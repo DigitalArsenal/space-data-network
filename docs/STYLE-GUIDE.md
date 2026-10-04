@@ -114,6 +114,9 @@ chapter titles in sentence case ("Digitally signed at the source").
   turns white with black text and the primary gives up its white.
 - Eyebrow above every section heading. A lede under it, one or two sentences.
 - Icons: 24 px line icons, 1.7 px stroke, amber, rounded joins.
+- Header bars: fixed at the top, blurred translucent fill, and their text is
+  not selectable (`user-select: none`), so a click or drag never highlights
+  the navigation.
 - No page-level horizontal scroll at any width. Test at 390 px.
 
 ## 5. Imagery

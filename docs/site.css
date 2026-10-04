@@ -88,6 +88,7 @@ code, pre { font-family: var(--font-mono); }
   background: var(--nav-bg);
   backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
   border-bottom: 1px solid var(--border);
+  -webkit-user-select: none; user-select: none;
 }
 .site-nav .inner { max-width: var(--max); height: 100%; margin: 0 auto; padding: 0 20px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; font-weight: 600; font-size: var(--sdn-stack-header-brand-size, 15px); white-space: nowrap; }

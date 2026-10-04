@@ -1,14 +1,17 @@
-// Renders the showreel frame by frame in Chromium and encodes it with ffmpeg.
-//   node tools/showreel/render.mjs [--frames a-b] [--out dir] [--stills t1,t2]
-// Needs ffmpeg (libx264, libsvtav1) and ImageMagick (the poster).
-// Outputs docs/media/showreel/sdn-showreel.{mp4,webm} and a poster frame.
-// Needs Playwright (any installed copy: set PLAYWRIGHT_MODULE to its path) and
-// an ffmpeg with libx264 and libsvtav1.
+// Renders a reel frame by frame in Chromium and encodes it with ffmpeg.
+//   node tools/showreel/render.mjs [--reel sdn] [--frames a-b] [--out dir]
+//                                  [--stills t1,t2] [--media dir]
+// --reel picks tools/showreel/reels/<name>.js (default sdn). Outputs
+// <media>/<name>.{mp4,webm} and <name>-poster.webp, where the reel's meta
+// names the file, the default media folder and the poster frame; --media
+// writes somewhere else (another stack site's repository).
+// Needs Playwright (any installed copy: set PLAYWRIGHT_MODULE to its path), an
+// ffmpeg with libx264 and libsvtav1, and ImageMagick (the poster).
 
 import { spawnSync } from "node:child_process";
 import { createReadStream, existsSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
-import { dirname, extname, join, normalize } from "node:path";
+import { dirname, extname, join, normalize, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -36,9 +39,10 @@ const port = server.address().port;
 const browser = await chromium.launch({ headless: true, args: ["--use-angle=metal", "--enable-gpu", "--ignore-gpu-blocklist", "--enable-unsafe-webgpu"] });
 const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
 page.on("pageerror", (e) => process.stderr.write(`pageerror: ${e}\n`));
-await page.goto(`http://127.0.0.1:${port}/tools/showreel/showreel.html`);
+await page.goto(`http://127.0.0.1:${port}/tools/showreel/showreel.html?reel=${args.reel ?? "sdn"}`);
 await page.waitForFunction(() => window.showreelReady === true, null, { timeout: 60000 });
 const total = await page.evaluate(() => window.showreel.frames);
+const meta = await page.evaluate(() => window.showreel.meta);
 
 async function grab(i) {
   const data = await page.evaluate((n) => window.showreel.renderFrame(n).toDataURL("image/png"), i);
@@ -62,19 +66,19 @@ if (args.stills) {
     writeFileSync(join(outDir, `f${String(i).padStart(4, "0")}.png`), await grab(i));
     if (i % 30 === 0) process.stdout.write(`frame ${i}/${b} ${((Date.now() - started) / 1000).toFixed(0)}s\n`);
   }
-  const media = join(repo, "docs", "media", "showreel");
+  const media = args.media ? resolve(args.media) : join(repo, meta.media);
   mkdirSync(media, { recursive: true });
   const ff = (argv) => {
     const r = spawnSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", ...argv], { stdio: "inherit" });
     if (r.status !== 0) throw new Error(`ffmpeg ${argv.join(" ")}`);
   };
   const input = ["-framerate", "30", "-start_number", String(a), "-i", join(outDir, "f%04d.png")];
-  ff([...input, "-c:v", "libx264", "-preset", "slow", "-crf", "27", "-profile:v", "high", "-pix_fmt", "yuv420p", "-tune", "film", "-movflags", "+faststart", join(media, "sdn-showreel.mp4")]);
-  ff([...input, "-c:v", "libsvtav1", "-preset", "5", "-crf", "36", "-pix_fmt", "yuv420p", "-svtav1-params", "tune=0", join(media, "sdn-showreel.webm")]);
-  // Poster: the storefront beat (frame 645). ImageMagick, because common
-  // ffmpeg builds lack a WebP encoder.
-  const poster = join(outDir, `f${String(Math.min(b, 645)).padStart(4, "0")}.png`);
-  const pm = spawnSync("magick", [poster, "-resize", "1600x", "-quality", "82", join(media, "sdn-showreel-poster.webp")], { stdio: "inherit" });
+  ff([...input, "-c:v", "libx264", "-preset", "slow", "-crf", "27", "-profile:v", "high", "-pix_fmt", "yuv420p", "-tune", "film", "-movflags", "+faststart", join(media, `${meta.name}.mp4`)]);
+  ff([...input, "-c:v", "libsvtav1", "-preset", "5", "-crf", "36", "-pix_fmt", "yuv420p", "-svtav1-params", "tune=0", join(media, `${meta.name}.webm`)]);
+  // Poster: the reel's chosen frame. ImageMagick, because common ffmpeg
+  // builds lack a WebP encoder.
+  const poster = join(outDir, `f${String(Math.min(b, meta.poster)).padStart(4, "0")}.png`);
+  const pm = spawnSync("magick", [poster, "-resize", "1600x", "-quality", "82", join(media, `${meta.name}-poster.webp`)], { stdio: "inherit" });
   if (pm.status !== 0) throw new Error("poster: magick failed");
   process.stdout.write(`encoded to ${media}\n`);
 }
