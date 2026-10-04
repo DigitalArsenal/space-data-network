@@ -31,6 +31,7 @@ type Options struct {
 	AOTCacheDir   string
 	CompileOnMiss bool                   // tests and prewarm only
 	Store         *flatsqlrt.NativeStore // the node's shared native I/O store, as format 2
+	FDBudget      int                    // open-fd budget of the instance's host I/O (0: flatsqlrt.P4FDBudget of RLIMIT_NOFILE)
 	OnFailure     func(error)            // instance trapped or hung; the Engine is fenced
 }
 
@@ -96,7 +97,7 @@ func Open(ctx context.Context, opt Options) (*Engine, error) {
 	e := &Engine{}
 	inst, err := flatsqlrt.OpenP4Instance(flatsqlrt.P4Config{
 		Wasm: wasm, AOTCacheDir: opt.AOTCacheDir, CompileOnMiss: opt.CompileOnMiss,
-		Store: opt.Store, StoreRoot: root, InitConfig: encodeConfig(engineRoot, opt),
+		Store: opt.Store, StoreRoot: root, FDBudget: opt.FDBudget, InitConfig: encodeConfig(engineRoot, opt),
 		OnFailure: func(_ *flatsqlrt.P4Instance, cause error) {
 			e.fence(cause)
 			if opt.OnFailure != nil {

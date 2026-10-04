@@ -287,13 +287,27 @@ type PSInstance struct {
 
 var nofileOnce sync.Once
 
+// processNoFile raises RLIMIT_NOFILE's soft limit toward 65536 once per
+// process (design §5.4) and reports the limits in force. Go's runtime has
+// already lifted the soft limit to the hard limit at start-up (darwin: to
+// kern.maxfilesperproc); the raise covers a limit lowered since. Both are 0
+// where the limit cannot be read.
+func processNoFile() (soft, hard uint64) {
+	nofileOnce.Do(func() { _, _, _ = RaiseNoFile(65536) })
+	soft, hard, _ = RaiseNoFile(0) // want 0 only reads
+	return soft, hard
+}
+
+// psDefaultMaxHandles is an instance's virtual handle table (PSConfig.MaxHandles).
+const psDefaultMaxHandles = 16384
+
 // OpenPSInstance creates, initializes and starts an instance.
 func OpenPSInstance(cfg PSConfig) (*PSInstance, error) {
 	if !NativeHostIOSupported() {
 		return nil, fmt.Errorf("%w: %v", ErrPSSubstrate, ErrNativeHostIOUnavailable)
 	}
 	applyPSDefaults(&cfg)
-	nofileOnce.Do(func() { _, _, _ = RaiseNoFile(65536) })
+	processNoFile()
 	// A31: the start-up self-test is a metric, logged once per process.
 	_ = wasmrt.SubstrateStatus()
 
@@ -376,7 +390,7 @@ func applyPSDefaults(cfg *PSConfig) {
 		cfg.FDBudget = 512
 	}
 	if cfg.MaxHandles <= 0 {
-		cfg.MaxHandles = 16384
+		cfg.MaxHandles = psDefaultMaxHandles
 	}
 	if cfg.MaxThreads <= 0 {
 		cfg.MaxThreads = 24

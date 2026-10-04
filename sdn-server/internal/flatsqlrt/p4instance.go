@@ -46,7 +46,7 @@ type P4Config struct {
 	CompileOnMiss bool         // compile a missing artifact (tests, prewarm)
 	Store         *NativeStore // the node's shared native store; StoreRoot opens a private one
 	StoreRoot     string
-	FDBudget      int    // this instance's share of RLIMIT_NOFILE (default 1024)
+	FDBudget      int    // open fds the instance's host I/O keeps (0: P4FDBudget's share of RLIMIT_NOFILE)
 	InitConfig    []byte // flatsql_p4_init's config TLV
 	MaxThreads    int    // guest threads (default 24)
 	// ControlBudget bounds each control call (default 5 min: init replays
@@ -55,6 +55,46 @@ type P4Config struct {
 	// OnFailure runs once, on its own goroutine, when a service thread traps
 	// or hangs, or a control call poisons the instance. It is fenced by then.
 	OnFailure func(*P4Instance, error)
+}
+
+// The format-4 instance's default share of the process's file descriptors.
+//
+// Its host I/O keeps at most FDBudget fds open and evicts (closes) the least
+// recently used one to open another; a handle whose fd was evicted reopens on
+// its next use. Every feed holds <feed>.fsdata, <feed>.db and its WAL, per
+// connection, so a budget below that set turns type-wide reads into
+// close/reopen churn: 1,024 fds at 571 MPE feeds took R12/R14/R16 from
+// 11-21 ms (16 feeds) to ~40 s (GATES-stream-r2).
+//
+// The share is a quarter of the soft RLIMIT_NOFILE: libp2p's resource manager
+// sizes itself from half of it (internal/node numFDs()/2), and the last
+// quarter is the reserve for everything else (the IPFS datastore, HTTP
+// listeners, the format-1/2 instances, logs). It never falls below the old
+// fixed 1,024 and never exceeds the handle table (an fd belongs to a handle,
+// so more could never be used). P4Config.FDBudget overrides it.
+const (
+	p4FDBudgetFloor = 1024
+	p4FDBudgetCap   = psDefaultMaxHandles
+)
+
+// P4FDBudget is the format-4 instance's fd budget for a soft RLIMIT_NOFILE.
+func P4FDBudget(softNoFile uint64) int {
+	b := softNoFile / 4
+	if b < p4FDBudgetFloor {
+		return p4FDBudgetFloor
+	}
+	if b > p4FDBudgetCap {
+		return p4FDBudgetCap
+	}
+	return int(b)
+}
+
+// limitText prints an rlimit (RLIM_INFINITY reads as "unlimited").
+func limitText(v uint64) string {
+	if v >= 1<<62 {
+		return "unlimited"
+	}
+	return fmt.Sprint(v)
 }
 
 // P4CallError is a control export that returned a negative engine status.
@@ -79,9 +119,14 @@ func OpenP4Instance(cfg P4Config) (*P4Instance, error) {
 	if len(cfg.Wasm) == 0 {
 		return nil, ErrNoP4Artifact
 	}
+	why := "configured"
 	if cfg.FDBudget <= 0 {
-		cfg.FDBudget = 1024
+		soft, hard := processNoFile()
+		cfg.FDBudget = P4FDBudget(soft)
+		why = fmt.Sprintf("a quarter of RLIMIT_NOFILE soft %s (hard %s), %d..%d", limitText(soft), limitText(hard),
+			p4FDBudgetFloor, p4FDBudgetCap)
 	}
+	log.Infof("format 4: host I/O fd budget %d (%s)", cfg.FDBudget, why)
 	if cfg.ControlBudget <= 0 {
 		cfg.ControlBudget = 5 * time.Minute
 	}
