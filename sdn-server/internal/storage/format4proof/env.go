@@ -28,6 +28,7 @@ const (
 	EnvShape      = "P4PROOF_SHAPE"       // a regular expression: re-run only the shapes it names (samples pooled, answers kept from the first run)
 	EnvSDNBin     = "P4PROOF_SDN_BIN"     // a spacedatanetwork binary (store-migrate kill loops)
 	EnvChild      = "P4PROOF_CHILD"       // set by the driver for a measurement child
+	EnvKeepStores = "P4PROOF_KEEP_STORES" // a directory: written stores are moved there when done, not removed (stream checks)
 	// The real host-02 copy (benchset h2copy: R21 PNM, R22, R24), per arm.
 	EnvH2F1 = "P4PROOF_H2_F1"
 	EnvH2F2 = "P4PROOF_H2_F2"
@@ -107,6 +108,30 @@ func splitList(s string) []string {
 		}
 	}
 	return out
+}
+
+// discardStore removes a store the harness wrote, or, with
+// P4PROOF_KEEP_STORES set, moves it into that directory (same volume) for
+// checks that read its files afterwards (the FlatBuffer streams).
+func discardStore(store string) {
+	keep := strings.TrimSpace(os.Getenv(EnvKeepStores))
+	if keep == "" {
+		_ = os.RemoveAll(store)
+		return
+	}
+	if err := os.MkdirAll(keep, 0o755); err == nil {
+		dst := filepath.Join(keep, filepath.Base(store))
+		for i := 2; ; i++ {
+			if _, err := os.Lstat(dst); os.IsNotExist(err) {
+				break
+			}
+			dst = filepath.Join(keep, fmt.Sprintf("%s.%d", filepath.Base(store), i))
+		}
+		if os.Rename(store, dst) == nil {
+			return
+		}
+	}
+	_ = os.RemoveAll(store)
 }
 
 func envInt(k string, d int) int {

@@ -877,7 +877,7 @@ func (c Config) driveXM(ctx context.Context, logf Logf, aliases map[string]strin
 	if err := CloneStore(c.Fixtures[ArmF1], store); err != nil {
 		return err
 	}
-	defer os.RemoveAll(store)
+	defer discardStore(store)
 	if err := child(CoverageSpec{Arm: ArmF1, Class: ClassXM, Store: store, Out: c.Out, Work: c.Work}, "coverage-f1-XM"); err != nil {
 		return err
 	}

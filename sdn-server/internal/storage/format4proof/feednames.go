@@ -334,7 +334,7 @@ func DriveFeedNames(ctx context.Context, c Config, crashRounds int, logf Logf) (
 	}
 	root := c.workPath("feednames")
 	_ = os.RemoveAll(root)
-	defer os.RemoveAll(root)
+	defer discardStore(root)
 	f1, p4 := filepath.Join(root, "f1"), filepath.Join(root, "s")
 	for _, d := range []string{f1, p4} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
