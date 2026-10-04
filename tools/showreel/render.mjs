@@ -73,8 +73,11 @@ if (args.stills) {
     if (r.status !== 0) throw new Error(`ffmpeg ${argv.join(" ")}`);
   };
   const input = ["-framerate", "30", "-start_number", String(a), "-i", join(outDir, "f%04d.png")];
-  ff([...input, "-c:v", "libx264", "-preset", "slow", "-crf", "27", "-profile:v", "high", "-pix_fmt", "yuv420p", "-tune", "film", "-movflags", "+faststart", join(media, `${meta.name}.mp4`)]);
-  ff([...input, "-c:v", "libsvtav1", "-preset", "5", "-crf", "36", "-pix_fmt", "yuv420p", "-svtav1-params", "tune=0", join(media, `${meta.name}.webm`)]);
+  // meta.crf = [x264, AV1]; busy reels (many fine lines changing every frame)
+  // take a higher value to stay near 10-13 MB.
+  const [crf264, crfAv1] = meta.crf ?? [27, 36];
+  ff([...input, "-c:v", "libx264", "-preset", "slow", "-crf", String(crf264), "-profile:v", "high", "-pix_fmt", "yuv420p", "-tune", "film", "-movflags", "+faststart", join(media, `${meta.name}.mp4`)]);
+  ff([...input, "-c:v", "libsvtav1", "-preset", "5", "-crf", String(crfAv1), "-pix_fmt", "yuv420p", "-svtav1-params", "tune=0", join(media, `${meta.name}.webm`)]);
   // Poster: the reel's chosen frame. ImageMagick, because common ffmpeg
   // builds lack a WebP encoder.
   const poster = join(outDir, `f${String(Math.min(b, meta.poster)).padStart(4, "0")}.png`);
