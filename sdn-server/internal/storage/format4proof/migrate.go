@@ -136,7 +136,7 @@ func MigrateCrashLoop(ctx context.Context, spec MigrateLoopSpec, logf Logf) (*Ru
 	if err := CloneStore(spec.Source, crash); err != nil {
 		return r, err
 	}
-	defer os.RemoveAll(crash)
+	defer discardStore(crash)
 	maxDelay := spec.MaxKillDelay
 	if maxDelay <= 0 {
 		maxDelay = time.Duration(float64(refWall) * 0.9)

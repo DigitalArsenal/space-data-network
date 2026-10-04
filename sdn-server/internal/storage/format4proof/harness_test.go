@@ -130,7 +130,7 @@ func TestProofCrash(t *testing.T) {
 				if err := os.MkdirAll(store, 0o755); err != nil {
 					t.Fatal(err)
 				}
-				defer os.RemoveAll(store)
+				defer discardStore(store)
 				res, err := CrashLoop(context.Background(), CrashLoopSpec{Arm: arm, Scenario: sc, Store: store, Work: c.Work,
 					Out: c.Out, Rounds: rounds, Batch: 1024, Source: os.Getenv("P4PROOF_CRASH_SOURCE")}, logfOf(t))
 				if err != nil {
