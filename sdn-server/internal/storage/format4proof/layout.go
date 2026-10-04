@@ -221,7 +221,8 @@ func checkFeedFiles(want map[string]map[string]bool, f4Store, work string) (*Fee
 		if r := cols["r"]; !contains(r, "off") || !contains(r, "len") || contains(r, "d") {
 			fail("%s: table r is %v; an index row names its frame by off and len and holds no record bytes (d)", strings.TrimPrefix(f, root+"/"), r)
 		}
-		// C-38 (1): the feed file's one CID index, on the CID alone.
+		// C-38 (1): the feed file's one CID index, on the CID alone, or
+		// (C-45 (3)) on cp, the generated first 8 bytes of the CID.
 		rel := strings.TrimPrefix(f, root+"/")
 		idx, err := cidIndexes(f, tmp)
 		if err != nil {
@@ -229,8 +230,8 @@ func checkFeedFiles(want map[string]map[string]bool, f4Store, work string) (*Fee
 			continue
 		}
 		lay.CIDIndexes[rel] = idx
-		if len(idx) != 1 || !strings.HasSuffix(idx[0], ": cid") {
-			fail("%s: the CID indexes are %v; C-38 keeps exactly one, on the CID alone", rel, idx)
+		if len(idx) != 1 || !(strings.HasSuffix(idx[0], ": cid") || strings.HasSuffix(idx[0], ": cp")) {
+			fail("%s: the CID indexes are %v; C-38 keeps exactly one, on the CID alone (C-45 (3): or on its prefix cp)", rel, idx)
 		}
 	}
 	// C-38 (2): the type index holds no per-record entry (no CID column).
@@ -258,7 +259,8 @@ func checkFeedFiles(want map[string]map[string]bool, f4Store, work string) (*Fee
 	return lay, nil
 }
 
-// cidIndexes lists a feed file's indexes that cover a cid column, each as
+// cidIndexes lists a feed file's indexes that cover a cid column, or cp
+// when r defines cp as the CID's first 8 bytes (C-45 (3)), each as
 // "name: col, col", read by the system sqlite3 from a clone of the file.
 func cidIndexes(file, tmp string) ([]string, error) {
 	if err := cloneForRead(file, tmp); err != nil {
@@ -266,7 +268,8 @@ func cidIndexes(file, tmp string) ([]string, error) {
 	}
 	out, err := exec.Command("sqlite3", filepath.Join(tmp, "feed.db"),
 		"SELECT i.name, group_concat(ii.name, ', ') FROM sqlite_master m, pragma_index_list(m.name) i, pragma_index_info(i.name) ii "+
-			"WHERE m.type = 'table' GROUP BY i.name HAVING sum(ii.name = 'cid') > 0 ORDER BY i.name").CombinedOutput()
+			"WHERE m.type = 'table' GROUP BY i.name HAVING sum(ii.name = 'cid' OR (ii.name = 'cp' AND "+
+			"replace(lower(m.sql), ' ', '') LIKE '%cpblobgeneratedalwaysas(substr(cid,1,8))%')) > 0 ORDER BY i.name").CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("sqlite3: %v: %s", err, strings.TrimSpace(string(out)))
 	}
