@@ -174,7 +174,7 @@ jobs:
     name: WasmEdge substrate (patched static prefix)
     runs-on: ubuntu-latest
     container: ubuntu:20.04
-    timeout-minutes: 90
+    timeout-minutes: 120
     env:
       WASMEDGE_VERSION: '0.16.4'
     defaults:
@@ -231,6 +231,12 @@ jobs:
           SDN_WASM_ATOMIC_REGRESSION: '1'
           SDN_WASM_REQUIRE_PATCHED: '1'
         run: |
+          # The legacy (format 1) engine loads its AOT artifact from the user
+          # cache and never compiles on a miss, so without this prewarm every
+          # legacy store these suites build runs INTERPRETED (the format-4
+          # migration tests' legacy stores took 6-10 minutes each).
+          ../scripts/go-with-wasmedge.sh build -o "$RUNNER_TEMP/spacedatanetwork-prewarm" ./cmd/spacedatanetwork
+          "$RUNNER_TEMP/spacedatanetwork-prewarm" prewarm-aot
           ../scripts/go-with-wasmedge.sh test ./internal/wasmrt/ -count=1 -timeout 20m
           ../scripts/go-with-wasmedge.sh test ./internal/flatsqlrt/ -count=1 -timeout 30m -v \
             -run 'TestPS|TestParallelAOT|TestSharedMemoryBase|TestConcurrentControl|TestNativeHostIO|TestEmbeddedPSThreads'
@@ -242,7 +248,9 @@ jobs:
           # its engine), and the dashboard lane through the API under ingest.
           ../scripts/go-with-wasmedge.sh test ./internal/storage/ -count=1 -timeout 30m -v -run 'TestFormat2|TestFormat4'
           ../scripts/go-with-wasmedge.sh test ./internal/api/ -count=1 -timeout 20m -v -run 'TestFormat2'
-          ../scripts/go-with-wasmedge.sh test ./cmd/spacedatanetwork/ -count=1 -timeout 30m -v -run 'TestFormat2|TestStoreMigrate'
+          # store-migrate --to 4 stops at every step of a migration here
+          # (SDN_WASM_REQUIRE_PATCHED=1): about 8 minutes locally, so 60m.
+          ../scripts/go-with-wasmedge.sh test ./cmd/spacedatanetwork/ -count=1 -timeout 60m -v -run 'TestFormat2|TestStoreMigrate'
 
   go-builds:
     name: Go builds (node + edge relay)
