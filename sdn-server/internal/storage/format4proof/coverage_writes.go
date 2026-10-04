@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -17,6 +18,7 @@ import (
 
 	EPMfb "github.com/DigitalArsenal/spacedatastandards.org/lib/go/EPM"
 	KMFfb "github.com/DigitalArsenal/spacedatastandards.org/lib/go/KMF"
+	MPEfb "github.com/DigitalArsenal/spacedatastandards.org/lib/go/MPE"
 	PNMfb "github.com/DigitalArsenal/spacedatastandards.org/lib/go/PNM"
 	flatbuffers "github.com/google/flatbuffers/go"
 
@@ -434,6 +436,14 @@ func buildEPM(i int) []byte {
 // buildPLOG is a publication-log entry as internal/logservice builds it
 // (buildPLGFlatBuffer, size-prefixed, "PLOG"), with fixed values.
 func buildPLOG(seq uint64, schemaType, publisher, recordCID, prevHash, entryHash string, ts uint64) []byte {
+	b, root := plogTable(seq, schemaType, publisher, recordCID, prevHash, entryHash, ts)
+	b.FinishSizePrefixedWithFileIdentifier(root, []byte("PLOG"))
+	return append([]byte(nil), b.FinishedBytes()...)
+}
+
+// plogTable builds a publication-log entry's table (buildPLOG's fields),
+// left to its caller to finish.
+func plogTable(seq uint64, schemaType, publisher, recordCID, prevHash, entryHash string, ts uint64) (*flatbuffers.Builder, flatbuffers.UOffsetT) {
 	b := flatbuffers.NewBuilder(512)
 	st := b.CreateString(schemaType)
 	pub := b.CreateString(publisher)
@@ -452,8 +462,7 @@ func buildPLOG(seq uint64, schemaType, publisher, recordCID, prevHash, entryHash
 	b.PrependUint64Slot(6, ts, 0)
 	b.PrependUOffsetTSlot(8, sigType, 0)
 	b.PrependUOffsetTSlot(10, day, 0)
-	b.FinishSizePrefixedWithFileIdentifier(b.EndObject(), []byte("PLOG"))
-	return append([]byte(nil), b.FinishedBytes()...)
+	return b, b.EndObject()
 }
 
 // ---- the scenarios -----------------------------------------------------------
@@ -480,13 +489,16 @@ func (c *cov) writeCoverage() []Shape {
 	out = append(out, c.x13()...)
 	out = append(out, c.x14()...)
 	out = append(out, c.x15(omm)...)
+	out = append(out, c.x16()...)
 	out = append(out, c.xm(omm, mpe, iqc, cat)...)
 	return out
 }
 
 // ClassXM is the migration class: every X scenario but X13 (the
-// maintenance verbs) on one format-1 clone, its writes first, then its
-// reads; the clone is then migrated (store-migrate --to 4: --inventory, the
+// maintenance verbs) and X16 (its NaN epoch, which C-47 (b) lets format 1
+// index and store-migrate's check compares) on one format-1 clone, its
+// writes first, then its reads; the clone is then migrated (store-migrate
+// --to 4: --inventory, the
 // migration, --verify-only), its record sets digested on both sides (W-op
 // digests, oversized records aside, C-6) and the reads run again on the
 // migrated store against format 1's answers (DriveCoverage, driveXM). It
@@ -1884,4 +1896,226 @@ func (c *cov) x15(omm [][]byte) []Shape {
 		CallRuling{Call: fmt.Sprintf(`SQL SELECT COUNT(*) FROM "OMM@%s"`, caseTwinSource), Why: c43B3, CaseTwin: true, Want: []Row{ValueRow("COUNT(*)", "3")}},
 		CallRuling{Call: fmt.Sprintf(`SQL SELECT COUNT(*) FROM "OMM@%s"`, strings.ToUpper(caseTwinSource)), Why: c43B3, CaseTwin: true})
 	return []Shape{sh}
+}
+
+// C-46/C-47 rulings X16's reads apply.
+const (
+	c9Meta      = "C-9: a relation's _rowid and _offset are each format's own (format 4: _rowid = seq, _offset = 0)"
+	c47EpochDay = "C-47 (a): the coverage day label of an epoch clamped to the int64 range caps the year at 9999 (format 1 prints the raw year)"
+	c47NaN      = "C-47 (b): a NaN epoch is not indexed (format 1 on arm64 indexes epoch 0)"
+)
+
+// x16Epochs are X16's MPE EPOCH values outside the usual range (C-46 (1):
+// clamped to the int64 range; format 4 indexed none before), one batch each
+// of their feed: beyond int64 above and below (past it, at 2^63, infinite),
+// a value int64 holds past 9.2e18 (the 3.7.0 engine dropped it), an ordinary
+// one. The NaN goes to a feed of its own.
+var x16Epochs = []struct {
+	batch  string
+	values []float64
+}{
+	{"x16-max", []float64{1e19, math.Ldexp(1, 63), math.Inf(1)}},
+	{"x16-min", []float64{-1e19, -math.Ldexp(1, 63), math.Inf(-1)}},
+	{"x16-big", []float64{9.21e18}},
+	{"x16-normal", []float64{float64(r16At) + 0.5}},
+}
+
+// X16: C-46's follow-ups on what the class writes.
+//   - full text of records aligned to a size prefix SDN cut off (C-46 (3),
+//     I1): publication-log entries built size-prefixed and cut out of the
+//     prefix (their 8-byte fields 4 bytes off the record's first byte, as
+//     SDN's builders plus [4:] leave them) beside the same entries finished
+//     bare, every one found by its tokens (3.7.0's format 4 found no cut
+//     one);
+//   - epoch values outside int64 (C-46 (1), I4): MPE records whose EPOCH is
+//     x16Epochs in one feed, a NaN alone in another, read by the index page,
+//     the epoch profiles, an export, SQL and coverage per batch, with C-47 (a)
+//     and (b) named (format 1 labels both clamped extremes'
+//     292277026596-12-04, so one coverage over both merges them in one
+//     bucket; the past-9999 label of the unclamped 9.21e18 is not read);
+//   - SandboxedSelect's SELECT * of a type's relation (C-47: format 1's fast
+//     path renders _source and _data its own way) on the class's
+//     publication-log entries.
+//
+// Not in XM: store-migrate checks format 1's epoch columns against the
+// engine's, and C-47 (b) lets the NaN record's differ.
+func (c *cov) x16() []Shape {
+	const class = "X16"
+	coverageNeedsSQL[class] = true
+	hits := c.hits["OMM.fbs"]
+	const publisher = "x16alignpublisher"
+	var plogs [][]byte
+	for i := 0; i < 8; i++ {
+		h := sha256.Sum256([]byte(fmt.Sprintf("x16-entry-%d", i)))
+		if i < 4 { // cut out of its size prefix
+			plogs = append(plogs, buildPLOG(uint64(100+i), "X16ALIGNCUT", publisher, hits[i], "", hex.EncodeToString(h[:]), uint64(1790000100+i))[4:])
+			continue
+		}
+		b, root := plogTable(uint64(100+i), "X16ALIGNBARE", publisher, hits[i], "", hex.EncodeToString(h[:]), uint64(1790000100+i))
+		b.FinishWithFileIdentifier(root, []byte("PLOG"))
+		plogs = append(plogs, append([]byte(nil), b.FinishedBytes()...))
+	}
+	extremes := plainTags("coverage-epoch-extremes", "")
+	nanTags := plainTags("coverage-epoch-nan", "x16-nan")
+	nan := buildMPEEpoch("X16-EPOCH-NAN", math.NaN())
+	nanCID := storage.ComputeCID(nan)
+	writes := []Call{c.storeBatch("StoreBatch PLOG cut and bare", "PLOG.fbs", plogs, covPeer, nil, nil)}
+	n := 0
+	for _, b := range x16Epochs {
+		var recs [][]byte
+		for _, v := range b.values {
+			recs = append(recs, buildMPEEpoch(fmt.Sprintf("X16-EPOCH-%02d", n), v))
+			n++
+		}
+		t := plainTags(extremes.SourceName, b.batch)
+		writes = append(writes, c.storeBatch("StoreBatchWithSourceTags MPE epochs "+b.batch, "MPE.fbs", recs, covPeer, nil, &t))
+	}
+	writes = append(writes, c.storeBatch("StoreBatchWithSourceTags MPE NaN epoch", "MPE.fbs", [][]byte{nan}, covPeer, nil, &nanTags))
+
+	// I1: wait until the publication log's index holds what it will (format
+	// 1 builds it on demand, format 4 follows the stream), then search.
+	settled := c.valueCall("PLOG full text settled", "PLOG.fbs", func(s *storage.FlatSQLStore) (Row, error) {
+		st := time.Now()
+		n := 0
+		for time.Since(st) < time.Minute {
+			_ = s.CheckFullTextSearch("PLOG.fbs", publisher)
+			l, err := s.QueryRawRecordRefs(storage.RawRecordQuery{SchemaName: "PLOG.fbs", Search: publisher, UseRowIDCursor: true, Limit: 20})
+			if err == nil {
+				if n = len(l); n >= len(plogs) {
+					break
+				}
+			}
+			time.Sleep(time.Second)
+		}
+		return ValueRow("hits", strconv.Itoa(n)), nil
+	})
+	search := func(name, q string) Call {
+		return c.rawQuery("search PLOG "+name, storage.RawRecordQuery{SchemaName: "PLOG.fbs", Search: q, UseRowIDCursor: true, Limit: 20}, false)
+	}
+	reads := []Call{
+		settled,
+		search("cut", "X16ALIGNCUT"),
+		search("bare", "X16ALIGNBARE"),
+		search("every entry", publisher),
+		c.valueCall("search snapshot PLOG every entry", "PLOG.fbs", func(s *storage.FlatSQLStore) (Row, error) {
+			q := storage.RawRecordQuery{SchemaName: "PLOG.fbs", Search: publisher}
+			n, h, err := s.RawRecordSnapshot(q)
+			return covHead(q, n, &h), err
+		}),
+		c.gets("GetRecord PLOG", "PLOG.fbs", cidsOf(plogs)),
+	}
+
+	// I4: the extremes' feed strictly but C-47 (a)'s day label; the NaN's
+	// feed under C-47 (b).
+	indexPage := func(name string, tags storage.SourceTags) Call {
+		return c.rowsCall("index page MPE "+name, "MPE.fbs", func(s *storage.FlatSQLStore) ([]Row, error) {
+			rows, total, err := s.RecordIndexPage(storage.RecordIndexPageQuery{SchemaName: "MPE.fbs", ProviderID: tags.ProviderID, SourceName: tags.SourceName, Limit: 20})
+			if err != nil {
+				return nil, err
+			}
+			out := []Row{ValueRow("total", i64(total))}
+			for _, r := range rows {
+				out = append(out, ValueRow("cid", r.CID, "norad", i64p(r.NoradCatID), "epoch", i64p(r.EpochUnix)))
+			}
+			return out, nil
+		})
+	}
+	epoch := func(name string, q storage.EpochRecordQuery) Call {
+		return c.rowsCall("epoch MPE "+name, "MPE.fbs", func(s *storage.FlatSQLStore) ([]Row, error) {
+			if q.Profile == storage.EpochProfileCoverage {
+				bs, err := s.QueryEpochCoverage(q)
+				if err != nil {
+					return nil, err
+				}
+				var rows []Row
+				for _, b := range bs {
+					rows = append(rows, ValueRow("day", b.Day, "n", i64(b.Count), "oldest", unixOf(b.OldestEpoch), "newest", unixOf(b.NewestEpoch)))
+				}
+				return rows, nil
+			}
+			n, err := s.CountEpochRecords(q)
+			if err != nil {
+				return nil, err
+			}
+			ms, err := s.QueryEpochRecords(q)
+			if err != nil {
+				return nil, err
+			}
+			a, _ := matchesAnswer(name, ms, n)
+			return a.Rows, nil
+		})
+	}
+	sqlRows := func(stmt string) Call {
+		return c.rowsCall("SandboxedSelect "+stmt, "", func(s *storage.FlatSQLStore) ([]Row, error) {
+			res, err := s.SandboxedSelect(context.Background(), stmt, storage.SandboxSelectCaps{MaxRows: 100, MaxBytes: 1 << 20, Timeout: time.Minute})
+			if err != nil {
+				return nil, err
+			}
+			var body []Row
+			for _, cells := range res.Rows {
+				row := Row{}
+				for i, v := range cells {
+					row = append(row, Field{res.Columns[i], v})
+				}
+				body = append(body, row)
+			}
+			return append([]Row{ValueRow("columns", strings.Join(res.Columns, ","), "truncated", strconv.FormatBool(res.Truncated))}, sortRows(body)...), nil
+		})
+	}
+	at := time.Unix(r16At, 0).UTC()
+	feed := func(t storage.SourceTags, p string) storage.EpochRecordQuery {
+		return storage.EpochRecordQuery{SchemaName: "MPE.fbs", Profile: p, At: at, ProviderID: t.ProviderID, SourceName: t.SourceName, Limit: 20}
+	}
+	reads = append(reads,
+		indexPage("epochs outside int64", extremes),
+		epoch("nearest epochs outside int64", feed(extremes, storage.EpochProfileNearest)),
+		epoch("as_of epochs outside int64", feed(extremes, storage.EpochProfileAsOf)),
+		epoch("forward epochs outside int64", feed(extremes, storage.EpochProfileForward)),
+		c.rowsCall("export MPE epochs outside int64", "MPE.fbs", func(s *storage.FlatSQLStore) ([]Row, error) {
+			return exportOf(s, "x16-epochs", storage.IndexedRecordQuery{SchemaName: "MPE.fbs", ProviderID: extremes.ProviderID, SourceName: extremes.SourceName,
+				Limit: 100})
+		}),
+		sqlRows(`SELECT ENTITY_ID, EPOCH FROM "MPE@coverage-epoch-extremes"`),
+	)
+	for _, b := range []string{"x16-max", "x16-min", "x16-normal"} {
+		reads = append(reads, epoch("coverage epochs "+b, storage.EpochRecordQuery{SchemaName: "MPE.fbs", Profile: storage.EpochProfileCoverage,
+			ProviderID: extremes.ProviderID, SourceName: extremes.SourceName, BatchID: b}))
+	}
+	reads = append(reads,
+		c.gets("GetRecord MPE NaN epoch", "MPE.fbs", []string{nanCID}),
+		indexPage("NaN epoch", nanTags),
+		epoch("nearest NaN epoch", feed(nanTags, storage.EpochProfileNearest)),
+		epoch("coverage NaN epoch", storage.EpochRecordQuery{SchemaName: "MPE.fbs", Profile: storage.EpochProfileCoverage, ProviderID: nanTags.ProviderID,
+			SourceName: nanTags.SourceName}),
+		sqlRows(`SELECT ENTITY_ID, EPOCH FROM "MPE@coverage-epoch-nan"`),
+		// C-47: the fast path's SELECT * of the publication log's relation.
+		sqlRows(`SELECT * FROM "PLOG"`),
+		sqlRows(`select * from plog;`),
+		sqlRows(`SELECT SEQUENCE, SCHEMA_TYPE, _source FROM "PLOG"`),
+	)
+	reads = append(reads, c.summaries(covPeer)...)
+	back := covShape(class, "C-46 follow-ups: read back", "MPE.fbs", reads...)
+	back.Policy.Calls = append(back.Policy.Calls,
+		CallRuling{Call: "epoch MPE coverage epochs x16-max", Why: c47EpochDay, Fields: []string{"day"}},
+		CallRuling{Call: "epoch MPE coverage epochs x16-min", Why: c47EpochDay, Fields: []string{"day"}},
+		CallRuling{Call: "index page MPE NaN epoch", Why: c47NaN, Fields: []string{"epoch"}, CID: nanCID},
+		CallRuling{Call: "epoch MPE nearest NaN epoch", Why: c47NaN},
+		CallRuling{Call: "epoch MPE coverage NaN epoch", Why: c47NaN},
+		CallRuling{Call: "SandboxedSelect SELECT * ", Why: c9Meta, Fields: []string{"_rowid", "_offset"}},
+		CallRuling{Call: "SandboxedSelect select * ", Why: c9Meta, Fields: []string{"_rowid", "_offset"}})
+	return []Shape{covShape(class, "C-46 follow-ups: writes", "MPE.fbs", writes...), back}
+}
+
+// buildMPEEpoch is a mean-elements record of entity whose EPOCH is epoch.
+func buildMPEEpoch(entity string, epoch float64) []byte {
+	b := flatbuffers.NewBuilder(256)
+	id := b.CreateString(entity)
+	MPEfb.MPEStart(b)
+	MPEfb.MPEAddENTITY_ID(b, id)
+	MPEfb.MPEAddEPOCH(b, epoch)
+	MPEfb.MPEAddMEAN_MOTION(b, 15.1)
+	MPEfb.MPEAddECCENTRICITY(b, 0.001)
+	MPEfb.MPEAddINCLINATION(b, 97.4)
+	MPEfb.FinishMPEBuffer(b, MPEfb.MPEEnd(b))
+	return append([]byte(nil), b.FinishedBytes()...)
 }
