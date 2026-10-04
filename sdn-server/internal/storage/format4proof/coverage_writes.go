@@ -48,7 +48,7 @@ var covSig = []byte("coverage-signature-0123456789abcdef0123456789abcdef01234567
 // covTags are fully populated tags: url, content key, producer peer and
 // public key, licence (the fields the fixture leaves empty).
 func covTags(source, batch string) storage.SourceTags {
-	return storage.SourceTags{ProviderID: FixtureProvider, SourceName: source, SourceURL: "https://celestrak.org/NORAD/elements/gp.php?GROUP=active&FORMAT=" + batch,
+	return storage.SourceTags{ProviderID: FixtureProvider, SourceName: source, SourceURL: "https://feeds.example/gp?GROUP=active&FORMAT=" + batch,
 		BatchID: batch, ContentKeyID: "ckey-" + batch, ProducerPeerID: covPeer, ProducerPublicKey: "ed25519:" + covPeer,
 		License: "CC-BY-4.0", LicenseURL: "https://creativecommons.org/licenses/by/4.0/", Citation: "CelesTrak GP (coverage)", ShareAlike: true}
 }
@@ -638,7 +638,7 @@ func xmC43(sh Shape, in *Inputs, routed []byte) Shape {
 	add(CallRuling{Call: "SourceBatchProgress", Why: c41N7, Fields: []string{"LastSeenUnix", "UpdatedAtUnix"}, Standard: "OMM.fbs", Source: odd.Source, Batch: x15BatchA},
 		CallRuling{Call: "ProducerSourceProgress", Why: c41N7, Fields: []string{"LastSeenUnix", "UpdatedAtUnix"}, Standard: "OMM.fbs", Source: odd.Source})
 	for _, read := range []string{"X15: lane snapshot ", "X15: lane head "} {
-		add(CallRuling{Call: fmt.Sprintf("%sOMM.fbs %s/%s/", read, odd.Provider, odd.Source), Why: c41N7, Fields: []string{"max_updated", "max_created"}})
+		add(CallRuling{Call: read + "OMM.fbs " + odd.Provider + "/" + odd.Source + "/", Why: c41N7, Fields: []string{"max_updated", "max_created"}})
 	}
 	add(CallRuling{Call: "X09: SQL stream SELECT _data FROM OMM WHERE NORAD_CAT_ID = ?1", Why: c43G4, F1Empty: true})
 	// G5: XM's only calls naming "@local" are X01's six "OMM@local" reads
