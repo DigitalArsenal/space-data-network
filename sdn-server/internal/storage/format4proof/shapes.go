@@ -98,7 +98,9 @@ type Inputs struct {
 	R01Held map[string][]string `json:"-"`
 }
 
-// bp is the union of the benchset reads' parameter keys.
+// bp is the union of the benchset reads' parameter keys. The SDS fields carry
+// their SDS names (NORAD_CAT_ID, EPOCH); encoding/json matches keys without
+// case, so benchset.json's "norad_cat_id" and "epoch" decode into them.
 type bp struct {
 	Schema          string          `json:"schema"`
 	Limit           int             `json:"limit"`
@@ -112,14 +114,14 @@ type bp struct {
 	SyncFilter      string          `json:"sync_filter"`
 	ExpectedTotal   *int64          `json:"expected_total"`
 	Norad           string          `json:"norad"`
-	NoradCatID      *uint32         `json:"norad_cat_id"`
+	NoradCatID      *uint32         `json:"NORAD_CAT_ID"`
 	EntityID        string          `json:"entity_id"`
 	Day             string          `json:"day"`
 	From            string          `json:"from"`
 	To              string          `json:"to"`
 	Profile         string          `json:"profile"`
 	At              int64           `json:"at"`
-	Epoch           float64         `json:"epoch"`
+	Epoch           float64         `json:"EPOCH"`
 	Source          string          `json:"source"`
 	MaxDeltaSeconds int64           `json:"max_delta_seconds"`
 	MaxBytes        int64           `json:"max_bytes"`
