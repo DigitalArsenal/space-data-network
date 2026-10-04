@@ -2628,7 +2628,8 @@ func (b format4Backend) QuerySandboxedJSON(sql string, caps flatsqlrt.SandboxCap
 }
 
 // sandboxedSelect is SandboxedSelect's statement on the sandbox path; the
-// caller validated it and resolved the caps.
+// caller validated it and resolved the caps. A `SELECT * FROM <relation>`
+// renders as format 1's full-scan fast path does (f4FullScan, C-47).
 func (b format4Backend) sandboxedSelect(ctx context.Context, stmt string, maxRows, maxBytes int, timeout time.Duration) (*SandboxSelectResult, error) {
 	if err := b.closed(); err != nil {
 		return nil, err
@@ -2638,15 +2639,20 @@ func (b format4Backend) sandboxedSelect(ctx context.Context, stmt string, maxRow
 	out := &SandboxSelectResult{Columns: []string{}}
 	bytesUsed := 0
 	errDone := errors.New("format4: sandboxed select is full")
-	names, err := b.f4SQL(ctx, format4.SQLRequest{SQL: stmt, Class: format4.ClassSandbox, Sandbox: true,
-		Caps: format4.Caps{MaxResultRows: uint64(maxRows) + 1}}, func(r []format2.Cell) error {
+	scan, fast := f4FullScanOf(stmt)
+	var render func(i int, c format2.Cell) string
+	var dec format2.RB1Decoder
+	dec.OnRow = func(r []format2.Cell) error {
 		if len(out.Rows) >= maxRows {
 			out.Truncated = true
 			return errDone
 		}
+		if render == nil {
+			render = scan.renderer(dec.Names, fast)
+		}
 		row := make([]string, len(r))
 		for i, c := range r {
-			cell := f4SelectCell(c)
+			cell := render(i, c)
 			bytesUsed += len(cell)
 			row[i] = cell
 		}
@@ -2656,9 +2662,11 @@ func (b format4Backend) sandboxedSelect(ctx context.Context, stmt string, maxRow
 		}
 		out.Rows = append(out.Rows, row)
 		return nil
-	})
-	if names != nil {
-		out.Columns = names
+	}
+	_, err := b.d.api().SQL(ctx, format4.SQLRequest{SQL: stmt, Class: format4.ClassSandbox, Sandbox: true,
+		Caps: format4.Caps{MaxResultRows: uint64(maxRows) + 1}}, func(chunk []byte) error { return dec.Feed(chunk) })
+	if dec.Names != nil {
+		out.Columns = dec.Names
 	}
 	if err != nil && !errors.Is(err, errDone) {
 		return nil, fmt.Errorf("sandboxed select: %w", b.f4SandboxErr(err))
@@ -2680,6 +2688,125 @@ func f4SelectCell(c format2.Cell) string {
 		return fmt.Sprint(c.F)
 	default:
 		return string(c.B)
+	}
+}
+
+// f4FullScan is format 1's SandboxedSelect full-scan fast path (contract
+// C-47). Format 1's SandboxedSelect runs its statement through the engine's
+// execute (SQLiteEngine::tryFastPath), which answers a statement that,
+// normalized as its normalizeSQL does (ASCII whitespace runs to one space,
+// ASCII lower case), reads `select * from <name>` with no " where " after
+// it (trailing spaces and semicolons and one pair of double quotes stripped
+// from <name>) from the relation's records with the type's extractor instead
+// of through SQLite, when <name> is a type relation with no (encrypted)
+// column. Its rows differ from SQLite's (and from QuerySandboxedJSON, which
+// format 1 runs without the fast path and format 4 equals) in four ways:
+//   - _source is the relation's registered name: the type's for `<TYPE>`
+//     (SQLite's view names each row's "<TYPE>@<source>"), the source table's
+//     own for `"<TYPE>@<source>"` (as SQLite's);
+//   - _data is NULL (SQLite: the record);
+//   - a bool column reads true or false (SQLite: 1 or 0);
+//   - a uint32 column reads unsigned (SQLite: the value as a signed int32).
+//
+// _rowid and _offset stay format 4's (C-9). Left alone: format 1 renders
+// every integer through a double on every path; its fast path answers a
+// `"<TYPE>@<source>"` relation from the type's whole record list (each row
+// named <TYPE>@<source>), where format 4 answers the source's records
+// (C-48 (a)); format 1 cuts a text at a NUL byte, format 4 keeps it whole
+// (C-48 (b)); a NaN in a float column reads NaN there, NULL through SQLite
+// (as an absent field does on both).
+type f4FullScan struct {
+	base  bool            // `<TYPE>`, not `"<TYPE>@<source>"`
+	kinds map[string]int8 // the type's root fields: reflection base types
+	enc   map[string]bool // root fields with the (encrypted) attribute
+}
+
+// f4FullScanOf parses stmt as format 1's fast path does; ok when it takes
+// the fast path's shape and names a type with an embedded binary schema.
+func f4FullScanOf(stmt string) (f4FullScan, bool) {
+	const prefix = "select * from "
+	n := format1NormalizeSQL(stmt)
+	if !strings.HasPrefix(n, prefix) || strings.Contains(n[len(prefix):], " where ") {
+		return f4FullScan{}, false
+	}
+	name := strings.TrimRight(n[len(prefix):], " ;")
+	if len(name) >= 2 && name[0] == '"' && name[len(name)-1] == '"' {
+		name = name[1 : len(name)-1]
+	}
+	typ, _, shadow := strings.Cut(name, "@")
+	fields, ok := format2.RootFields(typ)
+	if !ok {
+		return f4FullScan{}, false
+	}
+	scan := f4FullScan{base: !shadow, kinds: map[string]int8{}, enc: map[string]bool{}}
+	for _, f := range fields {
+		scan.kinds[f.Name] = f.BaseType
+		if f.Encrypted {
+			scan.enc[f.Name] = true
+		}
+	}
+	return scan, true
+}
+
+// format1NormalizeSQL is flatsql's normalizeSQL (sqlite_engine.cpp): ASCII
+// whitespace runs become one space (none leading or trailing), ASCII letters
+// lower case.
+func format1NormalizeSQL(sql string) string {
+	out := make([]byte, 0, len(sql))
+	space := true
+	for i := 0; i < len(sql); i++ {
+		c := sql[i]
+		switch c {
+		case ' ', '\t', '\n', '\v', '\f', '\r':
+			if !space && len(out) > 0 {
+				out = append(out, ' ')
+				space = true
+			}
+		default:
+			if 'A' <= c && c <= 'Z' {
+				c += 'a' - 'A'
+			}
+			out = append(out, c)
+			space = false
+		}
+	}
+	if len(out) > 0 && out[len(out)-1] == ' ' {
+		out = out[:len(out)-1]
+	}
+	return string(out)
+}
+
+// renderer is how a result's cells render: f4SelectCell, or, when the
+// statement took the fast path's shape and the result is a type relation's
+// (format 1's meta columns last, no (encrypted) column), the fast path's.
+func (s f4FullScan) renderer(names []string, fast bool) func(i int, c format2.Cell) string {
+	plain := func(_ int, c format2.Cell) string { return f4SelectCell(c) }
+	if !fast || len(names) < 4 || strings.Join(names[len(names)-4:], ",") != "_source,_rowid,_offset,_data" {
+		return plain
+	}
+	for _, n := range names {
+		if s.enc[n] {
+			return plain
+		}
+	}
+	src, data := len(names)-4, len(names)-1
+	return func(i int, c format2.Cell) string {
+		switch {
+		case i == data:
+			return ""
+		case i == src && s.base && c.Type == format2.CellText:
+			typ, _, _ := strings.Cut(string(c.B), "@")
+			return typ
+		case i >= src:
+			return f4SelectCell(c)
+		}
+		switch k := s.kinds[names[i]]; {
+		case k == format2.BaseBool && c.Type == format2.CellInt:
+			return strconv.FormatBool(c.I != 0)
+		case k == format2.BaseUInt && c.Type == format2.CellInt && c.I < 0:
+			return strconv.FormatInt(c.I+1<<32, 10)
+		}
+		return f4SelectCell(c)
 	}
 }
 
