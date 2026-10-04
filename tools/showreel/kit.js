@@ -155,6 +155,12 @@ export function distForRadius(px) {
   const t = (px / (H / 2)) * TAN;
   return Math.sqrt(1 + 1 / (t * t));
 }
+// A camera on a line from the Earth's center through (lat, lon), dist Earth
+// radii out, looking at the center; off shifts the frame, zoom narrows it.
+export function orbitCamera(lat, lon, dist, { off = [0, 0], zoom = 1, spin = 0 } = {}) {
+  const pos = mul(geoDir(lat, lon, 0), dist);
+  return { ...lookAt(pos, [0, 0, 0], [0, 1, 0]), spin, off, zoom, dist };
+}
 // World → screen, matching the ray tracer's projection exactly.
 export function project(cam, p) {
   const d = sub(p, cam.pos);
@@ -912,6 +918,79 @@ export async function createStudio({ base = "", hudTitle = "SPACE DATA NETWORK",
     sx.restore();
   }
 
+  // An orbit arc from u0 to u1 (radians along the orbit), hidden where the
+  // planet is in front of it.
+  function strokeOrbitArc(cam, o, u0, u1, color, alpha, width, glowA = 0.6, dash = null) {
+    if (alpha <= 0 || u1 === u0) return;
+    const N = Math.max(8, Math.ceil(Math.abs(u1 - u0) * 40));
+    let prev = null;
+    sx.save();
+    sx.lineCap = "round";
+    sx.strokeStyle = color;
+    sx.lineWidth = width;
+    sx.globalAlpha = alpha;
+    if (dash) sx.setLineDash(dash);
+    gx.strokeStyle = color;
+    gx.globalAlpha = alpha * glowA;
+    gx.lineWidth = width * 1.5;
+    sx.beginPath();
+    gx.beginPath();
+    for (let i = 0; i <= N; i++) {
+      const p = orbitPos(o, lerp(u0, u1, i / N));
+      const q = project(cam, p);
+      const hidden = occluded(cam, p);
+      if (q && prev && !hidden && !prev.hidden) {
+        sx.moveTo(prev.x, prev.y);
+        sx.lineTo(q.x, q.y);
+        gx.moveTo(prev.x / 2, prev.y / 2);
+        gx.lineTo(q.x / 2, q.y / 2);
+      }
+      prev = q ? { ...q, hidden } : null;
+    }
+    sx.stroke();
+    if (glowA > 0) gx.stroke();
+    sx.restore();
+  }
+
+  // An eyebrow over the lower-left type block (block() lines sit at 770-870).
+  function eyebrow(text, lines, tIn, tOut, t, color = AMBER) {
+    const y = lineYs(lines)[0] - 112;
+    maskText(sx, text, LX + 2, y, EYE, 600, color, tIn, tOut, t, { tracking: 3.5, outDur: 0.28 });
+  }
+
+  // Closing card: the mark (optional), a title, a subtitle and the address,
+  // revealed from t0 and held. The group is centered on the frame.
+  function lockup({ title, subtitle, url, t0, mark = true }, t) {
+    if (t < t0) return;
+    const TP = 78;
+    sx.save();
+    sx.font = font(650, TP);
+    sx.letterSpacing = "-1.5px";
+    const tw = sx.measureText(title).width;
+    sx.font = font(400, 28);
+    sx.letterSpacing = "0px";
+    const sw = sx.measureText(subtitle).width;
+    sx.restore();
+    const R = 118;
+    const gap = 102;
+    const textW = Math.max(tw, sw);
+    const total = mark ? 2 * R + gap + textW : textW;
+    const x0 = (W - total) / 2;
+    const tx = mark ? x0 + 2 * R + gap : x0;
+    if (mark) {
+      drawMark(x0 + R, H / 2, R, t, {
+        head: easeInOutExpo(seg(t, t0, t0 + 0.5)),
+        ring: seg(t, t0 - 0.1, t0 + 0.2),
+        nodes: seg(t, t0 + 0.52, t0 + 0.76),
+        links: easeOutCubic(seg(t, t0 + 0.6, t0 + 0.82)),
+        fade: seg(t, t0 - 0.1, t0 + 0.1),
+      });
+    }
+    maskText(sx, title, tx, H / 2 + 8, TP, 650, INK, t0 + 0.72, null, t, { dur: 0.45, tracking: -1.5 });
+    maskText(sx, subtitle, tx + 2, H / 2 + 64, 28, 400, MUTED, t0 + 0.8, null, t, { dur: 0.4 });
+    maskText(sx, url, tx + 2, H / 2 - 92, 18, 600, AMBER, t0 + 0.84, null, t, { dur: 0.4, tracking: 4 });
+  }
+
   // ---------------------------------------------------------- frame loop
   // Clears the scene and glow layers before a subframe is drawn.
   function beginSubframe() {
@@ -988,6 +1067,6 @@ export async function createStudio({ base = "", hudTitle = "SPACE DATA NETWORK",
     glc, sx, gx, font, maskText, GLYPHS, decodeText, dotGlow, drawMark, hud, scrim, pill, icon, badge, padlock, keyIcon,
     bezierPts, pointOn, strokeOn, stamp, renderEarth, drawSatellites, drawOrbitPath, arcPoint, strokeArc,
     LX, CAP_Y, BIG, EYE, CAP, LETTERS, lineYs, caption, block, shiftBlock, questionBadge,
-    beginSubframe, bloom, makeRenderFrame, cutPulses, canvas: out,
+    strokeOrbitArc, eyebrow, lockup, beginSubframe, bloom, makeRenderFrame, cutPulses, canvas: out,
   };
 }
