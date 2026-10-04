@@ -14,20 +14,26 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format4/marker"
 )
 
-// The owner's layout (contract C-37, C-38): one SQLite table file per source
-// feed x standard, P/<TYPE>/<provider@source>.db, untagged records in
-// P/<TYPE>/local.db; no row holds a provider or source string (the file is
-// the feed); each feed file has exactly one CID index, and the type index
-// holds no per-record entry. FeedLayout checks a migrated store against the
-// format-1 store it came from: the feed files of each type are exactly the
-// (provider, source) pairs format 1's source summary holds live records of
-// (plus local); no table of any feed file has a provider or source column;
-// one index of each feed file covers the CID, on the CID alone; no table of a
-// type index T/<TYPE>.idx has a CID column.
+// The owner's layout (contract C-37, C-38; BRIEF4): per source feed x
+// standard, the records in a pure FlatBuffer stream P/<TYPE>/<provider@source>.fsdata
+// (a compaction's generation is <name>.<gen>.fsdata) and their index in the
+// SQLite file P/<TYPE>/<provider@source>.db; untagged records in
+// P/<TYPE>/local.fsdata and local.db; no row holds a provider or source
+// string (the file is the feed) nor the record's bytes (an index row names
+// its frame by off and len); each feed file has exactly one CID index, and
+// the type index holds no per-record entry. FeedLayout checks a migrated
+// store against the format-1 store it came from: the feed files of each type
+// are exactly the (provider, source) pairs format 1's source summary holds
+// live records of (plus local), each with a non-empty stream; no table of
+// any feed file has a provider or source column; the record table has off
+// and len and no record-bytes column d; one index of each feed file covers
+// the CID, on the CID alone; no table of a type index T/<TYPE>.idx has a CID
+// column.
 
 // FeedLayout is a store's feed files and the problems found.
 type FeedLayout struct {
 	Files      map[string][]string `json:"files"`       // type -> feed file names
+	Streams    map[string][]string `json:"streams"`     // type -> stream file names (<feed>.fsdata, <feed>.<gen>.fsdata)
 	Columns    map[string][]string `json:"columns"`     // table -> columns, as one feed file holds them
 	CIDIndexes map[string][]string `json:"cid_indexes"` // feed file -> its indexes on a cid column (name: columns)
 	TypeIndex  map[string][]string `json:"type_index"`  // type -> the tables of T/<TYPE>.idx
@@ -110,8 +116,8 @@ func CheckFeedLayout(f1Store, f4Store, work string) (*FeedLayout, error) {
 // file, every file names a wanted feed (or local), and the schema rules of
 // C-37 and C-38 hold in every file.
 func checkFeedFiles(want map[string]map[string]bool, f4Store, work string) (*FeedLayout, error) {
-	lay := &FeedLayout{Files: map[string][]string{}, Columns: map[string][]string{}, CIDIndexes: map[string][]string{},
-		TypeIndex: map[string][]string{}}
+	lay := &FeedLayout{Files: map[string][]string{}, Streams: map[string][]string{}, Columns: map[string][]string{},
+		CIDIndexes: map[string][]string{}, TypeIndex: map[string][]string{}}
 	fail := func(f string, a ...any) { lay.Problems = append(lay.Problems, fmt.Sprintf(f, a...)) }
 	root := filepath.Join(f4Store, marker.Dir, "P")
 	types, err := os.ReadDir(root)
@@ -130,11 +136,25 @@ func checkFeedFiles(want map[string]map[string]bool, f4Store, work string) (*Fee
 			return nil, err
 		}
 		have[t.Name()] = map[string]bool{}
+		dbs := map[string]bool{}
+		for _, e := range ents {
+			if feed, ok := strings.CutSuffix(e.Name(), ".db"); ok && !e.IsDir() {
+				dbs[feed] = true
+			}
+		}
+		streamBytes := map[string]int64{} // feed file name -> its streams' bytes
 		for _, e := range ents {
 			name := e.Name()
 			if e.IsDir() {
 				// A '/' of a provider or source reached the file system.
 				fail("P/%s/%s is a directory: a feed file name is one path element", t.Name(), name)
+				continue
+			}
+			if feed, ok := streamFeed(name, dbs); ok {
+				lay.Streams[t.Name()] = append(lay.Streams[t.Name()], name)
+				if fi, err := e.Info(); err == nil {
+					streamBytes[feed] += fi.Size()
+				}
 				continue
 			}
 			feed, ok := strings.CutSuffix(name, ".db")
@@ -155,6 +175,12 @@ func checkFeedFiles(want map[string]map[string]bool, f4Store, work string) (*Fee
 			files = append(files, filepath.Join(root, t.Name(), name))
 		}
 		sort.Strings(lay.Files[t.Name()])
+		sort.Strings(lay.Streams[t.Name()])
+		for _, feed := range lay.Files[t.Name()] {
+			if want[t.Name()][feedIDSuffix.ReplaceAllString(feed, "")] && streamBytes[feed] == 0 {
+				fail("P/%s/%s.fsdata is missing or empty, and the feed holds records", t.Name(), feed)
+			}
+		}
 	}
 	for typ, feeds := range want {
 		for feed := range feeds {
@@ -189,6 +215,11 @@ func checkFeedFiles(want map[string]map[string]bool, f4Store, work string) (*Fee
 					fail("%s: table %s has a %s column", strings.TrimPrefix(f, root+"/"), table, c)
 				}
 			}
+		}
+		// BRIEF4: the record's bytes are in the stream; its row names the
+		// frame (off, len) and holds no record bytes.
+		if r := cols["r"]; !contains(r, "off") || !contains(r, "len") || contains(r, "d") {
+			fail("%s: table r is %v; an index row names its frame by off and len and holds no record bytes (d)", strings.TrimPrefix(f, root+"/"), r)
 		}
 		// C-38 (1): the feed file's one CID index, on the CID alone.
 		rel := strings.TrimPrefix(f, root+"/")
@@ -294,9 +325,10 @@ func cloneForRead(file, tmp string) error {
 
 // feedDirProblems checks one type directory P/<typ> of a format-4 store: it
 // holds no directory and no file but the feed files of feeds (feedFileName
-// names; "~<feed id>" aside) and their SQLite sidecars, and the files of the
-// feeds in nonEmpty exist and are not empty (a feed's records are in the
-// file the engine named, not in one a URI decoded the name to).
+// names; "~<feed id>" aside), their SQLite sidecars and their streams, and
+// the index and stream of each feed in nonEmpty exist and are not empty (a
+// feed's records are in the files the engine named, not in ones a URI
+// decoded the name to).
 func feedDirProblems(store, typ string, feeds, nonEmpty []string) []string {
 	var out []string
 	dir := filepath.Join(store, marker.Dir, "P", typ)
@@ -304,12 +336,26 @@ func feedDirProblems(store, typ string, feeds, nonEmpty []string) []string {
 	if err != nil {
 		return []string{fmt.Sprintf("P/%s: %v", typ, err)}
 	}
-	size := map[string]int64{}
+	dbs := map[string]bool{}
+	for _, e := range ents {
+		if feed, ok := strings.CutSuffix(e.Name(), ".db"); ok && !e.IsDir() {
+			dbs[feed] = true
+		}
+	}
+	size, stream := map[string]int64{}, map[string]int64{}
 	for _, e := range ents {
 		name := e.Name()
 		if e.IsDir() {
 			out = append(out, fmt.Sprintf("P/%s/%s is a directory: a feed file name is one path element", typ, name))
 			continue
+		}
+		if file, ok := streamFeed(name, dbs); ok {
+			if feed := feedIDSuffix.ReplaceAllString(file, ""); contains(feeds, feed) {
+				if fi, err := e.Info(); err == nil {
+					stream[feed] += fi.Size()
+				}
+				continue
+			}
 		}
 		base := name
 		for _, sfx := range []string{"-wal", "-shm", "-journal"} {
@@ -328,6 +374,26 @@ func feedDirProblems(store, typ string, feeds, nonEmpty []string) []string {
 		if n, ok := size[f]; !ok || n == 0 {
 			out = append(out, fmt.Sprintf("P/%s/%s.db is missing or empty, and the feed holds records", typ, f))
 		}
+		if stream[f] == 0 {
+			out = append(out, fmt.Sprintf("P/%s/%s.fsdata is missing or empty, and the feed holds records", typ, f))
+		}
 	}
 	return out
+}
+
+// streamFeed is the feed file name (dbs: the type directory's <feed>.db
+// names, without ".db") whose stream name is: <feed>.fsdata, or a
+// compaction's generation <feed>.<gen>.fsdata.
+func streamFeed(name string, dbs map[string]bool) (string, bool) {
+	base, ok := strings.CutSuffix(name, ".fsdata")
+	if !ok {
+		return "", false
+	}
+	if dbs[base] {
+		return base, true
+	}
+	if i := strings.LastIndexByte(base, '.'); i > 0 && dbs[base[:i]] && strings.Trim(base[i+1:], "0123456789") == "" && i+1 < len(base) {
+		return base[:i], true
+	}
+	return "", false
 }
