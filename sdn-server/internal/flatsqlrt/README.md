@@ -15,20 +15,25 @@ aligned size-prefixed FlatBuffer frames (`QueryRawFlatBufferStream`).
 `flatsql_wasi_noeh`, `-fignore-exceptions`), the PUBLISHED release's file, byte
 for byte (published-deps law):
 
-- npm package: `flatsql@3.4.0` (`https://registry.npmjs.org/flatsql/-/flatsql-3.4.0.tgz`),
-  published by flatsql's `npm-publish.yml` from tag `v3.4.0` with provenance
-- gitHead: `14a307555c21d7c28342d664d13cb3f04a8a74b9`
-- sha256: `8f11fd49ee2e6961b9c1c22dd891d5a6645d0faf481f815408c0f1f5d3a385ab`
+- npm package: `flatsql@3.7.0` (`https://registry.npmjs.org/flatsql/-/flatsql-3.7.0.tgz`),
+  published by flatsql's `npm-publish.yml` from tag `v3.7.0` with provenance
+- gitHead: `780b1265162a90ce76a7496a5b0beac83ba016d2`
+- sha256: `48dbf9473b5a4a506b0b42e5a1a66a6d5d2ff8173d6dbfef0cd59dfe4b24af86`
   (the package's `wasm/integrity.json`; `TestEmbeddedArtifact`)
-- 2,154,784 bytes; emscripten/emsdk 4.0.23, FlatBuffers 8af3053e
-- what it adds over the previous embed: record-arena compaction at runtime
-  (`flatsql_compact_arena`, `flatsql_arena_stat`, `arena.go`; flatsql
-  docs/STORAGE-DURABILITY.md §6.4.2), a partition's vtab showing only its own
-  rows, idempotent index inserts, and everything flatsql released since 2.0.3.
-  WAL (below) is in the release itself since 3.4.0.
-- previous: `flatsql@2.0.3` plus the WAL commit `51471e7` (local build), sha256
+- 2,241,020 bytes; emscripten/emsdk 4.0.23, FlatBuffers 8af3053e
+- what it changes over the previous embed: SQLite 3.53.4 (the official
+  amalgamation, byte-identical; flatsql's CMake checks its sha256) and the
+  `flatsql_io` VFS's per-path nodes, which only connections that opt in with
+  `share=1`/`ra=1` use (format 1 does not); format 1 behaviour is unchanged.
+- previous: `flatsql@3.4.0` (also shipped in 3.6.0), gitHead
+  `14a307555c21d7c28342d664d13cb3f04a8a74b9`, sha256
+  `8f11fd49ee2e6961b9c1c22dd891d5a6645d0faf481f815408c0f1f5d3a385ab`. It added
+  record-arena compaction at runtime (`flatsql_compact_arena`,
+  `flatsql_arena_stat`, `arena.go`; flatsql docs/STORAGE-DURABILITY.md §6.4.2),
+  a partition's vtab showing only its own rows, idempotent index inserts and
+  WAL (below) over `flatsql@2.0.3` plus the WAL commit `51471e7`, sha256
   `19ba179354064a3e9e448548ff974f045649e469e2ede00836383df88ca1c3bc`. On a copy
-  of a host-02-sized store the two answer identically: every partition's rows
+  of a host-02-sized store those two answer identically: every partition's rows
   and bytes, the ledger, the partition map and the unified views
   (`TestEngineUpgradeAnswersIdenticallyOnHost02Fixture`).
 
@@ -154,12 +159,14 @@ by `psartifact.go` and run by `psinstance.go` (`PSABIEngine`) as separate
 writer and reader instances. It is the PUBLISHED release's file, byte for
 byte (published-deps law, design A34):
 
-- npm package: `flatsql@3.6.0` (`https://registry.npmjs.org/flatsql/-/flatsql-3.6.0.tgz`),
-  published by flatsql's `npm-publish.yml` from tag `v3.6.0` with provenance
-- gitHead: `7df7140c88b0bfd23330a608bdb906d6c8cc16e6`
-- sha256: `87ea0c727eb3c0b889a2d3fb41f8dac631ec2af07f521fe9526556d094d2e119`
+- npm package: `flatsql@3.7.0` (`https://registry.npmjs.org/flatsql/-/flatsql-3.7.0.tgz`),
+  published by flatsql's `npm-publish.yml` from tag `v3.7.0` with provenance
+- gitHead: `780b1265162a90ce76a7496a5b0beac83ba016d2`
+- sha256: `b310425d5380dc549cfa010f6ea2dbc337d4faf356eb2b9b00eca3b30bb3259c`
   (the package's `wasm/integrity.json`; `TestEmbeddedPSThreadsArtifact`)
-- 2,629,364 bytes; `wasm32-wasip1-threads`, wasi-sdk 30
+- 2,680,137 bytes; `wasm32-wasip1-threads`, wasi-sdk 30
+- 3.7.0 changes no partition-store code: SQLite 3.53.4 and the VFS's opt-in
+  per-path nodes (above); `kFormatMax` stays 3.
 - 3.6.0 writes store format level 3 (flatsql PARTITION-STORE.md §41, TB03):
   a partition keeps committing past 1,170 live lanes (a batch carries only
   the lanes it changed; past 32 the head names a paged lane checkpoint
@@ -177,7 +184,8 @@ byte (published-deps law, design A34):
   MIGRATED, then STORE, whose one torn state the engine finishes from MIGRATED;
   `format2/store_crash_test.go`) and keeps per-partition bookkeeping
   O(1)/O(log S) per commit (flatsql PARTITION-STORE.md §40, B4, M3)
-- previous: `flatsql@3.5.1`, sha256 `3a215da45a53f3a7016257429c392720e728caf850d3a1213dc501bfb5844359`
+- previous: `flatsql@3.6.0`, sha256 `87ea0c727eb3c0b889a2d3fb41f8dac631ec2af07f521fe9526556d094d2e119`;
+  before it `flatsql@3.5.1`, sha256 `3a215da45a53f3a7016257429c392720e728caf850d3a1213dc501bfb5844359`
 
 It loads only as a THREADS + Interruptible AOT artifact (design A30: no
 interpreter fallback) under the prefix `fsqlps`. `spacedatanetwork
