@@ -14,11 +14,15 @@ import (
 	"sync/atomic"
 	"time"
 
+	logging "github.com/ipfs/go-log/v2"
+
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format2"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format4/internal/cidv1"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format4/marker"
 )
+
+var log = logging.Logger("format4")
 
 // Options opens a format-4 engine.
 type Options struct {
@@ -31,7 +35,7 @@ type Options struct {
 	AOTCacheDir   string
 	CompileOnMiss bool                   // tests and prewarm only
 	Store         *flatsqlrt.NativeStore // the node's shared native I/O store, as format 2
-	FDBudget      int                    // open-fd budget of the instance's host I/O (0: flatsqlrt.P4FDBudget of RLIMIT_NOFILE)
+	FDBudget      int                    // open-fd budget of the instance's host I/O (0: flatsqlrt.P4FDBudget); sizes Tuning.ReaderConns when that is 0
 	OnFailure     func(error)            // instance trapped or hung; the Engine is fenced
 }
 
@@ -94,10 +98,15 @@ func Open(ctx context.Context, opt Options) (*Engine, error) {
 			return nil, fmt.Errorf("format4: %w", err)
 		}
 	}
+	fdBudget, basis := flatsqlrt.P4FDBudget(opt.FDBudget)
+	if opt.Tuning.ReaderConns == 0 {
+		opt.Tuning.ReaderConns = readerConnsFor(fdBudget, opt.Tuning.WriterConns)
+	}
+	log.Infof("format 4: host I/O fd budget %d (%s), %d reader connections", fdBudget, basis, opt.Tuning.ReaderConns)
 	e := &Engine{}
 	inst, err := flatsqlrt.OpenP4Instance(flatsqlrt.P4Config{
 		Wasm: wasm, AOTCacheDir: opt.AOTCacheDir, CompileOnMiss: opt.CompileOnMiss,
-		Store: opt.Store, StoreRoot: root, FDBudget: opt.FDBudget, InitConfig: encodeConfig(engineRoot, opt),
+		Store: opt.Store, StoreRoot: root, FDBudget: fdBudget, InitConfig: encodeConfig(engineRoot, opt),
 		OnFailure: func(_ *flatsqlrt.P4Instance, cause error) {
 			e.fence(cause)
 			if opt.OnFailure != nil {
@@ -117,6 +126,40 @@ func Open(ctx context.Context, opt Options) (*Engine, error) {
 		return nil, err
 	}
 	return e, nil
+}
+
+// The engine's reader-connection pool, sized from the host fd budget.
+//
+// The engine keeps idle reader connections, one per feed file read, and
+// closes the least recently used past Tuning.ReaderConns (its default 256),
+// past ReaderConns x ReaderCacheKiB of page cache, or when its heap passes
+// three quarters of SoftHeap. A type-wide read opens every feed file of the
+// type, so a pool smaller than the type's feed count reopens connections on
+// every read: at 600 MPE feeds the R12 type window took 25-32 s with 256 and
+// 0.34-0.43 s warm with 1,024 (SDN-FD-REPORT). Each reader connection holds
+// two fds (<feed>.db, its WAL) and may need the feed's .fsdata; each writer
+// connection holds two. The pool takes what the budget leaves after the
+// writers, at three fds per connection, from the engine default to
+// maxReaderConns (the heap rule still closes idle connections under memory
+// pressure). A nonzero Tuning.ReaderConns overrides it.
+const (
+	engineReaderConns = 256 // flatsql p4 Config.readerConns
+	engineWriterConns = 64  // flatsql p4 Config.writerConns
+	maxReaderConns    = 2048
+)
+
+func readerConnsFor(fdBudget int, writerConns uint32) uint32 {
+	if writerConns == 0 {
+		writerConns = engineWriterConns
+	}
+	n := (int64(fdBudget) - 2*int64(writerConns)) / 3
+	if n < engineReaderConns {
+		return engineReaderConns
+	}
+	if n > maxReaderConns {
+		return maxReaderConns
+	}
+	return uint32(n)
 }
 
 // checkDataRoot refuses, before any file is touched, a data root format 4

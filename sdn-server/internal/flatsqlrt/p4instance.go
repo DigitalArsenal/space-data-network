@@ -46,7 +46,7 @@ type P4Config struct {
 	CompileOnMiss bool         // compile a missing artifact (tests, prewarm)
 	Store         *NativeStore // the node's shared native store; StoreRoot opens a private one
 	StoreRoot     string
-	FDBudget      int    // open fds the instance's host I/O keeps (0: P4FDBudget's share of RLIMIT_NOFILE)
+	FDBudget      int    // open fds the instance's host I/O keeps (0: P4FDBudget)
 	InitConfig    []byte // flatsql_p4_init's config TLV
 	MaxThreads    int    // guest threads (default 24)
 	// ControlBudget bounds each control call (default 5 min: init replays
@@ -61,24 +61,37 @@ type P4Config struct {
 //
 // Its host I/O keeps at most FDBudget fds open and evicts (closes) the least
 // recently used one to open another; a handle whose fd was evicted reopens on
-// its next use. Every feed holds <feed>.fsdata, <feed>.db and its WAL, per
-// connection, so a budget below that set turns type-wide reads into
-// close/reopen churn: 1,024 fds at 571 MPE feeds took R12/R14/R16 from
-// 11-21 ms (16 feeds) to ~40 s (GATES-stream-r2).
+// its next use. A feed's reader connection holds <feed>.db and its WAL, and a
+// read also needs <feed>.fsdata, so the engine's connection pools must fit
+// the budget or every type-wide read churns through close/reopen. At 600 MPE
+// feeds with 1,024 reader connections the instance held 1,837 fds, past the
+// old fixed 1,024 (SDN-FD-REPORT); format4 sizes its pools from this budget.
 //
 // The share is a quarter of the soft RLIMIT_NOFILE: libp2p's resource manager
 // sizes itself from half of it (internal/node numFDs()/2), and the last
 // quarter is the reserve for everything else (the IPFS datastore, HTTP
 // listeners, the format-1/2 instances, logs). It never falls below the old
 // fixed 1,024 and never exceeds the handle table (an fd belongs to a handle,
-// so more could never be used). P4Config.FDBudget overrides it.
+// so more could never be used). P4Config.FDBudget (format4.Options.FDBudget)
+// overrides it.
 const (
 	p4FDBudgetFloor = 1024
 	p4FDBudgetCap   = psDefaultMaxHandles
 )
 
-// P4FDBudget is the format-4 instance's fd budget for a soft RLIMIT_NOFILE.
-func P4FDBudget(softNoFile uint64) int {
+// P4FDBudget is the format-4 instance's fd budget and how it was chosen: a
+// positive override as configured, else the share of the soft RLIMIT_NOFILE.
+func P4FDBudget(override int) (budget int, basis string) {
+	if override > 0 {
+		return override, "configured"
+	}
+	soft, hard := processNoFile()
+	return p4FDShare(soft), fmt.Sprintf("a quarter of RLIMIT_NOFILE soft %s (hard %s), %d..%d",
+		limitText(soft), limitText(hard), p4FDBudgetFloor, p4FDBudgetCap)
+}
+
+// p4FDShare is a quarter of the soft limit, clamped to the floor and the cap.
+func p4FDShare(softNoFile uint64) int {
 	b := softNoFile / 4
 	if b < p4FDBudgetFloor {
 		return p4FDBudgetFloor
@@ -119,14 +132,9 @@ func OpenP4Instance(cfg P4Config) (*P4Instance, error) {
 	if len(cfg.Wasm) == 0 {
 		return nil, ErrNoP4Artifact
 	}
-	why := "configured"
 	if cfg.FDBudget <= 0 {
-		soft, hard := processNoFile()
-		cfg.FDBudget = P4FDBudget(soft)
-		why = fmt.Sprintf("a quarter of RLIMIT_NOFILE soft %s (hard %s), %d..%d", limitText(soft), limitText(hard),
-			p4FDBudgetFloor, p4FDBudgetCap)
+		cfg.FDBudget, _ = P4FDBudget(0)
 	}
-	log.Infof("format 4: host I/O fd budget %d (%s)", cfg.FDBudget, why)
 	if cfg.ControlBudget <= 0 {
 		cfg.ControlBudget = 5 * time.Minute
 	}
