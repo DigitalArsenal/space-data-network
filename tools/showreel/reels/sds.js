@@ -234,30 +234,6 @@ export async function createReel(base = "") {
     });
   }
 
-  // The SDS symbol: three stacked layers, the top one amber.
-  function icon(cx, cy, R, k) {
-    if (k <= 0) return;
-    sx.save();
-    sx.translate(cx, cy);
-    sx.scale(k, k);
-    sx.lineJoin = "round";
-    sx.lineWidth = 4;
-    [[34, "rgba(245,245,247,0.5)"], [8, "rgba(245,245,247,0.8)"], [-18, AMBER]].forEach(([dy, col]) => {
-      sx.beginPath();
-      sx.moveTo(0, dy - 30);
-      sx.lineTo(62, dy);
-      sx.lineTo(0, dy + 30);
-      sx.lineTo(-62, dy);
-      sx.closePath();
-      sx.fillStyle = "rgba(0,0,0,0.85)";
-      sx.fill();
-      sx.strokeStyle = col;
-      sx.stroke();
-    });
-    sx.restore();
-    dotGlow(cx, cy, R * 0.8, AMBER, 0.15 * k);
-  }
-
   // ------------------------------------------------------------ subframe
   const ca = studio.cutPulses([[T_SHIFT, 1], [M_SHIFT + 0.3, 0.6], [T_LANG, 1], [T_COUNT, 1], [T_END + 0.2, 1]]);
   const fade = (t) => seg(t, 0, 0.4);
@@ -295,7 +271,7 @@ export async function createReel(base = "") {
     if (t > T_COUNT - 0.05 && t < T_END + 0.1) {
       block([["Every kind of", INK], ["space data.", AMBER]], "VERSIONED, FREE AND OPEN SOURCE", T_COUNT + 0.1, T_END - 0.4, t, 88);
     }
-    lockup({ title: "Space Data Standards", subtitle: "The open language for space data", url: "SPACEDATASTANDARDS.ORG", t0: T_END + 0.3, mark: false, icon }, t);
+    lockup({ title: "Space Data Standards", subtitle: "The open language for space data", url: "SPACEDATASTANDARDS.ORG", t0: T_END + 0.3 }, t);
     bloom();
     hud(t, frameIndex, T_END + 0.1);
   }

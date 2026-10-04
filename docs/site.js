@@ -1,4 +1,5 @@
-// Shared page behavior for spacedatanetwork.org: background video, scroll reveals, copy buttons, mobile menu.
+// Shared page behavior for spacedatanetwork.org: background video, scroll reveals, copy buttons.
+// The top bar, its menu and the theme switch are the shared sdn-chrome kit.
 (function () {
   var video = document.getElementById('bgVideo');
   if (video && !window.SDN_EARTH && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
@@ -21,14 +22,6 @@
       io.observe(el);
     });
   }
-  // Light / dark theme: dark by default, the choice is remembered on this browser.
-  document.querySelectorAll('.theme-toggle').forEach(function (btn) {
-    btn.addEventListener('click', function () {
-      var next = document.documentElement.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
-      document.documentElement.setAttribute('data-theme', next);
-      try { localStorage.setItem('sdn-theme', next); } catch (e) {}
-    });
-  });
   document.querySelectorAll('.copy').forEach(function (button) {
     button.addEventListener('click', function () {
       var text = button.parentElement.querySelector('code').textContent;
@@ -37,8 +30,5 @@
         setTimeout(function () { button.textContent = 'Copy'; }, 1600);
       });
     });
-  });
-  document.querySelectorAll('.nav-menu a').forEach(function (a) {
-    a.addEventListener('click', function () { a.closest('details').removeAttribute('open'); });
   });
 })();

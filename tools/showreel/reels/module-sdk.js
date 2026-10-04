@@ -240,11 +240,6 @@ export async function createReel(base = "") {
     });
   }
 
-  function icon(cx, cy, R, k) {
-    cube(cx, cy, R * 0.62 * k, clamp(k * 2));
-    dotGlow(cx, cy, R, AMBER, 0.15 * k);
-  }
-
   // ------------------------------------------------------------ subframe
   const ca = studio.cutPulses([[T_SHIFT, 1], [M_SHIFT + 0.3, 0.6], [T_SIGN, 1], [T_KINDS, 1], [T_END + 0.2, 1]]);
   const fade = (t) => seg(t, 0, 0.4);
@@ -282,7 +277,7 @@ export async function createReel(base = "") {
     if (t > T_KINDS - 0.05 && t < T_END + 0.1) {
       block([["Nineteen kinds.", INK], ["One interface each.", AMBER]], "ORBITS, SENSORS, RADIO, WEATHER, ANALYTICS AND MORE", T_KINDS + 0.1, T_END - 0.4, t, 88);
     }
-    lockup({ title: "Space Data Module SDK", subtitle: "Build once. Run on every node.", url: "DIGITALARSENAL.GITHUB.IO/SPACE-DATA-MODULE-SDK", t0: T_END + 0.3, mark: false, icon }, t);
+    lockup({ title: "Space Data Module SDK", subtitle: "Build once. Run on every node.", url: "DIGITALARSENAL.GITHUB.IO/SPACE-DATA-MODULE-SDK", t0: T_END + 0.3 }, t);
     bloom();
     hud(t, frameIndex, T_END + 0.1);
   }

@@ -275,37 +275,6 @@ export async function createReel(base = "") {
     });
   }
 
-  // The FlatSQL symbol: a database whose top is a FlatBuffer, struck by a bolt.
-  function icon(cx, cy, R, k) {
-    if (k <= 0) return;
-    const s = (R / 50) * k;
-    sx.save();
-    sx.translate(cx, cy);
-    sx.scale(s, s);
-    sx.strokeStyle = INK;
-    sx.lineWidth = 5;
-    sx.beginPath();
-    sx.ellipse(0, -28, 38, 13, 0, 0, Math.PI * 2);
-    sx.moveTo(-38, -28);
-    sx.lineTo(-38, 28);
-    sx.ellipse(0, 28, 38, 13, 0, Math.PI, 0, true);
-    sx.lineTo(38, -28);
-    sx.stroke();
-    sx.fillStyle = AMBER;
-    sx.beginPath();
-    sx.moveTo(6, -14);
-    sx.lineTo(-12, 10);
-    sx.lineTo(4, 10);
-    sx.lineTo(-8, 36);
-    sx.lineTo(20, 2);
-    sx.lineTo(4, 2);
-    sx.lineTo(14, -14);
-    sx.closePath();
-    sx.fill();
-    sx.restore();
-    dotGlow(cx, cy, R * 0.8, AMBER, 0.15 * k);
-  }
-
   // ------------------------------------------------------------ subframe
   const ca = studio.cutPulses([[T_COPY, 1], [M_COPY + 0.3, 0.6], [T_LIVE, 1], [T_QUERY, 1], [T_END + 0.2, 1]]);
   const fade = (t) => seg(t, 0, 0.4);
@@ -343,7 +312,7 @@ export async function createReel(base = "") {
     if (t > T_QUERY - 0.05 && t < T_END + 0.1) {
       block([["One question.", INK], ["Every match.", AMBER]], "IN A BROWSER, ON A SERVER OR ON A NODE", T_QUERY + 0.1, T_END - 0.4, t, 88);
     }
-    lockup({ title: "FlatSQL", subtitle: "SQL over raw FlatBuffer storage", url: "DIGITALARSENAL.GITHUB.IO/FLATSQL", t0: T_END + 0.3, mark: false, icon }, t);
+    lockup({ title: "FlatSQL", subtitle: "SQL over raw FlatBuffer storage", url: "DIGITALARSENAL.GITHUB.IO/FLATSQL", t0: T_END + 0.3 }, t);
     bloom();
     hud(t, frameIndex, T_END + 0.1);
   }

@@ -108,15 +108,16 @@ function page({ title, description, body, base, mdName, math }) {
     ['collision-avoidance.html', 'CA'],
     ['whitepapers.html', 'Whitepapers'],
     ['index.html#download', 'Download'],
-    ['index.html#stack', 'Stack'],
   ];
   const links = (indent) => nav.map(([h, t]) => `${indent}<a href="${u(h)}"${h === 'whitepapers.html' ? ' aria-current="page"' : ''}>${t}</a>`).join('\n')
+    + `\n${indent}<a href="#stack">Stack</a>`
     + `\n${indent}<a href="https://github.com/DigitalArsenal/space-data-network" target="_blank" rel="noopener">GitHub</a>`;
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <script>try{var t=localStorage.getItem("sdn-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
+  <link rel="stylesheet" href="${u('assets/sdn-chrome/sdn-chrome.css')}">
+  <script src="${u('assets/sdn-chrome/sdn-chrome.js')}"></script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="${esc(description)}">
   <meta name="theme-color" content="#000000">
@@ -125,27 +126,19 @@ function page({ title, description, body, base, mdName, math }) {
   <link rel="stylesheet" href="${u('site.css')}">${math ? `\n  <link rel="stylesheet" href="katex/katex.min.css">` : ''}
   <style>
     :root { --sdn-stack-footer-height: 0px; --sdn-stack-header-height: 52px; }
-    .site-nav { height: var(--sdn-stack-header-height, 52px); }
-    .nav-links a { font-size: var(--sdn-stack-header-link-size, 14px); }
   </style>
 </head>
 <body class="paper-page">
-  <header class="site-nav">
-    <div class="inner">
-      <a href="${u('index.html')}" class="brand">
-        <svg viewBox="0 0 32 32" fill="none" aria-hidden="true"><defs><linearGradient id="sdn-tail" gradientUnits="userSpaceOnUse" x1="16" y1="29" x2="16" y2="3"><stop offset="0" style="stop-color:var(--accent)" stop-opacity="0"/><stop offset=".55" style="stop-color:var(--accent)" stop-opacity=".55"/><stop offset="1" style="stop-color:var(--accent)"/></linearGradient></defs><circle cx="16" cy="16" r="13" stroke="currentColor" stroke-width="1.6" opacity=".3"/><path d="M16 29A13 13 0 0 1 16 3" stroke="url(#sdn-tail)" stroke-width="2.2" stroke-linecap="round"/><path d="M16 10.2L10.4 20.1H21.6Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><circle cx="16" cy="10.2" r="2.6" fill="currentColor"/><circle cx="10.4" cy="20.1" r="2.6" fill="currentColor"/><circle cx="21.6" cy="20.1" r="2.6" fill="currentColor"/><circle cx="16" cy="3" r="2.5" style="fill:var(--accent)"/></svg>
-        Space Data Network
-      </a>
-      <nav class="nav-links" aria-label="Site">
+  <header class="sdn-header">
+    <div class="sdn-header-inner">
+      <a class="sdn-header-brand" href="${u('index.html')}"><span>Space Data Network</span></a>
+      <nav class="sdn-header-links" aria-label="Site">
 ${links('        ')}
       </nav>
-      <details class="nav-menu">
-        <summary>Menu</summary>
-        <div class="menu-panel">
-${links('          ')}
-        </div>
-      </details>
-      <button class="theme-toggle" type="button" aria-label="Switch between light and dark theme" title="Light or dark theme"><svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg><svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg></button>
+      <div class="sdn-header-actions">
+        <button data-sdn-theme-toggle aria-label="Switch between light and dark theme"></button>
+        <button data-sdn-menu-toggle aria-label="Menu"></button>
+      </div>
     </div>
   </header>
   <main>
@@ -153,19 +146,22 @@ ${links('          ')}
       <p class="paper-back"><a href="${u('whitepapers.html')}">&larr; All whitepapers</a> &middot; <a href="${GITHUB}${mdName}">Markdown source</a></p>
 ${body}
     </article>
+    <section id="stack" data-sdn-stack="sdn"></section>
   </main>
-  <footer>
-    <div class="wrap">
-      <nav>
+  <footer class="sdn-footer">
+    <div class="sdn-footer-inner">
+      <a class="sdn-footer-brand" href="${u('index.html')}">Space Data Network</a>
+      <nav class="sdn-footer-links" aria-label="Footer">
+        <a href="${u('index.html')}">Home</a>
         <a href="${u('onboarding.html')}">Get started</a>
         <a href="${u('catalog.html')}">Catalog</a>
         <a href="${u('collision-avoidance.html')}">Collision avoidance</a>
         <a href="${u('whitepapers.html')}">Whitepapers</a>
         <a href="${u('style-guide.html')}">Style guide</a>
-        <a href="https://github.com/DigitalArsenal/space-data-network" target="_blank" rel="noopener">GitHub</a>
-        <a href="mailto:tj@edgesource.com">tj@edgesource.com</a>
+        <a href="${u('onboarding.html#security-review')}">IT spec sheet</a>
+        <a href="https://github.com/DigitalArsenal/space-data-network">GitHub</a>
       </nav>
-      <span>MIT License &middot; &copy; Edgesource Corporation</span>
+      <p class="sdn-footer-legal">MIT License &middot; &copy; Edgesource Corporation &middot; <a href="mailto:tj@edgesource.com">tj@edgesource.com</a></p>
     </div>
   </footer>
   <script src="${u('site.js')}"></script>

@@ -159,11 +159,6 @@ export async function createReel(base = "") {
     });
   }
 
-  function icon(cx, cy, R, k) {
-    keyIcon(cx, cy, R * 1.2 * k, AMBER, clamp(k * 2));
-    dotGlow(cx, cy, R * 0.8, AMBER, 0.15 * k);
-  }
-
   // ------------------------------------------------------------ subframe
   const ca = studio.cutPulses([[T_SIGN, 1], [T_LOCK, 1], [T_NETS, 1], [T_END + 0.2, 1]]);
   const fade = (t) => seg(t, 0, 0.4);
@@ -193,7 +188,7 @@ export async function createReel(base = "") {
     if (t > T_NETS - 0.05 && t < T_END + 0.1) {
       block([["One wallet,", INK], ["many networks.", AMBER]], "THE SAME KEYS SIGN FOR EACH, AND FOR WEB CERTIFICATES", T_NETS + 0.1, T_END - 0.4, t, 88);
     }
-    lockup({ title: "HD Wallet", subtitle: "Your keys, in your browser", url: "WALLET.SPACEDATANETWORK.ORG", t0: T_END + 0.3, mark: false, icon }, t);
+    lockup({ title: "HD Wallet", subtitle: "Your keys, in your browser", url: "WALLET.SPACEDATANETWORK.ORG", t0: T_END + 0.3 }, t);
     bloom();
     hud(t, frameIndex, T_END + 0.1);
   }

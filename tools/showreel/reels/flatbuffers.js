@@ -251,22 +251,6 @@ export async function createReel(base = "") {
     maskText(sx, "THE COMPILER ITSELF RUNS IN THE BROWSER", cx, 720, 22, 600, MUTED, T_LANG + 2.4, T_END - 0.45, t, { tracking: 3, align: "center" });
   }
 
-  // The FlatBuffers symbol: a stack of flat, offset bars.
-  function icon(cx, cy, R, k) {
-    if (k <= 0) return;
-    sx.save();
-    sx.translate(cx, cy);
-    sx.scale(k, k);
-    [[-34, 104, "rgba(245,245,247,0.55)"], [-6, 80, "rgba(245,245,247,0.85)"], [22, 120, AMBER]].forEach(([y, w, col], i) => {
-      sx.beginPath();
-      sx.roundRect(-60 + i * 8, y - 10, w, 20, 10);
-      sx.fillStyle = col;
-      sx.fill();
-    });
-    sx.restore();
-    dotGlow(cx, cy, R * 0.8, AMBER, 0.15 * k);
-  }
-
   // ------------------------------------------------------------ subframe
   const ca = studio.cutPulses([[T_SHIFT, 1], [M_SHIFT + 0.3, 0.6], [T_LOCK, 1], [T_LANG, 1], [T_END + 0.2, 1]]);
   const fade = (t) => seg(t, 0, 0.4);
@@ -304,7 +288,7 @@ export async function createReel(base = "") {
     if (t > T_LANG - 0.05 && t < T_END + 0.1) {
       block([["Every language.", INK], ["Even the browser.", AMBER]], "ONE SCHEMA, CODE GENERATED FOR EACH", T_LANG + 0.1, T_END - 0.4, t, 88);
     }
-    lockup({ title: "Edgesource FlatBuffers", subtitle: "Fast data with field-level encryption", url: "DIGITALARSENAL.GITHUB.IO/FLATBUFFERS", t0: T_END + 0.3, mark: false, icon }, t);
+    lockup({ title: "Edgesource FlatBuffers", subtitle: "Fast data with field-level encryption", url: "DIGITALARSENAL.GITHUB.IO/FLATBUFFERS", t0: T_END + 0.3 }, t);
     bloom();
     hud(t, frameIndex, T_END + 0.1);
   }
