@@ -219,8 +219,34 @@ func (c *cov) v09() []Shape {
 		counts("60815", q("60815", 0, false)),
 		counts("lorem", q("lorem", 0, false)),
 		scan,
-		warm,
 	}
+	// Full text on a type without records (C-46 (2)): no rows, as format 1
+	// answers once its on-demand build of the empty index is done (format 4
+	// answers so at once). Before WarmFullTextIndexes: format 1 builds one
+	// index at a time, and the warm queues every type with records ahead of
+	// it. The wait answers a constant: the formats name an empty type's state
+	// apart (format 1 "ready" once built, format 4 "cold"), and V09's own
+	// state calls above read it first.
+	empty := func(r storage.RawRecordQuery) storage.RawRecordQuery { r.SchemaName = "PNM.fbs"; return r }
+	settle := c.valueCall("PNM index settled (no records)", "PNM.fbs", func(s *storage.FlatSQLStore) (Row, error) {
+		deadline := time.Now().Add(5 * time.Minute)
+		for {
+			_ = s.CheckFullTextSearch("PNM.fbs", "lorem")
+			st := s.FullTextIndexState("PNM.fbs")
+			if st == "ready" || st == "cold" || st == "failed" || time.Now().After(deadline) {
+				return ValueRow("settled", strconv.FormatBool(st == "ready" || st == "cold")), nil
+			}
+			time.Sleep(time.Second)
+		}
+	})
+	calls = append(calls, settle,
+		c.valueCall("CheckFullTextSearch PNM (no records)", "PNM.fbs", func(s *storage.FlatSQLStore) (Row, error) {
+			return ValueRow("ok", "1"), s.CheckFullTextSearch("PNM.fbs", "lorem")
+		}),
+		search("PNM (no records) cursor lorem", empty(q("lorem", 20, true)), false),
+		search("PNM (no records) newest lorem", empty(q("lorem", 20, false)), true),
+		counts("PNM (no records) lorem", empty(q("lorem", 0, false))),
+		warm)
 	return []Shape{covShape(class, "full-text search", "CAT.fbs", calls...)}
 }
 
@@ -986,8 +1012,29 @@ func (c *cov) v06() []Shape {
 	}
 	same := covShape(class, "epoch streams"+SameQuestionSuffix, "OMM.fbs", streams(true)...)
 	same.Arms = []string{ArmF1}
+	// R16's limits (C-46 (5): format 4 pushes the limit down into its walk
+	// of every feed, the answer unchanged): pages of 1, 37, 200 and 4096
+	// entities and their counts, with a max delta, a source and an object.
+	limits := []Call{
+		q(storage.EpochRecordQuery{SchemaName: "OMM.fbs", Profile: storage.EpochProfileNearest, At: at, Limit: 1}),
+		q(storage.EpochRecordQuery{SchemaName: "OMM.fbs", Profile: storage.EpochProfileNearest, At: at, Limit: 37}),
+		q(storage.EpochRecordQuery{SchemaName: "OMM.fbs", Profile: storage.EpochProfileNearest, At: at, Limit: 200}),
+		q(storage.EpochRecordQuery{SchemaName: "OMM.fbs", Profile: storage.EpochProfileNearest, At: at, Limit: 4096}),
+		q(storage.EpochRecordQuery{SchemaName: "OMM.fbs", Profile: storage.EpochProfileAsOf, At: at, Limit: 37}),
+		q(storage.EpochRecordQuery{SchemaName: "OMM.fbs", Profile: storage.EpochProfileForward, At: at, Limit: 37}),
+		q(storage.EpochRecordQuery{SchemaName: "OMM.fbs", Profile: storage.EpochProfileNearest, At: at, MaxDeltaSeconds: 3600, Limit: 37}),
+		q(storage.EpochRecordQuery{SchemaName: "OMM.fbs", Profile: storage.EpochProfileAsOf, At: at, MaxDeltaSeconds: 200, Limit: 200}),
+		q(storage.EpochRecordQuery{SchemaName: "OMM.fbs", Profile: storage.EpochProfileNearest, At: at, SourceName: "celestrak-gp", Limit: 37}),
+		q(storage.EpochRecordQuery{SchemaName: "OMM.fbs", Profile: storage.EpochProfileNearest, At: at, NoradCatID: u32(25544), Limit: 1}),
+		q(storage.EpochRecordQuery{SchemaName: "MPE.fbs", Profile: storage.EpochProfileNearest, At: at, Limit: 1}),
+		q(storage.EpochRecordQuery{SchemaName: "MPE.fbs", Profile: storage.EpochProfileNearest, At: at, Limit: 37}),
+		q(storage.EpochRecordQuery{SchemaName: "MPE.fbs", Profile: storage.EpochProfileAsOf, At: at, Limit: 200}),
+		q(storage.EpochRecordQuery{SchemaName: "MPE.fbs", Profile: storage.EpochProfileForward, At: at, MaxDeltaSeconds: 3600, Limit: 37}),
+		q(storage.EpochRecordQuery{SchemaName: "MPE.fbs", Profile: storage.EpochProfileNearest, At: at, IncludeSource: true, Limit: 37}),
+	}
 	return []Shape{covShape(class, "epoch profiles", "OMM.fbs", calls...),
-		rule(covShape(class, "epoch streams", "OMM.fbs", streams(false)...), "QueryEpochRawStream OMM.fbs@celestrak-gp", r18Accepted), same}
+		rule(covShape(class, "epoch streams", "OMM.fbs", streams(false)...), "QueryEpochRawStream OMM.fbs@celestrak-gp", r18Accepted), same,
+		covShape(class, "epoch limits (R16)", "OMM.fbs", limits...)}
 }
 
 // V07: the SQL surface: sandboxed rows and streams (every fixture type,
