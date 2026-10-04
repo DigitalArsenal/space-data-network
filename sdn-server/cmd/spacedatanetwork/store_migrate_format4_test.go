@@ -911,9 +911,12 @@ func engineWasm(t testing.TB) []byte {
 }
 
 // requireFormat4Engine skips unless format4.Open opens the engine here (it
-// needs the patched runtime and an engine: embedded, or SDN_P4_WASM).
+// needs the patched runtime and an engine: embedded, or SDN_P4_WASM). On an
+// unpatched runtime it skips like every partition-store test (the quick CI
+// lane links upstream WasmEdge; the substrate lane runs these).
 func requireFormat4Engine(t *testing.T) {
 	t.Helper()
+	requirePSEngine(t)
 	api, err := openFormat4Engine(context.Background(), format4.Options{DataRoot: t.TempDir(), Create: format4.CreateFresh,
 		AOTCacheDir: migrate4AOTDir(t), CompileOnMiss: true, Wasm: engineWasm(t)})
 	if err != nil {
