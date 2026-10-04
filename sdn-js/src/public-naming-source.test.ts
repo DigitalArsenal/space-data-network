@@ -2,10 +2,11 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { PNM_TOPIC } from './pnm-publisher';
 
-// docs.html became a redirect stub when the docs split into per-page HTML
-// (2026-08-29); the served content lives in server-overview.html now.
+// The rendered guides live only in the node's embed tree (served at /docs/);
+// docs/build-docs.mjs writes them there.
+const SERVER_OVERVIEW = '../../sdn-server/cmd/spacedatanetwork/embedded/docs/server-overview.html';
 const publicExampleFiles = [
-  '../../docs/server-overview.html',
+  SERVER_OVERVIEW,
   './stress/streaming.stress.test.ts',
 ] as const;
 
@@ -27,7 +28,7 @@ describe('public SDN channel naming examples', () => {
   });
 
   it('documents the wire topic used by the shipped PNM publisher', () => {
-    const docs = readFileSync(new URL('../../docs/server-overview.html', import.meta.url), 'utf8');
+    const docs = readFileSync(new URL(SERVER_OVERVIEW, import.meta.url), 'utf8');
     expect(docs).toContain(PNM_TOPIC);
   });
 });

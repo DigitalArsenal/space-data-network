@@ -1,18 +1,19 @@
 #!/usr/bin/env node
 /**
- * BUILD THE DOCUMENTATION SITE PAGES AND THE DOWNLOADABLE PDF.
+ * BUILD THE NODE'S DOCUMENTATION PAGES AND THE DOWNLOADABLE PDF.
  *
  * The three guides are authored as markdown because that is what stays
- * reviewable in a pull request. This renders them into the pages the public
- * site serves, and into one combined PDF for people who want the whole thing
- * offline or in print.
+ * reviewable in a pull request. This renders them into the pages every node
+ * serves at /docs/ (go:embed'ed from sdn-server/cmd/spacedatanetwork/
+ * embedded/docs), and into one combined PDF for people who want the whole
+ * thing offline or in print. The public website does not carry these pages.
  *
  * NO NEW RUNTIME DEPENDENCY, on purpose:
  *  · markdown  -> HTML   `marked`, already vendored under sdn-js
  *  · HTML      -> PDF    headless Chrome's own --print-to-pdf
  * A PDF toolchain (pandoc, LaTeX, a headless-browser wrapper) would be a large
- * install for one artifact, and every machine that can view this site already
- * has a browser that renders it identically.
+ * install for one artifact, and every machine that can view these pages
+ * already has a browser that renders them identically.
  *
  * ZERO EXTERNAL ORIGIN. Fonts are the system stack, styles are inline, and the
  * pages link only to each other. Nothing here fetches a byte from a third
@@ -22,7 +23,8 @@
  *   node docs/build-docs.mjs           # pages + PDF
  *   node docs/build-docs.mjs --no-pdf  # pages only (skips Chrome)
  */
-import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -200,25 +202,11 @@ function render(mdPath) {
 
 /*
  * The node SHIPS its own documentation (owner 2026-08-28): the rendered pages
- * and the PDF are copied into the Go embed tree, go:embed'ed into the binary,
+ * and the PDF are written into the Go embed tree, go:embed'ed into the binary,
  * and served same-origin at /docs/ — so the instructions a node shows are the
  * instructions for the version it runs, updated with every release.
  */
-const EMBED_DOCS_DIR = join(REPO, 'sdn-server', 'cmd', 'spacedatanetwork', 'embedded', 'docs');
-
-function emitEmbedded(pdfBuilt) {
-  mkdirSync(EMBED_DOCS_DIR, { recursive: true });
-  for (const d of DOCS) {
-    writeFileSync(join(EMBED_DOCS_DIR, `${d.slug}.html`), readFileSync(join(HERE, `${d.slug}.html`)));
-  }
-  if (pdfBuilt) {
-    writeFileSync(
-      join(EMBED_DOCS_DIR, 'space-data-network-docs.pdf'),
-      readFileSync(join(HERE, 'space-data-network-docs.pdf')),
-    );
-  }
-  console.log(`build-docs: embedded ${DOCS.length} page(s)${pdfBuilt ? ' + PDF' : ''} -> ${EMBED_DOCS_DIR}`);
-}
+const OUT = join(REPO, 'sdn-server', 'cmd', 'spacedatanetwork', 'embedded', 'docs');
 
 function main() {
   const noPdf = process.argv.includes('--no-pdf');
@@ -229,22 +217,22 @@ function main() {
   }
 
   // ── per-guide pages ──────────────────────────────────────────────────────
+  mkdirSync(OUT, { recursive: true });
   const chapters = [];
   for (const d of DOCS) {
     const bodyHtml = render(join(HERE, d.src));
-    writeFileSync(join(HERE, `${d.slug}.html`), page({ title: d.title, bodyHtml, active: d.slug }));
+    writeFileSync(join(OUT, `${d.slug}.html`), page({ title: d.title, bodyHtml, active: d.slug }));
     chapters.push(`<section class="chapter">\n${bodyHtml}\n</section>`);
     console.log(`build-docs: wrote ${d.slug}.html`);
   }
 
-  if (noPdf) { emitEmbedded(false); return; }
+  if (noPdf) return;
 
   // ── one combined document, then Chrome prints it ─────────────────────────
   // The print source is a temp file rather than a shipped page: a single
   // 1,400-line scroll is a bad web page and a good PDF, and shipping it would
   // just be a fourth thing to keep in sync.
-  const tmpDir = join(HERE, '.pdf-build');
-  mkdirSync(tmpDir, { recursive: true });
+  const tmpDir = mkdtempSync(join(tmpdir(), 'sdn-docs-pdf-'));
   const printSrc = join(tmpDir, 'print.html');
   writeFileSync(
     printSrc,
@@ -261,7 +249,7 @@ function main() {
     process.exit(1);
   }
 
-  const out = join(HERE, 'space-data-network-docs.pdf');
+  const out = join(OUT, 'space-data-network-docs.pdf');
   try {
     execFileSync(
       chrome,
@@ -290,7 +278,6 @@ function main() {
   }
   const kb = Math.round(readFileSync(out).length / 1024);
   console.log(`build-docs: wrote space-data-network-docs.pdf (${kb} KB)`);
-  emitEmbedded(true);
 }
 
 main();
