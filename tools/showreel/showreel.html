@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>SDN showreel renderer</title>
+    <title>Reel renderer</title>
     <style>
       html, body { margin: 0; background: #000; }
       canvas { display: block; width: 100vw; height: auto; }
@@ -10,11 +10,13 @@
   </head>
   <body>
     <script type="module">
-      import { createShowreel } from "./showreel.js";
-      const reel = await createShowreel();
-      window.showreel = reel;
-      document.body.append(reel.canvas);
+      // ?reel=<name> picks reels/<name>.js; ?t=<seconds> shows one frame,
+      // ?play loops it in real time.
       const q = new URLSearchParams(location.search);
+      const { createReel, meta } = await import(`./reels/${q.get("reel") || "sdn"}.js`);
+      const reel = await createReel();
+      window.showreel = { ...reel, meta };
+      document.body.append(reel.canvas);
       if (q.has("t")) {
         reel.renderFrame(Math.round(Number(q.get("t")) * reel.FPS));
       } else if (q.has("play")) {
