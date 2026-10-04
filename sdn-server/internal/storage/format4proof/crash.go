@@ -32,7 +32,14 @@ import (
 //     (REBUILD verify, 0 mismatches) and every file passes integrity_check;
 //  5. format 4: the type directory holds the crash and verify feeds' files
 //     only, under the engine's names (feedFileName), and the crash feed's
-//     records are in its file (CrashSpec.Source may be any feed name).
+//     records are in its file (CrashSpec.Source may be any feed name);
+//  6. ingest: an unacknowledged record is absent or present with its tag,
+//     never back without it. Every 4th call first sends 64 records to a feed
+//     new to the store (logged before it is sent), so kills land between a
+//     new feed's first frames and its first commit; every record of those
+//     feeds and of the crash feed must carry its call's batch
+//     (GATES-stream-r1 B1: the engine indexed such frames as records with
+//     blank provenance).
 //
 // Records are synthetic OMMs (sds.NewOMMBuilder), so the loops need no
 // fixture and run on a fresh store of any format.
@@ -73,7 +80,20 @@ const (
 	verifySource  = "proof-crash-verify"
 	crashEpoch0   = 1788220801 // 2026-09-01T00:00:01Z
 	crashCallsMax = 1000
+	crashNewEvery = 4  // ingest: every 4th call first writes to a new feed
+	crashNewBatch = 64 // records per new-feed call
 )
+
+// crashNewSource is the feed new to the store that call `call` of round
+// `round` writes to first (ingest).
+func crashNewSource(base string, round, call int) string {
+	return fmt.Sprintf("%s-new-%04d-%04d", base, round, call)
+}
+
+// crashNewBatchID is that call's batch on its new feed.
+func crashNewBatchID(round, call int) string {
+	return crashBatchID(ScenarioIngest, round, call) + "-new"
+}
 
 func crashTags(source, batch string) storage.SourceTags {
 	return storage.SourceTags{ProviderID: FixtureProvider, SourceName: source, BatchID: batch}
@@ -91,7 +111,15 @@ func crashBatchID(scenario string, round, call int) string {
 
 // CrashRecords is call `call` of round `round`: n distinct OMMs, the same
 // bytes in every process (every builder field is set; none takes the clock).
-func CrashRecords(round, call, n int) [][]byte {
+func CrashRecords(round, call, n int) [][]byte { return crashRecords(round, call, n, "PROOF CRASH") }
+
+// crashNewRecords are the records of a call's new feed (other bytes than the
+// call's own records).
+func crashNewRecords(round, call int) [][]byte {
+	return crashRecords(round, call, crashNewBatch, "PROOF CRASH NEW")
+}
+
+func crashRecords(round, call, n int, name string) [][]byte {
 	out := make([][]byte, n)
 	for i := 0; i < n; i++ {
 		k := int64(call*n + i)
@@ -99,7 +127,7 @@ func CrashRecords(round, call, n int) [][]byte {
 		epoch := time.Unix(crashEpoch0+k*37, 0).UTC()
 		b := sds.NewOMMBuilder().
 			WithNoradCatID(norad).
-			WithObjectName(fmt.Sprintf("PROOF CRASH %d", norad)).
+			WithObjectName(fmt.Sprintf("%s %d", name, norad)).
 			WithObjectID(fmt.Sprintf("2026-%03dA", norad%1000)).
 			WithEpoch(epoch.Format("2006-01-02T15:04:05Z")).
 			WithEpochTimestamp(float64(epoch.Unix())).
@@ -163,6 +191,17 @@ func CrashWriter(spec CrashSpec, mode string) error {
 	}
 	_ = acks.line(fmt.Sprintf("START %d", spec.Round))
 	for call := 0; call < spec.Calls; call++ {
+		if mode == ModeCrashIngest && call%crashNewEvery == crashNewEvery-1 {
+			if err := acks.line(fmt.Sprintf("NEW %d %d", spec.Round, call)); err != nil {
+				return err
+			}
+			if _, err := s.StoreBatchWithSourceTags(crashSchema, crashNewRecords(spec.Round, call), crashPeer, nil,
+				crashTags(crashNewSource(spec.source(), spec.Round, call), crashNewBatchID(spec.Round, call))); err != nil {
+				_ = acks.line(fmt.Sprintf("ERR %d %d new %s", spec.Round, call, strings.ReplaceAll(err.Error(), "\n", " ")))
+			} else if err := acks.line(fmt.Sprintf("NEWACK %d %d", spec.Round, call)); err != nil {
+				return err
+			}
+		}
 		recs := CrashRecords(spec.Round, call, spec.Batch)
 		n, err := s.StoreBatchWithSourceTags(crashSchema, recs, crashPeer, nil,
 			crashTags(spec.source(), crashBatchID(spec.Scenario, spec.Round, call)))
@@ -224,6 +263,8 @@ func follow(s *storage.FlatSQLStore, spec CrashSpec, stop <-chan struct{}, done 
 // crashLog is what the logs say.
 type crashLog struct {
 	acked    map[int][]int    // round -> acked calls
+	newSent  map[int][]int    // round -> calls that sent to a new feed (logged before sending)
+	newAcked map[[2]int]bool  // (round, call) -> its new-feed write was acked
 	seen     map[int64]string // seq -> cid (follower)
 	errs     []string
 	supDone  map[int]bool
@@ -231,7 +272,8 @@ type crashLog struct {
 }
 
 func readCrashLogs(logs string) (crashLog, error) {
-	cl := crashLog{acked: map[int][]int{}, seen: map[int64]string{}, supDone: map[int]bool{}}
+	cl := crashLog{acked: map[int][]int{}, newSent: map[int][]int{}, newAcked: map[[2]int]bool{}, seen: map[int64]string{},
+		supDone: map[int]bool{}}
 	scan := func(path string, fn func([]string)) error {
 		f, err := os.Open(path)
 		if os.IsNotExist(err) {
@@ -262,6 +304,16 @@ func readCrashLogs(logs string) (crashLog, error) {
 				call, err := strconv.Atoi(f[2])
 				if err == nil {
 					cl.acked[round] = append(cl.acked[round], call)
+				}
+			}
+		case "NEW", "NEWACK":
+			if len(f) >= 3 {
+				if call, err := strconv.Atoi(f[2]); err == nil {
+					if f[0] == "NEW" {
+						cl.newSent[round] = append(cl.newSent[round], call)
+					} else {
+						cl.newAcked[[2]int{round, call}] = true
+					}
 				}
 			}
 		case "SUPDONE":
@@ -376,6 +428,56 @@ func CrashVerify(spec CrashSpec) (*Run, error) {
 			}
 		}
 	}
+	// 6. Ingest: no record is back without its tag, acked or not: every
+	// record of the crash feed carries a call's batch, and every record of a
+	// new feed its call's batch (acked new-feed writes whole, with their
+	// bytes).
+	newChecked := 0
+	var newFeeds []string
+	if spec.Scenario == ScenarioIngest {
+		for _, rec := range all {
+			if !strings.HasPrefix(rec.SourceTags.BatchID, "crash-") {
+				fail("%s (seq %d) is in the crash feed after recovery with batch %q: no call sent that batch", rec.CID, rec.RowID,
+					rec.SourceTags.BatchID)
+			}
+		}
+		newRounds := make([]int, 0, len(cl.newSent))
+		for round := range cl.newSent {
+			newRounds = append(newRounds, round)
+		}
+		sort.Ints(newRounds)
+		for _, round := range newRounds {
+			for _, call := range cl.newSent[round] {
+				src := crashNewSource(spec.source(), round, call)
+				newFeeds = append(newFeeds, feedFileName(FixtureProvider, src))
+				recs, err := laneRecords(s, src, "")
+				if err != nil {
+					return r, err
+				}
+				want := crashNewBatchID(round, call)
+				got := map[string]*storage.Record{}
+				for _, rec := range recs {
+					newChecked++
+					got[rec.CID] = rec
+					if rec.SourceTags.BatchID != want {
+						fail("round %d call %d: %s is in its new feed after recovery with batch %q, not %q (acked %v)", round, call,
+							rec.CID, rec.SourceTags.BatchID, want, cl.newAcked[[2]int{round, call}])
+					}
+				}
+				if !cl.newAcked[[2]int{round, call}] {
+					continue
+				}
+				for i, b := range crashNewRecords(round, call) {
+					cid := storage.ComputeCID(b)
+					if rec := got[cid]; rec == nil {
+						fail("round %d call %d new-feed record %d %s: acked, missing after recovery", round, call, i, cid)
+					} else if string(rec.Data) != string(b) {
+						fail("round %d call %d new-feed record %s: bytes differ after recovery", round, call, cid)
+					}
+				}
+			}
+		}
+	}
 	// 2. Every seq a follower saw still names its CID.
 	seen := 0
 	for seq, cid := range cl.seen {
@@ -484,11 +586,12 @@ func CrashVerify(spec CrashSpec) (*Run, error) {
 			nonEmpty = []string{feed}
 		}
 		for _, v := range feedDirProblems(spec.Store, strings.TrimSuffix(crashSchema, ".fbs"),
-			[]string{feed, feedFileName(FixtureProvider, verifySource)}, nonEmpty) {
+			append([]string{feed, feedFileName(FixtureProvider, verifySource)}, newFeeds...), nonEmpty) {
 			fail("%s", v)
 		}
 	}
 	r.Extra["acked_records_checked"] = float64(checked)
+	r.Extra["new_feed_records_checked"] = float64(newChecked)
 	r.Extra["follower_seqs_checked"] = float64(seen)
 	r.Extra["writer_errors"] = cl.errs
 	r.Extra["violations"] = violations
