@@ -408,14 +408,15 @@ func createLegacyControlDir(basePath string) error {
 }
 
 // Format4TypeSpec is a schema's engine registration, the one rule the daemon
-// and store-migrate --to 4 both register by: format4.TypeSpecFor, or, for a
-// routed standard with no embedded binary schema (an encrypted one, C-25),
-// a spec with its file identifier (ident, the validator's) and no BFBS. Such
-// a type still stores and serves its frames by CID, arrival and tags; the
-// engine extracts nothing from it.
+// and store-migrate --to 4 both register by: format4.TypeSpecFor (a sealed
+// standard CID-only, one whose sealed field a rule reads refused: C-46 (7)),
+// or, for a routed standard with no embedded binary schema (an encrypted one,
+// C-25), the CID-only spec with its file identifier (ident, the validator's).
+// Such a type still stores and serves its frames by CID, arrival and tags;
+// the engine extracts nothing from it and it has no SQL relation.
 func Format4TypeSpec(schema string, ident func(schema string) (string, bool)) (format4.TypeSpec, error) {
 	spec, err := format4.TypeSpecFor(schema)
-	if err == nil || ident == nil {
+	if err == nil || ident == nil || errors.Is(err, format2.ErrSealedRuleField) {
 		return spec, err
 	}
 	typ, terr := sds.SchemaNameToTable(schema)

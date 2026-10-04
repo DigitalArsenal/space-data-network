@@ -3,7 +3,6 @@ package format4
 import (
 	"encoding/binary"
 
-	"github.com/spacedatanetwork/sdn-server/internal/encfield"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format2"
 )
 
@@ -67,17 +66,22 @@ func CIDOnlyTypeSpec(typ string, fid [4]byte) TypeSpec {
 // 2's (rules, BFBS, file identifier, flags; read-only reuse) plus IQC's
 // identity dedupe and 16 KiB pages, the A18 bound (OMM and TBS 400000, else
 // 10000), the epoch profile (OMM 1, MPE 2) and full text for every type
-// format 1 indexes: every routed standard whose records are not field-sealed
-// (a sealed record's stored bytes are not its text). The rules are format
-// 2's, unchanged (contract v15: one file per source feed x standard, no
-// bucket rule).
+// format 1 indexes: every routed standard whose records are not field-sealed.
+// A field-sealed standard (a sealed record's stored bytes are neither its
+// text nor a FlatBuffer) is CID-only on format 2, and so here: no SQL
+// relation, nothing extracted (contract C-46 (7)). The rules are format 2's,
+// unchanged (contract v15: one file per source feed x standard, no bucket
+// rule).
 func TypeSpecFor(schemaName string) (TypeSpec, error) {
 	base, err := format2.TypeSpecFor(schemaName)
 	if err != nil {
 		return TypeSpec{}, err
 	}
 	typ := base.TypeName()
-	spec := TypeSpec{TypeSpec: base, PageSize: 4096, A18Bound: a18BoundDefault, FullText: !encfield.HasEncryptedFields(typ)}
+	if len(base.BFBS) == 0 {
+		return CIDOnlyTypeSpec(typ, base.FID), nil
+	}
+	spec := TypeSpec{TypeSpec: base, PageSize: 4096, A18Bound: a18BoundDefault, FullText: true}
 	switch typ {
 	case "OMM":
 		spec.A18Bound = a18BoundDecorated

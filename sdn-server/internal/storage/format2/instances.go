@@ -283,7 +283,7 @@ func (s *Store) spec(schema string) (TypeSpec, error) {
 		return t, nil
 	}
 	t, err := TypeSpecFor(schema)
-	if err != nil && s.cfg.FileIdentifier != nil {
+	if err != nil && s.cfg.FileIdentifier != nil && !errors.Is(err, ErrSealedRuleField) {
 		// No embedded binary schema (an (encrypted) standard): the engine
 		// stores, dedupes and serves its frames by CID, arrival and tags;
 		// it extracts nothing (A19: the sealed bytes carry only a magic).
