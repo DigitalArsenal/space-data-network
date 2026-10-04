@@ -2646,18 +2646,7 @@ func (b format4Backend) sandboxedSelect(ctx context.Context, stmt string, maxRow
 		}
 		row := make([]string, len(r))
 		for i, c := range r {
-			var cell string
-			switch c.Type {
-			case format2.CellNull:
-			case format2.CellBlob:
-				cell = fmt.Sprintf("<%d bytes>", len(c.B))
-			case format2.CellInt:
-				cell = strconv.FormatInt(c.I, 10)
-			case format2.CellReal:
-				cell = fmt.Sprint(c.F)
-			default:
-				cell = string(c.B)
-			}
+			cell := f4SelectCell(c)
 			bytesUsed += len(cell)
 			row[i] = cell
 		}
@@ -2675,6 +2664,23 @@ func (b format4Backend) sandboxedSelect(ctx context.Context, stmt string, maxRow
 		return nil, fmt.Errorf("sandboxed select: %w", b.f4SandboxErr(err))
 	}
 	return out, nil
+}
+
+// f4SelectCell is a SandboxedSelect cell as format 1 renders a SQLite value:
+// NULL empty, a BLOB its size, numbers in Go's formatting, text as is.
+func f4SelectCell(c format2.Cell) string {
+	switch c.Type {
+	case format2.CellNull:
+		return ""
+	case format2.CellBlob:
+		return fmt.Sprintf("<%d bytes>", len(c.B))
+	case format2.CellInt:
+		return strconv.FormatInt(c.I, 10)
+	case format2.CellReal:
+		return fmt.Sprint(c.F)
+	default:
+		return string(c.B)
+	}
 }
 
 // PublicQuerySurface is the engine's SQL surface (SURFACE: the relations,

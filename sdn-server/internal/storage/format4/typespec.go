@@ -56,6 +56,13 @@ const (
 	a18BoundDefault   = 10_000
 )
 
+// CIDOnlyTypeSpec is format 2's CID-only registration (format2.CIDOnlyTypeSpec,
+// contract C-25) on format 4: 4 KiB pages and the default A18 bound, no
+// epoch profile, no identity, no full text.
+func CIDOnlyTypeSpec(typ string, fid [4]byte) TypeSpec {
+	return TypeSpec{TypeSpec: format2.CIDOnlyTypeSpec(typ, fid), PageSize: 4096, A18Bound: a18BoundDefault}
+}
+
 // TypeSpecFor builds the registration of an embedded SDS standard: format
 // 2's (rules, BFBS, file identifier, flags; read-only reuse) plus IQC's
 // identity dedupe and 16 KiB pages, the A18 bound (OMM and TBS 400000, else

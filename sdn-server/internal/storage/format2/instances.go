@@ -289,9 +289,9 @@ func (s *Store) spec(schema string) (TypeSpec, error) {
 		// it extracts nothing (A19: the sealed bytes carry only a magic).
 		code := strings.ToUpper(strings.TrimSuffix(strings.TrimSpace(schema), ".fbs"))
 		if ident, ok := s.cfg.FileIdentifier(code + ".fbs"); ok && len(ident) == 4 {
-			t = TypeSpec{SchemaName: code + ".fbs", Flags: TypeVerifyCID}
-			copy(t.FID[:], ident)
-			err = nil
+			var fid [4]byte
+			copy(fid[:], ident)
+			t, err = CIDOnlyTypeSpec(code, fid), nil
 		}
 	}
 	if err != nil {

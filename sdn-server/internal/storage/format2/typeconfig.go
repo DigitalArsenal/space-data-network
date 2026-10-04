@@ -88,6 +88,14 @@ func (t TypeSpec) TypeName() string {
 	return name
 }
 
+// CIDOnlyTypeSpec is the registration of a type the engine extracts nothing
+// from (contract C-25): its file identifier and verify-CID, no binary schema
+// and no rules. The engine stores, dedupes and serves its frames by CID,
+// arrival and tags, and gives it no SQL relation.
+func CIDOnlyTypeSpec(code string, fid [4]byte) TypeSpec {
+	return TypeSpec{SchemaName: code + ".fbs", FID: fid, Flags: TypeVerifyCID}
+}
+
 // TypeSpecFor builds the registration of an embedded SDS standard.
 func TypeSpecFor(schemaName string) (TypeSpec, error) {
 	code := strings.ToUpper(strings.TrimSuffix(strings.TrimSpace(schemaName), ".fbs"))
