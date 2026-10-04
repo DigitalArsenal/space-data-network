@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
@@ -34,10 +35,11 @@ import (
 //     only, under the engine's names (feedFileName), and the crash feed's
 //     records are in its file (CrashSpec.Source may be any feed name);
 //  6. ingest: an unacknowledged record is absent or present with its tag,
-//     never back without it. Every 4th call first sends 64 records to a feed
-//     new to the store (logged before it is sent), so kills land between a
-//     new feed's first frames and its first commit; every record of those
-//     feeds and of the crash feed must carry its call's batch
+//     never back without it. Every 4th call first sends four writes at once,
+//     64 records each to a feed new to the store (logged before they are
+//     sent), so one engine round holds several new feeds and kills land
+//     between their first frames and their first commits; every record of
+//     those feeds and of the crash feed must carry its batch
 //     (GATES-stream-r1 B1: the engine indexed such frames as records with
 //     blank provenance).
 //
@@ -80,20 +82,19 @@ const (
 	verifySource  = "proof-crash-verify"
 	crashEpoch0   = 1788220801 // 2026-09-01T00:00:01Z
 	crashCallsMax = 1000
-	crashNewEvery = 4  // ingest: every 4th call first writes to a new feed
-	crashNewBatch = 64 // records per new-feed call
+	crashNewEvery = 4  // ingest: every 4th call first writes to new feeds
+	crashNewFeeds = 4  // new feeds written at once
+	crashNewBatch = 64 // records per new-feed write
 )
 
-// crashNewSource is the feed new to the store that call `call` of round
-// `round` writes to first (ingest).
-func crashNewSource(base string, round, call int) string {
-	return fmt.Sprintf("%s-new-%04d-%04d", base, round, call)
+// crashNewSource is new feed `id` of round `round` (ingest: call c writes
+// ids c*crashNewFeeds ... c*crashNewFeeds+crashNewFeeds-1 first).
+func crashNewSource(base string, round, id int) string {
+	return fmt.Sprintf("%s-new-%04d-%05d", base, round, id)
 }
 
-// crashNewBatchID is that call's batch on its new feed.
-func crashNewBatchID(round, call int) string {
-	return crashBatchID(ScenarioIngest, round, call) + "-new"
-}
+// crashNewBatchID is that write's batch on its new feed.
+func crashNewBatchID(round, id int) string { return fmt.Sprintf("crash-%04d-new-%05d", round, id) }
 
 func crashTags(source, batch string) storage.SourceTags {
 	return storage.SourceTags{ProviderID: FixtureProvider, SourceName: source, BatchID: batch}
@@ -113,10 +114,10 @@ func crashBatchID(scenario string, round, call int) string {
 // bytes in every process (every builder field is set; none takes the clock).
 func CrashRecords(round, call, n int) [][]byte { return crashRecords(round, call, n, "PROOF CRASH") }
 
-// crashNewRecords are the records of a call's new feed (other bytes than the
+// crashNewRecords are the records of new feed `id` (other bytes than any
 // call's own records).
-func crashNewRecords(round, call int) [][]byte {
-	return crashRecords(round, call, crashNewBatch, "PROOF CRASH NEW")
+func crashNewRecords(round, id int) [][]byte {
+	return crashRecords(round, id, crashNewBatch, "PROOF CRASH NEW")
 }
 
 func crashRecords(round, call, n int, name string) [][]byte {
@@ -192,13 +193,7 @@ func CrashWriter(spec CrashSpec, mode string) error {
 	_ = acks.line(fmt.Sprintf("START %d", spec.Round))
 	for call := 0; call < spec.Calls; call++ {
 		if mode == ModeCrashIngest && call%crashNewEvery == crashNewEvery-1 {
-			if err := acks.line(fmt.Sprintf("NEW %d %d", spec.Round, call)); err != nil {
-				return err
-			}
-			if _, err := s.StoreBatchWithSourceTags(crashSchema, crashNewRecords(spec.Round, call), crashPeer, nil,
-				crashTags(crashNewSource(spec.source(), spec.Round, call), crashNewBatchID(spec.Round, call))); err != nil {
-				_ = acks.line(fmt.Sprintf("ERR %d %d new %s", spec.Round, call, strings.ReplaceAll(err.Error(), "\n", " ")))
-			} else if err := acks.line(fmt.Sprintf("NEWACK %d %d", spec.Round, call)); err != nil {
+			if err := crashNewWrites(s, spec, call, acks); err != nil {
 				return err
 			}
 		}
@@ -225,6 +220,37 @@ func CrashWriter(spec CrashSpec, mode string) error {
 	close(stopFollow)
 	<-followDone
 	return s.Close()
+}
+
+// crashNewWrites sends call `call`'s new-feed writes at once (each logged
+// before any is sent, each ack logged once all returned).
+func crashNewWrites(s *storage.FlatSQLStore, spec CrashSpec, call int, acks *syncLog) error {
+	ids := make([]int, crashNewFeeds)
+	for k := range ids {
+		ids[k] = call*crashNewFeeds + k
+		if err := acks.line(fmt.Sprintf("NEW %d %d", spec.Round, ids[k])); err != nil {
+			return err
+		}
+	}
+	errs := make([]error, len(ids))
+	var wg sync.WaitGroup
+	for k, id := range ids {
+		wg.Add(1)
+		go func(k, id int) {
+			defer wg.Done()
+			_, errs[k] = s.StoreBatchWithSourceTags(crashSchema, crashNewRecords(spec.Round, id), crashPeer, nil,
+				crashTags(crashNewSource(spec.source(), spec.Round, id), crashNewBatchID(spec.Round, id)))
+		}(k, id)
+	}
+	wg.Wait()
+	for k, id := range ids {
+		if errs[k] != nil {
+			_ = acks.line(fmt.Sprintf("ERR %d new %d %s", spec.Round, id, strings.ReplaceAll(errs[k].Error(), "\n", " ")))
+		} else if err := acks.line(fmt.Sprintf("NEWACK %d %d", spec.Round, id)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // follow reads the lane's datasync cursor and logs every (seq, cid) seen.
@@ -263,8 +289,8 @@ func follow(s *storage.FlatSQLStore, spec CrashSpec, stop <-chan struct{}, done 
 // crashLog is what the logs say.
 type crashLog struct {
 	acked    map[int][]int    // round -> acked calls
-	newSent  map[int][]int    // round -> calls that sent to a new feed (logged before sending)
-	newAcked map[[2]int]bool  // (round, call) -> its new-feed write was acked
+	newSent  map[int][]int    // round -> new feeds written to (logged before sending)
+	newAcked map[[2]int]bool  // (round, new feed) -> its write was acked
 	seen     map[int64]string // seq -> cid (follower)
 	errs     []string
 	supDone  map[int]bool
@@ -447,32 +473,32 @@ func CrashVerify(spec CrashSpec) (*Run, error) {
 		}
 		sort.Ints(newRounds)
 		for _, round := range newRounds {
-			for _, call := range cl.newSent[round] {
-				src := crashNewSource(spec.source(), round, call)
+			for _, id := range cl.newSent[round] {
+				src := crashNewSource(spec.source(), round, id)
 				newFeeds = append(newFeeds, feedFileName(FixtureProvider, src))
 				recs, err := laneRecords(s, src, "")
 				if err != nil {
 					return r, err
 				}
-				want := crashNewBatchID(round, call)
+				want := crashNewBatchID(round, id)
 				got := map[string]*storage.Record{}
 				for _, rec := range recs {
 					newChecked++
 					got[rec.CID] = rec
 					if rec.SourceTags.BatchID != want {
-						fail("round %d call %d: %s is in its new feed after recovery with batch %q, not %q (acked %v)", round, call,
-							rec.CID, rec.SourceTags.BatchID, want, cl.newAcked[[2]int{round, call}])
+						fail("round %d new feed %d: %s is in it after recovery with batch %q, not %q (acked %v)", round, id,
+							rec.CID, rec.SourceTags.BatchID, want, cl.newAcked[[2]int{round, id}])
 					}
 				}
-				if !cl.newAcked[[2]int{round, call}] {
+				if !cl.newAcked[[2]int{round, id}] {
 					continue
 				}
-				for i, b := range crashNewRecords(round, call) {
+				for i, b := range crashNewRecords(round, id) {
 					cid := storage.ComputeCID(b)
 					if rec := got[cid]; rec == nil {
-						fail("round %d call %d new-feed record %d %s: acked, missing after recovery", round, call, i, cid)
+						fail("round %d new feed %d record %d %s: acked, missing after recovery", round, id, i, cid)
 					} else if string(rec.Data) != string(b) {
-						fail("round %d call %d new-feed record %s: bytes differ after recovery", round, call, cid)
+						fail("round %d new feed %d record %s: bytes differ after recovery", round, id, cid)
 					}
 				}
 			}
