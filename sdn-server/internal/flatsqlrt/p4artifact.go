@@ -11,9 +11,9 @@ package flatsqlrt
 // init refuses to start a binary whose embedded bytes are not the pinned
 // engine, so a build stamped format 4 always carries its engine.
 //
-// UNTIL THE RELEASE: the file is empty, the pin is empty and P4ThreadsPackage
-// says so. Open refuses an empty artifact, nothing selects format 4 by
-// default, and the stamp stays below 4.
+// Format 4 stays off by default: SDN_STORE_FORMAT unset is format 1. A build
+// with no pin embeds no bytes, Open refuses that empty artifact, and its stamp
+// stays below 4.
 
 import (
 	"crypto/sha256"
@@ -30,11 +30,11 @@ var p4ThreadsWasm []byte
 
 const (
 	// P4ThreadsPackage is the npm release the artifact comes from.
-	P4ThreadsPackage = "flatsql@unreleased"
+	P4ThreadsPackage = "flatsql@3.7.0"
 	// P4ThreadsGitHead is that release's gitHead (flatsql main).
-	P4ThreadsGitHead = ""
+	P4ThreadsGitHead = "780b1265162a90ce76a7496a5b0beac83ba016d2"
 	// P4ThreadsSHA256 is the artifact's sha256 (the package's integrity.json):
-	// the release pin, empty until the release.
+	// the release pin.
 	P4ThreadsSHA256 = versioninfo.P4EngineSHA256
 	// P4ThreadsAOTPrefix names its threaded AOT artifacts in the engine cache
 	// (it must not start with "flatsql-", which the legacy engine prunes, nor
@@ -68,7 +68,7 @@ func checkP4Pin(wasm []byte, pin string) error {
 }
 
 // P4ThreadsWasm returns the embedded format-4 engine (portable bytes); empty
-// in a build made before the engine's release.
+// in a build that pins none.
 func P4ThreadsWasm() []byte { return p4ThreadsWasm }
 
 // P4ThreadsDigest returns the sha256 of the embedded bytes, hex.

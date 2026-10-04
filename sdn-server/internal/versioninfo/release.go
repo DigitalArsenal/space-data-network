@@ -64,12 +64,13 @@ const (
 	PSEngineStoreFormatMax = 3
 
 	// P4EngineSHA256 is the release pin of the format-4 engine (store format
-	// 4, one SQLite file per partition): the sha256 of the published
-	// flatsql-p4-threads.wasm (its package's wasm/integrity.json), which
-	// flatsqlrt embeds. It is EMPTY until a release is embedded. flatsqlrt
-	// refuses to start a binary whose embedded bytes are not this engine
-	// (empty bytes with no pin, else bytes with exactly this sha256).
-	P4EngineSHA256 = ""
+	// 4, the stream engine: per source feed a pure FlatBuffer stream plus a
+	// SQLite index file): the sha256 of the published flatsql-p4-threads.wasm
+	// (flatsql@3.7.0, its package's wasm/integrity.json), which flatsqlrt
+	// embeds. Empty means no format-4 engine is embedded. flatsqlrt refuses to
+	// start a binary whose embedded bytes are not this engine (empty bytes
+	// with no pin, else bytes with exactly this sha256).
+	P4EngineSHA256 = "fe65b36fe8c4d015c25c76e4ccca5bd84c18ffc3cb05b045a2ae85bb3a4dbe21"
 
 	// P4StoreFormat is format 4's fsql4/STORE format: the format a format-4
 	// store is at, and the one the format-4 engine opens.

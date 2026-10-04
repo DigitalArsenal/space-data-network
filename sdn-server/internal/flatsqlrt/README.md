@@ -196,21 +196,25 @@ the legacy engine below.
 
 ## The format-4 engine (store format 4)
 
-`flatsql-p4-threads.wasm` is the format-4 engine: one SQLite file per
-partition (producer x record type), SQLite 3.53.4 unmodified (stack design
-`docs/architecture/flatsql-sqlite-partitions.md`; build-out contract §1,
-§5.3). It is embedded by `p4artifact.go` and run by `p4instance.go` as ONE
-threaded instance (`PSABIP4` on the partition-store substrate): writer
-threads, read lanes and the maintenance thread share its memory, because the
-WAL index of every file must live in one linear memory.
+`flatsql-p4-threads.wasm` is the format-4 engine, the stream engine: per
+record standard and source feed, `<feed>.fsdata` is a pure FlatBuffer stream
+(`[u32 LE size][FlatBuffer]` frames, no header) and `<feed>.db` is SQLite
+3.53.4, unmodified, holding only index rows that point at their frames (stack
+design `docs/architecture/flatsql-sqlite-partitions.md`; build-out contract
+§1, §5.3, C-45). It is embedded by `p4artifact.go` and run by `p4instance.go`
+as ONE threaded instance (`PSABIP4` on the partition-store substrate): writer
+threads, their indexer threads, read lanes and the maintenance thread share
+its memory, because the WAL index of every file must live in one linear
+memory.
 
-- npm package: not released yet. Until flatsql's `npm-publish.yml` publishes
-  the engine (build-out landing step 3), the embedded file is EMPTY,
-  `P4ThreadsPackage` is `flatsql@unreleased`, `format4.Open` and `prewarm-aot`
-  refuse it, and nothing selects format 4 (`SDN_STORE_FORMAT` unset is
-  format 1). The release replaces this entry with the package, gitHead,
-  sha256 (the package's `wasm/integrity.json`) and size, and sets
-  `versioninfo.P4EngineSHA256`, the one pin, to that sha256.
+- npm package: `flatsql@3.7.0` (`https://registry.npmjs.org/flatsql/-/flatsql-3.7.0.tgz`),
+  published by flatsql's `npm-publish.yml` from tag `v3.7.0` with provenance
+- gitHead: `780b1265162a90ce76a7496a5b0beac83ba016d2`
+- sha256: `fe65b36fe8c4d015c25c76e4ccca5bd84c18ffc3cb05b045a2ae85bb3a4dbe21`
+  (the package's `wasm/integrity.json`; `versioninfo.P4EngineSHA256`, the one pin)
+- 2,925,356 bytes; `wasm32-wasip1-threads`, wasi-sdk 30
+- Off by default: `SDN_STORE_FORMAT` unset is format 1; `4` (alias `sqlite`)
+  selects it, and `store-migrate --to 4` migrates a format-1 store.
 - Store-format stamp: the build stamps `max_store_format` 4 only when it pins
   a format-4 engine (`versioninfo.P4EngineSHA256` non-empty); otherwise the
   stamp stays at the format-2 engine's level (3), so the update guard refuses
