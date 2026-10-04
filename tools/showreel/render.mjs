@@ -1,10 +1,11 @@
 // Renders a reel frame by frame in Chromium and encodes it with ffmpeg.
 //   node tools/showreel/render.mjs [--reel sdn] [--frames a-b] [--out dir]
-//                                  [--stills t1,t2] [--media dir]
+//                                  [--stills t1,t2] [--media dir] [--mux-only]
 // --reel picks tools/showreel/reels/<name>.js (default sdn). Outputs
 // <media>/<name>.{mp4,webm} and <name>-poster.webp, where the reel's meta
 // names the file, the default media folder and the poster frame; --media
-// writes somewhere else (another stack site's repository).
+// writes somewhere else (another stack site's repository). --mux-only re-cuts
+// the soundtrack onto existing encodes without rendering frames.
 // Needs Playwright (any installed copy: set PLAYWRIGHT_MODULE to its path), an
 // ffmpeg with libx264 and libsvtav1, and ImageMagick (the poster).
 
@@ -50,6 +51,31 @@ async function grab(i) {
 }
 
 const outDir = args.out ?? join(here, ".frames");
+const media = args.media ? resolve(args.media) : join(repo, meta.media);
+const ff = (argv) => {
+  const r = spawnSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", ...argv], { stdio: "inherit" });
+  if (r.status !== 0) throw new Error(`ffmpeg ${argv.join(" ")}`);
+};
+// The soundtrack: meta.audio = { track, start } takes the reel's length of
+// docs/media/audio/<track>.mp3 from start seconds, fading in over 1 s and out
+// over the last 1.5 s, and muxes it beside the untouched video stream.
+function mux(file, codecArgs) {
+  if (!meta.audio) return;
+  const duration = total / 30;
+  const silent = join(outDir, `silent${extname(file)}`);
+  ff(["-i", file, "-map", "0:v", "-c", "copy", silent]);
+  ff([
+    "-i", silent,
+    "-ss", String(meta.audio.start), "-t", String(duration), "-i", join(repo, "docs", "media", "audio", `${meta.audio.track}.mp3`),
+    "-map", "0:v", "-map", "1:a", "-c:v", "copy", ...codecArgs,
+    "-af", `afade=t=in:st=0:d=1,afade=t=out:st=${(duration - 1.5).toFixed(2)}:d=1.5`,
+    "-shortest", ...(file.endsWith(".mp4") ? ["-movflags", "+faststart"] : []), file,
+  ]);
+  rmSync(silent);
+}
+const AAC = ["-c:a", "aac", "-b:a", "160k"];
+const OPUS = ["-c:a", "libopus", "-b:a", "128k"];
+
 if (args.stills) {
   mkdirSync(outDir, { recursive: true });
   for (const s of args.stills.split(",")) {
@@ -57,6 +83,12 @@ if (args.stills) {
     writeFileSync(join(outDir, `still-${s}.png`), await grab(i));
   }
   process.stdout.write(`stills written to ${outDir}\n`);
+} else if ("mux-only" in args) {
+  // Re-cut the soundtrack onto the reel's existing encodes.
+  mkdirSync(outDir, { recursive: true });
+  mux(join(media, `${meta.name}.mp4`), AAC);
+  mux(join(media, `${meta.name}.webm`), OPUS);
+  process.stdout.write(`soundtrack muxed into ${media}\n`);
 } else {
   const [a, b] = (args.frames ?? `0-${total - 1}`).split("-").map(Number);
   rmSync(outDir, { recursive: true, force: true });
@@ -66,18 +98,15 @@ if (args.stills) {
     writeFileSync(join(outDir, `f${String(i).padStart(4, "0")}.png`), await grab(i));
     if (i % 30 === 0) process.stdout.write(`frame ${i}/${b} ${((Date.now() - started) / 1000).toFixed(0)}s\n`);
   }
-  const media = args.media ? resolve(args.media) : join(repo, meta.media);
   mkdirSync(media, { recursive: true });
-  const ff = (argv) => {
-    const r = spawnSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", ...argv], { stdio: "inherit" });
-    if (r.status !== 0) throw new Error(`ffmpeg ${argv.join(" ")}`);
-  };
   const input = ["-framerate", "30", "-start_number", String(a), "-i", join(outDir, "f%04d.png")];
   // meta.crf = [x264, AV1]; busy reels (many fine lines changing every frame)
   // take a higher value to stay near 10-13 MB.
   const [crf264, crfAv1] = meta.crf ?? [27, 36];
   ff([...input, "-c:v", "libx264", "-preset", "slow", "-crf", String(crf264), "-profile:v", "high", "-pix_fmt", "yuv420p", "-tune", "film", "-movflags", "+faststart", join(media, `${meta.name}.mp4`)]);
   ff([...input, "-c:v", "libsvtav1", "-preset", "5", "-crf", String(crfAv1), "-pix_fmt", "yuv420p", "-svtav1-params", "tune=0", join(media, `${meta.name}.webm`)]);
+  mux(join(media, `${meta.name}.mp4`), AAC);
+  mux(join(media, `${meta.name}.webm`), OPUS);
   // Poster: the reel's chosen frame. ImageMagick, because common ffmpeg
   // builds lack a WebP encoder.
   const poster = join(outDir, `f${String(Math.min(b, meta.poster)).padStart(4, "0")}.png`);

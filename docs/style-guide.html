@@ -18,6 +18,10 @@
     :root { --sdn-stack-footer-height: 40px; --sdn-stack-header-height: 52px; }
     .site-nav { height: var(--sdn-stack-header-height, 52px); }
     .nav-links a { font-size: var(--sdn-stack-header-link-size, 14px); }
+    .tracks { display: grid; gap: 12px; margin-top: 20px; }
+    .track { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 20px; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+    .track h3 { margin: 0 0 2px; }
+    .track span { color: var(--muted); font-size: 14px; }
     .sg { max-width: 980px; margin: 0 auto; text-align: left; }
     .sg h3 { margin: 28px 0 10px; }
     .sg p, .sg li { color: var(--text-2); font-size: 16px; }
@@ -175,6 +179,19 @@
       </div>
     </section>
 
+    <section class="block" id="music">
+      <div class="wrap sg">
+        <p class="eyebrow">5 &middot; Music</p>
+        <h2>The Soundtrack</h2>
+        <p class="lede">The music under the Space Data Network videos. Made with Suno.</p>
+        <div class="tracks">
+          <div class="track"><div><h3>Orbital Insertion</h3><span>3:50 &middot; MP3</span></div><a class="btn" href="media/audio/orbital-insertion.mp3" download>Download</a></div>
+          <div class="track"><div><h3>Covariance</h3><span>3:45 &middot; MP3</span></div><a class="btn" href="media/audio/covariance.mp3" download>Download</a></div>
+          <div class="track"><div><h3>DeltaV</h3><span>4:15 &middot; MP3</span></div><a class="btn" href="media/audio/delta-v.mp3" download>Download</a></div>
+        </div>
+      </div>
+    </section>
+
   </main>
 
   <footer>
@@ -193,5 +210,6 @@
     </div>
   </footer>
   <script src="site.js"></script>
+  <script src="assets/ai-credits/ai-credits.js" defer></script>
 </body>
 </html>

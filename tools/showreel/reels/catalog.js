@@ -1,16 +1,16 @@
 // Catalog reel: how a space catalog is built, in plain words, for
 // spacedatanetwork.org/catalog.html. 40 seconds: the crowded sky, sensors on
-// the ground, sightings fit into an orbit, uncertainty that grows and
+// the ground and in orbit, sightings fit into an orbit, uncertainty that grows and
 // shrinks, many digitally signed sources feeding one catalog, and a catalog
 // anyone can add to and check.
 
 import {
-  W, H, AMBER, SAT, INK, MUTED, SANS, MONO, D, FRAME_T,
+  W, H, AMBER, CYAN, SAT, INK, MUTED, SANS, MONO, D, FRAME_T,
   clamp, lerp, seg, easeOutExpo, easeInExpo, easeInOutExpo, easeInOutCubic, easeInCubic, easeOutBack,
   add, mul, dot, cross, norm, rng, makeTau, OMEGA_K, orbitBasis, orbitPos, makeSky, lookAt, geoDir, project, occluded, createStudio,
 } from "../kit.js";
 
-export const meta = { name: "sdn-catalog-reel", media: "docs/media/catalog", poster: 780 };
+export const meta = { name: "sdn-catalog-reel", media: "docs/media/catalog", poster: 780, crf: [29, 40], audio: { track: "covariance", start: 36 } };
 
 const DURATION = 40;
 const FPS = 30;
@@ -43,6 +43,21 @@ const SENSORS = [
   [48.72, -97.9, "radar", null],
   [33.82, -106.66, "scope", "TELESCOPE · NEW MEXICO", [-40, -64]],
 ];
+
+// Space-based sensors: satellites that watch other satellites. Each orbit is
+// built to pass over (lat, lon) at T_SENS + 3 s, moving east; the sensor looks
+// out at an angle into the crowded shells (look = radial and along-track mix).
+const SPACE_SENSORS = [
+  [42, -126, 1.2, 0.7, "SENSOR IN ORBIT", [-40, -70]],
+  [14, -68, 1.17, -0.5, null],
+  [50, -80, 1.24, 0.3, null],
+].map(([lat, lon, r, look, label, loff]) => {
+  const e1 = geoDir(lat, lon, 0);
+  const e2 = norm(cross([0, 1, 0], e1));
+  // a quarter of true orbital speed, so each stays in the shot
+  const w = 0.25 * OMEGA_K * Math.pow(r, -1.5);
+  return { e1, e2, r, w, u0: -w * (T_SENS + 3), look, label, loff };
+});
 
 // Camera keys: direction, distance, frame offset. Moves ease between keys.
 const FIT_DIR = norm(add(mul(FIT_N, 0.95), mul(FIT.e1, 0.3)));
@@ -227,6 +242,81 @@ export async function createReel(base = "") {
         sx.fillStyle = radar ? AMBER : INK;
         sx.textAlign = "left";
         sx.fillText(label, lx + 22, ly + 31);
+        sx.restore();
+      }
+    });
+    // satellites that watch from orbit: a narrow cyan field of view
+    SPACE_SENSORS.forEach((o, i) => {
+      const k = easeOutBack(seg(t, T_SENS + 0.9 + i * 0.15, T_SENS + 1.3 + i * 0.15));
+      if (k <= 0) return;
+      const u = o.u0 + o.w * tau(t);
+      const p = orbitPos(o, u);
+      if (occluded(cam, p)) return;
+      const q = project(cam, p);
+      if (!q) return;
+      const radial = norm(p);
+      const along = norm(add(mul(o.e1, -Math.sin(u)), mul(o.e2, Math.cos(u))));
+      const axis = norm(add(mul(radial, Math.cos(o.look)), mul(along, Math.sin(o.look))));
+      const side = norm(cross(axis, radial));
+      const reach = 0.42 * k;
+      const half = 9 * D;
+      const pts = [];
+      for (let a = -1; a <= 1.0001; a += 0.25) {
+        const d = norm(add(mul(axis, Math.cos(a * half)), mul(side, Math.sin(a * half))));
+        const pq = project(cam, add(p, mul(d, reach)));
+        if (pq) pts.push(pq);
+      }
+      if (pts.length > 1) {
+        sx.save();
+        sx.globalAlpha = alpha * 0.9;
+        const far = pts[Math.floor(pts.length / 2)];
+        const g = sx.createLinearGradient(q.x, q.y, far.x, far.y);
+        g.addColorStop(0, "rgba(89,217,255,0.38)");
+        g.addColorStop(1, "rgba(89,217,255,0)");
+        sx.fillStyle = g;
+        sx.beginPath();
+        sx.moveTo(q.x, q.y);
+        pts.forEach((pp) => sx.lineTo(pp.x, pp.y));
+        sx.closePath();
+        sx.fill();
+        sx.restore();
+      }
+      for (let s = 0; s < LEO.length; s += 3) {
+        const so = LEO[s];
+        const sp = orbitPos(so, so.u0 + so.w * tau(t));
+        const v = add(sp, mul(p, -1));
+        const dist = Math.hypot(v[0], v[1], v[2]);
+        if (dist > reach || dist < 1e-4) continue;
+        if (dot(mul(v, 1 / dist), axis) < Math.cos(half)) continue;
+        seen.push(sp);
+      }
+      sx.save();
+      sx.globalAlpha = alpha;
+      sx.fillStyle = CYAN;
+      sx.beginPath();
+      sx.arc(q.x, q.y, 5.5 * k, 0, Math.PI * 2);
+      sx.fill();
+      sx.restore();
+      dotGlow(q.x, q.y, 20, CYAN, alpha * 0.6);
+      if (o.label) {
+        const la = alpha * seg(t, T_SENS + 1.7, T_SENS + 2.1);
+        sx.save();
+        sx.globalAlpha = la;
+        sx.font = font(600, 24, SANS);
+        sx.letterSpacing = "3px";
+        const tw = sx.measureText(o.label).width + 44;
+        const lx = clamp(o.loff[0] > 0 ? q.x + o.loff[0] : q.x + o.loff[0] - tw, 70, W - 70 - tw);
+        const ly = clamp(q.y + o.loff[1] - 23, 80, H - 200);
+        sx.strokeStyle = "rgba(245,245,247,0.6)";
+        sx.lineWidth = 1.2;
+        sx.beginPath();
+        sx.moveTo(q.x, q.y);
+        sx.lineTo(o.loff[0] > 0 ? lx : lx + tw, ly + 23);
+        sx.stroke();
+        pill(lx, ly, tw, 46, CYAN, "rgba(0,0,0,0.66)");
+        sx.fillStyle = CYAN;
+        sx.textAlign = "left";
+        sx.fillText(o.label, lx + 22, ly + 31);
         sx.restore();
       }
     });
@@ -588,7 +678,7 @@ export async function createReel(base = "") {
       block([["Everything in orbit,", INK], ["in one shared list.", AMBER]], "WHERE EACH OBJECT IS, AND HOW SURE ANYONE IS", 0.6, T_SENS - 0.4, t, 84);
     }
     if (t > T_SENS - 0.05 && t < T_FIT + 0.1) {
-      block([["Radars and telescopes", INK], ["watch the sky.", AMBER]], "NO SINGLE SENSOR SEES EVERYTHING", T_SENS + 0.1, T_FIT - 0.4, t, 84);
+      block([["Sensors on the ground", INK], ["and in orbit keep watch.", AMBER]], "NO SINGLE SENSOR SEES EVERYTHING", T_SENS + 0.1, T_FIT - 0.4, t, 80);
     }
     if (t > T_FIT - 0.05 && t < T_UNC + 0.1) {
       block([["Sightings become", INK], ["an orbit.", AMBER]], "SOFTWARE FITS A PATH THROUGH A FEW PASSES", T_FIT + 0.1, T_UNC - 0.4, t, 84);

@@ -10,7 +10,7 @@ import {
   OMEGA_K, orbitBasis, orbitPos, makeSky, lookAt, geoDir, TAN, distForRadius, project, occluded, createStudio,
 } from "../kit.js";
 
-export const meta = { name: "sdn-showreel", media: "docs/media/showreel", poster: 645 };
+export const meta = { name: "sdn-showreel", media: "docs/media/showreel", poster: 645, audio: { track: "orbital-insertion", start: 40 } };
 
 const DURATION = 45; // 41 s of motion, then a hold on the lockup
 

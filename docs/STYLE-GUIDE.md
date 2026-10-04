@@ -151,3 +151,19 @@ chapter titles in sentence case ("Digitally signed at the source").
 - Prefer SVG for marks, icons and diagrams; WebP for photos and screenshots.
 - Colors come from the tokens in `docs/site.css`; do not hard-code new values.
 - Dark mode is the default. A light surface uses the "on light" colors above.
+
+## 8. Music
+
+The videos share one soundtrack, made with Suno, downloadable from the style
+guide page (`docs/media/audio/`):
+
+| Track | File |
+| --- | --- |
+| Orbital Insertion | `orbital-insertion.mp3` |
+| Covariance | `covariance.mp3` |
+| DeltaV | `delta-v.mp3` |
+
+- Each video carries one section of Orbital Insertion or Covariance, faded in
+  over 1 s and out over the last 1.5 s (`tools/showreel`, `meta.audio`).
+- Videos start muted (browsers only autoplay muted video); the player's sound
+  button turns the music on, and the choice carries to every video.

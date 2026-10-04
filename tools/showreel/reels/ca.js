@@ -11,7 +11,7 @@ import {
   project, occluded, createStudio,
 } from "../kit.js";
 
-export const meta = { name: "sdn-ca-reel", media: "docs/media/ca", poster: 438, crf: [30, 42] };
+export const meta = { name: "sdn-ca-reel", media: "docs/media/ca", poster: 438, crf: [30, 42], audio: { track: "orbital-insertion", start: 182 } };
 
 const DURATION = 40;
 const FPS = 30;
