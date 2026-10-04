@@ -255,6 +255,20 @@ type CallRuling struct {
 	// spelling): never another feed's records (caseTwinAnswer).
 	CaseTwin bool  `json:"case_twin,omitempty"`
 	Want     []Row `json:"want,omitempty"`
+	// S4Only (C-44 G5): the candidate's answer also holds this one record,
+	// which format 1's lacks; the candidate's rows lose it before comparing
+	// (s4OnlyRows), and the rest must be equal.
+	S4Only *OnlyRecord `json:"s4_only,omitempty"`
+}
+
+// OnlyRecord is one record as a call's rows show it: Rows are its rows
+// (its frame in a stream, its object in an epoch stream's object list) and
+// Counts the count fields that count it (a relation's COUNT(*), an object
+// list's frames).
+type OnlyRecord struct {
+	CID    string   `json:"cid"`
+	Rows   []Row    `json:"rows"`
+	Counts []string `json:"counts"`
 }
 
 // LaneKey names a lane: the provider, source and batch its records carry.
@@ -267,10 +281,10 @@ type LaneKey struct {
 }
 
 // rowRuling reports a ruling that rewrites the rows compared (Absent,
-// AbsentCID, TaggedFirst, PerFeed, SameLane) or decides a whole call
+// AbsentCID, TaggedFirst, PerFeed, SameLane, S4Only) or decides a whole call
 // (F1Empty, CaseTwin) rather than accepting fields.
 func (r *CallRuling) rowRuling() bool {
-	return r.Absent != "" || r.AbsentCID != "" || r.TaggedFirst || r.PerFeed || r.SameLane != nil || r.F1Empty || r.CaseTwin
+	return r.Absent != "" || r.AbsentCID != "" || r.TaggedFirst || r.PerFeed || r.SameLane != nil || r.F1Empty || r.CaseTwin || r.S4Only != nil
 }
 
 // ruling is the call ruling that accepts field of row (format 1's; nil for
@@ -357,6 +371,80 @@ func (p Policy) absentRows(call string, rows []Row) ([]Row, []string) {
 		rows = kept
 	}
 	return rows, why
+}
+
+// s4OnlyRuling is call's S4Only ruling (nil: none).
+func (p Policy) s4OnlyRuling(call string) *CallRuling {
+	for i := range p.Calls {
+		if r := &p.Calls[i]; r.S4Only != nil && strings.Contains(call, r.Call) {
+			return r
+		}
+	}
+	return nil
+}
+
+// s4OnlyRows is the candidate's rows rb without the record x, which format
+// 1's rows ra lack: each of x's rows that rb holds once and ra not at all
+// is dropped, and each count row of x (a row of one field, named in
+// x.Counts) is taken one less where it is ra's count plus one. ok is false,
+// and rb comes back unchanged, unless the call shows x and shows it on the
+// candidate's side alone: a row of x on format 1, or twice on format 4, or a
+// count other than format 1's plus one, rules it out.
+func s4OnlyRows(ra, rb []Row, x *OnlyRecord) ([]Row, bool) {
+	holds := func(rows []Row, text string) (n, at int) {
+		at = -1
+		for i, r := range rows {
+			if strictText(r) == text {
+				if n++; at < 0 {
+					at = i
+				}
+			}
+		}
+		return n, at
+	}
+	countRow := func(rows []Row, field string) int {
+		for i, r := range rows {
+			if len(r) == 1 && r[0].N == field {
+				return i
+			}
+		}
+		return -1
+	}
+	out := append([]Row(nil), rb...)
+	shown := false
+	for _, row := range x.Rows {
+		t := strictText(row)
+		nb, at := holds(out, t)
+		na, _ := holds(ra, t)
+		switch {
+		case nb == 0 && na == 0:
+			continue // the call does not list this form of the record
+		case nb != 1 || na != 0:
+			return rb, false
+		}
+		out = append(out[:at:at], out[at+1:]...)
+		shown = true
+	}
+	for _, field := range x.Counts {
+		ib, ia := countRow(out, field), countRow(ra, field)
+		if ib < 0 && ia < 0 {
+			continue
+		}
+		if ib < 0 || ia < 0 {
+			return rb, false
+		}
+		nb, errB := strconv.Atoi(out[ib][0].V)
+		na, errA := strconv.Atoi(ra[ia][0].V)
+		if errB != nil || errA != nil || nb != na+1 {
+			return rb, false
+		}
+		out[ib] = Row{{N: field, V: strconv.Itoa(na)}}
+		shown = true
+	}
+	if !shown {
+		return rb, false
+	}
+	return out, true
 }
 
 // surfaceDiff compares the public SQL surface listing (one row per
@@ -471,6 +559,9 @@ const (
 	c43G4 = "C-43 G4: format 1 answers the SQL stream with no rows once odd-named feeds exist (its SQLite table names break on those characters), a format-1 artifact"
 	c43B3 = "C-43 B3 residual: format 1 answers a relation whose source equals another feed's but for case with its own order-dependent choice between the twins; format 4 reads the exact spelling's feed, else none"
 )
+
+// c44G5 is C-44's ruling (contract v22, coordinator 2026-10-03 ~21:00).
+const c44G5 = "C-44 G5: format 1's StoreRoutedByProducer stores without its engine mirror, which its SQL relations and epoch stream read, so they miss a routed record until a restart rehydrates the mirror; format 4 answers it at once"
 
 // wholeCallRuling is call's F1Empty or CaseTwin ruling (nil: none).
 func (p Policy) wholeCallRuling(call string) *CallRuling {
@@ -1120,6 +1211,12 @@ func CompareShape(f1, s *ShapeAnswers, oracle CopyOracle) Verdict {
 			ra, forced = kept, true
 			for _, w := range why {
 				rulings[w] = true
+			}
+		}
+		if r := pol.s4OnlyRuling(a.Call); r != nil {
+			if out, ok := s4OnlyRows(ra, rb, r.S4Only); ok {
+				rb, forced, rulings[r.Why] = out, true, true
+				v.Notes = append(v.Notes, fmt.Sprintf("%s: format 4 also answers record %s, which format 1 lacks: %s", a.Call, r.S4Only.CID, r.Why))
 			}
 		}
 		if pol.Surface != "" && strings.Contains(a.Call, pol.Surface) {

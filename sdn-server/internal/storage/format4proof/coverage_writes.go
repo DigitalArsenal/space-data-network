@@ -297,21 +297,33 @@ func ommFrameObjects(b []byte) ([]Row, error) {
 		}
 		rec := b[4 : 4+size]
 		b = b[4+size:]
-		if len(rec) > 8 && int(binary.LittleEndian.Uint32(rec)) == len(rec)-4 {
-			rec = rec[4:] // a size-prefixed buffer
-		}
-		id, ok := ommNorad(rec)
+		id, ok := ommFrameNorad(rec)
 		if !ok {
 			return nil, fmt.Errorf("frame %d: not an OMM record", n)
 		}
-		ids = append(ids, int(id))
+		ids = append(ids, id)
 	}
 	sort.Ints(ids)
 	out := []Row{ValueRow("frames", strconv.Itoa(len(ids)))}
 	for _, id := range ids {
-		out = append(out, ValueRow("norad", strconv.Itoa(id)))
+		out = append(out, ommObjectRow(id))
 	}
 	return out, nil
+}
+
+// ommFrameNorad is the NORAD_CAT_ID of one OMM frame's record (bare or a
+// size-prefixed buffer).
+func ommFrameNorad(rec []byte) (int, bool) {
+	if len(rec) > 8 && int(binary.LittleEndian.Uint32(rec)) == len(rec)-4 {
+		rec = rec[4:] // a size-prefixed buffer
+	}
+	id, ok := ommNorad(rec)
+	return int(id), ok
+}
+
+// ommObjectRow is one object's row in ommFrameObjects.
+func ommObjectRow(norad int) Row {
+	return ValueRow("norad", strconv.Itoa(norad))
 }
 
 // typeReads are a type's counts and head, its newest records and its first
@@ -540,7 +552,7 @@ func (c *cov) xm(omm, mpe, iqc, cat [][]byte) []Shape {
 		// theirs: the XYZ table (U1, X01), the dangling tags (U2, X08), the
 		// KMF lane bytes (U5, X04) and the CAT lane bytes (U6, X02).
 		sh = xmSetAside(laneBytes(laneBytes(u2Rows(u1Rows(sh, ""), ""), "", c39U5, "KMF.fbs"), "", c39U6, "CAT.fbs"))
-		out = append(out, xmC43(xmC41(sh, storage.ComputeCID(x05Oversized(omm))), c.in))
+		out = append(out, xmC43(xmC41(sh, storage.ComputeCID(x05Oversized(omm))), c.in, x06Routed(omm)))
 	}
 	return out
 }
@@ -600,8 +612,12 @@ func xmC41(sh Shape, bigCID string) Shape {
 //   - G2: N7 on X15's "x/../local" feed, whose Delete restamped the lane on
 //     format 1 (the migration carries the tag time);
 //   - G3: N3 on the X01 cursor pages that both formats cut at their limit;
-//   - G4: format 1's empty answer to X09's SQL stream once X15's feeds exist.
-func xmC43(sh Shape, in *Inputs) Shape {
+//   - G4: format 1's empty answer to X09's SQL stream once X15's feeds exist;
+//   - G5 (C-44): X06's routed record (routed) in X01's six "OMM@local"
+//     reads, format 4 only: the relation's count, its sandboxed and raw
+//     streams and the epoch stream of source "local" (nearest, as_of,
+//     forward) hold it, format 1's live engine mirror does not.
+func xmC43(sh Shape, in *Inputs, routed []byte) Shape {
 	for i := range sh.Policy.Calls {
 		r := &sh.Policy.Calls[i]
 		if r.SameLane != nil && in != nil && r.SameLane.Batch == OMMLatestBatch {
@@ -625,6 +641,15 @@ func xmC43(sh Shape, in *Inputs) Shape {
 		add(CallRuling{Call: fmt.Sprintf("%sOMM.fbs %s/%s/", read, odd.Provider, odd.Source), Why: c41N7, Fields: []string{"max_updated", "max_created"}})
 	}
 	add(CallRuling{Call: "X09: SQL stream SELECT _data FROM OMM WHERE NORAD_CAT_ID = ?1", Why: c43G4, F1Empty: true})
+	// G5: XM's only calls naming "@local" are X01's six "OMM@local" reads
+	// (localReads). The record is a frame of the streams, an object of the
+	// epoch stream's object list (ommFrameObjects), and one more in the
+	// relation's COUNT(*) and the list's frames.
+	only := &OnlyRecord{CID: storage.ComputeCID(routed), Rows: []Row{digestRow(frameRow(routed))}, Counts: []string{"COUNT(*)", "frames"}}
+	if norad, ok := ommFrameNorad(routed); ok {
+		only.Rows = append(only.Rows, ommObjectRow(norad))
+	}
+	add(CallRuling{Call: "@local", Why: c44G5, S4Only: only})
 	return sh
 }
 
@@ -1033,13 +1058,19 @@ func x05Oversized(omm [][]byte) []byte {
 	return append(CloneOf("OMM", omm[52], 905, nil), make([]byte, 9<<20)...)
 }
 
+// x06Routed is X06's new OMM record, stored untagged through
+// StoreRoutedByProducer.
+func x06Routed(omm [][]byte) []byte {
+	return CloneOf("OMM", omm[60], 906, nil)
+}
+
 // X06: StoreRoutedByProducer (the storefront's DPM/PNM publication path: a
 // raw peer id, the producer token derived from it, C-13; no tags; a
 // signature): NEW, again (DUP), a held CID (COPY) and a type it holds none
 // of; the copies by that peer read back.
 func (c *cov) x06(omm [][]byte) []Shape {
 	const class = "X06"
-	n := CloneOf("OMM", omm[60], 906, nil)
+	n := x06Routed(omm)
 	pnm := buildPNM(9, storage.ComputeCID(omm[60]))
 	ids := cidsOf([][]byte{n, omm[61], pnm})
 	routed := func(name, schema string, rec []byte) Call {
