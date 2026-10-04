@@ -2,8 +2,10 @@
 // Space Data Network family of sites. The canonical copy lives in
 // spacedatanetwork.org docs/assets/ai-credits/; the other stack sites carry
 // verbatim copies. The panel sits in the lower right above any fixed footer
-// bar (in the page flow above the footer on phones), at 45% opacity, and takes
-// no clicks and no selection.
+// bar (in the page flow above the footer on phones), at 45% opacity, and no
+// part of it is selectable. Only the header takes a click: it starts
+// collapsed, and the header grows the panel to show the list, then collapses
+// it again.
 (function () {
   if (document.querySelector('.ai-credits')) return;
 
@@ -34,12 +36,21 @@
     '.ai-credits::before,.ai-credits::after{content:"";position:absolute;width:8px;height:8px;border:1px solid #fff}' +
     '.ai-credits::before{left:-1px;top:-1px;border-right:0;border-bottom:0}' +
     '.ai-credits::after{right:-1px;bottom:-1px;border-left:0;border-top:0}' +
+    // The header is the toggle: the one part that takes a click.
+    '.ai-credits .ai-credits-toggle{display:block;margin:0;padding:0;border:0;background:none;color:inherit;font:inherit;' +
+      'letter-spacing:inherit;text-align:left;cursor:pointer;pointer-events:auto;-webkit-tap-highlight-color:transparent}' +
+    '.ai-credits .ai-credits-toggle:focus-visible{outline:1px solid #fff;outline-offset:4px}' +
     '.ai-credits pre{margin:0;font-family:inherit;font-size:1em;font-weight:700;line-height:1.35;letter-spacing:inherit;white-space:pre;color:#fff}' +
+    // The list grows open from nothing and folds away again.
+    '.ai-credits .ai-credits-body{display:grid;grid-template-rows:0fr;transition:grid-template-rows .35s cubic-bezier(.2,.7,.2,1)}' +
+    '.ai-credits.is-open .ai-credits-body{grid-template-rows:1fr}' +
+    '.ai-credits .ai-credits-body>div{overflow:hidden;min-height:0}' +
     '.ai-credits hr{height:0;margin:8px 0 2px;border:0;border-top:1px dashed rgba(255,255,255,.55)}' +
     '.ai-credits dl{width:0;min-width:100%;margin:0}' +
     '.ai-credits dt{margin-top:6px;font-weight:700;color:#fff}' +
     '.ai-credits dt::before{content:"> "}' +
     '.ai-credits dd{margin:1px 0 0 2ch;color:rgba(255,255,255,.92)}' +
+    '@media (prefers-reduced-motion:reduce){.ai-credits .ai-credits-body{transition:none}}' +
     // Phones: no room for a fixed corner panel, so it sits in the page flow,
     // right-aligned, just above the footer.
     '@media (max-width:620px){.ai-credits{position:relative;right:auto;bottom:auto;display:block;font-size:8.5px;' +
@@ -53,10 +64,20 @@
     var box = document.createElement('aside');
     box.className = 'ai-credits';
     box.setAttribute('aria-label', 'AI used to build this project');
+    var toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'ai-credits-toggle';
+    toggle.setAttribute('aria-expanded', 'false');
     var pre = document.createElement('pre');
     pre.textContent = HEADER.join('\n');
-    box.appendChild(pre);
-    box.appendChild(document.createElement('hr'));
+    toggle.appendChild(pre);
+    box.appendChild(toggle);
+    var body = document.createElement('div');
+    body.className = 'ai-credits-body';
+    body.id = 'ai-credits-list';
+    toggle.setAttribute('aria-controls', body.id);
+    var inner = document.createElement('div');
+    inner.appendChild(document.createElement('hr'));
     var dl = document.createElement('dl');
     GROUPS.forEach(function (g) {
       var dt = document.createElement('dt');
@@ -66,7 +87,14 @@
       dl.appendChild(dt);
       dl.appendChild(dd);
     });
-    box.appendChild(dl);
+    inner.appendChild(dl);
+    body.appendChild(inner);
+    box.appendChild(body);
+    toggle.addEventListener('click', function () {
+      var open = !box.classList.contains('is-open');
+      box.classList.toggle('is-open', open);
+      toggle.setAttribute('aria-expanded', String(open));
+    });
     var footers = document.querySelectorAll('body > footer, body > .site-footer');
     var footer = footers[footers.length - 1];
     if (footer) footer.parentNode.insertBefore(box, footer); else document.body.appendChild(box);
