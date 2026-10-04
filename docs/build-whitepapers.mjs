@@ -5,8 +5,8 @@
  * The markdown under whitepapers/ at the repository root is the authoritative
  * copy. This writes one page per paper to docs/whitepapers/ and copies the
  * figures beside them, so the published site never holds a second, divergent
- * copy of the text. Same rules as build-docs.mjs: `marked` from the sdn-js
- * workspace, zero external origin. TeX math ($…$ inline, $$…$$ on its own
+ * copy of the text. `marked` comes from the sdn-js workspace; zero external
+ * origin. TeX math ($…$ inline, $$…$$ on its own
  * lines) is typeset here with KaTeX, and its stylesheet and fonts are copied
  * beside the pages, so readers get finished math with no script and no CDN.
  *
@@ -105,9 +105,9 @@ function page({ title, description, body, base, mdName, math }) {
   const nav = [
     ['onboarding.html', 'Get started'],
     ['catalog.html', 'Catalog'],
+    ['collision-avoidance.html', 'CA'],
     ['whitepapers.html', 'Whitepapers'],
     ['index.html#download', 'Download'],
-    ['server-overview.html', 'Docs'],
     ['index.html#stack', 'Stack'],
   ];
   const links = (indent) => nav.map(([h, t]) => `${indent}<a href="${u(h)}"${h === 'whitepapers.html' ? ' aria-current="page"' : ''}>${t}</a>`).join('\n')
@@ -162,7 +162,6 @@ ${body}
         <a href="${u('collision-avoidance.html')}">Collision avoidance</a>
         <a href="${u('whitepapers.html')}">Whitepapers</a>
         <a href="${u('style-guide.html')}">Style guide</a>
-        <a href="${u('server-overview.html')}">Docs</a>
         <a href="https://github.com/DigitalArsenal/space-data-network" target="_blank" rel="noopener">GitHub</a>
         <a href="mailto:tj@edgesource.com">tj@edgesource.com</a>
       </nav>

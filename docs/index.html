@@ -17,6 +17,7 @@
 <script defer src="assets/sdn-stack-nav/sdn-stack-nav.js" data-nav-style-url="/assets/vendor/sdn-stack-nav/1.0.0/sdn-stack-nav.36a36359ce18322185e9ff179f88175bab67d5ad84a14d9c08a54f2ff27267e7.css" data-nav-style-integrity="sha384-c4M8Fg+kYaeOYYtJVr7jJsde24IhSWkWaRyAOHEZU9jozhRck089aw+mnHwxymds"></script>
 <!-- SDN_CONSUMER_ASSETS_END -->
   <link rel="stylesheet" href="site.css">
+  <link rel="stylesheet" href="media/reel/reel.css">
   <style>
     :root {
       --sdn-stack-footer-height: 40px;
@@ -80,9 +81,9 @@
       <nav class="nav-links" aria-label="Site">
         <a href="onboarding.html">Get started</a>
         <a href="catalog.html">Catalog</a>
+        <a href="collision-avoidance.html">CA</a>
         <a href="whitepapers.html">Whitepapers</a>
         <a href="#download">Download</a>
-        <a href="server-overview.html">Docs</a>
         <a href="#stack">Stack</a>
         <a href="https://github.com/DigitalArsenal/space-data-network" target="_blank" rel="noopener">GitHub</a>
       </nav>
@@ -91,9 +92,9 @@
         <div class="menu-panel">
           <a href="onboarding.html">Get started</a>
           <a href="catalog.html">Catalog</a>
+          <a href="collision-avoidance.html">CA</a>
           <a href="whitepapers.html">Whitepapers</a>
           <a href="#download">Download</a>
-          <a href="server-overview.html">Docs</a>
           <a href="#stack">Stack</a>
           <a href="https://github.com/DigitalArsenal/space-data-network" target="_blank" rel="noopener">GitHub</a>
         </div>
@@ -109,30 +110,10 @@
       <p class="lede">An open, decentralized, censorship-resistant network for space data, software, and services.</p>
       <figure class="reel-frame" id="showreel">
         <div class="reel-stage">
-          <video id="reelVideo" muted playsinline preload="auto" data-poster="media/showreel/sdn-showreel-poster.webp" aria-label="Space Data Network showreel, 45 seconds, no sound">
+          <video muted playsinline preload="auto" data-poster="media/showreel/sdn-showreel-poster.webp" aria-label="Space Data Network showreel, 45 seconds, no sound">
             <source src="media/showreel/sdn-showreel.webm" type='video/webm; codecs="av01.0.08M.08"'>
             <source src="media/showreel/sdn-showreel.mp4" type="video/mp4">
           </video>
-          <button class="reel-big-play" type="button" aria-label="Play the showreel">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg>
-          </button>
-          <button class="reel-again" type="button">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.4-5.7"/><path d="M4 4v5h5"/></svg>
-            Play again
-          </button>
-          <div class="reel-bar">
-            <div class="reel-progress" role="slider" tabindex="0" aria-label="Seek" aria-valuemin="0" aria-valuemax="45" aria-valuenow="0" aria-valuetext="0:00 of 0:45"><span></span><b class="reel-knob"></b></div>
-            <div class="reel-controls">
-              <button class="reel-btn reel-play" type="button" aria-label="Play the showreel" aria-pressed="false">
-                <svg class="i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg>
-                <svg class="i-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z" fill="currentColor"/></svg>
-              </button>
-              <button class="reel-btn reel-fs" type="button" aria-label="Full screen">
-                <svg class="i-enter" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
-                <svg class="i-exit" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></svg>
-              </button>
-            </div>
-          </div>
         </div>
       </figure>
       <p class="lede">Digitally signed and optionally encrypted. <strong>Built on open standards, software, and algorithms.</strong></p>
@@ -414,7 +395,6 @@
         <a href="collision-avoidance.html">Collision avoidance</a>
         <a href="whitepapers.html">Whitepapers</a>
         <a href="style-guide.html">Style guide</a>
-        <a href="server-overview.html">Docs</a>
         <a href="onboarding.html#security-review">IT spec sheet</a>
         <a href="https://github.com/DigitalArsenal/space-data-network" target="_blank" rel="noopener">GitHub</a>
         <a href="mailto:tj@edgesource.com">tj@edgesource.com</a>
@@ -423,7 +403,7 @@
     </div>
   </footer>
 
-  <script src="media/showreel/reel.js" defer></script>
+  <script src="media/reel/reel.js" defer></script>
   <script src="earth.js"></script>
   <script src="site.js"></script>
 </body>
