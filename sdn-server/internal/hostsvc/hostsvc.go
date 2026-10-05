@@ -12,7 +12,7 @@
 // WHY A PROBE AND NOT A CONFIG VALUE. Every fact here is READ from the running
 // system, never configured and never assumed:
 //
-//   - the UNIT is resolved from THIS process's own cgroup (/proc/self/cgroup),
+//   - the UNIT is resolved from THIS process's own cgroup (/proc/<pid>/cgroup),
 //     so the daemon can only ever describe — and later control — the unit it is
 //     actually running under. A configured unit name would let a config edit
 //     point the control surface at some other unit on the box.
@@ -81,8 +81,13 @@ type State struct {
 	// "no", …). It is the difference between a STOP that sticks and a STOP
 	// systemd immediately undoes, so the operator is told which one they have.
 	RestartPolicy string
+	// MainPID is systemd's MainPID for the unit when it was read: the
+	// process the unit runs. Probe and ProbePID only report a unit whose
+	// MainPID is the probed process; Refresh reports whatever it is now (0
+	// once the unit has stopped).
+	MainPID int
 	// Detected is true only when Supervisor != "" — i.e. a unit was resolved
-	// and its MainPID matched this process.
+	// and its MainPID matched the probed process.
 	Detected bool
 }
 
@@ -91,7 +96,24 @@ type State struct {
 // "unknown" and "absent" have the same consequence here and a caller that had to
 // distinguish them would be tempted to treat one of them as permission.
 func Probe(ctx context.Context) State {
-	unit := unitFromCgroup(readSelfCgroup())
+	return ProbePID(ctx, os.Getpid())
+}
+
+// ProbePID reads the supervisor state of the process pid by the same proof
+// Probe applies to this one: the unit is resolved from the kernel's own
+// accounting of THAT process (/proc/<pid>/cgroup) and confirmed by systemd's
+// MainPID for the unit being that pid. Nothing about the unit comes from a
+// request or a config file.
+//
+// The update helper is its one caller for another process. The helper runs in
+// its OWN transient unit (update.LaunchSelfUpgrade), so Probe there would find
+// the helper's unit, not the daemon's: the helper probes the daemon's pid, which
+// the daemon itself reported over the token-authenticated loopback handshake.
+func ProbePID(ctx context.Context, pid int) State {
+	if pid <= 0 {
+		return State{}
+	}
+	unit := unitFromCgroup(readCgroup(pid))
 	if unit == "" {
 		return State{}
 	}
@@ -101,14 +123,38 @@ func Probe(ctx context.Context) State {
 		return State{}
 	}
 
-	// The unit must be OURS. systemd reports MainPID for the unit; for a
-	// Type=simple daemon that is this process. Anything else and we are not
-	// looking at ourselves.
+	// The unit must be the probed process's. systemd reports MainPID for the
+	// unit; for a Type=simple daemon that is the process itself. Anything else
+	// and we are not looking at it.
 	mainPID, err := strconv.Atoi(strings.TrimSpace(props["MainPID"]))
-	if err != nil || mainPID != os.Getpid() {
+	if err != nil || mainPID != pid {
 		return State{}
 	}
 
+	return stateFrom(unit, props, mainPID)
+}
+
+// Refresh re-reads a unit that Probe or ProbePID proved, after the lifecycle
+// verbs below have acted on it: ActiveState, SubState and MainPID as systemd
+// reports them now. MainPID is no longer required to match anything — a
+// stopped unit has none, a restarted one has a new one — but the unit itself is
+// still only ever the proven one. A unit that cannot be read reports nothing.
+func Refresh(ctx context.Context, state State) State {
+	if !state.Detected || state.Supervisor != "systemd" || state.Unit == "" {
+		return State{}
+	}
+	props, err := showUnit(ctx, state.Unit)
+	if err != nil {
+		return State{}
+	}
+	mainPID, err := strconv.Atoi(strings.TrimSpace(props["MainPID"]))
+	if err != nil {
+		return State{}
+	}
+	return stateFrom(state.Unit, props, mainPID)
+}
+
+func stateFrom(unit string, props map[string]string, mainPID int) State {
 	return State{
 		Supervisor:    "systemd",
 		Unit:          unit,
@@ -116,14 +162,15 @@ func Probe(ctx context.Context) State {
 		SubState:      props["SubState"],
 		Autostart:     props["UnitFileState"],
 		RestartPolicy: props["Restart"],
+		MainPID:       mainPID,
 		Detected:      true,
 	}
 }
 
-// readSelfCgroup returns /proc/self/cgroup's contents, or "" on any host that
+// readCgroup returns /proc/<pid>/cgroup's contents, or "" on any host that
 // does not have it (macOS, and any environment where procfs is not mounted).
-func readSelfCgroup() string {
-	raw, err := os.ReadFile("/proc/self/cgroup")
+func readCgroup(pid int) string {
+	raw, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/cgroup")
 	if err != nil {
 		return ""
 	}

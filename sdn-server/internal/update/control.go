@@ -47,13 +47,6 @@ type controlShutdownResponse struct {
 	Supervised bool `json:"supervised"`
 }
 
-// isSupervisedBySystemd reports whether the CURRENT process was started by
-// systemd (INVOCATION_ID is set for every unit-managed process since systemd
-// 232, system and user scope alike; nothing else sets it).
-func isSupervisedBySystemd() bool {
-	return strings.TrimSpace(os.Getenv("INVOCATION_ID")) != ""
-}
-
 func NewControlHandler(opts ControlHandlerOptions) http.Handler {
 	root := filepath.Clean(strings.TrimSpace(opts.BundleRoot))
 	return &controlHandler{
@@ -117,7 +110,7 @@ func (h *controlHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		PID:         os.Getpid(),
 		BundleRoot:  h.bundleRoot,
 		RestartArgv: os.Args,
-		Supervised:  isSupervisedBySystemd(),
+		Supervised:  SupervisedBySystemd(),
 	})
 	if h.shutdown != nil {
 		go h.shutdown()

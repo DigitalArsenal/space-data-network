@@ -123,19 +123,34 @@ type RollbackResult struct {
 	Slots []StateSlot
 }
 
-// Apply verifies a staged update and atomically swaps the bundle contents,
-// keeping the previous payload under updates/rollback/<update_id>/. On any
-// swap failure the previous contents are restored and the staged payload is
-// moved to updates/failed/<update_id>/.
-func Apply(paths Paths, opts ApplyOptions) (*ApplyResult, error) {
-	// Self-heal first: if a previous apply crashed between the Kubo phase
-	// committing and the SDN/main phase (or its own cleanup) completing,
-	// undo the Kubo phase before doing anything else so every subsequent
-	// step sees a consistent, fully-rolled-back bundle root.
-	if _, err := RecoverPendingApply(paths); err != nil {
-		return nil, fmt.Errorf("recover pending update apply: %w", err)
-	}
+// Prepared is a staged update made ready to install while the daemon still
+// serves: its payload verified against the trust roots, checked by the
+// store-format guard, extracted into updates/incoming/<update-id>/ and
+// validated (artifact checksums, protected entries, install-critical trees,
+// module hashes). ApplyPrepared installs it with renames only.
+//
+// WHY THE SPLIT. Apply used to extract and validate AFTER the update helper
+// had stopped the daemon, so every second of decompressing and hashing a
+// bundle was a second the node was down — and the longer that window, the
+// likelier a supervisor respawned the old binary in the middle of it. Nothing
+// in preparation touches the running bundle, so none of it has to wait for the
+// daemon to stop. Discard removes the extraction; call it when done.
+type Prepared struct {
+	// Candidate is the verified staged update.
+	Candidate *StagedUpdate
+	// Sequence is the installed sequence the candidate was verified against.
+	// ApplyPrepared refuses when the install has moved since.
+	Sequence int64
 
+	dir     string // updates/incoming/<update-id>[.dryrun]: the extraction
+	root    string // the bundle root inside dir
+	modules []verifiedModuleTarget
+}
+
+// Prepare verifies, guards, extracts and validates a staged update without
+// changing the running bundle. Empty opts.UpdateID picks the verified
+// candidate with the highest sequence.
+func Prepare(paths Paths, opts ApplyOptions) (*Prepared, error) {
 	roots, err := LoadTrustRoots(paths)
 	if err != nil {
 		return nil, err
@@ -155,26 +170,108 @@ func Apply(paths Paths, opts ApplyOptions) (*ApplyResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	// THE STORE-FORMAT GUARD (store_format_guard.go) runs before the dry run
-	// answers, before the ledger line and before anything is extracted: a
-	// payload whose binary cannot open the store on disk is refused with the
-	// install untouched.
+	// THE STORE-FORMAT GUARD (store_format_guard.go) runs before anything is
+	// extracted: a payload whose binary cannot open the store on disk is
+	// refused with nothing written. ApplyPrepared runs it again on the
+	// extracted tree, after the daemon has stopped.
 	if err := guardCandidateStoreFormat(opts.StoreRoot, candidate); err != nil {
 		return nil, err
 	}
+
+	dir := filepath.Join(paths.Incoming, candidate.UpdateID)
+	if opts.DryRun {
+		// Its own directory, so a dry run never clobbers a preparation a
+		// helper is about to install.
+		dir += ".dryrun"
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		return nil, err
+	}
+	prepared := &Prepared{Candidate: candidate, Sequence: state.Sequence, dir: dir}
+	if err := prepared.extract(paths); err != nil {
+		prepared.Discard()
+		return nil, err
+	}
+	return prepared, nil
+}
+
+// extract unpacks the candidate into p.dir and validates what came out.
+func (p *Prepared) extract(paths Paths) error {
+	candidate := p.Candidate
+	if err := extractBundleArchive(candidate.BundleFile, candidate.Manifest.Bundle.Format, p.dir); err != nil {
+		return fmt.Errorf("extract update bundle: %w", err)
+	}
+	root, err := locateBundleRoot(p.dir)
+	if err != nil {
+		return err
+	}
+	if err := validateIncomingBundle(root, candidate.Result.Version); err != nil {
+		return err
+	}
+	if candidate.Manifest.IsModuleUpdate() {
+		// A module-targeted update installs only the artifacts its manifest
+		// declares, and retires nothing.
+		modules, err := verifyModuleTargets(root, candidate.Manifest.Modules)
+		if err != nil {
+			return err
+		}
+		p.modules = modules
+	} else if err := assertPayloadKeepsInstallCriticalTrees(paths, root); err != nil {
+		// A full-bundle payload REPLACES the payload trees, so everything it
+		// omits is retired: it must not amputate an install-critical tree.
+		return err
+	}
+	p.root = root
+	return nil
+}
+
+// Discard removes the extraction. Safe on a nil receiver and after a
+// successful ApplyPrepared (which renamed the extracted entries away).
+func (p *Prepared) Discard() {
+	if p == nil || p.dir == "" {
+		return
+	}
+	_ = os.RemoveAll(p.dir)
+}
+
+// guardStoreFormat is the store-format guard against the EXTRACTED tree: the
+// daemon binary the swap is about to install, read without running it.
+func (p *Prepared) guardStoreFormat(storeRoot string) error {
+	store, check := storeToGuard("apply", p.Candidate.UpdateID, storeRoot)
+	if !check {
+		return nil
+	}
+	return guardStoreFormat("apply", p.Candidate.UpdateID, p.Candidate.Result.Version, store, func() (slotStamp, bool, error) {
+		s, err := stampOfDir(p.root)
+		if err != nil {
+			return s, true, err
+		}
+		// A module-targeted update changes the daemon binary only if it
+		// ships one.
+		if p.Candidate.Manifest.IsModuleUpdate() && len(s.Binaries) == 0 {
+			return s, false, nil
+		}
+		return s, true, nil
+	})
+}
+
+// Apply verifies a staged update and atomically swaps the bundle contents,
+// keeping the previous payload under updates/rollback/<update_id>/. On any
+// swap failure the previous contents are restored and the staged payload is
+// moved to updates/failed/<update_id>/. It is Prepare then ApplyPrepared, for
+// callers with no daemon to stop in between.
+func Apply(paths Paths, opts ApplyOptions) (*ApplyResult, error) {
+	prepared, err := Prepare(paths, opts)
+	if err != nil {
+		return nil, err
+	}
+	defer prepared.Discard()
 	if opts.DryRun {
 		// A DRY RUN THAT CHECKS NOTHING IS A GREEN LIGHT FOR A DOOMED APPLY.
-		// This returned before the bundle was even extracted, so the payload
-		// guard below never ran: dry-running the very payload that amputates
-		// runtime/ reported success, which is the one question an operator
-		// runs a dry run to answer.
-		//
-		// Inspect for real — extract, validate, guard — then throw the
-		// extraction away. Nothing is recorded and nothing is swapped, so this
-		// stays a dry run; it just now means something.
-		if err := inspectCandidatePayload(paths, candidate); err != nil {
-			return nil, err
-		}
+		// Prepare inspected for real — extract, validate, guard — and the
+		// extraction is thrown away. Nothing is recorded and nothing is
+		// swapped, so this stays a dry run; it just means something.
+		candidate := prepared.Candidate
 		return &ApplyResult{
 			UpdateID: candidate.UpdateID,
 			Version:  candidate.Result.Version,
@@ -182,6 +279,41 @@ func Apply(paths Paths, opts ApplyOptions) (*ApplyResult, error) {
 			Channel:  candidate.Result.Channel,
 			DryRun:   true,
 		}, nil
+	}
+	return ApplyPrepared(paths, prepared, opts)
+}
+
+// ApplyPrepared installs a Prepared update. Everything it does to the bundle
+// is a rename: the payload was extracted and validated by Prepare. The caller
+// must have stopped the daemon that runs from this bundle (the update helper
+// waits for its pid to exit and holds the store lock).
+func ApplyPrepared(paths Paths, prepared *Prepared, opts ApplyOptions) (*ApplyResult, error) {
+	if prepared == nil || prepared.root == "" {
+		return nil, errors.New("update: nothing prepared to apply")
+	}
+	candidate := prepared.Candidate
+
+	// Self-heal first: if a previous apply crashed between the Kubo phase
+	// committing and the SDN/main phase (or its own cleanup) completing,
+	// undo the Kubo phase before doing anything else so every subsequent
+	// step sees a consistent, fully-rolled-back bundle root.
+	if _, err := RecoverPendingApply(paths); err != nil {
+		return nil, fmt.Errorf("recover pending update apply: %w", err)
+	}
+	state, err := LoadState(paths)
+	if err != nil {
+		return nil, err
+	}
+	if state.Sequence != prepared.Sequence {
+		return nil, fmt.Errorf("update %s was prepared against installed sequence %d, but the install is now at %d: prepare it again",
+			candidate.UpdateID, prepared.Sequence, state.Sequence)
+	}
+	// THE STORE-FORMAT GUARD AGAIN, now that the daemon has stopped. The guard
+	// Prepare ran saw the store while the old daemon could still write to it,
+	// and a daemon in the middle of a migration can raise the store's format
+	// after that read. This read is the one that counts.
+	if err := prepared.guardStoreFormat(opts.StoreRoot); err != nil {
+		return nil, err
 	}
 
 	// LEDGER BEFORE MUTATION. This is the last point at which nothing has been
@@ -205,34 +337,9 @@ func Apply(paths Paths, opts ApplyOptions) (*ApplyResult, error) {
 		return nil, err
 	}
 
-	incomingDir := filepath.Join(paths.Incoming, candidate.UpdateID)
-	if err := os.RemoveAll(incomingDir); err != nil {
-		return nil, err
-	}
-	if err := extractBundleArchive(candidate.BundleFile, candidate.Manifest.Bundle.Format, incomingDir); err != nil {
-		return nil, fmt.Errorf("extract update bundle: %w", err)
-	}
-	defer os.RemoveAll(incomingDir)
-
-	newRoot, err := locateBundleRoot(incomingDir)
-	if err != nil {
-		return nil, err
-	}
-	if err := validateIncomingBundle(newRoot, candidate.Result.Version); err != nil {
-		return nil, err
-	}
-
+	newRoot := prepared.root
 	rollbackDir := filepath.Join(paths.Rollback, candidate.UpdateID)
 	moduleUpdate := candidate.Manifest.IsModuleUpdate()
-	// A full-bundle payload REPLACES the payload trees, so everything it
-	// omits is retired. A module-targeted update retires nothing (it only
-	// installs the artifacts its manifest declares), which is why the guard
-	// is scoped to the full-bundle paths below.
-	if !moduleUpdate {
-		if err := assertPayloadKeepsInstallCriticalTrees(paths, newRoot); err != nil {
-			return nil, err
-		}
-	}
 	var twoPhase bool
 	var swapErr error
 	switch {
@@ -240,7 +347,7 @@ func Apply(paths Paths, opts ApplyOptions) (*ApplyResult, error) {
 		// G4 targeted swap: install only the declared module artifacts.
 		// Never runs the Kubo two-phase path — that path exists for
 		// full-bundle updates that may ship a new runtime/kubo/ subtree.
-		swapErr = applyModuleTargets(paths, newRoot, rollbackDir, candidate.Manifest.Modules)
+		swapErr = installModuleTargets(paths, rollbackDir, prepared.modules)
 	case hasSeparableKuboSubtree(newRoot):
 		twoPhase = true
 		if err := os.RemoveAll(rollbackDir); err != nil {
@@ -938,31 +1045,4 @@ func payloadAmputationError(tree string, missing []string) error {
 	return fmt.Errorf(
 		"update bundle %s but this install has them: applying it would retire them to the rollback directory and never reinstall them, leaving the install unable to run or update. A full-bundle update must ship every install-critical tree (%s) with its contents; a partial payload must be published as a module-targeted update instead",
 		what, strings.Join(installCriticalPayloadTrees, ", "))
-}
-
-// inspectCandidatePayload runs the checks an apply would run, without changing
-// anything: extract the bundle to a scratch directory, validate it, and refuse
-// a payload that would amputate an install-critical tree. Used by the dry-run
-// path so it answers the question it is asked.
-func inspectCandidatePayload(paths Paths, candidate *StagedUpdate) error {
-	scratch := filepath.Join(paths.Incoming, candidate.UpdateID+".dryrun")
-	if err := os.RemoveAll(scratch); err != nil {
-		return err
-	}
-	defer os.RemoveAll(scratch)
-
-	if err := extractBundleArchive(candidate.BundleFile, candidate.Manifest.Bundle.Format, scratch); err != nil {
-		return fmt.Errorf("extract update bundle: %w", err)
-	}
-	newRoot, err := locateBundleRoot(scratch)
-	if err != nil {
-		return err
-	}
-	if err := validateIncomingBundle(newRoot, candidate.Result.Version); err != nil {
-		return err
-	}
-	if candidate.Manifest.IsModuleUpdate() {
-		return nil
-	}
-	return assertPayloadKeepsInstallCriticalTrees(paths, newRoot)
 }
