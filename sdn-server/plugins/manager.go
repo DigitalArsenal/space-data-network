@@ -745,6 +745,21 @@ func cronFirstRunDelay(cp CronProvider, method string, interval time.Duration) t
 	return delay
 }
 
+// scheduledRunKey marks the context of a scheduled cron run, as opposed to an
+// operator's run-now.
+type scheduledRunKey struct{}
+
+// WithScheduledRun marks ctx as a scheduled cron run.
+func WithScheduledRun(ctx context.Context) context.Context {
+	return context.WithValue(ctx, scheduledRunKey{}, true)
+}
+
+// ScheduledRun reports whether ctx belongs to a scheduled cron run.
+func ScheduledRun(ctx context.Context) bool {
+	scheduled, _ := ctx.Value(scheduledRunKey{}).(bool)
+	return scheduled
+}
+
 // runScheduledCronMethod runs one scheduled invocation and records it.
 func (m *Manager) runScheduledCronMethod(ctx context.Context, pluginID, method string, cp CronProvider) {
 	run := RuntimeModuleScheduleRun{
@@ -754,7 +769,7 @@ func (m *Manager) runScheduledCronMethod(ctx context.Context, pluginID, method s
 		StartedAt: time.Now().UTC().Format(time.RFC3339),
 		Status:    "running",
 	}
-	if output, err := cp.InvokeCron(ctx, method, nil); err != nil {
+	if output, err := cp.InvokeCron(WithScheduledRun(ctx), method, nil); err != nil {
 		run.Status = "error"
 		run.Message = err.Error()
 		log.Debugf("Plugin %q cron %q: %v", pluginID, method, err)
