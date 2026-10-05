@@ -1,5 +1,5 @@
-// Hash: c2d6d170c1ae3da153dd06d48efa54c95fb0d727b7a6365111220103cff480b0
-// Version: 1.208.2
+// Hash: ddc1e3e0a40da220c6a47f09199083e221b31601fcb90d05473d71db2eb80821
+// Version: 1.208.4
 // -----------------------------------END_HEADER
 /// Weather Forecast Field (WXF)
 /// Description
@@ -32,7 +32,11 @@ enum wxfModelClass : byte {
   /// Objective analysis at the initialisation time (lead 0).
   Analysis,
   /// A class not covered above; MODEL_ID identifies the producer's model.
-  Other
+  Other,
+  /// Empirical climatological model evaluated at VALID_TIME_MS from
+  /// geophysical indices, with no forecast run (pair with TIME_BASIS
+  /// ValidTimeOnly).
+  EmpiricalClimatology
 }
 
 /// Which realisation of an ensemble the field represents. Append new values
@@ -134,7 +138,11 @@ enum wxfVariable : byte {
   /// Total column water vapour, kg/m^2.
   TotalColumnWaterVapour,
   /// Surface pressure, pascal.
-  SurfacePressure
+  SurfacePressure,
+  /// Geopotential height, geopotential metres (gpm): the height a producer
+  /// such as GFS publishes on pressure levels and at the tropopause. Distinct
+  /// from Geopotential (m^2/s^2); a consumer never relabels one as the other.
+  GeopotentialHeight
 }
 
 /// Vertical coordinate of the field. Append new values only; never reorder or
@@ -151,7 +159,14 @@ enum wxfLevelKind : byte {
   /// Whole atmospheric column; LEVEL_VALUE is unused.
   EntireAtmosphere,
   /// Top of atmosphere; LEVEL_VALUE is unused.
-  TopOfAtmosphere
+  TopOfAtmosphere,
+  /// The producer's diagnosed tropopause; LEVEL_VALUE is unused. Its height is
+  /// a GeopotentialHeight field at this level, never implied by a pressure.
+  Tropopause,
+  /// Geometric height above the reference ellipsoid; LEVEL_VALUE in metres.
+  /// For fields defined at altitude rather than on pressure levels (for
+  /// example the upper atmosphere).
+  HeightAboveEllipsoid
 }
 
 /// Temporal character of the value in each cell. Append new values only;

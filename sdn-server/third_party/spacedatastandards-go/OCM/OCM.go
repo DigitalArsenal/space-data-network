@@ -161,6 +161,7 @@ func (rcv *OCM) MutateStateStepSize(n float64) bool {
 /// Number of components per state vector.
 /// 6 = position + velocity (X, Y, Z, X_DOT, Y_DOT, Z_DOT)
 /// 9 = position + velocity + acceleration (adds X_DDOT, Y_DDOT, Z_DDOT)
+/// 6 or 7 for the element sets named by TRAJ_TYPE.
 func (rcv *OCM) STATE_VECTOR_SIZE() byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -176,6 +177,7 @@ func (rcv *OCM) StateVectorSize() byte {
 /// Number of components per state vector.
 /// 6 = position + velocity (X, Y, Z, X_DOT, Y_DOT, Z_DOT)
 /// 9 = position + velocity + acceleration (adds X_DDOT, Y_DDOT, Z_DDOT)
+/// 6 or 7 for the element sets named by TRAJ_TYPE.
 func (rcv *OCM) MutateSTATE_VECTOR_SIZE(n byte) bool {
 	return rcv._tab.MutateByteSlot(14, n)
 }
@@ -188,6 +190,7 @@ func (rcv *OCM) MutateStateVectorSize(n byte) bool {
 /// Layout: [X0, Y0, Z0, X_DOT0, Y_DOT0, Z_DOT0, X1, Y1, Z1, ...]
 /// Time reconstruction: epoch[i] = METADATA.START_TIME + (i * STATE_STEP_SIZE)
 /// Length must be divisible by STATE_VECTOR_SIZE.
+/// Units: km, km/s and km/s**2, in TRAJ_REF_FRAME about CENTER_NAME.
 func (rcv *OCM) STATE_DATA(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -217,6 +220,7 @@ func (rcv *OCM) StateDataLength() int {
 /// Layout: [X0, Y0, Z0, X_DOT0, Y_DOT0, Z_DOT0, X1, Y1, Z1, ...]
 /// Time reconstruction: epoch[i] = METADATA.START_TIME + (i * STATE_STEP_SIZE)
 /// Length must be divisible by STATE_VECTOR_SIZE.
+/// Units: km, km/s and km/s**2, in TRAJ_REF_FRAME about CENTER_NAME.
 func (rcv *OCM) MutateSTATE_DATA(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -473,8 +477,154 @@ func (rcv *OCM) UserDefinedParametersLength() int {
 }
 
 /// User-defined parameters and supplemental comments.
+/// Origin of TRAJ_REF_FRAME (EARTH, MOON, ...) (CCSDS 502.0-B-3 CENTER_NAME).
+func (rcv *OCM) CENTER_NAME() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
+func (rcv *OCM) CenterName() []byte {
+	return rcv.CENTER_NAME()
+}
+
+/// Origin of TRAJ_REF_FRAME (EARTH, MOON, ...) (CCSDS 502.0-B-3 CENTER_NAME).
+/// Reference frame of STATE_DATA and the polynomial records
+/// (CCSDS 502.0-B-3 TRAJ_REF_FRAME).
+func (rcv *OCM) TRAJ_REF_FRAME(obj *RFM) *RFM {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
+	if o != 0 {
+		x := rcv._tab.Indirect(o + rcv._tab.Pos)
+		if obj == nil {
+			obj = new(RFM)
+		}
+		obj.Init(rcv._tab.Bytes, x)
+		return obj
+	}
+	return nil
+}
+
+func (rcv *OCM) TrajRefFrame(obj *RFM) *RFM {
+	return rcv.TRAJ_REF_FRAME(obj)
+}
+
+/// Reference frame of STATE_DATA and the polynomial records
+/// (CCSDS 502.0-B-3 TRAJ_REF_FRAME).
+/// Epoch of TRAJ_REF_FRAME when it is not intrinsic to the frame
+/// (CCSDS 502.0-B-3 TRAJ_FRAME_EPOCH).
+func (rcv *OCM) TRAJ_FRAME_EPOCH() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
+func (rcv *OCM) TrajFrameEpoch() []byte {
+	return rcv.TRAJ_FRAME_EPOCH()
+}
+
+/// Epoch of TRAJ_REF_FRAME when it is not intrinsic to the frame
+/// (CCSDS 502.0-B-3 TRAJ_FRAME_EPOCH).
+/// Reference frame of COVARIANCE_DATA (CCSDS 502.0-B-3 COV_REF_FRAME).
+func (rcv *OCM) COV_REF_FRAME(obj *RFM) *RFM {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
+	if o != 0 {
+		x := rcv._tab.Indirect(o + rcv._tab.Pos)
+		if obj == nil {
+			obj = new(RFM)
+		}
+		obj.Init(rcv._tab.Bytes, x)
+		return obj
+	}
+	return nil
+}
+
+func (rcv *OCM) CovRefFrame(obj *RFM) *RFM {
+	return rcv.COV_REF_FRAME(obj)
+}
+
+/// Reference frame of COVARIANCE_DATA (CCSDS 502.0-B-3 COV_REF_FRAME).
+/// Orbit revolution number at the first state (CCSDS 502.0-B-3 ORB_REVNUM).
+func (rcv *OCM) ORB_REVNUM() uint32 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
+	if o != 0 {
+		return rcv._tab.GetUint32(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *OCM) OrbRevnum() uint32 {
+	return rcv.ORB_REVNUM()
+}
+
+/// Orbit revolution number at the first state (CCSDS 502.0-B-3 ORB_REVNUM).
+func (rcv *OCM) MutateORB_REVNUM(n uint32) bool {
+	return rcv._tab.MutateUint32Slot(42, n)
+}
+
+func (rcv *OCM) MutateOrbRevnum(n uint32) bool {
+	return rcv.MutateORB_REVNUM(n)
+}
+
+/// For element sets: OSCULATING, or the mean-element theory used (BROUWER,
+/// KOZAI, ...) (CCSDS 502.0-B-3 ORB_AVERAGING). Absent means OSCULATING.
+func (rcv *OCM) ORB_AVERAGING() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
+func (rcv *OCM) OrbAveraging() []byte {
+	return rcv.ORB_AVERAGING()
+}
+
+/// For element sets: OSCULATING, or the mean-element theory used (BROUWER,
+/// KOZAI, ...) (CCSDS 502.0-B-3 ORB_AVERAGING). Absent means OSCULATING.
+/// Whether COVARIANCE_DATA's coverage was measured against independent
+/// reference states.
+func (rcv *OCM) COV_CALIBRATION() covarianceCalibration {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
+	if o != 0 {
+		return covarianceCalibration(rcv._tab.GetInt8(o + rcv._tab.Pos))
+	}
+	return 0
+}
+
+func (rcv *OCM) CovCalibration() covarianceCalibration {
+	return rcv.COV_CALIBRATION()
+}
+
+/// Whether COVARIANCE_DATA's coverage was measured against independent
+/// reference states.
+func (rcv *OCM) MutateCOV_CALIBRATION(n covarianceCalibration) bool {
+	return rcv._tab.MutateInt8Slot(46, int8(n))
+}
+
+func (rcv *OCM) MutateCovCalibration(n covarianceCalibration) bool {
+	return rcv.MutateCOV_CALIBRATION(n)
+}
+
+/// Identifier of that calibration evidence (a report or record).
+func (rcv *OCM) COV_CALIBRATION_REFERENCE() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
+func (rcv *OCM) CovCalibrationReference() []byte {
+	return rcv.COV_CALIBRATION_REFERENCE()
+}
+
+/// Identifier of that calibration evidence (a report or record).
 func OCMStart(builder *flatbuffers.Builder) {
-	builder.StartObject(15)
+	builder.StartObject(23)
 }
 func OCMAddHEADER(builder *flatbuffers.Builder, HEADER flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(HEADER), 0)
@@ -601,6 +751,54 @@ func OCMStartUSER_DEFINED_PARAMETERSVector(builder *flatbuffers.Builder, numElem
 }
 func OCMStartUserDefinedParametersVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return OCMStartUSER_DEFINED_PARAMETERSVector(builder, numElems)
+}
+func OCMAddCENTER_NAME(builder *flatbuffers.Builder, CENTER_NAME flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(15, flatbuffers.UOffsetT(CENTER_NAME), 0)
+}
+func OCMAddCenterName(builder *flatbuffers.Builder, CENTER_NAME flatbuffers.UOffsetT) {
+	OCMAddCENTER_NAME(builder, CENTER_NAME)
+}
+func OCMAddTRAJ_REF_FRAME(builder *flatbuffers.Builder, TRAJ_REF_FRAME flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(16, flatbuffers.UOffsetT(TRAJ_REF_FRAME), 0)
+}
+func OCMAddTrajRefFrame(builder *flatbuffers.Builder, TRAJ_REF_FRAME flatbuffers.UOffsetT) {
+	OCMAddTRAJ_REF_FRAME(builder, TRAJ_REF_FRAME)
+}
+func OCMAddTRAJ_FRAME_EPOCH(builder *flatbuffers.Builder, TRAJ_FRAME_EPOCH flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(17, flatbuffers.UOffsetT(TRAJ_FRAME_EPOCH), 0)
+}
+func OCMAddTrajFrameEpoch(builder *flatbuffers.Builder, TRAJ_FRAME_EPOCH flatbuffers.UOffsetT) {
+	OCMAddTRAJ_FRAME_EPOCH(builder, TRAJ_FRAME_EPOCH)
+}
+func OCMAddCOV_REF_FRAME(builder *flatbuffers.Builder, COV_REF_FRAME flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(18, flatbuffers.UOffsetT(COV_REF_FRAME), 0)
+}
+func OCMAddCovRefFrame(builder *flatbuffers.Builder, COV_REF_FRAME flatbuffers.UOffsetT) {
+	OCMAddCOV_REF_FRAME(builder, COV_REF_FRAME)
+}
+func OCMAddORB_REVNUM(builder *flatbuffers.Builder, ORB_REVNUM uint32) {
+	builder.PrependUint32Slot(19, ORB_REVNUM, 0)
+}
+func OCMAddOrbRevnum(builder *flatbuffers.Builder, ORB_REVNUM uint32) {
+	OCMAddORB_REVNUM(builder, ORB_REVNUM)
+}
+func OCMAddORB_AVERAGING(builder *flatbuffers.Builder, ORB_AVERAGING flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(20, flatbuffers.UOffsetT(ORB_AVERAGING), 0)
+}
+func OCMAddOrbAveraging(builder *flatbuffers.Builder, ORB_AVERAGING flatbuffers.UOffsetT) {
+	OCMAddORB_AVERAGING(builder, ORB_AVERAGING)
+}
+func OCMAddCOV_CALIBRATION(builder *flatbuffers.Builder, COV_CALIBRATION covarianceCalibration) {
+	builder.PrependInt8Slot(21, int8(COV_CALIBRATION), 0)
+}
+func OCMAddCovCalibration(builder *flatbuffers.Builder, COV_CALIBRATION covarianceCalibration) {
+	OCMAddCOV_CALIBRATION(builder, COV_CALIBRATION)
+}
+func OCMAddCOV_CALIBRATION_REFERENCE(builder *flatbuffers.Builder, COV_CALIBRATION_REFERENCE flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(22, flatbuffers.UOffsetT(COV_CALIBRATION_REFERENCE), 0)
+}
+func OCMAddCovCalibrationReference(builder *flatbuffers.Builder, COV_CALIBRATION_REFERENCE flatbuffers.UOffsetT) {
+	OCMAddCOV_CALIBRATION_REFERENCE(builder, COV_CALIBRATION_REFERENCE)
 }
 func OCMEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

@@ -498,6 +498,9 @@ const engineStandardCatalogGraph = `
     UNCOMPRESSED_LENGTH:uint32;
     UNCOMPRESSED_CRC32:uint32;
   }
+  table CQR {
+    PAIR_REQUEST:ubyte;
+  }
   table CRD {
     X:double;
     Y:double;
@@ -1639,6 +1642,9 @@ const engineStandardCatalogGraph = `
     SOLUTION_SET_ID:string;
     PROBLEM_ID:string;
   }
+  table MEM {
+    ERROR_MODELS:ubyte;
+  }
   table MET {
     MEAN_ELEMENT_THEORY:byte;
   }
@@ -2181,6 +2187,9 @@ const engineStandardCatalogGraph = `
     HOP_SCHEDULE_ID:string;
     GEOMETRY:byte;
   }
+  table PCE {
+    CATALOG:ubyte;
+  }
   table PCF {
     STEP_SIZE:double;
     TOLERANCE:double;
@@ -2205,6 +2214,17 @@ const engineStandardCatalogGraph = `
   table PGR {
     TIMESTAMP:string;
     LOCAL_PEER_ID:string;
+  }
+  table PHB {
+    BAND_ID:string;
+    NAME:string;
+    SYSTEM_NAME:string;
+    SPECTRAL_REGIME:ubyte;
+    WAVELENGTH_EFF_NM:double;
+    WAVELENGTH_MIN_NM:double;
+    WAVELENGTH_MAX_NM:double;
+    MAGNITUDE_SYSTEM:ubyte;
+    ZERO_POINT_JY:double;
   }
   table PHY {
     COMMAND:string;
@@ -3091,6 +3111,20 @@ const engineStandardCatalogGraph = `
     NEIGHBOR_DISTANCE:double;
     SHIFT_FLAG:bool;
     SHIFT:double;
+    TEFF:double;
+    TEFF_UNC:double;
+    LOGG:double;
+    LOGG_UNC:double;
+    METALLICITY:double;
+    EXTINCTION_A0:double;
+    RADIAL_VELOCITY:double;
+    RADIAL_VELOCITY_UNC:double;
+    SPECTRAL_TYPE:string;
+    PROPER_NAME:string;
+    BAYER_FLAMSTEED:string;
+    CONSTELLATION:string;
+    HR_CAT_ID:uint32;
+    HD_CAT_ID:uint32;
   }
   table STV {
     EPOCH:double;
@@ -3351,6 +3385,16 @@ const engineStandardCatalogGraph = `
     CARD:string;
     MEDIA_TYPE:string;
   }
+  table VCM {
+    CCSDS_OMM_VERS:double;
+    CREATION_DATE:string;
+    ORIGINATOR:string;
+    OBJECT_NAME:string;
+    OBJECT_ID:string;
+    CENTER_NAME:string;
+    REF_FRAME:string;
+    TIME_SYSTEM:string;
+  }
   table VEP {
     ID:string;
     VEHICLE_CLASS_ID:string;
@@ -3477,6 +3521,7 @@ var engineGeneratedStandardBindings = map[string]engineRoutedSchema{
 	"COM.fbs":  {Table: "COM", FileID: "$COM"},
 	"COT.fbs":  {Table: "COT", FileID: "$COT"},
 	"CPS.fbs":  {Table: "CPS", FileID: "$CPS"},
+	"CQR.fbs":  {Table: "CQR", FileID: "$CQR"},
 	"CRD.fbs":  {Table: "CRD", FileID: "$CRD"},
 	"CRM.fbs":  {Table: "CRM", FileID: "$CRM"},
 	"CSM.fbs":  {Table: "CSM", FileID: "$CSM"},
@@ -3548,6 +3593,7 @@ var engineGeneratedStandardBindings = map[string]engineRoutedSchema{
 	"MBL.fbs":  {Table: "MBL", FileID: "$MBL"},
 	"MDP.fbs":  {Table: "MDP", FileID: "$MDP"},
 	"MDS.fbs":  {Table: "MDS", FileID: "$MDS"},
+	"MEM.fbs":  {Table: "MEM", FileID: "$MEM"},
 	"MET.fbs":  {Table: "MET", FileID: "$MET"},
 	"MFE.fbs":  {Table: "MFE", FileID: "$MFE"},
 	"MNF.fbs":  {Table: "MNF", FileID: "$MNF"},
@@ -3576,9 +3622,11 @@ var engineGeneratedStandardBindings = map[string]engineRoutedSchema{
 	"OPP.fbs":  {Table: "OPP", FileID: "$OPP"},
 	"OSM.fbs":  {Table: "OSM", FileID: "$OSM"},
 	"PAP.fbs":  {Table: "PAP", FileID: "$PAP"},
+	"PCE.fbs":  {Table: "PCE", FileID: "$PCE"},
 	"PCF.fbs":  {Table: "PCF", FileID: "$PCF"},
 	"PGM.fbs":  {Table: "PGM", FileID: "$PGM"},
 	"PGR.fbs":  {Table: "PGR", FileID: "$PGR"},
+	"PHB.fbs":  {Table: "PHB", FileID: "$PHB"},
 	"PHY.fbs":  {Table: "PHY", FileID: "$PHY"},
 	"PIV.fbs":  {Table: "PIV", FileID: "$PIV"},
 	"PKB.fbs":  {Table: "PKB", FileID: "$PKB"},
@@ -3665,6 +3713,7 @@ var engineGeneratedStandardBindings = map[string]engineRoutedSchema{
 	"TXS.fbs":  {Table: "TXS", FileID: "$TXS"},
 	"VAM.fbs":  {Table: "VAM", FileID: "$VAM"},
 	"VCF.fbs":  {Table: "VCF", FileID: "$VCF"},
+	"VCM.fbs":  {Table: "VCM", FileID: "$VCM"},
 	"VEP.fbs":  {Table: "VEP", FileID: "$VEP"},
 	"VST.fbs":  {Table: "VST", FileID: "$VST"},
 	"WKS.fbs":  {Table: "WKS", FileID: "$WKS"},
@@ -3681,7 +3730,6 @@ var engineGeneratedStandardBindings = map[string]engineRoutedSchema{
 // if an entry goes stale.
 var engineUnroutableSchemas = map[string]string{
 	"KMF.fbs": "declares an (encrypted) field, whose plaintext must never reach the engine's public query surface",
-	"VCM.fbs": "declares no file_identifier",
 }
 
 // engineUnprojectableFirstFields names the standards whose root table already
@@ -3697,14 +3745,17 @@ var engineUnprojectableFirstFields = map[string]string{
 	"ACW.fbs": "REQUEST",
 	"BSP.fbs": "INTERPOLATION_REQUEST",
 	"CAQ.fbs": "REQUEST",
+	"CQR.fbs": "PAIR_REQUEST",
 	"CSM.fbs": "OBJECT_1",
 	"FPC.fbs": "GRAPH_DEFINITION",
 	"FRM.fbs": "FRAME_TRANSFORM_REQUEST",
 	"GJN.fbs": "FEATURES",
 	"HYP.fbs": "CAT_IDS",
 	"LDM.fbs": "SITE",
+	"MEM.fbs": "ERROR_MODELS",
 	"NUM.fbs": "ROOT_SOLVE_REQUEST",
 	"OCM.fbs": "HEADER",
+	"PCE.fbs": "CATALOG",
 	"PIV.fbs": "REQUEST",
 	"PPE.fbs": "COMMENT",
 	"PRW.fbs": "INIT",

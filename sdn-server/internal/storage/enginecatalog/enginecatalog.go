@@ -78,7 +78,7 @@
 // `string` columns since loop B.3), it is not something a column TYPE can fix,
 // and it is closed WHERE THE BYTES LEAVE, which is not one place but two:
 // storage.QuerySandboxedJSON makes the bodies the ENGINE assembles valid
-// UTF-8 (see its doc, and TestProjectedStringColumnsAreJSONSafe), and the
+// UTF-8 (see its doc, and TestSanitizingNeverTurnsAWithinCapAnswerIntoAFailure), and the
 // host's HTTP responder makes every JSON-labelled body valid UTF-8 on the way
 // to the socket (flowrt/httpmount_json_wire.go), which is what covers the
 // full-record presentation a wasm encoder produces from raw record frames —
