@@ -7,8 +7,8 @@ package main
 // then warm, and the step is written as a format4proof growth run, so the
 // gate report fits each metric's per-doubling slope per store format.
 //
-//   -format 1|2|4        store format (4: SDN_STORE_FORMAT=4, the backend's
-//                        format-4 engine; "sqlite" is accepted)
+//   -format 1|2|4        store format (default 4, the backend's format-4
+//                        engine; "sqlite" is accepted)
 //   -seeds <work dir>    format4proof's prepared inputs (fixture records)
 //                        instead of a TBC2 corpus
 //   -zipf 1.1            producer peers drawn Zipf(s) instead of in turn, so

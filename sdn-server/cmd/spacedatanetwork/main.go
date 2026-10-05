@@ -864,11 +864,13 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	// Startup is not the service path. Doing it here is the same work the
 	// operator was told to do, at the one moment it is guaranteed to happen,
 	// and it is idempotent: a warm cache returns immediately.
-	if err := prewarmEngineAOTForDaemon(cmd.ErrOrStderr()); err != nil {
-		// Never fatal. A libwasmedge without the AOT compiler still runs, just
-		// interpreted, and refusing to boot would turn a slow node into a dead
-		// one. The engine-mode line at store open states the outcome either way.
-		fmt.Fprintf(cmd.ErrOrStderr(), "warning: AOT prewarm failed, the FlatSQL engine will run interpreted (~65-100x slower): %v\n", err)
+	if err := prewarmEngineAOTForDaemon(cmd.ErrOrStderr(), cfg); err != nil {
+		// Never fatal. A libwasmedge without the AOT compiler still runs the
+		// format-1 engine, just interpreted, and refusing to boot would turn a
+		// slow node into a dead one. The format-4 engine runs AOT only: its
+		// store open fails with the reason. The engine-mode line at store open
+		// states the outcome either way.
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: AOT prewarm failed (the format-1 engine runs interpreted, ~65-100x slower; format 4 opens only with its artifact): %v\n", err)
 	}
 
 	if err := validateAssetPinPreNodeConfig(cfg); err != nil {

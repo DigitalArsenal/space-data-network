@@ -134,6 +134,7 @@ func (m *migrator4) check(ctx context.Context, want map[string]*migrate4Progress
 			sc, err = m.newSchemaCheck(it.schema)
 		case it.page != nil:
 			err = m.checkPage(ctx, sc, it.page.entries, c, lanes)
+			m.logProgress("checking", sc.schema, sc.got.Held+sc.got.Orphans+sc.got.SetAside)
 		case it.end:
 			c.Schemas++
 			m.endSchemaCheck(sc, want[sc.schema], c)

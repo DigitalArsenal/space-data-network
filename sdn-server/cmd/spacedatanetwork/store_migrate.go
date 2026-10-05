@@ -146,7 +146,15 @@ Format 2 runs only with SDN_STORE_FORMAT=2, and only on an activated store.
                     record (C-6; --inventory lists them as oversized_records)
                     is not carried either, and the migration refuses likewise
                     unless this flag names every one of them
-Format 4 runs only with SDN_STORE_FORMAT=4 (or sqlite).`,
+Format 4 is the default store format: a migrated store runs as format 4 with
+SDN_STORE_FORMAT unset (or 4), and needs no environment to migrate. With it
+unset, a daemon creates a fresh store as format 4 and keeps running a
+format-1 store as format 1 until this command migrates it.
+
+Rollback to format 1 (records taken on format 4 are not carried back): stop
+the daemon; in the data directory remove the empty control.flatsqldb
+directory, move fsql4/ and fsql4-migrate.json aside, and move
+pre-format4/control.flatsqldb* back; start with SDN_STORE_FORMAT=1.`,
 	RunE: runStoreMigrate,
 }
 

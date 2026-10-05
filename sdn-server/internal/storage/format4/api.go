@@ -22,8 +22,8 @@
 // path; control exports (registration, quota, activation, stats, stop) run on
 // the instance's exec thread.
 //
-// Everything here is behind SDN_STORE_FORMAT=4 (or "sqlite"): format 1 stays
-// the default, and format 2 is unchanged.
+// Format 4 is the default store format (select.go: SDN_STORE_FORMAT unset or
+// "4"/"sqlite"; "1" opts out); format 2 is unchanged.
 //
 // API is the whole surface; Engine implements it over the real engine, the
 // one implementation (C-33).

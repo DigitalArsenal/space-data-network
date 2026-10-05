@@ -7,8 +7,9 @@ package storage
 // §5.4, §5.5, C-37). A row holds no provider or source string: the file is
 // the feed, and a row's batch and publishing node are small per-file ids.
 //
-// SDN_STORE_FORMAT=4 (or "sqlite", any case) selects it; unset is format 1
-// and "2" is format 2, both unchanged. NewFlatSQLStore then opens:
+// It is the default store format: SDN_STORE_FORMAT unset (or "4"/"sqlite",
+// any case) selects it, "1" is format 1 and "2" is format 2, both unchanged
+// (storeFormatFor). NewFlatSQLStore then opens:
 //
 //   - THE ENGINE (internal/storage/format4): one threaded instance holding
 //     every record in its feed files, the per-file batch counters, the type
@@ -53,7 +54,7 @@ const format4CloseDeadline = 30 * time.Second
 
 // ErrFormat4Store: a format-1 or format-2 open of a format-4 store. Neither
 // may recreate record tables beside it.
-var ErrFormat4Store = errors.New("the store is format 4; start the daemon with SDN_STORE_FORMAT=4")
+var ErrFormat4Store = errors.New("the store is format 4; start the daemon without SDN_STORE_FORMAT (or with SDN_STORE_FORMAT=4)")
 
 // Test hooks: the daemon never compiles an artifact; tests do, and they name
 // the engine build they run on (SDN_P4_WASM).
@@ -177,13 +178,72 @@ func format2StorePresent(basePath string) (bool, error) {
 	return false, nil
 }
 
-// storeFormatFor is the store format NewFlatSQLStore opens basePath as: the
-// one SDN_STORE_FORMAT names, format 1 when it names none.
+// StoreFormat is the store format NewFlatSQLStore opens basePath as.
+// SDN_STORE_FORMAT names it when set. Unset, the default, is format 4, but a
+// store an earlier format holds keeps that format: a format-1 store opens as
+// format 1 until store-migrate --to 4 migrates it (offline, the daemon
+// stopped), and an activated format-2 store is refused by name. A process
+// that cannot run format 4 (format4.Runnable) opens an empty data directory
+// as format 1.
+func StoreFormat(basePath string) (int, error) {
+	format, _, err := storeFormat(basePath)
+	return format, err
+}
+
+// storeFormatFor is StoreFormat for NewFlatSQLStore, which says when the
+// default leaves a format-1 store on format 1.
 func storeFormatFor(basePath string) (int, error) {
-	if requested, err := format4.Requested(); err != nil || requested != 0 {
-		return requested, err
+	format, keptFormat1, err := storeFormat(basePath)
+	if keptFormat1 {
+		log.Warnf("store format 4 is the default, but %s holds a format-1 store: it opens as format 1. To migrate it, stop the daemon and run `spacedatanetwork store-migrate --to 4 --store %s`; SDN_STORE_FORMAT=1 keeps format 1 without this notice",
+			basePath, basePath)
 	}
-	return 1, nil
+	return format, err
+}
+
+// storeFormat is StoreFormat, and whether the default keeps a format-1 store
+// on format 1.
+func storeFormat(basePath string) (format int, keptFormat1 bool, err error) {
+	if requested, err := format4.Requested(); err != nil || requested != 0 {
+		return requested, false, err
+	}
+	held, err := heldStoreFormat(basePath)
+	if err != nil || held != 0 {
+		return held, held == 1, err
+	}
+	if ok, why := format4.Runnable(); !ok {
+		format4NotRunnableOnce.Do(func() {
+			log.Warnf("store format 4 (the default) cannot run in this process: %s; a new store is format 1", why)
+		})
+		return 1, false, nil
+	}
+	return 4, false, nil
+}
+
+var format4NotRunnableOnce sync.Once
+
+// heldStoreFormat is the format of the store in basePath: 4 for a format-4
+// store (activated, or activating: fsql4 markers, or control.flatsqldb a
+// directory), 1 for a format-1 store (control.flatsqldb a file, a format-4
+// migration of it unfinished included), 0 for none. An activated format-2
+// store is ErrFormat2Store.
+func heldStoreFormat(basePath string) (int, error) {
+	if migrated, err := format2.Migrated(basePath); err != nil {
+		return 0, fmt.Errorf("inspect %s: %w", filepath.Join(basePath, format2.Dir), err)
+	} else if migrated {
+		return 0, fmt.Errorf("%w (%s)", ErrFormat2Store, basePath)
+	}
+	m, err := marker.Read(basePath)
+	if err != nil {
+		return 0, fmt.Errorf("inspect %s: %w", filepath.Join(basePath, marker.Dir), err)
+	}
+	switch {
+	case m.Format4() || m.LegacyControlDir:
+		return 4, nil
+	case m.LegacyControlFile:
+		return 1, nil
+	}
+	return 0, nil
 }
 
 // format4CreateMode decides how the engine opens <data>/fsql4 (§5.5): an
@@ -221,7 +281,7 @@ func format4CreateMode(basePath string) (format4.CreateMode, error) {
 	}
 }
 
-// newFormat4Store is NewFlatSQLStore for SDN_STORE_FORMAT=4.
+// newFormat4Store is NewFlatSQLStore on store format 4.
 func newFormat4Store(basePath string, validator *sds.Validator, cfg storeConfig) (*FlatSQLStore, error) {
 	if err := os.MkdirAll(basePath, 0o700); err != nil {
 		return nil, fmt.Errorf("failed to create storage directory: %w", err)

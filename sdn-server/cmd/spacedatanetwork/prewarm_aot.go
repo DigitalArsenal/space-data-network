@@ -15,6 +15,7 @@ import (
 	"io"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
@@ -179,11 +180,10 @@ func prewarmAOTArtifacts(out io.Writer, cacheDir string) error {
 		reportPrewarm(out, "partition-store engine ("+flatsqlrt.PSThreadsPackage+")", psPath, psPresent)
 	}
 
-	// The format-4 engine (store format 4, flatsql-p4-threads.wasm): its one
-	// threaded instance, like format 2's, loads ONLY this THREADS +
-	// Interruptible artifact. Compiled on every host so format 4 can be
-	// selected without another prewarm; a failure fails the command only on
-	// a node that has selected format 4.
+	// The format-4 engine (store format 4, the default; flatsql-p4-threads.wasm):
+	// its one threaded instance, like format 2's, loads ONLY this THREADS +
+	// Interruptible artifact. Compiled on every host; a failure fails the
+	// command on a node that may run format 4 (format4Expected).
 	p4Path, p4Present, p4Err := flatsqlrt.PrewarmP4ThreadsAOT(cacheDir)
 	if p4Err != nil {
 		if format4Expected() {
@@ -196,11 +196,20 @@ func prewarmAOTArtifacts(out io.Writer, cacheDir string) error {
 	return nil
 }
 
-// format4Expected reports whether this process runs store format 4, so its
-// engine artifact is mandatory: SDN_STORE_FORMAT=4.
+// format4Expected reports whether this process may run store format 4, so
+// its engine artifact is mandatory: SDN_STORE_FORMAT=4, or the default (unset)
+// where format 4 can run (format4.Runnable).
 func format4Expected() bool {
-	requested, err := format4.Requested()
-	return err == nil && requested == 4
+	switch requested, err := format4.Requested(); {
+	case err != nil:
+		return false
+	case requested == 4:
+		return true
+	case requested == 0:
+		ok, _ := format4.Runnable()
+		return ok
+	}
+	return false
 }
 
 func reportPrewarm(out io.Writer, label, path string, alreadyPresent bool) {
@@ -211,14 +220,17 @@ func reportPrewarm(out io.Writer, label, path string, alreadyPresent bool) {
 	fmt.Fprintf(out, "  %s: %s (%s)\n", label, path, status)
 }
 
-// prewarmEngineAOTForDaemon compiles the FlatSQL engine artifact into the
-// daemon's cache before the store opens, if it is not already there.
+// prewarmEngineAOTForDaemon compiles the FlatSQL engine artifacts the store
+// opens into the daemon's cache before it opens, if they are not already
+// there: the format-1 engine (format 1, and format 4's control instance), and
+// the format-4 engine when the store opens as format 4 (storage.StoreFormat):
+// it runs AOT only, and an update brings a new artifact the update lane does
+// not prewarm.
 //
 // Split from prewarmAOTArtifacts so daemon startup does exactly the mandatory
-// part: the engine. Flows and the engine-link shim are prewarmed on demand or
-// by the explicit `prewarm-aot` command; only the engine decides whether every
-// query runs AOT or interpreted.
-func prewarmEngineAOTForDaemon(out io.Writer) error {
+// part: the engines. Flows and the engine-link shim are prewarmed on demand or
+// by the explicit `prewarm-aot` command.
+func prewarmEngineAOTForDaemon(out io.Writer, cfg *config.Config) error {
 	cacheDir := storage.EngineAOTCacheDir()
 	path, present, err := flatsqlrt.PrewarmEngineAOT(cacheDir)
 	if err != nil {
@@ -226,6 +238,20 @@ func prewarmEngineAOTForDaemon(out io.Writer) error {
 	}
 	if !present {
 		fmt.Fprintf(out, "compiled the FlatSQL engine AOT artifact for this host: %s\n", path)
+	}
+	if cfg.Mode == "edge" || strings.TrimSpace(cfg.Storage.Path) == "" {
+		return nil
+	}
+	if format, err := storage.StoreFormat(cfg.Storage.Path); err != nil || format != 4 {
+		return nil
+	}
+	start := time.Now()
+	path, present, err = flatsqlrt.PrewarmP4ThreadsAOT(cacheDir)
+	if err != nil {
+		return fmt.Errorf("the format-4 engine (%s): %w", flatsqlrt.P4ThreadsPackage, err)
+	}
+	if !present {
+		fmt.Fprintf(out, "compiled the format-4 engine AOT artifact for this host in %s: %s\n", time.Since(start).Round(time.Second), path)
 	}
 	return nil
 }

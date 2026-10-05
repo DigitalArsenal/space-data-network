@@ -2,11 +2,11 @@ package format2
 
 // Store-level files and the format switch.
 //
-// SDN_STORE_FORMAT=2 selects format 2. Without it (the default, format 1)
-// nothing in this package runs: running nodes are unchanged. A5: format 2
-// ships dark for at least five releases before any box activates it, and an
-// existing store changes format only through store-migrate in a per-host ops
-// task; the daemon never migrates by itself.
+// SDN_STORE_FORMAT=2 selects format 2. Without it (format 4 is the default,
+// format 1 the opt-out) nothing in this package runs. A5: format 2 ships dark
+// for at least five releases before any box activates it, and an existing
+// store becomes format 2 only through store-migrate in a per-host ops task;
+// the daemon never migrates to format 2 by itself.
 //
 // The engine's own markers live in <root>/fsql2/: STORE and MIGRATED
 // (flatsql ps/format.h StoreFile, MigratedFile). store-migrate writes both

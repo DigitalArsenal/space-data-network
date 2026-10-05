@@ -225,8 +225,12 @@ memory.
   an index file an earlier format-4 build wrote is refused (`P4_E_FORMAT`),
   default soft heap 576 MiB. Previous: `flatsql@3.7.0`, sha256
   `fe65b36fe8c4d015c25c76e4ccca5bd84c18ffc3cb05b045a2ae85bb3a4dbe21`.
-- Off by default: `SDN_STORE_FORMAT` unset is format 1; `4` (alias `sqlite`)
-  selects it, and `store-migrate --to 4` migrates a format-1 store.
+- The default store format: `SDN_STORE_FORMAT` unset (or `4`, alias
+  `sqlite`) runs it, and `1` opts out. Under the default a fresh data
+  directory is created as format 4 and a format-4 store opens as format 4; a
+  format-1 store keeps running format 1 until `store-migrate --to 4`
+  migrates it (offline, the daemon stopped); a process whose WasmEdge lacks
+  the SDN patches creates format 1.
 - Store-format stamp: the build stamps `max_store_format` 4 only when it pins
   a format-4 engine (`versioninfo.P4EngineSHA256` non-empty); otherwise the
   stamp stays at the format-2 engine's level (3), so the update guard refuses
@@ -252,9 +256,9 @@ guest export on a request.
 
 It loads only as a THREADS + Interruptible AOT artifact under the prefix
 `fsqlp4`. `spacedatanetwork prewarm-aot` compiles it on every host (a failure
-fails the command only when `SDN_STORE_FORMAT=4` or `sqlite` is set); a
-format-4 daemon never compiles on the service path. Bumping the artifact
-needs a `prewarm-aot` run.
+fails the command where format 4 may run: `SDN_STORE_FORMAT` unset on a
+patched runtime, or `4`), and so does the daemon at startup, before its
+store opens; a format-4 daemon never compiles on the service path.
 
 ## ABI conventions (mirrors `flatsql/wasm/standalone.js`)
 
