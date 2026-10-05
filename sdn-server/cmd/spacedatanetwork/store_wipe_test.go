@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
+	"github.com/spacedatanetwork/sdn-server/internal/storage/format4"
 )
 
 // A wipe removes exactly the named record layers and nothing else: the
@@ -123,5 +125,71 @@ func TestStoreWipeRefusesToNameAKeptEntry(t *testing.T) {
 	}
 	if err := storeWipeRefuse("/store", "ui-cache/", "/store/auth.db"); err != nil {
 		t.Fatalf("a record layer was refused: %v", err)
+	}
+}
+
+const storeWipeDeadDaemonEnv = "SDN_STORE_WIPE_DEAD_DAEMON_STORE"
+
+// TestStoreWipeDeadDaemon is the daemon TestStoreWipeLeavesNoWAL needs dead:
+// it stores a record and exits without closing the store, so the record is
+// in the WAL and the main file is a bare header.
+func TestStoreWipeDeadDaemon(t *testing.T) {
+	store := os.Getenv(storeWipeDeadDaemonEnv)
+	if store == "" {
+		t.Skip("runs only as TestStoreWipeLeavesNoWAL's child")
+	}
+	v, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := storage.NewFlatSQLStore(store, v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := sds.NewOMMBuilder().WithNoradCatID(25544).WithObjectName("ISS (ZARYA)").WithObjectID("1998-067A").Build()[4:]
+	if _, err := s.Store("OMM.fbs", rec, "source:celestrak", nil); err != nil {
+		t.Fatal(err)
+	}
+	os.Exit(0)
+}
+
+// A wipe of a store whose daemon died removes its WAL and any shared-memory
+// index beside it, and the next open serves an empty store.
+func TestStoreWipeLeavesNoWAL(t *testing.T) {
+	store := filepath.Join(t.TempDir(), "store")
+	child := exec.Command(os.Args[0], "-test.run=^TestStoreWipeDeadDaemon$", "-test.count=1")
+	child.Env = append(os.Environ(), storeWipeDeadDaemonEnv+"="+store, format4.FormatEnv+"=1")
+	if out, err := child.CombinedOutput(); err != nil {
+		t.Fatalf("the daemon child: %v\n%s", err, out)
+	}
+	if info, err := os.Stat(filepath.Join(store, "control.flatsqldb-wal")); err != nil || info.Size() == 0 {
+		t.Fatalf("the dead daemon left no WAL: %v", err)
+	}
+	// The engine keeps its WAL index on the heap; a sqlite3 session an
+	// operator opened on the store leaves one on disk.
+	if err := os.WriteFile(filepath.Join(store, "control.flatsqldb-shm"), make([]byte, 32<<10), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := wipeStoreRecordLayers(&out, store, filepath.Join(store, "auth.db"), true); err != nil {
+		t.Fatalf("wipe: %v\n%s", err, out.String())
+	}
+	for _, name := range []string{"control.flatsqldb", "control.flatsqldb-wal", "control.flatsqldb-shm"} {
+		if _, err := os.Stat(filepath.Join(store, name)); !os.IsNotExist(err) {
+			t.Fatalf("%s survived the wipe (err=%v):\n%s", name, err, out.String())
+		}
+	}
+	t.Setenv(format4.FormatEnv, "1")
+	v, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := storage.NewFlatSQLStore(store, v)
+	if err != nil {
+		t.Fatalf("open after wipe: %v", err)
+	}
+	defer s.Close()
+	if recs, err := s.QueryAllBounded("OMM.fbs", 10, 0); err != nil || len(recs) != 0 {
+		t.Fatalf("the wiped store serves %d OMM records: %v", len(recs), err)
 	}
 }

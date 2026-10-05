@@ -28,9 +28,12 @@ import (
 )
 
 // storeWipeTargets are the record layers, relative to storage.path. A name
-// ending in "/" is a directory.
+// ending in "/" is a directory. The control database runs in WAL mode, so a
+// daemon that died leaves its WAL (and any SQLite client its -shm) beside it.
 var storeWipeTargets = []string{
 	"control.flatsqldb",
+	"control.flatsqldb-wal",
+	"control.flatsqldb-shm",
 	"control.flatsqldb-journal",
 	"control.flatsqldb.fsdata",
 	"flatsql-streams/",
@@ -58,7 +61,7 @@ var storeWipeCmd = &cobra.Command{
 	Long: `Remove the record layers of the store named by --config, one named file
 or directory at a time, and leave every other file in place.
 
-Removed:  control.flatsqldb (+ -journal, .fsdata), flatsql-streams/,
+Removed:  control.flatsqldb (+ -wal, -shm, -journal, .fsdata), flatsql-streams/,
           record-catalog.flatsqlmeta (+ .prefix), dataset-publication-replay/,
           dataset-feed-head-sync/, ui-cache/
 Kept:     everything else — auxiliary.flatsqlmeta (the node's own EPM, pin
