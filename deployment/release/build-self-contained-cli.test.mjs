@@ -17,7 +17,6 @@ test('stageBundle creates expected portable archive layout', async () => {
   await mkdir(join(inputs, 'wasmedge', 'bin'), { recursive: true });
   await mkdir(join(inputs, 'wasmedge', 'lib'), { recursive: true });
   await writeFile(join(inputs, 'spacedatanetwork'), '#!/bin/sh\necho "WASMEDGE_DIR=${WASMEDGE_DIR};ARGS=$*"\n');
-  await writeFile(join(inputs, 'ipfs'), '#!/bin/sh\n');
   await writeFile(join(inputs, 'sdn-ui', 'index.html'), '<html>sdn</html>');
   await writeFile(join(inputs, 'webui', 'index.html'), '<html>webui</html>');
   await writeFile(join(inputs, 'modules', 'org.spacedatanetwork.updater.wasm'), 'wasm');
@@ -42,7 +41,6 @@ test('stageBundle creates expected portable archive layout', async () => {
     channel: 'release',
     outputDir: out,
     binaryPath: join(inputs, 'spacedatanetwork'),
-    kuboPath: join(inputs, 'ipfs'),
     sdnUiPath: join(inputs, 'sdn-ui'),
     webUiPath: join(inputs, 'webui'),
     updaterWasmPath: join(inputs, 'modules', 'org.spacedatanetwork.updater.wasm'),
@@ -57,7 +55,6 @@ test('stageBundle creates expected portable archive layout', async () => {
   await stat(join(staged.root, 'bin', 'spacedatanetwork'));
   await stat(join(staged.root, 'bin', 'sdn'));
   await stat(join(staged.root, 'runtime', 'sdn', 'spacedatanetwork'));
-  await stat(join(staged.root, 'runtime', 'kubo', 'ipfs'));
   await stat(join(staged.root, 'runtime', 'ui', 'sdn', 'index.html'));
   await stat(join(staged.root, 'runtime', 'ui', 'webui', 'index.html'));
   await stat(join(staged.root, 'runtime', 'modules', 'org.spacedatanetwork.updater.wasm'));
@@ -112,7 +109,6 @@ test('stageBundle creates expected portable archive layout', async () => {
     'README.md',
     'bin/sdn',
     'bin/spacedatanetwork',
-    'runtime/kubo/ipfs',
     'runtime/modules/hd-wallet-wasi.wasm',
     'runtime/modules/org.spacedatanetwork.updater.wasm',
     'runtime/sdn/spacedatanetwork',
@@ -145,7 +141,6 @@ test('stageBundle creates Windows executable names and copied alias', async () =
   await mkdir(join(inputs, 'modules'), { recursive: true });
   await mkdir(join(inputs, 'wasmedge', 'bin'), { recursive: true });
   await writeFile(join(inputs, 'spacedatanetwork.exe'), 'exe');
-  await writeFile(join(inputs, 'ipfs.exe'), 'ipfs');
   await writeFile(join(inputs, 'sdn-ui', 'index.html'), '<html>sdn</html>');
   await writeFile(join(inputs, 'webui', 'index.html'), '<html>webui</html>');
   await writeFile(join(inputs, 'modules', 'org.spacedatanetwork.updater.wasm'), 'wasm');
@@ -161,7 +156,6 @@ test('stageBundle creates Windows executable names and copied alias', async () =
     arch: 'amd64',
     outputDir: out,
     binaryPath: join(inputs, 'spacedatanetwork.exe'),
-    kuboPath: join(inputs, 'ipfs.exe'),
     sdnUIPath: join(inputs, 'sdn-ui'),
     webUIPath: join(inputs, 'webui'),
     updaterWasmPath: join(inputs, 'modules', 'org.spacedatanetwork.updater.wasm'),
@@ -175,7 +169,6 @@ test('stageBundle creates Windows executable names and copied alias', async () =
   await stat(join(staged.root, 'bin', 'spacedatanetwork.exe'));
   await stat(join(staged.root, 'bin', 'sdn.exe'));
   await stat(join(staged.root, 'bin', 'wasmedge.dll'));
-  await stat(join(staged.root, 'runtime', 'kubo', 'ipfs.exe'));
   await stat(join(staged.root, 'runtime', 'modules', 'hd-wallet-wasi.wasm'));
   await stat(join(staged.root, 'runtime', 'wasmedge', 'bin', 'wasmedge.dll'));
   const alias = await readFile(join(staged.root, 'bin', 'sdn.exe'), 'utf8');
@@ -194,7 +187,6 @@ test('stageBundle creates Windows executable names and copied alias', async () =
     'bin/sdn.exe',
     'bin/spacedatanetwork.exe',
     'bin/wasmedge.dll',
-    'runtime/kubo/ipfs.exe',
     'runtime/modules/hd-wallet-wasi.wasm',
     'runtime/modules/org.spacedatanetwork.updater.wasm',
     'runtime/ui/sdn/index.html',
@@ -213,7 +205,6 @@ test('stageBundle stages trust roots outside manifest artifacts and checksums', 
   await mkdir(join(inputs, 'modules'), { recursive: true });
   await mkdir(join(inputs, 'wasmedge', 'bin'), { recursive: true });
   await writeFile(join(inputs, 'spacedatanetwork'), '#!/bin/sh\n');
-  await writeFile(join(inputs, 'ipfs'), '#!/bin/sh\n');
   await writeFile(join(inputs, 'sdn-ui', 'index.html'), '<html>sdn</html>');
   await writeFile(join(inputs, 'webui', 'index.html'), '<html>webui</html>');
   await writeFile(join(inputs, 'modules', 'org.spacedatanetwork.updater.wasm'), 'wasm');
@@ -231,7 +222,6 @@ test('stageBundle stages trust roots outside manifest artifacts and checksums', 
     channel: 'release',
     outputDir: out,
     binaryPath: join(inputs, 'spacedatanetwork'),
-    kuboPath: join(inputs, 'ipfs'),
     sdnUIPath: join(inputs, 'sdn-ui'),
     webUIPath: join(inputs, 'webui'),
     updaterWasmPath: join(inputs, 'modules', 'org.spacedatanetwork.updater.wasm'),
@@ -252,7 +242,6 @@ test('stageBundle stages trust roots outside manifest artifacts and checksums', 
     'README.md',
     'bin/sdn',
     'bin/spacedatanetwork',
-    'runtime/kubo/ipfs',
     'runtime/modules/hd-wallet-wasi.wasm',
     'runtime/modules/org.spacedatanetwork.updater.wasm',
     'runtime/sdn/spacedatanetwork',
@@ -274,7 +263,6 @@ test('stageBundle rejects path traversal in bundle name fields', async () => {
       arch: 'amd64',
       outputDir: root,
       binaryPath: join(root, 'missing-spacedatanetwork'),
-      kuboPath: join(root, 'missing-ipfs'),
       sdnUIPath: join(root, 'missing-sdn-ui'),
       webUIPath: join(root, 'missing-webui'),
       updaterWasmPath: join(root, 'missing-updater.wasm'),
@@ -298,7 +286,6 @@ test('stageBundle stages the fleet trust roots when none are named', async () =>
   await mkdir(join(inputs, 'modules'), { recursive: true });
   await mkdir(join(inputs, 'wasmedge', 'bin'), { recursive: true });
   await writeFile(join(inputs, 'spacedatanetwork'), '#!/bin/sh\n');
-  await writeFile(join(inputs, 'ipfs'), '#!/bin/sh\n');
   await writeFile(join(inputs, 'sdn-ui', 'index.html'), '<html>sdn</html>');
   await writeFile(join(inputs, 'webui', 'index.html'), '<html>webui</html>');
   await writeFile(join(inputs, 'modules', 'org.spacedatanetwork.updater.wasm'), 'wasm');
@@ -314,7 +301,6 @@ test('stageBundle stages the fleet trust roots when none are named', async () =>
     channel: 'release',
     outputDir: out,
     binaryPath: join(inputs, 'spacedatanetwork'),
-    kuboPath: join(inputs, 'ipfs'),
     sdnUIPath: join(inputs, 'sdn-ui'),
     webUIPath: join(inputs, 'webui'),
     updaterWasmPath: join(inputs, 'modules', 'org.spacedatanetwork.updater.wasm'),
@@ -344,7 +330,6 @@ test('stageBundle stages wallet sign-in assets under runtime/ui when given', asy
     await mkdir(join(inputs, dir), { recursive: true });
   }
   await writeFile(join(inputs, 'spacedatanetwork'), '#!/bin/sh\n');
-  await writeFile(join(inputs, 'ipfs'), '#!/bin/sh\n');
   await writeFile(join(inputs, 'sdn-ui', 'index.html'), '<html>sdn</html>');
   await writeFile(join(inputs, 'webui', 'index.html'), '<html>webui</html>');
   await writeFile(join(inputs, 'modules', 'org.spacedatanetwork.updater.wasm'), 'wasm');
@@ -362,7 +347,6 @@ test('stageBundle stages wallet sign-in assets under runtime/ui when given', asy
     channel: 'release',
     outputDir: out,
     binaryPath: join(inputs, 'spacedatanetwork'),
-    kuboPath: join(inputs, 'ipfs'),
     sdnUIPath: join(inputs, 'sdn-ui'),
     webUIPath: join(inputs, 'webui'),
     updaterWasmPath: join(inputs, 'modules', 'org.spacedatanetwork.updater.wasm'),
@@ -396,7 +380,6 @@ test('a static bundle stages no WasmEdge runtime and no library path', async () 
   await mkdir(join(inputs, 'webui'), { recursive: true });
   await mkdir(join(inputs, 'modules'), { recursive: true });
   await writeFile(join(inputs, 'spacedatanetwork'), 'bin');
-  await writeFile(join(inputs, 'ipfs'), 'ipfs');
   await writeFile(join(inputs, 'sdn-ui', 'index.html'), '<html>sdn</html>');
   await writeFile(join(inputs, 'webui', 'index.html'), '<html>webui</html>');
   await writeFile(join(inputs, 'modules', 'org.spacedatanetwork.updater.wasm'), 'wasm');
@@ -410,7 +393,6 @@ test('a static bundle stages no WasmEdge runtime and no library path', async () 
     arch: 'amd64',
     outputDir: out,
     binaryPath: join(inputs, 'spacedatanetwork'),
-    kuboPath: join(inputs, 'ipfs'),
     sdnUIPath: join(inputs, 'sdn-ui'),
     webUIPath: join(inputs, 'webui'),
     updaterWasmPath: join(inputs, 'modules', 'org.spacedatanetwork.updater.wasm'),
@@ -445,7 +427,6 @@ test('stageBundle refuses to stamp a bundle with the internal fleet dev lane cha
       channel: 'beta',
       outputDir: join(root, 'out'),
       binaryPath: join(root, 'spacedatanetwork'),
-      kuboPath: join(root, 'ipfs'),
       sdnUIPath: join(root, 'sdn-ui'),
       webUIPath: join(root, 'webui'),
       updaterWasmPath: join(root, 'updater.wasm'),

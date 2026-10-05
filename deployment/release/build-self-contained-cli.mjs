@@ -52,14 +52,12 @@ export async function stageBundle(options) {
   await rm(root, { recursive: true, force: true });
   await mkdir(root, { recursive: true });
   await mkdir(join(root, 'bin'), { recursive: true });
-  await mkdir(join(root, 'runtime', 'kubo'), { recursive: true });
   await mkdir(join(root, 'runtime', 'modules'), { recursive: true });
   await mkdir(join(root, 'runtime', 'sdn'), { recursive: true });
   await mkdir(join(root, 'runtime', 'ui'), { recursive: true });
 
   const exeName = osName === 'windows' ? 'spacedatanetwork.exe' : 'spacedatanetwork';
   const aliasName = osName === 'windows' ? 'sdn.exe' : 'sdn';
-  const kuboName = osName === 'windows' ? 'ipfs.exe' : 'ipfs';
   // A STATICALLY LINKED daemon carries WasmEdge inside it, so there is nothing
   // to stage and no environment to set up: no runtime/wasmedge tree, no
   // wasmedge.dll beside the exe, no launcher exporting WASMEDGE_DIR and
@@ -82,7 +80,6 @@ export async function stageBundle(options) {
     }
     await writeFile(join(root, 'bin', exeName), unixLauncherScript(exeName, bundlesWasmEdge));
   }
-  await cp(required(options.kuboPath, 'kuboPath'), join(root, 'runtime', 'kubo', kuboName));
   await cp(required(options.sdnUIPath ?? options.sdnUiPath, 'sdnUIPath'), join(root, 'runtime', 'ui', 'sdn'), { recursive: true });
   await cp(required(options.webUIPath ?? options.webUiPath, 'webUIPath'), join(root, 'runtime', 'ui', 'webui'), { recursive: true });
   // Wallet sign-in assets (hd-wallet-wasm + hd-wallet-ui dist trees, staged
@@ -116,7 +113,6 @@ export async function stageBundle(options) {
   } else {
     await chmod(join(root, 'bin', exeName), executableMode);
     await chmod(join(root, 'runtime', 'sdn', exeName), executableMode);
-    await chmod(join(root, 'runtime', 'kubo', kuboName), executableMode);
     await symlink(exeName, join(root, 'bin', aliasName));
   }
 

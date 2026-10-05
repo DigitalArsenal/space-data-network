@@ -197,13 +197,20 @@ jobs:
       - name: sdn-js helia/libp2p layering
         run: node scripts/check-sdn-js-dependency-layering.mjs
 
-      # There used to be a kubo-lockstep check here, comparing the vendored
-      # kubo/go.mod against sdn-server/go.mod. The fork is deleted, so it has no
-      # subject left. The CONCERN it existed for did not go away, it moved: this
-      # node's Go libp2p stack must still interoperate with the STOCK upstream
-      # Kubo we ship (suite.versions.json kubo.shipped), which we no longer pin
-      # by editing. That is a different check against a different reference and
-      # nothing writes it yet — see sdn-server/docs/kubo-fork-audit.md.
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: sdn-server/go.mod
+          cache-dependency-path: sdn-server/go.sum
+
+      # Kubo is linked into the node, and SDN must build it from exactly what
+      # upstream builds it from (owner 2026-09-28: never change what Kubo
+      # depends on). replace/exclude reach only the main module and Go's
+      # minimum version selection takes the highest requirement, so this
+      # compares, module by module, what Kubo's linked packages compile from
+      # in SDN's build with what they compile from in Kubo's own.
+      - name: Kubo lockstep
+        run: node scripts/check-kubo-pin.js --build-list
 
       - name: Check suites
         run: |

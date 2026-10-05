@@ -2,14 +2,12 @@ package node
 
 import (
 	"crypto/ed25519"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
-	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/peer"
 
 	"github.com/spacedatanetwork/sdn-server/internal/keys"
@@ -37,10 +35,7 @@ type IdentityBundle struct {
 	EncryptionKeyPath string
 
 	// keyPassword is the same at-rest password used to encrypt the mnemonic
-	// (see resolveKeyPassword). It is reused to encrypt any exported copies
-	// of the derived libp2p identity private key (e.g. the managed Kubo repo
-	// config written by EnsureManagedIPFSRepoIdentity) so those copies never
-	// hit disk in plaintext either. Unexported: package-internal only.
+	// (see resolveKeyPassword). Unexported: package-internal only.
 	keyPassword string
 }
 
@@ -231,42 +226,6 @@ func (n *Node) loadOrCreateMnemonic(mnemonicPath, keyDir string) (string, error)
 	log.Infof("Generated and saved encrypted mnemonic to %s", mnemonicPath)
 	n.recordKeyDerivation(keyDir)
 	return strings.TrimSpace(newMnemonic), nil
-}
-
-func (b *IdentityBundle) privateKeyBytes() ([]byte, error) {
-	if b == nil || b.Identity == nil || b.Identity.IdentityPrivKey == nil {
-		return nil, errors.New("missing identity private key")
-	}
-	return crypto.MarshalPrivateKey(b.Identity.IdentityPrivKey)
-}
-
-// encryptedPrivateKeyForConfig returns the libp2p identity private key
-// encrypted for storage in the managed Kubo repo config's Identity.PrivKey
-// field (see ipfs_repo_identity.go). The returned string is safe to write to
-// disk in plaintext form: it is an encryptedIdentityKeyMagic-prefixed,
-// base64-encoded Argon2id + XChaCha20-Poly1305 envelope (internal/keys),
-// never the raw key material.
-func (b *IdentityBundle) encryptedPrivateKeyForConfig() (string, error) {
-	raw, err := b.privateKeyBytes()
-	if err != nil {
-		return "", err
-	}
-	defer zeroBytes(raw)
-
-	enc, err := keys.EncryptSecret(raw, b.keyPassword)
-	if err != nil {
-		return "", fmt.Errorf("encrypt identity private key: %w", err)
-	}
-	return encryptedIdentityKeyMagic + base64.StdEncoding.EncodeToString(enc), nil
-}
-
-// zeroBytes best-effort scrubs sensitive byte slices from memory once no
-// longer needed. It is not a cryptographic guarantee (the Go runtime may have
-// copied the backing array), but it costs nothing and narrows the window.
-func zeroBytes(b []byte) {
-	for i := range b {
-		b[i] = 0
-	}
 }
 
 // RootAuthPublicKeys returns the Ed25519 public keys that PROVE possession of

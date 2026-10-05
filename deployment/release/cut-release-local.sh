@@ -12,15 +12,12 @@
 #                  WasmEdge runtime comes out of the same image
 #   linux-arm64    same, linux/arm64
 #
-# Every bundle carries the node binary, WasmEdge, Kubo, the UI assets, the
+# Every bundle carries the node binary (Kubo is linked into it), WasmEdge, the UI assets, the
 # updater module, the HD wallet module, the wallet sign-in assets and the
 # fleet update trust roots — build-self-contained-cli.mjs decides the layout.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-# suite.versions.json kubo.shipped, never a literal: a pin that lived in five
-# scripts drifted from the version the node REPORTED for months.
-KUBO_VERSION="${KUBO_VERSION:-$("$root/scripts/kubo-version.sh")}"
 WASMEDGE_VERSION="${WASMEDGE_VERSION:-0.16.4}"
 HOST_WASMEDGE_DIR="${WASMEDGE_DIR:-$HOME/.local/share/spacedatanetwork/wasmedge-sdk/${WASMEDGE_VERSION}-darwin-arm64}"
 DOCKER_IMAGE_PREFIX="${DOCKER_IMAGE_PREFIX:-sdn-release-build}"
@@ -70,15 +67,6 @@ log "staging wallet sign-in assets"
 test -f "$dist/inputs/wallet-wasm/runtime/index.mjs"
 test -f "$dist/inputs/wallet-ui/compat/index.js"
 
-download_kubo() { # <platform>
-  local platform="$1" out="$dist/inputs/kubo/$1"
-  if [[ ! -x "$out/kubo/ipfs" ]]; then
-    log "downloading Kubo ${KUBO_VERSION} for ${platform}"
-    "$root/deployment/release/download-kubo.sh" --version "$KUBO_VERSION" --platform "$platform" --archive tar.gz --output-dir "$out" >/dev/null
-  fi
-  test -x "$out/kubo/ipfs"
-}
-
 build_native_darwin_arm64() {
   local out="$dist/inputs/bin/darwin-arm64"
   mkdir -p "$out"
@@ -102,9 +90,8 @@ build_docker_linux() { # <arch>
   echo "$dist/inputs/wasmedge/linux-$arch"
 }
 
-bundle() { # <os> <arch> <binary> <wasmedge-dir> <kubo-platform>
-  local os="$1" arch="$2" binary="$3" wasmedge="$4" kubo_platform="$5"
-  download_kubo "$kubo_platform"
+bundle() { # <os> <arch> <binary> <wasmedge-dir>
+  local os="$1" arch="$2" binary="$3" wasmedge="$4"
   log "bundling ${os}/${arch}"
   # --channel release: 'beta' belongs to the internal fleet dev lane, whose
   # binary-only payloads would amputate runtime/ from anything that installs
@@ -113,7 +100,6 @@ bundle() { # <os> <arch> <binary> <wasmedge-dir> <kubo-platform>
     --version "$version" --os "$os" --arch "$arch" --channel release \
     --output-dir "$dist/out" \
     --binary-path "$binary" \
-    --kubo-path "$dist/inputs/kubo/$kubo_platform/kubo/ipfs" \
     --sdnUIPath "$sdn_ui" --webUIPath "$webui" \
     --updater-wasm-path "$updater_wasm" \
     --hd-wallet-wasm-path "$hd_wallet_wasm" \
@@ -129,13 +115,13 @@ for target in "${target_list[@]}"; do
   case "$target" in
     darwin-arm64)
       wasmedge="$(build_native_darwin_arm64 | tail -1)"
-      bundle darwin arm64 "$dist/inputs/bin/darwin-arm64/spacedatanetwork" "$wasmedge" darwin-arm64 ;;
+      bundle darwin arm64 "$dist/inputs/bin/darwin-arm64/spacedatanetwork" "$wasmedge" ;;
     linux-amd64)
       wasmedge="$(build_docker_linux amd64 | tail -1)"
-      bundle linux amd64 "$dist/inputs/bin/linux-amd64/spacedatanetwork" "$wasmedge" linux-amd64 ;;
+      bundle linux amd64 "$dist/inputs/bin/linux-amd64/spacedatanetwork" "$wasmedge" ;;
     linux-arm64)
       wasmedge="$(build_docker_linux arm64 | tail -1)"
-      bundle linux arm64 "$dist/inputs/bin/linux-arm64/spacedatanetwork" "$wasmedge" linux-arm64 ;;
+      bundle linux arm64 "$dist/inputs/bin/linux-arm64/spacedatanetwork" "$wasmedge" ;;
     *) echo "unsupported target: $target" >&2; exit 2 ;;
   esac
 done
@@ -160,7 +146,7 @@ for linux_arch in amd64 arm64; do
     b="spacedatanetwork-${version}-linux-${linux_arch}"
     log "smoke (linux/${linux_arch} in a clean Debian container)"
     docker run --rm --platform "linux/${linux_arch}" -v "$dist/out:/rel:ro" debian:bookworm-slim sh -c \
-      "set -e; mkdir -p /tmp/s && tar -xzf /rel/${b}.tar.gz -C /tmp/s && /tmp/s/${b}/bin/spacedatanetwork version | head -1 && test -f /tmp/s/${b}/trust/update-roots.json && /tmp/s/${b}/runtime/kubo/ipfs version && test -f /tmp/s/${b}/runtime/ui/wallet-ui/compat/index.js" \
+      "set -e; mkdir -p /tmp/s && tar -xzf /rel/${b}.tar.gz -C /tmp/s && /tmp/s/${b}/bin/spacedatanetwork version | head -1 && test -f /tmp/s/${b}/trust/update-roots.json && test ! -e /tmp/s/${b}/runtime/kubo && test -f /tmp/s/${b}/runtime/ui/wallet-ui/compat/index.js" \
       | sed 's/^/[cut-release]   /'
   fi
 done

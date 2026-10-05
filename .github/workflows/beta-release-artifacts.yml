@@ -17,7 +17,10 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   REGISTRY: docker.io
   IMAGE_NAME: dockerdigitalarsenal/space-data-network
-  KUBO_VERSION: v0.39.0
+  # The ipfs CLI that computes and pins the UI asset CIDs: the Kubo SDN links
+  # (sdn-server/go.mod), so the CIDs are the ones the node computes.
+  # scripts/check-kubo-pin.js holds the two equal.
+  KUBO_VERSION: v0.43.1
   WASMEDGE_VERSION: 0.16.4
   NFPM_VERSION: v2.42.0
 
@@ -579,61 +582,43 @@ jobs:
             # built in would put the floor straight back up.
             container: ubuntu:20.04
             toolchain: focal-llvm16
-            kubo_platform: linux-amd64
-            kubo_archive: tar.gz
             archive_extension: tar.gz
             binary_name: spacedatanetwork
-            kubo_binary_name: ipfs
           - target_os: linux
             target_arch: arm64
             runner: ubuntu-24.04-arm
             container: ubuntu:20.04
             toolchain: focal-llvm16
-            kubo_platform: linux-arm64
-            kubo_archive: tar.gz
             archive_extension: tar.gz
             binary_name: spacedatanetwork
-            kubo_binary_name: ipfs
           - target_os: darwin
             target_arch: arm64
             runner: macos-14
             toolchain: brew-llvm18
-            kubo_platform: darwin-arm64
-            kubo_archive: tar.gz
             archive_extension: tar.gz
             binary_name: spacedatanetwork
-            kubo_binary_name: ipfs
           - target_os: darwin
             target_arch: amd64
             runner: macos-15-intel
             toolchain: brew-llvm18
-            kubo_platform: darwin-amd64
-            kubo_archive: tar.gz
             archive_extension: tar.gz
             binary_name: spacedatanetwork
-            kubo_binary_name: ipfs
           - target_os: windows
             target_arch: amd64
             runner: windows-latest
             toolchain: msys2-mingw64
-            kubo_platform: windows-amd64
-            kubo_archive: zip
             archive_extension: zip
             binary_name: spacedatanetwork.exe
-            kubo_binary_name: ipfs.exe
     env:
       PACKAGE_VERSION: ${{ needs.beta-version.outputs.package_version }}
       RELEASE_TAG: ${{ needs.beta-version.outputs.release_tag }}
       TARGET_OS: ${{ matrix.target_os }}
       TARGET_ARCH: ${{ matrix.target_arch }}
-      KUBO_PLATFORM: ${{ matrix.kubo_platform }}
-      KUBO_ARCHIVE: ${{ matrix.kubo_archive }}
       BINARY_NAME: ${{ matrix.binary_name }}
-      KUBO_BINARY_NAME: ${{ matrix.kubo_binary_name }}
       WASMEDGE_DIR: ${{ github.workspace }}/.sdn-wasmedge-static/prefix
     steps:
       # Before checkout, for the same reason as wasmedge-static: the bare image
-      # has no git, and download-kubo.sh needs curl. build-essential/zlib/tinfo
+      # has no git or curl. build-essential/zlib/tinfo
       # are what the link tail in link.flags names (-lz, -ltinfo) plus the
       # compiler driver itself.
       - name: Prepare the container
@@ -726,13 +711,6 @@ jobs:
           path: ${{ github.workspace }}/.sdn-wasmedge-static/prefix
           key: wasmedge-static-${{ env.WASMEDGE_VERSION }}-${{ matrix.target_os }}-${{ matrix.target_arch }}-${{ matrix.toolchain }}-${{ hashFiles('scripts/build-static-wasmedge.sh', 'scripts/wasmedge-static-env.sh') }}
           fail-on-cache-miss: true
-      - name: Download target Kubo binary
-        run: |
-          deployment/release/download-kubo.sh \
-            --version "${KUBO_VERSION}" \
-            --platform "${KUBO_PLATFORM}" \
-            --archive "${KUBO_ARCHIVE}" \
-            --output-dir dist/kubo
       # Ground truth for the one symbol still undefined on Windows
       # (llvm::demangle[abi:cxx11](std::string_view)). Everything else about it
       # is inference until something on a Windows runner reads the archives.
@@ -902,7 +880,6 @@ jobs:
             --channel release \
             --output-dir dist/cli \
             --binary-path "${PWD}/dist/cli-input/${BINARY_NAME}" \
-            --kubo-path "${PWD}/dist/kubo/kubo/${KUBO_BINARY_NAME}" \
             --sdnUIPath "${PWD}/dist/ipfs/sdn-admin" \
             --webUIPath "${PWD}/dist/ipfs/ipfs-webui" \
             --updater-wasm-path "${PWD}/packages/sdn-updater-module/dist/isomorphic/module.wasm" \

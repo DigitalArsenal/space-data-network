@@ -9,38 +9,52 @@ const TS_OUTPUT_PATH = path.join(REPO_ROOT, "sdn-js", "src", "version-info.gener
 const GO_OUTPUT_PATH = path.join(REPO_ROOT, "sdn-server", "internal", "versioninfo", "generated.go");
 const CHECK_MODE = process.argv.includes("--check");
 
-// KUBO_PIN_PATTERN is the shipped Kubo release tag: a dist.ipfs.tech tag,
-// `v` included, because that is the literal string the download URL is built
-// from (deployment/release/download-kubo.sh).
-const KUBO_PIN_PATTERN = /^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
+const GO_MOD_PATH = path.join(REPO_ROOT, "sdn-server", "go.mod");
+const SDN_JS_PACKAGE_PATH = path.join(REPO_ROOT, "sdn-js", "package.json");
+const NODE_SDS_MANIFEST_PATH = path.join(REPO_ROOT, "sdn-server", "internal", "sds", "search-schemas", "manifest.json");
 
-// readKuboVersion returns the Kubo version this suite SHIPS.
-//
-// It used to read kubo/version.go CurrentVersionNumber — the in-repo fork —
-// and that was a lie with a straight face. The fork is not what runs: it is
-// linked by nothing (sdn-server/go.mod has no kubo require), COPYed by no
-// Dockerfile, and built by no CI lane. Every production path downloads a
-// stock upstream build pinned by suite.versions.json kubo.shipped, and the
-// managed daemon (sdn-server/internal/kubo/supervisor.go) execs that binary.
-// So the fork's "0.40.0-dev" was reported as `kubo_version` on
-// /api/v1/version and rendered in the dashboard header while the fleet ran
-// v0.39.0 — two releases apart, on a node that had never contained the code
-// the string named.
-//
-// The pin now lives in the manifest, beside every other shipped version, and
-// scripts/kubo-version.sh reads the SAME field for the release scripts and
-// workflows. check-version-consistency.js asserts the two cannot diverge.
-function readKuboVersion(manifest) {
-  const pin = manifest.kubo?.shipped;
-  if (typeof pin !== "string" || !KUBO_PIN_PATTERN.test(pin.trim())) {
-    throw new Error(
-      "suite.versions.json kubo.shipped must be a Kubo release tag like \"v0.39.0\"",
-    );
+// Kubo and Helia ride SDN releases (owner 2026-10-05): Kubo is linked into the
+// node binary, Helia into the browser SDK, and their versions are part of
+// SDN's own version record. Neither is written down here by hand. Each is
+// read from the one file that decides what is built, so the record cannot
+// name a version the build does not contain. A hand-kept pin is exactly how
+// the node once reported a Kubo it had never run.
+
+// readKuboVersion returns the Kubo release sdn-server links: the
+// github.com/ipfs/kubo requirement in sdn-server/go.mod, without the `v`
+// (the shape /api/v1/version publishes and internal/update compares).
+function readKuboVersion() {
+  const goMod = fs.readFileSync(GO_MOD_PATH, "utf8");
+  const match = /^\s*github\.com\/ipfs\/kubo\s+v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\s*$/m.exec(goMod);
+  if (!match) {
+    throw new Error("sdn-server/go.mod must require github.com/ipfs/kubo at a release version: the node links Kubo");
   }
-  // The constants carry the bare version (no leading `v`): that is the shape
-  // /api/v1/version has always published and the shape internal/update's
-  // compareVersions parses.
-  return pin.trim().replace(/^v/, "");
+  return match[1];
+}
+
+// readNodeSDSVersion returns the Space Data Standards release the node embeds:
+// the sdsVersion of the schemas compiled into sdn-server. The browser SDK pins
+// its own (suite.versions.json dependencies.spacedatastandards), and the two
+// can differ while one side moves first.
+function readNodeSDSVersion() {
+  const manifest = JSON.parse(fs.readFileSync(NODE_SDS_MANIFEST_PATH, "utf8"));
+  const version = String(manifest.sdsVersion ?? "").trim();
+  if (!/^\d+\.\d+\.\d+$/.test(version)) {
+    throw new Error(`sdn-server/internal/sds/search-schemas/manifest.json must carry the embedded sdsVersion (got "${version}")`);
+  }
+  return version;
+}
+
+// readHeliaVersion returns the Helia release the browser SDK pins. It must be
+// an exact version: a range would let two installs of one SDN release carry
+// different Helias.
+function readHeliaVersion() {
+  const pkg = JSON.parse(fs.readFileSync(SDN_JS_PACKAGE_PATH, "utf8"));
+  const pin = String(pkg.dependencies?.helia ?? "").trim();
+  if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(pin)) {
+    throw new Error(`sdn-js/package.json must pin helia to an exact version (got "${pin}")`);
+  }
+  return pin;
 }
 
 function readManifest() {
@@ -99,6 +113,7 @@ export const HD_WALLET_WASM_VERSION = ${escapeForTS(manifest.dependencies.hdWall
 export const HD_WALLET_UI_VERSION = ${escapeForTS(manifest.dependencies.hdWalletUI)};
 export const IPFS_WEBUI_VERSION = ${escapeForTS(manifest.dependencies.ipfsWebUI)};
 export const KUBO_VERSION = ${escapeForTS(manifest.kuboVersion)};
+export const HELIA_VERSION = ${escapeForTS(manifest.heliaVersion)};
 export const DEFAULT_UPDATE_CHANNEL = ${escapeForTS(manifest.updates.defaultChannel)};
 export const CURRENT_ADVERTISEMENT_FLAG = ${escapeForTS(manifest.advertisement.currentFlag)};
 export const SUPPORTED_ADVERTISEMENT_FLAGS = [
@@ -112,6 +127,8 @@ export const SUITE_VERSION_INFO = Object.freeze({
   hdWalletWasmVersion: HD_WALLET_WASM_VERSION,
   hdWalletUIVersion: HD_WALLET_UI_VERSION,
   ipfsWebUIVersion: IPFS_WEBUI_VERSION,
+  kuboVersion: KUBO_VERSION,
+  heliaVersion: HELIA_VERSION,
   defaultUpdateChannel: DEFAULT_UPDATE_CHANNEL,
   currentAdvertisementFlag: CURRENT_ADVERTISEMENT_FLAG,
   supportedAdvertisementFlags: [...SUPPORTED_ADVERTISEMENT_FLAGS],
@@ -131,12 +148,13 @@ package versioninfo
 const (
 ${goConstBlock([
   ["SuiteVersion", manifest.suiteVersion],
-  ["SpaceDataStandardsVersion", manifest.dependencies.spacedatastandards],
+  ["SpaceDataStandardsVersion", manifest.nodeSDSVersion],
   ["FlatSQLVersion", manifest.dependencies.flatsql],
   ["HDWalletWasmVersion", manifest.dependencies.hdWalletWasm],
   ["HDWalletUIVersion", manifest.dependencies.hdWalletUI],
   ["IPFSWebUIVersion", manifest.dependencies.ipfsWebUI],
   ["KuboVersion", manifest.kuboVersion],
+  ["HeliaVersion", manifest.heliaVersion],
   ["DefaultUpdateChannel", manifest.updates.defaultChannel],
   ["CurrentAdvertisementFlag", manifest.advertisement.currentFlag],
 ])}
@@ -173,7 +191,9 @@ function writeFile(targetPath, content) {
 
 function main() {
   const manifest = readManifest();
-  manifest.kuboVersion = readKuboVersion(manifest);
+  manifest.kuboVersion = readKuboVersion();
+  manifest.heliaVersion = readHeliaVersion();
+  manifest.nodeSDSVersion = readNodeSDSVersion();
   writeFile(TS_OUTPUT_PATH, renderTS(manifest));
   writeFile(GO_OUTPUT_PATH, renderGo(manifest));
 }

@@ -36,7 +36,6 @@ licensing_wasm_path="${ORBPRO_LICENSING_WASM_PATH:-}"
 dev_wallet_config_path="${SDN_DEV_WALLET_CONFIG:-${repo_root}/config/dev-wallet.env}"
 ipfs_api_url="${SDN_IPFS_API_URL:-${SDN_DEV_IPFS_API_URL:-}}"
 ipfs_gateway_url="${SDN_IPFS_GATEWAY_URL:-${SDN_DEV_IPFS_GATEWAY_URL:-}}"
-ipfs_api_candidates="${SDN_DEV_IPFS_API_CANDIDATES:-http://127.0.0.1:5001}"
 config_path="${tmp_root}/admin-dev.yaml"
 server_pid=""
 
@@ -97,65 +96,6 @@ trim() {
   value="${value#"${value%%[![:space:]]*}"}"
   value="${value%"${value##*[![:space:]]}"}"
   printf '%s' "${value}"
-}
-
-probe_kubo_api_url() {
-  local candidate=""
-  local IFS=','
-  for candidate in ${ipfs_api_candidates}; do
-    candidate="$(trim "${candidate}")"
-    if [[ -z "${candidate}" ]]; then
-      continue
-    fi
-    candidate="${candidate%/}"
-    if curl -fsS -X POST "${candidate}/api/v0/version" >/dev/null 2>&1; then
-      printf '%s' "${candidate}"
-      return 0
-    fi
-  done
-  return 1
-}
-
-multiaddr_to_http_url() {
-  local multiaddr="${1:-}"
-  if [[ "${multiaddr}" =~ ^/ip4/([^/]+)/tcp/([0-9]+)$ ]]; then
-    printf 'http://%s:%s' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
-    return 0
-  fi
-  if [[ "${multiaddr}" =~ ^/ip6/([^/]+)/tcp/([0-9]+)$ ]]; then
-    printf 'http://[%s]:%s' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
-    return 0
-  fi
-  if [[ "${multiaddr}" =~ ^/dns4/([^/]+)/tcp/([0-9]+)$ ]]; then
-    printf 'http://%s:%s' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
-    return 0
-  fi
-  if [[ "${multiaddr}" =~ ^/dns6/([^/]+)/tcp/([0-9]+)$ ]]; then
-    printf 'http://[%s]:%s' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
-    return 0
-  fi
-  return 1
-}
-
-discover_kubo_gateway_url() {
-  local api_url="${1:-}"
-  local response=""
-  local gateway_multiaddr=""
-
-  if [[ -z "${api_url}" ]]; then
-    return 1
-  fi
-
-  if ! response="$(curl -fsS -X POST "${api_url%/}/api/v0/config?arg=Addresses.Gateway" 2>/dev/null)"; then
-    return 1
-  fi
-
-  gateway_multiaddr="$(printf '%s' "${response}" | sed -n 's/.*"Value":"\([^"]*\)".*/\1/p')"
-  if [[ -z "${gateway_multiaddr}" ]]; then
-    return 1
-  fi
-
-  multiaddr_to_http_url "${gateway_multiaddr}"
 }
 
 webui_build_contains_embedded_auth() {
@@ -243,19 +183,11 @@ if [[ -f "${dev_wallet_config_path}" ]]; then
   source "${dev_wallet_config_path}"
 fi
 
-if [[ -z "${ipfs_api_url}" ]]; then
-  detected_ipfs_api_url="$(probe_kubo_api_url || true)"
-  if [[ -n "${detected_ipfs_api_url}" ]]; then
-    ipfs_api_url="${detected_ipfs_api_url}"
-  fi
-fi
-
-if [[ -n "${ipfs_api_url}" && -z "${ipfs_gateway_url}" ]]; then
-  detected_ipfs_gateway_url="$(discover_kubo_gateway_url "${ipfs_api_url}" || true)"
-  if [[ -n "${detected_ipfs_gateway_url}" ]]; then
-    ipfs_gateway_url="${detected_ipfs_gateway_url}"
-  fi
-fi
+# Kubo runs inside the node. Port 0 lets the dev node pick free loopback ports
+# for its RPC API and gateway (it logs what it bound), so it coexists with any
+# other node or Kubo on this machine.
+ipfs_api_url="${ipfs_api_url:-http://127.0.0.1:0}"
+ipfs_gateway_url="${ipfs_gateway_url:-http://127.0.0.1:0}"
 
 dev_admin_name="${SDN_DEV_ADMIN_NAME:-${SDN_TRACKED_DEV_ADMIN_NAME:-}}"
 dev_admin_xpub="${SDN_DEV_ADMIN_XPUB:-${SDN_TRACKED_DEV_ADMIN_XPUB:-}}"
@@ -367,12 +299,7 @@ ensure_sdn_js_dependencies
 ensure_sdn_ui_build
 ensure_webui_build
 
-if [[ -n "${ipfs_api_url}" ]]; then
-  echo "Using Kubo RPC API via ${ipfs_api_url}"
-fi
-if [[ -n "${ipfs_gateway_url}" ]]; then
-  echo "Using Kubo gateway via ${ipfs_gateway_url}"
-fi
+echo "Kubo runs inside the node: RPC ${ipfs_api_url}, gateway ${ipfs_gateway_url} (port 0 = the node picks one and logs it)"
 
 echo "Using tracked dev wallet config: ${dev_wallet_config_path}"
 echo "Starting single dev server on ${server_base_url} ..."

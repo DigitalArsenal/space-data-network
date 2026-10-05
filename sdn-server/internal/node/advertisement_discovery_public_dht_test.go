@@ -35,7 +35,7 @@ func newTestAminoDHTHost(t *testing.T, ctx context.Context) (host.Host, *dht.Ipf
 		t.Fatalf("libp2p.New failed: %v", err)
 	}
 
-	d, err := dht.New(ctx, h, testAminoDHTOptions()...)
+	d, err := dht.New(h, testAminoDHTOptions()...)
 	if err != nil {
 		_ = h.Close()
 		t.Fatalf("dht.New failed: %v", err)

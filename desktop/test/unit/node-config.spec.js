@@ -6,7 +6,7 @@ const { test, expect } = require('@playwright/test')
 const { buildNodeConfig, configPathFor, ensureNodeConfig, findFreePort, nodeHome } = require('../../src/node/config')
 
 test.describe('the node configuration this shell writes', () => {
-  test('puts the store, the keys and the managed Kubo repository under one home', () => {
+  test('puts the store, the keys and the Kubo repository under one home', () => {
     const config = buildNodeConfig({
       home: '/users/x/node', adminPort: 51000, swarmPort: 51001, wsPort: 51002, quicPort: 51003, webrtcPort: 51004
     })
@@ -29,7 +29,7 @@ test.describe('the node configuration this shell writes', () => {
     expect(config.admin.local_console).toBe(true)
   })
 
-  test('leaves ipfs_api_url unset so the node manages the bundle Kubo itself', () => {
+  test('leaves ipfs_api_url unset so the RPC of the Kubo inside the node takes its default', () => {
     const config = buildNodeConfig({
       home: '/n', adminPort: 1, swarmPort: 2, wsPort: 3, quicPort: 4, webrtcPort: 5
     })
@@ -38,7 +38,7 @@ test.describe('the node configuration this shell writes', () => {
     expect(config.admin.dev_auto_admin).toBeUndefined()
   })
 
-  test('keeps the libp2p websocket off 8080, where the managed Kubo gateway binds', () => {
+  test('keeps the libp2p websocket off 8080, where the gateway of the Kubo inside the node binds', () => {
     const config = buildNodeConfig({
       home: '/n', adminPort: 1, swarmPort: 2, wsPort: 3, quicPort: 4, webrtcPort: 5
     })

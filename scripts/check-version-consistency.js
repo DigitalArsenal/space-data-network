@@ -379,20 +379,24 @@ if (isLocalFileDependency(rawJsSDS)) {
   fail(`sdn-js spacedatastandards.org mismatch: sdn-js/package.json=${jsSDS} suite.versions.json=${expectedSDS}`);
 }
 
-if (goSDS === expectedSDS) {
-  pass(`sdn-server Go spacedatastandards.org matches suite manifest: ${goSDS}`);
+// The node's SDS is the schema set compiled into sdn-server. Its Go module, the
+// schemas/sds checkout it generates from, and the embedded manifest must agree
+// with each other. The browser SDK's pin above is its own, and may move later.
+const nodeSDS = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "sdn-server/internal/sds/search-schemas/manifest.json"), "utf8")).sdsVersion;
+if (goSDS === nodeSDS) {
+  pass(`sdn-server Go spacedatastandards.org matches the node's embedded schemas: ${goSDS}`);
 } else {
-  fail(`sdn-server Go spacedatastandards.org mismatch: sdn-server/go.mod=${goSDS} suite.versions.json=${expectedSDS}`);
+  fail(`sdn-server Go spacedatastandards.org mismatch: sdn-server/go.mod=${goSDS} embedded schemas=${nodeSDS}`);
 }
 
 if (submoduleSDS === null) {
   skip(`schemas/sds checkout not available at ${SDS_SUBMODULE_PACKAGE_JSON}`);
-} else if (submoduleSDS === expectedSDS) {
-  pass(`schemas/sds checkout matches suite manifest: ${submoduleSDS}`);
+} else if (submoduleSDS === nodeSDS) {
+  pass(`schemas/sds checkout matches the node's embedded schemas: ${submoduleSDS}`);
 } else {
-  fail(`schemas/sds checkout mismatch: schemas/sds/package.json=${submoduleSDS} suite.versions.json=${expectedSDS}`);
+  fail(`schemas/sds checkout mismatch: schemas/sds/package.json=${submoduleSDS} embedded schemas=${nodeSDS}`);
 }
-checkPublishedGoModuleVersion("github.com/DigitalArsenal/spacedatastandards.org/lib/go", expectedSDS);
+checkPublishedGoModuleVersion("github.com/DigitalArsenal/spacedatastandards.org/lib/go", nodeSDS);
 
 heading("wallet version consistency");
 

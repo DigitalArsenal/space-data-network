@@ -8,7 +8,6 @@
 //   <bundle>/bin/spacedatanetwork          launcher (unix) / real exe (windows)
 //   <bundle>/runtime/sdn/spacedatanetwork  the real binary (unix)
 //   <bundle>/runtime/wasmedge/{lib,bin}    the WasmEdge runtime it links against
-//   <bundle>/runtime/kubo/ipfs             the Kubo the node manages itself
 //   <bundle>/runtime/modules/*.wasm        updater + HD wallet modules
 //   <bundle>/runtime/ui/*                  dashboard, webui, wallet sign-in assets
 //   <bundle>/trust/update-roots.json       fleet update trust roots
@@ -111,7 +110,7 @@ function nodeEnv (root, base = process.env) {
     env.PATH = prepend(join(wasmedge, 'bin'), prepend(join(root, 'bin'), base.PATH))
   } else {
     // A GUI process can inherit a PATH without /usr/bin; the node shells out
-    // for nothing critical, but its children (Kubo) expect a sane one.
+    // for nothing critical, but give it a sane one.
     env.PATH = prepend(join(root, 'bin'), base.PATH || '/usr/bin:/bin:/usr/sbin:/sbin')
   }
   return env

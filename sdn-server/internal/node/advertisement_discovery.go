@@ -23,7 +23,7 @@ import (
 
 // sdnAdvertisementDiscoveryNamespace is the canonical SDN membership flag on
 // the public IPFS/Amino DHT. Since A1 (SDN_ALIGNMENT_FIX_LOOP) the node's DHT
-// (see publicDHTOptions in node.go) joins the stock public "/ipfs/kad/1.0.0"
+// (Kubo's DHT, internal/kubo) joins the stock public "/ipfs/kad/1.0.0"
 // swarm rather than a private "/spacedatanetwork" one, so DHT membership
 // alone no longer implies SDN membership: the routing table and
 // FindProvidersAsync/GetClosestPeers results are full of unrelated public

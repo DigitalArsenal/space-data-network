@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Clean-machine install smoke for a linux self-contained bundle: extract it in
 # a fresh Debian container, initialise a node, start the daemon, and prove
-# that the probes answer and that the bundle's Kubo runs under the node.
+# that the probes answer and that Kubo runs inside the node.
 #
 #   deployment/release/install-smoke-container.sh dist/release-local/<ver>/out/spacedatanetwork-<ver>-linux-amd64.tar.gz [amd64|arm64]
 set -euo pipefail
@@ -25,7 +25,7 @@ for i in $(seq 1 90); do
 done
 echo "health: $(curl -s http://127.0.0.1:5001/health)"
 echo "ready:  $(curl -s -w " [%{http_code}]" http://127.0.0.1:5001/ready)"
-grep -E "Kubo managed by this node|Kubo not managed|kubo:" /tmp/daemon.log | head -5
-curl -s -X POST http://127.0.0.1:5002/api/v0/version && echo || { echo "managed Kubo API not answering on 5002"; tail -30 /tmp/daemon.log; exit 1; }
+grep -E "in process as|Kubo repository" /tmp/daemon.log | head -5
+curl -s -X POST http://127.0.0.1:5002/api/v0/version && echo || { echo "the node'"'"'s Kubo RPC is not answering on 5002"; tail -30 /tmp/daemon.log; exit 1; }
 echo SMOKE-OK
 '

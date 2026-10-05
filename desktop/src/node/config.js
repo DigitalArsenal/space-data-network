@@ -17,7 +17,7 @@ const { dirname, join } = require('node:path')
 
 /**
  * The node derives its key directory as `dirname(storage.path)/keys` and its
- * managed-Kubo repository as `<setup.data_path>/kubo`, so one home directory
+ * Kubo repository as `<setup.data_path>/kubo`, so one home directory
  * gives the whole node a place to live under the user's data directory.
  *
  * @param {string} userDataPath
@@ -51,13 +51,13 @@ function buildNodeConfig ({ home, adminPort, swarmPort, wsPort, quicPort, webrtc
       path: join(home, 'data')
     },
     setup: {
-      // the managed Kubo repository, TLS cache and other per-node state hang
+      // the Kubo repository, TLS cache and other per-node state hang
       // off this, keeping everything inside the user's data directory.
       data_path: home
     },
     network: {
       // Free ports, chosen once. The node's defaults put the websocket
-      // listener on 8080, which is exactly where the Kubo it manages binds its
+      // listener on 8080, which is exactly where the node's Kubo serves its
       // gateway, so a default desktop node would fight itself for that port.
       listen: [
         `/ip4/0.0.0.0/tcp/${swarmPort}`,
@@ -71,8 +71,8 @@ function buildNodeConfig ({ home, adminPort, swarmPort, wsPort, quicPort, webrtc
       // Loopback only: the dashboard is this machine's operator surface.
       listen_addr: `127.0.0.1:${adminPort}`,
       // dev_auto_admin and ipfs_api_url are deliberately absent: the node's own
-      // defaults apply, and leaving ipfs_api_url at its default is what makes
-      // the node manage the bundle's Kubo itself.
+      // defaults apply, and the default ipfs_api_url puts the RPC of the Kubo
+      // inside the node on loopback 5002.
       require_auth: true,
       // This window is the node's own console on a loopback listener with
       // nothing in front of it: it signs in as the node's root account

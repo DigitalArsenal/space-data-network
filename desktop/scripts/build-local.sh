@@ -5,8 +5,8 @@
 #
 # Three steps:
 #   1. build the darwin-arm64 node bundle with
-#      deployment/release/build-local-node-bundle.sh -- the same binary, Kubo,
-#      WasmEdge and wallet-asset steps cut-release-local.sh runs for the darwin
+#      deployment/release/build-local-node-bundle.sh -- the same binary (Kubo
+#      linked in), WasmEdge and wallet-asset steps cut-release-local.sh runs for the darwin
 #      target (or take a bundle someone else built with --node-bundle);
 #   2. stage it into desktop/assets/sdn-node/;
 #   3. run electron-builder for mac arm64.

@@ -17,18 +17,15 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-# suite.versions.json kubo.shipped, never a literal: a pin that lived in five
-# scripts drifted from the version the node REPORTED for months.
-KUBO_VERSION="${KUBO_VERSION:-$("$root/scripts/kubo-version.sh")}"
 WASMEDGE_VERSION="${WASMEDGE_VERSION:-0.16.4}"
 
 os="$(uname -s)"
 arch="$(uname -m)"
 case "${os}/${arch}" in
-  Darwin/arm64) target_os=darwin; target_arch=arm64; kubo_platform=darwin-arm64 ;;
-  Darwin/x86_64) target_os=darwin; target_arch=amd64; kubo_platform=darwin-amd64 ;;
-  Linux/x86_64) target_os=linux; target_arch=amd64; kubo_platform=linux-amd64 ;;
-  Linux/aarch64) target_os=linux; target_arch=arm64; kubo_platform=linux-arm64 ;;
+  Darwin/arm64) target_os=darwin; target_arch=arm64 ;;
+  Darwin/x86_64) target_os=darwin; target_arch=amd64 ;;
+  Linux/x86_64) target_os=linux; target_arch=amd64 ;;
+  Linux/aarch64) target_os=linux; target_arch=arm64 ;;
   *) echo "build-local-node-bundle.sh does not build ${os}/${arch} natively" >&2; exit 2 ;;
 esac
 
@@ -68,13 +65,6 @@ mkdir -p "$inputs/bin"
   -ldflags="-s -w -X github.com/spacedatanetwork/sdn-server/internal/versioninfo.ReleaseTag=${tag}" \
   -o "$inputs/bin/spacedatanetwork" ./cmd/spacedatanetwork)
 
-# --- Kubo -------------------------------------------------------------------
-if [[ ! -x "$inputs/kubo/kubo/ipfs" ]]; then
-  log "downloading Kubo ${KUBO_VERSION} for ${kubo_platform}"
-  "$root/deployment/release/download-kubo.sh" --version "$KUBO_VERSION" --platform "$kubo_platform" \
-    --archive tar.gz --output-dir "$inputs/kubo" >/dev/null
-fi
-
 # --- wallet sign-in assets --------------------------------------------------
 log "staging wallet sign-in assets"
 "$root/deployment/wallet-wasm/stage-wallet-wasm.sh" "$inputs/wallet-wasm" "$inputs/wallet-ui" >/dev/null
@@ -107,7 +97,6 @@ node "$root/deployment/release/build-self-contained-cli.mjs" \
   --version "$version" --os "$target_os" --arch "$target_arch" --channel release \
   --output-dir "$output_dir/out" \
   --binary-path "$inputs/bin/spacedatanetwork" \
-  --kubo-path "$inputs/kubo/kubo/ipfs" \
   --sdnUIPath "$sdn_ui" --webUIPath "$webui" \
   --updater-wasm-path "$updater_wasm" \
   --hd-wallet-wasm-path "$hd_wallet_wasm" \

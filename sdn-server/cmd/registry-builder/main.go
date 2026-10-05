@@ -134,7 +134,7 @@ func NewRegistryBuilder(ctx context.Context, bootstraps []string, buildScript, o
 		libp2p.Identity(privKey),
 		libp2p.Routing(func(h host.Host) (routing.PeerRouting, error) {
 			var err error
-			dhtRouting, err = dht.New(ctx, h,
+			dhtRouting, err = dht.New(h,
 				dht.Mode(dht.ModeClient),
 				// No ProtocolPrefix override: join the public IPFS/Amino DHT
 				// (protocol "/ipfs/kad/1.0.0") to stay reachable by the main
@@ -347,6 +347,9 @@ func (rb *RegistryBuilder) deployToCDN(endpoint string) {
 func (rb *RegistryBuilder) Close() error {
 	if rb.cancel != nil {
 		rb.cancel()
+	}
+	if rb.dht != nil {
+		_ = rb.dht.Close()
 	}
 	return rb.host.Close()
 }
