@@ -392,7 +392,11 @@ func (sf *ServiceFlow) InvokeCron(ctx context.Context, method string, input []by
 		gate := sf.retrievalGate
 		sf.statsMu.Unlock()
 		if gate != nil {
-			if allowed, reason := gate(); !allowed {
+			allowed, reason := gate()
+			if !allowed && plugins.ScheduledRun(ctx) {
+				allowed, reason = sf.waitOutWindow(ctx, method, gate, reason)
+			}
+			if !allowed {
 				log.Infof("Flow service %q: trigger %q skipped (%s)", sf.programID, method, reason)
 				summary, _ := json.Marshal(map[string]interface{}{
 					"trigger": method,
@@ -420,6 +424,40 @@ func (sf *ServiceFlow) InvokeCron(ctx context.Context, method string, input []by
 		}
 	}
 	return out, err
+}
+
+// windowRecheck is how often a scheduled run that the gate refused asks again.
+var windowRecheck = 15 * time.Second
+
+// waitOutWindow lets a scheduled run that the gate refused wait for the
+// publisher window to close, then pull.
+//
+// A trigger's interval and the window it serves are the same length, so a
+// tick can land just inside the window: a boot-time first pull that came a
+// few seconds after the ticker took its phase, or plain timer jitter.
+// Dropping that tick cost a whole cycle (host-02, 2026-10-05: the GP lane
+// skipped at 2h59m40s and ran every 6 h) and spared the publisher nothing.
+// The window itself is never shortened: the run waits, re-asking the gate,
+// for up to a twentieth of the interval, then pulls or is skipped as before.
+// An operator's run-now never comes through here and is refused at once.
+func (sf *ServiceFlow) waitOutWindow(ctx context.Context, method string, gate RetrievalGate, reason string) (bool, string) {
+	deadline := time.Now().Add(sf.ScheduledInterval(method) / 20)
+	for time.Now().Before(deadline) {
+		timer := time.NewTimer(windowRecheck)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return false, reason
+		case <-timer.C:
+		}
+		allowed, again := gate()
+		if allowed {
+			log.Infof("Flow service %q: trigger %q waited out its window and runs (%s)", sf.programID, method, reason)
+			return true, again
+		}
+		reason = again
+	}
+	return false, reason
 }
 
 // cronInvokeForced reads the optional {"force":true} escape from a cron
