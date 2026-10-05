@@ -85,6 +85,7 @@ func onFormat4Engine(t *testing.T, body func(t *testing.T)) {
 // openFormat4ForTest opens (creating) a format-4 store at dir.
 func openFormat4ForTest(t testing.TB, dir string, opts ...StoreOption) *FlatSQLStore {
 	t.Helper()
+	prevFormat := os.Getenv(format4.FormatEnv)
 	t.Setenv(format4.FormatEnv, "4")
 	t.Setenv(checkpointIntervalEnv, "0")
 	v, err := sds.NewValidator(nil)
@@ -98,7 +99,7 @@ func openFormat4ForTest(t testing.TB, dir string, opts ...StoreOption) *FlatSQLS
 	if !s.Format4() || !s.PartitionedRecords() || s.Format2() {
 		t.Fatalf("SDN_STORE_FORMAT=4 opened format4=%v partitioned=%v format2=%v", s.Format4(), s.PartitionedRecords(), s.Format2())
 	}
-	t.Setenv(format4.FormatEnv, "")
+	t.Setenv(format4.FormatEnv, prevFormat)
 	return s
 }
 
@@ -257,7 +258,7 @@ func TestFormat4StoreSelectionAndRefusals(t *testing.T) {
 
 		// Formats 1 and 2 refuse it before touching a file.
 		before := listing(dir)
-		for _, sel := range []string{"", "2"} {
+		for _, sel := range []string{"1", "2"} {
 			t.Setenv(format4.FormatEnv, sel)
 			if _, err := NewFlatSQLStore(dir, v); !errors.Is(err, ErrFormat4Store) {
 				t.Fatalf("SDN_STORE_FORMAT=%q on a format-4 store: %v", sel, err)
@@ -268,7 +269,7 @@ func TestFormat4StoreSelectionAndRefusals(t *testing.T) {
 		}
 
 		// Format 4 refuses an unmigrated format-1 store.
-		t.Setenv(format4.FormatEnv, "")
+		t.Setenv(format4.FormatEnv, "1")
 		legacyDir := t.TempDir()
 		l := reopenDeferred(t, legacyDir)
 		if err := l.Close(); err != nil {

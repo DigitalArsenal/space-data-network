@@ -914,7 +914,7 @@ func (c Config) driveXM(ctx context.Context, logf Logf, aliases map[string]strin
 		skip1[hexText], skip4[v1] = true, true
 	}
 	d1, err := DigestFormat1Limit(store, xmTypes, maxStorableRecord, skip1)
-	w1 := &Run{Kind: KindWrites, Arm: ArmF1, Format: "", Label: LabelFixture, Class: ClassXM, Started: time.Now().UTC().Format(time.RFC3339),
+	w1 := &Run{Kind: KindWrites, Arm: ArmF1, Format: ArmFormat(ArmF1), Label: LabelFixture, Class: ClassXM, Started: time.Now().UTC().Format(time.RFC3339),
 		Machine: ThisMachine(), LoadStart: Load(), Extra: map[string]any{}}
 	if err != nil {
 		w1.Extra["digest_error"] = err.Error()

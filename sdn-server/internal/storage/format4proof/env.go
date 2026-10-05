@@ -89,7 +89,8 @@ func ConfigFromEnv() Config {
 	return c
 }
 
-// ArmFormat is the SDN_STORE_FORMAT value an arm opens its store with.
+// ArmFormat is the SDN_STORE_FORMAT value an arm opens its store with
+// (format 1 is named: unset is the default, format 4).
 func ArmFormat(arm string) string {
 	switch arm {
 	case ArmF2:
@@ -97,7 +98,7 @@ func ArmFormat(arm string) string {
 	case ArmS:
 		return "4"
 	}
-	return ""
+	return "1"
 }
 
 func splitList(s string) []string {

@@ -37,15 +37,15 @@ type MigrationSource struct {
 	scanErr  error
 }
 
-// OpenMigrationSource opens the legacy store at basePath (it takes the
-// store's single-writer lock, so the daemon must be stopped, or basePath is
-// a copy).
+// OpenMigrationSource opens the legacy store at basePath as format 1,
+// whatever SDN_STORE_FORMAT says (it takes the store's single-writer lock,
+// so the daemon must be stopped, or basePath is a copy).
 func OpenMigrationSource(basePath string) (*MigrationSource, error) {
 	v, err := sds.NewValidator(nil)
 	if err != nil {
 		return nil, err
 	}
-	s, err := NewFlatSQLStore(basePath, v, WithDeferredBootRebuilds())
+	s, err := NewFlatSQLStore(basePath, v, WithDeferredBootRebuilds(), withStoreFormat(1))
 	if err != nil {
 		return nil, err
 	}

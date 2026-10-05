@@ -44,7 +44,6 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/keys"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format2"
-	"github.com/spacedatanetwork/sdn-server/internal/storage/format4"
 )
 
 var log = logging.Logger("storage")
@@ -360,6 +359,15 @@ type storeConfig struct {
 	deferBootRebuilds      bool
 	auxReplayChunkBytes    int64
 	quotaBytes             int64
+	// format pins the store format (withStoreFormat); 0 decides it by
+	// storeFormatFor.
+	format int
+}
+
+// withStoreFormat opens the store as format n whatever SDN_STORE_FORMAT
+// says (OpenMigrationSource: a migration source is format 1).
+func withStoreFormat(n int) StoreOption {
+	return func(c *storeConfig) { c.format = n }
 }
 
 // WithQuotaBytes is the store's cap on on-disk bytes (storage.max_size).
@@ -438,13 +446,22 @@ func NewFlatSQLStore(basePath string, validator *sds.Validator, opts ...StoreOpt
 	for _, o := range opts {
 		o(&cfg)
 	}
-	// STORE FORMATS 4 (format4_daemon.go) and 2 (format2_daemon.go) run only
-	// when selected; a format-1 open of a store store-migrate activated is
-	// refused before it touches a file (A5).
-	if format4.Selected() {
-		return newFormat4Store(basePath, validator, cfg)
+	// THE STORE FORMAT (storeFormatFor): SDN_STORE_FORMAT when set, else
+	// format 4 (format4_daemon.go), except for a store an earlier format
+	// holds. Format 2 (format2_daemon.go) runs only when selected. A format-1
+	// open of a store store-migrate activated is refused before it touches a
+	// file (A5).
+	format := cfg.format
+	if format == 0 {
+		var err error
+		if format, err = storeFormatFor(basePath); err != nil {
+			return nil, err
+		}
 	}
-	if format2.Selected() {
+	switch format {
+	case 4:
+		return newFormat4Store(basePath, validator, cfg)
+	case 2:
 		return newFormat2Store(basePath, validator, cfg)
 	}
 	if err := newFormat1RefusesMigratedStore(basePath); err != nil {
