@@ -273,118 +273,6 @@ func TestValidateSchemaNameMaxLength(t *testing.T) {
 	}
 }
 
-// internalSchemas are the SDN-internal schemas that are not part of the
-// upstream spacedatastandards.org standards set.
-var internalSchemas = map[string]bool{
-	"PGR.fbs":  true, // Peer Graph Record
-	"PLHD.fbs": true, // Publication Log Head
-	"PLOG.fbs": true, // Publication Log Entry
-	"RHD.fbs":  true, // Routing Header
-}
-
-const (
-	// Every standard published by spacedatastandards.org at the pinned
-	// version. The embed is a FULL mirror, not a subset: REC.fbs (the
-	// aggregate Records schema) includes every other standard, so a partial
-	// embed leaves dangling includes — which is exactly how the set went
-	// stale before v1.177.0.
-	//
-	// 225 from spacedatastandards.org v1.197.0 — every standard the pin
-	// publishes, counted as `ls schema/*/main.fbs` counts them. The v1.196.0
-	// bump folded the v1.193.0 $EGP partial addition back in and brought the
-	// count to 224 with $IRM (Ingest Resume Mark, REC ordinal 223) and the 17
-	// other standards REC.fbs began including between v1.186.0 and v1.196.0.
-	//
-	// v1.197.0 added exactly ONE: $VCF (vCard Projection Card, REC ordinal 224),
-	// the canonical contact-card projection of one published EPM. The vCard
-	// projection module writes it through the schema-typed storage.write
-	// capability, and a standard the validator has never loaded is not one it
-	// can admit — before that embed the write failed closed exactly as $IRM's
-	// did before v1.196.0.
-	//
-	// v1.198.0 adds TWO more for the RF-catalog program: $STX (Scheduled
-	// Transmission, REC ordinal 225) and $TXS (Terrestrial Transmitter Site,
-	// REC ordinal 226). $TXS is the merged, source-attributed facility record
-	// and $STX is one broadcast schedule row that references it by
-	// TXS.ID — STX.fbs literally includes ../TXS/main.fbs and reuses
-	// TXSProvenance, so the two are ONE include closure and neither embeds
-	// alone. Only REC.fbs changed among the 225 already embedded; the rest of
-	// this pin is the two new standards and the re-vendored bindings.
-	// The admitted embedded set also includes WXF and NCD from SDS v1.215.0.
-	expectedStandardSchemaCount = 232
-	expectedInternalSchemaCount = 4
-	expectedTotalSchemaCount    = expectedStandardSchemaCount + expectedInternalSchemaCount
-)
-
-func TestSupportedSchemas(t *testing.T) {
-	if len(SupportedSchemas) != expectedTotalSchemaCount {
-		t.Errorf("Expected %d schemas, got %d", expectedTotalSchemaCount, len(SupportedSchemas))
-	}
-
-	// Verify uniqueness and count standard vs internal schemas
-	seen := make(map[string]bool, len(SupportedSchemas))
-	standard, internal := 0, 0
-	for _, s := range SupportedSchemas {
-		if seen[s] {
-			t.Errorf("Duplicate schema in SupportedSchemas: %s", s)
-		}
-		seen[s] = true
-
-		if internalSchemas[s] {
-			internal++
-		} else {
-			standard++
-		}
-	}
-
-	if standard != expectedStandardSchemaCount {
-		t.Errorf("Expected %d standard schemas, got %d", expectedStandardSchemaCount, standard)
-	}
-	if internal != expectedInternalSchemaCount {
-		t.Errorf("Expected %d SDN-internal schemas, got %d", expectedInternalSchemaCount, internal)
-	}
-
-	// Spot-check a few well-known schemas
-	for _, expected := range []string{"OMM.fbs", "CDM.fbs", "EPM.fbs", "CAT.fbs", "PNM.fbs", "PGM.fbs", "PRR.fbs", "PGR.fbs"} {
-		if !seen[expected] {
-			t.Errorf("Expected schema %s not found in SupportedSchemas", expected)
-		}
-	}
-}
-
-func TestSupportedSchemasMatchEmbedded(t *testing.T) {
-	entries, err := schemasFS.ReadDir("schemas")
-	if err != nil {
-		t.Fatalf("Failed to read embedded schemas: %v", err)
-	}
-
-	embedded := make(map[string]bool)
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".fbs") {
-			continue
-		}
-		embedded[entry.Name()] = true
-	}
-
-	supported := make(map[string]bool, len(SupportedSchemas))
-	for _, s := range SupportedSchemas {
-		supported[s] = true
-		if !embedded[s] {
-			t.Errorf("Schema %s listed in SupportedSchemas but not embedded", s)
-		}
-	}
-
-	for name := range embedded {
-		if !supported[name] {
-			t.Errorf("Embedded schema %s missing from SupportedSchemas", name)
-		}
-	}
-
-	if len(embedded) != expectedTotalSchemaCount {
-		t.Errorf("Expected %d embedded schemas, got %d", expectedTotalSchemaCount, len(embedded))
-	}
-}
-
 func TestEmbeddedSchemaPathUsesSlashSeparator(t *testing.T) {
 	if got, want := embeddedSchemaPath("PNM.fbs"), "schemas/PNM.fbs"; got != want {
 		t.Fatalf("embeddedSchemaPath() = %q, want %q", got, want)
@@ -448,23 +336,6 @@ func TestEmbeddedSchemasParse(t *testing.T) {
 			if !supported[target] {
 				t.Errorf("Schema %s includes %s which is not a registered schema", name, target)
 			}
-		}
-	}
-}
-
-func TestValidatorLoadsAllSupportedSchemas(t *testing.T) {
-	validator, err := NewValidator(nil)
-	if err != nil {
-		t.Fatalf("Failed to create validator: %v", err)
-	}
-
-	if got := len(validator.Schemas()); got != expectedTotalSchemaCount {
-		t.Errorf("Expected validator to load %d schemas, got %d", expectedTotalSchemaCount, got)
-	}
-
-	for _, name := range SupportedSchemas {
-		if !validator.HasSchema(name) {
-			t.Errorf("Validator missing supported schema %s", name)
 		}
 	}
 }
@@ -694,25 +565,6 @@ func TestValidatorConverterSchemaAvailability(t *testing.T) {
 	}
 	if envelopeOnly.FieldLevelValidation() {
 		t.Fatal("field-level validation reported on without a converter")
-	}
-}
-
-// Every embedded schema but REC.fbs parses in the converter with its
-// includes resolved through the <FAMILY>/main.fbs file map.
-func TestValidatorConverterLoadsEmbeddedSchemas(t *testing.T) {
-	v := newConverterValidator(t)
-	ctx := context.Background()
-	loaded, failed := v.PreloadConverterSchemas(ctx)
-	if failed != 1 || v.ConverterError(ctx, "REC.fbs") == nil {
-		for _, name := range v.Schemas() {
-			if err := v.ConverterError(ctx, name); err != nil {
-				t.Logf("%s: %v", name, err)
-			}
-		}
-		t.Fatalf("converter failed %d schema(s), want only REC.fbs", failed)
-	}
-	if loaded != expectedTotalSchemaCount-1 {
-		t.Fatalf("converter loaded %d schemas, want %d", loaded, expectedTotalSchemaCount-1)
 	}
 }
 

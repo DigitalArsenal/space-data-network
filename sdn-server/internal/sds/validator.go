@@ -134,6 +134,7 @@ var SupportedSchemas = []string{
 	"COM.fbs",  // Communications Systems
 	"COT.fbs",  // Cursor on Target Event
 	"CPS.fbs",  // Compressed Packet Stream (CCSDS fixed-length packet run)
+	"CQR.fbs",  // Conjunction Query and Result - screening, encounter-plane probability, launch windows (SDS v1.220.0; uncertainty provenance v1.231.0)
 	"CRD.fbs",  // Coordinate Systems
 	"CRM.fbs",  // Collision Risk Message
 	"CSM.fbs",  // Conjunction Summary Message
@@ -206,6 +207,7 @@ var SupportedSchemas = []string{
 	"MBL.fbs",  // Module Bundle Listing
 	"MDP.fbs",  // Mission Design Problem - patched-conic broad search definition
 	"MDS.fbs",  // Mission Design Solution Set - candidate trajectories
+	"MEM.fbs",  // Measurement Error Model (SDS v1.203.0; included by ACW from v1.229.0)
 	"MET.fbs",  // Meteorological Data
 	"MFE.fbs",  // Manifold Element Set
 	"MNF.fbs",  // Orbit Manifold
@@ -235,9 +237,11 @@ var SupportedSchemas = []string{
 	"OPP.fbs",  // Object Physical Properties - sourced physical description
 	"OSM.fbs",  // Orbit State Message
 	"PAP.fbs",  // Phased Array Pattern Synthesis (SDS v1.196.0)
+	"PCE.fbs",  // Parameter Catalog and Evaluation (SDS v1.201.0; included by PRW)
 	"PCF.fbs",  // Propagator Configuration
 	"PGM.fbs",  // Peer Group Membership Record
 	"PGR.fbs",  // Peer Graph Record - Peer network graph snapshot (SDN-internal)
+	"PHB.fbs",  // Photometric Band (SDS v1.225.0; included by STR)
 	"PHY.fbs",  // Physics and Rigid Body Dynamics
 	"PIV.fbs",  // Plugin Invoke - Plugin request/response envelopes
 	"PKB.fbs",  // Publisher Key-Broker Descriptor

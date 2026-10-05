@@ -271,4 +271,14 @@ var unguardedEmbeddedSchemas = map[string]bool{
 	"WPN.fbs":  true,
 	"WTH.fbs":  true,
 	"XTC.fbs":  true,
+	// $CQR, $MEM, $PCE and $PHB (v1.232.0 pin) are embedded so every store
+	// format holds them as standards: store-migrate --to 4 listed a $CQR table
+	// as unregistered. $PCE, $MEM and $PHB are the include closure of the
+	// refreshed PRW, ACW and STR embeds. The host decodes no field of any of
+	// them; TestStoreMigrateFormat4CarriesCQR (cmd/spacedatanetwork) stores,
+	// reads and migrates real $CQR records built with the pinned binding.
+	"CQR.fbs": true,
+	"MEM.fbs": true,
+	"PCE.fbs": true,
+	"PHB.fbs": true,
 }

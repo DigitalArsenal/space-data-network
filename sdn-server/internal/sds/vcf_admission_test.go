@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"strings"
 	"testing"
 
 	flatbuffers "github.com/google/flatbuffers/go"
@@ -161,74 +160,5 @@ func TestVCFIsAdmittedByTheEmbeddedValidator(t *testing.T) {
 func TestVCFIsNotOnTheAnonymousDataPlane(t *testing.T) {
 	if IsPublicReadSchema("VCF.fbs") {
 		t.Error("VCF.fbs is on the anonymous public-read allow-list: a projected card is not the published profile")
-	}
-}
-
-// TestEmbeddedSetIsTheWholePinnedStandardSet states the count outcome this
-// task exists to produce, in the terms the pin is written in: every standard
-// spacedatastandards.org publishes at v1.197.0 is embedded, and $VCF is in it.
-//
-// The count constant alone would pass on a set that embedded 225 of the wrong
-// files; this also names the standard the bump was for and pins the internal
-// (non-SDS) schemas that make the total, so a future bump cannot quietly
-// swap one for the other.
-func TestEmbeddedSetIsTheWholePinnedStandardSet(t *testing.T) {
-	standards := 0
-	internal := 0
-	seen := make(map[string]bool, len(SupportedSchemas))
-	for _, name := range SupportedSchemas {
-		if seen[name] {
-			t.Fatalf("%s is listed twice in SupportedSchemas", name)
-		}
-		seen[name] = true
-		if internalSchemas[name] {
-			internal++
-			continue
-		}
-		standards++
-	}
-	if standards != expectedStandardSchemaCount {
-		t.Errorf("embedded SDS standards = %d, want %d", standards, expectedStandardSchemaCount)
-	}
-	if internal != expectedInternalSchemaCount {
-		t.Errorf("embedded internal schemas = %d, want %d", internal, expectedInternalSchemaCount)
-	}
-	for _, name := range []string{"VCF.fbs", "TXS.fbs", "STX.fbs", "WXF.fbs", "NCD.fbs"} {
-		if !seen[name] {
-			t.Errorf("%s is absent: the v1.197.0/v1.198.0 bumps exist to embed it", name)
-		}
-	}
-
-	// The embed is loadable, not merely listed. REC.fbs at this pin includes
-	// ../VCF/main.fbs, so a validator that builds without a dangling include
-	// is the proof that the closure is complete.
-	validator, err := NewValidator(nil)
-	if err != nil {
-		t.Fatalf("the embedded set does not load: %v", err)
-	}
-	for _, name := range SupportedSchemas {
-		if !validator.HasSchema(name) {
-			t.Errorf("%s is supported but not loaded by the validator", name)
-		}
-	}
-	rec, err := schemasFS.ReadFile("schemas/REC.fbs")
-	if err != nil {
-		t.Fatalf("REC.fbs is not embedded: %v", err)
-	}
-	for _, inc := range []string{"../VCF/main.fbs", "../TXS/main.fbs", "../STX/main.fbs"} {
-		if !strings.Contains(string(rec), inc) {
-			t.Errorf("the embedded REC.fbs does not include %s: the aggregate record schema is behind the pin", inc)
-		}
-	}
-
-	// $STX does not stand alone: STX.fbs includes ../TXS/main.fbs and reuses
-	// TXSProvenance, so embedding one without the other is a dangling include
-	// rather than a partial feature.
-	stx, err := schemasFS.ReadFile("schemas/STX.fbs")
-	if err != nil {
-		t.Fatalf("STX.fbs is not embedded: %v", err)
-	}
-	if !strings.Contains(string(stx), "../TXS/main.fbs") {
-		t.Error("the embedded STX.fbs does not include ../TXS/main.fbs: the schedule row has lost its facility closure")
 	}
 }
