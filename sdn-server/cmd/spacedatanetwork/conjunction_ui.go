@@ -102,7 +102,9 @@ func dashboardCSP() string { return strings.TrimSpace(dashboardCSPRaw) }
 // "/index.html") with its build-generated CSP, the isolated wallet callback
 // routes unchanged, and a 404 for every other root-surface path. If the
 // dashboard artifact was not built into the binary it falls back to the
-// self-contained wordmark placeholder.
+// self-contained wordmark placeholder. A request under the node's public name
+// (<peer-label>.spacedatanetwork.org) gets the node's homepage at "/" instead,
+// and /home/ is the homepage on any address (homepage_site.go).
 func makeRootHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if isWalletCallbackPath(r.URL.Path) {
@@ -113,7 +115,12 @@ func makeRootHandler() http.Handler {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		if r.URL.Path != "/" && r.URL.Path != "/index.html" {
+		root := r.URL.Path == "/" || r.URL.Path == "/index.html"
+		if isHomepagePath(r.URL.Path) || (root && isNodeSiteRequest(r)) {
+			serveHomepage(w, r)
+			return
+		}
+		if !root {
 			http.NotFound(w, r)
 			return
 		}
