@@ -51,12 +51,7 @@ func PrewarmAOT() error {
 // storage.NewFlatSQLStore exactly as the daemon does, and checks that the
 // store opened in the arm's format. It returns the open time.
 func OpenArm(arm, dir string, opts ...storage.StoreOption) (*storage.FlatSQLStore, float64, error) {
-	switch f := ArmFormat(arm); f {
-	case "":
-		os.Unsetenv(format2.FormatEnv)
-	default:
-		os.Setenv(format2.FormatEnv, f)
-	}
+	os.Setenv(format2.FormatEnv, ArmFormat(arm))
 	v, err := sds.NewValidator(nil)
 	if err != nil {
 		return nil, 0, err

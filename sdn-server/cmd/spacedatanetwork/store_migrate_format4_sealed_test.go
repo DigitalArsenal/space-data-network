@@ -86,10 +86,7 @@ func TestStoreMigrateFormat4SealedRecords(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := storage.NewFlatSQLStore(dir, v, storage.WithDeferredBootRebuilds())
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := newFormat1Store(t, dir, v)
 	tags := storage.SourceTags{ProviderID: "space-data-network-02", SourceName: "keys", BatchID: "k-1"}
 	if n, err := s.StoreBatchWithSourceTags("KMF.fbs", recs[:8], "source:keys", nil, tags); err != nil || n != 8 {
 		t.Fatalf("KMF batch: %d, %v", n, err)

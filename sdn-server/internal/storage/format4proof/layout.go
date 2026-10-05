@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
-	"github.com/spacedatanetwork/sdn-server/internal/storage/format2"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format4/marker"
 )
 
@@ -75,9 +74,6 @@ var feedIDSuffix = regexp.MustCompile(`~[0-9]+$`)
 // format1Feeds are the (provider, source) feeds of each type with live
 // records in format 1's source summary, as feed file names.
 func format1Feeds(f1Store string) (map[string]map[string]bool, error) {
-	// A format-1 store opens only without the format selector, which OpenArm
-	// sets in this process for a format-4 arm (every open sets its own).
-	os.Unsetenv(format2.FormatEnv)
 	src, err := storage.OpenMigrationSource(f1Store)
 	if err != nil {
 		return nil, err

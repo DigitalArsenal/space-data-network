@@ -18,18 +18,6 @@ func ctxT(t *testing.T) context.Context {
 	return ctx
 }
 
-func TestSelected(t *testing.T) {
-	for v, want := range map[string]bool{"": false, "1": false, "2": false, "4": true, " 4 ": true, "sqlite": true, "SQLite": true, "sqlite3": false} {
-		t.Setenv(format4.FormatEnv, v)
-		if format4.Selected() != want {
-			t.Fatalf("SDN_STORE_FORMAT=%q: Selected %v", v, !want)
-		}
-	}
-	if typ, err := format4.TypeOf("OMM.fbs"); err != nil || typ != "OMM" {
-		t.Fatalf("TypeOf: %q %v", typ, err)
-	}
-}
-
 func TestStatusErrors(t *testing.T) {
 	err := &format4.StatusError{Op: "PUT", Status: format4.StatusBusy, Msg: "credit"}
 	if !errors.Is(err, format4.ErrBusy) || errors.Is(err, format4.ErrNoType) {

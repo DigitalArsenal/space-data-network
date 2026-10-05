@@ -186,7 +186,7 @@ func prewarmAOTArtifacts(out io.Writer, cacheDir string) error {
 	// a node that has selected format 4.
 	p4Path, p4Present, p4Err := flatsqlrt.PrewarmP4ThreadsAOT(cacheDir)
 	if p4Err != nil {
-		if format4.Selected() {
+		if format4Expected() {
 			return fmt.Errorf("prewarm the format-4 engine (%s): %w", flatsqlrt.P4ThreadsPackage, p4Err)
 		}
 		fmt.Fprintf(out, "  format-4 engine (%s): SKIPPED (%v)\n", flatsqlrt.P4ThreadsPackage, p4Err)
@@ -194,6 +194,13 @@ func prewarmAOTArtifacts(out io.Writer, cacheDir string) error {
 		reportPrewarm(out, "format-4 engine ("+flatsqlrt.P4ThreadsPackage+")", p4Path, p4Present)
 	}
 	return nil
+}
+
+// format4Expected reports whether this process runs store format 4, so its
+// engine artifact is mandatory: SDN_STORE_FORMAT=4.
+func format4Expected() bool {
+	requested, err := format4.Requested()
+	return err == nil && requested == 4
 }
 
 func reportPrewarm(out io.Writer, label, path string, alreadyPresent bool) {

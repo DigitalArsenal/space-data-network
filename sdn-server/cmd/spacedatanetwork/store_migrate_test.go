@@ -88,6 +88,20 @@ func migrateTestCAT(norad uint32, name string) []byte {
 	return append([]byte(nil), b.FinishedBytes()...)
 }
 
+// newFormat1Store opens (creating) dir as format 1, the format store-migrate
+// reads; unset, SDN_STORE_FORMAT creates a fresh store as format 4.
+func newFormat1Store(t *testing.T, dir string, v *sds.Validator) *storage.FlatSQLStore {
+	t.Helper()
+	prev := os.Getenv(format2.FormatEnv)
+	t.Setenv(format2.FormatEnv, "1")
+	defer t.Setenv(format2.FormatEnv, prev)
+	s, err := storage.NewFlatSQLStore(dir, v, storage.WithDeferredBootRebuilds())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
 // buildLegacyStore writes a small legacy store through the daemon's own
 // write path: two OMM producers sharing CIDs (REPEAT copies), records with
 // several source tags (RETAG), CAT records that supersede, and a licence.
@@ -97,10 +111,7 @@ func buildLegacyStore(t *testing.T, dir string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := storage.NewFlatSQLStore(dir, v, storage.WithDeferredBootRebuilds())
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := newFormat1Store(t, dir, v)
 	base := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	var omm [][]byte
 	for i := 0; i < 300; i++ {

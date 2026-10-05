@@ -177,6 +177,15 @@ func format2StorePresent(basePath string) (bool, error) {
 	return false, nil
 }
 
+// storeFormatFor is the store format NewFlatSQLStore opens basePath as: the
+// one SDN_STORE_FORMAT names, format 1 when it names none.
+func storeFormatFor(basePath string) (int, error) {
+	if requested, err := format4.Requested(); err != nil || requested != 0 {
+		return requested, err
+	}
+	return 1, nil
+}
+
 // format4CreateMode decides how the engine opens <data>/fsql4 (§5.5): an
 // activated store opens; an activation store-migrate left half done is
 // finished first; a format-1 store it has not migrated is refused; an

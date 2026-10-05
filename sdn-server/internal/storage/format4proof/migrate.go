@@ -47,7 +47,7 @@ func migrateRun(ctx context.Context, bin, store, logPath string, kill time.Durat
 	cmd := exec.CommandContext(ctx, bin, append([]string{"store-migrate", "--to", "4", "--store", store}, extra...)...)
 	cmd.Stdout, cmd.Stderr = log, log
 	// OpenArm (SettleStore, the digests) sets SDN_STORE_FORMAT in this
-	// process; store-migrate opens format 1 and must not inherit it.
+	// process; store-migrate runs as an operator runs it, without it.
 	cmd.Env = envWithout(format2.FormatEnv)
 	st := time.Now()
 	if err := cmd.Start(); err != nil {

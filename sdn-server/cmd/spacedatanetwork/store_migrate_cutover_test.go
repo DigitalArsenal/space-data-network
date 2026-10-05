@@ -117,10 +117,7 @@ func TestStoreMigrateOrdersARecordsTagsByTheirRows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := storage.NewFlatSQLStore(dir, v, storage.WithDeferredBootRebuilds())
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := newFormat1Store(t, dir, v)
 	base := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	var omm [][]byte
 	for i := 0; i < 20; i++ {

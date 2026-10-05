@@ -54,6 +54,7 @@ func openFormat2ForTest(t testing.TB, dir string, opts ...StoreOption) *FlatSQLS
 		return filepath.Join(base, "sdn-format2-test-aot")
 	}
 	t.Cleanup(func() { format2CompileOnMiss, format2AOTCacheDir = prevCompile, prevDir })
+	prevFormat := os.Getenv(format2.FormatEnv)
 	t.Setenv(format2.FormatEnv, "2")
 	t.Setenv(checkpointIntervalEnv, "0")
 	if os.Getenv(format2TopologyEnv) == "" {
@@ -70,7 +71,7 @@ func openFormat2ForTest(t testing.TB, dir string, opts ...StoreOption) *FlatSQLS
 	if !s.Format2() {
 		t.Fatal("SDN_STORE_FORMAT=2 opened a format-1 store")
 	}
-	t.Setenv(format2.FormatEnv, "")
+	t.Setenv(format2.FormatEnv, prevFormat)
 	return s
 }
 

@@ -608,11 +608,7 @@ func parseMix(mix string) map[string]float64 {
 // in the arm's format (SDN_STORE_FORMAT; format 2 unless -format says
 // otherwise), as the daemon opens it.
 func openStore(c config, arm string) (*storage.FlatSQLStore, error) {
-	if f := format4proof.ArmFormat(arm); f == "" {
-		os.Unsetenv(format2.FormatEnv)
-	} else {
-		os.Setenv(format2.FormatEnv, f)
-	}
+	os.Setenv(format2.FormatEnv, format4proof.ArmFormat(arm))
 	if c.prewarm {
 		cache := storage.EngineAOTCacheDir()
 		if p, present, err := flatsqlrt.PrewarmEngineAOT(cache); err != nil {
