@@ -14,15 +14,32 @@ those apps integrated somehow into its own version numbering system."
   (secp256k1, IdentityPath). Kubo receives it in memory. The repository config
   on disk keeps the PeerID only, so the box no longer carries a plaintext
   Kubo key.
-- **Loopback HTTP.** Kubo's own RPC API and gateway listen where
-  `admin.ipfs_api_url` and `admin.ipfs_gateway_url` say, on loopback only:
-  - The default API URL maps to `127.0.0.1:5002`, because the admin listener
-    uses 5001. The gateway defaults to `127.0.0.1:8080`.
-  - Port 0 picks a free port.
-  - An API URL off loopback is refused, because a Kubo elsewhere would be a
-    second peer.
+- **Loopback HTTP.** Kubo's own RPC API and gateway listen where the
+  repository's config says (`Addresses.API`, `Addresses.Gateway`), on loopback
+  only, and the gateway fetches from the network as the repository's
+  `Gateway.NoFetch` says. A repository taken over keeps its ports, so host-01
+  keeps 5002 and 8091.
+  - A repository the node creates gets its addresses from
+    `admin.ipfs_api_url` and `admin.ipfs_gateway_url`: the default API URL
+    maps to `127.0.0.1:5002`, because the admin listener uses 5001, and the
+    gateway defaults to `127.0.0.1:8080`, with `Gateway.NoFetch` on. Port 0
+    picks a free port on every start.
+  - An address off loopback is refused: the RPC API publishes and signs as
+    the node, and the node serves the public web on its own listener.
+- **Client URLs.** The admin URLs are where the node's own clients reach Kubo.
+  Pinning and publishing use the in-process RPC API wherever it listens. An
+  explicit gateway URL stays as configured, because it can be a cache in front
+  of Kubo's gateway: host-01's terrain cache on 8081 serves tiles and falls
+  through to Kubo on 8091.
 - **Repository.** It is `asset_pins.kubo_repo_path` when that names an existing
   repository, otherwise `<data>/kubo`.
+- **No plugin loading.** Every build carries `-tags noplugin`
+  (`scripts/go-with-wasmedge.sh` adds it), which is Kubo's own switch. An
+  executable file in the repository's `plugins/` directory is then refused, and
+  never loaded into the process that holds the node's key. It also keeps Go's
+  `plugin` package out of the binary. With that package linked, Go links ELF
+  binaries with `-z nocopyreloc`, which the static WasmEdge prefix's non-PIC
+  terminfo objects cannot satisfy.
 
 ## Seams
 
@@ -31,7 +48,7 @@ surface:
 
 | Seam | Use |
 |---|---|
-| `plugin/loader` | Kubo's built-in datastores, loaded once per process |
+| `plugin/loader` | Kubo's built-in datastores, loaded once per process with the repository's `Plugins` settings |
 | `repo.Repo` wrapper | Adds the identity in memory and applies the node-owned settings on every config read |
 | `BuildCfg.Host` | Builds the host from the node's own options (see below) |
 | `BuildCfg.Routing` | Sets DHT participation: auto → `dht`, always → `dhtserver`, never or off → `dhtclient` |
@@ -107,9 +124,16 @@ To roll back to the two-process layout: stop the node, restore that copy as
 ## Fleet
 
 host-01 and host-02 run `ipfs.service` on the repository that
-`asset_pins.kubo_repo_path` names. Rolling them is an ops task with four steps:
+`asset_pins.kubo_repo_path` names. Rolling them is an ops task with five steps:
 
 1. Stop and disable `ipfs.service`.
-2. Give the node's service user the repository.
-3. Start the node.
-4. Check that `/api/v1/id`, the Kubo RPC `id` and the DHT agree on one peer.
+2. Give the node's service user the repository, and set
+   `asset_pins.kubo_repo_path` where the built-in default
+   (`/mnt/volume_nyc3_01/ipfs`) is not the repository.
+3. Check that the repository's `Addresses.API` and `Addresses.Gateway` are on
+   loopback.
+4. Start the node.
+5. Check that `/api/v1/id`, the Kubo RPC `id` and the DHT agree on one peer.
+
+The peer ID changes to the node's, so the IPNS name under `self` changes with
+it, and clients that dial the separate Kubo's peer must move to the node's.

@@ -2,6 +2,8 @@ module github.com/spacedatanetwork/sdn-server
 
 go 1.26.5
 
+toolchain go1.26.8
+
 require (
 	github.com/DigitalArsenal/spacedatastandards.org/lib/go v1.232.0
 	github.com/caddyserver/certmagic v0.25.3

@@ -165,6 +165,78 @@ CGO_LDFLAGS_VALUE="${CGO_LDFLAGS:-}"
 
 CGO_CFLAGS_VALUE="${CGO_CFLAGS_VALUE}${CGO_CFLAGS_VALUE:+ }-I${WASMEDGE_DIR}/include"
 
+# KUBO'S .so PLUGIN LOADER IS COMPILED OUT. Every build, install, run, test and
+# vet carries the noplugin tag, joined to the -tags the caller passes (or to
+# GOFLAGS's). Kubo's commands package imports its plugin loader, which imports
+# Go's `plugin` package on cgo builds, and that does two things to the node:
+#   - Kubo would dlopen any executable file in the repository's plugins/
+#     directory into the process that holds the node's key.
+#   - Go links an ELF binary that can load plugins with -z nocopyreloc, and the
+#     static prefix's terminfo objects in libwasmedge.a are not PIC:
+#     "relocation R_X86_64_PC32 against symbol `stderr@@GLIBC_2.2.5' can not be
+#     used when making a PDE object".
+# Arguments after go test's -args, or after go run's package, are the
+# program's and pass through untouched.
+join_noplugin_tag() {
+  case "$1" in
+    "") printf 'noplugin' ;;
+    *" "*) printf '%s noplugin' "$1" ;; # the old space-separated form
+    *) printf '%s,noplugin' "$1" ;;
+  esac
+}
+
+GO_ARGS=()
+add_noplugin_tag() {
+  local verb="${1:-}" tagged="" arg value=""
+  GO_ARGS=("$@")
+  case "$verb" in
+    build|install|run|test|vet) ;;
+    *) return 0 ;;
+  esac
+  shift
+  GO_ARGS=("$verb")
+  while (($#)); do
+    arg="$1"
+    shift
+    case "$arg" in
+      -args|--args)
+        GO_ARGS+=("$arg" "$@")
+        break
+        ;;
+      -tags|--tags)
+        value="${1:-}"
+        (($#)) && shift
+        GO_ARGS+=("$arg" "$(join_noplugin_tag "$value")")
+        tagged=1
+        ;;
+      -tags=*|--tags=*)
+        GO_ARGS+=("${arg%%=*}=$(join_noplugin_tag "${arg#*=}")")
+        tagged=1
+        ;;
+      -*)
+        GO_ARGS+=("$arg")
+        ;;
+      *)
+        GO_ARGS+=("$arg")
+        if [[ "$verb" == run ]]; then
+          GO_ARGS+=("$@")
+          break
+        fi
+        ;;
+    esac
+  done
+  if [[ -z "$tagged" ]]; then
+    for arg in ${GOFLAGS:-}; do
+      case "$arg" in
+        -tags=*|--tags=*) value="${arg#*=}" ;;
+      esac
+    done
+    GO_ARGS=("$verb" "-tags=$(join_noplugin_tag "$value")" "${GO_ARGS[@]:1}")
+  fi
+}
+add_noplugin_tag "$@"
+set -- ${GO_ARGS[@]+"${GO_ARGS[@]}"}
+
 # A STATIC prefix is self-describing: build-static-wasmedge.sh leaves link.flags
 # beside the archives holding the exact link line it built them for (archive
 # order, LLVM's own libraries, the per-platform extras). When that file is

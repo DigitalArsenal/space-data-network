@@ -60,7 +60,7 @@ test('portable Linux CLI Dockerfile asserts bundle layout and alias', () => {
   assert.match(linuxCli, /tar -C \/opt -xzf/);
   assert.match(linuxCli, /\/opt\/spacedatanetwork-1\.0\.3-beta\.1-linux-amd64\/bin\/spacedatanetwork --help/);
   assert.match(linuxCli, /\/opt\/spacedatanetwork-1\.0\.3-beta\.1-linux-amd64\/bin\/sdn --help/);
-  assert.match(linuxCli, /runtime\/kubo\/ipfs/);
+  assert.match(linuxCli, /! test -e \/opt\/spacedatanetwork-1\.0\.3-beta\.1-linux-amd64\/runtime\/kubo /);
   assert.match(linuxCli, /runtime\/modules\/hd-wallet-wasi\.wasm/);
   assert.match(linuxCli, /runtime\/modules\/org\.spacedatanetwork\.updater\.wasm/);
   assert.match(linuxCli, /runtime\/ui\/sdn/);

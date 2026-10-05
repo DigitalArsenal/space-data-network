@@ -816,7 +816,7 @@ func (n *Node) init() error {
 		libp2p.EnableNATService(),
 		libp2p.BandwidthReporter(n.bandwidthCounter),
 	)
-	apiAddr, gatewayAddr, err := kuboListenAddrs(n.config.Admin)
+	apiAddr, gatewayAddr, err := kuboNewRepoAddrs(n.config.Admin)
 	if err != nil {
 		return err
 	}
@@ -838,12 +838,7 @@ func (n *Node) init() error {
 	hostCreated = true
 	n.host = n.kubo.Host()
 	n.dht = n.kubo.WANDHT()
-	if apiAddr != "" {
-		n.config.Admin.IPFSAPIURL = n.kubo.APIURL()
-	}
-	if gatewayAddr != "" {
-		n.config.Admin.IPFSGatewayURL = n.kubo.GatewayURL()
-	}
+	kuboClientURLs(&n.config.Admin, n.kubo)
 	if autoTLSCertMgr != nil {
 		autoTLSCertMgr.ProvideHost(n.host)
 		if err := autoTLSCertMgr.Start(); err != nil {

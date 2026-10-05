@@ -168,7 +168,7 @@ test('CLI passes on the baseline and fails on a new module finding', (t) => {
     encoding: 'utf8',
   });
   assert.equal(ok.status, 0, ok.stderr);
-  assert.match(ok.stdout, /PASS: no new module vulnerabilities \(10 baselined\)/);
+  assert.match(ok.stdout, new RegExp(`PASS: no new module vulnerabilities \\(${BASELINE.length} baselined\\)`));
 
   const bad = spawnSync(
     process.execPath,

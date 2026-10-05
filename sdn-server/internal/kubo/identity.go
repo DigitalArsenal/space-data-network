@@ -67,17 +67,19 @@ func (r *identityRepo) SetConfigKey(key string, value any) error {
 	return r.Repo.SetConfigKey(key, value)
 }
 
-// openRepo opens the repository at path, creating it when missing, and makes
-// its on-disk identity the node's: PeerID set, no private key. An existing
-// repository from the supervised child or an operator's ipfs.service carries
-// its own random identity; that config, key included, is first copied beside
-// it, never deleted, so a rollback to the two-process layout is one file copy.
-func openRepo(path string, id peer.ID, logf func(string, ...any)) (r repo.Repo, tookOver bool, err error) {
+// openRepo opens the repository at path, creating it when missing (set up by
+// initial), and makes its on-disk identity the node's: PeerID set, no private
+// key. An existing repository from the supervised child or an operator's
+// ipfs.service carries its own random identity; that config, key included, is
+// first copied beside it, never deleted, so a rollback to the two-process
+// layout is one file copy.
+func openRepo(path string, id peer.ID, initial func(*config.Config), logf func(string, ...any)) (r repo.Repo, tookOver bool, err error) {
 	if !fsrepo.IsInitialized(path) {
 		cfg, err := config.InitWithIdentity(config.Identity{PeerID: id.String()})
 		if err != nil {
 			return nil, false, fmt.Errorf("kubo: new repository config: %w", err)
 		}
+		initial(cfg)
 		if err := fsrepo.Init(path, cfg); err != nil {
 			return nil, false, fmt.Errorf("kubo: create repository %s: %w", path, err)
 		}
