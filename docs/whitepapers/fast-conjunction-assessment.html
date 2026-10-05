@@ -41,7 +41,7 @@
 <p>Screening every catalog object against every other in seconds to minutes, for any propagator</p>
 <p>Anthony &quot;TJ&quot; Koury III</p>
 <p>Edgesource, Space Data Network · <a href="mailto:tj@edgesource.com">tj@edgesource.com</a></p>
-<p>Technical whitepaper 1.5 | 2 October 2026</p>
+<p>Technical whitepaper 1.6 | 5 October 2026</p>
 <p>Numerical evidence cutoff: 2 October 2026</p>
 <p>© Edgesource Corporation</p>
 <h2 id="executive-summary">Executive summary</h2>
@@ -61,8 +61,8 @@
 <li><strong>Cost.</strong> Its arithmetic is measured: 0.17 s and 8.7 MB per pair-day at 1 s steps.</li>
 <li><strong>What it reveals.</strong> The paper shows how a naive design leaks distances, how invented trajectories can locate a hidden satellite, and which defenses stop that.</li>
 <li><strong>What it cannot hide.</strong> Real close approaches reveal what safety requires.</li>
-<li><strong>Decoys.</strong> Hiding a real orbit among N decoys bounds a prober&#39;s chance at e^(2ε)/N. No decoy generator we measured reaches 1 in 10,000 yet: copies of the hidden satellite itself came closest (about 94 of 1,000).</li>
-<li><strong>Status.</strong> The protocol is not yet built.</li>
+<li><strong>Decoys.</strong> Hiding a real orbit among N decoys bounds a prober&#39;s chance at e^(2ε)/N, and at exactly 1/N when the decoys cannot be told apart from it. Physics exposes a decoy copied from a real history: Earth&#39;s gravity field marks it as moved. It does not expose a decoy simulated with the full force model at its own position. The best decoys measured here, copies of the hidden satellite&#39;s own history, leave the real orbit hidden among 2.6 effective candidates of 10.</li>
+<li><strong>Status.</strong> The protocol is specified and its arithmetic measured. It is not built.</li>
 </ul>
 <h2 id="1-the-problem">1 The problem</h2>
 <p>An all-vs-all screen compares every object with every other: n(n − 1)/2 pairs, 528.6 million for 32,514 objects. A three-day screen at 60 s steps evaluates each pair at 4,321 instants, about 2.3 trillion pair-steps. A close approach at 10 km/s relative speed lasts under a second inside a few kilometers, so a coarse test that misses it loses the event.</p>
@@ -373,7 +373,7 @@
 <h2 id="7-uncertainty-and-probability-of-collision">7 Uncertainty and probability of collision</h2>
 <p>The companion paper sets the conditions this screen respects (<a href="#r1">R1</a>, sections 5, 9, 12 and 16.2):</p>
 <ul>
-<li>A TLE supplies no covariance. The initial uncertainty of a TLE-seeded HPOP trajectory, including this paper&#39;s HPOP runs, is unknown until a validated representation exists.</li>
+<li>A TLE supplies no covariance. The initial uncertainty of a TLE-seeded HPOP trajectory, including this paper&#39;s HPOP runs, is unknown: no validated representation of it exists.</li>
 <li>A probability of collision requires relative-state uncertainty with independent calibration and stated cross-correlation, geometry and hard-body-radius assumptions.</li>
 </ul>
 <p>Every event reports the Alfano maximum: the largest probability any covariance size could give for the reported miss distance and combined hard-body radius (<a href="#r4">R4</a>). It needs no covariance and serves as an upper bound. Each object&#39;s radius comes with its basis: supplied, half the catalog size, from the radar cross section, or the request default. No uncertainty is invented: an event carries covariance, and a covariance-based probability, only when a source supplied covariance or the empirical model below applies, and it states which. The work below follows the companion paper&#39;s three parts: initial covariance, propagation, and calibration on held-out evidence (<a href="#r8">R8</a>).</p>
@@ -583,7 +583,7 @@ precise trajectories exist. Private screening lets two operators learn when
 their objects come close without either seeing the other&#39;s trajectory.</p>
 <p>This section specifies the protocol, measures its arithmetic, and analyses
 what it reveals and how it can be abused (<a href="#r14">R14</a>). It also measures
-whether decoy orbits can hide a satellite (<a href="#r16">R16</a>). <strong>It is not yet
+whether decoy orbits can hide a satellite (<a href="#r16">R16</a>). <strong>It is not
 built.</strong> SDN&#39;s encrypted-screening endpoint accepts requests and returns no
 result.</p>
 <h3 id="what-is-computed-on-ciphertext">What is computed on ciphertext</h3>
@@ -855,6 +855,8 @@ prober maps a cloud of N orbits, not one.</li>
 submits about N candidates reveals neither whether it has hidden
 satellites nor how many.</li>
 </ul>
+<p>Both hold only as far as a prober cannot tell the decoys from the real orbit,
+which the measurements below quantify.</p>
 <p><strong>The bound.</strong></p>
 <ul>
 <li>Let p be the prober&#39;s belief about real orbits and q the decoy
@@ -987,9 +989,16 @@ windows.</li>
 <td align="right">94</td>
 <td align="right">about 3,500</td>
 </tr>
+<tr>
+<td>Basis</td>
+<td align="right">measured</td>
+<td align="right">extrapolated</td>
+<td align="right">extrapolated</td>
+<td align="right">extrapolated</td>
+</tr>
 </tbody></table>
-<p>Beyond 50 candidates, the numbers are extrapolated from scores standardized
-within each set.</p>
+<p>Each satellite had 50 copies, so N = 10 is measured directly. Larger N
+extrapolates from scores standardized within each set.</p>
 <ul>
 <li><strong>The real orbit still stands out.</strong> It ranked in the top tenth of its own
 copies for 48 % of satellites. Its daily mean semi-major axis and its
@@ -997,19 +1006,26 @@ distance to neighbouring public objects give it away.</li>
 <li><strong>Why.</strong> A real orbit is consistent with Earth&#39;s gravity field at its own
 positions. A rotated copy of its history is not.</li>
 </ul>
-<p><strong>What 1 in 10,000 needs:</strong> pipeline equivalence.</p>
+<p><strong>What works.</strong></p>
 <ul>
-<li>Decoy truths must be simulated with the full force model at their own
-positions, not copied from a real history.</li>
-<li>Every candidate, the real one included, must be published through the
-owner&#39;s pipeline: simulated tracking with fresh noise, the same orbit
-determination and the same propagator.</li>
-<li>Decoys must sit inside real shells.</li>
-<li>The test is to rank real precise orbits (for example Swarm and Sentinel-1)
-among their simulated siblings.</li>
+<li><strong>The bound is exact.</strong> Decoys a prober cannot tell from the real orbit
+hold it to a 1/N chance, whatever its computing power.</li>
+<li><strong>Measured decoys dilute.</strong> Copies of the hidden satellite&#39;s own history,
+published through the same pipeline, cut a prober&#39;s chance of naming the
+real orbit first from certainty to about 1 in 2.6 among 10 candidates.
+They fall short of 1/N.</li>
+<li><strong>Physics rules out copies, not decoys.</strong> A copied history fails the
+gravity-field test because it was flown at other positions. A decoy whose
+truth is propagated with the full force model at its own position is
+consistent with the field there by construction. What remains to tell it
+apart is how it was tracked and fitted, and how it sits among its
+neighbours. This paper measures no generator of that kind.</li>
+<li><strong>Observation defeats any decoy.</strong> A prober that tracks the satellite with
+its own sensors finds it. Decoys hide a satellite only from what the
+screening service reveals.</li>
+<li><strong>Decoys are a second layer.</strong> They dilute what leaks behind the checks
+above; they do not replace them.</li>
 </ul>
-<p>Until then, decoys dilute what leaks behind the checks above; they do not
-replace them.</p>
 <h3 id="what-exists">What exists</h3>
 <table>
 <thead>
@@ -1020,7 +1036,7 @@ replace them.</p>
 </thead>
 <tbody><tr>
 <td>Homomorphic fields in FlatBuffers (SEAL BFV/BGV, <code>he_encrypted</code>) (<a href="#r15">R15</a>)</td>
-<td>Built. Each ciphertext holds one value under a 20-bit plaintext modulus, so metre-scale coordinates wrap silently. It needs batched vectors and multiple moduli, as in the benchmark, to carry this protocol.</td>
+<td>Built. Each ciphertext holds one value under a 20-bit plaintext modulus, so metre-scale coordinates wrap silently. It cannot carry this protocol&#39;s coordinates; the benchmark used batched vectors and multiple moduli.</td>
 </tr>
 <tr>
 <td>SDN encrypted-screening request (<code>/api/v1/conjunction/screen</code>)</td>
@@ -1032,61 +1048,52 @@ replace them.</p>
 </tr>
 <tr>
 <td>Decoy generators and their measurement (<a href="#r16">R16</a>)</td>
-<td>Measured. None reaches 1 in 10,000 yet.</td>
+<td>Measured. The best leaves the real orbit among 2.6 effective candidates of 10.</td>
 </tr>
 <tr>
 <td>Screening module, bit-only comparison, pre-answer tube check, completeness audit, noise flooding, Laplace noise, per-window keys and audit, staking, budgets</td>
 <td>Not built.</td>
 </tr>
 </tbody></table>
-<h2 id="9-limits-and-next-work">9 Limits and next work</h2>
+<h2 id="9-limits">9 Limits</h2>
 <table>
 <thead>
 <tr>
 <th>Limit</th>
 <th>Effect</th>
-<th>Next step</th>
 </tr>
 </thead>
 <tbody><tr>
 <td>SGP4 sampling</td>
 <td>About half of a 19 s screen: 140 million SGP4 evaluations</td>
-<td>Fewer evaluations per step only with a bound that stays exhaustive</td>
 </tr>
 <tr>
 <td>HPOP propagation</td>
 <td>Over 90 % of the HPOP screen</td>
-<td>Force-model choices and initial states nearer the screen start; both are modeling decisions with accuracy consequences</td>
 </tr>
 <tr>
 <td>Catch-up from element epochs</td>
 <td>The first HPOP window waits for every object to reach the screen start</td>
-<td>Persistent propagation across screens</td>
 </tr>
 <tr>
 <td>Memory per window</td>
 <td>About 400 MB per 2-hour HPOP window</td>
-<td>Window length chosen per host</td>
 </tr>
 <tr>
 <td>One host</td>
-<td>All timings from one shared 28-core workstation</td>
-<td>Repeat on other hosts, GPUs and Docker containers (<a href="#r2">R2</a> includes the procedure)</td>
+<td>All timings from one shared 28-core workstation (<a href="#r2">R2</a> gives the procedure for repeating them)</td>
 </tr>
 <tr>
 <td>Calibration coverage</td>
 <td>Covariance calibrated only in LEO 600 to 800 km (empirical model; HPOP to 3 days), for 48 reference objects in one week</td>
-<td>More precise-orbit missions, object-class strata, HPOP with the Sun and Moon, and orbit-determination covariance</td>
 </tr>
 <tr>
 <td>Probability inputs</td>
 <td>Combined radius and covariance shape differ from SOCRATES&#39;s unpublished ones</td>
-<td>Published per-object radii with their basis</td>
 </tr>
 <tr>
 <td>Private screening</td>
-<td>Designed and measured, not built</td>
-<td>A screening module with a bit-only comparison, noise flooding, a pre-answer tube check, and per-window keys opened and audited against tracking; a pipeline-equivalent decoy generator (section 8)</td>
+<td>Specified and measured, not built (section 8)</td>
 </tr>
 </tbody></table>
 <p>This paper reports computation speed, agreement between implementations and with SOCRATES on identical inputs, and covariance calibration where independent truth exists. It does not establish operational readiness, or accuracy for objects and regimes without independent reference orbits.</p>
