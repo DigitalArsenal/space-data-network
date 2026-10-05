@@ -1,7 +1,8 @@
 // Space Data Standards reel for spacedatastandards.org, in plain words. 34
 // seconds: one shared language for space data, a format per program against
 // one standard everyone reads, one record read from thirteen programming
-// languages, and 255 standards (dist/manifest.json, 1.232.0).
+// languages, and a wall of the standards themselves. No count (owner
+// 2026-10-05: the number of standards changes often).
 
 import {
   W, H, AMBER, CYAN, INK, MUTED, SANS, MONO, FRAME_T,
@@ -16,7 +17,7 @@ const FPS = 30;
 const T_SHIFT = 6.5; // every program its own format → one standard everyone reads
 const M_SHIFT = T_SHIFT + 3.0;
 const T_LANG = 13.5; // write once, read in thirteen languages
-const T_COUNT = 20.5; // 255 standards
+const T_WALL = 20.5; // a wall of standards, every kind of space data
 const T_END = 29.5;
 
 const KINDS = [
@@ -24,6 +25,15 @@ const KINDS = [
   ["SPACE WEATHER", "SPW"], ["LAUNCH", "LCC"], ["SENSOR", "SEN"], ["MANEUVER", "MNV"],
 ];
 const LANGS = ["JavaScript", "TypeScript", "Python", "Go", "Rust", "Java", "Kotlin", "C#", "Dart", "Swift", "PHP", "C++", "Lobster"];
+// Real standard codes (spacedatastandards.org dist/manifest.json); the wall
+// shows kinds, never a total.
+const WALL = [
+  "OMM", "OEM", "OCM", "OPM", "CDM", "TDM", "CAT", "SIT",
+  "EPM", "LDM", "SPW", "MNV", "RFO", "RFE", "RFB", "IQC",
+  "SEN", "TRK", "OBD", "ATD", "HEL", "SKT", "STR", "PHB",
+  "BUS", "OPP", "VAM", "PNL", "PLG", "PMM", "XTC", "CSO",
+  "LCH", "GNP", "EOP", "EME", "ROC", "IDM", "CNP", "LKS",
+];
 const FIELDS = [["OBJECT", "ISS (ZARYA)"], ["EPOCH", "2026-10-04 12:00 UTC"], ["MEAN MOTION", "15.50 rev/day"], ["SOURCE", "Digitally signed"]];
 
 export async function createReel(base = "") {
@@ -187,23 +197,37 @@ export async function createReel(base = "") {
     });
   }
 
-  // ------------------------------------------------------- 255 standards
-  function drawCount(t, alpha) {
+  // ------------------------------------------------- a wall of standards
+  function drawWall(t, alpha) {
     if (alpha <= 0) return;
-    const k = easeOutExpo(seg(FRAME_T, T_COUNT + 0.3, T_COUNT + 2.6));
-    const n = Math.round(255 * k);
-    sx.save();
-    sx.globalAlpha = alpha * seg(t, T_COUNT + 0.2, T_COUNT + 0.5);
-    sx.font = font(700, 220, SANS);
-    sx.letterSpacing = "-8px";
-    sx.fillStyle = AMBER;
-    sx.textAlign = "center";
-    sx.fillText(String(n), 1420, 400);
-    sx.font = font(600, 30, SANS);
-    sx.letterSpacing = "6px";
-    sx.fillStyle = INK;
-    sx.fillText("STANDARDS", 1420, 470);
-    sx.restore();
+    const COLS = 8;
+    const CW = 78;
+    const CH = 40;
+    const GAP = 10;
+    const x0 = 1420 - (COLS * CW + (COLS - 1) * GAP) / 2;
+    WALL.forEach((code, i) => {
+      const c = i % COLS;
+      const r = Math.floor(i / COLS);
+      // A diagonal wave from the upper left.
+      const pk = easeOutBack(seg(t, T_WALL + 0.25 + (c + r) * 0.06, T_WALL + 0.6 + (c + r) * 0.06));
+      if (pk <= 0) return;
+      // A slow shimmer runs across the wall once it is up.
+      const glow = clamp(1 - Math.abs(((t - T_WALL - 1.6) * 4 - (c + r * 0.6)) % 14) / 1.4);
+      const hot = i === 0 || glow > 0.05;
+      const x = x0 + c * (CW + GAP) + CW / 2;
+      const y = 236 + r * (CH + GAP);
+      sx.save();
+      sx.globalAlpha = alpha * clamp(pk * 2);
+      sx.translate(x, y);
+      sx.scale(pk, pk);
+      pill(-CW / 2, -CH / 2, CW, CH, hot ? `rgba(245,165,36,${0.45 + 0.4 * glow})` : "rgba(245,245,247,0.32)", "rgba(0,0,0,0.65)");
+      sx.font = font(600, 18, MONO);
+      sx.letterSpacing = "2px";
+      sx.fillStyle = hot ? AMBER : INK;
+      sx.textAlign = "center";
+      sx.fillText(code, 0, 6);
+      sx.restore();
+    });
     const rows = [["ORBITS", "CLOSE APPROACHES", "TRACKING", "CATALOGS"], ["SPACE WEATHER", "LAUNCHES", "SENSORS", "GROUND STATIONS"]];
     rows.forEach((row, r) => {
       sx.save();
@@ -215,12 +239,12 @@ export async function createReel(base = "") {
       let x = 1420 - total / 2;
       row.forEach((tg, j) => {
         const i = r * 4 + j;
-        const pk = easeOutBack(seg(t, T_COUNT + 1.2 + i * 0.12, T_COUNT + 1.5 + i * 0.12));
+        const pk = easeOutBack(seg(t, T_WALL + 1.2 + i * 0.12, T_WALL + 1.5 + i * 0.12));
         const w = ws[j];
         const cx = x + w / 2;
         x += w + 14;
         if (pk <= 0) return;
-        const y = 560 + r * 64;
+        const y = 520 + r * 64;
         sx.save();
         sx.font = font(600, 18, SANS);
         sx.letterSpacing = "2.5px";
@@ -235,7 +259,7 @@ export async function createReel(base = "") {
   }
 
   // ------------------------------------------------------------ subframe
-  const ca = studio.cutPulses([[T_SHIFT, 1], [M_SHIFT + 0.3, 0.6], [T_LANG, 1], [T_COUNT, 1], [T_END + 0.2, 1]]);
+  const ca = studio.cutPulses([[T_SHIFT, 1], [M_SHIFT + 0.3, 0.6], [T_LANG, 1], [T_WALL, 1], [T_END + 0.2, 1]]);
   const fade = (t) => seg(t, 0, 0.4);
   const flash = () => 0;
   const SHIFT = {
@@ -256,8 +280,8 @@ export async function createReel(base = "") {
     sx.drawImage(glc, 0, 0);
     if (t < T_SHIFT + 0.2) drawKinds(t, 1 - seg(t, T_SHIFT - 0.4, T_SHIFT));
     if (t > T_SHIFT - 0.05 && t < T_LANG + 0.1) drawShift(t, seg(t, T_SHIFT, T_SHIFT + 0.3) * (1 - seg(t, T_LANG - 0.4, T_LANG)));
-    if (t > T_LANG - 0.05 && t < T_COUNT + 0.1) drawLangs(t, seg(t, T_LANG, T_LANG + 0.3) * (1 - seg(t, T_COUNT - 0.4, T_COUNT)));
-    if (t > T_COUNT - 0.05 && t < T_END + 0.1) drawCount(t, seg(t, T_COUNT, T_COUNT + 0.3) * (1 - seg(t, T_END - 0.3, T_END)));
+    if (t > T_LANG - 0.05 && t < T_WALL + 0.1) drawLangs(t, seg(t, T_LANG, T_LANG + 0.3) * (1 - seg(t, T_WALL - 0.4, T_WALL)));
+    if (t > T_WALL - 0.05 && t < T_END + 0.1) drawWall(t, seg(t, T_WALL, T_WALL + 0.3) * (1 - seg(t, T_END - 0.3, T_END)));
     scrim(1 - out);
 
     if (t < T_SHIFT + 0.1) {
@@ -265,11 +289,11 @@ export async function createReel(base = "") {
       block([["One language", INK], ["for space data.", AMBER]], "OPEN AND FREE, FOR ANY SOFTWARE", 0.5, T_SHIFT - 0.4, t, 88);
     }
     if (t > SHIFT.tIn - 0.05 && t < SHIFT.tOut + 0.5) shiftBlock(SHIFT, t);
-    if (t > T_LANG - 0.05 && t < T_COUNT + 0.1) {
-      block([["Write it once.", INK], ["Read it in 13 languages.", AMBER]], "CODE FOR EVERY MAJOR LANGUAGE, GENERATED FOR YOU", T_LANG + 0.1, T_COUNT - 0.4, t, 84);
+    if (t > T_LANG - 0.05 && t < T_WALL + 0.1) {
+      block([["Write it once.", INK], ["Read it in 13 languages.", AMBER]], "CODE FOR EVERY MAJOR LANGUAGE, GENERATED FOR YOU", T_LANG + 0.1, T_WALL - 0.4, t, 84);
     }
-    if (t > T_COUNT - 0.05 && t < T_END + 0.1) {
-      block([["Every kind of", INK], ["space data.", AMBER]], "VERSIONED, FREE AND OPEN SOURCE", T_COUNT + 0.1, T_END - 0.4, t, 88);
+    if (t > T_WALL - 0.05 && t < T_END + 0.1) {
+      block([["Every kind of", INK], ["space data.", AMBER]], "VERSIONED, FREE AND OPEN SOURCE", T_WALL + 0.1, T_END - 0.4, t, 88);
     }
     lockup({ title: "Space Data Standards", subtitle: "The open language for space data", url: "SPACEDATASTANDARDS.ORG", t0: T_END + 0.3 }, t);
     bloom();
