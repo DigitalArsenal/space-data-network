@@ -1,12 +1,6 @@
 package main
 
-import (
-	"crypto/sha256"
-	"encoding/hex"
-	"io"
-	"os"
-	"sync"
-)
+import "github.com/spacedatanetwork/sdn-server/internal/versioninfo"
 
 // servingAPI names the serving routes this build answers. A fleet harness
 // refuses a mixed fleet by comparing build_sha256 across nodes instead of
@@ -25,21 +19,7 @@ var servingAPI = []string{
 // to consumers: a bare finished FlatBuffer, file identifier at byte 4.
 const recordForm = "bare"
 
-// executableSHA256 hashes the running executable once. An unreadable
-// executable yields "" rather than a fabricated identity.
-var executableSHA256 = sync.OnceValue(func() string {
-	exe, err := os.Executable()
-	if err != nil {
-		return ""
-	}
-	f, err := os.Open(exe)
-	if err != nil {
-		return ""
-	}
-	defer f.Close()
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return ""
-	}
-	return hex.EncodeToString(h.Sum(nil))
-})
+// executableSHA256 is the running executable's sha256, reported as
+// build_sha256. One implementation for every surface that reports it
+// (versioninfo.BuildSHA256): /api/node/info here, /api/v1/id in internal/api.
+var executableSHA256 = versioninfo.BuildSHA256

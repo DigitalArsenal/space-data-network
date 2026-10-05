@@ -20,57 +20,65 @@ import (
 
 // verifiedModuleTarget is a module target whose declared hash has already
 // been checked against the staged artifact bytes, resolved to a concrete
-// source path inside the extracted incoming bundle. applyModuleTargets
-// builds the full list of these (phase 1, read-only) before installing
-// anything (phase 2), so a single tampered or misdeclared artifact aborts
-// the whole apply without touching the live bundle root at all.
+// source path inside the extracted incoming bundle. verifyModuleTargets
+// builds the full list of these (phase 1, read-only, in Prepare) before
+// installModuleTargets installs anything (phase 2), so a single tampered or
+// misdeclared artifact aborts the whole apply without touching the live
+// bundle root at all.
 type verifiedModuleTarget struct {
 	id     string
 	rel    string // bundle-relative path, forward-slash, e.g. "runtime/modules/flatsql/flatsql.wasm"
 	source string // absolute path to the verified artifact inside the extracted incoming bundle
 }
 
-// applyModuleTargets is the G4 targeted-swap apply path. newRoot is the
-// already-extracted incoming bundle payload (same extraction Apply uses for
-// a full bundle: extractBundleArchive + locateBundleRoot); rollbackDir is
-// the same updates/rollback/<update_id>/ directory a full-bundle apply would
-// use. modules is the manifest's declared Modules[].
+// verifyModuleTargets is phase 1 of the G4 targeted swap, and it runs in
+// Prepare, while the daemon still serves. newRoot is the already-extracted
+// incoming bundle payload (the same extraction a full bundle gets:
+// extractBundleArchive + locateBundleRoot); modules is the manifest's
+// declared Modules[].
 //
-// Phase 1 (verify) resolves and sha256-checks every module artifact against
-// its declared Hash and rejects any target whose Path would land on a
-// protectedEntries top-level name — all before any file under paths.Root is
-// touched. Phase 2 (install) then, for each verified module in order: moves
-// any pre-existing file at its install Path into rollbackDir (preserving the
-// pre-apply bytes, exactly like the bundle-swap paths), and moves the new
-// artifact into place. If any phase-2 step fails, every module already
-// swapped in this call is restored via restoreEntries before the error is
-// returned — the same all-or-nothing discipline swapBundleContents and
-// applyTwoPhase provide for a full bundle.
-func applyModuleTargets(paths Paths, newRoot, rollbackDir string, modules []ManifestModuleTarget) error {
+// It resolves and sha256-checks every module artifact against its declared
+// Hash and rejects any target whose Path would land on a protectedEntries
+// top-level name. It reads and hashes; it touches nothing under paths.Root,
+// so a single tampered or misdeclared artifact aborts the update before the
+// daemon is ever asked to stop.
+func verifyModuleTargets(newRoot string, modules []ManifestModuleTarget) ([]verifiedModuleTarget, error) {
 	if len(modules) == 0 {
-		return errors.New("update: module-targeted apply requires at least one module target")
+		return nil, errors.New("update: module-targeted apply requires at least one module target")
 	}
 
 	verified := make([]verifiedModuleTarget, 0, len(modules))
 	for _, module := range modules {
 		rel := filepath.ToSlash(module.Path)
 		if firstSeg := strings.SplitN(rel, "/", 2)[0]; protectedEntries[firstSeg] {
-			return fmt.Errorf("module %s: install path %q targets a protected entry", module.ID, module.Path)
+			return nil, fmt.Errorf("module %s: install path %q targets a protected entry", module.ID, module.Path)
 		}
 		sourcePath, err := safeJoin(newRoot, module.Path)
 		if err != nil {
-			return fmt.Errorf("module %s: %w", module.ID, err)
+			return nil, fmt.Errorf("module %s: %w", module.ID, err)
 		}
 		data, err := os.ReadFile(sourcePath)
 		if err != nil {
-			return fmt.Errorf("module %s: read staged artifact: %w", module.ID, err)
+			return nil, fmt.Errorf("module %s: read staged artifact: %w", module.ID, err)
 		}
 		if sha256Hex(data) != strings.ToLower(module.Hash) {
-			return fmt.Errorf("module %s: artifact checksum mismatch", module.ID)
+			return nil, fmt.Errorf("module %s: artifact checksum mismatch", module.ID)
 		}
 		verified = append(verified, verifiedModuleTarget{id: module.ID, rel: rel, source: sourcePath})
 	}
+	return verified, nil
+}
 
+// installModuleTargets is phase 2 of the G4 targeted swap, and it only
+// renames. rollbackDir is the same updates/rollback/<update_id>/ directory a
+// full-bundle apply would use. For each verified module in order it moves any
+// pre-existing file at its install Path into rollbackDir (preserving the
+// pre-apply bytes, exactly like the bundle-swap paths) and moves the new
+// artifact into place. If any step fails, every module already swapped in
+// this call is restored via restoreEntries before the error is returned — the
+// same all-or-nothing discipline swapBundleContents and applyTwoPhase provide
+// for a full bundle.
+func installModuleTargets(paths Paths, rollbackDir string, verified []verifiedModuleTarget) error {
 	if err := os.RemoveAll(rollbackDir); err != nil {
 		return err
 	}
