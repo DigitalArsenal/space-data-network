@@ -21,6 +21,7 @@ for byte (published-deps law):
 - sha256: `48dbf9473b5a4a506b0b42e5a1a66a6d5d2ff8173d6dbfef0cd59dfe4b24af86`
   (the package's `wasm/integrity.json`; `TestEmbeddedArtifact`)
 - 2,241,020 bytes; emscripten/emsdk 4.0.23, FlatBuffers 8af3053e
+- `flatsql@3.7.1` ships this same file (same sha256), so it is not re-embedded
 - what it changes over the previous embed: SQLite 3.53.4 (the official
   amalgamation, byte-identical; flatsql's CMake checks its sha256) and the
   `flatsql_io` VFS's per-path nodes, which only connections that opt in with
@@ -159,14 +160,18 @@ by `psartifact.go` and run by `psinstance.go` (`PSABIEngine`) as separate
 writer and reader instances. It is the PUBLISHED release's file, byte for
 byte (published-deps law, design A34):
 
-- npm package: `flatsql@3.7.0` (`https://registry.npmjs.org/flatsql/-/flatsql-3.7.0.tgz`),
-  published by flatsql's `npm-publish.yml` from tag `v3.7.0` with provenance
-- gitHead: `780b1265162a90ce76a7496a5b0beac83ba016d2`
-- sha256: `b310425d5380dc549cfa010f6ea2dbc337d4faf356eb2b9b00eca3b30bb3259c`
+- npm package: `flatsql@3.7.1` (`https://registry.npmjs.org/flatsql/-/flatsql-3.7.1.tgz`),
+  published by flatsql's `npm-publish.yml` from tag `v3.7.1` with provenance
+- gitHead: `4845fd0176dafa96774b1ad37872128914f7ac43`
+- sha256: `aa1ed58de773347c478215a763328f2aca9bca795c0944a85247e53b2433736a`
   (the package's `wasm/integrity.json`; `TestEmbeddedPSThreadsArtifact`)
-- 2,680,137 bytes; `wasm32-wasip1-threads`, wasi-sdk 30
-- 3.7.0 changes no partition-store code: SQLite 3.53.4 and the VFS's opt-in
-  per-path nodes (above); `kFormatMax` stays 3.
+- 2,680,218 bytes; `wasm32-wasip1-threads`, wasi-sdk 30
+- 3.7.1 changes the epoch extractor it shares with format 4: a double epoch
+  (`f64floor`) outside the int64 range is clamped to it (as Go's conversion on
+  arm64, format 1), 9.2e18..2^63 is no longer dropped, and the millisecond
+  value is defined. `kFormatMax` stays 3.
+- 3.7.0 changed no partition-store code: SQLite 3.53.4 and the VFS's opt-in
+  per-path nodes (above).
 - 3.6.0 writes store format level 3 (flatsql PARTITION-STORE.md §41, TB03):
   a partition keeps committing past 1,170 live lanes (a batch carries only
   the lanes it changed; past 32 the head names a paged lane checkpoint
@@ -184,7 +189,8 @@ byte (published-deps law, design A34):
   MIGRATED, then STORE, whose one torn state the engine finishes from MIGRATED;
   `format2/store_crash_test.go`) and keeps per-partition bookkeeping
   O(1)/O(log S) per commit (flatsql PARTITION-STORE.md §40, B4, M3)
-- previous: `flatsql@3.6.0`, sha256 `87ea0c727eb3c0b889a2d3fb41f8dac631ec2af07f521fe9526556d094d2e119`;
+- previous: `flatsql@3.7.0`, sha256 `b310425d5380dc549cfa010f6ea2dbc337d4faf356eb2b9b00eca3b30bb3259c`;
+  before it `flatsql@3.6.0`, sha256 `87ea0c727eb3c0b889a2d3fb41f8dac631ec2af07f521fe9526556d094d2e119`;
   before it `flatsql@3.5.1`, sha256 `3a215da45a53f3a7016257429c392720e728caf850d3a1213dc501bfb5844359`
 
 It loads only as a THREADS + Interruptible AOT artifact (design A30: no
@@ -207,12 +213,18 @@ threads, their indexer threads, read lanes and the maintenance thread share
 its memory, because the WAL index of every file must live in one linear
 memory.
 
-- npm package: `flatsql@3.7.0` (`https://registry.npmjs.org/flatsql/-/flatsql-3.7.0.tgz`),
-  published by flatsql's `npm-publish.yml` from tag `v3.7.0` with provenance
-- gitHead: `780b1265162a90ce76a7496a5b0beac83ba016d2`
-- sha256: `fe65b36fe8c4d015c25c76e4ccca5bd84c18ffc3cb05b045a2ae85bb3a4dbe21`
+- npm package: `flatsql@3.7.1` (`https://registry.npmjs.org/flatsql/-/flatsql-3.7.1.tgz`),
+  published by flatsql's `npm-publish.yml` from tag `v3.7.1` with provenance
+- gitHead: `4845fd0176dafa96774b1ad37872128914f7ac43`
+- sha256: `7ae31439a7e79f9063c9c77ad2df5402d9efec063934b6a34d7837e4e56f0b7e`
   (the package's `wasm/integrity.json`; `versioninfo.P4EngineSHA256`, the one pin)
-- 2,925,356 bytes; `wasm32-wasip1-threads`, wasi-sdk 30
+- 2,936,308 bytes; `wasm32-wasip1-threads`, wasi-sdk 30
+- 3.7.1 (CONTRACT C-46/C-47/C-48): EPOCH counts and limited pages push the
+  limit down again, full text reads each frame with its size prefix, a type
+  with no records reports full text `ready`, epochs outside int64 are clamped,
+  an index file an earlier format-4 build wrote is refused (`P4_E_FORMAT`),
+  default soft heap 576 MiB. Previous: `flatsql@3.7.0`, sha256
+  `fe65b36fe8c4d015c25c76e4ccca5bd84c18ffc3cb05b045a2ae85bb3a4dbe21`.
 - Off by default: `SDN_STORE_FORMAT` unset is format 1; `4` (alias `sqlite`)
   selects it, and `store-migrate --to 4` migrates a format-1 store.
 - Store-format stamp: the build stamps `max_store_format` 4 only when it pins
