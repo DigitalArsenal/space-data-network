@@ -924,9 +924,10 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	// Kubo runs inside the node (internal/kubo), on the node's own host and
-	// identity. node.New starts it and re-points admin.ipfs_api_url and
-	// admin.ipfs_gateway_url at its loopback listeners before anything below
-	// reads them, so every CID, pin and archive path uses it.
+	// identity. node.New starts it and re-points admin.ipfs_api_url (and an
+	// unset admin.ipfs_gateway_url) at its loopback listeners before anything
+	// below reads them, so every CID, pin and archive path uses it. An explicit
+	// gateway URL stays: it can be a cache in front of Kubo's gateway.
 	// Resolve empty frontend path to the built SDN Svelte UI when available,
 	// then fall back to the managed frontend directory.
 	cfg.Admin.FrontendPath = resolveFrontendPath(cfg.Admin.FrontendPath)

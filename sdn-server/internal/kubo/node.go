@@ -14,9 +14,11 @@
 // graph equals Kubo's own (go.mod carries Kubo's replace and exclude blocks
 // verbatim, because those apply only in the main module).
 //
-// The node keeps the contract the supervised child had: the RPC API and the
-// gateway answer on loopback only, so every CID, pin, publication and archive
-// path that speaks the Kubo RPC keeps working unchanged.
+// The node keeps the contract the separate Kubo had: the RPC API and the
+// gateway answer where the repository's config says (Addresses.API and
+// Addresses.Gateway), on loopback only, so every CID, pin, publication and
+// archive path that speaks the Kubo RPC keeps working unchanged, and a
+// repository taken over keeps its ports.
 package kubo
 
 import (
@@ -25,6 +27,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -41,14 +44,17 @@ import (
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/multiformats/go-multiaddr"
 	manet "github.com/multiformats/go-multiaddr/net"
 )
 
 const (
-	// DefaultAPIAddr is where the RPC API answers: deliberately not Kubo's
-	// own 5001, which the node's admin listener uses.
+	// DefaultAPIAddr is where a repository this node creates serves the RPC
+	// API: deliberately not Kubo's own 5001, which the node's admin listener
+	// uses.
 	DefaultAPIAddr = "127.0.0.1:5002"
-	// DefaultGatewayAddr is where the HTTP gateway answers.
+	// DefaultGatewayAddr is where a repository this node creates serves the
+	// HTTP gateway.
 	DefaultGatewayAddr = "127.0.0.1:8080"
 )
 
@@ -114,13 +120,18 @@ type Config struct {
 	// Bootstrap is the multiaddr list Kubo bootstraps its DHT from. Ignored
 	// for DHTOff.
 	Bootstrap []string
-	// APIAddr and GatewayAddr are loopback host:port pairs. Port 0 picks a
-	// free port; APIURL and GatewayURL report what was bound. Empty serves
-	// nothing there.
+	// APIAddr and GatewayAddr are where a repository this node creates
+	// serves the RPC API and the gateway: loopback host:port pairs, written
+	// into its config as Addresses.API and Addresses.Gateway. Empty serves
+	// nothing there. Port 0 picks a free port on every start; APIURL and
+	// GatewayURL report what was bound. An existing repository keeps its
+	// own addresses.
 	APIAddr     string
 	GatewayAddr string
-	// FetchFromNetwork lets the gateway fetch content this node does not
-	// hold. Off by default: the gateway serves what the node has.
+	// FetchFromNetwork lets the gateway of a repository this node creates
+	// fetch content the node does not hold (Gateway.NoFetch off). Off by
+	// default: the gateway serves what the node has. An existing repository
+	// keeps its own Gateway.NoFetch.
 	FetchFromNetwork bool
 	// Logf receives node events; nil discards them.
 	Logf func(format string, args ...any)
@@ -158,10 +169,13 @@ var plugins struct {
 }
 
 // loadPlugins registers Kubo's built-in plugins (the datastores among them)
-// once per process; a second Inject would register them twice.
-func loadPlugins() (*loader.PluginLoader, error) {
+// once per process, with the repository's Plugins settings; a second Inject
+// would register them twice. The node is built with -tags noplugin, so an
+// executable file in the repository's plugins/ directory is refused, never
+// loaded into the process that holds the node's key.
+func loadPlugins(repoPath string) (*loader.PluginLoader, error) {
 	plugins.once.Do(func() {
-		l, err := loader.NewPluginLoader("")
+		l, err := loader.NewPluginLoader(repoPath)
 		if err == nil {
 			err = l.Initialize()
 		}
@@ -175,7 +189,7 @@ func loadPlugins() (*loader.PluginLoader, error) {
 
 // Start opens (or creates) the repository and runs the node: Kubo's host is
 // built from the node's options and key, the DHT from DHT, and the RPC API
-// and gateway listen on loopback.
+// and gateway listen on loopback where the repository's config says.
 func Start(ctx context.Context, cfg Config) (*Node, error) {
 	if strings.TrimSpace(cfg.RepoPath) == "" {
 		return nil, errors.New("kubo: repository path is required")
@@ -186,41 +200,38 @@ func Start(ctx context.Context, cfg Config) (*Node, error) {
 	if cfg.Logf == nil {
 		cfg.Logf = func(string, ...any) {}
 	}
-	var apiLis, gatewayLis net.Listener
-	closeListeners := func() {
-		if apiLis != nil {
-			apiLis.Close()
-		}
-		if gatewayLis != nil {
-			gatewayLis.Close()
-		}
-	}
-	var err error
-	if strings.TrimSpace(cfg.APIAddr) != "" {
-		if apiLis, err = listenLoopback(cfg.APIAddr); err != nil {
-			return nil, fmt.Errorf("kubo: RPC API: %w", err)
-		}
-	}
-	if strings.TrimSpace(cfg.GatewayAddr) != "" {
-		if gatewayLis, err = listenLoopback(cfg.GatewayAddr); err != nil {
-			closeListeners()
-			return nil, fmt.Errorf("kubo: gateway: %w", err)
-		}
-	}
-
-	pl, err := loadPlugins()
+	initial, err := cfg.initial()
 	if err != nil {
-		closeListeners()
+		return nil, err
+	}
+	pl, err := loadPlugins(cfg.RepoPath)
+	if err != nil {
 		return nil, fmt.Errorf("kubo: plugins: %w", err)
 	}
 	id, err := peer.IDFromPrivateKey(cfg.Key)
 	if err != nil {
-		closeListeners()
 		return nil, fmt.Errorf("kubo: node identity: %w", err)
 	}
-	r, tookOver, err := openRepo(cfg.RepoPath, id, cfg.Logf)
+	r, tookOver, err := openRepo(cfg.RepoPath, id, initial, cfg.Logf)
 	if err != nil {
-		closeListeners()
+		return nil, err
+	}
+	onDisk, err := r.Config()
+	if err != nil {
+		r.Close()
+		return nil, fmt.Errorf("kubo: read repository config: %w", err)
+	}
+	// Bound before the node starts, so an address another process holds
+	// fails the start instead of leaving a node without its API.
+	apiLis, err := listenLoopback("RPC API", onDisk.Addresses.API)
+	if err != nil {
+		r.Close()
+		return nil, err
+	}
+	gatewayLis, err := listenLoopback("gateway", onDisk.Addresses.Gateway)
+	if err != nil {
+		closeAll(apiLis)
+		r.Close()
 		return nil, err
 	}
 	settings := cfg.settings
@@ -247,12 +258,14 @@ func Start(ctx context.Context, cfg Config) (*Node, error) {
 	})
 	if err != nil {
 		r.Close()
-		closeListeners()
+		closeAll(apiLis)
+		closeAll(gatewayLis)
 		return nil, fmt.Errorf("kubo: start node: %w", err)
 	}
 	if node.Identity != id {
 		node.Close()
-		closeListeners()
+		closeAll(apiLis)
+		closeAll(gatewayLis)
 		return nil, fmt.Errorf("kubo: node came up as %s, want the node identity %s", node.Identity, id)
 	}
 
@@ -267,23 +280,31 @@ func Start(ctx context.Context, cfg Config) (*Node, error) {
 	}
 	// The RPC commands are Kubo's own, handed this node. The gateway serves
 	// content only, never the commands.
-	if apiLis != nil {
-		if n.apiURL, err = n.serve(apiLis, corehttp.CommandsOption(cctx), corehttp.CheckVersionOption(), corehttp.VersionOption()); err != nil {
-			if gatewayLis != nil {
-				gatewayLis.Close()
-			}
+	for i, lis := range apiLis {
+		u, err := n.serve(lis, corehttp.CommandsOption(cctx), corehttp.CheckVersionOption(), corehttp.VersionOption())
+		if err != nil {
+			closeAll(apiLis[i+1:])
+			closeAll(gatewayLis)
 			n.Stop()
 			return nil, fmt.Errorf("kubo: RPC API: %w", err)
 		}
-		if ma, err := manet.FromNetAddr(apiLis.Addr()); err == nil {
-			// The `ipfs` CLI finds a running node through this file.
-			_ = r.SetAPIAddr(ma)
+		if i == 0 {
+			n.apiURL = u
+			if ma, err := manet.FromNetAddr(lis.Addr()); err == nil {
+				// The `ipfs` CLI finds a running node through this file.
+				_ = r.SetAPIAddr(ma)
+			}
 		}
 	}
-	if gatewayLis != nil {
-		if n.gatewayURL, err = n.serve(gatewayLis, corehttp.HostnameOption(), corehttp.GatewayOption("/ipfs", "/ipns"), corehttp.VersionOption()); err != nil {
+	for i, lis := range gatewayLis {
+		u, err := n.serve(lis, corehttp.HostnameOption(), corehttp.GatewayOption("/ipfs", "/ipns"), corehttp.VersionOption())
+		if err != nil {
+			closeAll(gatewayLis[i+1:])
 			n.Stop()
 			return nil, fmt.Errorf("kubo: gateway: %w", err)
+		}
+		if i == 0 {
+			n.gatewayURL = u
 		}
 	}
 	cfg.Logf("Kubo %s in process as %s (repo %s, repo version %d): RPC %s, gateway %s",
@@ -298,20 +319,78 @@ func valueOr(v, fallback string) string {
 	return v
 }
 
-// listenLoopback binds addr, which must be a loopback host:port.
-func listenLoopback(addr string) (net.Listener, error) {
+// initial is how a repository this node creates is set up: where its RPC API
+// and gateway listen, and whether its gateway fetches from the network. An
+// existing repository keeps its own.
+func (c Config) initial() (func(*config.Config), error) {
+	api, err := loopbackMultiaddrs(c.APIAddr)
+	if err != nil {
+		return nil, fmt.Errorf("kubo: RPC API address: %w", err)
+	}
+	gateway, err := loopbackMultiaddrs(c.GatewayAddr)
+	if err != nil {
+		return nil, fmt.Errorf("kubo: gateway address: %w", err)
+	}
+	return func(k *config.Config) {
+		k.Addresses.API = api
+		k.Addresses.Gateway = gateway
+		k.Gateway.NoFetch = !c.FetchFromNetwork
+	}, nil
+}
+
+// loopbackMultiaddrs is a loopback host:port as Kubo's address list, which is
+// empty for "".
+func loopbackMultiaddrs(addr string) (config.Strings, error) {
 	addr = strings.TrimSpace(addr)
 	if addr == "" {
-		return nil, errors.New("no listen address")
+		return config.Strings{}, nil
 	}
-	h, _, err := net.SplitHostPort(addr)
+	h, p, err := net.SplitHostPort(addr)
 	if err != nil {
 		return nil, fmt.Errorf("bad address %q: %w", addr, err)
 	}
-	if ip := net.ParseIP(h); ip == nil || !ip.IsLoopback() {
+	ip := net.ParseIP(h)
+	if ip == nil || !ip.IsLoopback() {
 		return nil, fmt.Errorf("%q is not a loopback address; the RPC API and gateway listen on loopback only", addr)
 	}
-	return net.Listen("tcp", addr)
+	port, err := strconv.ParseUint(p, 10, 16)
+	if err != nil {
+		return nil, fmt.Errorf("bad port in %q: %w", addr, err)
+	}
+	ma, err := manet.FromNetAddr(&net.TCPAddr{IP: ip, Port: int(port)})
+	if err != nil {
+		return nil, err
+	}
+	return config.Strings{ma.String()}, nil
+}
+
+// listenLoopback binds the repository's addresses for one of Kubo's HTTP
+// services. They must be on loopback: the RPC API publishes and signs as the
+// node, and the node serves the public web on its own listener.
+func listenLoopback(service string, addrs []string) ([]net.Listener, error) {
+	var out []net.Listener
+	for _, a := range addrs {
+		ma, err := multiaddr.NewMultiaddr(strings.TrimSpace(a))
+		if err == nil && !manet.IsIPLoopback(ma) {
+			err = errors.New("not a loopback address; the RPC API and gateway listen on loopback only")
+		}
+		var l manet.Listener
+		if err == nil {
+			l, err = manet.Listen(ma)
+		}
+		if err != nil {
+			closeAll(out)
+			return nil, fmt.Errorf("kubo: %s at %s (the repository config's Addresses): %w", service, a, err)
+		}
+		out = append(out, manet.NetListener(l))
+	}
+	return out, nil
+}
+
+func closeAll(listeners []net.Listener) {
+	for _, l := range listeners {
+		l.Close()
+	}
 }
 
 // LoopbackAddr returns the host:port of a loopback http URL, or an error
@@ -388,14 +467,14 @@ func (n *Node) Stop() error {
 // config read so the node's own configuration stays the one source of truth.
 // What the host does (listening, transports, limits, relay, NAT) is the
 // host options' business, so Kubo's own versions of those are switched off
-// here rather than left to build a second, unused copy.
+// here rather than left to build a second, unused copy. Kubo's HTTP services
+// stay the repository's: Addresses.API, Addresses.Gateway and Gateway.NoFetch
+// are read from its config as they are.
 func (c Config) settings(k *config.Config) {
 	k.Addresses.Swarm = nil
 	k.Addresses.Announce = nil
 	k.Addresses.AppendAnnounce = nil
 	k.Addresses.NoAnnounce = nil
-	k.Addresses.API = nil
-	k.Addresses.Gateway = nil
 	if c.DHT == DHTOff {
 		k.Bootstrap = []string{}
 	} else {
@@ -417,5 +496,4 @@ func (c Config) settings(k *config.Config) {
 	k.Swarm.AddrFilters = nil
 	k.Discovery.MDNS.Enabled = false
 	k.Pubsub.Enabled = config.False
-	k.Gateway.NoFetch = !c.FetchFromNetwork
 }

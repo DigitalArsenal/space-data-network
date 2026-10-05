@@ -11,16 +11,16 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/kubo"
 )
 
-// kuboListenAddrs says where the node's in-process Kubo serves.
+// kuboNewRepoAddrs says where a Kubo repository this node creates serves its
+// RPC API and gateway. An existing repository, one the supervised child left
+// or an operator's ipfs.service ran on, keeps the addresses in its own config,
+// so taking it over moves no port.
 //
-// admin.ipfs_api_url and admin.ipfs_gateway_url used to name a Kubo to talk
-// to: the supervised child, or an operator's ipfs.service. Kubo is this
-// process now, so they name where it listens, on loopback only. The default
-// API URL (Kubo's 5001) maps to 5002, as the supervised child did, because
-// the admin listener uses 5001. An empty API URL keeps the RPC unserved and
-// the pinning paths off, as before. A gateway URL off loopback stays the
-// operator's to use, and the node serves no gateway of its own.
-func kuboListenAddrs(admin config.AdminConfig) (api, gateway string, err error) {
+// The default API URL (Kubo's 5001) maps to 5002, as the supervised child did,
+// because the admin listener uses 5001. An empty API URL leaves the RPC
+// unserved and the pinning paths off, as before. A gateway URL off loopback is
+// the operator's to use, and a new repository then serves no gateway.
+func kuboNewRepoAddrs(admin config.AdminConfig) (api, gateway string, err error) {
 	switch raw := strings.TrimSpace(admin.IPFSAPIURL); raw {
 	case "":
 	case config.DefaultIPFSAPIURL:
@@ -39,6 +39,30 @@ func kuboListenAddrs(admin config.AdminConfig) (api, gateway string, err error) 
 		}
 	}
 	return api, gateway, nil
+}
+
+// kuboClientURLs points the node's own Kubo clients (pinning and publishing
+// through the RPC API, the /ipfs/ proxy through the gateway) at the
+// in-process Kubo, where it actually listens. An explicit gateway URL stays:
+// it can be a cache in front of Kubo's gateway (host-01's terrain cache on
+// 8081 serves tiles and falls through to Kubo's 8091).
+func kuboClientURLs(admin *config.AdminConfig, k *kubo.Node) {
+	if strings.TrimSpace(admin.IPFSAPIURL) != "" {
+		if k.APIURL() == "" {
+			log.Warnf("admin.ipfs_api_url is set, but the Kubo repository serves no RPC API (its Addresses.API is empty): pinning and publishing through Kubo are off")
+		}
+		admin.IPFSAPIURL = k.APIURL()
+	}
+	raw := strings.TrimSpace(admin.IPFSGatewayURL)
+	if addr, err := kubo.LoopbackAddr(raw); raw == "" || (err == nil && strings.HasSuffix(addr, ":0")) {
+		admin.IPFSGatewayURL = k.GatewayURL()
+	} else if raw != k.GatewayURL() {
+		gateway := k.GatewayURL()
+		if gateway == "" {
+			gateway = "off"
+		}
+		log.Infof("admin.ipfs_gateway_url %s fronts the in-process Kubo gateway (%s)", raw, gateway)
+	}
 }
 
 // kuboRepoPath is the repository the node's Kubo runs on:

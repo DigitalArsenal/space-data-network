@@ -42,78 +42,17 @@ const SCRIPTS_DIR = dirname(fileURLToPath(import.meta.url));
 
 /**
  * Module-level vulnerabilities govulncheck reports as reaching sdn-server code,
- * captured 2026-09-18 against go.mod's pins. Each needs a disposition.
+ * captured 2026-09-18 against go.mod's pins. Each needs a disposition. Linking
+ * Kubo 0.43.1 (2026-10-05) moved pion/dtls, quic-go, webtransport-go, x/net and
+ * x/text to fixed releases and cleared nine entries; what is left has no fix.
  *
  * Do not add an entry to silence a new finding without reading it.
  */
 export const BASELINE = [
   {
-    id: 'GO-2026-6165',
-    module: 'github.com/pion/dtls/v3',
-    found: 'v3.0.6',
-    fixed: 'v3.1.4',
-    note: 'Reached through the WebRTC transport. Fix is available; needs a reviewed go.mod bump.',
-  },
-  {
-    id: 'GO-2026-6099',
-    module: 'github.com/quic-go/webtransport-go',
-    found: 'v0.9.0',
-    fixed: 'v0.11.1',
-    note: 'Fix available; bundled with the quic-go/webtransport bump below.',
-  },
-  {
-    id: 'GO-2026-4488',
-    module: 'github.com/quic-go/webtransport-go',
-    found: 'v0.9.0',
-    fixed: 'v0.10.0',
-    note: 'Fix available; same bump as GO-2026-6099.',
-  },
-  {
-    id: 'GO-2026-4485',
-    module: 'github.com/quic-go/webtransport-go',
-    found: 'v0.9.0',
-    fixed: 'v0.10.0',
-    note: 'Fix available; same bump as GO-2026-6099.',
-  },
-  {
-    id: 'GO-2026-4483',
-    module: 'github.com/quic-go/webtransport-go',
-    found: 'v0.9.0',
-    fixed: 'v0.10.0',
-    note: 'Fix available; same bump as GO-2026-6099.',
-  },
-  {
-    id: 'GO-2026-5676',
-    module: 'github.com/quic-go/quic-go',
-    found: 'v0.58.1',
-    fixed: 'v0.59.1',
-    note: 'Fix available; needs a reviewed go.mod bump.',
-  },
-  {
-    id: 'GO-2026-5970',
-    module: 'golang.org/x/text',
-    found: 'v0.37.0',
-    fixed: 'v0.39.0',
-    note: 'Fix available; routine x/ bump.',
-  },
-  {
-    id: 'GO-2026-5026',
-    module: 'golang.org/x/net',
-    found: 'v0.54.0',
-    fixed: 'v0.55.0',
-    note: 'Fix available; routine x/ bump.',
-  },
-  {
-    id: 'GO-2026-4479',
-    module: 'github.com/pion/dtls/v2',
-    found: 'v2.2.12',
-    fixed: null,
-    note: 'NO FIX UPSTREAM in the v2 line. Only reachable if something still pulls pion/dtls v2; the v3 bump above is the real lever.',
-  },
-  {
     id: 'GO-2024-3218',
     module: 'github.com/libp2p/go-libp2p-kad-dht',
-    found: 'v0.36.0',
+    found: 'v0.42.2',
     fixed: null,
     note: 'CVE-2023-26248. The advisory has introduced:0 and NO fixed event — unfixed in every version, a known property of the Amino DHT rather than an upgrade lever. Not actionable by bumping.',
   },

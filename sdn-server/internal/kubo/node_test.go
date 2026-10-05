@@ -6,7 +6,9 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -228,10 +230,22 @@ func mustAPI(t *testing.T, n *kubo.Node) coreiface.CoreAPI {
 
 func encode(raw []byte) string { return base64.StdEncoding.EncodeToString(raw) }
 
+// freePort is a loopback TCP port nothing listens on.
+func freePort(t *testing.T) int {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("free port: %v", err)
+	}
+	defer l.Close()
+	return l.Addr().(*net.TCPAddr).Port
+}
+
 // TestExistingRepositoryIsTakenOver: a repository from the separate Kubo
 // (its own random identity, key in the config) opens in place, runs as the
-// node, and keeps its previous config, key included, as a backup. A second
-// start finds nothing to take over.
+// node on the separate Kubo's own RPC and gateway ports, and keeps its
+// previous config, key included, as a backup. A second start finds nothing to
+// take over.
 func TestExistingRepositoryIsTakenOver(t *testing.T) {
 	repo := filepath.Join(t.TempDir(), "kubo")
 	oldKey, oldID := newKey(t)
@@ -243,14 +257,25 @@ func TestExistingRepositoryIsTakenOver(t *testing.T) {
 	if err != nil {
 		t.Fatalf("init config: %v", err)
 	}
+	apiURL := fmt.Sprintf("http://127.0.0.1:%d", freePort(t))
+	gatewayURL := fmt.Sprintf("http://127.0.0.1:%d", freePort(t))
+	cfg.Addresses.API = config.Strings{"/ip4/127.0.0.1/tcp/" + strings.TrimPrefix(apiURL, "http://127.0.0.1:")}
+	cfg.Addresses.Gateway = config.Strings{"/ip4/127.0.0.1/tcp/" + strings.TrimPrefix(gatewayURL, "http://127.0.0.1:")}
 	if err := fsrepo.Init(repo, cfg); err != nil {
 		t.Fatalf("init repo: %v", err)
 	}
 
 	key, id := newKey(t)
-	n := start(t, repo, key, nil, "")
+	// The address a new repository would get; this one keeps its own.
+	n := start(t, repo, key, nil, "127.0.0.1:0")
 	if n.Host().ID() != id {
 		t.Fatalf("node runs as %s, want %s", n.Host().ID(), id)
+	}
+	if n.APIURL() != apiURL || n.GatewayURL() != gatewayURL {
+		t.Fatalf("RPC at %s and gateway at %s, want the repository's own %s and %s", n.APIURL(), n.GatewayURL(), apiURL, gatewayURL)
+	}
+	if got, _ := rpc(t, apiURL, "id"); got["ID"] != id.String() {
+		t.Fatalf("RPC at the repository's port answers as %v, want %s", got["ID"], id)
 	}
 	if err := n.Stop(); err != nil {
 		t.Fatalf("stop: %v", err)
@@ -334,6 +359,8 @@ func TestTakeoverAnnouncesExistingContentNow(t *testing.T) {
 		t.Fatalf("config: %v", err)
 	}
 	cfg.Provide.DHT.Interval = config.NewOptionalDuration(20 * time.Second)
+	cfg.Addresses.API = config.Strings{}
+	cfg.Addresses.Gateway = config.Strings{}
 	if err := fsrepo.Init(repo, cfg); err != nil {
 		t.Fatalf("init repo: %v", err)
 	}
