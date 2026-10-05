@@ -476,9 +476,11 @@ type migrator4 struct {
 	setAside map[string]bool
 	index    []storage.IndexStats
 
-	lastJournal time.Time
-	timesMu     sync.Mutex // the reader goroutine adds its time too
-	times       map[string]time.Duration
+	lastJournal  time.Time
+	lastProgress time.Time
+	began        time.Time
+	timesMu      sync.Mutex // the reader goroutine adds its time too
+	times        map[string]time.Duration
 	// hexIdentities counts the check pass's records format 1 keeps under a
 	// legacy sha256-hex identity (migrate4CID).
 	hexIdentities atomic.Int64
@@ -514,7 +516,7 @@ func migrateStore4(ctx context.Context, opt migrate4Options, out io.Writer) (rep
 	}
 	start := time.Now()
 	m := &migrator4{opt: opt, out: out, root: root, jpath: filepath.Join(root, migrate4JournalName),
-		times: map[string]time.Duration{}}
+		times: map[string]time.Duration{}, began: start, lastProgress: start}
 	m.rep = &migrate4Report{Store: root, Format: 4, Mode: "migrate", Load: [2]float64{migrateLoadAverage(), 0},
 		Machine: fmt.Sprintf("%s/%s, %d CPUs", runtime.GOOS, runtime.GOARCH, runtime.NumCPU())}
 	if opt.VerifyOnly {
@@ -664,6 +666,7 @@ func (m *migrator4) run(ctx context.Context) error {
 	} else {
 		m.note("verified by an earlier run")
 	}
+	m.logf("copying the control tables into %s", filepath.Join(m.root, marker.Dir, migrate4ControlDB))
 	if err := m.timed("control", m.copyControl); err != nil {
 		return err
 	}
@@ -815,6 +818,30 @@ func (m *migrator4) openJournal() error {
 	m.j.Unregistered, m.j.SetAside = m.rep.Unregistered, m.rep.SetAside
 	m.rep.GseqFloor = m.j.GseqFloor
 	return nil
+}
+
+// migrate4ProgressEvery is how often the copy and the check log progress.
+const migrate4ProgressEvery = 30 * time.Second
+
+// logProgress logs, at most every migrate4ProgressEvery, how far a phase is
+// through a schema's index rows.
+func (m *migrator4) logProgress(phase, schema string, done int64) {
+	if time.Since(m.lastProgress) < migrate4ProgressEvery {
+		return
+	}
+	m.lastProgress = time.Now()
+	var total int64
+	for _, s := range m.index {
+		if s.Schema == schema {
+			total = s.Rows
+		}
+	}
+	if total > 0 {
+		m.logf("%s %s: %d of %d index rows (%.0f%%), %s since the run began", phase, schema, done, total,
+			100*float64(done)/float64(total), time.Since(m.began).Round(time.Second))
+		return
+	}
+	m.logf("%s %s: %d index rows, %s since the run began", phase, schema, done, time.Since(m.began).Round(time.Second))
 }
 
 // migrate4OversizedOf lists the records of tables above the largest storable
@@ -1404,6 +1431,7 @@ func (m *migrator4) copyAll(ctx context.Context, write bool) error {
 			staged.After = it.page.last
 			*p = staged
 			m.j.Rejected = append(m.j.Rejected, rejected...)
+			m.logProgress("copying", it.schema, p.Held+p.Orphans+p.SetAside)
 			every := journalEvery
 			if m.opt.testJournalEvery > 0 {
 				every = m.opt.testJournalEvery
@@ -1574,6 +1602,7 @@ func (m *migrator4) copyControl() error {
 // commit point); then control.flatsqldb* move to pre-format4/ and
 // control.flatsqldb becomes a directory.
 func (m *migrator4) activate(ctx context.Context) error {
+	m.logf("activating format 4")
 	if err := m.timed("activate", func() error { return m.api.Activate(ctx) }); err != nil {
 		return fmt.Errorf("activate: %w", err)
 	}

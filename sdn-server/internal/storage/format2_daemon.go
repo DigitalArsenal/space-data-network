@@ -3,7 +3,7 @@ package storage
 // format2_daemon.go — the daemon on store format 2 (stack design
 // docs/architecture/flatsql-partition-store.md §5.1, §14, §16, A6; task T6).
 //
-// SDN_STORE_FORMAT=2 selects it; format 1 stays the default and nothing here
+// SDN_STORE_FORMAT=2 selects it; format 4 is the default and nothing here
 // runs for a node that did not select it. NewFlatSQLStore then opens:
 //
 //   - THE PARTITION STORE (internal/storage/format2): the writer instance and

@@ -1,6 +1,7 @@
 // Command sds-tb-gen is the terabyte harness's SDN end-to-end tier (flatsql
 // TB audit §4 "Generating TB quickly" 3): the node's own write path, driven
-// the way ingest drives it, on store format 2.
+// the way ingest drives it, on store format 4 (the default; -format 1 or 2
+// for the others).
 //
 //	sds-tb-gen -store <dir> -corpus <corpus.tbc2> [-producers 64] [-peers-per-type 200]
 //	           [-batch 4096] [-duration 20m] [-csv <prefix>]
@@ -28,10 +29,10 @@
 // while calls are in flight (a growth step's pause does not count), it stops
 // at once (exit 3) with the stacks.
 //
-// The engine runs AOT (prewarmed into the daemon's cache first, as the
-// `prewarm-aot` command does); SDN_STORE_FORMAT=2 is set for the store.
-// Formats 1 and 4, fixture-derived seeds and the count-scaled growth steps
-// of the format-4 evidence harness: growth.go.
+// The engines run AOT (prewarmed into the daemon's cache first, as the
+// `prewarm-aot` command does); SDN_STORE_FORMAT is set to -format for the
+// store. Fixture-derived seeds and the count-scaled growth steps of the
+// format-4 evidence harness: growth.go.
 package main
 
 import (
@@ -112,7 +113,7 @@ type readStat struct {
 
 func main() {
 	var c config
-	flag.StringVar(&c.store, "store", "", "store directory (created as a fresh format-2 store when empty)")
+	flag.StringVar(&c.store, "store", "", "store directory (created as a fresh store of -format when empty)")
 	flag.StringVar(&c.corpus, "corpus", "", "TBC2 seed corpus (flatsql_ps_test --test=tb_corpus_export)")
 	flag.StringVar(&c.csv, "csv", "", "CSV prefix (default <store>/../sds-tb-gen)")
 	flag.StringVar(&c.schemas, "schemas", "OMM.fbs,CAT.fbs,IQC.fbs", "standards written")
@@ -129,7 +130,7 @@ func main() {
 	flag.Float64Var(&c.supersedePct, "supersede-pct", 15, "share of a supersede standard's records that supersede the previous clone")
 	flag.BoolVar(&c.prewarm, "prewarm", true, "AOT-compile the engines into the daemon's cache first")
 	flag.StringVar(&c.cpuProfile, "cpuprofile", "", "write a CPU profile of the run here")
-	flag.StringVar(&c.format, "format", "2", "store format: 1, 2 or 4 (\"sqlite\")")
+	flag.StringVar(&c.format, "format", "4", "store format: 1, 2 or 4 (\"sqlite\", the default)")
 	flag.StringVar(&c.seeds, "seeds", "", "format4proof work directory whose prepared inputs seed the records (instead of -corpus)")
 	flag.Float64Var(&c.zipf, "zipf", 0, "draw producer peers Zipf(s), s > 1 (0: in turn)")
 	flag.StringVar(&c.steps, "steps", "", "growth steps ID=records,… (records in the store, its start included): measure at each")
@@ -605,8 +606,7 @@ func parseMix(mix string) map[string]float64 {
 }
 
 // openStore prewarms the engines (as `prewarm-aot` does) and opens the store
-// in the arm's format (SDN_STORE_FORMAT; format 2 unless -format says
-// otherwise), as the daemon opens it.
+// in the arm's format (SDN_STORE_FORMAT = -format), as the daemon opens it.
 func openStore(c config, arm string) (*storage.FlatSQLStore, error) {
 	os.Setenv(format2.FormatEnv, format4proof.ArmFormat(arm))
 	if c.prewarm {
@@ -620,6 +620,11 @@ func openStore(c config, arm string) (*storage.FlatSQLStore, error) {
 			return nil, fmt.Errorf("prewarm the partition-store engine: %w", err)
 		} else {
 			fmt.Printf("# partition-store engine AOT %s (%s, present before: %v)\n", p, flatsqlrt.PSThreadsPackage, present)
+		}
+		if p, present, err := flatsqlrt.PrewarmP4ThreadsAOT(cache); err != nil {
+			return nil, fmt.Errorf("prewarm the format-4 engine: %w", err)
+		} else {
+			fmt.Printf("# format-4 engine AOT %s (%s, present before: %v)\n", p, flatsqlrt.P4ThreadsPackage, present)
 		}
 	}
 	v, err := sds.NewValidator(nil)

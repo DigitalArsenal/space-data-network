@@ -18,6 +18,6 @@
 // doorbells are words in shared memory. Control calls (init, registration,
 // stop) run on the instance under an explicit budget.
 //
-// Everything here is behind SDN_STORE_FORMAT=2 (store.go). Format 1 stays the
+// Everything here is behind SDN_STORE_FORMAT=2 (store.go). Format 4 is the
 // default; nothing in this package runs for a node that did not select it.
 package format2

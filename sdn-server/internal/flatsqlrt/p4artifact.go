@@ -11,9 +11,9 @@ package flatsqlrt
 // init refuses to start a binary whose embedded bytes are not the pinned
 // engine, so a build stamped format 4 always carries its engine.
 //
-// Format 4 stays off by default: SDN_STORE_FORMAT unset is format 1. A build
-// with no pin embeds no bytes, Open refuses that empty artifact, and its stamp
-// stays below 4.
+// Format 4 is the default store format (SDN_STORE_FORMAT unset; "1" opts
+// out). A build with no pin embeds no bytes, Open refuses that empty
+// artifact, and its stamp stays below 4.
 
 import (
 	"crypto/sha256"
