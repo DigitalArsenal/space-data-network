@@ -3,13 +3,11 @@ package bundle
 import (
 	"os"
 	"path/filepath"
-	"runtime"
 )
 
 type Layout struct {
 	Root         string
 	BinDir       string
-	KuboBinary   string
 	SDNUIPath    string
 	WebUIPath    string
 	UpdaterWASM  string
@@ -56,14 +54,9 @@ func ResolveFromExecutable(executablePath string) Layout {
 	if _, err := os.Stat(manifestPath); err != nil {
 		return Layout{}
 	}
-	kuboName := "ipfs"
-	if runtime.GOOS == "windows" {
-		kuboName = "ipfs.exe"
-	}
 	return Layout{
 		Root:          root,
 		BinDir:        binDir,
-		KuboBinary:    filepath.Join(root, "runtime", "kubo", kuboName),
 		SDNUIPath:     filepath.Join(root, "runtime", "ui", "sdn"),
 		WebUIPath:     filepath.Join(root, "runtime", "ui", "webui"),
 		UpdaterWASM:   filepath.Join(root, "runtime", "modules", "org.spacedatanetwork.updater.wasm"),

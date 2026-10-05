@@ -62,7 +62,9 @@ func SealKuboRepo(repoPath string, recipient Recipient, recipientPub []byte, kx 
 		return nil, err
 	}
 	if strings.TrimSpace(ident.PrivKey) == "" {
-		return nil, fmt.Errorf("kubo repo %s has no Identity.PrivKey to escrow", repoPath)
+		return nil, fmt.Errorf("kubo repo %s has no Identity.PrivKey to escrow: it runs as the node identity, "+
+			"which the root mnemonic re-creates, so escrow the node (no --repo). A separate Kubo identity this node "+
+			"took over is kept beside the config as config-pre-sdn-identity-*", repoPath)
 	}
 	if strings.HasPrefix(ident.PrivKey, encryptedIdentityPrefix) {
 		return nil, fmt.Errorf("kubo repo %s has an %s-encrypted Identity.PrivKey, which kubo itself cannot read; "+

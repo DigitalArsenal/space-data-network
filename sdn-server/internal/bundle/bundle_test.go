@@ -3,7 +3,6 @@ package bundle
 import (
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 )
 
@@ -60,19 +59,12 @@ func TestResolveFromExecutableInsideBundle(t *testing.T) {
 	}
 
 	layout := ResolveFromExecutable(exe)
-	kuboName := "ipfs"
-	if runtime.GOOS == "windows" {
-		kuboName = "ipfs.exe"
-	}
 
 	if layout.Root != root {
 		t.Fatalf("Root = %q, want %q", layout.Root, root)
 	}
 	if layout.BinDir != filepath.Join(root, "bin") {
 		t.Fatalf("BinDir = %q", layout.BinDir)
-	}
-	if layout.KuboBinary != filepath.Join(root, "runtime", "kubo", kuboName) {
-		t.Fatalf("KuboBinary = %q", layout.KuboBinary)
 	}
 	if layout.SDNUIPath != filepath.Join(root, "runtime", "ui", "sdn") {
 		t.Fatalf("SDNUIPath = %q", layout.SDNUIPath)

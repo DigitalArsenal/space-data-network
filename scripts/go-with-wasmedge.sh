@@ -17,10 +17,9 @@ WASMEDGE_DIR="${WASMEDGE_DIR:-}"
 # `github.com/spacedatanetwork/sdn-server`. The repo has nine go.mod files;
 # for eight of them this wrapper silently substituted a ninth.
 #
-# That is one reason no CI lane ever compiled the in-repo kubo fork: the
-# toolchain wrapper structurally could not be pointed at it. (With the override
-# below it builds clean — the fork is unbuilt, not broken. See
-# sdn-server/docs/kubo-fork-audit.md.)
+# That is one reason no CI lane ever compiled the old in-repo kubo fork: the
+# toolchain wrapper structurally could not be pointed at it. (The fork is gone;
+# Kubo is now linked into sdn-server, see sdn-server/docs/kubo-in-process.md.)
 #
 # sdn-server stays the default — every existing caller means sdn-server.
 # SDN_GO_MODULE_DIR overrides it (absolute, or relative to the repo root).

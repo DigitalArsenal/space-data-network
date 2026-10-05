@@ -321,14 +321,20 @@ test('IPFS asset release script skips browser downloads and bounds dependency in
 // version), so the guarantee worth holding is that it does not come back: a
 // replace directive would make the released image build from whatever happened
 // to be in the working tree.
+// The one kind of replace go.mod may carry is Kubo's own: Kubo builds against
+// a pinned module (its go.mod says why), replace directives reach only the
+// main module, and scripts/check-kubo-pin.js holds SDN's copy equal to
+// Kubo's. A replacement onto a local path is what this test forbids: the
+// release image would build something nobody can fetch.
 test('Docker release image builds against published Go modules, never a local replacement', () => {
   const goMod = readRepoFile('sdn-server/go.mod');
 
-  const replaces = goMod
+  const localReplaces = goMod
     .split('\n')
     .map((line) => line.trim())
-    .filter((line) => line.startsWith('replace ') || (line.includes('=>') && !line.startsWith('//')));
-  assert.deepEqual(replaces, [], 'sdn-server/go.mod must carry no replace directives');
+    .filter((line) => !line.startsWith('//') && line.includes('=>'))
+    .filter((line) => /=>\s*(\.{1,2}\/|\/)/.test(line));
+  assert.deepEqual(localReplaces, [], 'sdn-server/go.mod must replace nothing with a local path');
   assert.match(
     goMod,
     /github\.com\/DigitalArsenal\/spacedatastandards\.org\/lib\/go v\d+\.\d+\.\d+/,
@@ -413,7 +419,9 @@ test('beta release workflow builds every required portable CLI target', () => {
   }
 });
 
-test('beta release workflow downloads Kubo archives with retries and validation', () => {
+// The bundles carry no Kubo: it is linked into the node binary. The one Kubo
+// download left is the ipfs CLI the asset-pinning job runs as a build tool.
+test('beta release workflow downloads only the ipfs build tool, with retries and validation', () => {
   const workflow = readRepoFile('.github/workflows/beta-release-artifacts.yml');
   const downloaderPath = 'deployment/release/download-kubo.sh';
 
@@ -422,7 +430,7 @@ test('beta release workflow downloads Kubo archives with retries and validation'
   const downloader = readRepoFile(downloaderPath);
 
   assert.match(workflow, /deployment\/release\/download-kubo\.sh[\s\S]*--platform linux-amd64[\s\S]*--archive tar\.gz/);
-  assert.match(workflow, /deployment\/release\/download-kubo\.sh[\s\S]*--platform "\$\{KUBO_PLATFORM\}"[\s\S]*--archive "\$\{KUBO_ARCHIVE\}"/);
+  assert.doesNotMatch(workflow, /KUBO_PLATFORM|--kubo-path|dist\/kubo\//);
   assert.doesNotMatch(workflow, /curl -L https:\/\/dist\.ipfs\.tech\/kubo\/\$\{KUBO_VERSION\}\/kubo_\$\{KUBO_VERSION\}_linux-amd64\.tar\.gz \| tar/);
   assert.doesNotMatch(workflow, /curl -L "https:\/\/dist\.ipfs\.tech\/kubo\/\$\{KUBO_VERSION\}\/kubo_\$\{KUBO_VERSION\}_\$\{KUBO_PLATFORM\}\.tar\.gz" \| tar/);
   assert.match(downloader, /curl -fL/);

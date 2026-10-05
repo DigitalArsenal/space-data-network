@@ -31,7 +31,7 @@
 #   ./scripts/ci-local.sh builds     # node + edge-relay builds only
 #   ./scripts/ci-local.sh race       # CI-only/full race suite
 #   ./scripts/ci-local.sh js         # sdn-js checks only
-#   ./scripts/ci-local.sh kubo-pin   # the shipped Kubo version pin only
+#   ./scripts/ci-local.sh kubo-pin   # the linked Kubo: version and directives only
 #   ./scripts/ci-local.sh delivery   # focused module-delivery compatibility checks
 #   ./scripts/ci-local.sh plugin     # legacy alias for delivery
 #   ./scripts/ci-local.sh demo       # plugin-demo integration tests only
@@ -258,11 +258,10 @@ run_preflight() {
   pass "no orphan test suites"
 }
 
-# The shipped Kubo pin. Cheap, and it closes a hole that stayed open for
-# months: the node reported `kubo_version` from the in-repo fork's
-# version.go while every release path downloaded a stock upstream v0.39.0,
-# and NOTHING compared the two — neither this script nor any workflow
-# mentioned kubo at all.
+# The Kubo linked into the node: its version everywhere it is named, and
+# Kubo's own replace/exclude directives in sdn-server/go.mod. Cheap and
+# offline. The module-by-module lockstep with Kubo's build needs the module
+# proxy, so the security lane runs it (check-kubo-pin.js --build-list).
 #
 # Deliberately its own gate rather than `npm run check:versions`. That script
 # also reaches the network (npm view, go list, git ls-remote) and currently
@@ -286,7 +285,7 @@ run_docs_release() {
 }
 
 run_kubo_pin() {
-  step "Shipped Kubo version pin"
+  step "Kubo linked into SDN"
   (cd "$ROOT" && node scripts/check-kubo-pin.js)
   pass "kubo pin"
 }

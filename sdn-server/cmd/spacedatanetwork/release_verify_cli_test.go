@@ -117,8 +117,8 @@ func TestVerifyPortableCLIArchiveLayoutRejectsMissingBundledRuntimeAssets(t *tes
 		AliasPath:   "bin/sdn",
 		ArchiveKind: "tar.gz",
 	})
-	if err == nil || !strings.Contains(err.Error(), "runtime/kubo/ipfs") {
-		t.Fatalf("verifyPortableCLIArchiveLayout error = %v, want missing runtime/kubo/ipfs", err)
+	if err == nil || !strings.Contains(err.Error(), "runtime/ui/sdn/index.html") {
+		t.Fatalf("verifyPortableCLIArchiveLayout error = %v, want missing runtime/ui/sdn/index.html", err)
 	}
 }
 
@@ -131,7 +131,6 @@ func TestVerifyPortableCLIArchiveLayoutRejectsMissingWindowsWasmEdgeRuntime(t *t
 		PrimaryPath: "bin/spacedatanetwork.exe",
 		AliasPath:   "bin/sdn.exe",
 		ArchiveKind: "zip",
-		KuboPath:    "runtime/kubo/ipfs.exe",
 		Required:    []string{"bin/wasmedge.dll", "runtime/wasmedge/bin/wasmedge.dll"},
 	})
 	if err == nil || !strings.Contains(err.Error(), "bin/wasmedge.dll") {
@@ -322,7 +321,6 @@ func writePortableCLIZipWithoutWindowsWasmEdgeRuntime(t *testing.T, root string,
 	for _, pathValue := range []string{
 		bundleRoot + "/bin/spacedatanetwork.exe",
 		bundleRoot + "/bin/sdn.exe",
-		bundleRoot + "/runtime/kubo/ipfs.exe",
 		bundleRoot + "/runtime/modules/org.spacedatanetwork.updater.wasm",
 		bundleRoot + "/runtime/ui/sdn/index.html",
 		bundleRoot + "/runtime/ui/webui/index.html",
@@ -353,7 +351,6 @@ func portableCLIEntries(bundleRoot string, windows bool, omitAlias bool) map[str
 	}
 	entries := map[string]string{
 		bundleRoot + "/bin/" + primary:                                    "primary",
-		bundleRoot + "/runtime/kubo/ipfs":                                 "ipfs",
 		bundleRoot + "/runtime/modules/org.spacedatanetwork.updater.wasm": "updater",
 		bundleRoot + "/runtime/ui/sdn/index.html":                         "sdn ui",
 		bundleRoot + "/runtime/ui/webui/index.html":                       "webui",
@@ -361,9 +358,7 @@ func portableCLIEntries(bundleRoot string, windows bool, omitAlias bool) map[str
 		bundleRoot + "/manifest.json":                                     `{"schema":"org.spacedatanetwork.bundle.v1","update":{"pubsubTopic":"/sdn/updates/v1/beta","updaterModule":"org.spacedatanetwork.updater","updaterWasm":"runtime/modules/org.spacedatanetwork.updater.wasm"}}`,
 	}
 	if windows {
-		delete(entries, bundleRoot+"/runtime/kubo/ipfs")
 		delete(entries, bundleRoot+"/runtime/wasmedge/bin/wasmedge")
-		entries[bundleRoot+"/runtime/kubo/ipfs.exe"] = "ipfs"
 		entries[bundleRoot+"/runtime/wasmedge/bin/wasmedge.exe"] = "wasmedge"
 		entries[bundleRoot+"/bin/wasmedge.dll"] = "dll"
 		entries[bundleRoot+"/runtime/wasmedge/bin/wasmedge.dll"] = "dll"

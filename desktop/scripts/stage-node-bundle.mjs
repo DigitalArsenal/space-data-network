@@ -109,9 +109,7 @@ function makeExecutable (root) {
     join(root, 'bin', 'spacedatanetwork'),
     join(root, 'bin', 'spacedatanetwork.exe'),
     join(root, 'bin', 'sdn'),
-    join(root, 'runtime', 'sdn', 'spacedatanetwork'),
-    join(root, 'runtime', 'kubo', 'ipfs'),
-    join(root, 'runtime', 'kubo', 'ipfs.exe')
+    join(root, 'runtime', 'sdn', 'spacedatanetwork')
   ]
   const wasmedgeBin = join(root, 'runtime', 'wasmedge', 'bin')
   if (existsSync(wasmedgeBin)) {

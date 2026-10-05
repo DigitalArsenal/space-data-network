@@ -37,7 +37,6 @@ import (
 	libp2pmetrics "github.com/libp2p/go-libp2p/core/metrics"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/libp2p/go-libp2p/core/routing"
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
 	drouting "github.com/libp2p/go-libp2p/p2p/discovery/routing"
 	"github.com/libp2p/go-libp2p/p2p/host/autorelay"
@@ -61,6 +60,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/flowrt"
 	"github.com/spacedatanetwork/sdn-server/internal/flowrt/capabilities"
 	"github.com/spacedatanetwork/sdn-server/internal/keys"
+	"github.com/spacedatanetwork/sdn-server/internal/kubo"
 	"github.com/spacedatanetwork/sdn-server/internal/license"
 	"github.com/spacedatanetwork/sdn-server/internal/logservice"
 	"github.com/spacedatanetwork/sdn-server/internal/metrics"
@@ -124,8 +124,11 @@ type Node struct {
 	// Serializes customer download/installation receipt updates.
 	customerModuleMu sync.Mutex
 
-	host           host.Host
-	dht            *dht.IpfsDHT
+	host host.Host
+	dht  *dht.IpfsDHT
+	// kubo is upstream Kubo running in this process. Its host IS host and
+	// its public DHT IS dht: one peer, one identity (owner 2026-10-05).
+	kubo           *kubo.Node
 	pubsub         *pubsub.PubSub
 	topicsMu       sync.RWMutex
 	topics         map[string]*pubsub.Topic
@@ -357,51 +360,6 @@ func New(ctx context.Context, cfg *config.Config) (*Node, error) {
 	}
 
 	return n, nil
-}
-
-// publicDHTOptions returns the go-libp2p-kad-dht options used when
-// constructing the node's DHT routing table. Deliberately omits
-// dht.ProtocolPrefix so the node speaks the stock public IPFS/Amino DHT
-// protocol ("/ipfs/kad/1.0.0") rather than a private "/spacedatanetwork"
-// swarm. Factored out so tests can assert the resulting protocol
-// configuration without standing up a full Node.
-//
-// MODE IS NOT COSMETIC. ModeAutoServer was hardcoded here until 2026-08-08 and
-// made every SDN node a SERVER for the public Amino DHT — answering routing
-// queries for the whole IPFS network. Measured consequence on host-01
-// (2 vCPU, whose only job is module delivery): 780 inbound connections from
-// ~700 distinct internet IPs, 2105 kad-dht handler warnings in 70 minutes, and
-// the daemon pinned at 98.5% CPU. Concurrent module-delivery streams then lost
-// the race for scheduler time and rcmgr headroom and were reset with
-// StreamErrorCode 0x1002 (StreamResourceLimitExceeded), which is the "stream
-// reset" browsers reported on their FIRST attempt.
-//
-// ModeClient keeps every capability this node actually uses: it still QUERIES
-// the DHT and still PROVIDES its own records, so module-delivery provider
-// discovery is unchanged. It only stops serving strangers' lookups.
-func publicDHTOptions(p dhtParticipation) []dht.Option {
-	// ModeAuto is the default and the point of the exercise: it switches
-	// between client and server on EvtLocalReachabilityChanged — the same
-	// event the relay watcher uses — so a reachable node SERVES the DHT and is
-	// therefore findable, while a node behind NAT stays a client.
-	//
-	// Being discoverable requires serving. A client is never added to another
-	// peer's routing table and answers no queries, so it can find everyone and
-	// nobody can find it.
-	mode := dht.ModeAuto
-	switch p {
-	case dhtParticipationServer:
-		// Serve even before AutoNAT has decided. For a node deployed as DHT
-		// infrastructure, where waiting for a verdict is the wrong default.
-		mode = dht.ModeAutoServer
-	case dhtParticipationClient:
-		// Explicit opt-out: query only, never answer. This is what host-01 set
-		// after 2026-08-08.
-		mode = dht.ModeClient
-	}
-	return []dht.Option{
-		dht.Mode(mode),
-	}
 }
 
 // dhtParticipation is how much of the public DHT this node takes part in.
@@ -779,8 +737,8 @@ func (n *Node) init() error {
 		}
 	}()
 
-	// Create libp2p host with connection gater for trust-based filtering
-	var dhtRouting *dht.IpfsDHT
+	// The node's one libp2p host is Kubo's (internal/kubo): Kubo builds it
+	// from the options below and the node key, and runs its own DHT on it.
 	// Bandwidth counter (M1 node-status capability, caps/nodestatus.go):
 	// purely additive instrumentation via libp2p.BandwidthReporter — it does
 	// not change any existing host behavior, only records byte counters the
@@ -792,8 +750,7 @@ func (n *Node) init() error {
 		autoTLSTLSConfig = autoTLSCertMgr.TLSConfig()
 	}
 	hostOptions := append([]libp2p.Option{
-		libp2p.Identity(privKey),
-		libp2p.UserAgent(versioninfo.AgentVersion),
+		libp2p.UserAgent(kubo.AgentVersion(versioninfo.AgentVersion)),
 		libp2p.ListenAddrs(listenAddrs...),
 	}, HostTransportOptions(autoTLSTLSConfig)...)
 	// Public relay service. "always" wires it at construction; "auto" — the
@@ -839,11 +796,10 @@ func (n *Node) init() error {
 		// tells nobody about it.
 		hostOptions = append(hostOptions, libp2p.AddrsFactory(autoTLSCertMgr.AddressFactory()))
 	}
-	n.host, err = libp2p.New(append(hostOptions,
+	hostOptions = append(hostOptions,
 		libp2p.Security(libp2ptls.ID, libp2ptls.New),
 		libp2p.Security(noise.ID, noise.New),
 		libp2p.ConnectionManager(connMgr),
-		libp2p.ConnectionGater(n.peerGater), // Trust-based connection gating
 		libp2p.ResourceManager(resourceManager),
 		libp2p.EnableHolePunching(),
 		// CLIENT side only: this node may always DIAL through someone else's
@@ -856,20 +812,38 @@ func (n *Node) init() error {
 			},
 			autorelay.WithMinInterval(0),
 		),
-		libp2p.Routing(func(h host.Host) (routing.PeerRouting, error) {
-			var err error
-			dhtRouting, err = dht.New(n.ctx, h, publicDHTOptions(n.dhtParticipation())...)
-			return dhtRouting, err
-		}),
 		libp2p.NATManager(natWatchdogConstructor(&n.natWatchdog)),
 		libp2p.EnableNATService(),
 		libp2p.BandwidthReporter(n.bandwidthCounter),
-	)...)
+	)
+	apiAddr, gatewayAddr, err := kuboListenAddrs(n.config.Admin)
 	if err != nil {
-		return fmt.Errorf("failed to create libp2p host: %w", err)
+		return err
+	}
+	n.kubo, err = kubo.Start(n.ctx, kubo.Config{
+		RepoPath:    kuboRepoPath(n.config),
+		Key:         privKey,
+		HostOptions: hostOptions,
+		// Trust-based connection gating, ANDed with Kubo's own gate.
+		Gate:        n.peerGater,
+		DHT:         kuboDHTMode(n.dhtParticipation()),
+		Bootstrap:   kuboBootstrap(n.config.Network.Bootstrap),
+		APIAddr:     apiAddr,
+		GatewayAddr: gatewayAddr,
+		Logf:        log.Infof,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to start the node's Kubo: %w", err)
 	}
 	hostCreated = true
-	n.dht = dhtRouting
+	n.host = n.kubo.Host()
+	n.dht = n.kubo.WANDHT()
+	if apiAddr != "" {
+		n.config.Admin.IPFSAPIURL = n.kubo.APIURL()
+	}
+	if gatewayAddr != "" {
+		n.config.Admin.IPFSGatewayURL = n.kubo.GatewayURL()
+	}
 	if autoTLSCertMgr != nil {
 		autoTLSCertMgr.ProvideHost(n.host)
 		if err := autoTLSCertMgr.Start(); err != nil {
@@ -1626,7 +1600,7 @@ func (n *Node) buildP2PCapOptions() caps.P2PCapOptions {
 			// Merged network view: connected peers + peerstore entries with
 			// addresses + SDN-advertisement-flag-verified DHT peers +
 			// trust-registry peers. Since A1 the node's DHT joins the public
-			// IPFS/Amino swarm (publicDHTOptions in this file), so the raw
+			// IPFS/Amino swarm (Kubo's DHT, internal/kubo), so the raw
 			// DHT routing table is full of unrelated public IPFS nodes and
 			// must NOT be used here — only peers verified via the SDN
 			// membership flag namespace (sdnAdvertisementDiscoveryNamespace,
@@ -1830,12 +1804,6 @@ func (n *Node) loadOrCreateKey() (crypto.PrivKey, error) {
 			info.PeerID, info.IdentityKeyPath, info.SigningKeyPath, info.EncryptionKeyPath, info.GrantSigningKeyPath)
 
 		n.logGrantKeyDomainSeparation(info.SigningKeyPath)
-
-		if repoPath := strings.TrimSpace(os.Getenv("IPFS_PATH")); repoPath != "" {
-			if err := EnsureManagedIPFSRepoIdentity(repoPath, bundle); err != nil {
-				return nil, fmt.Errorf("managed IPFS repo identity sync: %w", err)
-			}
-		}
 
 		// Also save the serialized key for backward compatibility, encrypted
 		// at rest (same Argon2id + XChaCha20-Poly1305 scheme as the mnemonic).
@@ -5512,8 +5480,10 @@ func (n *Node) StopContext(ctx context.Context) error {
 		n.autoTLSCertMgr = nil
 	}
 
-	if err := n.host.Close(); err != nil {
-		return fmt.Errorf("failed to close host: %w", err)
+	// Kubo owns the host, its DHT and the repository; closing it closes all
+	// three.
+	if err := n.kubo.Stop(); err != nil {
+		return fmt.Errorf("failed to close the node's Kubo: %w", err)
 	}
 
 	return nil

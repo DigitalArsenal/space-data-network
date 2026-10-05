@@ -193,7 +193,7 @@ func NewEdgeNode(ctx context.Context, cfg EdgeConfig) (*EdgeNode, error) {
 		// DHT for peer discovery only
 		libp2p.Routing(func(h host.Host) (routing.PeerRouting, error) {
 			var err error
-			dhtRouting, err = dht.New(nodeCtx, h,
+			dhtRouting, err = dht.New(h,
 				dht.Mode(dht.ModeServer),
 				// No ProtocolPrefix override: join the public IPFS/Amino DHT
 				// (protocol "/ipfs/kad/1.0.0") to stay reachable by the main
@@ -303,6 +303,9 @@ func (e *EdgeNode) ConnectedPeers() int {
 // Close shuts down the edge node.
 func (e *EdgeNode) Close() error {
 	e.cancel()
+	if e.dht != nil {
+		_ = e.dht.Close()
+	}
 	return e.host.Close()
 }
 

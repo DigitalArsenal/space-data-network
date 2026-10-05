@@ -3,13 +3,14 @@
 package versioninfo
 
 const (
-	SuiteVersion              = "1.0.5"
-	SpaceDataStandardsVersion = "1.228.0"
+	SuiteVersion              = "1.1.0"
+	SpaceDataStandardsVersion = "1.232.0"
 	FlatSQLVersion            = "2.0.3"
-	HDWalletWasmVersion       = "2.0.29"
-	HDWalletUIVersion         = "2.0.29"
+	HDWalletWasmVersion       = "2.0.30"
+	HDWalletUIVersion         = "2.0.30"
 	IPFSWebUIVersion          = "4.12.0"
-	KuboVersion               = "0.39.0"
+	KuboVersion               = "0.43.1"
+	HeliaVersion              = "7.1.12"
 	DefaultUpdateChannel      = "stable"
 	CurrentAdvertisementFlag  = "spacedatanetwork/1.0.0"
 )

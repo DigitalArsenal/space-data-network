@@ -923,14 +923,10 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	if err := adminListenerSafety(cfg); err != nil {
 		return err
 	}
-	// Managed Kubo (INST-04): the bundle's Kubo runs under this daemon unless
-	// the operator named their own; the config is re-pointed at it before the
-	// node starts so every CID, pin and archive path uses it.
-	if sup, err := startManagedKubo(ctx, cfg, layout, managedKuboDataPath(cfg), log.Infof); err != nil {
-		return fmt.Errorf("managed Kubo: %w", err)
-	} else if sup != nil {
-		defer sup.Stop(15 * time.Second)
-	}
+	// Kubo runs inside the node (internal/kubo), on the node's own host and
+	// identity. node.New starts it and re-points admin.ipfs_api_url and
+	// admin.ipfs_gateway_url at its loopback listeners before anything below
+	// reads them, so every CID, pin and archive path uses it.
 	// Resolve empty frontend path to the built SDN Svelte UI when available,
 	// then fall back to the managed frontend directory.
 	cfg.Admin.FrontendPath = resolveFrontendPath(cfg.Admin.FrontendPath)

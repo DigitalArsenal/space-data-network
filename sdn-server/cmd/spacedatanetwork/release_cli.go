@@ -282,7 +282,6 @@ type portableCLITarget struct {
 	PrimaryPath string
 	AliasPath   string
 	ArchiveKind string
-	KuboPath    string
 	Required    []string
 }
 
@@ -292,7 +291,7 @@ func verifyPortableCLIArtifacts(dir string, files map[string]os.DirEntry) error 
 		{Label: "macOS AMD64 portable CLI", Suffix: "-darwin-amd64.tar.gz", PrimaryPath: "bin/spacedatanetwork", AliasPath: "bin/sdn", ArchiveKind: "tar.gz"},
 		{Label: "Linux AMD64 portable CLI", Suffix: "-linux-amd64.tar.gz", PrimaryPath: "bin/spacedatanetwork", AliasPath: "bin/sdn", ArchiveKind: "tar.gz"},
 		{Label: "Linux ARM64 portable CLI", Suffix: "-linux-arm64.tar.gz", PrimaryPath: "bin/spacedatanetwork", AliasPath: "bin/sdn", ArchiveKind: "tar.gz"},
-		{Label: "Windows AMD64 portable CLI", Suffix: "-windows-amd64.zip", PrimaryPath: "bin/spacedatanetwork.exe", AliasPath: "bin/sdn.exe", ArchiveKind: "zip", KuboPath: "runtime/kubo/ipfs.exe", Required: []string{"bin/wasmedge.dll", "runtime/wasmedge/bin/wasmedge.dll"}},
+		{Label: "Windows AMD64 portable CLI", Suffix: "-windows-amd64.zip", PrimaryPath: "bin/spacedatanetwork.exe", AliasPath: "bin/sdn.exe", ArchiveKind: "zip", Required: []string{"bin/wasmedge.dll", "runtime/wasmedge/bin/wasmedge.dll"}},
 	}
 	for _, target := range targets {
 		name := portableCLIArtifactName(files, target.Suffix)
@@ -332,7 +331,6 @@ func verifyPortableCLIArchiveLayout(pathValue string, target portableCLITarget) 
 	for _, required := range []string{
 		target.PrimaryPath,
 		target.AliasPath,
-		portableCLIKuboPath(target),
 		"runtime/modules/org.spacedatanetwork.updater.wasm",
 		"runtime/ui/sdn/index.html",
 		"runtime/ui/webui/index.html",
@@ -352,13 +350,6 @@ func verifyPortableCLIArchiveLayout(pathValue string, target portableCLITarget) 
 		return err
 	}
 	return nil
-}
-
-func portableCLIKuboPath(target portableCLITarget) string {
-	if target.KuboPath != "" {
-		return target.KuboPath
-	}
-	return "runtime/kubo/ipfs"
 }
 
 func portableCLIWasmEdgePath(target portableCLITarget) string {

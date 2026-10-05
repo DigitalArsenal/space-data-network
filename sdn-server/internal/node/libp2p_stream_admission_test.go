@@ -1,14 +1,11 @@
 package node
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/libp2p/go-libp2p"
-	dht "github.com/libp2p/go-libp2p-kad-dht"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	coreprotocol "github.com/libp2p/go-libp2p/core/protocol"
@@ -247,40 +244,22 @@ func TestDHTServesOnlyWhenReachable(t *testing.T) {
 	// REGISTERS the public DHT handler — i.e. whether it answers strangers'
 	// routing queries. That is the workload being shed, so assert on it
 	// directly rather than on the shape of an option slice.
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
 	registersKad := func(mode dhtParticipation) bool {
-		h, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"))
-		if err != nil {
-			t.Fatalf("libp2p.New failed: %v", err)
-		}
-		defer h.Close()
-		d, err := dht.New(ctx, h, publicDHTOptions(mode)...)
-		if err != nil {
-			t.Fatalf("dht.New failed: %v", err)
-		}
-		defer d.Close()
-		for _, p := range h.Mux().Protocols() {
-			if p == coreprotocol.ID("/ipfs/kad/1.0.0") {
-				return true
-			}
-		}
-		return false
+		return servesProtocol(startTestKubo(t, mode), coreprotocol.ID("/ipfs/kad/1.0.0"))
 	}
 
 	if registersKad(dhtParticipationClient) {
-		t.Fatalf("publicDHTOptions(dhtParticipationClient) must NOT serve /ipfs/kad/1.0.0: an explicit opt-out has to " +
+		t.Fatalf("client participation must NOT serve /ipfs/kad/1.0.0: an explicit opt-out has to " +
 			"be honoured — that is the setting host-01 made after 2026-08-08")
 	}
 	if !registersKad(dhtParticipationServer) {
-		t.Fatalf("publicDHTOptions(dhtParticipationServer) must serve /ipfs/kad/1.0.0 when a node is deliberately deployed as DHT infrastructure")
+		t.Fatalf("server participation must serve /ipfs/kad/1.0.0 when a node is deliberately deployed as DHT infrastructure")
 	}
 	// AUTO must not serve until AutoNAT says this node is reachable. On a fresh
 	// host with no verdict that means client, so the unbounded workload can
 	// never be taken on by default — it is earned by being dialable.
 	if registersKad(dhtParticipationAuto) {
-		t.Fatalf("publicDHTOptions(dhtParticipationAuto) served /ipfs/kad/1.0.0 with no reachability verdict; " +
+		t.Fatalf("auto participation served /ipfs/kad/1.0.0 with no reachability verdict; " +
 			"auto must start as a client and become a server only once AutoNAT reports the node reachable")
 	}
 }

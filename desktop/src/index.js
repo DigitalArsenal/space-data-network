@@ -4,9 +4,9 @@
 // node's own dashboard.
 //
 // It owns four things and nothing else: the node child process, one window,
-// the tray, and the logs directory. The dashboard, the API, the wallet sign-in
-// assets and the Kubo the node needs are all inside the node bundle and are
-// served by the node itself.
+// the tray, and the logs directory. The dashboard, the API and the wallet
+// sign-in assets are inside the node bundle and are served by the node itself,
+// and Kubo is linked into the node.
 require('v8-compile-cache')
 
 const { app, ipcMain, shell } = require('electron')

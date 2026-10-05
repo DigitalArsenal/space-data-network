@@ -2241,7 +2241,6 @@ func TestApplyBundleDefaultsUsesBundledAssetsWhenConfigIsEmpty(t *testing.T) {
 	root := t.TempDir()
 	layout := bundle.Layout{
 		Root:        root,
-		KuboBinary:  filepath.Join(root, "runtime", "kubo", "ipfs"),
 		SDNUIPath:   filepath.Join(root, "runtime", "ui", "sdn"),
 		WebUIPath:   filepath.Join(root, "runtime", "ui", "webui"),
 		UpdaterWASM: filepath.Join(root, "runtime", "modules", "org.spacedatanetwork.updater.wasm"),

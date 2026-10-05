@@ -19,7 +19,7 @@
 # Build context is the REPO ROOT (not kubo/), matching install-wasmedge.sh's
 # path. Run via scripts/test-docker.sh; do not build by hand with a stale tag.
 
-FROM golang:1.25-bookworm AS test-env
+FROM golang:1.26-bookworm AS test-env
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \

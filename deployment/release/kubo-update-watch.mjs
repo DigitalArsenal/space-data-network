@@ -6,10 +6,13 @@
  *
  * Emits ONE JSON verdict with two independent drift signals:
  *
- *  - kubo drift:  upstream ipfs/kubo latest release vs the kubo version this
- *    fork embeds (kubo/version.go CurrentVersionNumber). A fork rebase is
- *    ENGINEERING, not automation — the watcher's job is to surface the drift
- *    the day it appears, not to auto-merge a patched fork unattended.
+ *  - kubo drift:  upstream ipfs/kubo latest release vs the Kubo the node
+ *    links (the github.com/ipfs/kubo requirement in sdn-server/go.mod, read
+ *    through scripts/kubo-version.sh). Moving to a new Kubo is ENGINEERING,
+ *    not automation: go.mod takes Kubo's dependency set and its replace and
+ *    exclude directives (scripts/check-kubo-pin.js --build-list proves it),
+ *    and the release is an SDN release. The watcher surfaces the drift the
+ *    day it appears.
  *
  *  - feed drift:  the sdn repo's origin/main tip vs the sourceCommit of the
  *    newest published cli-bundle payload. THIS half is mechanizable: when the
@@ -20,7 +23,6 @@
  * (either signal), >0 other = error. Machine-readable stdout only.
  */
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
 
 // The INTERNAL fleet lane's channel by design: this watcher measures how far
 // behind main the fleet's own published payload is. Public releases live on
@@ -46,11 +48,8 @@ function upstreamKuboLatest() {
   return { tag: d.tag_name, publishedAt: d.published_at };
 }
 
-function forkKuboVersion() {
-  const src = readFileSync('kubo/version.go', 'utf8');
-  const m = src.match(/CurrentVersionNumber\s*=\s*"([^"]+)"/);
-  if (!m) throw new Error('CurrentVersionNumber not found in kubo/version.go');
-  return m[1];
+function linkedKuboVersion() {
+  return sh('bash', ['scripts/kubo-version.sh']);
 }
 
 function numeric(v) {
@@ -58,9 +57,9 @@ function numeric(v) {
   return m ? m.slice(1, 4).map(Number) : null;
 }
 
-function kuboBehind(upstreamTag, fork) {
+function kuboBehind(upstreamTag, linked) {
   const a = numeric(upstreamTag);
-  const b = numeric(fork);
+  const b = numeric(linked);
   if (!a || !b) return null; // unparseable — surface, don't guess
   for (let i = 0; i < 3; i += 1) {
     if (a[i] !== b[i]) return a[i] > b[i];
@@ -82,7 +81,7 @@ if (newest) {
 }
 
 const upstream = upstreamKuboLatest();
-const fork = forkKuboVersion();
+const linked = linkedKuboVersion();
 const feedBehind =
   publishedCommit === null ? null : sh('git', ['rev-parse', '--short=8', 'origin/main']).startsWith(publishedCommit) ? false : true;
 
@@ -91,8 +90,8 @@ const verdict = {
   kubo: {
     upstream: upstream.tag,
     upstreamPublishedAt: upstream.publishedAt,
-    fork,
-    behind: kuboBehind(upstream.tag, fork),
+    linked,
+    behind: kuboBehind(upstream.tag, linked),
   },
   feed: {
     indexUrl: feedIndexUrl,
@@ -105,8 +104,8 @@ const verdict = {
   action:
     feedBehind === true
       ? 'publish: build locally (Docker linux/amd64) then deployment/release/publish-fleet-update.mjs, then `update install` per box'
-      : kuboBehind(upstream.tag, fork)
-        ? 'kubo drift: fork rebase required — file/refresh the graph task'
+      : kuboBehind(upstream.tag, linked)
+        ? 'kubo drift: move sdn-server/go.mod to the new Kubo (its dependencies and directives) as an SDN release — file/refresh the graph task'
         : 'none',
 };
 

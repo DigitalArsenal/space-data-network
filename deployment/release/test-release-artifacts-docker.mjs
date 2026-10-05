@@ -203,7 +203,7 @@ RUN test -x /opt/${bundleRoot}/bin/spacedatanetwork \\
   && ! test -e /opt/${bundleRoot}/runtime/wasmedge \\
   && ! ldd /opt/${bundleRoot}/bin/spacedatanetwork | grep -qi wasmedge \\
   && test -x /opt/${bundleRoot}/bin/sdn \\
-  && test -x /opt/${bundleRoot}/runtime/kubo/ipfs \\
+  && ! test -e /opt/${bundleRoot}/runtime/kubo \\
   && test -f /opt/${bundleRoot}/runtime/modules/hd-wallet-wasi.wasm \\
   && test -f /opt/${bundleRoot}/runtime/modules/org.spacedatanetwork.updater.wasm \\
   && test -d /opt/${bundleRoot}/runtime/ui/sdn \\
