@@ -1,10 +1,12 @@
 package update
 
 import (
+	"bytes"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -30,8 +32,15 @@ type controlShutdownRequest struct {
 	BundleRoot string `json:"bundleRoot"`
 }
 
-type controlShutdownResponse struct {
-	Status      string   `json:"status"`
+// ControlShutdownPath is the daemon's loopback route for the update shutdown
+// handshake.
+const ControlShutdownPath = "/api/v1/admin/update/shutdown"
+
+// ControlShutdown is the daemon's answer to the update shutdown handshake.
+type ControlShutdown struct {
+	Status string `json:"status"`
+	// PID is the daemon process that accepted the shutdown. The helper swaps
+	// nothing until it has watched this pid exit (daemonstop.go).
 	PID         int      `json:"pid"`
 	BundleRoot  string   `json:"bundleRoot"`
 	RestartArgv []string `json:"restartArgv,omitempty"`
@@ -105,7 +114,7 @@ func (h *controlHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
-	_ = json.NewEncoder(w).Encode(controlShutdownResponse{
+	_ = json.NewEncoder(w).Encode(ControlShutdown{
 		Status:      "shutdown_requested",
 		PID:         os.Getpid(),
 		BundleRoot:  h.bundleRoot,
@@ -115,6 +124,30 @@ func (h *controlHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if h.shutdown != nil {
 		go h.shutdown()
 	}
+}
+
+// RequestShutdown is the helper's side of the handshake: it presents the
+// one-time token for bundleRoot at shutdownURL (the daemon's loopback
+// ControlShutdownPath) and returns the daemon's answer.
+func RequestShutdown(client *http.Client, shutdownURL, bundleRoot, token string) (*ControlShutdown, error) {
+	body, err := json.Marshal(controlShutdownRequest{Token: token, BundleRoot: bundleRoot})
+	if err != nil {
+		return nil, err
+	}
+	resp, err := client.Post(shutdownURL, "application/json", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+		return nil, fmt.Errorf("daemon update shutdown rejected: %s %s", resp.Status, strings.TrimSpace(string(data)))
+	}
+	var answer ControlShutdown
+	if err := json.NewDecoder(resp.Body).Decode(&answer); err != nil {
+		return nil, err
+	}
+	return &answer, nil
 }
 
 func isLoopbackRemoteAddr(remoteAddr string) bool {

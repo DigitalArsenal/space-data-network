@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/tls"
@@ -11,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -22,6 +22,9 @@ import (
 
 	"github.com/spacedatanetwork/sdn-server/internal/bundle"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
+	"github.com/spacedatanetwork/sdn-server/internal/hostsvc"
+	"github.com/spacedatanetwork/sdn-server/internal/ops"
+	"github.com/spacedatanetwork/sdn-server/internal/storage"
 	"github.com/spacedatanetwork/sdn-server/internal/update"
 	"github.com/spf13/cobra"
 )
@@ -254,11 +257,14 @@ var updateInstallCmd = &cobra.Command{
 			fmt.Fprintln(out, "next=the helper will apply the update after this command exits")
 			return nil
 		}
-		result, err := update.Apply(paths, update.ApplyOptions{
-			UpdateID:      staged.UpdateID,
-			DryRun:        updateInstallDryRun,
-			AllowRollback: updateInstallAllowRollback,
-			StoreRoot:     resolveUpdateStoreRoot(updateInstallStoreRoot, cmd.ErrOrStderr()),
+		storeRoot := resolveUpdateStoreRoot(updateInstallStoreRoot, cmd.ErrOrStderr())
+		result, err := applyUnlessDaemonRuns(storeRoot, updateInstallDryRun, func() (*update.ApplyResult, error) {
+			return update.Apply(paths, update.ApplyOptions{
+				UpdateID:      staged.UpdateID,
+				DryRun:        updateInstallDryRun,
+				AllowRollback: updateInstallAllowRollback,
+				StoreRoot:     storeRoot,
+			})
 		})
 		if err != nil {
 			return err
@@ -313,66 +319,29 @@ var updateHelperApplyCmd = &cobra.Command{
 				return fmt.Errorf("parse restart argv: %w", err)
 			}
 		}
-		// THE STORE-FORMAT GUARD, before the daemon is asked to stop: an
-		// update whose binary cannot open the store on disk is refused while
-		// the node keeps serving. Apply repeats the check below.
-		storeRoot := resolveUpdateStoreRoot(helperApplyStoreRoot, cmd.ErrOrStderr())
-		if err := update.CheckStagedStoreFormat(update.PathsFor(helperApplyBundleRoot), helperApplyUpdateID, storeRoot); err != nil {
-			var refusal *update.StoreFormatRefusal
-			if errors.As(err, &refusal) {
-				fmt.Fprintf(cmd.ErrOrStderr(), "store_format_guard=refused update_id=%s slot_max_store_format=%d store_format=%d store_root=%s\n",
-					helperApplyUpdateID, refusal.SlotMaxStoreFormat, refusal.Store.Format, refusal.Store.Root)
-			}
-			return err
-		}
 		// Resolved ONCE, here, while the daemon is still up — see
 		// daemonLoopbackTransport for why this cannot be deferred to the health
-		// gate below.
+		// gate.
 		loopback := helperLoopbackTransport(helperApplyAdminCA, helperApplyAdminURL)
-		var daemonSupervised bool
-		if strings.TrimSpace(helperApplyAdminURL) != "" && strings.TrimSpace(helperApplyToken) != "" {
-			daemonArgv, supervised, err := requestDaemonUpdateShutdown(daemonLoopbackClientWith(10*time.Second, loopback), helperApplyAdminURL, helperApplyBundleRoot, helperApplyToken)
-			if err != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "daemon_shutdown=unavailable error=%q\n", err.Error())
-			} else {
-				fmt.Fprintln(cmd.OutOrStdout(), "daemon_shutdown=requested")
-				if len(restartArgv) == 0 {
-					restartArgv = daemonArgv
-				}
-				daemonSupervised = supervised
-				time.Sleep(2 * time.Second)
-			}
-		}
-		result, err := update.Apply(update.PathsFor(helperApplyBundleRoot), update.ApplyOptions{
-			UpdateID:      helperApplyUpdateID,
+		return runHelperApply(cmd.Context(), helperApplyOptions{
+			Paths:         update.PathsFor(helperApplyBundleRoot),
+			UpdateID:      strings.TrimSpace(helperApplyUpdateID),
+			AdminURL:      strings.TrimSpace(helperApplyAdminURL),
+			Token:         strings.TrimSpace(helperApplyToken),
+			StoreRoot:     resolveUpdateStoreRoot(helperApplyStoreRoot, cmd.ErrOrStderr()),
+			RestartArgv:   restartArgv,
+			NoRestart:     helperApplyNoRestart,
 			AllowRollback: helperApplyAllowRollback,
-			Trigger:       strings.TrimSpace(helperApplyTrigger),
-			SignalKeyID:   strings.TrimSpace(helperApplySignalKeyID),
-			StoreRoot:     storeRoot,
-		})
-		if err != nil {
-			return err
-		}
-		out := cmd.OutOrStdout()
-		fmt.Fprintf(out, "applied_update=%s\n", result.UpdateID)
-		fmt.Fprintf(out, "version=%s\n", result.Version)
-		fmt.Fprintf(out, "sequence=%d\n", result.Sequence)
-		fmt.Fprintf(out, "rollback_path=%s\n", result.RollbackPath)
-		return helperPostApplyRestart(cmd.Context(), helperPostApplyOptions{
-			Paths:       update.PathsFor(helperApplyBundleRoot),
-			StoreRoot:   storeRoot,
-			RestartArgv: restartArgv,
-			Supervised:  daemonSupervised,
-			AdminURL:    helperApplyAdminURL,
-			NoRestart:   helperApplyNoRestart,
-			// The SAME anchored transport, captured above while the daemon was
-			// still running: a probe that cannot verify the daemon's own
+			Trigger:       helperApplyTrigger,
+			SignalKeyID:   helperApplySignalKeyID,
+			HealthTimeout: helperApplyHealthTimeout,
+			// The SAME anchored transport for the shutdown handshake and the
+			// health gate: a probe that cannot verify the daemon's own
 			// certificate reports "unhealthy" for a perfectly healthy daemon
 			// and rolls a good update back.
-			Client:        daemonLoopbackClientWith(5*time.Second, loopback),
-			Out:           out,
-			Err:           cmd.ErrOrStderr(),
-			HealthTimeout: helperApplyHealthTimeout,
+			Client: daemonLoopbackClientWith(10*time.Second, loopback),
+			Out:    cmd.OutOrStdout(),
+			Err:    cmd.ErrOrStderr(),
 		})
 	},
 }
@@ -390,11 +359,15 @@ var updateApplyCmd = &cobra.Command{
 			return errors.New("current executable is not running from a self-contained SDN bundle")
 		}
 		paths := update.PathsFor(layout.Root)
-		result, err := update.Apply(paths, update.ApplyOptions{
-			UpdateID:  strings.TrimSpace(updateApplyID),
-			DryRun:    updateApplyDryRun,
-			StoreRoot: resolveUpdateStoreRoot(updateApplyStoreRoot, cmd.ErrOrStderr()),
-		})
+		storeRoot := resolveUpdateStoreRoot(updateApplyStoreRoot, cmd.ErrOrStderr())
+		apply := func() (*update.ApplyResult, error) {
+			return update.Apply(paths, update.ApplyOptions{
+				UpdateID:  strings.TrimSpace(updateApplyID),
+				DryRun:    updateApplyDryRun,
+				StoreRoot: storeRoot,
+			})
+		}
+		result, err := applyUnlessDaemonRuns(storeRoot, updateApplyDryRun, apply)
 		if err != nil {
 			return err
 		}
@@ -766,13 +739,601 @@ func resolveUpdateStoreRoot(explicit string, errOut io.Writer) string {
 	return root
 }
 
+// THE SWAP, AS THE HELPER RUNS IT (expert review PLAT-01 / SD-5).
+//
+// The helper used to ask the daemon to shut down, sleep two seconds, extract
+// the bundle and rename it into place, then accept the first "status ok" it
+// heard. Every step of that raced something: the extraction ran while the node
+// was down; the sleep raced a shutdown that 15 of 22 times took 90 s; the
+// renames raced a supervisor respawning the old binary; and the health gate
+// could not tell the build it had installed from the one it had replaced. On
+// an unhealthy result under a supervisor it renamed the old files back and
+// reported "rolled back" while the bad build — possibly mid-migration — went
+// on running. The sequence is now:
+//
+//  1. guard and PREPARE while the daemon still serves: verify the staged
+//     payload, run the store-format guard, extract into updates/incoming/ and
+//     validate it (update.Prepare). Nothing has stopped yet.
+//  2. STOP: the update shutdown handshake returns the daemon's pid, and the
+//     helper waits for that pid to exit — bounded, then escalated through the
+//     supervisor connector (or SIGTERM), then SIGKILL (update.StopLadder).
+//  3. LOCK: take the store's single-writer lock, so no daemon — the old one, or
+//     one a supervisor respawned — can have the store open during the swap.
+//  4. SWAP: renames only (update.ApplyPrepared, which re-runs the guard now
+//     that nothing can write the store). Then release the lock.
+//  5. RESTART and GATE: the daemon must be healthy AND report, on /api/v1/id,
+//     the bundle version and executable sha256 of the bundle now on disk.
+//  6. REVERT on a failed gate: refuse up front if the store-format guard
+//     already refuses the previous slot (alert, leave the current build
+//     running); else stop the failed build (through the supervisor when there
+//     is one, so its restart policy cannot respawn it mid-swap), lock, roll
+//     back (the guard runs again inside), and restart the restored build
+//     through the supervisor. A revert the guard refuses after the stop
+//     restarts the current build and alerts: it never half-reverts.
+//
+// Every step is a deploy-ledger line (internal/update/deployledger.go).
+
+// helperApplyOptions is everything `update helper-apply` acts on, after flag
+// parsing.
+type helperApplyOptions struct {
+	Paths         update.Paths
+	UpdateID      string
+	AdminURL      string
+	Token         string
+	StoreRoot     string
+	RestartArgv   []string
+	NoRestart     bool
+	AllowRollback bool
+	Trigger       string
+	SignalKeyID   string
+	HealthTimeout time.Duration
+	Stop          update.StopBounds
+	// Client reaches the daemon over loopback for the shutdown handshake and
+	// the health gate. Build it while the daemon is still up: see
+	// daemonLoopbackTransport.
+	Client *http.Client
+	Out    io.Writer
+	Err    io.Writer
+	// Supervisor returns the connector to the supervisor that runs the daemon
+	// at pid, or nil when none is proven. Nil uses hostsvc (systemd).
+	Supervisor func(ctx context.Context, pid int) daemonSupervisor
+}
+
+// daemonSupervisor is the helper's connector to the supervisor that runs the
+// daemon: systemd through hostsvc. A Stop sticks — the unit's Restart= policy
+// does not undo it — until Start.
+type daemonSupervisor interface {
+	// Name says which supervisor and unit, for the ledger and the output.
+	Name() string
+	Stop(ctx context.Context) error
+	Start(ctx context.Context) error
+	// MainPID is the daemon process the supervisor runs now; 0 for none.
+	MainPID(ctx context.Context) int
+}
+
+type hostsvcSupervisor struct{ state hostsvc.State }
+
+func (s hostsvcSupervisor) Name() string { return "systemd unit " + s.state.Unit }
+
+func (s hostsvcSupervisor) Stop(ctx context.Context) error {
+	return hostsvc.Control(ctx, s.state, hostsvc.ActionStop)
+}
+
+func (s hostsvcSupervisor) Start(ctx context.Context) error {
+	return hostsvc.Control(ctx, s.state, hostsvc.ActionRestart)
+}
+
+func (s hostsvcSupervisor) MainPID(ctx context.Context) int {
+	return hostsvc.Refresh(ctx, s.state).MainPID
+}
+
+// hostsvcSupervisorFor proves the systemd unit that runs pid (hostsvc.ProbePID)
+// or reports none.
+func hostsvcSupervisorFor(ctx context.Context, pid int) daemonSupervisor {
+	state := hostsvc.ProbePID(ctx, pid)
+	if !state.Detected {
+		return nil
+	}
+	return hostsvcSupervisor{state: state}
+}
+
+// servingDaemon is the daemon the helper stopped for the swap.
+type servingDaemon struct {
+	PID         int
+	RestartArgv []string
+	Supervised  bool
+	// Supervisor is the proven connector, nil when there is none.
+	Supervisor daemonSupervisor
+	// StoppedBySupervisor is true when the stop went through the connector:
+	// it sticks, so the unit must be started again through it.
+	StoppedBySupervisor bool
+}
+
+// runHelperApply is `update helper-apply`.
+func runHelperApply(ctx context.Context, o helperApplyOptions) error {
+	if o.Out == nil {
+		o.Out = io.Discard
+	}
+	if o.Err == nil {
+		o.Err = io.Discard
+	}
+	if o.Client == nil {
+		o.Client = &http.Client{Timeout: 10 * time.Second}
+	}
+	if o.Supervisor == nil {
+		o.Supervisor = hostsvcSupervisorFor
+	}
+	if o.HealthTimeout <= 0 {
+		o.HealthTimeout = 60 * time.Second
+	}
+
+	// THE STORE-FORMAT GUARD, before the daemon is asked to stop: an update
+	// whose binary cannot open the store on disk is refused while the node
+	// keeps serving.
+	if err := update.CheckStagedStoreFormat(o.Paths, o.UpdateID, o.StoreRoot); err != nil {
+		var refusal *update.StoreFormatRefusal
+		if errors.As(err, &refusal) {
+			fmt.Fprintf(o.Err, "store_format_guard=refused update_id=%s slot_max_store_format=%d store_format=%d store_root=%s\n",
+				o.UpdateID, refusal.SlotMaxStoreFormat, refusal.Store.Format, refusal.Store.Root)
+		}
+		return err
+	}
+	prepared, err := update.Prepare(o.Paths, update.ApplyOptions{
+		UpdateID:      o.UpdateID,
+		AllowRollback: o.AllowRollback,
+		StoreRoot:     o.StoreRoot,
+	})
+	if err != nil {
+		return err
+	}
+	defer prepared.Discard()
+	version := prepared.Candidate.Result.Version
+	fmt.Fprintf(o.Out, "prepared_update=%s version=%s\n", o.UpdateID, version)
+
+	daemon, err := o.stopServingDaemon(ctx, version)
+	if err != nil {
+		return err
+	}
+	restartArgv := o.RestartArgv
+	if len(restartArgv) == 0 {
+		restartArgv = daemon.RestartArgv
+	}
+
+	var result *update.ApplyResult
+	err = o.underStoreLock(o.UpdateID, version, func() error {
+		var applyErr error
+		result, applyErr = update.ApplyPrepared(o.Paths, prepared, update.ApplyOptions{
+			AllowRollback: o.AllowRollback,
+			Trigger:       strings.TrimSpace(o.Trigger),
+			SignalKeyID:   strings.TrimSpace(o.SignalKeyID),
+			StoreRoot:     o.StoreRoot,
+		})
+		return applyErr
+	})
+	if err != nil {
+		// Nothing was swapped (or the swap restored itself): the build on disk
+		// is the build that was running. Bring it back the way it ran rather
+		// than leave the box dark.
+		if daemon.PID > 0 && !o.NoRestart && len(restartArgv) > 0 {
+			if _, restartErr := o.startBuildOnDisk(ctx, daemon, daemon.StoppedBySupervisor, restartArgv, o.UpdateID, version,
+				"the swap did not happen; restarting the build that was running"); restartErr != nil {
+				fmt.Fprintf(o.Err, "restart=failed error=%q\n", restartErr.Error())
+			}
+		}
+		return err
+	}
+	fmt.Fprintf(o.Out, "applied_update=%s\n", result.UpdateID)
+	fmt.Fprintf(o.Out, "version=%s\n", result.Version)
+	fmt.Fprintf(o.Out, "sequence=%d\n", result.Sequence)
+	fmt.Fprintf(o.Out, "rollback_path=%s\n", result.RollbackPath)
+
+	if o.NoRestart || len(restartArgv) == 0 {
+		fmt.Fprintln(o.Out, "restart=manual")
+		fmt.Fprintln(o.Out, "next=restart the SDN daemon to run the new version")
+		return nil
+	}
+	child, err := o.startBuildOnDisk(ctx, daemon, daemon.StoppedBySupervisor, restartArgv, result.UpdateID, result.Version,
+		"starting the build just installed")
+	if err != nil {
+		return fmt.Errorf("restart daemon: %w", err)
+	}
+	if strings.TrimSpace(o.AdminURL) == "" {
+		return nil
+	}
+	// A declared rollback may install a build from before the identity
+	// report; every other update installs one that reports it.
+	requireIdentity := !declaresRollback(prepared.Candidate.Manifest)
+	gateErr := o.gate(ctx, result.UpdateID, result.Version, requireIdentity)
+	if gateErr == nil {
+		return nil
+	}
+	return o.revert(ctx, daemon, child, restartArgv, result, gateErr)
+}
+
+// declaresRollback reports a manifest that goes BACK: a declared
+// source-lineage rollback, or a signed sequence rollback.
+func declaresRollback(m *update.Manifest) bool {
+	if m == nil {
+		return false
+	}
+	if m.Rollback != nil {
+		return true
+	}
+	return m.Provenance != nil && m.Provenance.Lineage == update.LineageRollback
+}
+
+// stopServingDaemon asks the daemon to shut down and waits for its pid to
+// exit (update.StopLadder). It returns an error, with nothing swapped, when
+// the daemon answered but would not stop, or did not exit through every rung.
+func (o helperApplyOptions) stopServingDaemon(ctx context.Context, version string) (servingDaemon, error) {
+	var daemon servingDaemon
+	if strings.TrimSpace(o.AdminURL) == "" || strings.TrimSpace(o.Token) == "" {
+		fmt.Fprintln(o.Out, "daemon_shutdown=skipped reason=no-admin-url")
+		return daemon, nil
+	}
+	if err := o.record("stop-requested", 0, version,
+		"update shutdown handshake: asking the daemon at "+o.AdminURL+" to exit for this update"); err != nil {
+		return daemon, err
+	}
+	answer, err := o.requestShutdown(o.Token)
+	if err != nil {
+		if isNotListening(err) {
+			// Nothing is serving there. Whether a daemon still runs from this
+			// bundle is for the store lock to say.
+			fmt.Fprintf(o.Err, "daemon_shutdown=unavailable reason=not-listening error=%q\n", err.Error())
+			return daemon, o.record("stop-skipped", 0, version,
+				"no daemon is listening at "+o.AdminURL+" ("+err.Error()+"); the store lock decides whether one still runs")
+		}
+		// A daemon answered and did not stop. Swapping now is swapping under a
+		// live process: refuse, and leave it serving.
+		fmt.Fprintf(o.Err, "daemon_shutdown=refused error=%q\n", err.Error())
+		_ = o.record("stop-failed", 0, version, "the daemon did not accept the update shutdown ("+err.Error()+"); it is still serving and nothing was swapped")
+		return daemon, fmt.Errorf("the daemon did not accept the update shutdown, so nothing was swapped: %w", err)
+	}
+	daemon = servingDaemon{PID: answer.PID, RestartArgv: answer.RestartArgv, Supervised: answer.Supervised}
+	fmt.Fprintf(o.Out, "daemon_shutdown=requested pid=%d supervised=%t\n", daemon.PID, daemon.Supervised)
+	if daemon.Supervised {
+		daemon.Supervisor = o.Supervisor(ctx, daemon.PID)
+		if daemon.Supervisor != nil {
+			fmt.Fprintf(o.Out, "supervisor=%q\n", daemon.Supervisor.Name())
+		} else {
+			fmt.Fprintln(o.Out, "supervisor=unproven")
+		}
+	}
+	ladder := update.StopLadder{
+		Paths:    o.Paths,
+		UpdateID: o.UpdateID,
+		Version:  version,
+		PID:      daemon.PID,
+		How:      "update shutdown handshake",
+		Bounds:   o.Stop,
+		Out:      o.Out,
+	}
+	if sup := daemon.Supervisor; sup != nil {
+		ladder.Escalate = func() error { return sup.Stop(ctx) }
+		ladder.EscalateHow = "supervisor stop of " + sup.Name()
+	}
+	stopped, err := ladder.Run(ctx)
+	if err != nil {
+		return daemon, err
+	}
+	daemon.StoppedBySupervisor = stopped.Escalated && daemon.Supervisor != nil
+	return daemon, nil
+}
+
+// requestShutdown makes the update shutdown handshake with token.
+func (o helperApplyOptions) requestShutdown(token string) (*update.ControlShutdown, error) {
+	shutdownURL, err := adminEndpointURL(o.AdminURL, update.ControlShutdownPath)
+	if err != nil {
+		return nil, err
+	}
+	return update.RequestShutdown(o.Client, shutdownURL, o.Paths.Root, token)
+}
+
+// isNotListening reports a handshake that never reached a daemon: nothing is
+// listening at the admin URL.
+func isNotListening(err error) bool {
+	var opErr *net.OpError
+	return errors.As(err, &opErr) && opErr.Op == "dial"
+}
+
+// storeLockWait bounds the helper's retries for the store lock once the
+// daemon's pid has exited (the kernel releases the lock with the process).
+const storeLockWait = 10 * time.Second
+
+// underStoreLock runs swap holding the store's single-writer lock, so no
+// daemon can have the store open while the bundle is renamed under it.
+func (o helperApplyOptions) underStoreLock(updateID, version string, swap func() error) error {
+	release, checked, err := lockUpdateStore(o.StoreRoot)
+	deadline := time.Now().Add(storeLockWait)
+	for err != nil && errors.Is(err, storage.ErrStoreLocked) && time.Now().Before(deadline) {
+		time.Sleep(200 * time.Millisecond)
+		release, checked, err = lockUpdateStore(o.StoreRoot)
+	}
+	if err != nil {
+		fmt.Fprintf(o.Err, "store_lock=failed root=%s error=%q\n", o.StoreRoot, err.Error())
+		_ = o.record("store-lock-failed", 0, version, "the store's single-writer lock is held, so a daemon still has the store open: nothing was swapped ("+err.Error()+")")
+		return fmt.Errorf("take the store lock before swapping: %w", err)
+	}
+	defer release()
+	if !checked {
+		fmt.Fprintln(o.Err, "store_lock=unchecked reason=no-store")
+		if err := o.record("store-unchecked", 0, version, "no record store at "+orNone(o.StoreRoot)+": the swap is not covered by the store lock"); err != nil {
+			return err
+		}
+	} else {
+		fmt.Fprintf(o.Out, "store_lock=held root=%s\n", o.StoreRoot)
+		if err := o.record("store-locked", 0, version, "took the single-writer lock of the store at "+o.StoreRoot+": no daemon can open it while the bundle is swapped"); err != nil {
+			return err
+		}
+	}
+	return swap()
+}
+
+// lockUpdateStore takes the store's single-writer lock. checked is false when
+// there is no store to protect (no root resolved, or none on disk yet).
+func lockUpdateStore(storeRoot string) (release func(), checked bool, err error) {
+	root := strings.TrimSpace(storeRoot)
+	if root == "" {
+		return func() {}, false, nil
+	}
+	if _, statErr := os.Stat(root); errors.Is(statErr, os.ErrNotExist) {
+		return func() {}, false, nil
+	}
+	lock, err := storage.LockStoreForMaintenance(root)
+	if err != nil {
+		return nil, true, err
+	}
+	return func() { _ = lock.Release() }, true, nil
+}
+
+// withStoreLock is the operator verbs' version (update apply, install
+// --direct, rollback): the same lock, refused at once when a daemon holds it.
+func withStoreLock(storeRoot string, fn func() error) error {
+	release, _, err := lockUpdateStore(storeRoot)
+	if err != nil {
+		if errors.Is(err, storage.ErrStoreLocked) {
+			return fmt.Errorf("the record store at %s is open, so a daemon is running from it, and nothing is swapped under a running daemon: stop it first, or use `spacedatanetwork update install`, whose helper stops it: %w", storeRoot, err)
+		}
+		return fmt.Errorf("take the store lock before swapping: %w", err)
+	}
+	defer release()
+	return fn()
+}
+
+// applyUnlessDaemonRuns runs an in-process apply (update apply, install
+// without the helper) under the store lock, so it refuses instead of swapping
+// a bundle out from under a running daemon. A dry run swaps nothing and needs
+// no lock.
+func applyUnlessDaemonRuns(storeRoot string, dryRun bool, apply func() (*update.ApplyResult, error)) (*update.ApplyResult, error) {
+	if dryRun {
+		return apply()
+	}
+	var result *update.ApplyResult
+	err := withStoreLock(storeRoot, func() error {
+		var applyErr error
+		result, applyErr = apply()
+		return applyErr
+	})
+	return result, err
+}
+
+// startBuildOnDisk starts the build now on disk the way the stopped daemon
+// ran: through the supervisor connector when the stop went through it (the
+// stop sticks), by the supervisor's own restart policy when the daemon merely
+// exited under it, or by spawning the restart argv. It returns the spawned
+// process, if it spawned one.
+func (o helperApplyOptions) startBuildOnDisk(ctx context.Context, daemon servingDaemon, viaSupervisor bool, argv []string, updateID, version, why string) (helperStartedProcess, error) {
+	switch {
+	case viaSupervisor && daemon.Supervisor != nil:
+		o.recordAfter("restart", 0, version, why+": start of "+daemon.Supervisor.Name()+" through the supervisor connector")
+		if err := daemon.Supervisor.Start(ctx); err != nil {
+			return nil, err
+		}
+		fmt.Fprintf(o.Out, "restart=supervisor unit=%q\n", daemon.Supervisor.Name())
+		return nil, nil
+	case daemon.Supervised:
+		o.recordAfter("restart", 0, version, why+": the supervisor's restart policy brings the daemon back under its own unit")
+		fmt.Fprintln(o.Out, "restart=supervised")
+		fmt.Fprintln(o.Out, "next=the supervising init restarts the daemon under its own unit; not direct-spawning")
+		return nil, nil
+	default:
+		process, err := startHelperDaemonProcess(argv, o.Out, o.Err)
+		if err != nil {
+			return nil, err
+		}
+		o.recordAfter("restart", process.PID(), version, why+": spawned the daemon's restart argv")
+		fmt.Fprintf(o.Out, "restart=started pid=%d\n", process.PID())
+		return process, nil
+	}
+}
+
+// gate waits for the restarted daemon to be healthy AND to be the build on
+// disk (update.BundleIdentity).
+func (o helperApplyOptions) gate(ctx context.Context, updateID, version string, requireIdentity bool) error {
+	expected, err := update.BundleIdentity(o.Paths.Root)
+	if err == nil {
+		var identity update.Identity
+		identity, err = waitForDaemonGate(ctx, o.Client, o.AdminURL, expected, requireIdentity, o.HealthTimeout)
+		if err == nil {
+			fmt.Fprintln(o.Out, "daemon_health=healthy")
+			if identity.Reported() {
+				fmt.Fprintf(o.Out, "daemon_identity=verified %s\n", identity)
+			} else {
+				fmt.Fprintln(o.Out, "daemon_identity=unreported")
+			}
+			o.recordAfter("health-passed", 0, version, "healthy, and the daemon that answered is the build on disk ("+identity.String()+")")
+			return nil
+		}
+	}
+	fmt.Fprintf(o.Err, "daemon_health=unhealthy error=%q\n", err.Error())
+	o.recordAfter("health-failed", 0, version, err.Error())
+	return err
+}
+
+// revert reverses an update whose build failed the gate. child is the process
+// the helper spawned for it, if it spawned one.
+func (o helperApplyOptions) revert(ctx context.Context, daemon servingDaemon, child helperStartedProcess, argv []string, result *update.ApplyResult, gateErr error) error {
+	// Can this box be reverted at all? Asked BEFORE stopping anything: a revert
+	// the store-format guard refuses, or one with no slot to restore, would
+	// take the running build down for nothing.
+	if err := update.CheckRollbackStoreFormat(o.Paths, o.StoreRoot); err != nil {
+		return o.revertRefused(result, gateErr, err)
+	}
+	stoppedViaSupervisor, err := o.stopFailedBuild(ctx, daemon, child, result)
+	if err != nil {
+		return o.revertRefused(result, gateErr, fmt.Errorf("the build that failed could not be stopped: %w", err))
+	}
+	var restored *update.RollbackResult
+	err = o.underStoreLock(result.UpdateID, result.Version, func() error {
+		var rollbackErr error
+		restored, rollbackErr = update.RollbackLast(o.Paths, update.RollbackOptions{
+			Reason:    "daemon health failed after update: " + gateErr.Error(),
+			StoreRoot: o.StoreRoot,
+		})
+		return rollbackErr
+	})
+	if err != nil {
+		// Nothing was swapped: the build that failed its gate is still the
+		// build on disk. Bring it back rather than leave the box dark.
+		if _, restartErr := o.startBuildOnDisk(ctx, daemon, stoppedViaSupervisor, argv, result.UpdateID, result.Version,
+			"the revert did not happen; restarting the current build"); restartErr != nil {
+			fmt.Fprintf(o.Err, "restart=failed error=%q\n", restartErr.Error())
+		}
+		return o.revertRefused(result, gateErr, err)
+	}
+	fmt.Fprintf(o.Out, "rollback=applied restored_version=%s failed_path=%s\n", restored.RestoredVersion, restored.FailedPath)
+	if _, err := o.startBuildOnDisk(ctx, daemon, stoppedViaSupervisor, argv, restored.RestoredUpdateID, restored.RestoredVersion,
+		"starting the restored build"); err != nil {
+		return fmt.Errorf("daemon health failed after update; rolled back to %s but restart failed: %w", restored.RestoredVersion, err)
+	}
+	// The restored build may predate the identity report; when it reports
+	// one, it must be the build on disk.
+	if err := o.gate(ctx, restored.RestoredUpdateID, restored.RestoredVersion, false); err != nil {
+		return fmt.Errorf("daemon health failed after update; rolled back to %s but the restored daemon is unhealthy: %w", restored.RestoredVersion, err)
+	}
+	return fmt.Errorf("daemon health failed after update; rolled back to %s", restored.RestoredVersion)
+}
+
+// stopFailedBuild stops the build that failed the gate before anything is
+// renamed back: through the supervisor connector when there is one (its stop
+// sticks, so the restart policy cannot respawn the failed build mid-swap),
+// else through the update shutdown handshake, escalating to signals. It
+// reports whether the stop went through the supervisor.
+func (o helperApplyOptions) stopFailedBuild(ctx context.Context, daemon servingDaemon, child helperStartedProcess, result *update.ApplyResult) (bool, error) {
+	ladder := update.StopLadder{
+		Paths:    o.Paths,
+		UpdateID: result.UpdateID,
+		Version:  result.Version,
+		Bounds:   o.Stop,
+		Out:      o.Out,
+	}
+	if sup := daemon.Supervisor; daemon.Supervised && sup != nil {
+		ladder.PID = sup.MainPID(ctx)
+		ladder.Request = func() error { return sup.Stop(ctx) }
+		ladder.How = "supervisor stop of " + sup.Name()
+		_, err := ladder.Run(ctx)
+		return true, err
+	}
+	token, err := generateUpdateControlToken()
+	if err != nil {
+		return false, err
+	}
+	if err := update.WriteControlToken(o.Paths, token); err != nil {
+		return false, err
+	}
+	ladder.How = "update shutdown handshake"
+	if child != nil {
+		// This helper started it: wait on the process itself.
+		ladder.PID = child.PID()
+		ladder.Exited = child.Done()
+		ladder.Request = func() error {
+			_, err := o.requestShutdown(token)
+			return err
+		}
+		_, err := ladder.Run(ctx)
+		return false, err
+	}
+	// Supervised, with no connector proven: the daemon names its own pid.
+	if err := o.record("stop-requested", 0, result.Version, "update shutdown handshake: asking the daemon that failed its health gate to exit"); err != nil {
+		return false, err
+	}
+	answer, err := o.requestShutdown(token)
+	if err != nil {
+		if isNotListening(err) {
+			// Not serving: there is nothing to wait for, and the store lock
+			// decides whether anything still runs.
+			return false, nil
+		}
+		return false, err
+	}
+	ladder.PID = answer.PID
+	_, err = ladder.Run(ctx)
+	return false, err
+}
+
+// revertRefused alerts that the update could not be reverted and leaves the
+// current build running: an operator has to decide what happens next.
+func (o helperApplyOptions) revertRefused(result *update.ApplyResult, gateErr, cause error) error {
+	reason := fmt.Sprintf("update %s failed its health gate (%v) and was NOT reverted: %s. The current build is left running; reverting it needs an operator.",
+		result.UpdateID, gateErr, strings.TrimRight(cause.Error(), "."))
+	fmt.Fprintf(o.Err, "revert=refused update_id=%s\n", result.UpdateID)
+	o.recordAfter("revert-refused", 0, result.Version, reason)
+	// The OPS ALERT lane (internal/ops): the registry logs the transition with
+	// its stable prefix into this helper's journal, and the hook puts it on
+	// the helper's own output.
+	alerts := ops.NewRegistry()
+	alerts.OnTransition(func(alert ops.Alert, active bool) {
+		if active {
+			fmt.Fprintf(o.Err, "ops_alert=raised kind=%s subject=%s severity=%s error=%q\n", alert.Kind, alert.Subject, alert.Severity, alert.LastError)
+		}
+	})
+	alerts.Raise(ops.KindUpdateFailed, result.UpdateID, ops.SeverityError, reason)
+	var refusal *update.StoreFormatRefusal
+	if errors.As(cause, &refusal) {
+		return fmt.Errorf("daemon health failed after update; the revert was refused and the current build is left running: %v: %w", gateErr, cause)
+	}
+	return fmt.Errorf("daemon health failed after update and rollback failed: %v: %w", gateErr, cause)
+}
+
+// record writes one step of the swap to the deploy ledger. Before the swap a
+// step that cannot be recorded does not happen; the caller returns the error.
+func (o helperApplyOptions) record(action string, pid int, version, reason string) error {
+	return update.RecordDeployLedgerEntry(o.Paths, update.DeployLedgerEntry{
+		Action:      action,
+		UpdateID:    o.UpdateID,
+		Version:     version,
+		DaemonPID:   pid,
+		Reason:      reason,
+		Trigger:     strings.TrimSpace(o.Trigger),
+		SignalKeyID: strings.TrimSpace(o.SignalKeyID),
+	})
+}
+
+// recordAfter is record for the steps after the swap, which happen either way:
+// a ledger that cannot be written is reported, not obeyed.
+func (o helperApplyOptions) recordAfter(action string, pid int, version, reason string) {
+	if err := o.record(action, pid, version, reason); err != nil {
+		fmt.Fprintf(o.Err, "deploy_ledger=unwritten action=%s error=%q\n", action, err.Error())
+	}
+}
+
+func orNone(s string) string {
+	if strings.TrimSpace(s) == "" {
+		return "(none resolved)"
+	}
+	return s
+}
+
 type helperStartedProcess interface {
 	PID() int
-	Kill() error
+	// Done is closed once the process has exited and been reaped.
+	Done() <-chan struct{}
 }
 
 type helperExecProcess struct {
-	cmd *exec.Cmd
+	cmd  *exec.Cmd
+	done chan struct{}
 }
 
 func (p helperExecProcess) PID() int {
@@ -782,163 +1343,7 @@ func (p helperExecProcess) PID() int {
 	return p.cmd.Process.Pid
 }
 
-func (p helperExecProcess) Kill() error {
-	if p.cmd == nil || p.cmd.Process == nil {
-		return nil
-	}
-	return p.cmd.Process.Kill()
-}
-
-type helperPostApplyOptions struct {
-	Paths update.Paths
-	// StoreRoot is handed to the health gate's rollback, which the
-	// store-format guard checks exactly as it checks an apply.
-	StoreRoot   string
-	RestartArgv []string
-	// Supervised, when true, means the DAEMON we are restarting reported it
-	// was started by systemd (INVOCATION_ID in its own environment — see
-	// requestDaemonUpdateShutdown). Direct-spawning RestartArgv in that case
-	// leaves a live, unsupervised replacement outside the unit's cgroup
-	// while the unit's own Restart= policy loops "activating" against the
-	// store's single-writer lock (six occurrences on lane boxes, graph task
-	// sdn-update-helper-supervisor-mode). When Supervised is true this
-	// function never calls StartDaemon: the daemon's own shutdown already
-	// exits the supervised process, the supervisor's Restart= policy brings
-	// it back under the SAME unit, and this only health-waits for that.
-	Supervised    bool
-	AdminURL      string
-	NoRestart     bool
-	Out           io.Writer
-	Err           io.Writer
-	Client        *http.Client
-	HealthTimeout time.Duration
-	StartDaemon   func(argv []string, stdout io.Writer, stderr io.Writer) (helperStartedProcess, error)
-	WaitHealth    func(ctx context.Context, client *http.Client, adminURL string, timeout time.Duration) error
-	Rollback      func(paths update.Paths) (*update.RollbackResult, error)
-}
-
-func helperPostApplyRestart(ctx context.Context, opts helperPostApplyOptions) error {
-	out := opts.Out
-	if out == nil {
-		out = io.Discard
-	}
-	errOut := opts.Err
-	if errOut == nil {
-		errOut = io.Discard
-	}
-	if opts.NoRestart || len(opts.RestartArgv) == 0 {
-		fmt.Fprintln(out, "restart=manual")
-		fmt.Fprintln(out, "next=restart the SDN daemon to run the new version")
-		return nil
-	}
-
-	start := opts.StartDaemon
-	if start == nil {
-		start = startHelperDaemonProcess
-	}
-	waitHealth := opts.WaitHealth
-	if waitHealth == nil {
-		waitHealth = waitForDaemonHealth
-	}
-	rollback := opts.Rollback
-	if rollback == nil {
-		rollback = func(paths update.Paths) (*update.RollbackResult, error) {
-			return update.RollbackLast(paths, update.RollbackOptions{Reason: "daemon health failed after update", StoreRoot: opts.StoreRoot})
-		}
-	}
-	client := opts.Client
-	if client == nil {
-		client = &http.Client{Timeout: 5 * time.Second}
-	}
-	timeout := opts.HealthTimeout
-	if timeout <= 0 {
-		timeout = 60 * time.Second
-	}
-
-	if opts.Supervised {
-		return helperPostApplyRestartSupervised(ctx, opts, waitHealth, rollback, client, out, errOut, timeout)
-	}
-
-	process, err := start(opts.RestartArgv, out, errOut)
-	if err != nil {
-		return fmt.Errorf("restart daemon: %w", err)
-	}
-	fmt.Fprintf(out, "restart=started pid=%d\n", process.PID())
-	if strings.TrimSpace(opts.AdminURL) == "" {
-		return nil
-	}
-	if err := waitHealth(ctx, client, opts.AdminURL, timeout); err == nil {
-		fmt.Fprintln(out, "daemon_health=healthy")
-		return nil
-	} else {
-		fmt.Fprintf(errOut, "daemon_health=unhealthy error=%q\n", err.Error())
-		if killErr := process.Kill(); killErr != nil {
-			fmt.Fprintf(errOut, "failed_daemon_stop=error error=%q\n", killErr.Error())
-		} else {
-			fmt.Fprintln(errOut, "failed_daemon=stopped")
-		}
-		rollbackResult, rollbackErr := rollback(opts.Paths)
-		if rollbackErr != nil {
-			return fmt.Errorf("daemon health failed after update and rollback failed: %v: %w", err, rollbackErr)
-		}
-		fmt.Fprintf(out, "rollback=applied restored_version=%s failed_path=%s\n",
-			rollbackResult.RestoredVersion, rollbackResult.FailedPath)
-		restoredProcess, restartErr := start(opts.RestartArgv, out, errOut)
-		if restartErr != nil {
-			return fmt.Errorf("daemon health failed after update; rolled back to %s but restart failed: %w",
-				rollbackResult.RestoredVersion, restartErr)
-		}
-		fmt.Fprintf(out, "restart=started pid=%d\n", restoredProcess.PID())
-		if restoredHealthErr := waitHealth(ctx, client, opts.AdminURL, timeout); restoredHealthErr != nil {
-			return fmt.Errorf("daemon health failed after update; rolled back to %s but restored daemon is unhealthy: %w",
-				rollbackResult.RestoredVersion, restoredHealthErr)
-		}
-		fmt.Fprintln(out, "daemon_health=healthy")
-		return fmt.Errorf("daemon health failed after update; rolled back to %s", rollbackResult.RestoredVersion)
-	}
-}
-
-// helperPostApplyRestartSupervised is the opts.Supervised branch of
-// helperPostApplyRestart: it NEVER calls StartDaemon. The daemon we asked to
-// shut down (requestDaemonUpdateShutdown) was itself started by systemd, so
-// its own exit is what the unit's Restart= policy is watching for — the
-// supervisor brings it back under the SAME unit/cgroup on its own. All this
-// does is wait for that to happen, and if it does not, roll back the bundle
-// and wait again (the supervisor keeps retrying on whatever binary is on
-// disk, so a rollback is enough — no second process to spawn here either).
-func helperPostApplyRestartSupervised(
-	ctx context.Context,
-	opts helperPostApplyOptions,
-	waitHealth func(ctx context.Context, client *http.Client, adminURL string, timeout time.Duration) error,
-	rollback func(paths update.Paths) (*update.RollbackResult, error),
-	client *http.Client,
-	out, errOut io.Writer,
-	timeout time.Duration,
-) error {
-	fmt.Fprintln(out, "restart=supervised")
-	fmt.Fprintln(out, "next=the supervising init restarts the daemon under its own unit; not direct-spawning")
-	if strings.TrimSpace(opts.AdminURL) == "" {
-		return nil
-	}
-	if err := waitHealth(ctx, client, opts.AdminURL, timeout); err == nil {
-		fmt.Fprintln(out, "daemon_health=healthy")
-		return nil
-	} else {
-		fmt.Fprintf(errOut, "daemon_health=unhealthy error=%q\n", err.Error())
-		rollbackResult, rollbackErr := rollback(opts.Paths)
-		if rollbackErr != nil {
-			return fmt.Errorf("daemon health failed after update and rollback failed: %v: %w", err, rollbackErr)
-		}
-		fmt.Fprintf(out, "rollback=applied restored_version=%s failed_path=%s\n",
-			rollbackResult.RestoredVersion, rollbackResult.FailedPath)
-		if restoredHealthErr := waitHealth(ctx, client, opts.AdminURL, timeout); restoredHealthErr != nil {
-			return fmt.Errorf("daemon health failed after update; rolled back to %s but supervised restart is still unhealthy: %w",
-				rollbackResult.RestoredVersion, restoredHealthErr)
-		}
-		fmt.Fprintln(out, "daemon_health=healthy")
-		return fmt.Errorf("daemon health failed after update; rolled back to %s", rollbackResult.RestoredVersion)
-	}
-}
+func (p helperExecProcess) Done() <-chan struct{} { return p.done }
 
 func startHelperDaemonProcess(argv []string, stdout io.Writer, stderr io.Writer) (helperStartedProcess, error) {
 	if len(argv) == 0 {
@@ -950,31 +1355,81 @@ func startHelperDaemonProcess(argv []string, stdout io.Writer, stderr io.Writer)
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	return helperExecProcess{cmd: cmd}, nil
+	// Reap it: a revert waits on this process's exit, and an unreaped child
+	// would sit as a zombie that never "exits".
+	done := make(chan struct{})
+	go func() {
+		_ = cmd.Wait()
+		close(done)
+	}()
+	return helperExecProcess{cmd: cmd, done: done}, nil
 }
 
-func waitForDaemonHealth(ctx context.Context, client *http.Client, rawAdminURL string, timeout time.Duration) error {
+// waitForDaemonGate waits until the daemon is healthy and reports the
+// expected identity, and returns the identity it reported.
+func waitForDaemonGate(ctx context.Context, client *http.Client, rawAdminURL string, expected update.ExpectedIdentity, requireIdentity bool, timeout time.Duration) (update.Identity, error) {
 	if timeout <= 0 {
 		timeout = 60 * time.Second
 	}
 	deadline := time.Now().Add(timeout)
-	var lastErr error
 	for {
-		lastErr = probeDaemonHealth(ctx, client, rawAdminURL)
-		if lastErr == nil {
-			return nil
+		identity, err := probeDaemonGate(ctx, client, rawAdminURL, expected, requireIdentity)
+		if err == nil {
+			return identity, nil
 		}
 		if time.Now().After(deadline) {
-			return lastErr
+			return update.Identity{}, err
 		}
 		timer := time.NewTimer(500 * time.Millisecond)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return ctx.Err()
+			return update.Identity{}, ctx.Err()
 		case <-timer.C:
 		}
 	}
+}
+
+func probeDaemonGate(ctx context.Context, client *http.Client, rawAdminURL string, expected update.ExpectedIdentity, requireIdentity bool) (update.Identity, error) {
+	if err := probeDaemonHealth(ctx, client, rawAdminURL); err != nil {
+		return update.Identity{}, err
+	}
+	identity, err := probeDaemonIdentity(ctx, client, rawAdminURL)
+	if err != nil {
+		return update.Identity{}, err
+	}
+	if err := expected.Check(identity, requireIdentity); err != nil {
+		return update.Identity{}, err
+	}
+	return identity, nil
+}
+
+// probeDaemonIdentity reads which build is answering: /api/v1/id's
+// bundle_version and build_sha256.
+func probeDaemonIdentity(ctx context.Context, client *http.Client, rawAdminURL string) (update.Identity, error) {
+	idURL, err := adminEndpointURL(rawAdminURL, "/api/v1/id")
+	if err != nil {
+		return update.Identity{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, idURL, nil)
+	if err != nil {
+		return update.Identity{}, err
+	}
+	req.Header.Set("Accept", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return update.Identity{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+		return update.Identity{}, fmt.Errorf("daemon identity rejected: %s %s", resp.Status, strings.TrimSpace(string(data)))
+	}
+	var identity update.Identity
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&identity); err != nil {
+		return update.Identity{}, fmt.Errorf("decode daemon identity: %w", err)
+	}
+	return identity, nil
 }
 
 func probeDaemonHealth(ctx context.Context, client *http.Client, rawAdminURL string) error {
@@ -1015,42 +1470,6 @@ func generateUpdateControlToken() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(raw[:]), nil
-}
-
-// requestDaemonUpdateShutdown asks the live daemon to shut down for an
-// update-apply and reports its restart argv plus whether IT was supervised
-// by systemd (INVOCATION_ID set in its own environment — the daemon is the
-// only party that can answer this reliably; the helper's own environment
-// says nothing about how the daemon it is restarting was started).
-func requestDaemonUpdateShutdown(client *http.Client, rawAdminURL string, bundleRoot string, token string) (restartArgv []string, supervised bool, err error) {
-	shutdownURL, err := adminEndpointURL(rawAdminURL, "/api/v1/admin/update/shutdown")
-	if err != nil {
-		return nil, false, err
-	}
-	body, err := json.Marshal(map[string]string{
-		"token":      token,
-		"bundleRoot": bundleRoot,
-	})
-	if err != nil {
-		return nil, false, err
-	}
-	resp, err := client.Post(shutdownURL, "application/json", bytes.NewReader(body))
-	if err != nil {
-		return nil, false, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusAccepted {
-		data, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-		return nil, false, fmt.Errorf("daemon update shutdown rejected: %s %s", resp.Status, strings.TrimSpace(string(data)))
-	}
-	var result struct {
-		RestartArgv []string `json:"restartArgv"`
-		Supervised  bool     `json:"supervised"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, false, err
-	}
-	return result.RestartArgv, result.Supervised, nil
 }
 
 func adminEndpointURL(rawAdminURL string, endpointPath string) (string, error) {

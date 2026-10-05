@@ -115,6 +115,9 @@ type DeployLedgerEntry struct {
 	// HeldSlots / PrunedSlots record a retention decision (Action "retain").
 	HeldSlots   []string `json:"held_slots,omitempty"`
 	PrunedSlots []string `json:"pruned_slots,omitempty"`
+	// DaemonPID is the daemon process a step of the swap acts on: the one the
+	// helper asked to stop, escalated against, waited for, or started.
+	DaemonPID int `json:"daemon_pid,omitempty"`
 	// LockHolder is whoever held /run/sdn-deploy.lock when this ran, verbatim
 	// from the lock file, or a marker saying the apply ran with NO lock held.
 	// An unlocked apply is not refused here — refusing would brick recovery on
@@ -214,6 +217,9 @@ func mirrorLine(e DeployLedgerEntry) []byte {
 	}
 	if len(e.PrunedSlots) > 0 {
 		fmt.Fprintf(&b, " pruned=[%s]", strings.Join(e.PrunedSlots, " "))
+	}
+	if e.DaemonPID > 0 {
+		fmt.Fprintf(&b, " daemon_pid=%d", e.DaemonPID)
 	}
 	if e.Reason != "" {
 		fmt.Fprintf(&b, " reason=%q", e.Reason)

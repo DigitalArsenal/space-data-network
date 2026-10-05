@@ -15,11 +15,16 @@ package update
 // ACT TWO is the swap, and it CANNOT run inside the daemon: the daemon has to
 // stop for its own binary to be replaced, so whatever performs the swap must
 // outlive it. That is the existing helper — a copy of the current executable
-// under updates/helper/, which asks the daemon to shut down through the
-// loopback control endpoint, applies, waits for the supervisor to bring the
-// daemon back, health-checks it, and reverses to the previous slot if it does
-// not come up. All of that is already built and tested. This file only starts
-// it, correctly.
+// under updates/helper/ (cmd/spacedatanetwork runHelperApply). It first
+// finishes everything that does not need the daemon down — re-verify, the
+// store-format guard, extract and validate the bundle (Prepare) — while the
+// daemon still serves. Only then does it ask the daemon to shut down through
+// the loopback control endpoint, WAIT FOR ITS PID TO EXIT (bounded, then
+// escalated: daemonstop.go), take the store's single-writer lock, and swap by
+// renames alone. It restarts the daemon, holds it to a health gate that also
+// asserts WHICH build answered (identity.go), and reverses to the previous
+// slot — stop, re-guard, swap, restart through the supervisor — if it does not
+// come up as the build just installed. This file only starts it, correctly.
 //
 // "CORRECTLY" IS THE WHOLE PROBLEM, and it is a cgroup problem. A child of the
 // daemon lives in the daemon's systemd cgroup. When the daemon exits, the unit

@@ -24,6 +24,7 @@ import (
 	sdnpubsub "github.com/spacedatanetwork/sdn-server/internal/pubsub"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
+	"github.com/spacedatanetwork/sdn-server/internal/update"
 	"github.com/spacedatanetwork/sdn-server/internal/updatesign"
 	"github.com/spacedatanetwork/sdn-server/internal/versioninfo"
 )
@@ -294,13 +295,27 @@ func (h *CoreAPIHandler) handleID(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	body := map[string]interface{}{
 		"peer_id":           h.peerID.String(),
 		"listen_addresses":  addrs,
 		"agent_version":     versioninfo.AgentVersion,
 		"suite_version":     versioninfo.SuiteVersion,
 		"standards_version": versioninfo.SpaceDataStandardsVersion,
-	})
+	}
+	// WHICH BUILD IS ANSWERING. The update helper's health gate passes only
+	// when these equal the bundle it has just installed (update.Identity):
+	// "status ok" from the build that was supposed to be replaced is not a
+	// successful update. bundle_version is the version of the bundle this
+	// process was started from (absent outside a bundle); build_sha256 is its
+	// executable's, the same value /api/node/info reports.
+	identity := update.RunningIdentity()
+	if identity.BundleVersion != "" {
+		body["bundle_version"] = identity.BundleVersion
+	}
+	if identity.BuildSHA256 != "" {
+		body["build_sha256"] = identity.BuildSHA256
+	}
+	writeJSON(w, http.StatusOK, body)
 }
 
 func (h *CoreAPIHandler) handleVersion(w http.ResponseWriter, r *http.Request) {

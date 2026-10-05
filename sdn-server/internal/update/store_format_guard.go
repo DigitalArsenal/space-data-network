@@ -558,3 +558,22 @@ func CheckStagedStoreFormat(paths Paths, updateID, storeRoot string) error {
 		Result:     &VerifyResult{UpdateID: updateID, Version: manifest.Version},
 	})
 }
+
+// CheckRollbackStoreFormat runs the Rollback guard against the slot an
+// undirected rollback restores (Slots[0]) without rolling anything back. The
+// update helper calls it before it stops a daemon it means to revert: when the
+// store already refuses that slot (a store a migration has taken to format 4,
+// say), stopping the running build would take the box down for a revert that
+// cannot happen. Rollback repeats the check once the daemon has stopped, which
+// is the read that counts. A box with no reverse target is refused too.
+func CheckRollbackStoreFormat(paths Paths, storeRoot string) error {
+	state, err := LoadState(paths)
+	if err != nil {
+		return err
+	}
+	slot, err := selectSlot(migrateSlots(state), "")
+	if err != nil {
+		return err
+	}
+	return guardSlotStoreFormat(storeRoot, *slot)
+}
