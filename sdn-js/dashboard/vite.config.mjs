@@ -202,7 +202,20 @@ function assertNoCssHashCollision() {
 //
 // Owner 2026-08-28: the old dashboard tree is deleted; the embed builds from
 // the TailAdmin tree — the same App the browser client shell mounts.
-const appRoot = path.resolve(__dirname, '../spaceaware-ui/src/dashboard-tailadmin/apps/sdn-node');
+/**
+ * Which single-file app this build produces (SDN_DASHBOARD_APP): the node
+ * dashboard (default), or the node's public homepage (`home`), the page a node
+ * serves at https://<peer-label>.spacedatanetwork.org and at /home/.
+ */
+const DASHBOARD_APPS = {
+  node: { dir: 'sdn-node', outDir: 'dist' },
+  home: { dir: 'sdn-home', outDir: 'dist/home' }
+};
+const dashboardApp = DASHBOARD_APPS[process.env.SDN_DASHBOARD_APP || 'node'];
+if (!dashboardApp) {
+  throw new Error(`SDN_DASHBOARD_APP must be one of ${Object.keys(DASHBOARD_APPS).join(', ')}`);
+}
+const appRoot = path.resolve(__dirname, `../spaceaware-ui/src/dashboard-tailadmin/apps/${dashboardApp.dir}`);
 
 // Tailwind v4 (CSS-first, @tailwindcss/vite). Resolved out of the design
 // repo's own dependency tree — this build dir has no tailwind install.
@@ -424,7 +437,7 @@ export default defineConfig({
      * (semantic.worker.js) — keep it that way structurally.
      */
 
-    outDir: path.resolve(__dirname, 'dist'),
+    outDir: path.resolve(__dirname, dashboardApp.outDir),
     emptyOutDir: true,
     rollupOptions: {
       input: path.resolve(appRoot, 'index.html'),

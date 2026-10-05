@@ -1,0 +1,1 @@
+default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'none'; script-src 'self' 'sha256-8Y5clMp+C6GmE3bgvrmjhIQ6EQuxOyzGwYNTgffQAsY='; connect-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:

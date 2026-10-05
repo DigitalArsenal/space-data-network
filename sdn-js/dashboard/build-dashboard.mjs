@@ -12,6 +12,9 @@
  *        sdn-server/cmd/spacedatanetwork/embedded/dashboard.html
  *        sdn-server/cmd/spacedatanetwork/embedded/dashboard.csp
  *      Go go:embed's both, so the CSP always matches the shipped bytes.
+ *   4. The same build of the `home` app, the node's public homepage, emitted as
+ *        embedded/homepage.html + embedded/homepage.csp
+ *      (served at https://<peer-label>.spacedatanetwork.org and at /home/).
  *
  * Run: `node dashboard/build-dashboard.mjs` from sdn-js (or npm run build:dashboard).
  */
@@ -110,6 +113,22 @@ function versionSatisfiesPin(version, pin) {
 }
 
 // --- 1. Build ---------------------------------------------------------------
+/**
+ * The CSP source for every non-empty inline <script> in a built page, so the
+ * page runs under script-src 'self' plus exactly these hashes.
+ */
+function inlineScriptHashes(page) {
+  const inlineScript = /<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi;
+  const out = [];
+  let m;
+  while ((m = inlineScript.exec(page)) !== null) {
+    const body = m[1];
+    if (body.trim().length === 0) continue;
+    out.push(`'sha256-${createHash('sha256').update(body, 'utf8').digest('base64')}'`);
+  }
+  return out;
+}
+
 const viteBin = path.resolve(__dirname, '../node_modules/vite/bin/vite.js');
 const build = spawnSync(process.execPath, [viteBin, 'build'], {
   cwd: __dirname,
@@ -122,15 +141,7 @@ if (build.status !== 0) {
 
 // --- 2. Hash the inline scripts --------------------------------------------
 const html = fs.readFileSync(distHtml, 'utf8');
-const inlineScript = /<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi;
-const hashes = [];
-let m;
-while ((m = inlineScript.exec(html)) !== null) {
-  const body = m[1];
-  if (body.trim().length === 0) continue;
-  const digest = createHash('sha256').update(body, 'utf8').digest('base64');
-  hashes.push(`'sha256-${digest}'`);
-}
+const hashes = inlineScriptHashes(html);
 if (hashes.length === 0) {
   console.error('[build-dashboard] no inline scripts found — CSP would block nothing to run');
   process.exit(1);
@@ -205,3 +216,43 @@ console.log(`[build-dashboard] CSP: ${csp}`);
 // cover. This is the scope that actually proves it did not reach the user, so
 // it runs on the emitted bytes, last.
 guard('--artifact');
+
+// --- The node's public homepage ---------------------------------------------
+// The same build of the `home` app: the page a node serves at
+// https://<peer-label>.spacedatanetwork.org and at /home/ (owner 2026-10-05).
+// It reads only its own origin (the operator's document and the node's EPM
+// card), so its policy carries no wasm, worker, frame or remote connect source.
+const homeBuild = spawnSync(process.execPath, [viteBin, 'build'], {
+  cwd: __dirname,
+  stdio: 'inherit',
+  env: { ...process.env, SDN_DASHBOARD_APP: 'home' }
+});
+if (homeBuild.status !== 0) {
+  console.error('[build-dashboard] homepage build failed');
+  process.exit(homeBuild.status ?? 1);
+}
+const homeHtml = fs.readFileSync(path.resolve(__dirname, 'dist/home/index.html'), 'utf8');
+const homeHashes = inlineScriptHashes(homeHtml);
+if (homeHashes.length === 0) {
+  console.error('[build-dashboard] the homepage has no inline script — CSP would block nothing to run');
+  process.exit(1);
+}
+const homeCsp = [
+  "default-src 'self'",
+  "base-uri 'none'",
+  "object-src 'none'",
+  "frame-ancestors 'none'",
+  "form-action 'none'",
+  `script-src 'self' ${homeHashes.join(' ')}`,
+  "connect-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "font-src 'self' data:",
+  "img-src 'self' data:"
+].join('; ');
+fs.writeFileSync(path.join(embedDir, 'homepage.html'), homeHtml);
+fs.writeFileSync(path.join(embedDir, 'homepage.csp'), homeCsp + '\n');
+console.log(
+  `[build-dashboard] wrote homepage.html (${Buffer.byteLength(homeHtml, 'utf8')} bytes,` +
+    ` sha256 ${createHash('sha256').update(homeHtml, 'utf8').digest('hex')}) and homepage.csp`
+);
+

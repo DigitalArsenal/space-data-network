@@ -51,6 +51,15 @@ var DefaultPublic = []string{
 	"/api/v1/health",
 	"/api/v1/ready",
 	"/ws/status",
+	// The node's public homepage, served at <peer-label>.spacedatanetwork.org
+	// (owner 2026-10-05), its document and this node's own EPM card, which
+	// the page always shows. Reads only: writing the document or the EPM
+	// stays an admin's, and other identities' cards (/identity/) stay locked.
+	"/home",
+	"/home/",
+	"/api/v1/homepage",
+	"/api/node/epm/vcard",
+	"/api/node/epm/qr",
 	// The dashboard shell and its sign-in.
 	"/",
 	"/index.html",
