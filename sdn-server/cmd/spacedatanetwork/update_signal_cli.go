@@ -207,10 +207,18 @@ var updateRollbackCmd = &cobra.Command{
 		if strings.TrimSpace(updateRollbackReason) == "" {
 			return errors.New("--reason is required: an unexplained reversal is the defect this lane exists to end")
 		}
-		result, err := update.Rollback(update.PathsFor(layout.Root), update.RollbackOptions{
-			Slot:      strings.TrimSpace(updateRollbackSlot),
-			Reason:    strings.TrimSpace(updateRollbackReason),
-			StoreRoot: resolveUpdateStoreRoot(updateRollbackStoreRoot, cmd.ErrOrStderr()),
+		storeRoot := resolveUpdateStoreRoot(updateRollbackStoreRoot, cmd.ErrOrStderr())
+		var result *update.RollbackResult
+		// Under the store lock, like every swap: a rollback rewrites the binary
+		// a running daemon executes, so it refuses while one has the store open.
+		err := withStoreLock(storeRoot, func() error {
+			var rollbackErr error
+			result, rollbackErr = update.Rollback(update.PathsFor(layout.Root), update.RollbackOptions{
+				Slot:      strings.TrimSpace(updateRollbackSlot),
+				Reason:    strings.TrimSpace(updateRollbackReason),
+				StoreRoot: storeRoot,
+			})
+			return rollbackErr
 		})
 		if err != nil {
 			return err
