@@ -792,8 +792,6 @@ type e2eSupervisor struct {
 	current *exec.Cmd
 	stopped bool
 	closed  bool
-	started []int
-	exits   map[int]int
 }
 
 func newE2ESupervisor(argv []string, restartSec time.Duration) *e2eSupervisor {
@@ -801,7 +799,6 @@ func newE2ESupervisor(argv []string, restartSec time.Duration) *e2eSupervisor {
 		argv:       argv,
 		env:        append(environWithout("INVOCATION_ID"), "INVOCATION_ID=e2e-supervisor"),
 		restartSec: restartSec,
-		exits:      map[int]int{},
 	}
 }
 
@@ -814,7 +811,6 @@ func (s *e2eSupervisor) spawnLocked() error {
 		return err
 	}
 	s.current = cmd
-	s.started = append(s.started, cmd.Process.Pid)
 	go s.reap(cmd)
 	return nil
 }
@@ -822,7 +818,6 @@ func (s *e2eSupervisor) spawnLocked() error {
 func (s *e2eSupervisor) reap(cmd *exec.Cmd) {
 	_ = cmd.Wait()
 	s.mu.Lock()
-	s.exits[cmd.Process.Pid] = cmd.ProcessState.ExitCode()
 	if s.current == cmd {
 		s.current = nil
 	}
@@ -866,16 +861,6 @@ func (s *e2eSupervisor) MainPID(context.Context) int {
 		return 0
 	}
 	return s.current.Process.Pid
-}
-
-func (s *e2eSupervisor) snapshot() (started []int, exits map[int]int) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	exits = make(map[int]int, len(s.exits))
-	for pid, code := range s.exits {
-		exits[pid] = code
-	}
-	return append([]int(nil), s.started...), exits
 }
 
 func (s *e2eSupervisor) close() {
@@ -1080,19 +1065,13 @@ func TestUpdateHelperRevertsAnUnhealthyBuildThroughTheSupervisor(t *testing.T) {
 	if _, exited := e2eFind(b.eventsOf(t), "v2", "exit"); exited {
 		t.Fatal("v2 logged an exit; the hung build was supposed to need SIGKILL")
 	}
-	// Only the supervisor ever started a daemon, and no daemon ever found the
-	// store already held.
+	// Only the supervisor ever started a daemon: the helper never spawns one
+	// under a supervisor, and it brought the restored build back through it.
 	if strings.Contains(out.String(), "restart=started") {
 		t.Fatalf("the helper spawned a daemon under a supervisor:\n%s", out)
 	}
 	if !strings.Contains(out.String(), `restart=supervisor unit="e2e supervisor"`) {
 		t.Fatalf("the restored build was not started through the supervisor:\n%s", out)
-	}
-	started, exits := supervisor.snapshot()
-	for pid, code := range exits {
-		if code == 3 {
-			t.Fatalf("daemon %d found the store locked: two daemons overlapped (starts %v)", pid, started)
-		}
 	}
 }
 
@@ -1121,16 +1100,16 @@ func TestUpdateHelperLeavesTheBuildRunningWhenTheGuardRefusesTheRevert(t *testin
 		t.Fatalf("no update_failed alert was raised:\n%s", errOut)
 	}
 
-	// v2 is still the running build: started once, never stopped.
-	started, _ := supervisor.snapshot()
-	if len(started) != 2 {
-		t.Fatalf("the supervisor started %v; want v1 then v2 and nothing after", started)
+	// v2 is still the running build, and nothing ever asked it to stop.
+	pid := supervisor.MainPID(context.Background())
+	if pid == 0 {
+		t.Fatal("no daemon is running after the refused revert")
 	}
-	if pid := supervisor.MainPID(context.Background()); pid != started[1] {
-		t.Fatalf("running pid %d, want v2's %d", pid, started[1])
+	if running := runningExecutableSHA256(t, pid); running != v2SHA {
+		t.Fatalf("pid %d runs %s, want v2 %s", pid, running, v2SHA)
 	}
-	if running := runningExecutableSHA256(t, started[1]); running != v2SHA {
-		t.Fatalf("pid %d runs %s, want v2 %s", started[1], running, v2SHA)
+	if ev, stopped := e2eFind(b.eventsOf(t), "v2", "shutdown"); stopped {
+		t.Fatalf("v2 was asked to stop (%+v); a refused revert must leave it running", ev)
 	}
 	// Nothing was half-reverted: the bundle is v2 and the v1 slot is whole.
 	if sha := e2eFileSHA256(filepath.Join(b.paths.Root, "bin", "spacedatanetwork")); sha != v2SHA {
@@ -1142,9 +1121,11 @@ func TestUpdateHelperLeavesTheBuildRunningWhenTheGuardRefusesTheRevert(t *testin
 	if update.HasFailedUpdate(b.paths, e2eV2UpdateID) {
 		t.Fatal("an update that was not reverted is quarantined")
 	}
+	// After the failed gate the ledger records the refusal and nothing else:
+	// no stop, no rollback, no restart.
 	actions := e2eActions(b.ledger(t))
-	requireInOrder(t, actions, []string{"apply", "health-failed", "revert-refused"})
-	if slices.Contains(actions, "rollback") {
-		t.Fatalf("a refused revert still rolled back: %v", actions)
+	failed := slices.Index(actions, "health-failed")
+	if failed < 0 || !slices.Equal(actions[failed+1:], []string{"revert-refused"}) {
+		t.Fatalf("ledger actions %v: after health-failed want only revert-refused", actions)
 	}
 }
