@@ -160,6 +160,23 @@ func TestProofFeedNames(t *testing.T) {
 	}
 }
 
+// TestProofEncryptedFields is the encrypted-field proof (encfields.go;
+// ENCRYPTED-FIELDS.md, C-46) on fresh stores: client-encrypted fields through
+// every read surface against format 1, on disk (P4PROOF_SDS_PY for the
+// stock-reader check), store-migrate --to 4 (P4PROOF_SDN_BIN), and the
+// full-text regression of records aligned to a cut size prefix
+// (P4PROOF_ENC_ONLY=align runs it alone).
+func TestProofEncryptedFields(t *testing.T) {
+	c := requireEnv(t, EnvWork, EnvOut)
+	r, err := DriveEncryptedFields(context.Background(), c, logfOf(t))
+	if r != nil {
+		t.Logf("ENCFIELDS: %v", r.Extra["problems"])
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestProofMigrate migrates the format-1 fixture with store-migrate --to 4
 // (P4PROOF_SDN_BIN): a clean run kept as the format-4 fixture, checked
 // against format 1, then a run under kill -9 (P4PROOF_MIGRATE_KILLS, 5)
