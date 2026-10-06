@@ -2757,16 +2757,29 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				}
 			}
 
+			// The node's public surface over libp2p (site_gateway.go): the
+			// same chain, reads of public routes only. A request under
+			// another detected node's name is forwarded there, so one
+			// wildcard name serves every node through this one.
+			secured := adminSecurityMiddleware(http.HandlerFunc(wall), tlsManager.Mode(), publicAPIRequest)
+			siteHTTP := serveSiteOverLibp2p(n.Host(), secured, publicAPIRequest, strings.TrimPrefix(nodeSiteURL(n.PeerID()), "https://"))
+			defer siteHTTP.Close()
+			gateway := &siteGateway{
+				self: n.PeerID(), site: siteHTTP,
+				flags: n.SDNAdvertisementFlagsByPeer, addrs: n.SDNAdvertisementAddrsByPeer,
+				agents: func(id peer.ID) string {
+					v, _ := n.Host().Peerstore().Get(id, "AgentVersion")
+					s, _ := v.(string)
+					return s
+				},
+			}
 			adminServer = &http.Server{
 				Addr:              adminAddr,
 				ReadHeaderTimeout: 10 * time.Second,
 				ReadTimeout:       30 * time.Second,
 				WriteTimeout:      10 * time.Minute,
 				IdleTimeout:       120 * time.Second,
-				Handler: newAdminUpgradeRouter(
-					wsUpgradeProxy,
-					adminSecurityMiddleware(http.HandlerFunc(wall), tlsManager.Mode(), publicAPIRequest),
-				),
+				Handler:           gateway.wrap(newAdminUpgradeRouter(wsUpgradeProxy, secured)),
 			}
 			go func() {
 				if cfg.Admin.RequireAuth && authHandler != nil {
