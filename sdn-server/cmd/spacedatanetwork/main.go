@@ -1759,6 +1759,12 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				cfg.Admin.RequireAuth,
 				func() *auth.Handler { return authHandler },
 			))
+			// The models the page shows are imported by the operator and
+			// pinned by this node (homepage_site.go).
+			homepageModels := handleHomepageModels(func() string { return cfg.Admin.IPFSAPIURL })
+			adminMux.HandleFunc("/api/v1/homepage/models", func(w http.ResponseWriter, r *http.Request) {
+				gateAdminOnlyHandler(w, r, homepageModels, authHandler, cfg.Admin.RequireAuth)
+			})
 
 			// EPM (Entity Profile Message) API endpoints
 			adminMux.HandleFunc("/api/node/epm/json", handleNodeEPMJSON(n))
@@ -2771,6 +2777,27 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					v, _ := n.Host().Peerstore().Get(id, "AgentVersion")
 					s, _ := v.(string)
 					return s
+				},
+				// The WAN DHT: its lookup stops as soon as it is connected
+				// to the node, and the gateway serves nodes the internet
+				// can reach.
+				find: func(ctx context.Context, id peer.ID) (peer.AddrInfo, error) {
+					if d := n.DHT(); d != nil {
+						return d.FindPeer(ctx, id)
+					}
+					return peer.AddrInfo{}, errors.New("no DHT")
+				},
+				connect: n.Host().Connect,
+				// A relayed connection takes no new streams without opting in,
+				// and its data limit is far below a model: forward only over
+				// a direct one (hole punching upgrades a relayed one).
+				direct: func(id peer.ID) bool {
+					for _, c := range n.Host().Network().ConnsToPeer(id) {
+						if !c.Stat().Limited {
+							return true
+						}
+					}
+					return false
 				},
 			}
 			adminServer = &http.Server{

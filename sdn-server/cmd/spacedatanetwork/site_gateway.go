@@ -19,6 +19,12 @@ package main
 //     policy, no sniffing, no cookies. So whatever a node returns, the code
 //     that runs under spacedatanetwork.org is ours. Each node enforces its
 //     own access gate.
+//
+// A node the gateway has not met yet (owner 2026-10-06) is looked up in the
+// DHT and dialled once; it is served when it then identifies as an SDN node.
+// Lookups are bounded in number and time, and a miss is remembered for a
+// while, so naming random peers cannot turn the gateway into a DHT client for
+// hire.
 
 import (
 	"context"
@@ -26,6 +32,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ipfs/go-cid"
@@ -41,6 +48,18 @@ const siteProtocol = protocol.ID("/sdn/site/1.0.0")
 
 // siteForwardTimeout bounds one forwarded request: dial, stream and response.
 const siteForwardTimeout = 30 * time.Second
+
+// Lookups of nodes the gateway has not met: at most siteLookups at once, the
+// DHT search within siteFindTimeout and then the dial and identify within
+// siteDialTimeout (each stage its own budget, so a slow search cannot starve
+// the check), and a peer that was not found is not looked up again for
+// siteMissTTL.
+const (
+	siteLookups     = 4
+	siteFindTimeout = 10 * time.Second
+	siteDialTimeout = 6 * time.Second
+	siteMissTTL     = 2 * time.Minute
+)
 
 // sitePeer is the node a request's name encodes.
 func sitePeer(r *http.Request) (peer.ID, bool) {
@@ -104,6 +123,81 @@ type siteGateway struct {
 	flags  func() map[string][]string // nodes found under the SDN advertisement
 	addrs  func() map[string][]string // their advertised addresses
 	agents func(peer.ID) string       // a connected peer's identify agent
+	// find and connect reach a node the gateway has not met: a DHT lookup,
+	// then one dial. Either may be nil, and then such a node is not served.
+	find    func(context.Context, peer.ID) (peer.AddrInfo, error)
+	connect func(context.Context, peer.AddrInfo) error
+	direct  func(peer.ID) bool // a direct (not relayed) connection is open
+
+	mu     sync.Mutex
+	missed map[peer.ID]time.Time
+	slots  chan struct{}
+}
+
+// What a lookup of a node the gateway has not met came to.
+type siteReach int
+
+const (
+	siteMissing     siteReach = iota // not found, or not an SDN node
+	siteReachable                    // an SDN node on a direct connection
+	siteUnreachable                  // an SDN node reached only through a relay
+)
+
+// locate looks up and dials a node the gateway has not met, and reports
+// whether it then identifies as an SDN node on a direct connection.
+func (g *siteGateway) locate(ctx context.Context, id peer.ID) (peer.AddrInfo, siteReach) {
+	if g.find == nil || g.connect == nil || g.direct == nil {
+		return peer.AddrInfo{}, siteMissing
+	}
+	now := time.Now()
+	g.mu.Lock()
+	if g.slots == nil {
+		g.slots = make(chan struct{}, siteLookups)
+		g.missed = map[peer.ID]time.Time{}
+	}
+	if until, ok := g.missed[id]; ok && now.Before(until) {
+		g.mu.Unlock()
+		return peer.AddrInfo{}, siteMissing
+	}
+	slots := g.slots
+	g.mu.Unlock()
+
+	select {
+	case slots <- struct{}{}:
+		defer func() { <-slots }()
+	default:
+		return peer.AddrInfo{}, siteMissing
+	}
+	findCtx, cancelFind := context.WithTimeout(ctx, siteFindTimeout)
+	info, err := g.find(findCtx, id)
+	cancelFind()
+	if err == nil {
+		dialCtx, cancelDial := context.WithTimeout(ctx, siteDialTimeout)
+		err = g.connect(dialCtx, info)
+		// Identify reports the agent on the new connection, and hole punching
+		// may still turn a relayed connection into a direct one: wait for both
+		// until the dial budget ends.
+		for err == nil && !(g.detected(id) && g.direct(id)) && dialCtx.Err() == nil {
+			time.Sleep(100 * time.Millisecond)
+		}
+		cancelDial()
+		if err == nil && g.detected(id) {
+			if g.direct(id) {
+				return info, siteReachable
+			}
+			return info, siteUnreachable
+		}
+	}
+
+	g.mu.Lock()
+	for other, until := range g.missed {
+		if now.After(until) {
+			delete(g.missed, other)
+		}
+	}
+	g.missed[id] = now.Add(siteMissTTL)
+	g.mu.Unlock()
+	return peer.AddrInfo{}, siteMissing
 }
 
 // detected reports a node the gateway serves: found under the SDN
@@ -141,24 +235,34 @@ func (g *siteGateway) forward(w http.ResponseWriter, r *http.Request, id peer.ID
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if !g.detected(id) {
-		http.Error(w, "No Space Data Network node by this name.", http.StatusNotFound)
-		return
+	info := peer.AddrInfo{ID: id}
+	if g.detected(id) {
+		for _, a := range g.addrs()[id.String()] {
+			if m, err := ma.NewMultiaddr(a); err == nil {
+				info.Addrs = append(info.Addrs, m)
+			}
+		}
+	} else {
+		found, reach := g.locate(r.Context(), id)
+		switch reach {
+		case siteReachable:
+			info = found
+		case siteUnreachable:
+			http.Error(w, "This Space Data Network node is not reachable right now.", http.StatusBadGateway)
+			return
+		default:
+			http.Error(w, "No Space Data Network node by this name.", http.StatusNotFound)
+			return
+		}
 	}
 	if p := r.URL.Path; p == "/" || p == "/index.html" || isHomepagePath(p) {
 		serveHomepage(w, r)
 		return
 	}
-	info := peer.AddrInfo{ID: id}
-	for _, a := range g.addrs()[id.String()] {
-		if m, err := ma.NewMultiaddr(a); err == nil {
-			info.Addrs = append(info.Addrs, m)
-		}
-	}
 	ctx, cancel := context.WithTimeout(r.Context(), siteForwardTimeout)
 	defer cancel()
 	unreachable := func(w http.ResponseWriter, err error) {
-		log.Debugf("node site %s unreachable: %v", id, err)
+		log.Infof("node site %s unreachable: %v", id, err)
 		http.Error(w, "This Space Data Network node is not reachable right now.", http.StatusBadGateway)
 	}
 	rt, err := g.site.NewConstrainedRoundTripper(info)
