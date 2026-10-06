@@ -1752,6 +1752,14 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				log.Warnf("Trust rules engine not started: %v", err)
 			}
 
+			// The node's public homepage document (homepage_site.go): anyone
+			// reads it, an admin writes it. It sits beside trust-settings.json.
+			adminMux.HandleFunc("/api/v1/homepage", gateNodeEPMWrite(
+				handleHomepageDocument(newHomepageStore(cfg.Storage.Path), func() string { return nodeSiteURL(n.PeerID()) }),
+				cfg.Admin.RequireAuth,
+				func() *auth.Handler { return authHandler },
+			))
+
 			// EPM (Entity Profile Message) API endpoints
 			adminMux.HandleFunc("/api/node/epm/json", handleNodeEPMJSON(n))
 			adminMux.HandleFunc("/api/node/epm/vcard", handleNodeEPMVCard(n))
