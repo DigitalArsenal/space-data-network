@@ -115,16 +115,24 @@ func (g *siteGateway) detected(id peer.ID) bool {
 	return strings.Contains(g.agents(id), "spacedatanetwork")
 }
 
-// wrap sends requests under another node's name to the gateway. Every other
-// request, including those under this node's own name, goes to next.
+// wrap routes requests under a name in the zone: this node's own name goes to
+// next, another node's to the gateway, and a name that is not a node's (the
+// wildcard catches every name) gets 404. Requests under any other host go to
+// next.
 func (g *siteGateway) wrap(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		id, ok := sitePeer(r)
-		if !ok || g == nil || id == g.self {
+		if g == nil || !isNodeSiteRequest(r) {
 			next.ServeHTTP(w, r)
 			return
 		}
-		g.forward(w, r, id)
+		switch id, ok := sitePeer(r); {
+		case !ok:
+			http.Error(w, "No Space Data Network node by this name.", http.StatusNotFound)
+		case id == g.self:
+			next.ServeHTTP(w, r)
+		default:
+			g.forward(w, r, id)
+		}
 	})
 }
 
