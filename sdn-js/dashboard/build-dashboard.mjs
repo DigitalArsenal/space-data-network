@@ -243,11 +243,13 @@ const homeCsp = [
   "object-src 'none'",
   "frame-ancestors 'none'",
   "form-action 'none'",
-  `script-src 'self' ${homeHashes.join(' ')}`,
-  "connect-src 'self'",
+  // The 3D models (three.js): the meshopt decoder compiles WebAssembly, and
+  // the glTF loader hands embedded textures over as blob: URLs it makes itself.
+  `script-src 'self' 'wasm-unsafe-eval' ${homeHashes.join(' ')}`,
+  "connect-src 'self' blob:",
   "style-src 'self' 'unsafe-inline'",
   "font-src 'self' data:",
-  "img-src 'self' data:"
+  "img-src 'self' data: blob:"
 ].join('; ');
 fs.writeFileSync(path.join(embedDir, 'homepage.html'), homeHtml);
 fs.writeFileSync(path.join(embedDir, 'homepage.csp'), homeCsp + '\n');

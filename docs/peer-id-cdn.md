@@ -26,6 +26,18 @@ Homepage), which the node keeps at `/api/v1/homepage`. A document can move
 the card but never remove it. Locked nodes serve these reads to anyone;
 writes stay an admin's.
 
+The page can also show the 3D models the entity claims. The operator imports
+each one into the node (`POST /api/v1/homepage/models` with a `.glb` file, an
+https address or an IPFS CID); the node pins it and serves it at `/ipfs/<cid>`,
+and the page links to the address it was published at. An address book block
+shows the contact cards the node has signed as public.
+
+One wildcard record, `*.spacedatanetwork.org`, points at a gateway node. Under
+another node's name the gateway serves the page and forwards that node's
+public reads to it over libp2p. A node the gateway is not connected to is
+found in the DHT; one it can reach only through a relay answers 502 until a
+direct connection opens.
+
 ## Working public example
 
 This CelesTrak CAT snapshot is replicated on a public origin:
