@@ -60,15 +60,24 @@ func nodeSiteURL(id peer.ID) string {
 	return "https://" + label + "." + publicSiteZone
 }
 
-// isNodeSiteRequest reports whether a request arrived under a node name in the
-// zone: exactly one label below spacedatanetwork.org.
-func isNodeSiteRequest(r *http.Request) bool {
+// siteLabel is the node name a request arrived under: exactly one label below
+// spacedatanetwork.org.
+func siteLabel(r *http.Request) (string, bool) {
 	host := strings.ToLower(strings.TrimSpace(r.Host))
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		host = h
 	}
 	label, ok := strings.CutSuffix(strings.TrimSuffix(host, "."), "."+publicSiteZone)
-	return ok && label != "" && !strings.Contains(label, ".")
+	if !ok || label == "" || strings.Contains(label, ".") {
+		return "", false
+	}
+	return label, true
+}
+
+// isNodeSiteRequest reports whether a request arrived under a node name.
+func isNodeSiteRequest(r *http.Request) bool {
+	_, ok := siteLabel(r)
+	return ok
 }
 
 // isHomepagePath reports the homepage's own paths on any address.
