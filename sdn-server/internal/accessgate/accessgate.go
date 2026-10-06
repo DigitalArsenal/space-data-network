@@ -55,9 +55,12 @@ var DefaultPublic = []string{
 	// (owner 2026-10-05), its document and this node's own EPM card, which
 	// the page always shows. Reads only: writing the document or the EPM
 	// stays an admin's, and other identities' cards (/identity/) stay locked.
+	// The address book's public entries (owner 2026-10-06) are this exact
+	// path; the operator's routes below it stay locked.
 	"/home",
 	"/home/",
 	"/api/v1/homepage",
+	"/api/v1/address-book",
 	"/api/node/epm/vcard",
 	"/api/node/epm/qr",
 	// The dashboard shell and its sign-in.

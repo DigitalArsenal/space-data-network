@@ -29,8 +29,25 @@ writes stay an admin's.
 The page can also show the 3D models the entity claims. The operator imports
 each one into the node (`POST /api/v1/homepage/models` with a `.glb` file, an
 https address or an IPFS CID); the node pins it and serves it at `/ipfs/<cid>`,
-and the page links to the address it was published at. An address book block
-shows the contact cards the node has signed as public.
+and the page links to the address it was published at.
+
+## The address book
+
+A contact card enters a node's address book only through the node's signed
+`$ABA` attestation, made with its libp2p identity key: the same key the peer
+ID, and so the address, encodes. The attestation binds the exact EPM it
+signs by its SHA-256 and travels with it, so anyone can check an entry from
+the node's address alone.
+
+The operator adds cards in the dashboard (THIS NODE › Address book). A card
+can come from a node this node knows, a vCard, or a picture of a QR code; a
+node's own QR adds that node's signed card. Each entry is public or private.
+A node setting picks the default, and each entry can differ from it.
+`GET /api/v1/address-book` serves only the public entries, to anyone, and the
+homepage shows them. Private entries stay on the operator's routes, under
+`/api/v1/address-book/`. They never enter the record store, which its sync
+serves to other peers. Removing an entry signs a tombstone, so an older
+attestation cannot bring it back.
 
 One wildcard record, `*.spacedatanetwork.org`, points at a gateway node. Under
 another node's name the gateway serves the page and forwards that node's

@@ -34,6 +34,7 @@ import (
 
 	"github.com/decred/dcrd/dcrec/secp256k1/v4"
 	logging "github.com/ipfs/go-log/v2"
+	libp2pcrypto "github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/event"
 	libp2phost "github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
@@ -43,6 +44,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/spacedatanetwork/sdn-server/internal/accessgate"
+	"github.com/spacedatanetwork/sdn-server/internal/addressbook"
 	"github.com/spacedatanetwork/sdn-server/internal/adminui"
 	"github.com/spacedatanetwork/sdn-server/internal/api"
 	"github.com/spacedatanetwork/sdn-server/internal/assetpin"
@@ -1764,6 +1766,27 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			homepageModels := handleHomepageModels(func() string { return cfg.Admin.IPFSAPIURL })
 			adminMux.HandleFunc("/api/v1/homepage/models", func(w http.ResponseWriter, r *http.Request) {
 				gateAdminOnlyHandler(w, r, homepageModels, authHandler, cfg.Admin.RequireAuth)
+			})
+			// The address book (owner 2026-10-06): a card enters it only signed
+			// by this node's identity key. Anyone reads the public entries; the
+			// private ones and every change are the operator's.
+			addressBook := &addressbook.Handler{
+				Book: addressbook.NewBook(addressbook.Options{
+					Dir: filepath.Join(cfg.Storage.Path, "address-book"),
+					Key: func() libp2pcrypto.PrivKey { return n.Host().Peerstore().PrivKey(n.Host().ID()) },
+				}),
+				ResolvePeer: func(id string) []byte { return heldNodeEPM(n, id) },
+				HeldProfiles: func() [][]byte {
+					var out [][]byte
+					for _, profile := range heldNodeProfiles(n) {
+						out = append(out, profile.Frame)
+					}
+					return out
+				},
+			}
+			adminMux.HandleFunc(addressbook.PublicPath, addressBook.ServePublic)
+			adminMux.HandleFunc(addressbook.OperatorPath, func(w http.ResponseWriter, r *http.Request) {
+				gateAdminOnlyHandler(w, r, addressBook, authHandler, cfg.Admin.RequireAuth)
 			})
 
 			// EPM (Entity Profile Message) API endpoints
