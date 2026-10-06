@@ -920,6 +920,26 @@ func VCardToEPM(vcardStr string) ([]byte, error) {
 	return result, nil
 }
 
+// SignKeyFromVCard returns the signing key a card advertises on its sign alias
+// (§21: the literal public key bytes, base64url), or nil. A compact card, like
+// the one in a node's QR code, names its node's signed record by this key.
+func SignKeyFromVCard(vcardStr string) []byte {
+	card, err := vcard.NewDecoder(strings.NewReader(vcardStr)).Decode()
+	if err != nil {
+		return nil
+	}
+	for _, field := range card[vcard.FieldEmail] {
+		local, ok := strings.CutSuffix(strings.TrimSpace(field.Value), "@"+signKeyAliasDomain)
+		if !ok || local == "" {
+			continue
+		}
+		if key, err := base64.RawURLEncoding.DecodeString(local); err == nil {
+			return key
+		}
+	}
+	return nil
+}
+
 // EmbeddedEPMFromVCard extracts a complete signed EPM payload from an SDN vCard
 // extension. A nil slice means the vCard has no embedded EPM payload.
 func EmbeddedEPMFromVCard(vcardStr string) ([]byte, error) {

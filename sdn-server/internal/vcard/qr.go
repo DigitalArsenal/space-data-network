@@ -58,19 +58,7 @@ func QRToVCard(pngData []byte) (string, error) {
 	if err != nil {
 		return "", errors.Join(ErrQRDecode, err)
 	}
-
-	bmp, err := gozxing.NewBinaryBitmapFromImage(img)
-	if err != nil {
-		return "", errors.Join(ErrQRDecode, err)
-	}
-
-	reader := qrcode.NewQRCodeReader()
-	result, err := reader.Decode(bmp, nil)
-	if err != nil {
-		return "", errors.Join(ErrQRDecode, err)
-	}
-
-	return result.GetText(), nil
+	return QRImageToVCard(img)
 }
 
 // EPMToQR renders an EPM as a scannable QR code.
@@ -140,6 +128,9 @@ func VCardToQRImage(vcardStr string, size int) (image.Image, error) {
 }
 
 // QRImageToVCard scans a QR code from an image.Image and extracts the vCard string.
+// A photo is read by finding the code in the picture. An image that is only
+// the code, such as the QR a node serves, is read whole: the finder misreads
+// the format bits of the large, dense codes this package renders.
 func QRImageToVCard(img image.Image) (string, error) {
 	if img == nil {
 		return "", ErrQRDecode
@@ -153,7 +144,10 @@ func QRImageToVCard(img image.Image) (string, error) {
 	reader := qrcode.NewQRCodeReader()
 	result, err := reader.Decode(bmp, nil)
 	if err != nil {
-		return "", errors.Join(ErrQRDecode, err)
+		var pureErr error
+		if result, pureErr = reader.Decode(bmp, map[gozxing.DecodeHintType]interface{}{gozxing.DecodeHintType_PURE_BARCODE: true}); pureErr != nil {
+			return "", errors.Join(ErrQRDecode, err)
+		}
 	}
 
 	return result.GetText(), nil
