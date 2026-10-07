@@ -2650,7 +2650,7 @@ func (s *FlatSQLStore) f2ProducerSourceProgress() ([]ProducerSourceProgress, err
 	type key struct{ peer, schema, provider, source string }
 	type acc struct {
 		p        ProducerSourceProgress
-		batches  map[string]int64 // batch -> updated
+		batches  map[string]int64 // batch -> when it was last written (ms)
 		batchCnt map[string]int64
 	}
 	agg := map[key]*acc{}
@@ -2676,7 +2676,16 @@ func (s *FlatSQLStore) f2ProducerSourceProgress() ([]ProducerSourceProgress, err
 		up := format2.EpochSeconds(l.UpdatedMs)
 		a.p.UpdatedAtUnix = max(a.p.UpdatedAtUnix, up)
 		a.p.LastSeenUnix = a.p.UpdatedAtUnix
-		a.batches[l.Batch] = max(a.batches[l.Batch], up)
+		// A batch's place is when it was last WRITTEN: the latest time one of
+		// its lanes first took a record. Not `updated`: an edition that
+		// supersedes old records (CAT keeps one per object) stamps the old
+		// batch's lanes as it removes them, a few ms after its own inserts,
+		// and that must not make the old pull the newest.
+		written := l.FirstSeenMs
+		if written <= 0 {
+			written = l.UpdatedMs
+		}
+		a.batches[l.Batch] = max(a.batches[l.Batch], written)
 		a.batchCnt[l.Batch] += l.Count
 	}
 	out := make([]ProducerSourceProgress, 0, len(agg))
