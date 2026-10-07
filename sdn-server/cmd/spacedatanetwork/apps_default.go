@@ -60,28 +60,8 @@ const dashboardPageID = "dashboard"
 func buildAppRegistry(cfg config.AppsConfig, dashboard []byte) (*apps.Registry, error) {
 	registry := apps.New(api.AppsRecordPrefix)
 
-	if len(dashboard) > 0 {
-		record, err := apps.BuildInlinePageRecord(
-			apps.AppIdentity{
-				ID:          dashboardAppID,
-				Name:        dashboardAppName,
-				Version:     versioninfo.Version(),
-				Description: dashboardAppDescription,
-			},
-			[]apps.InlinePage{{
-				ID:          dashboardPageID,
-				Title:       dashboardAppName,
-				Description: dashboardAppDescription,
-				HTML:        dashboard,
-				Entry:       true,
-			}},
-		)
-		if err != nil {
-			return nil, fmt.Errorf("apps: build dashboard $APP record: %w", err)
-		}
-		if _, err := registry.InstallRecord(apps.RuntimeServer, "/", record); err != nil {
-			return nil, fmt.Errorf("apps: install dashboard $APP record: %w", err)
-		}
+	if err := installDashboardRecord(registry, dashboard); err != nil {
+		return nil, err
 	}
 
 	for i, installed := range cfg.Installed {
@@ -137,4 +117,36 @@ func buildAppRegistry(cfg config.AppsConfig, dashboard []byte) (*apps.Registry, 
 		}
 	}
 	return registry, nil
+}
+
+// installDashboardRecord mints the dashboard's $APP record from the bytes
+// served at "/" and installs it, replacing the one before: called again
+// whenever a UI package switches the served dashboard (ui_packages.go), so
+// the record and the page stay the same bytes.
+func installDashboardRecord(registry *apps.Registry, dashboard []byte) error {
+	if len(dashboard) == 0 {
+		return nil
+	}
+	record, err := apps.BuildInlinePageRecord(
+		apps.AppIdentity{
+			ID:          dashboardAppID,
+			Name:        dashboardAppName,
+			Version:     versioninfo.Version(),
+			Description: dashboardAppDescription,
+		},
+		[]apps.InlinePage{{
+			ID:          dashboardPageID,
+			Title:       dashboardAppName,
+			Description: dashboardAppDescription,
+			HTML:        dashboard,
+			Entry:       true,
+		}},
+	)
+	if err != nil {
+		return fmt.Errorf("apps: build dashboard $APP record: %w", err)
+	}
+	if _, err := registry.InstallRecord(apps.RuntimeServer, "/", record); err != nil {
+		return fmt.Errorf("apps: install dashboard $APP record: %w", err)
+	}
+	return nil
 }

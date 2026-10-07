@@ -218,11 +218,21 @@ func (s *Signal) Verify(opts SignalVerifyOptions) error {
 	if opts.Kind != "" && s.Target.Kind != opts.Kind {
 		return fmt.Errorf("update signal targets kind %q, this bundle is %q", s.Target.Kind, opts.Kind)
 	}
-	if opts.Platform != "" && !platformMatches(s.Target.Platform, opts.Platform) {
-		return fmt.Errorf("update signal targets platform %q, this host is %q", s.Target.Platform, opts.Platform)
-	}
-	if opts.Arch != "" && !archMatches(s.Target.Arch, opts.Arch) {
-		return fmt.Errorf("update signal targets arch %q, this host is %q", s.Target.Arch, opts.Arch)
+	if s.Target.Kind == TargetKindUIBundle {
+		// The same files on every platform (see Manifest.assertTarget).
+		if s.Target.Platform != TargetAny || s.Target.Arch != TargetAny {
+			return fmt.Errorf("UI package signal targets %s/%s; a UI package targets any/any", s.Target.Platform, s.Target.Arch)
+		}
+	} else {
+		if s.Target.Platform == TargetAny || s.Target.Arch == TargetAny {
+			return errors.New("only a UI package signal may target any platform or arch")
+		}
+		if opts.Platform != "" && !platformMatches(s.Target.Platform, opts.Platform) {
+			return fmt.Errorf("update signal targets platform %q, this host is %q", s.Target.Platform, opts.Platform)
+		}
+		if opts.Arch != "" && !archMatches(s.Target.Arch, opts.Arch) {
+			return fmt.Errorf("update signal targets arch %q, this host is %q", s.Target.Arch, opts.Arch)
+		}
 	}
 	if s.Sequence <= opts.CurrentSequence {
 		return fmt.Errorf("update signal sequence %d is not newer than the installed sequence %d", s.Sequence, opts.CurrentSequence)
