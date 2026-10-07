@@ -1,18 +1,21 @@
 package main
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/peer"
 
+	"github.com/spacedatanetwork/sdn-server/internal/addressbook"
 	"github.com/spacedatanetwork/sdn-server/internal/api"
 	"github.com/spacedatanetwork/sdn-server/internal/auth"
 	"github.com/spacedatanetwork/sdn-server/internal/epm"
 	"github.com/spacedatanetwork/sdn-server/internal/node"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 	"github.com/spacedatanetwork/sdn-server/internal/trust"
+	"github.com/spacedatanetwork/sdn-server/internal/vcard"
 	"github.com/spacedatanetwork/sdn-server/plugins"
 )
 
@@ -122,6 +125,41 @@ func peerRegistryTrusts(registry api.TrustPeerRegistry, peerID string) bool {
 	}
 	id, err := peer.Decode(strings.TrimSpace(peerID))
 	return err == nil && registry.IsTrusted(id)
+}
+
+// heldProfileFrames is every held node profile as its size-prefixed frame.
+func heldProfileFrames(n *node.Node) [][]byte {
+	var out [][]byte
+	for _, profile := range heldNodeProfiles(n) {
+		out = append(out, profile.Frame)
+	}
+	return out
+}
+
+// contactCardReader reads contact cards the way the address book does and
+// takes only a signed profile that verifies and names its peer (owner
+// 2026-10-07: contacts are nodes and accounts). A card names its identity by
+// keys, not a peer ID (owner law 2026-08-04), so a card whose profile this
+// node does not hold is refused rather than guessed at.
+func contactCardReader(n *node.Node) peers.CardReader {
+	held := func() [][]byte { return heldProfileFrames(n) }
+	return func(card, qr string) (peers.ContactCard, error) {
+		text, _, refusal := addressbook.CardText(card, qr)
+		if text == "" {
+			return peers.ContactCard{}, errors.New(refusal)
+		}
+		if profile, _, _ := addressbook.CardProfile(text, held, ""); profile != nil && epm.VerifyEPMSignature(profile) == nil {
+			if named, err := epm.PeerIDFromEPM(profile); err == nil {
+				if id, err := peer.Decode(named); err == nil {
+					return peers.ContactCard{ID: id, VCard: text, Profile: profile}, nil
+				}
+			}
+		}
+		if len(vcard.SignKeyFromVCard(text)) > 0 {
+			return peers.ContactCard{}, errors.New("This node does not hold that card's signed profile yet.")
+		}
+		return peers.ContactCard{}, errors.New("That card names no node or account.")
+	}
 }
 
 // heldNodeProfiles joins the registry's live EPM copies with the directory's

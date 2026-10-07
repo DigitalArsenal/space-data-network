@@ -2,7 +2,9 @@ package api
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -301,6 +303,13 @@ func (h *CoreAPIHandler) handleID(w http.ResponseWriter, r *http.Request) {
 		"agent_version":     versioninfo.AgentVersion,
 		"suite_version":     versioninfo.SuiteVersion,
 		"standards_version": versioninfo.SpaceDataStandardsVersion,
+	}
+	// The node's publisher key, which signs what it publishes: the dashboard
+	// checks the FlatSQL engine this node serves against it before running it.
+	if provider, ok := h.publisher.(nodeSigningKeyProvider); ok && provider != nil {
+		if raw := provider.SigningKey(); len(raw) == ed25519.PrivateKeySize {
+			body["publisher_key"] = hex.EncodeToString(ed25519.PrivateKey(raw).Public().(ed25519.PublicKey))
+		}
 	}
 	// WHICH BUILD IS ANSWERING. The update helper's health gate passes only
 	// when these equal the bundle it has just installed (update.Identity):

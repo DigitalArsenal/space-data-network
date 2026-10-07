@@ -53,6 +53,7 @@ import {
   type DurableFlatSqlDatabase,
 } from './flatsql-io-store';
 import { sha384Digest } from './crypto/sha384';
+import { verifyNodeSignedModule } from './module-artifact';
 
 /**
  * Minimal record surface the engine store ingests. Structurally compatible
@@ -94,20 +95,21 @@ export const LOCAL_FLATSQL_DEFAULT_SOURCE = 'local';
 /**
  * How the shared engine instance is initialised (dashboard window model,
  * owner ruling 2026-09-03). The FIRST store opened in a JS context decides:
- * with `wasmPath` the engine is fetched from that directory with integrity
- * REQUIRED; without it, the Node/vitest lane loads the wasm beside flatsql's
- * own index.js with the integrity check skipped, exactly as before.
+ * with `wasmPath` the engine is the node's signed module artifact, verified
+ * before it runs; without it, the Node/vitest lane loads the wasm beside
+ * flatsql's own index.js with the integrity check skipped, exactly as before.
  */
 export interface LocalFlatSqlEngineOptions {
   /**
-   * Absolute URL of the directory serving `flatsql.wasm` and `integrity.json`
-   * (the node serves both same-origin under `/sdn-js`). flatsql fetches
-   * `${wasmPath}/integrity.json`, then `${wasmPath}/flatsql.wasm`, verifies
-   * the SHA-384 and fails closed on a mismatch or a missing manifest. MUST be
-   * absolute: inside a blob: worker a relative URL has nothing to resolve
-   * against.
+   * Absolute URL of the directory serving `flatsql.wasm` (the node serves it
+   * same-origin under `/sdn-js`), a module artifact the node signed with its
+   * publisher key (owner 2026-10-07). It is verified against `publisherKey`
+   * and fails closed. MUST be absolute: inside a blob: worker a relative URL
+   * has nothing to resolve against.
    */
   wasmPath?: string | null;
+  /** The node's publisher key (hex Ed25519, /api/v1/id `publisher_key`) the engine must be signed with. */
+  publisherKey?: string | null;
   /**
    * SHA-384 provider for the integrity check (base64 digest or raw digest
    * bytes). Defaults to the pure-JS digest in src/crypto/sha384.ts; functions
@@ -444,10 +446,9 @@ async function openDurableStandardDatabase(
  *
  * The FIRST call decides how the engine is loaded (there is exactly one
  * instance per context, so later callers inherit that decision):
- *   - `engine.wasmPath` set: `initFlatSQL({ io, wasmPath, computeSHA384,
- *     requireIntegrity: true })` — flatsql fetches `${wasmPath}/integrity.json`
- *     and `${wasmPath}/flatsql.wasm`, verifies the SHA-384 and FAILS CLOSED
- *     (the browser lane: the node serves both files same-origin).
+ *   - `engine.wasmPath` set: the node's signed engine artifact is fetched and
+ *     verified against `engine.publisherKey`, and flatsql runs the verified
+ *     module, FAILING CLOSED otherwise (the browser lane).
  *   - otherwise `initFlatSQL({ skipIntegrityCheck: true, io })` — the
  *     Node/vitest lane, unchanged.
  * A failed initialisation leaves no handles behind, so it is forgotten and the
@@ -460,15 +461,56 @@ export async function getSharedFlatSql(engine?: LocalFlatSqlEngineOptions | null
     const computeSHA384 = engine?.computeSHA384 ?? (wasmPath ? defaultSha384Provider() : undefined);
     // flatsql >= 1.4.5 declares `io` on InitOptions, so this is a typed call:
     // the seven imports are bound from the router at instantiation, once.
-    const pending = import('flatsql/wasm').then(({ initFlatSQL }) => (wasmPath
-      ? initFlatSQL({ io, wasmPath, computeSHA384, requireIntegrity: true })
-      : initFlatSQL({ skipIntegrityCheck: true, io })));
+    const pending = import('flatsql/wasm').then(async ({ initFlatSQL }) => {
+      if (!wasmPath) return initFlatSQL({ skipIntegrityCheck: true, io });
+      const engineUrl = `${wasmPath}/flatsql.wasm`;
+      const module = await fetchSignedEngine(engineUrl, engine?.publisherKey);
+      const integrity = base64(sha384Digest(module));
+      return withEngineBytes(engineUrl, module, () => initFlatSQL({ io, wasmPath, integrity, computeSHA384, requireIntegrity: true }));
+    });
     sharedFlatSqlPromise = pending;
     pending.catch(() => {
       if (sharedFlatSqlPromise === pending) sharedFlatSqlPromise = null;
     });
   }
   return sharedFlatSqlPromise;
+}
+
+/**
+ * The engine module from the node's signed artifact. Refuses it unless the
+ * node's publisher key signed exactly these bytes (src/module-artifact.ts).
+ */
+async function fetchSignedEngine(url: string, publisherKey: string | null | undefined): Promise<Uint8Array> {
+  if (!publisherKey) throw new Error('The node reported no publisher key, so its engine cannot be checked.');
+  const response = await fetch(url, { credentials: 'same-origin' });
+  if (!response.ok) throw new Error(`The engine is not available (${response.status}).`);
+  return verifyNodeSignedModule(new Uint8Array(await response.arrayBuffer()), [publisherKey]).module;
+}
+
+/**
+ * flatsql 2.0.3 fetches its own binary from `${wasmPath}/flatsql.wasm`; while
+ * it starts, that one URL answers with the verified module instead, so the
+ * engine is downloaded once and what runs is what was checked. flatsql still
+ * compares it with `integrity`, the SHA-384 of the same bytes.
+ */
+async function withEngineBytes<T>(url: string, module: Uint8Array, start: () => Promise<T>): Promise<T> {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+    const asked = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    if (asked === url) return Promise.resolve(new Response(module.slice().buffer, { headers: { 'content-type': 'application/wasm' } }));
+    return realFetch(input, init);
+  }) as typeof fetch;
+  try {
+    return await start();
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
+function base64(bytes: Uint8Array): string {
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
 }
 
 /** Trimmed, trailing-slash-free engine directory URL, or null for the default lane. */

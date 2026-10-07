@@ -20,6 +20,10 @@ type APIHandler struct {
 	registry *Registry
 	gater    *TrustedConnectionGater
 	mux      *http.ServeMux
+
+	// ReadCard reads a contact card for importContact; nil leaves only
+	// legacy X-SDN cards importable.
+	ReadCard CardReader
 }
 
 // NewAPIHandler creates a new API handler.
@@ -853,10 +857,16 @@ func (h *APIHandler) handleImport(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, settings)
 }
 
-// handleVCardImport handles POST /api/peers/import/vcard
+// handleVCardImport handles POST /api/peers/import/vcard: a text body of
+// legacy X-SDN cards, or a JSON body {vcard} or {qr} with one contact card
+// (importContact).
 func (h *APIHandler) handleVCardImport(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+		h.importContact(w, r)
 		return
 	}
 

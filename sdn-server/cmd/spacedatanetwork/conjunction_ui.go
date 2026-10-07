@@ -12,6 +12,7 @@ package main
 // surfaces are Iris's (ui-oracle) domain.
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
@@ -22,8 +23,12 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/auth"
+	"github.com/spacedatanetwork/sdn-server/internal/modulesign"
+	"github.com/spacedatanetwork/sdn-server/internal/node"
 	"github.com/spacedatanetwork/sdn-server/internal/vcard"
 )
 
@@ -81,19 +86,15 @@ var dashboardCSPRaw string
 //go:embed embedded/fonts/*.woff2
 var dashboardFonts embed.FS
 
-// flatsqlBrowserWasm / flatsqlBrowserIntegrity are the browser build of the
-// FlatSQL engine (the same engine core the node runs under WasmEdge) and its
-// SHA-384 integrity file, served same-origin at /sdn-js/flatsql.wasm and
-// /sdn-js/integrity.json. The dashboard's local FlatSQL window is created
-// from them: the node hands over raw record frames, the browser engine
-// projects them. build-dashboard.mjs regenerates both files from the flatsql
-// pin on every embed build (embed == pin), so they are never hand-edited.
+// flatsqlBrowserWasm is the browser build of the FlatSQL engine (the same
+// engine core the node runs under WasmEdge). The dashboard's local FlatSQL
+// window is created from it: the node hands over raw record frames, the
+// browser engine projects them. build-dashboard.mjs regenerates it from the
+// flatsql pin on every embed build (embed == pin), so it is never hand-edited.
+// The node serves it signed (browserEngine).
 //
 //go:embed embedded/sdn-js/flatsql.wasm
 var flatsqlBrowserWasm []byte
-
-//go:embed embedded/sdn-js/integrity.json
-var flatsqlBrowserIntegrity []byte
 
 // dashboardCSP returns the trimmed, build-generated CSP for the "/" dashboard.
 func dashboardCSP() string { return strings.TrimSpace(dashboardCSPRaw) }
@@ -177,59 +178,112 @@ func makeFontsHandler() http.Handler {
 	})
 }
 
-// sdnJsAsset is one same-origin browser-engine artifact under /sdn-js/.
-type sdnJsAsset struct {
-	body        []byte
-	contentType string
-	etag        string
-}
+// dashboardMedia is the video the dashboard plays (the Node Directory
+// explainer, owner 2026-10-07), served same-origin at /media/<name>.
+// build-dashboard.mjs regenerates the folder from the dashboard build, and
+// every name carries a content hash, so a copy is cached for good.
+//
+//go:embed embedded/media
+var dashboardMedia embed.FS
 
-// sdnJsAssetETag is a strong ETag from the first 16 hex characters of the
-// body's SHA-256: stable across restarts, changes with the embedded bytes.
-func sdnJsAssetETag(body []byte) string {
-	sum := sha256.Sum256(body)
-	return `"` + hex.EncodeToString(sum[:])[:16] + `"`
-}
+// mediaTypes are the files /media/ serves.
+var mediaTypes = map[string]string{".mp4": "video/mp4"}
 
-// sdnJsAssets is the exact set of names /sdn-js/ serves: the flatsql
-// browser engine and its integrity file. Nothing else, no nested paths.
-func sdnJsAssets() map[string]sdnJsAsset {
-	return map[string]sdnJsAsset{
-		"flatsql.wasm":   {body: flatsqlBrowserWasm, contentType: "application/wasm", etag: sdnJsAssetETag(flatsqlBrowserWasm)},
-		"integrity.json": {body: flatsqlBrowserIntegrity, contentType: "application/json", etag: sdnJsAssetETag(flatsqlBrowserIntegrity)},
-	}
-}
-
-// makeSdnJsAssetsHandler serves /sdn-js/flatsql.wasm and
-// /sdn-js/integrity.json (GET/HEAD only, public, cacheable for a day, strong
-// ETag with If-None-Match). Every other name under /sdn-js/ is a 404. The
-// paths are exactly what flatsql's loader requests for
-// wasmPath=`${origin}/sdn-js`.
-func makeSdnJsAssetsHandler() http.Handler {
-	assets := sdnJsAssets()
+// makeMediaHandler serves /media/<name> (GET/HEAD only, public, immutable,
+// with byte ranges, which video players ask for).
+func makeMediaHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		name := strings.TrimPrefix(r.URL.Path, "/sdn-js/")
-		asset, ok := assets[name]
-		if !ok || name == "" || strings.Contains(name, "/") || len(asset.body) == 0 {
+		name := strings.TrimPrefix(r.URL.Path, "/media/")
+		contentType := mediaTypes[path.Ext(name)]
+		if name == "" || strings.Contains(name, "/") || contentType == "" {
 			http.NotFound(w, r)
 			return
 		}
-		w.Header().Set("Content-Type", asset.contentType)
-		w.Header().Set("Cache-Control", "public, max-age=86400")
-		w.Header().Set("ETag", asset.etag)
+		body, err := fs.ReadFile(dashboardMedia, path.Join("embedded/media", name))
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", contentType)
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		if match := r.Header.Get("If-None-Match"); match != "" && strings.Contains(match, asset.etag) {
+		http.ServeContent(w, r, name, time.Time{}, bytes.NewReader(body))
+	})
+}
+
+// browserEngine is the FlatSQL engine as this node serves it at
+// /sdn-js/flatsql.wasm: a module artifact, the wasm with an appended $REC
+// trailer whose $MBL listing carries this node's signature (owner 2026-10-07:
+// the engine ships like every other module, with no checksum file beside it).
+// It is signed once, on first request, with the node's publisher key, and the
+// signature is audited like every other one over that key. The dashboard
+// checks it against the publisher_key /api/v1/id reports before running it.
+type browserEngine struct {
+	once sync.Once
+	node *node.Node
+	body []byte
+	etag string
+}
+
+func (e *browserEngine) artifact() ([]byte, string) {
+	e.once.Do(func() {
+		signer, err := modulesign.NewSigner(e.node.SigningKey(), e.node.PeerID().String(), modulesign.NewAuditLog(modulesign.DefaultAuditPath()))
+		if err != nil {
+			log.Errorf("Dashboard engine not served: %v", err)
+			return
+		}
+		signed, err := signer.Sign(modulesign.Request{Artifact: flatsqlBrowserWasm, Requester: "node:dashboard-engine"})
+		if err != nil {
+			log.Errorf("Dashboard engine not served: signing failed: %v", err)
+			return
+		}
+		body, err := modulesign.Artifact(flatsqlBrowserWasm, signed.Entry)
+		if err != nil {
+			log.Errorf("Dashboard engine not served: %v", err)
+			return
+		}
+		sum := sha256.Sum256(body)
+		e.body, e.etag = body, `"`+hex.EncodeToString(sum[:])[:16]+`"`
+	})
+	return e.body, e.etag
+}
+
+// makeSdnJsAssetsHandler serves /sdn-js/flatsql.wasm, the signed engine
+// (GET/HEAD only, public, cacheable for a day, strong ETag with
+// If-None-Match). Every other name under /sdn-js/ is a 404. The path is what
+// sdn-js's engine loader fetches for wasmPath=`${origin}/sdn-js`.
+func makeSdnJsAssetsHandler(n *node.Node) http.Handler {
+	engine := &browserEngine{node: n}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if strings.TrimPrefix(r.URL.Path, "/sdn-js/") != "flatsql.wasm" {
+			http.NotFound(w, r)
+			return
+		}
+		body, etag := engine.artifact()
+		if len(body) == 0 {
+			http.Error(w, "the dashboard engine is not available on this node", http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/wasm")
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		w.Header().Set("ETag", etag)
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		if match := r.Header.Get("If-None-Match"); match != "" && strings.Contains(match, etag) {
 			w.WriteHeader(http.StatusNotModified)
 			return
 		}
-		w.Header().Set("Content-Length", strconv.Itoa(len(asset.body)))
+		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
 		w.WriteHeader(http.StatusOK)
 		if r.Method != http.MethodHead {
-			_, _ = w.Write(asset.body)
+			_, _ = w.Write(body)
 		}
 	})
 }

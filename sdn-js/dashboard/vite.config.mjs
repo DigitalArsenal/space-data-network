@@ -372,7 +372,10 @@ export default defineConfig({
       enforce: 'post',
       config(config) {
         config.build = config.build ?? {};
-        config.build.assetsInlineLimit = (filePath) => !filePath.endsWith('.wasm');
+        // Video stays out of the page too: the node binary embeds it beside
+        // the page and serves it at /media/ (build-dashboard.mjs), so it costs
+        // nothing until a reader opens it.
+        config.build.assetsInlineLimit = (filePath) => !/\.(wasm|mp4)$/.test(filePath);
       },
     },
     assertNoCssHashCollision()
@@ -441,7 +444,11 @@ export default defineConfig({
     emptyOutDir: true,
     rollupOptions: {
       input: path.resolve(appRoot, 'index.html'),
-      output: { entryFileNames: 'index.js' }
+      output: {
+        entryFileNames: 'index.js',
+        // The node serves embedded video at /media/<name>-<hash>.mp4.
+        assetFileNames: (asset) => (/\.mp4$/.test(asset.names?.[0] ?? asset.name ?? '') ? 'media/[name]-[hash][extname]' : 'assets/[name]-[hash][extname]')
+      }
     }
   }
 });

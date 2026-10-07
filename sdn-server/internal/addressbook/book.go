@@ -58,8 +58,9 @@ func NewBook(o Options) *Book {
 	return &Book{store: store{dir: o.Dir}, key: o.Key, now: o.Now, newID: o.NewID}
 }
 
-// Entries lists the live entries, oldest first; private ones only on request.
-func (b *Book) Entries(withPrivate bool) ([]Entry, error) {
+// Entries lists the live entries, oldest first. Every entry is public (owner
+// 2026-10-07: "all should be visible").
+func (b *Book) Entries() ([]Entry, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	records, err := b.held()
@@ -68,7 +69,7 @@ func (b *Book) Entries(withPrivate bool) ([]Entry, error) {
 	}
 	out := make([]Entry, 0, len(records))
 	for _, r := range records {
-		if !r.Deleted && (withPrivate || r.Visibility == Public) {
+		if !r.Deleted {
 			out = append(out, entryOf(r))
 		}
 	}
@@ -83,8 +84,8 @@ func (b *Book) Entries(withPrivate bool) ([]Entry, error) {
 
 // Add signs a card into the book. A card already in it is returned as it is;
 // a newer card of a node already in it becomes that entry's next revision.
-// visibility nil takes the operator's default. created reports a new entry.
-func (b *Book) Add(profile []byte, visibility *Visibility) (entry Entry, created bool, err error) {
+// created reports a new entry.
+func (b *Book) Add(profile []byte) (entry Entry, created bool, err error) {
 	if profile, err = sizePrefixedEPM(profile); err != nil {
 		return Entry{}, false, err
 	}
@@ -115,40 +116,12 @@ func (b *Book) Add(profile []byte, visibility *Visibility) (entry Entry, created
 		next.Profile, next.ProfileSHA256 = profile, sum
 		next.UpdatedAt = after(now, next.UpdatedAt)
 	} else {
-		next = Record{EntryID: b.newID(), Profile: profile, ProfileSHA256: sum, CreatedAt: now, UpdatedAt: now}
-		if next.Visibility, err = b.store.defaultVisibility(); err != nil {
-			return Entry{}, false, err
-		}
-	}
-	if visibility != nil {
-		next.Visibility = *visibility
+		next = Record{EntryID: b.newID(), Profile: profile, ProfileSHA256: sum, CreatedAt: now, UpdatedAt: now, Visibility: Public}
 	}
 	if err := b.commit(records, next); err != nil {
 		return Entry{}, false, err
 	}
 	return entryOf(next), !found, nil
-}
-
-// SetVisibility changes who may read an entry.
-func (b *Book) SetVisibility(id string, v Visibility) (Entry, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	records, err := b.held()
-	if err != nil {
-		return Entry{}, err
-	}
-	r, ok := records[id]
-	if !ok || r.Deleted {
-		return Entry{}, ErrNotFound
-	}
-	if r.Visibility != v {
-		r.Visibility = v
-		r.UpdatedAt = after(b.millis(), r.UpdatedAt)
-		if err := b.commit(records, r); err != nil {
-			return Entry{}, err
-		}
-	}
-	return entryOf(r), nil
 }
 
 // Remove revokes an entry with a signed tombstone.
@@ -166,19 +139,6 @@ func (b *Book) Remove(id string) error {
 	r.Deleted = true
 	r.UpdatedAt = after(b.millis(), r.UpdatedAt)
 	return b.commit(records, r)
-}
-
-// DefaultVisibility is the visibility of new entries.
-func (b *Book) DefaultVisibility() (Visibility, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.store.defaultVisibility()
-}
-
-func (b *Book) SetDefaultVisibility(v Visibility) error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.store.setDefaultVisibility(v)
 }
 
 // held loads the book once; this Book is its only writer. Revisions another
@@ -199,7 +159,19 @@ func (b *Book) held() (map[string]Record, error) {
 		}
 	}
 	b.records = records
-	return records, nil
+	// An entry signed private before every entry became public is signed
+	// again as public, once. A node that cannot sign still lists it.
+	for _, r := range records {
+		if r.Deleted || r.Visibility == Public {
+			continue
+		}
+		r.Visibility = Public
+		r.UpdatedAt = after(b.millis(), r.UpdatedAt)
+		if err := b.commit(b.records, r); err != nil {
+			break
+		}
+	}
+	return b.records, nil
 }
 
 // commit signs r and saves it with the rest; nothing changes if either fails.

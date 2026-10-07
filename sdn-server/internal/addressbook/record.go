@@ -1,9 +1,9 @@
-// Package addressbook is a node's address book (owner 2026-10-06): the
-// contact cards the node has signed. A card is in the book only through the
-// node's $ABA attestation, made with its libp2p identity key and kept with the
-// card, so anyone can check an entry against the node's peer ID alone. Each
-// entry is public or private; private entries never leave the operator's
-// routes.
+// Package addressbook is a node's Node Directory (owner 2026-10-06, named
+// 2026-10-07): the contact cards the node has signed. A card is in it only
+// through the node's $ABA attestation, made with its libp2p identity key and
+// kept with the card, so anyone can check an entry against the node's peer ID
+// alone. Every entry is public (owner 2026-10-07: "all should be visible");
+// $ABA's VISIBILITY is always public in what this node signs.
 package addressbook
 
 import (
