@@ -48,11 +48,17 @@ func (s *UserStore) deleteDelegation(sessionPub ed25519.PublicKey) error {
 }
 
 // liveDelegations drops the expired rows and returns the rest, keyed like
-// Handler.delegations.
+// Handler.delegations. A row that ends past the current ceiling (issued under
+// a longer limit) is pulled back to it, in the table too, so a restart never
+// lengthens a session.
 func (s *UserStore) liveDelegations(now time.Time) (map[string]delegation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, err := s.db.Exec(`DELETE FROM session_delegations WHERE expires_at_ms <= ?`, now.UnixMilli()); err != nil {
+		return nil, err
+	}
+	ceiling := now.Add(MaxDelegation).UnixMilli()
+	if _, err := s.db.Exec(`UPDATE session_delegations SET expires_at_ms = ? WHERE expires_at_ms > ?`, ceiling, ceiling); err != nil {
 		return nil, err
 	}
 	rows, err := s.db.Query(`SELECT session_pub, wallet_pub, expires_at_ms FROM session_delegations`)

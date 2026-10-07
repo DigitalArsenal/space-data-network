@@ -38,10 +38,14 @@ import (
 // signature the wallet's sign-in key makes.
 const DelegationPrefix = "SDN-RPC-DELEGATION/v1"
 
-// MaxDelegation is the longest a session key may be delegated for. The
-// browser asks for a week and keeps the key across page loads (sdn-js
-// sealed-transport.ts); the extra day absorbs clock skew between the two.
-const MaxDelegation = 8 * 24 * time.Hour
+// MaxDelegation is the longest a session key may be delegated for (owner
+// 2026-10-07: "shorten the session to 24 hours"). The browser asks for a day
+// and keeps the key across page loads (sdn-js sealed-transport.ts).
+const MaxDelegation = 24 * time.Hour
+
+// delegationSkew is how far past MaxDelegation a browser's expiry may land:
+// its clock and this node's are not the same clock.
+const delegationSkew = 5 * time.Minute
 
 // DelegationDigest is the 32 bytes the wallet signs to delegate sessionPub.
 func DelegationDigest(challenge []byte, sessionPub ed25519.PublicKey, expiresAtMs uint64) []byte {
@@ -102,8 +106,8 @@ func (h *Handler) handleDelegate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	expiresAt := time.UnixMilli(int64(req.ExpiresAtMs)).UTC()
-	if !expiresAt.After(now) || expiresAt.After(now.Add(MaxDelegation)) {
-		writeJSON(w, http.StatusBadRequest, errorResponse{Code: "invalid_expiry", Message: "a delegation must expire within 8 days"})
+	if !expiresAt.After(now) || expiresAt.After(now.Add(MaxDelegation+delegationSkew)) {
+		writeJSON(w, http.StatusBadRequest, errorResponse{Code: "invalid_expiry", Message: "a delegation must expire within 24 hours"})
 		return
 	}
 
