@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import {
+  assertMachOExecutable,
   DAEMON_BINARY_MIN_BYTES,
   ReleaseBinaryRefusal,
   acquireExclusiveLock,
@@ -332,4 +333,33 @@ test('a lock left by a dead process is reclaimed, not honoured forever', () => {
     assert.match(readFileSync(lock, 'utf8'), new RegExp(`"pid":${process.pid}`));
     release();
   });
+});
+
+/**
+ * A darwin release (the local nodes, owner 2026-10-07: "all upgrades need to
+ * be in place like the Kubo upgrades"): a 64-bit arm64 Mach-O executable whose
+ * one segment ends at `segmentEnd`.
+ */
+function makeMachO({ size = 24 * 1024 * 1024, segmentEnd = size, cpuType = 0x0100000c, fileType = 2 } = {}) {
+  const bytes = Buffer.alloc(size);
+  bytes.writeUInt32LE(0xfeedfacf, 0);
+  bytes.writeUInt32LE(cpuType, 4);
+  bytes.writeUInt32LE(fileType, 12);
+  bytes.writeUInt32LE(1, 16); // ncmds
+  bytes.writeUInt32LE(72, 20); // sizeofcmds: one LC_SEGMENT_64 with no sections
+  bytes.writeUInt32LE(0x19, 32); // LC_SEGMENT_64
+  bytes.writeUInt32LE(72, 36);
+  bytes.writeBigUInt64LE(0n, 32 + 40); // fileoff
+  bytes.writeBigUInt64LE(BigInt(segmentEnd), 32 + 48); // filesize
+  return bytes;
+}
+
+test('a darwin release is refused when truncated or built for another arch, and passes whole', () => {
+  assert.doesNotThrow(() => assertMachOExecutable(makeMachO(), { path: 'whole', arch: 'arm64' }));
+  assert.throws(
+    () => assertMachOExecutable(makeMachO({ segmentEnd: 24 * 1024 * 1024 + 4096 }), { path: 'cut', arch: 'arm64' }),
+    /TRUNCATED: it is 25165824B, but its segments end at 25169920B/,
+  );
+  assert.throws(() => assertMachOExecutable(makeMachO({ cpuType: 0x01000007 }), { path: 'x86', arch: 'arm64' }), /not arm64/);
+  assert.throws(() => assertMachOExecutable(makeElf(), { path: 'elf', arch: 'arm64' }), /not a 64-bit Mach-O/);
 });
