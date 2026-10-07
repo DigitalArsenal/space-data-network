@@ -1,9 +1,14 @@
 package trust
 
-// Trust Rule Policies — `$TRP` (spacedatastandards.org v1.207.0).
+// Trust Rule Policies — `$TRP` (spacedatastandards.org v1.237.0).
 //
-// A policy is a compound rule set the node evaluates against subjects on an
-// interval (EVALUATION_INTERVAL_MS, 0.1 Hz by default) and early on events.
+// A node's trust rules are ONE table (owner 2026-10-07): each row is a named
+// rule of one kind with the values that kind needs, and a subject meets the
+// rules only when every row passes. There is no OR and no nesting. The table
+// is the `$TRP` policy TableID: its root group's PREDICATES are the rows,
+// joined by All. The node evaluates it against subjects on an interval
+// (EVALUATION_INTERVAL_MS, 0.1 Hz by default) and early on events.
+//
 // It is an SDS record like every other fact the node holds: encoded as the
 // `$TRP` FlatBuffer, signed in BOTH forms (the FlatBuffer bytes and the
 // canonical IDL-order JSON rendering — the dual-format signing law), stored
@@ -34,6 +39,11 @@ const (
 	DefaultEvaluationIntervalMs uint32 = 10000
 	// MinEvaluationIntervalMs bounds how hard a policy may drive the engine.
 	MinEvaluationIntervalMs uint32 = 250
+
+	// TableID is the POLICY_ID of the node's trust rules table.
+	TableID = "trust-rules"
+	// tableGroupID names the table's one group of rows.
+	tableGroupID = "rules"
 )
 
 // PredicateKind names the four `$TRP` predicate kinds.
@@ -46,13 +56,11 @@ const (
 	PredicateTrustedConnections PredicateKind = "TrustedConnections"
 )
 
-// Combinator joins a group's predicates and subgroups.
+// Combinator joins the rules. Every rule must pass, so All is the only
+// combinator the engine accepts; `$TRP` retired Any.
 type Combinator string
 
-const (
-	CombinatorAll Combinator = "All"
-	CombinatorAny Combinator = "Any"
-)
+const CombinatorAll Combinator = "All"
 
 // Asset identifies a chain and, optionally, a token on it. CHAIN_ID is a
 // CAIP-2 style identifier ("eip155:1", "solana:…"), never a vendor name.
@@ -63,7 +71,8 @@ type Asset struct {
 	Decimals     uint32 `json:"DECIMALS,omitempty"`
 }
 
-// Predicate is one typed rule.
+// Predicate is one row of the rules table: a named rule of one kind. Fields
+// follow `$TRP` IDL order (NAME is the newest, so it is last).
 type Predicate struct {
 	ID             string        `json:"PREDICATE_ID"`
 	Kind           PredicateKind `json:"KIND"`
@@ -74,14 +83,14 @@ type Predicate struct {
 	RequiredCount  uint32        `json:"REQUIRED_COUNT,omitempty"`
 	TrusterIDs     []string      `json:"TRUSTER_IDS,omitempty"`
 	MinEdgeWeight  float64       `json:"MIN_EDGE_WEIGHT,omitempty"`
+	Name           string        `json:"NAME,omitempty"`
 }
 
-// Group is a compound rule: predicates and nested groups under one combinator.
+// Group holds the rules, all of which must pass.
 type Group struct {
 	ID         string      `json:"GROUP_ID"`
 	Combinator Combinator  `json:"COMBINATOR"`
 	Predicates []Predicate `json:"PREDICATES,omitempty"`
-	Groups     []Group     `json:"GROUPS,omitempty"`
 }
 
 // Policy mirrors `$TRP` field for field.
@@ -102,7 +111,8 @@ type Policy struct {
 	Signature []byte `json:"EVALUATOR_SIGNATURE,omitempty"`
 }
 
-// Validate refuses a policy the engine could not evaluate honestly.
+// Validate refuses a policy the engine could not evaluate honestly. A table
+// with no rows is valid: there is nothing to meet.
 func (p Policy) Validate() error {
 	if strings.TrimSpace(p.ID) == "" {
 		return errors.New("trust: POLICY_ID required")
@@ -110,49 +120,41 @@ func (p Policy) Validate() error {
 	if p.EvaluationIntervalMs != 0 && p.EvaluationIntervalMs < MinEvaluationIntervalMs {
 		return fmt.Errorf("trust: EVALUATION_INTERVAL_MS below %d", MinEvaluationIntervalMs)
 	}
-	count := 0
-	var walk func(g Group, depth int) error
-	walk = func(g Group, depth int) error {
-		if depth > 8 {
-			return errors.New("trust: rule groups nest deeper than 8")
-		}
-		if g.Combinator != CombinatorAll && g.Combinator != CombinatorAny {
-			return fmt.Errorf("trust: group %q has no combinator", g.ID)
-		}
-		for _, pr := range g.Predicates {
-			count++
-			switch pr.Kind {
-			case PredicateMinValueLocked, PredicateValueForDuration:
-				if pr.MinValue == 0 {
-					return fmt.Errorf("trust: predicate %q needs MIN_VALUE", pr.ID)
-				}
-				if pr.Kind == PredicateValueForDuration && pr.MinHeldSeconds == 0 {
-					return fmt.Errorf("trust: predicate %q needs MIN_HELD_SECONDS", pr.ID)
-				}
-			case PredicateAllowedTokens:
-				if len(pr.Assets) == 0 {
-					return fmt.Errorf("trust: predicate %q needs ASSETS", pr.ID)
-				}
-			case PredicateTrustedConnections:
-				if pr.RequiredCount == 0 {
-					return fmt.Errorf("trust: predicate %q needs REQUIRED_COUNT", pr.ID)
-				}
-			default:
-				return fmt.Errorf("trust: predicate %q has unknown KIND %q", pr.ID, pr.Kind)
-			}
-		}
-		for _, sub := range g.Groups {
-			if err := walk(sub, depth+1); err != nil {
-				return err
-			}
-		}
-		return nil
+	if p.Root.Combinator != "" && p.Root.Combinator != CombinatorAll {
+		return errors.New("trust: rules are never alternatives; every rule must pass")
 	}
-	if err := walk(p.Root, 0); err != nil {
-		return err
-	}
-	if count == 0 {
-		return errors.New("trust: a policy needs at least one predicate")
+	seen := map[string]bool{}
+	for _, pr := range p.Root.Predicates {
+		if strings.TrimSpace(pr.ID) == "" {
+			return errors.New("trust: every rule needs a PREDICATE_ID")
+		}
+		if seen[pr.ID] {
+			return fmt.Errorf("trust: two rules share PREDICATE_ID %q", pr.ID)
+		}
+		seen[pr.ID] = true
+		label := pr.Name
+		if label == "" {
+			label = pr.ID
+		}
+		switch pr.Kind {
+		case PredicateMinValueLocked, PredicateValueForDuration:
+			if pr.MinValue == 0 {
+				return fmt.Errorf("trust: rule %q needs a value", label)
+			}
+			if pr.Kind == PredicateValueForDuration && pr.MinHeldSeconds == 0 {
+				return fmt.Errorf("trust: rule %q needs a holding time", label)
+			}
+		case PredicateAllowedTokens:
+			if len(pr.Assets) == 0 {
+				return fmt.Errorf("trust: rule %q needs a token", label)
+			}
+		case PredicateTrustedConnections:
+			if pr.RequiredCount == 0 {
+				return fmt.Errorf("trust: rule %q needs a count", label)
+			}
+		default:
+			return fmt.Errorf("trust: rule %q has unknown KIND %q", label, pr.Kind)
+		}
 	}
 	return nil
 }
@@ -178,12 +180,6 @@ func predicateKindFromName(name string) PredicateKind {
 	}
 }
 
-func combinatorFromName(name string) Combinator {
-	if name == string(CombinatorAny) {
-		return CombinatorAny
-	}
-	return CombinatorAll
-}
 
 /* ── FlatBuffer encoding ─────────────────────────────────────────────── */
 
@@ -230,6 +226,7 @@ func buildPredicate(b *flatbuffers.Builder, p Predicate) flatbuffers.UOffsetT {
 		assets = b.EndVector(len(offs))
 	}
 	trusters := stringVector(b, p.TrusterIDs, sdstrp.TRPPredicateStartTRUSTER_IDSVector)
+	name := trustStringOffset(b, p.Name)
 	sdstrp.TRPPredicateStart(b)
 	sdstrp.TRPPredicateAddPREDICATE_ID(b, id)
 	sdstrp.TRPPredicateAddKIND(b, sdstrp.EnumValuestrpPredicateKind[string(p.Kind)])
@@ -244,12 +241,13 @@ func buildPredicate(b *flatbuffers.Builder, p Predicate) flatbuffers.UOffsetT {
 		sdstrp.TRPPredicateAddTRUSTER_IDS(b, trusters)
 	}
 	sdstrp.TRPPredicateAddMIN_EDGE_WEIGHT(b, p.MinEdgeWeight)
+	sdstrp.TRPPredicateAddNAME(b, name)
 	return sdstrp.TRPPredicateEnd(b)
 }
 
 func buildGroup(b *flatbuffers.Builder, g Group) flatbuffers.UOffsetT {
 	id := trustStringOffset(b, g.ID)
-	var preds, subs flatbuffers.UOffsetT
+	var preds flatbuffers.UOffsetT
 	if len(g.Predicates) > 0 {
 		offs := make([]flatbuffers.UOffsetT, len(g.Predicates))
 		for i, p := range g.Predicates {
@@ -261,25 +259,11 @@ func buildGroup(b *flatbuffers.Builder, g Group) flatbuffers.UOffsetT {
 		}
 		preds = b.EndVector(len(offs))
 	}
-	if len(g.Groups) > 0 {
-		offs := make([]flatbuffers.UOffsetT, len(g.Groups))
-		for i, sub := range g.Groups {
-			offs[i] = buildGroup(b, sub)
-		}
-		sdstrp.TRPGroupStartGROUPSVector(b, len(offs))
-		for i := len(offs) - 1; i >= 0; i-- {
-			b.PrependUOffsetT(offs[i])
-		}
-		subs = b.EndVector(len(offs))
-	}
 	sdstrp.TRPGroupStart(b)
 	sdstrp.TRPGroupAddGROUP_ID(b, id)
-	sdstrp.TRPGroupAddCOMBINATOR(b, sdstrp.EnumValuestrpCombinator[string(g.Combinator)])
+	sdstrp.TRPGroupAddCOMBINATOR(b, sdstrp.EnumValuestrpCombinator[string(CombinatorAll)])
 	if preds != 0 {
 		sdstrp.TRPGroupAddPREDICATES(b, preds)
-	}
-	if subs != 0 {
-		sdstrp.TRPGroupAddGROUPS(b, subs)
 	}
 	return sdstrp.TRPGroupEnd(b)
 }
@@ -326,6 +310,7 @@ func readPredicate(p *sdstrp.TRPPredicate) Predicate {
 		MinHeldSeconds: p.MIN_HELD_SECONDS(),
 		RequiredCount:  p.REQUIRED_COUNT(),
 		MinEdgeWeight:  p.MIN_EDGE_WEIGHT(),
+		Name:           string(p.NAME()),
 	}
 	for i := 0; i < p.ASSETSLength(); i++ {
 		var a sdstrp.TRPAsset
@@ -339,21 +324,20 @@ func readPredicate(p *sdstrp.TRPPredicate) Predicate {
 	return out
 }
 
-func readGroup(g *sdstrp.TRPGroup) Group {
-	out := Group{ID: string(g.GROUP_ID()), Combinator: combinatorFromName(g.COMBINATOR().String())}
+// readGroup reads the rules. A record that nests groups or joins rules
+// with Any (both retired in `$TRP`) is refused: its meaning has no rows.
+func readGroup(g *sdstrp.TRPGroup) (Group, error) {
+	if g.GROUPSLength() > 0 || g.COMBINATOR().String() != string(CombinatorAll) {
+		return Group{}, errors.New("trust: TRP record nests rules or joins them with Any, which the rules table does not hold")
+	}
+	out := Group{ID: string(g.GROUP_ID()), Combinator: CombinatorAll}
 	for i := 0; i < g.PREDICATESLength(); i++ {
 		var p sdstrp.TRPPredicate
 		if g.PREDICATES(&p, i) {
 			out.Predicates = append(out.Predicates, readPredicate(&p))
 		}
 	}
-	for i := 0; i < g.GROUPSLength(); i++ {
-		var sub sdstrp.TRPGroup
-		if g.GROUPS(&sub, i) {
-			out.Groups = append(out.Groups, readGroup(&sub))
-		}
-	}
-	return out
+	return out, nil
 }
 
 // DecodePolicy reads a `$TRP` FlatBuffer.
@@ -377,7 +361,11 @@ func DecodePolicy(data []byte) (Policy, error) {
 		Signature:            append([]byte(nil), rec.EVALUATOR_SIGNATUREBytes()...),
 	}
 	if root := rec.ROOT(nil); root != nil {
-		out.Root = readGroup(root)
+		group, err := readGroup(root)
+		if err != nil {
+			return Policy{}, err
+		}
+		out.Root = group
 	}
 	for i := 0; i < rec.EVENT_SOURCESLength(); i++ {
 		out.EventSources = append(out.EventSources, string(rec.EVENT_SOURCES(i)))
@@ -532,6 +520,54 @@ func (s *PolicyStore) Put(p Policy) (string, []byte, error) {
 		return "", nil, fmt.Errorf("trust: store TRP record: %w", err)
 	}
 	return cid, signedJSON, nil
+}
+
+// Table is the node's trust rules: the TableID policy once one is saved.
+// Before that, it gathers the rows of the flat, active rule sets stored
+// earlier (the ones the table replaced), so no rule an operator wrote
+// disappears; saving the table makes it the only one the engine evaluates.
+func (s *PolicyStore) Table() (Policy, error) {
+	list, err := s.List()
+	if err != nil {
+		return Policy{}, err
+	}
+	for _, p := range list {
+		if p.ID == TableID {
+			return p, nil
+		}
+	}
+	table := Policy{ID: TableID, Name: "Trust rules", Root: Group{ID: tableGroupID, Combinator: CombinatorAll}, Active: true, EvaluationIntervalMs: DefaultEvaluationIntervalMs}
+	for _, p := range list {
+		if !p.Active {
+			continue
+		}
+		for _, rule := range p.Root.Predicates {
+			rule.ID = p.ID + "/" + rule.ID
+			table.Root.Predicates = append(table.Root.Predicates, rule)
+		}
+	}
+	return table, nil
+}
+
+// PutTable saves the rules table: the rows in order, all of which must pass.
+func (s *PolicyStore) PutTable(rules []Predicate) (Policy, string, []byte, error) {
+	current, err := s.Table()
+	if err != nil {
+		return Policy{}, "", nil, err
+	}
+	table := current
+	table.Name = "Trust rules"
+	table.Active = true
+	table.Root = Group{ID: tableGroupID, Combinator: CombinatorAll, Predicates: rules}
+	if table.EvaluationIntervalMs == 0 {
+		table.EvaluationIntervalMs = DefaultEvaluationIntervalMs
+	}
+	cid, signedJSON, err := s.Put(table)
+	if err != nil {
+		return Policy{}, "", nil, err
+	}
+	saved, err := s.Table()
+	return saved, cid, signedJSON, err
 }
 
 // List projects the latest record per POLICY_ID (any Active state).

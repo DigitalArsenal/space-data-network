@@ -110,7 +110,11 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 		if e.policies == nil {
 			return nil, errors.New("trust: no policy store")
 		}
-		return e.policies.List()
+		table, err := e.policies.Table()
+		if err != nil {
+			return nil, err
+		}
+		return []Policy{table}, nil
 	}
 	e.verdictPut = func(v Verdict, fb []byte) error {
 		if e.verdicts == nil {
@@ -259,8 +263,10 @@ func (e *Engine) facts(ctx context.Context, subject string) SubjectFacts {
 	return f
 }
 
-// RunOnce evaluates every active policy against every subject and returns
-// the policies it read (so the caller can size the next interval).
+// RunOnce evaluates the rules table against every subject and returns the
+// policies it read (so the caller can size the next interval). A table with
+// no rules, or one switched off, has no verdicts: the ones it had are
+// dropped, so a removed rule never keeps a subject failing.
 func (e *Engine) RunOnce(ctx context.Context, trigger string) []Policy {
 	if !e.running.CompareAndSwap(false, true) {
 		return nil
@@ -273,10 +279,12 @@ func (e *Engine) RunOnce(ctx context.Context, trigger string) []Policy {
 	now := e.nowMs()
 	subjects := e.subjects()
 	factsBy := map[string]SubjectFacts{}
+	evaluated := map[string]bool{}
 	for _, p := range policies {
-		if !p.Active {
+		if !p.Active || len(p.Root.Predicates) == 0 {
 			continue
 		}
+		evaluated[p.ID] = true
 		for _, subject := range subjects {
 			f, ok := factsBy[subject]
 			if !ok {
@@ -320,6 +328,11 @@ func (e *Engine) RunOnce(ctx context.Context, trigger string) []Policy {
 		}
 	}
 	e.mu.Lock()
+	for key, v := range e.latest {
+		if !evaluated[v.PolicyID] {
+			delete(e.latest, key)
+		}
+	}
 	e.lastRun = time.Now()
 	e.mu.Unlock()
 	e.runs.Add(1)

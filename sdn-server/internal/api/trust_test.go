@@ -677,54 +677,77 @@ func newRulesHandler(t *testing.T, protect func(http.HandlerFunc) http.HandlerFu
 	return h, mux, &saved
 }
 
-func rulesPolicyBody() string {
-	return `{"NAME":"one truster","ACTIVE":true,"ROOT":{"GROUP_ID":"root","COMBINATOR":"All","PREDICATES":[{"PREDICATE_ID":"c1","KIND":"TrustedConnections","REQUIRED_COUNT":1}]}}`
-}
-
-func TestTrustPolicyPostListsSignedAndVerdictsFollow(t *testing.T) {
+// Owner 2026-10-07: trust rules are one table. Each row is a named rule, the
+// rows are added and removed freely, and a subject meets the rules only when
+// every row passes. This drives the real routes over the real store and
+// engine.
+func TestTrustRulesTableNamedRowsAllMustPass(t *testing.T) {
 	h, mux, _ := newRulesHandler(t, nil)
+	put := func(body string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/api/v1/trust/rules", strings.NewReader(body)))
+		return rec
+	}
+	verdictFor := func(subject string) []trust.Verdict {
+		t.Helper()
+		h.Engine.RunOnce(context.Background(), "test")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/trust/verdicts?subject="+subject, nil))
+		var got struct{ Verdicts []trust.Verdict }
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatalf("GET verdicts: %d %s", rec.Code, rec.Body.String())
+		}
+		return got.Verdicts
+	}
+	const oneVouch = `{"PREDICATE_ID":"c1","NAME":"Vouched for","KIND":"TrustedConnections","REQUIRED_COUNT":1}`
+	const twoVouches = `{"PREDICATE_ID":"c2","NAME":"Two vouches","KIND":"TrustedConnections","REQUIRED_COUNT":2}`
 
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/trust/policies", strings.NewReader(rulesPolicyBody())))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("POST policy: %d %s", rec.Code, rec.Body.String())
+	rec := put(`{"RULES":[` + oneVouch + `,` + twoVouches + `]}`)
+	if rec.Code != http.StatusOK || rec.Header().Get("X-SDN-Record-CID") == "" {
+		t.Fatalf("PUT rules: %d %s", rec.Code, rec.Body.String())
 	}
-	var stored map[string]any
-	if err := json.Unmarshal(rec.Body.Bytes(), &stored); err != nil {
-		t.Fatal(err)
-	}
-	policyID, _ := stored["POLICY_ID"].(string)
-	if !strings.HasPrefix(policyID, "trp-") || stored["EVALUATOR_SIGNATURE"] == nil || stored["EVALUATOR_PEER_ID"] != "me" {
-		t.Fatalf("stored policy is id-stamped and signed by the evaluator: %v", stored)
-	}
-	if rec.Header().Get("X-SDN-Record-CID") == "" {
-		t.Fatal("the stored record's CID is reported")
-	}
-
+	// The stored $TRP record is the table, signed by this node, names intact.
 	rec = httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/trust/policies", nil))
 	var list struct{ Policies []trust.Policy }
-	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil || len(list.Policies) != 1 || list.Policies[0].ID != policyID {
+	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil || len(list.Policies) != 1 {
 		t.Fatalf("GET policies: %d %s", rec.Code, rec.Body.String())
 	}
+	if p := list.Policies[0]; p.ID != trust.TableID || len(p.Signature) == 0 || p.EvaluatorPeerID != "me" ||
+		len(p.Root.Predicates) != 2 || p.Root.Predicates[0].Name != "Vouched for" || p.Root.Predicates[1].Name != "Two vouches" {
+		t.Fatalf("stored table: %+v", p)
+	}
 
-	h.Engine.RunOnce(context.Background(), "test")
-	rec = httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/trust/verdicts?subject=alice", nil))
-	var got struct {
-		Source   string
-		Verdicts []trust.Verdict
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || got.Source != "engine" || len(got.Verdicts) != 1 {
-		t.Fatalf("GET verdicts: %d %s", rec.Code, rec.Body.String())
-	}
-	if v := got.Verdicts[0]; !v.Passed || v.PolicyID != policyID || v.SubjectID != "alice" || v.EvaluatorPeerID != "me" {
-		t.Fatalf("alice has one truster so the policy passes: %+v", v)
+	// alice has one truster: the first rule passes, the second fails, so
+	// alice does not meet the rules, and the verdict says which rule.
+	got := verdictFor("alice")
+	if len(got) != 1 || got[0].Passed || len(got[0].Results) != 2 || !got[0].Results[0].Passed || got[0].Results[1].Passed || got[0].Results[1].PredicateID != "c2" {
+		t.Fatalf("one failing row fails the subject: %+v", got)
 	}
 	rec = httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/trust/verdicts?subject=alice&history=1", nil))
-	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || got.Source != "history" || len(got.Verdicts) != 1 || !got.Verdicts[0].Passed {
-		t.Fatalf("the flip was persisted as a $TRV record: %d %s", rec.Code, rec.Body.String())
+	var history struct{ Verdicts []trust.Verdict }
+	if err := json.Unmarshal(rec.Body.Bytes(), &history); err != nil || len(history.Verdicts) != 1 || history.Verdicts[0].Passed {
+		t.Fatalf("the verdict was stored as a signed $TRV record: %d %s", rec.Code, rec.Body.String())
+	}
+
+	// Removing the failing row: every remaining row passes.
+	if rec := put(`{"RULES":[` + oneVouch + `]}`); rec.Code != http.StatusOK {
+		t.Fatalf("PUT one rule: %d %s", rec.Code, rec.Body.String())
+	}
+	if got := verdictFor("alice"); len(got) != 1 || !got[0].Passed {
+		t.Fatalf("all rows pass: %+v", got)
+	}
+	// No rows: nothing to meet, and no verdict lingers.
+	if rec := put(`{"RULES":[]}`); rec.Code != http.StatusOK {
+		t.Fatalf("PUT no rules: %d %s", rec.Code, rec.Body.String())
+	}
+	if got := verdictFor("alice"); len(got) != 0 {
+		t.Fatalf("an empty table leaves no verdicts: %+v", got)
+	}
+	// A row without the value its rule needs is refused.
+	if rec := put(`{"RULES":[{"PREDICATE_ID":"v1","NAME":"Bond","KIND":"MinValueLocked"}]}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("a rule without its value: %d %s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -759,7 +782,7 @@ func TestTrustRulesMutationsHonourProtect(t *testing.T) {
 	}
 	_, mux, _ := newRulesHandler(t, deny)
 	for _, tc := range []struct{ method, path, body string }{
-		{http.MethodPost, "/api/v1/trust/policies", rulesPolicyBody()},
+		{http.MethodPut, "/api/v1/trust/rules", `{"RULES":[]}`},
 		{http.MethodPut, "/api/v1/trust/settings", `{"EVALUATION_INTERVAL_MS":5000}`},
 		{http.MethodPost, "/api/v1/trust/evaluate", ""},
 	} {
@@ -769,7 +792,7 @@ func TestTrustRulesMutationsHonourProtect(t *testing.T) {
 			t.Fatalf("%s %s bypassed Protect: %d", tc.method, tc.path, rec.Code)
 		}
 	}
-	for _, path := range []string{"/api/v1/trust/policies", "/api/v1/trust/verdicts", "/api/v1/trust/settings"} {
+	for _, path := range []string{"/api/v1/trust/rules", "/api/v1/trust/policies", "/api/v1/trust/verdicts", "/api/v1/trust/settings"} {
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
 		if rec.Code != http.StatusOK {

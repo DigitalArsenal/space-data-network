@@ -248,51 +248,22 @@ func fmtUnits(v float64, p Predicate) string {
 	return fmt.Sprintf("%.0f %s units", v, strings.ToUpper(p.ValueCurrency))
 }
 
-func evaluateGroup(g Group, f SubjectFacts, nowMs int64, results *[]PredicateResult) (bool, int, int) {
+// EvaluatePolicy applies the rules table: the subject meets it only when
+// every rule passes. Score is the share of rules passed; with no rules there
+// is nothing to fail.
+func EvaluatePolicy(p Policy, f SubjectFacts, nowMs int64) Outcome {
+	results := make([]PredicateResult, 0, len(p.Root.Predicates))
 	passed := 0
-	total := 0
-	var verdicts []bool
-	for _, p := range g.Predicates {
-		r := EvaluatePredicate(p, f, nowMs)
-		*results = append(*results, r)
-		verdicts = append(verdicts, r.Passed)
-		total++
+	for _, rule := range p.Root.Predicates {
+		r := EvaluatePredicate(rule, f, nowMs)
+		results = append(results, r)
 		if r.Passed {
 			passed++
 		}
 	}
-	for _, sub := range g.Groups {
-		ok, p, t := evaluateGroup(sub, f, nowMs, results)
-		verdicts = append(verdicts, ok)
-		passed += p
-		total += t
+	score := 1.0
+	if len(results) > 0 {
+		score = float64(passed) / float64(len(results))
 	}
-	if len(verdicts) == 0 {
-		return false, passed, total
-	}
-	if g.Combinator == CombinatorAny {
-		for _, v := range verdicts {
-			if v {
-				return true, passed, total
-			}
-		}
-		return false, passed, total
-	}
-	for _, v := range verdicts {
-		if !v {
-			return false, passed, total
-		}
-	}
-	return true, passed, total
-}
-
-// EvaluatePolicy applies the whole rule tree.
-func EvaluatePolicy(p Policy, f SubjectFacts, nowMs int64) Outcome {
-	var results []PredicateResult
-	ok, passed, total := evaluateGroup(p.Root, f, nowMs, &results)
-	score := 0.0
-	if total > 0 {
-		score = float64(passed) / float64(total)
-	}
-	return Outcome{Passed: ok, Score: score, Results: results}
+	return Outcome{Passed: passed == len(results), Score: score, Results: results}
 }

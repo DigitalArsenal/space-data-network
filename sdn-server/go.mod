@@ -5,7 +5,7 @@ go 1.26.5
 toolchain go1.26.8
 
 require (
-	github.com/DigitalArsenal/spacedatastandards.org/lib/go v1.236.0
+	github.com/DigitalArsenal/spacedatastandards.org/lib/go v1.237.0
 	github.com/caddyserver/certmagic v0.25.3
 	github.com/coreos/go-oidc/v3 v3.20.0
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1
