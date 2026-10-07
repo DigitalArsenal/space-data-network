@@ -298,12 +298,15 @@ try {
 
   const verified = verifyReleaseBinary({
     path: resolvedBinary,
+    platform,
     arch,
     minBytes: minBinaryBytes,
     smoke: !noSmoke,
     // `version` is the daemon's subcommand — it has no --version FLAG, and
     // using one would make every smoke test fail on a perfectly good binary.
-    smokeOptions: { image: smokeImage, platform: `linux/${arch}`, args: ['version'] },
+    // A darwin release (the local nodes) is a Mach-O run on this Mac; a linux
+    // release runs in a container of its arch.
+    smokeOptions: platform === 'darwin' ? { args: ['version'] } : { image: smokeImage, platform: `linux/${arch}`, args: ['version'] },
     log,
   });
   // From here on the VERIFIED BUFFER is the only source of the binary. The

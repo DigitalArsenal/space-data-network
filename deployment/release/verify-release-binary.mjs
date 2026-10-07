@@ -73,6 +73,13 @@ const MACHINE_BY_ARCH = {
   aarch64: EM_AARCH64,
 };
 
+// Mach-O, for darwin releases: the local nodes join the lane too (owner
+// 2026-10-07: "all upgrades need to be in place like the Kubo upgrades").
+const MH_MAGIC_64 = 0xfeedfacf;
+const MH_EXECUTE = 0x2;
+const LC_SEGMENT_64 = 0x19;
+const CPU_TYPE_BY_ARCH = { arm64: 0x0100000c, aarch64: 0x0100000c, amd64: 0x01000007, x86_64: 0x01000007 };
+
 export const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 
 export class ReleaseBinaryRefusal extends Error {
@@ -241,6 +248,66 @@ export function assertElfNotTruncated(bytes, { path = '<bytes>' } = {}) {
   return { size, extents };
 }
 
+/**
+ * A 64-bit Mach-O executable for arch, whose load commands and segments all
+ * lie inside the file: the darwin counterpart of the ELF shape and extent
+ * checks. A truncated copy loses its trailing segments (__LINKEDIT) first, so
+ * every LC_SEGMENT_64's file range is held to the file's size.
+ */
+export function assertMachOExecutable(bytes, { path = '<bytes>', arch = 'arm64' } = {}) {
+  const size = bytes.length;
+  if (size < 32) {
+    refuse(`${path} is ${size}B — too small to contain a Mach-O header (32B)`, { path, size });
+  }
+  const magic = bytes.readUInt32LE(0);
+  if (magic !== MH_MAGIC_64) {
+    refuse(`${path} is not a 64-bit Mach-O executable (magic 0x${magic.toString(16)})`, { path, magic });
+  }
+  const want = CPU_TYPE_BY_ARCH[arch];
+  if (want === undefined) refuse(`no Mach-O CPU type is known for arch ${arch}`, { path, arch });
+  const cpuType = bytes.readUInt32LE(4);
+  if (cpuType !== want) {
+    refuse(`${path} is a Mach-O for CPU type 0x${cpuType.toString(16)}, not ${arch}`, { path, cpuType, arch });
+  }
+  const fileType = bytes.readUInt32LE(12);
+  if (fileType !== MH_EXECUTE) refuse(`${path} is a Mach-O of file type ${fileType}, not an executable`, { path, fileType });
+  const ncmds = bytes.readUInt32LE(16);
+  const sizeOfCmds = bytes.readUInt32LE(20);
+  if (32 + sizeOfCmds > size) {
+    refuse(`${path} is TRUNCATED: its load commands end at ${32 + sizeOfCmds}B but it is ${size}B`, { path, size, sizeOfCmds });
+  }
+  let offset = 32;
+  let declaredEnd = 0;
+  for (let i = 0; i < ncmds; i += 1) {
+    const cmd = bytes.readUInt32LE(offset);
+    const cmdSize = bytes.readUInt32LE(offset + 4);
+    if (cmdSize < 8 || offset + cmdSize > 32 + sizeOfCmds) {
+      refuse(`${path} has a malformed load command ${i} (size ${cmdSize})`, { path, index: i, cmdSize });
+    }
+    if (cmd === LC_SEGMENT_64) {
+      const end = Number(bytes.readBigUInt64LE(offset + 40) + bytes.readBigUInt64LE(offset + 48));
+      declaredEnd = Math.max(declaredEnd, end);
+    }
+    offset += cmdSize;
+  }
+  if (declaredEnd > size) {
+    refuse(
+      `${path} is TRUNCATED: it is ${size}B, but its segments end at ${declaredEnd}B ` +
+        `(short by ${declaredEnd - size}B). The bytes are not a whole program; nothing may sign them.`,
+      { path, size, declaredEnd },
+    );
+  }
+  return { cpuType, fileType, ncmds, declaredEnd };
+}
+
+/**
+ * Runs the artifact on this machine: the darwin smoke test, which can only
+ * run where the binary's platform and arch are the host's.
+ */
+export function localRunner({ path, args, timeoutMs }) {
+  return execFileSync(path, args, { encoding: 'utf8', timeout: timeoutMs, stdio: ['ignore', 'pipe', 'pipe'] });
+}
+
 /** Blunt plausibility bound for the artifact class. */
 export function assertSizeFloor(bytes, { path = '<bytes>', minBytes = DAEMON_BINARY_MIN_BYTES } = {}) {
   if (bytes.length < minBytes) {
@@ -360,6 +427,7 @@ function defaultDockerRunner({ path, image, platform, args, timeoutMs }) {
  */
 export function verifyReleaseBinary({
   path,
+  platform = 'linux',
   arch = 'amd64',
   minBytes = DAEMON_BINARY_MIN_BYTES,
   smoke = true,
@@ -368,13 +436,24 @@ export function verifyReleaseBinary({
   log = () => {},
 }) {
   const stable = readStableFile(path, { settleMs, log });
-  assertElfTarget(stable.bytes, { path, arch });
-  assertElfNotTruncated(stable.bytes, { path });
+  if (platform === 'darwin') {
+    assertMachOExecutable(stable.bytes, { path, arch });
+  } else {
+    assertElfTarget(stable.bytes, { path, arch });
+    assertElfNotTruncated(stable.bytes, { path });
+  }
   assertSizeFloor(stable.bytes, { path, minBytes });
 
   let smokeResult = null;
   if (smoke) {
-    smokeResult = smokeTestBinary(path, { log, ...smokeOptions });
+    // A darwin binary runs only on a Mac of its arch, so its smoke test is a
+    // local run; a linux binary runs in a container of its arch.
+    const hostArch = { arm64: 'arm64', x64: 'amd64' }[process.arch];
+    if (platform === 'darwin' && (process.platform !== 'darwin' || hostArch !== arch)) {
+      refuse(`${path} is a darwin/${arch} release; its smoke test runs only on a darwin/${arch} host`, { path, platform, arch });
+    }
+    const runOn = platform === 'darwin' ? { platform: `darwin/${arch}`, runner: localRunner } : {};
+    smokeResult = smokeTestBinary(path, { log, ...runOn, ...smokeOptions });
     // The smoke test ran the PATH, not our buffer. Prove they were still the
     // same file afterwards, so a writer that landed during the container run
     // cannot slip past the checks we already did.
