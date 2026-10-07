@@ -1814,17 +1814,14 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			// 2026-09-03: "everything should be flatbuffers"); JSON stays a
 			// derived read projection on /api/node/epm/json.
 			adminMux.HandleFunc("/api/node/epm", gateNodeEPMWrite(
-				api.NewNodeEPMHandler(nodeEPMWireService(n), func(ctx context.Context, _ []byte) error {
-					if err := n.IndexLocalNodeEPM(); err != nil {
-						return err
-					}
-					if svc := n.EPMService(); svc != nil {
-						if err := svc.PublishEPM(ctx, n); err != nil {
-							log.Warnf("Failed to publish updated EPM PNM: %v", err)
-						}
-					}
-					return nil
-				}).ServeHTTP,
+				api.NewNodeEPMHandler(nodeEPMWireService(n), commitNodeEPM(n)).ServeHTTP,
+				cfg.Admin.RequireAuth,
+				func() *auth.Handler { return authHandler },
+			))
+			// The node's photo, which the $EPM schema does not carry (owner
+			// 2026-10-07: an upload "did not survive the refresh").
+			adminMux.HandleFunc("/api/node/epm/photo", gateNodeEPMWrite(
+				api.NewNodePhotoHandler(nodePhotoService(n), commitNodeEPM(n)).ServeHTTP,
 				cfg.Admin.RequireAuth,
 				func() *auth.Handler { return authHandler },
 			))
@@ -5820,6 +5817,31 @@ func nodeEPMWireService(n *node.Node) api.NodeEPMService {
 		return svc
 	}
 	return nil
+}
+
+// nodePhotoService adapts the node's EPM service to the photo route without
+// leaking a typed nil into the interface.
+func nodePhotoService(n *node.Node) api.NodePhotoService {
+	if svc := n.EPMService(); svc != nil {
+		return svc
+	}
+	return nil
+}
+
+// commitNodeEPM indexes and publishes the node's re-signed record after a
+// profile edit: the record itself, or the photo beside it.
+func commitNodeEPM(n *node.Node) api.NodeEPMCommit {
+	return func(ctx context.Context, _ []byte) error {
+		if err := n.IndexLocalNodeEPM(); err != nil {
+			return err
+		}
+		if svc := n.EPMService(); svc != nil {
+			if err := svc.PublishEPM(ctx, n); err != nil {
+				log.Warnf("Failed to publish updated EPM PNM: %v", err)
+			}
+		}
+		return nil
+	}
 }
 
 func handleNodeEPM(n *node.Node) http.HandlerFunc {
