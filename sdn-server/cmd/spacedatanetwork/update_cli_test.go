@@ -901,9 +901,15 @@ func TestUpdateHelperWaitsForASlowDaemonAndRunsTheInstalledBuild(t *testing.T) {
 	v2SHA := b.stage(t, e2eBuild{Tag: "v2", StopDelayMS: 200})
 
 	// While v1 lives, the bundle must still hold v1 and nothing may have
-	// been moved aside.
+	// been moved aside. "Lives" is judged by v1's own exit event, not by when
+	// this test's Wait returns: on a loaded runner Wait returns after the
+	// helper has already, correctly, seen the exit and started applying.
+	type observation struct {
+		at   time.Time
+		what string
+	}
 	var samples int
-	var early []string
+	var seen []observation
 	watched := make(chan struct{})
 	go func() {
 		defer close(watched)
@@ -920,11 +926,18 @@ func TestUpdateHelperWaitsForASlowDaemonAndRunsTheInstalledBuild(t *testing.T) {
 			default:
 			}
 			samples++
+			var changed []string
 			if sha := e2eFileSHA256(filepath.Join(b.paths.Root, "bin", "spacedatanetwork")); sha != b.v1SHA {
-				early = append(early, "bundle binary "+sha)
+				changed = append(changed, "bundle binary "+sha)
 			}
 			if _, err := os.Stat(slot); err == nil {
-				early = append(early, "rollback slot "+slot)
+				changed = append(changed, "rollback slot "+slot)
+			}
+			// Stamped after the checks, so an observation counted as early was
+			// made before v1 exited.
+			now := time.Now()
+			for _, what := range changed {
+				seen = append(seen, observation{now, what})
 			}
 		}
 	}()
@@ -934,6 +947,17 @@ func TestUpdateHelperWaitsForASlowDaemonAndRunsTheInstalledBuild(t *testing.T) {
 		t.Fatalf("helper: %v", err)
 	}
 	<-watched
+	events := b.eventsOf(t)
+	exited, ok := e2eFind(events, "v1", "exit")
+	if !ok {
+		t.Fatal("v1 logged no exit")
+	}
+	var early []string
+	for _, o := range seen {
+		if o.at.Before(exited.At) {
+			early = append(early, o.what)
+		}
+	}
 	if len(early) > 0 {
 		t.Fatalf("the bundle changed while v1 was still running: %v", early)
 	}
@@ -942,14 +966,9 @@ func TestUpdateHelperWaitsForASlowDaemonAndRunsTheInstalledBuild(t *testing.T) {
 	}
 
 	// v1 took its 60 s, and at the moment it exited the bundle still held it.
-	events := b.eventsOf(t)
 	shutdown, ok := e2eFind(events, "v1", "shutdown")
 	if !ok || shutdown.Via != "update-handshake" {
 		t.Fatalf("v1 shutdown event = %+v, %v", shutdown, ok)
-	}
-	exited, ok := e2eFind(events, "v1", "exit")
-	if !ok {
-		t.Fatal("v1 logged no exit")
 	}
 	if took := exited.At.Sub(shutdown.At); took < stopDelay-time.Second {
 		t.Fatalf("v1 exited %s after the shutdown request, want ~%s", took, stopDelay)
