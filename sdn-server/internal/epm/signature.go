@@ -225,6 +225,8 @@ func canonicalSigningContentFromEPM(epmRecord *EPM.EPM) ([]byte, error) {
 	addBytesString(content, "OCCUPATION", epmRecord.OCCUPATION())
 	addBytesString(content, "EMAIL", epmRecord.EMAIL())
 	addBytesString(content, "TELEPHONE", epmRecord.TELEPHONE())
+	// SDS 1.239.0 annex rule 7: the photo is signed like the name it pictures.
+	addBytesString(content, "PHOTO", epmRecord.PHOTO())
 
 	addr := new(EPM.Address)
 	if epmRecord.ADDRESS(addr) != nil {

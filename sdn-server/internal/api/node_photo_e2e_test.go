@@ -2,9 +2,10 @@ package api
 
 // The node's photo sticks (owner 2026-10-07: an uploaded photo "did NOT
 // replace the image and did not survive the refresh"): set through the
-// route, it is on the node's card, after a restart, and after a record edit.
-// Its QR code carries a thumbnail and still scans ("image still not showing
-// up in QR").
+// route, it is the signed record's PHOTO (SDS 1.239.0), so it survives a
+// restart of a node that keeps only its record, survives a record edit, and
+// reaches every peer that holds the record — on its card and as a thumbnail
+// on its QR code that still scans ("image still not showing up in QR").
 
 import (
 	"bytes"
@@ -12,6 +13,7 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -25,13 +27,30 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/vcard"
 )
 
-func photoTestService(t *testing.T, dir string, key ed25519.PrivateKey) *epm.Service {
+// recordStore keeps only the signed record, as a node's record store does:
+// the profile is rebuilt from it at startup.
+type recordStore map[string][]byte
+
+func (s recordStore) LoadLocalEPM(peerID string) ([]byte, error) {
+	if raw, ok := s[peerID]; ok {
+		return raw, nil
+	}
+	return nil, errors.New("no record")
+}
+
+func (s recordStore) SaveLocalEPM(peerID string, epmBytes []byte) error {
+	s[peerID] = append([]byte(nil), epmBytes...)
+	return nil
+}
+
+func photoTestService(t *testing.T, store recordStore, key ed25519.PrivateKey) *epm.Service {
 	t.Helper()
 	peerID, err := peer.Decode("16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4")
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := epm.NewService(nil, nil, peerID, "", dir)
+	service := epm.NewService(nil, nil, peerID, "", t.TempDir())
+	service.SetProfileStore(store)
 	if err := service.SetRuntimeSigningKey(key, "sdn/runtime-signing"); err != nil {
 		t.Fatal(err)
 	}
@@ -78,27 +97,18 @@ func cardOf(t *testing.T, service *epm.Service) string {
 	if err != nil {
 		t.Fatalf("GetNodeVCard: %v", err)
 	}
-	return strings.ReplaceAll(card, "\r\n ", "")
+	return unfold(card)
 }
 
-// withoutPhoto unfolds a card and drops its PHOTO line.
-func withoutPhoto(card string) string {
-	var kept []string
-	for _, line := range strings.Split(strings.ReplaceAll(card, "\r\n ", ""), "\r\n") {
-		if !strings.HasPrefix(line, "PHOTO") {
-			kept = append(kept, line)
-		}
-	}
-	return strings.Join(kept, "\r\n")
-}
+func unfold(card string) string { return strings.ReplaceAll(card, "\r\n ", "") }
 
 func TestNodePhotoSticksOnTheCard(t *testing.T) {
-	dir := t.TempDir()
+	store := recordStore{}
 	_, key, err := ed25519.GenerateKey(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := photoTestService(t, dir, key)
+	service := photoTestService(t, store, key)
 	commits := 0
 	handler := NewNodePhotoHandler(service, func(context.Context, []byte) error { commits++; return nil })
 	dataURL, payload := photoDataURL(t)
@@ -114,37 +124,58 @@ func TestNodePhotoSticksOnTheCard(t *testing.T) {
 		t.Fatalf("the re-signed record was committed %d times, want 1", commits)
 	}
 
-	// The scannable card carries a thumbnail, stays within the scannable
-	// size, and the code drawn from it reads back as the same card.
-	qrCard, err := service.GetNodeQRVCard()
+	// The photo is signed: it is in the preimage, and the record verifies.
+	record := service.GetNodeEPM()
+	preimage, err := epm.EPMSigningPayload(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(preimage, []byte(`"PHOTO":"`+dataURL+`"`)) {
+		t.Fatal("the photo is not covered by the record's signature")
+	}
+	if err := epm.VerifyEPMSignature(record); err != nil {
+		t.Fatalf("the record with its photo does not verify: %v", err)
+	}
+
+	// A restart rebuilds the profile from the stored record alone.
+	if !strings.Contains(cardOf(t, photoTestService(t, store, key)), photoLine) {
+		t.Fatal("the photo did not survive a restart")
+	}
+
+	// A peer holding only the record gets the photo on the full card, and a
+	// thumbnail on the scannable card that stays within the scannable size
+	// and reads back from the code at the 320 px a peer's QR is served at.
+	if full, err := vcard.EPMToVCard(record); err != nil || !strings.Contains(unfold(full), photoLine) {
+		t.Fatalf("a peer's card of the record does not carry the photo (%v)", err)
+	}
+	qrCard, err := vcard.CompactQRVCard(record)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(qrCard, "\r\nPHOTO;ENCODING=b;TYPE=PNG:") {
 		t.Fatalf("the QR card carries no thumbnail: %s", qrCard)
 	}
-	plain, err := vcard.CompactQRVCard(service.GetNodeEPM())
+	if len(qrCard) > vcard.QRPhotoBudgetBytes {
+		t.Fatalf("the QR card is %d bytes, past the scannable %d", len(qrCard), vcard.QRPhotoBudgetBytes)
+	}
+	if self, err := service.GetNodeQRVCard(); err != nil || self != qrCard {
+		t.Fatalf("the node's own QR card differs from a peer's (%v)", err)
+	}
+	code, err := vcard.VCardToQR(qrCard, 320)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(qrCard) > vcard.QRPhotoBudgetBytes || withoutPhoto(qrCard) != strings.ReplaceAll(plain, "\r\n ", "") {
-		t.Fatalf("the QR card is %d bytes (budget %d) or is not the compact card plus its photo: %s", len(qrCard), vcard.QRPhotoBudgetBytes, qrCard)
-	}
-	code, err := vcard.VCardToQR(qrCard, 1024)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if scanned, err := vcard.QRToVCard(code); err != nil || scanned != qrCard {
+	scanned, err := vcard.QRToVCard(code)
+	if err != nil || scanned != qrCard {
 		t.Fatalf("the QR code does not read back as its card (%v)", err)
 	}
-
-	// A restart reads it back from what the node stored.
-	if !strings.Contains(cardOf(t, photoTestService(t, dir, key)), photoLine) {
-		t.Fatal("the photo did not survive a restart")
+	// Scanned, the card still names the key that signed the record.
+	if err := epm.VerifyEPMSignatureBindingKey(record, vcard.SignKeyFromVCard(scanned)); err != nil {
+		t.Fatalf("the scanned card does not bind to the record: %v", err)
 	}
 
-	// Editing the record (which has no photo field) keeps the photo.
-	proposal := photoTestService(t, t.TempDir(), key)
+	// Editing the record without a photo field set keeps the photo.
+	proposal := photoTestService(t, recordStore{}, key)
 	if err := proposal.UpdateProfile(&epm.Profile{DN: "Flight Operations", LegalName: "Digital Arsenal"}); err != nil {
 		t.Fatal(err)
 	}
@@ -167,11 +198,11 @@ func TestNodePhotoSticksOnTheCard(t *testing.T) {
 		t.Fatal("a refused photo changed the card")
 	}
 
-	// Empty removes it.
+	// Empty removes it, from the card and from the stored record.
 	if response := putPhoto(t, handler, ""); response.Code != http.StatusOK {
 		t.Fatalf("PUT empty = %d %s", response.Code, response.Body.String())
 	}
-	if strings.Contains(cardOf(t, service), "PHOTO") {
+	if strings.Contains(cardOf(t, service), "PHOTO") || strings.Contains(cardOf(t, photoTestService(t, store, key)), "PHOTO") {
 		t.Fatal("the photo is still on the card after removal")
 	}
 }

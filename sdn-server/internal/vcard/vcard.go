@@ -207,7 +207,31 @@ func EPMToVCard(epmBytes []byte) (string, error) {
 		return "", err
 	}
 
-	return insertRawVCardLines(b.String(), AppleIdentityEmailAliasLinesFromEPM(epm, epmBytes)), nil
+	lines := AppleIdentityEmailAliasLinesFromEPM(epm, epmBytes)
+	if photo := cardPhotoLine(string(epm.PHOTO())); photo != "" {
+		lines = append([]string{photo}, lines...)
+	}
+	return insertRawVCardLines(b.String(), lines), nil
+}
+
+// cardPhotoLine is the folded PHOTO line of a record's photo (a base64 data
+// URL), or "" when it is not one. The cards are vCard 3.0, whose inline photo
+// names its format with TYPE (PHOTO;ENCODING=b;TYPE=JPEG): MEDIATYPE is vCard
+// 4.0's parameter, and a 3.0 importer that does not know it can drop the
+// photo.
+func cardPhotoLine(dataURL string) string {
+	header, payload, ok := strings.Cut(strings.TrimSpace(dataURL), ",")
+	if !ok || !strings.HasPrefix(header, "data:image/") || !strings.HasSuffix(header, ";base64") || payload == "" {
+		return ""
+	}
+	if _, err := base64.StdEncoding.DecodeString(payload); err != nil {
+		return ""
+	}
+	format := strings.ToUpper(strings.TrimSuffix(strings.TrimPrefix(header, "data:image/"), ";base64"))
+	if format == "" || strings.ContainsAny(format, ";:,/ ") {
+		return ""
+	}
+	return foldVCardLine("PHOTO;ENCODING=b;TYPE=" + format + ":" + payload)
 }
 
 type appleIdentityLine struct {
@@ -390,7 +414,10 @@ func CompactQRVCard(epmBytes []byte) (string, error) {
 	}
 	lines = append(lines, AppleIdentityEmailAliasLinesFromEPM(epm, epmBytes, CompactQRVCardKinds...)...)
 	lines = append(lines, "END:VCARD")
-	return strings.Join(lines, "\r\n") + "\r\n", nil
+	// The record's photo rides the code as a thumbnail whenever the card
+	// still scans with it (owner 2026-10-07: "image still not showing up in
+	// QR").
+	return WithQRPhoto(strings.Join(lines, "\r\n")+"\r\n", string(epm.PHOTO())), nil
 }
 
 // CardCarriesCryptoIdentity reports whether a vCard string carries the

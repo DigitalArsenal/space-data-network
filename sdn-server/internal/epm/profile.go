@@ -45,15 +45,27 @@ func DecodeProfileEPM(data []byte) (profile *Profile, err error) {
 }
 
 // UpdateProfileFromEPM accepts the wire contract used by the identity editor.
-// The current schema has no photo or editable key-path profile fields, so the
-// stored values for those fields survive a wire update instead of being reset.
+// The schema has no editable key-path fields, so the stored paths survive a
+// wire update. A record that carries a photo sets it (checked like
+// SetNodePhoto); one without keeps the stored photo, so an editor whose
+// bindings predate the field cannot erase it — removal is PUT
+// /api/node/epm/photo with an empty value.
 func (s *Service) UpdateProfileFromEPM(data []byte) error {
 	profile, err := DecodeProfileEPM(data)
 	if err != nil {
 		return err
 	}
+	if strings.TrimSpace(profile.PhotoDataURL) != "" {
+		photo, err := NodePhotoDataURL(profile.PhotoDataURL)
+		if err != nil {
+			return err
+		}
+		profile.PhotoDataURL = photo
+	}
 	if current := s.GetNodeProfile(); current != nil {
-		profile.PhotoDataURL = current.PhotoDataURL
+		if strings.TrimSpace(profile.PhotoDataURL) == "" {
+			profile.PhotoDataURL = current.PhotoDataURL
+		}
 		profile.SigningKeyPath = current.SigningKeyPath
 		profile.EncryptionKeyPath = current.EncryptionKeyPath
 	}
@@ -71,9 +83,10 @@ func EncodeProfileEPM(profile *Profile) ([]byte, error) {
 	return scratch.buildEPMBytesLocked("", 0)
 }
 
-// MaxNodePhotoBytes bounds the node's photo. The dashboard sends a 256 px
-// JPEG of about 24 KB; anything near this is not a profile picture.
-const MaxNodePhotoBytes = 256 << 10
+// MaxNodePhotoBytes bounds the node's photo. It rides the signed $EPM every
+// resolving peer fetches, so it stays small: the dashboard sends a 256 px
+// JPEG of at most 24 KB.
+const MaxNodePhotoBytes = 64 << 10
 
 // maxNodePhotoEdge bounds either side of the photo in pixels.
 const maxNodePhotoEdge = 2048
@@ -113,11 +126,10 @@ func NodePhotoDataURL(raw string) (string, error) {
 }
 
 // SetNodePhoto replaces the node's photo (owner 2026-10-07: an uploaded photo
-// "did NOT replace the image and did not survive the refresh"). The record's
-// schema has no photo field, so the photo is kept beside the profile and put
-// on the node's card (vcardPhotoLine); UpdateProfileFromEPM keeps it across
-// record edits. An empty value removes it. The profile update re-signs and
-// persists the record, as any profile edit does.
+// "did NOT replace the image and did not survive the refresh"). The photo is
+// the record's PHOTO field (SDS 1.239.0): the profile update re-signs and
+// persists the record, so the node reads it back after a restart, peers see
+// it, and the cards carry it. An empty value removes it.
 func (s *Service) SetNodePhoto(dataURL string) error {
 	photo, err := NodePhotoDataURL(dataURL)
 	if err != nil {
