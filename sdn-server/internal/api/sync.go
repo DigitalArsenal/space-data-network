@@ -78,20 +78,40 @@ const (
 	DSSActionPin         int8 = 4
 	DSSActionUnpin       int8 = 5
 	DSSActionHydrate     int8 = 6
+	// DSSActionSetRetention sets RETENTION and leaves the subscription
+	// alone: one lane's rule, or, when the frame names no provider and no
+	// source, the default of every lane of SCHEMA_NAME.
+	DSSActionSetRetention int8 = 7
 )
 
-// $DSS RETENTION values (dssRetention): the lane's rule for what a
-// subscription keeps. ReplaceCurrent (the default) supersedes the lane's
-// previous batch with each publication; ArchiveAll keeps and pins every one.
+// $DSS RETENTION values (dssRetention): the lane's rule for what the node
+// keeps. ReplaceCurrent supersedes the lane's previous batch with each
+// publication; KeepAll keeps every one in the store and pins nothing;
+// ArchiveAll keeps and pins every one. A lane without a rule of its own
+// follows its standard's default (channels.SubscriptionRegistry).
 const (
 	DSSRetentionReplaceCurrent int8 = 0
 	DSSRetentionArchiveAll     int8 = 1
+	DSSRetentionKeepAll        int8 = 2
+)
+
+// RETENTION's place in $DSS: vtable offset 110, field 53. A request that
+// leaves the field out names no rule: Subscribe keeps the lane's rule and
+// SetRetention clears it (the lane, or the standard, follows the default
+// again). A request that names ReplaceCurrent must write the field even
+// though it is the FlatBuffers default (SyncLane.ForceRetention).
+const (
+	dssRetentionSlot  = 110
+	dssRetentionField = 53
 )
 
 // retentionWordToOrdinal maps a registry word onto the $DSS enum ordinal.
 func retentionWordToOrdinal(word string) int8 {
-	if normalized, ok := channels.NormalizeRetention(word); ok && normalized == channels.RetentionArchiveAll {
+	switch normalized, _ := channels.NormalizeRetention(word); normalized {
+	case channels.RetentionArchiveAll:
 		return DSSRetentionArchiveAll
+	case channels.RetentionKeepAll:
+		return DSSRetentionKeepAll
 	}
 	return DSSRetentionReplaceCurrent
 }
@@ -103,6 +123,8 @@ func retentionOrdinalToWord(ordinal int8) (string, bool) {
 		return channels.RetentionReplaceCurrent, true
 	case DSSRetentionArchiveAll:
 		return channels.RetentionArchiveAll, true
+	case DSSRetentionKeepAll:
+		return channels.RetentionKeepAll, true
 	}
 	return "", false
 }
@@ -183,9 +205,12 @@ type SyncLane struct {
 	Subscribed  bool
 	PinPolicy   int8
 	Retention   int8
-	Visibility  string
-	Encryption  string
-	GrantState  string
+	// ForceRetention writes RETENTION even when it is ReplaceCurrent, the
+	// FlatBuffers default: a request that names a rule must carry it.
+	ForceRetention bool
+	Visibility     string
+	Encryption     string
+	GrantState     string
 
 	FeedHead           string
 	LastPublicationCID string
@@ -215,7 +240,6 @@ type SyncHandler struct {
 	mu      sync.Mutex
 	actions map[laneKey]*laneAction
 
-	subsMu   sync.Mutex
 	subsPath string
 }
 
@@ -262,7 +286,7 @@ func NewSyncHandler(deps *AdminMountDeps) *SyncHandler {
 			deps.Channels.subscriptions.SetDefaultRetention(deps.Config.Subscriptions.EffectiveDefaultRetention())
 		}
 		if h.subsPath != "" {
-			if err := deps.Channels.subscriptions.LoadFrom(h.subsPath); err != nil {
+			if err := deps.Channels.subscriptions.AttachFile(h.subsPath, log.Warnf); err != nil {
 				log.Warnf("Sync lane: subscription list %s not loaded: %v", h.subsPath, err)
 			}
 		}
@@ -444,11 +468,10 @@ func (h *SyncHandler) build(filter SyncFilter) ([]SyncLane, error) {
 		log.Debugf("sync lane: pin ledger unavailable: %v", err)
 	}
 
-	// The node default rule: every lane reads it until the subscriber
-	// chooses otherwise.
-	defaultRetention := channels.RetentionReplaceCurrent
-	if deps.Channels != nil && deps.Channels.subscriptions != nil {
-		defaultRetention = deps.Channels.subscriptions.DefaultRetention()
+	// A lane follows its standard's default until someone chooses a rule.
+	var subscriptions *channels.SubscriptionRegistry
+	if deps.Channels != nil {
+		subscriptions = deps.Channels.subscriptions
 	}
 
 	out := make([]SyncLane, 0, len(order))
@@ -463,7 +486,7 @@ func (h *SyncHandler) build(filter SyncFilter) ([]SyncLane, error) {
 			Visibility:   "public",
 			Encryption:   "none",
 			GrantState:   "not-required",
-			Retention:    retentionWordToOrdinal(defaultRetention),
+			Retention:    retentionWordToOrdinal(subscriptions.DefaultRetentionFor(key.code())),
 		}
 		lane.ProviderPeerID, lane.ProviderPublicKey = agg.producer, agg.producerPK
 		if lane.ProviderPeerID == "" && !ambiguousProvider[key.providerID] {
@@ -714,7 +737,12 @@ func encodeDSS(l *SyncLane) []byte {
 	}
 	DSS.DSSAddSUBSCRIBED(b, l.Subscribed)
 	DSS.DSSAddPIN_POLICY(b, enumOf(DSS.EnumValuesdssPinPolicy, l.PinPolicy))
-	DSS.DSSAddRETENTION(b, enumOf(DSS.EnumValuesdssRetention, l.Retention))
+	if l.ForceRetention {
+		b.PrependInt8(l.Retention)
+		b.Slot(dssRetentionField)
+	} else {
+		DSS.DSSAddRETENTION(b, enumOf(DSS.EnumValuesdssRetention, l.Retention))
+	}
 	if visibility != 0 {
 		DSS.DSSAddVISIBILITY(b, visibility)
 	}
@@ -758,10 +786,20 @@ func EncodeDSSAction(schema, providerID, sourceName string, action int8) []byte 
 	return encodeDSS(&lane)
 }
 
-// EncodeDSSSubscribe builds a Subscribe request carrying the lane's retention
-// rule (DSSRetentionReplaceCurrent or DSSRetentionArchiveAll).
+// EncodeDSSSubscribe builds a Subscribe request that sets the lane's rule.
 func EncodeDSSSubscribe(schema, providerID, sourceName string, retention int8) []byte {
-	lane := SyncLane{Key: newLaneKey(schema, providerID, sourceName), RequestedAction: DSSActionSubscribe, Retention: retention}
+	lane := SyncLane{Key: newLaneKey(schema, providerID, sourceName), RequestedAction: DSSActionSubscribe, Retention: retention, ForceRetention: true}
+	return encodeDSS(&lane)
+}
+
+// EncodeDSSSetRetention builds a SetRetention request: one lane's rule, or,
+// with providerID and sourceName empty, the default of the standard. A nil
+// retention clears the choice, so the default applies again.
+func EncodeDSSSetRetention(schema, providerID, sourceName string, retention *int8) []byte {
+	lane := SyncLane{Key: newLaneKey(schema, providerID, sourceName), RequestedAction: DSSActionSetRetention}
+	if retention != nil {
+		lane.Retention, lane.ForceRetention = *retention, true
+	}
 	return encodeDSS(&lane)
 }
 
@@ -790,6 +828,10 @@ func (h *SyncHandler) handleLane(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rest := strings.Trim(strings.TrimPrefix(r.URL.Path, SyncPath+"/"), "/")
+	if rest == "defaults" {
+		h.writeRetentionDefaults(w)
+		return
+	}
 	parts := strings.Split(rest, "/")
 	if len(parts) != 3 {
 		WriteErrorFrame(w, http.StatusNotFound, "not_found", "A lane is addressed as /api/v1/sync/{schema}/{provider}/{source}.", 0)
@@ -853,6 +895,14 @@ func (h *SyncHandler) handleAction(w http.ResponseWriter, r *http.Request) {
 	retentionWord, ok := retentionOrdinalToWord(int8(req.RETENTION()))
 	if !ok {
 		WriteErrorFrame(w, http.StatusBadRequest, "bad_request", "That retention rule is not one this node understands.", 0)
+		return
+	}
+	table := req.Table()
+	if table.Offset(dssRetentionSlot) == 0 {
+		retentionWord = "" // the frame names no rule
+	}
+	if action == DSSActionSetRetention {
+		h.setRetention(w, key, retentionWord)
 		return
 	}
 	if running, name := h.runningAction(key); running {
@@ -944,9 +994,10 @@ func plainActionError(action string, err error) string {
 	return "The " + action + " did not complete: " + msg + "."
 }
 
-// toggleSubscription flips the lane's channel subscription. On Subscribe the
-// retention word becomes the lane's rule (re-subscribing an already
-// subscribed lane only changes the rule); Unsubscribe ignores it.
+// toggleSubscription flips the lane's channel subscription. On Subscribe a
+// retention word, when given, becomes the lane's rule (re-subscribing an
+// already subscribed lane only changes the rule); Unsubscribe ignores it.
+// The registry writes the subscription file itself.
 func (h *SyncHandler) toggleSubscription(key laneKey, subscribe bool, retentionWord string) {
 	verb := "subscribe to"
 	if !subscribe {
@@ -967,17 +1018,13 @@ func (h *SyncHandler) toggleSubscription(key laneKey, subscribe bool, retentionW
 		h.failLane(key, "subscription change", "That source has no channel to "+verb+".")
 		return
 	}
-	if subscribe {
-		h.deps.Channels.subscriptions.SubscribeWithRetention(parsed, retentionWord)
-	} else {
+	switch {
+	case !subscribe:
 		h.deps.Channels.subscriptions.Unsubscribe(parsed)
-	}
-	h.subsMu.Lock()
-	defer h.subsMu.Unlock()
-	if h.subsPath != "" {
-		if err := h.deps.Channels.subscriptions.SaveTo(h.subsPath); err != nil {
-			log.Warnf("Sync lane: subscription list %s not saved: %v", h.subsPath, err)
-		}
+	case retentionWord != "":
+		h.deps.Channels.subscriptions.SubscribeWithRetention(parsed, retentionWord)
+	default:
+		h.deps.Channels.subscriptions.Subscribe(parsed)
 	}
 	// A successful toggle clears any earlier refusal on the lane.
 	h.mu.Lock()
@@ -985,6 +1032,67 @@ func (h *SyncHandler) toggleSubscription(key laneKey, subscribe bool, retentionW
 		act.lastError = ""
 	}
 	h.mu.Unlock()
+}
+
+// setRetention answers a SetRetention action: one lane's rule, or, when the
+// frame names no provider and no source, the default of the standard. The
+// answer is the lane, or every lane of the standard, as it now reads.
+func (h *SyncHandler) setRetention(w http.ResponseWriter, key laneKey, word string) {
+	if h.deps.Channels == nil || h.deps.Channels.subscriptions == nil {
+		WriteErrorFrame(w, http.StatusServiceUnavailable, "unavailable", "This node keeps no retention rules.", 0)
+		return
+	}
+	subscriptions := h.deps.Channels.subscriptions
+	switch {
+	case key.providerID == "" && key.sourceName == "":
+		if _, ok := subscriptions.SetStandardRetention(key.code(), word); !ok {
+			WriteErrorFrame(w, http.StatusBadRequest, "bad_request", "That standard cannot take a default rule.", 0)
+			return
+		}
+		h.writeLanes(w, SyncFilter{Schema: key.schema}, http.StatusAccepted)
+		return
+	}
+	// A lane's rule lives on its channel: the provider's lanes of one
+	// standard share it.
+	channelID, err := channels.FormatChannelID(channels.ChannelIDInput{SourceID: datasetPublicationSourceID(key.providerID, key.sourceName), StandardCode: key.code()})
+	if err != nil {
+		WriteErrorFrame(w, http.StatusBadRequest, "bad_request", "That source has no channel to set a rule on.", 0)
+		return
+	}
+	parsed, err := channels.ParseChannelID(channelID)
+	if err != nil {
+		WriteErrorFrame(w, http.StatusBadRequest, "bad_request", "That source has no channel to set a rule on.", 0)
+		return
+	}
+	subscriptions.SetLaneRetention(parsed, word)
+	h.writeLanes(w, SyncFilter{Schema: key.schema, ProviderID: key.providerID, SourceName: key.sourceName, Exact: true}, http.StatusAccepted)
+}
+
+// writeRetentionDefaults answers GET /api/v1/sync/defaults: one $DSS per
+// standard with a default set on this node or built in (SCHEMA_NAME the
+// standard code, RETENTION the rule), and one with SCHEMA_NAME "*" for
+// every other standard.
+func (h *SyncHandler) writeRetentionDefaults(w http.ResponseWriter) {
+	var subscriptions *channels.SubscriptionRegistry
+	if h.deps.Channels != nil {
+		subscriptions = h.deps.Channels.subscriptions
+	}
+	defaults := subscriptions.StandardRetention()
+	codes := make([]string, 0, len(defaults))
+	for code := range defaults {
+		codes = append(codes, code)
+	}
+	sort.Strings(codes)
+	frames := make([][]byte, 0, len(codes))
+	for _, code := range codes {
+		schema := channels.NodeDefaultKey
+		if code != channels.NodeDefaultKey {
+			schema = storeSchemaName(code)
+		}
+		lane := SyncLane{Key: laneKey{schema: schema}, Retention: retentionWordToOrdinal(defaults[code])}
+		frames = append(frames, encodeDSS(&lane))
+	}
+	WriteFrameStream(w, http.StatusOK, frames, map[string]string{StreamSchemaHeader: SyncSchemaName})
 }
 
 func (h *SyncHandler) startSync(key laneKey) {

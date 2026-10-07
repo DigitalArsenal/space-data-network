@@ -383,16 +383,27 @@ func (h *ChannelHandler) handleChannel(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		// ?retention= sets the lane's rule with the subscription.
+		subscribe := h.subscriptions.Subscribe
+		if word := strings.TrimSpace(r.URL.Query().Get("retention")); word != "" {
+			if _, ok := channels.NormalizeRetention(word); !ok {
+				http.Error(w, "retention must be keep-all, replace-current or archive-all", http.StatusBadRequest)
+				return
+			}
+			subscribe = func(channel channels.ChannelID) channels.SubscriptionState {
+				return h.subscriptions.SubscribeWithRetention(channel, word)
+			}
+		}
 		if h.requiresPrivateGrant(r, parsed) {
 			decision := h.authorizeGrant(r, parsed, channels.BoundarySubscribe)
 			if !decision.Allowed {
 				h.writeAccessDenied(w, decision)
 				return
 			}
-			writeJSON(w, http.StatusOK, h.subscriptionResponseWithDecision(parsed, h.subscriptions.Subscribe(parsed), decision))
+			writeJSON(w, http.StatusOK, h.subscriptionResponseWithDecision(parsed, subscribe(parsed), decision))
 			return
 		}
-		writeJSON(w, http.StatusOK, h.subscriptionResponse(parsed, h.subscriptions.Subscribe(parsed)))
+		writeJSON(w, http.StatusOK, h.subscriptionResponse(parsed, subscribe(parsed)))
 	case "unsubscribe":
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -2266,8 +2277,8 @@ func datasetPublicationSourceID(providerID, sourceName string) string {
 	})
 }
 
-// SetDefaultRetention sets the retention rule a lane subscription starts
-// with (config subscriptions.default_retention).
+// SetDefaultRetention sets the node default: the rule of every standard
+// without a default of its own (config subscriptions.default_retention).
 func (h *ChannelHandler) SetDefaultRetention(word string) {
 	if h == nil || h.subscriptions == nil {
 		return
@@ -2276,16 +2287,17 @@ func (h *ChannelHandler) SetDefaultRetention(word string) {
 }
 
 // LaneRetention answers the retention rule for one (schema, provider,
-// source) lane — the subscriber's choice, else the node default. schema is
+// source) lane: its own choice, else its standard's default. schema is
 // either form ("OMM" or "OMM.fbs").
 func (h *ChannelHandler) LaneRetention(schema, providerID, sourceName string) string {
-	if h == nil || h.subscriptions == nil {
-		return channels.RetentionReplaceCurrent
-	}
-	fallback := h.subscriptions.DefaultRetention()
 	key := newLaneKey(schema, providerID, sourceName)
+	var subscriptions *channels.SubscriptionRegistry
+	if h != nil {
+		subscriptions = h.subscriptions
+	}
+	fallback := subscriptions.DefaultRetentionFor(key.code())
 	sourceID := datasetPublicationSourceID(key.providerID, key.sourceName)
-	if key.schema == "" || sourceID == "" {
+	if subscriptions == nil || key.schema == "" || sourceID == "" {
 		return fallback
 	}
 	channelID, err := channels.FormatChannelID(channels.ChannelIDInput{SourceID: sourceID, StandardCode: key.code()})
@@ -2296,10 +2308,7 @@ func (h *ChannelHandler) LaneRetention(schema, providerID, sourceName string) st
 	if err != nil {
 		return fallback
 	}
-	if word, ok := channels.NormalizeRetention(h.subscriptions.Get(parsed).Retention); ok {
-		return word
-	}
-	return fallback
+	return subscriptions.Get(parsed).Retention
 }
 
 func channelMonitorTimings(timings map[string]int64) map[string]int64 {
@@ -2327,6 +2336,8 @@ func (h *ChannelHandler) channelMonitorWithDecision(parsed channels.ChannelID, d
 func (h *ChannelHandler) subscriptionResponse(parsed channels.ChannelID, state channels.SubscriptionState) map[string]interface{} {
 	payload := h.channelDetail(parsed)
 	payload["subscribed"] = state.Subscribed
+	payload["retention"] = state.Retention
+	payload["retentionChosen"] = state.RetentionChosen
 	if !state.UpdatedAt.IsZero() {
 		payload["lastUpdated"] = state.UpdatedAt.Format(time.RFC3339Nano)
 	}

@@ -107,7 +107,7 @@ func (s *FlatSQLStore) laneBatchStates(schemaName, providerID, sourceName string
 	})
 	out := make([]laneBatchState, 0, len(batches))
 	for _, batch := range batches {
-		_, servable, err := s.MaterializedDatasetBatch(schemaName, batch.id, DatasetBatchOptions{})
+		_, servable, err := s.MaterializedDatasetBatch(schemaName, batch.id, DatasetBatchOptions{ProviderID: providerID, SourceName: sourceName})
 		if err != nil {
 			return nil, err
 		}
