@@ -41,7 +41,7 @@
 <p>Screening every catalog object against every other in seconds to minutes, for any propagator</p>
 <p>Anthony &quot;TJ&quot; Koury III</p>
 <p>Edgesource, Space Data Network · <a href="mailto:tj@edgesource.com">tj@edgesource.com</a></p>
-<p>Technical whitepaper 1.6 | 5 October 2026</p>
+<p>Technical whitepaper 1.7 | 7 October 2026</p>
 <p>Numerical evidence cutoff: 2 October 2026</p>
 <p>© Edgesource Corporation</p>
 <h2 id="executive-summary">Executive summary</h2>
@@ -61,7 +61,6 @@
 <li><strong>Cost.</strong> Its arithmetic is measured: 0.17 s and 8.7 MB per pair-day at 1 s steps.</li>
 <li><strong>What it reveals.</strong> The paper shows how a naive design leaks distances, how invented trajectories can locate a hidden satellite, and which defenses stop that.</li>
 <li><strong>What it cannot hide.</strong> Real close approaches reveal what safety requires.</li>
-<li><strong>Decoys.</strong> Hiding a real orbit among N decoys bounds a prober&#39;s chance at e^(2ε)/N, and at exactly 1/N when the decoys cannot be told apart from it. Physics exposes a decoy copied from a real history: Earth&#39;s gravity field marks it as moved. It does not expose a decoy simulated with the full force model at its own position. The best decoys measured here, copies of the hidden satellite&#39;s own history, leave the real orbit hidden among 2.6 effective candidates of 10.</li>
 <li><strong>Status.</strong> The protocol is specified and its arithmetic measured. It is not built.</li>
 </ul>
 <h2 id="1-the-problem">1 The problem</h2>
@@ -582,10 +581,8 @@ something is changing.</li>
 precise trajectories exist. Private screening lets two operators learn when
 their objects come close without either seeing the other&#39;s trajectory.</p>
 <p>This section specifies the protocol, measures its arithmetic, and analyses
-what it reveals and how it can be abused (<a href="#r14">R14</a>). It also measures
-whether decoy orbits can hide a satellite (<a href="#r16">R16</a>). <strong>It is not
-built.</strong> SDN&#39;s encrypted-screening endpoint accepts requests and returns no
-result.</p>
+what it reveals and how it can be abused (<a href="#r14">R14</a>). <strong>It is not built.</strong>
+SDN&#39;s encrypted-screening endpoint accepts requests and returns no result.</p>
 <h3 id="what-is-computed-on-ciphertext">What is computed on ciphertext</h3>
 <p>A (the requester) and B (the responder) each hold a trajectory, sampled on a
 common time grid. A wants to know when B&#39;s object passes within R of its own.
@@ -843,189 +840,6 @@ are protected by their owner&#39;s key either way.</p>
 <p>With these defenses in place, a prober learns what its real objects&#39; real
 close approaches reveal. If it is willing to lose its identity, it learns at
 most one more window of answers, within its own fleet&#39;s tubes.</p>
-<h3 id="decoys">Decoys</h3>
-<p>The owner of a satellite missing from the public catalog can submit N
-candidate orbits: one real and N − 1 decoys. Only its key says which answers
-matter, so a prober&#39;s positives are mostly decoys.</p>
-<p><strong>What decoys add:</strong></p>
-<ul>
-<li><strong>They don&#39;t depend on the gate.</strong> If the checks above are ever bypassed, a
-prober maps a cloud of N orbits, not one.</li>
-<li><strong>They hide whether a hidden satellite exists.</strong> An owner that always
-submits about N candidates reveals neither whether it has hidden
-satellites nor how many.</li>
-</ul>
-<p>Both hold only as far as a prober cannot tell the decoys from the real orbit,
-which the measurements below quantify.</p>
-<p><strong>The bound.</strong></p>
-<ul>
-<li>Let p be the prober&#39;s belief about real orbits and q the decoy
-distribution. If e^(−ε) ≤ p/q ≤ e^(ε) everywhere, no prober finds the real
-orbit with probability above e^(2ε)/N.</li>
-<li>With q = p, the probability is exactly 1/N.</li>
-<li>The bound holds only when three conditions are met:<ul>
-<li><strong>Persistence.</strong> Decoys are drawn once and then evolve like real orbits.
-Redrawn each window, they leak up to e^(Tε) over T windows.</li>
-<li><strong>No observations.</strong> A prober that tracks the satellite itself finds it.</li>
-<li><strong>Gated confirmation.</strong> Honest neighbours must learn which alerts are
-real, so confirmation goes through the checks above.</li>
-</ul>
-</li>
-</ul>
-<p><strong>Cost.</strong> Screening work grows N-fold on the side that uses decoys. From the
-measured cost per pair-day:</p>
-<table>
-<thead>
-<tr>
-<th>Decoys (N)</th>
-<th>1 s steps</th>
-<th>10 s steps</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>1,000</td>
-<td>about 3 core-minutes, 9 GB</td>
-<td>about 21 core-seconds, 1 GB</td>
-</tr>
-<tr>
-<td>10,000</td>
-<td>about 28 core-minutes, 87 GB</td>
-<td>about 3.5 core-minutes, 10 GB</td>
-</tr>
-</tbody></table>
-<p>Decoys on both sides of a pair multiply to N².</p>
-<p><strong>Measured (<a href="#r16">R16</a>).</strong></p>
-<ul>
-<li><strong>Setup.</strong> Five decoy generators on 3,000 LEO payload histories (14 days,
-August 2026), one decoy per real orbit per generator. A cross-validated
-classifier tried to tell real from decoy. Its searches included the
-nearest public object and replayed public sequences.</li>
-<li><strong>Views.</strong><ul>
-<li>Element sets.</li>
-<li>Published ephemeris: daily windows propagated by HPOP, 251,770 windows.</li>
-</ul>
-</li>
-<li><strong>Metric.</strong> The number of candidates out of 100 that the real orbit
-effectively hides among. 100 is ideal.</li>
-</ul>
-<table>
-<thead>
-<tr>
-<th>Generator</th>
-<th align="right">Element sets</th>
-<th align="right">Published ephemeris</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>Random orbits</td>
-<td align="right">1.0</td>
-<td align="right">1.1</td>
-</tr>
-<tr>
-<td>Rotated copies of public objects</td>
-<td align="right">1.0</td>
-<td align="right">5.2</td>
-</tr>
-<tr>
-<td>Resampled noise</td>
-<td align="right">1.0</td>
-<td align="right">1.6</td>
-</tr>
-<tr>
-<td>Real changes replayed from a random start</td>
-<td align="right">4.3</td>
-<td align="right">3.3</td>
-</tr>
-<tr>
-<td>Real changes replayed in their own time</td>
-<td align="right">2.9</td>
-<td align="right">4.2</td>
-</tr>
-</tbody></table>
-<ul>
-<li><strong>Invented noise is recognised by its statistics.</strong> Real element sets drift
-from SGP4&#39;s node rate, and consecutive sets agree more closely than
-independent noise allows.</li>
-<li><strong>Copied noise is recognised in two ways:</strong><ul>
-<li>by correlation with the public histories it came from;</li>
-<li>by sitting farther from any public object than real satellites, which
-share tight shells. The median catalog distance was 2.8 against 0.56 in
-the published ephemeris.</li>
-</ul>
-</li>
-<li><strong>The worst case decides.</strong> Even at an AUC of 0.90, 7 % of real histories
-scored above a threshold that no held-out decoy reached. Those are found
-whatever N is (ε ≥ 3.4 at 95 %).</li>
-<li><strong>The published ephemeris hides more than element sets,</strong> and it is the
-only view the protocol exposes.</li>
-</ul>
-<p><strong>Copies of the hidden satellite itself.</strong></p>
-<ul>
-<li>A hidden satellite&#39;s own history is not public, so copies of it cannot be
-matched against the catalog.</li>
-<li><strong>Setup.</strong><ul>
-<li>We rotated each real history&#39;s node and shifted it in time by up to
-half a period, 50 copies for each of 1,000 satellites.</li>
-<li>Each copy was published through the same HPOP pipeline: 713,847
-windows.</li>
-<li>The adversary compared each set&#39;s members with each other.</li>
-</ul>
-</li>
-</ul>
-<table>
-<thead>
-<tr>
-<th>Candidates (N)</th>
-<th align="right">10</th>
-<th align="right">100</th>
-<th align="right">1,000</th>
-<th align="right">10,000</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>Effective number hiding the real orbit</td>
-<td align="right">2.6</td>
-<td align="right">12</td>
-<td align="right">94</td>
-<td align="right">about 3,500</td>
-</tr>
-<tr>
-<td>Basis</td>
-<td align="right">measured</td>
-<td align="right">extrapolated</td>
-<td align="right">extrapolated</td>
-<td align="right">extrapolated</td>
-</tr>
-</tbody></table>
-<p>Each satellite had 50 copies, so N = 10 is measured directly. Larger N
-extrapolates from scores standardized within each set.</p>
-<ul>
-<li><strong>The real orbit still stands out.</strong> It ranked in the top tenth of its own
-copies for 48 % of satellites. Its daily mean semi-major axis and its
-distance to neighbouring public objects give it away.</li>
-<li><strong>Why.</strong> A real orbit is consistent with Earth&#39;s gravity field at its own
-positions. A rotated copy of its history is not.</li>
-</ul>
-<p><strong>What works.</strong></p>
-<ul>
-<li><strong>The bound is exact.</strong> Decoys a prober cannot tell from the real orbit
-hold it to a 1/N chance, whatever its computing power.</li>
-<li><strong>Measured decoys dilute.</strong> Copies of the hidden satellite&#39;s own history,
-published through the same pipeline, cut a prober&#39;s chance of naming the
-real orbit first from certainty to about 1 in 2.6 among 10 candidates.
-They fall short of 1/N.</li>
-<li><strong>Physics rules out copies, not decoys.</strong> A copied history fails the
-gravity-field test because it was flown at other positions. A decoy whose
-truth is propagated with the full force model at its own position is
-consistent with the field there by construction. What remains to tell it
-apart is how it was tracked and fitted, and how it sits among its
-neighbours. This paper measures no generator of that kind.</li>
-<li><strong>Observation defeats any decoy.</strong> A prober that tracks the satellite with
-its own sensors finds it. Decoys hide a satellite only from what the
-screening service reveals.</li>
-<li><strong>Decoys are a second layer.</strong> They dilute what leaks behind the checks
-above; they do not replace them.</li>
-</ul>
 <h3 id="what-exists">What exists</h3>
 <table>
 <thead>
@@ -1045,10 +859,6 @@ above; they do not replace them.</li>
 <tr>
 <td>The protocol&#39;s arithmetic</td>
 <td>Measured (<a href="#r14">R14</a>).</td>
-</tr>
-<tr>
-<td>Decoy generators and their measurement (<a href="#r16">R16</a>)</td>
-<td>Measured. The best leaves the real orbit among 2.6 effective candidates of 10.</td>
 </tr>
 <tr>
 <td>Screening module, bit-only comparison, pre-answer tube check, completeness audit, noise flooding, Laplace noise, per-window keys and audit, staking, budgets</td>
@@ -1128,8 +938,6 @@ above; they do not replace them.</li>
 <p>Edgesource. Private screening: protocol, SEAL benchmark, leakage and exposure measurements, exchange rules and defenses. Modules commit 22db2691620599403885cd1353677011e08f3d22. Files: <code>analysis/conjunction-assessment/docs/private-screening.md</code>, <code>analysis/conjunction-assessment/bench/private-screening</code>. Private repository, available on request (<a href="mailto:tj@edgesource.com">tj@edgesource.com</a>).</p>
 <h3 id="r15">R15</h3>
 <p>Edgesource. FlatBuffers homomorphic encryption. <a href="https://github.com/DigitalArsenal/flatbuffers/blob/master/docs/source/homomorphic_encryption.md">Documentation</a></p>
-<h3 id="r16">R16</h3>
-<p>Edgesource. Decoys for private screening: principle and measurement. Modules commit 22db2691620599403885cd1353677011e08f3d22. Files: <code>analysis/private-screening/docs/decoy-study-2026-08.md</code>, <code>analysis/private-screening</code>. Private repository, available on request (<a href="mailto:tj@edgesource.com">tj@edgesource.com</a>).</p>
 
     </article>
     <section id="stack" data-sdn-stack="sdn"></section>
