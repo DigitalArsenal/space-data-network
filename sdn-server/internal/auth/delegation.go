@@ -38,8 +38,10 @@ import (
 // signature the wallet's sign-in key makes.
 const DelegationPrefix = "SDN-RPC-DELEGATION/v1"
 
-// MaxDelegation is the longest a session key may be delegated for.
-const MaxDelegation = 12 * time.Hour
+// MaxDelegation is the longest a session key may be delegated for. The
+// browser asks for a week and keeps the key across page loads (sdn-js
+// sealed-transport.ts); the extra day absorbs clock skew between the two.
+const MaxDelegation = 8 * 24 * time.Hour
 
 // DelegationDigest is the 32 bytes the wallet signs to delegate sessionPub.
 func DelegationDigest(challenge []byte, sessionPub ed25519.PublicKey, expiresAtMs uint64) []byte {
@@ -55,7 +57,6 @@ func DelegationDigest(challenge []byte, sessionPub ed25519.PublicKey, expiresAtM
 
 type delegation struct {
 	wallet    ed25519.PublicKey
-	root      bool
 	expiresAt time.Time
 }
 
@@ -102,7 +103,7 @@ func (h *Handler) handleDelegate(w http.ResponseWriter, r *http.Request) {
 	}
 	expiresAt := time.UnixMilli(int64(req.ExpiresAtMs)).UTC()
 	if !expiresAt.After(now) || expiresAt.After(now.Add(MaxDelegation)) {
-		writeJSON(w, http.StatusBadRequest, errorResponse{Code: "invalid_expiry", Message: "a delegation must expire within 12 hours"})
+		writeJSON(w, http.StatusBadRequest, errorResponse{Code: "invalid_expiry", Message: "a delegation must expire within 8 days"})
 		return
 	}
 
@@ -137,41 +138,35 @@ func (h *Handler) handleDelegate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.mu.Lock()
-	if h.delegations == nil {
-		h.delegations = make(map[string]delegation)
-	}
-	for key, d := range h.delegations {
-		if d.expiresAt.Before(now) {
-			delete(h.delegations, key)
-		}
-	}
-	h.delegations[string(sessionPub)] = delegation{
-		wallet:    append(ed25519.PublicKey(nil), walletPub...),
-		root:      pending.rootAdmin,
-		expiresAt: expiresAt,
-	}
-	h.mu.Unlock()
+	h.recordDelegation(sessionPub, walletPub, expiresAt, now)
 	writeJSON(w, http.StatusOK, map[string]any{"status": "delegated", "expires_at_ms": req.ExpiresAtMs})
 }
 
 // DelegatedWallet returns the wallet key that delegated sessionPub, and
 // whether that wallet is the node's own root, while the delegation is live.
+// Root is decided now, from the node's current root keys.
 func (h *Handler) DelegatedWallet(sessionPub ed25519.PublicKey) (ed25519.PublicKey, bool, bool) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	d, ok := h.delegations[string(sessionPub)]
+	h.mu.Unlock()
 	if !ok || !d.expiresAt.After(time.Now()) {
 		return nil, false, false
 	}
-	return d.wallet, d.root, true
+	return d.wallet, h.isNodeRootSigningKey(d.wallet), true
 }
 
-// RevokeDelegation ends sessionPub's delegation (sign-out).
+// RevokeDelegation ends sessionPub's delegation (sign-out), here and in
+// auth.db.
 func (h *Handler) RevokeDelegation(sessionPub ed25519.PublicKey) {
 	h.mu.Lock()
 	delete(h.delegations, string(sessionPub))
 	h.mu.Unlock()
+	if h.userStore == nil {
+		return
+	}
+	if err := h.userStore.deleteDelegation(sessionPub); err != nil {
+		log.Warnf("Signed-out session still stored until it expires: %v", err)
+	}
 }
 
 // siwsMessageFor rebuilds the Sign-In With Solana text from the node's own

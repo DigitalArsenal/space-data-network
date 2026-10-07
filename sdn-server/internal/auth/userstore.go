@@ -84,6 +84,10 @@ func NewUserStore(dbPath string, configEntries []config.UserEntry) (*UserStore, 
 		closer()
 		return nil, fmt.Errorf("failed to initialize user store: %w", err)
 	}
+	if err := s.initDelegations(); err != nil {
+		closer()
+		return nil, fmt.Errorf("failed to initialize user store: %w", err)
+	}
 
 	// Load config users into memory
 	now := time.Now()
