@@ -22,8 +22,6 @@ package api
 
 import (
 	"crypto/ed25519"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -125,9 +123,11 @@ func (h *TrustHandler) RegisterEngineRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/trust/neighborhood", h.handleNeighborhood)
 	mux.HandleFunc("/api/v1/trust/query", h.handleQuery)
 	mux.HandleFunc("/api/v1/trust/funds", protect(h.handleFunds))
-	// Rules engine: policies and verdicts read openly (a policy is the
-	// evaluator's published rule; a verdict is its signed public opinion),
-	// mutations and settings behind the same admin gate as edges.
+	// Rules engine: the rules table, policies and verdicts read openly (a
+	// policy is the evaluator's published rule; a verdict is its signed
+	// public opinion), changes and settings behind the same admin gate as
+	// edges.
+	mux.HandleFunc("/api/v1/trust/rules", h.handleRules)
 	mux.HandleFunc("/api/v1/trust/policies", h.handlePolicies)
 	mux.HandleFunc("/api/v1/trust/verdicts", h.handleVerdicts)
 	mux.HandleFunc("/api/v1/trust/settings", h.handleSettings)
@@ -687,67 +687,92 @@ func (h *TrustHandler) rulesWired(w http.ResponseWriter) bool {
 
 // handlePolicies: GET lists every policy (latest record per POLICY_ID);
 // POST stores a new or updated policy as a signed `$TRP` record.
+// handlePolicies lists every stored `$TRP` policy (the rules table and the
+// rule sets it replaced), latest record per POLICY_ID. Rules change only
+// through /api/v1/trust/rules.
 func (h *TrustHandler) handlePolicies(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		trustError(w, http.StatusMethodNotAllowed, "GET only; change rules through /api/v1/trust/rules")
+		return
+	}
+	if !h.rulesWired(w) {
+		return
+	}
+	list, err := h.Policies.List()
+	if err != nil {
+		trustError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	if list == nil {
+		list = []trust.Policy{}
+	}
+	writeTrustJSON(w, http.StatusOK, map[string]any{"policies": list})
+}
+
+// rulesTable is the rules table on the wire: the rows in `$TRP` predicate
+// form, in order. Every row must pass.
+type rulesTable struct {
+	PolicyID  string            `json:"POLICY_ID"`
+	Rules     []trust.Predicate `json:"RULES"`
+	UpdatedAt int64             `json:"UPDATED_AT"`
+}
+
+func tableOf(p trust.Policy) rulesTable {
+	rules := p.Root.Predicates
+	if rules == nil {
+		rules = []trust.Predicate{}
+	}
+	return rulesTable{PolicyID: p.ID, Rules: rules, UpdatedAt: p.UpdatedAtMs}
+}
+
+// handleRules is the node's trust rules table (owner 2026-10-07: one simple
+// table, rows added and removed, every row must pass). GET reads it openly;
+// PUT replaces it (admin), and the engine evaluates the new rules at once.
+func (h *TrustHandler) handleRules(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		if !h.rulesWired(w) {
 			return
 		}
-		list, err := h.Policies.List()
+		table, err := h.Policies.Table()
 		if err != nil {
 			trustError(w, http.StatusServiceUnavailable, err.Error())
 			return
 		}
-		if list == nil {
-			list = []trust.Policy{}
-		}
-		writeTrustJSON(w, http.StatusOK, map[string]any{"policies": list})
-	case http.MethodPost:
+		writeTrustJSON(w, http.StatusOK, tableOf(table))
+	case http.MethodPut:
 		protect := h.protectFn
 		if protect == nil {
 			protect = func(f http.HandlerFunc) http.HandlerFunc { return f }
 		}
-		protect(h.postPolicy)(w, r)
+		protect(h.putRules)(w, r)
 	default:
-		trustError(w, http.StatusMethodNotAllowed, "GET or POST")
+		trustError(w, http.StatusMethodNotAllowed, "GET or PUT")
 	}
 }
 
-func newPolicyID() string {
-	var b [8]byte
-	_, _ = rand.Read(b[:])
-	return "trp-" + hex.EncodeToString(b[:])
-}
-
-func (h *TrustHandler) postPolicy(w http.ResponseWriter, r *http.Request) {
+func (h *TrustHandler) putRules(w http.ResponseWriter, r *http.Request) {
 	if !h.rulesWired(w) {
 		return
 	}
-	var p trust.Policy
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&p); err != nil {
-		trustError(w, http.StatusBadRequest, "invalid policy body: "+err.Error())
+	var body rulesTable
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body); err != nil {
+		trustError(w, http.StatusBadRequest, "invalid rules body: "+err.Error())
 		return
 	}
-	if p.ID == "" {
-		p.ID = newPolicyID()
-	}
-	if p.EvaluationIntervalMs == 0 {
-		p.EvaluationIntervalMs = trust.DefaultEvaluationIntervalMs
-	}
-	if err := p.Validate(); err != nil {
+	candidate := trust.Policy{ID: trust.TableID, Root: trust.Group{Combinator: trust.CombinatorAll, Predicates: body.Rules}}
+	if err := candidate.Validate(); err != nil {
 		trustError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	cid, signedJSON, err := h.Policies.Put(p)
+	saved, cid, _, err := h.Policies.PutTable(body.Rules)
 	if err != nil {
 		trustError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	h.trigger("policy-changed")
-	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-SDN-Record-CID", cid)
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(signedJSON)
+	writeTrustJSON(w, http.StatusOK, tableOf(saved))
 }
 
 // handleVerdicts serves the latest verdict per (policy, subject) from the
