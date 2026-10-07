@@ -1,5 +1,5 @@
 {
-  "sdsVersion": "1.237.0",
+  "sdsVersion": "1.238.0",
   "compilerSha256": "41cf8bc554d446577221bd074dce3c72a8bf7c8ec5ea8348c557f9c0a129195f",
   "inputs": {
     "published/ABA/main.fbs": "8a1a2bc1ea89290440eca1a139981642f9d347423391f6adced48b31eb34ce73",
@@ -257,7 +257,7 @@
     "published/WKS/main.fbs": "39889305d3ed3fc083d9301343ae1a82017cfab3fb00f2ed2dea3fa36cb97c29",
     "published/WPN/main.fbs": "ad409962b8971589b481fb2d0f411a0fd128a4c8ef26c4d969c1b150198b161c",
     "published/WTH/main.fbs": "fab5e76deb617970236feaf16a8bef8cc90440bf436bce6b3241795a3a1abcf5",
-    "published/WXF/main.fbs": "d76bc87a3e6defb1a7405b728d472d92d666a92993536f32349b7b16b97a8bbf",
+    "published/WXF/main.fbs": "d2b0864dc8b5745b8d4e77e3ab295a73877ae5f5867db05c03a8d5dfacdd3539",
     "published/XTC/main.fbs": "5eeb56f3fc59932e8071aec5c7dd559adff9e343c3095da7eaa1767aaea13372",
     "embedded/ACI.fbs": "ccf14c0c9af4e6ddcef60564761a5b7cda61fc9ef4af54b49ca5030c4a16110f",
     "embedded/ACL.fbs": "414e137556872fe8531b2c52e56d443ce6eaf950e8d966789b92bc0b64d31800",
@@ -497,7 +497,7 @@
     "embedded/WKS.fbs": "39889305d3ed3fc083d9301343ae1a82017cfab3fb00f2ed2dea3fa36cb97c29",
     "embedded/WPN.fbs": "ad409962b8971589b481fb2d0f411a0fd128a4c8ef26c4d969c1b150198b161c",
     "embedded/WTH.fbs": "fab5e76deb617970236feaf16a8bef8cc90440bf436bce6b3241795a3a1abcf5",
-    "embedded/WXF.fbs": "d76bc87a3e6defb1a7405b728d472d92d666a92993536f32349b7b16b97a8bbf",
+    "embedded/WXF.fbs": "d2b0864dc8b5745b8d4e77e3ab295a73877ae5f5867db05c03a8d5dfacdd3539",
     "embedded/XTC.fbs": "5eeb56f3fc59932e8071aec5c7dd559adff9e343c3095da7eaa1767aaea13372"
   },
   "outputs": {
@@ -667,7 +667,7 @@
     "RCF.bfbs": "ad663bd2d1749bc93e082ad6165de09bdacf8056d05fb8ccda25fd6663bb4a53",
     "RDM.bfbs": "30336168647075d88a2d8fd1232e4189f99eb0c4512bb145b49a0c602ce59636",
     "RDO.bfbs": "6c1a21f4ea21a8908bf5497a288f41398fb9ace014adb928b57cc5aa4f1cb10a",
-    "REC.bfbs": "e163217473c5ce530be8d685ceec11ec3420232015f15fce771bbaef9498d2b7",
+    "REC.bfbs": "2b5cd02ead1010a6b5850a002bd2d29c6573cd344b72b92d268e639e59a54732",
     "REM.bfbs": "41a87131b10a1b8aed678dd92e1470263dadbbde35ec431cee05c9aad7b960a2",
     "REV.bfbs": "51a1c845372ec9f1ac6b3e9c700316daa51b77a5cf3d69b07c58b777c417e01f",
     "RFB.bfbs": "5e9d997ad6e5790b138b43a5dafdb1b97ebbc465ff6a00ec5fa0879a378fecb1",
@@ -738,7 +738,7 @@
     "WKS.bfbs": "8811c0d61379d061a97ffbf857a113ef12665e57bfde1ab12d26390989372780",
     "WPN.bfbs": "8ae4122dde52d5c5e4860810b34d5f91d2d500b6dd399d64ece8db2e4c69febd",
     "WTH.bfbs": "fc2fb092f554b6f4b05af046912f3ee8a25727874e1fb7d2fd1175cc38bb1476",
-    "WXF.bfbs": "29bc1d284268f8bf463e20120c18054058933be4320027af312f59aa27457fd5",
+    "WXF.bfbs": "ceca5c2639a60e3911d553857f466482be9d7b35e0247fbc1e6fe2c4e9bb6561",
     "XTC.bfbs": "8a267006a166d239d5705a59cb1c55994b3e111609d9730a1900d72e054e10e9"
   }
 }
