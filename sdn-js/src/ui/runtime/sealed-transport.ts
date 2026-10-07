@@ -7,14 +7,14 @@
  * advertised encryption key (sdn-server internal/sealed, auth delegation.go).
  * This module holds that session and installs a fetch wrapper so every
  * same-origin /api/ call the dashboard makes travels sealed, without each
- * call site knowing. The session outlives a page load: rememberSession keeps
- * it encrypted in this browser (sealed-session-store.ts), resumeSession picks
- * it up again, and sign-out (revoke) deletes it.
+ * call site knowing. The session outlives a page load: sessionSnapshot hands
+ * the page what to keep and resumeFromSeed takes it back. Keeping it at rest
+ * is the page's job (the dashboard encrypts it, lib/session/session-vault.js):
+ * this runtime stays free of WebCrypto (no-webcrypto-runtime.test.ts).
  */
 
 import { call, createSessionSigner, REVOKE_ROUTE, RPC_ROUTE, sessionSignerFromSeed, type NodeTransport, type RpcSigner } from '../../sealed-rpc';
 import { sha256, useHDWalletModule } from '../../crypto/hd-wallet';
-import { clearSession, indexedDbVault, loadSession, storeSession, type SessionVault } from './sealed-session-store';
 
 /** Use the wallet module the page already loaded (see useHDWalletModule). */
 export const useWalletModule = useHDWalletModule;
@@ -140,70 +140,34 @@ export function sealedActive(nowMs = Date.now()): boolean {
   return Boolean(active && active.expiresAtMs > nowMs);
 }
 
-let defaultVault: SessionVault | null | undefined;
-const browserVault = (): SessionVault | null => (defaultVault === undefined ? (defaultVault = indexedDbVault()) : defaultVault);
-
-/**
- * Keep the active session in this browser so the next page load resumes it.
- * `facts` is what the page shows about the wallet; it must hold no secret.
- * Resolves false where the browser keeps nothing (no IndexedDB, private mode).
- */
-export async function rememberSession(facts?: unknown, vault: SessionVault | null = browserVault()): Promise<boolean> {
-  if (!active || !vault) return false;
-  try {
-    await storeSession(vault, {
-      origin: active.origin,
-      fingerprint: active.node.fingerprint,
-      sessionPubHex: toHex(active.signer.publicKey),
-      expiresAtMs: active.expiresAtMs,
-      seed: active.signer.seed,
-      facts,
-    });
-    return true;
-  } catch {
-    return false;
-  }
+/** What the page keeps to resume the active session after a reload, or null. */
+export function sessionSnapshot(): { origin: string; fingerprint: string; sessionPubHex: string; expiresAtMs: number; seed: Uint8Array } | null {
+  if (!active) return null;
+  return {
+    origin: active.origin,
+    fingerprint: active.node.fingerprint,
+    sessionPubHex: toHex(active.signer.publicKey),
+    expiresAtMs: active.expiresAtMs,
+    seed: new Uint8Array(active.signer.seed),
+  };
 }
 
 /**
- * Resume the session this browser kept for this node, if it still lasts.
- * `prepare` runs only when there is one to resume (loading the wallet module
- * the session key signs with). Resolves the facts kept with it and when the
- * session ends, or null.
- * The caller confirms the node still knows the session, and calls
- * forgetSession when it does not.
+ * Resume a session the page kept: it must not have expired, and its seed must
+ * make the same session key. Resolves whether the session is active again;
+ * the caller confirms the node still knows it.
  */
-export async function resumeSession(
+export async function resumeFromSeed(
   origin: string,
   node: NodeTransport,
-  { prepare, vault = browserVault(), nowMs = Date.now() }: { prepare?: () => Promise<void>; vault?: SessionVault | null; nowMs?: number } = {},
-): Promise<{ facts: unknown; expiresAtMs: number } | null> {
-  if (!vault) return null;
-  try {
-    const stored = await loadSession(vault, { origin, fingerprint: node.fingerprint, nowMs });
-    if (!stored) return null;
-    await prepare?.();
-    const signer = await sessionSignerFromSeed(stored.seed);
-    if (toHex(signer.publicKey) !== stored.sessionPubHex) {
-      await clearSession(vault);
-      return null;
-    }
-    active = { origin, node, signer, sessionId: stored.sessionPubHex.slice(0, 16), expiresAtMs: stored.expiresAtMs };
-    return { facts: stored.facts ?? null, expiresAtMs: stored.expiresAtMs };
-  } catch {
-    return null;
-  }
-}
-
-/** Drop the session here and the copy this browser kept. */
-export async function forgetSession(vault: SessionVault | null = browserVault()): Promise<void> {
-  active = null;
-  if (!vault) return;
-  try {
-    await clearSession(vault);
-  } catch {
-    /* nothing kept */
-  }
+  kept: { seed: Uint8Array; sessionPubHex: string; expiresAtMs: number },
+  nowMs = Date.now(),
+): Promise<boolean> {
+  if (!(kept.expiresAtMs > nowMs)) return false;
+  const signer = await sessionSignerFromSeed(kept.seed);
+  if (toHex(signer.publicKey) !== kept.sessionPubHex) return false;
+  active = { origin, node, signer, sessionId: kept.sessionPubHex.slice(0, 16), expiresAtMs: kept.expiresAtMs };
+  return true;
 }
 
 /** Send one request sealed, as a fetch Response. */
@@ -231,16 +195,16 @@ function arrayBufferOf(bytes: Uint8Array): ArrayBuffer {
   return bytes.slice().buffer as ArrayBuffer;
 }
 
-/** End the session here, on the node and in this browser's storage. */
+/** End the session here and on the node. */
 export async function revoke(fetchImpl: typeof fetch = fetch): Promise<void> {
-  if (active) {
-    try {
-      await sealedFetch(REVOKE_ROUTE, { method: 'POST' }, fetchImpl);
-    } catch {
-      /* the delegation expires on its own */
-    }
+  if (!active) return;
+  try {
+    await sealedFetch(REVOKE_ROUTE, { method: 'POST' }, fetchImpl);
+  } catch {
+    /* the delegation expires on its own */
+  } finally {
+    active = null;
   }
-  await forgetSession();
 }
 
 /**
