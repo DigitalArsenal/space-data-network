@@ -3764,7 +3764,7 @@ func (n *Node) enforceStorageQuota() {
 	if n == nil || n.store == nil || n.config == nil {
 		return
 	}
-	maxBytes, err := n.config.Storage.ResolveMaxSizeBytes(n.config.Storage.Path)
+	maxBytes, err := n.StorageLimitBytes()
 	if err != nil {
 		log.Warnf("Storage quota: resolve storage.max_size: %v", err)
 		return

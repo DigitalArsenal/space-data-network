@@ -61,9 +61,10 @@ export const decodeWindowStatus = decodeWorkerSchemaSyncProgressFlatBuffer;
 export type DashboardEngineDigest = NonNullable<LocalFlatSqlEngineOptions['computeSHA384']>;
 
 /**
- * Engine boot options forwarded to the worker's `initFlatSQL`: the absolute
- * URL of the directory serving `flatsql.wasm` + `integrity.json` (same-origin
- * `/sdn-js`) and the digest used for the integrity check.
+ * Engine boot options forwarded to the worker: the absolute URL of the
+ * directory serving the node's signed `flatsql.wasm` (same-origin `/sdn-js`),
+ * the node's publisher key it must be signed with, and the digest flatsql
+ * checks the verified module with.
  */
 export type DashboardEngineOptions = LocalFlatSqlEngineOptions;
 
@@ -119,14 +120,14 @@ export interface DashboardDataRuntimeHandle extends SDNDataWindowGlobal {
  */
 export function startDashboardDataRuntime(options: DashboardDataRuntimeOptions): DashboardDataRuntimeHandle {
   const createStore = options.createStore ?? defaultStoreFactory;
-  const storeOptions: DashboardDataStoreOptions = {
+  const store = nodePublisherKey(options).then((publisherKey) => createStore({
     schemas: [],
     engine: {
       wasmPath: options.wasmPath,
+      publisherKey,
       computeSHA384: digestSha384,
     },
-  };
-  const store = createStore(storeOptions, { createWorker: options.createWorker });
+  }, { createWorker: options.createWorker }));
   const runtimePromise = store.then((engine) => createDashboardWindow({
     store: engine,
     fetch: options.fetch ?? undefined,
@@ -162,6 +163,23 @@ export function startDashboardDataRuntime(options: DashboardDataRuntimeOptions):
 
   globalThis.SDN_DATA_WINDOW = handle;
   return handle;
+}
+
+/**
+ * The node's publisher key, which its engine artifact must be signed with
+ * (owner 2026-10-07: the engine ships as a signed module). Null when the node
+ * reports none, and the engine then refuses to start.
+ */
+async function nodePublisherKey(options: DashboardDataRuntimeOptions): Promise<string | null> {
+  const fetchImpl = options.fetch ?? globalThis.fetch;
+  try {
+    const response = await fetchImpl(`${(options.baseUrl ?? '').replace(/\/+$/, '')}/api/v1/id`, { credentials: 'same-origin' });
+    if (!response.ok) return null;
+    const body = (await response.json()) as { publisher_key?: unknown };
+    return typeof body?.publisher_key === 'string' && body.publisher_key ? body.publisher_key : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Read the currently published data-window global, if any. */

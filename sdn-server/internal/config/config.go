@@ -1404,6 +1404,13 @@ type StatusConfig struct {
 type StorageConfig struct {
 	Path string `yaml:"path"`
 
+	// MoveTo is a folder the node moves its data into at the next start,
+	// before it opens anything (the dashboard's storage editor; owner
+	// 2026-10-07). Path itself does not change: it becomes a link to the new
+	// folder, so the keys and everything else kept beside it stay where they
+	// are. Empty once the move is done.
+	MoveTo string `yaml:"move_to,omitempty"`
+
 	// MaxSize is the disk-quota cap enforced by FlatSQLStore.
 	// GarbageCollectToQuota (Task D3). Two forms:
 	//   - a percentage of the filesystem holding Path, e.g. "90%" — the

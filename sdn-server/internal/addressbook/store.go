@@ -1,31 +1,22 @@
 package addressbook
 
 // The book lives on the node's own disk, beside its homepage document and
-// outside the record store: FlatSQL sync answers other peers, and a private
-// entry must never be among the answers. One file keeps the latest signed
-// revision of every entry, tombstones included, so a revoked entry stays
-// revoked; another keeps the operator's default.
+// outside the record store. One file keeps the latest signed revision of
+// every entry, tombstones included, so a revoked entry stays revoked.
 
 import (
 	"bytes"
 	"encoding/binary"
-	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"sort"
 )
 
-const (
-	entriesFile  = "entries.aba" // size-prefixed $ABA frames, back to back
-	settingsFile = "settings.json"
-)
+// entriesFile holds size-prefixed $ABA frames, back to back.
+const entriesFile = "entries.aba"
 
 type store struct{ dir string }
-
-type settings struct {
-	DefaultVisibility string `json:"default_visibility"`
-}
 
 // load returns the latest revision of each entry that verifies. A frame that
 // does not verify is not an entry, and a torn tail ends the file.
@@ -73,32 +64,6 @@ func (s store) save(records map[string]Record) error {
 		buf.Write(records[id].Frame())
 	}
 	return s.write(entriesFile, buf.Bytes())
-}
-
-// defaultVisibility is the operator's choice for new entries; private until
-// they make one.
-func (s store) defaultVisibility() (Visibility, error) {
-	raw, err := os.ReadFile(filepath.Join(s.dir, settingsFile))
-	if errors.Is(err, os.ErrNotExist) {
-		return Private, nil
-	}
-	if err != nil {
-		return Private, err
-	}
-	var held settings
-	if err := json.Unmarshal(raw, &held); err != nil {
-		return Private, err
-	}
-	v, _ := ParseVisibility(held.DefaultVisibility)
-	return v, nil
-}
-
-func (s store) setDefaultVisibility(v Visibility) error {
-	raw, err := json.Marshal(settings{DefaultVisibility: v.String()})
-	if err != nil {
-		return err
-	}
-	return s.write(settingsFile, append(raw, '\n'))
 }
 
 // write replaces one file atomically, readable by the node's user only.

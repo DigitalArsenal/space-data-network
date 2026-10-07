@@ -45,9 +45,10 @@ guard('--sources');
 
 // --- 0b. Browser engine artifact (embed == pin law) --------------------------
 // The dashboard's data worker runs flatsql's wasm from the node's /sdn-js lane
-// (same-origin, integrity-checked), so the node embeds the engine binary and
-// its integrity manifest. Both are regenerated from the installed flatsql on
-// every embed build, and the build refuses an install that does not satisfy
+// (same-origin), so the node embeds the engine binary and serves it signed
+// with its publisher key as a module artifact (owner 2026-10-07; sdn-server
+// conjunction_ui.go browserEngine). It is regenerated from the installed
+// flatsql on every embed build, and the build refuses an install that does not satisfy
 // sdn-js's flatsql pin: the embedded engine must equal the pin, never drift
 // behind it (sdn-server's own engine is held to the same law).
 // The dashboard source is the private SpaceAware-UI submodule, which clones
@@ -76,19 +77,12 @@ if (!versionSatisfiesPin(flatsqlVersion, flatsqlPin)) {
 const engineWasmSrc = path.resolve(__dirname, '../node_modules/flatsql/wasm/flatsql.wasm');
 const engineDir = path.join(embedDir, 'sdn-js');
 const engineWasm = fs.readFileSync(engineWasmSrc);
-const engineHash = createHash('sha384').update(engineWasm).digest('base64');
 fs.mkdirSync(engineDir, { recursive: true });
 fs.writeFileSync(path.join(engineDir, 'flatsql.wasm'), engineWasm);
-// The shape flatsql's loadIntegrityFile reads: {hash, sri, size}. Compact +
-// trailing newline, byte-for-byte what the node tracks, so a rebuild on an
-// unchanged pin leaves the embed tree clean.
-fs.writeFileSync(
-  path.join(engineDir, 'integrity.json'),
-  JSON.stringify({ hash: engineHash, sri: `sha384-${engineHash}`, size: engineWasm.byteLength }) + '\n'
-);
+fs.rmSync(path.join(engineDir, 'integrity.json'), { force: true });
 console.log(
   `[build-dashboard] staged ${path.relative(process.cwd(), path.join(engineDir, 'flatsql.wasm'))} ` +
-    `(flatsql ${flatsqlVersion}, ${engineWasm.byteLength} bytes, sha384-${engineHash})`
+    `(flatsql ${flatsqlVersion}, ${engineWasm.byteLength} bytes, sha256 ${createHash('sha256').update(engineWasm).digest('hex')})`
 );
 
 /**
@@ -209,6 +203,20 @@ console.log(
 );
 console.log(`[build-dashboard] wrote ${path.relative(process.cwd(), outCsp)} (${hashes.length} inline-script hash(es))`);
 console.log(`[build-dashboard] CSP: ${csp}`);
+
+// --- 4b. Media the page plays ------------------------------------------------
+// Video never rides in the page (vite.config.mjs): Vite emits it to
+// dist/media/<name>-<hash>, and the node embeds that folder and serves it at
+// /media/ (conjunction_ui.go), so it ships in the binary and loads only when
+// a reader opens it (owner 2026-10-07: the Node Directory explainer).
+const mediaDist = path.resolve(__dirname, 'dist/media');
+const mediaOut = path.join(embedDir, 'media');
+fs.rmSync(mediaOut, { recursive: true, force: true });
+fs.mkdirSync(mediaOut, { recursive: true });
+for (const name of fs.existsSync(mediaDist) ? fs.readdirSync(mediaDist) : []) {
+  fs.copyFileSync(path.join(mediaDist, name), path.join(mediaOut, name));
+  console.log(`[build-dashboard] staged media/${name} (${fs.statSync(path.join(mediaOut, name)).size} bytes)`);
+}
 
 // --- 5. Owner-ruled copy, AFTER the build -----------------------------------
 // The source scan can pass while the artifact still carries the copy — via a

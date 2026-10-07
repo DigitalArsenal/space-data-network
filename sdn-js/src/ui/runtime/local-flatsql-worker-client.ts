@@ -390,12 +390,13 @@ function decodeWorkerSchemaSyncWireUpdate(update: WorkerSchemaSyncWireUpdate): W
 
 /**
  * Init options as they cross postMessage. A `computeSHA384` function cannot
- * be structured-cloned; the worker's engine store supplies its own WebCrypto
- * SHA-384 for a `wasmPath` init, so only the path travels.
+ * be structured-cloned; the worker's engine store supplies its own SHA-384,
+ * so only the engine's path and the publisher key it is checked against
+ * travel.
  */
 function workerInitOptions(options: LocalFlatSqlStoreOptions): LocalFlatSqlStoreOptions {
   if (!options.engine) return options;
-  return { ...options, engine: { wasmPath: options.engine.wasmPath ?? null } };
+  return { ...options, engine: { wasmPath: options.engine.wasmPath ?? null, publisherKey: options.engine.publisherKey ?? null } };
 }
 
 function prepareRecordsForWorker(records: RawDataRecord[], transfer: boolean): { records: RawDataRecord[]; transferables: Transferable[] } {

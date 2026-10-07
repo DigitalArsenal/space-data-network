@@ -840,10 +840,16 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	updateShutdown := make(chan struct{}, 1)
 
 	// Load configuration
-	cfg, _, err := config.LoadResolved(configPath)
+	cfg, cfgResolution, err := config.LoadResolved(configPath)
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
+	// A storage folder chosen in the dashboard moves before anything opens it.
+	storageConfigFile := ""
+	if cfgResolution.Exists {
+		storageConfigFile = cfgResolution.Path
+	}
+	applyPendingStorageMove(cfg, storageConfigFile)
 	// libp2p's resource manager sizes its connection and stream budget from
 	// RLIMIT_NOFILE at construction, so this has to happen before the host is
 	// built, not merely before it is busy.
@@ -1484,7 +1490,9 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			}
 
 			// Trusted peer registry management (admin UI React app consumes these endpoints).
-			adminMux.Handle("/api/", peers.NewAPIHandler(n.PeerRegistry(), n.PeerGater()))
+			peerAPI := peers.NewAPIHandler(n.PeerRegistry(), n.PeerGater())
+			peerAPI.ReadCard = contactCardReader(n)
+			adminMux.Handle("/api/", peerAPI)
 
 			// Storefront API (listings, purchases, Stripe checkout/webhooks).
 			// Uses FlatSQL for content-addressed storage of STF/ACL/PUR/REV records.
@@ -1748,6 +1756,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			bondAtt := &bondAttestor{}
 			bondAtt.start(ctx, n)
 			adminMux.HandleFunc("/api/v1/trust/bond", bondAtt.handleBond)
+			adminMux.HandleFunc("/api/v1/storage", (&storageAPI{node: n, configFile: storageConfigFile}).handle)
 			// Trust rules engine (`$TRP` policies → signed `$TRV` verdicts) and
 			// the trust graph API over it (trust_engine.go).
 			if err := startTrustRulesEngine(ctx, n, adminMux, cfg.Storage.Path, nodeFirstTrustHandler, bondAtt); err != nil {
@@ -1775,14 +1784,8 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					Dir: filepath.Join(cfg.Storage.Path, "address-book"),
 					Key: func() libp2pcrypto.PrivKey { return n.Host().Peerstore().PrivKey(n.Host().ID()) },
 				}),
-				ResolvePeer: func(id string) []byte { return heldNodeEPM(n, id) },
-				HeldProfiles: func() [][]byte {
-					var out [][]byte
-					for _, profile := range heldNodeProfiles(n) {
-						out = append(out, profile.Frame)
-					}
-					return out
-				},
+				ResolvePeer:  func(id string) []byte { return heldNodeEPM(n, id) },
+				HeldProfiles: func() [][]byte { return heldProfileFrames(n) },
 			}
 			adminMux.HandleFunc(addressbook.PublicPath, addressBook.ServePublic)
 			adminMux.HandleFunc(addressbook.OperatorPath, func(w http.ResponseWriter, r *http.Request) {
@@ -2595,9 +2598,11 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			// and the APIs are unchanged.
 			// ----------------------------------------------------------------
 			adminMux.Handle("/fonts/", makeFontsHandler())
-			// The browser engine artifact (flatsql.wasm + integrity.json)
-			// the dashboard's local FlatSQL window runs on, same-origin.
-			adminMux.Handle("/sdn-js/", makeSdnJsAssetsHandler())
+			// Video the dashboard plays (the Node Directory explainer), same-origin.
+			adminMux.Handle("/media/", makeMediaHandler())
+			// The browser engine the dashboard's local FlatSQL window runs
+			// on, signed by this node into a module artifact, same-origin.
+			adminMux.Handle("/sdn-js/", makeSdnJsAssetsHandler(n))
 			// The node's own documentation, shipped in the binary (owner
 			// 2026-08-28): version-exact guides + PDF at /docs/.
 			adminMux.Handle("/docs", makeDocsHandler())
