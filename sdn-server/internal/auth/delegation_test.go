@@ -93,10 +93,10 @@ func TestSessionKeyDelegation(t *testing.T) {
 		t.Fatal("attacker key recorded")
 	}
 
-	// More than 12 hours is refused.
+	// Longer than the ceiling is refused.
 	id, challenge = challengeFor(t, mux, walletPub)
-	if code := delegate(id, session, session, challenge, uint64(time.Now().Add(13*time.Hour).UnixMilli())); code != http.StatusBadRequest {
-		t.Fatalf("13h delegation = %d, want 400", code)
+	if code := delegate(id, session, session, challenge, uint64(time.Now().Add(MaxDelegation+time.Hour).UnixMilli())); code != http.StatusBadRequest {
+		t.Fatalf("over-long delegation = %d, want 400", code)
 	}
 
 	// The real one.
@@ -112,9 +112,18 @@ func TestSessionKeyDelegation(t *testing.T) {
 	if code := delegate(id, session, session, challenge, expires); code == http.StatusOK {
 		t.Fatal("a challenge delegated twice")
 	}
+	// A restarted node (a new handler over the same auth.db) keeps the
+	// browser signed in; a sign-out stays signed out across a restart.
+	restarted := NewHandler(h.userStore, nil, time.Hour, "", "")
+	if got, _, ok := restarted.DelegatedWallet(session); !ok || !bytes.Equal(got, walletPub) {
+		t.Fatal("a restart signed the browser out")
+	}
 	h.RevokeDelegation(session)
 	if _, _, ok := h.DelegatedWallet(session); ok {
 		t.Fatal("revoked delegation still live")
+	}
+	if _, _, ok := NewHandler(h.userStore, nil, time.Hour, "", "").DelegatedWallet(session); ok {
+		t.Fatal("a revoked delegation came back after a restart")
 	}
 }
 

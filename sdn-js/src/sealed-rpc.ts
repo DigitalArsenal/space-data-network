@@ -277,9 +277,13 @@ export async function decrypt(env: RpcEnvelope, recipientPrivateKey: Uint8Array)
   return body;
 }
 
-/** An in-memory Ed25519 session key (never leaves this page). */
+/** A new Ed25519 session key. Its seed leaves this page only encrypted (ui/runtime/sealed-session-store.ts). */
 export async function createSessionSigner(): Promise<RpcSigner & { seed: Uint8Array }> {
-  const seed = randomBytes(32);
+  return sessionSignerFromSeed(randomBytes(32));
+}
+
+/** The session key for a seed: a new one, or one kept from an earlier page load. */
+export async function sessionSignerFromSeed(seed: Uint8Array): Promise<RpcSigner & { seed: Uint8Array }> {
   const { ed25519PublicKey } = await import('./crypto/hd-wallet');
   const publicKey = await ed25519PublicKey(seed);
   return { seed, publicKey, sign: (message) => sign(seed, message) };

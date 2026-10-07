@@ -228,7 +228,7 @@ type errorResponse struct {
 
 // NewHandler creates a new auth handler.
 func NewHandler(userStore *UserStore, sessions *SessionStore, sessionTTL time.Duration, walletUIPath, configPath string) *Handler {
-	return &Handler{
+	h := &Handler{
 		userStore:        userStore,
 		sessions:         sessions,
 		challenges:       make(map[string]pendingChallenge),
@@ -240,6 +240,8 @@ func NewHandler(userStore *UserStore, sessions *SessionStore, sessionTTL time.Du
 		nodeAttestations: make(map[string]epm.IdentityAttestation),
 		rates:            make(map[string]rateEntry),
 	}
+	h.loadDelegations()
+	return h
 }
 
 // SetNodeSigningAttestation injects an identity-attestation chain for key binding.
