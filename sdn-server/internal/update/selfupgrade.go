@@ -243,7 +243,13 @@ func LaunchSelfUpgrade(paths Paths, opts SelfUpgradeOptions) (*SelfUpgradeLaunch
 			return nil, err
 		}
 	}
-	return launchDetached(plan, env)
+	// A detached helper is this daemon's own child, running as the same user,
+	// and it respawns this daemon from its argv: it carries the daemon's whole
+	// environment, so the restarted daemon runs as this one did (a provider's
+	// HTTPS_PROXY and GOMEMLIMIT, a key password given by environment). The
+	// allow-list is for systemd-run, where every variable becomes a queryable
+	// unit property; a child process discloses nothing its parent did not.
+	return launchDetached(plan, os.Environ())
 }
 
 func launchViaSystemdRun(plan *HelperPlan, env []string, opts SelfUpgradeOptions) (*SelfUpgradeLaunch, error) {
