@@ -76,8 +76,17 @@
  *     [--version-prefix 1.0.6-updatelane] \
  *     [--min-binary-bytes <n>] [--smoke-image <image>] \
  *     [--rollback "<why this deliberately reverts live code>"] \
+ *     [--nodes deployment/release/fleet-nodes.json] \
+ *     [--unsealed "<why this release goes out in the clear>"] \
  *     [--ledger-path /opt/spacedatanetwork/publish-ledger.log] \
  *     [--dry-run] [--no-smoke (dry-run only)]
+ *
+ * Every release is sealed per node (owner 2026-10-07: "updates even the binary
+ * need to be encrypted per node since they go over noise protocol"): the
+ * publisher host runs `update seal` for the nodes in --nodes on --platform/
+ * --arch, so the carrier on the feed is ciphertext only those nodes open.
+ * --unsealed is the recorded exception, for the release that first teaches the
+ * fleet to open a sealed binary.
  *
  * --smoke-image should name an image carrying the SDN runtime libraries (the
  * build image, e.g. sdn-builder:<tag>) for the strongest check: the daemon
@@ -92,6 +101,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildCarrier, extractBundleBytes } from './build-update-carrier.mjs';
+import { assertSealedFor, collectRecipients, recipientNodes, recipientsDocument, sealOnPublisher } from './update-seal.mjs';
 import { buildUpdateManifest } from './sign-update-manifest.mjs';
 import {
   DAEMON_BINARY_MIN_BYTES,
@@ -180,6 +190,10 @@ const supersedeReason = arg('supersede', '');
 // looks identical to a publish that never happened — so the push is the DEFAULT
 // and skipping it has to be said out loud and recorded in the ledger line.
 const noSignalReason = arg('no-signal', '');
+// --unsealed takes its REASON as its value too, and the ledger records it: a
+// release in the clear is readable by anyone who fetches the feed.
+const unsealedReason = arg('unsealed', '');
+const nodesFile = resolve(arg('nodes', join(repoRoot, 'deployment/release/fleet-nodes.json')));
 const dryRun = flag('dry-run');
 const noSmoke = flag('no-smoke');
 
@@ -512,6 +526,20 @@ try {
   const unsignedPath = join(work, 'manifest.unsigned.json');
   writeFileSync(unsignedPath, `${JSON.stringify(manifest, null, 2)}\n`);
 
+  // --- 3b. recipients: the nodes on this platform the release is sealed for ---
+  const refuse = (message) => {
+    throw new ReleaseBinaryRefusal(message);
+  };
+  // A dry run names the nodes it would seal for without asking them: it
+  // touches neither ssh nor the nodes.
+  const recipients = unsealedReason || dryRun ? [] : collectRecipients({ nodesFile, platform, arch, run, log, refuse, tag: 'fleet-update' });
+  const recipientsPath = join(work, 'recipients.json');
+  if (unsealedReason) {
+    log(`[fleet-update] *** UNSEALED *** reason: ${unsealedReason}`);
+  } else {
+    writeFileSync(recipientsPath, recipientsDocument(recipients));
+  }
+
   if (dryRun) {
     console.log(
       JSON.stringify(
@@ -528,6 +556,8 @@ try {
           bundleSize: bundleBytes.length,
           wasmHash,
           wasmSize: wasmBytes.length,
+          sealedFor: unsealedReason ? [] : recipientNodes({ nodesFile, platform, arch }).map((node) => node.name),
+          ...(unsealedReason ? { unsealedReason } : {}),
           lineage: lineage.lineage,
           sourceCommit: lineage.sourceCommit,
           supersedesCommit: lineage.supersedesCommit,
@@ -547,7 +577,14 @@ try {
   // --- 4. node-signed on the publisher host ----------------------------------
   const remoteTmp = `/tmp/sdn-manifest-${sequence}`;
   run('ssh', [publisherSSH, `mkdir -p ${remoteTmp}`]);
-  run('scp', ['-q', unsignedPath, `${publisherSSH}:${remoteTmp}/manifest.unsigned.json`]);
+  let toSign = 'manifest.unsigned.json';
+  if (unsealedReason) {
+    run('scp', ['-q', unsignedPath, `${publisherSSH}:${remoteTmp}/manifest.unsigned.json`]);
+  } else {
+    run('scp', ['-q', unsignedPath, archivePath, recipientsPath, `${publisherSSH}:${remoteTmp}/`]);
+    sealOnPublisher({ run, publisherSSH, publisherBin, remoteDir: remoteTmp, bundleRemote: `${remoteTmp}/${bundleName}.tar.gz`, log, tag: 'fleet-update' });
+    toSign = 'manifest.sealed.json';
+  }
   run('ssh', [
     publisherSSH,
     // NO --node-url, for the same reason as the signal push below: the public
@@ -555,12 +592,20 @@ try {
     // proxied request, which the whole-server lock (2026-09-23) refuses as
     // remote ("sealed_required"). Without it the client dials loopback and
     // anchors to the daemon's own certificate.
-    `${publisherBin} update sign-manifest --manifest ${remoteTmp}/manifest.unsigned.json ` +
+    `${publisherBin} update sign-manifest --manifest ${remoteTmp}/${toSign} ` +
       `--out ${remoteTmp}/manifest.json`,
   ]);
   const signedPath = join(work, 'manifest.json');
   run('scp', ['-q', `${publisherSSH}:${remoteTmp}/manifest.json`, signedPath]);
-  run('ssh', [publisherSSH, `rm -rf ${remoteTmp}`]);
+  // The carrier the fleet fetches: the ciphertext `update seal` wrote, or the
+  // plain carrier of an unsealed release.
+  let carrierBytes = wasmBytes;
+  if (!unsealedReason) {
+    const sealedPath = join(work, 'update.sealed.wasm');
+    run('scp', ['-q', `${publisherSSH}:${remoteTmp}/update.wasm`, sealedPath]);
+    carrierBytes = readFileSync(sealedPath);
+  }
+  const carrierHash = sha256(carrierBytes);
   const signed = JSON.parse(readFileSync(signedPath, 'utf8'));
   if (!signed.signing?.signature || signed.signing.statement_domain !== 'SDN-UPDATE-MANIFEST-V1') {
     throw new Error('publisher returned an unsigned or wrongly-domained manifest');
@@ -569,7 +614,12 @@ try {
   // signature is only as good as the document it covers, and that document
   // just made a round trip through another machine.
   assertSameBytes('signed manifest bundle hash', signed.bundle?.hash, bundleHash);
-  assertSameBytes('signed manifest wasm hash', signed.wasm?.hash, wasmHash);
+  assertSameBytes('signed manifest wasm hash', signed.wasm?.hash, carrierHash);
+  if (unsealedReason) {
+    if (signed.envelope) refuse('an unsealed release came back from the publisher with an envelope');
+  } else {
+    assertSealedFor(signed, recipients, refuse);
+  }
   assertSameBytes('signed manifest binary provenance', signed.provenance?.binary_sha256, binarySha);
   if (signed.bundle?.size !== bundleBytes.length || signed.update_id !== updateId || signed.sequence !== sequence) {
     throw new ReleaseBinaryRefusal(
@@ -601,9 +651,16 @@ try {
 
   run('ssh', [publisherSSH, `mkdir -p ${payloadRemote}`]);
   run('scp', ['-q', signedPath, `${publisherSSH}:${payloadRemote}/manifest.json`]);
-  const carrierLocal = join(work, 'update.wasm');
-  writeFileSync(carrierLocal, wasmBytes);
-  run('scp', ['-q', carrierLocal, `${publisherSSH}:${payloadRemote}/update.wasm`]);
+  if (unsealedReason) {
+    const carrierLocal = join(work, 'update.wasm');
+    writeFileSync(carrierLocal, carrierBytes);
+    run('scp', ['-q', carrierLocal, `${publisherSSH}:${payloadRemote}/update.wasm`]);
+  } else {
+    // The sealed carrier is already on the publisher host, where `update seal`
+    // wrote it.
+    run('ssh', [publisherSSH, `cp ${remoteTmp}/update.wasm ${payloadRemote}/update.wasm`]);
+  }
+  run('ssh', [publisherSSH, `rm -rf ${remoteTmp}`]);
 
   // The bytes ON THE HOST, hashed BY the host. scp reports success on a short
   // write to a full disk; this does not.
@@ -614,10 +671,10 @@ try {
     .toString()
     .trim()
     .split('\n');
-  assertSameBytes('carrier as stored on the publisher host', remoteSum[0]?.trim(), wasmHash);
-  if (Number(remoteSum[1]) !== wasmBytes.length) {
+  assertSameBytes('carrier as stored on the publisher host', remoteSum[0]?.trim(), carrierHash);
+  if (Number(remoteSum[1]) !== carrierBytes.length) {
     throw new ReleaseBinaryRefusal(
-      `uploaded carrier is ${remoteSum[1]}B on ${publisherSSH}, expected ${wasmBytes.length}B`,
+      `uploaded carrier is ${remoteSum[1]}B on ${publisherSSH}, expected ${carrierBytes.length}B`,
     );
   }
 
@@ -687,36 +744,44 @@ print(f'index: {len(updates)} update(s)')
   const pm = JSON.parse(pubManifest.toString());
   const pi = JSON.parse(pubIndex.toString());
   assertSameBytes('public manifest bundle hash', pm.bundle?.hash, bundleHash);
-  assertSameBytes('public manifest wasm hash', pm.wasm?.hash, wasmHash);
+  assertSameBytes('public manifest wasm hash', pm.wasm?.hash, carrierHash);
   assertSameBytes('public manifest signature', pm.signing?.signature, signed.signing.signature);
 
   const servedCarrierPath = join(work, 'served.wasm');
   run('curl', ['-s', '-m', '300', '-o', servedCarrierPath, `${feedBaseUrl}/${feedRel}/${version}/update.wasm`]);
   const servedCarrier = readFileSync(servedCarrierPath);
-  assertSameBytes('carrier served by the public feed', sha256(servedCarrier), wasmHash, `${servedCarrier.length}B`);
-  const servedBundle = extractBundleBytes(servedCarrier);
-  assertSameBytes('bundle inside the served carrier', sha256(servedBundle), bundleHash);
+  assertSameBytes('carrier served by the public feed', sha256(servedCarrier), carrierHash, `${servedCarrier.length}B`);
+  if (unsealedReason) {
+    const servedBundle = extractBundleBytes(servedCarrier);
+    assertSameBytes('bundle inside the served carrier', sha256(servedBundle), bundleHash);
 
-  const servedDir = join(work, 'served');
-  mkdirSync(servedDir, { recursive: true });
-  writeFileSync(join(work, 'served.tar.gz'), servedBundle);
-  run('tar', ['-xzf', join(work, 'served.tar.gz'), '-C', servedDir]);
-  assertSameBytes(
-    'binary inside the bundle the public feed serves',
-    sha256(readFileSync(join(servedDir, bundleName, 'bin', 'spacedatanetwork'))),
-    binarySha,
-  );
+    const servedDir = join(work, 'served');
+    mkdirSync(servedDir, { recursive: true });
+    writeFileSync(join(work, 'served.tar.gz'), servedBundle);
+    run('tar', ['-xzf', join(work, 'served.tar.gz'), '-C', servedDir]);
+    assertSameBytes(
+      'binary inside the bundle the public feed serves',
+      sha256(readFileSync(join(servedDir, bundleName, 'bin', 'spacedatanetwork'))),
+      binarySha,
+    );
+  } else {
+    // A sealed carrier opens only with a node's key, which the publisher does
+    // not hold. What it can prove: the feed serves the ciphertext sealed above,
+    // for exactly the recipients; each node then checks the bundle it opens
+    // against the signed hashes before staging it.
+    assertSealedFor(pm, recipients, refuse);
+  }
 
   const indexEntry = pi.updates.find((u) => u.update_id === updateId && u.sequence === sequence);
   if (!indexEntry) {
     throw new Error('public index does not list the new update');
   }
   assertSameBytes('public index bundle hash', indexEntry.bundle_hash, bundleHash);
-  assertSameBytes('public index wasm hash', indexEntry.wasm_hash, wasmHash);
-  if (indexEntry.bundle_size !== bundleBytes.length || indexEntry.wasm_size !== wasmBytes.length) {
+  assertSameBytes('public index wasm hash', indexEntry.wasm_hash, carrierHash);
+  if (indexEntry.bundle_size !== bundleBytes.length || indexEntry.wasm_size !== carrierBytes.length) {
     throw new ReleaseBinaryRefusal(
       `public index sizes disagree with the publish (bundle ${indexEntry.bundle_size}/${bundleBytes.length}, ` +
-        `wasm ${indexEntry.wasm_size}/${wasmBytes.length})`,
+        `wasm ${indexEntry.wasm_size}/${carrierBytes.length})`,
     );
   }
 
@@ -743,7 +808,8 @@ print(f'index: {len(updates)} update(s)')
     binary_size: verified.size,
     smoke_level: verified.smokeLevel,
     bundle_sha256: bundleHash,
-    wasm_sha256: wasmHash,
+    wasm_sha256: carrierHash,
+    ...(unsealedReason ? { unsealed_reason: unsealedReason } : { sealed_for: recipients.map((r) => `${r.name}:${r.fingerprint}`) }),
     published_by: process.env.USER || 'unknown',
     // Whether the fleet was TOLD. A published-but-unsignalled artifact and a
     // published-and-pushed one look identical on the feed and are completely
@@ -837,13 +903,16 @@ print(f'index: {len(updates)} update(s)')
         smokeLevel: verified.smokeLevel,
         bundleHash,
         bundleSize: bundleBytes.length,
-        wasmHash,
-        wasmSize: wasmBytes.length,
+        wasmHash: carrierHash,
+        wasmSize: carrierBytes.length,
+        ...(unsealedReason ? { unsealedReason } : { sealedFor: recipients.map((r) => r.name) }),
         lineage: lineage.lineage,
         sourceCommit: lineage.sourceCommit,
         supersedesCommit: lineage.supersedesCommit,
         ...(lineage.reason ? { rollbackReason: lineage.reason } : {}),
-        verifiedThrough: 'served carrier -> bundle -> binary',
+        verifiedThrough: unsealedReason
+          ? 'served carrier -> bundle -> binary'
+          : 'served ciphertext, sealed for exactly the recipients; the local bundle -> binary before sealing',
         feed: `${feedBaseUrl}/${feedRel}/`,
       },
       null,

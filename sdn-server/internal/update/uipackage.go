@@ -213,7 +213,7 @@ func OpenPayload(m *Manifest, carrier []byte, key *EnvelopeKey) ([]byte, error) 
 		return ExtractBundleFromCarrier(carrier)
 	}
 	if key == nil || len(key.Private) == 0 {
-		return nil, errors.New("this update is encrypted and this node has no key to open it")
+		return nil, errors.New("this update is sealed for its recipient nodes and opens only with a node's key: it installs in place through the daemon's update signal")
 	}
 	plain, err := DecryptCarrierForRecipient(&EncryptedBundle{
 		Schema:    m.Envelope.Schema,

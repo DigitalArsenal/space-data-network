@@ -451,7 +451,9 @@ func (s *UpdateSubscriber) handleMessage(data []byte) {
 	// bundle bytes — the real, end-to-end hash/size check that a tampered
 	// or mismatched ciphertext cannot pass even with a validly-signed
 	// manifest attached.
-	staged, err := update.Stage(s.paths, ann.Manifest, plainCarrier, verifyOpts)
+	// The announcement's own envelope was opened above; its manifest carries
+	// none, so Stage needs no key.
+	staged, err := update.Stage(s.paths, ann.Manifest, plainCarrier, verifyOpts, nil)
 	if err != nil {
 		log.Warnf("update subscriber: staging announcement %s failed: %v", manifest.UpdateID, err)
 		return

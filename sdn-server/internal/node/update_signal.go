@@ -355,6 +355,21 @@ func (s *UpdateSignalSubscriber) upgrade(ctx context.Context, signal *update.Sig
 	if _, err := parsed.Validate(parsed.Bundle.Hash, verifyOpts); err != nil {
 		return fmt.Errorf("verify update manifest: %w", err)
 	}
+	// A sealed release opens only with this node's key (owner 2026-10-07:
+	// "updates even the binary need to be encrypted per node"), so one that
+	// was not sealed for this node stops here, before the carrier download.
+	var key *update.EnvelopeKey
+	if parsed.Envelope != nil {
+		if s.deps.EnvelopeKey == nil {
+			return errors.New("this update is sealed and this node has no key to open it")
+		}
+		if key, err = s.deps.EnvelopeKey(); err != nil {
+			return fmt.Errorf("load this node's envelope key: %w", err)
+		}
+		if !parsed.AddressedTo(key.KeyID) {
+			return fmt.Errorf("update %s is not sealed for this node (key %s)", parsed.UpdateID, key.KeyID)
+		}
+	}
 	carrierLimit := int64(maxCarrierFetchBytes)
 	if signal.WasmSize < 0 || signal.WasmSize > carrierLimit {
 		return fmt.Errorf("update carrier size %d is outside the download limit", signal.WasmSize)
@@ -369,7 +384,7 @@ func (s *UpdateSignalSubscriber) upgrade(ctx context.Context, signal *update.Sig
 	if err := signalMatchesManifest(signal, parsed, len(carrierBytes)); err != nil {
 		return err
 	}
-	staged, err := update.Stage(s.deps.Paths, manifestBytes, carrierBytes, verifyOpts)
+	staged, err := update.Stage(s.deps.Paths, manifestBytes, carrierBytes, verifyOpts, key)
 	if err != nil {
 		return fmt.Errorf("stage update: %w", err)
 	}
