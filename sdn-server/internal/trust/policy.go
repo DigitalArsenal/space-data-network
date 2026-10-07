@@ -180,7 +180,6 @@ func predicateKindFromName(name string) PredicateKind {
 	}
 }
 
-
 /* ── FlatBuffer encoding ─────────────────────────────────────────────── */
 
 func stringVector(b *flatbuffers.Builder, values []string, start func(*flatbuffers.Builder, int) flatbuffers.UOffsetT) flatbuffers.UOffsetT {
