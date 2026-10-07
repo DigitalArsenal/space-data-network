@@ -9,6 +9,7 @@ import (
 
 	"github.com/spacedatanetwork/sdn-server/internal/api"
 	"github.com/spacedatanetwork/sdn-server/internal/auth"
+	"github.com/spacedatanetwork/sdn-server/internal/epm"
 	"github.com/spacedatanetwork/sdn-server/internal/node"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 	"github.com/spacedatanetwork/sdn-server/internal/trust"
@@ -159,6 +160,26 @@ func heldNodeProfiles(n *node.Node) []api.NodeProfile {
 		out = append(out, api.NodeProfile{PeerID: peerID, Frame: frame})
 	}
 	return out
+}
+
+// verifiedHeldEPM is a held profile that passes the node lane's bar: its own
+// signature verifies and it names this peer. A node's contact card and code
+// come from it when the node is not in the trusted registry (owner
+// 2026-10-07: every node's Identity page shows its contact code).
+func verifiedHeldEPM(n *node.Node, peerID string) (frame []byte) {
+	defer func() {
+		if recover() != nil {
+			frame = nil
+		}
+	}()
+	frame = heldNodeEPM(n, peerID)
+	if len(frame) == 0 || epm.VerifyEPMSignature(frame) != nil {
+		return nil
+	}
+	if advertised, err := epm.PeerIDFromEPM(frame); err != nil || strings.TrimSpace(advertised) != strings.TrimSpace(peerID) {
+		return nil
+	}
+	return frame
 }
 
 // heldNodeEPM resolves one profile with the same precedence as the node lane.
