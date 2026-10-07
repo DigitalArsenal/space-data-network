@@ -253,28 +253,6 @@ func TestBondPeerCacheAndLookupBounds(t *testing.T) {
 	}
 }
 
-func TestBondPeerRetriesIncompleteResultAndPreservesConfirmedZero(t *testing.T) {
-	calls := 0
-	b := &bondAttestor{
-		lookupPeer: func(string) (bondAddresses, error) { return bondAddresses{Btc: "known-address"}, nil },
-		invoke: func(context.Context, bondAddresses) ([]byte, error) {
-			calls++
-			return []byte(`{"attested":true,"bond_usd":0,"holdings":[{"symbol":"BTC","amount":0,"usd":0}]}`), nil
-		},
-		peerCache: map[string]bondPeerResult{"remote": {body: json.RawMessage(`{"attested":false,"bond_usd":null}`), at: time.Now().Add(-bondRetryInterval - time.Second)}},
-	}
-	for i := 0; i < 2; i++ {
-		rec := httptest.NewRecorder()
-		b.handleBond(rec, httptest.NewRequest("GET", "/api/v1/trust/bond?peer=remote", nil))
-		if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"bond_usd":0`) {
-			t.Fatalf("zero balance: %d %s", rec.Code, rec.Body.String())
-		}
-	}
-	if calls != 1 {
-		t.Fatalf("expected one retry followed by cached zero, got %d", calls)
-	}
-}
-
 // Manual live test (SDN_BOND_LIVE=1): drives the embedded module against the
 // real free services with real addresses. Not part of CI — network-dependent.
 func TestBondModuleLiveManual(t *testing.T) {

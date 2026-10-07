@@ -3767,10 +3767,9 @@ func isPublicReadAPIPath(path string) bool {
 		// The node's security bond: public BY DESIGN — peers price trust by
 		// a bond anyone can verify (owner 2026-08-03; bond_attestation.go).
 		"/api/v1/trust/bond",
-		// Policies are the evaluator's published rules and verdicts its
-		// signed public opinions: both read as openly as the bond.
-		"/api/v1/trust/policies",
-		"/api/v1/trust/verdicts",
+		// Not /api/v1/trust/policies or /api/v1/trust/verdicts: a node's trust
+		// rules and its verdicts on other nodes are its own (owner 2026-10-07:
+		// "no one should be able to see another nodes trust settings").
 		// FlatBuffer dashboard lanes (fbcs program): connector, sync-state
 		// and archive reads are operational facts about PUBLIC data
 		// retrieval — the same disclosure class as /api/apps and

@@ -282,8 +282,13 @@ func (b *bondAttestor) handleBond(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(body)
 }
 
-// Only directory-verified peers may initiate a lookup. Cache results and bound
-// concurrent upstream work; this is not an arbitrary address/URL proxy.
+// Only directory-verified peers may initiate a lookup, one at a time, and
+// it runs off the request with its own deadline: a remote admin's request
+// arrives through the sealed transport, which ends it long before a slow
+// chain API answers, so a lookup bound to the request never finished and the
+// dashboard showed "Balance refresh failed" (owner 2026-10-07: "bond should
+// work"). A caller gets the cached answer, stale while a refresh runs, or
+// pending. This is not an arbitrary address/URL proxy.
 func (b *bondAttestor) handlePeerBond(w http.ResponseWriter, r *http.Request, id string) {
 	if b.lookupPeer == nil || len(id) > 128 {
 		http.NotFound(w, r)
@@ -297,33 +302,40 @@ func (b *bondAttestor) handlePeerBond(w http.ResponseWriter, r *http.Request, id
 		ttl = bondRefreshInterval
 	}
 	if ok && time.Since(cached.at) < ttl {
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Cache-Control", "no-store")
-		_, _ = w.Write(cached.body)
+		writeBondJSON(w, cached.body)
 		return
 	}
-	if !b.peerMu.TryLock() {
-		writeBondPending(w)
+	if b.peerMu.TryLock() {
+		addresses, err := b.lookupPeer(id)
+		if err != nil {
+			b.peerMu.Unlock()
+			http.NotFound(w, r)
+			return
+		}
+		go func() {
+			defer b.peerMu.Unlock()
+			b.refreshPeer(id, addresses)
+		}()
+	}
+	if ok {
+		writeBondJSON(w, cached.body)
 		return
 	}
-	defer b.peerMu.Unlock()
-	addresses, err := b.lookupPeer(id)
-	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
+	writeBondPending(w)
+}
+
+// refreshPeer runs one peer lookup and caches what the module answers.
+func (b *bondAttestor) refreshPeer(id string, addresses bondAddresses) {
 	invoke := b.invoke
 	if invoke == nil {
 		invoke = invokeBondAttestation
 	}
-	raw, err := invoke(r.Context(), addresses)
+	raw, err := invoke(context.Background(), addresses)
 	if err != nil {
-		writeBondPending(w)
 		return
 	}
 	var body map[string]any
 	if json.Unmarshal(raw, &body) != nil {
-		http.Error(w, "invalid balance response", 502)
 		return
 	}
 	stamp := time.Now().UTC()
@@ -331,22 +343,24 @@ func (b *bondAttestor) handlePeerBond(w http.ResponseWriter, r *http.Request, id
 	body["attested_at"] = stamp.Format(time.RFC3339)
 	out, err := json.Marshal(body)
 	if err != nil {
-		http.Error(w, "invalid balance response", 502)
 		return
 	}
 	b.mu.Lock()
+	defer b.mu.Unlock()
 	if b.peerCache == nil {
 		b.peerCache = make(map[string]bondPeerResult)
 	}
-	if len(b.peerCache) >= 128 {
+	if _, held := b.peerCache[id]; !held && len(b.peerCache) >= 128 {
 		for key := range b.peerCache {
 			delete(b.peerCache, key)
 			break
 		}
 	}
 	b.peerCache[id] = bondPeerResult{out, stamp}
-	b.mu.Unlock()
+}
+
+func writeBondJSON(w http.ResponseWriter, body []byte) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
-	_, _ = w.Write(out)
+	_, _ = w.Write(body)
 }
