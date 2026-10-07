@@ -38,6 +38,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildUpdateManifest } from './sign-update-manifest.mjs';
 import { LINEAGE_ROLLBACK, SourceLineageRefusal, assertSourceLineage, resolveLiveSourceCommit } from './source-lineage.mjs';
+import { assertSealedFor, collectRecipients, recipientsDocument, sealOnPublisher } from './update-seal.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -113,24 +114,11 @@ try {
   if (lineage.lineage === LINEAGE_ROLLBACK) log(`[ui-update] *** DECLARED ROLLBACK *** reason: ${lineage.reason}`);
 
   // --- 1. recipients ---------------------------------------------------------
-  const fleet = JSON.parse(readFileSync(nodesFile, 'utf8'));
-  const recipients = [];
-  const builds = new Set();
-  for (const node of fleet.nodes ?? []) {
-    const ask = (route) =>
-      JSON.parse(run('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15', node.ssh, `curl -sk -m 15 ${shellQuote(node.node_url + route)}`]).toString());
-    const info = ask('/api/node/info');
-    const id = ask('/api/v1/id');
-    const sealed = info.sealed_transport ?? {};
-    if (!/^0[23][0-9a-f]{64}$/.test(sealed.encryption_key ?? '') || !sealed.fingerprint) {
-      throw new Refusal(`${node.name} advertises no sealed-transport key at ${node.node_url}/api/node/info; it could not open the package`);
-    }
-    if (!id.bundle_version) throw new Refusal(`${node.name} reports no bundle_version; it is not a bundle install the lane serves`);
-    recipients.push({ name: node.name, peer_id: info.peer_id, encryption_key: sealed.encryption_key, fingerprint: sealed.fingerprint });
-    builds.add(id.bundle_version);
-    log(`[ui-update] recipient ${node.name} ${String(info.peer_id).slice(-8)} key ${sealed.fingerprint} build ${id.bundle_version}`);
-  }
-  if (recipients.length === 0) throw new Refusal(`${nodesFile} names no node`);
+  const refuse = (message) => {
+    throw new Refusal(message);
+  };
+  const recipients = collectRecipients({ nodesFile, run, log, refuse, tag: 'ui-update' });
+  const builds = new Set(recipients.map((r) => r.bundle_version));
   const bundleVersions = forVersions ? forVersions.split(',').map((v) => v.trim()).filter(Boolean) : [...builds];
   if (!forVersions && builds.size > 1) {
     throw new Refusal(
@@ -202,7 +190,7 @@ try {
   const unsignedPath = join(work, 'manifest.unsigned.json');
   writeFileSync(unsignedPath, `${JSON.stringify(manifest, null, 2)}\n`);
   const recipientsPath = join(work, 'recipients.json');
-  writeFileSync(recipientsPath, `${JSON.stringify(recipients, null, 2)}\n`);
+  writeFileSync(recipientsPath, recipientsDocument(recipients));
 
   if (dryRun) {
     console.log(JSON.stringify({ dryRun: true, updateId, version, sequence, work, bundleHash, bundleSize: bundleBytes.length,
@@ -214,17 +202,7 @@ try {
   const remoteTmp = `/tmp/sdn-ui-update-${sequence}`;
   run('ssh', [publisherSSH, `mkdir -p ${remoteTmp}`]);
   run('scp', ['-q', archivePath, unsignedPath, recipientsPath, `${publisherSSH}:${remoteTmp}/`]);
-  log(
-    run('ssh', [
-      publisherSSH,
-      `${shellQuote(publisherBin)} update seal --manifest ${remoteTmp}/manifest.unsigned.json ` +
-        `--bundle ${remoteTmp}/${bundleName}.tar.gz --recipients ${remoteTmp}/recipients.json ` +
-        `--out-manifest ${remoteTmp}/manifest.sealed.json --out-carrier ${remoteTmp}/update.wasm`,
-    ])
-      .toString()
-      .trim()
-      .replace(/^/gm, '[ui-update] '),
-  );
+  sealOnPublisher({ run, publisherSSH, publisherBin, remoteDir: remoteTmp, bundleRemote: `${remoteTmp}/${bundleName}.tar.gz`, log, tag: 'ui-update' });
   // NO --node-url, as in publish-fleet-update: the client dials loopback and
   // anchors to the daemon's own certificate.
   run('ssh', [publisherSSH, `${shellQuote(publisherBin)} update sign-manifest --manifest ${remoteTmp}/manifest.sealed.json --out ${remoteTmp}/manifest.json`]);
@@ -243,11 +221,7 @@ try {
     throw new Refusal('the signed manifest does not describe this bundle');
   }
   if (signed.wasm?.hash !== carrierHash) throw new Refusal('the signed manifest does not describe the sealed carrier');
-  const sealedFor = new Set((signed.envelope?.recipients ?? []).map((r) => Buffer.from(r.key_id, 'base64').toString()));
-  const missing = recipients.filter((r) => !sealedFor.has(r.fingerprint));
-  if (missing.length || sealedFor.size !== recipients.length) {
-    throw new Refusal(`the envelope is not sealed for exactly the recipients (missing: ${missing.map((r) => r.name).join(', ') || 'none'})`);
-  }
+  assertSealedFor(signed, recipients, refuse);
 
   // --- 5. publish + index + verify the public surface ------------------------
   const payloadRemote = `${feedDir}/${feedRel}/${version}`;
