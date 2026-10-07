@@ -2683,6 +2683,14 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				}
 				return tp
 			}
+			// A peer's profile: the trusted registry's copy, else the held
+			// directory copy that passes the node lane's signature bar.
+			peerHeldEPM := func(peerID string) []byte {
+				if tp := peerLookup(peerID); tp != nil && len(tp.EPMData) > 0 {
+					return tp.EPMData
+				}
+				return verifiedHeldEPM(n, peerID)
+			}
 			adminMux.Handle("/identity/", makeIdentityHandler(identitySource{
 				SelfID: n.Host().ID().String(),
 				SelfVCard: func() (string, error) {
@@ -2706,6 +2714,11 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				PeerVCard: func(peerID string) (string, bool) {
 					tp := peerLookup(peerID)
 					if tp == nil {
+						if frame := verifiedHeldEPM(n, peerID); frame != nil {
+							if v, err := sdnvcard.EPMToVCard(frame); err == nil {
+								return v, true
+							}
+						}
 						return "", false
 					}
 					if v := strings.TrimSpace(tp.VCardData); v != "" {
@@ -2719,11 +2732,8 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					return peers.TrustedPeerToVCard(tp), true
 				},
 				PeerEPM: func(peerID string) ([]byte, bool) {
-					tp := peerLookup(peerID)
-					if tp == nil || len(tp.EPMData) == 0 {
-						return nil, false
-					}
-					return tp.EPMData, true
+					frame := peerHeldEPM(peerID)
+					return frame, len(frame) > 0
 				},
 				PeerQRVCard: func(peerID string) (string, bool) {
 					// OWNER LAW 2026-07-31: a scannable card MUST carry the
@@ -2731,11 +2741,11 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					// the EPM signature chain. A peer we hold no signed EPM
 					// for gets NO QR card at all (fail closed), never a
 					// name-and-peer-id-only card.
-					tp := peerLookup(peerID)
-					if tp == nil || len(tp.EPMData) == 0 {
+					frame := peerHeldEPM(peerID)
+					if len(frame) == 0 {
 						return "", false
 					}
-					card, err := sdnvcard.CompactQRVCard(tp.EPMData)
+					card, err := sdnvcard.CompactQRVCard(frame)
 					if err != nil || !sdnvcard.CardCarriesCryptoIdentity(card) {
 						return "", false
 					}
