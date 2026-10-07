@@ -153,7 +153,7 @@ func TestCleartextCarrierStillStagesWithoutEnvelope(t *testing.T) {
 		doc["wasm"].(map[string]any)["hash"] = sha256Hex(wasmBytes)
 	}, bundleBytes, wasmBytes)
 
-	staged, err := Stage(paths, manifestBytes, wasmBytes, HostVerifyOptions(signer.roots(t), 0, time.Now()))
+	staged, err := Stage(paths, manifestBytes, wasmBytes, HostVerifyOptions(signer.roots(t), 0, time.Now()), nil)
 	if err != nil {
 		t.Fatalf("Stage returned error for a cleartext carrier: %v", err)
 	}

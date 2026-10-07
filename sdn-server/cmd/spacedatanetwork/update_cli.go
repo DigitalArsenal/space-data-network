@@ -147,7 +147,7 @@ var updateStageCmd = &cobra.Command{
 		}
 		stageOpts := update.HostVerifyOptions(roots, state.Sequence, time.Now())
 		stageOpts.AllowRollback = updateStageAllowRollback
-		staged, err := update.Stage(paths, manifestBytes, wasmBytes, stageOpts)
+		staged, err := update.Stage(paths, manifestBytes, wasmBytes, stageOpts, nil)
 		if err != nil {
 			return err
 		}
@@ -228,7 +228,7 @@ var updateInstallCmd = &cobra.Command{
 		}
 		installOpts := update.HostVerifyOptions(roots, state.Sequence, time.Now())
 		installOpts.AllowRollback = updateInstallAllowRollback
-		staged, err := update.Stage(paths, manifestBytes, wasmBytes, installOpts)
+		staged, err := update.Stage(paths, manifestBytes, wasmBytes, installOpts, nil)
 		if err != nil {
 			return err
 		}

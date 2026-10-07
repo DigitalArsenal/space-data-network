@@ -586,7 +586,7 @@ func (b *e2eBundle) stage(t *testing.T, build e2eBuild) string {
 		t.Fatal(err)
 	}
 	doc["signing"].(map[string]any)["signature"] = base64.StdEncoding.EncodeToString(ed25519.Sign(b.priv, canonical))
-	if _, err := update.Stage(b.paths, e2eSortedJSON(t, doc), carrier, update.HostVerifyOptions(b.roots, 0, time.Now())); err != nil {
+	if _, err := update.Stage(b.paths, e2eSortedJSON(t, doc), carrier, update.HostVerifyOptions(b.roots, 0, time.Now()), nil); err != nil {
 		t.Fatalf("stage v2: %v", err)
 	}
 	return sha

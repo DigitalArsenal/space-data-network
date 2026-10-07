@@ -153,6 +153,8 @@ function stageLaneInto(repoRoot) {
     'source-lineage.mjs',
     'build-update-carrier.mjs',
     'sign-update-manifest.mjs',
+    'update-seal.mjs',
+    'fleet-nodes.json',
   ]) {
     execFileSync('cp', [join(here, file), join(target, file)]);
   }

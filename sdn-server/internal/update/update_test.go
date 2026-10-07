@@ -404,7 +404,7 @@ func stageSignedUpdate(t *testing.T, paths Paths, signer *testSigner, version st
 		doc["bundle"].(map[string]any)["size"] = int64(len(bundleBytes))
 		doc["wasm"].(map[string]any)["hash"] = sha256Hex(wasmBytes)
 	}, bundleBytes, wasmBytes)
-	staged, err := Stage(paths, manifestBytes, wasmBytes, HostVerifyOptions(signer.roots(t), 0, time.Now()))
+	staged, err := Stage(paths, manifestBytes, wasmBytes, HostVerifyOptions(signer.roots(t), 0, time.Now()), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -486,7 +486,7 @@ func TestStageAndApplySupportsZipBundleFormat(t *testing.T) {
 		doc["wasm"].(map[string]any)["hash"] = sha256Hex(wasmBytes)
 	}, bundleBytes, wasmBytes)
 
-	staged, err := Stage(paths, manifestBytes, wasmBytes, HostVerifyOptions(signer.roots(t), 0, time.Now()))
+	staged, err := Stage(paths, manifestBytes, wasmBytes, HostVerifyOptions(signer.roots(t), 0, time.Now()), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

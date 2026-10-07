@@ -34,7 +34,7 @@ func stageSignedUpdateAs(t *testing.T, paths Paths, signer *testSigner, updateID
 		doc["bundle"].(map[string]any)["size"] = int64(len(bundleBytes))
 		doc["wasm"].(map[string]any)["hash"] = sha256Hex(wasmBytes)
 	}, bundleBytes, wasmBytes)
-	staged, err := Stage(paths, manifestBytes, wasmBytes, HostVerifyOptions(signer.roots(t), currentSequence, time.Now()))
+	staged, err := Stage(paths, manifestBytes, wasmBytes, HostVerifyOptions(signer.roots(t), currentSequence, time.Now()), nil)
 	if err != nil {
 		t.Fatalf("stage %s: %v", updateID, err)
 	}

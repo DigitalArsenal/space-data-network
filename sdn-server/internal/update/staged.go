@@ -346,12 +346,19 @@ func verifyStagedDir(dir, updateID string, opts VerifyOptions) StagedUpdate {
 // Stage writes a verified payload into updates/staged/<update_id>/ so a
 // later `update apply` can install it. The payload is re-verified from the
 // written files by the caller before any swap.
-func Stage(paths Paths, manifestBytes, wasmBytes []byte, opts VerifyOptions) (*StagedUpdate, error) {
+//
+// A sealed release (its manifest carries an envelope) opens with key, this
+// node's envelope key (owner 2026-10-07: binaries are sealed per node like UI
+// packages). The staged carrier stays ciphertext; the staged bundle is the
+// plaintext the signed manifest describes, so the helper's re-verification
+// (VerifyPayload over both) holds unchanged. key may be nil for a release
+// that is not sealed.
+func Stage(paths Paths, manifestBytes, wasmBytes []byte, opts VerifyOptions, key *EnvelopeKey) (*StagedUpdate, error) {
 	manifest, err := ParseManifest(manifestBytes)
 	if err != nil {
 		return nil, err
 	}
-	bundleBytes, err := ExtractBundleFromCarrier(wasmBytes)
+	bundleBytes, err := OpenPayload(manifest, wasmBytes, key)
 	if err != nil {
 		return nil, err
 	}

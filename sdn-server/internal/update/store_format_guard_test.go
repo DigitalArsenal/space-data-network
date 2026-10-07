@@ -64,7 +64,7 @@ func stageBuild(t *testing.T, paths Paths, signer *testSigner, updateID, version
 		doc["bundle"].(map[string]any)["format"] = format
 		doc["wasm"].(map[string]any)["hash"] = sha256Hex(wasmBytes)
 	}, bundleBytes, wasmBytes)
-	staged, err := Stage(paths, manifestBytes, wasmBytes, HostVerifyOptions(signer.roots(t), current, time.Now()))
+	staged, err := Stage(paths, manifestBytes, wasmBytes, HostVerifyOptions(signer.roots(t), current, time.Now()), nil)
 	if err != nil {
 		t.Fatalf("stage %s: %v", updateID, err)
 	}

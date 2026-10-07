@@ -52,7 +52,7 @@ func stageSignedModuleUpdate(t *testing.T, paths Paths, signer *testSigner, vers
 		}
 		doc["modules"] = modulesDoc
 	}, bundleBytes, wasmBytes)
-	staged, err := Stage(paths, manifestBytes, wasmBytes, HostVerifyOptions(signer.roots(t), 0, time.Now()))
+	staged, err := Stage(paths, manifestBytes, wasmBytes, HostVerifyOptions(signer.roots(t), 0, time.Now()), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
