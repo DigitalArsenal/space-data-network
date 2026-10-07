@@ -60,6 +60,11 @@ type DatasetBatchOptions struct {
 	// contiguous from offset 0 and every shard file present with the
 	// recorded size.
 	IncludeBytes bool
+	// ProviderID and SourceName scope the batch to one lane. A batch id is
+	// the digest of the fetched payload, so two lanes fed from one payload
+	// share it; unscoped, such a batch spans both lanes and is refused.
+	ProviderID string
+	SourceName string
 }
 
 // MaterializedDatasetBatch resolves one publication batch to locally
@@ -93,6 +98,8 @@ func (s *FlatSQLStore) MaterializedDatasetBatch(schemaName, batchID string, opts
 
 	publications, err := s.ListDatasetShardPublications(DatasetShardPublicationQuery{
 		SchemaName:   schemaName,
+		ProviderID:   strings.TrimSpace(opts.ProviderID),
+		SourceName:   strings.TrimSpace(opts.SourceName),
 		BatchID:      batchID,
 		QueryProfile: DatasetPublicationQueryProfile,
 	})

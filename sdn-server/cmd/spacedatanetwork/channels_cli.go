@@ -44,6 +44,7 @@ type channelSubscriptionOptions struct {
 	Subject               string
 	GrantID               string
 	APIURL                string
+	Retention             string
 	InsecureSkipTLSVerify bool
 }
 
@@ -181,8 +182,10 @@ func newChannelsCommand() *cobra.Command {
 	subscribeCmd.Flags().StringVar(&subscribeOptions.Subject, "subject", "", "subscriber EPM subject for private channel access")
 	subscribeCmd.Flags().StringVar(&subscribeOptions.GrantID, "grant-id", "", "private channel grant ID")
 	subscribeCmd.Flags().StringVar(&subscribeOptions.APIURL, "api-url", "", "SDN API base URL (default: SDN_API_URL)")
+	subscribeCmd.Flags().StringVar(&subscribeOptions.Retention, "retention", "", "what the node keeps of each pull: replace-current (full replacement), keep-all or archive-all (default: the standard's default)")
 	addChannelInsecureTLSFlag(subscribeCmd, &subscribeOptions.InsecureSkipTLSVerify)
 	cmd.AddCommand(subscribeCmd)
+	cmd.AddCommand(newChannelsRetentionCommand())
 	unsubscribeCmd := &cobra.Command{
 		Use:   "unsubscribe <channelId>",
 		Short: "Unsubscribe from a channel",
@@ -945,15 +948,24 @@ func runChannelsSubscribe(cmd *cobra.Command, registry *channels.SubscriptionReg
 	if err != nil {
 		return err
 	}
+	retention := strings.TrimSpace(options.Retention)
+	if retention != "" {
+		if _, ok := channels.NormalizeRetention(retention); !ok {
+			return fmt.Errorf("--retention must be replace-current, keep-all or archive-all, not %q", retention)
+		}
+	}
 	if apiURL := firstNonEmptyChannelOption(strings.TrimSpace(options.APIURL), strings.TrimSpace(os.Getenv("SDN_API_URL"))); apiURL != "" {
 		return runChannelsSubscriptionToAPI(cmd, parsed, apiURL, "subscribe", channelAccessQuery{
 			Subject:    options.Subject,
 			GrantID:    options.GrantID,
 			Visibility: options.Visibility,
-		}, options.InsecureSkipTLSVerify)
+		}, retention, options.InsecureSkipTLSVerify)
 	}
 	if strings.EqualFold(strings.TrimSpace(options.Visibility), "private") {
 		return fmt.Errorf("verified channel grant required for %s", parsed.ChannelID)
+	}
+	if retention != "" {
+		return printChannelSubscriptionState(cmd, registry.SubscribeWithRetention(parsed, retention))
 	}
 	return printChannelSubscriptionState(cmd, registry.Subscribe(parsed))
 }
@@ -968,7 +980,7 @@ func runChannelsUnsubscribe(cmd *cobra.Command, registry *channels.SubscriptionR
 			Subject:    options.Subject,
 			GrantID:    options.GrantID,
 			Visibility: options.Visibility,
-		}, options.InsecureSkipTLSVerify)
+		}, "", options.InsecureSkipTLSVerify)
 	}
 	if strings.EqualFold(strings.TrimSpace(options.Visibility), "private") {
 		return fmt.Errorf("verified channel grant required for %s", parsed.ChannelID)
@@ -976,10 +988,20 @@ func runChannelsUnsubscribe(cmd *cobra.Command, registry *channels.SubscriptionR
 	return printChannelSubscriptionState(cmd, registry.Unsubscribe(parsed))
 }
 
-func runChannelsSubscriptionToAPI(cmd *cobra.Command, parsed channels.ChannelID, apiURL string, action string, access channelAccessQuery, insecureSkipTLSVerify bool) error {
+func runChannelsSubscriptionToAPI(cmd *cobra.Command, parsed channels.ChannelID, apiURL string, action string, access channelAccessQuery, retention string, insecureSkipTLSVerify bool) error {
 	subscriptionURL, err := channelSubscriptionURL(apiURL, parsed.ChannelID, action, access)
 	if err != nil {
 		return err
+	}
+	if retention != "" {
+		withRule, err := url.Parse(subscriptionURL)
+		if err != nil {
+			return err
+		}
+		query := withRule.Query()
+		query.Set("retention", retention)
+		withRule.RawQuery = query.Encode()
+		subscriptionURL = withRule.String()
 	}
 	client, err := newChannelAPIClient(apiURL, 10*time.Second, insecureSkipTLSVerify)
 	if err != nil {
@@ -1019,6 +1041,7 @@ func printChannelSubscriptionState(cmd *cobra.Command, state channels.Subscripti
 	out := cmd.OutOrStdout()
 	fmt.Fprintf(out, "channelId=%s\n", state.ChannelID)
 	fmt.Fprintf(out, "subscribed=%t\n", state.Subscribed)
+	fmt.Fprintf(out, "retention=%s\n", state.Retention)
 	fmt.Fprintf(out, "visibility=%s\n", state.Visibility)
 	fmt.Fprintf(out, "grantState=%s\n", state.GrantState)
 	fmt.Fprintf(out, "encryptionState=%s\n", state.EncryptionState)

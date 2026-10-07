@@ -61,29 +61,33 @@ type Config struct {
 // channels.
 const (
 	SubscriptionRetentionReplaceCurrent = "replace-current"
+	SubscriptionRetentionKeepAll        = "keep-all"
 	SubscriptionRetentionArchiveAll     = "archive-all"
 )
 
 // SubscriptionsConfig carries the node-wide defaults for channel
 // subscriptions (the $DSS sync lane).
 type SubscriptionsConfig struct {
-	// DefaultRetention is the retention rule a lane subscription starts
-	// with when the subscriber does not choose one —
-	// subscriptions.default_retention in config.yaml:
-	//   replace-current  each publication supersedes the lane's previous
-	//                    batch, so the node holds one current set (default);
-	//   archive-all      every publication is kept and pinned.
-	// A subscriber may still pick either rule per lane ($DSS RETENTION on
-	// POST /api/v1/sync).
+	// DefaultRetention is the rule of every standard without a default of
+	// its own — subscriptions.default_retention in config.yaml:
+	//   keep-all         every publication stays in the store; nothing is
+	//                    superseded or pinned (default);
+	//   replace-current  each publication replaces the lane's previous
+	//                    batch, so the node holds one current set;
+	//   archive-all      every publication stays and is pinned.
+	// CAT has its own built-in default, replace-current (owner 2026-10-06:
+	// "only CAT is replaced"). Standard defaults and per-lane rules are set
+	// with `spacedatanetwork channels retention` or the dashboard ($DSS
+	// SetRetention on POST /api/v1/sync) and kept in the subscription file.
 	DefaultRetention string `yaml:"default_retention"`
 }
 
 // EffectiveDefaultRetention returns the configured default rule, or
-// replace-current when none is set.
+// keep-all when none is set.
 func (c SubscriptionsConfig) EffectiveDefaultRetention() string {
 	word := strings.ToLower(strings.TrimSpace(c.DefaultRetention))
 	if word == "" {
-		return SubscriptionRetentionReplaceCurrent
+		return SubscriptionRetentionKeepAll
 	}
 	return word
 }
@@ -2051,9 +2055,10 @@ func Default() *Config {
 			},
 		},
 		Subscriptions: SubscriptionsConfig{
-			// Owner ruling 2026-09-04: a subscription replaces the current
-			// set with each update; archiving every version is the option.
-			DefaultRetention: SubscriptionRetentionReplaceCurrent,
+			// Owner 2026-10-06: "the OMM is multiple, only CAT is
+			// replaced". Every standard keeps every pull unless it has a
+			// default of its own (CAT: replace-current, built in).
+			DefaultRetention: SubscriptionRetentionKeepAll,
 		},
 		AssetPins: AssetPinConfig{
 			Enabled:          false,
@@ -2213,9 +2218,9 @@ func Load(path string) (*Config, error) {
 // successfully parsed.
 func (c *Config) validate() error {
 	switch c.Subscriptions.EffectiveDefaultRetention() {
-	case SubscriptionRetentionReplaceCurrent, SubscriptionRetentionArchiveAll:
+	case SubscriptionRetentionReplaceCurrent, SubscriptionRetentionKeepAll, SubscriptionRetentionArchiveAll:
 	default:
-		return fmt.Errorf("subscriptions.default_retention must be replace-current or archive-all")
+		return fmt.Errorf("subscriptions.default_retention must be keep-all, replace-current or archive-all")
 	}
 	if c.Publishing.Retention.KeepSeries < 0 {
 		return fmt.Errorf("publishing.retention.keep_series must not be negative (0 keeps every series)")

@@ -4216,6 +4216,14 @@ func (n *Node) materializeDatasetFeedHeadAnnouncement(ctx context.Context, ann s
 		log.Debugf("Skipping dataset feed head from non-trusted peer %s on %s", from.ShortString(), ann.Schema)
 		return 0, nil
 	}
+	// A node's own lane never comes back to it from a peer. Its records are
+	// here already, and its publication hygiene retires old series on
+	// purpose: re-importing them made host-02 replace its own OMM lane over
+	// and over (2026-10-06).
+	if n.laneProducedHere(ann.Schema, ann.ProviderID, ann.SourceName) {
+		log.Debugf("Skipping dataset feed head %s from %s: this node produces %s %s/%s", ann.FeedHead, from.ShortString(), ann.Schema, ann.ProviderID, ann.SourceName)
+		return 0, nil
+	}
 	if strings.TrimSpace(ann.ShardCID) == "" || strings.TrimSpace(ann.IndexCID) == "" {
 		return 0, fmt.Errorf("dataset feed head %s is missing shard or index CID", ann.FeedHead)
 	}
@@ -4374,8 +4382,8 @@ func (n *Node) supersedePinnedDatasetBatches(schema string, peers []string) {
 			if !ok {
 				continue // newest not fully materialized yet — keep waiting
 			}
-			if n.laneRetentionRule(schema, content.ProviderID, content.SourceName) == channels.RetentionArchiveAll {
-				log.Debugf("gateway.pin supersede %s %s: %s/%s keeps every version, batch %s left in place", peerID, schema, content.ProviderID, content.SourceName, content.BatchID)
+			if rule := n.laneRetentionRule(schema, content.ProviderID, content.SourceName); rule != channels.RetentionReplaceCurrent {
+				log.Debugf("gateway.pin supersede %s %s: %s/%s follows %s, batch %s left in place", peerID, schema, content.ProviderID, content.SourceName, rule, content.BatchID)
 				break
 			}
 			result, err := n.store.SupersedeSourceBatches(schema, content.ProviderID, content.SourceName, content.BatchID)
@@ -6211,17 +6219,43 @@ func (n *Node) laneRetentionResolver() func(schema, providerID, sourceName strin
 	return n.laneRetention
 }
 
-// laneRetentionRule answers the lane's rule, or the default when no resolver
-// is installed.
+// laneRetentionRule answers the lane's rule, or its standard's built-in
+// default when no resolver is installed.
 func (n *Node) laneRetentionRule(schema, providerID, sourceName string) string {
 	resolver := n.laneRetentionResolver()
 	if resolver == nil {
-		return channels.RetentionReplaceCurrent
+		return channels.BuiltinRetentionFor(schema)
 	}
 	if word, ok := channels.NormalizeRetention(resolver(schema, providerID, sourceName)); ok {
 		return word
 	}
-	return channels.RetentionReplaceCurrent
+	return channels.BuiltinRetentionFor(schema)
+}
+
+// laneProducedHere reports whether this node produced the lane's records
+// itself (the store's per-producer summary names this peer). Subscriber
+// rules never apply to such a lane: a producer manages its own history.
+func (n *Node) laneProducedHere(schema, providerID, sourceName string) bool {
+	if n == nil || n.store == nil || n.host == nil {
+		return false
+	}
+	code := channels.RetentionStandardCode(schema)
+	providerID, sourceName = strings.TrimSpace(providerID), strings.TrimSpace(sourceName)
+	if code == "" || providerID == "" || sourceName == "" {
+		return false
+	}
+	progress, err := n.store.ProducerSourceProgress()
+	if err != nil {
+		log.Debugf("Producer of %s %s/%s unknown: %v", schema, providerID, sourceName, err)
+		return false
+	}
+	self := n.host.ID().String()
+	for _, row := range progress {
+		if row.ProducerPeerID == self && row.ProviderID == providerID && row.SourceName == sourceName && channels.RetentionStandardCode(row.SchemaName) == code {
+			return true
+		}
+	}
+	return false
 }
 
 // datasetPublicationPins names the CIDs of one publication by role.
@@ -6251,6 +6285,10 @@ func (n *Node) applyLaneRetention(schema, providerID, sourceName string, importe
 		log.Debugf("Retention for %s %s/%s not applied: no rule resolver installed yet", schema, providerID, sourceName)
 		return
 	}
+	if n.laneProducedHere(schema, providerID, sourceName) {
+		log.Debugf("Retention for %s %s/%s not applied: this node produces the lane", schema, providerID, sourceName)
+		return
+	}
 	n.wg.Add(1)
 	go func() {
 		defer n.wg.Done()
@@ -6263,13 +6301,15 @@ func (n *Node) applyLaneRetention(schema, providerID, sourceName string, importe
 // applyLaneRetentionNow runs one evaluation; the caller holds
 // datasetSupersedeMu.
 func (n *Node) applyLaneRetentionNow(resolver func(schema, providerID, sourceName string) string, schema, providerID, sourceName string, imported storage.RetainCandidate, pins map[string]string) {
-	rule := channels.RetentionReplaceCurrent
+	rule := channels.BuiltinRetentionFor(schema)
 	if word, ok := channels.NormalizeRetention(resolver(schema, providerID, sourceName)); ok {
 		rule = word
 	}
 	switch rule {
 	case channels.RetentionArchiveAll:
 		n.archiveLanePublication(schema, providerID, sourceName, imported, pins)
+	case channels.RetentionKeepAll:
+		// Every pull stays in the store; nothing is evicted or pinned.
 	default:
 		n.replaceLaneCurrent(schema, providerID, sourceName, imported)
 	}
