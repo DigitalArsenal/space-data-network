@@ -4382,8 +4382,16 @@ func (n *Node) supersedePinnedDatasetBatches(schema string, peers []string) {
 			if !ok {
 				continue // newest not fully materialized yet — keep waiting
 			}
-			if rule := n.laneRetentionRule(schema, content.ProviderID, content.SourceName); rule != channels.RetentionReplaceCurrent {
-				log.Debugf("gateway.pin supersede %s %s: %s/%s follows %s, batch %s left in place", peerID, schema, content.ProviderID, content.SourceName, rule, content.BatchID)
+			// Only replace-current evicts. Keep-all keeps the records and drops
+			// the older pulls' files and pins; archive-all keeps everything.
+			rule := n.laneRetentionRule(schema, content.ProviderID, content.SourceName)
+			switch rule {
+			case channels.RetentionArchiveAll:
+				log.Debugf("gateway.pin supersede %s %s: %s/%s keeps and pins every version, batch %s left in place", peerID, schema, content.ProviderID, content.SourceName, content.BatchID)
+			case channels.RetentionKeepAll:
+				n.keepLaneHistory(schema, content.ProviderID, content.SourceName)
+			}
+			if rule != channels.RetentionReplaceCurrent {
 				break
 			}
 			result, err := n.store.SupersedeSourceBatches(schema, content.ProviderID, content.SourceName, content.BatchID)
@@ -6309,7 +6317,7 @@ func (n *Node) applyLaneRetentionNow(resolver func(schema, providerID, sourceNam
 	case channels.RetentionArchiveAll:
 		n.archiveLanePublication(schema, providerID, sourceName, imported, pins)
 	case channels.RetentionKeepAll:
-		// Every pull stays in the store; nothing is evicted or pinned.
+		n.keepLaneHistory(schema, providerID, sourceName)
 	default:
 		n.replaceLaneCurrent(schema, providerID, sourceName, imported)
 	}
@@ -6395,6 +6403,35 @@ func (n *Node) archiveLanePublication(schema, providerID, sourceName string, imp
 	}
 }
 
+// keepLaneHistory (keep-all): every pull's records stay. Only the copies of
+// the pulls older than the lane's current one go: their cached shard/index
+// files and their pins, so a history kept in the store costs no second copy
+// on disk (an OMM pull's files are about 18 MB). A pull newer than the
+// current one is never touched: it may still be landing.
+func (n *Node) keepLaneHistory(schema, providerID, sourceName string) {
+	current, older, ok, err := n.store.OlderLaneBatches(schema, providerID, sourceName)
+	if err != nil {
+		log.Warnf("Retention for %s %s/%s: current batch unknown: %v", schema, providerID, sourceName, err)
+		return
+	}
+	if !ok || len(older) == 0 {
+		return
+	}
+	files, err := n.store.RemovePublicationFiles(schema, providerID, sourceName, current, older)
+	if err != nil {
+		log.Warnf("Retention for %s %s/%s: could not drop older publication files: %v", schema, providerID, sourceName, err)
+	}
+	only := make(map[string]bool, len(older))
+	for _, id := range older {
+		only[id] = true
+	}
+	released := n.releaseLanePins(schema, providerID, sourceName, current, only)
+	if files > 0 || released > 0 {
+		log.Infof("Retention for %s %s/%s: keeping every pull; batch %s is current — removed %d cached publication files of older pulls, released %d pins",
+			schema, providerID, sourceName, current, files, released)
+	}
+}
+
 // replaceLaneCurrent (replace-current): keep the newest fully materialized
 // batch, evict the rest, and release the superseded publications' pins.
 func (n *Node) replaceLaneCurrent(schema, providerID, sourceName string, imported storage.RetainCandidate) {
@@ -6419,6 +6456,12 @@ func (n *Node) replaceLaneCurrent(schema, providerID, sourceName string, importe
 // unpinned in the pin ledger. Rows already marked unpinned are skipped, so a
 // repeat pass costs nothing.
 func (n *Node) releaseSupersededLanePins(schema, providerID, sourceName, keep string) int {
+	return n.releaseLanePins(schema, providerID, sourceName, keep, nil)
+}
+
+// releaseLanePins is releaseSupersededLanePins limited, when only is
+// non-nil, to the batches it names.
+func (n *Node) releaseLanePins(schema, providerID, sourceName, keep string, only map[string]bool) int {
 	if n.config == nil || strings.TrimSpace(n.config.Admin.IPFSAPIURL) == "" {
 		return 0
 	}
@@ -6455,7 +6498,7 @@ func (n *Node) releaseSupersededLanePins(schema, providerID, sourceName, keep st
 	seen := map[string]bool{}
 	for i := range pubs {
 		pub := &pubs[i]
-		if pub.BatchID == keep {
+		if pub.BatchID == keep || (only != nil && !only[pub.BatchID]) {
 			continue
 		}
 		snapshotID := pub.FeedHead

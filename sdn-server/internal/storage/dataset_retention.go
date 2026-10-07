@@ -117,6 +117,28 @@ func (s *FlatSQLStore) laneBatchStates(schemaName, providerID, sourceName string
 	return out, nil
 }
 
+// OlderLaneBatches names a lane's current batch — the newest one fully
+// servable here — and every ledger batch older than it, newest first. A batch
+// newer than the current one (an import still landing, or one whose files
+// never arrived) is in neither, so nothing that touches the older batches
+// can disturb it. ok=false when no batch is servable.
+func (s *FlatSQLStore) OlderLaneBatches(schemaName, providerID, sourceName string) (current string, older []string, ok bool, err error) {
+	states, err := s.laneBatchStates(schemaName, providerID, sourceName)
+	if err != nil {
+		return "", nil, false, err
+	}
+	for i, state := range states {
+		if !state.servable {
+			continue
+		}
+		for _, o := range states[i+1:] {
+			older = append(older, o.id)
+		}
+		return state.id, older, true, nil
+	}
+	return "", nil, false, nil
+}
+
 // NewestServableSourceBatch finds the newest publication batch of a lane
 // that is fully materialized here (MaterializedDatasetBatch servability).
 // Batches order by (max FeedSequence desc, max PublishedAt desc). ok=false

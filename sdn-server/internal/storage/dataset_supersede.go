@@ -253,54 +253,10 @@ func (s *FlatSQLStore) SupersedeSourceBatches(schemaName, providerID, sourceName
 			time.Since(started).Round(time.Millisecond), result.MaxLockHold.Round(time.Millisecond))
 	}
 
-	// Superseded batches' cached shard/index files. The publication metadata
-	// rows are kept (catch-up dedup + provenance, see the package comment);
-	// only the payload files go.
-	stale, err := s.ListDatasetShardPublications(DatasetShardPublicationQuery{
-		SchemaName:   result.SchemaName,
-		ProviderID:   result.ProviderID,
-		SourceName:   result.SourceName,
-		QueryProfile: DatasetPublicationQueryProfile,
-	})
+	files, err := s.RemoveSupersededPublicationFiles(result.SchemaName, result.ProviderID, result.SourceName, result.KeepBatch)
+	result.FilesDeleted += files
 	if err != nil {
 		return result, err
-	}
-	keepFiles := make(map[string]bool, 4)
-	for _, pub := range stale {
-		if pub.BatchID != result.KeepBatch {
-			continue
-		}
-		// A shard shared byte-identically across batches resolves to the
-		// same file name (query/shard hash pair) — never delete a file the
-		// kept batch still serves.
-		if shardPath, err := s.DatasetPublicationShardPath(pub); err == nil {
-			keepFiles[shardPath] = true
-		}
-		if indexPath, err := s.DatasetPublicationIndexPath(pub); err == nil {
-			keepFiles[indexPath] = true
-		}
-	}
-	for _, pub := range stale {
-		if pub.BatchID == result.KeepBatch {
-			continue
-		}
-		var files []string
-		if shardPath, err := s.DatasetPublicationShardPath(pub); err == nil {
-			files = append(files, shardPath)
-		}
-		if indexPath, err := s.DatasetPublicationIndexPath(pub); err == nil {
-			files = append(files, indexPath)
-		}
-		for _, file := range files {
-			if keepFiles[file] {
-				continue
-			}
-			if err := os.Remove(file); err == nil {
-				result.FilesDeleted++
-			} else if !os.IsNotExist(err) {
-				log.Warnf("supersede %s %s: remove cached publication file %s: %v", result.SchemaName, pub.BatchID, file, err)
-			}
-		}
 	}
 	return result, nil
 }
@@ -619,4 +575,86 @@ func (s *FlatSQLStore) rebuildSupersededSummaryLanes(scope *DatasetSupersedeResu
 		}
 	}
 	return nil
+}
+
+// RemoveSupersededPublicationFiles deletes the cached shard and index files of
+// every publication of one (schema, provider, source) lane except keepBatch's,
+// and nothing else: records and publication metadata rows stay. Replace-current
+// runs it after evicting records (SupersedeSourceBatches). Returns the number
+// of files removed.
+func (s *FlatSQLStore) RemoveSupersededPublicationFiles(schemaName, providerID, sourceName, keepBatch string) (int, error) {
+	return s.removePublicationFiles(schemaName, providerID, sourceName, keepBatch, nil)
+}
+
+// RemovePublicationFiles deletes the cached shard and index files of the named
+// batches of one lane, never a file keepBatch still serves (a shard shared
+// byte-identically across batches resolves to one file). Records and
+// publication metadata rows stay. Keep-all runs it for the pulls older than
+// the lane's current one, so a lane that keeps every pull's records holds no
+// second copy of the old pulls on disk.
+func (s *FlatSQLStore) RemovePublicationFiles(schemaName, providerID, sourceName, keepBatch string, batches []string) (int, error) {
+	only := make(map[string]bool, len(batches))
+	for _, id := range batches {
+		only[strings.TrimSpace(id)] = true
+	}
+	return s.removePublicationFiles(schemaName, providerID, sourceName, keepBatch, only)
+}
+
+// removePublicationFiles removes the files of every non-keep batch, or, when
+// only is non-nil, of the batches it names.
+func (s *FlatSQLStore) removePublicationFiles(schemaName, providerID, sourceName, keepBatch string, only map[string]bool) (int, error) {
+	schemaName, providerID, sourceName, keepBatch = strings.TrimSpace(schemaName), strings.TrimSpace(providerID), strings.TrimSpace(sourceName), strings.TrimSpace(keepBatch)
+	if s == nil {
+		return 0, errors.New("store is required")
+	}
+	if schemaName == "" || providerID == "" || sourceName == "" || keepBatch == "" {
+		return 0, errors.New("schema, provider, source and keep batch are required")
+	}
+	// The publication metadata rows are kept (catch-up dedup + provenance, see
+	// the package comment); only the payload files go.
+	pubs, err := s.ListDatasetShardPublications(DatasetShardPublicationQuery{
+		SchemaName:   schemaName,
+		ProviderID:   providerID,
+		SourceName:   sourceName,
+		QueryProfile: DatasetPublicationQueryProfile,
+	})
+	if err != nil {
+		return 0, err
+	}
+	keepFiles := make(map[string]bool, 4)
+	for _, pub := range pubs {
+		if pub.BatchID != keepBatch {
+			continue
+		}
+		if shardPath, err := s.DatasetPublicationShardPath(pub); err == nil {
+			keepFiles[shardPath] = true
+		}
+		if indexPath, err := s.DatasetPublicationIndexPath(pub); err == nil {
+			keepFiles[indexPath] = true
+		}
+	}
+	removed := 0
+	for _, pub := range pubs {
+		if pub.BatchID == keepBatch || (only != nil && !only[pub.BatchID]) {
+			continue
+		}
+		var files []string
+		if shardPath, err := s.DatasetPublicationShardPath(pub); err == nil {
+			files = append(files, shardPath)
+		}
+		if indexPath, err := s.DatasetPublicationIndexPath(pub); err == nil {
+			files = append(files, indexPath)
+		}
+		for _, file := range files {
+			if keepFiles[file] {
+				continue
+			}
+			if err := os.Remove(file); err == nil {
+				removed++
+			} else if !os.IsNotExist(err) {
+				log.Warnf("supersede %s %s: remove cached publication file %s: %v", schemaName, pub.BatchID, file, err)
+			}
+		}
+	}
+	return removed, nil
 }
