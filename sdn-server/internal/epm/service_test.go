@@ -628,15 +628,20 @@ func TestNodeQRUsesCompactContactAndLiteralKeyVCard(t *testing.T) {
 	if !ok {
 		t.Fatal("PublicIdentityKeysFromXPub failed")
 	}
-	signKeyBytes, decErr := hex.DecodeString(derivedForCard.SigningPublicKey)
+	// The sign alias is the key that signs the record, so a scanned card
+	// alone binds to the record (§21; owner 2026-10-07).
+	signKeyBytes, decErr := identity.SigningPubKey.Raw()
 	if decErr != nil {
-		t.Fatalf("decode signing pubkey: %v", decErr)
+		t.Fatalf("signing public key: %v", decErr)
 	}
 	signAlias := "EMAIL;type=INTERNET;type=sign:" +
 		base64.RawURLEncoding.EncodeToString(signKeyBytes) +
 		"@sign.spacedatanetwork.org"
 	if got := strings.Count(unfolded, signAlias); got != 1 {
 		t.Fatalf("QR vCard sign literal-key alias count = %d, want 1: %s", got, qrVCard)
+	}
+	if err := VerifyEPMSignatureBindingKey(service.GetNodeEPM(), signKeyBytes); err != nil {
+		t.Fatalf("the record's signature does not verify against the QR card's sign key: %v", err)
 	}
 	if got := strings.Count(unfolded, "@sign.spacedatanetwork.org"); got != 1 {
 		t.Fatalf("QR vCard sign alias count = %d, want exactly 1: %s", got, qrVCard)

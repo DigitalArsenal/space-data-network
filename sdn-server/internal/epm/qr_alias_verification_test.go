@@ -44,9 +44,9 @@ func parseAliasEmails(t *testing.T, card string) map[string][]string {
 //
 //  1. epmcid alias == CID of the fetched serialized EPM  (integrity of fetch)
 //  2. epmsig/epmts aliases == the record's embedded signature + timestamp
-//  3. xpub alias + sign-path alias  ->  derive the secp256k1 signing public
-//     key; it MUST appear among the record's signing KEYS (binds the signed
-//     record to the xpub holder)
+//  3. the sign alias is the record's FIRST signing key and the record's
+//     signature verifies against exactly that key (§21 binding: the scanned
+//     card alone names the key that signed the record; owner 2026-10-07)
 //  4. VerifyEPMSignature passes over the record
 func TestQRAliasChainProvesEPMSignature(t *testing.T) {
 	t.Parallel()
@@ -122,9 +122,15 @@ func TestQRAliasChainProvesEPMSignature(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sign alias %q not base64url: %v", aliases["sign"][0], err)
 	}
-	if hex.EncodeToString(signKeyBytes) != derived.SigningPublicKey {
-		t.Fatalf("sign alias decodes to %x, want the literal signing key %s",
-			signKeyBytes, derived.SigningPublicKey)
+	signerRaw, err := identity.SigningPubKey.Raw()
+	if err != nil {
+		t.Fatalf("signing public key: %v", err)
+	}
+	if hex.EncodeToString(signKeyBytes) != hex.EncodeToString(signerRaw) {
+		t.Fatalf("sign alias decodes to %x, want the key that signs the record %x", signKeyBytes, signerRaw)
+	}
+	if err := VerifyEPMSignatureBindingKey(epmBytes, signKeyBytes); err != nil {
+		t.Fatalf("the record's signature does not verify against the card's sign key: %v", err)
 	}
 	// Same rule on the encryption side (ONE ENCRYPTION KEY), asserted here so
 	// the two halves cannot drift apart again.
@@ -139,6 +145,7 @@ func TestQRAliasChainProvesEPMSignature(t *testing.T) {
 		t.Fatalf("encrypt alias decodes to %x, want the literal encryption key %s",
 			encAliasBytes, derived.EncryptionPublicKey)
 	}
+	// The operator-editable secp256k1 signing slot is still published.
 	keyInRecord := false
 	key := new(EPM.CryptoKey)
 	for i := 0; i < record.KEYSLength(); i++ {

@@ -1792,6 +1792,35 @@ func (s *Service) buildEPMBytesLocked(signatureHex string, signatureTimestamp in
 	var keyOffsets []flatbuffers.UOffsetT
 
 	if s.identity != nil {
+		// The Ed25519 key that produces the EPM self-signature (and PNM and
+		// dataset-publication signatures) comes FIRST. §21 binds a card's
+		// sign alias, the record's first signing key, to the record's
+		// SIGNATURE, so the first signing key has to be the one that signs;
+		// with a secp256k1 key ahead of it no QR card could be checked
+		// against its record (owner 2026-10-07: "resign them all"). It rides
+		// the wire because VerifyEPMSignature and the directory's Ed25519-key
+		// lookup read it from KEYS.
+		//
+		// XPUB IS DELIBERATELY ABSENT HERE (owner report 2026-07-29, task
+		// sdn-vcf-duplicate-sign-alias). XPUB on a CryptoKey is an ASSERTION,
+		// "PUBLIC_KEY is BIP-32 CKDpub-derivable from XPUB at KEY_ADDRESS",
+		// and it is false for this key twice over: the key is Ed25519
+		// (SLIP-10, which has no public derivation at all) and its path is
+		// all-hardened (m/44'/0'/0'/0'/0').
+		if s.identity.SigningPubKey != nil {
+			if sigPubBytes, err := s.identity.SigningPubKey.Raw(); err == nil && len(sigPubBytes) > 0 {
+				ed25519PubOff := builder.CreateString(hex.EncodeToString(sigPubBytes))
+				ed25519AddrTypeOff := builder.CreateString("ed25519")
+				ed25519PathOff := builder.CreateString(s.identity.SigningKeyPath)
+				EPM.CryptoKeyStart(builder)
+				EPM.CryptoKeyAddPUBLIC_KEY(builder, ed25519PubOff)
+				EPM.CryptoKeyAddADDRESS_TYPE(builder, ed25519AddrTypeOff)
+				EPM.CryptoKeyAddKEY_ADDRESS(builder, ed25519PathOff)
+				EPM.CryptoKeyAddKEY_TYPE(builder, EPM.KeyTypeSigning)
+				keyOffsets = append(keyOffsets, EPM.CryptoKeyEnd(builder))
+			}
+		}
+
 		// §18: the operator-editable SIGNING PATH / ENCRYPTION PATH. Empty
 		// falls back to this node's defaults; a set path is derived AT that
 		// path so the published key and the published path always agree.
@@ -1809,35 +1838,6 @@ func (s *Service) buildEPMBytesLocked(signatureHex string, signatureTimestamp in
 			EPM.CryptoKeyAddKEY_ADDRESS(builder, signingPathOff)
 			EPM.CryptoKeyAddKEY_TYPE(builder, EPM.KeyTypeSigning)
 			keyOffsets = append(keyOffsets, EPM.CryptoKeyEnd(builder))
-
-			// Ed25519 signing key. This is the key that produces the EPM
-			// self-signature (and PNM/dataset-publication signatures), so it
-			// must ride the wire: VerifyEPMSignature and the directory
-			// Ed25519-key lookup both read it from the EPM KEYS vector.
-			//
-			// XPUB IS DELIBERATELY ABSENT HERE (owner report 2026-07-29, task
-			// sdn-vcf-duplicate-sign-alias). XPUB on a CryptoKey is an
-			// ASSERTION — "PUBLIC_KEY is BIP-32 CKDpub-derivable from XPUB at
-			// KEY_ADDRESS" — and it is false for this key twice over: the key
-			// is Ed25519 (SLIP-10, which has no public derivation at all) and
-			// its path is all-hardened (m/44'/0'/0'/0'/0'). Stamping the
-			// secp256k1 account xpub on it invented a derivation that cannot
-			// exist, and because the vCard alias block projects that assertion
-			// it published a second sign@ path alias no verifier could ever
-			// resolve. The key stays; the false claim about it does not.
-			if s.identity.SigningPubKey != nil {
-				if sigPubBytes, err := s.identity.SigningPubKey.Raw(); err == nil && len(sigPubBytes) > 0 {
-					ed25519PubOff := builder.CreateString(hex.EncodeToString(sigPubBytes))
-					ed25519AddrTypeOff := builder.CreateString("ed25519")
-					ed25519PathOff := builder.CreateString(s.identity.SigningKeyPath)
-					EPM.CryptoKeyStart(builder)
-					EPM.CryptoKeyAddPUBLIC_KEY(builder, ed25519PubOff)
-					EPM.CryptoKeyAddADDRESS_TYPE(builder, ed25519AddrTypeOff)
-					EPM.CryptoKeyAddKEY_ADDRESS(builder, ed25519PathOff)
-					EPM.CryptoKeyAddKEY_TYPE(builder, EPM.KeyTypeSigning)
-					keyOffsets = append(keyOffsets, EPM.CryptoKeyEnd(builder))
-				}
-			}
 
 			encryptionPubOff := builder.CreateString(derived.EncryptionPublicKey)
 			encryptionPathOff := builder.CreateString(derived.EncryptionKeyPath)
@@ -1879,25 +1879,6 @@ func (s *Service) buildEPMBytesLocked(signatureHex string, signatureTimestamp in
 			EPM.CryptoKeyAddKEY_TYPE(builder, EPM.KeyTypeSigning)
 			identityKeyOff := EPM.CryptoKeyEnd(builder)
 			keyOffsets = append(keyOffsets, identityKeyOff)
-
-			// Signing key (Ed25519). No XPUB, for the same reason as the
-			// derived branch above: an Ed25519 key at a hardened path is not
-			// CKDpub-derivable from any extended public key, so asserting one
-			// would be inventing a derivation.
-			sigPubBytes, _ := s.identity.SigningPubKey.Raw()
-			sigPubHex := hex.EncodeToString(sigPubBytes)
-
-			sigPubOff := builder.CreateString(sigPubHex)
-			sigAddrTypeOff := builder.CreateString("ed25519")
-			sigPathOff := builder.CreateString(s.identity.SigningKeyPath)
-
-			EPM.CryptoKeyStart(builder)
-			EPM.CryptoKeyAddPUBLIC_KEY(builder, sigPubOff)
-			EPM.CryptoKeyAddADDRESS_TYPE(builder, sigAddrTypeOff)
-			EPM.CryptoKeyAddKEY_ADDRESS(builder, sigPathOff)
-			EPM.CryptoKeyAddKEY_TYPE(builder, EPM.KeyTypeSigning)
-			sigKeyOff := EPM.CryptoKeyEnd(builder)
-			keyOffsets = append(keyOffsets, sigKeyOff)
 
 			// Encryption key (X25519)
 			encPubHex := hex.EncodeToString(s.identity.EncryptionPub)
