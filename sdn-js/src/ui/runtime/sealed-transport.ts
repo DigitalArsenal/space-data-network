@@ -20,8 +20,9 @@ import { sha256, useHDWalletModule } from '../../crypto/hd-wallet';
 export const useWalletModule = useHDWalletModule;
 
 export const DELEGATION_PREFIX = 'SDN-RPC-DELEGATION/v1';
-/** A week, under the node's 8-day ceiling (auth delegation.go MaxDelegation). */
-export const DELEGATION_MS = 7 * 24 * 60 * 60 * 1000;
+/** A day (owner 2026-10-07: "shorten the session to 24 hours"), the node's
+ *  ceiling (auth delegation.go MaxDelegation). */
+export const DELEGATION_MS = 24 * 60 * 60 * 1000;
 const PIN_KEY = 'sdn.sealed.fingerprint';
 
 /**
