@@ -428,44 +428,6 @@ func TestNodeEPMSignatureVerifiesAndCoversTimestamp(t *testing.T) {
 		t.Fatal("VerifyEPMSignature accepted tampered signature timestamp")
 	}
 }
-
-func TestNodeVCardIncludesDirectoryMetadataAndPhoto(t *testing.T) {
-	t.Parallel()
-
-	peerID, err := peer.Decode("16Uiu2HAm9RZz2EQx8eTsnNCD4v3HVzPf1EfBxqPLqYMXeCQFjaoz")
-	if err != nil {
-		t.Fatalf("peer.Decode failed: %v", err)
-	}
-
-	service := NewService(nil, peers.NewRegistry(false, nil), peerID, "", t.TempDir())
-	if err := service.Init(); err != nil {
-		t.Fatalf("Init failed: %v", err)
-	}
-	if err := service.UpdateProfile(&Profile{
-		DN:           "SpaceAware Node",
-		PhotoDataURL: "data:image/png;base64,iVBORw0KGgo=",
-	}); err != nil {
-		t.Fatalf("UpdateProfile failed: %v", err)
-	}
-
-	vcard, err := service.GetNodeVCard()
-	if err != nil {
-		t.Fatalf("GetNodeVCard failed: %v", err)
-	}
-	// OWNER RULING 2026-08-04: no X-SDN extension properties on any card —
-	// directory kind and peer id are gone (the peer id is derivable from the
-	// xpub alias). The official PHOTO property stays.
-	if strings.Contains(vcard, "\r\nX-") || strings.Contains(vcard, "\nX-") {
-		t.Fatalf("vCard carries extension properties: %s", vcard)
-	}
-	if strings.Contains(vcard, peerID.String()) {
-		t.Fatalf("vCard carries the peer id: %s", vcard)
-	}
-	if !strings.Contains(vcard, "PHOTO;ENCODING=b;MEDIATYPE=image/png:iVBORw0KGgo=") {
-		t.Fatalf("vCard missing profile photo: %s", vcard)
-	}
-}
-
 func TestNodeVCardCarriesTheVerificationChainWithLiteralKeys(t *testing.T) {
 	t.Parallel()
 

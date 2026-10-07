@@ -950,7 +950,14 @@ func vcardPhotoLine(dataURL string) string {
 	if _, err := base64.StdEncoding.DecodeString(payload); err != nil {
 		return ""
 	}
-	return "PHOTO;ENCODING=b;MEDIATYPE=" + mediaType + ":" + payload
+	// The node's card is vCard 3.0, whose inline photo names its format with
+	// TYPE (PHOTO;ENCODING=b;TYPE=JPEG). MEDIATYPE is vCard 4.0's parameter,
+	// and a 3.0 importer that does not know it can drop the photo.
+	format := strings.ToUpper(strings.TrimPrefix(mediaType, "image/"))
+	if format == "" || strings.ContainsAny(format, ";:,/ ") {
+		return ""
+	}
+	return "PHOTO;ENCODING=b;TYPE=" + format + ":" + payload
 }
 
 // GetNodeProfile returns the current editable profile.
