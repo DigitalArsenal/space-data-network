@@ -51,10 +51,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/decred/dcrd/dcrec/secp256k1/v4"
+
 	"github.com/spacedatanetwork/sdn-server/internal/adminaddr"
 	"github.com/spacedatanetwork/sdn-server/internal/bundle"
+	"github.com/spacedatanetwork/sdn-server/internal/epm"
 	"github.com/spacedatanetwork/sdn-server/internal/ops"
 	"github.com/spacedatanetwork/sdn-server/internal/update"
+	"github.com/spacedatanetwork/sdn-server/internal/walletderive"
 )
 
 const (
@@ -121,6 +125,13 @@ type UpdateSignalSubscriberDeps struct {
 	// failure is raised here and cleared when a swap is handed off. Nil is
 	// tolerated (every Registry method is nil-safe).
 	Alerts *ops.Registry
+	// BundleVersion is the build this daemon runs (update.RunningIdentity). A
+	// UI package installs only when it names it.
+	BundleVersion string
+	// EnvelopeKey returns this node's key for an encrypted package: its
+	// sealed-transport encryption key, addressed by its fingerprint. Nil means
+	// this node cannot open one.
+	EnvelopeKey func() (*update.EnvelopeKey, error)
 }
 
 // UpdateSignalSubscriber listens for update signals and upgrades this install.
@@ -130,6 +141,8 @@ type UpdateSignalSubscriber struct {
 	mu          sync.Mutex
 	lastUpgrade time.Time
 	handled     map[string]bool
+	// uiAttempts is when each UI package was last tried (claimUI).
+	uiAttempts map[string]time.Time
 }
 
 // NewUpdateSignalSubscriber validates deps and constructs the subscriber.
@@ -155,7 +168,7 @@ func NewUpdateSignalSubscriber(deps UpdateSignalSubscriberDeps) (*UpdateSignalSu
 	if deps.Launch == nil {
 		deps.Launch = update.LaunchSelfUpgrade
 	}
-	return &UpdateSignalSubscriber{deps: deps, handled: make(map[string]bool)}, nil
+	return &UpdateSignalSubscriber{deps: deps, handled: make(map[string]bool), uiAttempts: make(map[string]time.Time)}, nil
 }
 
 // Run joins the topic and processes signals until ctx is done. A per-message
@@ -189,6 +202,10 @@ func (s *UpdateSignalSubscriber) handle(ctx context.Context, data []byte) {
 		// announcement schema too, and a box that logs a warning for every
 		// message it is not interested in trains its operator to ignore them.
 		log.Debugf("update signal: dropping message on %s: %v", s.deps.Topic, err)
+		return
+	}
+	if signal.Target.Kind == update.TargetKindUIBundle {
+		s.handleUI(ctx, signal)
 		return
 	}
 
@@ -384,6 +401,134 @@ func (s *UpdateSignalSubscriber) upgrade(ctx context.Context, signal *update.Sig
 	return nil
 }
 
+// uiRetryFloor spaces out attempts at one UI package, so a feed that fails
+// cannot turn duplicate deliveries into a download loop.
+const uiRetryFloor = time.Minute
+
+// handleUI is the in-place half of the lane for UI packages (OWNER 2026-10-07:
+// "have the running servers update in situ WITHOUT needing to republish the
+// binaries"). The same gates as a binary update — the signal's signature,
+// channel, freshness, sequence against the installed UI package, the rollback
+// refusal and the quarantine — and then no helper and no stop: the package is
+// fetched, opened with this node's key, verified file by file and switched in
+// while the daemon serves (update.InstallUIPackage).
+func (s *UpdateSignalSubscriber) handleUI(ctx context.Context, signal *update.Signal) {
+	active, err := update.ActiveUIPackage(s.deps.Paths)
+	if err != nil {
+		log.Warnf("update signal: cannot read the installed UI package, ignoring %s: %v", signal.UpdateID, err)
+		return
+	}
+	var installed int64
+	if active != nil {
+		installed = active.Sequence
+	}
+	if err := signal.Verify(update.SignalVerifyOptions{
+		TrustedRoots:    s.deps.TrustedRoots,
+		Kind:            update.TargetKindUIBundle,
+		Channel:         s.deps.Channel,
+		CurrentSequence: installed,
+		Now:             s.deps.Now(),
+	}); err != nil {
+		log.Debugf("UI package signal %s not actionable here: %v", signal.UpdateID, err)
+		return
+	}
+	if signal.Rollback {
+		log.Warnf("UI package signal %s declares a source-lineage ROLLBACK; this box will NOT install it automatically.", signal.UpdateID)
+		return
+	}
+	if update.HasFailedUpdate(s.deps.Paths, signal.UpdateID) {
+		log.Warnf("UI package signal %s refused: this box already tried it and reversed it (updates/failed/%s).", signal.UpdateID, signal.UpdateID)
+		return
+	}
+	if !s.claimUI(signal.UpdateID) {
+		return
+	}
+	pkg, err := s.installUI(ctx, signal, installed)
+	if err != nil {
+		log.Errorf("UI package %s not installed: %v", signal.UpdateID, err)
+		s.deps.Alerts.Raise(ops.KindUpdateFailed, signal.UpdateID, ops.SeverityError, err.Error())
+		s.release(signal.UpdateID)
+		return
+	}
+	s.deps.Alerts.Clear(ops.KindUpdateFailed, signal.UpdateID)
+	log.Infof("UI package %s (version %s, sequence %d) installed while serving; the dashboard and homepage switch on the next request, with no restart.",
+		pkg.UpdateID, pkg.Version, pkg.Sequence)
+}
+
+// claimUI is once-per-update for UI packages. Nothing restarts, so there is
+// no interval floor between packages, only between attempts at one.
+func (s *UpdateSignalSubscriber) claimUI(updateID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.handled[updateID] {
+		return false
+	}
+	if last, ok := s.uiAttempts[updateID]; ok && s.deps.Now().Sub(last) < uiRetryFloor {
+		return false
+	}
+	s.handled[updateID] = true
+	s.uiAttempts[updateID] = s.deps.Now()
+	return true
+}
+
+func (s *UpdateSignalSubscriber) installUI(ctx context.Context, signal *update.Signal, installed int64) (*update.UIPackage, error) {
+	ctx, cancel := context.WithTimeout(ctx, signalFetchTimeout)
+	defer cancel()
+	log.Infof("UI package signal accepted: %s version %s sequence %d (installed UI sequence %d). Fetching while this daemon keeps serving.",
+		signal.UpdateID, signal.Version, signal.Sequence, installed)
+
+	manifestBytes, err := s.fetch(ctx, signal.ManifestURL, maxManifestFetchBytes)
+	if err != nil {
+		return nil, fmt.Errorf("fetch UI package manifest: %w", err)
+	}
+	parsed, err := update.ParseManifest(manifestBytes)
+	if err != nil {
+		return nil, err
+	}
+	if err := signalMatchesManifest(signal, parsed, 0); err != nil {
+		return nil, err
+	}
+	verifyOpts := update.HostVerifyOptions(s.deps.TrustedRoots, installed, s.deps.Now())
+	verifyOpts.RunningBundleVersion = s.deps.BundleVersion
+	// The signed metadata, before any payload bandwidth: a package for another
+	// build, or one this node was not sealed for, stops here.
+	if _, err := parsed.Validate(parsed.Bundle.Hash, verifyOpts); err != nil {
+		return nil, fmt.Errorf("verify UI package manifest: %w", err)
+	}
+	if s.deps.EnvelopeKey == nil {
+		return nil, errors.New("this node has no key to open an encrypted UI package")
+	}
+	key, err := s.deps.EnvelopeKey()
+	if err != nil {
+		return nil, fmt.Errorf("load this node's envelope key: %w", err)
+	}
+	if !parsed.AddressedTo(key.KeyID) {
+		return nil, fmt.Errorf("UI package %s is not sealed for this node (key %s)", parsed.UpdateID, key.KeyID)
+	}
+	carrierLimit := int64(maxCarrierFetchBytes)
+	if signal.WasmSize < 0 || signal.WasmSize > carrierLimit {
+		return nil, fmt.Errorf("UI package carrier size %d is outside the download limit", signal.WasmSize)
+	}
+	if signal.WasmSize > 0 {
+		carrierLimit = signal.WasmSize
+	}
+	carrier, err := s.fetch(ctx, signal.CarrierURL, carrierLimit)
+	if err != nil {
+		return nil, fmt.Errorf("fetch UI package carrier: %w", err)
+	}
+	if err := signalMatchesManifest(signal, parsed, len(carrier)); err != nil {
+		return nil, err
+	}
+	return update.InstallUIPackage(s.deps.Paths, update.UIInstall{
+		Manifest:    manifestBytes,
+		Carrier:     carrier,
+		Verify:      verifyOpts,
+		Key:         key,
+		Trigger:     "signal",
+		SignalKeyID: signal.Signing.KeyID,
+	})
+}
+
 func unitSuffix(unit string) string {
 	if unit == "" {
 		return ""
@@ -516,6 +661,8 @@ func (n *Node) startUpdateSignalSubscriber() {
 		MaxDelay:      time.Duration(cfg.MaxDelaySeconds) * time.Second,
 		Client:        n.updateFetchClient(),
 		Alerts:        n.alerts,
+		BundleVersion: update.RunningIdentity().BundleVersion,
+		EnvelopeKey:   n.updateEnvelopeKey,
 	})
 	if err != nil {
 		log.Warnf("Update signal lane NOT started: %v", err)
@@ -641,4 +788,22 @@ func readBundleUpdateMetadata(manifestPath string) (*bundleSelfDescription, erro
 		return nil, fmt.Errorf("bundle manifest %s declares no channel", manifestPath)
 	}
 	return &described, nil
+}
+
+// updateEnvelopeKey is the key this node opens an encrypted update with: the
+// sealed-transport encryption key its /api/node/info advertises and its card
+// publishes, addressed by the same fingerprint, derived the way the sealed
+// admin transport derives it.
+func (n *Node) updateEnvelopeKey() (*update.EnvelopeKey, error) {
+	var profile *epm.Profile
+	if p, err := epm.LoadProfile(n.config.Storage.Path); err == nil {
+		profile = p
+	}
+	_, encPath := epm.EffectiveKeyPaths(profile, 0)
+	priv, _, err := n.SealedTransportKeys(encPath)
+	if err != nil {
+		return nil, err
+	}
+	pub := secp256k1.PrivKeyFromBytes(priv).PubKey().SerializeCompressed()
+	return &update.EnvelopeKey{KeyID: []byte(walletderive.Fingerprint(pub)), Private: priv}, nil
 }

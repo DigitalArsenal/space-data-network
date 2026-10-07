@@ -162,6 +162,29 @@ func SupervisedBySystemd() bool {
 	return strings.TrimSpace(os.Getenv("INVOCATION_ID")) != ""
 }
 
+// supervisedByUserManager reports whether this process runs under its user's
+// own systemd manager (systemctl --user), read from its cgroup. Such a box may
+// not create SYSTEM transient units — systemd-run answers "Interactive
+// authentication required" (vm-orbit-det-01, 2026-10-07) — and does not need
+// to: the user manager is the one that restarts the daemon.
+func supervisedByUserManager() bool {
+	data, err := os.ReadFile("/proc/self/cgroup")
+	if err != nil {
+		return false
+	}
+	return userManagerCgroup(string(data))
+}
+
+// userManagerCgroup reports a cgroup under a user@<uid>.service manager.
+func userManagerCgroup(cgroup string) bool {
+	for _, line := range strings.Split(cgroup, "\n") {
+		if strings.Contains(line, "/user@") && strings.Contains(line, ".service/") {
+			return true
+		}
+	}
+	return false
+}
+
 // LaunchSelfUpgrade starts the swap phase for an already-staged update.
 //
 // It writes the one-time control token first, then copies the helper, then
@@ -257,8 +280,20 @@ func launchViaSystemdRun(plan *HelperPlan, env []string, opts SelfUpgradeOptions
 	args = append(args, plan.Executable)
 	args = append(args, plan.Args...)
 
+	clientEnv := env
+	if supervisedByUserManager() {
+		// The helper's unit goes to the same user manager. systemd-run finds it
+		// through the session bus variables, which the client needs and the
+		// helper does not, so they are added here and never --setenv'd.
+		args = append([]string{"--user"}, args...)
+		for _, name := range []string{"XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"} {
+			if value, ok := os.LookupEnv(name); ok {
+				clientEnv = append(clientEnv, name+"="+value)
+			}
+		}
+	}
 	cmd := exec.Command(binary, args...)
-	cmd.Env = env
+	cmd.Env = clientEnv
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("systemd-run %s: %w: %s", unit, err, strings.TrimSpace(string(output)))

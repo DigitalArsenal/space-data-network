@@ -125,8 +125,10 @@ func makeRootHandler() http.Handler {
 			http.NotFound(w, r)
 			return
 		}
-		body := dashboardHTML
-		csp := dashboardCSP()
+		ui := servedUI.current()
+		body := ui.dashboard
+		csp := ui.dashboardCSP
+		w.Header().Set("X-SDN-UI", ui.label)
 		if len(body) == 0 || csp == "" {
 			// Dashboard artifact absent — serve the wordmark placeholder.
 			body = placeholderHTML
@@ -203,10 +205,13 @@ func makeMediaHandler() http.Handler {
 			http.NotFound(w, r)
 			return
 		}
-		body, err := fs.ReadFile(dashboardMedia, path.Join("embedded/media", name))
-		if err != nil {
-			http.NotFound(w, r)
-			return
+		body, ok := servedUI.current().media[name]
+		if !ok {
+			var err error
+			if body, err = fs.ReadFile(dashboardMedia, path.Join("embedded/media", name)); err != nil {
+				http.NotFound(w, r)
+				return
+			}
 		}
 		w.Header().Set("Content-Type", contentType)
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")

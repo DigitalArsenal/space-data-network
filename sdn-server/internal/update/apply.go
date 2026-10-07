@@ -170,6 +170,11 @@ func Prepare(paths Paths, opts ApplyOptions) (*Prepared, error) {
 	if err != nil {
 		return nil, err
 	}
+	// A UI package's files are not bundle entries: it installs while the daemon
+	// serves (InstallUIPackage) and is never swapped into the bundle root.
+	if candidate.Manifest.IsUIPackage() {
+		return nil, fmt.Errorf("%s is a UI package; it installs while the daemon runs, never through apply", candidate.UpdateID)
+	}
 	// THE STORE-FORMAT GUARD (store_format_guard.go) runs before anything is
 	// extracted: a payload whose binary cannot open the store on disk is
 	// refused with nothing written. ApplyPrepared runs it again on the

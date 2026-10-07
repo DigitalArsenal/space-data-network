@@ -93,13 +93,16 @@ func isHomepagePath(path string) bool {
 	return path == "/home" || path == "/home/" || path == "/home/index.html"
 }
 
-// serveHomepage writes the embedded homepage under its build-generated CSP.
+// serveHomepage writes the served homepage (servedUI) under its
+// build-generated CSP.
 func serveHomepage(w http.ResponseWriter, r *http.Request) {
-	if len(homepageHTML) == 0 || strings.TrimSpace(homepageCSPRaw) == "" {
+	ui := servedUI.current()
+	if len(ui.homepage) == 0 || ui.homepageCSP == "" {
 		http.NotFound(w, r)
 		return
 	}
-	w.Header().Set("Content-Security-Policy", strings.TrimSpace(homepageCSPRaw))
+	w.Header().Set("X-SDN-UI", ui.label)
+	w.Header().Set("Content-Security-Policy", ui.homepageCSP)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
 	// no-transform keeps a CDN in front of the gateway from rewriting the
@@ -109,7 +112,7 @@ func serveHomepage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	if r.Method != http.MethodHead {
-		_, _ = w.Write(homepageHTML)
+		_, _ = w.Write(ui.homepage)
 	}
 }
 

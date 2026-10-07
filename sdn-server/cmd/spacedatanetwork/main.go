@@ -2274,9 +2274,16 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				// A failed registry build is NOT fatal. The node's job is to
 				// run; a bad apps.* declaration must be loud and must not take
 				// the daemon down with it.
-				if appRegistry, err := buildAppRegistry(cfg.Apps, dashboardHTML); err != nil {
+				if appRegistry, err := buildAppRegistry(cfg.Apps, servedUI.current().dashboard); err != nil {
 					log.Errorf("Default-$APP registry not available: %v", err)
 				} else {
+					// A UI package that switches the dashboard re-mints its
+					// record from the new bytes.
+					servedUI.OnChange(func(ui *uiSet) {
+						if err := installDashboardRecord(appRegistry, ui.dashboard); err != nil {
+							log.Errorf("Dashboard $APP record not refreshed for UI %s: %v", ui.label, err)
+						}
+					})
 					api.NewDefaultAppsHandler(appRegistry).
 						WithNodePeerID(n.PeerID().String()).
 						RegisterRoutes(adminMux)

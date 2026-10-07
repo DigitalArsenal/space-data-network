@@ -1,0 +1,9 @@
+{
+  "schema": "org.spacedatanetwork.fleet-nodes.v1",
+  "about": "The self-contained bundle installs that hear the update signal, and where each answers on its own host. publish-ui-update.mjs reads each node's sealed-transport key from <node_url>/api/node/info over ssh at publish time and seals the UI package for it.",
+  "nodes": [
+    { "name": "host-01", "ssh": "space-data-network-01", "node_url": "https://127.0.0.1" },
+    { "name": "host-02", "ssh": "space-data-network-02", "node_url": "http://127.0.0.1:5003" },
+    { "name": "vm-orbit-det-01", "ssh": "vm-orbit-det-01", "node_url": "http://127.0.0.1:5001" }
+  ]
+}

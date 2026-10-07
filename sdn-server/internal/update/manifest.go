@@ -100,6 +100,11 @@ type ManifestRollback struct {
 // any swap begins.
 type ManifestCompatibility struct {
 	MinKuboVersion string `json:"min_kubo_version,omitempty"`
+	// BundleVersions names the binary builds a UI package was made for (the
+	// bundle versions /api/v1/id reports). A UI package installs and serves
+	// only on one of them; a node that has moved to a newer build serves that
+	// build's own embedded UI instead (see uipackage.go).
+	BundleVersions []string `json:"bundle_versions,omitempty"`
 }
 
 // Lineage values for ManifestProvenance.Lineage.
@@ -176,8 +181,23 @@ type Manifest struct {
 	// signature-compatible: it is covered by the signature like any other
 	// manifest field, old or new.
 	Modules []ManifestModuleTarget `json:"modules,omitempty"`
+	// Envelope (G2) is present when the published carrier is ciphertext: the
+	// bundle was encrypted once under a fresh content key, and each row wraps
+	// that key for one recipient node. It sits inside the signed document, so
+	// the recipient set is authorized by the same signature as the bytes.
+	Envelope *ManifestEnvelope `json:"envelope,omitempty"`
 
 	raw []byte
+}
+
+// ManifestEnvelope carries the wrapped content keys of an encrypted carrier.
+// Context is the ECIES context the keys were wrapped under; Recipients are
+// the per-node rows, matched by key_id (the node's encryption-key
+// fingerprint).
+type ManifestEnvelope struct {
+	Schema     string           `json:"schema"`
+	Context    string           `json:"context"`
+	Recipients []SealedEnvelope `json:"recipients"`
 }
 
 // IsModuleUpdate reports whether this manifest selects the G4
@@ -186,6 +206,12 @@ type Manifest struct {
 // sufficient (see TargetKindModuleUpdate doc).
 func (m *Manifest) IsModuleUpdate() bool {
 	return m.Target.Kind == TargetKindModuleUpdate || len(m.Modules) > 0
+}
+
+// IsUIPackage reports whether this manifest delivers the dashboard and
+// homepage a node serves (uipackage.go) rather than anything it runs.
+func (m *Manifest) IsUIPackage() bool {
+	return m.Target.Kind == TargetKindUIBundle
 }
 
 // ParseManifest decodes a signed update manifest, retaining the raw bytes so
@@ -316,6 +342,9 @@ func (m *Manifest) assertRequiredShape() error {
 	if err := m.assertModuleTargets(); err != nil {
 		return err
 	}
+	if m.IsUIPackage() {
+		return m.assertUIPackageShape()
+	}
 	return nil
 }
 
@@ -377,6 +406,18 @@ func archMatches(manifestArch, hostArch string) bool {
 }
 
 func (m *Manifest) assertTarget(platform, arch string) error {
+	// A UI package is the same files on every platform, so it targets "any";
+	// nothing else may, because a binary that claims every platform is a
+	// binary for none of them.
+	if m.IsUIPackage() {
+		if m.Target.Platform != TargetAny || m.Target.Arch != TargetAny {
+			return errors.New("a UI package must target platform any and arch any")
+		}
+		return nil
+	}
+	if m.Target.Platform == TargetAny || m.Target.Arch == TargetAny {
+		return errors.New("only a UI package may target any platform or arch")
+	}
 	if !platformMatches(m.Target.Platform, platform) {
 		return errors.New("update target platform mismatch")
 	}
@@ -595,6 +636,11 @@ type VerifyOptions struct {
 	// mistake, and the two are distinguishable only by whether an operator
 	// said so. `update install --allow-rollback` is that statement.
 	AllowRollback bool
+
+	// RunningBundleVersion is the bundle version of the build this process
+	// runs (RunningIdentity). A UI package verifies only when it names it in
+	// compatibility.bundle_versions.
+	RunningBundleVersion string
 }
 
 type VerifyResult struct {
@@ -630,6 +676,10 @@ func (m *Manifest) Validate(bundleHash string, opts VerifyOptions) (*VerifyResul
 	}
 	if err := m.assertCompatibility(opts.InstalledKuboVersion); err != nil {
 		return nil, err
+	}
+	if m.IsUIPackage() && !m.ServesOn(opts.RunningBundleVersion) {
+		return nil, fmt.Errorf("UI package %s was made for builds %s; this node runs %q",
+			m.UpdateID, strings.Join(m.Compatibility.BundleVersions, ", "), opts.RunningBundleVersion)
 	}
 	if err := m.assertLineage(opts.AllowRollback); err != nil {
 		return nil, err

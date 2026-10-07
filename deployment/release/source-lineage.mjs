@@ -68,8 +68,9 @@ export function resolveLiveSourceCommit({
   arch,
   versionPrefix,
   fetch,
+  kind = 'cli-bundle',
 }) {
-  const feedRel = `cli-bundle/${channel}/${platform}/${arch}`;
+  const feedRel = `${kind}/${channel}/${platform}/${arch}`;
   const indexUrl = `${feedBaseUrl}/${feedRel}/index.json`;
 
   // "Could not reach the feed" and "the feed has no artifacts" must NOT collapse
