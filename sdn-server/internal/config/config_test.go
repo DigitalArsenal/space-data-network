@@ -439,4 +439,3 @@ func TestLoadSubscriptionRetentionFromYAML(t *testing.T) {
 		t.Fatalf("EffectiveDefaultRetention() = %q, want %q", got, SubscriptionRetentionArchiveAll)
 	}
 }
-
