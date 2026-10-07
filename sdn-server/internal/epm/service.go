@@ -798,6 +798,11 @@ func (s *Service) GetNodeQRVCard() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// The node's photo rides its code as a thumbnail whenever the card still
+	// scans with it (owner 2026-10-07: "image still not showing up in QR").
+	if s.profile != nil {
+		card = vcard.WithQRPhoto(card, s.profile.PhotoDataURL)
+	}
 	return card, nil
 }
 

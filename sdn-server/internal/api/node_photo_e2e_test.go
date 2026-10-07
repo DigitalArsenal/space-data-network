@@ -3,6 +3,8 @@ package api
 // The node's photo sticks (owner 2026-10-07: an uploaded photo "did NOT
 // replace the image and did not survive the refresh"): set through the
 // route, it is on the node's card, after a restart, and after a record edit.
+// Its QR code carries a thumbnail and still scans ("image still not showing
+// up in QR").
 
 import (
 	"bytes"
@@ -20,6 +22,7 @@ import (
 
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/spacedatanetwork/sdn-server/internal/epm"
+	"github.com/spacedatanetwork/sdn-server/internal/vcard"
 )
 
 func photoTestService(t *testing.T, dir string, key ed25519.PrivateKey) *epm.Service {
@@ -40,14 +43,19 @@ func photoTestService(t *testing.T, dir string, key ed25519.PrivateKey) *epm.Ser
 
 func photoDataURL(t *testing.T) (string, string) {
 	t.Helper()
-	img := image.NewRGBA(image.Rect(0, 0, 32, 32))
-	for x := 0; x < 32; x++ {
-		for y := 0; y < 32; y++ {
-			img.Set(x, y, color.RGBA{uint8(x * 8), uint8(y * 8), 160, 255})
+	// A photo the size the dashboard sends: 256 px, a gradient behind a disc.
+	img := image.NewRGBA(image.Rect(0, 0, 256, 256))
+	for x := 0; x < 256; x++ {
+		for y := 0; y < 256; y++ {
+			c := color.RGBA{uint8(x), uint8(y), 160, 255}
+			if (x-128)*(x-128)+(y-110)*(y-110) < 70*70 {
+				c = color.RGBA{230, 120, 190, 255}
+			}
+			img.Set(x, y, c)
 		}
 	}
 	var buf bytes.Buffer
-	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 70}); err != nil {
+	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 80}); err != nil {
 		t.Fatal(err)
 	}
 	payload := base64.StdEncoding.EncodeToString(buf.Bytes())
@@ -73,6 +81,17 @@ func cardOf(t *testing.T, service *epm.Service) string {
 	return strings.ReplaceAll(card, "\r\n ", "")
 }
 
+// withoutPhoto unfolds a card and drops its PHOTO line.
+func withoutPhoto(card string) string {
+	var kept []string
+	for _, line := range strings.Split(strings.ReplaceAll(card, "\r\n ", ""), "\r\n") {
+		if !strings.HasPrefix(line, "PHOTO") {
+			kept = append(kept, line)
+		}
+	}
+	return strings.Join(kept, "\r\n")
+}
+
 func TestNodePhotoSticksOnTheCard(t *testing.T) {
 	dir := t.TempDir()
 	_, key, err := ed25519.GenerateKey(nil)
@@ -93,6 +112,30 @@ func TestNodePhotoSticksOnTheCard(t *testing.T) {
 	}
 	if commits != 1 {
 		t.Fatalf("the re-signed record was committed %d times, want 1", commits)
+	}
+
+	// The scannable card carries a thumbnail, stays within the scannable
+	// size, and the code drawn from it reads back as the same card.
+	qrCard, err := service.GetNodeQRVCard()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(qrCard, "\r\nPHOTO;ENCODING=b;TYPE=PNG:") {
+		t.Fatalf("the QR card carries no thumbnail: %s", qrCard)
+	}
+	plain, err := vcard.CompactQRVCard(service.GetNodeEPM())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(qrCard) > vcard.QRPhotoBudgetBytes || withoutPhoto(qrCard) != strings.ReplaceAll(plain, "\r\n ", "") {
+		t.Fatalf("the QR card is %d bytes (budget %d) or is not the compact card plus its photo: %s", len(qrCard), vcard.QRPhotoBudgetBytes, qrCard)
+	}
+	code, err := vcard.VCardToQR(qrCard, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scanned, err := vcard.QRToVCard(code); err != nil || scanned != qrCard {
+		t.Fatalf("the QR code does not read back as its card (%v)", err)
 	}
 
 	// A restart reads it back from what the node stored.

@@ -23,6 +23,13 @@ var (
 // DefaultQRSize is the default QR code size in pixels.
 const DefaultQRSize = 256
 
+// cardQRRecovery is the error-correction level of a card's code. Level L
+// keeps a card that carries a thumbnail (QRPhotoBudgetBytes) at version 24
+// or lower, which phones resolve in the hand; at M the same card is a v27
+// that does not scan reliably. A code read from a screen or a clean print
+// has no damage for the higher levels to repair.
+const cardQRRecovery = qrgen.Low
+
 // VCardToQR generates a QR code PNG from a vCard string.
 func VCardToQR(vcardStr string, size int) ([]byte, error) {
 	if vcardStr == "" {
@@ -35,7 +42,7 @@ func VCardToQR(vcardStr string, size int) ([]byte, error) {
 		return nil, ErrInvalidSize
 	}
 
-	qr, err := qrgen.New(vcardStr, qrgen.Medium)
+	qr, err := qrgen.New(vcardStr, cardQRRecovery)
 	if err != nil {
 		return nil, errors.Join(ErrQREncode, err)
 	}
@@ -119,7 +126,7 @@ func VCardToQRImage(vcardStr string, size int) (image.Image, error) {
 		return nil, ErrInvalidSize
 	}
 
-	qr, err := qrgen.New(vcardStr, qrgen.Medium)
+	qr, err := qrgen.New(vcardStr, cardQRRecovery)
 	if err != nil {
 		return nil, errors.Join(ErrQREncode, err)
 	}
