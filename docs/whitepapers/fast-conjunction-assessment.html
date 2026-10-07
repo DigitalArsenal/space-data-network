@@ -59,9 +59,8 @@
 <p>Operators keep their most precise orbits and planned maneuvers private. Section 8 specifies <strong>private screening</strong>: two operators learn when their objects come close without exchanging trajectories, by computing distances on homomorphically encrypted positions.</p>
 <ul>
 <li><strong>Cost.</strong> Its arithmetic is measured: 0.17 s and 8.7 MB per pair-day at 1 s steps.</li>
-<li><strong>What it reveals.</strong> The paper shows how a naive design leaks distances, how invented trajectories can locate a hidden satellite, and which defenses stop that.</li>
+<li><strong>What it reveals.</strong> The paper shows how a naive design leaks distances, how invented trajectories can locate a hidden satellite, and which defenses stop that, with or without a public track for either satellite.</li>
 <li><strong>What it cannot hide.</strong> Real close approaches reveal what safety requires.</li>
-<li><strong>Status.</strong> The protocol is specified and its arithmetic measured. It is not built.</li>
 </ul>
 <h2 id="1-the-problem">1 The problem</h2>
 <p>An all-vs-all screen compares every object with every other: n(n − 1)/2 pairs, 528.6 million for 32,514 objects. A three-day screen at 60 s steps evaluates each pair at 4,321 instants, about 2.3 trillion pair-steps. A close approach at 10 km/s relative speed lasts under a second inside a few kilometers, so a coarse test that misses it loses the event.</p>
@@ -581,8 +580,7 @@ something is changing.</li>
 precise trajectories exist. Private screening lets two operators learn when
 their objects come close without either seeing the other&#39;s trajectory.</p>
 <p>This section specifies the protocol, measures its arithmetic, and analyses
-what it reveals and how it can be abused (<a href="#r14">R14</a>). <strong>It is not built.</strong>
-SDN&#39;s encrypted-screening endpoint accepts requests and returns no result.</p>
+what it reveals and how it can be abused (<a href="#r14">R14</a>).</p>
 <h3 id="what-is-computed-on-ciphertext">What is computed on ciphertext</h3>
 <p>A (the requester) and B (the responder) each hold a trajectory, sampled on a
 common time grid. A wants to know when B&#39;s object passes within R of its own.
@@ -590,17 +588,25 @@ The protocol uses homomorphic encryption: B computes on A&#39;s encrypted
 positions without being able to read them (<a href="#r11">R11</a>, <a href="#r12">R12</a>).</p>
 <ol>
 <li><strong>A encrypts its trajectory under its own key.</strong><ul>
-<li>The quantities are x, y, z and |a|², in integer metres.</li>
+<li>The quantities are x, y and z, in integer metres.</li>
 <li>8,192 time steps are packed per ciphertext (BFV, n = 8192, 128-bit
 security).</li>
 <li>Three 60-bit plaintext moduli, recombined by the Chinese remainder
 theorem, hold the range, so no value wraps.</li>
 </ul>
 </li>
-<li><strong>B computes on ciphertext.</strong> Since |a − b|² = |a|² − 2a·b + |b|², B forms
-Enc(|a − b|² − R′²) using only products of its own plaintext with A&#39;s
-ciphertext. It never multiplies two ciphertexts.</li>
-<li><strong>A decrypts.</strong> It learns, for each step, whether B is within R′.</li>
+<li><strong>B computes on ciphertext.</strong><ul>
+<li>B squares A&#39;s coordinates itself: Enc(|a|²) = Enc(x)² + Enc(y)² +
+Enc(z)², once per submission, shared by all of B&#39;s objects.</li>
+<li>Since |a − b|² = |a|² − 2a·b + |b|², B then forms Enc(|a − b|² − R′²)
+from products of its own plaintext with A&#39;s ciphertext.</li>
+<li>A never supplies |a|². A false value would set the radius of every
+step&#39;s test, and the same value would pass the tube check (defense 2
+below).</li>
+</ul>
+</li>
+<li><strong>Both learn the result.</strong> A secure comparison tells A and B, for each
+step, whether B is within R′.</li>
 </ol>
 <p>A pair can come within R between two samples. Testing against
 R′ = √(R² + (v_max Δt / 2)²) catches every such approach. With
@@ -639,9 +645,9 @@ and keep the better answer.</li>
 <p>A short or malformed submission is refused.</p>
 </li>
 <li><p><strong>Content, under encryption.</strong> A missing or zero-filled step is still a
-valid ciphertext, so structure alone cannot reveal it. The tube check
-(defense 1 below) tests every step, and a blank or invented step is not
-near the declared object&#39;s track.</p>
+valid ciphertext, so structure alone cannot reveal it. The physics check
+(defense 1 below) tests every step, and a blank or invented step does not
+obey gravity.</p>
 </li>
 </ol>
 <p><strong>What can be verified under encryption.</strong></p>
@@ -649,18 +655,16 @@ near the declared object&#39;s track.</p>
 <li><p><strong>Before answering:</strong></p>
 <ul>
 <li>the structure;</li>
-<li>whether every step lies inside the tube around the declared object&#39;s
-public track.</li>
+<li>that every step obeys gravity, and that the trajectory continues the
+object&#39;s previous window (defense 1 below);</li>
+<li>where the requester&#39;s object has a track, that every step lies inside
+the tube around it (defense 2 below).</li>
 </ul>
-<p>The tube test is the screening arithmetic against that track, followed by
-the comparison. B learns only pass or fail.</p>
+<p>Each check is arithmetic on ciphertext followed by the secure comparison.
+B learns only pass or fail.</p>
 </li>
-<li><p><strong>Not in real time:</strong> whether the path obeys the equations of motion.
-Gravity (μr/|r|³) is not a polynomial, and homomorphic arithmetic only adds
-and multiplies. Zero-knowledge proofs of orbital dynamics remain research.</p>
-</li>
-<li><p><strong>After the window:</strong> everything, by opening the ciphertexts that were
-answered (defense 2 below).</p>
+<li><p><strong>After the window:</strong> a requester with a public track opens the window; a
+requester without one answers challenges to its alerts (defense 3 below).</p>
 </li>
 </ul>
 <h3 id="what-it-costs">What it costs</h3>
@@ -703,6 +707,12 @@ A control pair 60 km apart raised none at 1 s steps.</li>
 at 1 s steps costs B about 510 core-seconds and 26 GB of responses. Private
 screening suits operator-to-operator subsets; the open screen covers the
 catalog.</li>
+<li><strong>Scope.</strong> The measurement had A encrypt |a|² as a fourth quantity, and it
+covers the screening arithmetic only. B&#39;s squaring of |a|², the checks of
+defenses 1 and 2, the secure comparison and noise flooding come on top.
+The squaring and the physics check run once per submission, shared by all
+of B&#39;s objects. The physics check multiplies ciphertexts to depth 3 (4 with
+J2), which needs larger encryption parameters than the screen.</li>
 </ul>
 <h3 id="what-the-result-reveals">What the result reveals</h3>
 <p>The intended output is the set of steps at which B is within R′, and nothing
@@ -718,10 +728,9 @@ factor of 2 at 87 % of steps (1 s grid). That is enough for range-only
 orbit determination of B&#39;s object.</li>
 <li>The output must therefore be one bit per step: B adds a random additive
 mask, and A and B run a two-party secure comparison that reveals only the
-sign (<a href="#r13">R13</a>).</li>
+sign, to both of them (<a href="#r13">R13</a>).</li>
 <li>B&#39;s response must also be noise-flooded, so that its ciphertext noise
 carries nothing about b.</li>
-<li>Neither step is built or measured here.</li>
 </ul>
 <p><strong>Real conjunctions reveal what safety requires.</strong> Each alert places the
 other object within R′ of a known object at a known time. In this paper&#39;s
@@ -742,6 +751,9 @@ It cannot hide it from those it does.</p>
 <li><strong>The query.</strong> A requester submits invented trajectories, rather than its
 real object, to find B&#39;s object. Each step then answers whether B is
 within R′ of a chosen point at a chosen time.</li>
+<li><strong>A chosen radius.</strong> If A supplied |a|², a false value would make each step
+test any radius around any point, which locates B without a prior. B
+therefore squares A&#39;s coordinates itself (step 2 above).</li>
 <li><strong>The cost.</strong> Low Earth orbit (200–2,000 km altitude) holds about
 1.27 × 10¹² km³, and a 9.2 km ball is about 3,300 km³. A first hit with no
 prior takes about 3.9 × 10⁸ steps: 47,000 one-window queries. At the
@@ -769,45 +781,98 @@ counterpart&#39;s node computes.</li>
 <li>A central service computing on everyone&#39;s encrypted orbits would reverse
 this, which is one more reason the protocol has none.</li>
 </ul>
-<p>The defenses, strongest first:</p>
+<p>The defenses:</p>
 <ol>
-<li><strong>Check the question before answering.</strong><ul>
-<li>Each query must name a declared object that the requester operates.</li>
-<li>Under encryption, the responder tests that the submitted trajectory
-stays within a tube around that object&#39;s public track. The tube is D₀
-wide at the start and widens by Δv_max·(t − t_b) after a burn declared
-at t_b, so planned maneuvers pass.</li>
-<li>The test uses the two-party comparison above, and the responder learns
-only pass or fail. An invented sweep is refused before any answer is
-computed.</li>
+<li><strong>Check the physics before answering.</strong> This needs no track.<ul>
+<li><p>Each query names a registered object of the requester. Each object
+submits one trajectory, continued from window to window: a window&#39;s
+first k steps repeat the previous window&#39;s last k, and must match. When
+keys change per window, a key-switching key from the requester lets the
+responder compare them.</p>
+</li>
+<li><p>With the acceleration taken from second differences,
+sⱼ = aⱼ₊ₖ − 2aⱼ + aⱼ₋ₖ ≈ ä(tⱼ)(kΔt)², point-mass gravity requires</p>
+<div class="math-display"><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mi mathvariant="bold">s</mi><mi>j</mi></msub><mo>×</mo><msub><mi mathvariant="bold">a</mi><mi>j</mi></msub><mo>=</mo><mn mathvariant="bold">0</mn><mo separator="true">,</mo><mspace width="2em"/><mo stretchy="false">∣</mo><msub><mi mathvariant="bold">s</mi><mi>j</mi></msub><msup><mo stretchy="false">∣</mo><mn>2</mn></msup><mtext> </mtext><mo stretchy="false">∣</mo><msub><mi mathvariant="bold">a</mi><mi>j</mi></msub><msup><mo stretchy="false">∣</mo><mn>4</mn></msup><mo>=</mo><msup><mi>μ</mi><mn>2</mn></msup><mo stretchy="false">(</mo><mi>k</mi><mi mathvariant="normal">Δ</mi><mi>t</mi><msup><mo stretchy="false">)</mo><mn>4</mn></msup><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">\mathbf s_j \times \mathbf a_j = \mathbf 0, \qquad \lvert \mathbf s_j \rvert^2 \, \lvert \mathbf a_j \rvert^4 = \mu^2 (k\Delta t)^4 .</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8694em;vertical-align:-0.2861em;"></span><span class="mord"><span class="mord mathbf">s</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0572em;">j</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">×</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.7305em;vertical-align:-0.2861em;"></span><span class="mord"><span class="mord mathbf">a</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0572em;">j</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1.1502em;vertical-align:-0.2861em;"></span><span class="mord mathbf">0</span><span class="mpunct">,</span><span class="mspace" style="margin-right:2em;"></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mopen">∣</span><span class="mord"><span class="mord mathbf">s</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0572em;">j</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span><span class="mclose"><span class="mclose">∣</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.8641em;"><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight">2</span></span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mopen">∣</span><span class="mord"><span class="mord mathbf">a</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3117em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0572em;">j</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.2861em;"><span></span></span></span></span></span></span><span class="mclose"><span class="mclose">∣</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.8641em;"><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight">4</span></span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1.1141em;vertical-align:-0.25em;"></span><span class="mord"><span class="mord mathnormal">μ</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.8641em;"><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight">2</span></span></span></span></span></span></span></span><span class="mopen">(</span><span class="mord mathnormal" style="margin-right:0.0315em;">k</span><span class="mord">Δ</span><span class="mord mathnormal">t</span><span class="mclose"><span class="mclose">)</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.8641em;"><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight">4</span></span></span></span></span></span></span></span><span class="mord">.</span></span></span></span></span></div>
+</li>
+<li><p>The differences need only shifts and sums of ciphertexts, and both
+conditions are polynomials. The responder evaluates them with
+ciphertext products and tests them against a tolerance τ in the secure
+comparison. Multiplying through by |a|⁷ keeps both polynomial with J2
+included, at degree 16 instead of 6.</p>
+</li>
+<li><p>Around a declared burn, the check admits the declared Δv, drawn from a
+per-object budget.</p>
+</li>
+<li><p>The responder learns only pass or fail. Point clouds, steered sweeps
+and blank steps fail before any answer is computed.</p>
+</li>
+<li><p>The tolerance bounds the thrust a fake orbit can hide to about τμ/|a|²:
+with τ = 10⁻⁴ in low Earth orbit, 0.8 mm/s², about 70 m/s per day.
+Rounding to whole metres, the truncation of the differences and forces
+outside the check set how small τ can be.</p>
+</li>
+<li><p>A requester with K registered objects then learns what K satellites on
+its claimed orbits would.</p>
+</li>
+</ul>
+</li>
+<li><strong>Answer only near the requester&#39;s track.</strong> This applies where the
+requester&#39;s object has a track the requester does not control.<ul>
+<li><strong>The track.</strong> The public catalog&#39;s, or a certified private track: a
+tracker that already follows the object signs a copy of its track,
+encrypted under the requester&#39;s key. A certified track anchors a
+satellite missing from the public catalog without publishing it.</li>
+<li><strong>The tube.</strong> Under encryption, the responder tests that the submitted
+trajectory stays within D of the track. D is D₀ at the start and widens
+by Δv_max·(t − t_b) after a burn declared at t_b, so planned maneuvers
+pass. The responder learns only pass or fail.</li>
+<li><strong>The mask.</strong> Wherever the responder&#39;s object b is farther than D + R′
+from the track p, the answer is &quot;far&quot;, whatever was submitted. An honest
+requester is within D of its track, so there |a − b| ≥ |b − p| − |a − p|<blockquote>
+<p>R′, and no honest answer changes. A masked step is a fresh encryption
+of a positive value, flooded like the rest, so the requester cannot tell
+it apart.</p>
+</blockquote>
+</li>
+<li>With a public track the responder computes the mask in plaintext, so it
+needs nothing from the requester. With a certified track it computes the
+mask under encryption, and a step is &quot;close&quot; only when both tests pass,
+in one secure comparison.</li>
 <li>Probing with its real fleet, a requester reaches at most D + R′ around
-each of its satellites.</li>
+each of its satellites&#39; tracks.</li>
 </ul>
 </li>
-<li><strong>Open the window afterwards.</strong><ul>
-<li>Each window is encrypted under a fresh key. The responder keeps the
-ciphertexts it answered (34.6 MB per object-day at 1 s steps).</li>
-<li>After the window has passed, the requester hands over that window&#39;s
-key. The responder decrypts exactly what it answered: past positions,
-far less sensitive than planned maneuvers.</li>
-<li>The ciphertext is the commitment: it cannot be swapped afterwards, and
-no separate hash is needed.</li>
-<li>The responder checks every step and orbital dynamics, flagging grids,
-sweeps and non-Keplerian paths. It also checks agreement with
-independent tracking of the declared object, using the reference-orbit
-comparisons of section 7.</li>
-<li>Queries and responses are digitally signed, so a failure is
-attributable evidence. Withholding the key counts as a failure.</li>
+<li><strong>Audit afterwards.</strong><ul>
+<li><strong>A requester with a public track opens the window.</strong> Each window is
+encrypted under a fresh key, and the responder keeps the ciphertexts it
+answered. After the window has passed, the requester hands over that
+window&#39;s key. The responder decrypts exactly what it answered: past
+positions, far less sensitive than planned maneuvers. The ciphertext is
+the commitment: it cannot be swapped afterwards, and no separate hash is
+needed. The responder checks every step and orbital dynamics, and
+agreement with independent tracking of the declared object, using the
+reference-orbit comparisons of section 7.</li>
+<li><strong>A requester without one answers challenges.</strong> Opening a window would
+expose its orbit. Instead, the responder may challenge any alert: the
+requester states, signed, its object&#39;s positions for a few minutes
+around it, which the responder already knows to within R′. The
+responder checks them against its own or a contracted tracker&#39;s
+observations, and an empty sky is a failure. This exposes a fake only
+where some tracker can see the stated position.</li>
+<li>Queries, responses and alerts are digitally signed, so a failure is
+attributable evidence. Withholding the key or the positions counts as a
+failure.</li>
 </ul>
 </li>
-<li><strong>Stake and identity.</strong> Only identities with stake or reputation may ask.
-A failed check forfeits the stake and ends screening for that identity.</li>
+<li><strong>Stake and identity.</strong> Only identities with stake or reputation may ask,
+and each object is registered, with stake, ahead of the windows it screens
+in. A failed check forfeits the stake and ends screening for that identity.</li>
 <li><strong>Per-window budget.</strong><ul>
 <li>An identity may ask no more questions per window than it has
 registered objects.</li>
 <li>That bounds what a requester willing to lose its identity can extract
-before the later check catches it: one window of questions, inside the
-tubes of its own fleet.</li>
+before an audit catches it: one window of questions, inside the tubes
+of its own fleet or along the orbits it registered.</li>
 </ul>
 </li>
 <li><strong>Laplace noise with a safety offset.</strong> Before the comparison, the
@@ -831,40 +896,16 @@ truncation, the guarantee is approximate ((ε, δ)) differential privacy.</li>
 there are about 1.6 times as many alerts to resolve.</li>
 </ul>
 </li>
-<li><strong>Partners for untracked objects.</strong> An object missing from the public
-catalog cannot pass a public-track check. Its owner screens only with
-counterparties it agrees to work with, and they with it.</li>
 </ol>
 <p>Direct authenticated streams protect integrity and metadata. The ciphertexts
 are protected by their owner&#39;s key either way.</p>
 <p>With these defenses in place, a prober learns what its real objects&#39; real
-close approaches reveal. If it is willing to lose its identity, it learns at
-most one more window of answers, within its own fleet&#39;s tubes.</p>
-<h3 id="what-exists">What exists</h3>
-<table>
-<thead>
-<tr>
-<th>Piece</th>
-<th>State</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>Homomorphic fields in FlatBuffers (SEAL BFV/BGV, <code>he_encrypted</code>) (<a href="#r15">R15</a>)</td>
-<td>Built. Each ciphertext holds one value under a 20-bit plaintext modulus, so metre-scale coordinates wrap silently. It cannot carry this protocol&#39;s coordinates; the benchmark used batched vectors and multiple moduli.</td>
-</tr>
-<tr>
-<td>SDN encrypted-screening request (<code>/api/v1/conjunction/screen</code>)</td>
-<td>Built. It returns no result.</td>
-</tr>
-<tr>
-<td>The protocol&#39;s arithmetic</td>
-<td>Measured (<a href="#r14">R14</a>).</td>
-</tr>
-<tr>
-<td>Screening module, bit-only comparison, pre-answer tube check, completeness audit, noise flooding, Laplace noise, per-window keys and audit, staking, budgets</td>
-<td>Not built.</td>
-</tr>
-</tbody></table>
+close approaches reveal. A requester whose objects have no track learns what
+satellites on its claimed orbits would; a claimed orbit that no tracker
+follows cannot be told from a real hidden satellite until one of its alerts is
+challenged. If it is willing to lose its identity, a prober learns at most one
+more window of answers, within its own fleet&#39;s tubes or along the orbits it
+registered.</p>
 <h2 id="9-limits">9 Limits</h2>
 <table>
 <thead>
@@ -901,10 +942,6 @@ most one more window of answers, within its own fleet&#39;s tubes.</p>
 <td>Probability inputs</td>
 <td>Combined radius and covariance shape differ from SOCRATES&#39;s unpublished ones</td>
 </tr>
-<tr>
-<td>Private screening</td>
-<td>Specified and measured, not built (section 8)</td>
-</tr>
 </tbody></table>
 <p>This paper reports computation speed, agreement between implementations and with SOCRATES on identical inputs, and covariance calibration where independent truth exists. It does not establish operational readiness, or accuracy for objects and regimes without independent reference orbits.</p>
 <h2 id="references">References</h2>
@@ -936,8 +973,6 @@ most one more window of answers, within its own fleet&#39;s tubes.</p>
 <p>Damgård, I., Geisler, M. and Krøigaard, M. Efficient and Secure Comparison for On-Line Auctions. ACISP 2007, LNCS 4586.</p>
 <h3 id="r14">R14</h3>
 <p>Edgesource. Private screening: protocol, SEAL benchmark, leakage and exposure measurements, exchange rules and defenses. Modules commit 22db2691620599403885cd1353677011e08f3d22. Files: <code>analysis/conjunction-assessment/docs/private-screening.md</code>, <code>analysis/conjunction-assessment/bench/private-screening</code>. Private repository, available on request (<a href="mailto:tj@edgesource.com">tj@edgesource.com</a>).</p>
-<h3 id="r15">R15</h3>
-<p>Edgesource. FlatBuffers homomorphic encryption. <a href="https://github.com/DigitalArsenal/flatbuffers/blob/master/docs/source/homomorphic_encryption.md">Documentation</a></p>
 
     </article>
     <section id="stack" data-sdn-stack="sdn"></section>
