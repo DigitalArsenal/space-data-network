@@ -9,7 +9,6 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/sha512"
-	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -642,6 +641,9 @@ func profileFromEPMBytes(epmBytes []byte) (profile *Profile, err error) {
 	if v := epm.DN(); v != nil {
 		p.DN = string(v)
 	}
+	if v := epm.PHOTO(); v != nil {
+		p.PhotoDataURL = string(v)
+	}
 	if v := epm.LEGAL_NAME(); v != nil {
 		p.LegalName = string(v)
 	}
@@ -798,11 +800,6 @@ func (s *Service) GetNodeQRVCard() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// The node's photo rides its code as a thumbnail whenever the card still
-	// scans with it (owner 2026-10-07: "image still not showing up in QR").
-	if s.profile != nil {
-		card = vcard.WithQRPhoto(card, s.profile.PhotoDataURL)
-	}
 	return card, nil
 }
 
@@ -816,13 +813,9 @@ func (s *Service) decorateNodeVCardLocked(vcardStr string) string {
 	var lines []string
 	lines = append(lines, nodeIdentityAddressEmailAliasLines(s.identity)...)
 	// §21: the xpub alias is retired. The verification-chain aliases
-	// (sign/encrypt literal keys, epmsig/epmts/epmcid) are emitted by
-	// EPMToVCard from the EPM record itself; nothing is force-injected here.
-	if s.profile != nil {
-		if photoLine := vcardPhotoLine(s.profile.PhotoDataURL); photoLine != "" {
-			lines = append(lines, photoLine)
-		}
-	}
+	// (sign/encrypt literal keys, epmsig/epmts/epmcid) and the photo are
+	// emitted by EPMToVCard from the EPM record itself; nothing is
+	// force-injected here.
 	return insertVCardLines(vcardStr, lines)
 }
 
@@ -933,36 +926,6 @@ func nodeIdentityAddressEmailAliasLines(identity *wasm.DerivedIdentity) []string
 		}
 	}
 	return lines
-}
-
-func vcardPhotoLine(dataURL string) string {
-	raw := strings.TrimSpace(dataURL)
-	if raw == "" {
-		return ""
-	}
-	mediaType := "image/png"
-	payload := raw
-	if strings.HasPrefix(raw, "data:") {
-		header, body, ok := strings.Cut(raw, ",")
-		if !ok || strings.TrimSpace(body) == "" {
-			return ""
-		}
-		payload = body
-		if media, _, ok := strings.Cut(strings.TrimPrefix(header, "data:"), ";"); ok && strings.TrimSpace(media) != "" {
-			mediaType = strings.TrimSpace(media)
-		}
-	}
-	if _, err := base64.StdEncoding.DecodeString(payload); err != nil {
-		return ""
-	}
-	// The node's card is vCard 3.0, whose inline photo names its format with
-	// TYPE (PHOTO;ENCODING=b;TYPE=JPEG). MEDIATYPE is vCard 4.0's parameter,
-	// and a 3.0 importer that does not know it can drop the photo.
-	format := strings.ToUpper(strings.TrimPrefix(mediaType, "image/"))
-	if format == "" || strings.ContainsAny(format, ";:,/ ") {
-		return ""
-	}
-	return "PHOTO;ENCODING=b;TYPE=" + format + ":" + payload
 }
 
 // GetNodeProfile returns the current editable profile.
@@ -1739,6 +1702,12 @@ func (s *Service) buildEPMBytesLocked(signatureHex string, signatureTimestamp in
 	if p.Telephone != "" {
 		telephoneOff = builder.CreateString(p.Telephone)
 	}
+	// The photo rides the signed record (SDS 1.239.0), so peers see it and
+	// the node gets it back from its own stored record after a restart.
+	var photoOff flatbuffers.UOffsetT
+	if photo := strings.TrimSpace(p.PhotoDataURL); photo != "" {
+		photoOff = builder.CreateString(photo)
+	}
 
 	// Address
 	var addressOff flatbuffers.UOffsetT
@@ -2085,6 +2054,9 @@ func (s *Service) buildEPMBytesLocked(signatureHex string, signatureTimestamp in
 	EPM.EPMAddSIGNATURE_TIMESTAMP(builder, signatureTimestamp)
 	if chainProofsOff != 0 {
 		EPM.EPMAddCHAIN_PROOFS(builder, chainProofsOff)
+	}
+	if photoOff != 0 {
+		EPM.EPMAddPHOTO(builder, photoOff)
 	}
 	epmOff := EPM.EPMEnd(builder)
 

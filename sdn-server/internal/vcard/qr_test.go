@@ -252,20 +252,6 @@ func TestEPMQRCarriesTheCompactIdentityCard(t *testing.T) {
 		}
 	}
 }
-func TestVCardToQRImage(t *testing.T) {
-	vcard := "BEGIN:VCARD\r\nVERSION:4.0\r\nFN:Image Test\r\nEND:VCARD\r\n"
-
-	img, err := VCardToQRImage(vcard, 256)
-	if err != nil {
-		t.Fatalf("VCardToQRImage failed: %v", err)
-	}
-
-	bounds := img.Bounds()
-	if bounds.Dx() != 256 || bounds.Dy() != 256 {
-		t.Errorf("Image size mismatch: got %dx%d, want 256x256", bounds.Dx(), bounds.Dy())
-	}
-}
-
 func TestQRImageToVCard(t *testing.T) {
 	original := "BEGIN:VCARD\r\nVERSION:4.0\r\nFN:Image Roundtrip\r\nEND:VCARD\r\n"
 

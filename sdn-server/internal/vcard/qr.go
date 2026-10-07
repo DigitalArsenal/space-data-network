@@ -47,7 +47,7 @@ func VCardToQR(vcardStr string, size int) ([]byte, error) {
 		return nil, errors.Join(ErrQREncode, err)
 	}
 
-	pngData, err := qr.PNG(size)
+	pngData, err := qr.PNG(-cardQRScale(qr, size))
 	if err != nil {
 		return nil, errors.Join(ErrQREncode, err)
 	}
@@ -131,7 +131,16 @@ func VCardToQRImage(vcardStr string, size int) (image.Image, error) {
 		return nil, errors.Join(ErrQREncode, err)
 	}
 
-	return qr.Image(size), nil
+	return qr.Image(-cardQRScale(qr, size)), nil
+}
+
+// cardQRScale is the whole number of pixels per module that draws the code at
+// least size wide. At a fractional scale modules come out 2 and 3 pixels
+// wide, and a decoder (a phone too) misreads the dense codes cards make: a
+// v24 card drawn at 320 px did not read back.
+func cardQRScale(qr *qrgen.QRCode, size int) int {
+	modules := len(qr.Bitmap())
+	return max(1, (size+modules-1)/modules)
 }
 
 // QRImageToVCard scans a QR code from an image.Image and extracts the vCard string.
