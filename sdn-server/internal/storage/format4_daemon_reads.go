@@ -2025,10 +2025,10 @@ func (b format4Backend) f4ProducerSourceProgress() ([]ProducerSourceProgress, er
 		return nil, fmt.Errorf("query producer source progress: %w", err)
 	}
 	type key struct{ peer, schema, provider, source string }
-	type batchAt struct{ updated, maxSeq int64 }
+	type batchAt struct{ written, maxSeq int64 }
 	type acc struct {
 		p        ProducerSourceProgress
-		batches  map[string]batchAt // batch -> its newest update and seq
+		batches  map[string]batchAt // batch -> when it was last written, and its newest seq
 		batchCnt map[string]int64
 	}
 	agg := map[key]*acc{}
@@ -2048,7 +2048,11 @@ func (b format4Backend) f4ProducerSourceProgress() ([]ProducerSourceProgress, er
 		a.p.UpdatedAtUnix = max(a.p.UpdatedAtUnix, l.Updated)
 		a.p.LastSeenUnix = a.p.UpdatedAtUnix
 		b := a.batches[l.Batch]
-		a.batches[l.Batch] = batchAt{max(b.updated, l.Updated), max(b.maxSeq, l.MaxSeq)}
+		written := l.First
+		if written <= 0 {
+			written = l.Updated
+		}
+		a.batches[l.Batch] = batchAt{max(b.written, written), max(b.maxSeq, l.MaxSeq)}
 		a.batchCnt[l.Batch] += l.Records
 	}
 	out := make([]ProducerSourceProgress, 0, len(agg))
@@ -2056,8 +2060,12 @@ func (b format4Backend) f4ProducerSourceProgress() ([]ProducerSourceProgress, er
 		if a.p.Count <= 0 {
 			continue
 		}
-		// The last batch is format 1's: the newest update, then the newest
-		// seq (ORDER BY updated_at DESC, max_rowid DESC), then the name.
+		// The last batch is the newest pull: the batch whose lanes took a
+		// record most recently (their first-seen, not `updated`, which an
+		// edition superseding old records stamps on the old batch as it
+		// removes them), then the newest seq, then the name. That is format
+		// 1's answer (ORDER BY updated_at DESC, max_rowid DESC: there a
+		// removal never moves updated_at).
 		var best string
 		bestAt := batchAt{-1, -1}
 		for batch, at := range a.batches {
@@ -2065,7 +2073,7 @@ func (b format4Backend) f4ProducerSourceProgress() ([]ProducerSourceProgress, er
 				continue
 			}
 			a.p.BatchCount++
-			newer := at.updated > bestAt.updated || (at.updated == bestAt.updated && (at.maxSeq > bestAt.maxSeq ||
+			newer := at.written > bestAt.written || (at.written == bestAt.written && (at.maxSeq > bestAt.maxSeq ||
 				(at.maxSeq == bestAt.maxSeq && batch > best)))
 			if newer {
 				best, bestAt = batch, at
