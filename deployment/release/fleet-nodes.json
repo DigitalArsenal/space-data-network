@@ -6,6 +6,9 @@
     {"name": "host-02", "ssh": "space-data-network-02", "node_url": "http://127.0.0.1:5003"},
     {"name": "vm-orbit-det-01", "ssh": "vm-orbit-det-01", "node_url": "http://127.0.0.1:5001"},
     {"name": "dev", "node_url": "http://127.0.0.1:7173", "platform": "darwin", "arch": "arm64"},
-    {"name": "ut-austin", "node_url": "http://127.0.0.1:7174", "platform": "darwin", "arch": "arm64"}
+    {"name": "ut-austin", "node_url": "http://127.0.0.1:7174", "platform": "darwin", "arch": "arm64"},
+    {"name": "css-tiangong", "node_url": "http://127.0.0.1:7208", "platform": "darwin", "arch": "arm64"},
+    {"name": "launch-notices", "node_url": "http://127.0.0.1:7217", "platform": "darwin", "arch": "arm64"},
+    {"name": "vimpel", "node_url": "http://127.0.0.1:7184", "platform": "darwin", "arch": "arm64"}
   ]
 }
