@@ -165,7 +165,6 @@ ${body}
     </div>
   </footer>
   <script src="${u('site.js')}"></script>
-  <script src="${u('assets/ai-credits/ai-credits.js')}" defer></script>
 </body>
 </html>
 `;
