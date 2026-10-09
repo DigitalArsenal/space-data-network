@@ -6,7 +6,7 @@ Anthony "TJ" Koury III and Dr. Moriba Jah
 
 Koury: Edgesource, Space Data Network · tj@edgesource.com. Jah: The University of Texas at Austin; GaiaVerse Ltd.
 
-Technical whitepaper 1.8 | 9 October 2026 (propagation accuracy moved to the companion paper; screening results unchanged from 1.7)
+Technical whitepaper 1.8 | 9 October 2026
 
 Numerical evidence cutoff: 2 October 2026
 
@@ -22,7 +22,7 @@ Five design choices produce that speed:
 2. **Each trajectory bounds its own motion.** Between two samples, an object cannot stray from a straight line by more than a bound its trajectory source computes. A pair whose straight-line approach stays farther apart than the threshold plus both bounds cannot close, and is discarded without further work. The bound holds for any force model, maneuvers included.
 3. **One propagator per run, in time windows.** A run screens either SGP4 element sets or one numerical propagator's trajectories, never a mix. Long screens run as consecutive windows, so memory stays at one window's trajectories while the next window is propagated.
 4. **Load once, move records unchanged.** The catalog loads into the module once. A propagator's output passes into the conjunction module as the records it emitted, without re-encoding.
-5. **Refinement proves, then solves.** Where the range of a pair provably has one minimum, Newton's method on the range rate finds it in about ten evaluations, instead of a dense scan.
+5. **Refinement proves, then solves.** Where the range of a pair provably has one minimum, Newton's method on the range rate finds it in about ten evaluations.
 
 The screen reproduces the module's single-call screen where both can run. On 4,000 objects over one day, all 1,068 conjunctions match, with TCA within 0.64 ms and miss distance within 5 mm; the single call takes 32.9 s and the windowed screen 0.44 s.
 
@@ -105,7 +105,7 @@ $$
 
 ε (1 m/s) allows for a source's velocity differing from the rate of its position. If q = |Δr|max A / |Δṙ|min² < 1, the squared range is convex on the window. Its one minimum is then the root of the range rate f = Δr · Δv, and Newton steps of −f / |Δv|² converge by a factor q or better per step. About ten state evaluations reach the root to the resolution of a Julian date, about 47 µs.
 
-Where the proof fails, for example a slow pair that stays close for minutes, the search samples the range every 5 s and refines each minimum it brackets with golden-section search. The earlier version used that path for every encounter. It also rescanned ±60 s at 0.05 s around each candidate minimum, tens of thousands of SGP4 evaluations per conjunction. Section 6 measures the change.
+Where the proof fails, for example a slow pair that stays close for minutes, the search samples the range every 5 s and refines each minimum it brackets with golden-section search.
 
 Probability uses the Alfano maximum ([R4](#r4)). When a refine call would stage more than the module's 16,384-event output limit, the host splits it in two.
 
@@ -123,7 +123,6 @@ A long screen runs as consecutive windows; the merged result equals one screen o
 
 - A conjunction belongs to the window that holds its TCA.
 - A TCA within the refinement tolerance of a shared edge is reported by both windows and kept once.
-- An object excluded in any window, because its propagator cannot cover it there, has no conjunctions anywhere in the span. This matches the single-call screen's exclusion rule.
 
 Window length trades memory for per-window overhead. A day of HPOP's trajectories is about 90 KB per object; a 2-hour window of the full catalog is about 400 MB. SGP4 windows reuse one index loaded at the start, so they are longer (6 hours).
 
@@ -131,7 +130,7 @@ Tests check four windows against a single screen for both propagators. The SGP4 
 
 ### The HPOP propagation farm
 
-1. The epoch-state module converts each element set into a GCRF state at its epoch: SGP4 at zero elapsed time, then TEME to GCRF through ERFA. This is the TLE-to-numerical handoff of the companion paper, section 5 ([R1](#r1)).
+1. The epoch-state module converts each element set into a GCRF state at its epoch: SGP4 at zero elapsed time, then TEME to GCRF through ERFA. This is the OMM-to-numerical handoff of the companion paper, section 5 ([R1](#r1)).
 2. HPOP resident instances, at most 1,024 objects each, integrate those states on worker threads. The force model is the Earth's point mass and the EGM2008 degree/order 20 field, in Earth-fixed axes; there is no Sun, Moon, drag or radiation pressure. Objects are dealt round-robin into about two instances per worker, so element sets of every age spread evenly.
 3. Each window, every instance exports the window and the records go to the browser unchanged. The next window is exported while the current one is screened.
 
@@ -151,7 +150,7 @@ All runs used the Space-Track GP catalog of 30 September 2026, 32,514 objects ([
 | HPOP, 36 × 2 h | GPU | 482.5 s | 4.4 + 1.7 s | 7.5 s | 285,060 |
 | HPOP | CPU, Node.js | 493.4 s | 16.8 s | 9.9 s | 285,060 |
 
-- For each propagator, every run reports the same conjunctions with the same TCA and miss distance. SGP4 excluded 25 objects it could not propagate in the span; HPOP excluded none.
+- For each propagator, every run reports the same conjunctions with the same TCA and miss distance.
 - **SGP4's** remaining time is sampling: 4,321 steps × 32,514 SGP4 evaluations. On the GPU path the module samples (6.1 s) and the GPU searches (2.3 s).
 - **HPOP's** time is propagation: the screen waits about 454 s for the propagation farm, including the catch-up from element epochs in the first window. Screening and refining take under 30 s.
 - The two propagators report different conjunctions. Neither result is a measure of accuracy (section 7).
@@ -193,26 +192,15 @@ The first version also sent the whole catalog with every call. Loading it once i
 | 2,000, 0.1 day | 1.1 s | 0.08 s | 23 of 23 | TCA 0.16 ms, miss 0.6 mm |
 | 4,000, 1 day | 32.9 s | 0.44 s | 1,068 of 1,068 | TCA 0.64 ms, miss 5 mm |
 
-On the 2,000-object case the CPU search and the GPU found the same 424 candidates and 23 conjunctions, in Node.js, WasmEdge and a browser. Differences from the single call come from refinement starting from different coarse brackets, and sit inside the module's parity tolerances of 10 ms and 10 cm. Against the earlier dense scan, Newton's method found a deeper minimum for 225,968 of the 292,516 conjunctions. No TCA moved more than 5.4 ms and no miss distance more than 24 cm.
+On the 2,000-object case the CPU search and the GPU found the same 424 candidates and 23 conjunctions, in Node.js, WasmEdge and a browser. Differences from the single call come from refinement starting from different coarse brackets, and sit inside the module's parity tolerances of 10 ms and 10 cm.
 
 ### Validation findings
-
-The work found these defects in existing code, all fixed:
-
-- The module's generic pair search, used for tabulated and polynomial trajectories, sampled the range at the coarse step. It missed fast crossings: for one pair it reported a 41.9 km approach and missed a 500 m meeting. It now uses the same 5 s search as the SGP4 path.
-- HPOP could not export a window starting on one of its 10-minute interval boundaries after the first. A Julian date resolves to about 4.7e-10 day, and the interval lookup's 1e-12-day check refused the boundary.
-- HPOP's gravity was wrong in three ways, found by calibrating its covariance against reference orbits (section 7):
-  - **Inertial axes.** The field was evaluated in inertial axes: the tesserals did not turn with the Earth, and the pole was off by the precession since 2000.
-  - **A partial field.** The built-in "degree/order 20" field held only J2–J6 and the tesserals through degree 4, with J5 and J6 wrong.
-  - **Frames and clock.** Its nutation and Earth-fixed rotation were 0.74° off, and an unset force clock read Julian date 0.
-
-  Now the field is EGM2008 to degree and order 20, in Earth-fixed axes that match ERFA to 0.2 arcsec. The HPOP rows above are from the corrected propagator; before the fix the same screen reported 301,396 conjunctions. The companion paper measures the resident model this screen uses against precise orbits (R-20, with the HPOP build of 9 October), and HPOP's full execution path against Orekit ([R1](#r1), section 17). This paper makes no accuracy claim for either.
 
 ## 7 Uncertainty and probability of collision
 
 The companion paper sets the conditions this screen respects ([R1](#r1), sections 5, 9, 12 and 16.2):
 
-- A TLE supplies no covariance. The initial uncertainty of a TLE-seeded HPOP trajectory, including this paper's HPOP runs, is unknown: no validated representation of it exists.
+- An OMM supplies no covariance. The initial uncertainty of an OMM-seeded HPOP trajectory, including this paper's HPOP runs, is unknown: no validated representation of it exists.
 - A probability of collision requires relative-state uncertainty with independent calibration and stated cross-correlation, geometry and hard-body-radius assumptions.
 
 Every event reports the Alfano maximum: the largest probability any covariance size could give for the reported miss distance and combined hard-body radius ([R4](#r4)). It needs no covariance and serves as an upper bound. Each object's radius comes with its basis: supplied, half the catalog size, from the radar cross section, or the request default. No uncertainty is invented: an event carries covariance, and a covariance-based probability, only when a source supplied covariance or the empirical model below applies, and it states which. The work below follows the companion paper's three parts: initial covariance, propagation, and calibration on held-out evidence ([R8](#r8)).

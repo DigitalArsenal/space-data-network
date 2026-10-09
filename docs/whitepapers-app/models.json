@@ -8,13 +8,13 @@
   {
     "paper": "evidence-supported-aso-catalog",
     "section_id": "the-handoff-contract",
-    "title": "A TLE handed to a numerical propagator",
+    "title": "A OMM handed to a numerical propagator",
     "url": "models/evidence-supported-aso-catalog/the-handoff-contract.html"
   },
   {
     "paper": "evidence-supported-aso-catalog",
-    "section_id": "levels-of-measurement-of-tle-elements",
-    "title": "What one TLE digit is worth",
+    "section_id": "levels-of-measurement-of-omm-elements",
+    "title": "What one OMM digit is worth",
     "url": "models/evidence-supported-aso-catalog/levels-of-measurement-of-tle-elements.html"
   },
   {
@@ -43,20 +43,14 @@
   },
   {
     "paper": "evidence-supported-aso-catalog",
-    "section_id": "174-planned-experiments",
-    "title": "E1, E2 and E3 results",
-    "url": "models/evidence-supported-aso-catalog/174-planned-experiments.html"
-  },
-  {
-    "paper": "evidence-supported-aso-catalog",
-    "section_id": "175-evidence-baseline-and-reproduction",
+    "section_id": "174-evidence-baseline-and-reproduction",
     "title": "The binaries this page runs",
     "url": "models/evidence-supported-aso-catalog/175-evidence-baseline-and-reproduction.html"
   },
   {
     "paper": "fast-conjunction-assessment",
     "section_id": "1-the-problem",
-    "title": "All-vs-all is n(n − 1)/2 pairs",
+    "title": "All-vs-all is n(n \u2212 1)/2 pairs",
     "url": "models/fast-conjunction-assessment/1-the-problem.html"
   },
   {
@@ -104,7 +98,7 @@
   {
     "paper": "adversarial-security",
     "section_id": "32-m-of-n-funding-as-distributed-trust",
-    "title": "The bond’s payoff matrix",
+    "title": "The bond\u2019s payoff matrix",
     "url": "models/adversarial-security/32-m-of-n-funding-as-distributed-trust.html"
   },
   {
