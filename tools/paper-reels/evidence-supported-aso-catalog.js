@@ -1,6 +1,6 @@
 // Intro reel for "Evidence-Supported ASO Catalog" (Koury and Jah, 1.9).
 // 56 seconds, in plain words with the paper's own math: every orbit is an
-// estimate with evidence behind it, data levels, the TLE-to-numerical
+// estimate with evidence behind it, data levels, the OMM-to-numerical
 // handoff and its caveats, agreement with Orekit, accuracy against precise
 // orbits as forces are added, and covariance carried with the orbit.
 
@@ -17,7 +17,7 @@ export const meta = { name: "reel", media: "docs/media/papers/evidence-supported
 const DURATION = 56;
 const FPS = 30;
 const T_LEVELS = 6.0; // four levels of data
-const T_HAND = 13.0; // a TLE hands its state to a numerical propagator
+const T_HAND = 13.0; // an OMM hands its state to a numerical propagator
 const T_SPLIT = T_HAND + 2.4;
 const T_OREKIT = 21.0; // agreement with an independent implementation
 const T_ACC = 28.0; // error against precise orbits as forces are added
@@ -79,7 +79,7 @@ const LEVELS = [
   ["0", "RAW SENSOR DATA", "COUNTS, SIGNALS, IMAGES"],
   ["1", "MEASUREMENTS", "+ A MEASUREMENT MODEL"],
   ["2", "ESTIMATED STATES", "+ A DYNAMICS MODEL AND AN INFERENCE"],
-  ["3", "AVERAGED ELEMENTS (TLE)", "+ A SECOND THEORY, SGP4, AND A SECOND FIT"],
+  ["3", "AVERAGED ELEMENTS (OMM)", "+ A SECOND THEORY, SGP4, AND A SECOND FIT"],
 ];
 
 const CONTRIBUTORS = ["ACTUAL PHYSICS", "DYNAMICS MODEL", "OBSERVATIONS", "MEASUREMENT MODEL", "INFERENCE METHOD"];
@@ -157,7 +157,7 @@ export async function createReel(base = "") {
     label("LEVEL", x + 34, 178, T_LEVELS + 0.3, T_HAND - 0.45, t, { px: 18 });
   }
 
-  // ------------------------------------ the TLE-to-numerical handoff
+  // ------------------------------------ the OMM-to-numerical handoff
   const hpop = (u) => {
     const k = Math.max(0, u - U_EPOCH);
     return { ...HAND, r: HAND.r + 0.09 * k * k };
@@ -185,7 +185,7 @@ export async function createReel(base = "") {
       const wk = seg(t, T_SPLIT + 2.4, T_SPLIT + 2.8);
       if (qa && qb && wk > 0) chip("WHICH IS CLOSER? AN EMPIRICAL QUESTION", 1440, 790, easeOutBack(wk), alpha * (1 - seg(t, T_OREKIT - 0.5, T_OREKIT - 0.2)), { color: INK, px: 20 });
     }
-    // the epoch: the TLE becomes one state
+    // the epoch: the OMM becomes one state
     const ek = seg(t, T_HAND + 1.0, T_HAND + 1.4);
     if (qE && ek > 0) {
       const ring = seg(t, T_HAND + 1.0, T_HAND + 2.0);
@@ -198,7 +198,7 @@ export async function createReel(base = "") {
       sx.stroke();
       sx.restore();
       head(cam, orbitPos(HAND, U_EPOCH), INK, alpha, 7);
-      chip("TLE EPOCH · ONE ESTIMATED STATE", qE.x - 190, qE.y + 56, easeOutBack(ek), alpha, { color: INK, px: 20 });
+      chip("OMM EPOCH · ONE ESTIMATED STATE", qE.x - 190, qE.y + 56, easeOutBack(ek), alpha, { color: INK, px: 20 });
     }
   }
 
@@ -369,13 +369,13 @@ export async function createReel(base = "") {
       block([["Every orbit is an estimate.", INK], ["What supports it?", AMBER]], "A CATALOG OF HUMAN-MADE OBJECTS IN ORBIT, FROM MANY PROVIDERS", 0.6, T_LEVELS - 0.4, t, 84);
     }
     if (t > T_LEVELS - 0.05 && t < T_HAND + 0.1) {
-      block([["Each step adds a model", INK], ["and loses information.", AMBER]], "A TLE SITS AT LEVEL 3: MORE PROCESSED, NOT MORE ACCURATE", T_LEVELS + 0.1, T_HAND - 0.4, t, 84);
+      block([["Each step adds a model", INK], ["and loses information.", AMBER]], "AN OMM SITS AT LEVEL 3: MORE PROCESSED, NOT MORE ACCURATE", T_LEVELS + 0.1, T_HAND - 0.4, t, 84);
     }
     if (t > T_HAND - 0.05 && t < T_OREKIT + 0.1) {
       eq("handoff", 150, 214, T_HAND + 0.5, T_OREKIT - 0.45, t);
       eq("dyn", 150, 330, T_SPLIT + 0.6, T_OREKIT - 0.45, t);
       label("SHARED PHYSICS + OBJECT-SPECIFIC FORCES + MODEL ERROR", 152, 404, T_SPLIT + 0.9, T_OREKIT - 0.45, t, { px: 18 });
-      block([["Same starting state.", INK], ["Different physics after.", AMBER]], "A TLE CARRIES NO COVARIANCE: ITS UNCERTAINTY IS MARKED UNKNOWN", T_HAND + 0.1, T_OREKIT - 0.4, t, 84);
+      block([["Same starting state.", INK], ["Different physics after.", AMBER]], "AN OMM CARRIES NO COVARIANCE: ITS UNCERTAINTY IS MARKED UNKNOWN", T_HAND + 0.1, T_OREKIT - 0.4, t, 84);
     }
     if (t > T_OREKIT - 0.05 && t < T_ACC + 0.1) {
       eq("orekit", 150, 250, T_OREKIT + 0.5, T_ACC - 0.45, t);

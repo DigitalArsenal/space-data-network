@@ -4,7 +4,7 @@
 
 export const TEX = {
   // Evidence-Supported ASO Catalog
-  cat_handoff: String.raw`\mathrm{SGP4}(\text{TLE},\ \Delta t = 0) \;\longrightarrow\; (\mathbf r, \mathbf v)_{\mathrm{TEME}} \;\longrightarrow\; (\mathbf r, \mathbf v)_{\mathrm{GCRF}}`,
+  cat_handoff: String.raw`\mathrm{SGP4}(\text{OMM},\ \Delta t = 0) \;\longrightarrow\; (\mathbf r, \mathbf v)_{\mathrm{TEME}} \;\longrightarrow\; (\mathbf r, \mathbf v)_{\mathrm{GCRF}}`,
   cat_dyn: String.raw`\ddot{\mathbf r} = \mathbf a_{\mathrm{gen}}(\mathbf r,\dot{\mathbf r},t) + \mathbf a_{\mathrm{obj}}(\mathbf r,\dot{\mathbf r},t;\mathbf p) + \boldsymbol\delta(t)`,
   cat_orekit: String.raw`\max_{63\ \text{cases},\ 24\ \text{h}} \big\lVert \mathbf r_{\mathrm{HPOP}} - \mathbf r_{\mathrm{Orekit}} \big\rVert \le 15\ \text{mm}`,
   cat_cov: String.raw`P(t) = \Phi(t,t_0)\,P_0\,\Phi(t,t_0)^{\mathsf T} + Q(t)`,
