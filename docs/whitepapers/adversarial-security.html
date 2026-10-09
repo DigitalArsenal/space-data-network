@@ -68,6 +68,7 @@
           <div><dt>Revised</dt><dd>25 September 2026</dd></div>
           <div><dt>Sections</dt><dd>9</dd></div>
           <div><dt>Reading time</dt><dd>15 min</dd></div>
+          <div><dt>Interactive models</dt><dd>6</dd></div>
         </dl>
       </div>
     </header>
@@ -83,15 +84,15 @@
           <li><a href="#1-background"><span class="toc-num">1</span><span>Background</span></a></li>
           <li><a href="#2-the-adversarial-trust-model"><span class="toc-num">2</span><span>The Adversarial Trust Model</span></a>
             <ol>
-              <li><a href="#21-core-mechanism"><span class="toc-num">2.1</span><span>Core Mechanism</span></a></li>
+              <li><a href="#21-core-mechanism"><span class="toc-num">2.1</span><span>Core Mechanism</span><i class="toc-model" title="Interactive model"></i></a></li>
               <li><a href="#22-four-pillars"><span class="toc-num">2.2</span><span>Four Pillars</span></a></li>
               <li><a href="#23-trust-quantification"><span class="toc-num">2.3</span><span>Trust Quantification</span></a></li>
             </ol>
           </li>
           <li><a href="#3-game-theory-of-the-security-bond"><span class="toc-num">3</span><span>Game Theory of the Security Bond</span></a>
             <ol>
-              <li><a href="#31-the-security-bond-as-a-commitment-device"><span class="toc-num">3.1</span><span>The Security Bond as a Commitment Device</span></a></li>
-              <li><a href="#32-m-of-n-funding-as-distributed-trust"><span class="toc-num">3.2</span><span>M-of-N Funding as Distributed Trust</span></a></li>
+              <li><a href="#31-the-security-bond-as-a-commitment-device"><span class="toc-num">3.1</span><span>The Security Bond as a Commitment Device</span><i class="toc-model" title="Interactive model"></i></a></li>
+              <li><a href="#32-m-of-n-funding-as-distributed-trust"><span class="toc-num">3.2</span><span>M-of-N Funding as Distributed Trust</span><i class="toc-model" title="Interactive model"></i></a></li>
               <li><a href="#33-concentration-limits-as-risk-diversification"><span class="toc-num">3.3</span><span>Concentration Limits as Risk Diversification</span></a></li>
               <li><a href="#34-separating-equilibrium"><span class="toc-num">3.4</span><span>Separating Equilibrium</span></a></li>
               <li><a href="#35-cooperative-equilibrium-in-organizations"><span class="toc-num">3.5</span><span>Cooperative Equilibrium in Organizations</span></a></li>
@@ -100,13 +101,13 @@
           <li><a href="#4-threat-model-and-strategic-responses"><span class="toc-num">4</span><span>Threat Model and Strategic Responses</span></a></li>
           <li><a href="#5-pki-integration"><span class="toc-num">5</span><span>PKI Integration</span></a>
             <ol>
-              <li><a href="#51-cross-domain-identity-binding"><span class="toc-num">5.1</span><span>Cross-Domain Identity Binding</span></a></li>
+              <li><a href="#51-cross-domain-identity-binding"><span class="toc-num">5.1</span><span>Cross-Domain Identity Binding</span><i class="toc-model" title="Interactive model"></i></a></li>
               <li><a href="#52-certificate-hierarchy-as-delegated-trust"><span class="toc-num">5.2</span><span>Certificate Hierarchy as Delegated Trust</span></a></li>
-              <li><a href="#53-key-rotation-and-temporal-dynamics"><span class="toc-num">5.3</span><span>Key Rotation and Temporal Dynamics</span></a></li>
+              <li><a href="#53-key-rotation-and-temporal-dynamics"><span class="toc-num">5.3</span><span>Key Rotation and Temporal Dynamics</span><i class="toc-model" title="Interactive model"></i></a></li>
             </ol>
           </li>
           <li><a href="#6-mechanism-design-properties"><span class="toc-num">6</span><span>Mechanism Design Properties</span></a></li>
-          <li><a href="#7-implementation"><span class="toc-num">7</span><span>Implementation</span></a></li>
+          <li><a href="#7-implementation"><span class="toc-num">7</span><span>Implementation</span><i class="toc-model" title="Interactive model"></i></a></li>
           <li><a href="#8-voluntary-trust-enhancement"><span class="toc-num">8</span><span>Voluntary Trust Enhancement</span></a></li>
           <li><a href="#9-conclusion"><span class="toc-num">9</span><span>Conclusion</span></a></li>
           <li><a href="#references"><span>References</span></a></li>
@@ -136,6 +137,7 @@
 <p>The system is called <em>Adversarial Security</em> because it deliberately recruits adversaries as the enforcement mechanism. Anyone can increase the trust level of — effectively paint a target on — any key they need to trust but currently don&#39;t. A hospital that must trust a medical-device vendor&#39;s signing key can unilaterally deposit funds to that key&#39;s derived addresses, raising the economic stakes of compromise without the vendor&#39;s permission. More critically, depositors can issue <strong>public bounties</strong>: by publishing the derived addresses alongside details about the key&#39;s purpose, custodial arrangements, and the schedule on which new funds will arrive, they invite the very actors most capable of compromise — hacker collectives, nation-state operators, organized crime — to attempt extraction. If those adversaries <em>cannot</em> drain the funds, the key&#39;s integrity is demonstrated against the most capable threat actors in the world. The name reflects this core inversion: security is not provided <em>despite</em> adversaries but <em>because of</em> them.</p>
 <p>Instead of trusting an authority&#39;s <em>assertion</em> that a key is valid, observers verify a key&#39;s integrity by checking the <em>economic state</em> of its derived addresses. This approach contrasts with centralized CA models by allowing anonymous, permissionless trust level increases: entities can transfer funds to addresses without owner permission to signal confidence.</p>
 <h3 id="21-core-mechanism"><span class="sec-num">2.1</span>Core Mechanism</h3>
+<button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/adversarial-security/21-core-mechanism.html" data-model-title="One key: signatures and addresses"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span><span class="run-text"><b>Run it</b><span>One key: signatures and addresses</span></span><span class="run-go" aria-hidden="true">&rarr;</span></button>
 <p>Cryptographic public keys used for signing can mathematically derive addresses on multiple blockchain networks via hierarchical deterministic (HD) derivation (BIP-32 <sup><a href="#ref-7">7</a></sup>, BIP-44 <sup><a href="#ref-8">8</a></sup>, SLIP-10 <sup><a href="#ref-9">9</a></sup>). One key pair serves both authentication and value custody, requiring no additional infrastructure.</p>
 <p>By depositing value at those derived addresses, a keyholder or any third party creates a <strong>game-theoretic security bond</strong>:</p>
 <figure class="paper-fig"><img src="assets/flow.svg" alt="Protocol Flow: Public Key → Derive Addresses → Deposit Value → Monitor Balance → Infer Integrity" width="600"/><figcaption>Protocol Flow: Public Key → Derive Addresses → Deposit Value → Monitor Balance → Infer Integrity</figcaption></figure>
@@ -173,6 +175,7 @@
 <h2 id="3-game-theory-of-the-security-bond"><span class="sec-num">3</span>Game Theory of the Security Bond</h2>
 <p>This section formalizes the incentive structures, strategic interactions, and equilibrium conditions underlying adversarial security. The security bond and associated rules are <strong>mechanism design tools</strong>: they create conditions where rational actors are incentivized toward honest behavior.</p>
 <h3 id="31-the-security-bond-as-a-commitment-device"><span class="sec-num">3.1</span>The Security Bond as a Commitment Device</h3>
+<button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/adversarial-security/31-the-security-bond-as-a-commitment-device.html" data-model-title="When a bond is credible"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span><span class="run-text"><b>Run it</b><span>When a bond is credible</span></span><span class="run-go" aria-hidden="true">&rarr;</span></button>
 <p>The security bond functions as a <strong>credible commitment mechanism</strong>. By locking value across multiple blockchain networks, a keyholder signals:</p>
 <ul>
 <li><strong>Costly signaling.</strong> Acquiring and holding assets across diverse networks is expensive. A well-funded bond is difficult to fake, making it a reliable signal of investment in the identity. This follows the <strong>handicap principle</strong> from signaling theory <sup><a href="#ref-10">10</a></sup>: the cost of the signal is what makes it credible.</li>
@@ -184,6 +187,7 @@
 </code></pre>
 <p>Where <code>G(fraud)</code> is the gain from fraud. The bond must exceed the expected value of cheating for the commitment to hold.</p>
 <h3 id="32-m-of-n-funding-as-distributed-trust"><span class="sec-num">3.2</span>M-of-N Funding as Distributed Trust</h3>
+<button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/adversarial-security/32-m-of-n-funding-as-distributed-trust.html" data-model-title="The bond’s payoff matrix"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span><span class="run-text"><b>Run it</b><span>The bond’s payoff matrix</span></span><span class="run-go" aria-hidden="true">&rarr;</span></button>
 <p>Requiring funds across M of N independent blockchain networks implements a <strong>distributed trust model</strong> analogous to threshold cryptography but applied to economic commitments:</p>
 <ul>
 <li><strong>No single point of failure.</strong> An attacker must compromise or simulate presence across multiple independent blockchain ecosystems simultaneously.</li>
@@ -272,6 +276,7 @@
 <h2 id="5-pki-integration"><span class="sec-num">5</span>PKI Integration</h2>
 <p>Adversarial security does not replace traditional PKI. It augments it. By binding X.509 certificates to HD wallet keys, the system bridges two trust domains.</p>
 <h3 id="51-cross-domain-identity-binding"><span class="sec-num">5.1</span>Cross-Domain Identity Binding</h3>
+<button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/adversarial-security/51-cross-domain-identity-binding.html" data-model-title="Binding an X.509 key to a wallet key"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span><span class="run-text"><b>Run it</b><span>Binding an X.509 key to a wallet key</span></span><span class="run-go" aria-hidden="true">&rarr;</span></button>
 <p>The X.509 certificate contains a NIST-curve public key (P-256 or P-384) <sup><a href="#ref-13">13</a></sup> used for institutional PKI operations. To bind this certificate to a blockchain identity, the certificate&#39;s public key is signed using the cryptocurrency private key (e.g. secp256k1 at <code>m/44&#39;/0&#39;/0&#39;/0/0</code>). This signature is embedded in the X.509 certificate as a custom extension, along with the cryptocurrency public key that produced it.</p>
 <p>Any verifier can then:</p>
 <ol>
@@ -292,6 +297,7 @@
 
 <p>This addresses the <strong>principal-agent problem</strong>: the organization (principal) delegates authority to personnel (agents), with accountability at every level. Revocation of an intermediate CA revokes all downstream personnel certificates simultaneously. End entity certificates have constrained <code>KeyUsage</code>, allowing signing but not certificate issuance, preventing unauthorized trust delegation.</p>
 <h3 id="53-key-rotation-and-temporal-dynamics"><span class="sec-num">5.3</span>Key Rotation and Temporal Dynamics</h3>
+<button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/adversarial-security/53-key-rotation-and-temporal-dynamics.html" data-model-title="Trust decay with key age"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span><span class="run-text"><b>Run it</b><span>Trust decay with key age</span></span><span class="run-go" aria-hidden="true">&rarr;</span></button>
 <p>Regular key rotation introduces a temporal dimension to trust:</p>
 <ul>
 <li><strong>Forward secrecy analog.</strong> Rotation limits the blast radius of key compromise.</li>
@@ -317,6 +323,7 @@
 </ul>
 <hr>
 <h2 id="7-implementation"><span class="sec-num">7</span>Implementation</h2>
+<button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/adversarial-security/7-implementation.html" data-model-title="One seed, six networks"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span><span class="run-text"><b>Run it</b><span>One seed, six networks</span></span><span class="run-go" aria-hidden="true">&rarr;</span></button>
 <p>The adversarial security model is implemented using hierarchical deterministic wallets supporting BIP-39 <sup><a href="#ref-14">14</a></sup> seed phrases with multi-chain address derivation. The network utilizes secp256k1 and ed25519 elliptic curve cryptography to generate multi-blockchain-compatible crypto addresses, ensuring widespread applicability and security.</p>
 <div class="table-frame"><table>
 <thead>
