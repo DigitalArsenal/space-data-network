@@ -1,4 +1,4 @@
-// Intro reel for "Fast All-vs-All Conjunction Screening" (Koury, 1.8).
+// Intro reel for "Fast All-vs-All Conjunction Screening" (Koury and Jah, 1.8).
 // 56 seconds, in plain words with the paper's own math: every object against
 // every other, a bound each trajectory computes for itself, a grid that
 // proposes pairs on the GPU and a module that decides in f64, refinement and
@@ -444,7 +444,7 @@ export async function createReel(base = "") {
     if (t > T_PRIV - 0.05 && t < T_END + 0.1) {
       block([["Screen together", INK], ["without sharing orbits.", AMBER]], "DISTANCES COMPUTED ON ENCRYPTED POSITIONS", T_PRIV + 0.1, T_END - 0.4, t, 84);
     }
-    paperLockup({ eyebrow: "WHITEPAPER · EDITION 1.8", title: ["Fast All-vs-All", "Conjunction Screening"], byline: "Anthony “TJ” Koury III", t0: T_END + 0.3 }, t);
+    paperLockup({ eyebrow: "WHITEPAPER · EDITION 1.8", title: ["Fast All-vs-All", "Conjunction Screening"], byline: "Anthony “TJ” Koury III and Dr. Moriba Jah", t0: T_END + 0.3 }, t);
 
     bloom();
     hud(t, frameIndex, T_END + 0.1);
