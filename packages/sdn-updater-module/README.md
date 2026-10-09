@@ -1,99 +1,52 @@
-# SDN Updater Module
+# SDN Updater
 
-`org.spacedatanetwork.updater` is a single `space-data-module-sdk`-compliant
-WebAssembly module that will orchestrate updates of kubo, helia, the
-`sdn-server` binary, the desktop app, and plugins across SDN clients.
+`org.spacedatanetwork.updater` is the update coordinator. Releases reach the
+fleet only with the distribution key, which an administrator enters in this
+module's page each time. The key is never saved.
 
-The same artifact is loaded:
+## How a release goes out
 
-- on `sdn.spaceaware.io` with publisher capabilities, acting as the update
-  publisher;
-- on every other SDN client with consumer capabilities, acting as the update
-  applier.
+1. `publish-fleet-update.mjs` (binaries) or `publish-ui-update.mjs` (UI
+   packages) seals the release for each node and submits it unsigned to the
+   coordinator: `spacedatanetwork update distribute`.
+2. In the coordinator's dashboard, open **Updater** under the node's modules.
+   Enter the recovery phrase (and passphrase, if any). Sign the release.
+3. The publisher uploads the files; the coordinator builds the signal from its
+   feed. The page signs the signal with the same key, the coordinator publishes
+   it, and the page wipes the key.
 
-Role is determined by granted host capabilities, not by a module-side role flag.
+The coordinator accepts a signature only if it verifies against its own update
+roots and covers exactly the submitted release.
 
-## What's Here
+## The key
 
-This package is the initial SDK scaffold. `manifest.json` declares the updater
-methods, capabilities, runtime targets, and invoke surfaces. `src/module.cpp`
-contains one C++ stub per declared method. The SDK compiler generates the
-manifest exports, canonical invoke ABI, allocator exports, and dispatch table.
-
-```text
-packages/sdn-updater-module/
-├── manifest.json
-├── package.json
-├── build.mjs
-├── src/
-│   └── module.cpp
-├── test/
-│   └── smoke.test.mjs
-└── dist/isomorphic/module.wasm
-```
-
-`dist/` is generated and ignored by git.
-
-## Build
-
-From this package directory:
-
-```bash
-npm run build
-npm run check
-npm test
-```
-
-`npm run build` calls `compileModuleFromSource` from
-`space-data-module-sdk/compiler` and writes `dist/isomorphic/module.wasm`.
-Because the manifest includes the browser runtime target, the SDK selects the
-single-thread emception path; no system Emscripten or wasi-sdk install is
-required for this scaffold build.
-
-`npm run check` validates `manifest.json` and the generated wasm with the SDK
-compliance checker. `npm test` instantiates the wasm under Node's WASI preview1
-import, verifies the canonical ABI exports, checks the embedded manifest, and
-dispatches every declared updater method through `plugin_invoke_stream`.
+The SLIP-0010 Ed25519 key at `m/44'/0'/0'/3'/0'` of the phrase's BIP-39 seed:
+purpose 3 of the node key grammar, which no node derives. Its key id is the
+first 12 hex characters of sha256 over the public key. The key lives in the
+module instance between `openKey` and `closeKey`, and the page closes it after
+the signal, after 15 minutes without use, or when the page closes.
 
 ## Methods
 
-All methods currently return the JSON stub payload `{"status":"stub"}`.
+| methodId | Input | Output |
+|---|---|---|
+| `openKey` | `{phrase, passphrase}` | `{key_id, public_key, path}` |
+| `signRelease` | `{kind: "manifest" \| "signal", document}` | the signed document |
+| `closeKey` | `{}` | `{closed: true}` |
 
-| methodId           | Role      | Needs caps after stubs are replaced          |
-|--------------------|-----------|----------------------------------------------|
-| `checkForUpdates`  | consumer  | `http` or `ipfs` or `pubsub`                 |
-| `planUpdate`       | consumer  | none                                         |
-| `fetchArtifact`    | consumer  | `http`, `ipfs`                               |
-| `verifyArtifact`   | consumer  | `crypto_hash`, `crypto_verify`               |
-| `stageArtifact`    | consumer  | `storage_write`                              |
-| `applyStaged`      | consumer  | `host_control` once the SDK supports it      |
-| `selfUpgrade`      | both      | `host_control` once the SDK supports it      |
-| `pollUpstream`     | publisher | `http`                                       |
-| `buildManifest`    | publisher | `crypto_hash`, `clock`                       |
-| `signManifest`     | publisher | `wallet_sign`                                |
-| `publishManifest`  | publisher | `ipfs` add/pin and `pubsub.publish`          |
+Signatures are Ed25519 over `DOMAIN || 0x00 || sha256(canonical document)`,
+the canonical form Go's `update.CanonicalManifestBytes` writes.
 
-## Known Scaffold Shortcuts
+## Build
 
-- The method bodies are stubs. Step 2 is to implement `checkForUpdates` and
-  `verifyArtifact` against a hand-signed manifest using `http` and
-  `crypto_verify`.
-- `fetchArtifact` returns the same JSON stub payload on its declared `bytes`
-  output port. Real artifact fetching will return verified bytes.
-- `applyStaged` and `selfUpgrade` are blocked on a future `host_control`
-  capability in `space-data-module-sdk` plus matching Go server, Electron, and
-  browser host implementations.
-- The publisher path is not implemented yet. `pollUpstream`, `buildManifest`,
-  `signManifest`, and `publishManifest` will be filled in after the consumer
-  verification path works.
+```sh
+npm ci
+npm run build
+```
 
-## Next Steps
+`dist/isomorphic/module.wasm` holds the module and its page (`$APP`).
+Monocypher 4.0.2 (Ed25519, SHA-512) is vendored in `third_party/monocypher`.
 
-1. Implement `checkForUpdates` and `verifyArtifact` for a hand-crafted,
-   hand-signed manifest.
-2. Implement the publisher method chain and test on a dev SDN node with one
-   watcher.
-3. Add `host_control` to the SDK and host implementations, then wire
-   `applyStaged` and `selfUpgrade`.
-4. Deploy the updater module to `sdn.spaceaware.io` through the existing
-   `/space-data-network/module-publish/1.0.0` path.
+The test is `sdn-server/internal/api/update_distribution_e2e_test.go`: it runs
+this module from Go, checks its key against the node's wallet derivation, and
+distributes a release through the coordinator routes.

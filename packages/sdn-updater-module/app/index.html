@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Updater</title>
+<style>
+:root{font:15px system-ui,sans-serif;color:#1f2a3a;background:#f6f8fb;color-scheme:light}*{box-sizing:border-box}body{margin:0}
+button,input,textarea{font:inherit}button{border:1px solid #c9d3e3;border-radius:8px;padding:9px 14px;background:linear-gradient(#fff,#eef2f8);color:#22324a;cursor:pointer}
+button:disabled{opacity:.5;cursor:default}.primary{background:linear-gradient(#5d7fe9,#3f5fd3);border-color:#4766d6;color:#fff}
+header{padding:20px 24px;background:#fff;border-bottom:1px solid #dfe5ee}h1{margin:0;font-size:22px}h2{margin:0 0 12px;font-size:17px}
+main{padding:20px 24px;display:grid;gap:20px;max-width:980px}.panel{background:#fff;border:1px solid #dce3ed;border-radius:12px;padding:18px}
+label{display:block;font-weight:600;margin:12px 0 6px}textarea,input{width:100%;border:1px solid #cfd8e6;border-radius:8px;padding:10px;background:#fff}
+textarea{min-height:84px;resize:vertical}.muted{color:#5d6b80}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:14px;word-break:break-all}
+.row{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:14px}.status{margin-top:12px;font-size:15px}.error{color:#b42318}
+table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:10px 8px;border-top:1px solid #e6ebf2;font-size:14px;vertical-align:top}th{color:#5d6b80;font-weight:600;border-top:0}
+</style></head>
+<body>
+<header><h1>Updater</h1><p class="muted">Releases go out only with the distribution key. Enter it each time; it is never saved, and it is wiped when the release is signalled or this page closes.</p></header>
+<main>
+  <section class="panel" id="key-panel">
+    <h2>Distribution key</h2>
+    <form id="key-form" autocomplete="off">
+      <label for="phrase">Recovery phrase</label>
+      <textarea id="phrase" spellcheck="false" autocapitalize="off" autocomplete="off" required></textarea>
+      <label for="passphrase">Passphrase (if the phrase has one)</label>
+      <input id="passphrase" type="password" autocomplete="off">
+      <div class="row"><button class="primary" id="open" type="submit">Enter key</button></div>
+    </form>
+    <div id="key-open" hidden>
+      <p>Key <span class="mono" id="key-id"></span> at <span class="mono" id="key-path"></span></p>
+      <p class="muted mono" id="key-public"></p>
+      <div class="row"><button id="close" type="button">Close key</button></div>
+    </div>
+    <p class="status" id="key-status" role="status"></p>
+  </section>
+  <section class="panel">
+    <h2>Releases waiting for the key</h2>
+    <table><thead><tr><th>Release</th><th>Target</th><th>Nodes</th><th>State</th><th></th></tr></thead><tbody id="releases"></tbody></table>
+    <p class="status muted" id="list-status" role="status">Loading</p>
+  </section>
+</main>
+<script type="module">__UPDATER_SCRIPT__</script>
+</body></html>

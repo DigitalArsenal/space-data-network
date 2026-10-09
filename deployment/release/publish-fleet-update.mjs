@@ -15,10 +15,11 @@
  *   2. tar.gz it and wrap it in the inert wasm carrier;
  *   3. build the unsigned update manifest (sequence = epoch seconds, so it is
  *      monotonic across publishes without any registry);
- *   4. sign it WITH THE NODE KEY: the manifest document travels to the
- *      publisher host over ssh and `spacedatanetwork update sign-manifest`
- *      runs THERE (the bonded key cannot leave the box; owner ruling
- *      2026-07-30) — no session token ever crosses the wire;
+ *   4. sign it WITH THE DISTRIBUTION KEY: the manifest goes to the
+ *      coordinator over ssh (`spacedatanetwork update distribute`), an
+ *      administrator enters the key in the Updater page and signs, and the
+ *      signed manifest comes back (owner 2026-10-09; --node-signed keeps the
+ *      host-01 node key for a recorded reason);
  *   5. publish payload + regenerated index into SDN_UPDATE_FEED_DIR and
  *      verify the PUBLIC url serves the exact bytes just built.
  *
@@ -78,6 +79,8 @@
  *     [--rollback "<why this deliberately reverts live code>"] \
  *     [--nodes deployment/release/fleet-nodes.json] \
  *     [--unsealed "<why this release goes out in the clear>"] \
+ *     [--node-signed "<why host-01's node key signs instead of the distribution key>"] \
+ *     [--trust-roots roots.json] \
  *     [--ledger-path /opt/spacedatanetwork/publish-ledger.log] \
  *     [--dry-run] [--no-smoke (dry-run only)]
  *
@@ -193,6 +196,15 @@ const noSignalReason = arg('no-signal', '');
 // --unsealed takes its REASON as its value too, and the ledger records it: a
 // release in the clear is readable by anyone who fetches the feed.
 const unsealedReason = arg('unsealed', '');
+// Releases are signed with the distribution key, entered each time in the
+// updater module's page on the coordinator (owner 2026-10-09). --node-signed
+// keeps the host-01 node key for a recorded reason: the one release that moves
+// the fleet's update roots to the distribution key.
+const nodeSignedReason = arg('node-signed', '');
+// --trust-roots <file>: a JSON object {key_id: Ed25519 SPKI base64} this
+// release installs as every recipient's update roots once it applies.
+const trustRootsFile = arg('trust-roots', '');
+const trustRoots = trustRootsFile ? JSON.parse(readFileSync(resolve(trustRootsFile), 'utf8')) : null;
 const nodesFile = resolve(arg('nodes', join(repoRoot, 'deployment/release/fleet-nodes.json')));
 const dryRun = flag('dry-run');
 const noSmoke = flag('no-smoke');
@@ -518,6 +530,11 @@ try {
       binary_size: verified.size,
     },
   });
+  if (trustRoots) {
+    if (!Object.keys(trustRoots).length) refuse('--trust-roots names no root');
+    manifest.trust_roots = trustRoots;
+    log(`[fleet-update] this release moves the update roots to: ${Object.keys(trustRoots).join(', ')}`);
+  }
   assertSameBytes('unsigned manifest bundle hash', manifest.bundle.hash, bundleHash);
   assertSameBytes('unsigned manifest wasm hash', manifest.wasm.hash, wasmHash);
   if (manifest.bundle.size !== bundleBytes.length) {
@@ -588,16 +605,22 @@ try {
     sealOnPublisher({ run, publisherSSH, publisherBin, remoteDir: remoteTmp, bundleRemote: `${remoteTmp}/${bundleName}.tar.gz`, log, tag: 'fleet-update' });
     toSign = 'manifest.sealed.json';
   }
-  run('ssh', [
-    publisherSSH,
-    // NO --node-url, for the same reason as the signal push below: the public
-    // hostname sends this admin call out through the CDN and back in as a
-    // proxied request, which the whole-server lock (2026-09-23) refuses as
-    // remote ("sealed_required"). Without it the client dials loopback and
-    // anchors to the daemon's own certificate.
-    `${publisherBin} update sign-manifest --manifest ${remoteTmp}/${toSign} ` +
-      `--out ${remoteTmp}/manifest.json`,
-  ]);
+  // NO --node-url, for the same reason as the signal push below: the public
+  // hostname sends this admin call out through the CDN and back in as a
+  // proxied request, which the whole-server lock (2026-09-23) refuses as
+  // remote ("sealed_required"). Without it the client dials loopback and
+  // anchors to the daemon's own certificate.
+  let distributionId = '';
+  if (nodeSignedReason) {
+    log(`[fleet-update] *** NODE-SIGNED *** reason: ${nodeSignedReason}`);
+    run('ssh', [publisherSSH, `${publisherBin} update sign-manifest --manifest ${remoteTmp}/${toSign} --out ${remoteTmp}/manifest.json`]);
+  } else {
+    log('[fleet-update] waiting for the distribution key: open Updater in the coordinator\'s dashboard and sign this release');
+    const distributed = run('ssh', [publisherSSH, `${publisherBin} update distribute --manifest ${remoteTmp}/${toSign} --out ${remoteTmp}/manifest.json`], { stdio: ['ignore', 'pipe', 'inherit'] }).toString();
+    distributionId = (distributed.match(/^distribution=(\w+)$/m) || [])[1] || '';
+    log(distributed.trim().replace(/^/gm, '[fleet-update] '));
+    if (!distributionId) refuse('the coordinator did not report a distribution id');
+  }
   const signedPath = join(work, 'manifest.json');
   run('scp', ['-q', `${publisherSSH}:${remoteTmp}/manifest.json`, signedPath]);
   // The carrier the fleet fetches: the ciphertext `update seal` wrote, or the
@@ -869,7 +892,8 @@ print(f'index: {len(updates)} update(s)')
         // config declares (newAdminClient -> daemonTLSConfig), which is both
         // shorter and strictly better authenticated.
         `${shellQuote(publisherBin)} update signal --channel ${shellQuote(channel)} ` +
-          `--update-id ${shellQuote(updateId)} --platform ${shellQuote(platform)} --arch ${shellQuote(arch)}`,
+          `--update-id ${shellQuote(updateId)} --platform ${shellQuote(platform)} --arch ${shellQuote(arch)}` +
+          (distributionId ? ` --distribution ${shellQuote(distributionId)}` : ''),
       ]).toString();
       signalled = /published=true/.test(signalOut);
       signalTopic = (signalOut.match(/^topic=(.+)$/m) || [])[1] || '';

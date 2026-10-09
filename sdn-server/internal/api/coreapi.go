@@ -94,6 +94,10 @@ type CoreAPIHandler struct {
 	// separate signer from moduleSigner over the SAME key: one publisher key,
 	// two disjoint statement domains (council Q7, internal/sigdomain).
 	updateSigner *updatesign.Signer
+
+	// distributions holds releases waiting for the distribution key
+	// (update_distribution.go); nil on a node that is not the coordinator.
+	distributions *distributionStore
 }
 
 // SDNPeerCounts mirrors epm.SDNPeerCounts for the /api/v1/stats peers block:
@@ -236,8 +240,10 @@ func (h *CoreAPIHandler) RegisterRoutesWithFlowMounts(mux *http.ServeMux, flowCl
 	// and still signs. See update_signing.go and update_feed.go.
 	h.registerUpdateSigningRoutes(mux)
 	h.registerUpdateFeedRoutes(mux)
+	// Releases signed with the distribution key in the updater module.
+	h.registerUpdateDistributionRoutes(mux)
 	// The PUSH half of the update lane (owner ruling 2026-08-09). Registered
-	// after the signing routes because it needs the signer they construct.
+	// after the signing and distribution routes because it needs what they set up.
 	h.registerUpdateSignalRoutes(mux)
 
 	peersClaimedByFlow := flowClaimed != nil &&
