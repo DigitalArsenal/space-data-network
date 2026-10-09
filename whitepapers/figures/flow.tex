@@ -1,0 +1,12 @@
+\documentclass[tikz,border=6pt]{standalone}
+\input{style}
+\begin{document}
+\begin{tikzpicture}[node distance=6mm, stage/.style={box, minimum height=10mm, text width=22mm}]
+\node[stage] (a) {Public key};
+\node[stage, right=of a] (b) {Derive addresses};
+\node[stage, right=of b] (c) {Deposit value};
+\node[stage, right=of c] (d) {Monitor balance};
+\node[stage, right=of d, draw=accent, line width=0.9pt] (e) {Infer integrity};
+\foreach \x/\y in {a/b, b/c, c/d, d/e} \draw[flow] (\x) -- (\y);
+\end{tikzpicture}
+\end{document}

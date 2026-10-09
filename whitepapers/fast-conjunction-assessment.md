@@ -6,7 +6,7 @@ Anthony "TJ" Koury III
 
 Edgesource, Space Data Network · tj@edgesource.com
 
-Technical whitepaper 1.7 | 7 October 2026
+Technical whitepaper 1.8 | 9 October 2026 (propagation accuracy moved to the companion paper; screening results unchanged from 1.7)
 
 Numerical evidence cutoff: 2 October 2026
 
@@ -113,6 +113,8 @@ Probability uses the Alfano maximum ([R4](#r4)). When a refine call would stage 
 
 A run screens one propagator's output. A resident index holds either mean elements, evaluated with the module's SGP4, or trajectories from one generator, identified by the Chebyshev ephemeris (PPE) record's `EPHEMERIS_SOURCE`. The module refuses an index that mixes them (`mixed-propagators`).
 
+Chebyshev series per interval are the standard form for precomputed ephemerides. NASA's SPICE toolkit stores them that way: SPK data types 2, 3, 14 and 20 hold Chebyshev coefficients for position, velocity or both ([R15](#r15)), and JPL distributes its planetary ephemerides as Chebyshev polynomials fit to positions and velocities in 32-day intervals ([R16](#r16), [R17](#r17)). Deprit, Pickard and Poplarchek recommended Chebyshev approximation for compressing ephemerides because it minimizes the largest error over the interval ([R18](#r18)). A Chebyshev interpolant of degree n is within a factor 2 + (2/π) log(n + 1) of the best polynomial approximation of that degree ([R19](#r19)). The same form serves spacecraft and catalog orbits: onboard ephemeris generation ([R20](#r20)) and orbit information with continuous state and covariance at a predetermined accuracy ([R21](#r21)). Open-source readers include jplephem (MIT License, [R22](#r22)) and ANISE (Mozilla Public License 2.0, [R23](#r23)); NAIF's toolkit is free to use under its own rules ([R15](#r15)).
+
 Trajectories reach the module as their propagator exported them. The HPOP module's export is a size-prefixed `$PRW` record per object. The conjunction module's index preparation takes those records on its `trajectories` port without re-encoding, and the request carries only each object's identity. Trajectories in TT or TDB map to UTC linearly between their converted interval ends, using the vendored ERFA library ([R5](#r5)). TDB − TT is evaluated once per minute and interpolated, exact to about 1e-14 s.
 
 ## 5 Time windows
@@ -204,7 +206,7 @@ The work found these defects in existing code, all fixed:
   - **A partial field.** The built-in "degree/order 20" field held only J2–J6 and the tesserals through degree 4, with J5 and J6 wrong.
   - **Frames and clock.** Its nutation and Earth-fixed rotation were 0.74° off, and an unset force clock read Julian date 0.
 
-  Now the field is EGM2008 to degree and order 20, in Earth-fixed axes that match ERFA to 0.2 arcsec. Six days from an element-set epoch, an LEO arc's error against reference orbits fell from 5.9 km to 0.2 km radially and from 10.9 km to 0.2 km out of plane. The HPOP rows above are from the corrected propagator; before the fix the same screen reported 301,396 conjunctions.
+  Now the field is EGM2008 to degree and order 20, in Earth-fixed axes that match ERFA to 0.2 arcsec. The HPOP rows above are from the corrected propagator; before the fix the same screen reported 301,396 conjunctions. The companion paper measures the resident model this screen uses against precise orbits (R-20, with the HPOP build of 9 October), and HPOP's full execution path against Orekit ([R1](#r1), section 17). This paper makes no accuracy claim for either.
 
 ## 7 Uncertainty and probability of collision
 
@@ -633,13 +635,13 @@ registered.
 | Calibration coverage | Covariance calibrated only in LEO 600 to 800 km (empirical model; HPOP to 3 days), for 48 reference objects in one week |
 | Probability inputs | Combined radius and covariance shape differ from SOCRATES's unpublished ones |
 
-This paper reports computation speed, agreement between implementations and with SOCRATES on identical inputs, and covariance calibration where independent truth exists. It does not establish operational readiness, or accuracy for objects and regimes without independent reference orbits.
+This paper reports computation speed, agreement between implementations and with SOCRATES on identical inputs, and covariance calibration where independent truth exists. It does not establish operational readiness or orbit accuracy; the companion paper reports measurements of HPOP's accuracy, including the resident model used here ([R1](#r1), section 17).
 
 ## References
 
 ### R1
 
-Koury, A. and Jah, M. K. Evidence-Supported ASO Catalog. Space Data Network technical whitepaper 1.8.1, revised 1 October 2026. [Paper](evidence-supported-aso-catalog.md)
+Koury, A. and Jah, M. K. Evidence-Supported ASO Catalog. Space Data Network technical whitepaper 1.9, 9 October 2026. [Paper](evidence-supported-aso-catalog.md)
 
 ### R2
 
@@ -692,3 +694,39 @@ Damgård, I., Geisler, M. and Krøigaard, M. Efficient and Secure Comparison for
 ### R14
 
 Edgesource. Private screening: protocol, SEAL benchmark, leakage and exposure measurements, exchange rules and defenses. Modules commit 22db2691620599403885cd1353677011e08f3d22. Files: `analysis/conjunction-assessment/docs/private-screening.md`, `analysis/conjunction-assessment/bench/private-screening`. Private repository, available on request ([tj@edgesource.com](mailto:tj@edgesource.com)).
+
+### R15
+
+NASA Navigation and Ancillary Information Facility (NAIF), Jet Propulsion Laboratory. SPK Required Reading, sections "Type 2: Chebyshev (position only)", "Type 3: Chebyshev (position and velocity)", "Type 14: Chebyshev Polynomials — Unequal Time Steps" and "Type 20: Chebyshev (velocity only)". [Document](https://naif.jpl.nasa.gov/pub/naif/toolkit_docs/C/req/spk.html); toolkit terms: [SPICE rules](https://naif.jpl.nasa.gov/naif/rules.html)
+
+### R16
+
+Jet Propulsion Laboratory, Solar System Dynamics. Planetary and Lunar Ephemerides: export information. [Page](https://ssd.jpl.nasa.gov/planets/eph_export.html)
+
+### R17
+
+Folkner, W. M., Williams, J. G., Boggs, D. H., Park, R. S. and Kuchynka, P. The Planetary and Lunar Ephemerides DE430 and DE431. IPN Progress Report 42-196, 15 February 2014. [Paper](https://ipnpr.jpl.nasa.gov/progress_report/42-196/196C.pdf)
+
+### R18
+
+Deprit, A., Pickard, H. and Poplarchek, W. Compression of Ephemerides by Discrete Chebyshev Approximations. Navigation 26(1):1–11, 1979. [doi:10.1002/j.2161-4296.1979.tb01350.x](https://doi.org/10.1002/j.2161-4296.1979.tb01350.x)
+
+### R19
+
+Trefethen, L. N. Approximation Theory and Approximation Practice, Extended Edition. SIAM, 2019, chapter 16 (Chebyshev projections and interpolants are near-best). [doi:10.1137/1.9781611975949](https://doi.org/10.1137/1.9781611975949)
+
+### R20
+
+Song, M.-S., Park, S.-Y., Kim, Y. and Yim, J. R. Development of Kinematic Ephemeris Generator for Korea Pathfinder Lunar Orbiter (KPLO). Journal of Astronomy and Space Sciences 37(3):199–208, 2020. [doi:10.5140/jass.2020.37.3.199](https://doi.org/10.5140/jass.2020.37.3.199)
+
+### R21
+
+Braun, V. Providing Orbit Information With Predetermined Bounded Accuracy. Thesis, 2017. [doi:10.5281/zenodo.228164](https://doi.org/10.5281/zenodo.228164)
+
+### R22
+
+Rhodes, B. jplephem: reads JPL planetary ephemerides (SPK types 2 and 3). MIT License. [Repository](https://github.com/brandon-rhodes/python-jplephem)
+
+### R23
+
+Nyx Space. ANISE: SPICE kernels, including Chebyshev SPK types 2, 3, 14 and 20. Mozilla Public License 2.0. [Repository](https://github.com/nyx-space/anise)

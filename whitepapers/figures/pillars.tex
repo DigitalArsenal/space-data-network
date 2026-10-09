@@ -1,0 +1,11 @@
+\documentclass[tikz,border=6pt]{standalone}
+\input{style}
+\begin{document}
+\begin{tikzpicture}[node distance=5mm, pillar/.style={box, anchor=north}]
+\node[pillar] (a) at (0,0) {\begin{minipage}[t][19mm][t]{34mm}\centering{\bfseries Key derivation}\\[3pt] One key pair derives addresses on multiple blockchain networks\end{minipage}};
+\node[pillar, right=of a.north east, anchor=north west] (b) {\begin{minipage}[t][19mm][t]{34mm}\centering{\bfseries Value as signal}\\[3pt] Permissionless deposits create an economic commitment to an identity\end{minipage}};
+\node[pillar, right=of b.north east, anchor=north west] (c) {\begin{minipage}[t][19mm][t]{34mm}\centering{\bfseries Rational actors}\\[3pt] Draining the funds is the dominant strategy after any key compromise\end{minipage}};
+\node[pillar, right=of c.north east, anchor=north west] (d) {\begin{minipage}[t][19mm][t]{34mm}\centering{\bfseries Real-time proof}\\[3pt] Blockchain state is publicly auditable at every block\end{minipage}};
+\foreach \n/\k in {a/1, b/2, c/3, d/4} \node[font=\footnotesize\bfseries, text=accent, anchor=south] at (\n.north) {\k};
+\end{tikzpicture}
+\end{document}

@@ -1,0 +1,44 @@
+\usepackage{graphicx}
+\usepackage{titlesec}
+\titleformat{\section}{\large\bfseries}{}{0pt}{}
+\titleformat{\subsection}{\normalsize\bfseries}{}{0pt}{}
+\titleformat{\subsubsection}{\normalsize\itshape}{}{0pt}{}
+\titlespacing*{\section}{0pt}{1.6ex plus .5ex}{0.8ex}
+\usepackage{xcolor}
+\definecolor{sdnlink}{HTML}{1F5FA8}
+\AtBeginDocument{\hypersetup{colorlinks=true, linkcolor=sdnlink, urlcolor=sdnlink, citecolor=sdnlink}}
+\usepackage{fancyhdr}
+\pagestyle{fancy}\fancyhf{}\renewcommand{\headrulewidth}{0pt}
+\fancyfoot[C]{\footnotesize\thepage}
+\renewcommand{\arraystretch}{1.15}
+\usepackage{etoolbox}
+\AtBeginEnvironment{longtable}{\small}
+\AtBeginEnvironment{Shaded}{\small}
+\setlength{\emergencystretch}{3em}
+\sloppy
+% Characters the papers use that Latin Modern has no glyph for.
+\usepackage{newunicodechar}
+\usepackage{textcomp}
+\newunicodechar{δ}{\ensuremath{\delta}}
+\newunicodechar{ε}{\ensuremath{\varepsilon}}
+\newunicodechar{μ}{\ensuremath{\mu}}
+\newunicodechar{π}{\ensuremath{\pi}}
+\newunicodechar{σ}{\ensuremath{\sigma}}
+\newunicodechar{τ}{\ensuremath{\tau}}
+\newunicodechar{χ}{\ensuremath{\chi}}
+\newunicodechar{≈}{\ensuremath{\approx}}
+\newunicodechar{≤}{\ensuremath{\leq}}
+\newunicodechar{≥}{\ensuremath{\geq}}
+\newunicodechar{ᵀ}{\textsuperscript{T}}
+\newunicodechar{ᶜ}{\textsuperscript{c}}
+\newunicodechar{⁴}{\textsuperscript{4}}
+\newunicodechar{⁷}{\textsuperscript{7}}
+\newunicodechar{⁸}{\textsuperscript{8}}
+\newunicodechar{⁻}{\textsuperscript{\textminus}}
+\newunicodechar{₀}{\textsubscript{0}}
+\newunicodechar{₁}{\textsubscript{1}}
+\newunicodechar{₂}{\textsubscript{2}}
+\newunicodechar{₊}{\textsubscript{+}}
+\newunicodechar{₋}{\textsubscript{\textminus}}
+\newunicodechar{ₖ}{\textsubscript{k}}
+\newunicodechar{ⱼ}{\textsubscript{j}}
