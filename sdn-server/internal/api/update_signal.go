@@ -72,9 +72,9 @@ type updateSignalRequest struct {
 	// Topic overrides the derived topic. Present for a channel whose bundles
 	// declare a non-default pubsubTopic; normally omitted.
 	Topic string `json:"topic,omitempty"`
-	// Distribution names a release whose manifest the distribution key signed
+	// Distribution names a release whose manifest was approved
 	// (update_distribution.go). The node builds the signal and holds it for the
-	// same key instead of signing it with its own.
+	// same approval instead of signing it at once.
 	Distribution string `json:"distribution,omitempty"`
 	// DryRun signs nothing and publishes nothing: it reports the exact document
 	// that WOULD be broadcast. A publisher should be able to see the pointer
@@ -179,7 +179,7 @@ func (h *CoreAPIHandler) handleUpdateSignal(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if h.updateSigner == nil {
-		writeCoreAPIError(w, http.StatusBadRequest, "DISTRIBUTION_REQUIRED", "this node signs no releases: name the distribution whose key signs this signal")
+		writeCoreAPIError(w, http.StatusBadRequest, "DISTRIBUTION_REQUIRED", "this node signs no releases: name the distribution this signal belongs to")
 		return
 	}
 	// The signing identity goes in BEFORE the document is canonicalized, not
@@ -334,8 +334,8 @@ func resolveFeedEntry(req updateSignalRequest) (*update.ProviderFeedUpdate, stri
 	return entry, feed.FeedBaseURL, nil
 }
 
-// holdDistributionSignal stores the unsigned signal on its distribution, for the
-// distribution key to sign in the updater module.
+// holdDistributionSignal stores the unsigned signal on its distribution until it
+// is approved in the updater module's page.
 func (h *CoreAPIHandler) holdDistributionSignal(w http.ResponseWriter, req updateSignalRequest, id string, signal *update.Signal, entry *update.ProviderFeedUpdate) {
 	unsigned, err := signal.Marshal()
 	if err != nil {
@@ -359,13 +359,13 @@ func (h *CoreAPIHandler) holdDistributionSignal(w http.ResponseWriter, req updat
 		writeCoreAPIError(w, http.StatusConflict, "MANIFEST_NOT_SIGNED", err.Error())
 		return
 	}
-	log.Infof("Signal for %s is waiting for the distribution key (distribution %s).", entry.UpdateID, id)
+	log.Infof("Signal for %s is waiting for approval (distribution %s).", entry.UpdateID, id)
 	writeJSON(w, http.StatusAccepted, held)
 }
 
 func signerKeyID(signer *updatesign.Signer) string {
 	if signer == nil {
-		return "none (distribution key)"
+		return ""
 	}
 	return signer.KeyID()
 }

@@ -16,9 +16,9 @@ const read = (...parts) => readFile(resolve(packageRoot, ...parts), "utf8");
 const outputPath = resolve(packageRoot, "dist", "isomorphic", "module.wasm");
 const manifest = JSON.parse(await read("manifest.json"));
 
-// One translation unit: vendored Monocypher (its own #includes stripped), the
-// BIP-39 wordlist, then the module.
-const localInclude = /^#include "(monocypher|monocypher-ed25519|bip39_english\.inc)(\.h)?"\s*$/gm;
+// One translation unit: vendored Monocypher (its own #includes stripped), then
+// the module.
+const localInclude = /^#include "(monocypher|monocypher-ed25519)(\.h)?"\s*$/gm;
 const sourceCode = [
   await read("third_party/monocypher/monocypher.h"),
   await read("third_party/monocypher/monocypher.c"),
@@ -26,7 +26,6 @@ const sourceCode = [
   "#undef FOR",
   await read("third_party/monocypher/monocypher-ed25519.c"),
   "#undef FOR",
-  await read("src/bip39_english.inc"),
   await read("src/module.cpp"),
 ].join("\n").replace(localInclude, "");
 

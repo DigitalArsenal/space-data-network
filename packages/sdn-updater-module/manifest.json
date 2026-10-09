@@ -3,7 +3,7 @@
   "name": "SDN Updater",
   "version": "0.2.0",
   "pluginFamily": "infrastructure",
-  "description": "The update coordinator. An administrator enters the distribution key in its page each time; it signs a release's manifest and signal with that key and wipes it. Nothing is stored.",
+  "description": "The update coordinator's page: releases go out when an administrator approves them, signed with the coordinator node's key by default or with an uploaded key that is never saved.",
   "runtimeTargets": [
     "BROWSER",
     "WASI"
@@ -16,8 +16,8 @@
   "methods": [
     {
       "methodId": "openKey",
-      "displayName": "Enter the distribution key",
-      "description": "Derives the distribution key (m/44'/0'/0'/3'/0') from a BIP-39 recovery phrase and holds it in this instance's memory. Returns its key id and public key.",
+      "displayName": "Load an uploaded key",
+      "description": "Loads an uploaded Ed25519 key (PKCS#8 PEM or a 64-hex seed) into this instance's memory. Returns its key id and public key.",
       "inputPorts": [
         {
           "portId": "request",
@@ -29,18 +29,18 @@
                   "acceptsAnyFlatbuffer": true
                 }
               ],
-              "description": "The recovery phrase and optional passphrase, as JSON. Never stored.",
+              "description": "The uploaded key file, as JSON. Never stored.",
               "wildcardJustification": {
                 "kind": "intra-flow-control-frame",
                 "mediaType": "application/json",
-                "detail": "The recovery phrase and optional passphrase, as JSON. Never stored. Module control data, never persisted as an observation."
+                "detail": "The uploaded key file, as JSON. Never stored. Module control data, never persisted as an observation."
               }
             }
           ],
           "minStreams": 1,
           "maxStreams": 1,
           "required": true,
-          "description": "The recovery phrase and optional passphrase, as JSON. Never stored."
+          "description": "The uploaded key file, as JSON. Never stored."
         }
       ],
       "outputPorts": [
@@ -54,18 +54,18 @@
                   "acceptsAnyFlatbuffer": true
                 }
               ],
-              "description": "The distribution key id, public key and path, as JSON.",
+              "description": "The key id and public key, as JSON.",
               "wildcardJustification": {
                 "kind": "intra-flow-control-frame",
                 "mediaType": "application/json",
-                "detail": "The distribution key id, public key and path, as JSON. Module control data, never persisted as an observation."
+                "detail": "The key id and public key, as JSON. Module control data, never persisted as an observation."
               }
             }
           ],
           "minStreams": 1,
           "maxStreams": 1,
           "required": true,
-          "description": "The distribution key id, public key and path, as JSON."
+          "description": "The key id and public key, as JSON."
         }
       ],
       "maxBatch": 1,
@@ -74,7 +74,7 @@
     {
       "methodId": "signRelease",
       "displayName": "Sign a release",
-      "description": "Signs a release's manifest or signal with the distribution key under its update statement domain. Returns the signed document.",
+      "description": "Signs a release's manifest or signal with the uploaded key under its update statement domain. Returns the signed document.",
       "inputPorts": [
         {
           "portId": "request",
@@ -130,8 +130,8 @@
     },
     {
       "methodId": "closeKey",
-      "displayName": "Close the distribution key",
-      "description": "Wipes the distribution key from memory.",
+      "displayName": "Close the uploaded key",
+      "description": "Wipes the uploaded key from memory.",
       "inputPorts": [
         {
           "portId": "request",
@@ -188,6 +188,6 @@
   ],
   "sequentialJustification": {
     "kind": "pure-transform",
-    "detail": "Derives one key and signs one small document per call: a few milliseconds of hashing, with nothing to run in parallel."
+    "detail": "Signs one small document per call: a few milliseconds of hashing, with nothing to run in parallel."
   }
 }
