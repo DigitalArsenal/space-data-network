@@ -384,6 +384,12 @@ func ApplyPrepared(paths Paths, prepared *Prepared, opts ApplyOptions) (*ApplyRe
 		return nil, swapErr
 	}
 
+	if candidate.Manifest.TrustRoots != nil {
+		if err := installTrustRoots(paths, candidate.Manifest.TrustRoots); err != nil {
+			return nil, fmt.Errorf("update applied but its update roots were not installed: %w", err)
+		}
+	}
+
 	appliedAt := nowOr(opts.Now).UTC().Format(time.RFC3339)
 	previous := &StatePrevious{
 		Sequence: state.Sequence,

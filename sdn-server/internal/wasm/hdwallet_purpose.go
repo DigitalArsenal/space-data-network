@@ -68,15 +68,24 @@ const (
 	PurposeLicensingGrant KeyPurpose = 2
 )
 
+// PurposeUpdateDistribution (index 3) is RESERVED and deliberately absent from
+// the registry below: it is the release distribution key, which no node derives
+// or holds. An administrator enters a recovery phrase in the updater module's
+// page each time, and the module derives m/44'/0'/0'/3'/0' there and wipes it
+// (packages/sdn-updater-module; owner 2026-10-09). Leaving it unregistered is
+// what makes DeriveChildForPurpose refuse it on a node.
+const PurposeUpdateDistribution KeyPurpose = 3
+
 // purposeLabels is the REGISTRY. A purpose absent from this map cannot be derived.
 //
 // Labels are stable identifiers: they appear in the key inventory, in the legacy
 // KDF domain string, and in operator-facing UI. Renaming one is a breaking change
 // for the legacy derivation, so version the label rather than rename it.
 //
-// RESERVED: indices 3 and up are unallocated. The module-publication /
-// distribution lane and any future purpose MUST register here rather than picking
-// an index locally.
+// RESERVED: index 3 is the update distribution key (never derived by a node, see
+// PurposeUpdateDistribution); indices 4 and up are unallocated. The
+// module-publication lane and any future purpose MUST register here rather than
+// picking an index locally.
 var purposeLabels = map[KeyPurpose]string{
 	PurposeIdentitySigning: "identity-signing",
 	PurposeEncryption:      "encryption",

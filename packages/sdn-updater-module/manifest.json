@@ -1,129 +1,193 @@
 {
   "pluginId": "org.spacedatanetwork.updater",
   "name": "SDN Updater",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "pluginFamily": "infrastructure",
-  "description": "Orchestrates updates of kubo, helia, sdn-server, desktop app, and plugins across SDN clients. Same artifact runs in publisher mode on sdn.spaceaware.io (granted wallet_sign + ipfs add/pin + pubsub publish) and in consumer mode everywhere else.",
-  "runtimeTargets": ["WASMEDGE", "BROWSER", "WASI"],
-  "invokeSurfaces": ["direct", "command"],
-
-  "capabilities": [
-    { "capability": "clock",         "required": false },
-    { "capability": "logging",       "required": false },
-    { "capability": "schedule_cron", "required": false },
-    { "capability": "http",          "required": false },
-    { "capability": "ipfs",          "required": false },
-    { "capability": "pubsub",        "required": false },
-    { "capability": "crypto_hash",   "required": false },
-    { "capability": "crypto_verify", "required": false },
-    { "capability": "crypto_sign",   "required": false },
-    { "capability": "wallet_sign",   "required": false },
-    { "capability": "storage_write", "required": false },
-    { "capability": "storage_query", "required": false }
+  "description": "The update coordinator. An administrator enters the distribution key in its page each time; it signs a release's manifest and signal with that key and wipes it. Nothing is stored.",
+  "runtimeTargets": [
+    "BROWSER",
+    "WASI"
   ],
-
+  "invokeSurfaces": [
+    "direct"
+  ],
+  "capabilities": [],
   "externalInterfaces": [],
-
   "methods": [
     {
-      "methodId": "checkForUpdates",
-      "displayName": "Check for updates",
-      "description": "Consumer: fetch latest signed manifest (pubsub → IPNS → GitHub Releases), verify signature, return delta against currentVersions.",
+      "methodId": "openKey",
+      "displayName": "Enter the distribution key",
+      "description": "Derives the distribution key (m/44'/0'/0'/3'/0') from a BIP-39 recovery phrase and holds it in this instance's memory. Returns its key id and public key.",
       "inputPorts": [
         {
           "portId": "request",
-          "acceptedTypeSets": [{ "setId": "json", "allowedTypes": [{ "schemaName": "raw.json", "fileIdentifier": "JSON" }] }],
-          "minStreams": 0, "maxStreams": 1, "required": false
+          "acceptedTypeSets": [
+            {
+              "setId": "json",
+              "allowedTypes": [
+                {
+                  "acceptsAnyFlatbuffer": true
+                }
+              ],
+              "description": "The recovery phrase and optional passphrase, as JSON. Never stored.",
+              "wildcardJustification": {
+                "kind": "intra-flow-control-frame",
+                "mediaType": "application/json",
+                "detail": "The recovery phrase and optional passphrase, as JSON. Never stored. Module control data, never persisted as an observation."
+              }
+            }
+          ],
+          "minStreams": 1,
+          "maxStreams": 1,
+          "required": true,
+          "description": "The recovery phrase and optional passphrase, as JSON. Never stored."
         }
       ],
       "outputPorts": [
         {
           "portId": "result",
-          "acceptedTypeSets": [{ "setId": "json", "allowedTypes": [{ "schemaName": "raw.json", "fileIdentifier": "JSON" }] }],
-          "minStreams": 1, "maxStreams": 1, "required": true
+          "acceptedTypeSets": [
+            {
+              "setId": "json",
+              "allowedTypes": [
+                {
+                  "acceptsAnyFlatbuffer": true
+                }
+              ],
+              "description": "The distribution key id, public key and path, as JSON.",
+              "wildcardJustification": {
+                "kind": "intra-flow-control-frame",
+                "mediaType": "application/json",
+                "detail": "The distribution key id, public key and path, as JSON. Module control data, never persisted as an observation."
+              }
+            }
+          ],
+          "minStreams": 1,
+          "maxStreams": 1,
+          "required": true,
+          "description": "The distribution key id, public key and path, as JSON."
         }
       ],
-      "maxBatch": 1, "drainPolicy": "single-shot"
+      "maxBatch": 1,
+      "drainPolicy": "single-shot"
     },
     {
-      "methodId": "planUpdate",
-      "displayName": "Plan update",
-      "description": "Consumer: dependency-order the artifacts to apply from a manifest (kubo → helia → sdn-server → desktop → plugins) and return the step list.",
-      "inputPorts":  [{ "portId": "request", "acceptedTypeSets": [{ "setId": "json", "allowedTypes": [{ "schemaName": "raw.json", "fileIdentifier": "JSON" }] }], "minStreams": 1, "maxStreams": 1, "required": true }],
-      "outputPorts": [{ "portId": "result",  "acceptedTypeSets": [{ "setId": "json", "allowedTypes": [{ "schemaName": "raw.json", "fileIdentifier": "JSON" }] }], "minStreams": 1, "maxStreams": 1, "required": true }],
-      "maxBatch": 1, "drainPolicy": "single-shot"
+      "methodId": "signRelease",
+      "displayName": "Sign a release",
+      "description": "Signs a release's manifest or signal with the distribution key under its update statement domain. Returns the signed document.",
+      "inputPorts": [
+        {
+          "portId": "request",
+          "acceptedTypeSets": [
+            {
+              "setId": "json",
+              "allowedTypes": [
+                {
+                  "acceptsAnyFlatbuffer": true
+                }
+              ],
+              "description": "The release document to sign and its kind (manifest or signal), as JSON.",
+              "wildcardJustification": {
+                "kind": "intra-flow-control-frame",
+                "mediaType": "application/json",
+                "detail": "The release document to sign and its kind (manifest or signal), as JSON. Module control data, never persisted as an observation."
+              }
+            }
+          ],
+          "minStreams": 1,
+          "maxStreams": 1,
+          "required": true,
+          "description": "The release document to sign and its kind (manifest or signal), as JSON."
+        }
+      ],
+      "outputPorts": [
+        {
+          "portId": "result",
+          "acceptedTypeSets": [
+            {
+              "setId": "json",
+              "allowedTypes": [
+                {
+                  "acceptsAnyFlatbuffer": true
+                }
+              ],
+              "description": "The signed release document, as JSON.",
+              "wildcardJustification": {
+                "kind": "intra-flow-control-frame",
+                "mediaType": "application/json",
+                "detail": "The signed release document, as JSON. Module control data, never persisted as an observation."
+              }
+            }
+          ],
+          "minStreams": 1,
+          "maxStreams": 1,
+          "required": true,
+          "description": "The signed release document, as JSON."
+        }
+      ],
+      "maxBatch": 1,
+      "drainPolicy": "single-shot"
     },
     {
-      "methodId": "fetchArtifact",
-      "displayName": "Fetch artifact",
-      "description": "Consumer: fetch artifact bytes by CID (preferred, via ipfs cap) or URL (fallback, via http cap).",
-      "inputPorts":  [{ "portId": "request", "acceptedTypeSets": [{ "setId": "json", "allowedTypes": [{ "schemaName": "raw.json", "fileIdentifier": "JSON" }] }], "minStreams": 1, "maxStreams": 1, "required": true }],
-      "outputPorts": [{ "portId": "bytes",   "acceptedTypeSets": [{ "setId": "bin",  "allowedTypes": [{ "schemaName": "raw.bin",  "fileIdentifier": "RBIN" }] }], "minStreams": 1, "maxStreams": 1, "required": true }],
-      "maxBatch": 1, "drainPolicy": "single-shot"
-    },
-    {
-      "methodId": "verifyArtifact",
-      "displayName": "Verify artifact",
-      "description": "Consumer: verify sha256 + Ed25519 manifest signature using crypto_hash + crypto_verify.",
-      "inputPorts":  [{ "portId": "request", "acceptedTypeSets": [{ "setId": "json", "allowedTypes": [{ "schemaName": "raw.json", "fileIdentifier": "JSON" }] }], "minStreams": 1, "maxStreams": 1, "required": true }],
-      "outputPorts": [{ "portId": "result",  "acceptedTypeSets": [{ "setId": "json", "allowedTypes": [{ "schemaName": "raw.json", "fileIdentifier": "JSON" }] }], "minStreams": 1, "maxStreams": 1, "required": true }],
-      "maxBatch": 1, "drainPolicy": "single-shot"
-    },
-    {
-      "methodId": "stageArtifact",
-      "displayName": "Stage artifact",
-      "description": "Consumer: write verified bytes to host staging area via storage_write.",
-      "inputPorts":  [{ "portId": "request", "acceptedTypeSets": [{ "setId": "json", "allowedTypes": [{ "schemaName": "raw.json", "fileIdentifier": "JSON" }] }], "minStreams": 1, "maxStreams": 1, "required": true }],
-      "outputPorts": [{ "portId": "result",  "acceptedTypeSets": [{ "setId": "json", "allowedTypes": [{ "schemaName": "raw.json", "fileIdentifier": "JSON" }] }], "minStreams": 1, "maxStreams": 1, "required": true }],
-      "maxBatch": 1, "drainPolicy": "single-shot"
-    },
-    {
-      "methodId": "applyStaged",
-      "displayName": "Apply staged update",
-      "description": "Consumer: tell host to atomically swap staged → live and restart / reimport. Requires host_control capability (TBD: SDK addition).",
-      "inputPorts":  [{ "portId": "request", "acceptedTypeSets": [{ "setId": "json", "allowedTypes": [{ "schemaName": "raw.json", "fileIdentifier": "JSON" }] }], "minStreams": 1, "maxStreams": 1, "required": true }],
-      "outputPorts": [{ "portId": "result",  "acceptedTypeSets": [{ "setId": "json", "allowedTypes": [{ "schemaName": "raw.json", "fileIdentifier": "JSON" }] }], "minStreams": 1, "maxStreams": 1, "required": true }],
-      "maxBatch": 1, "drainPolicy": "single-shot"
-    },
-    {
-      "methodId": "selfUpgrade",
-      "displayName": "Self-upgrade updater wasm",
-      "description": "Both: detect own wasm is stale relative to manifest.updaterWasm.sha256 and trigger host re-import (browser) / restart-with-new (server, desktop).",
-      "inputPorts":  [{ "portId": "request", "acceptedTypeSets": [{ "setId": "json", "allowedTypes": [{ "schemaName": "raw.json", "fileIdentifier": "JSON" }] }], "minStreams": 0, "maxStreams": 1, "required": false }],
-      "outputPorts": [{ "portId": "result",  "acceptedTypeSets": [{ "setId": "json", "allowedTypes": [{ "schemaName": "raw.json", "fileIdentifier": "JSON" }] }], "minStreams": 1, "maxStreams": 1, "required": true }],
-      "maxBatch": 1, "drainPolicy": "single-shot"
-    },
-    {
-      "methodId": "pollUpstream",
-      "displayName": "Poll upstream releases",
-      "description": "Publisher: check kubo dist, helia npm, github releases for new versions. Requires http capability.",
-      "inputPorts":  [{ "portId": "request", "acceptedTypeSets": [{ "setId": "json", "allowedTypes": [{ "schemaName": "raw.json", "fileIdentifier": "JSON" }] }], "minStreams": 1, "maxStreams": 1, "required": true }],
-      "outputPorts": [{ "portId": "result",  "acceptedTypeSets": [{ "setId": "json", "allowedTypes": [{ "schemaName": "raw.json", "fileIdentifier": "JSON" }] }], "minStreams": 1, "maxStreams": 1, "required": true }],
-      "maxBatch": 1, "drainPolicy": "single-shot"
-    },
-    {
-      "methodId": "buildManifest",
-      "displayName": "Build update manifest",
-      "description": "Publisher: assemble org.spacedatanetwork.update.v1 manifest from gathered artifacts.",
-      "inputPorts":  [{ "portId": "request", "acceptedTypeSets": [{ "setId": "json", "allowedTypes": [{ "schemaName": "raw.json", "fileIdentifier": "JSON" }] }], "minStreams": 1, "maxStreams": 1, "required": true }],
-      "outputPorts": [{ "portId": "result",  "acceptedTypeSets": [{ "setId": "json", "allowedTypes": [{ "schemaName": "raw.json", "fileIdentifier": "JSON" }] }], "minStreams": 1, "maxStreams": 1, "required": true }],
-      "maxBatch": 1, "drainPolicy": "single-shot"
-    },
-    {
-      "methodId": "signManifest",
-      "displayName": "Sign update manifest",
-      "description": "Publisher: sign canonicalized manifest bytes with the admin Ed25519 key via wallet_sign capability.",
-      "inputPorts":  [{ "portId": "request", "acceptedTypeSets": [{ "setId": "json", "allowedTypes": [{ "schemaName": "raw.json", "fileIdentifier": "JSON" }] }], "minStreams": 1, "maxStreams": 1, "required": true }],
-      "outputPorts": [{ "portId": "result",  "acceptedTypeSets": [{ "setId": "json", "allowedTypes": [{ "schemaName": "raw.json", "fileIdentifier": "JSON" }] }], "minStreams": 1, "maxStreams": 1, "required": true }],
-      "maxBatch": 1, "drainPolicy": "single-shot"
-    },
-    {
-      "methodId": "publishManifest",
-      "displayName": "Publish update manifest",
-      "description": "Publisher: ipfs.add + pin manifest and artifacts, broadcast on /sdn/updates/v1/<channel> pubsub.",
-      "inputPorts":  [{ "portId": "request", "acceptedTypeSets": [{ "setId": "json", "allowedTypes": [{ "schemaName": "raw.json", "fileIdentifier": "JSON" }] }], "minStreams": 1, "maxStreams": 1, "required": true }],
-      "outputPorts": [{ "portId": "result",  "acceptedTypeSets": [{ "setId": "json", "allowedTypes": [{ "schemaName": "raw.json", "fileIdentifier": "JSON" }] }], "minStreams": 1, "maxStreams": 1, "required": true }],
-      "maxBatch": 1, "drainPolicy": "single-shot"
+      "methodId": "closeKey",
+      "displayName": "Close the distribution key",
+      "description": "Wipes the distribution key from memory.",
+      "inputPorts": [
+        {
+          "portId": "request",
+          "acceptedTypeSets": [
+            {
+              "setId": "json",
+              "allowedTypes": [
+                {
+                  "acceptsAnyFlatbuffer": true
+                }
+              ],
+              "description": "Empty JSON request.",
+              "wildcardJustification": {
+                "kind": "intra-flow-control-frame",
+                "mediaType": "application/json",
+                "detail": "Empty JSON request. Module control data, never persisted as an observation."
+              }
+            }
+          ],
+          "minStreams": 0,
+          "maxStreams": 1,
+          "required": false,
+          "description": "Empty JSON request."
+        }
+      ],
+      "outputPorts": [
+        {
+          "portId": "result",
+          "acceptedTypeSets": [
+            {
+              "setId": "json",
+              "allowedTypes": [
+                {
+                  "acceptsAnyFlatbuffer": true
+                }
+              ],
+              "description": "Confirmation that the key was wiped, as JSON.",
+              "wildcardJustification": {
+                "kind": "intra-flow-control-frame",
+                "mediaType": "application/json",
+                "detail": "Confirmation that the key was wiped, as JSON. Module control data, never persisted as an observation."
+              }
+            }
+          ],
+          "minStreams": 1,
+          "maxStreams": 1,
+          "required": true,
+          "description": "Confirmation that the key was wiped, as JSON."
+        }
+      ],
+      "maxBatch": 1,
+      "drainPolicy": "single-shot"
     }
-  ]
+  ],
+  "sequentialJustification": {
+    "kind": "pure-transform",
+    "detail": "Derives one key and signs one small document per call: a few milliseconds of hashing, with nothing to run in parallel."
+  }
 }

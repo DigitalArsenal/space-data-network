@@ -186,6 +186,10 @@ type Manifest struct {
 	// that key for one recipient node. It sits inside the signed document, so
 	// the recipient set is authorized by the same signature as the bytes.
 	Envelope *ManifestEnvelope `json:"envelope,omitempty"`
+	// TrustRoots (trustroots.go) replaces the node's update roots once this
+	// release's swap succeeds. Signed like every other field, so only a current
+	// root can move the roots.
+	TrustRoots TrustedRoots `json:"trust_roots,omitempty"`
 
 	raw []byte
 }
@@ -224,6 +228,16 @@ func ParseManifest(raw []byte) (*Manifest, error) {
 	}
 	manifest.raw = append([]byte(nil), raw...)
 	return &manifest, nil
+}
+
+// VerifySignature checks the manifest's shape and its signature against roots,
+// without the receiving host's target, sequence and expiry checks: what the
+// coordinator node checks before it accepts a distribution signature.
+func (m *Manifest) VerifySignature(roots TrustedRoots) error {
+	if err := m.assertRequiredShape(); err != nil {
+		return err
+	}
+	return m.assertSignature(roots)
 }
 
 // CanonicalManifestBytes reproduces the desktop updater's canonical JSON:
@@ -340,6 +354,9 @@ func (m *Manifest) assertRequiredShape() error {
 		return errors.New("missing update signature")
 	}
 	if err := m.assertModuleTargets(); err != nil {
+		return err
+	}
+	if err := m.assertTrustRoots(); err != nil {
 		return err
 	}
 	if m.IsUIPackage() {

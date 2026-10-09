@@ -72,6 +72,10 @@ type updateSignalRequest struct {
 	// Topic overrides the derived topic. Present for a channel whose bundles
 	// declare a non-default pubsubTopic; normally omitted.
 	Topic string `json:"topic,omitempty"`
+	// Distribution names a release whose manifest the distribution key signed
+	// (update_distribution.go). The node builds the signal and holds it for the
+	// same key instead of signing it with its own.
+	Distribution string `json:"distribution,omitempty"`
 	// DryRun signs nothing and publishes nothing: it reports the exact document
 	// that WOULD be broadcast. A publisher should be able to see the pointer
 	// before the fleet acts on it.
@@ -104,7 +108,7 @@ type updateSignalResponse struct {
 // indistinguishable from a publisher that simply never signalled — a confusion
 // this fleet has already paid for once.
 func (h *CoreAPIHandler) registerUpdateSignalRoutes(mux *http.ServeMux) {
-	if h.updateSigner == nil {
+	if h.updateSigner == nil && h.distributions == nil {
 		log.Warnf("Update signal endpoint NOT registered at %s: this node has no update signing key, so it cannot be a publisher of record.", UpdateSignalRoute)
 		return
 	}
@@ -118,17 +122,13 @@ func (h *CoreAPIHandler) registerUpdateSignalRoutes(mux *http.ServeMux) {
 	}
 	mux.HandleFunc(UpdateSignalRoute, h.withRL(h.requireAdminStrict(h.handleUpdateSignal)))
 	log.Infof("Update signal endpoint registered at %s (POST, Admin session required, key_id %s, domain %s). A publish is not a push until this is called.",
-		UpdateSignalRoute, h.updateSigner.KeyID(), sigdomain.DomainUpdateSignalV1)
+		UpdateSignalRoute, signerKeyID(h.updateSigner), sigdomain.DomainUpdateSignalV1)
 }
 
 func (h *CoreAPIHandler) handleUpdateSignal(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", http.MethodPost)
 		writeCoreAPIError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "update signal accepts POST only")
-		return
-	}
-	if h.updateSigner == nil {
-		writeCoreAPIError(w, http.StatusServiceUnavailable, "SIGNER_UNAVAILABLE", "update signing is not available on this node")
 		return
 	}
 	publisher, ok := h.publisher.(topicPublisher)
@@ -174,6 +174,14 @@ func (h *CoreAPIHandler) handleUpdateSignal(w http.ResponseWriter, r *http.Reque
 	}
 
 	signal := update.SignalFromFeedEntry(*entry, feedBaseURL, time.Now(), false)
+	if id := strings.TrimSpace(req.Distribution); id != "" {
+		h.holdDistributionSignal(w, req, id, signal, entry)
+		return
+	}
+	if h.updateSigner == nil {
+		writeCoreAPIError(w, http.StatusBadRequest, "DISTRIBUTION_REQUIRED", "this node signs no releases: name the distribution whose key signs this signal")
+		return
+	}
 	// The signing identity goes in BEFORE the document is canonicalized, not
 	// after. Canonicalization strips only signing.signature, so key_id and
 	// public_key are covered by the signature like every other field — filling
@@ -324,4 +332,40 @@ func resolveFeedEntry(req updateSignalRequest) (*update.ProviderFeedUpdate, stri
 		return nil, "", err
 	}
 	return entry, feed.FeedBaseURL, nil
+}
+
+// holdDistributionSignal stores the unsigned signal on its distribution, for the
+// distribution key to sign in the updater module.
+func (h *CoreAPIHandler) holdDistributionSignal(w http.ResponseWriter, req updateSignalRequest, id string, signal *update.Signal, entry *update.ProviderFeedUpdate) {
+	unsigned, err := signal.Marshal()
+	if err != nil {
+		writeCoreAPIError(w, http.StatusInternalServerError, "SIGNAL_ENCODE_FAILED", err.Error())
+		return
+	}
+	topic := strings.TrimSpace(req.Topic)
+	if topic == "" {
+		topic = update.SignalTopic(entry.Channel)
+	}
+	if req.DryRun {
+		writeJSON(w, http.StatusOK, buildSignalResponse(false, true, req, entry, unsigned, "", "", topic))
+		return
+	}
+	held, err := h.attachDistributionSignal(id, unsigned, topic)
+	if errors.Is(err, errNoDistribution) {
+		writeCoreAPIError(w, http.StatusNotFound, "NO_SUCH_DISTRIBUTION", err.Error())
+		return
+	}
+	if err != nil {
+		writeCoreAPIError(w, http.StatusConflict, "MANIFEST_NOT_SIGNED", err.Error())
+		return
+	}
+	log.Infof("Signal for %s is waiting for the distribution key (distribution %s).", entry.UpdateID, id)
+	writeJSON(w, http.StatusAccepted, held)
+}
+
+func signerKeyID(signer *updatesign.Signer) string {
+	if signer == nil {
+		return "none (distribution key)"
+	}
+	return signer.KeyID()
 }

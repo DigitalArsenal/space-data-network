@@ -21,7 +21,8 @@
  *      every file with its sha256, compatibility.bundle_versions = the build
  *      the nodes run;
  *   4. on the publisher host: `update seal` (encrypt once, wrap the key for
- *      each node), then `update sign-manifest` (the node key);
+ *      each node), then `update distribute` (the distribution key, entered in
+ *      the coordinator's Updater page; --node-signed keeps the node key);
  *   5. manifest.json + update.wasm into ui-bundle/<channel>/any/any/<version>/,
  *      the index regenerated, the public URLs checked against those bytes;
  *   6. the ledger line, then the signal. Each node installs the package while
@@ -67,6 +68,9 @@ const keyId = arg('key-id', 'd4a971a7e534');
 const nodesFile = resolve(arg('nodes', join(repoRoot, 'deployment/release/fleet-nodes.json')));
 const forVersions = arg('for-version', '');
 const ledgerPath = arg('ledger-path', '/opt/spacedatanetwork/publish-ledger.log');
+// Signed with the distribution key in the coordinator's Updater page (owner
+// 2026-10-09); --node-signed <reason> keeps the host-01 node key on record.
+const nodeSignedReason = arg('node-signed', '');
 // Opt-outs take their REASON as their value, like publish-fleet-update's.
 const rollbackReason = arg('rollback', '');
 const noSignalReason = arg('no-signal', '');
@@ -205,7 +209,17 @@ try {
   sealOnPublisher({ run, publisherSSH, publisherBin, remoteDir: remoteTmp, bundleRemote: `${remoteTmp}/${bundleName}.tar.gz`, log, tag: 'ui-update' });
   // NO --node-url, as in publish-fleet-update: the client dials loopback and
   // anchors to the daemon's own certificate.
-  run('ssh', [publisherSSH, `${shellQuote(publisherBin)} update sign-manifest --manifest ${remoteTmp}/manifest.sealed.json --out ${remoteTmp}/manifest.json`]);
+  let distributionId = '';
+  if (nodeSignedReason) {
+    log(`[ui-update] *** NODE-SIGNED *** reason: ${nodeSignedReason}`);
+    run('ssh', [publisherSSH, `${shellQuote(publisherBin)} update sign-manifest --manifest ${remoteTmp}/manifest.sealed.json --out ${remoteTmp}/manifest.json`]);
+  } else {
+    log('[ui-update] waiting for the distribution key: open Updater in the coordinator\'s dashboard and sign this release');
+    const distributed = run('ssh', [publisherSSH, `${shellQuote(publisherBin)} update distribute --manifest ${remoteTmp}/manifest.sealed.json --out ${remoteTmp}/manifest.json`]).toString();
+    distributionId = (distributed.match(/^distribution=(\w+)$/m) || [])[1] || '';
+    log(distributed.trim().replace(/^/gm, '[ui-update] '));
+    if (!distributionId) throw new Error('the coordinator did not report a distribution id');
+  }
   const signedPath = join(work, 'manifest.json');
   const carrierPath = join(work, 'update.wasm');
   run('scp', ['-q', `${publisherSSH}:${remoteTmp}/manifest.json`, signedPath]);
@@ -291,7 +305,7 @@ print(f'index: {len(updates)} UI package(s)')
     const out = run('ssh', [
       publisherSSH,
       `${shellQuote(publisherBin)} update signal --channel ${shellQuote(channel)} --update-id ${shellQuote(updateId)} ` +
-        `--kind ${kind} --platform any --arch any`,
+        `--kind ${kind} --platform any --arch any` + (distributionId ? ` --distribution ${shellQuote(distributionId)}` : ''),
     ]).toString();
     signalled = /published=true/.test(out);
     if (!signalled) throw new Error(`the publisher did not report published=true:\n${out}`);

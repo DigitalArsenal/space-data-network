@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -31,16 +32,18 @@ import (
 )
 
 var (
-	updateSignalChannel  string
-	updateSignalUpdateID string
-	updateSignalVersion  string
-	updateSignalPlatform string
-	updateSignalArch     string
-	updateSignalKind     string
-	updateSignalTopic    string
-	updateSignalDryRun   bool
-	updateSignalNodeURL  string
-	updateSignalJSON     bool
+	updateSignalChannel      string
+	updateSignalUpdateID     string
+	updateSignalVersion      string
+	updateSignalPlatform     string
+	updateSignalArch         string
+	updateSignalKind         string
+	updateSignalTopic        string
+	updateSignalDryRun       bool
+	updateSignalDistribution string
+	updateSignalWait         time.Duration
+	updateSignalNodeURL      string
+	updateSignalJSON         bool
 )
 
 type updateSignalCLIResponse struct {
@@ -94,6 +97,23 @@ var updateSignalCmd = &cobra.Command{
 		client, err := newSignalClient(cmd)
 		if err != nil {
 			return err
+		}
+		if id := strings.TrimSpace(updateSignalDistribution); id != "" && !updateSignalDryRun {
+			// The node builds the signal and holds it for the distribution key.
+			payload["distribution"] = id
+			var held distributionView
+			if err := client.postJSON(context.Background(), "/api/v1/admin/updates/signal", payload, &held, ""); err != nil {
+				return err
+			}
+			out := cmd.OutOrStdout()
+			fmt.Fprintf(out, "distribution=%s state=%s\n", id, held.State)
+			fmt.Fprintln(out, "next=the Updater page signs the signal with the key that signed the release")
+			done, err := waitForDistribution(client, id, "signalled", updateSignalWait, out)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(out, "published=true\ntopic=%s\nupdate_id=%s version=%s key_id=%s\n", done.Topic, done.UpdateID, done.Version, done.KeyID)
+			return nil
 		}
 		var result updateSignalCLIResponse
 		if err := client.postJSON(context.Background(), "/api/v1/admin/updates/signal", payload, &result, ""); err != nil {
@@ -243,6 +263,8 @@ func init() {
 	updateSignalCmd.Flags().StringVar(&updateSignalArch, "arch", "", "target arch (default: this host's)")
 	updateSignalCmd.Flags().StringVar(&updateSignalKind, "kind", "", "target kind (default: cli-bundle)")
 	updateSignalCmd.Flags().StringVar(&updateSignalTopic, "topic", "", "override the pub/sub topic (default: /sdn/updates/v1/<channel>)")
+	updateSignalCmd.Flags().StringVar(&updateSignalDistribution, "distribution", "", "the distribution whose key signs this signal (update distribute printed it)")
+	updateSignalCmd.Flags().DurationVar(&updateSignalWait, "wait", 30*time.Minute, "with --distribution: how long to wait for the key to sign the signal")
 	updateSignalCmd.Flags().BoolVar(&updateSignalDryRun, "dry-run", false, "show the exact signal that would be broadcast; sign nothing, publish nothing")
 	updateSignalCmd.Flags().BoolVar(&updateSignalJSON, "json", false, "emit the full response as JSON")
 	updateSignalCmd.Flags().StringVar(&updateSignalNodeURL, "node-url", "",
