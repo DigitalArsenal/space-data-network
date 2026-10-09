@@ -10,6 +10,7 @@
   <title>Fast All-vs-All Conjunction Screening &middot; Space Data Network</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' fill='none'><defs><linearGradient id='t' gradientUnits='userSpaceOnUse' x1='16' y1='29' x2='16' y2='3'><stop offset='0' stop-color='%23f5a524' stop-opacity='0'/><stop offset='.55' stop-color='%23f5a524' stop-opacity='.55'/><stop offset='1' stop-color='%23f5a524'/></linearGradient></defs><circle cx='16' cy='16' r='13' stroke='%23f5f5f7' stroke-width='1.6' opacity='.3'/><path d='M16 29A13 13 0 0 1 16 3' stroke='url(%23t)' stroke-width='2.2' stroke-linecap='round'/><path d='M16 10.2L10.4 20.1H21.6Z' stroke='%23f5f5f7' stroke-width='1.6' stroke-linejoin='round'/><circle cx='16' cy='10.2' r='2.6' fill='%23f5f5f7'/><circle cx='10.4' cy='20.1' r='2.6' fill='%23f5f5f7'/><circle cx='21.6' cy='20.1' r='2.6' fill='%23f5f5f7'/><circle cx='16' cy='3' r='2.5' fill='%23f5a524'/></svg>">
   <link rel="stylesheet" href="../site.css">
+  <link rel="stylesheet" href="../whitepapers-app/paper.css">
   <link rel="stylesheet" href="katex/katex.min.css">
   <style>
     :root { --sdn-stack-footer-height: 0px; --sdn-stack-header-height: 52px; }
@@ -34,16 +35,98 @@
       </div>
     </div>
   </header>
+  <canvas id="earth" aria-hidden="true" data-conjunction></canvas>
+  <div class="paper-progress" aria-hidden="true"><span></span></div>
   <main>
-    <article class="paper wrap">
-      <p class="paper-back"><a href="../whitepapers.html">&larr; All whitepapers</a> &middot; <a href="fast-conjunction-assessment.pdf">PDF</a> &middot; <a href="https://github.com/DigitalArsenal/space-data-network/blob/main/whitepapers/fast-conjunction-assessment.md">Markdown source</a></p>
-<h1 id="fast-all-vs-all-conjunction-screening">Fast All-vs-All Conjunction Screening</h1>
-<p>Screening every catalog object against every other in seconds to minutes, for any propagator</p>
-<p>Anthony &quot;TJ&quot; Koury III</p>
-<p>Edgesource, Space Data Network · <a href="mailto:tj@edgesource.com">tj@edgesource.com</a></p>
-<p>Technical whitepaper 1.8 | 9 October 2026 (propagation accuracy moved to the companion paper; screening results unchanged from 1.7)</p>
-<p>Numerical evidence cutoff: 2 October 2026</p>
-<p>© Edgesource Corporation</p>
+    <header class="paper-hero" data-earth="1.9 40 24 0.95 -0.55 70 16">
+      <div class="wrap paper-hero-grid">
+        <div class="paper-hero-text">
+          <p class="paper-crumbs"><a href="../whitepapers.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>All whitepapers</a></p>
+          <p class="eyebrow">Conjunctions &middot; Technical whitepaper</p>
+          <h1 class="paper-title">Fast All-vs-All Conjunction Screening</h1>
+          <p class="paper-subtitle">Screening every catalog object against every other in seconds to minutes, for any propagator</p>
+          <ul class="paper-authors">
+          <li><b>Anthony &quot;TJ&quot; Koury III</b><span>Edgesource, Space Data Network<span class="dot" aria-hidden="true">·</span><a href="mailto:tj@edgesource.com">tj@edgesource.com</a></span></li>
+          </ul>
+          <div class="actions paper-actions">
+            <a class="btn btn-primary" href="fast-conjunction-assessment.pdf"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>Download PDF</a>
+            <a class="btn" href="https://github.com/DigitalArsenal/space-data-network/blob/main/whitepapers/fast-conjunction-assessment.md"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 15V9l2.5 3L12 9v6M16 9v6M14 13l2 2 2-2"/></svg>Markdown source</a>
+          </div>
+        </div>
+      </div>
+      <div class="wrap">
+        <dl class="paper-facts">
+          <div><dt>Edition</dt><dd>1.8</dd></div>
+          <div><dt>Published</dt><dd>9 October 2026</dd></div>
+          <div><dt>Evidence cutoff</dt><dd><span>2 October 2026</span></dd></div>
+          <div><dt>Sections</dt><dd>9</dd></div>
+          <div><dt>Reading time</dt><dd>36 min</dd></div>
+        </dl>
+        <p class="paper-note">Propagation accuracy moved to the companion paper; screening results unchanged from 1.7 &middot; © Edgesource Corporation</p>
+      </div>
+    </header>
+    <div class="paper-body">
+      <div class="paper-layout">
+        <nav class="paper-toc" id="contents" aria-label="Contents">
+          <div class="toc-head">
+            <p>Contents</p>
+            <button class="toc-close" type="button" aria-label="Close contents"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+          </div>
+          <ol>
+          <li><a href="#executive-summary"><span>Executive summary</span></a></li>
+          <li><a href="#1-the-problem"><span class="toc-num">1</span><span>The problem</span></a></li>
+          <li><a href="#2-pipeline"><span class="toc-num">2</span><span>Pipeline</span></a></li>
+          <li><a href="#3-the-candidate-test"><span class="toc-num">3</span><span>The candidate test</span></a>
+            <ol>
+              <li><a href="#self-bounded-motion"><span>Self-bounded motion</span></a></li>
+              <li><a href="#spatial-grid"><span>Spatial grid</span></a></li>
+              <li><a href="#two-precisions-one-decision"><span>Two precisions, one decision</span></a></li>
+              <li><a href="#refinement"><span>Refinement</span></a></li>
+            </ol>
+          </li>
+          <li><a href="#4-one-propagator-per-run"><span class="toc-num">4</span><span>One propagator per run</span></a></li>
+          <li><a href="#5-time-windows"><span class="toc-num">5</span><span>Time windows</span></a>
+            <ol>
+              <li><a href="#the-hpop-propagation-farm"><span>The HPOP propagation farm</span></a></li>
+            </ol>
+          </li>
+          <li><a href="#6-results"><span class="toc-num">6</span><span>Results</span></a>
+            <ol>
+              <li><a href="#full-catalog-three-days"><span>Full catalog, three days</span></a></li>
+              <li><a href="#step-size"><span>Step size</span></a></li>
+              <li><a href="#how-the-time-came-down"><span>How the time came down</span></a></li>
+              <li><a href="#agreement-with-the-single-call-screen"><span>Agreement with the single-call screen</span></a></li>
+              <li><a href="#validation-findings"><span>Validation findings</span></a></li>
+            </ol>
+          </li>
+          <li><a href="#7-uncertainty-and-probability-of-collision"><span class="toc-num">7</span><span>Uncertainty and probability of collision</span></a>
+            <ol>
+              <li><a href="#independent-truth"><span>Independent truth</span></a></li>
+              <li><a href="#an-empirical-error-model-and-its-calibration"><span>An empirical error model, and its calibration</span></a></li>
+              <li><a href="#covariance-probability-on-screened-events"><span>Covariance probability on screened events</span></a></li>
+              <li><a href="#propagated-and-fitted-covariance"><span>Propagated and fitted covariance</span></a></li>
+              <li><a href="#agreement-with-socrates"><span>Agreement with SOCRATES</span></a></li>
+              <li><a href="#screening-rules-compared"><span>Screening rules compared</span></a></li>
+            </ol>
+          </li>
+          <li><a href="#8-private-screening"><span class="toc-num">8</span><span>Private screening</span></a>
+            <ol>
+              <li><a href="#what-is-computed-on-ciphertext"><span>What is computed on ciphertext</span></a></li>
+              <li><a href="#rules-of-the-exchange"><span>Rules of the exchange</span></a></li>
+              <li><a href="#what-it-costs"><span>What it costs</span></a></li>
+              <li><a href="#what-the-result-reveals"><span>What the result reveals</span></a></li>
+              <li><a href="#orbit-guessing"><span>Orbit guessing</span></a></li>
+            </ol>
+          </li>
+          <li><a href="#9-limits"><span class="toc-num">9</span><span>Limits</span></a></li>
+          <li><a href="#references"><span>References</span></a></li>
+          </ol>
+          <div class="toc-files">
+            <a href="fast-conjunction-assessment.pdf"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>PDF</a>
+            <a href="https://github.com/DigitalArsenal/space-data-network/blob/main/whitepapers/fast-conjunction-assessment.md"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 15V9l2.5 3L12 9v6M16 9v6M14 13l2 2 2-2"/></svg>Markdown</a>
+          </div>
+        </nav>
+        <article class="paper">
 <h2 id="executive-summary">Executive summary</h2>
 <p>Space Data Network (SDN) screens the full public catalog, 32,514 objects, all-vs-all over three days in 19 s with SGP4 on ordinary processors, and in 21 s with a GPU. With numerical high-precision orbit propagation (HPOP) it takes about 8 minutes, almost all of it propagation. The screen finds every pair that comes within 5 km, and reports each close approach&#39;s time (TCA), miss distance, relative speed and maximum collision probability. The measurements were taken on one 28-core workstation, in Node.js and in a standard web browser. In WasmEdge, the runtime SDN nodes use, the SGP4 screen takes 23 s. Every run on one catalog and propagator reports the same conjunctions.</p>
 <p>Five design choices produce that speed:</p>
@@ -62,16 +145,14 @@
 <li><strong>What it reveals.</strong> The paper shows how a naive design leaks distances, how invented trajectories can locate a hidden satellite, and which defenses stop that, with or without a public track for either satellite.</li>
 <li><strong>What it cannot hide.</strong> Real close approaches reveal what safety requires.</li>
 </ul>
-<h2 id="1-the-problem">1 The problem</h2>
+<h2 id="1-the-problem"><span class="sec-num">1</span>The problem</h2>
 <p>An all-vs-all screen compares every object with every other: n(n − 1)/2 pairs, 528.6 million for 32,514 objects. A three-day screen at 60 s steps evaluates each pair at 4,321 instants, about 2.3 trillion pair-steps. A close approach at 10 km/s relative speed lasts under a second inside a few kilometers, so a coarse test that misses it loses the event.</p>
 <p>The module&#39;s existing single-call screen (<code>screen_catalog</code>) uses a perigee/apogee prefilter and a k-d tree per time step. It holds every encounter of the window in WASM linear memory, at most 2 GiB. It runs out of memory above about 7,000 objects for a one-day window (<a href="#r2">R2</a>).</p>
-<h2 id="2-pipeline">2 Pipeline</h2>
-<p align="center">
-  <img src="assets/ca-pipeline.svg" alt="Pipeline: load index, coarse grid, pair search on the GPU or in the module, refine, and merge windows; SGP4 element sets load once, a propagator's trajectories load per window" width="720"/>
-</p>
+<h2 id="2-pipeline"><span class="sec-num">2</span>Pipeline</h2>
+<figure class="paper-fig"><img src="assets/ca-pipeline.svg" alt="Pipeline: load index, coarse grid, pair search on the GPU or in the module, refine, and merge windows; SGP4 element sets load once, a propagator's trajectories load per window" width="720"/><figcaption>Pipeline: load index, coarse grid, pair search on the GPU or in the module, refine, and merge windows; SGP4 element sets load once, a propagator's trajectories load per window</figcaption></figure>
 
 <p>The host code (JavaScript) moves records between the module and the GPU and contains no physics. The conjunction module, the SGP4 implementation, the HPOP propagator and the epoch-state converter are WASM modules. They are built with the SDN Module SDK and run unchanged in a browser, in the WasmEdge runtime and in its Docker image (<a href="#r3">R3</a>).</p>
-<table>
+<div class="table-frame"><table>
 <thead>
 <tr>
 <th>Stage</th>
@@ -110,14 +191,14 @@
 <td>Exact comparisons</td>
 <td>Which window owns each TCA</td>
 </tr>
-</tbody></table>
-<h2 id="3-the-candidate-test">3 The candidate test</h2>
+</tbody></table></div>
+<h2 id="3-the-candidate-test"><span class="sec-num">3</span>The candidate test</h2>
 <h3 id="self-bounded-motion">Self-bounded motion</h3>
 <p>Let h be half the coarse step (30 s at 60 s steps). For a sample of an object at step k, with position r and velocity v, the trajectory source supplies a bound D such that the true position stays within D of the straight line:</p>
 <div class="math-display"><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mo stretchy="false">∣</mo><mi mathvariant="bold">r</mi><mo stretchy="false">(</mo><msub><mi>t</mi><mi>k</mi></msub><mo>+</mo><mi>τ</mi><mo stretchy="false">)</mo><mo>−</mo><msub><mi mathvariant="bold">r</mi><mi>k</mi></msub><mo>−</mo><msub><mi mathvariant="bold">v</mi><mi>k</mi></msub><mi>τ</mi><mo stretchy="false">∣</mo><mo>≤</mo><mi>D</mi><mspace width="1em"/><mtext>for all </mtext><mo stretchy="false">∣</mo><mi>τ</mi><mo stretchy="false">∣</mo><mo>≤</mo><mi>h</mi><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">\lvert \mathbf{r}(t_k+\tau) - \mathbf{r}_k - \mathbf{v}_k\tau \rvert \le D \quad \text{for all } \lvert\tau\rvert \le h.</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mopen">∣</span><span class="mord mathbf">r</span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal">t</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0315em;">k</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">+</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal" style="margin-right:0.1132em;">τ</span><span class="mclose">)</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.7333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathbf">r</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0315em;">k</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord"><span class="mord mathbf" style="margin-right:0.016em;">v</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:-0.016em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0315em;">k</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mord mathnormal" style="margin-right:0.1132em;">τ</span><span class="mclose">∣</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">≤</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal" style="margin-right:0.0278em;">D</span><span class="mspace" style="margin-right:1em;"></span><span class="mord text"><span class="mord">for all </span></span><span class="mopen">∣</span><span class="mord mathnormal" style="margin-right:0.1132em;">τ</span><span class="mclose">∣</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">≤</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.6944em;"></span><span class="mord mathnormal">h</span><span class="mord">.</span></span></span></span></span></div>
 <p>Two objects can then come within the threshold d during the interval only if the straight-line relative path does so within d + D₁ + D₂. The test computes the clamped closest approach of the relative straight line over [−h, h] and compares it with that limit. A pair that fails the test at every step of an interval cannot close in it.</p>
 <p>Each source kind computes D from what it knows:</p>
-<table>
+<div class="table-frame"><table>
 <thead>
 <tr>
 <th>Source</th>
@@ -135,7 +216,7 @@
 <td>½ A h² + (J + G) h + P</td>
 <td>A bounds the position series&#39; second derivative using |T_k″| ≤ k²(k² − 1)/3. J and P sum velocity and position jumps where intervals meet. G is the gap between the velocity series and the position series&#39; derivative</td>
 </tr>
-</tbody></table>
+</tbody></table></div>
 <p>The trajectory bound uses only the coefficients, so it holds for any force model and for impulsive maneuvers that appear as interval jumps. A native test checks it against the trajectory itself every 0.1 s around samples taken every 7 s. The trajectory is a 7,000 km orbit interpolated as a propagator would export it, with a 5 m/s maneuver at an interval boundary. Tested at h = 30 s and h = 90 s, the bound was never exceeded, and away from the maneuver it was at most 1.34 times the true deviation (<a href="#r2">R2</a>).</p>
 <h3 id="spatial-grid">Spatial grid</h3>
 <p>Testing all 528.6 million pairs at every step is wasted work: almost all pairs are thousands of kilometres apart. At each step, an object&#39;s straight-line segment over [−h, h], widened by d/2 + D, gives an axis-aligned box. Two objects can pass the straight-line test only if their boxes overlap, so a search over overlapping boxes drops nothing the test would pass.</p>
@@ -155,11 +236,11 @@
 <p>ε (1 m/s) allows for a source&#39;s velocity differing from the rate of its position. If q = |Δr|max A / |Δṙ|min² &lt; 1, the squared range is convex on the window. Its one minimum is then the root of the range rate f = Δr · Δv, and Newton steps of −f / |Δv|² converge by a factor q or better per step. About ten state evaluations reach the root to the resolution of a Julian date, about 47 µs.</p>
 <p>Where the proof fails, for example a slow pair that stays close for minutes, the search samples the range every 5 s and refines each minimum it brackets with golden-section search. The earlier version used that path for every encounter. It also rescanned ±60 s at 0.05 s around each candidate minimum, tens of thousands of SGP4 evaluations per conjunction. Section 6 measures the change.</p>
 <p>Probability uses the Alfano maximum (<a href="#r4">R4</a>). When a refine call would stage more than the module&#39;s 16,384-event output limit, the host splits it in two.</p>
-<h2 id="4-one-propagator-per-run">4 One propagator per run</h2>
+<h2 id="4-one-propagator-per-run"><span class="sec-num">4</span>One propagator per run</h2>
 <p>A run screens one propagator&#39;s output. A resident index holds either mean elements, evaluated with the module&#39;s SGP4, or trajectories from one generator, identified by the Chebyshev ephemeris (PPE) record&#39;s <code>EPHEMERIS_SOURCE</code>. The module refuses an index that mixes them (<code>mixed-propagators</code>).</p>
 <p>Chebyshev series per interval are the standard form for precomputed ephemerides. NASA&#39;s SPICE toolkit stores them that way: SPK data types 2, 3, 14 and 20 hold Chebyshev coefficients for position, velocity or both (<a href="#r15">R15</a>), and JPL distributes its planetary ephemerides as Chebyshev polynomials fit to positions and velocities in 32-day intervals (<a href="#r16">R16</a>, <a href="#r17">R17</a>). Deprit, Pickard and Poplarchek recommended Chebyshev approximation for compressing ephemerides because it minimizes the largest error over the interval (<a href="#r18">R18</a>). A Chebyshev interpolant of degree n is within a factor 2 + (2/π) log(n + 1) of the best polynomial approximation of that degree (<a href="#r19">R19</a>). The same form serves spacecraft and catalog orbits: onboard ephemeris generation (<a href="#r20">R20</a>) and orbit information with continuous state and covariance at a predetermined accuracy (<a href="#r21">R21</a>). Open-source readers include jplephem (MIT License, <a href="#r22">R22</a>) and ANISE (Mozilla Public License 2.0, <a href="#r23">R23</a>); NAIF&#39;s toolkit is free to use under its own rules (<a href="#r15">R15</a>).</p>
 <p>Trajectories reach the module as their propagator exported them. The HPOP module&#39;s export is a size-prefixed <code>$PRW</code> record per object. The conjunction module&#39;s index preparation takes those records on its <code>trajectories</code> port without re-encoding, and the request carries only each object&#39;s identity. Trajectories in TT or TDB map to UTC linearly between their converted interval ends, using the vendored ERFA library (<a href="#r5">R5</a>). TDB − TT is evaluated once per minute and interpolated, exact to about 1e-14 s.</p>
-<h2 id="5-time-windows">5 Time windows</h2>
+<h2 id="5-time-windows"><span class="sec-num">5</span>Time windows</h2>
 <p>A long screen runs as consecutive windows; the merged result equals one screen of the whole span:</p>
 <ul>
 <li>A conjunction belongs to the window that holds its TCA.</li>
@@ -175,10 +256,10 @@
 <li>Each window, every instance exports the window and the records go to the browser unchanged. The next window is exported while the current one is screened.</li>
 </ol>
 <p>HPOP integrates each object from its element epoch, so the first window carries that catch-up. HPOP drops cached intervals that end before the requested window, so an instance holds about one window per object.</p>
-<h2 id="6-results">6 Results</h2>
+<h2 id="6-results"><span class="sec-num">6</span>Results</h2>
 <p>All runs used the Space-Track GP catalog of 30 September 2026, 32,514 objects (<a href="#r6">R6</a>). Screens started 2026-10-01T00:00Z, with a 5 km threshold and 60 s coarse steps, on a Mac Studio with 28 cores and 27 module threads. GPU runs used headless Chrome with Metal for WebGPU. The workstation was shared with other work (1-minute load average 15–65 on 28 cores), so times are upper bounds.</p>
 <h3 id="full-catalog-three-days">Full catalog, three days</h3>
-<table>
+<div class="table-frame"><table>
 <thead>
 <tr>
 <th>Propagator</th>
@@ -229,7 +310,7 @@
 <td align="right">9.9 s</td>
 <td align="right">285,060</td>
 </tr>
-</tbody></table>
+</tbody></table></div>
 <ul>
 <li>For each propagator, every run reports the same conjunctions with the same TCA and miss distance. SGP4 excluded 25 objects it could not propagate in the span; HPOP excluded none.</li>
 <li><strong>SGP4&#39;s</strong> remaining time is sampling: 4,321 steps × 32,514 SGP4 evaluations. On the GPU path the module samples (6.1 s) and the GPU searches (2.3 s).</li>
@@ -238,7 +319,7 @@
 </ul>
 <h3 id="step-size">Step size</h3>
 <p>The candidate test is exhaustive at any step, so the step size trades sampling against candidates. SGP4, three days:</p>
-<table>
+<div class="table-frame"><table>
 <thead>
 <tr>
 <th align="right">Step</th>
@@ -281,11 +362,11 @@
 <td align="right"></td>
 <td align="right">292,516</td>
 </tr>
-</tbody></table>
+</tbody></table></div>
 <p>Every step size reports the same conjunctions, with miss distances within 2 mm. TCAs differ by up to 173 ms, but only on flat minima, where the miss distance is the same. A 5 s screen samples 12 times as often and finds nothing more. Shorter steps cost sampling; longer steps give larger bounds and more candidates. 60 s is near the optimum.</p>
 <h3 id="how-the-time-came-down">How the time came down</h3>
 <p>Three days, SGP4, CPU search in Node.js, same host:</p>
-<table>
+<div class="table-frame"><table>
 <thead>
 <tr>
 <th>Change</th>
@@ -323,11 +404,11 @@
 <td align="right">19.1 s</td>
 <td align="right">6.6 s</td>
 </tr>
-</tbody></table>
+</tbody></table></div>
 <p>Every row reports the same 292,516 conjunctions. On the GPU path, replacing the all-pairs kernel with the grid cut the GPU search from 8.5 s to 2.3 s.</p>
 <p>The first version also sent the whole catalog with every call. Loading it once into the module cut one day of the full catalog from 266.7 s to 55.4 s, with the same 77,667 conjunctions.</p>
 <h3 id="agreement-with-the-single-call-screen">Agreement with the single-call screen</h3>
-<table>
+<div class="table-frame"><table>
 <thead>
 <tr>
 <th>Objects, window</th>
@@ -351,7 +432,7 @@
 <td>1,068 of 1,068</td>
 <td>TCA 0.64 ms, miss 5 mm</td>
 </tr>
-</tbody></table>
+</tbody></table></div>
 <p>On the 2,000-object case the CPU search and the GPU found the same 424 candidates and 23 conjunctions, in Node.js, WasmEdge and a browser. Differences from the single call come from refinement starting from different coarse brackets, and sit inside the module&#39;s parity tolerances of 10 ms and 10 cm. Against the earlier dense scan, Newton&#39;s method found a deeper minimum for 225,968 of the 292,516 conjunctions. No TCA moved more than 5.4 ms and no miss distance more than 24 cm.</p>
 <h3 id="validation-findings">Validation findings</h3>
 <p>The work found these defects in existing code, all fixed:</p>
@@ -369,7 +450,7 @@
 <p>Now the field is EGM2008 to degree and order 20, in Earth-fixed axes that match ERFA to 0.2 arcsec. The HPOP rows above are from the corrected propagator; before the fix the same screen reported 301,396 conjunctions. The companion paper measures the resident model this screen uses against precise orbits (R-20, with the HPOP build of 9 October), and HPOP&#39;s full execution path against Orekit (<a href="#r1">R1</a>, section 17). This paper makes no accuracy claim for either.</p>
 </li>
 </ul>
-<h2 id="7-uncertainty-and-probability-of-collision">7 Uncertainty and probability of collision</h2>
+<h2 id="7-uncertainty-and-probability-of-collision"><span class="sec-num">7</span>Uncertainty and probability of collision</h2>
 <p>The companion paper sets the conditions this screen respects (<a href="#r1">R1</a>, sections 5, 9, 12 and 16.2):</p>
 <ul>
 <li>A TLE supplies no covariance. The initial uncertainty of a TLE-seeded HPOP trajectory, including this paper&#39;s HPOP runs, is unknown: no validated representation of it exists.</li>
@@ -397,7 +478,7 @@
 <li>no more than 1 % falls outside 3σ;</li>
 <li>it has at least 30 samples from at least 3 objects.</li>
 </ul>
-<table>
+<div class="table-frame"><table>
 <thead>
 <tr>
 <th>LEO 600 to 800 km, prediction age</th>
@@ -448,7 +529,7 @@
 <td>0.683 / 0.954 / 0.997</td>
 <td></td>
 </tr>
-</tbody></table>
+</tbody></table></div>
 <p>Every other stratum is UNCALIBRATED:</p>
 <ul>
 <li><strong>GPS and the other MEO strata fail</strong>, for example 0.37 / 0.70 / 0.89 for LAGEOS-1/2 and LARES-2 within half a day. GPS element sets carry per-satellite along-track offsets of −1.6 to +3.8 km.</li>
@@ -485,7 +566,7 @@
 </ul>
 <h3 id="agreement-with-socrates">Agreement with SOCRATES</h3>
 <p>SOCRATES is CelesTrak&#39;s public conjunction screen (<a href="#r7">R7</a>). The replay used the top 300 rows of its 2 October 2026 maximum-probability report, from 179,398 rows. Each pair was reassessed from the element sets SOCRATES used for it, and the report and every input are hashed. The days since epoch agree to SOCRATES&#39;s printed precision, which confirms the inputs are identical.</p>
-<table>
+<div class="table-frame"><table>
 <thead>
 <tr>
 <th>Group</th>
@@ -512,7 +593,7 @@
 <td>19 / 69 / 363 ms</td>
 <td>0.26 / 0.47 / 0.51 m</td>
 </tr>
-</tbody></table>
+</tbody></table></div>
 <p>SOCRATES prints range to 1 m and speed to 1 m/s, so the cataloged pairs agree to its reported precision. Every fast miss difference over 20 m involves an object numbered 100000 or above, mostly Starlink, and the published inputs do not show why.</p>
 <p>Maximum probability is about nine times lower here at a 10 m combined radius. That matches SOCRATES using larger, object-specific radii, which it does not publish: a combined radius of 30 m (median) would reproduce its values. For the formation pair, a short-term encounter does not hold for either computation, so the probabilities are not comparable.</p>
 <h3 id="screening-rules-compared">Screening rules compared</h3>
@@ -530,7 +611,7 @@
 <li><strong>Possibility:</strong> min-joined χ² possibility per object, alerting unless the necessity of no collision reaches 0.9973. Possibility and necessity are not probabilities (<a href="#r1">R1</a>, section 9).</li>
 </ul>
 <p>The results, in the calibrated strata (10,000 cases a row):</p>
-<table>
+<div class="table-frame"><table>
 <thead>
 <tr>
 <th>Rule</th>
@@ -561,13 +642,13 @@
 <td align="right">69 to 89 %</td>
 <td align="right">4 to 24 %</td>
 </tr>
-</tbody></table>
+</tbody></table></div>
 <ul>
 <li><strong>Probabilistic.</strong> Along-track uncertainty here is 0.6 to 3 km, so a true collision&#39;s probability averages only 0.002 head-on and 0.0006 crossing. This is dilution, and it is what hides the collisions the probability rule misses.</li>
 <li><strong>Possibility.</strong> It missed none in calibrated strata, at the cost of the most false alerts. In uncalibrated strata it missed up to 8 %, so it is only as sound as its declared uncertainty.</li>
 <li><strong>Disclosure.</strong> The baselines and cases were chosen independently of the TEAG and ESPF authors&#39; implementations, and no TEAG or ESPF code was run.</li>
 </ul>
-<h2 id="8-private-screening">8 Private screening</h2>
+<h2 id="8-private-screening"><span class="sec-num">8</span>Private screening</h2>
 <p>Operators hold back their best data:</p>
 <ul>
 <li><strong>National security.</strong> Classified orbits reveal capability and coverage.</li>
@@ -671,7 +752,7 @@ requester without one answers challenges to its alerts (defense 3 below).</p>
 <h3 id="what-it-costs">What it costs</h3>
 <p>Measured with Microsoft SEAL 4.1.1 on one core of the shared workstation
 (<a href="#r14">R14</a>):</p>
-<table>
+<div class="table-frame"><table>
 <thead>
 <tr>
 <th>Step</th>
@@ -698,7 +779,7 @@ requester without one answers challenges to its alerts (defense 3 below).</p>
 <td align="right">1.0 MB</td>
 <td align="right">20 ms</td>
 </tr>
-</tbody></table>
+</tbody></table></div>
 <ul>
 <li><strong>Correctness.</strong> Over 86,400 one-second steps for eight pairs, every step
 matched the plaintext distance.</li>
@@ -907,8 +988,8 @@ follows cannot be told from a real hidden satellite until one of its alerts is
 challenged. If it is willing to lose its identity, a prober learns at most one
 more window of answers, within its own fleet&#39;s tubes or along the orbits it
 registered.</p>
-<h2 id="9-limits">9 Limits</h2>
-<table>
+<h2 id="9-limits"><span class="sec-num">9</span>Limits</h2>
+<div class="table-frame"><table>
 <thead>
 <tr>
 <th>Limit</th>
@@ -943,7 +1024,7 @@ registered.</p>
 <td>Probability inputs</td>
 <td>Combined radius and covariance shape differ from SOCRATES&#39;s unpublished ones</td>
 </tr>
-</tbody></table>
+</tbody></table></div>
 <p>This paper reports computation speed, agreement between implementations and with SOCRATES on identical inputs, and covariance calibration where independent truth exists. It does not establish operational readiness or orbit accuracy; the companion paper reports measurements of HPOP&#39;s accuracy, including the resident model used here (<a href="#r1">R1</a>, section 17).</p>
 <h2 id="references">References</h2>
 <h3 id="r1">R1</h3>
@@ -993,7 +1074,22 @@ registered.</p>
 <h3 id="r23">R23</h3>
 <p>Nyx Space. ANISE: SPICE kernels, including Chebyshev SPK types 2, 3, 14 and 20. Mozilla Public License 2.0. <a href="https://github.com/nyx-space/anise">Repository</a></p>
 
-    </article>
+        </article>
+      </div>
+    </div>
+    <button class="toc-fab" type="button" aria-controls="contents" aria-expanded="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01"/></svg><span class="toc-fab-label">Contents</span><svg class="toc-ring" viewBox="0 0 36 36" aria-hidden="true"><circle cx="18" cy="18" r="15"/><circle class="toc-ring-fill" cx="18" cy="18" r="15" pathLength="100"/></svg></button>
+    <div class="paper-scrim" hidden></div>
+    <aside class="paper-panel" aria-labelledby="panel-title" hidden>
+      <div class="panel-head">
+        <div>
+          <p class="eyebrow">Interactive model</p>
+          <h2 id="panel-title"></h2>
+        </div>
+        <a class="panel-btn panel-open" href="#" target="_blank" rel="noopener" aria-label="Open in a new tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg></a>
+        <button class="panel-btn panel-close" type="button" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+      </div>
+      <div class="panel-body"><iframe title="Interactive model" allow="cross-origin-isolated; fullscreen; clipboard-write" loading="lazy"></iframe></div>
+    </aside>
     <section id="stack" data-sdn-stack="sdn"></section>
   </main>
   <footer class="sdn-footer">
@@ -1013,5 +1109,7 @@ registered.</p>
     </div>
   </footer>
   <script src="../site.js"></script>
+  <script src="../earth.js"></script>
+  <script src="../whitepapers-app/paper.js"></script>
 </body>
 </html>
