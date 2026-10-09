@@ -119,7 +119,7 @@
     "multiformats": "^14.0.5",
     "qrcode": "^1.5.3",
     "space-data-module-sdk": "0.8.27",
-    "spacedatastandards.org": "1.240.0",
+    "spacedatastandards.org": "1.242.0",
     "uint8arraylist": "^3.0.2",
     "uint8arrays": "^6.1.1",
     "vcard-cryptoperson": "^1.1.10"
