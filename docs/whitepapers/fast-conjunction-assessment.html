@@ -41,7 +41,7 @@
 <p>Screening every catalog object against every other in seconds to minutes, for any propagator</p>
 <p>Anthony &quot;TJ&quot; Koury III</p>
 <p>Edgesource, Space Data Network · <a href="mailto:tj@edgesource.com">tj@edgesource.com</a></p>
-<p>Technical whitepaper 1.7 | 7 October 2026</p>
+<p>Technical whitepaper 1.8 | 9 October 2026 (propagation accuracy moved to the companion paper; screening results unchanged from 1.7)</p>
 <p>Numerical evidence cutoff: 2 October 2026</p>
 <p>© Edgesource Corporation</p>
 <h2 id="executive-summary">Executive summary</h2>
@@ -365,7 +365,7 @@
 <li><strong>A partial field.</strong> The built-in &quot;degree/order 20&quot; field held only J2–J6 and the tesserals through degree 4, with J5 and J6 wrong.</li>
 <li><strong>Frames and clock.</strong> Its nutation and Earth-fixed rotation were 0.74° off, and an unset force clock read Julian date 0.</li>
 </ul>
-<p>Now the field is EGM2008 to degree and order 20, in Earth-fixed axes that match ERFA to 0.2 arcsec. Six days from an element-set epoch, an LEO arc&#39;s error against reference orbits fell from 5.9 km to 0.2 km radially and from 10.9 km to 0.2 km out of plane. The HPOP rows above are from the corrected propagator; before the fix the same screen reported 301,396 conjunctions.</p>
+<p>Now the field is EGM2008 to degree and order 20, in Earth-fixed axes that match ERFA to 0.2 arcsec. The HPOP rows above are from the corrected propagator; before the fix the same screen reported 301,396 conjunctions. The companion paper measures the resident model this screen uses against precise orbits (R-20, with the HPOP build of 9 October), and HPOP&#39;s full execution path against Orekit (<a href="#r1">R1</a>, section 17). This paper makes no accuracy claim for either.</p>
 </li>
 </ul>
 <h2 id="7-uncertainty-and-probability-of-collision">7 Uncertainty and probability of collision</h2>
@@ -943,10 +943,10 @@ registered.</p>
 <td>Combined radius and covariance shape differ from SOCRATES&#39;s unpublished ones</td>
 </tr>
 </tbody></table>
-<p>This paper reports computation speed, agreement between implementations and with SOCRATES on identical inputs, and covariance calibration where independent truth exists. It does not establish operational readiness, or accuracy for objects and regimes without independent reference orbits.</p>
+<p>This paper reports computation speed, agreement between implementations and with SOCRATES on identical inputs, and covariance calibration where independent truth exists. It does not establish operational readiness or orbit accuracy; the companion paper reports measurements of HPOP&#39;s accuracy, including the resident model used here (<a href="#r1">R1</a>, section 17).</p>
 <h2 id="references">References</h2>
 <h3 id="r1">R1</h3>
-<p>Koury, A. and Jah, M. K. Evidence-Supported ASO Catalog. Space Data Network technical whitepaper 1.8.1, revised 1 October 2026. <a href="evidence-supported-aso-catalog.md">Paper</a></p>
+<p>Koury, A. and Jah, M. K. Evidence-Supported ASO Catalog. Space Data Network technical whitepaper 1.9, 9 October 2026. <a href="evidence-supported-aso-catalog.md">Paper</a></p>
 <h3 id="r2">R2</h3>
 <p>Edgesource. Conjunction assessment module: all-vs-all screening on a GPU or on CPU threads, time windows, TCA solve, parity and bound tests, and the benchmark procedure. Modules commit e1e9b6b8b9a9c5257eab5d447a668e1886a4fa71. Files: <code>analysis/conjunction-assessment/docs/gpu-all-vs-all.md</code>, <code>analysis/conjunction-assessment/docs/benchmark.md</code>. Private repository, available on request (<a href="mailto:tj@edgesource.com">tj@edgesource.com</a>).</p>
 <h3 id="r3">R3</h3>

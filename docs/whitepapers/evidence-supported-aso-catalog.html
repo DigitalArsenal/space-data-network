@@ -41,14 +41,15 @@
 <p>An attributed orbital catalog for Space Data Network</p>
 <p>Anthony &quot;TJ&quot; Koury III and Dr. Moriba Jah</p>
 <p>Koury: Edgesource, Space Data Network. Jah: The University of Texas at Austin; GaiaVerse Ltd.</p>
-<p>Technical whitepaper 1.8.1 | Revised 1 October 2026 (reference attribution corrected; content of 1.8, 28 September 2026)</p>
-<p>Numerical evidence cutoff: 21 September 2026</p>
+<p>Technical whitepaper 1.9 | 9 October 2026</p>
+<p>Numerical evidence cutoff: 9 October 2026 for section 17; 21 September 2026 for the Vimpel study and the baseline of section 15</p>
 <h2 id="executive-summary">Executive summary</h2>
 <p>Space Data Network (SDN) is developing a reproducible, multi-provider catalog of anthropogenic space objects (ASOs) for distributed data sharing, orbit prediction, and conjunction assessment. We select solutions according to the evidence supporting each object, the intended use, and the prediction interval. Numerical high-precision orbit propagation (HPOP) is a principal computational capability; its value depends on the initial state, force model, measurement information, and treatment of uncertainty.</p>
 <p>The catalog preserves original provider products and records how each selected or derived solution was obtained. It distinguishes direct observations from provider estimates, identifies shared source lineage, and makes model assumptions and unresolved parameters visible. Versioned dynamics and measurement models, observability reports, and explicit uncertainty representations extend the catalog&#39;s existing commitments to attribution and bounded claims.</p>
 <p>A TLE evaluated through SGP4 at its epoch yields an estimated Cartesian state that can initialize numerical propagation after a proper frame transformation. This handoff is a legitimate computational operation. Its predictive benefit is an empirical question: errors in the estimated epoch state affect both propagation paths, while different dynamics change how those errors evolve. Neither retaining SGP4 nor switching to a numerical model guarantees the more accurate forecast. A standard TLE supplies no covariance, however, and its epoch state is a point estimate whose errors are entangled with SGP4 dynamics. A TLE-seeded numerical product therefore carries an explicit epistemic uncertainty representation for its initial condition, or is marked as having none.</p>
 <p>The recorded Vimpel study converted all 13,808 acquired element rows and reduced withheld-position RMS discrepancies from 6.04–10.71 km to 52.82–69.93 m on three four-hour arcs. These are bounded consistency and model-reconciliation results against a provider ephemeris. Independent absolute accuracy, calibrated catalog-wide uncertainty, and operational collision probabilities remain to be established (<a href="#r1">R1</a>–<a href="#r3">R3</a>).</p>
-<p>This edition retains the numerical evidence baseline of 21 September 2026. It adds a classification of inputs by data level and of TLE fields by level of measurement, a validation path for TLE-seeded numerical propagation, object-specific modeling and measurement requirements, and proposed admissible-set inference and screening. It also adds a roadmap for developing an observations-based, accuracy-assessed catalog (section 16), measured against the publicly documented U.S. Space Force capability built around the Astrodynamics Support Workstation (ASW). These additions describe requirements and research directions; they do not add completed experiments to the evidence record.</p>
+<p>Edition 1.8 retained the numerical evidence baseline of 21 September 2026 and added a classification of inputs by data level and of TLE fields by level of measurement, a validation path for TLE-seeded numerical propagation, object-specific modeling and measurement requirements, and proposed admissible-set inference and screening. It also added a roadmap for developing an observations-based, accuracy-assessed catalog (section 16), measured against the publicly documented U.S. Space Force capability built around the Astrodynamics Support Workstation (ASW). Those additions describe requirements and research directions; they did not add completed experiments to the evidence record.</p>
+<p>This edition adds measured evidence for the propagation path (section 17). On identical inputs, HPOP agrees with Orekit 13.1, supplemented in two places described there, within 15 mm in position over a day with hourly output, in 63 cases across five orbit types. Started from precise orbits of four geodetic spheres, with gravity to degree and order 20, the Sun and Moon, radiation pressure, solid tides and relativity, its median error against the ILRS orbits is 4.8 m after a day and 14 m after three (largest 10 m and 31 m). Against IGS orbits of GPS satellites, with a crude radiation model, the median is 29 m after a day (largest 117 m). These results indicate the dynamics&#39; contribution for well-modeled objects started from precise states. They do not measure catalog products initialized from element sets; experiments for that are planned, and their plans are in draft. The measurements can be repeated in a web browser from published inputs (<a href="#r35">R35</a>).</p>
 <h2 id="1-evidence-and-the-five-contributors">1 Evidence and the five contributors</h2>
 <p>An orbit solution is an inference about a physical object. Its evidential support depends on five contributors. The catalog records the models and methods we choose, the measurements and provider products available to us, and the limits of what those inputs establish.</p>
 <table>
@@ -531,7 +532,7 @@ M347 1759 V0 H263 V1759 v0 v1759 h84z"/></svg></span></span></span><span class="
 <tr>
 <td>TLE model transfer</td>
 <td>Verified epoch handoff and comparative forecasts against independent references. Initial-condition uncertainty carried through the handoff, with coverage tested.</td>
-<td>Not established by the Vimpel study.</td>
+<td>Not established by the Vimpel study. Experiment E1 (GPS) planned; its plan is in draft (section 17.4).</td>
 </tr>
 <tr>
 <td>Object and sensor models</td>
@@ -539,14 +540,19 @@ M347 1759 V0 H263 V1759 v0 v1759 h84z"/></svg></span></span></span><span class="
 <td>Expanded requirements proposed.</td>
 </tr>
 <tr>
+<td>Dynamics agreement</td>
+<td>Matched propagation against an independent implementation (section 16.9).</td>
+<td>63 cases against Orekit 13.1, within 15 mm in position over a day (section 17.1). Limits were not set in advance; velocities are not yet reported.</td>
+</tr>
+<tr>
 <td>Physical accuracy</td>
 <td>Independent reference comparisons stratified by regime and prediction interval.</td>
-<td>Not established.</td>
+<td>Propagation from precise states measured for four geodetic spheres and 32 GPS satellites (section 17.2). Not established for catalog products, low orbits or drag-dominated objects.</td>
 </tr>
 <tr>
 <td>Uncertainty</td>
 <td>Calibration of covariance or coverage and conservatism of declared trajectory bounds.</td>
-<td>Not established.</td>
+<td>Not established. VCM covariance transformed with an exact Jacobian and propagated through HPOP&#39;s state-transition matrix; its mean-motion row&#39;s units are settled, its parameter rows&#39; units are supported by one comparison with a precise orbit, and its realism is not established (section 17.3).</td>
 </tr>
 <tr>
 <td>Identity</td>
@@ -568,7 +574,7 @@ M347 1759 V0 H263 V1759 v0 v1759 h84z"/></svg></span></span></span><span class="
 <p>Reserve a final untouched validation set. Repeated tuning against withheld points turns those points into development data. Assess the benefits of additional observations and physical information separately from benefits due only to a change in propagation model. Results should support a declared use and interval rather than a universal ranking of propagators.</p>
 <h2 id="15-reproducibility-and-evidence-baseline">15 Reproducibility and evidence baseline</h2>
 <p>The numerical baseline is modules commit 49e159d7003cac3d3e65b03170f11909fa86dd2c, including files/orbit-products 0.1.1 and analysis/catalog-composer 0.1.8. The recorded package suites passed 68 tests. One opt-in parity test ran separately; one full-DE440s external-fixture test was skipped. Nine explicit parity cases exercised Chromium, native WasmEdge, and the SDK container with 45 comparisons. Required repository gates passed; an advisory repository-wide gate was blocked under machine overload. (<a href="#r1">R1</a>)</p>
-<p>These checks establish selected software behavior across runtimes. They do not validate all inputs, establish independent orbit accuracy, or demonstrate operational readiness. The implementation statuses and measured results in this edition refer to that baseline; the revised architecture does not imply that the new requirements have been implemented.</p>
+<p>These checks establish selected software behavior across runtimes. They do not validate all inputs, establish independent orbit accuracy, or demonstrate operational readiness. Except for section 17 and the table rows that cite it, the implementation statuses and measured results in this edition refer to that baseline; the revised architecture does not imply that the new requirements have been implemented. Section 17&#39;s measurements have their own baseline, recorded in section 17.5.</p>
 <h3 id="immutable-evidence-identifiers">Immutable evidence identifiers</h3>
 <p>Acquired Vimpel element table</p>
 <pre><code class="language-text">840cda6d499028c17a7e22228b1b22fe500078e996113ef5804c4fff7ba612fa
@@ -605,7 +611,7 @@ M347 1759 V0 H263 V1759 v0 v1759 h84z"/></svg></span></span></span><span class="
 <tbody><tr>
 <td>G1</td>
 <td>Uncertainty estimation and transport</td>
-<td>State refinement without a calibrated covariance product</td>
+<td>State refinement without a calibrated covariance product; HPOP state-transition and parameter sensitivities checked against Orekit, and VCM covariance transformed and propagated (section 17)</td>
 <td>Establish initial uncertainty; propagate and calibrate covariance or admissible sets; serialize assumptions</td>
 </tr>
 <tr>
@@ -635,13 +641,13 @@ M347 1759 V0 H263 V1759 v0 v1759 h84z"/></svg></span></span></span><span class="
 <tr>
 <td>G6</td>
 <td>Accuracy assessment</td>
-<td>Independent physical accuracy not established</td>
+<td>Propagation from precise states measured for geodetic spheres and GPS (section 17.2); catalog accuracy not established</td>
 <td>Publish held-out residuals and reference errors by object, regime, and prediction age</td>
 </tr>
 <tr>
 <td>G7</td>
 <td>Force-model depth</td>
-<td>Study used J2–J4 and analytical Sun/Moon; drag and radiation pressure disabled</td>
+<td>Vimpel study used J2–J4 and analytical Sun/Moon. HPOP now models EGM96 and EGM2008 fields, DE440 Sun and Moon, radiation pressure with eclipses, NRLMSISE-00, JB2008 and Jacchia-Roberts drag, and IERS 2010 solid tides and relativity, checked against Orekit (Jacchia-Roberts against GMAT; section 17.1)</td>
 <td>Implement the closed-to-open force mapping and staged validation in section 16.7</td>
 </tr>
 <tr>
@@ -756,7 +762,7 @@ M347 1759 V0 H263 V1759 v0 v1759 h84z"/></svg></span></span></span><span class="
 </tr>
 </tbody></table>
 <p>For gravity, a 24-by-24 or 70-by-70 configuration is a truncation choice, not a separate physical model. Load the actual coefficient set and record its hash, maximum degree and order, normalization, gravitational constant, and reference radius. Public EGM96 and EGM2008 coefficients support this approach. Legacy names require the same discipline: an ellipsoid or reference-system label does not uniquely specify a gravity coefficient file. Where the required edition cannot be obtained and verified, label the replacement as a substitute and leave equivalence unmeasured. (<a href="#r26">R26</a>)</p>
-<p>SP&#39;s modified Jacchia 70 is the compatibility target for that atmosphere option, not generic Jacchia 70. The open implementation must match the applicable modifications, environmental-input conventions, and correction handling. A public implementation labeled &quot;modified Jacchia 70&quot; is not automatically the same variant. Standard Jacchia 70 or another public atmosphere model remains a declared substitute until density and drag-acceleration comparisons establish agreement over the stated test domain.</p>
+<p>SP&#39;s modified Jacchia 70 is the compatibility target for that atmosphere option, not generic Jacchia 70. The open implementation must match the applicable modifications, environmental-input conventions, and correction handling. A public implementation labeled &quot;modified Jacchia 70&quot; is not automatically the same variant. Standard Jacchia 70 or another public atmosphere model remains a declared substitute until density and drag-acceleration comparisons establish agreement over the stated test domain. HPOP&#39;s Jacchia-Roberts option (section 17.1) is such a declared substitute: it follows the GTDS and GMAT formulation with Jacchia&#39;s 1971 constants, not SP&#39;s modifications.</p>
 <p>Reproducing the modified density routine does not by itself reproduce an operational density-calibration process. Treat any separately applied correction fields or calibration products as explicit, versioned dependencies, with their availability and permitted use established. Public HASDM literature (<a href="#r28">R28</a>, <a href="#r32">R32</a>) describes a modified Jacchia-70 model and estimated temperature corrections; it provides context, not proof of the exact SP version or configuration being compared. Where the required variant or correction inputs are unavailable, retain the open substitute and mark SP equivalence as unmeasured. (<a href="#r28">R28</a>) Public research describes HASDM using JB2008 as its background density model, with dynamic corrections estimated through calibration-satellite observations (<a href="#r33">R33</a>). The open mapping therefore includes both the modified Jacchia 70 option and the publicly described JB2008-based HASDM framework; reproducing either base model alone does not reproduce the calibration process.</p>
 <p>Atmospheric parity requires more than choosing a density-model family. SP&#39;s modified Jacchia 70, standard Jacchia 70, MSIS 90, NRLMSISE-00, and JB2008 are distinct compatibility targets. Each adapter must define altitude and latitude conventions, local solar time, solar and geomagnetic inputs, averaging windows, lags, switches, interpolation, and missing-data behavior. F10.7 and Ap alone do not supply all JB2008 inputs; S10, M10, Y10, their averages, and the geomagnetic temperature correction also matter. A hybrid mode requires an explicit selection or blending rule rather than an assumed altitude threshold. (<a href="#r25">R25</a>, <a href="#r27">R27</a>)</p>
 <p>Drag configuration must state whether a supplied ballistic parameter means mass divided by drag coefficient and area, or the reciprocal coefficient-area-to-mass quantity. These conventions cannot be interchanged by relabeling units. Space-weather radio-flux indices used by an atmosphere model are also distinct from the photon irradiance used for radiation pressure. The basic cannonball radiation acceleration points away from the Sun and requires a declared eclipse model. Force and acceleration must remain distinct when converting input units.</p>
@@ -810,6 +816,135 @@ M347 1759 V0 H263 V1759 v0 v1759 h84z"/></svg></span></span></span><span class="
 <p>Use authorized closed-system outputs for matched comparisons when available and independent open reference implementations for cross-checks. Freeze the initial state during force and propagation comparisons; refitting it can conceal a model mismatch. Test refitting as a separate estimation experiment. Set acceptance tolerances before examining results, using the intended application and uncertainty budget, and report both position and velocity differences. Include drag-sensitive, eclipse-crossing, eccentric, and maneuver cases where those capabilities are claimed.</p>
 <p>Develop STM transport with declared test covariances while establishing defensible initial uncertainty through provider information, empirical calibration, or observation-based estimation. SLR range validation and batch correction form one path; angular-data acquisition and angles-only IOD form another. Next integrate association, maneuver hypotheses, and lifecycle handling. Add CDM serialization and uncertainty-aware encounter assessment as the required inputs become available.</p>
 <p>Continuous accuracy testing starts with the first testable products. Capability coverage, numerical agreement with a reference implementation, and accuracy against independent evidence are separate acceptance results. A declared substitute may improve physical forecasts while reducing agreement with a closed reference; an exact numerical match may preserve a shared bias. Publish those outcomes separately rather than calling either one universal parity.</p>
+<h2 id="17-measured-propagation-evidence">17 Measured propagation evidence</h2>
+<p>This section reports the first measurements behind the numerical propagation path of sections 5, 8 and 16.7. Following section 16.9, it reports agreement with a reference implementation (section 17.1) apart from accuracy against independent evidence (section 17.2). Both start from known states. Neither measures the accuracy of a catalog product initialized from an element set; section 17.4 describes the experiments planned for that. The evidence baseline is separate from section 15&#39;s and is recorded in section 17.5.</p>
+<h3 id="171-agreement-with-orekit">17.1 Agreement with Orekit</h3>
+<p>Matched propagation compares HPOP with Orekit 13.1 (<a href="#r36">R36</a>) on identical initial states, force configurations and constants: the EGM2008 gravitational parameter and reference radius, JPL DE440 for the Sun and Moon, the same IERS Earth-orientation rows, and the IAU 2015 nominal solar irradiance and radius for radiation pressure. The reference is Orekit with two additions of ours, both recorded with its generator (<a href="#r34">R34</a>). It evaluates the de Sitter term of IERS Conventions eq. 10.12 in consistent frames, in place of Orekit 13.1&#39;s implementation, and for the drag-rate cases it uses a drag model whose coefficient changes linearly in time.</p>
+<p>Sixty-three cases cover five orbits (400 km, 700 km sun-synchronous, GPS, geostationary and Molniya) and force sets from the point mass through gravity to degree and order 20, the Sun and Moon, radiation pressure with a conical shadow, and drag with NRLMSISE-00 or JB2008. They also cover the IERS 2010 relativistic and solid-tide terms (<a href="#r11">R11</a>), EGM96 to degree 70, daily space weather, an in-track acceleration and a drag-parameter rate. Orekit integrates with an eighth-order Dormand–Prince method at a tolerance of 1e-14 and steps of at most 10 s; HPOP with a Runge–Kutta 7(8) method at 1e-13 (1e-15 for the point mass) and steps of at most 300 s. Positions are compared hourly over 24 hours.</p>
+<table>
+<thead>
+<tr>
+<th>Force configuration</th>
+<th align="right">Cases</th>
+<th>Largest 3D position difference over 24 h</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Point mass</td>
+<td align="right">5</td>
+<td>0.57 mm</td>
+</tr>
+<tr>
+<td>Every other case without drag: zonal or full fields, Sun and Moon, radiation pressure, relativity, tides, in-track acceleration</td>
+<td align="right">48</td>
+<td>9.8 mm at 400 km; 7.0 mm at 700 km; 6.3 mm Molniya; 0.48 mm GPS; 0.07 mm geostationary</td>
+</tr>
+<tr>
+<td>With drag</td>
+<td align="right">10</td>
+<td>15 mm at 400 km; 6.9 mm at 700 km</td>
+</tr>
+</tbody></table>
+<p>These are the differences of the published WebAssembly build with hourly output. When only the final epoch is requested, HPOP takes a different integration path, which agrees to 2.8 cm at 24 hours. In the two cases that request them, the state-transition matrix agrees column by column within 1.2e-5 (relative), and the sensitivities to the drag parameter, its rate, the radiation-pressure parameter and the in-track acceleration within 1.4e-4.</p>
+<p>The differences are consistent with integration error on both sides, at most about 2e-11 of the distance flown. The smallest effect the cases exercise, the frame bias between EME2000 and GCRF, moves the 400 km orbit by 17 cm and the GPS orbit by 4 mm over the day, nine times the agreement or more. The test suite&#39;s limits (1 mm, 5 cm and 10 cm by force set) were set alongside these measurements and apply to positions only. They are regression limits, not pre-registered acceptance thresholds, so this comparison does not yet complete section 16.9&#39;s matched-propagation stage.</p>
+<p>The comparison found these faults in HPOP, all fixed before the measurements above (<a href="#r34">R34</a>):</p>
+<ul>
+<li>the gravity recursion stopped one column short, so a field without tesserals lost the x and y components of its zonal acceleration (290 km in a day at 400 km);</li>
+<li>one tesseral term had the wrong sign (38 km in a day);</li>
+<li>a field selected without its flags evaluated the point mass alone;</li>
+<li>epochs were single double-precision Julian dates, resolving about 40 µs;</li>
+<li>the penumbra was a linear ramp rather than the overlap of two disks, and a step that crossed a shadow boundary lost accuracy (one 400 km case was 21 cm off with 60 s steps); steps now end on the boundaries;</li>
+<li>a geodetic conversion was 0.1 m off.</li>
+</ul>
+<p>Two more faults surfaced in the same work. Three integrators returned the initial state when asked to propagate backward; they now refuse. Some paths that selected JB2008 ran a single-species stand-in; every path now runs JB2008 itself, a port of Orekit&#39;s equal to it in density to 2e-14 relative (<a href="#r25">R25</a>, <a href="#r39">R39</a>). Because HPOP&#39;s JB2008 is a port of Orekit&#39;s, the JB2008 cases check the port and its drivers rather than the model independently.</p>
+<p>HPOP&#39;s Jacchia-Roberts option is Jacchia&#39;s static diffusion model with Roberts&#39; closed-form integration (<a href="#r37">R37</a>, <a href="#r38">R38</a>), the formulation known from GTDS and implemented in GMAT (<a href="#r43">R43</a>), with the constants of Jacchia&#39;s 1971 models. It reproduces GMAT&#39;s density functions exactly. Independently of GMAT, integrating the diffusion equations numerically reproduces its closed forms to 1.6e-4, and replacing Roberts&#39; temperature fit with Jacchia&#39;s own profile changes the density by at most 4.3 % at 200 km and 2 % from 300 km. One public implementation, SatelliteToolbox.jl, gives a density 26 % lower at its own 700 km example; that difference is unresolved. Jacchia&#39;s 1970 models, which a VCM&#39;s JAC70 names, use a different inflection temperature and 100 km composition, and SP&#39;s modified Jacchia 70 differs again (section 16.7). Jacchia-Roberts is therefore a declared substitute for both: its differences from the first are known in kind, and its equivalence to the second is unmeasured.</p>
+<h3 id="172-accuracy-against-precise-orbits">17.2 Accuracy against precise orbits</h3>
+<p>Experiment V1 measures how far HPOP, started from a precise state, departs from independent precise orbits as force models are added (<a href="#r35">R35</a>). Its plan, windows and criteria were committed before the first run. That run found an HPOP fault (the zonal field evaluated the point mass alone; section 17.1), and once the faults were fixed V1 was rerun on the same seeds. Two configurations with every modeled force, E-e and E-f, were added afterwards by amendment; they enter no criterion and are descriptive. Each amendment states its reason.</p>
+<p>Sixteen seeds come from ILRS combined orbits of LAGEOS-1, LAGEOS-2, ETALON-1 and ETALON-2 in August 2026, and 96 from IGS final orbits of 32 GPS satellites on 2, 6 and 10 August 2026 (<a href="#r40">R40</a>). Each seed is propagated 72 hours and compared with the same product at 1, 6, 12, 24, 48 and 72 hours. The spheres&#39; known mass and size, with nominal radiation-pressure coefficients, make their radiation pressure computable. GPS radiation pressure uses a cannonball of 20 m², 1500 kg and radiation-pressure coefficient 1.3, a deliberately crude model.</p>
+<p>Median (largest) 3D position error:</p>
+<table>
+<thead>
+<tr>
+<th>Configuration</th>
+<th align="right">SLR, 24 h</th>
+<th align="right">SLR, 72 h</th>
+<th align="right">GPS, 24 h</th>
+<th align="right">GPS, 72 h</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>E-a: point mass</td>
+<td align="right">46 km (396 km)</td>
+<td align="right">110 km (1,213 km)</td>
+<td align="right">25 km (40 km)</td>
+<td align="right">75 km (170 km)</td>
+</tr>
+<tr>
+<td>E-b: zonal harmonics to degree 20</td>
+<td align="right">1.3 km (2.2 km)</td>
+<td align="right">3.4 km (8.7 km)</td>
+<td align="right">2.1 km (6.5 km)</td>
+<td align="right">6.0 km (94 km)</td>
+</tr>
+<tr>
+<td>E-c: E-b with the Sun and Moon</td>
+<td align="right">257 m (2.1 km)</td>
+<td align="right">677 m (6.2 km)</td>
+<td align="right">331 m (868 m)</td>
+<td align="right">983 m (89 km)</td>
+</tr>
+<tr>
+<td>E-d: E-c with radiation pressure</td>
+<td align="right">246 m (2.1 km)</td>
+<td align="right">670 m (6.2 km)</td>
+<td align="right">277 m (661 m)</td>
+<td align="right">853 m (89 km)</td>
+</tr>
+<tr>
+<td>E-e: E-d with the full field to degree and order 20 in Earth-fixed axes and IERS Earth orientation</td>
+<td align="right">6.2 m (15 m)</td>
+<td align="right">18.6 m (51 m)</td>
+<td align="right">29.5 m (117 m)</td>
+<td align="right">92 m (90 km)</td>
+</tr>
+<tr>
+<td>E-f: E-e with IERS 2010 solid tides and relativity</td>
+<td align="right">4.8 m (10 m)</td>
+<td align="right">13.9 m (31 m)</td>
+<td align="right">28.5 m (117 m)</td>
+<td align="right">91 m (90 km)</td>
+</tr>
+<tr>
+<td>R-20: the resident path of the conjunction screen (field to degree and order 20, no Sun or Moon)</td>
+<td align="right">634 m (2.1 km)</td>
+<td align="right">1.5 km (8.2 km)</td>
+<td align="right">2.0 km (6.0 km)</td>
+<td align="right">6.2 km (95 km)</td>
+</tr>
+</tbody></table>
+<ul>
+<li><strong>Two of four pre-registered checks failed</strong>, and are reported as failures. V1.2 required each added force to reduce every seed&#39;s error; it was violated 14 times, all in configurations without tesseral harmonics. Their errors, mostly hundreds of metres to kilometres, let an added force move a seed either way. With the tesserals present every SLR seed improved, and 92 of 96 GPS seeds. V1.3 required the resident model to beat zonal harmonics alone for GPS at 24 hours. It did so for 53 of 96 seeds, because neither model includes the Sun and Moon, which dominate GPS error at a day.</li>
+<li><strong>The GPS maxima at 48 and 72 hours</strong> are one satellite, NORAD 35752, seeded 6 August: about 45 km at 48 hours and 90 km at 72 hours in every configuration except the point mass (98 km and 170 km). No configuration accounts for it. The same satellite&#39;s element-set errors in E1&#39;s baseline look like a manoeuvre, but whether the cause lies with the satellite or the reference product is unresolved.</li>
+<li><strong>What the numbers indicate.</strong> For the four geodetic spheres, at about 5,900 km and 19,100 km altitude and started from a precise state, HPOP&#39;s dynamics leave a median error of about 5 m after a day and 14 m after three (largest 10 m and 31 m). This is not the accuracy of a catalog product. Catalog states start from element sets or fits whose epoch errors are far larger (for GPS element sets, about 2 km RMS (<a href="#r41">R41</a>)), and objects in low orbit add drag and gravity-truncation errors that V1 does not exercise.</li>
+</ul>
+<h3 id="173-vector-covariance-message-parity">17.3 Vector Covariance Message parity</h3>
+<p>The SP Vector Covariance Message (VCM) is the message in which SP orbit solutions are distributed with their covariance (<a href="#r42">R42</a>). An adapter module reads one into a propagation request. The request carries the J2000 state, the stated Earth orientation, and the force flags and parameters: the geopotential and its truncation, the drag model, the ballistic and radiation coefficients, the ballistic-coefficient rate, tides and thrust. The adapter transforms the equinoctial covariance to Cartesian form with an exact Jacobian, obtained by forward-mode differentiation of the closed-form conversion. HPOP propagates state and covariance through its state-transition matrix, with the ballistic coefficient as a dynamic parameter whose uncertainty the covariance carries, and the adapter writes the result back as a VCM (<a href="#r34">R34</a>). The request format, PRW in Space Data Standards, gained what this needed in schema revision 1.240.0. Its additions include Earth orientation, JB2008 indices, daily space weather, the Jacchia-Roberts selection, the relativistic and tidal terms, EME2000 axes, in-track thrust, and the drag-rate parameter with its sensitivities.</p>
+<p>The format states no units for the covariance:</p>
+<ul>
+<li><strong>The mean-motion row.</strong> Four messages settle it: the survey&#39;s sample, by its orbit and revolution number an ISS solution, and three SP messages on hand that are not redistributed (a geostationary orbit, a GPS satellite, and an orbit of eccentricity 0.59 with perigee in the atmosphere). The row is relative, dn/n. With that reading, and the covariance scaled by the square of the weighted RMS when the RMS exceeds 1, every printed U, V and W sigma of the four is reproduced within 1 %. No absolute unit does. The eccentric message&#39;s radial sigma is 45.8 m printed and 45.8 m with dn/n, but 36.9 m with n in radians per 1000 s and 51.1 m in revolutions per day. Radians per 1000 s, which the ISS message alone suggested, misses the geostationary and GPS radial sigmas by factors of 2.0 and 1.7.</li>
+<li><strong>The ballistic and radiation coefficients&#39; rows.</strong> The printed sigmas do not cover them. Read like the mean-motion row, as fractions of the coefficients, they give standard deviations of 1.5 % to 9.7 % in the four messages; read as printed in m²/kg, 0.38 to 5.6 times the coefficient. For the ISS message, the in-track sigma after a day is 510 m under the first reading and 44 km under the second. One measurement supports the fractional reading. The GPS message, propagated a day by HPOP and compared with ESA&#39;s final orbit for the satellite (<a href="#r40">R40</a>), has radial and in-track errors with RMS 0.46 and 0.64 of their sigmas under the fractional reading (cross-track, which does not depend on the reading, 1.27). Under the as-printed reading the sigmas overstate the radial error about 20 times and the in-track error about 7 times after half a day. The adapter reads the rows as fractions by default and keeps the other reading available; one satellite over one day is evidence, not a calibration.</li>
+</ul>
+<p>A round trip through the VCM text, in SP&#39;s five-digit number format, recovers the covariance to 2e-5 of its sigmas. A VCM naming JAC70/MSIS90 is propagated with Jacchia-Roberts alone, a declared substitute (section 17.1); the hybrid selection rule of section 16.7 is not reproduced. A VCM naming a JB2008-based model lacks the model&#39;s solar indices, which must be supplied separately.</p>
+<h3 id="174-planned-experiments">17.4 Planned experiments</h3>
+<ul>
+<li><strong>E1</strong> asks whether a GPS element set&#39;s state at epoch can be corrected, with an honest uncertainty, using only information available when the set is published. Ly et al. report a 65 % reduction of the 3D RMS error at epoch (<a href="#r41">R41</a>). E1&#39;s plan is in draft, to be frozen before its test data are read. It sets a primary hypothesis of a reduction of at least 50 % on later data for the same satellites. Its secondary hypotheses are at least 30 % for satellites in an orbital plane the model never saw, and a covariance that passes the calibration gate of the companion conjunction paper on held-out data. Its harness acceptance checks pass. Its primary statistic was fixed before any model was fitted: the RMS after excluding element sets with any error component beyond five robust standard deviations, decided once on the uncorrected errors so that every method is scored on the same sets. That decision followed the baseline check, which the plan allows to read two weeks inside the test window without fitting anything. There, one satellite whose errors look like a manoeuvre carried 99.6 % of the squared error at seven days. The unclipped RMS and two alternative exclusion rules are reported as sensitivity analyses. The precise orbits for its windows are being acquired.</li>
+<li><strong>E2</strong> extends the protocol to VCM-equivalent products from catalog history and E1&#39;s corrections: a state, drag and radiation parameters, and a covariance whose realism is tested against precise orbits at 0, 1, 3 and 7 days. Its plan is in draft.</li>
+</ul>
+<h3 id="175-evidence-baseline-and-reproduction">17.5 Evidence baseline and reproduction</h3>
+<p>Section 17&#39;s measurements use HPOP from space-data-network-modules commit 750b6399173a2678b8e8d0885557976d17a9ad5c and V1 run <code>v1-hpop-physical-truth-run-20261009T004514Z</code> of orbit-accuracy-experiments commit 5037cdf302bb12d52a16b5199769225607f9f048, whose manifest records every input&#39;s hash (<a href="#r34">R34</a>, <a href="#r35">R35</a>). The VCM adapter as section 17.3 describes it is at modules commit 1879d8c5c17c061e157c100723a8423c59fd98e2, which leaves HPOP unchanged. Both commits carry one HPOP binary:</p>
+<pre><code class="language-text">473d527175de6606ccf305c45b37218288634fa9de2dcab0d72564a190bdabd1
+</code></pre>
+<p>The experiments repository is public. Its site runs HPOP, the time-scale module and the VCM adapter in a web browser, through the same SDK harness the experiments use. A V1 seed in configurations E-a to E-f reproduces the committed result exactly. Any of the 63 Orekit cases re-runs from its exact request against the stored Orekit trajectories, whose generator is in the modules repository. The VCM round trip runs under both readings of the ballistic-coefficient row. Every input and result can be downloaded with its hash. Space-Track element sets are not redistributed.</p>
 <h2 id="appendix-a-glossary-and-nomenclature">Appendix A. Glossary and nomenclature</h2>
 <h3 id="terms">Terms</h3>
 <table>
@@ -1007,6 +1142,34 @@ M347 1759 V0 H263 V1759 v0 v1759 h84z"/></svg></span></span></span><span class="
 <td>G1–G9</td>
 <td>Capability gaps enumerated in section 16.1</td>
 </tr>
+<tr>
+<td>Orekit</td>
+<td>Open-source space flight dynamics library (CS GROUP), used here as the reference implementation (section 17.1)</td>
+</tr>
+<tr>
+<td>Jacchia-Roberts</td>
+<td>Jacchia&#39;s static diffusion density model integrated in closed form by Roberts, as in GTDS and GMAT</td>
+</tr>
+<tr>
+<td>GTDS, GMAT</td>
+<td>Goddard Trajectory Determination System; NASA&#39;s General Mission Analysis Tool</td>
+</tr>
+<tr>
+<td>IGS</td>
+<td>International GNSS Service, source of the precise GPS orbits in section 17.2</td>
+</tr>
+<tr>
+<td>VCM</td>
+<td>SP Vector Covariance Message: an SP state with its force-model settings and equinoctial covariance</td>
+</tr>
+<tr>
+<td>PRW</td>
+<td>The Space Data Standards propagation request and result format that SDN&#39;s propagators read and write</td>
+</tr>
+<tr>
+<td>V1, E1, E2</td>
+<td>Experiments in section 17: HPOP against precise orbits; GPS element-set correction at epoch; covariance from catalog history</td>
+</tr>
 </tbody></table>
 <h3 id="symbols">Symbols</h3>
 <table>
@@ -1114,7 +1277,7 @@ M347 1759 V0 H263 V1759 v0 v1759 h84z"/></svg></span></span></span><span class="
 </tr>
 </tbody></table>
 <h2 id="references">References</h2>
-<p>R1–R15 retain the sources and evidence roles of the 21 September 2026 baseline. Provider API descriptions refer to that reviewed baseline, not a fresh acquisition. R16–R20 support the added discussion of model transfer, estimation, and proposed inference methods. R21 and R22–R25 support initial orbit determination, covariance propagation, measurement-data distinctions, and atmospheric inputs. R26–R32 support the section 16 mapping to the publicly documented U.S. Space Force baseline. Restricted source records and credentials are not reproduced.</p>
+<p>R1–R15 retain the sources and evidence roles of the 21 September 2026 baseline. Provider API descriptions refer to that reviewed baseline, not a fresh acquisition. R16–R20 support the added discussion of model transfer, estimation, and proposed inference methods. R21 and R22–R25 support initial orbit determination, covariance propagation, measurement-data distinctions, and atmospheric inputs. R26–R33 support the section 16 mapping to the publicly documented U.S. Space Force baseline. R34–R43 support the measurements of section 17. Restricted source records and credentials are not reproduced.</p>
 <h3 id="r1">R1</h3>
 <p>Edgesource. Epoch-state conversion, validation and refinement, with aggregate verification record. Modules commit 49e159d7003cac3d3e65b03170f11909fa86dd2c. Files: <code>analysis/catalog-composer/docs/epoch-fitting.md</code>, <code>analysis/catalog-composer/docs/verification-vimpel-epoch-fit-20260921.json</code>. Private repository, available on request (<a href="mailto:tj@edgesource.com">tj@edgesource.com</a>).</p>
 <h3 id="r2">R2</h3>
@@ -1181,6 +1344,26 @@ M347 1759 V0 H263 V1759 v0 v1759 h84z"/></svg></span></span></span><span class="
 <p>Storz, M. F., Bowman, B. R., Branson, J. I., Casali, S. J., and Tobiska, W. K. High Accuracy Satellite Drag Model (HASDM). Advances in Space Research 36(12), 2497–2505, 2005. Dynamic calibration of Jacchia 70 density from calibration-satellite tracking. <a href="https://ui.adsabs.harvard.edu/abs/2005AdSpR..36.2497S/abstract">Research paper</a></p>
 <h3 id="r33">R33</h3>
 <p>Licata, R. J., Mehta, P. M., Tobiska, W. K., Bowman, B. R., and Pilinski, M. D. Qualitative and Quantitative Assessment of the SET HASDM Database. Space Weather 19, e2021SW002798, 2021. Describes JB2008 as the HASDM background density model and dynamic calibration. <a href="https://doi.org/10.1029/2021SW002798">Research paper</a></p>
+<h3 id="r34">R34</h3>
+<p>Edgesource. HPOP verification record: Orekit 13.1 reference cases and their generator, atmosphere ports, integrator events and the faults fixed, and the VCM adapter. Modules commit 750b6399173a2678b8e8d0885557976d17a9ad5c (HPOP) and 1879d8c5c17c061e157c100723a8423c59fd98e2 (the VCM adapter of section 17.3). Files: <code>propagator/hpop/README.md</code>, <code>propagator/hpop/tests/orekit_reference.test.mjs</code>, <code>propagator/hpop/tests/fixtures/orekit/OrekitReference.java</code>, <code>propagator/hpop/tests/atmosphere_ports.test.mjs</code>, <code>analysis/vcm-adapter/README.md</code>. Private repository, available on request (<a href="mailto:tj@edgesource.com">tj@edgesource.com</a>).</p>
+<h3 id="r35">R35</h3>
+<p>Edgesource. Orbit accuracy experiments: V1 plan, amendments, manifests and results; E1 and E2 plans; VCM parity; browser reproduction of every result. <a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments">Repository</a>, <a href="https://digitalarsenal.github.io/orbit-accuracy-experiments/">site</a></p>
+<h3 id="r36">R36</h3>
+<p>CS GROUP. Orekit 13.1, open-source space flight dynamics library, Apache License 2.0. <a href="https://www.orekit.org/">Project</a></p>
+<h3 id="r37">R37</h3>
+<p>Roberts, C. E., Jr. An analytic model for upper atmosphere densities based upon Jacchia&#39;s 1970 models. Celestial Mechanics 4, 368–377, 1971. <a href="https://doi.org/10.1007/BF01231398">Research paper</a></p>
+<h3 id="r38">R38</h3>
+<p>Jacchia, L. G. Revised Static Models of the Thermosphere and Exosphere with Empirical Temperature Profiles. Smithsonian Astrophysical Observatory Special Report 332, 1971. <a href="https://ui.adsabs.harvard.edu/abs/1971SAOSR.332.....J/abstract">Report</a></p>
+<h3 id="r39">R39</h3>
+<p>Bowman, B. R., Tobiska, W. K., Marcos, F. A., Huang, C. Y., Lin, C. S., and Burke, W. J. A New Empirical Thermospheric Density Model JB2008 Using New Solar and Geomagnetic Indices. AIAA 2008-6438, 2008. <a href="https://doi.org/10.2514/6.2008-6438">Paper</a></p>
+<h3 id="r40">R40</h3>
+<p>Precise orbit and Earth-orientation products: IGS final orbits (<a href="https://igs.org/products/">IGS</a>), ESA final GNSS orbits (<a href="https://navigation-office.esa.int/">ESA navigation office</a>), ILRS combined orbits (<a href="https://ilrs.gsfc.nasa.gov/">ILRS</a>), and IERS EOP 20 C04 (<a href="https://www.iers.org/">IERS</a>).</p>
+<h3 id="r41">R41</h3>
+<p>Ly, D., Lucken, R., and Giolito, D. Correcting TLEs at epoch: Application to the GPS constellation. Journal of Space Safety Engineering 7(3), 2020.</p>
+<h3 id="r42">R42</h3>
+<p>Space Data Standards. Legacy message survey: Vector Covariance Message format and sample; PRW and VCM schemas. <a href="https://github.com/DigitalArsenal/spacedatastandards.org/tree/main/survey/legacy-messages/vcm">Survey</a></p>
+<h3 id="r43">R43</h3>
+<p>NASA Goddard Space Flight Center. General Mission Analysis Tool (GMAT), atmosphere models. <a href="https://gmat.gsfc.nasa.gov/">Project</a></p>
 
     </article>
     <section id="stack" data-sdn-stack="sdn"></section>
