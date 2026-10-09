@@ -465,32 +465,8 @@ func announceAddrsFactory(announce []string) (func([]multiaddr.Multiaddr) []mult
 }
 
 func (n *Node) init() error {
-	// Initialize HD wallet WASM module (optional, enables deterministic identity)
-	if hdPath := n.findHDWalletWasmPath(); hdPath != "" {
-		// H11: Compute and log SHA-256 hash of WASM file for integrity verification.
-		wasmBytes, err := os.ReadFile(hdPath)
-		if err != nil {
-			log.Warnf("HD wallet WASM not loaded (will use random key): %v", err)
-		} else {
-			wasmHash := sha256.Sum256(wasmBytes)
-			log.Infof("WASM module loaded: %s (sha256: %s)", hdPath, hex.EncodeToString(wasmHash[:]))
-
-			hw, err := wasm.NewHDWalletModuleFromBytes(n.ctx, wasmBytes)
-			if err != nil {
-				log.Warnf("HD wallet WASM not loaded (will use random key): %v", err)
-			} else {
-				n.hdwallet = hw
-				// M10: Make entropy injection failure fatal - log critical warning.
-				entropy := make([]byte, 64)
-				if _, err := rand.Read(entropy); err != nil {
-					return fmt.Errorf("CRITICAL: failed to read random entropy: %w", err)
-				}
-				if err := hw.InjectEntropy(n.ctx, entropy); err != nil {
-					log.Errorf("CRITICAL: Failed to inject entropy into WASM module: %v", err)
-				}
-				log.Infof("HD wallet WASM loaded - deterministic identity derivation available")
-			}
-		}
+	if err := n.loadHDWallet(); err != nil {
+		return err
 	}
 
 	// Generate or load identity key
@@ -2019,6 +1995,55 @@ func (n *Node) generateRandomKey(keyDir, keyPath string) (crypto.PrivKey, error)
 
 	log.Infof("Generated and saved new node identity to %s", keyPath)
 	return privKey, nil
+}
+
+// loadHDWallet loads the HD-wallet module that derives the node's identity
+// and sealed-transport key: an on-disk copy if there is one, else the copy
+// built into the binary. A node that already holds a mnemonic refuses to start
+// without it: falling back to the legacy keys/node.key keeps the peer ID but
+// drops the sealed-transport key, and every sealed release is then refused.
+func (n *Node) loadHDWallet() error {
+	source, wasmBytes := "built-in "+wasm.HDWalletWasiPackage, wasm.EmbeddedHDWalletWasm()
+	if hdPath := n.findHDWalletWasmPath(); hdPath != "" {
+		data, err := os.ReadFile(hdPath)
+		if err != nil {
+			return n.hdWalletUnavailable(fmt.Errorf("read %s: %w", hdPath, err))
+		}
+		source, wasmBytes = hdPath, data
+	}
+	if wasmBytes == nil {
+		return n.hdWalletUnavailable(errors.New("the built-in module does not match its pinned sha256"))
+	}
+	// H11: log the module's hash for integrity verification.
+	wasmHash := sha256.Sum256(wasmBytes)
+	log.Infof("WASM module loaded: %s (sha256: %s)", source, hex.EncodeToString(wasmHash[:]))
+
+	hw, err := wasm.NewHDWalletModuleFromBytes(n.ctx, wasmBytes)
+	if err != nil {
+		return n.hdWalletUnavailable(fmt.Errorf("%s: %w", source, err))
+	}
+	n.hdwallet = hw
+	// M10: Make entropy injection failure fatal - log critical warning.
+	entropy := make([]byte, 64)
+	if _, err := rand.Read(entropy); err != nil {
+		return fmt.Errorf("CRITICAL: failed to read random entropy: %w", err)
+	}
+	if err := hw.InjectEntropy(n.ctx, entropy); err != nil {
+		log.Errorf("CRITICAL: Failed to inject entropy into WASM module: %v", err)
+	}
+	log.Infof("HD wallet WASM loaded - deterministic identity derivation available")
+	return nil
+}
+
+// hdWalletUnavailable refuses start for a node whose identity is HD-derived
+// and lets a node without a mnemonic continue on its on-disk key.
+func (n *Node) hdWalletUnavailable(cause error) error {
+	mnemonicPath := filepath.Join(filepath.Dir(n.config.Storage.Path), "keys", "mnemonic")
+	if _, err := os.Stat(mnemonicPath); err == nil {
+		return fmt.Errorf("HD wallet module unavailable for the HD identity at %s; refusing to start without its sealed-transport key: %w", mnemonicPath, cause)
+	}
+	log.Warnf("HD wallet WASM not loaded (will use random key): %v", cause)
+	return nil
 }
 
 func (n *Node) findHDWalletWasmPath() string {

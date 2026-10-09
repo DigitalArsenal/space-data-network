@@ -1,0 +1,11 @@
+\documentclass[tikz,border=6pt]{standalone}
+\input{style}
+\begin{document}
+\begin{tikzpicture}[node distance=9mm, level/.style={box, minimum width=62mm, minimum height=9mm}]
+\node[level] (root) {{\bfseries Root CA}\quad organization, P-384};
+\node[level, below=of root] (mid) {{\bfseries Intermediate CA}\quad department, P-256};
+\node[level, below=of mid] (leaf) {{\bfseries End entity}\quad personnel, P-256 + xpub signature};
+\draw[flow] (root) -- node[right, note] {signs} (mid);
+\draw[flow] (mid) -- node[right, note] {signs} (leaf);
+\end{tikzpicture}
+\end{document}
