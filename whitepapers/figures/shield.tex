@@ -1,0 +1,9 @@
+\documentclass[tikz,border=4pt]{standalone}
+\input{style}
+\begin{document}
+\begin{tikzpicture}
+\draw[rule, dashed, line width=0.8pt] (0,0) circle (14mm);
+\draw[ink, fill=panel, line width=1.2pt, rounded corners=1pt] (0,7mm) -- (-5.5mm,4.8mm) -- (-5.5mm,0) .. controls (-5.5mm,-4mm) and (-2.5mm,-6.5mm) .. (0,-8mm) .. controls (2.5mm,-6.5mm) and (5.5mm,-4mm) .. (5.5mm,0) -- (5.5mm,4.8mm) -- cycle;
+\draw[accent, line width=1.6pt, line cap=round, line join=round] (-2.5mm,-0.2mm) -- (-0.6mm,-2.2mm) -- (2.8mm,1.6mm);
+\end{tikzpicture}
+\end{document}

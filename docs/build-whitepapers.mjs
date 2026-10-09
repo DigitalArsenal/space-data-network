@@ -10,6 +10,8 @@
  * lines) is typeset here with KaTeX, and its stylesheet and fonts are copied
  * beside the pages, so readers get finished math with no script and no CDN.
  *
+ * The typeset PDFs and the figures come from docs/typeset-whitepapers.mjs.
+ *
  * Usage: node docs/build-whitepapers.mjs
  */
 import { cpSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -98,6 +100,17 @@ const PAPERS = [
   },
 ];
 
+// A paper's link to another paper's markdown is right on GitHub; here it opens
+// that paper's page.
+const PAGE = new Map(PAPERS.map(({ src }) => [src, src.replace(/\.md$/, '.html')]));
+marked.use({
+  walkTokens(token) {
+    if (token.type !== 'link') return;
+    const [file, ...hash] = token.href.split('#');
+    if (PAGE.has(file)) token.href = [PAGE.get(file), ...hash].join('#');
+  },
+});
+
 const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 function page({ title, description, body, base, mdName, math }) {
@@ -143,7 +156,7 @@ ${links('        ')}
   </header>
   <main>
     <article class="paper wrap">
-      <p class="paper-back"><a href="${u('whitepapers.html')}">&larr; All whitepapers</a> &middot; <a href="${GITHUB}${mdName}">Markdown source</a></p>
+      <p class="paper-back"><a href="${u('whitepapers.html')}">&larr; All whitepapers</a> &middot; <a href="${mdName.replace(/\.md$/, '.pdf')}">PDF</a> &middot; <a href="${GITHUB}${mdName}">Markdown source</a></p>
 ${body}
     </article>
     <section id="stack" data-sdn-stack="sdn"></section>
