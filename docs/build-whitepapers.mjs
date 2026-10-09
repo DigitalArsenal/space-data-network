@@ -397,6 +397,8 @@ function page(paper, fm, body, models, words) {
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <script>window.coi = { coepCredentialless: () => true, quiet: true };</script>
+  <script src="coi-serviceworker.js"></script>
   <link rel="stylesheet" href="${u('assets/sdn-chrome/sdn-chrome.css')}">
   <script src="${u('assets/sdn-chrome/sdn-chrome.js')}"></script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">

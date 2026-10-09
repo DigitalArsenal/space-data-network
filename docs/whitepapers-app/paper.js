@@ -100,6 +100,14 @@
   var opener = null;
   var closeTimer = 0;
   if (frame) frame.addEventListener('load', function () { if (frame.getAttribute('src')) frameBox.classList.add('is-loaded'); });
+  // An isolated page can only frame isolated pages; the paper's service worker
+  // serves the models under models-proxy/ with the headers GitHub Pages lacks.
+  var MODELS = 'https://digitalarsenal.github.io/orbit-accuracy-experiments/';
+  function frameSource(url) {
+    if (!window.crossOriginIsolated || !navigator.serviceWorker || !navigator.serviceWorker.controller) return url;
+    if (url.indexOf(MODELS) !== 0) return url;
+    return 'models-proxy/' + url.slice(MODELS.length);
+  }
   function openPanel(button) {
     var url = button.getAttribute('data-model-url');
     clearTimeout(closeTimer);
@@ -108,7 +116,8 @@
     opener = button;
     title.textContent = button.getAttribute('data-model-title');
     openLink.href = url;
-    if (frame.getAttribute('src') !== url) { frameBox.classList.remove('is-loaded'); frame.setAttribute('src', url); }
+    var src = frameSource(url);
+    if (frame.getAttribute('src') !== src) { frameBox.classList.remove('is-loaded'); frame.setAttribute('src', src); }
     // Reading beside the panel reflows the column; the control stays where it was on screen.
     var before = button.getBoundingClientRect().top;
     panel.hidden = false;
