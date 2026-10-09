@@ -12,21 +12,20 @@ textarea{min-height:84px;resize:vertical}.muted{color:#5d6b80}.mono{font-family:
 table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:10px 8px;border-top:1px solid #e6ebf2;font-size:14px;vertical-align:top}th{color:#5d6b80;font-weight:600;border-top:0}
 </style></head>
 <body>
-<header><h1>Updater</h1><p class="muted">Releases go out only with the distribution key. Enter it each time; it is never saved, and it is wiped when the release is signalled or this page closes.</p></header>
+<header><h1>Updater</h1><p class="muted">A release goes out only when you approve it here.</p></header>
 <main>
   <section class="panel" id="key-panel">
-    <h2>Distribution key</h2>
+    <h2>Signing key</h2>
+    <p id="node-key">Approvals are signed with this node's key <span class="mono" id="node-key-id"></span>.</p>
     <form id="key-form" autocomplete="off">
-      <label for="phrase">Recovery phrase</label>
-      <textarea id="phrase" spellcheck="false" autocapitalize="off" autocomplete="off" required></textarea>
-      <label for="passphrase">Passphrase (if the phrase has one)</label>
-      <input id="passphrase" type="password" autocomplete="off">
-      <div class="row"><button class="primary" id="open" type="submit">Enter key</button></div>
+      <label for="key-file">Or upload another key for this session</label>
+      <input id="key-file" type="file" accept=".pem,.key,.txt">
+      <p class="muted">An Ed25519 private key: a PKCS#8 PEM file or 64 hex characters. It is never saved, and it is wiped when the release is signalled or this page closes.</p>
     </form>
     <div id="key-open" hidden>
-      <p>Key <span class="mono" id="key-id"></span> at <span class="mono" id="key-path"></span></p>
+      <p>Signing with the uploaded key <span class="mono" id="key-id"></span></p>
       <p class="muted mono" id="key-public"></p>
-      <div class="row"><button id="close" type="button">Close key</button></div>
+      <div class="row"><button id="close" type="button">Use the node key</button></div>
     </div>
     <p class="status" id="key-status" role="status"></p>
   </section>

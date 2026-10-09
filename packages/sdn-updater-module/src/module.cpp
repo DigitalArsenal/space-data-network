@@ -1,20 +1,16 @@
 // org.spacedatanetwork.updater: the update coordinator.
 //
-// Owner 2026-10-09: "a module ... that is the update coordinator, into which we
-// load the distribution signing key", and the key "MUST be entered every time
-// for distribution to occur". The updater page in the dashboard loads the
-// recovery phrase into this module (openKey); the module derives the
-// distribution key, signs a release's manifest and signal (signRelease) and
-// wipes the key (closeKey). Nothing is persisted: the key lives in this
+// Owner 2026-10-09: releases are approved in this module's page. By default the
+// coordinator node signs with its own key when an administrator approves; or
+// the administrator uploads another Ed25519 key, which is loaded into this
+// module (openKey), signs the release's manifest and signal (signRelease) and
+// is wiped (closeKey). An uploaded key is never saved: it lives in this
 // instance's memory between openKey and closeKey and nowhere else.
 //
-// The key is the SLIP-0010 Ed25519 child at m/44'/0'/0'/3'/0' of the phrase's
-// BIP-39 seed: purpose 3 of the node key grammar
-// (sdn-server/internal/wasm/hdwallet_purpose.go), reserved for update
-// distribution. Signatures are what sdn-server/internal/update verifies:
-// Ed25519 over DOMAIN || 0x00 || sha256(canonical document), where the
-// canonical document is Go's encoding/json output of the document with
-// signing.signature removed (update.CanonicalManifestBytes).
+// Signatures are what sdn-server/internal/update verifies: Ed25519 over
+// DOMAIN || 0x00 || sha256(canonical document), where the canonical document is
+// Go's encoding/json output of the document with signing.signature removed
+// (update.CanonicalManifestBytes).
 //
 // This file is concatenated after the vendored Monocypher sources by build.mjs.
 
@@ -27,8 +23,6 @@
 #include <string>
 #include <utility>
 #include <vector>
-
-#include "bip39_english.inc"
 
 namespace {
 
@@ -392,99 +386,68 @@ void write_canonical(std::string &out, const Json &v) {
   }
 }
 
-// ------------------------------------------------------- key derivation --
+// ------------------------------------------------------- key files --
 
-void hmac_sha512(const uint8_t *key, size_t key_size, const uint8_t *a, size_t a_size, const uint8_t *b, size_t b_size, uint8_t out[64]) {
-  crypto_sha512_hmac_ctx ctx;
-  crypto_sha512_hmac_init(&ctx, key, key_size);
-  crypto_sha512_hmac_update(&ctx, a, a_size);
-  if (b_size) crypto_sha512_hmac_update(&ctx, b, b_size);
-  crypto_sha512_hmac_final(&ctx, out);
+int base64_value(char c) {
+  if (c >= 'A' && c <= 'Z') return c - 'A';
+  if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+  if (c >= '0' && c <= '9') return c - '0' + 52;
+  if (c == '+') return 62;
+  if (c == '/') return 63;
+  return -1;
 }
 
-// BIP-39 seed: PBKDF2-HMAC-SHA512(phrase, "mnemonic" + passphrase, 2048, 64).
-void bip39_seed(const std::string &phrase, const std::string &passphrase, uint8_t seed[64]) {
-  std::string salt = "mnemonic" + passphrase;
-  salt += std::string("\0\0\0\1", 4);
-  uint8_t u[64];
-  hmac_sha512(reinterpret_cast<const uint8_t *>(phrase.data()), phrase.size(),
-              reinterpret_cast<const uint8_t *>(salt.data()), salt.size(), nullptr, 0, u);
-  memcpy(seed, u, 64);
-  for (int i = 1; i < 2048; i++) {
-    hmac_sha512(reinterpret_cast<const uint8_t *>(phrase.data()), phrase.size(), u, 64, nullptr, 0, u);
-    for (int j = 0; j < 64; j++) seed[j] ^= u[j];
-  }
-  crypto_wipe(u, sizeof(u));
-  crypto_wipe(&salt[0], salt.size());
+bool hex_value(char c, int &out) {
+  if (c >= '0' && c <= '9') { out = c - '0'; return true; }
+  if (c >= 'a' && c <= 'f') { out = c - 'a' + 10; return true; }
+  if (c >= 'A' && c <= 'F') { out = c - 'A' + 10; return true; }
+  return false;
 }
 
-// Normalizes and checks a BIP-39 English phrase: 12 to 24 words, every word in
-// the list, and the checksum.
-bool bip39_phrase(const std::string &input, std::string &phrase, std::string &error) {
-  std::vector<int> indices;
-  std::string word;
-  auto flush = [&]() -> bool {
-    if (word.empty()) return true;
-    const auto *begin = kBip39English, *end = kBip39English + 2048;
-    const auto *it = std::lower_bound(begin, end, word, [](const char *a, const std::string &b) { return strcmp(a, b.c_str()) < 0; });
-    if (it == end || word != *it) { error = "\"" + word + "\" is not a recovery phrase word"; return false; }
-    indices.push_back(int(it - begin));
-    if (!phrase.empty()) phrase += ' ';
-    phrase += word;
-    crypto_wipe(&word[0], word.size());
-    word.clear();
+// The Ed25519 seed in an uploaded key file: a PKCS#8 PEM private key (as
+// `openssl genpkey -algorithm ed25519` writes it) or the 32-byte seed as 64 hex
+// characters.
+bool key_file_seed(const std::string &file, uint8_t seed[32], std::string &error) {
+  std::string text;
+  for (const char c : file) if (c != ' ' && c != '\t' && c != '\r' && c != '\n') text += c;
+  if (text.size() == 64) {
+    for (int i = 0; i < 32; i++) {
+      int hi, lo;
+      if (!hex_value(text[2 * i], hi) || !hex_value(text[2 * i + 1], lo)) { error = "the key is not 64 hex characters"; return false; }
+      seed[i] = uint8_t(hi << 4 | lo);
+    }
+    crypto_wipe(&text[0], text.size());
     return true;
-  };
-  for (const char c : input) {
-    if (c == ' ' || c == '\t' || c == '\n' || c == '\r') { if (!flush()) return false; continue; }
-    if (c >= 'A' && c <= 'Z') { word += char(c - 'A' + 'a'); continue; }
-    if (c >= 'a' && c <= 'z') { word += c; continue; }
-    error = "a recovery phrase holds only English BIP-39 words";
+  }
+  static const char begin[] = "-----BEGINPRIVATEKEY-----", end[] = "-----ENDPRIVATEKEY-----";
+  const size_t b = text.find(begin), e = text.find(end);
+  if (b != 0 || e == std::string::npos || e + strlen(end) != text.size()) {
+    crypto_wipe(&text[0], text.size());
+    error = "upload an Ed25519 private key: a PKCS#8 PEM file or 64 hex characters";
     return false;
   }
-  if (!flush()) return false;
-  const size_t n = indices.size();
-  if (n < 12 || n > 24 || n % 3 != 0) { error = "a recovery phrase has 12, 15, 18, 21 or 24 words"; return false; }
-  const size_t bits = n * 11, checksum_bits = bits / 33, entropy_bytes = (bits - checksum_bits) / 8;
-  uint8_t packed[33] = {0};
-  for (size_t i = 0; i < n; i++) {
-    for (int b = 0; b < 11; b++) {
-      if (indices[i] & (1 << (10 - b))) { const size_t at = i * 11 + size_t(b); packed[at / 8] |= uint8_t(0x80 >> (at % 8)); }
-    }
+  std::vector<uint8_t> der;
+  uint32_t acc = 0; int bits = 0;
+  for (size_t i = strlen(begin); i < e; i++) {
+    if (text[i] == '=') break;
+    const int v = base64_value(text[i]);
+    if (v < 0) { crypto_wipe(&text[0], text.size()); error = "the PEM key is not base64"; return false; }
+    acc = (acc << 6) | uint32_t(v); bits += 6;
+    if (bits >= 8) { bits -= 8; der.push_back(uint8_t(acc >> bits)); }
   }
-  uint8_t digest[32];
-  sha256(packed, entropy_bytes, digest);
-  const uint8_t want = uint8_t(digest[0] >> (8 - checksum_bits)), got = uint8_t(packed[entropy_bytes] >> (8 - checksum_bits));
-  crypto_wipe(packed, sizeof(packed));
-  if (want != got) { error = "the recovery phrase's checksum does not match: check the words"; return false; }
-  return true;
-}
-
-// SLIP-0010 Ed25519 private key at a fully hardened path.
-void slip10_ed25519(const uint8_t seed[64], const uint32_t *path, size_t depth, uint8_t key[32]) {
-  static const char curve[] = "ed25519 seed";
-  uint8_t node[64];
-  hmac_sha512(reinterpret_cast<const uint8_t *>(curve), strlen(curve), seed, 64, nullptr, 0, node);
-  for (size_t i = 0; i < depth; i++) {
-    uint8_t data[37];
-    data[0] = 0;
-    memcpy(data + 1, node, 32);
-    const uint32_t index = path[i] | 0x80000000u;
-    data[33] = uint8_t(index >> 24); data[34] = uint8_t(index >> 16); data[35] = uint8_t(index >> 8); data[36] = uint8_t(index);
-    uint8_t next[64];
-    hmac_sha512(node + 32, 32, data, sizeof(data), nullptr, 0, next);
-    memcpy(node, next, 64);
-    crypto_wipe(next, sizeof(next));
-    crypto_wipe(data, sizeof(data));
-  }
-  memcpy(key, node, 32);
-  crypto_wipe(node, sizeof(node));
+  crypto_wipe(&text[0], text.size());
+  // PKCS#8 OneAsymmetricKey for Ed25519 (RFC 8410): a fixed 16-byte prefix,
+  // then the 32-byte seed.
+  static const uint8_t prefix[16] = {0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04, 0x20};
+  const bool ok = der.size() == 48 && memcmp(der.data(), prefix, 16) == 0;
+  if (ok) memcpy(seed, der.data() + 16, 32);
+  crypto_wipe(der.data(), der.size());
+  if (!ok) error = "the PEM file is not an Ed25519 private key";
+  return ok;
 }
 
 // ------------------------------------------------------------ the key --
 
-const char kDistributionPath[] = "m/44'/0'/0'/3'/0'";
-const uint32_t kDistributionIndices[] = {44, 0, 0, 3, 0};
 const char kManifestDomain[] = "SDN-UPDATE-MANIFEST-V1";
 const char kSignalDomain[] = "SDN-UPDATE-SIGNAL-V1";
 // DER prefix of an Ed25519 SubjectPublicKeyInfo.
@@ -543,41 +506,26 @@ std::string key_report() {
   write_string(body, key_id());
   body += ",\"public_key\":";
   write_string(body, public_key_spki());
-  body += ",\"path\":";
-  write_string(body, kDistributionPath);
   body += '}';
   return body;
 }
 
 }  // namespace
 
-// openKey {"phrase": "<recovery phrase>", "passphrase": "<optional>"}
-//   -> {"key_id", "public_key" (Ed25519 SPKI, base64), "path"}
+// openKey {"key_file": "<uploaded key file>"}
+//   -> {"key_id", "public_key" (Ed25519 SPKI, base64)}
 extern "C" int openKey(void) {
   close_key();
   Json request;
   std::string error;
   if (!read_request(request, error)) return push_error(error);
-  const Json *phrase = request.member("phrase");
-  const Json *passphrase = request.member("passphrase");
-  if (!phrase || phrase->kind != Json::String) return push_error("enter the recovery phrase");
-  if (passphrase && passphrase->kind != Json::String) return push_error("the passphrase must be text");
-  // BIP-39 normalizes a passphrase to Unicode NFKD; ASCII is its own NFKD form,
-  // so only ASCII is accepted rather than deriving a key other wallets would not.
-  if (passphrase) {
-    for (const char c : passphrase->text) {
-      if (uint8_t(c) >= 0x80) return push_error("the passphrase must be ASCII");
-    }
-  }
-  std::string normalized;
-  if (!bip39_phrase(phrase->text, normalized, error)) return push_error(error);
-  uint8_t seed[64], child[32];
-  bip39_seed(normalized, passphrase ? passphrase->text : std::string(), seed);
-  crypto_wipe(&normalized[0], normalized.size());
-  for (auto &m : request.members) if (m.second.kind == Json::String) crypto_wipe(&m.second.text[0], m.second.text.size());
-  slip10_ed25519(seed, kDistributionIndices, 5, child);
-  crypto_wipe(seed, sizeof(seed));
-  crypto_ed25519_key_pair(g_key.secret, g_key.pub, child);  // wipes child
+  Json *file = request.member("key_file");
+  if (!file || file->kind != Json::String) return push_error("upload a key file");
+  uint8_t seed[32];
+  const bool ok = key_file_seed(file->text, seed, error);
+  crypto_wipe(&file->text[0], file->text.size());
+  if (!ok) return push_error(error);
+  crypto_ed25519_key_pair(g_key.secret, g_key.pub, seed);  // wipes seed
   g_key.loaded = true;
   return push("result", key_report());
 }
@@ -585,7 +533,7 @@ extern "C" int openKey(void) {
 // signRelease {"kind": "manifest" | "signal", "document": {...}}
 //   -> the document, canonical, signed with the distribution key
 extern "C" int signRelease(void) {
-  if (!g_key.loaded) return push_error("enter the distribution key first");
+  if (!g_key.loaded) return push_error("upload the key first");
   Json request;
   std::string error;
   if (!read_request(request, error)) return push_error(error);

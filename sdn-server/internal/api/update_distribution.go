@@ -1,26 +1,26 @@
 package api
 
-// DISTRIBUTIONS — releases waiting for the distribution key.
+// DISTRIBUTIONS — releases waiting for approval.
 //
-// Owner 2026-10-09: the distribution key "should be the same as any other key,
-// prompt for it when opening up the UI for it in the module ... do NOT have it
-// saved as a session like the other keys, it MUST be entered every time for
-// distribution to occur."
+// Owner 2026-10-09: "I want the new way to be able to use the node key by
+// default, or upload a new one", approved in the page.
 //
-// So this node never holds the key. publish-fleet-update.mjs and
-// publish-ui-update.mjs submit an unsigned release here; an administrator opens
-// the updater module's page in the dashboard, enters the key, and the module
-// signs. The node accepts a signature only when it verifies against the node's
-// own update roots and covers exactly the release that was submitted: the
-// signer may fill in signing.key_id, signing.public_key and signing.signature,
-// nothing else. The release's signal is built later from the feed, after the
-// files are served, and is signed the same way before the node publishes it.
+// publish-fleet-update.mjs and publish-ui-update.mjs submit an unsigned release
+// here, and nothing goes out until an administrator approves it in the updater
+// module's page: by default this node signs with its own key (approve), or the
+// page signs with an uploaded key it never saves. Either signature is accepted
+// only when it verifies against this node's update roots and covers exactly
+// the release that was submitted: the signer may fill in signing.key_id,
+// signing.public_key and signing.signature, nothing else. The release's signal
+// is built later from the feed, after the files are served, and is signed the
+// same way before the node publishes it.
 //
-//	POST /api/v1/admin/updates/distributions            submit an unsigned manifest
-//	GET  /api/v1/admin/updates/distributions            list
-//	GET  /api/v1/admin/updates/distributions/{id}       one, with its documents
-//	POST /api/v1/admin/updates/distributions/{id}/manifest  the signed manifest
-//	POST /api/v1/admin/updates/distributions/{id}/signal    the signed signal; publishes it
+//	POST /api/v1/admin/updates/distributions                submit an unsigned manifest
+//	GET  /api/v1/admin/updates/distributions                list, with this node's key and roots
+//	GET  /api/v1/admin/updates/distributions/{id}           one, with its documents
+//	POST /api/v1/admin/updates/distributions/{id}/approve   {"document": "manifest"|"signal"}: this node signs
+//	POST /api/v1/admin/updates/distributions/{id}/manifest  a manifest signed with an uploaded key
+//	POST /api/v1/admin/updates/distributions/{id}/signal    a signal signed with an uploaded key; publishes it
 //
 // The signal half starts at POST /api/v1/admin/updates/signal with
 // "distribution": <id> (update_signal.go).
@@ -43,6 +43,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/bundle"
 	"github.com/spacedatanetwork/sdn-server/internal/sigdomain"
 	"github.com/spacedatanetwork/sdn-server/internal/update"
+	"github.com/spacedatanetwork/sdn-server/internal/updatesign"
 )
 
 // UpdateDistributionsRoute is the collection path.
@@ -103,7 +104,7 @@ func (s *distributionStore) add(d *distribution) error {
 	defer s.mu.Unlock()
 	s.prune(d.created)
 	if len(s.items) >= distributionMax {
-		return errors.New("too many releases are waiting for the distribution key")
+		return errors.New("too many releases are waiting for approval")
 	}
 	s.items[d.ID] = d
 	return nil
@@ -144,13 +145,20 @@ func (h *CoreAPIHandler) registerUpdateDistributionRoutes(mux *http.ServeMux) {
 	mux.HandleFunc(UpdateDistributionsRoute, h.withRL(h.requireAdminStrict(h.handleDistributions)))
 	mux.HandleFunc(UpdateDistributionsRoute+"/{id}", h.withRL(h.requireAdminStrict(h.handleDistribution)))
 	mux.HandleFunc(UpdateDistributionsRoute+"/{id}/{document}", h.withRL(h.requireAdminStrict(h.handleDistributionSignature)))
-	log.Infof("Update distribution routes registered at %s: releases wait here for the distribution key.", UpdateDistributionsRoute)
+	log.Infof("Update distribution routes registered at %s: releases wait here for approval in the Updater page.", UpdateDistributionsRoute)
 }
 
 func (h *CoreAPIHandler) handleDistributions(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		writeJSON(w, http.StatusOK, map[string]any{"distributions": h.distributions.list()})
+		roots := []string{}
+		if loaded, err := update.LoadTrustRoots(update.PathsFor(bundle.ResolveCurrent().Root)); err == nil {
+			for id := range loaded {
+				roots = append(roots, id)
+			}
+			sort.Strings(roots)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"distributions": h.distributions.list(), "node_key_id": signerKeyID(h.updateSigner), "update_roots": roots})
 	case http.MethodPost:
 		body, ok := readDistributionBody(w, r)
 		if !ok {
@@ -165,7 +173,7 @@ func (h *CoreAPIHandler) handleDistributions(w http.ResponseWriter, r *http.Requ
 			writeCoreAPIError(w, http.StatusTooManyRequests, "DISTRIBUTIONS_FULL", err.Error())
 			return
 		}
-		log.Infof("Release %s (%s, %s) is waiting for the distribution key as distribution %s.", d.UpdateID, d.Version, d.Target, d.ID)
+		log.Infof("Release %s (%s, %s) is waiting for approval in the Updater page as distribution %s.", d.UpdateID, d.Version, d.Target, d.ID)
 		writeJSON(w, http.StatusCreated, d)
 	default:
 		w.Header().Set("Allow", "GET, POST")
@@ -203,6 +211,16 @@ func (h *CoreAPIHandler) handleDistributionSignature(w http.ResponseWriter, r *h
 		return
 	}
 	id, document := r.PathValue("id"), r.PathValue("document")
+	if document == "approve" {
+		if document, body, err = h.approveDistribution(r, id, body); err != nil {
+			status := http.StatusBadRequest
+			if errors.Is(err, errNoDistribution) {
+				status = http.StatusNotFound
+			}
+			writeCoreAPIError(w, status, "APPROVAL_REFUSED", err.Error())
+			return
+		}
+	}
 	var publish func(context.Context) error
 	err = h.distributions.with(id, func(d *distribution) error {
 		switch document {
@@ -273,6 +291,74 @@ func (h *CoreAPIHandler) attachDistributionSignal(id string, unsigned []byte, to
 	return out, err
 }
 
+// approveDistribution signs the waiting document with this node's own key. It
+// returns which document it signed and the signed bytes, which then pass the
+// same checks as a document signed with an uploaded key.
+func (h *CoreAPIHandler) approveDistribution(r *http.Request, id string, body []byte) (string, []byte, error) {
+	if h.updateSigner == nil {
+		return "", nil, errors.New("this node has no signing key: upload a key instead")
+	}
+	var req struct {
+		Document string `json:"document"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil || (req.Document != "manifest" && req.Document != "signal") {
+		return "", nil, errors.New(`approve names one document: {"document": "manifest"} or {"document": "signal"}`)
+	}
+	var unsigned []byte
+	err := h.distributions.with(id, func(d *distribution) error {
+		if req.Document == "manifest" && d.State == DistributionAwaitingManifest {
+			unsigned = append([]byte(nil), d.Manifest...)
+		} else if req.Document == "signal" && d.State == DistributionAwaitingSignal {
+			unsigned = append([]byte(nil), d.Signal...)
+		} else {
+			return errors.New("this release's " + req.Document + " is not waiting for a signature")
+		}
+		return nil
+	})
+	if err != nil {
+		return "", nil, err
+	}
+	// The signer names itself before the document is canonicalized: key_id and
+	// public_key are covered by the signature.
+	decoder := json.NewDecoder(bytes.NewReader(unsigned))
+	decoder.UseNumber()
+	var doc map[string]any
+	if err := decoder.Decode(&doc); err != nil {
+		return "", nil, err
+	}
+	signing, _ := doc["signing"].(map[string]any)
+	if signing == nil {
+		return "", nil, errors.New("the release has no signing block")
+	}
+	signing["key_id"], signing["public_key"] = h.updateSigner.KeyID(), h.updateSigner.PublicKeyB64()
+	named, err := json.Marshal(doc)
+	if err != nil {
+		return "", nil, err
+	}
+	requester, remote := updatesign.FingerprintPrincipal(sessionPrincipal(r)), requestRemoteIP(r)
+	var signature string
+	if req.Document == "manifest" {
+		result, err := h.updateSigner.Sign(updatesign.Request{Manifest: named, Requester: requester, RemoteIP: remote})
+		if err != nil {
+			return "", nil, err
+		}
+		signature = result.SignatureB64
+	} else {
+		statement, err := update.SignalStatement(named)
+		if err != nil {
+			return "", nil, err
+		}
+		result, err := h.updateSigner.SignSignal(updatesign.SignalRequest{Signal: named, Statement: statement, Requester: requester, RemoteIP: remote})
+		if err != nil {
+			return "", nil, err
+		}
+		signature = result.SignatureB64
+	}
+	signing["signature"] = signature
+	signed, err := json.Marshal(doc)
+	return req.Document, signed, err
+}
+
 func newDistribution(manifest []byte, now time.Time) (*distribution, error) {
 	m, err := update.ParseManifest(manifest)
 	if err != nil {
@@ -282,7 +368,7 @@ func newDistribution(manifest []byte, now time.Time) (*distribution, error) {
 		return nil, errors.New("not an update manifest")
 	}
 	if m.Signing.Signature != "" {
-		return nil, errors.New("submit the release unsigned: the distribution key signs it")
+		return nil, errors.New("submit the release unsigned: it is signed when approved")
 	}
 	if m.Signing.StatementDomain != sigdomain.DomainUpdateManifestV1 {
 		return nil, errors.New("the manifest must be signed under " + sigdomain.DomainUpdateManifestV1)

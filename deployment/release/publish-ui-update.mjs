@@ -21,8 +21,8 @@
  *      every file with its sha256, compatibility.bundle_versions = the build
  *      the nodes run;
  *   4. on the publisher host: `update seal` (encrypt once, wrap the key for
- *      each node), then `update distribute` (the distribution key, entered in
- *      the coordinator's Updater page; --node-signed keeps the node key);
+ *      each node), then `update distribute` (approved in the coordinator's
+ *      Updater page: the node key, or an uploaded key);
  *   5. manifest.json + update.wasm into ui-bundle/<channel>/any/any/<version>/,
  *      the index regenerated, the public URLs checked against those bytes;
  *   6. the ledger line, then the signal. Each node installs the package while
@@ -68,9 +68,7 @@ const keyId = arg('key-id', 'd4a971a7e534');
 const nodesFile = resolve(arg('nodes', join(repoRoot, 'deployment/release/fleet-nodes.json')));
 const forVersions = arg('for-version', '');
 const ledgerPath = arg('ledger-path', '/opt/spacedatanetwork/publish-ledger.log');
-// Signed with the distribution key in the coordinator's Updater page (owner
-// 2026-10-09); --node-signed <reason> keeps the host-01 node key on record.
-const nodeSignedReason = arg('node-signed', '');
+
 // Opt-outs take their REASON as their value, like publish-fleet-update's.
 const rollbackReason = arg('rollback', '');
 const noSignalReason = arg('no-signal', '');
@@ -202,24 +200,22 @@ try {
     process.exit(0);
   }
 
-  // --- 4. sealed and node-signed on the publisher host -----------------------
+  // --- 4. sealed on the publisher host, approved in the Updater page ---------
   const remoteTmp = `/tmp/sdn-ui-update-${sequence}`;
   run('ssh', [publisherSSH, `mkdir -p ${remoteTmp}`]);
   run('scp', ['-q', archivePath, unsignedPath, recipientsPath, `${publisherSSH}:${remoteTmp}/`]);
   sealOnPublisher({ run, publisherSSH, publisherBin, remoteDir: remoteTmp, bundleRemote: `${remoteTmp}/${bundleName}.tar.gz`, log, tag: 'ui-update' });
   // NO --node-url, as in publish-fleet-update: the client dials loopback and
   // anchors to the daemon's own certificate.
+  // Nothing goes out until an administrator approves it in the coordinator's
+  // Updater page: signed with the node key, or with an uploaded key (owner
+  // 2026-10-09).
   let distributionId = '';
-  if (nodeSignedReason) {
-    log(`[ui-update] *** NODE-SIGNED *** reason: ${nodeSignedReason}`);
-    run('ssh', [publisherSSH, `${shellQuote(publisherBin)} update sign-manifest --manifest ${remoteTmp}/manifest.sealed.json --out ${remoteTmp}/manifest.json`]);
-  } else {
-    log('[ui-update] waiting for the distribution key: open Updater in the coordinator\'s dashboard and sign this release');
-    const distributed = run('ssh', [publisherSSH, `${shellQuote(publisherBin)} update distribute --manifest ${remoteTmp}/manifest.sealed.json --out ${remoteTmp}/manifest.json`]).toString();
-    distributionId = (distributed.match(/^distribution=(\w+)$/m) || [])[1] || '';
-    log(distributed.trim().replace(/^/gm, '[ui-update] '));
-    if (!distributionId) throw new Error('the coordinator did not report a distribution id');
-  }
+  log('[ui-update] waiting for approval: open Updater under the coordinator\'s modules in its dashboard and approve this release');
+  const distributed = run('ssh', [publisherSSH, `${shellQuote(publisherBin)} update distribute --manifest ${remoteTmp}/manifest.sealed.json --out ${remoteTmp}/manifest.json`]).toString();
+  distributionId = (distributed.match(/^distribution=(\w+)$/m) || [])[1] || '';
+  log(distributed.trim().replace(/^/gm, '[ui-update] '));
+  if (!distributionId) throw new Error('the coordinator did not report a distribution id');
   const signedPath = join(work, 'manifest.json');
   const carrierPath = join(work, 'update.wasm');
   run('scp', ['-q', `${publisherSSH}:${remoteTmp}/manifest.json`, signedPath]);
