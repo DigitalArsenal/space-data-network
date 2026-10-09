@@ -11,6 +11,7 @@
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' fill='none'><defs><linearGradient id='t' gradientUnits='userSpaceOnUse' x1='16' y1='29' x2='16' y2='3'><stop offset='0' stop-color='%23f5a524' stop-opacity='0'/><stop offset='.55' stop-color='%23f5a524' stop-opacity='.55'/><stop offset='1' stop-color='%23f5a524'/></linearGradient></defs><circle cx='16' cy='16' r='13' stroke='%23f5f5f7' stroke-width='1.6' opacity='.3'/><path d='M16 29A13 13 0 0 1 16 3' stroke='url(%23t)' stroke-width='2.2' stroke-linecap='round'/><path d='M16 10.2L10.4 20.1H21.6Z' stroke='%23f5f5f7' stroke-width='1.6' stroke-linejoin='round'/><circle cx='16' cy='10.2' r='2.6' fill='%23f5f5f7'/><circle cx='10.4' cy='20.1' r='2.6' fill='%23f5f5f7'/><circle cx='21.6' cy='20.1' r='2.6' fill='%23f5f5f7'/><circle cx='16' cy='3' r='2.5' fill='%23f5a524'/></svg>">
   <link rel="stylesheet" href="../site.css">
   <link rel="stylesheet" href="../whitepapers-app/paper.css">
+  <link rel="stylesheet" href="../media/reel/reel.css">
   <link rel="stylesheet" href="katex/katex.min.css">
   <style>
     :root { --sdn-stack-footer-height: 0px; --sdn-stack-header-height: 52px; }
@@ -39,7 +40,7 @@
   <div class="paper-progress" aria-hidden="true"><span></span></div>
   <main>
     <header class="paper-hero" data-earth="1.9 40 24 0.95 -0.55 70 16">
-      <div class="wrap paper-hero-grid">
+      <div class="wrap paper-hero-grid has-reel">
         <div class="paper-hero-text">
           <p class="paper-crumbs"><a href="../whitepapers.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>All whitepapers</a></p>
           <p class="eyebrow">Conjunctions &middot; Technical whitepaper</p>
@@ -53,6 +54,14 @@
             <a class="btn" href="https://github.com/DigitalArsenal/space-data-network/blob/main/whitepapers/fast-conjunction-assessment.md"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 15V9l2.5 3L12 9v6M16 9v6M14 13l2 2 2-2"/></svg>Markdown source</a>
           </div>
         </div>
+        <figure class="reel-frame paper-reel">
+          <div class="reel-stage">
+            <video muted playsinline preload="auto" data-poster="../media/papers/fast-conjunction-assessment/poster.webp" aria-label="Fast All-vs-All Conjunction Screening: introduction">
+              <source src="../media/papers/fast-conjunction-assessment/reel.webm" type='video/webm; codecs="av01.0.08M.08"'>
+              <source src="../media/papers/fast-conjunction-assessment/reel.mp4" type="video/mp4">
+            </video>
+          </div>
+        </figure>
       </div>
       <div class="wrap">
         <dl class="paper-facts">
@@ -1109,6 +1118,7 @@ registered.</p>
     </div>
   </footer>
   <script src="../site.js"></script>
+  <script src="../media/reel/reel.js" defer></script>
   <script src="../earth.js"></script>
   <script src="../whitepapers-app/paper.js"></script>
 </body>
