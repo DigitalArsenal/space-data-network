@@ -201,6 +201,10 @@ details.more > .body { text-align: left; }
 /* Buttons carry their own backgrounds; a shadow only blurs their labels. */
 .has-earth .btn { text-shadow: none; }
 .has-earth .btn:not(.btn-primary) { background: var(--dim-bg); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+/* earth.js close-approach flag (canvas[data-conjunction]) */
+.ca-alert { position: fixed; left: 0; top: 0; z-index: -1; pointer-events: none; opacity: 0; display: flex; flex-direction: column; align-items: center; gap: 4px; filter: drop-shadow(0 0 12px rgba(255,59,48,.7)); will-change: transform, opacity; }
+.ca-alert span { font: 700 11px var(--font-sans); letter-spacing: .12em; text-transform: uppercase; color: #fff; background: #ff3b30; border-radius: 6px; padding: 2px 7px; }
+#earth[data-idle] ~ .ca-alert { visibility: hidden; }
 .story { min-height: 88vh; display: flex; flex-direction: column; justify-content: center; }
 .story-left .wrap > * { margin-left: 0; }
 
@@ -247,41 +251,33 @@ body.centered .figure figcaption { text-align: center; }
 .compare thead th:last-child { color: var(--accent); }
 @media (max-width: 620px) { .compare tbody th { white-space: normal; } }
 
-/* Whitepaper reader pages (build-whitepapers.mjs) */
-.paper-page { background: var(--paper-bg); }
-.paper { max-width: 780px; padding-top: 48px; padding-bottom: 48px; color: var(--text-2); font-size: 17px; line-height: 1.7; }
-.paper-back { font-size: 14px; color: var(--muted); margin-bottom: 28px; }
-.paper-back a { color: var(--accent); text-decoration: none; }
-.paper h1 { font-size: clamp(30px, 4.6vw, 44px); color: var(--text); margin: 8px 0 18px; }
-.paper h2 { font-size: clamp(22px, 3vw, 28px); color: var(--text); margin: 48px 0 14px; }
-.paper h3 { font-size: 19px; color: var(--text); margin: 32px 0 10px; }
-.paper p, .paper ul, .paper ol, .paper table, .paper pre, .paper blockquote { margin: 0 0 16px; }
-.paper ul, .paper ol { padding-left: 24px; }
-.paper li { margin-bottom: 6px; }
-.paper a { color: var(--accent); }
-.paper strong { color: var(--text); }
-.paper hr { border: 0; border-top: 1px solid var(--border); margin: 36px 0; }
-.paper code { font-size: .88em; background: var(--inline-code); padding: 1px 6px; border-radius: 5px; }
-.paper pre { background: #000; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 14px 16px; overflow-x: auto; }
-.paper pre code { background: none; padding: 0; }
-.paper table { display: block; overflow-x: auto; font-size: 15px; }
-.paper .katex-display { overflow-x: auto; overflow-y: hidden; padding: 2px 0; }
-.paper p, .paper li { overflow-wrap: anywhere; }
-.paper img { display: inline-block; max-width: 100%; height: auto; background: #fafafa; border-radius: 10px; padding: 12px; }
-.paper p[align="center"], .paper h1[align="center"] { text-align: center; }
-.paper blockquote { border-left: 3px solid var(--accent); padding-left: 16px; }
-.paper .math-display { margin: 0 0 16px; overflow-x: auto; overflow-y: hidden; }
-.paper .math-display .katex-display { margin: 8px 0; }
-
-/* Whitepapers index */
-.papers { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; max-width: 980px; margin: 0 auto; }
-.papers .card { display: flex; flex-direction: column; gap: 10px; text-align: left; }
-body.centered .papers .card { text-align: left; }
-.papers .card h3 { font-size: 21px; }
+/* Whitepapers index (cards written by build-whitepapers.mjs; the paper pages
+   are styled by whitepapers-app/paper.css) */
+.papers { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; max-width: 1120px; margin: 0 auto; }
+.paper-card { display: flex; flex-direction: column; padding: 0; overflow: hidden; text-align: left; transition: border-color .2s, transform .2s, box-shadow .2s; }
+body.centered .paper-card { text-align: left; }
+.paper-card:hover { border-color: var(--border-strong); transform: translateY(-3px); box-shadow: 0 24px 60px rgba(0,0,0,.35); }
+.paper-cover { position: relative; display: block; aspect-ratio: 20 / 9; overflow: hidden; background: radial-gradient(ellipse 80% 120% at 0% 0%, #10131c, #000 70%); border-bottom: 1px solid var(--border); }
+.paper-cover img, .paper-cover svg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.cover-planet { fill: #0d2a55; stroke: rgba(120,170,255,.55); stroke-width: 2; filter: drop-shadow(0 0 18px rgba(80,140,255,.55)); }
+.cover-orbit { fill: none; stroke: rgba(245,165,36,.75); stroke-width: 1.4; }
+.cover-orbit.faint { stroke: rgba(245,245,247,.22); stroke-dasharray: 3 5; }
+.cover-sat { fill: #f5a524; filter: drop-shadow(0 0 6px #f5a524); }
+.cover-sat.alt { fill: #ff3b30; filter: drop-shadow(0 0 6px #ff3b30); }
+.cover-conjunctions .cover-planet { fill: #2a1a08; stroke: rgba(255,180,90,.55); filter: drop-shadow(0 0 18px rgba(245,165,36,.45)); }
+.cover-security .cover-planet { fill: #0c2420; stroke: rgba(110,220,190,.5); filter: drop-shadow(0 0 18px rgba(80,200,170,.4)); }
+.paper-card:hover .cover-sat { animation: cover-pulse 1.2s ease-in-out infinite; }
+@keyframes cover-pulse { 50% { opacity: .35; } }
+.paper-card-body { flex: 1; display: flex; flex-direction: column; gap: 10px; padding: 22px 24px 24px; }
+.paper-card .eyebrow { margin: 0; color: var(--accent); font-size: 12px; }
+.paper-card h3 { font-size: 22px; line-height: 1.25; letter-spacing: -.01em; }
+.paper-card h3 a { text-decoration: none; }
+.paper-card h3 a:hover { color: var(--accent); }
 .papers .meta { font-size: 13px; color: var(--muted); }
-.papers .formats { margin-top: auto; padding-top: 12px; display: flex; flex-wrap: wrap; gap: 10px; }
-.papers .formats a { font-size: 14px; font-weight: 600; text-decoration: none; padding: 7px 14px; border: 1px solid var(--border-strong); border-radius: 999px; }
+.papers .formats { margin-top: auto; padding-top: 12px; display: flex; flex-wrap: wrap; gap: 8px; }
+.papers .formats a { font-size: 14px; font-weight: 600; text-decoration: none; padding: 7px 16px; border: 1px solid var(--border-strong); border-radius: 999px; transition: background .15s, color .15s, border-color .15s; }
 .papers .formats a:first-child { background: var(--hi-bg); color: var(--hi-fg); border-color: var(--hi-bg); }
+.papers .formats a:not(:first-child):hover { background: var(--wash); }
 
 /* Button groups: the hovered button turns white with black text, and the
    primary gives up its white so only one button reads as selected. */

@@ -11,8 +11,12 @@
 //   sunEl  Sun elevation relative to the view, degrees
 // Illustrative satellites ride circular orbits over the planet in a second GPU
 // pass; one carries its whole orbit as an arc. Without WebGL2, or with reduced
-// motion requested, the page keeps its video.
+// motion requested, the page keeps its video. While the canvas carries
+// data-idle (a page has scrolled past the part the Earth shows through) no
+// frames are drawn.
 (function () {
+  // Textures sit beside this script, so pages in subfolders share them.
+  var HERE = document.currentScript ? document.currentScript.src : location.href;
   var canvas = document.getElementById('earth');
   var sections = Array.prototype.slice.call(document.querySelectorAll('[data-earth]'));
   if (!canvas || !sections.length) return;
@@ -308,9 +312,9 @@
     };
     img.src = url;
   }
-  texture(0, 'img/earth/day.webp');
-  texture(1, 'img/earth/night.webp');
-  texture(2, 'img/earth/clouds.webp');
+  texture(0, new URL('img/earth/day.webp', HERE).href);
+  texture(1, new URL('img/earth/night.webp', HERE).href);
+  texture(2, new URL('img/earth/clouds.webp', HERE).href);
   gl.uniform1i(U.uDay, 0);
   gl.uniform1i(U.uNight, 1);
   gl.uniform1i(U.uClouds, 2);
@@ -357,6 +361,7 @@
   var D = Math.PI / 180;
   function frame(now) {
     if (!visible) return;
+    if (canvas.hasAttribute('data-idle')) { last = now; requestAnimationFrame(frame); return; }
     var dt = Math.min(0.05, (now - last) / 1000);
     last = now;
     spin += dt * SPIN;

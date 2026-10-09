@@ -1,0 +1,26 @@
+[
+  {
+    "paper": "evidence-supported-aso-catalog",
+    "section_id": "17-measured-propagation-evidence",
+    "title": "Propagate a real orbit",
+    "url": "./#live"
+  },
+  {
+    "paper": "evidence-supported-aso-catalog",
+    "section_id": "171-agreement-with-orekit",
+    "title": "Locked down force by force",
+    "url": "./#verification"
+  },
+  {
+    "paper": "evidence-supported-aso-catalog",
+    "section_id": "172-accuracy-against-precise-orbits",
+    "title": "Each force, measured",
+    "url": "./#v1"
+  },
+  {
+    "paper": "evidence-supported-aso-catalog",
+    "section_id": "173-vector-covariance-message-parity",
+    "title": "A Vector Covariance Message, round trip",
+    "url": "./#vcm"
+  }
+]
