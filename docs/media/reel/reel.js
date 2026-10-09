@@ -44,14 +44,13 @@
     '</div>';
 
   function fullElement() { return document.fullscreenElement || document.webkitFullscreenElement; }
-  // The visitor's sound choice, shared by every reel on the site.
-  var SOUND_KEY = 'sdn-reel-sound';
-  function soundWanted() { try { return localStorage.getItem(SOUND_KEY) === 'on'; } catch (e) { return false; } }
-  function rememberSound(on) { try { localStorage.setItem(SOUND_KEY, on ? 'on' : 'off'); } catch (e) {} }
+  // Every reel starts muted; sound plays only after the visitor turns it on,
+  // and only for this page view (owner 2026-10-09: music off by default).
 
   function init(stage) {
     var video = stage.querySelector('video');
     if (!video) return;
+    var wantSound = false;
     stage.setAttribute('data-reel-ready', '');
     stage.insertAdjacentHTML('beforeend', CHROME);
     var big = stage.querySelector('.reel-big-play');
@@ -110,10 +109,10 @@
       sound.setAttribute('aria-pressed', String(!video.muted));
       sound.setAttribute('aria-label', video.muted ? 'Turn sound on' : 'Turn sound off');
     }
-    // Plays with sound when the visitor asked for it; a browser that refuses
-    // sound without a gesture gets the muted reel instead.
+    // Plays with sound only after the visitor turned it on; a browser that
+    // refuses sound without a gesture gets the muted reel instead.
     function start() {
-      video.muted = !soundWanted();
+      video.muted = !wantSound;
       syncSound();
       var p = video.play();
       if (p && p.catch) p.catch(function () {
@@ -130,7 +129,7 @@
     }
     sound.addEventListener('click', function () {
       video.muted = !video.muted;
-      rememberSound(!video.muted);
+      wantSound = !video.muted;
       syncSound();
       if (video.paused && !stage.classList.contains('is-ended')) { userPaused = false; start(); }
     });

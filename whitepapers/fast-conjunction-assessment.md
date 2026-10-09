@@ -2,9 +2,9 @@
 
 Screening every catalog object against every other in seconds to minutes, for any propagator
 
-Anthony "TJ" Koury III
+Anthony "TJ" Koury III and Dr. Moriba Jah
 
-Edgesource, Space Data Network · tj@edgesource.com
+Koury: Edgesource, Space Data Network · tj@edgesource.com. Jah: The University of Texas at Austin; GaiaVerse Ltd.
 
 Technical whitepaper 1.8 | 9 October 2026 (propagation accuracy moved to the companion paper; screening results unchanged from 1.7)
 
