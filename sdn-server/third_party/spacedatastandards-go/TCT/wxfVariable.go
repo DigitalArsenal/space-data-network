@@ -76,6 +76,35 @@ const (
 	wxfVariableTotalColumnWaterVapour                wxfVariable = 28
 	/// Surface pressure, pascal.
 	wxfVariableSurfacePressure                       wxfVariable = 29
+	/// Geopotential height, geopotential metres (gpm): the height a producer
+	/// such as GFS publishes on pressure levels and at the tropopause. Distinct
+	/// from Geopotential (m^2/s^2); a consumer never relabels one as the other.
+	wxfVariableGeopotentialHeight                    wxfVariable = 30
+	/// Brightness temperature a radiometer channel measured, kelvin: the
+	/// temperature of a black body emitting the observed radiance at
+	/// CHANNEL_WAVELENGTH_UM. At LEVEL_KIND TopOfAtmosphere.
+	wxfVariableBrightnessTemperature                 wxfVariable = 31
+	/// Top-of-atmosphere bidirectional reflectance factor of a solar channel
+	/// at CHANNEL_WAVELENGTH_UM, dimensionless (1 = a white Lambertian
+	/// surface under the same illumination), not corrected for the solar
+	/// zenith angle unless VARIABLE_NAME says so. Missing at night.
+	wxfVariableReflectance                           wxfVariable = 32
+	/// Categorical cloud mask of a satellite retrieval: 0 clear, 1 probably
+	/// clear, 2 probably cloudy, 3 cloudy. Units "1". A cell resampled from
+	/// several source pixels carries their mean, so fractional values are
+	/// the average category, not a new class.
+	wxfVariableCloudMask                             wxfVariable = 33
+	/// Categorical thermodynamic phase at the cloud top: 0 clear, 1 liquid
+	/// water, 2 supercooled liquid water, 3 mixed, 4 ice, 5 unknown. Units
+	/// "1". Resampled cells carry the category of the source pixel nearest the
+	/// cell centre.
+	wxfVariableCloudPhase                            wxfVariable = 34
+	/// Cloud optical depth at CHANNEL_WAVELENGTH_UM, dimensionless.
+	wxfVariableCloudOpticalDepth                     wxfVariable = 35
+	/// Cloud-top effective particle radius, micrometres (units "um").
+	wxfVariableCloudEffectiveRadius                  wxfVariable = 36
+	/// Cloud-top emissivity at CHANNEL_WAVELENGTH_UM, [0, 1].
+	wxfVariableCloudEmissivity                       wxfVariable = 37
 )
 
 var EnumNameswxfVariable = map[wxfVariable]string{
@@ -109,6 +138,14 @@ var EnumNameswxfVariable = map[wxfVariable]string{
 	wxfVariableRelativeHumidity:                      "RelativeHumidity",
 	wxfVariableTotalColumnWaterVapour:                "TotalColumnWaterVapour",
 	wxfVariableSurfacePressure:                       "SurfacePressure",
+	wxfVariableGeopotentialHeight:                    "GeopotentialHeight",
+	wxfVariableBrightnessTemperature:                 "BrightnessTemperature",
+	wxfVariableReflectance:                           "Reflectance",
+	wxfVariableCloudMask:                             "CloudMask",
+	wxfVariableCloudPhase:                            "CloudPhase",
+	wxfVariableCloudOpticalDepth:                     "CloudOpticalDepth",
+	wxfVariableCloudEffectiveRadius:                  "CloudEffectiveRadius",
+	wxfVariableCloudEmissivity:                       "CloudEmissivity",
 }
 
 var EnumValueswxfVariable = map[string]wxfVariable{
@@ -142,6 +179,14 @@ var EnumValueswxfVariable = map[string]wxfVariable{
 	"RelativeHumidity":                      wxfVariableRelativeHumidity,
 	"TotalColumnWaterVapour":                wxfVariableTotalColumnWaterVapour,
 	"SurfacePressure":                       wxfVariableSurfacePressure,
+	"GeopotentialHeight":                    wxfVariableGeopotentialHeight,
+	"BrightnessTemperature":                 wxfVariableBrightnessTemperature,
+	"Reflectance":                           wxfVariableReflectance,
+	"CloudMask":                             wxfVariableCloudMask,
+	"CloudPhase":                            wxfVariableCloudPhase,
+	"CloudOpticalDepth":                     wxfVariableCloudOpticalDepth,
+	"CloudEffectiveRadius":                  wxfVariableCloudEffectiveRadius,
+	"CloudEmissivity":                       wxfVariableCloudEmissivity,
 }
 
 func (v wxfVariable) String() string {

@@ -516,7 +516,8 @@ func (rcv *RDO) MutateRangeBias(n float64) bool {
 	return rcv.MutateRANGE_BIAS(n)
 }
 
-/// Range rate (km/s)
+/// Range rate, the time derivative of RANGE (km/s): positive when the range
+/// is opening, negative when it is closing.
 func (rcv *RDO) RANGE_RATE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(54))
 	if o != 0 {
@@ -529,7 +530,8 @@ func (rcv *RDO) RangeRate() float64 {
 	return rcv.RANGE_RATE()
 }
 
-/// Range rate (km/s)
+/// Range rate, the time derivative of RANGE (km/s): positive when the range
+/// is opening, negative when it is closing.
 func (rcv *RDO) MutateRANGE_RATE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(54, n)
 }
@@ -604,7 +606,10 @@ func (rcv *RDO) MutateRangeAccelUnc(n float64) bool {
 	return rcv.MutateRANGE_ACCEL_UNC(n)
 }
 
-/// Doppler shift (Hz)
+/// Two-way (monostatic radar) Doppler shift (Hz): the received echo's
+/// frequency minus the transmitted carrier DOPPLER_FREQUENCY. Positive when
+/// the range is closing. To first order in RANGE_RATE / c,
+/// RANGE_RATE = -c * DOPPLER / (2 * DOPPLER_FREQUENCY), c = 299792.458 km/s.
 func (rcv *RDO) DOPPLER() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(62))
 	if o != 0 {
@@ -617,7 +622,10 @@ func (rcv *RDO) Doppler() float64 {
 	return rcv.DOPPLER()
 }
 
-/// Doppler shift (Hz)
+/// Two-way (monostatic radar) Doppler shift (Hz): the received echo's
+/// frequency minus the transmitted carrier DOPPLER_FREQUENCY. Positive when
+/// the range is closing. To first order in RANGE_RATE / c,
+/// RANGE_RATE = -c * DOPPLER / (2 * DOPPLER_FREQUENCY), c = 299792.458 km/s.
 func (rcv *RDO) MutateDOPPLER(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(62, n)
 }
@@ -626,7 +634,8 @@ func (rcv *RDO) MutateDoppler(n float64) bool {
 	return rcv.MutateDOPPLER(n)
 }
 
-/// Doppler uncertainty (Hz, 1-sigma)
+/// Uncertainty of DOPPLER (Hz, 1-sigma). The range-rate uncertainty is
+/// c * DOPPLER_UNC / (2 * DOPPLER_FREQUENCY).
 func (rcv *RDO) DOPPLER_UNC() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(64))
 	if o != 0 {
@@ -639,7 +648,8 @@ func (rcv *RDO) DopplerUnc() float64 {
 	return rcv.DOPPLER_UNC()
 }
 
-/// Doppler uncertainty (Hz, 1-sigma)
+/// Uncertainty of DOPPLER (Hz, 1-sigma). The range-rate uncertainty is
+/// c * DOPPLER_UNC / (2 * DOPPLER_FREQUENCY).
 func (rcv *RDO) MutateDOPPLER_UNC(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(64, n)
 }
@@ -1075,8 +1085,168 @@ func (rcv *RDO) TagsLength() int {
 }
 
 /// Associated tags
+/// Association: squared Mahalanobis distance of the observation's
+/// innovation against its predicted value, d^2 = v^T (H P H^T + R)^-1 v.
+func (rcv *RDO) CORR_MAHALANOBIS_SQ() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(108))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *RDO) CorrMahalanobisSq() float64 {
+	return rcv.CORR_MAHALANOBIS_SQ()
+}
+
+/// Association: squared Mahalanobis distance of the observation's
+/// innovation against its predicted value, d^2 = v^T (H P H^T + R)^-1 v.
+func (rcv *RDO) MutateCORR_MAHALANOBIS_SQ(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(108, n)
+}
+
+func (rcv *RDO) MutateCorrMahalanobisSq(n float64) bool {
+	return rcv.MutateCORR_MAHALANOBIS_SQ(n)
+}
+
+/// Association: degrees of freedom of d^2 (measurement dimension).
+func (rcv *RDO) CORR_DOF() byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(110))
+	if o != 0 {
+		return rcv._tab.GetByte(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *RDO) CorrDof() byte {
+	return rcv.CORR_DOF()
+}
+
+/// Association: degrees of freedom of d^2 (measurement dimension).
+func (rcv *RDO) MutateCORR_DOF(n byte) bool {
+	return rcv._tab.MutateByteSlot(110, n)
+}
+
+func (rcv *RDO) MutateCorrDof(n byte) bool {
+	return rcv.MutateCORR_DOF(n)
+}
+
+/// Association: the chi-square gate d^2 was tested against.
+func (rcv *RDO) CORR_GATE() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(112))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *RDO) CorrGate() float64 {
+	return rcv.CORR_GATE()
+}
+
+/// Association: the chi-square gate d^2 was tested against.
+func (rcv *RDO) MutateCORR_GATE(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(112, n)
+}
+
+func (rcv *RDO) MutateCorrGate(n float64) bool {
+	return rcv.MutateCORR_GATE(n)
+}
+
+/// Association: p-value of d^2, Q(dof/2, d^2/2).
+func (rcv *RDO) CORR_P_VALUE() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(114))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *RDO) CorrPValue() float64 {
+	return rcv.CORR_P_VALUE()
+}
+
+/// Association: p-value of d^2, Q(dof/2, d^2/2).
+func (rcv *RDO) MutateCORR_P_VALUE(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(114, n)
+}
+
+func (rcv *RDO) MutateCorrPValue(n float64) bool {
+	return rcv.MutateCORR_P_VALUE(n)
+}
+
+/// Association: true when the assignment was ambiguous.
+func (rcv *RDO) CORR_AMBIGUOUS() bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(116))
+	if o != 0 {
+		return rcv._tab.GetBool(o + rcv._tab.Pos)
+	}
+	return false
+}
+
+func (rcv *RDO) CorrAmbiguous() bool {
+	return rcv.CORR_AMBIGUOUS()
+}
+
+/// Association: true when the assignment was ambiguous.
+func (rcv *RDO) MutateCORR_AMBIGUOUS(n bool) bool {
+	return rcv._tab.MutateBoolSlot(116, n)
+}
+
+func (rcv *RDO) MutateCorrAmbiguous(n bool) bool {
+	return rcv.MutateCORR_AMBIGUOUS(n)
+}
+
+/// Association: posterior probability of the association.
+func (rcv *RDO) CORR_QUALITY() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(118))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *RDO) CorrQuality() float64 {
+	return rcv.CORR_QUALITY()
+}
+
+/// Association: posterior probability of the association.
+func (rcv *RDO) MutateCORR_QUALITY(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(118, n)
+}
+
+func (rcv *RDO) MutateCorrQuality(n float64) bool {
+	return rcv.MutateCORR_QUALITY(n)
+}
+
+/// Transmitted carrier frequency (Hz) that the two-way DOPPLER shift is
+/// relative to. Set whenever DOPPLER is: without it DOPPLER cannot be
+/// converted to range rate.
+func (rcv *RDO) DOPPLER_FREQUENCY() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(120))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *RDO) DopplerFrequency() float64 {
+	return rcv.DOPPLER_FREQUENCY()
+}
+
+/// Transmitted carrier frequency (Hz) that the two-way DOPPLER shift is
+/// relative to. Set whenever DOPPLER is: without it DOPPLER cannot be
+/// converted to range rate.
+func (rcv *RDO) MutateDOPPLER_FREQUENCY(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(120, n)
+}
+
+func (rcv *RDO) MutateDopplerFrequency(n float64) bool {
+	return rcv.MutateDOPPLER_FREQUENCY(n)
+}
+
 func RDOStart(builder *flatbuffers.Builder) {
-	builder.StartObject(52)
+	builder.StartObject(59)
 }
 func RDOAddID(builder *flatbuffers.Builder, ID flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(ID), 0)
@@ -1386,6 +1556,48 @@ func RDOStartTAGSVector(builder *flatbuffers.Builder, numElems int) flatbuffers.
 }
 func RDOStartTagsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return RDOStartTAGSVector(builder, numElems)
+}
+func RDOAddCORR_MAHALANOBIS_SQ(builder *flatbuffers.Builder, CORR_MAHALANOBIS_SQ float64) {
+	builder.PrependFloat64Slot(52, CORR_MAHALANOBIS_SQ, 0.0)
+}
+func RDOAddCorrMahalanobisSq(builder *flatbuffers.Builder, CORR_MAHALANOBIS_SQ float64) {
+	RDOAddCORR_MAHALANOBIS_SQ(builder, CORR_MAHALANOBIS_SQ)
+}
+func RDOAddCORR_DOF(builder *flatbuffers.Builder, CORR_DOF byte) {
+	builder.PrependByteSlot(53, CORR_DOF, 0)
+}
+func RDOAddCorrDof(builder *flatbuffers.Builder, CORR_DOF byte) {
+	RDOAddCORR_DOF(builder, CORR_DOF)
+}
+func RDOAddCORR_GATE(builder *flatbuffers.Builder, CORR_GATE float64) {
+	builder.PrependFloat64Slot(54, CORR_GATE, 0.0)
+}
+func RDOAddCorrGate(builder *flatbuffers.Builder, CORR_GATE float64) {
+	RDOAddCORR_GATE(builder, CORR_GATE)
+}
+func RDOAddCORR_P_VALUE(builder *flatbuffers.Builder, CORR_P_VALUE float64) {
+	builder.PrependFloat64Slot(55, CORR_P_VALUE, 0.0)
+}
+func RDOAddCorrPValue(builder *flatbuffers.Builder, CORR_P_VALUE float64) {
+	RDOAddCORR_P_VALUE(builder, CORR_P_VALUE)
+}
+func RDOAddCORR_AMBIGUOUS(builder *flatbuffers.Builder, CORR_AMBIGUOUS bool) {
+	builder.PrependBoolSlot(56, CORR_AMBIGUOUS, false)
+}
+func RDOAddCorrAmbiguous(builder *flatbuffers.Builder, CORR_AMBIGUOUS bool) {
+	RDOAddCORR_AMBIGUOUS(builder, CORR_AMBIGUOUS)
+}
+func RDOAddCORR_QUALITY(builder *flatbuffers.Builder, CORR_QUALITY float64) {
+	builder.PrependFloat64Slot(57, CORR_QUALITY, 0.0)
+}
+func RDOAddCorrQuality(builder *flatbuffers.Builder, CORR_QUALITY float64) {
+	RDOAddCORR_QUALITY(builder, CORR_QUALITY)
+}
+func RDOAddDOPPLER_FREQUENCY(builder *flatbuffers.Builder, DOPPLER_FREQUENCY float64) {
+	builder.PrependFloat64Slot(58, DOPPLER_FREQUENCY, 0.0)
+}
+func RDOAddDopplerFrequency(builder *flatbuffers.Builder, DOPPLER_FREQUENCY float64) {
+	RDOAddDOPPLER_FREQUENCY(builder, DOPPLER_FREQUENCY)
 }
 func RDOEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
