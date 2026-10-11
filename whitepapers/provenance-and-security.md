@@ -47,7 +47,7 @@ Each experiment's numbers come from a run manifest: the repository and module co
 | Evidence | Commit |
 | --- | --- |
 | Experiments V1, E1–E8, E13 and E14 | orbit-accuracy-experiments `357d992d6c62daac4ccbb2fd230634ac292192b8` |
-| HPOP 1.3.0, its Orekit suite, screen and covariance calibration; maneuver detection 0.3.0 | space-data-network-modules `d4a0b1155f64ac088694f9758c32e3b691952674` |
+| HPOP 1.3.0, its Orekit suite, screen and covariance calibration; maneuver detection 0.3.0 | space-data-network-modules `be9ac0db21cd95d52e184bb45d74d73dcf1f09ac` |
 | HPOP in V1 | space-data-network-modules `750b6399173a2678b8e8d0885557976d17a9ad5c` |
 | VCM adapter | space-data-network-modules `1879d8c5c17c061e157c100723a8423c59fd98e2` |
 | Vimpel conversion and refinement | space-data-network-modules `49e159d7003cac3d3e65b03170f11909fa86dd2c` |
