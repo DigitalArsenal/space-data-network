@@ -6,7 +6,9 @@ One motion-graphics intro per whitepaper, built on the showreel kit (`../showree
 | --- | --- | --- |
 | `whitepapers/evidence-supported-aso-catalog.md` | `evidence-supported-aso-catalog.js` (56 s) | `docs/media/papers/evidence-supported-aso-catalog/` |
 | `whitepapers/fast-conjunction-assessment.md` | `fast-conjunction-assessment.js` (56 s) | `docs/media/papers/fast-conjunction-assessment/` |
+| `whitepapers/provenance-and-security.md` | `provenance-and-security.js` (42 s) | `docs/media/papers/provenance-and-security/` |
 | `whitepapers/adversarial-security.md` | `adversarial-security.js` (47 s) | `docs/media/papers/adversarial-security/` |
+| `docs/udl.html` (producer brief, unlisted) | `udl-brief.js` (36 s) | `docs/media/papers/udl-brief/` |
 
 Each output folder holds `reel.webm` (AV1), `reel.mp4` (H.264) and `poster.webp`.
 
@@ -17,7 +19,7 @@ PLAYWRIGHT_MODULE=<dir>/node_modules/playwright/index.mjs \
   node tools/paper-reels/render.mjs [paper ...] [--out <frames dir>]
 ```
 
-Papers default to all three. `--stills 3.5,20` writes PNG stills to `<frames dir>/<paper>/` instead of encoding. Needs ffmpeg with libx264 and libsvtav1, and ImageMagick for the poster.
+Reels default to all of them. `--stills 3.5,20` writes PNG stills to `<frames dir>/<paper>/` instead of encoding. Needs ffmpeg with libx264 and libsvtav1, and ImageMagick for the poster.
 
 ## Math
 
