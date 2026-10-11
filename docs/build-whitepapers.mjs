@@ -51,7 +51,9 @@ const GITHUB = 'https://github.com/DigitalArsenal/space-data-network/blob/main/w
 /**
  * The papers, in index order. topic labels the card and header; summary is the
  * index card's blurb; earth is the header's Earth keyframe (earth.js:
- * dist lon lat ox oy sunAz sunEl); conjunction flies earth.js's close approach.
+ * dist lon lat ox oy sunAz sunEl); conjunction flies earth.js's close approach;
+ * aiModels names the AI models that worked on the paper, for the box in the
+ * page's lower-right corner.
  */
 const PAPERS = [
   {
@@ -60,6 +62,10 @@ const PAPERS = [
     description: 'An attributed orbital catalog for Space Data Network: evidence, provenance, uncertainty and reproducible selection for anthropogenic space objects.',
     summary: 'An attributed orbital catalog for Space Data Network, built from public and login-only sources. Each object gets the solution with the best measured accuracy, with its evidence, source and uncertainty. Includes measured accuracy by object class, an open drag correction solved from fleet orbits, and maneuver detection, with every result reproducible in a browser.',
     earth: '1.9 -60 28 0.95 -0.55 62 18',
+    aiModels: [
+      { name: 'Claude Opus 5.5', maker: 'Anthropic', role: 'writing, experiments and analysis' },
+      { name: 'Claude Sonnet 5.5', maker: 'Anthropic', role: 'module verification' },
+    ],
   },
   {
     src: 'fast-conjunction-assessment.md',
@@ -68,6 +74,7 @@ const PAPERS = [
     summary: 'How Space Data Network checks every tracked object against every other for close approaches: the full catalog over three days in about 20 seconds with SGP4, on a GPU or on ordinary processors, and in about two hours on 16 cores with full-force numerical propagation. Includes agreement with SOCRATES, where collision probabilities are calibrated, and private screening on encrypted orbits.',
     earth: '1.9 40 24 0.95 -0.55 70 16',
     conjunction: true,
+    aiModels: [{ name: 'Claude Opus 5.5', maker: 'Anthropic', role: 'writing, experiments and analysis' }],
   },
   {
     src: 'adversarial-security.md',
@@ -250,8 +257,9 @@ function byline(fm) {
 const affiliationHtml = (aff) => aff.split(/\s+·\s+/).map((part) => /^[^\s@]+@[^\s@]+$/.test(part)
   ? `<a href="mailto:${esc(part)}">${esc(part)}</a>` : esc(part)).join('<span class="dot" aria-hidden="true">·</span>');
 
+const authorList = (names) => (names.length > 2 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : names.join(' and '));
 const metaLine = (fm) => [
-  fm.authors.join(' and '),
+  authorList(fm.authors),
   fm.edition.version ? `Whitepaper ${fm.edition.version}` : '',
   `${fm.edition.dateLabel === 'Revised' ? 'Revised ' : ''}${fm.edition.date}`,
 ].filter(Boolean).join(' · ');
@@ -461,7 +469,13 @@ ${body}
     </div>
     <button class="toc-fab" type="button" aria-controls="contents" aria-expanded="false">${ICON.list}<span class="toc-fab-label">Contents</span><svg class="toc-ring" viewBox="0 0 36 36" aria-hidden="true"><circle cx="18" cy="18" r="15"/><circle class="toc-ring-fill" cx="18" cy="18" r="15" pathLength="100"/></svg></button>
     <div class="paper-scrim" hidden></div>
-    <aside class="paper-panel" aria-labelledby="panel-title" hidden>
+${paper.aiModels?.length ? `    <aside class="paper-ai" aria-label="AI models used for this paper" tabindex="0">
+      <span class="paper-ai-title">AI models used for this paper</span>
+      <ul>
+${paper.aiModels.map((m) => `        <li><b>${esc(m.name)}</b> <span>${esc(m.maker)} · ${esc(m.role)}</span></li>`).join('\n')}
+      </ul>
+    </aside>
+` : ''}    <aside class="paper-panel" aria-labelledby="panel-title" hidden>
       <div class="panel-head">
         <div>
           <p class="eyebrow">Interactive model</p>

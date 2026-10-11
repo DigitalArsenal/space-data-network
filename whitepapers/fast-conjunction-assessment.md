@@ -2,9 +2,9 @@
 
 Screening every catalog object against every other in seconds to minutes, for any propagator
 
-Anthony "TJ" Koury III and Dr. Moriba Jah
+Anthony "TJ" Koury III, Dr. Moriba Jah and Claude Opus 5.5
 
-Koury: Edgesource, Space Data Network · tj@edgesource.com. Jah: The University of Texas at Austin; GaiaVerse Ltd.
+Koury: Edgesource, Space Data Network · tj@edgesource.com. Jah: The University of Texas at Austin; GaiaVerse Ltd. Claude: Anthropic.
 
 Technical whitepaper 1.9 | 11 October 2026
 

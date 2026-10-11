@@ -2,9 +2,9 @@
 
 An attributed orbital catalog for Space Data Network
 
-Anthony "TJ" Koury III and Dr. Moriba Jah
+Anthony "TJ" Koury III, Dr. Moriba Jah and Claude Opus 5.5
 
-Koury: Edgesource, Space Data Network. Jah: The University of Texas at Austin; GaiaVerse Ltd.
+Koury: Edgesource, Space Data Network. Jah: The University of Texas at Austin; GaiaVerse Ltd. Claude: Anthropic.
 
 Technical whitepaper 2.0 | 11 October 2026
 
