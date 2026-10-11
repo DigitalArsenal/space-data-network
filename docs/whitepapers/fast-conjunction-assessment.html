@@ -73,7 +73,7 @@
           <div><dt>Evidence cutoff</dt><dd><span>11 October 2026</span></dd></div>
           <div><dt>Sections</dt><dd>9</dd></div>
           <div><dt>Reading time</dt><dd>39 min</dd></div>
-          <div><dt>Interactive models</dt><dd>7</dd></div>
+          <div><dt>Interactive models</dt><dd>8</dd></div>
         </dl>
         <p class="paper-note">© Edgesource Corporation</p>
       </div>
@@ -92,7 +92,7 @@
           <li><a href="#3-the-candidate-test"><span class="toc-num">3</span><span>The candidate test</span></a>
             <ol>
               <li><a href="#self-bounded-motion"><span>Self-bounded motion</span><i class="toc-model" title="Interactive model"></i></a></li>
-              <li><a href="#spatial-grid"><span>Spatial grid</span></a></li>
+              <li><a href="#spatial-grid"><span>Spatial grid</span><i class="toc-model" title="Interactive model"></i></a></li>
               <li><a href="#two-precisions-one-decision"><span>Two precisions, one decision</span></a></li>
               <li><a href="#refinement"><span>Refinement</span><i class="toc-model" title="Interactive model"></i></a></li>
             </ol>
@@ -231,7 +231,7 @@
 </tr>
 </tbody></table></div>
 <p>The trajectory bound uses only the coefficients, so it holds for any force model and for impulsive maneuvers that appear as interval jumps. A native test checks it against the trajectory itself every 0.1 s around samples taken every 7 s. The trajectory is a 7,000 km orbit interpolated as a propagator would export it, with a 5 m/s maneuver at an interval boundary. Tested at h = 30 s and h = 90 s, the bound was never exceeded, and away from the maneuver it was at most 1.34 times the true deviation<sup><a href="#r2">2</a></sup>.</p>
-<h3 id="spatial-grid">Spatial grid</h3>
+<div class="sec-head sec-head-h3"><h3 id="spatial-grid">Spatial grid</h3><button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/fast-conjunction-assessment/spatial-grid.html" data-model-title="The grid proposes the candidate pairs" aria-label="Run it: The grid proposes the candidate pairs"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span>Run it</button></div>
 <p>Testing all 528.6 million pairs at every step is wasted work: almost all pairs are thousands of kilometres apart. At each step, an object&#39;s straight-line segment over [−h, h], widened by d/2 + D, gives an axis-aligned box. Two objects can pass the straight-line test only if their boxes overlap, so a search over overlapping boxes drops nothing the test would pass.</p>
 <p>The boxes go into a uniform grid whose cell is the 99th-percentile box edge. Each overlapping pair is counted once, in the cell holding the low corner of the two boxes&#39; overlap. The few boxes that span four or more cells on an axis, such as fast perigee passes, are tested against every object. The same grid runs in two places:</p>
 <ul>
@@ -589,7 +589,7 @@
 <li><strong>GEO, eccentric and beyond-GEO orbits have no independent truth here.</strong></li>
 </ul>
 <p>The labels hold for these objects in this week.</p>
-<div class="sec-head sec-head-h3"><h3 id="covariance-probability-on-screened-events">Covariance probability on screened events</h3><button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/fast-conjunction-assessment/covariance-probability-on-screened-events.html" data-model-title="Probability and dilution" aria-label="Run it: Probability and dilution"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span>Run it</button></div>
+<div class="sec-head sec-head-h3"><h3 id="covariance-probability-on-screened-events">Covariance probability on screened events</h3><button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/fast-conjunction-assessment/covariance-probability-on-screened-events.html" data-model-title="A screened pair at TCA, with its covariances" aria-label="Run it: A screened pair at TCA, with its covariances"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span>Run it</button></div>
 <p>With the scaled model, element-set screens give each event&#39;s objects the covariance of their stratum at the TCA&#39;s prediction age. The event then reports the selected method&#39;s probability, Foster&#39;s by default<sup><a href="#r9">9</a></sup>. Each event is labeled:</p>
 <ul>
 <li>the covariance as synthesized from the empirical model;</li>
