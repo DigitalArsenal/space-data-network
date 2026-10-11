@@ -253,10 +253,12 @@ body.centered .figure figcaption { text-align: center; }
 
 /* Whitepapers index (cards written by build-whitepapers.mjs; the paper pages
    are styled by whitepapers-app/paper.css) */
-.papers { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; max-width: 1120px; margin: 0 auto; }
-.paper-card { display: flex; flex-direction: column; padding: 0; overflow: hidden; text-align: left; transition: border-color .2s, transform .2s, box-shadow .2s; }
+/* Four papers to a row, or two by two: never one alone on a row */
+.papers { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; max-width: 1120px; margin: 0 auto; }
+@media (min-width: 1100px) { .papers { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.paper-card { display: flex; flex-direction: column; padding: 0; overflow: hidden; text-align: left; transition: border-color .2s, background .2s; }
 body.centered .paper-card { text-align: left; }
-.paper-card:hover { border-color: var(--border-strong); transform: translateY(-3px); box-shadow: 0 24px 60px rgba(0,0,0,.35); }
+.paper-card:hover { border-color: var(--accent); background: var(--card-hover); }
 .paper-cover { position: relative; display: block; aspect-ratio: 20 / 9; overflow: hidden; background: radial-gradient(ellipse 80% 120% at 0% 0%, #10131c, #000 70%); border-bottom: 1px solid var(--border); }
 .paper-cover img, .paper-cover svg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .cover-planet { fill: #0d2a55; stroke: rgba(120,170,255,.55); stroke-width: 2; filter: drop-shadow(0 0 18px rgba(80,140,255,.55)); }
@@ -266,8 +268,6 @@ body.centered .paper-card { text-align: left; }
 .cover-sat.alt { fill: #ff3b30; filter: drop-shadow(0 0 6px #ff3b30); }
 .cover-conjunctions .cover-planet { fill: #2a1a08; stroke: rgba(255,180,90,.55); filter: drop-shadow(0 0 18px rgba(245,165,36,.45)); }
 .cover-security .cover-planet { fill: #0c2420; stroke: rgba(110,220,190,.5); filter: drop-shadow(0 0 18px rgba(80,200,170,.4)); }
-.paper-card:hover .cover-sat { animation: cover-pulse 1.2s ease-in-out infinite; }
-@keyframes cover-pulse { 50% { opacity: .35; } }
 .paper-card-body { flex: 1; display: flex; flex-direction: column; gap: 10px; padding: 22px 24px 24px; }
 .paper-card .eyebrow { margin: 0; color: var(--accent); font-size: 12px; }
 .paper-card h3 { font-size: 22px; line-height: 1.25; letter-spacing: -.01em; }
@@ -278,6 +278,13 @@ body.centered .paper-card { text-align: left; }
 .papers .formats a { font-size: 14px; font-weight: 600; text-decoration: none; padding: 7px 16px; border: 1px solid var(--border-strong); border-radius: 999px; transition: background .15s, color .15s, border-color .15s; }
 .papers .formats a:first-child { background: var(--hi-bg); color: var(--hi-fg); border-color: var(--hi-bg); }
 .papers .formats a:not(:first-child):hover { background: var(--wash); }
+@media (max-width: 600px) {
+  .papers { gap: 12px; }
+  .paper-card-body { padding: 14px 14px 16px; gap: 8px; }
+  .paper-card h3 { font-size: 17px; }
+  .paper-card-body > p:not(.eyebrow):not(.meta) { font-size: 13.5px; line-height: 1.45; }
+  .papers .formats a { padding: 5px 11px; font-size: 13px; }
+}
 
 /* Button groups: the hovered button turns white with black text, and the
    primary gives up its white so only one button reads as selected. */
