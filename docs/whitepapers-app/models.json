@@ -25,6 +25,12 @@
   },
   {
     "paper": "evidence-supported-aso-catalog",
+    "section_id": "sdns-own-omms",
+    "title": "An OMM fitted to NASA’s ISS trajectory, then scored after its window",
+    "url": "models/evidence-supported-aso-catalog/sdns-own-omms.html"
+  },
+  {
+    "paper": "evidence-supported-aso-catalog",
     "section_id": "51-gnss-and-laser-ranged-satellites",
     "title": "A GPS orbit from its analysis-centre state, beside the OMM",
     "url": "models/evidence-supported-aso-catalog/51-gnss-and-laser-ranged-satellites.html"
