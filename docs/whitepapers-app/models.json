@@ -25,6 +25,12 @@
   },
   {
     "paper": "evidence-supported-aso-catalog",
+    "section_id": "55-maneuver-detection",
+    "title": "The ISS reboost the detector found",
+    "url": "models/evidence-supported-aso-catalog/55-maneuver-detection.html"
+  },
+  {
+    "paper": "evidence-supported-aso-catalog",
     "section_id": "6-uncertainty",
     "title": "Covariance through HPOP’s state-transition matrix",
     "url": "models/evidence-supported-aso-catalog/6-uncertainty.html"
