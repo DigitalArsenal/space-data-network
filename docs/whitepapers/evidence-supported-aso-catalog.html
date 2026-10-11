@@ -69,11 +69,11 @@
       </div>
       <div class="wrap">
         <dl class="paper-facts">
-          <div><dt>Edition</dt><dd>2.1</dd></div>
+          <div><dt>Edition</dt><dd>2.2</dd></div>
           <div><dt>Published</dt><dd>11 October 2026</dd></div>
           <div><dt>Evidence cutoff</dt><dd><span>11 October 2026</span></dd></div>
           <div><dt>Sections</dt><dd>11</dd></div>
-          <div><dt>Reading time</dt><dd>33 min</dd></div>
+          <div><dt>Reading time</dt><dd>35 min</dd></div>
           <div><dt>Interactive models</dt><dd>16</dd></div>
         </dl>
       </div>
@@ -171,7 +171,7 @@
 <li><strong>Measured error as covariance.</strong> An orbit propagated from an OMM&#39;s epoch state carries a covariance equal to the error measured for its orbit regime and element-set age. That error is measured against independent orbits in every regime that has them: GNSS analysis-centre orbits, laser ranging, LEO precise orbits, operator ephemerides and radio-occultation receivers. A covariance is labeled calibrated only where held-out data confirm it (<a href="#22-covariance-for-every-object">section 2.2</a>).</li>
 <li><strong>SDN&#39;s own atmosphere.</strong> Drag uses JB2008 or NRLMSISE-00 with an open correction in the form of the Space Force&#39;s Dynamic Calibration of the Atmosphere, solved from public operator states. It explains 25–40 % of the density variation measured by satellites that did not calibrate it; 1–3-day position error is unchanged (ratios 0.98–1.02) (<a href="#54-drag-regime">section 5.4</a>).</li>
 <li><strong>Maneuvers.</strong> A detector reads each object&#39;s element-set history for steps in orbital energy and plane, and reports each maneuver&#39;s time and size. On held-out data it found 22 of 25 ISS burns and all 6 GPS maneuvers in precise orbits; geostationary station-keeping is harder, 4 of 11 (<a href="#55-maneuver-detection">section 5.5</a>).</li>
-<li><strong>Better start states where data allow.</strong> HPOP&#39;s force models agree with Orekit within 1 cm over a day (steps of at most 30 s; 2.5 cm at 300 s, <a href="#7-dynamics-and-verification">section 7</a>). Fitted to laser ranges, HPOP stays 20–60 times better than SGP4 to 7 days; fitted to an arc of corrected OMMs, it halves SGP4&#39;s error to two days in GPS (<a href="#53-objects-with-public-omms-only">section 5.3</a>).</li>
+<li><strong>Better start states where data allow.</strong> HPOP&#39;s force models agree with Orekit within 1 cm over a day (steps of at most 30 s; 2.5 cm at 300 s, <a href="#7-dynamics-and-verification">section 7</a>). Fitted to laser ranges, HPOP stays 20–60 times better than SGP4 to 7 days; fitted to an arc of corrected OMMs, it halves SGP4&#39;s error to two days in GPS (<a href="#53-objects-with-public-omms-only">section 5.3</a>). SGP4-XP sets that SDN fits to precise GNSS orbits err by a median 0.42 km over the seventh day, against 14 km for its SGP4 fits of the same orbits (exploratory, <a href="#4-normalization-and-model-dispatch">section 4</a>).</li>
 <li><strong>Screening that stays safe when the covariance is large.</strong> A large covariance spreads a collision&#39;s probability thin: on real OMM errors, a probability threshold of 1e-4 missed 2.7–16 % of true collisions. Where held-out data confirm the covariance, screening on the uncertainty region missed 0–0.4 %, at the cost of more false alerts, and every event also carries the covariance-free maximum probability<sup><a href="#r50">50</a></sup>. Large uncertainty makes the screen cautious, not blind.</li>
 </ol>
 <p>Three results go beyond published work:</p>
@@ -190,7 +190,7 @@
 <li><p><strong>Derive the same products from every source.</strong> For every object a source covers, the method derives four records:</p>
 <ol>
 <li>An SGP4 element set (OMM): the source&#39;s own, or one fitted to the source&#39;s ephemeris (<a href="#4-normalization-and-model-dispatch">section 4</a>).</li>
-<li>An SGP4-XP element set: an OMM in the extended-perturbation theory, with its ballistic and radiation coefficients, fitted to the same data<sup><a href="#r51">51</a></sup>.</li>
+<li>An SGP4-XP element set: an OMM in the extended-perturbation theory of the Space Force&#39;s Astrodynamics Standards<sup><a href="#r52">52</a></sup>, with its ballistic and radiation coefficients, fitted to the same data (<a href="#4-normalization-and-model-dispatch">section 4</a>).</li>
 <li>A state with its covariance (OCM): the source&#39;s state at its epoch, or the SGP4 epoch state of the handoff in <a href="#4-normalization-and-model-dispatch">section 4</a>, with the covariance of <a href="#22-covariance-for-every-object">section 2.2</a>.</li>
 <li>The maneuvers in the source&#39;s history (MNV), from the detector of <a href="#55-maneuver-detection">section 5.5</a>.</li>
 </ol>
@@ -391,7 +391,55 @@
 <h3 id="dispatch-frames-and-time">Dispatch, frames and time</h3>
 <p>Each record is routed by its declared theory: mean elements to SGP4, osculating elements to the two-body conversion, states and ephemerides to frame transforms. Osculating elements offered to SGP4 are refused as a model mismatch. Frames follow the IERS Conventions (2010): IAU 2006/2000A, CIO-based, through ERFA, with IERS Earth orientation<sup><a href="#r11">11</a></sup>. TEME, EME2000, GCRF and ITRF stay distinct; epochs are UTC and integration runs on TT.</p>
 <div class="sec-head sec-head-h3"><h3 id="sdns-own-omms">SDN&#39;s own OMMs</h3><button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/evidence-supported-aso-catalog/sdns-own-omms.html" data-model-title="An OMM fitted to NASA’s ISS trajectory, then scored after its window" aria-label="Run it: An OMM fitted to NASA’s ISS trajectory, then scored after its window"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span>Run it</button></div>
-<p>SDN fits its own OMMs to any source&#39;s ephemeris: operator ephemerides (SpaceX&#39;s MEME files, CCSDS OEM, Earth-fixed files), GNSS orbits (SP3), laser-ranging predictions (CPF) and its own HPOP solutions. Each is an SGP4 element set with B* fitted over a declared interval and scored on a held-out stretch before release, so any SGP4 implementation reads it. CelesTrak&#39;s supplemental GP fits operator ephemerides the same way<sup><a href="#r48">48</a></sup>, Spacebook fits extended-perturbation element sets to its own orbits<sup><a href="#r51">51</a></sup>, and the 18th Space Defense Squadron&#39;s eGP fits SP states<sup><a href="#r49">49</a></sup>. The fit RMS that CelesTrak publishes for each set is the benchmark.</p>
+<p>SDN fits its own OMMs to any source&#39;s ephemeris: operator ephemerides (SpaceX&#39;s MEME files, CCSDS OEM, Earth-fixed files), GNSS orbits (SP3), laser-ranging predictions (CPF) and its own HPOP solutions. Each fit gives two element sets over a declared interval, each scored on a held-out stretch before release: an SGP4 set with B*, which any SGP4 implementation reads, and an SGP4-XP set with its ballistic (BTERM) and radiation (AGOM) coefficients, propagated by the Astrodynamics Standards library<sup><a href="#r52">52</a></sup>. CelesTrak&#39;s supplemental GP fits operator ephemerides with SGP4 the same way<sup><a href="#r48">48</a></sup>, Spacebook fits extended-perturbation element sets to its own orbits<sup><a href="#r51">51</a></sup>, and the 18th Space Defense Squadron&#39;s eGP fits SP states<sup><a href="#r49">49</a></sup>. The fit RMS that CelesTrak publishes for each set is the benchmark.</p>
+<p>Exploratory, on 24-hour fits to the same states <a href="https://github.com/DigitalArsenal/space-data-network-modules/blob/1606dddebb112ff97feea050de65601bdcf4ae43/propagator/sgp4-xp/tests/measure/README.md">XP</a>: the median root-mean-square 3D position error (km) over the fit and over each later day, SGP4-XP / SGP4.</p>
+<div class="table-frame"><table>
+<thead>
+<tr>
+<th>Ephemeris (windows)</th>
+<th align="right">Fit</th>
+<th align="right">Day 1</th>
+<th align="right">Day 3</th>
+<th align="right">Day 7</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>GPS, Galileo and GLONASS, ESA final orbits (98)</td>
+<td align="right">0.022 / 0.134</td>
+<td align="right">0.057 / 0.420</td>
+<td align="right">0.161 / 2.40</td>
+<td align="right">0.419 / 14.2</td>
+</tr>
+<tr>
+<td>LAGEOS-1/2 and Etalon-1/2, ILRS orbits (36)</td>
+<td align="right">0.095 / 0.116</td>
+<td align="right">0.104 / 0.227</td>
+<td align="right">0.242 / 1.22</td>
+<td align="right">0.570 / 6.61</td>
+</tr>
+<tr>
+<td>Seven low laser-ranged satellites, ILRS orbits (139)</td>
+<td align="right">0.371 / 0.389</td>
+<td align="right">0.735 / 0.977</td>
+<td align="right">1.16 / 5.10</td>
+<td align="right"></td>
+</tr>
+<tr>
+<td>Starlink, SpaceX ephemerides (196)</td>
+<td align="right">0.539 / 0.534</td>
+<td align="right">3.67 / 5.92</td>
+<td align="right"></td>
+<td align="right"></td>
+</tr>
+<tr>
+<td>ISS, NASA ephemeris (14)</td>
+<td align="right">0.455 / 0.461</td>
+<td align="right">2.16 / 2.12</td>
+<td align="right">16.5 / 16.4</td>
+<td align="right">88.9 / 88.8</td>
+</tr>
+</tbody></table></div>
+<p>Starlink files span 2–3 days and the low laser-ranged arcs 4 days, which bounds their horizons. SGP4-XP converged on all 505 windows and SGP4 on 98 of the 120 GNSS windows; the GNSS row compares those 98. Where drag is weak the extended theory holds: 12 to 34 times closer at 7 days on GNSS, LAGEOS and Etalon. On the ISS, where drag and reboosts dominate, the two theories are equal.</p>
 <h2 id="5-products-by-object-class"><span class="sec-num">5</span>Products by object class</h2>
 <p>Each row is one method: its originators, our measured result (median 3D position error unless stated) and the experiment. Every experiment froze its plan before reading its test window<sup><a href="#r1">1</a></sup>.</p>
 <div class="sec-head sec-head-h3"><h3 id="51-gnss-and-laser-ranged-satellites"><span class="sec-num">5.1</span>GNSS and laser-ranged satellites</h3><button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/evidence-supported-aso-catalog/51-gnss-and-laser-ranged-satellites.html" data-model-title="A GPS orbit from its analysis-centre state, beside the OMM" aria-label="Run it: A GPS orbit from its analysis-centre state, beside the OMM"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span>Run it</button></div>
@@ -1150,6 +1198,8 @@
 <p>Koury, A. Fast All-vs-All Conjunction Screening. Space Data Network technical whitepaper. <a href="fast-conjunction-assessment.html">Paper</a></p>
 <h3 id="r51">R51</h3>
 <p>COMSPOC. Spacebook XP-TLE: extended-perturbation element sets fitted to Spacebook&#39;s own orbits. <a href="https://spacebook.com/xp-tle">Page</a></p>
+<h3 id="r52">R52</h3>
+<p>U.S. Space Force. Astrodynamics Standards: Sgp4Prop 9.1.1.0, with SGP4 and SGP4-XP. Distributed through Space-Track. <a href="https://www.space-track.org/documentation#/astro">Documentation</a></p>
 
         </article>
       </div>
