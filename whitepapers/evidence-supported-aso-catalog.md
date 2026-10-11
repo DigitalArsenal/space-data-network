@@ -6,13 +6,13 @@ Anthony "TJ" Koury III and Claude Opus 5.5
 
 Koury: Edgesource, Space Data Network. Claude: Anthropic.
 
-Technical whitepaper 2.0 | 11 October 2026
+Technical whitepaper 2.1 | 11 October 2026
 
 Numerical evidence cutoff: 11 October 2026
 
 ## 1 Summary
 
-Space Data Network (SDN) builds a catalog of anthropogenic space objects (ASOs) from public and login-only sources. Object by object, it publishes the solution with the best measured accuracy for the intended use, with its uncertainty. Accuracy is measured against independent precise orbits, under plans fixed before the test data were read<sup>[1](#r1)</sup>.
+Space Data Network (SDN) builds a catalog of anthropogenic space objects (ASOs) from public and login-only sources. Object by object, it publishes the solution with the best measured accuracy for the intended use, with its uncertainty. Accuracy is measured against independent precise orbits, under plans fixed before the test data were read<sup>[1](#r1)</sup>. Section 2 states the method step by step, with the rule that gives every object a covariance.
 
 | Object class | Catalog product | Measured (median) |
 | --- | --- | --- |
@@ -23,7 +23,7 @@ Space Data Network (SDN) builds a catalog of anthropogenic space objects (ASOs) 
 
 For most objects the only public input is the OMM, and the catalog takes it as it is. What the catalog adds is a measured account of each input's error, and screening that acts on it safely:
 
-1. **Measured error as covariance.** An orbit propagated from an OMM's epoch state carries a covariance equal to the error measured for its orbit regime and element-set age. That error is measured against independent orbits in every regime that has them: GNSS analysis-centre orbits, laser ranging, LEO precise orbits, operator ephemerides and radio-occultation receivers. A covariance is labeled calibrated only where held-out data confirm it (section 6).
+1. **Measured error as covariance.** An orbit propagated from an OMM's epoch state carries a covariance equal to the error measured for its orbit regime and element-set age. That error is measured against independent orbits in every regime that has them: GNSS analysis-centre orbits, laser ranging, LEO precise orbits, operator ephemerides and radio-occultation receivers. A covariance is labeled calibrated only where held-out data confirm it (section 2.2).
 2. **SDN's own atmosphere.** Drag uses JB2008 or NRLMSISE-00 with an open correction in the form of the Space Force's Dynamic Calibration of the Atmosphere, solved from public operator states. It explains 25–40 % of the density variation measured by satellites that did not calibrate it; 1–3-day position error is unchanged (ratios 0.98–1.02) (section 5.4).
 3. **Maneuvers.** A detector reads each object's element-set history for steps in orbital energy and plane, and reports each maneuver's time and size. On held-out data it found 22 of 25 ISS burns and all 6 GPS maneuvers in precise orbits; geostationary station-keeping is harder, 4 of 11 (section 5.5).
 4. **Better start states where data allow.** HPOP's force models agree with Orekit within 1 cm over a day (steps of at most 30 s; 2.5 cm at 300 s, section 7). Fitted to laser ranges, HPOP stays 20–60 times better than SGP4 to 7 days; fitted to an arc of corrected OMMs, it halves SGP4's error to two days in GPS (section 5.3).
@@ -37,7 +37,42 @@ Three results go beyond published work:
 
 Pre-registered hypotheses that failed are reported as not supported.
 
-## 2 Evidence model
+## 2 Method
+
+The catalog is assembled object by object from the products of every source. Each object ends with a state, a covariance and its maneuvers.
+
+### 2.1 Construction
+
+1. **Read each source at its level.** Each record becomes the Space Data Standards (SDS) record of its kind, under the source's own identifier: element sets as OMMs, ephemerides as OEMs, laser normal points and other measurements as observations (sections 3 and 4).
+2. **Derive the same products from every source.** For every object a source covers, the method derives four records:
+   1. An SGP4 element set (OMM): the source's own, or one fitted to the source's ephemeris (section 4).
+   2. An SGP4-XP element set: an OMM in the extended-perturbation theory, with its ballistic and radiation coefficients, fitted to the same data<sup>[51](#r51)</sup>.
+   3. A state with its covariance (OCM): the source's state at its epoch, or the SGP4 epoch state of the handoff in section 4, with the covariance of section 2.2.
+   4. The maneuvers in the source's history (MNV), from the detector of section 5.5.
+
+   Sources are then compared like for like, and each can be propagated and shown on its own.
+3. **Measure each source.** Each product is scored against independent precise orbits by object class, orbit regime and product age, under a plan fixed before its test data were read (sections 5 and 10). A source's measured errors form its error model.
+4. **Associate.** Crosswalks propose links between records of one object; ephemerides compared over shared intervals accept, reject or hold each link (section 8).
+5. **Select.** For each object, regime and horizon, the catalog takes the product of the source with the lowest measured median error on a training window of at least 30 samples. Fusing sources was never better than selecting one (section 8).
+6. **Attach covariance and maneuvers.** The selected product keeps its covariance and label (section 2.2). The object carries the maneuvers of all its sources, merged by time and size. A product whose epoch precedes a maneuver does not describe the orbit after it, so selection after a maneuver draws only on later products.
+7. **Write the catalog.** A catalog record (CAT) per object, with its selected OMM, SGP4-XP OMM and OCM and its merged MNV records, each naming the source it came from.
+
+### 2.2 Covariance for every object
+
+Every object carries a covariance, from the first rule that applies:
+
+1. **The operator supplies one.** The operator's covariance, as supplied.
+2. **An orbit fit made the product.** The fit's formal covariance, scaled by the realism factor measured for that source and object class on held-out data. Unscaled, laser-range fits are 16–21 times too small in mean d²/3 (section 6).
+3. **The source has an error model for the object's regime.** The source's measured error at the element set's age, mapped from radial, in-track and cross-track axes to Cartesian. The model is built from the errors of consecutive element sets against independent precise orbits, with their correlation, and calibrated by regime and age (section 6). AOE's sets match Space-Track's error at equal age (section 4) and take its model.
+4. **Otherwise.** The same model pooled over all sources in the object's regime.
+
+Rules 3 and 4 cover every object with an element set, so no object goes without a covariance.
+
+Each covariance carries a label: the rule, the source, the regime and age cell, and the verdict of held-out data for that cell. Calibrated means the realism rule of section 6 held on held-out data: mean d²/3 in [0.8, 1.25] and 95 % coverage in [0.93, 0.97]. Otherwise the label records the measured mean d²/3 and coverage. The element-set model is calibrated in 2 of 35 regime-and-age cells, LEO above 800 km at issue and at half a day; the HPOP epoch state with per-regime P₀ and Q in 5 (section 6). Screening on the uncertainty region relies on calibrated cells, and every screening event also carries the covariance-free maximum probability, which needs no covariance<sup>[50](#r50)</sup>.
+
+Covariance propagates through HPOP's state-transition matrix with per-regime process noise, or grows with element-set age in the model of rule 3 (section 6).
+
+### 2.3 Evidence model
 
 An orbit solution is an inference with five contributors:
 
@@ -232,7 +267,7 @@ HPOP's full force model, as the catalog and the conjunction screen run it<sup>[1
 | Third bodies | Sun, Moon, Venus, Mars and Jupiter from DE440s | Sun and Moon | Sun and Moon within 1 cm of Orekit |
 | Radiation | Cannonball with a conical shadow; Earth albedo and infrared | Solar radiation pressure, AGOM | Within 1 cm of Orekit |
 | Tides, relativity | IERS 2010 solid tides and relativity; FES2004 ocean tides to 30×30 | Solid Earth tides | Within 1.3 mm of Orekit |
-| Drag parameter, thrust | Cd·A/m and its rate; in-track acceleration | B, BDOT; in-track thrust | Within 3.7 mm of Orekit |
+| Drag parameter, thrust | Cd·A/m and its rate; in-track acceleration | B, BDOT; in-track thrust | Within 3.8 mm of Orekit |
 | Integrator | RK78 at 1e-12, steps of at most 300 s; its own error after 3 days 0.1–1.2 m | Eighth-order Gauss–Jackson on Cowell's equations<sup>[42](#r42),[43](#r43)</sup> | Declared substitute, converged |
 | Earth orientation | IAU 2006/2000A with daily IERS rows | IAU 1980 nutation, truncated | Declared substitute |
 
@@ -324,7 +359,7 @@ Conjunction screening<sup>[50](#r50)</sup> takes from one catalog snapshot, per 
 | Covariance | Supplied by the operator, fitted, or modeled (section 6), with its calibration label |
 | Hard-body radius | Supplied, half the catalog size, from radar cross-section, or the default, with its basis |
 
-An OMM supplies no covariance, so the catalog attaches one built from the object's element-set history and calibrated by regime and age against independent orbits (section 6), with its calibration label. Every event also carries the covariance-free maximum probability, which needs no covariance.
+An OMM supplies no covariance, so the catalog attaches one by the rule of section 2.2: built from the source's element-set errors against independent orbits and calibrated by regime and age, with its calibration label. Every event also carries the covariance-free maximum probability, which needs no covariance.
 
 ## Appendix A. Terms
 
