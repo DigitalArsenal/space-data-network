@@ -1,6 +1,12 @@
 [
   {
     "paper": "evidence-supported-aso-catalog",
+    "section_id": "2-evidence-model-and-records",
+    "title": "A solution from observations, with its covariance",
+    "url": "models/evidence-supported-aso-catalog/2-evidence-model-and-records.html"
+  },
+  {
+    "paper": "evidence-supported-aso-catalog",
     "section_id": "vimpel-osculating-elements",
     "title": "Osculating elements to a J2000 state",
     "url": "models/evidence-supported-aso-catalog/vimpel-osculating-elements.html"
@@ -20,38 +26,50 @@
   {
     "paper": "evidence-supported-aso-catalog",
     "section_id": "6-uncertainty",
-    "title": "OCM fields, and covariance through the STM",
-    "url": "models/evidence-supported-aso-catalog/162-uncertainty-estimation-and-propagation.html"
+    "title": "Covariance through HPOP’s state-transition matrix",
+    "url": "models/evidence-supported-aso-catalog/6-uncertainty.html"
   },
   {
     "paper": "evidence-supported-aso-catalog",
     "section_id": "agreement-with-orekit",
     "title": "HPOP against Orekit 13.1",
-    "url": "models/evidence-supported-aso-catalog/171-agreement-with-orekit.html"
+    "url": "models/evidence-supported-aso-catalog/agreement-with-orekit.html"
   },
   {
     "paper": "evidence-supported-aso-catalog",
     "section_id": "accuracy-against-precise-orbits",
     "title": "HPOP against precise orbits",
-    "url": "models/evidence-supported-aso-catalog/172-accuracy-against-precise-orbits.html"
+    "url": "models/evidence-supported-aso-catalog/accuracy-against-precise-orbits.html"
+  },
+  {
+    "paper": "evidence-supported-aso-catalog",
+    "section_id": "8-association-and-selection",
+    "title": "Associating observations with the catalog",
+    "url": "models/evidence-supported-aso-catalog/8-association-and-selection.html"
   },
   {
     "paper": "evidence-supported-aso-catalog",
     "section_id": "9-sp-message-interchange",
     "title": "VCM fields, read, propagated, written",
-    "url": "models/evidence-supported-aso-catalog/173-vector-covariance-message-parity.html"
-  },
-  {
-    "paper": "evidence-supported-aso-catalog",
-    "section_id": "11-measured-accuracy",
-    "title": "E1, E2 and E3 results",
-    "url": "models/evidence-supported-aso-catalog/17-measured-propagation-evidence.html"
+    "url": "models/evidence-supported-aso-catalog/9-sp-message-interchange.html"
   },
   {
     "paper": "evidence-supported-aso-catalog",
     "section_id": "10-publication-and-reproduction",
-    "title": "The binaries this page runs",
-    "url": "models/evidence-supported-aso-catalog/174-evidence-baseline-and-reproduction.html"
+    "title": "A V1 seed, reproduced here",
+    "url": "models/evidence-supported-aso-catalog/10-publication-and-reproduction.html"
+  },
+  {
+    "paper": "evidence-supported-aso-catalog",
+    "section_id": "11-measured-accuracy",
+    "title": "Measured accuracy, by object class and age",
+    "url": "models/evidence-supported-aso-catalog/11-measured-accuracy.html"
+  },
+  {
+    "paper": "evidence-supported-aso-catalog",
+    "section_id": "12-what-conjunction-assessment-consumes",
+    "title": "A conjunction from fitted covariances",
+    "url": "models/evidence-supported-aso-catalog/12-what-conjunction-assessment-consumes.html"
   },
   {
     "paper": "fast-conjunction-assessment",
@@ -67,15 +85,15 @@
   },
   {
     "paper": "fast-conjunction-assessment",
-    "section_id": "step-size",
-    "title": "Step size trades sampling for candidates",
-    "url": "models/fast-conjunction-assessment/step-size.html"
-  },
-  {
-    "paper": "fast-conjunction-assessment",
     "section_id": "refinement",
     "title": "Refining a close approach",
     "url": "models/fast-conjunction-assessment/refinement.html"
+  },
+  {
+    "paper": "fast-conjunction-assessment",
+    "section_id": "step-size",
+    "title": "Step size trades sampling for candidates",
+    "url": "models/fast-conjunction-assessment/step-size.html"
   },
   {
     "paper": "fast-conjunction-assessment",
@@ -88,6 +106,12 @@
     "section_id": "covariance-probability-on-screened-events",
     "title": "Probability and dilution",
     "url": "models/fast-conjunction-assessment/covariance-probability-on-screened-events.html"
+  },
+  {
+    "paper": "fast-conjunction-assessment",
+    "section_id": "propagated-and-fitted-covariance",
+    "title": "EKF and UKF: covariance through the pass",
+    "url": "models/fast-conjunction-assessment/propagated-and-fitted-covariance.html"
   },
   {
     "paper": "adversarial-security",
@@ -124,33 +148,5 @@
     "section_id": "7-implementation",
     "title": "One seed, six networks",
     "url": "models/adversarial-security/7-implementation.html"
-  },
-  {
-    "paper": "evidence-supported-aso-catalog",
-    "section_id": "od-batch-fit",
-    "title": "A batch least-squares fit with its covariance",
-    "url": "models/evidence-supported-aso-catalog/od-batch-fit.html",
-    "section": "03 // Orbit Determination"
-  },
-  {
-    "paper": "evidence-supported-aso-catalog",
-    "section_id": "od-ekf-ukf",
-    "title": "EKF and UKF: covariance through the pass",
-    "url": "models/evidence-supported-aso-catalog/od-ekf-ukf.html",
-    "section": "03 // Orbit Determination"
-  },
-  {
-    "paper": "evidence-supported-aso-catalog",
-    "section_id": "od-association",
-    "title": "Associating observations with the catalog",
-    "url": "models/evidence-supported-aso-catalog/od-association.html",
-    "section": "03 // Orbit Determination"
-  },
-  {
-    "paper": "evidence-supported-aso-catalog",
-    "section_id": "od-conjunction",
-    "title": "A conjunction from fitted covariances",
-    "url": "models/evidence-supported-aso-catalog/od-conjunction.html",
-    "section": "03 // Orbit Determination"
   }
 ]
