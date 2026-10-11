@@ -92,7 +92,7 @@ SpaceMapper's AOE catalog holds SGP4 element sets from its own ground and space 
 
 ### Vimpel osculating elements
 
-Vimpel's HEO product gives osculating elements in J2000<sup>[5](#r5)</sup>. The standard perifocal rotation turns them into a J2000 state at the same epoch<sup>[6](#r6)</sup>, with μ = 398,600.4418 km³/s², under the identifier `vimpel:<id>` and no invented NORAD number<sup>[7](#r7)</sup>. Velocity differenced from 600 s position samples departs from the analytic velocity by up to 1.1 km/s, so it serves only as a diagnostic.
+Vimpel's HEO product gives osculating elements in J2000<sup>[5](#r5)</sup>. The standard perifocal rotation turns them into a J2000 state at the same epoch<sup>[6](#r6)</sup>, with μ = 398,600.4418 km³/s². Vimpel's datefirst file maps its own object numbers to NORAD numbers, with the date each catalog first detected the object; each pair is a candidate link, accepted when the two orbits agree (section 8). An object the file does not map keeps the identifier `vimpel:<id>`, and no NORAD number is invented<sup>[7](#r7)</sup>. Velocity differenced from 600 s position samples departs from the analytic velocity by up to 1.1 km/s, so it serves only as a diagnostic.
 
 ### AOE element sets
 
@@ -272,7 +272,7 @@ HPOP's resident path, which holds the catalog in memory, reproduces its executio
 
 ## 8 Association and selection
 
-Association asks whether records describe one object; selection picks a solution for an epoch, interval and use; estimation derives a new one. Candidates come from provider crosswalks, international designators and native-identifier histories, Vimpel's datefirst fields included; names and bare numbers are not join keys. Compatibility is tested on normalized ephemerides over shared intervals. Each candidate link is compatible, rejected, ambiguous or insufficient, and accepted links stay reversible. Selection takes, per regime and horizon, the source with the lowest median error on a training window of at least 30 samples [E3][e3].
+Association asks whether records describe one object; selection picks a solution for an epoch, interval and use; estimation derives a new one. Candidates come from provider crosswalks, such as Vimpel's datefirst file of Vimpel and NORAD numbers, international designators and native-identifier histories; names and bare numbers are not join keys. Compatibility is tested on normalized ephemerides over shared intervals. Each candidate link is compatible, rejected, ambiguous or insufficient, and accepted links stay reversible. Selection takes, per regime and horizon, the source with the lowest median error on a training window of at least 30 samples [E3][e3].
 
 | Rule | Measured | Evidence |
 | --- | --- | --- |
