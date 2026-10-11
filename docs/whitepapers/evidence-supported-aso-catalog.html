@@ -73,7 +73,7 @@
           <div><dt>Evidence cutoff</dt><dd><span>11 October 2026</span></dd></div>
           <div><dt>Sections</dt><dd>11</dd></div>
           <div><dt>Reading time</dt><dd>29 min</dd></div>
-          <div><dt>Interactive models</dt><dd>11</dd></div>
+          <div><dt>Interactive models</dt><dd>14</dd></div>
         </dl>
       </div>
     </header>
@@ -100,11 +100,11 @@
           </li>
           <li><a href="#5-products-by-object-class"><span class="toc-num">5</span><span>Products by object class</span></a>
             <ol>
-              <li><a href="#51-gnss-and-laser-ranged-satellites"><span class="toc-num">5.1</span><span>GNSS and laser-ranged satellites</span></a></li>
-              <li><a href="#52-operator--and-provider-ephemeris-objects"><span class="toc-num">5.2</span><span>Operator- and provider-ephemeris objects</span></a></li>
+              <li><a href="#51-gnss-and-laser-ranged-satellites"><span class="toc-num">5.1</span><span>GNSS and laser-ranged satellites</span><i class="toc-model" title="Interactive model"></i></a></li>
+              <li><a href="#52-operator--and-provider-ephemeris-objects"><span class="toc-num">5.2</span><span>Operator- and provider-ephemeris objects</span><i class="toc-model" title="Interactive model"></i></a></li>
               <li><a href="#53-objects-with-public-omms-only"><span class="toc-num">5.3</span><span>Objects with public OMMs only</span></a></li>
               <li><a href="#54-drag-regime"><span class="toc-num">5.4</span><span>Drag regime</span></a></li>
-              <li><a href="#55-maneuver-detection"><span class="toc-num">5.5</span><span>Maneuver detection</span></a></li>
+              <li><a href="#55-maneuver-detection"><span class="toc-num">5.5</span><span>Maneuver detection</span><i class="toc-model" title="Interactive model"></i></a></li>
             </ol>
           </li>
           <li><a href="#6-uncertainty"><span class="toc-num">6</span><span>Uncertainty</span><i class="toc-model" title="Interactive model"></i></a></li>
@@ -350,7 +350,7 @@
 <p>SDN fits its own OMMs to any source&#39;s ephemeris: operator ephemerides (SpaceX&#39;s MEME files, CCSDS OEM, Earth-fixed files), GNSS orbits (SP3), laser-ranging predictions (CPF) and its own HPOP solutions. Each is an SGP4 element set with B* fitted over a declared interval and scored on a held-out stretch before release, so any SGP4 implementation reads it. CelesTrak&#39;s supplemental GP fits operator ephemerides the same way<sup><a href="#r48">48</a></sup>, Spacebook fits extended-perturbation element sets to its own orbits<sup><a href="#r51">51</a></sup>, and the 18th Space Defense Squadron&#39;s eGP fits SP states<sup><a href="#r49">49</a></sup>. The fit RMS that CelesTrak publishes for each set is the benchmark.</p>
 <h2 id="5-products-by-object-class"><span class="sec-num">5</span>Products by object class</h2>
 <p>Each row is one method: its originators, our measured result (median 3D position error unless stated) and the experiment. Every experiment froze its plan before reading its test window<sup><a href="#r1">1</a></sup>.</p>
-<h3 id="51-gnss-and-laser-ranged-satellites"><span class="sec-num">5.1</span>GNSS and laser-ranged satellites</h3>
+<div class="sec-head sec-head-h3"><h3 id="51-gnss-and-laser-ranged-satellites"><span class="sec-num">5.1</span>GNSS and laser-ranged satellites</h3><button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/evidence-supported-aso-catalog/51-gnss-and-laser-ranged-satellites.html" data-model-title="A GPS orbit from its analysis-centre state, beside the OMM" aria-label="Run it: A GPS orbit from its analysis-centre state, beside the OMM"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span>Run it</button></div>
 <div class="table-frame"><table>
 <thead>
 <tr>
@@ -373,7 +373,7 @@
 <td><a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e6/README.md">E6</a></td>
 </tr>
 </tbody></table></div>
-<h3 id="52-operator--and-provider-ephemeris-objects"><span class="sec-num">5.2</span>Operator- and provider-ephemeris objects</h3>
+<div class="sec-head sec-head-h3"><h3 id="52-operator--and-provider-ephemeris-objects"><span class="sec-num">5.2</span>Operator- and provider-ephemeris objects</h3><button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/evidence-supported-aso-catalog/52-operator--and-provider-ephemeris-objects.html" data-model-title="The ISS’s operator ephemeris against the public products" aria-label="Run it: The ISS’s operator ephemeris against the public products"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span>Run it</button></div>
 <div class="table-frame"><table>
 <thead>
 <tr>
@@ -511,7 +511,7 @@
 </tr>
 </tbody></table></div>
 <p>The correction does not follow storms. Exploratory, on one NRLMSISE-00 reference for every split: the fleet explains 0.47–0.48 of NRLMSISE-00&#39;s larger spread, leaving residuals of 0.075–0.095 against 0.069–0.086 on JB2008.</p>
-<h3 id="55-maneuver-detection"><span class="sec-num">5.5</span>Maneuver detection</h3>
+<div class="sec-head sec-head-h3"><h3 id="55-maneuver-detection"><span class="sec-num">5.5</span>Maneuver detection</h3><button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/evidence-supported-aso-catalog/55-maneuver-detection.html" data-model-title="The ISS reboost the detector found" aria-label="Run it: The ISS reboost the detector found"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span>Run it</button></div>
 <p>The detector compares the trajectories of consecutive element sets at one instant, whatever propagator answers its queries: a crossing test and a robust likelihood-ratio test for steps in orbit-averaged energy and orbit plane, merged by default<sup><a href="#r10">10</a></sup>. It builds on element-set time series<sup><a href="#r30">30</a></sup> and the generalized likelihood ratio for jumps<sup><a href="#r31">31</a></sup>. Thresholds came from the ISS in 2020–2024; every other window was read once. A planned ISS burn counts as truth only when NASA&#39;s next trajectory shows it executed; one 2021 plan was not.</p>
 <div class="table-frame"><table>
 <thead>
