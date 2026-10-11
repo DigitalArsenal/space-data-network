@@ -358,9 +358,9 @@ export async function createReel(base = "") {
     const tOut = T_PRIV - 0.45;
     stat("19 s", "SGP4 · CPU", 960, 260, T_RES + 0.5, tOut, t, { px: 104 });
     stat("21 s", "SGP4 · GPU", 1250, 260, T_RES + 0.7, tOut, t, { px: 104, color: INK });
-    stat("1.9 h", "FULL-FORCE HPOP · 16 CORES", 1500, 260, T_RES + 0.9, tOut, t, { px: 104, color: INK });
-    stat("292,516", "CLOSE APPROACHES WITHIN 5 km OVER THREE DAYS", 1000, 470, T_RES + 1.6, tOut, t, { px: 80 });
-    stat("13,088", "WITH A CALIBRATED COVARIANCE PROBABILITY", 1000, 640, T_RES + 2.4, tOut, t, { px: 80, color: INK });
+    stat("1.8 h", "FULL-FORCE HPOP · 16 CORES", 1500, 260, T_RES + 0.9, tOut, t, { px: 104, color: INK });
+    stat("294,544", "CLOSE APPROACHES WITHIN 5 km OVER THREE DAYS", 1000, 470, T_RES + 1.6, tOut, t, { px: 80 });
+    stat("13,734", "WITH A CALIBRATED COVARIANCE PROBABILITY", 1000, 640, T_RES + 2.4, tOut, t, { px: 80, color: INK });
   }
 
   // -------------------------------------- screening on encrypted positions

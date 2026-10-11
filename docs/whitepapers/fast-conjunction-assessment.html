@@ -142,7 +142,7 @@
         </nav>
         <article class="paper">
 <h2 id="executive-summary">Executive summary</h2>
-<p>Space Data Network (SDN) screens the full public catalog, 32,514 objects, all-vs-all over three days in 19 s with SGP4 on ordinary processors, and in 21 s with a GPU. With numerical high-precision orbit propagation (HPOP) under the full force model of <a href="#5-time-windows">section 5</a>, it takes 31 CPU-hours, 1.9 hours on 16 dedicated cores, almost all of it propagation; search and refinement take 48.6 s. The screen finds every pair that comes within 5 km, and reports each close approach&#39;s time (TCA), miss distance, relative speed and maximum collision probability. The measurements were taken on one 28-core workstation, in Node.js and in a standard web browser. In WasmEdge, the runtime SDN nodes use, the SGP4 screen takes 23 s. Every run on one catalog and propagator reports the same conjunctions.</p>
+<p>Space Data Network (SDN) screens the full public catalog, 32,514 objects, all-vs-all over three days in 19 s with SGP4 on ordinary processors, and in 21 s with a GPU. With numerical high-precision orbit propagation (HPOP) under the full force model of <a href="#5-time-windows">section 5</a>, it takes 28 CPU-hours, 1.8 hours on 16 dedicated cores, almost all of it propagation; search and refinement take 138 s on 2 module threads. The screen finds every pair that comes within 5 km, and reports each close approach&#39;s time (TCA), miss distance, relative speed and maximum collision probability. The measurements were taken on one 28-core workstation, in Node.js and in a standard web browser. In WasmEdge, the runtime SDN nodes use, the SGP4 screen takes 23 s. Every run on one catalog and propagator reports the same conjunctions.</p>
 <p>Five design choices produce that speed:</p>
 <ol>
 <li><strong>A spatial grid proposes pairs; the module decides.</strong> At every 60 s step, a uniform grid finds the pairs that could be close among the 528.6 million, on a GPU (WebGPU) or in the WebAssembly (WASM) conjunction module on CPU threads. The module re-tests each candidate in f64 and refines it. Every reported number comes from the module.</li>
@@ -152,7 +152,7 @@
 <li><strong>Refinement proves, then solves.</strong> Where the range of a pair provably has one minimum, Newton&#39;s method on the range rate finds it in about ten evaluations.</li>
 </ol>
 <p>The screen reproduces the module&#39;s single-call screen where both can run. On 4,000 objects over one day, all 1,068 conjunctions match, with TCA within 0.64 ms and miss distance within 5 mm; the single call takes 32.9 s and the windowed screen 0.44 s.</p>
-<p>Against SOCRATES on the element sets SOCRATES itself used, TCA agrees within 0.5 ms and miss distance within 2.4 m for 95 % of cataloged pairs, the precision SOCRATES reports. Each event reports the covariance-free maximum probability. With an empirical model of element-set prediction error, events also carry a covariance-based probability. It is labeled calibrated only where held-out precise orbits confirm the covariance: LEO 600 to 800 km, 13,088 of the 292,516 three-day conjunctions. There, screening on the uncertainty region missed 0–0.4 % of true collisions, against 2.7–16 % for a probability threshold of 1e-4, whose probabilities a large covariance dilutes (<a href="#7-uncertainty-and-probability-of-collision">section 7</a>). The model<sup><a href="#r1">1</a></sup> adds 1.1 s to the 19 s screen (<a href="#7-uncertainty-and-probability-of-collision">section 7</a>).</p>
+<p>Against SOCRATES on the element sets SOCRATES itself used, TCA agrees within 0.5 ms and miss distance within 2.4 m for 95 % of cataloged pairs, the precision SOCRATES reports. Each event reports the covariance-free maximum probability. With an empirical model of element-set prediction error, events also carry a covariance-based probability. It is labeled calibrated only where held-out precise orbits confirm the covariance: LEO 600 to 800 km, 13,734 of the 294,544 three-day conjunctions. There, screening on the uncertainty region missed 0–0.4 % of true collisions, against 2.7–16 % for a probability threshold of 1e-4, whose probabilities a large covariance dilutes (<a href="#7-uncertainty-and-probability-of-collision">section 7</a>). The model<sup><a href="#r1">1</a></sup> adds 1.1 s to the 19 s screen (<a href="#7-uncertainty-and-probability-of-collision">section 7</a>).</p>
 <p>Operators keep their most precise orbits and planned maneuvers private. <a href="#8-private-screening">Section 8</a> specifies <strong>private screening</strong>: two operators learn when their objects come close without exchanging trajectories, by computing distances on homomorphically encrypted positions.</p>
 <ul>
 <li><strong>Cost.</strong> Its arithmetic is measured: 0.17 s and 8.7 MB per pair-day at 1 s steps.</li>
@@ -347,7 +347,7 @@
 <td align="right">19.1 s</td>
 <td align="right">9.7 s</td>
 <td align="right">6.6 s</td>
-<td align="right">292,516</td>
+<td align="right">294,544</td>
 </tr>
 <tr>
 <td>SGP4</td>
@@ -355,7 +355,7 @@
 <td align="right">22.9 s</td>
 <td align="right">11.9 s</td>
 <td align="right">8.7 s</td>
-<td align="right">292,516</td>
+<td align="right">294,544</td>
 </tr>
 <tr>
 <td>SGP4</td>
@@ -363,22 +363,22 @@
 <td align="right">21.3 s</td>
 <td align="right">6.1 + 2.3 s</td>
 <td align="right">7.2 s</td>
-<td align="right">292,516</td>
+<td align="right">294,544</td>
 </tr>
 <tr>
 <td>HPOP, 72 × 1 h</td>
 <td>CPU, Node.js</td>
-<td align="right">6,964 s</td>
-<td align="right">33.8 s</td>
-<td align="right">14.8 s</td>
-<td align="right">288,524</td>
+<td align="right">6,383 s</td>
+<td align="right">97.7 s</td>
+<td align="right">40.1 s</td>
+<td align="right">283,700</td>
 </tr>
 </tbody></table></div>
 <ul>
 <li>For each propagator, every run reports the same conjunctions with the same TCA and miss distance.</li>
 <li><strong>SGP4&#39;s</strong> remaining time is sampling: 4,321 steps × 32,514 SGP4 evaluations. On the GPU path the module samples (6.1 s) and the GPU searches (2.3 s).</li>
-<li><strong>HPOP&#39;s</strong> time is propagation: 110,642 CPU-seconds on 16 worker threads, 0.72 s per object-day, 36 % of it the catch-up from element epochs to the screen&#39;s start. The table&#39;s end-to-end time is that CPU time on 16 dedicated cores plus the 48.6 s of search and refinement on 8 module threads; on the shared workstation (1-minute load average median 40, maximum 62) the screen took 9,294 s<sup><a href="#r33">33</a></sup>.</li>
-<li>The two propagators report different conjunctions. Of HPOP&#39;s 288,524, 39,486 (14 %) are also in the SGP4 screen, the same pair with TCAs within 10 minutes; on those, TCAs differ by a median of 1.2 s and miss distances by 670 m. The share falls from 21 % of the first day&#39;s conjunctions to 9 % of the third&#39;s. Neither result is a measure of accuracy (<a href="#7-uncertainty-and-probability-of-collision">section 7</a>).</li>
+<li><strong>HPOP&#39;s</strong> time is propagation: 99,929 CPU-seconds on 8 worker threads, 0.65 s per object-day, 36 % of it the catch-up from element epochs to the screen&#39;s start. The table&#39;s end-to-end time is that CPU time on 16 dedicated cores plus the 137.7 s of search and refinement on 2 module threads; on the shared workstation (1-minute load average median 44, maximum 82) the screen took 15,210 s<sup><a href="#r33">33</a></sup>.</li>
+<li>The two propagators report different conjunctions. Of HPOP&#39;s 283,700, 39,425 (14 %) are also in the SGP4 screen, the same pair with TCAs within 10 minutes; on those, TCAs differ by a median of 1.2 s and miss distances by 691 m. The share falls from 22 % of the first day&#39;s conjunctions to 9 % of the third&#39;s. Neither result is a measure of accuracy (<a href="#7-uncertainty-and-probability-of-collision">section 7</a>).</li>
 </ul>
 <div class="sec-head sec-head-h3"><h3 id="step-size">Step size</h3><button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/fast-conjunction-assessment/step-size.html" data-model-title="Step size trades sampling for candidates" aria-label="Run it: Step size trades sampling for candidates"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span>Run it</button></div>
 <p>The candidate test is exhaustive at any step, so the step size trades sampling against candidates. SGP4, three days:</p>
@@ -399,7 +399,7 @@
 <td align="right">92.1 s</td>
 <td align="right">102.0 s</td>
 <td align="right">98.6 s</td>
-<td align="right">292,516</td>
+<td align="right">294,544</td>
 </tr>
 <tr>
 <td align="right">30 s</td>
@@ -407,7 +407,7 @@
 <td align="right">17.8 s</td>
 <td align="right">29.9 s</td>
 <td align="right"></td>
-<td align="right">292,516</td>
+<td align="right">294,544</td>
 </tr>
 <tr>
 <td align="right">60 s</td>
@@ -415,7 +415,7 @@
 <td align="right">9.7 s</td>
 <td align="right">19.1 s</td>
 <td align="right">21.3 s</td>
-<td align="right">292,516</td>
+<td align="right">294,544</td>
 </tr>
 <tr>
 <td align="right">120 s</td>
@@ -423,7 +423,7 @@
 <td align="right">10.0 s</td>
 <td align="right">39.4 s</td>
 <td align="right"></td>
-<td align="right">292,516</td>
+<td align="right">294,544</td>
 </tr>
 </tbody></table></div>
 <p>Every step size reports the same conjunctions, with miss distances within 2 mm. TCAs differ by up to 173 ms, but only on flat minima, where the miss distance is the same. A 5 s screen samples 12 times as often and finds nothing more. Shorter steps cost sampling; longer steps give larger bounds and more candidates. 60 s is near the optimum.</p>
@@ -468,7 +468,7 @@
 <td align="right">6.6 s</td>
 </tr>
 </tbody></table></div>
-<p>Every row reports the same 292,516 conjunctions. On the GPU path, replacing the all-pairs kernel with the grid cut the GPU search from 8.5 s to 2.3 s.</p>
+<p>Every row reports the same conjunctions. On the GPU path, replacing the all-pairs kernel with the grid cut the GPU search from 8.5 s to 2.3 s.</p>
 <p>The first version also sent the whole catalog with every call. Loading it once into the module cut one day of the full catalog from 266.7 s to 55.4 s, with the same 77,667 conjunctions.</p>
 <h3 id="agreement-with-the-single-call-screen">Agreement with the single-call screen</h3>
 <div class="table-frame"><table>
@@ -597,10 +597,10 @@
 <li>the two objects&#39; errors as independent;</li>
 <li>calibrated only when both objects&#39; strata passed the gate.</li>
 </ul>
-<p>On the three-day full catalog the screen found the same 292,516 conjunctions:</p>
+<p>On the three-day full catalog the screen found the same 294,544 conjunctions:</p>
 <ul>
-<li>288,105 received a covariance probability;</li>
-<li>13,088 of those are calibrated;</li>
+<li>289,455 received a covariance probability;</li>
+<li>13,734 of those are calibrated;</li>
 <li>refinement took 7.8 s instead of 7.0 s, and the run 19.6 s instead of 18.5 s.</li>
 </ul>
 <p>Events outside the model keep the Alfano maximum. These are a negative or too-old prediction age, or a stratum the model lacks.</p>
@@ -869,13 +869,13 @@ carries nothing about b.</li>
 </ul>
 <p><strong>Real conjunctions reveal what safety requires.</strong> Each alert places the
 other object within R′ of a known object at a known time. In this paper&#39;s
-3-day SGP4 screen, 2,532 objects outside Starlink came within 5 km of a
+3-day SGP4 screen, 2,565 objects outside Starlink came within 5 km of a
 Starlink satellite:</p>
 <ul>
-<li>1,304 of them did so three or more times;</li>
-<li>668 did so ten or more times.</li>
+<li>1,312 of them did so three or more times;</li>
+<li>669 did so ten or more times.</li>
 </ul>
-<p>Kuiper, OneWeb and Qianfan had 857, 452 and 571 such objects, mostly with one
+<p>Kuiper, OneWeb and Qianfan had 875, 481 and 591 such objects, mostly with one
 to four conjunctions each. A private object in a crowded shell therefore
 gives its densest neighbour enough position fixes for a coarse orbit within
 days. Private screening hides an orbit from operators it does not approach.
@@ -1055,7 +1055,7 @@ registered.</p>
 </tr>
 <tr>
 <td>HPOP propagation</td>
-<td>Over 99 % of the HPOP screen, 0.72 CPU-seconds per object-day</td>
+<td>Over 99 % of the HPOP screen, 0.65 CPU-seconds per object-day</td>
 </tr>
 <tr>
 <td>Catch-up from element epochs</td>
@@ -1087,7 +1087,7 @@ registered.</p>
 <h3 id="r1">R1</h3>
 <p>Koury, A. Evidence-Supported ASO Catalog. Space Data Network technical whitepaper 2.0, 11 October 2026. <a href="evidence-supported-aso-catalog.html">Paper</a></p>
 <h3 id="r2">R2</h3>
-<p>Edgesource. Conjunction assessment module: all-vs-all screening on a GPU or on CPU threads, time windows, TCA solve, parity and bound tests, and the benchmark procedure. Modules commit e1e9b6b8b9a9c5257eab5d447a668e1886a4fa71. Files: <code>analysis/conjunction-assessment/docs/gpu-all-vs-all.md</code>, <code>analysis/conjunction-assessment/docs/benchmark.md</code>. Private repository, available on request (<a href="mailto:tj@edgesource.com">tj@edgesource.com</a>).</p>
+<p>Edgesource. Conjunction assessment module: all-vs-all screening on a GPU or on CPU threads, time windows, TCA solve, parity and bound tests, and the benchmark procedure. Modules commit e743f2a279ab8754a55b509ccd770e3415aaf3e6; module 0.7.0, <code>analysis/conjunction-assessment/dist/isomorphic/module.wasm</code>, SHA-256 ca5b9898007b5067c88e51bb54de82004a5e0a6e114bdba59843677cd2b6c106. Files: <code>analysis/conjunction-assessment/docs/gpu-all-vs-all.md</code>, <code>analysis/conjunction-assessment/docs/benchmark.md</code>. Private repository, available on request (<a href="mailto:tj@edgesource.com">tj@edgesource.com</a>).</p>
 <h3 id="r3">R3</h3>
 <p>Edgesource. Space Data Module SDK 0.8.26. <a href="https://github.com/DigitalArsenal/space-data-module-sdk">Repository</a></p>
 <h3 id="r4">R4</h3>
@@ -1149,7 +1149,7 @@ registered.</p>
 <h3 id="r32">R32</h3>
 <p>Fehlberg, E. Classical Fifth-, Sixth-, Seventh-, and Eighth-Order Runge-Kutta Formulas with Stepsize Control. NASA Technical Report R-287, 1968. <a href="https://ntrs.nasa.gov/citations/19680027281">Report</a></p>
 <h3 id="r33">R33</h3>
-<p>Edgesource. HPOP on the resident path: force model, integrator and export, reentry, equivalence and interpolation tests, catalog cost, the propagation farm, the full-catalog screen (with the conjunction module of <a href="#r2">R2</a>&#39;s commit) and the HPOP covariance calibration. Modules commit 06d22fec2fcbb9b1b491d6a19cb4c35d9e2a8604. Files: <code>propagator/hpop/README.md</code>, <code>propagator/hpop/catalog.mjs</code>, <code>analysis/conjunction-assessment/docs/gpu-all-vs-all.md</code>, <code>analysis/conjunction-assessment/docs/hpop-full-force-screen-2026-10.md</code>, <code>analysis/gp-error-model/docs/hpop-calibration-2026-08.md</code>. Private repository, available on request (<a href="mailto:tj@edgesource.com">tj@edgesource.com</a>).</p>
+<p>Edgesource. HPOP on the resident path: force model, integrator and export, reentry, equivalence and interpolation tests, catalog cost, the propagation farm, the full-catalog screen (with the conjunction module of <a href="#r2">R2</a>&#39;s commit) and the HPOP covariance calibration. Modules commit e743f2a279ab8754a55b509ccd770e3415aaf3e6. Files: <code>propagator/hpop/README.md</code>, <code>propagator/hpop/catalog.mjs</code>, <code>analysis/conjunction-assessment/docs/gpu-all-vs-all.md</code>, <code>analysis/conjunction-assessment/docs/hpop-full-force-screen-2026-10.md</code>, <code>analysis/gp-error-model/docs/hpop-calibration-2026-08.md</code>. Private repository, available on request (<a href="mailto:tj@edgesource.com">tj@edgesource.com</a>).</p>
 
         </article>
       </div>
