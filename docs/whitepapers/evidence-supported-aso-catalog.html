@@ -778,7 +778,7 @@
 </tr>
 </tbody></table></div>
 <div class="sec-head sec-head-h2"><h2 id="9-sp-message-interchange"><span class="sec-num">9</span>SP message interchange</h2><button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/evidence-supported-aso-catalog/9-sp-message-interchange.html" data-model-title="VCM fields, read, propagated, written" aria-label="Run it: VCM fields, read, propagated, written"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span>Run it</button></div>
-<p>The VCM carries an SP state, its force settings and an equinoctial covariance<sup><a href="#r39">39</a></sup>. SDN&#39;s adapter reads a VCM into an HPOP request and writes the result back as a VCM, transforming the covariance with an exact Jacobian computed by forward-mode dual numbers<sup><a href="#r47">47</a></sup>. The format states no covariance units, and no public definition was found. Four messages settle them:</p>
+<p>The VCM carries an SP state, its force settings and an equinoctial covariance<sup><a href="#r39">39</a></sup>. SDN&#39;s adapter reads a VCM into an HPOP request, transforming the covariance from equinoctial to Cartesian with an exact Jacobian computed by forward-mode dual numbers<sup><a href="#r47">47</a></sup>. The format states no covariance units, and no public definition was found. Four messages settle them:</p>
 <ol>
 <li>The survey&#39;s ISS sample</li>
 <li>An SP message for a geostationary orbit</li>
@@ -804,7 +804,7 @@
 <td>The GPS message against ESA&#39;s final orbit for one day: radial and in-track RMS 0.46 and 0.64 of their sigmas, cross-track 1.27; read as printed, the sigmas overstate the error 7 to 20 times</td>
 </tr>
 </tbody></table></div>
-<p>A round trip through VCM text in SP&#39;s number format recovers the covariance to 2e-5 of its sigmas. A VCM naming JBH09 runs as JB2008 on SET&#39;s indices, which the caller supplies.</p>
+<p>A VCM naming JBH09 runs as JB2008 on SET&#39;s indices, which the caller supplies.</p>
 <div class="sec-head sec-head-h2"><h2 id="10-measured-accuracy"><span class="sec-num">10</span>Measured accuracy</h2><button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/evidence-supported-aso-catalog/11-measured-accuracy.html" data-model-title="Measured accuracy, by object class and age" aria-label="Run it: Measured accuracy, by object class and age"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span>Run it</button></div>
 <p>Median 3D position error against precise orbits, by object class and age of the product:</p>
 <div class="table-frame"><table>
