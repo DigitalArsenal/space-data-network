@@ -62,6 +62,11 @@ var ErrStoreClosed = errors.New("datastore is closed")
 // whole rebuild: reads never wait on the data layer (owner 2026-09-02).
 var ErrEngineRebuilding = errors.New("engine is rebuilding; retry shortly")
 
+// ErrRecordNotFound is wrapped by Delete when no record has the requested CID,
+// so callers whose goal is the record's absence can tell that outcome apart
+// from a failed delete (errors.Is) without parsing the message.
+var ErrRecordNotFound = errors.New("not found")
+
 const (
 	localEPMStoreSalt     = "space-data-network-local-epm-store-v1"
 	engineAOTCacheDirName = "flatsql-aot"
@@ -3530,12 +3535,12 @@ func (s *FlatSQLStore) Delete(schemaName, cid string) error {
 	var recordRowID sql.NullInt64
 	if err := tx.QueryRow(fmt.Sprintf(`SELECT rowid, record_length FROM %s WHERE cid = ?1`, readSource), cid).Scan(&recordRowID, &recordBytes); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("not found: %s", cid)
+			return fmt.Errorf("%w: %s", ErrRecordNotFound, cid)
 		}
 		return fmt.Errorf("lookup deleted record bytes: %w", err)
 	}
 	if affected := s.deleteRoutedMirrorsWhere(tx, tableName, `cid = ?`, cid); affected == 0 {
-		return fmt.Errorf("not found: %s", cid)
+		return fmt.Errorf("%w: %s", ErrRecordNotFound, cid)
 	}
 	if err := s.removeRecordCatalogRowsTx(tx, schemaName, cid, recordBytes.Int64, recordRowID.Int64); err != nil {
 		return err
