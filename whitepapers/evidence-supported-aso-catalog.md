@@ -6,812 +6,375 @@ Anthony "TJ" Koury III and Dr. Moriba Jah
 
 Koury: Edgesource, Space Data Network. Jah: The University of Texas at Austin; GaiaVerse Ltd.
 
-Technical whitepaper 1.9 | 9 October 2026
+Technical whitepaper 2.0 | 11 October 2026
 
-Numerical evidence cutoff: 9 October 2026 for section 17; 21 September 2026 for the Vimpel study and the baseline of section 15
+Numerical evidence cutoff: 11 October 2026
 
-## Executive summary
+## 1 Summary
 
-Space Data Network (SDN) is developing a reproducible, multi-provider catalog of anthropogenic space objects (ASOs) for distributed data sharing, orbit prediction, and conjunction assessment. We select solutions according to the evidence supporting each object, the intended use, and the prediction interval. Numerical high-precision orbit propagation (HPOP) is a principal computational capability; its value depends on the initial state, force model, measurement information, and treatment of uncertainty.
+Space Data Network (SDN) builds a catalog of anthropogenic space objects (ASOs) from public and login-only sources. It keeps every provider's product as an attributed record and, object by object, publishes the solution with the best measured accuracy for the intended use, with its uncertainty and lineage. Accuracy is measured against independent precise orbits, under plans fixed before the test data were read [R1](#r1).
 
-The catalog preserves original provider products and records how each selected or derived solution was obtained. It distinguishes direct observations from provider estimates, identifies shared source lineage, and makes model assumptions and unresolved parameters visible. Versioned dynamics and measurement models, observability reports, and explicit uncertainty representations extend the catalog's existing commitments to attribution and bounded claims.
-
-An OMM evaluated through SGP4 at its epoch yields an estimated Cartesian state that can initialize numerical propagation after a proper frame transformation. This handoff is a legitimate computational operation. Its predictive benefit is an empirical question: errors in the estimated epoch state affect both propagation paths, while different dynamics change how those errors evolve. Neither retaining SGP4 nor switching to a numerical model guarantees the more accurate forecast. A standard OMM supplies no covariance, however, and its epoch state is a point estimate whose errors are entangled with SGP4 dynamics. An OMM-seeded numerical product therefore carries an explicit epistemic uncertainty representation for its initial condition, or is marked as having none.
-
-The recorded Vimpel study converted all 13,808 acquired element rows and reduced withheld-position RMS discrepancies from 6.04–10.71 km to 52.82–69.93 m on three four-hour arcs. These are consistency and model-reconciliation results against a provider ephemeris ([R1](#r1)–[R3](#r3)).
-
-Section 17 reports the measured evidence for the propagation path. On identical inputs, HPOP agrees with Orekit 13.1 within 15 mm in position over a day with hourly output, in 63 cases across five orbit types. Started from precise orbits of four geodetic spheres, with gravity to degree and order 20, the Sun and Moon, radiation pressure, solid tides and relativity, its median error against the ILRS orbits is 4.8 m after a day and 14 m after three (largest 10 m and 31 m). Against IGS orbits of GPS satellites, with a crude radiation model, the median is 29 m after a day (largest 117 m). These results measure the dynamics for well-modeled objects started from precise states. The measurements can be repeated in a web browser from published inputs ([R35](#r35)).
-
-## 1 Evidence and the five contributors
-
-An orbit solution is an inference about a physical object. Its evidential support depends on five contributors. The catalog records the models and methods we choose, the measurements and provider products available to us, and the limits of what those inputs establish.
-
-| No. | Contributor | Role in a catalog solution |
+| Object class | Catalog product | Measured (median) |
 | --- | --- | --- |
-| 1 | Actual physics | The forces and behavior experienced by the object; known only incompletely through evidence. |
-| 2 | Dynamics model | Our mathematical description of motion, including shared physical models and object-specific parameters. |
-| 3 | Observations | Measurements such as angles, ranges, range rates, and photometry, with acquisition and processing provenance. |
-| 4 | Measurement model | The mapping from object and sensor states to predicted measurements, including timing, calibration, and biases. |
-| 5 | Inference method | The procedure and assumptions used to estimate states, parameters, associations, and uncertainty. |
+| GPS satellites | Analysis-centre orbit, propagated | 3.5 cm at issue, 30 m a day later |
+| Satellites with laser ranging | High-precision orbit propagation (HPOP) fitted to the ranges | 7 m at the fit, 42 m after 7 days |
+| Satellites with operator ephemerides | The operator's ephemeris | Public element sets (OMMs) lie 0.6–5 km from it |
+| Objects known only from public OMMs | SGP4 on the OMM | 0.3–1.6 km at issue |
 
-### Observations and provider estimates
+HPOP's force models agree with Orekit within 1.6 cm over a day, and from precise states they leave a median 4.8 m against laser-ranging orbits after a day. Started from an OMM's own epoch state, HPOP is never better than SGP4: the start state, not the force model, limits it. None of the density corrections tested improves 1–3-day orbit prediction in its pre-registered test, and covariances proved realistic on held-out data in few regimes and horizons.
 
-A provider ephemeris or element set already incorporates that provider's dynamics model, measurement model, and inference. We call it a provider claim: an attributed estimate with an evidentiary history. This classification does not imply low quality. An operator solution with strong independent support may be the best available product. A direct observation also has instrument, processing, and error characteristics that must be documented.
+Three results go beyond published work and are marked [NEW] where they enter: GPS element-set correction fails on an unseen orbital plane (section 5.3); a density correction of the kind the Space Force's drag model uses, solved from Planet's public states, is scored on satellites that did not calibrate it (section 5.4); consecutive OMM errors are strongly correlated, and four published covariance constructions are overconfident (section 6). Pre-registered hypotheses that failed are reported as not supported.
 
-Independence depends on lineage. Products published through different channels may reuse the same measurements or solutions. Agreement among such products is useful consistency evidence but cannot be counted as repeated independent confirmation. Unknown lineage remains an explicit uncertainty.
+## 2 Evidence model and records
 
-### Levels of data
+An orbit solution is an inference with five contributors: the object's physics, the dynamics model, the observations, the measurement model and the inference method. A provider's ephemeris or element set already embeds the provider's models and inference, so the catalog keeps it as an attributed provider claim, not as an observation. Agreement between products counts as independent confirmation only when their lineage is independent; unknown lineage is recorded as unknown.
 
-Orbit products sit at different distances from the observations. We use four processing levels, defined here for orbit data by analogy to Earth-science data levels. Each step adds model contributors and discards information that later steps cannot recover.
+Orbit data sit at four processing levels, by analogy with Earth-science data levels. A higher level is more processed, not better: it inherits every flaw below it, and re-epoching adds no evidence. Every source record declares its level.
 
-| Level | Content | Examples among SDN inputs | What processing adds |
-| --- | --- | --- | --- |
-| 0 | Raw sensor data: detector counts, signal samples, images, time tags as recorded | Sensor output before reduction | Nothing yet; closest to contributor 1 |
-| 1 | Calibrated, time-tagged measurements: angles, ranges, range rates, photometry | Reduced observations from participating sensors | A measurement model (contributor 4) |
-| 2 | Estimated states and ephemerides: osculating state vectors or elements, and trajectories propagated from them | Vimpel elements and ephemerides, operator ephemerides, GNSS precise orbits, CPF predictions | A dynamics model and an inference method (contributors 2 and 5) |
-| 3 | Averaged, theory-specific elements fit to Level 2 states or Level 1 data | OMM (GP) element sets from CelesTrak, Space-Track, and Space Mapper; supplemental GP; SGP4 companions produced by SDN | A second, analytic theory (SGP4) and a second fit |
+| Level | Content | SDN inputs |
+| --- | --- | --- |
+| 0 | Raw sensor data | Detector counts, signal samples, images |
+| 1 | Calibrated, time-tagged measurements | Laser normal points; radio Doppler; optical angles |
+| 2 | Estimated states and ephemerides | Operator ephemerides; GNSS and laser-ranging precise orbits; Vimpel elements; ILRS predictions |
+| 3 | Theory-specific mean elements fitted to level 1 or 2 | OMMs from Space-Track and SpaceMapper; CelesTrak's supplemental GP; SDN's SGP4 companions |
 
-Three consequences follow. First, a higher level is not a better level; it is a more processed one, and each level inherits every flaw of the levels beneath it. Second, a product that is re-epoched or re-propagated without new Level 1 data keeps its level but carries no new evidence, so update frequency is not a proxy for evidential support. Third, derived assessments such as conjunction reports inherit the limits of the lowest-quality input they depend on. Every source record therefore declares its level, and the catalog never treats a Level 2 or Level 3 product as a Level 1 observation.
+A source record keeps the provider, native identifier, edition, SHA-256 of the bytes, product type, epoch, time scale and frame; observation time, solution epoch, issue time and retrieval time stay distinct. A solution record specifies:
 
-An OMM is a Level 3 product. Observations are reduced to measurements, measurements are fit to estimate osculating states, and those states, or the measurements directly, are averaged into SGP4 mean elements. The OMM records none of the intervening steps: not the observations used, the fit arc, the measurement weights, or the residuals. What it encodes is SGP4's best compromise over some unstated interval, expressed in quantities that are defined only within SGP4.
-
-### Observability and observation design
-
-Observability describes which state and physical parameters the available measurements can constrain, and at what precision. The report should distinguish structural ambiguity from weak sensitivity or inadequate geometry. A solution may constrain position well while leaving drag, radiation pressure, or attitude poorly separated.
-
-We choose dynamics models, measurement models, and inference methods. We can also influence which observations become available through tasking, viewing geometry, sensor type, cadence, and arc length. The catalog should identify useful additional measurements and send those needs to participating sensors when tasking is available. Measurement outcomes themselves are not under our control.
-
-## 2 Architecture and reproducible authority
-
-Association, selection, and estimation remain separate decisions. Association asks whether records describe the same object. Selection chooses a usable solution for an epoch, interval, and purpose. Estimation derives a new solution under a declared model. Success in one stage does not establish success in the others.
-
-The processing sequence is acquisition, preservation, evidence classification, normalization, association testing, selection or estimation, validation, publication, and conjunction assessment. Observability gaps and encounter uncertainty feed back into observation requests. Unresolved identities and failed estimates remain visible rather than being forced into the catalog.
-
-### Record contracts
-
-A source record retains provider, native identifier, edition, source hash, product type, epoch, time scale, frame, data, and lineage. Observation time, solution epoch, issue time, and retrieval time are distinct. An association records the source records, verdict, decision policy, and supporting evidence. A catalog snapshot binds its parent, recipe, association set, selected solutions, and source editions to immutable inputs.
-
-| Solution field | Required meaning |
+| Field | Content |
 | --- | --- |
-| stateRef and validity | The selected or derived state, reference epoch, and applicable interval. |
-| evidenceRefs and lineage | Observations and provider claims, their classifications, dependencies, and source editions. |
-| dynamicsModelRef | Force model, environmental inputs, and parameters marked estimated, bounded, or assumed. |
-| measurementModelRef | Sensor geometry, timing, calibration, bias treatment, and known or undisclosed provider modeling. |
-| inferenceRef | Estimation or selection method, weights, priors, assumptions, and software version. |
-| observabilityReport | Constrained and unresolved parameters and the evidence supporting that assessment. |
-| uncertaintyStatus | Available covariance, admissible-set bounds or reference, calibration evidence, and limitations. |
+| State and validity | State or ephemeris, epoch, applicable interval |
+| Evidence and lineage | Source records, their levels and dependencies, editions |
+| Dynamics | Force model, environment inputs, parameters estimated, considered or assumed |
+| Measurement model | Sensor geometry, timing, calibration, biases; unknown when a provider does not state it |
+| Inference | Estimator or selection rule, weights, priors, software version |
+| Uncertainty | Covariance or none, its source and its calibration label |
 
-These fields define a logical contract, not a claim of complete implementation in an SDS schema. Authority is reproducible within a declared policy: identical inputs, module artifacts, and policy should yield the same decisions within stated numerical tolerances. Hashes establish byte identity and signatures establish attribution; physical validity requires separate evidence.
+Hashes establish byte identity and signatures establish attribution; physical validity rests on the measurements of sections 5 to 7. Identical inputs, module binaries and policy reproduce the same decisions.
 
-The implemented Catalog Editor composes immutable source editions and preserves selected record bytes. Its matcher evaluates proposed associations without automatically publishing identity merges. End-to-end orchestration and the added evidence and uncertainty contracts remain integration work. ([R1](#r1), [R2](#r2))
+## 3 Sources
 
-## 3 Data inventory and evidence boundaries
+The inventory [R2](#r2) lists 97 public and login-only sources in eight groups, with access, terms, latency and use. Results draw on every source an experiment read; files are copied only where their terms allow, and the credits close this paper.
 
-| Source family | Class | Evidence and treatment |
+| Group | Sources | Role |
 | --- | --- | --- |
-| Vimpel elements | Orbit claim | 13,808 acquired rows converted to attributed epoch OPM states. Preserve native identity and provider uncertainty statements. |
-| Vimpel ephemerides | Orbit claim | Archive audit found 6,654 members matching elements by native identity and exact epoch. A 64-object diagnostic and three-object refinement study were recorded. |
-| Vimpel datefirst and aliases | Identity claim | Supporting association evidence. Automatic candidate generation and accepted-binding persistence remain incomplete. |
-| CelesTrak GP and SOCRATES | Orbit and assessment claims | Native-model interoperability and controlled conjunction comparison. No completed SOCRATES agreement result is asserted. |
-| Space Mapper AOE | Orbit claim | Documented proposed integration. No acquired catalog snapshot or numerical validation in the baseline. |
-| Operator and precise products | Orbit claim | Potential primary or reference solutions, depending on quality, independence, normalization, and maneuver information. |
-| CPF predictions | Orbit claim | Prediction products; their format does not make them raw tracking observations. |
-| Sensor measurements | Observation | Angles, ranges, range rates, and photometry can support estimation when their measurement models and error characteristics are available. |
+| A. Precise orbits | IGS and ESA GNSS orbits; ILRS orbits and normal points; Sentinel-1, Swarm, GRACE-FO and CryoSat-2 precise orbits | Truth; the GNSS and laser-ranged products |
+| B. Operator ephemerides | SpaceX Starlink (with covariance), Planet, NASA ISS, CMSE Tiangong, Intelsat; ILRS predictions | Operator products; drag and maneuver evidence |
+| C. Catalogs and observations | Space-Track GP history (OMM) and SATCAT; JSC Vimpel; SpaceMapper AOE; SatNOGS Doppler | Element sets; other providers' catalogs; public observations |
+| D. Density | Swarm and GRACE-FO densities; CHAMP and GRACE-A densities with the High Accuracy Satellite Drag Model (HASDM) [R3](#r3) | Density truth; the HASDM comparison |
+| E. Space weather | Space Environment Technologies' (SET) JB2008 indices; GFZ Kp, ap and F10.7; NOAA SWPC forecasts | Model drivers, as issued |
+| F. Earth orientation, gravity, ephemerides | IERS EOP; EGM2008, EGM96; FES2004; DE440 | Frames and dynamics |
+| G. Physical properties | GCAT; IGS satellite metadata | Priors for drag and radiation parameters |
+| H. The High Accuracy Catalog (HAC) and HASDM | Special Perturbations (SP) vectors; real-time HASDM | The comparison target (section 11) |
 
-The historical provider-fleet report records 13 public-source lanes passing signed publication, independent IPFS retrieval, pagination, and byte-hash checks: SpaceX Starlink, Eutelsat OneWeb, Planet Labs, NASA ISS, SES, Intelsat, Telesat, China Space Station, IGS/BKG GPS Precise, ESA GLONASS Precise, ESA Precise Orbit Determination, EUMETSAT, and ESA CPF Predictions. These development instances were named for their sources; they were not services operated by those organizations. ([R7](#r7))
+SpaceMapper's AOE catalog (channel KY) holds 19,197 element sets that the provider attributes to its own sensor network [R4](#r4). AOE rewrites them every 3 hours; SDN takes a snapshot daily from the public web pages. SpaceMapper states no license, so the sets are cited, not copied. Doppler read from SatNOGS waterfall images made the ISS orbit 2.7–10.7 times worse than SGP4 [E6][e6].
 
-Acquisition was incomplete in some lanes: 38 of 41 SES resources were recorded and Starlink acquisition was continuing. Authenticated Spire Global, Space-Track, EDC CPF, and Vimpel adapters were listed. Later Vimpel acquisition evidence supersedes that report's then-unverified Vimpel status without changing the status of other sources. Transport checks do not establish orbit accuracy or current service availability. ([R2](#r2), [R3](#r3), [R7](#r7))
-
-Each edition retains format version, interval, access restrictions, retrieval result, and upstream lineage. Authorized raw measurements are a development priority because they support direct testing of object and sensor models. When only provider estimates are available, the catalog can still compare, select, and reconcile them with explicit limits. ([R8](#r8))
-
-## 4 Normalization and epoch state physics
+## 4 Normalization and model dispatch
 
 ### Vimpel osculating elements
 
-Vimpel's documented 15-column product includes native object number, first observation date, UTC reference epoch, update age, semimajor axis, inclination, ascending-node longitude, eccentricity, argument of latitude, argument of perigee, effective area-to-mass, magnitude, and two uncertainty indicators. Angles are in degrees, semimajor axis is in kilometres, and the stated frame is J2000. This is a provider-specific osculating product. ([R3](#r3), [R10](#r10))
-
-Let a be the semimajor axis, e the eccentricity, i the inclination, $\Omega$ the ascending-node longitude, $\omega$ the argument of perigee, u the argument of latitude, $\nu$ the true anomaly, p the semilatus rectum, and $\mu$ Earth’s gravitational parameter. Let $\mathbf{r}_{\mathrm{pf}}$ and $\mathbf{v}_{\mathrm{pf}}$ be the position and velocity in the perifocal frame, $R_x$ and $R_z$ elementary rotations about the x and z axes, Q the rotation from perifocal to J2000 axes, and $\mathbf{r}_{\mathrm{J2000}}$ and $\mathbf{v}_{\mathrm{J2000}}$ the resulting J2000 position and velocity. At the reference epoch, true anomaly is the argument of latitude minus the argument of perigee. With consistent angles, Earth gravitational parameter $\mu$, eccentricity e, and semimajor axis a, the conversion is:
-
-$$
-\nu = u - \omega, \qquad p = a(1-e^2)
-$$
-
-$$
-\mathbf{r}_{\mathrm{pf}} = \frac{p}{1+e\cos\nu}\begin{bmatrix}\cos\nu \\ \sin\nu \\ 0\end{bmatrix}
-$$
-
-$$
-\mathbf{v}_{\mathrm{pf}} = \sqrt{\frac{\mu}{p}}\begin{bmatrix}-\sin\nu \\ e+\cos\nu \\ 0\end{bmatrix}
-$$
-
-$$
-Q = R_z(\Omega)\,R_x(i)\,R_z(\omega)
-$$
-
-$$
-\mathbf{r}_{\mathrm{J2000}} = Q\mathbf{r}_{\mathrm{pf}}, \qquad \mathbf{v}_{\mathrm{J2000}} = Q\mathbf{v}_{\mathrm{pf}}
-$$
-
-Here Q rotates the perifocal vectors using ascending-node longitude $\Omega$, inclination i, and argument of perigee $\omega$. The implemented reader uses $\mu$ = 398600.4418 km³/s², explicit internal SI conversion, and canonical OPM output in km and km/s. It retains `vimpel:<nativeID>` and the source descriptor without fabricating a NORAD identifier or international designator. This is an instantaneous conversion, not propagation to another epoch. ([R1](#r1)–[R3](#r3))
-
-### Position samples and velocity
-
-Numerical differentiation of provider positions is a diagnostic, with error that depends on spacing, rounding, stencil, and orbital geometry. At the archive's 600-second spacing, the 64-object audit found differences up to about 1.106 km/s between analytic and endpoint-derived velocities, and up to 1.824 km/s between derivative stencils. These discrepancies rule out unconditional use of the endpoint derivative, but do not determine which product is absolutely accurate. ([R3](#r3))
-
-The preferred initial velocity is the analytic osculating velocity or a validated fitted state. Position-only evidence remains position-only; a missing velocity is not replaced by zero. Reducing a differentiation step does not necessarily improve an estimate when timestamps and positions have finite precision.
-
-### Frames and time
-
-Transformations identify conventions and supporting data. The recorded Vimpel path transforms J2000 to GCRF for HPOP and back for comparison, and UTC sample times to TDB for propagation. TEME, terrestrial frames, J2000 conventions, and GCRF are distinguished explicitly. Earth-orientation, leap-second, and ephemeris inputs must be versioned where required. ([R1](#r1), [R11](#r11))
-
-## 5 Initializing numerical propagation from an OMM
-
-An OMM is a set of model-specific mean elements. Evaluating it with SGP4 at its reference epoch produces SGP4's estimated instantaneous Cartesian position and velocity. After a consistent frame transformation, that state can serve as the initial condition for numerical integration. We distinguish the validity of this initialization from the empirical accuracy of the resulting forecast. ([R13](#r13), [R16](#r16))
+Vimpel's HEO product gives osculating elements in J2000 [R5](#r5). The standard perifocal rotation turns them into a J2000 state at the same epoch [R6](#r6), with μ = 398,600.4418 km³/s², under the identifier `vimpel:<id>` and no invented NORAD number [R7](#r7). Velocity differenced from 600 s position samples departs from the analytic velocity by up to 1.1 km/s, so it serves only as a diagnostic.
 
 ### The handoff contract
 
-First, preserve the OMM bytes, epoch, identifiers, source edition, and SGP4 implementation and constants. Evaluate SGP4 at zero elapsed time, including the appropriate near-Earth or deep-space behavior. Use its returned position and velocity; do not treat the mean elements as ordinary osculating Keplerian elements.
+An OMM holds SGP4 mean elements, not osculating ones. The catalog evaluates SGP4 at zero elapsed time, transforms position and velocity from TEME to GCRF at the same instant, and starts HPOP from that state [R8](#r8). SGP4's drag term B* becomes the ballistic parameter
 
-Second, transform the complete state from TEME to the numerical integration frame at the same physical instant. The velocity transformation must include the frame's time dependence where required. Record the transformation conventions, supporting data, units, and time scales. Verify a round trip and confirm that the transformed state and numerical initial state agree within declared tolerances.
+$$
+B = \frac{C_D A}{m} = \frac{2B^*}{\rho_0}
+$$
 
-Third, declare the numerical force model, environmental inputs, integration settings, and object parameters. An OMM alone does not supply independently determined mass, attitude, drag coefficient, or radiation-pressure coefficient. Its $B^*$ parameter belongs to the SGP4 drag model; any mapping into a numerical drag model requires explicit assumptions and validation.
-
-Finally, publish the resulting trajectory as a derived, OMM-seeded numerical product with its parent state, model lineage, and initial-condition uncertainty status. Retain the native SGP4 product and identify the interval over which the numerical product has been assessed.
-
-### What the handoff establishes
-
-The two paths start from the same estimated position and velocity, expressed in a common frame. They subsequently evolve according to different dynamics. Applying numerical force terms after the handoff does not by itself double-count the perturbations used to obtain the epoch state: those terms govern subsequent evolution. Their adequacy and parameter values still require assessment.
-
-A state error at epoch is an error for both paths. Continuing with SGP4 does not remove it, and switching models does not create it. Different models can nevertheless amplify, reduce, or partly compensate its effect on predicted positions. Neither model complexity nor model consistency alone decides which forecast is closer to the object.
-
-The reported Vimpel study used osculating elements and provider ephemerides; it did not test this OMM handoff. No predictive advantage for OMM-seeded numerical propagation is claimed from that experiment.
+with ρ₀ from Spacetrack Report No. 3 [R9](#r9); 0.01 m²/kg stands in where B* ≤ 0, and Cr·A/m is 0.02 m²/kg [R10](#r10). The handoff is valid; whether it helps is measured in section 5.3.
 
 ### Levels of measurement of OMM elements
 
-The fields of an OMM are not measured on a common scale. We classify each by level of measurement: nominal (labels, supporting only equality), ordinal (ordering only), interval (meaningful differences, arbitrary zero), and ratio (meaningful differences and ratios, true zero). Angles that wrap around a circle form a further directional, or circular, scale on which ordinary arithmetic fails at the wrap point.
+OMM fields mix nominal (catalog number), ordinal (element-set number), interval (epoch), ratio (mean motion) and circular (node, perigee, mean anomaly) scales, so the pipeline computes on SGP4-evaluated states, never on raw fields. The legacy two-line format quantizes angles to 0.0001°, about 12 m along track near 6,900 km: a resolution, not an accuracy.
 
-| OMM field | Level of measurement | Implications for computation |
-| --- | --- | --- |
-| Catalog number | Nominal | Identifier only; equality tests, no arithmetic or ordering. Joined only with its namespace. |
-| Classification | Nominal | Category label; no arithmetic. |
-| International designator | Nominal | Composite identifier encoding launch year, launch number, and piece; its parts are labels, not quantities. |
-| Epoch (year, fractional day) | Interval | Differences are meaningful and define propagation age; ratios are not. The two-digit year needs an explicit century rule (conventionally 57–99 map to 1957–1999 and 00–56 to 2000–2056). |
-| First derivative of mean motion / 2 | Ratio (signed) | Not used by SGP4; carries no information into SGP4 propagation and should not be treated as a constraint. |
-| Second derivative of mean motion / 6 | Ratio (signed) | Not used by SGP4; same caution as above. |
-| $B^*$ | Ratio in form (signed) | A fitted SGP4 parameter, in inverse Earth radii, that absorbs unmodeled forces and can be negative. Arithmetic is defined, but it is not a physical drag coefficient and does not map directly to one. |
-| Ephemeris type | Nominal | Label; normally zero in distributed sets. |
-| Element set number | Ordinal | Supports ordering only. Increments do not count new fits and may skip or repeat. |
-| Checksum | Nominal | Integrity check for the line; not data. |
-| Inclination | Ratio on a bounded range (0 to 180 degrees) | Typically the best-determined element. Not circular, but the geometry becomes singular near 0 and 180 degrees, where the node is undefined. |
-| Right ascension of ascending node | Directional (circular) | Differences must be wrapped; arithmetic means are invalid near the wrap point; circular statistics apply. Ill-defined for near-equatorial orbits. |
-| Eccentricity | Ratio on a bounded range (0 to 1) | True zero and meaningful ratios, but bounded; near zero the argument of perigee loses meaning. |
-| Argument of perigee | Directional (circular) | Wrapped differences and circular statistics; ill-defined for near-circular orbits, where it trades off against mean anomaly. |
-| Mean anomaly | Directional (circular) | Encodes along-track phase, usually the least-determined quantity and the fastest-growing error. Circular treatment required. |
-| Mean motion | Ratio | Tied to orbital energy and typically well determined. The OMM carries a Kozai mean motion, which SGP4 converts internally to a Brouwer mean motion, so it is not interchangeable with an osculating value or with mean motion from another theory. |
-| Revolution number at epoch | Ratio (count), stored modulo 100,000 | Wraps in the fixed-width format and is often unreliable; not suitable as a constraint. |
+### Dispatch, frames and time
 
-These differences have direct mathematical consequences:
+Each record is routed by its declared theory: mean elements to SGP4, osculating elements to the two-body conversion, states and ephemerides to frame transforms. Osculating elements offered to SGP4 are refused as a model mismatch. Frames follow the IERS Conventions (2010): IAU 2006/2000A, CIO-based, through ERFA, with IERS Earth orientation [R11](#r11). TEME, EME2000, GCRF and ITRF stay distinct; epochs are UTC and integration runs on TT.
 
-1. The element set is not a vector space. Mixed scales and circular components mean that vector addition, arithmetic means, Euclidean distances, and ordinary covariance matrices over raw OMM fields are not well defined. Circular elements need wrapped differences and circular statistics, and near-circular or near-equatorial orbits require nonsingular element combinations or a Cartesian state representation before any averaging or differencing.
+## 5 Products by object class
 
-2. Nominal and ordinal fields support identity and sequencing, not computation. In particular, a change in element set number or epoch does not show that new observations were fit.
+Each row is one method: its originators, our measured result (median 3D position error unless stated) and the experiment. Every experiment froze its plan before reading its test window [R1](#r1).
 
-3. Determinability differs sharply across elements. Inclination and mean motion, and hence orbital energy, are usually well constrained, while along-track phase is weakly constrained and dominates forecast error as it grows with propagation age. Weighting all elements equally, or assigning them a common isotropic uncertainty, misrepresents what an OMM supports.
+### 5.1 GNSS and laser-ranged satellites
 
-4. The legacy two-line text format quantizes every value an OMM carries. Let a be the semimajor axis and $\Delta M$ the mean anomaly resolution in radians; the along-track position resolution is then approximately a × $\Delta M$. With $\Delta M$ equal to 0.0001 degree and a near 6,900 km, this is about 12 m per encoding increment for a near-circular orbit (about ±6 m for this component under round-to-nearest). This is encoding resolution, not a bound on total physical position error. Quantization is a hard, bounded error on what an OMM can represent and belongs in its uncertainty representation as a bounded term rather than a Gaussian one. Inclination, ascending-node longitude, and argument of perigee are encoded to the same 0.0001 degree, so each carries a comparable term of roughly 12 m at this radius, cross-track for inclination and node (the node term scaled by the sine of inclination) and in-plane for argument of perigee. Eccentricity is encoded to $10^{-7}$, contributing about 0.7 m in radial extent. Mean motion is encoded to $10^{-8}$ revolutions per day, which produces an along-track drift of about 0.43 m per day per encoding increment at this radius (about 0.22 m per day for half-increment rounding), negligible beside other OMM error sources.
-
-5. OMM elements are theory-specific. Mean elements share names with osculating elements but denote different quantities, so an OMM cannot be compared field by field with Vimpel's osculating elements or any Level 2 product. Comparison happens only after evaluating SGP4 and transforming to a common state and frame.
-
-6. Some fields carry no information into propagation. The mean-motion derivatives are ignored by SGP4, and $B^*$ is a fitted compensator rather than a physical parameter. Any uncertainty method should say which fields it treats as evidence.
-
-### Carrying OMM uncertainty through the handoff
-
-Because an OMM is a Level 3 product, its errors are dominated by epistemic limits, such as an unknown fit arc, unknown observation geometry, and unmodeled forces absorbed into $B^*$, rather than by random noise, and a standard OMM supplies no covariance. The SGP4 epoch state inherits those limits. Its errors are correlated with SGP4's own dynamics, because the fit that produced the elements allowed initial-state and model errors to compensate (section 6). A numerical integrator does not share that compensation, so the point state alone understates what is unknown at the moment of handoff.
-
-We therefore require that an OMM-seeded numerical product carry an initial-condition uncertainty representation derived from the OMM, available supporting evidence, and explicitly declared assumptions: a set of epoch states, or an equivalent bounded region, that those inputs cannot rule out under those assumptions, together with a process-uncertainty allowance for the difference between SGP4 dynamics and the object's actual motion. The construction should respect the measurement scale and determinability of each element described above, include the format's quantization as a bounded error, and support updating one OMM-derived region with a later OMM while recognizing that the later element set may not reflect new Level 1 evidence. Because the element set is not a vector space, admissible-region methods of the kind described in section 9 are a natural fit.
-
-Methods of this kind based on TEAG and the ESPF are in development and are not part of the present evidence baseline. Until such a representation is validated, an OMM-seeded numerical product is published with its initial-condition uncertainty marked unknown, and its forecast is assessed only through the controlled comparison in section 6.
-
-## 6 Estimation and model transfer validation
-
-### What an orbit fit optimizes
-
-Orbit determination estimates parameters by comparing predicted measurements with observations over a fitting arc. In weighted least squares, the objective is a weighted residual sum, potentially with priors or regularization. It does not generally minimize the physical position and velocity error specifically at the solution epoch. Sensor geometry, measurement errors, force-model errors, and fitted parameters all influence the inferred epoch state. ([R17](#r17))
-
-Initial-state and dynamics errors can compensate within a fit. A velocity that is too high can partly compensate for an acceleration that is too low over the observation arc. Both remain errors in the original model. Replacing the acceleration model while keeping the estimated velocity changes that compensation; it can improve or degrade the forecast. Model dependence therefore motivates testing rather than a presumption that SGP4 or numerical propagation is superior. ([R13](#r13))
-
-Formal covariance describes uncertainty under the estimator's assumed models and error statistics. For a linear model with correctly specified dynamics and measurement models, zero-mean errors, and weights equal to the inverse measurement-error covariance, weighted least squares yields the minimum-variance linear unbiased estimate, and its formal covariance describes the actual error. When those conditions fail, as they do whenever model error is present, the formal covariance no longer measures actual error, and a small formal covariance can coexist with systematic bias. A standard OMM does not itself provide a full state covariance. The catalog records what uncertainty was supplied, inferred, calibrated, or remains unknown.
-
-### A controlled comparison
-
-For each test object and OMM edition, evaluate native SGP4 and numerical propagation initialized from its epoch state over the same forecast interval. Use common frame and time conventions and an independent reference with documented accuracy, lineage, and maneuver treatment. Report reference uncertainty along with position and velocity errors, radial/along-track/cross-track components, maxima, percentiles, and error growth with prediction age. Where an initial-condition uncertainty representation is available, also report how often the independent reference falls within the propagated region, so coverage is tested rather than assumed.
-
-Stratify by orbit regime, perigee altitude, eccentricity, source age, physical-parameter knowledge, maneuver status, and forecast length. Use the same test cases and include failures. Distinguish tests supplied with additional physical information from tests using only OMM information. Freeze models and tuning before evaluating an untouched forecast set.
-
-### Optional fitting across an arc
-
-A numerical initial state and identifiable parameters may be fitted to an SGP4-generated arc or a history of OMM-derived states. This can improve consistency across the transition. Research has demonstrated improved forecasts from fits to successive OMM-derived states in tested cases, but the result is not universal. Such fitting remains inference from provider estimates and may inherit their biases or correlations. ([R18](#r18))
-
-An arc fit is an optional model-transfer technique, not a prerequisite for initializing an integrator. When independent observations are available, direct estimation under the chosen numerical and measurement models offers a stronger basis for evaluating physical accuracy. The acceptance criterion is performance for the intended use, with supported uncertainty and transparent failures.
-
-## 7 Object association and solution selection
-
-### Candidate generation
-
-Candidate associations combine provider crosswalks, international designators, native-identifier histories, and coarse orbital compatibility. Vimpel's datefirst fields Nvym, t_det_v, Nnor, and t_det_n supply attributed identity evidence. Preserve dates, leading-zero normalization, and contradictory or duplicate declarations. Names and unqualified numeric identifiers are not sufficient join keys. ([R3](#r3))
-
-Similar trajectories can describe formation members, recent deployments, or fragments. Pairwise compatibility is not automatically transitive. Proposed identity groups need component-wide conflict checks and a consistent one-to-one assignment where the catalog semantics require it. Unresolved records remain separate, and observations that fit no existing candidate retain an unassigned or new-object hypothesis.
-
-### Physical compatibility
-
-Compare trajectories on a common origin, frame, time scale, start epoch, and sampling grid over overlapping validity intervals. The implemented matcher accepts already normalized OEM inputs; the caller performs the required propagation and transformations. It assesses position, velocity, and derivative consistency against explicit thresholds. Its verdict is trajectory compatibility rather than automatic identity publication. ([R2](#r2))
-
-Report RMS and maximum discrepancies, duration, sample count, source epochs, and propagation ages. Require sufficient coverage rather than one coincident position. Treat maneuvers, discontinuities, and non-overlapping arcs explicitly. Thresholds belong to the versioned recipe and require calibration; future uncertainty-aware tests should retain their assumptions about correlation and admissible sets.
-
-### Selecting a solution
-
-For an accepted identity, exclude invalid or inapplicable products, then evaluate validity coverage, independent support, measurement and dynamics quality, maneuvers, uncertainty calibration, predictive performance, propagation age, source lineage, and declared source preference. Selection produces a source reference and an explanation appropriate to the requested use.
-
-A numerical solution can be preferred when evidence supports its forecast, including a validated OMM-seeded solution. A native SGP4 or operator solution can be preferred when it is better supported. Freshness and propagator sophistication alone are insufficient ranking criteria. Position, velocity, and uncertainty must form a consistent solution; they are not spliced from unrelated estimates.
-
-Review outcomes are compatible, rejected, ambiguous, or insufficient. Accepted links retain the reviewer or decision policy and evidence so later information can reverse an association without rewriting history. The current recipe-v2 editor uses international designators for authoritative composition. Objects without accepted designators remain review candidates even where the current CAT export excludes them. ([R2](#r2))
-
-## 8 Dynamics and measurement models
-
-### Shared physics and object parameters
-
-A dynamics model combines well-characterized shared physics, object-specific effects, and residual model error. Let r be the object position with time derivatives $\dot{\mathbf{r}}$ and $\ddot{\mathbf{r}}$, t time, $\mathbf{a}_{\mathrm{gen}}$ the acceleration from shared physics, $\mathbf{a}_{\mathrm{obj}}$ the object-specific acceleration depending on a parameter vector p, and $\delta(t)$ the residual model discrepancy. A useful decomposition is:
-
-$$
-\ddot{\mathbf{r}} = \mathbf{a}_{\mathrm{gen}}(\mathbf{r},\dot{\mathbf{r}},t) + \mathbf{a}_{\mathrm{obj}}(\mathbf{r},\dot{\mathbf{r}},t;\mathbf{p}) + \boldsymbol{\delta}(t)
-$$
-
-The shared term includes the selected gravity, third-body, tidal, and relativistic models. The object term depends on parameters such as area-to-mass, drag and radiation response, attitude, and thrust. The residual term represents remaining model discrepancy, with declared bounds or an appropriate stochastic description.
-
-Known force terms need not be estimated anew from every object's observations to be useful. Observability limits the estimation of unknown parameters and the confidence assigned to them; it does not prohibit using independently supported physics. An unresolved parameter may be bounded, marginalized, or assigned a documented prior. The choice of model complexity considers sensitivity, available evidence, and the forecast interval.
-
-The dominant errors depend on orbit, altitude, object behavior, measurement quality, and prediction age. High eccentricity alone does not establish strong atmospheric drag; perigee altitude and atmospheric conditions also matter. Track parameter histories and model residuals across arcs. Suspected maneuvers trigger a validity review and, where appropriate, a new arc or a model with explicit maneuver uncertainty.
-
-### Measurement models as versioned artifacts
-
-A measurement model maps the object and sensor states to a predicted observable. It includes geometry, timing, calibration, frame conventions, and relevant corrections such as light-time, aberration, and atmospheric refraction. Let y be the observable, x the object state, p its physical parameters, s the sensor state and calibration, t time, h the measurement model, b the modeled bias, e the random error, and $\varepsilon$ the residual measurement-model discrepancy. Bias, random error, and residual measurement-model discrepancy are represented distinctly:
-
-$$
-\mathbf{y} = h(\mathbf{x},\mathbf{p},\mathbf{s},t) + \mathbf{b} + \mathbf{e} + \boldsymbol{\varepsilon}
-$$
-
-A missing or undisclosed provider measurement model is recorded as unknown.
-
-Each contributing sensor should publish a versioned model with location, timing provenance, pointing and calibration history, error characterization, and known limitations. At an illustrative speed of 7.5 km/s, a 1 ms timing offset corresponds to 7.5 m of travel; its measurement impact depends on geometry. Photometric inference states its reflectance and attitude assumptions.
-
-Estimate biases when the observations can constrain them, otherwise carry defensible bounds or priors. Independent reference trajectories and observations across multiple objects can help separate sensor errors from orbital model errors. Residuals alone generally do not identify which contributor caused a discrepancy.
-
-## 9 Inference and supported uncertainty
-
-The catalog supports estimation methods whose assumptions and uncertainty can be examined. Least squares, probabilistic filters, and bounded-set methods are evaluated according to their model treatment, calibration, computational cost, and performance. Least squares can include estimated biases, physical parameters, and model-error terms; a state-only fit is one particular configuration.
-
-### Covariance and model discrepancy
-
-Preserve provider uncertainty statements with their stated semantics. Vimpel's two 50%-confidence indicators do not define a full six-dimensional covariance, correlations, a Gaussian distribution, or hard bounds. A fitting regularizer and small residuals likewise do not supply a validated physical covariance. ([R3](#r3), [R10](#r10))
-
-A covariance product must specify its state, epoch, frame, distributional assumptions, measurement errors, dynamics, model discrepancy, and calibration evidence. Propagation may use a state-transition model and a declared process-noise contribution, but unvalidated tuning is not a substitute for independent coverage tests. Unknown cross-provider correlations preclude treating simple inverse-covariance averaging as automatically justified.
-
-### Admissible trajectories
-
-An admissible set contains states, parameters, and associated trajectories consistent with the evidence under explicitly declared assumptions and error allowances. Parameter ranges, measurement-error sets, and dynamics-discrepancy bounds define what can be excluded. Provider claims require their own uncertainty treatment and dependency information before acting as constraints.
-
-Bounds are substantive modeling choices. When errors have unbounded tails, a finite envelope must state its coverage or truncation convention rather than claiming an absolute guarantee. New evidence can contract a fixed hypothesis set; propagation with process uncertainty can expand it. Maneuvers, revised bounds, or inadequate models can require reopening or expanding the hypotheses.
-
-### Proposed TEAG and ESPF evaluation
-
-We propose evaluating the Theory of Epistemic Abductive Geometry (TEAG) and the Epistemic Support-Point Filter (ESPF) as an implementation path for inference using admissible sets. Their support-point and bounding-geometry approach expresses plausibility through possibility and necessity and accommodates unresolved alternatives. Possibility describes compatibility with evidence; necessity describes support through exclusion of alternatives. These quantities are not collision probabilities. ([R19](#r19), [R20](#r20))
-
-The SDN evaluation must document bound construction, support resolution, treatment of outliers and inconsistent evidence, and behavior under model mismatch. It must compare against appropriate probabilistic and bounded-set baselines using independent cases. Published bounds must state whether they conservatively enclose the admissible trajectories or only summarize sampled support. TEAG/ESPF integration and catalog-scale validation are proposed work, not results of the Vimpel experiment.
-
-Disclosure: TEAG and the ESPF ([R19](#r19), [R20](#r20)) were developed by co-author M. K. Jah, who is also a co-founder of GaiaVerse Ltd., which develops implementations of these methods. Baselines and independent test cases for the SDN evaluation should therefore be selected and scored independently of the authors' own implementations.
-
-## 10 The measured Vimpel refinement study
-
-### Method and experimental configuration
-
-The implemented refinement estimates a six-component initial-state correction using finite-difference sensitivities from one nominal and six positively perturbed trajectories. It checks initial-state bindings and requires six numerically independent sensitivity columns. These derivatives measure sensitivity to the initial state; they do not differentiate coarse provider positions to obtain velocity. ([R1](#r1))
-
-A regularized weighted least-squares update uses training positions. Corrections outside configured position and velocity scales are rejected. A candidate has stale Keplerian fields cleared and is returned as candidate-needs-propagation. Repropagation and validation are mandatory, with an optional prior withheld-RMS gate rejecting deterioration. The module does not emit a provider covariance or automatically promote a catalog solution. ([R1](#r1))
-
-Each of three four-hour arcs contained 25 positions at 600-second spacing. Withheld indices 3, 7, 11, 15, 19, and 23 left 19 training and six validation positions. One update was performed. The force model used central Earth gravity, J2–J4, analytical Sun/Moon perturbations, and RKF78 integration; drag and solar-radiation pressure were disabled. ([R1](#r1))
-
-| Eccentricity | Initial withheld RMS (km) | Fitted withheld RMS (m) | Maximum withheld residual (m) |
+| Method | Prior art | Measured | Evidence |
 | --- | --- | --- | --- |
-| 0.004351 | 10.70686 | 69.929 | 97.349 |
-| 0.892913 | 6.04357 | 59.097 | 72.843 |
-| 0.840641 | 10.41481 | 52.821 | 89.683 |
+| Newest ultra-rapid analysis-centre orbit at issue, propagated numerically beyond | IGS products [R12](#r12) | GPS, 32 satellites: 3.5 cm at issue, 336 m at 7 days; the latest public OMM 1.5–1.7 km | [E3][e3] |
+| HPOP fitted to ILRS laser normal points | Laser-ranging orbit determination [R13](#r13) | Starlette, Stella, LARETS, WESTPAC, LARES: 7 m at the fit and 42 m at 7 days, against SGP4's 472 m and 685 m. One pass beats the OMM for a day; four passes beat it at every horizon to 7 days | [E6][e6] |
 
-### Interpretation and next measurements
+### 5.2 Operator- and provider-ephemeris objects
 
-Both training and withheld maxima passed the example 1 km gate, which was experimental tuning rather than an operational safety threshold. Estimation used the training samples; the withheld samples came from the same provider product. The results demonstrate software capability and short-arc consistency between models; they do not establish independent absolute accuracy or a representative catalog-wide error distribution.
+| Method | Prior art | Measured | Evidence |
+| --- | --- | --- | --- |
+| Operator ephemeris, within its span | Operator orbit determination | GNSS analysis centres' predictions (IGS for GPS, ESA for GLONASS): 0.1 m from final orbits at 0–12 h | [E4][e4] |
+| SGP4 on the latest public OMM, against operator ephemerides | Dyreby et al. 2025 [R14](#r14); Jankovic 2026 [R15](#r15) | At the file's start: Planet 0.59 km, ISS 0.82 km, GPS 1.23 km, Starlink 2.87 km, Intelsat 4.79 km; Starlink 13.8 km at 24 h | [E4][e4] |
+| Vimpel's state refined to Vimpel's ephemeris by one six-state correction | Weighted least squares [R16](#r16) | Withheld RMS 6.04–10.71 km before, 52.8–69.9 m after, on three 4-hour arcs: consistency with one provider, not accuracy | [R7](#r7) |
 
-Vimpel's published model includes degree-8 Earth gravity, DE405 Sun/Moon, atmosphere, and radiation pressure. The tested configuration differs and the current GOST selector is a placeholder. The initial 6–11 km discrepancies merit decomposition, but the study does not identify their individual causes. A state correction can absorb some model mismatch over four hours. ([R1](#r1), [R3](#r3), [R10](#r10))
+### 5.3 Objects with public OMMs only
 
-The next study should vary force terms and conventions systematically, report state corrections and sensitivity conditioning, assess longer predictions across the available ephemeris, and compare with independent reference products. Include failed cases and supported uncertainty envelopes. The original numerical results and their bounded interpretation remain unchanged.
+| Method | Prior art | Measured | Evidence |
+| --- | --- | --- | --- |
+| SGP4 on the latest public OMM | Hoots and Roehrich 1980 [R9](#r9); Vallado et al. 2006 [R8](#r8) | At issue: 0.31 km (laser-ranged LEO) to 1.57 km (GPS); by horizon in section 11 | [E3][e3] |
+| Along-track correction at epoch (GPS) | Ly et al. 2020: 65 % [R17](#r17); Hallgarten La Casta and Amato 2025 [R18](#r18) | RMS at epoch 2.04 → 0.79 km (61 % [53, 67]); the single-model form 8 %; worse than SGP4 by 7 days (2.55 against 1.88 km); its covariance fails the coverage gate. **[NEW]** On an orbital plane outside the fit: 6 % [2, 10] | [E1][e1] |
+| HPOP from the OMM's epoch state | Vallado et al. 2006 [R8](#r8); Jankovic 2026 [R15](#r15) | Never better than SGP4 in four regimes (GPS, LEO with precise orbits, laser-ranged LEO and MEO); worse in all four by 72 h; at 24 h, 1.7 (GPS) to 11 (laser-ranged LEO) times SGP4's error | [E7][e7] |
+| HPOP fitted to an arc of OMM epoch states | Levit and Marshall 2011 [R19](#r19) | Better than SGP4 only at short horizons: 0.32–0.51 of its error to 12 h (laser-ranged LEO), 0.36–0.53 to 48 h on E1-corrected GPS sets; undecided beyond | [E7][e7] |
 
-## 11 Chinese AOE catalog integration
+The start state sets the limit. Over 6 days, HPOP leaves 0.2 km along track from a GPS satellite's IGS state and 8.4 km from its OMM epoch state (medians of 508 arcs) [R10](#r10). Laser ranges fix the start state, and the prediction then stays 20 to 60 times better than SGP4 to 7 days [E6][e6].
 
-### Source and model identification
+### 5.4 Drag regime
 
-This design interprets the proposed Chinese catalog as Space Mapper's AOE catalog, subject to confirmation of the intended provider. Its documented families include self-determined AOE orbits, international multi-source orbits, and a combined product. The self-determined family's use of its parent company's observation network is a provider assertion to preserve and assess. ([R4](#r4), [R5](#r5))
+Density is scored by σ, the spread of ln(observed/model density) on satellites outside the calibration; prediction by the 3-day position error relative to JB2008's (below 1 is better).
 
-The documented orbit-list API uses bearer-token authentication and KY and INTERNATIONAL channels, with TLE, two-line TLE, JSON, and OMM-XML responses. Its OMM example declares Earth, TEME, UTC, and SGP4. A JSON example uses a timezone offset. The catalog API exposes MIXED, AOE, and INTL sources and distinguishes catalog identifiers from NORAD identifiers. Actual acquired responses must be checked against these examples. ([R6](#r6), [R9](#r9))
+| Method | Prior art | Measured | Evidence |
+| --- | --- | --- | --- |
+| JB2008 with SET's indices | Bowman et al. 2008 [R20](#r20) | σ 0.155 (Swarm, GRACE-FO, 2026); 0.148 on CHAMP and GRACE-A in 2003 and 2008, where HASDM scores 0.078 | [E5][e5] |
+| Temperature correction from accelerometer and precise-orbit densities, a stand-in for HASDM's calibration | Storz et al. 2005 [R21](#r21); Doornbos 2012 [R22](#r22) | σ 0.056, 64 % [57, 70] lower; 0.112 on HASDM's windows; forecast gain 9 % for one day; 3-day ratio 1.04 [0.96, 1.10]; inputs arrive 49–92 days late ([E8][e8]) | [E5][e5] |
+| Temperature correction from the OMM decay of 48 catalogued objects | Picone et al. 2005 [R23](#r23); Gondelach and Linares 2020 [R24](#r24); Gershman 2026 [R25](#r25) | σ 0.142, 8.4 % [−3.9, 18.3] lower (25 % required: not supported); 24.7 % lower in storms; as a forecast 16.8 % worse than JB2008; 3-day ratio 1.02; 0.270 on HASDM's windows | [E8][e8] |
 
-### Adapter and provenance requirements
+**[NEW] An open, DCA-form correction from public operator states** [E13][e13]. HASDM's Dynamic Calibration of the Atmosphere (DCA) corrects exospheric temperature every 3 hours from the drag of about 75–100 tracked calibration satellites, each with a constrained ballistic-coefficient correction [R21](#r21). E13 solves that form from public data alone: the common mode s of the daily drag of 36 Planet Doves, read through orbital energy, corrects JB2008's temperature, with a ballistic coefficient held constant per satellite over a block and a forecast with a 48-hour time constant. Published work derives density from operator ephemerides and scores density alone [R26](#r26), [R27](#r27), [R28](#r28), or assimilates commercial GPS states [R29](#r29). E13 scores the correction on satellites that did not calibrate it, over ten months of Planet states against Swarm and GRACE-FO, with the storm of January 2026 in a held-out block. With x′ the logarithmic residual of observed against JB2008 density in a 12-hour window,
 
-Maintain separate namespaces such as spacemapper:KY and spacemapper:INTERNATIONAL. Retain the requested channel, response metadata, native catalog identifier, asserted international links, epoch string, format, exact bytes, and upstream lineage. Normalize timezone-qualified epochs while preserving their original representation. Numeric identifiers are joined only with their namespaces and supporting association evidence.
+$$
+R_1 = 1 - \frac{\operatorname{sd}(x' - s)}{\operatorname{sd}(x')}
+$$
 
-An SGP4 mean-element product is evaluated through SGP4 before any numerical initialization or fit. It does not pass through the Vimpel osculating-element converter. Missing frame, time, or model metadata yields a validation failure or explicitly incomplete product. The OMM handoff and validation requirements in sections 5 and 6 apply to derived numerical solutions.
+| Pre-registered test (threshold) | Test A, Jan–Mar 2026, Kp 8.7 storm | Test B, Apr–Jul 2026 |
+| --- | --- | --- |
+| H1: Swarm and GRACE-FO density spread explained, R₁ (≥ 0.25) | 0.247 [0.137, 0.347]: not supported | 0.401 [0.283, 0.501]: supported |
+| H3: held-out Doves' drag explained (≥ 0.2) | 0.378 [0.223, 0.477]: supported | 0.254 [0.135, 0.359]: supported |
+| H4: Swarm position error ratio at 1 and 3 days (≤ 0.9) | 1.02, 0.92: not supported | 1.01, 1.00: not supported |
+| H5: held-out Doves, the same | 0.98, 0.97: not supported | 1.00, 1.01: not supported |
+| H6: control, correction shifted 7 days (R₁ < 0.05) | −0.149: passes | −0.082: passes |
 
-AOE, international, and mixed channels may share upstream information. Preserve a lineage graph and avoid counting duplicated inputs as independent evidence. A demonstrably independent KY estimate could be especially useful for testing agreement and disagreement across sources. Its value still depends on quality, geometry, uncertainty, and relevance to the intended interval; independence alone does not guarantee accuracy.
+The correction does not follow storms. Exploratory, on one NRLMSISE-00 reference for every split: the fleet explains 0.47–0.48 of NRLMSISE-00's larger spread, leaving residuals of 0.075–0.095 against 0.069–0.086 on JB2008.
 
-### Admission study
+### 5.5 Maneuver detection
 
-Before acquisition and combination, document applicable authorization, licensing, and any required export-control review. Acquire an authorized immutable snapshot, verify pagination and completeness, record counts and hashes, and test representative formats and orbital regimes. Compare time-aligned products and report coverage, consistency, conflicts, unknown lineage, and unavailable cases separately.
+The detector compares the trajectories of consecutive element sets at one instant, whatever propagator answers its queries: a crossing test and a robust likelihood-ratio test for steps in orbit-averaged energy and orbit plane, merged by default [R10](#r10). It builds on element-set time series [R30](#r30) and the generalized likelihood ratio for jumps [R31](#r31). Thresholds came from the ISS in 2020–2024; every other window was read once. A planned ISS burn counts as truth only when NASA's next trajectory shows it executed; one 2021 plan was not.
 
-No acquired AOE coverage count, completed integration, improved conjunction accuracy, or legal conclusion is asserted here. The historically tested China Space Station operator feed is a separate source and provides no evidence of AOE catalog ingestion.
+| Held-out class, 2025–2026 | Truth | Found | False alarms |
+| --- | --- | --- | --- |
+| ISS | 25 burns | 22; the misses are 0.1 m/s settling burns minutes before reboosts; median time error 10 min, Δv ratio 1.00 | 0.57 per year |
+| Metop-SG A1 | 24 EUMETSAT maneuvers | 14; 12 of 16 at 0.1 m/s or more | 0 |
+| GPS, 4 satellites | 6 maneuvers in precise orbits | 6 | 3.8 per object-year |
+| GEO (Intelsat) | 11 post-maneuver files | 4 | 24 events per object-year; the truth lists one maneuver per satellite |
 
-## 12 Conjunction assessment and uncertainty
+## 6 Uncertainty
 
-### Two validation baselines
+Covariance propagates through HPOP's state-transition matrix Φ with a declared white-acceleration process noise Q [R10](#r10):
 
-The first baseline is a controlled SGP4 replay against SOCRATES using identical input editions where available, the same assessment interval, compatible model conventions, and explicit screening settings. CelesTrak identifies SGP4 and STK/CAT in its methodology. The designated acquisition path remains the celestrak.eth test node. Preserve catalog and report hashes and record unavailable proprietary settings. A live report compared with a later catalog is not a controlled replay. ([R15](#r15))
+$$
+P(t) = \Phi(t, t_0)\, P_0\, \Phi(t, t_0)^{\mathsf{T}} + Q(t)
+$$
 
-The second baseline assesses the selected catalog, including numerical and other supported solutions, against independent orbit evidence and conjunction cases. Report closest-approach time and miss-distance errors, missed and additional encounters, coverage, failures, screening bounds, and uncertainty assumptions. A catalog using different orbital evidence or dynamics need not reproduce every GP-derived SOCRATES event.
+Φ supplies neither P₀ nor Q; they come from a fit, a provider or an empirical model. Realism is scored against independent precise orbits by $d^2 = \mathbf{e}^{\mathsf{T}} P^{-1} \mathbf{e}$ for a position error e, against χ² with 3 degrees of freedom: a covariance is realistic when the mean of d²/3 lies in [0.8, 1.25] and its 95 % coverage in [0.93, 0.97], the rule of [E14][e14] after Zaidi and Hejduk [R32](#r32).
 
-### Screening admissible trajectories
+| Covariance | Prior art | Held-out result | Evidence |
+| --- | --- | --- | --- |
+| Formal covariance of an HPOP fit to laser ranges | Weighted least squares [R16](#r16) | Too small: mean d²/3 16–21, coverage 0.14–0.18 | [E6][e6] |
+| HPOP fit to OMM history alone | Levit and Marshall 2011 [R19](#r19) | Realistic for laser-ranged LEO (0.68–0.83, coverage 0.96–0.98); too small for the ISS within a day (4.8–7.6) | [E6][e6] |
+| Batch fit to 3 days of OMM history (GPS) | Osweiler 2006 [R33](#r33); Geul et al. 2017 [R34](#r34) | Mean d²/3 1.23 and 1.05 at 0 and 1 day, 81 at 3 days; consistency failed at every horizon | [E2][e2] |
+| **[NEW]** Errors of consecutive OMMs, against precise orbits | Autocorrelation shown by Osweiler [R33](#r33) | Along-track correlation 0.61–1.00 in four regimes. Four published constructions [R33](#r33), [R35](#r35), [R34](#r34), [R36](#r36) are overconfident: mean d²/3 from 13 to over 10⁷. A covariance that models the correlation scores better at 1 day in three regimes but is consistent only for laser-ranged satellites at some horizons | [E2b][e2b] |
+| SGP4 with the E2b error model, calibrated by regime and age | Zaidi and Hejduk 2016 [R32](#r32) | Realistic in 2 of 35 regime-horizon cells (11 on the selection window) | [E14][e14] |
+| HPOP from the OMM epoch state, with P₀ and Q per regime | SP covariance as the Astrodynamics Support Workstation (ASW) forms it [R37](#r37) | 5 of 35 (6 on the selection window): 500–800 km at epoch, above 800 km to 2 days | [E14][e14] |
+| Density-forecast consider term, in the form of the Dynamic Consider Parameter | Hejduk 2019 [R38](#r38) | No measurable effect in storms; density-error coverage 0.83–0.86 against 0.95 | [E14][e14] |
 
-For two objects, propagate their admissible trajectory sets over a common interval. An encounter is geometrically possible under the declared bounds if some jointly admissible pair comes within the combined hard-body radius at the same time. Where the objects share errors or evidence, joint admissibility must account for those dependencies rather than automatically taking every combination of marginal states.
+On the held-out window, maneuvers, the storm of 4 July 2026 and GNSS repositioning put heavy tails on the errors: mean d²/3 rises while medians and coverage stay near nominal in LEO, so realism found on the selection window did not carry over. Operator covariance enters as supplied, labeled with its source.
 
-A conservative enclosing bound can support exclusion when it remains separated from the collision region. Intersection of conservative envelopes may be only a candidate requiring refinement, since an envelope can contain states that no admissible trajectory reaches. Finite support-point samples alone cannot guarantee that all encounters have been screened; coverage and enclosure assumptions must be explicit.
+## 7 Dynamics and verification
 
-Possibility and necessity scores require a specified possibility model and event definition. A geometric intersection by itself supplies no calibrated probability or graded score. Let A be an event, Aᶜ its complement, Π(·) the possibility measure, and N(·) the necessity measure. In a normalized possibility model, $N(A)=1-\Pi(A^{c})$: an event is necessary only to the degree that its complement is implausible. For the event "no collision," a high necessity therefore requires that every collision hypothesis be of low possibility, while a low necessity means only that collision has not been excluded. Report the definitions used. A low necessity of collision is not evidence of safety; a safety claim rests on a high necessity of no collision, which in turn requires the enclosure assumptions above. ([R19](#r19), [R20](#r20))
+HPOP's full force model, as the catalog and the conjunction screen run it [R10](#r10), beside the SP options a Vector Covariance Message (VCM) names [R39](#r39):
 
-### Operator reporting and tasking
+| Model | HPOP | SP, as a VCM names it | Equivalence |
+| --- | --- | --- | --- |
+| Geopotential | EGM2008 to degree and order 70; EGM96 and tesseral truncation (36Z,24T) selectable | EGM-96 with zonal and tesseral degrees | EGM96 cases within 1 cm of Orekit |
+| Atmosphere | NRLMSISE-00 (Orekit's to 1e-8); JB2008 (Orekit's to 2e-14); Jacchia-Roberts (GMAT's [R40](#r40), bit for bit) | JBH09, which is JB2008 with HASDM's calibration [R41](#r41); JAC70; MSIS90 | JB2008 matches Orekit's; HASDM's calibration is not public (section 5.4); Jacchia-Roberts and NRLMSISE-00 are declared substitutes for JAC70 and MSIS90 |
+| Third bodies | Sun, Moon, Venus, Mars and Jupiter from DE440s | Sun and Moon | Sun and Moon within 1 cm of Orekit |
+| Radiation | Cannonball with a conical shadow; Earth albedo and infrared | Solar radiation pressure, AGOM | Within 1 cm of Orekit |
+| Tides, relativity | IERS 2010 solid tides and relativity; FES2004 ocean tides to 30×30 | Solid Earth tides | Within 1 cm of Orekit |
+| Drag parameter, thrust | Cd·A/m and its rate; in-track acceleration | B, BDOT; in-track thrust | Within 1.6 cm of Orekit |
+| Integrator | RK78 at 1e-12, steps of at most 300 s; its own error after 3 days 0.1–1.2 m | Eighth-order Gauss–Jackson on Cowell's equations [R42](#r42), [R43](#r43) | Declared substitute, converged |
+| Earth orientation | IAU 2006/2000A with daily IERS rows | IAU 1980 nutation, truncated | Declared substitute |
 
-When supported, report ranges of closest-approach times and miss distances and identify whether initial-state uncertainty, unresolved object parameters, dynamics error, or measurement error dominates the encounter. Those findings should identify observations that could resolve an ambiguity. Wider uncertainty can increase screening workload; acceptance testing must measure missed encounters, false alerts, and computational cost.
+### Agreement with Orekit
 
-Collision probability remains available when the relative-state uncertainty model has suitable independent calibration and states its cross-correlation, geometry, and hard-body-radius assumptions. No live SOCRATES parity, validated admissible-set screening, or collision-probability result is claimed by the present evidence baseline.
+HPOP's Orekit 13.1 suite [R44](#r44) holds 72 cases on five orbits (400 km, 700 km sun-synchronous, GPS, geostationary, Molniya), each 24 hours, compared hourly on identical states, constants, Earth orientation and space weather [R10](#r10):
 
-## 13 Publication and the operator experience
-
-### Immutable distribution
-
-Publication proceeds transactionally: acquire and preserve bytes, verify integrity, normalize and validate, retain permitted source and derived products, publish a signed manifest, then announce the new catalog head. A conjunction worker consumes a complete immutable snapshot. Update events identify the object, prior and new solution references, effective epoch, recipe, and provenance. Retries are idempotent.
-
-Content addressing, independent replication, and open computation support resilience. They do not guarantee availability or override provider restrictions. Pin receipts identify retained bytes and actual nodes. A public notice may reference a restricted product without publishing its contents or credentials. Module availability, successful invocation, and validated output publication are separate operational checks.
-
-An intended conjunction service node is one placement of an auditable service that other authorized nodes can reproduce. Its availability, placement, throughput, and restart behavior require live verification. The recorded offline study does not establish operational readiness.
-
-### Feedback and reversible decisions
-
-New observations append evidence and trigger reevaluation of affected identities, solutions, and conjunctions. Corrections retain the provider originals and indicate which derived results are superseded. A feedback record identifies the disputed solution, supporting evidence, proposed correction, module and policy versions, and disposition. It distinguishes malformed inputs, stale data, maneuvers, incompatible models, and unresolved identity.
-
-Model revisions and changed error bounds are versioned events. A trajectory excluded under one model may become admissible under a corrected model; history must preserve why the earlier decision was made. New-object and unassigned hypotheses remain available where current explanations are inadequate.
-
-### Catalog and Space Aware interface
-
-The proposed workspace presents ordered source layers, coverage, freshness, integrity, and a paginated object table. An object comparison exposes native and derived solutions, evidence classifications, lineage, model versions, frame and time conventions, residuals, uncertainty status, and selection reasons. Observability gaps and admissible-set limits should be visible alongside a representative trajectory.
-
-A review action explains the ambiguity and the effects of accepting an identity link or solution. Every calculation links to immutable inputs and a recipe. The intended free orbital console exposes catalog browsing, propagation, conjunction assessment, and visualization through the same module artifacts. Help distinguishes native products, OMM-seeded numerical products, fitted solutions, consistency validation, and independent accuracy validation. These remain interface and packaging requirements rather than release claims.
-
-### SGP4 companion products
-
-An accepted numerical solution may be sampled and fitted with SGP4 mean elements over a declared interval, with separate fit and holdout checks before an OMM is emitted. Approximation errors and failures remain visible. An SGP4 companion for every object is a product objective, not a guaranteed useful approximation. SDS representations retain source OPM, OEM, and OMM semantics without claiming to be the CCSDS XML wire format. ([R12](#r12)–[R14](#r14))
-
-## 14 Acceptance gates and study design
-
-| Gate | Required evidence |
+| Force set | Largest 3D difference |
 | --- | --- |
-| Acquisition | Exact bytes, source edition, integrity, permitted retention, and lineage. |
-| Normalization | Preserved identity, epoch, units, frame, time scale, and model semantics. |
-| Evidence classification | Observations and provider claims tagged with dependencies and unknown lineage. Data level declared per source and measurement scale per field. |
-| Model reconciliation | Training and withheld residuals, state shifts, sensitivity checks, and failure counts. |
-| OMM model transfer | Verified epoch handoff and comparative forecasts against independent references. Initial-condition uncertainty carried through the handoff, with coverage tested. |
-| Object and sensor models | Versioned models, parameter observability, timing and bias treatment, and declared assumptions. |
-| Dynamics agreement | Matched propagation against an independent implementation (section 16.9). |
-| Physical accuracy | Independent reference comparisons stratified by regime and prediction interval. |
-| Uncertainty | Calibration of covariance or coverage and conservatism of declared trajectory bounds. |
-| Identity | Candidate review, conflict checks, reversible accepted links, and unassigned cases. |
-| Network flow | Update, pin, stream, restart/replay, and independent retrieval of complete snapshots. |
-| Conjunction | Controlled SOCRATES replay and independent assessment of selected trajectories and uncertainty. |
+| Point mass | 0.6 mm |
+| Gravity field, third bodies, radiation pressure, tides, relativity, in-track thrust | Under 1 cm |
+| With drag (NRLMSISE-00 or JB2008, daily space weather, drag rate) | 1.6 cm |
 
-The next study stratifies objects by orbit regime, perigee altitude, eccentricity, source age, arc duration, observation availability, maneuver status, parameter observability, and independent-reference availability. Report coverage and failure rates alongside residual percentiles, and retain parser failures and unmatchable objects in the denominator.
+State-transition matrices agree within 2e-5 and parameter sensitivities within 1.4e-4 (relative). What remains is integration error on both sides, about 1e-11 of the distance flown. Integrating Jacchia's diffusion equations numerically reproduces the closed forms of Jacchia-Roberts [R45](#r45) to 1.6e-4.
 
-Reserve a final untouched validation set. Repeated tuning against withheld points turns those points into development data. Assess the benefits of additional observations and physical information separately from benefits due only to a change in propagation model. Results should support a declared use and interval rather than a universal ranking of propagators.
+### Accuracy against precise orbits
 
-## 15 Reproducibility and evidence baseline
+Experiment V1 starts the propagator from ILRS orbits of four geodetic spheres (LAGEOS-1/2 and ETALON-1/2; 16 seeds) and IGS orbits of 32 GPS satellites (96 seeds), adds forces one set at a time, and compares each 72-hour run with the same product [V1][v1]. GPS radiation pressure is a deliberately crude cannonball. Median (largest) 3D error:
 
-The numerical baseline is modules commit 49e159d7003cac3d3e65b03170f11909fa86dd2c, including files/orbit-products 0.1.1 and analysis/catalog-composer 0.1.8. The recorded package suites passed 68 tests. One opt-in parity test ran separately; one full-DE440s external-fixture test was skipped. Nine explicit parity cases exercised Chromium, native WasmEdge, and the SDK container with 45 comparisons. Required repository gates passed; an advisory repository-wide gate was blocked under machine overload. ([R1](#r1))
-
-These checks establish software behavior across runtimes. Section 17's measurements have their own baseline, recorded in section 17.4.
-
-### Immutable evidence identifiers
-
-Acquired Vimpel element table
-
-```text
-840cda6d499028c17a7e22228b1b22fe500078e996113ef5804c4fff7ba612fa
-```
-
-Acquired Vimpel ephemeris archive
-
-```text
-f46df9c310a8c33752d5baebf429a0583e7896f6714501b77d8fcc033c65e6bb
-```
-
-Normalizer WASM
-
-```text
-d9f8ea296eab142767a02eddcdc888899fdd8fdccd968a1b82479ff673698e82
-```
-
-Catalog WASM
-
-```text
-7d87d552215685ee6a069f42f83d411af244e69d3cab7b4880f2e378cae30eed
-```
-
-HPOP WASM
-
-```text
-7305c5ef6db04cfb5babc4f2c5f87b17b1e5901e4c14bd25cf9ca7b14b7b48b1
-```
-
-### Reproduction contract
-
-Use the recorded commit, documented dependencies, exact artifact hashes, and authorized source files. The driver is analysis/catalog-composer/tests/vimpel-live.mjs with ELEMENTS_FILE and EPHEMERIS_RAR arguments. It routes existing C++/WASM reader, frame, time, propagation, and fitting modules. It does not acquire provider data, install modules, publish records, or create covariance. Per-case reference hashes and controls remain in the verification record. ([R1](#r1))
-
-Reproduction of the new OMM-transfer and uncertainty studies additionally requires frozen test editions, independent-reference lineage, force and measurement models, parameter assumptions, training and validation partitions, and prediction intervals. Report unavailable inputs and rejected cases rather than silently substituting a model or source.
-
-## 16 Closing the gap
-
-The preceding sections position the catalog as an evidence-classified assembly of provider claims. The comparison baseline for this section is the U.S. Space Force astrodynamics capability built around the Astrodynamics Support Workstation (ASW), including the Special Perturbations (SP) orbit determination and propagation that maintain the High Accuracy Catalog (HAC). Public descriptions of that baseline include an eighth-order Gauss–Jackson integrator, the EGM96 geopotential truncated to medium degree and order with Earth and ocean tides, and the High Accuracy Satellite Drag Model (HASDM), whose published development used dynamic corrections to a Jacchia 70 density model and tracking of about 75 calibration objects ([R29](#r29), [R30](#r30), [R32](#r32)). Public research also describes HASDM with JB2008 as the background density model ([R33](#r33)). This paper does not describe that baseline's internal implementation or assert its current operational configuration. This section identifies the technical work needed for SDN to produce an observations-based, accuracy-assessed catalog. These are requirements and design proposals, not completed experiments. Matching this baseline is a reproducibility target, not an accuracy target. An open implementation that reproduced SP dynamics exactly would also reproduce SP model error for every object whose actual environment departs from those models, and the accuracy of the HAC rests on the observations, calibration objects, and operational processes behind it, which dynamics software alone cannot supply.
-
-The catalog's own epistemics apply first. An external orbit solution remains a provider claim with its own fit arcs, weights, models, and lineage. Agreement with an authorized reference product is a validation target, not a new ground truth. Each proposed capability below belongs in the section 2 record contracts and must earn its own independent validation.
-
-### 16.1 Capability gaps
-
-An observations-based catalog requires uncertainty handling, observation-based correction, association, initial orbit determination, maneuver handling, accuracy assessment, configurable perturbation models, and conjunction products. The table maps those capability categories to the recorded SDN baseline and proposed work; it does not assert operational parity with another catalog.
-
-| Gap | Capability | Closing work |
-| --- | --- | --- |
-| G1 | Uncertainty estimation and transport | Establish initial uncertainty; propagate and calibrate covariance or admissible sets; serialize assumptions |
-| G2 | Observation-based differential correction | Add observation models, weighted batch correction, parameter treatment, and acceptance tests |
-| G3 | Observation-to-track association | Add observation-space gates, calibrated prediction-error models, and lifecycle decisions |
-| G4 | Initial orbit determination | Add angles-only IOD with suitable angular data and geometry-dependent alternatives |
-| G5 | Maneuver handling | Add residual change detection and explicit maneuver hypotheses with uncertainty |
-| G6 | Accuracy assessment | Publish held-out residuals and reference errors by object, regime, and prediction age |
-| G7 | Force-model depth | Implement the closed-to-open force mapping and staged validation in section 16.7 |
-| G8 | Conjunction products | Add CDM output with documented uncertainty and encounter validation |
-| G9 | Frames and element semantics | Enforce model dispatch and add reproducible convention-comparison tests |
-
-### 16.2 Uncertainty estimation and propagation
-
-The covariance-based implementation path has three distinct tasks: establish initial covariance, propagate it, and test its calibration. A state-transition matrix (STM) addresses the second task. The recorded refinement already forms finite-difference sensitivities from one nominal and six perturbed trajectories. Retaining the full final state and dividing its differences by the corresponding initial perturbations provides an STM approximation, subject to perturbation-size and numerical-convergence checks. Variational integration is a durable alternative that makes sensitivities available throughout the arc.
-
-Let t₀ be the initial epoch and t the output time, P₀ the initial-state covariance at t₀, P(t) the propagated covariance at t, Φ(t, t₀) the STM mapping state deviations from t₀ to t, and Q(t) the accumulated process covariance expressed at t. For a linearized six-state model with additive, uncorrelated process uncertainty, covariance propagation takes the form:
-
-$$
-P(t)=\Phi(t,t_0)P_0\Phi(t,t_0)^{\mathsf{T}}+Q(t).
-$$
-
-The STM does not determine $P_0$ or $Q(t)$. Initial uncertainty must come from an estimator with declared measurement-error assumptions, a documented provider product, or an independently calibrated empirical model. Uncertain physical parameters and their correlations require augmented sensitivities or an explicit consider-parameter treatment. ([R17](#r17), [R22](#r22))
-
-Estimated parameters are solved for using the observations. Consider parameters remain unestimated while their uncertainty is accounted for. Fixed values whose uncertainty is omitted constitute a third, distinct choice. The record must identify which treatment applies; a configured uncertainty allowance does not by itself demonstrate parameter estimation.
-
-Publish covariance at the epochs required for downstream use, with any interpolation method and its validation recorded. Cartesian and explicitly defined radial, transverse, and normal frames support complementary uses. The axes, velocity convention, units, and complete transformation must be specified rather than inferred from an acronym. CCSDS Orbit Comprehensive Messages (OCMs) provide a serialization framework; the SDN profile must identify required standard fields and any linked metadata needed to convey distributional assumptions, process uncertainty, and calibration. ([R14](#r14))
-
-Covariance is a prerequisite for covariance-based gates and collision-probability calculations, not for every uncertainty-aware method. The admissible-set and TEAG/ESPF evaluation paths in section 9 remain available. Each representation must carry its assumptions and demonstrate the coverage or enclosure properties it claims.
-
-### 16.3 Observations and orbit determination
-
-Observation-based estimation is the largest change from the recorded provider-product workflow. It requires an authorized data source, a validated measurement model, and an estimator appropriate to the measurement type.
-
-ILRS full-rate and normal-point laser-ranging data provide a practical first path for range-model validation and batch correction from a known initial orbit. Normal points are condensed range observations; they are not automatically the angular measurements required for angles-only IOD. Station coordinates, timing, atmospheric corrections, calibration, and bias treatment must accompany the ranges. Dataset editions, access requirements, and processing conventions are frozen for each study. ([R23](#r23)) Laser ranging covers only retroreflector-equipped, mostly cooperative satellites, so it validates range models and estimation software on a population that is not representative of debris or other uncooperative ASOs.
-
-An angles-only IOD study therefore needs a separate, identified angular dataset with station and timing metadata. A three-observation solver is an entry method, followed by geometry-dependent alternatives and additional observations where ambiguity remains. It is not a universal solver for every short arc or measurement type. For very short arcs, where classical three-observation methods are ill-conditioned, admissible-region methods constrain the unobserved range and range rate with physical bounds and can be carried forward as sets or as probabilistic mixtures ([R21](#r21), [R31](#r31)). This path gives the section 7 unassigned-observation hypothesis an actual solution procedure without requiring a provider element set.
-
-Space-Track GP history supplies derived orbit products for consistency studies. It is not treated here as an identified public raw-observation archive. Any proposed Space-Track observation source must first be named, its access established, and its measurement content verified. ([R24](#r24))
-
-Batch differential correction then compares predicted observables with measurements under the section 8 dynamics and sensor models. It must document weights, residual rejection, bias treatment, parameter observability, convergence, and uncertainty construction. Publish the fit arc, forecast validity interval, acceptance criteria, and diagnostics. Observation-based estimation adds to, rather than removes, the provider-position reconciliation path needed when measurements are unavailable. Initial-state covariance from a fit remains conditional on its assumptions until tested on held-out evidence.
-
-### 16.4 Association and prediction-error models
-
-SDN requires prediction-age-dependent association gates, configurable discrimination, and explicit object lifecycle states. Gate parameters must be learned and validated for the catalog's own inputs rather than inherited from another provider.
-
-Differences between an OMM propagated forward and a later-issued solution provide an empirical measure of inter-solution consistency. They are a useful starting proxy for prediction-error envelopes, but are not identical to physical prediction errors: both solutions are uncertain and may share observations or model biases. The OMM-based fitting literature supports evaluating derived forecasts, not treating every later OMM as truth. ([R18](#r18))
-
-Calibrate these proxies against held-out observations or independently characterized reference states, stratified by orbit regime, prediction age, and source lineage. An observation-space chi-square gate additionally requires the measurement model, an innovation covariance combining predicted and measurement uncertainty, appropriate correlations, and a stated distributional approximation. Empirical or bounded-set gates remain alternatives when those assumptions are unsupported.
-
-Keep section 7's separation between candidate generation, discrimination, and publication decisions. Record compatible, rejected, ambiguous, and insufficient outcomes. After an observation gap, reacquisition may retain an established identity when evidence supports it. A confirmed physical reentry is terminal; an erroneous decay classification can instead be corrected through the reversible record. Loss of tracking and physical decay must not be conflated.
-
-### 16.5 Maneuver detection and lifecycle
-
-Use residual analysis across adjacent arcs to propose maneuver hypotheses. A change point may also reflect sensor bias, source changes, association errors, or model discrepancy, so detection is a prescreen rather than proof of a burn. Compare plausible explanations and retain rejected or unresolved hypotheses.
-
-An accepted maneuver hypothesis records event time, estimated velocity change or finite-burn model, supporting evidence, and uncertainty in the dynamics reference. This makes the discontinuity auditable instead of silently starting a new arc. Distinguish propagation termination thresholds from confirmed decay evidence. An open catalog needs explicit lost, inactive, reentered, and uncertain statuses rather than inferring physical events from a provider product's disappearance.
-
-### 16.6 Accuracy assessment
-
-A continuing accuracy-assessment loop is central to this roadmap. Predicted products are checked against subsequent evidence, with results reported per object, prediction age, and orbit regime. The presence of accuracy-record fields alone does not establish the quality of the underlying calibration.
-
-SDN must distinguish three outputs. Held-out measurement residuals test predictions in observation space. Independent reference-state comparisons support position and velocity error estimates, subject to reference uncertainty and lineage. Encounter-level comparisons assess closest-approach time and miss distance when an adequately characterized encounter reference exists. A conjunction event or covariance by itself supplies no measured physical error, and a single range residual does not determine all three Cartesian error components.
-
-Publish these results beside the trajectory, with failure counts retained in the denominator and fit data separated from forecast evaluation. Test covariance coverage or admissible-set enclosure under the stated assumptions. A formal accuracy certification would additionally require a named acceptance procedure, thresholds, evaluation population, and review authority; the present proposal establishes an assessment program, not a completed certification.
-
-### 16.7 Mapping SP HAC capabilities to the open SDN catalog
-
-The path from Special Perturbations (SP) and the High Accuracy Catalog (HAC) capability baseline to an open SDN catalog begins by making the dynamics reproducible. We map the closed-system capability categories to explicit open model components, data dependencies, and acceptance tests. The mapping defines engineering targets; it does not establish that every listed option is active in a particular operational configuration. The open implementation can use different software while preserving the physical model and its declared conventions.
-
-The principal dynamics gaps are identifiable. Earth gravity, atmospheric drag, radiation pressure, third-body gravity, tides, maneuvers, numerical integration, and reference-system transformations all have implementable open counterparts. Availability of a counterpart does not establish equivalence to a particular configuration. The following mapping specifies what SDN must preserve or explicitly substitute.
-
-| Closed capability target | Open SDN counterpart | Equivalence condition |
-| --- | --- | --- |
-| Configurable geopotential | Spherical harmonics using EGM96 or EGM2008, with independently selected degree and order | Same coefficients, normalization, gravity constant, reference radius, and tide system |
-| Legacy gravity selections | Versioned coefficient loaders for older gravity models a source names, where available | Exact coefficient edition and conventions established; a model label alone is insufficient |
-| SP modified Jacchia 70 density | Open implementation of the corresponding modified model | Match the specific modifications, environmental inputs, and correction handling; standard Jacchia 70 is not presumed equivalent |
-| MSIS 90 density | Version-specific atmosphere adapter with environmental-data inputs | Same density routine, switches, drivers, and time conventions; newer models are declared substitutes |
-| Hybrid atmosphere selection | Explicit routing among density routines | Known selection or blending rule, transition behavior, and input handling |
-| Atmospheric drag | Relative-atmosphere velocity with declared drag coefficient, area, and mass | Same density, rotation or wind assumptions, units, and ballistic-parameter definition |
-| Solar radiation pressure | Cannonball or attitude-dependent radiation model with eclipses | Same optical properties, area-to-mass ratio, irradiance, and shadow geometry |
-| Sun and Moon perturbations | Differential third-body acceleration from versioned ephemerides | Same body positions, gravitational constants, frames, and time arguments |
-| Solid Earth and ocean tides | Time-varying geopotential corrections | Same tidal constituents, response parameters, and permanent-tide convention |
-| Thrust and outgassing | Impulsive or finite-burn models and evidence-supported empirical accelerations | Explicit event times, local or inertial directions, units, mass treatment, and parameter uncertainty |
-| Numerical propagation | Validated equations of motion, adaptive integration, and event handling | Converged trajectories under matched dynamics, with declared error controls |
-| Frames and time | Explicit inertial and terrestrial transformations with versioned Earth orientation and leap seconds | Epoch, time scale, frame realization, and full position-and-velocity transformation agree |
-
-For gravity, a 36-by-36 or 70-by-70 configuration is a truncation choice, not a separate physical model. Load the actual coefficient set and record its hash, maximum degree and order, normalization, gravitational constant, and reference radius. Public EGM96 and EGM2008 coefficients support this approach. Legacy names require the same discipline: an ellipsoid or reference-system label does not uniquely specify a gravity coefficient file. Where the required edition cannot be obtained and verified, label the replacement as a substitute and leave equivalence unmeasured. ([R26](#r26))
-
-SP's modified Jacchia 70 is the compatibility target for that atmosphere option, not generic Jacchia 70. The open implementation must match the applicable modifications, environmental-input conventions, and correction handling. A public implementation labeled "modified Jacchia 70" is not automatically the same variant. Standard Jacchia 70 or another public atmosphere model remains a declared substitute until density and drag-acceleration comparisons establish agreement over the stated test domain. HPOP's Jacchia-Roberts option (section 17.1) is such a declared substitute: it follows the GTDS and GMAT formulation with Jacchia's 1971 constants, not SP's modifications.
-
-Reproducing the modified density routine does not by itself reproduce an operational density-calibration process. Treat any separately applied correction fields or calibration products as explicit, versioned dependencies, with their availability and permitted use established. Public HASDM literature ([R28](#r28), [R32](#r32)) describes a modified Jacchia-70 model and estimated temperature corrections; it provides context, not proof of the exact SP version or configuration being compared. Where the required variant or correction inputs are unavailable, retain the open substitute and mark SP equivalence as unmeasured. ([R28](#r28)) Public research describes HASDM using JB2008 as its background density model, with dynamic corrections estimated through calibration-satellite observations ([R33](#r33)). The open mapping therefore includes both the modified Jacchia 70 option and the publicly described JB2008-based HASDM framework; reproducing either base model alone does not reproduce the calibration process.
-
-Atmospheric parity requires more than choosing a density-model family. SP's modified Jacchia 70, standard Jacchia 70, MSIS 90, NRLMSISE-00, and JB2008 are distinct compatibility targets. Each adapter must define altitude and latitude conventions, local solar time, solar and geomagnetic inputs, averaging windows, lags, switches, interpolation, and missing-data behavior. F10.7 and Ap alone do not supply all JB2008 inputs; S10, M10, Y10, their averages, and the geomagnetic temperature correction also matter. A hybrid mode requires an explicit selection or blending rule rather than an assumed altitude threshold. ([R25](#r25), [R27](#r27))
-
-Drag configuration must state whether a supplied ballistic parameter means mass divided by drag coefficient and area, or the reciprocal coefficient-area-to-mass quantity. These conventions cannot be interchanged by relabeling units. Space-weather radio-flux indices used by an atmosphere model are also distinct from the photon irradiance used for radiation pressure. The basic cannonball radiation acceleration points away from the Sun and requires a declared eclipse model. Force and acceleration must remain distinct when converting input units.
-
-Sun and Moon gravity uses time-dependent ephemerides and the differential acceleration appropriate to an Earth-centered origin, not fixed mean distances. Tidal geopotential corrections belong in the dynamics; station displacement and loading corrections belong in the measurement model and must be handled separately where required. Record the adopted conventions and data editions. ([R11](#r11))
-
-For maneuvers, an in-track direction is defined by the object's orbital frame and changes relative to inertial axes. It cannot be represented by an unexplained fixed inertial unit vector. Specify finite-burn timing, thrust or acceleration magnitude, direction convention, and mass evolution where relevant. Enable an outgassing or empirical acceleration model only with a stated physical or estimation rationale; assumed defaults must not become undeclared evidence about an object.
-
-Numerical equivalence does not require copying a proprietary integrator. Cowell and Encke describe formulations of the equations of motion; a Runge-Kutta method describes an integration algorithm. SDN must name both the formulation and algorithm, define dimensional absolute tolerances and relative tolerances, and verify convergence, interpolation, and event handling. A tight tolerance setting alone is not an accuracy result. The publicly described SP propagator applies an eighth-order Gauss–Jackson multistep method to the Cowell formulation ([R29](#r29), [R30](#r30)). Its behavior on eccentric orbits depends on step-size control or regularization and on the startup procedure, so integrator comparisons should include high-eccentricity and perigee-passage cases and should report agreement separately from the force-model comparisons.
-
-Frame and time adapters must preserve the exact epoch origin, units, and time scale of each input. Use epoch-appropriate Earth-orientation parameters and leap-second data rather than fixed example offsets. J2000, ICRF, TEME, and terrestrial frame labels cannot be treated as interchangeable. Transform velocity consistently with the time-dependent frame rotation, and distinguish sidereal angles from time scales. ([R11](#r11))
-
-Element-set semantics retain an explicit dispatch guard. The section 5 SGP4 handoff applies to SGP4-compatible mean elements, not every record shaped like a two-line set. Verify each source's ephemeris type, element definitions, frame, time scale, and generating model; route it to a compatible decoder or refuse it. Passing osculating elements to an SGP4 mean-element decoder is a model mismatch, not a valid handoff. Checksums establish record integrity, not model compatibility. A valid OMM-to-state handoff remains a legitimate way to initialize this open numerical pipeline; the additional models do not by themselves establish a better forecast.
-
-### 16.8 From model mapping to published catalog records
-
-The SDN bridge should expose a versioned dynamics configuration rather than bind the catalog schema to one analysis library. Each configuration identifies the force models, coefficient and environmental-data hashes, frame and time conventions, object parameters and their treatment, integrator settings, and supported interval. Mark each mapped component as a matched implementation, a declared substitute, or unresolved. A match claim must link to its test evidence; it is not inferred from a shared model name.
-
-An ingestion adapter preserves the original provider product and constructs a canonical state only after source-model dispatch. The propagation service consumes that state and the dynamics configuration. Observation-based estimation can then update the state and selected parameters using an explicit measurement model. The uncertainty service transports the chosen covariance or admissible representation with compatible dynamics. Finally, the catalog publishes an attributed solution, ephemeris, uncertainty status, validation interval, and evidence links under the section 2 contracts. New solutions do not erase the original claim or its lineage.
-
-This separates access to a closed product from dependence on a closed implementation. An authorized SP HAC reference product can support comparison without becoming the SDN runtime or being redistributed. Where only a state or ephemeris is available, SDN can test trajectory agreement but cannot infer the generating force configuration uniquely. Where observations are available, SDN can independently estimate and validate its own solution. Where neither matching inputs nor reference outputs are available, the corresponding parity claim remains open.
-
-The dynamics mapping principally closes G7 and G9. It supplies a foundation for G1 and G2, but it does not itself deliver calibrated uncertainty, raw observations, association, maneuver inference, or conjunction assessment. Those remaining capabilities follow sections 16.2 through 16.6. Reproducing a propagator is one part of building the catalog; comparable catalog performance also depends on observation coverage, cadence, calibration, and operational continuity.
-
-The availability of observations, sensor calibrations, provider-specific environmental inputs, and reference products must be established source by source. Public and participating-sensor datasets have their own coverage, errors, and dependencies. Public standards and reproducible independent tests provide the engineering basis, with access rights and reference independence recorded for every study.
-
-### 16.9 Sequencing and acceptance gates
-
-Begin with source-model dispatch, units, frames, time, and the versioned dynamics configuration. Keep the recorded SDN baseline reproducible while adding mapped components incrementally. A useful progression is gravity and ephemerides, atmosphere and drag, radiation and eclipses, then tides and event-driven accelerations where sensitivity justifies them. Observation and uncertainty development can proceed in parallel.
-
-| Acceptance stage | Required evidence | Supported claim |
-| --- | --- | --- |
-| Input and convention checks | Round-trip transforms, epoch tests, coefficient checks, and parameter-unit checks | Inputs mean the same thing in both implementations |
-| Component comparisons | Force-by-force accelerations at fixed states and epochs, including boundary cases | Tested components agree within stated tolerances |
-| Matched propagation | Common initial state, matched configuration, identical output epochs, and tolerance convergence | Trajectories agree over the tested interval |
-| Estimation and uncertainty | Declared observations, fit controls, parameter treatment, and calibration tests | State and uncertainty products support their stated interpretation |
-| Forecast and catalog assessment | Held-out evidence, regime and age stratification, coverage, and failure counts | Performance supports a declared catalog use and interval |
-
-Use authorized closed-system outputs for matched comparisons when available and independent open reference implementations for cross-checks. Freeze the initial state during force and propagation comparisons; refitting it can conceal a model mismatch. Test refitting as a separate estimation experiment. Set acceptance tolerances before examining results, using the intended application and uncertainty budget, and report both position and velocity differences. Include drag-sensitive, eclipse-crossing, eccentric, and maneuver cases where those capabilities are claimed.
-
-Develop STM transport with declared test covariances while establishing defensible initial uncertainty through provider information, empirical calibration, or observation-based estimation. SLR range validation and batch correction form one path; angular-data acquisition and angles-only IOD form another. Next integrate association, maneuver hypotheses, and lifecycle handling. Add CDM serialization and uncertainty-aware encounter assessment as the required inputs become available.
-
-Continuous accuracy testing starts with the first testable products. Capability coverage, numerical agreement with a reference implementation, and accuracy against independent evidence are separate acceptance results. A declared substitute may improve physical forecasts while reducing agreement with a closed reference; an exact numerical match may preserve a shared bias. Publish those outcomes separately rather than calling either one universal parity.
-
-## 17 Measured propagation evidence
-
-This section reports the first measurements behind the numerical propagation path of sections 5, 8 and 16.7. Following section 16.9, it reports agreement with a reference implementation (section 17.1) apart from accuracy against independent evidence (section 17.2). Both start from known states. The evidence baseline is separate from section 15's and is recorded in section 17.4.
-
-### 17.1 Agreement with Orekit
-
-Matched propagation compares HPOP with Orekit 13.1 ([R36](#r36)) on identical initial states, force configurations and constants: the EGM2008 gravitational parameter and reference radius, JPL DE440 for the Sun and Moon, the same IERS Earth-orientation rows, and the IAU 2015 nominal solar irradiance and radius for radiation pressure. The reference is Orekit with two additions of ours, both recorded with its generator ([R34](#r34)). It evaluates the de Sitter term of IERS Conventions eq. 10.12 in consistent frames, in place of Orekit 13.1's implementation, and for the drag-rate cases it uses a drag model whose coefficient changes linearly in time.
-
-Sixty-three cases cover five orbits (400 km, 700 km sun-synchronous, GPS, geostationary and Molniya) and force sets from the point mass through gravity to degree and order 20, the Sun and Moon, radiation pressure with a conical shadow, and drag with NRLMSISE-00 or JB2008. They also cover the IERS 2010 relativistic and solid-tide terms ([R11](#r11)), EGM96 to degree 70, daily space weather, an in-track acceleration and a drag-parameter rate. Orekit integrates with an eighth-order Dormand–Prince method at a tolerance of 1e-14 and steps of at most 10 s; HPOP with a Runge–Kutta 7(8) method at 1e-13 (1e-15 for the point mass) and steps of at most 300 s. Positions are compared hourly over 24 hours.
-
-| Force configuration | Cases | Largest 3D position difference over 24 h |
-| --- | ---: | --- |
-| Point mass | 5 | 0.57 mm |
-| Every other case without drag: zonal or full fields, Sun and Moon, radiation pressure, relativity, tides, in-track acceleration | 48 | 9.8 mm at 400 km; 7.0 mm at 700 km; 6.3 mm Molniya; 0.48 mm GPS; 0.07 mm geostationary |
-| With drag | 10 | 15 mm at 400 km; 6.9 mm at 700 km |
-
-These are the differences of the published WebAssembly build with hourly output. When only the final epoch is requested, HPOP takes a different integration path, which agrees to 2.8 cm at 24 hours. In the two cases that request them, the state-transition matrix agrees column by column within 1.2e-5 (relative), and the sensitivities to the drag parameter, its rate, the radiation-pressure parameter and the in-track acceleration within 1.4e-4.
-
-The differences are consistent with integration error on both sides, at most about 2e-11 of the distance flown. The smallest effect the cases exercise, the frame bias between EME2000 and GCRF, moves the 400 km orbit by 17 cm and the GPS orbit by 4 mm over the day, nine times the agreement or more. The test suite's limits (1 mm, 5 cm and 10 cm by force set) were set alongside these measurements and apply to positions only. They are regression limits, not pre-registered acceptance thresholds, so this comparison does not yet complete section 16.9's matched-propagation stage.
-
-HPOP's Jacchia-Roberts option is Jacchia's static diffusion model with Roberts' closed-form integration ([R37](#r37), [R38](#r38)), the formulation known from GTDS and implemented in GMAT ([R43](#r43)), with the constants of Jacchia's 1971 models. Independently of GMAT, integrating the diffusion equations numerically reproduces its closed forms to 1.6e-4, and replacing Roberts' temperature fit with Jacchia's own profile changes the density by at most 4.3 % at 200 km and 2 % from 300 km. Jacchia's 1970 models, which a VCM's JAC70 names, use a different inflection temperature and 100 km composition, and SP's modified Jacchia 70 differs again (section 16.7). Jacchia-Roberts is therefore a declared substitute for both: its differences from the first are known in kind, and its equivalence to the second is unmeasured.
-
-### 17.2 Accuracy against precise orbits
-
-Experiment V1 measures how far HPOP, started from a precise state, departs from independent precise orbits as force models are added ([R35](#r35)). Its plan, windows and criteria were committed before it was run. Configurations E-e and E-f, with every modeled force, are descriptive and enter no criterion.
-
-Sixteen seeds come from ILRS combined orbits of LAGEOS-1, LAGEOS-2, ETALON-1 and ETALON-2 in August 2026, and 96 from IGS final orbits of 32 GPS satellites on 2, 6 and 10 August 2026 ([R40](#r40)). Each seed is propagated 72 hours and compared with the same product at 1, 6, 12, 24, 48 and 72 hours. The spheres' known mass and size, with nominal radiation-pressure coefficients, make their radiation pressure computable. GPS radiation pressure uses a cannonball of 20 m², 1500 kg and radiation-pressure coefficient 1.3, a deliberately crude model.
-
-Median (largest) 3D position error:
-
-| Configuration | SLR, 24 h | SLR, 72 h | GPS, 24 h | GPS, 72 h |
+| Force set | Spheres, 24 h | Spheres, 72 h | GPS, 24 h | GPS, 72 h |
 | --- | ---: | ---: | ---: | ---: |
-| E-a: point mass | 46 km (396 km) | 110 km (1,213 km) | 25 km (40 km) | 75 km (170 km) |
-| E-b: zonal harmonics to degree 20 | 1.3 km (2.2 km) | 3.4 km (8.7 km) | 2.1 km (6.5 km) | 6.0 km (94 km) |
-| E-c: E-b with the Sun and Moon | 257 m (2.1 km) | 677 m (6.2 km) | 331 m (868 m) | 983 m (89 km) |
-| E-d: E-c with radiation pressure | 246 m (2.1 km) | 670 m (6.2 km) | 277 m (661 m) | 853 m (89 km) |
-| E-e: E-d with the full field to degree and order 20 in Earth-fixed axes and IERS Earth orientation | 6.2 m (15 m) | 18.6 m (51 m) | 29.5 m (117 m) | 92 m (90 km) |
-| E-f: E-e with IERS 2010 solid tides and relativity | 4.8 m (10 m) | 13.9 m (31 m) | 28.5 m (117 m) | 91 m (90 km) |
-| R-20: field to degree and order 20, no Sun or Moon | 634 m (2.1 km) | 1.5 km (8.2 km) | 2.0 km (6.0 km) | 6.2 km (95 km) |
+| E-a: point mass | 46 km (396 km) | 110 km (1,213 km) | 25 km (40 km) | 75 km (170 km) |
+| E-b: zonal harmonics to degree 20 | 1.3 km (2.2 km) | 3.4 km (8.7 km) | 2.1 km (6.5 km) | 6.0 km (94 km) |
+| E-c: E-b with the Sun and Moon | 257 m (2.1 km) | 677 m (6.2 km) | 331 m (868 m) | 983 m (89 km) |
+| E-d: E-c with radiation pressure | 246 m (2.1 km) | 670 m (6.2 km) | 277 m (661 m) | 853 m (89 km) |
+| E-e: E-d with the full 20×20 field and IERS Earth orientation | 6.2 m (15 m) | 18.6 m (51 m) | 29.5 m (117 m) | 92 m (90 km) |
+| E-f: E-e with IERS 2010 solid tides and relativity | 4.8 m (10 m) | 13.9 m (31 m) | 28.5 m (117 m) | 91 m (90 km) |
 
-- **Two of four pre-registered checks failed**, and are reported as failures. V1.2 required each added force to reduce every seed's error; it was violated 14 times, all in configurations without tesseral harmonics. Their errors, mostly hundreds of metres to kilometres, let an added force move a seed either way. With the tesserals present every SLR seed improved, and 92 of 96 GPS seeds. V1.3 required R-20 to beat zonal harmonics alone (E-b) for GPS at 24 hours. It did so for 53 of 96 seeds, because neither model includes the Sun and Moon, which dominate GPS error at a day.
-- **The conjunction screen** propagates every object with every modeled force, as the conjunction-screening paper describes; its resident path matches the execution path to 0.05 mm over four days.
-- **The GPS maxima at 48 and 72 hours** are one satellite, NORAD 35752, seeded 6 August: about 45 km at 48 hours and 90 km at 72 hours in every configuration except the point mass (98 km and 170 km). No configuration accounts for it.
-- **What the numbers indicate.** For the four geodetic spheres, at about 5,900 km and 19,100 km altitude and started from a precise state, HPOP's dynamics leave a median error of about 5 m after a day and 14 m after three (largest 10 m and 31 m). This is not the accuracy of a catalog product. Catalog states start from element sets or fits whose epoch errors are far larger (for GPS element sets, about 2 km RMS ([R41](#r41))), and objects in low orbit add drag and gravity-truncation errors that V1 does not exercise.
+The GPS maxima beyond a day are one satellite, NORAD 35752, in every force set. Two of four pre-registered checks failed: an added force did not reduce every seed's error (14 violations, all without tesseral harmonics), and a 20×20 field without the Sun and Moon beat zonals alone for only 53 of 96 GPS seeds. The two-body return (0.8 mm) and the E-d bound at 24 hours (246 m against 500 m) passed.
 
-### 17.3 Vector Covariance Message parity
+HPOP's resident path, which holds the catalog in memory, reproduces its execution path to 0.052 mm over four days, at 0.645 s per object-day on one thread [R10](#r10).
 
-The SP Vector Covariance Message (VCM) is the message in which SP orbit solutions are distributed with their covariance ([R42](#r42)). An adapter module reads one into a propagation request. The request carries the J2000 state, the stated Earth orientation, and the force flags and parameters: the geopotential and its truncation, the drag model, the ballistic and radiation coefficients, the ballistic-coefficient rate, tides and thrust. The adapter transforms the equinoctial covariance to Cartesian form with an exact Jacobian, obtained by forward-mode differentiation of the closed-form conversion. HPOP propagates state and covariance through its state-transition matrix, with the ballistic coefficient as a dynamic parameter whose uncertainty the covariance carries, and the adapter writes the result back as a VCM ([R34](#r34)). The request format, PRW in Space Data Standards, gained what this needed in schema revision 1.240.0. Its additions include Earth orientation, JB2008 indices, daily space weather, the Jacchia-Roberts selection, the relativistic and tidal terms, EME2000 axes, in-track thrust, and the drag-rate parameter with its sensitivities.
+## 8 Association and selection
 
-The format states no units for the covariance:
+Association asks whether records describe one object; selection picks a solution for an epoch, interval and use; estimation derives a new one. Candidates come from provider crosswalks, international designators and native-identifier histories, Vimpel's datefirst fields included; names and bare numbers are not join keys. Compatibility is tested on normalized ephemerides over shared intervals. Each candidate link is compatible, rejected, ambiguous or insufficient, and accepted links stay reversible. Selection takes, per regime and horizon, the source with the lowest median error on a training window of at least 30 samples [E3][e3].
 
-- **The mean-motion row.** Four messages settle it: the survey's sample, by its orbit and revolution number an ISS solution, and three SP messages on hand that are not redistributed (a geostationary orbit, a GPS satellite, and an orbit of eccentricity 0.59 with perigee in the atmosphere). The row is relative, dn/n. With that reading, and the covariance scaled by the square of the weighted RMS when the RMS exceeds 1, every printed U, V and W sigma of the four is reproduced within 1 %. No absolute unit does. The eccentric message's radial sigma is 45.8 m printed and 45.8 m with dn/n, but 36.9 m with n in radians per 1000 s and 51.1 m in revolutions per day. Radians per 1000 s, which the ISS message alone suggested, misses the geostationary and GPS radial sigmas by factors of 2.0 and 1.7.
-- **The ballistic and radiation coefficients' rows.** The printed sigmas do not cover them. Read like the mean-motion row, as fractions of the coefficients, they give standard deviations of 1.5 % to 9.7 % in the four messages; read as printed in m²/kg, 0.38 to 5.6 times the coefficient. For the ISS message, the in-track sigma after a day is 510 m under the first reading and 44 km under the second. One measurement supports the fractional reading. The GPS message, propagated a day by HPOP and compared with ESA's final orbit for the satellite ([R40](#r40)), has radial and in-track errors with RMS 0.46 and 0.64 of their sigmas under the fractional reading (cross-track, which does not depend on the reading, 1.27). Under the as-printed reading the sigmas overstate the radial error about 20 times and the in-track error about 7 times after half a day. The adapter reads the rows as fractions by default and keeps the other reading available; one satellite over one day is evidence, not a calibration.
+| Rule | Measured | Evidence |
+| --- | --- | --- |
+| Selection by evidence | GPS: 3.5 cm at issue (section 5.1) | [E3][e3] |
+| Fusion of sources | Never better than selection: 1.07–1.17 times its error in GPS at 1–7 days, equal elsewhere | [E3][e3] |
+| Covariance intersection [R46](#r46) of one provider's consecutive OMMs | Collapses onto one set (0.90–1.00 of selection's error); naive fusion is overconfident (mean d²/3 3.3–700) | [E2b][e2b] |
 
-A round trip through the VCM text, in SP's five-digit number format, recovers the covariance to 2e-5 of its sigmas. A VCM naming JAC70/MSIS90 is propagated with Jacchia-Roberts (section 17.1). A VCM naming a JB2008-based model lacks the model's solar indices, which must be supplied separately.
+## 9 SP message interchange
 
-### 17.4 Evidence baseline and reproduction
+The VCM carries an SP state, its force settings and an equinoctial covariance [R39](#r39). SDN's adapter reads a VCM into an HPOP request and writes the result back as a VCM, transforming the covariance with an exact Jacobian computed by forward-mode dual numbers [R47](#r47). The format states no covariance units, and no public definition was found. Four messages settle them: the survey's ISS sample and SP messages for a geostationary, a GPS and an eccentric (e = 0.59) orbit.
 
-Section 17's measurements use HPOP from space-data-network-modules commit 750b6399173a2678b8e8d0885557976d17a9ad5c and V1 run `v1-hpop-physical-truth-run-20261009T004514Z` of orbit-accuracy-experiments commit 5037cdf302bb12d52a16b5199769225607f9f048, whose manifest records every input's hash ([R34](#r34), [R35](#r35)). The VCM adapter as section 17.3 describes it is at modules commit 1879d8c5c17c061e157c100723a8423c59fd98e2, which leaves HPOP unchanged. Both commits carry one HPOP binary:
+| Covariance rows | Reading | Evidence |
+| --- | --- | --- |
+| Mean motion | Relative, dn/n; covariance scaled by max(1, weighted RMS)² | Every printed U, V and W sigma reproduced within 1 %; no absolute unit does (radians per 1000 s misses two radial sigmas by 1.7 and 2.0 times) |
+| B and AGOM | Fractions of the coefficients (1.5–9.7 %) | The GPS message against ESA's final orbit for one day: radial and in-track RMS 0.46 and 0.64 of their sigmas, cross-track 1.27; read as printed, the sigmas overstate the error 7 to 20 times |
+
+A round trip through VCM text in SP's number format recovers the covariance to 2e-5 of its sigmas. A VCM naming JBH09 runs as JB2008 on SET's indices, which the caller supplies.
+
+## 10 Publication and reproduction
+
+Publication is transactional: acquire and hash the bytes, verify, normalize, validate, sign a manifest, then announce the new catalog head. Consumers read one complete, immutable snapshot; each update names the object, the prior and new solutions, the epoch, the recipe and the provenance. Content addressing and independent replication keep a snapshot retrievable from any node that holds it.
+
+An accepted numerical solution can carry an SGP4 companion: mean elements fitted to it over a declared interval and scored on a held-out stretch before release, as CelesTrak's supplemental GP fits operator ephemerides [R48](#r48) and the 18th Space Defense Squadron's eGP fits SP states [R49](#r49). The fit RMS that CelesTrak publishes for each set is the benchmark.
+
+Each experiment's numbers come from a run manifest: the repository and module commits, each module's WebAssembly SHA-256 and the SHA-256 of every input; reports are generated from metrics [R1](#r1). The experiments' public site runs the same modules in a web browser: a V1 seed reproduces the committed result exactly, and any Orekit case re-runs from its exact request. Space-Track element sets, SpaceX and Planet files and SET's indices are cited by URL and SHA-256, not copied.
+
+| Evidence | Commit |
+| --- | --- |
+| Experiments V1, E1–E8, E13 and E14 | orbit-accuracy-experiments `357d992d6c62daac4ccbb2fd230634ac292192b8` |
+| HPOP 1.3.0, its Orekit suite, screen and covariance calibration; maneuver detection 0.3.0 | space-data-network-modules `d4a0b1155f64ac088694f9758c32e3b691952674` |
+| HPOP in V1 | space-data-network-modules `750b6399173a2678b8e8d0885557976d17a9ad5c` |
+| VCM adapter | space-data-network-modules `1879d8c5c17c061e157c100723a8423c59fd98e2` |
+| Vimpel conversion and refinement | space-data-network-modules `49e159d7003cac3d3e65b03170f11909fa86dd2c` |
+
+HPOP's WebAssembly binary in V1, SHA-256:
 
 ```text
 473d527175de6606ccf305c45b37218288634fa9de2dcab0d72564a190bdabd1
 ```
 
-The experiments repository is public. Its site runs HPOP, the time-scale module and the VCM adapter in a web browser, through the same SDK harness the experiments use. A V1 seed in configurations E-a to E-f reproduces the committed result exactly. Any of the 63 Orekit cases re-runs from its exact request against the stored Orekit trajectories, whose generator is in the modules repository. The VCM round trip runs under both readings of the ballistic-coefficient row. Every input and result can be downloaded with its hash. Space-Track element sets are not redistributed.
+## 11 Measured accuracy
 
-## Appendix A. Glossary and nomenclature
+Median 3D position error against precise orbits, by object class and age of the product:
 
-### Terms
+| Class (objects) | Product | At issue | 1 day | 3 days | 7 days | Evidence |
+| --- | --- | ---: | ---: | ---: | ---: | --- |
+| GPS (32) | Ultra-rapid orbit, propagated | 3.5 cm | 30 m | 104 m | 336 m | [E3][e3] |
+| GPS (32) | Public OMM, SGP4 | 1.57 km | 1.61 km | 1.68 km | 1.53 km | [E3][e3] |
+| Laser-ranged LEO (5) | HPOP fitted to laser ranges | 7 m | 9 m | 17 m | 42 m | [E6][e6] |
+| Laser-ranged LEO (5) | Public OMM, SGP4 | 472 m | 485 m | 482 m | 685 m | [E6][e6] |
+| Laser-ranged LEO, 800–1,500 km (5) | Public OMM, SGP4 | 314 m | 326 m | 326 m | 569 m | [E3][e3] |
+| Laser-ranged MEO (5) | Public OMM, SGP4 | 411 m | 438 m | 395 m | 413 m | [E3][e3] |
+| LEO, 400–800 km (6) | Public OMM, SGP4 | 566 m | 597 m | 760 m | 1.24 km | [E3][e3] |
+
+The HAC's position errors are not published [R2](#r2). The public figures: element sets in the HAC's own LEO conjunction regime (perigee above 500 km) err by 0.6–3 km from epoch to 72 hours [R49](#r49); one ASW covariance shown as an illustration has σ of 8.3 m radial, 332 m in-track and 2.1 m cross-track at epoch [R37](#r37); HASDM's density spread is 0.078 against JB2008's 0.148 (section 5.4).
+
+## 12 What conjunction assessment consumes
+
+Conjunction screening [R50](#r50) takes from one catalog snapshot, per object:
+
+| Input | From the catalog |
+| --- | --- |
+| Trajectory | The OMM for SGP4, or one propagator's trajectory; one propagator per run |
+| Covariance | Supplied by the operator, fitted, or modeled (section 6), with its calibration label |
+| Hard-body radius | Supplied, half the catalog size, from radar cross-section, or the default, with its basis |
+| Provenance | Snapshot, source records and recipe |
+
+An OMM supplies no covariance. A collision probability needs relative-state uncertainty with independent calibration and stated correlation, geometry and hard-body radius; without it the screen reports only the covariance-free maximum probability.
+
+## Appendix A. Terms
 
 | Term | Meaning |
 | --- | --- |
 | ASO | Anthropogenic space object |
-| Admissible set | States, parameters, and trajectories consistent with the evidence under declared assumptions and error allowances |
-| Provider claim | An attributed estimate (ephemeris, element set, identity link) that already embeds a provider's dynamics model, measurement model, and inference |
-| Observation | A direct measurement such as angles, range, range rate, or photometry |
-| Level 0 to Level 3 | Processing levels of orbit data: raw sensor data, calibrated measurements, estimated states and ephemerides, and averaged theory-specific elements (section 1) |
-| Nominal, ordinal, interval, ratio | Levels of measurement: labels; order only; differences with an arbitrary zero; differences and ratios with a true zero |
-| Directional (circular) scale | Angular values that wrap, requiring wrapped differences and circular statistics |
-| Mean elements | Averaged elements defined only within a specific analytic theory such as SGP4 |
-| Osculating elements | Instantaneous two-body elements matching a state at one epoch |
-| Quantization | The resolution limit imposed by a fixed-width numeric format |
-| Contributor | One of the five sources of evidential support for an orbit solution (section 1) |
-| Observability report | Statement of which state and physical parameters the evidence constrains |
-| OMM-seeded product | A numerical trajectory initialized from an SGP4 epoch state |
-| Initial-condition uncertainty | The set or distribution of epoch states not ruled out by the source product, carried into propagation |
-| Possibility | Degree to which a hypothesis is compatible with the evidence |
-| Necessity | Degree of support for a hypothesis through exclusion of alternatives |
-| TEAG | Theory of Epistemic Abductive Geometry |
-| ESPF | Epistemic Support-Point Filter |
-| HPOP | High-precision (numerical) orbit propagation |
-| SGP4, OMM, $B^*$ | Simplified General Perturbations 4 theory; CCSDS Orbit Mean-elements Message (the SGP4 mean elements, also distributed in the legacy two-line format); SGP4 drag term |
-| GP, OMM, OPM, OEM | General perturbations element set; CCSDS Orbit Mean-elements, Parameter, and Ephemeris Messages |
-| TEME, GCRF, J2000 | True Equator Mean Equinox frame; Geocentric Celestial Reference Frame; J2000 reference frame |
-| UTC, TDB | Coordinated Universal Time; Barycentric Dynamical Time |
-| SOCRATES | CelesTrak conjunction screening service |
-| AOE, KY | Space Mapper's self-determined orbit family and its API channel |
-| IOD | Initial orbit determination: deriving a first state from a short arc of observations |
-| STM | State-transition matrix; linear map propagating state deviations and covariance |
-| CDM | CCSDS Conjunction Data Message |
-| ASW | Astrodynamics Support Workstation, the U.S. Space Force astrodynamics environment named in public literature ([R29](#r29)) |
-| SP, HAC | Special Perturbations numerical orbit determination and propagation; High Accuracy Catalog |
-| HASDM | High Accuracy Satellite Drag Model: dynamic density corrections estimated from calibration-object tracking; public descriptions include Jacchia 70 and JB2008 background models |
-| Jacchia 70, MSIS 90, NRLMSISE-00, JB2008 | Empirical thermospheric density models; each is a distinct compatibility target (section 16.7) |
-| EGM96, EGM2008 | Earth Gravitational Models published by NGA as spherical-harmonic coefficient sets |
-| Gauss–Jackson | Fixed-order multistep integrator for second-order equations of motion, used with the Cowell formulation |
-| Cowell, Encke | Formulations of the equations of motion: direct integration of total acceleration; integration of deviations from a reference orbit |
-| RKF78 | Runge–Kutta–Fehlberg 7(8) adaptive integrator used in the Vimpel study |
-| Kozai, Brouwer mean motion | Two mean-motion conventions; OMMs carry Kozai values, which SGP4 converts to Brouwer values internally |
-| Consider parameter | A parameter that is not estimated but whose uncertainty is included in the solution covariance |
-| SLR, ILRS | Satellite laser ranging; International Laser Ranging Service |
-| CPF | ILRS Consolidated Prediction Format |
-| OCM | CCSDS Orbit Comprehensive Message |
-| IPFS | InterPlanetary File System, a content-addressed distribution network |
-| GOST | Russian state standard; here the GOST upper-atmosphere density model associated with Vimpel’s published dynamics |
-| G1–G9 | Capability gaps enumerated in section 16.1 |
-| Orekit | Open-source space flight dynamics library (CS GROUP), used here as the reference implementation (section 17.1) |
-| Jacchia-Roberts | Jacchia's static diffusion density model integrated in closed form by Roberts, as in GTDS and GMAT |
-| GTDS, GMAT | Goddard Trajectory Determination System; NASA's General Mission Analysis Tool |
-| IGS | International GNSS Service, source of the precise GPS orbits in section 17.2 |
-| VCM | SP Vector Covariance Message: an SP state with its force-model settings and equinoctial covariance |
-| PRW | The Space Data Standards propagation request and result format that SDN's propagators read and write |
-| V1, E1, E2 | Experiments in section 17: HPOP against precise orbits; GPS element-set correction at epoch; covariance from catalog history |
+| OMM, GP | CCSDS Orbit Mean-elements Message: SGP4 mean elements, also distributed in the legacy two-line format; general perturbations element set |
+| SGP4, B* | The analytic propagator of OMMs; its drag term |
+| HPOP | High-precision orbit propagation: numerical integration of the full force model of section 7 |
+| Provider claim | An attributed product that already embeds a provider's models and inference |
+| Level 0 to 3 | Processing levels of orbit data (section 2) |
+| Ultra-rapid, final orbits | GNSS analysis-centre orbits issued in near real time with a prediction; definitive orbits issued about two weeks later |
+| SLR, ILRS | Satellite laser ranging; the International Laser Ranging Service |
+| TEME, EME2000, GCRF, ITRF | SGP4's output frame; the J2000 mean equator and equinox; the Geocentric Celestial Reference Frame; the terrestrial frame |
+| d², mean d²/3 | Squared Mahalanobis distance of an error under its covariance; the mean of d²/3 is 1 for a realistic covariance |
+| DCA, DCP | HASDM's Dynamic Calibration of the Atmosphere; the Dynamic Consider Parameter for density-forecast error |
+| HASDM, JB2008, JBH09 | High Accuracy Satellite Drag Model; the Jacchia-Bowman 2008 density model; JB2008 with HASDM's calibration |
+| SP, HAC, ASW | Special Perturbations orbit determination and propagation; the High Accuracy Catalog; the Astrodynamics Support Workstation |
+| VCM | SP Vector Covariance Message |
+| Supplemental GP, eGP | CelesTrak's element sets fitted to operator ephemerides; the 18th Space Defense Squadron's element sets fitted to SP states |
+| AOE | SpaceMapper's catalog of element sets from its own sensors |
+| Covariance intersection | A fusion rule that stays consistent under unknown correlation |
 
-### Symbols
+## Data credits
 
-| Symbol | Meaning |
-| --- | --- |
-| a, e, i | Semimajor axis, eccentricity, inclination |
-| $\Omega$, $\omega$ | Ascending-node longitude, argument of perigee |
-| u, $\nu$ | Argument of latitude, true anomaly |
-| M, $\Delta M$ | Mean anomaly; its format resolution |
-| n | Mean motion |
-| p (section 4) | Semilatus rectum |
-| $\mu$ | Earth's gravitational parameter |
-| $\mathbf{r}_{\mathrm{pf}}$, $\mathbf{v}_{\mathrm{pf}}$ | Perifocal position and velocity |
-| $R_x$, $R_z$, Q | Elementary rotations; perifocal-to-J2000 rotation |
-| $\mathbf{r}_{\mathrm{J2000}}$, $\mathbf{v}_{\mathrm{J2000}}$ | J2000 position and velocity |
-| r, $\dot{\mathbf{r}}$, $\ddot{\mathbf{r}}$ | Object position, velocity, acceleration |
-| t | Time |
-| $\mathbf{a}_{\mathrm{gen}}$, $\mathbf{a}_{\mathrm{obj}}$ | Shared-physics and object-specific accelerations |
-| p (sections 8 and 9) | Object physical parameter vector |
-| $\delta(t)$ | Residual dynamics-model discrepancy |
-| y, h | Observable; measurement model |
-| x, s | Object state; sensor state and calibration |
-| b, e, $\varepsilon$ | Modeled bias; random error; residual measurement-model discrepancy |
-| t₀, P₀, P(t) | Initial epoch; initial-state covariance; propagated covariance (section 16.2) |
-| Φ(t, t₀) | State-transition matrix from t₀ to t |
-| Q (section 4); Q(t) (section 16.2) | Perifocal-to-J2000 rotation matrix; accumulated process covariance. Distinct quantities |
-| e (sections 4–5); e (section 8) | Eccentricity; random measurement error. Distinct quantities |
-| a; a with subscripts | Semimajor axis; accelerations a_gen and a_obj (section 8). Distinct quantities |
-| A, Aᶜ, Π, N | Event, its complement, possibility measure, necessity measure (section 12) |
+- IGS products, courtesy of the International GNSS Service and its analysis and data centres (Johnston, Riddell and Hausler 2017, doi:10.1007/978-3-319-42928-1). © Navigation Support Office at ESA/ESOC 2026.
+- GFZ rapid MGEX orbits of the IGS Multi-GNSS Experiment (Montenbruck et al. 2017, doi:10.1016/j.asr.2017.01.011), obtained from NASA CDDIS (Noll 2010, doi:10.1016/j.asr.2010.01.018).
+- ILRS data and products (Pearlman et al. 2019, doi:10.1007/s00190-019-01241-1), from the EUROLAS Data Center, DGFI-TUM (Noll et al. 2019, doi:10.1007/s00190-018-1207-2). NERC Space Geodesy Facility orbits; contains British Geological Survey materials © UKRI 2026, Open Government Licence v3.0.
+- Contains modified Copernicus Sentinel data 2026.
+- © ESA 2026; data provided by the European Space Agency: SW_SP3xCOM_2_ (doi:10.57780/esa-8579355), SW_DNSxPOD_2_ (doi:10.57780/esa-ef59315), GF_DNSxACC_2_ (doi:10.57780/esa-2559fd1).
+- Licata, Mehta, Tobiska, Bowman and Pilinski (2021), CHAMP and GRACE-A density estimates with associated HASDM and JB2008 predictions, Zenodo, doi:10.5281/zenodo.4602380, CC BY 4.0.
+- Source: USSPACECOM / 18th Space Defense Squadron, via Space-Track.org.
+- SatNOGS Network observations (Libre Space Foundation; the station and observer named in each record), https://network.satnogs.org/, CC BY-SA 4.0.
+- SpaceX Starlink public ephemerides, https://api.starlink.com/public-files/ephemerides/ (SpaceX). Planet Labs PBC orbital ephemerides, https://ephemerides.planet-labs.com/, © Planet Labs PBC, CC BY-NC 4.0. ISS trajectory: NASA JSC Flight Operations Directorate (U.S. Government work). China Manned Space Engineering Office, https://www.cmse.gov.cn/. Intelsat (SES) public ephemerides, https://my.intelsat.com/ephemeris/public. EUMETSAT.
+- JSC Vimpel, http://spacedata.vimpel.ru/. SpaceMapper, https://spacemapper.cn/. CelesTrak, https://celestrak.org (T. S. Kelso). Data from J. McDowell, planet4589.org.
+- The JB2008 solar and geomagnetic indices are provided for scientific use courtesy of Space Environment Technologies (https://spacewx.com/jb2008/). Kp, ap, Ap: GFZ Helmholtz Centre for Geosciences, CC BY 4.0 (Matzka et al. 2021, doi:10.5880/Kp.0001). Sunspot number: WDC-SILSO, Royal Observatory of Belgium, Brussels, CC BY-NC 4.0. F10.7: Dominion Radio Astrophysical Observatory and Natural Resources Canada. NOAA Space Weather Prediction Center (U.S. Government material).
+- IERS EOP 20 C04 (IERS Earth Orientation Centre, Observatoire de Paris); finals2000A (IERS Rapid Service/Prediction Centre, U.S. Naval Observatory). JPL planetary ephemeris DE440 (Park et al. 2021, doi:10.3847/1538-3881/abd414), via NASA/JPL NAIF. EGM2008: NGA (Pavlis et al. 2012, doi:10.1029/2011JB008916). EGM96: NASA GSFC and NIMA (Lemoine et al. 1998). FES2004 (Lyard et al. 2006) as distributed with the IERS Conventions (2010).
 
 ## References
 
-R16–R20 support the added discussion of model transfer, estimation, and proposed inference methods. R21 and R22–R25 support initial orbit determination, covariance propagation, measurement-data distinctions, and atmospheric inputs. R26–R33 support the section 16 mapping to the publicly documented U.S. Space Force baseline. R34–R43 support the measurements of section 17.
-
 ### R1
 
-Edgesource. Epoch-state conversion, validation and refinement, with aggregate verification record. Modules commit 49e159d7003cac3d3e65b03170f11909fa86dd2c. Files: `analysis/catalog-composer/docs/epoch-fitting.md`, `analysis/catalog-composer/docs/verification-vimpel-epoch-fit-20260921.json`. Private repository, available on request ([tj@edgesource.com](mailto:tj@edgesource.com)).
+Edgesource. Orbit accuracy experiments: frozen plans, run manifests, generated reports and data licenses, with a browser site that re-runs them. Commit 357d992d6c62daac4ccbb2fd230634ac292192b8. [Repository](https://github.com/DigitalArsenal/orbit-accuracy-experiments), [site](https://digitalarsenal.github.io/orbit-accuracy-experiments/)
 
 ### R2
 
-Edgesource. Catalog Editor module: composition, coverage and matching contracts. Same baseline commit. Files: `analysis/catalog-composer/README.md`. Private repository, available on request ([tj@edgesource.com](mailto:tj@edgesource.com)).
+Edgesource. HAC data sources: 97 public and login-only sources, their access, terms and use, and what is public about the HAC. [Inventory](https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/docs/hac-sources.md)
 
 ### R3
 
-Edgesource. Vimpel epoch normalization and catalog matching; 64-object diagnostic audit. Same baseline commit. Files: `analysis/catalog-composer/docs/vimpel-normalization.md`, `analysis/catalog-composer/docs/vimpel-epoch-audit-20260921.json`. Private repository, available on request ([tj@edgesource.com](mailto:tj@edgesource.com)).
+Licata, R. J., Mehta, P. M., Tobiska, W. K., Bowman, B. R., and Pilinski, M. D. CHAMP and GRACE-A density estimates with associated HASDM and JB2008 predictions. Zenodo, 2021. [doi:10.5281/zenodo.4602380](https://doi.org/10.5281/zenodo.4602380)
 
 ### R4
 
-Space Mapper. AOE Catalog. Provider description. [AOE Catalog](https://spacemapper.cn/en-us/catalog/aoecat/)
+SpaceMapper. AOE catalog and orbital database. [AOE catalog](https://spacemapper.cn/en-us/catalog/aoecat/)
 
 ### R5
 
-Space Mapper. Orbital Database. Standard, AOE, and international product families. [Orbital products](https://spacemapper.cn/en-us/satellite/orbital)
+JSC Vimpel and Keldysh Institute of Applied Mathematics. Orbit parameters of newly detected HEO space debris objects. [Bulletin](https://spacedata.vimpel.ru/en/)
 
 ### R6
 
-Space Mapper. Orbit-list API documentation. Channels, formats, and metadata examples. [Orbit API](https://spacemapper.cn/help/helpinfo/1613/)
+Vallado, D. A. Fundamentals of Astrodynamics and Applications, 4th edition. Microcosm Press, 2013.
 
 ### R7
 
-Edgesource. Ephemeris provider test fleet. Historical development verification at stack snapshot 43f5506457; transport evidence and acquisition limitations. [Provider-fleet report](https://github.com/DigitalArsenal/spacedatanetwork-stack/blob/43f5506457/studies/orbital-console-data/deployment/EPHEMERIS-PROVIDERS.md)
+Edgesource. Vimpel epoch conversion, refinement study and 64-object audit. SDN modules repository, commit 49e159d7003cac3d3e65b03170f11909fa86dd2c, `analysis/catalog-composer/docs/`. Private repository, available on request ([tj@edgesource.com](mailto:tj@edgesource.com)).
 
 ### R8
 
-International Laser Ranging Service, NASA GSFC. Consolidated Prediction Format, version 2, and supporting material. [CPF documentation](https://ilrs.gsfc.nasa.gov/data_and_products/formats/cpf.html)
+Vallado, D. A., Crawford, P., Hujsak, R., and Kelso, T. S. Revisiting Spacetrack Report #3. AIAA 2006-6753, 2006. [Paper](https://celestrak.org/publications/AIAA/2006-6753/AIAA-2006-6753.pdf)
 
 ### R9
 
-Space Mapper. Space-object API documentation. AOE, INTL, and MIXED sources and identifiers. [Catalog API](https://spacemapper.cn/help/helpinfo/1621/)
+Hoots, F. R., and Roehrich, R. L. Models for Propagation of NORAD Element Sets. Spacetrack Report No. 3, 1980. [Report](https://celestrak.org/NORAD/documentation/spacetrk.pdf)
 
 ### R10
 
-JSC Vimpel and Keldysh Institute of Applied Mathematics. Orbit parameters of newly detected HEO space debris objects. Public bulletin and format explanation; retained study interpretation in ([R3](#r3)). [Provider bulletin](https://spacedata.vimpel.ru/en/)
+Edgesource. SDN modules repository (space-data-network-modules), commit d4a0b1155f64ac088694f9758c32e3b691952674: `propagator/hpop/README.md` (force model, Orekit suite, resident path, catalog cost), `analysis/gp-error-model/docs/hpop-calibration-2026-08.md`, `analysis/conjunction-assessment/docs/hpop-full-force-screen-2026-10.md`, `analysis/maneuver-detection/README.md`, `docs/studies/maneuver-detection.md`. Private repository, available on request ([tj@edgesource.com](mailto:tj@edgesource.com)).
 
 ### R11
 
@@ -819,128 +382,169 @@ Petit, G., and Luzum, B., editors. IERS Conventions (2010). IERS Technical Note 
 
 ### R12
 
-CelesTrak. Current Supplemental GP Element Sets. Methodology for fitting operator ephemerides with SGP4. [Supplemental GP methodology](https://www.celestrak.org/NORAD/elements/supplemental/)
+Johnston, G., Riddell, A., and Hausler, G. The International GNSS Service. Springer Handbook of Global Navigation Satellite Systems, 967–982, 2017. [Products](https://igs.org/products/)
 
 ### R13
 
-Vallado, D. A., Crawford, P., Hujsak, R., and Kelso, T. S. Revisiting Spacetrack Report #3. AIAA 2006-6753. SGP4 theory, verification, frame conventions, and model-dependent estimation cautions. [Paper](https://celestrak.org/publications/AIAA/2006-6753/AIAA-2006-6753.pdf)
+Pearlman, M. R., et al. The ILRS: approaching 20 years and planning for the future. Journal of Geodesy 93, 2161–2180, 2019. [doi:10.1007/s00190-019-01241-1](https://doi.org/10.1007/s00190-019-01241-1)
 
 ### R14
 
-Consultative Committee for Space Data Systems. Orbit Data Messages. CCSDS 502.0-B-3, Issue 3, May 2023, including listed corrigenda. [Publication record](https://ccsds.org/publications/allpubs/entry/3073/)
+Dyreby, K., Caldas, F., and Soares, C. Analyzing Data Quality and Decay in Mega-Constellations: A Physics-Informed Machine Learning Approach. arXiv:2510.11242, 2025. [Preprint](https://arxiv.org/abs/2510.11242)
 
 ### R15
 
-CelesTrak. SOCRATES Plus. Methodology and service description; cited as documentation, not a completed SDN parity result. [SOCRATES methodology](https://celestrak.org/SOCRATES/)
+Jankovic, D. How long can you trust a Starlink TLE? An empirical comparison of SGP4 and high-fidelity propagation against operator-updated truth across a megaconstellation. arXiv:2605.19850, 2026. [Preprint](https://arxiv.org/abs/2605.19850)
 
 ### R16
 
-Orekit developer discussion. Using NRLMSISE-00 with numerical propagator. 3 August 2022. Clarifies the SGP4 initial state and its use to initialize numerical propagation. [Developer explanation](https://forum.orekit.org/t/using-nrlmsise-00-with-numerical-propagator/1875)
+Tapley, B. D., Schutz, B. E., and Born, G. H. Statistical Orbit Determination. Elsevier Academic Press, 2004.
 
 ### R17
 
-Orekit. Orbit Determination architecture. Measurement modeling, propagation, residuals, and estimation. [Estimation architecture](https://www.orekit.org/site-orekit-11.0.1/architecture/estimation.html)
+Ly, D., Lucken, R., and Giolito, D. Correcting TLEs at epoch: application to the GPS constellation. Journal of Space Safety Engineering 7(3), 2020.
 
 ### R18
 
-Levit, C., and Marshall, W. Improved orbit predictions using two-line elements. Advances in Space Research 47(7), 1107–1115, 2011; arXiv:1002.2277. Numerical fitting to states from successive TLEs and tested forecast improvements. [Research paper](https://arxiv.org/abs/1002.2277)
+Hallgarten La Casta, M. I., and Amato, D. Generalisable bias correction of two-line element sets in the medium Earth orbit regime. 9th European Conference on Space Debris, 2025.
 
 ### R19
 
-Jah, M. K. Theory of Epistemic Abductive Geometry (TEAG): A Unified Theory of Admissibility-Driven Inference Across Dynamical Systems, Measure Theory, and Language. Preprint, version 3, 2026. Proposed inference framework. [Versioned preprint](https://doi.org/10.20944/preprints202603.2010.v3)
+Levit, C., and Marshall, W. Improved orbit predictions using two-line elements. Advances in Space Research 47(7), 1107–1115, 2011. [arXiv:1002.2277](https://arxiv.org/abs/1002.2277)
 
 ### R20
 
-Jah, M. K. The Epistemic Support-Point Filter as a Tropical Hamilton–Jacobi System: Wavefront Propagation and Possibilistic Inference. Preprint, version 3, 2026. Proposed filtering framework. [Versioned preprint](https://doi.org/10.20944/preprints202603.2110.v3)
+Bowman, B. R., Tobiska, W. K., Marcos, F. A., Huang, C. Y., Lin, C. S., and Burke, W. J. A New Empirical Thermospheric Density Model JB2008 Using New Solar and Geomagnetic Indices. AIAA 2008-6438, 2008. [doi:10.2514/6.2008-6438](https://doi.org/10.2514/6.2008-6438)
 
 ### R21
 
-Milani, A., Gronchi, G. F., de’ Michieli Vitturi, M., and Knežević, Z. Orbit determination with very short arcs. I: Admissible regions. Celestial Mechanics and Dynamical Astronomy 90, 57–85, 2004. Admissible-region construction for too-short arcs. [Research paper](https://ui.adsabs.harvard.edu/abs/2004CeMDA..90...57M)
+Storz, M. F., Bowman, B. R., Branson, J. I., Casali, S. J., and Tobiska, W. K. High accuracy satellite drag model (HASDM). Advances in Space Research 36(12), 2497–2505, 2005. [doi:10.1016/j.asr.2004.02.020](https://doi.org/10.1016/j.asr.2004.02.020)
 
 ### R22
 
-Orekit. StateCovarianceMatrixProvider. Initial covariance and state-transition-matrix propagation. [API documentation](https://www.orekit.org/site-orekit-12.2/apidocs/org/orekit/propagation/StateCovarianceMatrixProvider.html)
+Doornbos, E. Empirical Model Calibration. In Thermospheric Density and Wind Determination from Satellite Dynamics, Springer Theses, 2012. [doi:10.1007/978-3-642-25129-0_6](https://doi.org/10.1007/978-3-642-25129-0_6)
 
 ### R23
 
-International Laser Ranging Service. Laser ranging data: full-rate and normal-point observations. [Data description](https://ilrs.gsfc.nasa.gov/data_and_products/data/index.html)
+Picone, J. M., Emmert, J. T., and Lean, J. L. Thermospheric densities derived from spacecraft orbits: accurate processing of two-line element sets. Journal of Geophysical Research 110(A3), 2005. [doi:10.1029/2004JA010585](https://doi.org/10.1029/2004JA010585)
 
 ### R24
 
-Space-Track.org. API and data documentation, including GP and GP history products. [Documentation](https://www.space-track.org/documentation)
+Gondelach, D. J., and Linares, R. Real-time thermospheric density estimation via two-line element data assimilation. Space Weather 18(2), e2019SW002356, 2020. [doi:10.1029/2019SW002356](https://doi.org/10.1029/2019SW002356)
 
 ### R25
 
-Orekit. JB2008 atmosphere model implementation and model-specific environmental inputs. [Implementation](https://www.orekit.org/site-orekit-13.1.1/jacoco/org.orekit.models.earth.atmosphere/JB2008.java.html)
+Gershman. Near Real-Time Thermospheric Density Monitoring from Public Satellite Tracking and Space Weather Data. NASA, 2026. [doi:10.64631/vfnq1575](https://doi.org/10.64631/vfnq1575)
 
 ### R26
 
-National Geospatial-Intelligence Agency. Earth Gravitational Models EGM96 and EGM2008. Public coefficient products and model definitions. [Gravity models](https://earth-info.nga.mil/?action=wgs84&dir=wgs84)
+Ou, Zhong, Hao, Li, et al. Near-Real-Time Global Thermospheric Density Variations Unveiled by Starlink Ephemeris. Remote Sensing 17(9), 1549, 2025. [doi:10.3390/rs17091549](https://doi.org/10.3390/rs17091549)
 
 ### R27
 
-Picone, J. M., Hedin, A. E., Drob, D. P., and Aikin, A. C. NRLMSISE-00 empirical model of the atmosphere: Statistical comparisons and scientific issues. Journal of Geophysical Research 107(A12), 1468, 2002. Distinguishes model generations and environmental responses. [Research paper](https://doi.org/10.1029/2002JA009430)
+Yamamoto. Tomography of thermospheric density from Starlink Ephemeris: initial report. Earth, Planets and Space 78, 2026. [doi:10.1186/s40623-026-02509-5](https://doi.org/10.1186/s40623-026-02509-5)
 
 ### R28
 
-Tobiska, W. K. E10.7 Use for Global Atmospheric Density Forecasting in 2001. AIAA 2002-4892, 2002. Public discussion of the modified Jacchia-70 model and atmospheric temperature corrections in HASDM forecasting; not identification of a particular SP software configuration. [Technical paper](https://spacewx.com/wp-content/uploads/2020/11/2002_4892.pdf)
+Fitzpatrick, Sutton, Pilinski, and Palo. Harnessing Satellite Constellations as Signals of Opportunity for an Enhanced Specification of the Satellite Drag Environment in the Critical LEO Regime. Space Weather, 2026. [doi:10.1029/2025SW004611](https://doi.org/10.1029/2025SW004611)
 
 ### R29
 
-National Research Council. Continuing Kepler’s Quest: Assessing Air Force Space Command’s Astrodynamics Standards. The National Academies Press, Washington, DC, 2012. Public description of SP, HASDM, the ASW, and covariance realism; not a statement of current operational configuration. [Report](https://doi.org/10.17226/13456)
+Gondelach, D. J., and Linares, R. Real-Time Thermospheric Density Estimation via Radar and GPS Tracking Data Assimilation. Space Weather 19, e2020SW002620, 2021. [doi:10.1029/2020SW002620](https://doi.org/10.1029/2020SW002620)
 
 ### R30
 
-Berry, M. M., and Healy, L. M. Implementation of Gauss–Jackson Integration for Orbit Propagation. Journal of the Astronautical Sciences 52(3), 331–357, 2004. Gauss–Jackson formulation, startup, and step control. [Research paper](https://ui.adsabs.harvard.edu/abs/2004JAnSc..52..331B/abstract)
+Lemmens, S., and Krag, H. Two-Line-Elements-Based Maneuver Detection Methods for Satellites in Low Earth Orbit. Journal of Guidance, Control, and Dynamics 37(3), 860–868, 2014. [doi:10.2514/1.61300](https://doi.org/10.2514/1.61300)
 
 ### R31
 
-DeMars, K. J., and Jah, M. K. Probabilistic Initial Orbit Determination Using Gaussian Mixture Models. Journal of Guidance, Control, and Dynamics 36(5), 1324–1335, 2013. Admissible-region initialization carried forward as a probabilistic mixture. [Research paper](https://doi.org/10.2514/1.59844)
+Willsky, A. S., and Jones, H. L. A generalized likelihood ratio approach to the detection and estimation of jumps in linear systems. IEEE Transactions on Automatic Control 21(1), 108–112, 1976. [doi:10.1109/TAC.1976.1101146](https://doi.org/10.1109/TAC.1976.1101146)
 
 ### R32
 
-Storz, M. F., Bowman, B. R., Branson, J. I., Casali, S. J., and Tobiska, W. K. High Accuracy Satellite Drag Model (HASDM). Advances in Space Research 36(12), 2497–2505, 2005. Dynamic calibration of Jacchia 70 density from calibration-satellite tracking. [Research paper](https://ui.adsabs.harvard.edu/abs/2005AdSpR..36.2497S/abstract)
+Zaidi, W. H., and Hejduk, M. D. Earth Observing System Covariance Realism. AIAA/AAS Astrodynamics Specialist Conference, AIAA 2016-5628, 2016. [doi:10.2514/6.2016-5628](https://doi.org/10.2514/6.2016-5628)
 
 ### R33
 
-Licata, R. J., Mehta, P. M., Tobiska, W. K., Bowman, B. R., and Pilinski, M. D. Qualitative and Quantitative Assessment of the SET HASDM Database. Space Weather 19, e2021SW002798, 2021. Describes JB2008 as the HASDM background density model and dynamic calibration. [Research paper](https://doi.org/10.1029/2021SW002798)
+Osweiler, V. P. Covariance estimation and autocorrelation of NORAD two-line element sets. MS thesis, Air Force Institute of Technology, AFIT/GSS/ENY/06-M09, 2006. [Thesis](https://scholar.afit.edu/etd/3531/)
 
 ### R34
 
-Edgesource. HPOP verification record: Orekit 13.1 reference cases and their generator, atmosphere ports, integrator events, and the VCM adapter. Modules commit 750b6399173a2678b8e8d0885557976d17a9ad5c (HPOP) and 1879d8c5c17c061e157c100723a8423c59fd98e2 (the VCM adapter of section 17.3). Files: `propagator/hpop/README.md`, `propagator/hpop/tests/orekit_reference.test.mjs`, `propagator/hpop/tests/fixtures/orekit/OrekitReference.java`, `propagator/hpop/tests/atmosphere_ports.test.mjs`, `analysis/vcm-adapter/README.md`. Private repository, available on request ([tj@edgesource.com](mailto:tj@edgesource.com)).
+Geul, J., Mooij, E., and Noomen, R. TLE uncertainty estimation using robust weighted differencing. Advances in Space Research 59(10), 2522–2535, 2017. [doi:10.1016/j.asr.2017.02.038](https://doi.org/10.1016/j.asr.2017.02.038)
 
 ### R35
 
-Edgesource. Orbit accuracy experiments: V1 plan, amendments, manifests and results; E1 and E2 plans; VCM parity; browser reproduction of every result. [Repository](https://github.com/DigitalArsenal/orbit-accuracy-experiments), [site](https://digitalarsenal.github.io/orbit-accuracy-experiments/)
+Thompson, Gossner, Sais, and Cunningham. Fast covariance propagation for two-line element sets. AMOS Technical Conference, 2019. [doi:10.64861/twqd5985](https://doi.org/10.64861/twqd5985)
 
 ### R36
 
-CS GROUP. Orekit 13.1, open-source space flight dynamics library, Apache License 2.0. [Project](https://www.orekit.org/)
+Verhaeghe, De Clerk, Lauwens, Delabie, Vandepitte, and Vandenbussche. Predicting TLE covariance using transformer-based time series forecasting. Small Satellite Conference, SSC25-IV-03, 2025. [Paper](https://digitalcommons.usu.edu/cgi/viewcontent.cgi?article=6135&context=smallsat)
 
 ### R37
 
-Roberts, C. E., Jr. An analytic model for upper atmosphere densities based upon Jacchia's 1970 models. Celestial Mechanics 4, 368–377, 1971. [Research paper](https://doi.org/10.1007/BF01231398)
+Hejduk, M. D. ASW Covariance Introduction and Formation. NASA, 2016. [NTRS 20160005042](https://ntrs.nasa.gov/citations/20160005042)
 
 ### R38
 
-Jacchia, L. G. Revised Static Models of the Thermosphere and Exosphere with Empirical Temperature Profiles. Smithsonian Astrophysical Observatory Special Report 332, 1971. [Report](https://ui.adsabs.harvard.edu/abs/1971SAOSR.332.....J/abstract)
+Hejduk, M. D. Three CA-Related Covariance Issues and Their Solutions. NASA, 2019. [NTRS 20190026790](https://ntrs.nasa.gov/citations/20190026790)
 
 ### R39
 
-Bowman, B. R., Tobiska, W. K., Marcos, F. A., Huang, C. Y., Lin, C. S., and Burke, W. J. A New Empirical Thermospheric Density Model JB2008 Using New Solar and Geomagnetic Indices. AIAA 2008-6438, 2008. [Paper](https://doi.org/10.2514/6.2008-6438)
+Space Data Standards. Legacy message survey: the Vector Covariance Message format and sample; PRW and VCM schemas. [Survey](https://github.com/DigitalArsenal/spacedatastandards.org/tree/main/survey/legacy-messages/vcm)
 
 ### R40
 
-Precise orbit and Earth-orientation products: IGS final orbits ([IGS](https://igs.org/products/)), ESA final GNSS orbits ([ESA navigation office](https://navigation-office.esa.int/)), ILRS combined orbits ([ILRS](https://ilrs.gsfc.nasa.gov/)), and IERS EOP 20 C04 ([IERS](https://www.iers.org/)).
+NASA Goddard Space Flight Center. General Mission Analysis Tool (GMAT), atmosphere models. [Project](https://gmat.gsfc.nasa.gov/)
 
 ### R41
 
-Ly, D., Lucken, R., and Giolito, D. Correcting TLEs at epoch: Application to the GPS constellation. Journal of Space Safety Engineering 7(3), 2020.
+Pachura, D., and Hejduk, M. D. Atmospheric Model at JSpOC. NASA, 2016. [NTRS 20160005044](https://ntrs.nasa.gov/citations/20160005044)
 
 ### R42
 
-Space Data Standards. Legacy message survey: Vector Covariance Message format and sample; PRW and VCM schemas. [Survey](https://github.com/DigitalArsenal/spacedatastandards.org/tree/main/survey/legacy-messages/vcm)
+National Research Council. Continuing Kepler's Quest: Assessing Air Force Space Command's Astrodynamics Standards. The National Academies Press, 2012. [doi:10.17226/13456](https://doi.org/10.17226/13456)
 
 ### R43
 
-NASA Goddard Space Flight Center. General Mission Analysis Tool (GMAT), atmosphere models. [Project](https://gmat.gsfc.nasa.gov/)
+Berry, M. M., and Healy, L. M. Implementation of Gauss–Jackson Integration for Orbit Propagation. Journal of the Astronautical Sciences 52(3), 331–357, 2004. [Paper](https://ui.adsabs.harvard.edu/abs/2004JAnSc..52..331B/abstract)
+
+### R44
+
+CS GROUP. Orekit 13.1, open-source space flight dynamics library, Apache License 2.0. [Project](https://www.orekit.org/)
+
+### R45
+
+Roberts, C. E., Jr. An analytic model for upper atmosphere densities based upon Jacchia's 1970 models. Celestial Mechanics 4, 368–377, 1971. [doi:10.1007/BF01231398](https://doi.org/10.1007/BF01231398)
+
+### R46
+
+Julier, S. J., and Uhlmann, J. K. A non-divergent estimation algorithm in the presence of unknown correlations. Proceedings of the American Control Conference, 2369–2373, 1997.
+
+### R47
+
+Edgesource. VCM adapter (`analysis/vcm-adapter`). SDN modules repository, commit 1879d8c5c17c061e157c100723a8423c59fd98e2. Private repository, available on request ([tj@edgesource.com](mailto:tj@edgesource.com)). Parity record: [vcm-parity.md](https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/docs/vcm-parity.md)
+
+### R48
+
+CelesTrak. Supplemental GP element sets: methodology for fitting operator ephemerides with SGP4. [Supplemental GP](https://celestrak.org/NORAD/elements/supplemental/)
+
+### R49
+
+NASA. Spacecraft Conjunction Assessment and Collision Avoidance Best Practices Handbook, Vol. 2, Technical Appendices, August 2026. [NTRS 20260000457](https://ntrs.nasa.gov/citations/20260000457)
+
+### R50
+
+Koury, A., and Jah, M. K. Fast All-vs-All Conjunction Screening. Space Data Network technical whitepaper. [Paper](fast-conjunction-assessment.md)
+
+[v1]: https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/v1/README.md
+[e1]: https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e1/test/REPORT.md
+[e2]: https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e2/test/README.md
+[e2b]: https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e2b/README.md
+[e3]: https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e3/README.md
+[e4]: https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e4/README.md
+[e5]: https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e5/test/REPORT.md
+[e6]: https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e6/README.md
+[e7]: https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e7/test/REPORT.md
+[e8]: https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e8/test/REPORT.md
+[e13]: https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e13/README.md
+[e14]: https://github.com/DigitalArsenal/orbit-accuracy-experiments/tree/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e14

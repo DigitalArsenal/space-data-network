@@ -130,7 +130,7 @@ Tests check four windows against a single screen for both propagators. The SGP4 
 
 ### The HPOP propagation farm
 
-1. The epoch-state module converts each element set into a GCRF state at its epoch: SGP4 at zero elapsed time, then TEME to GCRF through ERFA. This is the OMM-to-numerical handoff of the companion paper, section 5 ([R1](#r1)).
+1. The epoch-state module converts each element set into a GCRF state at its epoch: SGP4 at zero elapsed time, then TEME to GCRF through ERFA. This is the OMM-to-numerical handoff of the companion paper, section 4 ([R1](#r1)).
 2. HPOP resident instances, at most 1,024 objects each, integrate those states on worker threads with the force model below. Objects are dealt round-robin into about two instances per worker, so element sets of every age spread evenly.
 3. Each window, every instance exports the window and the records go to the browser unchanged. The next window is exported while the current one is screened.
 
@@ -217,7 +217,7 @@ On the 2,000-object case the CPU search and the GPU found the same 424 candidate
 
 ## 7 Uncertainty and probability of collision
 
-The companion paper sets the conditions this screen respects ([R1](#r1), sections 5, 9, 12 and 16.2):
+The companion paper sets the conditions this screen respects ([R1](#r1), sections 4, 6 and 12):
 
 - An OMM supplies no covariance. The initial uncertainty of an OMM-seeded HPOP trajectory, including this paper's HPOP runs, is unknown: no validated representation of it exists.
 - A probability of collision requires relative-state uncertainty with independent calibration and stated cross-correlation, geometry and hard-body-radius assumptions.
@@ -310,7 +310,7 @@ Maximum probability is about nine times lower here at a 10 m combined radius. Th
 
 ### Screening rules compared
 
-The companion paper's section 12 compares probabilistic, bounded-set and admissible-set screening ([R1](#r1)). Cases were built from real SGP4 errors against the held-out reference orbits:
+Probabilistic, bounded-set and admissible-set screening compare as follows, on cases built from real SGP4 errors against the held-out reference orbits:
 
 - two different objects' errors in one stratum make one encounter;
 - each encounter is placed head-on and at a 90° crossing;
@@ -644,13 +644,13 @@ registered.
 | Calibration coverage | Covariance calibrated only in LEO 600 to 800 km (empirical model; HPOP to 3 days, except 0.5 to 1 day), for 48 reference objects in one week |
 | Probability inputs | Combined radius and covariance shape differ from SOCRATES's unpublished ones |
 
-This paper reports computation speed, agreement between implementations and with SOCRATES on identical inputs, and covariance calibration where independent truth exists. It does not establish operational readiness or orbit accuracy; the companion paper reports measurements of HPOP's accuracy ([R1](#r1), section 17).
+This paper reports computation speed, agreement between implementations and with SOCRATES on identical inputs, and covariance calibration where independent truth exists. It does not establish operational readiness or orbit accuracy; the companion paper reports measurements of HPOP's accuracy ([R1](#r1), sections 7 and 11).
 
 ## References
 
 ### R1
 
-Koury, A. and Jah, M. K. Evidence-Supported ASO Catalog. Space Data Network technical whitepaper 1.9, 9 October 2026. [Paper](evidence-supported-aso-catalog.md)
+Koury, A. and Jah, M. K. Evidence-Supported ASO Catalog. Space Data Network technical whitepaper 2.0, 11 October 2026. [Paper](evidence-supported-aso-catalog.md)
 
 ### R2
 

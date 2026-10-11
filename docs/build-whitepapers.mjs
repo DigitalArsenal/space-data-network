@@ -58,7 +58,7 @@ const PAPERS = [
     src: 'evidence-supported-aso-catalog.md',
     topic: 'Catalog',
     description: 'An attributed orbital catalog for Space Data Network: evidence, provenance, uncertainty and reproducible selection for anthropogenic space objects.',
-    summary: 'An attributed orbital catalog for Space Data Network. Each solution records the evidence behind it, where it came from and how uncertain it is, and the rule that selected it. Includes the measured Vimpel refinement study, and HPOP measured against Orekit and against precise orbits, with every result reproducible in a browser.',
+    summary: 'An attributed orbital catalog for Space Data Network, built from public and login-only sources. Each object gets the solution with the best measured accuracy, with its evidence, source and uncertainty. Includes measured accuracy by object class, an open drag correction solved from fleet orbits, and maneuver detection, with every result reproducible in a browser.',
     earth: '1.9 -60 28 0.95 -0.55 62 18',
   },
   {
