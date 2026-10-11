@@ -89,7 +89,7 @@
 .paper h2 { font-size: clamp(25px, 2.8vw, 32px); line-height: 1.2; letter-spacing: -.02em; color: var(--text); margin: 72px 0 18px; padding-top: 32px; border-top: 1px solid var(--border); }
 .paper > h2:first-child, .paper > .sec-head:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
 .paper h3 { font-size: 20px; line-height: 1.35; color: var(--text); margin: 40px 0 12px; }
-.paper .sec-num { margin-right: .45em; }
+.paper .sec-num { margin-right: .45em; color: var(--accent); }
 .paper h4 { font-size: 17px; color: var(--text); margin: 28px 0 8px; }
 .paper p, .paper ul, .paper ol, .paper pre, .paper blockquote { margin: 0 0 18px; }
 .paper ul, .paper ol { padding-left: 24px; }
@@ -97,6 +97,9 @@
 .paper li::marker { color: var(--muted); }
 .paper a { color: var(--accent); text-decoration: underline; text-decoration-color: rgba(245, 165, 36, .35); text-underline-offset: 3px; }
 .paper a:hover { text-decoration-color: var(--accent); }
+.paper sup { font-size: .68em; line-height: 0; }
+.paper sup a { text-decoration: none; }
+.paper sup a:hover { text-decoration: underline; }
 .paper strong { color: var(--text); }
 .paper hr { border: 0; border-top: 1px solid var(--border); margin: 40px 0; }
 .paper code { font-size: .86em; background: var(--inline-code); padding: 1px 6px; border-radius: 5px; }

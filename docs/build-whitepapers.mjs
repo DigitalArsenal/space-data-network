@@ -32,6 +32,7 @@ import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
+import { linkSections } from './whitepaper-sections.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, '..');
@@ -548,7 +549,7 @@ for (const paper of PAPERS) {
   seen = new Map();
   headings = [];
   hasMath = false;
-  let body = dress(marked.parse(rest, { gfm: true }));
+  let body = dress(marked.parse(linkSections(rest, paper.src), { gfm: true }));
   const models = modelsFor(paper, new Set(headings.map((h) => h.id)));
   body = attachModels(body, models);
   const words = rest.replace(/\$\$[\s\S]*?\$\$|<\/?[a-zA-Z][^>\n]*>|[#*_`|>-]/g, ' ').split(/\s+/).filter(Boolean).length;

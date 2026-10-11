@@ -13,10 +13,11 @@
  * Usage: node docs/typeset-whitepapers.mjs, then node docs/build-whitepapers.mjs
  */
 import { execFileSync } from 'node:child_process';
-import { copyFileSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { copyFileSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { linkSections } from './whitepaper-sections.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, '..');
@@ -37,7 +38,10 @@ try {
   for (const file of readdirSync(SRC).filter((f) => f.endsWith('.md') && f !== 'README.md')) {
     const name = file.replace(/\.md$/, '');
     const tex = join(work, `${name}.tex`);
-    run('pandoc', [join(SRC, file), '-f', 'gfm+tex_math_dollars+smart', '-t', 'latex', '-s',
+    // Internal references become links, as on the reader pages.
+    const md = join(work, file);
+    writeFileSync(md, linkSections(readFileSync(join(SRC, file), 'utf8'), file));
+    run('pandoc', [md, '-f', 'gfm+tex_math_dollars+smart', '-t', 'latex', '-s',
       '--lua-filter', join(LATEX, 'paper.lua'), '-H', join(LATEX, 'header.tex'),
       '-V', 'documentclass=article', '-V', 'fontsize=10pt', '-V', 'geometry=margin=1in', '-V', 'papersize=letter',
       '-o', tex], SRC);

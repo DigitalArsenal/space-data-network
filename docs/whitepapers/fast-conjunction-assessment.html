@@ -73,7 +73,7 @@
           <div><dt>Published</dt><dd>11 October 2026</dd></div>
           <div><dt>Evidence cutoff</dt><dd><span>11 October 2026</span></dd></div>
           <div><dt>Sections</dt><dd>9</dd></div>
-          <div><dt>Reading time</dt><dd>38 min</dd></div>
+          <div><dt>Reading time</dt><dd>39 min</dd></div>
           <div><dt>Interactive models</dt><dd>7</dd></div>
         </dl>
         <p class="paper-note">© Edgesource Corporation</p>
@@ -142,7 +142,7 @@
         </nav>
         <article class="paper">
 <h2 id="executive-summary">Executive summary</h2>
-<p>Space Data Network (SDN) screens the full public catalog, 32,514 objects, all-vs-all over three days in 19 s with SGP4 on ordinary processors, and in 21 s with a GPU. With numerical high-precision orbit propagation (HPOP) under the full force model of section 5, it takes 31 CPU-hours, 1.9 hours on 16 dedicated cores, almost all of it propagation; search and refinement take 48.6 s. The screen finds every pair that comes within 5 km, and reports each close approach&#39;s time (TCA), miss distance, relative speed and maximum collision probability. The measurements were taken on one 28-core workstation, in Node.js and in a standard web browser. In WasmEdge, the runtime SDN nodes use, the SGP4 screen takes 23 s. Every run on one catalog and propagator reports the same conjunctions.</p>
+<p>Space Data Network (SDN) screens the full public catalog, 32,514 objects, all-vs-all over three days in 19 s with SGP4 on ordinary processors, and in 21 s with a GPU. With numerical high-precision orbit propagation (HPOP) under the full force model of <a href="#5-time-windows">section 5</a>, it takes 31 CPU-hours, 1.9 hours on 16 dedicated cores, almost all of it propagation; search and refinement take 48.6 s. The screen finds every pair that comes within 5 km, and reports each close approach&#39;s time (TCA), miss distance, relative speed and maximum collision probability. The measurements were taken on one 28-core workstation, in Node.js and in a standard web browser. In WasmEdge, the runtime SDN nodes use, the SGP4 screen takes 23 s. Every run on one catalog and propagator reports the same conjunctions.</p>
 <p>Five design choices produce that speed:</p>
 <ol>
 <li><strong>A spatial grid proposes pairs; the module decides.</strong> At every 60 s step, a uniform grid finds the pairs that could be close among the 528.6 million, on a GPU (WebGPU) or in the WebAssembly (WASM) conjunction module on CPU threads. The module re-tests each candidate in f64 and refines it. Every reported number comes from the module.</li>
@@ -152,8 +152,8 @@
 <li><strong>Refinement proves, then solves.</strong> Where the range of a pair provably has one minimum, Newton&#39;s method on the range rate finds it in about ten evaluations.</li>
 </ol>
 <p>The screen reproduces the module&#39;s single-call screen where both can run. On 4,000 objects over one day, all 1,068 conjunctions match, with TCA within 0.64 ms and miss distance within 5 mm; the single call takes 32.9 s and the windowed screen 0.44 s.</p>
-<p>Against SOCRATES on the element sets SOCRATES itself used, TCA agrees within 0.5 ms and miss distance within 2.4 m for 95 % of cataloged pairs, the precision SOCRATES reports. Each event reports the covariance-free maximum probability. With an empirical model of element-set prediction error, events also carry a covariance-based probability. It is labeled calibrated only where held-out precise orbits confirm the covariance: LEO 600 to 800 km, 13,088 of the 292,516 three-day conjunctions. The model adds 1.1 s to the 19 s screen (section 7, <a href="#r1">R1</a>).</p>
-<p>Operators keep their most precise orbits and planned maneuvers private. Section 8 specifies <strong>private screening</strong>: two operators learn when their objects come close without exchanging trajectories, by computing distances on homomorphically encrypted positions.</p>
+<p>Against SOCRATES on the element sets SOCRATES itself used, TCA agrees within 0.5 ms and miss distance within 2.4 m for 95 % of cataloged pairs, the precision SOCRATES reports. Each event reports the covariance-free maximum probability. With an empirical model of element-set prediction error, events also carry a covariance-based probability. It is labeled calibrated only where held-out precise orbits confirm the covariance: LEO 600 to 800 km, 13,088 of the 292,516 three-day conjunctions. The model<sup><a href="#r1">1</a></sup> adds 1.1 s to the 19 s screen (<a href="#7-uncertainty-and-probability-of-collision">section 7</a>).</p>
+<p>Operators keep their most precise orbits and planned maneuvers private. <a href="#8-private-screening">Section 8</a> specifies <strong>private screening</strong>: two operators learn when their objects come close without exchanging trajectories, by computing distances on homomorphically encrypted positions.</p>
 <ul>
 <li><strong>Cost.</strong> Its arithmetic is measured: 0.17 s and 8.7 MB per pair-day at 1 s steps.</li>
 <li><strong>What it reveals.</strong> The paper shows how a naive design leaks distances, how invented trajectories can locate a hidden satellite, and which defenses stop that, with or without a public track for either satellite.</li>
@@ -161,11 +161,11 @@
 </ul>
 <div class="sec-head sec-head-h2"><h2 id="1-the-problem"><span class="sec-num">1</span>The problem</h2><button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/fast-conjunction-assessment/1-the-problem.html" data-model-title="All-vs-all is n(n − 1)/2 pairs" aria-label="Run it: All-vs-all is n(n − 1)/2 pairs"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span>Run it</button></div>
 <p>An all-vs-all screen compares every object with every other: n(n − 1)/2 pairs, 528.6 million for 32,514 objects. A three-day screen at 60 s steps evaluates each pair at 4,321 instants, about 2.3 trillion pair-steps. A close approach at 10 km/s relative speed lasts under a second inside a few kilometers, so a coarse test that misses it loses the event.</p>
-<p>The module&#39;s existing single-call screen (<code>screen_catalog</code>) uses a perigee/apogee prefilter and a k-d tree per time step. It holds every encounter of the window in WASM linear memory, at most 2 GiB. It runs out of memory above about 7,000 objects for a one-day window (<a href="#r2">R2</a>).</p>
+<p>The module&#39;s existing single-call screen (<code>screen_catalog</code>) uses a perigee/apogee prefilter and a k-d tree per time step. It holds every encounter of the window in WASM linear memory, at most 2 GiB. It runs out of memory above about 7,000 objects for a one-day window<sup><a href="#r2">2</a></sup>.</p>
 <h2 id="2-pipeline"><span class="sec-num">2</span>Pipeline</h2>
 <figure class="paper-fig"><img src="assets/ca-pipeline.svg" alt="Pipeline: load index, coarse grid, pair search on the GPU or in the module, refine, and merge windows; SGP4 element sets load once, a propagator's trajectories load per window" width="720"/><figcaption>Pipeline: load index, coarse grid, pair search on the GPU or in the module, refine, and merge windows; SGP4 element sets load once, a propagator's trajectories load per window</figcaption></figure>
 
-<p>The host code (JavaScript) moves records between the module and the GPU and contains no physics. The conjunction module, the SGP4 implementation, the HPOP propagator and the epoch-state converter are WASM modules. They are built with the SDN Module SDK and run unchanged in a browser, in the WasmEdge runtime and in its Docker image (<a href="#r3">R3</a>).</p>
+<p>The host code (JavaScript) moves records between the module and the GPU and contains no physics. The conjunction module, the SGP4 implementation, the HPOP propagator and the epoch-state converter are WASM modules. They are built with the SDN Module SDK and run unchanged in a browser, in the WasmEdge runtime and in its Docker image<sup><a href="#r3">3</a></sup>.</p>
 <div class="table-frame"><table>
 <thead>
 <tr>
@@ -231,7 +231,7 @@
 <td>A bounds the position series&#39; second derivative using |T_k″| ≤ k²(k² − 1)/3. J and P sum velocity and position jumps where intervals meet. G is the gap between the velocity series and the position series&#39; derivative</td>
 </tr>
 </tbody></table></div>
-<p>The trajectory bound uses only the coefficients, so it holds for any force model and for impulsive maneuvers that appear as interval jumps. A native test checks it against the trajectory itself every 0.1 s around samples taken every 7 s. The trajectory is a 7,000 km orbit interpolated as a propagator would export it, with a 5 m/s maneuver at an interval boundary. Tested at h = 30 s and h = 90 s, the bound was never exceeded, and away from the maneuver it was at most 1.34 times the true deviation (<a href="#r2">R2</a>).</p>
+<p>The trajectory bound uses only the coefficients, so it holds for any force model and for impulsive maneuvers that appear as interval jumps. A native test checks it against the trajectory itself every 0.1 s around samples taken every 7 s. The trajectory is a 7,000 km orbit interpolated as a propagator would export it, with a 5 m/s maneuver at an interval boundary. Tested at h = 30 s and h = 90 s, the bound was never exceeded, and away from the maneuver it was at most 1.34 times the true deviation<sup><a href="#r2">2</a></sup>.</p>
 <h3 id="spatial-grid">Spatial grid</h3>
 <p>Testing all 528.6 million pairs at every step is wasted work: almost all pairs are thousands of kilometres apart. At each step, an object&#39;s straight-line segment over [−h, h], widened by d/2 + D, gives an axis-aligned box. Two objects can pass the straight-line test only if their boxes overlap, so a search over overlapping boxes drops nothing the test would pass.</p>
 <p>The boxes go into a uniform grid whose cell is the 99th-percentile box edge. Each overlapping pair is counted once, in the cell holding the low corner of the two boxes&#39; overlap. The few boxes that span four or more cells on an axis, such as fast perigee passes, are tested against every object. The same grid runs in two places:</p>
@@ -249,11 +249,11 @@
 <div class="math-display"><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mo stretchy="false">∣</mo><mi mathvariant="normal">Δ</mi><mover accent="true"><mi mathvariant="bold">r</mi><mo>˙</mo></mover><mo stretchy="false">∣</mo><mo>≥</mo><mo stretchy="false">∣</mo><mi mathvariant="normal">Δ</mi><mi mathvariant="bold">v</mi><mo stretchy="false">∣</mo><mo>−</mo><mi>ε</mi><mo>−</mo><mi>A</mi><mi>T</mi><mo separator="true">,</mo><mspace width="2em"/><mo stretchy="false">∣</mo><mi mathvariant="normal">Δ</mi><mi mathvariant="bold">r</mi><mo stretchy="false">∣</mo><mo>≤</mo><mo stretchy="false">∣</mo><mi mathvariant="normal">Δ</mi><msub><mi mathvariant="bold">r</mi><mrow><mi mathvariant="normal">m</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">d</mi></mrow></msub><mo stretchy="false">∣</mo><mo>+</mo><mo stretchy="false">∣</mo><mi mathvariant="normal">Δ</mi><mi mathvariant="bold">v</mi><mo stretchy="false">∣</mo><mi>T</mi><mo>+</mo><mstyle scriptlevel="0" displaystyle="false"><mfrac><mn>1</mn><mn>2</mn></mfrac></mstyle><mi>A</mi><msup><mi>T</mi><mn>2</mn></msup><mi mathvariant="normal">.</mi></mrow><annotation encoding="application/x-tex">\lvert \Delta\dot{\mathbf r} \rvert \ge \lvert \Delta\mathbf v \rvert - \varepsilon - A T, \qquad \lvert \Delta\mathbf r \rvert \le \lvert \Delta\mathbf r_{\mathrm{mid}} \rvert + \lvert \Delta\mathbf v \rvert T + \tfrac12 A T^2 .</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mopen">∣</span><span class="mord">Δ</span><span class="mord katex-accent"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.6813em;"><span style="top:-3em;"><span class="pstrut" style="height:3em;"></span><span class="mord mathbf">r</span></span><span style="top:-3.0134em;"><span class="pstrut" style="height:3em;"></span><span class="accent-body" style="left:-0.1389em;"><span class="mord">˙</span></span></span></span></span></span></span><span class="mclose">∣</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">≥</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mopen">∣</span><span class="mord">Δ</span><span class="mord mathbf" style="margin-right:0.016em;">v</span><span class="mclose">∣</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.6667em;vertical-align:-0.0833em;"></span><span class="mord mathnormal">ε</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal">A</span><span class="mord mathnormal" style="margin-right:0.1389em;">T</span><span class="mpunct">,</span><span class="mspace" style="margin-right:2em;"></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mopen">∣</span><span class="mord">Δ</span><span class="mord mathbf">r</span><span class="mclose">∣</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">≤</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mopen">∣</span><span class="mord">Δ</span><span class="mord"><span class="mord mathbf">r</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3361em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight"><span class="mord mathrm mtight">mid</span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mclose">∣</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">+</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mopen">∣</span><span class="mord">Δ</span><span class="mord mathbf" style="margin-right:0.016em;">v</span><span class="mclose">∣</span><span class="mord mathnormal" style="margin-right:0.1389em;">T</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">+</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1.2091em;vertical-align:-0.345em;"></span><span class="mord"><span class="mopen nulldelimiter"></span><span class="mfrac"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.8451em;"><span style="top:-2.655em;"><span class="pstrut" style="height:3em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight">2</span></span></span></span><span style="top:-3.23em;"><span class="pstrut" style="height:3em;"></span><span class="frac-line" style="border-bottom-width:0.04em;"></span></span><span style="top:-3.394em;"><span class="pstrut" style="height:3em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight">1</span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.345em;"><span></span></span></span></span></span><span class="mclose nulldelimiter"></span></span><span class="mord mathnormal">A</span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1389em;">T</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.8641em;"><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight">2</span></span></span></span></span></span></span></span><span class="mord">.</span></span></span></span></span></div>
 <p>ε (1 m/s) allows for a source&#39;s velocity differing from the rate of its position. If q = |Δr|max A / |Δṙ|min² &lt; 1, the squared range is convex on the window. Its one minimum is then the root of the range rate f = Δr · Δv, and Newton steps of −f / |Δv|² converge by a factor q or better per step. About ten state evaluations reach the root to the resolution of a Julian date, about 47 µs.</p>
 <p>Where the proof fails, for example a slow pair that stays close for minutes, the search samples the range every 5 s and refines each minimum it brackets with golden-section search.</p>
-<p>Probability uses the Alfano maximum (<a href="#r4">R4</a>). When a refine call would stage more than the module&#39;s 16,384-event output limit, the host splits it in two.</p>
+<p>Probability uses the Alfano maximum<sup><a href="#r4">4</a></sup>. When a refine call would stage more than the module&#39;s 16,384-event output limit, the host splits it in two.</p>
 <h2 id="4-one-propagator-per-run"><span class="sec-num">4</span>One propagator per run</h2>
 <p>A run screens one propagator&#39;s output. A resident index holds either mean elements, evaluated with the module&#39;s SGP4, or trajectories from one generator, identified by the Chebyshev ephemeris (PPE) record&#39;s <code>EPHEMERIS_SOURCE</code>. The module refuses an index that mixes them (<code>mixed-propagators</code>).</p>
-<p>Chebyshev series per interval are the standard form for precomputed ephemerides. NASA&#39;s SPICE toolkit stores them that way: SPK data types 2, 3, 14 and 20 hold Chebyshev coefficients for position, velocity or both (<a href="#r15">R15</a>), and JPL distributes its planetary ephemerides as Chebyshev polynomials fit to positions and velocities in 32-day intervals (<a href="#r16">R16</a>, <a href="#r17">R17</a>). Deprit, Pickard and Poplarchek recommended Chebyshev approximation for compressing ephemerides because it minimizes the largest error over the interval (<a href="#r18">R18</a>). A Chebyshev interpolant of degree n is within a factor 2 + (2/π) log(n + 1) of the best polynomial approximation of that degree (<a href="#r19">R19</a>). The same form serves spacecraft and catalog orbits: onboard ephemeris generation (<a href="#r20">R20</a>) and orbit information with continuous state and covariance at a predetermined accuracy (<a href="#r21">R21</a>). Open-source readers include jplephem (MIT License, <a href="#r22">R22</a>) and ANISE (Mozilla Public License 2.0, <a href="#r23">R23</a>); NAIF&#39;s toolkit is free to use under its own rules (<a href="#r15">R15</a>).</p>
-<p>Trajectories reach the module as their propagator exported them. The HPOP module&#39;s export is a size-prefixed <code>$PRW</code> record per object. The conjunction module&#39;s index preparation takes those records on its <code>trajectories</code> port without re-encoding, and the request carries only each object&#39;s identity. Trajectories in TT or TDB map to UTC linearly between their converted interval ends, using the vendored ERFA library (<a href="#r5">R5</a>). TDB − TT is evaluated once per minute and interpolated, exact to about 1e-14 s.</p>
+<p>Chebyshev series per interval are the standard form for precomputed ephemerides. NASA&#39;s SPICE toolkit stores them that way: SPK data types 2, 3, 14 and 20 hold Chebyshev coefficients for position, velocity or both<sup><a href="#r15">15</a></sup>, and JPL distributes its planetary ephemerides as Chebyshev polynomials fit to positions and velocities in 32-day intervals<sup><a href="#r16">16</a>,<a href="#r17">17</a></sup>. Deprit, Pickard and Poplarchek recommended Chebyshev approximation for compressing ephemerides because it minimizes the largest error over the interval<sup><a href="#r18">18</a></sup>. A Chebyshev interpolant of degree n is within a factor 2 + (2/π) log(n + 1) of the best polynomial approximation of that degree<sup><a href="#r19">19</a></sup>. The same form serves spacecraft and catalog orbits: onboard ephemeris generation<sup><a href="#r20">20</a></sup> and orbit information with continuous state and covariance at a predetermined accuracy<sup><a href="#r21">21</a></sup>. Open-source readers include jplephem (MIT License,<sup><a href="#r22">22</a></sup>) and ANISE (Mozilla Public License 2.0,<sup><a href="#r23">23</a></sup>); NAIF&#39;s toolkit is free to use under its own rules<sup><a href="#r15">15</a></sup>.</p>
+<p>Trajectories reach the module as their propagator exported them. The HPOP module&#39;s export is a size-prefixed <code>$PRW</code> record per object. The conjunction module&#39;s index preparation takes those records on its <code>trajectories</code> port without re-encoding, and the request carries only each object&#39;s identity. Trajectories in TT or TDB map to UTC linearly between their converted interval ends, using the vendored ERFA library<sup><a href="#r5">5</a></sup>. TDB − TT is evaluated once per minute and interpolated, exact to about 1e-14 s.</p>
 <h2 id="5-time-windows"><span class="sec-num">5</span>Time windows</h2>
 <p>A long screen runs as consecutive windows; the merged result equals one screen of the whole span:</p>
 <ul>
@@ -261,10 +261,10 @@
 <li>A TCA within the refinement tolerance of a shared edge is reported by both windows and kept once.</li>
 </ul>
 <p>Window length trades memory for per-window overhead. A day of HPOP&#39;s trajectories is about 240 KB per object, so HPOP screens in 1-hour windows: about 390 MB of trajectories for the full catalog, which the conjunction module indexes in 1.05 GiB of its 2 GiB. SGP4 windows reuse one index loaded at the start, so they are longer (6 hours).</p>
-<p>Tests check four windows against a single screen for both propagators. The SGP4 case uses CelesTrak element sets that include an object SGP4 cannot propagate. The HPOP case uses crossing orbits integrated by HPOP, passed through the <code>trajectories</code> port (<a href="#r2">R2</a>, <a href="#r33">R33</a>).</p>
+<p>Tests check four windows against a single screen for both propagators. The SGP4 case uses CelesTrak element sets that include an object SGP4 cannot propagate. The HPOP case uses crossing orbits integrated by HPOP, passed through the <code>trajectories</code> port<sup><a href="#r2">2</a>,<a href="#r33">33</a></sup>.</p>
 <h3 id="the-hpop-propagation-farm">The HPOP propagation farm</h3>
 <ol>
-<li>The epoch-state module converts each element set into a GCRF state at its epoch: SGP4 at zero elapsed time, then TEME to GCRF through ERFA. This is the OMM-to-numerical handoff of the companion paper, section 4 (<a href="#r1">R1</a>).</li>
+<li>The epoch-state module converts each element set into a GCRF state at its epoch: SGP4 at zero elapsed time, then TEME to GCRF through ERFA. This is the OMM-to-numerical handoff of the companion paper<sup><a href="#r1">1</a></sup>, <a href="evidence-supported-aso-catalog.html#4-normalization-and-model-dispatch">section 4</a>.</li>
 <li>HPOP resident instances, at most 1,024 objects each, integrate those states on worker threads with the force model below. Objects are dealt round-robin into about two instances per worker, so element sets of every age spread evenly.</li>
 <li>Each window, every instance exports the window and the records go to the browser unchanged. The next window is exported while the current one is screened.</li>
 </ol>
@@ -277,31 +277,31 @@
 </thead>
 <tbody><tr>
 <td>Gravity</td>
-<td>EGM2008 to degree and order 70, in Earth-fixed axes from IERS Earth orientation (<a href="#r24">R24</a>, <a href="#r26">R26</a>)</td>
+<td>EGM2008 to degree and order 70, in Earth-fixed axes from IERS Earth orientation<sup><a href="#r24">24</a>,<a href="#r26">26</a></sup></td>
 </tr>
 <tr>
 <td>Sun, Moon and planets</td>
-<td>Sun, Moon, Venus, Mars and Jupiter from JPL DE440s (<a href="#r25">R25</a>)</td>
+<td>Sun, Moon, Venus, Mars and Jupiter from JPL DE440s<sup><a href="#r25">25</a></sup></td>
 </tr>
 <tr>
 <td>Drag</td>
-<td>NRLMSISE-00 (<a href="#r27">R27</a>)</td>
+<td>NRLMSISE-00<sup><a href="#r27">27</a></sup></td>
 </tr>
 <tr>
 <td>Radiation pressure</td>
-<td>Cannonball with a conical Earth shadow; Earth albedo and infrared, Knocke model on 15° elements (<a href="#r28">R28</a>)</td>
+<td>Cannonball with a conical Earth shadow; Earth albedo and infrared, Knocke model on 15° elements<sup><a href="#r28">28</a></sup></td>
 </tr>
 <tr>
 <td>Tides and relativity</td>
-<td>IERS 2010 solid tides and relativistic terms; FES2004 ocean tides to degree and order 30 (<a href="#r26">R26</a>, <a href="#r29">R29</a>)</td>
+<td>IERS 2010 solid tides and relativistic terms; FES2004 ocean tides to degree and order 30<sup><a href="#r26">26</a>,<a href="#r29">29</a></sup></td>
 </tr>
 <tr>
 <td>Earth orientation and space weather</td>
-<td>As released at the screen&#39;s start: IERS finals2000A rows to the day before, the last one held; GFZ Kp, ap and F10.7, then NOAA SWPC&#39;s latest daily report with its 3-day forecast, the last day held (<a href="#r30">R30</a>)</td>
+<td>As released at the screen&#39;s start: IERS finals2000A rows to the day before, the last one held; GFZ Kp, ap and F10.7, then NOAA SWPC&#39;s latest daily report with its 3-day forecast, the last day held<sup><a href="#r30">30</a></sup></td>
 </tr>
 <tr>
 <td>Drag coefficient</td>
-<td>Cd·A/m = 2B*/ρ₀ from each element set&#39;s B*, with SGP4&#39;s reference density ρ₀ = 2.461 × 10⁻⁵ XKMPER kg/m² per Earth radius, XKMPER = 6,378.135 km (<a href="#r31">R31</a>)</td>
+<td>Cd·A/m = 2B*/ρ₀ from each element set&#39;s B*, with SGP4&#39;s reference density ρ₀ = 2.461 × 10⁻⁵ XKMPER kg/m² per Earth radius, XKMPER = 6,378.135 km<sup><a href="#r31">31</a></sup></td>
 </tr>
 <tr>
 <td>Reentry</td>
@@ -313,14 +313,14 @@
 </tr>
 <tr>
 <td>Integrator</td>
-<td>Runge–Kutta–Fehlberg 7(8), relative tolerance 10⁻¹², steps of at most 300 s, restarted only where the space weather changes (<a href="#r32">R32</a>)</td>
+<td>Runge–Kutta–Fehlberg 7(8), relative tolerance 10⁻¹², steps of at most 300 s, restarted only where the space weather changes<sup><a href="#r32">32</a></sup></td>
 </tr>
 <tr>
 <td>Export</td>
 <td>Chebyshev series of degree 12 on 300 s segments of TT, fitted to the integrator&#39;s dense output; each segment states its largest difference from the integrator&#39;s accepted states</td>
 </tr>
 </tbody></table></div>
-<p>The tolerance, the segment length and the resident integration were measured (<a href="#r33">R33</a>):</p>
+<p>The tolerance, the segment length and the resident integration were measured<sup><a href="#r33">33</a></sup>:</p>
 <ul>
 <li><strong>Tolerance.</strong> Against 10⁻¹⁴, the integration&#39;s own error after three days is 0.1 m at 400 km, 1.2 m at 700 km sun-synchronous and 0.18 m for Molniya. At 10⁻¹¹ it is 6 to 9 m in LEO.</li>
 <li><strong>Segment length.</strong> A degree-12 series resolves about four cycles per segment. 300 s keeps the 70 × 70 field&#39;s shortest LEO terms, with periods near 80 s; over 600 s, the terms above degree 35 leave centimetre fit errors. Over four days the exported series stay within 0.31 mm of the integrator&#39;s dense output in LEO and 0.18 mm for Molniya.</li>
@@ -328,7 +328,7 @@
 </ul>
 <p>HPOP integrates each object from its element epoch, so the first window carries that catch-up: 55,578 object-days from the element epochs to the screen&#39;s start, against 97,542 for the three days screened. HPOP drops cached intervals that end before the requested window, so an instance holds about one window per object.</p>
 <h2 id="6-results"><span class="sec-num">6</span>Results</h2>
-<p>All runs used the Space-Track GP catalog of 30 September 2026, 32,514 objects (<a href="#r6">R6</a>). Screens started 2026-10-01T00:00Z, with a 5 km threshold and 60 s coarse steps, on a Mac Studio with 28 cores and 27 module threads. GPU runs used headless Chrome with Metal for WebGPU. The workstation was shared with other work (1-minute load average 15–65 on 28 cores), so times are upper bounds.</p>
+<p>All runs used the Space-Track GP catalog of 30 September 2026, 32,514 objects<sup><a href="#r6">6</a></sup>. Screens started 2026-10-01T00:00Z, with a 5 km threshold and 60 s coarse steps, on a Mac Studio with 28 cores and 27 module threads. GPU runs used headless Chrome with Metal for WebGPU. The workstation was shared with other work (1-minute load average 15–65 on 28 cores), so times are upper bounds.</p>
 <h3 id="full-catalog-three-days">Full catalog, three days</h3>
 <div class="table-frame"><table>
 <thead>
@@ -377,8 +377,8 @@
 <ul>
 <li>For each propagator, every run reports the same conjunctions with the same TCA and miss distance.</li>
 <li><strong>SGP4&#39;s</strong> remaining time is sampling: 4,321 steps × 32,514 SGP4 evaluations. On the GPU path the module samples (6.1 s) and the GPU searches (2.3 s).</li>
-<li><strong>HPOP&#39;s</strong> time is propagation: 110,642 CPU-seconds on 16 worker threads, 0.72 s per object-day, 36 % of it the catch-up from element epochs to the screen&#39;s start. The table&#39;s end-to-end time is that CPU time on 16 dedicated cores plus the 48.6 s of search and refinement on 8 module threads; on the shared workstation (1-minute load average median 40, maximum 62) the screen took 9,294 s (<a href="#r33">R33</a>).</li>
-<li>The two propagators report different conjunctions. Of HPOP&#39;s 288,524, 39,486 (14 %) are also in the SGP4 screen, the same pair with TCAs within 10 minutes; on those, TCAs differ by a median of 1.2 s and miss distances by 670 m. The share falls from 21 % of the first day&#39;s conjunctions to 9 % of the third&#39;s. Neither result is a measure of accuracy (section 7).</li>
+<li><strong>HPOP&#39;s</strong> time is propagation: 110,642 CPU-seconds on 16 worker threads, 0.72 s per object-day, 36 % of it the catch-up from element epochs to the screen&#39;s start. The table&#39;s end-to-end time is that CPU time on 16 dedicated cores plus the 48.6 s of search and refinement on 8 module threads; on the shared workstation (1-minute load average median 40, maximum 62) the screen took 9,294 s<sup><a href="#r33">33</a></sup>.</li>
+<li>The two propagators report different conjunctions. Of HPOP&#39;s 288,524, 39,486 (14 %) are also in the SGP4 screen, the same pair with TCAs within 10 minutes; on those, TCAs differ by a median of 1.2 s and miss distances by 670 m. The share falls from 21 % of the first day&#39;s conjunctions to 9 % of the third&#39;s. Neither result is a measure of accuracy (<a href="#7-uncertainty-and-probability-of-collision">section 7</a>).</li>
 </ul>
 <div class="sec-head sec-head-h3"><h3 id="step-size">Step size</h3><button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/fast-conjunction-assessment/step-size.html" data-model-title="Step size trades sampling for candidates" aria-label="Run it: Step size trades sampling for candidates"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span>Run it</button></div>
 <p>The candidate test is exhaustive at any step, so the step size trades sampling against candidates. SGP4, three days:</p>
@@ -499,14 +499,19 @@
 <p>On the 2,000-object case the CPU search and the GPU found the same 424 candidates and 23 conjunctions, in Node.js, WasmEdge and a browser. Differences from the single call come from refinement starting from different coarse brackets, and sit inside the module&#39;s parity tolerances of 10 ms and 10 cm.</p>
 <h3 id="validation-findings">Validation findings</h3>
 <div class="sec-head sec-head-h2"><h2 id="7-uncertainty-and-probability-of-collision"><span class="sec-num">7</span>Uncertainty and probability of collision</h2><button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/fast-conjunction-assessment/7-uncertainty-and-probability-of-collision.html" data-model-title="The Alfano maximum probability" aria-label="Run it: The Alfano maximum probability"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span>Run it</button></div>
-<p>The companion paper sets the conditions this screen respects (<a href="#r1">R1</a>, sections 4, 6 and 12):</p>
+<p>The companion paper<sup><a href="#r1">1</a></sup> sets the conditions this screen respects, in its sections <a href="evidence-supported-aso-catalog.html#4-normalization-and-model-dispatch">4</a>, <a href="evidence-supported-aso-catalog.html#6-uncertainty">6</a> and <a href="evidence-supported-aso-catalog.html#12-what-conjunction-assessment-consumes">12</a>:</p>
 <ul>
 <li>An OMM supplies no covariance. The initial uncertainty of an OMM-seeded HPOP trajectory, including this paper&#39;s HPOP runs, is unknown: no validated representation of it exists.</li>
 <li>A probability of collision requires relative-state uncertainty with independent calibration and stated cross-correlation, geometry and hard-body-radius assumptions.</li>
 </ul>
-<p>Every event reports the Alfano maximum: the largest probability any covariance size could give for the reported miss distance and combined hard-body radius (<a href="#r4">R4</a>). It needs no covariance and serves as an upper bound. Each object&#39;s radius comes with its basis: supplied, half the catalog size, from the radar cross section, or the request default. No uncertainty is invented: an event carries covariance, and a covariance-based probability, only when a source supplied covariance or the empirical model below applies, and it states which. The work below follows the companion paper&#39;s three parts: initial covariance, propagation, and calibration on held-out evidence (<a href="#r8">R8</a>).</p>
+<p>Every event reports the Alfano maximum: the largest probability any covariance size could give for the reported miss distance and combined hard-body radius<sup><a href="#r4">4</a></sup>. It needs no covariance and serves as an upper bound. Each object&#39;s radius comes with its basis: supplied, half the catalog size, from the radar cross section, or the request default. No uncertainty is invented: an event carries covariance, and a covariance-based probability, only when a source supplied covariance or the empirical model below applies, and it states which. The work below follows the companion paper&#39;s three parts<sup><a href="#r8">8</a></sup>:</p>
+<ol>
+<li>Initial covariance</li>
+<li>Propagation</li>
+<li>Calibration on held-out evidence</li>
+</ol>
 <h3 id="independent-truth">Independent truth</h3>
-<p>Calibration needs reference orbits that SGP4 did not produce. SDN&#39;s reference-states module turns precise orbits into GCRF states at stated times, each with its stated uncertainty as covariance and its provenance (<a href="#r10">R10</a>):</p>
+<p>Calibration needs reference orbits that SGP4 did not produce. SDN&#39;s reference-states module turns precise orbits into GCRF states at stated times, each with its stated uncertainty as covariance and its provenance<sup><a href="#r10">10</a></sup>:</p>
 <ul>
 <li>IGS final GPS orbits;</li>
 <li>ILRS orbits for LAGEOS-1/2, ETALON-1/2, Ajisai, Starlette, Stella, LARETS, WESTPAC, LARES and LARES-2;</li>
@@ -586,7 +591,7 @@
 </ul>
 <p>The labels hold for these objects in this week.</p>
 <div class="sec-head sec-head-h3"><h3 id="covariance-probability-on-screened-events">Covariance probability on screened events</h3><button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/fast-conjunction-assessment/covariance-probability-on-screened-events.html" data-model-title="Probability and dilution" aria-label="Run it: Probability and dilution"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span>Run it</button></div>
-<p>With the scaled model, element-set screens give each event&#39;s objects the covariance of their stratum at the TCA&#39;s prediction age. The event then reports the selected method&#39;s probability, Foster&#39;s by default (<a href="#r9">R9</a>). Each event is labeled:</p>
+<p>With the scaled model, element-set screens give each event&#39;s objects the covariance of their stratum at the TCA&#39;s prediction age. The event then reports the selected method&#39;s probability, Foster&#39;s by default<sup><a href="#r9">9</a></sup>. Each event is labeled:</p>
 <ul>
 <li>the covariance as synthesized from the empirical model;</li>
 <li>the two objects&#39; errors as independent;</li>
@@ -603,7 +608,7 @@
 <ul>
 <li><strong>Propagation.</strong> HPOP resident instances accept an initial covariance P₀ per object and return P(t) = Φ P₀ Φᵀ + Q, with the state transition matrix of the full force model. Q is a declared white-acceleration process noise, inertial or radial-transverse-normal, given as a spectral density and discretization interval. It is recorded in the trajectory (SDS 1.232.0). The state transition matrix matches finite differences, and Q matches its closed form.</li>
 <li><strong>Orbit determination.</strong> Fits publish their formal covariance as an OCM. The OCM lists the noise models, weighting, observations used, process noise, a priori and convergence criteria, with biases neither estimated nor considered and no consider parameters. It is marked Uncalibrated.</li>
-<li><strong>HPOP covariance, calibrated in part.</strong> It was checked the same way as the empirical model, for this paper&#39;s HPOP screen product: an element-set epoch state with P₀ measured at the epoch, then HPOP with the full force model of section 5 and the space weather released on the element set&#39;s day. A white-acceleration Q was fitted by maximum likelihood on the fit week; a regime kept Q = 0 where P₀ alone passed more fit-week strata (<a href="#r33">R33</a>).<ul>
+<li><strong>HPOP covariance, calibrated in part.</strong> It was checked the same way as the empirical model, for this paper&#39;s HPOP screen product: an element-set epoch state with P₀ measured at the epoch, then HPOP with the full force model of <a href="#5-time-windows">section 5</a> and the space weather released on the element set&#39;s day. A white-acceleration Q was fitted by maximum likelihood on the fit week; a regime kept Q = 0 where P₀ alone passed more fit-week strata<sup><a href="#r33">33</a></sup>.<ul>
 <li><strong>LEO 600 to 800 km, 0 to 0.5 day and 1 to 3 days: CALIBRATED with P₀ alone.</strong> P₀ carried through HPOP&#39;s state transition matrix predicts the along-track growth, 1.3 to 17 km, within 11 %.</li>
 <li><strong>LEO 600 to 800 km, 0.5 to 1 day: FAILED.</strong> 75 % of the samples fall inside 1σ, 7 points above nominal.</li>
 <li><strong>LEO 600 to 800 km beyond 3 days: FAILED.</strong></li>
@@ -614,7 +619,7 @@
 <li><strong>Orbit-determination covariance is not calibrated.</strong> Covariance supplied in an OEM or OCM enters conjunction assessment as supplied covariance and keeps the source&#39;s calibration label.</li>
 </ul>
 <h3 id="agreement-with-socrates">Agreement with SOCRATES</h3>
-<p>SOCRATES is CelesTrak&#39;s public conjunction screen (<a href="#r7">R7</a>). The replay used the top 300 rows of its 2 October 2026 maximum-probability report, from 179,398 rows. Each pair was reassessed from the element sets SOCRATES used for it, and the report and every input are hashed. The days since epoch agree to SOCRATES&#39;s printed precision, which confirms the inputs are identical.</p>
+<p>SOCRATES is CelesTrak&#39;s public conjunction screen<sup><a href="#r7">7</a></sup>. The replay used the top 300 rows of its 2 October 2026 maximum-probability report, from 179,398 rows. Each pair was reassessed from the element sets SOCRATES used for it, and the report and every input are hashed. The days since epoch agree to SOCRATES&#39;s printed precision, which confirms the inputs are identical.</p>
 <div class="table-frame"><table>
 <thead>
 <tr>
@@ -657,7 +662,7 @@
 <ul>
 <li><strong>Probabilistic:</strong> Foster&#39;s probability ≥ 1e-4.</li>
 <li><strong>Bounded set:</strong> the 99.73 % relative ellipse comes within 20 m.</li>
-<li><strong>Possibility:</strong> min-joined χ² possibility per object, alerting unless the necessity of no collision reaches 0.9973. Possibility and necessity are not probabilities (<a href="#r1">R1</a>, section 9).</li>
+<li><strong>Possibility:</strong> min-joined χ² possibility per object, alerting unless the necessity of no collision reaches 0.9973. Possibility and necessity are not probabilities.</li>
 </ul>
 <p>The results, in the calibrated strata (10,000 cases a row):</p>
 <div class="table-frame"><table>
@@ -711,12 +716,12 @@ something is changing.</li>
 precise trajectories exist. Private screening lets two operators learn when
 their objects come close without either seeing the other&#39;s trajectory.</p>
 <p>This section specifies the protocol, measures its arithmetic, and analyses
-what it reveals and how it can be abused (<a href="#r14">R14</a>).</p>
+what it reveals and how it can be abused<sup><a href="#r14">14</a></sup>.</p>
 <h3 id="what-is-computed-on-ciphertext">What is computed on ciphertext</h3>
 <p>A (the requester) and B (the responder) each hold a trajectory, sampled on a
 common time grid. A wants to know when B&#39;s object passes within R of its own.
 The protocol uses homomorphic encryption: B computes on A&#39;s encrypted
-positions without being able to read them (<a href="#r11">R11</a>, <a href="#r12">R12</a>).</p>
+positions without being able to read them<sup><a href="#r11">11</a>,<a href="#r12">12</a></sup>.</p>
 <ol>
 <li><strong>A encrypts its trajectory under its own key.</strong><ul>
 <li>The quantities are x, y and z, in integer metres.</li>
@@ -799,8 +804,7 @@ requester without one answers challenges to its alerts (defense 3 below).</p>
 </li>
 </ul>
 <h3 id="what-it-costs">What it costs</h3>
-<p>Measured with Microsoft SEAL 4.1.1 on one core of the shared workstation
-(<a href="#r14">R14</a>):</p>
+<p>Measured with Microsoft SEAL 4.1.1 on one core of the shared workstation<sup><a href="#r14">14</a></sup>:</p>
 <div class="table-frame"><table>
 <thead>
 <tr>
@@ -859,7 +863,7 @@ factor of 2 at 87 % of steps (1 s grid). That is enough for range-only
 orbit determination of B&#39;s object.</li>
 <li>The output must therefore be one bit per step: B adds a random additive
 mask, and A and B run a two-party secure comparison that reveals only the
-sign, to both of them (<a href="#r13">R13</a>).</li>
+sign, to both of them<sup><a href="#r13">13</a></sup>.</li>
 <li>B&#39;s response must also be noise-flooded, so that its ciphertext noise
 carries nothing about b.</li>
 </ul>
@@ -982,7 +986,7 @@ positions, far less sensitive than planned maneuvers. The ciphertext is
 the commitment: it cannot be swapped afterwards, and no separate hash is
 needed. The responder checks every step and orbital dynamics, and
 agreement with independent tracking of the declared object, using the
-reference-orbit comparisons of section 7.</li>
+reference-orbit comparisons of <a href="#7-uncertainty-and-probability-of-collision">section 7</a>.</li>
 <li><strong>A requester without one answers challenges.</strong> Opening a window would
 expose its orbit. Instead, the responder may challenge any alert: the
 requester states, signed, its object&#39;s positions for a few minutes
@@ -1067,7 +1071,7 @@ registered.</p>
 </tr>
 <tr>
 <td>One host</td>
-<td>All timings from one shared 28-core workstation (<a href="#r2">R2</a> gives the procedure for repeating them)</td>
+<td>All timings from one shared 28-core workstation; the module gives the procedure for repeating them<sup><a href="#r2">2</a></sup></td>
 </tr>
 <tr>
 <td>Calibration coverage</td>
@@ -1078,7 +1082,7 @@ registered.</p>
 <td>Combined radius and covariance shape differ from SOCRATES&#39;s unpublished ones</td>
 </tr>
 </tbody></table></div>
-<p>This paper reports computation speed, agreement between implementations and with SOCRATES on identical inputs, and covariance calibration where independent truth exists. It does not establish operational readiness or orbit accuracy; the companion paper reports measurements of HPOP&#39;s accuracy (<a href="#r1">R1</a>, sections 7 and 11).</p>
+<p>This paper reports computation speed, agreement between implementations and with SOCRATES on identical inputs, and covariance calibration where independent truth exists. It does not establish operational readiness or orbit accuracy; the companion paper<sup><a href="#r1">1</a></sup> reports measurements of HPOP&#39;s accuracy in its sections <a href="evidence-supported-aso-catalog.html#7-dynamics-and-verification">7</a> and <a href="evidence-supported-aso-catalog.html#11-measured-accuracy">11</a>.</p>
 <h2 id="references">References</h2>
 <h3 id="r1">R1</h3>
 <p>Koury, A. and Jah, M. K. Evidence-Supported ASO Catalog. Space Data Network technical whitepaper 2.0, 11 October 2026. <a href="evidence-supported-aso-catalog.html">Paper</a></p>

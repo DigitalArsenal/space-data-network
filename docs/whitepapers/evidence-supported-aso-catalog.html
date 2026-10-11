@@ -73,7 +73,7 @@
           <div><dt>Published</dt><dd>11 October 2026</dd></div>
           <div><dt>Evidence cutoff</dt><dd><span>11 October 2026</span></dd></div>
           <div><dt>Sections</dt><dd>12</dd></div>
-          <div><dt>Reading time</dt><dd>27 min</dd></div>
+          <div><dt>Reading time</dt><dd>28 min</dd></div>
           <div><dt>Interactive models</dt><dd>12</dd></div>
         </dl>
       </div>
@@ -129,7 +129,7 @@
         </nav>
         <article class="paper">
 <h2 id="1-summary"><span class="sec-num">1</span>Summary</h2>
-<p>Space Data Network (SDN) builds a catalog of anthropogenic space objects (ASOs) from public and login-only sources. It keeps every provider&#39;s product as an attributed record and, object by object, publishes the solution with the best measured accuracy for the intended use, with its uncertainty and lineage. Accuracy is measured against independent precise orbits, under plans fixed before the test data were read <a href="#r1">R1</a>.</p>
+<p>Space Data Network (SDN) builds a catalog of anthropogenic space objects (ASOs) from public and login-only sources. It keeps every provider&#39;s product as an attributed record and, object by object, publishes the solution with the best measured accuracy for the intended use, with its uncertainty and lineage. Accuracy is measured against independent precise orbits, under plans fixed before the test data were read<sup><a href="#r1">1</a></sup>.</p>
 <div class="table-frame"><table>
 <thead>
 <tr>
@@ -160,9 +160,23 @@
 </tr>
 </tbody></table></div>
 <p>HPOP&#39;s force models agree with Orekit within 1.6 cm over a day, and from precise states they leave a median 4.8 m against laser-ranging orbits after a day. Started from an OMM&#39;s own epoch state, HPOP is never better than SGP4: the start state, not the force model, limits it. None of the density corrections tested improves 1–3-day orbit prediction in its pre-registered test, and covariances proved realistic on held-out data in few regimes and horizons.</p>
-<p>Three results go beyond published work: GPS element-set correction fails on an unseen orbital plane (section 5.3); a density correction of the kind the Space Force&#39;s drag model uses, solved from Planet&#39;s public states, is scored on satellites that did not calibrate it (section 5.4); consecutive OMM errors are strongly correlated, and four published covariance constructions are overconfident (section 6). Pre-registered hypotheses that failed are reported as not supported.</p>
+<p>Three results go beyond published work:</p>
+<ol>
+<li>GPS element-set correction fails on an unseen orbital plane (<a href="#53-objects-with-public-omms-only">section 5.3</a>).</li>
+<li>A density correction of the kind the Space Force&#39;s drag model uses, solved from Planet&#39;s public states, is scored on satellites that did not calibrate it (<a href="#54-drag-regime">section 5.4</a>).</li>
+<li>Consecutive OMM errors are strongly correlated, and four published covariance constructions are overconfident (<a href="#6-uncertainty">section 6</a>).</li>
+</ol>
+<p>Pre-registered hypotheses that failed are reported as not supported.</p>
 <div class="sec-head sec-head-h2"><h2 id="2-evidence-model-and-records"><span class="sec-num">2</span>Evidence model and records</h2><button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/evidence-supported-aso-catalog/2-evidence-model-and-records.html" data-model-title="A solution from observations, with its covariance" aria-label="Run it: A solution from observations, with its covariance"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span>Run it</button></div>
-<p>An orbit solution is an inference with five contributors: the object&#39;s physics, the dynamics model, the observations, the measurement model and the inference method. A provider&#39;s ephemeris or element set already embeds the provider&#39;s models and inference, so the catalog keeps it as an attributed provider claim, not as an observation. Agreement between products counts as independent confirmation only when their lineage is independent; unknown lineage is recorded as unknown.</p>
+<p>An orbit solution is an inference with five contributors:</p>
+<ol>
+<li>The object&#39;s physics</li>
+<li>The dynamics model</li>
+<li>The observations</li>
+<li>The measurement model</li>
+<li>The inference method</li>
+</ol>
+<p>A provider&#39;s ephemeris or element set already embeds the provider&#39;s models and inference, so the catalog keeps it as an attributed provider claim, not as an observation. Agreement between products counts as independent confirmation only when their lineage is independent; unknown lineage is recorded as unknown.</p>
 <p>Orbit data sit at four processing levels, by analogy with Earth-science data levels. A higher level is more processed, not better: it inherits every flaw below it, and re-epoching adds no evidence. Every source record declares its level.</p>
 <div class="table-frame"><table>
 <thead>
@@ -226,9 +240,9 @@
 <td>Covariance or none, its source and its calibration label</td>
 </tr>
 </tbody></table></div>
-<p>Hashes establish byte identity and signatures establish attribution; physical validity rests on the measurements of sections 5 to 7. Identical inputs, module binaries and policy reproduce the same decisions.</p>
+<p>Hashes establish byte identity and signatures establish attribution; physical validity rests on the measurements of <a href="#5-products-by-object-class">sections 5</a> to <a href="#7-dynamics-and-verification">7</a>. Identical inputs, module binaries and policy reproduce the same decisions.</p>
 <h2 id="3-sources"><span class="sec-num">3</span>Sources</h2>
-<p>The inventory <a href="#r2">R2</a> lists 97 public and login-only sources in eight groups, with access, terms, latency and use. Results draw on every source an experiment read; files are copied only where their terms allow, and the credits close this paper.</p>
+<p>The inventory<sup><a href="#r2">2</a></sup> lists 97 public and login-only sources in eight groups, with access, terms, latency and use. Results draw on every source an experiment read; files are copied only where their terms allow, and the credits close this paper.</p>
 <div class="table-frame"><table>
 <thead>
 <tr>
@@ -254,7 +268,7 @@
 </tr>
 <tr>
 <td>D. Density</td>
-<td>Swarm and GRACE-FO densities; CHAMP and GRACE-A densities with the High Accuracy Satellite Drag Model (HASDM) <a href="#r3">R3</a></td>
+<td>Swarm and GRACE-FO densities; CHAMP and GRACE-A densities with the High Accuracy Satellite Drag Model (HASDM)<sup><a href="#r3">3</a></sup></td>
 <td>Density truth; the HASDM comparison</td>
 </tr>
 <tr>
@@ -275,23 +289,23 @@
 <tr>
 <td>H. The High Accuracy Catalog (HAC) and HASDM</td>
 <td>Special Perturbations (SP) vectors; real-time HASDM</td>
-<td>The comparison target (section 11)</td>
+<td>The comparison target (<a href="#11-measured-accuracy">section 11</a>)</td>
 </tr>
 </tbody></table></div>
-<p>SpaceMapper&#39;s AOE catalog (channel KY) holds 19,197 element sets that the provider attributes to its own sensor network <a href="#r4">R4</a>. AOE rewrites them every 3 hours; SDN takes a snapshot daily from the public web pages. SpaceMapper states no license, so the sets are cited, not copied. Doppler read from SatNOGS waterfall images made the ISS orbit 2.7–10.7 times worse than SGP4 <a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e6/README.md">E6</a>.</p>
+<p>SpaceMapper&#39;s AOE catalog (channel KY) holds 19,197 element sets that the provider attributes to its own sensor network<sup><a href="#r4">4</a></sup>. AOE rewrites them every 3 hours; SDN takes a snapshot daily from the public web pages. SpaceMapper states no license, so the sets are cited, not copied. Doppler read from SatNOGS waterfall images made the ISS orbit 2.7–10.7 times worse than SGP4 <a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e6/README.md">E6</a>.</p>
 <h2 id="4-normalization-and-model-dispatch"><span class="sec-num">4</span>Normalization and model dispatch</h2>
 <div class="sec-head sec-head-h3"><h3 id="vimpel-osculating-elements">Vimpel osculating elements</h3><button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/evidence-supported-aso-catalog/vimpel-osculating-elements.html" data-model-title="Osculating elements to a J2000 state" aria-label="Run it: Osculating elements to a J2000 state"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span>Run it</button></div>
-<p>Vimpel&#39;s HEO product gives osculating elements in J2000 <a href="#r5">R5</a>. The standard perifocal rotation turns them into a J2000 state at the same epoch <a href="#r6">R6</a>, with μ = 398,600.4418 km³/s², under the identifier <code>vimpel:&lt;id&gt;</code> and no invented NORAD number <a href="#r7">R7</a>. Velocity differenced from 600 s position samples departs from the analytic velocity by up to 1.1 km/s, so it serves only as a diagnostic.</p>
+<p>Vimpel&#39;s HEO product gives osculating elements in J2000<sup><a href="#r5">5</a></sup>. The standard perifocal rotation turns them into a J2000 state at the same epoch<sup><a href="#r6">6</a></sup>, with μ = 398,600.4418 km³/s², under the identifier <code>vimpel:&lt;id&gt;</code> and no invented NORAD number<sup><a href="#r7">7</a></sup>. Velocity differenced from 600 s position samples departs from the analytic velocity by up to 1.1 km/s, so it serves only as a diagnostic.</p>
 <div class="sec-head sec-head-h3"><h3 id="the-handoff-contract">The handoff contract</h3><button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/evidence-supported-aso-catalog/the-handoff-contract.html" data-model-title="An OMM handed to a numerical propagator" aria-label="Run it: An OMM handed to a numerical propagator"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span>Run it</button></div>
-<p>An OMM holds SGP4 mean elements, not osculating ones. The catalog evaluates SGP4 at zero elapsed time, transforms position and velocity from TEME to GCRF at the same instant, and starts HPOP from that state <a href="#r8">R8</a>. SGP4&#39;s drag term B* becomes the ballistic parameter</p>
+<p>An OMM holds SGP4 mean elements, not osculating ones. The catalog evaluates SGP4 at zero elapsed time, transforms position and velocity from TEME to GCRF at the same instant, and starts HPOP from that state<sup><a href="#r8">8</a></sup>. SGP4&#39;s drag term B* becomes the ballistic parameter</p>
 <div class="math-display"><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mi>B</mi><mo>=</mo><mfrac><mrow><msub><mi>C</mi><mi>D</mi></msub><mi>A</mi></mrow><mi>m</mi></mfrac><mo>=</mo><mfrac><mrow><mn>2</mn><msup><mi>B</mi><mo>∗</mo></msup></mrow><msub><mi>ρ</mi><mn>0</mn></msub></mfrac></mrow><annotation encoding="application/x-tex">B = \frac{C_D A}{m} = \frac{2B^*}{\rho_0}</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6833em;"></span><span class="mord mathnormal" style="margin-right:0.0502em;">B</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:2.0463em;vertical-align:-0.686em;"></span><span class="mord"><span class="mopen nulldelimiter"></span><span class="mfrac"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:1.3603em;"><span style="top:-2.314em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord mathnormal">m</span></span></span><span style="top:-3.23em;"><span class="pstrut" style="height:3em;"></span><span class="frac-line" style="border-bottom-width:0.04em;"></span></span><span style="top:-3.677em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord"><span class="mord mathnormal" style="margin-right:0.0715em;">C</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3283em;"><span style="top:-2.55em;margin-left:-0.0715em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0278em;">D</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mord mathnormal">A</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.686em;"><span></span></span></span></span></span><span class="mclose nulldelimiter"></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:2.2461em;vertical-align:-0.8804em;"></span><span class="mord"><span class="mopen nulldelimiter"></span><span class="mfrac"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:1.3657em;"><span style="top:-2.314em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord"><span class="mord mathnormal">ρ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3011em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight">0</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span><span style="top:-3.23em;"><span class="pstrut" style="height:3em;"></span><span class="frac-line" style="border-bottom-width:0.04em;"></span></span><span style="top:-3.677em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord">2</span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0502em;">B</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.6887em;"><span style="top:-3.063em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mbin mtight">∗</span></span></span></span></span></span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.8804em;"><span></span></span></span></span></span><span class="mclose nulldelimiter"></span></span></span></span></span></span></div>
-<p>with ρ₀ from Spacetrack Report No. 3 <a href="#r9">R9</a>; 0.01 m²/kg stands in where B* ≤ 0, and Cr·A/m is 0.02 m²/kg <a href="#r10">R10</a>. The handoff is valid; whether it helps is measured in section 5.3.</p>
+<p>with ρ₀ from Spacetrack Report No. 3<sup><a href="#r9">9</a></sup>; 0.01 m²/kg stands in where B* ≤ 0, and Cr·A/m is 0.02 m²/kg<sup><a href="#r10">10</a></sup>. The handoff is valid; whether it helps is measured in <a href="#53-objects-with-public-omms-only">section 5.3</a>.</p>
 <div class="sec-head sec-head-h3"><h3 id="levels-of-measurement-of-omm-elements">Levels of measurement of OMM elements</h3><button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/evidence-supported-aso-catalog/levels-of-measurement-of-omm-elements.html" data-model-title="What one OMM digit is worth" aria-label="Run it: What one OMM digit is worth"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span>Run it</button></div>
 <p>OMM fields mix nominal (catalog number), ordinal (element-set number), interval (epoch), ratio (mean motion) and circular (node, perigee, mean anomaly) scales, so the pipeline computes on SGP4-evaluated states, never on raw fields. The legacy two-line format quantizes angles to 0.0001°, about 12 m along track near 6,900 km: a resolution, not an accuracy.</p>
 <h3 id="dispatch-frames-and-time">Dispatch, frames and time</h3>
-<p>Each record is routed by its declared theory: mean elements to SGP4, osculating elements to the two-body conversion, states and ephemerides to frame transforms. Osculating elements offered to SGP4 are refused as a model mismatch. Frames follow the IERS Conventions (2010): IAU 2006/2000A, CIO-based, through ERFA, with IERS Earth orientation <a href="#r11">R11</a>. TEME, EME2000, GCRF and ITRF stay distinct; epochs are UTC and integration runs on TT.</p>
+<p>Each record is routed by its declared theory: mean elements to SGP4, osculating elements to the two-body conversion, states and ephemerides to frame transforms. Osculating elements offered to SGP4 are refused as a model mismatch. Frames follow the IERS Conventions (2010): IAU 2006/2000A, CIO-based, through ERFA, with IERS Earth orientation<sup><a href="#r11">11</a></sup>. TEME, EME2000, GCRF and ITRF stay distinct; epochs are UTC and integration runs on TT.</p>
 <h2 id="5-products-by-object-class"><span class="sec-num">5</span>Products by object class</h2>
-<p>Each row is one method: its originators, our measured result (median 3D position error unless stated) and the experiment. Every experiment froze its plan before reading its test window <a href="#r1">R1</a>.</p>
+<p>Each row is one method: its originators, our measured result (median 3D position error unless stated) and the experiment. Every experiment froze its plan before reading its test window<sup><a href="#r1">1</a></sup>.</p>
 <h3 id="51-gnss-and-laser-ranged-satellites"><span class="sec-num">5.1</span>GNSS and laser-ranged satellites</h3>
 <div class="table-frame"><table>
 <thead>
@@ -304,13 +318,13 @@
 </thead>
 <tbody><tr>
 <td>Newest ultra-rapid analysis-centre orbit at issue, propagated numerically beyond</td>
-<td>IGS products <a href="#r12">R12</a></td>
+<td>IGS products<sup><a href="#r12">12</a></sup></td>
 <td>GPS, 32 satellites: 3.5 cm at issue, 336 m at 7 days; the latest public OMM 1.5–1.7 km</td>
 <td><a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e3/README.md">E3</a></td>
 </tr>
 <tr>
 <td>HPOP fitted to ILRS laser normal points</td>
-<td>Laser-ranging orbit determination <a href="#r13">R13</a></td>
+<td>Laser-ranging orbit determination<sup><a href="#r13">13</a></sup></td>
 <td>Starlette, Stella, LARETS, WESTPAC, LARES: 7 m at the fit and 42 m at 7 days, against SGP4&#39;s 472 m and 685 m. One pass beats the OMM for a day; four passes beat it at every horizon to 7 days</td>
 <td><a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e6/README.md">E6</a></td>
 </tr>
@@ -333,15 +347,15 @@
 </tr>
 <tr>
 <td>SGP4 on the latest public OMM, against operator ephemerides</td>
-<td>Dyreby et al. 2025 <a href="#r14">R14</a>; Jankovic 2026 <a href="#r15">R15</a></td>
+<td>Dyreby et al. 2025<sup><a href="#r14">14</a></sup>; Jankovic 2026<sup><a href="#r15">15</a></sup></td>
 <td>At the file&#39;s start: Planet 0.59 km, ISS 0.82 km, GPS 1.23 km, Starlink 2.87 km, Intelsat 4.79 km; Starlink 13.8 km at 24 h</td>
 <td><a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e4/README.md">E4</a></td>
 </tr>
 <tr>
 <td>Vimpel&#39;s state refined to Vimpel&#39;s ephemeris by one six-state correction</td>
-<td>Weighted least squares <a href="#r16">R16</a></td>
+<td>Weighted least squares<sup><a href="#r16">16</a></sup></td>
 <td>Withheld RMS 6.04–10.71 km before, 52.8–69.9 m after, on three 4-hour arcs: consistency with one provider, not accuracy</td>
-<td><a href="#r7">R7</a></td>
+<td><a href="#r7">R7</a>7</td>
 </tr>
 </tbody></table></div>
 <h3 id="53-objects-with-public-omms-only"><span class="sec-num">5.3</span>Objects with public OMMs only</h3>
@@ -356,30 +370,30 @@
 </thead>
 <tbody><tr>
 <td>SGP4 on the latest public OMM</td>
-<td>Hoots and Roehrich 1980 <a href="#r9">R9</a>; Vallado et al. 2006 <a href="#r8">R8</a></td>
-<td>At issue: 0.31 km (laser-ranged LEO) to 1.57 km (GPS); by horizon in section 11</td>
+<td>Hoots and Roehrich 1980<sup><a href="#r9">9</a></sup>; Vallado et al. 2006<sup><a href="#r8">8</a></sup></td>
+<td>At issue: 0.31 km (laser-ranged LEO) to 1.57 km (GPS); by horizon in <a href="#11-measured-accuracy">section 11</a></td>
 <td><a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e3/README.md">E3</a></td>
 </tr>
 <tr>
 <td>Along-track correction at epoch (GPS)</td>
-<td>Ly et al. 2020: 65 % <a href="#r17">R17</a>; Hallgarten La Casta and Amato 2025 <a href="#r18">R18</a></td>
+<td>Ly et al. 2020: 65 %<sup><a href="#r17">17</a></sup>; Hallgarten La Casta and Amato 2025<sup><a href="#r18">18</a></sup></td>
 <td>RMS at epoch 2.04 → 0.79 km (61 % [53, 67]); the single-model form 8 %; worse than SGP4 by 7 days (2.55 against 1.88 km); its covariance fails the coverage gate. On an orbital plane outside the fit: 6 % [2, 10]</td>
 <td><a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e1/test/REPORT.md">E1</a></td>
 </tr>
 <tr>
 <td>HPOP from the OMM&#39;s epoch state</td>
-<td>Vallado et al. 2006 <a href="#r8">R8</a>; Jankovic 2026 <a href="#r15">R15</a></td>
+<td>Vallado et al. 2006<sup><a href="#r8">8</a></sup>; Jankovic 2026<sup><a href="#r15">15</a></sup></td>
 <td>Never better than SGP4 in four regimes (GPS, LEO with precise orbits, laser-ranged LEO and MEO); worse in all four by 72 h; at 24 h, 1.7 (GPS) to 11 (laser-ranged LEO) times SGP4&#39;s error</td>
 <td><a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e7/test/REPORT.md">E7</a></td>
 </tr>
 <tr>
 <td>HPOP fitted to an arc of OMM epoch states</td>
-<td>Levit and Marshall 2011 <a href="#r19">R19</a></td>
+<td>Levit and Marshall 2011<sup><a href="#r19">19</a></sup></td>
 <td>Better than SGP4 only at short horizons: 0.32–0.51 of its error to 12 h (laser-ranged LEO), 0.36–0.53 to 48 h on E1-corrected GPS sets; undecided beyond</td>
 <td><a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e7/test/REPORT.md">E7</a></td>
 </tr>
 </tbody></table></div>
-<p>The start state sets the limit. Over 6 days, HPOP leaves 0.2 km along track from a GPS satellite&#39;s IGS state and 8.4 km from its OMM epoch state (medians of 508 arcs) <a href="#r10">R10</a>. Laser ranges fix the start state, and the prediction then stays 20 to 60 times better than SGP4 to 7 days <a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e6/README.md">E6</a>.</p>
+<p>The start state sets the limit. Over 6 days, HPOP leaves 0.2 km along track from a GPS satellite&#39;s IGS state and 8.4 km from its OMM epoch state (medians of 508 arcs)<sup><a href="#r10">10</a></sup>. Laser ranges fix the start state, and the prediction then stays 20 to 60 times better than SGP4 to 7 days <a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e6/README.md">E6</a>.</p>
 <h3 id="54-drag-regime"><span class="sec-num">5.4</span>Drag regime</h3>
 <p>Density is scored by σ, the spread of ln(observed/model density) on satellites outside the calibration; prediction by the 3-day position error relative to JB2008&#39;s (below 1 is better).</p>
 <div class="table-frame"><table>
@@ -393,24 +407,24 @@
 </thead>
 <tbody><tr>
 <td>JB2008 with SET&#39;s indices</td>
-<td>Bowman et al. 2008 <a href="#r20">R20</a></td>
+<td>Bowman et al. 2008<sup><a href="#r20">20</a></sup></td>
 <td>σ 0.155 (Swarm, GRACE-FO, 2026); 0.148 on CHAMP and GRACE-A in 2003 and 2008, where HASDM scores 0.078</td>
 <td><a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e5/test/REPORT.md">E5</a></td>
 </tr>
 <tr>
 <td>Temperature correction from accelerometer and precise-orbit densities, a stand-in for HASDM&#39;s calibration</td>
-<td>Storz et al. 2005 <a href="#r21">R21</a>; Doornbos 2012 <a href="#r22">R22</a></td>
+<td>Storz et al. 2005<sup><a href="#r21">21</a></sup>; Doornbos 2012<sup><a href="#r22">22</a></sup></td>
 <td>σ 0.056, 64 % [57, 70] lower; 0.112 on HASDM&#39;s windows; forecast gain 9 % for one day; 3-day ratio 1.04 [0.96, 1.10]; inputs arrive 49–92 days late (<a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e8/test/REPORT.md">E8</a>)</td>
 <td><a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e5/test/REPORT.md">E5</a></td>
 </tr>
 <tr>
 <td>Temperature correction from the OMM decay of 48 catalogued objects</td>
-<td>Picone et al. 2005 <a href="#r23">R23</a>; Gondelach and Linares 2020 <a href="#r24">R24</a>; Gershman 2026 <a href="#r25">R25</a></td>
+<td>Picone et al. 2005<sup><a href="#r23">23</a></sup>; Gondelach and Linares 2020<sup><a href="#r24">24</a></sup>; Gershman 2026<sup><a href="#r25">25</a></sup></td>
 <td>σ 0.142, 8.4 % [−3.9, 18.3] lower (25 % required: not supported); 24.7 % lower in storms; as a forecast 16.8 % worse than JB2008; 3-day ratio 1.02; 0.270 on HASDM&#39;s windows</td>
 <td><a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e8/test/REPORT.md">E8</a></td>
 </tr>
 </tbody></table></div>
-<p><strong>An open, DCA-form correction from public operator states</strong> <a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e13/README.md">E13</a>. HASDM&#39;s Dynamic Calibration of the Atmosphere (DCA) corrects exospheric temperature every 3 hours from the drag of about 75–100 tracked calibration satellites, each with a constrained ballistic-coefficient correction <a href="#r21">R21</a>. E13 solves that form from public data alone: the common mode s of the daily drag of 36 Planet Doves, read through orbital energy, corrects JB2008&#39;s temperature, with a ballistic coefficient held constant per satellite over a block and a forecast with a 48-hour time constant. Published work derives density from operator ephemerides and scores density alone <a href="#r26">R26</a>, <a href="#r27">R27</a>, <a href="#r28">R28</a>, or assimilates commercial GPS states <a href="#r29">R29</a>. E13 scores the correction on satellites that did not calibrate it, over ten months of Planet states against Swarm and GRACE-FO, with the storm of January 2026 in a held-out block. With x′ the logarithmic residual of observed against JB2008 density in a 12-hour window,</p>
+<p><strong>An open, DCA-form correction from public operator states</strong> <a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e13/README.md">E13</a>. HASDM&#39;s Dynamic Calibration of the Atmosphere (DCA) corrects exospheric temperature every 3 hours from the drag of about 75–100 tracked calibration satellites, each with a constrained ballistic-coefficient correction<sup><a href="#r21">21</a></sup>. E13 solves that form from public data alone: the common mode s of the daily drag of 36 Planet Doves, read through orbital energy, corrects JB2008&#39;s temperature, with a ballistic coefficient held constant per satellite over a block and a forecast with a 48-hour time constant. Published work derives density from operator ephemerides and scores density alone<sup><a href="#r26">26</a>,<a href="#r27">27</a>,<a href="#r28">28</a></sup>, or assimilates commercial GPS states<sup><a href="#r29">29</a></sup>. E13 scores the correction on satellites that did not calibrate it, over ten months of Planet states against Swarm and GRACE-FO, with the storm of January 2026 in a held-out block. With x′ the logarithmic residual of observed against JB2008 density in a 12-hour window,</p>
 <div class="math-display"><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><msub><mi>R</mi><mn>1</mn></msub><mo>=</mo><mn>1</mn><mo>−</mo><mfrac><mrow><mi mathvariant="normal">sd</mi><mo>⁡</mo><mo stretchy="false">(</mo><msup><mi>x</mi><mo mathvariant="normal" lspace="0em" rspace="0em">′</mo></msup><mo>−</mo><mi>s</mi><mo stretchy="false">)</mo></mrow><mrow><mi mathvariant="normal">sd</mi><mo>⁡</mo><mo stretchy="false">(</mo><msup><mi>x</mi><mo mathvariant="normal" lspace="0em" rspace="0em">′</mo></msup><mo stretchy="false">)</mo></mrow></mfrac></mrow><annotation encoding="application/x-tex">R_1 = 1 - \frac{\operatorname{sd}(x&#x27; - s)}{\operatorname{sd}(x&#x27;)}</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0077em;">R</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3011em;"><span style="top:-2.55em;margin-left:-0.0077em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight">1</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.7278em;vertical-align:-0.0833em;"></span><span class="mord">1</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:2.3649em;vertical-align:-0.936em;"></span><span class="mord"><span class="mopen nulldelimiter"></span><span class="mfrac"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:1.4289em;"><span style="top:-2.314em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mop"><span class="mord mathrm">sd</span></span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal">x</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.6779em;"><span style="top:-2.989em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight">′</span></span></span></span></span></span></span></span></span><span class="mclose">)</span></span></span><span style="top:-3.23em;"><span class="pstrut" style="height:3em;"></span><span class="frac-line" style="border-bottom-width:0.04em;"></span></span><span style="top:-3.677em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mop"><span class="mord mathrm">sd</span></span><span class="mopen">(</span><span class="mord"><span class="mord mathnormal">x</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.7519em;"><span style="top:-3.063em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight">′</span></span></span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">−</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mord mathnormal">s</span><span class="mclose">)</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.936em;"><span></span></span></span></span></span><span class="mclose nulldelimiter"></span></span></span></span></span></span></div>
 <div class="table-frame"><table>
 <thead>
@@ -448,7 +462,7 @@
 </tbody></table></div>
 <p>The correction does not follow storms. Exploratory, on one NRLMSISE-00 reference for every split: the fleet explains 0.47–0.48 of NRLMSISE-00&#39;s larger spread, leaving residuals of 0.075–0.095 against 0.069–0.086 on JB2008.</p>
 <h3 id="55-maneuver-detection"><span class="sec-num">5.5</span>Maneuver detection</h3>
-<p>The detector compares the trajectories of consecutive element sets at one instant, whatever propagator answers its queries: a crossing test and a robust likelihood-ratio test for steps in orbit-averaged energy and orbit plane, merged by default <a href="#r10">R10</a>. It builds on element-set time series <a href="#r30">R30</a> and the generalized likelihood ratio for jumps <a href="#r31">R31</a>. Thresholds came from the ISS in 2020–2024; every other window was read once. A planned ISS burn counts as truth only when NASA&#39;s next trajectory shows it executed; one 2021 plan was not.</p>
+<p>The detector compares the trajectories of consecutive element sets at one instant, whatever propagator answers its queries: a crossing test and a robust likelihood-ratio test for steps in orbit-averaged energy and orbit plane, merged by default<sup><a href="#r10">10</a></sup>. It builds on element-set time series<sup><a href="#r30">30</a></sup> and the generalized likelihood ratio for jumps<sup><a href="#r31">31</a></sup>. Thresholds came from the ISS in 2020–2024; every other window was read once. A planned ISS burn counts as truth only when NASA&#39;s next trajectory shows it executed; one 2021 plan was not.</p>
 <div class="table-frame"><table>
 <thead>
 <tr>
@@ -484,9 +498,9 @@
 </tr>
 </tbody></table></div>
 <div class="sec-head sec-head-h2"><h2 id="6-uncertainty"><span class="sec-num">6</span>Uncertainty</h2><button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/evidence-supported-aso-catalog/6-uncertainty.html" data-model-title="Covariance through HPOP’s state-transition matrix" aria-label="Run it: Covariance through HPOP’s state-transition matrix"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span>Run it</button></div>
-<p>Covariance propagates through HPOP&#39;s state-transition matrix Φ with a declared white-acceleration process noise Q <a href="#r10">R10</a>:</p>
+<p>Covariance propagates through HPOP&#39;s state-transition matrix Φ with a declared white-acceleration process noise Q<sup><a href="#r10">10</a></sup>:</p>
 <div class="math-display"><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mi>P</mi><mo stretchy="false">(</mo><mi>t</mi><mo stretchy="false">)</mo><mo>=</mo><mi mathvariant="normal">Φ</mi><mo stretchy="false">(</mo><mi>t</mi><mo separator="true">,</mo><msub><mi>t</mi><mn>0</mn></msub><mo stretchy="false">)</mo><mtext> </mtext><msub><mi>P</mi><mn>0</mn></msub><mtext> </mtext><mi mathvariant="normal">Φ</mi><mo stretchy="false">(</mo><mi>t</mi><mo separator="true">,</mo><msub><mi>t</mi><mn>0</mn></msub><msup><mo stretchy="false">)</mo><mi mathvariant="sans-serif">T</mi></msup><mo>+</mo><mi>Q</mi><mo stretchy="false">(</mo><mi>t</mi><mo stretchy="false">)</mo></mrow><annotation encoding="application/x-tex">P(t) = \Phi(t, t_0)\, P_0\, \Phi(t, t_0)^{\mathsf{T}} + Q(t)</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal" style="margin-right:0.1389em;">P</span><span class="mopen">(</span><span class="mord mathnormal">t</span><span class="mclose">)</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1.1491em;vertical-align:-0.25em;"></span><span class="mord">Φ</span><span class="mopen">(</span><span class="mord mathnormal">t</span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal">t</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3011em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight">0</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mclose">)</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1389em;">P</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3011em;"><span style="top:-2.55em;margin-left:-0.1389em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight">0</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord">Φ</span><span class="mopen">(</span><span class="mord mathnormal">t</span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord"><span class="mord mathnormal">t</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3011em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight">0</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mclose"><span class="mclose">)</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.8991em;"><span style="top:-3.113em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathsf mtight">T</span></span></span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">+</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal">Q</span><span class="mopen">(</span><span class="mord mathnormal">t</span><span class="mclose">)</span></span></span></span></span></div>
-<p>Φ supplies neither P₀ nor Q; they come from a fit, a provider or an empirical model. Realism is scored against independent precise orbits by <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msup><mi>d</mi><mn>2</mn></msup><mo>=</mo><msup><mi mathvariant="bold">e</mi><mi mathvariant="sans-serif">T</mi></msup><msup><mi>P</mi><mrow><mo>−</mo><mn>1</mn></mrow></msup><mi mathvariant="bold">e</mi></mrow><annotation encoding="application/x-tex">d^2 = \mathbf{e}^{\mathsf{T}} P^{-1} \mathbf{e}</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8141em;"></span><span class="mord"><span class="mord mathnormal">d</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.8141em;"><span style="top:-3.063em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight">2</span></span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.8491em;"></span><span class="mord"><span class="mord mathbf">e</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.8491em;"><span style="top:-3.063em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathsf mtight">T</span></span></span></span></span></span></span></span></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1389em;">P</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.8141em;"><span style="top:-3.063em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight">−</span><span class="mord mtight">1</span></span></span></span></span></span></span></span></span><span class="mord mathbf">e</span></span></span></span> for a position error e, against χ² with 3 degrees of freedom: a covariance is realistic when the mean of d²/3 lies in [0.8, 1.25] and its 95 % coverage in [0.93, 0.97], the rule of <a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/tree/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e14">E14</a> after Zaidi and Hejduk <a href="#r32">R32</a>.</p>
+<p>Φ supplies neither P₀ nor Q; they come from a fit, a provider or an empirical model. Realism is scored against independent precise orbits by <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msup><mi>d</mi><mn>2</mn></msup><mo>=</mo><msup><mi mathvariant="bold">e</mi><mi mathvariant="sans-serif">T</mi></msup><msup><mi>P</mi><mrow><mo>−</mo><mn>1</mn></mrow></msup><mi mathvariant="bold">e</mi></mrow><annotation encoding="application/x-tex">d^2 = \mathbf{e}^{\mathsf{T}} P^{-1} \mathbf{e}</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.8141em;"></span><span class="mord"><span class="mord mathnormal">d</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.8141em;"><span style="top:-3.063em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight">2</span></span></span></span></span></span></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.8491em;"></span><span class="mord"><span class="mord mathbf">e</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.8491em;"><span style="top:-3.063em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mathsf mtight">T</span></span></span></span></span></span></span></span></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.1389em;">P</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.8141em;"><span style="top:-3.063em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight">−</span><span class="mord mtight">1</span></span></span></span></span></span></span></span></span><span class="mord mathbf">e</span></span></span></span> for a position error e, against χ² with 3 degrees of freedom: a covariance is realistic when the mean of d²/3 lies in [0.8, 1.25] and its 95 % coverage in [0.93, 0.97], the rule of <a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/tree/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e14">E14</a> after Zaidi and Hejduk<sup><a href="#r32">32</a></sup>.</p>
 <div class="table-frame"><table>
 <thead>
 <tr>
@@ -498,50 +512,50 @@
 </thead>
 <tbody><tr>
 <td>Formal covariance of an HPOP fit to laser ranges</td>
-<td>Weighted least squares <a href="#r16">R16</a></td>
+<td>Weighted least squares<sup><a href="#r16">16</a></sup></td>
 <td>Too small: mean d²/3 16–21, coverage 0.14–0.18</td>
 <td><a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e6/README.md">E6</a></td>
 </tr>
 <tr>
 <td>HPOP fit to OMM history alone</td>
-<td>Levit and Marshall 2011 <a href="#r19">R19</a></td>
+<td>Levit and Marshall 2011<sup><a href="#r19">19</a></sup></td>
 <td>Realistic for laser-ranged LEO (0.68–0.83, coverage 0.96–0.98); too small for the ISS within a day (4.8–7.6)</td>
 <td><a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e6/README.md">E6</a></td>
 </tr>
 <tr>
 <td>Batch fit to 3 days of OMM history (GPS)</td>
-<td>Osweiler 2006 <a href="#r33">R33</a>; Geul et al. 2017 <a href="#r34">R34</a></td>
+<td>Osweiler 2006<sup><a href="#r33">33</a></sup>; Geul et al. 2017<sup><a href="#r34">34</a></sup></td>
 <td>Mean d²/3 1.23 and 1.05 at 0 and 1 day, 81 at 3 days; consistency failed at every horizon</td>
 <td><a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e2/test/README.md">E2</a></td>
 </tr>
 <tr>
 <td>Errors of consecutive OMMs, against precise orbits</td>
-<td>Autocorrelation shown by Osweiler <a href="#r33">R33</a></td>
-<td>Along-track correlation 0.61–1.00 in four regimes. Four published constructions <a href="#r33">R33</a>, <a href="#r35">R35</a>, <a href="#r34">R34</a>, <a href="#r36">R36</a> are overconfident: mean d²/3 from 13 to over 10⁷. A covariance that models the correlation scores better at 1 day in three regimes but is consistent only for laser-ranged satellites at some horizons</td>
+<td>Autocorrelation shown by Osweiler<sup><a href="#r33">33</a></sup></td>
+<td>Along-track correlation 0.61–1.00 in four regimes. Four published constructions<sup><a href="#r33">33</a>,<a href="#r35">35</a>,<a href="#r34">34</a>,<a href="#r36">36</a></sup> are overconfident: mean d²/3 from 13 to over 10⁷. A covariance that models the correlation scores better at 1 day in three regimes but is consistent only for laser-ranged satellites at some horizons</td>
 <td><a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e2b/README.md">E2b</a></td>
 </tr>
 <tr>
 <td>SGP4 with the E2b error model, calibrated by regime and age</td>
-<td>Zaidi and Hejduk 2016 <a href="#r32">R32</a></td>
+<td>Zaidi and Hejduk 2016<sup><a href="#r32">32</a></sup></td>
 <td>Realistic in 2 of 35 regime-horizon cells (11 on the selection window)</td>
 <td><a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/tree/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e14">E14</a></td>
 </tr>
 <tr>
 <td>HPOP from the OMM epoch state, with P₀ and Q per regime</td>
-<td>SP covariance as the Astrodynamics Support Workstation (ASW) forms it <a href="#r37">R37</a></td>
+<td>SP covariance as the Astrodynamics Support Workstation (ASW) forms it<sup><a href="#r37">37</a></sup></td>
 <td>5 of 35 (6 on the selection window): 500–800 km at epoch, above 800 km to 2 days</td>
 <td><a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/tree/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e14">E14</a></td>
 </tr>
 <tr>
 <td>Density-forecast consider term, in the form of the Dynamic Consider Parameter</td>
-<td>Hejduk 2019 <a href="#r38">R38</a></td>
+<td>Hejduk 2019<sup><a href="#r38">38</a></sup></td>
 <td>No measurable effect in storms; density-error coverage 0.83–0.86 against 0.95</td>
 <td><a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/tree/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e14">E14</a></td>
 </tr>
 </tbody></table></div>
 <p>On the held-out window, maneuvers, the storm of 4 July 2026 and GNSS repositioning put heavy tails on the errors: mean d²/3 rises while medians and coverage stay near nominal in LEO, so realism found on the selection window did not carry over. Operator covariance enters as supplied, labeled with its source.</p>
 <h2 id="7-dynamics-and-verification"><span class="sec-num">7</span>Dynamics and verification</h2>
-<p>HPOP&#39;s full force model, as the catalog and the conjunction screen run it <a href="#r10">R10</a>, beside the SP options a Vector Covariance Message (VCM) names <a href="#r39">R39</a>:</p>
+<p>HPOP&#39;s full force model, as the catalog and the conjunction screen run it<sup><a href="#r10">10</a></sup>, beside the SP options a Vector Covariance Message (VCM) names<sup><a href="#r39">39</a></sup>:</p>
 <div class="table-frame"><table>
 <thead>
 <tr>
@@ -559,9 +573,9 @@
 </tr>
 <tr>
 <td>Atmosphere</td>
-<td>NRLMSISE-00 (Orekit&#39;s to 1e-8); JB2008 (Orekit&#39;s to 2e-14); Jacchia-Roberts (GMAT&#39;s <a href="#r40">R40</a>, bit for bit)</td>
-<td>JBH09, which is JB2008 with HASDM&#39;s calibration <a href="#r41">R41</a>; JAC70; MSIS90</td>
-<td>JB2008 matches Orekit&#39;s; HASDM&#39;s calibration is not public (section 5.4); Jacchia-Roberts and NRLMSISE-00 are declared substitutes for JAC70 and MSIS90</td>
+<td>NRLMSISE-00 (Orekit&#39;s to 1e-8); JB2008 (Orekit&#39;s to 2e-14); Jacchia-Roberts (GMAT&#39;s<sup><a href="#r40">40</a></sup>, bit for bit)</td>
+<td>JBH09, which is JB2008 with HASDM&#39;s calibration<sup><a href="#r41">41</a></sup>; JAC70; MSIS90</td>
+<td>JB2008 matches Orekit&#39;s; HASDM&#39;s calibration is not public (<a href="#54-drag-regime">section 5.4</a>); Jacchia-Roberts and NRLMSISE-00 are declared substitutes for JAC70 and MSIS90</td>
 </tr>
 <tr>
 <td>Third bodies</td>
@@ -590,7 +604,7 @@
 <tr>
 <td>Integrator</td>
 <td>RK78 at 1e-12, steps of at most 300 s; its own error after 3 days 0.1–1.2 m</td>
-<td>Eighth-order Gauss–Jackson on Cowell&#39;s equations <a href="#r42">R42</a>, <a href="#r43">R43</a></td>
+<td>Eighth-order Gauss–Jackson on Cowell&#39;s equations<sup><a href="#r42">42</a>,<a href="#r43">43</a></sup></td>
 <td>Declared substitute, converged</td>
 </tr>
 <tr>
@@ -601,7 +615,7 @@
 </tr>
 </tbody></table></div>
 <div class="sec-head sec-head-h3"><h3 id="agreement-with-orekit">Agreement with Orekit</h3><button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/evidence-supported-aso-catalog/agreement-with-orekit.html" data-model-title="HPOP against Orekit 13.1" aria-label="Run it: HPOP against Orekit 13.1"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span>Run it</button></div>
-<p>HPOP&#39;s Orekit 13.1 suite <a href="#r44">R44</a> holds 72 cases on five orbits (400 km, 700 km sun-synchronous, GPS, geostationary, Molniya), each 24 hours, compared hourly on identical states, constants, Earth orientation and space weather <a href="#r10">R10</a>:</p>
+<p>HPOP&#39;s Orekit 13.1 suite<sup><a href="#r44">44</a></sup> holds 72 cases on five orbits (400 km, 700 km sun-synchronous, GPS, geostationary, Molniya), each 24 hours, compared hourly on identical states, constants, Earth orientation and space weather<sup><a href="#r10">10</a></sup>:</p>
 <div class="table-frame"><table>
 <thead>
 <tr>
@@ -622,7 +636,7 @@
 <td>1.6 cm</td>
 </tr>
 </tbody></table></div>
-<p>State-transition matrices agree within 2e-5 and parameter sensitivities within 1.4e-4 (relative). What remains is integration error on both sides, about 1e-11 of the distance flown. Integrating Jacchia&#39;s diffusion equations numerically reproduces the closed forms of Jacchia-Roberts <a href="#r45">R45</a> to 1.6e-4.</p>
+<p>State-transition matrices agree within 2e-5 and parameter sensitivities within 1.4e-4 (relative). What remains is integration error on both sides, about 1e-11 of the distance flown. Integrating Jacchia&#39;s diffusion equations numerically reproduces the closed forms of Jacchia-Roberts<sup><a href="#r45">45</a></sup> to 1.6e-4.</p>
 <div class="sec-head sec-head-h3"><h3 id="accuracy-against-precise-orbits">Accuracy against precise orbits</h3><button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/evidence-supported-aso-catalog/accuracy-against-precise-orbits.html" data-model-title="HPOP against precise orbits" aria-label="Run it: HPOP against precise orbits"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span>Run it</button></div>
 <p>Experiment V1 starts the propagator from ILRS orbits of four geodetic spheres (LAGEOS-1/2 and ETALON-1/2; 16 seeds) and IGS orbits of 32 GPS satellites (96 seeds), adds forces one set at a time, and compares each 72-hour run with the same product <a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/v1/README.md">V1</a>. GPS radiation pressure is a deliberately crude cannonball. Median (largest) 3D error:</p>
 <div class="table-frame"><table>
@@ -678,8 +692,14 @@
 <td align="right">91 m (90 km)</td>
 </tr>
 </tbody></table></div>
-<p>The GPS maxima beyond a day are one satellite, NORAD 35752, in every force set. Two of four pre-registered checks failed: an added force did not reduce every seed&#39;s error (14 violations, all without tesseral harmonics), and a 20×20 field without the Sun and Moon beat zonals alone for only 53 of 96 GPS seeds. The two-body return (0.8 mm) and the E-d bound at 24 hours (246 m against 500 m) passed.</p>
-<p>HPOP&#39;s resident path, which holds the catalog in memory, reproduces its execution path to 0.052 mm over four days, at 0.645 s per object-day on one thread <a href="#r10">R10</a>.</p>
+<p>The GPS maxima beyond a day are one satellite, NORAD 35752, in every force set. Of four pre-registered checks, two passed and two failed:</p>
+<ol>
+<li>Passed: the two-body return, 0.8 mm.</li>
+<li>Passed: the E-d bound at 24 hours, 246 m against 500 m.</li>
+<li>Failed: an added force did not reduce every seed&#39;s error (14 violations, all without tesseral harmonics).</li>
+<li>Failed: a 20×20 field without the Sun and Moon beat zonals alone for only 53 of 96 GPS seeds.</li>
+</ol>
+<p>HPOP&#39;s resident path, which holds the catalog in memory, reproduces its execution path to 0.052 mm over four days, at 0.645 s per object-day on one thread<sup><a href="#r10">10</a></sup>.</p>
 <div class="sec-head sec-head-h2"><h2 id="8-association-and-selection"><span class="sec-num">8</span>Association and selection</h2><button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/evidence-supported-aso-catalog/8-association-and-selection.html" data-model-title="Associating observations with the catalog" aria-label="Run it: Associating observations with the catalog"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span>Run it</button></div>
 <p>Association asks whether records describe one object; selection picks a solution for an epoch, interval and use; estimation derives a new one. Candidates come from provider crosswalks, international designators and native-identifier histories, Vimpel&#39;s datefirst fields included; names and bare numbers are not join keys. Compatibility is tested on normalized ephemerides over shared intervals. Each candidate link is compatible, rejected, ambiguous or insufficient, and accepted links stay reversible. Selection takes, per regime and horizon, the source with the lowest median error on a training window of at least 30 samples <a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e3/README.md">E3</a>.</p>
 <div class="table-frame"><table>
@@ -692,7 +712,7 @@
 </thead>
 <tbody><tr>
 <td>Selection by evidence</td>
-<td>GPS: 3.5 cm at issue (section 5.1)</td>
+<td>GPS: 3.5 cm at issue (<a href="#51-gnss-and-laser-ranged-satellites">section 5.1</a>)</td>
 <td><a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e3/README.md">E3</a></td>
 </tr>
 <tr>
@@ -701,13 +721,19 @@
 <td><a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e3/README.md">E3</a></td>
 </tr>
 <tr>
-<td>Covariance intersection <a href="#r46">R46</a> of one provider&#39;s consecutive OMMs</td>
+<td>Covariance intersection<sup><a href="#r46">46</a></sup> of one provider&#39;s consecutive OMMs</td>
 <td>Collapses onto one set (0.90–1.00 of selection&#39;s error); naive fusion is overconfident (mean d²/3 3.3–700)</td>
 <td><a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e2b/README.md">E2b</a></td>
 </tr>
 </tbody></table></div>
 <div class="sec-head sec-head-h2"><h2 id="9-sp-message-interchange"><span class="sec-num">9</span>SP message interchange</h2><button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/evidence-supported-aso-catalog/9-sp-message-interchange.html" data-model-title="VCM fields, read, propagated, written" aria-label="Run it: VCM fields, read, propagated, written"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span>Run it</button></div>
-<p>The VCM carries an SP state, its force settings and an equinoctial covariance <a href="#r39">R39</a>. SDN&#39;s adapter reads a VCM into an HPOP request and writes the result back as a VCM, transforming the covariance with an exact Jacobian computed by forward-mode dual numbers <a href="#r47">R47</a>. The format states no covariance units, and no public definition was found. Four messages settle them: the survey&#39;s ISS sample and SP messages for a geostationary, a GPS and an eccentric (e = 0.59) orbit.</p>
+<p>The VCM carries an SP state, its force settings and an equinoctial covariance<sup><a href="#r39">39</a></sup>. SDN&#39;s adapter reads a VCM into an HPOP request and writes the result back as a VCM, transforming the covariance with an exact Jacobian computed by forward-mode dual numbers<sup><a href="#r47">47</a></sup>. The format states no covariance units, and no public definition was found. Four messages settle them:</p>
+<ol>
+<li>The survey&#39;s ISS sample</li>
+<li>An SP message for a geostationary orbit</li>
+<li>An SP message for a GPS orbit</li>
+<li>An SP message for an eccentric (e = 0.59) orbit</li>
+</ol>
 <div class="table-frame"><table>
 <thead>
 <tr>
@@ -730,8 +756,8 @@
 <p>A round trip through VCM text in SP&#39;s number format recovers the covariance to 2e-5 of its sigmas. A VCM naming JBH09 runs as JB2008 on SET&#39;s indices, which the caller supplies.</p>
 <div class="sec-head sec-head-h2"><h2 id="10-publication-and-reproduction"><span class="sec-num">10</span>Publication and reproduction</h2><button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/evidence-supported-aso-catalog/10-publication-and-reproduction.html" data-model-title="A V1 seed, reproduced here" aria-label="Run it: A V1 seed, reproduced here"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span>Run it</button></div>
 <p>Publication is transactional: acquire and hash the bytes, verify, normalize, validate, sign a manifest, then announce the new catalog head. Consumers read one complete, immutable snapshot; each update names the object, the prior and new solutions, the epoch, the recipe and the provenance. Content addressing and independent replication keep a snapshot retrievable from any node that holds it.</p>
-<p>An accepted numerical solution can carry an SGP4 companion: mean elements fitted to it over a declared interval and scored on a held-out stretch before release, as CelesTrak&#39;s supplemental GP fits operator ephemerides <a href="#r48">R48</a> and the 18th Space Defense Squadron&#39;s eGP fits SP states <a href="#r49">R49</a>. The fit RMS that CelesTrak publishes for each set is the benchmark.</p>
-<p>Each experiment&#39;s numbers come from a run manifest: the repository and module commits, each module&#39;s WebAssembly SHA-256 and the SHA-256 of every input; reports are generated from metrics <a href="#r1">R1</a>. The experiments&#39; public site runs the same modules in a web browser: a V1 seed reproduces the committed result exactly, and any Orekit case re-runs from its exact request. Space-Track element sets, SpaceX and Planet files and SET&#39;s indices are cited by URL and SHA-256, not copied.</p>
+<p>An accepted numerical solution can carry an SGP4 companion: mean elements fitted to it over a declared interval and scored on a held-out stretch before release, as CelesTrak&#39;s supplemental GP fits operator ephemerides<sup><a href="#r48">48</a></sup> and the 18th Space Defense Squadron&#39;s eGP fits SP states<sup><a href="#r49">49</a></sup>. The fit RMS that CelesTrak publishes for each set is the benchmark.</p>
+<p>Each experiment&#39;s numbers come from a run manifest: the repository and module commits, each module&#39;s WebAssembly SHA-256 and the SHA-256 of every input; reports are generated from metrics<sup><a href="#r1">1</a></sup>. The experiments&#39; public site runs the same modules in a web browser: a V1 seed reproduces the committed result exactly, and any Orekit case re-runs from its exact request. Space-Track element sets, SpaceX and Planet files and SET&#39;s indices are cited by URL and SHA-256, not copied.</p>
 <div class="table-frame"><table>
 <thead>
 <tr>
@@ -841,9 +867,9 @@
 <td><a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e3/README.md">E3</a></td>
 </tr>
 </tbody></table></div>
-<p>The HAC&#39;s position errors are not published <a href="#r2">R2</a>. The public figures: element sets in the HAC&#39;s own LEO conjunction regime (perigee above 500 km) err by 0.6–3 km from epoch to 72 hours <a href="#r49">R49</a>; one ASW covariance shown as an illustration has σ of 8.3 m radial, 332 m in-track and 2.1 m cross-track at epoch <a href="#r37">R37</a>; HASDM&#39;s density spread is 0.078 against JB2008&#39;s 0.148 (section 5.4).</p>
+<p>The HAC&#39;s position errors are not published<sup><a href="#r2">2</a></sup>. The public figures: element sets in the HAC&#39;s own LEO conjunction regime (perigee above 500 km) err by 0.6–3 km from epoch to 72 hours<sup><a href="#r49">49</a></sup>; one ASW covariance shown as an illustration has σ of 8.3 m radial, 332 m in-track and 2.1 m cross-track at epoch<sup><a href="#r37">37</a></sup>; HASDM&#39;s density spread is 0.078 against JB2008&#39;s 0.148 (<a href="#54-drag-regime">section 5.4</a>).</p>
 <div class="sec-head sec-head-h2"><h2 id="12-what-conjunction-assessment-consumes"><span class="sec-num">12</span>What conjunction assessment consumes</h2><button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/evidence-supported-aso-catalog/12-what-conjunction-assessment-consumes.html" data-model-title="A conjunction from fitted covariances" aria-label="Run it: A conjunction from fitted covariances"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span>Run it</button></div>
-<p>Conjunction screening <a href="#r50">R50</a> takes from one catalog snapshot, per object:</p>
+<p>Conjunction screening<sup><a href="#r50">50</a></sup> takes from one catalog snapshot, per object:</p>
 <div class="table-frame"><table>
 <thead>
 <tr>
@@ -857,7 +883,7 @@
 </tr>
 <tr>
 <td>Covariance</td>
-<td>Supplied by the operator, fitted, or modeled (section 6), with its calibration label</td>
+<td>Supplied by the operator, fitted, or modeled (<a href="#6-uncertainty">section 6</a>), with its calibration label</td>
 </tr>
 <tr>
 <td>Hard-body radius</td>
@@ -891,7 +917,7 @@
 </tr>
 <tr>
 <td>HPOP</td>
-<td>High-precision orbit propagation: numerical integration of the full force model of section 7</td>
+<td>High-precision orbit propagation: numerical integration of the full force model of <a href="#7-dynamics-and-verification">section 7</a></td>
 </tr>
 <tr>
 <td>Provider claim</td>
@@ -899,7 +925,7 @@
 </tr>
 <tr>
 <td>Level 0 to 3</td>
-<td>Processing levels of orbit data (section 2)</td>
+<td>Processing levels of orbit data (<a href="#2-evidence-model-and-records">section 2</a>)</td>
 </tr>
 <tr>
 <td>Ultra-rapid, final orbits</td>
