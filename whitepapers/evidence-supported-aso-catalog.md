@@ -12,7 +12,7 @@ Numerical evidence cutoff: 11 October 2026
 
 ## 1 Summary
 
-Space Data Network (SDN) builds a catalog of anthropogenic space objects (ASOs) from public and login-only sources. It keeps every provider's product as an attributed record and, object by object, publishes the solution with the best measured accuracy for the intended use, with its uncertainty and lineage. Accuracy is measured against independent precise orbits, under plans fixed before the test data were read [R1](#r1).
+Space Data Network (SDN) builds a catalog of anthropogenic space objects (ASOs) from public and login-only sources. It keeps every provider's product as an attributed record and, object by object, publishes the solution with the best measured accuracy for the intended use, with its uncertainty and lineage. Accuracy is measured against independent precise orbits, under plans fixed before the test data were read<sup>[1](#r1)</sup>.
 
 | Object class | Catalog product | Measured (median) |
 | --- | --- | --- |
@@ -23,11 +23,25 @@ Space Data Network (SDN) builds a catalog of anthropogenic space objects (ASOs) 
 
 HPOP's force models agree with Orekit within 1.6 cm over a day, and from precise states they leave a median 4.8 m against laser-ranging orbits after a day. Started from an OMM's own epoch state, HPOP is never better than SGP4: the start state, not the force model, limits it. None of the density corrections tested improves 1–3-day orbit prediction in its pre-registered test, and covariances proved realistic on held-out data in few regimes and horizons.
 
-Three results go beyond published work: GPS element-set correction fails on an unseen orbital plane (section 5.3); a density correction of the kind the Space Force's drag model uses, solved from Planet's public states, is scored on satellites that did not calibrate it (section 5.4); consecutive OMM errors are strongly correlated, and four published covariance constructions are overconfident (section 6). Pre-registered hypotheses that failed are reported as not supported.
+Three results go beyond published work:
+
+1. GPS element-set correction fails on an unseen orbital plane (section 5.3).
+2. A density correction of the kind the Space Force's drag model uses, solved from Planet's public states, is scored on satellites that did not calibrate it (section 5.4).
+3. Consecutive OMM errors are strongly correlated, and four published covariance constructions are overconfident (section 6).
+
+Pre-registered hypotheses that failed are reported as not supported.
 
 ## 2 Evidence model and records
 
-An orbit solution is an inference with five contributors: the object's physics, the dynamics model, the observations, the measurement model and the inference method. A provider's ephemeris or element set already embeds the provider's models and inference, so the catalog keeps it as an attributed provider claim, not as an observation. Agreement between products counts as independent confirmation only when their lineage is independent; unknown lineage is recorded as unknown.
+An orbit solution is an inference with five contributors:
+
+1. The object's physics
+2. The dynamics model
+3. The observations
+4. The measurement model
+5. The inference method
+
+A provider's ephemeris or element set already embeds the provider's models and inference, so the catalog keeps it as an attributed provider claim, not as an observation. Agreement between products counts as independent confirmation only when their lineage is independent; unknown lineage is recorded as unknown.
 
 Orbit data sit at four processing levels, by analogy with Earth-science data levels. A higher level is more processed, not better: it inherits every flaw below it, and re-epoching adds no evidence. Every source record declares its level.
 
@@ -53,36 +67,36 @@ Hashes establish byte identity and signatures establish attribution; physical va
 
 ## 3 Sources
 
-The inventory [R2](#r2) lists 97 public and login-only sources in eight groups, with access, terms, latency and use. Results draw on every source an experiment read; files are copied only where their terms allow, and the credits close this paper.
+The inventory<sup>[2](#r2)</sup> lists 97 public and login-only sources in eight groups, with access, terms, latency and use. Results draw on every source an experiment read; files are copied only where their terms allow, and the credits close this paper.
 
 | Group | Sources | Role |
 | --- | --- | --- |
 | A. Precise orbits | IGS and ESA GNSS orbits; ILRS orbits and normal points; Sentinel-1, Swarm, GRACE-FO and CryoSat-2 precise orbits | Truth; the GNSS and laser-ranged products |
 | B. Operator ephemerides | SpaceX Starlink (with covariance), Planet, NASA ISS, CMSE Tiangong, Intelsat; ILRS predictions | Operator products; drag and maneuver evidence |
 | C. Catalogs and observations | Space-Track GP history (OMM) and SATCAT; JSC Vimpel; SpaceMapper AOE; SatNOGS Doppler | Element sets; other providers' catalogs; public observations |
-| D. Density | Swarm and GRACE-FO densities; CHAMP and GRACE-A densities with the High Accuracy Satellite Drag Model (HASDM) [R3](#r3) | Density truth; the HASDM comparison |
+| D. Density | Swarm and GRACE-FO densities; CHAMP and GRACE-A densities with the High Accuracy Satellite Drag Model (HASDM)<sup>[3](#r3)</sup> | Density truth; the HASDM comparison |
 | E. Space weather | Space Environment Technologies' (SET) JB2008 indices; GFZ Kp, ap and F10.7; NOAA SWPC forecasts | Model drivers, as issued |
 | F. Earth orientation, gravity, ephemerides | IERS EOP; EGM2008, EGM96; FES2004; DE440 | Frames and dynamics |
 | G. Physical properties | GCAT; IGS satellite metadata | Priors for drag and radiation parameters |
 | H. The High Accuracy Catalog (HAC) and HASDM | Special Perturbations (SP) vectors; real-time HASDM | The comparison target (section 11) |
 
-SpaceMapper's AOE catalog (channel KY) holds 19,197 element sets that the provider attributes to its own sensor network [R4](#r4). AOE rewrites them every 3 hours; SDN takes a snapshot daily from the public web pages. SpaceMapper states no license, so the sets are cited, not copied. Doppler read from SatNOGS waterfall images made the ISS orbit 2.7–10.7 times worse than SGP4 [E6][e6].
+SpaceMapper's AOE catalog (channel KY) holds 19,197 element sets that the provider attributes to its own sensor network<sup>[4](#r4)</sup>. AOE rewrites them every 3 hours; SDN takes a snapshot daily from the public web pages. SpaceMapper states no license, so the sets are cited, not copied. Doppler read from SatNOGS waterfall images made the ISS orbit 2.7–10.7 times worse than SGP4 [E6][e6].
 
 ## 4 Normalization and model dispatch
 
 ### Vimpel osculating elements
 
-Vimpel's HEO product gives osculating elements in J2000 [R5](#r5). The standard perifocal rotation turns them into a J2000 state at the same epoch [R6](#r6), with μ = 398,600.4418 km³/s², under the identifier `vimpel:<id>` and no invented NORAD number [R7](#r7). Velocity differenced from 600 s position samples departs from the analytic velocity by up to 1.1 km/s, so it serves only as a diagnostic.
+Vimpel's HEO product gives osculating elements in J2000<sup>[5](#r5)</sup>. The standard perifocal rotation turns them into a J2000 state at the same epoch<sup>[6](#r6)</sup>, with μ = 398,600.4418 km³/s², under the identifier `vimpel:<id>` and no invented NORAD number<sup>[7](#r7)</sup>. Velocity differenced from 600 s position samples departs from the analytic velocity by up to 1.1 km/s, so it serves only as a diagnostic.
 
 ### The handoff contract
 
-An OMM holds SGP4 mean elements, not osculating ones. The catalog evaluates SGP4 at zero elapsed time, transforms position and velocity from TEME to GCRF at the same instant, and starts HPOP from that state [R8](#r8). SGP4's drag term B* becomes the ballistic parameter
+An OMM holds SGP4 mean elements, not osculating ones. The catalog evaluates SGP4 at zero elapsed time, transforms position and velocity from TEME to GCRF at the same instant, and starts HPOP from that state<sup>[8](#r8)</sup>. SGP4's drag term B* becomes the ballistic parameter
 
 $$
 B = \frac{C_D A}{m} = \frac{2B^*}{\rho_0}
 $$
 
-with ρ₀ from Spacetrack Report No. 3 [R9](#r9); 0.01 m²/kg stands in where B* ≤ 0, and Cr·A/m is 0.02 m²/kg [R10](#r10). The handoff is valid; whether it helps is measured in section 5.3.
+with ρ₀ from Spacetrack Report No. 3<sup>[9](#r9)</sup>; 0.01 m²/kg stands in where B* ≤ 0, and Cr·A/m is 0.02 m²/kg<sup>[10](#r10)</sup>. The handoff is valid; whether it helps is measured in section 5.3.
 
 ### Levels of measurement of OMM elements
 
@@ -90,37 +104,37 @@ OMM fields mix nominal (catalog number), ordinal (element-set number), interval 
 
 ### Dispatch, frames and time
 
-Each record is routed by its declared theory: mean elements to SGP4, osculating elements to the two-body conversion, states and ephemerides to frame transforms. Osculating elements offered to SGP4 are refused as a model mismatch. Frames follow the IERS Conventions (2010): IAU 2006/2000A, CIO-based, through ERFA, with IERS Earth orientation [R11](#r11). TEME, EME2000, GCRF and ITRF stay distinct; epochs are UTC and integration runs on TT.
+Each record is routed by its declared theory: mean elements to SGP4, osculating elements to the two-body conversion, states and ephemerides to frame transforms. Osculating elements offered to SGP4 are refused as a model mismatch. Frames follow the IERS Conventions (2010): IAU 2006/2000A, CIO-based, through ERFA, with IERS Earth orientation<sup>[11](#r11)</sup>. TEME, EME2000, GCRF and ITRF stay distinct; epochs are UTC and integration runs on TT.
 
 ## 5 Products by object class
 
-Each row is one method: its originators, our measured result (median 3D position error unless stated) and the experiment. Every experiment froze its plan before reading its test window [R1](#r1).
+Each row is one method: its originators, our measured result (median 3D position error unless stated) and the experiment. Every experiment froze its plan before reading its test window<sup>[1](#r1)</sup>.
 
 ### 5.1 GNSS and laser-ranged satellites
 
 | Method | Prior art | Measured | Evidence |
 | --- | --- | --- | --- |
-| Newest ultra-rapid analysis-centre orbit at issue, propagated numerically beyond | IGS products [R12](#r12) | GPS, 32 satellites: 3.5 cm at issue, 336 m at 7 days; the latest public OMM 1.5–1.7 km | [E3][e3] |
-| HPOP fitted to ILRS laser normal points | Laser-ranging orbit determination [R13](#r13) | Starlette, Stella, LARETS, WESTPAC, LARES: 7 m at the fit and 42 m at 7 days, against SGP4's 472 m and 685 m. One pass beats the OMM for a day; four passes beat it at every horizon to 7 days | [E6][e6] |
+| Newest ultra-rapid analysis-centre orbit at issue, propagated numerically beyond | IGS products<sup>[12](#r12)</sup> | GPS, 32 satellites: 3.5 cm at issue, 336 m at 7 days; the latest public OMM 1.5–1.7 km | [E3][e3] |
+| HPOP fitted to ILRS laser normal points | Laser-ranging orbit determination<sup>[13](#r13)</sup> | Starlette, Stella, LARETS, WESTPAC, LARES: 7 m at the fit and 42 m at 7 days, against SGP4's 472 m and 685 m. One pass beats the OMM for a day; four passes beat it at every horizon to 7 days | [E6][e6] |
 
 ### 5.2 Operator- and provider-ephemeris objects
 
 | Method | Prior art | Measured | Evidence |
 | --- | --- | --- | --- |
 | Operator ephemeris, within its span | Operator orbit determination | GNSS analysis centres' predictions (IGS for GPS, ESA for GLONASS): 0.1 m from final orbits at 0–12 h | [E4][e4] |
-| SGP4 on the latest public OMM, against operator ephemerides | Dyreby et al. 2025 [R14](#r14); Jankovic 2026 [R15](#r15) | At the file's start: Planet 0.59 km, ISS 0.82 km, GPS 1.23 km, Starlink 2.87 km, Intelsat 4.79 km; Starlink 13.8 km at 24 h | [E4][e4] |
-| Vimpel's state refined to Vimpel's ephemeris by one six-state correction | Weighted least squares [R16](#r16) | Withheld RMS 6.04–10.71 km before, 52.8–69.9 m after, on three 4-hour arcs: consistency with one provider, not accuracy | [R7](#r7) |
+| SGP4 on the latest public OMM, against operator ephemerides | Dyreby et al. 2025<sup>[14](#r14)</sup>; Jankovic 2026<sup>[15](#r15)</sup> | At the file's start: Planet 0.59 km, ISS 0.82 km, GPS 1.23 km, Starlink 2.87 km, Intelsat 4.79 km; Starlink 13.8 km at 24 h | [E4][e4] |
+| Vimpel's state refined to Vimpel's ephemeris by one six-state correction | Weighted least squares<sup>[16](#r16)</sup> | Withheld RMS 6.04–10.71 km before, 52.8–69.9 m after, on three 4-hour arcs: consistency with one provider, not accuracy | [R7](#r7)7
 
 ### 5.3 Objects with public OMMs only
 
 | Method | Prior art | Measured | Evidence |
 | --- | --- | --- | --- |
-| SGP4 on the latest public OMM | Hoots and Roehrich 1980 [R9](#r9); Vallado et al. 2006 [R8](#r8) | At issue: 0.31 km (laser-ranged LEO) to 1.57 km (GPS); by horizon in section 11 | [E3][e3] |
-| Along-track correction at epoch (GPS) | Ly et al. 2020: 65 % [R17](#r17); Hallgarten La Casta and Amato 2025 [R18](#r18) | RMS at epoch 2.04 → 0.79 km (61 % [53, 67]); the single-model form 8 %; worse than SGP4 by 7 days (2.55 against 1.88 km); its covariance fails the coverage gate. On an orbital plane outside the fit: 6 % [2, 10] | [E1][e1] |
-| HPOP from the OMM's epoch state | Vallado et al. 2006 [R8](#r8); Jankovic 2026 [R15](#r15) | Never better than SGP4 in four regimes (GPS, LEO with precise orbits, laser-ranged LEO and MEO); worse in all four by 72 h; at 24 h, 1.7 (GPS) to 11 (laser-ranged LEO) times SGP4's error | [E7][e7] |
-| HPOP fitted to an arc of OMM epoch states | Levit and Marshall 2011 [R19](#r19) | Better than SGP4 only at short horizons: 0.32–0.51 of its error to 12 h (laser-ranged LEO), 0.36–0.53 to 48 h on E1-corrected GPS sets; undecided beyond | [E7][e7] |
+| SGP4 on the latest public OMM | Hoots and Roehrich 1980<sup>[9](#r9)</sup>; Vallado et al. 2006<sup>[8](#r8)</sup> | At issue: 0.31 km (laser-ranged LEO) to 1.57 km (GPS); by horizon in section 11 | [E3][e3] |
+| Along-track correction at epoch (GPS) | Ly et al. 2020: 65 %<sup>[17](#r17)</sup>; Hallgarten La Casta and Amato 2025<sup>[18](#r18)</sup> | RMS at epoch 2.04 → 0.79 km (61 % [53, 67]); the single-model form 8 %; worse than SGP4 by 7 days (2.55 against 1.88 km); its covariance fails the coverage gate. On an orbital plane outside the fit: 6 % [2, 10] | [E1][e1] |
+| HPOP from the OMM's epoch state | Vallado et al. 2006<sup>[8](#r8)</sup>; Jankovic 2026<sup>[15](#r15)</sup> | Never better than SGP4 in four regimes (GPS, LEO with precise orbits, laser-ranged LEO and MEO); worse in all four by 72 h; at 24 h, 1.7 (GPS) to 11 (laser-ranged LEO) times SGP4's error | [E7][e7] |
+| HPOP fitted to an arc of OMM epoch states | Levit and Marshall 2011<sup>[19](#r19)</sup> | Better than SGP4 only at short horizons: 0.32–0.51 of its error to 12 h (laser-ranged LEO), 0.36–0.53 to 48 h on E1-corrected GPS sets; undecided beyond | [E7][e7] |
 
-The start state sets the limit. Over 6 days, HPOP leaves 0.2 km along track from a GPS satellite's IGS state and 8.4 km from its OMM epoch state (medians of 508 arcs) [R10](#r10). Laser ranges fix the start state, and the prediction then stays 20 to 60 times better than SGP4 to 7 days [E6][e6].
+The start state sets the limit. Over 6 days, HPOP leaves 0.2 km along track from a GPS satellite's IGS state and 8.4 km from its OMM epoch state (medians of 508 arcs)<sup>[10](#r10)</sup>. Laser ranges fix the start state, and the prediction then stays 20 to 60 times better than SGP4 to 7 days [E6][e6].
 
 ### 5.4 Drag regime
 
@@ -128,11 +142,11 @@ Density is scored by σ, the spread of ln(observed/model density) on satellites 
 
 | Method | Prior art | Measured | Evidence |
 | --- | --- | --- | --- |
-| JB2008 with SET's indices | Bowman et al. 2008 [R20](#r20) | σ 0.155 (Swarm, GRACE-FO, 2026); 0.148 on CHAMP and GRACE-A in 2003 and 2008, where HASDM scores 0.078 | [E5][e5] |
-| Temperature correction from accelerometer and precise-orbit densities, a stand-in for HASDM's calibration | Storz et al. 2005 [R21](#r21); Doornbos 2012 [R22](#r22) | σ 0.056, 64 % [57, 70] lower; 0.112 on HASDM's windows; forecast gain 9 % for one day; 3-day ratio 1.04 [0.96, 1.10]; inputs arrive 49–92 days late ([E8][e8]) | [E5][e5] |
-| Temperature correction from the OMM decay of 48 catalogued objects | Picone et al. 2005 [R23](#r23); Gondelach and Linares 2020 [R24](#r24); Gershman 2026 [R25](#r25) | σ 0.142, 8.4 % [−3.9, 18.3] lower (25 % required: not supported); 24.7 % lower in storms; as a forecast 16.8 % worse than JB2008; 3-day ratio 1.02; 0.270 on HASDM's windows | [E8][e8] |
+| JB2008 with SET's indices | Bowman et al. 2008<sup>[20](#r20)</sup> | σ 0.155 (Swarm, GRACE-FO, 2026); 0.148 on CHAMP and GRACE-A in 2003 and 2008, where HASDM scores 0.078 | [E5][e5] |
+| Temperature correction from accelerometer and precise-orbit densities, a stand-in for HASDM's calibration | Storz et al. 2005<sup>[21](#r21)</sup>; Doornbos 2012<sup>[22](#r22)</sup> | σ 0.056, 64 % [57, 70] lower; 0.112 on HASDM's windows; forecast gain 9 % for one day; 3-day ratio 1.04 [0.96, 1.10]; inputs arrive 49–92 days late ([E8][e8]) | [E5][e5] |
+| Temperature correction from the OMM decay of 48 catalogued objects | Picone et al. 2005<sup>[23](#r23)</sup>; Gondelach and Linares 2020<sup>[24](#r24)</sup>; Gershman 2026<sup>[25](#r25)</sup> | σ 0.142, 8.4 % [−3.9, 18.3] lower (25 % required: not supported); 24.7 % lower in storms; as a forecast 16.8 % worse than JB2008; 3-day ratio 1.02; 0.270 on HASDM's windows | [E8][e8] |
 
-**An open, DCA-form correction from public operator states** [E13][e13]. HASDM's Dynamic Calibration of the Atmosphere (DCA) corrects exospheric temperature every 3 hours from the drag of about 75–100 tracked calibration satellites, each with a constrained ballistic-coefficient correction [R21](#r21). E13 solves that form from public data alone: the common mode s of the daily drag of 36 Planet Doves, read through orbital energy, corrects JB2008's temperature, with a ballistic coefficient held constant per satellite over a block and a forecast with a 48-hour time constant. Published work derives density from operator ephemerides and scores density alone [R26](#r26), [R27](#r27), [R28](#r28), or assimilates commercial GPS states [R29](#r29). E13 scores the correction on satellites that did not calibrate it, over ten months of Planet states against Swarm and GRACE-FO, with the storm of January 2026 in a held-out block. With x′ the logarithmic residual of observed against JB2008 density in a 12-hour window,
+**An open, DCA-form correction from public operator states** [E13][e13]. HASDM's Dynamic Calibration of the Atmosphere (DCA) corrects exospheric temperature every 3 hours from the drag of about 75–100 tracked calibration satellites, each with a constrained ballistic-coefficient correction<sup>[21](#r21)</sup>. E13 solves that form from public data alone: the common mode s of the daily drag of 36 Planet Doves, read through orbital energy, corrects JB2008's temperature, with a ballistic coefficient held constant per satellite over a block and a forecast with a 48-hour time constant. Published work derives density from operator ephemerides and scores density alone<sup>[26](#r26),[27](#r27),[28](#r28)</sup>, or assimilates commercial GPS states<sup>[29](#r29)</sup>. E13 scores the correction on satellites that did not calibrate it, over ten months of Planet states against Swarm and GRACE-FO, with the storm of January 2026 in a held-out block. With x′ the logarithmic residual of observed against JB2008 density in a 12-hour window,
 
 $$
 R_1 = 1 - \frac{\operatorname{sd}(x' - s)}{\operatorname{sd}(x')}
@@ -150,7 +164,7 @@ The correction does not follow storms. Exploratory, on one NRLMSISE-00 reference
 
 ### 5.5 Maneuver detection
 
-The detector compares the trajectories of consecutive element sets at one instant, whatever propagator answers its queries: a crossing test and a robust likelihood-ratio test for steps in orbit-averaged energy and orbit plane, merged by default [R10](#r10). It builds on element-set time series [R30](#r30) and the generalized likelihood ratio for jumps [R31](#r31). Thresholds came from the ISS in 2020–2024; every other window was read once. A planned ISS burn counts as truth only when NASA's next trajectory shows it executed; one 2021 plan was not.
+The detector compares the trajectories of consecutive element sets at one instant, whatever propagator answers its queries: a crossing test and a robust likelihood-ratio test for steps in orbit-averaged energy and orbit plane, merged by default<sup>[10](#r10)</sup>. It builds on element-set time series<sup>[30](#r30)</sup> and the generalized likelihood ratio for jumps<sup>[31](#r31)</sup>. Thresholds came from the ISS in 2020–2024; every other window was read once. A planned ISS burn counts as truth only when NASA's next trajectory shows it executed; one 2021 plan was not.
 
 | Held-out class, 2025–2026 | Truth | Found | False alarms |
 | --- | --- | --- | --- |
@@ -161,44 +175,44 @@ The detector compares the trajectories of consecutive element sets at one instan
 
 ## 6 Uncertainty
 
-Covariance propagates through HPOP's state-transition matrix Φ with a declared white-acceleration process noise Q [R10](#r10):
+Covariance propagates through HPOP's state-transition matrix Φ with a declared white-acceleration process noise Q<sup>[10](#r10)</sup>:
 
 $$
 P(t) = \Phi(t, t_0)\, P_0\, \Phi(t, t_0)^{\mathsf{T}} + Q(t)
 $$
 
-Φ supplies neither P₀ nor Q; they come from a fit, a provider or an empirical model. Realism is scored against independent precise orbits by $d^2 = \mathbf{e}^{\mathsf{T}} P^{-1} \mathbf{e}$ for a position error e, against χ² with 3 degrees of freedom: a covariance is realistic when the mean of d²/3 lies in [0.8, 1.25] and its 95 % coverage in [0.93, 0.97], the rule of [E14][e14] after Zaidi and Hejduk [R32](#r32).
+Φ supplies neither P₀ nor Q; they come from a fit, a provider or an empirical model. Realism is scored against independent precise orbits by $d^2 = \mathbf{e}^{\mathsf{T}} P^{-1} \mathbf{e}$ for a position error e, against χ² with 3 degrees of freedom: a covariance is realistic when the mean of d²/3 lies in [0.8, 1.25] and its 95 % coverage in [0.93, 0.97], the rule of [E14][e14] after Zaidi and Hejduk<sup>[32](#r32)</sup>.
 
 | Covariance | Prior art | Held-out result | Evidence |
 | --- | --- | --- | --- |
-| Formal covariance of an HPOP fit to laser ranges | Weighted least squares [R16](#r16) | Too small: mean d²/3 16–21, coverage 0.14–0.18 | [E6][e6] |
-| HPOP fit to OMM history alone | Levit and Marshall 2011 [R19](#r19) | Realistic for laser-ranged LEO (0.68–0.83, coverage 0.96–0.98); too small for the ISS within a day (4.8–7.6) | [E6][e6] |
-| Batch fit to 3 days of OMM history (GPS) | Osweiler 2006 [R33](#r33); Geul et al. 2017 [R34](#r34) | Mean d²/3 1.23 and 1.05 at 0 and 1 day, 81 at 3 days; consistency failed at every horizon | [E2][e2] |
-| Errors of consecutive OMMs, against precise orbits | Autocorrelation shown by Osweiler [R33](#r33) | Along-track correlation 0.61–1.00 in four regimes. Four published constructions [R33](#r33), [R35](#r35), [R34](#r34), [R36](#r36) are overconfident: mean d²/3 from 13 to over 10⁷. A covariance that models the correlation scores better at 1 day in three regimes but is consistent only for laser-ranged satellites at some horizons | [E2b][e2b] |
-| SGP4 with the E2b error model, calibrated by regime and age | Zaidi and Hejduk 2016 [R32](#r32) | Realistic in 2 of 35 regime-horizon cells (11 on the selection window) | [E14][e14] |
-| HPOP from the OMM epoch state, with P₀ and Q per regime | SP covariance as the Astrodynamics Support Workstation (ASW) forms it [R37](#r37) | 5 of 35 (6 on the selection window): 500–800 km at epoch, above 800 km to 2 days | [E14][e14] |
-| Density-forecast consider term, in the form of the Dynamic Consider Parameter | Hejduk 2019 [R38](#r38) | No measurable effect in storms; density-error coverage 0.83–0.86 against 0.95 | [E14][e14] |
+| Formal covariance of an HPOP fit to laser ranges | Weighted least squares<sup>[16](#r16)</sup> | Too small: mean d²/3 16–21, coverage 0.14–0.18 | [E6][e6] |
+| HPOP fit to OMM history alone | Levit and Marshall 2011<sup>[19](#r19)</sup> | Realistic for laser-ranged LEO (0.68–0.83, coverage 0.96–0.98); too small for the ISS within a day (4.8–7.6) | [E6][e6] |
+| Batch fit to 3 days of OMM history (GPS) | Osweiler 2006<sup>[33](#r33)</sup>; Geul et al. 2017<sup>[34](#r34)</sup> | Mean d²/3 1.23 and 1.05 at 0 and 1 day, 81 at 3 days; consistency failed at every horizon | [E2][e2] |
+| Errors of consecutive OMMs, against precise orbits | Autocorrelation shown by Osweiler<sup>[33](#r33)</sup> | Along-track correlation 0.61–1.00 in four regimes. Four published constructions<sup>[33](#r33),[35](#r35),[34](#r34),[36](#r36)</sup> are overconfident: mean d²/3 from 13 to over 10⁷. A covariance that models the correlation scores better at 1 day in three regimes but is consistent only for laser-ranged satellites at some horizons | [E2b][e2b] |
+| SGP4 with the E2b error model, calibrated by regime and age | Zaidi and Hejduk 2016<sup>[32](#r32)</sup> | Realistic in 2 of 35 regime-horizon cells (11 on the selection window) | [E14][e14] |
+| HPOP from the OMM epoch state, with P₀ and Q per regime | SP covariance as the Astrodynamics Support Workstation (ASW) forms it<sup>[37](#r37)</sup> | 5 of 35 (6 on the selection window): 500–800 km at epoch, above 800 km to 2 days | [E14][e14] |
+| Density-forecast consider term, in the form of the Dynamic Consider Parameter | Hejduk 2019<sup>[38](#r38)</sup> | No measurable effect in storms; density-error coverage 0.83–0.86 against 0.95 | [E14][e14] |
 
 On the held-out window, maneuvers, the storm of 4 July 2026 and GNSS repositioning put heavy tails on the errors: mean d²/3 rises while medians and coverage stay near nominal in LEO, so realism found on the selection window did not carry over. Operator covariance enters as supplied, labeled with its source.
 
 ## 7 Dynamics and verification
 
-HPOP's full force model, as the catalog and the conjunction screen run it [R10](#r10), beside the SP options a Vector Covariance Message (VCM) names [R39](#r39):
+HPOP's full force model, as the catalog and the conjunction screen run it<sup>[10](#r10)</sup>, beside the SP options a Vector Covariance Message (VCM) names<sup>[39](#r39)</sup>:
 
 | Model | HPOP | SP, as a VCM names it | Equivalence |
 | --- | --- | --- | --- |
 | Geopotential | EGM2008 to degree and order 70; EGM96 and tesseral truncation (36Z,24T) selectable | EGM-96 with zonal and tesseral degrees | EGM96 cases within 1 cm of Orekit |
-| Atmosphere | NRLMSISE-00 (Orekit's to 1e-8); JB2008 (Orekit's to 2e-14); Jacchia-Roberts (GMAT's [R40](#r40), bit for bit) | JBH09, which is JB2008 with HASDM's calibration [R41](#r41); JAC70; MSIS90 | JB2008 matches Orekit's; HASDM's calibration is not public (section 5.4); Jacchia-Roberts and NRLMSISE-00 are declared substitutes for JAC70 and MSIS90 |
+| Atmosphere | NRLMSISE-00 (Orekit's to 1e-8); JB2008 (Orekit's to 2e-14); Jacchia-Roberts (GMAT's<sup>[40](#r40)</sup>, bit for bit) | JBH09, which is JB2008 with HASDM's calibration<sup>[41](#r41)</sup>; JAC70; MSIS90 | JB2008 matches Orekit's; HASDM's calibration is not public (section 5.4); Jacchia-Roberts and NRLMSISE-00 are declared substitutes for JAC70 and MSIS90 |
 | Third bodies | Sun, Moon, Venus, Mars and Jupiter from DE440s | Sun and Moon | Sun and Moon within 1 cm of Orekit |
 | Radiation | Cannonball with a conical shadow; Earth albedo and infrared | Solar radiation pressure, AGOM | Within 1 cm of Orekit |
 | Tides, relativity | IERS 2010 solid tides and relativity; FES2004 ocean tides to 30×30 | Solid Earth tides | Within 1 cm of Orekit |
 | Drag parameter, thrust | Cd·A/m and its rate; in-track acceleration | B, BDOT; in-track thrust | Within 1.6 cm of Orekit |
-| Integrator | RK78 at 1e-12, steps of at most 300 s; its own error after 3 days 0.1–1.2 m | Eighth-order Gauss–Jackson on Cowell's equations [R42](#r42), [R43](#r43) | Declared substitute, converged |
+| Integrator | RK78 at 1e-12, steps of at most 300 s; its own error after 3 days 0.1–1.2 m | Eighth-order Gauss–Jackson on Cowell's equations<sup>[42](#r42),[43](#r43)</sup> | Declared substitute, converged |
 | Earth orientation | IAU 2006/2000A with daily IERS rows | IAU 1980 nutation, truncated | Declared substitute |
 
 ### Agreement with Orekit
 
-HPOP's Orekit 13.1 suite [R44](#r44) holds 72 cases on five orbits (400 km, 700 km sun-synchronous, GPS, geostationary, Molniya), each 24 hours, compared hourly on identical states, constants, Earth orientation and space weather [R10](#r10):
+HPOP's Orekit 13.1 suite<sup>[44](#r44)</sup> holds 72 cases on five orbits (400 km, 700 km sun-synchronous, GPS, geostationary, Molniya), each 24 hours, compared hourly on identical states, constants, Earth orientation and space weather<sup>[10](#r10)</sup>:
 
 | Force set | Largest 3D difference |
 | --- | --- |
@@ -206,7 +220,7 @@ HPOP's Orekit 13.1 suite [R44](#r44) holds 72 cases on five orbits (400 km, 700 
 | Gravity field, third bodies, radiation pressure, tides, relativity, in-track thrust | Under 1 cm |
 | With drag (NRLMSISE-00 or JB2008, daily space weather, drag rate) | 1.6 cm |
 
-State-transition matrices agree within 2e-5 and parameter sensitivities within 1.4e-4 (relative). What remains is integration error on both sides, about 1e-11 of the distance flown. Integrating Jacchia's diffusion equations numerically reproduces the closed forms of Jacchia-Roberts [R45](#r45) to 1.6e-4.
+State-transition matrices agree within 2e-5 and parameter sensitivities within 1.4e-4 (relative). What remains is integration error on both sides, about 1e-11 of the distance flown. Integrating Jacchia's diffusion equations numerically reproduces the closed forms of Jacchia-Roberts<sup>[45](#r45)</sup> to 1.6e-4.
 
 ### Accuracy against precise orbits
 
@@ -221,9 +235,14 @@ Experiment V1 starts the propagator from ILRS orbits of four geodetic spheres (L
 | E-e: E-d with the full 20×20 field and IERS Earth orientation | 6.2 m (15 m) | 18.6 m (51 m) | 29.5 m (117 m) | 92 m (90 km) |
 | E-f: E-e with IERS 2010 solid tides and relativity | 4.8 m (10 m) | 13.9 m (31 m) | 28.5 m (117 m) | 91 m (90 km) |
 
-The GPS maxima beyond a day are one satellite, NORAD 35752, in every force set. Two of four pre-registered checks failed: an added force did not reduce every seed's error (14 violations, all without tesseral harmonics), and a 20×20 field without the Sun and Moon beat zonals alone for only 53 of 96 GPS seeds. The two-body return (0.8 mm) and the E-d bound at 24 hours (246 m against 500 m) passed.
+The GPS maxima beyond a day are one satellite, NORAD 35752, in every force set. Of four pre-registered checks, two passed and two failed:
 
-HPOP's resident path, which holds the catalog in memory, reproduces its execution path to 0.052 mm over four days, at 0.645 s per object-day on one thread [R10](#r10).
+1. Passed: the two-body return, 0.8 mm.
+2. Passed: the E-d bound at 24 hours, 246 m against 500 m.
+3. Failed: an added force did not reduce every seed's error (14 violations, all without tesseral harmonics).
+4. Failed: a 20×20 field without the Sun and Moon beat zonals alone for only 53 of 96 GPS seeds.
+
+HPOP's resident path, which holds the catalog in memory, reproduces its execution path to 0.052 mm over four days, at 0.645 s per object-day on one thread<sup>[10](#r10)</sup>.
 
 ## 8 Association and selection
 
@@ -233,11 +252,16 @@ Association asks whether records describe one object; selection picks a solution
 | --- | --- | --- |
 | Selection by evidence | GPS: 3.5 cm at issue (section 5.1) | [E3][e3] |
 | Fusion of sources | Never better than selection: 1.07–1.17 times its error in GPS at 1–7 days, equal elsewhere | [E3][e3] |
-| Covariance intersection [R46](#r46) of one provider's consecutive OMMs | Collapses onto one set (0.90–1.00 of selection's error); naive fusion is overconfident (mean d²/3 3.3–700) | [E2b][e2b] |
+| Covariance intersection<sup>[46](#r46)</sup> of one provider's consecutive OMMs | Collapses onto one set (0.90–1.00 of selection's error); naive fusion is overconfident (mean d²/3 3.3–700) | [E2b][e2b] |
 
 ## 9 SP message interchange
 
-The VCM carries an SP state, its force settings and an equinoctial covariance [R39](#r39). SDN's adapter reads a VCM into an HPOP request and writes the result back as a VCM, transforming the covariance with an exact Jacobian computed by forward-mode dual numbers [R47](#r47). The format states no covariance units, and no public definition was found. Four messages settle them: the survey's ISS sample and SP messages for a geostationary, a GPS and an eccentric (e = 0.59) orbit.
+The VCM carries an SP state, its force settings and an equinoctial covariance<sup>[39](#r39)</sup>. SDN's adapter reads a VCM into an HPOP request and writes the result back as a VCM, transforming the covariance with an exact Jacobian computed by forward-mode dual numbers<sup>[47](#r47)</sup>. The format states no covariance units, and no public definition was found. Four messages settle them:
+
+1. The survey's ISS sample
+2. An SP message for a geostationary orbit
+3. An SP message for a GPS orbit
+4. An SP message for an eccentric (e = 0.59) orbit
 
 | Covariance rows | Reading | Evidence |
 | --- | --- | --- |
@@ -250,9 +274,9 @@ A round trip through VCM text in SP's number format recovers the covariance to 2
 
 Publication is transactional: acquire and hash the bytes, verify, normalize, validate, sign a manifest, then announce the new catalog head. Consumers read one complete, immutable snapshot; each update names the object, the prior and new solutions, the epoch, the recipe and the provenance. Content addressing and independent replication keep a snapshot retrievable from any node that holds it.
 
-An accepted numerical solution can carry an SGP4 companion: mean elements fitted to it over a declared interval and scored on a held-out stretch before release, as CelesTrak's supplemental GP fits operator ephemerides [R48](#r48) and the 18th Space Defense Squadron's eGP fits SP states [R49](#r49). The fit RMS that CelesTrak publishes for each set is the benchmark.
+An accepted numerical solution can carry an SGP4 companion: mean elements fitted to it over a declared interval and scored on a held-out stretch before release, as CelesTrak's supplemental GP fits operator ephemerides<sup>[48](#r48)</sup> and the 18th Space Defense Squadron's eGP fits SP states<sup>[49](#r49)</sup>. The fit RMS that CelesTrak publishes for each set is the benchmark.
 
-Each experiment's numbers come from a run manifest: the repository and module commits, each module's WebAssembly SHA-256 and the SHA-256 of every input; reports are generated from metrics [R1](#r1). The experiments' public site runs the same modules in a web browser: a V1 seed reproduces the committed result exactly, and any Orekit case re-runs from its exact request. Space-Track element sets, SpaceX and Planet files and SET's indices are cited by URL and SHA-256, not copied.
+Each experiment's numbers come from a run manifest: the repository and module commits, each module's WebAssembly SHA-256 and the SHA-256 of every input; reports are generated from metrics<sup>[1](#r1)</sup>. The experiments' public site runs the same modules in a web browser: a V1 seed reproduces the committed result exactly, and any Orekit case re-runs from its exact request. Space-Track element sets, SpaceX and Planet files and SET's indices are cited by URL and SHA-256, not copied.
 
 | Evidence | Commit |
 | --- | --- |
@@ -282,11 +306,11 @@ Median 3D position error against precise orbits, by object class and age of the 
 | Laser-ranged MEO (5) | Public OMM, SGP4 | 411 m | 438 m | 395 m | 413 m | [E3][e3] |
 | LEO, 400–800 km (6) | Public OMM, SGP4 | 566 m | 597 m | 760 m | 1.24 km | [E3][e3] |
 
-The HAC's position errors are not published [R2](#r2). The public figures: element sets in the HAC's own LEO conjunction regime (perigee above 500 km) err by 0.6–3 km from epoch to 72 hours [R49](#r49); one ASW covariance shown as an illustration has σ of 8.3 m radial, 332 m in-track and 2.1 m cross-track at epoch [R37](#r37); HASDM's density spread is 0.078 against JB2008's 0.148 (section 5.4).
+The HAC's position errors are not published<sup>[2](#r2)</sup>. The public figures: element sets in the HAC's own LEO conjunction regime (perigee above 500 km) err by 0.6–3 km from epoch to 72 hours<sup>[49](#r49)</sup>; one ASW covariance shown as an illustration has σ of 8.3 m radial, 332 m in-track and 2.1 m cross-track at epoch<sup>[37](#r37)</sup>; HASDM's density spread is 0.078 against JB2008's 0.148 (section 5.4).
 
 ## 12 What conjunction assessment consumes
 
-Conjunction screening [R50](#r50) takes from one catalog snapshot, per object:
+Conjunction screening<sup>[50](#r50)</sup> takes from one catalog snapshot, per object:
 
 | Input | From the catalog |
 | --- | --- |
