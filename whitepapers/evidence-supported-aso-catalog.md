@@ -282,7 +282,7 @@ Association asks whether records describe one object; selection picks a solution
 
 ## 9 SP message interchange
 
-The VCM carries an SP state, its force settings and an equinoctial covariance<sup>[39](#r39)</sup>. SDN's adapter reads a VCM into an HPOP request and writes the result back as a VCM, transforming the covariance with an exact Jacobian computed by forward-mode dual numbers<sup>[47](#r47)</sup>. The format states no covariance units, and no public definition was found. Four messages settle them:
+The VCM carries an SP state, its force settings and an equinoctial covariance<sup>[39](#r39)</sup>. SDN's adapter reads a VCM into an HPOP request, transforming the covariance from equinoctial to Cartesian with an exact Jacobian computed by forward-mode dual numbers<sup>[47](#r47)</sup>. The format states no covariance units, and no public definition was found. Four messages settle them:
 
 1. The survey's ISS sample
 2. An SP message for a geostationary orbit
@@ -294,7 +294,7 @@ The VCM carries an SP state, its force settings and an equinoctial covariance<su
 | Mean motion | Relative, dn/n; covariance scaled by max(1, weighted RMS)² | Every printed U, V and W sigma reproduced within 1 %; no absolute unit does (radians per 1000 s misses two radial sigmas by 1.7 and 2.0 times) |
 | B and AGOM | Fractions of the coefficients (1.5–9.7 %) | The GPS message against ESA's final orbit for one day: radial and in-track RMS 0.46 and 0.64 of their sigmas, cross-track 1.27; read as printed, the sigmas overstate the error 7 to 20 times |
 
-A round trip through VCM text in SP's number format recovers the covariance to 2e-5 of its sigmas. A VCM naming JBH09 runs as JB2008 on SET's indices, which the caller supplies.
+A VCM naming JBH09 runs as JB2008 on SET's indices, which the caller supplies.
 
 ## 10 Measured accuracy
 
