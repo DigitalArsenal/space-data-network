@@ -2,9 +2,9 @@
 
 Screening every catalog object against every other in seconds to minutes, for any propagator
 
-Anthony "TJ" Koury III, Dr. Moriba Jah and Claude Opus 5.5
+Anthony "TJ" Koury III and Claude Opus 5.5
 
-Koury: Edgesource, Space Data Network · tj@edgesource.com. Jah: The University of Texas at Austin; GaiaVerse Ltd. Claude: Anthropic.
+Koury: Edgesource, Space Data Network · tj@edgesource.com. Claude: Anthropic.
 
 Technical whitepaper 1.9 | 11 October 2026
 
@@ -26,7 +26,7 @@ Five design choices produce that speed:
 
 The screen reproduces the module's single-call screen where both can run. On 4,000 objects over one day, all 1,068 conjunctions match, with TCA within 0.64 ms and miss distance within 5 mm; the single call takes 32.9 s and the windowed screen 0.44 s.
 
-Against SOCRATES on the element sets SOCRATES itself used, TCA agrees within 0.5 ms and miss distance within 2.4 m for 95 % of cataloged pairs, the precision SOCRATES reports. Each event reports the covariance-free maximum probability. With an empirical model of element-set prediction error, events also carry a covariance-based probability. It is labeled calibrated only where held-out precise orbits confirm the covariance: LEO 600 to 800 km, 13,088 of the 292,516 three-day conjunctions. The model<sup>[1](#r1)</sup> adds 1.1 s to the 19 s screen (section 7).
+Against SOCRATES on the element sets SOCRATES itself used, TCA agrees within 0.5 ms and miss distance within 2.4 m for 95 % of cataloged pairs, the precision SOCRATES reports. Each event reports the covariance-free maximum probability. With an empirical model of element-set prediction error, events also carry a covariance-based probability. It is labeled calibrated only where held-out precise orbits confirm the covariance: LEO 600 to 800 km, 13,088 of the 292,516 three-day conjunctions. There, screening on the uncertainty region missed 0–0.4 % of true collisions, against 2.7–16 % for a probability threshold of 1e-4, whose probabilities a large covariance dilutes (section 7). The model<sup>[1](#r1)</sup> adds 1.1 s to the 19 s screen (section 7).
 
 Operators keep their most precise orbits and planned maneuvers private. Section 8 specifies **private screening**: two operators learn when their objects come close without exchanging trajectories, by computing distances on homomorphically encrypted positions.
 - **Cost.** Its arithmetic is measured: 0.17 s and 8.7 MB per pair-day at 1 s steps.
@@ -653,7 +653,7 @@ This paper reports computation speed, agreement between implementations and with
 
 ### R1
 
-Koury, A. and Jah, M. K. Evidence-Supported ASO Catalog. Space Data Network technical whitepaper 2.0, 11 October 2026. [Paper](evidence-supported-aso-catalog.md)
+Koury, A. Evidence-Supported ASO Catalog. Space Data Network technical whitepaper 2.0, 11 October 2026. [Paper](evidence-supported-aso-catalog.md)
 
 ### R2
 

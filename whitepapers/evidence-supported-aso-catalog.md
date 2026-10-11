@@ -2,9 +2,9 @@
 
 An attributed orbital catalog for Space Data Network
 
-Anthony "TJ" Koury III, Dr. Moriba Jah and Claude Opus 5.5
+Anthony "TJ" Koury III and Claude Opus 5.5
 
-Koury: Edgesource, Space Data Network. Jah: The University of Texas at Austin; GaiaVerse Ltd. Claude: Anthropic.
+Koury: Edgesource, Space Data Network. Claude: Anthropic.
 
 Technical whitepaper 2.0 | 11 October 2026
 
@@ -21,7 +21,13 @@ Space Data Network (SDN) builds a catalog of anthropogenic space objects (ASOs) 
 | Satellites with operator ephemerides | The operator's ephemeris | Public element sets (OMMs) lie 0.6–5 km from it |
 | Objects known only from public OMMs | SGP4 on the OMM | 0.3–1.6 km at issue |
 
-HPOP's force models agree with Orekit within 1.6 cm over a day, and from precise states they leave a median 4.8 m against laser-ranging orbits after a day. Started from an OMM's own epoch state, HPOP is never better than SGP4: the start state, not the force model, limits it. None of the density corrections tested improves 1–3-day orbit prediction in its pre-registered test, and covariances proved realistic on held-out data in few regimes and horizons.
+For most objects the only public input is the OMM, and the catalog takes it as it is. What the catalog adds is a measured account of each input's error, and screening that acts on it safely:
+
+1. **Measured error as covariance.** An orbit propagated from an OMM's epoch state carries a covariance equal to the error measured for its orbit regime and element-set age. That error is measured against independent orbits in every regime that has them: GNSS analysis-centre orbits, laser ranging, LEO precise orbits, operator ephemerides and radio-occultation receivers. A covariance is labeled calibrated only where held-out data confirm it (section 6).
+2. **SDN's own atmosphere.** Drag uses JB2008 or NRLMSISE-00 with an open correction in the form of the Space Force's Dynamic Calibration of the Atmosphere, solved from public operator states. It explains 25–40 % of the density variation measured by satellites that did not calibrate it; 1–3-day position error is unchanged (ratios 0.98–1.02) (section 5.4).
+3. **Maneuvers.** A detector reads each object's element-set history for steps in orbital energy and plane, and reports each maneuver's time and size. On held-out data it found 22 of 25 ISS burns and all 6 GPS maneuvers in precise orbits; geostationary station-keeping is harder, 4 of 11 (section 5.5).
+4. **Better start states where data allow.** HPOP's force models agree with Orekit within 1.6 cm over a day. Fitted to laser ranges, HPOP stays 20–60 times better than SGP4 to 7 days; fitted to an arc of corrected OMMs, it halves SGP4's error to two days in GPS (section 5.3).
+5. **Screening that stays safe when the covariance is large.** A large covariance spreads a collision's probability thin: on real OMM errors, a probability threshold of 1e-4 missed 2.7–16 % of true collisions. Where held-out data confirm the covariance, screening on the uncertainty region missed 0–0.4 %, at the cost of more false alerts, and every event also carries the covariance-free maximum probability<sup>[50](#r50)</sup>. Large uncertainty makes the screen cautious, not blind.
 
 Three results go beyond published work:
 
@@ -131,7 +137,7 @@ Each row is one method: its originators, our measured result (median 3D position
 | --- | --- | --- | --- |
 | SGP4 on the latest public OMM | Hoots and Roehrich 1980<sup>[9](#r9)</sup>; Vallado et al. 2006<sup>[8](#r8)</sup> | At issue: 0.31 km (laser-ranged LEO) to 1.57 km (GPS); by horizon in section 11 | [E3][e3] |
 | Along-track correction at epoch (GPS) | Ly et al. 2020: 65 %<sup>[17](#r17)</sup>; Hallgarten La Casta and Amato 2025<sup>[18](#r18)</sup> | RMS at epoch 2.04 → 0.79 km (61 % [53, 67]); the single-model form 8 %; worse than SGP4 by 7 days (2.55 against 1.88 km); its covariance fails the coverage gate. On an orbital plane outside the fit: 6 % [2, 10] | [E1][e1] |
-| HPOP from the OMM's epoch state | Vallado et al. 2006<sup>[8](#r8)</sup>; Jankovic 2026<sup>[15](#r15)</sup> | Never better than SGP4 in four regimes (GPS, LEO with precise orbits, laser-ranged LEO and MEO); worse in all four by 72 h; at 24 h, 1.7 (GPS) to 11 (laser-ranged LEO) times SGP4's error | [E7][e7] |
+| HPOP from the OMM's epoch state | Vallado et al. 2006<sup>[8](#r8)</sup>; Jankovic 2026<sup>[15](#r15)</sup> | Equal to SGP4 at epoch, then larger as the OMM's start-state error grows: at 24 h, 1.7 (GPS) to 11 (laser-ranged LEO) times SGP4's error; larger in all four regimes (GPS, LEO with precise orbits, laser-ranged LEO and MEO) by 72 h | [E7][e7] |
 | HPOP fitted to an arc of OMM epoch states | Levit and Marshall 2011<sup>[19](#r19)</sup> | Better than SGP4 only at short horizons: 0.32–0.51 of its error to 12 h (laser-ranged LEO), 0.36–0.53 to 48 h on E1-corrected GPS sets; undecided beyond | [E7][e7] |
 
 The start state sets the limit. Over 6 days, HPOP leaves 0.2 km along track from a GPS satellite's IGS state and 8.4 km from its OMM epoch state (medians of 508 arcs)<sup>[10](#r10)</sup>. Laser ranges fix the start state, and the prediction then stays 20 to 60 times better than SGP4 to 7 days [E6][e6].
@@ -558,7 +564,7 @@ NASA. Spacecraft Conjunction Assessment and Collision Avoidance Best Practices H
 
 ### R50
 
-Koury, A., and Jah, M. K. Fast All-vs-All Conjunction Screening. Space Data Network technical whitepaper. [Paper](fast-conjunction-assessment.md)
+Koury, A. Fast All-vs-All Conjunction Screening. Space Data Network technical whitepaper. [Paper](fast-conjunction-assessment.md)
 
 [v1]: https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/v1/README.md
 [e1]: https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e1/test/REPORT.md

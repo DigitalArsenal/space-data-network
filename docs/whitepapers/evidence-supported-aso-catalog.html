@@ -50,7 +50,6 @@
           <p class="paper-subtitle">An attributed orbital catalog for Space Data Network</p>
           <ul class="paper-authors">
           <li><b>Anthony &quot;TJ&quot; Koury III</b><span>Edgesource, Space Data Network</span></li>
-          <li><b>Dr. Moriba Jah</b><span>The University of Texas at Austin; GaiaVerse Ltd</span></li>
           <li><b>Claude Opus 5.5</b><span>Anthropic</span></li>
           </ul>
           <div class="actions paper-actions">
@@ -73,7 +72,7 @@
           <div><dt>Published</dt><dd>11 October 2026</dd></div>
           <div><dt>Evidence cutoff</dt><dd><span>11 October 2026</span></dd></div>
           <div><dt>Sections</dt><dd>12</dd></div>
-          <div><dt>Reading time</dt><dd>28 min</dd></div>
+          <div><dt>Reading time</dt><dd>29 min</dd></div>
           <div><dt>Interactive models</dt><dd>12</dd></div>
         </dl>
       </div>
@@ -159,7 +158,14 @@
 <td>0.3–1.6 km at issue</td>
 </tr>
 </tbody></table></div>
-<p>HPOP&#39;s force models agree with Orekit within 1.6 cm over a day, and from precise states they leave a median 4.8 m against laser-ranging orbits after a day. Started from an OMM&#39;s own epoch state, HPOP is never better than SGP4: the start state, not the force model, limits it. None of the density corrections tested improves 1–3-day orbit prediction in its pre-registered test, and covariances proved realistic on held-out data in few regimes and horizons.</p>
+<p>For most objects the only public input is the OMM, and the catalog takes it as it is. What the catalog adds is a measured account of each input&#39;s error, and screening that acts on it safely:</p>
+<ol>
+<li><strong>Measured error as covariance.</strong> An orbit propagated from an OMM&#39;s epoch state carries a covariance equal to the error measured for its orbit regime and element-set age. That error is measured against independent orbits in every regime that has them: GNSS analysis-centre orbits, laser ranging, LEO precise orbits, operator ephemerides and radio-occultation receivers. A covariance is labeled calibrated only where held-out data confirm it (<a href="#6-uncertainty">section 6</a>).</li>
+<li><strong>SDN&#39;s own atmosphere.</strong> Drag uses JB2008 or NRLMSISE-00 with an open correction in the form of the Space Force&#39;s Dynamic Calibration of the Atmosphere, solved from public operator states. It explains 25–40 % of the density variation measured by satellites that did not calibrate it; 1–3-day position error is unchanged (ratios 0.98–1.02) (<a href="#54-drag-regime">section 5.4</a>).</li>
+<li><strong>Maneuvers.</strong> A detector reads each object&#39;s element-set history for steps in orbital energy and plane, and reports each maneuver&#39;s time and size. On held-out data it found 22 of 25 ISS burns and all 6 GPS maneuvers in precise orbits; geostationary station-keeping is harder, 4 of 11 (<a href="#55-maneuver-detection">section 5.5</a>).</li>
+<li><strong>Better start states where data allow.</strong> HPOP&#39;s force models agree with Orekit within 1.6 cm over a day. Fitted to laser ranges, HPOP stays 20–60 times better than SGP4 to 7 days; fitted to an arc of corrected OMMs, it halves SGP4&#39;s error to two days in GPS (<a href="#53-objects-with-public-omms-only">section 5.3</a>).</li>
+<li><strong>Screening that stays safe when the covariance is large.</strong> A large covariance spreads a collision&#39;s probability thin: on real OMM errors, a probability threshold of 1e-4 missed 2.7–16 % of true collisions. Where held-out data confirm the covariance, screening on the uncertainty region missed 0–0.4 %, at the cost of more false alerts, and every event also carries the covariance-free maximum probability<sup><a href="#r50">50</a></sup>. Large uncertainty makes the screen cautious, not blind.</li>
+</ol>
 <p>Three results go beyond published work:</p>
 <ol>
 <li>GPS element-set correction fails on an unseen orbital plane (<a href="#53-objects-with-public-omms-only">section 5.3</a>).</li>
@@ -383,7 +389,7 @@
 <tr>
 <td>HPOP from the OMM&#39;s epoch state</td>
 <td>Vallado et al. 2006<sup><a href="#r8">8</a></sup>; Jankovic 2026<sup><a href="#r15">15</a></sup></td>
-<td>Never better than SGP4 in four regimes (GPS, LEO with precise orbits, laser-ranged LEO and MEO); worse in all four by 72 h; at 24 h, 1.7 (GPS) to 11 (laser-ranged LEO) times SGP4&#39;s error</td>
+<td>Equal to SGP4 at epoch, then larger as the OMM&#39;s start-state error grows: at 24 h, 1.7 (GPS) to 11 (laser-ranged LEO) times SGP4&#39;s error; larger in all four regimes (GPS, LEO with precise orbits, laser-ranged LEO and MEO) by 72 h</td>
 <td><a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e7/test/REPORT.md">E7</a></td>
 </tr>
 <tr>
@@ -1087,7 +1093,7 @@
 <h3 id="r49">R49</h3>
 <p>NASA. Spacecraft Conjunction Assessment and Collision Avoidance Best Practices Handbook, Vol. 2, Technical Appendices, August 2026. <a href="https://ntrs.nasa.gov/citations/20260000457">NTRS 20260000457</a></p>
 <h3 id="r50">R50</h3>
-<p>Koury, A., and Jah, M. K. Fast All-vs-All Conjunction Screening. Space Data Network technical whitepaper. <a href="fast-conjunction-assessment.html">Paper</a></p>
+<p>Koury, A. Fast All-vs-All Conjunction Screening. Space Data Network technical whitepaper. <a href="fast-conjunction-assessment.html">Paper</a></p>
 
         </article>
       </div>
