@@ -215,4 +215,10 @@
 .paper-ai:hover, .paper-ai:focus-within, .paper-ai:focus { max-width: 300px; }
 .paper-ai:hover li span, .paper-ai:focus li span { display: inline; }
 .panel-open .paper-ai { display: none; }
+/* Where the reading column reaches the corner, the card folds to a tab until hovered or focused */
+@media (min-width: 1200px) and (max-width: 1639px) {
+  .paper-ai:not(:hover):not(:focus):not(:focus-within) { padding: 7px 11px; }
+  .paper-ai:not(:hover):not(:focus):not(:focus-within) > * { display: none; }
+  .paper-ai:not(:hover):not(:focus):not(:focus-within)::before { content: "AI models"; display: block; font-size: 10.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); white-space: nowrap; }
+}
 @media (max-width: 1199px) { .paper-ai { position: static; max-width: none; margin: 24px auto 0; width: min(100% - 32px, var(--read)); box-shadow: none; } .paper-ai li span { display: inline; } }
