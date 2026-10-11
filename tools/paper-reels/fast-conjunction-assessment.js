@@ -1,4 +1,4 @@
-// Intro reel for "Fast All-vs-All Conjunction Screening" (Koury and Jah, 1.8).
+// Intro reel for "Fast All-vs-All Conjunction Screening" (Koury, 1.9).
 // 56 seconds, in plain words with the paper's own math: every object against
 // every other, a bound each trajectory computes for itself, a grid that
 // proposes pairs on the GPU and a module that decides in f64, refinement and
@@ -358,7 +358,7 @@ export async function createReel(base = "") {
     const tOut = T_PRIV - 0.45;
     stat("19 s", "SGP4 · CPU", 960, 260, T_RES + 0.5, tOut, t, { px: 104 });
     stat("21 s", "SGP4 · GPU", 1250, 260, T_RES + 0.7, tOut, t, { px: 104, color: INK });
-    stat("~8 min", "NUMERICAL HPOP", 1500, 260, T_RES + 0.9, tOut, t, { px: 104, color: INK });
+    stat("1.9 h", "FULL-FORCE HPOP · 16 CORES", 1500, 260, T_RES + 0.9, tOut, t, { px: 104, color: INK });
     stat("292,516", "CLOSE APPROACHES WITHIN 5 km OVER THREE DAYS", 1000, 470, T_RES + 1.6, tOut, t, { px: 80 });
     stat("13,088", "WITH A CALIBRATED COVARIANCE PROBABILITY", 1000, 640, T_RES + 2.4, tOut, t, { px: 80, color: INK });
   }
@@ -410,7 +410,7 @@ export async function createReel(base = "") {
 
     // -------------------------------------------------------- the type
     if (t < T_PAIRS + 0.1) {
-      eyebrow("WHITEPAPER · EDITION 1.8", 2, 0.5, T_PAIRS - 0.45, t);
+      eyebrow("WHITEPAPER · EDITION 1.9", 2, 0.5, T_PAIRS - 0.45, t);
       block([["Will anything", INK], ["come too close?", AMBER]], "EVERY CATALOG OBJECT, CHECKED AGAINST EVERY OTHER", 0.6, T_PAIRS - 0.4, t, 88);
     }
     if (t > T_PAIRS - 0.05 && t < T_BOUND + 0.1) {
@@ -444,7 +444,7 @@ export async function createReel(base = "") {
     if (t > T_PRIV - 0.05 && t < T_END + 0.1) {
       block([["Screen together", INK], ["without sharing orbits.", AMBER]], "DISTANCES COMPUTED ON ENCRYPTED POSITIONS", T_PRIV + 0.1, T_END - 0.4, t, 84);
     }
-    paperLockup({ eyebrow: "WHITEPAPER · EDITION 1.8", title: ["Fast All-vs-All", "Conjunction Screening"], byline: "Anthony “TJ” Koury III and Dr. Moriba Jah", t0: T_END + 0.3 }, t);
+    paperLockup({ eyebrow: "WHITEPAPER · EDITION 1.9", title: ["Fast All-vs-All", "Conjunction Screening"], byline: "Anthony “TJ” Koury III and Claude Opus 5.5", t0: T_END + 0.3 }, t);
 
     bloom();
     hud(t, frameIndex, T_END + 0.1);

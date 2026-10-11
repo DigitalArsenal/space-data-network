@@ -1,6 +1,6 @@
 # Evidence-Supported ASO Catalog
 
-An attributed orbital catalog for Space Data Network
+A measured orbital catalog for Space Data Network
 
 Anthony "TJ" Koury III and Claude Opus 5.5
 
@@ -12,7 +12,7 @@ Numerical evidence cutoff: 11 October 2026
 
 ## 1 Summary
 
-Space Data Network (SDN) builds a catalog of anthropogenic space objects (ASOs) from public and login-only sources. It keeps every provider's product as an attributed record and, object by object, publishes the solution with the best measured accuracy for the intended use, with its uncertainty and lineage. Accuracy is measured against independent precise orbits, under plans fixed before the test data were read<sup>[1](#r1)</sup>.
+Space Data Network (SDN) builds a catalog of anthropogenic space objects (ASOs) from public and login-only sources. Object by object, it publishes the solution with the best measured accuracy for the intended use, with its uncertainty. Accuracy is measured against independent precise orbits, under plans fixed before the test data were read<sup>[1](#r1)</sup>.
 
 | Object class | Catalog product | Measured (median) |
 | --- | --- | --- |
@@ -37,7 +37,7 @@ Three results go beyond published work:
 
 Pre-registered hypotheses that failed are reported as not supported.
 
-## 2 Evidence model and records
+## 2 Evidence model
 
 An orbit solution is an inference with five contributors:
 
@@ -47,9 +47,9 @@ An orbit solution is an inference with five contributors:
 4. The measurement model
 5. The inference method
 
-A provider's ephemeris or element set already embeds the provider's models and inference, so the catalog keeps it as an attributed provider claim, not as an observation. Agreement between products counts as independent confirmation only when their lineage is independent; unknown lineage is recorded as unknown.
+A provider's ephemeris or element set already embeds the provider's models and inference, so the catalog treats it as the provider's estimate, not as an observation. Agreement between two products counts as independent confirmation only when their inputs are independent.
 
-Orbit data sit at four processing levels, by analogy with Earth-science data levels. A higher level is more processed, not better: it inherits every flaw below it, and re-epoching adds no evidence. Every source record declares its level.
+Orbit data sit at four processing levels, by analogy with Earth-science data levels. A higher level is more processed, not better: it inherits every flaw below it, and re-epoching adds no evidence. Each input is placed at its level.
 
 | Level | Content | SDN inputs |
 | --- | --- | --- |
@@ -58,18 +58,18 @@ Orbit data sit at four processing levels, by analogy with Earth-science data lev
 | 2 | Estimated states and ephemerides | Operator ephemerides; GNSS and laser-ranging precise orbits; Vimpel elements; ILRS predictions |
 | 3 | Theory-specific mean elements fitted to level 1 or 2 | OMMs from Space-Track and SpaceMapper; CelesTrak's supplemental GP; SDN's SGP4 companions |
 
-A source record keeps the provider, native identifier, edition, SHA-256 of the bytes, product type, epoch, time scale and frame; observation time, solution epoch, issue time and retrieval time stay distinct. A solution record specifies:
+A solution states what produced it:
 
 | Field | Content |
 | --- | --- |
 | State and validity | State or ephemeris, epoch, applicable interval |
-| Evidence and lineage | Source records, their levels and dependencies, editions |
+| Inputs | The products it rests on and their levels |
 | Dynamics | Force model, environment inputs, parameters estimated, considered or assumed |
 | Measurement model | Sensor geometry, timing, calibration, biases; unknown when a provider does not state it |
-| Inference | Estimator or selection rule, weights, priors, software version |
-| Uncertainty | Covariance or none, its source and its calibration label |
+| Inference | Estimator or selection rule, weights, priors |
+| Uncertainty | Covariance, its source and its calibration label |
 
-Hashes establish byte identity and signatures establish attribution; physical validity rests on the measurements of sections 5 to 7. Identical inputs, module binaries and policy reproduce the same decisions.
+Physical validity rests on the measurements of sections 5 to 7.
 
 ## 3 Sources
 
@@ -84,15 +84,30 @@ The inventory<sup>[2](#r2)</sup> lists 97 public and login-only sources in eight
 | E. Space weather | Space Environment Technologies' (SET) JB2008 indices; GFZ Kp, ap and F10.7; NOAA SWPC forecasts | Model drivers, as issued |
 | F. Earth orientation, gravity, ephemerides | IERS EOP; EGM2008, EGM96; FES2004; DE440 | Frames and dynamics |
 | G. Physical properties | GCAT; IGS satellite metadata | Priors for drag and radiation parameters |
-| H. The High Accuracy Catalog (HAC) and HASDM | Special Perturbations (SP) vectors; real-time HASDM | The comparison target (section 11) |
+| H. The High Accuracy Catalog (HAC) and HASDM | Special Perturbations (SP) vectors; real-time HASDM | The comparison target (section 10) |
 
-SpaceMapper's AOE catalog (channel KY) holds 19,197 element sets that the provider attributes to its own sensor network<sup>[4](#r4)</sup>. AOE rewrites them every 3 hours; SDN takes a snapshot daily from the public web pages. SpaceMapper states no license, so the sets are cited, not copied. Doppler read from SatNOGS waterfall images made the ISS orbit 2.7–10.7 times worse than SGP4 [E6][e6].
+SpaceMapper's AOE catalog holds SGP4 element sets from its own ground and space sensors (channel KY, 19,202 objects on 11 October 2026) beside sets it relays from other catalogs<sup>[4](#r4)</sup>. AOE rewrites them every 3 hours; SDN reads them daily from the public web pages (section 4). SpaceMapper states no license, so the sets are cited, not copied. Doppler read from SatNOGS waterfall images made the ISS orbit 2.7–10.7 times worse than SGP4 [E6][e6].
 
 ## 4 Normalization and model dispatch
 
 ### Vimpel osculating elements
 
 Vimpel's HEO product gives osculating elements in J2000<sup>[5](#r5)</sup>. The standard perifocal rotation turns them into a J2000 state at the same epoch<sup>[6](#r6)</sup>, with μ = 398,600.4418 km³/s², under the identifier `vimpel:<id>` and no invented NORAD number<sup>[7](#r7)</sup>. Velocity differenced from 600 s position samples departs from the analytic velocity by up to 1.1 km/s, so it serves only as a diagnostic.
+
+### AOE element sets
+
+AOE's KY sets are SGP4 mean elements: the catalog evaluates them through the same SGP4 as Space-Track's OMMs, under the NORAD number AOE gives, or under `aoe:<id>` where it gives none. E15 scores them against independent orbits beside Space-Track's, under a plan fixed before its test window [E15][e15]. On 11 October 2026, its first training day:
+
+| Measure | Result |
+| --- | --- |
+| Difference from Space-Track | A median 1.70 km from Space-Track's newest set at the same moment; 1.5 % within 100 m |
+| Age at issue | Median 11.6 days: 7.4 in Starlink's shells, 36 for the Chinese space station, 62 for Spire, 83 for Planet |
+| Error at issue, Starlink (2,755 satellites, SpaceX ephemerides) | 40.7 km median against Space-Track's 2.14 km: 18.9 [16.7, 21.6] times, almost all set age |
+| The same at matched age | 1.07 [0.70, 1.55] times Space-Track's error under half a day old; 1.03 [0.80, 1.26] at half a day to a day |
+| Error at issue, GEO (76 satellites) | 19.0 km against 6.69 km: 2.84 [1.77, 4.07] times |
+| Coverage | 45 of 82 Planet and 6 of 10 Spire satellites have no AOE set |
+
+AOE's sets are therefore not copies of Space-Track's: they are as accurate at the same age, and older on most objects.
 
 ### The handoff contract
 
@@ -111,6 +126,10 @@ OMM fields mix nominal (catalog number), ordinal (element-set number), interval 
 ### Dispatch, frames and time
 
 Each record is routed by its declared theory: mean elements to SGP4, osculating elements to the two-body conversion, states and ephemerides to frame transforms. Osculating elements offered to SGP4 are refused as a model mismatch. Frames follow the IERS Conventions (2010): IAU 2006/2000A, CIO-based, through ERFA, with IERS Earth orientation<sup>[11](#r11)</sup>. TEME, EME2000, GCRF and ITRF stay distinct; epochs are UTC and integration runs on TT.
+
+### SDN's own OMMs
+
+SDN fits its own OMMs to any source's ephemeris: operator ephemerides (SpaceX's MEME files, CCSDS OEM, Earth-fixed files), GNSS orbits (SP3), laser-ranging predictions (CPF) and its own HPOP solutions. Each is an SGP4 element set with B* fitted over a declared interval and scored on a held-out stretch before release, so any SGP4 implementation reads it. CelesTrak's supplemental GP fits operator ephemerides the same way<sup>[48](#r48)</sup>, Spacebook fits extended-perturbation element sets to its own orbits<sup>[51](#r51)</sup>, and the 18th Space Defense Squadron's eGP fits SP states<sup>[49](#r49)</sup>. The fit RMS that CelesTrak publishes for each set is the benchmark.
 
 ## 5 Products by object class
 
@@ -135,9 +154,10 @@ Each row is one method: its originators, our measured result (median 3D position
 
 | Method | Prior art | Measured | Evidence |
 | --- | --- | --- | --- |
-| SGP4 on the latest public OMM | Hoots and Roehrich 1980<sup>[9](#r9)</sup>; Vallado et al. 2006<sup>[8](#r8)</sup> | At issue: 0.31 km (laser-ranged LEO) to 1.57 km (GPS); by horizon in section 11 | [E3][e3] |
+| SGP4 on the latest public OMM | Hoots and Roehrich 1980<sup>[9](#r9)</sup>; Vallado et al. 2006<sup>[8](#r8)</sup> | At issue: 0.31 km (laser-ranged LEO) to 1.57 km (GPS); by horizon in section 10 | [E3][e3] |
 | Along-track correction at epoch (GPS) | Ly et al. 2020: 65 %<sup>[17](#r17)</sup>; Hallgarten La Casta and Amato 2025<sup>[18](#r18)</sup> | RMS at epoch 2.04 → 0.79 km (61 % [53, 67]); the single-model form 8 %; worse than SGP4 by 7 days (2.55 against 1.88 km); its covariance fails the coverage gate. On an orbital plane outside the fit: 6 % [2, 10] | [E1][e1] |
 | HPOP from the OMM's epoch state | Vallado et al. 2006<sup>[8](#r8)</sup>; Jankovic 2026<sup>[15](#r15)</sup> | Equal to SGP4 at epoch, then larger as the OMM's start-state error grows: at 24 h, 1.7 (GPS) to 11 (laser-ranged LEO) times SGP4's error; larger in all four regimes (GPS, LEO with precise orbits, laser-ranged LEO and MEO) by 72 h | [E7][e7] |
+| AOE's newest set | SpaceMapper<sup>[4](#r4)</sup> | Starlink: 18.9 times Space-Track's error at issue, from set age; 1.03–1.07 times at matched age (section 4) | [E15][e15] |
 | HPOP fitted to an arc of OMM epoch states | Levit and Marshall 2011<sup>[19](#r19)</sup> | Better than SGP4 only at short horizons: 0.32–0.51 of its error to 12 h (laser-ranged LEO), 0.36–0.53 to 48 h on E1-corrected GPS sets; undecided beyond | [E7][e7] |
 
 The start state sets the limit. Over 6 days, HPOP leaves 0.2 km along track from a GPS satellite's IGS state and 8.4 km from its OMM epoch state (medians of 508 arcs)<sup>[10](#r10)</sup>. Laser ranges fix the start state, and the prediction then stays 20 to 60 times better than SGP4 to 7 days [E6][e6].
@@ -276,29 +296,7 @@ The VCM carries an SP state, its force settings and an equinoctial covariance<su
 
 A round trip through VCM text in SP's number format recovers the covariance to 2e-5 of its sigmas. A VCM naming JBH09 runs as JB2008 on SET's indices, which the caller supplies.
 
-## 10 Publication and reproduction
-
-Publication is transactional: acquire and hash the bytes, verify, normalize, validate, sign a manifest, then announce the new catalog head. Consumers read one complete, immutable snapshot; each update names the object, the prior and new solutions, the epoch, the recipe and the provenance. Content addressing and independent replication keep a snapshot retrievable from any node that holds it.
-
-An accepted numerical solution can carry an SGP4 companion: mean elements fitted to it over a declared interval and scored on a held-out stretch before release, as CelesTrak's supplemental GP fits operator ephemerides<sup>[48](#r48)</sup> and the 18th Space Defense Squadron's eGP fits SP states<sup>[49](#r49)</sup>. The fit RMS that CelesTrak publishes for each set is the benchmark.
-
-Each experiment's numbers come from a run manifest: the repository and module commits, each module's WebAssembly SHA-256 and the SHA-256 of every input; reports are generated from metrics<sup>[1](#r1)</sup>. The experiments' public site runs the same modules in a web browser: a V1 seed reproduces the committed result exactly, and any Orekit case re-runs from its exact request. Space-Track element sets, SpaceX and Planet files and SET's indices are cited by URL and SHA-256, not copied.
-
-| Evidence | Commit |
-| --- | --- |
-| Experiments V1, E1–E8, E13 and E14 | orbit-accuracy-experiments `357d992d6c62daac4ccbb2fd230634ac292192b8` |
-| HPOP 1.3.0, its Orekit suite, screen and covariance calibration; maneuver detection 0.3.0 | space-data-network-modules `d4a0b1155f64ac088694f9758c32e3b691952674` |
-| HPOP in V1 | space-data-network-modules `750b6399173a2678b8e8d0885557976d17a9ad5c` |
-| VCM adapter | space-data-network-modules `1879d8c5c17c061e157c100723a8423c59fd98e2` |
-| Vimpel conversion and refinement | space-data-network-modules `49e159d7003cac3d3e65b03170f11909fa86dd2c` |
-
-HPOP's WebAssembly binary in V1, SHA-256:
-
-```text
-473d527175de6606ccf305c45b37218288634fa9de2dcab0d72564a190bdabd1
-```
-
-## 11 Measured accuracy
+## 10 Measured accuracy
 
 Median 3D position error against precise orbits, by object class and age of the product:
 
@@ -314,7 +312,7 @@ Median 3D position error against precise orbits, by object class and age of the 
 
 The HAC's position errors are not published<sup>[2](#r2)</sup>. The public figures: element sets in the HAC's own LEO conjunction regime (perigee above 500 km) err by 0.6–3 km from epoch to 72 hours<sup>[49](#r49)</sup>; one ASW covariance shown as an illustration has σ of 8.3 m radial, 332 m in-track and 2.1 m cross-track at epoch<sup>[37](#r37)</sup>; HASDM's density spread is 0.078 against JB2008's 0.148 (section 5.4).
 
-## 12 What conjunction assessment consumes
+## 11 What conjunction assessment consumes
 
 Conjunction screening<sup>[50](#r50)</sup> takes from one catalog snapshot, per object:
 
@@ -323,9 +321,8 @@ Conjunction screening<sup>[50](#r50)</sup> takes from one catalog snapshot, per 
 | Trajectory | The OMM for SGP4, or one propagator's trajectory; one propagator per run |
 | Covariance | Supplied by the operator, fitted, or modeled (section 6), with its calibration label |
 | Hard-body radius | Supplied, half the catalog size, from radar cross-section, or the default, with its basis |
-| Provenance | Snapshot, source records and recipe |
 
-An OMM supplies no covariance. A collision probability needs relative-state uncertainty with independent calibration and stated correlation, geometry and hard-body radius; without it the screen reports only the covariance-free maximum probability.
+An OMM supplies no covariance, so the catalog attaches one built from the object's element-set history and calibrated by regime and age against independent orbits (section 6), with its calibration label. Every event also carries the covariance-free maximum probability, which needs no covariance.
 
 ## Appendix A. Terms
 
@@ -335,7 +332,7 @@ An OMM supplies no covariance. A collision probability needs relative-state unce
 | OMM, GP | CCSDS Orbit Mean-elements Message: SGP4 mean elements, also distributed in the legacy two-line format; general perturbations element set |
 | SGP4, B* | The analytic propagator of OMMs; its drag term |
 | HPOP | High-precision orbit propagation: numerical integration of the full force model of section 7 |
-| Provider claim | An attributed product that already embeds a provider's models and inference |
+| Provider estimate | A provider's product, which already embeds its models and inference |
 | Level 0 to 3 | Processing levels of orbit data (section 2) |
 | Ultra-rapid, final orbits | GNSS analysis-centre orbits issued in near real time with a prediction; definitive orbits issued about two weeks later |
 | SLR, ILRS | Satellite laser ranging; the International Laser Ranging Service |
@@ -576,5 +573,10 @@ Koury, A. Fast All-vs-All Conjunction Screening. Space Data Network technical wh
 [e6]: https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e6/README.md
 [e7]: https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e7/test/REPORT.md
 [e8]: https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e8/test/REPORT.md
+[e15]: https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/4b0bc1b556dae67d55c1d81a31337738822e7e06/results/e15/README.md
 [e13]: https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e13/README.md
 [e14]: https://github.com/DigitalArsenal/orbit-accuracy-experiments/tree/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e14
+
+### R51
+
+COMSPOC. Spacebook XP-TLE: extended-perturbation element sets fitted to Spacebook's own orbits. [Page](https://spacebook.com/xp-tle)

@@ -217,7 +217,7 @@ On the 2,000-object case the CPU search and the GPU found the same 424 candidate
 
 ## 7 Uncertainty and probability of collision
 
-The companion paper<sup>[1](#r1)</sup> sets the conditions this screen respects, in its sections [4](evidence-supported-aso-catalog.md#4-normalization-and-model-dispatch), [6](evidence-supported-aso-catalog.md#6-uncertainty) and [12](evidence-supported-aso-catalog.md#12-what-conjunction-assessment-consumes):
+The companion paper<sup>[1](#r1)</sup> sets the conditions this screen respects, in its sections [4](evidence-supported-aso-catalog.md#4-normalization-and-model-dispatch), [6](evidence-supported-aso-catalog.md#6-uncertainty) and [11](evidence-supported-aso-catalog.md#11-what-conjunction-assessment-consumes):
 
 - An OMM supplies no covariance. The initial uncertainty of an OMM-seeded HPOP trajectory, including this paper's HPOP runs, is unknown: no validated representation of it exists.
 - A probability of collision requires relative-state uncertainty with independent calibration and stated cross-correlation, geometry and hard-body-radius assumptions.
@@ -230,7 +230,7 @@ Every event reports the Alfano maximum: the largest probability any covariance s
 
 ### Independent truth
 
-Calibration needs reference orbits that SGP4 did not produce. SDN's reference-states module turns precise orbits into GCRF states at stated times, each with its stated uncertainty as covariance and its provenance<sup>[10](#r10)</sup>:
+Calibration needs reference orbits that SGP4 did not produce. SDN's reference-states module turns precise orbits into GCRF states at stated times, each with its stated uncertainty as covariance<sup>[10](#r10)</sup>:
 
 - IGS final GPS orbits;
 - ILRS orbits for LAGEOS-1/2, ETALON-1/2, Ajisai, Starlette, Stella, LARETS, WESTPAC, LARES and LARES-2;
@@ -647,7 +647,7 @@ registered.
 | Calibration coverage | Covariance calibrated only in LEO 600 to 800 km (empirical model; HPOP to 3 days, except 0.5 to 1 day), for 48 reference objects in one week |
 | Probability inputs | Combined radius and covariance shape differ from SOCRATES's unpublished ones |
 
-This paper reports computation speed, agreement between implementations and with SOCRATES on identical inputs, and covariance calibration where independent truth exists. It does not establish operational readiness or orbit accuracy; the companion paper<sup>[1](#r1)</sup> reports measurements of HPOP's accuracy in its sections [7](evidence-supported-aso-catalog.md#7-dynamics-and-verification) and [11](evidence-supported-aso-catalog.md#11-measured-accuracy).
+This paper reports computation speed, agreement between implementations and with SOCRATES on identical inputs, and covariance calibration where independent truth exists. It does not establish operational readiness or orbit accuracy; the companion paper<sup>[1](#r1)</sup> reports measurements of HPOP's accuracy in its sections [7](evidence-supported-aso-catalog.md#7-dynamics-and-verification) and [10](evidence-supported-aso-catalog.md#10-measured-accuracy).
 
 ## References
 

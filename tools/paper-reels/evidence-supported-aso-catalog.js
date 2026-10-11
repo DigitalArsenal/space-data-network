@@ -1,4 +1,4 @@
-// Intro reel for "Evidence-Supported ASO Catalog" (Koury and Jah, 1.9).
+// Intro reel for "Evidence-Supported ASO Catalog" (Koury, 2.0).
 // 56 seconds, in plain words with the paper's own math: every orbit is an
 // estimate with evidence behind it, data levels, the OMM-to-numerical
 // handoff and its caveats, agreement with Orekit, accuracy against precise
@@ -86,7 +86,7 @@ const CONTRIBUTORS = ["ACTUAL PHYSICS", "DYNAMICS MODEL", "OBSERVATIONS", "MEASU
 
 export async function createReel(base = "") {
   const studio = await createStudio({ base, hudTitle: "WHITEPAPER · EVIDENCE-SUPPORTED ASO CATALOG", hudUrl: "SPACEDATANETWORK.ORG" });
-  const { glc, sx, font, maskText, dotGlow, scrim, renderEarth, drawSatellites, strokeOrbitArc, eyebrow, block, beginSubframe, bloom, hud, stamp, badge } = studio;
+  const { glc, sx, font, maskText, dotGlow, scrim, renderEarth, drawSatellites, strokeOrbitArc, eyebrow, block, beginSubframe, bloom, hud, badge } = studio;
   const math = await prepareMath({
     handoff: { key: "cat_handoff", px: 44, color: INK },
     dyn: { key: "cat_dyn", px: 44, color: INK },
@@ -365,7 +365,7 @@ export async function createReel(base = "") {
 
     // -------------------------------------------------------- the type
     if (t < T_LEVELS + 0.1) {
-      eyebrow("WHITEPAPER · EDITION 1.9", 2, 0.5, T_LEVELS - 0.45, t);
+      eyebrow("WHITEPAPER · EDITION 2.0", 2, 0.5, T_LEVELS - 0.45, t);
       block([["Every orbit is an estimate.", INK], ["What supports it?", AMBER]], "A CATALOG OF HUMAN-MADE OBJECTS IN ORBIT, FROM MANY PROVIDERS", 0.6, T_LEVELS - 0.4, t, 84);
     }
     if (t > T_LEVELS - 0.05 && t < T_HAND + 0.1) {
@@ -375,12 +375,12 @@ export async function createReel(base = "") {
       eq("handoff", 150, 214, T_HAND + 0.5, T_OREKIT - 0.45, t);
       eq("dyn", 150, 330, T_SPLIT + 0.6, T_OREKIT - 0.45, t);
       label("SHARED PHYSICS + OBJECT-SPECIFIC FORCES + MODEL ERROR", 152, 404, T_SPLIT + 0.9, T_OREKIT - 0.45, t, { px: 18 });
-      block([["Same starting state.", INK], ["Different physics after.", AMBER]], "AN OMM CARRIES NO COVARIANCE: ITS UNCERTAINTY IS MARKED UNKNOWN", T_HAND + 0.1, T_OREKIT - 0.4, t, 84);
+      block([["Same starting state.", INK], ["Different physics after.", AMBER]], "AN OMM CARRIES NO COVARIANCE: SDN ADDS ITS MEASURED ERROR", T_HAND + 0.1, T_OREKIT - 0.4, t, 84);
     }
     if (t > T_OREKIT - 0.05 && t < T_ACC + 0.1) {
       eq("orekit", 150, 250, T_OREKIT + 0.5, T_ACC - 0.45, t);
       label("LARGEST POSITION DIFFERENCE, IDENTICAL INPUTS", 152, 352, T_OREKIT + 0.9, T_ACC - 0.45, t, { px: 18 });
-      block([["Checked against", INK], ["an independent code.", AMBER]], "HPOP AND OREKIT AGREE WITHIN 15 MM OVER A DAY", T_OREKIT + 0.1, T_ACC - 0.4, t, 84);
+      block([["Checked against", INK], ["an independent code.", AMBER]], "HPOP AND OREKIT AGREE WITHIN 1.6 CM OVER A DAY", T_OREKIT + 0.1, T_ACC - 0.4, t, 84);
     }
     if (t > T_ACC - 0.05 && t < T_VCM + 0.1) {
       block([["Add the physics.", INK], ["Watch the error fall.", AMBER]], null, T_ACC + 0.1, T_VCM - 0.4, t, 84);
@@ -396,11 +396,9 @@ export async function createReel(base = "") {
       block([["Uncertainty travels", INK], ["with the orbit.", AMBER]], "EVERY PRINTED U, V, W SIGMA OF FOUR SP MESSAGES, WITHIN 1 %", T_VCM + 0.1, T_CLAIM - 0.4, t, 84);
     }
     if (t > T_CLAIM - 0.05 && t < T_END + 0.1) {
-      block([["Every orbit shows", INK], ["its evidence and its limits.", AMBER]], "DIGITALLY SIGNED · REPEATABLE IN A WEB BROWSER", T_CLAIM + 0.1, T_END - 0.4, t, 84);
-      const st = seg(t, T_CLAIM + 1.0, T_CLAIM + 1.17);
-      if (st > 0) stamp(1480, 300, st, 1 - seg(t, T_END - 0.4, T_END));
+      block([["Every orbit shows", INK], ["its evidence and its limits.", AMBER]], "MEASURED AGAINST INDEPENDENT PRECISE ORBITS", T_CLAIM + 0.1, T_END - 0.4, t, 84);
     }
-    paperLockup({ eyebrow: "WHITEPAPER · EDITION 1.9", title: ["Evidence-Supported", "ASO Catalog"], byline: "Anthony “TJ” Koury III and Dr. Moriba Jah", t0: T_END + 0.3 }, t);
+    paperLockup({ eyebrow: "WHITEPAPER · EDITION 2.0", title: ["Evidence-Supported", "ASO Catalog"], byline: "Anthony “TJ” Koury III and Claude Opus 5.5", t0: T_END + 0.3 }, t);
 
     bloom();
     hud(t, frameIndex, T_END + 0.1);

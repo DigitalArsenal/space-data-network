@@ -498,7 +498,7 @@
 <p>On the 2,000-object case the CPU search and the GPU found the same 424 candidates and 23 conjunctions, in Node.js, WasmEdge and a browser. Differences from the single call come from refinement starting from different coarse brackets, and sit inside the module&#39;s parity tolerances of 10 ms and 10 cm.</p>
 <h3 id="validation-findings">Validation findings</h3>
 <div class="sec-head sec-head-h2"><h2 id="7-uncertainty-and-probability-of-collision"><span class="sec-num">7</span>Uncertainty and probability of collision</h2><button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/fast-conjunction-assessment/7-uncertainty-and-probability-of-collision.html" data-model-title="The Alfano maximum probability" aria-label="Run it: The Alfano maximum probability"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span>Run it</button></div>
-<p>The companion paper<sup><a href="#r1">1</a></sup> sets the conditions this screen respects, in its sections <a href="evidence-supported-aso-catalog.html#4-normalization-and-model-dispatch">4</a>, <a href="evidence-supported-aso-catalog.html#6-uncertainty">6</a> and <a href="evidence-supported-aso-catalog.html#12-what-conjunction-assessment-consumes">12</a>:</p>
+<p>The companion paper<sup><a href="#r1">1</a></sup> sets the conditions this screen respects, in its sections <a href="evidence-supported-aso-catalog.html#4-normalization-and-model-dispatch">4</a>, <a href="evidence-supported-aso-catalog.html#6-uncertainty">6</a> and <a href="evidence-supported-aso-catalog.html#11-what-conjunction-assessment-consumes">11</a>:</p>
 <ul>
 <li>An OMM supplies no covariance. The initial uncertainty of an OMM-seeded HPOP trajectory, including this paper&#39;s HPOP runs, is unknown: no validated representation of it exists.</li>
 <li>A probability of collision requires relative-state uncertainty with independent calibration and stated cross-correlation, geometry and hard-body-radius assumptions.</li>
@@ -510,7 +510,7 @@
 <li>Calibration on held-out evidence</li>
 </ol>
 <h3 id="independent-truth">Independent truth</h3>
-<p>Calibration needs reference orbits that SGP4 did not produce. SDN&#39;s reference-states module turns precise orbits into GCRF states at stated times, each with its stated uncertainty as covariance and its provenance<sup><a href="#r10">10</a></sup>:</p>
+<p>Calibration needs reference orbits that SGP4 did not produce. SDN&#39;s reference-states module turns precise orbits into GCRF states at stated times, each with its stated uncertainty as covariance<sup><a href="#r10">10</a></sup>:</p>
 <ul>
 <li>IGS final GPS orbits;</li>
 <li>ILRS orbits for LAGEOS-1/2, ETALON-1/2, Ajisai, Starlette, Stella, LARETS, WESTPAC, LARES and LARES-2;</li>
@@ -1081,7 +1081,7 @@ registered.</p>
 <td>Combined radius and covariance shape differ from SOCRATES&#39;s unpublished ones</td>
 </tr>
 </tbody></table></div>
-<p>This paper reports computation speed, agreement between implementations and with SOCRATES on identical inputs, and covariance calibration where independent truth exists. It does not establish operational readiness or orbit accuracy; the companion paper<sup><a href="#r1">1</a></sup> reports measurements of HPOP&#39;s accuracy in its sections <a href="evidence-supported-aso-catalog.html#7-dynamics-and-verification">7</a> and <a href="evidence-supported-aso-catalog.html#11-measured-accuracy">11</a>.</p>
+<p>This paper reports computation speed, agreement between implementations and with SOCRATES on identical inputs, and covariance calibration where independent truth exists. It does not establish operational readiness or orbit accuracy; the companion paper<sup><a href="#r1">1</a></sup> reports measurements of HPOP&#39;s accuracy in its sections <a href="evidence-supported-aso-catalog.html#7-dynamics-and-verification">7</a> and <a href="evidence-supported-aso-catalog.html#10-measured-accuracy">10</a>.</p>
 <h2 id="references">References</h2>
 <h3 id="r1">R1</h3>
 <p>Koury, A. Evidence-Supported ASO Catalog. Space Data Network technical whitepaper 2.0, 11 October 2026. <a href="evidence-supported-aso-catalog.html">Paper</a></p>
