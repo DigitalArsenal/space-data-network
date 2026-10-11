@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" href="assets/sdn-chrome/sdn-chrome.css">
+  <script src="assets/sdn-chrome/sdn-chrome.js"></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="format-detection" content="telephone=no, date=no, address=no, email=no">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="description" content="Producer brief: offer the data you deliver to the Unified Data Library to every buyer, as Space Data Standards records from your own Space Data Network node.">
+  <meta name="theme-color" content="#000000">
+  <title>Producer Brief &middot; Space Data Network</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' fill='none'><defs><linearGradient id='t' gradientUnits='userSpaceOnUse' x1='16' y1='29' x2='16' y2='3'><stop offset='0' stop-color='%23f5a524' stop-opacity='0'/><stop offset='.55' stop-color='%23f5a524' stop-opacity='.55'/><stop offset='1' stop-color='%23f5a524'/></linearGradient></defs><circle cx='16' cy='16' r='13' stroke='%23f5f5f7' stroke-width='1.6' opacity='.3'/><path d='M16 29A13 13 0 0 1 16 3' stroke='url(%23t)' stroke-width='2.2' stroke-linecap='round'/><path d='M16 10.2L10.4 20.1H21.6Z' stroke='%23f5f5f7' stroke-width='1.6' stroke-linejoin='round'/><circle cx='16' cy='10.2' r='2.6' fill='%23f5f5f7'/><circle cx='10.4' cy='20.1' r='2.6' fill='%23f5f5f7'/><circle cx='21.6' cy='20.1' r='2.6' fill='%23f5f5f7'/><circle cx='16' cy='3' r='2.5' fill='%23f5a524'/></svg>">
+<link rel="stylesheet" href="assets/sdn-wallet/sdn-wallet-public-client.css">
+<script defer src="assets/sdn-wallet/sdn-wallet-public-client.js"></script>
+<script defer src="assets/sdn-stack-nav/sdn-stack-nav.js" data-nav-style-url="/assets/vendor/sdn-stack-nav/1.0.0/sdn-stack-nav.36a36359ce18322185e9ff179f88175bab67d5ad84a14d9c08a54f2ff27267e7.css" data-nav-style-integrity="sha384-c4M8Fg+kYaeOYYtJVr7jJsde24IhSWkWaRyAOHEZU9jozhRck089aw+mnHwxymds"></script>
+<!-- SDN_CONSUMER_ASSETS_END -->
+  <link rel="stylesheet" href="site.css">
+  <link rel="stylesheet" href="site.css">
+  <style>
+    :root { --sdn-stack-footer-height: 40px; --sdn-stack-header-height: 52px; }
+    .brief { max-width: 960px; margin: 0 auto; text-align: left; }
+    .brief-reel { margin: 8px auto 0; max-width: 960px; border: 1px solid var(--border); border-radius: 18px; overflow: hidden; background: #000; }
+    .brief-reel video { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; }
+    .brief h2 { font-size: clamp(24px, 3vw, 32px); letter-spacing: -.02em; margin: 0 0 14px; }
+    .brief p { color: var(--text-2); font-size: 17px; line-height: 1.65; margin: 0 0 14px; }
+    .brief .grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-top: 8px; }
+    .brief .grid3 .card h3 { font-size: 18px; margin: 0 0 8px; }
+    .brief .grid3 .card p { font-size: 15px; margin: 0; }
+    .brief-table { overflow-x: auto; border: 1px solid var(--border); border-radius: 14px; background: var(--panel); }
+    .brief-table table { width: 100%; border-collapse: collapse; font-size: 15px; }
+    .brief-table th, .brief-table td { padding: 10px 14px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+    .brief-table thead th { color: var(--text); font-size: 13px; font-weight: 600; letter-spacing: .02em; }
+    .brief-table td:first-child { color: var(--text); }
+    .brief-table td:last-child { color: var(--text-2); }
+    .brief-table tbody tr:last-child td { border-bottom: 0; }
+    .brief-table code { color: var(--accent); font-size: 14px; }
+    .brief ol.steps { list-style: none; counter-reset: step; padding: 0; margin: 0; display: grid; gap: 12px; }
+    .brief ol.steps li { counter-increment: step; position: relative; padding: 16px 18px 16px 64px; border: 1px solid var(--border); border-radius: 14px; background: var(--panel); color: var(--text-2); font-size: 16px; line-height: 1.55; }
+    .brief ol.steps li::before { content: counter(step); position: absolute; left: 18px; top: 14px; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; background: var(--accent); color: #000; font-weight: 700; font-size: 15px; }
+    .brief ol.steps li strong { color: var(--text); }
+    .brief .contact { display: inline-flex; margin-top: 6px; padding: 11px 22px; border-radius: 999px; background: var(--hi-bg); color: var(--hi-fg); font-weight: 600; text-decoration: none; }
+    @media (max-width: 760px) { .brief .grid3 { grid-template-columns: 1fr; } .brief ol.steps li { padding-left: 58px; } }
+  </style>
+</head>
+<body class="centered">
+  <sdn-stack-nav active="sdn"></sdn-stack-nav>
+  <video class="bg-video" id="bgVideo" autoplay loop muted playsinline disablepictureinpicture></video>
+  <div class="bg-shade"></div>
+  <header class="sdn-header">
+    <div class="sdn-header-inner">
+      <a class="sdn-header-brand" href="index.html"><span>Space Data Network</span></a>
+      <nav class="sdn-header-links" aria-label="Site">
+        <a href="onboarding.html">Get started</a>
+        <a href="catalog.html">Catalog</a>
+        <a href="collision-avoidance.html">CA</a>
+        <a href="whitepapers.html">Whitepapers</a>
+        <a href="index.html#download">Download</a>
+        <a href="https://github.com/DigitalArsenal/space-data-network" target="_blank" rel="noopener">GitHub</a>
+      </nav>
+      <div class="sdn-header-actions">
+        <button data-sdn-theme-toggle aria-label="Switch between light and dark theme"></button>
+        <button data-sdn-menu-toggle aria-label="Menu"></button>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section class="page-hero wrap">
+      <p class="eyebrow">Producer brief</p>
+      <h1>Your data already serves the UDL. Offer it to every buyer.</h1>
+      <p class="lede">Space Data Network is a storefront with no middlemen: publish the data you already produce, as open Space Data Standards records, from your own node and on your own terms.</p>
+    </section>
+    <section class="block" style="padding-top:8px">
+      <div class="wrap">
+        <div class="brief-reel">
+          <video controls playsinline preload="metadata" poster="media/papers/udl-brief/poster.webp">
+            <source src="media/papers/udl-brief/reel.webm" type='video/webm; codecs="av01.0.08M.08"'>
+            <source src="media/papers/udl-brief/reel.mp4" type="video/mp4">
+          </video>
+        </div>
+      </div>
+    </section>
+
+    <section class="block">
+      <div class="wrap brief">
+        <h2>What stays the same</h2>
+        <div class="grid3">
+          <div class="card"><h3>Your UDL delivery</h3><p>Nothing changes in what you deliver to the Unified Data Library. Space Data Network is one more channel for the same products.</p></div>
+          <div class="card"><h3>Your payloads</h3><p>The data you already produce maps field for field to Space Data Standards records, the open standard every SDN node reads.</p></div>
+          <div class="card"><h3>Your terms and keys</h3><p>You decide what is free, delayed or paid, and your node holds the keys to everything you sell.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="block">
+      <div class="wrap brief">
+        <h2>Your data types, as SDS records</h2>
+        <p>Every SSA product class that producers deliver has a Space Data Standards record. Records are compact FlatBuffers, read the same way in any language.</p>
+        <div class="brief-table">
+          <table>
+            <thead><tr><th>What you deliver</th><th>SDS record</th><th>Carries</th></tr></thead>
+            <tbody>
+              <tr><td>Element sets</td><td><code>OMM</code></td><td>Orbit Mean-elements Message: SGP4 element sets, catalog numbers above 99,999 included</td></tr>
+              <tr><td>State vectors</td><td><code>OCM</code></td><td>State, covariance, solve-for parameters (B, AGOM, thrust) and force-model settings</td></tr>
+              <tr><td>Ephemerides</td><td><code>OEM, OCM</code></td><td>OEM for states; OCM when covariance travels with them</td></tr>
+              <tr><td>SP vector covariance messages</td><td><code>OCM</code></td><td>Read field for field into an OCM</td></tr>
+              <tr><td>Conjunctions</td><td><code>CDM</code></td><td>Conjunction Data Message</td></tr>
+              <tr><td>Electro-optical observations</td><td><code>EOO</code></td><td>Angles, photometry and their uncertainties</td></tr>
+              <tr><td>Radar observations</td><td><code>RDO</code></td><td>Range, range rate and angles</td></tr>
+              <tr><td>RF observations</td><td><code>RFO</code></td><td>Frequency, power and geolocation inputs</td></tr>
+              <tr><td>Difference of arrival</td><td><code>DOA</code></td><td>TDOA and FDOA geolocation</td></tr>
+              <tr><td>Space object identification</td><td><code>SOI</code></td><td>Signature observation sets</td></tr>
+              <tr><td>Maneuvers</td><td><code>MNV</code></td><td>Pre- and post-maneuver states</td></tr>
+              <tr><td>Launch detections</td><td><code>LND</code></td><td>Launch detection events</td></tr>
+              <tr><td>Tracks and moving targets</td><td><code>TRK, MTI</code></td><td>Track and moving-target-indicator records</td></tr>
+              <tr><td>GNSS observations</td><td><code>GNO</code></td><td>GNSS observation data</td></tr>
+              <tr><td>SAR and SWIR observations</td><td><code>SAR, SWR</code></td><td>Imaging observations</td></tr>
+              <tr><td>Space environment and space weather</td><td><code>SEV, SPW</code></td><td>Environment observations and space-weather records</td></tr>
+              <tr><td>On-orbit objects</td><td><code>CAT, OOD</code></td><td>Catalog entities and object details</td></tr>
+              <tr><td>Earth orientation</td><td><code>EOP</code></td><td>Earth-orientation series</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section class="block">
+      <div class="wrap brief">
+        <h2>Onboarding, step by step</h2>
+        <ol class="steps">
+          <li><strong>Run a node.</strong> The SDN desktop app or a server, on your premises or in your cloud. Your node has its own identity key.</li>
+          <li><strong>Map your feed.</strong> We map the payloads you already produce, as UDL JSON or CCSDS KVN and XML, to SDS records with you.</li>
+          <li><strong>Publish.</strong> Your node signs every record with its key and publishes it content-addressed, so any buyer can check who published it and that nothing changed on the way.</li>
+          <li><strong>Set your terms.</strong> Free, delayed, subscription or one-time. Paid products ship encrypted; the content key stays with your node, and a buyer&#39;s entitlement unlocks it.</li>
+          <li><strong>Show your accuracy.</strong> SDN measures orbit products against independent precise orbits, as its catalog whitepaper does, so accurate data shows it.</li>
+        </ol>
+      </div>
+    </section>
+
+    <section class="block">
+      <div class="wrap brief">
+        <h2>Why producers publish on SDS</h2>
+        <div class="grid3">
+          <div class="card"><h3>One protocol</h3><p>One open format and one network for every buyer, instead of a portal, a login, an API and a format per customer.</p></div>
+          <div class="card"><h3>Efficient at volume</h3><p>Binary records sized for constellation ephemerides, with the uncertainty and its calibration label carried in the record.</p></div>
+          <div class="card"><h3>Provenance by default</h3><p>Signed at the source and content-addressed, so a record&#39;s origin and integrity travel with it to every buyer.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="block">
+      <div class="wrap brief">
+        <h2>Talk to us</h2>
+        <p>Tell us what you deliver today and to whom. We will map your products to SDS records and bring your node online with you.</p>
+        <a class="contact" href="mailto:tj@edgesource.com">tj@edgesource.com</a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="sdn-footer">
+    <div class="sdn-footer-inner">
+      <a class="sdn-footer-brand" href="index.html">Space Data Network</a>
+      <p class="sdn-footer-legal">MIT License &middot; &copy; Edgesource Corporation &middot; <a href="mailto:tj@edgesource.com">tj@edgesource.com</a></p>
+    </div>
+  </footer>
+  <script src="site.js"></script>
+</body>
+</html>

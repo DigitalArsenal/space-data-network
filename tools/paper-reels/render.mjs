@@ -12,7 +12,7 @@ import { dirname, join } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-const PAPERS = ["evidence-supported-aso-catalog", "fast-conjunction-assessment", "adversarial-security"];
+const PAPERS = ["evidence-supported-aso-catalog", "fast-conjunction-assessment", "provenance-and-security", "adversarial-security", "udl-brief"];
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = join(here, "..", "..");
 const argv = process.argv.slice(2);
