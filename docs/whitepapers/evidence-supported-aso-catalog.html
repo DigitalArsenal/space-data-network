@@ -74,7 +74,7 @@
           <div><dt>Evidence cutoff</dt><dd><span>11 October 2026</span></dd></div>
           <div><dt>Sections</dt><dd>11</dd></div>
           <div><dt>Reading time</dt><dd>29 min</dd></div>
-          <div><dt>Interactive models</dt><dd>14</dd></div>
+          <div><dt>Interactive models</dt><dd>15</dd></div>
         </dl>
       </div>
     </header>
@@ -104,7 +104,7 @@
               <li><a href="#51-gnss-and-laser-ranged-satellites"><span class="toc-num">5.1</span><span>GNSS and laser-ranged satellites</span><i class="toc-model" title="Interactive model"></i></a></li>
               <li><a href="#52-operator--and-provider-ephemeris-objects"><span class="toc-num">5.2</span><span>Operator- and provider-ephemeris objects</span><i class="toc-model" title="Interactive model"></i></a></li>
               <li><a href="#53-objects-with-public-omms-only"><span class="toc-num">5.3</span><span>Objects with public OMMs only</span></a></li>
-              <li><a href="#54-drag-regime"><span class="toc-num">5.4</span><span>Drag regime</span></a></li>
+              <li><a href="#54-drag-regime"><span class="toc-num">5.4</span><span>Drag regime</span><i class="toc-model" title="Interactive model"></i></a></li>
               <li><a href="#55-maneuver-detection"><span class="toc-num">5.5</span><span>Maneuver detection</span><i class="toc-model" title="Interactive model"></i></a></li>
             </ol>
           </li>
@@ -445,7 +445,7 @@
 </tr>
 </tbody></table></div>
 <p>The start state sets the limit. Over 6 days, HPOP leaves 0.2 km along track from a GPS satellite&#39;s IGS state and 8.4 km from its OMM epoch state (medians of 508 arcs)<sup><a href="#r10">10</a></sup>. Laser ranges fix the start state, and the prediction then stays 20 to 60 times better than SGP4 to 7 days <a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e6/README.md">E6</a>.</p>
-<h3 id="54-drag-regime"><span class="sec-num">5.4</span>Drag regime</h3>
+<div class="sec-head sec-head-h3"><h3 id="54-drag-regime"><span class="sec-num">5.4</span>Drag regime</h3><button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/evidence-supported-aso-catalog/54-drag-regime.html" data-model-title="CHAMP through the 2003 storms: JB2008, its correction and HASDM" aria-label="Run it: CHAMP through the 2003 storms: JB2008, its correction and HASDM"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span>Run it</button></div>
 <p>Density is scored by σ, the spread of ln(observed/model density) on satellites outside the calibration; prediction by the 3-day position error relative to JB2008&#39;s (below 1 is better).</p>
 <div class="table-frame"><table>
 <thead>
