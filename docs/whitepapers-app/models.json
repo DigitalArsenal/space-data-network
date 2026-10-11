@@ -1,7 +1,7 @@
 [
   {
     "paper": "evidence-supported-aso-catalog",
-    "section_id": "2-evidence-model-and-records",
+    "section_id": "2-evidence-model",
     "title": "A solution from observations, with its covariance",
     "url": "models/evidence-supported-aso-catalog/2-evidence-model-and-records.html"
   },
@@ -54,20 +54,20 @@
     "url": "models/evidence-supported-aso-catalog/9-sp-message-interchange.html"
   },
   {
-    "paper": "evidence-supported-aso-catalog",
-    "section_id": "10-publication-and-reproduction",
+    "paper": "provenance-and-security",
+    "section_id": "3-publication-and-reproduction",
     "title": "A V1 seed, reproduced here",
     "url": "models/evidence-supported-aso-catalog/10-publication-and-reproduction.html"
   },
   {
     "paper": "evidence-supported-aso-catalog",
-    "section_id": "11-measured-accuracy",
+    "section_id": "10-measured-accuracy",
     "title": "Measured accuracy, by object class and age",
     "url": "models/evidence-supported-aso-catalog/11-measured-accuracy.html"
   },
   {
     "paper": "evidence-supported-aso-catalog",
-    "section_id": "12-what-conjunction-assessment-consumes",
+    "section_id": "11-what-conjunction-assessment-consumes",
     "title": "A conjunction from fitted covariances",
     "url": "models/evidence-supported-aso-catalog/12-what-conjunction-assessment-consumes.html"
   },

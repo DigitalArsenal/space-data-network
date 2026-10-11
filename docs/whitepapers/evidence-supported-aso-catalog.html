@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="../assets/sdn-chrome/sdn-chrome.css">
   <script src="../assets/sdn-chrome/sdn-chrome.js"></script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="An attributed orbital catalog for Space Data Network: evidence, provenance, uncertainty and reproducible selection for anthropogenic space objects.">
+  <meta name="description" content="A measured orbital catalog for Space Data Network: sources, dynamics, uncertainty and accuracy against independent orbits for anthropogenic space objects.">
   <meta name="theme-color" content="#000000">
   <title>Evidence-Supported ASO Catalog &middot; Space Data Network</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' fill='none'><defs><linearGradient id='t' gradientUnits='userSpaceOnUse' x1='16' y1='29' x2='16' y2='3'><stop offset='0' stop-color='%23f5a524' stop-opacity='0'/><stop offset='.55' stop-color='%23f5a524' stop-opacity='.55'/><stop offset='1' stop-color='%23f5a524'/></linearGradient></defs><circle cx='16' cy='16' r='13' stroke='%23f5f5f7' stroke-width='1.6' opacity='.3'/><path d='M16 29A13 13 0 0 1 16 3' stroke='url(%23t)' stroke-width='2.2' stroke-linecap='round'/><path d='M16 10.2L10.4 20.1H21.6Z' stroke='%23f5f5f7' stroke-width='1.6' stroke-linejoin='round'/><circle cx='16' cy='10.2' r='2.6' fill='%23f5f5f7'/><circle cx='10.4' cy='20.1' r='2.6' fill='%23f5f5f7'/><circle cx='21.6' cy='20.1' r='2.6' fill='%23f5f5f7'/><circle cx='16' cy='3' r='2.5' fill='%23f5a524'/></svg>">
@@ -47,7 +47,7 @@
           <p class="paper-crumbs"><a href="../whitepapers.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>All whitepapers</a></p>
           <p class="eyebrow">Catalog &middot; Technical whitepaper</p>
           <h1 class="paper-title">Evidence-Supported ASO Catalog</h1>
-          <p class="paper-subtitle">An attributed orbital catalog for Space Data Network</p>
+          <p class="paper-subtitle">A measured orbital catalog for Space Data Network</p>
           <ul class="paper-authors">
           <li><b>Anthony &quot;TJ&quot; Koury III</b><span>Edgesource, Space Data Network</span></li>
           <li><b>Claude Opus 5.5</b><span>Anthropic</span></li>
@@ -71,9 +71,9 @@
           <div><dt>Edition</dt><dd>2.0</dd></div>
           <div><dt>Published</dt><dd>11 October 2026</dd></div>
           <div><dt>Evidence cutoff</dt><dd><span>11 October 2026</span></dd></div>
-          <div><dt>Sections</dt><dd>12</dd></div>
+          <div><dt>Sections</dt><dd>11</dd></div>
           <div><dt>Reading time</dt><dd>29 min</dd></div>
-          <div><dt>Interactive models</dt><dd>12</dd></div>
+          <div><dt>Interactive models</dt><dd>11</dd></div>
         </dl>
       </div>
     </header>
@@ -86,14 +86,16 @@
           </div>
           <ol>
           <li><a href="#1-summary"><span class="toc-num">1</span><span>Summary</span></a></li>
-          <li><a href="#2-evidence-model-and-records"><span class="toc-num">2</span><span>Evidence model and records</span><i class="toc-model" title="Interactive model"></i></a></li>
+          <li><a href="#2-evidence-model"><span class="toc-num">2</span><span>Evidence model</span><i class="toc-model" title="Interactive model"></i></a></li>
           <li><a href="#3-sources"><span class="toc-num">3</span><span>Sources</span></a></li>
           <li><a href="#4-normalization-and-model-dispatch"><span class="toc-num">4</span><span>Normalization and model dispatch</span></a>
             <ol>
               <li><a href="#vimpel-osculating-elements"><span>Vimpel osculating elements</span><i class="toc-model" title="Interactive model"></i></a></li>
+              <li><a href="#aoe-element-sets"><span>AOE element sets</span></a></li>
               <li><a href="#the-handoff-contract"><span>The handoff contract</span><i class="toc-model" title="Interactive model"></i></a></li>
               <li><a href="#levels-of-measurement-of-omm-elements"><span>Levels of measurement of OMM elements</span><i class="toc-model" title="Interactive model"></i></a></li>
               <li><a href="#dispatch-frames-and-time"><span>Dispatch, frames and time</span></a></li>
+              <li><a href="#sdns-own-omms"><span>SDN's own OMMs</span></a></li>
             </ol>
           </li>
           <li><a href="#5-products-by-object-class"><span class="toc-num">5</span><span>Products by object class</span></a>
@@ -114,9 +116,8 @@
           </li>
           <li><a href="#8-association-and-selection"><span class="toc-num">8</span><span>Association and selection</span><i class="toc-model" title="Interactive model"></i></a></li>
           <li><a href="#9-sp-message-interchange"><span class="toc-num">9</span><span>SP message interchange</span><i class="toc-model" title="Interactive model"></i></a></li>
-          <li><a href="#10-publication-and-reproduction"><span class="toc-num">10</span><span>Publication and reproduction</span><i class="toc-model" title="Interactive model"></i></a></li>
-          <li><a href="#11-measured-accuracy"><span class="toc-num">11</span><span>Measured accuracy</span><i class="toc-model" title="Interactive model"></i></a></li>
-          <li><a href="#12-what-conjunction-assessment-consumes"><span class="toc-num">12</span><span>What conjunction assessment consumes</span><i class="toc-model" title="Interactive model"></i></a></li>
+          <li><a href="#10-measured-accuracy"><span class="toc-num">10</span><span>Measured accuracy</span><i class="toc-model" title="Interactive model"></i></a></li>
+          <li><a href="#11-what-conjunction-assessment-consumes"><span class="toc-num">11</span><span>What conjunction assessment consumes</span><i class="toc-model" title="Interactive model"></i></a></li>
           <li><a href="#appendix-a-terms"><span class="toc-num">Appendix A</span><span>Terms</span></a></li>
           <li><a href="#data-credits"><span>Data credits</span></a></li>
           <li><a href="#references"><span>References</span></a></li>
@@ -128,7 +129,7 @@
         </nav>
         <article class="paper">
 <h2 id="1-summary"><span class="sec-num">1</span>Summary</h2>
-<p>Space Data Network (SDN) builds a catalog of anthropogenic space objects (ASOs) from public and login-only sources. It keeps every provider&#39;s product as an attributed record and, object by object, publishes the solution with the best measured accuracy for the intended use, with its uncertainty and lineage. Accuracy is measured against independent precise orbits, under plans fixed before the test data were read<sup><a href="#r1">1</a></sup>.</p>
+<p>Space Data Network (SDN) builds a catalog of anthropogenic space objects (ASOs) from public and login-only sources. Object by object, it publishes the solution with the best measured accuracy for the intended use, with its uncertainty. Accuracy is measured against independent precise orbits, under plans fixed before the test data were read<sup><a href="#r1">1</a></sup>.</p>
 <div class="table-frame"><table>
 <thead>
 <tr>
@@ -173,7 +174,7 @@
 <li>Consecutive OMM errors are strongly correlated, and four published covariance constructions are overconfident (<a href="#6-uncertainty">section 6</a>).</li>
 </ol>
 <p>Pre-registered hypotheses that failed are reported as not supported.</p>
-<div class="sec-head sec-head-h2"><h2 id="2-evidence-model-and-records"><span class="sec-num">2</span>Evidence model and records</h2><button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/evidence-supported-aso-catalog/2-evidence-model-and-records.html" data-model-title="A solution from observations, with its covariance" aria-label="Run it: A solution from observations, with its covariance"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span>Run it</button></div>
+<div class="sec-head sec-head-h2"><h2 id="2-evidence-model"><span class="sec-num">2</span>Evidence model</h2><button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/evidence-supported-aso-catalog/2-evidence-model-and-records.html" data-model-title="A solution from observations, with its covariance" aria-label="Run it: A solution from observations, with its covariance"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span>Run it</button></div>
 <p>An orbit solution is an inference with five contributors:</p>
 <ol>
 <li>The object&#39;s physics</li>
@@ -182,8 +183,8 @@
 <li>The measurement model</li>
 <li>The inference method</li>
 </ol>
-<p>A provider&#39;s ephemeris or element set already embeds the provider&#39;s models and inference, so the catalog keeps it as an attributed provider claim, not as an observation. Agreement between products counts as independent confirmation only when their lineage is independent; unknown lineage is recorded as unknown.</p>
-<p>Orbit data sit at four processing levels, by analogy with Earth-science data levels. A higher level is more processed, not better: it inherits every flaw below it, and re-epoching adds no evidence. Every source record declares its level.</p>
+<p>A provider&#39;s ephemeris or element set already embeds the provider&#39;s models and inference, so the catalog treats it as the provider&#39;s estimate, not as an observation. Agreement between two products counts as independent confirmation only when their inputs are independent.</p>
+<p>Orbit data sit at four processing levels, by analogy with Earth-science data levels. A higher level is more processed, not better: it inherits every flaw below it, and re-epoching adds no evidence. Each input is placed at its level.</p>
 <div class="table-frame"><table>
 <thead>
 <tr>
@@ -213,7 +214,7 @@
 <td>OMMs from Space-Track and SpaceMapper; CelesTrak&#39;s supplemental GP; SDN&#39;s SGP4 companions</td>
 </tr>
 </tbody></table></div>
-<p>A source record keeps the provider, native identifier, edition, SHA-256 of the bytes, product type, epoch, time scale and frame; observation time, solution epoch, issue time and retrieval time stay distinct. A solution record specifies:</p>
+<p>A solution states what produced it:</p>
 <div class="table-frame"><table>
 <thead>
 <tr>
@@ -226,8 +227,8 @@
 <td>State or ephemeris, epoch, applicable interval</td>
 </tr>
 <tr>
-<td>Evidence and lineage</td>
-<td>Source records, their levels and dependencies, editions</td>
+<td>Inputs</td>
+<td>The products it rests on and their levels</td>
 </tr>
 <tr>
 <td>Dynamics</td>
@@ -239,14 +240,14 @@
 </tr>
 <tr>
 <td>Inference</td>
-<td>Estimator or selection rule, weights, priors, software version</td>
+<td>Estimator or selection rule, weights, priors</td>
 </tr>
 <tr>
 <td>Uncertainty</td>
-<td>Covariance or none, its source and its calibration label</td>
+<td>Covariance, its source and its calibration label</td>
 </tr>
 </tbody></table></div>
-<p>Hashes establish byte identity and signatures establish attribution; physical validity rests on the measurements of <a href="#5-products-by-object-class">sections 5</a> to <a href="#7-dynamics-and-verification">7</a>. Identical inputs, module binaries and policy reproduce the same decisions.</p>
+<p>Physical validity rests on the measurements of <a href="#5-products-by-object-class">sections 5</a> to <a href="#7-dynamics-and-verification">7</a>.</p>
 <h2 id="3-sources"><span class="sec-num">3</span>Sources</h2>
 <p>The inventory<sup><a href="#r2">2</a></sup> lists 97 public and login-only sources in eight groups, with access, terms, latency and use. Results draw on every source an experiment read; files are copied only where their terms allow, and the credits close this paper.</p>
 <div class="table-frame"><table>
@@ -295,13 +296,48 @@
 <tr>
 <td>H. The High Accuracy Catalog (HAC) and HASDM</td>
 <td>Special Perturbations (SP) vectors; real-time HASDM</td>
-<td>The comparison target (<a href="#11-measured-accuracy">section 11</a>)</td>
+<td>The comparison target (<a href="#10-measured-accuracy">section 10</a>)</td>
 </tr>
 </tbody></table></div>
-<p>SpaceMapper&#39;s AOE catalog (channel KY) holds 19,197 element sets that the provider attributes to its own sensor network<sup><a href="#r4">4</a></sup>. AOE rewrites them every 3 hours; SDN takes a snapshot daily from the public web pages. SpaceMapper states no license, so the sets are cited, not copied. Doppler read from SatNOGS waterfall images made the ISS orbit 2.7–10.7 times worse than SGP4 <a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e6/README.md">E6</a>.</p>
+<p>SpaceMapper&#39;s AOE catalog holds SGP4 element sets from its own ground and space sensors (channel KY, 19,202 objects on 11 October 2026) beside sets it relays from other catalogs<sup><a href="#r4">4</a></sup>. AOE rewrites them every 3 hours; SDN reads them daily from the public web pages (<a href="#4-normalization-and-model-dispatch">section 4</a>). SpaceMapper states no license, so the sets are cited, not copied. Doppler read from SatNOGS waterfall images made the ISS orbit 2.7–10.7 times worse than SGP4 <a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e6/README.md">E6</a>.</p>
 <h2 id="4-normalization-and-model-dispatch"><span class="sec-num">4</span>Normalization and model dispatch</h2>
 <div class="sec-head sec-head-h3"><h3 id="vimpel-osculating-elements">Vimpel osculating elements</h3><button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/evidence-supported-aso-catalog/vimpel-osculating-elements.html" data-model-title="Osculating elements to a J2000 state" aria-label="Run it: Osculating elements to a J2000 state"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span>Run it</button></div>
 <p>Vimpel&#39;s HEO product gives osculating elements in J2000<sup><a href="#r5">5</a></sup>. The standard perifocal rotation turns them into a J2000 state at the same epoch<sup><a href="#r6">6</a></sup>, with μ = 398,600.4418 km³/s², under the identifier <code>vimpel:&lt;id&gt;</code> and no invented NORAD number<sup><a href="#r7">7</a></sup>. Velocity differenced from 600 s position samples departs from the analytic velocity by up to 1.1 km/s, so it serves only as a diagnostic.</p>
+<h3 id="aoe-element-sets">AOE element sets</h3>
+<p>AOE&#39;s KY sets are SGP4 mean elements: the catalog evaluates them through the same SGP4 as Space-Track&#39;s OMMs, under the NORAD number AOE gives, or under <code>aoe:&lt;id&gt;</code> where it gives none. E15 scores them against independent orbits beside Space-Track&#39;s, under a plan fixed before its test window <a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/4b0bc1b556dae67d55c1d81a31337738822e7e06/results/e15/README.md">E15</a>. On 11 October 2026, its first training day:</p>
+<div class="table-frame"><table>
+<thead>
+<tr>
+<th>Measure</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Difference from Space-Track</td>
+<td>A median 1.70 km from Space-Track&#39;s newest set at the same moment; 1.5 % within 100 m</td>
+</tr>
+<tr>
+<td>Age at issue</td>
+<td>Median 11.6 days: 7.4 in Starlink&#39;s shells, 36 for the Chinese space station, 62 for Spire, 83 for Planet</td>
+</tr>
+<tr>
+<td>Error at issue, Starlink (2,755 satellites, SpaceX ephemerides)</td>
+<td>40.7 km median against Space-Track&#39;s 2.14 km: 18.9 [16.7, 21.6] times, almost all set age</td>
+</tr>
+<tr>
+<td>The same at matched age</td>
+<td>1.07 [0.70, 1.55] times Space-Track&#39;s error under half a day old; 1.03 [0.80, 1.26] at half a day to a day</td>
+</tr>
+<tr>
+<td>Error at issue, GEO (76 satellites)</td>
+<td>19.0 km against 6.69 km: 2.84 [1.77, 4.07] times</td>
+</tr>
+<tr>
+<td>Coverage</td>
+<td>45 of 82 Planet and 6 of 10 Spire satellites have no AOE set</td>
+</tr>
+</tbody></table></div>
+<p>AOE&#39;s sets are therefore not copies of Space-Track&#39;s: they are as accurate at the same age, and older on most objects.</p>
 <div class="sec-head sec-head-h3"><h3 id="the-handoff-contract">The handoff contract</h3><button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/evidence-supported-aso-catalog/the-handoff-contract.html" data-model-title="An OMM handed to a numerical propagator" aria-label="Run it: An OMM handed to a numerical propagator"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span>Run it</button></div>
 <p>An OMM holds SGP4 mean elements, not osculating ones. The catalog evaluates SGP4 at zero elapsed time, transforms position and velocity from TEME to GCRF at the same instant, and starts HPOP from that state<sup><a href="#r8">8</a></sup>. SGP4&#39;s drag term B* becomes the ballistic parameter</p>
 <div class="math-display"><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mi>B</mi><mo>=</mo><mfrac><mrow><msub><mi>C</mi><mi>D</mi></msub><mi>A</mi></mrow><mi>m</mi></mfrac><mo>=</mo><mfrac><mrow><mn>2</mn><msup><mi>B</mi><mo>∗</mo></msup></mrow><msub><mi>ρ</mi><mn>0</mn></msub></mfrac></mrow><annotation encoding="application/x-tex">B = \frac{C_D A}{m} = \frac{2B^*}{\rho_0}</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6833em;"></span><span class="mord mathnormal" style="margin-right:0.0502em;">B</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:2.0463em;vertical-align:-0.686em;"></span><span class="mord"><span class="mopen nulldelimiter"></span><span class="mfrac"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:1.3603em;"><span style="top:-2.314em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord mathnormal">m</span></span></span><span style="top:-3.23em;"><span class="pstrut" style="height:3em;"></span><span class="frac-line" style="border-bottom-width:0.04em;"></span></span><span style="top:-3.677em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord"><span class="mord mathnormal" style="margin-right:0.0715em;">C</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3283em;"><span style="top:-2.55em;margin-left:-0.0715em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mathnormal mtight" style="margin-right:0.0278em;">D</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span><span class="mord mathnormal">A</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.686em;"><span></span></span></span></span></span><span class="mclose nulldelimiter"></span></span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:2.2461em;vertical-align:-0.8804em;"></span><span class="mord"><span class="mopen nulldelimiter"></span><span class="mfrac"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:1.3657em;"><span style="top:-2.314em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord"><span class="mord mathnormal">ρ</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3011em;"><span style="top:-2.55em;margin-left:0em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight">0</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span><span style="top:-3.23em;"><span class="pstrut" style="height:3em;"></span><span class="frac-line" style="border-bottom-width:0.04em;"></span></span><span style="top:-3.677em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord">2</span><span class="mord"><span class="mord mathnormal" style="margin-right:0.0502em;">B</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.6887em;"><span style="top:-3.063em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mbin mtight">∗</span></span></span></span></span></span></span></span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.8804em;"><span></span></span></span></span></span><span class="mclose nulldelimiter"></span></span></span></span></span></span></div>
@@ -310,6 +346,8 @@
 <p>OMM fields mix nominal (catalog number), ordinal (element-set number), interval (epoch), ratio (mean motion) and circular (node, perigee, mean anomaly) scales, so the pipeline computes on SGP4-evaluated states, never on raw fields. The legacy two-line format quantizes angles to 0.0001°, about 12 m along track near 6,900 km: a resolution, not an accuracy.</p>
 <h3 id="dispatch-frames-and-time">Dispatch, frames and time</h3>
 <p>Each record is routed by its declared theory: mean elements to SGP4, osculating elements to the two-body conversion, states and ephemerides to frame transforms. Osculating elements offered to SGP4 are refused as a model mismatch. Frames follow the IERS Conventions (2010): IAU 2006/2000A, CIO-based, through ERFA, with IERS Earth orientation<sup><a href="#r11">11</a></sup>. TEME, EME2000, GCRF and ITRF stay distinct; epochs are UTC and integration runs on TT.</p>
+<h3 id="sdns-own-omms">SDN&#39;s own OMMs</h3>
+<p>SDN fits its own OMMs to any source&#39;s ephemeris: operator ephemerides (SpaceX&#39;s MEME files, CCSDS OEM, Earth-fixed files), GNSS orbits (SP3), laser-ranging predictions (CPF) and its own HPOP solutions. Each is an SGP4 element set with B* fitted over a declared interval and scored on a held-out stretch before release, so any SGP4 implementation reads it. CelesTrak&#39;s supplemental GP fits operator ephemerides the same way<sup><a href="#r48">48</a></sup>, Spacebook fits extended-perturbation element sets to its own orbits<sup><a href="#r51">51</a></sup>, and the 18th Space Defense Squadron&#39;s eGP fits SP states<sup><a href="#r49">49</a></sup>. The fit RMS that CelesTrak publishes for each set is the benchmark.</p>
 <h2 id="5-products-by-object-class"><span class="sec-num">5</span>Products by object class</h2>
 <p>Each row is one method: its originators, our measured result (median 3D position error unless stated) and the experiment. Every experiment froze its plan before reading its test window<sup><a href="#r1">1</a></sup>.</p>
 <h3 id="51-gnss-and-laser-ranged-satellites"><span class="sec-num">5.1</span>GNSS and laser-ranged satellites</h3>
@@ -377,7 +415,7 @@
 <tbody><tr>
 <td>SGP4 on the latest public OMM</td>
 <td>Hoots and Roehrich 1980<sup><a href="#r9">9</a></sup>; Vallado et al. 2006<sup><a href="#r8">8</a></sup></td>
-<td>At issue: 0.31 km (laser-ranged LEO) to 1.57 km (GPS); by horizon in <a href="#11-measured-accuracy">section 11</a></td>
+<td>At issue: 0.31 km (laser-ranged LEO) to 1.57 km (GPS); by horizon in <a href="#10-measured-accuracy">section 10</a></td>
 <td><a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e3/README.md">E3</a></td>
 </tr>
 <tr>
@@ -391,6 +429,12 @@
 <td>Vallado et al. 2006<sup><a href="#r8">8</a></sup>; Jankovic 2026<sup><a href="#r15">15</a></sup></td>
 <td>Equal to SGP4 at epoch, then larger as the OMM&#39;s start-state error grows: at 24 h, 1.7 (GPS) to 11 (laser-ranged LEO) times SGP4&#39;s error; larger in all four regimes (GPS, LEO with precise orbits, laser-ranged LEO and MEO) by 72 h</td>
 <td><a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e7/test/REPORT.md">E7</a></td>
+</tr>
+<tr>
+<td>AOE&#39;s newest set</td>
+<td>SpaceMapper<sup><a href="#r4">4</a></sup></td>
+<td>Starlink: 18.9 times Space-Track&#39;s error at issue, from set age; 1.03–1.07 times at matched age (<a href="#4-normalization-and-model-dispatch">section 4</a>)</td>
+<td><a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/4b0bc1b556dae67d55c1d81a31337738822e7e06/results/e15/README.md">E15</a></td>
 </tr>
 <tr>
 <td>HPOP fitted to an arc of OMM epoch states</td>
@@ -760,42 +804,7 @@
 </tr>
 </tbody></table></div>
 <p>A round trip through VCM text in SP&#39;s number format recovers the covariance to 2e-5 of its sigmas. A VCM naming JBH09 runs as JB2008 on SET&#39;s indices, which the caller supplies.</p>
-<div class="sec-head sec-head-h2"><h2 id="10-publication-and-reproduction"><span class="sec-num">10</span>Publication and reproduction</h2><button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/evidence-supported-aso-catalog/10-publication-and-reproduction.html" data-model-title="A V1 seed, reproduced here" aria-label="Run it: A V1 seed, reproduced here"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span>Run it</button></div>
-<p>Publication is transactional: acquire and hash the bytes, verify, normalize, validate, sign a manifest, then announce the new catalog head. Consumers read one complete, immutable snapshot; each update names the object, the prior and new solutions, the epoch, the recipe and the provenance. Content addressing and independent replication keep a snapshot retrievable from any node that holds it.</p>
-<p>An accepted numerical solution can carry an SGP4 companion: mean elements fitted to it over a declared interval and scored on a held-out stretch before release, as CelesTrak&#39;s supplemental GP fits operator ephemerides<sup><a href="#r48">48</a></sup> and the 18th Space Defense Squadron&#39;s eGP fits SP states<sup><a href="#r49">49</a></sup>. The fit RMS that CelesTrak publishes for each set is the benchmark.</p>
-<p>Each experiment&#39;s numbers come from a run manifest: the repository and module commits, each module&#39;s WebAssembly SHA-256 and the SHA-256 of every input; reports are generated from metrics<sup><a href="#r1">1</a></sup>. The experiments&#39; public site runs the same modules in a web browser: a V1 seed reproduces the committed result exactly, and any Orekit case re-runs from its exact request. Space-Track element sets, SpaceX and Planet files and SET&#39;s indices are cited by URL and SHA-256, not copied.</p>
-<div class="table-frame"><table>
-<thead>
-<tr>
-<th>Evidence</th>
-<th>Commit</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>Experiments V1, E1–E8, E13 and E14</td>
-<td>orbit-accuracy-experiments <code>357d992d6c62daac4ccbb2fd230634ac292192b8</code></td>
-</tr>
-<tr>
-<td>HPOP 1.3.0, its Orekit suite, screen and covariance calibration; maneuver detection 0.3.0</td>
-<td>space-data-network-modules <code>d4a0b1155f64ac088694f9758c32e3b691952674</code></td>
-</tr>
-<tr>
-<td>HPOP in V1</td>
-<td>space-data-network-modules <code>750b6399173a2678b8e8d0885557976d17a9ad5c</code></td>
-</tr>
-<tr>
-<td>VCM adapter</td>
-<td>space-data-network-modules <code>1879d8c5c17c061e157c100723a8423c59fd98e2</code></td>
-</tr>
-<tr>
-<td>Vimpel conversion and refinement</td>
-<td>space-data-network-modules <code>49e159d7003cac3d3e65b03170f11909fa86dd2c</code></td>
-</tr>
-</tbody></table></div>
-<p>HPOP&#39;s WebAssembly binary in V1, SHA-256:</p>
-<pre><code class="language-text">473d527175de6606ccf305c45b37218288634fa9de2dcab0d72564a190bdabd1
-</code></pre>
-<div class="sec-head sec-head-h2"><h2 id="11-measured-accuracy"><span class="sec-num">11</span>Measured accuracy</h2><button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/evidence-supported-aso-catalog/11-measured-accuracy.html" data-model-title="Measured accuracy, by object class and age" aria-label="Run it: Measured accuracy, by object class and age"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span>Run it</button></div>
+<div class="sec-head sec-head-h2"><h2 id="10-measured-accuracy"><span class="sec-num">10</span>Measured accuracy</h2><button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/evidence-supported-aso-catalog/11-measured-accuracy.html" data-model-title="Measured accuracy, by object class and age" aria-label="Run it: Measured accuracy, by object class and age"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span>Run it</button></div>
 <p>Median 3D position error against precise orbits, by object class and age of the product:</p>
 <div class="table-frame"><table>
 <thead>
@@ -874,7 +883,7 @@
 </tr>
 </tbody></table></div>
 <p>The HAC&#39;s position errors are not published<sup><a href="#r2">2</a></sup>. The public figures: element sets in the HAC&#39;s own LEO conjunction regime (perigee above 500 km) err by 0.6–3 km from epoch to 72 hours<sup><a href="#r49">49</a></sup>; one ASW covariance shown as an illustration has σ of 8.3 m radial, 332 m in-track and 2.1 m cross-track at epoch<sup><a href="#r37">37</a></sup>; HASDM&#39;s density spread is 0.078 against JB2008&#39;s 0.148 (<a href="#54-drag-regime">section 5.4</a>).</p>
-<div class="sec-head sec-head-h2"><h2 id="12-what-conjunction-assessment-consumes"><span class="sec-num">12</span>What conjunction assessment consumes</h2><button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/evidence-supported-aso-catalog/12-what-conjunction-assessment-consumes.html" data-model-title="A conjunction from fitted covariances" aria-label="Run it: A conjunction from fitted covariances"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span>Run it</button></div>
+<div class="sec-head sec-head-h2"><h2 id="11-what-conjunction-assessment-consumes"><span class="sec-num">11</span>What conjunction assessment consumes</h2><button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/evidence-supported-aso-catalog/12-what-conjunction-assessment-consumes.html" data-model-title="A conjunction from fitted covariances" aria-label="Run it: A conjunction from fitted covariances"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span>Run it</button></div>
 <p>Conjunction screening<sup><a href="#r50">50</a></sup> takes from one catalog snapshot, per object:</p>
 <div class="table-frame"><table>
 <thead>
@@ -895,12 +904,8 @@
 <td>Hard-body radius</td>
 <td>Supplied, half the catalog size, from radar cross-section, or the default, with its basis</td>
 </tr>
-<tr>
-<td>Provenance</td>
-<td>Snapshot, source records and recipe</td>
-</tr>
 </tbody></table></div>
-<p>An OMM supplies no covariance. A collision probability needs relative-state uncertainty with independent calibration and stated correlation, geometry and hard-body radius; without it the screen reports only the covariance-free maximum probability.</p>
+<p>An OMM supplies no covariance, so the catalog attaches one built from the object&#39;s element-set history and calibrated by regime and age against independent orbits (<a href="#6-uncertainty">section 6</a>), with its calibration label. Every event also carries the covariance-free maximum probability, which needs no covariance.</p>
 <h2 id="appendix-a-terms"><span class="sec-num">Appendix A</span>Terms</h2>
 <div class="table-frame"><table>
 <thead>
@@ -926,12 +931,12 @@
 <td>High-precision orbit propagation: numerical integration of the full force model of <a href="#7-dynamics-and-verification">section 7</a></td>
 </tr>
 <tr>
-<td>Provider claim</td>
-<td>An attributed product that already embeds a provider&#39;s models and inference</td>
+<td>Provider estimate</td>
+<td>A provider&#39;s product, which already embeds its models and inference</td>
 </tr>
 <tr>
 <td>Level 0 to 3</td>
-<td>Processing levels of orbit data (<a href="#2-evidence-model-and-records">section 2</a>)</td>
+<td>Processing levels of orbit data (<a href="#2-evidence-model">section 2</a>)</td>
 </tr>
 <tr>
 <td>Ultra-rapid, final orbits</td>
@@ -1094,6 +1099,8 @@
 <p>NASA. Spacecraft Conjunction Assessment and Collision Avoidance Best Practices Handbook, Vol. 2, Technical Appendices, August 2026. <a href="https://ntrs.nasa.gov/citations/20260000457">NTRS 20260000457</a></p>
 <h3 id="r50">R50</h3>
 <p>Koury, A. Fast All-vs-All Conjunction Screening. Space Data Network technical whitepaper. <a href="fast-conjunction-assessment.html">Paper</a></p>
+<h3 id="r51">R51</h3>
+<p>COMSPOC. Spacebook XP-TLE: extended-perturbation element sets fitted to Spacebook&#39;s own orbits. <a href="https://spacebook.com/xp-tle">Page</a></p>
 
         </article>
       </div>

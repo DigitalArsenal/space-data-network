@@ -1,4 +1,4 @@
-// Intro reel for "Fast All-vs-All Conjunction Screening" (Koury and Jah, 1.8).
+// Intro reel for "Fast All-vs-All Conjunction Screening" (Koury, 1.9).
 // 56 seconds, in plain words with the paper's own math: every object against
 // every other, a bound each trajectory computes for itself, a grid that
 // proposes pairs on the GPU and a module that decides in f64, refinement and
@@ -13,15 +13,14 @@ import { prepareMath, createPaperKit } from "./paper-kit.js";
 
 export const meta = { name: "reel", media: "docs/media/papers/fast-conjunction-assessment", poster: 750, crf: [29, 40], audio: { track: "orbital-insertion", start: 120 } };
 
-const DURATION = 56;
+const DURATION = 50.5;
 const FPS = 30;
 const T_PAIRS = 5.5; // every object against every other
 const T_BOUND = 12.5; // each trajectory bounds its own motion
 const T_GRID = 21.5; // the GPU proposes, the module decides
 const T_REF = 29.5; // the closest moment, then the odds
 const T_RES = 38.0; // the measured times
-const T_PRIV = 46.0; // screening on encrypted positions
-const T_END = 51.5; // lockup
+const T_END = 46.0; // lockup
 
 const SATS = makeSky();
 const LEO = SATS.filter((s) => s.kind === 0);
@@ -55,7 +54,7 @@ const OVERLAPS = (() => {
 
 export async function createReel(base = "") {
   const studio = await createStudio({ base, hudTitle: "WHITEPAPER · FAST ALL-VS-ALL CONJUNCTION SCREENING", hudUrl: "SPACEDATANETWORK.ORG" });
-  const { glc, sx, gx, font, maskText, dotGlow, scrim, renderEarth, drawSatellites, eyebrow, block, beginSubframe, bloom, hud, padlock } = studio;
+  const { glc, sx, gx, font, maskText, dotGlow, scrim, renderEarth, drawSatellites, eyebrow, block, beginSubframe, bloom, hud } = studio;
   const math = await prepareMath({
     pairs: { key: "ca_pairs", px: 60, color: INK },
     bound: { key: "ca_bound", px: 46, color: INK },
@@ -355,33 +354,16 @@ export async function createReel(base = "") {
     }
   }
   function drawResults(t) {
-    const tOut = T_PRIV - 0.45;
+    const tOut = T_END - 0.45;
     stat("19 s", "SGP4 · CPU", 960, 260, T_RES + 0.5, tOut, t, { px: 104 });
     stat("21 s", "SGP4 · GPU", 1250, 260, T_RES + 0.7, tOut, t, { px: 104, color: INK });
-    stat("~8 min", "NUMERICAL HPOP", 1500, 260, T_RES + 0.9, tOut, t, { px: 104, color: INK });
+    stat("1.9 h", "FULL-FORCE HPOP · 16 CORES", 1500, 260, T_RES + 0.9, tOut, t, { px: 104, color: INK });
     stat("292,516", "CLOSE APPROACHES WITHIN 5 km OVER THREE DAYS", 1000, 470, T_RES + 1.6, tOut, t, { px: 80 });
     stat("13,088", "WITH A CALIBRATED COVARIANCE PROBABILITY", 1000, 640, T_RES + 2.4, tOut, t, { px: 80, color: INK });
   }
 
-  // -------------------------------------- screening on encrypted positions
-  function drawPrivate(t, alpha) {
-    if (alpha <= 0) return;
-    const A = [1200, 380];
-    const B = [1640, 380];
-    [[A, "OPERATOR A", AMBER], [B, "OPERATOR B", CYAN]].forEach(([p, name, col], i) => {
-      const k = easeOutBack(seg(t, T_PRIV + 0.3 + i * 0.15, T_PRIV + 0.7 + i * 0.15));
-      const lockK = easeInExpo(seg(t, T_PRIV + 0.9, T_PRIV + 1.1));
-      padlock(p[0], p[1], 120 * k, 1 - lockK, lockK >= 1 ? col : INK, alpha);
-      label(name, p[0], p[1] + 110, T_PRIV + 0.4, T_END - 0.45, t, { px: 22, color: col, align: "center" });
-    });
-    const k = easeInOutCubic(seg(t, T_PRIV + 1.4, T_PRIV + 2.2));
-    strokePathScreen([[A[0] + 90, A[1]], [lerp(A[0] + 90, B[0] - 90, k), B[1]]], "rgba(245,245,247,0.6)", alpha, 1.6, [6, 7]);
-    if (k >= 1) chip("CLOSE · NOT CLOSE", (A[0] + B[0]) / 2, A[1] - 70, easeOutBack(seg(t, T_PRIV + 2.2, T_PRIV + 2.6)), alpha, { color: AMBER, px: 20 });
-    eq("he", 1420, 640, T_PRIV + 1.0, T_END - 0.45, t, { align: "center" });
-  }
-
   // ------------------------------------------------------------ subframe
-  const ca = studio.cutPulses([[T_PAIRS, 0.8], [T_BOUND, 1], [T_GRID, 1], [T_REF, 1], [T_RES, 1], [T_PRIV, 0.8], [T_END + 0.2, 1]]);
+  const ca = studio.cutPulses([[T_PAIRS, 0.8], [T_BOUND, 1], [T_GRID, 1], [T_REF, 1], [T_RES, 1], [T_END + 0.2, 1]]);
   const flash = (t) => 0.08 * Math.exp(-Math.pow((t - (T_GRID + 4.2)) / 0.05, 2));
   const fade = (t) => seg(t, 0, 0.4);
 
@@ -390,7 +372,7 @@ export async function createReel(base = "") {
     const cam = cameraAt(t);
     beginSubframe();
     const out = easeInCubic(seg(t, T_END - 0.2, T_END + 0.4));
-    const under = seg(t, T_BOUND - 0.1, T_BOUND + 0.4) * (1 - seg(t, T_RES - 0.3, T_RES + 0.1)) + seg(t, T_PRIV - 0.1, T_PRIV + 0.4);
+    const under = seg(t, T_BOUND - 0.1, T_BOUND + 0.4) * (1 - seg(t, T_RES - 0.3, T_RES + 0.1));
     const earthFade = seg(t, 0, 1.2) * (1 - 0.8 * clamp(under)) * (1 - out);
     if (earthFade > 0.001) {
       renderEarth(cam, t, earthFade, 0.22 * (1 - seg(t, 1.5, 3)), t < T_RES ? 40 : 70, 18);
@@ -404,13 +386,12 @@ export async function createReel(base = "") {
     if (t > T_BOUND - 0.05 && t < T_GRID + 0.1) drawBound(t, seg(t, T_BOUND, T_BOUND + 0.3) * (1 - seg(t, T_GRID - 0.4, T_GRID)));
     if (t > T_GRID - 0.05 && t < T_REF + 0.1) drawGrid(t, seg(t, T_GRID, T_GRID + 0.3) * (1 - seg(t, T_REF - 0.4, T_REF)));
     if (t > T_REF - 0.05 && t < T_RES + 0.1) drawRefine(t, seg(t, T_REF, T_REF + 0.3) * (1 - seg(t, T_RES - 0.4, T_RES)));
-    if (t > T_RES - 0.05 && t < T_PRIV + 0.1) drawFlashes(cam, t, T, seg(t, T_RES, T_RES + 0.3) * (1 - seg(t, T_PRIV - 0.4, T_PRIV)));
-    if (t > T_PRIV - 0.05 && t < T_END + 0.1) drawPrivate(t, seg(t, T_PRIV, T_PRIV + 0.3) * (1 - seg(t, T_END - 0.4, T_END)));
+    if (t > T_RES - 0.05 && t < T_END + 0.1) drawFlashes(cam, t, T, seg(t, T_RES, T_RES + 0.3) * (1 - seg(t, T_END - 0.4, T_END)));
     scrim((1 - out) * 0.9);
 
     // -------------------------------------------------------- the type
     if (t < T_PAIRS + 0.1) {
-      eyebrow("WHITEPAPER · EDITION 1.8", 2, 0.5, T_PAIRS - 0.45, t);
+      eyebrow("WHITEPAPER · EDITION 1.9", 2, 0.5, T_PAIRS - 0.45, t);
       block([["Will anything", INK], ["come too close?", AMBER]], "EVERY CATALOG OBJECT, CHECKED AGAINST EVERY OTHER", 0.6, T_PAIRS - 0.4, t, 88);
     }
     if (t > T_PAIRS - 0.05 && t < T_BOUND + 0.1) {
@@ -437,14 +418,11 @@ export async function createReel(base = "") {
       label("PROVES ONE MINIMUM, THEN ABOUT TEN EVALUATIONS", 152, 470, T_REF + 1.4, T_RES - 0.45, t, { px: 18 });
       block([["Find the closest moment.", INK], ["Then the odds.", AMBER]], "TIME, MISS DISTANCE, RELATIVE SPEED, PROBABILITY", T_REF + 0.1, T_RES - 0.4, t, 84);
     }
-    if (t > T_RES - 0.05 && t < T_PRIV + 0.1) {
+    if (t > T_RES - 0.05 && t < T_END + 0.1) {
       drawResults(t);
-      block([["The full catalog,", INK], ["three days ahead.", AMBER]], "EVERY RUN ON ONE CATALOG AND PROPAGATOR, THE SAME CONJUNCTIONS", T_RES + 0.1, T_PRIV - 0.4, t, 88);
+      block([["The full catalog,", INK], ["three days ahead.", AMBER]], "EVERY RUN ON ONE CATALOG AND PROPAGATOR, THE SAME CONJUNCTIONS", T_RES + 0.1, T_END - 0.4, t, 88);
     }
-    if (t > T_PRIV - 0.05 && t < T_END + 0.1) {
-      block([["Screen together", INK], ["without sharing orbits.", AMBER]], "DISTANCES COMPUTED ON ENCRYPTED POSITIONS", T_PRIV + 0.1, T_END - 0.4, t, 84);
-    }
-    paperLockup({ eyebrow: "WHITEPAPER · EDITION 1.8", title: ["Fast All-vs-All", "Conjunction Screening"], byline: "Anthony “TJ” Koury III and Dr. Moriba Jah", t0: T_END + 0.3 }, t);
+    paperLockup({ eyebrow: "WHITEPAPER · EDITION 1.9", title: ["Fast All-vs-All", "Conjunction Screening"], byline: "Anthony “TJ” Koury III and Claude Opus 5.5", t0: T_END + 0.3 }, t);
 
     bloom();
     hud(t, frameIndex, T_END + 0.1);

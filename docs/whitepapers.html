@@ -56,8 +56,8 @@
             <div class="paper-card-body">
               <p class="eyebrow">Catalog &middot; Edition 2.0</p>
               <h3><a href="whitepapers/evidence-supported-aso-catalog.html">Evidence-Supported ASO Catalog</a></h3>
-              <p>An attributed orbital catalog for Space Data Network, built from public and login-only sources. Each object gets the solution with the best measured accuracy, with its evidence, source and uncertainty. Includes measured accuracy by object class, an open drag correction solved from fleet orbits, and maneuver detection, with every result reproducible in a browser.</p>
-              <p class="meta">Anthony &quot;TJ&quot; Koury III and Claude Opus 5.5 · Whitepaper 2.0 · 11 October 2026 &middot; 12 interactive models</p>
+              <p>A measured orbital catalog for Space Data Network, built from public and login-only sources. Each object gets the solution with the best measured accuracy, with a covariance set from its measured error. Includes accuracy by object class against independent orbits, the Chinese AOE catalog beside Space-Track, an open drag correction solved from fleet orbits, and maneuver detection.</p>
+              <p class="meta">Anthony &quot;TJ&quot; Koury III and Claude Opus 5.5 · Whitepaper 2.0 · 11 October 2026 &middot; 11 interactive models</p>
               <div class="formats">
                 <a href="whitepapers/evidence-supported-aso-catalog.html">Read</a>
                 <a href="whitepapers/evidence-supported-aso-catalog.pdf">PDF</a>
@@ -70,12 +70,26 @@
             <div class="paper-card-body">
               <p class="eyebrow">Conjunctions &middot; Edition 1.9</p>
               <h3><a href="whitepapers/fast-conjunction-assessment.html">Fast All-vs-All Conjunction Screening</a></h3>
-              <p>How Space Data Network checks every tracked object against every other for close approaches: the full catalog over three days in about 20 seconds with SGP4, on a GPU or on ordinary processors, and in about two hours on 16 cores with full-force numerical propagation. Includes agreement with SOCRATES, where collision probabilities are calibrated, and private screening on encrypted orbits.</p>
+              <p>How Space Data Network checks every tracked object against every other for close approaches: the full catalog over three days in about 20 seconds with SGP4, on a GPU or on ordinary processors, and in about two hours on 16 cores with full-force numerical propagation. Includes agreement with SOCRATES, where collision probabilities are calibrated, and why screening on the uncertainty region stays safe when the covariance is large.</p>
               <p class="meta">Anthony &quot;TJ&quot; Koury III and Claude Opus 5.5 · Whitepaper 1.9 · 11 October 2026 &middot; 7 interactive models</p>
               <div class="formats">
                 <a href="whitepapers/fast-conjunction-assessment.html">Read</a>
                 <a href="whitepapers/fast-conjunction-assessment.pdf">PDF</a>
                 <a href="https://github.com/DigitalArsenal/space-data-network/blob/main/whitepapers/fast-conjunction-assessment.md">Markdown</a>
+              </div>
+            </div>
+          </article>
+          <article class="card paper-card">
+            <a class="paper-cover cover-provenance" href="whitepapers/provenance-and-security.html" tabindex="-1" aria-hidden="true"><svg viewBox="0 0 400 180" aria-hidden="true"><circle class="cover-planet" cx="330" cy="250" r="190"/><ellipse class="cover-orbit" cx="330" cy="250" rx="300" ry="96" transform="rotate(-14 330 250)"/><ellipse class="cover-orbit faint" cx="330" cy="250" rx="250" ry="150" transform="rotate(22 330 250)"/></svg></a>
+            <div class="paper-card-body">
+              <p class="eyebrow">Provenance &middot; Edition 1.0</p>
+              <h3><a href="whitepapers/provenance-and-security.html">Provenance and Security in Space Data Network</a></h3>
+              <p>What makes Space Data Network's catalog and screening results traceable, checkable and safe to share: records that keep every source, signed and content-addressed publication, screening work that replicas verify byte for byte, private screening on encrypted orbits, and keys secured by an economic bond.</p>
+              <p class="meta">Anthony &quot;TJ&quot; Koury III and Claude Opus 5.5 · Whitepaper 1.0 · 11 October 2026 &middot; 1 interactive model</p>
+              <div class="formats">
+                <a href="whitepapers/provenance-and-security.html">Read</a>
+                <a href="whitepapers/provenance-and-security.pdf">PDF</a>
+                <a href="https://github.com/DigitalArsenal/space-data-network/blob/main/whitepapers/provenance-and-security.md">Markdown</a>
               </div>
             </div>
           </article>
