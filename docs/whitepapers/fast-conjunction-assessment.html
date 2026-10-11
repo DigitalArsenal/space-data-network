@@ -73,7 +73,7 @@
           <div><dt>Evidence cutoff</dt><dd><span>11 October 2026</span></dd></div>
           <div><dt>Sections</dt><dd>9</dd></div>
           <div><dt>Reading time</dt><dd>38 min</dd></div>
-          <div><dt>Interactive models</dt><dd>6</dd></div>
+          <div><dt>Interactive models</dt><dd>7</dd></div>
         </dl>
         <p class="paper-note">© Edgesource Corporation</p>
       </div>
@@ -117,7 +117,7 @@
               <li><a href="#independent-truth"><span>Independent truth</span></a></li>
               <li><a href="#an-empirical-error-model-and-its-calibration"><span>An empirical error model, and its calibration</span></a></li>
               <li><a href="#covariance-probability-on-screened-events"><span>Covariance probability on screened events</span><i class="toc-model" title="Interactive model"></i></a></li>
-              <li><a href="#propagated-and-fitted-covariance"><span>Propagated and fitted covariance</span></a></li>
+              <li><a href="#propagated-and-fitted-covariance"><span>Propagated and fitted covariance</span><i class="toc-model" title="Interactive model"></i></a></li>
               <li><a href="#agreement-with-socrates"><span>Agreement with SOCRATES</span></a></li>
               <li><a href="#screening-rules-compared"><span>Screening rules compared</span></a></li>
             </ol>
@@ -605,6 +605,7 @@
 </ul>
 <p>Events outside the model keep the Alfano maximum. These are a negative or too-old prediction age, or a stratum the model lacks.</p>
 <h3 id="propagated-and-fitted-covariance">Propagated and fitted covariance</h3>
+<button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/fast-conjunction-assessment/propagated-and-fitted-covariance.html" data-model-title="EKF and UKF: covariance through the pass"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span><span class="run-text"><b>Run it</b><span>EKF and UKF: covariance through the pass</span></span><span class="run-go" aria-hidden="true">&rarr;</span></button>
 <ul>
 <li><strong>Propagation.</strong> HPOP resident instances accept an initial covariance P₀ per object and return P(t) = Φ P₀ Φᵀ + Q, with the state transition matrix of the full force model. Q is a declared white-acceleration process noise, inertial or radial-transverse-normal, given as a spectral density and discretization interval. It is recorded in the trajectory (SDS 1.232.0). The state transition matrix matches finite differences, and Q matches its closed form.</li>
 <li><strong>Orbit determination.</strong> Fits publish their formal covariance as an OCM. The OCM lists the noise models, weighting, observations used, process noise, a priori and convergence criteria, with biases neither estimated nor considered and no consider parameters. It is marked Uncalibrated.</li>
