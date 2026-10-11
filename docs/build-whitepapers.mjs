@@ -419,6 +419,7 @@ function page(paper, fm, body, models, words) {
   <link rel="stylesheet" href="${u('assets/sdn-chrome/sdn-chrome.css')}">
   <script src="${u('assets/sdn-chrome/sdn-chrome.js')}"></script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="format-detection" content="telephone=no, date=no, address=no, email=no">
   <meta name="description" content="${esc(paper.description)}">
   <meta name="theme-color" content="#000000">
   <title>${esc(fm.title)} &middot; Space Data Network</title>
