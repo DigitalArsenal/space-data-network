@@ -69,11 +69,11 @@
       </div>
       <div class="wrap">
         <dl class="paper-facts">
-          <div><dt>Edition</dt><dd>2.0</dd></div>
+          <div><dt>Edition</dt><dd>2.1</dd></div>
           <div><dt>Published</dt><dd>11 October 2026</dd></div>
           <div><dt>Evidence cutoff</dt><dd><span>11 October 2026</span></dd></div>
           <div><dt>Sections</dt><dd>11</dd></div>
-          <div><dt>Reading time</dt><dd>30 min</dd></div>
+          <div><dt>Reading time</dt><dd>33 min</dd></div>
           <div><dt>Interactive models</dt><dd>16</dd></div>
         </dl>
       </div>
@@ -87,7 +87,13 @@
           </div>
           <ol>
           <li><a href="#1-summary"><span class="toc-num">1</span><span>Summary</span></a></li>
-          <li><a href="#2-evidence-model"><span class="toc-num">2</span><span>Evidence model</span><i class="toc-model" title="Interactive model"></i></a></li>
+          <li><a href="#2-method"><span class="toc-num">2</span><span>Method</span></a>
+            <ol>
+              <li><a href="#21-construction"><span class="toc-num">2.1</span><span>Construction</span></a></li>
+              <li><a href="#22-covariance-for-every-object"><span class="toc-num">2.2</span><span>Covariance for every object</span></a></li>
+              <li><a href="#23-evidence-model"><span class="toc-num">2.3</span><span>Evidence model</span><i class="toc-model" title="Interactive model"></i></a></li>
+            </ol>
+          </li>
           <li><a href="#3-sources"><span class="toc-num">3</span><span>Sources</span></a></li>
           <li><a href="#4-normalization-and-model-dispatch"><span class="toc-num">4</span><span>Normalization and model dispatch</span></a>
             <ol>
@@ -130,7 +136,7 @@
         </nav>
         <article class="paper">
 <h2 id="1-summary"><span class="sec-num">1</span>Summary</h2>
-<p>Space Data Network (SDN) builds a catalog of anthropogenic space objects (ASOs) from public and login-only sources. Object by object, it publishes the solution with the best measured accuracy for the intended use, with its uncertainty. Accuracy is measured against independent precise orbits, under plans fixed before the test data were read<sup><a href="#r1">1</a></sup>.</p>
+<p>Space Data Network (SDN) builds a catalog of anthropogenic space objects (ASOs) from public and login-only sources. Object by object, it publishes the solution with the best measured accuracy for the intended use, with its uncertainty. Accuracy is measured against independent precise orbits, under plans fixed before the test data were read<sup><a href="#r1">1</a></sup>. <a href="#2-method">Section 2</a> states the method step by step, with the rule that gives every object a covariance.</p>
 <div class="table-frame"><table>
 <thead>
 <tr>
@@ -162,7 +168,7 @@
 </tbody></table></div>
 <p>For most objects the only public input is the OMM, and the catalog takes it as it is. What the catalog adds is a measured account of each input&#39;s error, and screening that acts on it safely:</p>
 <ol>
-<li><strong>Measured error as covariance.</strong> An orbit propagated from an OMM&#39;s epoch state carries a covariance equal to the error measured for its orbit regime and element-set age. That error is measured against independent orbits in every regime that has them: GNSS analysis-centre orbits, laser ranging, LEO precise orbits, operator ephemerides and radio-occultation receivers. A covariance is labeled calibrated only where held-out data confirm it (<a href="#6-uncertainty">section 6</a>).</li>
+<li><strong>Measured error as covariance.</strong> An orbit propagated from an OMM&#39;s epoch state carries a covariance equal to the error measured for its orbit regime and element-set age. That error is measured against independent orbits in every regime that has them: GNSS analysis-centre orbits, laser ranging, LEO precise orbits, operator ephemerides and radio-occultation receivers. A covariance is labeled calibrated only where held-out data confirm it (<a href="#22-covariance-for-every-object">section 2.2</a>).</li>
 <li><strong>SDN&#39;s own atmosphere.</strong> Drag uses JB2008 or NRLMSISE-00 with an open correction in the form of the Space Force&#39;s Dynamic Calibration of the Atmosphere, solved from public operator states. It explains 25–40 % of the density variation measured by satellites that did not calibrate it; 1–3-day position error is unchanged (ratios 0.98–1.02) (<a href="#54-drag-regime">section 5.4</a>).</li>
 <li><strong>Maneuvers.</strong> A detector reads each object&#39;s element-set history for steps in orbital energy and plane, and reports each maneuver&#39;s time and size. On held-out data it found 22 of 25 ISS burns and all 6 GPS maneuvers in precise orbits; geostationary station-keeping is harder, 4 of 11 (<a href="#55-maneuver-detection">section 5.5</a>).</li>
 <li><strong>Better start states where data allow.</strong> HPOP&#39;s force models agree with Orekit within 1 cm over a day (steps of at most 30 s; 2.5 cm at 300 s, <a href="#7-dynamics-and-verification">section 7</a>). Fitted to laser ranges, HPOP stays 20–60 times better than SGP4 to 7 days; fitted to an arc of corrected OMMs, it halves SGP4&#39;s error to two days in GPS (<a href="#53-objects-with-public-omms-only">section 5.3</a>).</li>
@@ -175,7 +181,44 @@
 <li>Consecutive OMM errors are strongly correlated, and four published covariance constructions are overconfident (<a href="#6-uncertainty">section 6</a>).</li>
 </ol>
 <p>Pre-registered hypotheses that failed are reported as not supported.</p>
-<div class="sec-head sec-head-h2"><h2 id="2-evidence-model"><span class="sec-num">2</span>Evidence model</h2><button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/evidence-supported-aso-catalog/2-evidence-model-and-records.html" data-model-title="A solution from observations, with its covariance" aria-label="Run it: A solution from observations, with its covariance"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span>Run it</button></div>
+<h2 id="2-method"><span class="sec-num">2</span>Method</h2>
+<p>The catalog is assembled object by object from the products of every source. Each object ends with a state, a covariance and its maneuvers.</p>
+<h3 id="21-construction"><span class="sec-num">2.1</span>Construction</h3>
+<ol>
+<li><p><strong>Read each source at its level.</strong> Each record becomes the Space Data Standards (SDS) record of its kind, under the source&#39;s own identifier: element sets as OMMs, ephemerides as OEMs, laser normal points and other measurements as observations (<a href="#3-sources">sections 3</a> and <a href="#4-normalization-and-model-dispatch">4</a>).</p>
+</li>
+<li><p><strong>Derive the same products from every source.</strong> For every object a source covers, the method derives four records:</p>
+<ol>
+<li>An SGP4 element set (OMM): the source&#39;s own, or one fitted to the source&#39;s ephemeris (<a href="#4-normalization-and-model-dispatch">section 4</a>).</li>
+<li>An SGP4-XP element set: an OMM in the extended-perturbation theory, with its ballistic and radiation coefficients, fitted to the same data<sup><a href="#r51">51</a></sup>.</li>
+<li>A state with its covariance (OCM): the source&#39;s state at its epoch, or the SGP4 epoch state of the handoff in <a href="#4-normalization-and-model-dispatch">section 4</a>, with the covariance of <a href="#22-covariance-for-every-object">section 2.2</a>.</li>
+<li>The maneuvers in the source&#39;s history (MNV), from the detector of <a href="#55-maneuver-detection">section 5.5</a>.</li>
+</ol>
+<p>Sources are then compared like for like, and each can be propagated and shown on its own.</p>
+</li>
+<li><p><strong>Measure each source.</strong> Each product is scored against independent precise orbits by object class, orbit regime and product age, under a plan fixed before its test data were read (<a href="#5-products-by-object-class">sections 5</a> and <a href="#10-measured-accuracy">10</a>). A source&#39;s measured errors form its error model.</p>
+</li>
+<li><p><strong>Associate.</strong> Crosswalks propose links between records of one object; ephemerides compared over shared intervals accept, reject or hold each link (<a href="#8-association-and-selection">section 8</a>).</p>
+</li>
+<li><p><strong>Select.</strong> For each object, regime and horizon, the catalog takes the product of the source with the lowest measured median error on a training window of at least 30 samples. Fusing sources was never better than selecting one (<a href="#8-association-and-selection">section 8</a>).</p>
+</li>
+<li><p><strong>Attach covariance and maneuvers.</strong> The selected product keeps its covariance and label (<a href="#22-covariance-for-every-object">section 2.2</a>). The object carries the maneuvers of all its sources, merged by time and size. A product whose epoch precedes a maneuver does not describe the orbit after it, so selection after a maneuver draws only on later products.</p>
+</li>
+<li><p><strong>Write the catalog.</strong> A catalog record (CAT) per object, with its selected OMM, SGP4-XP OMM and OCM and its merged MNV records, each naming the source it came from.</p>
+</li>
+</ol>
+<h3 id="22-covariance-for-every-object"><span class="sec-num">2.2</span>Covariance for every object</h3>
+<p>Every object carries a covariance, from the first rule that applies:</p>
+<ol>
+<li><strong>The operator supplies one.</strong> The operator&#39;s covariance, as supplied.</li>
+<li><strong>An orbit fit made the product.</strong> The fit&#39;s formal covariance, scaled by the realism factor measured for that source and object class on held-out data. Unscaled, laser-range fits are 16–21 times too small in mean d²/3 (<a href="#6-uncertainty">section 6</a>).</li>
+<li><strong>The source has an error model for the object&#39;s regime.</strong> The source&#39;s measured error at the element set&#39;s age, mapped from radial, in-track and cross-track axes to Cartesian. The model is built from the errors of consecutive element sets against independent precise orbits, with their correlation, and calibrated by regime and age (<a href="#6-uncertainty">section 6</a>). AOE&#39;s sets match Space-Track&#39;s error at equal age (<a href="#4-normalization-and-model-dispatch">section 4</a>) and take its model.</li>
+<li><strong>Otherwise.</strong> The same model pooled over all sources in the object&#39;s regime.</li>
+</ol>
+<p>Rules 3 and 4 cover every object with an element set, so no object goes without a covariance.</p>
+<p>Each covariance carries a label: the rule, the source, the regime and age cell, and the verdict of held-out data for that cell. Calibrated means the realism rule of <a href="#6-uncertainty">section 6</a> held on held-out data: mean d²/3 in [0.8, 1.25] and 95 % coverage in [0.93, 0.97]. Otherwise the label records the measured mean d²/3 and coverage. The element-set model is calibrated in 2 of 35 regime-and-age cells, LEO above 800 km at issue and at half a day; the HPOP epoch state with per-regime P₀ and Q in 5 (<a href="#6-uncertainty">section 6</a>). Screening on the uncertainty region relies on calibrated cells, and every screening event also carries the covariance-free maximum probability, which needs no covariance<sup><a href="#r50">50</a></sup>.</p>
+<p>Covariance propagates through HPOP&#39;s state-transition matrix with per-regime process noise, or grows with element-set age in the model of rule 3 (<a href="#6-uncertainty">section 6</a>).</p>
+<div class="sec-head sec-head-h3"><h3 id="23-evidence-model"><span class="sec-num">2.3</span>Evidence model</h3><button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/evidence-supported-aso-catalog/2-evidence-model-and-records.html" data-model-title="A solution from observations, with its covariance" aria-label="Run it: A solution from observations, with its covariance"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span>Run it</button></div>
 <p>An orbit solution is an inference with five contributors:</p>
 <ol>
 <li>The object&#39;s physics</li>
@@ -650,7 +693,7 @@
 <td>Drag parameter, thrust</td>
 <td>Cd·A/m and its rate; in-track acceleration</td>
 <td>B, BDOT; in-track thrust</td>
-<td>Within 3.7 mm of Orekit</td>
+<td>Within 3.8 mm of Orekit</td>
 </tr>
 <tr>
 <td>Integrator</td>
@@ -911,7 +954,7 @@
 <td>Supplied, half the catalog size, from radar cross-section, or the default, with its basis</td>
 </tr>
 </tbody></table></div>
-<p>An OMM supplies no covariance, so the catalog attaches one built from the object&#39;s element-set history and calibrated by regime and age against independent orbits (<a href="#6-uncertainty">section 6</a>), with its calibration label. Every event also carries the covariance-free maximum probability, which needs no covariance.</p>
+<p>An OMM supplies no covariance, so the catalog attaches one by the rule of <a href="#22-covariance-for-every-object">section 2.2</a>: built from the source&#39;s element-set errors against independent orbits and calibrated by regime and age, with its calibration label. Every event also carries the covariance-free maximum probability, which needs no covariance.</p>
 <h2 id="appendix-a-terms"><span class="sec-num">Appendix A</span>Terms</h2>
 <div class="table-frame"><table>
 <thead>
@@ -942,7 +985,7 @@
 </tr>
 <tr>
 <td>Level 0 to 3</td>
-<td>Processing levels of orbit data (<a href="#2-evidence-model">section 2</a>)</td>
+<td>Processing levels of orbit data (<a href="#2-method">section 2</a>)</td>
 </tr>
 <tr>
 <td>Ultra-rapid, final orbits</td>
