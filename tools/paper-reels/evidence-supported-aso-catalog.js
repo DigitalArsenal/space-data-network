@@ -86,7 +86,7 @@ const CONTRIBUTORS = ["ACTUAL PHYSICS", "DYNAMICS MODEL", "OBSERVATIONS", "MEASU
 
 export async function createReel(base = "") {
   const studio = await createStudio({ base, hudTitle: "WHITEPAPER · EVIDENCE-SUPPORTED ASO CATALOG", hudUrl: "SPACEDATANETWORK.ORG" });
-  const { glc, sx, font, maskText, dotGlow, scrim, renderEarth, drawSatellites, strokeOrbitArc, eyebrow, block, beginSubframe, bloom, hud, stamp, badge } = studio;
+  const { glc, sx, font, maskText, dotGlow, scrim, renderEarth, drawSatellites, strokeOrbitArc, eyebrow, block, beginSubframe, bloom, hud, badge } = studio;
   const math = await prepareMath({
     handoff: { key: "cat_handoff", px: 44, color: INK },
     dyn: { key: "cat_dyn", px: 44, color: INK },
@@ -397,8 +397,6 @@ export async function createReel(base = "") {
     }
     if (t > T_CLAIM - 0.05 && t < T_END + 0.1) {
       block([["Every orbit shows", INK], ["its evidence and its limits.", AMBER]], "MEASURED AGAINST INDEPENDENT PRECISE ORBITS", T_CLAIM + 0.1, T_END - 0.4, t, 84);
-      const st = seg(t, T_CLAIM + 1.0, T_CLAIM + 1.17);
-      if (st > 0) stamp(1480, 300, st, 1 - seg(t, T_END - 0.4, T_END));
     }
     paperLockup({ eyebrow: "WHITEPAPER · EDITION 2.0", title: ["Evidence-Supported", "ASO Catalog"], byline: "Anthony “TJ” Koury III and Claude Opus 5.5", t0: T_END + 0.3 }, t);
 
