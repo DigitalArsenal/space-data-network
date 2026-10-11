@@ -234,7 +234,7 @@ export async function createReel(base = "") {
       chip(o, x + widths[i] / 2, 470, k, alpha, { color: INK, px: 20, stroke: "rgba(245,245,247,0.4)" });
       x += widths[i] + 12;
     });
-    label("FIVE ORBITS · 63 CASES · HOURLY FOR 24 h", 152, 422, T_OREKIT + 1.8, T_ACC - 0.45, t, { px: 18, color: AMBER });
+    label("FIVE ORBITS · 72 CASES · HOURLY FOR 24 h · STEPS OF 30 s", 152, 422, T_OREKIT + 1.8, T_ACC - 0.45, t, { px: 18, color: AMBER });
   }
 
   // ------------------------------------- error as forces are added (log bars)
@@ -380,7 +380,7 @@ export async function createReel(base = "") {
     if (t > T_OREKIT - 0.05 && t < T_ACC + 0.1) {
       eq("orekit", 150, 250, T_OREKIT + 0.5, T_ACC - 0.45, t);
       label("LARGEST POSITION DIFFERENCE, IDENTICAL INPUTS", 152, 352, T_OREKIT + 0.9, T_ACC - 0.45, t, { px: 18 });
-      block([["Checked against", INK], ["an independent code.", AMBER]], "HPOP AND OREKIT AGREE WITHIN 1.6 CM OVER A DAY", T_OREKIT + 0.1, T_ACC - 0.4, t, 84);
+      block([["Checked against", INK], ["an independent code.", AMBER]], "HPOP AND OREKIT AGREE WITHIN 1 CM OVER A DAY", T_OREKIT + 0.1, T_ACC - 0.4, t, 84);
     }
     if (t > T_ACC - 0.05 && t < T_VCM + 0.1) {
       block([["Add the physics.", INK], ["Watch the error fall.", AMBER]], null, T_ACC + 0.1, T_VCM - 0.4, t, 84);
