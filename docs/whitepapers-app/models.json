@@ -19,37 +19,37 @@
   },
   {
     "paper": "evidence-supported-aso-catalog",
-    "section_id": "162-uncertainty-estimation-and-propagation",
+    "section_id": "6-uncertainty",
     "title": "OCM fields, and covariance through the STM",
     "url": "models/evidence-supported-aso-catalog/162-uncertainty-estimation-and-propagation.html"
   },
   {
     "paper": "evidence-supported-aso-catalog",
-    "section_id": "171-agreement-with-orekit",
+    "section_id": "agreement-with-orekit",
     "title": "HPOP against Orekit 13.1",
     "url": "models/evidence-supported-aso-catalog/171-agreement-with-orekit.html"
   },
   {
     "paper": "evidence-supported-aso-catalog",
-    "section_id": "172-accuracy-against-precise-orbits",
+    "section_id": "accuracy-against-precise-orbits",
     "title": "HPOP against precise orbits",
     "url": "models/evidence-supported-aso-catalog/172-accuracy-against-precise-orbits.html"
   },
   {
     "paper": "evidence-supported-aso-catalog",
-    "section_id": "173-vector-covariance-message-parity",
+    "section_id": "9-sp-message-interchange",
     "title": "VCM fields, read, propagated, written",
     "url": "models/evidence-supported-aso-catalog/173-vector-covariance-message-parity.html"
   },
   {
     "paper": "evidence-supported-aso-catalog",
-    "section_id": "17-measured-propagation-evidence",
+    "section_id": "11-measured-accuracy",
     "title": "E1, E2 and E3 results",
     "url": "models/evidence-supported-aso-catalog/17-measured-propagation-evidence.html"
   },
   {
     "paper": "evidence-supported-aso-catalog",
-    "section_id": "174-evidence-baseline-and-reproduction",
+    "section_id": "10-publication-and-reproduction",
     "title": "The binaries this page runs",
     "url": "models/evidence-supported-aso-catalog/174-evidence-baseline-and-reproduction.html"
   },
