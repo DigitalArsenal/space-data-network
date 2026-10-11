@@ -26,7 +26,7 @@ For most objects the only public input is the OMM, and the catalog takes it as i
 1. **Measured error as covariance.** An orbit propagated from an OMM's epoch state carries a covariance equal to the error measured for its orbit regime and element-set age. That error is measured against independent orbits in every regime that has them: GNSS analysis-centre orbits, laser ranging, LEO precise orbits, operator ephemerides and radio-occultation receivers. A covariance is labeled calibrated only where held-out data confirm it (section 6).
 2. **SDN's own atmosphere.** Drag uses JB2008 or NRLMSISE-00 with an open correction in the form of the Space Force's Dynamic Calibration of the Atmosphere, solved from public operator states. It explains 25–40 % of the density variation measured by satellites that did not calibrate it; 1–3-day position error is unchanged (ratios 0.98–1.02) (section 5.4).
 3. **Maneuvers.** A detector reads each object's element-set history for steps in orbital energy and plane, and reports each maneuver's time and size. On held-out data it found 22 of 25 ISS burns and all 6 GPS maneuvers in precise orbits; geostationary station-keeping is harder, 4 of 11 (section 5.5).
-4. **Better start states where data allow.** HPOP's force models agree with Orekit within 1.6 cm over a day. Fitted to laser ranges, HPOP stays 20–60 times better than SGP4 to 7 days; fitted to an arc of corrected OMMs, it halves SGP4's error to two days in GPS (section 5.3).
+4. **Better start states where data allow.** HPOP's force models agree with Orekit within 1 cm over a day (steps of at most 30 s; 2.5 cm at 300 s, section 7). Fitted to laser ranges, HPOP stays 20–60 times better than SGP4 to 7 days; fitted to an arc of corrected OMMs, it halves SGP4's error to two days in GPS (section 5.3).
 5. **Screening that stays safe when the covariance is large.** A large covariance spreads a collision's probability thin: on real OMM errors, a probability threshold of 1e-4 missed 2.7–16 % of true collisions. Where held-out data confirm the covariance, screening on the uncertainty region missed 0–0.4 %, at the cost of more false alerts, and every event also carries the covariance-free maximum probability<sup>[50](#r50)</sup>. Large uncertainty makes the screen cautious, not blind.
 
 Three results go beyond published work:
@@ -225,28 +225,30 @@ On the held-out window, maneuvers, the storm of 4 July 2026 and GNSS repositioni
 
 HPOP's full force model, as the catalog and the conjunction screen run it<sup>[10](#r10)</sup>, beside the SP options a Vector Covariance Message (VCM) names<sup>[39](#r39)</sup>:
 
-| Model | HPOP | SP, as a VCM names it | Equivalence |
+| Model | HPOP | SP, as a VCM names it | Equivalence (Orekit: steps of at most 30 s) |
 | --- | --- | --- | --- |
-| Geopotential | EGM2008 to degree and order 70; EGM96 and tesseral truncation (36Z,24T) selectable | EGM-96 with zonal and tesseral degrees | EGM96 cases within 1 cm of Orekit |
+| Geopotential | EGM2008 to degree and order 70; EGM96 and tesseral truncation (36Z,24T) selectable | EGM-96 with zonal and tesseral degrees | EGM96 cases within 1.1 mm of Orekit |
 | Atmosphere | NRLMSISE-00 (Orekit's to 1e-8); JB2008 (Orekit's to 2e-14); Jacchia-Roberts (GMAT's<sup>[40](#r40)</sup>, bit for bit) | JBH09, which is JB2008 with HASDM's calibration<sup>[41](#r41)</sup>; JAC70; MSIS90 | JB2008 matches Orekit's; HASDM's calibration is not public (section 5.4); Jacchia-Roberts and NRLMSISE-00 are declared substitutes for JAC70 and MSIS90 |
 | Third bodies | Sun, Moon, Venus, Mars and Jupiter from DE440s | Sun and Moon | Sun and Moon within 1 cm of Orekit |
 | Radiation | Cannonball with a conical shadow; Earth albedo and infrared | Solar radiation pressure, AGOM | Within 1 cm of Orekit |
-| Tides, relativity | IERS 2010 solid tides and relativity; FES2004 ocean tides to 30×30 | Solid Earth tides | Within 1 cm of Orekit |
-| Drag parameter, thrust | Cd·A/m and its rate; in-track acceleration | B, BDOT; in-track thrust | Within 1.6 cm of Orekit |
+| Tides, relativity | IERS 2010 solid tides and relativity; FES2004 ocean tides to 30×30 | Solid Earth tides | Within 1.3 mm of Orekit |
+| Drag parameter, thrust | Cd·A/m and its rate; in-track acceleration | B, BDOT; in-track thrust | Within 3.7 mm of Orekit |
 | Integrator | RK78 at 1e-12, steps of at most 300 s; its own error after 3 days 0.1–1.2 m | Eighth-order Gauss–Jackson on Cowell's equations<sup>[42](#r42),[43](#r43)</sup> | Declared substitute, converged |
 | Earth orientation | IAU 2006/2000A with daily IERS rows | IAU 1980 nutation, truncated | Declared substitute |
 
 ### Agreement with Orekit
 
-HPOP's Orekit 13.1 suite<sup>[44](#r44)</sup> holds 72 cases on five orbits (400 km, 700 km sun-synchronous, GPS, geostationary, Molniya), each 24 hours, compared hourly on identical states, constants, Earth orientation and space weather<sup>[10](#r10)</sup>:
+HPOP's Orekit 13.1 suite<sup>[44](#r44)</sup> holds 72 cases on five orbits (400 km, 700 km sun-synchronous, GPS, geostationary, Molniya), each 24 hours, compared hourly on identical states, constants, daily Earth-orientation rows and space weather<sup>[10](#r10)</sup>. HPOP 1.3.0 (module SHA-256 9c24bf0e) integrates with RK78 at a relative tolerance of 1e-13 (point mass at 1e-15) and the steps named below; Orekit with Dormand–Prince 8(5,3) at 1e-14 and steps of at most 10 s:
 
-| Force set | Largest 3D difference |
-| --- | --- |
-| Point mass | 0.6 mm |
-| Gravity field, third bodies, radiation pressure, tides, relativity, in-track thrust | Under 1 cm |
-| With drag (NRLMSISE-00 or JB2008, daily space weather, drag rate) | 1.6 cm |
+| Force set | Steps of at most 300 s | Steps of at most 30 s |
+| --- | ---: | ---: |
+| Point mass | 0.6 mm | 0.6 mm |
+| Gravity field, third bodies, radiation pressure, tides, relativity, in-track thrust | 1.9 cm | 9.9 mm |
+| With drag (NRLMSISE-00 or JB2008, daily space weather, drag rate) | 2.5 cm | 4.2 mm |
 
-State-transition matrices agree within 2e-5 and parameter sensitivities within 1.4e-4 (relative). What remains is integration error on both sides, about 1e-11 of the distance flown. Integrating Jacchia's diffusion equations numerically reproduces the closed forms of Jacchia-Roberts<sup>[45](#r45)</sup> to 1.6e-4.
+At steps of up to 300 s, HPOP's own integration error is most of the difference: 1.8 cm over a day at 400 km (2.9 cm with JB2008 drag) and 1.6 cm at 700 km, against 0.03 mm for GPS satellites. With steps of 30 s it is under 0.3 mm, and the largest difference is in Molniya, 9.9 mm; 400 km and 700 km agree to 4.2 mm with drag and 1.7 mm without, and GPS and geostationary orbits to 0.2 mm. The rest is Earth orientation: Orekit applies the IERS Conventions' tidal and libration corrections to polar motion and UT1<sup>[11](#r11)</sup>, and HPOP interpolates the daily rows. Against Orekit without those corrections the differences at 30 s are 0.6 mm for point mass, 1.1 mm without drag and 3.9 mm with it, and 0.6 mm in Molniya.
+
+State-transition matrices agree within 2e-5 and parameter sensitivities within 1.5e-4 (relative), at steps of up to 300 s. Integrating Jacchia's diffusion equations numerically reproduces the closed forms of Jacchia-Roberts<sup>[45](#r45)</sup> to 1.6e-4.
 
 ### Accuracy against precise orbits
 
@@ -401,7 +403,7 @@ Hoots, F. R., and Roehrich, R. L. Models for Propagation of NORAD Element Sets. 
 
 ### R10
 
-Edgesource. SDN modules repository (space-data-network-modules), commit d4a0b1155f64ac088694f9758c32e3b691952674: `propagator/hpop/README.md` (force model, Orekit suite, resident path, catalog cost), `analysis/gp-error-model/docs/hpop-calibration-2026-08.md`, `analysis/conjunction-assessment/docs/hpop-full-force-screen-2026-10.md`, `analysis/maneuver-detection/README.md`, `docs/studies/maneuver-detection.md`. Private repository, available on request ([tj@edgesource.com](mailto:tj@edgesource.com)).
+Edgesource. SDN modules repository (space-data-network-modules), commit 89854178abfc8f6593f8a2d50de5fb25f05392ea: `propagator/hpop/README.md` (force model, Orekit suite and its measured agreement, resident path, catalog cost), `propagator/hpop/tests/evidence/orekit/` (the agreement by case; HPOP 1.3.0, `propagator/hpop/dist/isomorphic/module.wasm`, SHA-256 9c24bf0ed74f59893282514f08891c414da6db071d4997357a8ebd6c2a8a99e3), `analysis/gp-error-model/docs/hpop-calibration-2026-08.md`, `analysis/conjunction-assessment/docs/hpop-full-force-screen-2026-10.md`, `analysis/maneuver-detection/README.md`, `docs/studies/maneuver-detection.md`. Private repository, available on request ([tj@edgesource.com](mailto:tj@edgesource.com)).
 
 ### R11
 

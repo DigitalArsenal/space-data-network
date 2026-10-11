@@ -73,7 +73,7 @@
           <div><dt>Published</dt><dd>11 October 2026</dd></div>
           <div><dt>Evidence cutoff</dt><dd><span>11 October 2026</span></dd></div>
           <div><dt>Sections</dt><dd>11</dd></div>
-          <div><dt>Reading time</dt><dd>29 min</dd></div>
+          <div><dt>Reading time</dt><dd>30 min</dd></div>
           <div><dt>Interactive models</dt><dd>16</dd></div>
         </dl>
       </div>
@@ -165,7 +165,7 @@
 <li><strong>Measured error as covariance.</strong> An orbit propagated from an OMM&#39;s epoch state carries a covariance equal to the error measured for its orbit regime and element-set age. That error is measured against independent orbits in every regime that has them: GNSS analysis-centre orbits, laser ranging, LEO precise orbits, operator ephemerides and radio-occultation receivers. A covariance is labeled calibrated only where held-out data confirm it (<a href="#6-uncertainty">section 6</a>).</li>
 <li><strong>SDN&#39;s own atmosphere.</strong> Drag uses JB2008 or NRLMSISE-00 with an open correction in the form of the Space Force&#39;s Dynamic Calibration of the Atmosphere, solved from public operator states. It explains 25–40 % of the density variation measured by satellites that did not calibrate it; 1–3-day position error is unchanged (ratios 0.98–1.02) (<a href="#54-drag-regime">section 5.4</a>).</li>
 <li><strong>Maneuvers.</strong> A detector reads each object&#39;s element-set history for steps in orbital energy and plane, and reports each maneuver&#39;s time and size. On held-out data it found 22 of 25 ISS burns and all 6 GPS maneuvers in precise orbits; geostationary station-keeping is harder, 4 of 11 (<a href="#55-maneuver-detection">section 5.5</a>).</li>
-<li><strong>Better start states where data allow.</strong> HPOP&#39;s force models agree with Orekit within 1.6 cm over a day. Fitted to laser ranges, HPOP stays 20–60 times better than SGP4 to 7 days; fitted to an arc of corrected OMMs, it halves SGP4&#39;s error to two days in GPS (<a href="#53-objects-with-public-omms-only">section 5.3</a>).</li>
+<li><strong>Better start states where data allow.</strong> HPOP&#39;s force models agree with Orekit within 1 cm over a day (steps of at most 30 s; 2.5 cm at 300 s, <a href="#7-dynamics-and-verification">section 7</a>). Fitted to laser ranges, HPOP stays 20–60 times better than SGP4 to 7 days; fitted to an arc of corrected OMMs, it halves SGP4&#39;s error to two days in GPS (<a href="#53-objects-with-public-omms-only">section 5.3</a>).</li>
 <li><strong>Screening that stays safe when the covariance is large.</strong> A large covariance spreads a collision&#39;s probability thin: on real OMM errors, a probability threshold of 1e-4 missed 2.7–16 % of true collisions. Where held-out data confirm the covariance, screening on the uncertainty region missed 0–0.4 %, at the cost of more false alerts, and every event also carries the covariance-free maximum probability<sup><a href="#r50">50</a></sup>. Large uncertainty makes the screen cautious, not blind.</li>
 </ol>
 <p>Three results go beyond published work:</p>
@@ -613,14 +613,14 @@
 <th>Model</th>
 <th>HPOP</th>
 <th>SP, as a VCM names it</th>
-<th>Equivalence</th>
+<th>Equivalence (Orekit: steps of at most 30 s)</th>
 </tr>
 </thead>
 <tbody><tr>
 <td>Geopotential</td>
 <td>EGM2008 to degree and order 70; EGM96 and tesseral truncation (36Z,24T) selectable</td>
 <td>EGM-96 with zonal and tesseral degrees</td>
-<td>EGM96 cases within 1 cm of Orekit</td>
+<td>EGM96 cases within 1.1 mm of Orekit</td>
 </tr>
 <tr>
 <td>Atmosphere</td>
@@ -644,13 +644,13 @@
 <td>Tides, relativity</td>
 <td>IERS 2010 solid tides and relativity; FES2004 ocean tides to 30×30</td>
 <td>Solid Earth tides</td>
-<td>Within 1 cm of Orekit</td>
+<td>Within 1.3 mm of Orekit</td>
 </tr>
 <tr>
 <td>Drag parameter, thrust</td>
 <td>Cd·A/m and its rate; in-track acceleration</td>
 <td>B, BDOT; in-track thrust</td>
-<td>Within 1.6 cm of Orekit</td>
+<td>Within 3.7 mm of Orekit</td>
 </tr>
 <tr>
 <td>Integrator</td>
@@ -666,28 +666,33 @@
 </tr>
 </tbody></table></div>
 <div class="sec-head sec-head-h3"><h3 id="agreement-with-orekit">Agreement with Orekit</h3><button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/evidence-supported-aso-catalog/agreement-with-orekit.html" data-model-title="HPOP against Orekit 13.1" aria-label="Run it: HPOP against Orekit 13.1"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span>Run it</button></div>
-<p>HPOP&#39;s Orekit 13.1 suite<sup><a href="#r44">44</a></sup> holds 72 cases on five orbits (400 km, 700 km sun-synchronous, GPS, geostationary, Molniya), each 24 hours, compared hourly on identical states, constants, Earth orientation and space weather<sup><a href="#r10">10</a></sup>:</p>
+<p>HPOP&#39;s Orekit 13.1 suite<sup><a href="#r44">44</a></sup> holds 72 cases on five orbits (400 km, 700 km sun-synchronous, GPS, geostationary, Molniya), each 24 hours, compared hourly on identical states, constants, daily Earth-orientation rows and space weather<sup><a href="#r10">10</a></sup>. HPOP 1.3.0 (module SHA-256 9c24bf0e) integrates with RK78 at a relative tolerance of 1e-13 (point mass at 1e-15) and the steps named below; Orekit with Dormand–Prince 8(5,3) at 1e-14 and steps of at most 10 s:</p>
 <div class="table-frame"><table>
 <thead>
 <tr>
 <th>Force set</th>
-<th>Largest 3D difference</th>
+<th align="right">Steps of at most 300 s</th>
+<th align="right">Steps of at most 30 s</th>
 </tr>
 </thead>
 <tbody><tr>
 <td>Point mass</td>
-<td>0.6 mm</td>
+<td align="right">0.6 mm</td>
+<td align="right">0.6 mm</td>
 </tr>
 <tr>
 <td>Gravity field, third bodies, radiation pressure, tides, relativity, in-track thrust</td>
-<td>Under 1 cm</td>
+<td align="right">1.9 cm</td>
+<td align="right">9.9 mm</td>
 </tr>
 <tr>
 <td>With drag (NRLMSISE-00 or JB2008, daily space weather, drag rate)</td>
-<td>1.6 cm</td>
+<td align="right">2.5 cm</td>
+<td align="right">4.2 mm</td>
 </tr>
 </tbody></table></div>
-<p>State-transition matrices agree within 2e-5 and parameter sensitivities within 1.4e-4 (relative). What remains is integration error on both sides, about 1e-11 of the distance flown. Integrating Jacchia&#39;s diffusion equations numerically reproduces the closed forms of Jacchia-Roberts<sup><a href="#r45">45</a></sup> to 1.6e-4.</p>
+<p>At steps of up to 300 s, HPOP&#39;s own integration error is most of the difference: 1.8 cm over a day at 400 km (2.9 cm with JB2008 drag) and 1.6 cm at 700 km, against 0.03 mm for GPS satellites. With steps of 30 s it is under 0.3 mm, and the largest difference is in Molniya, 9.9 mm; 400 km and 700 km agree to 4.2 mm with drag and 1.7 mm without, and GPS and geostationary orbits to 0.2 mm. The rest is Earth orientation: Orekit applies the IERS Conventions&#39; tidal and libration corrections to polar motion and UT1<sup><a href="#r11">11</a></sup>, and HPOP interpolates the daily rows. Against Orekit without those corrections the differences at 30 s are 0.6 mm for point mass, 1.1 mm without drag and 3.9 mm with it, and 0.6 mm in Molniya.</p>
+<p>State-transition matrices agree within 2e-5 and parameter sensitivities within 1.5e-4 (relative), at steps of up to 300 s. Integrating Jacchia&#39;s diffusion equations numerically reproduces the closed forms of Jacchia-Roberts<sup><a href="#r45">45</a></sup> to 1.6e-4.</p>
 <div class="sec-head sec-head-h3"><h3 id="accuracy-against-precise-orbits">Accuracy against precise orbits</h3><button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/evidence-supported-aso-catalog/accuracy-against-precise-orbits.html" data-model-title="HPOP against precise orbits" aria-label="Run it: HPOP against precise orbits"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span>Run it</button></div>
 <p>Experiment V1 starts the propagator from ILRS orbits of four geodetic spheres (LAGEOS-1/2 and ETALON-1/2; 16 seeds) and IGS orbits of 32 GPS satellites (96 seeds), adds forces one set at a time, and compares each 72-hour run with the same product <a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/v1/README.md">V1</a>. GPS radiation pressure is a deliberately crude cannonball. Median (largest) 3D error:</p>
 <div class="table-frame"><table>
@@ -1019,7 +1024,7 @@
 <h3 id="r9">R9</h3>
 <p>Hoots, F. R., and Roehrich, R. L. Models for Propagation of NORAD Element Sets. Spacetrack Report No. 3, 1980. <a href="https://celestrak.org/NORAD/documentation/spacetrk.pdf">Report</a></p>
 <h3 id="r10">R10</h3>
-<p>Edgesource. SDN modules repository (space-data-network-modules), commit d4a0b1155f64ac088694f9758c32e3b691952674: <code>propagator/hpop/README.md</code> (force model, Orekit suite, resident path, catalog cost), <code>analysis/gp-error-model/docs/hpop-calibration-2026-08.md</code>, <code>analysis/conjunction-assessment/docs/hpop-full-force-screen-2026-10.md</code>, <code>analysis/maneuver-detection/README.md</code>, <code>docs/studies/maneuver-detection.md</code>. Private repository, available on request (<a href="mailto:tj@edgesource.com">tj@edgesource.com</a>).</p>
+<p>Edgesource. SDN modules repository (space-data-network-modules), commit 89854178abfc8f6593f8a2d50de5fb25f05392ea: <code>propagator/hpop/README.md</code> (force model, Orekit suite and its measured agreement, resident path, catalog cost), <code>propagator/hpop/tests/evidence/orekit/</code> (the agreement by case; HPOP 1.3.0, <code>propagator/hpop/dist/isomorphic/module.wasm</code>, SHA-256 9c24bf0ed74f59893282514f08891c414da6db071d4997357a8ebd6c2a8a99e3), <code>analysis/gp-error-model/docs/hpop-calibration-2026-08.md</code>, <code>analysis/conjunction-assessment/docs/hpop-full-force-screen-2026-10.md</code>, <code>analysis/maneuver-detection/README.md</code>, <code>docs/studies/maneuver-detection.md</code>. Private repository, available on request (<a href="mailto:tj@edgesource.com">tj@edgesource.com</a>).</p>
 <h3 id="r11">R11</h3>
 <p>Petit, G., and Luzum, B., editors. IERS Conventions (2010). IERS Technical Note 36. <a href="https://iers-conventions.obspm.fr/conventions/content/tn36.pdf">Technical note</a></p>
 <h3 id="r12">R12</h3>
