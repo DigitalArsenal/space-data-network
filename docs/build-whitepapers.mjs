@@ -290,11 +290,11 @@ function modelsFor(paper, ids) {
 }
 
 const PLAY = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg>';
-const runIt = (m) => `<button class="run-it" type="button" data-model-url="${esc(m.url)}" data-model-title="${esc(m.title)}"><span class="run-icon">${PLAY}</span><span class="run-text"><b>Run it</b><span>${esc(m.title)}</span></span><span class="run-go" aria-hidden="true">&rarr;</span></button>\n`;
+const runIt = (m) => `<button class="run-it" type="button" data-model-url="${esc(m.url)}" data-model-title="${esc(m.title)}" aria-label="Run it: ${esc(m.title)}"><span class="run-icon">${PLAY}</span>Run it</button>`;
 
-/** Put each model's control under its section heading. */
+/** Put each model's control on its section heading's line. */
 function attachModels(html, models) {
-  for (const [id, m] of models) html = html.replace(new RegExp(`(<h([23]) id="${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}">[\\s\\S]*?</h\\2>\\n)`), `$1${runIt(m)}`);
+  for (const [id, m] of models) html = html.replace(new RegExp(`(<h([23]) id="${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}">[\\s\\S]*?</h\\2>)\\n`), (_, heading, depth) => `<div class="sec-head sec-head-h${depth}">${heading}${runIt(m)}</div>\n`);
   return html;
 }
 
