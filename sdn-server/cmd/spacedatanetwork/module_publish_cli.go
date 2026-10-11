@@ -45,6 +45,7 @@ var (
 	modulePublishAllowXpubs  []string
 	modulePublishGrantPolicy string
 	modulePublishTimeout     time.Duration
+	moduleEntitlementXpubs   []string
 )
 
 var pluginsCmd = &cobra.Command{
@@ -63,19 +64,112 @@ admin in the provider's wallet auth store.`,
 	RunE: runPluginsPublishOrbPro,
 }
 
+var pluginsEntitleCmd = &cobra.Command{
+	Use:   "entitle",
+	Short: "Lease published modules to more accounts, without republishing them",
+	Long: `Add account xpubs to the allowed_xpubs of published modules. The provider
+persists the change to its catalog.json and re-sends each module's publication
+descriptor to its key server, so the change holds at once, without a restart
+and without re-encrypting the module. "*" means any signed-in account.
+Signed by an admin HD wallet, like publish-orbpro.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runPluginsEntitlement(cmd, moduleEntitlementXpubs, nil)
+	},
+}
+
+var pluginsRevokeCmd = &cobra.Command{
+	Use:   "revoke",
+	Short: "Stop leasing published modules to accounts, without republishing them",
+	Long: `Remove account xpubs from the allowed_xpubs of published modules. Revoking
+"*" makes the modules leased only to the accounts listed. The provider refuses
+a revoke that would leave a module with nobody entitled: entitle first.
+Leases already granted run to their expiry.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runPluginsEntitlement(cmd, nil, moduleEntitlementXpubs)
+	},
+}
+
+// addModuleRequestFlags binds the provider and signer flags every signed
+// module request shares.
+func addModuleRequestFlags(cmd *cobra.Command) {
+	cmd.Flags().StringVar(&modulePublishProviderURL, "provider-url", defaultModulePublishProviderURL, "provider descriptor URL used to resolve peer id when --target is omitted")
+	cmd.Flags().StringVar(&modulePublishTargetAddr, "target", "", "explicit provider multiaddr including /p2p/<peer-id>")
+	cmd.Flags().StringVar(&modulePublishWalletEnv, "wallet-env", "", "wallet env file containing the admin mnemonic used to sign the request")
+	cmd.Flags().StringVar(&modulePublishWalletWASM, "wallet-wasm", "", "HD wallet WASM path used to derive the signing key")
+	cmd.Flags().Uint32Var(&modulePublishWalletAcct, "wallet-account", 0, "HD wallet account index used to derive the signing key")
+	cmd.Flags().DurationVar(&modulePublishTimeout, "timeout", 60*time.Second, "request timeout")
+}
+
 func init() {
 	pluginsPublishOrbProCmd.Flags().StringVar(&modulePublishPluginRoot, "plugin-root", "", "plugin root containing catalog.json plus encrypted module artifacts")
-	pluginsPublishOrbProCmd.Flags().StringVar(&modulePublishProviderURL, "provider-url", defaultModulePublishProviderURL, "provider descriptor URL used to resolve peer id when --target is omitted")
-	pluginsPublishOrbProCmd.Flags().StringVar(&modulePublishTargetAddr, "target", "", "explicit provider multiaddr including /p2p/<peer-id>")
-	pluginsPublishOrbProCmd.Flags().StringVar(&modulePublishWalletEnv, "wallet-env", "", "wallet env file containing the admin mnemonic used to sign the publish request")
-	pluginsPublishOrbProCmd.Flags().StringVar(&modulePublishWalletWASM, "wallet-wasm", "", "HD wallet WASM path used to derive the signing key")
-	pluginsPublishOrbProCmd.Flags().Uint32Var(&modulePublishWalletAcct, "wallet-account", 0, "HD wallet account index used to derive the signing key")
 	pluginsPublishOrbProCmd.Flags().StringArrayVar(&modulePublishModules, "module", nil, "module id to publish; repeat to publish a subset")
 	pluginsPublishOrbProCmd.Flags().StringArrayVar(&modulePublishAllowXpubs, "allowed-xpub", nil, "allowed requester xpub (PKI) to apply to every published module; repeat for multiple xpubs")
 	pluginsPublishOrbProCmd.Flags().StringVar(&modulePublishGrantPolicy, "grant-policy", "", "grant policy to stamp on every published module: allowlist (fail-closed default), open, or link-key")
-	pluginsPublishOrbProCmd.Flags().DurationVar(&modulePublishTimeout, "timeout", 60*time.Second, "publish timeout")
+	addModuleRequestFlags(pluginsPublishOrbProCmd)
 	pluginsCmd.AddCommand(pluginsPublishOrbProCmd)
+
+	for _, cmd := range []*cobra.Command{pluginsEntitleCmd, pluginsRevokeCmd} {
+		cmd.Flags().StringArrayVar(&modulePublishModules, "module", nil, "published module id; repeat for several")
+		cmd.Flags().StringArrayVar(&moduleEntitlementXpubs, "xpub", nil, `account xpub, or "*" for any signed-in account; repeat for several`)
+		addModuleRequestFlags(cmd)
+		pluginsCmd.AddCommand(cmd)
+	}
 	rootCmd.AddCommand(pluginsCmd)
+}
+
+func runPluginsEntitlement(cmd *cobra.Command, entitle, revoke []string) error {
+	if len(modulePublishModules) == 0 {
+		return errors.New("--module is required")
+	}
+	if len(moduleEntitlementXpubs) == 0 {
+		return errors.New("--xpub is required")
+	}
+	nonce, err := randomHex(16)
+	if err != nil {
+		return err
+	}
+	req := license.ModulePublishRequest{
+		Type:       license.ModuleEntitlementRequestType,
+		IssuedAtMs: time.Now().UnixMilli(),
+		Nonce:      nonce,
+		Entitlement: &license.ModuleEntitlementChange{
+			ModuleIDs: append([]string(nil), modulePublishModules...),
+			Entitle:   append([]string(nil), entitle...),
+			Revoke:    append([]string(nil), revoke...),
+		},
+	}
+	resp, err := sendSignedModuleRequest(cmd.Context(), req)
+	if err != nil {
+		return err
+	}
+	if !resp.OK {
+		return fmt.Errorf("module entitlement change failed: %s", resp.Error)
+	}
+	for _, result := range resp.Results {
+		fmt.Fprintf(cmd.OutOrStdout(), "%s@%s policy=%s allowed=[%s]\n",
+			result.ID, result.Version, result.GrantPolicy, strings.Join(result.AllowedFingerprints, ", "))
+	}
+	return nil
+}
+
+// sendSignedModuleRequest signs req with the admin wallet and sends it to the
+// provider over the module publish protocol.
+func sendSignedModuleRequest(parent context.Context, req license.ModulePublishRequest) (*license.ModulePublishResponse, error) {
+	ctx, cancel := context.WithTimeout(parent, modulePublishTimeout)
+	defer cancel()
+
+	signer, err := loadModulePublishSigner(ctx, modulePublishWalletEnv, modulePublishWalletWASM, modulePublishWalletAcct)
+	if err != nil {
+		return nil, err
+	}
+	if err := license.SignModulePublishRequest(&req, signer.XPub, signer.SigningPubKey, signer.SigningPrivateKey); err != nil {
+		return nil, err
+	}
+	target, err := resolveModulePublishTarget(ctx, modulePublishProviderURL, modulePublishTargetAddr)
+	if err != nil {
+		return nil, err
+	}
+	return publishModuleRequest(ctx, target, req)
 }
 
 func runPluginsPublishOrbPro(cmd *cobra.Command, args []string) error {
@@ -100,22 +194,7 @@ func runPluginsPublishOrbPro(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(cmd.Context(), modulePublishTimeout)
-	defer cancel()
-
-	signer, err := loadModulePublishSigner(ctx, modulePublishWalletEnv, modulePublishWalletWASM, modulePublishWalletAcct)
-	if err != nil {
-		return err
-	}
-	if err := license.SignModulePublishRequest(&req, signer.XPub, signer.SigningPubKey, signer.SigningPrivateKey); err != nil {
-		return err
-	}
-
-	target, err := resolveModulePublishTarget(ctx, modulePublishProviderURL, modulePublishTargetAddr)
-	if err != nil {
-		return err
-	}
-	resp, err := publishModuleRequest(ctx, target, req)
+	resp, err := sendSignedModuleRequest(cmd.Context(), req)
 	if err != nil {
 		return err
 	}
@@ -187,7 +266,7 @@ func buildModulePublishRequestFromPluginRoot(pluginRoot string, moduleIDs []stri
 		return license.ModulePublishRequest{}, errors.New("catalog contains no encrypted modules")
 	}
 	return license.ModulePublishRequest{
-		Type:       "module-publish.v1",
+		Type:       license.ModulePublishRequestType,
 		IssuedAtMs: issuedAtMs,
 		Nonce:      nonce,
 		Modules:    modules,

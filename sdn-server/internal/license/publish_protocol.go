@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"time"
@@ -12,10 +13,18 @@ import (
 
 const (
 	// ModulePublishProtocolID is the libp2p protocol used by deployment
-	// clients to replace encrypted module-delivery catalog entries.
+	// clients to replace encrypted module-delivery catalog entries, and to
+	// change who a published module is leased to.
 	ModulePublishProtocolID = "/space-data-network/module-publish/1.0.0"
 
-	modulePublishRequestType  = "module-publish.v1"
+	// ModulePublishRequestType replaces modules' encrypted bytes. An empty
+	// type means this one.
+	ModulePublishRequestType = "module-publish.v1"
+
+	// ModuleEntitlementRequestType changes modules' allowed_xpubs and nothing
+	// else: the bytes and their content keys stay as published.
+	ModuleEntitlementRequestType = "module-entitlement.v1"
+
 	maxModulePublishJSONBytes = 256 << 20
 )
 
@@ -49,25 +58,39 @@ type ModulePublishEntry struct {
 	SignerPubKeyHex   string                `json:"signer_pubkey_hex,omitempty"`
 }
 
-// ModulePublishRequest is signed by an admin wallet. The signer xpub is the
-// stable wallet identity and SignerPubKeyHex is the Ed25519 key bound to that
-// xpub by the provider's admin auth store.
-type ModulePublishRequest struct {
-	Type            string               `json:"type"`
-	IssuedAtMs      int64                `json:"issued_at_ms"`
-	Nonce           string               `json:"nonce"`
-	Modules         []ModulePublishEntry `json:"modules"`
-	SignerXPub      string               `json:"signer_xpub"`
-	SignerPubKeyHex string               `json:"signer_pubkey_hex"`
-	SignatureHex    string               `json:"signature_hex"`
+// ModuleEntitlementChange adds and removes requester xpubs on published
+// modules. "*" is an entry like any other: entitling it leases the modules to
+// any signed-in account, and revoking it is how a module becomes paid-only.
+type ModuleEntitlementChange struct {
+	ModuleIDs []string `json:"module_ids"`
+	Entitle   []string `json:"entitle,omitempty"`
+	Revoke    []string `json:"revoke,omitempty"`
 }
 
-// ModulePublishResult reports one catalog replacement.
+// ModulePublishRequest is signed by an admin wallet. The signer xpub is the
+// stable wallet identity and SignerPubKeyHex is the Ed25519 key bound to that
+// xpub by the provider's admin auth store. Type selects the body: Modules for
+// ModulePublishRequestType, Entitlement for ModuleEntitlementRequestType.
+type ModulePublishRequest struct {
+	Type            string                   `json:"type"`
+	IssuedAtMs      int64                    `json:"issued_at_ms"`
+	Nonce           string                   `json:"nonce"`
+	Modules         []ModulePublishEntry     `json:"modules"`
+	Entitlement     *ModuleEntitlementChange `json:"entitlement,omitempty"`
+	SignerXPub      string                   `json:"signer_xpub"`
+	SignerPubKeyHex string                   `json:"signer_pubkey_hex"`
+	SignatureHex    string                   `json:"signature_hex"`
+}
+
+// ModulePublishResult reports one changed catalog entry. AllowedFingerprints
+// is the module's allowlist after the change, as fingerprints, never xpubs.
 type ModulePublishResult struct {
-	ID           string `json:"id"`
-	Version      string `json:"version"`
-	BundleSHA256 string `json:"bundle_sha256"`
-	SizeBytes    int64  `json:"size_bytes"`
+	ID                  string   `json:"id"`
+	Version             string   `json:"version"`
+	BundleSHA256        string   `json:"bundle_sha256"`
+	SizeBytes           int64    `json:"size_bytes"`
+	GrantPolicy         string   `json:"grant_policy,omitempty"`
+	AllowedFingerprints []string `json:"allowed_fingerprints,omitempty"`
 }
 
 // ModulePublishResponse is returned by the provider over the libp2p stream.
@@ -77,15 +100,20 @@ type ModulePublishResponse struct {
 	Results []ModulePublishResult `json:"results,omitempty"`
 }
 
-// ApplyModulePublishRequest verifies req and replaces the matching encrypted
-// catalog entries in reg. It returns a wire-safe response instead of exposing
-// partial filesystem errors to stream callers.
+// ApplyModulePublishRequest verifies req and applies it to reg: a publish
+// replaces the matching encrypted catalog entries, an entitlement change
+// rewrites their allowed_xpubs. Results name every changed module, which the
+// caller then re-provisions into the licensing runtime. It returns a wire-safe
+// response instead of exposing partial filesystem errors to stream callers.
 func ApplyModulePublishRequest(reg *PluginRegistry, req ModulePublishRequest, authorizer ModulePublishAuthorizer) ModulePublishResponse {
 	if reg == nil {
 		return ModulePublishResponse{OK: false, Error: "plugin registry is unavailable"}
 	}
 	if err := VerifyModulePublishRequest(req, authorizer); err != nil {
 		return ModulePublishResponse{OK: false, Error: err.Error()}
+	}
+	if req.Type == ModuleEntitlementRequestType {
+		return applyModuleEntitlementChange(reg, req)
 	}
 
 	uploadedAt := time.Now().UTC().Format(time.RFC3339)
@@ -115,6 +143,28 @@ func ApplyModulePublishRequest(reg *PluginRegistry, req ModulePublishRequest, au
 			Version:      asset.Version,
 			BundleSHA256: asset.BundleSHA256,
 			SizeBytes:    asset.SizeBytes,
+		})
+	}
+	return ModulePublishResponse{OK: true, Results: results}
+}
+
+func applyModuleEntitlementChange(reg *PluginRegistry, req ModulePublishRequest) ModulePublishResponse {
+	change := req.Entitlement
+	assets, err := reg.ChangeAllowedXpubs(change.ModuleIDs, change.Entitle, change.Revoke)
+	if err != nil {
+		return ModulePublishResponse{OK: false, Error: err.Error()}
+	}
+	results := make([]ModulePublishResult, 0, len(assets))
+	for _, asset := range assets {
+		decision := EvaluatePublication(asset, reg.GrantPolicyConfig())
+		AuditEntitlementChange(req.SignerXPub, asset, decision, change.Entitle, change.Revoke)
+		results = append(results, ModulePublishResult{
+			ID:                  asset.ID,
+			Version:             asset.Version,
+			BundleSHA256:        asset.BundleSHA256,
+			SizeBytes:           asset.SizeBytes,
+			GrantPolicy:         decision.Policy,
+			AllowedFingerprints: xpubFingerprints(asset.AllowedXpubs),
 		})
 	}
 	return ModulePublishResponse{OK: true, Results: results}
@@ -226,10 +276,7 @@ func VerifyModulePublishRequest(req ModulePublishRequest, authorizer ModulePubli
 func modulePublishSigningPayload(req ModulePublishRequest) ([]byte, error) {
 	req.SignatureHex = ""
 	if strings.TrimSpace(req.Type) == "" {
-		req.Type = modulePublishRequestType
-	}
-	if req.Type != modulePublishRequestType {
-		return nil, errors.New("unsupported module publish request type")
+		req.Type = ModulePublishRequestType
 	}
 	if req.IssuedAtMs <= 0 {
 		return nil, errors.New("issued_at_ms is required")
@@ -246,22 +293,64 @@ func modulePublishSigningPayload(req ModulePublishRequest) ([]byte, error) {
 	if pubKey, err := hex.DecodeString(strings.TrimSpace(req.SignerPubKeyHex)); err != nil || len(pubKey) != ed25519.PublicKeySize {
 		return nil, errors.New("signer_pubkey_hex must be 32-byte Ed25519 public key")
 	}
+	var bodyErr error
+	switch req.Type {
+	case ModulePublishRequestType:
+		bodyErr = validateModulePublishBody(req)
+	case ModuleEntitlementRequestType:
+		bodyErr = validateModuleEntitlementBody(req)
+	default:
+		bodyErr = errors.New("unsupported module publish request type")
+	}
+	if bodyErr != nil {
+		return nil, bodyErr
+	}
+	return json.Marshal(req)
+}
+
+func validateModulePublishBody(req ModulePublishRequest) error {
+	if req.Entitlement != nil {
+		return errors.New("a module publish request carries no entitlement change")
+	}
 	if len(req.Modules) == 0 {
-		return nil, errors.New("at least one module is required")
+		return errors.New("at least one module is required")
 	}
 	for _, module := range req.Modules {
 		if strings.TrimSpace(module.ID) == "" {
-			return nil, errors.New("module id is required")
+			return errors.New("module id is required")
 		}
 		if strings.TrimSpace(module.Version) == "" {
-			return nil, errors.New("module version is required")
+			return errors.New("module version is required")
 		}
 		if len(module.EncryptedBundle) == 0 {
-			return nil, errors.New("encrypted bundle is required")
+			return errors.New("encrypted bundle is required")
 		}
 		if len(module.KeyMaterial) == 0 {
-			return nil, errors.New("key material is required")
+			return errors.New("key material is required")
 		}
 	}
-	return json.Marshal(req)
+	return nil
+}
+
+func validateModuleEntitlementBody(req ModulePublishRequest) error {
+	if len(req.Modules) > 0 {
+		return errors.New("a module entitlement request carries no module bytes")
+	}
+	change := req.Entitlement
+	if change == nil || len(normalizeAllowedXpubs(change.ModuleIDs)) == 0 {
+		return errors.New("at least one module id is required")
+	}
+	entitle := normalizeAllowedXpubs(change.Entitle)
+	revoke := normalizeAllowedXpubs(change.Revoke)
+	if len(entitle) == 0 && len(revoke) == 0 {
+		return errors.New("an entitlement change needs at least one xpub to entitle or revoke")
+	}
+	for _, xpub := range revoke {
+		for _, other := range entitle {
+			if xpub == other {
+				return fmt.Errorf("%s is both entitled and revoked", XpubFingerprint(xpub))
+			}
+		}
+	}
+	return nil
 }

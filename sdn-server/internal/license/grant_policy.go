@@ -296,7 +296,7 @@ func EvaluatePublication(asset *PluginAsset, cfg *GrantPolicyConfig) Publication
 		decision.Publish = false
 		decision.Reason = fmt.Sprintf(
 			"grant policy %q (from %s) with an EMPTY allowed_xpubs list: REFUSING to provision the content key, so no grant can be issued for this module. "+
-				"Fix by entitling identities (catalog.json allowed_xpubs, or `spacedatanetwork module publish --allow-xpub <xpub>`) "+
+				"Fix by entitling identities (`spacedatanetwork plugins entitle --module <id> --xpub <xpub>`, or catalog.json allowed_xpubs) "+
 				"or, if this module really is unrestricted, declare it explicitly (%s \"modules\": [{\"match\": %q, \"policy\": %q}])",
 			decision.Policy, decision.Source, GrantPolicyFileName, asset.ID, GrantPolicyOpen,
 		)
@@ -308,12 +308,31 @@ func EvaluatePublication(asset *PluginAsset, cfg *GrantPolicyConfig) Publication
 
 // XpubFingerprint is the ONLY form an xpub takes in a log line: the first 8
 // bytes of its SHA-256, hex, prefixed. Raw xpubs are wallet-linkable across
-// every module a party ever requests, so they never reach the audit log.
+// every module a party ever requests, so they never reach the audit log. The
+// "*" entry (any signed-in account) names nobody and prints as itself.
 func XpubFingerprint(xpub string) string {
 	trimmed := strings.TrimSpace(xpub)
 	if trimmed == "" {
 		return "xpub:none"
 	}
+	if trimmed == AnyAccountXpub {
+		return "xpub:" + AnyAccountXpub
+	}
 	sum := sha256.Sum256([]byte(trimmed))
 	return "xpub:" + hex.EncodeToString(sum[:8])
+}
+
+// AnyAccountXpub is the allowed_xpubs entry the key server reads as "any
+// account that proves its key".
+const AnyAccountXpub = "*"
+
+func xpubFingerprints(xpubs []string) []string {
+	if len(xpubs) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(xpubs))
+	for _, xpub := range xpubs {
+		out = append(out, XpubFingerprint(xpub))
+	}
+	return out
 }

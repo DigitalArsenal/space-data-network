@@ -274,3 +274,21 @@ func FormatPublicationAudit(decision PublicationDecision) string {
 	}
 	return line
 }
+
+// AuditEntitlementChange records an admin's change to a module's lease list:
+// who signed it, what was added and removed, and the list and policy now in
+// force. Every xpub is a fingerprint. Safe to call with no sink installed.
+func AuditEntitlementChange(signerXpub string, asset *PluginAsset, decision PublicationDecision, entitled, revoked []string) {
+	sink := auditSink
+	if sink == nil || asset == nil {
+		return
+	}
+	sink(fmt.Sprintf(
+		"grant-audit dir=entitle module=%s version=%s signer=%s entitled=[%s] revoked=[%s] allowed=[%s] policy=%s",
+		orNone(asset.ID), orNone(asset.Version), XpubFingerprint(signerXpub),
+		strings.Join(xpubFingerprints(normalizeAllowedXpubs(entitled)), ","),
+		strings.Join(xpubFingerprints(normalizeAllowedXpubs(revoked)), ","),
+		strings.Join(xpubFingerprints(asset.AllowedXpubs), ","),
+		orNone(decision.Policy),
+	))
+}

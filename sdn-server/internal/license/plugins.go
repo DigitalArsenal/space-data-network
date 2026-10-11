@@ -967,6 +967,79 @@ func (r *PluginRegistry) AddEncryptedPlugin(upload EncryptedPluginUpload) (*Plug
 	return asset.clone(), nil
 }
 
+// ChangeAllowedXpubs adds entitle to and removes revoke from the allowed_xpubs
+// of every named module, persists catalog.json, and returns the changed
+// assets. The encrypted bytes and their content keys are left as published, so
+// re-provisioning a changed module into the licensing runtime re-sends the
+// same publication under the new list.
+//
+// All modules change or none do. A change that would leave a module
+// unpublishable (an allowlist with nobody on it) is refused: the host would
+// stop provisioning the module, but the key server keeps the publication it
+// already holds, with the old list, until it is reconfigured. Entitle the
+// replacement accounts first, then revoke.
+func (r *PluginRegistry) ChangeAllowedXpubs(moduleIDs, entitle, revoke []string) ([]*PluginAsset, error) {
+	if r == nil {
+		return nil, errors.New("plugin registry is nil")
+	}
+	ids := normalizeAllowedXpubs(moduleIDs)
+	if len(ids) == 0 {
+		return nil, errors.New("at least one module id is required")
+	}
+	removed := make(map[string]struct{}, len(revoke))
+	for _, xpub := range normalizeAllowedXpubs(revoke) {
+		removed[xpub] = struct{}{}
+	}
+	added := normalizeAllowedXpubs(entitle)
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	next := make([]*PluginAsset, 0, len(ids))
+	for _, id := range ids {
+		current, ok := r.assets[id]
+		if !ok {
+			return nil, fmt.Errorf("module %q is not in this provider's catalog", id)
+		}
+		if strings.TrimSpace(current.keyPath) == "" {
+			return nil, fmt.Errorf("module %q is not an encrypted module; it has no lease to change", id)
+		}
+		allowed := make([]string, 0, len(current.AllowedXpubs)+len(added))
+		for _, xpub := range current.AllowedXpubs {
+			if _, drop := removed[xpub]; !drop {
+				allowed = append(allowed, xpub)
+			}
+		}
+		changed := current.clone()
+		changed.AllowedXpubs = normalizeAllowedXpubs(append(allowed, added...))
+		if decision := EvaluatePublication(changed, r.grantPolicy); !decision.Publish {
+			return nil, fmt.Errorf(
+				"module %q would be left with no entitled account (grant policy %q from %s); "+
+					"the key server would keep serving its current list until a restart. Entitle an account before revoking the last one",
+				id, decision.Policy, decision.Source,
+			)
+		}
+		next = append(next, changed)
+	}
+
+	previous := make(map[string]*PluginAsset, len(next))
+	for _, asset := range next {
+		previous[asset.ID] = r.assets[asset.ID]
+		r.assets[asset.ID] = asset
+	}
+	if err := r.saveCatalogLocked(); err != nil {
+		for id, asset := range previous {
+			r.assets[id] = asset
+		}
+		return nil, fmt.Errorf("save catalog: %w", err)
+	}
+	out := make([]*PluginAsset, 0, len(next))
+	for _, asset := range next {
+		out = append(out, asset.clone())
+	}
+	return out, nil
+}
+
 // saveCatalogLocked writes catalog.json from the current in-memory assets.
 // Caller must hold r.mu.
 func (r *PluginRegistry) saveCatalogLocked() error {
