@@ -553,6 +553,15 @@ async function decodeGrantResponse(
     trustedGrantVerifierPublicKeys?: Uint8Array[];
   },
 ): Promise<GrantResponsePayload> {
+  // The key server answers a refused grant proof (an account proof it does not
+  // accept, an expired challenge) with no frame at all. Decoding that silence as
+  // a grant reported "invalid licensing grant identifier", which named nothing.
+  if (bytes.length === 0) {
+    throw new ModuleDeliveryProtocolError(
+      'grant_refused',
+      'the provider returned no grant: this account was not authorized (no valid account proof, or the challenge expired)',
+    );
+  }
   try {
     const decodedGrant = decodeLicensingGrant(bytes);
     const validatedGrant = validateLicensingGrant(decodedGrant, options);
