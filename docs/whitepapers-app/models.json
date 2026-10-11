@@ -72,12 +72,6 @@
     "url": "models/evidence-supported-aso-catalog/9-sp-message-interchange.html"
   },
   {
-    "paper": "provenance-and-security",
-    "section_id": "3-publication-and-reproduction",
-    "title": "A V1 seed, reproduced here",
-    "url": "models/evidence-supported-aso-catalog/10-publication-and-reproduction.html"
-  },
-  {
     "paper": "evidence-supported-aso-catalog",
     "section_id": "10-measured-accuracy",
     "title": "Measured accuracy, by object class and age",
@@ -103,6 +97,12 @@
   },
   {
     "paper": "fast-conjunction-assessment",
+    "section_id": "spatial-grid",
+    "title": "The grid proposes the candidate pairs",
+    "url": "models/fast-conjunction-assessment/spatial-grid.html"
+  },
+  {
+    "paper": "fast-conjunction-assessment",
     "section_id": "refinement",
     "title": "Refining a close approach",
     "url": "models/fast-conjunction-assessment/refinement.html"
@@ -122,7 +122,7 @@
   {
     "paper": "fast-conjunction-assessment",
     "section_id": "covariance-probability-on-screened-events",
-    "title": "Probability and dilution",
+    "title": "A screened pair at TCA, with its covariances",
     "url": "models/fast-conjunction-assessment/covariance-probability-on-screened-events.html"
   },
   {
@@ -130,6 +130,12 @@
     "section_id": "propagated-and-fitted-covariance",
     "title": "EKF and UKF: covariance through the pass",
     "url": "models/fast-conjunction-assessment/propagated-and-fitted-covariance.html"
+  },
+  {
+    "paper": "provenance-and-security",
+    "section_id": "3-publication-and-reproduction",
+    "title": "A V1 seed, reproduced here",
+    "url": "models/evidence-supported-aso-catalog/10-publication-and-reproduction.html"
   },
   {
     "paper": "adversarial-security",
