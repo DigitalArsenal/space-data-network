@@ -183,6 +183,7 @@ type gpArchiveRunReport struct {
 	StartedAt                                                                        string                         `json:"started_at"`
 	FinishedAt                                                                       string                         `json:"finished_at"`
 	Status                                                                           string                         `json:"status"`
+	Error                                                                            string                         `json:"error,omitempty"`
 	RecordsRead                                                                      int64                          `json:"records_read"`
 	MPEStored                                                                        int64                          `json:"mpe_stored"`
 	DuplicatesSkipped                                                                int64                          `json:"duplicates_skipped"`
@@ -317,7 +318,7 @@ func (s *gpFlatSQLArchiveSink) StoreCatalogMPE(r [][]byte, t storage.SourceTags)
 	return s.catalogMPE.StoreBatchWithSourceTags("MPE.fbs", r, gpArchiveSourcePeer, nil, t)
 }
 func (s *gpFlatSQLArchiveSink) DeleteCatalogMPE(cid string) error {
-	return s.catalogMPE.Delete("MPE.fbs", cid)
+	return deleteGPArchiveRecord(s.catalogMPE, "MPE.fbs", cid)
 }
 func (s *gpFlatSQLArchiveSink) StoreCatalogCAT(r [][]byte, t storage.SourceTags) (int, error) {
 	return s.catalogCAT.StoreBatchWithSourceTags("CAT.fbs", r, gpArchiveSourcePeer, nil, t)
@@ -339,7 +340,19 @@ func (s *gpFlatSQLArchiveSink) StoreOEMBatch(writes []gpOEMWrite) ([]string, err
 	}
 	return cids, nil
 }
-func (s *gpFlatSQLArchiveSink) DeleteOEM(cid string) error { return s.oem.Delete("OEM.fbs", cid) }
+func (s *gpFlatSQLArchiveSink) DeleteOEM(cid string) error {
+	return deleteGPArchiveRecord(s.oem, "OEM.fbs", cid)
+}
+
+// deleteGPArchiveRecord removes a superseded catalog or OEM record. The goal is
+// the record's absence, so a record that is already gone (deleted by a run that
+// failed before its checkpoint recorded the delete) is success.
+func deleteGPArchiveRecord(store *storage.FlatSQLStore, schema, cid string) error {
+	if err := store.Delete(schema, cid); err != nil && !errors.Is(err, storage.ErrRecordNotFound) {
+		return err
+	}
+	return nil
+}
 func (s *gpFlatSQLArchiveSink) Close() error {
 	var first error
 	for _, st := range []*storage.FlatSQLStore{s.history, s.catalogMPE, s.catalogCAT, s.oem} {
@@ -664,6 +677,9 @@ func importGPArchive(ctx context.Context, opts gpArchiveOptions, sink gpArchiveS
 	report.RecordBuilderModuleSHA256 = opts.recordBuilderHash
 	progress := newGPArchiveProgress(opts.CheckpointPath, sourcesPath, cp, sources)
 	finish := func(runErr error) (*gpArchiveRunReport, error) {
+		if runErr != nil {
+			report.Status, report.Error = "failed", runErr.Error()
+		}
 		report.finalize()
 		if e := saveGPArchiveReport(opts.ReportPath, report); e != nil && runErr == nil {
 			runErr = e
@@ -684,6 +700,19 @@ func importGPArchive(ctx context.Context, opts gpArchiveOptions, sink gpArchiveS
 			return r, stopErr, true
 		}
 		return nil, e, false
+	}
+	// A failed catalog or OEM phase still saves the checkpoint. Those phases
+	// move a reference only after the store writes behind it commit, so the
+	// checkpoint never runs ahead of the stores, and saving it keeps what the
+	// failed run stored and deleted on record. Replaying against the older
+	// checkpoint re-deleted removed records (the 2026-10-10 "not found"
+	// outage) and orphaned the ones it had stored. The import phases must not
+	// do this: their seen-GP_ID bookkeeping runs ahead of unflushed history.
+	failMaterialize := func(e error) (*gpArchiveRunReport, error) {
+		if saveErr := progress.save(true); saveErr != nil {
+			e = errors.Join(e, saveErr)
+		}
+		return finish(e)
 	}
 	ledger := gpArchiveLedger{}
 	if opts.LedgerPath != "" {
@@ -769,7 +798,7 @@ func importGPArchive(ctx context.Context, opts gpArchiveOptions, sink gpArchiveS
 		if r, e, stopped := handlePhaseError(err); stopped {
 			return r, e
 		}
-		return finish(err)
+		return failMaterialize(err)
 	}
 	if err = progress.save(true); err != nil {
 		return finish(err)
@@ -782,7 +811,7 @@ func importGPArchive(ctx context.Context, opts gpArchiveOptions, sink gpArchiveS
 			if r, e, stopped := handlePhaseError(err); stopped {
 				return r, e
 			}
-			return finish(err)
+			return failMaterialize(err)
 		}
 		if err = progress.save(true); err != nil {
 			return finish(err)
@@ -1639,13 +1668,14 @@ func materializeGPArchiveCatalog(ctx context.Context, opts gpArchiveOptions, cp 
 				return err
 			}
 			for _, st := range states[start:end] {
-				previous := st.CatalogCID
-				st.CatalogCID = st.HistoryCID
-				if previous != "" && previous != st.CatalogCID {
+				// Delete before moving the reference: a failed delete keeps
+				// the old reference, so the next run retries it.
+				if previous := st.CatalogCID; previous != "" && previous != st.HistoryCID {
 					if err := sink.DeleteCatalogMPE(previous); err != nil {
 						return err
 					}
 				}
+				st.CatalogCID = st.HistoryCID
 				report.CatalogEntitiesChanged++
 			}
 			if err := progress.save(false); err != nil {
@@ -1775,14 +1805,14 @@ func materializeGPArchiveOEM(ctx context.Context, opts gpArchiveOptions, cp *gpA
 			return err
 		}
 		for i, st := range successful {
-			previous := st.OEMCID
-			st.OEMCID = cids[i]
-			st.OEMParentCID = st.CatalogCID
-			if previous != "" && previous != cids[i] {
+			// Delete before moving the reference, as in the catalog phase.
+			if previous := st.OEMCID; previous != "" && previous != cids[i] {
 				if err := sink.DeleteOEM(previous); err != nil {
 					return err
 				}
 			}
+			st.OEMCID = cids[i]
+			st.OEMParentCID = st.CatalogCID
 		}
 		if err := progress.save(false); err != nil {
 			return err
