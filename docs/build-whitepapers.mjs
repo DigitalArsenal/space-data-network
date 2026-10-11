@@ -65,7 +65,7 @@ const PAPERS = [
     src: 'fast-conjunction-assessment.md',
     topic: 'Conjunctions',
     description: 'Screening every catalog object against every other in minutes, for any propagator, with or without a GPU.',
-    summary: 'How Space Data Network checks every tracked object against every other for close approaches: the full catalog over three days in about 20 seconds with SGP4, on a GPU or on ordinary processors, and with a numerical propagator in minutes. Includes agreement with SOCRATES, where collision probabilities are calibrated, and private screening on encrypted orbits.',
+    summary: 'How Space Data Network checks every tracked object against every other for close approaches: the full catalog over three days in about 20 seconds with SGP4, on a GPU or on ordinary processors, and in about two hours on 16 cores with full-force numerical propagation. Includes agreement with SOCRATES, where collision probabilities are calibrated, and private screening on encrypted orbits.',
     earth: '1.9 40 24 0.95 -0.55 70 16',
     conjunction: true,
   },
