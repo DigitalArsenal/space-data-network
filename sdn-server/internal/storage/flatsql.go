@@ -5017,8 +5017,13 @@ type RecordIndexPageQuery struct {
 	// TEXT) LIKE '%<q>%'. Callers must pass digits only (LIKE wildcards are not
 	// escaped here — the HTTP handler sanitizes to digits).
 	NoradLike string
-	Limit     int
-	Offset    int
+	// ArrivedBefore (unix seconds), when set, keeps only records this node
+	// stored before then (the store's arrival time: source_timestamp,
+	// format 2 _arrival, format 4 TS). The rolling-window expiry
+	// (record_expiry.go) pages its lane with it.
+	ArrivedBefore *int64
+	Limit       int
+	Offset      int
 }
 
 // RecordIndexRow is one per-record row of the index-page surface. Pointer fields
@@ -5068,6 +5073,10 @@ func (s *FlatSQLStore) RecordIndexPage(q RecordIndexPageQuery) ([]RecordIndexRow
 	if q.NoradLike != "" {
 		where = append(where, "CAST(ix.norad_cat_id AS TEXT) LIKE ?")
 		args = append(args, "%"+q.NoradLike+"%")
+	}
+	if q.ArrivedBefore != nil {
+		where = append(where, "ix.source_timestamp < ?")
+		args = append(args, *q.ArrivedBefore)
 	}
 	whereSQL := strings.Join(where, " AND ")
 
