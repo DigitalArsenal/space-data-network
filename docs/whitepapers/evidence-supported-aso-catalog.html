@@ -69,11 +69,11 @@
       </div>
       <div class="wrap">
         <dl class="paper-facts">
-          <div><dt>Edition</dt><dd>2.2</dd></div>
-          <div><dt>Published</dt><dd>11 October 2026</dd></div>
+          <div><dt>Edition</dt><dd>2.3</dd></div>
+          <div><dt>Published</dt><dd>12 October 2026</dd></div>
           <div><dt>Evidence cutoff</dt><dd><span>11 October 2026</span></dd></div>
           <div><dt>Sections</dt><dd>11</dd></div>
-          <div><dt>Reading time</dt><dd>35 min</dd></div>
+          <div><dt>Reading time</dt><dd>36 min</dd></div>
           <div><dt>Interactive models</dt><dd>16</dd></div>
         </dl>
       </div>
@@ -176,7 +176,7 @@
 </ol>
 <p>Three results go beyond published work:</p>
 <ol>
-<li>GPS element-set correction fails on an unseen orbital plane (<a href="#53-objects-with-public-omms-only">section 5.3</a>).</li>
+<li>An element-set correction learned on a LEO fleet carries to that fleet&#39;s unseen satellites (25 % lower error at epoch) but not to other operators&#39; satellites, nor across GPS orbital planes; in GNSS a per-satellite bias holds 37 % of the along-track variance, against 1–5 % in LEO (<a href="#53-objects-with-public-omms-only">section 5.3</a>).</li>
 <li>A density correction of the kind the Space Force&#39;s drag model uses, solved from Planet&#39;s public states, is scored on satellites that did not calibrate it (<a href="#54-drag-regime">section 5.4</a>).</li>
 <li>Consecutive OMM errors are strongly correlated, and four published covariance constructions are overconfident (<a href="#6-uncertainty">section 6</a>).</li>
 </ol>
@@ -517,6 +517,12 @@
 <td><a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e1/test/REPORT.md">E1</a></td>
 </tr>
 <tr>
+<td>The epoch correction learned on other objects, by regime (LEO: static covariates and a 48-hour fleet nowcast; MEO/GEO: the form of Ly et al.)</td>
+<td>Ly et al. 2020<sup><a href="#r17">17</a></sup>; Hallgarten La Casta and Amato 2025<sup><a href="#r18">18</a></sup></td>
+<td>Unseen LEO satellites: 25 % [18, 32] lower error at epoch, 51 % for Planet&#39;s own satellites; other operators&#39; satellites −2 % [−17, 10]; 9 % at 1 day, 1 % at 3 days. MEO and GEO 4 %, worse by more than 10 % for 64 of 135 objects. A per-satellite bias holds 37 % of the along-track variance in GNSS, 1–5 % in LEO</td>
+<td><a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/30da10c9d913abc4db45c468d97e0033c045afbd/results/e16/test/REPORT.md">E16</a></td>
+</tr>
+<tr>
 <td>HPOP from the OMM&#39;s epoch state</td>
 <td>Vallado et al. 2006<sup><a href="#r8">8</a></sup>; Jankovic 2026<sup><a href="#r15">15</a></sup></td>
 <td>Equal to SGP4 at epoch, then larger as the OMM&#39;s start-state error grows: at 24 h, 1.7 (GPS) to 11 (laser-ranged LEO) times SGP4&#39;s error; larger in all four regimes (GPS, LEO with precise orbits, laser-ranged LEO and MEO) by 72 h</td>
@@ -533,6 +539,12 @@
 <td>Levit and Marshall 2011<sup><a href="#r19">19</a></sup></td>
 <td>Better than SGP4 only at short horizons: 0.32–0.51 of its error to 12 h (laser-ranged LEO), 0.36–0.53 to 48 h on E1-corrected GPS sets; undecided beyond</td>
 <td><a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e7/test/REPORT.md">E7</a></td>
+</tr>
+<tr>
+<td>HPOP fitted to a 4- or 7-day arc of OMM epoch states with drag fitted (LEO)</td>
+<td>Levit and Marshall 2011<sup><a href="#r19">19</a></sup></td>
+<td>0.45 of SGP4&#39;s error at epoch and 0.39 at 6 h; 0.87 [0.62, 1.18] at 24 h and 1.40 [1.00, 1.92] at 72 h (not supported); laser-ranged spheres 0.28 at 24 h and 0.46 at 72 h. A fitted drag rate, weights with the measured correlation and the E13 density correction leave it unchanged</td>
+<td><a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/30da10c9d913abc4db45c468d97e0033c045afbd/results/e16/test/REPORT.md">E16</a></td>
 </tr>
 </tbody></table></div>
 <p>The start state sets the limit. Over 6 days, HPOP leaves 0.2 km along track from a GPS satellite&#39;s IGS state and 8.4 km from its OMM epoch state (medians of 508 arcs)<sup><a href="#r10">10</a></sup>. Laser ranges fix the start state, and the prediction then stays 20 to 60 times better than SGP4 to 7 days <a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e6/README.md">E6</a>.</p>
@@ -693,6 +705,12 @@
 <td>Hejduk 2019<sup><a href="#r38">38</a></sup></td>
 <td>No measurable effect in storms; density-error coverage 0.83–0.86 against 0.95</td>
 <td><a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/tree/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e14">E14</a></td>
+</tr>
+<tr>
+<td>Covariance of the corrected epoch state, unseen LEO objects</td>
+<td>Ly et al. 2020<sup><a href="#r17">17</a></sup></td>
+<td>Mean d²/3 1.01 and coverage 0.949, inside the rule; not supported once corrected for multiple tests</td>
+<td><a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/30da10c9d913abc4db45c468d97e0033c045afbd/results/e16/test/REPORT.md">E16</a></td>
 </tr>
 </tbody></table></div>
 <p>On the held-out window, maneuvers, the storm of 4 July 2026 and GNSS repositioning put heavy tails on the errors: mean d²/3 rises while medians and coverage stay near nominal in LEO, so realism found on the selection window did not carry over. Operator covariance enters as supplied, labeled with its source.</p>
