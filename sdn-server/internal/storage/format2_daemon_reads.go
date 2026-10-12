@@ -2031,6 +2031,10 @@ func (s *FlatSQLStore) f2RecordIndexPage(q RecordIndexPageQuery) ([]RecordIndexR
 				Params: []format2.Cell{format2.Text("%" + q.NoradLike + "%")}})
 		}
 	}
+	if q.ArrivedBefore != nil {
+		// _arrival is milliseconds.
+		wq.Conds = append(wq.Conds, format2.Cond{SQL: "_arrival < ?", Params: []format2.Cell{format2.Int(*q.ArrivedBefore * 1000)}})
+	}
 	// A tag the lanes prove selects every record of the type is read as the
 	// unfiltered page and total (a tag plan walks every posting of the tag):
 	// proven once, for both.
