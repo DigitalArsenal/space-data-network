@@ -6,7 +6,7 @@ Anthony "TJ" Koury III and Claude Opus 5.5
 
 Koury: Edgesource, Space Data Network. Claude: Anthropic.
 
-Technical whitepaper 2.2 | 11 October 2026
+Technical whitepaper 2.3 | 12 October 2026
 
 Numerical evidence cutoff: 11 October 2026
 
@@ -31,7 +31,7 @@ For most objects the only public input is the OMM, and the catalog takes it as i
 
 Three results go beyond published work:
 
-1. GPS element-set correction fails on an unseen orbital plane (section 5.3).
+1. An element-set correction learned on a LEO fleet carries to that fleet's unseen satellites (25 % lower error at epoch) but not to other operators' satellites, nor across GPS orbital planes; in GNSS a per-satellite bias holds 37 % of the along-track variance, against 1–5 % in LEO (section 5.3).
 2. A density correction of the kind the Space Force's drag model uses, solved from Planet's public states, is scored on satellites that did not calibrate it (section 5.4).
 3. Consecutive OMM errors are strongly correlated, and four published covariance constructions are overconfident (section 6).
 
@@ -203,9 +203,11 @@ Each row is one method: its originators, our measured result (median 3D position
 | --- | --- | --- | --- |
 | SGP4 on the latest public OMM | Hoots and Roehrich 1980<sup>[9](#r9)</sup>; Vallado et al. 2006<sup>[8](#r8)</sup> | At issue: 0.31 km (laser-ranged LEO) to 1.57 km (GPS); by horizon in section 10 | [E3][e3] |
 | Along-track correction at epoch (GPS) | Ly et al. 2020: 65 %<sup>[17](#r17)</sup>; Hallgarten La Casta and Amato 2025<sup>[18](#r18)</sup> | RMS at epoch 2.04 → 0.79 km (61 % [53, 67]); the single-model form 8 %; worse than SGP4 by 7 days (2.55 against 1.88 km); its covariance fails the coverage gate. On an orbital plane outside the fit: 6 % [2, 10] | [E1][e1] |
+| The epoch correction learned on other objects, by regime (LEO: static covariates and a 48-hour fleet nowcast; MEO/GEO: the form of Ly et al.) | Ly et al. 2020<sup>[17](#r17)</sup>; Hallgarten La Casta and Amato 2025<sup>[18](#r18)</sup> | Unseen LEO satellites: 25 % [18, 32] lower error at epoch, 51 % for Planet's own satellites; other operators' satellites −2 % [−17, 10]; 9 % at 1 day, 1 % at 3 days. MEO and GEO 4 %, worse by more than 10 % for 64 of 135 objects. A per-satellite bias holds 37 % of the along-track variance in GNSS, 1–5 % in LEO | [E16][e16] |
 | HPOP from the OMM's epoch state | Vallado et al. 2006<sup>[8](#r8)</sup>; Jankovic 2026<sup>[15](#r15)</sup> | Equal to SGP4 at epoch, then larger as the OMM's start-state error grows: at 24 h, 1.7 (GPS) to 11 (laser-ranged LEO) times SGP4's error; larger in all four regimes (GPS, LEO with precise orbits, laser-ranged LEO and MEO) by 72 h | [E7][e7] |
 | AOE's newest set | SpaceMapper<sup>[4](#r4)</sup> | Starlink: 18.9 times Space-Track's error at issue, from set age; 1.03–1.07 times at matched age (section 4) | [E15][e15] |
 | HPOP fitted to an arc of OMM epoch states | Levit and Marshall 2011<sup>[19](#r19)</sup> | Better than SGP4 only at short horizons: 0.32–0.51 of its error to 12 h (laser-ranged LEO), 0.36–0.53 to 48 h on E1-corrected GPS sets; undecided beyond | [E7][e7] |
+| HPOP fitted to a 4- or 7-day arc of OMM epoch states with drag fitted (LEO) | Levit and Marshall 2011<sup>[19](#r19)</sup> | 0.45 of SGP4's error at epoch and 0.39 at 6 h; 0.87 [0.62, 1.18] at 24 h and 1.40 [1.00, 1.92] at 72 h (not supported); laser-ranged spheres 0.28 at 24 h and 0.46 at 72 h. A fitted drag rate, weights with the measured correlation and the E13 density correction leave it unchanged | [E16][e16] |
 
 The start state sets the limit. Over 6 days, HPOP leaves 0.2 km along track from a GPS satellite's IGS state and 8.4 km from its OMM epoch state (medians of 508 arcs)<sup>[10](#r10)</sup>. Laser ranges fix the start state, and the prediction then stays 20 to 60 times better than SGP4 to 7 days [E6][e6].
 
@@ -265,6 +267,7 @@ $$
 | SGP4 with the E2b error model, calibrated by regime and age | Zaidi and Hejduk 2016<sup>[32](#r32)</sup> | Realistic in 2 of 35 regime-horizon cells (11 on the selection window) | [E14][e14] |
 | HPOP from the OMM epoch state, with P₀ and Q per regime | SP covariance as the Astrodynamics Support Workstation (ASW) forms it<sup>[37](#r37)</sup> | 5 of 35 (6 on the selection window): 500–800 km at epoch, above 800 km to 2 days | [E14][e14] |
 | Density-forecast consider term, in the form of the Dynamic Consider Parameter | Hejduk 2019<sup>[38](#r38)</sup> | No measurable effect in storms; density-error coverage 0.83–0.86 against 0.95 | [E14][e14] |
+| Covariance of the corrected epoch state, unseen LEO objects | Ly et al. 2020<sup>[17](#r17)</sup> | Mean d²/3 1.01 and coverage 0.949, inside the rule; not supported once corrected for multiple tests | [E16][e16] |
 
 On the held-out window, maneuvers, the storm of 4 July 2026 and GNSS repositioning put heavy tails on the errors: mean d²/3 rises while medians and coverage stay near nominal in LEO, so realism found on the selection window did not carry over. Operator covariance enters as supplied, labeled with its source.
 
@@ -623,6 +626,7 @@ Koury, A. Fast All-vs-All Conjunction Screening. Space Data Network technical wh
 [e7]: https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e7/test/REPORT.md
 [e8]: https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e8/test/REPORT.md
 [e15]: https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/4b0bc1b556dae67d55c1d81a31337738822e7e06/results/e15/README.md
+[e16]: https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/30da10c9d913abc4db45c468d97e0033c045afbd/results/e16/test/REPORT.md
 [xp]: https://github.com/DigitalArsenal/space-data-network-modules/blob/1606dddebb112ff97feea050de65601bdcf4ae43/propagator/sgp4-xp/tests/measure/README.md
 [e13]: https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e13/README.md
 [e14]: https://github.com/DigitalArsenal/orbit-accuracy-experiments/tree/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e14
