@@ -2031,6 +2031,13 @@ func (s *FlatSQLStore) f2RecordIndexPage(q RecordIndexPageQuery) ([]RecordIndexR
 				Params: []format2.Cell{format2.Text("%" + q.NoradLike + "%")}})
 		}
 	}
+	if q.EpochBefore != nil {
+		if !hasEpoch {
+			wq.Conds = append(wq.Conds, f2Never)
+		} else {
+			wq.Conds = append(wq.Conds, format2.Cond{SQL: "_epoch < ?", Params: []format2.Cell{format2.Int(*q.EpochBefore * 1000)}})
+		}
+	}
 	// A tag the lanes prove selects every record of the type is read as the
 	// unfiltered page and total (a tag plan walks every posting of the tag):
 	// proven once, for both.

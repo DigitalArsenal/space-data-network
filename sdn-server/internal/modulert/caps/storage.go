@@ -312,6 +312,34 @@ func (s *storageCapAdapter) handle(operation string, payload []byte) ([]byte, er
 		}
 		return okCapJSON(true), nil
 
+	case "storage.expire":
+		// POLICY: destructive op - the storage_write tier, as storage.delete.
+		// Deletes one lane's records whose indexed epoch is before before_ms
+		// (unix milliseconds), paging the store's record index - every stored
+		// record, not the engine's resident hot window that module SQL sees.
+		// The rolling window is the caller's (data-source/record-retention).
+		if s.bridge == nil || !s.bridge.HasCapability("storage_write") {
+			return refuseCapJSON("storage.expire", "requires the storage_write capability grant"), nil
+		}
+		num := func(key string) (float64, bool) { v, ok := p[key].(float64); return v, ok }
+		beforeMs, ok := num("before_ms")
+		if !ok || beforeMs <= 0 {
+			return errCapJSON("missing before_ms (unix milliseconds)"), nil
+		}
+		q := storage.RecordExpiryQuery{SchemaName: str("schema"), ProviderID: str("provider_id"), SourceName: str("source_name"),
+			BeforeUnix: int64(beforeMs / 1000)}
+		if v, ok := num("batch"); ok {
+			q.Batch = int(v)
+		}
+		if v, ok := num("max_deletes"); ok {
+			q.MaxDeletes = int(v)
+		}
+		res, err := s.store.ExpireRecords(q)
+		if err != nil {
+			return errCapJSON("expire failed: " + err.Error()), nil
+		}
+		return okCapJSON(res), nil
+
 	case "storage.ingest_with_source":
 		return logIngestRefusal(s.handleIngestWithSource(p, str)), nil
 

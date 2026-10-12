@@ -38,6 +38,8 @@ var typeRules = map[string]string{
 	"OMM": "epoch str:EPOCH|str:CREATION_DATE\ncol 0 u64pos:NORAD_CAT_ID\ncol 1 str:OBJECT_ID\nepoch_day 4\nobject 0,1\n",
 	// case "MPE.fbs": floor(EPOCH) seconds, 0 = absent.
 	"MPE": "epoch f64floor:EPOCH\ncol 1 str:ENTITY_ID\nepoch_day 4\nobject 1\n",
+	// case "WXF.fbs": the field's valid time (ms) and its FIELD_ID.
+	"WXF": "epoch i64ms:VALID_TIME_MS\ncol 1 str:FIELD_ID\nepoch_day 4\n",
 	// case "OEM.fbs": the first block's OBJECT is required; epoch = START_TIME,
 	// else the first data line's EPOCH.
 	"OEM": "require EPHEMERIS_DATA_BLOCK[0].OBJECT\n" +

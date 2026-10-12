@@ -33,6 +33,7 @@ import (
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/OMM"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/PNM"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/RFB"
+	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/WXF"
 	"github.com/google/flatbuffers/go"
 	logging "github.com/ipfs/go-log/v2"
 	"golang.org/x/crypto/scrypt"
@@ -5022,8 +5023,12 @@ type RecordIndexPageQuery struct {
 	// TEXT) LIKE '%<q>%'. Callers must pass digits only (LIKE wildcards are not
 	// escaped here — the HTTP handler sanitizes to digits).
 	NoradLike string
-	Limit     int
-	Offset    int
+	// EpochBefore (unix seconds), when set, keeps only records whose indexed
+	// epoch is earlier - a record without an epoch never matches. The
+	// rolling-window expiry (record_expiry.go) pages its lane with it.
+	EpochBefore *int64
+	Limit       int
+	Offset      int
 }
 
 // RecordIndexRow is one per-record row of the index-page surface. Pointer fields
@@ -5073,6 +5078,10 @@ func (s *FlatSQLStore) RecordIndexPage(q RecordIndexPageQuery) ([]RecordIndexRow
 	if q.NoradLike != "" {
 		where = append(where, "CAST(ix.norad_cat_id AS TEXT) LIKE ?")
 		args = append(args, "%"+q.NoradLike+"%")
+	}
+	if q.EpochBefore != nil {
+		where = append(where, "ix.epoch_unix IS NOT NULL AND ix.epoch_unix < ?")
+		args = append(args, *q.EpochBefore)
 	}
 	whereSQL := strings.Join(where, " AND ")
 
@@ -7070,6 +7079,20 @@ func extractIndexedFields(schemaName string, data []byte) (*indexedFields, error
 				out.epochDay = time.Unix(epochUnix, 0).UTC().Format("2006-01-02")
 			}
 		}
+	case "WXF.fbs":
+		// A weather field's time is its VALID_TIME_MS (the instant the field
+		// describes), its identity the producer's FIELD_ID. Floored to seconds,
+		// as format2/typeconfig.go's "epoch i64ms:VALID_TIME_MS" rule does.
+		wxf, err := parseWXF(data)
+		if err != nil {
+			return nil, err
+		}
+		out.entityID = strings.TrimSpace(string(wxf.FIELD_ID()))
+		if ms := wxf.VALID_TIME_MS(); ms != 0 {
+			epoch := int64(ms / 1000)
+			out.epochUnix = &epoch
+			out.epochDay = time.Unix(epoch, 0).UTC().Format("2006-01-02")
+		}
 	case "MPE.fbs":
 		mpe, err := parseMPE(data)
 		if err != nil {
@@ -7237,6 +7260,22 @@ func parseRFB(data []byte) (rfb *RFB.RFB, err error) {
 		return RFB.GetRootAsRFB(data, 0), nil
 	default:
 		return nil, errors.New("invalid RFB buffer")
+	}
+}
+
+func parseWXF(data []byte) (wxf *WXF.WXF, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("malformed WXF buffer: %v", r)
+		}
+	}()
+	switch {
+	case WXF.SizePrefixedWXFBufferHasIdentifier(data):
+		return WXF.GetSizePrefixedRootAsWXF(data, 0), nil
+	case WXF.WXFBufferHasIdentifier(data):
+		return WXF.GetRootAsWXF(data, 0), nil
+	default:
+		return nil, errors.New("invalid WXF buffer")
 	}
 }
 
