@@ -524,30 +524,41 @@ func scanSBD(store sbdStore, base storage.RawRecordQuery, f *sbdFilter, slots sb
 	}
 }
 
-// readSBDSeqs reads the records of known sequence numbers (ascending).
+// readSBDSeqs reads the records of known sequence numbers (ascending): one
+// short sequence-range read per run of nearby matches, so a sparse result
+// (an orbit class spread through the lane) never reads the records between.
 func readSBDSeqs(store sbdStore, base storage.RawRecordQuery, seqs []int64) ([]*storage.Record, error) {
+	const gap = 64 // matches closer than this share one read
 	want := make(map[int64]bool, len(seqs))
 	for _, s := range seqs {
 		want[s] = true
 	}
-	q := base
-	q.UseRowIDCursor, q.Limit = true, sbdScanChunk
-	q.AfterRowID, q.MaxRowID = seqs[0]-1, seqs[len(seqs)-1]
 	out := make([]*storage.Record, 0, len(seqs))
-	for len(out) < len(seqs) {
-		records, err := store.QueryRawRecords(q)
-		if err != nil {
-			return nil, err
+	for start := 0; start < len(seqs); {
+		end := start
+		for end+1 < len(seqs) && seqs[end+1]-seqs[end] < gap {
+			end++
 		}
-		for _, r := range records {
-			if want[r.RowID] {
-				out = append(out, r)
+		q := base
+		q.UseRowIDCursor = true
+		q.AfterRowID, q.MaxRowID = seqs[start]-1, seqs[end]
+		for {
+			q.Limit = int(min(int64(sbdScanChunk), q.MaxRowID-q.AfterRowID))
+			records, err := store.QueryRawRecords(q)
+			if err != nil {
+				return nil, err
 			}
+			for _, r := range records {
+				if want[r.RowID] {
+					out = append(out, r)
+				}
+			}
+			if len(records) < q.Limit || len(records) == 0 || records[len(records)-1].RowID >= q.MaxRowID {
+				break
+			}
+			q.AfterRowID = records[len(records)-1].RowID
 		}
-		if len(records) < q.Limit {
-			break
-		}
-		q.AfterRowID = records[len(records)-1].RowID
+		start = end + 1
 	}
 	return out, nil
 }
