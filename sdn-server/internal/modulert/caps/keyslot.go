@@ -240,6 +240,10 @@ func handleKeyslotUnwrap(nodeCtx *modulert.NodeContext, payload []byte) []byte {
 	if err != nil {
 		return errCapJSON("gcm init failed: " + err.Error())
 	}
+	// gcm.Open panics on a nonce of the wrong length: the guest chooses it, so check it.
+	if len(nonce) != gcm.NonceSize() {
+		return errCapJSON(fmt.Sprintf("invalid nonce: AES-GCM takes a %d-byte nonce, got %d", gcm.NonceSize(), len(nonce)))
+	}
 	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
 	if err != nil {
 		return errCapJSON("unwrap failed: " + err.Error())
