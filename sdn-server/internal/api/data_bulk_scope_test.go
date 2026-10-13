@@ -11,7 +11,9 @@ import (
 )
 
 // Coordinator D2 (multi-body round 2): the unfiltered OMM bulk list is the
-// satellite catalog; the named-only asteroid lane appears only when named.
+// satellite catalog; a named-only lane appears only when named. (Asteroids are
+// $SBD, never $OMM; the default named-only lanes are the beyond-Earth ones,
+// and the OMM case is configured here.)
 func TestBulkExportLeavesNamedOnlyLanesOutUnlessNamed(t *testing.T) {
 	store := newDataAPITestStore(t)
 	for i := 0; i < 3; i++ {
@@ -19,8 +21,8 @@ func TestBulkExportLeavesNamedOnlyLanesOutUnlessNamed(t *testing.T) {
 	}
 	for i, name := range []string{"Ceres", "Pallas"} {
 		payload := sds.NewOMMBuilder().WithNoradCatID(uint32(900000 + i)).WithObjectName(name).WithEpoch("2026-05-05T12:00:00Z").Build()
-		tags := storage.SourceTags{ProviderID: "lowell-astorb", SourceName: "astorb-numbered", SourceURL: "https://ftp.lowell.edu/pub/elgb/astorb.dat.gz", BatchID: "astorb-batch"}
-		if _, err := store.StoreWithSourceTags("OMM.fbs", payload, "source:lowell", nil, tags); err != nil {
+		tags := storage.SourceTags{ProviderID: "operator-elements", SourceName: "operator-omm", SourceURL: "https://example.org/elements", BatchID: "operator-batch"}
+		if _, err := store.StoreWithSourceTags("OMM.fbs", payload, "source:operator", nil, tags); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -43,11 +45,11 @@ func TestBulkExportLeavesNamedOnlyLanesOutUnlessNamed(t *testing.T) {
 	}
 	const at = "&epoch=2026-05-05T12:00:00Z&format=json"
 	scoped := NewDataQueryHandler(store)
-	scoped.SetNamedOnlyLanes(config.DefaultNamedOnlyLanes())
+	scoped.SetNamedOnlyLanes(append(config.DefaultNamedOnlyLanes(), config.LaneSelector{Schema: "OMM.fbs", ProviderID: "operator-elements"}))
 	if n, names := count(scoped, "/api/v1/data/omm/bulk?limit=100"+at); n != 3 {
 		t.Fatalf("unfiltered list: %d rows %v, want the 3 satellites", n, names)
 	}
-	if n, _ := count(scoped, "/api/v1/data/omm/bulk?provider_id=lowell-astorb&limit=100"+at); n != 2 {
+	if n, _ := count(scoped, "/api/v1/data/omm/bulk?provider_id=operator-elements&limit=100"+at); n != 2 {
 		t.Fatalf("named lane: %d rows, want 2", n)
 	}
 	if n, _ := count(scoped, "/api/v1/data/omm/bulk?limit=2"+at); n != 2 {

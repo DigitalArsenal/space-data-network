@@ -23,13 +23,13 @@ func TestTrustedImportLanePolicy(t *testing.T) {
 		want     bool
 		why      trustedImportDecision
 	}{
-		{"asteroids new on host-02", def, "OMM.fbs", "lowell-astorb", "astorb-numbered", fresh, false, trustedImportNew},
+		{"asteroids new on host-02", def, "SBD.fbs", "lowell-astorb", "astorb-numbered", fresh, false, trustedImportNew},
 		{"kernels new on host-02", def, "PNM.fbs", "naif", "ssb-kernels", fresh, false, trustedImportNew},
 		{"catalog already held keeps syncing", def, "OMM.fbs", "space-data-network-02", "celestrak-gp", held, true, trustedImportHeld},
-		{"listed new lane", config.TrustedImportConfig{Allow: []config.LaneSelector{{Schema: "OMM.fbs", ProviderID: "lowell-astorb"}}}, "OMM.fbs", "lowell-astorb", "astorb-numbered", fresh, true, trustedImportAllowed},
-		{"listed for another peer only", config.TrustedImportConfig{Allow: []config.LaneSelector{{Peer: "16Uiu2HAmOther", ProviderID: "lowell-astorb"}}}, "OMM.fbs", "lowell-astorb", "astorb-numbered", fresh, false, trustedImportNew},
+		{"listed new lane", config.TrustedImportConfig{Allow: []config.LaneSelector{{Schema: "SBD.fbs", ProviderID: "lowell-astorb"}}}, "SBD.fbs", "lowell-astorb", "astorb-numbered", fresh, true, trustedImportAllowed},
+		{"listed for another peer only", config.TrustedImportConfig{Allow: []config.LaneSelector{{Peer: "16Uiu2HAmOther", ProviderID: "lowell-astorb"}}}, "SBD.fbs", "lowell-astorb", "astorb-numbered", fresh, false, trustedImportNew},
 		{"deny wins over held", config.TrustedImportConfig{Deny: []config.LaneSelector{{ProviderID: "naif"}}}, "PNM.fbs", "naif", "ssb-kernels", held, false, trustedImportDenied},
-		{"deny wins over allow", config.TrustedImportConfig{Allow: []config.LaneSelector{{ProviderID: "*"}}, Deny: []config.LaneSelector{{Schema: "OMM.fbs", ProviderID: "lowell-astorb"}}}, "OMM.fbs", "lowell-astorb", "astorb-numbered", fresh, false, trustedImportDenied},
+		{"deny wins over allow", config.TrustedImportConfig{Allow: []config.LaneSelector{{ProviderID: "*"}}, Deny: []config.LaneSelector{{Schema: "SBD.fbs", ProviderID: "lowell-astorb"}}}, "SBD.fbs", "lowell-astorb", "astorb-numbered", fresh, false, trustedImportDenied},
 		{"new_lanes allow restores the old rule", config.TrustedImportConfig{NewLanes: "allow"}, "PNM.fbs", "usgs-astrogeology", "body-imagery", fresh, true, trustedImportNewLanes},
 	}
 	for _, c := range cases {

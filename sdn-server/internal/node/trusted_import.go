@@ -15,7 +15,7 @@ import (
 //
 // A node used to materialize every dataset publication of every schema from
 // every trusted peer. host-02 trusts host-01, so the moment host-01 starts
-// publishing the beyond-Earth retrieval lanes (895,910 asteroid $OMM records
+// publishing the beyond-Earth retrieval lanes (895,910 asteroid $SBD small-body records
 // every 72 hours, the NAIF kernel and body-imagery $PNM files), host-02 (7 GB
 // of RAM, its disk 94% full) would import all of them on every cycle.
 //

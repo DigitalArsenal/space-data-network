@@ -97,7 +97,7 @@ type LanesConfig struct {
 	// NamedOnly lanes are left out of the unfiltered bulk lists
 	// (/api/v1/data/omm/bulk with no provider_id, source or batch): a request
 	// that names the lane still reads it. Default: the beyond-Earth lanes
-	// (asteroid elements, solar-system kernels and body imagery), so the
+	// ($SBD asteroid elements, solar-system kernels and body imagery), so the
 	// satellite catalog's unfiltered list stays the satellite catalog
 	// (multi-body round 2, coordinator D2). An explicit empty list in the
 	// config file turns the scope off.
@@ -108,7 +108,7 @@ type LanesConfig struct {
 // default: the beyond-Earth retrieval lanes (deployment/solar-system-provider-node).
 func DefaultNamedOnlyLanes() []LaneSelector {
 	return []LaneSelector{
-		{Schema: "OMM.fbs", ProviderID: "lowell-astorb"},
+		{Schema: "SBD.fbs", ProviderID: "lowell-astorb"},
 		{Schema: "PNM.fbs", ProviderID: "naif", SourceName: "ssb-kernels"},
 		{Schema: "PNM.fbs", ProviderID: "usgs-astrogeology", SourceName: "body-imagery"},
 	}
@@ -118,7 +118,7 @@ func DefaultNamedOnlyLanes() []LaneSelector {
 // peers' dataset publications (the catch-up pass and live feed heads).
 // Before 2026-10-13 a trusted peer's every publication of every schema was
 // imported; a provider that starts publishing a new bulk lane (895,910
-// asteroid $OMM records every 72 hours) would land on every node that trusts
+// asteroid $SBD records every 72 hours) would land on every node that trusts
 // it. Now a lane this node does not already hold is imported only when
 // listed (multi-body round 2, coordinator D2).
 type TrustedImportConfig struct {

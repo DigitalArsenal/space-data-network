@@ -15,9 +15,9 @@ func TestAutoPublisherSettleWaitsForTheLastPart(t *testing.T) {
 	service := newRecordingPublicationService()
 	settle := 120 * time.Millisecond
 	publisher := startAutoPublisher(t, service, []config.AutoPublishLane{
-		{Schema: "OMM.fbs", ProviderID: "lowell-astorb", SourceName: "astorb-numbered", Settle: settle},
+		{Schema: "SBD.fbs", ProviderID: "lowell-astorb", SourceName: "astorb-numbered", Settle: settle},
 	})
-	part := IngestedBatch{Schema: "OMM.fbs", ProviderID: "lowell-astorb", SourceName: "astorb-numbered", BatchID: "astorb-sha", Inserted: 40000}
+	part := IngestedBatch{Schema: "SBD.fbs", ProviderID: "lowell-astorb", SourceName: "astorb-numbered", BatchID: "astorb-sha", Inserted: 40000}
 	started := time.Now()
 	for i := 0; i < 5; i++ {
 		publisher.ObserveIngest(part)
