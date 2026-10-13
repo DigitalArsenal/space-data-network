@@ -92,9 +92,12 @@ type AutoPublisher struct {
 	// already queued. A flow that re-ingests the SAME batch id (the CelesTrak
 	// debounce replay shape) must not republish it.
 	publishedBatches map[string]struct{}
-	started          bool
-	stop             chan struct{}
-	done             chan struct{}
+	// settling holds one timer per batch of a lane with a settle time: the
+	// batch publishes when its timer fires, Settle after its last ingest.
+	settling map[string]*time.Timer
+	started  bool
+	stop     chan struct{}
+	done     chan struct{}
 
 	now func() time.Time
 	// onPublished reports the outcome of each attempt. Tests use it; the
@@ -248,6 +251,10 @@ func (p *AutoPublisher) Stop() {
 	}
 	p.mu.Lock()
 	started := p.started
+	for key, timer := range p.settling {
+		timer.Stop()
+		delete(p.settling, key)
+	}
 	p.mu.Unlock()
 	if !started {
 		return
@@ -378,7 +385,41 @@ func (p *AutoPublisher) ObserveIngest(batch IngestedBatch) {
 		p.observeSourceIngest(lane)
 		return
 	}
+	if lane.Settle > 0 {
+		p.settleBatch(lane, schema, provider, source, batchID)
+		return
+	}
+	p.publishBatch(lane, schema, provider, source, batchID)
+}
 
+// settleBatch (re)arms the batch's timer: it publishes once the batch has
+// been quiet for the lane's settle time, so a batch stored in parts is
+// announced whole.
+func (p *AutoPublisher) settleBatch(lane config.AutoPublishLane, schema, provider, source, batchID string) {
+	batchKey := autoPublishLaneKey(lane) + "|" + batchID
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if _, seen := p.publishedBatches[batchKey]; seen {
+		return
+	}
+	if p.settling == nil {
+		p.settling = map[string]*time.Timer{}
+	}
+	if timer, ok := p.settling[batchKey]; ok {
+		timer.Reset(lane.Settle)
+		return
+	}
+	p.settling[batchKey] = time.AfterFunc(lane.Settle, func() {
+		p.mu.Lock()
+		delete(p.settling, batchKey)
+		p.mu.Unlock()
+		p.publishBatch(lane, schema, provider, source, batchID)
+	})
+}
+
+// publishBatch queues one batch's publication, once per batch and at most
+// once per lane interval.
+func (p *AutoPublisher) publishBatch(lane config.AutoPublishLane, schema, provider, source, batchID string) {
 	laneKey := autoPublishLaneKey(lane)
 	batchKey := laneKey + "|" + batchID
 	now := p.now()

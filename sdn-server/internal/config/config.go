@@ -53,6 +53,89 @@ type Config struct {
 	// Subscriptions carries the node-wide defaults for lane subscriptions
 	// (subscriptions.default_retention).
 	Subscriptions SubscriptionsConfig `yaml:"subscriptions"`
+	// Lanes scopes how whole lanes appear on this node's unfiltered lists
+	// (lanes.named_only).
+	Lanes LanesConfig `yaml:"lanes"`
+}
+
+// LaneSelector names lanes by peer, schema, provider and source. An empty
+// field, or "*", matches anything.
+type LaneSelector struct {
+	// Peer is a peer ID (only meaningful for trusted-peer import).
+	Peer       string `yaml:"peer,omitempty"`
+	Schema     string `yaml:"schema,omitempty"`
+	ProviderID string `yaml:"provider_id,omitempty"`
+	SourceName string `yaml:"source_name,omitempty"`
+}
+
+func laneFieldMatches(want, have string) bool {
+	want = strings.TrimSpace(want)
+	return want == "" || want == "*" || strings.EqualFold(want, strings.TrimSpace(have))
+}
+
+// Matches reports whether the selector names the lane (peer may be empty when
+// no peer is involved; a selector naming a peer then does not match).
+func (s LaneSelector) Matches(peer, schema, providerID, sourceName string) bool {
+	if p := strings.TrimSpace(s.Peer); p != "" && p != "*" && p != strings.TrimSpace(peer) {
+		return false
+	}
+	return laneFieldMatches(s.Schema, schema) && laneFieldMatches(s.ProviderID, providerID) && laneFieldMatches(s.SourceName, sourceName)
+}
+
+// AnyLaneMatches reports whether any selector names the lane.
+func AnyLaneMatches(selectors []LaneSelector, peer, schema, providerID, sourceName string) bool {
+	for _, s := range selectors {
+		if s.Matches(peer, schema, providerID, sourceName) {
+			return true
+		}
+	}
+	return false
+}
+
+// LanesConfig scopes whole lanes on this node's unfiltered lists.
+type LanesConfig struct {
+	// NamedOnly lanes are left out of the unfiltered bulk lists
+	// (/api/v1/data/omm/bulk with no provider_id, source or batch): a request
+	// that names the lane still reads it. Default: the beyond-Earth lanes
+	// (asteroid elements, solar-system kernels and body imagery), so the
+	// satellite catalog's unfiltered list stays the satellite catalog
+	// (multi-body round 2, coordinator D2). An explicit empty list in the
+	// config file turns the scope off.
+	NamedOnly []LaneSelector `yaml:"named_only"`
+}
+
+// DefaultNamedOnlyLanes are the lanes the unfiltered bulk lists leave out by
+// default: the beyond-Earth retrieval lanes (deployment/solar-system-provider-node).
+func DefaultNamedOnlyLanes() []LaneSelector {
+	return []LaneSelector{
+		{Schema: "OMM.fbs", ProviderID: "lowell-astorb"},
+		{Schema: "PNM.fbs", ProviderID: "naif", SourceName: "ssb-kernels"},
+		{Schema: "PNM.fbs", ProviderID: "usgs-astrogeology", SourceName: "body-imagery"},
+	}
+}
+
+// TrustedImportConfig scopes what this node materializes from its trusted
+// peers' dataset publications (the catch-up pass and live feed heads).
+// Before 2026-10-13 a trusted peer's every publication of every schema was
+// imported; a provider that starts publishing a new bulk lane (895,910
+// asteroid $OMM records every 72 hours) would land on every node that trusts
+// it. Now a lane this node does not already hold is imported only when
+// listed (multi-body round 2, coordinator D2).
+type TrustedImportConfig struct {
+	// NewLanes is the rule for a lane this node holds no publication of yet:
+	// "deny" (default) imports it only when Allow names it; "allow" imports
+	// every lane, as before.
+	NewLanes string `yaml:"new_lanes,omitempty"`
+	// Allow names lanes imported from trusted peers even when new here.
+	Allow []LaneSelector `yaml:"allow,omitempty"`
+	// Deny names lanes never imported from trusted peers, held or not.
+	// Deny wins over Allow and over a held lane.
+	Deny []LaneSelector `yaml:"deny,omitempty"`
+}
+
+// NewLanesAllowed reports whether unlisted new lanes are imported.
+func (c TrustedImportConfig) NewLanesAllowed() bool {
+	return strings.EqualFold(strings.TrimSpace(c.NewLanes), "allow")
 }
 
 // Subscription retention words. These mirror
@@ -975,6 +1058,14 @@ type AutoPublishLane struct {
 	// records produced a "250-record" shard of arbitrary size (250 x 128 MiB =
 	// 32 GiB), because buffer length never entered the boundary decision.
 	MaxShardBytes int64 `yaml:"max_shard_bytes,omitempty"`
+
+	// Settle waits until a batch has been quiet this long (no further ingest
+	// of the same batch) before publishing it. A retrieval flow that streams
+	// one large batch into the store in chunks (the asteroid lane: 895,910
+	// records in ~16 MiB parts, so the node never holds the whole batch in
+	// memory) is published once, complete. Zero publishes on the first ingest
+	// of a batch, as before.
+	Settle time.Duration `yaml:"settle,omitempty"`
 }
 
 // ErrListenAddrNotLoopback marks a listen address that is not loopback-only.
@@ -1725,6 +1816,10 @@ type PeersConfig struct {
 
 	// TrustBasedRateLimiting adjusts rate limits based on peer trust level.
 	TrustBasedRateLimiting bool `yaml:"trust_based_rate_limiting"`
+
+	// TrustedImport scopes the lanes imported from trusted peers
+	// (peers.trusted_import): new lanes are denied unless listed.
+	TrustedImport TrustedImportConfig `yaml:"trusted_import"`
 }
 
 // DefaultIPFSAPIURL is the Kubo RPC API endpoint AdminConfig.IPFSAPIURL
@@ -2020,7 +2115,9 @@ func Default() *Config {
 			EnableDHT:              true,
 			EnableMDNS:             true,
 			TrustBasedRateLimiting: true,
+			TrustedImport:          TrustedImportConfig{NewLanes: "deny"},
 		},
+		Lanes: LanesConfig{NamedOnly: DefaultNamedOnlyLanes()},
 		Admin: AdminConfig{
 			Enabled:           true,
 			ListenAddr:        "127.0.0.1:5001",

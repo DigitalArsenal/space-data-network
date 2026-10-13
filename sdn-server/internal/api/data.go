@@ -26,6 +26,7 @@ import (
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/MPE"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/OMM"
 
+	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/datasync"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
@@ -40,6 +41,9 @@ type DataQueryHandler struct {
 	// publisher is the node's own identity and its held publisher profiles;
 	// see SetPublisherIdentity (sources.go).
 	publisher publisherIdentity
+	// namedOnly are the lanes the unfiltered bulk lists leave out
+	// (data_bulk_scope.go).
+	namedOnly []config.LaneSelector
 }
 
 const (
@@ -1293,7 +1297,18 @@ func (h *DataQueryHandler) bulkExportRecords(r *http.Request, schemaName string)
 			}
 			query.At = at
 		}
-		matches, err := h.store.QueryEpochRecords(query)
+		var matches []storage.EpochRecordMatch
+		var err error
+		if providerID == "" && sourceName == "" && batchID == "" {
+			lanes, hidden, laneErr := h.unfilteredBulkLanes(schemaName)
+			if laneErr == nil && hidden {
+				matches, err = h.queryEpochLanes(query, lanes)
+			} else {
+				matches, err = h.store.QueryEpochRecords(query)
+			}
+		} else {
+			matches, err = h.store.QueryEpochRecords(query)
+		}
 		if err != nil {
 			return nil, err
 		}

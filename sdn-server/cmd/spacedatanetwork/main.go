@@ -1212,6 +1212,9 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			// served by the data-retrieval flow mounted below via
 			// n.MountFlows (config flows.mounts) — loop C.4 cutover.
 			dataAPI := api.NewDataQueryHandlerWithUICache(n.Store(), uiCacheDir)
+			// The unfiltered bulk lists leave out the named-only lanes
+			// (lanes.named_only; default: the beyond-Earth lanes).
+			dataAPI.SetNamedOnlyLanes(cfg.Lanes.NamedOnly)
 			// The resolved-sources lane names publishers from the signed
 			// profiles this node holds: its own, and the registry copies the
 			// EPM exchange fetched from peers it met.

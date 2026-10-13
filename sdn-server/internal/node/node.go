@@ -3048,6 +3048,9 @@ func (n *Node) catchUpDatasetShardPublicationsFromPeerCounting(ctx context.Conte
 			continue
 		}
 		for _, publication := range publications {
+			if !n.trustedPeerLaneImportAllowed(from, publication.SchemaName, publication.ProviderID, publication.SourceName, publication.QueryProfile) {
+				continue
+			}
 			if n.datasetShardPublicationAlreadyCached(publication) {
 				continue
 			}
@@ -4247,6 +4250,11 @@ func (n *Node) materializeDatasetFeedHeadAnnouncement(ctx context.Context, ann s
 	// and over (2026-10-06).
 	if n.laneProducedHere(ann.Schema, ann.ProviderID, ann.SourceName) {
 		log.Debugf("Skipping dataset feed head %s from %s: this node produces %s %s/%s", ann.FeedHead, from.ShortString(), ann.Schema, ann.ProviderID, ann.SourceName)
+		return 0, nil
+	}
+	// Trusted is not "everything": a lane is imported only when this node
+	// holds it already or its configuration lists it (trusted_import.go).
+	if !n.trustedPeerLaneImportAllowed(from, ann.Schema, ann.ProviderID, ann.SourceName, ann.QueryProfile) {
 		return 0, nil
 	}
 	if strings.TrimSpace(ann.ShardCID) == "" || strings.TrimSpace(ann.IndexCID) == "" {

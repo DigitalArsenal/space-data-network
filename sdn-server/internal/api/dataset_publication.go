@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"net/http"
@@ -1037,6 +1038,14 @@ func (s *ConcreteDatasetPublicationService) reusableDatasetPublicationResult(
 	}
 	pnmRecord, err := s.store.GetRecord("PNM.fbs", existing.PNMCID)
 	if err != nil {
+		if errors.Is(err, storage.ErrRecordNotFound) || strings.Contains(strings.ToLower(err.Error()), "not found") {
+			// The publication row outlived its $PNM record (a record store
+			// rebuilt from its publishers, or wiped): the window is published
+			// again rather than refused on every retry (multi-body round 2).
+			log.Infof("Republishing %s %s/%s window offset=%d: its earlier $PNM %s is no longer held",
+				schema, sourceIdentity.ProviderID, sourceIdentity.SourceName, filter.Offset, existing.PNMCID)
+			return nil, false, nil
+		}
 		return nil, false, fmt.Errorf("load reusable dataset publication PNM: %w", err)
 	}
 	if len(pnmRecord.Data) == 0 {
