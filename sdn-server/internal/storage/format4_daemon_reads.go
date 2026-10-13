@@ -1562,6 +1562,10 @@ func (b format4Backend) RecordIndexPage(q RecordIndexPageQuery) ([]RecordIndexRo
 	if q.NoradLike != "" {
 		eq.Preds = append(eq.Preds, f4Pred(format4.FieldCol0, format4.OpLike, format2.Text("%"+q.NoradLike+"%")))
 	}
+	if q.ArrivedBefore != nil {
+		// TS is the arrival, unix seconds.
+		eq.Preds = append(eq.Preds, f4Pred(format4.FieldTS, format4.OpLt, format2.Int(*q.ArrivedBefore)))
+	}
 	api, ctx := b.d.api(), b.d.ctx
 	// The total (HEAD; a whole type's from the type counters) and the page
 	// are two reads: run them at once.
