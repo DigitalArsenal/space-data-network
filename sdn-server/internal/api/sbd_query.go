@@ -21,8 +21,15 @@ package api
 // sequence numbers are kept for a few minutes per (lane, filter), so paging
 // through a result does not read the lane again. Pages are in sequence
 // (arrival) order; X-SDN-Total-Count carries the match count.
+//
+// A lane scan reads the whole lane (895,910 records: about 8 s on a loaded
+// machine), so one runs at a time: a query that needs another scan waits for
+// the slot (and then finds its result cached when it asked for the same
+// filter), and one that waits longer than sbdScanWait is answered 503 with
+// Retry-After instead of piling scans onto a two-CPU node.
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math"
@@ -432,6 +439,14 @@ const (
 	sbdMaxCachedSeqs = 1 << 21 // 16 MiB of sequence numbers at most per entry
 )
 
+// errSBDBusy: another lane scan held the slot for longer than sbdScanWait.
+var errSBDBusy = errors.New("small-body lane scan busy; retry shortly")
+
+const sbdScanWait = 20 * time.Second
+
+// sbdScanSlot admits one full-lane scan at a time.
+var sbdScanSlot = make(chan struct{}, 1)
+
 var sbdMatches = struct {
 	sync.Mutex
 	m map[string]*sbdMatchSet
@@ -448,7 +463,7 @@ type sbdStore interface {
 }
 
 // querySBD answers one page of a filtered small-body query and the total.
-func querySBD(store sbdStore, base storage.RawRecordQuery, f *sbdFilter, offset, limit int) ([]*storage.Record, int, error) {
+func querySBD(ctx context.Context, store sbdStore, base storage.RawRecordQuery, f *sbdFilter, offset, limit int) ([]*storage.Record, int, error) {
 	slots, err := loadSBDSlots()
 	if err != nil {
 		return nil, 0, err
@@ -459,13 +474,32 @@ func querySBD(store sbdStore, base storage.RawRecordQuery, f *sbdFilter, offset,
 		return nil, 0, err
 	}
 	key := sbdCacheKey(base, f)
-	sbdMatches.Lock()
-	set := sbdMatches.m[key]
-	if set != nil && (time.Since(set.computed) > sbdMatchTTL || set.head != head) {
-		delete(sbdMatches.m, key)
-		set = nil
+	cached := func() *sbdMatchSet {
+		sbdMatches.Lock()
+		defer sbdMatches.Unlock()
+		set := sbdMatches.m[key]
+		if set != nil && (time.Since(set.computed) > sbdMatchTTL || set.head != head) {
+			delete(sbdMatches.m, key)
+			set = nil
+		}
+		return set
 	}
-	sbdMatches.Unlock()
+	set := cached()
+	if set == nil {
+		wait := time.NewTimer(sbdScanWait)
+		select {
+		case sbdScanSlot <- struct{}{}:
+			wait.Stop()
+		case <-wait.C:
+			return nil, 0, errSBDBusy
+		case <-ctx.Done():
+			wait.Stop()
+			return nil, 0, ctx.Err()
+		}
+		defer func() { <-sbdScanSlot }()
+		// The scan this one waited behind may have been the same filter.
+		set = cached()
+	}
 	if set == nil {
 		seqs, page, err := scanSBD(store, base, f, slots, offset, limit)
 		if err != nil {
@@ -568,7 +602,12 @@ func readSBDSeqs(store sbdStore, base storage.RawRecordQuery, seqs []int64) ([]*
 // JSON rows).
 func (h *DataQueryHandler) serveSBDQuery(w http.ResponseWriter, r *http.Request, store sbdStore, schemaName string,
 	base storage.RawRecordQuery, f *sbdFilter, offset, limit int, includeData bool) {
-	records, total, err := querySBD(store, base, f, offset, limit)
+	records, total, err := querySBD(r.Context(), store, base, f, offset, limit)
+	if errors.Is(err, errSBDBusy) {
+		w.Header().Set("Retry-After", "5")
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
 	if err != nil {
 		if errors.Is(err, storage.ErrEngineRebuilding) {
 			writeEngineRebuilding(w, r)
