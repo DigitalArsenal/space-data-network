@@ -1,0 +1,1184 @@
+{
+  "version": 1,
+  "updated": "2026-10-13",
+  "consoleBuild": "20261013T204527Z",
+  "pricing": {
+    "status": "request",
+    "approvedPriceList": null,
+    "cta": {
+      "label": "Request pricing",
+      "href": "mailto:tj@edgesource.com?subject=SpaceAware%20pricing"
+    },
+    "open": {
+      "label": "Open SpaceAware",
+      "href": "https://spaceaware.io"
+    }
+  },
+  "access": {
+    "free": "Free, no account",
+    "account": "Sign in, no email",
+    "add-on": "Paid add-on"
+  },
+  "delivery": {
+    "console": "SpaceAware console",
+    "sdn-module": "SDN module",
+    "node": "SDN node"
+  },
+  "categories": [
+    {
+      "id": "console",
+      "name": "Orbital Console",
+      "blurb": "The live catalog on a 3D globe in your browser, streamed peer to peer and digitally verified."
+    },
+    {
+      "id": "space-safety",
+      "name": "Space Safety",
+      "blurb": "Find close approaches early, measure the risk and plan the response."
+    },
+    {
+      "id": "sda",
+      "name": "Space Domain Awareness",
+      "blurb": "Keep custody of objects, plan your sensors and build a catalog you can trace."
+    },
+    {
+      "id": "flight-dynamics",
+      "name": "Flight Dynamics",
+      "blurb": "Propagate, target and maneuver with the same modules the network runs."
+    },
+    {
+      "id": "comms-rf",
+      "name": "Communications and Spectrum",
+      "blurb": "Plan contacts and compute links, margins and interference from physical models."
+    },
+    {
+      "id": "earth-sky",
+      "name": "Earth and Sky",
+      "blurb": "Imagery, detection, terrain, grids, cameras and a real sky."
+    },
+    {
+      "id": "network",
+      "name": "Network and Developer",
+      "blurb": "Run a node, publish digitally signed data and build on open modules."
+    }
+  ],
+  "modules": [
+    {
+      "id": "catalog-globe",
+      "name": "Live catalog globe",
+      "category": "console",
+      "tagline": "Every tracked object, live on a 3D globe",
+      "summary": "Every tracked object in Earth orbit on a real-time 3D globe in your browser. The catalog streams peer to peer from the Space Data Network and is digitally verified on arrival.",
+      "capabilities": [
+        "Real-time SGP4 propagation with time warp",
+        "Catalog delivered peer to peer over IPFS",
+        "Owners and operators attached from SATCAT",
+        "Full console on phones, with a payload catalog sized for phone memory",
+        "Rebindable hotkeys and one status log for every event"
+      ],
+      "standards": [
+        "CCSDS OMM",
+        "SATCAT"
+      ],
+      "access": "free",
+      "delivery": "console",
+      "covers": [],
+      "learnMore": "https://spaceaware.io",
+      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/engine/initEngine.ts; engine/phoneCatalog.ts; live probe 2026-10-13 build 20261013T204527Z (32,573 records over IPFS/bitswap); components/HotkeySettings.svelte; components/StatusLog.svelte"
+    },
+    {
+      "id": "catalog-search",
+      "name": "Catalog search",
+      "category": "console",
+      "tagline": "Find any object by name, ID or place",
+      "summary": "Find any object by name, catalog number or international designator, by operator or constellation, by SQL, or by place and coordinates.",
+      "capabilities": [
+        "Name, catalog number and international designator search",
+        "Operator and constellation search",
+        "SQL predicates over the catalog",
+        "Place names and typed coordinates with boundary outlines"
+      ],
+      "standards": [
+        "FlatSQL",
+        "SDS gazetteer records"
+      ],
+      "access": "free",
+      "delivery": "console",
+      "covers": [],
+      "learnMore": "https://spaceaware.io",
+      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/components/SearchPanel.svelte:141-152; search/EntitySearch.ts; search/constellations.ts; geo/geoPlaces.ts; geo/coordinateQuery.ts"
+    },
+    {
+      "id": "object-intelligence",
+      "name": "Object intelligence card",
+      "category": "console",
+      "tagline": "Identity, owner, orbit and live state in one click",
+      "summary": "Click any object for its identity, owner, orbit regime, live state and a copyable element set, with a 3D frame view beside it. Fields the record does not carry stay blank, never invented.",
+      "capabilities": [
+        "Identity, owner, regime and launch year",
+        "Live state and a copyable element set",
+        "3D frame view in ECI, RIC or body axes with Sun, Moon and Earth directions",
+        "Orbital-elements overlay on the globe"
+      ],
+      "standards": [
+        "CCSDS OMM",
+        "SATCAT"
+      ],
+      "access": "free",
+      "delivery": "console",
+      "covers": [],
+      "learnMore": "https://spaceaware.io",
+      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/components/ObjectCard.svelte; components/FrameView.svelte; engine/ommOverview.ts; engine/elementsOverlay.ts"
+    },
+    {
+      "id": "scene-builder",
+      "name": "Scene builder",
+      "category": "console",
+      "tagline": "Build your own scenario of sites, sensors and groups",
+      "summary": "Build a scenario from folders, ground sites, sensors, radios, regions and query-driven groups, then style every object and group with graphics you can keyframe over time.",
+      "capabilities": [
+        "Ground sites, sensors, radios and folders",
+        "Query-driven groups with per-group graphics",
+        "Color, size, labels, paths, axes, 3D models and covariance, keyframed over time",
+        "Select by click, box or lasso; regions by shape, country, H3 hex or lat/lon grid",
+        "Spacecraft 3D models delivered over SDN and verified"
+      ],
+      "standards": [
+        "SDS EGP",
+        "H3"
+      ],
+      "access": "free",
+      "delivery": "console",
+      "covers": [],
+      "learnMore": "https://spaceaware.io",
+      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/entities/EntitiesMenu.svelte; entities/EntityWizard.svelte; entities/GraphicsPanel.svelte; groups/groupStore.ts; regions/regionModes.ts:39-81; selection/selectionController.svelte.ts; engine/assetModels.ts"
+    },
+    {
+      "id": "context-layers",
+      "name": "Published context layers",
+      "category": "console",
+      "tagline": "Ground sites, constellations and facilities in one click",
+      "summary": "Add published ground sites, entity groups, constellations and facilities to your scene, item by item or a whole group at once.",
+      "capabilities": [
+        "More than 4,200 ground sites",
+        "More than 2,300 entity groups",
+        "More than 200 constellations",
+        "Nearly 6,000 facilities with cited lifecycle status",
+        "Sites, groups and constellations delivered over SDN and checked against the publisher's digital signature"
+      ],
+      "standards": [
+        "SDS SIT",
+        "SDS EGP",
+        "SDS CMR"
+      ],
+      "access": "free",
+      "delivery": "console",
+      "covers": [],
+      "learnMore": "https://spaceaware.io",
+      "evidence": "live probe 2026-10-13 ENTITIES > SOURCES counts; sdn-js/spaceaware-ui/src/orbital-console/sources/sourceEndpoint.ts:97-114; sources/publishedSites.ts; sources/facilities.ts"
+    },
+    {
+      "id": "mission-timeline",
+      "name": "Mission timeline",
+      "category": "console",
+      "tagline": "Shared clock, gantt and events as time runs",
+      "summary": "One clock for the whole scene, a gantt of every result you can save and reload by name, and an events drawer that calls out windows as they open and close.",
+      "capabilities": [
+        "Time warp and a time-zone map",
+        "Per-mode gantt, saved and reloaded by name",
+        "Events drawer for windows opening and closing",
+        "Results export as CSV or JSON"
+      ],
+      "standards": [
+        "UTC"
+      ],
+      "access": "free",
+      "delivery": "console",
+      "covers": [],
+      "learnMore": "https://spaceaware.io",
+      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/components/GanttSettingsBar.svelte:135-138; components/EventsDrawer.svelte; components/WarpBar.svelte; components/TimezonePicker.svelte; modes/reports.ts (REPORT card in TRK, DET, CNJ, MNV, COM and RF; none in CAM or ANL)"
+    },
+    {
+      "id": "analyze-toolkit",
+      "name": "Analyze toolkit",
+      "category": "console",
+      "tagline": "RIC box, range, measure and markup",
+      "summary": "Box a formation in its leader's radial, in-track and cross-track frame, read live range and range rate, measure on the globe and pin notes.",
+      "capabilities": [
+        "RIC box with per-axis fit",
+        "Live range and range rate between objects",
+        "Click-to-measure distance on the globe",
+        "Markup notes and lines"
+      ],
+      "standards": [
+        "RIC frame"
+      ],
+      "access": "free",
+      "delivery": "console",
+      "covers": [
+        "ANL"
+      ],
+      "learnMore": "https://spaceaware.io",
+      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/modes/modeCards.ts:573-585; modes/anl/surface.ts:113-122; modes/anl/ricBox.ts; modes/anl/range.ts; modes/anl/measure.ts; modes/anl/markup.ts"
+    },
+    {
+      "id": "spaceaware-account",
+      "name": "SpaceAware account",
+      "category": "console",
+      "tagline": "Sign in with a wallet, password or passkey",
+      "summary": "Sign in with a username and password, seed phrase, passkey or external wallet, no email needed. Signing in opens the operator modes and delivers paid add-ons encrypted to your account.",
+      "capabilities": [
+        "Password, seed phrase, passkey or external wallet",
+        "Session kept for 24 hours",
+        "Opens the track, detection, maneuver and communications modes",
+        "Paid add-ons delivered encrypted to your account"
+      ],
+      "standards": [
+        "HD wallet"
+      ],
+      "access": "free",
+      "delivery": "console",
+      "covers": [],
+      "learnMore": "https://spaceaware.io",
+      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/session/walletSession.svelte.ts:46-49; session/keptSession.ts:32-37; modes/modeCards.ts:643-653 (SIGNED_OUT_MODES = CNJ, CAM, ANL); data/modules/protectedDelivery.ts (ENTITLED rows only); sdn-server/internal/license/plugins.go:89-111"
+    },
+    {
+      "id": "conjunction-assessment",
+      "name": "Conjunction assessment",
+      "category": "space-safety",
+      "tagline": "Screen, assess and act on close approaches",
+      "summary": "Screen one satellite against the whole catalog or a chosen object, compute collision probability and plan an avoidance burn. Free on spaceaware.io with no account.",
+      "capabilities": [
+        "Screen against the full catalog or a single object",
+        "Collision probability for each event",
+        "Conjunction data messages to review and download as CDM, JSON or OCM",
+        "Avoidance burn with post-burn miss distance and collision probability",
+        "Operator notification package ready to send",
+        "Close events and export results"
+      ],
+      "standards": [
+        "CCSDS CDM",
+        "CCSDS OCM",
+        "SDS CQR"
+      ],
+      "access": "free",
+      "delivery": "console",
+      "covers": [
+        "CNJ"
+      ],
+      "learnMore": "https://spacedatanetwork.org/collision-avoidance.html",
+      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/modes/modeCards.ts:243-292; modes/cnj/surface.ts:547-600; modes/cnj/CnjPanel.svelte:224-227; live modules.pmm conjunction-assessment 0.6.0 ANONYMOUS"
+    },
+    {
+      "id": "catalog-screening",
+      "name": "All-vs-all catalog screening",
+      "category": "space-safety",
+      "tagline": "Every object against every other, GPU or CPU",
+      "summary": "Screens the whole catalog, every object against every other, on GPU or CPU. Produces conjunction data messages with collision probability from SGP4 or high-precision trajectories.",
+      "capabilities": [
+        "All-vs-all pair search on a WebGPU device or the CPU",
+        "SGP4 or numerically integrated trajectories in time windows",
+        "Collision probability from covariance on each screened event",
+        "CDM output for every event"
+      ],
+      "standards": [
+        "CCSDS CDM",
+        "CCSDS OMM",
+        "CCSDS OEM",
+        "SDS CQR"
+      ],
+      "access": "account",
+      "delivery": "sdn-module",
+      "covers": [],
+      "learnMore": "https://spacedatanetwork.org/whitepapers/fast-conjunction-assessment.html",
+      "evidence": "live modules.pmm conjunction-assessment 0.6.0; space-data-network-modules commits 40d04048, b9bb45f5, aa06ae30, beff6f1b (all-vs-all GPU/CPU, time windows, covariance Pc) at or before 0.6.0; live artifact /modules/conjunction-assessment/0.6.0/module.wasm exports coarse_grid, refine_candidates, screen_window, screen_catalog"
+    },
+    {
+      "id": "covariance-analysis",
+      "name": "Covariance and error modeling",
+      "category": "space-safety",
+      "tagline": "Uncertainty for every object in the catalog",
+      "summary": "Gives every object an uncertainty, from direct covariance or from measured prediction error by orbit regime and age, calibrated against independent precise orbits.",
+      "capabilities": [
+        "Covariance from records or element-set series",
+        "Empirical SGP4 prediction error by regime and prediction age",
+        "Independent reference states from precise orbit products",
+        "Stated accuracy and provenance carried with each state"
+      ],
+      "standards": [
+        "CCSDS OCM",
+        "CCSDS OEM",
+        "CCSDS OMM"
+      ],
+      "access": "account",
+      "delivery": "sdn-module",
+      "covers": [],
+      "learnMore": "https://spacedatanetwork.org/whitepapers/evidence-supported-aso-catalog.html",
+      "evidence": "live modules.pmm covariance-analysis 0.1.0, com.digitalarsenal.analysis.gp-error-model 0.1.0, com.digitalarsenal.analysis.reference-states 0.1.0"
+    },
+    {
+      "id": "maneuver-detection",
+      "name": "Maneuver detection",
+      "category": "space-safety",
+      "tagline": "Spot maneuvers in element-set history",
+      "summary": "Finds maneuvers in an object's element-set history over any propagator, and reports when and how much each one changed the orbit.",
+      "capabilities": [
+        "Works over any pluggable propagator",
+        "Measures energy and orbit-plane change",
+        "Flags only steps beyond the object's own noise",
+        "Detected maneuvers with time and in-track and cross-track delta-V"
+      ],
+      "standards": [
+        "CCSDS OMM",
+        "SDS MNV"
+      ],
+      "access": "account",
+      "delivery": "sdn-module",
+      "covers": [],
+      "learnMore": "https://spacedatanetwork.org/whitepapers/evidence-supported-aso-catalog.html",
+      "evidence": "live modules.pmm com.digitalarsenal.analysis.maneuver-detection 0.1.0 (manifest description)"
+    },
+    {
+      "id": "launch-reentry",
+      "name": "Launch and reentry analysis",
+      "category": "space-safety",
+      "tagline": "Clear launch windows and reconstruct ascents",
+      "summary": "Screens a launch window against every orbiting object, reconstructs ascents from telemetry and analyses reentry trajectories.",
+      "capabilities": [
+        "Launch window screening with prohibited liftoff spans",
+        "Ascent reconstruction with ground track, impact point and insertion orbit",
+        "Projected insertion orbit for a scheduled launch",
+        "Reentry trajectory analysis",
+        "Upcoming launch notices from a public launch registry"
+      ],
+      "standards": [
+        "SDS CQR",
+        "SDS LDM"
+      ],
+      "access": "account",
+      "delivery": "sdn-module",
+      "covers": [],
+      "learnMore": "https://spacedatanetwork.org/modules.html",
+      "evidence": "live modules.pmm com.digitalarsenal.analysis.launch-cola 0.1.0, launch-trajectory 0.1.0, launch-ascent-analysis 0.1.0, reentry-analysis 0.1.0, data-source.launch-schedule 0.1.0"
+    },
+    {
+      "id": "track-custody",
+      "name": "Track and custody",
+      "category": "sda",
+      "tagline": "Watch lists, custody and access for your sensors",
+      "summary": "Plan search volumes, keep watch lists and custody, and compute access and collection plans for the sensors you define, with ephemeris and covariance on the globe.",
+      "capabilities": [
+        "Search volumes for uncorrelated objects and detection promotion",
+        "Tip and cue, watch list, custody and handover planning for your sensors",
+        "Propagate ephemeris and show covariance",
+        "Access windows and collection plans",
+        "Eclipses, apsides and node crossings",
+        "Import ephemeris; export OEM, OMM, CZML or KML"
+      ],
+      "standards": [
+        "CCSDS OEM",
+        "CCSDS OMM",
+        "CZML",
+        "KML"
+      ],
+      "access": "account",
+      "delivery": "console",
+      "covers": [
+        "TRK"
+      ],
+      "learnMore": "https://spaceaware.io",
+      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/modes/modeCards.ts:89-205; modes/trk/surface.ts:100-200; modes/trk/export.ts:4"
+    },
+    {
+      "id": "sensor-coverage",
+      "name": "Sensor coverage",
+      "category": "sda",
+      "tagline": "Coverage and figures of merit for your sensors",
+      "summary": "Maps your sensor network's ground coverage and figures of merit across the planning horizon, drawn on the globe.",
+      "capabilities": [
+        "Coverage maps on the globe",
+        "Figures of merit over time",
+        "Runs on the sensors in your scene"
+      ],
+      "standards": [
+        "SDS ACW"
+      ],
+      "access": "add-on",
+      "delivery": "console",
+      "covers": [
+        "TRK:COVERAGE"
+      ],
+      "learnMore": "https://spaceaware.io",
+      "evidence": "live modules.pmm com.orbpro.sensor-coverage 0.3.0 OPTIONAL ENTITLED; sdn-js/spaceaware-ui/src/orbital-console/modes/trk/surface.ts:133-135; store/moduleHost.ts:14; deployment/license/grant-policy.json"
+    },
+    {
+      "id": "observation-simulator",
+      "name": "Observation simulator",
+      "category": "sda",
+      "tagline": "Simulated radar, optical and passive RF observations",
+      "summary": "Simulates raw sensor observations of targets inside access windows, with noise, biases, detection limits and false alarms.",
+      "capabilities": [
+        "Radar, optical and passive RF observations",
+        "Scheduled inside access windows with tasking limits",
+        "Noise, biases, detection limits and false alarms"
+      ],
+      "standards": [
+        "SDS RDO",
+        "SDS EOO",
+        "SDS RFO",
+        "SDS ACW"
+      ],
+      "access": "account",
+      "delivery": "sdn-module",
+      "covers": [],
+      "learnMore": "https://spacedatanetwork.org/modules.html",
+      "evidence": "live modules.pmm com.digitalarsenal.analysis.observation-simulator 0.1.0 (manifest description)"
+    },
+    {
+      "id": "orbit-estimation",
+      "name": "Orbit fitting and estimation",
+      "category": "sda",
+      "tagline": "Fit element sets to operator ephemeris",
+      "summary": "Fits OMM element sets to operator ephemeris and runs Kalman-filter estimation, as SDN modules your node runs.",
+      "capabilities": [
+        "OMM fitted to operator ephemeris",
+        "Kalman-filter estimation with smoothing",
+        "Fit pipeline for batches of objects"
+      ],
+      "standards": [
+        "CCSDS OEM",
+        "CCSDS OMM",
+        "CCSDS OCM"
+      ],
+      "access": "account",
+      "delivery": "sdn-module",
+      "covers": [],
+      "learnMore": "https://spacedatanetwork.org/modules.html",
+      "evidence": "live modules.pmm orbit-determination 0.1.2, com.orbpro.od-fit-pipeline 0.1.0, com.digitalarsenal.analysis.estimation 0.2.0; space-data-network-modules/analysis/od, analysis/estimation"
+    },
+    {
+      "id": "catalog-composer",
+      "name": "Catalog composer",
+      "category": "sda",
+      "tagline": "One combined catalog with source precedence",
+      "summary": "Builds one combined catalog from many sources with clear precedence and conflict review, and hands element sets over to numerical states.",
+      "capabilities": [
+        "Composed catalog with source precedence and conflict review",
+        "Supplemental catalog synthesis",
+        "GCAT and McCants catalog editions read with their own identities",
+        "Element sets handed over to numerical states in GCRF"
+      ],
+      "standards": [
+        "SDS CAT",
+        "CCSDS OMM",
+        "CCSDS OEM"
+      ],
+      "access": "account",
+      "delivery": "sdn-module",
+      "covers": [],
+      "learnMore": "https://spacedatanetwork.org/catalog.html",
+      "evidence": "live modules.pmm com.digitalarsenal.analysis.catalog-composer 0.1.9, com.orbpro.catalog-synthesis 0.1.0, data-source.catalog-source 0.2.0, analysis.epoch-state 0.1.0"
+    },
+    {
+      "id": "maneuver-planning",
+      "name": "Maneuver planning",
+      "category": "flight-dynamics",
+      "tagline": "Plan burns, transfers and rendezvous on the globe",
+      "summary": "Plan burns, transfers, rendezvous and formation flying, and see the new orbit on the globe and the gantt.",
+      "capabilities": [
+        "Prograde, retrograde, radial and plane-change burns",
+        "Hohmann transfers and Lambert rendezvous",
+        "Phasing, catch-up and formation flying",
+        "New orbit shown on the globe and gantt"
+      ],
+      "standards": [
+        "SDS MNV"
+      ],
+      "access": "account",
+      "delivery": "console",
+      "covers": [
+        "MNV"
+      ],
+      "learnMore": "https://spaceaware.io",
+      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/modes/modeCards.ts:293-380; modes/mnv/surface.ts:101-117; engine/applyManeuvers.ts; live modules.pmm maneuver-planner 0.6.1, com.orbpro.lambert-izzo 0.2.0"
+    },
+    {
+      "id": "hpop",
+      "name": "High-precision propagation",
+      "category": "flight-dynamics",
+      "tagline": "Numerically integrated orbits for precise work",
+      "summary": "Numerically integrated orbit propagation for work that needs more than analytical element sets, including the trajectories that feed catalog screening.",
+      "capabilities": [
+        "Numerical integration of orbital states with state transition matrices",
+        "Atmospheric drag from NRLMSISE-00 or the 1976 US Standard Atmosphere",
+        "Finite burns",
+        "Trajectories that feed all-vs-all screening"
+      ],
+      "standards": [
+        "SDS PRW",
+        "SDS PPE"
+      ],
+      "access": "account",
+      "delivery": "sdn-module",
+      "covers": [],
+      "learnMore": "https://spacedatanetwork.org/whitepapers/fast-conjunction-assessment.html",
+      "evidence": "live modules.pmm com.orbpro.hpop 1.1.0 ANONYMOUS; live artifact /modules/com.orbpro.hpop/1.1.0/module.wasm strings (PRW execution, PPE trajectory, finite-burn, STM, NRLMSISE-00 and US Standard Atmosphere 1976; no OEM output); space-data-network-modules/propagator/hpop"
+    },
+    {
+      "id": "propagator-suite",
+      "name": "Propagator suite",
+      "category": "flight-dynamics",
+      "tagline": "SGP4, two-body, ephemeris, cislunar and hypersonic propagation",
+      "summary": "A family of interchangeable propagators for every regime, from catalog element sets to cislunar space and hypersonic flight.",
+      "capabilities": [
+        "SGP4/SDP4 for OMM element sets",
+        "Two-body reference propagator",
+        "Ephemeris interpolation",
+        "Atmospheric density model",
+        "Circular restricted three-body cislunar propagation",
+        "Hypersonic flight conditions"
+      ],
+      "standards": [
+        "CCSDS OMM",
+        "CCSDS OEM",
+        "CCSDS OCM"
+      ],
+      "access": "account",
+      "delivery": "sdn-module",
+      "covers": [],
+      "learnMore": "https://spacedatanetwork.org/modules.html",
+      "evidence": "live modules.pmm com.orbpro.sgp4 1.1.0, com.orbpro.keplerian.reference 1.0.0, com.digitalarsenal.propagator.ephemeris 0.1.1, atmosphere-model 0.1.0, cislunar-propagator 0.1.0, hypersonics-propagator 0.1.1"
+    },
+    {
+      "id": "orbit-analysis-toolkit",
+      "name": "Orbit analysis toolkit",
+      "category": "flight-dynamics",
+      "tagline": "Events, access, parameters, targeting and DOP",
+      "summary": "Finds events on any trajectory, computes access windows and orbital parameters, solves vary-and-achieve targeting and GNSS dilution of precision.",
+      "capabilities": [
+        "Eclipse, station contact, field-of-view, apsis and node events",
+        "Access windows",
+        "Classical, equinoctial and B-plane parameters",
+        "Vary-and-achieve targeting",
+        "GNSS dilution of precision"
+      ],
+      "standards": [
+        "SDS ACW",
+        "SDS EVL"
+      ],
+      "access": "account",
+      "delivery": "sdn-module",
+      "covers": [],
+      "learnMore": "https://spacedatanetwork.org/modules.html",
+      "evidence": "live modules.pmm com.digitalarsenal.propagator.events 0.1.0, com.orbpro.access 1.0.0, com.digitalarsenal.analysis.parameters 0.1.0, com.orbpro.analysis.targeting 0.1.0, com.orbpro.dop 1.0.1"
+    },
+    {
+      "id": "ground-contact",
+      "name": "Ground contact planning",
+      "category": "comms-rf",
+      "tagline": "Plan passes, footprints and bands for your sites",
+      "summary": "Plan ground-station passes for your sites, show ground tracks and footprints, and choose the band for each contact.",
+      "capabilities": [
+        "Pass scheduling for your ground sites",
+        "Ground tracks and footprints",
+        "Band selection per contact"
+      ],
+      "standards": [],
+      "access": "account",
+      "delivery": "console",
+      "covers": [
+        "COM"
+      ],
+      "learnMore": "https://spaceaware.io",
+      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/modes/com/surface.ts:194-230; modes/modeCards.ts:382-436"
+    },
+    {
+      "id": "rf-link-analysis",
+      "name": "Link budget and RF analysis",
+      "category": "comms-rf",
+      "tagline": "Link margins and interference from physical models",
+      "summary": "Compute link budgets, footprints and margins, path loss to your site and interference from your own transmitters, from rain, cloud, gas, diffraction, terrain and antenna-pattern models.",
+      "capabilities": [
+        "Link budget, downlink footprint and uplink margin by band",
+        "Path loss from each spacecraft to your site",
+        "Spectrum scan and link margin",
+        "Interference from your own transmitters as carrier-to-interference and interference-to-noise",
+        "Emitter log of your transmitters and the analyses each took part in",
+        "Co-site and aggregate interference modules for your node",
+        "Rain, gaseous, cloud and fog, diffraction, terrain and antenna-pattern models"
+      ],
+      "standards": [
+        "ITU-R P.676",
+        "ITU-R P.838",
+        "ITU-R P.840",
+        "ITU-R P.526",
+        "Longley-Rice ITM"
+      ],
+      "access": "add-on",
+      "delivery": "console",
+      "covers": [
+        "RF",
+        "COM:LINK BUDGET",
+        "COM:DOWNLINK",
+        "COM:UPLINK"
+      ],
+      "learnMore": "https://spaceaware.io",
+      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/modes/com/surface.ts:232-279,430-438; modes/rf/surface.ts:175-228; store/moduleHost.ts:10; live modules.pmm com.orbpro.rf-* (link-budget 0.6.0, longley-rice 0.3.0, rain 0.3.0, cloud-fog 0.2.0, atmospheric-gaseous 0.3.0, diffraction 0.4.0, antenna-pattern 0.3.0, emi-cosite 0.1.0, aggregate-interference 0.1.0) ENTITLED; modes/rf/engine.ts:428-457 (co-channel C/I, I/N); modes/rf/surface.ts:193 (EMITTER LOG armable)"
+    },
+    {
+      "id": "fastest-path",
+      "name": "Time-varying network routing",
+      "category": "comms-rf",
+      "tagline": "Fastest paths across links that come and go",
+      "summary": "Finds the fastest route across a network whose links open and close over time, such as relays and crosslinks.",
+      "capabilities": [
+        "Shortest-path routing over time-varying links",
+        "Relay and crosslink networks"
+      ],
+      "standards": [],
+      "access": "add-on",
+      "delivery": "sdn-module",
+      "covers": [],
+      "learnMore": "https://spacedatanetwork.org/modules.html",
+      "evidence": "live modules.pmm com.orbpro.fastest-path 1.0.0 OPTIONAL ENTITLED"
+    },
+    {
+      "id": "imagery-studio",
+      "name": "Globe imagery studio",
+      "category": "earth-sky",
+      "tagline": "Stack, tune and compare imagery layers",
+      "summary": "Stack and reorder imagery layers with full per-layer controls, compare two dates, and add your own imagery from any URL.",
+      "capabilities": [
+        "Built-in Blue Marble, Black Marble, world imagery, street map, shaded relief and OpenStreetMap",
+        "Brightness, contrast, hue, gamma and day/night alpha per layer",
+        "Split view, color-to-alpha and cut-outs",
+        "Two-date compare",
+        "Your own imagery from any URL"
+      ],
+      "standards": [
+        "OGC WMTS"
+      ],
+      "access": "free",
+      "delivery": "console",
+      "covers": [],
+      "learnMore": "https://spaceaware.io",
+      "evidence": "live probe 2026-10-13 Settings > IMAGERY (6 built-in layers); sdn-js/spaceaware-ui/src/orbital-console/components/imagery/ActiveLayersTable.svelte; LayerAdvanced.svelte; CustomSourceForm.svelte"
+    },
+    {
+      "id": "imagery-detection",
+      "name": "Imagery object detection",
+      "category": "earth-sky",
+      "tagline": "On-device AI finds objects in imagery",
+      "summary": "Draw an area and run AI detectors on your own device over the imagery, review each detection and turn the ones you keep into a group.",
+      "capabilities": [
+        "Vehicles, people, boats, cars and ships",
+        "Buildings, building outlines, solar panels and oil tanks",
+        "Aircraft at any angle",
+        "Detectors run in your browser",
+        "Review each detection and promote it into a group"
+      ],
+      "standards": [],
+      "access": "account",
+      "delivery": "console",
+      "covers": [
+        "DET"
+      ],
+      "learnMore": "https://spaceaware.io",
+      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/modes/modeCards.ts:207-240; modes/det/surface.ts:542-560; modes/det/detectionModels.svelte.ts:38-45 (objects:true models); components/imagery/LayerAdvanced.svelte:155"
+    },
+    {
+      "id": "globe-environment",
+      "name": "Globe, sky and grids",
+      "category": "earth-sky",
+      "tagline": "Terrain, ocean, lighting, celestial planes and grids",
+      "summary": "Terrain relief, a reflective ocean, lighting and night lights, Earth-fixed or inertial views, celestial planes and MGRS, UTM, lat/lon and H3 reference grids.",
+      "capabilities": [
+        "Terrain relief and a reflective ocean with coastal banks",
+        "Lighting and night lights",
+        "Earth-fixed or inertial view with globe axes",
+        "Equatorial, ecliptic and galactic planes",
+        "MGRS, UTM/UPS, lat/lon and H3 grids with labels and clickable cells",
+        "Attribution on or off, with a credits menu"
+      ],
+      "standards": [
+        "ICRF",
+        "MGRS",
+        "UTM/UPS",
+        "H3"
+      ],
+      "access": "free",
+      "delivery": "console",
+      "covers": [],
+      "learnMore": "https://spaceaware.io",
+      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/components/SettingsPanel.svelte:203-570; engine/referenceGrid.ts:1-10; components/CreditsMenu.svelte"
+    },
+    {
+      "id": "camera-cinematics",
+      "name": "Camera and cinematics",
+      "category": "earth-sky",
+      "tagline": "Ride, follow and fly keyframed camera paths",
+      "summary": "Look from one object to another, ride or follow an object, or keyframe a camera path on the timeline with pace curves and fly it.",
+      "capabilities": [
+        "Look from one object to another",
+        "Ride or follow any object",
+        "Keyframed camera paths on the timeline",
+        "Pace curves for smooth moves"
+      ],
+      "standards": [],
+      "access": "free",
+      "delivery": "console",
+      "covers": [
+        "CAM"
+      ],
+      "learnMore": "https://spaceaware.io",
+      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/modes/modeCards.ts:555-571; modes/cam/surface.ts:23-44; modes/cam/pace.ts; modes/cam/cameraPath.ts"
+    },
+    {
+      "id": "star-field",
+      "name": "Premium star field",
+      "category": "earth-sky",
+      "tagline": "A real star catalog as your sky",
+      "summary": "Replace the default sky with a real star catalog, rendered as true physics or tuned for looks, including the sky seen from the object the camera rides.",
+      "capabilities": [
+        "True-physics or look-good rendering",
+        "Sky seen from the object the camera rides",
+        "Star catalog delivered over SDN and hash-checked"
+      ],
+      "standards": [
+        "SDS STR"
+      ],
+      "access": "add-on",
+      "delivery": "console",
+      "covers": [],
+      "learnMore": "https://spaceaware.io",
+      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/engine/starField.ts:1-115; components/SettingsPanel.svelte STARS / STAR RENDERING; license-catalog grant (no modules.pmm row)"
+    },
+    {
+      "id": "sensor-shaders",
+      "name": "Sensor shaders",
+      "category": "earth-sky",
+      "tagline": "GPU-drawn sensor volumes and footprints",
+      "summary": "Draws sensor volumes and footprints on the GPU for scenes with many sensors.",
+      "capabilities": [
+        "Sensor volumes on the GPU",
+        "Ground footprints"
+      ],
+      "standards": [],
+      "access": "add-on",
+      "delivery": "sdn-module",
+      "covers": [],
+      "learnMore": "https://spacedatanetwork.org/modules.html",
+      "evidence": "live modules.pmm com.orbpro.sensor-shaders 1.0.0 OPTIONAL ENTITLED"
+    },
+    {
+      "id": "sdn-node",
+      "name": "Space Data Network node",
+      "category": "network",
+      "tagline": "Publish, find and exchange space data peer to peer",
+      "summary": "An open-source node that publishes, finds and exchanges space data peer to peer, with no central server. One command installs it.",
+      "capabilities": [
+        "Peer-to-peer exchange of Space Data Standards records",
+        "No central server",
+        "One-line install",
+        "MIT licensed"
+      ],
+      "standards": [
+        "Space Data Standards"
+      ],
+      "access": "free",
+      "delivery": "node",
+      "covers": [],
+      "learnMore": "https://spacedatanetwork.org/network.html",
+      "evidence": "https://spacedatanetwork.org/install.sh (200); release v1.0.5-beta.70; sdn-server"
+    },
+    {
+      "id": "data-publishing",
+      "name": "Data provider publishing",
+      "category": "network",
+      "tagline": "Publish your OMM, OEM and CDM, digitally signed",
+      "summary": "Put your organization on the network and publish your own orbit and conjunction data, digitally signed, streamed to everyone who subscribes.",
+      "capabilities": [
+        "Digitally signed OMM, OEM and CDM publishing",
+        "Subscription streaming to subscribers",
+        "Your organization's identity on every record"
+      ],
+      "standards": [
+        "CCSDS OMM",
+        "CCSDS OEM",
+        "CCSDS CDM",
+        "SDS PNM"
+      ],
+      "access": "account",
+      "delivery": "node",
+      "covers": [],
+      "learnMore": "https://spacedatanetwork.org/onboarding.html",
+      "evidence": "docs/onboarding.html (live); sdn-server/internal/subscription; /api/v1/data/publish"
+    },
+    {
+      "id": "provenance-identity",
+      "name": "Provenance and digital identity",
+      "category": "network",
+      "tagline": "Every record digitally signed and checked on arrival",
+      "summary": "Every record carries its publisher's digital signature and is checked before a node stores it, so provenance is proven, not taken on trust.",
+      "capabilities": [
+        "Ed25519 digital signatures on every record",
+        "Checked before storage",
+        "Organization identities, vCard and QR identity",
+        "Encrypted transport"
+      ],
+      "standards": [
+        "SDS EPM",
+        "SDS PNM"
+      ],
+      "access": "free",
+      "delivery": "node",
+      "covers": [],
+      "learnMore": "https://spacedatanetwork.org/security.html",
+      "evidence": "sdn-server/internal/epm, sigdomain, vcard; docs/security.html; whitepapers/provenance-and-security.html"
+    },
+    {
+      "id": "embed-api",
+      "name": "Embeddable console",
+      "category": "network",
+      "tagline": "Put the live console inside your own page",
+      "summary": "Embed the live console in your own page and drive it over a private, versioned message channel: select objects, set the clock and hear what the viewer picks.",
+      "capabilities": [
+        "Private, versioned message channel",
+        "Select any object by name or catalog number from your page",
+        "Set the view clock from your page",
+        "Selection and clock events sent back to your page"
+      ],
+      "standards": [
+        "Console frame API v1"
+      ],
+      "access": "free",
+      "delivery": "console",
+      "covers": [],
+      "learnMore": "https://spaceaware.io",
+      "evidence": "sdn-js/spaceaware-ui/src/client/embed/protocol.js:1-66; client/embed/spaceawareGuest.js:11-80 (v1 offers ping, getState, select, setClock; setTheme and loadRecords not offered); live index.html embed/guest.43bc3f8bfbc6.js"
+    },
+    {
+      "id": "ccsds-interchange",
+      "name": "CCSDS file interchange",
+      "category": "network",
+      "tagline": "Read and write CCSDS messages and ephemeris files",
+      "summary": "Reads and writes CCSDS attitude ephemeris and tracking data messages, and reads OEM files and common precise-ephemeris containers into Space Data Standards records.",
+      "capabilities": [
+        "AEM and TDM read and written in KVN",
+        "OEM files read into Space Data Standards ephemeris records",
+        "SPK, SP3 and Code-500 ephemeris containers",
+        "Malformed messages reported by name, never guessed"
+      ],
+      "standards": [
+        "CCSDS AEM",
+        "CCSDS TDM",
+        "CCSDS OEM"
+      ],
+      "access": "account",
+      "delivery": "sdn-module",
+      "covers": [],
+      "learnMore": "https://spacedatanetwork.org/modules.html",
+      "evidence": "live modules.pmm com.digitalarsenal.files.ccsds-messages 0.1.0 (live artifact exports read_aem, read_tdm, write_aem, write_tdm only; the ten-message 0.2.0 is on space-data-network-modules main but not published) and com.digitalarsenal.files.orbit-products 0.1.2 (SPK, SP3, Code-500, OEM KVN)"
+    },
+    {
+      "id": "data-sources",
+      "name": "Data source modules",
+      "category": "network",
+      "tagline": "Ready-made ingest for public space data",
+      "summary": "Ready-made ingest for public catalogs, operator ephemeris, precise orbits, Earth orientation, weather and radio data, normalized into Space Data Standards records.",
+      "capabilities": [
+        "CelesTrak GP, supplemental GP and reference lanes",
+        "GP history archive records",
+        "Operator ephemeris for Starlink, OneWeb, Intelsat and the ISS",
+        "ILRS CPF and GLONASS precise orbits, and GPS almanacs",
+        "Earth orientation parameters",
+        "SatNOGS, SigMF captures, Open-Meteo and WeatherNext"
+      ],
+      "standards": [
+        "CCSDS OMM",
+        "CCSDS OEM",
+        "SDS CAT",
+        "SDS EOP"
+      ],
+      "access": "account",
+      "delivery": "sdn-module",
+      "covers": [],
+      "learnMore": "https://spacedatanetwork.org/onboarding.html",
+      "evidence": "live modules.pmm data-source.* rows (celestrak-parser/request/reference, gp-archive-records, ephemeris-source, oem-source-iss, eop-parser/request, satnogs-source, sigmf-captures, open-meteo, weathernext-parser, retrieval) and com.orbpro.{celestrak-supgp,spacex-starlink-source,oneweb-source,intelsat-source,iss-source,cpf-source,glonass-source,gps-source}; com.orbpro.gps-source manifest name 'GPS Almanac (NAVCEN SEM/YUMA) Data Source'"
+    },
+    {
+      "id": "module-building-blocks",
+      "name": "Module building blocks",
+      "category": "network",
+      "tagline": "Build your own flows from SDN modules",
+      "summary": "Open building blocks for SDN flows: time, frames, orbits, numerics, HTTP, storage, FlatSQL queries and peer discovery, on open Space Data Standards schemas.",
+      "capabilities": [
+        "Time, frames, orbits, numerics and attitude math",
+        "HTTP route and respond, decision gates, clock and file",
+        "FlatSQL query and storage ingest",
+        "Peer discovery and node status",
+        "Space Data Standards schemas, FlatSQL and the Module SDK"
+      ],
+      "standards": [
+        "Space Data Standards",
+        "FlatBuffers",
+        "FlatSQL"
+      ],
+      "access": "free",
+      "delivery": "sdn-module",
+      "covers": [],
+      "learnMore": "https://spacedatanetwork.org/modules.html",
+      "evidence": "live modules.pmm CORE foundation and hostcap rows; space-data-network-modules/foundation/*, hostcap/*"
+    }
+  ],
+  "bundles": [
+    {
+      "id": "space-safety",
+      "name": "Space safety",
+      "tagline": "Protect your fleet from first alert to burn",
+      "summary": "Screen your satellites against the catalog, measure the risk, plan the avoidance burn and share your data with the network.",
+      "audience": "Satellite owners and operators",
+      "modules": [
+        "catalog-globe",
+        "catalog-search",
+        "object-intelligence",
+        "conjunction-assessment",
+        "catalog-screening",
+        "hpop",
+        "covariance-analysis",
+        "maneuver-detection",
+        "maneuver-planning",
+        "launch-reentry",
+        "analyze-toolkit",
+        "mission-timeline",
+        "data-publishing",
+        "spaceaware-account"
+      ],
+      "pricing": "request",
+      "price": null
+    },
+    {
+      "id": "sda-workstation",
+      "name": "SDA analyst workstation",
+      "tagline": "Custody, sensors and a catalog you can trace",
+      "summary": "Everything an analyst needs to keep custody, plan sensors, simulate observations and build a combined catalog with its evidence.",
+      "audience": "Space domain awareness analysts and sensor operators",
+      "modules": [
+        "catalog-globe",
+        "catalog-search",
+        "object-intelligence",
+        "scene-builder",
+        "context-layers",
+        "track-custody",
+        "sensor-coverage",
+        "observation-simulator",
+        "orbit-estimation",
+        "covariance-analysis",
+        "catalog-composer",
+        "maneuver-detection",
+        "analyze-toolkit",
+        "mission-timeline",
+        "spaceaware-account"
+      ],
+      "pricing": "request",
+      "price": null
+    },
+    {
+      "id": "mission-design",
+      "name": "Mission design and flight dynamics",
+      "tagline": "Propagate, target, maneuver and plan contacts",
+      "summary": "Design orbits and maneuvers with interchangeable propagators, find events and access, and plan ground contacts.",
+      "audience": "Mission designers and flight dynamics teams",
+      "modules": [
+        "maneuver-planning",
+        "hpop",
+        "propagator-suite",
+        "orbit-analysis-toolkit",
+        "orbit-estimation",
+        "launch-reentry",
+        "ground-contact",
+        "camera-cinematics",
+        "mission-timeline",
+        "spaceaware-account"
+      ],
+      "pricing": "request",
+      "price": null
+    },
+    {
+      "id": "comms-spectrum",
+      "name": "Communications and spectrum",
+      "tagline": "Links, margins, interference and routing",
+      "summary": "Plan contacts, compute link budgets and interference from physical models, and route across networks whose links change over time.",
+      "audience": "Ground segment, communications and spectrum engineers",
+      "modules": [
+        "ground-contact",
+        "rf-link-analysis",
+        "fastest-path",
+        "orbit-analysis-toolkit",
+        "sensor-shaders",
+        "scene-builder",
+        "globe-environment",
+        "spaceaware-account"
+      ],
+      "pricing": "request",
+      "price": null
+    },
+    {
+      "id": "earth-observation",
+      "name": "Earth observation and visualization",
+      "tagline": "Imagery, detection and cinematic views",
+      "summary": "Tune imagery, find objects in it on your own device, and present it all under a real sky with keyframed cameras.",
+      "audience": "Imagery analysts, communicators and visualization teams",
+      "modules": [
+        "imagery-studio",
+        "imagery-detection",
+        "globe-environment",
+        "scene-builder",
+        "context-layers",
+        "catalog-search",
+        "camera-cinematics",
+        "star-field",
+        "spaceaware-account"
+      ],
+      "pricing": "request",
+      "price": null
+    },
+    {
+      "id": "network-developer",
+      "name": "Network and developer",
+      "tagline": "Run a node, publish data and build on modules",
+      "summary": "Run your own node, publish digitally signed data, ingest public sources, read and write CCSDS files, and embed the console in your own product.",
+      "audience": "Data providers, integrators and developers",
+      "modules": [
+        "sdn-node",
+        "provenance-identity",
+        "data-publishing",
+        "data-sources",
+        "ccsds-interchange",
+        "module-building-blocks",
+        "propagator-suite",
+        "embed-api"
+      ],
+      "pricing": "request",
+      "price": null
+    },
+    {
+      "id": "complete",
+      "name": "Complete",
+      "tagline": "Every module in this catalog",
+      "summary": "Every console capability, paid add-on and SDN module listed here, in one package.",
+      "audience": "Organizations that want everything",
+      "modules": [
+        "catalog-globe",
+        "catalog-search",
+        "object-intelligence",
+        "scene-builder",
+        "context-layers",
+        "mission-timeline",
+        "analyze-toolkit",
+        "spaceaware-account",
+        "conjunction-assessment",
+        "catalog-screening",
+        "covariance-analysis",
+        "maneuver-detection",
+        "launch-reentry",
+        "track-custody",
+        "sensor-coverage",
+        "observation-simulator",
+        "orbit-estimation",
+        "catalog-composer",
+        "maneuver-planning",
+        "hpop",
+        "propagator-suite",
+        "orbit-analysis-toolkit",
+        "ground-contact",
+        "rf-link-analysis",
+        "fastest-path",
+        "imagery-studio",
+        "imagery-detection",
+        "globe-environment",
+        "camera-cinematics",
+        "star-field",
+        "sensor-shaders",
+        "sdn-node",
+        "data-publishing",
+        "provenance-identity",
+        "embed-api",
+        "ccsds-interchange",
+        "data-sources",
+        "module-building-blocks"
+      ],
+      "pricing": "request",
+      "price": null
+    }
+  ],
+  "notListed": [
+    {
+      "key": "CBT",
+      "reason": "Not offered in the public catalog"
+    },
+    {
+      "key": "TRK:TRACK INIT",
+      "reason": "Not available on spaceaware.io"
+    },
+    {
+      "key": "TRK:CORRELATE OBS",
+      "reason": "Not available on spaceaware.io"
+    },
+    {
+      "key": "TRK:REFINE OD",
+      "reason": "Not available on spaceaware.io"
+    },
+    {
+      "key": "TRK:SLEW / POINT",
+      "reason": "Not available on spaceaware.io"
+    },
+    {
+      "key": "TRK:SAR STRIP",
+      "reason": "Not available on spaceaware.io"
+    },
+    {
+      "key": "MNV:CISLUNAR",
+      "reason": "Not connected on spaceaware.io; cislunar propagation is listed as an SDN module"
+    },
+    {
+      "key": "RF:GNSS INTEGRITY",
+      "reason": "Card promises jamming and spoofing maps; it delivers a DOP chart, listed under the orbit analysis toolkit"
+    },
+    {
+      "key": "RF:JAM ASSESS",
+      "reason": "Not available on spaceaware.io"
+    },
+    {
+      "key": "search:ai",
+      "reason": "Not available on spaceaware.io"
+    },
+    {
+      "key": "imagery:gibs-catalog",
+      "reason": "Not available on spaceaware.io"
+    },
+    {
+      "key": "settings:browser-node",
+      "reason": "Not available on spaceaware.io"
+    },
+    {
+      "key": "det:other-image-tools",
+      "reason": "Not available on spaceaware.io"
+    },
+    {
+      "key": "module:private-screening",
+      "reason": "Research module, not a product"
+    },
+    {
+      "key": "module:basilisk-runtime",
+      "reason": "Not offered in the public catalog"
+    },
+    {
+      "key": "node:storefront",
+      "reason": "Not offered in the public catalog"
+    },
+    {
+      "key": "module:ccsds-messages-0.2.0",
+      "reason": "Ten-message reader and writer is on main but not in the live module catalog"
+    }
+  ]
+}

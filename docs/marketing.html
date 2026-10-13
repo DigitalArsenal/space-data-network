@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" href="assets/sdn-chrome/sdn-chrome.css">
+  <script src="assets/sdn-chrome/sdn-chrome.js"></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="description" content="SpaceAware modules and bundles: every capability of the SpaceAware orbital console and the Space Data Network, one module at a time or as a bundle.">
+  <meta name="theme-color" content="#000000">
+  <title>SpaceAware Modules · Space Data Network</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' fill='none'><defs><linearGradient id='t' gradientUnits='userSpaceOnUse' x1='16' y1='29' x2='16' y2='3'><stop offset='0' stop-color='%23f5a524' stop-opacity='0'/><stop offset='.55' stop-color='%23f5a524' stop-opacity='.55'/><stop offset='1' stop-color='%23f5a524'/></linearGradient></defs><circle cx='16' cy='16' r='13' stroke='%23f5f5f7' stroke-width='1.6' opacity='.3'/><path d='M16 29A13 13 0 0 1 16 3' stroke='url(%23t)' stroke-width='2.2' stroke-linecap='round'/><path d='M16 10.2L10.4 20.1H21.6Z' stroke='%23f5f5f7' stroke-width='1.6' stroke-linejoin='round'/><circle cx='16' cy='10.2' r='2.6' fill='%23f5f5f7'/><circle cx='10.4' cy='20.1' r='2.6' fill='%23f5f5f7'/><circle cx='21.6' cy='20.1' r='2.6' fill='%23f5f5f7'/><circle cx='16' cy='3' r='2.5' fill='%23f5a524'/></svg>">
+  <!-- SDN_CONSUMER_ASSETS_START -->
+<link rel="stylesheet" href="assets/sdn-wallet/sdn-wallet-public-client.css">
+<script defer src="assets/sdn-wallet/sdn-wallet-public-client.js"></script>
+<script defer src="assets/sdn-stack-nav/sdn-stack-nav.js" data-nav-style-url="/assets/vendor/sdn-stack-nav/1.0.0/sdn-stack-nav.36a36359ce18322185e9ff179f88175bab67d5ad84a14d9c08a54f2ff27267e7.css" data-nav-style-integrity="sha384-c4M8Fg+kYaeOYYtJVr7jJsde24IhSWkWaRyAOHEZU9jozhRck089aw+mnHwxymds"></script>
+<!-- SDN_CONSUMER_ASSETS_END -->
+  <link rel="stylesheet" href="site.css">
+  <link rel="stylesheet" href="marketing/marketing.css">
+  <style>
+    :root {
+      --sdn-stack-footer-height: 40px;
+      --sdn-stack-header-height: 52px;
+      --sdn-stack-header-brand-size: 15px;
+      --sdn-stack-header-link-size: 14px;
+      --sdn-stack-header-action-size: 13px;
+      --sdn-stack-header-mobile-link-size: 16px;
+    }
+  </style>
+</head>
+<body class="centered mk">
+  <sdn-stack-nav active="sdn"></sdn-stack-nav>
+  <canvas id="earth" aria-hidden="true"></canvas>
+  <video class="bg-video" id="bgVideo" autoplay loop muted playsinline disablepictureinpicture></video>
+  <div class="bg-shade"></div>
+
+  <header class="sdn-header">
+    <div class="sdn-header-inner">
+      <a class="sdn-header-brand" href="index.html"><span>Space Data Network</span></a>
+      <nav class="sdn-header-links" aria-label="Site">
+        <a href="onboarding.html">Get started</a>
+        <a href="catalog.html">Catalog</a>
+        <a href="collision-avoidance.html">CA</a>
+        <a href="whitepapers.html">Whitepapers</a>
+        <a href="index.html#download">Download</a>
+        <a href="#stack">Stack</a>
+        <a href="https://github.com/DigitalArsenal/space-data-network" target="_blank" rel="noopener">GitHub</a>
+      </nav>
+      <div class="sdn-header-actions">
+        <button data-sdn-theme-toggle aria-label="Switch between light and dark theme"></button>
+        <button data-sdn-menu-toggle aria-label="Menu"></button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Everything inside <main> marked data-mk is filled from marketing/catalog.json,
+       the single source for this page. Adding a module or bundle is a JSON edit. -->
+  <main>
+    <section class="wrap hero mk-hero" id="hero" data-earth="1.62 -48 36 0 -2.25 28 22">
+      <p class="eyebrow">SpaceAware modules and bundles</p>
+      <h1 class="mk-title" data-mk="title">SpaceAware Modules</h1>
+      <p class="mk-ticker" aria-live="off"><span>Built for</span> <span class="mk-rot" data-mk="ticker">space operations</span></p>
+      <p class="lede">Every capability of the SpaceAware orbital console and the Space Data Network, one module at a time or as a bundle for your team.</p>
+      <div class="stats mk-stats" data-mk="stats"></div>
+      <div class="actions" data-mk="hero-actions">
+        <a href="https://spaceaware.io" class="btn btn-primary">Open SpaceAware</a>
+        <a href="#modules" class="btn">Browse modules</a>
+      </div>
+    </section>
+
+    <section class="block mk-standards" id="standards" aria-labelledby="standards-title">
+      <div class="wrap">
+        <div class="head">
+          <p class="eyebrow">Open standards</p>
+          <h2 id="standards-title">Speaks The Formats You Already Use</h2>
+        </div>
+      </div>
+      <div class="mk-marquee" data-mk="marquee" data-section-links="off"></div>
+    </section>
+
+    <section class="mk-orbit" id="constellation" aria-labelledby="orbit-title">
+      <div class="mk-orbit-track" data-mk="orbit-track">
+        <div class="mk-kf mk-kf-start" data-mk="orbit-kf"></div>
+        <div class="mk-kf mk-kf-end" data-mk="orbit-kf"></div>
+        <div class="mk-orbit-stage" data-section-links="off">
+          <canvas class="mk-orbit-canvas" data-mk="orbit-canvas" aria-hidden="true"></canvas>
+          <div class="mk-orbit-head">
+            <p class="eyebrow">The catalog in motion</p>
+            <h2 id="orbit-title">Every Module, In Orbit</h2>
+          </div>
+          <p class="mk-orbit-caption" data-mk="orbit-caption" aria-live="polite"></p>
+          <ol class="mk-orbit-phases" data-mk="orbit-phases">
+            <li><span>Orbits</span><i></i></li>
+            <li><span>Disciplines</span><i></i></li>
+            <li><span>Bundles</span><i></i></li>
+          </ol>
+        </div>
+      </div>
+    </section>
+
+    <div class="mk-modules">
+      <div class="mk-filter" id="modules" data-section-links="off">
+        <div class="mk-filter-inner" role="toolbar" aria-label="Filter modules" data-mk="filter"></div>
+      </div>
+      <div class="mk-cats" data-mk="categories">
+        <noscript>
+          <section class="block"><div class="wrap"><p class="lede">This catalog draws itself from <a href="marketing/catalog.json">marketing/catalog.json</a> with JavaScript. Open <a href="https://spaceaware.io">SpaceAware</a> to try the console.</p></div></section>
+        </noscript>
+      </div>
+    </div>
+
+    <section class="block mk-bundles" id="bundles" data-earth="5.5 40 15 0.75 0 55 12">
+      <div class="wrap">
+        <div class="head">
+          <p class="eyebrow">Bundles</p>
+          <h2>Bundles Built Around Your Team</h2>
+          <p class="lede">Each bundle gathers the modules one kind of team reaches for. Pick one to see what it brings together.</p>
+        </div>
+        <div class="mk-builder" data-mk="builder" data-section-links="off"></div>
+      </div>
+    </section>
+
+    <section class="block mk-access" id="access">
+      <div class="wrap">
+        <div class="head">
+          <p class="eyebrow">Access</p>
+          <h2>Three Ways In</h2>
+          <p class="lede">Start free with no account, sign in without an email address, and add paid modules when you need them.</p>
+        </div>
+        <ol class="mk-tiers" data-mk="tiers" data-section-links="off"></ol>
+      </div>
+    </section>
+
+    <section class="block story mk-start" id="start" data-earth="1.34 10 18 0 -3.1 180 -3">
+      <div class="wrap">
+        <div class="head">
+          <p class="eyebrow">Get started</p>
+          <h2>Start On SpaceAware Today</h2>
+          <p class="lede">Open the console in your browser now, free with no account. For paid modules and bundles, request pricing.</p>
+        </div>
+        <div class="actions" data-mk="final-actions">
+          <a href="https://spaceaware.io" class="btn btn-primary">Open SpaceAware</a>
+        </div>
+        <p class="note mk-updated" data-mk="updated"></p>
+      </div>
+    </section>
+
+    <section id="stack" data-sdn-stack="sdn"></section>
+  </main>
+
+  <footer class="sdn-footer">
+    <div class="sdn-footer-inner">
+      <a class="sdn-footer-brand" href="index.html">Space Data Network</a>
+      <nav class="sdn-footer-links" aria-label="Footer">
+        <a href="index.html">Home</a>
+        <a href="onboarding.html">Get started</a>
+        <a href="catalog.html">Catalog</a>
+        <a href="collision-avoidance.html">Collision avoidance</a>
+        <a href="whitepapers.html">Whitepapers</a>
+        <a href="style-guide.html">Style guide</a>
+        <a href="onboarding.html#security-review">IT spec sheet</a>
+        <a href="https://github.com/DigitalArsenal/space-data-network">GitHub</a>
+      </nav>
+      <p class="sdn-footer-legal">MIT License &middot; &copy; Edgesource Corporation &middot; <a href="mailto:tj@edgesource.com">tj@edgesource.com</a> &middot; Earth imagery: NASA Blue Marble and Black Marble</p>
+    </div>
+  </footer>
+
+  <dialog class="mk-drawer" data-mk="drawer" aria-labelledby="mk-drawer-title"></dialog>
+
+  <!-- marketing.js renders the catalog first, then loads earth.js and site.js,
+       so the Earth sees every keyframe and the reveals see every card. -->
+  <script src="marketing/orbit.js"></script>
+  <script src="marketing/marketing.js"></script>
+  <script src="assets/ai-credits/ai-credits.js" defer></script>
+  <script src="assets/section-links/section-links.js" defer></script>
+</body>
+</html>
