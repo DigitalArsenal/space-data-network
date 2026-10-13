@@ -776,6 +776,20 @@ type FlowService struct {
 	// sourcemetrics.MaxDebounceHours, so a lane whose publisher starts
 	// refusing still backs off rather than hammering it.
 	RetrievalInterval string `yaml:"retrieval_interval,omitempty"`
+
+	// ExclusiveGroup names a group of flow services that never run at the
+	// same time: a run (timer, first fire or run-now) waits for the one
+	// ahead of it. Empty (default): no group. A small host that boots with
+	// several heavy retrievals due runs them one after another instead of
+	// all at once (host-01, 7 GB: the three solar-system first pulls together
+	// peaked at 2.97 GB, owner A1 2026-10-13).
+	ExclusiveGroup string `yaml:"exclusive_group,omitempty"`
+
+	// ReleaseAfterRun tears the flow's WASM instance down after every run and
+	// builds a fresh one for the next. Linear memory never shrinks, so a
+	// retrieval that once held a large download keeps that high-water mark
+	// for the life of the node unless its instance goes. Default false.
+	ReleaseAfterRun bool `yaml:"release_after_run,omitempty"`
 }
 
 // EffectiveRetrievalInterval parses RetrievalInterval. It returns ok=false

@@ -452,6 +452,15 @@ func (h *DataQueryHandler) handleRawQuery(w http.ResponseWriter, r *http.Request
 		Limit:             limit,
 		Offset:            offset,
 	}
+	// A small-body lane filtered on its own fields (sbd_query.go).
+	if sbd, ok, err := parseSBDFilter(schemaName, req.SyncFilter); ok {
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		h.serveSBDQuery(w, r, queryStore, schemaName, filter, sbd, offset, limit, req.IncludeData)
+		return
+	}
 	records, err := queryStore.QueryRawRecords(filter)
 	if err != nil {
 		if errors.Is(err, storage.ErrSearchIndexBuilding) {
