@@ -21,13 +21,17 @@ import (
 //
 // The rule now, per lane (schema, provider, source) and peer:
 //   - peers.trusted_import.deny names it          -> skipped, always;
-//   - this node already holds a publication of it -> imported (the lanes the
-//     fleet syncs today keep syncing, with no config change);
+//   - this node already holds a publication of it, or records of it (a lane
+//     received only as gossiped PNMs has no publication row) -> imported (the
+//     lanes the fleet syncs today keep syncing, with no config change);
 //   - peers.trusted_import.allow names it         -> imported;
 //   - otherwise (a NEW lane)                      -> skipped, unless
 //     peers.trusted_import.new_lanes is "allow".
-// Skipping happens before anything is fetched. Each skipped lane is logged
-// once per process.
+// The rule is asked on every import path: the shard-publication catch-up and
+// the feed head (before anything is fetched), and the PNM replay that the
+// gossiped PNM, the TipQueue tip and the stored-PNM catch-up all share (after
+// the signed DPM names the lane, before its shard or index is fetched). Each
+// skipped lane is logged once per process.
 
 // trustedImportDecision is why a lane is or is not imported from a peer.
 type trustedImportDecision string
@@ -73,17 +77,30 @@ func (n *Node) trustedPeerLaneImportAllowed(from peer.ID, schema, providerID, so
 		if n.store == nil || schema == "" || providerID == "" || sourceName == "" {
 			return false
 		}
-		profile := strings.TrimSpace(queryProfile)
-		if profile == "" {
+		if profile := strings.TrimSpace(queryProfile); profile != "" {
+			pubs, err := n.store.ListDatasetShardPublications(storage.DatasetShardPublicationQuery{
+				SchemaName:   schema,
+				ProviderID:   providerID,
+				SourceName:   sourceName,
+				QueryProfile: profile,
+			})
+			if err == nil && len(pubs) > 0 {
+				return true
+			}
+		}
+		// The PNM replay path writes no shard-publication row, so a lane this
+		// node has only ever received that way is held when its records are:
+		// the per-lane source summary (tens of rows) answers that.
+		progress, err := n.store.SourceBatchProgress()
+		if err != nil {
 			return false
 		}
-		pubs, err := n.store.ListDatasetShardPublications(storage.DatasetShardPublicationQuery{
-			SchemaName:   schema,
-			ProviderID:   providerID,
-			SourceName:   sourceName,
-			QueryProfile: profile,
-		})
-		return err == nil && len(pubs) > 0
+		for _, p := range progress {
+			if p.Count > 0 && strings.EqualFold(p.SchemaName, schema) && strings.EqualFold(p.ProviderID, providerID) && strings.EqualFold(p.SourceName, sourceName) {
+				return true
+			}
+		}
+		return false
 	}
 	ok, why := trustedImportLanePolicy(n.config.Peers.TrustedImport, from.String(), schema, providerID, sourceName, held)
 	if !ok {

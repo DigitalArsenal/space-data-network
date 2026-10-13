@@ -220,6 +220,11 @@ func buildTipMaterializationFixture(t *testing.T) (n *Node, pnmBytes []byte, pro
 		config: &config.Config{
 			Storage: config.StorageConfig{Path: filepath.Join(tmpDir, "subscriber-storage")},
 			Admin:   config.AdminConfig{IPFSAPIURL: ipfs.URL},
+			// The subscriber lists the lane it imports (a new lane from a
+			// trusted peer is imported only when listed: trusted_import.go).
+			Peers: config.PeersConfig{TrustedImport: config.TrustedImportConfig{
+				Allow: []config.LaneSelector{{ProviderID: tags.ProviderID}},
+			}},
 		},
 		ctx:                     ctx,
 		datasetMaterializedPNMs: make(map[string]time.Time),

@@ -4633,7 +4633,20 @@ func (n *Node) materializeDatasetPublicationPNM(ctx context.Context, schema stri
 		FetchRetryDelays: []time.Duration{2 * time.Second, 5 * time.Second, 10 * time.Second, 20 * time.Second},
 		FetchBudget:      datasetPublicationFetchBudget,
 		WorkDir:          workDir,
+		// Trusted is not "everything" here either: the gossiped PNM, the
+		// TipQueue tip and the stored-PNM catch-up all land in this function,
+		// so the lane policy (trusted_import.go) is asked once the signed DPM
+		// names the lane, before the shard or index is fetched.
+		LaneAllowed: func(laneSchema, providerID, sourceName string) bool {
+			return n.trustedPeerLaneImportAllowed(from, laneSchema, providerID, sourceName, storage.DatasetPublicationQueryProfile)
+		},
 	})
+	if errors.Is(err, storage.ErrDatasetPublicationLaneNotImported) {
+		// Skipped, not failed: the in-memory mark stays, so the same PNM is
+		// not fetched again for 24 hours, and no replay state is written, so
+		// a later allow-list entry imports it.
+		return false, nil
+	}
 	if err != nil {
 		if isPermanentDatasetPublicationMaterializationError(err) {
 			if stateErr := n.store.UpsertDatasetPublicationReplayState(storage.DatasetPublicationReplayState{
