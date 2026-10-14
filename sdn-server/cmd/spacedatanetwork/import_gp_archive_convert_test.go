@@ -29,6 +29,7 @@ import (
 	CATFB "github.com/DigitalArsenal/spacedatastandards.org/lib/go/CAT"
 	MPEFB "github.com/DigitalArsenal/spacedatastandards.org/lib/go/MPE"
 	"github.com/google/flatbuffers/go"
+	"github.com/spacedatanetwork/sdn-server/internal/modulert"
 )
 
 // The builder module the importer tests run against: the signed artifact of
@@ -100,8 +101,8 @@ func TestGPArchiveRecordBuilderTestdataMatchesProvenance(t *testing.T) {
 // Archive encoding v1 vectors shared with the module's own suite
 // (data-source/gp-archive-records/tests/archive-v1-vectors.json). Their
 // expected bytes came from the original Go builders. Each vector's field values
-// must match its expected bytes, and the importer's field batch for those
-// values must come back from the module as exactly the expected bytes.
+// must match its expected bytes, and the importer's $MPE / $CAT records for
+// those values must come back from the module as exactly the expected bytes.
 func TestGPArchiveRecordBuilderReproducesArchiveV1Vectors(t *testing.T) {
 	var vectors struct {
 		MPE []map[string]any `json:"mpe"`
@@ -222,19 +223,29 @@ func TestGPArchiveRecordBuilderMatchesArchiveV1OnRandomRecords(t *testing.T) {
 
 func TestGPArchiveRecordBuilderRefusesWhatTheImporterNeverSends(t *testing.T) {
 	b := testGPArchiveRecordBuilder(t).(*gpWASMRecordBuilder)
-	b.buf = []byte(`[{"ENTITY_ID":"A","EPOCH":1}]`)
-	if _, err := b.invoke(context.Background(), "build_mpe", 1); err == nil || !strings.Contains(err.Error(), "not a GPAF field batch") {
-		t.Fatalf("err = %v", err)
+	refused := func(method string, frame modulert.InvokeInputFrame, want string) {
+		t.Helper()
+		if _, err := b.invoke(context.Background(), method, frame, 1); err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("%s: err = %v, want %q", method, err, want)
+		}
 	}
-	b.buf = appendGPArchiveFieldBatchHeader(nil, gpArchiveMPEFields[:len(gpArchiveMPEFields)-1], 0)
-	if _, err := b.invoke(context.Background(), "build_mpe", 0); err == nil || !strings.Contains(err.Error(), "missing field BSTAR") {
-		t.Fatalf("err = %v", err)
-	}
-	b.buf = appendGPArchiveMPEInput(nil, []gpArchiveRecord{{EntityID: "A"}})
+	// A $CAT stream is not an $MPE stream.
+	b.buf = appendGPArchiveCATStream(nil, b.fb, []gpArchiveCATInput{{EntityID: "1957-001A", NORAD: 1, Name: "SL-1 R/B"}})
+	refused("build_mpe", gpArchiveMPEType, "is not a verifiable size-prefixed $MPE buffer")
+	// An $MPE that leaves an element out (the generated adders drop a 0.0).
+	fb := flatbuffers.NewBuilder(64)
+	entity := fb.CreateString("A")
+	MPEFB.MPEStart(fb)
+	MPEFB.MPEAddENTITY_ID(fb, entity)
+	MPEFB.MPEAddEPOCH(fb, 1)
+	MPEFB.MPEAddBSTAR(fb, 0)
+	fb.FinishSizePrefixedWithFileIdentifier(MPEFB.MPEEnd(fb), []byte(MPEFB.MPEIdentifier))
+	b.buf = append([]byte(nil), fb.FinishedBytes()...)
+	refused("build_mpe", gpArchiveMPEType, "lacks MEAN_MOTION")
+	// A truncated stream.
+	b.buf = appendGPArchiveMPEStream(nil, b.fb, []gpArchiveRecord{{EntityID: "A"}})
 	b.buf = b.buf[:len(b.buf)-1]
-	if _, err := b.invoke(context.Background(), "build_mpe", 1); err == nil || !strings.Contains(err.Error(), "record 0 is truncated") {
-		t.Fatalf("err = %v", err)
-	}
+	refused("build_mpe", gpArchiveMPEType, "record 0 is truncated")
 }
 
 // Every key the importer reads or writes is taken from one table (the gpKey

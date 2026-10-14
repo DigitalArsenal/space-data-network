@@ -3,13 +3,14 @@ package main
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/binary"
 	"encoding/hex"
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
 
+	CATFB "github.com/DigitalArsenal/spacedatastandards.org/lib/go/CAT"
+	MPEFB "github.com/DigitalArsenal/spacedatastandards.org/lib/go/MPE"
+	flatbuffers "github.com/google/flatbuffers/go"
 	"github.com/spacedatanetwork/sdn-server/internal/modulert"
 )
 
@@ -18,8 +19,9 @@ import (
 // ENCODING V1: the byte layout the archive's content IDs depend on. A CID is
 // sha256 over the record bytes, so the layout is a compatibility contract; the
 // module reproduces it with the SDS schema-generated C++ builders, and its
-// README states it. The importer only parses, keys identities and keeps
-// cursors; it never lays out a record.
+// README states it. The importer parses, keys identities and keeps cursors;
+// it hands the module each record's values as a $MPE / $CAT record in any
+// layout, and the archive's bytes are the module's.
 
 const (
 	gpArchiveRecordBuilderPluginID = "com.digitalarsenal.data-source.gp-archive-records"
@@ -33,7 +35,7 @@ var gpArchiveRecordBuildBatch = gpArchiveRecordBuildBatchDefault
 
 // Record keys, in one table. The Space-Track GP keys are CCSDS OMM keywords
 // and the SATCAT keys are Space-Track's; the $MPE and $CAT keys are the SDS
-// field names the builder module takes. TestGPArchiveKeysMatchSDSSchemas
+// fields the builder module reads. TestGPArchiveKeysMatchSDSSchemas
 // checks every key against the pinned SDS schemas (OMM, MPE, CAT) and the
 // JSON struct tags against this table.
 const (
@@ -83,6 +85,7 @@ type gpArchiveRecordBuilder interface {
 type gpWASMRecordBuilder struct {
 	module *modulert.Module
 	buf    []byte
+	fb     *flatbuffers.Builder
 }
 
 // defaultGPArchiveRecordBuilderPath is gp-archive-records.wasm beside the
@@ -114,7 +117,7 @@ func loadGPArchiveRecordBuilder(path string) (*gpWASMRecordBuilder, string, erro
 		m.Close()
 		return nil, "", fmt.Errorf("record builder module %s is %q, want %q", path, id, gpArchiveRecordBuilderPluginID)
 	}
-	return &gpWASMRecordBuilder{module: m}, hex.EncodeToString(sum[:]), nil
+	return &gpWASMRecordBuilder{module: m, fb: flatbuffers.NewBuilder(256)}, hex.EncodeToString(sum[:]), nil
 }
 
 func (b *gpWASMRecordBuilder) Close() error {
@@ -128,8 +131,8 @@ func (b *gpWASMRecordBuilder) BuildMPE(ctx context.Context, records []gpArchiveR
 	out := make([][]byte, 0, len(records))
 	for start := 0; start < len(records); start += gpArchiveRecordBuildBatch {
 		end := min(start+gpArchiveRecordBuildBatch, len(records))
-		b.buf = appendGPArchiveMPEInput(b.buf[:0], records[start:end])
-		built, err := b.invoke(ctx, "build_mpe", end-start)
+		b.buf = appendGPArchiveMPEStream(b.buf[:0], b.fb, records[start:end])
+		built, err := b.invoke(ctx, "build_mpe", gpArchiveMPEType, end-start)
 		if err != nil {
 			return nil, err
 		}
@@ -142,8 +145,8 @@ func (b *gpWASMRecordBuilder) BuildCAT(ctx context.Context, rows []gpArchiveCATI
 	out := make([][]byte, 0, len(rows))
 	for start := 0; start < len(rows); start += gpArchiveRecordBuildBatch {
 		end := min(start+gpArchiveRecordBuildBatch, len(rows))
-		b.buf = appendGPArchiveCATInput(b.buf[:0], rows[start:end])
-		built, err := b.invoke(ctx, "build_cat", end-start)
+		b.buf = appendGPArchiveCATStream(b.buf[:0], b.fb, rows[start:end])
+		built, err := b.invoke(ctx, "build_cat", gpArchiveCATType, end-start)
 		if err != nil {
 			return nil, err
 		}
@@ -152,9 +155,16 @@ func (b *gpWASMRecordBuilder) BuildCAT(ctx context.Context, rows []gpArchiveCATI
 	return out, nil
 }
 
-func (b *gpWASMRecordBuilder) invoke(ctx context.Context, method string, want int) ([][]byte, error) {
+// The "records" port's type for each method: a size-prefixed record stream.
+var (
+	gpArchiveMPEType = modulert.InvokeInputFrame{PortID: "records", SchemaName: "MPE.fbs", FileIdentifier: MPEFB.MPEIdentifier, RootTypeName: "MPE"}
+	gpArchiveCATType = modulert.InvokeInputFrame{PortID: "records", SchemaName: "CAT.fbs", FileIdentifier: CATFB.CATIdentifier, RootTypeName: "CAT"}
+)
+
+func (b *gpWASMRecordBuilder) invoke(ctx context.Context, method string, frame modulert.InvokeInputFrame, want int) ([][]byte, error) {
+	frame.Payload = b.buf
 	// A started batch finishes: a half-built batch would only be rebuilt.
-	outputs, err := b.module.InvokeMethodOutputs(context.WithoutCancel(ctx), method, []modulert.InvokeInputFrame{{PortID: "records", WireFormat: 1, RequiredAlignment: 1, Alignment: 1, ByteLength: uint32(len(b.buf)), Payload: b.buf}})
+	outputs, err := b.module.InvokeMethodOutputs(context.WithoutCancel(ctx), method, []modulert.InvokeInputFrame{frame})
 	if err != nil {
 		return nil, fmt.Errorf("record builder %s: %w", method, err)
 	}
@@ -174,60 +184,52 @@ func (b *gpWASMRecordBuilder) invoke(ctx context.Context, method string, want in
 	return records, nil
 }
 
-// The builder module's input is a "field batch" (format in the module's
-// README): a header naming the SDS fields of the record, then each record's
-// values in header order, strings as length-prefixed bytes and doubles as
-// their IEEE-754 bits. Nothing is formatted or re-parsed on the way, so every
-// value reaches the builder exactly (negative zero, subnormals, and names that
-// are not UTF-8 included).
-var (
-	gpArchiveMPEFields = append([]string{gpKeyEntityID, gpKeyEpoch}, gpArchiveElementKeys[:]...)
-	gpArchiveCATFields = []string{gpKeyObjectID, gpKeyNORADCatID, gpKeyObjectName}
-)
+// The builder module's input is a stream of size-prefixed records,
+// [u32le length][buffer] each (format in the module's README). Each record
+// carries the values in place, as FlatBuffers stores them: strings as their
+// bytes and doubles as their IEEE-754 bits, so every value reaches the builder
+// exactly (negative zero, subnormals, and names that are not UTF-8 included).
+// The module re-builds each one in archive encoding v1.
 
-func appendGPArchiveFieldBatchHeader(dst []byte, fields []string, count int) []byte {
-	dst = append(dst, "GPAF"...)
-	dst = binary.LittleEndian.AppendUint16(dst, 1)
-	dst = binary.LittleEndian.AppendUint16(dst, uint16(len(fields)))
-	for _, f := range fields {
-		dst = append(dst, byte(len(f)))
-		dst = append(dst, f...)
-	}
-	return binary.LittleEndian.AppendUint32(dst, uint32(count))
-}
+// gpArchiveMPESlots are the $MPE vtable slots of EPOCH and the mean elements,
+// in gpArchiveElementKeys order after EPOCH.
+var gpArchiveMPESlots = [...]flatbuffers.VOffsetT{1, 2, 3, 4, 5, 6, 7, 8}
 
-func appendGPArchiveString(dst []byte, s string) []byte {
-	dst = binary.LittleEndian.AppendUint32(dst, uint32(len(s)))
-	return append(dst, s...)
-}
-
-func appendGPArchiveDouble(dst []byte, v float64) []byte {
-	return binary.LittleEndian.AppendUint64(dst, math.Float64bits(v))
-}
-
-// appendGPArchiveMPEInput writes the build_mpe field batch (fields in
-// gpArchiveMPEFields order).
-func appendGPArchiveMPEInput(dst []byte, records []gpArchiveRecord) []byte {
-	dst = appendGPArchiveFieldBatchHeader(dst, gpArchiveMPEFields, len(records))
+// appendGPArchiveMPEStream appends one $MPE per record. Every element is
+// written, defaults included (the generated adders leave a 0.0 out, and an
+// omitted 0.0 cannot be told from -0.0); the module refuses a record that
+// lacks one.
+func appendGPArchiveMPEStream(dst []byte, b *flatbuffers.Builder, records []gpArchiveRecord) []byte {
 	for i := range records {
 		r := &records[i]
-		dst = appendGPArchiveString(dst, r.EntityID)
-		dst = appendGPArchiveDouble(dst, r.Epoch)
-		for _, v := range r.elements() {
-			dst = appendGPArchiveDouble(dst, v)
+		b.Reset()
+		entity := b.CreateString(r.EntityID)
+		MPEFB.MPEStart(b)
+		MPEFB.MPEAddENTITY_ID(b, entity)
+		values, elements := [len(gpArchiveMPESlots)]float64{r.Epoch}, r.elements()
+		copy(values[1:], elements[:])
+		for j, slot := range gpArchiveMPESlots {
+			b.PrependFloat64(values[j])
+			b.Slot(int(slot))
 		}
+		b.FinishSizePrefixedWithFileIdentifier(MPEFB.MPEEnd(b), []byte(MPEFB.MPEIdentifier))
+		dst = append(dst, b.FinishedBytes()...)
 	}
 	return dst
 }
 
-// appendGPArchiveCATInput writes the build_cat field batch (fields in
-// gpArchiveCATFields order).
-func appendGPArchiveCATInput(dst []byte, rows []gpArchiveCATInput) []byte {
-	dst = appendGPArchiveFieldBatchHeader(dst, gpArchiveCATFields, len(rows))
+// appendGPArchiveCATStream appends one $CAT per row: OBJECT_ID, NORAD_CAT_ID
+// and OBJECT_NAME.
+func appendGPArchiveCATStream(dst []byte, b *flatbuffers.Builder, rows []gpArchiveCATInput) []byte {
 	for _, row := range rows {
-		dst = appendGPArchiveString(dst, row.EntityID)
-		dst = binary.LittleEndian.AppendUint32(dst, row.NORAD)
-		dst = appendGPArchiveString(dst, row.Name)
+		b.Reset()
+		id, name := b.CreateString(row.EntityID), b.CreateString(row.Name)
+		CATFB.CATStart(b)
+		CATFB.CATAddOBJECT_ID(b, id)
+		CATFB.CATAddNORAD_CAT_ID(b, row.NORAD)
+		CATFB.CATAddOBJECT_NAME(b, name)
+		b.FinishSizePrefixedWithFileIdentifier(CATFB.CATEnd(b), []byte(CATFB.CATIdentifier))
+		dst = append(dst, b.FinishedBytes()...)
 	}
 	return dst
 }

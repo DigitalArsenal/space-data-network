@@ -30,6 +30,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/modulert"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
+	"github.com/spacedatanetwork/sdn-server/internal/typedfb/flownotice"
 	"github.com/spf13/cobra"
 )
 
@@ -1835,7 +1836,7 @@ func (d *gpWASMEpochDeriver) Derive(ctx context.Context, records [][]byte) ([][]
 			payload = append(payload, 0)
 		}
 	}
-	outputs, err := d.module.InvokeMethodOutputs(ctx, "derive", []modulert.InvokeInputFrame{{PortID: "elements", SchemaName: "MPE.fbs", FileIdentifier: "$MPE", RootTypeName: "MPE", WireFormat: 1, RequiredAlignment: 8, Alignment: 8, ByteLength: uint32(len(payload)), Payload: payload}})
+	outputs, err := d.module.InvokeMethodOutputs(ctx, "derive", []modulert.InvokeInputFrame{{PortID: "elements", SchemaName: "MPE.fbs", FileIdentifier: "$MPE", RootTypeName: "MPE", Payload: payload}})
 	if err != nil {
 		return nil, gpEpochReport{}, err
 	}
@@ -1848,14 +1849,59 @@ func (d *gpWASMEpochDeriver) Derive(ctx context.Context, records [][]byte) ([][]
 			reportPayload = o.Payload
 		}
 	}
-	var mr gpEpochReport
-	if len(reportPayload) > 0 {
-		if err = json.Unmarshal(reportPayload, &mr); err != nil {
-			return nil, mr, fmt.Errorf("decode epoch-state report: %w", err)
-		}
+	mr, err := gpEpochReportFromNotice(reportPayload)
+	if err != nil {
+		return nil, mr, fmt.Errorf("decode epoch-state report: %w", err)
 	}
 	states, err := splitSizePrefixedAligned(statesPayload)
 	return states, mr, err
+}
+
+// gpEpochReportFromNotice reads derive's FlowNotice (FNTC) report: its ITEMS
+// are "key=value" counts and one "failure index=I entity_id=E reason=R
+// sgp4_error=K" line per refused element set.
+func gpEpochReportFromNotice(payload []byte) (gpEpochReport, error) {
+	var mr gpEpochReport
+	if !flownotice.FlowNoticeBufferHasIdentifier(payload) {
+		return mr, fmt.Errorf("not a FlowNotice (%d bytes)", len(payload))
+	}
+	notice := flownotice.GetRootAsFlowNotice(payload, 0)
+	for i := 0; i < notice.ItemsLength(); i++ {
+		item := string(notice.Items(i))
+		if rest, ok := strings.CutPrefix(item, "failure index="); ok {
+			entityAt, reasonAt, codeAt := strings.Index(rest, " entity_id="), strings.LastIndex(rest, " reason="), strings.LastIndex(rest, " sgp4_error=")
+			if entityAt < 0 || reasonAt < entityAt || codeAt < reasonAt {
+				return mr, fmt.Errorf("malformed failure item %q", item)
+			}
+			index, err1 := strconv.Atoi(rest[:entityAt])
+			code, err2 := strconv.Atoi(rest[codeAt+len(" sgp4_error="):])
+			if err1 != nil || err2 != nil {
+				return mr, fmt.Errorf("malformed failure item %q", item)
+			}
+			mr.Failures = append(mr.Failures, gpEpochFailure{Index: index, EntityID: rest[entityAt+len(" entity_id=") : reasonAt], Reason: rest[reasonAt+len(" reason=") : codeAt], SGP4Error: code})
+			continue
+		}
+		key, value, _ := strings.Cut(item, "=")
+		var err error
+		switch key {
+		case "records":
+			mr.Records, err = strconv.ParseInt(value, 10, 64)
+		case "derived":
+			mr.Derived, err = strconv.ParseInt(value, 10, 64)
+		case "failed":
+			mr.Failed, err = strconv.ParseInt(value, 10, 64)
+		case "epochs_outside_leap_second_table":
+			mr.EpochsOutsideLeapSecondTable, err = strconv.ParseInt(value, 10, 64)
+		case "max_round_trip_position_km":
+			mr.MaxRoundTripPositionKm, err = strconv.ParseFloat(value, 64)
+		case "max_round_trip_velocity_km_s":
+			mr.MaxRoundTripVelocityKmPerS, err = strconv.ParseFloat(value, 64)
+		}
+		if err != nil {
+			return mr, fmt.Errorf("malformed report item %q", item)
+		}
+	}
+	return mr, nil
 }
 func splitSizePrefixedAligned(payload []byte) ([][]byte, error) {
 	var out [][]byte

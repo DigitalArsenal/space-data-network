@@ -1,9 +1,13 @@
 {
   "artifact": "gp-archive-records.wasm",
   "source": "space-data-network-modules data-source/gp-archive-records/dist/isomorphic/module.wasm",
-  "modulesCommit": "3940c356970343ab5cec688848cd3e58a9a3040b",
-  "modulesMain": "9aac68163955c2bc858b8012930172155367cf16",
-  "sha256": "71a1614382d4ff939123ee14cb23157fb060c5dd07023c877b49059499beb5c5",
-  "spacedatastandards": "1.226.0",
+  "version": "0.2.0",
+  "modulesCommit": "a5beefc60a8cdd4dce7938c62bbfd20d3877a078",
+  "modulesBranch": "task/modules-hostcap-typed-20261013",
+  "sha256": "2ed0572767d3983d61eef9e3fe54cf668def682a03159259018c6de856cc1dd7",
+  "spacedatastandards": "1.247.0 with the 1.249.0 drafts (974663a2e6)",
+  "moduleSdk": "0.9.3",
+  "rebuilt": "node build.mjs at a5beefc6 against SDS 974663a2e6 and module-sdk 4e46663 gives byte-identical type, import, function, code and data sections; this artifact is the signed build (its manifest section carries the module signature)",
+  "ports": "build_mpe: records $MPE -> records $MPE; build_cat: records $CAT -> records $CAT (size-prefixed record streams)",
   "encoding": "gp-archive-v1"
 }

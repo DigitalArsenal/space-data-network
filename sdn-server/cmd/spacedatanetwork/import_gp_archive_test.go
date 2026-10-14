@@ -909,18 +909,24 @@ func TestGPArchiveEpochStateRealWASM(t *testing.T) {
 	if err = json.Unmarshal(b, &cases); err != nil {
 		t.Fatal(err)
 	}
-	records := make([]gpArchiveRecord, 100)
-	for i := range records {
+	records := make([]gpArchiveRecord, 101)
+	for i := range records[:100] {
 		c := cases[i%len(cases)]
 		records[i] = gpArchiveRecord{EntityID: c.EntityID, NORAD: c.Satnum, Epoch: c.Epoch, MeanMotion: c.MeanMotion, Eccentricity: c.Eccentricity, Inclination: c.Inclination, RAOfAscNode: c.RAAN, ArgOfPericenter: c.Arg, MeanAnomaly: c.Anomaly, BSTAR: c.BSTAR}
 	}
+	// The last element set cannot be propagated: the FlowNotice report names it.
+	records[100] = records[0]
+	records[100].EntityID, records[100].Eccentricity = "NORAD:99999", 1.5
 	inputs := testBuildMPE(t, records...)
 	outputs, report, err := d.Derive(context.Background(), inputs)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.Failed != 0 || report.Derived != 100 || len(outputs) != 100 {
+	if report.Records != 101 || report.Failed != 1 || report.Derived != 100 || len(outputs) != 100 || report.MaxRoundTripPositionKm <= 0 {
 		t.Fatalf("derive report=%+v outputs=%d", report, len(outputs))
+	}
+	if len(report.Failures) != 1 || report.Failures[0].Index != 100 || report.Failures[0].EntityID != "NORAD:99999" || report.Failures[0].Reason == "" {
+		t.Fatalf("refused element set: %+v", report.Failures)
 	}
 	sink := &gpArchiveMemorySink{}
 	for i, out := range outputs {
