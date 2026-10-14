@@ -188,7 +188,7 @@ func httpCapHandle(operation string, payload []byte) ([]byte, error) {
 	if req.MaxBytes > 0 && req.MaxBytes < limit {
 		limit = req.MaxBytes
 	}
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	respBody, err := readHTTPCapBody(resp, limit)
 	if err != nil {
 		observeFetch(req.URL, resp.StatusCode, int64(len(respBody)), time.Since(started).Milliseconds(), err.Error())
 		return errCapJSON("failed to read response body: " + err.Error()), nil
@@ -243,4 +243,24 @@ func httpCapHandle(operation string, payload []byte) ([]byte, error) {
 		"body_encoding": bodyEncoding,
 	}
 	return okCapJSON(result), nil
+}
+
+// readHTTPCapBody reads at most limit+1 bytes of a response body. With a
+// Content-Length within the limit the body lands in ONE buffer of exactly
+// that size: io.ReadAll grows its slice by doubling, so a 48 MiB ranged body
+// passed through 512 B..64 MiB of garbage and peaked near twice its size in
+// the node's heap (host-01, 7 GB, coordinator D3; owner A1 2026-10-13).
+func readHTTPCapBody(resp *http.Response, limit int64) ([]byte, error) {
+	if n := resp.ContentLength; n >= 0 && n <= limit {
+		body := make([]byte, n)
+		if _, err := io.ReadFull(resp.Body, body); err != nil {
+			return body, err
+		}
+		var one [1]byte
+		if extra, _ := io.ReadFull(resp.Body, one[:]); extra > 0 {
+			return body, fmt.Errorf("the body is longer than its Content-Length %d", n)
+		}
+		return body, nil
+	}
+	return io.ReadAll(io.LimitReader(resp.Body, limit+1))
 }

@@ -258,6 +258,7 @@ var SupportedSchemas = []string{
 	"PRG.fbs",  // Propagation Settings
 	"PRW.fbs",  // Propagator Runtime Wire
 	"PUR.fbs",  // Purchase Request - Marketplace purchases
+	"PVN.fbs",  // Product Provenance (SDS v1.246.0; included by SBD)
 	"QEM.fbs",  // Query Encoder Model
 	"RAF.fbs",  // Return All Frames Service (CCSDS 913.1-B-2)
 	"RBK.fbs",  // Rigid Body Kinematics
@@ -278,6 +279,7 @@ var SupportedSchemas = []string{
 	"RPT.fbs",  // Verifiable Report descriptor
 	"RSD.fbs",  // Radar Sensitivity and Detection Performance (SDS v1.196.0)
 	"SAR.fbs",  // SAR Observation
+	"SBD.fbs",  // Small Body - asteroid or comet, heliocentric elements (SDS v1.248.0)
 	"SBM.fbs",  // Satellite Breakup Model
 	"SCC.fbs",  // Scenario Controls - scenario setup/state message bus envelope
 	"SCM.fbs",  // Spacecraft Message

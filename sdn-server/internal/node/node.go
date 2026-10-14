@@ -3048,6 +3048,9 @@ func (n *Node) catchUpDatasetShardPublicationsFromPeerCounting(ctx context.Conte
 			continue
 		}
 		for _, publication := range publications {
+			if !n.trustedPeerLaneImportAllowed(from, publication.SchemaName, publication.ProviderID, publication.SourceName, publication.QueryProfile) {
+				continue
+			}
 			if n.datasetShardPublicationAlreadyCached(publication) {
 				continue
 			}
@@ -3410,6 +3413,18 @@ func (n *Node) handleSubscription(sub *pubsub.Subscription, schema string) {
 			continue
 		}
 
+		// A trusted peer's PNM on the aggregate topic goes to the TipQueue
+		// first (see below): when the trusted-import lane scope refuses its
+		// lane, nothing of it is kept, not even the PNM row.
+		trustedTip := schema == "PNM.fbs" && n.tipQueue != nil && n.peerRegistry != nil && n.peerRegistry.IsTrusted(from)
+		if trustedTip {
+			publication := *msg
+			publication.ReceivedFrom = from
+			if n.tipQueue.HandleMessageDeclined(&publication) {
+				continue
+			}
+		}
+
 		// Process the message
 		stored, err := n.protocol.HandlePubSubMessageStored(schema, msg.Data, from)
 		if err != nil {
@@ -3438,11 +3453,7 @@ func (n *Node) handleSubscription(sub *pubsub.Subscription, schema string) {
 		// trust gate in this file (e.g. materializeDatasetPublicationPNM,
 		// catchUpDatasetShardPublicationsFromPeer) so an untrusted peer's
 		// PNM never reaches the queue's fetch/pin/materialize path.
-		if schema == "PNM.fbs" && n.tipQueue != nil && n.peerRegistry != nil && n.peerRegistry.IsTrusted(from) {
-			publication := *msg
-			publication.ReceivedFrom = from
-			n.tipQueue.HandleMessage(&publication)
-		}
+		// (Forwarded above, before the row is stored.)
 	}
 }
 
@@ -4130,7 +4141,13 @@ func (n *Node) handleTipQueueTip(tip *sdnpubsub.Tip, _ sdnpubsub.ResolvedConfig)
 		log.Debugf("TipQueue: cannot decode tip peer ID %q: %v", tip.PeerID, err)
 		return
 	}
-	materialized, err := n.materializeDatasetPublicationPNM(n.ctx, schema, tip.RawPNM, from)
+	materialized, laneRefused, err := n.materializeDatasetPublicationPNMLane(n.ctx, schema, tip.RawPNM, from)
+	if laneRefused {
+		// The trusted-import lane scope refused the lane: the queue keeps
+		// nothing of the tip (no fetch, no pin, no stored PNM row).
+		tip.Decline()
+		return
+	}
 	if err != nil {
 		log.Warnf("TipQueue: dataset PNM materialization failed for %s on %s from %s: %v", tip.CID, schema, from.ShortString(), err)
 		n.raisePublicationRejected(from.String(), err)
@@ -4247,6 +4264,11 @@ func (n *Node) materializeDatasetFeedHeadAnnouncement(ctx context.Context, ann s
 	// and over (2026-10-06).
 	if n.laneProducedHere(ann.Schema, ann.ProviderID, ann.SourceName) {
 		log.Debugf("Skipping dataset feed head %s from %s: this node produces %s %s/%s", ann.FeedHead, from.ShortString(), ann.Schema, ann.ProviderID, ann.SourceName)
+		return 0, nil
+	}
+	// Trusted is not "everything": a lane is imported only when this node
+	// holds it already or its configuration lists it (trusted_import.go).
+	if !n.trustedPeerLaneImportAllowed(from, ann.Schema, ann.ProviderID, ann.SourceName, ann.QueryProfile) {
 		return 0, nil
 	}
 	if strings.TrimSpace(ann.ShardCID) == "" || strings.TrimSpace(ann.IndexCID) == "" {
@@ -4562,6 +4584,33 @@ func (n *Node) fetchDatasetFeedHeadAssetToFile(ctx context.Context, ann sdnpubsu
 }
 
 func (n *Node) materializeDatasetPublicationPNM(ctx context.Context, schema string, pnmBytes []byte, from peer.ID) (bool, error) {
+	materialized, _, err := n.materializeDatasetPublicationPNMLane(ctx, schema, pnmBytes, from)
+	return materialized, err
+}
+
+// datasetPNMLaneRefused remembers the PNMs whose lane the trusted-import
+// scope refused (pnmKey -> true), so a re-announcement inside the 24-hour
+// in-memory mark is declined too, not fetched and pinned by the TipQueue.
+var datasetPNMLaneRefused sync.Map
+
+// materializeDatasetPublicationPNMLane is materializeDatasetPublicationPNM
+// that also reports whether the lane scope refused the publication's lane.
+func (n *Node) materializeDatasetPublicationPNMLane(ctx context.Context, schema string, pnmBytes []byte, from peer.ID) (bool, bool, error) {
+	materialized, err := n.materializeDatasetPublicationPNMInner(ctx, schema, pnmBytes, from)
+	if errors.Is(err, storage.ErrDatasetPublicationLaneNotImported) {
+		return false, true, nil
+	}
+	if err == nil && !materialized && len(pnmBytes) > 0 && PNM.SizePrefixedPNMBufferHasIdentifier(pnmBytes) {
+		pnm := PNM.GetSizePrefixedRootAsPNM(pnmBytes, 0)
+		key := strings.TrimSpace(string(pnm.CID())) + "\x00" + strings.TrimSpace(string(pnm.FILE_ID()))
+		if _, refused := datasetPNMLaneRefused.Load(key); refused {
+			return false, true, nil
+		}
+	}
+	return materialized, false, err
+}
+
+func (n *Node) materializeDatasetPublicationPNMInner(ctx context.Context, schema string, pnmBytes []byte, from peer.ID) (bool, error) {
 	if schema == "PNM.fbs" {
 		return false, nil
 	}
@@ -4625,7 +4674,22 @@ func (n *Node) materializeDatasetPublicationPNM(ctx context.Context, schema stri
 		FetchRetryDelays: []time.Duration{2 * time.Second, 5 * time.Second, 10 * time.Second, 20 * time.Second},
 		FetchBudget:      datasetPublicationFetchBudget,
 		WorkDir:          workDir,
+		// Trusted is not "everything" here either: the gossiped PNM, the
+		// TipQueue tip and the stored-PNM catch-up all land in this function,
+		// so the lane policy (trusted_import.go) is asked once the signed DPM
+		// names the lane, before the shard or index is fetched.
+		LaneAllowed: func(laneSchema, providerID, sourceName string) bool {
+			return n.trustedPeerLaneImportAllowed(from, laneSchema, providerID, sourceName, storage.DatasetPublicationQueryProfile)
+		},
 	})
+	if errors.Is(err, storage.ErrDatasetPublicationLaneNotImported) {
+		// Skipped, not failed: the in-memory mark stays, so the same PNM is
+		// not fetched again for 24 hours, and no replay state is written, so
+		// a later allow-list entry imports it. The caller learns the lane was
+		// refused (the TipQueue then neither queues nor pins the tip).
+		datasetPNMLaneRefused.Store(pnmKey, true)
+		return false, err
+	}
 	if err != nil {
 		if isPermanentDatasetPublicationMaterializationError(err) {
 			if stateErr := n.store.UpsertDatasetPublicationReplayState(storage.DatasetPublicationReplayState{

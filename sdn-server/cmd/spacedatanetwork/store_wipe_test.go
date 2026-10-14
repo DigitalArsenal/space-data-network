@@ -40,7 +40,7 @@ func TestStoreWipeRemovesOnlyTheRecordLayers(t *testing.T) {
 	removed := []string{"control.flatsqldb", "control.flatsqldb-journal", "control.flatsqldb.fsdata",
 		"record-catalog.flatsqlmeta", "record-catalog.flatsqlmeta.prefix"}
 	removedDirs := []string{"flatsql-streams", "dataset-publication-replay", "dataset-feed-head-sync", "ui-cache"}
-	kept := []string{"auxiliary.flatsqlmeta", "auth.db", "auth.db-wal", "sdn.db", "storefront.db", "source-metrics.db", "secrets/credentials.enc"}
+	kept := []string{"auxiliary.flatsqlmeta", "auth.db", "auth.db-wal", "sdn.db", "storefront.db", "source-metrics.db", "secrets/credentials.enc", "trusted-import-lanes.json"}
 	keptDirs := []string{"modules", "customer-modules", "license", "flows", "p2p-forge-certs"}
 	for _, f := range removed {
 		mk(f, false)

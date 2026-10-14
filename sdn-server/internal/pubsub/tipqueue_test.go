@@ -17,6 +17,8 @@ import (
 	ps "github.com/libp2p/go-libp2p-pubsub"
 	pb "github.com/libp2p/go-libp2p-pubsub/pb"
 	"github.com/libp2p/go-libp2p/core/peer"
+
+	"github.com/spacedatanetwork/sdn-server/internal/channels"
 )
 
 // waitUntil polls cond until it returns true or timeout elapses, returning
@@ -1257,5 +1259,48 @@ func TestErrFetchTooLargeIsDistinguishableViaErrorsIs(t *testing.T) {
 	wrapped := fmt.Errorf("adapter rejected cid: %w", ErrFetchTooLarge)
 	if !errors.Is(wrapped, ErrFetchTooLarge) {
 		t.Fatal("wrapped oversize error should satisfy errors.Is(err, ErrFetchTooLarge)")
+	}
+}
+
+// A handler that declines a tip (the node's trusted-import lane scope refused
+// its lane, multi-body round 2 D2) leaves nothing behind: no queue entry, no
+// fetch, no pin, and the caller is told so it stores no PNM row either.
+func TestTipQueueDeclinedTipIsNeitherQueuedFetchedNorPinned(t *testing.T) {
+	config := NewTipQueueConfig()
+	config.DefaultAutoFetch = true
+	config.DefaultAutoPin = true
+
+	tq := NewTipQueue(config)
+	fetcher := newMockFetcher()
+	pinner := newMockPinner()
+	tq.SetFetcher(fetcher)
+	tq.SetPinner(pinner)
+	tq.SetPNMVerifier(func([]byte) (channels.PNMTrustEvidence, error) { return channels.PNMTrustEvidence{}, nil })
+	tq.OnTip(func(tip *Tip, config ResolvedConfig) {
+		if tip.CID == "bafydeclined" {
+			tip.Decline()
+		}
+	})
+
+	declined := tq.HandleMessageDeclined(&ps.Message{
+		Message:      &pb.Message{Data: buildTestPNM(t, "bafydeclined", "DPM")},
+		ReceivedFrom: peer.ID("12D3KooWTrustedPublisher"),
+	})
+	admitted := tq.HandleMessageDeclined(&ps.Message{
+		Message:      &pb.Message{Data: buildTestPNM(t, "bafyadmitted", "DPM")},
+		ReceivedFrom: peer.ID("12D3KooWTrustedPublisher"),
+	})
+	if !declined || admitted {
+		t.Fatalf("declined = %v, admitted tip declined = %v", declined, admitted)
+	}
+	waitUntil(t, 2*time.Second, func() bool { return pinner.IsPinned("bafyadmitted") })
+	if !pinner.IsPinned("bafyadmitted") {
+		t.Fatal("the admitted tip was not pinned")
+	}
+	if tq.QueueSize() != 1 {
+		t.Fatalf("queued tips = %d, want 1 (the admitted one)", tq.QueueSize())
+	}
+	if fetcher.WasFetched("bafydeclined") || pinner.IsPinned("bafydeclined") {
+		t.Fatal("a declined tip was fetched or pinned")
 	}
 }

@@ -51,6 +51,9 @@ var storeWipeMustSurvive = []string{
 	"auth.db", "auth.db-wal", "auth.db-shm",
 	"keys/", "secrets/", "modules/", "customer-modules/", "license/", "flows/",
 	"p2p-forge-certs/", "tls/", "field-encryption-identity.json",
+	// The lanes this node has held from its trusted peers
+	// (internal/node/trusted_import.go): a wiped store re-imports them.
+	"trusted-import-lanes.json",
 }
 
 var storeWipeYes bool
