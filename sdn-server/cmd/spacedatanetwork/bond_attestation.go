@@ -5,12 +5,13 @@
 // The HOST here is connectors-only glue, per the WASM-not-Go-host-boundary
 // law (owner 2026-07-16): every chain query and every price lookup happens
 // inside the embedded bond-attestation WASM module through the generic
-// `http` capability. This file only (1) schedules the module with the node's
-// own EPM-derived chain addresses as the invoke payload, (2) caches the
-// module's JSON attestation, and (3) serves it anonymously at
-// GET /api/v1/trust/bond — the bond is public by design
-// (publisher-key-adversarial-security: trust is priced by a bond peers can
-// verify).
+// `http` capability. This file only (1) schedules the module with a $WHA
+// request naming the node's own EPM-derived chain addresses, (2) caches the
+// module's $WHA attestation, and (3) serves it anonymously at
+// GET /api/v1/trust/bond, rendered as JSON for the dashboard (the external
+// client edge; nothing between host and module is JSON) — the bond is public
+// by design (publisher-key-adversarial-security: trust is priced by a bond
+// peers can verify).
 //
 // The module artifact is go:embed'ed like the dashboard: the lean update
 // lane ships only bin/ + manifest (the fleet bundles carry no runtime/ dir),
@@ -27,9 +28,12 @@ import (
 	"sync"
 	"time"
 
+	flatbuffers "github.com/google/flatbuffers/go"
 	"github.com/spacedatanetwork/sdn-server/internal/modulert"
 	"github.com/spacedatanetwork/sdn-server/internal/modulert/caps"
 	"github.com/spacedatanetwork/sdn-server/internal/node"
+	"github.com/spacedatanetwork/sdn-server/internal/typedfb/wha"
+	"github.com/spacedatanetwork/sdn-server/internal/wasmrt"
 )
 
 //go:embed embedded/bond-attestation.wasm
@@ -45,8 +49,9 @@ const bondRetryInterval = 10 * time.Second
 const bondInitialDelay = 5 * time.Second
 
 type bondAttestor struct {
-	mu         sync.RWMutex
-	latest     json.RawMessage
+	mu sync.RWMutex
+	// latest is the module's last $WHA attestation, verbatim.
+	latest     []byte
 	attestedAt time.Time
 	peerID     string
 	// onRefresh, when set, runs after every successful attestation (the
@@ -59,16 +64,112 @@ type bondAttestor struct {
 }
 
 type bondPeerResult struct {
-	body json.RawMessage
-	at   time.Time
+	attestation []byte // the module's $WHA, verbatim
+	at          time.Time
 }
 
-// bondAddresses is the module's invoke payload: this node's own EPM-derived
-// chain addresses. Empty fields are simply absent balances.
+// bondAddresses are the chain addresses a $WHA request names (this node's
+// own EPM-derived ones, or a directory peer's). Empty fields are simply
+// absent balances.
 type bondAddresses struct {
-	Btc string `json:"btc,omitempty"`
-	Eth string `json:"eth,omitempty"`
-	Sol string `json:"sol,omitempty"`
+	Btc, Eth, Sol string
+}
+
+// The module's chains, by CAIP-2 identifier ($WHA CHAIN_ID).
+const (
+	bondChainBTC = "bip122:000000000019d6689c085ae165831e93"
+	bondChainETH = "eip155:1"
+	bondChainSOL = "solana:5eykt4UsFv8P8NJdTREpY1vzQKqZKvdp"
+)
+
+// bondRequest is the $WHA request: ACCOUNTS only, one per address.
+func bondRequest(addrs bondAddresses) []byte {
+	b := flatbuffers.NewBuilder(256)
+	var accounts []flatbuffers.UOffsetT
+	for _, a := range []struct{ chain, name, address string }{
+		{bondChainBTC, "BTC", addrs.Btc}, {bondChainETH, "ETH", addrs.Eth}, {bondChainSOL, "SOL", addrs.Sol},
+	} {
+		if a.address == "" {
+			continue
+		}
+		chain, name, address := b.CreateString(a.chain), b.CreateString(a.name), b.CreateString(a.address)
+		wha.WHAAccountStart(b)
+		wha.WHAAccountAddCHAIN_ID(b, chain)
+		wha.WHAAccountAddCHAIN_NAME(b, name)
+		wha.WHAAccountAddADDRESS(b, address)
+		accounts = append(accounts, wha.WHAAccountEnd(b))
+	}
+	wha.WHAStartACCOUNTSVector(b, len(accounts))
+	for i := len(accounts) - 1; i >= 0; i-- {
+		b.PrependUOffsetT(accounts[i])
+	}
+	vector := b.EndVector(len(accounts))
+	wha.WHAStart(b)
+	wha.WHAAddACCOUNTS(b, vector)
+	wha.FinishWHABuffer(b, wha.WHAEnd(b))
+	return b.FinishedBytes()
+}
+
+// bondAttestation reads a $WHA answer; nil when the bytes are not one.
+func bondAttestation(raw []byte) *wha.WHA {
+	if len(raw) < 8 || !wha.WHABufferHasIdentifier(raw) {
+		return nil
+	}
+	return wha.GetRootAsWHA(raw, 0)
+}
+
+// bondJSON renders a $WHA attestation for the dashboard's GET
+// /api/v1/trust/bond: attested, bond_usd and total_usd (null unless attested),
+// holdings (usd null when unvalued), chains (usd null when incomplete) and
+// errors, plus the node it attests and when it was read.
+func bondJSON(raw []byte, nodeID string, at time.Time) ([]byte, error) {
+	w := bondAttestation(raw)
+	if w == nil {
+		return nil, fmt.Errorf("not a $WHA attestation")
+	}
+	orNull := func(ok bool, v float64) any {
+		if ok {
+			return v
+		}
+		return nil
+	}
+	holdings := make([]map[string]any, 0, w.HOLDINGSLength())
+	var h wha.WHAHolding
+	for i := 0; i < w.HOLDINGSLength(); i++ {
+		if !w.HOLDINGS(&h, i) {
+			continue
+		}
+		row := map[string]any{"symbol": string(h.SYMBOL()), "amount": h.AMOUNT(), "usd": orNull(h.VALUED(), h.VALUE()),
+			"chain": string(h.CHAIN_NAME()), "address": string(h.ADDRESS())}
+		if contract := string(h.CONTRACT()); contract != "" {
+			row["contract"] = contract
+		}
+		holdings = append(holdings, row)
+	}
+	chains := make([]map[string]any, 0, w.CHAINSLength())
+	var c wha.WHAChain
+	for i := 0; i < w.CHAINSLength(); i++ {
+		if w.CHAINS(&c, i) {
+			chains = append(chains, map[string]any{"chain": string(c.CHAIN_NAME()), "address": string(c.ADDRESS()),
+				"token_count": c.TOKEN_COUNT(), "usd": orNull(c.COMPLETE(), c.VALUE()), "complete": c.COMPLETE()})
+		}
+	}
+	errs := make([]string, 0, w.ERRORSLength())
+	for i := 0; i < w.ERRORSLength(); i++ {
+		errs = append(errs, string(w.ERRORS(i)))
+	}
+	total := orNull(w.ATTESTED(), w.TOTAL_VALUE())
+	return json.Marshal(map[string]any{"attested": w.ATTESTED(), "bond_usd": total, "total_usd": total,
+		"holdings": holdings, "chains": chains, "errors": errs, "node": nodeID, "attested_at": at.Format(time.RFC3339)})
+}
+
+// bondAttestedAt is the attestation's as-of time (AS_OF_MS, the module's
+// clock read), else the time the host received it.
+func bondAttestedAt(w *wha.WHA, received time.Time) time.Time {
+	if ms := w.AS_OF_MS(); ms > 0 {
+		return time.UnixMilli(ms).UTC()
+	}
+	return received
 }
 
 // readBondAddresses pulls the chain addresses out of the node's own signed
@@ -133,35 +234,29 @@ func (b *bondAttestor) refresh(ctx context.Context, n *node.Node) {
 		return
 	}
 
-	// The module's answer must be JSON with an `attested` verdict; anything
-	// else is refused rather than cached.
-	var probe struct {
-		Attested *bool `json:"attested"`
-	}
-	if err := json.Unmarshal(out, &probe); err != nil || probe.Attested == nil {
+	// The module's answer must be a $WHA attestation; anything else is
+	// refused rather than cached.
+	w := bondAttestation(out)
+	if w == nil {
 		log.Warnf("bond attestation: module returned a non-attestation answer (%d bytes)", len(out))
 		return
 	}
 
 	b.mu.Lock()
-	b.latest = append(json.RawMessage(nil), out...)
-	b.attestedAt = time.Now().UTC()
+	b.latest = append([]byte(nil), out...)
+	b.attestedAt = bondAttestedAt(w, time.Now().UTC())
 	b.peerID = n.PeerID().String()
 	b.mu.Unlock()
-	log.Infof("bond attestation: refreshed (%d bytes, attested=%v)", len(out), *probe.Attested)
+	log.Infof("bond attestation: refreshed (%d bytes, attested=%v)", len(out), w.ATTESTED())
 	if b.onRefresh != nil {
 		b.onRefresh()
 	}
 }
 
 // invokeBondAttestation runs the embedded module once for the given
-// addresses and returns its verbatim JSON answer. The trust rules engine
+// addresses and returns its verbatim $WHA answer. The trust rules engine
 // reuses it for every subject it evaluates (trust_engine.go).
 func invokeBondAttestation(ctx context.Context, addrs bondAddresses) ([]byte, error) {
-	payload, err := json.Marshal(addrs)
-	if err != nil {
-		return nil, err
-	}
 	// A fresh module instance per run releases guest memory between refreshes.
 	capReg := modulert.NewCapabilityRegistry()
 	capReg.Register("http", caps.NewHTTPCapFactory())
@@ -171,20 +266,33 @@ func invokeBondAttestation(ctx context.Context, addrs bondAddresses) ([]byte, er
 	}
 	defer mod.Close()
 
+	return attestBond(ctx, mod, addrs)
+}
+
+// attestBond invokes `attest` with the $WHA request on "request" and returns
+// the $WHA on "attestation". The chain and price lookups are many outbound
+// requests, so the call gets two minutes rather than the interactive budget.
+func attestBond(ctx context.Context, mod *modulert.Module, addrs bondAddresses) ([]byte, error) {
 	invokeCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	out, err := mod.InvokeCron(invokeCtx, "attest", payload)
+	invokeCtx = wasmrt.WithExecBudget(invokeCtx, wasmrt.ExecBudget{Timeout: 2 * time.Minute})
+	outputs, err := mod.InvokeMethodOutputs(invokeCtx, "attest", []modulert.InvokeInputFrame{{
+		PortID: "request", SchemaName: "WHA.fbs", FileIdentifier: wha.WHAIdentifier, RootTypeName: "WHA", Payload: bondRequest(addrs),
+	}})
 	if err != nil {
 		return nil, fmt.Errorf("attest invoke failed: %w", err)
 	}
-	return out, nil
+	for _, o := range outputs {
+		if o.PortID == "attestation" && bondAttestation(o.Payload) != nil {
+			return o.Payload, nil
+		}
+	}
+	return nil, fmt.Errorf("attest returned no $WHA attestation")
 }
 
 func bondComplete(raw []byte) bool {
-	var answer struct {
-		Attested bool `json:"attested"`
-	}
-	return json.Unmarshal(raw, &answer) == nil && answer.Attested
+	w := bondAttestation(raw)
+	return w != nil && w.ATTESTED()
 }
 
 // start refreshes successful balances periodically and retries incomplete reads.
@@ -269,17 +377,13 @@ func (b *bondAttestor) handleBond(w http.ResponseWriter, r *http.Request) {
 		writeBondPending(w)
 		return
 	}
-	// Wrap the module's verbatim answer with the node identity + timestamp.
-	var body map[string]interface{}
-	if err := json.Unmarshal(latest, &body); err != nil {
+	// The module's attestation, with the node identity + timestamp.
+	body, err := bondJSON(latest, peerID, at)
+	if err != nil {
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
-	body["node"] = peerID
-	body["attested_at"] = at.Format(time.RFC3339)
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "no-store")
-	_ = json.NewEncoder(w).Encode(body)
+	writeBondJSON(w, body)
 }
 
 // Only directory-verified peers may initiate a lookup, one at a time, and
@@ -298,11 +402,11 @@ func (b *bondAttestor) handlePeerBond(w http.ResponseWriter, r *http.Request, id
 	cached, ok := b.peerCache[id]
 	b.mu.RUnlock()
 	ttl := bondRetryInterval
-	if bondComplete(cached.body) {
+	if bondComplete(cached.attestation) {
 		ttl = bondRefreshInterval
 	}
 	if ok && time.Since(cached.at) < ttl {
-		writeBondJSON(w, cached.body)
+		writeBondPeerJSON(w, id, cached)
 		return
 	}
 	if b.peerMu.TryLock() {
@@ -318,10 +422,19 @@ func (b *bondAttestor) handlePeerBond(w http.ResponseWriter, r *http.Request, id
 		}()
 	}
 	if ok {
-		writeBondJSON(w, cached.body)
+		writeBondPeerJSON(w, id, cached)
 		return
 	}
 	writeBondPending(w)
+}
+
+func writeBondPeerJSON(w http.ResponseWriter, id string, cached bondPeerResult) {
+	body, err := bondJSON(cached.attestation, id, cached.at)
+	if err != nil {
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+	writeBondJSON(w, body)
 }
 
 // refreshPeer runs one peer lookup and caches what the module answers.
@@ -334,17 +447,11 @@ func (b *bondAttestor) refreshPeer(id string, addresses bondAddresses) {
 	if err != nil {
 		return
 	}
-	var body map[string]any
-	if json.Unmarshal(raw, &body) != nil {
+	attestation := bondAttestation(raw)
+	if attestation == nil {
 		return
 	}
-	stamp := time.Now().UTC()
-	body["node"] = id
-	body["attested_at"] = stamp.Format(time.RFC3339)
-	out, err := json.Marshal(body)
-	if err != nil {
-		return
-	}
+	stamp := bondAttestedAt(attestation, time.Now().UTC())
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.peerCache == nil {
@@ -356,7 +463,7 @@ func (b *bondAttestor) refreshPeer(id string, addresses bondAddresses) {
 			break
 		}
 	}
-	b.peerCache[id] = bondPeerResult{out, stamp}
+	b.peerCache[id] = bondPeerResult{append([]byte(nil), raw...), stamp}
 }
 
 func writeBondJSON(w http.ResponseWriter, body []byte) {

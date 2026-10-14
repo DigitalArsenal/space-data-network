@@ -5,26 +5,33 @@ import (
 	"testing"
 )
 
+// The engine credits each attested address's native coin from the module's
+// $WHA: BTC priced, SOL (a zero balance) priced at zero, the USDC token and
+// the ETH address the subject never attested left out.
 func TestParseBondHoldingsMapsSymbolsToAttestedAddresses(t *testing.T) {
-	out := []byte(`{"attested":true,"bond_usd":12.5,"holdings":[{"symbol":"BTC","amount":0.001,"usd":12.5},{"symbol":"SOL","amount":2},{"symbol":"XYZ","amount":9,"usd":1}]}`)
-	byChain := map[string]string{"bitcoin": "bc1qexample", "solana": "So1anaExample"}
+	out := bondFixtureAttestation(t, "complete", bondFixtureAddresses)
+	byChain := map[string]string{"bitcoin": "bc1test", "solana": "SolTest"}
 	holdings, err := parseBondHoldings(out, byChain, 1_000)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(holdings) != 2 {
-		t.Fatalf("unsupported symbols are dropped: got %d holdings", len(holdings))
+		t.Fatalf("only attested native holdings count: got %+v", holdings)
 	}
 	btc := holdings[0]
-	if btc.ChainID != "bitcoin" || btc.Address != "bc1qexample" || btc.Decimals != 8 || !btc.PricedInUSD || btc.USD != 12.5 || btc.ObservedAtMs != 1_000 {
+	if btc.ChainID != "bitcoin" || btc.Address != "bc1test" || btc.Symbol != "BTC" || btc.Amount != 1 || btc.Decimals != 8 || !btc.PricedInUSD || btc.USD != 60000 || btc.ObservedAtMs != 1_000 {
 		t.Fatalf("btc holding: %+v", btc)
 	}
 	sol := holdings[1]
-	if sol.ChainID != "solana" || sol.Address != "So1anaExample" || sol.Decimals != 9 || sol.PricedInUSD {
-		t.Fatalf("an unpriced holding stays unpriced: %+v", sol)
+	if sol.ChainID != "solana" || sol.Address != "SolTest" || sol.Decimals != 9 || sol.Amount != 0 {
+		t.Fatalf("sol holding: %+v", sol)
 	}
-	if _, err := parseBondHoldings([]byte(`{"holdings":[]}`), byChain, 0); err == nil {
-		t.Fatal("an answer without the attested verdict is refused")
+	unpriced, err := parseBondHoldings(bondFixtureAttestation(t, "price-error", bondAddresses{Btc: "bc1test"}), byChain, 0)
+	if err != nil || len(unpriced) != 1 || unpriced[0].PricedInUSD {
+		t.Fatalf("an unpriced holding stays unpriced: %+v %v", unpriced, err)
+	}
+	if _, err := parseBondHoldings([]byte(`{"attested":true,"holdings":[]}`), byChain, 0); err == nil {
+		t.Fatal("an answer that is not a $WHA is refused")
 	}
 }
 
@@ -48,10 +55,15 @@ func TestTrustSettingsRoundTrip(t *testing.T) {
 	}
 }
 
+// An ERC-20 named "ETH" is a token, not ether, and a wallet the subject did
+// not attest is not the subject's.
 func TestParseBondHoldingsRejectsTickerImpersonation(t *testing.T) {
-	raw := []byte(`{"attested":true,"holdings":[{"chain":"ETH","symbol":"ETH","contract":"0xFake","amount":999,"usd":999999},{"chain":"SOL","symbol":"ETH","amount":999},{"chain":"ETH","symbol":"ETH","address":"another-wallet","amount":999},{"chain":"ETH","symbol":"ETH","address":"wallet","amount":2,"usd":6000}]}`)
-	holdings, err := parseBondHoldings(raw, map[string]string{"ethereum": "wallet"}, 1000)
-	if err != nil || len(holdings) != 1 || holdings[0].Amount != 2 {
+	out := bondFixtureAttestation(t, "ticker", bondAddresses{Eth: "0xTest"})
+	holdings, err := parseBondHoldings(out, map[string]string{"ethereum": "0xTest"}, 1000)
+	if err != nil || len(holdings) != 1 || holdings[0].Amount != 2 || holdings[0].USD != 6000 {
 		t.Fatalf("ticker impersonation accepted: %+v %v", holdings, err)
+	}
+	if holdings, err = parseBondHoldings(out, map[string]string{"ethereum": "another-wallet"}, 1000); err != nil || len(holdings) != 0 {
+		t.Fatalf("another wallet credited: %+v %v", holdings, err)
 	}
 }

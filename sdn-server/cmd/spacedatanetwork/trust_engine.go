@@ -26,6 +26,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/node"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 	"github.com/spacedatanetwork/sdn-server/internal/trust"
+	"github.com/spacedatanetwork/sdn-server/internal/typedfb/wha"
 )
 
 // trustSettingsFile persists the operator's runtime evaluation interval.
@@ -102,39 +103,35 @@ func bondBalances(ctx context.Context, addrs []trust.ChainAddress) ([]trust.Hold
 	return parseBondHoldings(out, byChain, time.Now().UnixMilli())
 }
 
-// parseBondHoldings turns the module's verbatim answer into engine holdings.
+// parseBondHoldings turns the module's $WHA attestation into engine holdings:
+// each address's native coin, never a token reusing its ticker.
 func parseBondHoldings(out []byte, byChain map[string]string, nowMs int64) ([]trust.Holding, error) {
-	var ans struct {
-		Attested *bool `json:"attested"`
-		Holdings []struct {
-			Symbol   string   `json:"symbol"`
-			Contract string   `json:"contract"`
-			Chain    string   `json:"chain"`
-			Address  string   `json:"address"`
-			Amount   float64  `json:"amount"`
-			USD      *float64 `json:"usd"`
-		} `json:"holdings"`
-	}
-	if err := json.Unmarshal(out, &ans); err != nil || ans.Attested == nil {
+	w := bondAttestation(out)
+	if w == nil {
 		return nil, errors.New("the bond-attestation module returned a non-attestation answer")
 	}
-	holdings := make([]trust.Holding, 0, len(ans.Holdings))
-	for _, h := range ans.Holdings {
-		// Native-token rules must never credit an ERC20/SPL token reusing a ticker.
-		if h.Contract != "" || (h.Chain != "" && !strings.EqualFold(h.Chain, h.Symbol)) {
+	holdings := make([]trust.Holding, 0, w.HOLDINGSLength())
+	var h wha.WHAHolding
+	for i := 0; i < w.HOLDINGSLength(); i++ {
+		if !w.HOLDINGS(&h, i) {
 			continue
 		}
-		chain, decimals := bondChainForSymbol(h.Symbol)
-		if chain == "" || byChain[chain] == "" || (h.Address != "" && h.Address != byChain[chain]) {
+		// Native-token rules must never credit an ERC20/SPL token reusing a ticker.
+		symbol, chainName, address := string(h.SYMBOL()), string(h.CHAIN_NAME()), string(h.ADDRESS())
+		if h.ASSET_KIND() != wha.EnumValueswhaAssetKind["Native"] || len(h.CONTRACT()) != 0 || !strings.EqualFold(chainName, symbol) {
+			continue
+		}
+		chain, decimals := bondChainForSymbol(symbol)
+		if chain == "" || byChain[chain] == "" || (address != "" && address != byChain[chain]) {
 			continue
 		}
 		holding := trust.Holding{
-			ChainID: chain, Address: byChain[chain], Symbol: strings.ToUpper(h.Symbol),
-			Amount: h.Amount, Decimals: decimals, ObservedAtMs: nowMs,
+			ChainID: chain, Address: byChain[chain], Symbol: strings.ToUpper(symbol),
+			Amount: h.AMOUNT(), Decimals: decimals, ObservedAtMs: nowMs,
 			SourceQuery: "org.spacedatanetwork.bond-attestation/attest",
 		}
-		if h.USD != nil {
-			holding.USD, holding.PricedInUSD = *h.USD, true
+		if h.VALUED() {
+			holding.USD, holding.PricedInUSD = h.VALUE(), true
 		}
 		holdings = append(holdings, holding)
 	}
