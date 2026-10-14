@@ -4,13 +4,23 @@
 // SpaceAware console:
 //   - ids are unique, and every reference (category, access, delivery,
 //     bundle member) resolves;
-//   - every module sits in at least one bundle;
-//   - no bundle shows a price unless an approved price list is named;
+//   - every module sits in at least one bundle, and the complete bundle holds
+//     every module;
+//   - no bundle or module shows a price unless an approved price list is named;
+//   - access matches the live module catalog policy the evidence quotes:
+//     ENTITLED is a paid add-on, and an SDN module that is ANONYMOUS is free;
 //   - every console mode is either covered by a module or listed in notListed
-//     with a reason, and every MODE:CARD key the catalog names still exists.
-// A new console mode therefore cannot land without a catalog decision.
+//     with a reason, every MODE:CARD key the catalog names still exists, and
+//     every console card is in consoleCards (the cards the catalog has been
+//     reviewed against).
+// A new console mode or card therefore cannot land without a catalog decision.
+//
+// The console is read from a spaceaware-ui checkout when one is there, else
+// straight from the commit sdn pins (git objects), so a task worktree without
+// initialised submodules still checks.
 //
 //   node scripts/check-marketing-catalog.mjs [--console <spaceaware-ui dir>]
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -59,20 +69,53 @@ for (const b of catalog.bundles) {
   }
 }
 for (const id of modules) if (!bundled.has(id)) fail(`module ${id} is in no bundle`);
+const complete = catalog.bundles.find((b) => b.id === "complete");
+if (complete) for (const id of modules) if (!complete.modules.includes(id)) fail(`bundle complete is missing module ${id}`);
+for (const m of catalog.modules) {
+  if (m.price != null && !catalog.pricing.approvedPriceList) {
+    fail(`module ${m.id} shows a price, but pricing.approvedPriceList names no owner-approved list`);
+  }
+  const evidence = String(m.evidence || "");
+  const entitled = /\bENTITLED\b/.test(evidence), anonymous = /\bANONYMOUS\b/.test(evidence);
+  if (entitled && m.access !== "add-on") fail(`module ${m.id}: evidence quotes ENTITLED, so access must be add-on (is ${m.access})`);
+  if (m.delivery === "sdn-module") {
+    if (!entitled && !anonymous) fail(`module ${m.id}: an SDN module's evidence must quote its live access policy (ANONYMOUS or ENTITLED)`);
+    else if (!entitled && m.access !== "free") fail(`module ${m.id}: evidence quotes ANONYMOUS, so access must be free (is ${m.access})`);
+  }
+}
+
+// The pinned console source: a checkout, or the gitlink's commit.
+function consoleReader() {
+  if (existsSync(join(consoleDir, "src/orbital-console/modes/registry.ts"))) {
+    return (rel) => readFileSync(join(consoleDir, rel), "utf8");
+  }
+  if (consoleArg >= 0) return null;
+  try {
+    const git = (...a) => execFileSync("git", ["-C", root, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    const sha = git("ls-tree", "HEAD", "sdn-js/spaceaware-ui").split(/\s+/)[2];
+    const gitDir = resolve(root, git("rev-parse", "--git-common-dir"), "modules/sdn-js/spaceaware-ui");
+    const show = (rel) => execFileSync("git", ["--git-dir", gitDir, "show", `${sha}:${rel}`], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 64 << 20 });
+    show("src/orbital-console/modes/registry.ts");
+    return show;
+  } catch {
+    return null;
+  }
+}
 
 // Console coverage, read from the pinned console source.
-const modesDir = join(consoleDir, "src/orbital-console/modes");
-if (!existsSync(join(modesDir, "registry.ts"))) {
-  fail(`console source not found at ${consoleDir}; check out sdn-js/spaceaware-ui or pass --console <dir>`);
+const readConsole = consoleReader();
+const modesDir = "src/orbital-console/modes";
+if (!readConsole) {
+  fail(`console source not found at ${consoleDir} or in the pinned sdn-js/spaceaware-ui commit; pass --console <dir>`);
 } else {
-  const registry = readFileSync(join(modesDir, "registry.ts"), "utf8");
+  const registry = readConsole(`${modesDir}/registry.ts`);
   const loaders = registry.match(/MODE_SURFACE_LOADERS[^=]*=[\s\S]*?\}\);/);
   const modeKeys = loaders ? [...loaders[0].matchAll(/^\s*([A-Z]+):/gm)].map((m) => m[1]) : [];
   if (!modeKeys.length) fail("no MODE_SURFACE_LOADERS keys found in registry.ts");
 
   // Cards: card("hotkey", "glyph", "LABEL", ...) under each mode's key; the
   // sensor-planning cards live on the TRK panel.
-  const source = readFileSync(join(modesDir, "modeCards.ts"), "utf8");
+  const source = readConsole(`${modesDir}/modeCards.ts`);
   const cardKeys = new Set();
   let mode = null;
   for (const m of source.matchAll(/key:\s*"([A-Z]+)"|SENSOR_PLANNING_CARDS[^=]*=|card\(\s*"[^"]*",\s*"[^"]*",\s*"([^"]+)"/g)) {
@@ -97,6 +140,15 @@ if (!existsSync(join(modesDir, "registry.ts"))) {
     }
     if (covered.has(key) && excluded.has(key)) fail(`${key} is both covered and in notListed`);
   }
+  // A mode left out whole (notListed) needs no card-by-card review.
+  const reviewed = new Set(catalog.consoleCards || []);
+  for (const key of cardKeys) {
+    if (excluded.has(key.split(":")[0])) continue;
+    if (!reviewed.has(key)) {
+      fail(`console card ${key} is new: cover it in a module (covers, capabilities) or add it to notListed, then add it to consoleCards`);
+    }
+  }
+  for (const key of reviewed) if (!cardKeys.has(key)) fail(`consoleCards names ${key}, which the console no longer has`);
 }
 
 if (errors.length) {

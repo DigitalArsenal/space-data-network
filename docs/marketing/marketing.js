@@ -4,9 +4,8 @@
 // shared earth.js and site.js, so the Earth sees every section keyframe and
 // the scroll reveals see every card. Motion is transform, opacity or one 2D
 // canvas (orbit.js), drawn only while on screen; reduced motion gets a still,
-// complete page. After the first render the page only rewrites existing text
-// nodes and attributes, never adds or removes nodes: section-links.js
-// re-lands on the address's section whenever nodes are added.
+// complete page. section-links.js loads last, after the catalog is on the
+// page, so a shared section address lands where that section really is.
 (function () {
   'use strict';
   var HERE = document.currentScript.src;
@@ -36,6 +35,8 @@
     if (!('IntersectionObserver' in window)) { cb(true); return; }
     new IntersectionObserver(function (e) { cb(e[e.length - 1].isIntersecting); }, { rootMargin: margin || '0px' }).observe(node);
   }
+  // Section headings are Title Case on every SDN page (docs/STYLE-GUIDE.md).
+  function titleCase(text) { return text.replace(/(^|\s)([a-z])/g, function (_, sp, ch) { return sp + ch.toUpperCase(); }); }
   function headerHeight() { return parseFloat(getComputedStyle(root).getPropertyValue('--sdn-stack-header-height')) || 52; }
 
   // Presentation only: a line icon per discipline, and a camera keyframe for
@@ -53,7 +54,7 @@
   var KEYFRAMES = ['2.9 20 28 1.05 0.05 118 12', '3.3 70 8 -1.25 0.1 162 6', '2.7 100 25 1.1 0.05 120 10',
     '2.9 -40 -12 -1.05 0.05 210 8', '2.8 100 -20 1.05 0.05 125 8', '2.7 -75 38 1.1 0.05 122 10', '2.9 -160 20 -1.05 0.05 240 10'];
   var TIER_COPY = {
-    free: 'Open spaceaware.io and start. Conjunction assessment, the camera and the analysis tools work with no account.',
+    free: 'Open spaceaware.io and start. Conjunction assessment, the camera and the analysis tools work with no account, and free SDN modules download from any node.',
     account: 'Sign in with a password, seed phrase, passkey or external wallet, with no email address. Signing in opens the track, detection, maneuver and communications modes.',
     'add-on': 'Paid modules are delivered encrypted to your account. Request pricing for a single module or a bundle.'
   };
@@ -182,7 +183,7 @@
       s.setAttribute('data-earth', KEYFRAMES[i % KEYFRAMES.length]);
       var wrap = el('div', 'wrap'), head = el('div', 'head'), grid = el('div', 'mk-grid');
       head.appendChild(el('p', 'eyebrow', mods.length + (mods.length === 1 ? ' module' : ' modules')));
-      head.appendChild(el('h2', '', c.name));
+      head.appendChild(el('h2', '', titleCase(c.name)));
       head.appendChild(el('p', 'lede', c.blurb));
       grid.setAttribute('data-section-links', 'off');
       mods.forEach(function (m) { var k = card(m); cards.push(k); grid.appendChild(k); });
@@ -194,9 +195,16 @@
     });
 
     var state = { cat: 'all', access: 'all' }, bar = $('filter'), chips = [];
+    // Bring the first shown discipline up under the filter bar, its heading
+    // 16 px clear of it (the section's top padding tucks under the bar, so the
+    // address names it too). Measured from the discipline itself: the bar is
+    // sticky, so once pinned its own position only says where the reader is.
     function jump() {
-      var y = document.getElementById('modules').getBoundingClientRect().top + scrollY - headerHeight();
-      if (scrollY > y + 4 || scrollY < y - innerHeight) scrollTo({ top: y, behavior: REDUCED ? 'auto' : 'smooth' });
+      var first = sections.filter(function (s) { return !s.classList.contains('is-hidden'); })[0] || host;
+      var tuck = Math.max(0, (parseFloat(getComputedStyle(first).paddingTop) || 0) - 16);
+      var y = Math.round(first.getBoundingClientRect().top + scrollY - headerHeight() - document.getElementById('modules').offsetHeight + tuck);
+      if (Math.abs(scrollY - y) >= 1) scrollTo({ top: y, behavior: REDUCED ? 'auto' : 'smooth' });
+      else dispatchEvent(new Event('scroll'));   // the page changed under a still reader: let the address follow
     }
     function count(cat, access) {
       return C.modules.filter(function (m) { return (cat === 'all' || m.category === cat) && (access === 'all' || m.access === access); }).length;
@@ -430,9 +438,10 @@
     window.SDNMarketingOrbit({ catalog: C, open: openDrawer, reduced: REDUCED });
   }
 
-  // The shared scene scripts run once the catalog is on the page.
+  // The shared scene scripts run once the catalog is on the page; the section
+  // addresses run last, so they measure the finished page.
   function scene() {
-    ['../earth.js', '../site.js'].forEach(function (src) {
+    ['../earth.js', '../site.js', '../assets/section-links/section-links.js'].forEach(function (src) {
       var s = document.createElement('script');
       s.src = new URL(src, HERE).href;
       s.async = false;

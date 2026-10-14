@@ -239,7 +239,7 @@
       "delivery": "console",
       "covers": [],
       "learnMore": "https://spaceaware.io",
-      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/session/walletSession.svelte.ts:46-49; session/keptSession.ts:32-37; modes/modeCards.ts:643-653 (SIGNED_OUT_MODES = CNJ, CAM, ANL); data/modules/protectedDelivery.ts (ENTITLED rows only); sdn-server/internal/license/plugins.go:89-111"
+      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/session/walletSession.svelte.ts:46-49; session/keptSession.ts:32-37; modes/modeCards.ts:643-653 (SIGNED_OUT_MODES = CNJ, CAM, ANL); data/modules/protectedDelivery.ts (entitled rows only); sdn-server/internal/license/plugins.go:89-111"
     },
     {
       "id": "conjunction-assessment",
@@ -286,11 +286,11 @@
         "CCSDS OEM",
         "SDS CQR"
       ],
-      "access": "account",
+      "access": "free",
       "delivery": "sdn-module",
       "covers": [],
       "learnMore": "https://spacedatanetwork.org/whitepapers/fast-conjunction-assessment.html",
-      "evidence": "live modules.pmm conjunction-assessment 0.6.0; space-data-network-modules commits 40d04048, b9bb45f5, aa06ae30, beff6f1b (all-vs-all GPU/CPU, time windows, covariance Pc) at or before 0.6.0; live artifact /modules/conjunction-assessment/0.6.0/module.wasm exports coarse_grid, refine_candidates, screen_window, screen_catalog"
+      "evidence": "live modules.pmm conjunction-assessment 0.6.0; space-data-network-modules commits 40d04048, b9bb45f5, aa06ae30, beff6f1b (all-vs-all GPU/CPU, time windows, covariance Pc) at or before 0.6.0; live artifact /modules/conjunction-assessment/0.6.0/module.wasm exports coarse_grid, refine_candidates, screen_window, screen_catalog; every modules.pmm row named here is ANONYMOUS (live manifest 2026-10-13)"
     },
     {
       "id": "covariance-analysis",
@@ -309,11 +309,11 @@
         "CCSDS OEM",
         "CCSDS OMM"
       ],
-      "access": "account",
+      "access": "free",
       "delivery": "sdn-module",
       "covers": [],
       "learnMore": "https://spacedatanetwork.org/whitepapers/evidence-supported-aso-catalog.html",
-      "evidence": "live modules.pmm covariance-analysis 0.1.0, com.digitalarsenal.analysis.gp-error-model 0.1.0, com.digitalarsenal.analysis.reference-states 0.1.0"
+      "evidence": "live modules.pmm covariance-analysis 0.1.0, com.digitalarsenal.analysis.gp-error-model 0.1.0, com.digitalarsenal.analysis.reference-states 0.1.0; every modules.pmm row named here is ANONYMOUS (live manifest 2026-10-13)"
     },
     {
       "id": "maneuver-detection",
@@ -331,11 +331,11 @@
         "CCSDS OMM",
         "SDS MNV"
       ],
-      "access": "account",
+      "access": "free",
       "delivery": "sdn-module",
       "covers": [],
       "learnMore": "https://spacedatanetwork.org/whitepapers/evidence-supported-aso-catalog.html",
-      "evidence": "live modules.pmm com.digitalarsenal.analysis.maneuver-detection 0.1.0 (manifest description)"
+      "evidence": "live modules.pmm com.digitalarsenal.analysis.maneuver-detection 0.1.0 (manifest description); every modules.pmm row named here is ANONYMOUS (live manifest 2026-10-13)"
     },
     {
       "id": "launch-reentry",
@@ -354,11 +354,11 @@
         "SDS CQR",
         "SDS LDM"
       ],
-      "access": "account",
+      "access": "free",
       "delivery": "sdn-module",
       "covers": [],
       "learnMore": "https://spacedatanetwork.org/modules.html",
-      "evidence": "live modules.pmm com.digitalarsenal.analysis.launch-cola 0.1.0, launch-trajectory 0.1.0, launch-ascent-analysis 0.1.0, reentry-analysis 0.1.0, data-source.launch-schedule 0.1.0"
+      "evidence": "live modules.pmm com.digitalarsenal.analysis.launch-cola 0.1.0, launch-trajectory 0.1.0, launch-ascent-analysis 0.1.0, reentry-analysis 0.1.0, data-source.launch-schedule 0.1.0; every modules.pmm row named here is ANONYMOUS (live manifest 2026-10-13)"
     },
     {
       "id": "track-custody",
@@ -427,11 +427,11 @@
         "SDS RFO",
         "SDS ACW"
       ],
-      "access": "account",
+      "access": "free",
       "delivery": "sdn-module",
       "covers": [],
       "learnMore": "https://spacedatanetwork.org/modules.html",
-      "evidence": "live modules.pmm com.digitalarsenal.analysis.observation-simulator 0.1.0 (manifest description)"
+      "evidence": "live modules.pmm com.digitalarsenal.analysis.observation-simulator 0.1.0 (manifest description); every modules.pmm row named here is ANONYMOUS (live manifest 2026-10-13)"
     },
     {
       "id": "orbit-estimation",
@@ -449,11 +449,11 @@
         "CCSDS OMM",
         "CCSDS OCM"
       ],
-      "access": "account",
+      "access": "free",
       "delivery": "sdn-module",
       "covers": [],
       "learnMore": "https://spacedatanetwork.org/modules.html",
-      "evidence": "live modules.pmm orbit-determination 0.1.2, com.orbpro.od-fit-pipeline 0.1.0, com.digitalarsenal.analysis.estimation 0.2.0; space-data-network-modules/analysis/od, analysis/estimation"
+      "evidence": "live modules.pmm orbit-determination 0.1.2, com.orbpro.od-fit-pipeline 0.1.0, com.digitalarsenal.analysis.estimation 0.2.0; space-data-network-modules/analysis/od, analysis/estimation; every modules.pmm row named here is ANONYMOUS (live manifest 2026-10-13)"
     },
     {
       "id": "catalog-composer",
@@ -472,11 +472,11 @@
         "CCSDS OMM",
         "CCSDS OEM"
       ],
-      "access": "account",
+      "access": "free",
       "delivery": "sdn-module",
       "covers": [],
       "learnMore": "https://spacedatanetwork.org/catalog.html",
-      "evidence": "live modules.pmm com.digitalarsenal.analysis.catalog-composer 0.1.9, com.orbpro.catalog-synthesis 0.1.0, data-source.catalog-source 0.2.0, analysis.epoch-state 0.1.0"
+      "evidence": "live modules.pmm com.digitalarsenal.analysis.catalog-composer 0.1.9, com.orbpro.catalog-synthesis 0.1.0, data-source.catalog-source 0.2.0, analysis.epoch-state 0.1.0; every modules.pmm row named here is ANONYMOUS (live manifest 2026-10-13)"
     },
     {
       "id": "maneuver-planning",
@@ -517,11 +517,11 @@
         "SDS PRW",
         "SDS PPE"
       ],
-      "access": "account",
+      "access": "free",
       "delivery": "sdn-module",
       "covers": [],
       "learnMore": "https://spacedatanetwork.org/whitepapers/fast-conjunction-assessment.html",
-      "evidence": "live modules.pmm com.orbpro.hpop 1.1.0 ANONYMOUS; live artifact /modules/com.orbpro.hpop/1.1.0/module.wasm strings (PRW execution, PPE trajectory, finite-burn, STM, NRLMSISE-00 and US Standard Atmosphere 1976; no OEM output); space-data-network-modules/propagator/hpop"
+      "evidence": "live modules.pmm com.orbpro.hpop 1.1.0 RECOMMENDED ANONYMOUS; live artifact /modules/com.orbpro.hpop/1.1.0/module.wasm strings (PRW execution, PPE trajectory, finite-burn, STM, NRLMSISE-00 and US Standard Atmosphere 1976; no OEM output); space-data-network-modules/propagator/hpop"
     },
     {
       "id": "propagator-suite",
@@ -542,11 +542,11 @@
         "CCSDS OEM",
         "CCSDS OCM"
       ],
-      "access": "account",
+      "access": "free",
       "delivery": "sdn-module",
       "covers": [],
       "learnMore": "https://spacedatanetwork.org/modules.html",
-      "evidence": "live modules.pmm com.orbpro.sgp4 1.1.0, com.orbpro.keplerian.reference 1.0.0, com.digitalarsenal.propagator.ephemeris 0.1.1, atmosphere-model 0.1.0, cislunar-propagator 0.1.0, hypersonics-propagator 0.1.1"
+      "evidence": "live modules.pmm com.orbpro.sgp4 1.1.0, com.orbpro.keplerian.reference 1.0.0, com.digitalarsenal.propagator.ephemeris 0.1.1, atmosphere-model 0.1.0, cislunar-propagator 0.1.0, hypersonics-propagator 0.1.1; every modules.pmm row named here is ANONYMOUS (live manifest 2026-10-13)"
     },
     {
       "id": "orbit-analysis-toolkit",
@@ -565,11 +565,11 @@
         "SDS ACW",
         "SDS EVL"
       ],
-      "access": "account",
+      "access": "free",
       "delivery": "sdn-module",
       "covers": [],
       "learnMore": "https://spacedatanetwork.org/modules.html",
-      "evidence": "live modules.pmm com.digitalarsenal.propagator.events 0.1.0, com.orbpro.access 1.0.0, com.digitalarsenal.analysis.parameters 0.1.0, com.orbpro.analysis.targeting 0.1.0, com.orbpro.dop 1.0.1"
+      "evidence": "live modules.pmm com.digitalarsenal.propagator.events 0.1.0, com.orbpro.access 1.0.0, com.digitalarsenal.analysis.parameters 0.1.0, com.orbpro.analysis.targeting 0.1.0, com.orbpro.dop 1.0.1; every modules.pmm row named here is ANONYMOUS (live manifest 2026-10-13)"
     },
     {
       "id": "ground-contact",
@@ -873,11 +873,11 @@
         "CCSDS TDM",
         "CCSDS OEM"
       ],
-      "access": "account",
+      "access": "free",
       "delivery": "sdn-module",
       "covers": [],
       "learnMore": "https://spacedatanetwork.org/modules.html",
-      "evidence": "live modules.pmm com.digitalarsenal.files.ccsds-messages 0.1.0 (live artifact exports read_aem, read_tdm, write_aem, write_tdm only; the ten-message 0.2.0 is on space-data-network-modules main but not published) and com.digitalarsenal.files.orbit-products 0.1.2 (SPK, SP3, Code-500, OEM KVN)"
+      "evidence": "live modules.pmm com.digitalarsenal.files.ccsds-messages 0.1.0 (live artifact exports read_aem, read_tdm, write_aem, write_tdm only; the ten-message 0.2.0 is on space-data-network-modules main but not published) and com.digitalarsenal.files.orbit-products 0.1.2 (SPK, SP3, Code-500, OEM KVN); every modules.pmm row named here is ANONYMOUS (live manifest 2026-10-13)"
     },
     {
       "id": "data-sources",
@@ -899,11 +899,11 @@
         "SDS CAT",
         "SDS EOP"
       ],
-      "access": "account",
+      "access": "free",
       "delivery": "sdn-module",
       "covers": [],
       "learnMore": "https://spacedatanetwork.org/onboarding.html",
-      "evidence": "live modules.pmm data-source.* rows (celestrak-parser/request/reference, gp-archive-records, ephemeris-source, oem-source-iss, eop-parser/request, satnogs-source, sigmf-captures, open-meteo, weathernext-parser, retrieval) and com.orbpro.{celestrak-supgp,spacex-starlink-source,oneweb-source,intelsat-source,iss-source,cpf-source,glonass-source,gps-source}; com.orbpro.gps-source manifest name 'GPS Almanac (NAVCEN SEM/YUMA) Data Source'"
+      "evidence": "live modules.pmm data-source.* rows (celestrak-parser/request/reference, gp-archive-records, ephemeris-source, oem-source-iss, eop-parser/request, satnogs-source, sigmf-captures, open-meteo, weathernext-parser, retrieval) and com.orbpro.{celestrak-supgp,spacex-starlink-source,oneweb-source,intelsat-source,iss-source,cpf-source,glonass-source,gps-source}; com.orbpro.gps-source manifest name 'GPS Almanac (NAVCEN SEM/YUMA) Data Source'; every modules.pmm row named here is ANONYMOUS (live manifest 2026-10-13)"
     },
     {
       "id": "module-building-blocks",
@@ -927,7 +927,7 @@
       "delivery": "sdn-module",
       "covers": [],
       "learnMore": "https://spacedatanetwork.org/modules.html",
-      "evidence": "live modules.pmm CORE foundation and hostcap rows; space-data-network-modules/foundation/*, hostcap/*"
+      "evidence": "live modules.pmm CORE foundation and hostcap rows; space-data-network-modules/foundation/*, hostcap/*; every modules.pmm row named here is ANONYMOUS (live manifest 2026-10-13)"
     }
   ],
   "bundles": [
@@ -1111,6 +1111,73 @@
       "price": null
     }
   ],
+  "consoleCards": [
+    "TRK:REPORT",
+    "TRK:IMPORT EPHEMERIS",
+    "TRK:EVENTS",
+    "TRK:SEARCH VOL",
+    "TRK:NEW DETECT",
+    "TRK:TIP & CUE",
+    "TRK:WATCH LIST",
+    "TRK:CUSTODY",
+    "TRK:TRACK INIT",
+    "TRK:CORRELATE OBS",
+    "TRK:REFINE OD",
+    "TRK:PROPAGATE",
+    "TRK:COVARIANCE",
+    "TRK:HANDOVER",
+    "TRK:SLEW / POINT",
+    "TRK:COMPUTE ACCESS",
+    "TRK:COVERAGE",
+    "DET:REPORT",
+    "DET:AOI SELECT",
+    "DET:EXTRACT",
+    "DET:DETECTIONS",
+    "DET:PROMOTE",
+    "CNJ:REPORT",
+    "CNJ:SCREEN ALL",
+    "CNJ:SCREEN PAIR",
+    "CNJ:CDM REVIEW",
+    "CNJ:Pc COMPUTE",
+    "CNJ:COLA",
+    "CNJ:NOTIFY",
+    "CNJ:CLOSE",
+    "MNV:REPORT",
+    "MNV:PROGRADE / RETRO",
+    "MNV:RADIAL",
+    "MNV:INCLINATION",
+    "MNV:CISLUNAR",
+    "MNV:HOHMANN",
+    "MNV:RENDEZVOUS",
+    "MNV:PHASE SHIFT",
+    "MNV:CATCH S/C",
+    "MNV:RELATIVE ORBIT",
+    "COM:REPORT",
+    "COM:SCHEDULE PASS",
+    "COM:LINK BUDGET",
+    "COM:DOWNLINK",
+    "COM:UPLINK",
+    "COM:BAND SELECT",
+    "COM:GROUND TRACK",
+    "RF:REPORT",
+    "RF:CHANNEL MODEL",
+    "RF:SPECTRUM SCAN",
+    "RF:LINK MARGIN",
+    "RF:INTERFERENCE",
+    "RF:GNSS INTEGRITY",
+    "RF:JAM ASSESS",
+    "RF:EMITTER LOG",
+    "CAM:FROM/TO",
+    "CAM:VIEW FROM",
+    "CAM:PATH",
+    "CAM:RELEASE",
+    "ANL:RIC BOX",
+    "ANL:RANGE",
+    "ANL:MEASURE",
+    "ANL:MARKUP",
+    "TRK:COLLECT PLAN",
+    "TRK:SAR STRIP"
+  ],
   "notListed": [
     {
       "key": "CBT",
@@ -1138,11 +1205,11 @@
     },
     {
       "key": "MNV:CISLUNAR",
-      "reason": "Not connected on spaceaware.io; cislunar propagation is listed as an SDN module"
+      "reason": "Cislunar propagation is listed as an SDN module"
     },
     {
       "key": "RF:GNSS INTEGRITY",
-      "reason": "Card promises jamming and spoofing maps; it delivers a DOP chart, listed under the orbit analysis toolkit"
+      "reason": "Listed as the dilution of precision chart in the orbit analysis toolkit"
     },
     {
       "key": "RF:JAM ASSESS",
@@ -1166,7 +1233,7 @@
     },
     {
       "key": "module:private-screening",
-      "reason": "Research module, not a product"
+      "reason": "Not offered in the public catalog"
     },
     {
       "key": "module:basilisk-runtime",
@@ -1178,7 +1245,7 @@
     },
     {
       "key": "module:ccsds-messages-0.2.0",
-      "reason": "Ten-message reader and writer is on main but not in the live module catalog"
+      "reason": "Not in the live module catalog"
     }
   ]
 }

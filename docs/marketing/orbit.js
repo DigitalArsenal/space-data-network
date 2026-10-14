@@ -47,7 +47,7 @@ window.SDNMarketingOrbit = function (opts) {
 
   function colors() {
     var cs = getComputedStyle(root);
-    ['--text', '--accent', '--border-strong', '--panel-solid', '--font-sans'].forEach(function (v) { col[v] = cs.getPropertyValue(v).trim(); });
+    ['--text', '--accent', '--border-strong', '--panel-solid', '--bg', '--font-sans'].forEach(function (v) { col[v] = cs.getPropertyValue(v).trim(); });
     font = col['--font-sans'];
     dark = root.getAttribute('data-theme') !== 'light';
     glow = document.createElement('canvas');
@@ -207,21 +207,25 @@ window.SDNMarketingOrbit = function (opts) {
       }
     });
 
-    // Discipline names once the clusters form (phones: the lit one only).
+    // Discipline names once the clusters form (phones: the lit one only),
+    // each on a knock-out halo so bundle links and satellites never cross it.
     if (mix > 0.5) {
       ctx.textBaseline = 'middle';
       ctx.textAlign = 'center';
       ctx.font = '600 ' + (narrow ? 11 : 13) + 'px ' + font;
+      ctx.lineJoin = 'round';
+      ctx.lineWidth = 6;
+      ctx.strokeStyle = col['--bg'];
       rings.forEach(function (g, k) {
         var hot = k === activeCat || k === hoverCat();
         if (narrow && !hot && !REDUCED) return;
-        ctx.globalAlpha = (mix - 0.5) * 2 * (inB ? 0.45 : hot ? 1 : 0.7);
+        var a = (mix - 0.5) * 2, name = C.categories[k].name, ly = g.cyk + g.rc + 16, cut = name.lastIndexOf(' ', 16);
+        var lines = narrow && name.length > 18 && cut > 0 ? [name.slice(0, cut), name.slice(cut + 1)] : [name];
+        ctx.globalAlpha = a * 0.9;
+        lines.forEach(function (s, i) { ctx.strokeText(s, g.cxk, ly + i * 14); });
+        ctx.globalAlpha = a * (inB ? 0.7 : hot ? 1 : 0.75);
         ctx.fillStyle = hot ? col['--accent'] : col['--text'];
-        var name = C.categories[k].name, ly = g.cyk + g.rc + 16, cut = name.lastIndexOf(' ', 16);
-        if (narrow && name.length > 18 && cut > 0) {
-          ctx.fillText(name.slice(0, cut), g.cxk, ly);
-          ctx.fillText(name.slice(cut + 1), g.cxk, ly + 14);
-        } else ctx.fillText(name, g.cxk, ly);
+        lines.forEach(function (s, i) { ctx.fillText(s, g.cxk, ly + i * 14); });
       });
     }
     ctx.globalAlpha = 1;

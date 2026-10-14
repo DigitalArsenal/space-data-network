@@ -82,7 +82,7 @@
       <div class="mk-orbit-track" data-mk="orbit-track">
         <div class="mk-kf mk-kf-start" data-mk="orbit-kf"></div>
         <div class="mk-kf mk-kf-end" data-mk="orbit-kf"></div>
-        <div class="mk-orbit-stage" data-section-links="off">
+        <div class="mk-orbit-stage">
           <canvas class="mk-orbit-canvas" data-mk="orbit-canvas" aria-hidden="true"></canvas>
           <div class="mk-orbit-head">
             <p class="eyebrow">The catalog in motion</p>
@@ -165,13 +165,13 @@
     </div>
   </footer>
 
-  <dialog class="mk-drawer" data-mk="drawer" aria-labelledby="mk-drawer-title"></dialog>
+  <dialog class="mk-drawer" data-mk="drawer" aria-labelledby="mk-drawer-title" data-section-links="off"></dialog>
 
-  <!-- marketing.js renders the catalog first, then loads earth.js and site.js,
-       so the Earth sees every keyframe and the reveals see every card. -->
+  <!-- marketing.js renders the catalog first, then loads earth.js, site.js and
+       section-links.js, so the Earth sees every keyframe, the reveals see every
+       card and a shared section address lands on the finished page. -->
   <script src="marketing/orbit.js"></script>
   <script src="marketing/marketing.js"></script>
   <script src="assets/ai-credits/ai-credits.js" defer></script>
-  <script src="assets/section-links/section-links.js" defer></script>
 </body>
 </html>
