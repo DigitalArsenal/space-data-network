@@ -72,7 +72,7 @@ func (c *ipfsCapClient) handle(operation string, payload []byte) ([]byte, error)
 			return ""
 		}
 		if v, ok := p[key]; ok {
-			return fmt.Sprintf("%v", v)
+			return capText(v)
 		}
 		return ""
 	}
@@ -115,11 +115,15 @@ func (c *ipfsCapClient) handle(operation string, payload []byte) ([]byte, error)
 		part, _ := w.CreateFormFile("file", "data")
 		part.Write(content)
 		w.Close()
-		resp, err := c.kuboPost(ctx, "/api/v0/add?pin=true", &buf, w.FormDataContentType())
+		pin := "true"
+		if v, ok := p["pin"].(bool); ok && !v {
+			pin = "false"
+		}
+		resp, err := c.kuboPost(ctx, "/api/v0/add?pin="+pin, &buf, w.FormDataContentType())
 		if err != nil {
 			return errCapJSON(err.Error()), nil
 		}
-		return okCapJSON(json.RawMessage(resp)), nil
+		return okKuboJSON(resp), nil
 
 	case "ipfs.ls":
 		cid := str("cid")
@@ -130,7 +134,7 @@ func (c *ipfsCapClient) handle(operation string, payload []byte) ([]byte, error)
 		if err != nil {
 			return errCapJSON(err.Error()), nil
 		}
-		return okCapJSON(json.RawMessage(resp)), nil
+		return okKuboJSON(resp), nil
 
 	case "ipfs.pin_add":
 		cid := str("cid")
@@ -141,7 +145,7 @@ func (c *ipfsCapClient) handle(operation string, payload []byte) ([]byte, error)
 		if err != nil {
 			return errCapJSON(err.Error()), nil
 		}
-		return okCapJSON(json.RawMessage(resp)), nil
+		return okKuboJSON(resp), nil
 
 	case "ipfs.pin_rm":
 		cid := str("cid")
@@ -152,7 +156,7 @@ func (c *ipfsCapClient) handle(operation string, payload []byte) ([]byte, error)
 		if err != nil {
 			return errCapJSON(err.Error()), nil
 		}
-		return okCapJSON(json.RawMessage(resp)), nil
+		return okKuboJSON(resp), nil
 
 	case "ipfs.pin_ls":
 		pinType := str("type")
@@ -164,7 +168,7 @@ func (c *ipfsCapClient) handle(operation string, payload []byte) ([]byte, error)
 		if err != nil {
 			return errCapJSON(err.Error()), nil
 		}
-		return okCapJSON(json.RawMessage(resp)), nil
+		return okKuboJSON(resp), nil
 
 	case "ipfs.dag_get":
 		cid := str("cid")
@@ -175,7 +179,7 @@ func (c *ipfsCapClient) handle(operation string, payload []byte) ([]byte, error)
 		if err != nil {
 			return errCapJSON(err.Error()), nil
 		}
-		return okCapJSON(json.RawMessage(resp)), nil
+		return okKuboJSON(resp), nil
 
 	case "ipfs.name_resolve":
 		name := str("name")
@@ -186,7 +190,7 @@ func (c *ipfsCapClient) handle(operation string, payload []byte) ([]byte, error)
 		if err != nil {
 			return errCapJSON(err.Error()), nil
 		}
-		return okCapJSON(json.RawMessage(resp)), nil
+		return okKuboJSON(resp), nil
 
 	case "ipfs.name_publish":
 		cid := str("cid")
@@ -204,38 +208,46 @@ func (c *ipfsCapClient) handle(operation string, payload []byte) ([]byte, error)
 		if err != nil {
 			return errCapJSON(err.Error()), nil
 		}
-		return okCapJSON(json.RawMessage(resp)), nil
+		return okKuboJSON(resp), nil
 
 	case "ipfs.id":
 		resp, err := c.kuboPost(ctx, "/api/v0/id", nil, "")
 		if err != nil {
 			return errCapJSON(err.Error()), nil
 		}
-		return okCapJSON(json.RawMessage(resp)), nil
+		return okKuboJSON(resp), nil
 
 	case "ipfs.swarm_peers":
 		resp, err := c.kuboPost(ctx, "/api/v0/swarm/peers", nil, "")
 		if err != nil {
 			return errCapJSON(err.Error()), nil
 		}
-		return okCapJSON(json.RawMessage(resp)), nil
+		return okKuboJSON(resp), nil
 
 	case "ipfs.pubsub_publish":
 		topic := str("topic")
 		if topic == "" {
 			return errCapJSON("missing topic"), nil
 		}
-		data := str("data")
+		// Binary data arrives as "base64" (typed hostcalls); "data" is UTF-8 text.
+		data := []byte(str("data"))
+		if raw := str("base64"); raw != "" {
+			decoded, err := base64.StdEncoding.DecodeString(raw)
+			if err != nil {
+				return errCapJSON("invalid base64 payload"), nil
+			}
+			data = decoded
+		}
 		var buf bytes.Buffer
 		w := multipart.NewWriter(&buf)
 		part, _ := w.CreateFormFile("file", "data")
-		io.WriteString(part, data)
+		part.Write(data) //nolint:errcheck
 		w.Close()
 		resp, err := c.kuboPost(ctx, "/api/v0/pubsub/pub?arg="+topic, &buf, w.FormDataContentType())
 		if err != nil {
 			return errCapJSON(err.Error()), nil
 		}
-		return okCapJSON(json.RawMessage(resp)), nil
+		return okKuboJSON(resp), nil
 
 	default:
 		return errCapJSON(fmt.Sprintf("unknown ipfs operation: %s", operation)), nil
@@ -278,6 +290,25 @@ func okCapRaw(data []byte) []byte {
 		"result": map[string]interface{}{"__type": "bytes", "base64": encodeBase64Cap(encoded)},
 	})
 	return r
+}
+
+// okKuboJSON wraps a Kubo RPC answer. Kubo answers some calls (pubsub/pub, and pin/rm on some versions) with an
+// empty body, which is not JSON: that is an empty result, not "unexpected end of JSON input". A streamed answer
+// (newline-delimited JSON objects) is delivered as a list.
+func okKuboJSON(resp []byte) []byte {
+	if len(bytes.TrimSpace(resp)) == 0 {
+		return okCapJSON(map[string]interface{}{})
+	}
+	if !json.Valid(resp) {
+		var items []json.RawMessage
+		for _, line := range bytes.Split(resp, []byte("\n")) {
+			if line = bytes.TrimSpace(line); len(line) > 0 && json.Valid(line) {
+				items = append(items, json.RawMessage(line))
+			}
+		}
+		return okCapJSON(items)
+	}
+	return okCapJSON(json.RawMessage(resp))
 }
 
 func okCapJSON(result interface{}) []byte {

@@ -65,7 +65,7 @@ func cryptoCapHandle(operation string, payload []byte) ([]byte, error) {
 			return ""
 		}
 		if v, ok := p[key]; ok {
-			return fmt.Sprintf("%v", v)
+			return capText(v)
 		}
 		return ""
 	}
@@ -264,6 +264,10 @@ func cryptoCapHandle(operation string, payload []byte) ([]byte, error) {
 				return errCapJSON("nonce generation failed: " + err.Error()), nil
 			}
 		}
+		// gcm.Seal panics on a nonce of the wrong length: the guest chooses it, so check it.
+		if len(nonce) != gcm.NonceSize() {
+			return errCapJSON(fmt.Sprintf("invalid nonce: AES-GCM takes a %d-byte nonce, got %d", gcm.NonceSize(), len(nonce))), nil
+		}
 		ciphertext := gcm.Seal(nil, nonce, plaintext, nil)
 		return okCapJSON(map[string]interface{}{
 			"ciphertext": encodeBase64Cap(ciphertext),
@@ -290,6 +294,9 @@ func cryptoCapHandle(operation string, payload []byte) ([]byte, error) {
 		gcm, err := cipher.NewGCM(block)
 		if err != nil {
 			return errCapJSON("gcm init failed: " + err.Error()), nil
+		}
+		if len(nonce) != gcm.NonceSize() {
+			return errCapJSON(fmt.Sprintf("invalid nonce: AES-GCM takes a %d-byte nonce, got %d", gcm.NonceSize(), len(nonce))), nil
 		}
 		plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
 		if err != nil {
@@ -387,7 +394,7 @@ func cryptoCapHandle(operation string, payload []byte) ([]byte, error) {
 	case "crypto.random":
 		length := intVal("length", 32)
 		if length <= 0 || length > 8192 {
-			return errCapJSON("length must be 1-8192"), nil
+			return errCapJSON(fmt.Sprintf("crypto.random: length must be 1-8192 (one bound with random.bytes), got %d", length)), nil
 		}
 		buf := make([]byte, length)
 		if _, err := io.ReadFull(rand.Reader, buf); err != nil {

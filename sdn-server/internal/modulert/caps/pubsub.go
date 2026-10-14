@@ -2,6 +2,7 @@ package caps
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"sync"
@@ -51,7 +52,7 @@ func (h *pubsubCapHandler) handle(operation string, payload []byte) ([]byte, err
 			return ""
 		}
 		if v, ok := p[key]; ok {
-			return fmt.Sprintf("%v", v)
+			return capText(v)
 		}
 		return ""
 	}
@@ -62,7 +63,15 @@ func (h *pubsubCapHandler) handle(operation string, payload []byte) ([]byte, err
 		if topic == "" {
 			return errCapJSON("missing topic"), nil
 		}
-		data := str("data")
+		// Binary data arrives as "base64" (typed hostcalls); "data" is UTF-8 text.
+		data := []byte(str("data"))
+		if raw := str("base64"); raw != "" {
+			decoded, err := base64.StdEncoding.DecodeString(raw)
+			if err != nil {
+				return errCapJSON("invalid base64 payload"), nil
+			}
+			data = decoded
+		}
 
 		t, err := h.joinTopic(topic)
 		if err != nil {
@@ -71,7 +80,7 @@ func (h *pubsubCapHandler) handle(operation string, payload []byte) ([]byte, err
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if err := t.Publish(ctx, []byte(data)); err != nil {
+		if err := t.Publish(ctx, data); err != nil {
 			return errCapJSON("publish failed: " + err.Error()), nil
 		}
 		return okCapJSON(true), nil
@@ -80,6 +89,12 @@ func (h *pubsubCapHandler) handle(operation string, payload []byte) ([]byte, err
 		topic := str("topic")
 		if topic == "" {
 			return errCapJSON("missing topic"), nil
+		}
+
+		// Messages are delivered by invoking the module's on_pubsub_message; a flow bundle (mod == nil) has no
+		// module to deliver to, and the drain goroutine dereferenced it.
+		if h.mod == nil {
+			return errCapJSON("pubsub.subscribe is not supported for flow bundles: there is no module to deliver messages to"), nil
 		}
 
 		h.mu.Lock()
