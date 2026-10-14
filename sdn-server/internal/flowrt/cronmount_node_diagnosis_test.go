@@ -1,10 +1,15 @@
 package flowrt
 
 import (
-	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
+	"time"
+
+	flatbuffers "github.com/google/flatbuffers/go"
+
+	"github.com/spacedatanetwork/sdn-server/internal/typedfb/flownotice"
+	"github.com/spacedatanetwork/sdn-server/internal/typedfb/timertick"
 )
 
 // The cellular worldwide ingest ran three times on host-02, fetched 3,145,728 B
@@ -133,12 +138,45 @@ func TestEgressReportsUnchangedReadsTheNotice(t *testing.T) {
 		{[]string{`"plain text frame"`, `{"unchanged":false}`}, false},
 		{nil, false},
 	} {
-		results := make([]json.RawMessage, 0, len(tc.frames))
+		frames := make([][]byte, 0, len(tc.frames))
 		for _, frame := range tc.frames {
-			results = append(results, json.RawMessage(frame))
+			frames = append(frames, []byte(frame))
 		}
-		if got := egressReportsUnchanged(results); got != tc.want {
+		if got := egressReportsUnchanged(frames); got != tc.want {
 			t.Errorf("egressReportsUnchanged(%v) = %v, want %v", tc.frames, got, tc.want)
 		}
+	}
+
+	// A typed module's notice: a FlowNotice (FNTC) of KIND Unchanged is the
+	// quiet tick; any other kind is not.
+	notice := func(kind byte) []byte {
+		builder := flatbuffers.NewBuilder(64)
+		reason := builder.CreateString("not-modified")
+		flownotice.FlowNoticeStart(builder)
+		flownotice.FlowNoticeAddReason(builder, reason)
+		builder.PrependByteSlot(0, kind, 255)
+		flownotice.FinishFlowNoticeBuffer(builder, flownotice.FlowNoticeEnd(builder))
+		return builder.FinishedBytes()
+	}
+	if !egressReportsUnchanged([][]byte{notice(0)}) {
+		t.Error("a FlowNotice of KIND Unchanged was not read as unchanged")
+	}
+	if egressReportsUnchanged([][]byte{notice(1)}) {
+		t.Error("a FlowNotice of KIND Skipped was read as unchanged")
+	}
+	if got := egressSummary([][]byte{notice(0)}); len(got) != 1 || !strings.Contains(string(got[0]), `"fileIdentifier":"FNTC"`) {
+		t.Errorf("egressSummary of a FlowNotice = %s", got)
+	}
+}
+
+func TestTimerTickFrameIsATimerTick(t *testing.T) {
+	at := time.UnixMilli(1760472000123)
+	frame := timerTickFrame("timer-supplemental-omm", at, 7)
+	if !timertick.TimerTickBufferHasIdentifier(frame) {
+		t.Fatalf("tick frame has no TICK identifier: % x", frame[:8])
+	}
+	tick := timertick.GetRootAsTimerTick(frame, 0)
+	if string(tick.TriggerId()) != "timer-supplemental-omm" || tick.FiredMs() != 1760472000123 || tick.ScheduledMs() != 1760472000123 || tick.Sequence() != 7 {
+		t.Fatalf("tick = %q fired %d scheduled %d seq %d", tick.TriggerId(), tick.FiredMs(), tick.ScheduledMs(), tick.Sequence())
 	}
 }

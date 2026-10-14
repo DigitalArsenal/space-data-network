@@ -27,7 +27,11 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
 	"github.com/spacedatanetwork/sdn-server/internal/modulert"
+	"github.com/spacedatanetwork/sdn-server/internal/typedfb/flownotice"
+	"github.com/spacedatanetwork/sdn-server/internal/typedfb/timertick"
 	"github.com/spacedatanetwork/sdn-server/plugins"
+
+	flatbuffers "github.com/google/flatbuffers/go"
 )
 
 // serviceTrigger is one TIMER trigger of a service flow: its runtime trigger
@@ -44,6 +48,10 @@ type serviceTrigger struct {
 	// the cadence is operator-declared and must outrank persisted runtime
 	// state.
 	IntervalPinned bool
+
+	// Fired counts this trigger's firings since the flow loaded: the next
+	// TimerTick's SEQUENCE (0-based).
+	Fired uint64
 }
 
 // ServiceFlow is one timer-served flow bundle registered as an SDN plugin.
@@ -574,25 +582,27 @@ func (sf *ServiceFlow) FireTrigger(ctx context.Context, triggerID string) ([]byt
 	rt := sf.inst.rt
 	defer sf.inst.bridge.ResetBodyRefs()
 
-	tick, _ := json.Marshal(map[string]string{
-		"trigger": trigger.TriggerID,
-		"firedAt": time.Now().UTC().Format(time.RFC3339),
-	})
+	tick := timerTickFrame(trigger.TriggerID, time.Now(), trigger.Fired)
+	trigger.Fired++
 
 	// One tick frame into the flow's linear memory at the trigger's bound
-	// port ([48B descriptor][port id\0][payload], same packing as HTTP
-	// mounts).
+	// port ([48B descriptor][port id\0][pad][payload], the HTTP mounts'
+	// packing). The TimerTick carries uint64 fields, so its first byte sits
+	// on an 8-byte boundary of guest memory: the allocation is 8-aligned
+	// (the guest allocator's minimum) and the port id is padded to 8.
 	portBytes := append([]byte(trigger.PortID), 0)
-	buf := make([]byte, flowFrameDescriptorSize+len(portBytes)+len(tick))
+	payloadAt := flowFrameDescriptorSize + (len(portBytes)+7)&^7
+	buf := make([]byte, payloadAt+len(tick))
 	copy(buf[flowFrameDescriptorSize:], portBytes)
-	copy(buf[flowFrameDescriptorSize+len(portBytes):], tick)
+	copy(buf[payloadAt:], tick)
 	framePtr, err := rt.Module().AllocateSize(uint32(len(buf)))
 	if err != nil {
 		return nil, fmt.Errorf("allocate tick frame: %w", err)
 	}
 	encodeFrameDescriptor(buf[:flowFrameDescriptorSize], &FlowFrameDescriptor{
 		PortIDPointer: framePtr + flowFrameDescriptorSize,
-		Offset:        framePtr + flowFrameDescriptorSize + uint32(len(portBytes)),
+		Alignment:     8,
+		Offset:        framePtr + uint32(payloadAt),
 		Size:          uint32(len(tick)),
 		Occupied:      true,
 	})
@@ -602,15 +612,10 @@ func (sf *ServiceFlow) FireTrigger(ctx context.Context, triggerID string) ([]byt
 	rt.EnqueueTriggerFrame(trigger.Index, framePtr)
 
 	// Drain, collecting every egress result frame verbatim.
-	var results []json.RawMessage
+	var frames [][]byte
 	collect := func(_ context.Context, args *InvocationArgs) (*InvocationResult, error) {
 		for _, frame := range args.Frames {
-			if json.Valid(frame.Bytes) {
-				results = append(results, json.RawMessage(append([]byte(nil), frame.Bytes...)))
-			} else {
-				encoded, _ := json.Marshal(string(frame.Bytes))
-				results = append(results, json.RawMessage(encoded))
-			}
+			frames = append(frames, append([]byte(nil), frame.Bytes...))
 		}
 		return &InvocationResult{StatusCode: 0}, nil
 	}
@@ -624,7 +629,7 @@ func (sf *ServiceFlow) FireTrigger(ctx context.Context, triggerID string) ([]byt
 	// died mid-drain is exactly the one whose per-node record is worth having.
 	sf.statsMu.Lock()
 	sf.lastNodeDigest = readNodeRunDigest(rt)
-	sf.lastRunUnchanged = egressReportsUnchanged(results)
+	sf.lastRunUnchanged = egressReportsUnchanged(frames)
 	sf.statsMu.Unlock()
 	if drainErr != nil {
 		return nil, fmt.Errorf("flow service %q trigger %q: %w", sf.programID, triggerID, drainErr)
@@ -632,9 +637,59 @@ func (sf *ServiceFlow) FireTrigger(ctx context.Context, triggerID string) ([]byt
 
 	summary, _ := json.Marshal(map[string]interface{}{
 		"trigger": triggerID,
-		"results": results,
+		"results": egressSummary(frames),
 	})
 	return summary, nil
+}
+
+// timerTickFrame is the frame a timer trigger hands its bound port: an SDK
+// TimerTick (TICK). The host fires a trigger when it is due, so SCHEDULED_MS
+// and FIRED_MS are the same instant.
+func timerTickFrame(triggerID string, firedAt time.Time, sequence uint64) []byte {
+	builder := flatbuffers.NewBuilder(64)
+	id := builder.CreateString(triggerID)
+	ms := uint64(firedAt.UnixMilli())
+	timertick.TimerTickStart(builder)
+	timertick.TimerTickAddTriggerId(builder, id)
+	timertick.TimerTickAddScheduledMs(builder, ms)
+	timertick.TimerTickAddFiredMs(builder, ms)
+	timertick.TimerTickAddSequence(builder, sequence)
+	timertick.FinishTimerTickBuffer(builder, timertick.TimerTickEnd(builder))
+	return builder.FinishedBytes()
+}
+
+// egressSummary is the run summary's view of the egress frames: a JSON frame
+// as itself, a FlatBuffer frame as its file identifier and bytes (base64), so
+// a typed IngestResult or FlowNotice reaches the caller whole.
+func egressSummary(frames [][]byte) []json.RawMessage {
+	results := make([]json.RawMessage, 0, len(frames))
+	for _, frame := range frames {
+		if json.Valid(frame) {
+			results = append(results, json.RawMessage(frame))
+			continue
+		}
+		entry := map[string]interface{}{"bytes": frame}
+		if id, ok := frameFileIdentifier(frame); ok {
+			entry["fileIdentifier"] = id
+		}
+		encoded, _ := json.Marshal(entry)
+		results = append(results, json.RawMessage(encoded))
+	}
+	return results
+}
+
+// frameFileIdentifier reads a FlatBuffer frame's 4-character file identifier
+// (bytes 4..8 after the root offset), when those bytes are printable ASCII.
+func frameFileIdentifier(frame []byte) (string, bool) {
+	if len(frame) < 8 {
+		return "", false
+	}
+	for _, c := range frame[4:8] {
+		if c < 0x21 || c > 0x7e {
+			return "", false
+		}
+	}
+	return string(frame[4:8]), true
 }
 
 // readNodeRunDigest copies the artifact's per-node state table out of guest
@@ -684,14 +739,21 @@ func readNodeRunDigest(rt *FlowRuntime) []nodeRunOutcome {
 // ErrRetrievalUnchanged is the diagnosis of a run whose conditional fetch
 // answered 304: the publisher had nothing new, the node keeps the set it has,
 // and the ledger must count the attempt as a success without a batch rather
-// than widen the publisher's window. The retrieval modules say so with one
-// egress frame {"status":304,"unchanged":true,...}.
+// than widen the publisher's window. A typed retrieval module says so with a
+// FlowNotice (FNTC) of KIND Unchanged; a JSON-era one with an egress frame
+// {"status":304,"unchanged":true,...}.
 var ErrRetrievalUnchanged = errors.New("upstream unchanged: the conditional fetch answered 304 and there was nothing new to land")
 
 // egressReportsUnchanged reports whether any egress result frame of the run
 // is such an unchanged notice.
-func egressReportsUnchanged(results []json.RawMessage) bool {
-	for _, raw := range results {
+func egressReportsUnchanged(frames [][]byte) bool {
+	for _, raw := range frames {
+		if flownotice.FlowNoticeBufferHasIdentifier(raw) {
+			if flownotice.GetRootAsFlowNotice(raw, 0).Kind().String() == "Unchanged" {
+				return true
+			}
+			continue
+		}
 		var frame struct {
 			Unchanged bool `json:"unchanged"`
 			Status    int  `json:"status"`

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
@@ -9,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/libp2p/go-libp2p/core/crypto"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -20,6 +22,7 @@ import (
 	sdnpubsub "github.com/spacedatanetwork/sdn-server/internal/pubsub"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
+	"github.com/spacedatanetwork/sdn-server/internal/typedfb/ingestresult"
 )
 
 const (
@@ -196,12 +199,27 @@ func (h *DatasetPublicationHandler) handlePublish(w http.ResponseWriter, r *http
 		return
 	}
 
-	var req DatasetPublicationRequest
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64*1024))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&req); err != nil {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 64*1024))
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request: "+err.Error())
 		return
+	}
+	var req DatasetPublicationRequest
+	if ingestresult.IngestResultBufferHasIdentifier(body) {
+		// A typed ingest flow names the batch it just stored with its
+		// IngestResult (INGR), the same frame its storage hostcall answered.
+		req, err = datasetPublicationRequestFromIngestResult(body)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid request: "+err.Error())
+			return
+		}
+	} else {
+		decoder := json.NewDecoder(bytes.NewReader(body))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid request: "+err.Error())
+			return
+		}
 	}
 
 	result, err := h.service.PublishDatasetUpdate(r.Context(), req)
@@ -210,6 +228,34 @@ func (h *DatasetPublicationHandler) handlePublish(w http.ResponseWriter, r *http
 		return
 	}
 	writeJSON(w, http.StatusAccepted, publicDatasetPublicationResult(result))
+}
+
+// datasetPublicationRequestFromIngestResult reads the lane and batch a typed
+// ingest's IngestResult names: the publication of exactly that batch, every
+// other field at its default. A result whose ingest refused the batch names
+// nothing to publish.
+func datasetPublicationRequestFromIngestResult(body []byte) (req DatasetPublicationRequest, err error) {
+	defer func() {
+		// The Go FlatBuffers reader has no verifier: a truncated or forged
+		// table panics on an out-of-range offset, which is a bad request.
+		if recovered := recover(); recovered != nil {
+			req, err = DatasetPublicationRequest{}, fmt.Errorf("malformed IngestResult: %v", recovered)
+		}
+	}()
+	result := ingestresult.GetRootAsIngestResult(body, 0)
+	if refused := string(result.Refused()); refused != "" {
+		return DatasetPublicationRequest{}, fmt.Errorf("the ingest refused batch %q: %s", result.BatchId(), refused)
+	}
+	req = DatasetPublicationRequest{
+		Schema:     string(result.Schema()),
+		ProviderID: string(result.ProviderId()),
+		SourceName: string(result.SourceName()),
+		BatchID:    string(result.BatchId()),
+	}
+	if req.Schema == "" || req.BatchID == "" {
+		return DatasetPublicationRequest{}, errors.New("an IngestResult names no SCHEMA and BATCH_ID to publish")
+	}
+	return req, nil
 }
 
 func publicDatasetPublicationResult(result *DatasetPublicationResult) *datasetPublicationResponse {
