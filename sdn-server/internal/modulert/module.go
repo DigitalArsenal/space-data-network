@@ -582,16 +582,16 @@ func (m *Module) Start(ctx context.Context, runtime plugins.RuntimeContext) erro
 				streamProtocolID = proto.ProtocolID
 			}
 			pid := protocol.ID(streamProtocolID)
-			methodID := proto.MethodID
+			decl := proto
 			runtime.Host.SetStreamHandler(pid, func(s network.Stream) {
-				m.handleProtocolStream(s, methodID)
+				m.handleProtocolStream(s, decl)
 			})
 			log.Infof(
 				"Module %q: registered protocol handler %s (%s) → %s",
 				manifest.PluginID,
 				streamProtocolID,
 				proto.ProtocolID,
-				methodID,
+				proto.MethodID,
 			)
 		}
 	}
@@ -1150,8 +1150,41 @@ func runtimeManifestTypeRefs(typeRefs []ManifestFlatBufferTypeRef) []plugins.Run
 
 // --- Generic protocol stream handler ---
 
-func (m *Module) handleProtocolStream(s network.Stream, methodID string) {
+// protocolInputFrame types a protocol request for the method's input ports.
+// A stream may carry more than one message type (module-delivery carries $LCH
+// requests and $LPF proofs), so the frame goes to the input port whose
+// accepted types name its FlatBuffer file identifier; a frame no port names
+// goes to the protocol's declared input port.
+func protocolInputFrame(manifest *Manifest, proto ProtocolDecl, payload []byte) InvokeInputFrame {
+	frame := InvokeInputFrame{PortID: proto.InputPortID, Payload: payload}
+	if frame.PortID == "" {
+		frame.PortID = "request"
+	}
+	if len(payload) < 8 || manifest == nil {
+		return frame
+	}
+	fileID := string(payload[4:8])
+	for _, method := range manifest.Methods {
+		if method.MethodID != proto.MethodID {
+			continue
+		}
+		for _, port := range method.InputPorts {
+			for _, set := range port.AcceptedTypeSets {
+				for _, t := range set.AllowedTypes {
+					if t.FileIdentifier == fileID {
+						frame.PortID, frame.SchemaName, frame.FileIdentifier, frame.RootTypeName = port.PortID, t.SchemaName, t.FileIdentifier, t.RootType
+						return frame
+					}
+				}
+			}
+		}
+	}
+	return frame
+}
+
+func (m *Module) handleProtocolStream(s network.Stream, proto ProtocolDecl) {
 	defer s.Close()
+	methodID := proto.MethodID
 
 	s.SetReadDeadline(time.Now().Add(15 * time.Second))
 
@@ -1185,8 +1218,8 @@ func (m *Module) handleProtocolStream(s network.Stream, methodID string) {
 	}
 	license.AuditDeliveryFrame("request", reqBytes, remotePeer)
 
-	// Invoke the module's method
-	resp, err := m.InvokeMethod(context.Background(), methodID, reqBytes)
+	// Invoke the module's method, the frame on the port its type names.
+	resp, err := m.InvokeMethodFrames(context.Background(), methodID, []InvokeInputFrame{protocolInputFrame(m.Manifest(), proto, reqBytes)})
 	if err != nil {
 		// A request this node ADMITTED and then answered with silence. Say so
 		// in the delivery audit, naming the module and the requester
