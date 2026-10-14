@@ -171,12 +171,12 @@ func TestEgressReportsUnchangedReadsTheNotice(t *testing.T) {
 
 func TestTimerTickFrameIsATimerTick(t *testing.T) {
 	at := time.UnixMilli(1760472000123)
-	frame := timerTickFrame("timer-supplemental-omm", at, 7)
+	frame := timerTickFrame("timer-hourly", at, 7)
 	if !timertick.TimerTickBufferHasIdentifier(frame) {
 		t.Fatalf("tick frame has no TICK identifier: % x", frame[:8])
 	}
 	tick := timertick.GetRootAsTimerTick(frame, 0)
-	if string(tick.TriggerId()) != "timer-supplemental-omm" || tick.FiredMs() != 1760472000123 || tick.ScheduledMs() != 1760472000123 || tick.Sequence() != 7 {
+	if string(tick.TriggerId()) != "timer-hourly" || tick.FiredMs() != 1760472000123 || tick.ScheduledMs() != 1760472000123 || tick.Sequence() != 7 {
 		t.Fatalf("tick = %q fired %d scheduled %d seq %d", tick.TriggerId(), tick.FiredMs(), tick.ScheduledMs(), tick.Sequence())
 	}
 }
