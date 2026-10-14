@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"sort"
 	"strconv"
@@ -147,52 +148,124 @@ func headerBlock(object map[string]any) []byte {
 	return []byte(strings.Join(lines, "\r\n"))
 }
 
-// sqlParams: list "sql_params" (SqlValue) -> the handlers' tagged params ({"t","v"}); i64 beyond float64's exact
-// range travels as text so it arrives whole.
-func sqlParams(call *typedCall) []any {
-	list, ok := call.lists["sql_params"]
-	if !ok {
-		return nil
-	}
-	out := make([]any, 0, len(list))
-	for _, v := range list {
-		switch enumName("sqlValueKind", v["KIND"]) {
-		case "Bool":
-			out = append(out, map[string]any{"t": "bool", "v": v["BOOL_VALUE"] == true})
-		case "I64":
-			i := integer(v["I64_VALUE"])
-			if i > 1<<53 || i < -(1<<53) {
-				out = append(out, map[string]any{"t": "i64", "v": strconv.FormatInt(i, 10)})
-			} else {
-				out = append(out, map[string]any{"t": "i64", "v": i})
-			}
-		case "F64":
-			out = append(out, map[string]any{"t": "f64", "v": num(v["F64_VALUE"])})
-		case "Str":
-			out = append(out, map[string]any{"t": "str", "v": str(v["STR_VALUE"])})
-		default:
-			out = append(out, map[string]any{"t": "null"})
+// SQL values travel in FlatSQL's own tagged parameter encoding (raw "params" in, raw "cells" out): value after
+// value, a u8 tag, a u32 little-endian payload length, the payload.
+const (
+	sqlTagNull  = 0
+	sqlTagBool  = 1
+	sqlTagI64   = 2
+	sqlTagF64   = 3
+	sqlTagStr   = 4
+	sqlTagBytes = 5
+)
+
+var sqlTagNames = []string{"null", "bool", "i64", "f64", "str", "bytes"}
+
+// sqlFixedSize is the payload size of the fixed-width tags (-1: any length).
+var sqlFixedSize = []int{0, 1, 8, 8, -1, -1}
+
+// decodeSQLValues splits a tagged SQL value run into its tags and payloads (the payloads alias data).
+func decodeSQLValues(data []byte) (tags []byte, payloads [][]byte, err error) {
+	for at := 0; at < len(data); {
+		if len(data)-at < 5 {
+			return nil, nil, fmt.Errorf("truncated value header")
 		}
+		tag, size := data[at], binary.LittleEndian.Uint32(data[at+1:])
+		start := at + 5
+		if uint64(len(data)-start) < uint64(size) {
+			return nil, nil, fmt.Errorf("payload exceeds the buffer")
+		}
+		if int(tag) >= len(sqlTagNames) {
+			return nil, nil, fmt.Errorf("unknown tag %d", tag)
+		}
+		if fixed := sqlFixedSize[tag]; fixed >= 0 && int(size) != fixed {
+			return nil, nil, fmt.Errorf("a %s carries %d bytes, not %d", sqlTagNames[tag], fixed, size)
+		}
+		tags = append(tags, tag)
+		payloads = append(payloads, data[start:start+int(size)])
+		at = start + int(size)
 	}
-	return out
+	return tags, payloads, nil
 }
 
-func deliver(call *typedCall) string {
+// appendSQLValue appends one tagged SQL value.
+func appendSQLValue(out []byte, tag byte, payload []byte) []byte {
+	var hdr [5]byte
+	hdr[0] = tag
+	binary.LittleEndian.PutUint32(hdr[1:], uint32(len(payload)))
+	return append(append(out, hdr[:]...), payload...)
+}
+
+// maxExactInteger is 2^53: an i64 beyond it travels to the handlers as text so it arrives whole.
+const maxExactInteger = 1 << 53
+
+// sqlParams: raw "params" -> the handlers' tagged params ({"t","v"}; bytes as base64). nil when the module sent none.
+func sqlParams(call *typedCall) ([]any, error) {
+	data, ok := call.raw["params"]
+	if !ok {
+		return nil, nil
+	}
+	tags, payloads, err := decodeSQLValues(data)
+	if err != nil {
+		return nil, typedErr("invalid-params", "%s: params: %v", call.op, err)
+	}
+	out := make([]any, 0, len(tags))
+	for i, tag := range tags {
+		payload := payloads[i]
+		switch tag {
+		case sqlTagNull:
+			out = append(out, map[string]any{"t": "null"})
+		case sqlTagBool:
+			out = append(out, map[string]any{"t": "bool", "v": payload[0] != 0})
+		case sqlTagI64:
+			v := int64(binary.LittleEndian.Uint64(payload))
+			if v > maxExactInteger || v < -maxExactInteger {
+				out = append(out, map[string]any{"t": "i64", "v": strconv.FormatInt(v, 10)})
+			} else {
+				out = append(out, map[string]any{"t": "i64", "v": v})
+			}
+		case sqlTagF64:
+			v := math.Float64frombits(binary.LittleEndian.Uint64(payload))
+			if math.IsNaN(v) || math.IsInf(v, 0) {
+				return nil, typedErr("invalid-params", "%s: params: value %d is %v (this host takes finite f64)", call.op, i, v)
+			}
+			out = append(out, map[string]any{"t": "f64", "v": v})
+		case sqlTagStr:
+			out = append(out, map[string]any{"t": "str", "v": string(payload)})
+		case sqlTagBytes:
+			out = append(out, map[string]any{"t": "bytes", "v": b64(payload)})
+		}
+	}
+	return out, nil
+}
+
+// deliverRef: DELIVER Ref is "ref" for the handlers; Inline is left out (the handlers' default).
+func deliverRef(call *typedCall) string {
 	if enumName("deliverMode", call.params["DELIVER"]) == "Ref" {
 		return "ref"
 	}
 	return ""
 }
 
-func sqlRequest(call *typedCall) map[string]any {
-	request := map[string]any{"sql": string(call.raw["sql"])}
-	if params := sqlParams(call); params != nil {
-		request["params"] = params
-	}
-	if d := deliver(call); d != "" {
+// withDeliver replaces the record's numeric "deliver" with the handlers' "ref".
+func withDeliver(request map[string]any, call *typedCall) map[string]any {
+	delete(request, "deliver")
+	if d := deliverRef(call); d != "" {
 		request["deliver"] = d
 	}
 	return request
+}
+
+func sqlRequest(call *typedCall) (map[string]any, error) {
+	request := map[string]any{"sql": string(call.raw["sql"])}
+	params, err := sqlParams(call)
+	if err != nil {
+		return nil, err
+	}
+	if params != nil {
+		request["params"] = params
+	}
+	return withDeliver(request, call), nil
 }
 
 // streamAnswer: {rows, columns, stream: $bin | ref: {token,size,fnv1a64,frames}} -> StreamResult-shaped record + raw.
@@ -201,11 +274,7 @@ func streamAnswer(call *typedCall, result any, segments [][]byte) (*typedAnswer,
 	record := map[string]any{"ROWS": integer(object["rows"]), "COLUMNS": integer(object["columns"])}
 	answer := &typedAnswer{result: record, raw: map[string][]byte{}}
 	if ref, ok := object["ref"].(map[string]any); ok {
-		frames := int64(-1)
-		if v, ok := ref["frames"]; ok {
-			frames = integer(v)
-		}
-		record["REF"] = map[string]any{"TOKEN": integer(ref["token"]), "SIZE": integer(ref["size"]), "FRAMES": frames, "FNV1A64": str(ref["fnv1a64"])}
+		record["REF"] = bodyRef(ref)
 	} else if data, ok := bytesOf(object["stream"], segments); ok {
 		answer.raw["stream"] = data
 	}
@@ -267,22 +336,38 @@ func orderedRows(doc []byte) ([]string, [][]any, error) {
 	return columns, rows, nil
 }
 
-func sqlCell(v any) (map[string]any, error) {
+// appendSQLCell appends a rows-answer cell (a JSON value) as a tagged SQL value: an integer is i64, any other number
+// f64 (as the SDK's JS hosts tag it: 1.0 is an integer there too).
+func appendSQLCell(out []byte, v any) ([]byte, error) {
+	var word [8]byte
 	switch t := v.(type) {
 	case nil:
-		return map[string]any{"KIND": uint8(0)}, nil
+		return appendSQLValue(out, sqlTagNull, nil), nil
 	case bool:
-		return map[string]any{"KIND": uint8(1), "BOOL_VALUE": t}, nil
+		b := byte(0)
+		if t {
+			b = 1
+		}
+		return appendSQLValue(out, sqlTagBool, []byte{b}), nil
 	case json.Number:
 		if i, err := t.Int64(); err == nil {
-			return map[string]any{"KIND": uint8(2), "I64_VALUE": i}, nil
+			binary.LittleEndian.PutUint64(word[:], uint64(i))
+			return appendSQLValue(out, sqlTagI64, word[:]), nil
 		}
-		f, _ := t.Float64()
-		return map[string]any{"KIND": uint8(3), "F64_VALUE": f}, nil
+		f, err := t.Float64()
+		if err != nil {
+			return nil, fmt.Errorf("a cell is the number %s", t)
+		}
+		if f == math.Trunc(f) && f >= -(1<<63) && f < 1<<63 {
+			binary.LittleEndian.PutUint64(word[:], uint64(int64(f)))
+			return appendSQLValue(out, sqlTagI64, word[:]), nil
+		}
+		binary.LittleEndian.PutUint64(word[:], math.Float64bits(f))
+		return appendSQLValue(out, sqlTagF64, word[:]), nil
 	case string:
-		return map[string]any{"KIND": uint8(4), "STR_VALUE": t}, nil
+		return appendSQLValue(out, sqlTagStr, []byte(t)), nil
 	}
-	return nil, fmt.Errorf("a cell is a %T (nested values do not fit SqlValue)", v)
+	return nil, fmt.Errorf("a cell is a %T (nested values are not SQL values)", v)
 }
 
 var typedAdapters = map[string]typedAdapter{
@@ -316,10 +401,21 @@ var typedAdapters = map[string]typedAdapter{
 		if raw, ok := call.raw["archive"]; ok {
 			request["archive"] = map[string]any{"source": str(call.params["ARCHIVE_SOURCE"]), "name": str(call.params["ARCHIVE_NAME"]), "raw": b64(raw)}
 		}
-		if provenance := call.lists["provenance"]; len(provenance) > 0 {
+		// the "provenance" record (keys lower-cased) and the "provenance_attributes" as "attributes": [{name, value}]
+		provenance, attributes := call.lists["provenance"], call.lists["provenance_attributes"]
+		if len(provenance) > 0 || len(attributes) > 0 {
 			document := map[string]any{}
-			for k, v := range provenance[0] {
-				document[strings.ToLower(k)] = v
+			if len(attributes) > 0 {
+				list := make([]map[string]string, 0, len(attributes))
+				for _, a := range attributes {
+					list = append(list, map[string]string{"name": str(a["NAME"]), "value": str(a["VALUE"])})
+				}
+				document["attributes"] = list
+			}
+			if len(provenance) > 0 {
+				for k, v := range provenance[0] {
+					document[strings.ToLower(k)] = v
+				}
 			}
 			body, err := json.Marshal(document)
 			if err != nil {
@@ -336,17 +432,18 @@ var typedAdapters = map[string]typedAdapter{
 		}
 		return &typedAnswer{result: record}, nil
 	}},
-	"storage.flatsql_query_stream": {in: func(call *typedCall) (map[string]any, error) { return sqlRequest(call), nil }, out: streamAnswer},
+	"storage.flatsql_query_stream": {in: sqlRequest, out: streamAnswer},
 	"storage.flatsql_epoch_stream": {in: func(call *typedCall) (map[string]any, error) {
 		request, _ := defaultTypedRequest(call)
-		delete(request, "deliver")
-		if d := deliver(call); d != "" {
-			request["deliver"] = d
-		}
-		return request, nil
+		return withDeliver(request, call), nil
 	}, out: streamAnswer},
+	// want "stream" answers like flatsql_query_stream (KIND Stream); "rows" ({kind: "rows", json}) with list "columns"
+	// and raw "cells" (tagged SQL values, row-major)
 	"storage.query_sandboxed": {in: func(call *typedCall) (map[string]any, error) {
-		request := sqlRequest(call)
+		request, err := sqlRequest(call)
+		if err != nil {
+			return nil, err
+		}
 		request["want"] = strings.ToLower(enumName("sandboxWant", call.params["WANT"]))
 		return request, nil
 	}, out: func(call *typedCall, result any, segments [][]byte) (*typedAnswer, error) {
@@ -367,19 +464,19 @@ var typedAdapters = map[string]typedAdapter{
 			return nil, typedErr("failed", "storage.query_sandboxed: %v", err)
 		}
 		answer := &typedAnswer{result: map[string]any{"KIND": uint8(1), "ROWS": int64(len(rows)), "COLUMNS": int64(len(columns))},
-			lists: map[string][]map[string]any{"columns": {}, "cells": {}}}
+			lists: map[string][]map[string]any{"columns": {}}}
 		for _, c := range columns {
 			answer.lists["columns"] = append(answer.lists["columns"], map[string]any{"VALUE": c})
 		}
+		cells := []byte{}
 		for _, row := range rows {
 			for _, cell := range row {
-				v, err := sqlCell(cell)
-				if err != nil {
+				if cells, err = appendSQLCell(cells, cell); err != nil {
 					return nil, typedErr("failed", "storage.query_sandboxed: %v", err)
 				}
-				answer.lists["cells"] = append(answer.lists["cells"], v)
 			}
 		}
+		answer.raw = map[string][]byte{"cells": cells}
 		return answer, nil
 	}},
 	"storage.query_surface": {out: func(call *typedCall, result any, _ [][]byte) (*typedAnswer, error) {
@@ -407,7 +504,12 @@ var typedAdapters = map[string]typedAdapter{
 	}},
 	"storage.flatsql_cache_key": {in: func(call *typedCall) (map[string]any, error) {
 		request, _ := defaultTypedRequest(call)
-		for k, v := range sqlRequest(call) {
+		delete(request, "params") // the raw tagged values, decoded by sqlRequest
+		sql, err := sqlRequest(call)
+		if err != nil {
+			return nil, err
+		}
+		for k, v := range sql {
 			request[k] = v
 		}
 		if projection := call.lists["projection"]; projection != nil {
@@ -651,6 +753,61 @@ var typedAdapters = map[string]typedAdapter{
 	"secrets.put":    {in: secretRequest, out: secretStatus},
 	"secrets.clear":  {in: secretRequest, out: noAnswer},
 
+	// ---- p2p: the frames ($EPM / $PNM, size-prefixed and concatenated) on raw "records" ------------------------
+	"p2p.peers_snapshot": {in: p2pRequest, out: func(call *typedCall, result any, segments [][]byte) (*typedAnswer, error) {
+		object, _ := result.(map[string]any)
+		answer := &typedAnswer{result: recordFromObject("P2pSummary", object),
+			lists: map[string][]map[string]any{"peers": {}, "peer_addresses": {}, "peer_standards": {}}, raw: p2pRecords(object, segments)}
+		for _, peer := range objectsOf(object["peers"]) {
+			id := str(peer["peer_id"])
+			answer.lists["peers"] = append(answer.lists["peers"], map[string]any{"PEER_ID": id, "CONNECTED": peer["connected"] == true,
+				"SELF": peer["self"] == true, "EPM_INDEX": integerOr(peer["epm_index"], -1), "AGENT_VERSION": str(peer["agent_version"])})
+			for _, a := range valuesOf(peer["addrs"]) {
+				answer.lists["peer_addresses"] = append(answer.lists["peer_addresses"], map[string]any{"PEER_ID": id, "VALUE": str(a)})
+			}
+			for _, s := range valuesOf(peer["standards"]) {
+				answer.lists["peer_standards"] = append(answer.lists["peer_standards"], map[string]any{"PEER_ID": id, "VALUE": str(s)})
+			}
+		}
+		return answer, nil
+	}},
+	"p2p.standards_snapshot": {in: p2pRequest, out: func(call *typedCall, result any, segments [][]byte) (*typedAnswer, error) {
+		object, _ := result.(map[string]any)
+		return &typedAnswer{lists: map[string][]map[string]any{"entries": pnmEntries(object)}, raw: p2pRecords(object, segments)}, nil
+	}},
+	"p2p.pnm_history": {in: p2pRequest, out: func(call *typedCall, result any, segments [][]byte) (*typedAnswer, error) {
+		object, _ := result.(map[string]any)
+		return &typedAnswer{result: recordFromObject("P2pSummary", object), lists: map[string][]map[string]any{"entries": pnmEntries(object)},
+			raw: p2pRecords(object, segments)}, nil
+	}},
+	// {known, reason, pinned, self, fresh, standard, schema, pnm, serving: {batch_id, ..., pnm, ref | stream}}: the served
+	// batch's PNM pointer when one is served, else the newest
+	"p2p.latest_dataset": {in: p2pRequest, out: func(call *typedCall, result any, segments [][]byte) (*typedAnswer, error) {
+		object, _ := result.(map[string]any)
+		serving, _ := object["serving"].(map[string]any)
+		pnm, ok := serving["pnm"].(map[string]any)
+		if !ok {
+			pnm, _ = object["pnm"].(map[string]any)
+		}
+		record := map[string]any{
+			"KNOWN": object["known"] == true, "REASON": str(object["reason"]), "PINNED": object["pinned"] == true, "SELF": object["self"] == true,
+			"FRESH": object["fresh"] == true, "STANDARD": str(object["standard"]), "SCHEMA": str(object["schema"]),
+			"PNM_CID": str(firstOf(pnm["CID"], pnm["cid"])), "PNM_FILE_ID": str(firstOf(pnm["FILE_ID"], pnm["file_id"])),
+			"PNM_PUBLISH_MS":         msOf(firstOf(pnm["PUBLISH_TIMESTAMP"], pnm["publish_timestamp"])),
+			"PNM_SIGNATURE_VERIFIED": pnm["signature_verified"] == true, "PNM_ATTRIBUTION": str(pnm["attribution"]),
+			"BATCH_ID": str(serving["batch_id"]), "PROVIDER_ID": str(serving["provider_id"]), "SOURCE_NAME": str(serving["source_name"]),
+			"RECORD_COUNT": integer(serving["record_count"]), "BYTE_COUNT": integer(serving["byte_count"]), "PARTS": integer(serving["parts"]),
+			"PUBLISHED_MS": msOf(serving["published_at"]), "ETAG_FNV1A64": str(serving["etag_fnv1a64"]),
+		}
+		answer := &typedAnswer{result: record, raw: map[string][]byte{}}
+		if ref, ok := serving["ref"].(map[string]any); ok {
+			record["REF"] = bodyRef(ref)
+		} else if data, ok := bytesOf(serving["stream"], segments); ok {
+			answer.raw["stream"] = data
+		}
+		return answer, nil
+	}},
+
 	// ---- node status and activity ----------------------------------------------------------------------------
 	"node_status_read.status": {out: func(call *typedCall, result any, _ [][]byte) (*typedAnswer, error) {
 		object, _ := result.(map[string]any)
@@ -742,4 +899,87 @@ func secretStatus(call *typedCall, result any, _ [][]byte) (*typedAnswer, error)
 	}
 	return &typedAnswer{result: map[string]any{"ID": str(object["id"]), "CONFIGURED": object["configured"] == true || object["stored"] == true,
 		"USERNAME_MASKED": str(object["username_masked"]), "UPDATED_MS": unixMs(updated), "VERIFIED_MS": unixMs(object["verified_at"])}}, nil
+}
+
+// bodyRef: a handler's {token, size, frames, fnv1a64} body reference as a BodyRef (FRAMES -1 = not counted).
+func bodyRef(ref map[string]any) map[string]any {
+	return map[string]any{"TOKEN": integer(ref["token"]), "SIZE": integer(ref["size"]), "FRAMES": integerOr(ref["frames"], -1), "FNV1A64": str(ref["fnv1a64"])}
+}
+
+// integerOr reads an integer answer, def when the handler left it out.
+func integerOr(v any, def int64) int64 {
+	if v == nil {
+		return def
+	}
+	return integer(v)
+}
+
+func firstOf(values ...any) any {
+	for _, v := range values {
+		if v != nil {
+			return v
+		}
+	}
+	return nil
+}
+
+// msOf reads an answer's time as unix ms: RFC 3339 text or a number of ms; 0 when absent or unreadable.
+func msOf(v any) int64 {
+	switch t := v.(type) {
+	case nil:
+		return 0
+	case string:
+		return unixMs(t)
+	}
+	if f, ok := toFloat(v); ok {
+		return int64(f)
+	}
+	return 0
+}
+
+func objectsOf(v any) []map[string]any {
+	items, _ := v.([]any)
+	out := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		if m, ok := item.(map[string]any); ok {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+func valuesOf(v any) []any {
+	items, _ := v.([]any)
+	return items
+}
+
+// p2pRequest: the P2pParams fields as the handler's keys (peer_id, limit, standard), DELIVER as "ref" (Inline is
+// the handler's default and is left out, as on the SDK's JS hosts).
+func p2pRequest(call *typedCall) (map[string]any, error) {
+	request, _ := defaultTypedRequest(call)
+	return withDeliver(request, call), nil
+}
+
+func p2pRecords(object map[string]any, segments [][]byte) map[string][]byte {
+	if data, ok := bytesOf(object["records"], segments); ok {
+		return map[string][]byte{"records": data}
+	}
+	return map[string][]byte{}
+}
+
+// pnmEntries: the handler's entries as P2pPnmEntry records (the PNM's publish time as unix ms, the signature and the
+// publisher key as hex).
+func pnmEntries(object map[string]any) []map[string]any {
+	entries := []map[string]any{}
+	for _, e := range objectsOf(object["entries"]) {
+		entries = append(entries, map[string]any{
+			"PEER_ID": str(e["peer_id"]), "PUBLISHER_PEER_ID": str(e["publisher_peer_id"]), "GOSSIP_PEER_ID": str(e["gossip_peer_id"]),
+			"STANDARD": str(e["standard"]), "SCHEMA": str(e["schema"]), "FILE_ID": str(e["file_id"]), "FILE_NAME": str(e["file_name"]),
+			"CID": str(e["cid"]), "PUBLISH_MS": msOf(firstOf(e["publish_timestamp"], e["publish_ms"])), "SIGNATURE_TYPE": str(e["signature_type"]),
+			"SIGNATURE_HEX": str(firstOf(e["signature"], e["signature_hex"])), "SIGNATURE_VERIFIED": e["signature_verified"] == true,
+			"ATTRIBUTION": str(e["attribution"]), "PNM_INDEX": integerOr(e["pnm_index"], -1),
+			"PUBLISHER_KEY_HEX": str(firstOf(e["publisher_key"], e["publisher_key_hex"])), "PUBLISHER_KEY_SOURCE": str(e["publisher_key_source"]),
+		})
+	}
+	return entries
 }
