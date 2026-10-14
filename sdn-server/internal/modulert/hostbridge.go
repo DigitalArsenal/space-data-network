@@ -57,6 +57,9 @@ type NodeContext struct {
 
 	Config map[string]interface{}
 
+	// HostSecrets are secrets the host holds for this module by ID (host_secrets.go); nil = none.
+	HostSecrets *HostSecrets
+
 	// CapabilityPolicy is the operator-controlled capability allowlist
 	// consulted at module load/provision time (loop B1 — defensive
 	// hardening, FAIL CLOSED). May be nil, which is equivalent to an empty
@@ -151,6 +154,10 @@ type HostBridge struct {
 	granted     map[string]bool
 	capHandlers map[string]CapHandler // capability prefix → handler
 	nodeCtx     *NodeContext
+
+	// moduleHash is the content hash of the module this bridge serves (set at load), the identity
+	// host-held secret lanes are approved for.
+	moduleHash string
 
 	// producerID identifies the artifact this bridge serves — a module's
 	// manifest plugin id, or a flow bundle's program id. Set by

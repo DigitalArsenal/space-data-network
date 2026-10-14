@@ -482,6 +482,7 @@ func (m *Module) instantiateWASM(wasmBytes []byte) (*wasmrt.Module, *HostBridge,
 		granted[c] = true
 	}
 	bridge.granted = granted
+	bridge.moduleHash = contentHash
 
 	// Provision capabilities from registry
 	if m.capReg != nil {
@@ -917,6 +918,23 @@ func (m *Module) InvokeMethodFrames(ctx context.Context, methodID string, inputF
 	}
 
 	return extractPluginInvokePayload(response, "response")
+}
+
+// SetConfigValue sets one key of the module's config (what plugin.getConfig answers) between invocations: the map is
+// replaced under the invocation lock, so no running invocation reads it mid-change.
+func (m *Module) SetConfigValue(key string, value any) error {
+	if m == nil || m.nodeCtx == nil {
+		return errors.New("module has no node context")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	config := make(map[string]interface{}, len(m.nodeCtx.Config)+1)
+	for k, v := range m.nodeCtx.Config {
+		config[k] = v
+	}
+	config[key] = value
+	m.nodeCtx.Config = config
+	return nil
 }
 
 // Manifest returns the immutable parsed manifest.

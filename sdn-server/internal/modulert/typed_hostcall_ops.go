@@ -744,10 +744,19 @@ var typedAdapters = map[string]typedAdapter{
 		rawB64(request, "ciphertext", call, "ciphertext")
 		return request, nil
 	}, out: fieldBytes("plaintext", "data")},
-	"secrets.get": {in: secretRequest, out: func(call *typedCall, result any, _ [][]byte) (*typedAnswer, error) {
+	"secrets.get": {in: secretRequest, out: func(call *typedCall, result any, segments [][]byte) (*typedAnswer, error) {
 		object, _ := result.(map[string]any)
+		// A text credential is its UTF-8 bytes; a binary secret ({"$bin"} segment or {"__type":"bytes"}) its exact bytes.
+		secret := []byte(str(object["secret"]))
+		if _, binary := object["secret"].(map[string]any); binary {
+			data, ok := bytesOf(object["secret"], segments)
+			if !ok {
+				return nil, typedErr("failed", "secrets.get: the host answered an unreadable binary secret")
+			}
+			secret = data
+		}
 		return &typedAnswer{result: map[string]any{"ID": str(object["id"]), "USERNAME": str(object["username"]), "CONFIGURED": true},
-			raw: map[string][]byte{"secret": []byte(str(object["secret"]))}}, nil
+			raw: map[string][]byte{"secret": secret}}, nil
 	}},
 	"secrets.status": {in: secretRequest, out: secretStatus},
 	"secrets.put":    {in: secretRequest, out: secretStatus},

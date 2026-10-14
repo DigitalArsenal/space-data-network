@@ -358,6 +358,13 @@ func (hb *HostBridge) answerTyped(call *typedCall) (*typedAnswer, error) {
 			return nil, typedErr("failed", "node peer ID not available")
 		}
 		return rawText("value", hb.nodeCtx.PeerID), nil
+	case "secrets.get":
+		// A secret the host holds for this module answers as its exact bytes; any other ID is the "secrets"
+		// capability's (the operator keystore).
+		id := str(call.params["ID"])
+		if value, ok := hb.hostSecret(id); ok {
+			return &typedAnswer{result: map[string]any{"ID": id, "CONFIGURED": true}, raw: map[string][]byte{"secret": value}}, nil
+		}
 	case "plugin.getConfig":
 		var config map[string]interface{}
 		if hb.nodeCtx != nil {
