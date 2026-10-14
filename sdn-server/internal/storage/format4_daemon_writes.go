@@ -384,6 +384,9 @@ func (b format4Backend) f4Supersede(result SourceBatchReconcileResult) (SourceBa
 	if err != nil {
 		return result, err
 	}
+	if !result.Apply {
+		return b.f4SupersedeCount(typ, result)
+	}
 	r, err := b.d.api().Supersede(b.d.ctx, typ, result.ProviderID, result.SourceName, result.KeepBatch, result.Apply)
 	if errors.Is(err, format4.ErrNoType) {
 		return result, nil
@@ -394,6 +397,28 @@ func (b format4Backend) f4Supersede(result SourceBatchReconcileResult) (SourceBa
 	result.Matched = r.TagsDeleted
 	if result.Apply {
 		result.Deleted = r.RecordsDeleted
+	}
+	return result, nil
+}
+
+// f4SupersedeCount is the dry run's answer, the tag instances of the feed's
+// other batches, read from the feed's lane counters (SUMMARY kind 3, one row
+// per feed instance with its count, kept by the writer with the rows): the
+// same sum the engine's count-only SUPERSEDE takes over the feed's instances.
+// The engine's count-only SUPERSEDE also loads the state of every record of
+// those batches into one write context it never commits, so before a
+// "current" ingest of a new batch it held the whole previous batch in the
+// engine's memory (about 600 MB for the 895,910 astorb rows; a WASM memory
+// keeps its size), and its records figure is not part of a dry run's answer.
+func (b format4Backend) f4SupersedeCount(typ string, result SourceBatchReconcileResult) (SourceBatchReconcileResult, error) {
+	lanes, err := b.f4Lanes(typ)
+	if err != nil {
+		return result, err
+	}
+	for _, l := range lanes {
+		if l.Provider == result.ProviderID && l.Source == result.SourceName && l.Batch != result.KeepBatch {
+			result.Matched += l.Records
+		}
 	}
 	return result, nil
 }

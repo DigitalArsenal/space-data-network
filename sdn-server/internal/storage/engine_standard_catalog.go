@@ -2377,6 +2377,16 @@ const engineStandardCatalogGraph = `
     WEBHOOK_URL:string;
     PROVIDER_SIGNATURE:[ubyte];
   }
+  table PVN {
+    SOURCE_ID:string;
+    SOURCE_KIND:byte;
+    ORIGINATOR:string;
+    PROVIDER_ID:string;
+    PRODUCER:string;
+    LICENSE_CLASS:byte;
+    LICENSE_ID:string;
+    LINEAGE:string;
+  }
   table QEM {
     MODEL_ID:string;
     MODEL_VERSION:string;
@@ -2776,6 +2786,38 @@ const engineStandardCatalogGraph = `
     SENLAT_END:double;
     SENLON_END:double;
     TRANSACTION_ID:string;
+  }
+  table SBD {
+    NUMBER:uint;
+    DESIGNATION:string;
+    NAME:string;
+    ORBIT_CLASS:ubyte;
+    NEO:bool;
+    PHA:bool;
+    EARTH_MOID:double;
+    CENTER_NAME:string;
+    REF_FRAME:string;
+    TIME_SYSTEM:string;
+    EPOCH:string;
+    SEMI_MAJOR_AXIS:double;
+    ECCENTRICITY:double;
+    INCLINATION:double;
+    RA_OF_ASC_NODE:double;
+    ARG_OF_PERICENTER:double;
+    MEAN_ANOMALY:double;
+    GM:double;
+    PERICENTER_DISTANCE:double;
+    PERICENTER_EPOCH:string;
+    ABSOLUTE_MAGNITUDE:double;
+    SLOPE_PARAMETER:double;
+    DIAMETER:double;
+    ALBEDO:double;
+    ROTATION_PERIOD:double;
+    CEU:double;
+    CEU_RATE:double;
+    CEU_EPOCH:string;
+    ORBIT_ARC:double;
+    OBSERVATION_COUNT:uint;
   }
   table SBM {
     MESSAGE_ID:string;
@@ -3643,6 +3685,7 @@ var engineGeneratedStandardBindings = map[string]engineRoutedSchema{
 	"PRR.fbs":  {Table: "PRR", FileID: "$PRR"},
 	"PRW.fbs":  {Table: "PRW", FileID: "$PRW"},
 	"PUR.fbs":  {Table: "PUR", FileID: "$PUR"},
+	"PVN.fbs":  {Table: "PVN", FileID: "$PVN"},
 	"QEM.fbs":  {Table: "QEM", FileID: "$QEM"},
 	"RAF.fbs":  {Table: "RAF", FileID: "$RAF"},
 	"RBK.fbs":  {Table: "RBK", FileID: "$RBK"},
@@ -3663,6 +3706,7 @@ var engineGeneratedStandardBindings = map[string]engineRoutedSchema{
 	"RPT.fbs":  {Table: "RPT", FileID: "$RPT"},
 	"RSD.fbs":  {Table: "RSD", FileID: "$RSD"},
 	"SAR.fbs":  {Table: "SAR", FileID: "$SAR"},
+	"SBD.fbs":  {Table: "SBD", FileID: "$SBD"},
 	"SBM.fbs":  {Table: "SBM", FileID: "$SBM"},
 	"SCC.fbs":  {Table: "SCC", FileID: "$SCC"},
 	"SCM.fbs":  {Table: "SCM", FileID: "$SCM"},

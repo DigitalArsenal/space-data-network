@@ -161,6 +161,7 @@ func TestMaterializeStoredDatasetPublicationPNMsReplaysTrustedProviderPNM(t *tes
 		config: &config.Config{
 			Storage: config.StorageConfig{Path: filepath.Join(tmpDir, "subscriber-storage")},
 			Admin:   config.AdminConfig{IPFSAPIURL: ipfs.URL},
+			Peers:   catchUpTestTrustedImport,
 		},
 		ctx:                     ctx,
 		datasetMaterializedPNMs: make(map[string]time.Time),
@@ -356,6 +357,7 @@ func TestMaterializeStoredDatasetPublicationPNMsDoesNotRetryPermanentShardFrameE
 		config: &config.Config{
 			Storage: config.StorageConfig{Path: filepath.Join(tmpDir, "subscriber-storage")},
 			Admin:   config.AdminConfig{IPFSAPIURL: ipfs.URL},
+			Peers:   catchUpTestTrustedImport,
 		},
 		ctx:                     ctx,
 		datasetMaterializedPNMs: make(map[string]time.Time),
@@ -382,6 +384,7 @@ func TestMaterializeStoredDatasetPublicationPNMsDoesNotRetryPermanentShardFrameE
 		config: &config.Config{
 			Storage: config.StorageConfig{Path: filepath.Join(tmpDir, "subscriber-storage-restarted")},
 			Admin:   config.AdminConfig{IPFSAPIURL: ipfs.URL},
+			Peers:   catchUpTestTrustedImport,
 		},
 		ctx:                     ctx,
 		datasetMaterializedPNMs: make(map[string]time.Time),
@@ -551,3 +554,9 @@ func buildCatchupTestPNM(t *testing.T, cid, fileID string) []byte {
 	PNM.FinishSizePrefixedPNMBuffer(builder, pnm)
 	return append([]byte(nil), builder.FinishedBytes()...)
 }
+
+// The subscribers list the lanes they import (a new lane from a trusted peer
+// is imported only when listed: trusted_import.go).
+var catchUpTestTrustedImport = config.PeersConfig{TrustedImport: config.TrustedImportConfig{
+	Allow: []config.LaneSelector{{ProviderID: "celestrak.eth"}, {ProviderID: "space-data-network-02"}},
+}}

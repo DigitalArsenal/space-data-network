@@ -45,6 +45,11 @@ package sds
 // asserts the TXS.ID <- STX.SITE_ID join the RF dataset is read on. The moment
 // the host reads one of these fields in Go, the rule below applies.
 
+// $SBD (Small Body, SDS 1.248.0) and the $PVN it includes arrive waived for
+// the standing reason: the asteroid retrieval module (WASM) builds the records
+// and the small-body propagator module (WASM) reads them; no Go binding here
+// decodes a field. The host stores, publishes and serves them by CID and lane.
+
 // THE MOMENT THE HOST STARTS READING ONE OF THESE, move it to
 // driftGuardedSchemas. That is one line and it is not optional.
 var unguardedEmbeddedSchemas = map[string]bool{
@@ -198,6 +203,7 @@ var unguardedEmbeddedSchemas = map[string]bool{
 	"PRR.fbs":  true,
 	"PRW.fbs":  true,
 	"PUR.fbs":  true,
+	"PVN.fbs":  true,
 	"QEM.fbs":  true,
 	"RAF.fbs":  true,
 	"RBK.fbs":  true,
@@ -217,6 +223,7 @@ var unguardedEmbeddedSchemas = map[string]bool{
 	"RPT.fbs":  true,
 	"RSD.fbs":  true,
 	"SAR.fbs":  true,
+	"SBD.fbs":  true,
 	"SBM.fbs":  true,
 	"SCC.fbs":  true,
 	"SCM.fbs":  true,
