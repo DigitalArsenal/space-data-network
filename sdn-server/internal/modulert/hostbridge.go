@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -84,6 +85,58 @@ type NodeContext struct {
 	// must set here). Mirrors CapabilityPolicy's nil-is-a-real-choice
 	// shape.
 	ModuleSignaturePolicy *ModuleSignaturePolicy
+}
+
+// supportedCapabilities is every capability this node can provision.
+var supportedCapabilities = []string{
+	"clock", "random",
+	"protocol_handle", "protocol_dial",
+	"pubsub",
+	"crypto_hash", "crypto_sign", "crypto_verify",
+	"crypto_encrypt", "crypto_decrypt", "crypto_key_agreement", "crypto_kdf",
+	"wallet_sign",
+	"ipfs",
+	"storage_query", "storage_write", "storage_adapter", "storage_ingest",
+	"http",
+	"schedule_cron",
+	"p2p_read",
+	"node_status_read",
+	"node_activity_read",
+}
+
+// builtinOperations are served by the bridge itself; capabilityOperations by the handler of each prefix.
+var builtinOperations = []string{
+	"clock.now", "clock.nowIso", "clock.monotonicNow", "random.bytes",
+	"host.runtimeTarget", "host.listCapabilities", "host.listSupportedCapabilities", "host.hasCapability", "host.listOperations",
+	"node.publicKey", "node.peerId", "plugin.getConfig",
+}
+
+var capabilityOperations = map[string][]string{
+	"storage": {"storage.query", "storage.write", "storage.delete", "storage.expire", "storage.ingest_with_source",
+		"storage.flatsql_query_stream", "storage.flatsql_epoch_stream", "storage.query_sandboxed", "storage.query_surface",
+		"storage.flatsql_cache_key"},
+	"crypto": {"crypto.hash", "crypto.sign", "crypto.verify", "crypto.encrypt", "crypto.decrypt", "crypto.key_agreement",
+		"crypto.kdf", "crypto.generate_key", "crypto.random", "crypto.ed25519.publicKeyFromSeed", "crypto.ed25519.sign",
+		"crypto.ed25519.verify", "crypto.secp256k1.publicKeyFromPrivate", "crypto.secp256k1.sign", "crypto.secp256k1.verify"},
+	"http":               {"http.request"},
+	"ipfs":               {"ipfs.add", "ipfs.cat", "ipfs.ls", "ipfs.pin_add", "ipfs.pin_rm", "ipfs.pin_ls", "ipfs.dag_get", "ipfs.name_resolve", "ipfs.name_publish", "ipfs.id", "ipfs.swarm_peers", "ipfs.pubsub_publish"},
+	"pubsub":             {"pubsub.publish", "pubsub.subscribe", "pubsub.unsubscribe", "pubsub.list_topics"},
+	"protocol":           {"protocol.request"},
+	"keyslot":            {"keyslot.sign", "keyslot.unwrap"},
+	"secrets":            {"secrets.get", "secrets.status", "secrets.put", "secrets.clear"},
+	"p2p":                {"p2p.peers_snapshot", "p2p.standards_snapshot", "p2p.pnm_history", "p2p.latest_dataset"},
+	"node_status_read":   {"node_status_read.status"},
+	"node_activity_read": {"node_activity_read.activity"},
+}
+
+// servedOperations lists every operation this bridge answers: the built-ins and each provisioned handler's.
+func (hb *HostBridge) servedOperations() []string {
+	operations := append([]string(nil), builtinOperations...)
+	for prefix := range hb.capHandlers {
+		operations = append(operations, capabilityOperations[prefix]...)
+	}
+	sort.Strings(operations)
+	return operations
 }
 
 // CapHandler is a function that handles a capability-gated hostcall operation.
@@ -228,21 +281,7 @@ func (hb *HostBridge) Dispatch(operation string, payload []byte) []byte {
 		}
 		return okJSON(caps)
 	case "host.listSupportedCapabilities":
-		return okJSON([]string{
-			"clock", "random",
-			"protocol_handle", "protocol_dial",
-			"pubsub",
-			"crypto_hash", "crypto_sign", "crypto_verify",
-			"crypto_encrypt", "crypto_decrypt", "crypto_key_agreement", "crypto_kdf",
-			"wallet_sign",
-			"ipfs",
-			"storage_query", "storage_write", "storage_adapter", "storage_ingest",
-			"http",
-			"schedule_cron",
-			"p2p_read",
-			"node_status_read",
-			"node_activity_read",
-		})
+		return okJSON(supportedCapabilities)
 	case "host.hasCapability":
 		var p struct {
 			Capability string `json:"capability"`
@@ -250,51 +289,7 @@ func (hb *HostBridge) Dispatch(operation string, payload []byte) []byte {
 		json.Unmarshal(payload, &p)
 		return okJSON(hb.granted[p.Capability])
 	case "host.listOperations":
-		operations := []string{
-			"clock.now",
-			"clock.nowIso",
-			"clock.monotonicNow",
-			"random.bytes",
-			"host.runtimeTarget",
-			"host.listCapabilities",
-			"host.hasCapability",
-			"host.listOperations",
-			"node.publicKey",
-			"node.peerId",
-			"plugin.getConfig",
-		}
-		if _, ok := hb.capHandlers["protocol"]; ok {
-			operations = append(operations, "protocol.request")
-		}
-		if _, ok := hb.capHandlers["ipfs"]; ok {
-			operations = append(operations, "ipfs.add", "ipfs.cat")
-		}
-		if _, ok := hb.capHandlers["keyslot"]; ok {
-			// keyslot is a host-side crypto oracle: sign/unwrap return only
-			// derived outputs (a signature, or the plaintext of a wrapped
-			// payload) — never the slot's private key. There is no raw-get
-			// operation; do not add one back.
-			operations = append(operations, "keyslot.sign", "keyslot.unwrap")
-		}
-		if _, ok := hb.capHandlers["p2p"]; ok {
-			operations = append(operations, "p2p.peers_snapshot", "p2p.standards_snapshot")
-		}
-		if _, ok := hb.capHandlers["node_status_read"]; ok {
-			// node_status_read has no capPrefixFromName override (module.go
-			// is out of scope for this change), so — mirroring the OTHER
-			// unmapped capabilities above (ipfs, keyslot's wallet_sign
-			// aside) — its hostcall prefix is the capability name itself.
-			// See caps/nodestatus.go's package doc for the full rationale.
-			operations = append(operations, "node_status_read.status")
-		}
-		if _, ok := hb.capHandlers["node_activity_read"]; ok {
-			// node_activity_read has no capPrefixFromName override either
-			// (same unmapped-prefix convention as node_status_read just
-			// above) — see caps/nodeactivity.go's package doc for the full
-			// rationale.
-			operations = append(operations, "node_activity_read.activity")
-		}
-		return okJSON(operations)
+		return okJSON(hb.servedOperations())
 	case "node.publicKey":
 		if hb.nodeCtx != nil && hb.nodeCtx.PublicKeyHex != "" {
 			return okJSON(hb.nodeCtx.PublicKeyHex)
@@ -336,8 +331,8 @@ func (hb *HostBridge) handleRandomBytes(payload []byte) []byte {
 			n = p.Length
 		}
 	}
-	if n > 8192 {
-		n = 8192
+	if n > maxRandomBytes {
+		return errJSON(fmt.Sprintf("random.bytes: %d bytes requested, at most %d", n, maxRandomBytes))
 	}
 	buf := make([]byte, n)
 	rand.Read(buf)
@@ -390,6 +385,13 @@ func (hb *HostBridge) BuildWasmEdgeHostFuncs() []wasmrt.HostFunc {
 			}
 		}
 
+		// An SDS $PIV hostcall (typed contracts 1.0) is answered with a $PIV response.
+		if isTypedHostcall(payloadBytes) {
+			hb.responseBuf = hb.DispatchTyped(append([]byte(nil), payloadBytes...))
+			hb.lastStatus = 0
+			return []interface{}{int32(0)}, wasmedge.Result_Success
+		}
+
 		jsonPayload, err := decodeHostcallEnvelopePayload(payloadBytes)
 		if err != nil {
 			hb.lastStatus = 1
@@ -430,7 +432,9 @@ func (hb *HostBridge) BuildWasmEdgeHostFuncs() []wasmrt.HostFunc {
 				}
 				toCopy := uint32(len(hb.responseBuf))
 				if toCopy > dstLen {
-					toCopy = dstLen
+					// Never a silent truncation: a guest that reserved less than response_len gets -1 and
+					// nothing written (the SDK guests size the buffer from response_len and refuse a short read).
+					return []interface{}{int32(-1)}, wasmedge.Result_Success
 				}
 				if toCopy > 0 {
 					mem.SetData(hb.responseBuf[:toCopy], uint(dstPtr), uint(toCopy))

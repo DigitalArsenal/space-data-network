@@ -3,6 +3,7 @@ package caps
 import (
 	"encoding/binary"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -167,7 +168,7 @@ func TestFlatSQLEpochStreamOp(t *testing.T) {
 
 func TestFlatSQLCacheKeyOp(t *testing.T) {
 	store := newCapTestStore(t)
-	handler := NewStorageCapFactory(store)(nil, modulert.NewHostBridge(nil, nil))
+	handler := NewStorageCapFactory(store)(nil, modulert.NewHostBridge(nil, []string{"storage_query"}))
 	payload := map[string]interface{}{
 		"schema_name":    "OMM",
 		"schema_version": "1",
@@ -176,6 +177,11 @@ func TestFlatSQLCacheKeyOp(t *testing.T) {
 		"params":         []map[string]interface{}{{"t": "i64", "v": 30001}},
 	}
 	body, _ := json.Marshal(payload)
+	// the read tier: a module without storage_query is refused (it used to answer any storage_* grant)
+	ungranted := NewStorageCapFactory(store)(nil, modulert.NewHostBridge(nil, []string{"storage_write"}))
+	if refused, _ := ungranted("storage.flatsql_cache_key", body); !strings.Contains(string(refused), "requires the storage_query capability grant") {
+		t.Fatalf("cache key without storage_query: %s", refused)
+	}
 	resp, err := handler("storage.flatsql_cache_key", body)
 	if err != nil {
 		t.Fatalf("cache key: %v", err)

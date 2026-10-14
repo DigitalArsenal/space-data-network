@@ -25,7 +25,12 @@ const (
 // It allows modules to open outbound libp2p streams through the hosting node.
 func NewProtocolCapFactory() modulert.CapFactory {
 	return func(mod *modulert.Module) modulert.CapHandler {
-		return newProtocolCapHandler(mod.RuntimeHost())
+		// Flow bundles provision with mod == nil: answer "protocol host is not available" rather than panicking.
+		var runtimeHost libp2phost.Host
+		if mod != nil {
+			runtimeHost = mod.RuntimeHost()
+		}
+		return newProtocolCapHandler(runtimeHost)
 	}
 }
 

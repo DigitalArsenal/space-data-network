@@ -5,8 +5,10 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -202,7 +204,7 @@ func (s *storageCapAdapter) handle(operation string, payload []byte) ([]byte, er
 			return ""
 		}
 		if v, ok := p[key]; ok {
-			return fmt.Sprintf("%v", v)
+			return capText(v)
 		}
 		return ""
 	}
@@ -408,6 +410,10 @@ func (s *storageCapAdapter) handle(operation string, payload []byte) ([]byte, er
 		return s.handleQuerySurface(), nil
 
 	case "storage.flatsql_cache_key":
+		// POLICY: read-tier gate, same rationale as storage.query above (it used to answer any storage_* grant).
+		if s.bridge == nil || !s.bridge.HasCapability("storage_query") {
+			return refuseCapJSON("storage.flatsql_cache_key", "requires the storage_query capability grant"), nil
+		}
 		sqlText := str("sql")
 		if sqlText == "" {
 			return errCapJSON("missing sql"), nil
@@ -1123,6 +1129,15 @@ func decodeTaggedParams(raw interface{}) ([]interface{}, error) {
 			v, _ := m["v"].(bool)
 			out = append(out, v)
 		case "i64":
+			// A 64-bit integer beyond float64's exact range travels as text so it arrives whole.
+			if text, ok := m["v"].(string); ok {
+				v, err := strconv.ParseInt(text, 10, 64)
+				if err != nil {
+					return nil, fmt.Errorf("param %d: i64 value %q: %w", i, text, err)
+				}
+				out = append(out, v)
+				break
+			}
 			v, ok := m["v"].(float64)
 			if !ok {
 				return nil, fmt.Errorf("param %d: i64 value missing", i)
@@ -1155,6 +1170,23 @@ func decodeTaggedParams(raw interface{}) ([]interface{}, error) {
 		}
 	}
 	return out, nil
+}
+
+// capText formats a request value as text. JSON numbers decode as float64, and %v prints 1000000 as "1e+06"
+// (which then parses as 1): integral values are written as integers.
+func capText(v interface{}) string {
+	switch t := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return t
+	case float64:
+		if t == math.Trunc(t) && math.Abs(t) < 1e18 {
+			return strconv.FormatInt(int64(t), 10)
+		}
+		return strconv.FormatFloat(t, 'f', -1, 64)
+	}
+	return fmt.Sprintf("%v", v)
 }
 
 // decodeBase64Cap decodes a standard base64 string (with or without padding).
