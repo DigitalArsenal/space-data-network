@@ -108,6 +108,9 @@ func ProvisionBridge(bridge *HostBridge, reg *CapabilityRegistry, capabilities [
 
 	var missing []string
 	for _, capability := range capabilities {
+		if bridgeServedCapabilities[capability] {
+			continue // the bridge answers these operations itself (Dispatch, DispatchTyped)
+		}
 		var factory BridgeCapFactory
 		ok := false
 		if reg != nil {
@@ -124,3 +127,8 @@ func ProvisionBridge(bridge *HostBridge, reg *CapabilityRegistry, capabilities [
 	}
 	return nil
 }
+
+// bridgeServedCapabilities are the capabilities whose operations the HostBridge answers itself (clock.*,
+// random.bytes): a flow bundle declaring them needs no registered factory, as a module loaded through NewModule
+// never did.
+var bridgeServedCapabilities = map[string]bool{"clock": true, "random": true}

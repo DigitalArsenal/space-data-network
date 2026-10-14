@@ -21,13 +21,13 @@ import (
 	"fmt"
 	"io"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
 	piv "github.com/DigitalArsenal/spacedatastandards.org/lib/go/PIV"
 	flatbuffers "github.com/google/flatbuffers/go"
 	"github.com/spacedatanetwork/sdn-server/internal/modulert/hostops"
+	"github.com/spacedatanetwork/sdn-server/internal/modulert/runtimecfg"
 )
 
 // hostcallErrorCodes is the SDK's HOSTCALL_ERROR_CODES.
@@ -363,11 +363,12 @@ func (hb *HostBridge) answerTyped(call *typedCall) (*typedAnswer, error) {
 		if hb.nodeCtx != nil {
 			config = hb.nodeCtx.Config
 		}
-		entries, err := configEntries(config)
+		// one ModuleConfig FlatBuffer (MCFG) on raw "config": typed values, number and string lists, nested tables
+		encoded, err := runtimecfg.Encode(config)
 		if err != nil {
-			return nil, err
+			return nil, typedErr("failed", "plugin.getConfig: %v", err)
 		}
-		return &typedAnswer{lists: map[string][]map[string]any{"entries": entries}}, nil
+		return &typedAnswer{raw: map[string][]byte{"config": encoded}}, nil
 	}
 
 	adapter := typedAdapters[call.op]
@@ -405,53 +406,6 @@ func textItems(values []string) *typedAnswer {
 		items = append(items, map[string]any{"VALUE": v})
 	}
 	return &typedAnswer{lists: map[string][]map[string]any{"items": items}}
-}
-
-// configEntries flattens the module config into dotted-path entries ("targets.0.provider_id"), sorted by key.
-func configEntries(config map[string]interface{}) ([]map[string]any, error) {
-	var entries []map[string]any
-	var walk func(prefix string, value interface{}) error
-	walk = func(prefix string, value interface{}) error {
-		switch v := value.(type) {
-		case map[string]interface{}:
-			for _, k := range sortedKeys(v) {
-				key := k
-				if prefix != "" {
-					key = prefix + "." + k
-				}
-				if err := walk(key, v[k]); err != nil {
-					return err
-				}
-			}
-		case []interface{}:
-			for i, item := range v {
-				if err := walk(prefix+"."+strconv.Itoa(i), item); err != nil {
-					return err
-				}
-			}
-		case nil:
-		case bool:
-			entries = append(entries, map[string]any{"KEY": prefix, "KIND": uint8(2), "BOOL_VALUE": v})
-		case string:
-			entries = append(entries, map[string]any{"KEY": prefix, "KIND": uint8(0), "STRING_VALUE": v})
-		default:
-			n, ok := toFloat(v)
-			if !ok {
-				return typedErr("failed", "plugin.getConfig: %s is a %T", prefix, v)
-			}
-			entries = append(entries, map[string]any{"KEY": prefix, "KIND": uint8(1), "NUMBER_VALUE": n})
-		}
-		return nil
-	}
-	if err := walk("", config); err != nil {
-		return nil, err
-	}
-	for _, e := range entries {
-		if len(str(e["KEY"])) > 255 || len(str(e["STRING_VALUE"])) > 255 {
-			return nil, typedErr("too-large", "plugin.getConfig: %s does not fit a ConfigEntry (255 bytes)", str(e["KEY"]))
-		}
-	}
-	return entries, nil
 }
 
 // decodeHandlerAnswer reads a capability handler's answer: a JSON {"ok","result","error"} or a pre-encoded envelope
