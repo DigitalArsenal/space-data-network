@@ -12,5 +12,8 @@
   },
   "devDependencies": {
     "esbuild": "0.25.12"
+  },
+  "overrides": {
+    "hd-wallet-wasm": "2.1.0"
   }
 }

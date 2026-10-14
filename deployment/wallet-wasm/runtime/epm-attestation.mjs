@@ -119,8 +119,8 @@ function epmJcsCanonicalize(value) {
  * wallet signature over this content verifies isomorphically in the browser and
  * on wasmedge. Mirrors the field set/rules exactly: trim + omit-empty strings,
  * enum-label ENTITY_TYPE (always) / KEY_TYPE (Signing|Encryption only), nested
- * ADDRESS, KEYS/CHAIN_PROOFS arrays, SIGNATURE_TIMESTAMP (integer, when nonzero),
- * and SIGNATURE excluded.
+ * ADDRESS, all public CryptoKey fields in KEYS, CHAIN_PROOFS arrays,
+ * SIGNATURE_TIMESTAMP (integer, when nonzero), and SIGNATURE excluded.
  *
  * @param {Object} epm - EPM fields as a plain object (schema UPPER_SNAKE keys;
  *   ENTITY_TYPE/KEY_TYPE may be enum index or label)
@@ -141,6 +141,9 @@ export function buildEPMSigningContent(epm) {
   epmAddStr(content, 'OCCUPATION', g('OCCUPATION'));
   epmAddStr(content, 'EMAIL', g('EMAIL'));
   epmAddStr(content, 'TELEPHONE', g('TELEPHONE'));
+  // SDS 1.239.0 annex rule 7: the photo (an RFC 2397 data URI) is signed like
+  // the name it pictures, as SDN's Go signer and the modules' C++ projection do.
+  epmAddStr(content, 'PHOTO', g('PHOTO'));
 
   const addr = g('ADDRESS');
   if (addr && typeof addr === 'object') {
@@ -170,6 +173,9 @@ export function buildEPMSigningContent(epm) {
       epmAddStr(e, 'KEY_ADDRESS', kg('KEY_ADDRESS'));
       const kt = epmEnumName(kg('KEY_TYPE'), EPM_KEY_TYPE_NAMES);
       if (kt === 'Signing' || kt === 'Encryption') e.KEY_TYPE = kt;
+      epmAddStr(e, 'KEY_PATH', kg('KEY_PATH'));
+      epmAddStr(e, 'ALGORITHM', kg('ALGORITHM'));
+      epmAddStr(e, 'ENCODING', kg('ENCODING'));
       if (Object.keys(e).length) arr.push(e);
     }
     if (arr.length) content.KEYS = arr;
@@ -211,25 +217,101 @@ export function buildEPMSigningContent(epm) {
   return new TextEncoder().encode(epmJcsCanonicalize(content));
 }
 
+// =============================================================================
+// ECDSA encodings (formatting only; hashing and signing stay in native code)
+// =============================================================================
+
+const SECP256K1_ORDER = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n;
+const SECP256K1_HALF_ORDER = SECP256K1_ORDER >> 1n;
+
+function bytesToBigInt(bytes) {
+  let value = 0n;
+  for (const b of bytes) value = (value << 8n) | BigInt(b);
+  return value;
+}
+
+// One DER INTEGER for an unsigned big-endian scalar: minimal length, a 0x00
+// pad when the high bit is set.
+function derInteger(scalar) {
+  let start = 0;
+  while (start < scalar.length - 1 && scalar[start] === 0) start++;
+  const body = scalar.subarray(start);
+  const pad = body[0] & 0x80 ? 1 : 0;
+  const out = new Uint8Array(2 + pad + body.length);
+  out[0] = 0x02;
+  out[1] = pad + body.length;
+  out.set(body, 2 + pad);
+  return out;
+}
+
+/**
+ * Encode a 64-byte compact r||s ECDSA signature as DER
+ * (SEQUENCE { INTEGER r, INTEGER s }), the SDS EPM annex encoding.
+ *
+ * @param {Uint8Array} compact - 64-byte r||s
+ * @returns {Uint8Array} DER signature
+ */
+export function compactSignatureToDer(compact) {
+  if (!(compact instanceof Uint8Array) || compact.length !== 64) {
+    throw new TypeError('compact signature must be 64 bytes (r||s)');
+  }
+  const r = derInteger(compact.subarray(0, 32));
+  const s = derInteger(compact.subarray(32, 64));
+  const der = new Uint8Array(2 + r.length + s.length);
+  der[0] = 0x30;
+  der[1] = r.length + s.length;
+  der.set(r, 2);
+  der.set(s, 2 + r.length);
+  return der;
+}
+
+// Strict DER: exactly SEQUENCE { INTEGER r, INTEGER s } with minimal,
+// positive, nonzero integers of at most 32 bytes and no trailing bytes.
+function isStrictSecp256k1Der(der) {
+  if (!(der instanceof Uint8Array) || der.length < 8 || der.length > 72) return false;
+  if (der[0] !== 0x30 || der[1] !== der.length - 2) return false;
+  let pos = 2;
+  for (let i = 0; i < 2; i++) {
+    if (der[pos] !== 0x02) return false;
+    const len = der[pos + 1];
+    pos += 2;
+    if (len < 1 || len > 33 || pos + len > der.length) return false;
+    const body = der.subarray(pos, pos + len);
+    if (body[0] & 0x80) return false; // negative
+    if (len > 1 && body[0] === 0 && !(body[1] & 0x80)) return false; // not minimal
+    if (len === 33 && body[0] !== 0) return false;
+    const value = bytesToBigInt(body);
+    if (value === 0n || value >= SECP256K1_ORDER) return false;
+    pos += len;
+  }
+  return pos === der.length;
+}
+
 /**
  * Sign EPM content. Default curve is ed25519 (fast, the network default); pass
- * `{ curve: 'secp256k1' }` to sign with secp256k1 (ECDSA-DER over sha256(content),
- * byte-compatible with the Go/C++ EPM verifiers). The content canonicalization is
- * identical for both curves; only the signature differs.
+ * `{ curve: 'secp256k1' }` to sign with secp256k1: DER-encoded ECDSA over
+ * SHA-256 of the canonical content, hashed once (SDS EPM annex; the Go and C++
+ * EPM verifiers check exactly this). The content canonicalization is identical
+ * for both curves; only the signature differs.
  *
  * @param {Object} wallet - Initialized HDWalletModule
  * @param {Object} epm - EPM fields as a plain object (without SIGNATURE/SIGNATURE_TIMESTAMP)
  * @param {Uint8Array} privateKey - 32-byte private key (ed25519 seed or secp256k1 key)
  * @param {{ curve?: 'ed25519'|'secp256k1' }} [options]
- * @returns {{ signature: string, timestamp: number }} Hex signature and Unix timestamp
+ * @returns {{ signature: string, timestamp: number }} Hex signature (ed25519: 64 raw
+ *   bytes; secp256k1: DER) and Unix timestamp
  */
 export function signEPMContent(wallet, epm, privateKey, options = {}) {
   const curve = String(options.curve || 'ed25519').toLowerCase();
+  if (curve !== 'ed25519' && curve !== 'secp256k1') {
+    throw new Error(`signEPMContent: unsupported curve "${curve}"`);
+  }
   const timestamp = Math.floor(Date.now() / 1000);
   const content = buildEPMSigningContent({ ...epm, SIGNATURE_TIMESTAMP: timestamp });
+  // curves.secp256k1.sign hashes its input with SHA-256: pass the content itself.
   const sig =
     curve === 'secp256k1'
-      ? wallet.curves.secp256k1.sign(wallet.utils.sha256(content), privateKey)
+      ? compactSignatureToDer(wallet.curves.secp256k1.sign(content, privateKey))
       : wallet.curves.ed25519.sign(content, privateKey);
   return {
     signature: wallet.utils.encodeHex(sig),
@@ -240,8 +322,9 @@ export function signEPMContent(wallet, epm, privateKey, options = {}) {
 /**
  * Verify an EPM content signature. Dispatches on the explicit `options.curve`,
  * else infers from the public key length (32 = ed25519; 33/65 = secp256k1).
- * secp256k1 is verified as ECDSA-DER over sha256(content), matching signEPMContent
- * and the Go/C++ verifiers.
+ * secp256k1 must be a strict DER ECDSA signature over SHA-256 of the canonical
+ * content (hashed once), matching signEPMContent and the Go/C++ verifiers; a
+ * signature over SHA-256(SHA-256(content)) does not verify.
  *
  * @param {Object} wallet - Initialized HDWalletModule
  * @param {Object} epm - Full EPM object including SIGNATURE and SIGNATURE_TIMESTAMP
@@ -259,9 +342,101 @@ export function verifyEPMSignature(wallet, epm, publicKey, options = {}) {
     options.curve || (publicKey && publicKey.length === 32 ? 'ed25519' : 'secp256k1'),
   ).toLowerCase();
   if (curve === 'secp256k1') {
-    return wallet.curves.secp256k1.verify(wallet.utils.sha256(content), sig, publicKey);
+    if (!isStrictSecp256k1Der(sig)) return false;
+    return wallet.curves.secp256k1.verify(content, sig, publicKey);
   }
-  return wallet.curves.ed25519.verify(content, sig, publicKey);
+  if (curve === 'ed25519') {
+    return wallet.curves.ed25519.verify(content, sig, publicKey);
+  }
+  return false;
+}
+
+// =============================================================================
+// Chain Proof Building
+// =============================================================================
+
+// =============================================================================
+// Chain message hashes (each chain's own signed-message protocol)
+// =============================================================================
+
+function concatBytes(...parts) {
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let offset = 0;
+  for (const p of parts) {
+    out.set(p, offset);
+    offset += p.length;
+  }
+  return out;
+}
+
+// Bitcoin CompactSize (little-endian varint).
+function compactSize(length) {
+  if (length < 253) return Uint8Array.of(length);
+  if (length <= 0xffff) return Uint8Array.of(253, length & 0xff, length >>> 8);
+  if (length <= 0xffffffff) {
+    return Uint8Array.of(254, length & 0xff, (length >>> 8) & 0xff, (length >>> 16) & 0xff, length >>> 24);
+  }
+  throw new RangeError('message too long for a Bitcoin signed message');
+}
+
+const BITCOIN_MESSAGE_MAGIC = new TextEncoder().encode('\x18Bitcoin Signed Message:\n');
+
+/**
+ * Bitcoin signed-message hash: SHA-256(SHA-256("\x18Bitcoin Signed Message:\n"
+ * || CompactSize(len) || message)), the digest Bitcoin Core's signmessage signs
+ * and SDN's Go verifier recovers from. The double SHA-256 is the protocol's.
+ *
+ * @param {Object} wallet - Initialized HDWalletModule
+ * @param {Uint8Array} message - Message bytes
+ * @returns {Uint8Array} 32-byte digest
+ */
+export function bitcoinSignedMessageHash(wallet, message) {
+  const preimage = concatBytes(BITCOIN_MESSAGE_MAGIC, compactSize(message.length), message);
+  return wallet.utils.sha256(wallet.utils.sha256(preimage));
+}
+
+/**
+ * Ethereum EIP-191 personal_sign hash: Keccak-256("\x19Ethereum Signed Message:\n"
+ * || decimal(len) || message).
+ *
+ * @param {Object} wallet - Initialized HDWalletModule
+ * @param {Uint8Array} message - Message bytes
+ * @returns {Uint8Array} 32-byte digest
+ */
+export function ethereumPersonalSignHash(wallet, message) {
+  const prefix = new TextEncoder().encode(`\x19Ethereum Signed Message:\n${message.length}`);
+  return wallet.utils.keccak256(concatBytes(prefix, message));
+}
+
+// Recoverable signature over a protocol digest -> 65-byte compact header||r||s
+// (header 31 + recovery id: a compressed key, as Bitcoin Core and dcrd emit).
+function signCompactRecoverable(wallet, digest, privateKey) {
+  const { signature, recoveryId } = wallet.curves.secp256k1.signRecoverable(digest, privateKey);
+  return concatBytes(Uint8Array.of(31 + recoveryId), signature);
+}
+
+// Recover the compressed key from a 65-byte header||r||s signature over a
+// protocol digest; null when malformed. Headers 27..34 as dcrd accepts.
+function recoverCompact(wallet, digest, signature, { requireLowS }) {
+  if (signature.length !== 65) return null;
+  const header = signature[0];
+  if (header < 27 || header > 34) return null;
+  const r = bytesToBigInt(signature.subarray(1, 33));
+  const s = bytesToBigInt(signature.subarray(33, 65));
+  if (r === 0n || r >= SECP256K1_ORDER || s === 0n || s >= SECP256K1_ORDER) return null;
+  if (requireLowS && s > SECP256K1_HALF_ORDER) return null;
+  try {
+    return wallet.curves.secp256k1.recover(digest, signature.subarray(1, 65), (header - 27) & 3);
+  } catch {
+    return null;
+  }
+}
+
+function bytesEqual(a, b) {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+  return diff === 0;
 }
 
 // =============================================================================
@@ -269,8 +444,9 @@ export function verifyEPMSignature(wallet, epm, publicKey, options = {}) {
 // =============================================================================
 
 /**
- * Build a Bitcoin chain proof.
- * Signs the canonical payload with secp256k1 using Bitcoin message signing format.
+ * Build a Bitcoin chain proof: a Bitcoin signed message (signmessage) over the
+ * canonical payload, as a 65-byte compact recoverable signature
+ * (header 31+recid || r || s).
  *
  * @param {Object} wallet - Initialized HDWalletModule
  * @param {Object} params
@@ -283,10 +459,7 @@ export function verifyEPMSignature(wallet, epm, publicKey, options = {}) {
  */
 export function buildBitcoinChainProof(wallet, { address, publicKeyHex, privateKey, keyPath, canonicalPayload }) {
   const payloadBytes = new TextEncoder().encode(canonicalPayload);
-  const payloadHash = wallet.utils.sha256(payloadBytes);
-  const sig = wallet.curves.secp256k1.signRecoverable
-    ? wallet.curves.secp256k1.signRecoverable(payloadHash, privateKey)
-    : wallet.curves.secp256k1.sign(payloadHash, privateKey);
+  const sig = signCompactRecoverable(wallet, bitcoinSignedMessageHash(wallet, payloadBytes), privateKey);
 
   return {
     CHAIN: 'bitcoin',
@@ -301,8 +474,9 @@ export function buildBitcoinChainProof(wallet, { address, publicKeyHex, privateK
 }
 
 /**
- * Build an Ethereum chain proof.
- * Signs the canonical payload with secp256k1 using Ethereum personal_sign prefix.
+ * Build an Ethereum chain proof: an EIP-191 personal_sign signature over the
+ * canonical payload, as a 65-byte compact recoverable signature
+ * (header 31+recid || r || s, low-S).
  *
  * @param {Object} wallet - Initialized HDWalletModule
  * @param {Object} params
@@ -315,10 +489,7 @@ export function buildBitcoinChainProof(wallet, { address, publicKeyHex, privateK
  */
 export function buildEthereumChainProof(wallet, { address, publicKeyHex, privateKey, keyPath, canonicalPayload }) {
   const payloadBytes = new TextEncoder().encode(canonicalPayload);
-  const payloadHash = wallet.utils.sha256(payloadBytes);
-  const sig = wallet.curves.secp256k1.signRecoverable
-    ? wallet.curves.secp256k1.signRecoverable(payloadHash, privateKey)
-    : wallet.curves.secp256k1.sign(payloadHash, privateKey);
+  const sig = signCompactRecoverable(wallet, ethereumPersonalSignHash(wallet, payloadBytes), privateKey);
 
   return {
     CHAIN: 'ethereum',
@@ -366,7 +537,10 @@ export function buildSolanaChainProof(wallet, { address, publicKeyHex, privateKe
 // =============================================================================
 
 /**
- * Verify a single chain proof.
+ * Verify a single chain proof. Bitcoin and Ethereum proofs are checked as their
+ * chains do (and as SDN's Go verifier does): hash the payload with the chain's
+ * signed-message protocol, recover the key from the 65-byte compact signature,
+ * and compare it with PUBLIC_KEY. Ethereum proofs must be low-S.
  *
  * @param {Object} wallet - Initialized HDWalletModule
  * @param {Object} proof - ChainProof object with CHAIN, PUBLIC_KEY, SIGNATURE, SIGNED_PAYLOAD, ALGORITHM
@@ -384,8 +558,14 @@ export function verifyChainProof(wallet, proof) {
   }
 
   if (algorithm === 'secp256k1-compact-bitcoin' || algorithm === 'secp256k1-compact-ethereum') {
-    const payloadHash = wallet.utils.sha256(payload);
-    return wallet.curves.secp256k1.verify(payloadHash, sig, pubKey);
+    if (proof.ENCODING !== undefined && proof.ENCODING !== 'compact') return false;
+    if (pubKey.length !== 33) return false;
+    const ethereum = algorithm === 'secp256k1-compact-ethereum';
+    const digest = ethereum
+      ? ethereumPersonalSignHash(wallet, payload)
+      : bitcoinSignedMessageHash(wallet, payload);
+    const recovered = recoverCompact(wallet, digest, sig, { requireLowS: ethereum });
+    return recovered !== null && bytesEqual(recovered, pubKey);
   }
 
   return false;

@@ -156,16 +156,23 @@ done
 # Owner law 2026-07-27: "we do NOT load anything from a site." Enforced on what
 # was actually staged.
 #
-# What the audit of hd-wallet-ui@2.0.28 found, so the next auditor starts here:
+# What the audit of hd-wallet-ui@2.0.28 found, re-checked for 2.1.0 (the
+# single-hash ECDSA release, 2026-10-14), so the next auditor starts here:
 #   * The in-page app performs NO cross-document or push egress: no window.open,
 #     no postMessage, no WebSocket/EventSource/sendBeacon/XHR/importScripts, and
 #     it injects no <script>. This guard keeps that true across upgrades.
-#   * It DOES use fetch — but only through its DEFAULT relay, and only against
-#     the RELATIVE paths /relay/v1/transactions/{id}[/result]. Relative means
-#     same-origin, i.e. this node. The node deliberately does not implement that
-#     endpoint (a transaction store with result tokens is application logic, and
-#     this host is connectors only), so the dashboard MUST inject its own relay;
-#     doing so means the default is never constructed and no fetch ever happens.
+#   * It uses fetch through its DEFAULT relay, only against the RELATIVE paths
+#     /relay/v1/transactions/{id}[/result]. Relative means same-origin, i.e.
+#     this node. The node deliberately does not implement that endpoint (a
+#     transaction store with result tokens is application logic, and this host
+#     is connectors only), so the dashboard MUST inject its own relay; doing so
+#     means the default is never constructed and that fetch never happens.
+#   * Newer than the 2.0.29 copies staged before, it has one more fetch: a POST
+#     to <providerOrigin>/api/auth/challenge, reached only for a SpaceAware
+#     publish request (client spaceaware-web-v1, request origin
+#     https://spaceaware.io, registry row spaceaware-publish-request-v1). The
+#     dashboard's transactions are bound to its own client (sdn-node-console-v1),
+#     so that path never runs on a node origin, like the WebAuthn rp.id below.
 #   * It contains absolute https:// URLs as DATA — the baked client registry's
 #     requestOrigin/callbackUri values, and a WebAuthn rp.id. Data, not loads.
 for rel in compat/index.js wallet-origin/index.js; do

@@ -9,7 +9,7 @@
  * - Transaction building and signing
  *
  * @module hd-wallet-wasm
- * @version 2.0.29
+ * @version 2.1.0
  */
 
 // Import aligned API for batch operations
@@ -1688,10 +1688,13 @@ function createModule(wasm) {
      */
     secp256k1: {
       /**
-       * Sign message with secp256k1
-       * @param {Uint8Array} message - Message to sign (typically 32-byte hash)
+       * Sign a message with secp256k1 ECDSA. Hashes the message with SHA-256
+       * internally and signs that hash (RFC 6979, low-S): pass the message, never
+       * a hash of it, or the signature covers SHA-256(SHA-256(message)) and no
+       * standard verifier accepts it.
+       * @param {Uint8Array} message - Message bytes (hashed once with SHA-256 here)
        * @param {Uint8Array} privateKey - 32-byte private key
-       * @returns {Uint8Array} Signature
+       * @returns {Uint8Array} 64-byte compact signature r||s
        */
       sign(message, privateKey) {
         const msgPtr = allocAndCopy(wasm, message);
@@ -1710,10 +1713,12 @@ function createModule(wasm) {
       },
 
       /**
-       * Sign message with recovery ID
-       * @param {Uint8Array} message - Message to sign
-       * @param {Uint8Array} privateKey - Private key
-       * @returns {Object} { signature: Uint8Array, recoveryId: number }
+       * Sign a 32-byte hash with recovery ID. Unlike sign(), the input is NOT
+       * hashed: pass the protocol digest you computed (e.g. Keccak-256 for
+       * Ethereum, the Bitcoin signed-message hash).
+       * @param {Uint8Array} message - 32-byte hash, signed as given
+       * @param {Uint8Array} privateKey - 32-byte private key
+       * @returns {Object} { signature: Uint8Array (64-byte r||s), recoveryId: number }
        */
       signRecoverable(message, privateKey) {
         const signRecoverableFn = requireWasmFunction(wasm, '_hd_secp256k1_sign_recoverable');
@@ -1738,10 +1743,11 @@ function createModule(wasm) {
       },
 
       /**
-       * Verify secp256k1 signature
-       * @param {Uint8Array} message - Original message
-       * @param {Uint8Array} signature - Signature to verify
-       * @param {Uint8Array} publicKey - Public key
+       * Verify a secp256k1 ECDSA signature over SHA-256(message). Hashes the
+       * message with SHA-256 internally: pass the message, not a hash of it.
+       * @param {Uint8Array} message - Original message bytes (hashed once with SHA-256 here)
+       * @param {Uint8Array} signature - 64-byte compact r||s or DER signature
+       * @param {Uint8Array} publicKey - 33- or 65-byte public key
        * @returns {boolean} True if valid
        */
       verify(message, signature, publicKey) {
@@ -1759,11 +1765,12 @@ function createModule(wasm) {
       },
 
       /**
-       * Recover public key from signature
-       * @param {Uint8Array} message - Original message
-       * @param {Uint8Array} signature - Signature
+       * Recover the public key from a recoverable signature. Like
+       * signRecoverable(), the input is the 32-byte hash, used as given.
+       * @param {Uint8Array} message - 32-byte hash that was signed
+       * @param {Uint8Array} signature - 64-byte r||s
        * @param {number} recoveryId - Recovery ID (0-3)
-       * @returns {Uint8Array} Recovered public key
+       * @returns {Uint8Array} Recovered 33-byte compressed public key
        */
       recover(message, signature, recoveryId) {
         const recoverFn = requireWasmFunction(wasm, '_hd_secp256k1_recover');
@@ -1881,6 +1888,13 @@ function createModule(wasm) {
      * P-256 (secp256r1) ECDSA operations
      */
     p256: {
+      /**
+       * Sign a message with P-256 ECDSA. Hashes the message with SHA-256
+       * internally: pass the message, never a hash of it.
+       * @param {Uint8Array} message - Message bytes (hashed once with SHA-256 here)
+       * @param {Uint8Array} privateKey - 32-byte private key
+       * @returns {Uint8Array} 64-byte compact signature r||s
+       */
       sign(message, privateKey) {
         const msgPtr = allocAndCopy(wasm, message);
         const keyPtr = allocAndCopy(wasm, privateKey);
@@ -1897,6 +1911,13 @@ function createModule(wasm) {
         }
       },
 
+      /**
+       * Verify a P-256 ECDSA signature over SHA-256(message).
+       * @param {Uint8Array} message - Original message bytes (hashed once with SHA-256 here)
+       * @param {Uint8Array} signature - 64-byte compact signature r||s
+       * @param {Uint8Array} publicKey - 33- or 65-byte public key
+       * @returns {boolean} True if valid
+       */
       verify(message, signature, publicKey) {
         const verifyFn = requireWasmFunction(wasm, '_hd_p256_verify');
         const msgPtr = allocAndCopy(wasm, message);
@@ -1934,6 +1955,13 @@ function createModule(wasm) {
      * P-384 (secp384r1) ECDSA operations
      */
     p384: {
+      /**
+       * Sign a message with P-384 ECDSA. Hashes the message with SHA-384
+       * internally: pass the message, never a hash of it.
+       * @param {Uint8Array} message - Message bytes (hashed once with SHA-384 here)
+       * @param {Uint8Array} privateKey - 48-byte private key
+       * @returns {Uint8Array} 96-byte compact signature r||s
+       */
       sign(message, privateKey) {
         const msgPtr = allocAndCopy(wasm, message);
         const keyPtr = allocAndCopy(wasm, privateKey);
@@ -1950,6 +1978,13 @@ function createModule(wasm) {
         }
       },
 
+      /**
+       * Verify a P-384 ECDSA signature over SHA-384(message).
+       * @param {Uint8Array} message - Original message bytes (hashed once with SHA-384 here)
+       * @param {Uint8Array} signature - 96-byte compact signature r||s
+       * @param {Uint8Array} publicKey - 49- or 97-byte public key
+       * @returns {boolean} True if valid
+       */
       verify(message, signature, publicKey) {
         const verifyFn = requireWasmFunction(wasm, '_hd_p384_verify');
         const msgPtr = allocAndCopy(wasm, message);
@@ -4707,7 +4742,7 @@ export function buildEncryptionPath(coinType, account = '0', index = '0') {
  * const seed = wallet.mnemonic.toSeed(mnemonic);
  * const root = wallet.hdkey.fromSeed(seed);
  * const { privateKey, publicKey, path } = getSigningKey(root, 60);
- * const sig = wallet.curves.secp256k1.sign(messageHash, privateKey);
+ * const sig = wallet.curves.secp256k1.sign(message, privateKey); // hashes with SHA-256
  */
 export function getSigningKey(hdRoot, coinType, account = '0', index = '0') {
   const path = buildSigningPath(coinType, account, index);
@@ -4816,4 +4851,7 @@ export {
   buildAllChainProofs,
   verifyChainProof,
   verifyAllChainProofs,
+  compactSignatureToDer,
+  bitcoinSignedMessageHash,
+  ethereumPersonalSignHash,
 } from './epm-attestation.mjs';
