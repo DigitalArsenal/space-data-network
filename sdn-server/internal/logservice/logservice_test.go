@@ -1,12 +1,21 @@
 package logservice
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"path/filepath"
 	"testing"
 
+	"github.com/decred/dcrd/dcrec/secp256k1/v4"
+	"github.com/decred/dcrd/dcrec/secp256k1/v4/ecdsa"
+	flatbuffers "github.com/google/flatbuffers/go"
 	"github.com/libp2p/go-libp2p/core/crypto"
+
+	"github.com/spacedatanetwork/sdn-server/internal/sds"
+	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
 
 func TestComputeEntryHash(t *testing.T) {
@@ -211,6 +220,7 @@ func TestBuildPLGFlatBuffer(t *testing.T) {
 		"abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
 		1700000000,
 		[]byte{1, 2, 3, 4},
+		sds.SignatureTypeEd25519,
 		[]string{"SAT-25544", "SAT-12345"},
 		"2024-01-15",
 	)
@@ -235,6 +245,7 @@ func TestBuildPLHFlatBuffer(t *testing.T) {
 		"/dns4/spaceaware.io/tcp/443",
 		1700000000,
 		[]byte{5, 6, 7, 8},
+		sds.SignatureTypeEd25519,
 		"2024-01-01",
 		"2024-06-15",
 	)
@@ -259,6 +270,7 @@ func TestParsePLH(t *testing.T) {
 		"/dns4/example.com/tcp/443",
 		1700000000,
 		nil,
+		sds.SignatureTypeEd25519,
 		"2024-01-01",
 		"2024-12-31",
 	)
@@ -293,5 +305,191 @@ func TestComputeEntryHashEmptyPrevious(t *testing.T) {
 	hash2 := ComputeEntryHash(1, "OMM.fbs", "peer1", "cid1", "someprevhash", 1000)
 	if hash == hash2 {
 		t.Error("Hash with empty vs non-empty previous should differ")
+	}
+}
+
+// parsePLGForTest reads the fields buildPLGFlatBuffer writes back out of a
+// stored, size-prefixed PLG buffer.
+func parsePLGForTest(t *testing.T, data []byte) PLGInfo {
+	t.Helper()
+	if len(data) < 8 {
+		t.Fatalf("PLG buffer too short: %d bytes", len(data))
+	}
+	buf := data[flatbuffers.SizeUint32:]
+	tab := &flatbuffers.Table{Bytes: buf, Pos: flatbuffers.GetUOffsetT(buf)}
+	str := func(slot flatbuffers.VOffsetT) string {
+		if o := flatbuffers.UOffsetT(tab.Offset(slot)); o != 0 {
+			return string(tab.ByteVector(o + tab.Pos))
+		}
+		return ""
+	}
+	u64 := func(slot flatbuffers.VOffsetT) uint64 {
+		if o := flatbuffers.UOffsetT(tab.Offset(slot)); o != 0 {
+			return tab.GetUint64(o + tab.Pos)
+		}
+		return 0
+	}
+	field := func(i int) flatbuffers.VOffsetT { return flatbuffers.VOffsetT(4 + 2*i) }
+	return PLGInfo{
+		Sequence:          u64(field(0)),
+		SchemaType:        str(field(1)),
+		PublisherPeerID:   str(field(2)),
+		RecordCID:         str(field(3)),
+		PreviousEntryHash: str(field(4)),
+		EntryHash:         str(field(5)),
+		Timestamp:         u64(field(6)),
+		Signature:         []byte(str(field(7))),
+		SignatureType:     str(field(8)),
+	}
+}
+
+// entryPreimageForTest is the canonical PLG entry content, assembled here
+// independently of ComputeEntryHash, so the test checks the signature against
+// the specification and not against the code under test.
+func entryPreimageForTest(e PLGInfo) []byte {
+	var out []byte
+	out = binary.LittleEndian.AppendUint64(out, e.Sequence)
+	out = append(out, e.SchemaType...)
+	out = append(out, e.PublisherPeerID...)
+	out = append(out, e.RecordCID...)
+	out = append(out, e.PreviousEntryHash...)
+	out = binary.LittleEndian.AppendUint64(out, e.Timestamp)
+	return out
+}
+
+// A secp256k1 publisher's log signatures are ECDSA over SHA-256 of the
+// canonical entry, once (owner 2026-10-14: a single signature, no legacy
+// double sign). The service appends real entries to a real store; what comes
+// back out is checked by decred's verifier over sha256(preimage) and by
+// VerifyChain, and a libp2p Sign(entryHash) signature — ECDSA over
+// SHA-256(SHA-256(preimage)) — is refused.
+func TestSecp256k1LogSignaturesHashOnce(t *testing.T) {
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := storage.NewFlatSQLStore(filepath.Join(t.TempDir(), "db"), validator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	priv, pub, err := crypto.GenerateSecp256k1Key(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const peer = "16Uiu2HAmSecp256k1LogPeer"
+	svc := NewService(store, priv, peer)
+	for _, cid := range []string{"bafy-secp-1", "bafy-secp-2", "bafy-secp-3"} {
+		if _, _, err := svc.AppendEntry("OMM.fbs", cid, nil, ""); err != nil {
+			t.Fatalf("AppendEntry(%s): %v", cid, err)
+		}
+	}
+	raw, err := store.QueryLogEntries(peer, "OMM.fbs", 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(raw) != 3 {
+		t.Fatalf("stored PLG entries = %d, want 3", len(raw))
+	}
+	entries := make([]PLGInfo, len(raw))
+	for i, data := range raw {
+		entries[i] = parsePLGForTest(t, data)
+	}
+
+	rawPub, err := pub.Raw()
+	if err != nil {
+		t.Fatal(err)
+	}
+	decredPub, err := secp256k1.ParsePubKey(rawPub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.SignatureType != sds.SignatureTypeSecp256k1 {
+			t.Fatalf("seq %d SIGNATURE_TYPE = %q, want %q", e.Sequence, e.SignatureType, sds.SignatureTypeSecp256k1)
+		}
+		digest := sha256.Sum256(entryPreimageForTest(e))
+		if hex.EncodeToString(digest[:]) != e.EntryHash {
+			t.Fatalf("seq %d ENTRY_HASH is not sha256 of the canonical entry", e.Sequence)
+		}
+		sig, err := ecdsa.ParseDERSignature(e.Signature)
+		if err != nil {
+			t.Fatalf("seq %d signature is not strict DER: %v", e.Sequence, err)
+		}
+		if !sig.Verify(digest[:], decredPub) {
+			t.Fatalf("seq %d: signature is not ECDSA over sha256(entry) once", e.Sequence)
+		}
+		twice := sha256.Sum256(digest[:])
+		if sig.Verify(twice[:], decredPub) {
+			t.Fatalf("seq %d: signature verifies over the double hash", e.Sequence)
+		}
+	}
+	if err := VerifyChain(entries, pub); err != nil {
+		t.Fatalf("VerifyChain on the stored secp256k1 log: %v", err)
+	}
+
+	// The legacy double hash: libp2p's secp256k1 Sign hashes its input, so
+	// Sign(entryHash) is ECDSA over SHA-256(SHA-256(entry)). It must fail.
+	legacy := append([]PLGInfo(nil), entries...)
+	hashBytes, _ := hex.DecodeString(legacy[1].EntryHash)
+	legacySig, err := priv.Sign(hashBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy[1].Signature = legacySig
+	if err := VerifyChain(legacy, pub); err == nil {
+		t.Fatal("VerifyChain accepted a double-hashed secp256k1 signature")
+	}
+
+	// A record that declares Ed25519 while carrying a secp256k1 signature is
+	// mislabelled, not merely unverifiable.
+	mislabelled := append([]PLGInfo(nil), entries...)
+	mislabelled[0].SignatureType = sds.SignatureTypeEd25519
+	if err := VerifyChain(mislabelled, pub); err == nil {
+		t.Fatal("VerifyChain accepted a secp256k1 signature labelled Ed25519")
+	}
+}
+
+// Ed25519 signs the 32-byte entry hash as its message, as it always has: the
+// stored entries say so and VerifyChain accepts them.
+func TestEd25519LogSignaturesUnchanged(t *testing.T) {
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := storage.NewFlatSQLStore(filepath.Join(t.TempDir(), "db"), validator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	priv, pub, err := crypto.GenerateEd25519Key(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const peer = "12D3KooWEd25519LogPeer"
+	svc := NewService(store, priv, peer)
+	if _, err := svc.AppendEntryBatch("OMM.fbs", []string{"bafy-ed-1", "bafy-ed-2"}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := store.QueryLogEntries(peer, "OMM.fbs", 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries := make([]PLGInfo, len(raw))
+	for i, data := range raw {
+		entries[i] = parsePLGForTest(t, data)
+		if entries[i].SignatureType != sds.SignatureTypeEd25519 {
+			t.Fatalf("SIGNATURE_TYPE = %q, want Ed25519", entries[i].SignatureType)
+		}
+		rawPub, _ := pub.Raw()
+		hash, _ := hex.DecodeString(entries[i].EntryHash)
+		if !ed25519.Verify(ed25519.PublicKey(rawPub), hash, entries[i].Signature) {
+			t.Fatalf("seq %d: Ed25519 signature is not over the entry hash", entries[i].Sequence)
+		}
+	}
+	if err := VerifyChain(entries, pub); err != nil {
+		t.Fatalf("VerifyChain: %v", err)
 	}
 }

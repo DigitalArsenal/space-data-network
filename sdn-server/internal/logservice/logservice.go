@@ -15,10 +15,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/decred/dcrd/dcrec/secp256k1/v4"
+	"github.com/decred/dcrd/dcrec/secp256k1/v4/ecdsa"
 	flatbuffers "github.com/google/flatbuffers/go"
 	logging "github.com/ipfs/go-log/v2"
 	"github.com/libp2p/go-libp2p/core/crypto"
+	cryptopb "github.com/libp2p/go-libp2p/core/crypto/pb"
 
+	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
 
@@ -74,17 +78,13 @@ func (s *Service) AppendEntry(schemaType, recordCID string, entityIDs []string, 
 	entryHash := ComputeEntryHash(newSeq, schemaType, s.peerID, recordCID, prevEntryHash, now)
 
 	// Sign entry hash
-	var sigBytes []byte
-	if s.signingKey != nil {
-		entryHashBytes, _ := hex.DecodeString(entryHash)
-		sigBytes, err = s.signingKey.Sign(entryHashBytes)
-		if err != nil {
-			return "", 0, fmt.Errorf("failed to sign entry hash: %w", err)
-		}
+	sigBytes, sigType, err := signLogHash(s.signingKey, entryHash)
+	if err != nil {
+		return "", 0, fmt.Errorf("failed to sign entry hash: %w", err)
 	}
 
 	// Build PLG FlatBuffer
-	plgData := buildPLGFlatBuffer(newSeq, schemaType, s.peerID, recordCID, prevEntryHash, entryHash, now, sigBytes, entityIDs, epochDay)
+	plgData := buildPLGFlatBuffer(newSeq, schemaType, s.peerID, recordCID, prevEntryHash, entryHash, now, sigBytes, sigType, entityIDs, epochDay)
 
 	// Store in the canonical PLG FlatSQL table.
 	plgCID, err := s.store.Store(plgSchema, plgData, s.peerID, sigBytes)
@@ -127,16 +127,12 @@ func (s *Service) AppendEntryBatch(schemaType string, recordCIDs []string) (uint
 		now := uint64(time.Now().Unix())
 		entryHash := ComputeEntryHash(newSeq, schemaType, s.peerID, recordCID, prevEntryHash, now)
 
-		var sigBytes []byte
-		if s.signingKey != nil {
-			entryHashBytes, _ := hex.DecodeString(entryHash)
-			sigBytes, err = s.signingKey.Sign(entryHashBytes)
-			if err != nil {
-				return 0, fmt.Errorf("failed to sign entry hash: %w", err)
-			}
+		sigBytes, sigType, err := signLogHash(s.signingKey, entryHash)
+		if err != nil {
+			return 0, fmt.Errorf("failed to sign entry hash: %w", err)
 		}
 
-		plgData := buildPLGFlatBuffer(newSeq, schemaType, s.peerID, recordCID, prevEntryHash, entryHash, now, sigBytes, nil, "")
+		plgData := buildPLGFlatBuffer(newSeq, schemaType, s.peerID, recordCID, prevEntryHash, entryHash, now, sigBytes, sigType, nil, "")
 		entries = append(entries, plgData)
 		rows = append(rows, storage.LogIndexRow{
 			Sequence:  newSeq,
@@ -183,16 +179,13 @@ func (s *Service) BuildPLH(schemaType, multiaddr string) ([]byte, error) {
 
 	// Sign the PLH content
 	plhHash := ComputePLHHash(schemaType, s.peerID, headSeq, headEntryHash, now)
-	var sigBytes []byte
-	if s.signingKey != nil {
-		plhHashBytes, _ := hex.DecodeString(plhHash)
-		sigBytes, err = s.signingKey.Sign(plhHashBytes)
-		if err != nil {
-			log.Warnf("Failed to sign PLH: %v", err)
-		}
+	sigBytes, sigType, err := signLogHash(s.signingKey, plhHash)
+	if err != nil {
+		log.Warnf("Failed to sign PLH: %v", err)
+		sigBytes = nil
 	}
 
-	data := buildPLHFlatBuffer(schemaType, s.peerID, headSeq, headEntryHash, recordCount, multiaddr, now, sigBytes, oldest, newest)
+	data := buildPLHFlatBuffer(schemaType, s.peerID, headSeq, headEntryHash, recordCount, multiaddr, now, sigBytes, sigType, oldest, newest)
 	return data, nil
 }
 
@@ -260,8 +253,7 @@ func VerifyChain(entries []PLGInfo, publisherPubKey crypto.PubKey) error {
 
 		// Verify signature if public key provided
 		if publisherPubKey != nil && len(entry.Signature) > 0 {
-			entryHashBytes, _ := hex.DecodeString(entry.EntryHash)
-			ok, err := publisherPubKey.Verify(entryHashBytes, entry.Signature)
+			ok, err := verifyLogHash(publisherPubKey, entry.SignatureType, entry.EntryHash, entry.Signature)
 			if err != nil {
 				return fmt.Errorf("entry seq=%d: signature verification error: %w", entry.Sequence, err)
 			}
@@ -271,6 +263,88 @@ func VerifyChain(entries []PLGInfo, publisherPubKey crypto.PubKey) error {
 		}
 	}
 	return nil
+}
+
+// One hash per signature (owner 2026-10-14: "we should just have a single
+// signature ... do NOT keep around the legacy double sign").
+//
+// ENTRY_HASH and the PLH hash are already SHA-256 of the canonical fields, and
+// they are what a log signature covers. A libp2p secp256k1 (or ECDSA) key's
+// Sign/Verify hash their input with SHA-256 again, so handing them the entry
+// hash made ECDSA over SHA-256(SHA-256(fields)), which no standard verifier
+// checks. A secp256k1 key therefore signs the 32-byte hash AS the ECDSA digest
+// (DER, RFC 6979, low-S): ECDSA over SHA-256 of the canonical fields, once.
+// Ed25519 is not a pre-hashed scheme: it signs the 32-byte entry hash as its
+// message, as it always has. Any other key type is refused rather than signed
+// with a scheme no log verifier knows.
+
+// signLogHash signs a hex SHA-256 log hash with key, returning the signature
+// and the SDS SIGNATURE_TYPE it was made with. A nil key signs nothing.
+func signLogHash(key crypto.PrivKey, hashHex string) ([]byte, string, error) {
+	if key == nil {
+		return nil, sds.SignatureTypeEd25519, nil
+	}
+	hash, err := decodeLogHash(hashHex)
+	if err != nil {
+		return nil, "", err
+	}
+	switch key.Type() {
+	case cryptopb.KeyType_Ed25519:
+		sig, err := key.Sign(hash)
+		return sig, sds.SignatureTypeEd25519, err
+	case cryptopb.KeyType_Secp256k1:
+		raw, err := key.Raw()
+		if err != nil {
+			return nil, "", err
+		}
+		priv := secp256k1.PrivKeyFromBytes(raw)
+		defer priv.Zero()
+		return ecdsa.Sign(priv, hash).Serialize(), sds.SignatureTypeSecp256k1, nil
+	default:
+		return nil, "", fmt.Errorf("unsupported log signing key type %s", key.Type())
+	}
+}
+
+// verifyLogHash checks sig over a hex SHA-256 log hash. declaredType is the
+// record's SIGNATURE_TYPE; when present it must name the key's algorithm.
+func verifyLogHash(key crypto.PubKey, declaredType, hashHex string, sig []byte) (bool, error) {
+	keyType, err := sds.SignatureTypeForPubKey(key)
+	if err != nil {
+		return false, err
+	}
+	if declaredType != "" && declaredType != keyType {
+		return false, fmt.Errorf("SIGNATURE_TYPE %q does not match the publisher's %s key", declaredType, keyType)
+	}
+	hash, err := decodeLogHash(hashHex)
+	if err != nil {
+		return false, err
+	}
+	switch key.Type() {
+	case cryptopb.KeyType_Secp256k1:
+		raw, err := key.Raw()
+		if err != nil {
+			return false, err
+		}
+		pub, err := secp256k1.ParsePubKey(raw)
+		if err != nil {
+			return false, err
+		}
+		parsed, err := ecdsa.ParseDERSignature(sig)
+		if err != nil {
+			return false, nil
+		}
+		return parsed.Verify(hash, pub), nil
+	default:
+		return key.Verify(hash, sig)
+	}
+}
+
+func decodeLogHash(hashHex string) ([]byte, error) {
+	hash, err := hex.DecodeString(hashHex)
+	if err != nil || len(hash) != sha256.Size {
+		return nil, fmt.Errorf("log hash %q is not a hex SHA-256", hashHex)
+	}
+	return hash, nil
 }
 
 // ComputeEntryHash computes the canonical SHA-256 hash for a PLG entry.
@@ -370,7 +444,7 @@ func ParsePLH(data []byte) (*PLHInfo, error) {
 
 // buildPLGFlatBuffer constructs a PLG FlatBuffer message.
 // Uses manual FlatBuffer builder since we don't have generated Go bindings yet.
-func buildPLGFlatBuffer(sequence uint64, schemaType, publisherPeerID, recordCID, previousEntryHash, entryHash string, timestamp uint64, signature []byte, entityIDs []string, epochDay string) []byte {
+func buildPLGFlatBuffer(sequence uint64, schemaType, publisherPeerID, recordCID, previousEntryHash, entryHash string, timestamp uint64, signature []byte, signatureType string, entityIDs []string, epochDay string) []byte {
 	builder := flatbuffers.NewBuilder(512)
 
 	// Create strings
@@ -379,7 +453,7 @@ func buildPLGFlatBuffer(sequence uint64, schemaType, publisherPeerID, recordCID,
 	recordCIDOff := builder.CreateString(recordCID)
 	prevHashOff := builder.CreateString(previousEntryHash)
 	entryHashOff := builder.CreateString(entryHash)
-	sigTypeOff := builder.CreateString("Ed25519")
+	sigTypeOff := builder.CreateString(signatureType)
 	epochDayOff := builder.CreateString(epochDay)
 
 	// Create signature byte vector
@@ -434,14 +508,14 @@ func buildPLGFlatBuffer(sequence uint64, schemaType, publisherPeerID, recordCID,
 }
 
 // buildPLHFlatBuffer constructs a PLH FlatBuffer message.
-func buildPLHFlatBuffer(schemaType, publisherPeerID string, headSequence uint64, headEntryHash string, recordCount uint64, multiaddr string, timestamp uint64, signature []byte, oldestEpochDay, newestEpochDay string) []byte {
+func buildPLHFlatBuffer(schemaType, publisherPeerID string, headSequence uint64, headEntryHash string, recordCount uint64, multiaddr string, timestamp uint64, signature []byte, signatureType string, oldestEpochDay, newestEpochDay string) []byte {
 	builder := flatbuffers.NewBuilder(512)
 
 	schemaTypeOff := builder.CreateString(schemaType)
 	publisherOff := builder.CreateString(publisherPeerID)
 	headHashOff := builder.CreateString(headEntryHash)
 	multiaddrOff := builder.CreateString(multiaddr)
-	sigTypeOff := builder.CreateString("Ed25519")
+	sigTypeOff := builder.CreateString(signatureType)
 	oldestOff := builder.CreateString(oldestEpochDay)
 	newestOff := builder.CreateString(newestEpochDay)
 
