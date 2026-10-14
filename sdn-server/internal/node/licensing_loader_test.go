@@ -2,6 +2,7 @@ package node
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -133,7 +134,11 @@ func writeTestPluginRegistryWithGrantPolicy(
 			}
 		}
 		if keyPath := filepath.Join(root, entry.KeyPath); entry.KeyPath != "" {
-			if err := os.WriteFile(keyPath, []byte(base64.RawStdEncoding.EncodeToString(make([]byte, 32))), 0o600); err != nil {
+			key := make([]byte, 32)
+			if _, err := rand.Read(key); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(keyPath, []byte(base64.RawStdEncoding.EncodeToString(key)), 0o600); err != nil {
 				t.Fatalf("WriteFile(bundle key) failed: %v", err)
 			}
 		}

@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	kmf "github.com/DigitalArsenal/spacedatastandards.org/lib/go/KMF"
 	lcf "github.com/DigitalArsenal/spacedatastandards.org/lib/go/LCF"
 	flatbuffers "github.com/google/flatbuffers/go"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
@@ -91,17 +90,14 @@ func TestBootstrapLicensingModulePublishesCatalogModulesAndHandlesChallenge(t *t
 		t.Fatalf("bootstrapLicensingModule() failed: %v", err)
 	}
 
-	challengeResponse, err := mod.InvokeMethod(
-		context.Background(),
-		"server_handle_message",
-		buildChallengeRequestFrame(
-			"req-sgp4-001",
-			"com.orbpro.sgp4",
-			"1.0.0",
-			"requester.orbpro.test",
-			"localhost",
-			"provider.orbpro.test",
-		),
+	challengeResponse, err := handleChallengeRequest(mod, buildChallengeRequestFrame(
+		"req-sgp4-001",
+		"com.orbpro.sgp4",
+		"1.0.0",
+		"requester.orbpro.test",
+		"localhost",
+		"provider.orbpro.test",
+	),
 	)
 	if err != nil {
 		t.Fatalf("InvokeMethod(server_handle_message) failed: %v", err)
@@ -173,42 +169,21 @@ func TestBuildModuleNodeContextFallsBackToServerIdentity(t *testing.T) {
 	}
 }
 
-func TestBuildPublicationContentKeyFrameUsesDecryptKeyForRecProtectedArtifacts(t *testing.T) {
+// A $REC-protected artifact's key is the X25519 decrypt key; any other is the AES-256-GCM content key. Either is
+// named by the secret "licensing/content/<KEY_ID>".
+func TestPublicationContentKeyNamesTheSecretAndAlgorithm(t *testing.T) {
 	t.Parallel()
 
 	asset := &license.PluginAsset{
 		ID:      "com.orbpro.rec-protected",
 		Version: "2.0.0",
 	}
-	keyBytes := bytes.Repeat([]byte{0x7b}, 32)
-
-	frame, err := buildPublicationContentKeyFrame(asset, buildRecProtectedContentFixture(t), keyBytes)
-	if err != nil {
-		t.Fatalf("buildPublicationContentKeyFrame() failed: %v", err)
+	rec := publicationContentKey(asset, buildRecProtectedContentFixture(t))
+	if rec["key_id"] != "com.orbpro.rec-protected:2.0.0" || rec["secret_id"] != "licensing/content/com.orbpro.rec-protected:2.0.0" || rec["algorithm"] != "x25519" {
+		t.Fatalf("REC-protected content key entry: %v", rec)
 	}
-
-	keyMaterial := kmf.GetRootAsKMF(frame, 0)
-	if got := keyMaterial.ROLE(); got != keyMaterialRoleDecryptKey {
-		t.Fatalf("KMF ROLE = %d, want %d (DecryptKey)", got, keyMaterialRoleDecryptKey)
-	}
-	if got := keyMaterial.ALGORITHM(); got != keyMaterialAlgorithmX25519Private {
-		t.Fatalf("KMF ALGORITHM = %d, want %d (X25519Private)", got, keyMaterialAlgorithmX25519Private)
-	}
-}
-
-func TestPublicationContentKeyFrameEmitsKMFIdentifier(t *testing.T) {
-	t.Parallel()
-
-	asset := &license.PluginAsset{
-		ID:      "com.orbpro.rec-protected",
-		Version: "2.0.0",
-	}
-	frame, err := buildPublicationContentKeyFrame(asset, buildRecProtectedContentFixture(t), bytes.Repeat([]byte{0x42}, 32))
-	if err != nil {
-		t.Fatalf("buildPublicationContentKeyFrame() failed: %v", err)
-	}
-	if !kmf.KMFBufferHasIdentifier(frame) {
-		t.Fatalf("publication content key frame is not a $KMF FlatBuffer")
+	if plain := publicationContentKey(asset, []byte("encrypted-bundle")); plain["algorithm"] != "aes-256-gcm" {
+		t.Fatalf("content key entry: %v", plain)
 	}
 }
 
@@ -278,6 +253,7 @@ func newLicensingTestModule(t *testing.T) *modulert.Module {
 	nodeCtx := &modulert.NodeContext{
 		PeerID:           "provider.orbpro.test",
 		CapabilityPolicy: policy,
+		HostSecrets:      modulert.NewHostSecrets(),
 		KeySlots: map[string][]byte{
 			providerSigningSlotID: {
 				1, 2, 3, 4, 5, 6, 7, 8,
@@ -315,6 +291,14 @@ func newLicensingTestModule(t *testing.T) *modulert.Module {
 		t.Fatalf("NewModule() failed: %v", err)
 	}
 	return mod
+}
+
+// handleChallengeRequest hands the licensing runtime one $LCH challenge request on its typed "request" port, as the
+// module-delivery stream handler does.
+func handleChallengeRequest(mod *modulert.Module, frame []byte) ([]byte, error) {
+	return mod.InvokeMethodFrames(context.Background(), "server_handle_message", []modulert.InvokeInputFrame{{
+		PortID: "request", SchemaName: "LCH.fbs", FileIdentifier: "$LCH", RootTypeName: "LCH", Payload: frame,
+	}})
 }
 
 func fakeIPFSCapResponse(t *testing.T, operation string, payload []byte) []byte {

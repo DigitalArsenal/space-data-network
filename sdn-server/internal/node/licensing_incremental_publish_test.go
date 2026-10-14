@@ -1,7 +1,6 @@
 package node
 
 import (
-	"context"
 	"testing"
 
 	flatbuffers "github.com/google/flatbuffers/go"
@@ -75,17 +74,14 @@ func TestIncrementalPublishLeavesOtherModulesAndTheSessionIntact(t *testing.T) {
 
 	challengeable := func(t *testing.T, requestID, moduleID string) bool {
 		t.Helper()
-		response, err := mod.InvokeMethod(
-			context.Background(),
-			"server_handle_message",
-			buildChallengeRequestFrame(
-				requestID,
-				moduleID,
-				"1.0.0",
-				"requester.orbpro.test",
-				"localhost",
-				"provider.orbpro.test",
-			),
+		response, err := handleChallengeRequest(mod, buildChallengeRequestFrame(
+			requestID,
+			moduleID,
+			"1.0.0",
+			"requester.orbpro.test",
+			"localhost",
+			"provider.orbpro.test",
+		),
 		)
 		if err != nil {
 			t.Fatalf("InvokeMethod(server_handle_message, %s) failed: %v", moduleID, err)

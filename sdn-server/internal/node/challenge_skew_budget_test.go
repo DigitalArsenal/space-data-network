@@ -1,7 +1,6 @@
 package node
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -110,14 +109,11 @@ func TestStaleStampedRequestStillGetsAChallenge(t *testing.T) {
 		{name: "1h stale — the bound is still armed", stampedAgo: time.Hour, wantRefusal: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			response, err := mod.InvokeMethod(
-				context.Background(),
-				"server_handle_message",
-				buildChallengeRequestFrameStampedAt(
-					"req-skew-"+tc.name,
-					"com.orbpro.sgp4",
-					uint64(time.Now().Add(-tc.stampedAgo).UnixMilli()),
-				),
+			response, err := handleChallengeRequest(mod, buildChallengeRequestFrameStampedAt(
+				"req-skew-"+tc.name,
+				"com.orbpro.sgp4",
+				uint64(time.Now().Add(-tc.stampedAgo).UnixMilli()),
+			),
 			)
 			if err != nil {
 				t.Fatalf("InvokeMethod(server_handle_message) failed: %v", err)

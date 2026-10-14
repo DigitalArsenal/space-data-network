@@ -16,11 +16,11 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/hkdf"
 
-	kmf "github.com/DigitalArsenal/spacedatastandards.org/lib/go/KMF"
 	lcf "github.com/DigitalArsenal/spacedatastandards.org/lib/go/LCF"
 	plg "github.com/DigitalArsenal/spacedatastandards.org/lib/go/PLG"
 	flatbuffers "github.com/google/flatbuffers/go"
@@ -28,6 +28,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/keys"
 	"github.com/spacedatanetwork/sdn-server/internal/license"
 	"github.com/spacedatanetwork/sdn-server/internal/modulert"
+	fil "github.com/spacedatanetwork/sdn-server/internal/typedfb/FIL"
 )
 
 const (
@@ -43,12 +44,6 @@ const (
 	keyReferenceRoleProviderWrapping = 2
 	keyReferenceAlgorithmEd25519Seed = 1
 	keyReferenceAlgorithmX25519      = 3
-
-	keyMaterialRolePublicationContent = 1
-	keyMaterialRoleDecryptKey         = 4
-	keyMaterialAlgorithmX25519Private = 3
-	keyMaterialAlgorithmAes256Gcm     = 5
-	keyMaterialEncodingRawBytes       = 1
 
 	publicationTrailerFooterLength = 8
 	publicationTrailerMagicText    = "$REC"
@@ -151,7 +146,7 @@ func BuildModuleDeliveryListings(reg *license.PluginRegistry) ([]ModuleDeliveryL
 }
 
 func (n *Node) buildModuleNodeContext() (*modulert.NodeContext, error) {
-	nodeCtx := &modulert.NodeContext{}
+	nodeCtx := &modulert.NodeContext{HostSecrets: modulert.NewHostSecrets()}
 	if n != nil && n.host != nil {
 		nodeCtx.PeerID = n.host.ID().String()
 	}
@@ -612,7 +607,9 @@ func bootstrapLicensingModule(mod *modulert.Module, reg *license.PluginRegistry)
 	configResponse, err := mod.InvokeMethodFrames(context.Background(), "server_configure_runtime", []modulert.InvokeInputFrame{
 		{
 			PortID:         "config",
+			SchemaName:     "LCF.fbs",
 			FileIdentifier: "$LCF",
+			RootTypeName:   "LCF",
 			Payload:        configFrame,
 		},
 	})
@@ -674,59 +671,72 @@ func publishCatalogAssets(mod *modulert.Module, reg *license.PluginRegistry, ids
 	// assets are considered never widens what may be published.
 	plan := planCatalogPublication(reg, scope)
 
+	nodeCtx := mod.NodeContext()
+	if nodeCtx == nil || nodeCtx.HostSecrets == nil {
+		return fmt.Errorf("licensing module has no host secrets to provision content keys into")
+	}
+	licensingContentKeysMu.Lock()
+	defer licensingContentKeysMu.Unlock()
+	contentKeys := licensingContentKeyEntries(nodeCtx.Config)
+
 	var publishErrs []error
 	for _, asset := range plan.Admitted {
+		fail := func(err error) {
+			publishErrs = append(publishErrs, err)
+			_ = reg.SetRuntimeStatus(asset.ID, "error", err.Error())
+		}
 		protectedContent, _, err := reg.ReadEncryptedBundle(asset.ID)
 		if err != nil {
-			publishErrs = append(publishErrs, fmt.Errorf("read encrypted bundle for %q: %w", asset.ID, err))
-			_ = reg.SetRuntimeStatus(asset.ID, "error", err.Error())
+			fail(fmt.Errorf("read encrypted bundle for %q: %w", asset.ID, err))
 			continue
 		}
 		contentKey, err := reg.ReadBundleKey(asset.ID)
 		if err != nil {
-			publishErrs = append(publishErrs, fmt.Errorf("read bundle key for %q: %w", asset.ID, err))
-			_ = reg.SetRuntimeStatus(asset.ID, "error", err.Error())
+			fail(fmt.Errorf("read bundle key for %q: %w", asset.ID, err))
 			continue
 		}
 
 		descriptorFrame, err := buildPublicationDescriptorFrame(asset)
 		if err != nil {
-			publishErrs = append(publishErrs, fmt.Errorf("build publication descriptor for %q: %w", asset.ID, err))
-			_ = reg.SetRuntimeStatus(asset.ID, "error", err.Error())
+			fail(fmt.Errorf("build publication descriptor for %q: %w", asset.ID, err))
 			continue
 		}
-		keyFrame, err := buildPublicationContentKeyFrame(asset, protectedContent, contentKey)
-		if err != nil {
-			publishErrs = append(publishErrs, fmt.Errorf("build publication key frame for %q: %w", asset.ID, err))
-			_ = reg.SetRuntimeStatus(asset.ID, "error", err.Error())
+		// The content key reaches the key server as a host-held secret: config content_keys names the secret
+		// for the descriptor's KEY_ID, the policy approves its lane for this artifact, and secrets.get answers it.
+		entry := publicationContentKey(asset, protectedContent)
+		if err := approveLicensingSecretLane(nodeCtx.CapabilityPolicy, mod, entry["secret_id"].(string)); err != nil {
+			fail(fmt.Errorf("approve content key lane for %q: %w", asset.ID, err))
+			continue
+		}
+		nodeCtx.HostSecrets.Set(entry["secret_id"].(string), contentKey)
+		contentKeys = withContentKeyEntry(contentKeys, entry)
+		if err := mod.SetConfigValue("content_keys", contentKeys); err != nil {
+			fail(fmt.Errorf("configure content key for %q: %w", asset.ID, err))
 			continue
 		}
 
 		publishResponse, err := mod.InvokeMethodFrames(context.Background(), "server_publish_module", []modulert.InvokeInputFrame{
 			{
 				PortID:         "module_descriptor",
+				SchemaName:     "PLG.fbs",
 				FileIdentifier: "$PLG",
+				RootTypeName:   "PLG",
 				Payload:        descriptorFrame,
 			},
 			{
-				PortID:  "protected_content",
-				Payload: protectedContent,
-			},
-			{
-				PortID:         "content_key",
-				FileIdentifier: "$KMF",
-				Payload:        keyFrame,
+				PortID:         "protected_content",
+				SchemaName:     "FIL.fbs",
+				FileIdentifier: "$FIL",
+				RootTypeName:   "FIL",
+				Payload:        buildProtectedContentFrame(asset, protectedContent),
 			},
 		})
 		if err != nil {
-			publishErrs = append(publishErrs, fmt.Errorf("publish module %q: %w", asset.ID, err))
-			_ = reg.SetRuntimeStatus(asset.ID, "error", err.Error())
+			fail(fmt.Errorf("publish module %q: %w", asset.ID, err))
 			continue
 		}
 		if !flatbuffers.BufferHasIdentifier(publishResponse, "$PLG") {
-			err := fmt.Errorf("publish module %q returned %d bytes without $PLG identifier", asset.ID, len(publishResponse))
-			publishErrs = append(publishErrs, err)
-			_ = reg.SetRuntimeStatus(asset.ID, "error", err.Error())
+			fail(fmt.Errorf("publish module %q returned %d bytes without $PLG identifier", asset.ID, len(publishResponse)))
 			continue
 		}
 
@@ -983,35 +993,70 @@ func buildKeyReferenceFrame(
 	return lcf.KRFEnd(builder)
 }
 
-func buildPublicationContentKeyFrame(asset *license.PluginAsset, protectedContent []byte, keyBytes []byte) ([]byte, error) {
-	if asset == nil {
-		return nil, fmt.Errorf("publication asset is required")
-	}
-	if len(keyBytes) == 0 {
-		return nil, fmt.Errorf("publication content key is required")
-	}
-	useDecryptKey := hasEncryptedPublicationRecordCollection(protectedContent)
+// licensingContentKeySecretPrefix names a content key's secret: "licensing/content/<KEY_ID>", the convention
+// licensing/core's own suite uses.
+const licensingContentKeySecretPrefix = "licensing/content/"
 
-	builder := flatbuffers.NewBuilder(128 + len(keyBytes))
-	keyIDOffset := builder.CreateString(publicationKeyID(asset))
-	keyBytesOffset := builder.CreateByteVector(keyBytes)
+// licensingContentKeysMu serializes publications, which each extend the module's content_keys config.
+var licensingContentKeysMu sync.Mutex
 
-	kmf.KMFStart(builder)
-	kmf.KMFAddKEY_ID(builder, keyIDOffset)
-	if useDecryptKey {
-		kmf.KMFAddROLE(builder, keyMaterialRoleDecryptKey)
-		kmf.KMFAddALGORITHM(builder, keyMaterialAlgorithmX25519Private)
-	} else {
-		kmf.KMFAddROLE(builder, keyMaterialRolePublicationContent)
-		kmf.KMFAddALGORITHM(builder, keyMaterialAlgorithmAes256Gcm)
+// publicationContentKey is the content_keys config entry for an asset: its KEY_ID, the secret that holds its key,
+// and the key's algorithm (the X25519 decrypt key of a $REC-protected artifact, else the AES-256-GCM content key).
+func publicationContentKey(asset *license.PluginAsset, protectedContent []byte) map[string]any {
+	keyID := publicationKeyID(asset)
+	algorithm := "aes-256-gcm"
+	if hasEncryptedPublicationRecordCollection(protectedContent) {
+		algorithm = "x25519"
 	}
-	kmf.KMFAddENCODING(builder, keyMaterialEncodingRawBytes)
-	kmf.KMFAddKEY_BYTES(builder, keyBytesOffset)
-	kmf.KMFAddVERSION(builder, 0)
-	kmf.KMFAddEXPIRES_AT(builder, 0)
-	root := kmf.KMFEnd(builder)
-	kmf.FinishKMFBuffer(builder, root)
-	return builder.FinishedBytes(), nil
+	return map[string]any{"key_id": keyID, "secret_id": licensingContentKeySecretPrefix + keyID, "algorithm": algorithm}
+}
+
+// licensingContentKeyEntries is the content_keys list a module config already carries.
+func licensingContentKeyEntries(config map[string]interface{}) []any {
+	entries, _ := config["content_keys"].([]any)
+	return append([]any(nil), entries...)
+}
+
+// withContentKeyEntry replaces the entry for the same KEY_ID, else appends.
+func withContentKeyEntry(entries []any, entry map[string]any) []any {
+	for i, e := range entries {
+		if existing, ok := e.(map[string]any); ok && existing["key_id"] == entry["key_id"] {
+			entries[i] = entry
+			return entries
+		}
+	}
+	return append(entries, entry)
+}
+
+// approveLicensingSecretLane records the operator-policy approval of the "secrets:<id>" lane for the licensing
+// artifact: the host provisions this content key to this module only. An approval already present is not rewritten.
+func approveLicensingSecretLane(policy *modulert.CapabilityPolicyStore, mod *modulert.Module, secretID string) error {
+	capability := modulert.SecretsCapabilityPrefix + secretID
+	if policy.IsApproved(mod.ContentHash(), capability) {
+		return nil
+	}
+	_, err := policy.Approve(modulert.CapabilityApproval{
+		ModuleHash: mod.ContentHash(),
+		Capability: capability,
+		PluginID:   mod.ID(),
+		ApprovedBy: "licensing-bootstrap",
+		Note:       "content key the node holds for a published module (plugin registry bundle key), served by secrets.get",
+	})
+	return err
+}
+
+// buildProtectedContentFrame wraps a module's encrypted delivery bytes as a $FIL (KIND File, SIZE, CONTENT).
+func buildProtectedContentFrame(asset *license.PluginAsset, protectedContent []byte) []byte {
+	builder := flatbuffers.NewBuilder(len(protectedContent) + 128)
+	content := builder.CreateByteVector(protectedContent)
+	name := builder.CreateString(publicationKeyID(asset))
+	fil.FILStart(builder)
+	fil.FILAddNAME(builder, name)
+	fil.FILAddKIND(builder, fil.EnumValuesfilEntryKind["File"])
+	fil.FILAddSIZE(builder, uint64(len(protectedContent)))
+	fil.FILAddCONTENT(builder, content)
+	fil.FinishFILBuffer(builder, fil.FILEnd(builder))
+	return builder.FinishedBytes()
 }
 
 func hasEncryptedPublicationRecordCollection(protectedContent []byte) bool {
