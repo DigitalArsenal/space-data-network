@@ -29,6 +29,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/modulert"
 	"github.com/spacedatanetwork/sdn-server/internal/typedfb/flownotice"
 	"github.com/spacedatanetwork/sdn-server/internal/typedfb/timertick"
+	"github.com/spacedatanetwork/sdn-server/internal/wasmrt"
 	"github.com/spacedatanetwork/sdn-server/plugins"
 
 	flatbuffers "github.com/google/flatbuffers/go"
@@ -599,17 +600,31 @@ func (sf *ServiceFlow) FireTrigger(ctx context.Context, triggerID string) ([]byt
 	if err != nil {
 		return nil, fmt.Errorf("allocate tick frame: %w", err)
 	}
+	// The descriptor names no type (InvalidIndex), as the HTTP mounts' does:
+	// the guest gives the frame each binding's own type. Index 0 is a real
+	// descriptor, and a typed port refuses a frame that claims it.
 	encodeFrameDescriptor(buf[:flowFrameDescriptorSize], &FlowFrameDescriptor{
-		PortIDPointer: framePtr + flowFrameDescriptorSize,
-		Alignment:     8,
-		Offset:        framePtr + uint32(payloadAt),
-		Size:          uint32(len(tick)),
-		Occupied:      true,
+		TypeDescriptorIdx: InvalidIndex,
+		PortIDPointer:     framePtr + flowFrameDescriptorSize,
+		Alignment:         8,
+		Offset:            framePtr + uint32(payloadAt),
+		Size:              uint32(len(tick)),
+		Occupied:          true,
 	})
 	if err := rt.Module().WriteMemory(framePtr, buf); err != nil {
 		return nil, fmt.Errorf("write tick frame: %w", err)
 	}
-	rt.EnqueueTriggerFrame(trigger.Index, framePtr)
+	// A refused frame is a run that cannot start: say so instead of draining
+	// an empty flow and reporting that nothing ran.
+	res, err := rt.Module().Execute(runtimeExportEnqueueTriggerFrame, int32(trigger.Index), int32(framePtr))
+	if err != nil {
+		return nil, fmt.Errorf("flow service %q trigger %q: enqueue the tick: %w", sf.programID, triggerID, err)
+	}
+	if len(res) > 0 {
+		if code := wasmrt.ToInt32(res[0]); code < 0 {
+			return nil, fmt.Errorf("flow service %q trigger %q: the flow refused the tick frame (code %d)", sf.programID, triggerID, code)
+		}
+	}
 
 	// Drain, collecting every egress result frame verbatim.
 	var frames [][]byte
