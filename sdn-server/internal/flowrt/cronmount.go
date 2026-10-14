@@ -58,6 +58,23 @@ type ServiceFlow struct {
 
 	mu   sync.Mutex
 	inst *flowInstance
+	// closed: Close ran. inst is also nil between runs of a service that
+	// releases its instance after each run (releaseAfterRun).
+	closed bool
+	// What a fresh instance is built from (releaseAfterRun).
+	runBytes    []byte
+	pages       uint32
+	deps        FlowMountDeps
+	contentHash string
+	// releaseAfterRun tears the WASM instance down after every run and builds
+	// a fresh one for the next (flows.services[].release_after_run): linear
+	// memory never shrinks, so a retrieval that once held a 112 MB download
+	// would otherwise keep that high-water mark for the life of the node.
+	releaseAfterRun bool
+	// exclusive is shared by the services of one flows.services[].
+	// exclusive_group: one run at a time among them (nil: no group).
+	exclusive      chan struct{}
+	exclusiveGroup string
 
 	statsMu          sync.Mutex
 	retrievalGate    RetrievalGate
@@ -181,6 +198,10 @@ func LoadFlowService(flowRef string, intervals map[string]string, deps FlowMount
 		aot:             aot,
 		inst:            inst,
 		lastTimerStatus: "never-run",
+		runBytes:        runBytes,
+		pages:           pages,
+		deps:            deps,
+		contentHash:     contentHash,
 	}
 	sf.programID = manifest.PluginID
 
@@ -268,11 +289,35 @@ func (sf *ServiceFlow) RegisterRoutes(mux *http.ServeMux) {}
 func (sf *ServiceFlow) Close() error {
 	sf.mu.Lock()
 	defer sf.mu.Unlock()
+	sf.closed = true
 	if sf.inst != nil {
 		sf.inst.rt.Release()
 		sf.inst = nil
 	}
 	return nil
+}
+
+// SetReleaseAfterRun makes every run build a fresh WASM instance and tear it
+// down when the run ends (flows.services[].release_after_run). The instance
+// loaded at start is released at once, so an idle service holds no linear
+// memory at all.
+func (sf *ServiceFlow) SetReleaseAfterRun(release bool) {
+	sf.mu.Lock()
+	defer sf.mu.Unlock()
+	sf.releaseAfterRun = release
+	if release && sf.inst != nil {
+		sf.inst.rt.Release()
+		sf.inst = nil
+	}
+}
+
+// SetExclusiveGroup puts the service in a group whose services never run at
+// the same time (flows.services[].exclusive_group): a run waits for the one
+// ahead of it, whether a timer, a first fire or a run-now started it.
+func (sf *ServiceFlow) SetExclusiveGroup(name string, slot chan struct{}) {
+	sf.statsMu.Lock()
+	defer sf.statsMu.Unlock()
+	sf.exclusiveGroup, sf.exclusive = name, slot
 }
 
 // --- plugins.CronProvider interface ---
@@ -413,6 +458,22 @@ func (sf *ServiceFlow) InvokeCron(ctx context.Context, method string, input []by
 			attempted = true
 		}
 	}
+	sf.statsMu.Lock()
+	slot, group := sf.exclusive, sf.exclusiveGroup
+	sf.statsMu.Unlock()
+	if slot != nil {
+		select {
+		case slot <- struct{}{}:
+		default:
+			log.Infof("Flow service %q: trigger %q waits for another run of exclusive group %q", sf.programID, method, group)
+			select {
+			case slot <- struct{}{}:
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+		defer func() { <-slot }()
+	}
 	out, err := sf.FireTrigger(ctx, method)
 	sf.recordTimerResult(err)
 	if attempted {
@@ -491,8 +552,24 @@ func (sf *ServiceFlow) FireTrigger(ctx context.Context, triggerID string) ([]byt
 
 	sf.mu.Lock()
 	defer sf.mu.Unlock()
-	if sf.inst == nil {
+	if sf.closed || (sf.inst == nil && len(sf.runBytes) == 0) {
 		return nil, fmt.Errorf("flow service %q is closed", sf.programID)
+	}
+	if sf.inst == nil {
+		// Released after the last run: this run gets a fresh instance.
+		inst, _, err := loadFlowInstance(sf.runBytes, sf.pages, false, nil, sf.deps, sf.contentHash)
+		if err != nil {
+			return nil, fmt.Errorf("flow service %q: load a fresh instance: %w", sf.programID, err)
+		}
+		sf.inst = inst
+	}
+	if sf.releaseAfterRun {
+		defer func() {
+			if sf.inst != nil {
+				sf.inst.rt.Release()
+				sf.inst = nil
+			}
+		}()
 	}
 	rt := sf.inst.rt
 	defer sf.inst.bridge.ResetBodyRefs()
@@ -783,6 +860,7 @@ func LoadFlowServices(services []config.FlowService, deps FlowMountDeps) ([]*Ser
 		}
 		return nil, err
 	}
+	groups := map[string]chan struct{}{}
 	for _, service := range services {
 		if service.Flow == "" {
 			return fail(fmt.Errorf("flow service requires a flow reference"))
@@ -816,8 +894,18 @@ func LoadFlowServices(services []config.FlowService, deps FlowMountDeps) ([]*Ser
 			}
 			return fail(fmt.Errorf("flow service %q: %w", service.Flow, err))
 		}
+		if group := strings.TrimSpace(service.ExclusiveGroup); group != "" {
+			if groups[group] == nil {
+				groups[group] = make(chan struct{}, 1)
+			}
+			sf.SetExclusiveGroup(group, groups[group])
+		}
+		if service.ReleaseAfterRun {
+			sf.SetReleaseAfterRun(true)
+		}
 		loaded = append(loaded, sf)
-		log.Infof("Flow service %q loaded (%d timers, aot %v)", sf.ID(), len(sf.triggers), sf.aot)
+		log.Infof("Flow service %q loaded (%d timers, aot %v, exclusive group %q, release after run %v)", sf.ID(), len(sf.triggers), sf.aot,
+			service.ExclusiveGroup, service.ReleaseAfterRun)
 	}
 	return loaded, nil
 }

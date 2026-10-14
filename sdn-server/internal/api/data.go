@@ -26,6 +26,7 @@ import (
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/MPE"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/OMM"
 
+	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/datasync"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
@@ -40,6 +41,9 @@ type DataQueryHandler struct {
 	// publisher is the node's own identity and its held publisher profiles;
 	// see SetPublisherIdentity (sources.go).
 	publisher publisherIdentity
+	// namedOnly are the lanes the unfiltered bulk lists leave out
+	// (data_bulk_scope.go).
+	namedOnly []config.LaneSelector
 }
 
 const (
@@ -447,6 +451,15 @@ func (h *DataQueryHandler) handleRawQuery(w http.ResponseWriter, r *http.Request
 		Search:            req.Search,
 		Limit:             limit,
 		Offset:            offset,
+	}
+	// A small-body lane filtered on its own fields (sbd_query.go).
+	if sbd, ok, err := parseSBDFilter(schemaName, req.SyncFilter); ok {
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		h.serveSBDQuery(w, r, queryStore, schemaName, filter, sbd, offset, limit, req.IncludeData)
+		return
 	}
 	records, err := queryStore.QueryRawRecords(filter)
 	if err != nil {
@@ -1293,7 +1306,18 @@ func (h *DataQueryHandler) bulkExportRecords(r *http.Request, schemaName string)
 			}
 			query.At = at
 		}
-		matches, err := h.store.QueryEpochRecords(query)
+		var matches []storage.EpochRecordMatch
+		var err error
+		if providerID == "" && sourceName == "" && batchID == "" {
+			lanes, hidden, laneErr := h.unfilteredBulkLanes(schemaName)
+			if laneErr == nil && hidden {
+				matches, err = h.queryEpochLanes(query, lanes)
+			} else {
+				matches, err = h.store.QueryEpochRecords(query)
+			}
+		} else {
+			matches, err = h.store.QueryEpochRecords(query)
+		}
 		if err != nil {
 			return nil, err
 		}

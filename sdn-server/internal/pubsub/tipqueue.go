@@ -74,7 +74,18 @@ type Tip struct {
 	// the parsed fields above, so OnTip handlers get them here rather than
 	// having to re-fetch or reconstruct the buffer.
 	RawPNM []byte
+
+	// declined is set by a handler (Decline) that refuses the tip: the
+	// node's trusted-import lane scope did not admit its lane.
+	declined atomic.Bool
 }
+
+// Decline marks the tip as refused by a handler: the queue keeps nothing of
+// it (no queue entry, no fetch, no pin).
+func (t *Tip) Decline() { t.declined.Store(true) }
+
+// IsDeclined reports whether a handler declined the tip.
+func (t *Tip) IsDeclined() bool { return t.declined.Load() }
 
 // TipHandler is called when a tip is received.
 type TipHandler func(tip *Tip, config ResolvedConfig)
@@ -298,28 +309,35 @@ func (tq *TipQueue) HandleMessage(msg *ps.Message) {
 	tq.handleMessage(msg)
 }
 
-// handleMessage processes a single PNM message.
-func (tq *TipQueue) handleMessage(msg *ps.Message) {
+// HandleMessageDeclined is HandleMessage that reports whether a handler
+// declined the tip (Tip.Decline): the caller then keeps nothing of it.
+func (tq *TipQueue) HandleMessageDeclined(msg *ps.Message) bool {
+	return tq.handleMessage(msg)
+}
+
+// handleMessage processes a single PNM message. It reports whether a handler
+// declined the tip.
+func (tq *TipQueue) handleMessage(msg *ps.Message) bool {
 	data := msg.Data
 	if len(data) == 0 {
-		return
+		return false
 	}
 
 	// Validate PNM
 	if !PNM.SizePrefixedPNMBufferHasIdentifier(data) {
 		log.Debug("Received message without PNM identifier")
-		return
+		return false
 	}
 	tq.mu.RLock()
 	verifier := tq.verifier
 	tq.mu.RUnlock()
 	if verifier == nil {
 		log.Debug("PNM verifier is not configured")
-		return
+		return false
 	}
 	if _, err := verifier(data); err != nil {
 		log.Debugf("Rejected untrusted PNM: %v", err)
-		return
+		return false
 	}
 
 	pnm := PNM.GetSizePrefixedRootAsPNM(data, 0)
@@ -327,7 +345,7 @@ func (tq *TipQueue) handleMessage(msg *ps.Message) {
 	cid := string(pnm.CID())
 	if cid == "" {
 		log.Debug("PNM missing CID")
-		return
+		return false
 	}
 
 	// Dedupe: a CID that is already pinned and not yet past its TTL has
@@ -339,7 +357,7 @@ func (tq *TipQueue) handleMessage(msg *ps.Message) {
 	if existing, ok := tq.pinnedCIDs[cid]; ok && (existing.PinExpiry.IsZero() || time.Now().Before(existing.PinExpiry)) {
 		tq.mu.RUnlock()
 		log.Debugf("Skipping duplicate tip for already-pinned CID %s", cid)
-		return
+		return false
 	}
 	tq.mu.RUnlock()
 
@@ -377,14 +395,20 @@ func (tq *TipQueue) handleMessage(msg *ps.Message) {
 	// Resolve config for this peer+schema
 	config := tq.config.ResolveConfig(peerID, schemaType)
 
+	// Handlers first: one that declines the tip (the node's trusted-import
+	// lane scope refuses its lane) keeps it out of the queue, and its CID is
+	// neither fetched again nor pinned.
+	tq.notifyHandlers(tip, config)
+	if tip.IsDeclined() {
+		return true
+	}
+
 	// Add to queue
 	tq.addTip(tip, config)
 
-	// Notify handlers
-	tq.notifyHandlers(tip, config)
-
 	// Process based on config
 	tq.processTip(tip, config)
+	return false
 }
 
 // addTip adds a tip to the queue.

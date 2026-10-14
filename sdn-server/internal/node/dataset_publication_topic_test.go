@@ -175,6 +175,11 @@ func TestMaterializeDatasetFeedHeadAnnouncementImportsShardOverFlatSQLSync(t *te
 		peerRegistry: registry,
 		config: &config.Config{
 			Storage: config.StorageConfig{Path: filepath.Join(tmpDir, "subscriber-storage")},
+			// A trusted peer's lane this node does not hold yet is imported
+			// only when listed (peers.trusted_import, trusted_import.go).
+			Peers: config.PeersConfig{TrustedImport: config.TrustedImportConfig{
+				Allow: []config.LaneSelector{{Schema: "OMM.fbs", ProviderID: "space-data-network-02", SourceName: "celestrak-gp"}},
+			}},
 		},
 		ctx: ctx,
 	}
@@ -358,6 +363,11 @@ func TestCatchUpDatasetShardPublicationsListsRemoteShardIndex(t *testing.T) {
 		peerRegistry: registry,
 		config: &config.Config{
 			Storage: config.StorageConfig{Path: filepath.Join(tmpDir, "subscriber-storage")},
+			// A trusted peer's lane this node does not hold yet is imported
+			// only when listed (peers.trusted_import, trusted_import.go).
+			Peers: config.PeersConfig{TrustedImport: config.TrustedImportConfig{
+				Allow: []config.LaneSelector{{Schema: "OMM.fbs", ProviderID: "space-data-network-02", SourceName: "celestrak-gp"}},
+			}},
 		},
 		ctx: ctx,
 	}

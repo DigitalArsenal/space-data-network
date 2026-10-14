@@ -102,7 +102,7 @@ func (s *ConcreteDatasetPublicationService) publicationFingerprint(req DatasetPu
 	if strings.TrimSpace(req.ProviderID) == "" || strings.TrimSpace(req.SourceName) == "" {
 		return ""
 	}
-	fingerprint, _, err := s.store.DatasetPublicationSetFingerprint(schema, req.ProviderID, req.SourceName, req.BatchID)
+	fingerprint, _, err := s.store.PagedDatasetPublicationSetFingerprint(schema, req.ProviderID, req.SourceName, req.BatchID)
 	if err != nil {
 		log.Warnf("publication fingerprint %s %s/%s: %v", schema, req.ProviderID, req.SourceName, err)
 		return ""

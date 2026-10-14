@@ -94,6 +94,47 @@ type DatasetPublicationReplayOptions struct {
 	// WorkDir is the root under which each materialization makes its own
 	// directory for the fetched shard and index, removed when it returns.
 	WorkDir string
+	// LaneAllowed, when set, is asked for every lane (schema, provider,
+	// source) the verified DPM names, after the manifest is fetched and
+	// before the shard or index is: one "no" ends the replay with
+	// ErrDatasetPublicationLaneNotImported and nothing else is fetched.
+	LaneAllowed func(schema, providerID, sourceName string) bool
+}
+
+// ErrDatasetPublicationLaneNotImported reports a publication whose lane the
+// caller's LaneAllowed refused. Nothing was fetched past the manifest.
+var ErrDatasetPublicationLaneNotImported = errors.New("dataset publication lane is not imported here")
+
+// DatasetManifestLanes lists the lanes (provider, source) a DPM carries, with
+// provider attribution as rebuildUnsignedDatasetManifest has it: the query
+// binding's first PROVIDER_ID, else the provider peer id. A manifest without
+// sources names one lane with an empty source.
+func DatasetManifestLanes(manifest *dpm.DPM) (providerID string, sourceNames []string) {
+	if manifest == nil {
+		return "", nil
+	}
+	providerID = strings.TrimSpace(string(manifest.PROVIDER_PEER_ID()))
+	if query := manifest.QUERY(nil); query != nil {
+		if ids := dpmStringVectorValues(query.PROVIDER_IDSLength(), query.PROVIDER_IDS); len(ids) > 0 {
+			providerID = strings.TrimSpace(ids[0])
+		}
+	}
+	seen := map[string]bool{}
+	for i := 0; i < manifest.SOURCESLength(); i++ {
+		var source dpm.DPMSourceBatch
+		if !manifest.SOURCES(&source, i) {
+			continue
+		}
+		name := strings.TrimSpace(string(source.SOURCE_NAME()))
+		if !seen[name] {
+			seen[name] = true
+			sourceNames = append(sourceNames, name)
+		}
+	}
+	if len(sourceNames) == 0 {
+		sourceNames = []string{""}
+	}
+	return providerID, sourceNames
 }
 
 // DatasetPublicationReplayResult summarizes a verified publication replay.
@@ -411,6 +452,18 @@ func MaterializeDatasetPublication(ctx context.Context, store *FlatSQLStore, opt
 	indexAsset, ok := assetMap["QUERY_INDEX"]
 	if !ok {
 		return nil, fmt.Errorf("DPM missing QUERY_INDEX asset")
+	}
+	if opts.LaneAllowed != nil {
+		schema := strings.TrimSpace(shardAsset.Schema)
+		if schema == "" {
+			schema = datasetFileIDSchema(fileID)
+		}
+		providerID, sourceNames := DatasetManifestLanes(manifest)
+		for _, sourceName := range sourceNames {
+			if !opts.LaneAllowed(schema, providerID, sourceName) {
+				return nil, fmt.Errorf("%w: %s %s/%s", ErrDatasetPublicationLaneNotImported, schema, providerID, sourceName)
+			}
+		}
 	}
 	if pub, ok := store.replicatedDatasetShardPublication(shardAsset, indexAsset); ok {
 		if err := recordManifestSourceBatchLicenses(store, manifest, pub.SchemaName); err != nil {
@@ -1438,6 +1491,16 @@ func queryWindowFromCanonical(canonical string) (string, string) {
 	// fields are optional DPM conveniences, so leave them empty here rather than
 	// parsing the canonical document a second time.
 	return "", ""
+}
+
+// datasetFileIDSchema is the "<name>.fbs" part of a publication FILE_ID.
+func datasetFileIDSchema(fileID string) string {
+	for _, part := range strings.Split(fileID, ":") {
+		if part = strings.TrimSpace(part); strings.HasSuffix(part, ".fbs") {
+			return part
+		}
+	}
+	return ""
 }
 
 func datasetPublicationFileID(opts DatasetPublicationManifestOptions) string {
