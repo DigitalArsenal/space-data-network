@@ -435,8 +435,12 @@ func (p *AutoPublisher) publishBatch(lane config.AutoPublishLane, schema, provid
 	}
 	if last, ok := p.lastPublished[laneKey]; ok && now.Sub(last) < minInterval {
 		p.mu.Unlock()
-		log.Debugf("auto-publish skipped for %s %s/%s: within the %s lane interval",
-			schema, provider, source, minInterval)
+		// Info, not debug: the batch is stored (and a "current" ingest has
+		// already retired the previous batch's rows) but its publication waits
+		// for the lane's next batch after the interval; an operator who ran a
+		// flow by hand within the interval must see why nothing was announced.
+		log.Infof("auto-publish skipped for %s %s/%s batch %s: within the %s lane interval (last publication %s ago); the lane's next batch after the interval publishes",
+			schema, provider, source, batchID, minInterval, now.Sub(last).Round(time.Second))
 		return
 	}
 	p.lastPublished[laneKey] = now
