@@ -105,16 +105,35 @@ function detectSigningCurve(payload) {
   return 'secp256k1';
 }
 
+function bytesEqual(a, b) {
+  if (a.length !== b.length) {
+    return false;
+  }
+  let diff = 0;
+  for (let i = 0; i < a.length; i += 1) {
+    diff |= a[i] ^ b[i];
+  }
+  return diff === 0;
+}
+
+// secp256k1-sha256 is ECDSA over SHA-256(message), hashed once by
+// curves.secp256k1.sign/verify. The digest is reported, never signed: a
+// caller digest that is not SHA-256(message) is refused rather than signed
+// (which would be ECDSA over SHA-256(digest)).
 function resolveSigningInput(wallet, payload, curve) {
   const messageBytes = toUint8Array(
     payload.messageBytes ?? payload.message ?? payload.protectedRecordBytes,
     'message'
   );
   if (curve === 'secp256k1') {
-    return {
-      messageBytes,
-      digest: optionalUint8Array(payload.digest, 'digest') ?? wallet.utils.sha256(messageBytes),
-    };
+    const digest = wallet.utils.sha256(messageBytes);
+    const callerDigest = optionalUint8Array(payload.digest, 'digest');
+    if (callerDigest && !bytesEqual(callerDigest, digest)) {
+      throw new Error(
+        'secp256k1-sha256 signs the message bytes; digest must be omitted or equal SHA-256(message).'
+      );
+    }
+    return { messageBytes, digest };
   }
   return {
     messageBytes,
@@ -133,11 +152,13 @@ function resolveSignatureEnvelope(wallet, payload, walletSign) {
   }
 
   if (typeof walletSign === 'function' && !payload.signerPrivateKey) {
+    // secp256k1: the wallet gets the message and hashes it once itself; it is
+    // never handed a digest to sign. ed25519 prehash keeps its digest input.
     const response = walletSign({
       curve,
       payload,
       messageBytes,
-      digest,
+      digest: curve === 'secp256k1' ? null : digest,
     });
     if (!response || typeof response !== 'object') {
       throw new Error('walletSign capability must return a signature envelope.');
@@ -181,7 +202,7 @@ function resolveSignatureEnvelope(wallet, payload, walletSign) {
     algorithm: payload.algorithm ?? 'secp256k1-sha256',
     messageBytes,
     digest,
-    signature: wallet.curves.secp256k1.sign(digest, privateKey),
+    signature: wallet.curves.secp256k1.sign(messageBytes, privateKey),
     publicKey:
       optionalUint8Array(payload.publicKey, 'publicKey') ??
       wallet.curves.publicKeyFromPrivate(privateKey, 0),
@@ -193,7 +214,7 @@ function resolveVerificationEnvelope(wallet, payload) {
   const signature = toUint8Array(payload.signature, 'signature');
   const publicKey = toUint8Array(payload.publicKey, 'publicKey');
   const { messageBytes, digest } = resolveSigningInput(wallet, payload, curve);
-  const verificationInput = curve === 'secp256k1' ? digest : digest ?? messageBytes;
+  const verificationInput = curve === 'secp256k1' ? messageBytes : digest ?? messageBytes;
   const valid =
     curve === 'ed25519'
       ? wallet.curves.ed25519.verify(verificationInput, signature, publicKey)

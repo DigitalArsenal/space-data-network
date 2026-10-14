@@ -3,8 +3,8 @@
   "dependencies": {
     "spacedatastandards": "1.242.0",
     "flatsql": "2.0.3",
-    "hdWalletWasm": "2.0.30",
-    "hdWalletUI": "2.0.30",
+    "hdWalletWasm": "2.1.0",
+    "hdWalletUI": "2.1.0",
     "ipfsWebUI": "4.12.0"
   },
   "advertisement": {

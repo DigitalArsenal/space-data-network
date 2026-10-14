@@ -77,15 +77,20 @@ code, pre { font-family: var(--font-mono); }
 [id] { scroll-margin-top: calc(var(--sdn-stack-header-height, 52px) + 16px); }
 
 /* Background video */
-.bg-video { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: -2; opacity: 0; transition: opacity 1s ease; }
+/* Layering: the backgrounds (#earth, .bg-video, .bg-shade, .ca-alert) sit at
+   z-index 0 and the page (main, footer) at z-index 1, so the backgrounds are
+   behind the content by an explicit order, never by the negative z-index the
+   compositor had to split the root layer around while it animated. */
+.bg-video { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: 0; pointer-events: none; opacity: 0; transition: opacity 1s ease; }
 .bg-video.loaded { opacity: 0.35; }
-.bg-shade { position: fixed; inset: 0; z-index: -1; background: var(--shade); }
+.bg-shade { position: fixed; inset: 0; z-index: 0; pointer-events: none; background: var(--shade); }
 @media (prefers-reduced-motion: reduce) { .bg-video { display: none; } }
 
 /* The top bar and footer are the shared sdn-chrome kit (assets/sdn-chrome/). */
 
 /* Layout */
-main { padding-top: var(--sdn-stack-header-height, 52px); }
+main { position: relative; z-index: 1; padding-top: var(--sdn-stack-header-height, 52px); }
+.sdn-footer { position: relative; z-index: 1; }
 .wrap { max-width: var(--max); margin: 0 auto; padding: 0 20px; }
 section.block { padding: 72px 0; }
 .eyebrow { font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); font-weight: 600; margin-bottom: 10px; }
@@ -194,7 +199,7 @@ details.more > .body { text-align: left; }
 .code pre::-webkit-scrollbar-thumb { background: rgba(255,255,255,.25); border-radius: 3px; }
 
 /* Scroll-driven Earth (earth.js) replaces the background video where WebGL2 runs */
-#earth { position: fixed; inset: 0; width: 100%; height: 100%; z-index: -2; opacity: 0; transition: opacity 1.2s ease; }
+#earth { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; opacity: 0; transition: opacity 1.2s ease; }
 #earth.loaded { opacity: 1; }
 .has-earth .bg-shade { background: var(--earth-shade); }
 .has-earth .head, .has-earth .hero, .has-earth .page-hero, .has-earth .chapter { text-shadow: var(--earth-text-shadow); }
@@ -202,22 +207,19 @@ details.more > .body { text-align: left; }
 .has-earth .btn { text-shadow: none; }
 .has-earth .btn:not(.btn-primary) { background: var(--dim-bg); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
 /* earth.js close-approach flag (canvas[data-conjunction]) */
-.ca-alert { position: fixed; left: 0; top: 0; z-index: -1; pointer-events: none; opacity: 0; display: flex; flex-direction: column; align-items: center; gap: 4px; filter: drop-shadow(0 0 12px rgba(255,59,48,.7)); will-change: transform, opacity; }
+.ca-alert { position: fixed; left: 0; top: 0; z-index: 0; pointer-events: none; opacity: 0; display: flex; flex-direction: column; align-items: center; gap: 4px; filter: drop-shadow(0 0 12px rgba(255,59,48,.7)); will-change: transform, opacity; }
 .ca-alert span { font: 700 11px var(--font-sans); letter-spacing: .12em; text-transform: uppercase; color: #fff; background: #ff3b30; border-radius: 6px; padding: 2px 7px; }
 #earth[data-idle] ~ .ca-alert { visibility: hidden; }
 .story { min-height: 88vh; display: flex; flex-direction: column; justify-content: center; }
 .story-left .wrap > * { margin-left: 0; }
 
-/* Scroll reveals (site.js) */
-.reveal { opacity: 0; transform: translateY(28px); transition: opacity .8s cubic-bezier(.2,.7,.2,1), transform .8s cubic-bezier(.2,.7,.2,1); transition-delay: var(--reveal-delay, 0ms); }
-.reveal.in { opacity: 1; transform: none; }
 .hero > *, .page-hero > * { animation: rise 1s cubic-bezier(.2,.7,.2,1) both; }
 .hero > :nth-child(2), .page-hero > :nth-child(2) { animation-delay: .12s; }
 .hero > :nth-child(3), .page-hero > :nth-child(3) { animation-delay: .24s; }
 .hero > :nth-child(4), .page-hero > :nth-child(4) { animation-delay: .36s; }
 .hero > :nth-child(5), .page-hero > :nth-child(5) { animation-delay: .48s; }
 @keyframes rise { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: none; } }
-@media (prefers-reduced-motion: reduce) { .reveal { opacity: 1; transform: none; transition: none; } .hero > *, .page-hero > * { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .hero > *, .page-hero > * { animation: none; } }
 
 /* Catalog page */
 .narrow { max-width: 860px; margin-left: auto; margin-right: auto; }

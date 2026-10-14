@@ -3,6 +3,8 @@ package logservice
 import (
 	"encoding/binary"
 	"testing"
+
+	"github.com/spacedatanetwork/sdn-server/internal/sds"
 )
 
 // B2 (cutover rehearsal): a publication log entry and head carry their
@@ -14,8 +16,8 @@ func TestPublicationLogBuffersCarryTheirFileIdentifiers(t *testing.T) {
 		name, id string
 		buf      []byte
 	}{
-		{"PLOG", "PLOG", buildPLGFlatBuffer(7, "OMM.fbs", "12D3KooWTestPeer", "bafyTestCID", "", "abcdef", 1700000000, []byte{1}, nil, "")},
-		{"PLHD", "PLHD", buildPLHFlatBuffer("OMM.fbs", "12D3KooWTestPeer", 7, "abcdef", 7, "/dns4/example.com/tcp/443", 1700000000, nil, "", "")},
+		{"PLOG", "PLOG", buildPLGFlatBuffer(7, "OMM.fbs", "12D3KooWTestPeer", "bafyTestCID", "", "abcdef", 1700000000, []byte{1}, sds.SignatureTypeEd25519, nil, "")},
+		{"PLHD", "PLHD", buildPLHFlatBuffer("OMM.fbs", "12D3KooWTestPeer", 7, "abcdef", 7, "/dns4/example.com/tcp/443", 1700000000, nil, sds.SignatureTypeEd25519, "", "")},
 	} {
 		if len(c.buf) < 12 || int(binary.LittleEndian.Uint32(c.buf)) != len(c.buf)-4 {
 			t.Fatalf("%s: not size-prefixed (%d bytes)", c.name, len(c.buf))

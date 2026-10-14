@@ -5,7 +5,7 @@
   <link rel="stylesheet" href="assets/sdn-chrome/sdn-chrome.css">
   <script src="assets/sdn-chrome/sdn-chrome.js"></script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Get on the Space Data Network: install a node, sign in, subscribe to live space data and publish your own. Step by step, with screenshots.">
+  <meta name="description" content="Get on the Space Data Network: install a node on bare metal or in Docker, learn the difference between full nodes and NAT nodes, sign in, subscribe to live space data and publish your own. Step by step, with screenshots.">
   <meta name="theme-color" content="#000000">
   <title>Get started &middot; Space Data Network</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' fill='none'><defs><linearGradient id='t' gradientUnits='userSpaceOnUse' x1='16' y1='29' x2='16' y2='3'><stop offset='0' stop-color='%23f5a524' stop-opacity='0'/><stop offset='.55' stop-color='%23f5a524' stop-opacity='.55'/><stop offset='1' stop-color='%23f5a524'/></linearGradient></defs><circle cx='16' cy='16' r='13' stroke='%23f5f5f7' stroke-width='1.6' opacity='.3'/><path d='M16 29A13 13 0 0 1 16 3' stroke='url(%23t)' stroke-width='2.2' stroke-linecap='round'/><path d='M16 10.2L10.4 20.1H21.6Z' stroke='%23f5f5f7' stroke-width='1.6' stroke-linejoin='round'/><circle cx='16' cy='10.2' r='2.6' fill='%23f5f5f7'/><circle cx='10.4' cy='20.1' r='2.6' fill='%23f5f5f7'/><circle cx='21.6' cy='20.1' r='2.6' fill='%23f5f5f7'/><circle cx='16' cy='3' r='2.5' fill='%23f5a524'/></svg>">
@@ -47,6 +47,14 @@
       .step { grid-template-columns: 1fr; gap: 22px; }
     }
     .next { display: grid; gap: 14px; }
+    .guide { display: grid; gap: 14px; max-width: 900px; padding: 56px 0 24px; border-top: 1px solid var(--border); }
+    .guide > p, .guide li { color: var(--text-2); }
+    .guide h3 { margin-top: 18px; }
+    .guide ul { display: grid; gap: 8px; padding-left: 20px; }
+    .guide b { color: var(--text); font-weight: 600; }
+    .guide a { text-decoration: underline; text-underline-offset: 2px; }
+    .guide .code { margin-top: 0; }
+    .guide td:first-child { color: var(--text); }
   </style>
 </head>
 <body>
@@ -87,6 +95,8 @@
         <li><a href="#your-data">6 &middot; Your data</a></li>
         <li><a href="#publish">7 &middot; Publish</a></li>
         <li><a href="#network">8 &middot; The network</a></li>
+        <li><a href="#install-node">Bare metal or Docker</a></li>
+        <li><a href="#node-types">Full or NAT node</a></li>
       </ul>
     </section>
 
@@ -102,6 +112,7 @@ spacedatanetwork open</code></pre></div>
 spacedatanetwork start
 spacedatanetwork open</code></pre></div>
         <p class="note">The dashboard lives at <code>http://127.0.0.1:5001/</code>. The icons on the left switch between <b>This node</b>, <b>Nodes</b> and <b>Store</b>.</p>
+        <p class="note">Installing on a server, or in Docker? <a href="#install-node">Bare metal or Docker</a> covers the service, the configuration and the ports, and <a href="#node-types">full nodes and NAT nodes</a> explains what changes when other computers can reach yours.</p>
       </div>
       <a class="shot" href="img/onboarding/01-dashboard.webp"><img src="img/onboarding/01-dashboard.webp" width="1800" height="1125" alt="The node dashboard: record, dataset, storage and peer counts, with tabs for Identity, Data, Modules and Subscriptions" loading="lazy"></a>
     </section>
@@ -187,6 +198,150 @@ await node.publish('OMM', ommData);</code></pre></div>
         <p class="note">Mark the nodes you rely on as trusted with <b>Trust rules</b> on the <b>This node</b> screen.</p>
       </div>
       <a class="shot" href="img/onboarding/08-nodes.webp"><img src="img/onboarding/08-nodes.webp" width="1800" height="1125" alt="The Nodes screen with node cards showing online and verified status above a globe of node locations" loading="lazy"></a>
+    </section>
+
+    <section class="guide" id="install-node">
+      <p class="eyebrow">Install a node</p>
+      <h2>Bare metal or Docker</h2>
+      <p class="lede">A node is one program, <code>spacedatanetwork</code>. You can run it directly on a computer you control (&ldquo;bare metal&rdquo;: a server, a virtual machine or a desktop, with no container around it) or inside Docker. Both run the same node, join the same network and keep the same kind of identity. Pick the one that fits how you already run software.</p>
+
+      <div class="table-wrap"><table>
+        <tr><th></th><th>Bare metal</th><th>Docker</th></tr>
+        <tr><td>Platforms</td><td>macOS (Apple Silicon and Intel), Linux (x86-64 and ARM64), Windows (x86-64)</td><td>Linux x86-64 image on Docker Hub; an ARM64 image archive for <code>docker load</code> on the release page</td></tr>
+        <tr><td>How it keeps running</td><td>A background service for your user account, installed by <code>spacedatanetwork start</code></td><td>The container, with <code>--restart unless-stopped</code></td></tr>
+        <tr><td>Where its files live</td><td><code>~/.spacedatanetwork/</code>: <code>config.yaml</code>, the data and the keys</td><td>One volume mounted at <code>/app/data</code>: the data, the keys and the sign-in records</td></tr>
+        <tr><td>Updates</td><td>Digitally signed updates (<code>spacedatanetwork update check</code>) on Linux x86-64; elsewhere, run the installer again</td><td>Run a newer image tag with the same volume and the same hostname</td></tr>
+      </table></div>
+
+      <h3 id="bare-metal">Bare metal: download and install</h3>
+      <p>The installer finds the newest node release on <a href="https://github.com/DigitalArsenal/space-data-network/releases" target="_blank" rel="noopener">GitHub</a>, downloads the bundle for your system, checks it against the release&rsquo;s published checksums, unpacks it under <code>~/.spacedatanetwork/bundles</code>, puts the <code>spacedatanetwork</code> command (and its short name, <code>sdn</code>) in <code>~/.spacedatanetwork/bin</code>, and creates the node&rsquo;s identity. It needs no administrator rights.</p>
+      <div class="code"><span class="label">macOS / Linux</span><button class="copy" type="button">Copy</button><pre><code>curl -fsSL https://spacedatanetwork.org/install.sh | bash</code></pre></div>
+      <div class="code"><span class="label">Windows PowerShell</span><button class="copy" type="button">Copy</button><pre><code>irm https://spacedatanetwork.org/install.ps1 | iex</code></pre></div>
+      <ul>
+        <li>If the installer says <code>~/.spacedatanetwork/bin</code> is not on your <code>PATH</code>, add it: <code>export PATH="$HOME/.spacedatanetwork/bin:$PATH"</code>.</li>
+        <li>To install a particular release instead of the newest, set <code>SDN_VERSION</code>, for example <code>SDN_VERSION=v1.0.5-beta.70</code>. <code>SDN_INSTALL_DIR</code> and <code>SDN_BUNDLE_DIR</code> move the command links and the bundles.</li>
+        <li>The installer runs the node once before it reports success. On a Linux system too old for the build (its C library, glibc, is older than the one the node was built against) it says so, leaves nothing running, and points you to the Docker image instead.</li>
+        <li>The same bundles (<code>spacedatanetwork-&lt;version&gt;-&lt;system&gt;-&lt;cpu&gt;.tar.gz</code>, <code>.zip</code> for Windows) and <code>spacedatanetwork-checksums.txt</code> are on every <a href="https://github.com/DigitalArsenal/space-data-network/releases" target="_blank" rel="noopener">release page</a>; the <a href="index.html#download">download section</a> links the current ones.</li>
+      </ul>
+
+      <h3>First run</h3>
+      <div class="code"><button class="copy" type="button">Copy</button><pre><code>spacedatanetwork start     # install and start the background service
+spacedatanetwork status    # is the node up?
+spacedatanetwork open      # print the dashboard address, http://127.0.0.1:5001/</code></pre></div>
+      <p>For a session in the foreground instead, with the log in your terminal, run <code>spacedatanetwork daemon</code>. Run the node as an ordinary user, never as root.</p>
+
+      <h3>The background service</h3>
+      <p><code>spacedatanetwork start</code> installs a service for the user who runs it and starts it; the service restarts the node if it stops.</p>
+      <div class="table-wrap"><table>
+        <tr><th>System</th><th>Service</th><th>File</th></tr>
+        <tr><td>Linux</td><td>systemd user service <code>spacedatanetwork.service</code></td><td><code>~/.config/systemd/user/spacedatanetwork.service</code></td></tr>
+        <tr><td>macOS</td><td>launchd agent <code>org.spacedatanetwork.daemon</code></td><td><code>~/Library/LaunchAgents/org.spacedatanetwork.daemon.plist</code></td></tr>
+        <tr><td>Windows</td><td>Scheduled task <code>SpaceDataNetworkDaemon</code></td><td></td></tr>
+      </table></div>
+      <div class="code"><button class="copy" type="button">Copy</button><pre><code>spacedatanetwork stop                # stop and disable the service
+spacedatanetwork restart
+spacedatanetwork service status      # the operating system's view of the service
+spacedatanetwork service uninstall   # remove the service
+spacedatanetwork remove              # remove this install; keeps the identity and data
+                                     # (add --purge-data to delete those too)</code></pre></div>
+      <p>On a Linux server you log out of, a user service stops with your last session unless systemd keeps the user&rsquo;s services running. That is a systemd setting, not a node setting: <code>sudo loginctl enable-linger $USER</code>. Read the node&rsquo;s log with <code>journalctl --user -u spacedatanetwork -f</code>.</p>
+
+      <h3>Configuration and keys</h3>
+      <p>The first run writes the configuration to <code>~/.spacedatanetwork/config.yaml</code>; the records go to <code>~/.spacedatanetwork/data</code> and the keys beside them in <code>~/.spacedatanetwork/keys</code>. Every command takes <code>--config &lt;file&gt;</code> (or the <code>SDN_CONFIG</code> variable) to use another file. The settings to check before you open the node to the internet are listed in <a href="INSTALL.md">INSTALL.md</a>: where the records are stored and how much space they may use, and keeping the dashboard on this computer only (<code>127.0.0.1:5001</code>) unless it has TLS and sign-in turned on.</p>
+      <p>The node&rsquo;s identity is a recovery phrase sealed to this computer. Export a backup once and keep it somewhere other than this computer: <code>spacedatanetwork key export --format backup</code>.</p>
+
+      <h3>Ports</h3>
+      <div class="table-wrap"><table>
+        <tr><th>Port</th><th>Protocol</th><th>What it is for</th></tr>
+        <tr><td>4001</td><td>TCP and UDP (QUIC)</td><td>Connections between nodes</td></tr>
+        <tr><td>8080</td><td>TCP (WebSocket)</td><td>Web browsers connecting to the node</td></tr>
+        <tr><td>4003</td><td>UDP (WebRTC-direct)</td><td>Web browsers connecting to the node</td></tr>
+        <tr><td>5001</td><td>TCP, this computer only</td><td>The dashboard and the local API</td></tr>
+      </table></div>
+      <p>No port has to be open for the node to work. Opening 4001, 8080 and 4003 to incoming connections is what makes it a full node; see <a href="#node-types">full nodes and NAT nodes</a> below.</p>
+
+      <h3>Linux packages</h3>
+      <p>Each release also carries Debian and RPM packages for Linux x86-64 (<code>spacedatanetwork-full_&lt;version&gt;_amd64.deb</code> and <code>spacedatanetwork-full-&lt;version&gt;-1.x86_64.rpm</code>; the version is written with dots, such as <code>1.0.5.beta.70</code>). They install the node under <code>/opt/spacedatanetwork</code>, a configuration at <code>/etc/spacedatanetwork/config.yaml</code> that keeps records under <code>/var/lib/spacedatanetwork</code>, and a system-wide service, <code>/etc/systemd/system/spacedatanetwork.service</code>, that runs as a user named <code>sdn</code>. The packages create neither that user nor <code>/var/lib/spacedatanetwork</code>, so create both before starting the service. For a single server, the installer above is simpler.</p>
+
+      <h3 id="docker">Docker</h3>
+      <p>The image is <a href="https://hub.docker.com/r/dockerdigitalarsenal/space-data-network" target="_blank" rel="noopener"><code>dockerdigitalarsenal/space-data-network</code></a>, tagged by release (<code>v1.0.5-beta.70</code>) and with a moving <code>beta</code> tag for the newest beta. It carries the node, its storage engine, IPFS (Kubo) and the sign-in pages, and runs as an ordinary user inside the container.</p>
+      <div class="code"><span class="label">docker run</span><button class="copy" type="button">Copy</button><pre><code>docker run -d --name sdn --hostname sdn --restart unless-stopped \
+  -v sdn-data:/app/data \
+  -p 127.0.0.1:5001:5001 -p 4001:4001 -p 4001:4001/udp \
+  dockerdigitalarsenal/space-data-network:v1.0.5-beta.70</code></pre></div>
+      <div class="code"><span class="label">compose.yaml (the same node)</span><button class="copy" type="button">Copy</button><pre><code>services:
+  sdn:
+    image: dockerdigitalarsenal/space-data-network:v1.0.5-beta.70
+    container_name: sdn
+    hostname: sdn
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5001:5001"
+      - "4001:4001"
+      - "4001:4001/udp"
+    volumes:
+      - sdn-data:/app/data
+volumes:
+  sdn-data:</code></pre></div>
+      <ul>
+        <li><b>The volume.</b> Everything the node owns is in <code>/app/data</code>: records, keys and sign-in records. Keep the volume and you keep the node.</li>
+        <li><b>The hostname is required.</b> Unless you give the node a key password, it seals its keys with a password derived from the container&rsquo;s hostname, and Docker invents a new hostname every time a container is created. A first start without <code>--hostname</code> refuses and prints what to do. Any fixed name works; it is not a secret. To use a password instead, mount a file and point <code>SDN_KEY_PASSWORD_FILE</code> at it.</li>
+        <li><b>Ports.</b> The command keeps the dashboard on this computer (<code>127.0.0.1:5001</code>) and opens 4001 for other nodes. For a full node that browsers can reach too, also publish <code>-p 8080:8080 -p 4003:4003/udp</code>.</li>
+        <li><b>First start is slower.</b> The node compiles its storage engine for this computer&rsquo;s processor and keeps the result in the volume.</li>
+        <li><b>Dashboard:</b> <code>http://127.0.0.1:5001/</code>. The recovery phrase: <code>docker exec sdn /app/spacedatanetwork show-identity --config /app/config/full-docker.yaml --show-mnemonic</code>.</li>
+        <li><b>Your own configuration.</b> The image starts with <code>daemon --config /app/config/full-docker.yaml</code>. Mount your own file and pass <code>daemon --config &lt;file&gt;</code> as the command to replace it.</li>
+        <li><b>No Docker Hub?</b> Every release carries the image as an archive for <code>docker load</code>, for example <code>spacedatanetwork-container-1.0.5.beta.70-linux-amd64.tar.gz</code> (the version is written with dots).</li>
+      </ul>
+    </section>
+
+    <section class="guide" id="node-types">
+      <p class="eyebrow">Full nodes and NAT nodes</p>
+      <h2>Can other nodes reach yours?</h2>
+      <p class="lede">Every node runs the same software. What differs is whether other computers on the internet can open a connection to it. That depends on your network, not on a setting you have to choose: the node checks for itself and adjusts.</p>
+      <p><b>NAT</b> (network address translation) is how most home and office routers share one public internet address among many computers. Computers behind it can connect out, but nothing outside can connect in unless the router forwards a port to them. Many mobile and some home internet providers add a second layer of it (carrier-grade NAT), and company firewalls often block incoming connections the same way.</p>
+      <ul>
+        <li><b>A full node</b> is publicly reachable: any node can connect to it directly.</li>
+        <li><b>A NAT node</b> sits behind NAT or a firewall. It connects out to other nodes, and they reach it through those connections or through a relay.</li>
+        <li><b>A relay</b> is a full node that passes traffic between two nodes that cannot connect to each other directly.</li>
+      </ul>
+
+      <h3>How a node finds out</h3>
+      <p>Shortly after it starts, the node asks nodes it has connected to whether they can connect back to it (a check called AutoNAT). While the answer is yes, it acts as a full node. While it is no, it acts as a NAT node and tries, on its own, to become reachable:</p>
+      <ul>
+        <li>it asks the router to forward its ports (UPnP or NAT-PMP, where the router allows it), and asks again if the router restarts and forgets;</li>
+        <li>it books a place on a relay, so others can reach it through the relay;</li>
+        <li>when another node connects through a relay, the two try to open a direct connection through both routers at the same moment (hole punching), which often works.</li>
+      </ul>
+
+      <h3>What each can do</h3>
+      <div class="table-wrap"><table>
+        <tr><th></th><th>Full node</th><th>NAT node</th></tr>
+        <tr><td>Subscribe to data, keep records, use the dashboard and the local API</td><td>Yes</td><td>Yes</td></tr>
+        <tr><td>Publish records to the network</td><td>Yes</td><td>Yes, over the connections it opens</td></tr>
+        <tr><td>Other nodes connect to it</td><td>Directly</td><td>Through a relay, or directly once hole punching works</td></tr>
+        <tr><td>Serve large published datasets and archives to other nodes</td><td>Yes</td><td>Only over a direct connection. A relayed connection carries about 128 KiB for about two minutes, so a node that is reachable only through a relay can be found but cannot deliver a large dataset.</td></tr>
+        <tr><td>Relay for NAT nodes</td><td>Yes, automatically, with limits: 32 bookings in all, 8 relayed connections per node, each booking for 30 minutes</td><td>No</td></tr>
+        <tr><td>Help other nodes find each other (serve the network&rsquo;s shared directory, the DHT)</td><td>Yes, automatically</td><td>No: it looks others up, but answers no lookups, and other nodes leave it out of their copies of the directory</td></tr>
+        <tr><td>Web browsers connect to it directly</td><td>Yes, with ports 8080 and 4003 open</td><td>No</td></tr>
+      </table></div>
+
+      <h3>Which to run</h3>
+      <ul>
+        <li><b>A NAT node is fine</b> for a laptop, a desktop or an office server that subscribes to data, analyses it and publishes small streams. There is nothing to set up.</li>
+        <li><b>Run a full node</b> to publish datasets other nodes download, to offer software and services, or to help carry the network: an always-on server with a public address and ports 4001 (TCP and UDP), 8080 (TCP) and 4003 (UDP) open to incoming connections, either directly, on a cloud server&rsquo;s firewall, or forwarded by your router.</li>
+      </ul>
+
+      <h3>Settings</h3>
+      <p>The defaults suit almost everyone. These three, in the <code>network</code> part of <code>config.yaml</code>, change the behaviour:</p>
+      <div class="code"><span class="label">config.yaml</span><button class="copy" type="button">Copy</button><pre><code>network:
+  enable_relay: auto   # auto: relay while reachable (default); always; never
+  dht_server: auto     # auto: serve the directory while reachable (default); always; never
+  announce: []         # extra public addresses to advertise, as multiaddrs</code></pre></div>
+      <ul>
+        <li><code>enable_relay: never</code> keeps a reachable node from relaying for others; it can still reach others through relays. <code>always</code> relays whether or not the node is reachable. <code>dht_server</code> takes the same three values.</li>
+        <li><code>announce</code> is for a node reached at an address it cannot see itself, such as a DNS name or a port your router or load balancer forwards, for example <code>/dns4/node.example.org/tcp/4001</code>.</li>
+        <li>Signed in as the operator, <code>GET /api/v1/status/reachability</code> on the local API gives the node&rsquo;s own answer: <code>direct</code> (a full node), <code>relayed</code> (a NAT node reachable through a relay), <code>unconfirmed</code> or <code>unreachable</code>.</li>
+      </ul>
     </section>
 
     <section class="block next">
