@@ -127,6 +127,19 @@ func (h *FlatSQLSyncHandler) authorize(peerID peer.ID, req *flatSQLSyncRequest) 
 		return fmt.Errorf("not authorized: datastore_key needs private-read authority")
 	}
 	requested := requestedSchema(req.Schema, req.SchemaName)
+	if publishedLaneOps[op] {
+		// The dataset-publication lane serves only what this node holds as a
+		// dataset publication: shards and indexes announced on open topics,
+		// whose manifests are pinned publicly. Its handlers look every byte
+		// up in the publication index, never in a raw table, so it is open
+		// to any peer for any well-formed schema name (trusted catch-up
+		// replicates every standard over it). Raw tables stay behind the
+		// public-read allow-list below.
+		if requested == "" || sds.ValidateSchemaName(requested) != nil {
+			return fmt.Errorf("%w (%s)", ErrReadNotAuthorized, strconv.QuoteToASCII(truncateName(requested)))
+		}
+		return nil
+	}
 	canonical, ok := publicReadSchema(requested)
 	if !ok {
 		return fmt.Errorf("%w (%s)", ErrReadNotAuthorized, strconv.QuoteToASCII(truncateName(requested)))
@@ -140,6 +153,15 @@ func (h *FlatSQLSyncHandler) authorize(peerID peer.ID, req *flatSQLSyncRequest) 
 		req.Records[i].Schema, req.Records[i].SchemaName = "", ""
 	}
 	return nil
+}
+
+// publishedLaneOps are the flatsql-sync ops that read only the node's
+// dataset publications (see FlatSQLSyncHandler.authorize).
+var publishedLaneOps = map[string]bool{
+	"list_published_shards":      true,
+	"read_published_shard":       true,
+	"read_published_shard_batch": true,
+	"read_published_asset":       true,
 }
 
 func truncateName(name string) string {

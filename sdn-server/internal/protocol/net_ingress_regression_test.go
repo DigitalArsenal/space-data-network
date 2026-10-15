@@ -137,7 +137,6 @@ func TestNET02FlatSQLSyncRefusesPrivateSchemasToUnauthorizedPeers(t *testing.T) 
 		"scan PUR":                    {"op": "scan", "schema": "PUR.fbs", "limit": 100},
 		"open_snapshot PUR":           {"op": "open_snapshot", "schema": "PUR.fbs"},
 		"open_manifest PUR":           {"op": "open_manifest", "schema": "PUR.fbs"},
-		"list_published_shards PUR":   {"op": "list_published_shards", "schema": "PUR.fbs"},
 		"empty schema":                {"op": "read_chunk", "limit": 100},
 		"other datastore":             {"op": "read_chunk", "schema": "OMM.fbs", "datastore_key": "private-ledger"},
 		"list_datastores":             {"op": "list_datastores"},
@@ -157,6 +156,38 @@ func TestNET02FlatSQLSyncRefusesPrivateSchemasToUnauthorizedPeers(t *testing.T) 
 	out := f.syncRequest(t, map[string]any{"op": "read_chunk", "schema": "OMM.fbs", "limit": 10})
 	if refused(out) || !bytes.Contains(out, f.ommBytes) {
 		t.Fatalf("public OMM read was refused or empty: %q", out)
+	}
+}
+
+// The dataset-publication lane serves only the node's dataset publications,
+// to anyone and for any standard (trusted catch-up replicates every schema
+// over it). It never reaches a raw table: a private record's CID is not a
+// publication, and asking for it by that lane reads nothing.
+func TestNET02PublicationLaneServesOnlyPublications(t *testing.T) {
+	f := newReadFixture(t)
+	f.server.SetStreamHandler(protocol.FlatSQLSyncProtocolID, protocol.NewFlatSQLSyncHandler(f.store).HandleStream)
+	out := f.syncRequest(t, map[string]any{"op": "list_published_shards", "schema": "TRK.fbs"})
+	if refused(out) || !bytes.Contains(out, []byte(`"publication_count":0`)) {
+		t.Fatalf("publication listing for a non-allow-listed standard was refused: %.300q", out)
+	}
+	for name, req := range map[string]map[string]any{
+		"list PUR publications":  {"op": "list_published_shards", "schema": "PUR.fbs"},
+		"PUR record as an asset": {"op": "read_published_asset", "schema": "PUR.fbs", "cid": f.purCID, "role": "shard"},
+		"PUR record as a shard":  {"op": "read_published_shard", "schema": "PUR.fbs", "cid": f.purCID},
+		"PUR record in a batch":  {"op": "read_published_shard_batch", "schema": "PUR.fbs", "cids": []string{f.purCID}},
+	} {
+		if out := f.syncRequest(t, req); leaksPurchase(out) {
+			t.Fatalf("%s: the publication lane leaked a private record: %q", name, out)
+		}
+	}
+	for name, req := range map[string]map[string]any{
+		"no schema":       {"op": "list_published_shards"},
+		"path schema":     {"op": "list_published_shards", "schema": "../PUR.fbs"},
+		"other datastore": {"op": "list_published_shards", "schema": "OMM.fbs", "datastore_key": "private-ledger"},
+	} {
+		if out := f.syncRequest(t, req); !refused(out) {
+			t.Fatalf("%s: not refused: %.300q", name, out)
+		}
 	}
 }
 
