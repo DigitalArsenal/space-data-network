@@ -19,6 +19,8 @@ import (
 	"strings"
 	"testing"
 
+	flatbuffers "github.com/google/flatbuffers/go"
+
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
 	"github.com/spacedatanetwork/sdn-server/internal/modulert"
@@ -30,8 +32,9 @@ import (
 // shape: STORED records are size-prefixed $OMM FlatBuffers (the ingest wire
 // form), and the shard wraps each in an OUTER stream frame — so shard
 // frames are double-prefixed ([u32 outer][u32 inner][buffer]). The fb path
-// serves these bytes verbatim; the json path unwraps the redundant outer
-// layer before omm-json.
+// serves these bytes verbatim; for format=json foundation/http-respond reads
+// the size-prefixed record inside each shard frame (its identifier and root
+// sit one prefix further in).
 func latestOMMStream(t *testing.T) []byte {
 	t.Helper()
 	stream := make([]byte, 0, 2048)
@@ -48,6 +51,99 @@ func latestOMMStream(t *testing.T) []byte {
 		stream = append(stream, record...)
 	}
 	return stream
+}
+
+// $DAV (SDS DAV.fbs, Dataset Availability) field slots, in schema order.
+const (
+	davSTANDARD               = 0
+	davKNOWN                  = 4
+	davAVAILABLE              = 5
+	davUNAVAILABLE_REASON     = 6
+	davPINNED                 = 8
+	davPNM_CID                = 15
+	davPNM_FILE_ID            = 16
+	davPNM_SIGNATURE_VERIFIED = 18
+
+	davReasonNotHeld = 2 // davUnavailableReason.NotHeld
+)
+
+// sdsTable reads an SDS record by field slot (schema declaration order)
+// through the FlatBuffers table API. The pinned Go standards module
+// (lib/go v1.242.0) predates the 1.249.0 records the typed flows answer with
+// ($DAV, $PNV, and $NST's ETAG / STANDARDS), so the tests read them by slot
+// rather than through a generated binding.
+type sdsTable struct{ tab flatbuffers.Table }
+
+// readSDSRecord checks body is one plain (root-offset-first) FlatBuffer with
+// the given file identifier and anchors its root table.
+func readSDSRecord(t *testing.T, body []byte, identifier string) sdsTable {
+	t.Helper()
+	if len(body) < 8 || !flatbuffers.BufferHasIdentifier(body, identifier) {
+		t.Fatalf("body is not a %s FlatBuffer: %q", identifier, body[:min(len(body), 16)])
+	}
+	return sdsTable{flatbuffers.Table{Bytes: body, Pos: flatbuffers.GetUOffsetT(body)}}
+}
+
+// field is the slot's absolute position, 0 when the field is absent.
+func (d sdsTable) field(slot int) flatbuffers.UOffsetT {
+	if o := flatbuffers.UOffsetT(d.tab.Offset(flatbuffers.VOffsetT(4 + 2*slot))); o != 0 {
+		return o + d.tab.Pos
+	}
+	return 0
+}
+
+func (d sdsTable) str(slot int) string {
+	if at := d.field(slot); at != 0 {
+		return string(d.tab.ByteVector(at))
+	}
+	return ""
+}
+
+func (d sdsTable) bytes(slot int) []byte {
+	if at := d.field(slot); at != 0 {
+		return d.tab.ByteVector(at)
+	}
+	return nil
+}
+
+func (d sdsTable) byte(slot int) byte {
+	if at := d.field(slot); at != 0 {
+		return d.tab.GetByte(at)
+	}
+	return 0
+}
+
+func (d sdsTable) flag(slot int) bool { return d.byte(slot) != 0 }
+
+// tables is a vector-of-tables field.
+func (d sdsTable) tables(slot int) []sdsTable {
+	at := d.field(slot)
+	if at == 0 {
+		return nil
+	}
+	rel := at - d.tab.Pos // Vector / VectorLen take the table-relative offset
+	out := make([]sdsTable, d.tab.VectorLen(rel))
+	start := d.tab.Vector(rel)
+	for i := range out {
+		elem := start + flatbuffers.UOffsetT(i)*4
+		out[i] = sdsTable{flatbuffers.Table{Bytes: d.tab.Bytes, Pos: d.tab.Indirect(elem)}}
+	}
+	return out
+}
+
+// strs is a vector-of-strings field.
+func (d sdsTable) strs(slot int) []string {
+	at := d.field(slot)
+	if at == 0 {
+		return nil
+	}
+	rel := at - d.tab.Pos
+	out := make([]string, d.tab.VectorLen(rel))
+	start := d.tab.Vector(rel)
+	for i := range out {
+		out[i] = string(d.tab.ByteVector(start + flatbuffers.UOffsetT(i)*4))
+	}
+	return out
 }
 
 func TestHTTPMountedLatestDatasetFlow(t *testing.T) {
@@ -217,31 +313,23 @@ func TestHTTPMountedLatestDatasetFlow(t *testing.T) {
 		}
 	})
 
-	t.Run("unpinned CAT answers an honest 503 carrying the newest PNM pointer", func(t *testing.T) {
+	t.Run("unpinned CAT answers an honest 503: the $DAV carrying the newest PNM pointer", func(t *testing.T) {
 		resp, body := discoveryGET(t, base+"/cat/latest", nil)
 		if resp.StatusCode != http.StatusServiceUnavailable {
 			t.Fatalf("status = %d body %q, want 503", resp.StatusCode, body)
 		}
-		var payload struct {
-			Error string `json:"error"`
-			PNM   struct {
-				CID               string `json:"CID"`
-				FileID            string `json:"FILE_ID"`
-				BatchID           string `json:"batch_id"`
-				PublishTimestamp  string `json:"PUBLISH_TIMESTAMP"`
-				SignatureVerified bool   `json:"signature_verified"`
-				Attribution       string `json:"attribution"`
-			} `json:"pnm"`
+		if ct, id := resp.Header.Get("Content-Type"), resp.Header.Get("X-Sdn-File-Identifier"); ct != "application/x-flatbuffers" || id != "$DAV" {
+			t.Fatalf("content-type = %q, x-sdn-file-identifier = %q; want the $DAV record", ct, id)
 		}
-		if err := json.Unmarshal(body, &payload); err != nil {
-			t.Fatalf("503 body: %v (%q)", err, body)
+		dav := readSDSRecord(t, body, "$DAV")
+		if dav.str(davSTANDARD) != "CAT" || !dav.flag(davKNOWN) || dav.flag(davAVAILABLE) || dav.flag(davPINNED) ||
+			dav.byte(davUNAVAILABLE_REASON) != davReasonNotHeld {
+			t.Fatalf("$DAV = standard %q known %v available %v pinned %v reason %d; want CAT known, unavailable, unpinned, NotHeld",
+				dav.str(davSTANDARD), dav.flag(davKNOWN), dav.flag(davAVAILABLE), dav.flag(davPINNED), dav.byte(davUNAVAILABLE_REASON))
 		}
-		if !strings.Contains(payload.Error, "not pinned") {
-			t.Fatalf("503 error = %q", payload.Error)
-		}
-		if payload.PNM.CID != "bafy-manifest-cat" || payload.PNM.BatchID != newBatch ||
-			!payload.PNM.SignatureVerified || payload.PNM.Attribution != "signature" {
-			t.Fatalf("pnm pointer: %+v", payload.PNM)
+		if cid, fileID := dav.str(davPNM_CID), dav.str(davPNM_FILE_ID); cid != "bafy-manifest-cat" ||
+			fileID != "sdn-CAT-full:CAT.fbs:"+newBatch+":part-000001" || !dav.flag(davPNM_SIGNATURE_VERIFIED) {
+			t.Fatalf("pnm pointer: cid %q file %q verified %v", cid, fileID, dav.flag(davPNM_SIGNATURE_VERIFIED))
 		}
 	})
 
