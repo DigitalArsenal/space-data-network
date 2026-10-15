@@ -1,0 +1,193 @@
+{
+  "schema": "sdn-epm-canonical-preimage-vectors/1",
+  "description": "EPM signing preimage conformance vectors (security audit SEC-038). Each vector is a minimal $EPM record carrying only LEGAL_NAME, ENTITY_TYPE (User) and SIGNATURE_TIMESTAMP; preimage_hex is the exact canonical signing payload, or error names why the record must be refused. Every implementation (Go node, hd-wallet JS, modules C++) must reproduce them byte for byte.",
+  "rules": [
+    "Signed strings are trimmed of ASCII space, TAB, LF, CR, VT and FF at both ends, and of nothing else; a field that trims to empty is omitted.",
+    "Strings that are not valid UTF-8 are refused at signing and at verification.",
+    "Serialization is RFC 8785 (JCS): keys sorted by UTF-16 code units; strings escape only quote, backslash, \\b, \\f, \\n, \\r, \\t and other bytes below 0x20 (lowercase \\u00xx); U+2028, U+2029, U+007F and all other characters are emitted raw.",
+    "SIGNATURE_TIMESTAMP is written as an exact decimal integer."
+  ],
+  "vectors": [
+    {
+      "name": "ascii",
+      "description": "plain ASCII",
+      "legal_name_hex": "416c696365",
+      "signature_timestamp": 1777000000,
+      "preimage_hex": "7b22454e544954595f54595045223a2255736572222c224c4547414c5f4e414d45223a22416c696365222c225349474e41545552455f54494d455354414d50223a313737373030303030307d",
+      "preimage": "{\"ENTITY_TYPE\":\"User\",\"LEGAL_NAME\":\"Alice\",\"SIGNATURE_TIMESTAMP\":1777000000}"
+    },
+    {
+      "name": "ascii-space-trim",
+      "description": "ASCII space trimmed at both ends",
+      "legal_name_hex": "20416c69636520",
+      "signature_timestamp": 1777000000,
+      "preimage_hex": "7b22454e544954595f54595045223a2255736572222c224c4547414c5f4e414d45223a22416c696365222c225349474e41545552455f54494d455354414d50223a313737373030303030307d",
+      "preimage": "{\"ENTITY_TYPE\":\"User\",\"LEGAL_NAME\":\"Alice\",\"SIGNATURE_TIMESTAMP\":1777000000}"
+    },
+    {
+      "name": "ascii-vt-ff-trim",
+      "description": "VT and FF are trimmed",
+      "legal_name_hex": "0b416c6963650c",
+      "signature_timestamp": 1777000000,
+      "preimage_hex": "7b22454e544954595f54595045223a2255736572222c224c4547414c5f4e414d45223a22416c696365222c225349474e41545552455f54494d455354414d50223a313737373030303030307d",
+      "preimage": "{\"ENTITY_TYPE\":\"User\",\"LEGAL_NAME\":\"Alice\",\"SIGNATURE_TIMESTAMP\":1777000000}"
+    },
+    {
+      "name": "nbsp-kept",
+      "description": "NBSP is not trimmed (Unicode White_Space is not canonical whitespace)",
+      "legal_name_hex": "c2a0416c696365",
+      "signature_timestamp": 1777000000,
+      "preimage_hex": "7b22454e544954595f54595045223a2255736572222c224c4547414c5f4e414d45223a22c2a0416c696365222c225349474e41545552455f54494d455354414d50223a313737373030303030307d",
+      "preimage": "{\"ENTITY_TYPE\":\"User\",\"LEGAL_NAME\":\"\u00a0Alice\",\"SIGNATURE_TIMESTAMP\":1777000000}"
+    },
+    {
+      "name": "ideographic-space-kept",
+      "description": "U+3000 is not trimmed",
+      "legal_name_hex": "416c696365e38080",
+      "signature_timestamp": 1777000000,
+      "preimage_hex": "7b22454e544954595f54595045223a2255736572222c224c4547414c5f4e414d45223a22416c696365e38080222c225349474e41545552455f54494d455354414d50223a313737373030303030307d",
+      "preimage": "{\"ENTITY_TYPE\":\"User\",\"LEGAL_NAME\":\"Alice\u3000\",\"SIGNATURE_TIMESTAMP\":1777000000}"
+    },
+    {
+      "name": "nel-kept",
+      "description": "U+0085 is not trimmed",
+      "legal_name_hex": "416c696365c285",
+      "signature_timestamp": 1777000000,
+      "preimage_hex": "7b22454e544954595f54595045223a2255736572222c224c4547414c5f4e414d45223a22416c696365c285222c225349474e41545552455f54494d455354414d50223a313737373030303030307d",
+      "preimage": "{\"ENTITY_TYPE\":\"User\",\"LEGAL_NAME\":\"Alice\u0085\",\"SIGNATURE_TIMESTAMP\":1777000000}"
+    },
+    {
+      "name": "bom-kept",
+      "description": "U+FEFF is not trimmed",
+      "legal_name_hex": "416c696365efbbbf",
+      "signature_timestamp": 1777000000,
+      "preimage_hex": "7b22454e544954595f54595045223a2255736572222c224c4547414c5f4e414d45223a22416c696365efbbbf222c225349474e41545552455f54494d455354414d50223a313737373030303030307d",
+      "preimage": "{\"ENTITY_TYPE\":\"User\",\"LEGAL_NAME\":\"Alice\ufeff\",\"SIGNATURE_TIMESTAMP\":1777000000}"
+    },
+    {
+      "name": "zwsp-kept",
+      "description": "U+200B is not trimmed",
+      "legal_name_hex": "416c696365e2808b",
+      "signature_timestamp": 1777000000,
+      "preimage_hex": "7b22454e544954595f54595045223a2255736572222c224c4547414c5f4e414d45223a22416c696365e2808b222c225349474e41545552455f54494d455354414d50223a313737373030303030307d",
+      "preimage": "{\"ENTITY_TYPE\":\"User\",\"LEGAL_NAME\":\"Alice\u200b\",\"SIGNATURE_TIMESTAMP\":1777000000}"
+    },
+    {
+      "name": "line-separator-raw",
+      "description": "U+2028 is emitted raw, not escaped",
+      "legal_name_hex": "61e280a862",
+      "signature_timestamp": 1777000000,
+      "preimage_hex": "7b22454e544954595f54595045223a2255736572222c224c4547414c5f4e414d45223a2261e280a862222c225349474e41545552455f54494d455354414d50223a313737373030303030307d",
+      "preimage": "{\"ENTITY_TYPE\":\"User\",\"LEGAL_NAME\":\"a\u2028b\",\"SIGNATURE_TIMESTAMP\":1777000000}"
+    },
+    {
+      "name": "paragraph-separator-raw",
+      "description": "U+2029 is emitted raw, not escaped",
+      "legal_name_hex": "61e280a962",
+      "signature_timestamp": 1777000000,
+      "preimage_hex": "7b22454e544954595f54595045223a2255736572222c224c4547414c5f4e414d45223a2261e280a962222c225349474e41545552455f54494d455354414d50223a313737373030303030307d",
+      "preimage": "{\"ENTITY_TYPE\":\"User\",\"LEGAL_NAME\":\"a\u2029b\",\"SIGNATURE_TIMESTAMP\":1777000000}"
+    },
+    {
+      "name": "line-separator-edge-kept",
+      "description": "U+2028/2029 at the ends are neither trimmed nor escaped",
+      "legal_name_hex": "e280a8416c696365e280a9",
+      "signature_timestamp": 1777000000,
+      "preimage_hex": "7b22454e544954595f54595045223a2255736572222c224c4547414c5f4e414d45223a22e280a8416c696365e280a9222c225349474e41545552455f54494d455354414d50223a313737373030303030307d",
+      "preimage": "{\"ENTITY_TYPE\":\"User\",\"LEGAL_NAME\":\"\u2028Alice\u2029\",\"SIGNATURE_TIMESTAMP\":1777000000}"
+    },
+    {
+      "name": "html-raw",
+      "description": "& < > are emitted raw",
+      "legal_name_hex": "61263c3e62",
+      "signature_timestamp": 1777000000,
+      "preimage_hex": "7b22454e544954595f54595045223a2255736572222c224c4547414c5f4e414d45223a2261263c3e62222c225349474e41545552455f54494d455354414d50223a313737373030303030307d",
+      "preimage": "{\"ENTITY_TYPE\":\"User\",\"LEGAL_NAME\":\"a&<>b\",\"SIGNATURE_TIMESTAMP\":1777000000}"
+    },
+    {
+      "name": "bs-ff-escaped",
+      "description": "inner backspace and form feed escape as \\b and \\f",
+      "legal_name_hex": "6108620c63",
+      "signature_timestamp": 1777000000,
+      "preimage_hex": "7b22454e544954595f54595045223a2255736572222c224c4547414c5f4e414d45223a22615c62625c6663222c225349474e41545552455f54494d455354414d50223a313737373030303030307d",
+      "preimage": "{\"ENTITY_TYPE\":\"User\",\"LEGAL_NAME\":\"a\\bb\\fc\",\"SIGNATURE_TIMESTAMP\":1777000000}"
+    },
+    {
+      "name": "tab-escaped",
+      "description": "inner tab escapes as \\t",
+      "legal_name_hex": "610962",
+      "signature_timestamp": 1777000000,
+      "preimage_hex": "7b22454e544954595f54595045223a2255736572222c224c4547414c5f4e414d45223a22615c7462222c225349474e41545552455f54494d455354414d50223a313737373030303030307d",
+      "preimage": "{\"ENTITY_TYPE\":\"User\",\"LEGAL_NAME\":\"a\\tb\",\"SIGNATURE_TIMESTAMP\":1777000000}"
+    },
+    {
+      "name": "control-escaped",
+      "description": "other C0 controls escape as lowercase \\u00xx",
+      "legal_name_hex": "6101621f63",
+      "signature_timestamp": 1777000000,
+      "preimage_hex": "7b22454e544954595f54595045223a2255736572222c224c4547414c5f4e414d45223a22615c7530303031625c753030316663222c225349474e41545552455f54494d455354414d50223a313737373030303030307d",
+      "preimage": "{\"ENTITY_TYPE\":\"User\",\"LEGAL_NAME\":\"a\\u0001b\\u001fc\",\"SIGNATURE_TIMESTAMP\":1777000000}"
+    },
+    {
+      "name": "del-raw",
+      "description": "U+007F is emitted raw",
+      "legal_name_hex": "617f62",
+      "signature_timestamp": 1777000000,
+      "preimage_hex": "7b22454e544954595f54595045223a2255736572222c224c4547414c5f4e414d45223a22617f62222c225349474e41545552455f54494d455354414d50223a313737373030303030307d",
+      "preimage": "{\"ENTITY_TYPE\":\"User\",\"LEGAL_NAME\":\"a\u007fb\",\"SIGNATURE_TIMESTAMP\":1777000000}"
+    },
+    {
+      "name": "quote-backslash",
+      "description": "quote and backslash escape",
+      "legal_name_hex": "6122625c63",
+      "signature_timestamp": 1777000000,
+      "preimage_hex": "7b22454e544954595f54595045223a2255736572222c224c4547414c5f4e414d45223a22615c22625c5c63222c225349474e41545552455f54494d455354414d50223a313737373030303030307d",
+      "preimage": "{\"ENTITY_TYPE\":\"User\",\"LEGAL_NAME\":\"a\\\"b\\\\c\",\"SIGNATURE_TIMESTAMP\":1777000000}"
+    },
+    {
+      "name": "astral-raw",
+      "description": "non-BMP characters are emitted raw",
+      "legal_name_hex": "61f09f988062",
+      "signature_timestamp": 1777000000,
+      "preimage_hex": "7b22454e544954595f54595045223a2255736572222c224c4547414c5f4e414d45223a2261f09f988062222c225349474e41545552455f54494d455354414d50223a313737373030303030307d",
+      "preimage": "{\"ENTITY_TYPE\":\"User\",\"LEGAL_NAME\":\"a\ud83d\ude00b\",\"SIGNATURE_TIMESTAMP\":1777000000}"
+    },
+    {
+      "name": "invalid-utf8-ff",
+      "description": "invalid UTF-8 is refused",
+      "legal_name_hex": "61ff62",
+      "signature_timestamp": 1777000000,
+      "error": "invalid-utf8"
+    },
+    {
+      "name": "invalid-utf8-truncated",
+      "description": "a truncated multi-byte sequence is refused",
+      "legal_name_hex": "61e28262",
+      "signature_timestamp": 1777000000,
+      "error": "invalid-utf8"
+    },
+    {
+      "name": "invalid-utf8-surrogate",
+      "description": "an encoded surrogate is refused",
+      "legal_name_hex": "61eda08062",
+      "signature_timestamp": 1777000000,
+      "error": "invalid-utf8"
+    },
+    {
+      "name": "whitespace-only-omitted",
+      "description": "a field that trims to empty is omitted",
+      "legal_name_hex": "20090a20",
+      "signature_timestamp": 1777000000,
+      "preimage_hex": "7b22454e544954595f54595045223a2255736572222c225349474e41545552455f54494d455354414d50223a313737373030303030307d",
+      "preimage": "{\"ENTITY_TYPE\":\"User\",\"SIGNATURE_TIMESTAMP\":1777000000}"
+    },
+    {
+      "name": "timestamp-above-2^53",
+      "description": "integers are written exactly, even above 2^53",
+      "legal_name_hex": "416c696365",
+      "signature_timestamp": 9007199254740993,
+      "preimage_hex": "7b22454e544954595f54595045223a2255736572222c224c4547414c5f4e414d45223a22416c696365222c225349474e41545552455f54494d455354414d50223a393030373139393235343734303939337d",
+      "preimage": "{\"ENTITY_TYPE\":\"User\",\"LEGAL_NAME\":\"Alice\",\"SIGNATURE_TIMESTAMP\":9007199254740993}"
+    }
+  ]
+}

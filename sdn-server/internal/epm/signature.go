@@ -5,10 +5,13 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
+	"unicode/utf16"
+	"unicode/utf8"
 
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/EPM"
 	"github.com/decred/dcrd/dcrec/secp256k1/v4"
@@ -245,7 +248,7 @@ func canonicalSigningContentFromEPM(epmRecord *EPM.EPM) ([]byte, error) {
 	if n := epmRecord.ALTERNATE_NAMESLength(); n > 0 {
 		values := make([]string, 0, n)
 		for i := 0; i < n; i++ {
-			if value := strings.TrimSpace(string(epmRecord.ALTERNATE_NAMES(i))); value != "" {
+			if value := canonicalTrim(string(epmRecord.ALTERNATE_NAMES(i))); value != "" {
 				values = append(values, value)
 			}
 		}
@@ -295,7 +298,7 @@ func canonicalSigningContentFromEPM(epmRecord *EPM.EPM) ([]byte, error) {
 	if n := epmRecord.MULTIFORMAT_ADDRESSLength(); n > 0 {
 		addresses := make([]string, 0, n)
 		for i := 0; i < n; i++ {
-			if value := strings.TrimSpace(string(epmRecord.MULTIFORMAT_ADDRESS(i))); value != "" {
+			if value := canonicalTrim(string(epmRecord.MULTIFORMAT_ADDRESS(i))); value != "" {
 				addresses = append(addresses, value)
 			}
 		}
@@ -337,20 +340,146 @@ func canonicalSigningContentFromEPM(epmRecord *EPM.EPM) ([]byte, error) {
 	return marshalEPMSigningContent(content)
 }
 
-// marshalEPMSigningContent serializes the canonical EPM content as RFC 8785 (JCS):
-// encoding/json sorts map keys recursively (the EPM key set is ASCII, so byte
-// order == UTF-16 code-unit order), and SetEscapeHTML(false) emits & < > and
-// U+2028/U+2029 raw instead of \u00XX. The result is byte-identical to the
-// isomorphic wasm verifier (space-data-network-modules common/jcs) and the wallet
-// (hd-wallet-wasm buildEPMSigningContent), so wallet/node/module signatures match.
+// marshalEPMSigningContent serializes the canonical EPM content as RFC 8785
+// (JCS) with a hand-written encoder, byte-identical to the isomorphic wasm
+// verifier (space-data-network-modules common/jcs SerializeString) and the
+// wallet (hd-wallet-wasm buildEPMSigningContent):
+//
+//   - object keys sorted by UTF-16 code units;
+//   - strings escape only '"', '\', \b, \f, \n, \r, \t and the other
+//     bytes below 0x20 (as lowercase \u00xx); everything else, U+2028/U+2029
+//     and U+007F included, is emitted raw;
+//   - integers in decimal.
+//
+// encoding/json was used here before and diverged (SEC-038): it always
+// escapes U+2028/U+2029 and silently rewrites invalid UTF-8 to U+FFFD, so the
+// same record had a different preimage on the node than in the wallet and the
+// modules. Invalid UTF-8 in any signed string is now refused outright, at
+// signing and at verification, on every side.
 func marshalEPMSigningContent(content map[string]interface{}) ([]byte, error) {
 	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(content); err != nil {
+	if err := writeJCSValue(&buf, content); err != nil {
 		return nil, fmt.Errorf("marshal EPM signing content: %w", err)
 	}
-	return bytes.TrimRight(buf.Bytes(), "\n"), nil
+	return buf.Bytes(), nil
+}
+
+// ErrInvalidEPMString rejects a signed EPM string field that is not valid
+// UTF-8: it has no canonical form shared by every verifier.
+var ErrInvalidEPMString = errors.New("EPM string field is not valid UTF-8")
+
+func writeJCSValue(buf *bytes.Buffer, value interface{}) error {
+	switch v := value.(type) {
+	case map[string]interface{}:
+		keys := make([]string, 0, len(v))
+		for key := range v {
+			if !utf8.ValidString(key) {
+				return ErrInvalidEPMString
+			}
+			keys = append(keys, key)
+		}
+		sort.Slice(keys, func(i, j int) bool { return jcsKeyLess(keys[i], keys[j]) })
+		buf.WriteByte('{')
+		for i, key := range keys {
+			if i > 0 {
+				buf.WriteByte(',')
+			}
+			if err := writeJCSString(buf, key); err != nil {
+				return err
+			}
+			buf.WriteByte(':')
+			if err := writeJCSValue(buf, v[key]); err != nil {
+				return err
+			}
+		}
+		buf.WriteByte('}')
+		return nil
+	case []map[string]interface{}:
+		buf.WriteByte('[')
+		for i, item := range v {
+			if i > 0 {
+				buf.WriteByte(',')
+			}
+			if err := writeJCSValue(buf, item); err != nil {
+				return err
+			}
+		}
+		buf.WriteByte(']')
+		return nil
+	case []string:
+		buf.WriteByte('[')
+		for i, item := range v {
+			if i > 0 {
+				buf.WriteByte(',')
+			}
+			if err := writeJCSString(buf, item); err != nil {
+				return err
+			}
+		}
+		buf.WriteByte(']')
+		return nil
+	case string:
+		return writeJCSString(buf, v)
+	case int64:
+		buf.WriteString(strconv.FormatInt(v, 10))
+		return nil
+	case int:
+		buf.WriteString(strconv.Itoa(v))
+		return nil
+	case uint64:
+		buf.WriteString(strconv.FormatUint(v, 10))
+		return nil
+	default:
+		return fmt.Errorf("unsupported canonical EPM value of type %T", value)
+	}
+}
+
+func writeJCSString(buf *bytes.Buffer, s string) error {
+	if !utf8.ValidString(s) {
+		return ErrInvalidEPMString
+	}
+	const hexDigits = "0123456789abcdef"
+	buf.WriteByte('"')
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch c {
+		case '"':
+			buf.WriteString(`\"`)
+		case '\\':
+			buf.WriteString(`\\`)
+		case '\b':
+			buf.WriteString(`\b`)
+		case '\f':
+			buf.WriteString(`\f`)
+		case '\n':
+			buf.WriteString(`\n`)
+		case '\r':
+			buf.WriteString(`\r`)
+		case '\t':
+			buf.WriteString(`\t`)
+		default:
+			if c < 0x20 {
+				buf.WriteString(`\u00`)
+				buf.WriteByte(hexDigits[c>>4])
+				buf.WriteByte(hexDigits[c&0xf])
+			} else {
+				buf.WriteByte(c)
+			}
+		}
+	}
+	buf.WriteByte('"')
+	return nil
+}
+
+// jcsKeyLess orders object keys by UTF-16 code units (RFC 8785 §3.2.3).
+func jcsKeyLess(a, b string) bool {
+	ua, ub := utf16.Encode([]rune(a)), utf16.Encode([]rune(b))
+	for i := 0; i < len(ua) && i < len(ub); i++ {
+		if ua[i] != ub[i] {
+			return ua[i] < ub[i]
+		}
+	}
+	return len(ua) < len(ub)
 }
 
 func decodeHexString(value string) ([]byte, error) {
@@ -360,8 +489,21 @@ func decodeHexString(value string) ([]byte, error) {
 	return hex.DecodeString(trimmed)
 }
 
+// canonicalWhitespace is the whitespace the EPM canonicalization annex trims
+// from both ends of a signed string: ASCII space, TAB, LF, CR, VT and FF, and
+// nothing else (SEC-038). It used to be strings.TrimSpace, which also strips
+// Unicode White_Space (NBSP, U+3000, U+0085, U+2028/2029, U+2000-200A): the
+// wallet and the modules do not, so their preimages differed, and a relay
+// could pad a Go-verified record with invisible characters the signature did
+// not cover.
+const canonicalWhitespace = " \t\n\r\v\f"
+
+func canonicalTrim(value string) string {
+	return strings.Trim(value, canonicalWhitespace)
+}
+
 func addBytesString(target map[string]interface{}, key string, value []byte) {
-	if trimmed := strings.TrimSpace(string(value)); trimmed != "" {
+	if trimmed := canonicalTrim(string(value)); trimmed != "" {
 		target[key] = trimmed
 	}
 }
