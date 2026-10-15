@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/MBL"
 	flatbuffers "github.com/google/flatbuffers/go"
@@ -256,8 +257,10 @@ func TestModuleSignatureReconcilesWithPublishProtocolSignerKey(t *testing.T) {
 	adminPub, adminPriv := mustGenerateEd25519Key(t)
 
 	// (a) publish_protocol.go's admin-wallet scheme accepts this key.
+	issued := time.UnixMilli(1777392000000)
 	req := &license.ModulePublishRequest{
-		IssuedAtMs: 1,
+		Audience:   "16Uiu2HAmReconciliationTestNode",
+		IssuedAtMs: issued.UnixMilli(),
 		Nonce:      "reconciliation-test-nonce",
 		Modules: []license.ModulePublishEntry{{
 			ID:              "com.example.reconciliation-test",
@@ -276,7 +279,8 @@ func TestModuleSignatureReconcilesWithPublishProtocolSignerKey(t *testing.T) {
 			Admin:            true,
 		}, nil
 	}
-	if err := license.VerifyModulePublishRequest(*req, authorizer); err != nil {
+	guard := license.ModulePublishGuard{Audience: req.Audience, Now: func() time.Time { return issued }}
+	if err := license.VerifyModulePublishRequest(*req, authorizer, guard); err != nil {
 		t.Fatalf("VerifyModulePublishRequest() with admin wallet key failed: %v", err)
 	}
 

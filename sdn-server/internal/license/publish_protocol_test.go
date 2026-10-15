@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"testing"
+	"time"
 )
 
 func TestModulePublishRequestWalletSignatureRejectsTampering(t *testing.T) {
@@ -14,6 +15,7 @@ func TestModulePublishRequestWalletSignatureRejectsTampering(t *testing.T) {
 	}
 	req := ModulePublishRequest{
 		Type:       "module-publish.v1",
+		Audience:   testModulePublishAudience,
 		IssuedAtMs: 1777392000000,
 		Nonce:      "nonce-1",
 		Modules: []ModulePublishEntry{
@@ -34,12 +36,12 @@ func TestModulePublishRequestWalletSignatureRejectsTampering(t *testing.T) {
 		t.Fatal("signature was not set")
 	}
 	authorizer := testModulePublishAuthorizer("xpub-admin", pub, true)
-	if err := VerifyModulePublishRequest(req, authorizer); err != nil {
+	if err := VerifyModulePublishRequest(req, authorizer, testModulePublishGuard()); err != nil {
 		t.Fatalf("VerifyModulePublishRequest failed: %v", err)
 	}
 
 	req.Modules[0].Version = "1.0.1"
-	if err := VerifyModulePublishRequest(req, authorizer); err == nil {
+	if err := VerifyModulePublishRequest(req, authorizer, testModulePublishGuard()); err == nil {
 		t.Fatal("VerifyModulePublishRequest accepted tampered request")
 	}
 }
@@ -55,6 +57,7 @@ func TestApplyModulePublishRequestStoresEncryptedModules(t *testing.T) {
 	}
 	req := ModulePublishRequest{
 		Type:       "module-publish.v1",
+		Audience:   testModulePublishAudience,
 		IssuedAtMs: 1777392000000,
 		Nonce:      "nonce-2",
 		Modules: []ModulePublishEntry{
@@ -73,7 +76,7 @@ func TestApplyModulePublishRequestStoresEncryptedModules(t *testing.T) {
 		t.Fatalf("SignModulePublishRequest failed: %v", err)
 	}
 
-	resp := ApplyModulePublishRequest(reg, req, testModulePublishAuthorizer("xpub-admin", pub, true))
+	resp := ApplyModulePublishRequest(reg, req, testModulePublishAuthorizer("xpub-admin", pub, true), testModulePublishGuard())
 	if !resp.OK {
 		t.Fatalf("ApplyModulePublishRequest failed: %s", resp.Error)
 	}
@@ -106,6 +109,7 @@ func TestServeModulePublishJSONWritesResponse(t *testing.T) {
 	}
 	req := ModulePublishRequest{
 		Type:       "module-publish.v1",
+		Audience:   testModulePublishAudience,
 		IssuedAtMs: 1777392000000,
 		Nonce:      "nonce-3",
 		Modules: []ModulePublishEntry{
@@ -126,7 +130,7 @@ func TestServeModulePublishJSONWritesResponse(t *testing.T) {
 	}
 
 	var responseBytes bytes.Buffer
-	ServeModulePublishJSON(bytes.NewReader(requestBytes), &responseBytes, reg, testModulePublishAuthorizer("xpub-admin", pub, true))
+	ServeModulePublishJSON(bytes.NewReader(requestBytes), &responseBytes, reg, testModulePublishAuthorizer("xpub-admin", pub, true), testModulePublishGuard())
 
 	var response ModulePublishResponse
 	if err := json.Unmarshal(responseBytes.Bytes(), &response); err != nil {
@@ -147,6 +151,7 @@ func TestVerifyModulePublishRequestRejectsNonAdminSigner(t *testing.T) {
 	}
 	req := ModulePublishRequest{
 		Type:       "module-publish.v1",
+		Audience:   testModulePublishAudience,
 		IssuedAtMs: 1777392000000,
 		Nonce:      "nonce-non-admin",
 		Modules: []ModulePublishEntry{
@@ -161,8 +166,19 @@ func TestVerifyModulePublishRequestRejectsNonAdminSigner(t *testing.T) {
 	if err := SignModulePublishRequest(&req, "xpub-user", pub, priv); err != nil {
 		t.Fatalf("SignModulePublishRequest failed: %v", err)
 	}
-	if err := VerifyModulePublishRequest(req, testModulePublishAuthorizer("xpub-user", pub, false)); err == nil {
+	if err := VerifyModulePublishRequest(req, testModulePublishAuthorizer("xpub-user", pub, false), testModulePublishGuard()); err == nil {
 		t.Fatal("VerifyModulePublishRequest accepted non-admin signer")
+	}
+}
+
+// testModulePublishAudience is the receiving node's peer ID in these tests.
+const testModulePublishAudience = "16Uiu2HAmTestProviderNodeAudience"
+
+// testModulePublishGuard is a node whose clock reads the fixtures' issued_at.
+func testModulePublishGuard() ModulePublishGuard {
+	return ModulePublishGuard{
+		Audience: testModulePublishAudience,
+		Now:      func() time.Time { return time.UnixMilli(1777392000000) },
 	}
 }
 

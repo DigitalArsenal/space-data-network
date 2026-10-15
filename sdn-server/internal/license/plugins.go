@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -186,6 +187,9 @@ type EncryptedPluginUpload struct {
 	SignatureHex       string
 	SignerPubKeyHex    string
 	UploadedAtOverride string
+	// AllowRollback admits a version lower than the one already published
+	// (SEC-030). It comes only from a signed request's explicit rollback.
+	AllowRollback bool
 }
 
 func (a *PluginAsset) clone() *PluginAsset {
@@ -244,6 +248,11 @@ func (a *PluginAsset) Descriptor() PluginDescriptor {
 // PluginRegistry manages encrypted plugin artifacts and key material pointers.
 type PluginRegistry struct {
 	rootPath string
+
+	// publishReplay is the signed-request replay ledger beside catalog.json
+	// (SEC-030), opened on first use.
+	publishReplayOnce sync.Once
+	publishReplay     *ModulePublishReplayStore
 
 	mu     sync.RWMutex
 	assets map[string]*PluginAsset
@@ -920,6 +929,15 @@ func (r *PluginRegistry) AddEncryptedPlugin(upload EncryptedPluginUpload) (*Plug
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	// SEC-030: a publish never silently downgrades a module. A lower version
+	// (or one that cannot be ordered against the current one) needs the
+	// signed request's explicit rollback.
+	if current := r.assets[id]; current != nil && !upload.AllowRollback {
+		if order, ok := compareModuleVersions(version, current.Version); !ok || order < 0 {
+			return nil, fmt.Errorf("refusing to replace %s@%s with %s: a lower or unordered version needs an explicit signed rollback", id, current.Version, version)
+		}
+	}
+
 	pluginDir := filepath.Join(r.rootPath, id)
 	if err := os.MkdirAll(pluginDir, 0700); err != nil {
 		return nil, fmt.Errorf("create plugin directory: %w", err)
@@ -1379,4 +1397,82 @@ func derivePluginBundleKey(sharedSecret []byte, context []byte) ([]byte, error) 
 		return nil, fmt.Errorf("hkdf read: %w", err)
 	}
 	return k, nil
+}
+
+// PublishReplayStore returns the registry's signed-request replay ledger,
+// persisted beside catalog.json.
+func (r *PluginRegistry) PublishReplayStore() *ModulePublishReplayStore {
+	if r == nil {
+		return nil
+	}
+	r.publishReplayOnce.Do(func() {
+		r.publishReplay = NewModulePublishReplayStore(filepath.Join(r.rootPath, modulePublishReplayFile))
+	})
+	return r.publishReplay
+}
+
+// compareModuleVersions orders dotted numeric versions ("1.2.3",
+// "2026.04.28", an optional "v" prefix and "-prerelease" suffix, where a
+// prerelease sorts before its release). ok is false when either version is
+// not of that form, so the caller can refuse to guess.
+func compareModuleVersions(a, b string) (order int, ok bool) {
+	pa, preA, okA := parseModuleVersion(a)
+	pb, preB, okB := parseModuleVersion(b)
+	if !okA || !okB {
+		return 0, a == b
+	}
+	for i := 0; i < len(pa) || i < len(pb); i++ {
+		var x, y uint64
+		if i < len(pa) {
+			x = pa[i]
+		}
+		if i < len(pb) {
+			y = pb[i]
+		}
+		if x != y {
+			if x < y {
+				return -1, true
+			}
+			return 1, true
+		}
+	}
+	switch {
+	case preA == preB:
+		return 0, true
+	case preA == "":
+		return 1, true
+	case preB == "":
+		return -1, true
+	case preA < preB:
+		return -1, true
+	default:
+		return 1, true
+	}
+}
+
+func parseModuleVersion(v string) ([]uint64, string, bool) {
+	v = strings.TrimPrefix(strings.TrimSpace(v), "v")
+	if i := strings.IndexByte(v, '+'); i >= 0 {
+		v = v[:i]
+	}
+	pre := ""
+	if i := strings.IndexByte(v, '-'); i >= 0 {
+		v, pre = v[:i], v[i+1:]
+		if pre == "" {
+			return nil, "", false
+		}
+	}
+	parts := strings.Split(v, ".")
+	out := make([]uint64, 0, len(parts))
+	for _, part := range parts {
+		if part == "" || len(part) > 18 {
+			return nil, "", false
+		}
+		n, err := strconv.ParseUint(part, 10, 64)
+		if err != nil {
+			return nil, "", false
+		}
+		out = append(out, n)
+	}
+	return out, pre, true
 }

@@ -71,10 +71,18 @@ type ModuleEntitlementChange struct {
 // stable wallet identity and SignerPubKeyHex is the Ed25519 key bound to that
 // xpub by the provider's admin auth store. Type selects the body: Modules for
 // ModulePublishRequestType, Entitlement for ModuleEntitlementRequestType.
+//
+// Replay protection (SEC-030): Audience is the peer ID of the one node the
+// request is for, IssuedAtMs must be within ModulePublishMaxClockSkew of that
+// node's clock, and Nonce is accepted once per signer. All three are signed.
+// Rollback, also signed, is the only way to publish a module version lower
+// than the one the node holds.
 type ModulePublishRequest struct {
 	Type            string                   `json:"type"`
+	Audience        string                   `json:"audience"`
 	IssuedAtMs      int64                    `json:"issued_at_ms"`
 	Nonce           string                   `json:"nonce"`
+	Rollback        bool                     `json:"rollback,omitempty"`
 	Modules         []ModulePublishEntry     `json:"modules"`
 	Entitlement     *ModuleEntitlementChange `json:"entitlement,omitempty"`
 	SignerXPub      string                   `json:"signer_xpub"`
@@ -100,16 +108,39 @@ type ModulePublishResponse struct {
 	Results []ModulePublishResult `json:"results,omitempty"`
 }
 
+// ModulePublishGuard is the receiving node's side of replay protection.
+type ModulePublishGuard struct {
+	// Audience is this node's peer ID. A request addressed to any other node
+	// is refused. Required.
+	Audience string
+	// Now is the clock (time.Now when nil).
+	Now func() time.Time
+}
+
+func (g ModulePublishGuard) now() time.Time {
+	if g.Now != nil {
+		return g.Now()
+	}
+	return time.Now()
+}
+
 // ApplyModulePublishRequest verifies req and applies it to reg: a publish
 // replaces the matching encrypted catalog entries, an entitlement change
 // rewrites their allowed_xpubs. Results name every changed module, which the
 // caller then re-provisions into the licensing runtime. It returns a wire-safe
 // response instead of exposing partial filesystem errors to stream callers.
-func ApplyModulePublishRequest(reg *PluginRegistry, req ModulePublishRequest, authorizer ModulePublishAuthorizer) ModulePublishResponse {
+//
+// A request is applied at most once, on the node it names, while fresh: the
+// (signer, nonce) pair is consumed in reg's replay ledger before anything
+// changes.
+func ApplyModulePublishRequest(reg *PluginRegistry, req ModulePublishRequest, authorizer ModulePublishAuthorizer, guard ModulePublishGuard) ModulePublishResponse {
 	if reg == nil {
 		return ModulePublishResponse{OK: false, Error: "plugin registry is unavailable"}
 	}
-	if err := VerifyModulePublishRequest(req, authorizer); err != nil {
+	if err := VerifyModulePublishRequest(req, authorizer, guard); err != nil {
+		return ModulePublishResponse{OK: false, Error: err.Error()}
+	}
+	if err := reg.PublishReplayStore().Consume(strings.TrimSpace(req.SignerXPub), req.Nonce, req.IssuedAtMs, guard.now()); err != nil {
 		return ModulePublishResponse{OK: false, Error: err.Error()}
 	}
 	if req.Type == ModuleEntitlementRequestType {
@@ -134,6 +165,7 @@ func ApplyModulePublishRequest(reg *PluginRegistry, req ModulePublishRequest, au
 			SignatureHex:       module.SignatureHex,
 			SignerPubKeyHex:    module.SignerPubKeyHex,
 			UploadedAtOverride: uploadedAt,
+			AllowRollback:      req.Rollback,
 		})
 		if err != nil {
 			return ModulePublishResponse{OK: false, Error: err.Error()}
@@ -173,7 +205,7 @@ func applyModuleEntitlementChange(reg *PluginRegistry, req ModulePublishRequest)
 // ApplyModulePublishJSON decodes one JSON publish request from r and applies it
 // to reg. The caller owns response timing so it can refresh runtime state before
 // acknowledging success.
-func ApplyModulePublishJSON(r io.Reader, reg *PluginRegistry, authorizer ModulePublishAuthorizer) ModulePublishResponse {
+func ApplyModulePublishJSON(r io.Reader, reg *PluginRegistry, authorizer ModulePublishAuthorizer, guard ModulePublishGuard) ModulePublishResponse {
 	var req ModulePublishRequest
 	data, err := io.ReadAll(io.LimitReader(r, maxModulePublishJSONBytes+1))
 	if err != nil {
@@ -185,14 +217,14 @@ func ApplyModulePublishJSON(r io.Reader, reg *PluginRegistry, authorizer ModuleP
 	if err := json.Unmarshal(data, &req); err != nil {
 		return ModulePublishResponse{OK: false, Error: "decode request: " + err.Error()}
 	}
-	return ApplyModulePublishRequest(reg, req, authorizer)
+	return ApplyModulePublishRequest(reg, req, authorizer, guard)
 }
 
 // ServeModulePublishJSON decodes one JSON publish request from r and writes one
 // JSON response to w. It is intentionally transport-agnostic so HTTP tests,
 // libp2p streams, and future CLI integrations use identical request handling.
-func ServeModulePublishJSON(r io.Reader, w io.Writer, reg *PluginRegistry, authorizer ModulePublishAuthorizer) {
-	WriteModulePublishResponse(w, ApplyModulePublishJSON(r, reg, authorizer))
+func ServeModulePublishJSON(r io.Reader, w io.Writer, reg *PluginRegistry, authorizer ModulePublishAuthorizer, guard ModulePublishGuard) {
+	WriteModulePublishResponse(w, ApplyModulePublishJSON(r, reg, authorizer, guard))
 }
 
 // WriteModulePublishResponse writes a newline-terminated JSON response.
@@ -225,9 +257,11 @@ func SignModulePublishRequest(req *ModulePublishRequest, signerXPub string, sign
 	return nil
 }
 
-// VerifyModulePublishRequest checks the request's wallet signature and confirms
-// the signer is an admin in the provider's local auth store.
-func VerifyModulePublishRequest(req ModulePublishRequest, authorizer ModulePublishAuthorizer) error {
+// VerifyModulePublishRequest checks the request's wallet signature, confirms
+// the signer is an admin in the provider's local auth store, and that the
+// request is addressed to this node (guard.Audience) and fresh. It does not
+// consume the nonce; ApplyModulePublishRequest does.
+func VerifyModulePublishRequest(req ModulePublishRequest, authorizer ModulePublishAuthorizer, guard ModulePublishGuard) error {
 	got := strings.TrimSpace(req.SignatureHex)
 	if got == "" {
 		return errors.New("signature_hex is required")
@@ -270,6 +304,18 @@ func VerifyModulePublishRequest(req ModulePublishRequest, authorizer ModulePubli
 	if !ed25519.Verify(ed25519.PublicKey(pubKey), payload, gotBytes) {
 		return errors.New("module publish signature mismatch")
 	}
+	audience := strings.TrimSpace(guard.Audience)
+	if audience == "" {
+		return errors.New("module publish audience is not configured on this node")
+	}
+	if strings.TrimSpace(req.Audience) != audience {
+		return fmt.Errorf("module publish request is addressed to %q, not this node", req.Audience)
+	}
+	issued := time.UnixMilli(req.IssuedAtMs)
+	now := guard.now()
+	if issued.Before(now.Add(-ModulePublishMaxClockSkew)) || issued.After(now.Add(ModulePublishMaxClockSkew)) {
+		return fmt.Errorf("module publish request issued_at %s is outside %s of this node's clock", issued.UTC().Format(time.RFC3339), ModulePublishMaxClockSkew)
+	}
 	return nil
 }
 
@@ -283,6 +329,12 @@ func modulePublishSigningPayload(req ModulePublishRequest) ([]byte, error) {
 	}
 	if strings.TrimSpace(req.Nonce) == "" {
 		return nil, errors.New("nonce is required")
+	}
+	if len(req.Nonce) > 128 {
+		return nil, errors.New("nonce is too long")
+	}
+	if strings.TrimSpace(req.Audience) == "" {
+		return nil, errors.New("audience (the target node's peer id) is required")
 	}
 	if strings.TrimSpace(req.SignerXPub) == "" {
 		return nil, errors.New("signer_xpub is required")

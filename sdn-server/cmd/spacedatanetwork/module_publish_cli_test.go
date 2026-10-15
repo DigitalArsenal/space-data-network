@@ -151,3 +151,17 @@ func TestResolveModulePublishMnemonicNodeRootOutranksImplicitDevWallet(t *testin
 		t.Fatalf("stray config/dev-wallet.env outranked the node root key: got %q", got)
 	}
 }
+
+// SEC-030: the CLI signs the provider's peer ID into the request as its
+// audience, so it reads it from the target multiaddr and refuses a target
+// without one.
+func TestModulePublishTargetPeerID(t *testing.T) {
+	const pid = "16Uiu2HAmAPZQ22WpSgQeUxStqr5ah3cJYrtpMQBJiTH3oQRHD31L"
+	got, err := modulePublishTargetPeerID("/ip4/127.0.0.1/tcp/4001/p2p/" + pid)
+	if err != nil || got != pid {
+		t.Fatalf("modulePublishTargetPeerID = %q, %v; want %q", got, err, pid)
+	}
+	if _, err := modulePublishTargetPeerID("/ip4/127.0.0.1/tcp/4001"); err == nil {
+		t.Fatal("a target without /p2p/<peer-id> gave an audience")
+	}
+}

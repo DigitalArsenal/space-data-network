@@ -46,6 +46,7 @@ var (
 	modulePublishGrantPolicy string
 	modulePublishTimeout     time.Duration
 	moduleEntitlementXpubs   []string
+	modulePublishRollback    bool
 )
 
 var pluginsCmd = &cobra.Command{
@@ -105,6 +106,7 @@ func init() {
 	pluginsPublishOrbProCmd.Flags().StringArrayVar(&modulePublishModules, "module", nil, "module id to publish; repeat to publish a subset")
 	pluginsPublishOrbProCmd.Flags().StringArrayVar(&modulePublishAllowXpubs, "allowed-xpub", nil, "allowed requester xpub (PKI) to apply to every published module; repeat for multiple xpubs")
 	pluginsPublishOrbProCmd.Flags().StringVar(&modulePublishGrantPolicy, "grant-policy", "", "grant policy to stamp on every published module: allowlist (fail-closed default), open, or link-key")
+	pluginsPublishOrbProCmd.Flags().BoolVar(&modulePublishRollback, "rollback", false, "allow publishing a lower module version than the provider holds (signed into the request)")
 	addModuleRequestFlags(pluginsPublishOrbProCmd)
 	pluginsCmd.AddCommand(pluginsPublishOrbProCmd)
 
@@ -158,15 +160,23 @@ func sendSignedModuleRequest(parent context.Context, req license.ModulePublishRe
 	ctx, cancel := context.WithTimeout(parent, modulePublishTimeout)
 	defer cancel()
 
+	// Resolve the provider first: its peer ID is signed into the request as
+	// the audience, so the request is valid on that one node only (SEC-030).
+	target, err := resolveModulePublishTarget(ctx, modulePublishProviderURL, modulePublishTargetAddr)
+	if err != nil {
+		return nil, err
+	}
+	audience, err := modulePublishTargetPeerID(target)
+	if err != nil {
+		return nil, err
+	}
+	req.Audience = audience
+
 	signer, err := loadModulePublishSigner(ctx, modulePublishWalletEnv, modulePublishWalletWASM, modulePublishWalletAcct)
 	if err != nil {
 		return nil, err
 	}
 	if err := license.SignModulePublishRequest(&req, signer.XPub, signer.SigningPubKey, signer.SigningPrivateKey); err != nil {
-		return nil, err
-	}
-	target, err := resolveModulePublishTarget(ctx, modulePublishProviderURL, modulePublishTargetAddr)
-	if err != nil {
 		return nil, err
 	}
 	return publishModuleRequest(ctx, target, req)
@@ -190,6 +200,7 @@ func runPluginsPublishOrbPro(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	applyPublishAllowedXpubs(&req, modulePublishAllowXpubs)
+	req.Rollback = modulePublishRollback
 	if err := applyPublishGrantPolicy(&req, modulePublishGrantPolicy); err != nil {
 		return err
 	}
@@ -687,6 +698,19 @@ func targetFromProviderURL(providerURL, peerID string) (string, error) {
 		}
 	}
 	return fmt.Sprintf("/%s/%s/tcp/%s/%s/p2p/%s", hostComponent, host, port, transport, strings.TrimSpace(peerID)), nil
+}
+
+// modulePublishTargetPeerID is the provider peer ID a target multiaddr names.
+func modulePublishTargetPeerID(target string) (string, error) {
+	addr, err := multiaddr.NewMultiaddr(target)
+	if err != nil {
+		return "", fmt.Errorf("parse target multiaddr: %w", err)
+	}
+	info, err := peer.AddrInfoFromP2pAddr(addr)
+	if err != nil {
+		return "", fmt.Errorf("target must include /p2p/<peer-id>: %w", err)
+	}
+	return info.ID.String(), nil
 }
 
 func publishModuleRequest(ctx context.Context, target string, req license.ModulePublishRequest) (*license.ModulePublishResponse, error) {

@@ -54,7 +54,11 @@ func (n *Node) handleModulePublishStream(stream network.Stream) {
 		return
 	}
 
-	response := license.ApplyModulePublishJSON(stream, n.pluginRegistry, n.modulePublishAuthorizer)
+	// SEC-030: the request must name this node as its audience, be fresh,
+	// and carry a nonce this node has not applied before.
+	response := license.ApplyModulePublishJSON(stream, n.pluginRegistry, n.modulePublishAuthorizer, license.ModulePublishGuard{
+		Audience: n.host.ID().String(),
+	})
 	if response.OK {
 		// Publish exactly the modules this request changed, and nothing else.
 		//
