@@ -13,6 +13,7 @@ package node
 import (
 	"crypto/ed25519"
 	"encoding/hex"
+	"github.com/spacedatanetwork/sdn-server/internal/modulert"
 	"testing"
 
 	libp2pcrypto "github.com/libp2p/go-libp2p/core/crypto"
@@ -62,28 +63,46 @@ func TestPolicySelfTrustsTheNodeKeyWithNoOperatorConfig(t *testing.T) {
 	}
 }
 
-func TestPolicyDefaultsToReportOnlyAndFlipsOnOneEnvVar(t *testing.T) {
+// TestPolicyEnforcesByDefault is the security-audit fix for the raw-load
+// track's finding 1: the policy used to default to report-only, admitting
+// unsigned, tampered and untrusted modules. Enforcement is now the default;
+// SDN_MODULE_SIGNATURE_ENFORCE cannot turn it off, and only the explicit
+// development opt-out (exactly "1") runs report-only.
+func TestPolicyEnforcesByDefault(t *testing.T) {
 	n, _ := nodeWithSigningKey(t)
 
 	t.Setenv(trustedPublisherKeysEnv, "")
-	t.Setenv(moduleSignatureEnforceEnv, "")
-	if got := n.buildModuleSignaturePolicy(); !got.ReportOnly {
-		t.Fatal("default posture must be REPORT-ONLY: an operator who has not made the owner-gated decision must never get a surprise outage")
+	t.Setenv(moduleSignatureReportOnlyDevEnv, "")
+	for _, value := range []string{"", "1", "true", "enforce", "0", "false", "no", "off", "maybe"} {
+		t.Setenv(moduleSignatureEnforceEnv, value)
+		if got := n.buildModuleSignaturePolicy(); got.ReportOnly {
+			t.Fatalf("%s=%q left the policy report-only; enforcement is the default", moduleSignatureEnforceEnv, value)
+		}
 	}
 
-	// The enforce flip is deliberately one variable, so it is one guarded,
-	// reversible step.
-	for _, truthy := range []string{"1", "true", "yes", "on", "enforce", "TRUE"} {
-		t.Setenv(moduleSignatureEnforceEnv, truthy)
+	t.Setenv(moduleSignatureEnforceEnv, "")
+	for _, value := range []string{"true", "yes", "on", "0"} {
+		t.Setenv(moduleSignatureReportOnlyDevEnv, value)
 		if got := n.buildModuleSignaturePolicy(); got.ReportOnly {
-			t.Fatalf("%s=%q must enforce (ReportOnly=false)", moduleSignatureEnforceEnv, truthy)
+			t.Fatalf("%s=%q opened report-only; only exactly \"1\" may", moduleSignatureReportOnlyDevEnv, value)
 		}
 	}
-	for _, falsy := range []string{"", "0", "false", "no", "off", "maybe"} {
-		t.Setenv(moduleSignatureEnforceEnv, falsy)
-		if got := n.buildModuleSignaturePolicy(); !got.ReportOnly {
-			t.Fatalf("%s=%q must stay report-only", moduleSignatureEnforceEnv, falsy)
-		}
+	t.Setenv(moduleSignatureReportOnlyDevEnv, "1")
+	if got := n.buildModuleSignaturePolicy(); !got.ReportOnly {
+		t.Fatalf("%s=1 is the development opt-out and must run report-only", moduleSignatureReportOnlyDevEnv)
+	}
+}
+
+// TestEnforcedPolicyRefusesUnsignedModule runs the default policy through the
+// real admit gate: an unsigned module is refused, not logged and admitted.
+func TestEnforcedPolicyRefusesUnsignedModule(t *testing.T) {
+	n, _ := nodeWithSigningKey(t)
+	t.Setenv(trustedPublisherKeysEnv, "")
+	t.Setenv(moduleSignatureEnforceEnv, "")
+	t.Setenv(moduleSignatureReportOnlyDevEnv, "")
+	unsigned := []byte{0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00}
+	if _, _, err := modulert.EnforceModuleSignaturePolicy(n.buildModuleSignaturePolicy(), unsigned); err == nil {
+		t.Fatal("the default policy admitted an unsigned module")
 	}
 }
 
@@ -121,8 +140,8 @@ func TestMalformedOperatorKnobFailsSafe(t *testing.T) {
 }
 
 // TestPolicyWithoutNodeIdentityStillAttaches covers an edge node with no HD
-// identity: the policy must still be attached (so the observe log works) rather
-// than falling back to the inert nil state.
+// identity: the policy must still be attached, enforcing, rather than falling
+// back to the inert nil state.
 func TestPolicyWithoutNodeIdentityStillAttaches(t *testing.T) {
 	t.Setenv(trustedPublisherKeysEnv, "")
 	t.Setenv(moduleSignatureEnforceEnv, "")
@@ -135,8 +154,8 @@ func TestPolicyWithoutNodeIdentityStillAttaches(t *testing.T) {
 	if len(policy.TrustedSigners) != 0 {
 		t.Fatalf("no identity and no operator keys must mean no trusted signers, got %d", len(policy.TrustedSigners))
 	}
-	if !policy.ReportOnly {
-		t.Fatal("an identity-less node must not silently enforce with an empty trust set")
+	if policy.ReportOnly {
+		t.Fatal("an identity-less node with no trusted keys must fail closed (refuse every module), not admit them")
 	}
 }
 

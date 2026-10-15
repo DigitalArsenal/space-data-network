@@ -111,28 +111,33 @@ func (m *FlowManager) Deploy(ctx context.Context, wasmBytes []byte, flowJSON []b
 		return "", fmt.Errorf("flow JSON missing programId")
 	}
 
-	// Check max flows limit
-	if m.cfg.MaxFlows > 0 && len(m.running) >= m.cfg.MaxFlows {
-		return "", fmt.Errorf("max flows limit reached (%d)", m.cfg.MaxFlows)
-	}
-
-	// Stop existing flow if upgrading
-	if existing, ok := m.running[program.ProgramID]; ok {
-		existing.Close()
-		delete(m.running, program.ProgramID)
-	}
-
 	// Publication-trailer signature gate (loop I2 — defensive hardening,
-	// FAIL CLOSED once configured): admitted here, BEFORE the artifact is
-	// written to disk, reusing the exact gate modulert's module load path
-	// applies (instantiateWASM, loop I1) via the exported wrapper. The
+	// FAIL CLOSED once configured): admitted FIRST, before the running flow
+	// is touched or anything is written to disk, reusing the exact gate
+	// modulert's module load path applies (instantiateWASM, loop I1) via the
+	// exported wrapper. A refused deploy must leave the version that is
+	// running now running (security audit: Deploy used to stop the old flow
+	// before this check, so a refused upgrade still took it down). The
 	// portable (trailer-stripped) return value is discarded on purpose —
 	// Install below persists wasmBytes VERBATIM, trailer intact, so an
 	// installed flow stays signed at rest; loadAndRegister strips the
-	// trailer again at actual wasm-compile time. nil sigPolicy (today's
-	// default) makes this a no-op that never rejects.
+	// trailer again at actual wasm-compile time. A nil sigPolicy makes this
+	// a no-op that never rejects.
 	if _, _, sigErr := modulert.EnforceModuleSignaturePolicy(m.signaturePolicy(), wasmBytes); sigErr != nil {
 		return "", fmt.Errorf("flow %q: %w", program.ProgramID, sigErr)
+	}
+
+	// Check max flows limit. An upgrade replaces a running flow, so it does
+	// not count against the limit.
+	_, upgrading := m.running[program.ProgramID]
+	if m.cfg.MaxFlows > 0 && !upgrading && len(m.running) >= m.cfg.MaxFlows {
+		return "", fmt.Errorf("max flows limit reached (%d)", m.cfg.MaxFlows)
+	}
+
+	// Verified: now swap. Stop the existing flow if upgrading.
+	if existing, ok := m.running[program.ProgramID]; ok {
+		existing.Close()
+		delete(m.running, program.ProgramID)
 	}
 
 	// Install to disk

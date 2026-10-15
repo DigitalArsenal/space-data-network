@@ -30,12 +30,14 @@ package node
 // node identity while sdnruntime.go:198-206 trusted only an env list — into
 // ONE root, resolving it in sdnapi's favor as the ruling directs.
 //
-// ROLLOUT STATE: this lands in REPORT-ONLY. The policy is attached and
-// fully evaluated, every would-be rejection is logged with the greppable
-// token "module_signature_observe", and NOTHING is refused. Enforcement is
-// a separate, single, reversible step gated on a final owner go/no-go once
-// the observe log has been drained to empty by re-signing. See
-// ModuleSignaturePolicy.ReportOnly.
+// ROLLOUT STATE (security audit 2026-10-15, owner: "lock all this down"):
+// ENFORCING by default. An unsigned, tampered or untrusted-signer module or
+// flow is refused. The report-only observe stage (every would-be rejection
+// logged as "module_signature_observe", nothing refused) survives only as a
+// development opt-out, SDN_DEV_MODULE_SIGNATURE_REPORT_ONLY=1, which logs an
+// error on every start. Before upgrading a node, list every publisher key its
+// modules are signed with in SDN_TRUSTED_PUBLISHER_KEYS (or re-sign them with
+// the node key).
 
 import (
 	"crypto/ed25519"
@@ -55,21 +57,22 @@ const (
 	// name, one meaning, both binaries.
 	trustedPublisherKeysEnv = "SDN_TRUSTED_PUBLISHER_KEYS"
 
-	// moduleSignatureEnforceEnv is THE ENFORCE FLIP. Unset/false (the
-	// default) = report-only: verify everything, log would-be rejections,
-	// admit everything. Set truthy = fail closed.
-	//
-	// The flip is exactly this one variable plus a restart so that it is one
-	// guarded step and its rollback is unsetting it. It defaults to
-	// report-only on purpose: an operator who has not made the owner-gated
-	// decision gets observability, never a surprise outage.
+	// moduleSignatureEnforceEnv was the opt-in enforce flip while the policy
+	// defaulted to report-only. Enforcement is now the default; the variable
+	// is still read so a node that sets it keeps enforcing, and a node that
+	// sets it to a false value is told it no longer turns enforcement off.
 	moduleSignatureEnforceEnv = "SDN_MODULE_SIGNATURE_ENFORCE"
+
+	// moduleSignatureReportOnlyDevEnv is the ONLY way to run report-only:
+	// exactly "1", for local development. Never set it on a node that serves
+	// anyone.
+	moduleSignatureReportOnlyDevEnv = "SDN_DEV_MODULE_SIGNATURE_REPORT_ONLY"
 )
 
 // buildModuleSignaturePolicy assembles the node's publication-signature trust
 // policy: the node's own Ed25519 signing key (the publisher key named by the
-// owner ruling) plus any additional operator-trusted publisher keys, in
-// report-only mode unless the operator has explicitly opted into enforcement.
+// owner ruling) plus any additional operator-trusted publisher keys,
+// ENFORCING unless the development opt-out is set.
 //
 // It never returns nil. A nil policy would mean "no verification at all",
 // which is precisely the inert state the council found on this binary and the
@@ -77,7 +80,14 @@ const (
 // always answer "what would enforcement break?", which is the whole point of
 // the observe stage.
 func (n *Node) buildModuleSignaturePolicy() *modulert.ModuleSignaturePolicy {
-	enforce := envTruthy(os.Getenv(moduleSignatureEnforceEnv))
+	enforce := true
+	if os.Getenv(moduleSignatureReportOnlyDevEnv) == "1" {
+		enforce = false
+		log.Errorf("SECURITY: module signature policy is REPORT-ONLY because %s=1 — unsigned and untrusted modules will run; this is for local development only", moduleSignatureReportOnlyDevEnv)
+	}
+	if raw := strings.TrimSpace(os.Getenv(moduleSignatureEnforceEnv)); raw != "" && !envTruthy(raw) {
+		log.Warnf("Module signature policy: %s=%q no longer turns enforcement off (enforcement is the default); use %s=1 for local development only", moduleSignatureEnforceEnv, raw, moduleSignatureReportOnlyDevEnv)
+	}
 	policy := &modulert.ModuleSignaturePolicy{
 		AllowUnsignedByContentHash: make(map[string]bool),
 		ReportOnly:                 !enforce,
@@ -93,8 +103,7 @@ func (n *Node) buildModuleSignaturePolicy() *modulert.ModuleSignaturePolicy {
 	// Trust root 2 (additive): other nodes' publisher keys, from the operator.
 	operatorKeys, err := parseTrustedPublisherKeys(os.Getenv(trustedPublisherKeysEnv))
 	if err != nil {
-		// A malformed operator knob must not silently widen or narrow trust.
-		// In report-only this is merely noisy; under enforcement the node
+		// A malformed operator knob must not silently widen trust: the node
 		// still refuses everything not signed by its own key, which is the
 		// safe direction.
 		log.Warnf("Module signature policy: %s is malformed (%v); ignoring operator-supplied publisher keys", trustedPublisherKeysEnv, err)
@@ -117,7 +126,7 @@ func (n *Node) buildModuleSignaturePolicy() *modulert.ModuleSignaturePolicy {
 	case len(policy.TrustedSigners) > 0:
 		log.Warnf("Module signature policy %s: node signing key unavailable; trusting %d operator-supplied key(s) only", mode, len(policy.TrustedSigners))
 	default:
-		log.Warnf("Module signature policy %s: NO trusted publisher keys (node signing key unavailable and %s empty) — every artifact will be reported as untrusted", mode, trustedPublisherKeysEnv)
+		log.Warnf("Module signature policy %s: NO trusted publisher keys (node signing key unavailable and %s empty) — every module artifact is untrusted and will be refused", mode, trustedPublisherKeysEnv)
 	}
 	return policy
 }
