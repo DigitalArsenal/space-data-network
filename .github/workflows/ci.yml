@@ -199,7 +199,7 @@ jobs:
     permissions:
       contents: read
     runs-on: ubuntu-latest
-    container: ubuntu:20.04
+    container: ubuntu:20.04@sha256:8feb4d8ca5354def3d8fce243717141ce31e2c428701f6682bd2fafe15388214
     timeout-minutes: 120
     env:
       WASMEDGE_VERSION: '0.16.4'

@@ -134,11 +134,11 @@ jobs:
           # about the build changes except the floor.
           - label: linux-amd64
             runner: ubuntu-latest
-            container: ubuntu:20.04
+            container: ubuntu:20.04@sha256:8feb4d8ca5354def3d8fce243717141ce31e2c428701f6682bd2fafe15388214
             toolchain: focal-llvm16
           - label: linux-arm64
             runner: ubuntu-24.04-arm
-            container: ubuntu:20.04
+            container: ubuntu:20.04@sha256:8feb4d8ca5354def3d8fce243717141ce31e2c428701f6682bd2fafe15388214
             toolchain: focal-llvm16
           - label: darwin-arm64
             runner: macos-14
@@ -290,7 +290,7 @@ jobs:
     # does a real cgo link, so it has to agree with the archives it links; and
     # if anything about the focal toolchain is wrong, failing HERE is much
     # cheaper than finding out in five parallel build jobs.
-    container: ubuntu:20.04
+    container: ubuntu:20.04@sha256:8feb4d8ca5354def3d8fce243717141ce31e2c428701f6682bd2fafe15388214
     needs: [beta-version, wasmedge-static]
     steps:
       - name: Prepare the container
@@ -628,14 +628,14 @@ jobs:
             # must match too: the cgo LINK is what records the glibc version the
             # binary demands, so linking on a newer image than the prefix was
             # built in would put the floor straight back up.
-            container: ubuntu:20.04
+            container: ubuntu:20.04@sha256:8feb4d8ca5354def3d8fce243717141ce31e2c428701f6682bd2fafe15388214
             toolchain: focal-llvm16
             archive_extension: tar.gz
             binary_name: spacedatanetwork
           - target_os: linux
             target_arch: arm64
             runner: ubuntu-24.04-arm
-            container: ubuntu:20.04
+            container: ubuntu:20.04@sha256:8feb4d8ca5354def3d8fce243717141ce31e2c428701f6682bd2fafe15388214
             toolchain: focal-llvm16
             archive_extension: tar.gz
             binary_name: spacedatanetwork
@@ -1227,7 +1227,7 @@ jobs:
     # Same image as the cli job, for the same reason: this builds the binary the
     # RPM and DEB carry, and the link is what fixes the glibc floor. Building it
     # anywhere newer is what made the install-tests refuse to run the package.
-    container: ubuntu:20.04
+    container: ubuntu:20.04@sha256:8feb4d8ca5354def3d8fce243717141ce31e2c428701f6682bd2fafe15388214
     needs: [beta-version, ipfs, wasmedge-static]
     env:
       VERSION: ${{ needs.beta-version.outputs.native_package_version }}
