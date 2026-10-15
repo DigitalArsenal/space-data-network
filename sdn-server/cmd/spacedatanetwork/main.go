@@ -2018,6 +2018,11 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					if user == nil {
 						return license.ModulePublishPrincipal{}, nil
 					}
+					// SEC-001 hotfix: the leaked identity never authorizes a publish.
+					if auth.DeniedPublishPrincipal(user.XPub, user.SigningPubKeyHex) {
+						log.Warnf("SEC-001 hotfix: refused a module publish by the leaked identity")
+						return license.ModulePublishPrincipal{}, nil
+					}
 					return license.ModulePublishPrincipal{
 						XPub:             user.XPub,
 						SigningPubKeyHex: user.SigningPubKeyHex,
