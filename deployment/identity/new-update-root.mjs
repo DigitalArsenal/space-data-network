@@ -40,7 +40,7 @@
 // nothing (with --key-out it writes the throwaway key there, to prove the file
 // modes, and the caller deletes it).
 import { generateKeyPairSync, randomBytes, sign as edSign } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
@@ -56,7 +56,7 @@ import {
   structuralProblems,
   updateRootKeyId,
 } from './anchors-lib.mjs';
-import { assertOutsideGitWorkTree, onlineInterfaces, readLine } from './new-node-identity.mjs';
+import { assertOutsideGitWorkTree, onlineInterfaces, readLine, realResolve } from './new-node-identity.mjs';
 
 const require = createRequire(import.meta.url);
 const { canonicalManifestBytes, signatureStatement, validateUpdateManifest } = require('../release/sdn-updater/manifest.js');
@@ -141,6 +141,14 @@ export function mergeUpdateRoot(base, root) {
   return anchors;
 }
 
+function isSymlink(path) {
+  try {
+    return lstatSync(path).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
 function writeExclusive(path, contents, mode) {
   writeFileSync(path, contents, { mode, flag: 'wx' });
   chmodSync(path, mode);
@@ -197,9 +205,13 @@ export async function main(argv = process.argv.slice(2)) {
   const outDir = opts.outDir ? resolve(opts.outDir) : keyOut ? dirname(keyOut) : null;
   try {
     if (keyOut) {
+      // The key path as written and as it resolves through any symlink.
       assertOutsideGitWorkTree(dirname(keyOut), '--key-out');
+      assertOutsideGitWorkTree(realResolve(keyOut), '--key-out (resolved)');
+      if (isSymlink(keyOut)) throw new Error(`${keyOut} is a symlink; name the real file`);
       if (existsSync(keyOut)) throw new Error(`${keyOut} exists; refusing to overwrite`);
     }
+    if (outDir) assertOutsideGitWorkTree(realResolve(outDir), '--out-dir (resolved)');
     if (outDir) {
       for (const name of ['public-update-root.json', 'update-roots.json', 'anchors.json']) {
         if (existsSync(join(outDir, name))) throw new Error(`${join(outDir, name)} exists; refusing to overwrite (use another --out-dir)`);
@@ -230,6 +242,7 @@ export async function main(argv = process.argv.slice(2)) {
   }
 
   let root = generateUpdateRoot();
+  let dryDir = null;
   try {
     selfTestUpdateRoot(root);
     process.stdout.write('self-test: a manifest signed with this key verifies under {key_id: SPKI} with the fleet verifier\n');
@@ -250,7 +263,7 @@ export async function main(argv = process.argv.slice(2)) {
 
     const publicValues = { updateRootKeyId: root.keyId, updateRootSpki: root.spki, updateRootPublicKey: root.publicKeyHex };
     const anchors = mergeUpdateRoot(base, root);
-    const dryDir = opts.dryRun && !outDir ? mkdtempSync(join(tmpdir(), 'sdn-update-root-dry-')) : null;
+    dryDir = opts.dryRun && !outDir ? mkdtempSync(join(tmpdir(), 'sdn-update-root-dry-')) : null;
     const dir = outDir || dryDir;
     mkdirSync(dir, { recursive: true });
     const publicFiles = {
@@ -275,10 +288,10 @@ export async function main(argv = process.argv.slice(2)) {
         ? `\nanchors.json still has ${remaining.length} placeholder(s)${dryDir ? '.' : ': run new-node-identity.mjs --anchors on it, or merge.'}\n`
         : '\nanchors.json is complete: send it (public) to the repository. Keep the private key offline.\n',
     );
-    if (dryDir) rmSync(dryDir, { recursive: true, force: true });
     if (opts.dryRun) process.stdout.write(`dry-run: throwaway key discarded${keyOut ? ` (except ${basename(keyOut)}, which the caller deletes)` : ''}\n`);
     return 0;
   } finally {
+    if (dryDir) rmSync(dryDir, { recursive: true, force: true });
     root = null;
   }
 }

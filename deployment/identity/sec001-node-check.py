@@ -67,17 +67,57 @@ def systemctl_show(unit, prop, user):
     return subprocess.run(cmd, capture_output=True, text=True, check=True).stdout.strip()
 
 
+def parse_env_file(path):
+    """A systemd EnvironmentFile: KEY=VALUE lines, # comments, optional quotes."""
+    env = {}
+    try:
+        with open(path, "r", errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith(("#", ";")) or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                k = k.strip()
+                if k.startswith("export "):
+                    k = k[7:].strip()
+                v = v.strip()
+                if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'":
+                    v = v[1:-1]
+                env[k] = v
+    except OSError:
+        pass
+    return env
+
+
+def unit_environment(unit, user, pid):
+    """The environment the daemon actually runs with (verifier r2 R2): the
+    process's own /proc/<pid>/environ when readable, else the unit's
+    Environment= merged over its EnvironmentFile= files, in systemd's order."""
+    try:
+        with open(f"/proc/{pid}/environ", "rb") as f:
+            items = f.read().split(b"\0")
+        return {k.decode(errors="replace"): v.decode(errors="replace") for k, _, v in (i.partition(b"=") for i in items if b"=" in i)}, f"/proc/{pid}/environ"
+    except OSError:
+        pass
+    env = {}
+    for entry in systemctl_show(unit, "EnvironmentFiles", user).splitlines():
+        path = entry.split(" (", 1)[0].strip()
+        if path:
+            env.update(parse_env_file(path.lstrip("-")))
+    for item in systemctl_show(unit, "Environment", user).split():
+        if "=" in item:
+            k, v = item.split("=", 1)
+            env[k] = v
+    return env, "unit Environment= and EnvironmentFile="
+
+
 def running_binary(unit, user):
     pid = systemctl_show(unit, "MainPID", user)
     if not pid or pid == "0":
         raise SystemExit(f"{unit} is not running (MainPID {pid or 'unset'}); start it or pass --bundle")
     exe = os.path.realpath(f"/proc/{pid}/exe")
-    env = {}
-    for item in systemctl_show(unit, "Environment", user).split():
-        if "=" in item:
-            k, v = item.split("=", 1)
-            env[k] = v
-    return int(pid), exe, env
+    env, source = unit_environment(unit, user, pid)
+    return int(pid), exe, env, source
 
 
 def bundle_root_of(exe):
@@ -98,7 +138,17 @@ def root_key_id(encoded):
     return hashlib.sha256(raw).hexdigest()[:12]
 
 
-def check_roots(roots):
+def anchored_roots(anchors_path):
+    """deployment/identity/anchors.json updateRoots: the ONLY roots a node may hold."""
+    anchors = json.load(open(anchors_path))
+    roots = anchors.get("updateRoots") or {}
+    if not roots or any(k.startswith("PLACEHOLDER-") or str(v).startswith("PLACEHOLDER-") for k, v in roots.items()):
+        raise SystemExit(f"REFUSED: {anchors_path} has no released update root yet (placeholders); land the owner's anchors first")
+    check_roots(roots)
+    return roots
+
+
+def check_roots(roots, required=None):
     if not isinstance(roots, dict) or not roots:
         raise SystemExit("REFUSED: the roots file must be a non-empty JSON object {key_id: SPKI}")
     for key_id, encoded in roots.items():
@@ -112,6 +162,12 @@ def check_roots(roots):
             raise SystemExit("REFUSED: the roots file carries the published root's key under another id")
         if computed != key_id:
             raise SystemExit(f"REFUSED: key {computed} is listed under key id {key_id}")
+    # Not merely "not the leaked root": exactly the committed one (verifier r2 R2).
+    if required is not None and roots != required:
+        raise SystemExit(
+            "REFUSED: the roots file is not exactly anchors.json updateRoots "
+            f"(anchored: {', '.join(sorted(required))}; given: {', '.join(sorted(roots))})"
+        )
 
 
 def iso_at_or_after(value, since):
@@ -184,9 +240,9 @@ def list_updates(bundle, since, out):
             out.append("    state.json unreadable")
 
 
-def swap_roots(trust_path, new_roots_path, evidence_dir):
+def swap_roots(trust_path, new_roots_path, evidence_dir, required):
     new_bytes = open(new_roots_path, "rb").read()
-    check_roots(json.loads(new_bytes))
+    check_roots(json.loads(new_bytes), required)
     os.makedirs(evidence_dir, mode=0o700, exist_ok=True)
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     if os.path.exists(trust_path):
@@ -226,23 +282,30 @@ def main(argv=None):
     p.add_argument("--user", action="store_true", help="the unit is a systemd --user unit")
     p.add_argument("--binary", help="with --bundle: the running binary (default <bundle>/bin/spacedatanetwork)")
     p.add_argument("--since", default=EXPOSED_SINCE, help=f"list changes on or after this date (default {EXPOSED_SINCE})")
-    p.add_argument("--swap-roots", metavar="FILE", help="replace the trust-roots file with FILE (needs --apply)")
+    p.add_argument("--swap-roots", metavar="FILE", help="replace the trust-roots file with FILE (needs --anchors; --apply to install)")
+    p.add_argument("--anchors", metavar="ANCHORS_JSON", help="deployment/identity/anchors.json: the roots must equal its updateRoots exactly")
     p.add_argument("--evidence-dir", default="", help="where the old roots file is copied before a swap")
     p.add_argument("--apply", action="store_true", help="actually perform --swap-roots")
+    p.add_argument("--expect-sha256", action="append", default=[], metavar="HEX",
+                   help="another binary sha256 you recorded (e.g. host-01's SEC-001 hotfix build, live since 15:11Z); repeatable")
     args = p.parse_args(argv)
 
     out = [f"SEC-001 node check on {platform.node()} at {datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}"]
     env = {}
+    env_source = ""
     if args.unit:
-        pid, exe, env = running_binary(args.unit, args.user)
-        out.append(f"unit {args.unit}: MainPID {pid}, binary {exe}")
+        pid, exe, env, env_source = running_binary(args.unit, args.user)
+        out.append(f"unit {args.unit}: MainPID {pid}, binary {exe}; environment from {env_source}")
         bundle = bundle_root_of(exe)
     else:
         bundle = os.path.realpath(args.bundle)
         exe = os.path.realpath(args.binary or os.path.join(bundle, "bin", "spacedatanetwork"))
         out.append(f"bundle {bundle}, binary {exe}")
     digest = sha256_file(exe) if os.path.isfile(exe) else "(binary not found)"
-    known = RECORDED_SHA256.get(digest)
+    recorded = dict(RECORDED_SHA256)
+    for value in args.expect_sha256:
+        recorded[value.strip().lower()] = "a value passed with --expect-sha256"
+    known = recorded.get(digest)
     out.append(f"binary sha256 {digest}  -> {'matches the recorded ' + known if known else 'NOT one of the values recorded at containment'}")
     out.append(f"bundle root {bundle}")
 
@@ -254,6 +317,9 @@ def main(argv=None):
             ids = sorted(roots)
             leaked = [i for i in ids if i.lower() == LEAKED_ROOT_KEY_ID]
             out.append(f"  key ids: {', '.join(ids)}{'   <- still trusts the PUBLISHED root' if leaked else ''}")
+            if args.anchors:
+                wanted = anchored_roots(args.anchors)
+                out.append(f"  {'MATCHES' if roots == wanted else 'DOES NOT MATCH'} anchors.json updateRoots ({', '.join(sorted(wanted))})")
             out.append(f"  sha256 {sha256_file(trust_path)}")
         except ValueError:
             out.append("  unreadable JSON")
@@ -269,13 +335,16 @@ def main(argv=None):
     print("\n".join(out))
 
     if args.swap_roots:
+        if not args.anchors:
+            raise SystemExit("REFUSED: --swap-roots needs --anchors <anchors.json>: the new roots must equal its updateRoots exactly")
+        required = anchored_roots(args.anchors)
         if not args.apply:
-            check_roots(json.load(open(args.swap_roots)))
+            check_roots(json.load(open(args.swap_roots)), required)
             print(f"\n--swap-roots: {args.swap_roots} is valid; re-run with --apply (and --evidence-dir) to install it at {trust_path}")
             return 0
         if not args.evidence_dir:
             raise SystemExit("REFUSED: --apply needs --evidence-dir for the old roots file")
-        saved = swap_roots(trust_path, args.swap_roots, args.evidence_dir)
+        saved = swap_roots(trust_path, args.swap_roots, args.evidence_dir, required)
         print(f"\nswapped {trust_path}: now {', '.join(sorted(json.load(open(trust_path))))}" + (f"; old file kept at {saved}" if saved else ""))
     return 0
 

@@ -42,9 +42,21 @@ export function isPlaceholderAnchor(value: string | undefined | null): boolean {
 /** True for any public value (PeerID, hex key, xpub, key id, CID, address) of a denylisted identity. */
 export function isDeniedIdentityValue(value: string | undefined | null): boolean {
   if (typeof value !== 'string') return false;
-  const trimmed = value.trim();
+  let trimmed = value.trim();
   if (!trimmed) return false;
-  return DENIED.has(trimmed) || DENIED.has(trimmed.toLowerCase());
+  if (DENIED.has(trimmed) || DENIED.has(trimmed.toLowerCase())) return true;
+  // An uncompressed secp256k1 key (04 || X || Y), optionally 0x-prefixed.
+  if (/^(0x)?04[0-9a-f]{128}$/i.test(trimmed)) {
+    trimmed = trimmed.replace(/^0x/i, '').toLowerCase();
+    return DENIED.has(compressedSecp256k1Hex(trimmed.slice(2, 66), trimmed.slice(66)));
+  }
+  return false;
+}
+
+/** 02/03 || X for an uncompressed point's X and Y (hex): the parity of Y picks the prefix. */
+function compressedSecp256k1Hex(xHex: string, yHex: string): string {
+  const yLast = Number.parseInt(yHex.slice(-2), 16);
+  return `${yLast % 2 === 0 ? '02' : '03'}${xHex.toLowerCase()}`;
 }
 
 function toHex(bytes: Uint8Array): string {
@@ -53,10 +65,15 @@ function toHex(bytes: Uint8Array): string {
   return out;
 }
 
-/** True for raw public key bytes (secp256k1 compressed or Ed25519/X25519) of a denylisted identity. */
+/** True for raw public key bytes (secp256k1 compressed or uncompressed, Ed25519/X25519) of a denylisted identity. */
 export function isDeniedPublicKey(key: Uint8Array | undefined | null): boolean {
   if (!key || key.length === 0) return false;
-  return DENIED.has(toHex(key));
+  const hexKey = toHex(key);
+  if (DENIED.has(hexKey)) return true;
+  // The same secp256k1 point uncompressed (65 bytes, 04 || X || Y) — verifier
+  // r2 S3: comparing only the compressed form let it through.
+  if (key.length === 65 && key[0] === 0x04) return DENIED.has(compressedSecp256k1Hex(hexKey.slice(2, 66), hexKey.slice(66)));
+  return false;
 }
 
 export function assertNotDeniedValue(value: string | undefined | null, what: string): void {

@@ -50,15 +50,18 @@ import {
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readlinkSync,
+  realpathSync,
   rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs';
 import { networkInterfaces, tmpdir } from 'node:os';
-import { dirname, join, parse as parsePath, resolve } from 'node:path';
+import { basename, dirname, join, parse as parsePath, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
@@ -460,12 +463,46 @@ export function onlineInterfaces() {
  * or the file a worktree or submodule has), so it needs no git binary.
  */
 export function enclosingGitWorkTree(path) {
-  let dir = resolve(path);
-  const { root } = parsePath(dir);
+  // Verifier r2: a symlinked output path (or a symlinked ancestor) can point
+  // into a checkout, so the path is checked as written AND as it resolves.
+  for (const candidate of new Set([resolve(path), realResolve(path)])) {
+    let dir = candidate;
+    const { root } = parsePath(dir);
+    for (;;) {
+      if (existsSync(join(dir, '.git'))) return dir;
+      if (dir === root) break;
+      dir = dirname(dir);
+    }
+  }
+  return '';
+}
+
+/**
+ * `path` with every symlink resolved: the nearest existing ancestor (the path
+ * itself, if it exists — a dangling symlink included) through realpath, plus
+ * the part that does not exist yet.
+ */
+export function realResolve(path) {
+  let existing = resolve(path);
+  const rest = [];
   for (;;) {
-    if (existsSync(join(dir, '.git'))) return dir;
-    if (dir === root) return '';
-    dir = dirname(dir);
+    let link = null;
+    try {
+      link = lstatSync(existing);
+    } catch {
+      link = null;
+    }
+    if (link) {
+      if (link.isSymbolicLink() && !existsSync(existing)) {
+        // a dangling symlink: follow its target lexically
+        return realResolve(join(resolve(dirname(existing), readlinkSync(existing)), ...rest));
+      }
+      return join(realpathSync(existing), ...rest);
+    }
+    const parent = dirname(existing);
+    if (parent === existing) return join(existing, ...rest);
+    rest.unshift(basename(existing));
+    existing = parent;
   }
 }
 
@@ -740,6 +777,8 @@ export async function main(argv = process.argv.slice(2)) {
   let seed = wallet.mnemonic.toSeed(mnemonic, '');
 
   const files = [];
+  let dryDir = null;
+  let completed = false;
   try {
     const publicValues = deriveNodePublicIdentity(wallet, mod, seed);
     const anchors = mergeAnchors(base, { node: publicValues });
@@ -754,7 +793,7 @@ export async function main(argv = process.argv.slice(2)) {
 
     if (!opts.dryRun) await showOnceAndConfirm(mnemonic, 'NEW NODE IDENTITY');
 
-    const dryDir = opts.dryRun && !outDir ? mkdtempSync(join(tmpdir(), 'sdn-identity-dry-')) : null;
+    dryDir = opts.dryRun && !outDir ? mkdtempSync(join(tmpdir(), 'sdn-identity-dry-')) : null;
     const dir = outDir || dryDir;
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     chmodSync(dir, 0o700);
@@ -789,10 +828,15 @@ export async function main(argv = process.argv.slice(2)) {
     } else {
       process.stdout.write('\nanchors.json is complete: send it (public) to the repo; keep the backup and the phrase offline.\n');
     }
-    if (dryDir) rmSync(dryDir, { recursive: true, force: true });
     if (opts.dryRun) process.stdout.write('dry-run: throwaway phrase discarded; nothing secret was kept\n');
+    completed = true;
     return 0;
   } finally {
+    // A dry run leaves nothing behind, failed or not (verifier r2): its temp
+    // directory goes, and a failed dry run removes the throwaway backup it
+    // wrote to an --out-dir too.
+    if (dryDir) rmSync(dryDir, { recursive: true, force: true });
+    if (opts.dryRun && !completed) for (const file of files) rmSync(file, { force: true });
     if (seed) wallet.utils.secureWipe(seed);
     mnemonic = null;
     password = null;

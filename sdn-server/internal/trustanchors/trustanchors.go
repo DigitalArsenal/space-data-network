@@ -30,6 +30,11 @@ import (
 //go:embed anchors.json
 var anchorsJSON []byte
 
+// EmbeddedJSON returns a copy of the compiled-in anchors file. Tests build a
+// throwaway denylist from it (the real denylisted private keys never exist in
+// a test) and install it with Use.
+func EmbeddedJSON() []byte { return append([]byte(nil), anchorsJSON...) }
+
 // Schema is the anchors file schema this package reads.
 const Schema = "org.spacedatanetwork.identity-anchors.v1"
 
@@ -180,7 +185,20 @@ func IsDeniedKey(raw []byte) bool {
 	if len(raw) == 0 {
 		return false
 	}
-	return Load().IsDenied(hex.EncodeToString(raw))
+	a := Load()
+	if a.IsDenied(hex.EncodeToString(raw)) {
+		return true
+	}
+	// The same secp256k1 point uncompressed (04 || X || Y): compare its
+	// compressed form (02/03 by the parity of Y, then X).
+	if len(raw) == 65 && raw[0] == 0x04 {
+		prefix := byte(0x02)
+		if raw[64]&1 == 1 {
+			prefix = 0x03
+		}
+		return a.IsDenied(hex.EncodeToString(append([]byte{prefix}, raw[1:33]...)))
+	}
+	return false
 }
 
 // CheckPeer returns an ErrDenied-wrapping error for a denylisted peer.

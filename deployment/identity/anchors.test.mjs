@@ -340,17 +340,32 @@ test('sec001-node-check.py lists changes since the exposure and swaps the roots 
     const newRoot = { [updateRootKeyId(VECTOR.distributionPublicKey)]: ed25519Spki(VECTOR.distributionPublicKey) };
     writeFileSync(newRoots, JSON.stringify(newRoot));
     const evidence = join(dir, 'evidence');
-    assert.equal(run('--swap-roots', newRoots).status, 0, 'validation only');
+    const anchorsPath = join(dir, 'anchors.json');
+    writeFileSync(anchorsPath, JSON.stringify({ ...loadAnchors(), updateRoots: newRoot }));
+    // R2: the swap needs the committed anchors and installs exactly their root.
+    const noAnchors = run('--swap-roots', newRoots, '--apply', '--evidence-dir', evidence);
+    assert.notEqual(noAnchors.status, 0);
+    assert.match(noAnchors.stderr, /needs --anchors/);
+    assert.equal(run('--swap-roots', newRoots, '--anchors', anchorsPath).status, 0, 'validation only');
     assert.deepEqual(JSON.parse(readFileSync(join(bundle, 'trust', 'update-roots.json'), 'utf8')), { [OLD.rootKeyId]: OLD.rootSpki }, 'nothing changes without --apply');
-    const applied = run('--swap-roots', newRoots, '--apply', '--evidence-dir', evidence);
+    const applied = run('--swap-roots', newRoots, '--anchors', anchorsPath, '--apply', '--evidence-dir', evidence);
     assert.equal(applied.status, 0, applied.stderr);
     assert.deepEqual(JSON.parse(readFileSync(join(bundle, 'trust', 'update-roots.json'), 'utf8')), newRoot);
     assert.match(applied.stdout, /old file kept at/);
+    assert.match(run('--anchors', anchorsPath).stdout, /MATCHES anchors\.json updateRoots/);
 
-    // Refusals: the published root (under its own id or another), a mislabelled key.
-    for (const bad of [{ [OLD.rootKeyId]: OLD.rootSpki }, { abcdef012345: OLD.rootSpki }, { abcdef012345: newRoot[Object.keys(newRoot)[0]] }]) {
+    // Refusals: the published root (under its own id or another), a mislabelled
+    // key, and a well-formed root that is not the committed one (R2).
+    const otherHex = '22'.repeat(32);
+    for (const bad of [
+      { [OLD.rootKeyId]: OLD.rootSpki },
+      { abcdef012345: OLD.rootSpki },
+      { abcdef012345: newRoot[Object.keys(newRoot)[0]] },
+      { [updateRootKeyId(otherHex)]: ed25519Spki(otherHex) },
+      { ...newRoot, [updateRootKeyId(otherHex)]: ed25519Spki(otherHex) },
+    ]) {
       writeFileSync(newRoots, JSON.stringify(bad));
-      const refused = run('--swap-roots', newRoots, '--apply', '--evidence-dir', evidence);
+      const refused = run('--swap-roots', newRoots, '--anchors', anchorsPath, '--apply', '--evidence-dir', evidence);
       assert.notEqual(refused.status, 0);
       assert.match(refused.stderr, /REFUSED/);
     }
@@ -370,5 +385,114 @@ test('N2: the identity check also matches the leaked PeerID as a CIDv1 (base32 b
   const list = needles(loadAnchors());
   for (const form of peerIdCidForms(OLD.peerId)) {
     assert.equal(denylistedValuesIn(`https://${form}.ipns.dweb.link/`, list).length, 1, form);
+  }
+});
+
+test('R2: sec001-node-check.py reads SDN_UPDATE_TRUST_ROOTS from a systemd EnvironmentFile', () => {
+  if (spawnSync('python3', ['--version']).status !== 0) return;
+  const dir = mkdtempSync(join(tmpdir(), 'sdn-envfile-'));
+  try {
+    writeFileSync(join(dir, 'node.env'), '# comment\nexport SDN_UPDATE_TRUST_ROOTS="/opt/sdn/roots.json"\nOTHER=1\n');
+    const code = [
+      'import importlib.util, json, sys',
+      `spec = importlib.util.spec_from_file_location("m", ${JSON.stringify(join(HERE, 'sec001-node-check.py'))})`,
+      'm = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)',
+      `print(json.dumps(m.parse_env_file(${JSON.stringify(join(dir, 'node.env'))})))`,
+    ].join('\n');
+    const out = spawnSync('python3', ['-I', '-c', code], { encoding: 'utf8' });
+    assert.equal(out.status, 0, out.stderr);
+    assert.deepEqual(JSON.parse(out.stdout), { SDN_UPDATE_TRUST_ROOTS: '/opt/sdn/roots.json', OTHER: '1' });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('generators refuse output paths that resolve into a git work tree through a symlink, dangling or not', () => {
+  const { symlinkSync } = require('node:fs');
+  const dir = mkdtempSync(join(tmpdir(), 'sdn-symlink-'));
+  try {
+    symlinkSync(HERE, join(dir, 'into-repo'));
+    symlinkSync(join(HERE, 'sec001-not-yet-created'), join(dir, 'dangling'));
+    const node = (outDir) => spawnSync(process.execPath, [join(HERE, 'new-node-identity.mjs'), '--dry-run', '--out-dir', outDir], { encoding: 'utf8' });
+    const root = (...args) => spawnSync(process.execPath, [join(HERE, 'new-update-root.mjs'), '--dry-run', ...args], { encoding: 'utf8' });
+    for (const out of [join(dir, 'into-repo', 'sub'), join(dir, 'dangling'), join(dir, 'dangling', 'deeper')]) {
+      const r = node(out);
+      assert.equal(r.status, 2, `${out}: ${r.stderr}`);
+      assert.match(r.stderr, /inside the git work tree/);
+    }
+    for (const args of [['--key-out', join(dir, 'into-repo', 'k.pem')], ['--key-out', join(dir, 'k.pem'), '--out-dir', join(dir, 'into-repo')]]) {
+      const r = root(...args);
+      assert.equal(r.status, 2, `${args.join(' ')}: ${r.stderr}`);
+      assert.match(r.stderr, /inside the git work tree/);
+    }
+    assert.equal(existsSync(join(HERE, 'sec001-not-yet-created')), false);
+    assert.equal(existsSync(join(HERE, 'k.pem')), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a failed dry run leaves no throwaway backup behind', { skip: !generatorAvailable() && 'hd-wallet-wasm not installed' }, () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'sdn-dry-fail-'));
+  try {
+    const out = join(tmp, 'out');
+    const fakeNode = join(tmp, 'not-a-node');
+    writeFileSync(fakeNode, '#!/bin/sh\nexit 3\n', { mode: 0o755 });
+    for (const extra of [[], ['--out-dir', out]]) {
+      const args = [join(HERE, 'new-node-identity.mjs'), '--dry-run', '--verify-with-node', fakeNode, ...extra, ...(HD_WALLET ? ['--hd-wallet', HD_WALLET] : [])];
+      const r = spawnSync(process.execPath, args, { encoding: 'utf8', env: { ...process.env, TMPDIR: tmp } });
+      assert.notEqual(r.status, 0, 'the fake node makes the dry run fail after the backup is written');
+      const left = spawnSync('find', [tmp, '-name', 'node-identity.backup'], { encoding: 'utf8' }).stdout.trim();
+      assert.equal(left, '', `a throwaway backup was left: ${left}`);
+    }
+    assert.deepEqual(spawnSync('ls', [tmp], { encoding: 'utf8' }).stdout.split('\n').filter((n) => n.startsWith('sdn-identity-dry-')), []);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('R1: release documents are signed OFFLINE with the update-root PEM (manifest and signal), never with a denylisted key', async () => {
+  const { generateKeyPairSync, verify } = await import('node:crypto');
+  const { signUpdateDocumentOffline, UPDATE_SIGNAL_STATEMENT_DOMAIN } = await import('../release/sign-update-manifest.mjs');
+  const { validateUpdateManifest, signatureStatement, canonicalManifestBytes } = require('../release/sdn-updater/manifest.js');
+  const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+  const pem = privateKey.export({ type: 'pkcs8', format: 'pem' });
+  const spki = publicKey.export({ type: 'spki', format: 'der' });
+  const keyId = updateRootKeyId(spki.subarray(12).toString('hex'));
+  const now = Date.now();
+  const unsigned = {
+    schema: 'org.spacedatanetwork.update.v1', update_id: 'offline-test', version: '1.0.0', sequence: 5, channel: 'beta',
+    created_at: new Date(now).toISOString(), expires_at: new Date(now + 3600_000).toISOString(),
+    target: { platform: 'linux', arch: 'amd64', kind: 'cli-bundle' },
+    bundle: { hash: 'a'.repeat(64), size: 1, format: 'tar.gz' }, wasm: { hash: 'b'.repeat(64) },
+    signing: { algorithm: 'Ed25519', statement_domain: 'SDN-UPDATE-MANIFEST-V1' },
+  };
+  const manifest = signUpdateDocumentOffline({ document: unsigned, privateKey: pem, kind: 'manifest' });
+  assert.equal(manifest.signing.key_id, keyId);
+  validateUpdateManifest(manifest, {
+    platform: 'linux', arch: 'amd64', currentSequence: 0, bundleHash: 'a'.repeat(64), trustedRoots: { [keyId]: spki.toString('base64') },
+  });
+
+  const signal = signUpdateDocumentOffline({ document: { channel: 'beta', update_id: 'offline-test', sequence: 5, signing: { statement_domain: UPDATE_SIGNAL_STATEMENT_DOMAIN } }, privateKey: pem, kind: 'signal' });
+  const preimage = signatureStatement(UPDATE_SIGNAL_STATEMENT_DOMAIN, canonicalManifestBytes(signal));
+  assert.equal(verify(null, preimage, publicKey, Buffer.from(signal.signing.signature, 'base64')), true);
+
+  assert.throws(() => signUpdateDocumentOffline({ document: manifest, privateKey: pem }), /already signed/);
+  assert.throws(() => signUpdateDocumentOffline({ document: unsigned, privateKey: pem, kind: 'signal' }), /statement_domain/);
+  const denying = { ...loadAnchors(), denylist: { ...loadAnchors().denylist, updateRootKeyIds: [...loadAnchors().denylist.updateRootKeyIds, keyId] } };
+  assert.throws(() => signUpdateDocumentOffline({ document: unsigned, privateKey: pem, anchors: denying }), /denylisted/);
+
+  // The CLI, end to end, with the PEM on disk (as new-update-root.mjs writes it).
+  const dir = mkdtempSync(join(tmpdir(), 'sdn-offline-sign-'));
+  try {
+    writeFileSync(join(dir, 'root.pem'), pem, { mode: 0o600 });
+    writeFileSync(join(dir, 'waiting.json'), JSON.stringify(unsigned));
+    const cli = spawnSync(process.execPath, [join(HERE, '../release/sign-update-manifest.mjs'), '--kind', 'manifest', '--document', join(dir, 'waiting.json'), '--key', join(dir, 'root.pem'), '--out', join(dir, 'signed.json')], { encoding: 'utf8' });
+    assert.equal(cli.status, 0, cli.stderr);
+    assert.doesNotMatch(cli.stdout + cli.stderr, /PRIVATE KEY/);
+    const signed = JSON.parse(readFileSync(join(dir, 'signed.json'), 'utf8'));
+    assert.equal(signed.signing.key_id, keyId);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });

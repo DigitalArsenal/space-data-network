@@ -1,8 +1,10 @@
 # SEC-001 node identity rotation runbook
 
-**Why.** The BIP-39 seed behind `sdn.spaceaware.io` (host-01) was committed to this public repository
-(`sdn-js/verify-identity.mjs`, commits `0e16f8569693` and its sibling `9e21580db908`). Everything derived from
-it is compromised:
+**Why.** The BIP-39 seed behind `sdn.spaceaware.io` (host-01) was committed to this public repository in
+`sdn-js/verify-identity.mjs` (pre-purge commits `0e16f8569693` and its sibling `9e21580db908`); the same seed also
+sat in `config/dev-wallet.env`, which OrbPro's module publish script fell back to. Both paths were purged from
+every branch and tag on 2026-10-15 (step 10), which does not un-publish the seed. Everything derived from it is
+compromised:
 
 - the libp2p identity (the bootstrap/relay peer and the module-delivery provider);
 - the Ed25519 node signing key `0d80e1fd…` (key id `d4a971a7e534`), which was **also the fleet update root and the
@@ -37,11 +39,12 @@ HTTPS URL), act as root admin on host-01, mint grants, and decrypt past sealed a
 | Generators (owner-run, offline) | `new-node-identity.mjs` (node identity: an encrypted seed backup) and `new-update-root.mjs` (fleet update root: an Ed25519 PKCS#8 PEM). Both refuse a non-TTY or CI run, refuse an output path inside any git work tree, check every path before a secret exists, and print public values only. |
 | Per-node helper (owner-run) | `sec001-node-check.py`: the running binary and its sha256 (path taken from the unit), the trust-roots file in use, every ledger line and `updates/` entry since 2026-07-30, and the out-of-band root swap (`--swap-roots … --apply`). Read-only without `--apply`; never deletes. |
 | Release gates | No bundle is staged on **any** channel while its trust roots are placeholders, mislabelled or denylisted (`build-self-contained-cli.mjs`, `desktop/scripts/stage-node-bundle.mjs`). `--channel release` also needs a complete `anchors.json`. Release signing refuses the old key id outright; `--trust-roots` must equal the committed `updateRoots` exactly. `SDN_IDENTITY_RELEASE=1` makes the anchor tests fail on placeholders. |
-| Denylist in the node | The connection gater never dials or accepts the old PeerID. The peer registry refuses it any positive trust on every path (config `trusted_peers` in the daemon and the server, the admin API, a persisted registry, which now reads as Never). Bootstrap drops it. Update roots, manifests, signals and `trust_roots` using the old root are refused. Grants stamped with the old grant key and requests to the old provider are refused. The daemon refuses to start as the old identity; `key import` refuses to install it. |
-| Denylist in sdn-js | Every libp2p node sdn-js builds refuses the old PeerID at dial and after any handshake, inbound or outbound (DHT, delegated routing and pubsub included). Relays naming it are dropped from every source. Provider descriptors and EPMs naming its keys, PeerID, grant key or addresses are refused (JSON and `$EPM` paths), the EPM resolver never resolves or caches it, and the exported `verifyEPMSignature` returns false for it. |
+| Denylist in the node | The connection gater never dials or accepts the old PeerID. The peer registry refuses it any positive trust on every path (config `trusted_peers` in the daemon and the server, the admin API, a persisted registry, which now reads as Never). Bootstrap drops it. Update roots, manifests, signals and `trust_roots` using the old root are refused. Grants stamped with the old grant key and requests to the old provider are refused. The daemon refuses to start as the old identity; `key import` refuses to install it. A node holding a denylisted key gets no update signer (sign-manifest, the Updater page's approve button and signal signing all refuse). A module signed by a denylisted publisher key is never trusted, whatever `SDN_TRUSTED_PUBLISHER_KEYS` says. A persisted account whose xpub or signing key is denylisted (the old root's own row, an enrolled old root key) cannot sign in. Uncompressed secp256k1 forms are denied too. Root sign-in is loopback-only until the re-key (step 0.2). |
+| Denylist in sdn-js | Every libp2p node sdn-js builds refuses the old PeerID at dial and after any handshake, inbound or outbound (DHT, delegated routing and pubsub included). Relays naming it are dropped from every source. Provider descriptors and EPMs naming its keys, PeerID, grant key or addresses are refused (JSON and `$EPM` paths), the EPM resolver never resolves or caches it, and the exported `verifyEPMSignature` returns false for it. Keys are matched compressed or uncompressed. |
 | Denylist in the desktop | `stage-node-bundle.mjs` refuses a bundle whose roots name the old root or a placeholder. |
-| Guards | `scripts/check-no-mnemonics.mjs` scans staged content, every tracked file and git history, in any file type; words join across any run of non-letters (only NUL or control bytes end a run). `scripts/check-no-denylisted-identity.mjs` fails CI on any copy of an old public value. Both run in `scripts/oss-preflight.sh`, which also blocks tracked `*.backup` / `*.pem` files. |
-| Removed | `sdn-js/verify-identity.mjs`. |
+| Guards | `scripts/check-no-mnemonics.mjs` scans staged content, every tracked file and git history (every added line, merge-only content, commit and tag messages, whatever the user's diff config), in any file type; words join across any run of non-letters (only NUL or control bytes end a run), a key repeated between the words does not hide a phrase, and separators encoded as escapes, entities, percent-encoding or tags are decoded, as are base64 values and UTF-16 text. `scripts/check-no-denylisted-identity.mjs` fails CI on any copy of an old public value. Both run in `scripts/oss-preflight.sh`, which also blocks tracked `*.backup` / `*.pem` files. |
+| Removed | `sdn-js/verify-identity.mjs`; it and `config/dev-wallet.env` are purged from history (step 10). |
+| Public advisory (draft) | `deployment/identity/ADVISORY-SEC-001.md`, published in step 4. |
 
 ## Host table
 
@@ -52,10 +55,13 @@ HTTPS URL), act as root admin on host-01, mint grants, and decrypt past sealed a
 | vm-orbit-det-01 | behind relays | user unit `spacedatanetwork.service`, `~/.spacedatanetwork/config.yaml` | from the unit | `16Uiu2HAmNVJA…Ktwi` (own seed) | Roots swap (3), binary + config (5b) |
 | Local Mac nodes `dev`, `ut-austin`, `css-tiangong`, `launch-notices`, `vimpel` (`deployment/release/fleet-nodes.json`) | loopback 7173/7174/7208/7217/7184 | own configs | `ps -o command= -p "$(lsof -ti tcp:<port> -sTCP:LISTEN)"` | own | Roots swap (3), binary (4) |
 
-## 0. Containment: DONE, 2026-10-15 13:13–13:25Z (owner-approved)
+## 0. Containment: DONE, 2026-10-15 (owner-approved)
 
-Signal-driven self-upgrade is **off** on every node, so nothing signed with the leaked root can install itself
-while the rest of this runbook runs.
+Two containments are live while the rest of this runbook runs.
+
+### 0.1 Self-update off on every node (13:13–13:25Z)
+
+Signal-driven self-upgrade is **off** on every node, so nothing signed with the leaked root can install itself.
 
 | Node | Change | Restarted, logs | Running binary sha256 |
 |---|---|---|---|
@@ -86,6 +92,28 @@ Each must show `enabled: false` and a count of at least 1 since the current boot
 Then set `update: {enabled: true}` in that node's config, restart its unit, and confirm the log no longer says
 `Update signal lane DISABLED`. Never re-enable a node whose roots still name `d4a971a7e534`.
 
+### 0.2 Root sign-in on host-01 only from the box itself (live 15:11Z)
+
+host-01's root admin keys (`0d80e1fd…`, `c9e84f37…`) derive from the published seed, so until the re-key the
+node admits a root key **only from loopback with no proxy headers**, at challenge, verify and signed request; the
+public listener and the sealed `/api/rpc` transport never see a loopback peer. At startup it revokes every
+stored root session and root-wallet delegation.
+
+- **Code:** owner-approved hotfix `0de18ab2b` on `hotfix/sec001-host01-root-loopback-20261015`, built on the
+  deployed source `32abc438d` (pre-purge `24c0512bc`) for host-01 only; cherry-picked onto this branch so every
+  later release carries it (`sdn-server/internal/auth/root_loopback_hotfix.go`).
+- **Rollback path on host-01:** `/opt/spacedatanetwork/_rollback-sec001-hotfix-20261015T150958Z` (the outgoing
+  binary). Rolling back reopens root sign-in to the network; do it only if the hotfix itself breaks the node,
+  and redo 0.1's checks afterwards.
+- **Verify** (read-only): the boot log carries `SEC-001 hotfix: the root account's stored sessions are revoked`
+  and `root sign-in is loopback-only`; an off-box root challenge gets an authentication failure and logs
+  `SEC-001 hotfix: refused a root-key auth challenge`.
+  ```sh
+  ssh space-data-network-01 "journalctl -u space-data-network-module-delivery.service -b | grep -c 'root sign-in is loopback-only'"
+  ```
+- The running binary's sha256 changed at 15:11Z: step 0b compares host-01 against the hotfix build, and the
+  pre-hotfix value above is the one in the rollback directory.
+
 ## 0b. Compromise check, on every node (list, never delete)
 
 Treat every node as possibly compromised since 2026-07-30, when the leaked node key became the update root.
@@ -100,7 +128,9 @@ Treat every node as possibly compromised since 2026-07-30, when the leaked node 
    python3 -I deployment/identity/sec001-node-check.py --bundle <mac node bundle root> | tee evidence/<name>.check.txt
    ```
    (Copy the script to host-02 and the VM the same way first.) The binary's sha256 must equal the value recorded
-   in step 0; the script says so or prints `NOT one of the values recorded at containment`.
+   in step 0; the script says so or prints `NOT one of the values recorded at containment`. host-01 has run the
+   step-0.2 hotfix build since 15:11Z: pass that build's recorded sha256 with `--expect-sha256 <hex>`, and check
+   the pre-hotfix binary in `/opt/spacedatanetwork/_rollback-sec001-hotfix-20261015T150958Z` against `5f2ae665…`.
 
 2. **Reproducibility.** Build the recorded commit from source and compare.
    ```sh
@@ -168,7 +198,8 @@ node deployment/identity/new-update-root.mjs --anchors "$OUT/node/anchors.json" 
   --key-out "$OUT/update-root/sdn-update-root-ed25519.pem" --out-dir "$OUT/update-root"
 ```
 
-**1a** refuses before a phrase exists if `--out-dir` is in a work tree or already holds a backup. It then:
+**1a** refuses before a phrase exists if `--out-dir` is in a work tree (as written or through any symlink,
+dangling or not) or already holds a backup. A dry run that fails removes its throwaway backup. It then:
 
 1. takes the password;
 2. shows the 24 words once;
@@ -190,8 +221,8 @@ checks it:
 It writes:
 
 - `update-root/sdn-update-root-ed25519.pem`: **secret**, mode 0600 in a 0700 directory, unencrypted PKCS#8 PEM.
-  This is the format `sign-update-manifest.mjs --key`, `SDN_UPDATE_SIGNING_KEY_PEM` and the Updater page's
-  "upload a key" read.
+  This is the format `sign-update-manifest.mjs --key` and `SDN_UPDATE_SIGNING_KEY_PEM` read. It stays on the
+  offline media: releases are signed offline (step 4), never by uploading it to a page.
 - `update-root/update-roots.json`: public; it is what every node's trust file becomes in step 3.
 - `update-root/public-update-root.json`: public.
 - `update-root/anchors.json`: public and complete (`"status": "released"`). **Send this file to the repository.**
@@ -203,9 +234,9 @@ new node seed, so load it into the owner wallet.
 
 - **Resolved by repo evidence (verifier N7):** the old update root *was* host-01's node key.
 - Did celestrak.eth's legacy identity `16Uiu2HAm9oK2…` come from a committed seed? It is retired.
-- History holds two checksum-valid 14-word runs in `sdn-server/cmd/spacedatanetwork/main_test.go` at
-  `6b6d4323100d` that are not public test vectors. View them privately. If either is a real seed, rotate it and
-  add the file to step 10.
+- **Resolved (verifier r2 R4):** the two checksum-valid 14-word runs once flagged in
+  `sdn-server/cmd/spacedatanetwork/main_test.go` are the public "abandon" ×11 + "about" vector plus one
+  adjacent word each; they are allowlisted by fingerprint for that path. Nothing to rotate.
 
 ## 2. Repo: commit the new anchors
 
@@ -226,39 +257,43 @@ Nothing is signed with the leaked key. Each node's trust file is replaced direct
 `$OUT/update-root/update-roots.json`, then its unit is restarted so the signal lane loads the new roots. The
 helper:
 
-- refuses a file that names the published root (under any id), a placeholder, or a key under the wrong id;
+- requires `--anchors`, the committed `anchors.json`, and refuses a file that is not **exactly** its
+  `updateRoots` (verifier r2 R2), as well as the published root under any id, a placeholder, or a key under the
+  wrong id;
 - copies the old file to `--evidence-dir`;
 - writes the new one atomically with the old owner and mode, and reads it back by hash.
 
 ```sh
 R="$OUT/update-root/update-roots.json"
+A=deployment/identity/anchors.json      # the COMMITTED anchors (step 2); the helper installs exactly its updateRoots
 
 # host-01 (it keeps its old identity until step 5; only the roots change here)
-scp deployment/identity/sec001-node-check.py "$R" space-data-network-01:/root/sec001/
+scp deployment/identity/sec001-node-check.py "$R" "$A" space-data-network-01:/root/sec001/
 ssh space-data-network-01 'sudo python3 -I /root/sec001/sec001-node-check.py --unit space-data-network-module-delivery.service \
-  --swap-roots /root/sec001/update-roots.json --evidence-dir /root/sec001/evidence --apply \
+  --swap-roots /root/sec001/update-roots.json --anchors /root/sec001/anchors.json --evidence-dir /root/sec001/evidence --apply \
   && sudo systemctl restart space-data-network-module-delivery.service'
 
 # host-02
-scp deployment/identity/sec001-node-check.py "$R" space-data-network-02:/root/sec001/
+scp deployment/identity/sec001-node-check.py "$R" "$A" space-data-network-02:/root/sec001/
 ssh space-data-network-02 'sudo python3 -I /root/sec001/sec001-node-check.py --unit sdn-retriever.service \
-  --swap-roots /root/sec001/update-roots.json --evidence-dir /root/sec001/evidence --apply \
+  --swap-roots /root/sec001/update-roots.json --anchors /root/sec001/anchors.json --evidence-dir /root/sec001/evidence --apply \
   && sudo systemctl restart sdn-retriever.service'
 
 # vm-orbit-det-01 (user unit)
-ssh vm-orbit-det-01 'mkdir -p ~/sec001' && scp deployment/identity/sec001-node-check.py "$R" vm-orbit-det-01:sec001/
+ssh vm-orbit-det-01 'mkdir -p ~/sec001' && scp deployment/identity/sec001-node-check.py "$R" "$A" vm-orbit-det-01:sec001/
 ssh vm-orbit-det-01 'python3 -I ~/sec001/sec001-node-check.py --unit spacedatanetwork.service --user \
-  --swap-roots ~/sec001/update-roots.json --evidence-dir ~/sec001/evidence --apply \
+  --swap-roots ~/sec001/update-roots.json --anchors ~/sec001/anchors.json --evidence-dir ~/sec001/evidence --apply \
   && systemctl --user restart spacedatanetwork.service'
 
 # each Mac node, locally (restart it however it runs)
 python3 -I deployment/identity/sec001-node-check.py --bundle <bundle root> \
-  --swap-roots "$R" --evidence-dir ~/sec001-evidence/<name> --apply
+  --swap-roots "$R" --anchors "$A" --evidence-dir ~/sec001-evidence/<name> --apply
 ```
 
-The trust file is `<bundle>/trust/update-roots.json`, or the file `SDN_UPDATE_TRUST_ROOTS` names in the unit's
-environment; the helper uses whichever applies. Re-run the helper without `--swap-roots` on each node. It must show
-`key ids: <new root key id>` and nothing else.
+The trust file is `<bundle>/trust/update-roots.json`, or the file `SDN_UPDATE_TRUST_ROOTS` names in the daemon's
+environment. The helper reads that from the running process (`/proc/<pid>/environ`), or else from the unit's
+`Environment=` and `EnvironmentFile=` files. Re-run the helper with `--anchors` and without `--swap-roots` on each node. It must show
+`key ids: <new root key id>` and nothing else, and `MATCHES anchors.json updateRoots`.
 
 `update.enabled` stays `false` until the step-0 conditions hold.
 
@@ -272,18 +307,41 @@ environment; the helper uses whichever applies. Re-run the helper without `--swa
 
 Then:
 
-- **Fleet lane.** `publish-fleet-update.mjs --binary <built daemon> --source-commit <step-2 or later sha>`, without
-  `--trust-roots`; the nodes already hold the new root. In the coordinator's Updater page, approve with **the
-  uploaded update-root PEM**, never the node key. The node key is no longer a root, and nodes refuse what it signs.
+- **Fleet lane: signed OFFLINE (verifier r2 R1).** The update-root PEM never leaves the offline media: it is
+  not uploaded to the Updater page, and the node key cannot sign (a node holding a denylisted key gets no
+  update signer at all, so the page's approve button and `sign-manifest` refuse).
+  1. `publish-fleet-update.mjs --binary <built daemon> --source-commit <step-2 or later sha>`, without
+     `--trust-roots`; the nodes already hold the new root. It submits the unsigned release to the coordinator
+     and waits.
+  2. Copy the waiting manifest out:
+     `GET /api/v1/admin/updates/distributions/<id>` → `manifest.json`. Carry it to the offline machine.
+  3. Sign it offline:
+     ```sh
+     node deployment/release/sign-update-manifest.mjs --kind manifest --document manifest.json \
+       --key "$OUT/update-root/sdn-update-root-ed25519.pem" --out manifest.signed.json
+     ```
+     It fills in `signing.key_id` and `signing.public_key` from the key, signs
+     `SDN-UPDATE-MANIFEST-V1 || 0x00 || sha256(canonical manifest)` exactly as the node and the fleet verifiers
+     check it, and refuses a denylisted key or an already-signed document.
+  4. Carry `manifest.signed.json` back and submit it:
+     `POST /api/v1/admin/updates/distributions/<id>/manifest`. The coordinator accepts it only if it verifies
+     against its (new) roots and covers exactly the submitted release.
+  5. Once the files are served, the coordinator builds the signal. Repeat 2–4 for it with `--kind signal`
+     (`SDN-UPDATE-SIGNAL-V1`) and `POST …/<id>/signal`, which publishes it.
   Because `update.enabled` is off, install by hand on each node:
   ```sh
   spacedatanetwork update stage --manifest <feed>/manifest.json --carrier <feed>/update.wasm
   spacedatanetwork update apply
   ```
   Each node verifies the release against its new root. Then re-enable `update.enabled` per step 0.
-- **sdn GitHub release.** Build with `SDN_IDENTITY_RELEASE=1`. Sign the CLI update payloads with
-  `--key "$OUT/update-root/sdn-update-root-ed25519.pem"`. Mark v1.0.5-beta.70 and older as superseded: they embed
-  the old root and bootstrap peer.
+- **sdn GitHub release.** Build with `SDN_IDENTITY_RELEASE=1`, on the offline machine or with the PEM only on
+  removable media. Sign the CLI update payloads with `--key "$OUT/update-root/sdn-update-root-ed25519.pem"`.
+- **Public security advisory (verifier r2 R3).** Every public build from 2026-08-01 to now — `v1.0.4-beta.18`
+  and every `v1.0.5-beta` tag through `v1.0.5-beta.83` — trusts `d4a971a7e534` with `update.enabled: true` by
+  default, so anyone holding the seed can push code to third-party installs. Marking them "superseded" does not
+  protect anyone. Publish the advisory drafted in `deployment/identity/ADVISORY-SEC-001.md` (GitHub Security
+  Advisory, the fixed release's notes, spacedatanetwork.org) once the new root and the fixed release exist,
+  filling in its `<…>` values. Then edit each affected release's notes to point at it.
 - **npm `@spacedatanetwork/sdn-js`.** Publish the next version, then
   `npm deprecate @spacedatanetwork/sdn-js@"<=3.1.0" "SEC-001: pins a compromised identity; upgrade"`.
 - **Desktop.** Rebuild from the new bundle. `stage-node-bundle.mjs` refuses an old one.
@@ -449,6 +507,8 @@ daemon never reads, so a first boot on that path generates a fresh identity.
 - **OrbPro** (the other session's lane): the exact edit list is in the SEC-001 report. It covers:
   - the descriptor fallback, pinned constants, discovery CID, gallery catalog and tests;
   - re-vendoring sdn-js;
+  - removing `scripts/publish-orbpro-module-catalog.mjs`'s fallback to `config/dev-wallet.env` (:261-262): that
+    file held the same leaked seed;
   - rebuilding `docs/` and gh-pages.
 
   `resolve-pages-provider-descriptor.mjs` compares the live descriptor with its constants, so OrbPro builds fail
@@ -484,9 +544,16 @@ finds only historical notes.
 The old PeerID can still be announced by whoever holds the seed. "No delegated-routing peers" is informational
 only: it proves nothing about the rotation (verifier N5). What matters is that nothing we ship trusts it.
 
-## 10. History purge: a SEPARATE owner confirmation
+## 10. History purge: DONE 2026-10-15 (owner-ordered)
 
-This rewrites shared public history:
+`git filter-repo` removed `sdn-js/verify-identity.mjs` and `config/dev-wallet.env` from every branch and tag;
+every SHA changed (commit map: `~/software/sec001-purge/work.git/filter-repo/commit-map`). The `exposed` lines are
+gone from `scripts/mnemonic-scan-allowlist.txt`, its `commit:` entries are remapped through the commit map, and
+`node scripts/check-no-mnemonics.mjs --history --strict --all` passes. Still to do from the list below: the
+GitHub Support request for cached views and `refs/pull/*`, fork owners, and re-pinning the stack's sdn
+gitlinks.
+
+As planned (kept for the record). This rewrites shared public history:
 
 - Every branch SHA changes, and every clone, worktree and session must re-clone.
 - Gitlinks that pin sdn commits (`spacedatanetwork-stack`, OrbPro's vendored copies) must be re-pinned.

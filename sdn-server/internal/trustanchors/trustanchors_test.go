@@ -2,12 +2,14 @@ package trustanchors
 
 import (
 	"bytes"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
 	"strings"
 	"testing"
 
+	"github.com/decred/dcrd/dcrec/secp256k1/v4"
 	"github.com/libp2p/go-libp2p/core/peer"
 )
 
@@ -145,5 +147,26 @@ func TestX25519DenylistEntriesAreDenied(t *testing.T) {
 	}
 	if a.IsDenied(strings.Repeat("cd", 32)) {
 		t.Fatal("an unrelated key is denied")
+	}
+}
+
+// The denylisted secp256k1 keys are denied uncompressed too (04 || X || Y).
+func TestUncompressedSecp256k1KeysAreDenied(t *testing.T) {
+	keys := Load().Denylist.Secp256k1PublicKeys
+	if len(keys) != 5 {
+		t.Fatalf("want the 5 denylisted secp256k1 keys, got %d", len(keys))
+	}
+	for _, k := range keys {
+		compressed, err := hex.DecodeString(k)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pub, err := secp256k1.ParsePubKey(compressed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !IsDeniedKey(pub.SerializeUncompressed()) {
+			t.Fatalf("uncompressed form of %s… is not denied", k[:12])
+		}
 	}
 }

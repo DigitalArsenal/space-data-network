@@ -7,7 +7,7 @@ const require = createRequire(import.meta.url);
 const crypto = require('crypto');
 // Shared with the verification side so signing and verification always agree
 // on the canonical manifest bytes (sorted keys, signing.signature omitted).
-const { canonicalManifestBytes, sha256Hex } = require('./sdn-updater/manifest');
+const { canonicalManifestBytes, sha256Hex, signatureStatement } = require('./sdn-updater/manifest');
 
 export const MANIFEST_SCHEMA = 'org.spacedatanetwork.update.v1';
 
@@ -374,17 +374,60 @@ export async function resolveSigningKeyPem(keyPath, env = process.env) {
   return pem;
 }
 
+export const UPDATE_SIGNAL_STATEMENT_DOMAIN = 'SDN-UPDATE-SIGNAL-V1';
+
+/**
+ * OFFLINE signing with the fleet update root (SEC-001 ROTATION.md step 4): the
+ * owner signs a release's manifest or signal on the offline machine with the
+ * PEM new-update-root.mjs wrote, exactly as the node and the Updater page
+ * sign: Ed25519 over DOMAIN || 0x00 || sha256(canonical document), with
+ * signing.key_id and signing.public_key filled in from the key itself. The
+ * key never goes near a server. Refuses a denylisted key and a document
+ * already signed or carrying another domain.
+ */
+export function signUpdateDocumentOffline({ document, privateKey, kind = 'manifest', anchors = readAnchors() }) {
+  if (!document || typeof document !== 'object') throw new Error('document is required');
+  const domain = kind === 'signal' ? UPDATE_SIGNAL_STATEMENT_DOMAIN : kind === 'manifest' ? UPDATE_MANIFEST_STATEMENT_DOMAIN : null;
+  if (!domain) throw new Error('--kind is manifest or signal');
+  const keyObject = normalizeSigningKey(privateKey);
+  const spki = crypto.createPublicKey(keyObject).export({ type: 'spki', format: 'der' });
+  const keyId = crypto.createHash('sha256').update(spki.subarray(12)).digest('hex').slice(0, 12);
+  const denied = new Set((anchors?.denylist?.updateRootKeyIds || []).map((id) => id.toLowerCase()));
+  if (denied.has(keyId)) throw new Error(`REFUSED: key ${keyId} is denylisted (SEC-001); sign with the update root in deployment/identity/anchors.json.`);
+  const signing = { ...(document.signing || {}) };
+  if (signing.signature) throw new Error('the document is already signed');
+  if (signing.statement_domain && signing.statement_domain !== domain) {
+    throw new Error(`the document declares statement_domain ${signing.statement_domain}, not ${domain}; is it a ${kind}?`);
+  }
+  signing.key_id = keyId;
+  signing.public_key = spki.toString('base64');
+  signing.statement_domain = domain;
+  if (kind === 'manifest' || signing.algorithm) signing.algorithm = 'Ed25519';
+  const unsigned = { ...document, signing };
+  const signature = crypto.sign(null, signatureStatement(domain, canonicalManifestBytes(unsigned)), keyObject).toString('base64');
+  return { ...unsigned, signing: { ...signing, signature } };
+}
+
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const options = parseArgs(process.argv.slice(2));
-  if (!options.manifest) {
-    throw new Error('--manifest is required');
-  }
   if (!options.out) {
     throw new Error('--out is required');
   }
-  const manifest = JSON.parse(await readFile(resolve(options.manifest), 'utf8'));
-  const privateKey = await resolveSigningKeyPem(options.key);
-  const signed = signUpdateManifest({ manifest, privateKey });
+  let signed;
+  if (options.document) {
+    // Offline: node deployment/release/sign-update-manifest.mjs --kind manifest|signal \
+    //   --document waiting.json --key <update-root PEM> --out signed.json
+    const document = JSON.parse(await readFile(resolve(options.document), 'utf8'));
+    const privateKey = await resolveSigningKeyPem(options.key);
+    signed = signUpdateDocumentOffline({ document, privateKey, kind: options.kind || 'manifest' });
+  } else {
+    if (!options.manifest) {
+      throw new Error('--manifest (legacy, undomained) or --document with --kind is required');
+    }
+    const manifest = JSON.parse(await readFile(resolve(options.manifest), 'utf8'));
+    const privateKey = await resolveSigningKeyPem(options.key);
+    signed = signUpdateManifest({ manifest, privateKey });
+  }
   const outPath = resolve(options.out);
   await mkdir(dirname(outPath), { recursive: true });
   await writeFile(outPath, `${JSON.stringify(signed, null, 2)}\n`);

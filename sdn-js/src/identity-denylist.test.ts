@@ -177,6 +177,25 @@ describe('SEC-001 identity denylist', () => {
   });
 });
 
+describe('SEC-001 S3: uncompressed secp256k1 keys', () => {
+  it('denies all five denylisted secp256k1 keys in uncompressed form, as bytes, hex and 0x-hex', async () => {
+    const { ECDH } = await import('node:crypto');
+    const keys = IDENTITY_ANCHORS.denylist.secp256k1PublicKeys;
+    expect(keys.length).toBe(5);
+    for (const compressed of keys) {
+      const uncompressed = ECDH.convertKey(compressed, 'secp256k1', 'hex', 'hex', 'uncompressed') as string;
+      expect(uncompressed).toMatch(/^04[0-9a-f]{128}$/);
+      expect(isDeniedPublicKey(hexToBytes(uncompressed))).toBe(true);
+      expect(isDeniedIdentityValue(uncompressed)).toBe(true);
+      expect(isDeniedIdentityValue(`0x${uncompressed.toUpperCase()}`)).toBe(true);
+    }
+    // An ordinary key, uncompressed, is not denied.
+    const other = ECDH.convertKey(OTHER_PROVIDER_KEY, 'secp256k1', 'hex', 'hex', 'uncompressed') as string;
+    expect(isDeniedPublicKey(hexToBytes(other))).toBe(false);
+    expect(isDeniedIdentityValue(other)).toBe(false);
+  });
+});
+
 // A minimal $EPM (the shape server-descriptor.test.ts builds): a secp256k1
 // provider key, an optional Ed25519 grant-verifier key, relay addresses.
 function buildEPM(input: { publicKeyHex: string; grantVerifierPublicKeyHex?: string; multiformatAddresses?: string[] }): Uint8Array {
