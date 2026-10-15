@@ -7,11 +7,14 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/libp2p/go-libp2p/core/network"
+	"github.com/libp2p/go-libp2p/core/peer"
 
 	"github.com/spacedatanetwork/sdn-server/internal/datasync"
+	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
 
@@ -28,6 +31,11 @@ const (
 // any libp2p stream transport, including WebSocket and WebRTC.
 type FlatSQLSyncHandler struct {
 	store *storage.FlatSQLStore
+	// readAuthorizer admits a peer to schemas outside the anonymous read
+	// surface, to other registered datastores, to the datastore listing and
+	// to the wire-speed probe (NET-02, NET-06). Unset: nobody.
+	readAuthorizer PeerAuthorizer
+	probes         *wireSpeedProbeBudget
 }
 
 type flatSQLSyncRequest struct {
@@ -76,8 +84,69 @@ type flatSQLSyncRequest struct {
 }
 
 // NewFlatSQLSyncHandler creates a FlatSQL sync stream handler.
+//
+// As constructed it serves only the anonymous read surface: the schemas
+// sds.IsPublicReadSchema names, from the node's own datastore. Everything
+// else needs SetPrivateReadAuthorizer.
 func NewFlatSQLSyncHandler(store *storage.FlatSQLStore) *FlatSQLSyncHandler {
-	return &FlatSQLSyncHandler{store: store}
+	return &FlatSQLSyncHandler{store: store, probes: newWireSpeedProbeBudget()}
+}
+
+// SetPrivateReadAuthorizer installs the check that admits a peer to private
+// schemas, other datastores, list_datastores and wire_speed_probe. It returns
+// h so registration can chain it.
+func (h *FlatSQLSyncHandler) SetPrivateReadAuthorizer(fn PeerAuthorizer) *FlatSQLSyncHandler {
+	h.readAuthorizer = fn
+	return h
+}
+
+// authorize applies the read surface to one request before any op runs. For
+// a peer without private-read authority it rewrites the request's schema to
+// the canonical public name it checked, so the name checked is the name read.
+func (h *FlatSQLSyncHandler) authorize(peerID peer.ID, req *flatSQLSyncRequest) error {
+	op := strings.TrimSpace(req.Op)
+	authorized := authorizedPeer(h.readAuthorizer, peerID)
+	switch op {
+	case "ack_progress":
+		return nil // echoes the caller's own progress; no store access
+	case "list_datastores":
+		if !authorized {
+			return fmt.Errorf("not authorized: list_datastores needs private-read authority")
+		}
+		return nil
+	case "wire_speed_probe":
+		if !authorized {
+			return fmt.Errorf("not authorized: wire_speed_probe needs private-read authority")
+		}
+		return nil
+	}
+	if authorized {
+		return nil
+	}
+	if strings.TrimSpace(req.DatastoreKey) != "" {
+		return fmt.Errorf("not authorized: datastore_key needs private-read authority")
+	}
+	requested := requestedSchema(req.Schema, req.SchemaName)
+	canonical, ok := publicReadSchema(requested)
+	if !ok {
+		return fmt.Errorf("%w (%s)", ErrReadNotAuthorized, strconv.QuoteToASCII(truncateName(requested)))
+	}
+	req.Schema = canonical
+	req.SchemaName = canonical
+	for i := range req.Records {
+		if ref := requestedSchema(req.Records[i].Schema, req.Records[i].SchemaName); ref != "" && sds.NormalizeSchemaFileName(ref) != canonical {
+			return fmt.Errorf("%w: record ref names another schema", ErrReadNotAuthorized)
+		}
+		req.Records[i].Schema, req.Records[i].SchemaName = "", ""
+	}
+	return nil
+}
+
+func truncateName(name string) string {
+	if len(name) > 64 {
+		return name[:64]
+	}
+	return name
 }
 
 // HandleStream handles one FlatSQL sync request. The record data plane is a
@@ -85,9 +154,16 @@ func NewFlatSQLSyncHandler(store *storage.FlatSQLStore) *FlatSQLSyncHandler {
 // response header for read_chunk.
 func (h *FlatSQLSyncHandler) HandleStream(s network.Stream) {
 	defer s.Close()
+	defer recoverStream("flatsql-sync", s)
 
 	var req flatSQLSyncRequest
 	if err := readFlatSQLSyncJSONFrame(s, datasync.StreamRequestMaxBytes, &req); err != nil {
+		_ = writeFlatSQLSyncJSONFrame(s, flatSQLSyncErrorResponse(err))
+		return
+	}
+	peerID := streamPeer(s)
+	if err := h.authorize(peerID, &req); err != nil {
+		log.Warnf("flatsql-sync: refused %q from %s: %v", truncateName(req.Op), peerID.ShortString(), err)
 		_ = writeFlatSQLSyncJSONFrame(s, flatSQLSyncErrorResponse(err))
 		return
 	}
@@ -114,7 +190,7 @@ func (h *FlatSQLSyncHandler) HandleStream(s network.Stream) {
 			_ = writeFlatSQLSyncJSONFrame(s, flatSQLSyncErrorResponse(err))
 		}
 	case "wire_speed_probe":
-		if err := h.handleWireSpeedProbe(s, req); err != nil {
+		if err := h.handleWireSpeedProbe(s, peerID, req); err != nil {
 			_ = writeFlatSQLSyncJSONFrame(s, flatSQLSyncErrorResponse(err))
 		}
 	case "read_published_shard":
@@ -743,8 +819,16 @@ func (h *FlatSQLSyncHandler) handleAckProgress(writer io.Writer, req flatSQLSync
 	})
 }
 
-func (h *FlatSQLSyncHandler) handleWireSpeedProbe(writer io.Writer, req flatSQLSyncRequest) error {
+func (h *FlatSQLSyncHandler) handleWireSpeedProbe(writer io.Writer, peerID peer.ID, req flatSQLSyncRequest) error {
 	probeBytes := normalizeWireSpeedProbeBytes(req.ProbeBytes)
+	if h.probes == nil {
+		h.probes = newWireSpeedProbeBudget()
+	}
+	release, err := h.probes.acquire(peerID, probeBytes)
+	if err != nil {
+		return err
+	}
+	defer release()
 	if err := writeFlatSQLSyncJSONFrame(writer, map[string]interface{}{
 		"op":              "wire_speed_probe",
 		"status":          "ok",

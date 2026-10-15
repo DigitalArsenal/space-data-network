@@ -1,12 +1,15 @@
 package node
 
 import (
+	"runtime/debug"
 	"strings"
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multiaddr"
+
+	"github.com/spacedatanetwork/sdn-server/internal/epm"
 )
 
 const peerEPMRequestCooldown = 5 * time.Minute
@@ -61,7 +64,38 @@ func (n *Node) requestConnectedPeerEPM(pid peer.ID, source string) {
 	if !n.reserveConnectedPeerEPMRequest(pid) {
 		return
 	}
-	go n.fetchAndIndexDiscoveredNodeEPM(pid, source)
+	go n.fetchAndIndexPeerEPM(pid, source)
+}
+
+// fetchAndIndexPeerEPM is the connect-time EPM request (security re-audit
+// NET-01b, 2026-10-15). The bytes are whatever the peer answers, and the
+// indexer reads them through ~30 generated accessors (VerifyEPMSignature):
+// on origin/main one EPM with a field offset past its end panicked this bare
+// goroutine and ended the process. So the answer is proved memory-safe
+// before anything reads it, and the goroutine contains any panic past that
+// as a dropped EPM.
+func (n *Node) fetchAndIndexPeerEPM(pid peer.ID, source string) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Errorf("EPM from %s (%s) dropped: handling it panicked: %v\n%s", pid.ShortString(), source, r, debug.Stack())
+		}
+	}()
+	if n == nil || pid == "" || n.peerRegistry == nil || n.host == nil {
+		return
+	}
+	epmBytes, err := n.fetchDiscoveredNodeEPM(pid)
+	if err != nil {
+		log.Debugf("Failed to fetch EPM for peer %s: %v", pid, err)
+		return
+	}
+	if len(epmBytes) == 0 {
+		return
+	}
+	if err := epm.VerifyEPMBuffer(epmBytes); err != nil {
+		log.Warnf("Rejecting EPM from %s (%s): %v", pid.ShortString(), source, err)
+		return
+	}
+	n.indexFetchedDiscoveredNodeEPM(pid, source, epmBytes)
 }
 
 func (n *Node) directoryEPMSourceForPeer(pid peer.ID, source string) string {

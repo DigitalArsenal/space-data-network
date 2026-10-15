@@ -64,6 +64,14 @@ func registerPublicMetadataTransport(h host.Host, mux *http.ServeMux, path strin
 			return
 		}
 		defer stream.Close()
+		// The handler runs outside net/http, so nothing else recovers a
+		// panic here: contain it to this stream (security re-audit NET-01).
+		defer func() {
+			if r := recover(); r != nil {
+				_ = stream.Reset()
+				log.Errorf("public metadata stream from %s dropped: handler panicked: %v", stream.Conn().RemotePeer().ShortString(), r)
+			}
+		}()
 		_ = stream.SetDeadline(time.Now().Add(10 * time.Second))
 		req, err := http.ReadRequest(bufio.NewReader(io.LimitReader(stream, 8192)))
 		if err != nil || req.Method != http.MethodGet || req.URL.RequestURI() != path || req.ContentLength > 0 || len(req.TransferEncoding) != 0 {

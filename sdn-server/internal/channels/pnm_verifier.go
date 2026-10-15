@@ -35,6 +35,11 @@ func VerifySignedPNMEnvelope(pnmBytes []byte) (PNMTrustEvidence, error) {
 	if !PNM.SizePrefixedPNMBufferHasIdentifier(pnmBytes) {
 		return PNMTrustEvidence{}, ErrPNMMissingIdentity
 	}
+	// Untrusted bytes: every offset must be in range before an accessor
+	// follows one (security re-audit NET-01).
+	if err := sds.VerifySizePrefixedStructure("PNM.fbs", pnmBytes); err != nil {
+		return PNMTrustEvidence{}, fmt.Errorf("malformed PNM: %w", err)
+	}
 	pnm := PNM.GetSizePrefixedRootAsPNM(pnmBytes, 0)
 	cidValue := strings.TrimSpace(string(pnm.CID()))
 	if cidValue == "" {

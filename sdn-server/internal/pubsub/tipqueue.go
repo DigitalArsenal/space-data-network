@@ -3,6 +3,7 @@ package pubsub
 import (
 	"context"
 	"errors"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -11,6 +12,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 	ps "github.com/libp2p/go-libp2p-pubsub"
 	"github.com/spacedatanetwork/sdn-server/internal/channels"
+	"github.com/spacedatanetwork/sdn-server/internal/sds"
 )
 
 // TipQueue errors.
@@ -317,7 +319,13 @@ func (tq *TipQueue) HandleMessageDeclined(msg *ps.Message) bool {
 
 // handleMessage processes a single PNM message. It reports whether a handler
 // declined the tip.
-func (tq *TipQueue) handleMessage(msg *ps.Message) bool {
+func (tq *TipQueue) handleMessage(msg *ps.Message) (accepted bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Errorf("PNM tip dropped: handler panicked on malformed input: %v\n%s", r, debug.Stack())
+			accepted = false
+		}
+	}()
 	data := msg.Data
 	if len(data) == 0 {
 		return false
@@ -337,6 +345,12 @@ func (tq *TipQueue) handleMessage(msg *ps.Message) bool {
 	}
 	if _, err := verifier(data); err != nil {
 		log.Debugf("Rejected untrusted PNM: %v", err)
+		return false
+	}
+	// Whatever the configured verifier checks, the accessors below read
+	// these bytes: prove them memory-safe first (security re-audit NET-01).
+	if err := sds.VerifySizePrefixedStructure("PNM.fbs", data); err != nil {
+		log.Warnf("Rejected malformed PNM tip: %v", err)
 		return false
 	}
 

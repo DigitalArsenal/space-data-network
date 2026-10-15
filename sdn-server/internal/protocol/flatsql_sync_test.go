@@ -334,7 +334,8 @@ func TestFlatSQLSyncProtocolWireSpeedProbeStreamsRequestedBytes(t *testing.T) {
 	}
 	defer client.Close()
 
-	server.SetStreamHandler(FlatSQLSyncProtocolID, NewFlatSQLSyncHandler(nil).HandleStream)
+	// The probe needs private-read authority (NET-06): admit this client.
+	server.SetStreamHandler(FlatSQLSyncProtocolID, NewFlatSQLSyncHandler(nil).SetPrivateReadAuthorizer(func(id peer.ID) bool { return id == client.ID() }).HandleStream)
 	client.Peerstore().AddAddrs(server.ID(), server.Addrs(), peerstore.PermanentAddrTTL)
 	if err := client.Connect(ctx, peer.AddrInfo{ID: server.ID(), Addrs: server.Addrs()}); err != nil {
 		libp2pStepFailed(t, "libp2p connect", err)

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	dpm "github.com/DigitalArsenal/spacedatastandards.org/lib/go/DPM"
+	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
 
@@ -38,6 +39,11 @@ func VerifySignedDPMManifest(manifestBytes []byte, expectedFileID string) (DPMTr
 	}
 	if !dpm.DPMBufferHasIdentifier(manifestBytes) {
 		return DPMTrustEvidence{}, ErrDPMMissingIdentity
+	}
+	// A manifest is fetched from the network on an announcement's say-so:
+	// prove it memory-safe before reading it (security re-audit NET-01).
+	if err := sds.VerifyBareStructure("DPM.fbs", manifestBytes); err != nil {
+		return DPMTrustEvidence{}, fmt.Errorf("malformed DPM manifest: %w", err)
 	}
 	manifest := dpm.GetRootAsDPM(manifestBytes, 0)
 	fileID := strings.TrimSpace(string(manifest.FILE_ID()))

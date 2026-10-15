@@ -517,14 +517,14 @@ func RunLiveFlatSQLMultiProviderRangeBenchmark(ctx context.Context, opts LiveFla
 		return nil, fmt.Errorf("create provider A libp2p host: %w", err)
 	}
 	defer providerHostA.Close()
-	providerHostA.SetStreamHandler(protocol.FlatSQLSyncProtocolID, protocol.NewFlatSQLSyncHandler(providerStoreA).HandleStream)
+	providerHostA.SetStreamHandler(protocol.FlatSQLSyncProtocolID, liveFlatSQLProviderHandler(providerStoreA).HandleStream)
 
 	providerHostB, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"))
 	if err != nil {
 		return nil, fmt.Errorf("create provider B libp2p host: %w", err)
 	}
 	defer providerHostB.Close()
-	providerHostB.SetStreamHandler(protocol.FlatSQLSyncProtocolID, protocol.NewFlatSQLSyncHandler(providerStoreB).HandleStream)
+	providerHostB.SetStreamHandler(protocol.FlatSQLSyncProtocolID, liveFlatSQLProviderHandler(providerStoreB).HandleStream)
 
 	subscriberHost, err := libp2p.New(libp2p.NoListenAddrs)
 	if err != nil {
@@ -941,12 +941,19 @@ func generateLiveFlatSQLExportRecords(ctx context.Context, targetBytes int64, ta
 	return records, nil
 }
 
+// liveFlatSQLProviderHandler serves the harness's own subscriber. The
+// harness measures the wire with wire_speed_probe, which needs private-read
+// authority (security re-audit NET-06); every peer here is the harness.
+func liveFlatSQLProviderHandler(store *storage.FlatSQLStore) *protocol.FlatSQLSyncHandler {
+	return protocol.NewFlatSQLSyncHandler(store).SetPrivateReadAuthorizer(protocol.AllowAnyPeer)
+}
+
 func startLiveFlatSQLPeers(ctx context.Context, providerStore *storage.FlatSQLStore) (host.Host, host.Host, error) {
 	providerHost, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"))
 	if err != nil {
 		return nil, nil, fmt.Errorf("create provider libp2p host: %w", err)
 	}
-	providerHost.SetStreamHandler(protocol.FlatSQLSyncProtocolID, protocol.NewFlatSQLSyncHandler(providerStore).HandleStream)
+	providerHost.SetStreamHandler(protocol.FlatSQLSyncProtocolID, liveFlatSQLProviderHandler(providerStore).HandleStream)
 	subscriberHost, err := libp2p.New(libp2p.NoListenAddrs)
 	if err != nil {
 		_ = providerHost.Close()

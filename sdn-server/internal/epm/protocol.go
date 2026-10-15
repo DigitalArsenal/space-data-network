@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"fmt"
 	"io"
+	"runtime/debug"
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/host"
@@ -50,6 +52,12 @@ func (s *Service) handleStream(stream network.Stream) {
 	defer stream.Close()
 
 	remotePeer := stream.Conn().RemotePeer().ShortString()
+	defer func() {
+		if r := recover(); r != nil {
+			_ = stream.Reset()
+			log.Errorf("epm-exchange request from %s dropped: handler panicked: %v\n%s", remotePeer, r, debug.Stack())
+		}
+	}()
 
 	// Read request
 	_ = stream.SetReadDeadline(time.Now().Add(streamReadDeadline))
@@ -122,7 +130,13 @@ func (s *Service) writeResponse(stream network.Stream, status uint32, data []byt
 
 // RequestPeerEPM opens a stream to a remote peer and requests their EPM.
 // On success, it stores the EPM in the peer registry.
-func (s *Service) RequestPeerEPM(ctx context.Context, h host.Host, target peer.ID) error {
+func (s *Service) RequestPeerEPM(ctx context.Context, h host.Host, target peer.ID) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Errorf("epm-exchange: EPM from %s dropped: panicked on malformed input: %v\n%s", target.ShortString(), r, debug.Stack())
+			err = fmt.Errorf("epm-exchange: malformed EPM from %s", target.ShortString())
+		}
+	}()
 	streamCtx, cancel := context.WithTimeout(ctx, streamReadDeadline+streamWriteDeadline)
 	defer cancel()
 
@@ -158,6 +172,13 @@ func (s *Service) RequestPeerEPM(ctx context.Context, h host.Host, target peer.I
 	epmData := make([]byte, dataLen)
 	if _, err := io.ReadFull(stream, epmData); err != nil {
 		return err
+	}
+
+	// The bytes are the peer's: prove every offset in them is in range before
+	// any accessor (VerifyEPMSignature walks ~30 of them) reads one.
+	if err := VerifyEPMBuffer(epmData); err != nil {
+		log.Warnf("epm-exchange: rejecting malformed EPM from %s: %v", target.ShortString(), err)
+		return nil
 	}
 
 	// Never store an unverified identity: the EPM must be self-signed by

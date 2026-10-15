@@ -28,6 +28,7 @@ type idExchangeResponse struct {
 // by older browser integration scripts.
 func HandleLegacyIDExchange(s network.Stream) {
 	defer s.Close()
+	defer recoverStream("id-exchange", s)
 
 	_ = s.SetReadDeadline(time.Now().Add(legacyReadDeadline))
 	buf := make([]byte, legacyMaxReadBytes)
@@ -67,6 +68,7 @@ func HandleLegacyIDExchange(s network.Stream) {
 // with the historical chat protocol smoke tests.
 func HandleLegacyChat(s network.Stream) {
 	defer s.Close()
+	defer recoverStream("chat", s)
 
 	reader := bufio.NewReader(io.LimitReader(s, legacyMaxReadBytes))
 	line, err := reader.ReadString('\n')

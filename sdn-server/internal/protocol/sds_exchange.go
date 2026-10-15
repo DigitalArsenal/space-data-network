@@ -2,11 +2,14 @@
 package protocol
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
+	"runtime/debug"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -105,6 +108,10 @@ type SDSExchangeHandler struct {
 	pushAuthorizer PushAuthorizer
 	warnedNoAuthz  atomic.Bool
 
+	// readAuthorizer admits peers to schemas outside the anonymous read
+	// surface (NET-02). Unset: public schemas only.
+	readAuthorizer PeerAuthorizer
+
 	// untrustedAnnouncements budgets the dataset-catalog announcements an
 	// untrusted peer may have dispatched to pnmHandler. Unlike pushAuthorizer
 	// this is a DoS control, not a trust gate, so nil ALLOWS — see
@@ -156,6 +163,72 @@ func AllowAnyPush(peer.ID) bool { return true }
 // its deny-by-default state.
 func (h *SDSExchangeHandler) SetPushAuthorizer(fn PushAuthorizer) {
 	h.pushAuthorizer = fn
+}
+
+// SetPrivateReadAuthorizer installs the check that admits a peer to schemas
+// outside the anonymous read surface (sds.IsPublicReadSchema). It is
+// deliberately separate from the push authorizer: an operator who accepts
+// pushes from anyone has not thereby published every private table.
+func (h *SDSExchangeHandler) SetPrivateReadAuthorizer(fn PeerAuthorizer) {
+	h.readAuthorizer = fn
+}
+
+// mayRead resolves the schema a read may be served from: any valid schema
+// for an authorized peer, otherwise only the canonical public-read schema.
+func (h *SDSExchangeHandler) mayRead(peerID peer.ID, schema string) (string, bool) {
+	if authorizedPeer(h.readAuthorizer, peerID) {
+		return schema, true
+	}
+	return publicReadSchema(schema)
+}
+
+// sanitizeLogName keeps a peer-supplied name from forging log lines.
+func sanitizeLogName(name string) string {
+	if len(name) > 64 {
+		name = name[:64]
+	}
+	return strconv.QuoteToASCII(name)
+}
+
+// syncLogReject is the sync-log lane's refusal byte (logservice.SyncHandler
+// answers 0x00 for every refusal and 0x01 before entries).
+const syncLogReject byte = 0x00
+
+// replayStream hands a handler the bytes the gate already consumed, then the
+// rest of the stream.
+type replayStream struct {
+	network.Stream
+	r io.Reader
+}
+
+func (s *replayStream) Read(p []byte) (int, error) { return s.r.Read(p) }
+
+// gateSyncLog applies the read surface to a MsgSyncLog request (NET-02): the
+// publication log of a schema is that schema's activity, so it is served on
+// the same terms as its records. It reads the request's schema name, refuses
+// a peer without private-read authority anything off the public surface, and
+// returns the stream with the consumed header replayed for the handler.
+func (h *SDSExchangeHandler) gateSyncLog(s network.Stream) (network.Stream, bool) {
+	var lenBuf [2]byte
+	if _, err := io.ReadFull(s, lenBuf[:]); err != nil {
+		return nil, false
+	}
+	n := binary.BigEndian.Uint16(lenBuf[:])
+	if int(n) > h.limits.MaxSchemaName {
+		log.Warnf("REFUSING sync-log request from %s: schema name of %d bytes", s.Conn().RemotePeer().ShortString(), n)
+		return nil, false
+	}
+	name := make([]byte, n)
+	if _, err := io.ReadFull(s, name); err != nil {
+		return nil, false
+	}
+	if _, ok := h.mayRead(s.Conn().RemotePeer(), string(name)); !ok {
+		log.Warnf("REFUSING sync-log request for %s from %s: not on the public read surface and the peer is not authorized for private reads",
+			sanitizeLogName(string(name)), s.Conn().RemotePeer().ShortString())
+		return nil, false
+	}
+	consumed := append(lenBuf[:], name...)
+	return &replayStream{Stream: s, r: io.MultiReader(bytes.NewReader(consumed), s)}, true
 }
 
 // mayPush reports whether peerID may write. Unwired means no.
@@ -215,6 +288,7 @@ func NewSDSExchangeHandlerWithOptions(store *storage.FlatSQLStore, validator *sd
 // HandleStream handles an incoming SDS exchange stream.
 func (h *SDSExchangeHandler) HandleStream(s network.Stream) {
 	defer s.Close()
+	defer recoverStream("sds-exchange", s)
 
 	// Get peer ID for rate limiting
 	peerID := s.Conn().RemotePeer()
@@ -251,7 +325,12 @@ func (h *SDSExchangeHandler) HandleStream(s network.Stream) {
 		h.handleQuery(ctx, s)
 	case MsgSyncLog:
 		if h.syncHandler != nil {
-			h.syncHandler.HandleSyncLog(s)
+			gated, ok := h.gateSyncLog(s)
+			if !ok {
+				s.Write([]byte{syncLogReject})
+				return
+			}
+			h.syncHandler.HandleSyncLog(gated)
 		} else {
 			log.Warnf("MsgSyncLog received but no sync handler registered")
 			s.Write([]byte{RespReject})
@@ -305,6 +384,15 @@ func (h *SDSExchangeHandler) handleDataRequest(ctx context.Context, s network.St
 		log.Warnf("Failed to read CID: %v", err)
 		return
 	}
+
+	readSchema, ok := h.mayRead(s.Conn().RemotePeer(), string(schemaName))
+	if !ok {
+		log.Warnf("REFUSING data request for %s from %s: not on the public read surface and the peer is not authorized for private reads",
+			sanitizeLogName(string(schemaName)), s.Conn().RemotePeer().ShortString())
+		s.Write([]byte{RespReject})
+		return
+	}
+	schemaName = []byte(readSchema)
 
 	// Edge-mode fail-safe: no local store means nothing to serve. Reject
 	// without dereferencing the nil store (would SIGSEGV).
@@ -525,6 +613,15 @@ func (h *SDSExchangeHandler) handleQuery(ctx context.Context, s network.Stream) 
 		return
 	}
 
+	readSchema, ok := h.mayRead(s.Conn().RemotePeer(), string(schemaName))
+	if !ok {
+		log.Warnf("REFUSING query on %s from %s: not on the public read surface and the peer is not authorized for private reads",
+			sanitizeLogName(string(schemaName)), s.Conn().RemotePeer().ShortString())
+		s.Write([]byte{RespReject})
+		return
+	}
+	schemaName = []byte(readSchema)
+
 	// Edge-mode fail-safe: no local store means nothing to query. Reject
 	// without dereferencing the nil store (would SIGSEGV).
 	if h.store == nil {
@@ -594,6 +691,18 @@ func (h *SDSExchangeHandler) HandlePubSubMessage(schema string, data []byte, fro
 // failure. Anything that counts stored records must read the bool, not the
 // absence of an error.
 func (h *SDSExchangeHandler) HandlePubSubMessageStored(schema string, data []byte, from peer.ID) (stored bool, err error) {
+	// The gossip loop that calls this runs on a bare goroutine: a panic here,
+	// or in the announcement handler it dispatches to, would take the node
+	// down (NET-01). Validation below refuses malformed buffers before any
+	// accessor sees them; this is the backstop if anything downstream ever
+	// reads past what was verified.
+	defer func() {
+		if r := recover(); r != nil {
+			log.Errorf("PubSub message from %s on %s dropped: handler panicked on malformed input: %v\n%s",
+				from.ShortString(), sanitizeLogName(schema), r, debug.Stack())
+			stored, err = false, panicError(r)
+		}
+	}()
 	// Check rate limit before processing
 	if h.rateLimiter != nil && !h.rateLimiter.Allow(from) {
 		log.Warnf("Rate limit exceeded for peer %s, rejecting PubSub message", from.ShortString())
@@ -650,6 +759,14 @@ func (h *SDSExchangeHandler) HandlePubSubMessageStored(schema string, data []byt
 		routedSchema = pnmSchemaName
 		if err := h.validator.Validate(ctx, pnmSchemaName, data); err != nil {
 			log.Warnf("PubSub PNM rejected: validation failed from %s on %s: %v", from.ShortString(), schema, err)
+			return false, fmt.Errorf("PNM validation failed: %w", err)
+		}
+		// Every consumer of an announcement reads it with
+		// GetSizePrefixedRootAsPNM, so that is the form it must verify in: a
+		// bare $PNM (which Validate admits) read that way takes its root
+		// offset from the identifier bytes.
+		if err := sds.VerifySizePrefixedStructure(pnmSchemaName, data); err != nil {
+			log.Warnf("PubSub PNM rejected: not a well-formed size-prefixed $PNM from %s on %s: %v", from.ShortString(), schema, err)
 			return false, fmt.Errorf("PNM validation failed: %w", err)
 		}
 		// Edge-mode fail-safe: a node with no local store (config mode: edge)

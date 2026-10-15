@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/DPM"
+	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
 
@@ -56,6 +57,9 @@ func DecodeDatasetCatalog(raw []byte, publicKey crypto.PubKey, publisher string,
 	}()
 	if len(raw) < 12 || len(raw) > MaxDatasetCatalogManifestBytes {
 		return entry, errors.New("dataset manifest exceeds catalog bounds")
+	}
+	if err := sds.VerifyBareStructure("DPM.fbs", raw); err != nil {
+		return entry, fmt.Errorf("malformed dataset manifest: %w", err)
 	}
 	evidence, err := storage.VerifySignedDatasetPublicationManifest(raw, publicKey)
 	if err != nil {

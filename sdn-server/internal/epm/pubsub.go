@@ -110,6 +110,11 @@ func ComputeEPMCID(epmData []byte) (string, error) {
 // HandlePNMEPM processes an incoming PNM with FILE_ID="EPM".
 // It verifies the signature and stores the EPM data in the peer registry.
 func (s *Service) HandlePNMEPM(pnmData []byte, fromPeer string) {
+	defer recoverIngress("EPM announcement", fromPeer)
+	if err := verifyPNMBuffer(pnmData); err != nil {
+		log.Warnf("Received malformed EPM announcement from %s: %v", fromPeer, err)
+		return
+	}
 	pnm := PNM.GetSizePrefixedRootAsPNM(pnmData, 0)
 	if pnm == nil {
 		log.Warn("Received invalid PNM data")
