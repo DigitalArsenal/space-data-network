@@ -99,8 +99,12 @@ updates:
     versioning-strategy: increase
 
   # GitHub Actions
+  # The workflows' actions are pinned to commit SHAs (security audit SEC-042);
+  # this keeps those pins current, including inside the composite actions.
   - package-ecosystem: "github-actions"
-    directory: "/"
+    directories:
+      - "/"
+      - "/.github/actions/*"
     schedule:
       interval: "weekly"
       day: "wednesday"

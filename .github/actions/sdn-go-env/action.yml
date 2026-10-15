@@ -26,7 +26,7 @@ inputs:
 runs:
   using: composite
   steps:
-    - uses: actions/setup-go@v5
+    - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
       with:
         go-version-file: sdn-server/go.mod
         cache-dependency-path: sdn-server/go.sum
@@ -44,7 +44,7 @@ runs:
     # against, so that is what we fetch.
     - name: Restore WasmEdge
       id: wasmedge-cache
-      uses: actions/cache@v4
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
       with:
         path: ${{ runner.temp }}/.wasmedge
         key: wasmedge-${{ inputs.wasmedge-version }}-${{ runner.os }}-${{ runner.arch }}
@@ -83,9 +83,13 @@ runs:
     # not by pretending the contract is proved.
     - name: Check out space-data-network-modules
       if: inputs.modules-token != ''
-      uses: actions/checkout@v4
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       with:
         repository: DigitalArsenal/space-data-network-modules
+        # A commit, never a branch: CI must not run whatever a moving branch
+        # head holds that minute (security audit SEC-042). Bump it on purpose
+        # when the committed flow bundles change.
+        ref: 4705d65593c71c6f0ca7fb546964100c88e656a8
         token: ${{ inputs.modules-token }}
         path: .ci-artifacts/space-data-network-modules
         persist-credentials: false
@@ -167,7 +171,7 @@ runs:
         echo "AOT CPU profile: $profile"
 
     - name: Restore the FlatSQL AOT cache
-      uses: actions/cache@v4
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
       with:
         path: ~/.cache/flatsql-aot
         key: >-

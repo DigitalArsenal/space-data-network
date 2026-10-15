@@ -11,10 +11,11 @@ on:
         required: true
         type: string
 
-permissions:
-  contents: write
-  packages: write
-  id-token: write
+# Least privilege (security audit SEC-042/SEC-044): the workflow token gets
+# nothing by default; each job names exactly what it needs. Only the jobs that
+# sign or publish hold a write scope, and they run in deployment environments
+# whose required reviewers and branch/tag policy the owner sets.
+permissions: {}
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -32,14 +33,18 @@ jobs:
   preflight:
     name: Preflight
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24'
           cache: npm
           cache-dependency-path: sdn-js/package-lock.json
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: '1.24.x'
           cache-dependency-path: sdn-server/go.sum
@@ -57,23 +62,31 @@ jobs:
     name: Publish static assets to IPFS
     runs-on: ubuntu-latest
     needs: preflight
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24'
           cache: npm
           cache-dependency-path: sdn-js/package-lock.json
       - name: Install Kubo
         run: |
-          curl -L "https://dist.ipfs.tech/kubo/${KUBO_VERSION}/kubo_${KUBO_VERSION}_linux-amd64.tar.gz" | tar -xz
-          sudo install kubo/ipfs /usr/local/bin/ipfs
+          deployment/release/download-kubo.sh \
+            --version "${KUBO_VERSION}" \
+            --platform linux-amd64 \
+            --archive tar.gz \
+            --output-dir dist/bootstrap-kubo
+          sudo install dist/bootstrap-kubo/kubo/ipfs /usr/local/bin/ipfs
           ipfs init --profile=server
           ipfs daemon > /tmp/ipfs.log 2>&1 &
           until ipfs id >/dev/null 2>&1; do sleep 1; done
       - name: Build and pin UI assets
         run: deployment/ipfs/ipfs-deploy.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ipfs-assets
           path: |
@@ -85,9 +98,18 @@ jobs:
     name: Build and sign container image
     runs-on: ubuntu-latest
     needs: ipfs
+    # Publishes to Docker Hub: only from a v* tag (or main), in the dockerhub
+    # environment that holds DOCKERHUB_TOKEN.
+    if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main'
+    environment: dockerhub
+    permissions:
+      contents: read
+      id-token: write # keyless cosign signature of the pushed digest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: ipfs-assets
           path: dist/ipfs
@@ -96,22 +118,22 @@ jobs:
           mkdir -p sdn-js/ui/dist webui/build
           cp -R dist/ipfs/sdn-admin/. sdn-js/ui/dist/
           cp -R dist/ipfs/ipfs-webui/. webui/build/
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ${{ env.REGISTRY }}
           username: dockerdigitalarsenal
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-      - uses: sigstore/cosign-installer@v3.4.0
+      - uses: sigstore/cosign-installer@e1523de7571e31dbe865fd2e80c5c7c23ae71eb4 # v3.4.0
       - id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
         with:
           images: ${{ env.IMAGE_NAME }}
           tags: |
             type=raw,value=${{ env.VERSION }}
             type=sha,prefix=
       - id: build
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5.4.0
         with:
           context: .
           file: deployment/docker/Dockerfile
@@ -131,8 +153,8 @@ jobs:
           done
           cosign sign --yes ${images}
           mkdir -p dist/container-digests
-          printf '{"name":"%s","digest":"%s"}\n' "${{ env.IMAGE_NAME }}" "${DIGEST}" > dist/container-digests/image.json
-      - uses: actions/upload-artifact@v4
+          printf '{"name":"%s","digest":"%s"}\n' "${IMAGE_NAME}" "${DIGEST}" > dist/container-digests/image.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: container-digest
           path: dist/container-digests/image.json
@@ -141,9 +163,14 @@ jobs:
     name: Build native packages and SBOM
     runs-on: ubuntu-latest
     needs: ipfs
+    # Builds what ships, so it holds no write token, no id-token and no secret.
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: ipfs-assets
           path: dist/ipfs
@@ -152,53 +179,82 @@ jobs:
           mkdir -p sdn-js/ui/dist webui/build
           cp -R dist/ipfs/sdn-admin/. sdn-js/ui/dist/
           cp -R dist/ipfs/ipfs-webui/. webui/build/
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: '1.24.x'
           cache-dependency-path: sdn-server/go.sum
-      - name: Install nfpm and syft
+      - name: Install nfpm
         run: |
           mkdir -p "${RUNNER_TEMP}/bin"
+          # go install verifies the module against sum.golang.org.
           GOBIN="${RUNNER_TEMP}/bin" go install "github.com/goreleaser/nfpm/v2/cmd/nfpm@${NFPM_VERSION}"
           echo "${RUNNER_TEMP}/bin" >> "$GITHUB_PATH"
-          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sudo sh -s -- -b /usr/local/bin
           "${RUNNER_TEMP}/bin/nfpm" --version
-          syft version
       - name: Build RPM and DEB artifacts
         run: deployment/packaging/build-linux-packages.sh
       - name: Build Linux VM tarball
         run: deployment/scripts/package-linux-vm-bundle.sh
-      - name: Generate CycloneDX SBOM
-        run: |
-          mkdir -p dist/sbom
-          syft dir:dist/package-root -o cyclonedx-json=dist/sbom/spacedatanetwork-sbom.cdx.json
-      - uses: actions/upload-artifact@v4
+      # The packages are uploaded BEFORE any SBOM tooling runs, so the SBOM
+      # generator can never touch what ships.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: package-artifacts
           path: |
             dist/packages/*
             dist/linux-vm/*.tar.gz
-            dist/sbom/spacedatanetwork-sbom.cdx.json
+      # syft from a pinned release, checked against a committed sha256 — never
+      # the moving install.sh on syft's main branch piped into a root shell.
+      - name: Install syft (pinned, checksum-verified)
+        env:
+          SYFT_VERSION: 1.52.0
+          SYFT_SHA256: caeedb81fb0491615f1ebd1761e4145d41ee86dd2cc7bf80669f9f5ad9d6133d
+        run: |
+          archive="${RUNNER_TEMP}/syft.tar.gz"
+          curl -fsSL -o "${archive}" "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64.tar.gz"
+          echo "${SYFT_SHA256}  ${archive}" | sha256sum -c -
+          mkdir -p "${RUNNER_TEMP}/syft"
+          tar -xzf "${archive}" -C "${RUNNER_TEMP}/syft" syft
+          "${RUNNER_TEMP}/syft/syft" version
+      - name: Generate CycloneDX SBOM
+        run: |
+          mkdir -p dist/sbom
+          "${RUNNER_TEMP}/syft/syft" dir:dist/package-root -o cyclonedx-json=dist/sbom/spacedatanetwork-sbom.cdx.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: package-sbom
+          path: dist/sbom/spacedatanetwork-sbom.cdx.json
 
   release:
     name: Assemble verified release
     runs-on: ubuntu-latest
     needs: [ipfs, docker, packages]
+    # Creates the GitHub release: only from a v* tag (or main), in the release
+    # environment that holds the anchoring secrets.
+    if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main'
+    environment: release
+    permissions:
+      contents: write # create the release and upload its assets
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: ipfs-assets
           path: dist/ipfs
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: package-artifacts
           path: dist
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: package-sbom
+          path: dist/sbom
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: container-digest
           path: dist/container-digests
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: '1.24.x'
           cache-dependency-path: sdn-server/go.sum
@@ -222,7 +278,14 @@ jobs:
           BITCOIN_BLOCK_HEIGHT: ${{ secrets.BITCOIN_BLOCK_HEIGHT }}
           BITCOIN_CONFIRMATIONS: ${{ secrets.BITCOIN_CONFIRMATIONS }}
         run: deployment/release/assemble-release-artifacts.sh
-      - uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ env.VERSION }}
-          files: dist/release/*
+      # The GitHub CLI with this job's token, not a third-party action holding
+      # contents: write. --verify-tag refuses to invent a tag that was never
+      # pushed (the action created one at the default branch).
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view "${VERSION}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release create "${VERSION}" --repo "${GITHUB_REPOSITORY}" --verify-tag --title "${VERSION}" --notes ""
+          fi
+          gh release upload "${VERSION}" dist/release/* --repo "${GITHUB_REPOSITORY}" --clobber

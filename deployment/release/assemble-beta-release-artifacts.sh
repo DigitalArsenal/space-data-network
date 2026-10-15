@@ -37,6 +37,12 @@ copy_matches "${dist_dir}/update-feed/*.tar.gz"
 copy_matches "${dist_dir}/sdn-js/*.tgz"
 copy_matches "${dist_dir}/sbom/*.json"
 
+# The shell installer ships as a release asset: the public stub
+# (docs/install.sh) runs this exact file, pinned by tag and SHA-256, and the
+# owner's offline signature over spacedatanetwork-checksums.txt covers it
+# (deployment/release/RELEASE-SIGNING.md).
+cp "${root}/scripts/install.sh" "${release_dir}/install.sh"
+
 # The four platforms whose builds are proven. A release without one of these is
 # a broken release and must not be published.
 required_cli_artifacts=(

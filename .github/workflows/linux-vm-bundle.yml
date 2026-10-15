@@ -9,21 +9,29 @@ on:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
+# Least privilege (security audit SEC-042/SEC-044): the workflow token gets
+# nothing by default and every job names exactly the scopes it needs.
+permissions: {}
+
 jobs:
   build-vm-bundle:
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: sdn-server/go.mod
           cache-dependency-path: sdn-server/go.sum
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24'
           cache: 'npm'
@@ -48,7 +56,7 @@ jobs:
         run: ./deployment/scripts/package-linux-vm-bundle.sh
 
       - name: Upload Linux VM bundle
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: linux-vm-bundle
           path: dist/linux-vm/*.tar.gz

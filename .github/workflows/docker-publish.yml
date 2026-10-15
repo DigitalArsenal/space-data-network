@@ -23,24 +23,36 @@ env:
   REGISTRY: docker.io
   IMAGE_NAME: dockerdigitalarsenal/space-data-network
 
-permissions:
-  contents: read
-  id-token: write
+# Least privilege (security audit SEC-042/SEC-044): nothing by default; the one
+# job names what it needs, and runs in the dockerhub environment that holds
+# DOCKERHUB_TOKEN behind the owner's required reviewers.
+permissions: {}
 
 jobs:
   build-and-push:
     name: Build, push and sign
     runs-on: ubuntu-latest
+    # A push trigger only fires on v* tags; a manual run must start from main
+    # or a v* tag (the ref input then names the tag to build).
+    if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main'
+    environment: dockerhub
+    permissions:
+      contents: read
+      id-token: write # keyless cosign signature of the pushed digest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
 
       - name: Resolve tag
         id: tag
+        env:
+          # Passed through the environment, never expanded into the script.
+          REQUESTED_REF: ${{ inputs.ref || github.ref_name }}
         run: |
-          ref="${{ inputs.ref || github.ref_name }}"
+          ref="${REQUESTED_REF}"
           tag="${ref#refs/tags/}"
           version="${tag#v}"
           if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
@@ -54,7 +66,7 @@ jobs:
           echo "channel=$channel" >> "$GITHUB_OUTPUT"
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24'
           cache: npm
@@ -80,21 +92,21 @@ jobs:
           test -f build/index.html
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
       - name: Log in to Docker Hub
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ${{ env.REGISTRY }}
           username: dockerdigitalarsenal
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@v3.4.0
+        uses: sigstore/cosign-installer@e1523de7571e31dbe865fd2e80c5c7c23ae71eb4 # v3.4.0
 
       - name: Build and push
         id: build
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5.4.0
         with:
           context: .
           file: deployment/docker/Dockerfile
@@ -111,8 +123,10 @@ jobs:
       - name: Sign the pushed digest
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE_VERSION: ${{ steps.tag.outputs.version }}
+          IMAGE_CHANNEL: ${{ steps.tag.outputs.channel }}
         run: |
           cosign sign --yes \
-            "${IMAGE_NAME}:${{ steps.tag.outputs.version }}@${DIGEST}" \
-            "${IMAGE_NAME}:${{ steps.tag.outputs.channel }}@${DIGEST}"
-          echo "pushed ${IMAGE_NAME}:${{ steps.tag.outputs.version }} (${DIGEST})"
+            "${IMAGE_NAME}:${IMAGE_VERSION}@${DIGEST}" \
+            "${IMAGE_NAME}:${IMAGE_CHANNEL}@${DIGEST}"
+          echo "pushed ${IMAGE_NAME}:${IMAGE_VERSION} (${DIGEST})"

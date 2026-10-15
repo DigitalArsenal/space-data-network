@@ -9,8 +9,9 @@ on:
         default: '20'
         type: string
 
-permissions:
-  contents: read
+# Least privilege (security audit SEC-042/SEC-044): the workflow token gets
+# nothing by default and every job names exactly the scopes it needs.
+permissions: {}
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -22,14 +23,18 @@ env:
 jobs:
   build-updater-wasm:
     name: Build updater module wasm
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     defaults:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24'
           cache: npm
@@ -41,7 +46,7 @@ jobs:
       - name: Build updater module wasm
         run: npm --prefix packages/sdn-updater-module run build
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: updater-module-wasm
           path: packages/sdn-updater-module/dist/isomorphic/module.wasm
@@ -49,6 +54,8 @@ jobs:
 
   build-cli:
     name: Build CLI archive (${{ matrix.target_os }}-${{ matrix.target_arch }})
+    permissions:
+      contents: read
     runs-on: ${{ matrix.runner }}
     needs: build-updater-wasm
     defaults:
@@ -79,15 +86,17 @@ jobs:
       BINARY_NAME: ${{ matrix.binary_name }}
       WASMEDGE_DIR: ${{ github.workspace }}/dist/.wasmedge
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24'
           cache: npm
           cache-dependency-path: package-lock.json
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: '1.24.x'
           cache-dependency-path: sdn-server/go.sum
@@ -95,7 +104,7 @@ jobs:
       - name: Install root JS dependencies
         run: npm ci
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: updater-module-wasm
           path: packages/sdn-updater-module/dist/isomorphic
@@ -154,13 +163,15 @@ jobs:
             --readme-path "${PWD}/README.md" \
             --manifest-signature "github-actions:${GITHUB_RUN_ID}:${GITHUB_SHA}"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: cli-${{ matrix.target_os }}-${{ matrix.target_arch }}
           path: dist/cli/spacedatanetwork-*-${{ matrix.target_os }}-${{ matrix.target_arch }}.${{ matrix.archive_extension }}
 
   live-dht-smoke:
     name: ${{ matrix.role }}
+    permissions:
+      contents: read
     runs-on: ${{ matrix.runner }}
     needs: build-cli
     timeout-minutes: 25
@@ -195,18 +206,20 @@ jobs:
       TARGET_ARCH: ${{ matrix.target_arch }}
       ARCHIVE_EXTENSION: ${{ matrix.archive_extension }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24'
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: '1.24.x'
           cache-dependency-path: sdn-server/go.sum
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: cli-${{ matrix.target_os }}-${{ matrix.target_arch }}
           path: dist/live-dht
@@ -285,7 +298,7 @@ jobs:
 
       - name: Upload live DHT report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: live-dht-${{ matrix.role }}
           path: |
@@ -296,6 +309,7 @@ jobs:
 
   summarize:
     name: Summarize live DHT reports
+    permissions: {}
     runs-on: ubuntu-latest
     needs: live-dht-smoke
     if: always()
@@ -303,13 +317,15 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24'
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: dist/live-dht/downloaded-reports
           pattern: live-dht-*

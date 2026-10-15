@@ -14,12 +14,16 @@ curl -fsSL https://spacedatanetwork.org/install.sh | bash
 irm https://spacedatanetwork.org/install.ps1 | iex
 ```
 
-The installers resolve the newest node release on GitHub (today
-v1.0.5-beta.70: macOS Apple Silicon and Intel, Linux x86-64 and arm64, and
-Windows x86-64), verify the checksum,
+The shell installer resolves the newest node release on GitHub whose
+`spacedatanetwork-checksums.txt` carries a valid signature by the offline
+release key (`openssl` must be installed; an unsigned or forged release is
+skipped, never installed), verifies the archive against that signed checksum,
 unpack the self-contained bundle under `~/.spacedatanetwork/bundles`, link
 `spacedatanetwork` and `sdn` under `~/.spacedatanetwork/bin`, and initialise
-the node identity. Other platforms build from source:
+the node identity. The PowerShell installer is disabled until it verifies the
+same signature; on Windows use WSL. How releases are signed:
+[deployment/release/RELEASE-SIGNING.md](../deployment/release/RELEASE-SIGNING.md).
+Other platforms build from source:
 
 ```sh
 git clone https://github.com/DigitalArsenal/space-data-network.git

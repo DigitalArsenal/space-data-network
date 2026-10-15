@@ -48,6 +48,10 @@ concurrency:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
+# Least privilege (security audit SEC-042/SEC-044): the workflow token gets
+# nothing by default and every job names exactly the scopes it needs.
+permissions: {}
+
 jobs:
   # scripts/install.ps1 IS THE LIVE INSTALLER. The public entrypoint
   # (https://spacedatanetwork.org/install.ps1, docs/install.ps1) is a 19-line
@@ -61,10 +65,14 @@ jobs:
   # installer is the published-installer smoke's job in the release workflow.
   powershell-installer-parses:
     name: Installer script parses
+    permissions:
+      contents: read
     runs-on: windows-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - name: Parse scripts/install.ps1
         shell: pwsh
         run: |
@@ -95,11 +103,15 @@ jobs:
   # 2026-02-24.
   preflight:
     name: Preflight (OSS scan, gofmt, encryption)
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: sdn-server/go.mod
           cache-dependency-path: sdn-server/go.sum
@@ -125,12 +137,18 @@ jobs:
   # the numbers it came from.
   go-quick:
     name: Go tests (quick)
+    permissions:
+      contents: read
+    # MODULES_REPO_TOKEN (a read-only PAT for the private modules repo) lives in
+    # this environment, not at repository level.
+    environment: ci-private-modules
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           submodules: recursive
+          persist-credentials: false
       - uses: ./.github/actions/sdn-go-env
         with:
           modules-token: ${{ secrets.MODULES_REPO_TOKEN }}
@@ -147,15 +165,21 @@ jobs:
   # interpreted.
   go-heavy:
     name: Go tests (record store)
+    permissions:
+      contents: read
+    # MODULES_REPO_TOKEN (a read-only PAT for the private modules repo) lives in
+    # this environment, not at repository level.
+    environment: ci-private-modules
     runs-on: ubuntu-latest
     # Above the lane's own 25m go-test budget, so an overrun surfaces as go
     # test's timeout panic (which names the running test) instead of the job
     # being killed with no diagnostic.
     timeout-minutes: 35
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           submodules: recursive
+          persist-credentials: false
       - uses: ./.github/actions/sdn-go-env
         with:
           modules-token: ${{ secrets.MODULES_REPO_TOKEN }}
@@ -172,6 +196,8 @@ jobs:
   # LLVM-free WasmEdge build, about half an hour.
   wasmedge-substrate:
     name: WasmEdge substrate (patched static prefix)
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     container: ubuntu:20.04
     timeout-minutes: 120
@@ -188,9 +214,11 @@ jobs:
           apt-get install -y -qq --no-install-recommends \
             ca-certificates curl gnupg git xz-utils build-essential zlib1g-dev libtinfo-dev
           git config --global --add safe.directory '*'
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - id: cache
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ github.workspace }}/.sdn-wasmedge-static/prefix
           key: wasmedge-static-${{ env.WASMEDGE_VERSION }}-linux-amd64-focal-llvm16-${{ hashFiles('scripts/build-static-wasmedge.sh', 'scripts/wasmedge-static-env.sh') }}
@@ -200,15 +228,26 @@ jobs:
         if: steps.cache.outputs.cache-hit != 'true'
         env:
           CMAKE_VERSION: '3.31.6'
+          # Pinned downloads, the same pins as the release workflow.
+          LLVM_APT_KEY_FINGERPRINT: 6084F3CF814B57C1CF12EFD515CF4D18AF4F7421
+          CMAKE_SHA256_LINUX_X86_64: 5a1133ff103c71eb5120e2cc3de922733e7d8a26a98ae716397e8676adb367bf
         run: |
           export DEBIAN_FRONTEND=noninteractive
           echo "deb http://apt.llvm.org/focal/ llvm-toolchain-focal-16 main" > /etc/apt/sources.list.d/llvm.list
-          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --dearmor -o /etc/apt/trusted.gpg.d/llvm.gpg
+          curl -fsSL -o /tmp/llvm-snapshot.gpg.key https://apt.llvm.org/llvm-snapshot.gpg.key
+          key_fpr="$(gpg --show-keys --with-colons /tmp/llvm-snapshot.gpg.key | awk -F: '$1 == "fpr" { print $10; exit }')"
+          if [ "${key_fpr}" != "${LLVM_APT_KEY_FINGERPRINT}" ]; then
+            echo "apt.llvm.org key fingerprint ${key_fpr} is not ${LLVM_APT_KEY_FINGERPRINT}" >&2
+            exit 1
+          fi
+          gpg --dearmor -o /etc/apt/trusted.gpg.d/llvm.gpg < /tmp/llvm-snapshot.gpg.key
           apt-get update -qq
           apt-get install -y -qq --no-install-recommends \
             ninja-build clang-16 llvm-16-dev liblld-16-dev libpolly-16-dev \
             libzstd-dev zlib1g-dev libtinfo-dev build-essential
-          curl -fsSL "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-x86_64.tar.gz" | tar -xz -C /opt
+          curl -fsSL -o /tmp/cmake.tar.gz "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-x86_64.tar.gz"
+          echo "${CMAKE_SHA256_LINUX_X86_64}  /tmp/cmake.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/cmake.tar.gz -C /opt
           echo "/opt/cmake-${CMAKE_VERSION}-linux-x86_64/bin" >> "$GITHUB_PATH"
       - name: Build the static prefix
         if: steps.cache.outputs.cache-hit != 'true'
@@ -217,7 +256,7 @@ jobs:
           WASMEDGE_STATIC_WORK="${GITHUB_WORKSPACE}/.sdn-wasmedge-static" \
           WASMEDGE_STATIC_PREFIX_ONLY=1 \
           bash scripts/build-static-wasmedge.sh
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: sdn-server/go.mod
           cache-dependency-path: sdn-server/go.sum
@@ -254,12 +293,15 @@ jobs:
 
   go-builds:
     name: Go builds (node + edge relay)
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           submodules: recursive
+          persist-credentials: false
       - uses: ./.github/actions/sdn-go-env
         with:
           needs-flow-bundles: 'false'
@@ -268,13 +310,16 @@ jobs:
 
   js:
     name: sdn-js + module delivery + plugin demo
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           submodules: recursive
-      - uses: actions/setup-node@v4
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24'
           cache: 'npm'
@@ -297,6 +342,7 @@ jobs:
   # needed job failed, was cancelled, or was skipped.
   ci-complete:
     name: CI complete
+    permissions: {}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     if: always()

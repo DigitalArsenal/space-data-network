@@ -14,6 +14,7 @@ const workflowPaths = [
   '.github/workflows/npm-publish-sdn-js.yml',
   '.github/workflows/release-deploy.yml',
   '.github/workflows/security.yml',
+  '.github/workflows/published-installer-smoke.yml',
 ];
 
 function readRepoFile(relativePath) {
@@ -290,8 +291,11 @@ test('beta release workflow publishes public beta artifacts', () => {
   assert.match(workflow, /name:\s*cli-\$\{\{ matrix\.target_os \}\}-\$\{\{ matrix\.target_arch \}\}/);
   assert.match(workflow, /pattern:\s*cli-\*/);
   assert.match(workflow, /merge-multiple:\s*true/);
-  assert.match(workflow, /prerelease:\s*false/);
-  assert.match(workflow, /make_latest:\s*true/);
+  // SEC-045: the workflow creates a DRAFT with the GitHub CLI; the owner
+  // signs the checksums offline and publishes it (RELEASE-SIGNING.md).
+  assert.match(workflow, /gh release create "\$\{RELEASE_TAG\}" dist\/release\/\*[\s\S]*?--draft/);
+  assert.doesNotMatch(workflow, /make_latest:\s*true/);
+  assert.doesNotMatch(workflow, /softprops\/action-gh-release/);
   assert.match(workflow, /release_name/);
   assert.match(workflow, /docker\.io/);
   assert.match(workflow, /dockerdigitalarsenal\/space-data-network/);
@@ -532,16 +536,19 @@ test('beta release workflow builds desktop app artifacts for every supported OS'
   assert.match(workflow, /pattern:\s*desktop-\*[\s\S]*path:\s*dist\/desktop[\s\S]*merge-multiple:\s*true/);
 });
 
-test('beta release workflow smoke-tests published installers after release', () => {
-  const workflow = readRepoFile('.github/workflows/beta-release-artifacts.yml');
+test('published installers are smoke-tested once a release is published', () => {
+  // The beta workflow now ends with a DRAFT that only the owner's offline
+  // signature makes installable, so the smoke runs on `release: published`.
+  const workflow = readRepoFile('.github/workflows/published-installer-smoke.yml');
 
+  assert.match(workflow, /release:\s*\n\s*types:\s*\[published\]/);
   assert.match(workflow, /published-installer-smoke:\s*\n\s*name:\s*Smoke published installers/);
-  assert.match(workflow, /published-installer-smoke:[\s\S]*needs:\s*\[beta-version, release\]/);
-  assert.match(workflow, /SDN_VERSION:\s*\$\{\{ needs\.beta-version\.outputs\.release_tag \}\}/);
+  assert.match(workflow, /SDN_VERSION:\s*\$\{\{ inputs\.release_tag \|\| github\.event\.release\.tag_name \}\}/);
   assert.match(workflow, /target_os:\s*linux[\s\S]*runner:\s*ubuntu-latest/);
   assert.match(workflow, /target_os:\s*macos[\s\S]*runner:\s*macos-14/);
   assert.match(workflow, /target_os:\s*windows[\s\S]*runner:\s*windows-latest/);
-  assert.match(workflow, /node deployment\/release\/published-install-smoke\.mjs --platform \$\{\{ matrix\.target_os \}\}/);
+  assert.match(workflow, /node deployment\/release\/published-install-smoke\.mjs --platform "\$TARGET_OS"/);
+  assert.doesNotMatch(readRepoFile('.github/workflows/beta-release-artifacts.yml'), /published-installer-smoke:/);
 });
 
 test('npm release publishing maps beta releases to the beta dist-tag', () => {

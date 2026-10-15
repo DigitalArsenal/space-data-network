@@ -8,10 +8,9 @@ on:
         required: false
         type: string
 
-permissions:
-  contents: write
-  packages: write
-  id-token: write
+# Least privilege (security audit SEC-042/SEC-044): the workflow token gets
+# nothing by default and every job names exactly the scopes it needs.
+permissions: {}
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -27,6 +26,8 @@ env:
 jobs:
   beta-version:
     name: Resolve beta version
+    permissions:
+      contents: write # the draft-release publish probe below (created and deleted at once)
     runs-on: ubuntu-latest
     outputs:
       release_tag: ${{ steps.version.outputs.release_tag }}
@@ -36,8 +37,10 @@ jobs:
       channel: ${{ steps.version.outputs.channel }}
       npm_tag: ${{ steps.version.outputs.npm_tag }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24'
       - id: version
@@ -101,6 +104,8 @@ jobs:
   # each is cached on the version + layout and rebuilt only when those change.
   wasmedge-static:
     name: Build static WasmEdge (${{ matrix.label }})
+    permissions:
+      contents: read
     runs-on: ${{ matrix.runner }}
     # Empty for the macOS and Windows legs, which have no container key and so
     # run directly on the runner.
@@ -161,9 +166,11 @@ jobs:
           apt-get update -qq
           apt-get install -y -qq --no-install-recommends ca-certificates curl gnupg git xz-utils
           git config --global --add safe.directory '*' 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - id: cache
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ github.workspace }}/.sdn-wasmedge-static/prefix
           # The key covers EVERYTHING THAT DECIDES HOW THE PREFIX IS BUILT: the
@@ -190,20 +197,34 @@ jobs:
         if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'Linux'
         env:
           CMAKE_VERSION: '3.31.6'
+          # Pinned downloads (security audit SEC-042): the apt.llvm.org signing
+          # key must carry this fingerprint, and each CMake archive must match
+          # Kitware's published SHA-256 for 3.31.6.
+          LLVM_APT_KEY_FINGERPRINT: 6084F3CF814B57C1CF12EFD515CF4D18AF4F7421
+          CMAKE_SHA256_LINUX_X86_64: 5a1133ff103c71eb5120e2cc3de922733e7d8a26a98ae716397e8676adb367bf
+          CMAKE_SHA256_LINUX_AARCH64: b4cc788d63112b2749b40627e719eb5d3b8ed8f00c36d77189f4019cfe64bc9e
         run: |
           export DEBIAN_FRONTEND=noninteractive
           echo "deb http://apt.llvm.org/focal/ llvm-toolchain-focal-16 main" > /etc/apt/sources.list.d/llvm.list
-          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --dearmor -o /etc/apt/trusted.gpg.d/llvm.gpg
+          curl -fsSL -o /tmp/llvm-snapshot.gpg.key https://apt.llvm.org/llvm-snapshot.gpg.key
+          key_fpr="$(gpg --show-keys --with-colons /tmp/llvm-snapshot.gpg.key | awk -F: '$1 == "fpr" { print $10; exit }')"
+          if [ "${key_fpr}" != "${LLVM_APT_KEY_FINGERPRINT}" ]; then
+            echo "apt.llvm.org key fingerprint ${key_fpr} is not ${LLVM_APT_KEY_FINGERPRINT}" >&2
+            exit 1
+          fi
+          gpg --dearmor -o /etc/apt/trusted.gpg.d/llvm.gpg < /tmp/llvm-snapshot.gpg.key
           apt-get update -qq
           apt-get install -y -qq --no-install-recommends \
             ninja-build clang-16 llvm-16-dev liblld-16-dev libpolly-16-dev \
             libzstd-dev zlib1g-dev libtinfo-dev build-essential
           case "$(uname -m)" in
-            x86_64) cmake_arch=linux-x86_64 ;;
-            aarch64) cmake_arch=linux-aarch64 ;;
+            x86_64) cmake_arch=linux-x86_64; cmake_sha256="${CMAKE_SHA256_LINUX_X86_64}" ;;
+            aarch64) cmake_arch=linux-aarch64; cmake_sha256="${CMAKE_SHA256_LINUX_AARCH64}" ;;
             *) echo "unsupported architecture $(uname -m)" >&2; exit 1 ;;
           esac
-          curl -fsSL "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-${cmake_arch}.tar.gz" | tar -xz -C /opt
+          curl -fsSL -o /tmp/cmake.tar.gz "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-${cmake_arch}.tar.gz"
+          echo "${cmake_sha256}  /tmp/cmake.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/cmake.tar.gz -C /opt
           echo "/opt/cmake-${CMAKE_VERSION}-${cmake_arch}/bin" >> "$GITHUB_PATH"
       - name: Install build toolchain (macOS)
         if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'macOS'
@@ -216,7 +237,7 @@ jobs:
       # on every non-Apple platform.
       - name: Install build toolchain (Windows)
         if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'Windows'
-        uses: msys2/setup-msys2@v2
+        uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2.33.0
         with:
           msystem: MINGW64
           update: false
@@ -262,6 +283,8 @@ jobs:
 
   preflight:
     name: Preflight
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     # Same image as everything else that links the prefix. The Go test below
     # does a real cgo link, so it has to agree with the archives it links; and
@@ -277,18 +300,20 @@ jobs:
           apt-get install -y -qq --no-install-recommends \
             ca-certificates curl git xz-utils build-essential zlib1g-dev libtinfo-dev
           git config --global --add safe.directory '*'
-      - uses: actions/checkout@v4
-      - uses: actions/cache/restore@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ github.workspace }}/.sdn-wasmedge-static/prefix
           key: wasmedge-static-${{ env.WASMEDGE_VERSION }}-linux-amd64-focal-llvm16-${{ hashFiles('scripts/build-static-wasmedge.sh', 'scripts/wasmedge-static-env.sh') }}
           fail-on-cache-miss: true
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24'
           cache: npm
           cache-dependency-path: sdn-js/package-lock.json
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: '1.24.x'
           cache-dependency-path: sdn-server/go.sum
@@ -309,11 +334,15 @@ jobs:
 
   ipfs:
     name: Build and pin static assets
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     needs: preflight
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24'
           cache: npm
@@ -331,7 +360,7 @@ jobs:
           until ipfs id >/dev/null 2>&1; do sleep 1; done
       - name: Build and pin UI assets
         run: deployment/ipfs/ipfs-deploy.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ipfs-assets
           path: |
@@ -341,14 +370,18 @@ jobs:
 
   updater-wasm:
     name: Build updater module wasm
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     needs: preflight
     defaults:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24'
           cache: npm
@@ -357,7 +390,7 @@ jobs:
         run: npm ci
       - name: Build updater module wasm
         run: npm --prefix packages/sdn-updater-module run build
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: updater-module-wasm
           path: packages/sdn-updater-module/dist/isomorphic/module.wasm
@@ -377,6 +410,12 @@ jobs:
     # and a per-arch push that claimed them would leave whichever leg finished
     # last owning `:beta` as a single-architecture image.
     name: Build beta container image (${{ matrix.arch }})
+    # Pushes per-arch images by digest: Docker Hub credentials live in the
+    # dockerhub environment, and only main or a v* tag may use it.
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    environment: dockerhub
+    permissions:
+      contents: read
     runs-on: ${{ matrix.runner }}
     needs: [beta-version, ipfs]
     strategy:
@@ -393,15 +432,17 @@ jobs:
       RELEASE_TAG: ${{ needs.beta-version.outputs.release_tag }}
       NATIVE_PACKAGE_VERSION: ${{ needs.beta-version.outputs.native_package_version }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: ipfs-assets
           path: dist/ipfs
       # The image COPYs sdn-js/node_modules/hd-wallet-wasm/dist/hd-wallet-wasi.wasm
       # into the build context, so those dependencies must exist before buildx
       # runs — otherwise the build fails computing that path's checksum.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24'
           cache: npm
@@ -414,8 +455,8 @@ jobs:
           mkdir -p sdn-js/ui/dist webui/build
           cp -R dist/ipfs/sdn-admin/. sdn-js/ui/dist/
           cp -R dist/ipfs/ipfs-webui/. webui/build/
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ${{ env.REGISTRY }}
           username: dockerdigitalarsenal
@@ -425,11 +466,11 @@ jobs:
       # Without this step the per-architecture images lose their OCI source,
       # revision and created annotations, which the single-arch job did emit.
       - id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
         with:
           images: ${{ env.IMAGE_NAME }}
       - id: build
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5.4.0
         with:
           context: .
           file: deployment/docker/Dockerfile
@@ -450,7 +491,7 @@ jobs:
         run: |
           mkdir -p dist/container-arch-digests
           printf '%s' "${{ steps.build.outputs.digest }}" > "dist/container-arch-digests/${{ matrix.arch }}"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: container-arch-digest-${{ matrix.arch }}
           path: dist/container-arch-digests/${{ matrix.arch }}
@@ -479,7 +520,7 @@ jobs:
             exit 1
           fi
           docker save "${image_ref}" | gzip -n > "dist/container-images/spacedatanetwork-container-${NATIVE_PACKAGE_VERSION}-linux-${{ matrix.arch }}.tar.gz"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: container-image-${{ matrix.arch }}
           path: dist/container-images/spacedatanetwork-container-${{ needs.beta-version.outputs.native_package_version }}-linux-${{ matrix.arch }}.tar.gz
@@ -490,25 +531,30 @@ jobs:
     # here and only here: cosign signs the manifest digest, which is what a
     # consumer verifies after pulling.
     name: Publish beta container manifest
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    environment: dockerhub
+    permissions:
+      contents: read
+      id-token: write # keyless cosign signature of the manifest digest
     runs-on: ubuntu-latest
     needs: [beta-version, docker]
     env:
       RELEASE_TAG: ${{ needs.beta-version.outputs.release_tag }}
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: container-arch-digest-*
           path: dist/container-arch-digests
           merge-multiple: true
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ${{ env.REGISTRY }}
           username: dockerdigitalarsenal
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-      - uses: sigstore/cosign-installer@v3.4.0
+      - uses: sigstore/cosign-installer@e1523de7571e31dbe865fd2e80c5c7c23ae71eb4 # v3.4.0
       - id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
         with:
           images: ${{ env.IMAGE_NAME }}
           tags: |
@@ -553,13 +599,15 @@ jobs:
           cosign sign --yes ${images}
           mkdir -p dist/container-digests
           printf '{"name":"%s","digest":"%s"}\n' "${IMAGE_NAME}" "${digest}" > dist/container-digests/image.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: container-digest
           path: dist/container-digests/image.json
 
   cli:
     name: Build self-contained CLI archives (${{ matrix.target_os }}-${{ matrix.target_arch }})
+    permissions:
+      contents: read
     runs-on: ${{ matrix.runner }}
     # Empty for macOS and Windows, which run on the runner itself.
     container: ${{ matrix.container }}
@@ -629,17 +677,19 @@ jobs:
           apt-get install -y -qq --no-install-recommends \
             ca-certificates curl git xz-utils build-essential zlib1g-dev libtinfo-dev
           git config --global --add safe.directory '*'
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: ipfs-assets
           path: dist/ipfs
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24'
           cache: npm
           cache-dependency-path: package-lock.json
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: '1.24.x'
           cache-dependency-path: sdn-server/go.sum
@@ -651,7 +701,7 @@ jobs:
       - name: Install sdn-js dependencies
         working-directory: sdn-js
         run: npm ci
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: updater-module-wasm
           path: packages/sdn-updater-module/dist/isomorphic
@@ -666,7 +716,7 @@ jobs:
       - name: Install the MSYS2 toolchain (Windows)
         if: matrix.target_os == 'windows'
         id: msys2
-        uses: msys2/setup-msys2@v2
+        uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2.33.0
         with:
           msystem: MINGW64
           update: false
@@ -706,7 +756,7 @@ jobs:
       # asserted by beta-release-workflow.test.mjs, which is why no comment in
       # this file may name that flag.
       - name: Restore the static WasmEdge prefix
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ github.workspace }}/.sdn-wasmedge-static/prefix
           key: wasmedge-static-${{ env.WASMEDGE_VERSION }}-${{ matrix.target_os }}-${{ matrix.target_arch }}-${{ matrix.toolchain }}-${{ hashFiles('scripts/build-static-wasmedge.sh', 'scripts/wasmedge-static-env.sh') }}
@@ -890,13 +940,18 @@ jobs:
             --license-path "${PWD}/LICENSE" \
             --readme-path "${PWD}/README.md" \
             --manifest-signature "github-actions:${RELEASE_TAG}:${GITHUB_SHA}"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: cli-${{ matrix.target_os }}-${{ matrix.target_arch }}
           path: dist/cli/spacedatanetwork-${{ needs.beta-version.outputs.package_version }}-${{ matrix.target_os }}-${{ matrix.target_arch }}.${{ matrix.archive_extension }}
 
   cli-update-feed:
     name: Build signed CLI update feed
+    # The update-feed signing key lives in the update-signing environment.
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    environment: update-signing
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     needs: [beta-version, cli]
     defaults:
@@ -908,13 +963,15 @@ jobs:
       SDN_UPDATE_KEY_ID: ${{ secrets.SDN_UPDATE_KEY_ID }}
       SDN_UPDATE_SEQUENCE: ${{ github.run_number }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: cli-*
           path: dist/cli
           merge-multiple: true
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24'
       # The feed is what lets an installed node upgrade itself, and every payload
@@ -975,7 +1032,7 @@ jobs:
           done
           node deployment/release/build-sdn-update-feed.js "${feed_args[@]}"
           tar -czf "dist/update-feed/spacedatanetwork-update-feed-${VERSION}.tar.gz" -C "${feed_tree_root}" update-feed
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: steps.signing.outputs.available == 'true'
         with:
           name: cli-update-feed
@@ -983,6 +1040,12 @@ jobs:
 
   desktop:
     name: Build desktop app artifacts (${{ matrix.target_os }}-${{ matrix.target_arch }})
+    # Apple signing and notarisation credentials live in the macos-signing
+    # environment.
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    environment: macos-signing
+    permissions:
+      contents: read
     runs-on: ${{ matrix.runner }}
     # The Windows CLI archive it consumes is no longer experimental, but this
     # leg still is: packaging that archive into an installer has never yet run
@@ -1028,14 +1091,16 @@ jobs:
     env:
       PACKAGE_VERSION: ${{ needs.beta-version.outputs.package_version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       # The desktop app SHIPS the node: each app carries the self-contained
       # bundle the cli job built for its own operating system and architecture.
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: ${{ matrix.cli_artifact }}
           path: dist/cli
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24'
           cache: npm
@@ -1147,7 +1212,7 @@ jobs:
           if [ -f dist/desktop/latest-mac.yml ]; then
             mv dist/desktop/latest-mac.yml "dist/desktop/latest-mac-${{ matrix.target_arch }}.yml"
           fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: desktop-${{ matrix.target_os }}-${{ matrix.target_arch }}
           path: dist/desktop/*
@@ -1155,6 +1220,9 @@ jobs:
 
   packages:
     name: Build beta native packages and SBOM
+    # Builds what ships: no write token, no id-token, no secret.
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     # Same image as the cli job, for the same reason: this builds the binary the
     # RPM and DEB carry, and the link is what fixes the glibc floor. Building it
@@ -1179,14 +1247,16 @@ jobs:
           # stamping dies with exit status 128. Submodules make a single path
           # insufficient.
           git config --global --add safe.directory '*' 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - name: Restore the static WasmEdge prefix
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ github.workspace }}/.sdn-wasmedge-static/prefix
           key: wasmedge-static-${{ env.WASMEDGE_VERSION }}-linux-amd64-focal-llvm16-${{ hashFiles('scripts/build-static-wasmedge.sh', 'scripts/wasmedge-static-env.sh') }}
           fail-on-cache-miss: true
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: ipfs-assets
           path: dist/ipfs
@@ -1195,51 +1265,71 @@ jobs:
           mkdir -p sdn-js/ui/dist webui/build
           cp -R dist/ipfs/sdn-admin/. sdn-js/ui/dist/
           cp -R dist/ipfs/ipfs-webui/. webui/build/
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24'
           cache: npm
           cache-dependency-path: sdn-js/package-lock.json
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: '1.24.x'
           cache-dependency-path: sdn-server/go.sum
       - name: Install JS dependencies
         working-directory: sdn-js
         run: npm ci
-      - name: Install nfpm and syft
+      - name: Install nfpm
         run: |
           mkdir -p "${RUNNER_TEMP}/bin"
+          # go install verifies the module against sum.golang.org.
           GOBIN="${RUNNER_TEMP}/bin" go install "github.com/goreleaser/nfpm/v2/cmd/nfpm@${NFPM_VERSION}"
           echo "${RUNNER_TEMP}/bin" >> "$GITHUB_PATH"
-          # No sudo: this job runs as root inside ubuntu:20.04, and the image
-          # has no sudo at all ("sudo: not found").
-          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
           "${RUNNER_TEMP}/bin/nfpm" --version
-          syft version
       - name: Build RPM and DEB artifacts
         run: deployment/packaging/build-linux-packages.sh
       - name: Build Linux VM tarball
         run: deployment/scripts/package-linux-vm-bundle.sh
-      - name: Generate CycloneDX SBOM
-        run: |
-          mkdir -p dist/sbom
-          syft dir:dist/package-root -o cyclonedx-json=dist/sbom/spacedatanetwork-sbom.cdx.json
-      - uses: actions/upload-artifact@v4
+      # The packages are uploaded BEFORE any SBOM tooling runs, so the SBOM
+      # generator can never touch what ships.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: package-artifacts
           path: |
             dist/packages/*
             dist/linux-vm/*.tar.gz
-            dist/sbom/spacedatanetwork-sbom.cdx.json
+      # syft from a pinned release, checked against a committed sha256 — never
+      # the moving install.sh on syft's main branch piped into a root shell
+      # (security audit SEC-042). This job runs as root in ubuntu:20.04.
+      - name: Install syft (pinned, checksum-verified)
+        env:
+          SYFT_VERSION: 1.52.0
+          SYFT_SHA256: caeedb81fb0491615f1ebd1761e4145d41ee86dd2cc7bf80669f9f5ad9d6133d
+        run: |
+          archive="${RUNNER_TEMP}/syft.tar.gz"
+          curl -fsSL -o "${archive}" "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64.tar.gz"
+          echo "${SYFT_SHA256}  ${archive}" | sha256sum -c -
+          mkdir -p "${RUNNER_TEMP}/syft"
+          tar -xzf "${archive}" -C "${RUNNER_TEMP}/syft" syft
+          "${RUNNER_TEMP}/syft/syft" version
+      - name: Generate CycloneDX SBOM
+        run: |
+          mkdir -p dist/sbom
+          "${RUNNER_TEMP}/syft/syft" dir:dist/package-root -o cyclonedx-json=dist/sbom/spacedatanetwork-sbom.cdx.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: package-sbom
+          path: dist/sbom/spacedatanetwork-sbom.cdx.json
 
   sdn-js-package:
     name: Build beta sdn-js package
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     needs: beta-version
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24'
           cache: npm
@@ -1255,48 +1345,56 @@ jobs:
         run: |
           mkdir -p ../dist/sdn-js
           npm pack --pack-destination ../dist/sdn-js
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: sdn-js-package
           path: dist/sdn-js/*.tgz
 
   artifact-docker-test:
     name: Install and network-test release artifacts
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     needs: [beta-version, ipfs, docker, cli, cli-update-feed, packages, sdn-js-package]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: ipfs-assets
           path: dist/ipfs
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: package-artifacts
           path: dist
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: package-sbom
+          path: dist/sbom
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: sdn-js-package
           path: dist/sdn-js
       # Both architectures land here; the test picks the amd64 tarball by name
       # (see test-release-artifacts-docker.mjs), since this runner is amd64.
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: container-image-*
           path: dist
           merge-multiple: true
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: cli-*
           path: dist/cli
           merge-multiple: true
       # Absent when the signing key is not configured; see cli-update-feed.
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         continue-on-error: true
         with:
           name: cli-update-feed
           path: dist/update-feed
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24'
       - name: Install artifacts and verify SDN network
@@ -1304,48 +1402,60 @@ jobs:
 
   release:
     name: Publish beta GitHub release
+    # Creates the GitHub release: only from main or a v* tag, in the release
+    # environment behind the owner's required reviewers.
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    environment: release
+    permissions:
+      contents: write # create the draft release and upload its assets
     runs-on: ubuntu-latest
     needs: [beta-version, ipfs, docker, docker-manifest, cli, cli-update-feed, desktop, packages, sdn-js-package, artifact-docker-test]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: ipfs-assets
           path: dist/ipfs
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: package-artifacts
           path: dist
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: package-sbom
+          path: dist/sbom
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: sdn-js-package
           path: dist/sdn-js
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: container-image-*
           path: dist/container-images
           merge-multiple: true
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: container-digest
           path: dist/container-digests
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: cli-*
           path: dist/cli
           merge-multiple: true
       # Absent when the signing key is not configured; see cli-update-feed.
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         continue-on-error: true
         with:
           name: cli-update-feed
           path: dist/update-feed
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: desktop-*
           path: dist/desktop
           merge-multiple: true
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24'
       - name: Build container digest manifest
@@ -1367,42 +1477,25 @@ jobs:
           VERSION: ${{ needs.beta-version.outputs.package_version }}
           RELEASE_TAG: ${{ needs.beta-version.outputs.release_tag }}
         run: deployment/release/assemble-beta-release-artifacts.sh
-      - uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ needs.beta-version.outputs.release_tag }}
-          target_commitish: ${{ github.sha }}
-          name: ${{ needs.beta-version.outputs.release_name }}
-          body_path: dist/release/SDN-BETA-RELEASE.md
-          prerelease: false
-          make_latest: true
-          files: dist/release/*
-
-  published-installer-smoke:
-    name: Smoke published installers (${{ matrix.target_os }})
-    runs-on: ${{ matrix.runner }}
-    # Windows carries the same experimental policy as every other Windows leg.
-    # There is no Windows archive in the release while the CLI build is broken,
-    # so this leg cannot pass, and letting it fail the whole run would paint a
-    # successful release red — which trains everyone to ignore the status.
-    continue-on-error: ${{ matrix.experimental == true }}
-    needs: [beta-version, release]
-    env:
-      SDN_VERSION: ${{ needs.beta-version.outputs.release_tag }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target_os: linux
-            runner: ubuntu-latest
-          - target_os: macos
-            runner: macos-14
-          - target_os: windows
-            runner: windows-latest
-            experimental: true
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-      - name: Smoke clean-user published installer
-        run: node deployment/release/published-install-smoke.mjs --platform ${{ matrix.target_os }}
+      # A DRAFT, created with this job's own token (no third-party action
+      # holds contents: write). The installers trust only releases whose
+      # spacedatanetwork-checksums.txt carries the owner's OFFLINE signature
+      # (deployment/release/RELEASE-SIGNING.md): the owner verifies this
+      # draft, signs the checksums with the release key, uploads
+      # spacedatanetwork-checksums.txt.sig and only then publishes it. Nothing
+      # this workflow can do makes an unsigned release installable. The
+      # published-installer smoke runs when the owner publishes
+      # (published-installer-smoke.yml).
+      - name: Create the draft beta release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.beta-version.outputs.release_tag }}
+          RELEASE_NAME: ${{ needs.beta-version.outputs.release_name }}
+        run: |
+          gh release create "${RELEASE_TAG}" dist/release/* \
+            --repo "${GITHUB_REPOSITORY}" \
+            --draft \
+            --target "${GITHUB_SHA}" \
+            --title "${RELEASE_NAME}" \
+            --notes-file dist/release/SDN-BETA-RELEASE.md
+          echo "::notice::Draft ${RELEASE_TAG} created. Sign spacedatanetwork-checksums.txt offline and upload the .sig before publishing (deployment/release/RELEASE-SIGNING.md)."

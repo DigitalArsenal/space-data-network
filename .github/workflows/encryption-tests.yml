@@ -29,21 +29,29 @@ env:
   GO_VERSION: '1.24'
   NODE_VERSION: '24'
 
+# Least privilege (security audit SEC-042/SEC-044): the workflow token gets
+# nothing by default and every job names exactly the scopes it needs.
+permissions: {}
+
 jobs:
   # ============================================
   # Go ECIES and Server-to-Server Tests
   # ============================================
   go-encryption-tests:
     name: Go Encryption Tests
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     if: github.event.inputs.skip_go_tests != 'true'
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: tests/encryption/go/go.sum
@@ -84,7 +92,7 @@ jobs:
           go test -bench=. -benchmem ./... | tee benchmark-results.txt
 
       - name: Upload coverage reports
-        uses: codecov/codecov-action@v3
+        uses: codecov/codecov-action@ab904c41d6ece82784817410c45d8b8c02684457 # v3.1.6
         with:
           files: |
             tests/encryption/go/coverage-ecies.out
@@ -96,7 +104,7 @@ jobs:
           name: go-encryption-coverage
 
       - name: Upload benchmark results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: go-benchmark-results
           path: tests/encryption/go/benchmark-results.txt
@@ -106,15 +114,19 @@ jobs:
   # ============================================
   playwright-encryption-tests:
     name: Playwright Browser Tests
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     if: github.event.inputs.skip_playwright_tests != 'true'
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
@@ -134,7 +146,7 @@ jobs:
           CI: true
 
       - name: Upload Playwright report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
           name: playwright-report
@@ -142,7 +154,7 @@ jobs:
           retention-days: 30
 
       - name: Upload test results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
           name: playwright-test-results
@@ -154,6 +166,8 @@ jobs:
   # ============================================
   integration-tests:
     name: Integration Tests (Docker Network)
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     needs: [go-encryption-tests]
 
@@ -164,13 +178,15 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
       - name: Cache Docker layers
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: /tmp/.buildx-cache
           key: ${{ runner.os }}-buildx-${{ github.sha }}
@@ -206,7 +222,7 @@ jobs:
           docker-compose -f docker-compose.test.yaml logs > docker-logs.txt
 
       - name: Upload Docker logs
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
           name: docker-logs
@@ -223,14 +239,19 @@ jobs:
   # ============================================
   security-scan:
     name: Crypto Security Scan
+    permissions:
+      contents: read
+      security-events: write # upload the Trivy SARIF
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: 'fs'
           scan-ref: 'tests/encryption'
@@ -239,13 +260,13 @@ jobs:
           output: 'trivy-results.sarif'
 
       - name: Upload Trivy scan results
-        uses: github/codeql-action/upload-sarif@v2
+        uses: github/codeql-action/upload-sarif@9f759ee644a3e7c15c1390abf49868036c00067b # v3.38.3
         if: always()
         with:
           sarif_file: 'trivy-results.sarif'
 
       - name: Check for hardcoded secrets
-        uses: trufflesecurity/trufflehog@main
+        uses: trufflesecurity/trufflehog@e76dff8a7e57d6df0c60ad8cbf5d5cba505a8fc9 # v3.99.2
         with:
           path: ./tests/encryption
           extra_args: --only-verified
@@ -255,15 +276,19 @@ jobs:
   # ============================================
   performance-tests:
     name: Performance Regression Tests
+    permissions:
+      contents: write # github-action-benchmark pushes results to gh-pages and comments on alerts
     runs-on: ubuntu-latest
     needs: [go-encryption-tests]
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: tests/encryption/go/go.sum
@@ -274,7 +299,7 @@ jobs:
           go test -bench=. -benchmem -count=5 ./... | tee benchmark.txt
 
       - name: Store benchmark results
-        uses: benchmark-action/github-action-benchmark@v1
+        uses: benchmark-action/github-action-benchmark@4322e5726e6334590d251fc4f92bec0efafc45dc # v1.22.2
         with:
           tool: 'go'
           output-file-path: tests/encryption/go/benchmark.txt
@@ -289,6 +314,7 @@ jobs:
   # ============================================
   test-summary:
     name: Test Summary
+    permissions: {}
     runs-on: ubuntu-latest
     needs: [go-encryption-tests, playwright-encryption-tests, integration-tests, security-scan]
     if: always()

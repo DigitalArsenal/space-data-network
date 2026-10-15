@@ -1,0 +1,63 @@
+name: Smoke published installers
+
+# Runs the public one-line installers against a release once it is PUBLISHED.
+# It used to run at the end of beta-release-artifacts.yml, but that workflow
+# now creates a draft: a release becomes installable only after the owner
+# signs its spacedatanetwork-checksums.txt offline and publishes it
+# (deployment/release/RELEASE-SIGNING.md), so this is the first moment the
+# installers can see it.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Node release tag to install, for example v1.0.5-beta.71
+        required: true
+        type: string
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+# Least privilege (security audit SEC-042/SEC-044): the workflow token gets
+# nothing by default and every job names exactly the scopes it needs.
+permissions: {}
+
+jobs:
+  published-installer-smoke:
+    name: Smoke published installers (${{ matrix.target_os }})
+    # Library releases (sdn-js-v*) carry no node archives.
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.event.release.tag_name, 'v')
+    permissions:
+      contents: read
+    runs-on: ${{ matrix.runner }}
+    # Windows carries the same experimental policy as every other Windows leg.
+    # There is no Windows archive in the release while the CLI build is broken,
+    # so this leg cannot pass, and letting it fail the whole run would paint a
+    # successful release red — which trains everyone to ignore the status.
+    continue-on-error: ${{ matrix.experimental == true }}
+    env:
+      SDN_VERSION: ${{ inputs.release_tag || github.event.release.tag_name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target_os: linux
+            runner: ubuntu-latest
+          - target_os: macos
+            runner: macos-14
+          - target_os: windows
+            runner: windows-latest
+            experimental: true
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24'
+      - name: Smoke clean-user published installer
+        env:
+          TARGET_OS: ${{ matrix.target_os }}
+        run: node deployment/release/published-install-smoke.mjs --platform "$TARGET_OS"

@@ -57,9 +57,9 @@ concurrency:
   group: security-${{ github.ref }}
   cancel-in-progress: true
 
-permissions:
-  contents: read
-  security-events: write
+# Least privilege (security audit SEC-042/SEC-044): the workflow token gets
+# nothing by default and every job names exactly the scopes it needs.
+permissions: {}
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -67,23 +67,26 @@ env:
 jobs:
   go-vulnerability-scan:
     name: Go Vulnerability Scan
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           submodules: recursive
+          persist-credentials: false
 
       # go-version was hardcoded '1.21' here while sdn-server/go.mod asks for
       # 1.25 — the security lane was scanning a build the real lanes never make.
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: sdn-server/go.mod
           cache-dependency-path: sdn-server/go.sum
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24'
 
@@ -110,7 +113,7 @@ jobs:
         run: node scripts/check-govulncheck.mjs --report sdn-server/govulncheck-report.txt
 
       - name: Upload govulncheck report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
           name: govulncheck-report
@@ -119,13 +122,17 @@ jobs:
 
   npm-audit:
     name: npm Dependency Audit
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24'
           cache: 'npm'
@@ -167,7 +174,7 @@ jobs:
           echo "::endgroup::"
 
       - name: Upload npm audit report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
           name: npm-audit-report
@@ -180,13 +187,17 @@ jobs:
 
   dependency-layering:
     name: Dependency layering and kubo lockstep
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24'
 
@@ -198,7 +209,7 @@ jobs:
         run: node scripts/check-sdn-js-dependency-layering.mjs
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: sdn-server/go.mod
           cache-dependency-path: sdn-server/go.sum
@@ -220,13 +231,17 @@ jobs:
 
   docker-scan:
     name: Docker Image Scan
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24'
           cache: 'npm'
@@ -274,11 +289,11 @@ jobs:
 
       - name: Set up Docker Buildx
         if: steps.check.outputs.exists == 'true'
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
       - name: Build Docker image
         if: steps.check.outputs.exists == 'true'
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5.4.0
         with:
           context: .
           file: deployment/docker/Dockerfile
@@ -291,7 +306,7 @@ jobs:
       # to ignore. Baseline them the way check-govulncheck.mjs does, then gate.
       - name: Run Trivy vulnerability scanner
         if: steps.check.outputs.exists == 'true'
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: sdn-node:scan
           format: 'table'
@@ -309,7 +324,7 @@ jobs:
 
       - name: Upload Trivy report
         if: steps.check.outputs.exists == 'true' && always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: trivy-node-report
           path: trivy-node-report.txt
@@ -329,19 +344,20 @@ jobs:
         language: ['go', 'javascript']
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           submodules: recursive
+          persist-credentials: false
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@9f759ee644a3e7c15c1390abf49868036c00067b # v3.38.3
         with:
           languages: ${{ matrix.language }}
           queries: security-and-quality
 
       - name: Set up Go
         if: matrix.language == 'go'
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: sdn-server/go.mod
           cache-dependency-path: sdn-server/go.sum
@@ -359,7 +375,7 @@ jobs:
 
       - name: Set up Node.js
         if: matrix.language == 'javascript'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24'
           cache: 'npm'
@@ -376,19 +392,20 @@ jobs:
           npm run build
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@9f759ee644a3e7c15c1390abf49868036c00067b # v3.38.3
         with:
           category: "/language:${{ matrix.language }}"
 
   security-summary:
     name: Security Summary
+    permissions: {}
     runs-on: ubuntu-latest
     needs: [go-vulnerability-scan, npm-audit, dependency-layering, docker-scan, codeql-analysis]
     if: always()
 
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: reports
         continue-on-error: true

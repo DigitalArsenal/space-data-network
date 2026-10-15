@@ -87,6 +87,12 @@ npm run install:wasmedge
 npm run server:build
 ```
 
+The shell installer installs only a release whose checksum list carries a
+valid signature by the offline release key, and needs `openssl` to check it.
+The PowerShell installer refuses to run until it can verify that signature too;
+use WSL meanwhile. See
+[deployment/release/RELEASE-SIGNING.md](./deployment/release/RELEASE-SIGNING.md).
+
 A plain clone is enough to build the node: the dashboard ships as a prebuilt,
 embedded bundle (`sdn-server/cmd/spacedatanetwork/embedded/dashboard.html`).
 Its source, the `sdn-js/spaceaware-ui` submodule, is private and is skipped by

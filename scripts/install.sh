@@ -7,6 +7,15 @@
 #   SDN_INSTALL_DIR Command link directory (default: ~/.spacedatanetwork/bin)
 #   SDN_BUNDLE_DIR  Bundle parent directory (default: ~/.spacedatanetwork/bundles)
 #   SDN_SKIP_INIT   Set to 1 to skip first-run node identity initialization
+#
+# Release signatures (security audit SEC-045). A release is installed only when
+# its spacedatanetwork-checksums.txt carries a valid signature
+# (spacedatanetwork-checksums.txt.sig, ECDSA P-256 over SHA-256) by the release
+# key below, whose private half is held OFFLINE by the owner and never by CI
+# (deployment/release/RELEASE-SIGNING.md). A checksum file published in the
+# same release as the archive proves nothing on its own: whoever can create a
+# release controls both. Every failure here refuses to install; there is no
+# unsigned fallback.
 
 set -e
 
@@ -18,6 +27,17 @@ BUNDLE_PARENT_DIR="${SDN_BUNDLE_DIR:-$HOME/.spacedatanetwork/bundles}"
 PRIMARY_COMMAND_PATH="${INSTALL_DIR}/${PRIMARY_BINARY_NAME}"
 ALIAS_COMMAND_PATH="${INSTALL_DIR}/${ALIAS_BINARY_NAME}"
 TMP_DIR=""
+VERIFIED_CHECKSUMS=""
+VERIFIED_TAG=""
+# How many of the newest node releases to consider when none is pinned. A
+# release without a valid signature is skipped, never installed.
+MAX_RELEASE_CANDIDATES=10
+
+# The release signing PUBLIC key (PEM). Empty means no key has been
+# provisioned yet, and the installer then refuses to install anything.
+# BEGIN SDN RELEASE SIGNING KEY
+SDN_RELEASE_SIGNING_KEY_PEM=''
+# END SDN RELEASE SIGNING KEY
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -70,6 +90,55 @@ download_url() {
         log_error "Neither curl nor wget found. Please install one of them."
         exit 1
     fi
+}
+
+ensure_tmp_dir() {
+    if [ -z "$TMP_DIR" ] || [ ! -d "$TMP_DIR" ]; then
+        TMP_DIR=$(mktemp -d)
+    fi
+}
+
+require_release_signing_key() {
+    if [ -z "$SDN_RELEASE_SIGNING_KEY_PEM" ]; then
+        log_error "This installer carries no release signing key, so it cannot verify any release."
+        log_error "Refusing to install unverified binaries. See https://github.com/${REPO}/blob/main/deployment/release/RELEASE-SIGNING.md"
+        exit 1
+    fi
+    if ! command -v openssl &> /dev/null; then
+        log_error "openssl is required to verify the release signature. Install openssl and run the installer again."
+        exit 1
+    fi
+}
+
+# verify_release_signature <file> <signature>: 0 only when <signature> is a
+# valid signature over <file> by the embedded release key.
+verify_release_signature() {
+    local file="$1"
+    local signature="$2"
+    local key_file="${TMP_DIR}/sdn-release-signing-key.pem"
+
+    require_release_signing_key
+    printf '%s\n' "$SDN_RELEASE_SIGNING_KEY_PEM" > "$key_file"
+    openssl dgst -sha256 -verify "$key_file" -signature "$signature" "$file" > /dev/null 2>&1
+}
+
+# fetch_verified_checksums: download RELEASE_TAG's checksum list and its
+# signature, and accept the list only when the signature verifies and the list
+# names this platform's ARCHIVE_NAME. Archive names carry the version, so a
+# signed list replayed under another tag never names that tag's archive.
+fetch_verified_checksums() {
+    local dir="${TMP_DIR}/release-${RELEASE_TAG}"
+    local base="https://github.com/${REPO}/releases/download/${RELEASE_TAG}"
+
+    mkdir -p "$dir"
+    download_url "${base}/spacedatanetwork-checksums.txt" "${dir}/spacedatanetwork-checksums.txt" 2> /dev/null || return 1
+    download_url "${base}/spacedatanetwork-checksums.txt.sig" "${dir}/spacedatanetwork-checksums.txt.sig" 2> /dev/null || return 1
+    verify_release_signature "${dir}/spacedatanetwork-checksums.txt" "${dir}/spacedatanetwork-checksums.txt.sig" || return 1
+    if [ -z "$(awk -v name="$ARCHIVE_NAME" '$2 == name || $2 == "*" name { print $1; exit }' "${dir}/spacedatanetwork-checksums.txt")" ]; then
+        return 1
+    fi
+    VERIFIED_CHECKSUMS="${dir}/spacedatanetwork-checksums.txt"
+    VERIFIED_TAG="$RELEASE_TAG"
 }
 
 calculate_sha256() {
@@ -139,23 +208,53 @@ select_node_release_tag() {
     grep -oE '"tag_name": *"[^"]*"' | sed -E 's/^"tag_name": *"//; s/"$//' | grep -E '^v[0-9]' | head -n 1
 }
 
+# list_node_release_tags: every v<digit>... tag in the releases JSON on stdin,
+# in GitHub's newest-first order.
+list_node_release_tags() {
+    grep -oE '"tag_name": *"[^"]*"' | sed -E 's/^"tag_name": *"//; s/"$//' | grep -E '^v[0-9]'
+}
+
 get_latest_version() {
+    require_release_signing_key
+    ensure_tmp_dir
     if [ -n "$SDN_VERSION" ]; then
         VERSION="$SDN_VERSION"
         log_info "Using specified version: $VERSION"
-    else
-        log_info "Fetching latest version..."
-        # The repository also publishes library releases (sdn-js-v*), which
-        # GitHub's latest-release endpoint may return; the node's own releases
-        # are the v<semver> tags, newest first.
-        VERSION=$(fetch_url_stdout "https://api.github.com/repos/${REPO}/releases?per_page=50" | select_node_release_tag)
-
-        if [ -z "$VERSION" ]; then
-            log_error "Failed to fetch latest version: no v<semver> node release found among the newest 50 releases of ${REPO}"
-            exit 1
-        fi
-        log_info "Latest version: $VERSION"
+        return
     fi
+
+    log_info "Fetching latest version..."
+    # The repository also publishes library releases (sdn-js-v*), which
+    # GitHub's latest-release endpoint may return; the node's own releases
+    # are the v<semver> tags, newest first. The newest one whose checksum
+    # list carries a valid release-key signature is the one installed: an
+    # unsigned or forged release is skipped, never trusted.
+    local releases candidate tried=0
+    releases=$(fetch_url_stdout "https://api.github.com/repos/${REPO}/releases?per_page=50")
+    for candidate in $(printf '%s\n' "$releases" | list_node_release_tags); do
+        tried=$((tried + 1))
+        if [ "$tried" -gt "$MAX_RELEASE_CANDIDATES" ]; then
+            break
+        fi
+        case "${candidate#v}" in
+            ""|*[!A-Za-z0-9._-]*)
+                log_warn "Skipping release tag with unsupported characters: $candidate"
+                continue
+                ;;
+        esac
+        VERSION="$candidate"
+        normalize_version_names
+        select_archive > /dev/null
+        if fetch_verified_checksums; then
+            log_info "Latest signed version: $VERSION"
+            return
+        fi
+        log_warn "Skipping $candidate: its checksum list has no valid release signature for ${ARCHIVE_NAME}"
+    done
+
+    VERSION=""
+    log_error "No signed node release found among the newest node releases of ${REPO}. Refusing to install."
+    exit 1
 }
 
 normalize_version_names() {
@@ -199,7 +298,7 @@ select_archive() {
 download_archive() {
     local url="https://github.com/${REPO}/releases/download/${RELEASE_TAG}/${ARCHIVE_NAME}"
 
-    TMP_DIR=$(mktemp -d)
+    ensure_tmp_dir
     TMP_FILE="${TMP_DIR}/${ARCHIVE_NAME}"
 
     log_info "Downloading from: $url"
@@ -214,13 +313,24 @@ download_archive() {
 }
 
 verify_checksum() {
-    local checksum_url="https://github.com/${REPO}/releases/download/${RELEASE_TAG}/spacedatanetwork-checksums.txt"
-    local checksum_file="${TMP_DIR}/spacedatanetwork-checksums.txt"
+    log_info "Verifying release signature..."
+    ensure_tmp_dir
+    # The checksum list must be the one whose signature was verified for THIS
+    # tag, read from that same verified file (never downloaded again).
+    if [ "$VERIFIED_TAG" != "$RELEASE_TAG" ] || [ ! -f "$VERIFIED_CHECKSUMS" ]; then
+        VERIFIED_CHECKSUMS=""
+        VERIFIED_TAG=""
+        if ! fetch_verified_checksums; then
+            log_error "Release ${RELEASE_TAG} has no valid release-key signature over spacedatanetwork-checksums.txt for ${ARCHIVE_NAME}."
+            log_error "Refusing to install unverified binaries."
+            exit 1
+        fi
+    fi
+    log_info "Release signature verified"
+    local checksum_file="$VERIFIED_CHECKSUMS"
 
     log_info "Verifying checksum..."
-    download_url "$checksum_url" "$checksum_file"
-
-    EXPECTED=$(awk -v name="$ARCHIVE_NAME" '$2 == name { print $1; exit }' "$checksum_file")
+    EXPECTED=$(awk -v name="$ARCHIVE_NAME" '$2 == name || $2 == "*" name { print $1; exit }' "$checksum_file")
     if [ -z "$EXPECTED" ]; then
         log_error "Checksum for $ARCHIVE_NAME not found in spacedatanetwork-checksums.txt"
         exit 1

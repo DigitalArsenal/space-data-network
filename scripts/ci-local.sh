@@ -188,6 +188,14 @@ run_preflight() {
     pass "workflow files parse"
   fi
 
+  # Supply-chain hardening of the workflows themselves (security audit
+  # SEC-042/SEC-044): SHA-pinned actions, least-privilege tokens, no curl|sh,
+  # no persisted checkout credentials, secrets only in deployment
+  # environments. Dependency-free, so it runs in CI and locally alike.
+  step "Workflow hardening"
+  (cd "$ROOT" && node scripts/check-workflow-hardening.mjs)
+  pass "workflow hardening"
+
   step "OSS preflight"
   (cd "$ROOT" && ./scripts/oss-preflight.sh)
   pass "oss-preflight"
@@ -200,7 +208,8 @@ run_preflight() {
     scripts/check-npm-audit.test.mjs \
     scripts/check-govulncheck.test.mjs \
     scripts/run-govulncheck.test.mjs \
-    scripts/check-no-orphan-test-suites.test.mjs)
+    scripts/check-no-orphan-test-suites.test.mjs \
+    scripts/check-workflow-hardening.test.mjs)
   pass "dependency-drift check suites"
 
   # Release-assembly logic, which decides what a published release CONTAINS.
@@ -231,6 +240,7 @@ run_preflight() {
     deployment/release/build-update-carrier.test.mjs \
     deployment/release/extract-release-binary.test.mjs \
     deployment/release/install-script.test.mjs \
+    deployment/release/install-signature.test.mjs \
     deployment/release/live-dht-client-smoke.test.mjs \
     deployment/release/live-dht-summary.test.mjs \
     deployment/release/live-dht-workflow.test.mjs \

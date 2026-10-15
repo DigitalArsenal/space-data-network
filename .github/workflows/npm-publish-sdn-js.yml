@@ -23,22 +23,33 @@ concurrency:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
+# Least privilege (security audit SEC-042/SEC-044): nothing by default.
+permissions: {}
+
 jobs:
   publish:
     name: Build & Publish
     runs-on: ubuntu-latest
+    # Publishes with npm provenance: only for a release (a tag ref) or a manual
+    # run from main, in the npm-publish environment where the owner's required
+    # reviewers approve it. npm's trusted publisher should require this
+    # environment too, so no other workflow run can mint the provenance.
+    if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main'
+    environment: npm-publish
     permissions:
       contents: read
       id-token: write  # Required for npm provenance
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
         # No submodules: build:package compiles sdn-js/src only, and the
         # private SpaceAware-UI submodule fails an unauthenticated recursive
         # checkout (sdn-js-npm-publish-blocked-by-submodule).
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
@@ -87,11 +98,26 @@ jobs:
 
       - name: Determine dist-tag
         id: tag
+        env:
+          # Dispatch inputs and the release tag reach the script through the
+          # environment, never by expansion into its text.
+          EVENT_NAME: ${{ github.event_name }}
+          REQUESTED_TAG: ${{ inputs.tag || 'latest' }}
+          TAG_NAME: ${{ github.event.release.tag_name }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "tag=${{ inputs.tag || 'latest' }}" >> $GITHUB_OUTPUT
-          elif [ "${{ github.event_name }}" = "release" ]; then
-            TAG_NAME="${{ github.event.release.tag_name }}"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            # A dist-tag is what every `npm install` resolves, so only the
+            # known channels are accepted.
+            case "$REQUESTED_TAG" in
+              latest|next|beta|alpha)
+                echo "tag=$REQUESTED_TAG" >> "$GITHUB_OUTPUT"
+                ;;
+              *)
+                echo "::error::dist-tag '$REQUESTED_TAG' is not one of latest, next, beta, alpha"
+                exit 1
+                ;;
+            esac
+          elif [ "$EVENT_NAME" = "release" ]; then
             case "$TAG_NAME" in
               *beta*)
                 echo "tag=beta" >> $GITHUB_OUTPUT
@@ -132,17 +158,26 @@ jobs:
       - name: Publish to npm
         if: ${{ steps.published.outputs.already == 'false' && (github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run)) }}
         working-directory: sdn-js
-        run: npm publish --provenance --access public --tag ${{ steps.tag.outputs.tag }}
+        env:
+          DIST_TAG: ${{ steps.tag.outputs.tag }}
+        run: npm publish --provenance --access public --tag "$DIST_TAG"
 
       - name: Publish dry run
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
         working-directory: sdn-js
+        env:
+          DIST_TAG: ${{ steps.tag.outputs.tag }}
         run: |
           echo "=== DRY RUN ==="
           npm publish --dry-run --access public
-          echo "=== Would publish with tag: ${{ steps.tag.outputs.tag }} ==="
+          echo "=== Would publish with tag: ${DIST_TAG} ==="
 
       - name: Summary
+        env:
+          DIST_TAG: ${{ steps.tag.outputs.tag }}
+          EVENT_NAME: ${{ github.event_name }}
+          ALREADY: ${{ steps.published.outputs.already }}
+          DRY_RUN: ${{ inputs.dry_run }}
         run: |
           VERSION=$(node -p "require('./sdn-js/package.json').version")
           echo "## npm Publish Summary" >> $GITHUB_STEP_SUMMARY
@@ -151,11 +186,11 @@ jobs:
           echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
           echo "| Package | \`@spacedatanetwork/sdn-js\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Version | \`${VERSION}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Tag | \`${{ steps.tag.outputs.tag }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Trigger | \`${{ github.event_name }}\` |" >> $GITHUB_STEP_SUMMARY
-          if [ "${{ steps.published.outputs.already }}" = "true" ]; then
+          echo "| Tag | \`${DIST_TAG}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Trigger | \`${EVENT_NAME}\` |" >> $GITHUB_STEP_SUMMARY
+          if [ "$ALREADY" = "true" ]; then
             echo "| Status | Already on npm — skipped |" >> $GITHUB_STEP_SUMMARY
-          elif [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry_run }}" = "true" ]; then
+          elif [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$DRY_RUN" = "true" ]; then
             echo "| Status | Dry run (not published) |" >> $GITHUB_STEP_SUMMARY
           else
             echo "| Status | Published |" >> $GITHUB_STEP_SUMMARY

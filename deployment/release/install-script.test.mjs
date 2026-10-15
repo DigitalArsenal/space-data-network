@@ -87,12 +87,20 @@ test('public installers use spacedatanetwork.org docs and no GitHub CLI', () => 
   assert.match(readme, /irm https:\/\/spacedatanetwork\.org\/install\.ps1 \| iex/);
   assert.doesNotMatch(readme, /digitalarsenal\.github\.io\/space-data-network/);
   assert.doesNotMatch(readme, /space-data-network\/\/install\.sh/);
-  assert.match(pagesInstall, /raw\.githubusercontent\.com\/DigitalArsenal\/space-data-network\/main\/scripts\/install\.sh/);
-  assert.match(pagesPowerShellInstall, /raw\.githubusercontent\.com\/DigitalArsenal\/space-data-network\/main\/scripts\/install\.ps1/);
+  // SEC-045: the public stubs never run code from main. The shell stub runs
+  // the install.sh asset of one pinned, signed release (its behaviour is
+  // proved in install-signature.test.mjs); the PowerShell stub refuses until
+  // the PowerShell installer verifies the release signature.
+  assert.doesNotMatch(pagesInstall, /raw\.githubusercontent\.com/);
+  assert.doesNotMatch(pagesPowerShellInstall, /raw\.githubusercontent\.com/);
+  assert.match(pagesInstall, /releases\/download\/\$\{SDN_INSTALLER_RELEASE_TAG\}/);
+  assert.match(pagesInstall, /\$\{base\}\/install\.sh/);
+  assert.match(pagesInstall, /SDN_INSTALLER_SHA256/);
+  assert.match(pagesInstall, /openssl dgst -sha256 -verify/);
   assert.match(pagesInstall, /curl -fsSL/);
-  assert.match(pagesInstall, /wget -qO-/);
+  assert.match(pagesInstall, /wget -q/);
   assert.doesNotMatch(pagesInstall, /\bgh\b/);
-  assert.match(pagesPowerShellInstall, /Invoke-WebRequest/);
+  assert.match(pagesPowerShellInstall, /^throw /m);
   assert.doesNotMatch(pagesPowerShellInstall, /\bgh\b/);
 });
 
