@@ -270,6 +270,10 @@ func decodeModuleSignaturePayload(entryPayload []byte, out *moduleSignaturePaylo
 // "no policy configured, don't care" unsigned case so callers that ignore
 // enforcement never need to unwrap it.
 func verifyPublicationSignature(wasmBytes []byte, trustedKeys []ed25519.PublicKey) (portable []byte, status ModuleSignatureStatus, err error) {
+	// SEC-001 (verifier r3 BLOCKER): a denylisted key is never a trusted signer
+	// on ANY scope. Filtered here, before the module/bundle dispatch below, so
+	// verifyWholeBundleSignature cannot verify with one either.
+	trustedKeys = withoutDeniedKeys(trustedKeys)
 	portable = StripPublicationTrailer(wasmBytes)
 	sum := sha256.Sum256(portable)
 	status.ContentHash = hex.EncodeToString(sum[:])
@@ -314,6 +318,15 @@ func verifyPublicationSignature(wasmBytes []byte, trustedKeys []ed25519.PublicKe
 	// so a domain-carrying artifact that also claimed the bundle algorithm
 	// would have verified with its domain never checked. Unreachable today,
 	// which is precisely why it had to be closed before it became reachable.
+	// SEC-001: refuse a denylisted signer by name before the scope dispatch, so
+	// the bundle path reports it as such too.
+	if signerHex := strings.ToLower(strings.TrimSpace(payload.PublicKeyHex)); signerHex != "" {
+		if raw, decErr := hex.DecodeString(signerHex); decErr == nil && trustanchors.IsDeniedKey(raw) {
+			status.SignerPubKeyHex = signerHex
+			status.Reason = "denylisted_signer"
+			return portable, status, fmt.Errorf("module signer %s is a denylisted (SEC-001) key: %w", signerHex, trustanchors.ErrDenied)
+		}
+	}
 	declaresDomain := strings.TrimSpace(payload.StatementDomain) != ""
 	declaresBundle := strings.TrimSpace(payload.SignedHashAlgorithm) == bundleSignatureHashAlgorithm
 	if declaresDomain && declaresBundle {
@@ -612,4 +625,15 @@ func isAllZeroBytes(b []byte) bool {
 		}
 	}
 	return true
+}
+
+// withoutDeniedKeys drops SEC-001 denylisted keys from a trusted-signer list.
+func withoutDeniedKeys(keys []ed25519.PublicKey) []ed25519.PublicKey {
+	out := make([]ed25519.PublicKey, 0, len(keys))
+	for _, k := range keys {
+		if !trustanchors.IsDeniedKey(k) {
+			out = append(out, k)
+		}
+	}
+	return out
 }
