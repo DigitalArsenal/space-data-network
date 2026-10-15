@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated": "2026-10-13",
+  "updated": "2026-10-15",
   "consoleBuild": "20261013T204527Z",
   "pricing": {
     "status": "request",
@@ -645,23 +645,28 @@
       "id": "imagery-studio",
       "name": "Globe imagery studio",
       "category": "earth-sky",
-      "tagline": "Stack, tune and compare imagery layers",
-      "summary": "Stack and reorder imagery layers with full per-layer controls, compare two dates, and add your own imagery from any URL.",
+      "tagline": "Stack, tune and compare imagery and video layers",
+      "summary": "Stack and reorder imagery layers with full per-layer controls, compare two dates, and add any imagery or video layer by URL or from your own files.",
       "capabilities": [
         "Built-in Blue Marble, Black Marble, world imagery, street map, shaded relief and OpenStreetMap",
         "Brightness, contrast, hue, gamma and day/night alpha per layer",
         "Split view, color-to-alpha and cut-outs",
         "Two-date compare",
-        "Your own imagery from any URL"
+        "Add any layer by URL: WMTS and WMS with a layer picker read from the server's capabilities, XYZ, TMS, ArcGIS MapServer and ImageServer, Cesium ion, single images, and KML or KMZ ground overlays",
+        "Your own image and video files, kept in the browser and restored on reload",
+        "Video layers (MP4, WebM, HLS) placed by bounds or four corners, playing in step with the console clock",
+        "Share a layer set as KML through the Space Data Network and open it by its CID"
       ],
       "standards": [
-        "OGC WMTS"
+        "OGC WMTS",
+        "OGC WMS",
+        "OGC KML"
       ],
       "access": "free",
       "delivery": "console",
       "covers": [],
       "learnMore": "https://spaceaware.io",
-      "evidence": "live probe 2026-10-13 Settings > IMAGERY (6 built-in layers); sdn-js/spaceaware-ui/src/orbital-console/components/imagery/ActiveLayersTable.svelte; LayerAdvanced.svelte; CustomSourceForm.svelte"
+      "evidence": "landed 2026-10-15: SpaceAware-UI 7d24ed6, OrbPro 39ce5adc82 (LiveImageryProvider); headless gate on the merged build (add flow for every layer type, rect and corner video with clock sync, layer-set share, phone 390 px); sdn-js/spaceaware-ui/src/orbital-console/components/imagery/AddLayerForm.svelte; CapabilitiesPicker.svelte; VideoTransport.svelte; LayerSetShare.svelte; engine/videoLayers.ts; not in console build 20261013T204527Z"
     },
     {
       "id": "imagery-detection",
@@ -1246,6 +1251,14 @@
     {
       "key": "module:ccsds-messages-0.2.0",
       "reason": "Not in the live module catalog"
+    },
+    {
+      "key": "imagery:misb-klv-video",
+      "reason": "Full-motion video with MISB ST 0601 metadata: files/misb-klv 0.2.0 is not yet offered by the node module catalog"
+    },
+    {
+      "key": "imagery:geotiff-cog",
+      "reason": "GeoTIFF and Cloud-Optimized GeoTIFF layers: files/geotiff 0.2.0 is not yet offered by the node module catalog"
     }
   ]
 }
