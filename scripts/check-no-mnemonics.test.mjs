@@ -312,6 +312,175 @@ test('this repository: no tracked file holds an unreviewed phrase', () => {
   assert.equal(result.status, 0, result.stderr);
 });
 
+// ---------------------------------------------------------------------------
+// Verifier NB2 (round 3): a repeated key between the words, encoded
+// separators, base64, UTF-16, and the history parser's holes.
+// ---------------------------------------------------------------------------
+function keyedShapes(phrase) {
+  const w = phrase.split(' ');
+  return {
+    'XML <item> list': ['<items>', ...w.map((x) => `  <item>${x}</item>`), '</items>'].join('\n'),
+    'JSON [{"index":i,"text":w}]': JSON.stringify(w.map((x, i) => ({ index: i, text: x }))),
+    'JSON {"word1": w}': JSON.stringify(Object.fromEntries(w.map((x, i) => [`word${i + 1}`, x])), null, 2),
+    'YAML word01: lines': w.map((x, i) => `word${String(i + 1).padStart(2, '0')}: ${x}`).join('\n'),
+    'Go {Name: w}': ['var words = []entry{', ...w.map((x) => `\t{Name: "${x}"},`), '}'].join('\n'),
+    // keys that are NOT wordlist words
+    'JSON {"value": w}': JSON.stringify(w.map((x) => ({ value: x }))),
+    'HTML <span> list': w.map((x) => `<span>${x}</span>`).join(''),
+  };
+}
+
+function encodedShapes(phrase) {
+  const w = phrase.split(' ');
+  return {
+    'escaped \\n in a string': `const s = "${w.join('\\n')}";`,
+    'escaped \\t in a string': `const s = "${w.join('\\t')}";`,
+    'escaped \\r\\n in a string': `const s = "${w.join('\\r\\n')}";`,
+    'HTML <li> list': `<ul>${w.map((x) => `<li>${x}</li>`).join('')}</ul>`,
+    'HTML tags between words': w.map((x, i) => (i % 2 ? `<b>${x}</b>` : x)).join(''),
+    'percent-encoded %2C': w.join('%2C'),
+    'percent-encoded %0A': `seed=${w.join('%0A')}`,
+    '&nbsp; entities': w.join('&nbsp;'),
+    '\\x20 escapes': `"${w.join('\\x20')}"`,
+    '&#32; entities': w.join('&#32;'),
+  };
+}
+
+test('NB2: a key repeated between the words (wordlist keys or not) is still caught, checksum and all', () => {
+  for (const [name, content] of Object.entries(keyedShapes(synthetic24))) {
+    const runs = findMnemonicRuns(content, WORDLIST);
+    assert.ok(runs.length >= 1, `${name}: missed`);
+    assert.ok(runs.some((r) => r.checksumValid), `${name}: no checksum-valid run`);
+  }
+});
+
+test('NB2: separators encoded inside strings, markup or URLs are decoded', () => {
+  for (const [name, content] of Object.entries(encodedShapes(synthetic24))) {
+    const runs = findMnemonicRuns(content, WORDLIST);
+    assert.ok(runs.some((r) => r.checksumValid && r.words >= 24), `${name}: missed`);
+  }
+});
+
+test('NB2: base64 values (a Kubernetes Secret, base64url) and UTF-16 (LE, BE, with BOM) are decoded', () => {
+  const b64 = Buffer.from(synthetic24).toString('base64');
+  const secret = ['apiVersion: v1', 'kind: Secret', 'metadata:', '  name: node-seed', 'type: Opaque', 'data:', `  mnemonic: ${b64}`, ''].join('\n');
+  const url = `token=${Buffer.from(`seed: ${synthetic24}`).toString('base64url')}`;
+  const le = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(`mnemonic = "${synthetic24}"\r\n`, 'utf16le')]);
+  const be = Buffer.from(Buffer.from(`${synthetic24}\n`, 'utf16le')).swap16();
+  for (const [name, content, line] of [['k8s Secret', secret, 7], ['base64url', url, 1], ['UTF-16LE + BOM', le, 1], ['UTF-16BE', be, 1]]) {
+    const runs = findMnemonicRuns(content, WORDLIST);
+    const hit = runs.find((r) => r.checksumValid);
+    assert.ok(hit, `${name}: missed`);
+    assert.equal(hit.line, line, `${name}: line`);
+  }
+});
+
+test('NB2: no regression on the round-1 shapes, and sorted wordlist copies stay unflagged', () => {
+  for (const [name, content] of Object.entries(shapesTheOldGuardCaught(synthetic24))) {
+    assert.ok(findMnemonicRuns(content, WORDLIST).some((r) => r.checksumValid), name);
+  }
+  const sortedXml = WORDLIST.slice(0, 200).map((w) => `<item>${w}</item>`).join('\n');
+  const sortedYaml = WORDLIST.slice(300, 500).map((w, i) => `word${i}: ${w}`).join('\n');
+  assert.deepEqual(findMnemonicRuns(sortedXml, WORDLIST), []);
+  assert.deepEqual(findMnemonicRuns(sortedYaml, WORDLIST), []);
+});
+
+test('NB2: every mode catches the keyed, encoded, base64 and UTF-16 shapes, printing no word', () => {
+  const repo = createTempRepo();
+  const files = {
+    'fixtures/items.xml': keyedShapes(synthetic24)['XML <item> list'],
+    'fixtures/words.yaml': keyedShapes(synthetic24)['YAML word01: lines'],
+    'fixtures/escaped.js': encodedShapes(synthetic24)['escaped \\n in a string'],
+    'k8s/secret.yaml': `data:\n  mnemonic: ${Buffer.from(synthetic24).toString('base64')}\n`,
+    'notes/utf16.txt': Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(synthetic24, 'utf16le')]),
+  };
+  for (const [path, content] of Object.entries(files)) writeStagedFile(repo, path, content);
+  const staged = runGuard(repo);
+  assert.equal(staged.status, 1, staged.stderr);
+  for (const path of Object.keys(files)) assert.match(staged.stderr, new RegExp(path.replace(/\./g, '\\.')), `--staged ${path}`);
+  git(repo, ['-c', 'user.name=t', '-c', 'user.email=t@e', 'commit', '-qm', 'shapes']);
+  for (const args of [['--tracked'], ['--history', 'HEAD']]) {
+    const result = runGuard(repo, args);
+    assert.equal(result.status, 1, `${args[0]}: ${result.stderr}`);
+    for (const path of Object.keys(files)) assert.match(result.stderr, new RegExp(path.replace(/\./g, '\\.')), `${args[0]} ${path}`);
+    assertNoWordsLeak(result.stdout + result.stderr, synthetic24);
+  }
+});
+
+function commitAll(repo, message, extra = []) {
+  git(repo, ['add', '-A']);
+  git(repo, ['-c', 'user.name=t', '-c', 'user.email=t@e', 'commit', '-q', ...extra, '-m', message]);
+}
+
+test('NB2 history: a quoted filename is scanned', () => {
+  const repo = createTempRepo();
+  writeFile(repo, 'odd "name"\tfile.txt', `${synthetic24}\n`);
+  commitAll(repo, 'quoted');
+  const result = runGuard(repo, ['--history', 'HEAD']);
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /odd "name"\tfile\.txt \(added line 1\)/);
+});
+
+test('NB2 history: an added line starting "++ " does not end the file', () => {
+  const repo = createTempRepo();
+  writeFile(repo, 'notes/log.txt', ['++ a line that looks like a diff header', 'xyzzy plugh', `${synthetic24}`, ''].join('\n'));
+  commitAll(repo, 'plusplus');
+  const result = runGuard(repo, ['--history', 'HEAD']);
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /notes\/log\.txt \(added line 3\)/);
+});
+
+test('NB2 history: diff.noprefix and diff.dstPrefix in the repo config cannot blind the scan', () => {
+  for (const config of [['diff.noprefix', 'true'], ['diff.dstPrefix', 'zz/'], ['diff.mnemonicPrefix', 'true']]) {
+    const repo = createTempRepo();
+    git(repo, ['config', ...config]);
+    writeFile(repo, 'leak.txt', `${synthetic24}\n`);
+    commitAll(repo, 'leak');
+    const result = runGuard(repo, ['--history', 'HEAD']);
+    assert.equal(result.status, 1, `${config.join('=')}: ${result.stderr}`);
+    assert.match(result.stderr, /leak\.txt \(added line 1\)/, config.join('='));
+  }
+});
+
+test('NB2 history: commit messages and annotated tag messages are scanned', () => {
+  const repo = createTempRepo();
+  writeFile(repo, 'README.md', 'innocent\n');
+  commitAll(repo, `release notes\n\nrecovery: ${synthetic24}`);
+  const commitHit = runGuard(repo, ['--history', 'HEAD']);
+  assert.equal(commitHit.status, 1, commitHit.stderr);
+  assert.match(commitHit.stderr, /\(commit message\)/);
+
+  const tagged = createTempRepo();
+  writeFile(tagged, 'README.md', 'innocent\n');
+  commitAll(tagged, 'plain');
+  git(tagged, ['-c', 'user.name=t', '-c', 'user.email=t@e', 'tag', '-a', 'v1', '-m', `seed ${synthetic24}`]);
+  assert.equal(runGuard(tagged, ['--history', 'HEAD']).status, 0, 'a plain range does not read tags');
+  const tagHit = runGuard(tagged, ['--history', '--all']);
+  assert.equal(tagHit.status, 1, tagHit.stderr);
+  assert.match(tagHit.stderr, /\(tag message refs\/tags\/v1\)/);
+  assertNoWordsLeak(tagHit.stdout + tagHit.stderr, synthetic24);
+});
+
+test('NB2 history: content only a merge commit introduced (an evil merge) is scanned', () => {
+  const repo = createTempRepo();
+  writeFile(repo, 'a.txt', 'base\n');
+  commitAll(repo, 'base');
+  git(repo, ['checkout', '-q', '-b', 'side']);
+  writeFile(repo, 'b.txt', 'side\n');
+  commitAll(repo, 'side');
+  git(repo, ['checkout', '-q', '-']);
+  writeFile(repo, 'c.txt', 'main\n');
+  commitAll(repo, 'main');
+  git(repo, ['-c', 'user.name=t', '-c', 'user.email=t@e', 'merge', '-q', '--no-commit', '--no-ff', 'side']);
+  writeFile(repo, 'a.txt', `base\n${synthetic24}\n`);
+  git(repo, ['add', 'a.txt']);
+  git(repo, ['-c', 'user.name=t', '-c', 'user.email=t@e', 'commit', '-qm', 'merge side']);
+  const merge = git(repo, ['rev-parse', 'HEAD']).stdout.trim();
+  const result = runGuard(repo, ['--history', 'HEAD']);
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, new RegExp(`${merge.slice(0, 12)} a\\.txt`));
+});
+
 // Verifier S8: the public-test-vector files are excused from the MNEMONIC
 // pattern only. A PEM key, AWS key or GitHub token in them still fails the
 // preflight's secret scan (step 2 runs before anything that needs the repo).

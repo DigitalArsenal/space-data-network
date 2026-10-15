@@ -33,13 +33,18 @@ ecb0e7ba498c5920  sdn-server/cmd/spacedatanetwork/identity_wizard_cli_test.go
 # Not a phrase: CSS property words ("paper", "margin", "top", ...).
 10a39e7ea605f0c2  docs/whitepapers-app/paper.css
 
+# Found once separators encoded in string literals became spaces (verifier
+# NB2, round 3); neither is checksum-valid:
+1ddc1e861a61c1d6  desktop/test/unit/node-identity.spec.js       # the sorted fixture above, joined to "share" across a \n escape
+7ae55bf3e13e0093  sdn-server/internal/hostsvc/hostsvc_test.go   # Go test strings: "...slice/outer.service/inner.service\n" and their want: values
+
 # ---------------------------------------------------------------------------
 # History. Public test vectors added by commits whose file has since changed,
 # moved or gone (triaged in memory against the Trezor vectors, 2026-10-15).
-*  commit:f7ceb9801fb4d5942e02e95aad405364482af0fb:sdn-server/internal/api/update_distribution_e2e_test.go
-*  commit:e953ec6e387b71e23ba4afa40945e0b4052baa42:sdn-server/cmd/spacedatanetwork/key_reseal_cli_test.go
-*  commit:d44fe14ac054e2208464b8aec3b47ca50554c86e:sdn-js/src/ui/runtime/identity-core.test.ts
-*  commit:f0338079b86ac6012b3fc54d9d0c36905733673d:sdn-server/internal/keys/machine_key_test.go
+*  commit:9eb53dd8dc461b59bd0683f0c866d42e65c13eb5:sdn-server/internal/api/update_distribution_e2e_test.go
+*  commit:a7227c8189edf2196ba4f62eead44ace09b5b6a0:sdn-server/cmd/spacedatanetwork/key_reseal_cli_test.go
+*  commit:cb9126ecd979fa1b4749d5195adb70a92b372aea:sdn-js/src/ui/runtime/identity-core.test.ts
+*  commit:a44bc948ac6e09d882446f8064b717e2312dba33:sdn-server/internal/keys/machine_key_test.go
 *  commit:dbcb29295fc8a4a5264cbe91f7c09bf2fb4f9692:config/dev-docker.yaml
 *  commit:dbcb29295fc8a4a5264cbe91f7c09bf2fb4f9692:config/dev.yaml
 *  commit:cd33c79a789c5563e81c24bec2d657522c534759:test_cli.sh
@@ -50,27 +55,25 @@ ecb0e7ba498c5920  sdn-server/cmd/spacedatanetwork/identity_wizard_cli_test.go
 # c557eec878dfd852 recomputed from the vector) in the dev configs:
 c557eec878dfd852  config/dev-docker.yaml
 c557eec878dfd852  config/dev.yaml
+
+# After the history purge (2026-10-15) every SHA changed; the commit: entries
+# above are remapped through filter-repo's commit-map. Public vectors in
+# history recorded by PATH (they survive any rewrite), triaged by the
+# coordinator against the public vectors:
+ecb0e7ba498c5920  sdn-server/internal/api/update_distribution_e2e_test.go
+b5a85a07dc5988c0  sdn-server/internal/api/update_distribution_e2e_test.go
+315e1418850baddb  sdn-server/cmd/spacedatanetwork/key_reseal_cli_test.go
+c557eec878dfd852  sdn-server/internal/keys/machine_key_test.go
+c557eec878dfd852  legacy/test/testmnemonic.txt      # the vector, in a commit that moved the old tree under legacy/
+c557eec878dfd852  legacy/test_cli.sh
+a401133341ab0673  sdn-js/src/ui/runtime/identity-core.test.ts
+# The two 14-word runs once listed as UNCONFIRMED exposures: the public
+# "abandon" x11 + "about" vector plus one adjacent word (resolved, round 3).
+7044305931867281  sdn-server/cmd/spacedatanetwork/main_test.go
+2bc7366d1bd9e2a6  sdn-server/cmd/spacedatanetwork/main_test.go
 # Not phrases: vendored public code. Bootstrap's minified CSS class names
 # ("list group first child border top ...", checksum-valid by chance: 1 in 16
 # for a 12-word window) and eslint regexpp's repeated tokens (not checksum-valid).
 e441d3a6bd16aafc  *
 ab68778655d80edf  sdn-js/node_modules/@eslint-community/regexpp/index.js
 ab68778655d80edf  sdn-js/node_modules/@eslint-community/regexpp/index.mjs
-
-# ---------------------------------------------------------------------------
-# KNOWN EXPOSURES — NOT safe values. Phrases git history already published.
-# `--history` reports these as warnings; `--history --strict` (the post-purge
-# audit in deployment/identity/ROTATION.md) fails on them. Delete each line
-# once the purge has removed its commit's blob.
-#
-# SEC-001: the sdn.spaceaware.io node seed (24 words, checksum-valid).
-exposed  commit:0e16f85696932d219cdf7fbc18f3d70fc248e10b:sdn-js/verify-identity.mjs
-# The same seed (fingerprint c660f21d1531dd1b) in a sibling commit of the same
-# day and subject; found by the B1 separator fix. The path purge covers both.
-exposed  commit:9e21580db908f4dd3ad2aef4e040fc8b1b7e2ce9:sdn-js/verify-identity.mjs
-# SEC-007: the dev admin wallet (24 words, checksum-valid).
-exposed  commit:2925c2a022ba6dcbfdaa7e1b5283b1e72af2f4cf:config/dev-wallet.env
-# UNCONFIRMED: two checksum-valid 14-word runs that are NOT public test vectors.
-# Owner triage needed (view privately; if either is a real seed, rotate it and
-# add the file to the purge).
-exposed  commit:6b6d4323100db09126d0d98bff1efe7c6a7319ce:sdn-server/cmd/spacedatanetwork/main_test.go
