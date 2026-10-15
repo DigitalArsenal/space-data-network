@@ -78,3 +78,34 @@ func TestOriginatedOnThisBox(t *testing.T) {
 		}
 	}
 }
+
+func TestRateLimitKeyWidensIPv6To64(t *testing.T) {
+	a := RateLimitKey(req("[2001:db8:1:2::1]:443", nil))
+	b := RateLimitKey(req("[2001:db8:1:2:ffff:ffff:ffff:ffff]:443", nil))
+	c := RateLimitKey(req("[2001:db8:1:3::1]:443", nil))
+	if a != b || a != "2001:db8:1:2::/64" {
+		t.Fatalf("one /64 got two buckets: %q %q", a, b)
+	}
+	if a == c {
+		t.Fatalf("two /64s shared a bucket: %q", a)
+	}
+	if got := RateLimitKey(req("203.0.113.9:1", nil)); got != "203.0.113.9" {
+		t.Fatalf("IPv4 key %q", got)
+	}
+	if got := RateLimitKey(req("[::ffff:203.0.113.9]:1", nil)); got != "203.0.113.9" {
+		t.Fatalf("mapped IPv4 key %q", got)
+	}
+}
+
+func TestOnionClientAddrIsNeverLocal(t *testing.T) {
+	r := req(OnionClientAddr, map[string][]string{"X-Forwarded-For": {"127.0.0.1"}})
+	if !IsOnionRequest(r) || OriginatedOnThisBox(r) || IsLoopbackRemote(r.RemoteAddr) {
+		t.Fatalf("an onion client looked local")
+	}
+	if got := ClientIP(r); got != "100::" {
+		t.Fatalf("an onion client chose its address: %q", got)
+	}
+	if ip := ParseIP(OnionClientAddr); ip == nil || ip.IsPrivate() || ip.IsLoopback() || ip.IsUnspecified() {
+		t.Fatalf("onion sentinel %v is not a plain non-local address", ip)
+	}
+}

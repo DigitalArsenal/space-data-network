@@ -92,7 +92,7 @@ func (h *Handler) handleDelegate(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now().UTC()
 	clientPubHex := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(req.ClientPubKeyHex), "0x"))
-	if !h.allowRateLimited("verify:ip:"+clientIPForRequest(r), maxVerifyPerMinutePerIP, now) ||
+	if !h.allowRateLimited("verify:ip:"+rateLimitKeyForRequest(r), maxVerifyPerMinutePerIP, now) ||
 		!h.allowRateLimited("verify:pubkey:"+clientPubHex, maxVerifyPerMinutePerXPub, now) {
 		writeJSON(w, http.StatusTooManyRequests, errorResponse{Code: "too_many_requests", Message: "rate limit exceeded"})
 		return

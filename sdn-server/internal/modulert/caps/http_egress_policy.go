@@ -83,6 +83,7 @@ func mustPrefixes(raw ...string) []netip.Prefix {
 }
 
 var (
+	siitPrefix  = netip.MustParsePrefix("::ffff:0:0:0/96") // IPv4-translated (RFC 2765 SIIT)
 	nat64Prefix = netip.MustParsePrefix("64:ff9b::/96")
 	nat64Local  = netip.MustParsePrefix("64:ff9b:1::/48")
 	sixToFour   = netip.MustParsePrefix("2002::/16")
@@ -92,8 +93,8 @@ var (
 // capability refuses by default: loopback, unspecified, link-local (incl.
 // 169.254.169.254 and fe80::/10), RFC 1918, CGNAT, ULA (fc00::/7), multicast,
 // reserved and documentation ranges, the Azure metadata address, and IPv6
-// forms that embed or tunnel to one of those (IPv4-mapped, NAT64, 6to4,
-// Teredo).
+// forms that embed or tunnel to one of those (IPv4-mapped, IPv4-translated
+// SIIT, NAT64, 6to4, Teredo).
 func IsInternalAddress(ip netip.Addr) bool {
 	if !ip.IsValid() {
 		return true
@@ -115,6 +116,8 @@ func IsInternalAddress(ip netip.Addr) bool {
 	if ip.Is6() {
 		b := ip.As16()
 		switch {
+		case siitPrefix.Contains(ip):
+			return IsInternalAddress(netip.AddrFrom4([4]byte{b[12], b[13], b[14], b[15]}))
 		case nat64Prefix.Contains(ip):
 			return IsInternalAddress(netip.AddrFrom4([4]byte{b[12], b[13], b[14], b[15]}))
 		case nat64Local.Contains(ip):
@@ -154,6 +157,18 @@ func ParseEgressAllowEntry(raw string) (egressAllowRule, error) {
 		return egressAllowRule{}, fmt.Errorf("empty entry")
 	}
 	if p, err := netip.ParsePrefix(s); err == nil {
+		if p.Addr().Zone() != "" {
+			return egressAllowRule{}, fmt.Errorf("%q: scoped addresses are not accepted", raw)
+		}
+		if p.Addr().Is4In6() {
+			// Destinations are compared unmapped, so a mapped-form CIDR
+			// ("::ffff:127.0.0.0/104") never matched anything. Take it as
+			// the IPv4 prefix it names, or refuse it.
+			if p.Bits() < 96 {
+				return egressAllowRule{}, fmt.Errorf("%q: an IPv4-mapped prefix must be /96 or longer; write the IPv4 CIDR instead", raw)
+			}
+			p = netip.PrefixFrom(p.Addr().Unmap(), p.Bits()-96)
+		}
 		return egressAllowRule{prefix: p.Masked()}, nil
 	}
 	if a, err := netip.ParseAddr(s); err == nil {

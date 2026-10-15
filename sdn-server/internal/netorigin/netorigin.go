@@ -193,3 +193,34 @@ func ClientIP(r *http.Request) string {
 	}
 	return peer.String()
 }
+
+// OnionClientAddr is the RemoteAddr every request that arrived through this
+// node's Tor onion service carries (cmd/spacedatanetwork onion listener).
+//
+// Tor forwards raw TCP from its own process on this machine, so an onion
+// client used to arrive from 127.0.0.1 with no forwarding header: it passed
+// OriginatedOnThisBox (skipping remote_requires_sealed and reaching the
+// loopback self-gated routes' gate), and ClientIP read its X-Forwarded-For,
+// letting it pick its own rate-limit bucket. The onion listener rewrites the
+// peer to this address instead: 100:: is the IPv6 discard prefix (RFC 6666),
+// never loopback, private or routable, so every loopback rule refuses it and
+// every onion client shares one rate-limit bucket (Tor hides anything finer).
+const OnionClientAddr = "[100::]:0"
+
+// IsOnionRequest reports whether r arrived through the node's onion service.
+func IsOnionRequest(r *http.Request) bool {
+	return r != nil && r.RemoteAddr == OnionClientAddr
+}
+
+// RateLimitKey is the bucket a per-client rate limit charges r to: the
+// ClientIP for IPv4, and the client's /64 for IPv6. One IPv6 subscriber is
+// routinely handed a whole /64 (2^64 addresses); keyed per /128, it had an
+// unlimited supply of fresh buckets.
+func RateLimitKey(r *http.Request) string {
+	client := ClientIP(r)
+	ip := net.ParseIP(client)
+	if ip == nil || ip.To4() != nil {
+		return client
+	}
+	return (&net.IPNet{IP: ip.Mask(net.CIDRMask(64, 128)), Mask: net.CIDRMask(64, 128)}).String()
+}

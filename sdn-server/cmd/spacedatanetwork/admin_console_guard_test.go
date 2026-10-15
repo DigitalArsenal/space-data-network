@@ -62,7 +62,7 @@ func consoleChain(t *testing.T) (srv *httptest.Server, users *auth.UserStore, po
 	if v, ok := os.LookupEnv(auth.ConsoleTokenEnv); ok {
 		t.Fatalf("%s still in the environment (%d bytes): processes the node starts would inherit it", auth.ConsoleTokenEnv, len(v))
 	}
-	guarded, err := adminHostAllowList(addr, newAdminUpgradeRouter(nil, secured))
+	guarded, err := adminHostAllowList(addr, nil, newAdminUpgradeRouter(nil, secured))
 	if err != nil {
 		t.Fatalf("adminHostAllowList: %v", err)
 	}
@@ -239,7 +239,10 @@ func TestCSRFExemptsOnlyNonAmbientCredentials(t *testing.T) {
 		{"bearer token", map[string]string{"Authorization": "Bearer abc"}, false, true},
 		{"basic auth", map[string]string{"Authorization": "Basic dXNlcjpwYXNz"}, false, false},
 		{"signed request with a cookie", map[string]string{"Authorization": "SDN-Signed challenge=\"c\""}, true, false},
-		{"console header", map[string]string{auth.ConsoleTokenHeader: "x"}, false, false},
+		// The console secret in its header: no page can attach a custom
+		// header cross-origin without a preflight (round 2).
+		{"console header", map[string]string{auth.ConsoleTokenHeader: "x"}, false, true},
+		{"console header with a cookie", map[string]string{auth.ConsoleTokenHeader: "x"}, true, false},
 	}
 	for _, tc := range cases {
 		r := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:5001/api/admin/x", strings.NewReader("{}"))

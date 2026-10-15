@@ -1900,6 +1900,16 @@ type AdminConfig struct {
 	// forwarding headers are never read. YAML: admin.trusted_proxy_hops.
 	TrustedProxyHops *int `yaml:"trusted_proxy_hops,omitempty"`
 
+	// AllowedHosts adds Host values the admin listener answers when reaching
+	// it grants something by itself (require_auth: false, local_console,
+	// dev_auto_admin). Such a listener otherwise answers only its own
+	// loopback names, so a DNS-rebinding web page cannot read or drive it
+	// (security audit 2026-10-15, NET-03). Name the Host a local reverse
+	// proxy sends, e.g. "records.example.org" or "records.example.org:8443".
+	// Exact names only: no wildcards, no schemes, no paths.
+	// YAML: admin.allowed_hosts.
+	AllowedHosts []string `yaml:"allowed_hosts,omitempty"`
+
 	// SessionExpiry is the duration for admin session tokens (default: 24h).
 	SessionExpiry string `yaml:"session_expiry"`
 
@@ -2423,6 +2433,11 @@ func (c *Config) validate() error {
 			return fmt.Errorf("asset_pins.gateway_url must be an absolute HTTPS URL")
 		}
 	}
+	for _, h := range c.Admin.AllowedHosts {
+		if _, err := NormalizeAllowedHost(h); err != nil {
+			return fmt.Errorf("admin.allowed_hosts: %w", err)
+		}
+	}
 	for _, mount := range c.Flows.Mounts {
 		if !strings.HasPrefix(mount.Path, "/api/") {
 			return fmt.Errorf(
@@ -2478,4 +2493,57 @@ func (a AdminConfig) EffectiveTrustedProxyHops() int {
 // RemoteAdminRequiresSealed reports admin.remote_requires_sealed, default true.
 func (a AdminConfig) RemoteAdminRequiresSealed() bool {
 	return a.RemoteRequiresSealed == nil || *a.RemoteRequiresSealed
+}
+
+// NormalizeAllowedHost validates one admin.allowed_hosts entry and returns it
+// in the form an HTTP Host header is compared in (lower case, IPv6 in
+// brackets). Wildcards, schemes, paths, userinfo and empty entries are
+// refused: each would let a name the operator did not mean match.
+func NormalizeAllowedHost(raw string) (string, error) {
+	s := strings.ToLower(strings.TrimSpace(raw))
+	if s == "" {
+		return "", fmt.Errorf("empty host")
+	}
+	if strings.ContainsAny(s, "*/@?#\\ \t") || strings.Contains(s, "://") {
+		return "", fmt.Errorf("%q: give an exact host or host:port (no wildcard, scheme, path or userinfo)", raw)
+	}
+	host, port := s, ""
+	if h, p, err := net.SplitHostPort(s); err == nil {
+		host, port = h, p
+		n, perr := strconv.Atoi(port)
+		if perr != nil || n < 1 || n > 65535 {
+			return "", fmt.Errorf("%q: invalid port", raw)
+		}
+	} else if strings.Count(s, ":") > 1 {
+		// A bare IPv6 address.
+		host = strings.Trim(s, "[]")
+	} else if strings.Contains(s, ":") {
+		return "", fmt.Errorf("%q: invalid host:port", raw)
+	}
+	host = strings.Trim(host, "[]")
+	if host == "" || strings.HasSuffix(host, ".") || strings.HasPrefix(host, ".") {
+		return "", fmt.Errorf("%q: invalid host", raw)
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if ip.To4() == nil {
+			host = "[" + ip.String() + "]"
+		} else {
+			host = ip.String()
+		}
+	} else {
+		for _, label := range strings.Split(host, ".") {
+			if label == "" || len(label) > 63 {
+				return "", fmt.Errorf("%q: invalid host name", raw)
+			}
+			for _, c := range label {
+				if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-') {
+					return "", fmt.Errorf("%q: invalid host name", raw)
+				}
+			}
+		}
+	}
+	if port != "" {
+		return host + ":" + port, nil
+	}
+	return host, nil
 }

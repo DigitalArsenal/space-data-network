@@ -7,8 +7,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/spacedatanetwork/sdn-server/internal/auth"
+	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/sealed"
 )
 
@@ -39,16 +41,46 @@ import (
 //     therefore need application/json from anything that is not the node's
 //     own page.
 
-// adminHostAllowList refuses any Host that does not name the loopback console
-// listener. Installed only when an ambient console mode is armed.
-func adminHostAllowList(listenAddr string, next http.Handler) (http.Handler, error) {
+// adminListenerHasAmbientAuthority reports whether reaching the admin
+// listener is itself worth something: a console mode admits the machine's
+// own browser, and require_auth off serves the whole read surface (and every
+// non-operator write) to whoever connects. Either way a DNS-rebinding page,
+// which the browser lets read and write its "own" origin, must be refused by
+// Host (NET-03). A require_auth node grants nothing to a rebinding page: its
+// cookies belong to the real origin, never the attacker's name.
+func adminListenerHasAmbientAuthority(cfg *config.Config, authMounted bool) bool {
+	if cfg == nil {
+		return false
+	}
+	if !cfg.Admin.RequireAuth {
+		return true
+	}
+	return authMounted && (cfg.Admin.LocalConsole || cfg.Admin.DevAutoAdmin)
+}
+
+// adminHostAllowList refuses any Host that does not name the loopback admin
+// listener: 127.0.0.1:<port>, localhost:<port> or [::1]:<port>, the same
+// names without a port (a local reverse proxy that sets "Host: localhost";
+// no browser sends a port-less Host for a page on another port), and the
+// operator's admin.allowed_hosts. A rebinding name gets 421.
+func adminHostAllowList(listenAddr string, allowedHosts []string, next http.Handler) (http.Handler, error) {
 	hosts, err := auth.ConsoleHostsForListenAddr(listenAddr)
 	if err != nil {
 		return nil, err
 	}
+	for _, h := range []string{"127.0.0.1", "localhost", "[::1]"} {
+		hosts[h] = true
+	}
+	for _, raw := range allowedHosts {
+		h, err := config.NormalizeAllowedHost(raw)
+		if err != nil {
+			return nil, fmt.Errorf("admin.allowed_hosts: %w", err)
+		}
+		hosts[h] = true
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !hosts[strings.ToLower(strings.TrimSpace(r.Host))] {
-			http.Error(w, "misdirected request: this console answers only its own loopback address", http.StatusMisdirectedRequest)
+			http.Error(w, "misdirected request: this listener answers only its own loopback address (add a proxy's Host to admin.allowed_hosts)", http.StatusMisdirectedRequest)
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -65,7 +97,8 @@ func carriesAmbientCredential(r *http.Request) bool {
 // never attaches by itself, so a cross-origin page cannot forge it: the
 // sealed admin transport (signed and encrypted per command), signed-request
 // admission (an SDN-Signed Authorization over this exact request) and an
-// explicit Bearer token (license tokens, the asset-pin workflow token). Basic
+// explicit Bearer token (license tokens, the asset-pin workflow token), and
+// the console secret in X-SDN-Console-Token (a local tool's). Basic
 // and Digest are NOT on the list: browsers replay cached ones on their own.
 // None counts when an ambient credential rides along.
 func isSelfAuthenticatingRequest(r *http.Request) bool {
@@ -73,6 +106,10 @@ func isSelfAuthenticatingRequest(r *http.Request) bool {
 		return false
 	}
 	if r.URL.Path == sealed.Route {
+		return true
+	}
+	if strings.TrimSpace(r.Header.Get(auth.ConsoleTokenHeader)) != "" {
+		// The console secret in its header: a page cannot attach it.
 		return true
 	}
 	scheme, _, _ := strings.Cut(strings.TrimSpace(r.Header.Get("Authorization")), " ")
@@ -153,6 +190,32 @@ func adminCSRFRefusal(r *http.Request, publicAPIRequest func(method, path string
 	return 0, ""
 }
 
+// The desktop shell's console secret leaves the environment before anything
+// else runs. installConsoleSecret used to unset it when the admin listener
+// was built, but the daemon starts Tor (and may start Kubo) before that, and
+// both inherited SDN_CONSOLE_TOKEN: any process the node spawned held the
+// key to its root console (security audit 2026-10-15, round 2). init runs
+// before main, so no child process can be started while it is set.
+var consoleTokenFromEnv struct {
+	sync.Mutex
+	value string
+}
+
+func init() { takeConsoleTokenEnv() }
+
+// takeConsoleTokenEnv removes SDN_CONSOLE_TOKEN from this process's
+// environment and returns its value: the one present now if any, else the one
+// taken earlier.
+func takeConsoleTokenEnv() string {
+	consoleTokenFromEnv.Lock()
+	defer consoleTokenFromEnv.Unlock()
+	if v, ok := os.LookupEnv(auth.ConsoleTokenEnv); ok {
+		consoleTokenFromEnv.value = strings.TrimSpace(v)
+		_ = os.Unsetenv(auth.ConsoleTokenEnv)
+	}
+	return consoleTokenFromEnv.value
+}
+
 // consoleTokenFileName is where a daemon started without SDN_CONSOLE_TOKEN
 // keeps the console secret it generated, next to the auth database.
 const consoleTokenFileName = "console-token"
@@ -164,8 +227,7 @@ const consoleTokenFileName = "console-token"
 // <auth db dir>/console-token. It also pins the console's Host values to the
 // listener.
 func installConsoleSecret(h *auth.Handler, listenAddr, authDBPath string) (tokenFile string, err error) {
-	token := strings.TrimSpace(os.Getenv(auth.ConsoleTokenEnv))
-	_ = os.Unsetenv(auth.ConsoleTokenEnv)
+	token := takeConsoleTokenEnv()
 	if err := h.SetConsoleListenAddr(listenAddr); err != nil {
 		return "", err
 	}

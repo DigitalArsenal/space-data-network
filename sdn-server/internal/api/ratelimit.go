@@ -99,8 +99,9 @@ func (rl *rateLimiter) AllowRead(w http.ResponseWriter, r *http.Request) bool {
 }
 
 func (rl *rateLimiter) allow(w http.ResponseWriter, r *http.Request, write bool) bool {
-	ip := clientIP(r)
-	b := rl.bucket(ip)
+	// One bucket per IPv4 client, one per IPv6 /64 (an IPv6 subscriber
+	// holds a whole /64; keyed per address it had endless fresh buckets).
+	b := rl.bucket(netorigin.RateLimitKey(r))
 
 	rl.mu.Lock()
 	defer rl.mu.Unlock()

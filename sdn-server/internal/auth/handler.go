@@ -429,12 +429,11 @@ func (h *Handler) handleChallenge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now().UTC()
-	clientIP := clientIPForRequest(r)
 	rateKey := "challenge:pubkey:" + strings.ToLower(req.ClientPubKeyHex)
 	if req.XPub != "" {
 		rateKey = "challenge:xpub:" + strings.ToLower(req.XPub)
 	}
-	if !h.allowRateLimited("challenge:ip:"+clientIP, maxChallengePerMinutePerIP, now) ||
+	if !h.allowRateLimited("challenge:ip:"+rateLimitKeyForRequest(r), maxChallengePerMinutePerIP, now) ||
 		!h.allowRateLimited(rateKey, maxChallengePerMinutePerXPub, now) {
 		writeJSON(w, http.StatusTooManyRequests, errorResponse{Code: "too_many_requests", Message: "rate limit exceeded"})
 		return
@@ -584,7 +583,14 @@ func (h *Handler) handleChallenge(w http.ResponseWriter, r *http.Request) {
 		// indistinguishable "valid-looking challenge that can never verify" —
 		// no new enumeration signal. The operator gets the explanation in the
 		// server log.
-		if IsMasterXPub(req.XPub) {
+		//
+		// And only from this machine (security audit 2026-10-15, round 2):
+		// on a node whose root identity failed to load, the first wallet on
+		// the internet to reach this endpoint became its admin. The operator
+		// sitting at the box signs in from loopback, with no proxy hop.
+		if !netorigin.OriginatedOnThisBox(r) {
+			log.Warnf("Refusing first-admin bootstrap from %s: the first admin of a node with no root identity must sign in on the node's own machine (loopback, no proxy), or be seeded in config", clientIPForRequest(r))
+		} else if IsMasterXPub(req.XPub) {
 			log.Warnf("Refusing first-admin bootstrap for a BIP-32 MASTER xpub (depth 0): it would store a key that enumerates the entire wallet and cannot match a users: entry seeded from show-identity. Sign in with an already-registered identity (send no xpub and the node resolves by signing key), or seed the operator in config.")
 		} else {
 			shouldStore = true
@@ -662,12 +668,11 @@ func (h *Handler) handleVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now().UTC()
-	clientIP := clientIPForRequest(r)
 	rateKey := "verify:pubkey:" + strings.ToLower(req.ClientPubKeyHex)
 	if req.XPub != "" {
 		rateKey = "verify:xpub:" + strings.ToLower(req.XPub)
 	}
-	if !h.allowRateLimited("verify:ip:"+clientIP, maxVerifyPerMinutePerIP, now) ||
+	if !h.allowRateLimited("verify:ip:"+rateLimitKeyForRequest(r), maxVerifyPerMinutePerIP, now) ||
 		!h.allowRateLimited(rateKey, maxVerifyPerMinutePerXPub, now) {
 		writeJSON(w, http.StatusTooManyRequests, errorResponse{Code: "too_many_requests", Message: "rate limit exceeded"})
 		return
@@ -1320,8 +1325,14 @@ func (h *Handler) devAutoAdminSession(r *http.Request) *Session {
 	h.devSessionMu.Lock()
 	defer h.devSessionMu.Unlock()
 	if h.devSessionToken != "" {
+		// The cached session is re-checked against the user store like any
+		// other (SEC-029): a removed or demoted dev admin is not re-admitted
+		// from the cache until it expires.
 		if s, verr := h.sessions.ValidateSession(h.devSessionToken); verr == nil {
-			return s
+			if rs, rerr := h.reconcileSession(s); rerr == nil && rs.TrustLevel >= peers.Admin {
+				return rs
+			}
+			_ = h.sessions.RevokeSession(h.devSessionToken)
 		}
 		h.devSessionToken = ""
 	}
@@ -1502,6 +1513,12 @@ func (h *Handler) compactRateLimits(now time.Time) {
 // the client-written leftmost entry (security audit 2026-10-15, SEC-062).
 func clientIPForRequest(r *http.Request) string {
 	return netorigin.ClientIP(r)
+}
+
+// rateLimitKeyForRequest is the per-client rate-limit bucket: the client
+// address, widened to its /64 for IPv6 (netorigin.RateLimitKey).
+func rateLimitKeyForRequest(r *http.Request) string {
+	return netorigin.RateLimitKey(r)
 }
 
 func (h *Handler) writeAuthenticationFailure(w http.ResponseWriter) {

@@ -42,3 +42,27 @@ modules:
 		t.Fatalf("a negative hop count = %d, want 0", got)
 	}
 }
+
+// admin.allowed_hosts parses, and a wildcard entry stops the load instead of
+// being ignored (NET-03 round 2).
+func TestAdminAllowedHostsParseAndRefuseWildcards(t *testing.T) {
+	dir := t.TempDir()
+	good := filepath.Join(dir, "good.yaml")
+	if err := os.WriteFile(good, []byte("admin:\n  allowed_hosts:\n    - Records.Example.org:8443\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(good)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cfg.Admin.AllowedHosts) != 1 || cfg.Admin.AllowedHosts[0] != "Records.Example.org:8443" {
+		t.Fatalf("allowed_hosts = %v", cfg.Admin.AllowedHosts)
+	}
+	bad := filepath.Join(dir, "bad.yaml")
+	if err := os.WriteFile(bad, []byte("admin:\n  allowed_hosts:\n    - \"*.example.org\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(bad); err == nil {
+		t.Fatalf("a wildcard admin.allowed_hosts entry loaded")
+	}
+}

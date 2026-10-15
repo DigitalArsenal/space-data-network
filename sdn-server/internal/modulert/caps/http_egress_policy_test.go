@@ -224,3 +224,31 @@ func itoaPort(p int) string {
 	b, _ := json.Marshal(p)
 	return string(b)
 }
+
+// Round 2 (verifier notes on SEC-027): the IPv4-translated SIIT form
+// (::ffff:0:a.b.c.d) embeds an IPv4 destination like the mapped form does,
+// and a mapped-form allow-list CIDR silently matched nothing.
+func TestEgressPolicySIITAndMappedAllowEntries(t *testing.T) {
+	for _, raw := range []string{"::ffff:0:7f00:1", "::ffff:0:a9fe:a9fe", "::ffff:0:a00:5"} {
+		if !IsInternalAddress(netip.MustParseAddr(raw)) {
+			t.Fatalf("%s embeds an internal IPv4 address but was classified external", raw)
+		}
+	}
+	if IsInternalAddress(netip.MustParseAddr("::ffff:0:808:808")) {
+		t.Fatalf("::ffff:0:8.8.8.8 embeds a public address")
+	}
+
+	t.Cleanup(func() { SetEgressInternalAllowList(nil) })
+	if invalid := SetEgressInternalAllowList([]string{"::ffff:127.0.0.0/104"}); len(invalid) > 0 {
+		t.Fatalf("a mapped-form /104 was refused: %v", invalid)
+	}
+	if err := checkEgressDestination(netip.MustParseAddr("127.0.0.9"), 80); err != nil {
+		t.Fatalf("::ffff:127.0.0.0/104 did not allow 127.0.0.9: %v", err)
+	}
+	if err := checkEgressDestination(netip.MustParseAddr("10.0.0.1"), 80); err == nil {
+		t.Fatalf("::ffff:127.0.0.0/104 allowed 10.0.0.1")
+	}
+	if _, err := ParseEgressAllowEntry("::ffff:0.0.0.0/80"); err == nil {
+		t.Fatalf("a mapped prefix shorter than /96 was accepted")
+	}
+}

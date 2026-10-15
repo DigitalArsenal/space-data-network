@@ -157,8 +157,12 @@ func bootstrapAttempt(t *testing.T, h *Handler, xpub string) (created bool, veri
 
 	body := `{"xpub":"` + xpub + `","client_pubkey_hex":"` + pubHex +
 		`","ts":` + itoa(time.Now().Unix()) + `}`
+	// The operator at the node's own machine: first-admin bootstrap is
+	// refused to every other caller.
+	creq := httptest.NewRequest(http.MethodPost, "/api/auth/challenge", strings.NewReader(body))
+	creq.RemoteAddr = "127.0.0.1:50000"
 	rec := httptest.NewRecorder()
-	h.handleChallenge(rec, httptest.NewRequest(http.MethodPost, "/api/auth/challenge", strings.NewReader(body)))
+	h.handleChallenge(rec, creq)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("challenge status = %d: %s", rec.Code, rec.Body.String())
 	}
@@ -178,8 +182,10 @@ func bootstrapAttempt(t *testing.T, h *Handler, xpub string) (created bool, veri
 	vbody := `{"challenge_id":"` + ch.ChallengeID + `","xpub":"` + xpub +
 		`","client_pubkey_hex":"` + pubHex + `","challenge":"` + ch.Challenge +
 		`","signature_hex":"` + hex.EncodeToString(ed25519.Sign(priv, raw)) + `"}`
+	vreq := httptest.NewRequest(http.MethodPost, "/api/auth/verify", strings.NewReader(vbody))
+	vreq.RemoteAddr = "127.0.0.1:50000"
 	vrec := httptest.NewRecorder()
-	h.handleVerify(vrec, httptest.NewRequest(http.MethodPost, "/api/auth/verify", strings.NewReader(vbody)))
+	h.handleVerify(vrec, vreq)
 
 	return h.userStore.HasAdmin(), vrec.Code
 }

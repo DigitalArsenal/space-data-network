@@ -19,6 +19,14 @@ func adminListenerSafety(cfg *config.Config) error {
 	if cfg == nil || !cfg.Admin.Enabled || cfg.Admin.RequireAuth {
 		return nil
 	}
+	// The onion service publishes the admin surface to the whole Tor network
+	// from a loopback socket: as routable as a public bind, whatever
+	// listen_addr says.
+	if onionFrontsAdmin(cfg) {
+		return fmt.Errorf("tor.hidden_service_enabled publishes the admin listener while admin.require_auth is false: " +
+			"authentication off would serve every operator action to anyone on the Tor network. " +
+			"Set admin.require_auth: true, or point tor.hidden_service_target at a different service")
+	}
 	addr := strings.TrimSpace(cfg.Admin.ListenAddr)
 	if addr == "" {
 		// An unset listen_addr is the built-in default, 127.0.0.1:5001.

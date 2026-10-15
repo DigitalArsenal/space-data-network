@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -36,5 +37,30 @@ func TestClientIPHonoursForwardingHeadersOnlyFromLoopback(t *testing.T) {
 	direct.RemoteAddr = "192.0.2.4:1234"
 	if got := clientIP(direct); got != "192.0.2.4" {
 		t.Fatalf("direct peer keyed as %q", got)
+	}
+}
+
+// One IPv6 subscriber holds a whole /64. Keyed per address, it had 2^64 fresh
+// write buckets (security audit 2026-10-15, round 2 note on SEC-062). Uses
+// only APIs on origin/main.
+func TestR2_WriteRateLimitBucketsIPv6By64(t *testing.T) {
+	rl := newRateLimiter()
+	limited := false
+	for i := 0; i < writeLimitPerMin+5; i++ {
+		r := httptest.NewRequest(http.MethodPost, "/api/v1/publish", nil)
+		r.RemoteAddr = fmt.Sprintf("[2001:db8:7:9::%x]:443", i+1)
+		if !rl.Allow(httptest.NewRecorder(), r) {
+			limited = true
+			break
+		}
+	}
+	if !limited {
+		t.Fatalf("%d writes from one /64 were never rate limited", writeLimitPerMin+5)
+	}
+	// A different /64 is a different client.
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/publish", nil)
+	r.RemoteAddr = "[2001:db8:7:a::1]:443"
+	if !rl.Allow(httptest.NewRecorder(), r) {
+		t.Fatalf("a neighbouring /64 shared the bucket")
 	}
 }

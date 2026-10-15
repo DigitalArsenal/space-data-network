@@ -69,8 +69,7 @@ func (h *Handler) handleAttest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := time.Now().UTC()
-	clientIP := clientIPForRequest(r)
-	if !h.allowRateLimited("attest:ip:"+clientIP, maxAttestPerMinutePerIP, now) ||
+	if !h.allowRateLimited("attest:ip:"+rateLimitKeyForRequest(r), maxAttestPerMinutePerIP, now) ||
 		!h.allowRateLimited("attest:xpub:"+strings.ToLower(req.XPub), maxAttestPerMinutePerXPub, now) {
 		writeJSON(w, http.StatusTooManyRequests, errorResponse{Code: "too_many_requests", Message: "rate limit exceeded"})
 		return

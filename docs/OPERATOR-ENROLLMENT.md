@@ -195,7 +195,8 @@ On a brand-new node, exactly three ways an administrator exists:
 **3. First-admin bootstrap — automatic.** When no administrator exists anywhere (no config rows, no database rows at admin tier), the node arms one bootstrap path: the first wallet that completes a full sign-in not matching the node's own root is minted as **"Initial Admin"** at admin trust, and its signing key is bound at that moment. Two constraints are enforced deliberately:
 
 - the xpub must be an account-level xpub — a BIP-32 **master** xpub (depth 0) is *refused* at both the challenge and the minting step, because it would store a key that enumerates an entire wallet. Any xpub from `derive-xpub` (account 0) qualifies;
-- the path only exists while `HasAdmin()` is false — the moment any administrator row appears (including a config row), the bootstrap stops arming, and unknown keys get unverifiable challenges instead.
+- the path only exists while `HasAdmin()` is false — the moment any administrator row appears (including a config row), the bootstrap stops arming, and unknown keys get unverifiable challenges instead;
+- the path only exists on the node's own machine: the sign-in must arrive from a loopback address with no forwarding header (no reverse proxy, no Tor onion service). A first wallet anywhere else gets an unverifiable challenge; seed it in `config.yaml` instead (security audit 2026-10-15).
 
 **Legacy setup mode:** on a daemon with no identity key yet, the terminal banner prints a one-time setup token and the root page redirects to a setup page that creates the initial node identity plus a legacy username/password administrator. Old pre-wallet flow; still present on fresh boxes.
 

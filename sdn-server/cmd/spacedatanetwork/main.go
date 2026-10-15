@@ -998,7 +998,19 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		hiddenServiceTarget = cfg.Admin.ListenAddr
 	}
 	if strings.TrimSpace(hiddenServiceTarget) == "" {
-		hiddenServiceTarget = "127.0.0.1:5001"
+		hiddenServiceTarget = defaultAdminListenAddr
+	}
+	// An onion service that publishes the admin surface forwards to its own
+	// ephemeral loopback socket, never to the admin listener itself: there,
+	// Tor's clients would arrive as loopback callers (onion_listener.go).
+	var onionAdminListener net.Listener
+	if onionFrontsAdmin(cfg) {
+		onionAdminListener, err = listenOnionAdmin()
+		if err != nil {
+			return err
+		}
+		defer onionAdminListener.Close()
+		hiddenServiceTarget = onionAdminListener.Addr().String()
 	}
 	hiddenServicePort := cfg.Tor.HiddenServicePort
 	if hiddenServicePort <= 0 {
@@ -1059,6 +1071,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 
 	// Start admin server if enabled
 	var adminServer *http.Server
+	var onionServer *http.Server
 	var httpChallengeServer *http.Server
 	var localPublishServer *http.Server
 	var authHandler *auth.Handler
@@ -1649,6 +1662,11 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			// sign-in use) plus admin.public_paths, minus
 			// admin.public_paths_deny. Everything else on a require_auth node
 			// needs an admin (owner order 2026-09-22).
+			mountPaths := make([]string, 0, len(cfg.Flows.Mounts))
+			for _, m := range cfg.Flows.Mounts {
+				mountPaths = append(mountPaths, m.Path)
+			}
+			setDataPlaneQueryMounts(mountPaths)
 			publicGate, gateErr := accessgate.New(accessgate.DefaultPublic, cfg.Admin.PublicPaths, cfg.Admin.PublicPathsDeny)
 			if gateErr != nil {
 				return fmt.Errorf("admin.public_paths: %w", gateErr)
@@ -1666,7 +1684,11 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				cfg.Gateway.Anonymous.Allow,
 				cfg.Gateway.Anonymous.Deny,
 			)
-			publicAPIRequest := anonymousPolicy.Anonymous
+			// A flow's SQL surface is never anonymous (SEC-033): not for
+			// the wall, CORS or the CSRF exemption.
+			publicAPIRequest := func(method, path string) bool {
+				return !isDataPlaneQueryPath(path) && anonymousPolicy.Anonymous(method, path)
+			}
 
 			// Gateway API docs (loop G.1): OpenAPI generated FROM the flows
 			// mounted above (their flow.json api extensions) + the Scalar
@@ -1951,7 +1973,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 						log.Infof("Console secret written to %s (mode 0600). Open http://%s%s?token=<that file's contents> in this machine's browser to sign the console in.", tokenFile, adminAddr, auth.ConsoleBootstrapPath)
 					}
 				} else {
-					_ = os.Unsetenv(auth.ConsoleTokenEnv)
+					takeConsoleTokenEnv()
 				}
 				// Bind the operator profile-photo object store to the IPFS lane
 				// this node already runs. When admin.ipfs_api_url is unset the
@@ -2866,12 +2888,18 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				},
 			}
 			adminHandler := gateway.wrap(newAdminUpgradeRouter(wsUpgradeProxy, secured))
-			if authHandler != nil && (cfg.Admin.LocalConsole || cfg.Admin.DevAutoAdmin) {
-				// An ambient console mode is armed: answer only Host values
-				// that name this loopback listener (no DNS rebinding, SEC-012).
-				guarded, herr := adminHostAllowList(adminAddr, adminHandler)
+			// The onion socket serves the same chain with every peer marked
+			// as an anonymous remote client. It skips the Host allow-list:
+			// its Host is the onion name, and no browser can rebind one.
+			onionHandler := onionClientHandler(adminHandler)
+			if adminListenerHasAmbientAuthority(cfg, authHandler != nil) {
+				// Something on this listener is granted by reaching it (a
+				// console mode, or require_auth off): answer only Host values
+				// that name it, so a DNS-rebinding page cannot drive it
+				// (SEC-012 / NET-03).
+				guarded, herr := adminHostAllowList(adminAddr, cfg.Admin.AllowedHosts, adminHandler)
 				if herr != nil {
-					return fmt.Errorf("admin console host allow-list: %w", herr)
+					return fmt.Errorf("admin listener host allow-list: %w", herr)
 				}
 				adminHandler = guarded
 			}
@@ -2908,6 +2936,30 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					log.Warnf("Admin server error: %v", err)
 				}
 			}()
+			if onionAdminListener != nil {
+				onionServer = &http.Server{
+					ReadHeaderTimeout: 10 * time.Second,
+					ReadTimeout:       30 * time.Second,
+					WriteTimeout:      10 * time.Minute,
+					IdleTimeout:       120 * time.Second,
+					Handler:           onionHandler,
+				}
+				if adminTLS {
+					onionServer.TLSConfig = tlsManager.TLSConfig()
+				}
+				go func(ln net.Listener) {
+					var err error
+					if adminTLS {
+						err = onionServer.ServeTLS(ln, "", "")
+					} else {
+						err = onionServer.Serve(ln)
+					}
+					if err != nil && err != http.ErrServerClosed {
+						log.Warnf("Onion service listener error: %v", err)
+					}
+				}(onionAdminListener)
+				log.Infof("Tor onion service forwards to its own socket %s (its clients are treated as remote)", onionAdminListener.Addr())
+			}
 
 			if tlsManager.Mode() == tlsmgr.ModeManaged {
 				challengeAddr := strings.TrimSpace(cfg.Admin.HTTPChallengeAddr)
@@ -3085,6 +3137,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		srv  *http.Server
 	}{
 		{"admin", adminServer},
+		{"onion", onionServer},
 		{"http-challenge", httpChallengeServer},
 		{"local-publish", localPublishServer},
 	} {
@@ -3629,6 +3682,14 @@ func serveAdminMuxRequest(
 	sealedHandler *sealed.Handler,
 	remoteRequiresSealed bool,
 ) {
+	// A flow's SQL surface is never anonymous, whatever a flow's own route
+	// declaration, gateway.anonymous.allow or admin.public_paths say
+	// (SEC-033, round 2).
+	if anonymous := publicAPIRequest; anonymous != nil {
+		publicAPIRequest = func(method, path string) bool {
+			return !isDataPlaneQueryPath(path) && anonymous(method, path)
+		}
+	}
 	// Default-deny on EVERY path (owner order 2026-09-22: lock the whole
 	// server): a request is served without an admin only when the access
 	// gate opens it, it is one of the two exact OIDC capabilities, or it is a
@@ -3925,8 +3986,11 @@ func applyPublicAPICORSHeaders(header http.Header, origin string) {
 
 // hasSessionCookie reports whether r carries an ambient credential the
 // browser attaches by itself: a session cookie or the console cookie
-// (internal/auth/console_gate.go). The console header is included because it
-// authenticates exactly like the cookie.
+// (internal/auth/console_gate.go). The console HEADER is not one: no browser
+// sends a custom header cross-origin without a CORS preflight, so a request
+// carrying it alone is self-authenticating (isSelfAuthenticatingRequest), and
+// counting it here made every documented header-only local POST fail the
+// cookie rules' "missing origin" check.
 func hasSessionCookie(r *http.Request) bool {
 	if _, err := r.Cookie("sdn_wallet_session"); err == nil {
 		return true
@@ -3937,7 +4001,7 @@ func hasSessionCookie(r *http.Request) bool {
 	if _, err := r.Cookie(auth.ConsoleCookieName); err == nil {
 		return true
 	}
-	return strings.TrimSpace(r.Header.Get(auth.ConsoleTokenHeader)) != ""
+	return false
 }
 
 func isSameOrigin(r *http.Request, raw string) bool {
@@ -4394,17 +4458,49 @@ func isLoopbackRequestAddr(remoteAddr string) bool {
 	return netorigin.IsLoopbackRemote(remoteAddr)
 }
 
-// isDataPlaneQueryPath reports a path under the /api/v1/data/ mount whose last
-// segment is "query" (any case, trailing slash ignored): a SQL surface of the
-// data-retrieval flow, never part of the anonymous read surface.
-func isDataPlaneQueryPath(path string) bool {
-	const mount = "/api/v1/data/"
-	if !strings.HasPrefix(path, mount) {
-		return false
+// defaultDataPlaneMount is the data-retrieval flow's built-in mount.
+const defaultDataPlaneMount = "/api/v1/data/"
+
+// dataPlaneQueryMounts are the flow mounts (flows.mounts) whose */query paths
+// are SQL surfaces; /api/v1/data/ is always among them.
+var dataPlaneQueryMounts atomic.Pointer[[]string]
+
+// setDataPlaneQueryMounts installs every configured flow mount path. The
+// data-retrieval flow (or any flow serving */query) can be mounted anywhere
+// under /api/; gating only /api/v1/data/ left a second mount's SQL route
+// behind nothing but the flow's own route declaration (SEC-033, round 2).
+func setDataPlaneQueryMounts(paths []string) {
+	mounts := []string{defaultDataPlaneMount}
+	for _, p := range paths {
+		p = strings.TrimSpace(p)
+		if p == "" || p == "/" {
+			continue
+		}
+		mounts = append(mounts, strings.TrimRight(p, "/")+"/")
 	}
+	dataPlaneQueryMounts.Store(&mounts)
+}
+
+// isDataPlaneQueryPath reports a path under a flow mount (the built-in
+// /api/v1/data/ and every flows.mounts path) whose last segment is "query"
+// (any case, trailing slash ignored): a SQL surface of a mounted flow, never
+// part of the anonymous read surface.
+func isDataPlaneQueryPath(path string) bool {
 	trimmed := strings.TrimRight(path, "/")
 	last := trimmed[strings.LastIndex(trimmed, "/")+1:]
-	return strings.EqualFold(last, "query")
+	if !strings.EqualFold(last, "query") {
+		return false
+	}
+	mounts := []string{defaultDataPlaneMount}
+	if m := dataPlaneQueryMounts.Load(); m != nil {
+		mounts = *m
+	}
+	for _, mount := range mounts {
+		if strings.HasPrefix(path, mount) || path == strings.TrimRight(mount, "/") {
+			return true
+		}
+	}
+	return false
 }
 
 func isAdminOnlyAPIPath(path string) bool {

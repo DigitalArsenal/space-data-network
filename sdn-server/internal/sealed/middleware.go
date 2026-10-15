@@ -14,6 +14,7 @@ import (
 
 	"github.com/spacedatanetwork/sdn-server/internal/auth"
 	"github.com/spacedatanetwork/sdn-server/internal/ecies"
+	"github.com/spacedatanetwork/sdn-server/internal/netorigin"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 )
 
@@ -182,8 +183,11 @@ func (h *Handler) dispatch(outer *http.Request, body Body, account string, trust
 	inner := httptest.NewRequest(method, route, bytes.NewReader(body.Body)).WithContext(ctx)
 	inner.RemoteAddr = outer.RemoteAddr
 	inner.Host = outer.Host
-	// A command relayed by a proxy must still look remote once unwrapped.
-	for _, name := range []string{"X-Forwarded-For", "X-Real-Ip", "Forwarded", "X-Forwarded-Host", "X-Forwarded-Proto", "Cf-Connecting-Ip"} {
+	// A command relayed by a proxy must still look remote once unwrapped:
+	// every header the node-wide rule counts as a forwarding hop crosses
+	// (internal/netorigin). A shorter private list let an outer request
+	// marked only by, say, Via or X-Forwarded-Port unwrap as a local one.
+	for _, name := range netorigin.ProxyHeaders() {
 		if v := outer.Header.Values(name); len(v) > 0 {
 			inner.Header[name] = append([]string(nil), v...)
 		}
