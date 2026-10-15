@@ -37,7 +37,9 @@ type HDWalletModule struct {
 	mu  sync.Mutex
 }
 
-// NewHDWalletModule creates a new HDWalletModule from a WASM file path.
+// NewHDWalletModule creates a new HDWalletModule from a WASM file path. The
+// file must be a pinned hd-wallet release (see NewHDWalletModuleFromBytes).
+// The bytes are read once and the same bytes are checked and compiled.
 func NewHDWalletModule(ctx context.Context, wasmPath string) (*HDWalletModule, error) {
 	if wasmPath == "" {
 		return nil, fmt.Errorf("no WASM path provided: %w", ErrHDWalletNoModule)
@@ -56,7 +58,14 @@ func NewHDWalletModule(ctx context.Context, wasmPath string) (*HDWalletModule, e
 // Emscripten builds with -sSTANDALONE_WASM=1 -sPURE_WASI=1 work with WasmEdge.
 // The Emscripten WASI build is preferred as it includes Crypto++ security hardening,
 // HMAC-DRBG entropy mixing, MaskedKey protection, and optional FIPS mode.
+//
+// The bytes must be a pinned hd-wallet release (CheckHDWalletPin, SEC-040):
+// this module derives the node's identity and sealed-transport key from its
+// mnemonic, so an unpinned build is refused before it is compiled.
 func NewHDWalletModuleFromBytes(ctx context.Context, wasmBytes []byte) (*HDWalletModule, error) {
+	if err := CheckHDWalletPin(wasmBytes); err != nil {
+		return nil, err
+	}
 	mod, err := wasmrt.NewModule(wasmBytes,
 		wasmrt.WithWASI(),
 		wasmrt.WithMaxMemoryPages(512),
@@ -724,4 +733,13 @@ func (hw *HDWalletModule) GetVersion(ctx context.Context) (string, error) {
 	}
 
 	return hw.mod.ReadCString(uint32(ptr), 64)
+}
+
+// NewEmbeddedHDWalletModule loads the hd-wallet module built into this binary.
+func NewEmbeddedHDWalletModule(ctx context.Context) (*HDWalletModule, error) {
+	wasmBytes := EmbeddedHDWalletWasm()
+	if wasmBytes == nil {
+		return nil, fmt.Errorf("%w: the built-in module does not match its pinned sha256", ErrHDWalletUnpinned)
+	}
+	return NewHDWalletModuleFromBytes(ctx, wasmBytes)
 }

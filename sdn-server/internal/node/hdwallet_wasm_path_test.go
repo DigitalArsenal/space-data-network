@@ -6,10 +6,14 @@ package node
 // first in the search order.
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/spacedatanetwork/sdn-server/internal/config"
+	"github.com/spacedatanetwork/sdn-server/internal/wasm"
 )
 
 func TestExecutableRelativeWalletWasmPathsPreferOwnInstall(t *testing.T) {
@@ -39,5 +43,64 @@ func TestExecutableRelativeWalletWasmPathsPreferOwnInstall(t *testing.T) {
 		if !strings.HasSuffix(p, "hd-wallet-wasi.wasm") {
 			t.Fatalf("candidate %q is not the WASI wallet artifact", p)
 		}
+	}
+}
+
+// TestLoadHDWalletRefusesPlantedModule is the SEC-040 audit repro: an
+// hd-wallet module planted in the working directory's node_modules (the
+// pinned build plus an appended section) must never serve identity
+// derivation. A node with no mnemonic yet comes up without it; a node whose
+// identity is HD-derived refuses to start.
+func TestLoadHDWalletRefusesPlantedModule(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", filepath.Join(root, "home"))
+	t.Setenv("HD_WALLET_WASM_PATH", "")
+	t.Setenv(wasm.AllowUnpinnedHDWalletEnv, "")
+	work := filepath.Join(root, "cwd")
+	planted := filepath.Join(work, "node_modules", "hd-wallet-wasm", "dist", "hd-wallet-wasi.wasm")
+	if err := os.MkdirAll(filepath.Dir(planted), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	name := []byte("sec040")
+	body := append([]byte{byte(len(name))}, name...)
+	body = append(body, []byte("attacker-controlled bytes")...)
+	module := append(append([]byte(nil), wasm.EmbeddedHDWalletWasm()...), 0x00, byte(len(body)))
+	module = append(module, body...)
+	if err := os.WriteFile(planted, module, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	previous, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(work); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(previous) })
+
+	n := &Node{ctx: context.Background(), config: &config.Config{}}
+	n.config.Storage.Path = filepath.Join(root, "data", "store")
+	if got := n.findHDWalletWasmPath(); got == "" {
+		t.Skip("the search order no longer reaches a working-directory node_modules copy")
+	}
+	if err := n.loadHDWallet(); err != nil {
+		t.Fatalf("loadHDWallet without a mnemonic: %v", err)
+	}
+	if n.hdwallet != nil {
+		t.Fatal("the planted, unpinned module was loaded as the node's HD wallet")
+	}
+
+	mnemonic := filepath.Join(root, "data", "keys", "mnemonic")
+	if err := os.MkdirAll(filepath.Dir(mnemonic), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mnemonic, []byte("placeholder"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := n.loadHDWallet(); err == nil || !strings.Contains(err.Error(), "not a pinned release") {
+		t.Fatalf("an HD-identity node with only a planted module: err = %v, want a refusal to start", err)
+	}
+	if n.hdwallet != nil {
+		t.Fatal("the planted module was loaded for an HD-identity node")
 	}
 }
