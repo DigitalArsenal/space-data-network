@@ -399,7 +399,7 @@ test('R2: sec001-node-check.py reads SDN_UPDATE_TRUST_ROOTS from a systemd Envir
       'm = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)',
       `print(json.dumps(m.parse_env_file(${JSON.stringify(join(dir, 'node.env'))})))`,
     ].join('\n');
-    const out = spawnSync('python3', ['-I', '-c', code], { encoding: 'utf8' });
+    const out = spawnSync('python3', ['-I', '-B', '-c', code], { encoding: 'utf8' });
     assert.equal(out.status, 0, out.stderr);
     assert.deepEqual(JSON.parse(out.stdout), { SDN_UPDATE_TRUST_ROOTS: '/opt/sdn/roots.json', OTHER: '1' });
   } finally {
