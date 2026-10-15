@@ -95,6 +95,7 @@ async function run () {
     logsPath: logger.logsPath
   })
 
+  window.setConsoleTokenProvider(() => supervisor?.consoleToken ?? '')
   setupAppMenu(actions)
   window.create()
   tray = new NodeTray(actions)

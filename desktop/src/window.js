@@ -8,6 +8,7 @@ const { join } = require('node:path')
 
 const logger = require('./common/logger')
 const { PHASES } = require('./node/ready')
+const { consoleCookie } = require('./node/console-token')
 const { PRODUCT_NAME } = require('./common/consts')
 
 const STATUS_PAGE = join(__dirname, '..', 'assets', 'pages', 'status.html')
@@ -19,6 +20,13 @@ class MainWindow {
     this.showingDashboard = false
     /** @type {object|null} */
     this.lastState = null
+    /** @type {() => string} the running daemon's console secret */
+    this.consoleToken = () => ''
+  }
+
+  /** @param {() => string} provider */
+  setConsoleTokenProvider (provider) {
+    this.consoleToken = provider
   }
 
   /** @returns {Electron.BrowserWindow} */
@@ -74,11 +82,18 @@ class MainWindow {
     if (this.showingDashboard) return
     this.showingDashboard = true
     logger.info(`[window] loading the node dashboard at ${url}`)
-    this.window.loadURL(url).catch((err) => {
-      logger.error(err)
-      this.showingDashboard = false
-      this.showStatus()
-    })
+    const window = this.window
+    // The console secret rides in an HttpOnly, SameSite=Strict cookie on the
+    // node's own origin, set in this window's session before the dashboard
+    // loads: it is what admits this window as the node's console.
+    Promise.resolve()
+      .then(() => window.webContents.session.cookies.set(consoleCookie(url, this.consoleToken())))
+      .then(() => window.loadURL(url))
+      .catch((err) => {
+        logger.error(err)
+        this.showingDashboard = false
+        this.showStatus()
+      })
   }
 
   /**

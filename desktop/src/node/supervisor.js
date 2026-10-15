@@ -15,6 +15,7 @@ const logger = require('../common/logger')
 const { PHASES, initialState, reduce } = require('./ready')
 const { ensureNodeConfig, nodeHome } = require('./config')
 const { nodeEnv, resolveBundle } = require('./paths')
+const { daemonEnv, generateConsoleToken } = require('./console-token')
 
 const PROBE_INTERVAL_MS = 500
 const STOP_GRACE_MS = 30_000
@@ -46,7 +47,15 @@ class NodeSupervisor extends EventEmitter {
     this.home = ''
     this.adminUrl = ''
     this.stopping = false
+    /**
+     * This launch's console secret (console-token.js). Never part of
+     * snapshot(): the renderer must not see it.
+     */
+    this.consoleSecret = ''
   }
+
+  /** The console secret of the running daemon ('' before the first start). */
+  get consoleToken () { return this.consoleSecret }
 
   /** The URL of the node's own dashboard, once it is known. */
   get dashboardUrl () { return this.adminUrl }
@@ -89,6 +98,8 @@ class NodeSupervisor extends EventEmitter {
       if (config.created) logger.info(`[node] wrote first-run config ${config.path}`)
       await this.ensureIdentity()
       this.adminUrl = await this.readAdminUrl()
+      // A fresh secret for every daemon this shell starts.
+      this.consoleSecret = generateConsoleToken()
       this.spawnDaemon()
       this.poll()
     } catch (err) {
@@ -147,7 +158,7 @@ class NodeSupervisor extends EventEmitter {
     mkdirSync(this.logsPath, { recursive: true })
     const nodeLog = createWriteStream(join(this.logsPath, 'node.log'), { flags: 'a' })
     const child = spawn(bundle.binary, ['daemon', '--config', this.configPath], {
-      env: nodeEnv(bundle.root),
+      env: daemonEnv(nodeEnv(bundle.root), this.consoleSecret),
       cwd: this.home,
       stdio: ['ignore', 'pipe', 'pipe']
     })
