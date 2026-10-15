@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/spacedatanetwork/sdn-server/internal/trustanchors"
 )
 
 // SESSION-KEY DELEGATION — how a browser signs every sealed ($RPC) command
@@ -154,6 +156,11 @@ func (h *Handler) DelegatedWallet(sessionPub ed25519.PublicKey) (ed25519.PublicK
 	d, ok := h.delegations[string(sessionPub)]
 	h.mu.Unlock()
 	if !ok || !d.expiresAt.After(time.Now()) {
+		return nil, false, false
+	}
+	// SEC-001 (verifier r3): a delegation from a denylisted wallet is dead.
+	if trustanchors.IsDeniedKey(d.wallet) {
+		h.RevokeDelegation(sessionPub)
 		return nil, false, false
 	}
 	return d.wallet, h.isNodeRootSigningKey(d.wallet), true

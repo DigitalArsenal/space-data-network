@@ -241,6 +241,7 @@ func NewHandler(userStore *UserStore, sessions *SessionStore, sessionTTL time.Du
 		rates:            make(map[string]rateEntry),
 	}
 	h.loadDelegations()
+	h.RevokeDeniedGrants() // SEC-001: before any request is served
 	return h
 }
 
@@ -441,6 +442,14 @@ func (h *Handler) handleChallenge(w http.ResponseWriter, r *http.Request) {
 	pubRaw, err := hex.DecodeString(req.ClientPubKeyHex)
 	if err != nil || len(pubRaw) != ed25519.PublicKeySize {
 		writeJSON(w, http.StatusBadRequest, errorResponse{Code: "invalid_public_key", Message: "client_pubkey_hex must be 32-byte Ed25519 hex"})
+		return
+	}
+
+	// SEC-001 (verifier r3): a key or xpub of a denylisted identity is refused
+	// as PRESENTED, before any root check or stored-account lookup.
+	if presentsDeniedIdentity(pubRaw, req.XPub) {
+		log.Warnf("SEC-001: refused an auth challenge presenting a denylisted identity from %s", clientIPForRequest(r))
+		h.writeAuthenticationFailure(w)
 		return
 	}
 

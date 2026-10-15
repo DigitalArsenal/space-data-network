@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
+	"github.com/spacedatanetwork/sdn-server/internal/trustanchors"
 )
 
 func hashToken(token string) string {
@@ -119,6 +120,12 @@ func (ss *SessionStore) ValidateSession(token string) (*Session, error) {
 
 	if revoked != 0 {
 		return nil, fmt.Errorf("session revoked")
+	}
+	// SEC-001 (verifier r3): a stored session of a denylisted identity is
+	// revoked on sight, whatever minted it.
+	if trustanchors.IsDenied(s.XPub) {
+		_, _ = ss.db.Exec("UPDATE sessions SET revoked = 1 WHERE token = ?", tokenHash)
+		return nil, fmt.Errorf("session revoked: denylisted identity (SEC-001)")
 	}
 
 	s.TrustLevel = peers.TrustLevel(trust)

@@ -234,6 +234,10 @@ func (h *Handler) sessionFromSignedRequest(r *http.Request) (*Session, error) {
 		return nil, errors.New("signed request: first-admin bootstrap must use the ordinary sign-in")
 	}
 
+	if presentsDeniedIdentity(pending.pubKey, pending.xpub) {
+		return nil, errors.New("signed request: a denylisted (SEC-001) identity is refused")
+	}
+
 	canonical := canonicalRequestString(r.Method, r.URL.RequestURI(), bodyDigest[:])
 	if !ed25519.Verify(pending.pubKey, signedRequestMessage(pending.challenge, canonical), creds.signature) {
 		return nil, errors.New("signed request: signature does not cover this request")
