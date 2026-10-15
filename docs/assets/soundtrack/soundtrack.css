@@ -1,0 +1,65 @@
+/* Soundtrack player (style guide). Colors come from the site tokens, so the
+ * light/dark switch carries over; the waveform canvas reads them too. */
+.st-tracks { display: grid; gap: 12px; margin-top: 20px; }
+
+.st-track {
+  display: grid;
+  grid-template-columns: auto minmax(120px, 170px) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 18px;
+  padding: 14px 18px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  transition: border-color .2s, box-shadow .2s;
+}
+.st-track.is-playing {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent), 0 18px 40px -24px color-mix(in srgb, var(--accent) 60%, transparent);
+}
+
+.st-play {
+  width: 46px; height: 46px;
+  display: grid; place-items: center;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  background: var(--hi-bg);
+  color: var(--hi-fg);
+  cursor: pointer;
+  transition: transform .15s, background .2s, color .2s, box-shadow .2s;
+}
+.st-play:hover { transform: scale(1.05); }
+.st-play:active { transform: scale(.97); }
+.st-play:focus-visible, .st-wave:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.st-play svg { width: 18px; height: 18px; fill: currentColor; }
+.st-play .st-i-pause { display: none; }
+.st-track.is-playing .st-play { background: var(--accent); color: #000; border-color: var(--accent); box-shadow: 0 0 22px -4px var(--accent); }
+.st-track.is-playing .st-play .st-i-play { display: none; }
+.st-track.is-playing .st-play .st-i-pause { display: block; }
+
+.st-track .st-meta h3 { margin: 0 0 3px; font-size: 17px; }
+.st-time { color: var(--muted); font-size: 13px; font-family: var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.st-wave {
+  position: relative;
+  height: 92px;
+  cursor: pointer;
+  touch-action: pan-y;
+  border-radius: 6px;
+}
+.st-wave canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+
+.st-track .btn { padding: 10px 18px; font-size: 14px; }
+
+@media (max-width: 640px) {
+  .st-track {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas: "play meta dl" "wave wave wave";
+    gap: 4px 14px;
+    padding: 14px;
+  }
+  .st-play { grid-area: play; }
+  .st-meta { grid-area: meta; }
+  .st-wave { grid-area: wave; height: 76px; }
+  .st-track .btn { grid-area: dl; padding: 8px 14px; }
+}
