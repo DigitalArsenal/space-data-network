@@ -72,7 +72,9 @@ func signIn(t *testing.T, h *Handler, priv ed25519.PrivateKey, sendXPub string) 
 	cbody += `}`
 
 	crec := httptest.NewRecorder()
-	h.handleChallenge(crec, httptest.NewRequest(http.MethodPost, "/api/auth/challenge", strings.NewReader(cbody)))
+	creq := httptest.NewRequest(http.MethodPost, "/api/auth/challenge", strings.NewReader(cbody))
+	creq.RemoteAddr = "127.0.0.1:40000" // SEC-001 hotfix: root sign-in is loopback-only
+	h.handleChallenge(crec, creq)
 	if crec.Code != http.StatusOK {
 		t.Fatalf("challenge status = %d: %s", crec.Code, crec.Body.String())
 	}
@@ -92,7 +94,9 @@ func signIn(t *testing.T, h *Handler, priv ed25519.PrivateKey, sendXPub string) 
 		`","challenge":"` + ch.Challenge + `","signature_hex":"` +
 		hex.EncodeToString(ed25519.Sign(priv, raw)) + `"}`
 	vrec := httptest.NewRecorder()
-	h.handleVerify(vrec, httptest.NewRequest(http.MethodPost, "/api/auth/verify", strings.NewReader(vbody)))
+	vreq := httptest.NewRequest(http.MethodPost, "/api/auth/verify", strings.NewReader(vbody))
+	vreq.RemoteAddr = "127.0.0.1:40000"
+	h.handleVerify(vrec, vreq)
 	return vrec
 }
 

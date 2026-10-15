@@ -1992,6 +1992,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 						Name:        "Node Root",
 						SigningKeys: rootKeys,
 					})
+					authHandler.RevokeRootGrants() // SEC-001 hotfix
 				}
 				if epmSvc := n.EPMService(); epmSvc != nil {
 					if att := epmSvc.GetIdentityAttestation(); att != nil {
