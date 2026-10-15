@@ -198,7 +198,9 @@ func TestPublicQueryJSONWireIsAlwaysAJSONText(t *testing.T) {
 	})
 
 	t.Run("the surface listing is a JSON text", func(t *testing.T) {
-		resp, err := http.Get(url)
+		// The surface's default representation is the $QRP page header
+		// (FlatBuffers); this guard is about the JSON wire, so ask for it.
+		resp, err := http.Get(url + "?format=json")
 		if err != nil {
 			t.Fatalf("GET surface: %v", err)
 		}
@@ -216,14 +218,17 @@ func TestPublicQueryJSONWireIsAlwaysAJSONText(t *testing.T) {
 
 		// A junk column must not be advertised like a real one. $LDM's first
 		// field is a sub-table, so its only projected column is the
-		// >=1-column-invariant placeholder that reads one byte of slot 0 —
-		// listed under the field's own name, and now marked as what it is.
+		// >=1-column-invariant placeholder that reads one byte of slot 0. The
+		// node marks it PLACEHOLDER on the typed surface hostcall; a $QRP
+		// column cannot carry that mark, so the surface leaves it out and
+		// lists `_data`, the honest column for this standard.
 		var surface struct {
 			Tables []struct {
-				Name         string   `json:"name"`
-				Columns      []string `json:"columns"`
-				Placeholders []string `json:"placeholder_columns"`
-			} `json:"tables"`
+				Name    string `json:"NAME"`
+				Columns []struct {
+					Name string `json:"NAME"`
+				} `json:"COLUMNS"`
+			} `json:"TABLES"`
 		}
 		if err := json.Unmarshal(buf, &surface); err != nil {
 			t.Fatalf("decode surface: %v", err)
@@ -234,9 +239,15 @@ func TestPublicQueryJSONWireIsAlwaysAJSONText(t *testing.T) {
 				continue
 			}
 			found = true
-			if len(rel.Placeholders) != 1 || rel.Placeholders[0] != "SITE" {
-				t.Fatalf("LDM placeholder_columns = %v, want [SITE] — SELECT SITE FROM LDM returns a one-byte junk read, not the site",
-					rel.Placeholders)
+			hasData := false
+			for _, col := range rel.Columns {
+				if col.Name == "SITE" {
+					t.Fatalf("LDM advertises SITE — SELECT SITE FROM LDM returns a one-byte junk read, not the site")
+				}
+				hasData = hasData || col.Name == "_data"
+			}
+			if !hasData {
+				t.Fatalf("LDM columns %v do not list _data", rel.Columns)
 			}
 		}
 		if !found {

@@ -7,9 +7,9 @@ package flowrt
 // precedence routes the pnm surface to its own flow. Fixtures carry REAL
 // Ed25519 signatures over the dataset-publication payload
 // ("SDN-DPM-PNM\x00" + FILE_ID + "\x00" + CID) so the test verifies the
-// whole provenance chain a cold client walks: fetch the newest $PNM frame
-// verbatim, extract SIGNATURE/FILE_ID/CID, verify against the publisher's
-// publication key.
+// whole provenance chain a cold client walks: take the newest $PNM, carried
+// verbatim as PNM_BYTES in the flow's $PNV answer, extract
+// SIGNATURE/FILE_ID/CID, verify against the publisher's publication key.
 
 import (
 	"crypto/ed25519"
@@ -129,8 +129,10 @@ func TestHTTPMountedPNMHistoryFlow(t *testing.T) {
 			{Path: "/api/v1/peers/{peerId}/pnm", Flow: pnmDist, Pool: 1},
 		},
 		FlowMountDeps{
-			CapRegistry:    reg,
-			NodeCtx:        &modulert.NodeContext{},
+			CapRegistry: reg,
+			// The node's own peer id answers node.peerId (the $PNV
+			// VERIFIER_PEER_ID), as Node hands every mount.
+			NodeCtx:        &modulert.NodeContext{PeerID: discoverySelfID},
 			MaxMemoryPages: 2048,
 		})
 	if err != nil {
@@ -157,34 +159,56 @@ func TestHTTPMountedPNMHistoryFlow(t *testing.T) {
 
 	var newestEtag string
 
-	t.Run("default limit=1 serves the newest signed $PNM verbatim + verifiable", func(t *testing.T) {
-		resp, body := discoveryGET(t, base, nil)
+	// pnvAt fetches the pnm surface as FlatBuffers: one $PNV.
+	pnvAt := func(t *testing.T, url string) (*http.Response, sdsTable) {
+		t.Helper()
+		resp, body := discoveryGET(t, url, nil)
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("status = %d body %q", resp.StatusCode, body)
 		}
-		if ct := resp.Header.Get("Content-Type"); ct != "application/vnd.sdn.flatbuffers.stream" {
-			t.Fatalf("content-type = %q", ct)
+		if ct, id := resp.Header.Get("Content-Type"), resp.Header.Get("X-Sdn-File-Identifier"); ct != "application/x-flatbuffers" || id != "$PNV" {
+			t.Fatalf("content-type = %q, x-sdn-file-identifier = %q; want one $PNV", ct, id)
 		}
-		if rc := resp.Header.Get("X-Sdn-Record-Count"); rc != "1" {
-			t.Fatalf("x-sdn-record-count = %q, want 1", rc)
-		}
+		return resp, readSDSRecord(t, body, "$PNV")
+	}
+
+	t.Run("default limit=1 answers the newest signed $PNM verbatim inside one $PNV, verifiable", func(t *testing.T) {
+		resp, pnv := pnvAt(t, base)
 		newestEtag = resp.Header.Get("ETag")
-		if !strings.HasPrefix(newestEtag, `W/"fnv1a64-`) {
-			t.Fatalf("etag = %q", newestEtag)
+		if !strings.HasPrefix(newestEtag, `W/"fnv1a64-`) || newestEtag != pnv.str(pnvETAG) {
+			t.Fatalf("etag = %q, $PNV ETAG = %q", newestEtag, pnv.str(pnvETAG))
 		}
-		frames := splitSizePrefixedFrames(t, body)
-		if len(frames) != 1 {
-			t.Fatalf("frames = %d, want 1", len(frames))
+		if got := pnv.str(pnvVERIFIER_PEER_ID); got != discoverySelfID {
+			t.Fatalf("VERIFIER_PEER_ID = %q", got)
 		}
+		entries := pnv.tables(pnvENTRIES)
+		if len(entries) != 1 {
+			t.Fatalf("entries = %d, want 1", len(entries))
+		}
+		entry := entries[0]
 		// Byte-verbatim: the newest publication is store record 0.
-		if string(frames[0]) != string(pnms[0].Data) {
-			t.Fatalf("newest frame not spliced verbatim")
+		raw := entry.bytes(entryPNM_BYTES)
+		if string(raw) != string(pnms[0].Data) {
+			t.Fatalf("newest $PNM not carried verbatim")
 		}
-		// Cold-client verification chain over the response bytes ONLY.
-		if !PNM.SizePrefixedPNMBufferHasIdentifier(frames[0]) {
-			t.Fatalf("frame is not $PNM")
+		// The node's verdict, typed.
+		if entry.str(entryPUBLISHER_PEER_ID) != discoveryCelestrakID || !entry.flag(entrySIGNATURE_VERIFIED) ||
+			entry.byte(entryATTRIBUTION) != pnvAttributionDirect || entry.byte(entryKEY_SOURCE) != pnvKeySourceIdentityRecord {
+			t.Fatalf("provenance: publisher %q verified %v attribution %d key source %d", entry.str(entryPUBLISHER_PEER_ID),
+				entry.flag(entrySIGNATURE_VERIFIED), entry.byte(entryATTRIBUTION), entry.byte(entryKEY_SOURCE))
 		}
-		pnm := PNM.GetSizePrefixedRootAsPNM(frames[0], 0)
+		// PUBLISHER_KEY is the libp2p-marshalled key the capability was handed
+		// (36 bytes for Ed25519), NOT the raw 32-byte key: since 982fc25d the
+		// surface publishes a key that names its own algorithm.
+		if string(entry.bytes(entryPUBLISHER_KEY)) != string(discoveryPublisherKey(t, celestrakPub)) {
+			t.Fatalf("PUBLISHER_KEY = %x", entry.bytes(entryPUBLISHER_KEY))
+		}
+		// Cold-client verification chain over the response bytes ONLY: the
+		// received $PNM itself, not the node's verdict.
+		if !PNM.SizePrefixedPNMBufferHasIdentifier(raw) {
+			t.Fatalf("PNM_BYTES is not a size-prefixed $PNM")
+		}
+		pnm := PNM.GetSizePrefixedRootAsPNM(raw, 0)
 		if got := string(pnm.SIGNATURE_TYPE()); got != "Ed25519" {
 			t.Fatalf("SIGNATURE_TYPE = %q", got)
 		}
@@ -192,30 +216,31 @@ func TestHTTPMountedPNMHistoryFlow(t *testing.T) {
 		if err != nil {
 			t.Fatalf("decode signature: %v", err)
 		}
+		if string(entry.bytes(entrySIGNATURE)) != string(signature) {
+			t.Fatalf("$PNV SIGNATURE is not the $PNM's signature bytes")
+		}
 		payload := pnmPublicationSignaturePayload(string(pnm.CID()), string(pnm.FILE_ID()))
 		if !ed25519.Verify(celestrakPub, payload, signature) {
 			t.Fatalf("served PNM signature does not verify against the publisher key")
 		}
 	})
 
-	t.Run("limit forwards and clamps at 100; json exposes provenance; shared etag + 304", func(t *testing.T) {
-		resp, body := discoveryGET(t, base+"?limit=5", nil)
-		if rc := resp.Header.Get("X-Sdn-Record-Count"); rc != "5" {
-			t.Fatalf("limit=5 count = %q body %d bytes", rc, len(body))
+	t.Run("limit forwards and clamps at 100; json renders the same $PNV; shared etag + 304", func(t *testing.T) {
+		_, pnv := pnvAt(t, base+"?limit=5")
+		entries := pnv.tables(pnvENTRIES)
+		if len(entries) != 5 {
+			t.Fatalf("limit=5 entries = %d", len(entries))
 		}
-		frames := splitSizePrefixedFrames(t, body)
-		for i, frame := range frames {
-			pnm := PNM.GetSizePrefixedRootAsPNM(frame, 0)
-			if got := string(pnm.CID()); got != fmt.Sprintf("bafy-omm-%03d", i) {
-				t.Fatalf("frame %d = %q: not newest-first", i, got)
+		for i, entry := range entries {
+			if got := entry.str(entryCID); got != fmt.Sprintf("bafy-omm-%03d", i) {
+				t.Fatalf("entry %d = %q: not newest-first", i, got)
 			}
 		}
 
 		// The api-block clamp: 120 verified publications stored, limit=5000
 		// answers exactly 100.
-		resp, _ = discoveryGET(t, base+"?limit=5000", nil)
-		if rc := resp.Header.Get("X-Sdn-Record-Count"); rc != "100" {
-			t.Fatalf("limit=5000 count = %q, want 100 (in-wasm clamp)", rc)
+		if _, pnv := pnvAt(t, base+"?limit=5000"); len(pnv.tables(pnvENTRIES)) != 100 {
+			t.Fatalf("limit=5000 entries = %d, want 100 (in-wasm clamp)", len(pnv.tables(pnvENTRIES)))
 		}
 
 		respJSON, bodyJSON := discoveryGET(t, base+"?format=json", nil)
@@ -225,62 +250,53 @@ func TestHTTPMountedPNMHistoryFlow(t *testing.T) {
 		if respJSON.Header.Get("ETag") != newestEtag {
 			t.Fatalf("json etag %q != fb etag %q", respJSON.Header.Get("ETag"), newestEtag)
 		}
-		var records []map[string]interface{}
-		if err := json.Unmarshal(bodyJSON, &records); err != nil {
-			t.Fatalf("bare array: %v (%q)", err, bodyJSON)
+		var rendered struct {
+			Entries []map[string]interface{} `json:"ENTRIES"`
 		}
-		if len(records) != 1 {
-			t.Fatalf("records = %d", len(records))
+		if err := json.Unmarshal(bodyJSON, &rendered); err != nil {
+			t.Fatalf("json $PNV: %v (%q)", err, bodyJSON)
 		}
-		entry := records[0]
-		if entry["publisher_peer_id"] != discoveryCelestrakID ||
-			entry["signature_verified"] != true ||
-			entry["attribution"] != "signature" {
+		if len(rendered.Entries) != 1 {
+			t.Fatalf("entries = %d", len(rendered.Entries))
+		}
+		entry := rendered.Entries[0]
+		if entry["PUBLISHER_PEER_ID"] != discoveryCelestrakID || entry["SIGNATURE_VERIFIED"] != true ||
+			entry["ATTRIBUTION"] != "Direct" || entry["KEY_SOURCE"] != "IdentityRecord" {
 			t.Fatalf("provenance fields: %v", entry)
 		}
-		// publisher_key is the libp2p-marshalled key the capability was handed
-		// (36 bytes / 72 hex for Ed25519), NOT the raw 32-byte key: since
-		// 982fc25d the surface must publish a key that names its own algorithm.
-		if entry["publisher_key"] != hex.EncodeToString(discoveryPublisherKey(t, celestrakPub)) ||
-			entry["publisher_key_source"] != "epm-directory" {
-			t.Fatalf("publisher key fields: %v", entry)
+		if entry["PUBLISHER_KEY"] != hex.EncodeToString(discoveryPublisherKey(t, celestrakPub)) {
+			t.Fatalf("publisher key: %v", entry["PUBLISHER_KEY"])
 		}
 		if entry["CID"] != "bafy-omm-000" {
 			t.Fatalf("newest CID: %v", entry["CID"])
 		}
-		// The json "signature" must be the PNM's Ed25519 signature hex —
-		// regression guard for the key-vs-value collision (Go marshals
-		// entry keys alphabetically, so "attribution":"signature" precedes
-		// the "signature" key; a substring key match served the cid here).
+		// Byte vectors render as lower-case hex: SIGNATURE is the PNM's
+		// Ed25519 signature, verifiable from the JSON alone.
 		sigHex, _ := entry["SIGNATURE"].(string)
 		sig, err := hex.DecodeString(sigHex)
 		if err != nil || len(sig) != ed25519.SignatureSize {
 			t.Fatalf("json signature is not a 64-byte hex signature: %q", sigHex)
 		}
-		if !ed25519.Verify(celestrakPub,
-			pnmPublicationSignaturePayload(entry["CID"].(string), entry["FILE_ID"].(string)), sig) {
+		fileID, _ := entry["FILE_ID"].(string)
+		if !ed25519.Verify(celestrakPub, pnmPublicationSignaturePayload(entry["CID"].(string), fileID), sig) {
 			t.Fatalf("json signature does not verify: %v", entry)
 		}
 
-		resp, _ = discoveryGET(t, base, map[string]string{"If-None-Match": newestEtag})
+		resp, _ := discoveryGET(t, base, map[string]string{"If-None-Match": newestEtag})
 		if resp.StatusCode != http.StatusNotModified {
 			t.Fatalf("conditional GET = %d, want 304", resp.StatusCode)
 		}
 	})
 
 	t.Run("impostor and unsigned frames never appear even at the full clamp", func(t *testing.T) {
-		_, body := discoveryGET(t, base+"?limit=100&format=json", nil)
-		var records []map[string]interface{}
-		if err := json.Unmarshal(body, &records); err != nil {
-			t.Fatalf("bare array: %v", err)
-		}
-		for _, record := range records {
-			cid, _ := record["CID"].(string)
+		_, pnv := pnvAt(t, base+"?limit=100")
+		for _, entry := range pnv.tables(pnvENTRIES) {
+			cid := entry.str(entryCID)
 			if cid == "bafy-impostor" || cid == "bafy-unsigned" {
-				t.Fatalf("unattributable frame served: %v", record)
+				t.Fatalf("unattributable notice served: %q", cid)
 			}
-			if record["signature_verified"] != true {
-				t.Fatalf("unverified entry on a keyed surface: %v", record)
+			if !entry.flag(entrySIGNATURE_VERIFIED) {
+				t.Fatalf("unverified entry on a keyed surface: %q", cid)
 			}
 		}
 	})
