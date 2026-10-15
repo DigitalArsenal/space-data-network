@@ -1,0 +1,62 @@
+# Reviewed mnemonic-shaped word runs that are NOT secrets
+# (scripts/check-no-mnemonics.mjs). One entry per line:
+#
+#   <fingerprint prefix>  <path>                       # a run in that file
+#   *                     commit:<sha>:<path>          # a history addition (pre-purge only)
+#
+# The fingerprint is the first 16 hex digits of sha256 over the run's words,
+# exactly as the scanner reports it; the words themselves are never written
+# here. Every entry was triaged on 2026-10-15 (SEC-001) WITHOUT printing the
+# phrase: checksum-valid runs were compared in memory against the official
+# Trezor BIP-39 vectors (hd-wallet-wasm test/fixtures/trezor-bip39-vectors.json).
+#
+# NEVER add a fingerprint for a phrase that is, or might be, a real seed. A real
+# seed that reached git is compromised: rotate it (deployment/identity/ROTATION.md).
+
+# Public BIP-39 test vector "abandon" x11 + "about" (Trezor vector 0).
+c557eec878dfd852  sdn-server/internal/wasm/hdwallet_test.go
+c557eec878dfd852  sdn-server/internal/server/key_backup_test.go
+c557eec878dfd852  docker-compose.dev.yaml
+933855750408675b  scripts/dev-docker.sh            # the same vector, echoed as "Test mnemonic"
+a8c6d225e1d757f4  scripts/dev-local.sh             # the same vector, echoed as "Test mnemonic"
+f0b35a6f245aa3a9  sdn-server/internal/wasm/hdwallet_test.go   # the vector with its last word replaced by "invalid" (not checksum-valid)
+
+# Public Trezor BIP-39 vector 1.
+0e463846784aa46a  sdn-server/internal/keys/identity_backup_test.go
+0e463846784aa46a  sdn-server/internal/server/key_backup_test.go
+ecb0e7ba498c5920  sdn-server/cmd/spacedatanetwork/identity_wizard_cli_test.go
+
+# Not checksum-valid: the first twelve wordlist words in order after a
+# "*** MNEMONIC (SENSITIVE — DO NOT SHARE) ***" header, a show-identity fixture.
+120e5107c06cd429  desktop/test/unit/node-identity.spec.js
+
+# Not a phrase: CSS property words ("paper", "margin", "top", ...).
+10a39e7ea605f0c2  docs/whitepapers-app/paper.css
+
+# ---------------------------------------------------------------------------
+# History. Public test vectors added by commits whose file has since changed,
+# moved or gone (triaged in memory against the Trezor vectors, 2026-10-15).
+*  commit:f7ceb9801fb4d5942e02e95aad405364482af0fb:sdn-server/internal/api/update_distribution_e2e_test.go
+*  commit:e953ec6e387b71e23ba4afa40945e0b4052baa42:sdn-server/cmd/spacedatanetwork/key_reseal_cli_test.go
+*  commit:d44fe14ac054e2208464b8aec3b47ca50554c86e:sdn-js/src/ui/runtime/identity-core.test.ts
+*  commit:f0338079b86ac6012b3fc54d9d0c36905733673d:sdn-server/internal/keys/machine_key_test.go
+*  commit:dbcb29295fc8a4a5264cbe91f7c09bf2fb4f9692:config/dev-docker.yaml
+*  commit:dbcb29295fc8a4a5264cbe91f7c09bf2fb4f9692:config/dev.yaml
+*  commit:cd33c79a789c5563e81c24bec2d657522c534759:test_cli.sh
+*  commit:b92974a66ec36b7b4fdee65525e79c78cbebd7b8:test/testmnemonic.txt
+*  commit:763454b63191b6c1a1227d55f6ac520b8862a9a1:internal/node/hdwallet_test.go
+
+# ---------------------------------------------------------------------------
+# KNOWN EXPOSURES — NOT safe values. Phrases git history already published.
+# `--history` reports these as warnings; `--history --strict` (the post-purge
+# audit in deployment/identity/ROTATION.md) fails on them. Delete each line
+# once the purge has removed its commit's blob.
+#
+# SEC-001: the sdn.spaceaware.io node seed (24 words, checksum-valid).
+exposed  commit:0e16f85696932d219cdf7fbc18f3d70fc248e10b:sdn-js/verify-identity.mjs
+# SEC-007: the dev admin wallet (24 words, checksum-valid).
+exposed  commit:2925c2a022ba6dcbfdaa7e1b5283b1e72af2f4cf:config/dev-wallet.env
+# UNCONFIRMED: two checksum-valid 14-word runs that are NOT public test vectors.
+# Owner triage needed (view privately; if either is a real seed, rotate it and
+# add the file to the purge).
+exposed  commit:6b6d4323100db09126d0d98bff1efe7c6a7319ce:sdn-server/cmd/spacedatanetwork/main_test.go
