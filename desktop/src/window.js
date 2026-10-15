@@ -8,7 +8,7 @@ const { join } = require('node:path')
 
 const logger = require('./common/logger')
 const { PHASES } = require('./node/ready')
-const { consoleCookie } = require('./node/console-token')
+const { consoleCookie, isConsoleNavigation, isExternalBrowserUrl } = require('./node/console-token')
 const { PRODUCT_NAME } = require('./common/consts')
 
 const STATUS_PAGE = join(__dirname, '..', 'assets', 'pages', 'status.html')
@@ -18,6 +18,8 @@ class MainWindow {
     /** @type {Electron.BrowserWindow|null} */
     this.window = null
     this.showingDashboard = false
+    /** @type {string|null} the dashboard this window holds the console cookie for */
+    this.dashboardUrl = null
     /** @type {object|null} */
     this.lastState = null
     /** @type {() => string} the running daemon's console secret */
@@ -53,8 +55,20 @@ class MainWindow {
     // A link to somewhere else belongs in the user's browser, never in the
     // shell that runs their node.
     window.webContents.setWindowOpenHandler(({ url }) => {
-      shell.openExternal(url).catch((err) => logger.error(err))
+      if (isExternalBrowserUrl(url)) shell.openExternal(url).catch((err) => logger.error(err))
       return { action: 'deny' }
+    })
+    // The window carries the console cookie, which is not port-scoped: it
+    // never leaves the dashboard's origin, by link or by redirect.
+    window.webContents.on('will-navigate', (event, url) => {
+      if (isConsoleNavigation(this.dashboardUrl, url)) return
+      event.preventDefault()
+      if (isExternalBrowserUrl(url)) shell.openExternal(url).catch((err) => logger.error(err))
+    })
+    window.webContents.on('will-redirect', (event, url) => {
+      if (!this.showingDashboard || isConsoleNavigation(this.dashboardUrl, url)) return
+      logger.error(`[window] refused a redirect away from the dashboard origin: ${url}`)
+      event.preventDefault()
     })
     this.showStatus()
     return window
@@ -73,6 +87,7 @@ class MainWindow {
   showStatus () {
     if (!this.window || this.window.isDestroyed()) return
     this.showingDashboard = false
+    this.dashboardUrl = null
     this.window.loadFile(STATUS_PAGE).catch((err) => logger.error(err))
   }
 
@@ -81,6 +96,7 @@ class MainWindow {
     if (!this.window || this.window.isDestroyed()) return
     if (this.showingDashboard) return
     this.showingDashboard = true
+    this.dashboardUrl = url
     logger.info(`[window] loading the node dashboard at ${url}`)
     const window = this.window
     // The console secret rides in an HttpOnly, SameSite=Strict cookie on the

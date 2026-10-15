@@ -6,7 +6,8 @@ const {
   CONSOLE_TOKEN_ENV,
   consoleCookie,
   daemonEnv,
-  generateConsoleToken
+  generateConsoleToken,
+  isConsoleNavigation
 } = require('../../src/node/console-token')
 
 // Security audit 2026-10-15, SEC-012: the node admits its console only with
@@ -67,5 +68,90 @@ test.describe('the supervisor', () => {
     const snapshot = supervisor.snapshot()
     expect(JSON.stringify(snapshot)).not.toContain(supervisor.consoleSecret)
     expect(supervisor.consoleToken).toBe(supervisor.consoleSecret)
+  })
+})
+
+// Security audit 2026-10-15, round 2: the console cookie is not port-scoped,
+// so the window that carries it must never navigate (by link or redirect) off
+// the dashboard's own origin.
+test.describe('the console window', () => {
+  function fakeElectron () {
+    const opened = []
+    class FakeBrowserWindow {
+      constructor () {
+        this.handlers = {}
+        this.webContents = {
+          on: (name, fn) => { this.handlers[name] = fn },
+          setWindowOpenHandler: (fn) => { this.openHandler = fn },
+          session: { cookies: { set: async () => {} } },
+          isLoading: () => false,
+          send () {},
+          once () {}
+        }
+        FakeBrowserWindow.last = this
+      }
+
+      once () {}
+      on () {}
+      isDestroyed () { return false }
+      loadFile () { return Promise.resolve() }
+      loadURL () { return Promise.resolve() }
+    }
+    return {
+      opened,
+      electron: {
+        BrowserWindow: FakeBrowserWindow,
+        shell: { openExternal: async (url) => { opened.push(url) } }
+      }
+    }
+  }
+
+  function navigate (win, name, url) {
+    let prevented = false
+    win.handlers[name]({ preventDefault () { prevented = true } }, url)
+    return prevented
+  }
+
+  test('stays on the dashboard origin', async () => {
+    const { electron, opened } = fakeElectron()
+    const { MainWindow } = proxyquire('../../src/window', {
+      electron,
+      './common/logger': { info () {}, warn () {}, error () {}, debug () {} }
+    })
+    const main = new MainWindow()
+    main.setConsoleTokenProvider(() => generateConsoleToken())
+    main.create()
+    const win = electron.BrowserWindow.last
+    expect(typeof win.handlers['will-navigate']).toBe('function')
+    expect(typeof win.handlers['will-redirect']).toBe('function')
+
+    // The status page: nothing to navigate to.
+    expect(navigate(win, 'will-navigate', 'http://127.0.0.1:52011/')).toBe(true)
+
+    main.showDashboard('http://127.0.0.1:52011/')
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(navigate(win, 'will-navigate', 'http://127.0.0.1:52011/admin')).toBe(false)
+    expect(navigate(win, 'will-navigate', 'http://127.0.0.1:8000/')).toBe(true)
+    expect(navigate(win, 'will-navigate', 'http://localhost:52011/')).toBe(true)
+    expect(navigate(win, 'will-navigate', 'https://evil.example/')).toBe(true)
+    expect(navigate(win, 'will-navigate', 'file:///etc/passwd')).toBe(true)
+    expect(navigate(win, 'will-navigate', 'http://user:pw@127.0.0.1:52011/')).toBe(true)
+    expect(navigate(win, 'will-redirect', 'http://127.0.0.1:52011/admin/')).toBe(false)
+    expect(navigate(win, 'will-redirect', 'http://127.0.0.1:9/')).toBe(true)
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(opened).toEqual(['http://127.0.0.1:52011/', 'http://127.0.0.1:8000/', 'http://localhost:52011/', 'https://evil.example/', 'http://user:pw@127.0.0.1:52011/'])
+
+    // A window.open to a non-web scheme is not handed to the OS.
+    expect(win.openHandler({ url: 'file:///Applications/Calculator.app' })).toEqual({ action: 'deny' })
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(opened).not.toContain('file:///Applications/Calculator.app')
+  })
+
+  test('isConsoleNavigation refuses everything off the dashboard origin', () => {
+    expect(isConsoleNavigation(null, 'http://127.0.0.1:1/')).toBe(false)
+    expect(isConsoleNavigation('http://127.0.0.1:1/', 'http://127.0.0.1:1/x')).toBe(true)
+    expect(isConsoleNavigation('http://127.0.0.1:1/', 'http://127.0.0.1:2/x')).toBe(false)
+    expect(isConsoleNavigation('http://127.0.0.1:1/', 'javascript:alert(1)')).toBe(false)
+    expect(isConsoleNavigation('http://127.0.0.1:1/', 'not a url')).toBe(false)
   })
 })

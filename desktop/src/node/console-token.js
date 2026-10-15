@@ -65,4 +65,43 @@ function consoleCookie (dashboardUrl, token) {
   }
 }
 
-module.exports = { CONSOLE_COOKIE_NAME, CONSOLE_TOKEN_ENV, consoleCookie, daemonEnv, generateConsoleToken }
+/**
+ * Whether the window that holds the console cookie may navigate to targetUrl:
+ * only within the dashboard's own origin. The console cookie is not
+ * port-scoped, so a link or a redirect that took the window to another
+ * loopback port (or anywhere else) would carry the console secret there.
+ * Anything else opens in the user's browser instead.
+ *
+ * @param {string|null|undefined} dashboardUrl the loaded dashboard, if any
+ * @param {string} targetUrl
+ * @returns {boolean}
+ */
+function isConsoleNavigation (dashboardUrl, targetUrl) {
+  if (!dashboardUrl) return false
+  try {
+    const from = new URL(dashboardUrl)
+    const to = new URL(targetUrl)
+    if (to.protocol !== 'http:' && to.protocol !== 'https:') return false
+    if (to.username || to.password) return false
+    return to.origin === from.origin
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Whether a URL the window refuses may be handed to the user's browser.
+ *
+ * @param {string} targetUrl
+ * @returns {boolean}
+ */
+function isExternalBrowserUrl (targetUrl) {
+  try {
+    const u = new URL(targetUrl)
+    return u.protocol === 'https:' || u.protocol === 'http:'
+  } catch {
+    return false
+  }
+}
+
+module.exports = { CONSOLE_COOKIE_NAME, CONSOLE_TOKEN_ENV, consoleCookie, daemonEnv, generateConsoleToken, isConsoleNavigation, isExternalBrowserUrl }
