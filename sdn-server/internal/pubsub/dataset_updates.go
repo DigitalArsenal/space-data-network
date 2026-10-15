@@ -108,8 +108,10 @@ func SignDatasetFeedHead(ann *DatasetFeedHeadAnnouncement, signingKey ed25519.Pr
 // VerifyDatasetFeedHead verifies the announcement signature. When
 // providerPublicKey is non-nil it is the trust anchor (resolved from the
 // provider's EPM, like PNM verification); otherwise the embedded
-// signing_public_key is used, which proves payload integrity but not
-// publisher identity. Returns an error for tampered or malformed signatures.
+// signing_public_key is used, which proves payload integrity but NOT
+// publisher identity: anyone can sign with a key they put in the message.
+// Authorization must use VerifyDatasetFeedHeadWithKey with a key bound to the
+// gossip author (security audit SEC-031); a nil key here never authorizes.
 func VerifyDatasetFeedHead(ann DatasetFeedHeadAnnouncement, providerPublicKey ed25519.PublicKey) error {
 	if strings.TrimSpace(ann.Signature) == "" {
 		return errors.New("dataset feed head is unsigned")
@@ -135,6 +137,42 @@ func VerifyDatasetFeedHead(ann DatasetFeedHeadAnnouncement, providerPublicKey ed
 	}
 	if !ed25519.Verify(publicKey, payload, signature) {
 		return errors.New("invalid dataset feed head signature")
+	}
+	return nil
+}
+
+// VerifyDatasetFeedHeadWithKey verifies the announcement signature against
+// key, which the caller has bound to the announcement's author (the
+// StrictSign gossip author's peer identity or EPM signing keys). The key the
+// message itself carries is never consulted (SEC-031).
+func VerifyDatasetFeedHeadWithKey(ann DatasetFeedHeadAnnouncement, key ed25519.PublicKey) error {
+	if len(key) != ed25519.PublicKeySize {
+		return errors.New("dataset feed head verification needs a key bound to its author")
+	}
+	return VerifyDatasetFeedHead(ann, key)
+}
+
+// DatasetFeedHeadMaxFutureSkew bounds how far a feed head's published_at may
+// sit ahead of the receiving node's clock.
+const DatasetFeedHeadMaxFutureSkew = 5 * time.Minute
+
+// DatasetFeedHeadMaxSequence bounds a feed head's feed_sequence. Producers
+// number the windows of one batch 1, 2, 3, ...; a sequence near 2^63 is a
+// forged ranking (the SEC-031 lane freeze used MaxInt64).
+const DatasetFeedHeadMaxSequence = int64(1) << 24
+
+// CheckDatasetFeedHeadBounds refuses ranking metadata no honest producer
+// emits: a missing or future published_at, and a feed_sequence outside
+// [1, DatasetFeedHeadMaxSequence].
+func CheckDatasetFeedHeadBounds(ann DatasetFeedHeadAnnouncement, now time.Time) error {
+	if ann.PublishedAt.IsZero() {
+		return errors.New("dataset feed head has no published_at")
+	}
+	if ann.PublishedAt.After(now.Add(DatasetFeedHeadMaxFutureSkew)) {
+		return fmt.Errorf("dataset feed head published_at %s is in the future", ann.PublishedAt.UTC().Format(time.RFC3339))
+	}
+	if ann.FeedSequence < 1 || ann.FeedSequence > DatasetFeedHeadMaxSequence {
+		return fmt.Errorf("dataset feed head feed_sequence %d is outside [1, %d]", ann.FeedSequence, DatasetFeedHeadMaxSequence)
 	}
 	return nil
 }
