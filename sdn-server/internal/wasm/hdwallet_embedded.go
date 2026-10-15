@@ -13,9 +13,9 @@ import (
 // its legacy key with no sealed-transport key (owner 2026-10-09: "it shouldn't
 // lose the encryption key, even for a mac").
 //
-// Pin: hd-wallet-wasm 2.1.0, dist/hd-wallet-wasi.wasm, byte for byte the
-// module hd-wallet's own release build published to npm (gitHead 62e752d,
-// tag v2.1.0). 2.1.0 signs every ECDSA signature over one hash; the identity
+// Pin: hd-wallet-wasm 2.1.2, dist/hd-wallet-wasi.wasm, byte for byte the
+// module hd-wallet's own release build published to npm (gitHead e862d42,
+// tag v2.1.2). 2.1.x signs every ECDSA signature over one hash; the identity
 // derivation this module serves the node is unchanged from 2.0.29, which the
 // local Mac nodes' HD identities were made with. An on-disk copy still wins
 // (node.findHDWalletWasmPath); this is the last fallback.
@@ -25,9 +25,9 @@ var hdWalletWasiWasm []byte
 
 const (
 	// HDWalletWasiPackage is the npm package the embedded module comes from.
-	HDWalletWasiPackage = "hd-wallet-wasm@2.1.0"
+	HDWalletWasiPackage = "hd-wallet-wasm@2.1.2"
 	// HDWalletWasiSHA256 is the sha256 of the embedded hd-wallet-wasi.wasm.
-	HDWalletWasiSHA256 = "25d00466a8251d46099962536fadb3d8fcb7a62e2b24a7f9468b27a0a2a31920"
+	HDWalletWasiSHA256 = "a62f264058ea5839fc443d425a2f1685398cbe972788bf5052d398ffcf67e308"
 )
 
 // EmbeddedHDWalletWasm returns the embedded module's bytes, or nil when they do
