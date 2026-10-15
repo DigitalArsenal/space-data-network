@@ -114,7 +114,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "sealed command timestamp outside the allowed window", http.StatusBadRequest)
 		return
 	}
-	trust, account := h.trustOf(env.Signer)
+	trust, account := h.trustOfFor(r, env.Signer)
 	if trust < peers.Admin {
 		http.Error(w, "admin access required", http.StatusForbidden)
 		return
@@ -195,6 +195,25 @@ func (h *Handler) dispatch(outer *http.Request, body Body, account string, trust
 	rec := httptest.NewRecorder()
 	h.Next.ServeHTTP(rec, inner)
 	return rec.Code, rec.Header().Get("Content-Type"), rec.Body.Bytes()
+}
+
+// trustOfFor is trustOf with the SEC-001 hotfix rules (host-01): a root key,
+// or a session delegated by one, is Admin only when the outer request comes
+// from this box with no proxy hop (the rule root sign-in already follows); the
+// leaked identity's xpub and keys get no trust at all, whatever rows the user
+// store holds.
+func (h *Handler) trustOfFor(r *http.Request, signer ed25519.PublicKey) (peers.TrustLevel, string) {
+	if auth.DeniedPublishPrincipal("", hex.EncodeToString(signer)) {
+		return peers.Never, ""
+	}
+	trust, account := h.trustOf(signer)
+	if account == h.RootAccount && h.RootAccount != "" && !auth.RootPeerIsLocal(r) {
+		return peers.Never, ""
+	}
+	if auth.DeniedPublishPrincipal(account, "") {
+		return peers.Never, ""
+	}
+	return trust, account
 }
 
 // trustOf is the signer's trust now: a sign-in key directly, or a delegated

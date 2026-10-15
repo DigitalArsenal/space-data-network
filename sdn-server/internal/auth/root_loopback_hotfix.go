@@ -22,6 +22,10 @@ import (
 // At registration, every stored session and delegation the root account holds
 // is revoked, so anything minted before this binary does not outlive it.
 
+// RootPeerIsLocal reports whether r came from this box with no proxy hop; the
+// sealed /api/rpc transport applies the same rule to root signers.
+func RootPeerIsLocal(r *http.Request) bool { return rootPeerIsLocal(r) }
+
 // rootPeerIsLocal reports whether r came from this box with no proxy hop.
 func rootPeerIsLocal(r *http.Request) bool {
 	if r == nil || requestCrossedAProxy(r) {
