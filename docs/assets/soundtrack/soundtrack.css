@@ -11,11 +11,10 @@
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  transition: border-color .2s, box-shadow .2s;
+  transition: border-color .2s;
 }
 .st-track.is-playing {
   border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent), 0 18px 40px -24px color-mix(in srgb, var(--accent) 60%, transparent);
 }
 
 .st-play {
@@ -26,14 +25,14 @@
   background: var(--hi-bg);
   color: var(--hi-fg);
   cursor: pointer;
-  transition: transform .15s, background .2s, color .2s, box-shadow .2s;
+  transition: transform .15s, background .2s, color .2s;
 }
 .st-play:hover { transform: scale(1.05); }
 .st-play:active { transform: scale(.97); }
 .st-play:focus-visible, .st-wave:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .st-play svg { width: 18px; height: 18px; fill: currentColor; }
 .st-play .st-i-pause { display: none; }
-.st-track.is-playing .st-play { background: var(--accent); color: #000; border-color: var(--accent); box-shadow: 0 0 22px -4px var(--accent); }
+.st-track.is-playing .st-play { background: var(--accent); color: #000; border-color: var(--accent); }
 .st-track.is-playing .st-play .st-i-play { display: none; }
 .st-track.is-playing .st-play .st-i-pause { display: block; }
 
