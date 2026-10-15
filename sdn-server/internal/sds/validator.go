@@ -17,6 +17,7 @@ import (
 	standardsCLM "github.com/DigitalArsenal/spacedatastandards.org/lib/go/CLM"
 	logging "github.com/ipfs/go-log/v2"
 
+	"github.com/spacedatanetwork/sdn-server/internal/fbverify"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/recordalign"
 	"github.com/spacedatanetwork/sdn-server/internal/wasm"
 )
@@ -386,6 +387,10 @@ type Validator struct {
 	identifierSchemas map[string]string
 	ambiguousIdents   map[string]bool
 	mu                sync.RWMutex
+	// structure is the always-on structural verifier (structure.go): every
+	// schema AddSchema registers is also compiled here, and Validate refuses
+	// any buffer it cannot prove memory-safe.
+	structure *fbverify.Registry
 }
 
 // NewValidator creates a new SDS validator. flatc is the JSON⇄FlatBuffer
@@ -400,6 +405,7 @@ func NewValidator(flatc *wasm.FlatcModule) (*Validator, error) {
 		identifiers:       make(map[string]string),
 		identifierSchemas: make(map[string]string),
 		ambiguousIdents:   make(map[string]bool),
+		structure:         fbverify.NewRegistry(),
 	}
 	fieldLevel, err := fieldLevelValidationFromEnv()
 	if err != nil {
@@ -498,6 +504,12 @@ func converterSchemaPath(schemaName string) string {
 func (v *Validator) registerPublishedBindingSchemas() {
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	for name := range publishedBindingOnlySchemas {
+		// The published IDL, for structural verification only.
+		if content, err := bindingSchemasFS.ReadFile("binding-schemas/" + name); err == nil {
+			v.structure.AddSource(name, content)
+		}
+	}
 	for name, ident := range publishedBindingOnlySchemas {
 		v.identifiers[name] = ident
 		switch {
@@ -566,6 +578,7 @@ func (v *Validator) AddSchema(ctx context.Context, name string, content []byte) 
 	if _, ok := v.schemas[name]; !ok {
 		v.schemas[name] = len(v.schemas) + 1
 	}
+	v.structure.AddSource(name, content)
 
 	// Stage the source in the converter's file map; it is parsed on first
 	// use. A schema the converter cannot parse (REC.fbs includes standards
@@ -614,8 +627,11 @@ func (v *Validator) FileIdentifier(schemaName string) (string, bool) {
 // Envelope verification (VerifyEnvelope) runs on EVERY path, with or without
 // the flatc converter: structure plus the schema's declared file_identifier are
 // always enforced, so a 1-byte junk body is never stored as a valid SDS record.
-// The converter's field-level parse (full verification against the schema)
-// runs additionally only when FieldLevelValidation is on.
+// Structural verification (structure.go) also runs on every path: every offset
+// a generated accessor could follow must land inside the buffer, in every
+// envelope form the bytes could be read in. The converter's field-level parse
+// (full conformance against the schema) runs additionally only when
+// FieldLevelValidation is on.
 func (v *Validator) Validate(ctx context.Context, schemaName string, data []byte) error {
 	v.mu.RLock()
 	_, ok := v.schemas[schemaName]
@@ -628,6 +644,13 @@ func (v *Validator) Validate(ctx context.Context, schemaName string, data []byte
 
 	if err := v.VerifyEnvelope(schemaName, data); err != nil {
 		return err
+	}
+
+	// Structural verification: always on, whatever the field-level switch
+	// says (structure.go). This is what keeps a malformed offset from ever
+	// reaching a generated accessor.
+	if err := verifyStructureForms(v.structure, schemaName, data); err != nil {
+		return fmt.Errorf("validation failed for %s: %w", schemaName, err)
 	}
 
 	// Field-level parse: only for a schema the converter can load; one it
