@@ -717,6 +717,32 @@
       "evidence": "sdn-js/spaceaware-ui/src/orbital-console/components/SettingsPanel.svelte:203-570; engine/referenceGrid.ts:1-10; components/CreditsMenu.svelte"
     },
     {
+      "id": "solar-system",
+      "name": "Solar system navigation",
+      "category": "earth-sky",
+      "tagline": "Zoom out past the Milky Way and centre any planet or moon",
+      "summary": "Scroll out from Earth to the scale of the Milky Way and back. The Sun, the planets, their major moons, Pluto, Charon, Ceres and Vesta are drawn at their true positions with surface imagery; click any of them to make it the centred globe. Kernels and imagery load over the Space Data Network.",
+      "capabilities": [
+        "19 bodies with surface imagery, each one click from becoming the centred globe",
+        "Orbits for every body, a body card, and Return to Earth",
+        "Zoom from the ground to 1e22 m and back from any view",
+        "Planet positions and orientation within 0.06 arcseconds of JPL Horizons",
+        "Earth's satellites pause propagation while the camera is far from Earth",
+        "Numbered asteroids as points, a setting that is off by default",
+        "Works on phones"
+      ],
+      "standards": [
+        "NAIF SPICE",
+        "IAU WGCCRE",
+        "SDS SBD"
+      ],
+      "access": "free",
+      "delivery": "console",
+      "covers": [],
+      "learnMore": "https://spaceaware.io",
+      "evidence": "Landed 2026-10-15 (multi-body rounds 3-4): OrbPro scene.bodies/setCentralBody (OrbPro eff2b00a9b), modules propagator/solar-system-bodies, data-source/lowell-astorb, naif-kernels, body-imagery, keplerian-reference 1.8.2 (modules d8b7fb1d), console SOLAR SYSTEM search group, Centre chip and settings (SpaceAware-UI 608ed18, landed in dae4edd); clean-build checks 2026-10-15: nav 19/19 clicks centred with imagery, 1e22 m and back from pitch -0.15/-0.6/-1.2/+0.3, ACC drawn 0.056 arcsec, D9 cutoff, phone. Not on spaceaware.io until the console is republished (publish hold 2026-10-15)."
+    },
+    {
       "id": "camera-cinematics",
       "name": "Camera and cinematics",
       "category": "earth-sky",
@@ -741,12 +767,16 @@
       "id": "star-field",
       "name": "Premium star field",
       "category": "earth-sky",
-      "tagline": "A real star catalog as your sky",
-      "summary": "Replace the default sky with a real star catalog, rendered as true physics or tuned for looks, including the sky seen from the object the camera rides.",
+      "tagline": "A real star catalog and the Milky Way as your sky",
+      "summary": "Replace the default sky with a real star catalog and the Milky Way, seen as a camera would see them: true physics or tuned for looks, including the sky seen from the object the camera rides.",
       "capabilities": [
         "True-physics or look-good rendering",
         "Sky seen from the object the camera rides",
-        "Star catalog delivered over SDN and hash-checked"
+        "Star catalog delivered over SDN and hash-checked",
+        "Deeper catalog to magnitude 10, joined after the sky first draws",
+        "Milky Way and diffuse sky from an all-sky image fetched over SDN by CID",
+        "Camera model: preset and exposure set the sky brightness",
+        "Every catalog and image credited in the CREDITS menu"
       ],
       "standards": [
         "SDS STR"
@@ -755,7 +785,7 @@
       "delivery": "console",
       "covers": [],
       "learnMore": "https://spaceaware.io",
-      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/engine/starField.ts:1-115; components/SettingsPanel.svelte STARS / STAR RENDERING; license-catalog grant (no modules.pmm row)"
+      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/engine/starField.ts, engine/starFieldContent.ts (sky background and Milky Way detail by CID, star-field-camera 0.5.0 preset/exposure/observer; SpaceAware-UI efd011d, landed in dae4edd); components/SettingsPanel.svelte STARS / STAR RENDERING; engine/attribution.ts sky credits; license-catalog grant (no modules.pmm row)"
     },
     {
       "id": "sensor-shaders",
@@ -1042,7 +1072,8 @@
         "catalog-search",
         "camera-cinematics",
         "star-field",
-        "spaceaware-account"
+        "spaceaware-account",
+        "solar-system"
       ],
       "pricing": "request",
       "price": null
@@ -1110,7 +1141,8 @@
         "embed-api",
         "ccsds-interchange",
         "data-sources",
-        "module-building-blocks"
+        "module-building-blocks",
+        "solar-system"
       ],
       "pricing": "request",
       "price": null
