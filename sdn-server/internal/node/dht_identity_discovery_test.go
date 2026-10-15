@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/EPM"
@@ -211,15 +212,22 @@ func TestIndexKnownDiscoveredNodeEPMStoresDirectoryRecord(t *testing.T) {
 	if row.EPMBase64 != base64.StdEncoding.EncodeToString(epmBytes) {
 		t.Fatal("directory row carries no signed EPM bytes; the resolved-sources lane verifies publishers from them")
 	}
-	if got.BitcoinAddress != "bc1qdiscoverwallet0000000000000000000000000" {
-		t.Fatalf("BitcoinAddress = %q, want %q", got.BitcoinAddress, "bc1qdiscoverwallet0000000000000000000000000")
+	// SEC-013: the fixture's ChainProof is junk (SIGNATURE "00",
+	// SIGNED_PAYLOAD "00", a PUBLIC_KEY unrelated to the address). The
+	// profile itself is indexed, but the unproven address must not be: not
+	// in the row, not in chain_proofs, not findable by address search.
+	if got.BitcoinAddress != "" {
+		t.Fatalf("BitcoinAddress = %q, want the unverified chain proof dropped", got.BitcoinAddress)
+	}
+	if strings.Contains(got.EPMJSON, "bc1qdiscoverwallet") || strings.Contains(got.EPMJSON, "chain_proofs") {
+		t.Fatalf("directory row JSON still carries the unverified chain proof: %s", got.EPMJSON)
 	}
 	nodesByAddress, err := dirSvc.SearchNodes("bc1qdiscoverwallet0000000000000000000000000", 10)
 	if err != nil {
 		t.Fatalf("SearchNodes by bitcoin address failed: %v", err)
 	}
-	if len(nodesByAddress) != 1 {
-		t.Fatalf("SearchNodes by bitcoin address returned %d records, want 1", len(nodesByAddress))
+	if len(nodesByAddress) != 0 {
+		t.Fatalf("SearchNodes by an unproven bitcoin address returned %d records, want 0", len(nodesByAddress))
 	}
 }
 

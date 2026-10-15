@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/EPM"
 )
@@ -77,46 +78,12 @@ func DirectoryRecordJSONFromEPM(epmBytes []byte, fallbackPeerID string) (map[str
 		}
 	}
 
-	proof := new(EPM.ChainProof)
-	if n := epmRecord.CHAIN_PROOFSLength(); n > 0 {
-		proofs := make([]map[string]any, 0, n)
-		for i := 0; i < n; i++ {
-			if !epmRecord.CHAIN_PROOFS(proof, i) {
-				continue
-			}
-			entry := make(map[string]any)
-			chain := strings.ToLower(strings.TrimSpace(string(proof.CHAIN())))
-			if chain != "" {
-				entry["chain"] = chain
-			}
-			address := strings.TrimSpace(string(proof.ADDRESS()))
-			if address != "" {
-				entry["address"] = address
-				switch chain {
-				case "bitcoin":
-					info["bitcoin_address"] = address
-					addLowerString(info, "bitcoin_key_path", proof.KEY_PATH())
-				case "ethereum":
-					info["ethereum_address"] = address
-					addLowerString(info, "ethereum_key_path", proof.KEY_PATH())
-				case "solana":
-					info["solana_address"] = address
-					addLowerString(info, "solana_key_path", proof.KEY_PATH())
-				}
-			}
-			addLowerString(entry, "public_key", proof.PUBLIC_KEY())
-			addLowerString(entry, "key_path", proof.KEY_PATH())
-			addLowerString(entry, "signature", proof.SIGNATURE())
-			addLowerString(entry, "signed_payload", proof.SIGNED_PAYLOAD())
-			addLowerString(entry, "algorithm", proof.ALGORITHM())
-			addLowerString(entry, "encoding", proof.ENCODING())
-			if len(entry) > 0 {
-				proofs = append(proofs, entry)
-			}
-		}
-		if len(proofs) > 0 {
-			info["chain_proofs"] = proofs
-		}
+	// SEC-013: only chain proofs that verify against this record and peer
+	// reach the row. The flattened <chain>_address fields are what directory
+	// search and the trust engine read, so an unverified ADDRESS must never
+	// land there.
+	for _, reason := range ApplyVerifiedChainProofs(info, epmBytes, peerID, time.Now()) {
+		log.Debugf("directory record %s: %v", peerID, reason)
 	}
 
 	if n := epmRecord.MULTIFORMAT_ADDRESSLength(); n > 0 {

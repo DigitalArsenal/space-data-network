@@ -12,6 +12,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,6 +24,7 @@ import (
 
 	"github.com/spacedatanetwork/sdn-server/internal/api"
 	"github.com/spacedatanetwork/sdn-server/internal/directory"
+	sdnepm "github.com/spacedatanetwork/sdn-server/internal/epm"
 	"github.com/spacedatanetwork/sdn-server/internal/node"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 	"github.com/spacedatanetwork/sdn-server/internal/trust"
@@ -138,9 +140,13 @@ func parseBondHoldings(out []byte, byChain map[string]string, nowMs int64) ([]tr
 	return holdings, nil
 }
 
-// directoryChainAddresses resolves a peer's attested addresses from its
-// verified `$EPM` directory record (ChainProofs, else the flattened
-// <chain>_address fields the directory projection carries).
+// directoryChainAddresses resolves a peer's attested chain addresses from the
+// signed `$EPM` bytes its directory row carries (epm_base64), re-verified here
+// on every lookup (SEC-013): the EPM signature, each ChainProof's signature,
+// the address derived from the proof key, and the attestation's binding to
+// the record's signing key and to this peer. The row's projected JSON
+// (chain_proofs / <chain>_address) is never trusted on its own: a bond lookup
+// must not credit an address the peer has not proven it controls.
 func directoryChainAddresses(flat *storage.FlatSQLStore) trust.AddressResolver {
 	return func(peerID string) ([]trust.ChainAddress, error) {
 		if flat == nil {
@@ -153,32 +159,40 @@ func directoryChainAddresses(flat *storage.FlatSQLStore) trust.AddressResolver {
 		if len(records) == 0 {
 			return nil, errors.New("no verified profile in the directory for this peer")
 		}
-		var payload map[string]any
-		if err := json.Unmarshal([]byte(records[0].EPMJSON), &payload); err != nil {
-			return nil, fmt.Errorf("parse directory profile: %w", err)
-		}
-		var out []trust.ChainAddress
-		seen := map[string]bool{}
-		if proofs, ok := payload["chain_proofs"].([]any); ok {
-			for _, raw := range proofs {
-				entry, _ := raw.(map[string]any)
-				chain, _ := entry["chain"].(string)
-				address, _ := entry["address"].(string)
-				if chain == "" || address == "" || seen[chain] {
-					continue
-				}
-				seen[chain] = true
-				out = append(out, trust.ChainAddress{ChainID: chain, Address: address})
-			}
-		}
-		for _, chain := range []string{"bitcoin", "ethereum", "solana"} {
-			if address, _ := payload[chain+"_address"].(string); address != "" && !seen[chain] {
-				seen[chain] = true
-				out = append(out, trust.ChainAddress{ChainID: chain, Address: address})
-			}
-		}
-		return out, nil
+		return verifiedChainAddressesFromDirectoryRow(records[0].EPMJSON, peerID, time.Now())
 	}
+}
+
+// verifiedChainAddressesFromDirectoryRow returns the chain addresses whose
+// proofs verify inside the row's signed EPM bytes, one per chain.
+func verifiedChainAddressesFromDirectoryRow(rowJSON, peerID string, now time.Time) ([]trust.ChainAddress, error) {
+	var stored struct {
+		EPMBase64 string `json:"epm_base64"`
+	}
+	if err := json.Unmarshal([]byte(rowJSON), &stored); err != nil {
+		return nil, fmt.Errorf("parse directory profile: %w", err)
+	}
+	if strings.TrimSpace(stored.EPMBase64) == "" {
+		return nil, errors.New("directory profile carries no signed EPM")
+	}
+	epmBytes, err := base64.StdEncoding.DecodeString(strings.TrimSpace(stored.EPMBase64))
+	if err != nil {
+		return nil, fmt.Errorf("decode directory profile EPM: %w", err)
+	}
+	verified, _, err := sdnepm.VerifiedEPMChainProofs(epmBytes, peerID, now)
+	if err != nil {
+		return nil, fmt.Errorf("directory profile EPM does not verify: %w", err)
+	}
+	var out []trust.ChainAddress
+	seen := map[string]bool{}
+	for _, proof := range verified {
+		if seen[proof.Chain] {
+			continue
+		}
+		seen[proof.Chain] = true
+		out = append(out, trust.ChainAddress{ChainID: proof.Chain, Address: proof.Address})
+	}
+	return out, nil
 }
 
 // directoryNodeSubjects lists every node with a verified profile in the

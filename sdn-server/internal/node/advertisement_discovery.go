@@ -364,63 +364,13 @@ func discoveredNodeEPMJSON(epmBytes []byte, pid peer.ID) (map[string]any, error)
 		}
 	}
 
-	if n := epmRecord.CHAIN_PROOFSLength(); n > 0 {
-		proofs := make([]map[string]any, 0, n)
-		proof := new(EPM.ChainProof)
-		for i := 0; i < n; i++ {
-			if !epmRecord.CHAIN_PROOFS(proof, i) {
-				continue
-			}
-			entry := make(map[string]any)
-			chain := ""
-			if value := proof.CHAIN(); value != nil {
-				chain = strings.ToLower(strings.TrimSpace(string(value)))
-				entry["chain"] = chain
-			}
-			if value := proof.ADDRESS(); value != nil {
-				address := strings.TrimSpace(string(value))
-				entry["address"] = address
-				switch chain {
-				case "bitcoin":
-					info["bitcoin_address"] = address
-					if value := proof.KEY_PATH(); value != nil {
-						info["bitcoin_key_path"] = strings.TrimSpace(string(value))
-					}
-				case "ethereum":
-					info["ethereum_address"] = address
-					if value := proof.KEY_PATH(); value != nil {
-						info["ethereum_key_path"] = strings.TrimSpace(string(value))
-					}
-				case "solana":
-					info["solana_address"] = address
-					if value := proof.KEY_PATH(); value != nil {
-						info["solana_key_path"] = strings.TrimSpace(string(value))
-					}
-				}
-			}
-			if value := proof.PUBLIC_KEY(); value != nil {
-				entry["public_key"] = string(value)
-			}
-			if value := proof.KEY_PATH(); value != nil {
-				entry["key_path"] = string(value)
-			}
-			if value := proof.SIGNATURE(); value != nil {
-				entry["signature"] = string(value)
-			}
-			if value := proof.SIGNED_PAYLOAD(); value != nil {
-				entry["signed_payload"] = string(value)
-			}
-			if value := proof.ALGORITHM(); value != nil {
-				entry["algorithm"] = string(value)
-			}
-			if value := proof.ENCODING(); value != nil {
-				entry["encoding"] = string(value)
-			}
-			proofs = append(proofs, entry)
-		}
-		if len(proofs) > 0 {
-			info["chain_proofs"] = proofs
-		}
+	// SEC-013: a chain address reaches the directory row (and from there the
+	// trust engine's bond lookups and address search) only when its
+	// ChainProof verifies against this record and this peer: signature,
+	// address derived from the proof key, and an attestation naming this
+	// record's signing key and this peer's identity key.
+	for _, reason := range epm.ApplyVerifiedChainProofs(info, epmBytes, pid.String(), time.Now()) {
+		log.Debugf("Discovered EPM for peer %s: dropping chain proof: %v", pid, reason)
 	}
 
 	if n := epmRecord.MULTIFORMAT_ADDRESSLength(); n > 0 {
