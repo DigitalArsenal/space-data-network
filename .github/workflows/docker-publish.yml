@@ -2,21 +2,23 @@ name: Publish container image
 
 # Builds deployment/docker/Dockerfile for linux/amd64 and pushes it to Docker
 # Hub as dockerdigitalarsenal/space-data-network:<version> (plus `beta` for a
-# pre-release tag, `latest` for a release tag). Runs for every v* tag and on
-# demand for a named ref. The image carries the same inputs the local release
-# cut stages: the Kubo web UI build, the same-origin wallet sign-in assets
-# (deployment/wallet-wasm/stage-wallet-wasm.sh) and the HD wallet module from
-# the pinned hd-wallet-wasm package.
+# pre-release tag, `latest` for a release tag). The image carries the same
+# inputs the local release cut stages: the Kubo web UI build, the same-origin
+# wallet sign-in assets (deployment/wallet-wasm/stage-wallet-wasm.sh) and the
+# HD wallet module from the pinned hd-wallet-wasm package.
+#
+# It builds the tag it RUNS FROM and nothing else (security audit SEC-044). A
+# push of a v* tag starts it; to rebuild a tag by hand, dispatch the workflow
+# ON that tag: `gh workflow run docker-publish.yml --ref v1.0.5-beta.1`.
+# There is deliberately no ref input: a run dispatched from main with
+# `-f ref=<name>` used to check out <name>, and actions/checkout resolves an
+# unqualified name to a BRANCH before a tag, so any writer's branch named like
+# a version was built, pushed and cosign-signed as a release image.
 
 on:
   push:
     tags: ['v*']
   workflow_dispatch:
-    inputs:
-      ref:
-        description: Tag to build, for example v1.0.5-beta.1
-        required: true
-        type: string
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -32,31 +34,48 @@ jobs:
   build-and-push:
     name: Build, push and sign
     runs-on: ubuntu-latest
-    # A push trigger only fires on v* tags; a manual run must start from main
-    # or a v* tag (the ref input then names the tag to build).
-    if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main'
+    # Only a v* tag: the push trigger fires on nothing else, and a manual run
+    # from a branch (main included) is refused here.
+    if: github.ref_type == 'tag' && startsWith(github.ref, 'refs/tags/v')
     environment: dockerhub
     permissions:
       contents: read
       id-token: write # keyless cosign signature of the pushed digest
     steps:
+      # No ref: the checkout is github.sha, the commit the tag the run started
+      # from points at.
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          ref: ${{ inputs.ref || github.ref }}
           persist-credentials: false
 
       - name: Resolve tag
         id: tag
         env:
           # Passed through the environment, never expanded into the script.
-          REQUESTED_REF: ${{ inputs.ref || github.ref_name }}
+          REF: ${{ github.ref }}
+          REF_TYPE: ${{ github.ref_type }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          ref="${REQUESTED_REF}"
-          tag="${ref#refs/tags/}"
+          if [[ "${REF_TYPE}" != tag || "${REF}" != refs/tags/v* ]]; then
+            echo "::error::'${REF}' is not a v* tag; dispatch this workflow on the tag to build" >&2
+            exit 1
+          fi
+          tag="${REF#refs/tags/}"
           version="${tag#v}"
           if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
-            echo "ref '$ref' is not a release tag (v<semver>)" >&2
+            echo "::error::tag '$tag' is not a release tag (v<semver>)" >&2
+            exit 1
+          fi
+          # The checked-out commit is the tag's, and it is on main: a tag
+          # pushed onto an unreviewed branch is not a release.
+          if [[ "$(git rev-parse HEAD)" != "${GITHUB_SHA}" ]]; then
+            echo "::error::checked-out commit is not the commit tag ${tag} names" >&2
+            exit 1
+          fi
+          on_main="$(gh api "repos/${GITHUB_REPOSITORY}/compare/refs/heads/main...${GITHUB_SHA}" --jq .status)" || on_main=unknown
+          if [[ "${on_main}" != identical && "${on_main}" != behind ]]; then
+            echo "::error::tag ${tag} (${GITHUB_SHA}) is not on main (${on_main}); refusing to publish it" >&2
             exit 1
           fi
           channel=latest

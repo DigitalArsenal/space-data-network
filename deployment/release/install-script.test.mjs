@@ -84,7 +84,9 @@ test('public installers use spacedatanetwork.org docs and no GitHub CLI', () => 
   const readme = readFileSync(join(repoRoot, 'README.md'), 'utf8');
 
   assert.match(readme, /curl -fsSL https:\/\/spacedatanetwork\.org\/install\.sh \| bash/);
-  assert.match(readme, /irm https:\/\/spacedatanetwork\.org\/install\.ps1 \| iex/);
+  // The PowerShell stub refuses to install, so no instruction may pipe it
+  // into iex (it only throws); Windows users run the shell installer in WSL.
+  assert.doesNotMatch(readme, /install\.ps1\s*\|\s*iex/i);
   assert.doesNotMatch(readme, /digitalarsenal\.github\.io\/space-data-network/);
   assert.doesNotMatch(readme, /space-data-network\/\/install\.sh/);
   // SEC-045: the public stubs never run code from main. The shell stub runs

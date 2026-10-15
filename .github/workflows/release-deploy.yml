@@ -1,15 +1,16 @@
 name: SDN Release Deployment
 
+# Releases the v* tag the run starts from, and nothing else (security audit
+# SEC-044). To re-run a release by hand, dispatch ON the tag:
+# `gh workflow run release-deploy.yml --ref v2.1.0`. There is deliberately no
+# version input: a dispatch from main used to build main HEAD under any label
+# it was given (`beta`, `latest`, an existing release), push that Docker tag
+# and --clobber the named release's assets, signed checksum list included.
 on:
   push:
     tags:
       - 'v*'
   workflow_dispatch:
-    inputs:
-      version:
-        description: Release version, for example v2.1.0
-        required: true
-        type: string
 
 # Least privilege (security audit SEC-042/SEC-044): the workflow token gets
 # nothing by default; each job names exactly what it needs. Only the jobs that
@@ -21,7 +22,7 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   REGISTRY: docker.io
   IMAGE_NAME: dockerdigitalarsenal/space-data-network
-  VERSION: ${{ github.ref_type == 'tag' && github.ref_name || inputs.version }}
+  VERSION: ${{ github.ref_name }}
   NFPM_VERSION: v2.42.0
   # The ipfs CLI that computes and pins the UI asset CIDs: the Kubo SDN links
   # (sdn-server/go.mod), so the CIDs are the ones the node computes. A
@@ -33,12 +34,39 @@ jobs:
   preflight:
     name: Preflight
     runs-on: ubuntu-latest
+    # Every other job needs this one, so a run from anything but a v* tag
+    # stops here.
+    if: github.ref_type == 'tag' && startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
+      - name: The run is a v<semver> tag on main
+        env:
+          REF: ${{ github.ref }}
+          REF_TYPE: ${{ github.ref_type }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [[ "${REF_TYPE}" != tag || "${REF}" != "refs/tags/${VERSION}" ]]; then
+            echo "::error::release-deploy runs only from the v* tag it releases (ref ${REF})" >&2
+            exit 1
+          fi
+          if [[ ! "${VERSION}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::tag '${VERSION}' is not v<semver>" >&2
+            exit 1
+          fi
+          if [[ "$(git rev-parse HEAD)" != "${GITHUB_SHA}" ]]; then
+            echo "::error::checked-out commit is not the commit tag ${VERSION} names" >&2
+            exit 1
+          fi
+          # A tag pushed onto an unreviewed branch is not a release.
+          on_main="$(gh api "repos/${GITHUB_REPOSITORY}/compare/refs/heads/main...${GITHUB_SHA}" --jq .status)" || on_main=unknown
+          if [[ "${on_main}" != identical && "${on_main}" != behind ]]; then
+            echo "::error::tag ${VERSION} (${GITHUB_SHA}) is not on main (${on_main}); refusing to release it" >&2
+            exit 1
+          fi
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24'
@@ -98,9 +126,9 @@ jobs:
     name: Build and sign container image
     runs-on: ubuntu-latest
     needs: ipfs
-    # Publishes to Docker Hub: only from a v* tag (or main), in the dockerhub
+    # Publishes to Docker Hub: only from a v* tag, in the dockerhub
     # environment that holds DOCKERHUB_TOKEN.
-    if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main'
+    if: github.ref_type == 'tag' && startsWith(github.ref, 'refs/tags/v')
     environment: dockerhub
     permissions:
       contents: read
@@ -228,9 +256,9 @@ jobs:
     name: Assemble verified release
     runs-on: ubuntu-latest
     needs: [ipfs, docker, packages]
-    # Creates the GitHub release: only from a v* tag (or main), in the release
+    # Creates the GitHub release: only from a v* tag, in the release
     # environment that holds the anchoring secrets.
-    if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main'
+    if: github.ref_type == 'tag' && startsWith(github.ref, 'refs/tags/v')
     environment: release
     permissions:
       contents: write # create the release and upload its assets
@@ -280,12 +308,20 @@ jobs:
         run: deployment/release/assemble-release-artifacts.sh
       # The GitHub CLI with this job's token, not a third-party action holding
       # contents: write. --verify-tag refuses to invent a tag that was never
-      # pushed (the action created one at the default branch).
-      - name: Publish the GitHub release
+      # pushed (the action created one at the default branch). The release is
+      # a DRAFT: the installers trust it only once the owner signs its
+      # checksum list offline (deployment/release/RELEASE-SIGNING.md). Assets
+      # are replaced only on a draft; a published release is never touched.
+      - name: Publish the GitHub release as a draft
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if ! gh release view "${VERSION}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            gh release create "${VERSION}" --repo "${GITHUB_REPOSITORY}" --verify-tag --title "${VERSION}" --notes ""
+          if is_draft="$(gh release view "${VERSION}" --repo "${GITHUB_REPOSITORY}" --json isDraft --jq .isDraft 2>/dev/null)"; then
+            if [[ "${is_draft}" != true ]]; then
+              echo "::error::release ${VERSION} is already published; refusing to replace its assets" >&2
+              exit 1
+            fi
+          else
+            gh release create "${VERSION}" --repo "${GITHUB_REPOSITORY}" --verify-tag --draft --title "${VERSION}" --notes ""
           fi
           gh release upload "${VERSION}" dist/release/* --repo "${GITHUB_REPOSITORY}" --clobber

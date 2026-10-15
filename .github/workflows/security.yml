@@ -91,7 +91,8 @@ jobs:
           node-version: '24'
 
       - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+        # A pinned release; go install checks it against sum.golang.org.
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
 
       - name: Install WasmEdge
         env:

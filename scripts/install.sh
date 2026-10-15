@@ -418,7 +418,7 @@ install_unix_links() {
 
 print_windows_usage() {
     log_info "Extracted portable Windows bundle to ${BUNDLE_ROOT}"
-    log_info "For native PowerShell, run: irm https://spacedatanetwork.org/install.ps1 | iex"
+    log_info "The native PowerShell installer is disabled until it verifies signed releases"
     log_info "For this Bash environment, add ${BUNDLE_ROOT}/bin to your PATH"
     log_info "Run ${BUNDLE_ROOT}/bin/spacedatanetwork.exe version"
     log_info "Alias binary: ${BUNDLE_ROOT}/bin/sdn.exe"

@@ -10,8 +10,8 @@ archive. It describes v1.0.5-beta.70 (2026-09-18).
 ```sh
 # macOS or Linux
 curl -fsSL https://spacedatanetwork.org/install.sh | bash
-# Windows PowerShell
-irm https://spacedatanetwork.org/install.ps1 | iex
+# Windows: run the command above inside WSL. The native PowerShell installer
+# is disabled until it verifies signed releases.
 ```
 
 The shell installer resolves the newest node release on GitHub whose

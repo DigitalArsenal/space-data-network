@@ -34,7 +34,7 @@ jobs:
     # run from main, in the npm-publish environment where the owner's required
     # reviewers approve it. npm's trusted publisher should require this
     # environment too, so no other workflow run can mint the provenance.
-    if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main'
+    if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main'
     environment: npm-publish
     permissions:
       contents: read

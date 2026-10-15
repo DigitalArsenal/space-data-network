@@ -238,6 +238,7 @@ run_preflight() {
     deployment/release/build-cli-update-payload.test.mjs \
     deployment/release/build-self-contained-cli.test.mjs \
     deployment/release/build-update-carrier.test.mjs \
+    deployment/release/ci-release-gates.test.mjs \
     deployment/release/extract-release-binary.test.mjs \
     deployment/release/install-script.test.mjs \
     deployment/release/install-signature.test.mjs \

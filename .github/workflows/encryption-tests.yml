@@ -269,6 +269,10 @@ jobs:
         uses: trufflesecurity/trufflehog@e76dff8a7e57d6df0c60ad8cbf5d5cba505a8fc9 # v3.99.2
         with:
           path: ./tests/encryption
+          # The action runs ghcr.io/trufflesecurity/trufflehog:<version>, and
+          # its default version is `latest`: pin the scanner image by digest
+          # too, not just the action (SEC-042).
+          version: 3.99.2@sha256:47a84bc18a0d04a165498bbbd3bacfd84176661cbc91f8e0f85467f6a771e99a
           extra_args: --only-verified
 
   # ============================================

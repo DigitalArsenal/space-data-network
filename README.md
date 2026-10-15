@@ -77,8 +77,8 @@ the node's private interface.
 # macOS/Linux
 curl -fsSL https://spacedatanetwork.org/install.sh | bash
 
-# Windows PowerShell
-irm https://spacedatanetwork.org/install.ps1 | iex
+# Windows: run the macOS/Linux command inside WSL. The native PowerShell
+# installer is disabled until it verifies signed releases (SEC-045).
 
 # Or build from source
 git clone https://github.com/DigitalArsenal/space-data-network.git

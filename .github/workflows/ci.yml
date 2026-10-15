@@ -235,12 +235,8 @@ jobs:
           export DEBIAN_FRONTEND=noninteractive
           echo "deb http://apt.llvm.org/focal/ llvm-toolchain-focal-16 main" > /etc/apt/sources.list.d/llvm.list
           curl -fsSL -o /tmp/llvm-snapshot.gpg.key https://apt.llvm.org/llvm-snapshot.gpg.key
-          key_fpr="$(gpg --show-keys --with-colons /tmp/llvm-snapshot.gpg.key | awk -F: '$1 == "fpr" { print $10; exit }')"
-          if [ "${key_fpr}" != "${LLVM_APT_KEY_FINGERPRINT}" ]; then
-            echo "apt.llvm.org key fingerprint ${key_fpr} is not ${LLVM_APT_KEY_FINGERPRINT}" >&2
-            exit 1
-          fi
-          gpg --dearmor -o /etc/apt/trusted.gpg.d/llvm.gpg < /tmp/llvm-snapshot.gpg.key
+          # Exactly the pinned key and nothing else in the file (SEC-042).
+          scripts/install-pinned-apt-key.sh /tmp/llvm-snapshot.gpg.key "${LLVM_APT_KEY_FINGERPRINT}" /etc/apt/trusted.gpg.d/llvm.gpg
           apt-get update -qq
           apt-get install -y -qq --no-install-recommends \
             ninja-build clang-16 llvm-16-dev liblld-16-dev libpolly-16-dev \

@@ -1,0 +1,83 @@
+name: Deploy spacedatanetwork.org (Pages)
+
+# spacedatanetwork.org serves docs/, and docs/install.sh is the stub every new
+# `curl ... | sh` install runs. Security audit SEC-045: with Pages building
+# straight from main:/docs ("Deploy from a branch"), any push to main changed
+# that stub for every new install, with no review in between. This workflow is
+# the only way docs/ should reach Pages: it deploys from main alone, in the
+# github-pages environment, so the owner's required reviewers approve every
+# deploy. It takes effect when Settings -> Pages -> Source is "GitHub Actions";
+# until then it only reports that Pages still builds from the branch.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy docs/ to Pages
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    permissions:
+      contents: read
+      pages: write # deploy the artifact
+      id-token: write # the Pages deployment's OIDC token
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      # The stub either refuses (nothing provisioned yet) or runs one pinned,
+      # signed release installer; it never deploys half-configured.
+      - name: Check the install stub's pins
+        run: |
+          set -euo pipefail
+          stub=docs/install.sh
+          tag="$(sed -n "s/^SDN_INSTALLER_RELEASE_TAG='\(.*\)'$/\1/p" "$stub")"
+          sha="$(sed -n "s/^SDN_INSTALLER_SHA256='\(.*\)'$/\1/p" "$stub")"
+          key=set
+          grep -qx "SDN_RELEASE_SIGNING_KEY_PEM=''" "$stub" && key=''
+          # No pins: the stub refuses to run. Pins: all three must be set.
+          if [ -n "${tag}${sha}" ]; then
+            [[ "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "::error::SDN_INSTALLER_RELEASE_TAG '${tag}' is not v<semver>"; exit 1; }
+            [[ "${sha}" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::SDN_INSTALLER_SHA256 is not a SHA-256"; exit 1; }
+            [ -n "${key}" ] || { echo "::error::the stub pins a release but embeds no release key"; exit 1; }
+          fi
+          bash -n "$stub"
+
+      - name: Pages source is GitHub Actions
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          build_type="$(gh api "repos/${GITHUB_REPOSITORY}/pages" --jq .build_type)"
+          if [ "${build_type}" = workflow ]; then
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::Pages still builds '${build_type}' from a branch, so any push to main changes docs/install.sh unreviewed. Owner: Settings -> Pages -> Source -> GitHub Actions."
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload docs/
+        if: steps.source.outputs.deploy == 'true'
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: docs
+
+      - name: Deploy
+        id: deploy
+        if: steps.source.outputs.deploy == 'true'
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

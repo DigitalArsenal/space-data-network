@@ -14,7 +14,11 @@ signature by an **offline release key** that CI never holds.
 | `docs/install.sh` (served at `https://spacedatanetwork.org/install.sh`) | Runs `install.sh` from ONE pinned release (`SDN_INSTALLER_RELEASE_TAG`), only if its SHA-256 equals `SDN_INSTALLER_SHA256` and the release's signed checksum list gives it that same SHA-256. Never reads `main`. |
 | `scripts/install.sh` (the release asset `install.sh`) | Considers the newest node releases, skips any whose `spacedatanetwork-checksums.txt.sig` does not verify against the embedded public key or whose list does not name this platform's archive, then checks the archive against that verified list. A pinned `SDN_VERSION` must verify too. |
 | `docs/install.ps1` | Refuses to run until the PowerShell installer verifies the same signature. |
-| `beta-release-artifacts.yml` | Creates the release as a **draft**. It cannot make a release installable. |
+| `beta-release-artifacts.yml` | Runs from `main` only and creates the release as a **draft**. It cannot make a release installable. |
+| `release-deploy.yml` | Runs only from the `v*` tag it releases (no version input), refuses a tag whose commit is not on `main`, creates a **draft**, and never replaces the assets of a published release. |
+| `docker-publish.yml` | Builds only the `v*` tag it runs from (no ref input), and only if that commit is on `main`. |
+| `pages.yml` | The only path from `docs/` to spacedatanetwork.org once Pages' source is "GitHub Actions": from `main`, in the `github-pages` environment, so every change to `docs/install.sh` waits for the owner's approval. |
+| `sign-release-checksums.sh sign` | Refuses unless the draft's `install.sh` is byte-identical to `scripts/install.sh` at the tag, embeds the public half of the key signing it, and is listed at its real digest; the tag must be on `origin/main` and the list must name only this version's installer archives. |
 
 Both installers fail closed: no key embedded, no `openssl`, a missing or bad
 signature, a missing archive entry or a checksum mismatch all stop the install
@@ -44,21 +48,38 @@ Until step 3 lands, both installers refuse to install anything.
 1. Dispatch **SDN Beta Release Artifacts** from `main`. Its publishing jobs
    wait for approval in their environments (`dockerhub`, `update-signing`,
    `macos-signing`, `release`). The run ends with a **draft** release.
-2. On the signing machine, fetch the draft's checksum list and review it:
-   `gh release download <tag> --repo DigitalArsenal/space-data-network -p spacedatanetwork-checksums.txt`
+2. On the signing machine, in a checkout of this repository, fetch the tag
+   and `main`, then the draft's checksum list and installer:
+   `git fetch origin main --tags`
+   `gh release download <tag> --repo DigitalArsenal/space-data-network -D draft -p spacedatanetwork-checksums.txt -p install.sh`
+   (add `-p 'spacedatanetwork-*.tar.gz'` to have every archive checked too).
 3. Sign it offline:
-   `deployment/release/sign-release-checksums.sh sign <release-key.pem> spacedatanetwork-checksums.txt`
-   (it prints the list it signs and verifies the result against the key
-   embedded in `scripts/install.sh`).
+   `deployment/release/sign-release-checksums.sh sign <release-key.pem> <tag> draft`
+   It refuses unless `draft/install.sh` is exactly `scripts/install.sh` at
+   `<tag>`, that installer embeds the public half of `<release-key.pem>`, the
+   list gives it its real SHA-256, `<tag>` is on `origin/main`, and the list
+   names no installer archive of another version. Then it prints the list,
+   signs it and verifies the signature.
 4. Upload the signature and publish:
-   `gh release upload <tag> spacedatanetwork-checksums.txt.sig --repo DigitalArsenal/space-data-network`
+   `gh release upload <tag> draft/spacedatanetwork-checksums.txt.sig --repo DigitalArsenal/space-data-network`
    `gh release edit <tag> --draft=false --latest --repo DigitalArsenal/space-data-network`
    Publishing triggers **Smoke published installers**.
 5. To move the public stub to this release's installer:
-   `deployment/release/sign-release-checksums.sh installer-pin spacedatanetwork-checksums.txt`
+   `deployment/release/sign-release-checksums.sh installer-pin draft/spacedatanetwork-checksums.txt`
    prints the SHA-256 to set as `SDN_INSTALLER_SHA256` in `docs/install.sh`,
    with `SDN_INSTALLER_RELEASE_TAG=<tag>`. Land it through a reviewed pull
-   request; Pages serves it from `main`.
+   request; `pages.yml` deploys it after the `github-pages` environment's
+   reviewer approves. While Pages still builds from the branch (Settings ->
+   Pages -> Source "Deploy from a branch"), any push to `main` changes the
+   stub with no approval: switching the source to "GitHub Actions" is part of
+   closing SEC-045.
+
+## Re-running a release by hand
+
+Dispatch on the tag, never with a name typed into an input:
+`gh workflow run release-deploy.yml --ref <tag>` and
+`gh workflow run docker-publish.yml --ref <tag>`. Both refuse a branch, a
+non-semver tag and a tag whose commit is not on `main`.
 
 ## Rotating the key
 

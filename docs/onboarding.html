@@ -108,7 +108,7 @@
         <div class="code"><span class="label">macOS / Linux</span><button class="copy" type="button">Copy</button><pre><code>curl -fsSL https://spacedatanetwork.org/install.sh | bash
 spacedatanetwork start
 spacedatanetwork open</code></pre></div>
-        <div class="code"><span class="label">Windows PowerShell</span><button class="copy" type="button">Copy</button><pre><code>irm https://spacedatanetwork.org/install.ps1 | iex
+        <div class="code"><span class="label">Windows (in WSL)</span><button class="copy" type="button">Copy</button><pre><code>curl -fsSL https://spacedatanetwork.org/install.sh | bash
 spacedatanetwork start
 spacedatanetwork open</code></pre></div>
         <p class="note">The dashboard lives at <code>http://127.0.0.1:5001/</code>. The icons on the left switch between <b>This node</b>, <b>Nodes</b> and <b>Store</b>.</p>
@@ -214,9 +214,9 @@ await node.publish('OMM', ommData);</code></pre></div>
       </table></div>
 
       <h3 id="bare-metal">Bare metal: download and install</h3>
-      <p>The installer finds the newest node release on <a href="https://github.com/DigitalArsenal/space-data-network/releases" target="_blank" rel="noopener">GitHub</a>, downloads the bundle for your system, checks it against the release&rsquo;s published checksums, unpacks it under <code>~/.spacedatanetwork/bundles</code>, puts the <code>spacedatanetwork</code> command (and its short name, <code>sdn</code>) in <code>~/.spacedatanetwork/bin</code>, and creates the node&rsquo;s identity. It needs no administrator rights.</p>
+      <p>The installer finds the newest node release on <a href="https://github.com/DigitalArsenal/space-data-network/releases" target="_blank" rel="noopener">GitHub</a>, downloads the bundle for your system, checks it against the release&rsquo;s checksum list after verifying the release key&rsquo;s signature on it, unpacks it under <code>~/.spacedatanetwork/bundles</code>, puts the <code>spacedatanetwork</code> command (and its short name, <code>sdn</code>) in <code>~/.spacedatanetwork/bin</code>, and creates the node&rsquo;s identity. It needs no administrator rights.</p>
       <div class="code"><span class="label">macOS / Linux</span><button class="copy" type="button">Copy</button><pre><code>curl -fsSL https://spacedatanetwork.org/install.sh | bash</code></pre></div>
-      <div class="code"><span class="label">Windows PowerShell</span><button class="copy" type="button">Copy</button><pre><code>irm https://spacedatanetwork.org/install.ps1 | iex</code></pre></div>
+      <div class="code"><span class="label">Windows (in WSL)</span><button class="copy" type="button">Copy</button><pre><code>curl -fsSL https://spacedatanetwork.org/install.sh | bash</code></pre></div>
       <ul>
         <li>If the installer says <code>~/.spacedatanetwork/bin</code> is not on your <code>PATH</code>, add it: <code>export PATH="$HOME/.spacedatanetwork/bin:$PATH"</code>.</li>
         <li>To install a particular release instead of the newest, set <code>SDN_VERSION</code>, for example <code>SDN_VERSION=v1.0.5-beta.70</code>. <code>SDN_INSTALL_DIR</code> and <code>SDN_BUNDLE_DIR</code> move the command links and the bundles.</li>
