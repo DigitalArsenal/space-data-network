@@ -157,7 +157,8 @@ done
 # was actually staged.
 #
 # What the audit of hd-wallet-ui@2.0.28 found, re-checked for 2.1.0 (the
-# single-hash ECDSA release, 2026-10-14), so the next auditor starts here:
+# single-hash ECDSA release, 2026-10-14) and for 2.1.2 (2026-10-15: the three
+# staged files are byte-identical to 2.1.0's), so the next auditor starts here:
 #   * The in-page app performs NO cross-document or push egress: no window.open,
 #     no postMessage, no WebSocket/EventSource/sendBeacon/XHR/importScripts, and
 #     it injects no <script>. This guard keeps that true across upgrades.
