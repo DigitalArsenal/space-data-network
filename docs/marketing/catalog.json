@@ -775,7 +775,7 @@
         "Star catalog delivered over SDN and hash-checked",
         "Deeper catalog to magnitude 10, joined after the sky first draws",
         "Milky Way and diffuse sky from an all-sky image fetched over SDN by CID",
-        "Camera model: preset and exposure set the sky brightness",
+        "A camera model draws the sky at a real camera's exposure",
         "Every catalog and image credited in the CREDITS menu"
       ],
       "standards": [
