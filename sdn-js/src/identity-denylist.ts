@@ -147,6 +147,20 @@ function endpointAddrs(endpoint: AnchorEndpoint, kind: 'browserTransports' | 'bo
   return endpoint[kind].map((transport) => `${transport.replace(/\/+$/, '')}/p2p/${endpoint.peerId}`);
 }
 
+/**
+ * The anchored provider's grant-verifier key(s) (anchors.json
+ * provider.grantVerifierPublicKey), as raw bytes; empty while the anchors are
+ * placeholders. Pass them as requestModuleGrant's
+ * trustedGrantVerifierPublicKeys for the anchored provider.
+ */
+export function anchoredGrantVerifierPublicKeys(): Uint8Array[] {
+  const key = String(IDENTITY_ANCHORS.provider.grantVerifierPublicKey);
+  if (isPlaceholderAnchor(key) || !/^[0-9a-f]{64}$/i.test(key) || isDeniedIdentityValue(key)) return [];
+  const out = new Uint8Array(32);
+  for (let i = 0; i < 32; i += 1) out[i] = Number.parseInt(key.slice(i * 2, i * 2 + 2), 16);
+  return [out];
+}
+
 /** The anchored provider's PeerID, or '' while the anchors file still holds a placeholder. */
 export const ANCHORED_PROVIDER_PEER_ID: string =
   isPlaceholderAnchor(IDENTITY_ANCHORS.provider.peerId) || isDeniedIdentityValue(IDENTITY_ANCHORS.provider.peerId)

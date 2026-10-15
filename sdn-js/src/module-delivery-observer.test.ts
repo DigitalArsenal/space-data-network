@@ -26,7 +26,7 @@ const licensingMocks = vi.hoisted(() => ({
     requestedTimeoutMs: 30_000,
     grantedDomain: 'xpub6FixtureAllowList',
     grantedTimeoutMs: 30_000,
-    expiresAtMs: 1_700_003_600_000,
+    expiresAtMs: Date.now() + 24 * 3_600_000,
     grantStatus: 'active',
     capabilityToken: new Uint8Array([1, 2, 3]),
     grantVerifierPublicKey: new Uint8Array(32).fill(5),
@@ -53,7 +53,7 @@ const licensingMocks = vi.hoisted(() => ({
     iv: new Uint8Array(12),
     ciphertext: new Uint8Array(4),
     tag: new Uint8Array(16),
-    expiresAtMs: 1_700_003_600_000,
+    expiresAtMs: Date.now() + 24 * 3_600_000,
     recipientPublicKey: new Uint8Array(32),
     ephemeralPublicKey: new Uint8Array(32),
     nonce: new Uint8Array(12),
@@ -150,6 +150,7 @@ describe('module-delivery observers', () => {
     const grant = await requestModuleGrant(transport, {
       serverDescriptor: {
         publicKey: '02'.padEnd(66, '1'),
+        grantVerifierPublicKeys: ['05'.repeat(32)],
       },
       requesterIdentity: {
         peerId: 'requester-peer-id',

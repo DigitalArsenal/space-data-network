@@ -115,7 +115,19 @@ export interface ModuleGrantRequestOptions {
   requesterDomain: string;
   requestedTimeoutMs: number;
   reqId?: string;
+  /**
+   * Sent to the provider on the wire. The client's own expired-grant check
+   * always uses the LOCAL clock, whatever this says (core-delivery item D:
+   * requestedAtMs: 0 used to switch that check off).
+   */
   requestedAtMs?: number;
+  /**
+   * The grant-verifier keys a grant must be stamped with. Default: the keys the
+   * provider's descriptor/EPM advertises. For the anchored provider pass
+   * anchoredGrantVerifierPublicKeys(). An EMPTY list is refused, never read as
+   * "accept any" (core-delivery item D).
+   */
+  trustedGrantVerifierPublicKeys?: Uint8Array[];
   observer?: ModuleDeliveryObserver;
 }
 
@@ -222,6 +234,14 @@ export async function requestModuleGrant(
     options.descriptorResolver,
   );
   const requesterIdentity = normalizeRequesterIdentity(options.requesterIdentity);
+  const trustedGrantVerifierPublicKeys = (options.trustedGrantVerifierPublicKeys ?? provider.grantVerifierPublicKeys ?? [])
+    .filter((key) => key instanceof Uint8Array && key.length > 0);
+  if (trustedGrantVerifierPublicKeys.length === 0) {
+    throw new ModuleDeliveryProtocolError(
+      'no_trusted_grant_verifier',
+      'no trusted grant-verifier key: the provider advertises none and none was passed (trustedGrantVerifierPublicKeys); a grant cannot be verified',
+    );
+  }
   const discovery = await discoverProvider(provider.publicKey);
   const candidateAddrs = await resolveCandidateAddresses(
     transport,
@@ -303,11 +323,13 @@ export async function requestModuleGrant(
   if (challenge.moduleId !== moduleId) {
     throw new ModuleDeliveryProtocolError('request_mismatch', 'grant challenge module id mismatch');
   }
-  if (moduleVersion && challenge.moduleVersion && challenge.moduleVersion !== moduleVersion) {
-    throw new ModuleDeliveryProtocolError('request_mismatch', 'grant challenge module version mismatch');
+  // The echoes are REQUIRED (core-delivery item D): a missing one is a
+  // mismatch, not a pass.
+  if (moduleVersion && challenge.moduleVersion !== moduleVersion) {
+    throw new ModuleDeliveryProtocolError('request_mismatch', 'grant challenge module version missing or mismatched');
   }
-  if (challenge.providerPeerId && challenge.providerPeerId !== provider.peerId) {
-    throw new ModuleDeliveryProtocolError('provider_mismatch', 'provider peer id mismatch');
+  if (challenge.providerPeerId !== provider.peerId) {
+    throw new ModuleDeliveryProtocolError('provider_mismatch', 'grant challenge provider peer id missing or mismatched');
   }
 
   const signature = await sign(requesterIdentity.signingKey.privateKey, challenge.rawBytes);
@@ -340,7 +362,7 @@ export async function requestModuleGrant(
     expectedDomain: requesterDomain,
     requestedTimeoutMs,
     requestedAtMs,
-    trustedGrantVerifierPublicKeys: provider.grantVerifierPublicKeys,
+    trustedGrantVerifierPublicKeys,
   });
   console.info('[sdn-js] grant response received', {
     moduleId,
@@ -566,7 +588,12 @@ async function decodeGrantResponse(
   try {
     const decodedGrant = decodeLicensingGrant(bytes);
     const validatedGrant = validateLicensingGrant(decodedGrant, options);
-    await validateGrantEnvelope(validatedGrant, options.requestedAtMs, options.trustedGrantVerifierPublicKeys);
+    if (options.moduleVersion && trimOptional(validatedGrant.moduleVersion) !== options.moduleVersion) {
+      throw new ModuleDeliveryProtocolError('request_mismatch', 'grant response module version missing or mismatched');
+    }
+    // Expiry is judged by the LOCAL clock, never by the requestedAtMs the
+    // caller put on the wire (core-delivery item D).
+    await validateGrantEnvelope(validatedGrant, Date.now(), options.trustedGrantVerifierPublicKeys);
     const bundleDescriptor = extractGrantModuleDescriptor(validatedGrant);
     const wrappedContentKey = extractWrappedContentKey(validatedGrant);
     validateWrappedContentKeyEnvelope(wrappedContentKey);
@@ -579,7 +606,7 @@ async function decodeGrantResponse(
 
 async function validateGrantEnvelope(
   grant: LicensingGrantMessage,
-  requestedAtMs: number,
+  nowMs: number,
   trustedGrantVerifierPublicKeys: Uint8Array[] = [],
 ): Promise<void> {
   const grantVerifierPublicKey = cloneOptionalBytes(grant.grantVerifierPublicKey);
@@ -591,18 +618,21 @@ async function validateGrantEnvelope(
       'licensing grant verifier public key is denylisted (SEC-001: its seed was published)',
     );
   }
-  if (
-    trustedGrantVerifierPublicKeys.length > 0 &&
-    !trustedGrantVerifierPublicKeys.some((trustedKey) => equalBytes(trustedKey, grantVerifierPublicKey))
-  ) {
+  if (trustedGrantVerifierPublicKeys.length === 0) {
+    throw new ModuleDeliveryProtocolError('no_trusted_grant_verifier', 'no trusted grant-verifier key to check the grant against');
+  }
+  if (!trustedGrantVerifierPublicKeys.some((trustedKey) => equalBytes(trustedKey, grantVerifierPublicKey))) {
     throw new ModuleDeliveryProtocolError(
       'invalid_grant_verifier',
       'licensing grant verifier public key is not advertised by the provider EPM',
     );
   }
 
+  if (grant.expiresAtMs > 0 && grant.expiresAtMs <= nowMs) {
+    throw new ModuleDeliveryProtocolError('grant_expired', 'licensing grant has expired');
+  }
   await verifyLicensingGrantProviderSignature(grant, {
-    requestedAtMs,
+    requestedAtMs: nowMs,
     verify,
   });
 }
@@ -769,8 +799,13 @@ function cloneOptionalBytes(value: Uint8Array | null | undefined): Uint8Array {
   return value ? value.slice() : new Uint8Array(0);
 }
 
-function createReqId(): string {
-  return `req-${Math.random().toString(36).slice(2, 10)}`;
+/** A request id with 128 bits from the platform CSPRNG (core-delivery item D). */
+export function createReqId(): string {
+  const bytes = new Uint8Array(16);
+  globalThis.crypto.getRandomValues(bytes);
+  let hex = '';
+  for (const byte of bytes) hex += byte.toString(16).padStart(2, '0');
+  return `req-${hex}`;
 }
 
 function normalizeRequestedTimeoutMs(value: number): number {

@@ -187,8 +187,19 @@ export function evaluateFilters(data: Record<string, unknown>, filters: QueryFil
  */
 export function generateSubscriptionId(): string {
   const timestamp = Date.now().toString(36);
-  const random = Math.random().toString(36).substring(2, 10);
-  return `sub_${timestamp}_${random}`;
+  return `sub_${timestamp}_${randomIdSuffix()}`;
+}
+
+/**
+ * 128 bits from the platform CSPRNG as hex: identifiers that name a session,
+ * a session key or a subscription are never Math.random (core-delivery item D).
+ */
+export function randomIdSuffix(): string {
+  const bytes = new Uint8Array(16);
+  globalThis.crypto.getRandomValues(bytes);
+  let hex = '';
+  for (const byte of bytes) hex += byte.toString(16).padStart(2, '0');
+  return hex;
 }
 
 /**
@@ -1138,14 +1149,14 @@ export class DesktopSubscriptionAPI {
     const subscription = this.manager.createSubscription(config);
 
     const session: StreamingSession = {
-      id: `sess_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 10)}`,
+      id: `sess_${Date.now().toString(36)}_${randomIdSuffix()}`,
       subscriptionId: subscription.id,
       peerId,
       schemaTypes: config.dataTypes,
       mode,
       encryptionMode: encMode,
       sessionKeyId: encMode === EncryptionMode.SessionKey
-        ? `sk_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 10)}`
+        ? `sk_${Date.now().toString(36)}_${randomIdSuffix()}`
         : undefined,
       active: true,
       messagesSent: 0,

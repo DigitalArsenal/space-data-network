@@ -307,7 +307,7 @@ describe('module-delivery SDK compatibility', () => {
           requestedTimeoutMs: BigInt(decoded.requestedTimeoutMs),
           grantedDomain: 'xpub6FixtureAllowList',
           grantedTimeoutMs: 300_000n,
-          expiresAtMs: 1_700_003_600_000n,
+          expiresAtMs: BigInt(Date.now() + 24 * 3_600_000),
           contentHash: new Uint8Array(32).fill(7),
         });
         return capturedGrantBytes;
@@ -320,6 +320,7 @@ describe('module-delivery SDK compatibility', () => {
     const result = await requestModuleGrant(transport, {
       serverDescriptor: {
         publicKey: '02'.padEnd(66, '1'),
+        grantVerifierPublicKeys: ['05'.repeat(32)],
         relayAddresses: ['/dns4/relay.example/tcp/443/wss/p2p/relay-peer'],
       },
       requesterIdentity: {

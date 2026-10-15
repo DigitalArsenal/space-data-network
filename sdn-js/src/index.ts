@@ -417,6 +417,7 @@ export { verifyEPMSignature } from './epm-resolver';
 // (SpaceAware-UI, OrbPro) read the provider from here instead of pinning it.
 export {
   ANCHORED_PROVIDER_PEER_ID,
+  anchoredGrantVerifierPublicKeys,
   anchoredBrowserRelays,
   anchoredBootstrapAddrs,
   anchoredPeerId,

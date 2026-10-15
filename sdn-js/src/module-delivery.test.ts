@@ -57,6 +57,11 @@ import {
   requestModuleGrant,
 } from './module-delivery';
 
+// Item D: the client judges grant expiry by its LOCAL clock, so a grant must
+// expire in the future; and every request names a trusted grant verifier.
+const GRANT_EXPIRES_AT = BigInt(Date.now() + 24 * 3_600_000);
+const TRUSTED_GRANT_VERIFIER_HEX = '05'.repeat(32);
+
 describe('module-delivery', () => {
   it('keeps the module-delivery requester API on the public root package export', async () => {
     const sdn = await import('@spacedatanetwork/sdn-js');
@@ -112,7 +117,7 @@ describe('module-delivery', () => {
           requestedTimeoutMs: proof.REQUESTED_TIMEOUT_MS(),
           grantedDomain: 'xpub6FixtureAllowList',
           grantedTimeoutMs: 300_000n,
-          expiresAtMs: 1_700_003_600_000n,
+          expiresAtMs: GRANT_EXPIRES_AT,
           contentHash: new Uint8Array(32).fill(7),
         });
         this.grantResponseBytes = grantResponseBytes;
@@ -126,6 +131,7 @@ describe('module-delivery', () => {
     const result = await requestModuleGrant(transport, {
       serverDescriptor: {
         publicKey: '02'.padEnd(66, '1'),
+        grantVerifierPublicKeys: [TRUSTED_GRANT_VERIFIER_HEX],
         relayAddresses: ['/dns4/relay.example/tcp/443/wss/p2p/relay-peer'],
       },
       requesterIdentity: {
@@ -233,7 +239,7 @@ describe('module-delivery', () => {
           requestedTimeoutMs: proof.REQUESTED_TIMEOUT_MS(),
           grantedDomain: 'xpub6FixtureAllowList',
           grantedTimeoutMs: proof.REQUESTED_TIMEOUT_MS(),
-          expiresAtMs: 1_700_003_600_000n,
+          expiresAtMs: GRANT_EXPIRES_AT,
           contentHash: new Uint8Array(32).fill(7),
         });
       },
@@ -249,6 +255,7 @@ describe('module-delivery', () => {
     const result = await requestModuleGrant(transport, {
       serverDescriptor: {
         publicKey: '02'.padEnd(66, '1'),
+        grantVerifierPublicKeys: [TRUSTED_GRANT_VERIFIER_HEX],
         relayAddresses: [explicitRelay],
       },
       requesterIdentity: {
@@ -414,7 +421,7 @@ describe('module-delivery', () => {
           requestedTimeoutMs: 30_000n,
           grantedDomain: 'example.org',
           grantedTimeoutMs: 30_000n,
-          expiresAtMs: 1_700_003_600_000n,
+          expiresAtMs: GRANT_EXPIRES_AT,
           contentHash: new Uint8Array(32).fill(7),
         });
       },
@@ -429,6 +436,7 @@ describe('module-delivery', () => {
     const result = await requestModuleGrant(transport, {
       serverDescriptor: {
         publicKey: '02'.padEnd(66, '1'),
+        grantVerifierPublicKeys: [TRUSTED_GRANT_VERIFIER_HEX],
       },
       requesterDomain: 'example.org',
       requesterIdentity: {
@@ -491,7 +499,7 @@ describe('module-delivery', () => {
           requestedTimeoutMs: proof.REQUESTED_TIMEOUT_MS(),
           grantedDomain: 'xpub6FixtureAllowList',
           grantedTimeoutMs: proof.REQUESTED_TIMEOUT_MS() + 1n,
-          expiresAtMs: 1_700_003_600_000n,
+          expiresAtMs: GRANT_EXPIRES_AT,
           contentHash: new Uint8Array(32).fill(7),
         });
       },
@@ -504,6 +512,7 @@ describe('module-delivery', () => {
       requestModuleGrant(transport, {
         serverDescriptor: {
           publicKey: '02'.padEnd(66, '1'),
+          grantVerifierPublicKeys: [TRUSTED_GRANT_VERIFIER_HEX],
           relayAddresses: ['/dns4/relay.example/tcp/443/wss/p2p/relay-peer'],
         },
         requesterIdentity: {
@@ -560,7 +569,7 @@ describe('module-delivery', () => {
           requestedTimeoutMs: proof.REQUESTED_TIMEOUT_MS(),
           grantedDomain: 'xpub6FixtureAllowList',
           grantedTimeoutMs: proof.REQUESTED_TIMEOUT_MS(),
-          expiresAtMs: 1_700_003_600_000n,
+          expiresAtMs: GRANT_EXPIRES_AT,
           contentHash: new Uint8Array(32).fill(7),
           ...grantOverrides,
         });
@@ -572,6 +581,7 @@ describe('module-delivery', () => {
     const request = {
       serverDescriptor: {
         publicKey: '02'.padEnd(66, '1'),
+        grantVerifierPublicKeys: [TRUSTED_GRANT_VERIFIER_HEX],
         relayAddresses: ['/dns4/relay.example/tcp/443/wss/p2p/relay-peer'],
       },
       requesterIdentity: {
@@ -655,7 +665,7 @@ describe('module-delivery', () => {
           requestedTimeoutMs: proof.REQUESTED_TIMEOUT_MS(),
           grantedDomain: 'xpub6FixtureAllowList',
           grantedTimeoutMs: proof.REQUESTED_TIMEOUT_MS(),
-          expiresAtMs: 1_700_003_600_000n,
+          expiresAtMs: GRANT_EXPIRES_AT,
           contentHash: new Uint8Array(32).fill(7),
           createdAtMs,
           updatedAtMs,
@@ -669,6 +679,7 @@ describe('module-delivery', () => {
     await requestModuleGrant(transport, {
       serverDescriptor: {
         publicKey: '02'.padEnd(66, '1'),
+        grantVerifierPublicKeys: [TRUSTED_GRANT_VERIFIER_HEX],
         relayAddresses: ['/dns4/relay.example/tcp/443/wss/p2p/relay-peer'],
       },
       requesterIdentity: {
@@ -731,7 +742,7 @@ describe('module-delivery', () => {
           requestedTimeoutMs: proof.REQUESTED_TIMEOUT_MS(),
           grantedDomain: 'xpub6FixtureAllowList',
           grantedTimeoutMs: proof.REQUESTED_TIMEOUT_MS(),
-          expiresAtMs: 1_700_003_600_000n,
+          expiresAtMs: GRANT_EXPIRES_AT,
           contentHash: new Uint8Array(32).fill(7),
           grantVerifierPublicKey: new Uint8Array(32).fill(5),
         });
@@ -778,7 +789,7 @@ describe('module-delivery', () => {
     });
   });
 
-  it('rejects grants stamped with the SEC-001 denylisted grant verifier key, even with no advertised verifier list', async () => {
+  it('rejects grants stamped with the SEC-001 denylisted grant verifier key, even when the caller trusts it', async () => {
     const transport = {
       async dialProtocol(
         _targetPeerId: string,
@@ -808,7 +819,7 @@ describe('module-delivery', () => {
           requestedTimeoutMs: proof.REQUESTED_TIMEOUT_MS(),
           grantedDomain: 'xpub6FixtureAllowList',
           grantedTimeoutMs: proof.REQUESTED_TIMEOUT_MS(),
-          expiresAtMs: 1_700_003_600_000n,
+          expiresAtMs: GRANT_EXPIRES_AT,
           contentHash: new Uint8Array(32).fill(7),
           grantVerifierPublicKey: hexToBytes(IDENTITY_ANCHORS.denylist.ed25519PublicKeys[1]),
         });
@@ -822,6 +833,7 @@ describe('module-delivery', () => {
       requestModuleGrant(transport, {
         serverDescriptor: {
           publicKey: '02'.padEnd(66, '1'),
+          grantVerifierPublicKeys: [TRUSTED_GRANT_VERIFIER_HEX],
           relayAddresses: ['/dns4/relay.example/tcp/443/wss/p2p/relay-peer'],
         },
         requesterIdentity: {
@@ -840,6 +852,7 @@ describe('module-delivery', () => {
         moduleVersion: '0.5.22',
         requesterDomain: 'xpub6FixtureAllowList',
         requestedTimeoutMs: 30_000,
+        trustedGrantVerifierPublicKeys: [hexToBytes(IDENTITY_ANCHORS.denylist.ed25519PublicKeys[1])],
         reqId: 'req-denied-verifier',
         requestedAtMs: 1_700_000_000_000,
       }),
@@ -879,7 +892,7 @@ describe('module-delivery', () => {
           requestedTimeoutMs: proof.REQUESTED_TIMEOUT_MS(),
           grantedDomain: 'xpub6FixtureAllowList',
           grantedTimeoutMs: proof.REQUESTED_TIMEOUT_MS(),
-          expiresAtMs: 1_700_003_600_000n,
+          expiresAtMs: GRANT_EXPIRES_AT,
           contentHash: new Uint8Array(32).fill(7),
           ...grantOverrides,
         });
@@ -895,6 +908,7 @@ describe('module-delivery', () => {
         {
           serverDescriptor: {
             publicKey: '02'.padEnd(66, '1'),
+            grantVerifierPublicKeys: [TRUSTED_GRANT_VERIFIER_HEX],
             relayAddresses: ['/dns4/relay.example/tcp/443/wss/p2p/relay-peer'],
           },
           requesterIdentity: {
@@ -931,6 +945,146 @@ describe('module-delivery', () => {
     expect(exampleSource.includes('requestModuleGrant(')).toBe(true);
     expect(exampleSource.includes('ModuleDeliveryProtocolError')).toBe(true);
     expect(exampleSource.includes('SDN_MODULE_ID')).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Core-delivery item D (OrbPro core delivery): every check fails closed.
+// ---------------------------------------------------------------------------
+function itemDTransport(overrides: {
+  challengeProviderPeerId?: string;
+  challengeModuleVersion?: string | null;
+  grantModuleVersion?: string | null;
+  grantExpiresAtMs?: bigint;
+} = {}) {
+  const transport = {
+    dials: 0,
+    reqIds: [] as string[],
+    async dialProtocol(_targetPeerId: string, _protocolId: string, payload: Uint8Array) {
+      transport.dials += 1;
+      if (isLCH(payload)) {
+        const request = decodeLCH(payload);
+        transport.reqIds.push(request.REQUEST_ID() ?? '');
+        return encodeChallengeResponse({
+          reqId: request.REQUEST_ID() ?? '',
+          moduleId: request.MODULE_ID() ?? '',
+          moduleVersion: overrides.challengeModuleVersion === null ? undefined : (overrides.challengeModuleVersion ?? request.MODULE_VERSION() ?? undefined),
+          providerPeerId: overrides.challengeProviderPeerId ?? 'provider-peer-id',
+          challengeNonce: new Uint8Array([1, 2, 3, 4]),
+          expiresAtMs: 1_700_000_900_000n,
+        });
+      }
+      const proof = decodeLPF(payload);
+      return encodeGrantResponse({
+        reqId: proof.REQUEST_ID() ?? '',
+        moduleId: proof.MODULE_ID() ?? '',
+        moduleVersion: overrides.grantModuleVersion === null ? undefined : (overrides.grantModuleVersion ?? proof.MODULE_VERSION() ?? undefined),
+        requesterPeerId: proof.REQUESTER_PEER_ID() ?? undefined,
+        requesterXpub: proof.REQUESTER_XPUB() ?? undefined,
+        requestedDomain: proof.REQUESTED_DOMAIN() ?? '',
+        requestedTimeoutMs: proof.REQUESTED_TIMEOUT_MS(),
+        grantedDomain: 'xpub6FixtureAllowList',
+        grantedTimeoutMs: proof.REQUESTED_TIMEOUT_MS(),
+        expiresAtMs: overrides.grantExpiresAtMs ?? GRANT_EXPIRES_AT,
+        contentHash: new Uint8Array(32).fill(7),
+      });
+    },
+    async fetchCIDBytes() {
+      return new Uint8Array([1, 2, 3, 4]);
+    },
+  };
+  return transport;
+}
+
+function itemDRequest(extra: Record<string, unknown> = {}) {
+  return {
+    serverDescriptor: {
+      publicKey: '02'.padEnd(66, '1'),
+      relayAddresses: ['/dns4/relay.example/tcp/443/wss/p2p/relay-peer'],
+      grantVerifierPublicKeys: [TRUSTED_GRANT_VERIFIER_HEX],
+    },
+    requesterIdentity: {
+      peerId: 'requester-peer-id',
+      xpub: 'xpub-requester',
+      signingKey: { privateKey: new Uint8Array(32).fill(5), publicKey: new Uint8Array(32).fill(6) },
+      encryptionKey: { privateKey: new Uint8Array(32).fill(7), publicKey: new Uint8Array(32).fill(8) },
+    },
+    moduleId: 'com.space-data-network.fastest-path',
+    moduleVersion: '0.5.22',
+    requesterDomain: 'xpub6FixtureAllowList',
+    requestedTimeoutMs: 30_000,
+    ...extra,
+  } as Parameters<typeof requestModuleGrant>[1];
+}
+
+describe('core-delivery item D', () => {
+  it('exports anchoredGrantVerifierPublicKeys: empty while the anchors are placeholders, the anchored key otherwise', async () => {
+    const { anchoredGrantVerifierPublicKeys } = await import('./identity-denylist');
+    const sdn = await import('./index');
+    expect(typeof (sdn as Record<string, unknown>).anchoredGrantVerifierPublicKeys).toBe('function');
+    const anchored = String(IDENTITY_ANCHORS.provider.grantVerifierPublicKey);
+    if (anchored.startsWith('PLACEHOLDER-')) expect(anchoredGrantVerifierPublicKeys()).toEqual([]);
+    else expect(anchoredGrantVerifierPublicKeys()).toEqual([hexToBytes(anchored)]);
+  });
+
+  it('throws, before dialing anything, when the trusted grant-verifier list is empty', async () => {
+    const transport = itemDTransport();
+    const noList = itemDRequest({ serverDescriptor: { publicKey: '02'.padEnd(66, '1'), relayAddresses: ['/dns4/relay.example/tcp/443/wss/p2p/relay-peer'] } });
+    await expect(requestModuleGrant(transport, noList)).rejects.toMatchObject({ code: 'no_trusted_grant_verifier' });
+    await expect(requestModuleGrant(transport, itemDRequest({ trustedGrantVerifierPublicKeys: [] }))).rejects.toMatchObject({ code: 'no_trusted_grant_verifier' });
+    expect(transport.dials).toBe(0);
+    // A caller-supplied list overrides the provider's (here: it does not hold the grant's key).
+    await expect(
+      requestModuleGrant(itemDTransport(), itemDRequest({ trustedGrantVerifierPublicKeys: [new Uint8Array(32).fill(9)] })),
+    ).rejects.toMatchObject({ code: 'invalid_grant_verifier' });
+    await expect(requestModuleGrant(itemDTransport(), itemDRequest())).resolves.toBeTruthy();
+  });
+
+  it('requires the moduleVersion and providerPeerId echoes to be present and equal to the request', async () => {
+    for (const [overrides, code] of [
+      [{ challengeProviderPeerId: '' }, 'provider_mismatch'],
+      [{ challengeProviderPeerId: 'some-other-peer' }, 'provider_mismatch'],
+      [{ challengeModuleVersion: null }, 'request_mismatch'],
+      [{ challengeModuleVersion: '9.9.9' }, 'request_mismatch'],
+      [{ grantModuleVersion: null }, 'request_mismatch'],
+      [{ grantModuleVersion: '9.9.9' }, 'request_mismatch'],
+    ] as const) {
+      await expect(requestModuleGrant(itemDTransport(overrides), itemDRequest()), JSON.stringify(overrides)).rejects.toMatchObject({ code });
+    }
+  });
+
+  it('creates 128-bit request ids from crypto.getRandomValues', async () => {
+    const { createReqId } = await import('./module-delivery');
+    const spy = vi.spyOn(globalThis.crypto, 'getRandomValues');
+    const ids = new Set(Array.from({ length: 64 }, () => createReqId()));
+    expect(spy).toHaveBeenCalled();
+    spy.mockRestore();
+    expect(ids.size).toBe(64);
+    for (const id of ids) expect(id).toMatch(/^req-[0-9a-f]{32}$/);
+    const transport = itemDTransport();
+    await requestModuleGrant(transport, itemDRequest());
+    expect(transport.reqIds[0]).toMatch(/^req-[0-9a-f]{32}$/);
+  });
+
+  it('the other identifier generators (subscription, session, session key) use 128 CSPRNG bits too', async () => {
+    const { generateSubscriptionId, randomIdSuffix } = await import('./subscription');
+    const spy = vi.spyOn(globalThis.crypto, 'getRandomValues');
+    const ids = new Set(Array.from({ length: 64 }, () => generateSubscriptionId()));
+    expect(spy).toHaveBeenCalled();
+    spy.mockRestore();
+    expect(ids.size).toBe(64);
+    for (const id of ids) expect(id).toMatch(/^sub_[0-9a-z]+_[0-9a-f]{32}$/);
+    expect(randomIdSuffix()).toMatch(/^[0-9a-f]{32}$/);
+  });
+
+  it('judges grant expiry by the local clock, whatever requestedAtMs says (0 included)', async () => {
+    const expired = BigInt(Date.now() - 60_000);
+    for (const requestedAtMs of [0, 1_000, Date.now() - 3_600_000, undefined]) {
+      await expect(
+        requestModuleGrant(itemDTransport({ grantExpiresAtMs: expired }), itemDRequest({ requestedAtMs })),
+        `requestedAtMs=${requestedAtMs}`,
+      ).rejects.toMatchObject({ code: 'grant_expired' });
+    }
   });
 });
 
