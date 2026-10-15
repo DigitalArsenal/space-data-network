@@ -320,7 +320,25 @@ func validateDatasetFeedHeadAnnouncement(ann *DatasetFeedHeadAnnouncement) error
 	ann.IndexCID = strings.TrimSpace(ann.IndexCID)
 	ann.ManifestCID = strings.TrimSpace(ann.ManifestCID)
 	ann.PNMCID = strings.TrimSpace(ann.PNMCID)
-	return nil
+	// A head names its whole lane and both assets itself (SEC-031). Lane
+	// fields left empty used to be filled in later from the fetched index,
+	// which the signature never covered, and an empty batch skipped the lane
+	// checks entirely.
+	switch {
+	case ann.ProviderID == "":
+		return errors.New("dataset feed head names no provider_id")
+	case ann.SourceName == "":
+		return errors.New("dataset feed head names no source_name")
+	case ann.BatchID == "":
+		return errors.New("dataset feed head names no batch_id")
+	case ann.ShardCID == "" || ann.IndexCID == "":
+		return errors.New("dataset feed head names no shard_cid or index_cid")
+	case ann.Limit <= 0:
+		return errors.New("dataset feed head has no positive window limit")
+	}
+	// Ranking metadata no honest producer emits is malformed, whoever sent
+	// it: a missing or future published_at, a sequence outside [1, 2^24].
+	return CheckDatasetFeedHeadBounds(*ann, time.Now())
 }
 
 func hasSizePrefixedPNMIdentifier(data []byte) (ok bool) {

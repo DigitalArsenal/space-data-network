@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"path/filepath"
 	"strings"
@@ -19,6 +20,7 @@ import (
 	pb "github.com/libp2p/go-libp2p-pubsub/pb"
 	libp2pcrypto "github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 
 	"github.com/spacedatanetwork/sdn-server/internal/channels"
@@ -84,7 +86,7 @@ func TestAdmitDatasetFeedHeadAuthorizesTheAuthorNotTheRelay(t *testing.T) {
 	if err := registry.AddPeer(&peers.TrustedPeer{ID: trusted.id, TrustLevel: peers.Trusted}); err != nil {
 		t.Fatal(err)
 	}
-	n := &Node{peerRegistry: registry}
+	n := &Node{peerRegistry: registry, store: newFeedHeadTestStore(t)}
 	t.Setenv(allowUnsignedFeedHeadsDevEnv, "")
 	now := time.Now().UTC()
 
@@ -92,7 +94,12 @@ func TestAdmitDatasetFeedHeadAuthorizesTheAuthorNotTheRelay(t *testing.T) {
 	// the trusted peer.
 	forged := testFeedHead(math.MaxInt64, time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC))
 	forged = signedFeedHead(t, forged, attacker.priv)
-	if _, _, err := n.admitDatasetFeedHead(context.Background(), feedHeadMessage(t, attacker.id, trusted.id, forged), "OMM.fbs"); err == nil || !strings.Contains(err.Error(), "not a trusted peer") {
+	if _, _, err := n.admitDatasetFeedHead(context.Background(), feedHeadMessage(t, attacker.id, trusted.id, forged), "OMM.fbs"); err == nil {
+		t.Fatal("the audit's forged head, relayed by a trusted peer, was admitted")
+	}
+	// The same attack with plausible ranking is refused for its author.
+	plausible := signedFeedHead(t, testFeedHead(2, now), attacker.priv)
+	if _, _, err := n.admitDatasetFeedHead(context.Background(), feedHeadMessage(t, attacker.id, trusted.id, plausible), "OMM.fbs"); err == nil || !strings.Contains(err.Error(), "not a trusted peer") {
 		t.Fatalf("untrusted author relayed by a trusted peer: err = %v, want refusal", err)
 	}
 
@@ -129,9 +136,22 @@ func TestAdmitDatasetFeedHeadRefusesForgedRanking(t *testing.T) {
 	if err := registry.AddPeer(&peers.TrustedPeer{ID: trusted.id, TrustLevel: peers.Trusted}); err != nil {
 		t.Fatal(err)
 	}
-	n := &Node{peerRegistry: registry}
+	n := &Node{peerRegistry: registry, store: newFeedHeadTestStore(t)}
 	now := time.Now().UTC()
+	without := func(mutate func(*sdnpubsub.DatasetFeedHeadAnnouncement)) sdnpubsub.DatasetFeedHeadAnnouncement {
+		a := testFeedHead(2, now)
+		mutate(&a)
+		return a
+	}
 	for name, ann := range map[string]sdnpubsub.DatasetFeedHeadAnnouncement{
+		// The verifier's S2: an empty lane field skipped every lane check.
+		"empty batch_id, sequence 2^24": without(func(a *sdnpubsub.DatasetFeedHeadAnnouncement) {
+			a.BatchID, a.FeedSequence = "", sdnpubsub.DatasetFeedHeadMaxSequence
+		}),
+		"empty provider, source and batch": without(func(a *sdnpubsub.DatasetFeedHeadAnnouncement) {
+			a.ProviderID, a.SourceName, a.BatchID = "", "", ""
+		}),
+		"empty source_name":      without(func(a *sdnpubsub.DatasetFeedHeadAnnouncement) { a.SourceName = "" }),
 		"MaxInt64 sequence":      testFeedHead(math.MaxInt64, now),
 		"zero sequence":          testFeedHead(0, now),
 		"future published_at":    testFeedHead(2, now.Add(time.Hour)),
@@ -167,7 +187,7 @@ func TestAdmitDatasetFeedHeadChecksTheRecordedLane(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	n := &Node{peerRegistry: registry, store: store}
-	now := time.Now().UTC().Truncate(time.Second)
+	now := time.Now().UTC().Add(-3 * time.Hour).Truncate(time.Second)
 
 	recorded := storage.DatasetShardPublication{
 		SchemaName: "OMM.fbs", ProviderID: "space-data-network-02", SourceName: "celestrak-gp", BatchID: "batch-1",
@@ -211,6 +231,35 @@ func TestAdmitDatasetFeedHeadChecksTheRecordedLane(t *testing.T) {
 	if err := admit(next); err != nil {
 		t.Fatalf("the next window: %v", err)
 	}
+
+	// The verifier's S1: once a newer batch of the lane has begun, a head
+	// that extends the older batch with a later published_at is refused,
+	// however modest its sequence. A late-arriving window published before
+	// the newer batch began is still taken.
+	newer := recorded
+	newer.BatchID, newer.FeedSequence, newer.FeedHead = "batch-2", 0, ""
+	newer.ShardCID, newer.IndexCID = "bafyshard2", "bafyindex2"
+	newer.PublishedAt = now.Add(time.Hour)
+	if err := store.UpsertDatasetShardPublication(newer); err != nil {
+		t.Fatal(err)
+	}
+	rollback := testFeedHead(recorded.FeedSequence+2, now.Add(90*time.Minute))
+	rollback.Offset, rollback.FeedHead = 20, "head-rollback"
+	if err := admit(rollback); err == nil || !strings.Contains(err.Error(), "after the newer batch batch-2 began") {
+		t.Fatalf("extending a superseded batch: err = %v", err)
+	}
+	late := testFeedHead(recorded.FeedSequence+2, now.Add(30*time.Minute))
+	late.Offset, late.FeedHead = 20, "head-late"
+	if err := admit(late); err != nil {
+		t.Fatalf("a window of the older batch published before the newer batch began: %v", err)
+	}
+	// A batch never seen here is not refused for being older: retention
+	// ranks it below the newer batch by its publish time.
+	older := testFeedHead(1, now.Add(-time.Hour))
+	older.BatchID, older.FeedHead = "batch-0", "head-0"
+	if err := admit(older); err != nil {
+		t.Fatalf("an older, unseen batch: %v", err)
+	}
 }
 
 func TestRepairImplausibleDatasetFeedPublications(t *testing.T) {
@@ -232,10 +281,20 @@ func TestRepairImplausibleDatasetFeedPublications(t *testing.T) {
 			QuerySHA256: strings.Repeat("c", 64), ResultSHA256: strings.Repeat("d", 64), FeedSequence: seq, PublishedAt: at,
 		}
 	}
+	window := func(pub storage.DatasetShardPublication, offset int) storage.DatasetShardPublication {
+		pub.Offset = offset
+		return pub
+	}
 	for _, pub := range []storage.DatasetShardPublication{
 		row("batch-good", 2, now.Add(-time.Hour)),
 		row("batch-forged-seq", math.MaxInt64, now.Add(-2*time.Hour)),
 		row("batch-forged-time", 1, time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC)),
+		// The verifier's S1 residue: an old batch extended, with a
+		// plausible sequence, after the newer batch-good began.
+		row("batch-old", 1, now.Add(-3*time.Hour)),
+		window(row("batch-old", 1+datasetFeedHeadMaxSequenceStep, now.Add(-time.Minute)), 10),
+		// A sequence leap inside one batch.
+		window(row("batch-good", 2+datasetFeedHeadMaxSequenceStep+1, now.Add(-time.Hour)), 10),
 	} {
 		if err := store.UpsertDatasetShardPublication(pub); err != nil {
 			t.Fatal(err)
@@ -245,8 +304,8 @@ func TestRepairImplausibleDatasetFeedPublications(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(plan) != 2 {
-		t.Fatalf("dry run found %d implausible rows, want 2: %+v", len(plan), plan)
+	if len(plan) != 4 {
+		t.Fatalf("dry run found %d implausible rows, want 4: %+v", len(plan), plan)
 	}
 	if _, err := RepairImplausibleDatasetFeedPublications(store, storage.DatasetPublicationQueryProfile, now, true); err != nil {
 		t.Fatal(err)
@@ -255,12 +314,30 @@ func TestRepairImplausibleDatasetFeedPublications(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(left) != 1 || left[0].BatchID != "batch-good" {
-		t.Fatalf("after repair: %+v, want only batch-good", left)
+	kept := map[string]int{}
+	for _, row := range left {
+		kept[fmt.Sprintf("%s@%d", row.BatchID, row.Offset)]++
+	}
+	if len(left) != 2 || kept["batch-good@0"] != 1 || kept["batch-old@0"] != 1 {
+		t.Fatalf("after repair: %v, want batch-good@0 and batch-old@0 only", kept)
 	}
 }
 
-func feedHeadTestHost(t *testing.T) host.Host {
+func newFeedHeadTestStore(t *testing.T) *storage.FlatSQLStore {
+	t.Helper()
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := storage.NewFlatSQLStore(filepath.Join(t.TempDir(), "store"), validator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	return store
+}
+
+func feedHeadTestHostWithKey(t *testing.T) (host.Host, ed25519.PrivateKey) {
 	t.Helper()
 	priv, _, err := libp2pcrypto.GenerateEd25519Key(rand.Reader)
 	if err != nil {
@@ -271,172 +348,17 @@ func feedHeadTestHost(t *testing.T) host.Host {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = h.Close() })
-	return h
+	raw, err := priv.Raw()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return h, ed25519.PrivateKey(raw)
 }
 
-// TestForwardedForgedFeedHeadCannotRollBackLane is the audit's end-to-end
-// repro over real libp2p hosts and the node's StrictSign gossipsub: X
-// (untrusted, connected only to the trusted provider P) publishes a
-// self-signed head naming P's OLD batch with a MaxInt64 sequence. The victim V
-// gates every delivery through admitDatasetFeedHead before materializing, as
-// handleDatasetFeedHeadSubscription does once wired; the lane must keep the
-// genuine newest batch.
-func TestForwardedForgedFeedHeadCannotRollBackLane(t *testing.T) {
-	tmp := t.TempDir()
-	validator, err := sds.NewValidator(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	pStore, err := storage.NewFlatSQLStore(filepath.Join(tmp, "p", "p-db"), validator)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = pStore.Close() })
-	vStore, err := storage.NewFlatSQLStore(filepath.Join(tmp, "v", "v-db"), validator)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = vStore.Close() })
-
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	ph, vh, xh := feedHeadTestHost(t), feedHeadTestHost(t), feedHeadTestHost(t)
-	ph.SetStreamHandler(protocol.FlatSQLSyncProtocolID, protocol.NewFlatSQLSyncHandler(pStore).HandleStream)
-
-	base := time.Now().UTC().Add(-3 * time.Hour).Truncate(time.Second)
-	pubA := sec031Publish(t, pStore, ph.ID().String(), "batch-A-old", 1001, 1, base)
-	pubB := sec031Publish(t, pStore, ph.ID().String(), "batch-B-new", 1002, 2, base.Add(time.Hour))
-
-	registry := peers.NewRegistry(false, nil)
-	if err := registry.AddPeer(&peers.TrustedPeer{ID: ph.ID(), TrustLevel: peers.Trusted}); err != nil {
-		t.Fatal(err)
-	}
-	n := &Node{
-		host: vh, store: vStore, peerRegistry: registry, ctx: ctx,
-		config: &config.Config{
-			Storage: config.StorageConfig{Path: filepath.Join(tmp, "v", "v-storage")},
-			Peers: config.PeersConfig{TrustedImport: config.TrustedImportConfig{
-				Allow: []config.LaneSelector{{Schema: "OMM.fbs", ProviderID: "space-data-network-02", SourceName: "celestrak-gp"}},
-			}},
-		},
-	}
-	n.laneRetention = func(string, string, string) string { return channels.RetentionReplaceCurrent }
-	if err := vh.Connect(ctx, peer.AddrInfo{ID: ph.ID(), Addrs: ph.Addrs()}); err != nil {
-		t.Fatal(err)
-	}
-	for _, p := range []storage.DatasetShardPublication{pubA, pubB} {
-		if _, err := n.materializeDatasetFeedHeadAnnouncement(ctx, sec031Ann(p), ph.ID()); err != nil {
-			t.Fatalf("genuine import %s: %v", p.BatchID, err)
-		}
-		n.wg.Wait()
-	}
-	if sec031Count(t, vStore, pubB.BatchID) == 0 {
-		t.Fatal("setup: the genuine newest batch is not on the victim")
-	}
-
-	pps, err := newGossipSub(ctx, ph)
-	if err != nil {
-		t.Fatal(err)
-	}
-	vps, err := newGossipSub(ctx, vh)
-	if err != nil {
-		t.Fatal(err)
-	}
-	xps, err := newGossipSub(ctx, xh)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := xh.Connect(ctx, peer.AddrInfo{ID: ph.ID(), Addrs: ph.Addrs()}); err != nil {
-		t.Fatal(err)
-	}
-	topicName := sdnpubsub.DatasetFeedHeadTopic("OMM.fbs")
-	pt, err := pps.Join(topicName)
-	if err != nil {
-		t.Fatal(err)
-	}
-	psub, err := pt.Subscribe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	go func() {
-		for {
-			if _, err := psub.Next(ctx); err != nil {
-				return
-			}
-		}
-	}()
-	vt, err := vps.Join(topicName)
-	if err != nil {
-		t.Fatal(err)
-	}
-	vsub, err := vt.Subscribe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	refused := make(chan error, 4)
-	go func() {
-		for {
-			msg, err := vsub.Next(ctx)
-			if err != nil {
-				return
-			}
-			ann, author, err := n.admitDatasetFeedHead(ctx, msg, "OMM.fbs")
-			if err != nil {
-				if !errors.Is(err, errOwnDatasetFeedHead) {
-					refused <- err
-				}
-				continue
-			}
-			_, _ = n.materializeDatasetFeedHeadAnnouncement(ctx, ann, author)
-		}
-	}()
-	xt, err := xps.Join(topicName)
-	if err != nil {
-		t.Fatal(err)
-	}
-	time.Sleep(2 * time.Second) // mesh formation
-
-	forged := sec031Ann(pubA)
-	forged.FeedSequence = math.MaxInt64
-	forged.PublishedAt = time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC)
-	forged.FeedHead = "attacker-head"
-	_, xPriv, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := sdnpubsub.SignDatasetFeedHead(&forged, xPriv); err != nil {
-		t.Fatal(err)
-	}
-	payload, err := json.Marshal(forged)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := xt.Publish(ctx, payload); err != nil {
-		t.Fatal(err)
-	}
-
-	select {
-	case err := <-refused:
-		if !strings.Contains(err.Error(), "not a trusted peer") {
-			t.Fatalf("forged head refused for the wrong reason: %v", err)
-		}
-	case <-time.After(20 * time.Second):
-		t.Fatal("the forged head never reached the victim's gate")
-	}
-	time.Sleep(500 * time.Millisecond)
-	if got := sec031Count(t, vStore, pubB.BatchID); got == 0 {
-		t.Fatalf("the genuine newest batch was evicted: lane=%s", sec031Lane(t, vStore))
-	}
-	if rows, _ := vStore.ListDatasetShardPublications(storage.DatasetShardPublicationQuery{SchemaName: "OMM.fbs", QueryProfile: storage.DatasetPublicationQueryProfile}); len(rows) > 0 {
-		for _, row := range rows {
-			if row.FeedSequence == math.MaxInt64 || row.FeedHead == "attacker-head" {
-				t.Fatalf("the forged head reached the publication ledger: %+v", row)
-			}
-		}
-	}
-}
-
-func sec031Publish(t *testing.T, st *storage.FlatSQLStore, producer string, batch string, norad uint32, seq int64, at time.Time) storage.DatasetShardPublication {
+// producerPublish stores one batch on a producer's store and records its
+// publication row the way the producer does; it returns the stored row (with
+// the feed sequence and head the store computed).
+func producerPublish(t *testing.T, st *storage.FlatSQLStore, producer, batch string, norad uint32, at time.Time) storage.DatasetShardPublication {
 	t.Helper()
 	tags := storage.SourceTags{ProviderID: "space-data-network-02", SourceName: "celestrak-gp", BatchID: batch, ContentKeyID: "public"}
 	rec := sds.NewOMMBuilder().WithNoradCatID(norad).WithObjectID("1998-067A").WithObjectName(batch).Build()
@@ -453,20 +375,367 @@ func sec031Publish(t *testing.T, st *storage.FlatSQLStore, producer string, batc
 		SchemaName: "OMM.fbs", ProviderID: tags.ProviderID, SourceName: tags.SourceName, BatchID: batch,
 		QueryProfile: storage.DatasetPublicationQueryProfile, Limit: 10, RecordCount: export.RecordCount, ByteCount: export.ShardBytes,
 		ShardCID: export.ShardCID, IndexCID: export.IndexCID, ShardSHA256: export.ShardSHA256, IndexSHA256: export.IndexSHA256,
-		QuerySHA256: export.QuerySHA256, ResultSHA256: export.ResultSHA256, FeedSequence: seq, FeedHead: "head-" + batch, PublishedAt: at,
+		QuerySHA256: export.QuerySHA256, ResultSHA256: export.ResultSHA256, PublishedAt: at,
 	}
 	if err := st.UpsertDatasetShardPublication(pub); err != nil {
 		t.Fatalf("upsert %s: %v", batch, err)
 	}
-	return pub
+	stored, found, err := st.FindDatasetShardPublication(storage.DatasetShardPublicationQuery{
+		SchemaName: pub.SchemaName, ProviderID: pub.ProviderID, SourceName: pub.SourceName, BatchID: batch,
+		QueryProfile: pub.QueryProfile, Offset: 0, Limit: pub.Limit,
+	})
+	if err != nil || !found {
+		t.Fatalf("read back %s: found=%v err=%v", batch, found, err)
+	}
+	return stored
 }
 
-func sec031Ann(p storage.DatasetShardPublication) sdnpubsub.DatasetFeedHeadAnnouncement {
-	return sdnpubsub.DatasetFeedHeadAnnouncement{
-		MessageType: sdnpubsub.DatasetFeedHeadMessageType, Schema: p.SchemaName, ProviderID: p.ProviderID, SourceName: p.SourceName,
-		BatchID: p.BatchID, QueryProfile: p.QueryProfile, Limit: p.Limit, FeedSequence: p.FeedSequence, FeedHead: p.FeedHead,
-		RecordCount: p.RecordCount, ByteCount: p.ByteCount, ShardCID: p.ShardCID, IndexCID: p.IndexCID, PublishedAt: p.PublishedAt,
+// producerFeedHead is the head a producer announces for a stored row (the
+// fields internal/api announceDatasetFeedHead sends), signed with its key.
+func producerFeedHead(t *testing.T, p storage.DatasetShardPublication, key ed25519.PrivateKey) sdnpubsub.DatasetFeedHeadAnnouncement {
+	t.Helper()
+	ann := sdnpubsub.DatasetFeedHeadAnnouncement{
+		MessageType: sdnpubsub.DatasetFeedHeadMessageType,
+		Schema:      p.SchemaName, ProviderID: p.ProviderID, SourceName: p.SourceName, BatchID: p.BatchID,
+		QueryProfile: p.QueryProfile, Offset: p.Offset, Limit: p.Limit, FeedSequence: p.FeedSequence,
+		PreviousHead: p.PreviousHead, FeedHead: p.FeedHead, RecordCount: p.RecordCount, ByteCount: p.ByteCount,
+		ShardCID: p.ShardCID, IndexCID: p.IndexCID, ManifestCID: p.ManifestCID, PNMCID: p.PNMCID, PublishedAt: p.PublishedAt,
 	}
+	if key != nil {
+		if err := sdnpubsub.SignDatasetFeedHead(&ann, key); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return ann
+}
+
+type feedHeadResult struct {
+	imported int
+	err      error
+}
+
+// feedHeadNet is the audit's topology over real libp2p hosts and the node's
+// StrictSign gossipsub: P is the trusted producer, V the victim node (trusts
+// only P) and X an untrusted attacker connected only to P. With relayOnly, V
+// is connected only to R, a second trusted node serving the same content,
+// and never to the author P. With liveHandler, V runs the node's own
+// handleDatasetFeedHeadSubscription instead of reporting each head's result.
+type feedHeadNet struct {
+	ctx      context.Context
+	pStore   *storage.FlatSQLStore
+	vStore   *storage.FlatSQLStore
+	pHost    host.Host
+	pKey     ed25519.PrivateKey
+	node     *Node
+	pTopic   *pubsub.Topic
+	xTopic   *pubsub.Topic
+	results  chan feedHeadResult
+	baseTime time.Time
+	// live: the node's handler goroutine holds node.wg for the test's
+	// lifetime, so retention is awaited by polling alone.
+	live bool
+}
+
+type feedHeadNetOptions struct{ relayOnly, liveHandler bool }
+
+func newFeedHeadNet(t *testing.T, opts feedHeadNetOptions) *feedHeadNet {
+	t.Helper()
+	t.Setenv(allowUnsignedFeedHeadsDevEnv, "")
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	t.Cleanup(cancel)
+	tmp := t.TempDir()
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pStore, err := storage.NewFlatSQLStore(filepath.Join(tmp, "p", "p-db"), validator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = pStore.Close() })
+	vStore, err := storage.NewFlatSQLStore(filepath.Join(tmp, "v", "v-db"), validator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = vStore.Close() })
+
+	ph, pKey := feedHeadTestHostWithKey(t)
+	vh, _ := feedHeadTestHostWithKey(t)
+	xh, _ := feedHeadTestHostWithKey(t)
+	ph.SetStreamHandler(protocol.FlatSQLSyncProtocolID, protocol.NewFlatSQLSyncHandler(pStore).HandleStream)
+
+	registry := peers.NewRegistry(false, nil)
+	if err := registry.AddPeer(&peers.TrustedPeer{ID: ph.ID(), TrustLevel: peers.Trusted}); err != nil {
+		t.Fatal(err)
+	}
+	node := &Node{
+		host: vh, store: vStore, peerRegistry: registry, ctx: ctx,
+		config: &config.Config{
+			Storage: config.StorageConfig{Path: filepath.Join(tmp, "v", "v-storage")},
+			Peers: config.PeersConfig{TrustedImport: config.TrustedImportConfig{
+				Allow: []config.LaneSelector{{Schema: "OMM.fbs", ProviderID: "space-data-network-02", SourceName: "celestrak-gp"}},
+			}},
+		},
+	}
+	node.laneRetention = func(string, string, string) string { return channels.RetentionReplaceCurrent }
+
+	pps, err := newGossipSub(ctx, ph)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vps, err := newGossipSub(ctx, vh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	xps, err := newGossipSub(ctx, xh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	topicName := sdnpubsub.DatasetFeedHeadTopic("OMM.fbs")
+	drain := func(ps *pubsub.PubSub) *pubsub.Topic {
+		topic, err := ps.Join(topicName)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sub, err := topic.Subscribe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		go func() {
+			for {
+				if _, err := sub.Next(ctx); err != nil {
+					return
+				}
+			}
+		}()
+		return topic
+	}
+	pTopic := drain(pps)
+	xTopic := drain(xps)
+	if err := xh.Connect(ctx, peer.AddrInfo{ID: ph.ID(), Addrs: ph.Addrs()}); err != nil {
+		t.Fatal(err)
+	}
+	if opts.relayOnly {
+		rh, _ := feedHeadTestHostWithKey(t)
+		rh.SetStreamHandler(protocol.FlatSQLSyncProtocolID, protocol.NewFlatSQLSyncHandler(pStore).HandleStream)
+		rps, err := newGossipSub(ctx, rh)
+		if err != nil {
+			t.Fatal(err)
+		}
+		drain(rps)
+		if err := registry.AddPeer(&peers.TrustedPeer{ID: rh.ID(), TrustLevel: peers.Trusted}); err != nil {
+			t.Fatal(err)
+		}
+		if err := rh.Connect(ctx, peer.AddrInfo{ID: ph.ID(), Addrs: ph.Addrs()}); err != nil {
+			t.Fatal(err)
+		}
+		if err := vh.Connect(ctx, peer.AddrInfo{ID: rh.ID(), Addrs: rh.Addrs()}); err != nil {
+			t.Fatal(err)
+		}
+	} else if err := vh.Connect(ctx, peer.AddrInfo{ID: ph.ID(), Addrs: ph.Addrs()}); err != nil {
+		t.Fatal(err)
+	}
+
+	vTopic, err := vps.Join(topicName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vSub, err := vTopic.Subscribe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	results := make(chan feedHeadResult, 16)
+	if opts.liveHandler {
+		node.wg.Add(1)
+		go node.handleDatasetFeedHeadSubscription(vSub, "OMM.fbs")
+	} else {
+		go func() {
+			for {
+				msg, err := vSub.Next(ctx)
+				if err != nil {
+					return
+				}
+				imported, err := node.handleDatasetFeedHeadMessage(ctx, msg, "OMM.fbs")
+				results <- feedHeadResult{imported: imported, err: err}
+			}
+		}()
+	}
+	time.Sleep(2 * time.Second) // mesh formation
+	return &feedHeadNet{ctx: ctx, pStore: pStore, vStore: vStore, pHost: ph, pKey: pKey, node: node, pTopic: pTopic, xTopic: xTopic, results: results,
+		baseTime: time.Now().UTC().Add(-3 * time.Hour).Truncate(time.Second), live: opts.liveHandler}
+}
+
+func (f *feedHeadNet) publish(t *testing.T, topic *pubsub.Topic, ann sdnpubsub.DatasetFeedHeadAnnouncement) feedHeadResult {
+	t.Helper()
+	payload, err := json.Marshal(ann)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := topic.Publish(f.ctx, payload); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case result := <-f.results:
+		return result
+	case <-time.After(30 * time.Second):
+		t.Fatalf("feed head %s never reached the victim", ann.FeedHead)
+	}
+	return feedHeadResult{}
+}
+
+// waitForLane waits for the lane's retention to settle on current: current
+// is the lane's newest servable batch and every older batch's records are
+// evicted (ReplaceCurrent).
+func (f *feedHeadNet) waitForLane(t *testing.T, current string) {
+	t.Helper()
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		if !f.live {
+			f.node.wg.Wait()
+		}
+		cur, older, ok, err := f.vStore.OlderLaneBatches("OMM.fbs", "space-data-network-02", "celestrak-gp")
+		if err == nil && ok && cur == current {
+			evicted := true
+			for _, batch := range older {
+				if sec031Count(t, f.vStore, batch) != 0 {
+					evicted = false
+				}
+			}
+			if evicted && sec031Count(t, f.vStore, current) > 0 {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("lane = %s, want current %s with every older batch evicted", sec031Lane(t, f.vStore), current)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+// TestGossipedFeedHeadsAreAdmittedOnTheirAuthorsSignature is the audit's
+// SEC-031 repro and the verifier's bypass variants (S1, S2) over real
+// libp2p hosts, each head travelling by gossip into the node's feed-head
+// receive path (handleDatasetFeedHeadMessage). Genuine producer heads are
+// imported; every forgery is refused before anything is fetched or stored;
+// the lane keeps its genuine newest batch and still takes the next one.
+func TestGossipedFeedHeadsAreAdmittedOnTheirAuthorsSignature(t *testing.T) {
+	f := newFeedHeadNet(t, feedHeadNetOptions{})
+	producer := f.pHost.ID().String()
+	pubA := producerPublish(t, f.pStore, producer, "batch-A-old", 1001, f.baseTime)
+	pubB := producerPublish(t, f.pStore, producer, "batch-B-new", 1002, f.baseTime.Add(time.Hour))
+
+	// Genuine history arrives by gossip and is imported.
+	for _, p := range []storage.DatasetShardPublication{pubA, pubB} {
+		if r := f.publish(t, f.pTopic, producerFeedHead(t, p, f.pKey)); r.err != nil || r.imported == 0 {
+			t.Fatalf("genuine head %s: imported=%d err=%v", p.BatchID, r.imported, r.err)
+		}
+	}
+	f.waitForLane(t, pubB.BatchID)
+
+	_, xKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	forge := func(from storage.DatasetShardPublication, key ed25519.PrivateKey, mutate func(*sdnpubsub.DatasetFeedHeadAnnouncement)) sdnpubsub.DatasetFeedHeadAnnouncement {
+		ann := producerFeedHead(t, from, nil)
+		mutate(&ann)
+		if key != nil {
+			if err := sdnpubsub.SignDatasetFeedHead(&ann, key); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return ann
+	}
+	attacks := []struct {
+		name  string
+		topic *pubsub.Topic
+		ann   sdnpubsub.DatasetFeedHeadAnnouncement
+		want  string
+	}{
+		{"V0 audit repro: untrusted X, MaxInt64 sequence, year 2099", f.xTopic, forge(pubA, xKey, func(a *sdnpubsub.DatasetFeedHeadAnnouncement) {
+			a.FeedSequence, a.PublishedAt, a.FeedHead = math.MaxInt64, time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC), "attacker-head"
+		}), "invalid dataset feed-head announcement"},
+		{"V0b untrusted X, plausible ranking", f.xTopic, forge(pubA, xKey, func(a *sdnpubsub.DatasetFeedHeadAnnouncement) {
+			a.FeedSequence, a.PublishedAt, a.Offset, a.FeedHead = 2, now, 10, "attacker-head-2"
+		}), "not a trusted peer"},
+		{"V0c untrusted X claiming P's key in the message", f.xTopic, forge(pubA, f.pKey, func(a *sdnpubsub.DatasetFeedHeadAnnouncement) {
+			a.FeedSequence, a.PublishedAt, a.Offset, a.FeedHead = 2, now, 10, "attacker-head-3"
+		}), "not a trusted peer"},
+		{"V1 trusted P extends its superseded batch A", f.pTopic, forge(pubA, f.pKey, func(a *sdnpubsub.DatasetFeedHeadAnnouncement) {
+			a.FeedSequence, a.PublishedAt, a.Offset, a.FeedHead = 1+datasetFeedHeadMaxSequenceStep, now, 10, "p-forged-head"
+		}), "after the newer batch batch-B-new began"},
+		{"V2 trusted P, empty lane fields", f.pTopic, forge(pubA, f.pKey, func(a *sdnpubsub.DatasetFeedHeadAnnouncement) {
+			a.ProviderID, a.SourceName, a.BatchID = "", "", ""
+			a.FeedSequence, a.PublishedAt, a.Offset, a.FeedHead = sdnpubsub.DatasetFeedHeadMaxSequence, now, 20, "p-forged-head2"
+		}), "names no"},
+		{"V2b trusted P, empty batch_id only", f.pTopic, forge(pubA, f.pKey, func(a *sdnpubsub.DatasetFeedHeadAnnouncement) {
+			a.BatchID = ""
+			a.FeedSequence, a.PublishedAt, a.Offset, a.FeedHead = sdnpubsub.DatasetFeedHeadMaxSequence, now, 40, "p-forged-head2b"
+		}), "names no batch_id"},
+		{"V3 trusted P, unsigned", f.pTopic, forge(pubA, nil, func(a *sdnpubsub.DatasetFeedHeadAnnouncement) {
+			a.FeedSequence, a.PublishedAt, a.Offset, a.FeedHead = 99, now, 30, "p-unsigned"
+		}), "unsigned"},
+	}
+	for _, attack := range attacks {
+		r := f.publish(t, attack.topic, attack.ann)
+		if r.err == nil || r.imported != 0 {
+			t.Fatalf("%s: imported=%d err=%v, want refusal", attack.name, r.imported, r.err)
+		}
+		if !strings.Contains(r.err.Error(), attack.want) {
+			t.Fatalf("%s: refused for the wrong reason: %v (want %q)", attack.name, r.err, attack.want)
+		}
+		f.waitForLane(t, pubB.BatchID)
+	}
+
+	// A trusted author's head whose commitment does not match the content
+	// it names: refused before anything is imported.
+	pubC := producerPublish(t, f.pStore, producer, "batch-C-newest", 1003, f.baseTime.Add(2*time.Hour))
+	tampered := forge(pubC, f.pKey, func(a *sdnpubsub.DatasetFeedHeadAnnouncement) { a.FeedHead = "not-the-content" })
+	if r := f.publish(t, f.pTopic, tampered); r.err == nil || !errors.Is(r.err, errFeedHeadContentMismatch) {
+		t.Fatalf("head not committing to its content: imported=%d err=%v", r.imported, r.err)
+	}
+	if got := sec031Count(t, f.vStore, pubC.BatchID); got != 0 {
+		t.Fatalf("records of a refused head were imported: %d", got)
+	}
+	wrongCount := forge(pubC, f.pKey, func(a *sdnpubsub.DatasetFeedHeadAnnouncement) { a.RecordCount = 7 })
+	if r := f.publish(t, f.pTopic, wrongCount); r.err == nil || !errors.Is(r.err, errFeedHeadContentMismatch) {
+		t.Fatalf("head with a false record count: imported=%d err=%v", r.imported, r.err)
+	}
+
+	// Nothing forged reached the ledger, and the genuine next batch is taken.
+	rows, err := f.vStore.ListDatasetShardPublications(storage.DatasetShardPublicationQuery{SchemaName: "OMM.fbs", QueryProfile: storage.DatasetPublicationQueryProfile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range rows {
+		if row.Offset != 0 || row.FeedSequence > 2 {
+			t.Fatalf("a forged head reached the publication ledger: %+v", row)
+		}
+	}
+	if r := f.publish(t, f.pTopic, producerFeedHead(t, pubC, f.pKey)); r.err != nil || r.imported == 0 {
+		t.Fatalf("genuine head %s: imported=%d err=%v", pubC.BatchID, r.imported, r.err)
+	}
+	f.waitForLane(t, pubC.BatchID)
+	if got := sec031Count(t, f.vStore, pubC.BatchID); got != 1 {
+		t.Fatalf("batch C records = %d, want 1", got)
+	}
+}
+
+// TestGossipedFeedHeadIsFetchedFromATrustedRelayWhenTheAuthorIsUnreachable:
+// the bytes are bound to the author's signed head, so a trusted relay may
+// serve them when the author cannot be dialled.
+func TestGossipedFeedHeadIsFetchedFromATrustedRelayWhenTheAuthorIsUnreachable(t *testing.T) {
+	f := newFeedHeadNet(t, feedHeadNetOptions{relayOnly: true})
+	pub := producerPublish(t, f.pStore, f.pHost.ID().String(), "batch-relayed", 2001, f.baseTime)
+	r := f.publish(t, f.pTopic, producerFeedHead(t, pub, f.pKey))
+	if r.err != nil || r.imported != 1 {
+		t.Fatalf("relayed genuine head: imported=%d err=%v", r.imported, r.err)
+	}
+	if got := f.node.host.Network().Connectedness(f.pHost.ID()); got == network.Connected {
+		t.Fatalf("the victim reached the author directly (%v); this test needs the relay to serve", got)
+	}
+	f.waitForLane(t, pub.BatchID)
 }
 
 func sec031Count(t *testing.T, st *storage.FlatSQLStore, batch string) int {

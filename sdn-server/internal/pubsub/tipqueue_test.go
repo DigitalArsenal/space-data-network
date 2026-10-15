@@ -586,13 +586,17 @@ func TestParseDatasetFeedHeadAnnouncementNormalizesAndValidates(t *testing.T) {
 		"schema": "OMM",
 		"provider_id": "space-data-network-02",
 		"source_name": "celestrak-gp",
+		"batch_id": "batch-1",
 		"query_profile": "dataset-publication-offset-v1",
 		"offset": 10000,
 		"limit": 5000,
 		"feed_sequence": 3,
 		"previous_head": "head-2",
 		"feed_head": "head-3",
-		"manifest_cid": "bafymanifest"
+		"shard_cid": "bafyshard",
+		"index_cid": "bafyindex",
+		"manifest_cid": "bafymanifest",
+		"published_at": "2026-10-01T00:00:00Z"
 	}`)
 
 	ann, err := ParseDatasetFeedHeadAnnouncement(payload)

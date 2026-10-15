@@ -6,6 +6,7 @@ package pubsub
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/json"
 	"math"
 	"testing"
 	"time"
@@ -65,6 +66,49 @@ func TestCheckDatasetFeedHeadBounds(t *testing.T) {
 	} {
 		if err := CheckDatasetFeedHeadBounds(ann, now); err == nil {
 			t.Fatalf("%s: accepted", name)
+		}
+	}
+}
+
+// TestParseDatasetFeedHeadRefusesIncompleteOrImplausibleHeads: the verifier's
+// S2 (an empty lane field skipped the lane checks and was filled from the
+// unsigned index) and the audit's forged ranking, refused at the parser that
+// every gossiped head goes through.
+func TestParseDatasetFeedHeadRefusesIncompleteOrImplausibleHeads(t *testing.T) {
+	now := time.Now().UTC()
+	base := DatasetFeedHeadAnnouncement{
+		MessageType: DatasetFeedHeadMessageType, Schema: "OMM.fbs",
+		ProviderID: "space-data-network-02", SourceName: "celestrak-gp", BatchID: "batch-1",
+		QueryProfile: "dataset-publication-v1", Limit: 10, FeedSequence: 1, FeedHead: "h",
+		ShardCID: "bafyshard", IndexCID: "bafyindex", PublishedAt: now.Add(-time.Minute),
+	}
+	encode := func(ann DatasetFeedHeadAnnouncement) []byte {
+		data, err := json.Marshal(ann)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return data
+	}
+	if _, err := ParseDatasetFeedHeadAnnouncement(encode(base)); err != nil {
+		t.Fatalf("a complete head: %v", err)
+	}
+	for name, mutate := range map[string]func(*DatasetFeedHeadAnnouncement){
+		"empty provider_id":      func(a *DatasetFeedHeadAnnouncement) { a.ProviderID = "" },
+		"blank source_name":      func(a *DatasetFeedHeadAnnouncement) { a.SourceName = "  " },
+		"empty batch_id":         func(a *DatasetFeedHeadAnnouncement) { a.BatchID = "" },
+		"all lane fields empty":  func(a *DatasetFeedHeadAnnouncement) { a.ProviderID, a.SourceName, a.BatchID = "", "", "" },
+		"no shard cid":           func(a *DatasetFeedHeadAnnouncement) { a.ShardCID = "" },
+		"no index cid":           func(a *DatasetFeedHeadAnnouncement) { a.IndexCID = "" },
+		"no window limit":        func(a *DatasetFeedHeadAnnouncement) { a.Limit = 0 },
+		"MaxInt64 sequence":      func(a *DatasetFeedHeadAnnouncement) { a.FeedSequence = math.MaxInt64 },
+		"sequence past 2^24":     func(a *DatasetFeedHeadAnnouncement) { a.FeedSequence = DatasetFeedHeadMaxSequence + 1 },
+		"year 2099 published_at": func(a *DatasetFeedHeadAnnouncement) { a.PublishedAt = time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC) },
+		"missing published_at":   func(a *DatasetFeedHeadAnnouncement) { a.PublishedAt = time.Time{} },
+	} {
+		ann := base
+		mutate(&ann)
+		if _, err := ParseDatasetFeedHeadAnnouncement(encode(ann)); err == nil {
+			t.Fatalf("%s: parsed", name)
 		}
 	}
 }

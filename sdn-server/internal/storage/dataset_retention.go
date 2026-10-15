@@ -48,8 +48,15 @@ type laneBatchState struct {
 }
 
 // laneBatchStates lists the lane's ledger batches ordered by (max
-// FeedSequence desc, max PublishedAt desc) with MaterializedDatasetBatch
+// PublishedAt desc, max FeedSequence desc) with MaterializedDatasetBatch
 // servability probed for each.
+//
+// Publish time ranks batches; the feed sequence only breaks ties. A feed
+// sequence numbers the windows of ONE batch (it restarts at 1 for every
+// batch, latestDatasetShardPublicationFeedLinkLocked), so comparing it across
+// batches ranked a large old batch above a small new one, and let one forged
+// feed head with a huge sequence pin a stale batch as the lane's current set
+// for good (security audit SEC-031).
 func (s *FlatSQLStore) laneBatchStates(schemaName, providerID, sourceName string) ([]laneBatchState, error) {
 	if s == nil {
 		return nil, errors.New("store is required")
@@ -97,11 +104,11 @@ func (s *FlatSQLStore) laneBatchStates(schemaName, providerID, sourceName string
 		}
 	}
 	sort.SliceStable(batches, func(i, j int) bool {
-		if batches[i].sequence != batches[j].sequence {
-			return batches[i].sequence > batches[j].sequence
-		}
 		if !batches[i].publishedAt.Equal(batches[j].publishedAt) {
 			return batches[i].publishedAt.After(batches[j].publishedAt)
+		}
+		if batches[i].sequence != batches[j].sequence {
+			return batches[i].sequence > batches[j].sequence
 		}
 		return batches[i].id > batches[j].id
 	})
@@ -141,7 +148,7 @@ func (s *FlatSQLStore) OlderLaneBatches(schemaName, providerID, sourceName strin
 
 // NewestServableSourceBatch finds the newest publication batch of a lane
 // that is fully materialized here (MaterializedDatasetBatch servability).
-// Batches order by (max FeedSequence desc, max PublishedAt desc). ok=false
+// Batches order by (max PublishedAt desc, max FeedSequence desc). ok=false
 // when no ledger batch is servable. pending=true when a batch NEWER than the
 // answer (or, without an answer, any batch) exists but is not servable —
 // an import in flight; callers must not evict while pending.

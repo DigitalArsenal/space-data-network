@@ -3,9 +3,11 @@ package main
 // feed_head_repair.go: `spacedatanetwork store-repair-feed-heads` removes the
 // residue a forged dataset feed head left in the publication ledger (security
 // audit SEC-031): rows whose feed_sequence or published_at no honest producer
-// emits. Such a row ranks first in its lane's retention forever, so the lane
-// stays frozen on a stale batch even after the node is upgraded. Dry run by
-// default; refuses while a daemon holds the store.
+// emits, rows that extend a batch after a newer batch of the lane began, and
+// rows whose sequence leaps past their batch's previous window. Such a row
+// keeps a stale batch ranked first in its lane, so the lane stays frozen even
+// after the node is upgraded. Dry run by default; refuses while a daemon
+// holds the store.
 
 import (
 	"errors"
@@ -28,10 +30,11 @@ var (
 
 var storeRepairFeedHeadsCmd = &cobra.Command{
 	Use:   "store-repair-feed-heads",
-	Short: "Remove dataset publication rows left by forged feed heads (implausible sequence or future time)",
-	Long: `Find dataset publication rows whose feed_sequence is outside [0, 2^24] or
-whose published_at is in the future — values only a forged feed head writes —
-and, with --apply, delete them and their cached shard/index files so each lane
+	Short: "Remove dataset publication rows left by forged feed heads (implausible ranking or lane order)",
+	Long: `Find dataset publication rows a forged feed head wrote: a feed_sequence outside
+[0, 2^24], a published_at in the future, a window that extends a batch after a
+newer batch of the same lane began, or a sequence more than 2^16 past the
+batch's previous window. Review the dry run, then with --apply delete them and their cached shard/index files so each lane
 ranks its genuine batches again. Records the forged head made the node evict
 come back with the provider's next genuine batch (or a catch-up).
 

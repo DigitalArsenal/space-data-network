@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"strings"
 	"testing"
+	"time"
 )
 
 type capturingTopicPublisher struct {
@@ -25,10 +26,15 @@ func signedTestAnnouncement(t *testing.T, key ed25519.PrivateKey) DatasetFeedHea
 		MessageType:  DatasetFeedHeadMessageType,
 		Schema:       OMMSchema,
 		ProviderID:   "provider-1",
+		SourceName:   "source-1",
+		BatchID:      "batch-1",
 		QueryProfile: "default",
+		Limit:        10,
 		FeedSequence: 7,
 		FeedHead:     "bafyfeedhead",
 		ShardCID:     "bafyshard",
+		IndexCID:     "bafyindex",
+		PublishedAt:  time.Now().UTC().Add(-time.Minute).Truncate(time.Second),
 	}
 	if err := SignDatasetFeedHead(&ann, key); err != nil {
 		t.Fatalf("SignDatasetFeedHead: %v", err)
@@ -110,9 +116,16 @@ func TestPublishSignedDatasetFeedHeadSigns(t *testing.T) {
 	}
 	ann := DatasetFeedHeadAnnouncement{
 		Schema:       "OMM",
+		ProviderID:   "provider-1",
+		SourceName:   "source-1",
+		BatchID:      "batch-1",
 		QueryProfile: "default",
+		Limit:        10,
 		FeedSequence: 1,
 		FeedHead:     "bafyhead",
+		ShardCID:     "bafyshard",
+		IndexCID:     "bafyindex",
+		PublishedAt:  time.Now().UTC().Add(-time.Minute).Truncate(time.Second),
 	}
 	publisher := &capturingTopicPublisher{}
 	if err := PublishSignedDatasetFeedHead(t.Context(), publisher, ann, priv); err != nil {
