@@ -208,10 +208,14 @@ func TestResolveProducerOrganizationThreeRungLadder(t *testing.T) {
 		evaluator      *trust.Evaluator
 		wantState      string
 		wantDomainText bool
+		// attested builds a profile whose ChainProof really verifies
+		// (SEC-013); a bond counts only for such an address.
+		attested bool
 	}{
 		{name: "source tag", peerID: "16UiuSOURCE", wantState: organizationStateSourceTag},
 		{name: "signed", peerID: "16UiuSIGNED", wantState: organizationStateSigned},
-		{name: "bonded", peerID: "16UiuBONDED", chain: "ethereum", address: bondAddress, evaluator: positiveBond, wantState: organizationStateBonded},
+		{name: "bonded", attested: true, wantState: organizationStateBonded},
+		{name: "unproven chain proof is no bond", peerID: "16UiuUNPROVEN", chain: "ethereum", address: bondAddress, evaluator: positiveBond, wantState: organizationStateSigned},
 		{name: "domain proof is evidence only", peerID: "16UiuDOMAIN", domain: "observatory.example", wantState: organizationStateSigned, wantDomainText: true},
 		{name: "bond source error fails safe", peerID: "16UiuBONDERROR", chain: "ethereum", address: bondAddress, evaluator: errorBond, wantState: organizationStateSigned},
 	}
@@ -224,10 +228,21 @@ func TestResolveProducerOrganizationThreeRungLadder(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if tc.wantState != organizationStateSourceTag {
+			peerID, evaluator := tc.peerID, tc.evaluator
+			switch {
+			case tc.attested:
+				var epmBytes []byte
+				var ethAddress string
+				peerID, epmBytes, ethAddress = attestedPublisherEPM(t, "State University Radio Observatory")
+				storePublisherEPM(t, store, peerID, epmBytes)
+				evaluator = trust.NewEvaluator(trust.NewGraph(), trust.MemoryFundsProvider{}, trust.MemoryBondSource{
+					ChainID: trust.ChainEthereum,
+					Amounts: map[string]float64{ethAddress: 2500},
+				})
+			case tc.wantState != organizationStateSourceTag:
 				upsertSignedPublisherFixture(t, store, tc.peerID, "State University Radio Observatory", tc.chain, tc.address, tc.domain)
 			}
-			got := resolveProducerOrganization(store, "source-"+tc.name, tc.peerID, tc.evaluator)
+			got := resolveProducerOrganization(store, "source-"+tc.name, peerID, evaluator)
 			if got.State != tc.wantState {
 				t.Fatalf("state = %q, want %q (organization=%+v)", got.State, tc.wantState, got)
 			}

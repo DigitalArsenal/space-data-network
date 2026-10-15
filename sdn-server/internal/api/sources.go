@@ -39,6 +39,7 @@ import (
 	"github.com/decred/dcrd/dcrec/secp256k1/v4"
 	secp256k1ecdsa "github.com/decred/dcrd/dcrec/secp256k1/v4/ecdsa"
 
+	"github.com/spacedatanetwork/sdn-server/internal/dnsproof"
 	"github.com/spacedatanetwork/sdn-server/internal/epm"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 	"github.com/spacedatanetwork/sdn-server/internal/trust"
@@ -134,18 +135,19 @@ func resolvePublisherOrganization(store *storage.FlatSQLStore, sourceTag, peerID
 	floor.Self = self
 
 	var epmRecord *standardsEPM.EPM
+	var epmData []byte
 	epmCID := ""
 	if store != nil {
 		if records, err := store.QueryDirectory(storage.DirectoryQuery{PeerID: peerID, Limit: 1}); err == nil && len(records) > 0 {
-			if rec, ok := verifiedPublisherEPM(records[0], peerID); ok {
-				epmRecord, epmCID = rec, records[0].EPMCID
+			if rec, data, ok := verifiedPublisherEPMWithBytes(records[0], peerID); ok {
+				epmRecord, epmData, epmCID = rec, data, records[0].EPMCID
 			}
 		}
 	}
 	if epmRecord == nil && identity.epmBytes != nil {
 		if data := identity.epmBytes(peerID); len(data) > 0 {
 			if rec, ok := verifiedPublisherEPMBytes(data, peerID); ok {
-				epmRecord = rec
+				epmRecord, epmData = rec, data
 				if cid, err := epm.ComputeEPMCID(data); err == nil {
 					epmCID = cid
 				}
@@ -174,13 +176,13 @@ func resolvePublisherOrganization(store *storage.FlatSQLStore, sourceTag, peerID
 	}
 
 	if evaluator != nil {
-		proof := new(standardsEPM.ChainProof)
-		for i := 0; i < epmRecord.CHAIN_PROOFSLength(); i++ {
-			if !epmRecord.CHAIN_PROOFS(proof, i) {
-				continue
-			}
-			address := strings.TrimSpace(string(proof.ADDRESS()))
-			if address == "" || evaluator.BondBalance(address) <= 0 {
+		// SEC-013: only an address whose ChainProof verifies against this
+		// record and this peer may lend the publisher a bond. A profile's
+		// self-signature says nothing about who controls the addresses it
+		// names.
+		verifiedProofs, _, _ := epm.VerifiedEPMChainProofs(epmData, peerID, time.Now())
+		for _, proof := range verifiedProofs {
+			if evaluator.BondBalance(proof.Address) <= 0 {
 				continue
 			}
 			resolved.State = organizationStateBonded
@@ -190,11 +192,31 @@ func resolvePublisherOrganization(store *storage.FlatSQLStore, sourceTag, peerID
 		}
 	}
 
-	for _, domain := range verifiedPublisherDomains(epmRecord, peerID, time.Now()) {
+	// SEC-037: a DomainProof is signed by a key the record itself carries, so
+	// it shows only that the publisher CLAIMS the domain. It reads as
+	// verified only once the domain's own DNS (TXT _sdnkey.<domain>) names
+	// the same key and peer; until then, and whenever DNS is unreachable, it
+	// is shown as a claim.
+	for _, claim := range signedPublisherDomainClaims(epmRecord, peerID, time.Now()) {
+		if publisherDomainDNS.Status(claim.domain, claim.algorithm, claim.publicHex, peerID) == dnsproof.StatusVerified {
+			resolved.Evidence = append(resolved.Evidence,
+				"DNS confirms the domain-control proof: "+dnsproof.RecordName(claim.domain)+" names this publisher's key, linking it to "+claim.domain+".")
+			continue
+		}
 		resolved.Evidence = append(resolved.Evidence,
-			"A verified domain-control proof links this publisher to "+domain+".")
+			"The publisher claims the domain "+claim.domain+" (self-signed, not DNS-verified).")
 	}
 	return resolved
+}
+
+// publisherDomainDNS checks domain-control claims against DNS off the request
+// path (cached, bounded, fail-closed). Tests replace it.
+var publisherDomainDNS = dnsproof.NewVerifier(dnsproof.Options{})
+
+type publisherDomainClaim struct {
+	domain    string
+	algorithm string
+	publicHex string
 }
 
 func sourceTagOrganization(sourceTag string) *resolvedOrganization {
@@ -245,17 +267,28 @@ func isPlaceholderNodeName(name string) bool {
 }
 
 func verifiedPublisherEPM(rec storage.DirectoryRecord, peerID string) (*standardsEPM.EPM, bool) {
+	record, _, ok := verifiedPublisherEPMWithBytes(rec, peerID)
+	return record, ok
+}
+
+// verifiedPublisherEPMWithBytes is verifiedPublisherEPM that also returns the
+// verified bytes, for checks (chain proofs) that need the whole record.
+func verifiedPublisherEPMWithBytes(rec storage.DirectoryRecord, peerID string) (*standardsEPM.EPM, []byte, bool) {
 	var stored struct {
 		EPMBase64 string `json:"epm_base64"`
 	}
 	if json.Unmarshal([]byte(rec.EPMJSON), &stored) != nil || strings.TrimSpace(stored.EPMBase64) == "" {
-		return nil, false
+		return nil, nil, false
 	}
 	data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(stored.EPMBase64))
 	if err != nil {
-		return nil, false
+		return nil, nil, false
 	}
-	return verifiedPublisherEPMBytes(data, peerID)
+	record, ok := verifiedPublisherEPMBytes(data, peerID)
+	if !ok {
+		return nil, nil, false
+	}
+	return record, data, true
 }
 
 // verifiedPublisherEPMBytes admits signed EPM bytes only when the signature
@@ -274,27 +307,38 @@ func verifiedPublisherEPMBytes(data []byte, peerID string) (*standardsEPM.EPM, b
 	return standardsEPM.GetSizePrefixedRootAsEPM(data, 0), true
 }
 
-func verifiedPublisherDomains(record *standardsEPM.EPM, peerID string, now time.Time) []string {
+// signedPublisherDomainClaims returns the domains whose DomainProof is
+// well-formed and self-signed by one of the record's signing keys, with the
+// key that signed each. That is a claim, not proof of control: DNS decides.
+func signedPublisherDomainClaims(record *standardsEPM.EPM, peerID string, now time.Time) []publisherDomainClaim {
 	if record == nil {
 		return nil
 	}
-	seen := map[string]struct{}{}
+	seen := map[string]publisherDomainClaim{}
 	proof := new(standardsEPM.DomainProof)
 	for i := 0; i < record.DOMAIN_PROOFSLength(); i++ {
 		if !record.DOMAIN_PROOFS(proof, i) {
 			continue
 		}
 		domain, ok := verifyPublisherDomainProof(record, proof, peerID, now)
-		if ok {
-			seen[domain] = struct{}{}
+		if !ok {
+			continue
 		}
+		if _, dup := seen[domain]; dup {
+			continue
+		}
+		algorithm := strings.ToLower(strings.TrimSpace(string(proof.ALGORITHM())))
+		if algorithm == "" {
+			algorithm = "ed25519"
+		}
+		seen[domain] = publisherDomainClaim{domain: domain, algorithm: algorithm, publicHex: strings.TrimSpace(string(proof.PUBLIC_KEY()))}
 	}
-	domains := make([]string, 0, len(seen))
-	for domain := range seen {
-		domains = append(domains, domain)
+	claims := make([]publisherDomainClaim, 0, len(seen))
+	for _, claim := range seen {
+		claims = append(claims, claim)
 	}
-	sort.Strings(domains)
-	return domains
+	sort.Slice(claims, func(i, j int) bool { return claims[i].domain < claims[j].domain })
+	return claims
 }
 
 func verifyPublisherDomainProof(record *standardsEPM.EPM, proof *standardsEPM.DomainProof, peerID string, now time.Time) (string, bool) {
