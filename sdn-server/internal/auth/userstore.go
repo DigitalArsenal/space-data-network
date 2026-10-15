@@ -288,6 +288,9 @@ func (s *UserStore) GetUser(xpub string) (*User, error) {
 		// Keep runtime state in DB, but apply configured values as the source of
 		// truth for trust and signing key checks.
 		s.applyConfigOverrides(&u)
+		if deniedAccount(&u) {
+			return nil, nil
+		}
 		return &u, nil
 	}
 	if err != sql.ErrNoRows {
@@ -296,6 +299,9 @@ func (s *UserStore) GetUser(xpub string) (*User, error) {
 
 	// Fall back to config users
 	if cu, ok := s.configUsers[xpub]; ok {
+		if deniedAccount(&cu) {
+			return nil, nil
+		}
 		return &cu, nil
 	}
 
@@ -322,6 +328,9 @@ func (s *UserStore) GetUserBySigningPubKey(signingPubKeyHex string) (*User, erro
 	for i := range users {
 		if strings.EqualFold(strings.TrimSpace(users[i].SigningPubKeyHex), normalized) {
 			u := users[i]
+			if deniedAccount(&u) {
+				return nil, nil
+			}
 			return &u, nil
 		}
 	}
