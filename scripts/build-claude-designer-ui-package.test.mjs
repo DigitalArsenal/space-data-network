@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { isDenied, loadAnchors } from '../deployment/identity/anchors-lib.mjs';
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const scriptPath = join(repoRoot, 'scripts/build-claude-designer-ui-package.mjs');
@@ -112,7 +113,9 @@ describe('Claude Designer UI package generator', () => {
     const fixtures = JSON.parse(readPackageFile('prototype/data/fixtures.json'));
     const spaceAwarePeer = fixtures.peers.find((peer) => peer.name === 'SpaceAware.io');
     const celesTrakPeer = fixtures.peers.find((peer) => peer.name === 'CelesTrak Provider');
-    assert.equal(spaceAwarePeer?.id, '16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45');
+    assert.ok(spaceAwarePeer?.id, 'the SpaceAware.io fixture peer has an id');
+    // SEC-001: fixtures must not carry the denylisted identity.
+    assert.equal(isDenied(loadAnchors(), spaceAwarePeer.id), false);
     assert.equal(celesTrakPeer?.id, '16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3');
     assert.deepEqual(fixtures.standards.map((standard) => standard.id), ['CAT', 'EPM', 'MPE', 'OMM', 'PNM', 'SPW']);
 

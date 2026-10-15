@@ -11,6 +11,8 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multiaddr"
 	"go.uber.org/zap/zapcore"
+
+	"github.com/spacedatanetwork/sdn-server/internal/trustanchors"
 )
 
 var log = logging.Logger("sdn-peers")
@@ -73,8 +75,26 @@ func (g *TrustedConnectionGater) ListBlocked() []peer.ID {
 	return blocked
 }
 
+// refuseDenied is the SEC-001 gate: an identity whose seed was published is
+// never dialled and never accepted, whatever the registry, a config file or
+// an operator's trust level says. Nothing reaches the EPM exchange, provider
+// records, pubsub or any protocol stream from a connection that never opens.
+func (g *TrustedConnectionGater) refuseDenied(p peer.ID) bool {
+	if !trustanchors.IsDeniedPeer(p) {
+		return false
+	}
+	log.Warnf("Refused peer %s: SEC-001 denylisted identity (its seed was published)", p)
+	if g.onBlocked != nil {
+		g.onBlocked(p, "SEC-001 denylisted identity")
+	}
+	return true
+}
+
 // InterceptPeerDial is called before dialing a peer.
 func (g *TrustedConnectionGater) InterceptPeerDial(p peer.ID) bool {
+	if g.refuseDenied(p) {
+		return false
+	}
 	// Check blocklist first
 	if g.IsBlocked(p) {
 		log.Debugf("Blocked dial to peer %s: on blocklist", p.ShortString())
@@ -122,6 +142,9 @@ func (g *TrustedConnectionGater) InterceptAccept(addrs network.ConnMultiaddrs) b
 
 // InterceptSecured is called after the security handshake is complete.
 func (g *TrustedConnectionGater) InterceptSecured(dir network.Direction, p peer.ID, addrs network.ConnMultiaddrs) bool {
+	if g.refuseDenied(p) {
+		return false
+	}
 	// Check blocklist first
 	if g.IsBlocked(p) {
 		log.Debugf("Rejected secured connection from peer %s: on blocklist", p.ShortString())

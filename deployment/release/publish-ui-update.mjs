@@ -37,7 +37,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildUpdateManifest } from './sign-update-manifest.mjs';
+import { buildUpdateManifest, resolveReleaseKeyId } from './sign-update-manifest.mjs';
 import { LINEAGE_ROLLBACK, SourceLineageRefusal, assertSourceLineage, resolveLiveSourceCommit } from './source-lineage.mjs';
 import { assertSealedFor, collectRecipients, recipientsDocument, sealOnPublisher } from './update-seal.mjs';
 
@@ -64,7 +64,7 @@ const publisherSSH = arg('publisher-ssh', 'space-data-network-01');
 const publisherBin = arg('publisher-bin', '/opt/spacedatanetwork/bin/spacedatanetwork');
 const feedDir = arg('feed-dir', '/opt/spacedatanetwork/update-feed');
 const feedBaseUrl = arg('feed-base-url', 'https://sdn.spaceaware.io/updates');
-const keyId = arg('key-id', 'd4a971a7e534');
+const keyIdArg = arg('key-id', '');
 const nodesFile = resolve(arg('nodes', join(repoRoot, 'deployment/release/fleet-nodes.json')));
 const forVersions = arg('for-version', '');
 const ledgerPath = arg('ledger-path', '/opt/spacedatanetwork/publish-ledger.log');
@@ -73,6 +73,13 @@ const ledgerPath = arg('ledger-path', '/opt/spacedatanetwork/publish-ledger.log'
 const rollbackReason = arg('rollback', '');
 const noSignalReason = arg('no-signal', '');
 const dryRun = flag('dry-run');
+let keyId;
+try {
+  keyId = resolveReleaseKeyId(keyIdArg, { dryRun });
+} catch (error) {
+  console.error(error.message);
+  process.exit(2);
+}
 
 const UI_FILES = ['dashboard.html', 'dashboard.csp', 'homepage.html', 'homepage.csp'];
 const MEDIA_EXTENSIONS = new Set(['.mp4', '.jpg', '.png', '.webp']);

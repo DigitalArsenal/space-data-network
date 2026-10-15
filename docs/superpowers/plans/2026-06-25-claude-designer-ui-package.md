@@ -164,7 +164,7 @@ describe('Claude Designer UI package generator', () => {
     const fixtures = JSON.parse(readPackageFile('prototype/data/fixtures.json'));
     const spaceAwarePeer = fixtures.peers.find((peer) => peer.name === 'SpaceAware.io');
     const celesTrakPeer = fixtures.peers.find((peer) => peer.name === 'CelesTrak Provider');
-    assert.equal(spaceAwarePeer?.id, '16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45');
+    assert.equal(spaceAwarePeer?.id, '<sdn.spaceaware.io PeerID: deployment/identity/anchors.json provider.peerId (the pre-SEC-001 one is denylisted)>');
     assert.equal(celesTrakPeer?.id, '16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3');
     assert.deepEqual(fixtures.standards.map((standard) => standard.id), ['CAT', 'EPM', 'MPE', 'OMM', 'PNM', 'SPW']);
 
@@ -447,7 +447,7 @@ Create `design/claude-designer-ui-package/prototype/data/fixtures.json` with the
   },
   "peers": [
     {
-      "id": "16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45",
+      "id": "<sdn.spaceaware.io PeerID: deployment/identity/anchors.json provider.peerId (the pre-SEC-001 one is denylisted)>",
       "name": "SpaceAware.io",
       "role": "Provider",
       "trust": "trusted",

@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/spacedatanetwork/sdn-server/internal/trustanchors"
 )
 
 const (
@@ -227,8 +229,17 @@ func LoadTrustRoots(paths Paths) (TrustedRoots, error) {
 	if err := json.Unmarshal(data, &roots); err != nil {
 		return nil, fmt.Errorf("parse update trust roots: %w", err)
 	}
+	// SEC-001: a denylisted root is dropped, not trusted. A node whose only root
+	// is the published one can no longer verify any update; it must receive its
+	// new roots from a trust_roots release or a reinstall (ROTATION.md).
+	for id, encoded := range roots {
+		key, kerr := decodeEd25519Root(encoded)
+		if trustanchors.IsDenied(id) || (kerr == nil && (trustanchors.IsDeniedKey(key) || trustanchors.IsDenied(RootKeyID(key)))) {
+			delete(roots, id)
+		}
+	}
 	if len(roots) == 0 {
-		return nil, errors.New("update trust roots are empty")
+		return nil, errors.New("update trust roots are empty (a SEC-001 denylisted root is not trusted)")
 	}
 	return roots, nil
 }

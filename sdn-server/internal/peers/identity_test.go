@@ -113,7 +113,7 @@ func TestPeerIDFromPublicKeyRefusesUnparseableMaterial(t *testing.T) {
 		// accepted by ed25519 (any 32 bytes are a public key), so use a length
 		// that matches nothing instead.
 		"unrecognised length": hex.EncodeToString(make([]byte, 40)),
-		"an xpub":             "xpub6DKCyLbCHZLFR4XpFg26royZdkxExSMHTjNorEgkn1kgvQbLF5sts9RfNt3PbGhphVUh7WsFQ5H6GJBh4LhmRL27oSPt1qDkJ5mAr6FZ3Wa",
+		"an xpub":             "xpub6BosfCnifzxcFwrSzQiqu2DBVTshkCXacvNsWGYJVVhhawA7d4R5WSWGFNbi8Aw6ZRc1brxMyWMzG3DSSSSoekkudhUd9yLb6qx39T9nMdj",
 	}
 
 	for name, input := range cases {

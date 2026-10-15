@@ -1,4 +1,9 @@
 import { derivePeerIdFromPublicKey } from './crypto/hd-wallet';
+import {
+  assertNotDeniedPublicKey,
+  assertNotDeniedValue,
+  filterDeniedMultiaddrs,
+} from './identity-denylist';
 
 const EPM_FILE_IDENTIFIER = '$EPM';
 const EPM_KEY_TYPE_SIGNING = 0;
@@ -61,6 +66,8 @@ export async function normalizeServerDescriptor(
   if (declaredPeerId && declaredPeerId !== derivedPeerId) {
     throw new Error('provider peer id does not match the declared public key');
   }
+  assertNotDeniedPublicKey(publicKey, 'provider public key');
+  assertNotDeniedValue(derivedPeerId, `provider ${derivedPeerId}`);
 
   const normalized: NormalizedServerDescriptor = {
     publicKey,
@@ -88,12 +95,27 @@ export async function normalizeServerDescriptor(
     }
   }
 
-  return normalized;
+  return admitDescriptor(normalized);
+}
+
+/**
+ * SEC-001: a descriptor or EPM naming the denylisted identity — as the
+ * provider, as a grant verifier, or as a relay — is refused outright; a relay
+ * address naming it is dropped.
+ */
+async function admitDescriptor(descriptor: NormalizedServerDescriptor): Promise<NormalizedServerDescriptor> {
+  assertNotDeniedPublicKey(descriptor.publicKey, 'provider public key');
+  assertNotDeniedValue(descriptor.peerId, `provider ${descriptor.peerId}`);
+  for (const key of descriptor.grantVerifierPublicKeys) {
+    assertNotDeniedPublicKey(key, 'provider grant verifier key');
+  }
+  descriptor.relayAddresses = filterDeniedMultiaddrs(descriptor.relayAddresses);
+  return descriptor;
 }
 
 export async function normalizeEPMDescriptor(epmBytes: Uint8Array): Promise<NormalizedServerDescriptor> {
   const parsed = parseEPMDescriptor(epmBytes);
-  return {
+  return admitDescriptor({
     publicKey: parsed.publicKey,
     publicKeyHex: parsed.publicKeyHex,
     peerId: await derivePeerIdFromPublicKey(parsed.publicKey),
@@ -101,7 +123,7 @@ export async function normalizeEPMDescriptor(epmBytes: Uint8Array): Promise<Norm
     grantVerifierPublicKeys: parsed.grantVerifierPublicKeys,
     rawEpmBytes: epmBytes.slice(),
     source: 'epm',
-  };
+  });
 }
 
 function parseEPMDescriptor(epmBytes: Uint8Array): ParsedEPMDescriptor {

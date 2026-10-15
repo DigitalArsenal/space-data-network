@@ -108,7 +108,7 @@ to competitors that maneuvers are happening.
 
 - local node identity and service state;
 - SpaceAware peer:
-  `16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45`;
+  `<sdn.spaceaware.io PeerID: deployment/identity/anchors.json provider.peerId (the pre-SEC-001 one is denylisted)>`;
 - CelesTrak peer:
   `16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3`;
 - provider records for SpaceAware and CelesTrak;

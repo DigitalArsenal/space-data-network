@@ -8,7 +8,7 @@ package node
 // (graph/tasks/sdn-grant-verifier-key-domain-separation.md).
 //
 // The defect these tests exist to make impossible: one ed25519 key
-// (fleet-trust-roots.json key_id d4a971a7e534) simultaneously signed
+// (the pre-SEC-001 fleet update root, now denylisted) simultaneously signed
 // SDN-UPDATE-MANIFEST-V1 — whatever it signs, every box in the fleet installs and
 // runs — and every licensing grant issued to every anonymous browser. Nothing in
 // either suite asserted the two were distinct, which is why it survived until a

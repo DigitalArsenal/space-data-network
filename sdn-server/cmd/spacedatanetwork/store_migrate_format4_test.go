@@ -109,7 +109,7 @@ func buildLegacyStore4(t *testing.T, dir string) {
 		t.Fatal(err)
 	}
 	// A second producer holds 20 of them (copies) and is untagged.
-	if _, err := s.StoreBatch("IQC.fbs", iqc[50:], "16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45", nil); err != nil {
+	if _, err := s.StoreBatch("IQC.fbs", iqc[50:], "16Uiu2HAmHjHmWJ3zZApae9Ryh4gWjtNHArrEz4x3JoAykfGeQTZy", nil); err != nil {
 		t.Fatal(err)
 	}
 	// A record with no peer (format 1's "unattributed" table keeps its empty

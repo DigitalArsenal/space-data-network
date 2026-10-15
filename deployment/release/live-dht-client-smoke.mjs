@@ -16,16 +16,17 @@ import { basename, dirname, join, resolve, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
+import { bootstrapMultiaddrs, loadAnchors } from '../identity/anchors-lib.mjs';
+
 export const DEFAULT_EXPECTED_ROLES = ['linux-docker', 'macos-native', 'windows-native'];
 export const DEFAULT_DHT_REGISTRATION_WAIT_MS = 300_000;
 export const DEFAULT_TOTAL_TIMEOUT_MS = 1_200_000;
 export const DEFAULT_PUBLISH_INTERVAL_MS = 15_000;
-export const LIVE_DHT_BOOTSTRAP_PEERS = [
-  '/dnsaddr/bootstrap.spacedatanetwork.org/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
-  '/dnsaddr/bootstrap.spacedatanetwork.org/p2p/16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3',
-  '/ip4/159.203.150.8/tcp/4001/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
-  '/ip4/167.172.219.213/tcp/4001/p2p/16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3'
-];
+// The production peers come from deployment/identity/anchors.json (SEC-001:
+// never a hand-copied PeerID; the identity before the rotation is denylisted).
+// bootstrap.spacedatanetwork.org was never allocated (owner ruling 2026-07-30),
+// so no dnsaddr entry is listed.
+export const LIVE_DHT_BOOTSTRAP_PEERS = bootstrapMultiaddrs(loadAnchors());
 
 function log(message) {
   console.log(`[live-dht-smoke] ${message}`);

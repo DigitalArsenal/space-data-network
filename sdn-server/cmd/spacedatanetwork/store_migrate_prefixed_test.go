@@ -43,7 +43,7 @@ func TestStoreMigrateActivatesWithSizePrefixedRecords(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		peer := "16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45"
+		peer := "16Uiu2HAmHjHmWJ3zZApae9Ryh4gWjtNHArrEz4x3JoAykfGeQTZy"
 		if i%2 == 1 {
 			peer = "16Uiu2HAmGjaPxkWFSXBbmhs9K5x1Zo6euJw95VjS6Jj2bcPpYr2U"
 		}

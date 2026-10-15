@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/sigdomain"
+	"github.com/spacedatanetwork/sdn-server/internal/trustanchors"
 )
 
 const ManifestSchema = "org.spacedatanetwork.update.v1"
@@ -553,7 +554,22 @@ func (m *Manifest) assertSequence(currentSequence int64) error {
 // public keys.
 type TrustedRoots map[string]string
 
+// decodeTrustedPublicKey decodes an update root and refuses one on the SEC-001
+// denylist: the old root's seed was published, so a signature by it proves
+// nothing, whether it arrives in a trust file, a release's trust_roots or a
+// manifest/signal signing block.
 func decodeTrustedPublicKey(encoded string) (ed25519.PublicKey, error) {
+	key, err := decodeEd25519Root(encoded)
+	if err != nil {
+		return nil, err
+	}
+	if trustanchors.IsDeniedKey(key) || trustanchors.IsDenied(RootKeyID(key)) {
+		return nil, fmt.Errorf("update root %s: %w", RootKeyID(key), trustanchors.ErrDenied)
+	}
+	return key, nil
+}
+
+func decodeEd25519Root(encoded string) (ed25519.PublicKey, error) {
 	der, err := base64.StdEncoding.DecodeString(encoded)
 	if err != nil {
 		// Allow hex for raw keys such as the dev wallet signing pubkey.
@@ -578,6 +594,9 @@ func decodeTrustedPublicKey(encoded string) (ed25519.PublicKey, error) {
 }
 
 func (m *Manifest) assertSignature(roots TrustedRoots) error {
+	if trustanchors.IsDenied(m.Signing.KeyID) {
+		return fmt.Errorf("update signing key %s: %w", m.Signing.KeyID, trustanchors.ErrDenied)
+	}
 	trusted, ok := roots[m.Signing.KeyID]
 	if !ok || trusted == "" {
 		return errors.New("untrusted update signing key")

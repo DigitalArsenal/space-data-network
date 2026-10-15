@@ -43,7 +43,7 @@ const (
 	//
 	// WHY IT IS ITS OWN PATH. Until this constant existed the grant lane signed
 	// with the key at SigningKeyPath — the SAME key that is the fleet update trust
-	// root (fleet-trust-roots.json key_id d4a971a7e534) and the module publisher of
+	// root (until SEC-001, fleet-trust-roots.json named this key as the update root) and the module publisher of
 	// record. Those two duties have opposite risk profiles: the update root is
 	// fleet-wide CODE AUTHORITY, exercised rarely, maximum blast radius; a grant
 	// signature is issued to every anonymous browser, constantly, and is worth one

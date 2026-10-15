@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/spacedatanetwork/sdn-server/internal/trustanchors"
 )
 
 // SignFunc signs message with the requester's signing private key. It abstracts
@@ -89,6 +91,9 @@ func NewConsumer(transport Transport, identity RequesterIdentity) (*Consumer, er
 func (c *Consumer) RequestGrant(ctx context.Context, provider Provider, p PullParams) (*Grant, error) {
 	if strings.TrimSpace(p.ModuleID) == "" {
 		return nil, errors.New("deliveryclient: module id is required")
+	}
+	if trustanchors.IsDenied(provider.PeerID) {
+		return nil, fmt.Errorf("deliveryclient: provider %s: %w", provider.PeerID, trustanchors.ErrDenied)
 	}
 
 	req := ChallengeRequest{

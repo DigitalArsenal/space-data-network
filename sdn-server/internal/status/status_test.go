@@ -16,7 +16,7 @@ import (
 
 // two known-valid libp2p peer IDs (base58) used as fixtures.
 const (
-	selfPeerIDFixture = "16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45"
+	selfPeerIDFixture = "16Uiu2HAmHjHmWJ3zZApae9Ryh4gWjtNHArrEz4x3JoAykfGeQTZy"
 	peerIDFixture     = "16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3"
 )
 

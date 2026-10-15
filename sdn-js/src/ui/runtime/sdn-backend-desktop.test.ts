@@ -67,9 +67,9 @@ describe('desktop-local SDN backend', () => {
           { id: 'sdn.spaceaware.io', name: 'sdn.spaceaware.io', addrs: [], trust_level: 'trusted' },
           { id: 'celestrak.eth', name: 'celestrak.eth', addrs: [], trust_level: 'trusted' },
           {
-            peer_id: '16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
+            peer_id: '16Uiu2HAmHjHmWJ3zZApae9Ryh4gWjtNHArrEz4x3JoAykfGeQTZy',
             name: 'Public SDN Node',
-            addrs: ['/ip4/159.203.150.8/tcp/4001/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45'],
+            addrs: ['/ip4/159.203.150.8/tcp/4001/p2p/16Uiu2HAmHjHmWJ3zZApae9Ryh4gWjtNHArrEz4x3JoAykfGeQTZy'],
             metadata: {
               agent_version: 'spacedatanetwork/1.0.3',
             },
@@ -86,7 +86,7 @@ describe('desktop-local SDN backend', () => {
 
     await expect(backend.listObservedPeers()).resolves.toMatchObject({
       ok: true,
-      data: [{ id: '16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45' }],
+      data: [{ id: '16Uiu2HAmHjHmWJ3zZApae9Ryh4gWjtNHArrEz4x3JoAykfGeQTZy' }],
     });
   });
 

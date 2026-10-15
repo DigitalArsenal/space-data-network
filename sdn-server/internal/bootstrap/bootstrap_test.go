@@ -1,10 +1,13 @@
 package bootstrap
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
 	dht "github.com/libp2p/go-libp2p-kad-dht"
+
+	"github.com/spacedatanetwork/sdn-server/internal/trustanchors"
 )
 
 func TestParseBootstrapAddress_WithPeerID(t *testing.T) {
@@ -216,14 +219,21 @@ func TestDefaultBootstrapAddresses_UsesRealPinnedPeers(t *testing.T) {
 		t.Fatal("DefaultBootstrapAddresses returned no peers")
 	}
 
-	foundSpaceaware := false
+	anchors := trustanchors.Load()
+	providerPlaceholder := trustanchors.IsPlaceholder(anchors.Provider.PeerID)
+	foundSpaceaware := providerPlaceholder
 	foundCelestrak := false
 	for _, addr := range addresses {
-		if addr == "/ip4/159.203.150.8/tcp/4004/ws/p2p/"+bootstrapPeerSpaceaware {
+		if !providerPlaceholder && addr == "/ip4/159.203.150.8/tcp/4004/ws/p2p/"+anchors.Provider.PeerID {
 			foundSpaceaware = true
 		}
-		if addr == "/ip4/167.172.219.213/tcp/4001/p2p/"+bootstrapPeerCelestrak {
+		if addr == "/ip4/167.172.219.213/tcp/4001/p2p/16Uiu2HAmGjaPxkWFSXBbmhs9K5x1Zo6euJw95VjS6Jj2bcPpYr2U" {
 			foundCelestrak = true
+		}
+		for _, denied := range anchors.Denylist.PeerIDs {
+			if strings.Contains(addr, denied) {
+				t.Fatalf("SEC-001 denylisted peer leaked into defaults: %s", addr)
+			}
 		}
 		// bootstrap.spacedatanetwork.org was never allocated and the owner ruled
 		// on 2026-07-30 that it never will be. A dnsaddr entry here is a
@@ -304,7 +314,7 @@ func TestResolveBootstrapPeers_PreservesConfiguredPinnedPeers(t *testing.T) {
 // DHT. That config reads as obviously correct and made the discovery path look
 // broken three separate times, so the condition has to be detectable.
 func TestHasPublicDHTBootstrap(t *testing.T) {
-	sdnOnly, _, err := ResolveBootstrapPeers(productionBootstrapAddresses)
+	sdnOnly, _, err := ResolveBootstrapPeers(productionBootstrapAddresses())
 	if err != nil {
 		t.Fatalf("resolving the SDN production peers: %v", err)
 	}
@@ -327,5 +337,45 @@ func TestHasPublicDHTBootstrap(t *testing.T) {
 
 	if HasPublicDHTBootstrap(nil) {
 		t.Error("an empty set cannot contain a bootstrapper")
+	}
+}
+
+// SEC-001: the identity whose seed was published must never be a bootstrap
+// peer, whether it arrives from a config file, a persisted list or a default.
+func TestParseBootstrapAddress_RefusesDenylistedIdentity(t *testing.T) {
+	anchors := trustanchors.Load()
+	if len(anchors.Denylist.PeerIDs) == 0 {
+		t.Fatal("the SEC-001 denylist names no peer")
+	}
+	for _, denied := range anchors.Denylist.PeerIDs {
+		for _, addr := range []string{
+			"/ip4/159.203.150.8/tcp/4004/ws/p2p/" + denied,
+			"/dns4/sdn.spaceaware.io/tcp/443/wss/p2p/" + denied,
+		} {
+			if _, err := ParseBootstrapAddress(addr); !errors.Is(err, trustanchors.ErrDenied) {
+				t.Fatalf("ParseBootstrapAddress(%q) err = %v, want ErrDenied", addr, err)
+			}
+		}
+		parsed, err := ParseBootstrapAddresses([]string{"/ip4/159.203.150.8/tcp/4004/ws/p2p/" + denied})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(parsed) != 0 {
+			t.Fatalf("a configured list kept the denylisted peer: %+v", parsed)
+		}
+		// A config naming ONLY the old identity falls back to the defaults,
+		// which do not contain it either.
+		peers, usedFallback, err := ResolveBootstrapPeers([]string{"/ip4/159.203.150.8/tcp/4004/ws/p2p/" + denied})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !usedFallback {
+			t.Fatal("a config naming only the denylisted peer must fall back to the defaults")
+		}
+		for _, p := range peers {
+			if p.AddrInfo.ID.String() == denied {
+				t.Fatal("the fallback defaults contain the denylisted peer")
+			}
+		}
 	}
 }

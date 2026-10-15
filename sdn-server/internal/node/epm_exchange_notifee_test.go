@@ -16,7 +16,7 @@ func TestDirectoryEPMSourceForPeerAsksTrustedPeersOnConnect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stranger, err := peer.Decode("16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45")
+	stranger, err := peer.Decode("16Uiu2HAmHjHmWJ3zZApae9Ryh4gWjtNHArrEz4x3JoAykfGeQTZy")
 	if err != nil {
 		t.Fatal(err)
 	}

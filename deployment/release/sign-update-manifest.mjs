@@ -10,6 +10,63 @@ const crypto = require('crypto');
 const { canonicalManifestBytes, sha256Hex } = require('./sdn-updater/manifest');
 
 export const MANIFEST_SCHEMA = 'org.spacedatanetwork.update.v1';
+
+// SEC-001: the release signing key id comes from the ONE anchors file
+// (deployment/identity/anchors.json updateRoots: the fleet distribution key),
+// never a hand-kept default. The pre-rotation default was host-01's node key,
+// whose seed was published; it is on the anchors denylist.
+const ANCHORS_URL = new URL('../identity/anchors.json', import.meta.url);
+
+function readAnchors() {
+  try {
+    return JSON.parse(require('fs').readFileSync(ANCHORS_URL, 'utf8'));
+  } catch {
+    return null; // a lane copied outside the repository has no anchors file
+  }
+}
+
+/** The single update root anchors.json names, or '' when it names none or several. */
+export function anchoredUpdateRootKeyId(anchors = readAnchors()) {
+  const ids = Object.keys(anchors?.updateRoots || {});
+  return ids.length === 1 ? ids[0] : '';
+}
+
+/**
+ * The key id a release is signed under: --key-id, else the anchored root.
+ * Throws for a denylisted key id always, and for a missing or placeholder one
+ * unless this is a dry run (which signs nothing).
+ */
+export function resolveReleaseKeyId(explicit, { dryRun = false, anchors = readAnchors(), rootMigration = null } = {}) {
+  const keyId = String(explicit || anchoredUpdateRootKeyId(anchors) || '').trim();
+  const denied = new Set((anchors?.denylist?.updateRootKeyIds || []).map((id) => id.toLowerCase()));
+  // THE ONE EXCEPTION (ROTATION.md, "move the fleet's update roots"): installed
+  // nodes only accept a release signed by a root they already trust — the
+  // published one — so the release that MOVES them to the new distribution
+  // root must be signed by it. It may carry nothing but that move: trust_roots
+  // naming only non-denylisted, non-placeholder roots, and a stated reason.
+  if (keyId && denied.has(keyId.toLowerCase()) && rootMigration) {
+    const roots = Object.entries(rootMigration.trustRoots || {});
+    if (!String(rootMigration.reason || '').trim()) {
+      throw new Error('REFUSED: --sec001-root-migration needs its reason as its value.');
+    }
+    if (roots.length === 0) {
+      throw new Error('REFUSED: a SEC-001 root-migration release must carry --trust-roots naming the new distribution root.');
+    }
+    for (const [id, spki] of roots) {
+      if (denied.has(id.toLowerCase()) || id.startsWith('PLACEHOLDER-') || String(spki).startsWith('PLACEHOLDER-')) {
+        throw new Error(`REFUSED: the root-migration release names ${id}, which is denylisted or a placeholder.`);
+      }
+    }
+    return keyId;
+  }
+  if (keyId && denied.has(keyId.toLowerCase())) {
+    throw new Error(`REFUSED: update key id ${keyId} is denylisted (SEC-001: its seed was published). Sign with the fleet distribution key in deployment/identity/anchors.json.`);
+  }
+  if (!dryRun && (!keyId || keyId.startsWith('PLACEHOLDER-'))) {
+    throw new Error('REFUSED: no release signing key id: deployment/identity/anchors.json updateRoots is still a placeholder (SEC-001 rotation pending) — pass --key-id or land the owner\'s anchors.');
+  }
+  return keyId || 'PLACEHOLDER-SEC001-UPDATE-ROOT-KEY-ID';
+}
 export const SIGNING_KEY_ENV = 'SDN_UPDATE_SIGNING_KEY_PEM';
 
 export function normalizeSigningKey(privateKey) {

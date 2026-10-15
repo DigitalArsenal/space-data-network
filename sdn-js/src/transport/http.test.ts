@@ -254,7 +254,7 @@ describe('iterateSizePrefixedFrames', () => {
 describe('HttpTransport default-$APP discovery', () => {
   const defaultsDocument = {
     generated_at: '2026-08-04T14:00:00Z',
-    node_peer_id: '16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
+    node_peer_id: '16Uiu2HAmHjHmWJ3zZApae9Ryh4gWjtNHArrEz4x3JoAykfGeQTZy',
     runtime_classes: ['server', 'browser'],
     defaults: {
       server: {

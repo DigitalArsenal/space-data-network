@@ -14,6 +14,7 @@ import {
   SPACEAWARE_RELAY_PEER_ID,
   CELESTRAK_RELAY_PEER_ID,
 } from './edge-discovery';
+import { isDeniedMultiaddr } from './identity-denylist';
 
 describe('edge-discovery', () => {
   describe('DEFAULT_EDGE_RELAYS', () => {
@@ -49,11 +50,16 @@ describe('edge-discovery', () => {
     });
 
     it('bootstraps the full node over a CA-authenticated, browser-dialable address', () => {
-      // Verified live 2026-08-06: this address dials 16Uiu2HAm1Lbv…Fm45 through
-      // Cloudflare and yields a DIRECT (non-transient) connection.
-      expect(DEFAULT_EDGE_RELAYS).toContain(
-        '/dns4/sdn.spaceaware.io/tcp/443/wss/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
-      );
+      // sdn.spaceaware.io through Cloudflare yields a DIRECT (non-transient)
+      // connection. Its PeerID is the anchored one (deployment/identity/
+      // anchors.json); while that is a placeholder (SEC-001 rotation pending)
+      // the full node is simply absent, never the denylisted identity.
+      if (SPACEAWARE_RELAY_PEER_ID) {
+        expect(DEFAULT_EDGE_RELAYS).toContain(`/dns4/sdn.spaceaware.io/tcp/443/wss/p2p/${SPACEAWARE_RELAY_PEER_ID}`);
+      }
+      for (const relay of DEFAULT_EDGE_RELAYS) {
+        expect(isDeniedMultiaddr(relay)).toBe(false);
+      }
       for (const relay of DEFAULT_EDGE_RELAYS) {
         expect(isBrowserDialableAddr(relay)).toBe(true);
       }
@@ -81,8 +87,10 @@ describe('edge-discovery', () => {
       const peers = new Set(
         DEFAULT_EDGE_RELAYS.map((r) => r.split('/p2p/')[1]).filter(Boolean),
       );
-      expect(peers.size).toBeGreaterThanOrEqual(2);
-      expect(peers.has(SPACEAWARE_RELAY_PEER_ID)).toBe(true);
+      // Two once the rotated sdn.spaceaware.io identity is anchored; until
+      // then only celestrak.eth is a shippable browser relay.
+      expect(peers.size).toBeGreaterThanOrEqual(SPACEAWARE_RELAY_PEER_ID ? 2 : 1);
+      if (SPACEAWARE_RELAY_PEER_ID) expect(peers.has(SPACEAWARE_RELAY_PEER_ID)).toBe(true);
       expect(peers.has(CELESTRAK_RELAY_PEER_ID)).toBe(true);
     });
 
@@ -138,7 +146,8 @@ describe('edge-discovery', () => {
   });
 
   describe('resolvePeerBootstrapAddrs (delegated routing)', () => {
-    const PEER = '16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45';
+    // A synthetic test peer (random key, no relation to any deployed node).
+    const PEER = '16Uiu2HAmHjHmWJ3zZApae9Ryh4gWjtNHArrEz4x3JoAykfGeQTZy';
 
     it('resolves current addresses and re-attaches the /p2p component', async () => {
       const fetchImpl = vi.fn(async () => ({

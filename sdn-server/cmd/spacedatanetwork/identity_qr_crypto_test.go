@@ -16,7 +16,7 @@ func fullChainTestCard(name string) string {
 		"VERSION:3.0",
 		"FN:" + name,
 		"EMAIL;type=INTERNET;type=sign:bS80NCcvMCcvMCcvMC8w@sign.spacedatanetwork.org",
-		"EMAIL;type=INTERNET;type=xpub:xpub6DKCyLbCHZLFR4XpFg26royZdkx@xpub.spacedatanetwork.org",
+		"EMAIL;type=INTERNET;type=xpub:xpub6BosfCnifzxcFwrSzQiqu2DBVTs@xpub.spacedatanetwork.org",
 		"EMAIL;type=INTERNET;type=encrypt:bS80NCcvMCcvMCcvMS8w@encrypt.spacedatanetwork.org",
 		"EMAIL;type=INTERNET;type=epmsig:pPiwij9fiUMf80Jhi8vKRdiGBfdY@epmsig.spacedatanetwork.org",
 		"END:VCARD",

@@ -12,6 +12,8 @@ import (
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multiaddr"
+
+	"github.com/spacedatanetwork/sdn-server/internal/trustanchors"
 )
 
 var log = logging.Logger("sdn-bootstrap")
@@ -33,20 +35,17 @@ var log = logging.Logger("sdn-bootstrap")
 // has ANY udp listener, so all quic-v1 entries were unreachable; and the
 // celestrak peer id below was the LEGACY identity of a service that is now
 // inactive, which libp2p rejects on peer-id mismatch even with the port open.
-const (
-	// sdn.spaceaware.io. Addressed by its RESERVED ip 159.203.150.8, not by the
-	// box's eth0 104.131.11.220: the reserved ip is not on any interface, it
-	// forwards, and it therefore survives a box replacement. Both were measured
-	// OPEN on tcp/4004 from a third host on 2026-07-30; 4001 was CLOSED on both.
-	bootstrapPeerSpaceaware = "16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45"
-	// celestrak.eth retriever — the LIVE identity. Not 16Uiu2HAm9oK2…, which is
-	// the stopped legacy spacedatanetwork.service.
-	bootstrapPeerCelestrak = "16Uiu2HAmGjaPxkWFSXBbmhs9K5x1Zo6euJw95VjS6Jj2bcPpYr2U"
-)
-
-var productionBootstrapAddresses = []string{
-	"/ip4/159.203.150.8/tcp/4004/ws/p2p/" + bootstrapPeerSpaceaware,
-	"/ip4/167.172.219.213/tcp/4001/p2p/" + bootstrapPeerCelestrak,
+//
+// SEC-001 (2026-10-15): the peers and their transports now come from the ONE
+// committed anchors file, deployment/identity/anchors.json (compiled in via
+// internal/trustanchors), instead of constants here. host-01 is still dialled
+// on its RESERVED ip 159.203.150.8 tcp/4004 ws (it forwards and survives a box
+// replacement; 4001 is closed there), celestrak.eth on 167.172.219.213
+// tcp/4001 under its LIVE identity (not the legacy 16Uiu2HAm9oK2…). The old
+// host-01 identity, whose seed was published, is DENYLISTED: it is neither
+// compiled in nor accepted from a config file.
+func productionBootstrapAddresses() []string {
+	return trustanchors.BootstrapAddresses()
 }
 
 // PeerInfo represents a bootstrap peer with its address and expected peer ID.
@@ -108,6 +107,9 @@ func ParseBootstrapAddress(addr string) (PeerInfo, error) {
 		addrInfo, err := peer.AddrInfoFromP2pAddr(ma)
 		if err != nil {
 			return PeerInfo{}, fmt.Errorf("failed to parse peer info: %w", err)
+		}
+		if err := trustanchors.CheckPeer(addrInfo.ID, "bootstrap peer"); err != nil {
+			return PeerInfo{}, err
 		}
 
 		return PeerInfo{
@@ -252,8 +254,9 @@ func RequirePinnedPeerIDs(peers []PeerInfo) []PeerInfo {
 // configured list is empty or invalid. The production SDN bootstrap nodes are
 // seeded first, then the libp2p DHT defaults are appended.
 func DefaultBootstrapAddresses() []string {
-	out := make([]string, 0, len(dht.DefaultBootstrapPeers)+len(productionBootstrapAddresses))
-	seen := make(map[string]struct{}, len(dht.DefaultBootstrapPeers)+len(productionBootstrapAddresses))
+	production := productionBootstrapAddresses()
+	out := make([]string, 0, len(dht.DefaultBootstrapPeers)+len(production))
+	seen := make(map[string]struct{}, len(dht.DefaultBootstrapPeers)+len(production))
 
 	appendAddr := func(addr string) {
 		addr = strings.TrimSpace(addr)
@@ -267,7 +270,7 @@ func DefaultBootstrapAddresses() []string {
 		out = append(out, addr)
 	}
 
-	for _, addr := range productionBootstrapAddresses {
+	for _, addr := range production {
 		appendAddr(addr)
 	}
 	for _, addr := range dht.DefaultBootstrapPeers {

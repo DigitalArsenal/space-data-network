@@ -20,9 +20,10 @@ private Kubo/SDN key material.
 
 - SSH alias: `celestrak.eth` or `space-data-network-02`
 - Role: SDN full node, CelesTrak public provider ingest worker, local Kubo node
-- Production seed:
-  `/ip4/159.203.150.8/tcp/4001/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45`
-  (direct pinned IP multiaddrs are authoritative until `_dnsaddr.bootstrap.spacedatanetwork.org` TXT records are published)
+- Production seed: sdn.spaceaware.io on `/ip4/159.203.150.8/tcp/4004/ws`, pinned to the
+  PeerID in `deployment/identity/anchors.json` (`provider.peerId`); `config.yaml` here carries
+  it, written by `node deployment/identity/sync-anchors.mjs`. The identity before SEC-001
+  (2026-10) is denylisted and must not appear in this host's bootstrap or `trusted_peers`.
 
 ## Install Shape
 

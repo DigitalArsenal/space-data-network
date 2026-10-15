@@ -58,7 +58,7 @@ func TestProviderDescriptorKeepsRoutableAddresses(t *testing.T) {
 		// The TLS-terminated browser lane. This is the entry that makes the
 		// descriptor usable from an HTTPS page at all.
 		"/dns4/sdn.spaceaware.io/tcp/443/wss",
-		"/dns4/sdn.spaceaware.io/tcp/443/wss/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45",
+		"/dns4/sdn.spaceaware.io/tcp/443/wss/p2p/16Uiu2HAmHjHmWJ3zZApae9Ryh4gWjtNHArrEz4x3JoAykfGeQTZy",
 		// AutoTLS libp2p.direct names must survive the filter too: they are the
 		// other CA-authenticated, browser-dialable shape in the fleet.
 		"/dns4/167-172-219-213.kzwfwjn5ji4purkaknrwvpronfvibl14m4uj4zvolmjz02gajewxm0fo7nsyagx.libp2p.direct/tcp/4001/tls/ws",

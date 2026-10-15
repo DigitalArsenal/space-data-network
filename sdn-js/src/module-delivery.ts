@@ -30,6 +30,7 @@ import {
   type ServerDescriptorInput,
   type ServerDescriptorResolver,
 } from './server-descriptor';
+import { isDeniedPublicKey } from './identity-denylist';
 
 export const MODULE_DELIVERY_PROTOCOL_ID = '/space-data-network/module-delivery/1.0.0';
 
@@ -582,6 +583,14 @@ async function validateGrantEnvelope(
   trustedGrantVerifierPublicKeys: Uint8Array[] = [],
 ): Promise<void> {
   const grantVerifierPublicKey = cloneOptionalBytes(grant.grantVerifierPublicKey);
+  // SEC-001: anyone holding the published seed can mint grants that verify
+  // against its grant key, so a grant stamped with it is never accepted.
+  if (isDeniedPublicKey(grantVerifierPublicKey)) {
+    throw new ModuleDeliveryProtocolError(
+      'invalid_grant_verifier',
+      'licensing grant verifier public key is denylisted (SEC-001: its seed was published)',
+    );
+  }
   if (
     trustedGrantVerifierPublicKeys.length > 0 &&
     !trustedGrantVerifierPublicKeys.some((trustedKey) => equalBytes(trustedKey, grantVerifierPublicKey))

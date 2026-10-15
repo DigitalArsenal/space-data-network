@@ -24,7 +24,7 @@ import (
 // node had never dialled.
 
 const (
-	localID     = "16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45"
+	localID     = "16Uiu2HAmHjHmWJ3zZApae9Ryh4gWjtNHArrEz4x3JoAykfGeQTZy"
 	strangerID  = "16Uiu2HAkuSSuf8u32gYvsSrxARFqBS4dTAjmVjmC1sVCNyGSNCP4"
 	connectedID = "12D3KooWKh3diobFtzBk2RvdwR4TuFB8nkU31th8Mc2iKb7bZBWs"
 	pinnedID    = "16Uiu2HAmGjaPxkWFSXBbmhs9K5x1Zo6euJw95VjS6Jj2bcPpYr2U"

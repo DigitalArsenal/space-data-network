@@ -7,7 +7,8 @@ network:
     - /ip4/0.0.0.0/udp/4001/quic-v1
     - /ip4/0.0.0.0/udp/4003/webrtc-direct
   bootstrap:
-    - /ip4/159.203.150.8/tcp/4004/ws/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45
+    # sdn.spaceaware.io: written from deployment/identity/anchors.json by sync-anchors.mjs
+    - /ip4/159.203.150.8/tcp/4004/ws/p2p/PLACEHOLDER-SEC001-PROVIDER-PEER-ID  # identity-anchor: provider.bootstrap
   max_connections: 1000
   enable_relay: true
 

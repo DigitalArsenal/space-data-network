@@ -130,7 +130,7 @@ func buildLegacyStore(t *testing.T, dir string) {
 	}
 	// A second producer holds 100 of the same CIDs (REPEAT copies) and 100 new.
 	peer := storage.SourceTags{ProviderID: "space-data-network-01", SourceName: "mirror", BatchID: "m-1"}
-	if _, err := s.StoreBatchWithSourceTags("OMM.fbs", omm[100:300], "16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45", nil, peer); err != nil {
+	if _, err := s.StoreBatchWithSourceTags("OMM.fbs", omm[100:300], "16Uiu2HAmHjHmWJ3zZApae9Ryh4gWjtNHArrEz4x3JoAykfGeQTZy", nil, peer); err != nil {
 		t.Fatal(err)
 	}
 	var cat [][]byte
@@ -290,7 +290,7 @@ func buildLegacyStoreN(t *testing.T, dir string, n int) {
 		tags := storage.SourceTags{ProviderID: "space-data-network-02", SourceName: "celestrak-gp", BatchID: fmt.Sprintf("k-%03d", b)}
 		peer := "source:celestrak"
 		if b%3 == 2 {
-			peer = "16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45"
+			peer = "16Uiu2HAmHjHmWJ3zZApae9Ryh4gWjtNHArrEz4x3JoAykfGeQTZy"
 		}
 		if _, err := s.StoreBatchWithSourceTags("OMM.fbs", recs, peer, nil, tags); err != nil {
 			t.Fatal(err)

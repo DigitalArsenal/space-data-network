@@ -15,7 +15,10 @@ import { execFileSync } from 'node:child_process'
 import { chmodSync, cpSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
+import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
+
+const { deniedUpdateRoots } = createRequire(import.meta.url)('../src/common/identity-denylist.js')
 
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const target = join(desktopRoot, 'assets', 'sdn-node')
@@ -171,6 +174,17 @@ function assertSelfContained (root) {
   console.log('[stage-node] node is self-contained (no libwasmedge dependency)')
 }
 
+// SEC-001: never package a node whose update roots still name the root whose
+// seed was published (src/common/identity-denylist.js).
+export function assertNoDeniedUpdateRoots (bundleRoot) {
+  const rootsPath = join(bundleRoot, 'trust', 'update-roots.json')
+  if (!existsSync(rootsPath)) return
+  const denied = deniedUpdateRoots(JSON.parse(readFileSync(rootsPath, 'utf8')))
+  if (denied.length > 0) {
+    throw new Error(`REFUSED: ${rootsPath} trusts denylisted update root(s) ${denied.join(', ')} (SEC-001: the seed was published). Rebuild the bundle from the current deployment/identity/anchors.json.`)
+  }
+}
+
 function main () {
   const options = parseArgs(process.argv.slice(2))
   if (options.help) { usage(); return }
@@ -189,6 +203,7 @@ function main () {
       workspace = mkdtempSync(join(tmpdir(), 'sdn-node-bundle-'))
       root = extract(source, workspace)
     }
+    assertNoDeniedUpdateRoots(root)
     rmSync(destination, { recursive: true, force: true })
     cpSync(root, destination, { recursive: true, verbatimSymlinks: true })
   } finally {
@@ -202,4 +217,4 @@ function main () {
   console.log(`[stage-node] staged ${manifest.os}/${manifest.arch} node ${manifest.version} into ${destination}`)
 }
 
-main()
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main()

@@ -52,11 +52,11 @@ func TestFormat2StoresSizePrefixedRecords(t *testing.T) {
 		{"OMM.fbs", f2TestOMM(40001, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC), "OBJ-P")},
 	}
 	for _, r := range recs {
-		a, err := legacy.Store(r.schema, r.data, "16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45", nil)
+		a, err := legacy.Store(r.schema, r.data, "16Uiu2HAmHjHmWJ3zZApae9Ryh4gWjtNHArrEz4x3JoAykfGeQTZy", nil)
 		if err != nil {
 			t.Fatalf("%s: format 1: %v", r.schema, err)
 		}
-		b, err := f2.Store(r.schema, r.data, "16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45", nil)
+		b, err := f2.Store(r.schema, r.data, "16Uiu2HAmHjHmWJ3zZApae9Ryh4gWjtNHArrEz4x3JoAykfGeQTZy", nil)
 		if err != nil {
 			t.Fatalf("%s: format 2 refused the record: %v", r.schema, err)
 		}

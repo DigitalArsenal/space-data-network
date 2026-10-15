@@ -38,7 +38,7 @@ func TestRealCatalogRoundTrip(t *testing.T) {
 	pub, priv, _ := ed25519.GenerateKey(nil)
 	trust := TrustAnchor{
 		ProviderDomain:     "sdn.spaceaware.io",
-		NodePeerID:         "16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45",
+		NodePeerID:         "16Uiu2HAmHjHmWJ3zZApae9Ryh4gWjtNHArrEz4x3JoAykfGeQTZy",
 		SigningPublicKey:   hex.EncodeToString(pub),
 		SigningKeyPath:     "m/44'/0'/0'/0'/0'",
 		SignatureAlgorithm: "ed25519",

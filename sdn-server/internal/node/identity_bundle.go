@@ -11,6 +11,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 
 	"github.com/spacedatanetwork/sdn-server/internal/keys"
+	"github.com/spacedatanetwork/sdn-server/internal/trustanchors"
 	"github.com/spacedatanetwork/sdn-server/internal/wasm"
 )
 
@@ -55,6 +56,11 @@ func (n *Node) loadOrCreateIdentityBundle() (*IdentityBundle, error) {
 	identity, err := n.hdwallet.IdentityFromMnemonic(n.ctx, mnemonic, "", 0)
 	if err != nil {
 		return nil, fmt.Errorf("derive identity from mnemonic: %w", err)
+	}
+	// SEC-001: never come up as the identity whose seed was published. A node
+	// restored from an old backup must be re-keyed, not started.
+	if err := trustanchors.CheckPeer(identity.PeerID, "this node's identity"); err != nil {
+		return nil, fmt.Errorf("%w: the seed in %s is a published (SEC-001) seed; import the new identity with `spacedatanetwork key import --format backup --force` (deployment/identity/ROTATION.md)", err, mnemonicPath)
 	}
 
 	bundlePassword, err := n.resolveKeyPassword()

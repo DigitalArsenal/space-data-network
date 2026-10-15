@@ -50,6 +50,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/auth"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/keys"
+	"github.com/spacedatanetwork/sdn-server/internal/trustanchors"
 	"github.com/spacedatanetwork/sdn-server/internal/wasm"
 )
 
@@ -148,8 +149,14 @@ var (
 	keyImportFormat    string
 	keyImportInput     string
 	keyImportForce     bool
-	keyVerifyFormat    string
-	keyVerifyInput     string
+	// keyImportBackupPasswordFile names a 0600 file holding the password a
+	// backup was sealed under when it differs from this node's at-rest key
+	// password — the owner-run offline generator's transport password, for a
+	// host whose at-rest password is machine-derived and so cannot be known
+	// off-box. The imported phrase is re-sealed under the node's own password.
+	keyImportBackupPasswordFile string
+	keyVerifyFormat             string
+	keyVerifyInput              string
 )
 
 var keyCmd = &cobra.Command{
@@ -230,6 +237,8 @@ func init() {
 		"read from a file, or '-' for stdin")
 	keyImportCmd.Flags().BoolVar(&keyImportForce, "force", false,
 		"overwrite an existing node identity (DESTRUCTIVE)")
+	keyImportCmd.Flags().StringVar(&keyImportBackupPasswordFile, "backup-password-file", "",
+		"--format backup: a 0600 file with the password the backup was sealed under, when it is not this node's key password")
 
 	keyVerifyCmd.Flags().StringVar(&keyVerifyFormat, "format", string(keyFormatKubo),
 		"input format: kubo, libp2p, hex, base64")
@@ -410,7 +419,11 @@ func runKeyImport(cmd *cobra.Command, _ []string) error {
 		err = importIdentityMnemonic(cmd, cfg, material)
 	case keyFormatBackup:
 		var password string
-		password, err = resolveKeyCLIPassword(cfg)
+		if keyImportBackupPasswordFile != "" {
+			password, err = readBackupPasswordFile(keyImportBackupPasswordFile)
+		} else {
+			password, err = resolveKeyCLIPassword(cfg)
+		}
 		if err != nil {
 			return err
 		}
@@ -455,6 +468,9 @@ func importIdentityMnemonic(cmd *cobra.Command, cfg *config.Config, mnemonic str
 	if !valid {
 		return errors.New("invalid BIP-39 mnemonic (word list or checksum)")
 	}
+	if err := refuseDeniedIdentity(ctx, hw, mnemonic); err != nil {
+		return err
+	}
 	password, err := resolveKeyCLIPassword(cfg)
 	if err != nil {
 		return err
@@ -471,6 +487,49 @@ func importIdentityMnemonic(cmd *cobra.Command, cfg *config.Config, mnemonic str
 		return fmt.Errorf("write identity mnemonic: %w", err)
 	}
 	return nil
+}
+
+// refuseDeniedIdentity refuses to install a phrase whose identity is on the
+// SEC-001 denylist: restoring the published seed (an old backup, a stale
+// escrow copy) would put the network's compromised identity back in service.
+func refuseDeniedIdentity(ctx context.Context, hw *wasm.HDWalletModule, mnemonic string) error {
+	seed, err := hw.MnemonicToSeed(ctx, strings.TrimSpace(mnemonic), "")
+	if err != nil {
+		return fmt.Errorf("derive seed: %w", err)
+	}
+	defer func() {
+		for i := range seed {
+			seed[i] = 0
+		}
+	}()
+	id, err := hw.DeriveIdentity(ctx, seed, 0)
+	if err != nil {
+		return fmt.Errorf("derive identity: %w", err)
+	}
+	if err := trustanchors.CheckPeer(id.PeerID, "refusing to import identity"); err != nil {
+		return err
+	}
+	if raw, rerr := id.SigningPubKey.Raw(); rerr == nil && trustanchors.IsDeniedKey(raw) {
+		return fmt.Errorf("refusing to import identity: its signing key: %w", trustanchors.ErrDenied)
+	}
+	return nil
+}
+
+// readBackupPasswordFile reads a transport password the way the node reads
+// SDN_KEY_PASSWORD_FILE: owner-only permissions, trailing CR/LF trimmed.
+func readBackupPasswordFile(path string) (string, error) {
+	if err := keys.EnforceKeyFilePermissions(path); err != nil {
+		return "", fmt.Errorf("--backup-password-file: %w", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("--backup-password-file: %w", err)
+	}
+	password := strings.TrimRight(string(data), "\r\n")
+	if password == "" {
+		return "", fmt.Errorf("--backup-password-file %s is empty", path)
+	}
+	return password, nil
 }
 
 // readKeyImportInput reads material from --input or stdin.

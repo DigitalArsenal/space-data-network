@@ -48,6 +48,7 @@ import (
 	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/sigdomain"
+	"github.com/spacedatanetwork/sdn-server/internal/trustanchors"
 )
 
 const (
@@ -305,6 +306,9 @@ func (s *Signal) assertFreshness(now time.Time) error {
 func (s *Signal) assertSignature(roots TrustedRoots) error {
 	if len(roots) == 0 {
 		return errors.New("no trusted update roots: an update signal cannot be verified")
+	}
+	if trustanchors.IsDenied(s.Signing.KeyID) {
+		return fmt.Errorf("update signal signing key %s: %w", s.Signing.KeyID, trustanchors.ErrDenied)
 	}
 	trusted, ok := roots[s.Signing.KeyID]
 	if !ok || trusted == "" {

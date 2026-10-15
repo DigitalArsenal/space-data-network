@@ -3,6 +3,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import * as flatbuffers from 'flatbuffers';
 import { describe, expect, it, vi } from 'vitest';
+import { IDENTITY_ANCHORS } from './identity-anchors.generated';
 import { ENC } from 'spacedatastandards.org/lib/js/REC/ENC.js';
 import { KDF } from 'spacedatastandards.org/lib/js/REC/KDF.js';
 import { KMF } from 'spacedatastandards.org/lib/js/REC/KMF.js';
@@ -774,6 +775,77 @@ describe('module-delivery', () => {
       }),
     ).rejects.toMatchObject({
       code: 'invalid_grant_verifier',
+    });
+  });
+
+  it('rejects grants stamped with the SEC-001 denylisted grant verifier key, even with no advertised verifier list', async () => {
+    const transport = {
+      async dialProtocol(
+        _targetPeerId: string,
+        _protocolId: string,
+        payload: Uint8Array,
+      ) {
+        if (isLCH(payload)) {
+          const request = decodeLCH(payload);
+          return encodeChallengeResponse({
+            reqId: request.REQUEST_ID() ?? '',
+            moduleId: request.MODULE_ID() ?? '',
+            moduleVersion: request.MODULE_VERSION() ?? undefined,
+            providerPeerId: 'provider-peer-id',
+            challengeNonce: new Uint8Array([1, 2, 3, 4]),
+            expiresAtMs: 1_700_000_900_000n,
+          });
+        }
+
+        const proof = decodeLPF(payload);
+        return encodeGrantResponse({
+          reqId: proof.REQUEST_ID() ?? '',
+          moduleId: proof.MODULE_ID() ?? '',
+          moduleVersion: proof.MODULE_VERSION() ?? undefined,
+          requesterPeerId: proof.REQUESTER_PEER_ID() ?? undefined,
+          requesterXpub: proof.REQUESTER_XPUB() ?? undefined,
+          requestedDomain: proof.REQUESTED_DOMAIN() ?? '',
+          requestedTimeoutMs: proof.REQUESTED_TIMEOUT_MS(),
+          grantedDomain: 'xpub6FixtureAllowList',
+          grantedTimeoutMs: proof.REQUESTED_TIMEOUT_MS(),
+          expiresAtMs: 1_700_003_600_000n,
+          contentHash: new Uint8Array(32).fill(7),
+          grantVerifierPublicKey: hexToBytes(IDENTITY_ANCHORS.denylist.ed25519PublicKeys[1]),
+        });
+      },
+      async fetchCIDBytes() {
+        return new Uint8Array([1, 2, 3, 4]);
+      },
+    };
+
+    await expect(
+      requestModuleGrant(transport, {
+        serverDescriptor: {
+          publicKey: '02'.padEnd(66, '1'),
+          relayAddresses: ['/dns4/relay.example/tcp/443/wss/p2p/relay-peer'],
+        },
+        requesterIdentity: {
+          peerId: 'requester-peer-id',
+          xpub: 'xpub-requester',
+          signingKey: {
+            privateKey: new Uint8Array(32).fill(5),
+            publicKey: new Uint8Array(32).fill(6),
+          },
+          encryptionKey: {
+            privateKey: new Uint8Array(32).fill(7),
+            publicKey: new Uint8Array(32).fill(8),
+          },
+        },
+        moduleId: 'com.space-data-network.fastest-path',
+        moduleVersion: '0.5.22',
+        requesterDomain: 'xpub6FixtureAllowList',
+        requestedTimeoutMs: 30_000,
+        reqId: 'req-denied-verifier',
+        requestedAtMs: 1_700_000_000_000,
+      }),
+    ).rejects.toMatchObject({
+      code: 'invalid_grant_verifier',
+      message: expect.stringContaining('SEC-001'),
     });
   });
 

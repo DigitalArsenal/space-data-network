@@ -15,7 +15,7 @@ import (
 func TestConfiguredRelaysBecomeAutoRelayCandidates(t *testing.T) {
 	const (
 		relayID = "16Uiu2HAmPewKE2n2cEQYQFpghYevFfnSr9foCoJKoEZhcbwVHZFC"
-		bootID  = "16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45"
+		bootID  = "16Uiu2HAmHjHmWJ3zZApae9Ryh4gWjtNHArrEz4x3JoAykfGeQTZy"
 	)
 	n := &Node{
 		config: &config.Config{},

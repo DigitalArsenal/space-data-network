@@ -1,0 +1,20 @@
+{
+  "note": "Public values derived by the node (sdn-server/internal/wasm, embedded hd-wallet-wasi.wasm) from the PUBLIC BIP-39 test vector. Contains no secret.",
+  "mnemonic": "bip39-test-vector:abandon*11+about",
+  "peerId": "16Uiu2HAmLggak6WGB3dqbUkX22r4jScmzPY6AsPC4HAp6MTGGoYx",
+  "identityPublicKey": "03774c910fcf07fa96886ea794f0d5caed9afe30b44b83f7e213bb92930e7df4bd",
+  "xpub": "xpub6BosfCnifzxcFwrSzQiqu2DBVTshkCXacvNsWGYJVVhhawA7d4R5WSWGFNbi8Aw6ZRc1brxMyWMzG3DSSSSoekkudhUd9yLb6qx39T9nMdj",
+  "signingPublicKey": "03aaeb52dd7494c361049de67cc680e83ebcbbbdbeb13637d92cd845f70308af5e",
+  "encryptionPublicKey": "03498b3ac8e882c5d693540c49adf22b7a1b99c1bb8047966739bfe8cdeb272e64",
+  "publisherPublicKey": "7c2e79f3a1701fb2a86a2c24a3fdf8634b7aad80886c0c0a526d44d23fe8e19a",
+  "x25519PublicKey": "654f607c4395ac0599a6c38bc34315dd6644f405218daa4ec5318068f008a364",
+  "grantVerifierPublicKey": "d8c1129d890a4284b71c6371648aef7fb8d8582ceeffc8b6d363c3394744fc68",
+  "rootAdminPublicKey": "3c35d187ea9428787cb3343d4a724fc961902012bbce5ce4f43369861e19127f",
+  "discoveryCid": "bafkreiegjag72kjkqbc3efin3bff5lzzvok5ecmsk2v36k6ptuu6rihfq4",
+  "chainAddresses": {
+    "bitcoin": "bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu",
+    "ethereum": "0x9858EfFD232B4033E47d90003D41EC34EcaEda94",
+    "solana": "HAgk14JpMQLgt6rVgv7cBQFJWFto5Dqxi472uT3DKpqk"
+  },
+  "distributionPublicKey": "61946ff658dc5085a64563f56182906f6fb3bf317e19bfd9537566e2aa8f4096"
+}

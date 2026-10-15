@@ -103,7 +103,7 @@ import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildCarrier, extractBundleBytes } from './build-update-carrier.mjs';
 import { assertSealedFor, collectRecipients, recipientNodes, recipientsDocument, sealOnPublisher } from './update-seal.mjs';
-import { buildUpdateManifest } from './sign-update-manifest.mjs';
+import { buildUpdateManifest, resolveReleaseKeyId } from './sign-update-manifest.mjs';
 import {
   DAEMON_BINARY_MIN_BYTES,
   ReleaseBinaryRefusal,
@@ -172,7 +172,7 @@ const publisherBin = arg('publisher-bin', '/opt/spacedatanetwork/bin/spacedatane
 const feedDir = arg('feed-dir', '/opt/spacedatanetwork/update-feed');
 const feedBaseUrl = arg('feed-base-url', 'https://sdn.spaceaware.io/updates');
 const versionPrefix = arg('version-prefix', '1.0.6-updatelane');
-const keyId = arg('key-id', 'd4a971a7e534');
+const keyIdArg = arg('key-id', '');
 const minBinaryBytes = Number(arg('min-binary-bytes', DAEMON_BINARY_MIN_BYTES));
 const smokeImage = arg('smoke-image', 'debian:bookworm-slim');
 const ledgerPath = arg('ledger-path', '/opt/spacedatanetwork/publish-ledger.log');
@@ -218,6 +218,20 @@ const resolvedBinary = resolve(binaryPath);
 // Mutable: a --supersede publish mints a NEW identity in step 0c rather than
 // overwriting the published one. Everything downstream (bundle name, manifest,
 // signing, upload path, index, ledger) reads these AFTER that decision.
+// --sec001-root-migration <reason>: sign ONLY the trust_roots move with the
+// published root (deployment/identity/ROTATION.md). Needs --trust-roots.
+const rootMigrationReason = arg('sec001-root-migration', '');
+let keyId;
+try {
+  keyId = resolveReleaseKeyId(keyIdArg, {
+    dryRun,
+    rootMigration: rootMigrationReason ? { reason: rootMigrationReason, trustRoots: trustRoots || {} } : null,
+  });
+} catch (error) {
+  console.error(error.message);
+  process.exit(2);
+}
+
 let version = `${versionPrefix}.${sourceCommit}`;
 let updateId = `sdn-cli-bundle-${version}`;
 // Set by step 0c to the version this publish revokes, if any.

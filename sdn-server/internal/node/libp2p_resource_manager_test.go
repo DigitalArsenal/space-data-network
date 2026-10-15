@@ -116,7 +116,7 @@ func TestResourceAllowlistCoversLoopbackAndTheFleet(t *testing.T) {
 	got := map[string]bool{}
 	for _, addr := range resourceAllowlist(
 		[]string{"/ip4/167.172.219.213/tcp/4001/p2p/16Uiu2HAmGjaPxkWFSXBbmhs9K5x1Zo6euJw95VjS6Jj2bcPpYr2U"},
-		[]string{"/dns4/sdn.spaceaware.io/tcp/443/wss/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45", "not a multiaddr"},
+		[]string{"/dns4/sdn.spaceaware.io/tcp/443/wss/p2p/16Uiu2HAmHjHmWJ3zZApae9Ryh4gWjtNHArrEz4x3JoAykfGeQTZy", "not a multiaddr"},
 	) {
 		got[addr.String()] = true
 	}

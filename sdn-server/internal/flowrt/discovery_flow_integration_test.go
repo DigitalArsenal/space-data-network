@@ -34,7 +34,7 @@ import (
 )
 
 const (
-	discoverySelfID      = "16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45"
+	discoverySelfID      = "16Uiu2HAmHjHmWJ3zZApae9Ryh4gWjtNHArrEz4x3JoAykfGeQTZy"
 	discoveryCelestrakID = "16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3"
 	discoveryDHTPeerID   = "16Uiu2HAmDHTonlyPeerWithoutProfile"
 )

@@ -5,6 +5,14 @@ import { cp, chmod, lstat, mkdir, readFile, readdir, readlink, rm, symlink, unli
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import {
+  ed25519FromRoot,
+  isDenied,
+  loadAnchors,
+  releaseProblems,
+  updateRootKeyId,
+} from '../identity/anchors-lib.mjs';
+
 const executableMode = 0o755;
 const defaultUpdateFeedBaseUrl = 'https://sdn.spaceaware.io/updates';
 // LANE SEPARATION (2026-09-16). A bundle's channel decides which feed index
@@ -104,6 +112,7 @@ export async function stageBundle(options) {
   await cp(required(options.readmePath, 'readmePath'), join(root, 'README.md'));
   const trustRootsPath = options.trustRootsPath || (existsSync(defaultTrustRootsPath) ? defaultTrustRootsPath : '');
   if (trustRootsPath) {
+    assertNoDeniedUpdateRoots(JSON.parse(await readFile(trustRootsPath, 'utf8')), trustRootsPath);
     await mkdir(join(root, 'trust'), { recursive: true });
     await cp(trustRootsPath, join(root, 'trust', 'update-roots.json'));
   }
@@ -291,8 +300,43 @@ function parseArgs(argv) {
   return options;
 }
 
+/**
+ * SEC-001: no bundle ships an update root whose seed was published — it would
+ * let anyone holding that seed push code to the install.
+ */
+export function assertNoDeniedUpdateRoots(roots, source = 'trust roots', anchors = loadAnchors()) {
+  for (const [keyId, encoded] of Object.entries(roots || {})) {
+    let raw = '';
+    try {
+      raw = ed25519FromRoot(encoded);
+    } catch {
+      // a placeholder or malformed root is the release gate's concern
+    }
+    if (isDenied(anchors, keyId) || (raw && (isDenied(anchors, raw) || isDenied(anchors, updateRootKeyId(raw))))) {
+      throw new Error(`REFUSED: ${source} names update root ${keyId}, which is denylisted (SEC-001: its seed was published)`);
+    }
+  }
+}
+
+/**
+ * The release gate: a PUBLIC release bundle is never built while
+ * deployment/identity/anchors.json still has placeholders (the owner's new
+ * identity and distribution root have not landed) or is unsound.
+ */
+export function assertReleaseAnchors(channel, anchors = loadAnchors()) {
+  if (channel !== publicReleaseChannel) return;
+  const problems = releaseProblems(anchors);
+  if (problems.length > 0) {
+    throw new Error(
+      `REFUSED: deployment/identity/anchors.json is not release-ready (SEC-001 rotation):\n  ${problems.join('\n  ')}`,
+    );
+  }
+}
+
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const staged = await stageBundle(parseArgs(process.argv.slice(2)));
+  const cliOptions = parseArgs(process.argv.slice(2));
+  assertReleaseAnchors(cliOptions.channel || publicReleaseChannel);
+  const staged = await stageBundle(cliOptions);
   const archive = await createArchive(staged);
   console.log(archive.path);
 }

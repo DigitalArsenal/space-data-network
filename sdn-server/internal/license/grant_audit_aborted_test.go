@@ -22,7 +22,7 @@ func TestAuditDeliveryAbortedNamesTheModuleAndFingerprintsTheRequester(t *testin
 	SetGrantAuditSink(func(line string) { lines = append(lines, line) }, nil)
 	defer SetGrantAuditSink(nil, nil)
 
-	const xpub = "xpub6DKCyLbCHZLFR4XpFg26royZdkxExSMHTjNorEgkn1kgvQbLF5sts9RfNt3PbGhphVUh7WsFQ5H6GJBh4LhmRL27oSPt1qDkJ5mAr6FZ3Wa"
+	const xpub = "xpub6BosfCnifzxcFwrSzQiqu2DBVTshkCXacvNsWGYJVVhhawA7d4R5WSWGFNbi8Aw6ZRc1brxMyWMzG3DSSSSoekkudhUd9yLb6qx39T9nMdj"
 	frame := buildAuditChallengeRequestFrame(t, "com.orbpro.rf-fspl", "0.1.1", xpub, "req-abc123")
 
 	AuditDeliveryAborted("invoke_failed", frame, "16Uiu2HAmTestPeer", errors.New("plugin invoke failed (1)"))

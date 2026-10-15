@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { bootstrapMultiaddrs, loadAnchors } from '../identity/anchors-lib.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const defaultComposeFile = resolve(repoRoot, 'deployment/hydra-marketplace-demo.compose.yaml');
@@ -201,8 +202,8 @@ function buildPlan(options) {
       mechanism: 'SDN/libp2p/IPFS',
       minWaitMs: options.minDiscoveryWaitMs,
       bootstrap: [
-        '/dnsaddr/bootstrap.spacedatanetwork.org/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
-        '/dnsaddr/bootstrap.spacedatanetwork.org/p2p/16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3',
+        // Production peers from deployment/identity/anchors.json (SEC-001).
+        ...bootstrapMultiaddrs(loadAnchors()),
         '/dns4/hydra-provider-maneuver/tcp/8080/ws/p2p/${SDN_HYDRA_BOOTSTRAP_PEER_ID}',
       ],
       forbiddenShortcuts: ['tailscale', 'tailnet', 'side-channel-discovery'],

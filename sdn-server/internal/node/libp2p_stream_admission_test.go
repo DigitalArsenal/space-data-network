@@ -25,7 +25,7 @@ import (
 //
 //	SDN module delivery failed for com.orbpro.rf-atmospheric-gaseous@0.1.0:
 //	failed to dial /space-data-network/module-delivery/1.0.0 for
-//	16Uiu2HAm1Lbv…Fm45: stream reset
+//	<host-01 PeerID>: stream reset
 //
 // "stream reset" here is not a network fault. go-libp2p emits exactly one
 // StreamErrorCode for a resource-manager denial — 0x1002 (4098),

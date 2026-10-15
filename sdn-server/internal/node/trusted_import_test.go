@@ -11,7 +11,7 @@ import (
 func TestTrustedImportLanePolicy(t *testing.T) {
 	held := func() bool { return true }
 	fresh := func() bool { return false }
-	const host01 = "16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45"
+	const host01 = "16Uiu2HAmHjHmWJ3zZApae9Ryh4gWjtNHArrEz4x3JoAykfGeQTZy"
 	def := config.Default().Peers.TrustedImport
 	cases := []struct {
 		name     string

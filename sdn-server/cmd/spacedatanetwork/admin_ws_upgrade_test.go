@@ -248,7 +248,7 @@ func TestNonRootPathWebSocketUpgradeIsTunnelled(t *testing.T) {
 	admin := testAdminRouter(t, backend)
 	addr := strings.TrimPrefix(admin.URL, "http://")
 
-	path := "/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45"
+	path := "/p2p/16Uiu2HAmHjHmWJ3zZApae9Ryh4gWjtNHArrEz4x3JoAykfGeQTZy"
 	status, rest := rawRequest(t, addr, upgradeRequest(addr, path))
 	if !strings.Contains(status, "101") {
 		t.Fatalf("%s upgrade answered %q, want 101 (body %.120s)", path, status, rest)

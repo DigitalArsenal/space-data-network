@@ -26,7 +26,9 @@ test('live DHT daemon config uses public bootstrap and disables private discover
   assert.match(config, /path: "?\/tmp\/sdn-live-dht-store"?/);
   assert.match(config, /enable_dht: true/);
   assert.match(config, /enable_mdns: false/);
-  assert.match(config, /\/dnsaddr\/bootstrap\.spacedatanetwork\.org/);
+  // The anchored production peers (deployment/identity/anchors.json), never the SEC-001 denylisted one.
+  assert.match(config, /\/ip4\/167\.172\.219\.213\/tcp\/4001\/p2p\/16Uiu2HAmGjaPx/);
+  assert.doesNotMatch(config, /16Uiu2HAm1Lbvwj/);
   assert.doesNotMatch(config, /tailscale/i);
   assert.doesNotMatch(config, /private/i);
 });

@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	lgr "github.com/DigitalArsenal/spacedatastandards.org/lib/go/LGR"
+
+	"github.com/spacedatanetwork/sdn-server/internal/trustanchors"
 )
 
 // LGR grant message-type wire values (generated enum constants are
@@ -135,6 +137,11 @@ func (g *Grant) Validate(exp GrantExpectations) error {
 	}
 	if strings.TrimSpace(g.ModuleDescriptorCID) == "" {
 		return errors.New("deliveryclient: grant missing module descriptor CID")
+	}
+	// SEC-001: anyone holding the published seed can mint grants that verify
+	// against the old grant-verifier key; such a grant is never accepted.
+	if trustanchors.IsDeniedKey(g.GrantVerifierPublicKey) {
+		return fmt.Errorf("deliveryclient: grant verifier key: %w", trustanchors.ErrDenied)
 	}
 	return nil
 }

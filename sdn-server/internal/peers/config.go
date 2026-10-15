@@ -7,6 +7,8 @@ import (
 
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multiaddr"
+
+	"github.com/spacedatanetwork/sdn-server/internal/trustanchors"
 )
 
 // RegistryConfig holds configuration for initializing the peer registry.
@@ -64,6 +66,10 @@ func InitializeFromConfig(cfg RegistryConfig) (*Registry, *TrustedConnectionGate
 		info, err := ParsePeerMultiaddr(addrStr)
 		if err != nil {
 			log.Warnf("Skipping invalid trusted peer address %q: %v", addrStr, err)
+			continue
+		}
+		if err := trustanchors.CheckPeer(info.ID, "trusted_peers entry"); err != nil {
+			log.Errorf("Skipping trusted peer %q: %v — remove it from the config (deployment/identity/ROTATION.md)", addrStr, err)
 			continue
 		}
 

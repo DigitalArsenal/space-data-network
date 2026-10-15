@@ -153,7 +153,7 @@ func runF2Script(t *testing.T, s *FlatSQLStore, sc f2Script) f2Script {
 		t.Fatalf("gp-002 re-tag: %d inserted, %v", n, err)
 	}
 	peer := SourceTags{ProviderID: "space-data-network-01", SourceName: "mirror", BatchID: "m-1"}
-	if n, err = s.StoreBatchWithSourceTags("OMM.fbs", sc.omm[120:220], "16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45", nil, peer); err != nil || n != 60 {
+	if n, err = s.StoreBatchWithSourceTags("OMM.fbs", sc.omm[120:220], "16Uiu2HAmHjHmWJ3zZApae9Ryh4gWjtNHArrEz4x3JoAykfGeQTZy", nil, peer); err != nil || n != 60 {
 		t.Fatalf("mirror: %d inserted, %v", n, err)
 	}
 	// Untagged records (a relayed record, a direct Store) and one tag
@@ -546,7 +546,7 @@ func TestFormat2DaemonAPIMatchesFormat1(t *testing.T) {
 	if a, b := rangeKey(dra), rangeKey(drb); fmt.Sprint(a) != fmt.Sprint(b) {
 		t.Fatalf("SchemaDateRanges:\n format 2 %v\n format 1 %v", b, a)
 	}
-	for _, peer := range []string{"source:celestrak", "16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45", "nobody"} {
+	for _, peer := range []string{"source:celestrak", "16Uiu2HAmHjHmWJ3zZApae9Ryh4gWjtNHArrEz4x3JoAykfGeQTZy", "nobody"} {
 		a, err := legacy.PeerStorageBytes(peer)
 		if err != nil {
 			t.Fatal(err)
@@ -791,7 +791,7 @@ func TestFormat2TagFiltersSeeEveryCopy(t *testing.T) {
 			SourceTags{ProviderID: "space-data-network-02", SourceName: "celestrak-gp", BatchID: "gp-001"}); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := s.StoreBatchWithSourceTags("OMM.fbs", sc.omm[120:220], "16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45", nil,
+		if _, err := s.StoreBatchWithSourceTags("OMM.fbs", sc.omm[120:220], "16Uiu2HAmHjHmWJ3zZApae9Ryh4gWjtNHArrEz4x3JoAykfGeQTZy", nil,
 			SourceTags{ProviderID: "space-data-network-01", SourceName: "mirror", BatchID: "m-1"}); err != nil {
 			t.Fatal(err)
 		}

@@ -26,7 +26,14 @@ fi
 server_base_url="${SDN_DEV_SERVER_BASE_URL:-${server_scheme}://127.0.0.1:${server_port}}"
 http_challenge_port="${SDN_DEV_HTTP_CHALLENGE_PORT:-5080}"
 remote_provider_url="${SDN_DEV_PROVIDER_URL:-https://sdn.spaceaware.io/api/module-delivery/provider}"
-remote_bootstrap_addr="${SDN_DEV_BOOTSTRAP_ADDR:-/ip4/159.203.150.8/tcp/8080/ws/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45}"
+# The production provider's bootstrap address comes from deployment/identity/anchors.json
+# (SEC-001: never a hand-copied PeerID). Empty while that anchor is a placeholder.
+anchored_bootstrap_addr="$(node --input-type=module -e "import('${repo_root}/deployment/identity/anchors-lib.mjs').then((l) => { const a = l.loadAnchors(); const p = a.provider; if (!l.isPlaceholder(p.peerId) && !l.isDenied(a, p.peerId)) console.log(p.bootstrapTransports[0] + '/p2p/' + p.peerId); })" 2>/dev/null || true)"
+remote_bootstrap_addr="${SDN_DEV_BOOTSTRAP_ADDR:-${anchored_bootstrap_addr}}"
+if [[ -z "${remote_bootstrap_addr}" ]]; then
+  echo "[admin-dev] no production bootstrap address: deployment/identity/anchors.json provider.peerId is still a placeholder (SEC-001 rotation pending). Set SDN_DEV_BOOTSTRAP_ADDR." >&2
+  exit 2
+fi
 storage_path="${SDN_DEV_STORAGE_PATH:-${repo_root}/data/admin-dev}"
 plugin_root="${SDN_PLUGIN_ROOT:-${storage_path}/license/plugins}"
 frontend_path="${SDN_FRONTEND_PATH:-${repo_root}/sdn-js/ui/dist}"

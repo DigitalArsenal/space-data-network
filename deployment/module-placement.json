@@ -10,7 +10,7 @@
     },
     "tu-delft": {
       "name": "TU Delft",
-      "peerId": "16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45",
+      "peerId": "PLACEHOLDER-SEC001-PROVIDER-PEER-ID",
       "ssh": "space-data-network-01",
       "role": "Propagators, dynamics and numerical methods"
     },

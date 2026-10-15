@@ -22,7 +22,7 @@ import (
 // Run it against the live publisher:
 //
 //	SDN_LIVE_FEED_URL=https://sdn.spaceaware.io/updates/cli-bundle/beta/linux/amd64 \
-//	SDN_LIVE_FEED_ROOT='d4a971a7e534=MCowBQYDK2VwAyEA…' \
+//	SDN_LIVE_FEED_ROOT='<key id>=<SPKI from deployment/identity/anchors.json updateRoots>' \
 //	go test ./internal/update/ -run TestLiveFeedVerifies -v
 //
 // Skipped when unset, so it never turns a normal `go test ./...` into a network
