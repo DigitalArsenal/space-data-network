@@ -7,7 +7,7 @@
 # until that changes. Building LLVM + WasmEdge from source is slow; keeping it
 # out of the source-dependent layers is the difference between a cheap rebuild
 # and a very expensive one.
-FROM golang:1.26.8-bookworm AS wasmedge-static
+FROM golang:1.26.9-bookworm@sha256:d9c68c2c51161e12fd77e4c6320687c9cd86e1af1e3ad6e6cd63ff970641453c AS wasmedge-static
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates git cmake ninja-build \
@@ -23,7 +23,7 @@ RUN WASMEDGE_VERSION="${WASMEDGE_VERSION}" \
     WASMEDGE_STATIC_PREFIX_ONLY=1 \
     bash scripts/build-static-wasmedge.sh
 
-FROM golang:1.26.8-bookworm AS builder
+FROM golang:1.26.9-bookworm@sha256:d9c68c2c51161e12fd77e4c6320687c9cd86e1af1e3ad6e6cd63ff970641453c AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash \
