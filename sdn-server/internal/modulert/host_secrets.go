@@ -46,3 +46,25 @@ func (hb *HostBridge) hostSecret(id string) ([]byte, bool) {
 	}
 	return append([]byte(nil), value...), true
 }
+
+// Has reports whether id is held.
+func (s *HostSecrets) Has(id string) bool {
+	_, ok := s.get(id)
+	return ok
+}
+
+// Delete zeroes and drops the secret held under id. A module that asks for it
+// afterwards is answered as for any unknown ID.
+func (s *HostSecrets) Delete(id string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if value, ok := s.values[id]; ok {
+		for i := range value {
+			value[i] = 0
+		}
+		delete(s.values, id)
+	}
+}
