@@ -12,6 +12,7 @@ import (
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/MBL"
 	flatbuffers "github.com/google/flatbuffers/go"
 	"github.com/spacedatanetwork/sdn-server/internal/sigdomain"
+	"github.com/spacedatanetwork/sdn-server/internal/trustanchors"
 )
 
 // Module publication-trailer signature verification (loop I1 — defensive
@@ -357,6 +358,15 @@ func verifyPublicationSignature(wasmBytes []byte, trustedKeys []ed25519.PublicKe
 	if domainErr != nil {
 		status.Reason = "unsupported_statement_domain"
 		return portable, status, domainErr
+	}
+
+	// SEC-001 (verifier r2): a publisher key derived from a published seed is
+	// never trusted, whichever list named it — SDN_TRUSTED_PUBLISHER_KEYS, the
+	// node's own key, or anything an operator persisted. This is the one place
+	// every module signature is checked, so no parser can widen it.
+	if trustanchors.IsDeniedKey(pubKeyBytes) {
+		status.Reason = "denylisted_signer"
+		return portable, status, fmt.Errorf("module signer %s is a denylisted (SEC-001) key: %w", pubKeyHex, trustanchors.ErrDenied)
 	}
 
 	trustedSigner := false

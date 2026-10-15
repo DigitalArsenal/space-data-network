@@ -63,6 +63,7 @@ import (
 	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/sigdomain"
+	"github.com/spacedatanetwork/sdn-server/internal/trustanchors"
 	"github.com/spacedatanetwork/sdn-server/internal/update"
 )
 
@@ -151,6 +152,16 @@ func NewSigner(rawKey []byte, audit *AuditLog) (*Signer, error) {
 	pub, ok := key.Public().(ed25519.PublicKey)
 	if !ok || len(pub) != ed25519.PublicKeySize {
 		return nil, fmt.Errorf("update manifest signer key does not yield an ed25519 public half")
+	}
+	// SEC-001 (verifier r2): host-01's node key — the old fleet update root —
+	// was derived from a published seed. A node holding a denylisted key gets
+	// no signer at all, so neither the sign-manifest endpoint, the Updater
+	// page's approve button nor the signal signer can mint a release with it.
+	if trustanchors.IsDeniedKey(pub) {
+		for i := range key {
+			key[i] = 0
+		}
+		return nil, fmt.Errorf("refusing to sign updates with key %s: %w (releases are signed offline with the update root in deployment/identity/anchors.json)", hex.EncodeToString(pub)[:12], trustanchors.ErrDenied)
 	}
 	return &Signer{
 		key:   key,
