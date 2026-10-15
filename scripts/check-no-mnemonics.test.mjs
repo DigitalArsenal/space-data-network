@@ -81,11 +81,91 @@ test('SEC-001: the leaked file pattern is caught, in a .mjs and in any file type
   }
 });
 
-test('an embedded copy of the wordlist is not a phrase (NUL-separated or in order)', () => {
+// Verifier B1 (2026-10-15): the pre-SEC-001 staged guard turned every
+// non-letter into a space, so it caught these shapes; a scanner that ended a
+// run on any gap over 8 characters or any non-ASCII byte missed all four.
+// Each is built at runtime from the synthetic phrase.
+function shapesTheOldGuardCaught(phrase) {
+  const words = phrase.split(' ');
+  const goSlice = [
+    'package seeds',
+    '',
+    'func vectors() [][]string {',
+    '\treturn [][]string{',
+    '\t\t{',
+    ...words.map((w) => `            "${w}",`),
+    '\t\t},',
+    '\t}',
+    '}',
+  ].join('\n');
+  const nestedJSON = JSON.stringify({ fleet: { node: { identity: { seed: words } } } }, null, 2);
+  const nbspJoined = Buffer.from(words.join(' '), 'utf8');
+  const bulletList = ['Recovery words:', ...words.map((w) => `• ${w}`)].join('\n');
+  return { goSlice, nestedJSON, nbspJoined, bulletList };
+}
+
+test('B1: a Go slice indented 12 spaces, 4-level nested JSON, NBSP-joined words and a bullet list are all caught', () => {
+  const shapes = shapesTheOldGuardCaught(synthetic24);
+  // The nested JSON really is 4 levels deep with the words on their own lines.
+  assert.match(shapes.nestedJSON, /\n {10}"/);
+  assert.ok(shapes.nbspJoined.includes(Buffer.from([0xc2, 0xa0])));
+  for (const [name, content] of Object.entries(shapes)) {
+    const runs = findMnemonicRuns(content, WORDLIST);
+    assert.equal(runs.length, 1, `${name}: want one run`);
+    // "seed", the JSON key, is itself a wordlist word: 25 there.
+    assert.ok(runs[0].words >= 24, `${name}: ${runs[0].words} words`);
+    assert.equal(runs[0].checksumValid, true, name);
+  }
+});
+
+test('B1: --staged, --tracked and --history all catch the four shapes, and never print a word', () => {
+  const shapes = shapesTheOldGuardCaught(synthetic24);
+  const files = {
+    'seeds/vectors.go': shapes.goSlice,
+    'config/fleet.json': shapes.nestedJSON,
+    'notes/nbsp.txt': shapes.nbspJoined,
+    'notes/bullets.md': shapes.bulletList,
+  };
+  const repo = createTempRepo();
+  for (const [path, content] of Object.entries(files)) writeStagedFile(repo, path, content);
+  const staged = runGuard(repo);
+  assert.equal(staged.status, 1, staged.stderr);
+  for (const path of Object.keys(files)) assert.match(staged.stderr, new RegExp(`${path.replace(/\./g, '\\.')}:\\d+: 2[45]-word run, BIP-39 CHECKSUM-VALID`));
+  assertNoWordsLeak(staged.stdout + staged.stderr, synthetic24);
+
+  git(repo, ['-c', 'user.name=t', '-c', 'user.email=t@e', 'commit', '-qm', 'shapes']);
+  for (const args of [['--tracked'], ['--history', 'HEAD']]) {
+    const result = runGuard(repo, args);
+    assert.equal(result.status, 1, `${args[0]}: ${result.stderr}`);
+    for (const path of Object.keys(files)) assert.match(result.stderr, new RegExp(path.replace(/\./g, '\\.')), `${args[0]} ${path}`);
+    assertNoWordsLeak(result.stdout + result.stderr, synthetic24);
+  }
+});
+
+test('an embedded copy of the wordlist is not a phrase (NUL-separated, length-prefixed, or in order)', () => {
   const nulSeparated = Buffer.from(WORDLIST.slice(0, 400).join('\0'));
+  // A compiled module's string table: each word prefixed by its length byte
+  // (3..8, all C0 controls), shuffled so the ascending-order rule cannot help.
+  const shuffled = WORDLIST.slice(0, 400).map((w, i) => WORDLIST[(i * 769) % 2048]);
+  const lengthPrefixed = Buffer.concat(shuffled.map((w) => Buffer.concat([Buffer.from([w.length]), Buffer.from(w)])));
   const sortedRun = WORDLIST.slice(100, 140).join(' ');
   assert.deepEqual(findMnemonicRuns(nulSeparated, WORDLIST), []);
+  assert.deepEqual(findMnemonicRuns(lengthPrefixed, WORDLIST), []);
   assert.deepEqual(findMnemonicRuns(sortedRun, WORDLIST), []);
+});
+
+test('a NUL or other control byte inside a phrase ends the run', () => {
+  const words = synthetic24.split(' ');
+  for (const byte of [0x00, 0x01, 0x1b, 0x7f]) {
+    const split = Buffer.concat([
+      Buffer.from(words.slice(0, 8).join(' ')),
+      Buffer.from([byte]),
+      Buffer.from(words.slice(8, 16).join(' ')),
+      Buffer.from([byte]),
+      Buffer.from(words.slice(16).join(' ')),
+    ]);
+    assert.deepEqual(findMnemonicRuns(split, WORDLIST), [], `byte 0x${byte.toString(16)}`);
+  }
 });
 
 // ---------------------------------------------------------------------------

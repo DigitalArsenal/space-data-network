@@ -45,6 +45,17 @@ ecb0e7ba498c5920  sdn-server/cmd/spacedatanetwork/identity_wizard_cli_test.go
 *  commit:cd33c79a789c5563e81c24bec2d657522c534759:test_cli.sh
 *  commit:b92974a66ec36b7b4fdee65525e79c78cbebd7b8:test/testmnemonic.txt
 *  commit:763454b63191b6c1a1227d55f6ac520b8862a9a1:internal/node/hdwallet_test.go
+# Found once the scanner joined words across ANY non-letter gap (verifier B1,
+# 2026-10-15). The public "abandon" x11 + "about" vector (sha256 prefix
+# c557eec878dfd852 recomputed from the vector) in the dev configs:
+c557eec878dfd852  config/dev-docker.yaml
+c557eec878dfd852  config/dev.yaml
+# Not phrases: vendored public code. Bootstrap's minified CSS class names
+# ("list group first child border top ...", checksum-valid by chance: 1 in 16
+# for a 12-word window) and eslint regexpp's repeated tokens (not checksum-valid).
+e441d3a6bd16aafc  *
+ab68778655d80edf  sdn-js/node_modules/@eslint-community/regexpp/index.js
+ab68778655d80edf  sdn-js/node_modules/@eslint-community/regexpp/index.mjs
 
 # ---------------------------------------------------------------------------
 # KNOWN EXPOSURES — NOT safe values. Phrases git history already published.
@@ -54,6 +65,9 @@ ecb0e7ba498c5920  sdn-server/cmd/spacedatanetwork/identity_wizard_cli_test.go
 #
 # SEC-001: the sdn.spaceaware.io node seed (24 words, checksum-valid).
 exposed  commit:0e16f85696932d219cdf7fbc18f3d70fc248e10b:sdn-js/verify-identity.mjs
+# The same seed (fingerprint c660f21d1531dd1b) in a sibling commit of the same
+# day and subject; found by the B1 separator fix. The path purge covers both.
+exposed  commit:9e21580db908f4dd3ad2aef4e040fc8b1b7e2ce9:sdn-js/verify-identity.mjs
 # SEC-007: the dev admin wallet (24 words, checksum-valid).
 exposed  commit:2925c2a022ba6dcbfdaa7e1b5283b1e72af2f4cf:config/dev-wallet.env
 # UNCONFIRMED: two checksum-valid 14-word runs that are NOT public test vectors.

@@ -42,6 +42,9 @@ export const ALLOWLIST_REL = 'scripts/mnemonic-scan-allowlist.txt';
 const MIN_WORDS = 12;
 const MIN_DISTINCT = 9;
 const VALID_LENGTHS = [24, 21, 18, 15, 12];
+// The only bytes that end a run of wordlist words: NUL and the other C0
+// controls except whitespace (\t \n \v \f \r), and DEL.
+const RUN_BREAK = /[\x00-\x08\x0e-\x1f\x7f]/;
 
 export function loadWordlist(path = join(HERE, 'wordlists', 'bip39-english-wordlist.txt')) {
   const words = readFileSync(path, 'utf8')
@@ -171,11 +174,16 @@ export function findMnemonicRuns(content, wordlist) {
       flush();
       continue;
     }
-    // A separator joins two words only when it is short printable text — a
-    // space, `", "`, ` 7. ` in a numbered list. Anything else (a NUL, other
-    // binary bytes, a long gap) ends the run: compiled modules embed wordlists
-    // as NUL-separated tables, which are not phrases.
-    if (token.length > 8 || /[^\x20-\x7e\t\r]/.test(token)) flush();
+    // ANY run of non-letters joins two words, as the pre-SEC-001 guard did
+    // (it turned every non-letter into a space): a space, `", "`, a Go slice
+    // indented 12 spaces, a nested JSON array, an NBSP (UTF-8 C2 A0, read as
+    // two latin1 non-letters), a `•` bullet list, a numbered list. Only a NUL
+    // or another C0/DEL control byte ends the run — whitespace controls
+    // (\t \n \v \f \r) do not — because compiled modules embed wordlists as
+    // NUL- or length-byte-separated tables, which are not phrases. (Verifier
+    // B1: a "gap longer than 8 or any non-ASCII byte ends the run" rule
+    // missed all four of those shapes.)
+    if (RUN_BREAK.test(token)) flush();
     for (const ch of token) if (ch === '\n') line += 1;
   }
   flush();
