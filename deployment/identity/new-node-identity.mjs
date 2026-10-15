@@ -2,9 +2,13 @@
 // new-node-identity.mjs — OWNER-RUN, OFFLINE generator for a new SDN node
 // identity (SEC-001 rotation) and for the separate fleet distribution key.
 //
-//   node deployment/identity/new-node-identity.mjs              # node identity
-//   node deployment/identity/new-node-identity.mjs --kind distribution
+//   node deployment/identity/new-node-identity.mjs --out-dir <dir outside any git checkout>
 //   node deployment/identity/new-node-identity.mjs --dry-run    # self-test, no owner
+//   node deployment/identity/new-node-identity.mjs --describe-backup <old.backup>
+//
+// The fleet UPDATE ROOT is no longer derived here: it is a standalone Ed25519
+// key from deployment/identity/new-update-root.mjs (owner, 2026-10-15), so
+// `--kind distribution` is refused.
 //
 // WHAT IT DOES (real mode, interactive terminal only)
 //   1. Proves its derivation equals the node's: derives the PUBLIC BIP-39 test
@@ -54,7 +58,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { networkInterfaces, tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, parse as parsePath, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
@@ -327,11 +331,11 @@ export function selfTestAgainstNode(wallet, mod) {
 // ---------------------------------------------------------------------------
 // Terminal I/O. Only used in real mode, which requires a TTY on both ends.
 // ---------------------------------------------------------------------------
-function readLine(prompt) {
+export function readLine(prompt) {
   return readTTY(prompt, { echo: true });
 }
 
-function readHidden(prompt) {
+export function readHidden(prompt) {
   return readTTY(prompt, { echo: false });
 }
 
@@ -436,7 +440,7 @@ async function promptNewPassword() {
   throw new Error('no backup password was set; nothing was written');
 }
 
-function onlineInterfaces() {
+export function onlineInterfaces() {
   const up = [];
   for (const [name, addrs] of Object.entries(networkInterfaces())) {
     for (const addr of addrs || []) {
@@ -446,6 +450,34 @@ function onlineInterfaces() {
     }
   }
   return up;
+}
+
+/**
+ * The git work tree containing `path` (or its nearest existing ancestor), or
+ * ''. Verifier S5: an encrypted seed backup or a private key written inside a
+ * checkout is one `git add -A` away from being published, so secret outputs
+ * must live outside every work tree. Walks up looking for `.git` (a directory,
+ * or the file a worktree or submodule has), so it needs no git binary.
+ */
+export function enclosingGitWorkTree(path) {
+  let dir = resolve(path);
+  const { root } = parsePath(dir);
+  for (;;) {
+    if (existsSync(join(dir, '.git'))) return dir;
+    if (dir === root) return '';
+    dir = dirname(dir);
+  }
+}
+
+/** Throws unless `dir` is outside every git work tree. */
+export function assertOutsideGitWorkTree(dir, what) {
+  const tree = enclosingGitWorkTree(dir);
+  if (tree) {
+    throw new Error(
+      `${what} ${dir} is inside the git work tree ${tree}; a stray \`git add\` would publish it. ` +
+        'Choose a directory outside every checkout (removable media on the offline machine).',
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -552,19 +584,68 @@ function parseArgs(argv) {
     else if (arg === '--hd-wallet') opts.hdWallet = value();
     else if (arg === '--anchors') opts.anchors = value();
     else if (arg === '--verify-with-node') opts.verifyWithNode = value();
+    else if (arg === '--describe-backup') opts.describeBackup = value();
     else if (arg === '--help' || arg === '-h') opts.help = true;
     else throw new Error(`unknown argument ${arg}`);
   }
-  if (!['node', 'distribution'].includes(opts.kind)) throw new Error('--kind is node or distribution');
+  if (opts.kind === 'distribution') {
+    throw new Error(
+      'the fleet update root is no longer a seed-derived key (owner, 2026-10-15): generate it with ' +
+        'deployment/identity/new-update-root.mjs, a standalone Ed25519 key separate from the node identity',
+    );
+  }
+  if (opts.kind !== 'node') throw new Error('--kind is node');
   return opts;
 }
 
 const USAGE = `usage:
-  node deployment/identity/new-node-identity.mjs [--kind node|distribution]
-       [--password-file <SDN_KEY_PASSWORD_FILE>] [--out-dir <dir>]
+  node deployment/identity/new-node-identity.mjs --out-dir <dir outside any git checkout>
+       [--password-file <SDN_KEY_PASSWORD_FILE>]
        [--anchors <anchors.json to extend>] [--hd-wallet <hd-wallet-wasm runtime/index.mjs>]
-  node deployment/identity/new-node-identity.mjs --dry-run [--kind ...] [--verify-with-node <binary>]
-Real mode runs only in an interactive terminal, offline. See deployment/identity/ROTATION.md.`;
+  node deployment/identity/new-node-identity.mjs --dry-run [--verify-with-node <binary>]
+  node deployment/identity/new-node-identity.mjs --describe-backup <backup> [--password-file <file>]
+       (public values of an EXISTING identity, e.g. the retired one, for the denylist)
+Real modes run only in an interactive terminal. The update root comes from new-update-root.mjs.
+See deployment/identity/ROTATION.md.`;
+
+/**
+ * --describe-backup: the PUBLIC values of an existing identity backup (as
+ * `spacedatanetwork key export --format backup` writes it). For the retired
+ * SEC-001 identity this yields the two values no public source carries — the
+ * X25519 wrapping key and the full legacy root-admin key (fingerprint
+ * c9e84f37) — for anchors.json's denylist (verifier S6). Prints public values
+ * only; writes nothing.
+ */
+async function describeBackup(opts, wallet, mod, base) {
+  const sealed = readFileSync(resolve(opts.describeBackup));
+  let password = opts.passwordFile ? readPasswordFile(resolve(opts.passwordFile)) : await readHidden('  Backup password (input hidden): ');
+  let mnemonic = openMnemonic(sealed, password);
+  password = null;
+  let seed = wallet.mnemonic.toSeed(mnemonic, '');
+  mnemonic = null;
+  try {
+    const values = deriveNodePublicIdentity(wallet, mod, seed);
+    printPublic('node', values, []);
+    const deny = base.denylist || {};
+    const missing = (list, value) => !(list || []).map((v) => v.toLowerCase()).includes(String(value).toLowerCase());
+    const additions = {};
+    if (missing(deny.x25519PublicKeys, values.x25519PublicKey)) additions.x25519PublicKeys = [values.x25519PublicKey];
+    const ed = [values.rootAdminPublicKey, values.publisherPublicKey, values.grantVerifierPublicKey].filter((v) => missing(deny.ed25519PublicKeys, v));
+    if (ed.length) additions.ed25519PublicKeys = ed;
+    const secp = [values.identityPublicKey, values.signingPublicKey, values.encryptionPublicKey].filter((v) => missing(deny.secp256k1PublicKeys, v));
+    if (secp.length) additions.secp256k1PublicKeys = secp;
+    if (missing(deny.peerIds, values.peerId)) additions.peerIds = [values.peerId];
+    process.stdout.write(
+      Object.keys(additions).length
+        ? `\nAdd to anchors.json "denylist" (public values; then run sync-anchors.mjs):\n${JSON.stringify(additions, null, 2)}\n`
+        : '\nEvery public value of this identity is already on the denylist.\n',
+    );
+    return 0;
+  } finally {
+    wallet.utils.secureWipe(seed);
+    seed = null;
+  }
+}
 
 export async function main(argv = process.argv.slice(2)) {
   const opts = parseArgs(argv);
@@ -580,6 +661,28 @@ export async function main(argv = process.argv.slice(2)) {
         'REFUSED: the identity generator runs only in an interactive terminal (stdin and stdout a TTY, not CI).\n' +
           'Use --dry-run for an automated self-test with a throwaway mnemonic.\n',
       );
+      return 2;
+    }
+  }
+
+  // Every secret output lives outside every git work tree (verifier S5), and
+  // is checked BEFORE a phrase exists, so a refusal never discards a phrase
+  // the owner has already written down (verifier N3).
+  if (!opts.dryRun && !opts.describeBackup && !opts.outDir) {
+    process.stderr.write('REFUSED: --out-dir is required: a directory outside every git checkout (removable media).\n');
+    return 2;
+  }
+  const outDir = opts.outDir ? resolve(opts.outDir) : null;
+  if (outDir) {
+    try {
+      assertOutsideGitWorkTree(outDir, '--out-dir');
+    } catch (error) {
+      process.stderr.write(`REFUSED: ${error.message}\n`);
+      return 2;
+    }
+    const backupPath = join(outDir, 'node-identity.backup');
+    if (existsSync(backupPath)) {
+      process.stderr.write(`REFUSED: ${backupPath} exists; refusing to overwrite. Nothing was generated.\n`);
       return 2;
     }
   }
@@ -604,6 +707,11 @@ export async function main(argv = process.argv.slice(2)) {
     return 3;
   }
 
+  if (opts.describeBackup) {
+    if (opts.dryRun) throw new Error('--describe-backup is not a dry-run mode');
+    return describeBackup(opts, wallet, mod, base);
+  }
+
   if (!opts.dryRun) {
     const online = onlineInterfaces();
     if (online.length) {
@@ -616,6 +724,12 @@ export async function main(argv = process.argv.slice(2)) {
     }
   }
 
+  // The backup password, before the phrase is shown (verifier N3).
+  let password;
+  if (opts.passwordFile) password = readPasswordFile(resolve(opts.passwordFile));
+  else if (opts.dryRun) password = randomBytes(24).toString('base64url');
+  else password = await promptNewPassword();
+
   // Extra entropy into the module's DRBG; it mixes rather than replaces its own.
   const extra = randomBytes(64);
   wallet.injectEntropy(extra);
@@ -626,73 +740,51 @@ export async function main(argv = process.argv.slice(2)) {
   let seed = wallet.mnemonic.toSeed(mnemonic, '');
 
   const files = [];
-  let publicValues;
-  let anchors;
-  let password;
   try {
-    if (opts.kind === 'node') {
-      publicValues = deriveNodePublicIdentity(wallet, mod, seed);
-      anchors = mergeAnchors(base, { node: publicValues });
-    } else {
-      const distribution = deriveDistributionPublic(wallet, seed);
-      if (!isPlaceholder(base.provider.publisherPublicKey) && distribution.distributionPublicKey === base.provider.publisherPublicKey) {
-        throw new Error('the distribution key equals the node publisher key; generate it from a separate phrase');
-      }
-      publicValues = { updateRootKeyId: distribution.keyId, updateRootSpki: distribution.spki, distributionPublicKey: distribution.distributionPublicKey };
-      anchors = mergeAnchors(base, { distribution });
-    }
+    const publicValues = deriveNodePublicIdentity(wallet, mod, seed);
+    const anchors = mergeAnchors(base, { node: publicValues });
     for (const value of JSON.stringify(publicValues).match(/[0-9A-Za-z]{20,}/g) || []) {
       if (isDenied(base, value)) throw new Error('a derived value is on the SEC-001 denylist; refusing');
+    }
+    if (Object.keys(base.updateRoots || {}).includes(updateRootKeyId(publicValues.publisherPublicKey))) {
+      throw new Error('the node publisher key equals the anchored update root; they must be separate keys');
     }
     wallet.utils.secureWipe(seed);
     seed = null;
 
-    if (!opts.dryRun) {
-      await showOnceAndConfirm(mnemonic, opts.kind === 'node' ? 'NEW NODE IDENTITY' : 'NEW FLEET DISTRIBUTION KEY');
-    }
+    if (!opts.dryRun) await showOnceAndConfirm(mnemonic, 'NEW NODE IDENTITY');
 
-    const outDir = opts.outDir
-      ? resolve(opts.outDir)
-      : opts.dryRun
-        ? null
-        : resolve(`sdn-${opts.kind}-identity-${new Date().toISOString().slice(0, 10)}`);
     const dryDir = opts.dryRun && !outDir ? mkdtempSync(join(tmpdir(), 'sdn-identity-dry-')) : null;
     const dir = outDir || dryDir;
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     chmodSync(dir, 0o700);
 
-    if (opts.kind === 'node') {
-      if (opts.passwordFile) password = readPasswordFile(resolve(opts.passwordFile));
-      else if (opts.dryRun) password = randomBytes(24).toString('base64url');
-      else password = await promptNewPassword();
+    const backupPath = join(dir, 'node-identity.backup');
+    if (existsSync(backupPath)) throw new Error(`${backupPath} exists; refusing to overwrite`);
+    const sealed = sealMnemonic(mnemonic, password);
+    if (openMnemonic(sealed, password) !== mnemonic) throw new Error('the backup did not decrypt back to the phrase');
+    writeOwnerFile(backupPath, sealed, 0o600);
+    files.push(backupPath);
 
-      const backupPath = join(dir, 'node-identity.backup');
-      if (existsSync(backupPath)) throw new Error(`${backupPath} exists; refusing to overwrite`);
-      const sealed = sealMnemonic(mnemonic, password);
-      if (openMnemonic(sealed, password) !== mnemonic) throw new Error('the backup did not decrypt back to the phrase');
-      writeOwnerFile(backupPath, sealed, 0o600);
-      files.push(backupPath);
-
-      if (opts.verifyWithNode) {
-        if (!opts.dryRun) throw new Error('--verify-with-node is a dry-run check only');
-        verifyWithNode(resolve(opts.verifyWithNode), backupPath, password, publicValues);
-        process.stdout.write('node check: `spacedatanetwork key import --format backup` + `key export` agree on PeerID and xpub\n');
-      }
+    if (opts.verifyWithNode) {
+      if (!opts.dryRun) throw new Error('--verify-with-node is a dry-run check only');
+      verifyWithNode(resolve(opts.verifyWithNode), backupPath, password, publicValues);
+      process.stdout.write('node check: `spacedatanetwork key import --format backup` + `key export` agree on PeerID and xpub\n');
     }
 
     const publicPath = join(dir, 'public-identity.json');
-    writeOwnerFile(publicPath, `${JSON.stringify({ kind: opts.kind, ...publicValues }, null, 2)}\n`, 0o644);
+    writeOwnerFile(publicPath, `${JSON.stringify({ kind: 'node', ...publicValues }, null, 2)}\n`, 0o644);
     files.push(publicPath);
     const anchorsPath = join(dir, 'anchors.json');
     writeOwnerFile(anchorsPath, `${JSON.stringify(anchors, null, 2)}\n`, 0o644);
     files.push(anchorsPath);
 
-    printPublic(opts.kind, publicValues, opts.dryRun && dryDir ? [] : files);
+    printPublic('node', publicValues, opts.dryRun && dryDir ? [] : files);
     const remaining = releaseProblems(anchors).filter((p) => !p.startsWith('status'));
     if (remaining.length) {
       process.stdout.write(
         `\nanchors.json still has ${remaining.length} placeholder(s)` +
-          (dryDir ? '.\n' : `; run the other --kind with --anchors ${anchorsPath}\n`),
+          (dryDir ? '.\n' : `; run deployment/identity/new-update-root.mjs --anchors ${anchorsPath}\n`),
       );
     } else {
       process.stdout.write('\nanchors.json is complete: send it (public) to the repo; keep the backup and the phrase offline.\n');

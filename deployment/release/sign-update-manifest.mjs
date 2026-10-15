@@ -33,39 +33,61 @@ export function anchoredUpdateRootKeyId(anchors = readAnchors()) {
 
 /**
  * The key id a release is signed under: --key-id, else the anchored root.
- * Throws for a denylisted key id always, and for a missing or placeholder one
+ * Throws for a denylisted key id ALWAYS, and for a missing or placeholder one
  * unless this is a dry run (which signs nothing).
+ *
+ * SEC-001 (owner, 2026-10-15): the fleet's update roots move OUT-OF-BAND — each
+ * node's trust/update-roots.json is replaced directly (deployment/identity/
+ * ROTATION.md). Nothing is ever signed with the published root again, so there
+ * is no in-band "root migration" exception: a release under a denylisted key
+ * id is refused whatever it carries.
  */
-export function resolveReleaseKeyId(explicit, { dryRun = false, anchors = readAnchors(), rootMigration = null } = {}) {
+export function resolveReleaseKeyId(explicit, { dryRun = false, anchors = readAnchors() } = {}) {
   const keyId = String(explicit || anchoredUpdateRootKeyId(anchors) || '').trim();
   const denied = new Set((anchors?.denylist?.updateRootKeyIds || []).map((id) => id.toLowerCase()));
-  // THE ONE EXCEPTION (ROTATION.md, "move the fleet's update roots"): installed
-  // nodes only accept a release signed by a root they already trust — the
-  // published one — so the release that MOVES them to the new distribution
-  // root must be signed by it. It may carry nothing but that move: trust_roots
-  // naming only non-denylisted, non-placeholder roots, and a stated reason.
-  if (keyId && denied.has(keyId.toLowerCase()) && rootMigration) {
-    const roots = Object.entries(rootMigration.trustRoots || {});
-    if (!String(rootMigration.reason || '').trim()) {
-      throw new Error('REFUSED: --sec001-root-migration needs its reason as its value.');
-    }
-    if (roots.length === 0) {
-      throw new Error('REFUSED: a SEC-001 root-migration release must carry --trust-roots naming the new distribution root.');
-    }
-    for (const [id, spki] of roots) {
-      if (denied.has(id.toLowerCase()) || id.startsWith('PLACEHOLDER-') || String(spki).startsWith('PLACEHOLDER-')) {
-        throw new Error(`REFUSED: the root-migration release names ${id}, which is denylisted or a placeholder.`);
-      }
-    }
-    return keyId;
-  }
   if (keyId && denied.has(keyId.toLowerCase())) {
-    throw new Error(`REFUSED: update key id ${keyId} is denylisted (SEC-001: its seed was published). Sign with the fleet distribution key in deployment/identity/anchors.json.`);
+    throw new Error(`REFUSED: update key id ${keyId} is denylisted (SEC-001: its seed was published). Sign with the fleet update root in deployment/identity/anchors.json.`);
   }
   if (!dryRun && (!keyId || keyId.startsWith('PLACEHOLDER-'))) {
     throw new Error('REFUSED: no release signing key id: deployment/identity/anchors.json updateRoots is still a placeholder (SEC-001 rotation pending) — pass --key-id or land the owner\'s anchors.');
   }
   return keyId || 'PLACEHOLDER-SEC001-UPDATE-ROOT-KEY-ID';
+}
+
+const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
+
+/**
+ * A release's trust_roots (--trust-roots) must be EXACTLY the committed
+ * anchors.json updateRoots (verifier S7): same key ids, same keys, each key id
+ * the first 12 hex of sha256 over its Ed25519 key, none denylisted or a
+ * placeholder. A typo or a swapped file would otherwise move every node that
+ * applies the release to the wrong root.
+ */
+export function assertTrustRootsMatchAnchors(trustRoots, anchors = readAnchors()) {
+  const entries = Object.entries(trustRoots || {});
+  if (entries.length === 0) throw new Error('REFUSED: --trust-roots names no root.');
+  const anchored = anchors?.updateRoots || {};
+  const denied = new Set((anchors?.denylist?.updateRootKeyIds || []).map((id) => id.toLowerCase()));
+  for (const [keyId, encoded] of entries) {
+    if (keyId.startsWith('PLACEHOLDER-') || String(encoded).startsWith('PLACEHOLDER-')) {
+      throw new Error(`REFUSED: --trust-roots names a placeholder root (${keyId}).`);
+    }
+    const der = Buffer.from(String(encoded), 'base64');
+    if (der.length !== 44 || !der.subarray(0, 12).equals(ED25519_SPKI_PREFIX)) {
+      throw new Error(`REFUSED: --trust-roots ${keyId} is not a base64 Ed25519 SPKI.`);
+    }
+    const computed = crypto.createHash('sha256').update(der.subarray(12)).digest('hex').slice(0, 12);
+    if (computed !== keyId) throw new Error(`REFUSED: --trust-roots lists key ${computed} under key id ${keyId}.`);
+    if (denied.has(keyId.toLowerCase())) throw new Error(`REFUSED: --trust-roots names denylisted root ${keyId} (SEC-001).`);
+  }
+  const want = JSON.stringify(Object.entries(anchored).sort());
+  const got = JSON.stringify(entries.sort());
+  if (want !== got) {
+    throw new Error(
+      'REFUSED: --trust-roots must equal deployment/identity/anchors.json updateRoots exactly ' +
+        `(anchored: ${Object.keys(anchored).join(', ') || 'none'}; given: ${entries.map(([id]) => id).join(', ')}).`,
+    );
+  }
 }
 export const SIGNING_KEY_ENV = 'SDN_UPDATE_SIGNING_KEY_PEM';
 

@@ -18,19 +18,26 @@ fi
 
 echo "[oss-preflight] Repo: $ROOT"
 
-BLOCKED_PATHS_REGEX='^\.claude/|^\.gocache/|^demo/\.demo-env$|^demo/\.demo-secrets\.json$|(^|/)[^/]*-?wallet\.env$|(^|/)[^/]*\.mnemonic$'
+# SEC-001 (verifier S5): an encrypted seed backup or a PEM private key is never
+# tracked, whatever its password; the generators also refuse a git work tree.
+BLOCKED_PATHS_REGEX='^\.claude/|^\.gocache/|^demo/\.demo-env$|^demo/\.demo-secrets\.json$|(^|/)[^/]*-?wallet\.env$|(^|/)[^/]*\.mnemonic$|(^|/)[^/]*\.backup$|(^|/)[^/]*\.pem$'
 # AKIA/ASIA are wrapped in non-alphanumeric boundaries: a real AWS key id is a
 # standalone 20-char token, while base64-embedded build artifacts (e.g. the
 # single-file UI bundles inlining wasm) legitimately contain AKIA/ASIA as
 # substrings of longer alphanumeric runs and must not trip the scan.
 # Google API keys likewise need token boundaries: embedded WASM base64 can
 # contain the 39-character pattern inside a much longer encoded value.
-SECRET_REGEX='-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----|-----BEGIN PRIVATE KEY-----|(^|[^A-Za-z0-9])AKIA[0-9A-Z]{16}($|[^A-Za-z0-9])|(^|[^A-Za-z0-9])ASIA[0-9A-Z]{16}($|[^A-Za-z0-9])|ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{80,}|xox[baprs]-[A-Za-z0-9-]{10,}|(^|[^A-Za-z0-9_+/-])AIza[A-Za-z0-9_-]{35}($|[^A-Za-z0-9_+/-])|sk_live_[A-Za-z0-9]{16,}|ORBPRO_SERVER_PRIVATE_KEY_HEX=[A-Fa-f0-9]{32,}|DERIVATION_SECRET=[A-Fa-f0-9]{32,}|([Mm][Nn][Ee][Mm][Oo][Nn][Ii][Cc]|[Ss][Ee][Ee][Dd]_?[Pp][Hh][Rr][Aa][Ss][Ee])[A-Za-z_]*[^[:alnum:]]{0,3}[:=][^[:alnum:]]{0,3}([a-z]+ ){11,}[a-z]+'
+SECRET_REGEX='-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----|-----BEGIN PRIVATE KEY-----|(^|[^A-Za-z0-9])AKIA[0-9A-Z]{16}($|[^A-Za-z0-9])|(^|[^A-Za-z0-9])ASIA[0-9A-Z]{16}($|[^A-Za-z0-9])|ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{80,}|xox[baprs]-[A-Za-z0-9-]{10,}|(^|[^A-Za-z0-9_+/-])AIza[A-Za-z0-9_-]{35}($|[^A-Za-z0-9_+/-])|sk_live_[A-Za-z0-9]{16,}|ORBPRO_SERVER_PRIVATE_KEY_HEX=[A-Fa-f0-9]{32,}|DERIVATION_SECRET=[A-Fa-f0-9]{32,}'
+# A mnemonic assigned to a key (MNEMONIC=, seed_phrase:, mnemonicPhrase := ...).
+MNEMONIC_ASSIGN_REGEX='([Mm][Nn][Ee][Mm][Oo][Nn][Ii][Cc]|[Ss][Ee][Ee][Dd]_?[Pp][Hh][Rr][Aa][Ss][Ee])[A-Za-z_]*[^[:alnum:]]{0,3}[:=][^[:alnum:]]{0,3}([a-z]+ ){11,}[a-z]+'
 INFRA_REGEX='api\.spaceaware\.io|relay\.spaceaware\.io|tokyo\.relay\.digitalarsenal\.io|209\.182\.234\.97|~/.ssh/sdn_deploy_key'
 
-# Public BIP-39 test vectors in an assignment shape; each is also pinned by
-# fingerprint in scripts/mnemonic-scan-allowlist.txt (the precise layer).
-SECRET_ALLOWLIST_REGEX='^docker-compose\.dev\.yaml:[0-9]+:|^sdn-server/cmd/spacedatanetwork/identity_wizard_cli_test\.go:|^sdn-server/internal/wasm/hdwallet_test\.go:|^kubo/test/sharness/t0165-keystore-data/|^sdn-server/internal/storefront/payment_stripe_test.go:|^sdn-js/node_modules/|^docs/network-ecosystem-demo\.mjs:|^scripts/oss-preflight.sh:'
+SECRET_ALLOWLIST_REGEX='^kubo/test/sharness/t0165-keystore-data/|^sdn-server/internal/storefront/payment_stripe_test.go:|^sdn-js/node_modules/|^docs/network-ecosystem-demo\.mjs:|^scripts/oss-preflight.sh:'
+# Public BIP-39 test vectors in an assignment shape. These files are excused
+# from the MNEMONIC pattern only (verifier S8): a PEM key, AWS key or GitHub
+# token in them still fails. Each vector is also pinned by fingerprint in
+# scripts/mnemonic-scan-allowlist.txt (the precise layer).
+MNEMONIC_ALLOWLIST_REGEX="${SECRET_ALLOWLIST_REGEX}|^docker-compose\.dev\.yaml:[0-9]+:|^sdn-server/cmd/spacedatanetwork/identity_wizard_cli_test\.go:[0-9]+:|^sdn-server/internal/wasm/hdwallet_test\.go:[0-9]+:"
 INFRA_ALLOWLIST_REGEX='^scripts/oss-preflight.sh:'
 
 echo "[oss-preflight] 1/11 Checking blocked tracked paths..."
@@ -48,14 +55,20 @@ else
 fi
 
 echo "[oss-preflight] 2/11 Scanning tracked files for high-risk secret patterns..."
-secret_hits="$(git grep -n -I -E -e "$SECRET_REGEX" || true)"
-if [[ -n "$secret_hits" ]]; then
-  if [[ "$FILTER_CMD" == "rg" ]]; then
-    secret_hits="$(printf '%s\n' "$secret_hits" | rg -v "$SECRET_ALLOWLIST_REGEX" || true)"
-  else
-    secret_hits="$(printf '%s\n' "$secret_hits" | grep -Ev "$SECRET_ALLOWLIST_REGEX" || true)"
+secret_scan() { # <pattern> <allowlist>
+  local hits
+  hits="$(git grep -n -I -E -e "$1" || true)"
+  if [[ -n "$hits" ]]; then
+    if [[ "$FILTER_CMD" == "rg" ]]; then
+      hits="$(printf '%s\n' "$hits" | rg -v "$2" || true)"
+    else
+      hits="$(printf '%s\n' "$hits" | grep -Ev "$2" || true)"
+    fi
   fi
-fi
+  [[ -n "$hits" ]] && printf '%s\n' "$hits"
+  return 0
+}
+secret_hits="$(secret_scan "$SECRET_REGEX" "$SECRET_ALLOWLIST_REGEX"; secret_scan "$MNEMONIC_ASSIGN_REGEX" "$MNEMONIC_ALLOWLIST_REGEX")"
 if [[ -n "$secret_hits" ]]; then
   # path:line only — echoing the matched line would publish the secret in CI logs.
   echo "[oss-preflight] FAIL: possible secret material detected (matched text withheld):"

@@ -59,6 +59,7 @@ import { multiaddr } from '@multiformats/multiaddr';
 import type { SDNConfig } from './node';
 import { dhtEnabled } from './node';
 import { getBootstrapRelays } from './edge-discovery';
+import { deniedIdentityConnectionGater } from './identity-denylist';
 import { resolveConnectionMonitorInit } from './connection-monitor-policy';
 import { initHDWallet } from './crypto/hd-wallet';
 import type { DerivedIdentity } from './crypto/types';
@@ -490,6 +491,11 @@ export async function createHeliaSDNNode(config: SDNConfig = {}): Promise<HeliaS
       denyDialMultiaddr: async () => false,
     };
   }
+  // SEC-001 (verifier S3): never dial, and drop any connection to, a
+  // denylisted identity — DHT, delegated routing and pubsub included.
+  libp2pOpts.connectionGater = deniedIdentityConnectionGater(
+    (libp2pOpts.connectionGater ?? {}) as Record<string, unknown>,
+  ) as HeliaLibp2pCreateOptions['connectionGater'];
 
   if (config.identity?.identityKey) {
     const rawKey = (config.identity as DerivedIdentity).identityKey.privateKey;

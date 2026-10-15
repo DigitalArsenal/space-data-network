@@ -439,6 +439,34 @@ describe('createHeliaSDNNode', () => {
     await node.stop();
   });
 
+  it('SEC-001 (S3): the libp2p it builds refuses the denylisted PeerID at dial and after any handshake', async () => {
+    const { createHeliaSDNNode } = await import('./helia');
+    const { IDENTITY_ANCHORS } = await import('./identity-anchors.generated');
+    const leaked = { toString: () => IDENTITY_ANCHORS.denylist.peerIds[0] };
+    const other = { toString: () => '16Uiu2HAmHjHmWJ3zZApae9Ryh4gWjtNHArrEz4x3JoAykfGeQTZy' };
+
+    for (const allowPrivateAddressDial of [false, true]) {
+      createLibp2pMock.mockClear();
+      const node = await createHeliaSDNNode({
+        allowPrivateAddressDial,
+        edgeRelays: ['/ip4/104.131.11.220/udp/4003/webrtc-direct/certhash/uEiDHMHA60lI3WloWOnksNqBZe8J7zUcxrIV_yB6E5NBMyw/p2p/16Uiu2HAmHjHmWJ3zZApae9Ryh4gWjtNHArrEz4x3JoAykfGeQTZy'],
+      });
+      const gater = createLibp2pMock.mock.calls[0][0].connectionGater;
+      expect(await gater.denyDialPeer(leaked)).toBe(true);
+      expect(await gater.denyInboundEncryptedConnection(leaked)).toBe(true);
+      expect(await gater.denyOutboundEncryptedConnection(leaked)).toBe(true);
+      expect(await gater.denyDialPeer(other)).toBe(false);
+      expect(await gater.denyInboundEncryptedConnection(other)).toBe(false);
+      // The browser default private-address policy is kept unless the caller lifted it.
+      expect(typeof gater.denyDialMultiaddr === 'function').toBe(allowPrivateAddressDial);
+      if (allowPrivateAddressDial) {
+        expect(await gater.denyDialMultiaddr({ toString: () => `/ip4/127.0.0.1/tcp/1/ws/p2p/${leaked}` })).toBe(true);
+        expect(await gater.denyDialMultiaddr({ toString: () => '/ip4/127.0.0.1/tcp/1/ws' })).toBe(false);
+      }
+      await node.stop();
+    }
+  });
+
   it('uses direct libp2p bitswap routing instead of Helia HTTP gateway defaults', async () => {
     const { createHeliaSDNNode } = await import('./helia');
 

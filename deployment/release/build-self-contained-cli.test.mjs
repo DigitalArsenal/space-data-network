@@ -1,11 +1,25 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { lstat, mkdtemp, mkdir, readFile, readlink, stat, symlink, writeFile } from 'node:fs/promises';
-import { createHash } from 'node:crypto';
+import { createHash, generateKeyPairSync } from 'node:crypto';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { createArchive, stageBundle } from './build-self-contained-cli.mjs';
+import { assertStageableTrustRoots, createArchive, stageBundle } from './build-self-contained-cli.mjs';
+import { ed25519Spki, loadAnchors, updateRootKeyId } from '../identity/anchors-lib.mjs';
+
+// A synthetic update root (a fresh Ed25519 key, listed under its real key id:
+// the first 12 hex of sha256 over the raw key). SEC-001: stageBundle refuses
+// placeholder and denylisted roots on every channel, so tests name this one.
+function syntheticTrustRoots() {
+  const spki = generateKeyPairSync('ed25519').publicKey.export({ type: 'spki', format: 'der' });
+  const keyId = createHash('sha256').update(spki.subarray(12)).digest('hex').slice(0, 12);
+  return { [keyId]: spki.toString('base64') };
+}
+const TEST_TRUST_ROOTS = syntheticTrustRoots();
+const TEST_TRUST_ROOTS_PATH = join(mkdtempSync(join(tmpdir(), 'sdn-cli-test-roots-')), 'update-roots.json');
+writeFileSync(TEST_TRUST_ROOTS_PATH, JSON.stringify(TEST_TRUST_ROOTS));
 
 test('stageBundle creates expected portable archive layout', async () => {
   const root = await mkdtemp(join(tmpdir(), 'sdn-cli-bundle-'));
@@ -49,6 +63,7 @@ test('stageBundle creates expected portable archive layout', async () => {
     licensePath: join(inputs, 'LICENSE'),
     readmePath: join(inputs, 'README.md'),
     manifestSignature: 'test-signature',
+    trustRootsPath: TEST_TRUST_ROOTS_PATH,
   });
 
   assert.equal(staged.bundleName, 'spacedatanetwork-1.2.3-linux-amd64');
@@ -164,6 +179,7 @@ test('stageBundle creates Windows executable names and copied alias', async () =
     licensePath: join(inputs, 'LICENSE'),
     readmePath: join(inputs, 'README.md'),
     manifestSignature: 'test-signature',
+    trustRootsPath: TEST_TRUST_ROOTS_PATH,
   });
 
   await stat(join(staged.root, 'bin', 'spacedatanetwork.exe'));
@@ -212,7 +228,7 @@ test('stageBundle stages trust roots outside manifest artifacts and checksums', 
   await writeFile(join(inputs, 'wasmedge', 'bin', 'wasmedge'), '#!/bin/sh\n');
   await writeFile(join(inputs, 'LICENSE'), 'license');
   await writeFile(join(inputs, 'README.md'), 'readme');
-  const trustRoots = { 'sdn-test-root': 'MCowBQYDK2VwAyEA' };
+  const trustRoots = syntheticTrustRoots();
   await writeFile(join(inputs, 'update-roots.json'), `${JSON.stringify(trustRoots, null, 2)}\n`);
 
   const staged = await stageBundle({
@@ -269,6 +285,7 @@ test('stageBundle rejects path traversal in bundle name fields', async () => {
       licensePath: join(root, 'missing-license'),
       readmePath: join(root, 'missing-readme'),
       manifestSignature: 'test-signature',
+    trustRootsPath: TEST_TRUST_ROOTS_PATH,
     }),
     /version contains unsupported characters/,
   );
@@ -294,7 +311,7 @@ test('stageBundle stages the fleet trust roots when none are named', async () =>
   await writeFile(join(inputs, 'LICENSE'), 'license');
   await writeFile(join(inputs, 'README.md'), 'readme');
 
-  const staged = await stageBundle({
+  const options = {
     version: '1.2.3',
     os: 'linux',
     arch: 'amd64',
@@ -309,15 +326,35 @@ test('stageBundle stages the fleet trust roots when none are named', async () =>
     licensePath: join(inputs, 'LICENSE'),
     readmePath: join(inputs, 'README.md'),
     manifestSignature: 'test-signature',
-  });
-
+  };
   const fleetRoots = JSON.parse(await readFile(new URL('./fleet-trust-roots.json', import.meta.url), 'utf8'));
+  assert.ok(Object.keys(fleetRoots).length >= 1, 'the fleet roots file names at least one root');
+  if (JSON.stringify(fleetRoots).includes('PLACEHOLDER-')) {
+    // SEC-001 (verifier S4): until the owner's new root lands, no channel
+    // stages the placeholder roots — such a node could never verify an update.
+    await assert.rejects(stageBundle(options), /PLACEHOLDER update root/);
+    return;
+  }
+  const staged = await stageBundle(options);
   const stagedRoots = JSON.parse(await readFile(join(staged.root, 'trust', 'update-roots.json'), 'utf8'));
   assert.deepEqual(stagedRoots, fleetRoots);
-  assert.ok(Object.keys(fleetRoots).length >= 1, 'the fleet roots file names at least one root');
   const manifest = JSON.parse(await readFile(join(staged.root, 'manifest.json'), 'utf8'));
   assert.equal(manifest.artifacts.some((artifact) => artifact.path.startsWith('trust/')), false);
   assert.equal(manifest.update.feedBaseUrl, 'https://sdn.spaceaware.io/updates');
+});
+
+test('SEC-001 S4: every channel refuses placeholder, mislabelled, malformed and denylisted trust roots', async () => {
+  const [[keyId, spki]] = Object.entries(TEST_TRUST_ROOTS);
+  assert.doesNotThrow(() => assertStageableTrustRoots(TEST_TRUST_ROOTS));
+  assert.throws(() => assertStageableTrustRoots({}), /names no update root/);
+  assert.throws(() => assertStageableTrustRoots({ 'PLACEHOLDER-SEC001-UPDATE-ROOT-KEY-ID': 'PLACEHOLDER-SEC001-UPDATE-ROOT-SPKI' }), /PLACEHOLDER/);
+  assert.throws(() => assertStageableTrustRoots({ 'sdn-test-root': spki }), /under key id/);
+  assert.throws(() => assertStageableTrustRoots({ [keyId]: 'MCowBQYDK2VwAyEA' }), /not an Ed25519 key/);
+  // The published root, read from the anchors denylist (never written out here).
+  const anchors = loadAnchors();
+  const leakedHex = anchors.denylist.ed25519PublicKeys.find((k) => anchors.denylist.updateRootKeyIds.includes(updateRootKeyId(k)));
+  assert.ok(leakedHex, 'the denylist names the published update root');
+  assert.throws(() => assertStageableTrustRoots({ [updateRootKeyId(leakedHex)]: ed25519Spki(leakedHex) }), /denylisted/);
 });
 
 // INST-03: a release bundle carries the wallet sign-in assets so a fresh
@@ -355,6 +392,7 @@ test('stageBundle stages wallet sign-in assets under runtime/ui when given', asy
     licensePath: join(inputs, 'LICENSE'),
     readmePath: join(inputs, 'README.md'),
     manifestSignature: 'test-signature',
+    trustRootsPath: TEST_TRUST_ROOTS_PATH,
     walletWasmPath: join(inputs, 'wallet-wasm'),
     walletUIPath: join(inputs, 'wallet-ui'),
   });
@@ -400,6 +438,7 @@ test('a static bundle stages no WasmEdge runtime and no library path', async () 
     licensePath: join(inputs, 'LICENSE'),
     readmePath: join(inputs, 'README.md'),
     manifestSignature: 'test-signature',
+    trustRootsPath: TEST_TRUST_ROOTS_PATH,
   });
 
   await assert.rejects(
@@ -434,6 +473,7 @@ test('stageBundle refuses to stamp a bundle with the internal fleet dev lane cha
       licensePath: join(root, 'LICENSE'),
       readmePath: join(root, 'README.md'),
       manifestSignature: 'test-signature',
+    trustRootsPath: TEST_TRUST_ROOTS_PATH,
     }),
     /internal fleet dev lane/,
   );

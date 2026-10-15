@@ -112,7 +112,7 @@ export async function stageBundle(options) {
   await cp(required(options.readmePath, 'readmePath'), join(root, 'README.md'));
   const trustRootsPath = options.trustRootsPath || (existsSync(defaultTrustRootsPath) ? defaultTrustRootsPath : '');
   if (trustRootsPath) {
-    assertNoDeniedUpdateRoots(JSON.parse(await readFile(trustRootsPath, 'utf8')), trustRootsPath);
+    assertStageableTrustRoots(JSON.parse(await readFile(trustRootsPath, 'utf8')), trustRootsPath);
     await mkdir(join(root, 'trust'), { recursive: true });
     await cp(trustRootsPath, join(root, 'trust', 'update-roots.json'));
   }
@@ -316,6 +316,34 @@ export function assertNoDeniedUpdateRoots(roots, source = 'trust roots', anchors
       throw new Error(`REFUSED: ${source} names update root ${keyId}, which is denylisted (SEC-001: its seed was published)`);
     }
   }
+}
+
+/**
+ * SEC-001 gate for EVERY channel that stages trust roots (verifier S4): a
+ * bundle trusting a placeholder root can never verify an update, and one
+ * trusting the published root can be pushed code by anyone holding its seed.
+ * The fleet's roots move out-of-band (deployment/identity/ROTATION.md), so
+ * until the owner's root lands in anchors.json no bundle is staged at all.
+ */
+export function assertStageableTrustRoots(roots, source = 'trust roots', anchors = loadAnchors()) {
+  const entries = Object.entries(roots || {});
+  if (entries.length === 0) throw new Error(`REFUSED: ${source} names no update root`);
+  for (const [keyId, encoded] of entries) {
+    if (String(keyId).startsWith('PLACEHOLDER-') || String(encoded).startsWith('PLACEHOLDER-')) {
+      throw new Error(
+        `REFUSED: ${source} still names a PLACEHOLDER update root (SEC-001 rotation pending): a bundle trusting it can never ` +
+          'verify an update. Land the owner\'s new root in deployment/identity/anchors.json and run sync-anchors.mjs first.',
+      );
+    }
+    let raw;
+    try {
+      raw = ed25519FromRoot(encoded);
+    } catch {
+      throw new Error(`REFUSED: ${source} update root ${keyId} is not an Ed25519 key`);
+    }
+    if (updateRootKeyId(raw) !== keyId) throw new Error(`REFUSED: ${source} lists update root ${updateRootKeyId(raw)} under key id ${keyId}`);
+  }
+  assertNoDeniedUpdateRoots(roots, source, anchors);
 }
 
 /**

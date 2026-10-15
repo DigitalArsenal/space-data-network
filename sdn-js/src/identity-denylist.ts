@@ -28,6 +28,7 @@ const DENIED: ReadonlySet<string> = new Set<string>([
   ...deny.peerIds,
   ...deny.secp256k1PublicKeys.map((v) => v.toLowerCase()),
   ...deny.ed25519PublicKeys.map((v) => v.toLowerCase()),
+  ...(deny.x25519PublicKeys as readonly string[]).map((v) => v.toLowerCase()),
   ...deny.xpubs,
   ...deny.updateRootKeyIds.map((v) => v.toLowerCase()),
   ...deny.discoveryCids,
@@ -125,4 +126,59 @@ export function anchoredBootstrapAddrs(): string[] {
   return [IDENTITY_ANCHORS.provider, ...IDENTITY_ANCHORS.peers].flatMap((endpoint) =>
     endpointAddrs(endpoint, 'bootstrapTransports'),
   );
+}
+
+/**
+ * True when any string or key-sized byte array anywhere in `value` (an EPM, a
+ * parsed EPM, a descriptor) is a public value of a denylisted identity: a
+ * PeerID, hex key, xpub, key id, CID, chain address, or a multiaddr naming the
+ * peer. Depth-limited; never throws.
+ */
+export function namesDeniedIdentity(value: unknown, depth = 0): boolean {
+  if (depth > 8 || value === null || value === undefined) return false;
+  if (typeof value === 'string') return isDeniedIdentityValue(value) || isDeniedMultiaddr(value);
+  if (value instanceof Uint8Array) return (value.length === 32 || value.length === 33) && isDeniedPublicKey(value);
+  if (Array.isArray(value)) return value.some((item) => namesDeniedIdentity(item, depth + 1));
+  if (typeof value === 'object') {
+    return Object.values(value as Record<string, unknown>).some((item) => namesDeniedIdentity(item, depth + 1));
+  }
+  return false;
+}
+
+type PeerLike = { toString(): string };
+type GateFn = (...args: never[]) => boolean | Promise<boolean>;
+type GateLike = { [name: string]: unknown };
+
+async function baseDenies(base: GateLike, name: string, args: unknown[]): Promise<boolean> {
+  const fn = base[name];
+  return typeof fn === 'function' ? Boolean(await (fn as (...a: unknown[]) => unknown)(...args)) : false;
+}
+
+/**
+ * A libp2p connection gater that refuses the denylisted identities at the
+ * transport level (verifier S3): never dial them, and drop any connection,
+ * inbound or outbound, whose remote peer turns out to be one of them after the
+ * handshake — so DHT, delegated-routing and pubsub peers cannot reach the old
+ * identity either. Every other gate is the caller's (or libp2p's default):
+ * `denyDialMultiaddr` is only wrapped when the caller replaced it, so a
+ * browser keeps libp2p's private-address policy.
+ */
+export function deniedIdentityConnectionGater<T extends GateLike>(base: T = {} as T): T & Record<string, GateFn> {
+  const peerDenied = (peerId: PeerLike | undefined) => Boolean(peerId) && isDeniedIdentityValue(String(peerId));
+  const gate: GateLike = { ...base };
+  gate.denyDialPeer = async (peerId: PeerLike, ...rest: unknown[]) =>
+    peerDenied(peerId) || baseDenies(base, 'denyDialPeer', [peerId, ...rest]);
+  for (const name of [
+    'denyInboundEncryptedConnection',
+    'denyOutboundEncryptedConnection',
+    'denyInboundUpgradedConnection',
+    'denyOutboundUpgradedConnection',
+  ]) {
+    gate[name] = async (peerId: PeerLike, ...rest: unknown[]) => peerDenied(peerId) || baseDenies(base, name, [peerId, ...rest]);
+  }
+  if (typeof base.denyDialMultiaddr === 'function') {
+    gate.denyDialMultiaddr = async (addr: PeerLike, ...rest: unknown[]) =>
+      isDeniedMultiaddr(String(addr)) || baseDenies(base, 'denyDialMultiaddr', [addr, ...rest]);
+  }
+  return gate as T & Record<string, GateFn>;
 }

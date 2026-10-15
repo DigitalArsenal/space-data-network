@@ -2,6 +2,7 @@ package trustanchors
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"strings"
@@ -119,5 +120,30 @@ func TestParseRefusesAnEmptyDenylist(t *testing.T) {
 	stripped := bytes.Replace(anchorsJSON, []byte(`"peerIds": [`), []byte(`"peerIdsX": [`), 1)
 	if _, err := Parse(stripped); err == nil {
 		t.Fatal("anchors without a SEC-001 peer denylist parsed")
+	}
+}
+
+// Verifier S6: the retired identity's X25519 wrapping key, once the owner
+// records it, is denied like every other public value of that identity.
+func TestX25519DenylistEntriesAreDenied(t *testing.T) {
+	var raw map[string]any
+	if err := json.Unmarshal(anchorsJSON, &raw); err != nil {
+		t.Fatal(err)
+	}
+	wrapping := strings.Repeat("ab", 32)
+	raw["denylist"].(map[string]any)["x25519PublicKeys"] = []string{strings.ToUpper(wrapping)}
+	data, err := json.Marshal(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !a.IsDenied(wrapping) || !a.IsDenied(strings.ToUpper(wrapping)) {
+		t.Fatal("a recorded X25519 wrapping key is not denied")
+	}
+	if a.IsDenied(strings.Repeat("cd", 32)) {
+		t.Fatal("an unrelated key is denied")
 	}
 }

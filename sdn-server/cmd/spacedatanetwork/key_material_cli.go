@@ -155,6 +155,13 @@ var (
 	// host whose at-rest password is machine-derived and so cannot be known
 	// off-box. The imported phrase is re-sealed under the node's own password.
 	keyImportBackupPasswordFile string
+	// keyExportBackupPasswordFile is the export half (SEC-001): seal the
+	// backup under a transport password instead of this node's at-rest one,
+	// so a forensic copy from a host whose at-rest password is machine-derived
+	// can still be opened off-box — e.g. by the offline generator's
+	// --describe-backup, to read the retired identity's X25519 wrapping key
+	// for the denylist.
+	keyExportBackupPasswordFile string
 	keyVerifyFormat             string
 	keyVerifyInput              string
 )
@@ -230,6 +237,8 @@ func init() {
 		"write to a file instead of stdout")
 	keyExportCmd.Flags().BoolVar(&keyExportPlaintext, "insecure-plaintext", false,
 		"REQUIRED to export a SECRET format; prints plaintext private material")
+	keyExportCmd.Flags().StringVar(&keyExportBackupPasswordFile, "backup-password-file", "",
+		"--format backup: seal under the password in this 0600 file instead of this node's key password (a portable forensic copy)")
 
 	keyImportCmd.Flags().StringVar(&keyImportFormat, "format", string(keyFormatMnemonic),
 		"input format: "+strings.Join(importable, ", "))
@@ -334,7 +343,7 @@ func runKeyExport(cmd *cobra.Command, _ []string) error {
 		var mnemonic, password string
 		mnemonic, _, err = loadStoredMnemonic(cfg, cfgRes)
 		if err == nil {
-			password, err = resolveKeyCLIPassword(cfg)
+			password, err = backupSealPassword(cfg, keyExportBackupPasswordFile)
 		}
 		if err == nil {
 			payload, err = keys.EncryptMnemonic(strings.TrimSpace(mnemonic), password)
@@ -799,4 +808,15 @@ func keyDirOwner(dir string) string {
 		return ""
 	}
 	return fileOwnerName(info)
+}
+
+// backupSealPassword is the password `key export --format backup` seals under:
+// the transport password in passwordFile when one is named (read exactly as
+// `key import --backup-password-file` reads it), else this node's own key
+// password.
+func backupSealPassword(cfg *config.Config, passwordFile string) (string, error) {
+	if strings.TrimSpace(passwordFile) != "" {
+		return readBackupPasswordFile(passwordFile)
+	}
+	return resolveKeyCLIPassword(cfg)
 }

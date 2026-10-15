@@ -145,6 +145,26 @@ describe("SDNNode relay bootstrap", () => {
     await node.stop();
   });
 
+  it("SEC-001 (S3): the libp2p it builds refuses the denylisted PeerID at dial and after any handshake", async () => {
+    const { SDNNode } = await import("./node");
+    const { IDENTITY_ANCHORS } = await import("./identity-anchors.generated");
+    const leaked = { toString: () => IDENTITY_ANCHORS.denylist.peerIds[0] };
+    const other = { toString: () => "16Uiu2HAmHjHmWJ3zZApae9Ryh4gWjtNHArrEz4x3JoAykfGeQTZy" };
+
+    const node = await SDNNode.create({
+      edgeRelays: ["/ip4/127.0.0.1/tcp/14080/ws/p2p/local-provider"],
+      enableStorage: false,
+    });
+    const gater = createLibp2pMock.mock.calls[0][0].connectionGater;
+    expect(await gater.denyDialPeer(leaked)).toBe(true);
+    expect(await gater.denyInboundEncryptedConnection(leaked)).toBe(true);
+    expect(await gater.denyOutboundEncryptedConnection(leaked)).toBe(true);
+    expect(await gater.denyDialPeer(other)).toBe(false);
+    expect(gater.denyDialMultiaddr).toBeUndefined();
+
+    await node.stop();
+  });
+
   it("keeps discovery probing for the default bootstrap path", async () => {
     const { SDNNode, IPFS_BOOTSTRAP_PEERS } = await import("./node");
 

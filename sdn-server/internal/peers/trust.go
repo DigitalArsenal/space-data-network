@@ -14,6 +14,7 @@ import (
 	"github.com/multiformats/go-multiaddr"
 
 	"github.com/spacedatanetwork/sdn-server/internal/trust"
+	"github.com/spacedatanetwork/sdn-server/internal/trustanchors"
 )
 
 // TrustLevel represents the trust level of a peer, aligned with the PGP/GPG
@@ -894,10 +895,27 @@ var (
 	ErrNotPersisted = errors.New("peers: change applied in memory but not persisted")
 )
 
+// refuseDeniedTrust is the registry half of SEC-001 (verifier S2): no path —
+// the daemon's peers.trusted_peers loop, the server's InitializeFromConfig, the
+// admin API, a trust-graph import — can give a denylisted identity (one whose
+// seed was published) any positive trust. Recording it at Never/Untrusted, to
+// block it, stays allowed.
+func refuseDeniedTrust(id peer.ID, level TrustLevel) error {
+	if level > Untrusted {
+		if err := trustanchors.CheckPeer(id, "peers: trust for"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // AddPeer adds a peer to the registry.
 func (r *Registry) AddPeer(tp *TrustedPeer) error {
 	if tp.ID == "" {
 		return ErrInvalidPeerID
+	}
+	if err := refuseDeniedTrust(tp.ID, tp.TrustLevel); err != nil {
+		return err
 	}
 
 	r.mu.Lock()
@@ -925,6 +943,9 @@ func (r *Registry) AddPeer(tp *TrustedPeer) error {
 func (r *Registry) UpdatePeer(tp *TrustedPeer) error {
 	if tp.ID == "" {
 		return ErrInvalidPeerID
+	}
+	if err := refuseDeniedTrust(tp.ID, tp.TrustLevel); err != nil {
+		return err
 	}
 
 	r.mu.Lock()
@@ -1053,6 +1074,9 @@ func (r *Registry) ListPeersByGroup(groupName string) []*TrustedPeer {
 
 // SetTrustLevel updates the trust level for a peer.
 func (r *Registry) SetTrustLevel(id peer.ID, level TrustLevel) error {
+	if err := refuseDeniedTrust(id, level); err != nil {
+		return err
+	}
 	r.mu.Lock()
 
 	tp, exists := r.peers[id]
@@ -1075,6 +1099,11 @@ func (r *Registry) SetTrustLevel(id peer.ID, level TrustLevel) error {
 // computed-validity-augmented accessor). Used for rate limiting / display
 // where only the operator's own explicit assignment should matter.
 func (r *Registry) GetTrustLevel(id peer.ID) TrustLevel {
+	// SEC-001: a denylisted identity is Never, whatever a registry persisted
+	// before this binary (or an operator's old config) said about it.
+	if trustanchors.IsDeniedPeer(id) {
+		return Never
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 

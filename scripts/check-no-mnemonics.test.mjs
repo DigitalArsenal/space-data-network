@@ -312,6 +312,27 @@ test('this repository: no tracked file holds an unreviewed phrase', () => {
   assert.equal(result.status, 0, result.stderr);
 });
 
+// Verifier S8: the public-test-vector files are excused from the MNEMONIC
+// pattern only. A PEM key, AWS key or GitHub token in them still fails the
+// preflight's secret scan (step 2 runs before anything that needs the repo).
+test('S8: oss-preflight excuses docker-compose.dev.yaml from the mnemonic pattern only', () => {
+  const repo = createTempRepo();
+  copyFileSync(join(repoRoot, 'scripts/oss-preflight.sh'), join(repo, 'scripts/oss-preflight.sh'));
+  const step2 = () => {
+    const out = spawnSync('bash', ['scripts/oss-preflight.sh'], { cwd: repo, encoding: 'utf8' }).stdout;
+    return out.slice(out.indexOf('2/11'), out.indexOf('3/11'));
+  };
+  writeStagedFile(repo, 'docker-compose.dev.yaml', `services:\n  x:\n    environment:\n      MNEMONIC: "${publicTestMnemonic}"\n`);
+  assert.match(step2(), /PASS: no high-risk secret patterns/);
+  // Built at runtime so this file never holds the token shape itself.
+  const awsShaped = ['AK', 'IA', 'Q'.repeat(16)].join('');
+  writeStagedFile(repo, 'docker-compose.dev.yaml', `services:\n  x:\n    environment:\n      KEY: ${awsShaped}\n`);
+  const failed = step2();
+  assert.match(failed, /FAIL: possible secret material detected/);
+  assert.match(failed, /docker-compose\.dev\.yaml:4/);
+  assert.doesNotMatch(failed, new RegExp(awsShaped), 'the matched text is withheld');
+});
+
 function createTempRepo() {
   const repo = mkdtempSync(join(tmpdir(), 'sdn-check-no-mnemonics-'));
   mkdirSync(join(repo, 'scripts/wordlists'), { recursive: true });

@@ -67,10 +67,14 @@ type Denylist struct {
 	PeerIDs             []string `json:"peerIds"`
 	Secp256k1PublicKeys []string `json:"secp256k1PublicKeys"`
 	Ed25519PublicKeys   []string `json:"ed25519PublicKeys"`
-	XPubs               []string `json:"xpubs"`
-	UpdateRootKeyIDs    []string `json:"updateRootKeyIds"`
-	DiscoveryCIDs       []string `json:"discoveryCids"`
-	ChainAddresses      []string `json:"chainAddresses"`
+	// X25519PublicKeys: the retired identity's wrapping key(s), which no public
+	// surface carried; the owner adds them from a forensic export
+	// (ROTATION.md step 5, new-node-identity.mjs --describe-backup).
+	X25519PublicKeys []string `json:"x25519PublicKeys"`
+	XPubs            []string `json:"xpubs"`
+	UpdateRootKeyIDs []string `json:"updateRootKeyIds"`
+	DiscoveryCIDs    []string `json:"discoveryCids"`
+	ChainAddresses   []string `json:"chainAddresses"`
 }
 
 // Anchors is the parsed anchors file.
@@ -116,6 +120,7 @@ func Parse(data []byte) (*Anchors, error) {
 	add(a.Denylist.PeerIDs, false)
 	add(a.Denylist.Secp256k1PublicKeys, true)
 	add(a.Denylist.Ed25519PublicKeys, true)
+	add(a.Denylist.X25519PublicKeys, true)
 	add(a.Denylist.XPubs, false)
 	add(a.Denylist.UpdateRootKeyIDs, true)
 	add(a.Denylist.DiscoveryCIDs, false)

@@ -17,7 +17,42 @@ import { execFileSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { ed25519Spki, loadAnchors } from '../deployment/identity/anchors-lib.mjs';
+import { base58Decode, ed25519Spki, loadAnchors } from '../deployment/identity/anchors-lib.mjs';
+
+const B32 = 'abcdefghijklmnopqrstuvwxyz234567';
+const B36 = '0123456789abcdefghijklmnopqrstuvwxyz';
+
+/**
+ * A PeerID's CIDv1 (libp2p-key, 0x72) spellings, as IPNS names and gateways
+ * show them: multibase base32 (`b…`) and base36 (`k…`). Verifier N2.
+ */
+export function peerIdCidForms(peerId) {
+  const cid = Buffer.concat([Buffer.from([0x01, 0x72]), base58Decode(peerId)]);
+  let bits = 0;
+  let acc = 0;
+  let b32 = '';
+  for (const byte of cid) {
+    acc = (acc << 8) | byte;
+    bits += 8;
+    while (bits >= 5) {
+      b32 += B32[(acc >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
+    acc &= (1 << bits) - 1;
+  }
+  if (bits > 0) b32 += B32[(acc << (5 - bits)) & 31];
+  let n = BigInt(`0x${cid.toString('hex')}`);
+  let b36 = '';
+  while (n > 0n) {
+    b36 = B36[Number(n % 36n)] + b36;
+    n /= 36n;
+  }
+  for (const byte of cid) {
+    if (byte !== 0) break;
+    b36 = `0${b36}`;
+  }
+  return [`b${b32}`, `k${b36}`];
+}
 import { indexBlobs } from './check-no-mnemonics.mjs';
 
 export const ALLOWED = [
@@ -50,12 +85,19 @@ export function needles(anchors = loadAnchors()) {
   const d = anchors.denylist;
   const out = [];
   const add = (value, ci) => value && out.push({ value, caseInsensitive: ci });
-  for (const v of d.peerIds) add(v, false);
+  for (const v of d.peerIds) {
+    add(v, false);
+    for (const form of peerIdCidForms(v)) add(form, false);
+  }
   for (const v of d.xpubs) add(v, false);
   for (const v of d.secp256k1PublicKeys) add(v, true);
   for (const v of d.ed25519PublicKeys) {
     add(v, true);
     add(ed25519Spki(v), false);
+  }
+  for (const v of d.x25519PublicKeys || []) {
+    add(v, true);
+    add(Buffer.from(v, 'hex').toString('base64'), false);
   }
   for (const v of d.updateRootKeyIds) add(v, true);
   for (const v of d.discoveryCids) add(v, true);

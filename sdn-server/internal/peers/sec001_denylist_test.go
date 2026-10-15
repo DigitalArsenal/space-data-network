@@ -1,6 +1,7 @@
 package peers
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/libp2p/go-libp2p/core/network"
@@ -34,9 +35,10 @@ func TestGaterRefusesTheDenylistedIdentityWhateverItsTrust(t *testing.T) {
 		var blocked []string
 		gater.SetBlockedCallback(func(_ peer.ID, reason string) { blocked = append(blocked, reason) })
 		for _, p := range deniedPeers(t) {
-			if err := registry.AddPeer(&TrustedPeer{ID: p, TrustLevel: Admin}); err != nil {
-				t.Fatalf("seed the registry: %v", err)
-			}
+			// A registry persisted before SEC-001 may still hold it at Admin.
+			registry.mu.Lock()
+			registry.peers[p] = &TrustedPeer{ID: p, TrustLevel: Admin}
+			registry.mu.Unlock()
 			if gater.InterceptPeerDial(p) {
 				t.Fatalf("strict=%v: dial to the denylisted peer was allowed", strict)
 			}
@@ -85,5 +87,51 @@ func TestConfigTrustedPeersDropTheDenylistedIdentity(t *testing.T) {
 	celestrak, _ := peer.Decode("16Uiu2HAmGjaPxkWFSXBbmhs9K5x1Zo6euJw95VjS6Jj2bcPpYr2U")
 	if _, err := registry.GetPeer(celestrak); err != nil {
 		t.Fatalf("an ordinary trusted peer was dropped: %v", err)
+	}
+}
+
+// Verifier S2: the daemon registers peers.trusted_peers through AddPeer /
+// UpdatePeer (internal/node/node.go upsertConfiguredTrustedPeer), not through
+// InitializeFromConfig. The registry itself refuses the denylisted identity any
+// positive trust, so every path drops it, and a persisted entry reads as Never.
+func TestRegistryRefusesTrustForTheDenylistedIdentityOnEveryPath(t *testing.T) {
+	registry := NewRegistry(false, nil)
+	for _, p := range deniedPeers(t) {
+		for _, level := range []TrustLevel{Limited, Standard, Trusted, Admin, Ultimate} {
+			if err := registry.AddPeer(&TrustedPeer{ID: p, TrustLevel: level}); !errors.Is(err, trustanchors.ErrDenied) {
+				t.Fatalf("AddPeer(level %d) = %v, want ErrDenied", level, err)
+			}
+		}
+		// Recording it in order to block it is allowed.
+		if err := registry.AddPeer(&TrustedPeer{ID: p, TrustLevel: Never}); err != nil {
+			t.Fatalf("AddPeer(Never) = %v", err)
+		}
+		if err := registry.UpdatePeer(&TrustedPeer{ID: p, TrustLevel: Trusted}); !errors.Is(err, trustanchors.ErrDenied) {
+			t.Fatalf("UpdatePeer(Trusted) = %v, want ErrDenied", err)
+		}
+		if err := registry.SetTrustLevel(p, Admin); !errors.Is(err, trustanchors.ErrDenied) {
+			t.Fatalf("SetTrustLevel(Admin) = %v, want ErrDenied", err)
+		}
+		// A persisted pre-SEC-001 entry at Admin reads as Never everywhere.
+		registry.mu.Lock()
+		registry.peers[p] = &TrustedPeer{ID: p, TrustLevel: Admin}
+		registry.mu.Unlock()
+		if got := registry.GetTrustLevel(p); got != Never {
+			t.Fatalf("GetTrustLevel = %d, want Never", got)
+		}
+		if registry.IsAllowed(p) || registry.IsTrusted(p) || registry.IsAdmin(p) {
+			t.Fatal("a persisted denylisted peer is still allowed, trusted or admin")
+		}
+	}
+	// Ordinary peers are untouched.
+	other, err := peer.Decode("16Uiu2HAmGjaPxkWFSXBbmhs9K5x1Zo6euJw95VjS6Jj2bcPpYr2U")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.AddPeer(&TrustedPeer{ID: other, TrustLevel: Trusted}); err != nil {
+		t.Fatalf("AddPeer(ordinary) = %v", err)
+	}
+	if registry.GetTrustLevel(other) != Trusted {
+		t.Fatal("ordinary peer lost its trust")
 	}
 }

@@ -127,3 +127,47 @@ func TestBackupPasswordFileIsReadLikeTheKeyPasswordFile(t *testing.T) {
 		t.Fatal("an empty transport password file was accepted")
 	}
 }
+
+// SEC-001: `key export --format backup --backup-password-file` seals a portable
+// forensic copy under a transport password; `key import --backup-password-file`
+// (and the offline generator's --describe-backup) open it with the same file.
+func TestExportBackupSealsUnderTheTransportPasswordFile(t *testing.T) {
+	t.Setenv(config.EnvKeyPassword, "the-node-at-rest-password")
+	t.Setenv(config.EnvKeyPasswordFile, "")
+	cfg := config.Default()
+
+	atRest, err := backupSealPassword(cfg, "")
+	if err != nil || atRest != "the-node-at-rest-password" {
+		t.Fatalf("without a file: %q, %v; want the node key password", atRest, err)
+	}
+
+	path := filepath.Join(t.TempDir(), "transport-password")
+	if err := os.WriteFile(path, []byte("a long transport password\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	transport, err := backupSealPassword(cfg, path)
+	if err != nil || transport != "a long transport password" {
+		t.Fatalf("with a file: %q, %v", transport, err)
+	}
+	sealed, err := keys.EncryptMnemonic("throwaway test words", transport)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opener, err := readBackupPasswordFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opened, err := keys.DecryptMnemonic(sealed, opener); err != nil || opened != "throwaway test words" {
+		t.Fatalf("import side could not open the export: %q, %v", opened, err)
+	}
+	if _, err := keys.DecryptMnemonic(sealed, atRest); err == nil {
+		t.Fatal("the transport-sealed copy opened with the at-rest password")
+	}
+
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := backupSealPassword(cfg, path); err == nil {
+		t.Fatal("a group/world-readable transport password file was accepted for export")
+	}
+}

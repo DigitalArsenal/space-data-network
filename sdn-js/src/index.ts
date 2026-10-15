@@ -404,7 +404,6 @@ export {
   buildCanonicalPayload,
   buildEPMSigningContent,
   signEPMContent,
-  verifyEPMSignature,
   buildBitcoinChainProof,
   buildEthereumChainProof,
   buildSolanaChainProof,
@@ -412,6 +411,22 @@ export {
   verifyChainProof,
   verifyAllChainProofs,
 } from 'hd-wallet-wasm';
+// SEC-001: the EPM signature check refuses denylisted signers (epm-resolver.ts).
+export { verifyEPMSignature } from './epm-resolver';
+// SEC-001: the network's trust anchors and the identity denylist, so consumers
+// (SpaceAware-UI, OrbPro) read the provider from here instead of pinning it.
+export {
+  ANCHORED_PROVIDER_PEER_ID,
+  anchoredBrowserRelays,
+  anchoredBootstrapAddrs,
+  anchoredPeerId,
+  DeniedIdentityError,
+  deniedIdentityConnectionGater,
+  filterDeniedMultiaddrs,
+  isDeniedIdentityValue,
+  isDeniedMultiaddr,
+  namesDeniedIdentity,
+} from './identity-denylist';
 
 // Subscription Management
 export {

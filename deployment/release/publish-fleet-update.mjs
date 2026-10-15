@@ -103,7 +103,7 @@ import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildCarrier, extractBundleBytes } from './build-update-carrier.mjs';
 import { assertSealedFor, collectRecipients, recipientNodes, recipientsDocument, sealOnPublisher } from './update-seal.mjs';
-import { buildUpdateManifest, resolveReleaseKeyId } from './sign-update-manifest.mjs';
+import { assertTrustRootsMatchAnchors, buildUpdateManifest, resolveReleaseKeyId } from './sign-update-manifest.mjs';
 import {
   DAEMON_BINARY_MIN_BYTES,
   ReleaseBinaryRefusal,
@@ -218,15 +218,17 @@ const resolvedBinary = resolve(binaryPath);
 // Mutable: a --supersede publish mints a NEW identity in step 0c rather than
 // overwriting the published one. Everything downstream (bundle name, manifest,
 // signing, upload path, index, ledger) reads these AFTER that decision.
-// --sec001-root-migration <reason>: sign ONLY the trust_roots move with the
-// published root (deployment/identity/ROTATION.md). Needs --trust-roots.
-const rootMigrationReason = arg('sec001-root-migration', '');
+// SEC-001: no in-band root migration. The fleet's roots move out-of-band
+// (deployment/identity/ROTATION.md) and nothing is signed with the published
+// root again; --trust-roots, when given, must equal the committed anchors.
+if (process.argv.includes('--sec001-root-migration')) {
+  console.error('REFUSED: --sec001-root-migration was withdrawn (owner, 2026-10-15): update roots move out-of-band; see deployment/identity/ROTATION.md.');
+  process.exit(2);
+}
 let keyId;
 try {
-  keyId = resolveReleaseKeyId(keyIdArg, {
-    dryRun,
-    rootMigration: rootMigrationReason ? { reason: rootMigrationReason, trustRoots: trustRoots || {} } : null,
-  });
+  keyId = resolveReleaseKeyId(keyIdArg, { dryRun });
+  if (trustRoots) assertTrustRootsMatchAnchors(trustRoots);
 } catch (error) {
   console.error(error.message);
   process.exit(2);

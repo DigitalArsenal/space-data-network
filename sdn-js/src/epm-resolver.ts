@@ -9,6 +9,30 @@
  */
 
 import type { Libp2p } from 'libp2p';
+import { verifyEPMSignature as hdWalletVerifyEPMSignature } from 'hd-wallet-wasm';
+import { DeniedIdentityError, isDeniedIdentityValue, isDeniedPublicKey, namesDeniedIdentity } from './identity-denylist';
+
+/**
+ * hd-wallet-wasm's EPM content-signature check, refusing (false) any EPM
+ * signed by, or naming, a denylisted identity (SEC-001, verifier S3): a valid
+ * signature by a key whose seed was published proves nothing.
+ */
+export function verifyEPMSignature(...args: Parameters<typeof hdWalletVerifyEPMSignature>): boolean {
+  const [, epm, publicKey] = args;
+  if (isDeniedPublicKey(publicKey) || namesDeniedIdentity(epm)) return false;
+  return hdWalletVerifyEPMSignature(...args);
+}
+
+/** Throws DeniedIdentityError for an EPM (or its cache key) naming a denylisted identity. */
+function assertEPMAdmissible(key: string, epm: ParsedEPM): void {
+  const peer = key.startsWith('cid:') ? '' : key;
+  if (isDeniedIdentityValue(peer) || isDeniedIdentityValue(epm.peerID)) {
+    throw new DeniedIdentityError(`EPM for peer ${epm.peerID || peer}`);
+  }
+  if (namesDeniedIdentity({ keys: epm.keys, multiformatAddresses: epm.multiformatAddresses, chainProofs: epm.chainProofs })) {
+    throw new DeniedIdentityError('an EPM key or address');
+  }
+}
 
 // Key type enum matching FlatBuffers schema
 export enum KeyType {
@@ -269,6 +293,7 @@ export class EPMResolver {
    * 3. Fetch from IPFS gateway (if CID known)
    */
   async resolveByPeerID(peerID: string): Promise<ParsedEPM | null> {
+    if (isDeniedIdentityValue(peerID)) throw new DeniedIdentityError(`EPM for peer ${peerID}`);
     // Check cache first
     const cached = this.getFromCache(peerID);
     if (cached) return cached;
@@ -494,6 +519,8 @@ export class EPMResolver {
   }
 
   private addToCache(key: string, epm: ParsedEPM): void {
+    // SEC-001: every path into the cache (IPNS, CID, addEPM*, addParsedEPM).
+    assertEPMAdmissible(key, epm);
     // Enforce max cache size with LRU-like behavior
     if (this.cache.size >= this.options.maxCacheSize) {
       // Remove oldest entry

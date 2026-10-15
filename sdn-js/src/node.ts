@@ -41,6 +41,7 @@ import type {
 } from "./epoch-query-sql";
 import type { LocalFlatSqlSchema } from "./local-flatsql";
 import { getBootstrapRelays, EdgeDiscovery } from "./edge-discovery";
+import { deniedIdentityConnectionGater } from "./identity-denylist";
 import {
   resolveConnectionMonitorInit,
   type SdnConnectionMonitorConfig,
@@ -428,6 +429,11 @@ export class SDNNode {
         denyDialMultiaddr: async () => false,
       };
     }
+    // SEC-001 (verifier S3): never dial, and drop any connection to, a
+    // denylisted identity — whoever handed us its address.
+    libp2pOpts.connectionGater = deniedIdentityConnectionGater(
+      (libp2pOpts.connectionGater ?? {}) as Record<string, unknown>,
+    ) as Libp2pCreateOptions["connectionGater"];
 
     // If an HD wallet identity is provided, use its secp256k1 key for deterministic PeerID.
     //

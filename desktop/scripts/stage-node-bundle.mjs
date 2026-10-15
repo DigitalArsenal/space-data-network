@@ -175,11 +175,18 @@ function assertSelfContained (root) {
 }
 
 // SEC-001: never package a node whose update roots still name the root whose
-// seed was published (src/common/identity-denylist.js).
+// seed was published (src/common/identity-denylist.js), or a PLACEHOLDER root
+// (verifier S4: such a node can never verify an update; the owner's new root
+// has not landed in deployment/identity/anchors.json yet).
 export function assertNoDeniedUpdateRoots (bundleRoot) {
   const rootsPath = join(bundleRoot, 'trust', 'update-roots.json')
   if (!existsSync(rootsPath)) return
-  const denied = deniedUpdateRoots(JSON.parse(readFileSync(rootsPath, 'utf8')))
+  const roots = JSON.parse(readFileSync(rootsPath, 'utf8'))
+  const placeholders = Object.entries(roots || {}).filter(([keyId, encoded]) => String(keyId).startsWith('PLACEHOLDER-') || String(encoded).startsWith('PLACEHOLDER-'))
+  if (placeholders.length > 0) {
+    throw new Error(`REFUSED: ${rootsPath} names a PLACEHOLDER update root (SEC-001 rotation pending): the node could never verify an update. Rebuild the bundle once the owner's root is in deployment/identity/anchors.json.`)
+  }
+  const denied = deniedUpdateRoots(roots)
   if (denied.length > 0) {
     throw new Error(`REFUSED: ${rootsPath} trusts denylisted update root(s) ${denied.join(', ')} (SEC-001: the seed was published). Rebuild the bundle from the current deployment/identity/anchors.json.`)
   }

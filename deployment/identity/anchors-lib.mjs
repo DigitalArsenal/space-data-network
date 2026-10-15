@@ -171,6 +171,7 @@ export function deniedValues(anchors) {
     ...(deny.peerIds || []),
     ...(deny.secp256k1PublicKeys || []).map((v) => v.toLowerCase()),
     ...(deny.ed25519PublicKeys || []).map((v) => v.toLowerCase()),
+    ...(deny.x25519PublicKeys || []).map((v) => v.toLowerCase()),
     ...(deny.xpubs || []),
     ...(deny.updateRootKeyIds || []).map((v) => v.toLowerCase()),
     ...(deny.discoveryCids || []),

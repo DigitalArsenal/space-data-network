@@ -16,6 +16,12 @@
 config/dev-wallet.env
 config/*.env
 *.mnemonic
+# SEC-001: the identity / update-root generators' secret outputs
+# (deployment/identity/ROTATION.md). The generators refuse a path inside any
+# git work tree; this and oss-preflight.sh's blocked paths are the backstop.
+*.backup
+node-identity.backup
+sdn-update-root*.pem
 !*.example
 secrets/
 credentials/
