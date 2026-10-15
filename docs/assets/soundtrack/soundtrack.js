@@ -1,6 +1,6 @@
 /* Soundtrack player for the style guide: each track plays in the page over its
- * waveform. The bars already played stay lit; the bars under the playhead rise
- * out of the page towards the viewer (an extruded, glowing section). One track
+ * waveform. The bars already played stay lit; the bars under the playhead stay
+ * on the baseline and grow, as if nearer the viewer. One track
  * plays at a time. The waveform is a precomputed RMS profile (data-peaks,
  * 0..99), so nothing is decoded until a track is played. */
 (function () {
@@ -8,7 +8,7 @@
 
   var LIFT_SIGMA = 6.5;      // bars either side of the playhead that rise
   var LIFT_SCALE = 0.6;      // how much taller a fully lifted bar gets
-  var LIFT_DEPTH = 13;       // px of extrusion at full lift
+  var LIFT_WIDEN = 0.5;      // how much wider a fully lifted bar gets
   var BAR_PITCH = 6;         // px per bar at most (thinner screens merge bars)
 
   var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -178,36 +178,21 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
 
-    // Room on the left for a raised bar at the very start, which moves up and left.
-    var padL = Math.ceil(LIFT_DEPTH * 0.6);
-    var pitch = (w - padL) / n, bw = Math.max(1.5, pitch * 0.62);
-    var mid = h * 0.74;                       // baseline: bars above, a faint reflection below
+    // Room either side for a widened bar at the very start or end.
+    var pad = 3;
+    var pitch = (w - pad * 2) / n, bw = Math.max(1.5, pitch * 0.62);
+    var mid = h - 3;                          // baseline: every bar stands on it
     // Unlifted bars leave headroom so a fully lifted bar still fits.
-    var maxH = (mid - LIFT_DEPTH * 0.75 - 2) / (1 + LIFT_SCALE);
+    var maxH = (mid - 2) / (1 + LIFT_SCALE);
     var head = this.pos * n;                  // playhead in bar units
     var hov = this.hover >= 0 ? this.hover * n : -1;
     var acc = palette.accent, txt = palette.text;
     var hot = mix(acc, palette.light ? [255, 214, 120, 1] : [255, 236, 190, 1], 0.55);
-    var side = mix(acc, [0, 0, 0, 1], palette.light ? 0.35 : 0.55);
+    var near = mix(hot, [255, 255, 255, 1], palette.light ? 0.2 : 0.45);
     var lift = this.lift;
 
-    // A pool of light on the page under the raised section.
-    if (lift > 0.01) {
-      var gx = padL + head * pitch, gr = pitch * LIFT_SIGMA * 2.6;
-      var squash = Math.min(0.32, (h - mid) * 0.92 / gr);   // the pool stays inside the canvas
-      var glow = ctx.createRadialGradient(gx, mid, 0, gx, mid, gr);
-      glow.addColorStop(0, rgba(acc, (palette.light ? 0.22 : 0.32) * lift));
-      glow.addColorStop(1, rgba(acc, 0));
-      ctx.save();
-      ctx.translate(gx, mid);
-      ctx.scale(1, squash);
-      ctx.translate(-gx, -mid);
-      ctx.fillStyle = glow;
-      ctx.fillRect(gx - gr, mid - gr, gr * 2, gr * 2);
-      ctx.restore();
-    }
-
-    // Draw far-to-near: unlifted bars first, then lifted ones nearest the playhead last.
+    // Draw far-to-near: unlifted bars first, then the nearest the playhead last,
+    // so a grown bar sits in front of its neighbours.
     var order = [];
     for (var i = 0; i < n; i++) order.push(i);
     order.sort(function (a, b) { return Math.abs(b + 0.5 - head) - Math.abs(a + 0.5 - head); });
@@ -219,43 +204,14 @@
       var L = lift * Math.exp(-Math.pow((c - head) / LIFT_SIGMA, 2));
       var hovered = hov >= 0 && c <= hov && !played;
       var bh = Math.max(2, bars[i] * maxH) * (1 + LIFT_SCALE * L);
-      var x = padL + i * pitch + (pitch - bw) / 2;
-      var d = LIFT_DEPTH * L;                 // extrusion depth: the bar comes out of the page
-      // Both sides lean in toward the play bar: a bar left of it moves right, a
-      // bar right of it moves left, so the raised section meets at the playhead.
-      var toward = c < head ? 1 : -1;
-      var fx = x + toward * d * 0.55, fy = mid - bh - d * 0.75;
-      var ex = toward > 0 ? 0 : bw;            // the outer edge, whose side face shows
+      var bwL = bw * (1 + LIFT_WIDEN * L);    // grows about its own centre
+      var x = pad + c * pitch - bwL / 2;
+      var top = mid - bh;
 
-      // Reflection under the baseline.
-      ctx.fillStyle = played ? rgba(acc, 0.16 + 0.2 * L) : rgba(txt, palette.light ? 0.06 : 0.05);
-      ctx.fillRect(x, mid + 3, bw, bh * 0.32);
-
+      var g = ctx.createLinearGradient(0, top, 0, mid);
       if (L > 0.02) {
-        // Side and bottom faces of the extrusion, then a soft shadow on the page.
-        ctx.fillStyle = rgba(side, 0.9);
-        ctx.beginPath();
-        ctx.moveTo(fx + ex, fy);
-        ctx.lineTo(x + ex, mid - bh);
-        ctx.lineTo(x + ex, mid);
-        ctx.lineTo(fx + ex, mid - d * 0.75);
-        ctx.closePath();
-        ctx.fill();
-        ctx.beginPath();
-        ctx.moveTo(fx, mid - d * 0.75);
-        ctx.lineTo(fx + bw, mid - d * 0.75);
-        ctx.lineTo(x + bw, mid);
-        ctx.lineTo(x, mid);
-        ctx.closePath();
-        ctx.fill();
-        ctx.shadowColor = rgba(acc, palette.light ? 0.45 : 0.75);
-        ctx.shadowBlur = 16 * L;
-      }
-
-      var g = ctx.createLinearGradient(0, fy, 0, mid);
-      if (L > 0.02) {
-        g.addColorStop(0, rgba(hot, 1));
-        g.addColorStop(1, rgba(mix(hot, acc, 0.6), 1));
+        g.addColorStop(0, rgba(mix(hot, near, L), 1));
+        g.addColorStop(1, rgba(mix(acc, hot, L), 1));
       } else if (played) {
         g.addColorStop(0, rgba(acc, 0.95));
         g.addColorStop(1, rgba(acc, 0.6));
@@ -267,10 +223,8 @@
         g.addColorStop(1, rgba(txt, palette.light ? 0.16 : 0.14));
       }
       ctx.fillStyle = g;
-      roundRect(ctx, fx, fy, bw, mid - d * 0.75 - fy, Math.min(2, bw / 2));
+      roundRect(ctx, x, top, bwL, bh, Math.min(2, bwL / 2));
       ctx.fill();
-      ctx.shadowBlur = 0;
-      ctx.shadowColor = 'transparent';
     }
 
     // Baseline.
@@ -279,19 +233,16 @@
 
     // The play bar at the current position, standing out nearest the viewer.
     if (this.pos > 0 || lift > 0.01) {
-      var px = padL + head * pitch, k = Math.max(lift, 0.35);
+      var px = pad + head * pitch, k = Math.max(lift, 0.35);
       var top = 3, pw = Math.max(2.5, bw * 0.75);
       ctx.save();
-      ctx.shadowColor = rgba(acc, palette.light ? 0.6 : 0.9);
-      ctx.shadowBlur = 18 * k;
-      var pg = ctx.createLinearGradient(0, top, 0, mid + 8);
+      var pg = ctx.createLinearGradient(0, top, 0, mid);
       pg.addColorStop(0, rgba(hot, k));
       pg.addColorStop(0.75, rgba(mix(hot, acc, 0.5), k));
       pg.addColorStop(1, rgba(acc, 0));
       ctx.fillStyle = pg;
-      roundRect(ctx, px - pw / 2, top, pw, mid + 8 - top, pw / 2);
+      roundRect(ctx, px - pw / 2, top, pw, mid - top, pw / 2);
       ctx.fill();
-      ctx.shadowBlur = 0;
       ctx.beginPath();                        // the cap
       ctx.arc(px, top + pw / 2, pw * 1.15, 0, Math.PI * 2);
       ctx.fillStyle = rgba(palette.light ? hot : [255, 248, 230, 1], k);
