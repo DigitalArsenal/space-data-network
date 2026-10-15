@@ -35,7 +35,6 @@ import (
 	"crypto/ed25519"
 	"crypto/subtle"
 	"encoding/hex"
-	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -252,12 +251,14 @@ func (h *Handler) completeRootSignIn(w http.ResponseWriter, r *http.Request, pen
 // the internet this console. The desktop app, whose admin listener is
 // loopback-only with nothing in front of it, turns it on.
 //
-// SAFETY, and it is the whole of it: loopback is checked on RemoteAddr
-// directly, and ANY evidence of a proxy hop refuses outright. That second test
-// is not paranoia — nginx terminating TLS on the node's own box makes
-// RemoteAddr 127.0.0.1 for every client on the internet, and without it this
-// would hand each of them the owner's console. requestCrossedAProxy is shared
-// with dev_auto_admin, which learned the same lesson.
+// SAFETY. Loopback was once the whole of it, and that was SEC-012: every web
+// page the user visited could POST to 127.0.0.1 and a DNS-rebinding page
+// could read the answers. ambientConsoleRequestAllowed (console_gate.go) now
+// also requires the per-launch console secret the desktop shell holds, the
+// console's own Host, and no cross-site signal. Loopback is still checked on
+// RemoteAddr directly, and ANY evidence of a proxy hop refuses outright: nginx
+// terminating TLS on the node's own box makes RemoteAddr 127.0.0.1 for every
+// client on the internet. The gate is shared with dev_auto_admin.
 func (h *Handler) localConsoleSession(r *http.Request) *Session {
 	if h == nil || !h.localConsole || h.sessions == nil {
 		return nil
@@ -266,15 +267,7 @@ func (h *Handler) localConsoleSession(r *http.Request) *Session {
 	if xpub == "" {
 		return nil // no root identity yet: nothing to be
 	}
-	if requestCrossedAProxy(r) {
-		return nil
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
-	}
-	ip := net.ParseIP(strings.TrimSpace(host))
-	if ip == nil || !ip.IsLoopback() {
+	if !h.ambientConsoleRequestAllowed(r) {
 		return nil
 	}
 

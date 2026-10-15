@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -108,6 +109,19 @@ func httpCapHandle(operation string, payload []byte) ([]byte, error) {
 		req.TimeoutMs = 30000
 	}
 
+	// Destination policy (http_egress_policy.go, SEC-027): http/https only,
+	// and no internal address unless the operator allow-listed it. Checked
+	// here for a clear early refusal; the dialer re-checks every connection
+	// (redirect hops, DNS answers) on the resolved address.
+	parsedURL, perr := url.Parse(req.URL)
+	if perr != nil {
+		return errCapJSON("invalid request: " + perr.Error()), nil
+	}
+	if err := checkEgressURL(parsedURL); err != nil {
+		observeFetch(req.URL, 0, 0, 0, err.Error())
+		return errCapJSON(err.Error()), nil
+	}
+
 	// Host egress pacing (see http_egress.go): serialize per destination host
 	// and honour the minimum spacing that host is owed. Pure connector policy —
 	// the calling module neither sees nor controls it. Waiting for the slot is
@@ -152,7 +166,11 @@ func httpCapHandle(operation string, payload []byte) ([]byte, error) {
 	// this URL carried, unless the module set its own. See http_validators.go.
 	applyFetchValidators(httpReq)
 
-	client := &http.Client{Timeout: time.Duration(req.TimeoutMs) * time.Millisecond}
+	client := &http.Client{
+		Timeout:       time.Duration(req.TimeoutMs) * time.Millisecond,
+		Transport:     egressTransport,
+		CheckRedirect: egressCheckRedirect,
+	}
 	if req.FollowRedirects != nil && !*req.FollowRedirects {
 		// Return the original response, including its body and every header.
 		// In particular, do not replay a POST body on a 307 or 308 redirect.

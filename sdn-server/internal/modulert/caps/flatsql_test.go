@@ -104,7 +104,7 @@ func callOp(t *testing.T, store *storage.FlatSQLStore, op string, payload map[st
 	// The engine-native flatsql_* ops are read-tier (loop B1 defense in
 	// depth) — grant storage_query so these positive-path tests exercise the
 	// handler logic, not the capability gate itself.
-	handler := NewStorageCapFactory(store)(nil, modulert.NewHostBridge(nil, []string{"storage_query"}))
+	handler := NewStorageCapFactory(store)(nil, modulert.NewHostBridge(nil, []string{"storage_query", TrustedSQLCapability}))
 	body, _ := json.Marshal(payload)
 	resp, err := handler(op, body)
 	if err != nil {
@@ -206,7 +206,7 @@ func TestFlatSQLCacheKeyOp(t *testing.T) {
 
 func TestFlatSQLQueryStreamOpErrors(t *testing.T) {
 	store := newCapTestStore(t)
-	handler := NewStorageCapFactory(store)(nil, modulert.NewHostBridge(nil, []string{"storage_query"}))
+	handler := NewStorageCapFactory(store)(nil, modulert.NewHostBridge(nil, []string{"storage_query", TrustedSQLCapability}))
 	body, _ := json.Marshal(map[string]interface{}{"sql": "SELECT _data FROM Nope"})
 	resp, err := handler("storage.flatsql_query_stream", body)
 	if err != nil {

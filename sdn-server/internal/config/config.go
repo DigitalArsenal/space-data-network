@@ -359,6 +359,20 @@ type ModulesConfig struct {
 	// policy (2.5 s serial) is enforced whether or not it is configured here.
 	// YAML: modules.egress_min_interval.
 	EgressMinInterval map[string]string `yaml:"egress_min_interval,omitempty"`
+
+	// EgressAllowInternal names the INTERNAL destinations a module's `http`
+	// capability may reach. Without an entry here, http.request refuses
+	// loopback, link-local (incl. cloud metadata 169.254.169.254), RFC 1918,
+	// CGNAT, ULA, multicast and reserved addresses, checked on the resolved
+	// address of every connection, so redirects and DNS rebinding cannot
+	// route around it (security audit 2026-10-15, SEC-027).
+	//
+	// Entries are addresses, never names: "10.20.0.0/16", "10.20.0.5",
+	// "127.0.0.1:5001", "[fd00::5]:8443". An entry that does not parse grants
+	// nothing and is logged. Allowing the node's own admin port lets every
+	// module with `http` call the admin API, so prefer an exact IP:port.
+	// YAML: modules.egress_allow_internal.
+	EgressAllowInternal []string `yaml:"egress_allow_internal,omitempty"`
 }
 
 // EffectiveEgressMinIntervals parses the configured per-host egress spacing,
@@ -1166,8 +1180,11 @@ type UserEntry struct {
 	// Generate with: spacedatanetwork derive-xpub
 	XPub string `yaml:"xpub"`
 
-	// SigningPubKeyHex is an optional Ed25519 public key (32 bytes hex).
-	// When omitted, the signing key is bound on first wallet login (TOFU).
+	// SigningPubKeyHex is the Ed25519 sign-in public key (32 bytes hex).
+	// Required in practice: a row without it can sign in only with the key
+	// the node's own identity attestation names; nobody can bind a key to it
+	// by signing in first (first-use binding was removed, SEC-028).
+	// `spacedatanetwork derive-xpub` prints both values.
 	SigningPubKeyHex string `yaml:"signing_pubkey_hex,omitempty"`
 
 	// TrustLevel: "untrusted", "limited", "standard", "trusted", "admin".
@@ -1874,6 +1891,15 @@ type AdminConfig struct {
 	// through a reverse proxy on the same box.
 	LocalConsole bool `yaml:"local_console"`
 
+	// TrustedProxyHops is how many reverse proxies on this machine's loopback
+	// interface sit in front of the admin listener (default 1). The client
+	// address for rate limits, sessions and audit rows is the X-Forwarded-For
+	// entry the outermost trusted proxy appended, counted from the RIGHT; the
+	// leftmost entries are client-written (security audit 2026-10-15,
+	// SEC-062). 0 ignores forwarding headers. A remote (non-loopback) peer's
+	// forwarding headers are never read. YAML: admin.trusted_proxy_hops.
+	TrustedProxyHops *int `yaml:"trusted_proxy_hops,omitempty"`
+
 	// SessionExpiry is the duration for admin session tokens (default: 24h).
 	SessionExpiry string `yaml:"session_expiry"`
 
@@ -2436,6 +2462,17 @@ func Save(path string, cfg *Config) error {
 	}
 
 	return os.WriteFile(path, data, 0600)
+}
+
+// EffectiveTrustedProxyHops reports admin.trusted_proxy_hops, default 1.
+func (a AdminConfig) EffectiveTrustedProxyHops() int {
+	if a.TrustedProxyHops == nil {
+		return 1
+	}
+	if *a.TrustedProxyHops < 0 {
+		return 0
+	}
+	return *a.TrustedProxyHops
 }
 
 // RemoteAdminRequiresSealed reports admin.remote_requires_sealed, default true.

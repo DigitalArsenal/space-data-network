@@ -610,11 +610,13 @@ func TestClientIP_XForwardedFor(t *testing.T) {
 		t.Fatalf("clientIP = %q, want the remote peer's own address 192.0.2.1", ip)
 	}
 
+	// Behind the loopback proxy the client is the entry the proxy APPENDED,
+	// the rightmost one; the leftmost was written by the client (SEC-062).
 	proxied := httptest.NewRequest("GET", "/", nil)
 	proxied.RemoteAddr = "127.0.0.1:1234"
 	proxied.Header.Set("X-Forwarded-For", "203.0.113.1, 10.0.0.1")
-	if ip := clientIP(proxied); ip != "203.0.113.1" {
-		t.Fatalf("clientIP behind a loopback proxy = %q, want 203.0.113.1", ip)
+	if ip := clientIP(proxied); ip != "10.0.0.1" {
+		t.Fatalf("clientIP behind a loopback proxy = %q, want the proxy-appended 10.0.0.1", ip)
 	}
 }
 

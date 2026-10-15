@@ -37,7 +37,7 @@ func TestRequireAuth_RedirectsBrowserForbiddenToWalletLogin(t *testing.T) {
 		t.Fatalf("CreateSession: %v", err)
 	}
 
-	h := NewHandler(nil, sessions, time.Hour, "", "")
+	h := NewHandler(sessionAccountStore(t, map[string]peers.TrustLevel{"xpub-standard-user": peers.Standard}), sessions, time.Hour, "", "")
 	req := httptest.NewRequest(http.MethodGet, "/admin/", nil)
 	req.AddCookie(&http.Cookie{Name: "sdn_wallet_session", Value: token})
 	rec := httptest.NewRecorder()
@@ -103,7 +103,7 @@ func TestRequireAuth_APIPathsGet401NotRedirect(t *testing.T) {
 		t.Fatalf("NewSessionStore: %v", err)
 	}
 
-	h := NewHandler(nil, sessions, time.Hour, "", "")
+	h := NewHandler(sessionAccountStore(t, map[string]peers.TrustLevel{"xpub-standard-user": peers.Standard}), sessions, time.Hour, "", "")
 
 	// Unauthenticated browser-shaped request (no Accept: application/json).
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/data/epoch", nil)
@@ -173,7 +173,7 @@ func TestRequireAuth_RotatesNearExpirySessionAndSetsReplacementCookie(t *testing
 		t.Fatalf("UPDATE sessions expiry: %v", err)
 	}
 
-	h := NewHandler(nil, sessions, time.Hour, "", "")
+	h := NewHandler(sessionAccountStore(t, map[string]peers.TrustLevel{"xpub-standard-user": peers.Standard}), sessions, time.Hour, "", "")
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.AddCookie(&http.Cookie{Name: "sdn_wallet_session", Value: token})
 	rec := httptest.NewRecorder()

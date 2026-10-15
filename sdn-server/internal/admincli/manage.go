@@ -8,6 +8,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/spacedatanetwork/sdn-server/internal/auth"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 )
 
@@ -44,7 +45,7 @@ func PrintAccounts(w io.Writer, accounts []Account) {
 			}
 			key := a.SigningPubKeyHex
 			if key == "" {
-				key = "(bound at first sign-in)"
+				key = "(none: cannot sign in until a key is enrolled)"
 			}
 			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", a.Name, a.Trust, key, shorten(a.RowKey), a.Source)
 		}
@@ -169,10 +170,35 @@ func (s AuthDBStore) List(context.Context) ([]Account, error) {
 	return accounts, nil
 }
 
+// Remove deletes an operator row and ends every session it holds: a removed
+// account's cookie must not outlive the removal (SEC-029).
 func (s AuthDBStore) Remove(_ context.Context, rowKey string) error {
-	return s.Users.RemoveUser(rowKey)
+	if err := s.Users.RemoveUser(rowKey); err != nil {
+		return err
+	}
+	return s.revokeSessions(rowKey)
 }
 
+// SetTrust changes an operator's trust; a reduction ends every session the
+// account holds, so the new tier applies from the next sign-in (SEC-029).
 func (s AuthDBStore) SetTrust(_ context.Context, rowKey string, trust peers.TrustLevel) error {
-	return s.Users.UpdateTrust(rowKey, trust)
+	before, _ := s.Users.GetUser(rowKey)
+	if err := s.Users.UpdateTrust(rowKey, trust); err != nil {
+		return err
+	}
+	if before != nil && trust < before.TrustLevel {
+		return s.revokeSessions(rowKey)
+	}
+	return nil
+}
+
+func (s AuthDBStore) revokeSessions(rowKey string) error {
+	sessions, err := auth.NewSessionStore(s.Users.DB())
+	if err != nil {
+		return fmt.Errorf("account changed, but its sessions could not be revoked: %w", err)
+	}
+	if err := sessions.RevokeAllForUser(rowKey); err != nil {
+		return fmt.Errorf("account changed, but its sessions could not be revoked: %w", err)
+	}
+	return nil
 }

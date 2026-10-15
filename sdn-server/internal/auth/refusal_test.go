@@ -69,7 +69,7 @@ func TestRequireTrustRefusalsAreReadableCrossOrigin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
-	h := NewHandler(nil, sessions, time.Hour, "", "")
+	h := NewHandler(sessionAccountStore(t, map[string]peers.TrustLevel{"xpub-standard-user": peers.Standard}), sessions, time.Hour, "", "")
 
 	cases := []struct {
 		name    string

@@ -14,6 +14,7 @@ import (
 )
 
 func TestHTTPCapRedirectControlPreventsPostReplay(t *testing.T) {
+	allowLoopbackEgressForTest(t) // the upstream here is a loopback httptest server
 	for _, status := range []int{http.StatusTemporaryRedirect, http.StatusPermanentRedirect} {
 		for _, follow := range []string{"unset", "true", "false"} {
 			t.Run(fmt.Sprintf("%d/%s", status, follow), func(t *testing.T) {
@@ -57,6 +58,7 @@ func TestHTTPCapRedirectControlPreventsPostReplay(t *testing.T) {
 }
 
 func TestHTTPCapPreservesRepeatedCookieHeaders(t *testing.T) {
+	allowLoopbackEgressForTest(t) // the upstream here is a loopback httptest server
 	cookies := []string{"first=fixture; Path=/; HttpOnly", "second=fixture; Expires=Wed, 09 Sep 2026 12:00:00 GMT; Path=/"}
 	for _, status := range []int{http.StatusFound, http.StatusNotModified} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {
@@ -83,6 +85,7 @@ func TestHTTPCapPreservesRepeatedCookieHeaders(t *testing.T) {
 }
 
 func TestHTTPCapBinaryResponsePreservesExactBytes(t *testing.T) {
+	allowLoopbackEgressForTest(t) // the upstream here is a loopback httptest server
 	raw := []byte{0, 255, '<', '&', '>', '\n'}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")

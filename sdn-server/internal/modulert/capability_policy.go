@@ -115,6 +115,11 @@ var sensitiveCapabilities = map[string]bool{
 	"ipfs":            true,
 	"pubsub":          true,
 
+	// database: storage.flatsql_query_stream, caller SQL on the live engine
+	// session with no sandbox (caps/storage.go TrustedSQLCapability). Split
+	// out of storage_query by the 2026-10-15 security audit (SEC-033).
+	"database": true,
+
 	// Credential-keystore lanes (internal/secrets). See the block comment above.
 	"secrets:spacetrack": true,
 	"secrets:edc_cpf":    true,
@@ -197,7 +202,7 @@ var benignCapabilities = map[string]bool{
 // The inverse (treat every name absent from benignCapabilities as sensitive)
 // was tried and reverted: node.go buildCapRegistry currently wires factories
 // for only a subset of the manifest schema's capabilityNames enum (see
-// manifest.go); every other declared name (e.g. "database", "tcp", "mqtt",
+// manifest.go); every other declared name (e.g. "tcp", "mqtt", "network",
 // "scene_access", ...) already has zero enforcement effect (no factory, no
 // hostcall handler gets registered for its prefix — any hostcall using it
 // fails with "operation not supported" regardless of this policy). Denying

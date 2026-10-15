@@ -2450,7 +2450,22 @@ func newAdminSession(t *testing.T, trust peers.TrustLevel) (*auth.Handler, strin
 		t.Fatalf("CreateSession: %v", err)
 	}
 
-	return auth.NewHandler(nil, sessions, time.Hour, "", ""), token
+	// A stored session is re-resolved against its account on every request
+	// (SEC-029): give it the account row a real sign-in always has.
+	users, err := auth.NewUserStore(filepath.Join(dir, "users.db"), nil)
+	if err != nil {
+		t.Fatalf("NewUserStore: %v", err)
+	}
+	t.Cleanup(func() { _ = users.Close() })
+	pub, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	if err := users.AddUser("xpub-test-user", "test user", trust, hex.EncodeToString(pub)); err != nil {
+		t.Fatalf("AddUser: %v", err)
+	}
+
+	return auth.NewHandler(users, sessions, time.Hour, "", ""), token
 }
 
 // TestGateAdminOnlyHandlerAllowsUnauthenticatedWhenAuthNotRequired locks in

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -16,6 +15,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/auth"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/logservice"
+	"github.com/spacedatanetwork/sdn-server/internal/netorigin"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
@@ -220,19 +220,13 @@ func requireLoopbackClient(r *http.Request) error {
 	// A proxy header on the private lane means a reverse proxy has been placed in
 	// front of it — exactly the misconfiguration this lane must never survive.
 	// We do not parse these headers (they are forgeable); their mere presence is
-	// disqualifying.
-	for _, header := range []string{"X-Forwarded-For", "X-Real-IP", "Forwarded", "X-Forwarded-Host"} {
-		if r.Header.Get(header) != "" {
-			return fmt.Errorf("request carries %s: this lane must never be reverse-proxied", header)
-		}
+	// disqualifying. The list is the node-wide one (internal/netorigin), which
+	// also covers X-Forwarded-Proto, Via and the CDN client-IP headers this
+	// copy used to miss.
+	if netorigin.CrossedAProxy(r) {
+		return fmt.Errorf("request carries a forwarding header: this lane must never be reverse-proxied")
 	}
-
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
-	}
-	ip := net.ParseIP(strings.TrimSpace(host))
-	if ip == nil || !ip.IsLoopback() {
+	if !netorigin.IsLoopbackRemote(r.RemoteAddr) {
 		return fmt.Errorf("client %q is not on the loopback interface", r.RemoteAddr)
 	}
 	return nil

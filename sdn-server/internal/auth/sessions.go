@@ -44,11 +44,27 @@ type Session struct {
 // SessionStore manages authentication sessions in SQLite.
 type SessionStore struct {
 	db *sql.DB
+	// absoluteLifetime bounds a session from its ORIGINAL sign-in, however
+	// often it is rotated (security audit 2026-10-15, SEC-029: a sliding
+	// refresh used to extend a session forever). 0 disables the bound.
+	absoluteLifetime time.Duration
+}
+
+// DefaultSessionAbsoluteLifetime is how long a session may live from its
+// sign-in, across every rotation, unless the configured TTL is longer.
+const DefaultSessionAbsoluteLifetime = 7 * 24 * time.Hour
+
+// SetAbsoluteLifetime sets the bound measured from the original sign-in.
+func (ss *SessionStore) SetAbsoluteLifetime(d time.Duration) {
+	if d < 0 {
+		d = 0
+	}
+	ss.absoluteLifetime = d
 }
 
 // NewSessionStore creates a session store using the provided database connection.
 func NewSessionStore(db *sql.DB) (*SessionStore, error) {
-	ss := &SessionStore{db: db}
+	ss := &SessionStore{db: db, absoluteLifetime: DefaultSessionAbsoluteLifetime}
 	if err := ss.initDB(); err != nil {
 		return nil, fmt.Errorf("failed to initialize session store: %w", err)
 	}
@@ -128,16 +144,29 @@ func (ss *SessionStore) ValidateSession(token string) (*Session, error) {
 	if time.Now().After(s.ExpiresAt) {
 		return nil, fmt.Errorf("session expired")
 	}
+	if ss.absoluteLifetime > 0 && time.Since(s.CreatedAt) > ss.absoluteLifetime {
+		return nil, fmt.Errorf("session expired (sign-in is older than %s)", ss.absoluteLifetime)
+	}
 
 	return &s, nil
 }
 
 // RotateSession revokes the current session token and replaces it with a new
-// opaque token carrying the same identity and trust level with a fresh expiry.
-func (ss *SessionStore) RotateSession(token string, ttl time.Duration) (string, *Session, error) {
+// opaque token for the same identity with a fresh expiry.
+//
+// trust is the caller's CURRENT trust level, re-resolved from the user store
+// (Handler.reconcileSession); the replacement never carries more than the
+// stored session did or more than trust. Copying the stored trust kept a
+// removed or demoted admin at Admin for as long as they stayed active
+// (SEC-029). The replacement keeps the ORIGINAL sign-in time, so the
+// absolute lifetime still counts from the wallet ceremony.
+func (ss *SessionStore) RotateSession(token string, ttl time.Duration, trust peers.TrustLevel) (string, *Session, error) {
 	current, err := ss.ValidateSession(token)
 	if err != nil {
 		return "", nil, err
+	}
+	if trust > current.TrustLevel {
+		trust = current.TrustLevel
 	}
 
 	newTokenBytes := make([]byte, sessionTokenLength)
@@ -150,8 +179,8 @@ func (ss *SessionStore) RotateSession(token string, ttl time.Duration) (string, 
 	refreshed := &Session{
 		Token:      hashToken(newToken),
 		XPub:       current.XPub,
-		TrustLevel: current.TrustLevel,
-		CreatedAt:  now,
+		TrustLevel: trust,
+		CreatedAt:  current.CreatedAt,
 		ExpiresAt:  now.Add(ttl),
 		IPAddress:  current.IPAddress,
 		UserAgent:  current.UserAgent,

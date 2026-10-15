@@ -156,6 +156,7 @@ func TestEgressPacerReleasesOnContextCancel(t *testing.T) {
 // The observer sees exactly what the connector did — and nothing about what the
 // payload means.
 func TestHTTPCapFetchObserverRecordsRealFetch(t *testing.T) {
+	allowLoopbackEgressForTest(t) // the upstream here is a loopback httptest server
 	body := []byte("OBJECT_NAME,NORAD_CAT_ID\nISS (ZARYA),25544\n")
 	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/csv")

@@ -33,6 +33,7 @@ func (m *memoryValidators) observe(url, etag, lastModified string) {
 }
 
 func TestFetchValidatorsArePresentedAndA304IsNotAnError(t *testing.T) {
+	allowLoopbackEgressForTest(t) // the upstream here is a loopback httptest server
 	ledger := &memoryValidators{}
 	SetFetchValidatorSource(ledger.source)
 	SetFetchValidatorObserver(ledger.observe)

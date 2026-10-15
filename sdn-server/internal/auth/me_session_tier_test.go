@@ -1,9 +1,10 @@
 package auth
 
 // Locks graph task sdn-auth-me-tier-mismatch: /api/auth/me must report the
-// SESSION's trust level — the value every RequireTrust gate enforces — never
-// the user-store row's, and a valid session whose xpub has no store row is
-// still authenticated (the root ceremony mints exactly such sessions).
+// trust level every RequireTrust gate enforces: the session's, capped by the
+// account's current row (SEC-029). A valid session whose xpub has no store row
+// is authenticated only when it is the node's own root account (the root
+// ceremony mints exactly such sessions).
 
 import (
 	"encoding/json"
@@ -56,6 +57,11 @@ func meWithSession(t *testing.T, h *Handler, xpub string, trust peers.TrustLevel
 	return rec
 }
 
+// /api/auth/me reports the tier the gates enforce. Since SEC-029 that is the
+// session's tier CAPPED by the account's current row: a session minted at
+// Admin for an account whose row now says standard (a demotion after sign-in)
+// is a standard session everywhere, /me included. Before the cap, /me and the
+// gates agreed on the stale Admin.
 func TestMeReportsSessionTierNotRowTier(t *testing.T) {
 	t.Parallel()
 
@@ -79,8 +85,8 @@ func TestMeReportsSessionTierNotRowTier(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode me: %v", err)
 	}
-	if body.TrustLevel != peers.Admin.String() {
-		t.Fatalf("me trust_level = %q, want the session's %q (row says standard; gates enforce the session)", body.TrustLevel, peers.Admin.String())
+	if body.TrustLevel != peers.Standard.String() {
+		t.Fatalf("me trust_level = %q, want %q: the session tier capped by the account's current row, which is what the gates enforce", body.TrustLevel, peers.Standard.String())
 	}
 	if body.Name != "Config Row Standard" {
 		t.Fatalf("me name = %q, want the row's display name", body.Name)
@@ -95,6 +101,10 @@ func TestMeAcceptsSessionWithoutStoreRow(t *testing.T) {
 
 	const xpub = "xpub-me-rowless-session-test"
 	h := newMeTierHandler(t, nil)
+	// Rowless sessions are the root ceremony's: the node's own account. A
+	// rowless session for any other xpub is a removed account and is refused
+	// (TestSEC029_* in session_revocation_test.go).
+	registerRootAccount(t, h, xpub)
 
 	rec := meWithSession(t, h, xpub, peers.Admin)
 	if rec.Code != http.StatusOK {

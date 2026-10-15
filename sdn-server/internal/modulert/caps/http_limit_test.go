@@ -29,6 +29,7 @@ func httpCapCall(t *testing.T, payload map[string]interface{}) map[string]interf
 }
 
 func TestHTTPCapDeliversBodiesBeyondTheOld4MiBTruncation(t *testing.T) {
+	allowLoopbackEgressForTest(t) // the upstream here is a loopback httptest server
 	// 10 MB — the size class of the real Provider GP full catalog, and 2.5x
 	// the old silent-truncation limit.
 	payload := strings.Repeat("NORAD_CAT_ID,EPOCH,MEAN_MOTION\n", 10*1024*1024/31)
@@ -50,6 +51,7 @@ func TestHTTPCapDeliversBodiesBeyondTheOld4MiBTruncation(t *testing.T) {
 }
 
 func TestHTTPCapMaxBytesClampErrorsInsteadOfTruncating(t *testing.T) {
+	allowLoopbackEgressForTest(t) // the upstream here is a loopback httptest server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write(make([]byte, 64*1024)) //nolint:errcheck
 	}))

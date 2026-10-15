@@ -21,6 +21,7 @@ func adminListenerSafety(cfg *config.Config) error {
 	}
 	addr := strings.TrimSpace(cfg.Admin.ListenAddr)
 	if addr == "" {
+		// An unset listen_addr is the built-in default, 127.0.0.1:5001.
 		return nil
 	}
 	host, _, err := net.SplitHostPort(addr)
@@ -28,7 +29,10 @@ func adminListenerSafety(cfg *config.Config) error {
 		host = addr
 	}
 	host = strings.Trim(host, "[]")
-	if host == "" || strings.EqualFold(host, "localhost") {
+	// An EMPTY host (":5001") binds every interface: it is the most routable
+	// address there is, not a loopback one (SEC-033: it slipped through here
+	// and served unauthenticated data-plane SQL to the network).
+	if strings.EqualFold(host, "localhost") {
 		return nil
 	}
 	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {

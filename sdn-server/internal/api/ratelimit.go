@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/spacedatanetwork/sdn-server/internal/netorigin"
 )
 
 const (
@@ -132,31 +134,17 @@ func (rl *rateLimiter) allow(w http.ResponseWriter, r *http.Request, write bool)
 	return true
 }
 
-// clientIP extracts the best-effort client IP from the request.
+// clientIP extracts the client IP from the request by the node-wide rule
+// (internal/netorigin.ClientIP).
 //
-// Forwarding headers are honoured only when the direct peer is loopback —
-// a reverse proxy on this host. Anyone else can write X-Forwarded-For, and
-// trusting it from a remote peer let one caller pick its own bucket (or
-// someone else's) and walk past the per-IP limit (SEC-05).
+// Forwarding headers are honoured only when the direct peer is loopback — a
+// reverse proxy on this host. Anyone else can write X-Forwarded-For, and
+// trusting it from a remote peer let one caller pick its own bucket (SEC-05).
+// Behind the local proxy the client is the RIGHTMOST entry, the one the proxy
+// appended: the leftmost entry is whatever the client sent, so taking it gave
+// every request a fresh bucket for the price of a header (SEC-062).
 func clientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
-	}
-	if !isLoopbackHost(host) {
-		return host
-	}
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		// Take the first (leftmost) address — that is the original client.
-		if idx := strings.Index(xff, ","); idx >= 0 {
-			return strings.TrimSpace(xff[:idx])
-		}
-		return strings.TrimSpace(xff)
-	}
-	if real := strings.TrimSpace(r.Header.Get("X-Real-IP")); real != "" {
-		return real
-	}
-	return host
+	return netorigin.ClientIP(r)
 }
 
 func isLoopbackHost(host string) bool {

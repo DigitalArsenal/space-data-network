@@ -113,6 +113,7 @@ func (g typedGuest) run(name string, args ...interface{}) string {
 }
 
 func TestTypedHostcallsFromAnSDKModule(t *testing.T) {
+	allowLoopbackEgressForTest(t) // t_http fetches a loopback httptest server
 	dir := t.TempDir()
 	validator, err := sds.NewValidator(nil)
 	if err != nil {
@@ -257,8 +258,11 @@ func TestTypedHostcallsFromAnSDKModule(t *testing.T) {
 
 	// SQL values in FlatSQL's tagged encoding: a null, bytes, a 300-byte string and an i64 beyond 2^53 reach the real
 	// store whole (the WHERE clause holds only then); a malformed run is refused invalid-params
-	if got := run("t_sql"); !strings.HasPrefix(got, "1 1 ") || !strings.HasSuffix(got, " 0 invalid-params|") {
-		t.Fatalf("storage.flatsql_query_stream with raw params: %q", got)
+	// storage.flatsql_query_stream is TRUSTED SQL since the 2026-10-15 audit (SEC-033): it needs the `database`
+	// grant, which this guest's manifest does not declare, so an SDK module with storage_query alone is refused with a
+	// typed error naming the grant (the malformed run is still refused invalid-params before any grant check).
+	if got := run("t_sql"); !strings.HasPrefix(got, "0 0 0 0 invalid-params|") || !strings.Contains(got, "database (trusted SQL)") {
+		t.Fatalf("storage.flatsql_query_stream without the database grant: %q", got)
 	}
 	// rows answer: list "columns", raw "cells" row-major (integer -> i64, other number -> f64, string, null)
 	if got := run("t_rows"); got != "1 1 2 5 NORAD_CAT_ID,OBJECT_NAME,empty,half,word|"+

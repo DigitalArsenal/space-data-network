@@ -280,6 +280,9 @@ func TestPatchMe_RowlessSessionIsNotAnAuthFailure(t *testing.T) {
 	t.Parallel()
 
 	h := newMeTierHandler(t, nil)
+	// The rowless session is the root ceremony's: the node's own account.
+	// A rowless session for any OTHER xpub is a removed account (SEC-029).
+	registerRootAccount(t, h, "xpub-rowless-patch")
 	token, err := h.sessions.CreateSession("xpub-rowless-patch", peers.Admin, "127.0.0.1", "test", time.Hour)
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
@@ -451,6 +454,7 @@ func TestMePhoto_RowlessSessionIsNotAnAuthFailure(t *testing.T) {
 
 	h := newMeTierHandler(t, nil)
 	h.SetProfilePhotoStore(&stubPhotoStore{cid: "bafkreirowless"})
+	registerRootAccount(t, h, "xpub-rowless-photo") // the root ceremony's rowless session
 	token, err := h.sessions.CreateSession("xpub-rowless-photo", peers.Admin, "127.0.0.1", "test", time.Hour)
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)

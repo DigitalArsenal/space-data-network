@@ -54,6 +54,12 @@ func canonicalStoredSchemaName(schema string) string {
 	return schema
 }
 
+// TrustedSQLCapability is the manifest capability (PluginManifest
+// CapabilityKind DATABASE) that grants storage.flatsql_query_stream: raw SQL
+// on the live engine session. It is sensitive (operator approval per module
+// hash) and is not implied by storage_query.
+const TrustedSQLCapability = "database"
+
 // NewStorageCapFactory returns a BridgeCapFactory for "storage_query" and
 // "storage_write" capabilities. Both capabilities share the same handler —
 // the operation prefix distinguishes them ("storage.query" vs
@@ -350,9 +356,17 @@ func (s *storageCapAdapter) handle(operation string, payload []byte) ([]byte, er
 	// handler returns a PRE-ENCODED envelope — no base64/JSON round-trip
 	// anywhere on the host side, loop C.5).
 	case "storage.flatsql_query_stream":
-		// POLICY: read-tier gate, same rationale as storage.query above.
-		if s.bridge == nil || !s.bridge.HasCapability("storage_query") {
-			return refuseCapJSON("storage.flatsql_query_stream", "requires the storage_query capability grant"), nil
+		// POLICY: TRUSTED-SQL tier (security audit 2026-10-15, SEC-033).
+		// This op runs caller SQL on the live engine session — no single-
+		// statement rule, no row/byte cap, no deadline — unlike
+		// storage.query_sandboxed. storage_query alone used to grant it, so
+		// the public data-retrieval flow (which needs storage_query for its
+		// epoch-profile bulk reads) forwarded anonymous HTTP bodies here as
+		// SQL. It now ALSO needs the `database` capability, a separate
+		// sensitive grant an operator approves per module hash; a module that
+		// serves untrusted callers should use storage.query_sandboxed.
+		if s.bridge == nil || !s.bridge.HasCapability("storage_query") || !s.bridge.HasCapability(TrustedSQLCapability) {
+			return refuseCapJSON("storage.flatsql_query_stream", "requires the storage_query and database (trusted SQL) capability grants; use storage.query_sandboxed for untrusted queries"), nil
 		}
 		sqlText := str("sql")
 		if sqlText == "" {

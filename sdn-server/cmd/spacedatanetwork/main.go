@@ -65,6 +65,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/metrics"
 	"github.com/spacedatanetwork/sdn-server/internal/modulert"
 	"github.com/spacedatanetwork/sdn-server/internal/modulert/caps"
+	"github.com/spacedatanetwork/sdn-server/internal/netorigin"
 	"github.com/spacedatanetwork/sdn-server/internal/node"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
@@ -237,9 +238,10 @@ var reindexCmd = &cobra.Command{
 var deriveXPubCmd = &cobra.Command{
 	Use:   "derive-xpub",
 	Short: "Derive a BIP-32 xpub from a BIP-39 mnemonic",
-	Long: `Derives the standard BIP-32 extended public key at m/44'/0'/0' from a BIP-39 mnemonic.
-The resulting xpub can be pasted directly into config.yaml as the user's xpub field.
-The Ed25519 signing key is bound on first wallet login (TOFU).`,
+	Long: `Derives the standard BIP-32 extended public key at m/44'/0'/0' from a BIP-39 mnemonic,
+and the Ed25519 sign-in key the wallet signs in with (the same derivation as
+` + "`admin init`" + `'s mnemonic source). Both go into config.yaml: a users: row without
+signing_pubkey_hex can never sign in (first-use key binding is disabled).`,
 	RunE: runDeriveXPub,
 }
 
@@ -1096,6 +1098,10 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			if adminAddr == "" {
 				adminAddr = "127.0.0.1:5001"
 			}
+			// Client addresses for rate limits, sessions and audit rows: the
+			// X-Forwarded-For entry the trusted loopback proxy appended,
+			// counted from the right (SEC-062).
+			netorigin.SetTrustedProxyHops(cfg.Admin.EffectiveTrustedProxyHops())
 			tlsManager, err := tlsmgr.New(cfg.Admin)
 			if err != nil {
 				return fmt.Errorf("configure admin tls: %w", err)
@@ -1931,7 +1937,21 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 						return fmt.Errorf("admin.local_console requires a loopback listen_addr (got %q)", cfg.Admin.ListenAddr)
 					}
 					authHandler.EnableLocalConsole()
-					log.Infof("admin.local_console is ON: loopback requests without a session are the node's own root account")
+					log.Infof("admin.local_console is ON: the console holding this launch's console secret is the node's own root account")
+				}
+				// The console secret (SEC-012): without it neither ambient
+				// mode admits anybody. Always consumed, so the variable never
+				// reaches a process this node starts.
+				if cfg.Admin.LocalConsole || cfg.Admin.DevAutoAdmin {
+					tokenFile, terr := installConsoleSecret(authHandler, adminAddr, authDBPath)
+					if terr != nil {
+						return fmt.Errorf("admin console secret: %w", terr)
+					}
+					if tokenFile != "" {
+						log.Infof("Console secret written to %s (mode 0600). Open http://%s%s?token=<that file's contents> in this machine's browser to sign the console in.", tokenFile, adminAddr, auth.ConsoleBootstrapPath)
+					}
+				} else {
+					_ = os.Unsetenv(auth.ConsoleTokenEnv)
 				}
 				// Bind the operator profile-photo object store to the IPFS lane
 				// this node already runs. When admin.ipfs_api_url is unset the
@@ -2845,13 +2865,23 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					return false
 				},
 			}
+			adminHandler := gateway.wrap(newAdminUpgradeRouter(wsUpgradeProxy, secured))
+			if authHandler != nil && (cfg.Admin.LocalConsole || cfg.Admin.DevAutoAdmin) {
+				// An ambient console mode is armed: answer only Host values
+				// that name this loopback listener (no DNS rebinding, SEC-012).
+				guarded, herr := adminHostAllowList(adminAddr, adminHandler)
+				if herr != nil {
+					return fmt.Errorf("admin console host allow-list: %w", herr)
+				}
+				adminHandler = guarded
+			}
 			adminServer = &http.Server{
 				Addr:              adminAddr,
 				ReadHeaderTimeout: 10 * time.Second,
 				ReadTimeout:       30 * time.Second,
 				WriteTimeout:      10 * time.Minute,
 				IdleTimeout:       120 * time.Second,
-				Handler:           gateway.wrap(newAdminUpgradeRouter(wsUpgradeProxy, secured)),
+				Handler:           adminHandler,
 			}
 			go func() {
 				if cfg.Admin.RequireAuth && authHandler != nil {
@@ -3608,6 +3638,13 @@ func serveAdminMuxRequest(
 			adminMux.ServeHTTP(w, r)
 			return
 		}
+		if r.URL.Path == auth.ConsoleBootstrapPath && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
+			// The console-secret exchange gates itself (loopback, no proxy,
+			// console Host, not cross-site, the secret): it is how a console
+			// gets the credential the wall would otherwise demand.
+			adminMux.ServeHTTP(w, r)
+			return
+		}
 		if r.URL.Path == sealed.Route {
 			if sealedHandler == nil {
 				http.Error(w, "sealed admin transport unavailable", http.StatusServiceUnavailable)
@@ -3676,6 +3713,11 @@ func serveAdminMuxRequest(
 	adminOnlyPath := isAdminOnlyAPIPath(r.URL.Path) &&
 		!isLoopbackSelfGatedAdminPath(r.URL.Path) &&
 		isStateChangingMethod(r.Method)
+	// A data-plane SQL path is an operator surface for EVERY method: a GET
+	// to /api/v1/data/<x>/query ran SQL exactly like a POST (SEC-033).
+	if isDataPlaneQueryPath(r.URL.Path) {
+		adminOnlyPath = true
+	}
 	if adminOnlyPath && !publicAPIRequest(r.Method, r.URL.Path) {
 		if authHandler == nil {
 			// Fail closed: no admit point, no operator action.
@@ -3881,6 +3923,10 @@ func applyPublicAPICORSHeaders(header http.Header, origin string) {
 	header.Set("Vary", "Origin")
 }
 
+// hasSessionCookie reports whether r carries an ambient credential the
+// browser attaches by itself: a session cookie or the console cookie
+// (internal/auth/console_gate.go). The console header is included because it
+// authenticates exactly like the cookie.
 func hasSessionCookie(r *http.Request) bool {
 	if _, err := r.Cookie("sdn_wallet_session"); err == nil {
 		return true
@@ -3888,7 +3934,10 @@ func hasSessionCookie(r *http.Request) bool {
 	if _, err := r.Cookie("sdn_session"); err == nil {
 		return true
 	}
-	return false
+	if _, err := r.Cookie(auth.ConsoleCookieName); err == nil {
+		return true
+	}
+	return strings.TrimSpace(r.Header.Get(auth.ConsoleTokenHeader)) != ""
 }
 
 func isSameOrigin(r *http.Request, raw string) bool {
@@ -3960,32 +4009,13 @@ func adminSecurityMiddleware(next http.Handler, tlsMode string, publicAPIRequest
 			return
 		}
 
-		// CSRF protection: for state-changing requests using cookie auth,
-		// require same-origin Origin/Referer, or X-Requested-With.
-		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
-			if hasSessionCookie(r) && !isWebhookPath(r.URL.Path) && !publicAPIRequest(r.Method, r.URL.Path) {
-				origin := strings.TrimSpace(r.Header.Get("Origin"))
-				referer := strings.TrimSpace(r.Header.Get("Referer"))
-				xrw := strings.TrimSpace(r.Header.Get("X-Requested-With"))
-
-				// If Origin is present, enforce same-origin.
-				if origin != "" {
-					if !isSameOrigin(r, origin) {
-						http.Error(w, "CSRF validation failed (origin mismatch)", http.StatusForbidden)
-						return
-					}
-				} else if referer != "" {
-					// Otherwise fall back to Referer check.
-					if !isSameOrigin(r, referer) {
-						http.Error(w, "CSRF validation failed (referer mismatch)", http.StatusForbidden)
-						return
-					}
-				} else if xrw == "" {
-					// No Origin/Referer: require explicit X-Requested-With (AJAX).
-					http.Error(w, "CSRF validation failed (missing origin)", http.StatusForbidden)
-					return
-				}
-			}
+		// CSRF protection (admin_console_guard.go): every state-changing
+		// request to a non-public path, cookie or not — an ambient console
+		// admission has no cookie (SEC-012). Cross-site refusals, the
+		// same-origin rule for cookie sessions, and the body-type rule.
+		if status, message := adminCSRFRefusal(r, publicAPIRequest); status != 0 {
+			http.Error(w, message, status)
+			return
 		}
 
 		next.ServeHTTP(w, r)
@@ -4331,10 +4361,6 @@ func isLoopbackSelfGatedAdminPath(path string) bool {
 	return false
 }
 
-// isLoopbackRequestAddr mirrors the update control handler's own RemoteAddr
-// gate (internal/update/control.go isLoopbackRemoteAddr): the wall may only
-// wave a self-gated request through when it demonstrably originates on this
-// box — the handler then enforces its one-time token on top.
 // isLoopbackListenAddr reports whether a configured listen address binds a
 // loopback interface — the gate admin.dev_auto_admin must pass. "localhost" is
 // accepted alongside literal loopback IPs; an empty or wildcard host is NOT
@@ -4351,31 +4377,34 @@ func isLoopbackListenAddr(listenAddr string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-// requestOriginatedOnThisBox is isLoopbackRequestAddr plus the proxy check.
+// requestOriginatedOnThisBox is a loopback peer plus the proxy check, by the
+// node-wide rule (internal/netorigin) the update control handler and the
+// dataset-updates lanes share: the wall may only wave a self-gated request
+// through when it demonstrably originates on this box.
 //
 // A loopback RemoteAddr proves the last hop was local, not that the REQUEST
 // was. With a reverse proxy on the same machine — the deployed shape here —
 // every remote caller arrives from 127.0.0.1. Forwarded headers are never
 // trusted to grant anything; their presence is used only to refuse.
 func requestOriginatedOnThisBox(r *http.Request) bool {
-	if r == nil {
-		return false
-	}
-	for _, h := range []string{"X-Forwarded-For", "X-Real-Ip", "Forwarded", "X-Forwarded-Host", "X-Forwarded-Proto"} {
-		if strings.TrimSpace(r.Header.Get(h)) != "" {
-			return false
-		}
-	}
-	return isLoopbackRequestAddr(r.RemoteAddr)
+	return netorigin.OriginatedOnThisBox(r)
 }
 
 func isLoopbackRequestAddr(remoteAddr string) bool {
-	host, _, err := net.SplitHostPort(remoteAddr)
-	if err != nil {
-		host = remoteAddr
+	return netorigin.IsLoopbackRemote(remoteAddr)
+}
+
+// isDataPlaneQueryPath reports a path under the /api/v1/data/ mount whose last
+// segment is "query" (any case, trailing slash ignored): a SQL surface of the
+// data-retrieval flow, never part of the anonymous read surface.
+func isDataPlaneQueryPath(path string) bool {
+	const mount = "/api/v1/data/"
+	if !strings.HasPrefix(path, mount) {
+		return false
 	}
-	ip := net.ParseIP(strings.TrimSpace(host))
-	return ip != nil && ip.IsLoopback()
+	trimmed := strings.TrimRight(path, "/")
+	last := trimmed[strings.LastIndex(trimmed, "/")+1:]
+	return strings.EqualFold(last, "query")
 }
 
 func isAdminOnlyAPIPath(path string) bool {
@@ -4414,6 +4443,11 @@ func isAdminOnlyAPIPath(path string) bool {
 		strings.HasPrefix(path, "/api/v1/admin/") ||
 		path == "/api/v1/data/summary" ||
 		path == "/api/v1/data/query" ||
+		// Every OTHER */query path under the data mount too (SEC-033): the
+		// data-retrieval flow mounted on the /api/v1/data/ subtree treated
+		// any path ending in /query, any method, as SQL to run, so the exact
+		// match above left /api/v1/data/<x>/query open.
+		isDataPlaneQueryPath(path) ||
 		strings.HasPrefix(path, "/api/v1/search/") ||
 		path == "/api/v1/conjunction/screen" ||
 		strings.HasPrefix(path, "/api/v1/data/records/") ||
@@ -6228,11 +6262,22 @@ func runDeriveXPub(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to derive xpub: %w", err)
 	}
+	// And the sign-in key the row must carry: a keyless row is never bound
+	// by whoever signs in first (SEC-028).
+	signInPub, err := walletderive.SignInPublicKey(ctx, walletderive.HDWallet{HDWalletModule: hw}, seed)
+	for i := range seed {
+		seed[i] = 0
+	}
+	if err != nil {
+		return fmt.Errorf("failed to derive the sign-in key: %w", err)
+	}
+	signInHex := hex.EncodeToString(signInPub)
 
 	fmt.Fprintf(os.Stderr, "\n--- SDN Identity ---\n")
 	fmt.Fprintf(os.Stderr, "XPub (BIP-32):     %s\n", xpubStr)
+	fmt.Fprintf(os.Stderr, "Sign-in key:       %s\n", signInHex)
 	fmt.Fprintf(os.Stderr, "\nAdd to config.yaml:\n")
-	fmt.Fprintf(os.Stderr, "users:\n  - xpub: \"%s\"\n    trust_level: \"admin\"\n    name: \"Operator\"\n", xpubStr)
+	fmt.Fprintf(os.Stderr, "users:\n  - xpub: \"%s\"\n    signing_pubkey_hex: \"%s\"\n    trust_level: \"admin\"\n    name: \"Operator\"\n", xpubStr, signInHex)
 
 	// Print just the xpub to stdout (for scripting)
 	fmt.Println(xpubStr)

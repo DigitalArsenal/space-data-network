@@ -100,6 +100,7 @@ var supportedCapabilities = []string{
 	"wallet_sign",
 	"ipfs",
 	"storage_query", "storage_write", "storage_adapter", "storage_ingest",
+	"database",
 	"http",
 	"schedule_cron",
 	"p2p_read",

@@ -15,3 +15,9 @@ node build.mjs <space-data-module-sdk checkout>
 ```
 
 The SDK's `node_modules` must be installed, because the compiler runs emception from there.
+
+Since the 2026-10-15 security audit (SEC-033) `storage.flatsql_query_stream` is trusted SQL and needs the `database`
+capability (PluginManifest `DATABASE`) as well as `storage_query`. Neither module declares it, so `t_sql` now asserts
+the typed refusal naming that grant. To exercise the op's tagged SQL parameters end to end again, add `"database"` to
+`guest.wasm`'s capability list in `build.mjs`, rebuild, and restore the `t_sql` row-count assertion in
+`../../typed_hostcall_e2e_test.go`.

@@ -31,7 +31,28 @@ func newDevAutoAdminHandler(t *testing.T, entries []config.UserEntry) *Handler {
 	if err != nil {
 		t.Fatalf("NewSessionStore: %v", err)
 	}
-	return NewHandler(userStore, sessions, 24*time.Hour, "", "")
+	h := NewHandler(userStore, sessions, 24*time.Hour, "", "")
+	// The per-launch console secret both ambient modes require (SEC-012).
+	if err := h.SetConsoleToken(testConsoleToken); err != nil {
+		t.Fatalf("SetConsoleToken: %v", err)
+	}
+	if err := h.SetConsoleListenAddr("127.0.0.1:5001"); err != nil {
+		t.Fatalf("SetConsoleListenAddr: %v", err)
+	}
+	return h
+}
+
+// testConsoleToken stands in for the desktop shell's per-launch secret.
+const testConsoleToken = "test-console-secret-0123456789-abcdefghij"
+
+// consoleRequest is the console's own browser: a loopback peer, the console
+// Host, and the console cookie.
+func consoleRequest(remoteAddr string) *http.Request {
+	r := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
+	r.RemoteAddr = remoteAddr
+	r.Host = "127.0.0.1:5001"
+	r.AddCookie(&http.Cookie{Name: ConsoleCookieName, Value: testConsoleToken})
+	return r
 }
 
 func adminEntry() []config.UserEntry {
@@ -46,8 +67,7 @@ func TestDevAutoAdmin_LoopbackResolvesAdminSession(t *testing.T) {
 	h := newDevAutoAdminHandler(t, adminEntry())
 	h.EnableDevAutoAdmin()
 
-	r := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
-	r.RemoteAddr = "127.0.0.1:54321"
+	r := consoleRequest("127.0.0.1:54321")
 	session, err := h.sessionFromRequest(r)
 	if err != nil {
 		t.Fatalf("sessionFromRequest: %v", err)
@@ -60,8 +80,7 @@ func TestDevAutoAdmin_LoopbackResolvesAdminSession(t *testing.T) {
 	}
 
 	// Second request reuses the minted session instead of minting again.
-	r2 := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
-	r2.RemoteAddr = "[::1]:54321"
+	r2 := consoleRequest("[::1]:54321")
 	session2, err := h.sessionFromRequest(r2)
 	if err != nil {
 		t.Fatalf("second sessionFromRequest: %v", err)

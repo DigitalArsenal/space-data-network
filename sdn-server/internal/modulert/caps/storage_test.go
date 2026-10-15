@@ -100,12 +100,24 @@ func TestStorageQueryOnlyGrantDeniesWriteAndDelete(t *testing.T) {
 		t.Fatalf("storage.delete denial did not name the missing storage_write grant: %v", envelope)
 	}
 
-	// storage.flatsql_query_stream / storage.flatsql_epoch_stream: also
-	// read-tier — must keep working under storage_query alone.
-	if ok, envelope := storageOpOK(t, handler, "storage.flatsql_query_stream", map[string]interface{}{
+	// storage.flatsql_query_stream is TRUSTED SQL (caller SQL on the live
+	// engine session, no sandbox): storage_query alone no longer reaches it,
+	// so a public flow that needs epoch reads cannot also run anonymous
+	// callers' SQL (SEC-033). It needs the separate `database` grant.
+	ok, envelope = storageOpOK(t, handler, "storage.flatsql_query_stream", map[string]interface{}{
+		"sql": `SELECT _data FROM "OMM@provider-gp"`,
+	})
+	if ok {
+		t.Fatal("storage.flatsql_query_stream SUCCEEDED for a module granted only storage_query — trusted SQL must need the database grant")
+	}
+	if errMsg, _ := envelope["error"].(map[string]interface{})["message"].(string); !strings.Contains(errMsg, "database") {
+		t.Fatalf("storage.flatsql_query_stream denial did not name the database grant: %v", envelope)
+	}
+	trusted := newStorageHandlerWithGrants(t, "storage_query", TrustedSQLCapability)
+	if ok, envelope := storageOpOK(t, trusted, "storage.flatsql_query_stream", map[string]interface{}{
 		"sql": `SELECT _data FROM "OMM@provider-gp"`,
 	}); !ok {
-		t.Fatalf("storage.flatsql_query_stream denied for a storage_query grant: %v", envelope)
+		t.Fatalf("storage.flatsql_query_stream denied for storage_query + database: %v", envelope)
 	}
 }
 

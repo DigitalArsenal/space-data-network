@@ -90,18 +90,17 @@ The prospective operator passes to an existing administrator **exactly**:
 
 **What must never be handed over, in any channel:** the recovery phrase, any private key, the extended private key. If a private value ever enters a chat, a paste, a logged terminal, or an agent transcript, the identity is compromised — generate a new one. (The CLI's custody classification: `key export --format mnemonic` is labelled "THE ENTIRE NODE IDENTITY IN PLAINTEXT" and `base64`/`hex`/`kubo`/`libp2p` formats are labelled "SECRET".) Nothing in enrollment ever asks for a private value; an enrollment request that does is a scam or a bug.
 
-### Step 3 — what binds on first login (TOFU)
+### Step 3 — the signing key is enrolled, never claimed
 
-The signing key is bound **on first successful login — trust on first use**:
+The signing key is part of the enrollment. There is **no trust on first use**: the node does not bind a key to an account because somebody signed in with it first (removed by the 2026-10-15 security audit, SEC-028). An xpub is public, so first-use binding let anyone who knew an enrolled operator's xpub sign in with their own key, take that account's trust level (admin included) and lock the real operator out.
 
-- Signing key pre-seeded at enrollment (recommended; it is a required field in the dashboard form): login just works; any other key is refused from day one.
-- Row created without a signing key (possible via config): the **first** wallet that completes a successful sign-in binds its key permanently; a conflicting key presented later is refused.
-- The binding is a pin — whoever holds the phrase that first signed in owns the account permanently. An admin can pin the key in advance (dashboard form or config `signing_pubkey_hex`), mapping enrollment exactly to the key the holder presented.
+- Signing key enrolled with the row (the dashboard form requires it, `admin init` derives it, `derive-xpub` prints it for config): login just works; any other key is refused.
+- Row without a signing key: **it cannot sign in.** The node refuses every key for it, except the one its own identity attestation names for that xpub. Add `signing_pubkey_hex` and restart.
 
 Failure modes to avoid:
 
-- **Enrolling the wrong signing key** — the node holds a pin the operator cannot produce; the account can never sign in.
-- **Omitting the signing key entirely** — the row is a dead record: the dashboard sends no xpub at sign-in, the node resolves the operator by signing key, and a keyless row matches nothing.
+- **Enrolling the wrong signing key** — the node holds a key the operator cannot produce; the account can never sign in.
+- **Omitting the signing key** — the row is a dead record until the key is added.
 
 ## 3. Path A — enrol from the CLI (and the config path)
 
@@ -150,7 +149,7 @@ users:
     name: "Operator"
 ```
 
-   (`signing_pubkey_hex` is optional in the config parser and required in practice, for the same dead-record reason as in the UI. Without it, the node logs that the signing key "will be bound on first login (TOFU)".)
+   (`signing_pubkey_hex` is optional in the config parser but required to sign in: without it the node logs that the row cannot sign in until a key is set. `spacedatanetwork derive-xpub` prints both the xpub and the sign-in key.)
 3. Restart the daemon (`spacedatanetwork restart`, or stop/start).
 4. The operator signs in; the account is live. Two consequences:
 

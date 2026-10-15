@@ -134,7 +134,7 @@ func NewUserStore(dbPath string, configEntries []config.UserEntry) (*UserStore, 
 
 		// No signing key yet — it will be bound on first wallet login (TOFU).
 		if signingHex == "" {
-			log.Infof("Config user %q: signing key will be bound on first login (TOFU)", entry.Name)
+			log.Warnf("Config user %q has no signing_pubkey_hex: it cannot sign in until one is set (first-use key binding is disabled; `spacedatanetwork derive-xpub` prints it)", entry.Name)
 		}
 
 		user := User{
@@ -427,8 +427,8 @@ func (s *UserStore) AddUser(xpub, name string, trust peers.TrustLevel, signingPu
 		return fmt.Errorf("invalid signing_pubkey_hex: %w", err)
 	}
 
-	// Signing key is optional at creation — it gets bound on first login (TOFU).
-	// If provided, it's already validated above.
+	// A row without a signing key can be stored, but it cannot sign in until
+	// a key is enrolled: no key is ever bound by first use (SEC-028).
 
 	// PRR.PEER_ID for the new operator, derived from the account xpub's
 	// secp256k1 key (Themis binding). Empty when the identifier is not a

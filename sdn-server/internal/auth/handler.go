@@ -11,13 +11,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/epm"
+	"github.com/spacedatanetwork/sdn-server/internal/netorigin"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 	"github.com/spacedatanetwork/sdn-server/internal/tlsmgr"
 )
@@ -72,6 +72,12 @@ type Handler struct {
 	devAutoAdmin    bool
 	devSessionMu    sync.Mutex
 	devSessionToken string
+
+	// The per-launch console secret and the console listener's Host values
+	// (console_gate.go). Both ambient modes above admit nobody until
+	// SetConsoleToken has been called. Set once at startup.
+	consoleToken string
+	consoleHosts map[string]bool
 }
 
 type pendingChallenge struct {
@@ -241,6 +247,13 @@ func NewHandler(userStore *UserStore, sessions *SessionStore, sessionTTL time.Du
 		rates:            make(map[string]rateEntry),
 	}
 	h.loadDelegations()
+	if sessions != nil {
+		lifetime := DefaultSessionAbsoluteLifetime
+		if sessionTTL > lifetime {
+			lifetime = sessionTTL
+		}
+		sessions.SetAbsoluteLifetime(lifetime)
+	}
 	return h
 }
 
@@ -321,6 +334,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/auth/users", h.handleUsers)
 	mux.HandleFunc("/api/auth/users/", h.handleUserByXPub)
 	mux.HandleFunc("/api/auth/attest", h.handleAttest)
+	mux.HandleFunc(ConsoleBootstrapPath, h.handleConsoleBootstrap)
 	if h.externalLoginUI {
 		// U1.2: the embedded SpaceAware login owns /login; the legacy page
 		// stays reachable for wallet creation / recovery flows.
@@ -507,11 +521,16 @@ func (h *Handler) handleChallenge(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Store challenges for known users. If the user has a bound signing key,
-	// only accept challenges where client_pubkey_hex matches. If the user has
-	// no signing key yet (e.g. config has xpub only), accept the presented key
-	// — it will be permanently bound on first successful verify (TOFU or attestation).
+	// only accept challenges where client_pubkey_hex matches. A user with NO
+	// signing key can sign in only with the key the node's own identity
+	// attestation binds to that xpub. Remote trust-on-first-use is gone
+	// (security audit 2026-10-15, SEC-028): an xpub is public, so "the first
+	// key presented with it" let anybody who knew an enrolled operator's xpub
+	// bind their own key, take the row's trust (admin) and lock the operator
+	// out. A key is enrolled by an operator (dashboard, `admin` CLI,
+	// signing_pubkey_hex in config), never by whoever signs in first.
 	// Unknown xpubs get a valid-looking response that can never be verified
-	// (prevents user enumeration).
+	// (prevents user enumeration); so does a keyless row.
 	shouldStore := false
 	firstAdminBootstrap := false
 	expectedPubKey := []byte(nil)
@@ -532,11 +551,10 @@ func (h *Handler) handleChallenge(w http.ResponseWriter, r *http.Request) {
 						log.Infof("Auth challenge for xpub %q: using attested signing key", req.XPub)
 					}
 				} else {
-					// TOFU: no signing key bound yet — accept the presented key.
-					// The key will be permanently bound on first successful verify.
-					shouldStore = true
-					expectedPubKey = pubRaw
-					log.Infof("Auth challenge for xpub %q: no signing key bound, TOFU mode", req.XPub)
+					// No signing key enrolled and no attestation: refuse
+					// (SEC-028). The wire answer stays the indistinguishable
+					// never-verifiable challenge.
+					log.Warnf("Auth challenge for account %s refused: no signing key is enrolled for it (first-use binding is disabled; enroll the key with signing_pubkey_hex, the dashboard or the admin CLI)", XPubFingerprint(req.XPub))
 				}
 			} else {
 				expRaw, derr := hex.DecodeString(normalized)
@@ -752,10 +770,13 @@ func (h *Handler) handleVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TOFU/attestation: bind signing key on first successful authentication.
+	// Attestation: a keyless row is bound ONLY to the key the node's own
+	// identity attestation names for this xpub. Anything else is refused
+	// here as well as at challenge time (SEC-028): no first-use binding.
 	if strings.TrimSpace(user.SigningPubKeyHex) == "" {
-		attested := h.getNodeAttestedSigningKey(req.XPub)
-		if len(attested) > 0 && !bytes.Equal(attested, pending.pubKey) {
+		attested := h.getNodeAttestedSigningKey(pending.xpub)
+		if len(attested) == 0 || !bytes.Equal(attested, pending.pubKey) {
+			log.Warnf("Sign-in for account %s refused: no enrolled signing key and no matching node attestation", XPubFingerprint(pending.xpub))
 			h.writeAuthenticationFailure(w)
 			return
 		}
@@ -1088,6 +1109,7 @@ func (h *Handler) handleUserByXPub(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, errorResponse{Code: "remove_failed", Message: err.Error()})
 			return
 		}
+		h.revokeSessionsFor(xpub, "account removal")
 		writeJSON(w, http.StatusOK, map[string]string{"status": "removed"})
 
 	case http.MethodPut:
@@ -1105,6 +1127,7 @@ func (h *Handler) handleUserByXPub(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, errorResponse{Code: "invalid_trust_level", Message: err.Error()})
 			return
 		}
+		before, _ := h.userStore.GetUser(xpub)
 		if err := h.userStore.UpdateTrust(xpub, trust); err != nil {
 			if errors.Is(err, ErrLastAdmin) {
 				writeJSON(w, http.StatusConflict, errorResponse{Code: "last_admin", Message: err.Error()})
@@ -1128,6 +1151,22 @@ func (h *Handler) handleUserByXPub(w http.ResponseWriter, r *http.Request) {
 			if err := h.userStore.UpdateSigningPubKey(xpub, req.SigningPubKeyHex); err != nil {
 				writeJSON(w, http.StatusBadRequest, errorResponse{Code: "update_failed", Message: err.Error()})
 				return
+			}
+		}
+		// A demotion or a replaced signing key ends every live session of
+		// the account (SEC-029): the new terms start at the next sign-in.
+		if before != nil {
+			keyChanged := false
+			if newKey := strings.TrimSpace(req.SigningPubKeyHex); newKey != "" {
+				oldNorm, _ := normalizeEd25519PubKeyHex(before.SigningPubKeyHex)
+				newNorm, _ := normalizeEd25519PubKeyHex(newKey)
+				keyChanged = !strings.EqualFold(oldNorm, newNorm)
+			}
+			switch {
+			case trust < before.TrustLevel:
+				h.revokeSessionsFor(xpub, "a trust reduction")
+			case keyChanged:
+				h.revokeSessionsFor(xpub, "a signing-key change")
 			}
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
@@ -1174,7 +1213,11 @@ func (h *Handler) sessionFromRequestStrict(r *http.Request) (*Session, error) {
 	}
 	cookie, err := r.Cookie("sdn_wallet_session")
 	if err == nil {
-		return h.sessions.ValidateSession(cookie.Value)
+		session, verr := h.sessions.ValidateSession(cookie.Value)
+		if verr != nil {
+			return nil, verr
+		}
+		return h.reconcileSession(session)
 	}
 	session, signedErr := h.sessionFromSignedRequest(r)
 	if signedErr == nil {
@@ -1186,16 +1229,70 @@ func (h *Handler) sessionFromRequestStrict(r *http.Request) (*Session, error) {
 	return nil, signedErr
 }
 
+// reconcileSession re-resolves a stored session against the user store
+// (security audit 2026-10-15, SEC-029). A session records the trust its
+// holder had at sign-in, and nothing used to look again: a removed admin's
+// cookie kept creating admins, and rotation copied the stale trust forward
+// indefinitely.
+//
+//   - The node's own root account is not a user-store row (root sign-in and
+//     the local console mint it from the node's key), so it is kept as is.
+//   - A session whose account no longer exists is refused, and every session
+//     of that account is revoked.
+//   - Otherwise the effective trust is min(session trust, current trust).
+func (h *Handler) reconcileSession(s *Session) (*Session, error) {
+	if s == nil {
+		return nil, errors.New("no session")
+	}
+	if root := h.rootSessionXPub(); root != "" && s.XPub == root {
+		return s, nil
+	}
+	if h.userStore == nil {
+		return nil, errors.New("session account cannot be resolved")
+	}
+	user, err := h.userStore.GetUser(s.XPub)
+	if err != nil {
+		return nil, fmt.Errorf("session account lookup: %w", err)
+	}
+	if user == nil {
+		if h.sessions != nil {
+			_ = h.sessions.RevokeAllForUser(s.XPub)
+		}
+		return nil, errors.New("session account no longer exists")
+	}
+	if user.TrustLevel < s.TrustLevel {
+		reduced := *s
+		reduced.TrustLevel = user.TrustLevel
+		return &reduced, nil
+	}
+	return s, nil
+}
+
+// revokeSessionsFor ends every session of xpub after an operator removed the
+// account, lowered its trust or replaced its signing key.
+func (h *Handler) revokeSessionsFor(xpub, why string) {
+	if h == nil || h.sessions == nil || strings.TrimSpace(xpub) == "" {
+		return
+	}
+	if err := h.sessions.RevokeAllForUser(xpub); err != nil {
+		log.Warnf("failed to revoke sessions of %q after %s: %v", XPubFingerprint(xpub), why, err)
+		return
+	}
+	log.Infof("Revoked every session of account %s after %s", XPubFingerprint(xpub), why)
+}
+
 // EnableDevAutoAdmin arms admin.dev_auto_admin. Call once at startup, before
 // the admin listener opens; the caller (main.go) has already verified the
-// listener is loopback-bound.
+// listener is loopback-bound. It admits nobody until SetConsoleToken has
+// installed the per-launch console secret.
 func (h *Handler) EnableDevAutoAdmin() {
 	h.devAutoAdmin = true
 }
 
 // EnableLocalConsole arms admin.local_console. Call once at startup, before
 // the admin listener opens; the caller (main.go) has already verified the
-// listener is loopback-bound.
+// listener is loopback-bound. It admits nobody until SetConsoleToken has
+// installed the per-launch console secret.
 func (h *Handler) EnableLocalConsole() {
 	h.localConsole = true
 }
@@ -1212,25 +1309,12 @@ func (h *Handler) devAutoAdminSession(r *http.Request) *Session {
 	if !h.devAutoAdmin || h.userStore == nil || h.sessions == nil {
 		return nil
 	}
-	// A PROXY HOP MEANS IT DID NOT ORIGINATE HERE. Checking RemoteAddr and
-	// ignoring forwarded headers is the right way to decide WHO the caller is,
-	// but it silently inverts when something on this same box forwards for
-	// them: nginx in front of a loopback listener makes RemoteAddr 127.0.0.1
-	// for every remote client on the internet, and this gate would hand each
-	// of them an Admin session. That is the deployed shape here — host-01
-	// terminates TLS in nginx on the node's own box.
-	//
-	// So the headers are still never TRUSTED to grant anything; their mere
-	// presence is taken as proof that a hop happened, and refuses.
-	if requestCrossedAProxy(r) {
-		return nil
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
-	}
-	ip := net.ParseIP(strings.TrimSpace(host))
-	if ip == nil || !ip.IsLoopback() {
+	// The console gate (console_gate.go): the per-launch console secret, a
+	// loopback peer with no forwarding header (nginx in front of a loopback
+	// listener makes RemoteAddr 127.0.0.1 for every internet client), the
+	// console's own Host, and no cross-site signal. Loopback alone admitted
+	// every web page the developer visited (SEC-012).
+	if !h.ambientConsoleRequestAllowed(r) {
 		return nil
 	}
 	h.devSessionMu.Lock()
@@ -1306,7 +1390,7 @@ func (h *Handler) maybeRefreshSessionCookie(w http.ResponseWriter, r *http.Reque
 		return session
 	}
 
-	newToken, rotated, err := h.sessions.RotateSession(cookie.Value, h.sessionTTL)
+	newToken, rotated, err := h.sessions.RotateSession(cookie.Value, h.sessionTTL, session.TrustLevel)
 	if err != nil {
 		log.Warnf("failed to rotate auth session for %q: %v", session.XPub, err)
 		return session
@@ -1412,27 +1496,12 @@ func (h *Handler) compactRateLimits(now time.Time) {
 	}
 }
 
+// clientIPForRequest is the address a request stands for, by the node-wide
+// rule (internal/netorigin.ClientIP): forwarding headers are read only from a
+// loopback proxy, and then from the RIGHT (the entry the proxy appended), never
+// the client-written leftmost entry (security audit 2026-10-15, SEC-062).
 func clientIPForRequest(r *http.Request) string {
-	remoteHost, _, _ := net.SplitHostPort(r.RemoteAddr)
-	if remoteHost == "" {
-		remoteHost = r.RemoteAddr
-	}
-
-	remoteIP := net.ParseIP(remoteHost)
-	isTrustedProxy := remoteIP != nil && remoteIP.IsLoopback()
-	if isTrustedProxy {
-		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-			parts := strings.Split(xff, ",")
-			if len(parts) > 0 {
-				return strings.TrimSpace(parts[0])
-			}
-		}
-		if xri := r.Header.Get("X-Real-IP"); xri != "" {
-			return strings.TrimSpace(xri)
-		}
-	}
-
-	return strings.TrimSpace(remoteHost)
+	return netorigin.ClientIP(r)
 }
 
 func (h *Handler) writeAuthenticationFailure(w http.ResponseWriter) {
@@ -1449,15 +1518,8 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 //
 // Used to REFUSE loopback-only privileges, never to grant anything: a caller
 // can set these headers freely, so they can only ever be evidence against
-// "this request originated on this machine", never evidence for it.
+// "this request originated on this machine", never evidence for it. The
+// header list is the node-wide one (internal/netorigin).
 func requestCrossedAProxy(r *http.Request) bool {
-	if r == nil {
-		return false
-	}
-	for _, h := range []string{"X-Forwarded-For", "X-Real-Ip", "Forwarded", "X-Forwarded-Host", "X-Forwarded-Proto"} {
-		if strings.TrimSpace(r.Header.Get(h)) != "" {
-			return true
-		}
-	}
-	return false
+	return netorigin.CrossedAProxy(r)
 }

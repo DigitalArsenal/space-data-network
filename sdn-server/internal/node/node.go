@@ -1397,6 +1397,9 @@ func (n *Node) buildCapRegistry() *modulert.CapabilityRegistry {
 		reg.RegisterBridgeAware("storage_write", storageFac)
 		reg.RegisterBridgeAware("storage_adapter", storageFac)
 		reg.RegisterBridgeAware("storage_ingest", storageFac)
+		// Trusted SQL (storage.flatsql_query_stream), split from
+		// storage_query (SEC-033); served by the same storage handler.
+		reg.RegisterBridgeAware(caps.TrustedSQLCapability, storageFac)
 	}
 
 	// HTTP outbound capability — always available. Egress pacing is host
@@ -1408,6 +1411,12 @@ func (n *Node) buildCapRegistry() *modulert.CapabilityRegistry {
 			log.Warnf("Ignoring unparseable modules.egress_min_interval entry for %q", host)
 		}
 		caps.SetEgressMinIntervals(intervals)
+	}
+	// Destination policy (SEC-027): internal addresses are refused unless
+	// the operator lists them in modules.egress_allow_internal. Always set,
+	// so a node with no entries is explicitly default-deny.
+	for _, entry := range caps.SetEgressInternalAllowList(n.config.Modules.EgressAllowInternal) {
+		log.Warnf("Ignoring modules.egress_allow_internal entry %q: not an IP, IP:port or CIDR (it grants nothing)", entry)
 	}
 	reg.Register("http", caps.NewHTTPCapFactory())
 

@@ -3,7 +3,6 @@ package auth
 import (
 	"crypto/ed25519"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
@@ -22,10 +21,10 @@ func newLocalConsoleHandler(t *testing.T, withRoot bool) *Handler {
 	return h
 }
 
+// loopbackRequest is the console's own browser on loopback, holding the
+// console secret (consoleRequest, dev_auto_admin_test.go).
 func loopbackRequest() *http.Request {
-	r := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
-	r.RemoteAddr = "127.0.0.1:54321"
-	return r
+	return consoleRequest("127.0.0.1:54321")
 }
 
 func TestLocalConsole_LoopbackIsNodeRoot(t *testing.T) {

@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"html/template"
-	"net"
 	"net/http"
 	"strings"
 
@@ -15,6 +14,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/admin"
 	"github.com/spacedatanetwork/sdn-server/internal/audit"
 	"github.com/spacedatanetwork/sdn-server/internal/keys"
+	"github.com/spacedatanetwork/sdn-server/internal/netorigin"
 )
 
 // Handler handles HTTP requests for the setup process.
@@ -223,29 +223,11 @@ func sendJSONResponse(w http.ResponseWriter, data interface{}, status int) {
 	json.NewEncoder(w).Encode(data)
 }
 
-// getClientIP extracts the client IP from the request.
+// getClientIP extracts the client IP from the request by the node-wide rule
+// (internal/netorigin.ClientIP): the rightmost X-Forwarded-For entry written
+// by a loopback proxy, never the client-supplied leftmost one (SEC-062).
 func getClientIP(r *http.Request) string {
-	remoteHost, _, _ := net.SplitHostPort(r.RemoteAddr)
-	if remoteHost == "" {
-		remoteHost = r.RemoteAddr
-	}
-
-	remoteIP := net.ParseIP(remoteHost)
-	isTrustedProxy := remoteIP != nil && remoteIP.IsLoopback()
-
-	if isTrustedProxy {
-		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-			parts := strings.Split(xff, ",")
-			if len(parts) > 0 {
-				return strings.TrimSpace(parts[0])
-			}
-		}
-		if xri := r.Header.Get("X-Real-IP"); xri != "" {
-			return strings.TrimSpace(xri)
-		}
-	}
-
-	return remoteHost
+	return netorigin.ClientIP(r)
 }
 
 // formatTime formats minutes and seconds as "Xm Ys".

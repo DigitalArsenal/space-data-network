@@ -16,11 +16,13 @@ func TestClientIPHonoursForwardingHeadersOnlyFromLoopback(t *testing.T) {
 		t.Fatalf("remote peer with spoofed X-Forwarded-For keyed as %q, want its own address", got)
 	}
 
+	// The proxy appends the address it saw; everything to its left is what
+	// the client sent, so the client is the RIGHTMOST entry (SEC-062).
 	proxied := httptest.NewRequest(http.MethodGet, "/api/v1/stats", nil)
 	proxied.RemoteAddr = "127.0.0.1:40000"
 	proxied.Header.Set("X-Forwarded-For", "198.51.100.9, 10.0.0.2")
-	if got := clientIP(proxied); got != "198.51.100.9" {
-		t.Fatalf("loopback proxy forwarding keyed as %q, want the original client", got)
+	if got := clientIP(proxied); got != "10.0.0.2" {
+		t.Fatalf("loopback proxy forwarding keyed as %q, want the proxy-appended 10.0.0.2", got)
 	}
 
 	realIP := httptest.NewRequest(http.MethodGet, "/api/v1/stats", nil)

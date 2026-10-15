@@ -7,11 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/spacedatanetwork/sdn-server/internal/netorigin"
 )
 
 const controlTokenName = "control-token"
@@ -84,7 +85,9 @@ func (h *controlHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeControlError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	if !isLoopbackRemoteAddr(r.RemoteAddr) {
+	// Loopback AND no forwarding header: behind a reverse proxy on this box
+	// every internet client arrives from 127.0.0.1 (internal/netorigin).
+	if !netorigin.OriginatedOnThisBox(r) {
 		writeControlError(w, http.StatusForbidden, "update control is only available to local clients")
 		return
 	}
@@ -148,15 +151,6 @@ func RequestShutdown(client *http.Client, shutdownURL, bundleRoot, token string)
 		return nil, err
 	}
 	return &answer, nil
-}
-
-func isLoopbackRemoteAddr(remoteAddr string) bool {
-	host, _, err := net.SplitHostPort(remoteAddr)
-	if err != nil {
-		host = remoteAddr
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
 }
 
 func writeControlError(w http.ResponseWriter, status int, message string) {

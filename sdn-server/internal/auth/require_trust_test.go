@@ -29,7 +29,7 @@ func newRequireTrustHandler(t *testing.T) (*Handler, func(peers.TrustLevel) *htt
 		t.Fatalf("NewSessionStore: %v", err)
 	}
 
-	handler := NewHandler(nil, sessions, time.Hour, "", "")
+	handler := NewHandler(sessionAccountStore(t, map[string]peers.TrustLevel{"xpub-require-trust": peers.Ultimate}), sessions, time.Hour, "", "")
 	return handler, func(trust peers.TrustLevel) *http.Cookie {
 		t.Helper()
 		token, err := sessions.CreateSession("xpub-require-trust", trust, "127.0.0.1", "test-agent", time.Hour)
