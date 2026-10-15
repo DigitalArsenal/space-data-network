@@ -33,27 +33,51 @@ const DENIED: ReadonlySet<string> = new Set<string>([
   ...deny.updateRootKeyIds.map((v) => v.toLowerCase()),
   ...deny.discoveryCids,
   ...deny.chainAddresses,
+  // An Ethereum address in any letter case, not only its EIP-55 checksum case.
+  ...deny.chainAddresses.filter((v) => /^0x/i.test(v)).map((v) => v.toLowerCase()),
 ]);
 
 export function isPlaceholderAnchor(value: string | undefined | null): boolean {
   return typeof value === 'string' && value.startsWith(PLACEHOLDER_PREFIX);
 }
 
-/** True for any public value (PeerID, hex key, xpub, key id, CID, address) of a denylisted identity. */
-export function isDeniedIdentityValue(value: string | undefined | null): boolean {
-  if (typeof value !== 'string') return false;
-  let trimmed = value.trim();
-  if (!trimmed) return false;
-  if (DENIED.has(trimmed) || DENIED.has(trimmed.toLowerCase())) return true;
-  // An uncompressed secp256k1 key (04 || X || Y), optionally 0x-prefixed.
-  if (/^(0x)?04[0-9a-f]{128}$/i.test(trimmed)) {
-    trimmed = trimmed.replace(/^0x/i, '').toLowerCase();
-    return DENIED.has(compressedSecp256k1Hex(trimmed.slice(2, 66), trimmed.slice(66)));
+const KEY_LENGTHS = new Set([32, 33, 64, 65]);
+
+/** A key written as (0x-)hex or base64/base64url, as bytes; null for anything else. */
+function decodeKeyText(value: string): Uint8Array | null {
+  const hexText = value.replace(/^0x/i, '');
+  if (/^(?:[0-9a-f]{2})+$/i.test(hexText) && KEY_LENGTHS.has(hexText.length / 2)) {
+    const out = new Uint8Array(hexText.length / 2);
+    for (let i = 0; i < out.length; i += 1) out[i] = Number.parseInt(hexText.slice(i * 2, i * 2 + 2), 16);
+    return out;
   }
-  return false;
+  if (/^[A-Za-z0-9+/_-]{40,88}={0,2}$/.test(value)) {
+    try {
+      const b64 = value.replace(/-/g, '+').replace(/_/g, '/');
+      const binary = atob(b64 + '='.repeat((4 - (b64.length % 4)) % 4));
+      if (KEY_LENGTHS.has(binary.length)) return Uint8Array.from(binary, (c) => c.charCodeAt(0));
+    } catch {
+      return null;
+    }
+  }
+  return null;
 }
 
-/** 02/03 || X for an uncompressed point's X and Y (hex): the parity of Y picks the prefix. */
+/**
+ * True for any public value (PeerID, key, xpub, key id, CID, address) of a
+ * denylisted identity, in any spelling: verbatim, any letter case, 0x-prefixed
+ * hex, base64/base64url, and every secp256k1 point form (verifier r3 S3).
+ */
+export function isDeniedIdentityValue(value: string | undefined | null): boolean {
+  if (typeof value !== 'string') return false;
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  if (DENIED.has(trimmed) || DENIED.has(trimmed.toLowerCase())) return true;
+  const raw = decodeKeyText(trimmed);
+  return raw !== null && isDeniedPublicKey(raw);
+}
+
+/** 02/03 || X for a point's X and Y (hex): the parity of Y picks the prefix. */
 function compressedSecp256k1Hex(xHex: string, yHex: string): string {
   const yLast = Number.parseInt(yHex.slice(-2), 16);
   return `${yLast % 2 === 0 ? '02' : '03'}${xHex.toLowerCase()}`;
@@ -65,14 +89,19 @@ function toHex(bytes: Uint8Array): string {
   return out;
 }
 
-/** True for raw public key bytes (secp256k1 compressed or uncompressed, Ed25519/X25519) of a denylisted identity. */
+/**
+ * True for raw public key bytes of a denylisted identity: Ed25519/X25519 (32),
+ * compressed secp256k1 (33), and the same point uncompressed (04||X||Y),
+ * hybrid (06/07||X||Y) or raw (X||Y) — verifier r2/r3 S3.
+ */
 export function isDeniedPublicKey(key: Uint8Array | undefined | null): boolean {
   if (!key || key.length === 0) return false;
   const hexKey = toHex(key);
   if (DENIED.has(hexKey)) return true;
-  // The same secp256k1 point uncompressed (65 bytes, 04 || X || Y) — verifier
-  // r2 S3: comparing only the compressed form let it through.
-  if (key.length === 65 && key[0] === 0x04) return DENIED.has(compressedSecp256k1Hex(hexKey.slice(2, 66), hexKey.slice(66)));
+  if (key.length === 65 && (key[0] === 0x04 || key[0] === 0x06 || key[0] === 0x07)) {
+    return DENIED.has(compressedSecp256k1Hex(hexKey.slice(2, 66), hexKey.slice(66)));
+  }
+  if (key.length === 64) return DENIED.has(compressedSecp256k1Hex(hexKey.slice(0, 64), hexKey.slice(64)));
   return false;
 }
 

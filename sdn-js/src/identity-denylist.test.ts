@@ -196,6 +196,32 @@ describe('SEC-001 S3: uncompressed secp256k1 keys', () => {
   });
 });
 
+describe('SEC-001 r3 S3: every encoding of a denylisted key or address', () => {
+  it('denies 0x/base64 spellings, raw 64-byte and hybrid 06/07 points, and lowercase Ethereum addresses', async () => {
+    const { ECDH } = await import('node:crypto');
+    const b64 = (hex: string) => Buffer.from(hex, 'hex').toString('base64');
+    const b64url = (hex: string) => Buffer.from(hex, 'hex').toString('base64url');
+    for (const compressed of IDENTITY_ANCHORS.denylist.secp256k1PublicKeys) {
+      const un = ECDH.convertKey(compressed, 'secp256k1', 'hex', 'hex', 'uncompressed') as string;
+      const raw64 = un.slice(2);
+      const hybrid = ECDH.convertKey(compressed, 'secp256k1', 'hex', 'hex', 'hybrid') as string;
+      expect(hybrid.slice(0, 2)).toMatch(/^0[67]$/);
+      for (const bytes of [raw64, hybrid]) expect(isDeniedPublicKey(hexToBytes(bytes))).toBe(true);
+      for (const text of [`0x${compressed}`, `0X${compressed.toUpperCase()}`, b64(compressed), b64url(raw64), `0x${hybrid}`, b64(un)]) {
+        expect(isDeniedIdentityValue(text)).toBe(true);
+      }
+    }
+    for (const ed of IDENTITY_ANCHORS.denylist.ed25519PublicKeys) {
+      for (const text of [`0x${ed}`, b64(ed), b64url(ed)]) expect(isDeniedIdentityValue(text)).toBe(true);
+    }
+    const eth = IDENTITY_ANCHORS.denylist.chainAddresses.find((a) => a.startsWith('0x')) as string;
+    expect(isDeniedIdentityValue(eth.toLowerCase())).toBe(true);
+    expect(isDeniedIdentityValue(`0x${eth.slice(2).toUpperCase()}`)).toBe(true);
+    expect(isDeniedIdentityValue(`0x${OTHER_PROVIDER_KEY}`)).toBe(false);
+    expect(isDeniedIdentityValue(b64(OTHER_PROVIDER_KEY))).toBe(false);
+  });
+});
+
 // A minimal $EPM (the shape server-descriptor.test.ts builds): a secp256k1
 // provider key, an optional Ed25519 grant-verifier key, relay addresses.
 function buildEPM(input: { publicKeyHex: string; grantVerifierPublicKeyHex?: string; multiformatAddresses?: string[] }): Uint8Array {

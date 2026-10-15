@@ -49,6 +49,7 @@ SPKI_PREFIX = bytes.fromhex("302a300506032b6570032100")
 RECORDED_SHA256 = {
     "5f2ae665276463b1295416ddf942cd4819ed26209ceec111bb9a656a045bdece": "host-01 / host-02: bundle 1.0.6-updatelane.24c0512bc (installed 2026-10-09)",
     "4c3c82a630a911568e88f1dd9a2a18886332751d9a45bf61d3cf50a785ce2b78": "vm-orbit-det-01",
+    "7a2a85063a6bf3f984a431b480a75a1049070ce43ba903d970fad6a006119a35": "host-01: SEC-001 root sign-in hotfix build (0de18ab2b), live since 2026-10-15T15:11Z",
 }
 UPDATE_SUBDIRS = ("staged", "incoming", "rollback", "failed")
 SYSTEM_LEDGERS = ("/var/log/sdn-deploy-lock.ledger", "/opt/spacedatanetwork/deploy-ledger.log")
@@ -99,16 +100,26 @@ def unit_environment(unit, user, pid):
         return {k.decode(errors="replace"): v.decode(errors="replace") for k, _, v in (i.partition(b"=") for i in items if b"=" in i)}, f"/proc/{pid}/environ"
     except OSError:
         pass
+    # systemd: "Settings from these files override settings made with
+    # Environment=" (systemd.exec), so EnvironmentFile= is applied LAST.
+    env = merge_unit_environment(
+        systemctl_show(unit, "Environment", user),
+        [e.split(" (", 1)[0].strip() for e in systemctl_show(unit, "EnvironmentFiles", user).splitlines()],
+    )
+    return env, "unit Environment=, overridden by EnvironmentFile="
+
+
+def merge_unit_environment(environment_value, env_files):
+    """systemd.exec: Environment= first, then every EnvironmentFile= on top."""
     env = {}
-    for entry in systemctl_show(unit, "EnvironmentFiles", user).splitlines():
-        path = entry.split(" (", 1)[0].strip()
-        if path:
-            env.update(parse_env_file(path.lstrip("-")))
-    for item in systemctl_show(unit, "Environment", user).split():
+    for item in environment_value.split():
         if "=" in item:
             k, v = item.split("=", 1)
             env[k] = v
-    return env, "unit Environment= and EnvironmentFile="
+    for path in env_files:
+        if path:
+            env.update(parse_env_file(path.lstrip("-")))
+    return env
 
 
 def running_binary(unit, user):
@@ -304,7 +315,10 @@ def main(argv=None):
     digest = sha256_file(exe) if os.path.isfile(exe) else "(binary not found)"
     recorded = dict(RECORDED_SHA256)
     for value in args.expect_sha256:
-        recorded[value.strip().lower()] = "a value passed with --expect-sha256"
+        value = value.strip().lower()
+        if not (len(value) == 64 and all(c in "0123456789abcdef" for c in value)):
+            raise SystemExit(f"REFUSED: --expect-sha256 must be 64 hex characters, got {value!r}")
+        recorded[value] = "a value passed with --expect-sha256"
     known = recorded.get(digest)
     out.append(f"binary sha256 {digest}  -> {'matches the recorded ' + known if known else 'NOT one of the values recorded at containment'}")
     out.append(f"bundle root {bundle}")

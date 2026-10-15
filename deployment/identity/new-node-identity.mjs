@@ -49,7 +49,11 @@ import {
 } from 'node:crypto';
 import {
   chmodSync,
+  closeSync,
+  constants as fsConstants,
   existsSync,
+  fchmodSync,
+  openSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -546,9 +550,31 @@ export function mergeAnchors(base, { node, distribution }) {
   return anchors;
 }
 
-function writeOwnerFile(path, contents, mode) {
-  writeFileSync(path, contents, { mode });
-  chmodSync(path, mode);
+/**
+ * Create `path` exclusively and write `contents` (verifier r3): O_CREAT|O_EXCL
+ * refuses ANY pre-existing node there — a file, a directory, a symlink,
+ * dangling or not — and O_NOFOLLOW refuses to traverse a final symlink, so an
+ * output can never be redirected into a checkout or over another file. The
+ * mode is set on the open descriptor. The bytes written are exactly
+ * `contents`.
+ */
+export function writeOwnerFile(path, contents, mode) {
+  let existing = null;
+  try {
+    existing = lstatSync(path);
+  } catch {
+    existing = null;
+  }
+  if (existing) {
+    throw new Error(`${path} already exists${existing.isSymbolicLink() ? ' (a symlink)' : ''}; refusing to write over it`);
+  }
+  const fd = openSync(path, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | (fsConstants.O_NOFOLLOW || 0), mode);
+  try {
+    fchmodSync(fd, mode);
+    writeFileSync(fd, contents);
+  } finally {
+    closeSync(fd);
+  }
 }
 
 function printPublic(kind, publicValues, files) {
@@ -717,10 +743,19 @@ export async function main(argv = process.argv.slice(2)) {
       process.stderr.write(`REFUSED: ${error.message}\n`);
       return 2;
     }
-    const backupPath = join(outDir, 'node-identity.backup');
-    if (existsSync(backupPath)) {
-      process.stderr.write(`REFUSED: ${backupPath} exists; refusing to overwrite. Nothing was generated.\n`);
-      return 2;
+    for (const name of ['node-identity.backup', 'public-identity.json', 'anchors.json']) {
+      const path = join(outDir, name);
+      let present = false;
+      try {
+        lstatSync(path);
+        present = true;
+      } catch {
+        present = false;
+      }
+      if (present) {
+        process.stderr.write(`REFUSED: ${path} exists (or is a symlink); refusing to overwrite. Nothing was generated.\n`);
+        return 2;
+      }
     }
   }
 

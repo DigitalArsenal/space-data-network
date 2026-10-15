@@ -3,6 +3,9 @@
 //
 //   node deployment/identity/sync-anchors.mjs           # write every derived copy
 //   node deployment/identity/sync-anchors.mjs --check   # fail if any copy drifted
+//   node deployment/identity/sync-anchors.mjs --from <owner anchors.json>
+//        # ROTATION.md step 2: merge the owner's generated identity into the
+//        # COMMITTED anchors.json, then write every derived copy
 //
 // anchors.json is the ONE source. Code in this repository reads it directly
 // (anchors-lib.mjs) wherever it can; the places that cannot — a Go embed, the
@@ -21,7 +24,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { ANCHORS_PATH, loadAnchors, structuralProblems } from './anchors-lib.mjs';
+import { ANCHORS_PATH, loadAnchors, releaseProblems, structuralProblems } from './anchors-lib.mjs';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -143,8 +146,51 @@ export function drift(root = REPO_ROOT, anchorsPath = ANCHORS_PATH) {
   return stale;
 }
 
+// The provider fields the owner's generator fills in (new-node-identity.mjs
+// mergeAnchors). Everything else in the committed file — the denylist, the
+// other peers, transports — stays as committed.
+export const OWNER_PROVIDER_FIELDS = Object.freeze([
+  'peerId', 'identityPublicKey', 'xpub', 'signingPublicKey', 'encryptionPublicKey',
+  'publisherPublicKey', 'x25519PublicKey', 'grantVerifierPublicKey', 'rootAdminPublicKey', 'discoveryCid',
+]);
+
+/**
+ * Step 2 (verifier r3): `cp owner/anchors.json anchors.json` would silently drop
+ * every denylist entry committed after the owner generated his file. Take ONLY
+ * provider identity fields and updateRoots from the owner's file; keep the
+ * committed file otherwise, and union the two denylists so nothing is lost.
+ * Refuses a result that is not release-ready (placeholders, a denylisted or
+ * non-separate root, an inconsistent identity).
+ */
+export function mergeOwnerAnchors(committed, owner) {
+  const merged = JSON.parse(JSON.stringify(committed));
+  for (const field of OWNER_PROVIDER_FIELDS) {
+    if (typeof owner?.provider?.[field] !== 'string') throw new Error(`the owner's anchors.json has no provider.${field}`);
+    merged.provider[field] = owner.provider[field];
+  }
+  if (!owner.updateRoots || typeof owner.updateRoots !== 'object') throw new Error("the owner's anchors.json has no updateRoots");
+  merged.updateRoots = { ...owner.updateRoots };
+  const ownDeny = owner.denylist || {};
+  for (const [key, values] of Object.entries(merged.denylist)) {
+    if (!Array.isArray(values)) continue;
+    for (const value of ownDeny[key] || []) if (!values.includes(value)) values.push(value);
+  }
+  merged.status = JSON.stringify(merged).includes('"PLACEHOLDER-') ? 'placeholder' : 'released';
+  const problems = releaseProblems(merged);
+  if (problems.length) throw new Error(`the merged anchors are not release-ready:\n  ${problems.join('\n  ')}`);
+  return merged;
+}
+
 function main(argv) {
   const check = argv.includes('--check');
+  const fromIndex = argv.indexOf('--from');
+  if (fromIndex >= 0) {
+    const ownerPath = argv[fromIndex + 1];
+    if (!ownerPath) throw new Error('--from needs the owner anchors.json');
+    const merged = mergeOwnerAnchors(loadAnchors(), loadAnchors(resolve(ownerPath)));
+    writeFileSync(ANCHORS_PATH, `${JSON.stringify(merged, null, 2)}\n`);
+    console.log(`[sync-anchors] merged provider identity and updateRoots from ${ownerPath}; the committed denylist is kept`);
+  }
   const anchors = loadAnchors();
   const problems = structuralProblems(anchors);
   if (problems.length) {

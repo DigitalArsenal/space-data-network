@@ -38,7 +38,7 @@ HTTPS URL), act as root admin on host-01, mint grants, and decrypt past sealed a
 | Derived copies, CI-checked | `sync-anchors.mjs` writes and `--check`s the Go embed, `sdn-js/src/identity-anchors.generated.ts`, `desktop/src/common/identity-anchors.json`, `deployment/release/fleet-trust-roots.json`, `deployment/module-placement.json`, and the marked lines in the YAML configs and `sdn-server/deploy/README.md`. |
 | Generators (owner-run, offline) | `new-node-identity.mjs` (node identity: an encrypted seed backup) and `new-update-root.mjs` (fleet update root: an Ed25519 PKCS#8 PEM). Both refuse a non-TTY or CI run, refuse an output path inside any git work tree, check every path before a secret exists, and print public values only. |
 | Per-node helper (owner-run) | `sec001-node-check.py`: the running binary and its sha256 (path taken from the unit), the trust-roots file in use, every ledger line and `updates/` entry since 2026-07-30, and the out-of-band root swap (`--swap-roots … --apply`). Read-only without `--apply`; never deletes. |
-| Release gates | No bundle is staged on **any** channel while its trust roots are placeholders, mislabelled or denylisted (`build-self-contained-cli.mjs`, `desktop/scripts/stage-node-bundle.mjs`). `--channel release` also needs a complete `anchors.json`. Release signing refuses the old key id outright; `--trust-roots` must equal the committed `updateRoots` exactly. `SDN_IDENTITY_RELEASE=1` makes the anchor tests fail on placeholders. |
+| Release gates | No bundle is staged on **any** channel while its trust roots are placeholders, mislabelled or denylisted (`build-self-contained-cli.mjs`, `desktop/scripts/stage-node-bundle.mjs`). `--channel release` also needs a complete `anchors.json`. Release signing refuses the old key id outright; `--trust-roots` must equal the committed `updateRoots` exactly. `SDN_IDENTITY_RELEASE=1` makes the anchor tests fail on placeholders. Releases are signed offline (`sign-update-manifest.mjs --kind manifest|signal --document --key`; the legacy undomained path refuses a denylisted key too, and signing fails closed without `anchors.json`); `spacedatanetwork update distribution get|submit` moves a waiting document out and the signed one back. `sync-anchors.mjs --from` merges the owner's file into the committed one (step 2). |
 | Denylist in the node | The connection gater never dials or accepts the old PeerID. The peer registry refuses it any positive trust on every path (config `trusted_peers` in the daemon and the server, the admin API, a persisted registry, which now reads as Never). Bootstrap drops it. Update roots, manifests, signals and `trust_roots` using the old root are refused. Grants stamped with the old grant key and requests to the old provider are refused. The daemon refuses to start as the old identity; `key import` refuses to install it. A node holding a denylisted key gets no update signer (sign-manifest, the Updater page's approve button and signal signing all refuse). A module signed by a denylisted publisher key is never trusted, whatever `SDN_TRUSTED_PUBLISHER_KEYS` says. A persisted account whose xpub or signing key is denylisted (the old root's own row, an enrolled old root key) cannot sign in. Uncompressed secp256k1 forms are denied too. Root sign-in is loopback-only until the re-key (step 0.2). |
 | Denylist in sdn-js | Every libp2p node sdn-js builds refuses the old PeerID at dial and after any handshake, inbound or outbound (DHT, delegated routing and pubsub included). Relays naming it are dropped from every source. Provider descriptors and EPMs naming its keys, PeerID, grant key or addresses are refused (JSON and `$EPM` paths), the EPM resolver never resolves or caches it, and the exported `verifyEPMSignature` returns false for it. Keys are matched compressed or uncompressed. |
 | Denylist in the desktop | `stage-node-bundle.mjs` refuses a bundle whose roots name the old root or a placeholder. |
@@ -120,21 +120,29 @@ Treat every node as possibly compromised since 2026-07-30, when the leaked node 
 
 1. **What is running.** Copy the helper and run it read-only; keep the output as evidence.
    ```sh
-   scp deployment/identity/sec001-node-check.py space-data-network-01:/root/sec001/
+   mkdir -p evidence
+   for h in space-data-network-01 space-data-network-02; do
+     ssh $h 'sudo mkdir -p /root/sec001' && scp deployment/identity/sec001-node-check.py $h:/tmp/ && \
+       ssh $h 'sudo mv /tmp/sec001-node-check.py /root/sec001/'
+   done
+   ssh vm-orbit-det-01 'mkdir -p ~/sec001' && scp deployment/identity/sec001-node-check.py vm-orbit-det-01:sec001/
    ssh space-data-network-01 'sudo python3 -I /root/sec001/sec001-node-check.py --unit space-data-network-module-delivery.service' \
      | tee evidence/host-01.check.txt
    ssh space-data-network-02 'sudo python3 -I /root/sec001/sec001-node-check.py --unit sdn-retriever.service' | tee evidence/host-02.check.txt
    ssh vm-orbit-det-01 'python3 -I ~/sec001/sec001-node-check.py --unit spacedatanetwork.service --user' | tee evidence/vm.check.txt
    python3 -I deployment/identity/sec001-node-check.py --bundle <mac node bundle root> | tee evidence/<name>.check.txt
    ```
-   (Copy the script to host-02 and the VM the same way first.) The binary's sha256 must equal the value recorded
-   in step 0; the script says so or prints `NOT one of the values recorded at containment`. host-01 has run the
-   step-0.2 hotfix build since 15:11Z: pass that build's recorded sha256 with `--expect-sha256 <hex>`, and check
-   the pre-hotfix binary in `/opt/spacedatanetwork/_rollback-sec001-hotfix-20261015T150958Z` against `5f2ae665…`.
+   The binary's sha256 must equal a value recorded in step 0; the script says so or prints `NOT one of the values
+   recorded at containment`. host-01 has run the step-0.2 hotfix build since 15:11Z; its sha256
+   `7a2a85063a6bf3f984a431b480a75a1049070ce43ba903d970fad6a006119a35` is recorded in the script (pass any other
+   value you recorded with `--expect-sha256 <64 hex>`). Check the pre-hotfix binary in
+   `/opt/spacedatanetwork/_rollback-sec001-hotfix-20261015T150958Z` against `5f2ae665…` the same way
+   (`--bundle` on that directory).
 
 2. **Reproducibility.** Build the recorded commit from source and compare.
    ```sh
-   git worktree add /tmp/sdn-24c0512bc 24c0512bcdbb52a4de6359467ffe685b8d58c284
+   # 24c0512bc before the history purge; the same tree is 32abc438d now.
+   git worktree add /tmp/sdn-24c0512bc 32abc438da5f15f2ea50003985471e4ff9ced16e
    (cd /tmp/sdn-24c0512bc && docker buildx build --platform linux/amd64 --target builder \
       -f deployment/docker/Dockerfile -t sdn-build:24c0512bc --load .)
    node deployment/release/extract-release-binary.mjs --image sdn-build:24c0512bc \
@@ -165,7 +173,26 @@ Treat every node as possibly compromised since 2026-07-30, when the leaked node 
    ```
    Flag any `manifest_url` outside `https://sdn.spaceaware.io/updates/`.
 
-4. **Record and decide.** Anything not in our publisher ledger is a finding: write it in the evidence folder and
+4. **Accounts, sessions and delegations (host-01).** Everything that could act as an operator before the root
+   sign-in hotfix went live (2026-10-15T15:11Z) is suspect. List them, keep the output, and remove any you do
+   not recognise. The hotfix already revoked the root account's own sessions and delegations at its start, and
+   builds from this branch revoke every session and delegation of a denylisted identity at start.
+   ```sh
+   ssh space-data-network-01 'sudo sh -c '"'"'
+     CFG=/etc/space-data-network/config.module-delivery-sidecar.yaml
+     DB="$(awk "/^ *path:/{print \$2; exit}" $CFG)/auth.db"     # or auth.db_path if the config sets one
+     env HOME=/root WASMEDGE_DIR=/opt/spacedatanetwork/.wasmedge-0.16.4 LD_LIBRARY_PATH=/opt/spacedatanetwork/.wasmedge-0.16.4/lib64 \
+       /opt/spacedatanetwork/sdn-bundle/bin/spacedatanetwork admin list --config $CFG
+     sqlite3 -readonly "$DB" "SELECT xpub, trust_level, datetime(created_at, \"unixepoch\"), ip_address, revoked FROM sessions
+                              WHERE created_at < strftime(\"%s\", \"2026-10-15T15:11:00Z\") ORDER BY created_at"
+     sqlite3 -readonly "$DB" "SELECT wallet_pub, datetime(expires_at_ms/1000, \"unixepoch\") FROM session_delegations"
+   '"'"'' | tee evidence/host-01.accounts.txt
+   ```
+   Remove an unknown account with `spacedatanetwork admin remove <name | sign-in key | account> --yes --config $CFG`;
+   revoke its sessions with `sqlite3 "$DB" "UPDATE sessions SET revoked = 1 WHERE xpub = '<xpub>'"` (daemon
+   stopped, or it re-reads on the next request). Do the same on host-02 and the VM with their configs.
+
+5. **Record and decide.** Anything not in our publisher ledger is a finding: write it in the evidence folder and
    **do not delete it**. A node with an unexplained binary, ledger entry, staged update or signal is compromised.
    Rebuild it from a step-4 bundle on a clean install and rotate its own identity as well.
 
@@ -235,14 +262,16 @@ new node seed, so load it into the owner wallet.
 - **Resolved by repo evidence (verifier N7):** the old update root *was* host-01's node key.
 - Did celestrak.eth's legacy identity `16Uiu2HAm9oK2…` come from a committed seed? It is retired.
 - **Resolved (verifier r2 R4):** the two checksum-valid 14-word runs once flagged in
-  `sdn-server/cmd/spacedatanetwork/main_test.go` are the public "abandon" ×11 + "about" vector plus one
-  adjacent word each; they are allowlisted by fingerprint for that path. Nothing to rotate.
+  `sdn-server/cmd/spacedatanetwork/main_test.go` are the public "abandon" ×11 + "about" vector plus two
+  extra words each; they are allowlisted by fingerprint for that path. Nothing to rotate.
 
 ## 2. Repo: commit the new anchors
 
 ```sh
-cp "$OUT/update-root/anchors.json" deployment/identity/anchors.json
-node deployment/identity/sync-anchors.mjs                  # rewrites every derived copy
+# MERGE, never cp: takes provider.* and updateRoots from the owner's file and keeps the
+# COMMITTED denylist (entries added since the owner generated are not lost), then rewrites
+# every derived copy. Refuses anything not release-ready.
+node deployment/identity/sync-anchors.mjs --from "$OUT/update-root/anchors.json"
 SDN_IDENTITY_RELEASE=1 npm run test:identity-rotation       # placeholders now fail
 (cd sdn-server && SDN_IDENTITY_RELEASE=1 ../scripts/go-with-wasmedge.sh test ./internal/trustanchors ./internal/bootstrap ./internal/peers ./internal/update ./internal/deliveryclient)
 ./scripts/oss-preflight.sh
@@ -268,12 +297,14 @@ R="$OUT/update-root/update-roots.json"
 A=deployment/identity/anchors.json      # the COMMITTED anchors (step 2); the helper installs exactly its updateRoots
 
 # host-01 (it keeps its old identity until step 5; only the roots change here)
+ssh space-data-network-01 'sudo mkdir -p /root/sec001'
 scp deployment/identity/sec001-node-check.py "$R" "$A" space-data-network-01:/root/sec001/
 ssh space-data-network-01 'sudo python3 -I /root/sec001/sec001-node-check.py --unit space-data-network-module-delivery.service \
   --swap-roots /root/sec001/update-roots.json --anchors /root/sec001/anchors.json --evidence-dir /root/sec001/evidence --apply \
   && sudo systemctl restart space-data-network-module-delivery.service'
 
 # host-02
+ssh space-data-network-02 'sudo mkdir -p /root/sec001'
 scp deployment/identity/sec001-node-check.py "$R" "$A" space-data-network-02:/root/sec001/
 ssh space-data-network-02 'sudo python3 -I /root/sec001/sec001-node-check.py --unit sdn-retriever.service \
   --swap-roots /root/sec001/update-roots.json --anchors /root/sec001/anchors.json --evidence-dir /root/sec001/evidence --apply \
@@ -310,11 +341,32 @@ Then:
 - **Fleet lane: signed OFFLINE (verifier r2 R1).** The update-root PEM never leaves the offline media: it is
   not uploaded to the Updater page, and the node key cannot sign (a node holding a denylisted key gets no
   update signer at all, so the page's approve button and `sign-manifest` refuse).
+  **About authentication here.** Until host-01 is re-keyed (step 5), its admin API is reached by signing in
+  with host-01's node root key, which IS the leaked key: `update distribute` (run by `publish-fleet-update.mjs`)
+  and `update distribution` below do that over loopback on host-01, which the step-0.2 hotfix still admits.
+  That is acceptable because it is **transport only**: the key proves "an operator on host-01's own box" to a
+  daemon that already trusts it, and nothing is signed with it — every release document is signed offline
+  with the new update root, and the coordinator accepts a document only if it verifies against its (new)
+  update roots. Anyone else holding the seed cannot reach this path (loopback only, no proxy). If you prefer
+  not to use the key even for that, sign in to host-01's dashboard over an SSH tunnel and pass that session
+  with `--session-token` (or `SDN_SESSION_TOKEN`) to both commands.
+
   1. `publish-fleet-update.mjs --binary <built daemon> --source-commit <step-2 or later sha>`, without
-     `--trust-roots`; the nodes already hold the new root. It submits the unsigned release to the coordinator
-     and waits.
-  2. Copy the waiting manifest out:
-     `GET /api/v1/admin/updates/distributions/<id>` → `manifest.json`. Carry it to the offline machine.
+     `--trust-roots`; the nodes already hold the new root. It runs `update distribute` on host-01, prints
+     `distribution=<id>`, and waits (up to `--wait`) for the signed manifest.
+  2. Fetch the waiting manifest (host-01 runs the hotfix build, which lacks the `distribution` command, so use
+     a copy of the step-4 binary as the client; it only talks to the local daemon):
+     ```sh
+     ID=<distribution id>
+     scp <step-4 linux/amd64 binary> space-data-network-01:/root/sec001/sdn-client
+     ssh space-data-network-01 "sudo env HOME=/root WASMEDGE_DIR=/opt/spacedatanetwork/.wasmedge-0.16.4 \
+       LD_LIBRARY_PATH=/opt/spacedatanetwork/.wasmedge-0.16.4/lib64 /root/sec001/sdn-client update distribution get $ID \
+       --document manifest --out /root/sec001/manifest.json \
+       --config /etc/space-data-network/config.module-delivery-sidecar.yaml"
+     scp space-data-network-01:/root/sec001/manifest.json .      # carry it to the offline machine
+     ```
+     It writes only the manifest that is waiting (the coordinator's `manifest` field) and refuses a
+     distribution that is not waiting for it.
   3. Sign it offline:
      ```sh
      node deployment/release/sign-update-manifest.mjs --kind manifest --document manifest.json \
@@ -324,19 +376,32 @@ Then:
      `SDN-UPDATE-MANIFEST-V1 || 0x00 || sha256(canonical manifest)` exactly as the node and the fleet verifiers
      check it, and refuses a denylisted key or an already-signed document.
   4. Carry `manifest.signed.json` back and submit it:
-     `POST /api/v1/admin/updates/distributions/<id>/manifest`. The coordinator accepts it only if it verifies
-     against its (new) roots and covers exactly the submitted release.
-  5. Once the files are served, the coordinator builds the signal. Repeat 2–4 for it with `--kind signal`
-     (`SDN-UPDATE-SIGNAL-V1`) and `POST …/<id>/signal`, which publishes it.
-  Because `update.enabled` is off, install by hand on each node:
+     ```sh
+     scp manifest.signed.json space-data-network-01:/root/sec001/
+     ssh space-data-network-01 "sudo env HOME=/root WASMEDGE_DIR=/opt/spacedatanetwork/.wasmedge-0.16.4 \
+       LD_LIBRARY_PATH=/opt/spacedatanetwork/.wasmedge-0.16.4/lib64 /root/sec001/sdn-client update distribution submit $ID \
+       --document manifest --signed /root/sec001/manifest.signed.json \
+       --config /etc/space-data-network/config.module-delivery-sidecar.yaml"
+     ```
+     It prints `accepted manifest: state=manifest-signed key_id=<new root>`. The coordinator accepts it only if
+     it verifies against its (new) roots and covers exactly the submitted release; the waiting
+     `update distribute` then returns the signed manifest and the publish continues.
+  5. Once the files are served, the publisher asks for the signal and the coordinator builds it. Repeat 2–4
+     with `--document signal` (`get … --out signal.json`, sign with `--kind signal --document signal.json`,
+     `submit … --document signal --signed signal.signed.json`); submitting the signal publishes it.
+
+  Because `update.enabled` is off, install by hand on host-02, the VM and the Mac nodes:
   ```sh
   spacedatanetwork update stage --manifest <feed>/manifest.json --carrier <feed>/update.wasm
   spacedatanetwork update apply
   ```
   Each node verifies the release against its new root. Then re-enable `update.enabled` per step 0.
+  **Not host-01:** the step-4 binary refuses to start as the old (denylisted) identity, so host-01 takes it in
+  step 5, together with its new identity.
 - **sdn GitHub release.** Build with `SDN_IDENTITY_RELEASE=1`, on the offline machine or with the PEM only on
   removable media. Sign the CLI update payloads with `--key "$OUT/update-root/sdn-update-root-ed25519.pem"`.
-- **Public security advisory (verifier r2 R3).** Every public build from 2026-08-01 to now — `v1.0.4-beta.18`
+- **Public security advisory (verifier r2 R3).** Every public build since the node key became the update root
+  (2026-07-30; first shipped in `fleet-trust-roots.json` on 2026-08-01) — `v1.0.4-beta.18`
   and every `v1.0.5-beta` tag through `v1.0.5-beta.83` — trusts `d4a971a7e534` with `update.enabled: true` by
   default, so anyone holding the seed can push code to third-party installs. Marking them "superseded" does not
   protect anyone. Publish the advisory drafted in `deployment/identity/ADVISORY-SEC-001.md` (GitHub Security

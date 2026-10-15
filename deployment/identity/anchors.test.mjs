@@ -91,8 +91,28 @@ test('RELEASE GATE: the committed anchors carry no placeholder at release time',
   }
 });
 
+// Fixtures built from the committed anchors' denylist, so the tests below hold
+// whether anchors.json is still a placeholder or carries the owner's released
+// identity (verifier r3: they assumed placeholders, so step 2 could not pass).
+function placeholderAnchors() {
+  const a = structuredClone(loadAnchors());
+  for (const [key, value] of Object.entries(a.provider)) {
+    if (typeof value === 'string' && key !== 'name') a.provider[key] = `PLACEHOLDER-SEC001-TEST-${key}`;
+  }
+  a.updateRoots = { 'PLACEHOLDER-SEC001-UPDATE-ROOT-KEY-ID': 'PLACEHOLDER-SEC001-UPDATE-ROOT-SPKI' };
+  a.status = 'placeholder';
+  return a;
+}
+
+function releasedAnchors() {
+  return mergeAnchors(placeholderAnchors(), {
+    node: { ...VECTOR, chainAddresses: undefined },
+    distribution: { keyId: updateRootKeyId(VECTOR.distributionPublicKey), spki: ed25519Spki(VECTOR.distributionPublicKey) },
+  });
+}
+
 test('the release gate refuses placeholders, the leaked identity, and a non-separate update root', () => {
-  const base = loadAnchors();
+  const base = placeholderAnchors();
   assert.ok(releaseProblems(base).some((p) => p.includes('placeholder')));
 
   const filled = mergeAnchors(base, {
@@ -127,8 +147,12 @@ test('every derived copy matches anchors.json (sync-anchors --check)', () => {
 });
 
 test('the public-release bundle builder refuses placeholder anchors and the leaked update root', () => {
-  assert.throws(() => assertReleaseAnchors('release', loadAnchors()), /not release-ready/);
-  assert.doesNotThrow(() => assertReleaseAnchors('live-dht', loadAnchors()));
+  assert.throws(() => assertReleaseAnchors('release', placeholderAnchors()), /not release-ready/);
+  assert.doesNotThrow(() => assertReleaseAnchors('release', releasedAnchors()));
+  assert.doesNotThrow(() => assertReleaseAnchors('live-dht', placeholderAnchors()));
+  // The committed file: refused exactly while it still has placeholders.
+  if (releaseProblems(loadAnchors()).length) assert.throws(() => assertReleaseAnchors('release', loadAnchors()), /not release-ready/);
+  else assert.doesNotThrow(() => assertReleaseAnchors('release', loadAnchors()));
   assert.throws(() => assertNoDeniedUpdateRoots({ [OLD.rootKeyId]: OLD.rootSpki }), /denylisted/);
   assert.throws(() => assertNoDeniedUpdateRoots({ relabelled: OLD.rootSpki }), /denylisted/);
   assert.doesNotThrow(() => assertNoDeniedUpdateRoots({
@@ -138,9 +162,13 @@ test('the public-release bundle builder refuses placeholder anchors and the leak
 
 test('release signing never defaults to, or accepts, the leaked update root', () => {
   assert.throws(() => resolveReleaseKeyId(OLD.rootKeyId, { dryRun: true }), /denylisted/);
-  assert.throws(() => resolveReleaseKeyId('', { dryRun: false }), /placeholder/);
-  assert.equal(resolveReleaseKeyId('', { dryRun: true }).startsWith('PLACEHOLDER-'), true);
-  assert.equal(resolveReleaseKeyId('abcdef012345', { dryRun: false }), 'abcdef012345');
+  const placeholder = placeholderAnchors();
+  assert.throws(() => resolveReleaseKeyId('', { dryRun: false, anchors: placeholder }), /placeholder/);
+  assert.equal(resolveReleaseKeyId('', { dryRun: true, anchors: placeholder }).startsWith('PLACEHOLDER-'), true);
+  assert.equal(resolveReleaseKeyId('abcdef012345', { dryRun: false, anchors: placeholder }), 'abcdef012345');
+  // With released anchors the anchored root is the default.
+  const released = releasedAnchors();
+  assert.equal(resolveReleaseKeyId('', { dryRun: false, anchors: released }), Object.keys(released.updateRoots)[0]);
 
   // No in-band root migration (owner, 2026-10-15): the published root signs
   // nothing, whatever the release carries.
@@ -165,7 +193,7 @@ test('S7: --trust-roots must equal the anchored update roots exactly, each key i
     /exactly/,
   );
   // While anchors.json is still a placeholder, no --trust-roots passes.
-  assert.throws(() => assertTrustRootsMatchAnchors({ [newId]: newSpki }), /exactly/);
+  assert.throws(() => assertTrustRootsMatchAnchors({ [newId]: newSpki }, placeholderAnchors()), /exactly/);
 });
 
 test('the desktop shell refuses to package a bundle trusting the leaked update root', async () => {
@@ -492,6 +520,108 @@ test('R1: release documents are signed OFFLINE with the update-root PEM (manifes
     assert.doesNotMatch(cli.stdout + cli.stderr, /PRIVATE KEY/);
     const signed = JSON.parse(readFileSync(join(dir, 'signed.json'), 'utf8'));
     assert.equal(signed.signing.key_id, keyId);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('step 2 merge: the owner provider and update root, the COMMITTED denylist kept (verifier r3)', async () => {
+  const { mergeOwnerAnchors } = await import('./sync-anchors.mjs');
+  const owner = releasedAnchors(); // what the generators wrote, from an older base
+  const committed = placeholderAnchors();
+  committed.denylist.ed25519PublicKeys = [...committed.denylist.ed25519PublicKeys, '33'.repeat(32)]; // added after the owner generated
+  committed.peers = [...committed.peers, { name: 'added-later', peerId: committed.peers[0].peerId, bootstrapTransports: [], browserTransports: [] }];
+  const merged = mergeOwnerAnchors(committed, owner);
+  assert.equal(merged.status, 'released');
+  assert.deepEqual(releaseProblems(merged), []);
+  assert.equal(merged.provider.peerId, owner.provider.peerId);
+  assert.deepEqual(merged.updateRoots, owner.updateRoots);
+  assert.ok(merged.denylist.ed25519PublicKeys.includes('33'.repeat(32)), 'a denylist entry committed later is kept');
+  assert.equal(merged.peers.at(-1).name, 'added-later');
+  assert.deepEqual(Object.keys(merged), Object.keys(committed), 'the anchors.json shape is unchanged');
+  // Refusals: an owner file still holding placeholders, or naming the leaked identity.
+  assert.throws(() => mergeOwnerAnchors(committed, placeholderAnchors()), /not release-ready/);
+  const leaked = structuredClone(owner);
+  leaked.provider.peerId = OLD.peerId;
+  assert.throws(() => mergeOwnerAnchors(committed, leaked), /not release-ready/);
+});
+
+test('generator outputs are created exclusively: a pre-existing file or symlink (even dangling) at an output path is refused', async () => {
+  const { symlinkSync } = require('node:fs');
+  const { writeOwnerFile } = await import('./new-node-identity.mjs');
+  const dir = mkdtempSync(join(tmpdir(), 'sdn-excl-'));
+  try {
+    writeOwnerFile(join(dir, 'fresh.json'), 'exact bytes\n', 0o640);
+    assert.equal(readFileSync(join(dir, 'fresh.json'), 'utf8'), 'exact bytes\n');
+    assert.equal(statSync(join(dir, 'fresh.json')).mode & 0o777, 0o640);
+    assert.throws(() => writeOwnerFile(join(dir, 'fresh.json'), 'x', 0o600), /already exists/);
+
+    writeFileSync(join(dir, 'victim.txt'), 'untouched');
+    symlinkSync(join(dir, 'victim.txt'), join(dir, 'link.json'));
+    symlinkSync(join(dir, 'nowhere', 'gone.txt'), join(dir, 'dangling.json'));
+    assert.throws(() => writeOwnerFile(join(dir, 'link.json'), 'x', 0o600), /symlink/);
+    assert.throws(() => writeOwnerFile(join(dir, 'dangling.json'), 'x', 0o600), /symlink/);
+    assert.equal(readFileSync(join(dir, 'victim.txt'), 'utf8'), 'untouched');
+    assert.equal(existsSync(join(dir, 'nowhere')), false);
+
+    // The update-root generator refuses before any key exists.
+    const out = join(dir, 'root');
+    mkdirSync(out);
+    symlinkSync(join(dir, 'victim.txt'), join(out, 'update-roots.json'));
+    const r = spawnSync(process.execPath, [join(HERE, 'new-update-root.mjs'), '--dry-run', '--key-out', join(out, 'k.pem')], { encoding: 'utf8' });
+    assert.equal(r.status, 2, r.stderr);
+    assert.match(r.stderr, /symlink/);
+    assert.equal(existsSync(join(out, 'k.pem')), false);
+    assert.equal(readFileSync(join(dir, 'victim.txt'), 'utf8'), 'untouched');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('r3: release signing fails closed without anchors.json, and the legacy undomained path refuses a denylisted key', async () => {
+  const { loadReleaseAnchors, signUpdateManifest } = await import('../release/sign-update-manifest.mjs');
+  const { generateKeyPairSync, createHash } = await import('node:crypto');
+  assert.throws(() => loadReleaseAnchors(new URL('file:///nonexistent/sec001/anchors.json')), /REFUSED: release signing needs/);
+  const dir = mkdtempSync(join(tmpdir(), 'sdn-anchors-nodeny-'));
+  try {
+    writeFileSync(join(dir, 'anchors.json'), JSON.stringify({ ...loadAnchors(), denylist: { updateRootKeyIds: [] } }));
+    assert.throws(() => loadReleaseAnchors(new URL(`file://${join(dir, 'anchors.json')}`)), /no SEC-001 denylist/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+  const keyId = createHash('sha256').update(publicKey.export({ type: 'spki', format: 'der' }).subarray(12)).digest('hex').slice(0, 12);
+  const manifest = { schema: 'org.spacedatanetwork.update.v1', signing: { key_id: keyId, algorithm: 'Ed25519' } };
+  assert.ok(signUpdateManifest({ manifest, privateKey }).signing.signature, 'an ordinary key signs');
+  const denying = { ...loadAnchors(), denylist: { ...loadAnchors().denylist, updateRootKeyIds: [...loadAnchors().denylist.updateRootKeyIds, keyId] } };
+  assert.throws(() => signUpdateManifest({ manifest, privateKey, anchors: denying }), /denylisted/);
+  assert.throws(() => signUpdateManifest({ manifest: { ...manifest, signing: { key_id: OLD.rootKeyId } }, privateKey }), /denylisted/);
+});
+
+test('r3: sec001-node-check.py gives EnvironmentFile= precedence over Environment=, and validates --expect-sha256', () => {
+  if (spawnSync('python3', ['--version']).status !== 0) return;
+  const dir = mkdtempSync(join(tmpdir(), 'sdn-envprec-'));
+  try {
+    writeFileSync(join(dir, 'a.env'), 'SDN_UPDATE_TRUST_ROOTS=/from/the/file.json\n');
+    const code = [
+      'import importlib.util, json',
+      `spec = importlib.util.spec_from_file_location("m", ${JSON.stringify(join(HERE, 'sec001-node-check.py'))})`,
+      'm = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)',
+      `print(json.dumps(m.merge_unit_environment("SDN_UPDATE_TRUST_ROOTS=/from/environment.json OTHER=1", [${JSON.stringify(join(dir, 'a.env'))}])))`,
+      'print(json.dumps(sorted(m.RECORDED_SHA256)))',
+    ].join('\n');
+    const out = spawnSync('python3', ['-I', '-B', '-c', code], { encoding: 'utf8' });
+    assert.equal(out.status, 0, out.stderr);
+    const [env, recorded] = out.stdout.trim().split('\n').map((l) => JSON.parse(l));
+    assert.deepEqual(env, { SDN_UPDATE_TRUST_ROOTS: '/from/the/file.json', OTHER: '1' });
+    assert.ok(recorded.includes('7a2a85063a6bf3f984a431b480a75a1049070ce43ba903d970fad6a006119a35'), 'the host-01 hotfix build is recorded');
+
+    mkdirSync(join(dir, 'b', 'bin'), { recursive: true });
+    writeFileSync(join(dir, 'b', 'manifest.json'), '{}');
+    writeFileSync(join(dir, 'b', 'bin', 'spacedatanetwork'), 'x');
+    const bad = spawnSync('python3', ['-I', '-B', join(HERE, 'sec001-node-check.py'), '--bundle', join(dir, 'b'), '--expect-sha256', '<hex>'], { encoding: 'utf8' });
+    assert.notEqual(bad.status, 0);
+    assert.match(bad.stderr, /64 hex characters/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

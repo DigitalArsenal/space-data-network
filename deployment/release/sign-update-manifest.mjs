@@ -17,11 +17,39 @@ export const MANIFEST_SCHEMA = 'org.spacedatanetwork.update.v1';
 // whose seed was published; it is on the anchors denylist.
 const ANCHORS_URL = new URL('../identity/anchors.json', import.meta.url);
 
-function readAnchors() {
+/**
+ * The SEC-001 anchors every signing decision reads. FAILS CLOSED (verifier
+ * r3): a missing or unreadable anchors.json, or one with no denylist, is an
+ * error, never "no restrictions".
+ */
+export function loadReleaseAnchors(url = ANCHORS_URL) {
+  let text;
   try {
-    return JSON.parse(require('fs').readFileSync(ANCHORS_URL, 'utf8'));
-  } catch {
-    return null; // a lane copied outside the repository has no anchors file
+    text = require('fs').readFileSync(url, 'utf8');
+  } catch (error) {
+    throw new Error(`REFUSED: release signing needs deployment/identity/anchors.json (its denylist and update root); could not read ${url}: ${error.message}`);
+  }
+  const anchors = JSON.parse(text);
+  if (!Array.isArray(anchors?.denylist?.updateRootKeyIds) || anchors.denylist.updateRootKeyIds.length === 0) {
+    throw new Error('REFUSED: anchors.json carries no SEC-001 denylist');
+  }
+  return anchors;
+}
+
+function readAnchors() {
+  return loadReleaseAnchors();
+}
+
+/** The key id of an Ed25519 signing key: sha256(raw public key)[:12]. */
+function keyIdOf(keyObject) {
+  const spki = crypto.createPublicKey(keyObject).export({ type: 'spki', format: 'der' });
+  return crypto.createHash('sha256').update(spki.subarray(12)).digest('hex').slice(0, 12);
+}
+
+function assertKeyNotDenied(keyObject, anchors, declaredKeyId = '') {
+  const denied = new Set((anchors?.denylist?.updateRootKeyIds || []).map((id) => id.toLowerCase()));
+  for (const id of [keyIdOf(keyObject), String(declaredKeyId || '').toLowerCase()]) {
+    if (id && denied.has(id)) throw new Error(`REFUSED: update key id ${id} is denylisted (SEC-001); sign with the update root in deployment/identity/anchors.json.`);
   }
 }
 
@@ -182,11 +210,14 @@ export function buildUpdateManifest(options) {
   return manifest;
 }
 
-export function signUpdateManifest({ manifest, privateKey }) {
+export function signUpdateManifest({ manifest, privateKey, anchors = readAnchors() }) {
   if (!manifest || typeof manifest !== 'object') {
     throw new Error('manifest is required');
   }
   const keyObject = normalizeSigningKey(privateKey);
+  // The legacy undomained form (build-cli-update-payload.mjs, the GitHub
+  // release payloads) refuses a denylisted key too (verifier r3).
+  assertKeyNotDenied(keyObject, anchors, manifest.signing?.key_id);
   const signature = crypto
     .sign(null, canonicalManifestBytes(manifest), keyObject)
     .toString('base64');
@@ -391,9 +422,8 @@ export function signUpdateDocumentOffline({ document, privateKey, kind = 'manife
   if (!domain) throw new Error('--kind is manifest or signal');
   const keyObject = normalizeSigningKey(privateKey);
   const spki = crypto.createPublicKey(keyObject).export({ type: 'spki', format: 'der' });
-  const keyId = crypto.createHash('sha256').update(spki.subarray(12)).digest('hex').slice(0, 12);
-  const denied = new Set((anchors?.denylist?.updateRootKeyIds || []).map((id) => id.toLowerCase()));
-  if (denied.has(keyId)) throw new Error(`REFUSED: key ${keyId} is denylisted (SEC-001); sign with the update root in deployment/identity/anchors.json.`);
+  const keyId = keyIdOf(keyObject);
+  assertKeyNotDenied(keyObject, anchors);
   const signing = { ...(document.signing || {}) };
   if (signing.signature) throw new Error('the document is already signed');
   if (signing.statement_domain && signing.statement_domain !== domain) {

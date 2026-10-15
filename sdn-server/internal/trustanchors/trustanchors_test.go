@@ -2,6 +2,7 @@ package trustanchors
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -168,5 +169,51 @@ func TestUncompressedSecp256k1KeysAreDenied(t *testing.T) {
 		if !IsDeniedKey(pub.SerializeUncompressed()) {
 			t.Fatalf("uncompressed form of %s… is not denied", k[:12])
 		}
+	}
+}
+
+// Verifier r3 S3: every spelling of a denylisted key or address is denied.
+func TestEveryEncodingOfADenylistedKeyIsDenied(t *testing.T) {
+	d := Load().Denylist
+	for _, k := range d.Secp256k1PublicKeys {
+		compressed, _ := hex.DecodeString(k)
+		pub, err := secp256k1.ParsePubKey(compressed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		un := pub.SerializeUncompressed()
+		hybrid := append([]byte{0x06 | (un[64] & 1)}, un[1:]...)
+		for name, raw := range map[string][]byte{"uncompressed": un, "raw64": un[1:], "hybrid": hybrid} {
+			if !IsDeniedKey(raw) {
+				t.Fatalf("%s… %s bytes not denied", k[:10], name)
+			}
+		}
+		for name, text := range map[string]string{
+			"0x compressed":     "0x" + k,
+			"0X upper":          "0X" + strings.ToUpper(k),
+			"base64 compressed": base64.StdEncoding.EncodeToString(compressed),
+			"base64url raw64":   base64.RawURLEncoding.EncodeToString(un[1:]),
+			"0x uncompressed":   "0x" + hex.EncodeToString(un),
+		} {
+			if !IsDenied(text) {
+				t.Fatalf("%s… as %s not denied", k[:10], name)
+			}
+		}
+	}
+	for _, k := range d.Ed25519PublicKeys {
+		raw, _ := hex.DecodeString(k)
+		for name, text := range map[string]string{"0x": "0x" + k, "base64": base64.StdEncoding.EncodeToString(raw), "base64url": base64.RawURLEncoding.EncodeToString(raw)} {
+			if !IsDenied(text) {
+				t.Fatalf("ed25519 %s… as %s not denied", k[:10], name)
+			}
+		}
+	}
+	for _, addr := range d.ChainAddresses {
+		if strings.HasPrefix(addr, "0x") && (!IsDenied(strings.ToLower(addr)) || !IsDenied(strings.ToUpper(addr[2:])) && !IsDenied("0x"+strings.ToUpper(addr[2:]))) {
+			t.Fatalf("Ethereum address %s not denied in another case", addr)
+		}
+	}
+	if IsDenied("0x"+strings.Repeat("ab", 33)) || IsDenied(base64.StdEncoding.EncodeToString(make([]byte, 32))) {
+		t.Fatal("an unrelated key is denied")
 	}
 }

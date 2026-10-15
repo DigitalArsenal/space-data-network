@@ -17,6 +17,7 @@ package trustanchors
 
 import (
 	_ "embed"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -130,6 +131,12 @@ func Parse(data []byte) (*Anchors, error) {
 	add(a.Denylist.UpdateRootKeyIDs, true)
 	add(a.Denylist.DiscoveryCIDs, false)
 	add(a.Denylist.ChainAddresses, false)
+	// An Ethereum address in any letter case (EIP-55 checksum case or not).
+	for _, v := range a.Denylist.ChainAddresses {
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(v)), "0x") {
+			add([]string{v}, true)
+		}
+	}
 	if len(a.Denylist.PeerIDs) == 0 || len(a.Denylist.Ed25519PublicKeys) == 0 || len(a.Denylist.UpdateRootKeyIDs) == 0 {
 		return nil, errors.New("identity anchors: the SEC-001 denylist must not be empty")
 	}
@@ -161,11 +168,66 @@ func (a *Anchors) IsDenied(value string) bool {
 	if value == "" {
 		return false
 	}
+	if a.deniedVerbatim(value) {
+		return true
+	}
+	// Other spellings of a denylisted public key (verifier r3 S3): 0x-prefixed
+	// hex, uncompressed/raw/hybrid secp256k1 points, and base64 of any of them.
+	if raw, ok := decodeKeyText(value); ok {
+		return a.deniedKeyBytes(raw)
+	}
+	return false
+}
+
+func (a *Anchors) deniedVerbatim(value string) bool {
 	if _, ok := a.denied[value]; ok {
 		return true
 	}
 	_, ok := a.denied[strings.ToLower(value)]
 	return ok
+}
+
+// keyLengths are the public-key byte lengths a denylisted value can take:
+// Ed25519/X25519 (32), compressed secp256k1 (33), raw X||Y (64), and
+// uncompressed or hybrid 04/06/07||X||Y (65).
+func keyLength(n int) bool { return n == 32 || n == 33 || n == 64 || n == 65 }
+
+// decodeKeyText reads a key written as (0x-)hex or base64/base64url.
+func decodeKeyText(value string) ([]byte, bool) {
+	text := value
+	if len(text) > 2 && (text[:2] == "0x" || text[:2] == "0X") {
+		text = text[2:]
+	}
+	if raw, err := hex.DecodeString(text); err == nil && keyLength(len(raw)) {
+		return raw, true
+	}
+	for _, enc := range []*base64.Encoding{base64.StdEncoding, base64.RawStdEncoding, base64.URLEncoding, base64.RawURLEncoding} {
+		if raw, err := enc.DecodeString(value); err == nil && keyLength(len(raw)) {
+			return raw, true
+		}
+	}
+	return nil, false
+}
+
+// deniedKeyBytes checks raw key bytes in every form a denylisted key can take.
+func (a *Anchors) deniedKeyBytes(raw []byte) bool {
+	if a.deniedVerbatim(hex.EncodeToString(raw)) {
+		return true
+	}
+	var x, y []byte
+	switch {
+	case len(raw) == 65 && (raw[0] == 0x04 || raw[0] == 0x06 || raw[0] == 0x07):
+		x, y = raw[1:33], raw[33:65]
+	case len(raw) == 64:
+		x, y = raw[:32], raw[32:]
+	default:
+		return false
+	}
+	prefix := byte(0x02)
+	if y[31]&1 == 1 {
+		prefix = 0x03
+	}
+	return a.deniedVerbatim(hex.EncodeToString(append([]byte{prefix}, x...)))
 }
 
 // IsDenied reports whether value is denylisted by the compiled-in anchors.
@@ -185,20 +247,9 @@ func IsDeniedKey(raw []byte) bool {
 	if len(raw) == 0 {
 		return false
 	}
-	a := Load()
-	if a.IsDenied(hex.EncodeToString(raw)) {
-		return true
-	}
-	// The same secp256k1 point uncompressed (04 || X || Y): compare its
-	// compressed form (02/03 by the parity of Y, then X).
-	if len(raw) == 65 && raw[0] == 0x04 {
-		prefix := byte(0x02)
-		if raw[64]&1 == 1 {
-			prefix = 0x03
-		}
-		return a.IsDenied(hex.EncodeToString(append([]byte{prefix}, raw[1:33]...)))
-	}
-	return false
+	// Compressed, uncompressed (04), hybrid (06/07) or raw X||Y secp256k1,
+	// or a 32-byte Ed25519/X25519 key.
+	return Load().deniedKeyBytes(raw)
 }
 
 // CheckPeer returns an ErrDenied-wrapping error for a denylisted peer.

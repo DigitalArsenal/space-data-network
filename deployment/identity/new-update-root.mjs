@@ -56,7 +56,7 @@ import {
   structuralProblems,
   updateRootKeyId,
 } from './anchors-lib.mjs';
-import { assertOutsideGitWorkTree, onlineInterfaces, readLine, realResolve } from './new-node-identity.mjs';
+import { assertOutsideGitWorkTree, onlineInterfaces, readLine, realResolve, writeOwnerFile } from './new-node-identity.mjs';
 
 const require = createRequire(import.meta.url);
 const { canonicalManifestBytes, signatureStatement, validateUpdateManifest } = require('../release/sdn-updater/manifest.js');
@@ -150,8 +150,8 @@ function isSymlink(path) {
 }
 
 function writeExclusive(path, contents, mode) {
-  writeFileSync(path, contents, { mode, flag: 'wx' });
-  chmodSync(path, mode);
+  // O_CREAT|O_EXCL|O_NOFOLLOW, refusing any pre-existing node (verifier r3).
+  writeOwnerFile(path, contents, mode);
 }
 
 function parseArgs(argv) {
@@ -214,7 +214,7 @@ export async function main(argv = process.argv.slice(2)) {
     if (outDir) assertOutsideGitWorkTree(realResolve(outDir), '--out-dir (resolved)');
     if (outDir) {
       for (const name of ['public-update-root.json', 'update-roots.json', 'anchors.json']) {
-        if (existsSync(join(outDir, name))) throw new Error(`${join(outDir, name)} exists; refusing to overwrite (use another --out-dir)`);
+        if (existsSync(join(outDir, name)) || isSymlink(join(outDir, name))) throw new Error(`${join(outDir, name)} exists (or is a symlink); refusing to overwrite (use another --out-dir)`);
       }
     }
   } catch (error) {

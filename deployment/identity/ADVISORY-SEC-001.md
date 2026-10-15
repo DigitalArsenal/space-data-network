@@ -6,7 +6,7 @@
 > `<…>` first. Never include a seed, private key, or any value not listed here as public.
 
 **Severity:** Critical. **Affected:** Space Data Network node (`spacedatanetwork`) and desktop releases built
-from 2026-08-01 to 2026-10-15; `@spacedatanetwork/sdn-js` 3.1.0 and earlier (see below).
+from 2026-07-30 to 2026-10-15; `@spacedatanetwork/sdn-js` 3.1.0 and earlier (see below).
 **Fixed in:** `<fixed node release, e.g. v1.0.5-beta.NN>`, `@spacedatanetwork/sdn-js <fixed version>`.
 **Identifier:** `<GHSA id>` / `<CVE id if assigned>`.
 
@@ -22,7 +22,7 @@ holding the published seed.
 ## Affected versions
 
 - **Node / CLI bundles and the desktop app** whose `trust/update-roots.json` names key id `d4a971a7e534`:
-  every release built from 2026-08-01 onward, which is `v1.0.4-beta.18` and every `v1.0.5-beta` tag up to and
+  every release built since 2026-07-30, which is `v1.0.4-beta.18` and every `v1.0.5-beta` tag up to and
   including `v1.0.5-beta.83`. GitHub release pages exist for `v1.0.4-beta.18`, `v1.0.5-beta.1`, `.58`, `.59`,
   `.65`, `.67`, `.68`, `.69` and `.70`; tags `v1.0.5-beta.71` to `.83` carry the same root. All of them ship
   with `update: {enabled: true}` as the default.
@@ -54,7 +54,7 @@ used by anyone else.
    ```
    The log then says `Update signal lane DISABLED`.
 2. **Check what is installed.** Compare the running binary's sha256 with the published release checksums, and
-   look in `<bundle>/deploy-ledger.jsonl` and `<bundle>/updates/` for any update applied since 2026-08-01 that
+   look in `<bundle>/deploy-ledger.jsonl` and `<bundle>/updates/` for any update applied since 2026-07-30 that
    you did not install yourself. `deployment/identity/sec001-node-check.py` in the repository lists them; it
    changes nothing unless asked.
 3. **Replace the update root.** Overwrite `<bundle>/trust/update-roots.json` (or the file
@@ -87,7 +87,8 @@ used by anyone else.
 ## Timeline (UTC)
 
 - 2026-02-18: the seed is committed in `sdn-js/verify-identity.mjs`; the same seed also sat in `config/dev-wallet.env` in the history.
-- 2026-08-01: the node key becomes the fleet update root (`fleet-trust-roots.json`).
+- 2026-07-30: the node key becomes the fleet update root (owner ruling); it ships in `fleet-trust-roots.json`
+  from 2026-08-01.
 - 2026-10-15: found in a security audit; the fleet's update lane is disabled (13:13–13:25Z); a hotfix limits
   root sign-in on `sdn.spaceaware.io` to the box itself (15:11Z); the history is purged; the rotation begins.
 - `<date>`: new update root installed on the project's nodes; `<fixed release>` published; this advisory.
