@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Grant policy — the per-module entitlement rule the provider applies before it
@@ -78,6 +79,61 @@ type GrantPolicyConfig struct {
 	// Modules are evaluated in order; the FIRST match wins, so specific
 	// module IDs belong above family wildcards.
 	Modules []GrantPolicyRule `json:"modules,omitempty"`
+
+	// DeliveryLimits tunes the host's admission of open-policy handshakes on
+	// the module-delivery protocol (delivery_admission.go). Unset fields keep
+	// the built-in defaults.
+	DeliveryLimits *DeliveryLimitsConfig `json:"delivery_limits,omitempty"`
+
+	// RetireSupersededAfterSeconds is how long a module's older versions stay
+	// grantable after a newer version of the same module is published. Unset
+	// means the default, ten minutes, which is also the maximum: a release
+	// whose key is superseded must stop being handed out soon. Zero retires
+	// at once.
+	RetireSupersededAfterSeconds *int `json:"retire_superseded_after_seconds,omitempty"`
+}
+
+// DeliveryLimitsConfig is the "delivery_limits" block of grant-policy.json.
+type DeliveryLimitsConfig struct {
+	// OpenRatePerSecond refills the one node-wide token bucket every open-policy
+	// $LCH and $LPF draws from. Default 50.
+	OpenRatePerSecond float64 `json:"open_rate_per_second,omitempty"`
+	// OpenBurst is that bucket's depth. Default 200.
+	OpenBurst int `json:"open_burst,omitempty"`
+}
+
+// DefaultRetireSupersededAfter is the grace a superseded module version keeps,
+// and the most an operator may give it.
+const DefaultRetireSupersededAfter = 10 * time.Minute
+
+// RetireSupersededAfter is the effective grace for superseded versions.
+func (c *GrantPolicyConfig) RetireSupersededAfter() time.Duration {
+	if c == nil || c.RetireSupersededAfterSeconds == nil {
+		return DefaultRetireSupersededAfter
+	}
+	grace := time.Duration(*c.RetireSupersededAfterSeconds) * time.Second
+	if grace < 0 {
+		return 0
+	}
+	if grace > DefaultRetireSupersededAfter {
+		return DefaultRetireSupersededAfter
+	}
+	return grace
+}
+
+// EffectiveDeliveryLimits resolves the delivery_limits block over the defaults.
+func (c *GrantPolicyConfig) EffectiveDeliveryLimits() DeliveryLimits {
+	limits := DefaultDeliveryLimits()
+	if c == nil || c.DeliveryLimits == nil {
+		return limits
+	}
+	if c.DeliveryLimits.OpenRatePerSecond > 0 {
+		limits.OpenRatePerSecond = c.DeliveryLimits.OpenRatePerSecond
+	}
+	if c.DeliveryLimits.OpenBurst > 0 {
+		limits.OpenBurst = c.DeliveryLimits.OpenBurst
+	}
+	return limits
 }
 
 // GrantPolicySourceBuiltIn and friends name where an effective policy came
@@ -149,6 +205,19 @@ func (c *GrantPolicyConfig) Validate() error {
 	}
 	if _, err := NormalizeGrantPolicy(c.DefaultPolicy); err != nil {
 		return fmt.Errorf("default_policy: %w", err)
+	}
+	if limits := c.DeliveryLimits; limits != nil {
+		if limits.OpenRatePerSecond < 0 {
+			return fmt.Errorf("delivery_limits.open_rate_per_second must not be negative, got %v", limits.OpenRatePerSecond)
+		}
+		if limits.OpenBurst < 0 {
+			return fmt.Errorf("delivery_limits.open_burst must not be negative, got %d", limits.OpenBurst)
+		}
+	}
+	if grace := c.RetireSupersededAfterSeconds; grace != nil {
+		if *grace < 0 || time.Duration(*grace)*time.Second > DefaultRetireSupersededAfter {
+			return fmt.Errorf("retire_superseded_after_seconds must be between 0 and %d, got %d", int(DefaultRetireSupersededAfter/time.Second), *grace)
+		}
 	}
 	for i, rule := range c.Modules {
 		if strings.TrimSpace(rule.Match) == "" {
