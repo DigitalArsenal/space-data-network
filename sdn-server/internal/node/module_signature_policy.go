@@ -35,7 +35,8 @@ package node
 // flow is refused. The report-only observe stage (every would-be rejection
 // logged as "module_signature_observe", nothing refused) survives only as a
 // development opt-out, SDN_DEV_MODULE_SIGNATURE_REPORT_ONLY=1, which logs an
-// error on every start. Before upgrading a node, list every publisher key its
+// error on every start and is ignored whenever SDN_MODULE_SIGNATURE_ENFORCE is
+// set at all. Before upgrading a node, list every publisher key its
 // modules are signed with in SDN_TRUSTED_PUBLISHER_KEYS (or re-sign them with
 // the node key).
 
@@ -81,12 +82,21 @@ const (
 // the observe stage.
 func (n *Node) buildModuleSignaturePolicy() *modulert.ModuleSignaturePolicy {
 	enforce := true
-	if os.Getenv(moduleSignatureReportOnlyDevEnv) == "1" {
+	enforceRaw := strings.TrimSpace(os.Getenv(moduleSignatureEnforceEnv))
+	switch {
+	case os.Getenv(moduleSignatureReportOnlyDevEnv) != "1":
+	case enforceRaw != "":
+		// Conflicting settings resolve to enforcing: an operator who set
+		// SDN_MODULE_SIGNATURE_ENFORCE (to anything) asked about enforcement,
+		// and a development flag left in the environment must not silently
+		// undo that.
+		log.Errorf("SECURITY: %s=1 ignored because %s=%q is set; module signatures are ENFORCED", moduleSignatureReportOnlyDevEnv, moduleSignatureEnforceEnv, enforceRaw)
+	default:
 		enforce = false
 		log.Errorf("SECURITY: module signature policy is REPORT-ONLY because %s=1 — unsigned and untrusted modules will run; this is for local development only", moduleSignatureReportOnlyDevEnv)
 	}
-	if raw := strings.TrimSpace(os.Getenv(moduleSignatureEnforceEnv)); raw != "" && !envTruthy(raw) {
-		log.Warnf("Module signature policy: %s=%q no longer turns enforcement off (enforcement is the default); use %s=1 for local development only", moduleSignatureEnforceEnv, raw, moduleSignatureReportOnlyDevEnv)
+	if enforceRaw != "" && !envTruthy(enforceRaw) {
+		log.Warnf("Module signature policy: %s=%q no longer turns enforcement off (enforcement is the default); use %s=1 for local development only", moduleSignatureEnforceEnv, enforceRaw, moduleSignatureReportOnlyDevEnv)
 	}
 	policy := &modulert.ModuleSignaturePolicy{
 		AllowUnsignedByContentHash: make(map[string]bool),

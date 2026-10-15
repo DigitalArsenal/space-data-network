@@ -93,6 +93,21 @@ func TestPolicyEnforcesByDefault(t *testing.T) {
 	}
 }
 
+// TestExplicitEnforceWinsOverDevReportOnly: the verifier's S3. With both
+// SDN_MODULE_SIGNATURE_ENFORCE and the development opt-out set, the conflict
+// resolves to enforcing, whatever value ENFORCE carries.
+func TestExplicitEnforceWinsOverDevReportOnly(t *testing.T) {
+	n, _ := nodeWithSigningKey(t)
+	t.Setenv(trustedPublisherKeysEnv, "")
+	t.Setenv(moduleSignatureReportOnlyDevEnv, "1")
+	for _, value := range []string{"1", "true", "enforce", " 1 ", "0", "off"} {
+		t.Setenv(moduleSignatureEnforceEnv, value)
+		if got := n.buildModuleSignaturePolicy(); got.ReportOnly {
+			t.Fatalf("%s=%q with %s=1 ran report-only; an explicit enforce setting must win", moduleSignatureEnforceEnv, value, moduleSignatureReportOnlyDevEnv)
+		}
+	}
+}
+
 // TestEnforcedPolicyRefusesUnsignedModule runs the default policy through the
 // real admit gate: an unsigned module is refused, not logged and admitted.
 func TestEnforcedPolicyRefusesUnsignedModule(t *testing.T) {
