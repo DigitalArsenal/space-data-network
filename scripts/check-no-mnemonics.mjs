@@ -24,6 +24,13 @@
 //     probability 1/12!).
 // A window that also passes the BIP-39 checksum is reported as CHECKSUM-VALID.
 //
+// KNOWN LIMITS (best effort, verifier r3): a phrase split into records whose
+// separators are not text (SQL rows, CSV columns, log lines with timestamps
+// between words), UTF-32, camelCase or PascalCase joins, abbreviated words
+// (BIP-39 words are unique in their first four letters), hex or other binary
+// encodings of the phrase, and non-English wordlists are not detected. The
+// guard is a backstop; a seed belongs in an encrypted file outside git.
+//
 // It NEVER prints the matched words: only the path (and commit), the line
 // number, the run length and a sha256 fingerprint of the run, which is what
 // scripts/mnemonic-scan-allowlist.txt records for a known PUBLIC test vector or
@@ -46,12 +53,23 @@ const VALID_LENGTHS = [24, 21, 18, 15, 12];
 // controls except whitespace (\t \n \v \f \r), and DEL.
 const RUN_BREAK = /[\x00-\x08\x0e-\x1f\x7f]/;
 
-export function loadWordlist(path = join(HERE, 'wordlists', 'bip39-english-wordlist.txt')) {
-  const words = readFileSync(path, 'utf8')
+// sha256 of the official BIP-39 English list (2048 words, "\n"-terminated):
+// the scanner refuses to run on a modified copy, and reports one in the tree.
+export const BIP39_ENGLISH_SHA256 = '2f5eed53a4727b4bf8880d8f3f199efc90e58503646d9ff8eff3a2ed3b24dbda';
+
+/** The words of a wordlist file's text (its "#" comment lines dropped), and their sha256. */
+export function wordlistWords(text) {
+  const words = String(text)
     .split('\n')
     .map((w) => w.trim())
     .filter((w) => w && !w.startsWith('#'));
+  return { words, sha256: createHash('sha256').update(`${words.join('\n')}\n`).digest('hex') };
+}
+
+export function loadWordlist(path = join(HERE, 'wordlists', 'bip39-english-wordlist.txt')) {
+  const { words, sha256 } = wordlistWords(readFileSync(path, 'utf8'));
   if (words.length !== 2048) throw new Error(`BIP-39 wordlist has ${words.length} words, want 2048`);
+  if (sha256 !== BIP39_ENGLISH_SHA256) throw new Error(`${path} is not the official BIP-39 English wordlist (sha256 ${sha256})`);
   return words;
 }
 
@@ -292,17 +310,46 @@ function looksPrintable(buf) {
   return ok / buf.length >= 0.95;
 }
 
-/** Base64 and base64url values (a Kubernetes Secret's data, an env blob) that decode to text. */
+function lineOf(text, index) {
+  let line = 1;
+  for (let i = text.lastIndexOf('\n', index - 1); i >= 0; i = text.lastIndexOf('\n', i - 1)) line += 1;
+  return line;
+}
+
+/**
+ * Text a base64 value decodes to, trying every alignment 0..5 (verifier r3: a
+ * value glued to 1-5 preceding alphabet characters, "seedQUJD...", decodes to
+ * garbage at offset 0). null when no alignment yields text.
+ */
+function decodeBase64Text(value) {
+  const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
+  for (let offset = 0; offset <= 5 && normalized.length - offset >= 44; offset++) {
+    const decoded = Buffer.from(normalized.slice(offset), 'base64');
+    if (looksPrintable(decoded)) return decoded.toString('latin1');
+  }
+  return null;
+}
+
+/**
+ * Base64 and base64url values that decode to text: one-line values (a
+ * Kubernetes Secret's data, an env blob) and line-wrapped blocks (PEM bodies,
+ * 64- or 76-column MIME), each at every alignment.
+ */
 function* base64Texts(text) {
   const re = /[A-Za-z0-9+/_-]{44,65536}={0,2}/g;
   let match;
   while ((match = re.exec(text)) !== null) {
-    const value = match[0];
-    const decoded = Buffer.from(value.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
-    if (!looksPrintable(decoded)) continue;
-    let line = 1;
-    for (let i = text.lastIndexOf('\n', match.index); i >= 0; i = text.lastIndexOf('\n', i - 1)) line += 1;
-    yield { text: decoded.toString('latin1'), lineOffset: line - 1 };
+    const decoded = decodeBase64Text(match[0]);
+    if (decoded !== null) yield { text: decoded, lineOffset: lineOf(text, match.index) - 1 };
+  }
+  // Wrapped: 2+ consecutive lines that are only base64 characters (optionally
+  // indented), joined.
+  const block = /(?:^|\n)((?:[ \t]*[A-Za-z0-9+/_-]{8,}={0,2}[ \t]*\r?(?:\n|$)){2,})/g;
+  while ((match = block.exec(text)) !== null) {
+    const joined = match[1].replace(/\s+/g, '');
+    if (joined.length < 44) continue;
+    const decoded = decodeBase64Text(joined);
+    if (decoded !== null) yield { text: decoded, lineOffset: lineOf(text, match.index + (match[0].startsWith('\n') ? 1 : 0)) - 1 };
   }
 }
 
@@ -385,12 +432,17 @@ export function findMnemonicRuns(content, wordlist) {
   return findings;
 }
 
+// Replace refs (refs/replace/*) could show the scanner other objects than the
+// ones history holds; never honour them (verifier r3).
+const GIT_ENV = { ...process.env, GIT_NO_REPLACE_OBJECTS: '1' };
+
 function git(args, options = {}) {
-  return execFileSync('git', args, { maxBuffer: 1 << 30, ...options });
+  return execFileSync('git', ['--no-replace-objects', ...args], { maxBuffer: 1 << 30, env: GIT_ENV, ...options });
 }
 
 function listStaged() {
-  return git(['diff', '--cached', '--name-only', '--diff-filter=ACMR', '-z'], { encoding: 'utf8' })
+  // T: a path whose type changed (a symlink became a file) carries new content too.
+  return git(['diff', '--cached', '--name-only', '--diff-filter=ACMRT', '-z'], { encoding: 'utf8' })
     .split('\0')
     .filter(Boolean);
 }
@@ -465,7 +517,7 @@ export function parseDiffPath(raw) {
 // read nothing; core.quotePath only changes quoting, handled above).
 const GIT_DIFF_CONFIG = [
   '-c', 'diff.noprefix=false', '-c', 'diff.mnemonicPrefix=false', '-c', 'diff.srcPrefix=a/', '-c', 'diff.dstPrefix=b/',
-  '-c', 'diff.external=', '-c', 'core.quotePath=true', '-c', 'log.showSignature=false',
+  '-c', 'diff.external=', '-c', 'core.quotePath=true', '-c', 'log.showSignature=false', '-c', 'log.showRoot=true',
 ];
 
 /**
@@ -486,13 +538,14 @@ async function* historyAdditions(range) {
   const child = spawn(
     'git',
     [
+      '--no-replace-objects',
       ...GIT_DIFF_CONFIG,
       'log', '-p', '--cc', '--no-color', '--no-ext-diff', '--no-textconv', '--text', '--no-renames',
       '--src-prefix=a/', '--dst-prefix=b/',
       `--format=${MARK} %H%n%B%n${MARK}`,
       ...range.split(/\s+/).filter(Boolean),
     ],
-    { stdio: ['ignore', 'pipe', 'inherit'] },
+    { stdio: ['ignore', 'pipe', 'inherit'], env: GIT_ENV },
   );
   child.stdout.setEncoding('latin1');
   const exited = new Promise((resolveExit) => child.on('close', resolveExit));
@@ -559,16 +612,35 @@ async function* historyAdditions(range) {
   }
 }
 
-/** Annotated tag messages (every tag object reachable from refs/tags). */
-function* tagMessages() {
-  const refs = git(['for-each-ref', '--format=%(objecttype) %(refname)', 'refs/tags'], { encoding: 'utf8' })
+/**
+ * What refs/tags hold besides commits: annotated tag messages, and tags that
+ * point (directly or through a tag object) at a BLOB or a TREE — content no
+ * `git log` ever shows (verifier r3).
+ */
+function* tagContents() {
+  const lines = git(['for-each-ref', '--format=%(objecttype) %(*objecttype) %(objectname) %(refname)', 'refs/tags'], { encoding: 'utf8' })
     .split('\n')
-    .filter((l) => l.startsWith('tag '))
-    .map((l) => l.slice(4));
-  for (const ref of refs) {
-    const body = git(['cat-file', 'tag', ref], { encoding: 'latin1' });
-    const at = body.indexOf('\n\n');
-    yield { commit: '', path: `(tag message ${ref})`, content: at >= 0 ? body.slice(at + 2) : '', message: true };
+    .filter(Boolean);
+  for (const line of lines) {
+    const [type, peeledType, oid, ref] = line.split(' ');
+    if (type === 'tag') {
+      const body = git(['cat-file', 'tag', oid], { encoding: 'latin1' });
+      const at = body.indexOf('\n\n');
+      yield { commit: '', path: `(tag message ${ref})`, content: at >= 0 ? body.slice(at + 2) : '' };
+    }
+    const target = type === 'tag' ? peeledType : type;
+    const targetOid = type === 'tag' ? `${oid}^{}` : oid;
+    if (target === 'blob') {
+      yield { commit: '', path: `(blob tagged ${ref})`, content: git(['cat-file', 'blob', targetOid], { encoding: 'latin1' }) };
+    } else if (target === 'tree') {
+      const entries = git(['ls-tree', '-r', '-z', targetOid], { encoding: 'utf8' }).split('\0').filter(Boolean);
+      for (const entry of entries) {
+        const [meta, path] = entry.split('\t');
+        const [, kind, blobOid] = meta.split(' ');
+        if (kind !== 'blob') continue;
+        yield { commit: '', path: `(tree tagged ${ref}) ${path}`, content: git(['cat-file', 'blob', blobOid], { encoding: 'latin1' }) };
+      }
+    }
   }
 }
 
@@ -597,7 +669,12 @@ export async function main(argv = process.argv.slice(2)) {
   if (mode === '--staged' || mode === '--tracked') {
     const paths = mode === '--staged' ? listStaged() : null;
     for (const { path, content } of indexBlobs(paths)) {
-      if (path === WORDLIST_REL) continue;
+      // The vendored wordlist is scanned like any file (a phrase hidden in its
+      // comment lines is found; its sorted words are not a phrase), and its
+      // words must be the official list (verifier r3).
+      if (path === WORDLIST_REL && wordlistWords(content.toString('latin1')).sha256 !== BIP39_ENGLISH_SHA256) {
+        hits.push(`${path}: not the official BIP-39 English wordlist (its words were changed, added or reordered)`);
+      }
       if (isEnvLike(path) && ENV_SECRET_MARKERS.test(content.toString('latin1'))) {
         hits.push(`${path}: env-style file holds a mnemonic/seed_phrase/xprv/PRIVATE KEY marker`);
       }
@@ -610,7 +687,6 @@ export async function main(argv = process.argv.slice(2)) {
     const range = argv.slice(1).filter((a) => a !== '--strict').join(' ') || 'HEAD';
     const exposures = [];
     const scan = ({ commit, path, content }) => {
-      if (path === WORDLIST_REL) return;
       for (const f of findMnemonicRuns(Buffer.from(content, 'latin1'), wordlist)) {
         if (isAllowed(allowlist, { fingerprint: f.fingerprint, path, commit })) continue;
         const where = `${commit ? `${commit.slice(0, 12)} ` : ''}${path} (added line ${f.line}): ${describe(f)}`;
@@ -619,8 +695,9 @@ export async function main(argv = process.argv.slice(2)) {
       }
     };
     for await (const addition of historyAdditions(range)) scan(addition);
-    // Tag messages: with --all (every ref), or when the range names tags.
-    if (/(^|\s)--(all|tags)(\s|$)/.test(range)) for (const t of tagMessages()) scan(t);
+    // Tag messages and tagged blobs/trees: with --all (every ref), or when the
+    // range names tags.
+    if (/(^|\s)--(all|tags)(\s|$)/.test(range)) for (const t of tagContents()) scan(t);
     if (exposures.length) {
       console.error(`[check-no-mnemonics] ${exposures.length} KNOWN EXPOSURE(S) in history, awaiting the purge (deployment/identity/ROTATION.md):`);
       for (const e of exposures) console.error(`  ${e}`);

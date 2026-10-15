@@ -11,7 +11,7 @@
 //     from, any real seed — in particular not the SEC-001 leaked one.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -479,6 +479,94 @@ test('NB2 history: content only a merge commit introduced (an evil merge) is sca
   const result = runGuard(repo, ['--history', 'HEAD']);
   assert.equal(result.status, 1, result.stderr);
   assert.match(result.stderr, new RegExp(`${merge.slice(0, 12)} a\\.txt`));
+});
+
+// ---------------------------------------------------------------------------
+// Verifier r3: the remaining holes, each with a test.
+// ---------------------------------------------------------------------------
+test('r3: line-wrapped base64 (76 and 64 columns, a PEM body) and base64 misaligned by 1-5 characters are decoded', () => {
+  const b64 = Buffer.from(`recovery phrase: ${synthetic24}\n`).toString('base64');
+  const wrap = (text, cols) => text.match(new RegExp(`.{1,${cols}}`, 'g')).join('\n');
+  const shapes = {
+    'MIME 76 columns': `Content-Transfer-Encoding: base64\n\n${wrap(b64, 76)}\n`,
+    '64 columns, indented': `data: |\n${wrap(b64, 64).replace(/^/gm, '    ')}\n`,
+    'PEM body': `-----BEGIN SEED PHRASE-----\n${wrap(b64, 64)}\n-----END SEED PHRASE-----\n`,
+  };
+  for (const prefix of ['a', 'ab', 'abc', 'abcd', 'seedX']) shapes[`glued to "${prefix}"`] = `value=${prefix}${b64}`;
+  for (const [name, content] of Object.entries(shapes)) {
+    assert.ok(findMnemonicRuns(content, WORDLIST).some((r) => r.checksumValid), `${name}: missed`);
+  }
+});
+
+test('r3: the vendored wordlist is scanned (a phrase in its comments) and must be the official list', () => {
+  const official = readFileSync(join(repoRoot, 'scripts/wordlists/bip39-english-wordlist.txt'), 'utf8');
+  const repo = createTempRepo();
+  writeStagedFile(repo, 'scripts/wordlists/bip39-english-wordlist.txt', `# ${synthetic24}\n${official}`);
+  const comment = runGuard(repo);
+  assert.equal(comment.status, 1, comment.stderr);
+  assert.match(comment.stderr, /bip39-english-wordlist\.txt:1: .*CHECKSUM-VALID/);
+  assertNoWordsLeak(comment.stdout + comment.stderr, synthetic24);
+
+  const lines = official.split('\n');
+  const firstWord = lines.findIndex((l) => l && !l.startsWith('#'));
+  [lines[firstWord], lines[firstWord + 1]] = [lines[firstWord + 1], lines[firstWord]];
+  writeStagedFile(repo, 'scripts/wordlists/bip39-english-wordlist.txt', lines.join('\n'));
+  const reordered = runGuard(repo, ['--staged']);
+  assert.notEqual(reordered.status, 0);
+  assert.match(reordered.stderr, /not the official BIP-39 English wordlist/);
+});
+
+test('r3 history: log.showRoot=false cannot hide the root commit, nor a replace ref the leak', () => {
+  const repo = createTempRepo();
+  git(repo, ['config', 'log.showRoot', 'false']);
+  writeFile(repo, 'leak.txt', `${synthetic24}\n`);
+  commitAll(repo, 'root commit with the leak');
+  const root = runGuard(repo, ['--history', 'HEAD']);
+  assert.equal(root.status, 1, root.stderr);
+  assert.match(root.stderr, /leak\.txt \(added line 1\)/);
+
+  // Replace the leaking blob with an innocent one: git log would follow the replacement.
+  const leakBlob = git(repo, ['rev-parse', 'HEAD:leak.txt']).stdout.trim();
+  writeFileSync(join(repo, 'innocent.txt'), 'nothing to see\n');
+  const innocent = git(repo, ['hash-object', '-w', 'innocent.txt']).stdout.trim();
+  git(repo, ['replace', leakBlob, innocent]);
+  const replaced = runGuard(repo, ['--history', 'HEAD']);
+  assert.equal(replaced.status, 1, replaced.stderr);
+  assert.match(replaced.stderr, /leak\.txt \(added line 1\)/);
+});
+
+test('r3 history: tags pointing at a blob or a tree are scanned with --all', () => {
+  for (const kind of ['blob', 'tree', 'annotated-blob']) {
+    const repo = createTempRepo();
+    writeFile(repo, 'README.md', 'innocent\n');
+    commitAll(repo, 'plain');
+    writeFileSync(join(repo, 'hidden.txt'), `${synthetic24}\n`);
+    const blob = git(repo, ['hash-object', '-w', 'hidden.txt']).stdout.trim();
+    let target = blob;
+    if (kind === 'tree') {
+      target = spawnSync('git', ['mktree'], { cwd: repo, input: `100644 blob ${blob}\tseed.txt\n`, encoding: 'utf8' }).stdout.trim();
+    }
+    if (kind === 'annotated-blob') git(repo, ['-c', 'user.name=t', '-c', 'user.email=t@e', 'tag', '-a', 'stash', blob, '-m', 'innocent']);
+    else git(repo, ['tag', 'stash', target]);
+    rmSync(join(repo, 'hidden.txt'));
+    assert.equal(runGuard(repo, ['--history', 'HEAD']).status, 0, `${kind}: no commit holds it`);
+    const all = runGuard(repo, ['--history', '--all']);
+    assert.equal(all.status, 1, `${kind}: ${all.stderr}`);
+    assert.match(all.stderr, kind === 'tree' ? /\(tree tagged refs\/tags\/stash\) seed\.txt/ : /\(blob tagged refs\/tags\/stash\)/);
+    assertNoWordsLeak(all.stdout + all.stderr, synthetic24);
+  }
+});
+
+test('r3 --staged: a type change (symlink to file) is scanned', () => {
+  const repo = createTempRepo();
+  symlinkSync('README.md', join(repo, 'notes.txt'));
+  writeFile(repo, 'README.md', 'innocent\n');
+  commitAll(repo, 'a symlink');
+  rmSync(join(repo, 'notes.txt'));
+  writeStagedFile(repo, 'notes.txt', `${synthetic24}\n`);
+  const result = runGuard(repo);
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /notes\.txt:1/);
 });
 
 // Verifier S8: the public-test-vector files are excused from the MNEMONIC
