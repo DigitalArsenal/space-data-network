@@ -124,3 +124,18 @@
 .pl-cap h3 { font-size: 16px; }
 .pl-cap p { font-size: 14px; color: var(--text-2); }
 .pl-tag { justify-self: start; font-size: 11px; font-weight: 600; letter-spacing: .04em; padding: 2px 8px; border-radius: 999px; color: var(--accent); background: var(--accent-soft); }
+
+.po-leads { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+.po-leads h3 { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 600; margin-bottom: 6px; }
+.po-leads ul { margin: 0; padding-left: 18px; font-size: 14px; color: var(--text-2); display: grid; gap: 4px; }
+.po-leads a, .po-table a { color: var(--accent); font-size: 12px; }
+.pl-section > h3 { font-size: 16px; margin-top: 8px; }
+.po-claims { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 460px), 1fr)); gap: 12px; }
+.po-table { min-width: 640px; }
+.po-claims .po-table { min-width: 440px; }
+.po-state { display: inline-flex; flex-wrap: wrap; gap: 4px 6px; align-items: baseline; font-size: 13px; color: var(--text-2); }
+.po-chip { display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+.po-ok { color: var(--ok); background: var(--ok-soft); }
+.po-teal { color: var(--teal); background: var(--teal-soft); }
+.po-part { color: var(--part); background: var(--part-soft); }
+.po-gap { color: var(--gap); background: var(--gap-soft); }
