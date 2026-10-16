@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated": "2026-10-15",
+  "updated": "2026-10-16",
   "consoleBuild": "20261013T204527Z",
   "pricing": {
     "status": "request",
@@ -251,13 +251,13 @@
       "capabilities": [
         "Screen against the full catalog or a single object",
         "Collision probability for each event",
-        "Conjunction data messages to review and download as CDM, JSON or OCM",
+        "Conjunction data messages in CCSDS 508.0-B-1 KVN and XML, as FlatBuffer or JSON, with OCM orbits",
         "Avoidance burn with post-burn miss distance and collision probability",
         "Operator notification package ready to send",
         "Close events and export results"
       ],
       "standards": [
-        "CCSDS CDM",
+        "CCSDS CDM 508.0-B-1",
         "CCSDS OCM",
         "SDS CQR"
       ],
@@ -267,7 +267,7 @@
         "CNJ"
       ],
       "learnMore": "https://spacedatanetwork.org/collision-avoidance.html",
-      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/modes/modeCards.ts:243-292; modes/cnj/surface.ts:547-600; modes/cnj/CnjPanel.svelte:224-227; live modules.pmm conjunction-assessment 0.6.0 ANONYMOUS"
+      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/modes/modeCards.ts:243-292; modes/cnj/surface.ts:599-610,743-770; modes/cnj/cdmExport.e2e.test.ts; modes/cnj/CnjPanel.svelte:220-243; modules analysis/conjunction-assessment tests/cdmCcsdsConformance.e2e.mjs (xmllint against the CCSDS NDM/XML 4.0.0 schema, Orekit CdmParser)"
     },
     {
       "id": "catalog-screening",
