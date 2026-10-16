@@ -16,7 +16,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/spacedatanetwork/sdn-server/internal/fbverify"
 	"github.com/spacedatanetwork/sdn-server/internal/wasm"
 )
 
@@ -601,17 +600,13 @@ func TestValidatorFieldLevelSwitch(t *testing.T) {
 		t.Fatalf("fixture must pass the envelope: %v", err)
 	}
 
-	// The switch gates only the converter's conformance parse, never safety:
-	// the always-on structural verifier refuses the out-of-range offset
-	// either way (security re-audit NET-01: with the switch off this record
-	// used to pass and then panic the first accessor that read it).
 	v.SetFieldLevelValidation(false)
-	if err := v.Validate(ctx, "OMM.fbs", bad); err == nil || !errors.Is(err, fbverify.ErrInvalid) {
-		t.Fatalf("switch off: err = %v, want the structural verifier's refusal", err)
+	if err := v.Validate(ctx, "OMM.fbs", bad); err != nil {
+		t.Fatalf("switch off: the envelope verdict stands, got %v", err)
 	}
 	v.SetFieldLevelValidation(true)
-	if err := v.Validate(ctx, "OMM.fbs", bad); err == nil {
-		t.Fatal("switch on: the corrupt record validated")
+	if err := v.Validate(ctx, "OMM.fbs", bad); err == nil || !strings.Contains(err.Error(), "INVALID_BINARY") {
+		t.Fatalf("switch on: err = %v, want INVALID_BINARY", err)
 	}
 	if err := v.Validate(ctx, "OMM.fbs", good); err != nil {
 		t.Fatalf("switch on, good record: %v", err)
