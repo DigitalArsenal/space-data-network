@@ -29,13 +29,15 @@ const getEnvRelays = (): string[] | null => {
  * Prefer DNS-based addresses for production deployments.
  * IP addresses should only be used for development/testing.
  */
+// SEC-001: host-01's identity since the 2026-10 re-key. The one before it
+// (16Uiu2HAm1Lbv…) was derived from a published seed and is never a relay.
 export const SPACEAWARE_RELAY_PEER_ID =
-  '16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45';
+  '16Uiu2HAmNpWvv4aG4U67cex3LfUJpdrXKXbvcxn6Gm33RPM3MTCf';
 
 /**
  * CA-authenticated, browser-dialable bootstrap address for the SpaceAware full
  * node. Verified live 2026-08-06: dials through the Cloudflare-fronted
- * sdn.spaceaware.io to peer 16Uiu2HAm1Lbv…Fm45 and yields a DIRECT connection
+ * sdn.spaceaware.io to the full node's peer and yields a DIRECT connection
  * (connection.limits === null, i.e. not a limited/transient relay hop), over
  * which /space-data-network/module-delivery/1.0.0 negotiates.
  *
