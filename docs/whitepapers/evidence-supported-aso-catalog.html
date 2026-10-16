@@ -69,11 +69,11 @@
       </div>
       <div class="wrap">
         <dl class="paper-facts">
-          <div><dt>Edition</dt><dd>2.4</dd></div>
+          <div><dt>Edition</dt><dd>2.5</dd></div>
           <div><dt>Published</dt><dd>16 October 2026</dd></div>
-          <div><dt>Evidence cutoff</dt><dd><span>11 October 2026</span></dd></div>
+          <div><dt>Evidence cutoff</dt><dd><span>16 October 2026</span></dd></div>
           <div><dt>Sections</dt><dd>11</dd></div>
-          <div><dt>Reading time</dt><dd>37 min</dd></div>
+          <div><dt>Reading time</dt><dd>41 min</dd></div>
           <div><dt>Interactive models</dt><dd>16</dd></div>
         </dl>
       </div>
@@ -118,6 +118,7 @@
           <li><a href="#7-dynamics-and-verification"><span class="toc-num">7</span><span>Dynamics and verification</span></a>
             <ol>
               <li><a href="#agreement-with-orekit"><span>Agreement with Orekit</span><i class="toc-model" title="Interactive model"></i></a></li>
+              <li><a href="#agreement-with-independent-implementations"><span>Agreement with independent implementations</span></a></li>
               <li><a href="#accuracy-against-precise-orbits"><span>Accuracy against precise orbits</span><i class="toc-model" title="Interactive model"></i></a></li>
             </ol>
           </li>
@@ -171,7 +172,7 @@
 <li><strong>Measured error as covariance.</strong> An orbit propagated from an OMM&#39;s epoch state carries a covariance equal to the error measured for its orbit regime and element-set age. That error is measured against independent orbits in every regime that has them: GNSS analysis-centre orbits, laser ranging, LEO precise orbits, operator ephemerides and radio-occultation receivers. A covariance is labeled calibrated only where held-out data confirm it (<a href="#22-covariance-for-every-object">section 2.2</a>).</li>
 <li><strong>SDN&#39;s own atmosphere.</strong> Drag uses JB2008 or NRLMSISE-00 with an open correction in the form of the Space Force&#39;s Dynamic Calibration of the Atmosphere, solved from public operator states. It explains 25–40 % of the density variation measured by satellites that did not calibrate it; 1–3-day position error is unchanged (ratios 0.98–1.02) (<a href="#54-drag-regime">section 5.4</a>).</li>
 <li><strong>Maneuvers.</strong> A detector reads each object&#39;s element-set history for steps in orbital energy and plane, and reports each maneuver&#39;s time and size. On held-out data it found 22 of 25 ISS burns and all 6 GPS maneuvers in precise orbits; geostationary station-keeping is harder, 4 of 11 (<a href="#55-maneuver-detection">section 5.5</a>).</li>
-<li><strong>Better start states where data allow.</strong> HPOP&#39;s force models agree with Orekit within 1 cm over a day (steps of at most 30 s; 2.5 cm at 300 s, <a href="#7-dynamics-and-verification">section 7</a>). Fitted to laser ranges, HPOP stays 20–60 times better than SGP4 to 7 days; fitted to an arc of corrected OMMs, it halves SGP4&#39;s error to two days in GPS (<a href="#53-objects-with-public-omms-only">section 5.3</a>). In LEO, drag from B* limits even a precise start state: 481 m at 24 h (<a href="#53-objects-with-public-omms-only">section 5.3</a>). SGP4-XP sets that SDN fits to precise GNSS orbits err by a median 0.42 km over the seventh day, against 14 km for its SGP4 fits of the same orbits (exploratory, <a href="#4-normalization-and-model-dispatch">section 4</a>).</li>
+<li><strong>Better start states where data allow.</strong> HPOP&#39;s force models agree with Orekit within 1 cm over a day (steps of at most 30 s; 2.5 cm at 300 s), and with GMAT, Tudat, Nyx and Basilisk within the same agreement limits once each tool&#39;s atmosphere settings match (<a href="#7-dynamics-and-verification">section 7</a>). Fitted to laser ranges, HPOP stays 20–60 times better than SGP4 to 7 days; fitted to an arc of corrected OMMs, it halves SGP4&#39;s error to two days in GPS (<a href="#53-objects-with-public-omms-only">section 5.3</a>). In LEO, drag from B* limits even a precise start state: 481 m at 24 h (<a href="#53-objects-with-public-omms-only">section 5.3</a>). SGP4-XP sets that SDN fits to precise GNSS orbits err by a median 0.42 km over the seventh day, against 14 km for its SGP4 fits of the same orbits (exploratory, <a href="#4-normalization-and-model-dispatch">section 4</a>).</li>
 <li><strong>Screening when the covariance is large.</strong> A large covariance spreads a collision&#39;s probability thin. In a synthetic study, with collisions built on the OMM errors of 4 reference objects, a probability threshold of 1e-4 missed 2.7–16 % of collisions; screening on the uncertainty region missed 0.2–0.4 %, with 21–45 % false alerts at a 1 km miss<sup><a href="#r50">50</a></sup>. Every event also carries the Alfano maximum, the largest probability a spherical covariance of any size gives, which needs no covariance. Products built from public OMMs are advisory: public element sets alone must not drive conjunction assessment decisions<sup><a href="#r49">49</a>,<a href="#r53">53</a></sup>.</li>
 </ol>
 <p>Three results go beyond published work:</p>
@@ -802,6 +803,105 @@
 </tbody></table></div>
 <p>At steps of up to 300 s, HPOP&#39;s own integration error is most of the difference: 1.8 cm over a day at 400 km (2.6 cm with JB2008 drag) and 1.6 cm at 700 km, against 0.03 mm for GPS satellites. With steps of 30 s the rows no longer depend on the step (a tolerance of 1e-15 with steps of 10 s moves them by under 0.2 mm), and the largest difference is in Molniya, 9.9 mm; 400 km and 700 km agree to 4.2 mm with drag and 1.7 mm without, and GPS and geostationary orbits to 0.2 mm. The rest is Earth orientation: Orekit applies the IERS Conventions&#39; tidal and libration corrections to polar motion and UT1<sup><a href="#r11">11</a></sup>, and HPOP interpolates the daily rows. Against Orekit without those corrections the differences at 30 s are 0.6 mm for point mass, 1.1 mm without drag and 3.9 mm with it, and 0.6 mm in Molniya.</p>
 <p>State-transition matrices agree within 2e-5 and parameter sensitivities within 1.5e-4 (relative), at steps of up to 300 s. Integrating Jacchia&#39;s diffusion equations numerically reproduces the closed forms of Jacchia-Roberts<sup><a href="#r45">45</a></sup> to 1.6e-4.</p>
+<h3 id="agreement-with-independent-implementations">Agreement with independent implementations</h3>
+<p>Four further implementations, in six versions or builds, ran the same 72 cases (<a href="https://github.com/DigitalArsenal/space-data-network-modules/blob/01f0bbad93eba83ab8bf116133d8c6fc6f76a54d/propagator/hpop/tests/evidence/CONSOLIDATED.md">reference suite</a>). Every difference beyond its agreement limit traces to a measured setting or model difference in the reference, and no limit was changed. HPOP 1.3.1 (module SHA-256 8c9c361b) ran at the suite setting above, steps of at most 300 s at 1e-13. Each case is scored by its largest 3D position difference over the 25 hourly samples in GCRF. The limits are 1 mm for point mass, 5 cm with the gravity field and third bodies, and 10 cm with radiation pressure or drag; GMAT&#39;s are 1 cm for point mass and 1.5 m with drag. They are agreement limits, not accuracy claims. A case a tool cannot model is skipped and not counted.</p>
+<div class="table-frame"><table>
+<thead>
+<tr>
+<th>Implementation</th>
+<th>Version</th>
+<th align="right">Cases scored</th>
+<th align="right">Within the limit</th>
+<th>Largest difference, no drag</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Orekit<sup><a href="#r44">44</a></sup></td>
+<td>13.1</td>
+<td align="right">72</td>
+<td align="right">72</td>
+<td>1.9 cm (400 km)</td>
+</tr>
+<tr>
+<td>GMAT<sup><a href="#r40">40</a></sup></td>
+<td>R2022a</td>
+<td align="right">55</td>
+<td align="right">55</td>
+<td>4.5 cm (400 km)</td>
+</tr>
+<tr>
+<td>GMAT<sup><a href="#r40">40</a></sup></td>
+<td>R2026a</td>
+<td align="right">57</td>
+<td align="right">51</td>
+<td>4.5 cm (400 km)</td>
+</tr>
+<tr>
+<td>tudatpy<sup><a href="#r54">54</a></sup></td>
+<td>1.0.0</td>
+<td align="right">59</td>
+<td align="right">59</td>
+<td>1.8 cm (400 km)</td>
+</tr>
+<tr>
+<td>Tudat, compiled to WebAssembly<sup><a href="#r54">54</a></sup></td>
+<td>1.0.0.dev4</td>
+<td align="right">27</td>
+<td align="right">27</td>
+<td>2.0 cm (400 km)</td>
+</tr>
+<tr>
+<td>Nyx<sup><a href="#r55">55</a></sup></td>
+<td>2.6.0</td>
+<td align="right">59</td>
+<td align="right">54</td>
+<td>1.8 cm (400 km)</td>
+</tr>
+<tr>
+<td>Basilisk<sup><a href="#r56">56</a></sup></td>
+<td>2.12.0</td>
+<td align="right">50</td>
+<td align="right">43</td>
+<td>1.8 cm (400 km)</td>
+</tr>
+</tbody></table></div>
+<p>Point-mass cases agree within 0.58 mm in every implementation. Without drag, GPS cases agree within 2.6 mm and geostationary cases within 1.4 mm. All 18 cases outside a limit are drag cases, and each has a measured cause in the reference:</p>
+<div class="table-frame"><table>
+<thead>
+<tr>
+<th>Implementation</th>
+<th align="right">Cases</th>
+<th>Largest difference</th>
+<th>Cause</th>
+<th>With the cause removed</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>GMAT R2026a</td>
+<td align="right">6</td>
+<td>2.3 m (400 km), 8.0 m (700 km)</td>
+<td>Its NRLMSISE-00 density omits anomalous oxygen; HPOP and Orekit include it in the drag density</td>
+<td>4.2 cm and 11 cm, with Cd scaled by each case&#39;s mean anomalous-oxygen fraction</td>
+</tr>
+<tr>
+<td>Nyx 2.6.0</td>
+<td align="right">5</td>
+<td>12.5 m (400 km)</td>
+<td>Two lines of its NRLMSISE-00 port differ from the published model, and its runner used a different Earth shape</td>
+<td>4.2–5.2 cm, with the published formulas and the WGS84 shape</td>
+</tr>
+<tr>
+<td>Basilisk 2.12.0</td>
+<td align="right">7</td>
+<td>5.4 km (400 km), 58 m (700 km)</td>
+<td>Spherical altitude and geocentric latitude for the atmosphere, and density without anomalous oxygen below 500 km</td>
+<td>2.7 cm and 1.5 cm, with WGS84 geodetic coordinates and its own density with anomalous oxygen</td>
+</tr>
+</tbody></table></div>
+<p>The cause-removed runs are diagnostics, reported beside the stock runs. A constant Cd scale only approximates a density ratio that varies along the orbit, so GMAT&#39;s corrected run is a measured residual, not an identity of models.</p>
+<p>State-transition matrices agree within 1.8e-5 of Orekit&#39;s, 2.6e-5 of GMAT R2026a&#39;s and 2.6e-5 of tudatpy&#39;s (largest relative column difference); tudatpy&#39;s comparison includes the sensitivities to Cd·A/m, its rate, Cr·A/m and in-track acceleration. Nyx&#39;s is not a usable reference: its variational equations multiply the step-start matrix by the gradient, in the reverse order. GMAT R2022a, the WebAssembly Tudat build and Basilisk export no variational equations.</p>
+<p>Time and ephemerides were checked against ERFA 2.0.1<sup><a href="#r57">57</a></sup> and CSPICE N0067<sup><a href="#r58">58</a></sup>. TAI−UTC agrees exactly, TT from UTC within 5.6e-12 s, and the celestial-to-terrestrial rotation at the instant the force model evaluates within 0.0005 mas. Sun and Moon positions from DE440 agree with CSPICE within 0.03 mm at the same TDB date. Against JPL Horizons<sup><a href="#r59">59</a></sup>, which serves DE441, HPOP&#39;s Sun and Moon differ by 1.5 m and 2.4 m. CSPICE with DE440 differs from Horizons by 1.4 m for Venus and 1.3 m for the Jupiter barycentre, so these differences come from the two ephemeris releases and their time realization.</p>
+<p>The SGP4 module was compared with Vallado&#39;s SGP4 verification set<sup><a href="#r8">8</a></sup> (666 samples, near-Earth and deep space). At the same minutes since epoch, the shipped module agrees with Vallado&#39;s own code within 0.11 mm and 7.2e-8 m/s. At the requested epoch, rounding the request to one double-precision Julian date dominates the difference: up to 0.15 m near Earth and 9.7 m on Vallado&#39;s longest deep-space arcs. 17 of the 666 samples exceed the sum of the separately measured parts by up to 0.109 mm. The SGP4-XP module returns the Space Force library&#39;s states<sup><a href="#r52">52</a></sup> exactly, the same doubles, on 640 SGP4 and SGP4-XP sets at seven times each.</p>
 <div class="sec-head sec-head-h3"><h3 id="accuracy-against-precise-orbits">Accuracy against precise orbits</h3><button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/evidence-supported-aso-catalog/accuracy-against-precise-orbits.html" data-model-title="HPOP against precise orbits" aria-label="Run it: HPOP against precise orbits"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span>Run it</button></div>
 <p>Experiment V1 starts the propagator from ILRS orbits of four geodetic spheres (LAGEOS-1/2 and ETALON-1/2; 16 seeds) and IGS orbits of 32 GPS satellites (96 seeds), adds forces one set at a time, and compares each 72-hour run with the same product <a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/v1/README.md">V1</a>. GPS radiation pressure is a deliberately crude cannonball. Neither class feels significant drag; in LEO, drag from B* limits a precise start (<a href="#53-objects-with-public-omms-only">section 5.3</a>). Median (largest) 3D error:</p>
 <div class="table-frame"><table>
@@ -1228,6 +1328,18 @@
 <p>U.S. Space Force. Astrodynamics Standards: Sgp4Prop 9.1.1.0, with SGP4 and SGP4-XP. Distributed through Space-Track. <a href="https://www.space-track.org/documentation#/astro">Documentation</a></p>
 <h3 id="r53">R53</h3>
 <p>Space-Track.org. User Agreement: &quot;A TLE available to the public should not be used for conjunction assessment prediction.&quot; <a href="https://www.space-track.org/documentation#/user_agree">User Agreement</a></p>
+<h3 id="r54">R54</h3>
+<p>Delft University of Technology. Tudat (TU Delft Astrodynamics Toolbox) and tudatpy 1.0.0. <a href="https://docs.tudat.space/">Project</a></p>
+<h3 id="r55">R55</h3>
+<p>Nyx Space. Nyx 2.6.0, high-fidelity astrodynamics in Rust. <a href="https://nyxspace.com/">Project</a></p>
+<h3 id="r56">R56</h3>
+<p>Kenneally, P. W., Piggott, S., and Schaub, H. Basilisk: A Flexible, Scalable and Modular Astrodynamics Simulation Framework. Journal of Aerospace Information Systems 17(9), 496–507, 2020. <a href="https://doi.org/10.2514/1.I010762">doi:10.2514/1.I010762</a></p>
+<h3 id="r57">R57</h3>
+<p>ERFA 2.0.1, Essential Routines for Fundamental Astronomy, derived from the IAU SOFA library. <a href="https://github.com/liberfa/erfa">Project</a></p>
+<h3 id="r58">R58</h3>
+<p>Acton, C. H. Ancillary data services of NASA&#39;s Navigation and Ancillary Information Facility. Planetary and Space Science 44(1), 65–70, 1996. <a href="https://doi.org/10.1016/0032-0633(95)00107-7">doi:10.1016/0032-0633(95)00107-7</a></p>
+<h3 id="r59">R59</h3>
+<p>Park, R. S., Folkner, W. M., Williams, J. G., and Boggs, D. H. The JPL Planetary and Lunar Ephemerides DE440 and DE441. The Astronomical Journal 161(3), 105, 2021. <a href="https://doi.org/10.3847/1538-3881/abd414">doi:10.3847/1538-3881/abd414</a>; served by JPL Horizons. <a href="https://ssd.jpl.nasa.gov/horizons/">Horizons</a></p>
 
         </article>
       </div>
