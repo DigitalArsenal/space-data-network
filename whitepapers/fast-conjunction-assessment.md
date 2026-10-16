@@ -6,7 +6,7 @@ Anthony "TJ" Koury III and Claude Opus 5.5
 
 Koury: Edgesource, Space Data Network · tj@edgesource.com. Claude: Anthropic.
 
-Technical whitepaper 2.0 | 16 October 2026
+Technical whitepaper 2.1 | 16 October 2026
 
 Numerical evidence cutoff: 11 October 2026
 
@@ -26,7 +26,7 @@ Five design choices produce that speed:
 
 The screen reproduces the module's single-call screen where both can run. On 4,000 objects over one day, all 1,068 conjunctions match, with TCA within 0.64 ms and miss distance within 5 mm; the single call takes 32.9 s and the windowed screen 0.44 s.
 
-Against SOCRATES on the element sets SOCRATES itself used, TCA agrees within 0.5 ms and miss distance within 2.4 m for 95 % of cataloged pairs, the precision SOCRATES reports. Each event reports the Alfano maximum, the largest probability a spherical covariance of any size gives; it needs no covariance, and it is not a bound for elongated covariances. With an empirical model of element-set prediction error, events also carry a covariance-based probability. On held-out precise orbits, element-set covariance of this kind is realistic in 2 of 35 regime-and-age cells, LEO above 800 km at 0 and 0.5 days, and the HPOP epoch state's in 5 of 35. In a synthetic study on the errors of 4 reference objects, a probability threshold of 1e-4 missed 2.7–16 % of collisions, whose probabilities a large covariance dilutes; screening on the uncertainty region missed 0.2–0.4 %, with 21–45 % false alerts at a 1 km miss (section 7). The model<sup>[1](#r1)</sup> adds 1.1 s to the 19 s screen (section 7). Products built from public element sets are advisory: public element sets alone must not drive conjunction assessment decisions<sup>[34](#r34),[35](#r35)</sup>.
+Against SOCRATES on the element sets SOCRATES itself used, TCA agrees within 0.5 ms and miss distance within 2.4 m for 95 % of cataloged pairs, the precision SOCRATES reports. Each event reports the Alfano maximum, the largest probability a spherical covariance of any size gives; it needs no covariance, and it is not a bound for elongated covariances. With an empirical model of element-set prediction error, events also carry a covariance-based probability, Foster's integral over the hard-body disk. On held-out precise orbits, element-set covariance of this kind is realistic in 2 of 35 regime-and-age cells, LEO above 800 km at 0 and 0.5 days, and the HPOP epoch state's in 5 of 35. In a synthetic study on the errors of 4 reference objects, a probability threshold of 1e-4 missed 2.7–16 % of collisions, whose probabilities a large covariance dilutes; screening on the uncertainty region missed 0.2–0.4 %, with 21–45 % false alerts at a 1 km miss (section 7). Products built from public element sets are advisory: public element sets alone must not drive conjunction assessment decisions<sup>[34](#r34),[35](#r35)</sup>.
 
 Operators keep their most precise orbits and planned maneuvers private. Section 8 specifies **private screening**: two operators learn when their objects come close without exchanging trajectories, by computing distances on homomorphically encrypted positions.
 - **Cost.** Its arithmetic is measured: 0.17 s and 8.7 MB per pair-day at 1 s steps.
@@ -223,7 +223,7 @@ The companion paper<sup>[1](#r1)</sup> sets the conditions this screen respects,
 - A probability of collision requires relative-state uncertainty with independent calibration and stated cross-correlation, geometry and hard-body-radius assumptions.
 - Public element sets alone must not drive conjunction assessment decisions: NASA's conjunction assessment handbook (Vol. 2, App. E) and the Space-Track user agreement say so<sup>[34](#r34),[35](#r35)</sup>. Every product of this screen built from them is advisory.
 
-Every event reports the Alfano maximum: the largest probability a spherical covariance of any size gives for the reported miss distance and combined hard-body radius<sup>[4](#r4)</sup>. It needs no covariance. It is not a bound for other covariance shapes: at aspect ratios of 3, 10 and 100 to 1,000, the largest probability is about 3, 10 and 57 to 131 times higher, and LEO element-set covariances have aspect ratios of 2.4 to 191. Each object's radius comes with its basis: supplied, half the catalog size, from the radar cross section, or the request default. No uncertainty is invented: an event carries covariance, and a covariance-based probability, only when a source supplied covariance or the empirical model below applies, and it states which. The work below follows the companion paper's three parts<sup>[8](#r8)</sup>:
+Every event reports the Alfano maximum: the largest probability a spherical covariance of any size gives for the reported miss distance and combined hard-body radius<sup>[4](#r4)</sup>. It needs no covariance. It is not a bound for other covariance shapes: at aspect ratios of 3, 10, 100 and 1,000 the largest probability over covariance scale for the covariance's own shape (PC2D-SHAPE-SCALED-MAX, which agrees with an independent numerical maximization within 9e-10) is 3.0, 10, 82 and 131 times higher, and LEO element-set covariances have aspect ratios of 2.4 to 191. Each object's radius comes with its basis: supplied, half the catalog size, from the radar cross section, or the request default. No uncertainty is invented: an event carries covariance, and a covariance-based probability, only when a source supplied covariance or the empirical model below applies, and it states which. The work below follows the companion paper's three parts<sup>[8](#r8)</sup>:
 
 1. Initial covariance
 2. Propagation
@@ -273,13 +273,7 @@ The passing strata rest on 4 objects in one week. E14 of the companion paper<sup
 
 ### Covariance probability on screened events
 
-With the scaled model, element-set screens give each event's objects the covariance of their stratum at the TCA's prediction age. The event then reports the selected method's probability. The default method, FOSTER-2D, is the small-hard-body approximation to Foster's integral<sup>[9](#r9)</sup>:
-
-$$
-P_c \approx \frac{R^2}{2\sigma_1\sigma_2} \exp\!\left(-\tfrac12 m^2\right),
-$$
-
-with R the combined hard-body radius, σ₁ and σ₂ the principal sigmas of the relative covariance in the encounter plane, and m the Mahalanobis distance of the miss. Against the integral it is within 2 % when the smaller sigma is at least 10 R, 0.31 to 1.06 times the integral at 2 to 5 R, and 0.002 to 6.3 times at R or less. Each event is labeled:
+With the scaled model, element-set screens give each event's objects the covariance of their stratum at the TCA's prediction age. The event then reports the selected method's probability. The default, FOSTER-2D, integrates the Gaussian density of the miss over the combined hard-body disk in the encounter plane<sup>[9](#r9)</sup>: one coordinate analytically with error functions, the other by adaptive Gauss–Kronrod quadrature, including when the radius is comparable to a sigma. It agrees with the test cases of NASA's CARA Analysis Tools<sup>[37](#r37)</sup> within 4.7e-4 relative, and with an independent numerical double integral on 20 geometries within 3e-11. Each event is first checked against CARA's tests of the two-dimensional encounter assumptions; an event that fails them is evaluated with Hall's two- or three-dimensional expected-collision model (2D-Nc, 3D-Nc) or seeded Monte Carlo over the encounter interval, which agree with CARA's within 1.7e-5 relative and within its 10 % Monte Carlo tolerance. When only one object has a covariance, Frisbee's prescription applies (within 5.1e-3 of CARA's). The small-hard-body approximation R²/(2σ₁σ₂)·exp(−m²/2) runs only when selected (PC2D-SMALL-HBR-APPROX). Each event is labeled:
 
 - the covariance as synthesized from the empirical model;
 - the two objects' errors as independent;
@@ -287,8 +281,7 @@ with R the combined hard-body radius, σ₁ and σ₂ the principal sigmas of th
 
 On the three-day full catalog the screen found the same 294,544 conjunctions:
 
-- 289,455 received a covariance probability;
-- refinement took 7.8 s instead of 7.0 s, and the run 19.6 s instead of 18.5 s.
+- 289,455 received a covariance probability.
 
 Events outside the model keep the Alfano maximum. These are a negative or too-old prediction age, or a stratum the model lacks.
 
@@ -653,8 +646,8 @@ registered.
 | HPOP accuracy in LEO | From element-set epoch states, 9.5 to 11 times SGP4's median error at 24 h; from the true state with drag from B*, 481 m at 24 h and 4.5 km at 72 h |
 | One host | All timings from one shared 28-core workstation; the module gives the procedure for repeating them<sup>[2](#r2)</sup> |
 | Covariance realism | Realistic on held-out data in 2 of 35 regime-and-age cells for element sets (LEO above 800 km, 0 and 0.5 days) and 5 of 35 for the HPOP epoch state; the passing cells rest on 10 to 14 reference objects, none of them debris |
-| Probability method | The default, FOSTER-2D, is a small-hard-body approximation: within 2 % of Foster's integral when the smaller sigma is at least 10 times the hard-body radius, 0.002 to 6.3 times it when the sigma is at most the radius |
-| Alfano maximum | The maximum for spherical covariance only; the worst case is about 3 to 131 times higher at aspect ratios of 3 to 1,000 |
+| Probability method | The default, FOSTER-2D, assumes a two-dimensional encounter; events failing CARA's tests of that assumption are evaluated by 2D-Nc, 3D-Nc or Monte Carlo. The SDS CQR record carries only the maximum probability for those events; the CDM carries their result |
+| Alfano maximum | The maximum for spherical covariance only; the maximum for the covariance's own shape is 3.0 to 131 times higher at aspect ratios of 3 to 1,000 |
 | Probability inputs | Combined radius and covariance shape differ from SOCRATES's unpublished ones |
 
 This paper reports computation speed, agreement between implementations and with SOCRATES on identical inputs, and covariance realism where independent truth exists. Products built from public element sets are advisory and must not alone drive conjunction assessment decisions<sup>[34](#r34),[35](#r35)</sup>. The paper does not establish operational readiness or orbit accuracy; the companion paper<sup>[1](#r1)</sup> reports measurements of HPOP's accuracy in its sections [7](evidence-supported-aso-catalog.md#7-dynamics-and-verification) and [10](evidence-supported-aso-catalog.md#10-measured-accuracy).
@@ -804,3 +797,7 @@ Space-Track.org. User Agreement: "A TLE available to the public should not be us
 ### R36
 
 Vallado, D. A., Crawford, P., Hujsak, R. and Kelso, T. S. Revisiting Spacetrack Report #3. AIAA 2006-6753, 2006. [Paper](https://celestrak.org/publications/AIAA/2006-6753/AIAA-2006-6753.pdf)
+
+### R37
+
+NASA Conjunction Assessment Risk Analysis. CARA_Analysis_Tools. [GitHub](https://github.com/nasa/CARA_Analysis_Tools)

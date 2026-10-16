@@ -219,6 +219,10 @@
       "note": "Agreement with SOCRATES, not recall. Objects numbered 100000 and above: 20.8 m."
     },
     {
+      "claim": "Collision probability is Foster's integral over the hard-body disk, agreeing with NASA CARA Analysis Tools test cases within 4.7e-4; events outside the two-dimensional assumptions are evaluated with Hall's expected-collision models or Monte Carlo.",
+      "note": "The conjunction module; the SDS CQR record carries only the maximum for events outside the 2-D assumptions."
+    },
+    {
       "claim": "Probabilities and covariance built from public element sets are advisory: for awareness and triage, not maneuver decisions.",
       "note": "NASA CA Handbook Vol. 2 App. E; the Space-Track user agreement."
     },
@@ -246,11 +250,7 @@
     },
     {
       "claim": "The Alfano value as the largest possible probability",
-      "why": "It is the spherical-covariance maximum; elongated covariances go 3 to 131 times higher."
-    },
-    {
-      "claim": "FOSTER-2D as Foster's method",
-      "why": "It is the small-hard-body approximation; 0.002 to 6.3 times the integral when the smaller sigma is at most the hard-body radius."
+      "why": "It is the spherical-covariance maximum; the maximum for the covariance's own shape is 3 to 131 times higher (the shape-scaled maximum)."
     },
     {
       "claim": "A green Low band as safe",
