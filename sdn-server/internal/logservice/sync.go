@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/libp2p/go-libp2p/core/network"
 
@@ -14,7 +15,8 @@ import (
 // Sync protocol constants
 const (
 	// MaxSyncEntries is the maximum number of PLG entries returned in one sync response.
-	MaxSyncEntries = 500
+	MaxSyncEntries       = 500
+	maxSyncResponseBytes = 10 * 1024 * 1024
 )
 
 // SyncHandler handles log synchronization requests over libp2p streams.
@@ -133,7 +135,23 @@ func (h *SyncHandler) HandleSyncLog(s network.Stream) {
 }
 
 // RequestSyncLog sends a MsgSyncLog request to a remote peer and returns the PLG entries.
-func RequestSyncLog(s network.Stream, schemaType, publisherPeerID string, sinceSequence uint64, maxEntries uint32) ([][]byte, error) {
+func RequestSyncLog(s network.Stream, schemaType, publisherPeerID string, sinceSequence uint64, maxEntries uint32) (entries [][]byte, err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			entries = nil
+			err = fmt.Errorf("malformed sync-log reply: %v", recovered)
+		}
+		if err != nil {
+			log.Warnf("sync-log-reply: refused reply from %s: %v", s.Conn().RemotePeer(), err)
+			_ = s.Reset()
+		}
+	}()
+	if err := s.SetDeadline(time.Now().Add(30 * time.Second)); err != nil {
+		return nil, fmt.Errorf("set sync-log deadline: %w", err)
+	}
+	if maxEntries == 0 || maxEntries > MaxSyncEntries {
+		maxEntries = MaxSyncEntries
+	}
 	// Write message type
 	s.Write([]byte{0x07}) // MsgSyncLog
 
@@ -175,22 +193,30 @@ func RequestSyncLog(s network.Stream, schemaType, publisherPeerID string, sinceS
 		return nil, fmt.Errorf("failed to read entry count: %w", err)
 	}
 	entryCount := binary.BigEndian.Uint32(countBuf)
+	if entryCount > maxEntries {
+		return nil, fmt.Errorf("sync-log entry count %d exceeds requested limit %d", entryCount, maxEntries)
+	}
 
 	// Read entries
-	entries := make([][]byte, 0, entryCount)
+	entries = make([][]byte, 0, entryCount)
+	remaining := uint32(maxSyncResponseBytes)
 	for i := uint32(0); i < entryCount; i++ {
 		entryLenBuf := make([]byte, 4)
 		if _, err := io.ReadFull(s, entryLenBuf); err != nil {
 			return entries, fmt.Errorf("failed to read entry %d length: %w", i, err)
 		}
 		entryLen := binary.BigEndian.Uint32(entryLenBuf)
-		if entryLen > 10*1024*1024 { // 10MB sanity limit
-			return entries, fmt.Errorf("entry %d too large: %d bytes", i, entryLen)
+		if entryLen > remaining {
+			return nil, fmt.Errorf("sync-log response exceeds %d bytes at entry %d", maxSyncResponseBytes, i)
 		}
+		remaining -= entryLen
 
 		entryData := make([]byte, entryLen)
 		if _, err := io.ReadFull(s, entryData); err != nil {
 			return entries, fmt.Errorf("failed to read entry %d data: %w", i, err)
+		}
+		if err := sds.VerifyStructure(plgSchema, entryData); err != nil {
+			return nil, fmt.Errorf("invalid sync-log entry %d: %w", i, err)
 		}
 		entries = append(entries, entryData)
 	}

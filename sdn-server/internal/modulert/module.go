@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -1202,6 +1203,14 @@ func protocolInputFrame(manifest *Manifest, proto ProtocolDecl, payload []byte) 
 
 func (m *Module) handleProtocolStream(s network.Stream, proto ProtocolDecl) {
 	defer s.Close()
+	// libp2p runs stream handlers on bare goroutines: a panic on one peer's
+	// bytes resets that stream instead of ending the process (NET-01).
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			log.Errorf("Module protocol stream from %s dropped: handler panicked: %v\n%s", s.Conn().RemotePeer(), recovered, debug.Stack())
+			_ = s.Reset()
+		}
+	}()
 	methodID := proto.MethodID
 
 	s.SetReadDeadline(time.Now().Add(15 * time.Second))

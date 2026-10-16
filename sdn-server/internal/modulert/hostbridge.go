@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"runtime/debug"
 	"sort"
 	"sync"
 	"time"
@@ -353,7 +354,15 @@ func (hb *HostBridge) handleRandomBytes(payload []byte) []byte {
 // BuildWasmEdgeHostFuncs returns the WasmEdge host functions bound to this bridge.
 func (hb *HostBridge) BuildWasmEdgeHostFuncs() []wasmrt.HostFunc {
 	i32 := func() *wasmedge.ValType { return wasmedge.NewValTypeI32() }
-	call := func(_ interface{}, cf *wasmedge.CallingFrame, params []interface{}) ([]interface{}, wasmedge.Result) {
+	call := func(_ interface{}, cf *wasmedge.CallingFrame, params []interface{}) (result []interface{}, status wasmedge.Result) {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				log.Errorf("hostcall: a guest call panicked the host bridge: %.1024q\n%s", fmt.Sprint(recovered), debug.Stack())
+				hb.lastStatus = 1
+				hb.responseBuf = encodeHostcallEnvelope(map[string]interface{}{"ok": false, "error": map[string]string{"message": "hostcall refused"}}, nil)
+				result, status = []interface{}{int32(1)}, wasmedge.Result_Success
+			}
+		}()
 		opPtr := uint32(params[0].(int32))
 		opLen := uint32(params[1].(int32))
 		payloadPtr := uint32(params[2].(int32))
@@ -502,6 +511,9 @@ func decodeHostcallEnvelope(payload []byte) (interface{}, [][]byte, error) {
 	offset += metaLen
 	segmentCount := int(binary.LittleEndian.Uint32(payload[offset:]))
 	offset += 4
+	if segmentCount > (len(payload)-offset)/4 {
+		return nil, nil, fmt.Errorf("hostcall envelope segment count %d exceeds envelope bounds", segmentCount)
+	}
 	segments := make([][]byte, 0, segmentCount)
 	for i := 0; i < segmentCount; i++ {
 		if offset+4 > len(payload) {

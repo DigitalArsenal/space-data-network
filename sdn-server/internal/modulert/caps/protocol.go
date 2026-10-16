@@ -101,9 +101,14 @@ func newProtocolCapHandler(runtimeHost libp2phost.Host) modulert.CapHandler {
 			return errCapJSON("close write side: " + err.Error()), nil
 		}
 
-		responsePayload, err := io.ReadAll(io.LimitReader(stream, maxProtocolResponseBytes))
+		responsePayload, err := io.ReadAll(io.LimitReader(stream, maxProtocolResponseBytes+1))
 		if err != nil {
 			return errCapJSON("read response payload: " + err.Error()), nil
+		}
+		if len(responsePayload) > maxProtocolResponseBytes {
+			log.Warnf("ingress lane=module-protocol-reply peer=%s refused: response exceeds 1MB limit", targetInfo.ID)
+			_ = stream.Reset()
+			return errCapJSON("protocol response exceeds 1MB limit"), nil
 		}
 		return okCapRaw(responsePayload), nil
 	}

@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"encoding/hex"
 	"fmt"
+	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"net/url"
 	"strings"
 
@@ -48,7 +49,12 @@ func (s *Service) consumeListingPublication(data []byte, source peer.ID) {
 			log.Warnf("Rejected malformed storefront publication from %s: %v", source, recovered)
 		}
 	}()
-	if sdspnm.SizePrefixedPNMBufferHasIdentifier(data) {
+	if len(data) >= 12 && sdspnm.SizePrefixedPNMBufferHasIdentifier(data) {
+		// Prove the peer's bytes memory-safe before any accessor (NET-01).
+		if err := sds.VerifySizePrefixedStructure("PNM.fbs", data); err != nil {
+			log.Warnf("Rejected malformed storefront PNM from %s: %v", source, err)
+			return
+		}
 		pnm := sdspnm.GetSizePrefixedRootAsPNM(data, 0)
 		cid := strings.TrimSpace(string(pnm.CID()))
 		if cid == "" {
@@ -75,7 +81,11 @@ func (s *Service) consumeListingPublication(data []byte, source peer.ID) {
 		}
 		return
 	}
-	if sdsstf.STFBufferHasIdentifier(data) {
+	if len(data) >= 8 && sdsstf.STFBufferHasIdentifier(data) {
+		if err := sds.VerifyBareStructure("STF.fbs", data); err != nil {
+			log.Warnf("Rejected malformed storefront STF from %s: %v", source, err)
+			return
+		}
 		cid := storage.ComputeCID(data)
 		s.mu.RLock()
 		pending, ok := s.pendingListings[cid]
@@ -139,6 +149,9 @@ func (s *Service) listingSigningPublicKey(source peer.ID, epmCID string) (ed2551
 }
 
 func ed25519SigningKeyFromEPM(data []byte) (ed25519.PublicKey, error) {
+	if err := sds.VerifyStructure("EPM.fbs", data); err != nil {
+		return nil, fmt.Errorf("storefront EPM structure: %w", err)
+	}
 	var epm *sdsepm.EPM
 	switch {
 	case sdsepm.SizePrefixedEPMBufferHasIdentifier(data):

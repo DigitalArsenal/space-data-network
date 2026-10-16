@@ -320,9 +320,12 @@ func (tq *TipQueue) HandleMessageDeclined(msg *ps.Message) bool {
 // handleMessage processes a single PNM message. It reports whether a handler
 // declined the tip.
 func (tq *TipQueue) handleMessage(msg *ps.Message) (accepted bool) {
+	if msg == nil {
+		return false
+	}
 	defer func() {
 		if r := recover(); r != nil {
-			log.Errorf("PNM tip dropped: handler panicked on malformed input: %v\n%s", r, debug.Stack())
+			log.Errorf("pnm-tip from %s refused: handler panicked on malformed input: %v\n%s", msg.ReceivedFrom, r, debug.Stack())
 			accepted = false
 		}
 	}()
@@ -331,7 +334,12 @@ func (tq *TipQueue) handleMessage(msg *ps.Message) (accepted bool) {
 		return false
 	}
 
-	// Validate PNM
+	// Verify before either the generated identifier accessor or a caller's
+	// custom verifier sees these untrusted bytes.
+	if err := sds.VerifySizePrefixedStructure("PNM.fbs", data); err != nil {
+		log.Debugf("pnm-tip from %s refused: %v", msg.ReceivedFrom, err)
+		return false
+	}
 	if !PNM.SizePrefixedPNMBufferHasIdentifier(data) {
 		log.Debug("Received message without PNM identifier")
 		return false
@@ -347,13 +355,6 @@ func (tq *TipQueue) handleMessage(msg *ps.Message) (accepted bool) {
 		log.Debugf("Rejected untrusted PNM: %v", err)
 		return false
 	}
-	// Whatever the configured verifier checks, the accessors below read
-	// these bytes: prove them memory-safe first (security re-audit NET-01).
-	if err := sds.VerifySizePrefixedStructure("PNM.fbs", data); err != nil {
-		log.Warnf("Rejected malformed PNM tip: %v", err)
-		return false
-	}
-
 	pnm := PNM.GetSizePrefixedRootAsPNM(data, 0)
 
 	cid := string(pnm.CID())
@@ -513,6 +514,7 @@ func (tq *TipQueue) processTip(tip *Tip, config ResolvedConfig) {
 // oversize (ErrFetchTooLarge) is counted and logged, and never reaches
 // Pin.
 func (tq *TipQueue) dispatchFetch(tip *Tip, config ResolvedConfig, fetcher ContentFetcher, pinner ContentPinner) {
+	defer recoverTipRequest("pnm-tip-fetch", tip.PeerID)
 	if err := tq.fetchLimiter.wait(tq.ctx); err != nil {
 		return // TipQueue is shutting down
 	}
@@ -553,6 +555,7 @@ func (tq *TipQueue) dispatchFetch(tip *Tip, config ResolvedConfig, fetcher Conte
 // either as its own goroutine (pin-only tips) or synchronously from
 // dispatchFetch after a successful in-cap fetch.
 func (tq *TipQueue) runPin(tip *Tip, config ResolvedConfig, pinner ContentPinner) {
+	defer recoverTipRequest("pnm-tip-pin", tip.PeerID)
 	ctx, cancel := context.WithTimeout(tq.ctx, tq.config.FetchTimeout)
 	defer cancel()
 

@@ -1,7 +1,6 @@
 package node
 
 import (
-	"runtime/debug"
 	"strings"
 	"time"
 
@@ -75,11 +74,7 @@ func (n *Node) requestConnectedPeerEPM(pid peer.ID, source string) {
 // before anything reads it, and the goroutine contains any panic past that
 // as a dropped EPM.
 func (n *Node) fetchAndIndexPeerEPM(pid peer.ID, source string) {
-	defer func() {
-		if r := recover(); r != nil {
-			log.Errorf("EPM from %s (%s) dropped: handling it panicked: %v\n%s", pid.ShortString(), source, r, debug.Stack())
-		}
-	}()
+	defer recoverPeerIngress("epm-connect", pid, false, nil)
 	if n == nil || pid == "" || n.peerRegistry == nil || n.host == nil {
 		return
 	}
@@ -137,6 +132,17 @@ func (n *Node) reserveConnectedPeerEPMRequest(pid peer.ID) bool {
 	}
 	if last, ok := n.epmExchangeLastRequest[pid]; ok && now.Sub(last) < peerEPMRequestCooldown {
 		return false
+	}
+	if len(n.epmExchangeLastRequest) >= 4096 {
+		for id, last := range n.epmExchangeLastRequest {
+			if now.Sub(last) >= peerEPMRequestCooldown {
+				delete(n.epmExchangeLastRequest, id)
+			}
+		}
+		if len(n.epmExchangeLastRequest) >= 4096 {
+			log.Debugf("epm-connect: request for %s refused: discovery cooldown capacity", pid)
+			return false
+		}
 	}
 	n.epmExchangeLastRequest[pid] = now
 	return true

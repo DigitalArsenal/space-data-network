@@ -190,7 +190,7 @@ func (s *UpdateSignalSubscriber) Run(ctx context.Context) error {
 			log.Warnf("update signal: error reading topic %s: %v", s.deps.Topic, err)
 			continue
 		}
-		s.handle(ctx, data)
+		runUpdateGossip("update-signal", func() { s.handle(ctx, data) })
 	}
 }
 

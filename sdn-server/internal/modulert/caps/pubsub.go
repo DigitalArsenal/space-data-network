@@ -5,11 +5,13 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"runtime/debug"
 	"sync"
 	"time"
 
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	"github.com/spacedatanetwork/sdn-server/internal/modulert"
+	sdnpubsub "github.com/spacedatanetwork/sdn-server/internal/pubsub"
 )
 
 // NewPubSubCapFactory returns a CapFactory for the "pubsub" capability.
@@ -160,6 +162,9 @@ func (h *pubsubCapHandler) joinTopic(name string) (*pubsub.Topic, error) {
 	if t, ok := h.topics[name]; ok {
 		return t, nil
 	}
+	if err := sdnpubsub.RegisterTopicStructureValidator(h.ps, name); err != nil {
+		return nil, err
+	}
 	t, err := h.ps.Join(name)
 	if err != nil {
 		return nil, err
@@ -179,13 +184,22 @@ func (h *pubsubCapHandler) drainSubscription(topic string, sub *pubsub.Subscript
 			// Subscription cancelled or closed — stop the goroutine.
 			return
 		}
-		payload, _ := json.Marshal(map[string]interface{}{
-			"topic":  topic,
-			"from":   msg.ReceivedFrom.String(),
-			"data":   string(msg.Data),
-			"seq_no": msg.Seqno,
-		})
-		// Best-effort: if the module doesn't export on_pubsub_message, ignore.
-		h.mod.InvokeMethod(ctx, "on_pubsub_message", payload) //nolint:errcheck
+		h.deliverMessage(ctx, topic, msg)
 	}
+}
+
+func (h *pubsubCapHandler) deliverMessage(ctx context.Context, topic string, msg *pubsub.Message) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			log.Errorf("module pubsub delivery from %s on %s dropped: panicked: %v\n%s", msg.ReceivedFrom, topic, recovered, debug.Stack())
+		}
+	}()
+	payload, _ := json.Marshal(map[string]interface{}{
+		"topic":  topic,
+		"from":   msg.ReceivedFrom.String(),
+		"data":   string(msg.Data),
+		"seq_no": msg.Seqno,
+	})
+	// Best-effort: if the module doesn't export on_pubsub_message, ignore.
+	h.mod.InvokeMethod(ctx, "on_pubsub_message", payload) //nolint:errcheck
 }

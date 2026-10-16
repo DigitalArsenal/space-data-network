@@ -2,6 +2,7 @@ package node
 
 import (
 	"fmt"
+	"runtime/debug"
 
 	"github.com/libp2p/go-libp2p/core/network"
 	libp2pprotocol "github.com/libp2p/go-libp2p/core/protocol"
@@ -31,6 +32,12 @@ func (n *Node) registerModulePublishHandler() {
 
 func (n *Node) handleModulePublishStream(stream network.Stream) {
 	defer stream.Close()
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			log.Errorf("module-publish stream from %s dropped: handler panicked: %v\n%s", stream.Conn().RemotePeer(), recovered, debug.Stack())
+			_ = stream.Reset()
+		}
+	}()
 
 	if n.modulePublishAuthorizer == nil {
 		license.WriteModulePublishResponse(stream, license.ModulePublishResponse{
@@ -55,6 +62,9 @@ func (n *Node) handleModulePublishStream(stream network.Stream) {
 	}
 
 	response := license.ApplyModulePublishJSON(stream, n.pluginRegistry, n.modulePublishAuthorizer)
+	if !response.OK {
+		log.Warnf("ingress lane=module-publish peer=%s refused: %.1024q", stream.Conn().RemotePeer(), response.Error)
+	}
 	if response.OK {
 		// Publish exactly the modules this request changed, and nothing else.
 		//

@@ -913,11 +913,12 @@ func (n *Node) init() error {
 
 	n.protocol = protocol.NewSDSExchangeHandlerWithOptions(n.store, n.validator, limits, rateLimiter)
 	n.protocol.SetPushAuthorizer(n.mayAcceptPush)
+	n.protocol.SetPrivateReadAuthorizer(n.mayReadPrivate)
 	n.protocol.SetPubSubPNMHandler(n.handleDatasetPublicationPNM)
 	n.tipQueue = n.buildTipQueue()
 	n.host.SetStreamHandler(protocol.SDSProtocolID, n.protocol.HandleStream)
 	if n.store != nil {
-		n.host.SetStreamHandler(protocol.FlatSQLSyncProtocolID, protocol.NewFlatSQLSyncHandler(n.store).HandleStream)
+		n.host.SetStreamHandler(protocol.FlatSQLSyncProtocolID, protocol.NewFlatSQLSyncHandler(n.store).SetPrivateReadAuthorizer(n.mayReadPrivate).HandleStream)
 	}
 	n.host.SetStreamHandler(protocol.IDExchangeProtoID, protocol.HandleLegacyIDExchange)
 	n.host.SetStreamHandler(protocol.ChatProtoID, protocol.HandleLegacyChat)
@@ -2933,15 +2934,17 @@ func (n *Node) runDatasetPublicationPNMCatchup() {
 		case <-n.ctx.Done():
 			return
 		case <-timer.C:
-			if materialized, err := n.materializeStoredDatasetPublicationPNMs(n.ctx, datasetPublicationCatchupLimit); err != nil {
-				// No alert here: this is the SUMMARY of the per-record
-				// failures inside, each of which already raised
-				// publication_rejected against the producer that published
-				// it. An alert keyed on this line would have no subject.
-				log.Warnf("Dataset publication PNM catch-up completed with errors after materializing %d update(s): %v", materialized, err)
-			} else if materialized > 0 {
-				log.Infof("Dataset publication PNM catch-up materialized %d update(s)", materialized)
-			}
+			runPeerIngress("dataset-pnm-catchup", "", func() {
+				if materialized, err := n.materializeStoredDatasetPublicationPNMs(n.ctx, datasetPublicationCatchupLimit); err != nil {
+					// No alert here: this is the SUMMARY of the per-record
+					// failures inside, each of which already raised
+					// publication_rejected against the producer that published
+					// it. An alert keyed on this line would have no subject.
+					log.Warnf("Dataset publication PNM catch-up completed with errors after materializing %d update(s): %v", materialized, err)
+				} else if materialized > 0 {
+					log.Infof("Dataset publication PNM catch-up materialized %d update(s)", materialized)
+				}
+			})
 			timer.Reset(datasetPublicationCatchupInterval)
 		}
 	}
@@ -2992,11 +2995,13 @@ func (n *Node) runDatasetShardPublicationCatchup() {
 		case <-n.ctx.Done():
 			return
 		case <-timer.C:
-			if materialized, err := n.catchUpDatasetShardPublicationsFromTrustedPeers(n.ctx); err != nil {
-				log.Warnf("Dataset shard publication catch-up completed with errors after materializing %d shard(s): %v", materialized, err)
-			} else if materialized > 0 {
-				log.Infof("Dataset shard publication catch-up materialized %d shard(s)", materialized)
-			}
+			runPeerIngress("dataset-shard-catchup", "", func() {
+				if materialized, err := n.catchUpDatasetShardPublicationsFromTrustedPeers(n.ctx); err != nil {
+					log.Warnf("Dataset shard publication catch-up completed with errors after materializing %d shard(s): %v", materialized, err)
+				} else if materialized > 0 {
+					log.Infof("Dataset shard publication catch-up materialized %d shard(s)", materialized)
+				}
+			})
 			timer.Reset(datasetPublicationCatchupInterval)
 		}
 	}
@@ -3032,14 +3037,14 @@ func (n *Node) catchUpDatasetShardPublicationsFromPeer(ctx context.Context, from
 	return n.catchUpDatasetShardPublicationsFromPeerCounting(ctx, from, nil)
 }
 
-func (n *Node) catchUpDatasetShardPublicationsFromPeerCounting(ctx context.Context, from peer.ID, count func(storage.DatasetShardPublication) bool) (int, error) {
+func (n *Node) catchUpDatasetShardPublicationsFromPeerCounting(ctx context.Context, from peer.ID, count func(storage.DatasetShardPublication) bool) (total int, err error) {
+	defer recoverPeerIngress("dataset-shard-catchup", from, false, &err)
 	if n == nil || n.host == nil || n.store == nil || n.validator == nil || n.peerRegistry == nil {
 		return 0, nil
 	}
 	if !n.peerRegistry.IsTrusted(from) {
 		return 0, nil
 	}
-	var total int
 	var errs []error
 	for _, schema := range n.validator.Schemas() {
 		publications, err := n.listRemoteDatasetShardPublications(ctx, from, schema)
@@ -3128,6 +3133,9 @@ func (n *Node) listRemoteDatasetShardPublications(ctx context.Context, from peer
 		if err != nil {
 			return publications, err
 		}
+		if len(publications)+len(page.Publications) > 100000 {
+			return publications, fmt.Errorf("dataset-shard-list: publication count exceeds 100000")
+		}
 		for _, item := range page.Publications {
 			publications = append(publications, datasetShardPublicationFromListItem(schema, item))
 		}
@@ -3139,13 +3147,16 @@ func (n *Node) listRemoteDatasetShardPublications(ctx context.Context, from peer
 	}
 }
 
-func (n *Node) listRemoteDatasetShardPublicationPage(ctx context.Context, from peer.ID, schema string, offset int, limit int) (datasetShardPublicationListResponse, error) {
-	var response datasetShardPublicationListResponse
+func (n *Node) listRemoteDatasetShardPublicationPage(ctx context.Context, from peer.ID, schema string, offset int, limit int) (response datasetShardPublicationListResponse, err error) {
 	stream, err := n.host.NewStream(ctx, from, protocol.FlatSQLSyncProtocolID)
 	if err != nil {
 		return response, err
 	}
 	defer stream.Close()
+	defer recoverPeerReply("dataset-shard-list", stream, &err)
+	_ = stream.SetDeadline(time.Now().Add(30 * time.Second))
+	stopReset := context.AfterFunc(ctx, func() { _ = stream.Reset() })
+	defer stopReset()
 	if err := protocol.WriteFlatSQLSyncJSONFrame(stream, map[string]interface{}{
 		"op":                 "list_published_shards",
 		"schema":             schema,
@@ -3160,12 +3171,15 @@ func (n *Node) listRemoteDatasetShardPublicationPage(ctx context.Context, from p
 	}
 	if response.Status != "ok" {
 		if response.Error != nil && response.Error.Message != "" {
-			return response, errors.New(response.Error.Message)
+			return response, fmt.Errorf("dataset-shard-list: provider refused: %.1024q", response.Error.Message)
 		}
-		return response, fmt.Errorf("list published shards returned status %q", response.Status)
+		return response, fmt.Errorf("list published shards returned status %.128q", response.Status)
 	}
 	if response.Op != "list_published_shards" || response.SyncProtocol != protocol.FlatSQLSyncProtocolID {
-		return response, fmt.Errorf("unexpected list published shards response: %+v", response)
+		return response, fmt.Errorf("unexpected list published shards operation or protocol")
+	}
+	if response.PublicationOffset != offset || response.PublicationCount != len(response.Publications) || response.PublicationCount > limit || response.TotalPublicationCount < offset || response.PublicationCount > response.TotalPublicationCount-offset {
+		return response, fmt.Errorf("dataset-shard-list: inconsistent page counts")
 	}
 	return response, nil
 }
@@ -3247,11 +3261,7 @@ func (n *Node) materializeStoredDatasetPublicationPNMs(ctx context.Context, limi
 				break
 			}
 		}
-		if record == nil || len(record.Data) == 0 || !PNM.SizePrefixedPNMBufferHasIdentifier(record.Data) {
-			continue
-		}
-		pnm := PNM.GetSizePrefixedRootAsPNM(record.Data, 0)
-		schema := datasetPublicationFileIDSchema(string(pnm.FILE_ID()))
+		_, schema, _ := datasetPublicationRecordParts(record)
 		if schema == "" {
 			continue
 		}
@@ -3311,7 +3321,9 @@ func (n *Node) storedDatasetPublicationPNMIsSelfOwned(record *storage.Record) bo
 	return strings.TrimSpace(record.PeerID) == n.host.ID().String()
 }
 
-func (n *Node) materializeStoredDatasetPublicationPNM(ctx context.Context, schema string, record *storage.Record) (bool, error) {
+func (n *Node) materializeStoredDatasetPublicationPNM(ctx context.Context, schema string, record *storage.Record) (materialized bool, err error) {
+	from, _ := peer.Decode(record.PeerID)
+	defer recoverPeerIngress("dataset-pnm-catchup", from, false, &err)
 	var lastSignerMismatch error
 	for _, from := range n.datasetPublicationSignerCandidates(strings.TrimSpace(record.PeerID)) {
 		if !n.peerRegistry.IsTrusted(from) {
@@ -3406,55 +3418,60 @@ func (n *Node) handleSubscription(sub *pubsub.Subscription, schema string) {
 			continue
 		}
 
-		// StrictSign authenticates the original publisher. ReceivedFrom is
-		// only the immediate relay and must not select the signing key.
-		from := msg.GetFrom()
-		if from == "" || from == n.host.ID() {
-			continue
-		}
-
-		// A trusted peer's PNM on the aggregate topic goes to the TipQueue
-		// first (see below): when the trusted-import lane scope refuses its
-		// lane, nothing of it is kept, not even the PNM row.
-		trustedTip := schema == "PNM.fbs" && n.tipQueue != nil && n.peerRegistry != nil && n.peerRegistry.IsTrusted(from)
-		if trustedTip {
-			publication := *msg
-			publication.ReceivedFrom = from
-			if n.tipQueue.HandleMessageDeclined(&publication) {
-				continue
-			}
-		}
-
-		// Process the message
-		stored, err := n.protocol.HandlePubSubMessageStored(schema, msg.Data, from)
-		if err != nil {
-			log.Warnf("Failed to handle message on %s: %v", schema, err)
-			n.raisePubSubPublicationRejected(from.String(), err)
-		} else if stored {
-			// Activity-ring tap (M2 activity capability, caps/
-			// nodeactivity.go): this is the ACCEPTED/stored record, not every
-			// gossip delivery.
-			//
-			// Read the bool, not the absence of an error. Since record writes
-			// were gated on peer trust (74c82735c) a nil error means HANDLED,
-			// which is no longer the same as STORED: a message from an
-			// untrusted peer is validated and — for a dataset-catalog
-			// announcement — dispatched for metadata discovery, all without
-			// becoming a row. Counting those as stored records would report
-			// ordinary public-topic traffic as ingest.
-			n.activityRing.Append("record_stored", from.String(), schema)
-		}
-
-		// The aggregate "PNM.fbs" topic is deliberately skipped by
-		// materializeDatasetPublicationPNM (schema == "PNM.fbs" is a no-op
-		// there; only the per-schema dataset topics materialize directly).
-		// The TipQueue (Task D1) is that topic's consumer: forward only
-		// messages from already-trusted peers, mirroring every other
-		// trust gate in this file (e.g. materializeDatasetPublicationPNM,
-		// catchUpDatasetShardPublicationsFromPeer) so an untrusted peer's
-		// PNM never reaches the queue's fetch/pin/materialize path.
-		// (Forwarded above, before the row is stored.)
+		n.handleSchemaMessage(msg, schema)
 	}
+}
+
+func (n *Node) handleSchemaMessage(msg *pubsub.Message, schema string) {
+	defer recoverPeerIngress("schema-gossip/"+schema, msg.GetFrom(), true, nil)
+	// StrictSign authenticates the original publisher. ReceivedFrom is
+	// only the immediate relay and must not select the signing key.
+	from := msg.GetFrom()
+	if from == "" || from == n.host.ID() {
+		return
+	}
+
+	// A trusted peer's PNM on the aggregate topic goes to the TipQueue
+	// first (see below): when the trusted-import lane scope refuses its
+	// lane, nothing of it is kept, not even the PNM row.
+	trustedTip := schema == "PNM.fbs" && n.tipQueue != nil && n.peerRegistry != nil && n.peerRegistry.IsTrusted(from)
+	if trustedTip {
+		publication := *msg
+		publication.ReceivedFrom = from
+		if n.tipQueue.HandleMessageDeclined(&publication) {
+			return
+		}
+	}
+
+	// Process the message
+	stored, err := n.protocol.HandlePubSubMessageStored(schema, msg.Data, from)
+	if err != nil {
+		log.Warnf("Failed to handle message on %s: %v", schema, err)
+		n.raisePubSubPublicationRejected(from.String(), err)
+	} else if stored {
+		// Activity-ring tap (M2 activity capability, caps/
+		// nodeactivity.go): this is the ACCEPTED/stored record, not every
+		// gossip delivery.
+		//
+		// Read the bool, not the absence of an error. Since record writes
+		// were gated on peer trust (74c82735c) a nil error means HANDLED,
+		// which is no longer the same as STORED: a message from an
+		// untrusted peer is validated and — for a dataset-catalog
+		// announcement — dispatched for metadata discovery, all without
+		// becoming a row. Counting those as stored records would report
+		// ordinary public-topic traffic as ingest.
+		n.activityRing.Append("record_stored", from.String(), schema)
+	}
+
+	// The aggregate "PNM.fbs" topic is deliberately skipped by
+	// materializeDatasetPublicationPNM (schema == "PNM.fbs" is a no-op
+	// there; only the per-schema dataset topics materialize directly).
+	// The TipQueue (Task D1) is that topic's consumer: forward only
+	// messages from already-trusted peers, mirroring every other
+	// trust gate in this file (e.g. materializeDatasetPublicationPNM,
+	// catchUpDatasetShardPublicationsFromPeer) so an untrusted peer's
+	// PNM never reaches the queue's fetch/pin/materialize path.
+	// (Forwarded above, before the row is stored.)
 }
 
 func (n *Node) handleDatasetFeedHeadSubscription(sub *pubsub.Subscription, schema string) {
@@ -3469,36 +3486,41 @@ func (n *Node) handleDatasetFeedHeadSubscription(sub *pubsub.Subscription, schem
 			log.Warnf("Error reading dataset feed-head subscription %s: %v", schema, err)
 			continue
 		}
-		if msg.ReceivedFrom == n.host.ID() {
-			continue
+		n.handleDatasetFeedHeadMessage(msg, schema)
+	}
+}
+
+func (n *Node) handleDatasetFeedHeadMessage(msg *pubsub.Message, schema string) {
+	defer recoverPeerIngress("feed-head-gossip/"+schema, msg.ReceivedFrom, true, nil)
+	if msg.ReceivedFrom == n.host.ID() {
+		return
+	}
+	ann, err := sdnpubsub.ParseDatasetFeedHeadAnnouncement(msg.Data)
+	if err != nil {
+		log.Warnf("Invalid dataset feed-head announcement on %s from %s: %v", schema, msg.ReceivedFrom.ShortString(), err)
+		return
+	}
+	if ann.Signature != "" {
+		// Tampered or malformed signatures are always rejected.
+		if err := sdnpubsub.VerifyDatasetFeedHead(ann, nil); err != nil {
+			log.Warnf("Rejecting dataset feed head on %s from %s: %v", schema, msg.ReceivedFrom.ShortString(), err)
+			return
 		}
-		ann, err := sdnpubsub.ParseDatasetFeedHeadAnnouncement(msg.Data)
-		if err != nil {
-			log.Warnf("Invalid dataset feed-head announcement on %s from %s: %v", schema, msg.ReceivedFrom.ShortString(), err)
-			continue
-		}
-		if ann.Signature != "" {
-			// Tampered or malformed signatures are always rejected.
-			if err := sdnpubsub.VerifyDatasetFeedHead(ann, nil); err != nil {
-				log.Warnf("Rejecting dataset feed head on %s from %s: %v", schema, msg.ReceivedFrom.ShortString(), err)
-				continue
-			}
-		} else if n.config != nil && n.config.Security.RequireSignedFeedHeads {
-			log.Warnf("Rejecting unsigned dataset feed head on %s from %s (security.require_signed_feed_heads)", schema, msg.ReceivedFrom.ShortString())
-			continue
-		}
-		if ann.Schema != schema {
-			log.Debugf("Skipping dataset feed-head announcement on %s for schema %s", schema, ann.Schema)
-			continue
-		}
-		imported, err := n.materializeDatasetFeedHeadAnnouncement(n.ctx, ann, msg.ReceivedFrom)
-		if err != nil {
-			log.Warnf("Failed to materialize dataset feed head %s from %s on %s: %v", ann.FeedHead, msg.ReceivedFrom.ShortString(), schema, err)
-			continue
-		}
-		if imported > 0 {
-			log.Infof("Materialized dataset feed head %s from %s on %s: imported=%d", ann.FeedHead, msg.ReceivedFrom.ShortString(), schema, imported)
-		}
+	} else if n.config != nil && n.config.Security.RequireSignedFeedHeads {
+		log.Warnf("Rejecting unsigned dataset feed head on %s from %s (security.require_signed_feed_heads)", schema, msg.ReceivedFrom.ShortString())
+		return
+	}
+	if ann.Schema != schema {
+		log.Debugf("Skipping dataset feed-head announcement on %s for schema %s", schema, ann.Schema)
+		return
+	}
+	imported, err := n.materializeDatasetFeedHeadAnnouncement(n.ctx, ann, msg.ReceivedFrom)
+	if err != nil {
+		log.Warnf("Failed to materialize dataset feed head %s from %s on %s: %v", ann.FeedHead, msg.ReceivedFrom.ShortString(), schema, err)
+		return
+	}
+	if imported > 0 {
+		log.Infof("Materialized dataset feed head %s from %s on %s: imported=%d", ann.FeedHead, msg.ReceivedFrom.ShortString(), schema, imported)
 	}
 }
 
@@ -3996,19 +4018,20 @@ func (f *ipfsTipFetcher) Fetch(ctx context.Context, cidValue string) ([]byte, er
 		return nil, fmt.Errorf("IPFS cat failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
-	if f.maxBytes <= 0 {
-		return io.ReadAll(resp.Body)
+	maxBytes := f.maxBytes
+	if maxBytes <= 0 {
+		maxBytes = sdnpubsub.DefaultMaxFetchBytes
 	}
 
 	// Read at most maxBytes+1 so a body that is exactly at the cap can be
 	// distinguished from one that exceeds it, without ever buffering more
 	// than a single byte past the limit.
-	data, err := io.ReadAll(io.LimitReader(resp.Body, f.maxBytes+1))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("read IPFS CID bytes: %w", err)
 	}
-	if int64(len(data)) > f.maxBytes {
-		return nil, fmt.Errorf("%w: cid %s exceeded %d bytes", sdnpubsub.ErrFetchTooLarge, cidValue, f.maxBytes)
+	if int64(len(data)) > maxBytes {
+		return nil, fmt.Errorf("%w: cid %s exceeded %d bytes", sdnpubsub.ErrFetchTooLarge, cidValue, maxBytes)
 	}
 	return data, nil
 }
@@ -4111,7 +4134,7 @@ func (p *ipfsTipPinner) Pin(ctx context.Context, cidValue string, _ time.Duratio
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return nil
 	}
-	body, _ := io.ReadAll(resp.Body)
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	return fmt.Errorf("IPFS pin/add failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 }
 
@@ -4141,6 +4164,7 @@ func (n *Node) handleTipQueueTip(tip *sdnpubsub.Tip, _ sdnpubsub.ResolvedConfig)
 		log.Debugf("TipQueue: cannot decode tip peer ID %q: %v", tip.PeerID, err)
 		return
 	}
+	defer recoverPeerIngress("tipqueue-tip", from, true, nil)
 	materialized, laneRefused, err := n.materializeDatasetPublicationPNMLane(n.ctx, schema, tip.RawPNM, from)
 	if laneRefused {
 		// The trusted-import lane scope refused the lane: the queue keeps
@@ -4180,6 +4204,11 @@ func (n *Node) mayAcceptPush(id peer.ID) bool {
 		return false
 	}
 	return n.peerRegistry.IsTrusted(id)
+}
+
+// Trusting a peer's publications does not authorize reading private tables.
+func (n *Node) mayReadPrivate(id peer.ID) bool {
+	return n != nil && n.peerRegistry != nil && id != "" && n.peerRegistry.EffectiveTrustLevel(id) >= peers.Admin
 }
 
 // handleTrustLevelChange is the Task D2 trust-change hook: it auto-
@@ -4224,16 +4253,20 @@ func (n *Node) subscribeFullyTrustedPeer(id peer.ID) {
 	n.wg.Add(1)
 	go func() {
 		defer n.wg.Done()
-		if materialized, err := n.materializeStoredDatasetPublicationPNMs(n.ctx, datasetPublicationCatchupLimit); err != nil {
-			log.Warnf("Trust-promotion PNM catch-up for %s completed with errors after materializing %d update(s): %v", id.ShortString(), materialized, err)
-		} else if materialized > 0 {
-			log.Infof("Trust-promotion PNM catch-up materialized %d update(s) triggered by %s", materialized, id.ShortString())
-		}
-		if materialized, err := n.catchUpDatasetShardPublicationsFromPeer(n.ctx, id); err != nil {
-			log.Warnf("Trust-promotion shard catch-up from %s completed with errors after materializing %d shard(s): %v", id.ShortString(), materialized, err)
-		} else if materialized > 0 {
-			log.Infof("Trust-promotion shard catch-up materialized %d shard(s) from %s", materialized, id.ShortString())
-		}
+		runPeerIngress("trust-promotion-pnm-backfill", id, func() {
+			if materialized, err := n.materializeStoredDatasetPublicationPNMs(n.ctx, datasetPublicationCatchupLimit); err != nil {
+				log.Warnf("Trust-promotion PNM catch-up for %s completed with errors after materializing %d update(s): %v", id.ShortString(), materialized, err)
+			} else if materialized > 0 {
+				log.Infof("Trust-promotion PNM catch-up materialized %d update(s) triggered by %s", materialized, id.ShortString())
+			}
+		})
+		runPeerIngress("trust-promotion-shard-backfill", id, func() {
+			if materialized, err := n.catchUpDatasetShardPublicationsFromPeer(n.ctx, id); err != nil {
+				log.Warnf("Trust-promotion shard catch-up from %s completed with errors after materializing %d shard(s): %v", id.ShortString(), materialized, err)
+			} else if materialized > 0 {
+				log.Infof("Trust-promotion shard catch-up materialized %d shard(s) from %s", materialized, id.ShortString())
+			}
+		})
 	}()
 }
 
@@ -4250,7 +4283,8 @@ func (n *Node) unsubscribeFullyTrustedPeer(id peer.ID) {
 	}
 }
 
-func (n *Node) materializeDatasetFeedHeadAnnouncement(ctx context.Context, ann sdnpubsub.DatasetFeedHeadAnnouncement, from peer.ID) (int, error) {
+func (n *Node) materializeDatasetFeedHeadAnnouncement(ctx context.Context, ann sdnpubsub.DatasetFeedHeadAnnouncement, from peer.ID) (imported int, err error) {
+	defer recoverPeerIngress("dataset-feed-head-import", from, false, &err)
 	if n == nil || n.store == nil || n.host == nil || n.peerRegistry == nil {
 		return 0, nil
 	}
@@ -4523,13 +4557,16 @@ type datasetFeedHeadAssetHeader struct {
 	} `json:"error"`
 }
 
-func (n *Node) fetchDatasetFeedHeadAssetToFile(ctx context.Context, ann sdnpubsub.DatasetFeedHeadAnnouncement, from peer.ID, cidValue string, role string, outputPath string) (datasetFeedHeadAssetHeader, error) {
-	var header datasetFeedHeadAssetHeader
+func (n *Node) fetchDatasetFeedHeadAssetToFile(ctx context.Context, ann sdnpubsub.DatasetFeedHeadAnnouncement, from peer.ID, cidValue string, role string, outputPath string) (header datasetFeedHeadAssetHeader, err error) {
 	stream, err := n.host.NewStream(ctx, from, protocol.FlatSQLSyncProtocolID)
 	if err != nil {
 		return header, fmt.Errorf("open FlatSQL sync stream to %s: %w", from.ShortString(), err)
 	}
 	defer stream.Close()
+	defer recoverPeerReply("dataset-asset-reply", stream, &err)
+	_ = stream.SetDeadline(time.Now().Add(datasetPublicationFetchBudget))
+	stopReset := context.AfterFunc(ctx, func() { _ = stream.Reset() })
+	defer stopReset()
 	if err := protocol.WriteFlatSQLSyncJSONFrame(stream, map[string]interface{}{
 		"op":            "read_published_asset",
 		"schema":        ann.Schema,
@@ -4546,10 +4583,10 @@ func (n *Node) fetchDatasetFeedHeadAssetToFile(ctx context.Context, ann sdnpubsu
 		return header, fmt.Errorf("read published %s asset header %s: %w", role, cidValue, err)
 	}
 	if header.Status == "error" {
-		return header, fmt.Errorf("provider rejected published %s asset %s: %s", role, cidValue, header.Error.Message)
+		return header, fmt.Errorf("provider rejected published %s asset: %.1024q", role, header.Error.Message)
 	}
 	if header.Op != "read_published_asset" || header.Status != "ok" || header.Role != role || header.CID != cidValue || header.SyncProtocol != protocol.FlatSQLSyncProtocolID || !header.ImmutableBytes {
-		return header, fmt.Errorf("published %s asset header mismatch: %+v", role, header)
+		return header, fmt.Errorf("published %s asset header mismatch", role)
 	}
 	if header.Schema != ann.Schema {
 		return header, fmt.Errorf("published %s asset schema = %q, want %q", role, header.Schema, ann.Schema)
@@ -4564,6 +4601,13 @@ func (n *Node) fetchDatasetFeedHeadAssetToFile(ctx context.Context, ann sdnpubsu
 	if err != nil {
 		return header, fmt.Errorf("create published %s asset file: %w", role, err)
 	}
+	complete := false
+	defer func() {
+		_ = file.Close()
+		if !complete {
+			_ = os.Remove(outputPath)
+		}
+	}()
 	hash := sha256.New()
 	written, copyErr := io.CopyN(io.MultiWriter(file, hash), stream, header.ByteCount)
 	closeErr := file.Close()
@@ -4580,6 +4624,7 @@ func (n *Node) fetchDatasetFeedHeadAssetToFile(ctx context.Context, ann sdnpubsu
 	if strings.TrimSpace(header.SHA256) != "" && actualSHA != header.SHA256 {
 		return header, fmt.Errorf("published %s asset %s SHA-256 = %s, want %s", role, cidValue, actualSHA, header.SHA256)
 	}
+	complete = true
 	return header, nil
 }
 
@@ -4595,8 +4640,12 @@ var datasetPNMLaneRefused sync.Map
 
 // materializeDatasetPublicationPNMLane is materializeDatasetPublicationPNM
 // that also reports whether the lane scope refused the publication's lane.
-func (n *Node) materializeDatasetPublicationPNMLane(ctx context.Context, schema string, pnmBytes []byte, from peer.ID) (bool, bool, error) {
-	materialized, err := n.materializeDatasetPublicationPNMInner(ctx, schema, pnmBytes, from)
+func (n *Node) materializeDatasetPublicationPNMLane(ctx context.Context, schema string, pnmBytes []byte, from peer.ID) (materialized bool, refused bool, err error) {
+	defer recoverPeerIngress("dataset-pnm-import", from, false, &err)
+	if err := sds.VerifySizePrefixedStructure("PNM.fbs", pnmBytes); err != nil {
+		return false, false, err
+	}
+	materialized, err = n.materializeDatasetPublicationPNMInner(ctx, schema, pnmBytes, from)
 	if errors.Is(err, storage.ErrDatasetPublicationLaneNotImported) {
 		return false, true, nil
 	}
@@ -4611,6 +4660,9 @@ func (n *Node) materializeDatasetPublicationPNMLane(ctx context.Context, schema 
 }
 
 func (n *Node) materializeDatasetPublicationPNMInner(ctx context.Context, schema string, pnmBytes []byte, from peer.ID) (bool, error) {
+	if err := sds.VerifySizePrefixedStructure("PNM.fbs", pnmBytes); err != nil {
+		return false, err
+	}
 	if schema == "PNM.fbs" {
 		return false, nil
 	}
@@ -4807,11 +4859,7 @@ func latestDatasetPublicationPNMBatches(records []*storage.Record) []*storage.Re
 		batchID string
 	})
 	for _, record := range records {
-		if record == nil || len(record.Data) == 0 || !PNM.SizePrefixedPNMBufferHasIdentifier(record.Data) {
-			continue
-		}
-		pnm := PNM.GetSizePrefixedRootAsPNM(record.Data, 0)
-		dataset, schema, batchID := datasetPublicationFileIDParts(string(pnm.FILE_ID()))
+		dataset, schema, batchID := datasetPublicationRecordParts(record)
 		if dataset == "" || schema == "" || batchID == "" {
 			continue
 		}
@@ -4861,6 +4909,20 @@ func datasetPublicationFileIDParts(fileID string) (dataset string, schema string
 		}
 	}
 	return dataset, schema, batchID
+}
+
+func datasetPublicationRecordParts(record *storage.Record) (dataset, schema, batchID string) {
+	if record == nil {
+		return "", "", ""
+	}
+	from, _ := peer.Decode(record.PeerID)
+	defer recoverPeerIngress("dataset-pnm-catchup", from, false, nil)
+	if err := sds.VerifySizePrefixedStructure("PNM.fbs", record.Data); err != nil {
+		log.Debugf("dataset-pnm-catchup: stored record from %s rejected: %v", from, err)
+		return "", "", ""
+	}
+	pnm := PNM.GetSizePrefixedRootAsPNM(record.Data, 0)
+	return datasetPublicationFileIDParts(string(pnm.FILE_ID()))
 }
 
 func (n *Node) datasetPNMAlreadyMaterialized(key string) bool {
@@ -4933,6 +4995,10 @@ func (n *Node) datasetPublicationKeyCandidates(ctx context.Context, id peer.ID, 
 	if (err != nil || len(dirKeys) == 0) && allowFetch && n != nil && n.host != nil {
 		epmBytes, fetchErr := n.fetchDiscoveredNodeEPM(id)
 		if fetchErr == nil && len(epmBytes) > 0 {
+			if err := epm.VerifyEPMBuffer(epmBytes); err != nil {
+				log.Warnf("dataset-publication-key: EPM from %s rejected: %v", id, err)
+				return dedupPublicKeys(keys)
+			}
 			n.indexFetchedDiscoveredNodeEPM(id, "dataset-publication", epmBytes)
 			dirKeys, _ = n.datasetPublicationPublicKeysFromDirectory(id)
 		} else if fetchErr != nil && ctx != nil && ctx.Err() == nil {
@@ -5871,23 +5937,19 @@ func (n *Node) sdnTopicMembers() []peer.ID {
 }
 
 func (n *Node) joinAndStoreTopic(key, topicName string) (*pubsub.Topic, error) {
-	n.topicsMu.RLock()
-	topic, ok := n.topics[key]
-	n.topicsMu.RUnlock()
-	if ok {
-		return topic, nil
-	}
-
-	joined, err := n.pubsub.Join(topicName)
-	if err != nil {
-		return nil, err
-	}
-
 	n.topicsMu.Lock()
 	defer n.topicsMu.Unlock()
 	if topic, ok := n.topics[key]; ok {
 		return topic, nil
 	}
+	if err := sdnpubsub.RegisterTopicStructureValidator(n.pubsub, topicName); err != nil {
+		return nil, err
+	}
+	joined, err := n.pubsub.Join(topicName)
+	if err != nil {
+		return nil, err
+	}
+
 	n.topics[key] = joined
 	return joined, nil
 }

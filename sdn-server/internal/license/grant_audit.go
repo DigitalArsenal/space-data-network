@@ -6,6 +6,7 @@ import (
 
 	lch "github.com/DigitalArsenal/spacedatastandards.org/lib/go/LCH"
 	lgr "github.com/DigitalArsenal/spacedatastandards.org/lib/go/LGR"
+	"github.com/spacedatanetwork/sdn-server/internal/sds"
 )
 
 // Grant auditing.
@@ -122,6 +123,9 @@ func DecodeGrantAuditEvent(direction string, frame []byte) (event GrantAuditEven
 	}
 	switch {
 	case lch.LCHBufferHasIdentifier(frame):
+		if sds.VerifyBareStructure("LCH.fbs", frame) != nil {
+			return GrantAuditEvent{}, false
+		}
 		msg := lch.GetRootAsLCH(frame, 0)
 		event := GrantAuditEvent{
 			Direction:       direction,
@@ -145,6 +149,9 @@ func DecodeGrantAuditEvent(direction string, frame []byte) (event GrantAuditEven
 		}
 		return event, true
 	case lgr.LGRBufferHasIdentifier(frame):
+		if sds.VerifyBareStructure("LGR.fbs", frame) != nil {
+			return GrantAuditEvent{}, false
+		}
 		msg := lgr.GetRootAsLGR(frame, 0)
 		event := GrantAuditEvent{
 			Direction:       direction,

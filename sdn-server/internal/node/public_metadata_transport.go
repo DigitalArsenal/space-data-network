@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -75,6 +76,7 @@ func registerPublicMetadataTransport(h host.Host, mux *http.ServeMux, path strin
 		_ = stream.SetDeadline(time.Now().Add(10 * time.Second))
 		req, err := http.ReadRequest(bufio.NewReader(io.LimitReader(stream, 8192)))
 		if err != nil || req.Method != http.MethodGet || req.URL.RequestURI() != path || req.ContentLength > 0 || len(req.TransferEncoding) != 0 {
+			log.Warnf("public-metadata: request from %s refused: malformed or unsupported request", stream.Conn().RemotePeer())
 			_ = stream.Reset()
 			return
 		}
@@ -84,6 +86,7 @@ func registerPublicMetadataTransport(h host.Host, mux *http.ServeMux, path strin
 		w := &boundedMetadataResponse{header: make(http.Header)}
 		handler.ServeHTTP(w, local)
 		if w.overflow {
+			log.Warnf("public-metadata: request from %s refused: response exceeds limit", stream.Conn().RemotePeer())
 			_ = stream.Reset()
 			return
 		}
@@ -138,6 +141,13 @@ func registerPublicMetadataTransport(h host.Host, mux *http.ServeMux, path strin
 			return
 		}
 		defer stream.Close()
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				_ = stream.Reset()
+				log.Errorf("public-metadata-reply: response from %s dropped: handler panicked: %v", id, recovered)
+				http.Error(w, "Provider metadata response rejected", http.StatusBadGateway)
+			}
+		}()
 		stopReset := context.AfterFunc(ctx, func() { _ = stream.Reset() })
 		defer stopReset()
 		_ = stream.SetDeadline(time.Now().Add(10 * time.Second))
@@ -151,6 +161,7 @@ func registerPublicMetadataTransport(h host.Host, mux *http.ServeMux, path strin
 		response, err := http.ReadResponse(bufio.NewReader(io.LimitReader(stream, publicMetadataLimit+8192)), request)
 		if err != nil {
 			_ = stream.Reset()
+			log.Warnf("public-metadata-reply: response from %s refused: malformed HTTP response", id)
 			http.Error(w, "Provider metadata response failed", http.StatusBadGateway)
 			return
 		}
@@ -158,6 +169,7 @@ func registerPublicMetadataTransport(h host.Host, mux *http.ServeMux, path strin
 		body, err := io.ReadAll(io.LimitReader(response.Body, publicMetadataLimit+1))
 		if err != nil || len(body) > publicMetadataLimit {
 			_ = stream.Reset()
+			log.Warnf("public-metadata-reply: response from %s refused: body exceeds limits or is truncated", id)
 			http.Error(w, "Provider metadata exceeds limits", http.StatusBadGateway)
 			return
 		}
@@ -171,6 +183,12 @@ func registerPublicMetadataTransport(h host.Host, mux *http.ServeMux, path strin
 		}
 		if response.StatusCode != http.StatusOK {
 			http.Error(w, "Provider has no available module manifest", http.StatusBadGateway)
+			return
+		}
+		if !json.Valid(body) {
+			_ = stream.Reset()
+			log.Warnf("public-metadata-reply: response from %s refused: invalid JSON", id)
+			http.Error(w, "Provider metadata response rejected", http.StatusBadGateway)
 			return
 		}
 		mu.Lock()

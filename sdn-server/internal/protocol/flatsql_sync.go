@@ -9,6 +9,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -177,62 +178,49 @@ func truncateName(name string) string {
 func (h *FlatSQLSyncHandler) HandleStream(s network.Stream) {
 	defer s.Close()
 	defer recoverStream("flatsql-sync", s)
+	_ = s.SetReadDeadline(time.Now().Add(DefaultReadTimeout))
 
 	var req flatSQLSyncRequest
 	if err := readFlatSQLSyncJSONFrame(s, datasync.StreamRequestMaxBytes, &req); err != nil {
+		log.Warnf("flatsql-sync: refused request from %s: %s", streamPeer(s).ShortString(), boundedRefusalReason(err.Error()))
 		_ = writeFlatSQLSyncJSONFrame(s, flatSQLSyncErrorResponse(err))
 		return
 	}
 	peerID := streamPeer(s)
 	if err := h.authorize(peerID, &req); err != nil {
-		log.Warnf("flatsql-sync: refused %q from %s: %v", truncateName(req.Op), peerID.ShortString(), err)
+		log.Warnf("flatsql-sync: refused %q from %s: %s", truncateName(req.Op), peerID.ShortString(), boundedRefusalReason(err.Error()))
 		_ = writeFlatSQLSyncJSONFrame(s, flatSQLSyncErrorResponse(err))
 		return
 	}
 
+	var requestErr error
 	switch strings.TrimSpace(req.Op) {
 	case "", "read_chunk":
-		if err := h.handleReadChunk(s, req); err != nil {
-			_ = writeFlatSQLSyncJSONFrame(s, flatSQLSyncErrorResponse(err))
-		}
+		requestErr = h.handleReadChunk(s, req)
 	case "scan", "open_snapshot":
-		if err := h.handleScan(s, req); err != nil {
-			_ = writeFlatSQLSyncJSONFrame(s, flatSQLSyncErrorResponse(err))
-		}
+		requestErr = h.handleScan(s, req)
 	case "open_manifest":
-		if err := h.handleOpenManifest(s, req); err != nil {
-			_ = writeFlatSQLSyncJSONFrame(s, flatSQLSyncErrorResponse(err))
-		}
+		requestErr = h.handleOpenManifest(s, req)
 	case "list_datastores":
-		if err := h.handleListDatastores(s); err != nil {
-			_ = writeFlatSQLSyncJSONFrame(s, flatSQLSyncErrorResponse(err))
-		}
+		requestErr = h.handleListDatastores(s)
 	case "ack_progress":
-		if err := h.handleAckProgress(s, req); err != nil {
-			_ = writeFlatSQLSyncJSONFrame(s, flatSQLSyncErrorResponse(err))
-		}
+		requestErr = h.handleAckProgress(s, req)
 	case "wire_speed_probe":
-		if err := h.handleWireSpeedProbe(s, peerID, req); err != nil {
-			_ = writeFlatSQLSyncJSONFrame(s, flatSQLSyncErrorResponse(err))
-		}
+		requestErr = h.handleWireSpeedProbe(s, peerID, req)
 	case "read_published_shard":
-		if err := h.handleReadPublishedShard(s, req); err != nil {
-			_ = writeFlatSQLSyncJSONFrame(s, flatSQLSyncErrorResponse(err))
-		}
+		requestErr = h.handleReadPublishedShard(s, req)
 	case "read_published_shard_batch":
-		if err := h.handleReadPublishedShardBatch(s, req); err != nil {
-			_ = writeFlatSQLSyncJSONFrame(s, flatSQLSyncErrorResponse(err))
-		}
+		requestErr = h.handleReadPublishedShardBatch(s, req)
 	case "read_published_asset":
-		if err := h.handleReadPublishedAsset(s, req); err != nil {
-			_ = writeFlatSQLSyncJSONFrame(s, flatSQLSyncErrorResponse(err))
-		}
+		requestErr = h.handleReadPublishedAsset(s, req)
 	case "list_published_shards":
-		if err := h.handleListPublishedShards(s, req); err != nil {
-			_ = writeFlatSQLSyncJSONFrame(s, flatSQLSyncErrorResponse(err))
-		}
+		requestErr = h.handleListPublishedShards(s, req)
 	default:
-		_ = writeFlatSQLSyncJSONFrame(s, flatSQLSyncErrorResponse(fmt.Errorf("unsupported sync op %q", req.Op)))
+		requestErr = fmt.Errorf("unsupported sync op %q", truncateName(req.Op))
+	}
+	if requestErr != nil {
+		log.Debugf("flatsql-sync: %q from %s failed: %s", truncateName(req.Op), peerID.ShortString(), boundedRefusalReason(requestErr.Error()))
+		_ = writeFlatSQLSyncJSONFrame(s, flatSQLSyncErrorResponse(requestErr))
 	}
 }
 
@@ -348,6 +336,9 @@ func (h *FlatSQLSyncHandler) handleReadPublishedShard(writer io.Writer, req flat
 }
 
 func (h *FlatSQLSyncHandler) handleReadPublishedShardBatch(writer io.Writer, req flatSQLSyncRequest) error {
+	if len(req.CIDs) > datasync.MaxSyncChunkLimit {
+		return fmt.Errorf("published shard batch limit is %d", datasync.MaxSyncChunkLimit)
+	}
 	activeStore, cleanup, err := h.storeForRequest(req)
 	if err != nil {
 		return err
@@ -844,13 +835,19 @@ func (h *FlatSQLSyncHandler) handleAckProgress(writer io.Writer, req flatSQLSync
 func (h *FlatSQLSyncHandler) handleWireSpeedProbe(writer io.Writer, peerID peer.ID, req flatSQLSyncRequest) error {
 	probeBytes := normalizeWireSpeedProbeBytes(req.ProbeBytes)
 	if h.probes == nil {
-		h.probes = newWireSpeedProbeBudget()
+		return fmt.Errorf("wire_speed_probe: probe budget unavailable")
 	}
 	release, err := h.probes.acquire(peerID, probeBytes)
 	if err != nil {
 		return err
 	}
 	defer release()
+	// A reader that stops consuming must not hold a node-wide probe slot:
+	// every write (the header, then each chunk) must make progress within
+	// DefaultHandlerTimeout. A slow but live reader keeps going.
+	if err := extendProbeWriteDeadline(writer); err != nil {
+		return err
+	}
 	if err := writeFlatSQLSyncJSONFrame(writer, map[string]interface{}{
 		"op":              "wire_speed_probe",
 		"status":          "ok",
@@ -874,6 +871,19 @@ func normalizeWireSpeedProbeBytes(requested int64) int64 {
 	return requested
 }
 
+// extendProbeWriteDeadline gives the next probe write DefaultHandlerTimeout
+// to complete, when the writer is a stream that supports deadlines.
+func extendProbeWriteDeadline(writer io.Writer) error {
+	stream, ok := writer.(interface{ SetWriteDeadline(time.Time) error })
+	if !ok {
+		return nil
+	}
+	if err := stream.SetWriteDeadline(time.Now().Add(DefaultHandlerTimeout)); err != nil {
+		return fmt.Errorf("wire_speed_probe: set write deadline: %w", err)
+	}
+	return nil
+}
+
 func writeWireSpeedProbePayload(writer io.Writer, totalBytes int64) error {
 	chunk := make([]byte, wireSpeedProbeChunkBytes)
 	var state uint32 = 0x9e3779b9
@@ -888,6 +898,9 @@ func writeWireSpeedProbePayload(writer io.Writer, totalBytes int64) error {
 		size := int64(len(chunk))
 		if remaining < size {
 			size = remaining
+		}
+		if err := extendProbeWriteDeadline(writer); err != nil {
+			return err
 		}
 		if _, err := writer.Write(chunk[:size]); err != nil {
 			return err
@@ -948,7 +961,10 @@ func readFlatSQLSyncJSONFrame(reader io.Reader, maxBytes int, target interface{}
 	if length == 0 {
 		return fmt.Errorf("empty sync frame")
 	}
-	if maxBytes > 0 && int64(length) > int64(maxBytes) {
+	if maxBytes <= 0 || maxBytes > datasync.StreamRequestMaxBytes {
+		maxBytes = datasync.StreamRequestMaxBytes
+	}
+	if int64(length) > int64(maxBytes) {
 		return fmt.Errorf("sync frame exceeds %d bytes", maxBytes)
 	}
 	payload := make([]byte, length)
