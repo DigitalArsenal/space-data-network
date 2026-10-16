@@ -270,6 +270,20 @@ func (w *walker) offsetField(slot int64) (int64, error) {
 	return w.follow(slot)
 }
 
+// offsetFieldFollow follows a uoffset field whose slot the reference does NOT
+// align-check: reflection VerifyObject reads a table-typed field through
+// GetPointer (an unaligned-safe ReadScalar) and checks only the target
+// table's start, never the field slot. Go's accessors read the slot with
+// binary.LittleEndian too, so an unaligned slot is memory-safe. Strings and
+// vectors keep offsetField, which aligns the slot as VerifyField<uoffset_t>
+// does.
+func (w *walker) offsetFieldFollow(slot int64) (int64, error) {
+	if err := w.rangeErr(slot, sizeUOffset, "offset slot at %d outside buffer", slot); err != nil {
+		return 0, err
+	}
+	return w.follow(slot)
+}
+
 // table is VerifyObject: VerifyTableStart, then every declared field.
 func (w *walker) table(pos int64, t *tableDef) error {
 	if err := w.atErr(pos, sizeUOffset, "table at %d misaligned or outside buffer", pos); err != nil {
@@ -340,7 +354,7 @@ func (w *walker) field(pos int64, slot func(int64) int64, f *tableField) error {
 			}
 			return nil
 		}
-		target, err := w.offsetField(pos + fo)
+		target, err := w.offsetFieldFollow(pos + fo)
 		if err != nil {
 			return err
 		}
