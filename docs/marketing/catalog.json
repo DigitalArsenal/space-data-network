@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated": "2026-10-13",
+  "updated": "2026-10-16",
   "consoleBuild": "20261013T204527Z",
   "pricing": {
     "status": "request",
@@ -73,7 +73,8 @@
         "Catalog delivered peer to peer over IPFS",
         "Owners and operators attached from SATCAT",
         "Full console on phones, with a payload catalog sized for phone memory",
-        "Rebindable hotkeys and one status log for every event"
+        "Rebindable hotkeys and one status log for every event",
+        "Engine delivered encrypted and unlocked per visit over the network, its signature checked before it runs"
       ],
       "standards": [
         "CCSDS OMM",
@@ -83,7 +84,7 @@
       "delivery": "console",
       "covers": [],
       "learnMore": "https://spaceaware.io",
-      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/engine/initEngine.ts; engine/phoneCatalog.ts; live probe 2026-10-13 build 20261013T204527Z (32,573 records over IPFS/bitswap); components/HotkeySettings.svelte; components/StatusLog.svelte"
+      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/engine/initEngine.ts; engine/phoneCatalog.ts; live probe 2026-10-13 build 20261013T204527Z (32,573 records over IPFS/bitswap); components/HotkeySettings.svelte; components/StatusLog.svelte; core delivery (SEC-006): engine/coreDelivery.ts, engine/coreProvider.json (SpaceAware-UI 62f1532), OrbPro packages/orbpro-integration/coreDeliveryBinding.js (OrbPro 1f1d9e5d39); live on spaceaware.io from build 20261015T224504Z"
     },
     {
       "id": "catalog-search",
@@ -250,13 +251,13 @@
       "capabilities": [
         "Screen against the full catalog or a single object",
         "Collision probability for each event",
-        "Conjunction data messages to review and download as CDM, JSON or OCM",
+        "Conjunction data messages in CCSDS 508.0-B-1 KVN and XML, as FlatBuffer or JSON, with OCM orbits",
         "Avoidance burn with post-burn miss distance and collision probability",
         "Operator notification package ready to send",
         "Close events and export results"
       ],
       "standards": [
-        "CCSDS CDM",
+        "CCSDS CDM 508.0-B-1",
         "CCSDS OCM",
         "SDS CQR"
       ],
@@ -266,7 +267,7 @@
         "CNJ"
       ],
       "learnMore": "https://spacedatanetwork.org/collision-avoidance.html",
-      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/modes/modeCards.ts:243-292; modes/cnj/surface.ts:547-600; modes/cnj/CnjPanel.svelte:224-227; live modules.pmm conjunction-assessment 0.6.0 ANONYMOUS"
+      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/modes/modeCards.ts:243-292; modes/cnj/surface.ts:599-610,743-770; modes/cnj/cdmExport.e2e.test.ts; modes/cnj/CnjPanel.svelte:220-243; modules analysis/conjunction-assessment tests/cdmCcsdsConformance.e2e.mjs (xmllint against the CCSDS NDM/XML 4.0.0 schema, Orekit CdmParser)"
     },
     {
       "id": "catalog-screening",
@@ -645,23 +646,28 @@
       "id": "imagery-studio",
       "name": "Globe imagery studio",
       "category": "earth-sky",
-      "tagline": "Stack, tune and compare imagery layers",
-      "summary": "Stack and reorder imagery layers with full per-layer controls, compare two dates, and add your own imagery from any URL.",
+      "tagline": "Stack, tune and compare imagery and video layers",
+      "summary": "Stack and reorder imagery layers with full per-layer controls, compare two dates, and add any imagery or video layer by URL or from your own files.",
       "capabilities": [
         "Built-in Blue Marble, Black Marble, world imagery, street map, shaded relief and OpenStreetMap",
         "Brightness, contrast, hue, gamma and day/night alpha per layer",
         "Split view, color-to-alpha and cut-outs",
         "Two-date compare",
-        "Your own imagery from any URL"
+        "Add any layer by URL: WMTS and WMS with a layer picker read from the server's capabilities, XYZ, TMS, ArcGIS MapServer and ImageServer, Cesium ion, single images, and KML or KMZ ground overlays",
+        "Your own image and video files, kept in the browser and restored on reload",
+        "Video layers (MP4, WebM, HLS) placed by bounds or four corners, playing in step with the console clock",
+        "Share a layer set as KML through the Space Data Network and open it by its CID"
       ],
       "standards": [
-        "OGC WMTS"
+        "OGC WMTS",
+        "OGC WMS",
+        "OGC KML"
       ],
       "access": "free",
       "delivery": "console",
       "covers": [],
       "learnMore": "https://spaceaware.io",
-      "evidence": "live probe 2026-10-13 Settings > IMAGERY (6 built-in layers); sdn-js/spaceaware-ui/src/orbital-console/components/imagery/ActiveLayersTable.svelte; LayerAdvanced.svelte; CustomSourceForm.svelte"
+      "evidence": "landed 2026-10-15: SpaceAware-UI 7d24ed6, OrbPro 39ce5adc82 (LiveImageryProvider); headless gate on the merged build (add flow for every layer type, rect and corner video with clock sync, layer-set share, phone 390 px); sdn-js/spaceaware-ui/src/orbital-console/components/imagery/AddLayerForm.svelte; CapabilitiesPicker.svelte; VideoTransport.svelte; LayerSetShare.svelte; engine/videoLayers.ts; not in console build 20261013T204527Z"
     },
     {
       "id": "imagery-detection",
@@ -712,6 +718,32 @@
       "evidence": "sdn-js/spaceaware-ui/src/orbital-console/components/SettingsPanel.svelte:203-570; engine/referenceGrid.ts:1-10; components/CreditsMenu.svelte"
     },
     {
+      "id": "solar-system",
+      "name": "Solar system navigation",
+      "category": "earth-sky",
+      "tagline": "Zoom out past the Milky Way and centre any planet or moon",
+      "summary": "Scroll out from Earth to the scale of the Milky Way and back. The Sun, the planets, their major moons, Pluto, Charon, Ceres and Vesta are drawn at their true positions with surface imagery; click any of them to make it the centred globe. Kernels and imagery load over the Space Data Network.",
+      "capabilities": [
+        "19 bodies with surface imagery, each one click from becoming the centred globe",
+        "Orbits for every body, a body card, and Return to Earth",
+        "Zoom from the ground to 1e22 m and back from any view",
+        "Planet positions and orientation within 0.06 arcseconds of JPL Horizons",
+        "Earth's satellites pause propagation while the camera is far from Earth",
+        "Numbered asteroids as points, a setting that is off by default",
+        "Works on phones"
+      ],
+      "standards": [
+        "NAIF SPICE",
+        "IAU WGCCRE",
+        "SDS SBD"
+      ],
+      "access": "free",
+      "delivery": "console",
+      "covers": [],
+      "learnMore": "https://spaceaware.io",
+      "evidence": "Landed 2026-10-15 (multi-body rounds 3-4): OrbPro scene.bodies/setCentralBody (OrbPro eff2b00a9b), modules propagator/solar-system-bodies, data-source/lowell-astorb, naif-kernels, body-imagery, keplerian-reference 1.8.2 (modules d8b7fb1d), console SOLAR SYSTEM search group, Centre chip and settings (SpaceAware-UI 608ed18, landed in dae4edd); clean-build checks 2026-10-15: nav 19/19 clicks centred with imagery, 1e22 m and back from pitch -0.15/-0.6/-1.2/+0.3, ACC drawn 0.056 arcsec, D9 cutoff, phone. Not on spaceaware.io until the console is republished (publish hold 2026-10-15)."
+    },
+    {
       "id": "camera-cinematics",
       "name": "Camera and cinematics",
       "category": "earth-sky",
@@ -736,12 +768,16 @@
       "id": "star-field",
       "name": "Premium star field",
       "category": "earth-sky",
-      "tagline": "A real star catalog as your sky",
-      "summary": "Replace the default sky with a real star catalog, rendered as true physics or tuned for looks, including the sky seen from the object the camera rides.",
+      "tagline": "A real star catalog and the Milky Way as your sky",
+      "summary": "Replace the default sky with a real star catalog and the Milky Way, seen as a camera would see them: true physics or tuned for looks, including the sky seen from the object the camera rides.",
       "capabilities": [
         "True-physics or look-good rendering",
         "Sky seen from the object the camera rides",
-        "Star catalog delivered over SDN and hash-checked"
+        "Star catalog delivered over SDN and hash-checked",
+        "Deeper catalog to magnitude 10, joined after the sky first draws",
+        "Milky Way and diffuse sky from an all-sky image fetched over SDN by CID",
+        "A camera model draws the sky at a real camera's exposure",
+        "Every catalog and image credited in the CREDITS menu"
       ],
       "standards": [
         "SDS STR"
@@ -750,7 +786,7 @@
       "delivery": "console",
       "covers": [],
       "learnMore": "https://spaceaware.io",
-      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/engine/starField.ts:1-115; components/SettingsPanel.svelte STARS / STAR RENDERING; license-catalog grant (no modules.pmm row)"
+      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/engine/starField.ts, engine/starFieldContent.ts (sky background and Milky Way detail by CID, star-field-camera 0.5.0 preset/exposure/observer; SpaceAware-UI efd011d, landed in dae4edd); components/SettingsPanel.svelte STARS / STAR RENDERING; engine/attribution.ts sky credits; license-catalog grant (no modules.pmm row)"
     },
     {
       "id": "sensor-shaders",
@@ -1037,7 +1073,8 @@
         "catalog-search",
         "camera-cinematics",
         "star-field",
-        "spaceaware-account"
+        "spaceaware-account",
+        "solar-system"
       ],
       "pricing": "request",
       "price": null
@@ -1105,7 +1142,8 @@
         "embed-api",
         "ccsds-interchange",
         "data-sources",
-        "module-building-blocks"
+        "module-building-blocks",
+        "solar-system"
       ],
       "pricing": "request",
       "price": null
@@ -1246,6 +1284,14 @@
     {
       "key": "module:ccsds-messages-0.2.0",
       "reason": "Not in the live module catalog"
+    },
+    {
+      "key": "imagery:misb-klv-video",
+      "reason": "Full-motion video with MISB ST 0601 metadata: files/misb-klv 0.2.0 is not yet offered by the node module catalog"
+    },
+    {
+      "key": "imagery:geotiff-cog",
+      "reason": "GeoTIFF and Cloud-Optimized GeoTIFF layers: files/geotiff 0.2.0 is not yet offered by the node module catalog"
     }
   ]
 }

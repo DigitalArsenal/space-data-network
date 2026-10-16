@@ -15,12 +15,9 @@
 <script defer src="assets/sdn-stack-nav/sdn-stack-nav.js" data-nav-style-url="/assets/vendor/sdn-stack-nav/1.0.0/sdn-stack-nav.36a36359ce18322185e9ff179f88175bab67d5ad84a14d9c08a54f2ff27267e7.css" data-nav-style-integrity="sha384-c4M8Fg+kYaeOYYtJVr7jJsde24IhSWkWaRyAOHEZU9jozhRck089aw+mnHwxymds"></script>
 <!-- SDN_CONSUMER_ASSETS_END -->
   <link rel="stylesheet" href="site.css">
+  <link rel="stylesheet" href="assets/soundtrack/soundtrack.css">
   <style>
     :root { --sdn-stack-footer-height: 40px; --sdn-stack-header-height: 52px; }
-    .tracks { display: grid; gap: 12px; margin-top: 20px; }
-    .track { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 20px; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-sm); }
-    .track h3 { margin: 0 0 2px; }
-    .track span { color: var(--muted); font-size: 14px; }
     .sg { max-width: 980px; margin: 0 auto; text-align: left; }
     .sg h3 { margin: 28px 0 10px; }
     .sg p, .sg li { color: var(--text-2); font-size: 16px; }
@@ -171,11 +168,25 @@
       <div class="wrap sg">
         <p class="eyebrow">5 &middot; Music</p>
         <h2>The Soundtrack</h2>
-        <p class="lede">The music under the Space Data Network videos. Made with Suno.</p>
-        <div class="tracks">
-          <div class="track"><div><h3>Orbital Insertion</h3><span>3:50 &middot; MP3</span></div><a class="btn" href="media/audio/orbital-insertion.mp3" download>Download</a></div>
-          <div class="track"><div><h3>Covariance</h3><span>3:45 &middot; MP3</span></div><a class="btn" href="media/audio/covariance.mp3" download>Download</a></div>
-          <div class="track"><div><h3>DeltaV</h3><span>4:15 &middot; MP3</span></div><a class="btn" href="media/audio/delta-v.mp3" download>Download</a></div>
+        <div class="st-tracks">
+          <div class="st-track" data-title="Orbital Insertion" data-src="media/audio/orbital-insertion.mp3" data-duration="229.6" data-peaks="10,21,37,33,39,39,33,47,43,49,39,41,49,41,49,41,47,49,41,64,85,82,71,85,82,75,80,45,45,60,78,71,80,73,78,73,66,60,51,62,78,75,78,80,71,78,78,71,78,71,73,75,71,64,62,45,35,33,53,73,71,80,82,82,71,80,71,73,71,66,71,71,66,73,69,56,56,56,85,78,78,69,58,47,58,62,53,51,80,69,73,73,66,78,62,71,62,60,71,75,73,75,69,60,51,49,56,69,80,75,85,78,82,80,78,82,85,75,87,87,85,78,80,60,43,37,62,97,97,94,99,97,92,94,97,99,94,99,87,94,85,89,92,92,82,85,99,62,62,62,69,97,69,71,82,92,99,80,12,10">
+            <button class="st-play" type="button" aria-label="Play Orbital Insertion"><svg class="st-i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.4-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z"/></svg><svg class="st-i-pause" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="5" width="4.2" height="14" rx="1.2"/><rect x="13.8" y="5" width="4.2" height="14" rx="1.2"/></svg></button>
+            <div class="st-meta"><h3>Orbital Insertion</h3><span class="st-time">0:00 / 3:49</span></div>
+            <div class="st-wave" role="slider" tabindex="0" aria-label="Seek Orbital Insertion" aria-valuemin="0" aria-valuemax="230" aria-valuenow="0" aria-valuetext="0:00 of 3:49"><canvas aria-hidden="true"></canvas></div>
+            <a class="btn" href="media/audio/orbital-insertion.mp3" download>Download</a>
+          </div>
+          <div class="st-track" data-title="Covariance" data-src="media/audio/covariance.mp3" data-duration="224.8" data-peaks="10,25,22,21,28,31,28,31,34,43,41,31,37,37,37,36,34,36,37,41,39,37,37,29,39,41,63,67,65,61,59,63,59,57,59,68,55,57,51,50,61,59,59,57,63,63,57,65,61,43,39,43,67,74,70,74,70,68,72,68,74,74,65,70,61,63,70,67,63,67,65,68,67,68,68,67,65,63,57,55,51,57,55,59,55,43,48,43,43,44,55,68,74,68,68,68,67,65,67,70,68,65,68,61,72,41,43,46,55,51,70,53,59,57,59,72,70,74,82,74,76,95,86,78,89,86,91,91,91,76,89,95,99,95,99,97,95,97,99,97,97,91,86,91,82,50,46,50,55,99,99,63,67,80,86,86,59,48,26,10">
+            <button class="st-play" type="button" aria-label="Play Covariance"><svg class="st-i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.4-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z"/></svg><svg class="st-i-pause" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="5" width="4.2" height="14" rx="1.2"/><rect x="13.8" y="5" width="4.2" height="14" rx="1.2"/></svg></button>
+            <div class="st-meta"><h3>Covariance</h3><span class="st-time">0:00 / 3:44</span></div>
+            <div class="st-wave" role="slider" tabindex="0" aria-label="Seek Covariance" aria-valuemin="0" aria-valuemax="225" aria-valuenow="0" aria-valuetext="0:00 of 3:44"><canvas aria-hidden="true"></canvas></div>
+            <a class="btn" href="media/audio/covariance.mp3" download>Download</a>
+          </div>
+          <div class="st-track" data-title="DeltaV" data-src="media/audio/delta-v.mp3" data-duration="254.6" data-peaks="10,14,29,32,45,32,29,29,38,51,30,29,32,62,51,29,33,37,58,55,55,55,58,56,58,47,51,60,62,60,58,64,62,62,56,64,56,60,56,56,55,58,62,51,51,64,58,64,60,60,60,66,60,55,56,60,55,60,60,62,60,56,62,56,56,56,60,56,55,56,56,56,44,38,42,38,55,53,49,44,45,60,58,60,66,60,62,66,68,70,53,47,42,47,72,64,56,38,60,64,64,68,64,64,66,70,74,60,68,64,74,82,68,70,70,70,70,68,64,66,68,72,74,72,66,99,76,44,42,74,72,66,66,70,86,82,86,88,84,90,82,82,76,95,99,99,88,93,66,44,49,70,74,58,88,66,93,99,42,10">
+            <button class="st-play" type="button" aria-label="Play DeltaV"><svg class="st-i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.4-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z"/></svg><svg class="st-i-pause" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="5" width="4.2" height="14" rx="1.2"/><rect x="13.8" y="5" width="4.2" height="14" rx="1.2"/></svg></button>
+            <div class="st-meta"><h3>DeltaV</h3><span class="st-time">0:00 / 4:14</span></div>
+            <div class="st-wave" role="slider" tabindex="0" aria-label="Seek DeltaV" aria-valuemin="0" aria-valuemax="255" aria-valuenow="0" aria-valuetext="0:00 of 4:14"><canvas aria-hidden="true"></canvas></div>
+            <a class="btn" href="media/audio/delta-v.mp3" download>Download</a>
+          </div>
         </div>
       </div>
     </section>
@@ -202,5 +213,6 @@
   <script src="site.js"></script>
   <script src="assets/ai-credits/ai-credits.js" defer></script>
   <script src="assets/section-links/section-links.js" defer></script>
+  <script src="assets/soundtrack/soundtrack.js" defer></script>
 </body>
 </html>

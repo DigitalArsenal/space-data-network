@@ -224,6 +224,15 @@ export function buildEPMSigningContent(epm) {
 const SECP256K1_ORDER = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n;
 const SECP256K1_HALF_ORDER = SECP256K1_ORDER >> 1n;
 
+// Hex from an attestation or proof is untrusted data: anything that is not an
+// even-length hex string decodes to null, and the verification fails.
+function hexOrNull(wallet, value) {
+  if (typeof value !== 'string' || value.length % 2 !== 0 || !/^[0-9a-fA-F]*$/.test(value)) {
+    return null;
+  }
+  return wallet.utils.decodeHex(value);
+}
+
 function bytesToBigInt(bytes) {
   let value = 0n;
   for (const b of bytes) value = (value << 8n) | BigInt(b);
@@ -337,7 +346,8 @@ export function verifyEPMSignature(wallet, epm, publicKey, options = {}) {
   if (!sigHex) return false;
 
   const content = buildEPMSigningContent(epm);
-  const sig = wallet.utils.decodeHex(sigHex);
+  const sig = hexOrNull(wallet, sigHex);
+  if (sig === null) return false;
   const curve = String(
     options.curve || (publicKey && publicKey.length === 32 ? 'ed25519' : 'secp256k1'),
   ).toLowerCase();
@@ -547,9 +557,14 @@ export function buildSolanaChainProof(wallet, { address, publicKeyHex, privateKe
  * @returns {boolean} True if the signature is valid for the given public key and payload
  */
 export function verifyChainProof(wallet, proof) {
-  const pubKey = wallet.utils.decodeHex(proof.PUBLIC_KEY);
-  const sig = wallet.utils.decodeHex(proof.SIGNATURE);
-  const payload = wallet.utils.decodeHex(proof.SIGNED_PAYLOAD);
+  if (proof === null || typeof proof !== 'object') {
+    throw new TypeError('proof must be a ChainProof object');
+  }
+  // A proof whose fields are not hex does not verify.
+  const pubKey = hexOrNull(wallet, proof.PUBLIC_KEY);
+  const sig = hexOrNull(wallet, proof.SIGNATURE);
+  const payload = hexOrNull(wallet, proof.SIGNED_PAYLOAD);
+  if (pubKey === null || sig === null || payload === null) return false;
 
   const algorithm = proof.ALGORITHM;
 

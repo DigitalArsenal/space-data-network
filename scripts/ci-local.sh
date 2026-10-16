@@ -2,10 +2,11 @@
 # Canonical local CI runner.
 # This script is intentionally aligned with .github/workflows/ci.yml.
 #
-# ONE SCRIPT, TWO CALLERS. A developer runs `quick` (the pre-push gate); CI
-# runs the same modes, one per job. Splitting CI into parallel jobs is a
-# job-shape change only — every check still lives here, and no check lives in
-# the workflow file.
+# ONE SCRIPT, TWO CALLERS. A developer runs `quick` (opt-in at pre-push with
+# SDN_PREPUSH_CI=1; the default pre-push hook runs only the secret and
+# mnemonic scans); CI runs the same modes, one per job. Splitting CI into
+# parallel jobs is a job-shape change only — every check still lives here,
+# and no check lives in the workflow file.
 #
 #   .github/workflows/ci.yml job   modes it runs
 #   ----------------------------   ---------------------------
@@ -200,7 +201,8 @@ run_preflight() {
     scripts/check-npm-audit.test.mjs \
     scripts/check-govulncheck.test.mjs \
     scripts/run-govulncheck.test.mjs \
-    scripts/check-no-orphan-test-suites.test.mjs)
+    scripts/check-no-orphan-test-suites.test.mjs \
+    scripts/prepush-hook.test.mjs)
   pass "dependency-drift check suites"
 
   # Release-assembly logic, which decides what a published release CONTAINS.

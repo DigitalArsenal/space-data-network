@@ -252,8 +252,10 @@ func TestHTTPMountedDiscoveryFlows(t *testing.T) {
 			{Path: "/api/v1/standards", Flow: standardsDist, Pool: 1},
 		},
 		FlowMountDeps{
-			CapRegistry:    discoveryCapRegistry(t),
-			NodeCtx:        &modulert.NodeContext{},
+			CapRegistry: discoveryCapRegistry(t),
+			// The node's own peer id answers node.peerId (the $PNV
+			// VERIFIER_PEER_ID), as Node hands every mount.
+			NodeCtx:        &modulert.NodeContext{PeerID: discoverySelfID},
 			MaxMemoryPages: 2048,
 		})
 	if err != nil {
@@ -281,40 +283,53 @@ func TestHTTPMountedDiscoveryFlows(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
+	nodesByID := func(nst sdsTable) map[string]sdsTable {
+		out := map[string]sdsTable{}
+		for _, node := range nst.tables(nstNODES) {
+			out[node.str(nodePEER_ID)] = node
+		}
+		return out
+	}
+
 	var peersEtag string
 
-	t.Run("GET /api/v1/peers (no trailing slash, NO redirect) streams $EPM frames", func(t *testing.T) {
+	t.Run("GET /api/v1/peers (no trailing slash, NO redirect) answers one $NST", func(t *testing.T) {
 		resp, body := discoveryGET(t, srv.URL+"/api/v1/peers", nil)
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("status = %d (a 301 here means the exact-path alias regressed), body %q", resp.StatusCode, body)
 		}
-		if ct := resp.Header.Get("Content-Type"); ct != "application/vnd.sdn.flatbuffers.stream" {
-			t.Fatalf("content-type = %q", ct)
+		if ct, id := resp.Header.Get("Content-Type"), resp.Header.Get("X-Sdn-File-Identifier"); ct != "application/x-flatbuffers" || id != "$NST" {
+			t.Fatalf("content-type = %q, x-sdn-file-identifier = %q", ct, id)
 		}
-		if rc := resp.Header.Get("X-Sdn-Record-Count"); rc != "3" {
-			t.Fatalf("x-sdn-record-count = %q, want 3 (self + celestrak + dht peer)", rc)
-		}
+		nst := readSDSRecord(t, body, "$NST")
 		peersEtag = resp.Header.Get("ETag")
-		if !strings.HasPrefix(peersEtag, `W/"fnv1a64-`) {
-			t.Fatalf("etag = %q", peersEtag)
+		if !strings.HasPrefix(peersEtag, `W/"fnv1a64-`) || peersEtag != nst.str(nstETAG) {
+			t.Fatalf("etag = %q, $NST ETAG = %q (the record's ETAG is the entity tag)", peersEtag, nst.str(nstETAG))
 		}
-		frames := splitSizePrefixedFrames(t, body)
-		if len(frames) != 3 {
-			t.Fatalf("frames = %d, want 3", len(frames))
+		if got := nst.str(nstSOURCE_PEER_ID); got != discoverySelfID {
+			t.Fatalf("SOURCE_PEER_ID = %q", got)
 		}
-		for i, frame := range frames {
-			if !EPM.SizePrefixedEPMBufferHasIdentifier(frame) {
-				t.Fatalf("frame %d is not a size-prefixed $EPM buffer", i)
-			}
+		nodes := nodesByID(nst)
+		if len(nst.tables(nstNODES)) != 3 || len(nodes) != 3 {
+			t.Fatalf("NODES = %d, want 3 (self + celestrak + dht peer)", len(nst.tables(nstNODES)))
 		}
-		// The DHT-only peer gets a synthesized profile carrying its peer id.
-		synthesized := EPM.GetSizePrefixedRootAsEPM(frames[2], 0)
-		if got := string(synthesized.DN()); got != discoveryDHTPeerID {
-			t.Fatalf("synthesized DN = %q", got)
+		if self := nodes[discoverySelfID]; !self.flag(nodeIS_SELF) || self.str(nodeDN) != "sdn.spaceaware.io" {
+			t.Fatalf("self node: is_self %v dn %q", self.flag(nodeIS_SELF), self.str(nodeDN))
+		}
+		celestrak := nodes[discoveryCelestrakID]
+		if celestrak.str(nodeDN) != "celestrak" || !celestrak.flag(nodeIS_ONLINE) {
+			t.Fatalf("celestrak node: dn %q online %v (identity from its stored $EPM)", celestrak.str(nodeDN), celestrak.flag(nodeIS_ONLINE))
+		}
+		if got := strings.Join(celestrak.strs(nodeSTANDARDS), ","); got != "CAT,OMM" {
+			t.Fatalf("celestrak STANDARDS = %q", got)
+		}
+		// The DHT-only peer has no stored profile: present by peer id alone.
+		if dht, ok := nodes[discoveryDHTPeerID]; !ok || dht.str(nodeDN) != "" {
+			t.Fatalf("dht peer missing or carries a DN it never published")
 		}
 	})
 
-	t.Run("format=json is a bare array carrying peerID + standards", func(t *testing.T) {
+	t.Run("format=json renders the same $NST with its IDL field names and the same etag", func(t *testing.T) {
 		resp, body := discoveryGET(t, srv.URL+"/api/v1/peers?format=json", nil)
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("status = %d body %q", resp.StatusCode, body)
@@ -323,36 +338,27 @@ func TestHTTPMountedDiscoveryFlows(t *testing.T) {
 			t.Fatalf("content-type = %q", ct)
 		}
 		if resp.Header.Get("ETag") != peersEtag {
-			t.Fatalf("json etag %q != fb etag %q (must be the SAME logical stream tag)",
-				resp.Header.Get("ETag"), peersEtag)
+			t.Fatalf("json etag %q != fb etag %q (one record, one entity tag)", resp.Header.Get("ETag"), peersEtag)
 		}
-		var records []map[string]interface{}
-		if err := json.Unmarshal(body, &records); err != nil {
-			t.Fatalf("body is not a bare JSON array: %v (%q)", err, body)
+		var nst struct {
+			SourcePeerID string `json:"SOURCE_PEER_ID"`
+			ETag         string `json:"ETAG"`
+			Nodes        []struct {
+				PeerID    string   `json:"PEER_ID"`
+				DN        *string  `json:"DN"`
+				Standards []string `json:"STANDARDS"`
+			} `json:"NODES"`
 		}
-		if len(records) != 3 {
-			t.Fatalf("records = %d", len(records))
+		if err := json.Unmarshal(body, &nst); err != nil {
+			t.Fatalf("body is not the $NST as JSON: %v (%q)", err, body)
 		}
-		var celestrak map[string]interface{}
-		for _, record := range records {
-			if record["peer_id"] == discoveryCelestrakID {
-				celestrak = record
+		if nst.SourcePeerID != discoverySelfID || nst.ETag != peersEtag || len(nst.Nodes) != 3 {
+			t.Fatalf("json $NST: source %q etag %q nodes %d", nst.SourcePeerID, nst.ETag, len(nst.Nodes))
+		}
+		for _, node := range nst.Nodes {
+			if node.PeerID == discoveryCelestrakID && (node.DN == nil || *node.DN != "celestrak" || strings.Join(node.Standards, ",") != "CAT,OMM") {
+				t.Fatalf("celestrak node: %+v", node)
 			}
-		}
-		if celestrak == nil {
-			t.Fatalf("celestrak peer missing from %v", records)
-		}
-		standards, _ := celestrak["standards"].([]interface{})
-		if len(standards) != 2 || standards[0] != "CAT" || standards[1] != "OMM" {
-			t.Fatalf("celestrak standards = %v", standards)
-		}
-		epm, _ := celestrak["epm"].(map[string]interface{})
-		if epm == nil {
-			t.Fatalf("celestrak epm missing")
-		}
-		names, _ := epm["ALTERNATE_NAMES"].([]interface{})
-		if len(names) != 1 || names[0] != "celestrak.eth" {
-			t.Fatalf("celestrak alternate_names = %v", names)
 		}
 	})
 
@@ -361,18 +367,15 @@ func TestHTTPMountedDiscoveryFlows(t *testing.T) {
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("status = %d body %q", resp.StatusCode, body)
 		}
-		if rc := resp.Header.Get("X-Sdn-Record-Count"); rc != "1" {
-			t.Fatalf("x-sdn-record-count = %q, want 1", rc)
-		}
-		frames := splitSizePrefixedFrames(t, body)
-		if len(frames) != 1 {
-			t.Fatalf("frames = %d", len(frames))
-		}
-		profile := EPM.GetSizePrefixedRootAsEPM(frames[0], 0)
-		if got := string(profile.ALTERNATE_NAMES(0)); got != "celestrak.eth" {
-			t.Fatalf("stored profile not spliced verbatim: alternate name %q", got)
+		nst := readSDSRecord(t, body, "$NST")
+		nodes := nst.tables(nstNODES)
+		if len(nodes) != 1 || nodes[0].str(nodePEER_ID) != discoveryCelestrakID || nodes[0].str(nodeDN) != "celestrak" {
+			t.Fatalf("narrowed $NST: %d nodes", len(nodes))
 		}
 		etag := resp.Header.Get("ETag")
+		if etag == "" || etag != nst.str(nstETAG) {
+			t.Fatalf("etag = %q, $NST ETAG = %q", etag, nst.str(nstETAG))
+		}
 
 		resp, _ = discoveryGET(t, srv.URL+"/api/v1/peers/"+discoveryCelestrakID,
 			map[string]string{"If-None-Match": etag})
@@ -386,48 +389,59 @@ func TestHTTPMountedDiscoveryFlows(t *testing.T) {
 		}
 	})
 
-	t.Run("GET /api/v1/standards streams the newest $PNM per (peer, standard)", func(t *testing.T) {
+	t.Run("GET /api/v1/standards answers one $PNV of the newest notice per (peer, standard)", func(t *testing.T) {
 		resp, body := discoveryGET(t, srv.URL+"/api/v1/standards", nil)
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("status = %d body %q", resp.StatusCode, body)
 		}
-		if rc := resp.Header.Get("X-Sdn-Record-Count"); rc != "2" {
-			t.Fatalf("x-sdn-record-count = %q, want 2 (CAT + newest OMM)", rc)
+		if id := resp.Header.Get("X-Sdn-File-Identifier"); id != "$PNV" {
+			t.Fatalf("x-sdn-file-identifier = %q", id)
 		}
-		frames := splitSizePrefixedFrames(t, body)
-		if len(frames) != 2 {
-			t.Fatalf("frames = %d", len(frames))
+		pnv := readSDSRecord(t, body, "$PNV")
+		if got := pnv.str(pnvVERIFIER_PEER_ID); got != discoverySelfID {
+			t.Fatalf("VERIFIER_PEER_ID = %q", got)
 		}
-		for i, frame := range frames {
-			if !PNM.SizePrefixedPNMBufferHasIdentifier(frame) {
-				t.Fatalf("frame %d is not $PNM", i)
-			}
+		if etag := resp.Header.Get("ETag"); etag == "" || etag != pnv.str(pnvETAG) {
+			t.Fatalf("etag = %q, $PNV ETAG = %q", etag, pnv.str(pnvETAG))
 		}
-		// Newest-per-pair: the OMM frame must be the 2026-07-06 publication.
-		omm := PNM.GetSizePrefixedRootAsPNM(frames[1], 0)
-		if got := string(omm.CID()); got != "bafy-omm-new" {
-			t.Fatalf("expected the newest OMM PNM, got CID %q", got)
+		entries := pnv.tables(pnvENTRIES)
+		if len(entries) != 2 || entries[0].str(entrySTANDARD) != "CAT" || entries[1].str(entrySTANDARD) != "OMM" {
+			t.Fatalf("entries = %d, want 2 (CAT + newest OMM)", len(entries))
+		}
+		// Newest-per-pair: the OMM entry is the 2026-07-06 publication, its
+		// received $PNM carried verbatim so a reader can verify it.
+		omm := entries[1]
+		if got := omm.str(entryCID); got != "bafy-omm-new" {
+			t.Fatalf("expected the newest OMM notice, got CID %q", got)
+		}
+		if got := omm.str(entryPUBLISHER_PEER_ID); got != discoveryCelestrakID {
+			t.Fatalf("publisher attribution = %q", got)
+		}
+		if raw := omm.bytes(entryPNM_BYTES); !PNM.SizePrefixedPNMBufferHasIdentifier(raw) ||
+			string(PNM.GetSizePrefixedRootAsPNM(raw, 0).CID()) != "bafy-omm-new" {
+			t.Fatalf("PNM_BYTES is not the received $PNM")
 		}
 
 		respJSON, bodyJSON := discoveryGET(t, srv.URL+"/api/v1/standards?format=json", nil)
 		if respJSON.StatusCode != http.StatusOK {
 			t.Fatalf("json status = %d", respJSON.StatusCode)
 		}
-		var entries []map[string]interface{}
-		if err := json.Unmarshal(bodyJSON, &entries); err != nil {
-			t.Fatalf("bare array: %v (%q)", err, bodyJSON)
+		var pnvJSON struct {
+			Entries []struct {
+				Standard  string `json:"STANDARD"`
+				Publisher string `json:"PUBLISHER_PEER_ID"`
+			} `json:"ENTRIES"`
 		}
-		if len(entries) != 2 || entries[0]["standard"] != "CAT" || entries[1]["standard"] != "OMM" {
-			t.Fatalf("entries = %v", entries)
+		if err := json.Unmarshal(bodyJSON, &pnvJSON); err != nil {
+			t.Fatalf("json $PNV: %v (%q)", err, bodyJSON)
 		}
-		if entries[1]["peer_id"] != discoveryCelestrakID {
-			t.Fatalf("publisher attribution missing: %v", entries[1])
+		if len(pnvJSON.Entries) != 2 || pnvJSON.Entries[0].Standard != "CAT" || pnvJSON.Entries[1].Publisher != discoveryCelestrakID {
+			t.Fatalf("json entries = %+v", pnvJSON.Entries)
 		}
 		if respJSON.Header.Get("ETag") != resp.Header.Get("ETag") {
 			t.Fatalf("standards etag differs across encodings")
 		}
 	})
-
 	t.Run("POST and deeper per-peer paths answer 404 (no redirects anywhere)", func(t *testing.T) {
 		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/peers", strings.NewReader("{}"))
 		resp, err := noRedirectClient().Do(req)

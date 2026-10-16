@@ -1,0 +1,311 @@
+{
+  "version": 1,
+  "updated": "2026-10-16",
+  "status": "proposed",
+  "statusLabel": "Proposed list prices, 2026-10-16",
+  "currency": "USD",
+  "governmentName": "SpaceEdge",
+  "levels": [
+    {
+      "id": "executive",
+      "label": "Executive"
+    },
+    {
+      "id": "operator",
+      "label": "Operator"
+    },
+    {
+      "id": "integrator",
+      "label": "Integrator"
+    }
+  ],
+  "copy": {
+    "hero": {
+      "executive": "One workspace for space operations: the live orbit catalog, space safety, sensors, communications, the solar system and weather, on a 3D globe in the browser. The data is free on the Space Data Network and digitally signed at the source. Customers pay for the software, updates and support.",
+      "operator": "Open the console and every tracked object is live on the globe. Screen your fleet for close approaches, plan maneuvers, cover your sensors, plan ground contacts, and see clouds, wind and seas where you operate. Every record carries its source's digital signature.",
+      "integrator": "Every capability is a signed WebAssembly module that reads and writes Space Data Standards FlatBuffers. Embed the console in your product or call the modules from your own code with the Module SDK. Data arrives over the Space Data Network, from the public network or your own node."
+    },
+    "plans": {
+      "executive": "Buy one module group for one job, or the suite for all of them. Free shows the open data. Pro is one person. Team adds seats and the SDK. Enterprise adds private nodes, on-premises installation and support. Data stays free in every plan.",
+      "operator": "Pick the group that matches your job: Weather, Orbits or Solar System. Pro gives one person the full group with updates. Team and Enterprise put the same tools in front of everyone on your team.",
+      "integrator": "Team includes the Module SDK and API for internal tools. Developer licenses a module group inside a product you ship. Enterprise runs on your own Space Data Network nodes and takes your own data in the same standards."
+    },
+    "builder": {
+      "executive": "Choose a plan and the groups you need to see the list price. Two or more groups usually cost less as the suite.",
+      "operator": "Choose a plan, the groups your work needs and the number of seats.",
+      "integrator": "Choose a plan, the groups and seats, and the number of products that embed our modules."
+    },
+    "spaceedge": {
+      "executive": "SpaceEdge is the government edition and the only one connected to the Unified Data Library (UDL), the US Space Force's shared data store. It runs on the customer's own servers with the customer's own UDL account, and adds a Defense Operations group. It is sold per program through government contract routes.",
+      "operator": "Sign in with your SpaceEdge account and UDL element sets, observations, conjunctions and space weather appear beside the open catalog, in the same views. Your UDL account stays yours, and UDL data stays on your organization's node.",
+      "integrator": "A producer module on the customer's private node reads UDL with the customer's credentials, writes each UDL type as its SDS record, and serves it only on that node. Products that embed the console get SpaceEdge data through the same SDS records."
+    },
+    "signin": {
+      "executive": "Integrators can put our interface inside their own products. When it opens for government work, the user signs in with a SpaceEdge account.",
+      "operator": "You sign in once with your SpaceEdge account. The tool you already use then shows UDL data from your organization's node.",
+      "integrator": "The embedded console asks for a SpaceEdge sign-in, checks the account against the customer's SpaceEdge license on their node, and reads UDL-sourced SDS records from that node. Your product reads the same records."
+    },
+    "udl": {
+      "executive": "Only SpaceEdge reads UDL. The other plans use an open source for the same data where one exists.",
+      "operator": "Search a UDL data type to see what each plan gets and where it comes from.",
+      "integrator": "Each UDL type maps to its Space Data Standards record. Types marked No SDS yet have no standard."
+    },
+    "modules": {
+      "executive": "Every live module and the bundles they belong to.",
+      "operator": "Every live module: what it does, how you get it and which console cards it covers.",
+      "integrator": "Every live module with its standards, delivery and evidence. Export any view as CSV."
+    },
+    "capabilities": {
+      "executive": "What each capability is and why a customer buys it.",
+      "operator": "What each capability does for someone at the console.",
+      "integrator": "What each capability is built from and how it connects to your software."
+    }
+  },
+  "groups": [
+    {
+      "id": "weather",
+      "name": "Weather",
+      "who": "Maritime, aviation, media and emergency planning",
+      "includes": [
+        "World clouds in 3D from geostationary satellites, hour by hour",
+        "Forecast clouds, wind, rain and fog",
+        "Waves, swell and sea state on the ocean",
+        "Storm and hurricane views",
+        "Analytic weather maps"
+      ],
+      "link": "https://digitalarsenal.github.io/Cesium_Weather/orbpro-gaussian-clouds/examples/world-clouds.html"
+    },
+    {
+      "id": "orbits",
+      "name": "Orbits",
+      "who": "Satellite operators, space domain awareness and flight dynamics teams",
+      "categories": [
+        "console",
+        "space-safety",
+        "sda",
+        "flight-dynamics",
+        "comms-rf"
+      ],
+      "modules": [
+        "imagery-studio",
+        "imagery-detection",
+        "sensor-shaders"
+      ]
+    },
+    {
+      "id": "solar",
+      "name": "Solar System",
+      "who": "Education, planetariums, outreach and mission planning",
+      "modules": [
+        "globe-environment",
+        "solar-system",
+        "camera-cinematics",
+        "star-field"
+      ]
+    },
+    {
+      "id": "developer",
+      "name": "Developer",
+      "who": "Companies building products on our engine",
+      "categories": [
+        "network"
+      ]
+    }
+  ],
+  "suite": {
+    "name": "Full suite",
+    "groups": [
+      "weather",
+      "orbits",
+      "solar"
+    ]
+  },
+  "plans": [
+    {
+      "id": "free",
+      "name": "Free",
+      "who": "Anyone",
+      "basis": "",
+      "prices": {
+        "weather": 0,
+        "orbits": 0,
+        "solar": 0
+      },
+      "adds": [
+        "View the open data",
+        "Free modules in the console"
+      ]
+    },
+    {
+      "id": "pro",
+      "name": "Pro",
+      "who": "One person",
+      "basis": "per month",
+      "annualMonths": 10,
+      "prices": {
+        "weather": 20,
+        "orbits": 40,
+        "solar": 15,
+        "suite": 60
+      },
+      "adds": [
+        "Every module in the group",
+        "Updates",
+        "Commercial use for one person",
+        "Yearly billing: two months free"
+      ]
+    },
+    {
+      "id": "team",
+      "name": "Team",
+      "who": "Companies",
+      "basis": "per seat per year",
+      "prices": {
+        "weather": 1500,
+        "orbits": 3000,
+        "solar": 1000,
+        "suite": 4500,
+        "developer": 5000
+      },
+      "developerBasis": "per product shipped per year",
+      "adds": [
+        "Seats for a team",
+        "Module SDK and API",
+        "Priority fixes"
+      ]
+    },
+    {
+      "id": "enterprise",
+      "name": "Enterprise",
+      "who": "Organizations",
+      "basis": "per year, site license",
+      "from": true,
+      "prices": {
+        "weather": 25000,
+        "orbits": 40000,
+        "solar": 15000,
+        "suite": 75000
+      },
+      "suiteTo": 150000,
+      "adds": [
+        "Private Space Data Network nodes",
+        "On-premises installation",
+        "Support agreement",
+        "Security approval help",
+        "Custom data feeds",
+        "Your own data in the same standards"
+      ]
+    },
+    {
+      "id": "spaceedge",
+      "name": "SpaceEdge",
+      "who": "Government programs",
+      "basis": "per program",
+      "adds": [
+        "Everything in Enterprise",
+        "Live UDL data with the customer's own UDL account",
+        "Defense Operations group",
+        "Air-gapped and classified-network deployment",
+        "Support from US persons",
+        "Software bill of materials and code escrow"
+      ],
+      "fees": "Installation and accreditation support priced separately",
+      "routes": [
+        "Small Business Innovation Research (SBIR)",
+        "Other Transaction Authority (OTA) agreements",
+        "GSA schedule",
+        "Tradewinds Solutions Marketplace (CDAO)"
+      ],
+      "state": "In development",
+      "priceLabel": "Call for pricing"
+    }
+  ],
+  "signinSteps": [
+    {
+      "title": "Open",
+      "text": "The integrator's product opens the SpaceAware interface for a government user."
+    },
+    {
+      "title": "Sign in",
+      "text": "The user signs in with a SpaceEdge account."
+    },
+    {
+      "title": "Check",
+      "text": "The account is checked against the customer's SpaceEdge license on their node."
+    },
+    {
+      "title": "Work",
+      "text": "UDL data from the customer's node appears in the interface and in the integrator's product."
+    }
+  ],
+  "mark": {
+    "dark": "marketing/spaceedge-mark-dark.svg",
+    "light": "marketing/spaceedge-mark-light.svg",
+    "label": "Proposed SpaceEdge mark"
+  },
+  "capabilities": [
+    {
+      "name": "Orbital Console",
+      "group": "Orbits",
+      "executive": "Every tracked object in orbit, live on a 3D globe in the browser. It is the shared picture every other capability builds on, and it needs no installation.",
+      "operator": "Search any object by name, ID or place, open its card for owner, orbit and live state, and build scenes of your own sites, sensors and groups on a shared clock.",
+      "integrator": "The catalog streams peer to peer as CCSDS OMM records and is digitally verified on arrival. Embed the console in your page with the console frame API, or query it through FlatSQL."
+    },
+    {
+      "name": "Space Safety",
+      "group": "Orbits",
+      "executive": "Finds close approaches early, measures the risk and plans the response, so a fleet operator can act before a collision rather than after a warning.",
+      "operator": "Screen your satellites against the whole catalog, see each close approach with its uncertainty, spot maneuvers in other objects' histories and check launch windows.",
+      "integrator": "All-vs-all screening, covariance and maneuver detection are SDN modules that read OMM and OEM and write CCSDS CDM and SDS CQR records, on GPU or CPU, in the browser or on a node."
+    },
+    {
+      "name": "Space Domain Awareness",
+      "group": "Orbits",
+      "executive": "Keeps custody of objects, plans sensors and builds a catalog whose every source can be traced, which is what defense and civil awareness teams are measured on.",
+      "operator": "Keep watch lists and custody, see coverage and figures of merit for your sensors, simulate observations and fit orbits to operator ephemeris.",
+      "integrator": "Observation simulation writes SDS RDO, EOO and RFO records; the catalog composer merges sources by precedence into SDS CAT. Track exports include OEM, CZML and KML."
+    },
+    {
+      "name": "Flight Dynamics",
+      "group": "Orbits",
+      "executive": "Propagates, targets and maneuvers with the same modules the network runs, so mission plans and the operating picture never disagree.",
+      "operator": "Plan burns, transfers and rendezvous on the globe; run high-precision propagation, events, access and targeting.",
+      "integrator": "SGP4, two-body, ephemeris, cislunar, hypersonic and numerically integrated propagators are SDN modules that read OMM, OEM and OCM. Maneuvers are SDS MNV records."
+    },
+    {
+      "name": "Communications and Spectrum",
+      "group": "Orbits",
+      "executive": "Plans contacts and computes links, margins and interference from physical models, a capability telecom and defense customers pay a premium for.",
+      "operator": "Plan passes, footprints and bands for your ground sites, and see link margins and interference before a contact.",
+      "integrator": "Link budgets use ITU-R P.676, P.838, P.840 and P.526 and the Longley-Rice ITM model. Network routing finds the fastest path across links that come and go."
+    },
+    {
+      "name": "Earth and Sky",
+      "group": "Orbits",
+      "executive": "Imagery, on-device object detection, terrain and grids on the same globe as the catalog: one picture from the ground to orbit.",
+      "operator": "Stack and compare imagery and video layers, find objects in imagery, and read positions on MGRS, UTM and H3 grids over full terrain.",
+      "integrator": "Imagery layers come from OGC WMTS, WMS and KML sources; detection runs on the device. Grids and frames follow ICRF, MGRS, UTM/UPS and H3."
+    },
+    {
+      "name": "Solar System",
+      "group": "Solar System",
+      "executive": "Zoom from Earth out past the Milky Way and center any planet or moon, with real positions and a real sky, for education, outreach and mission planning.",
+      "operator": "Center any planet or moon and fly keyframed camera paths against a real star catalog and the Milky Way.",
+      "integrator": "Positions come from NAIF SPICE kernels and IAU body frames through an SDN module; stars are SDS STR records and small bodies SDS SBD."
+    },
+    {
+      "name": "Weather",
+      "group": "Weather",
+      "executive": "Live clouds, wind, rain, fog and sea state in 3D from weather satellites and forecasts: the context for imaging windows, launches, aviation and shipping.",
+      "operator": "See the clouds in 3D hour by hour and into the forecast, check rain, fog, wind and waves where you operate, and jump to the heaviest rain or biggest seas.",
+      "integrator": "Clouds are traced from raw geostationary satellite data and forecast fields in WebAssembly. Weather data is published on the Space Data Network as SDS WXF records from a producer node."
+    },
+    {
+      "name": "Network and Developer",
+      "group": "Developer",
+      "executive": "The platform: a free network for space data and a kit for building, signing and selling modules that run the same in the browser and on a node.",
+      "operator": "Run a node, publish your OMM, OEM and CDM digitally signed, and add new analysis modules to the console from the store.",
+      "integrator": "Modules are WebAssembly built with the Module SDK, reading and writing Space Data Standards FlatBuffers and FlatSQL. Every record is signed (SDS EPM and PNM) and checked on arrival."
+    }
+  ]
+}

@@ -490,11 +490,17 @@ var typedAdapters = map[string]typedAdapter{
 			table, _ := t.(map[string]any)
 			name := str(table["name"])
 			answer.lists["tables"] = append(answer.lists["tables"], map[string]any{"NAME": name, "KIND": str(table["kind"]), "SOURCE": str(table["source"]), "RECORDS": integer(table["records"])})
+			// placeholder_columns (storage.SurfaceRelation.PlaceholderColumns) names the columns that exist only for the
+			// engine's >=1-column invariant: a one-byte read of slot 0, never the field's value. PLACEHOLDER carries that.
+			placeholder := map[string]bool{}
+			for _, p := range valuesOf(table["placeholder_columns"]) {
+				placeholder[str(p)] = true
+			}
 			columns, _ := table["columns"].([]any)
 			for _, c := range columns {
 				switch col := c.(type) {
 				case string:
-					answer.lists["columns"] = append(answer.lists["columns"], map[string]any{"TABLE": name, "NAME": col})
+					answer.lists["columns"] = append(answer.lists["columns"], map[string]any{"TABLE": name, "NAME": col, "PLACEHOLDER": placeholder[col]})
 				case map[string]any:
 					answer.lists["columns"] = append(answer.lists["columns"], map[string]any{"TABLE": name, "NAME": str(col["name"]), "PLACEHOLDER": col["placeholder"] == true})
 				}

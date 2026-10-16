@@ -1,0 +1,307 @@
+{
+  "version": 1,
+  "updated": "2026-10-16",
+  "incumbent": "ASW, the Astrodynamics Support Workstation (Omitron)",
+  "peer": "LeoLabs",
+  "copy": {
+    "executive": "ASW is the incumbent: the first and only Air Force certified special-perturbations catalog, at more than 15 government sites and free to government. Its proven edge is covariance realism. We lead on screening speed, reproducibility, open standards, public evidence and cost for commercial and allied operators. We are behind on covariance realism, orbit determination from observations, calibrated density and accreditation. Products built from public data are advisory.",
+    "operator": "Use SpaceAware for fast, repeatable screening and analysis of the whole catalog, with geometry that matches SOCRATES. Its products built from public element sets support awareness and triage, not maneuver decisions.",
+    "integrator": "One WebAssembly build gives byte-identical results in a browser, on WasmEdge and on air-gapped hosts, and reads and writes SDS FlatBuffers and CCSDS messages. Covariance realism, Pc methods and the CDM's full field set are behind ASW today."
+  },
+  "aswLeads": [
+    {
+      "text": "Covariance realism: DoD covariance beat commercial in the IAC-24 TraCSS pathfinder",
+      "url": "https://space.commerce.gov/wp-content/uploads/2024-10-TraCSS-consolidated-pathfinder-paper-IAC.pdf"
+    },
+    {
+      "text": "Orbit determination from SSN radar and optical observations, at catalog scale",
+      "url": "https://nap.nationalacademies.org/read/13456/chapter/4"
+    },
+    {
+      "text": "Calibrated density: JBH09 with DCA re-fit every 8 hours",
+      "url": "https://spacewx.com/wp-content/uploads/2024/02/HASDM.pdf"
+    },
+    {
+      "text": "Certification and deployment: Air Force certified since 1998, more than 15 government instances",
+      "url": "https://www.omitron.com/astrodynamics-support-workstation/"
+    }
+  ],
+  "weLead": [
+    {
+      "text": "Speed and continuity: the full catalog screened all-vs-all in 19 s; an incremental re-screen gives results byte-identical to a full one"
+    },
+    {
+      "text": "Open interchange: SDS FlatBuffers and CCSDS messages anyone can read and check"
+    },
+    {
+      "text": "Portable, reproducible execution: one WebAssembly build, byte-identical in the browser, on WasmEdge and air-gapped"
+    },
+    {
+      "text": "Fidelity and evidence: frames and gravity cross-checked against Orekit, with pre-registered, held-out results published"
+    },
+    {
+      "text": "Cost for commercial and allied operators, whom free-to-government pricing does not reach"
+    }
+  ],
+  "areas": [
+    {
+      "name": "Orbit determination from observations",
+      "asw": "Weighted batch least squares on SSN radar and optical data",
+      "status": [
+        [
+          "Parity",
+          "laser-tracked targets"
+        ],
+        [
+          "Missing",
+          "radar and optical catalog OD"
+        ]
+      ],
+      "bar": "B1a, B1b"
+    },
+    {
+      "name": "Observation types and sensor calibration",
+      "asw": "Radar and optical association; a calibration application",
+      "status": [
+        [
+          "Behind",
+          ""
+        ]
+      ],
+      "bar": "B2"
+    },
+    {
+      "name": "Special-perturbations propagation",
+      "asw": "Truncated EGM-96, Gauss-Jackson 8th order, IAU-1980 nutation",
+      "status": [
+        [
+          "Ahead",
+          "dynamics fidelity"
+        ],
+        [
+          "Behind",
+          "accuracy started from public element sets"
+        ]
+      ],
+      "bar": "B3a, B3b"
+    },
+    {
+      "name": "Atmosphere and density calibration",
+      "asw": "JBH09 with DCA every 8 hours: 1-day prediction 25 % better",
+      "status": [
+        [
+          "Behind",
+          ""
+        ]
+      ],
+      "bar": "B4"
+    },
+    {
+      "name": "Covariance and realism",
+      "asw": "Formal covariance with consider parameters and scale factors; proven in the pathfinder",
+      "status": [
+        [
+          "Behind",
+          "the deciding row"
+        ]
+      ],
+      "bar": "B5"
+    },
+    {
+      "name": "VCM and CDM interchange",
+      "asw": "VCM, SP ephemeris, CDM and CSM with the operators' handbook fields",
+      "status": [
+        [
+          "Parity",
+          "formats"
+        ],
+        [
+          "Missing",
+          "consider-parameter fields"
+        ]
+      ],
+      "bar": "B6"
+    },
+    {
+      "name": "Screening and probability of collision",
+      "asw": "Daily full-catalog screen, 8-hour concern lists, 19 screening volumes",
+      "status": [
+        [
+          "Ahead",
+          "speed"
+        ],
+        [
+          "Behind",
+          "screening volumes and Pc methods"
+        ]
+      ],
+      "bar": "B7a-c"
+    },
+    {
+      "name": "Maneuver processing",
+      "asw": "Detection at the first post-maneuver track; continuous-thrust solutions",
+      "status": [
+        [
+          "Behind",
+          ""
+        ]
+      ],
+      "bar": "B8"
+    },
+    {
+      "name": "Uncorrelated tracks and association",
+      "asw": "Automatic UCT promotion; post-launch piece separation",
+      "status": [
+        [
+          "Behind",
+          "partial"
+        ],
+        [
+          "Missing",
+          "UCT promotion and breakup analysis"
+        ]
+      ],
+      "bar": "B9"
+    },
+    {
+      "name": "Throughput and latency",
+      "asw": "About 30,000 objects and 600,000 CDMs a day",
+      "status": [
+        [
+          "Ahead",
+          "screening"
+        ],
+        [
+          "Behind",
+          "the orbit-determination cycle"
+        ]
+      ],
+      "bar": "B10"
+    },
+    {
+      "name": "Deployment",
+      "asw": "More than 15 instances at DoD, IC, NASA and NRO",
+      "status": [
+        [
+          "Behind",
+          ""
+        ]
+      ],
+      "bar": "B11"
+    },
+    {
+      "name": "Accreditation",
+      "asw": "Air Force certified special-perturbations catalog",
+      "status": [
+        [
+          "Missing",
+          ""
+        ]
+      ],
+      "bar": "B12"
+    }
+  ],
+  "say": [
+    {
+      "claim": "The HPOP force model agrees with Orekit, GMAT, Tudat and Nyx to about 1 cm over 24 hours on identical inputs (metres where drag models differ).",
+      "note": "Verifies the implementation, not orbit accuracy."
+    },
+    {
+      "claim": "From precise start states, HPOP predicts drag-free spheres to 4.8 m at 24 h and 13.9 m at 72 h, and GPS to 28.5 m at 24 h.",
+      "note": "Not LEO: drag from B* gives 481 m at 24 h even from the true state."
+    },
+    {
+      "claim": "Fitted to laser ranges, HPOP's median error is 7 m at the fit and 9, 17 and 42 m at 1, 3 and 7 days, against 472 to 685 m for SGP4.",
+      "note": "Five laser-ranged spheres; the truth uses the same laser data."
+    },
+    {
+      "claim": "Screening geometry reproduces SOCRATES on identical element sets: 95th percentile 2.4 m.",
+      "note": "Agreement with SOCRATES, not recall. Objects numbered 100000 and above: 20.8 m."
+    },
+    {
+      "claim": "Collision probability is Foster's integral over the hard-body disk, agreeing with NASA CARA Analysis Tools test cases within 4.7e-4; events outside the two-dimensional assumptions are evaluated with Hall's expected-collision models or Monte Carlo.",
+      "note": "The conjunction module; the SDS CQR record carries only the maximum for events outside the 2-D assumptions."
+    },
+    {
+      "claim": "Probabilities and covariance built from public element sets are advisory: for awareness and triage, not maneuver decisions.",
+      "note": "NASA CA Handbook Vol. 2 App. E; the Space-Track user agreement."
+    },
+    {
+      "claim": "Earth orientation (IAU 2006/2000A, polar motion, UT1) is applied to the millimetre.",
+      "note": ""
+    },
+    {
+      "claim": "Every covariance carries a held-out realism label: realistic in 2 of 35 cells for element sets and 5 of 35 for the HPOP epoch state.",
+      "note": "LEO only; few samples per cell."
+    }
+  ],
+  "dontSay": [
+    {
+      "claim": "Operational, or ASW-equivalent",
+      "why": "Behind ASW, at least in part, in 9 of the 12 capability areas below, and missing whole parts of 4."
+    },
+    {
+      "claim": "Operational probability of collision for objects with only public element sets",
+      "why": "NASA's handbook and the Space-Track user agreement: public element sets alone must not drive conjunction decisions."
+    },
+    {
+      "claim": "Calibrated covariance in LEO 600-800 km",
+      "why": "Not realistic on held-out data at any age past epoch."
+    },
+    {
+      "claim": "The Alfano value as the largest possible probability",
+      "why": "It is the spherical-covariance maximum; the maximum for the covariance's own shape is 3 to 131 times higher (the shape-scaled maximum)."
+    },
+    {
+      "claim": "A green Low band as safe",
+      "why": "No dilution flag or calibration label; real near misses of 5.7-14.3 m scored 1e-6 to 4e-5."
+    },
+    {
+      "claim": "HPOP screening as more accurate than SGP4",
+      "why": "Started from public element sets it is 9.5-11 times worse in LEO at 24 h."
+    },
+    {
+      "claim": "Metre-level LEO prediction",
+      "why": "481 m median at 24 h even from a precise state."
+    },
+    {
+      "claim": "The screen finds every pair within the threshold",
+      "why": "No brute-force recall test has been run."
+    },
+    {
+      "claim": "A CCSDS-conformant CDM, or a live CA service",
+      "why": "The CDM lacks required fields; the node's CA endpoint returns no events."
+    },
+    {
+      "claim": "Orbit-determination accuracy",
+      "why": "No result yet; the laser-OD experiment (E18) is scored from late November 2026."
+    }
+  ],
+  "targets": [
+    {
+      "target": "Laser residuals at centimetre level on cooperative LEO",
+      "reference": "ILRS and Copernicus precise-orbit reports",
+      "public": "Yes"
+    },
+    {
+      "target": "Navigation-satellite orbits within a few cm of IGS finals",
+      "reference": "IGS final orbits (about 2.5 cm)",
+      "public": "Yes, against SP3"
+    },
+    {
+      "target": "Covariance realism on cooperative objects",
+      "reference": "Park et al. 2019 (LeoLabs: 95.2 % within d of 4); Zaidi and Hejduk 2016; CARA handbook App. I",
+      "public": "Yes"
+    },
+    {
+      "target": "Batch and sequential OD with process noise and consider parameters",
+      "reference": "Vallado et al. (ODTK); Tapley, Schutz and Born; Montenbruck and Gill",
+      "public": "Yes"
+    },
+    {
+      "target": "Catalog-wide debris accuracy, UCT linking, GEO optical custody",
+      "reference": "SP catalog accuracy in the CARA literature",
+      "public": "No: needs radar and optical data (UDL through SpaceEdge, results private)"
+    }
+  ]
+}

@@ -3,8 +3,8 @@
 export const SUITE_VERSION = "1.1.0";
 export const SPACEDATASTANDARDS_VERSION = "1.242.0";
 export const FLATSQL_VERSION = "2.0.3";
-export const HD_WALLET_WASM_VERSION = "2.1.0";
-export const HD_WALLET_UI_VERSION = "2.1.0";
+export const HD_WALLET_WASM_VERSION = "2.1.2";
+export const HD_WALLET_UI_VERSION = "2.1.2";
 export const IPFS_WEBUI_VERSION = "4.12.0";
 export const KUBO_VERSION = "0.43.1";
 export const HELIA_VERSION = "7.1.12";

@@ -14,6 +14,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -160,6 +161,31 @@ func buildQueryTestOMM(t *testing.T, norad uint32, name string, epochUnix int64)
 		WithInclination(51.6).
 		Build()
 	return data[4:] // stored form: bare buffer
+}
+
+// queryRefusal reads a refusal in the representation it was asked for: the
+// $QRP KIND Error record itself (FlatBuffers, the default), or
+// {"error","code"} when the request asked for JSON.
+func queryRefusal(t *testing.T, name string, resp *http.Response, body []byte) (code, message string) {
+	t.Helper()
+	if strings.HasPrefix(resp.Header.Get("Content-Type"), "application/json") {
+		var payload struct {
+			Error string `json:"error"`
+			Code  string `json:"code"`
+		}
+		if err := json.Unmarshal(body, &payload); err != nil {
+			t.Fatalf("%s: json error body: %v (%q)", name, err, body)
+		}
+		return payload.Code, payload.Error
+	}
+	if id := resp.Header.Get("X-Sdn-File-Identifier"); id != "$QRP" {
+		t.Fatalf("%s: refusal x-sdn-file-identifier = %q (%q)", name, id, body)
+	}
+	refusal := readSDSRecord(t, body, "$QRP")
+	if refusal.byte(qrpKIND) != qrpKindError {
+		t.Fatalf("%s: refusal $QRP KIND = %d, want Error", name, refusal.byte(qrpKIND))
+	}
+	return refusal.str(qrpERROR_CODE), refusal.str(qrpMESSAGE)
 }
 
 func queryPOST(t *testing.T, url, body string, headers map[string]string) (*http.Response, []byte) {
@@ -363,22 +389,28 @@ func TestHTTPMountedPublicQueryFlow(t *testing.T) {
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("status = %d body %q", resp.StatusCode, body)
 		}
-		var surface struct {
-			Tables []struct {
-				Name    string   `json:"name"`
-				Kind    string   `json:"kind"`
-				Source  string   `json:"source"`
-				Columns []string `json:"columns"`
-				Records int64    `json:"records"`
-			} `json:"tables"`
-			Caps struct {
-				TimeoutMs int64 `json:"timeout_ms"`
-				MaxRows   int64 `json:"max_rows"`
-				MaxBytes  int64 `json:"max_bytes"`
-			} `json:"caps"`
+		// The surface is a $QRP page header (KIND Page, its TABLES and the
+		// serving limits) as a size-prefixed stream of one frame.
+		if ct := resp.Header.Get("Content-Type"); ct != "application/vnd.sdn.flatbuffers.stream" {
+			t.Fatalf("surface content-type = %q", ct)
 		}
-		if err := json.Unmarshal(body, &surface); err != nil {
-			t.Fatalf("surface json: %v (%q)", err, body)
+		header := readSizePrefixedSDSRecord(t, body, "$QRP")
+		type surfaceRel struct {
+			Name, Kind, Source string
+			Columns            []string
+			Records            int64
+		}
+		relations := header.tables(qrpTABLES)
+		if rc := resp.Header.Get("X-Sdn-Record-Count"); rc != fmt.Sprint(len(relations)) {
+			t.Fatalf("x-sdn-record-count = %q, want the %d relations", rc, len(relations))
+		}
+		surface := make([]surfaceRel, len(relations))
+		for i, rel := range relations {
+			surface[i] = surfaceRel{Name: rel.str(qrpTableNAME), Kind: rel.str(qrpTableKIND), Source: rel.str(qrpTableSOURCE),
+				Records: rel.i64(qrpTableRECORDS)}
+			for _, col := range rel.tables(qrpTableCOLUMNS) {
+				surface[i].Columns = append(surface[i].Columns, col.str(qrpColumnNAME))
+			}
 		}
 		// EVERY EMBEDDED STANDARD IS ROUTED, so the surface is no longer
 		// "the two decorated standards": it lists every routed relation
@@ -387,20 +419,13 @@ func TestHTTPMountedPublicQueryFlow(t *testing.T) {
 		// partitions are listed only for standards that actually hold
 		// records — otherwise the public body repeats a full column list
 		// once per standard per source.
-		if len(surface.Tables) < 200 {
-			t.Fatalf("surface lists %d relations — every routed standard should appear", len(surface.Tables))
-		}
-		type surfaceRel = struct {
-			Name    string   `json:"name"`
-			Kind    string   `json:"kind"`
-			Source  string   `json:"source"`
-			Columns []string `json:"columns"`
-			Records int64    `json:"records"`
+		if len(surface) < 200 {
+			t.Fatalf("surface lists %d relations — every routed standard should appear", len(surface))
 		}
 		var ommView, ommShadow *surfaceRel
 		var foreignPartitions []string
-		for i := range surface.Tables {
-			rel := &surface.Tables[i]
+		for i := range surface {
+			rel := &surface[i]
 			base, source, isPartition := strings.Cut(rel.Name, "@")
 			switch {
 			case rel.Name == "OMM":
@@ -416,7 +441,7 @@ func TestHTTPMountedPublicQueryFlow(t *testing.T) {
 			}
 		}
 		if ommView == nil || ommView.Kind != "view" {
-			t.Fatalf("surface has no OMM view: %+v", surface.Tables)
+			t.Fatalf("surface has no OMM view")
 		}
 		if ommShadow == nil || ommShadow.Kind != "table" || ommShadow.Source != "celestrak-gp" {
 			t.Fatalf("surface has no OMM@celestrak-gp shadow: %+v", ommShadow)
@@ -436,8 +461,11 @@ func TestHTTPMountedPublicQueryFlow(t *testing.T) {
 		if !hasData {
 			t.Fatalf("OMM columns missing _data: %v", ommView.Columns)
 		}
-		if surface.Caps.TimeoutMs != 1500 || surface.Caps.MaxRows != 100 {
-			t.Fatalf("caps: %+v", surface.Caps)
+		if header.u32(qrpMAX_ELAPSED_MS) != 1500 || header.u64(qrpMAX_ROWS) != 100 {
+			t.Fatalf("limits: MAX_ELAPSED_MS %d MAX_ROWS %d", header.u32(qrpMAX_ELAPSED_MS), header.u64(qrpMAX_ROWS))
+		}
+		if etag := resp.Header.Get("ETag"); etag == "" || etag != header.str(qrpETAG) {
+			t.Fatalf("etag = %q, $QRP ETAG = %q", etag, header.str(qrpETAG))
 		}
 
 		// If-None-Match answers 304.
@@ -472,7 +500,9 @@ func TestHTTPMountedPublicQueryFlow(t *testing.T) {
 			{"runaway recursive CTE", `{"sql":"WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c) SELECT count(*) FROM c"}`, 422, "timeout"},
 			{"oversized result (row cap)", `{"sql":"WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < 5000) SELECT x FROM c","format":"json"}`, 422, "row-cap"},
 			{"cartesian blowup", `{"sql":"SELECT a.NORAD_CAT_ID FROM OMM a, OMM b, OMM c, OMM d, OMM e, OMM f, OMM g, OMM h","format":"json"}`, 422, "row-cap"},
-			{"projection as flatbuffer", `{"sql":"SELECT NORAD_CAT_ID FROM OMM"}`, 406, "not-a-record-stream"},
+			// The engine's not-a-record-stream is answered as HTTP's not-acceptable (hostcap/flatsql-query, with a
+			// "request format=json for projection results" hint).
+			{"projection as flatbuffer", `{"sql":"SELECT NORAD_CAT_ID FROM OMM"}`, 406, "not-acceptable"},
 			{"bad SQL", `{"sql":"SELECT nope FROM OMM"}`, 400, ""},
 			{"empty body", ``, 400, "missing-sql"},
 			{"sort injection", `{"sql":"SELECT _data FROM OMM","sort":"NORAD_CAT_ID; DROP TABLE OMM"}`, 400, "invalid-sort"},
@@ -484,17 +514,11 @@ func TestHTTPMountedPublicQueryFlow(t *testing.T) {
 			if resp.StatusCode != tc.wantStatus {
 				t.Fatalf("%s: status = %d body %q, want %d", tc.name, resp.StatusCode, body, tc.wantStatus)
 			}
-			var payload struct {
-				Error string `json:"error"`
-				Code  string `json:"code"`
+			code, message := queryRefusal(t, tc.name, resp, body)
+			if tc.wantCode != "" && code != tc.wantCode {
+				t.Fatalf("%s: code = %q (%q), want %q", tc.name, code, message, tc.wantCode)
 			}
-			if err := json.Unmarshal(body, &payload); err != nil {
-				t.Fatalf("%s: error body: %v (%q)", tc.name, err, body)
-			}
-			if tc.wantCode != "" && payload.Code != tc.wantCode {
-				t.Fatalf("%s: code = %q (%q), want %q", tc.name, payload.Code, payload.Error, tc.wantCode)
-			}
-			if payload.Error == "" {
+			if message == "" {
 				t.Fatalf("%s: empty error message", tc.name)
 			}
 			// BOUNDED TIME: nothing may run past the 1.5 s statement
@@ -511,15 +535,22 @@ func TestHTTPMountedPublicQueryFlow(t *testing.T) {
 		}
 	})
 
-	t.Run("non-POST non-GET degrades to 404", func(t *testing.T) {
+	// A method the surface does not serve is 405 method-not-allowed, refused
+	// inside the flow by foundation/http-route (modules 254c135a, the typed
+	// HTTP edge; documented in the public-query api block since a5beefc6).
+	t.Run("non-POST non-GET answers 405 method-not-allowed", func(t *testing.T) {
 		req, _ := http.NewRequest(http.MethodDelete, url, nil)
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatalf("DELETE: %v", err)
 		}
+		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		if resp.StatusCode != http.StatusNotFound {
-			t.Fatalf("DELETE status = %d, want 404", resp.StatusCode)
+		if resp.StatusCode != http.StatusMethodNotAllowed {
+			t.Fatalf("DELETE status = %d, want 405", resp.StatusCode)
+		}
+		if code, _ := queryRefusal(t, "DELETE", resp, body); code != "method-not-allowed" {
+			t.Fatalf("DELETE code = %q", code)
 		}
 	})
 }

@@ -30,8 +30,9 @@ import (
 // shape: STORED records are size-prefixed $OMM FlatBuffers (the ingest wire
 // form), and the shard wraps each in an OUTER stream frame — so shard
 // frames are double-prefixed ([u32 outer][u32 inner][buffer]). The fb path
-// serves these bytes verbatim; the json path unwraps the redundant outer
-// layer before omm-json.
+// serves these bytes verbatim; for format=json foundation/http-respond reads
+// the size-prefixed record inside each shard frame (its identifier and root
+// sit one prefix further in).
 func latestOMMStream(t *testing.T) []byte {
 	t.Helper()
 	stream := make([]byte, 0, 2048)
@@ -217,31 +218,23 @@ func TestHTTPMountedLatestDatasetFlow(t *testing.T) {
 		}
 	})
 
-	t.Run("unpinned CAT answers an honest 503 carrying the newest PNM pointer", func(t *testing.T) {
+	t.Run("unpinned CAT answers an honest 503: the $DAV carrying the newest PNM pointer", func(t *testing.T) {
 		resp, body := discoveryGET(t, base+"/cat/latest", nil)
 		if resp.StatusCode != http.StatusServiceUnavailable {
 			t.Fatalf("status = %d body %q, want 503", resp.StatusCode, body)
 		}
-		var payload struct {
-			Error string `json:"error"`
-			PNM   struct {
-				CID               string `json:"CID"`
-				FileID            string `json:"FILE_ID"`
-				BatchID           string `json:"batch_id"`
-				PublishTimestamp  string `json:"PUBLISH_TIMESTAMP"`
-				SignatureVerified bool   `json:"signature_verified"`
-				Attribution       string `json:"attribution"`
-			} `json:"pnm"`
+		if ct, id := resp.Header.Get("Content-Type"), resp.Header.Get("X-Sdn-File-Identifier"); ct != "application/x-flatbuffers" || id != "$DAV" {
+			t.Fatalf("content-type = %q, x-sdn-file-identifier = %q; want the $DAV record", ct, id)
 		}
-		if err := json.Unmarshal(body, &payload); err != nil {
-			t.Fatalf("503 body: %v (%q)", err, body)
+		dav := readSDSRecord(t, body, "$DAV")
+		if dav.str(davSTANDARD) != "CAT" || !dav.flag(davKNOWN) || dav.flag(davAVAILABLE) || dav.flag(davPINNED) ||
+			dav.byte(davUNAVAILABLE_REASON) != davReasonNotHeld {
+			t.Fatalf("$DAV = standard %q known %v available %v pinned %v reason %d; want CAT known, unavailable, unpinned, NotHeld",
+				dav.str(davSTANDARD), dav.flag(davKNOWN), dav.flag(davAVAILABLE), dav.flag(davPINNED), dav.byte(davUNAVAILABLE_REASON))
 		}
-		if !strings.Contains(payload.Error, "not pinned") {
-			t.Fatalf("503 error = %q", payload.Error)
-		}
-		if payload.PNM.CID != "bafy-manifest-cat" || payload.PNM.BatchID != newBatch ||
-			!payload.PNM.SignatureVerified || payload.PNM.Attribution != "signature" {
-			t.Fatalf("pnm pointer: %+v", payload.PNM)
+		if cid, fileID := dav.str(davPNM_CID), dav.str(davPNM_FILE_ID); cid != "bafy-manifest-cat" ||
+			fileID != "sdn-CAT-full:CAT.fbs:"+newBatch+":part-000001" || !dav.flag(davPNM_SIGNATURE_VERIFIED) {
+			t.Fatalf("pnm pointer: cid %q file %q verified %v", cid, fileID, dav.flag(davPNM_SIGNATURE_VERIFIED))
 		}
 	})
 

@@ -6,7 +6,7 @@ Anthony "TJ" Koury III and Claude Opus 5.5
 
 Koury: Edgesource, Space Data Network · tj@edgesource.com. Claude: Anthropic.
 
-Technical whitepaper 1.9 | 11 October 2026
+Technical whitepaper 2.1 | 16 October 2026
 
 Numerical evidence cutoff: 11 October 2026
 
@@ -14,7 +14,7 @@ Numerical evidence cutoff: 11 October 2026
 
 ## Executive summary
 
-Space Data Network (SDN) screens the full public catalog, 32,514 objects, all-vs-all over three days in 19 s with SGP4 on ordinary processors, and in 21 s with a GPU. With numerical high-precision orbit propagation (HPOP) under the full force model of section 5, it takes 28 CPU-hours, 1.8 hours on 16 dedicated cores, almost all of it propagation; search and refinement take 138 s on 2 module threads. The screen finds every pair that comes within 5 km, and reports each close approach's time (TCA), miss distance, relative speed and maximum collision probability. The measurements were taken on one 28-core workstation, in Node.js and in a standard web browser. In WasmEdge, the runtime SDN nodes use, the SGP4 screen takes 23 s. Every run on one catalog and propagator reports the same conjunctions.
+Space Data Network (SDN) screens the full public catalog, 32,514 objects, all-vs-all over three days in 19 s with SGP4 on ordinary processors, and in 21 s with a GPU. With numerical high-precision orbit propagation (HPOP) under the full force model of section 5, it takes 28 CPU-hours, 1.8 hours on 16 dedicated cores, almost all of it propagation; search and refinement take 138 s on 2 module threads. The screen finds every pair that comes within 5 km, and reports each close approach's time (TCA), miss distance, relative speed and Alfano maximum probability of collision. The measurements were taken on one 28-core workstation, in Node.js and in a standard web browser. In WasmEdge, the runtime SDN nodes use, the SGP4 screen takes 23 s. Every run on one catalog and propagator reports the same conjunctions.
 
 Five design choices produce that speed:
 
@@ -26,7 +26,7 @@ Five design choices produce that speed:
 
 The screen reproduces the module's single-call screen where both can run. On 4,000 objects over one day, all 1,068 conjunctions match, with TCA within 0.64 ms and miss distance within 5 mm; the single call takes 32.9 s and the windowed screen 0.44 s.
 
-Against SOCRATES on the element sets SOCRATES itself used, TCA agrees within 0.5 ms and miss distance within 2.4 m for 95 % of cataloged pairs, the precision SOCRATES reports. Each event reports the covariance-free maximum probability. With an empirical model of element-set prediction error, events also carry a covariance-based probability. It is labeled calibrated only where held-out precise orbits confirm the covariance: LEO 600 to 800 km, 13,734 of the 294,544 three-day conjunctions. There, screening on the uncertainty region missed 0–0.4 % of true collisions, against 2.7–16 % for a probability threshold of 1e-4, whose probabilities a large covariance dilutes (section 7). The model<sup>[1](#r1)</sup> adds 1.1 s to the 19 s screen (section 7).
+Against SOCRATES on the element sets SOCRATES itself used, TCA agrees within 0.5 ms and miss distance within 2.4 m for 95 % of cataloged pairs, the precision SOCRATES reports. Each event reports the Alfano maximum, the largest probability a spherical covariance of any size gives; it needs no covariance, and it is not a bound for elongated covariances. With an empirical model of element-set prediction error, events also carry a covariance-based probability, Foster's integral over the hard-body disk. On held-out precise orbits, element-set covariance of this kind is realistic in 2 of 35 regime-and-age cells, LEO above 800 km at 0 and 0.5 days, and the HPOP epoch state's in 5 of 35. In a synthetic study on the errors of 4 reference objects, a probability threshold of 1e-4 missed 2.7–16 % of collisions, whose probabilities a large covariance dilutes; screening on the uncertainty region missed 0.2–0.4 %, with 21–45 % false alerts at a 1 km miss (section 7). Products built from public element sets are advisory: public element sets alone must not drive conjunction assessment decisions<sup>[34](#r34),[35](#r35)</sup>.
 
 Operators keep their most precise orbits and planned maneuvers private. Section 8 specifies **private screening**: two operators learn when their objects come close without exchanging trajectories, by computing distances on homomorphically encrypted positions.
 - **Cost.** Its arithmetic is measured: 0.17 s and 8.7 MB per pair-day at 1 s steps.
@@ -130,7 +130,7 @@ Tests check four windows against a single screen for both propagators. The SGP4 
 
 ### The HPOP propagation farm
 
-1. The epoch-state module converts each element set into a GCRF state at its epoch: SGP4 at zero elapsed time, then TEME to GCRF through ERFA. This is the OMM-to-numerical handoff of the companion paper<sup>[1](#r1)</sup>, [section 4](evidence-supported-aso-catalog.md#4-normalization-and-model-dispatch).
+1. The epoch-state module converts each element set into a GCRF state at its epoch: SGP4 at zero elapsed time, then TEME to GCRF through ERFA, with the IAU 2006/2000A precession-nutation and the equation of the equinoxes. Against the GMST82 and IAU 1976/1980 rotations of Vallado et al.<sup>[36](#r36)</sup>, this convention moves positions by 2.0–2.6 m in LEO and 12–16 m at GEO; the catalog and this screen use it throughout. This is the OMM-to-numerical handoff of the companion paper<sup>[1](#r1)</sup>, [section 4](evidence-supported-aso-catalog.md#4-normalization-and-model-dispatch).
 2. HPOP resident instances, at most 1,024 objects each, integrate those states on worker threads with the force model below. Objects are dealt round-robin into about two instances per worker, so element sets of every age spread evenly.
 3. Each window, every instance exports the window and the records go to the browser unchanged. The next window is exported while the current one is screened.
 
@@ -221,8 +221,9 @@ The companion paper<sup>[1](#r1)</sup> sets the conditions this screen respects,
 
 - An OMM supplies no covariance. The initial uncertainty of an OMM-seeded HPOP trajectory, including this paper's HPOP runs, is unknown: no validated representation of it exists.
 - A probability of collision requires relative-state uncertainty with independent calibration and stated cross-correlation, geometry and hard-body-radius assumptions.
+- Public element sets alone must not drive conjunction assessment decisions: NASA's conjunction assessment handbook (Vol. 2, App. E) and the Space-Track user agreement say so<sup>[34](#r34),[35](#r35)</sup>. Every product of this screen built from them is advisory.
 
-Every event reports the Alfano maximum: the largest probability any covariance size could give for the reported miss distance and combined hard-body radius<sup>[4](#r4)</sup>. It needs no covariance and serves as an upper bound. Each object's radius comes with its basis: supplied, half the catalog size, from the radar cross section, or the request default. No uncertainty is invented: an event carries covariance, and a covariance-based probability, only when a source supplied covariance or the empirical model below applies, and it states which. The work below follows the companion paper's three parts<sup>[8](#r8)</sup>:
+Every event reports the Alfano maximum: the largest probability a spherical covariance of any size gives for the reported miss distance and combined hard-body radius<sup>[4](#r4)</sup>. It needs no covariance. It is not a bound for other covariance shapes: at aspect ratios of 3, 10, 100 and 1,000 the largest probability over covariance scale for the covariance's own shape (PC2D-SHAPE-SCALED-MAX, which agrees with an independent numerical maximization within 9e-10) is 3.0, 10, 82 and 131 times higher, and LEO element-set covariances have aspect ratios of 2.4 to 191. Each object's radius comes with its basis: supplied, half the catalog size, from the radar cross section, or the request default. No uncertainty is invented: an event carries covariance, and a covariance-based probability, only when a source supplied covariance or the empirical model below applies, and it states which. The work below follows the companion paper's three parts<sup>[8](#r8)</sup>:
 
 1. Initial covariance
 2. Propagation
@@ -239,50 +240,48 @@ Calibration needs reference orbits that SGP4 did not produce. SDN's reference-st
 
 Their frames are converted with IERS Earth orientation parameters. For 2026-08-02 to 15, this gives 48 objects. The conversion matches an independent pyerfa computation within 1 mm, and a Vallado textbook case within its printed precision.
 
-### An empirical error model, and its calibration
+### An empirical error model, and its realism
 
 A model of SGP4 prediction error was built from 1.89 million element sets (2026-07-12 to 08-08), stratified by orbit regime and prediction age. It uses differences between consecutive element sets of the same object. Those differences are not truth, and the reference orbits show by how much:
 
 - From 600 km up, under half a day, they understate the true along-track error 4 to 11 times, because consecutive fits share their error.
 - Below 600 km they overstate it, by 10 to 90 times beyond a day.
 
-The calibration gate scales each stratum's covariance on one week of reference orbits (08-02 to 08), then tests it on the next (08-09 to 15). It compares each error's Mahalanobis distance with χ² on 3 degrees of freedom, and every sample counts. A stratum is CALIBRATED only when all of these hold:
+A one-week gate scales each stratum's covariance on one week of reference orbits (08-02 to 08), then tests it on the next (08-09 to 15). It compares each error's Mahalanobis distance with χ² on 3 degrees of freedom, and every sample counts. A stratum passes only when all of these hold:
 
 - its 1σ and 2σ containment are within 5 points of nominal;
 - no more than 1 % falls outside 3σ;
 - it has at least 30 samples from at least 3 objects.
 
-| LEO 600 to 800 km, prediction age | Samples (objects) | Inside 1σ / 2σ / 3σ | Label |
+| LEO 600 to 800 km, prediction age | Samples (objects) | Inside 1σ / 2σ / 3σ | One-week gate |
 | --- | ---: | --- | --- |
-| 0 to 0.5 day | 14,968 (4) | 0.642 / 0.954 / 0.997 | CALIBRATED |
-| 0.5 to 1 day | 14,876 (4) | 0.627 / 0.947 / 0.996 | FAILED |
-| 1 to 2 days | 31,327 (4) | 0.647 / 0.943 / 0.997 | CALIBRATED |
-| 2 to 3 days | 31,805 (4) | 0.636 / 0.922 / 0.994 | CALIBRATED |
-| 3 to 5 days | 58,981 (4) | 0.701 / 0.960 / 0.997 | CALIBRATED |
-| 5 to 7 days | 49,187 (4) | 0.728 / 0.965 / 0.991 | CALIBRATED |
+| 0 to 0.5 day | 14,968 (4) | 0.642 / 0.954 / 0.997 | Passed |
+| 0.5 to 1 day | 14,876 (4) | 0.627 / 0.947 / 0.996 | Failed |
+| 1 to 2 days | 31,327 (4) | 0.647 / 0.943 / 0.997 | Passed |
+| 2 to 3 days | 31,805 (4) | 0.636 / 0.922 / 0.994 | Passed |
+| 3 to 5 days | 58,981 (4) | 0.701 / 0.960 / 0.997 | Passed |
+| 5 to 7 days | 49,187 (4) | 0.728 / 0.965 / 0.991 | Passed |
 | Nominal | | 0.683 / 0.954 / 0.997 | |
 
-Every other stratum is UNCALIBRATED:
+Every other stratum fails or lacks reference objects:
 
 - **GPS and the other MEO strata fail**, for example 0.37 / 0.70 / 0.89 for LAGEOS-1/2 and LARES-2 within half a day. GPS element sets carry per-satellite along-track offsets of −1.6 to +3.8 km.
 - **The other LEO bands have only one or two reference objects.**
 - **GEO, eccentric and beyond-GEO orbits have no independent truth here.**
 
-The labels hold for these objects in this week.
+The passing strata rest on 4 objects in one week. E14 of the companion paper<sup>[1](#r1)</sup>, [section 6](evidence-supported-aso-catalog.md#6-uncertainty), tests the same kind of model on held-out weeks, with 5 to 14 reference objects per LEO band and its realism rule: mean d²/3 in [0.8, 1.25] and 95 % coverage in [0.93, 0.97]. The element-set covariance is realistic in 2 of 35 regime-and-age cells, LEO above 800 km at 0 and 0.5 days. LEO 500 to 800 km is not realistic at any age.
 
 ### Covariance probability on screened events
 
-With the scaled model, element-set screens give each event's objects the covariance of their stratum at the TCA's prediction age. The event then reports the selected method's probability, Foster's by default<sup>[9](#r9)</sup>. Each event is labeled:
+With the scaled model, element-set screens give each event's objects the covariance of their stratum at the TCA's prediction age. The event then reports the selected method's probability. The default, FOSTER-2D, integrates the Gaussian density of the miss over the combined hard-body disk in the encounter plane<sup>[9](#r9)</sup>: one coordinate analytically with error functions, the other by adaptive Gauss–Kronrod quadrature, including when the radius is comparable to a sigma. It agrees with the test cases of NASA's CARA Analysis Tools<sup>[37](#r37)</sup> within 4.7e-4 relative, and with an independent numerical double integral on 20 geometries within 3e-11. Each event is first checked against CARA's tests of the two-dimensional encounter assumptions; an event that fails them is evaluated with Hall's two- or three-dimensional expected-collision model (2D-Nc, 3D-Nc) or seeded Monte Carlo over the encounter interval, which agree with CARA's within 1.7e-5 relative and within its 10 % Monte Carlo tolerance. When only one object has a covariance, Frisbee's prescription applies (within 5.1e-3 of CARA's). The small-hard-body approximation R²/(2σ₁σ₂)·exp(−m²/2) runs only when selected (PC2D-SMALL-HBR-APPROX). Each event is labeled:
 
 - the covariance as synthesized from the empirical model;
 - the two objects' errors as independent;
-- calibrated only when both objects' strata passed the gate.
+- the calibration verdict of each object's stratum.
 
 On the three-day full catalog the screen found the same 294,544 conjunctions:
 
-- 289,455 received a covariance probability;
-- 13,734 of those are calibrated;
-- refinement took 7.8 s instead of 7.0 s, and the run 19.6 s instead of 18.5 s.
+- 289,455 received a covariance probability.
 
 Events outside the model keep the Alfano maximum. These are a negative or too-old prediction age, or a stratum the model lacks.
 
@@ -290,12 +289,11 @@ Events outside the model keep the Alfano maximum. These are a negative or too-ol
 
 - **Propagation.** HPOP resident instances accept an initial covariance P₀ per object and return P(t) = Φ P₀ Φᵀ + Q, with the state transition matrix of the full force model. Q is a declared white-acceleration process noise, inertial or radial-transverse-normal, given as a spectral density and discretization interval. It is recorded in the trajectory (SDS 1.232.0). The state transition matrix matches finite differences, and Q matches its closed form.
 - **Orbit determination.** Fits publish their formal covariance as an OCM. The OCM lists the noise models, weighting, observations used, process noise, a priori and convergence criteria, with biases neither estimated nor considered and no consider parameters. It is marked Uncalibrated.
-- **HPOP covariance, calibrated in part.** It was checked the same way as the empirical model, for this paper's HPOP screen product: an element-set epoch state with P₀ measured at the epoch, then HPOP with the full force model of section 5 and the space weather released on the element set's day. A white-acceleration Q was fitted by maximum likelihood on the fit week; a regime kept Q = 0 where P₀ alone passed more fit-week strata<sup>[33](#r33)</sup>.
-  - **LEO 600 to 800 km, 0 to 0.5 day and 1 to 3 days: CALIBRATED with P₀ alone.** P₀ carried through HPOP's state transition matrix predicts the along-track growth, 1.3 to 17 km, within 11 %.
-  - **LEO 600 to 800 km, 0.5 to 1 day: FAILED.** 75 % of the samples fall inside 1σ, 7 points above nominal.
-  - **LEO 600 to 800 km beyond 3 days: FAILED.**
+- **HPOP covariance.** It was checked the same way as the empirical model, for this paper's HPOP screen product: an element-set epoch state with P₀ measured at the epoch, then HPOP with the full force model of section 5 and the space weather released on the element set's day. A white-acceleration Q was fitted by maximum likelihood on the fit week; a regime kept Q = 0 where P₀ alone passed more fit-week strata<sup>[33](#r33)</sup>.
+  - **Held out (E14<sup>[1](#r1)</sup>): realistic in 5 of 35 regime-and-age cells, with P₀ alone.** These are LEO 500 to 800 km at epoch and LEO above 800 km to 2 days. In LEO 500 to 800 km, mean d²/3 is 2.21 to 294 at 1 to 3 days.
   - **GPS: FAILED at every age.** The normal error stays within 0.15 km for a week, while the along-track error grows to 36 km RMS at 5 to 7 days, against 16 km predicted. Started from the independent reference state instead, the same force model's along-track error after 6 days is 0.2 km (median), and 1.0 km with the radiation-pressure coefficient doubled; started from the element set it is 8.4 km. The along-track error is the epoch state's.
-  - **Other bands: INSUFFICIENT**, except MEO 2,000 to 10,000 km within half a day: FAILED.
+  - **LEO drag.** Started from the true state with drag from B*, HPOP's median error in LEO with precise orbits is 481 m at 24 h and 4.5 km at 72 h. Started from element-set epoch states, as this screen is, it is 9.5 to 11 times SGP4's error in LEO at 24 h (E7<sup>[1](#r1)</sup>).
+  - **LEO below 500 km, MEO and GEO: not realistic at any age** on the held-out test.
 - **Orbit-determination covariance is not calibrated.** Covariance supplied in an OEM or OCM enters conjunction assessment as supplied covariance and keeps the source's calibration label.
 
 ### Agreement with SOCRATES
@@ -314,7 +312,7 @@ Maximum probability is about nine times lower here at a 10 m combined radius. Th
 
 ### Screening rules compared
 
-Probabilistic, bounded-set and admissible-set screening compare as follows, on cases built from real SGP4 errors against the held-out reference orbits:
+Probabilistic, bounded-set and admissible-set screening compare as follows in a synthetic study. The collisions are built from real SGP4 errors against the reference orbits of the one-week gate's test week:
 
 - two different objects' errors in one stratum make one encounter;
 - each encounter is placed head-on and at a 90° crossing;
@@ -323,11 +321,11 @@ Probabilistic, bounded-set and admissible-set screening compare as follows, on c
 
 The three rules alert as follows:
 
-- **Probabilistic:** Foster's probability ≥ 1e-4.
+- **Probabilistic:** Foster's probability, integrated over the hard-body disk, ≥ 1e-4.
 - **Bounded set:** the 99.73 % relative ellipse comes within 20 m.
 - **Possibility:** min-joined χ² possibility per object, alerting unless the necessity of no collision reaches 0.9973. Possibility and necessity are not probabilities.
 
-The results, in the calibrated strata (10,000 cases a row):
+The results, in the LEO 600 to 800 km strata that passed the one-week gate, whose errors come from 4 reference objects (10,000 cases a row):
 
 | Rule | Missed collisions, head-on | Missed collisions, crossing | False alerts at 1 km miss | False alerts at 2 km miss |
 | --- | ---: | ---: | ---: | ---: |
@@ -336,7 +334,9 @@ The results, in the calibrated strata (10,000 cases a row):
 | Possibility | 0 % | 0 % | 69 to 89 % | 4 to 24 % |
 
 - **Probabilistic.** Along-track uncertainty here is 0.6 to 3 km, so a true collision's probability averages only 0.002 head-on and 0.0006 crossing. This is dilution, and it is what hides the collisions the probability rule misses.
-- **Possibility.** It missed none in calibrated strata, at the cost of the most false alerts. In uncalibrated strata it missed up to 8 %, so it is only as sound as its declared uncertainty.
+- **Bounded set.** It missed 0.2 to 0.4 %, with 21 to 45 % false alerts at a 1 km miss.
+- **Possibility.** It missed none in these strata, at the cost of the most false alerts. In strata whose covariance understates the error it missed up to 8 %, so it is only as sound as its declared uncertainty.
+- **Scope.** The true misses are designed, so these rates show how each rule responds to dilution, not operational miss rates. On E14's held-out test, element-set covariance in LEO 500 to 800 km is not realistic at any age<sup>[1](#r1)</sup>.
 - **Disclosure.** The baselines and cases were chosen independently of the TEAG and ESPF authors' implementations, and no TEAG or ESPF code was run.
 
 ## 8 Private screening
@@ -643,17 +643,20 @@ registered.
 | Catch-up from element epochs | The first HPOP window waits for every object to reach the screen start: 36 % of the object-days |
 | Memory per window | About 390 MB of trajectories per 1-hour HPOP window, indexed in 1.05 GiB of the module's 2 GiB |
 | HPOP coefficients | Drag from each element set's B*, 0.01 m²/kg where B* ≤ 0; one radiation-pressure coefficient for every object |
+| HPOP accuracy in LEO | From element-set epoch states, 9.5 to 11 times SGP4's median error at 24 h; from the true state with drag from B*, 481 m at 24 h and 4.5 km at 72 h |
 | One host | All timings from one shared 28-core workstation; the module gives the procedure for repeating them<sup>[2](#r2)</sup> |
-| Calibration coverage | Covariance calibrated only in LEO 600 to 800 km (empirical model; HPOP to 3 days, except 0.5 to 1 day), for 48 reference objects in one week |
+| Covariance realism | Realistic on held-out data in 2 of 35 regime-and-age cells for element sets (LEO above 800 km, 0 and 0.5 days) and 5 of 35 for the HPOP epoch state; the passing cells rest on 10 to 14 reference objects, none of them debris |
+| Probability method | The default, FOSTER-2D, assumes a two-dimensional encounter; events failing CARA's tests of that assumption are evaluated by 2D-Nc, 3D-Nc or Monte Carlo. The SDS CQR record carries only the maximum probability for those events; the CDM carries their result |
+| Alfano maximum | The maximum for spherical covariance only; the maximum for the covariance's own shape is 3.0 to 131 times higher at aspect ratios of 3 to 1,000 |
 | Probability inputs | Combined radius and covariance shape differ from SOCRATES's unpublished ones |
 
-This paper reports computation speed, agreement between implementations and with SOCRATES on identical inputs, and covariance calibration where independent truth exists. It does not establish operational readiness or orbit accuracy; the companion paper<sup>[1](#r1)</sup> reports measurements of HPOP's accuracy in its sections [7](evidence-supported-aso-catalog.md#7-dynamics-and-verification) and [10](evidence-supported-aso-catalog.md#10-measured-accuracy).
+This paper reports computation speed, agreement between implementations and with SOCRATES on identical inputs, and covariance realism where independent truth exists. Products built from public element sets are advisory and must not alone drive conjunction assessment decisions<sup>[34](#r34),[35](#r35)</sup>. The paper does not establish operational readiness or orbit accuracy; the companion paper<sup>[1](#r1)</sup> reports measurements of HPOP's accuracy in its sections [7](evidence-supported-aso-catalog.md#7-dynamics-and-verification) and [10](evidence-supported-aso-catalog.md#10-measured-accuracy).
 
 ## References
 
 ### R1
 
-Koury, A. Evidence-Supported ASO Catalog. Space Data Network technical whitepaper 2.0, 11 October 2026. [Paper](evidence-supported-aso-catalog.md)
+Koury, A. Evidence-Supported ASO Catalog. Space Data Network technical whitepaper 2.4, 16 October 2026. [Paper](evidence-supported-aso-catalog.md)
 
 ### R2
 
@@ -782,3 +785,19 @@ Fehlberg, E. Classical Fifth-, Sixth-, Seventh-, and Eighth-Order Runge-Kutta Fo
 ### R33
 
 Edgesource. HPOP on the resident path: force model, integrator and export, reentry, equivalence and interpolation tests, catalog cost, the propagation farm, the full-catalog screen (with the conjunction module of [R2](#r2)'s commit) and the HPOP covariance calibration. Modules commit e743f2a279ab8754a55b509ccd770e3415aaf3e6. Files: `propagator/hpop/README.md`, `propagator/hpop/catalog.mjs`, `analysis/conjunction-assessment/docs/gpu-all-vs-all.md`, `analysis/conjunction-assessment/docs/hpop-full-force-screen-2026-10.md`, `analysis/gp-error-model/docs/hpop-calibration-2026-08.md`. Private repository, available on request ([tj@edgesource.com](mailto:tj@edgesource.com)).
+
+### R34
+
+NASA. Spacecraft Conjunction Assessment and Collision Avoidance Best Practices Handbook, Vol. 2, Technical Appendices, Appendix E, Use of Analytic Theory Orbital Data in Conjunction Assessment, August 2026. [NTRS 20260000457](https://ntrs.nasa.gov/citations/20260000457)
+
+### R35
+
+Space-Track.org. User Agreement: "A TLE available to the public should not be used for conjunction assessment prediction." [User Agreement](https://www.space-track.org/documentation#/user_agree)
+
+### R36
+
+Vallado, D. A., Crawford, P., Hujsak, R. and Kelso, T. S. Revisiting Spacetrack Report #3. AIAA 2006-6753, 2006. [Paper](https://celestrak.org/publications/AIAA/2006-6753/AIAA-2006-6753.pdf)
+
+### R37
+
+NASA Conjunction Assessment Risk Analysis. CARA_Analysis_Tools. [GitHub](https://github.com/nasa/CARA_Analysis_Tools)

@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "updated": "2026-10-16",
+  "copy": {
+    "executive": "What government programs buy beyond SpaceAware: security built for accreditation, the warfighting functions in the terms both research and operations use, real-time collaboration, integration with legacy systems at the edge, and deployment into CDAO environments. Each line says whether it is live today or a target.",
+    "operator": "The same tools, named as your mission uses them, with your organization's data and UDL beside the open catalog, shared with the people you work with, and running where your systems are, including disconnected ones.",
+    "integrator": "A Space Data Network node runs as a sidecar beside legacy systems, converting their messages to signed SDS records; modules are WebAssembly that runs in the browser, on WasmEdge on small hosts and offline. Certifications are listed as targets until each is granted."
+  },
+  "security": {
+    "live": [
+      "Every record digitally signed at the source (Ed25519) and checked on arrival",
+      "Encrypted transport between nodes",
+      "The engine delivered encrypted and its signature checked before it runs",
+      "Paid modules encrypted to each account",
+      "Sign-in by passkey, password, seed phrase or wallet; no email needed",
+      "UDL credentials and data kept on the customer's own node"
+    ],
+    "certifications": [
+      { "name": "RMF Authorization to Operate (ATO)", "detail": "Interim authorization to test (IATT) first, then ATO", "status": "Target" },
+      { "name": "DoD Cloud Computing SRG Impact Levels", "detail": "IL4 and IL5; IL6 for classified networks", "status": "Target" },
+      { "name": "FedRAMP", "detail": "Moderate, then High, for hosted deployments", "status": "Target" },
+      { "name": "DISA STIGs", "detail": "Hardened builds with no open CAT I findings", "status": "Target" },
+      { "name": "FIPS 140-3", "detail": "Validated cryptographic modules", "status": "Target" },
+      { "name": "CMMC Level 2", "detail": "NIST SP 800-171 controls for the company", "status": "Target" },
+      { "name": "Secure software attestation", "detail": "NIST SP 800-218 (SSDF) and a software bill of materials with every release", "status": "Target" }
+    ]
+  },
+  "warfighting": [
+    { "academic": "Communications and spectrum analysis: link budgets, interference, propagation loss", "military": "Electromagnetic spectrum operations: spectrum management and electromagnetic warfare support", "status": "Live" },
+    { "academic": "Emitter location from time and frequency difference of arrival", "military": "RF geolocation (TDOA/FDOA) from UDL", "status": "Target" },
+    { "academic": "Relative-motion analysis in the RIC frame; rendezvous and transfer planning", "military": "Rendezvous and proximity operations (RPO): approach characterization and inspection planning", "status": "Live" },
+    { "academic": "Conjunction assessment and collision avoidance", "military": "Space protection and safety of flight", "status": "Live (advisory on public data)" },
+    { "academic": "Maneuver detection in element-set history", "military": "Indications and warning of maneuvers; pattern-of-life change", "status": "Live" },
+    { "academic": "Catalog maintenance, object custody and sensor coverage", "military": "Space domain awareness: custody and characterization of objects of interest", "status": "Live" },
+    { "academic": "Observation planning", "military": "Collection management and sensor tasking through UDL", "status": "Target" },
+    { "academic": "Launch window clearance and ascent and reentry reconstruction", "military": "Launch and reentry characterization", "status": "Live" },
+    { "academic": "On-device object detection in imagery", "military": "GEOINT exploitation at the edge", "status": "Live" },
+    { "academic": "Fastest paths across time-varying links", "military": "PACE planning and resilient communications routing", "status": "Live" },
+    { "academic": "Clouds, wind, rain, fog and sea state from satellites and forecasts", "military": "METOC support: collection windows and a sensor-site cloud outlook", "status": "Live; site outlook a target" },
+    { "academic": "Cislunar propagation and solar system navigation", "military": "Cislunar (xGEO) domain awareness", "status": "Live" }
+  ],
+  "collaboration": [
+    { "feature": "Signed data published once and shared node to node, the same records for every team", "status": "Live" },
+    { "feature": "Layer sets shared by content ID and opened by anyone with access", "status": "Live" },
+    { "feature": "Shared live sessions: one scene, one clock, every participant's view", "status": "Target" },
+    { "feature": "Sharing across organizations by release marking, with access enforced by key", "status": "Target" }
+  ],
+  "legacy": [
+    { "feature": "Space Data Network node as a sidecar beside legacy systems, converting CCSDS and legacy messages to signed SDS records", "status": "Live" },
+    { "feature": "Edge-deployed engineers who install and run sidecars on site", "status": "Offered with SpaceEdge" },
+    { "feature": "Resource-constrained hosts: WebAssembly modules on WasmEdge, byte-identical to the browser", "status": "Live" },
+    { "feature": "Disconnected and intermittent networks: work offline, sync when links return; install from a signed offline bundle", "status": "Target" }
+  ],
+  "cdao": [
+    { "feature": "Advana, the DoD enterprise data and analytics platform", "status": "Target" },
+    { "feature": "Open DAGIR, CDAO's open data and applications environment", "status": "Target" },
+    { "feature": "Tradewinds Solutions Marketplace, CDAO's procurement vehicle", "status": "Target" }
+  ]
+}
