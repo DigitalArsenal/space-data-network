@@ -40,9 +40,10 @@
     if (!VIEWS.some((v) => v.id === next.view)) next.view = DEFAULT.view;
     return next;
   }
+  // The hash is shared with plans.js (level, plan builder): keep its keys, write only ours.
   function writeHash() {
-    const params = new URLSearchParams();
-    for (const [key, value] of Object.entries(state)) if (value !== DEFAULT[key]) params.set(key, value);
+    const params = new URLSearchParams(location.hash.slice(1));
+    for (const [key, value] of Object.entries(state)) value !== DEFAULT[key] ? params.set(key, value) : params.delete(key);
     const hash = params.toString();
     history.replaceState(null, "", hash ? `#${hash}` : location.pathname + location.search);
   }
