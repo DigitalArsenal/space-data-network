@@ -68,7 +68,7 @@
   // ----- Plans table ---------------------------------------------------------------------
 
   function cell(p, gid) {
-    if (p.id === "spaceedge") return gid === "suite" ? `${money(p.range[0])}–${money(p.range[1])}${p.rangeOpen ? "+" : ""}` : "In the program";
+    if (p.id === "spaceedge") return gid === "suite" ? esc(p.priceLabel) : "In the program";
     const price = p.prices[gid];
     if (gid === "developer") return price == null ? "—" : `${money(price)}<small>${esc(p.developerBasis ?? p.basis)}</small>`;
     if (price == null) return "—";
@@ -103,7 +103,7 @@
     let total = 0, unit = "", note = "", saving = null;
 
     if (p.id === "spaceedge") {
-      return { total: null, text: `${money(p.range[0])}–${money(p.range[1])}${p.rangeOpen ? "+" : ""}`, unit: p.basis, lines: [p.fees, ...p.routes.map((r) => `Contract route: ${r}`)], note: "", saving: null };
+      return { total: null, text: p.priceLabel, unit: p.basis, lines: [p.fees, ...p.routes.map((r) => `Contract route: ${r}`)], note: "", saving: null };
     }
     if (p.id === "free") return { total: 0, text: "Free", unit: "", lines: core.map((id) => `${group(id).name}: view the open data`), note: "", saving: null };
 
@@ -180,7 +180,7 @@
         <div><b>${esc(plans.governmentName)}</b><small>${esc(plans.mark.label)}</small></div></div>
       <div class="pl-edge-cols">
         <div><h3>Adds</h3><ul>${p.adds.map((a) => `<li>${esc(a)}</li>`).join("")}</ul></div>
-        <div><h3>Price</h3><p class="pl-price-sm">${money(p.range[0])}–${money(p.range[1])}${p.rangeOpen ? "+" : ""} <span>${esc(p.basis)}</span></p>
+        <div><h3>Price</h3><p class="pl-price-sm">${esc(p.priceLabel)} <span>${esc(p.basis)}</span></p>
           <p class="pl-muted">${esc(p.fees)}</p><h3>Contract routes</h3><ul>${p.routes.map((r) => `<li>${esc(r)}</li>`).join("")}</ul></div>
       </div>`;
     $("[data-plans=signin]").innerHTML = plans.signinSteps.map((s, i) =>
