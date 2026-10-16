@@ -79,7 +79,7 @@ func VerifyDetachedSignature(epmData, payload, signature []byte) error {
 	if len(epmData) == 0 {
 		return ErrEmptyEPMData
 	}
-	if !EPM.SizePrefixedEPMBufferHasIdentifier(epmData) {
+	if VerifyEPMBuffer(epmData) != nil || !EPM.SizePrefixedEPMBufferHasIdentifier(epmData) {
 		return ErrInvalidEPMData
 	}
 	if len(payload) == 0 || len(signature) == 0 {
@@ -98,7 +98,7 @@ func verifyEPMSignaturePrep(epmData []byte) (*EPM.EPM, []byte, []byte, error) {
 	if len(epmData) == 0 {
 		return nil, nil, nil, ErrEmptyEPMData
 	}
-	if !EPM.SizePrefixedEPMBufferHasIdentifier(epmData) {
+	if VerifyEPMBuffer(epmData) != nil || !EPM.SizePrefixedEPMBufferHasIdentifier(epmData) {
 		return nil, nil, nil, ErrInvalidEPMData
 	}
 
@@ -202,7 +202,7 @@ func EPMSigningPayload(epmData []byte) ([]byte, error) {
 	if len(epmData) == 0 {
 		return nil, ErrEmptyEPMData
 	}
-	if !EPM.SizePrefixedEPMBufferHasIdentifier(epmData) {
+	if VerifyEPMBuffer(epmData) != nil || !EPM.SizePrefixedEPMBufferHasIdentifier(epmData) {
 		return nil, ErrInvalidEPMData
 	}
 	return canonicalSigningContentFromEPM(EPM.GetSizePrefixedRootAsEPM(epmData, 0))

@@ -3,6 +3,7 @@ package storefront
 import (
 	"errors"
 	"fmt"
+	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"time"
 
 	sdsstf "github.com/DigitalArsenal/spacedatastandards.org/lib/go/STF"
@@ -15,6 +16,9 @@ func decodeListingRecord(data []byte) (listing *Listing, err error) {
 			err = fmt.Errorf("malformed STF FlatBuffer: %v", recovered)
 		}
 	}()
+	if err := sds.VerifyBareStructure("STF.fbs", data); err != nil {
+		return nil, fmt.Errorf("storefront STF structure: %w", err)
+	}
 	if !sdsstf.STFBufferHasIdentifier(data) {
 		return nil, errors.New("STF buffer missing $STF file identifier")
 	}

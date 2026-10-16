@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	sdnpubsub "github.com/spacedatanetwork/sdn-server/internal/pubsub"
 	"strings"
 	"sync"
 	"time"
@@ -92,6 +93,10 @@ func NewService(store *Store, peerID string, signingKey, grantSigningKey ed25519
 	// Join PubSub topics if available
 	if pubsub != nil {
 		var err error
+		// Malformed listing publications are refused before relay (NET-01).
+		if err := sdnpubsub.RegisterTopicStructureValidator(pubsub, StorefrontListingsTopic); err != nil {
+			return nil, fmt.Errorf("storefront listings validator: %w", err)
+		}
 		svc.listingTopic, err = pubsub.Join(StorefrontListingsTopic)
 		if err != nil {
 			log.Warnf("Failed to join listings topic: %v", err)

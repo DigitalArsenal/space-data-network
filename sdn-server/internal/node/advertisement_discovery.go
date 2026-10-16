@@ -173,6 +173,7 @@ func (n *Node) sdnAdvertisementDiscoveredPeerIDs() []peer.ID {
 }
 
 func (n *Node) fetchAndIndexDiscoveredNodeEPM(pid peer.ID, source string) {
+	defer recoverPeerIngress("epm-discovery", pid, false, nil)
 	if n == nil || pid == "" {
 		return
 	}
@@ -225,7 +226,12 @@ func (n *Node) fetchDiscoveredNodeEPM(pid peer.ID) ([]byte, error) {
 
 	status := binary.LittleEndian.Uint32(respHeader[0:4])
 	dataLen := binary.LittleEndian.Uint32(respHeader[4:8])
-	if status != 0 || dataLen == 0 || dataLen > 64*1024 {
+	if dataLen > 64*1024 {
+		_ = stream.Reset()
+		log.Warnf("epm-discovery from %s refused: EPM length %d exceeds 65536", pid, dataLen)
+		return nil, fmt.Errorf("EPM exceeds size limit")
+	}
+	if status != 0 || dataLen == 0 {
 		return nil, nil
 	}
 
@@ -233,11 +239,20 @@ func (n *Node) fetchDiscoveredNodeEPM(pid peer.ID) ([]byte, error) {
 	if _, err := io.ReadFull(stream, epmBytes); err != nil {
 		return nil, err
 	}
+	if err := epm.VerifyEPMBuffer(epmBytes); err != nil {
+		_ = stream.Reset()
+		log.Warnf("epm-discovery from %s refused: %v", pid, err)
+		return nil, err
+	}
 	return epmBytes, nil
 }
 
 func (n *Node) indexFetchedDiscoveredNodeEPM(pid peer.ID, source string, epmBytes []byte) {
 	if n == nil || pid == "" || n.peerRegistry == nil {
+		return
+	}
+	if err := epm.VerifyEPMBuffer(epmBytes); err != nil {
+		log.Warnf("epm-discovery from %s refused: %v", pid, err)
 		return
 	}
 	if err := epm.VerifyEPMSignature(epmBytes); err != nil {
@@ -304,7 +319,7 @@ func discoveredNodeEPMJSON(epmBytes []byte, pid peer.ID) (map[string]any, error)
 	if len(epmBytes) == 0 {
 		return nil, fmt.Errorf("empty EPM data")
 	}
-	if !EPM.SizePrefixedEPMBufferHasIdentifier(epmBytes) {
+	if epm.VerifyEPMBuffer(epmBytes) != nil || !EPM.SizePrefixedEPMBufferHasIdentifier(epmBytes) {
 		return nil, fmt.Errorf("invalid EPM data")
 	}
 

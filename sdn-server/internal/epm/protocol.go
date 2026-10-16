@@ -55,7 +55,7 @@ func (s *Service) handleStream(stream network.Stream) {
 	defer func() {
 		if r := recover(); r != nil {
 			_ = stream.Reset()
-			log.Errorf("epm-exchange request from %s dropped: handler panicked: %v\n%s", remotePeer, r, debug.Stack())
+			log.Errorf("epm-exchange request from %s refused: handler panicked: %v\n%s", remotePeer, r, debug.Stack())
 		}
 	}()
 
@@ -64,7 +64,8 @@ func (s *Service) handleStream(stream network.Stream) {
 
 	var reqLen uint32
 	if err := binary.Read(stream, binary.LittleEndian, &reqLen); err != nil {
-		log.Debugf("epm-exchange: read header from %s failed: %v", remotePeer, err)
+		_ = stream.Reset()
+		log.Warnf("epm-exchange request from %s refused: invalid header: %v", remotePeer, err)
 		return
 	}
 
@@ -81,12 +82,14 @@ func (s *Service) handleStream(stream network.Stream) {
 		// Client wants a specific peer's EPM
 		peerIDBytes := make([]byte, reqLen)
 		if _, err := io.ReadFull(stream, peerIDBytes); err != nil {
-			log.Debugf("epm-exchange: read peer ID from %s failed: %v", remotePeer, err)
+			_ = stream.Reset()
+			log.Warnf("epm-exchange request from %s refused: truncated peer ID: %v", remotePeer, err)
 			return
 		}
 
 		targetPeerID, err := peer.Decode(string(peerIDBytes))
 		if err != nil {
+			log.Warnf("epm-exchange request from %s refused: invalid peer ID", remotePeer)
 			s.writeResponse(stream, statusError, nil, remotePeer)
 			return
 		}
@@ -100,6 +103,7 @@ func (s *Service) handleStream(stream network.Stream) {
 		epmData = tp.EPMData
 	} else {
 		log.Warnf("epm-exchange: invalid request length %d from %s", reqLen, remotePeer)
+		s.writeResponse(stream, statusError, nil, remotePeer)
 		return
 	}
 
@@ -131,21 +135,26 @@ func (s *Service) writeResponse(stream network.Stream, status uint32, data []byt
 // RequestPeerEPM opens a stream to a remote peer and requests their EPM.
 // On success, it stores the EPM in the peer registry.
 func (s *Service) RequestPeerEPM(ctx context.Context, h host.Host, target peer.ID) (err error) {
+	var stream network.Stream
 	defer func() {
 		if r := recover(); r != nil {
-			log.Errorf("epm-exchange: EPM from %s dropped: panicked on malformed input: %v\n%s", target.ShortString(), r, debug.Stack())
+			if stream != nil {
+				_ = stream.Reset()
+			}
+			log.Errorf("epm-exchange reply from %s refused: handler panicked: %v\n%s", target, r, debug.Stack())
 			err = fmt.Errorf("epm-exchange: malformed EPM from %s", target.ShortString())
+		}
+		if stream != nil {
+			_ = stream.Close()
 		}
 	}()
 	streamCtx, cancel := context.WithTimeout(ctx, streamReadDeadline+streamWriteDeadline)
 	defer cancel()
 
-	stream, err := h.NewStream(streamCtx, target, EPMExchangeProtocolID)
+	stream, err = h.NewStream(streamCtx, target, EPMExchangeProtocolID)
 	if err != nil {
 		return err
 	}
-	defer stream.Close()
-
 	// Send request (len=0 means "send me yours")
 	_ = stream.SetWriteDeadline(time.Now().Add(streamWriteDeadline))
 	header := make([]byte, 4)
@@ -159,24 +168,34 @@ func (s *Service) RequestPeerEPM(ctx context.Context, h host.Host, target peer.I
 
 	var respHeader [8]byte
 	if _, err := io.ReadFull(stream, respHeader[:]); err != nil {
+		_ = stream.Reset()
+		log.Warnf("epm-exchange reply from %s refused: invalid header: %v", target, err)
 		return err
 	}
 
 	status := binary.LittleEndian.Uint32(respHeader[0:4])
 	dataLen := binary.LittleEndian.Uint32(respHeader[4:8])
 
-	if status != statusOK || dataLen == 0 || dataLen > maxEPMSize {
+	if dataLen > maxEPMSize {
+		_ = stream.Reset()
+		log.Warnf("epm-exchange reply from %s refused: EPM length %d exceeds %d", target, dataLen, maxEPMSize)
+		return nil
+	}
+	if status != statusOK || dataLen == 0 {
 		return nil // peer doesn't have an EPM or returned error
 	}
 
 	epmData := make([]byte, dataLen)
 	if _, err := io.ReadFull(stream, epmData); err != nil {
+		_ = stream.Reset()
+		log.Warnf("epm-exchange reply from %s refused: truncated EPM: %v", target, err)
 		return err
 	}
 
 	// The bytes are the peer's: prove every offset in them is in range before
 	// any accessor (VerifyEPMSignature walks ~30 of them) reads one.
 	if err := VerifyEPMBuffer(epmData); err != nil {
+		_ = stream.Reset()
 		log.Warnf("epm-exchange: rejecting malformed EPM from %s: %v", target.ShortString(), err)
 		return nil
 	}

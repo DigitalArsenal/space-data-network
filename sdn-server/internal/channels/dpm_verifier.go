@@ -30,20 +30,20 @@ type DPMTrustEvidence struct {
 }
 
 func IsDPMManifest(manifestBytes []byte) bool {
-	return dpm.DPMBufferHasIdentifier(manifestBytes)
+	return len(manifestBytes) >= 8 && dpm.DPMBufferHasIdentifier(manifestBytes)
 }
 
 func VerifySignedDPMManifest(manifestBytes []byte, expectedFileID string) (DPMTrustEvidence, error) {
 	if len(manifestBytes) == 0 {
 		return DPMTrustEvidence{}, ErrDPMRequired
 	}
-	if !dpm.DPMBufferHasIdentifier(manifestBytes) {
-		return DPMTrustEvidence{}, ErrDPMMissingIdentity
-	}
 	// A manifest is fetched from the network on an announcement's say-so:
 	// prove it memory-safe before reading it (security re-audit NET-01).
 	if err := sds.VerifyBareStructure("DPM.fbs", manifestBytes); err != nil {
 		return DPMTrustEvidence{}, fmt.Errorf("malformed DPM manifest: %w", err)
+	}
+	if !dpm.DPMBufferHasIdentifier(manifestBytes) {
+		return DPMTrustEvidence{}, ErrDPMMissingIdentity
 	}
 	manifest := dpm.GetRootAsDPM(manifestBytes, 0)
 	fileID := strings.TrimSpace(string(manifest.FILE_ID()))

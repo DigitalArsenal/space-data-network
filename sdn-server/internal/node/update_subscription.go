@@ -367,7 +367,7 @@ func (s *UpdateSubscriber) Run(ctx context.Context) error {
 			log.Warnf("update subscriber: error reading topic %s: %v", s.topic, err)
 			continue
 		}
-		s.handleMessage(data)
+		runUpdateGossip("update-announcement", func() { s.handleMessage(data) })
 	}
 }
 

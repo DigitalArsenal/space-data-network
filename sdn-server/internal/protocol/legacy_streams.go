@@ -30,7 +30,7 @@ func HandleLegacyIDExchange(s network.Stream) {
 	defer s.Close()
 	defer recoverStream("id-exchange", s)
 
-	_ = s.SetReadDeadline(time.Now().Add(legacyReadDeadline))
+	_ = s.SetDeadline(time.Now().Add(legacyReadDeadline))
 	buf := make([]byte, legacyMaxReadBytes)
 	n, err := s.Read(buf)
 	if err != nil && !errors.Is(err, io.EOF) && !isTimeoutError(err) {
@@ -69,6 +69,7 @@ func HandleLegacyIDExchange(s network.Stream) {
 func HandleLegacyChat(s network.Stream) {
 	defer s.Close()
 	defer recoverStream("chat", s)
+	_ = s.SetDeadline(time.Now().Add(legacyReadDeadline))
 
 	reader := bufio.NewReader(io.LimitReader(s, legacyMaxReadBytes))
 	line, err := reader.ReadString('\n')

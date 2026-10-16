@@ -1,10 +1,13 @@
 package protocol
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"runtime/debug"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -82,15 +85,48 @@ func recoverStream(protocolName string, s network.Stream) {
 	if r == nil {
 		return
 	}
-	log.Errorf("%s: stream from %s dropped: handler panicked on malformed input: %v\n%s",
-		protocolName, streamPeer(s).ShortString(), r, debug.Stack())
+	log.Errorf("%s: refused stream from %s: handler panicked on malformed input: %s\n%s",
+		protocolName, streamPeer(s).ShortString(), boundedRefusalReason(fmt.Sprint(r)), debug.Stack())
 	if s != nil {
 		_ = s.Reset()
 	}
 }
 
+// recoverReply keeps a malformed peer response inside the request boundary.
+// A refusal resets the stream and is logged once, including verifier failures.
+func recoverReply(lane string, s network.Stream, err *error) {
+	if r := recover(); r != nil {
+		*err = panicError(r)
+	}
+	if *err != nil {
+		log.Warnf("%s: refused reply from %s: %s", lane, streamPeer(s).ShortString(), boundedRefusalReason((*err).Error()))
+		if s != nil {
+			_ = s.Reset()
+		}
+	}
+}
+
+func setRequestDeadline(ctx context.Context, s network.Stream) error {
+	deadline := time.Now().Add(DefaultHandlerTimeout)
+	if contextDeadline, ok := ctx.Deadline(); ok && contextDeadline.Before(deadline) {
+		deadline = contextDeadline
+	}
+	return s.SetDeadline(deadline)
+}
+
 func panicError(r any) error {
 	return fmt.Errorf("%w: %v", ErrMalformedMessage, r)
+}
+
+func warnStreamRefusal(s network.Stream, format string, args ...any) {
+	log.Warnf("sds-exchange: refused request from %s: %s", streamPeer(s).ShortString(), boundedRefusalReason(fmt.Sprintf(format, args...)))
+}
+
+func boundedRefusalReason(reason string) string {
+	if len(reason) > 1024 {
+		reason = reason[:1024] + "..."
+	}
+	return strconv.QuoteToASCII(reason)
 }
 
 func requestedSchema(values ...string) string {

@@ -651,6 +651,9 @@ func buildListingPNM(stfCID, dpmCID, listingID, fileID string, publishedAt time.
 }
 
 func VerifyListingPNM(pnmBytes []byte, publicKey ed25519.PublicKey) (err error) {
+	if err := sds.VerifySizePrefixedStructure("PNM.fbs", pnmBytes); err != nil {
+		return fmt.Errorf("storefront PNM structure: %w", err)
+	}
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			err = fmt.Errorf("malformed PNM FlatBuffer: %v", recovered)
@@ -903,6 +906,9 @@ func ComputeListingFileIDMerkleRoot(fileID string, records [][]byte) string {
 // VerifyListingDPM verifies the provider signature using the same canonical
 // unsigned FlatBuffer reconstruction used by the listing publisher.
 func VerifyListingDPM(dpmBytes []byte, publicKey ed25519.PublicKey) (err error) {
+	if err := sds.VerifyBareStructure("DPM.fbs", dpmBytes); err != nil {
+		return fmt.Errorf("storefront DPM structure: %w", err)
+	}
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			err = fmt.Errorf("malformed DPM FlatBuffer: %v", recovered)

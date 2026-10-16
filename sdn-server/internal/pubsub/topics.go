@@ -64,6 +64,12 @@ func NewTopicManager(pubsub *ps.PubSub, validator *sds.Validator) (*TopicManager
 func (tm *TopicManager) SetupSDSTopics() error {
 	for _, schemaName := range tm.validator.Schemas() {
 		topicName := TopicPrefix + schemaName
+		if _, joined := tm.topics[schemaName]; joined {
+			continue
+		}
+		if err := RegisterTopicStructureValidator(tm.pubsub, topicName); err != nil {
+			return err
+		}
 
 		topic, err := tm.pubsub.Join(topicName)
 		if err != nil {

@@ -211,20 +211,21 @@ func (s *replayStream) Read(p []byte) (int, error) { return s.r.Read(p) }
 func (h *SDSExchangeHandler) gateSyncLog(s network.Stream) (network.Stream, bool) {
 	var lenBuf [2]byte
 	if _, err := io.ReadFull(s, lenBuf[:]); err != nil {
+		warnStreamRefusal(s, "sync-log schema length: %v", err)
 		return nil, false
 	}
 	n := binary.BigEndian.Uint16(lenBuf[:])
 	if int(n) > h.limits.MaxSchemaName {
-		log.Warnf("REFUSING sync-log request from %s: schema name of %d bytes", s.Conn().RemotePeer().ShortString(), n)
+		warnStreamRefusal(s, "sync-log schema name of %d bytes", n)
 		return nil, false
 	}
 	name := make([]byte, n)
 	if _, err := io.ReadFull(s, name); err != nil {
+		warnStreamRefusal(s, "sync-log schema name: %v", err)
 		return nil, false
 	}
 	if _, ok := h.mayRead(s.Conn().RemotePeer(), string(name)); !ok {
-		log.Warnf("REFUSING sync-log request for %s from %s: not on the public read surface and the peer is not authorized for private reads",
-			sanitizeLogName(string(name)), s.Conn().RemotePeer().ShortString())
+		warnStreamRefusal(s, "sync-log schema %s: not authorized for private reads", sanitizeLogName(string(name)))
 		return nil, false
 	}
 	consumed := append(lenBuf[:], name...)
@@ -295,7 +296,7 @@ func (h *SDSExchangeHandler) HandleStream(s network.Stream) {
 
 	// Check rate limit before processing
 	if h.rateLimiter != nil && !h.rateLimiter.Allow(peerID) {
-		log.Warnf("Rate limit exceeded for peer %s, rejecting stream", peerID.ShortString())
+		warnStreamRefusal(s, "rate limit exceeded")
 		s.Write([]byte{RespRateLimited})
 		return
 	}
@@ -303,16 +304,24 @@ func (h *SDSExchangeHandler) HandleStream(s network.Stream) {
 	// Create context with timeout for the entire handler
 	ctx, cancel := context.WithTimeout(context.Background(), DefaultHandlerTimeout)
 	defer cancel()
+	if err := setRequestDeadline(ctx, s); err != nil {
+		log.Warnf("sds-exchange: refused stream from %s: set deadline: %v", peerID.ShortString(), err)
+		_ = s.Reset()
+		return
+	}
 
 	// Set stream deadline for read operations
 	if err := s.SetReadDeadline(time.Now().Add(DefaultReadTimeout)); err != nil {
-		log.Warnf("Failed to set read deadline: %v", err)
+		warnStreamRefusal(s, "set read deadline: %v", err)
+		_ = s.Reset()
+		return
 	}
 
 	// Read message type
 	msgType := make([]byte, 1)
 	if _, err := io.ReadFull(s, msgType); err != nil {
-		log.Warnf("Failed to read message type: %v", err)
+		warnStreamRefusal(s, "message type: %v", err)
+		_ = s.Reset()
 		return
 	}
 
@@ -332,11 +341,11 @@ func (h *SDSExchangeHandler) HandleStream(s network.Stream) {
 			}
 			h.syncHandler.HandleSyncLog(gated)
 		} else {
-			log.Warnf("MsgSyncLog received but no sync handler registered")
+			warnStreamRefusal(s, "sync-log handler unavailable")
 			s.Write([]byte{RespReject})
 		}
 	default:
-		log.Warnf("Unknown message type: 0x%02x", msgType[0])
+		warnStreamRefusal(s, "unknown message type: 0x%02x", msgType[0])
 		s.Write([]byte{RespReject})
 	}
 }
@@ -345,14 +354,15 @@ func (h *SDSExchangeHandler) handleDataRequest(ctx context.Context, s network.St
 	// Read schema name length (2 bytes)
 	schemaNameLen := make([]byte, 2)
 	if _, err := io.ReadFull(s, schemaNameLen); err != nil {
-		log.Warnf("Failed to read schema name length: %v", err)
+		warnStreamRefusal(s, "data-request schema length: %v", err)
+		s.Write([]byte{RespReject})
 		return
 	}
 
 	// Validate schema name length
 	schemaLen := binary.BigEndian.Uint16(schemaNameLen)
 	if int(schemaLen) > h.limits.MaxSchemaName {
-		log.Warnf("Schema name too long: %d > %d", schemaLen, h.limits.MaxSchemaName)
+		warnStreamRefusal(s, "data-request schema length %d > %d", schemaLen, h.limits.MaxSchemaName)
 		s.Write([]byte{RespReject})
 		return
 	}
@@ -360,13 +370,14 @@ func (h *SDSExchangeHandler) handleDataRequest(ctx context.Context, s network.St
 	// Read schema name
 	schemaName := make([]byte, schemaLen)
 	if _, err := io.ReadFull(s, schemaName); err != nil {
-		log.Warnf("Failed to read schema name: %v", err)
+		warnStreamRefusal(s, "data-request schema name: %v", err)
+		s.Write([]byte{RespReject})
 		return
 	}
 
 	// Validate schema name to prevent path traversal and injection attacks
 	if err := sds.ValidateSchemaName(string(schemaName)); err != nil {
-		log.Warnf("Invalid schema name from %s: %v", s.Conn().RemotePeer().ShortString(), err)
+		warnStreamRefusal(s, "data-request schema: %v", err)
 		s.Write([]byte{RespReject})
 		return
 	}
@@ -374,21 +385,22 @@ func (h *SDSExchangeHandler) handleDataRequest(ctx context.Context, s network.St
 	// Read CID length (2 bytes)
 	cidLen := make([]byte, 2)
 	if _, err := io.ReadFull(s, cidLen); err != nil {
-		log.Warnf("Failed to read CID length: %v", err)
+		warnStreamRefusal(s, "data-request CID length: %v", err)
+		s.Write([]byte{RespReject})
 		return
 	}
 
 	// Read CID
 	cid := make([]byte, binary.BigEndian.Uint16(cidLen))
 	if _, err := io.ReadFull(s, cid); err != nil {
-		log.Warnf("Failed to read CID: %v", err)
+		warnStreamRefusal(s, "data-request CID: %v", err)
+		s.Write([]byte{RespReject})
 		return
 	}
 
 	readSchema, ok := h.mayRead(s.Conn().RemotePeer(), string(schemaName))
 	if !ok {
-		log.Warnf("REFUSING data request for %s from %s: not on the public read surface and the peer is not authorized for private reads",
-			sanitizeLogName(string(schemaName)), s.Conn().RemotePeer().ShortString())
+		warnStreamRefusal(s, "data-request schema %s: not authorized for private reads", sanitizeLogName(string(schemaName)))
 		s.Write([]byte{RespReject})
 		return
 	}
@@ -429,7 +441,7 @@ func (h *SDSExchangeHandler) handleDataPush(ctx context.Context, s network.Strea
 	// Read schema name length (2 bytes)
 	schemaNameLen := make([]byte, 2)
 	if _, err := io.ReadFull(s, schemaNameLen); err != nil {
-		log.Warnf("Failed to read schema name length: %v", err)
+		warnStreamRefusal(s, "data-push schema length: %v", err)
 		s.Write([]byte{RespReject})
 		return
 	}
@@ -437,7 +449,7 @@ func (h *SDSExchangeHandler) handleDataPush(ctx context.Context, s network.Strea
 	// Validate schema name length
 	schemaLen := binary.BigEndian.Uint16(schemaNameLen)
 	if int(schemaLen) > h.limits.MaxSchemaName {
-		log.Warnf("Schema name too long: %d > %d", schemaLen, h.limits.MaxSchemaName)
+		warnStreamRefusal(s, "data-push schema length %d > %d", schemaLen, h.limits.MaxSchemaName)
 		s.Write([]byte{RespReject})
 		return
 	}
@@ -445,7 +457,7 @@ func (h *SDSExchangeHandler) handleDataPush(ctx context.Context, s network.Strea
 	// Read schema name
 	schemaName := make([]byte, schemaLen)
 	if _, err := io.ReadFull(s, schemaName); err != nil {
-		log.Warnf("Failed to read schema name: %v", err)
+		warnStreamRefusal(s, "data-push schema name: %v", err)
 		s.Write([]byte{RespReject})
 		return
 	}
@@ -458,7 +470,7 @@ func (h *SDSExchangeHandler) handleDataPush(ctx context.Context, s network.Strea
 	// though every SDN record carries its type in its first bytes.
 	if len(schemaName) > 0 {
 		if err := sds.ValidateSchemaName(string(schemaName)); err != nil {
-			log.Warnf("Invalid schema name from %s: %v", s.Conn().RemotePeer().ShortString(), err)
+			warnStreamRefusal(s, "data-push schema: %v", err)
 			s.Write([]byte{RespReject})
 			return
 		}
@@ -467,7 +479,7 @@ func (h *SDSExchangeHandler) handleDataPush(ctx context.Context, s network.Strea
 	// Read data length (4 bytes)
 	dataLenBuf := make([]byte, 4)
 	if _, err := io.ReadFull(s, dataLenBuf); err != nil {
-		log.Warnf("Failed to read data length: %v", err)
+		warnStreamRefusal(s, "data-push data length: %v", err)
 		s.Write([]byte{RespReject})
 		return
 	}
@@ -475,7 +487,7 @@ func (h *SDSExchangeHandler) handleDataPush(ctx context.Context, s network.Strea
 	// Validate data length before allocation
 	dataLen := binary.BigEndian.Uint32(dataLenBuf)
 	if int(dataLen) > h.limits.MaxMessageSize {
-		log.Warnf("Message too large: %d > %d bytes", dataLen, h.limits.MaxMessageSize)
+		warnStreamRefusal(s, "data-push length %d > %d bytes", dataLen, h.limits.MaxMessageSize)
 		s.Write([]byte{RespReject})
 		return
 	}
@@ -483,7 +495,7 @@ func (h *SDSExchangeHandler) handleDataPush(ctx context.Context, s network.Strea
 	// Read data
 	data := make([]byte, dataLen)
 	if _, err := io.ReadFull(s, data); err != nil {
-		log.Warnf("Failed to read data: %v", err)
+		warnStreamRefusal(s, "data-push bytes: %v", err)
 		s.Write([]byte{RespReject})
 		return
 	}
@@ -498,12 +510,12 @@ func (h *SDSExchangeHandler) handleDataPush(ctx context.Context, s network.Strea
 	// identifier was only ever used to validate it.)
 	decision, err := h.validator.RouteBuffer(string(schemaName), data)
 	if err != nil {
-		log.Warnf("Unroutable data push from %s: %v", peerID.ShortString(), err)
+		warnStreamRefusal(s, "data-push routing: %v", err)
 		s.Write([]byte{RespReject})
 		return
 	}
 	if err := decision.MismatchError(); err != nil {
-		log.Warnf("Rejected data push from %s: %v", peerID.ShortString(), err)
+		warnStreamRefusal(s, "data-push routing: %v", err)
 		s.Write([]byte{RespReject})
 		return
 	}
@@ -514,7 +526,7 @@ func (h *SDSExchangeHandler) handleDataPush(ctx context.Context, s network.Strea
 	defer validationCancel()
 
 	if err := h.validator.Validate(validationCtx, routedSchema, data); err != nil {
-		log.Warnf("Validation failed for %s from %s: %v", routedSchema, peerID, err)
+		warnStreamRefusal(s, "data-push validation for %s: %v", routedSchema, err)
 		s.Write([]byte{RespReject})
 		return
 	}
@@ -539,9 +551,7 @@ func (h *SDSExchangeHandler) handleDataPush(ctx context.Context, s network.Strea
 	// through the SDN rendezvous tag, so a Standard gate would be satisfied by
 	// discovery itself and would gate nothing.
 	if !h.mayPush(peerID) {
-		log.Warnf("REFUSING data push for %s from untrusted peer %s: records are accepted only from trusted peers. "+
-			"Raise that peer's trust level, or set network.accept_push_from: any to accept from anyone.",
-			routedSchema, peerID.ShortString())
+		warnStreamRefusal(s, "data-push for %s: records are accepted only from trusted peers", routedSchema)
 		s.Write([]byte{RespReject})
 		return
 	}
@@ -549,7 +559,7 @@ func (h *SDSExchangeHandler) handleDataPush(ctx context.Context, s network.Strea
 	// Store data
 	cid, err := h.store.Store(routedSchema, data, peerID.String(), nil)
 	if err != nil {
-		log.Warnf("Failed to store data: %v", err)
+		warnStreamRefusal(s, "data-push store: %v", err)
 		s.Write([]byte{RespReject})
 		return
 	}
@@ -565,14 +575,15 @@ func (h *SDSExchangeHandler) handleQuery(ctx context.Context, s network.Stream) 
 	// Read schema name length (2 bytes)
 	schemaNameLen := make([]byte, 2)
 	if _, err := io.ReadFull(s, schemaNameLen); err != nil {
-		log.Warnf("Failed to read schema name length: %v", err)
+		warnStreamRefusal(s, "query schema length: %v", err)
+		s.Write([]byte{RespReject})
 		return
 	}
 
 	// Validate schema name length
 	schemaLen := binary.BigEndian.Uint16(schemaNameLen)
 	if int(schemaLen) > h.limits.MaxSchemaName {
-		log.Warnf("Schema name too long: %d > %d", schemaLen, h.limits.MaxSchemaName)
+		warnStreamRefusal(s, "query schema length %d > %d", schemaLen, h.limits.MaxSchemaName)
 		s.Write([]byte{RespReject})
 		return
 	}
@@ -580,13 +591,14 @@ func (h *SDSExchangeHandler) handleQuery(ctx context.Context, s network.Stream) 
 	// Read schema name
 	schemaName := make([]byte, schemaLen)
 	if _, err := io.ReadFull(s, schemaName); err != nil {
-		log.Warnf("Failed to read schema name: %v", err)
+		warnStreamRefusal(s, "query schema name: %v", err)
+		s.Write([]byte{RespReject})
 		return
 	}
 
 	// Validate schema name to prevent path traversal and injection attacks
 	if err := sds.ValidateSchemaName(string(schemaName)); err != nil {
-		log.Warnf("Invalid schema name from %s: %v", s.Conn().RemotePeer().ShortString(), err)
+		warnStreamRefusal(s, "query schema: %v", err)
 		s.Write([]byte{RespReject})
 		return
 	}
@@ -594,14 +606,15 @@ func (h *SDSExchangeHandler) handleQuery(ctx context.Context, s network.Stream) 
 	// Read query length (4 bytes)
 	queryLenBuf := make([]byte, 4)
 	if _, err := io.ReadFull(s, queryLenBuf); err != nil {
-		log.Warnf("Failed to read query length: %v", err)
+		warnStreamRefusal(s, "query length: %v", err)
+		s.Write([]byte{RespReject})
 		return
 	}
 
 	// Validate query length before allocation
 	queryLen := binary.BigEndian.Uint32(queryLenBuf)
 	if int(queryLen) > h.limits.MaxQuerySize {
-		log.Warnf("Query too large: %d > %d bytes", queryLen, h.limits.MaxQuerySize)
+		warnStreamRefusal(s, "query length %d > %d bytes", queryLen, h.limits.MaxQuerySize)
 		s.Write([]byte{RespReject})
 		return
 	}
@@ -609,14 +622,14 @@ func (h *SDSExchangeHandler) handleQuery(ctx context.Context, s network.Stream) 
 	// Read query (ignored — raw SQL queries from peers are not supported for security)
 	query := make([]byte, queryLen)
 	if _, err := io.ReadFull(s, query); err != nil {
-		log.Warnf("Failed to read query: %v", err)
+		warnStreamRefusal(s, "query bytes: %v", err)
+		s.Write([]byte{RespReject})
 		return
 	}
 
 	readSchema, ok := h.mayRead(s.Conn().RemotePeer(), string(schemaName))
 	if !ok {
-		log.Warnf("REFUSING query on %s from %s: not on the public read surface and the peer is not authorized for private reads",
-			sanitizeLogName(string(schemaName)), s.Conn().RemotePeer().ShortString())
+		warnStreamRefusal(s, "query schema %s: not authorized for private reads", sanitizeLogName(string(schemaName)))
 		s.Write([]byte{RespReject})
 		return
 	}
@@ -635,7 +648,7 @@ func (h *SDSExchangeHandler) handleQuery(ctx context.Context, s network.Stream) 
 	// Enforce a strict row/byte budget to avoid response amplification and memory pressure.
 	results, err := h.store.QueryAllBounded(string(schemaName), DefaultQueryRecordLimit, DefaultQueryResponseMaxBytes)
 	if err != nil {
-		log.Warnf("Query failed: %v", err)
+		warnStreamRefusal(s, "query store: %v", err)
 		s.Write([]byte{RespReject})
 		return
 	}
@@ -901,7 +914,11 @@ func hasSizePrefixedPNMIdentifier(data []byte) (ok bool) {
 }
 
 // PushData sends data to a remote peer.
-func PushData(ctx context.Context, s network.Stream, schemaName string, data []byte) (string, error) {
+func PushData(ctx context.Context, s network.Stream, schemaName string, data []byte) (cid string, err error) {
+	defer recoverReply("sds-push-reply", s, &err)
+	if err := setRequestDeadline(ctx, s); err != nil {
+		return "", fmt.Errorf("set push deadline: %w", err)
+	}
 	// Write message type
 	if _, err := s.Write([]byte{MsgPushData}); err != nil {
 		return "", fmt.Errorf("failed to write message type: %w", err)
@@ -940,7 +957,11 @@ func PushData(ctx context.Context, s network.Stream, schemaName string, data []b
 }
 
 // RequestData requests data from a remote peer.
-func RequestData(ctx context.Context, s network.Stream, schemaName, cid string) ([]byte, error) {
+func RequestData(ctx context.Context, s network.Stream, schemaName, cid string) (data []byte, err error) {
+	defer recoverReply("sds-data-reply", s, &err)
+	if err := setRequestDeadline(ctx, s); err != nil {
+		return nil, fmt.Errorf("set request deadline: %w", err)
+	}
 	// Write message type
 	if _, err := s.Write([]byte{MsgRequestData}); err != nil {
 		return nil, fmt.Errorf("failed to write message type: %w", err)
@@ -980,9 +1001,12 @@ func RequestData(ctx context.Context, s network.Stream, schemaName, cid string) 
 	}
 
 	// Read data
-	data := make([]byte, dataLen)
+	data = make([]byte, dataLen)
 	if _, err := io.ReadFull(s, data); err != nil {
 		return nil, fmt.Errorf("failed to read data: %w", err)
+	}
+	if err := sds.VerifyStructure(schemaName, data); err != nil {
+		return nil, fmt.Errorf("invalid data reply: %w", err)
 	}
 
 	return data, nil
