@@ -172,12 +172,14 @@
 
   // ----- SpaceEdge ----------------------------------------------------------------------
 
+  // The wordmark: the first letter of each word full height, the rest small capitals (plans.css .se-wordmark)
+  const wordmark = (name) => name.split(/(?=[A-Z])/).map((w) => `${esc(w[0])}<small>${esc(w.slice(1).toUpperCase())}</small>`).join("");
   function renderEdge() {
     const p = plan("spaceedge");
     $("[data-plans=edge]").innerHTML = `
-      <div class="pl-edge-mark"><picture><source srcset="${esc(plans.mark.dark)}" media="(prefers-color-scheme: dark)">
-        <img src="${esc(plans.mark.light)}" alt="" width="72" height="72" data-mark></picture>
-        <div><b>${esc(plans.governmentName)}</b><small>${esc(plans.mark.label)}</small></div></div>
+      <div class="pl-edge-mark"><img class="se-mark-dark" src="${esc(plans.mark.dark)}" alt="" width="64" height="64">
+        <img class="se-mark-light" src="${esc(plans.mark.light)}" alt="" width="64" height="64">
+        <b class="se-wordmark" aria-label="${esc(plans.governmentName)}">${wordmark(plans.governmentName)}</b></div>
       <div class="pl-edge-cols">
         <div><h3>Adds</h3><ul>${p.adds.map((a) => `<li>${esc(a)}</li>`).join("")}</ul></div>
         <div><h3>Price</h3><p class="pl-price-sm">${esc(p.priceLabel)} <span>${esc(p.basis)}</span></p>
@@ -185,18 +187,8 @@
       </div>`;
     $("[data-plans=signin]").innerHTML = plans.signinSteps.map((s, i) =>
       `<li><span class="pl-step">${i + 1}</span><div><b>${esc(s.title)}</b><p>${esc(s.text)}</p></div></li>`).join("");
-    syncMark();
   }
 
-  // The mark follows the site's theme toggle (data-theme on <html>), not only the OS setting.
-  function syncMark() {
-    const img = $("[data-mark]");
-    if (!img) return;
-    const theme = document.documentElement.getAttribute("data-theme");
-    const source = img.parentElement.querySelector("source");
-    if (theme) { source.media = "not all"; img.src = theme === "light" ? plans.mark.light : plans.mark.dark; }
-    else source.media = "(prefers-color-scheme: dark)";
-  }
 
   function render() {
     renderLevel();
@@ -246,7 +238,6 @@
     builder.addEventListener("focusout", (e) => { if (e.target.dataset?.num) render(); });
     for (const b of document.querySelectorAll("[data-goto]")) b.addEventListener("click", () =>
       $(`#${b.dataset.goto}`)?.scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }));
-    new MutationObserver(syncMark).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
   }
 
   Promise.all([

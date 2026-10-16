@@ -68,9 +68,17 @@
 .pl-quote details ul { margin: 6px 0 0; padding-left: 18px; color: var(--text-2); font-size: 13px; }
 
 .pl-edge-box { border: 1px solid var(--edge-soft); border-radius: var(--radius-sm); background: var(--panel); padding: 18px; display: grid; gap: 16px; }
-.pl-edge-mark { display: flex; gap: 14px; align-items: center; }
-.pl-edge-mark b { display: block; font-size: 22px; color: var(--edge); }
-.pl-edge-mark small { color: var(--muted); font-size: 12px; }
+/* The SpaceEdge lockup: the mark in front of the wordmark - Michroma (OFL, subset to its seven letters: fonts/),
+   slanted, the first letter of each word full height and the rest small capitals, solid (owner
+   2026-10-16) */
+@font-face { font-family: "SpaceEdge Wordmark"; font-style: normal; font-weight: 400; font-display: block; src: url("fonts/michroma-spaceedge.woff2") format("woff2"); }
+.pl-edge-mark { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 4px 18px; padding-block: 6px; }
+.se-wordmark { display: block; font: 400 clamp(26px, 5vw, 40px) / 1.1 "SpaceEdge Wordmark", var(--font-sans); letter-spacing: .04em; white-space: nowrap;
+  transform: skewX(-12deg); color: var(--text); }
+.se-wordmark small { font-size: .74em; letter-spacing: .05em; }
+/* (the mark by the site's theme - data-theme on <html>, dark by default - not the system's) */
+.pl-edge-mark .se-mark-light, :root[data-theme="light"] .pl-edge-mark .se-mark-dark { display: none; }
+:root[data-theme="light"] .pl-edge-mark .se-mark-light { display: block; }
 .pl-edge-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
 .pl-edge-cols h3 { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 600; margin-bottom: 6px; }
 .pl-edge-cols ul { margin: 0 0 10px; padding-left: 18px; font-size: 14px; color: var(--text-2); }
