@@ -38,7 +38,9 @@ const (
 	// box's eth0 104.131.11.220: the reserved ip is not on any interface, it
 	// forwards, and it therefore survives a box replacement. Both were measured
 	// OPEN on tcp/4004 from a third host on 2026-07-30; 4001 was CLOSED on both.
-	bootstrapPeerSpaceaware = "16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45"
+	// SEC-001: the identity host-01 ran before the 2026-10 re-key (16Uiu2HAm1Lbv…)
+	// was derived from a published seed; it is never a bootstrap peer.
+	bootstrapPeerSpaceaware = "16Uiu2HAmNpWvv4aG4U67cex3LfUJpdrXKXbvcxn6Gm33RPM3MTCf"
 	// celestrak.eth retriever — the LIVE identity. Not 16Uiu2HAm9oK2…, which is
 	// the stopped legacy spacedatanetwork.service.
 	bootstrapPeerCelestrak = "16Uiu2HAmGjaPxkWFSXBbmhs9K5x1Zo6euJw95VjS6Jj2bcPpYr2U"

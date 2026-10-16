@@ -49,11 +49,13 @@ describe('edge-discovery', () => {
     });
 
     it('bootstraps the full node over a CA-authenticated, browser-dialable address', () => {
-      // Verified live 2026-08-06: this address dials 16Uiu2HAm1Lbv…Fm45 through
-      // Cloudflare and yields a DIRECT (non-transient) connection.
+      // Verified live 2026-08-06: this address dials the full node through
+      // Cloudflare and yields a DIRECT (non-transient) connection. SEC-001: it
+      // names host-01's re-keyed identity, never the one from the leaked seed.
       expect(DEFAULT_EDGE_RELAYS).toContain(
-        '/dns4/sdn.spaceaware.io/tcp/443/wss/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
+        '/dns4/sdn.spaceaware.io/tcp/443/wss/p2p/16Uiu2HAmNpWvv4aG4U67cex3LfUJpdrXKXbvcxn6Gm33RPM3MTCf',
       );
+      expect(DEFAULT_EDGE_RELAYS.join('\n')).not.toContain('16Uiu2HAm1Lbvwj');
       for (const relay of DEFAULT_EDGE_RELAYS) {
         expect(isBrowserDialableAddr(relay)).toBe(true);
       }
@@ -138,7 +140,7 @@ describe('edge-discovery', () => {
   });
 
   describe('resolvePeerBootstrapAddrs (delegated routing)', () => {
-    const PEER = '16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45';
+    const PEER = '16Uiu2HAmNpWvv4aG4U67cex3LfUJpdrXKXbvcxn6Gm33RPM3MTCf';
 
     it('resolves current addresses and re-attaches the /p2p component', async () => {
       const fetchImpl = vi.fn(async () => ({
