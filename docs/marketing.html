@@ -67,6 +67,7 @@
           <button type="button" data-goto="builder">Build a plan</button>
           <button type="button" data-goto="spaceedge">SpaceEdge</button>
           <button type="button" data-goto="udl">UDL data</button>
+          <button type="button" data-goto="positioning">Positioning</button>
           <button type="button" data-goto="modules">Modules</button>
         </nav>
       </section>
@@ -126,6 +127,19 @@
         <div class="pl-scroll" data-udl="table"></div>
       </section>
 
+      <section class="pl-section" id="positioning" aria-labelledby="po-title">
+        <h2 id="po-title">Positioning</h2>
+        <p data-po="copy"></p>
+        <div class="inv-summary" data-po="stats"></div>
+        <div class="po-leads" data-po="leads"></div>
+        <h3>Status by capability area</h3>
+        <div class="pl-scroll" data-po="areas"></div>
+        <h3>Claims</h3>
+        <div class="po-claims"><div class="pl-scroll" data-po="say"></div><div class="pl-scroll" data-po="dont"></div></div>
+        <h3>Accuracy targets from open literature</h3>
+        <div class="pl-scroll" data-po="targets"></div>
+      </section>
+
       <section class="inv-head pl-section" id="modules" aria-labelledby="inv-title">
         <h2 id="inv-title">Module Inventory</h2>
         <p class="inv-lede" data-copy="modules"></p>
@@ -166,6 +180,7 @@
   <script src="marketing/inventory.js"></script>
   <script src="marketing/plans.js"></script>
   <script src="marketing/udl.js"></script>
+  <script src="marketing/positioning.js"></script>
   <script src="assets/ai-credits/ai-credits.js" defer></script>
 </body>
 </html>
