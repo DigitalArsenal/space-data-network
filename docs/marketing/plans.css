@@ -139,3 +139,10 @@
 .po-teal { color: var(--teal); background: var(--teal-soft); }
 .po-part { color: var(--part); background: var(--part-soft); }
 .po-gap { color: var(--gap); background: var(--gap-soft); }
+
+.se-h { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+.se-head { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; }
+.se-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 16px; }
+.se-grid > div { display: grid; gap: 6px; align-content: start; min-width: 0; }
+.se-table { min-width: 0; }
+.pl-section h4 { margin: 0; }

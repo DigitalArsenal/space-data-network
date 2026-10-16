@@ -1,12 +1,42 @@
-# Run local CI before pushing to reduce GitHub Actions spend.
-# Set SKIP_LOCAL_CI=1 to bypass intentionally.
+# Pre-push runs only the cheap scans by default (owner 2026-10-16: a change
+# gets the E2E for that change, then deploys; the full Go gate is not run on
+# every push):
+#   1. the tracked-file secret and infrastructure scan (scripts/oss-preflight.sh);
+#   2. the BIP-39 mnemonic scan over the content being pushed
+#      (scripts/check-no-mnemonics.sh in range mode, the same rules the
+#      pre-commit hook applies to the index).
+# SDN_PREPUSH_CI=1 adds the whole local CI gate (scripts/ci-local.sh quick) on
+# top. GitHub Actions runs the Go and VM builds only when Go, server or build
+# files change (paths filters in .github/workflows/ci.yml and
+# linux-vm-bundle.yml), so the cost of the gate is not moved there.
+# Set SKIP_LOCAL_CI=1 to bypass this hook intentionally.
 
 if [ "${SKIP_LOCAL_CI:-0}" = "1" ]; then
-  echo "SKIP_LOCAL_CI=1 set, skipping local CI"
+  echo "SKIP_LOCAL_CI=1 set, skipping pre-push checks"
   exit 0
 fi
 
 ROOT="$(git rev-parse --show-toplevel)"
+ZERO="0000000000000000000000000000000000000000"
+EMPTY_TREE="$(git hash-object -t tree /dev/null)"
 
-echo "Running local CI before push (quick mode)..."
-"$ROOT/scripts/ci-local.sh" quick
+echo "pre-push: secret and infrastructure scan..."
+"$ROOT/scripts/oss-preflight.sh" || exit 1
+
+echo "pre-push: mnemonic scan over the pushed commits..."
+while read -r _local_ref local_sha _remote_ref remote_sha; do
+  [ -z "$local_sha" ] && continue
+  [ "$local_sha" = "$ZERO" ] && continue
+  if [ "$remote_sha" != "$ZERO" ] && git cat-file -e "$remote_sha^{commit}" 2>/dev/null; then
+    base="$remote_sha"
+  else
+    # A new branch: scan what it adds over the default branch.
+    base="$(git merge-base "$local_sha" origin/main 2>/dev/null || echo "$EMPTY_TREE")"
+  fi
+  CHECK_NO_MNEMONICS_RANGE="$base $local_sha" "$ROOT/scripts/check-no-mnemonics.sh" || exit 1
+done
+
+if [ "${SDN_PREPUSH_CI:-0}" = "1" ]; then
+  echo "SDN_PREPUSH_CI=1 set, running local CI (quick mode)..."
+  "$ROOT/scripts/ci-local.sh" quick
+fi

@@ -200,12 +200,7 @@
       "id": "spaceedge",
       "name": "SpaceEdge",
       "who": "Government programs",
-      "basis": "per program per year",
-      "range": [
-        250000,
-        1000000
-      ],
-      "rangeOpen": true,
+      "basis": "per program",
       "adds": [
         "Everything in Enterprise",
         "Live UDL data with the customer's own UDL account",
@@ -218,9 +213,11 @@
       "routes": [
         "Small Business Innovation Research (SBIR)",
         "Other Transaction Authority (OTA) agreements",
-        "GSA schedule"
+        "GSA schedule",
+        "Tradewinds Solutions Marketplace (CDAO)"
       ],
-      "state": "In development"
+      "state": "In development",
+      "priceLabel": "Call for pricing"
     }
   ],
   "signinSteps": [
