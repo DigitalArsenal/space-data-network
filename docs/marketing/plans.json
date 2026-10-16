@@ -240,8 +240,7 @@
   ],
   "mark": {
     "dark": "marketing/spaceedge-mark-dark.svg",
-    "light": "marketing/spaceedge-mark-light.svg",
-    "label": "Proposed SpaceEdge mark"
+    "light": "marketing/spaceedge-mark-light.svg"
   },
   "capabilities": [
     {
