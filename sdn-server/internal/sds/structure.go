@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/spacedatanetwork/sdn-server/internal/fbverify"
+	"github.com/spacedatanetwork/sdn-server/internal/storage/recordalign"
 )
 
 // STRUCTURAL VERIFICATION ON EVERY UNTRUSTED BUFFER (security re-audit
@@ -114,7 +115,15 @@ func VerifyBareStructure(schemaName string, data []byte) error {
 	if err := checkIdentifierAt(s, data, 0); err != nil {
 		return err
 	}
-	return s.VerifyBuffer(data)
+	return verifyBare(s, data)
+}
+
+// verifyBare verifies a bare buffer at its alignment origin: a size-prefixed
+// build whose prefix was stripped (length 4 mod 8) is aligned from 4 bytes
+// before its first byte, the rule recordalign gives the reference verifier
+// (Validator.placeForVerifier). Bounds are the buffer's own.
+func verifyBare(s *fbverify.Schema, data []byte) error {
+	return s.VerifyBufferAt(data, int64(recordalign.OriginOffset(len(data))))
 }
 
 func checkIdentifierAt(s *fbverify.Schema, data []byte, base int) error {
@@ -128,6 +137,15 @@ func checkIdentifierAt(s *fbverify.Schema, data []byte, base int) error {
 	return nil
 }
 
+// A form is a candidate when a consumer could choose to read data in it.
+// Generated readers choose by identifier alone: <T>BufferHasIdentifier reads
+// bytes 4..8 (bare) and SizePrefixed<T>BufferHasIdentifier bytes 8..12, and
+// GetSizePrefixedRootAs never checks the prefix value. So for a schema with a
+// file_identifier, a form whose identifier slot holds it is a candidate
+// whatever its prefix or root offset says, and it must verify (a prefix that
+// does not account for the rest of the buffer fails VerifySizePrefixedBuffer).
+// A schema without one is read bare unless the prefix accounts for exactly
+// the rest of the buffer and the inner root is plausible.
 func verifyStructureForms(r *fbverify.Registry, schemaName string, data []byte) error {
 	s, err := r.Schema(schemaName)
 	if err != nil {
@@ -135,15 +153,27 @@ func verifyStructureForms(r *fbverify.Registry, schemaName string, data []byte) 
 	}
 	ident := s.FileIdentifier()
 	candidates := 0
-	if inner, ok := sizePrefixedPayload(data); ok && verifyFlatBufferRoot(inner) == nil && (ident == "" || bufferHasIdentifier(inner, ident)) {
+	sizePrefixedCandidate := false
+	if ident != "" {
+		sizePrefixedCandidate = len(data) >= sizePrefixLength+minFlatBufferLength && bufferHasIdentifier(data[sizePrefixLength:], ident)
+	} else if inner, ok := sizePrefixedPayload(data); ok && verifyFlatBufferRoot(inner) == nil {
+		sizePrefixedCandidate = true
+	}
+	if sizePrefixedCandidate {
 		candidates++
-		if err := s.VerifyBuffer(inner); err != nil {
+		if err := s.VerifySizePrefixedBuffer(data); err != nil {
 			return fmt.Errorf("size-prefixed form: %w", err)
 		}
 	}
-	if verifyFlatBufferRoot(data) == nil && (ident == "" || bufferHasIdentifier(data, ident)) {
+	bareCandidate := false
+	if ident != "" {
+		bareCandidate = bufferHasIdentifier(data, ident)
+	} else {
+		bareCandidate = verifyFlatBufferRoot(data) == nil
+	}
+	if bareCandidate {
 		candidates++
-		if err := s.VerifyBuffer(data); err != nil {
+		if err := verifyBare(s, data); err != nil {
 			return fmt.Errorf("bare form: %w", err)
 		}
 	}

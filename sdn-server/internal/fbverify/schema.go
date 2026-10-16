@@ -10,22 +10,19 @@
 // unions, and walks a buffer checking that every offset an accessor could
 // follow lands inside it.
 //
-// It checks memory safety, not schema conformance: alignment, `required`
-// presence and enum ranges are the field-level validator's business, because
-// none of them can make a Go accessor read out of bounds. Everything that can
-// is refused:
+// It is held to flatbuffers' own C++ verifier: the reflection verifier
+// (flatbuffers::Verify / VerifySizePrefixed, src/reflection.cpp) plus the
+// DeepVerifier that flatc's binary_to_json runs after it
+// (src/flatc_wasm_wasi.cpp). The node embeds that exact code as
+// flatc-wasi.wasm, and the differential fuzz harness
+// (internal/sds/structure_fuzz_test.go) compares the two verdicts. Like the
+// reference it checks bounds, alignment (from the start of the buffer it is
+// given, size prefix included), vtables, strings, vectors, unions, `required`
+// tables, structs and struct vectors, deprecated fields, nesting depth and
+// table count. verify.go lists where it is deliberately stricter.
 //
-//   - a root, table, vtable, field, string, vector or struct outside the buffer;
-//   - a uoffset of zero or with the sign bit set (C++ VerifyOffset);
-//   - a string without its terminating zero;
-//   - a vector whose element count overflows the buffer;
-//   - a union whose type is not a declared member, or a union vector whose
-//     type and value vectors disagree in length;
-//   - nesting deeper than MaxDepth, or more table visits or slot checks than
-//     the buffer's size can account for (a bounded-work guarantee: a crafted
-//     DAG of shared offsets cannot make verification quadratic).
-//
-// All arithmetic is done in int64 on the real positions, so an offset that a
+// Every refusal carries a Class saying how it relates to the reference. All
+// arithmetic is done in int64 on the real positions, so an offset that a
 // uint32 accessor would wrap back into range is refused, never "fixed up".
 package fbverify
 
@@ -114,6 +111,9 @@ type tableField struct {
 	typ     fieldType
 	// typeVOffset is the companion _type field of a union (or union vector).
 	typeVOffset int64
+	// required is the IDL's (required): the reference refuses a buffer that
+	// leaves out a required table, struct or vector of structs.
+	required bool
 }
 
 type tableDef struct {
@@ -368,12 +368,10 @@ func (c *compiler) fillTable(d *rawDecl) error {
 		if tf.voffset > 0xffff {
 			return fmt.Errorf("table %s field %s: vtable offset out of range", d.name, f.name)
 		}
-		if _, deprecated := f.attrs["deprecated"]; deprecated {
-			// The slot stays reserved, but no accessor is generated for a
-			// deprecated field, so there is nothing to protect (C++ skips
-			// it too).
-			continue
-		}
+		// Deprecated fields stay: no Go accessor reads them, but the
+		// reference verifies every field the schema declares, and other
+		// readers of the same bytes (flatc's JSON printer) follow them.
+		_, tf.required = f.attrs["required"]
 		t.fields = append(t.fields, tf)
 	}
 	sort.Slice(t.fields, func(i, j int) bool { return t.fields[i].voffset < t.fields[j].voffset })

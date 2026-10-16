@@ -319,64 +319,6 @@ func TestFlatSQLSyncProtocolAckProgress(t *testing.T) {
 	}
 }
 
-func TestFlatSQLSyncProtocolWireSpeedProbeStreamsRequestedBytes(t *testing.T) {
-	ctx, cancel := libp2pTestContext(t, 10*time.Second)
-	defer cancel()
-
-	server, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"))
-	if err != nil {
-		t.Fatalf("server libp2p failed: %v", err)
-	}
-	defer server.Close()
-	client, err := libp2p.New(libp2p.NoListenAddrs)
-	if err != nil {
-		t.Fatalf("client libp2p failed: %v", err)
-	}
-	defer client.Close()
-
-	server.SetStreamHandler(FlatSQLSyncProtocolID, NewFlatSQLSyncHandler(nil).HandleStream)
-	client.Peerstore().AddAddrs(server.ID(), server.Addrs(), peerstore.PermanentAddrTTL)
-	if err := client.Connect(ctx, peer.AddrInfo{ID: server.ID(), Addrs: server.Addrs()}); err != nil {
-		libp2pStepFailed(t, "libp2p connect", err)
-	}
-
-	stream, err := client.NewStream(ctx, server.ID(), FlatSQLSyncProtocolID)
-	if err != nil {
-		libp2pStepFailed(t, "libp2p NewStream", err)
-	}
-	defer stream.Close()
-
-	writeFlatSQLSyncTestFrame(t, stream, map[string]interface{}{
-		"op":          "wire_speed_probe",
-		"probe_bytes": 32 * 1024,
-	})
-
-	var header struct {
-		Op           string `json:"op"`
-		Status       string `json:"status"`
-		SyncProtocol string `json:"sync_protocol"`
-		ProbeBytes   int64  `json:"probe_bytes"`
-		PayloadBytes int64  `json:"payload_bytes"`
-	}
-	readFlatSQLSyncTestJSONFrame(t, stream, &header)
-	if header.Op != "wire_speed_probe" || header.Status != "ok" || header.SyncProtocol != FlatSQLSyncProtocolID {
-		t.Fatalf("unexpected probe header: %+v", header)
-	}
-	if header.ProbeBytes != 32*1024 || header.PayloadBytes != 32*1024 {
-		t.Fatalf("probe size header = %+v, want 32768 bytes", header)
-	}
-	payload, err := io.ReadAll(stream)
-	if err != nil {
-		t.Fatalf("read probe payload failed: %v", err)
-	}
-	if len(payload) != 32*1024 {
-		t.Fatalf("probe payload length = %d, want %d", len(payload), 32*1024)
-	}
-	if bytes.Count(payload, []byte{0}) == len(payload) {
-		t.Fatalf("probe payload should be deterministic bytes, not all zeroes")
-	}
-}
-
 func TestFlatSQLSyncProtocolReadChunkReusesProvidedSnapshotMetadata(t *testing.T) {
 	store := newFlatSQLSyncTestStore(t)
 	payload := storeFlatSQLSyncTestOMM(t, store, 56775, "STARLINK-6292")

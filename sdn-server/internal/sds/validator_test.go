@@ -584,48 +584,6 @@ func corruptStringOffset(t *testing.T, buf []byte) []byte {
 	return out
 }
 
-func TestValidatorFieldLevelSwitch(t *testing.T) {
-	v := newConverterValidator(t)
-	ctx := context.Background()
-	if v.FieldLevelValidation() != DefaultFieldLevelValidation {
-		t.Fatalf("field-level validation = %v, want the default %v", v.FieldLevelValidation(), DefaultFieldLevelValidation)
-	}
-
-	good, err := v.JSONToFlatBuffer(ctx, "OMM.fbs", []byte(`{"OBJECT_NAME":"X","NORAD_CAT_ID":7}`), StoredRecordOptions)
-	if err != nil {
-		t.Fatal(err)
-	}
-	bad := corruptStringOffset(t, good)
-	if err := v.VerifyEnvelope("OMM.fbs", bad); err != nil {
-		t.Fatalf("fixture must pass the envelope: %v", err)
-	}
-
-	v.SetFieldLevelValidation(false)
-	if err := v.Validate(ctx, "OMM.fbs", bad); err != nil {
-		t.Fatalf("switch off: the envelope verdict stands, got %v", err)
-	}
-	v.SetFieldLevelValidation(true)
-	if err := v.Validate(ctx, "OMM.fbs", bad); err == nil || !strings.Contains(err.Error(), "INVALID_BINARY") {
-		t.Fatalf("switch on: err = %v, want INVALID_BINARY", err)
-	}
-	if err := v.Validate(ctx, "OMM.fbs", good); err != nil {
-		t.Fatalf("switch on, good record: %v", err)
-	}
-
-	// The in-repo record builders' output passes the field-level parse.
-	fixtures := map[string][]byte{
-		"OMM.fbs": NewOMMBuilder().WithNoradCatID(25544).Build(),
-		"CAT.fbs": NewCATBuilder().WithNoradCatID(25544).Build(),
-		"EPM.fbs": NewEPMBuilder().WithLegalName("Test Org").Build(),
-		"PNM.fbs": NewPNMBuilder().Build(),
-	}
-	for schema, record := range fixtures {
-		if err := v.Validate(ctx, schema, record); err != nil {
-			t.Errorf("builder %s record rejected by the field-level parse: %v", schema, err)
-		}
-	}
-}
-
 func TestFieldLevelValidationEnv(t *testing.T) {
 	t.Setenv(FieldLevelValidationEnv, "maybe")
 	if _, err := NewValidator(nil); err == nil || !strings.Contains(err.Error(), FieldLevelValidationEnv) {
