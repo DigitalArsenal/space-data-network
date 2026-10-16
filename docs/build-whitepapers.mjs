@@ -199,7 +199,7 @@ function split(md) {
 /**
  * Read the front matter into fields. Markdown papers write one paragraph per
  * field; HTML papers write centered <p> elements (<strong> subtitle, <em>
- * tagline). Labelled lines (edition, cutoff, ©) are recognized by their words;
+ * tagline). Labeled lines (edition, cutoff, ©) are recognized by their words;
  * the rest are, in order, subtitle, authors, affiliations.
  */
 function frontMatter(front) {

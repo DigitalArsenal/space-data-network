@@ -41,10 +41,10 @@ pubsub message payload.
 
 With the change landed today (`internal/sds/builders.go:WithClassificationType`,
 `internal/ingest/udl.go:ingestUDLElsetRecords`), UDL elset records now carry
-their `CLASSIFICATION_MARKING` value directly in the serialised OMM
+their `CLASSIFICATION_MARKING` value directly in the serialized OMM
 `CLASSIFICATION_TYPE` field. CelesTrak-sourced records remain `"U"`.
 
-### 2.2 Normalised vocabulary
+### 2.2 Normalized vocabulary
 
 | Token   | Meaning                                      | Use in SDN              |
 |---------|----------------------------------------------|-------------------------|
@@ -56,7 +56,7 @@ their `CLASSIFICATION_MARKING` value directly in the serialised OMM
 | `TS//SCI` | TS with SCI compartment indicator          | IL6 deployment          |
 
 Caveat strings (e.g. `U//FOUO`, `S//REL TO USA,FVEY`) are preserved verbatim
-as received from the authoritative source; no normalisation is applied at
+as received from the authoritative source; no normalization is applied at
 ingest. The ABAC engine performs case-insensitive matching
 (`internal/abac/policy.go:278`).
 
@@ -104,7 +104,7 @@ directly.
 Cross-domain transfer is mediated by a dedicated guard-node process that:
 
 1. Subscribes to the high-side topic (e.g. `/spacedatanetwork/il5/sds/OMM.fbs`)
-2. Applies a human-in-the-loop or automated sanitisation/review step
+2. Applies a human-in-the-loop or automated sanitization/review step
 3. Publishes approved records to the low-side topic (e.g.
    `/spacedatanetwork/il4/sds/OMM.fbs`) after downgrading the
    `CLASSIFICATION_TYPE` field to the target enclave's maximum level
@@ -112,7 +112,7 @@ Cross-domain transfer is mediated by a dedicated guard-node process that:
 The guard node is architecturally separate from the normal SDN server process.
 Its review hook is a pluggable function called before publication to the
 lower-side topic. For Phase 2 the hook is a human approval queue; for Phase 3
-it can be an automated declassification/sanitisation module delivered via the
+it can be an automated declassification/sanitization module delivered via the
 existing WASM module runtime.
 
 One-way enforcement (high→low only) is maintained by network topology: the
@@ -149,7 +149,7 @@ content_key_il5  →  all S records exported to IL5
 content_key_il6  →  all TS/SCI records exported to IL6
 ```
 
-The key is wrapped for each authorised recipient using the existing X25519
+The key is wrapped for each authorized recipient using the existing X25519
 ECDH mechanism (`X25519_HKDF_SHA256_AES_256_GCM` as defined in
 `internal/sds/schemas/LWK.fbs:6`). Enclave membership is equivalent to
 possession of a key slot containing the unwrapped enclave content key.
@@ -253,7 +253,7 @@ is a Phase 2/3 enhancement.
 
 Platform One's Iron Bank provides DoD-hardened container images suitable for
 IL4 cATO. SDN server is distributed as a single Go binary with minimal
-external dependencies (libp2p, FlatSQL, WasmEdge). The containerisation path
+external dependencies (libp2p, FlatSQL, WasmEdge). The containerization path
 is:
 
 - Base image: Iron Bank `ubi9/ubi-minimal` or `cbi/golang` for the build stage
@@ -263,7 +263,7 @@ is:
 - Secret injection: Vault Agent sidecar or Kubernetes Secrets mounted as files
   (credentials, enclave content key)
 
-No code changes are required for IL4 containerisation; the binary already
+No code changes are required for IL4 containerization; the binary already
 reads all secrets from environment variables or config-file paths.
 
 ### IL5 (Secret, classified on-prem or GovCloud)
@@ -330,7 +330,7 @@ boringcrypto flag and static peer config.
 1. Wire ABAC engine into the publish handler and enforce per-record
    `CLASSIFICATION_TYPE` against the requester's clearance. Currently ABAC is
    checked at the API layer but the `Resource.Classification` is not populated
-   from the record payload — the handler must deserialise the FlatBuffer header
+   from the record payload — the handler must deserialize the FlatBuffer header
    to extract the marking (~150 LOC).
 2. Expose `classification_type` as an indexed query field in FlatSQL
    (`internal/storage/flatsql.go`) so export windows can be filtered by
@@ -338,7 +338,7 @@ boringcrypto flag and static peer config.
 3. Add `IL5ContentKeyID` config option and set it on export shards that contain
    only `S`-or-above records (~40 LOC in `internal/ingest/runner.go`).
 4. IL5 deployment runbook (not code): node config, ABAC policy file, cATO
-   artefacts.
+   artifacts.
 
 **Rough size:** ~270 LOC of Go, one config schema change, operator runbook.
 
@@ -380,7 +380,7 @@ path via guard node.
 ### Phase 3 (12–18 months): Three Enclaves + Automated Releasability Review
 
 **Goal:** IL4/IL5/IL6 simultaneously; automated guard-node using WASM module
-runtime for declassification/sanitisation decisions.
+runtime for declassification/sanitization decisions.
 
 **What exists today:**
 
@@ -396,7 +396,7 @@ runtime for declassification/sanitisation decisions.
 1. Automated review hook in guard node: call a WASM module (delivered via the
    existing licensing/module-delivery path) that inspects the record payload,
    checks releasability rules (e.g. source markings, caveats, content
-   fingerprints), and returns allow/deny/sanitise (~200 LOC hook + WASM module
+   fingerprints), and returns allow/deny/sanitize (~200 LOC hook + WASM module
    developed separately).
 2. IL5→IL6 guard node (second instance) with TS/SCI-to-S downgrade path.
 3. Per-enclave key rotation tooling: CLI command to re-wrap enclave content
@@ -404,9 +404,9 @@ runtime for declassification/sanitisation decisions.
 4. Full audit log integration: route `PolicyDenied` and guard-node events
    through `internal/audit.Logger` for tamper-evident storage and SIEM
    forwarding (`abac-policies.md:Roadmap item 4`).
-5. Three-enclave deployment charts and cATO artefacts for all three IL levels.
+5. Three-enclave deployment charts and cATO artifacts for all three IL levels.
 
-**Rough size:** ~400 LOC Go + WASM module (separate artefact), deployment
+**Rough size:** ~400 LOC Go + WASM module (separate artifact), deployment
 automation.
 
 ---
@@ -422,7 +422,7 @@ automation.
 3. **Vocabulary authoritative source:** The CCSDS specification defines
    `CLASSIFICATION_TYPE` as a free string. The SDN vocabulary table in Section
    2.2 is normative for SDN deployments; sources that use non-standard strings
-   (e.g. `UNCLASSIFIED` instead of `U`) will need a normalisation map, which
+   (e.g. `UNCLASSIFIED` instead of `U`) will need a normalization map, which
    is deferred to Phase 1 implementation.
 4. **Guard-node authority model:** Who approves a high→low transfer? For Phase
    2, a human operator; for Phase 3, a WASM policy module accredited separately.

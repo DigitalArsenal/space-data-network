@@ -233,7 +233,7 @@
 </tbody></table></div>
 <p>The trajectory bound uses only the coefficients, so it holds for any force model and for impulsive maneuvers that appear as interval jumps. A native test checks it against the trajectory itself every 0.1 s around samples taken every 7 s. The trajectory is a 7,000 km orbit interpolated as a propagator would export it, with a 5 m/s maneuver at an interval boundary. Tested at h = 30 s and h = 90 s, the bound was never exceeded, and away from the maneuver it was at most 1.34 times the true deviation<sup><a href="#r2">2</a></sup>.</p>
 <div class="sec-head sec-head-h3"><h3 id="spatial-grid">Spatial grid</h3><button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/fast-conjunction-assessment/spatial-grid.html" data-model-title="The grid proposes the candidate pairs" aria-label="Run it: The grid proposes the candidate pairs"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span>Run it</button></div>
-<p>Testing all 528.6 million pairs at every step is wasted work: almost all pairs are thousands of kilometres apart. At each step, an object&#39;s straight-line segment over [−h, h], widened by d/2 + D, gives an axis-aligned box. Two objects can pass the straight-line test only if their boxes overlap, so a search over overlapping boxes drops nothing the test would pass.</p>
+<p>Testing all 528.6 million pairs at every step is wasted work: almost all pairs are thousands of kilometers apart. At each step, an object&#39;s straight-line segment over [−h, h], widened by d/2 + D, gives an axis-aligned box. Two objects can pass the straight-line test only if their boxes overlap, so a search over overlapping boxes drops nothing the test would pass.</p>
 <p>The boxes go into a uniform grid whose cell is the 99th-percentile box edge. Each overlapping pair is counted once, in the cell holding the low corner of the two boxes&#39; overlap. The few boxes that span four or more cells on an axis on the GPU, or five or more on CPU threads, such as fast perigee passes, are tested against every object. The same grid runs in two places:</p>
 <ul>
 <li><strong>On a GPU</strong>, in three WebGPU compute passes per step. The first inserts each box into its cells, hashed into one lock-free list per slot. The second has each object walk its cells&#39; lists. The third tests the large boxes.</li>
@@ -323,7 +323,7 @@
 <p>The tolerance, the segment length and the resident integration were measured<sup><a href="#r33">33</a></sup>:</p>
 <ul>
 <li><strong>Tolerance.</strong> Against 10⁻¹⁴, the integration&#39;s own error after three days is 0.1 m at 400 km, 1.2 m at 700 km sun-synchronous and 0.18 m for Molniya. At 10⁻¹¹ it is 6 to 9 m in LEO.</li>
-<li><strong>Segment length.</strong> A degree-12 series resolves about four cycles per segment. 300 s keeps the 70 × 70 field&#39;s shortest LEO terms, with periods near 80 s; over 600 s, the terms above degree 35 leave centimetre fit errors. Over four days the exported series stay within 0.31 mm of the integrator&#39;s dense output in LEO and 0.18 mm for Molniya.</li>
+<li><strong>Segment length.</strong> A degree-12 series resolves about four cycles per segment. 300 s keeps the 70 × 70 field&#39;s shortest LEO terms, with periods near 80 s; over 600 s, the terms above degree 35 leave centimeter fit errors. Over four days the exported series stay within 0.31 mm of the integrator&#39;s dense output in LEO and 0.18 mm for Molniya.</li>
 <li><strong>One integration.</strong> A resident object takes the same steps as one HPOP request for that object. From a day before its epoch to three days after, the two agree within 0.05 mm in LEO, 9 µm for Molniya and 9 nm for GPS and geostationary orbits.</li>
 </ul>
 <p>HPOP integrates each object from its element epoch, so the first window carries that catch-up: 55,578 object-days from the element epochs to the screen&#39;s start, against 97,542 for the three days screened. HPOP drops cached intervals that end before the requested window, so an instance holds about one window per object.</p>
@@ -724,7 +724,7 @@ The protocol uses homomorphic encryption: B computes on A&#39;s encrypted
 positions without being able to read them<sup><a href="#r11">11</a>,<a href="#r12">12</a></sup>.</p>
 <ol>
 <li><strong>A encrypts its trajectory under its own key.</strong><ul>
-<li>The quantities are x, y and z, in integer metres.</li>
+<li>The quantities are x, y and z, in integer meters.</li>
 <li>8,192 time steps are packed per ciphertext (BFV, n = 8192, 128-bit
 security).</li>
 <li>Three 60-bit plaintext moduli, recombined by the Chinese remainder
@@ -857,8 +857,8 @@ more.</p>
 <li>The obvious way to hide the distance is to multiply each step&#39;s value by a
 fresh random factor and let A read only its sign. One step&#39;s value then
 bounds the distance only loosely.</li>
-<li>Neighbouring steps, however, have almost the same distance. Intersecting
-the bounds of 64 neighbouring steps, A recovered the distance within a
+<li>Neighboring steps, however, have almost the same distance. Intersecting
+the bounds of 64 neighboring steps, A recovered the distance within a
 factor of 2 at 87 % of steps (1 s grid). That is enough for range-only
 orbit determination of B&#39;s object.</li>
 <li>The output must therefore be one bit per step: B adds a random additive
@@ -877,7 +877,7 @@ Starlink satellite:</p>
 </ul>
 <p>Kuiper, OneWeb and Qianfan had 875, 481 and 591 such objects, mostly with one
 to four conjunctions each. A private object in a crowded shell therefore
-gives its densest neighbour enough position fixes for a coarse orbit within
+gives its densest neighbor enough position fixes for a coarse orbit within
 days. Private screening hides an orbit from operators it does not approach.
 It cannot hide it from those it does.</p>
 <h3 id="orbit-guessing">Orbit guessing</h3>
@@ -943,7 +943,7 @@ and blank steps fail before any answer is computed.</p>
 </li>
 <li><p>The tolerance bounds the thrust a fake orbit can hide to about τμ/|a|²:
 with τ = 10⁻⁴ in low Earth orbit, 0.8 mm/s², about 70 m/s per day.
-Rounding to whole metres, the truncation of the differences and forces
+Rounding to whole meters, the truncation of the differences and forces
 outside the check set how small τ can be.</p>
 </li>
 <li><p>A requester with K registered objects then learns what K satellites on
@@ -1115,7 +1115,7 @@ registered.</p>
 <h3 id="r9">R9</h3>
 <p>Foster, J. L. and Estes, H. S. A Parametric Analysis of Orbital Debris Collision Probability and Maneuver Rate for Space Vehicles. NASA JSC-25898, 1992.</p>
 <h3 id="r10">R10</h3>
-<p>Precise orbit products: IGS final orbits (<a href="https://igs.org/products/">IGS</a>), ILRS analysis-centre orbits (<a href="https://ilrs.gsfc.nasa.gov/">ILRS</a>), Copernicus Sentinel-1 precise orbit ephemerides (<a href="https://sentinels.copernicus.eu/">ESA</a>), Swarm precise orbits (<a href="https://earth.esa.int/eogateway/missions/swarm">ESA</a>), and IERS EOP 20 C04 (<a href="https://www.iers.org/">IERS</a>).</p>
+<p>Precise orbit products: IGS final orbits (<a href="https://igs.org/products/">IGS</a>), ILRS analysis-center orbits (<a href="https://ilrs.gsfc.nasa.gov/">ILRS</a>), Copernicus Sentinel-1 precise orbit ephemerides (<a href="https://sentinels.copernicus.eu/">ESA</a>), Swarm precise orbits (<a href="https://earth.esa.int/eogateway/missions/swarm">ESA</a>), and IERS EOP 20 C04 (<a href="https://www.iers.org/">IERS</a>).</p>
 <h3 id="r11">R11</h3>
 <p>Microsoft Research. Microsoft SEAL 4.1.1, homomorphic encryption library. <a href="https://github.com/microsoft/SEAL">Repository</a></p>
 <h3 id="r12">R12</h3>

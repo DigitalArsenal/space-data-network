@@ -148,7 +148,7 @@
 </thead>
 <tbody><tr>
 <td>GPS satellites</td>
-<td>Analysis-centre orbit, propagated</td>
+<td>Analysis-center orbit, propagated</td>
 <td>3.5 cm at issue, 30 m a day later</td>
 </tr>
 <tr>
@@ -169,7 +169,7 @@
 </tbody></table></div>
 <p>For most objects the only public input is the OMM, and the catalog takes it as it is. What the catalog adds is a measured account of each input&#39;s error, and screening that acts on it safely:</p>
 <ol>
-<li><strong>Measured error as covariance.</strong> An orbit propagated from an OMM&#39;s epoch state carries a covariance equal to the error measured for its orbit regime and element-set age. That error is measured against independent orbits in every regime that has them: GNSS analysis-centre orbits, laser ranging, LEO precise orbits, operator ephemerides and radio-occultation receivers. A covariance is labeled calibrated only where held-out data confirm it (<a href="#22-covariance-for-every-object">section 2.2</a>).</li>
+<li><strong>Measured error as covariance.</strong> An orbit propagated from an OMM&#39;s epoch state carries a covariance equal to the error measured for its orbit regime and element-set age. That error is measured against independent orbits in every regime that has them: GNSS analysis-center orbits, laser ranging, LEO precise orbits, operator ephemerides and radio-occultation receivers. A covariance is labeled calibrated only where held-out data confirm it (<a href="#22-covariance-for-every-object">section 2.2</a>).</li>
 <li><strong>SDN&#39;s own atmosphere.</strong> Drag uses JB2008 or NRLMSISE-00 with an open correction in the form of the Space Force&#39;s Dynamic Calibration of the Atmosphere, solved from public operator states. It explains 25–40 % of the density variation measured by satellites that did not calibrate it; 1–3-day position error is unchanged (ratios 0.98–1.02) (<a href="#54-drag-regime">section 5.4</a>).</li>
 <li><strong>Maneuvers.</strong> A detector reads each object&#39;s element-set history for steps in orbital energy and plane, and reports each maneuver&#39;s time and size. On held-out data it found 22 of 25 ISS burns and all 6 GPS maneuvers in precise orbits; geostationary station-keeping is harder, 4 of 11 (<a href="#55-maneuver-detection">section 5.5</a>).</li>
 <li><strong>Better start states where data allow.</strong> HPOP&#39;s force models agree with Orekit within 1 cm over a day (steps of at most 30 s; 2.5 cm at 300 s), and with GMAT, Tudat, Nyx and Basilisk within the same agreement limits once each tool&#39;s atmosphere settings match (<a href="#7-dynamics-and-verification">section 7</a>). Fitted to laser ranges, HPOP stays 20–60 times better than SGP4 to 7 days; fitted to an arc of corrected OMMs, it halves SGP4&#39;s error to two days in GPS (<a href="#53-objects-with-public-omms-only">section 5.3</a>). In LEO, drag from B* limits even a precise start state: 481 m at 24 h (<a href="#53-objects-with-public-omms-only">section 5.3</a>). SGP4-XP sets that SDN fits to precise GNSS orbits err by a median 0.42 km over the seventh day, against 14 km for its SGP4 fits of the same orbits (exploratory, <a href="#4-normalization-and-model-dispatch">section 4</a>).</li>
@@ -443,7 +443,7 @@
 <p>Starlink files span 2–3 days and the low laser-ranged arcs 4 days, which bounds their horizons. SGP4-XP converged on all 505 windows and SGP4 on 98 of the 120 GNSS windows; the GNSS row compares those 98. Where drag is weak the extended theory holds: 12 to 34 times closer at 7 days on GNSS, LAGEOS and Etalon. On the ISS, where drag and reboosts dominate, the two theories are equal.</p>
 <h2 id="5-products-by-object-class"><span class="sec-num">5</span>Products by object class</h2>
 <p>Each row is one method: its originators, our measured result (median 3D position error unless stated) and the experiment. Every experiment froze its plan before reading its test window<sup><a href="#r1">1</a></sup>.</p>
-<div class="sec-head sec-head-h3"><h3 id="51-gnss-and-laser-ranged-satellites"><span class="sec-num">5.1</span>GNSS and laser-ranged satellites</h3><button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/evidence-supported-aso-catalog/51-gnss-and-laser-ranged-satellites.html" data-model-title="A GPS orbit from its analysis-centre state, beside the OMM" aria-label="Run it: A GPS orbit from its analysis-centre state, beside the OMM"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span>Run it</button></div>
+<div class="sec-head sec-head-h3"><h3 id="51-gnss-and-laser-ranged-satellites"><span class="sec-num">5.1</span>GNSS and laser-ranged satellites</h3><button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/evidence-supported-aso-catalog/51-gnss-and-laser-ranged-satellites.html" data-model-title="A GPS orbit from its analysis-center state, beside the OMM" aria-label="Run it: A GPS orbit from its analysis-center state, beside the OMM"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span>Run it</button></div>
 <div class="table-frame"><table>
 <thead>
 <tr>
@@ -454,7 +454,7 @@
 </tr>
 </thead>
 <tbody><tr>
-<td>Newest ultra-rapid analysis-centre orbit at issue, propagated numerically beyond</td>
+<td>Newest ultra-rapid analysis-center orbit at issue, propagated numerically beyond</td>
 <td>IGS products<sup><a href="#r12">12</a></sup></td>
 <td>GPS, 32 satellites: 3.5 cm at issue, 336 m at 7 days; the latest public OMM 1.5–1.7 km</td>
 <td><a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e3/README.md">E3</a></td>
@@ -479,7 +479,7 @@
 <tbody><tr>
 <td>Operator ephemeris, within its span</td>
 <td>Operator orbit determination</td>
-<td>GNSS analysis centres&#39; predictions (IGS for GPS, ESA for GLONASS): 0.1 m from final orbits at 0–12 h</td>
+<td>GNSS analysis centers&#39; predictions (IGS for GPS, ESA for GLONASS): 0.1 m from final orbits at 0–12 h</td>
 <td><a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e4/README.md">E4</a></td>
 </tr>
 <tr>
@@ -573,7 +573,7 @@
 <td><a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e5/test/REPORT.md">E5</a></td>
 </tr>
 <tr>
-<td>Temperature correction from the OMM decay of 48 catalogued objects</td>
+<td>Temperature correction from the OMM decay of 48 cataloged objects</td>
 <td>Picone et al. 2005<sup><a href="#r23">23</a></sup>; Gondelach and Linares 2020<sup><a href="#r24">24</a></sup>; Gershman 2026<sup><a href="#r25">25</a></sup></td>
 <td>σ 0.142, 8.4 % [−3.9, 18.3] lower (25 % required: not supported); 24.7 % lower in storms; as a forecast 16.8 % worse than JB2008; 3-day ratio 1.02; 0.270 on HASDM&#39;s windows</td>
 <td><a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e8/test/REPORT.md">E8</a></td>
@@ -1155,7 +1155,7 @@
 </tr>
 <tr>
 <td>Ultra-rapid, final orbits</td>
-<td>GNSS analysis-centre orbits issued in near real time with a prediction; definitive orbits issued about two weeks later</td>
+<td>GNSS analysis-center orbits issued in near real time with a prediction; definitive orbits issued about two weeks later</td>
 </tr>
 <tr>
 <td>SLR, ILRS</td>
@@ -1208,7 +1208,7 @@
 </tbody></table></div>
 <h2 id="data-credits">Data credits</h2>
 <ul>
-<li>IGS products, courtesy of the International GNSS Service and its analysis and data centres (Johnston, Riddell and Hausler 2017, doi:10.1007/978-3-319-42928-1). © Navigation Support Office at ESA/ESOC 2026.</li>
+<li>IGS products, courtesy of the International GNSS Service and its analysis and data centers (Johnston, Riddell and Hausler 2017, doi:10.1007/978-3-319-42928-1). © Navigation Support Office at ESA/ESOC 2026.</li>
 <li>GFZ rapid MGEX orbits of the IGS Multi-GNSS Experiment (Montenbruck et al. 2017, doi:10.1016/j.asr.2017.01.011), obtained from NASA CDDIS (Noll 2010, doi:10.1016/j.asr.2010.01.018).</li>
 <li>ILRS data and products (Pearlman et al. 2019, doi:10.1007/s00190-019-01241-1), from the EUROLAS Data Center, DGFI-TUM (Noll et al. 2019, doi:10.1007/s00190-018-1207-2). NERC Space Geodesy Facility orbits; contains British Geological Survey materials © UKRI 2026, Open Government Licence v3.0.</li>
 <li>Contains modified Copernicus Sentinel data 2026.</li>

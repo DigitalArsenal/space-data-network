@@ -88,7 +88,7 @@ The prospective operator passes to an existing administrator **exactly**:
 2. the **64-hex Ed25519 signing public key**,
 3. their preferred display **name** (optional).
 
-**What must never be handed over, in any channel:** the recovery phrase, any private key, the extended private key. If a private value ever enters a chat, a paste, a logged terminal, or an agent transcript, the identity is compromised — generate a new one. (The CLI's custody classification: `key export --format mnemonic` is labelled "THE ENTIRE NODE IDENTITY IN PLAINTEXT" and `base64`/`hex`/`kubo`/`libp2p` formats are labelled "SECRET".) Nothing in enrollment ever asks for a private value; an enrollment request that does is a scam or a bug.
+**What must never be handed over, in any channel:** the recovery phrase, any private key, the extended private key. If a private value ever enters a chat, a paste, a logged terminal, or an agent transcript, the identity is compromised — generate a new one. (The CLI's custody classification: `key export --format mnemonic` is labeled "THE ENTIRE NODE IDENTITY IN PLAINTEXT" and `base64`/`hex`/`kubo`/`libp2p` formats are labeled "SECRET".) Nothing in enrollment ever asks for a private value; an enrollment request that does is a scam or a bug.
 
 ### Step 3 — what binds on first login (TOFU)
 
@@ -103,7 +103,7 @@ Failure modes to avoid:
 - **Enrolling the wrong signing key** — the node holds a pin the operator cannot produce; the account can never sign in.
 - **Omitting the signing key entirely** — the row is a dead record: the dashboard sends no xpub at sign-in, the node resolves the operator by signing key, and a keyless row matches nothing.
 
-## 3. Path A — enrol from the CLI (and the config path)
+## 3. Path A — enroll from the CLI (and the config path)
 
 **`spacedatanetwork admin init`** is the CLI enrollment path, and the one a remote node with no desktop app uses. Run it on the server. It prints the node's public keys and the fingerprint of its encryption key, then enrolls an admin from one of three sources:
 
@@ -172,7 +172,7 @@ Every admin command authenticates by signing in as the node's own root key again
 
 > **Not yet supported:** no CLI command creates an operator row — `accounts add` creates **peer** rows only and explicitly refuses xpubs ("it identifies a wallet account, not a libp2p host"). Proposal: Section 8.
 
-## 4. Path B — enrol from the dashboard UI
+## 4. Path B — enroll from the dashboard UI
 
 1. Sign in as an administrator.
 2. Open **Accounts**, then the **Operators** tab.
@@ -181,7 +181,7 @@ Every admin command authenticates by signing in as the node's own root key again
    - **Name** — optional, their display name;
    - **Trust** — one of: `unknown`, `marginal`, `standard`, `full`, `admin` (the dropdown offers exactly these; see Section 6);
    - **Signing public key (hex)** — the 64-hex Ed25519 public key from the same ceremony, lowercased; the wallet UIs' convenience copy button produces this directly.
-4. Click **Enrol**. The node answers `201` for a new row; a duplicate xpub answers `409 user_exists`.
+4. Click **Enroll**. The node answers `201` for a new row; a duplicate xpub answers `409 user_exists`.
 
 The form posts exactly the two-value payload above to `POST /api/auth/users` with the session cookie. Any admin session can also edit a row's trust/name/signing key (the row's own edit control in the table) and **Withdraw** a row — see Section 7 for what withdrawal refuses.
 
@@ -214,7 +214,7 @@ The scale is the classic PGP ownertrust ladder, from hard veto to self-identity:
 | `admin` | 4 | **Operator tier: administrative API access, can manage other accounts** |
 | `ultimate` | 5 | Reserved for the node's own identity — never granted to anyone else |
 
-Admin grants: all `/api/auth/users*` management (the Enrol/editing surface), the merged accounts view, peer trust management, and the rest of the admin-gated API. Every admin gate is a numeric comparison against tier 4.
+Admin grants: all `/api/auth/users*` management (the Enroll/editing surface), the merged accounts view, peer trust management, and the rest of the admin-gated API. Every admin gate is a numeric comparison against tier 4.
 
 **Who can assign what:**
 
@@ -267,7 +267,7 @@ An account is named by display name, sign-in key or account key; an ambiguous na
 - **The recovery phrase.** The browser ceremony generates it locally and drops it when the dialog closes. Never type it into a chat, an email, a ticket, or a terminal command; a phrase that has appeared in a transcript or a log is compromised — generate a new one.
 - **Private keys.** The node never asks for them. Enrollment transports exactly two public values: the xpub and the Ed25519 public key.
 - **The node's own key material.** At-rest keys are encrypted with a machine-derived key and fail closed if the machine changes. `key export --format mnemonic` prints the entire node identity in plaintext — that command belongs on the box, in a trusted session, not in any pipeline you cannot vouch for.
-- **Master xpubs.** A depth-0 master xpub is refused by the first-admin bootstrap because it would enumerate an entire wallet; always enrol the account-level xpub (`derive-xpub` output).
+- **Master xpubs.** A depth-0 master xpub is refused by the first-admin bootstrap because it would enumerate an entire wallet; always enroll the account-level xpub (`derive-xpub` output).
 - **No enumeration.** A sign-in attempt with an unknown xpub receives a valid-looking challenge that *can never verify* — probing for whether an account exists gets you silence, not information.
 - **Session tokens.** Browser sessions ride an HttpOnly cookie. Scripted administration passes a session token explicitly (`--session-token` / `SDN_SESSION_TOKEN`) — treat it as a bearer credential.
 

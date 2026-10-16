@@ -192,7 +192,7 @@
     var lift = this.lift;
 
     // Draw far-to-near: unlifted bars first, then the nearest the playhead last,
-    // so a grown bar sits in front of its neighbours.
+    // so a grown bar sits in front of its neighbors.
     var order = [];
     for (var i = 0; i < n; i++) order.push(i);
     order.sort(function (a, b) { return Math.abs(b + 0.5 - head) - Math.abs(a + 0.5 - head); });
@@ -204,7 +204,7 @@
       var L = lift * Math.exp(-Math.pow((c - head) / LIFT_SIGMA, 2));
       var hovered = hov >= 0 && c <= hov && !played;
       var bh = Math.max(2, bars[i] * maxH) * (1 + LIFT_SCALE * L);
-      var bwL = bw * (1 + LIFT_WIDEN * L);    // grows about its own centre
+      var bwL = bw * (1 + LIFT_WIDEN * L);    // grows about its own center
       var x = pad + c * pitch - bwL / 2;
       var top = mid - bh;
 

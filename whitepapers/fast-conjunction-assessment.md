@@ -78,7 +78,7 @@ The trajectory bound uses only the coefficients, so it holds for any force model
 
 ### Spatial grid
 
-Testing all 528.6 million pairs at every step is wasted work: almost all pairs are thousands of kilometres apart. At each step, an object's straight-line segment over [−h, h], widened by d/2 + D, gives an axis-aligned box. Two objects can pass the straight-line test only if their boxes overlap, so a search over overlapping boxes drops nothing the test would pass.
+Testing all 528.6 million pairs at every step is wasted work: almost all pairs are thousands of kilometers apart. At each step, an object's straight-line segment over [−h, h], widened by d/2 + D, gives an axis-aligned box. Two objects can pass the straight-line test only if their boxes overlap, so a search over overlapping boxes drops nothing the test would pass.
 
 The boxes go into a uniform grid whose cell is the 99th-percentile box edge. Each overlapping pair is counted once, in the cell holding the low corner of the two boxes' overlap. The few boxes that span four or more cells on an axis on the GPU, or five or more on CPU threads, such as fast perigee passes, are tested against every object. The same grid runs in two places:
 
@@ -151,7 +151,7 @@ Tests check four windows against a single screen for both propagators. The SGP4 
 The tolerance, the segment length and the resident integration were measured<sup>[33](#r33)</sup>:
 
 - **Tolerance.** Against 10⁻¹⁴, the integration's own error after three days is 0.1 m at 400 km, 1.2 m at 700 km sun-synchronous and 0.18 m for Molniya. At 10⁻¹¹ it is 6 to 9 m in LEO.
-- **Segment length.** A degree-12 series resolves about four cycles per segment. 300 s keeps the 70 × 70 field's shortest LEO terms, with periods near 80 s; over 600 s, the terms above degree 35 leave centimetre fit errors. Over four days the exported series stay within 0.31 mm of the integrator's dense output in LEO and 0.18 mm for Molniya.
+- **Segment length.** A degree-12 series resolves about four cycles per segment. 300 s keeps the 70 × 70 field's shortest LEO terms, with periods near 80 s; over 600 s, the terms above degree 35 leave centimeter fit errors. Over four days the exported series stay within 0.31 mm of the integrator's dense output in LEO and 0.18 mm for Molniya.
 - **One integration.** A resident object takes the same steps as one HPOP request for that object. From a day before its epoch to three days after, the two agree within 0.05 mm in LEO, 9 µm for Molniya and 9 nm for GPS and geostationary orbits.
 
 HPOP integrates each object from its element epoch, so the first window carries that catch-up: 55,578 object-days from the element epochs to the screen's start, against 97,542 for the three days screened. HPOP drops cached intervals that end before the requested window, so an instance holds about one window per object.
@@ -364,7 +364,7 @@ The protocol uses homomorphic encryption: B computes on A's encrypted
 positions without being able to read them<sup>[11](#r11),[12](#r12)</sup>.
 
 1. **A encrypts its trajectory under its own key.**
-   - The quantities are x, y and z, in integer metres.
+   - The quantities are x, y and z, in integer meters.
    - 8,192 time steps are packed per ciphertext (BFV, n = 8192, 128-bit
      security).
    - Three 60-bit plaintext moduli, recombined by the Chinese remainder
@@ -463,8 +463,8 @@ more.
 - The obvious way to hide the distance is to multiply each step's value by a
   fresh random factor and let A read only its sign. One step's value then
   bounds the distance only loosely.
-- Neighbouring steps, however, have almost the same distance. Intersecting
-  the bounds of 64 neighbouring steps, A recovered the distance within a
+- Neighboring steps, however, have almost the same distance. Intersecting
+  the bounds of 64 neighboring steps, A recovered the distance within a
   factor of 2 at 87 % of steps (1 s grid). That is enough for range-only
   orbit determination of B's object.
 - The output must therefore be one bit per step: B adds a random additive
@@ -482,7 +482,7 @@ Starlink satellite:
 
 Kuiper, OneWeb and Qianfan had 875, 481 and 591 such objects, mostly with one
 to four conjunctions each. A private object in a crowded shell therefore
-gives its densest neighbour enough position fixes for a coarse orbit within
+gives its densest neighbor enough position fixes for a coarse orbit within
 days. Private screening hides an orbit from operators it does not approach.
 It cannot hide it from those it does.
 
@@ -548,7 +548,7 @@ The defenses:
      and blank steps fail before any answer is computed.
    - The tolerance bounds the thrust a fake orbit can hide to about τμ/|a|²:
      with τ = 10⁻⁴ in low Earth orbit, 0.8 mm/s², about 70 m/s per day.
-     Rounding to whole metres, the truncation of the differences and forces
+     Rounding to whole meters, the truncation of the differences and forces
      outside the check set how small τ can be.
    - A requester with K registered objects then learns what K satellites on
      its claimed orbits would.
@@ -692,7 +692,7 @@ Foster, J. L. and Estes, H. S. A Parametric Analysis of Orbital Debris Collision
 
 ### R10
 
-Precise orbit products: IGS final orbits ([IGS](https://igs.org/products/)), ILRS analysis-centre orbits ([ILRS](https://ilrs.gsfc.nasa.gov/)), Copernicus Sentinel-1 precise orbit ephemerides ([ESA](https://sentinels.copernicus.eu/)), Swarm precise orbits ([ESA](https://earth.esa.int/eogateway/missions/swarm)), and IERS EOP 20 C04 ([IERS](https://www.iers.org/)).
+Precise orbit products: IGS final orbits ([IGS](https://igs.org/products/)), ILRS analysis-center orbits ([ILRS](https://ilrs.gsfc.nasa.gov/)), Copernicus Sentinel-1 precise orbit ephemerides ([ESA](https://sentinels.copernicus.eu/)), Swarm precise orbits ([ESA](https://earth.esa.int/eogateway/missions/swarm)), and IERS EOP 20 C04 ([IERS](https://www.iers.org/)).
 
 ### R11
 

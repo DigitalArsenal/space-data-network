@@ -18,7 +18,7 @@ The installers resolve the newest node release on GitHub (today
 v1.0.5-beta.70: macOS Apple Silicon and Intel, Linux x86-64 and arm64, and
 Windows x86-64), verify the checksum,
 unpack the self-contained bundle under `~/.spacedatanetwork/bundles`, link
-`spacedatanetwork` and `sdn` under `~/.spacedatanetwork/bin`, and initialise
+`spacedatanetwork` and `sdn` under `~/.spacedatanetwork/bin`, and initialize
 the node identity. Other platforms build from source:
 
 ```sh
@@ -115,7 +115,7 @@ hyphen.
 
 A node that is publicly reachable relays for peers that are not. This is the
 default: AutoNAT decides, and a node behind NAT never relays. It is how nodes
-on corporate networks and CGNAT — which can connect but cannot be dialled —
+on corporate networks and CGNAT — which can connect but cannot be dialed —
 reach anyone at all.
 
 It is bounded (32 reservations, 8 circuits per peer, 30-minute TTL), well under
@@ -143,7 +143,7 @@ through a Kubo (go-ipfs) daemon.
   only; it never fetches arbitrary CIDs for callers. If you expose Kubo's own
   gateway anywhere, set `Gateway.NoFetch=true` on it.
 
-## 3. Initialise and edit the config
+## 3. Initialize and edit the config
 
 ```sh
 spacedatanetwork init --config /etc/space-data-network/config.yaml
@@ -217,7 +217,7 @@ network:
     - /ip4/167.172.219.213/tcp/4001/p2p/16Uiu2HAmGjaPxkWFSXBbmhs9K5x1Zo6euJw95VjS6Jj2bcPpYr2U
 ```
 
-The publisher needs no configuration. Once connected, the node materialises
+The publisher needs no configuration. Once connected, the node materializes
 the publisher's signed dataset publications; the dashboard's SOURCES page
 lists them by origin with SYNC, EXPORT and ARCHIVE per lane.
 

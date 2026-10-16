@@ -4,7 +4,7 @@
 > record of why it existed and what it cost, not a description of the tree.**
 >
 > `sdn-js` now resolves **one** libp2p (3.3.11), **one** `@libp2p/interface`
-> (3.3.0) and **one** helia (7.1.12), and every shim this audit catalogues —
+> (3.3.0) and **one** helia (7.1.12), and every shim this audit catalogs —
 > `withHeliaStreamHandlerCompat`, `withHeliaDialProtocolStreamCompat`,
 > `addLegacyEventedStreamCompat`, `addLegacyWritableStreamCompat` — is deleted.
 > `identifyCapabilityOnly()` stays, because it was never a version bridge: see
@@ -369,7 +369,7 @@ survives.
 
 **Step 3 — defer helia 6→7.** helia 7 requires `multiformats ^14` (we are on
 13.4.2), `@helia/unixfs` 8 requires `@helia/interface ^7.1.1`, and helia 7 drops
-`libp2p` as a dependency entirely in favour of `@helia/libp2p ^2.1.3`, changing
+`libp2p` as a dependency entirely in favor of `@helia/libp2p ^2.1.3`, changing
 node construction. It is a multiformats 13→14 migration across the whole package,
 since `multiformats` is imported well beyond helia. Bundled with Step 2 it would
 be unbisectable.

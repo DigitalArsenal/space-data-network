@@ -16,14 +16,14 @@ Space Data Network (SDN) builds a catalog of anthropogenic space objects (ASOs) 
 
 | Object class | Catalog product | Measured (median) |
 | --- | --- | --- |
-| GPS satellites | Analysis-centre orbit, propagated | 3.5 cm at issue, 30 m a day later |
+| GPS satellites | Analysis-center orbit, propagated | 3.5 cm at issue, 30 m a day later |
 | Satellites with laser ranging | High-precision orbit propagation (HPOP) fitted to the ranges | 7 m at the fit, 42 m after 7 days |
 | Satellites with operator ephemerides | The operator's ephemeris | Public element sets (OMMs) lie 0.6–5 km from it |
 | Objects known only from public OMMs | SGP4 on the OMM | 0.3–1.6 km at issue |
 
 For most objects the only public input is the OMM, and the catalog takes it as it is. What the catalog adds is a measured account of each input's error, and screening that acts on it safely:
 
-1. **Measured error as covariance.** An orbit propagated from an OMM's epoch state carries a covariance equal to the error measured for its orbit regime and element-set age. That error is measured against independent orbits in every regime that has them: GNSS analysis-centre orbits, laser ranging, LEO precise orbits, operator ephemerides and radio-occultation receivers. A covariance is labeled calibrated only where held-out data confirm it (section 2.2).
+1. **Measured error as covariance.** An orbit propagated from an OMM's epoch state carries a covariance equal to the error measured for its orbit regime and element-set age. That error is measured against independent orbits in every regime that has them: GNSS analysis-center orbits, laser ranging, LEO precise orbits, operator ephemerides and radio-occultation receivers. A covariance is labeled calibrated only where held-out data confirm it (section 2.2).
 2. **SDN's own atmosphere.** Drag uses JB2008 or NRLMSISE-00 with an open correction in the form of the Space Force's Dynamic Calibration of the Atmosphere, solved from public operator states. It explains 25–40 % of the density variation measured by satellites that did not calibrate it; 1–3-day position error is unchanged (ratios 0.98–1.02) (section 5.4).
 3. **Maneuvers.** A detector reads each object's element-set history for steps in orbital energy and plane, and reports each maneuver's time and size. On held-out data it found 22 of 25 ISS burns and all 6 GPS maneuvers in precise orbits; geostationary station-keeping is harder, 4 of 11 (section 5.5).
 4. **Better start states where data allow.** HPOP's force models agree with Orekit within 1 cm over a day (steps of at most 30 s; 2.5 cm at 300 s), and with GMAT, Tudat, Nyx and Basilisk within the same agreement limits once each tool's atmosphere settings match (section 7). Fitted to laser ranges, HPOP stays 20–60 times better than SGP4 to 7 days; fitted to an arc of corrected OMMs, it halves SGP4's error to two days in GPS (section 5.3). In LEO, drag from B* limits even a precise start state: 481 m at 24 h (section 5.3). SGP4-XP sets that SDN fits to precise GNSS orbits err by a median 0.42 km over the seventh day, against 14 km for its SGP4 fits of the same orbits (exploratory, section 4).
@@ -186,14 +186,14 @@ Each row is one method: its originators, our measured result (median 3D position
 
 | Method | Prior art | Measured | Evidence |
 | --- | --- | --- | --- |
-| Newest ultra-rapid analysis-centre orbit at issue, propagated numerically beyond | IGS products<sup>[12](#r12)</sup> | GPS, 32 satellites: 3.5 cm at issue, 336 m at 7 days; the latest public OMM 1.5–1.7 km | [E3][e3] |
+| Newest ultra-rapid analysis-center orbit at issue, propagated numerically beyond | IGS products<sup>[12](#r12)</sup> | GPS, 32 satellites: 3.5 cm at issue, 336 m at 7 days; the latest public OMM 1.5–1.7 km | [E3][e3] |
 | HPOP fitted to ILRS laser normal points | Laser-ranging orbit determination<sup>[13](#r13)</sup> | Starlette, Stella, LARETS, WESTPAC, LARES: 7 m at the fit and 42 m at 7 days, against SGP4's 472 m and 685 m. One pass beats the OMM for a day; four passes beat it at every horizon to 7 days | [E6][e6] |
 
 ### 5.2 Operator- and provider-ephemeris objects
 
 | Method | Prior art | Measured | Evidence |
 | --- | --- | --- | --- |
-| Operator ephemeris, within its span | Operator orbit determination | GNSS analysis centres' predictions (IGS for GPS, ESA for GLONASS): 0.1 m from final orbits at 0–12 h | [E4][e4] |
+| Operator ephemeris, within its span | Operator orbit determination | GNSS analysis centers' predictions (IGS for GPS, ESA for GLONASS): 0.1 m from final orbits at 0–12 h | [E4][e4] |
 | SGP4 on the latest public OMM, against operator ephemerides | Dyreby et al. 2025<sup>[14](#r14)</sup>; Jankovic 2026<sup>[15](#r15)</sup> | At the file's start: Planet 0.59 km, ISS 0.82 km, GPS 1.23 km, Starlink 2.87 km, Intelsat 4.79 km; Starlink 13.8 km at 24 h | [E4][e4] |
 | Vimpel's state refined to Vimpel's ephemeris by one six-state correction | Weighted least squares<sup>[16](#r16)</sup> | Withheld RMS 6.04–10.71 km before, 52.8–69.9 m after, on three 4-hour arcs: consistency with one provider, not accuracy | [R7](#r7)7
 
@@ -219,7 +219,7 @@ Density is scored by σ, the spread of ln(observed/model density) on satellites 
 | --- | --- | --- | --- |
 | JB2008 with SET's indices | Bowman et al. 2008<sup>[20](#r20)</sup> | σ 0.155 (Swarm, GRACE-FO, 2026); 0.148 on CHAMP and GRACE-A in 2003 and 2008, where HASDM scores 0.078 | [E5][e5] |
 | Temperature correction from accelerometer and precise-orbit densities, a stand-in for HASDM's calibration | Storz et al. 2005<sup>[21](#r21)</sup>; Doornbos 2012<sup>[22](#r22)</sup> | σ 0.056, 64 % [57, 70] lower; 0.112 on HASDM's windows; forecast gain 9 % for one day; 3-day ratio 1.04 [0.96, 1.10]; inputs arrive 49–92 days late ([E8][e8]) | [E5][e5] |
-| Temperature correction from the OMM decay of 48 catalogued objects | Picone et al. 2005<sup>[23](#r23)</sup>; Gondelach and Linares 2020<sup>[24](#r24)</sup>; Gershman 2026<sup>[25](#r25)</sup> | σ 0.142, 8.4 % [−3.9, 18.3] lower (25 % required: not supported); 24.7 % lower in storms; as a forecast 16.8 % worse than JB2008; 3-day ratio 1.02; 0.270 on HASDM's windows | [E8][e8] |
+| Temperature correction from the OMM decay of 48 cataloged objects | Picone et al. 2005<sup>[23](#r23)</sup>; Gondelach and Linares 2020<sup>[24](#r24)</sup>; Gershman 2026<sup>[25](#r25)</sup> | σ 0.142, 8.4 % [−3.9, 18.3] lower (25 % required: not supported); 24.7 % lower in storms; as a forecast 16.8 % worse than JB2008; 3-day ratio 1.02; 0.270 on HASDM's windows | [E8][e8] |
 
 **An open, DCA-form correction from public operator states** [E13][e13]. HASDM's Dynamic Calibration of the Atmosphere (DCA) corrects exospheric temperature every 3 hours from the drag of about 75–100 tracked calibration satellites, each with a constrained ballistic-coefficient correction<sup>[21](#r21)</sup>. E13 solves that form from public data alone: the common mode s of the daily drag of 36 Planet Doves, read through orbital energy, corrects JB2008's temperature, with a ballistic coefficient held constant per satellite over a block and a forecast with a 48-hour time constant. Published work derives density from operator ephemerides and scores density alone<sup>[26](#r26),[27](#r27),[28](#r28)</sup>, or assimilates commercial GPS states<sup>[29](#r29)</sup>. E13 scores the correction on satellites that did not calibrate it, over ten months of Planet states against Swarm and GRACE-FO, with the storm of January 2026 in a held-out block. With x′ the logarithmic residual of observed against JB2008 density in a 12-hour window,
 
@@ -416,7 +416,7 @@ An OMM supplies no covariance, so the catalog attaches one by the rule of sectio
 | HPOP | High-precision orbit propagation: numerical integration of the full force model of section 7 |
 | Provider estimate | A provider's product, which already embeds its models and inference |
 | Level 0 to 3 | Processing levels of orbit data (section 2) |
-| Ultra-rapid, final orbits | GNSS analysis-centre orbits issued in near real time with a prediction; definitive orbits issued about two weeks later |
+| Ultra-rapid, final orbits | GNSS analysis-center orbits issued in near real time with a prediction; definitive orbits issued about two weeks later |
 | SLR, ILRS | Satellite laser ranging; the International Laser Ranging Service |
 | TEME, EME2000, GCRF, ITRF | SGP4's output frame; the J2000 mean equator and equinox; the Geocentric Celestial Reference Frame; the terrestrial frame |
 | d², mean d²/3 | Squared Mahalanobis distance of an error under its covariance; the mean of d²/3 is 1 for a realistic covariance |
@@ -432,7 +432,7 @@ An OMM supplies no covariance, so the catalog attaches one by the rule of sectio
 
 ## Data credits
 
-- IGS products, courtesy of the International GNSS Service and its analysis and data centres (Johnston, Riddell and Hausler 2017, doi:10.1007/978-3-319-42928-1). © Navigation Support Office at ESA/ESOC 2026.
+- IGS products, courtesy of the International GNSS Service and its analysis and data centers (Johnston, Riddell and Hausler 2017, doi:10.1007/978-3-319-42928-1). © Navigation Support Office at ESA/ESOC 2026.
 - GFZ rapid MGEX orbits of the IGS Multi-GNSS Experiment (Montenbruck et al. 2017, doi:10.1016/j.asr.2017.01.011), obtained from NASA CDDIS (Noll 2010, doi:10.1016/j.asr.2010.01.018).
 - ILRS data and products (Pearlman et al. 2019, doi:10.1007/s00190-019-01241-1), from the EUROLAS Data Center, DGFI-TUM (Noll et al. 2019, doi:10.1007/s00190-018-1207-2). NERC Space Geodesy Facility orbits; contains British Geological Survey materials © UKRI 2026, Open Government Licence v3.0.
 - Contains modified Copernicus Sentinel data 2026.

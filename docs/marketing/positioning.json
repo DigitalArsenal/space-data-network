@@ -203,7 +203,7 @@
   ],
   "say": [
     {
-      "claim": "The HPOP force model agrees with Orekit, GMAT, Tudat and Nyx to about 1 cm over 24 hours on identical inputs (metres where drag models differ).",
+      "claim": "The HPOP force model agrees with Orekit, GMAT, Tudat and Nyx to about 1 cm over 24 hours on identical inputs (meters where drag models differ).",
       "note": "Verifies the implementation, not orbit accuracy."
     },
     {
@@ -227,7 +227,7 @@
       "note": "NASA CA Handbook Vol. 2 App. E; the Space-Track user agreement."
     },
     {
-      "claim": "Earth orientation (IAU 2006/2000A, polar motion, UT1) is applied to the millimetre.",
+      "claim": "Earth orientation (IAU 2006/2000A, polar motion, UT1) is applied to the millimeter.",
       "note": ""
     },
     {
@@ -261,7 +261,7 @@
       "why": "Started from public element sets it is 9.5-11 times worse in LEO at 24 h."
     },
     {
-      "claim": "Metre-level LEO prediction",
+      "claim": "Meter-level LEO prediction",
       "why": "481 m median at 24 h even from a precise state."
     },
     {
@@ -279,7 +279,7 @@
   ],
   "targets": [
     {
-      "target": "Laser residuals at centimetre level on cooperative LEO",
+      "target": "Laser residuals at centimeter level on cooperative LEO",
       "reference": "ILRS and Copernicus precise-orbit reports",
       "public": "Yes"
     },

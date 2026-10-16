@@ -39,7 +39,7 @@ every record this node signed still verifies against them.
 
 ### What comes back by itself
 
-Records materialised from a trusted publisher come back when the node
+Records materialized from a trusted publisher come back when the node
 reconnects: the publisher's current publications are announced again and the
 node imports them. Keep the publisher in both `peers.trusted_peers` and
 `network.bootstrap` in the restored config; the current set of each lane

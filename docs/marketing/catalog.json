@@ -721,10 +721,10 @@
       "id": "solar-system",
       "name": "Solar system navigation",
       "category": "earth-sky",
-      "tagline": "Zoom out past the Milky Way and centre any planet or moon",
-      "summary": "Scroll out from Earth to the scale of the Milky Way and back. The Sun, the planets, their major moons, Pluto, Charon, Ceres and Vesta are drawn at their true positions with surface imagery; click any of them to make it the centred globe. Kernels and imagery load over the Space Data Network.",
+      "tagline": "Zoom out past the Milky Way and center any planet or moon",
+      "summary": "Scroll out from Earth to the scale of the Milky Way and back. The Sun, the planets, their major moons, Pluto, Charon, Ceres and Vesta are drawn at their true positions with surface imagery; click any of them to make it the centered globe. Kernels and imagery load over the Space Data Network.",
       "capabilities": [
-        "19 bodies with surface imagery, each one click from becoming the centred globe",
+        "19 bodies with surface imagery, each one click from becoming the centered globe",
         "Orbits for every body, a body card, and Return to Earth",
         "Zoom from the ground to 1e22 m and back from any view",
         "Planet positions and orientation within 0.06 arcseconds of JPL Horizons",
@@ -741,7 +741,7 @@
       "delivery": "console",
       "covers": [],
       "learnMore": "https://spaceaware.io",
-      "evidence": "Landed 2026-10-15 (multi-body rounds 3-4): OrbPro scene.bodies/setCentralBody (OrbPro eff2b00a9b), modules propagator/solar-system-bodies, data-source/lowell-astorb, naif-kernels, body-imagery, keplerian-reference 1.8.2 (modules d8b7fb1d), console SOLAR SYSTEM search group, Centre chip and settings (SpaceAware-UI 608ed18, landed in dae4edd); clean-build checks 2026-10-15: nav 19/19 clicks centred with imagery, 1e22 m and back from pitch -0.15/-0.6/-1.2/+0.3, ACC drawn 0.056 arcsec, D9 cutoff, phone. Not on spaceaware.io until the console is republished (publish hold 2026-10-15)."
+      "evidence": "Landed 2026-10-15 (multi-body rounds 3-4): OrbPro scene.bodies/setCentralBody (OrbPro eff2b00a9b), modules propagator/solar-system-bodies, data-source/lowell-astorb, naif-kernels, body-imagery, keplerian-reference 1.8.2 (modules d8b7fb1d), console SOLAR SYSTEM search group, Center chip and settings (SpaceAware-UI 608ed18, landed in dae4edd); clean-build checks 2026-10-15: nav 19/19 clicks centered with imagery, 1e22 m and back from pitch -0.15/-0.6/-1.2/+0.3, ACC drawn 0.056 arcsec, D9 cutoff, phone. Not on spaceaware.io until the console is republished (publish hold 2026-10-15)."
     },
     {
       "id": "camera-cinematics",

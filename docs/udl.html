@@ -289,14 +289,14 @@
     // reveal the stages once the rail is on screen and run the light while it stays there.
     document.querySelectorAll('.flow').forEach(function (flow) {
       var nodes = Array.prototype.slice.call(flow.querySelectorAll('.flow-node'));
-      // Layout position of a node's centre inside the flow; offsets ignore the reveal transforms.
-      function centre(el) {
+      // Layout position of a node's center inside the flow; offsets ignore the reveal transforms.
+      function center(el) {
         var x = el.offsetWidth / 2, y = el.offsetHeight / 2;
         for (var e = el; e && e !== flow; e = e.offsetParent) { x += e.offsetLeft; y += e.offsetTop; }
         return [x, y];
       }
       function lay() {
-        var c = nodes.map(centre), top = c[0], len = c[c.length - 1][1] - top[1];
+        var c = nodes.map(center), top = c[0], len = c[c.length - 1][1] - top[1];
         flow.style.setProperty('--rx', top[0] + 'px');
         flow.style.setProperty('--ry', top[1] + 'px');
         flow.style.setProperty('--rlen', len + 'px');

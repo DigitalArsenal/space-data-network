@@ -240,7 +240,7 @@ control tables when it is unusable, never the other way round.
 
 **Auxiliary journal.**
 `auxiliary.flatsqlmeta`, the append-only log of the node's OWN state — its
-encrypted EPM, pin ledger, dataset shard publications, source-batch licences,
+encrypted EPM, pin ledger, dataset shard publications, source-batch licenses,
 asset-pin audit. Replayed from a resume mark at every boot. It is not records.
 
 **Resume mark.**
@@ -301,7 +301,7 @@ re-fetch or re-decode).
 How a node spends its connection budget. A **protected set** (bootstrap
 peers, configured trusted peers, pinned peers, registry-trusted peers, and
 peers proven interactive — speaking an SDN protocol or joining SDN pubsub
-topics, including tunnelled browsers) is never trimmed. Anonymous churn is
+topics, including tunneled browsers) is never trimmed. Anonymous churn is
 admitted, tagged by observed behavior, and trimmed by **watermarks** (a
 low/high band below the hard ceiling with reserved headroom) so the fleet
 and real users always have room. Trimming is the library's own connection

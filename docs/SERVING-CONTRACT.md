@@ -34,7 +34,7 @@ matching executable as `build_sha256`, and a fleet must show one value.
 | `data.query` | `POST /api/v1/data/query` | JSON body with `schema`, `offset`, `limit`, optional `provider_id`, `source_name`, `batch_id`, `producer_peer_id`, `cursor`, `search`, `query_profile`, `include_data`; `Accept: application/vnd.sdn.flatbuffers.stream` returns u32 size-prefixed frames of bare records with `x-sdn-total-count` |
 | `data.search` | `POST /api/v1/search/data` | full-text over the canonical record; returns the same frame form |
 | `data.remote` | `POST /api/v1/data/remote/{peerID}` | body = u32BE length + JSON `{op:"read_chunk"|"read_published_shard", schema, limit ≤ 1000, offset ≤ 16000, source_name?, cursor?}`; answer = u32BE length + JSON header (`sync_protocol`, `count`, `total_count`, `results[]{cid,size_bytes}`, `cursor`) followed by the frames; 20 s deadline, 8 MiB cap, HTTP 502 when the remote node does not answer in time |
-| `publish.batch` | `POST /api/v1/data/publish/batch/{schema}` (admin alias `/api/v1/admin/publish/batch`) | u32 LE length-framed bodies; a size-prefixed FlatBuffer (identifier at byte 8) is normalised to the bare record before its CID is computed; the response names the envelope form that arrived |
+| `publish.batch` | `POST /api/v1/data/publish/batch/{schema}` (admin alias `/api/v1/admin/publish/batch`) | u32 LE length-framed bodies; a size-prefixed FlatBuffer (identifier at byte 8) is normalized to the bare record before its CID is computed; the response names the envelope form that arrived |
 
 ## Records
 
