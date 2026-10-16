@@ -479,6 +479,15 @@ func (hb *HostBridge) BuildWasmEdgeHostFuncs() []wasmrt.HostFunc {
 	}
 }
 
+// DecodeHostcallEnvelopePayload is the exported form of the guest-to-host
+// envelope decoder, for the net-ingress E2E (cmd/net-ingress-e2e) to drive
+// the NET-07 segment-count bound directly: the hostcall boundary is guest-
+// reachable only, so the E2E exercises the exact code the host runs on guest
+// bytes rather than over the network.
+func DecodeHostcallEnvelopePayload(payload []byte) ([]byte, error) {
+	return decodeHostcallEnvelopePayload(payload)
+}
+
 func decodeHostcallEnvelopePayload(payload []byte) ([]byte, error) {
 	if len(payload) == 0 {
 		return nil, nil
