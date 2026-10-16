@@ -22,6 +22,11 @@
 # Wired into .husky/pre-commit (this repo's existing hook mechanism; see
 # scripts/oss-preflight.sh for the sibling tracked-file scan run at
 # pre-push/CI time via scripts/ci-local.sh).
+#
+# RANGE MODE (pre-push). CHECK_NO_MNEMONICS_RANGE="<base> <head>" scans the
+# content of <head> for the files changed since <base> instead of the index,
+# so .husky/pre-push can run the same scan over what is about to leave the
+# machine. The rules and the output are identical.
 
 set -euo pipefail
 
@@ -45,11 +50,29 @@ is_env_like() {
   esac
 }
 
+# Where file content is read from: the index (":path") or, in range mode, the
+# head commit ("<sha>:path").
+SCAN_PREFIX=":"
+RANGE_BASE=""
+RANGE_HEAD=""
+if [[ -n "${CHECK_NO_MNEMONICS_RANGE:-}" ]]; then
+  read -r RANGE_BASE RANGE_HEAD <<< "$CHECK_NO_MNEMONICS_RANGE"
+  if [[ -z "$RANGE_BASE" || -z "$RANGE_HEAD" ]]; then
+    echo "[check-no-mnemonics] ERROR: CHECK_NO_MNEMONICS_RANGE must be \"<base> <head>\"" >&2
+    exit 2
+  fi
+  SCAN_PREFIX="${RANGE_HEAD}:"
+fi
+
 is_binary_staged() {
-  # `git diff --cached --numstat` prints "-" for added/removed line counts
-  # on binary paths.
+  # `git diff --numstat` prints "-" for added/removed line counts on binary
+  # paths.
   local marker
-  marker="$(git diff --cached --numstat -- "$1" | head -1 | awk '{print $1}')"
+  if [[ -n "$RANGE_HEAD" ]]; then
+    marker="$(git diff --numstat "$RANGE_BASE" "$RANGE_HEAD" -- "$1" | head -1 | awk '{print $1}')"
+  else
+    marker="$(git diff --cached --numstat -- "$1" | head -1 | awk '{print $1}')"
+  fi
   [[ "$marker" == "-" ]]
 }
 
@@ -81,7 +104,7 @@ is_binary_staged() {
 # times IS still flagged, covering degenerate low-entropy test vectors)
 # while eliminating code-token false positives.
 scan_bip39_sequences() {
-  git show ":$1" 2>/dev/null | awk -v wordlist="$WORDLIST" '
+  git show "${SCAN_PREFIX}$1" 2>/dev/null | awk -v wordlist="$WORDLIST" '
     BEGIN {
       while ((getline w < wordlist) > 0) {
         if (w == "" || w ~ /^#/) continue
@@ -125,11 +148,15 @@ scan_bip39_sequences() {
 # Obvious secret markers inside .env-style staged content: mnemonic/seed
 # keys, xprv extended private keys, PEM private key blocks.
 scan_env_keywords() {
-  git show ":$1" 2>/dev/null | grep -Eiq -- \
+  git show "${SCAN_PREFIX}$1" 2>/dev/null | grep -Eiq -- \
     '-----BEGIN [A-Z ]*PRIVATE KEY-----|xprv[0-9A-Za-z]{10,}|(^|[^a-z_])mnemonic([^a-z_]|$)|(^|[^a-z_])seed_phrase([^a-z_]|$)'
 }
 
-staged_files="$(git diff --cached --name-only --diff-filter=ACMR)"
+if [[ -n "$RANGE_HEAD" ]]; then
+  staged_files="$(git diff --name-only --diff-filter=ACMR "$RANGE_BASE" "$RANGE_HEAD")"
+else
+  staged_files="$(git diff --cached --name-only --diff-filter=ACMR)"
+fi
 
 fail=0
 

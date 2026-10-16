@@ -1,8 +1,24 @@
 name: Build Linux VM Bundle
 
+# PATHS FILTER (owner 2026-10-16): the bundle is built only when the server, the
+# sdn-js and webui assets it packs, or the packaging inputs change. GitHub does
+# not evaluate path filters for tag pushes, so every v* release tag still builds.
 on:
   push:
     branches: [main]
+    paths:
+      - 'sdn-server/**'
+      - 'sdn-js/**'
+      - '!sdn-js/spaceaware-ui'
+      - '!sdn-js/spaceaware-ui/**'
+      - 'sdn-wasi/**'
+      - 'webui/**'
+      - 'config/**'
+      - 'deployment/scripts/**'
+      - 'scripts/install-wasmedge.sh'
+      - 'suite.versions.json'
+      - '.github/workflows/linux-vm-bundle.yml'
+      - '.github/actions/**'
     tags: ['v*']
   workflow_dispatch:
 
