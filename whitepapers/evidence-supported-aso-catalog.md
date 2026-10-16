@@ -6,13 +6,13 @@ Anthony "TJ" Koury III and Claude Opus 5.5
 
 Koury: Edgesource, Space Data Network. Claude: Anthropic.
 
-Technical whitepaper 2.3 | 12 October 2026
+Technical whitepaper 2.4 | 16 October 2026
 
 Numerical evidence cutoff: 11 October 2026
 
 ## 1 Summary
 
-Space Data Network (SDN) builds a catalog of anthropogenic space objects (ASOs) from public and login-only sources. Object by object, it publishes the solution with the best measured accuracy for the intended use, with its uncertainty. Accuracy is measured against independent precise orbits, under plans fixed before the test data were read<sup>[1](#r1)</sup>. Section 2 states the method step by step, with the rule that gives every object a covariance.
+Space Data Network (SDN) builds a catalog of anthropogenic space objects (ASOs) from public and login-only sources. Object by object, it publishes the solution with the best measured accuracy for the intended use, with its uncertainty. Accuracy is measured against independent precise orbits, under plans fixed before the test data were read<sup>[1](#r1)</sup>. Each method is chosen and tuned on one set of data, the selection window (also called the training window), and scored on held-out data: observations set aside until the method is fixed, either a later time window or objects the tuning never saw. A result on held-out data shows how the method performs on cases it has not seen, not how well it fits the data it was tuned on. Section 2 states the method step by step, with the rule that gives every object a covariance.
 
 | Object class | Catalog product | Measured (median) |
 | --- | --- | --- |
@@ -390,6 +390,8 @@ An OMM supplies no covariance, so the catalog attaches one by the rule of sectio
 | SLR, ILRS | Satellite laser ranging; the International Laser Ranging Service |
 | TEME, EME2000, GCRF, ITRF | SGP4's output frame; the J2000 mean equator and equinox; the Geocentric Celestial Reference Frame; the terrestrial frame |
 | d², mean d²/3 | Squared Mahalanobis distance of an error under its covariance; the mean of d²/3 is 1 for a realistic covariance |
+| Held-out data | Data set aside while a method is chosen or tuned and used only to score it: a later time window, or objects the tuning never saw (section 1) |
+| Selection window, training window | The data a method is chosen or tuned on; its result is reported on held-out data (section 1) |
 | DCA, DCP | HASDM's Dynamic Calibration of the Atmosphere; the Dynamic Consider Parameter for density-forecast error |
 | HASDM, JB2008, JBH09 | High Accuracy Satellite Drag Model; the Jacchia-Bowman 2008 density model; JB2008 with HASDM's calibration |
 | SP, HAC, ASW | Special Perturbations orbit determination and propagation; the High Accuracy Catalog; the Astrodynamics Support Workstation |

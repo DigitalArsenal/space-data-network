@@ -69,8 +69,8 @@
       </div>
       <div class="wrap">
         <dl class="paper-facts">
-          <div><dt>Edition</dt><dd>2.3</dd></div>
-          <div><dt>Published</dt><dd>12 October 2026</dd></div>
+          <div><dt>Edition</dt><dd>2.4</dd></div>
+          <div><dt>Published</dt><dd>16 October 2026</dd></div>
           <div><dt>Evidence cutoff</dt><dd><span>11 October 2026</span></dd></div>
           <div><dt>Sections</dt><dd>11</dd></div>
           <div><dt>Reading time</dt><dd>36 min</dd></div>
@@ -136,7 +136,7 @@
         </nav>
         <article class="paper">
 <h2 id="1-summary"><span class="sec-num">1</span>Summary</h2>
-<p>Space Data Network (SDN) builds a catalog of anthropogenic space objects (ASOs) from public and login-only sources. Object by object, it publishes the solution with the best measured accuracy for the intended use, with its uncertainty. Accuracy is measured against independent precise orbits, under plans fixed before the test data were read<sup><a href="#r1">1</a></sup>. <a href="#2-method">Section 2</a> states the method step by step, with the rule that gives every object a covariance.</p>
+<p>Space Data Network (SDN) builds a catalog of anthropogenic space objects (ASOs) from public and login-only sources. Object by object, it publishes the solution with the best measured accuracy for the intended use, with its uncertainty. Accuracy is measured against independent precise orbits, under plans fixed before the test data were read<sup><a href="#r1">1</a></sup>. Each method is chosen and tuned on one set of data, the selection window (also called the training window), and scored on held-out data: observations set aside until the method is fixed, either a later time window or objects the tuning never saw. A result on held-out data shows how the method performs on cases it has not seen, not how well it fits the data it was tuned on. <a href="#2-method">Section 2</a> states the method step by step, with the rule that gives every object a covariance.</p>
 <div class="table-frame"><table>
 <thead>
 <tr>
@@ -1068,6 +1068,14 @@
 <tr>
 <td>d², mean d²/3</td>
 <td>Squared Mahalanobis distance of an error under its covariance; the mean of d²/3 is 1 for a realistic covariance</td>
+</tr>
+<tr>
+<td>Held-out data</td>
+<td>Data set aside while a method is chosen or tuned and used only to score it: a later time window, or objects the tuning never saw (<a href="#1-summary">section 1</a>)</td>
+</tr>
+<tr>
+<td>Selection window, training window</td>
+<td>The data a method is chosen or tuned on; its result is reported on held-out data (<a href="#1-summary">section 1</a>)</td>
 </tr>
 <tr>
 <td>DCA, DCP</td>
