@@ -23,11 +23,64 @@ name: CI
 # Every check still lives in scripts/ci-local.sh — one mode per job — so what
 # CI runs and what a developer runs before pushing are the same script.
 
+# PATHS FILTERS (owner 2026-10-16: a change gets the E2E for that change, then
+# deploys). Making the sdn pre-push gate opt-in (SDN_PREPUSH_CI=1) must not move
+# its cost here, so the Go, WasmEdge, sdn-js and plugin-demo jobs run only when
+# a file they build or test changes. The nested SpaceAware-UI checkout
+# (sdn-js/spaceaware-ui) is its own repository and is excluded: a pin bump for
+# it builds nothing here. workflow_dispatch always runs everything. The
+# preflight job's secret scan is inside this workflow, so it follows the same
+# filter; the pre-push hook runs it on every push, and security.yml and
+# encryption-tests.yml (the dependency and secret scans) stay unfiltered.
 on:
   push:
     branches: [main]
+    paths:
+      - 'sdn-server/**'
+      - 'sdn-js/**'
+      - '!sdn-js/spaceaware-ui'
+      - '!sdn-js/spaceaware-ui/**'
+      - 'sdn-wasi/**'
+      - 'webui/**'
+      - 'plugin-demo/**'
+      - 'tests/**'
+      - 'shared-test-vectors/**'
+      - 'schemas/**'
+      - 'packages/**'
+      - 'tools/**'
+      - 'deployment/**'
+      - 'scripts/**'
+      - 'config/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'suite.versions.json'
+      - '.gitmodules'
+      - '.github/workflows/ci.yml'
+      - '.github/actions/**'
   pull_request:
     branches: [main]
+    paths:
+      - 'sdn-server/**'
+      - 'sdn-js/**'
+      - '!sdn-js/spaceaware-ui'
+      - '!sdn-js/spaceaware-ui/**'
+      - 'sdn-wasi/**'
+      - 'webui/**'
+      - 'plugin-demo/**'
+      - 'tests/**'
+      - 'shared-test-vectors/**'
+      - 'schemas/**'
+      - 'packages/**'
+      - 'tools/**'
+      - 'deployment/**'
+      - 'scripts/**'
+      - 'config/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'suite.versions.json'
+      - '.gitmodules'
+      - '.github/workflows/ci.yml'
+      - '.github/actions/**'
   workflow_dispatch:
 
 concurrency:

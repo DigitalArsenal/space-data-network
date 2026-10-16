@@ -1,0 +1,1233 @@
+{
+ "source": "UDL Services API 1.28.0 (spacedatastandards.org input_schemas/udl/udl_openapi.json)",
+ "updated": "2026-10-16",
+ "areas": [
+  {
+   "id": "orb",
+   "name": "Orbits and catalog"
+  },
+  {
+   "id": "obs",
+   "name": "Observations and tracking"
+  },
+  {
+   "id": "env",
+   "name": "Space environment"
+  },
+  {
+   "id": "wx",
+   "name": "Weather"
+  },
+  {
+   "id": "sol",
+   "name": "Solar system"
+  },
+  {
+   "id": "lch",
+   "name": "Launch"
+  },
+  {
+   "id": "rf",
+   "name": "RF and communications"
+  },
+  {
+   "id": "sen",
+   "name": "Sensors, sites and tasking"
+  },
+  {
+   "id": "def",
+   "name": "Defense operations"
+  },
+  {
+   "id": "sup",
+   "name": "Supporting data"
+  }
+ ],
+ "rows": [
+  {
+   "area": "orb",
+   "label": "Element sets",
+   "udl": [
+    "elset",
+    "currentelset"
+   ],
+   "sds": [
+    "OMM",
+    "MPE"
+   ],
+   "group": "Orbits",
+   "plans": {
+    "free": "View",
+    "pro": "Open",
+    "team": "Open",
+    "enterprise": "Open",
+    "spaceedge": "UDL"
+   },
+   "note": "CelesTrak and Space-Track general perturbations (GP) element sets"
+  },
+  {
+   "area": "orb",
+   "label": "State vectors",
+   "udl": [
+    "statevector"
+   ],
+   "sds": [
+    "STV",
+    "OEM"
+   ],
+   "group": "Orbits",
+   "plans": {
+    "free": "View",
+    "pro": "Open",
+    "team": "Open",
+    "enterprise": "Own",
+    "spaceedge": "UDL"
+   },
+   "note": "Propagated from public element sets; Enterprise adds their own"
+  },
+  {
+   "area": "orb",
+   "label": "Ephemerides",
+   "udl": [
+    "ephemeris",
+    "ephemerisset"
+   ],
+   "sds": [
+    "OEM"
+   ],
+   "group": "Orbits",
+   "plans": {
+    "free": "View",
+    "pro": "Open",
+    "team": "Open",
+    "enterprise": "Own",
+    "spaceedge": "UDL"
+   },
+   "note": "CelesTrak supplemental GP (operator ephemerides)"
+  },
+  {
+   "area": "orb",
+   "label": "Attitude",
+   "udl": [
+    "attitudedata",
+    "attitudeset"
+   ],
+   "sds": [
+    "ATD",
+    "AEM"
+   ],
+   "group": "Orbits",
+   "plans": {
+    "free": "—",
+    "pro": "—",
+    "team": "—",
+    "enterprise": "Own",
+    "spaceedge": "UDL"
+   },
+   "note": "No public source"
+  },
+  {
+   "area": "orb",
+   "label": "Conjunctions",
+   "udl": [
+    "conjunction"
+   ],
+   "sds": [
+    "CDM",
+    "CSM"
+   ],
+   "group": "Orbits",
+   "plans": {
+    "free": "View",
+    "pro": "Derived",
+    "team": "Derived",
+    "enterprise": "Own",
+    "spaceedge": "UDL"
+   },
+   "note": "CelesTrak SOCRATES, plus our own screening (SCR) on public element sets"
+  },
+  {
+   "area": "orb",
+   "label": "Maneuvers",
+   "udl": [
+    "maneuver"
+   ],
+   "sds": [
+    "MNV",
+    "MDE"
+   ],
+   "group": "Orbits",
+   "plans": {
+    "free": "—",
+    "pro": "Derived",
+    "team": "Derived",
+    "enterprise": "Derived",
+    "spaceedge": "UDL"
+   },
+   "note": "Detected by us from public element-set history"
+  },
+  {
+   "area": "orb",
+   "label": "Orbit determination",
+   "udl": [
+    "orbitdetermination"
+   ],
+   "sds": [
+    "OBD"
+   ],
+   "group": "Orbits",
+   "plans": {
+    "free": "—",
+    "pro": "—",
+    "team": "—",
+    "enterprise": "Own",
+    "spaceedge": "UDL"
+   },
+   "note": "No public source"
+  },
+  {
+   "area": "orb",
+   "label": "Satellite catalog",
+   "udl": [
+    "onorbit",
+    "onorbitlist",
+    "onorbitdetails",
+    "objectofinterest"
+   ],
+   "sds": [
+    "OON",
+    "OOL",
+    "OOD",
+    "OOI",
+    "CAT"
+   ],
+   "group": "Orbits",
+   "plans": {
+    "free": "View",
+    "pro": "Partial",
+    "team": "Partial",
+    "enterprise": "Partial",
+    "spaceedge": "UDL"
+   },
+   "note": "Public SATCAT gives identity and basics; details and objects of interest are UDL only"
+  },
+  {
+   "area": "orb",
+   "label": "Satellite hardware",
+   "udl": [
+    "onorbitantenna",
+    "onorbitbattery",
+    "onorbitsolararray",
+    "onorbitthruster",
+    "onorbitthrusterstatus",
+    "antenna",
+    "antennadetails",
+    "battery",
+    "batterydetails",
+    "solararray",
+    "solararraydetails",
+    "bus"
+   ],
+   "sds": [
+    "OOA",
+    "OOB",
+    "OOS",
+    "OOT",
+    "BUS"
+   ],
+   "group": "Orbits",
+   "plans": {
+    "free": "—",
+    "pro": "—",
+    "team": "—",
+    "enterprise": "Own",
+    "spaceedge": "UDL"
+   },
+   "note": "No public source"
+  },
+  {
+   "area": "orb",
+   "label": "On-orbit events",
+   "udl": [
+    "onorbitevent"
+   ],
+   "sds": [
+    "OOE"
+   ],
+   "group": "Orbits",
+   "plans": {
+    "free": "—",
+    "pro": "Partial",
+    "team": "Partial",
+    "enterprise": "Partial",
+    "spaceedge": "UDL"
+   },
+   "note": "Space-Track decay and re-entry messages cover part of it"
+  },
+  {
+   "area": "orb",
+   "label": "GEO status and drift",
+   "udl": [
+    "geostatus",
+    "drifthistory"
+   ],
+   "sds": [
+    "GEO",
+    "DFH"
+   ],
+   "group": "Orbits",
+   "plans": {
+    "free": "—",
+    "pro": "Derived",
+    "team": "Derived",
+    "enterprise": "Derived",
+    "spaceedge": "UDL"
+   },
+   "note": "Derived from public element sets"
+  },
+  {
+   "area": "orb",
+   "label": "Orbit manifolds",
+   "udl": [
+    "manifold",
+    "manifoldelset"
+   ],
+   "sds": [
+    "MNF",
+    "MFE"
+   ],
+   "group": "Orbits",
+   "plans": {
+    "free": "—",
+    "pro": "—",
+    "team": "—",
+    "enterprise": "—",
+    "spaceedge": "UDL"
+   },
+   "note": "Lost-object and maneuver hypotheses from UDL processing"
+  },
+  {
+   "area": "orb",
+   "label": "Payload details (Seradata)",
+   "udl": [
+    "seradataspacecraftdetails",
+    "seradatacommdetails",
+    "seradataopticalpayload",
+    "seradataradarpayload",
+    "seradatasigintpayload",
+    "seradataearlywarning",
+    "seradatanavigation",
+    "ir",
+    "navigation",
+    "scientific"
+   ],
+   "sds": [
+    "PLD",
+    "CMS"
+   ],
+   "group": "Orbits",
+   "plans": {
+    "free": "—",
+    "pro": "—",
+    "team": "—",
+    "enterprise": "—",
+    "spaceedge": "UDL"
+   },
+   "note": "Commercially licensed through UDL"
+  },
+  {
+   "area": "obs",
+   "label": "Optical observations",
+   "udl": [
+    "eoobservation"
+   ],
+   "sds": [
+    "EOO"
+   ],
+   "group": "Orbits",
+   "plans": {
+    "free": "—",
+    "pro": "—",
+    "team": "—",
+    "enterprise": "Own",
+    "spaceedge": "UDL"
+   },
+   "note": "Commercial optical networks sell their own; Enterprise brings theirs"
+  },
+  {
+   "area": "obs",
+   "label": "Radar observations",
+   "udl": [
+    "radarobservation",
+    "monoradar",
+    "passiveradarobservation"
+   ],
+   "sds": [
+    "RDO"
+   ],
+   "group": "Orbits",
+   "plans": {
+    "free": "—",
+    "pro": "—",
+    "team": "—",
+    "enterprise": "Own",
+    "spaceedge": "UDL"
+   },
+   "note": ""
+  },
+  {
+   "area": "obs",
+   "label": "RF observations",
+   "udl": [
+    "rfobservation"
+   ],
+   "sds": [
+    "RFO"
+   ],
+   "group": "Orbits",
+   "plans": {
+    "free": "—",
+    "pro": "—",
+    "team": "—",
+    "enterprise": "Own",
+    "spaceedge": "UDL"
+   },
+   "note": ""
+  },
+  {
+   "area": "obs",
+   "label": "Short-wave infrared",
+   "udl": [
+    "swir"
+   ],
+   "sds": [
+    "SWR",
+    "IRO"
+   ],
+   "group": "Orbits",
+   "plans": {
+    "free": "—",
+    "pro": "—",
+    "team": "—",
+    "enterprise": "Own",
+    "spaceedge": "UDL"
+   },
+   "note": ""
+  },
+  {
+   "area": "obs",
+   "label": "SAR observations",
+   "udl": [
+    "sarobservation"
+   ],
+   "sds": [
+    "SAR"
+   ],
+   "group": "Orbits",
+   "plans": {
+    "free": "—",
+    "pro": "—",
+    "team": "—",
+    "enterprise": "Own",
+    "spaceedge": "UDL"
+   },
+   "note": ""
+  },
+  {
+   "area": "obs",
+   "label": "Object identification",
+   "udl": [
+    "soiobservationset"
+   ],
+   "sds": [
+    "SOI"
+   ],
+   "group": "Orbits",
+   "plans": {
+    "free": "—",
+    "pro": "—",
+    "team": "—",
+    "enterprise": "Own",
+    "spaceedge": "UDL"
+   },
+   "note": "Photometry and signatures for identifying objects"
+  },
+  {
+   "area": "obs",
+   "label": "GNSS observations",
+   "udl": [
+    "gnssobservationset",
+    "gnssrawif"
+   ],
+   "sds": [
+    "GNO",
+    "IQC"
+   ],
+   "group": "Orbits",
+   "plans": {
+    "free": "—",
+    "pro": "Partial",
+    "team": "Partial",
+    "enterprise": "Partial",
+    "spaceedge": "UDL"
+   },
+   "note": "IGS ground networks cover part of it; raw IF samples are UDL only"
+  },
+  {
+   "area": "obs",
+   "label": "Onboard navigation",
+   "udl": [
+    "onboardnavigation"
+   ],
+   "sds": [],
+   "group": "Orbits",
+   "plans": {
+    "free": "—",
+    "pro": "—",
+    "team": "—",
+    "enterprise": "Own",
+    "spaceedge": "UDL"
+   },
+   "note": ""
+  },
+  {
+   "area": "obs",
+   "label": "Orbit tracks",
+   "udl": [
+    "orbittrack"
+   ],
+   "sds": [
+    "OBT"
+   ],
+   "group": "Orbits",
+   "plans": {
+    "free": "—",
+    "pro": "—",
+    "team": "—",
+    "enterprise": "Own",
+    "spaceedge": "UDL"
+   },
+   "note": ""
+  },
+  {
+   "area": "obs",
+   "label": "Missile tracks",
+   "udl": [
+    "missiletrack"
+   ],
+   "sds": [
+    "MST"
+   ],
+   "group": "Defense Ops",
+   "plans": {
+    "free": "—",
+    "pro": "—",
+    "team": "—",
+    "enterprise": "—",
+    "spaceedge": "UDL"
+   },
+   "note": ""
+  },
+  {
+   "area": "obs",
+   "label": "Launch detection",
+   "udl": [
+    "launchdetection"
+   ],
+   "sds": [
+    "LND"
+   ],
+   "group": "Defense Ops",
+   "plans": {
+    "free": "—",
+    "pro": "—",
+    "team": "—",
+    "enterprise": "—",
+    "spaceedge": "UDL"
+   },
+   "note": ""
+  },
+  {
+   "area": "obs",
+   "label": "Air, land and sea tracks",
+   "udl": [
+    "track",
+    "trackdetails"
+   ],
+   "sds": [
+    "TRK"
+   ],
+   "group": "Defense Ops",
+   "plans": {
+    "free": "—",
+    "pro": "—",
+    "team": "—",
+    "enterprise": "—",
+    "spaceedge": "UDL"
+   },
+   "note": ""
+  },
+  {
+   "area": "obs",
+   "label": "Moving target indicator",
+   "udl": [
+    "mti"
+   ],
+   "sds": [
+    "MTI"
+   ],
+   "group": "Defense Ops",
+   "plans": {
+    "free": "—",
+    "pro": "—",
+    "team": "—",
+    "enterprise": "—",
+    "spaceedge": "UDL"
+   },
+   "note": ""
+  },
+  {
+   "area": "obs",
+   "label": "Sky imagery",
+   "udl": [
+    "skyimagery"
+   ],
+   "sds": [
+    "SKI"
+   ],
+   "group": "Orbits",
+   "plans": {
+    "free": "—",
+    "pro": "—",
+    "team": "—",
+    "enterprise": "Own",
+    "spaceedge": "UDL"
+   },
+   "note": ""
+  },
+  {
+   "area": "obs",
+   "label": "Ground imagery",
+   "udl": [
+    "groundimagery"
+   ],
+   "sds": [
+    "GDI"
+   ],
+   "group": "Defense Ops",
+   "plans": {
+    "free": "—",
+    "pro": "—",
+    "team": "—",
+    "enterprise": "Own",
+    "spaceedge": "UDL"
+   },
+   "note": ""
+  },
+  {
+   "area": "obs",
+   "label": "Analytic imagery",
+   "udl": [
+    "analyticimagery"
+   ],
+   "sds": [
+    "ANI"
+   ],
+   "group": "Defense Ops",
+   "plans": {
+    "free": "—",
+    "pro": "—",
+    "team": "—",
+    "enterprise": "Own",
+    "spaceedge": "UDL"
+   },
+   "note": ""
+  },
+  {
+   "area": "obs",
+   "label": "Video streams",
+   "udl": [
+    "video"
+   ],
+   "sds": [],
+   "group": "Defense Ops",
+   "plans": {
+    "free": "—",
+    "pro": "—",
+    "team": "—",
+    "enterprise": "—",
+    "spaceedge": "UDL"
+   },
+   "note": ""
+  },
+  {
+   "area": "env",
+   "label": "Solar and geomagnetic indices",
+   "udl": [
+    "sgi"
+   ],
+   "sds": [
+    "SPW"
+   ],
+   "group": "Orbits, Weather",
+   "plans": {
+    "free": "View",
+    "pro": "Open",
+    "team": "Open",
+    "enterprise": "Open",
+    "spaceedge": "UDL"
+   },
+   "note": "NOAA SWPC, CelesTrak space weather, SET JB2008 (45-day lag). UDL adds real-time SET/HASDM for drag"
+  },
+  {
+   "area": "env",
+   "label": "Space environment observations",
+   "udl": [
+    "spaceenvobservation"
+   ],
+   "sds": [
+    "SEO",
+    "SEV"
+   ],
+   "group": "Weather",
+   "plans": {
+    "free": "View",
+    "pro": "Open",
+    "team": "Open",
+    "enterprise": "Open",
+    "spaceedge": "UDL"
+   },
+   "note": "NOAA GOES particles and magnetometer"
+  },
+  {
+   "area": "env",
+   "label": "Charged-particle sensor records",
+   "udl": [
+    "ecpsdr"
+   ],
+   "sds": [
+    "SEO",
+    "SEV"
+   ],
+   "group": "Weather",
+   "plans": {
+    "free": "—",
+    "pro": "—",
+    "team": "—",
+    "enterprise": "Own",
+    "spaceedge": "UDL"
+   },
+   "note": "Raw dosimeter readings and status from particle sensors on satellites"
+  },
+  {
+   "area": "env",
+   "label": "Ionosphere",
+   "udl": [
+    "ionoobservation"
+   ],
+   "sds": [
+    "ION"
+   ],
+   "group": "Weather",
+   "plans": {
+    "free": "—",
+    "pro": "Open",
+    "team": "Open",
+    "enterprise": "Open",
+    "spaceedge": "UDL"
+   },
+   "note": "GIRO ionosonde network"
+  },
+  {
+   "area": "env",
+   "label": "Earth orientation and leap seconds",
+   "udl": [
+    "eop",
+    "taiutc"
+   ],
+   "sds": [
+    "EOP",
+    "TIM"
+   ],
+   "group": "All",
+   "plans": {
+    "free": "Open",
+    "pro": "Open",
+    "team": "Open",
+    "enterprise": "Open",
+    "spaceedge": "UDL"
+   },
+   "note": "IERS bulletins; every version needs them"
+  },
+  {
+   "area": "wx",
+   "label": "Weather fields",
+   "udl": [
+    "weatherdata"
+   ],
+   "sds": [
+    "WTH",
+    "WXF"
+   ],
+   "group": "Weather",
+   "plans": {
+    "free": "View",
+    "pro": "Open",
+    "team": "Open",
+    "enterprise": "Open",
+    "spaceedge": "UDL"
+   },
+   "note": "NOAA GFS and geostationary satellites (our Weather module)"
+  },
+  {
+   "area": "wx",
+   "label": "Weather reports",
+   "udl": [
+    "weatherreport"
+   ],
+   "sds": [
+    "WTH"
+   ],
+   "group": "Weather",
+   "plans": {
+    "free": "View",
+    "pro": "Open",
+    "team": "Open",
+    "enterprise": "Open",
+    "spaceedge": "UDL"
+   },
+   "note": "METAR and aviation weather. Feeds the sensor-site cloud outlook"
+  },
+  {
+   "area": "sol",
+   "label": "Star catalog",
+   "udl": [
+    "starcatalog"
+   ],
+   "sds": [
+    "STR"
+   ],
+   "group": "Solar System",
+   "plans": {
+    "free": "View",
+    "pro": "Open",
+    "team": "Open",
+    "enterprise": "Open",
+    "spaceedge": "UDL"
+   },
+   "note": "Gaia DR3 and Hipparcos; also used to calibrate optical sensors"
+  },
+  {
+   "area": "lch",
+   "label": "Launch events",
+   "udl": [
+    "launchevent"
+   ],
+   "sds": [
+    "LNE"
+   ],
+   "group": "Orbits",
+   "plans": {
+    "free": "View",
+    "pro": "Open",
+    "team": "Open",
+    "enterprise": "Open",
+    "spaceedge": "UDL"
+   },
+   "note": "Public launch schedules"
+  },
+  {
+   "area": "lch",
+   "label": "Launch vehicles and sites",
+   "udl": [
+    "launchvehicle",
+    "launchvehicledetails",
+    "launchsite",
+    "launchsitedetails",
+    "stage",
+    "engine",
+    "enginedetails"
+   ],
+   "sds": [
+    "LDM",
+    "ROC",
+    "SIT"
+   ],
+   "group": "Orbits",
+   "plans": {
+    "free": "—",
+    "pro": "Partial",
+    "team": "Partial",
+    "enterprise": "Partial",
+    "spaceedge": "UDL"
+   },
+   "note": "Public references cover the main vehicles and sites"
+  },
+  {
+   "area": "rf",
+   "label": "RF emitters and bands",
+   "udl": [
+    "rfemitter",
+    "rfemitterdetails",
+    "rfband",
+    "rfbandtype"
+   ],
+   "sds": [
+    "RFE",
+    "RFB"
+   ],
+   "group": "Defense Ops",
+   "plans": {
+    "free": "—",
+    "pro": "—",
+    "team": "—",
+    "enterprise": "Own",
+    "spaceedge": "UDL"
+   },
+   "note": "ITU filings cover part of the bands"
+  },
+  {
+   "area": "rf",
+   "label": "Antenna beams",
+   "udl": [
+    "beam",
+    "beamcontour"
+   ],
+   "sds": [
+    "BEM",
+    "BMC"
+   ],
+   "group": "Orbits",
+   "plans": {
+    "free": "—",
+    "pro": "—",
+    "team": "—",
+    "enterprise": "Own",
+    "spaceedge": "UDL"
+   },
+   "note": "Operators bring their own"
+  },
+  {
+   "area": "rf",
+   "label": "Comms payloads and channels",
+   "udl": [
+    "comm",
+    "channel",
+    "transponder"
+   ],
+   "sds": [
+    "COM",
+    "CHN",
+    "TPN"
+   ],
+   "group": "Orbits",
+   "plans": {
+    "free": "—",
+    "pro": "Partial",
+    "team": "Partial",
+    "enterprise": "Own",
+    "spaceedge": "UDL"
+   },
+   "note": "Operator-published frequency plans"
+  },
+  {
+   "area": "rf",
+   "label": "Data links",
+   "udl": [
+    "datalink",
+    "linkstatus"
+   ],
+   "sds": [
+    "LKS"
+   ],
+   "group": "Defense Ops",
+   "plans": {
+    "free": "—",
+    "pro": "—",
+    "team": "—",
+    "enterprise": "Own",
+    "spaceedge": "UDL"
+   },
+   "note": ""
+  },
+  {
+   "area": "rf",
+   "label": "RF geolocation",
+   "udl": [
+    "diffofarrival",
+    "rfgeolocation"
+   ],
+   "sds": [
+    "DOA",
+    "GEL"
+   ],
+   "group": "Defense Ops",
+   "plans": {
+    "free": "—",
+    "pro": "—",
+    "team": "—",
+    "enterprise": "—",
+    "spaceedge": "UDL"
+   },
+   "note": "TDOA/FDOA solutions"
+  },
+  {
+   "area": "sen",
+   "label": "Sensors",
+   "udl": [
+    "sensor",
+    "sensortype",
+    "sensorobservationtype",
+    "sensormaintenance"
+   ],
+   "sds": [
+    "SEN",
+    "SNR"
+   ],
+   "group": "Orbits",
+   "plans": {
+    "free": "—",
+    "pro": "—",
+    "team": "—",
+    "enterprise": "Own",
+    "spaceedge": "UDL"
+   },
+   "note": ""
+  },
+  {
+   "area": "sen",
+   "label": "Sensor tasking",
+   "udl": [
+    "collectrequest",
+    "collectresponse",
+    "sensorplan",
+    "isrcollection"
+   ],
+   "sds": [
+    "CRM"
+   ],
+   "group": "Defense Ops",
+   "plans": {
+    "free": "—",
+    "pro": "—",
+    "team": "—",
+    "enterprise": "Own",
+    "spaceedge": "UDL"
+   },
+   "note": "Responses, plans and ISR collections have no standard yet"
+  },
+  {
+   "area": "sen",
+   "label": "Sites",
+   "udl": [
+    "site",
+    "sitestatus",
+    "siteremark",
+    "surface"
+   ],
+   "sds": [
+    "SIT"
+   ],
+   "group": "All",
+   "plans": {
+    "free": "View",
+    "pro": "Partial",
+    "team": "Partial",
+    "enterprise": "Own",
+    "spaceedge": "UDL"
+   },
+   "note": "Public observatory and ground-station lists"
+  },
+  {
+   "area": "def",
+   "label": "Air operations",
+   "udl": [
+    "aircraft",
+    "aircraftstatus",
+    "aircraftstatusremark",
+    "aircraftsortie",
+    "airevent",
+    "airloadplan",
+    "airspacecontrolorder",
+    "airtaskingorder",
+    "airtransportmission",
+    "flightplan",
+    "sortieppr",
+    "trackroute",
+    "diplomaticclearance",
+    "crewpapers",
+    "crew",
+    "navigationalobstruction"
+   ],
+   "sds": [
+    "ACR",
+    "AVL"
+   ],
+   "group": "Defense Ops",
+   "plans": {
+    "free": "—",
+    "pro": "—",
+    "team": "—",
+    "enterprise": "—",
+    "spaceedge": "UDL"
+   },
+   "note": "Only aircraft dynamics and airspace have standards"
+  },
+  {
+   "area": "def",
+   "label": "Airfields and ports",
+   "udl": [
+    "airfield",
+    "airfieldslot",
+    "airfieldslotconsumption",
+    "airfieldstatus",
+    "port"
+   ],
+   "sds": [
+    "TFN"
+   ],
+   "group": "Defense Ops",
+   "plans": {
+    "free": "—",
+    "pro": "—",
+    "team": "—",
+    "enterprise": "—",
+    "spaceedge": "UDL"
+   },
+   "note": ""
+  },
+  {
+   "area": "def",
+   "label": "Maritime",
+   "udl": [
+    "ais",
+    "vessel"
+   ],
+   "sds": [
+    "NAV"
+   ],
+   "group": "Defense Ops",
+   "plans": {
+    "free": "—",
+    "pro": "—",
+    "team": "—",
+    "enterprise": "Own",
+    "spaceedge": "UDL"
+   },
+   "note": "Commercial AIS feeds; Enterprise brings their own"
+  },
+  {
+   "area": "def",
+   "label": "Logistics and personnel",
+   "udl": [
+    "item",
+    "itemtracking",
+    "logisticssupport",
+    "equipment",
+    "equipmentremark",
+    "evac",
+    "personnelrecovery"
+   ],
+   "sds": [],
+   "group": "Defense Ops",
+   "plans": {
+    "free": "—",
+    "pro": "—",
+    "team": "—",
+    "enterprise": "—",
+    "spaceedge": "UDL"
+   },
+   "note": ""
+  },
+  {
+   "area": "def",
+   "label": "Reports and activity",
+   "udl": [
+    "cot",
+    "poi",
+    "sigact",
+    "hazard",
+    "eventevolution"
+   ],
+   "sds": [
+    "COT"
+   ],
+   "group": "Defense Ops",
+   "plans": {
+    "free": "—",
+    "pro": "—",
+    "team": "—",
+    "enterprise": "—",
+    "spaceedge": "UDL"
+   },
+   "note": "Only Cursor on Target has a standard"
+  },
+  {
+   "area": "def",
+   "label": "Mission operations",
+   "udl": [
+    "missionassignment",
+    "effectrequest",
+    "effectresponse"
+   ],
+   "sds": [],
+   "group": "Defense Ops",
+   "plans": {
+    "free": "—",
+    "pro": "—",
+    "team": "—",
+    "enterprise": "—",
+    "spaceedge": "UDL"
+   },
+   "note": ""
+  },
+  {
+   "area": "def",
+   "label": "Notifications",
+   "udl": [
+    "notification"
+   ],
+   "sds": [],
+   "group": "Defense Ops",
+   "plans": {
+    "free": "—",
+    "pro": "—",
+    "team": "—",
+    "enterprise": "—",
+    "spaceedge": "UDL"
+   },
+   "note": ""
+  },
+  {
+   "area": "sup",
+   "label": "Countries, owners and organizations",
+   "udl": [
+    "country",
+    "organization",
+    "organizationdetails",
+    "operatingunit",
+    "operatingunitremark",
+    "dataowner",
+    "entity",
+    "location",
+    "status",
+    "substatus"
+   ],
+   "sds": [
+    "CTR",
+    "LCC",
+    "EPM",
+    "ETM"
+   ],
+   "group": "All",
+   "plans": {
+    "free": "Open",
+    "pro": "Open",
+    "team": "Open",
+    "enterprise": "Open",
+    "spaceedge": "UDL"
+   },
+   "note": "Country codes and catalog owners are public"
+  }
+ ]
+}
