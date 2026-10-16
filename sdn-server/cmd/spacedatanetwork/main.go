@@ -1992,6 +1992,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 						Name:        "Node Root",
 						SigningKeys: rootKeys,
 					})
+					authHandler.RevokeRootGrants() // SEC-001 hotfix
 				}
 				if epmSvc := n.EPMService(); epmSvc != nil {
 					if att := epmSvc.GetIdentityAttestation(); att != nil {
@@ -2015,6 +2016,11 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 						return license.ModulePublishPrincipal{}, err
 					}
 					if user == nil {
+						return license.ModulePublishPrincipal{}, nil
+					}
+					// SEC-001 hotfix: the leaked identity never authorizes a publish.
+					if auth.DeniedPublishPrincipal(user.XPub, user.SigningPubKeyHex) {
+						log.Warnf("SEC-001 hotfix: refused a module publish by the leaked identity")
 						return license.ModulePublishPrincipal{}, nil
 					}
 					return license.ModulePublishPrincipal{

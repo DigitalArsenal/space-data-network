@@ -96,11 +96,29 @@ const (
 
 // ModuleDeliveryListing is a canonical $PLG listing generated from a published
 // module catalog asset.
+//
+// The $PLG payload carries the host's admit-point verdict (EvaluatePublication)
+// in fields $PLG already has, so a release gate reading only SDS bytes can prove
+// a module@version is grantable and to whom:
+//
+//	LISTING_STATUS Public  -> the content key is provisioned; grants are issued
+//	LISTING_STATUS Retired -> publication REFUSED; no grant can be issued
+//	ALLOWED_XPUBS empty    -> (with Public) open or link-key policy: any
+//	                          identity that passes the challenge is granted
+//	ALLOWED_XPUBS listed   -> (with Public) allowlist policy
+//
+// EvaluatePublication never publishes an allowlist with an empty list and
+// narrows an open policy with a declared list to allowlist, so the pair is
+// exact. ENCRYPTED_WASM_HASH and ENCRYPTED_WASM_SIZE name the protected bytes
+// the key server publishes, the same hash it stamps into its own descriptor.
+// GrantPolicy and Grantable restate the verdict for Go callers.
 type ModuleDeliveryListing struct {
-	PluginID  string
-	Version   string
-	Payload   []byte
-	Timestamp string
+	PluginID    string
+	Version     string
+	Payload     []byte
+	Timestamp   string
+	GrantPolicy string
+	Grantable   bool
 }
 
 func catalogPublicationAssets(reg *license.PluginRegistry) []*license.PluginAsset {
@@ -129,20 +147,39 @@ func catalogPublicationAssets(reg *license.PluginRegistry) []*license.PluginAsse
 // without depending on the legacy storefront API.
 func BuildModuleDeliveryListings(reg *license.PluginRegistry) ([]ModuleDeliveryListing, error) {
 	assets := catalogPublicationAssets(reg)
+	policyCfg := reg.GrantPolicyConfig()
 	listings := make([]ModuleDeliveryListing, 0, len(assets))
 	for _, asset := range assets {
-		payload, err := buildPublicationDescriptorFrame(asset)
+		decision := license.EvaluatePublication(asset, policyCfg)
+		verdict := &listingVerdict{grantable: decision.Publish}
+		if encrypted, err := reg.IsEncrypted(asset.ID); err == nil && encrypted {
+			if sum, err := hex.DecodeString(strings.TrimSpace(asset.BundleSHA256)); err == nil && len(sum) == 32 {
+				verdict.encryptedHash = sum
+				verdict.encryptedSize = uint64(asset.SizeBytes)
+			}
+		}
+		payload, err := buildDescriptorFrame(asset, verdict)
 		if err != nil {
 			return nil, fmt.Errorf("build publication descriptor for %q: %w", asset.ID, err)
 		}
 		listings = append(listings, ModuleDeliveryListing{
-			PluginID:  strings.TrimSpace(asset.ID),
-			Version:   strings.TrimSpace(asset.Version),
-			Payload:   payload,
-			Timestamp: strings.TrimSpace(asset.UploadedAt),
+			PluginID:    strings.TrimSpace(asset.ID),
+			Version:     strings.TrimSpace(asset.Version),
+			Payload:     payload,
+			Timestamp:   strings.TrimSpace(asset.UploadedAt),
+			GrantPolicy: decision.Policy,
+			Grantable:   decision.Publish,
 		})
 	}
 	return listings, nil
+}
+
+// listingVerdict is what a LISTING carries beyond the descriptor the key server
+// is handed: the admit-point verdict and the protected bytes' hash.
+type listingVerdict struct {
+	grantable     bool
+	encryptedHash []byte
+	encryptedSize uint64
 }
 
 func (n *Node) buildModuleNodeContext() (*modulert.NodeContext, error) {
@@ -620,7 +657,44 @@ func bootstrapLicensingModule(mod *modulert.Module, reg *license.PluginRegistry)
 		return fmt.Errorf("configure licensing runtime returned %d bytes without $LCF identifier", len(configResponse))
 	}
 
+	configureLicensingDeliveryAdmission(reg)
 	return publishCatalogAssets(mod, reg, nil)
+}
+
+// licensingDeliveryAdmission is the node's module-delivery admission gate
+// (internal/license/delivery_admission.go). The plugin manager wraps every
+// module-delivery stream handler with it; the licensing bootstrap gives it the
+// operator's limits and the catalog's verdicts.
+var licensingDeliveryAdmission = license.DefaultDeliveryAdmission()
+
+// configureLicensingDeliveryAdmission applies grant-policy.json delivery_limits
+// and tells the gate which modules are allowlisted (paid): those the admit point
+// published under an allowlist that names someone. A list holding "*" admits any
+// signed-in account, so it is open traffic, not a reserved lane.
+func configureLicensingDeliveryAdmission(reg *license.PluginRegistry) {
+	if reg == nil {
+		return
+	}
+	licensingDeliveryAdmission.Configure(reg.GrantPolicyConfig().EffectiveDeliveryLimits(), func(moduleID string) bool {
+		return reservedDeliveryModule(reg, moduleID)
+	})
+}
+
+func reservedDeliveryModule(reg *license.PluginRegistry, moduleID string) bool {
+	asset, ok := reg.Get(moduleID)
+	if !ok {
+		return false
+	}
+	decision := license.EvaluatePublication(asset, reg.GrantPolicyConfig())
+	if !decision.Publish || decision.Policy != license.GrantPolicyAllowlist {
+		return false
+	}
+	for _, xpub := range asset.AllowedXpubs {
+		if strings.TrimSpace(xpub) == license.AnyAccountXpub {
+			return false
+		}
+	}
+	return true
 }
 
 // publishCatalogAssets provisions content keys into the ALREADY-CONFIGURED
@@ -743,9 +817,187 @@ func publishCatalogAssets(mod *modulert.Module, reg *license.PluginRegistry, ids
 		if err := reg.SetRuntimeStatus(asset.ID, "stopped", "published via licensing runtime"); err != nil {
 			log.Warnf("Unable to update runtime status for plugin %q: %v", asset.ID, err)
 		}
+
+		// This version is current again even if it was retired before.
+		licensingDeliveryAdmission.ReinstateKeyID(publicationKeyID(asset))
+		scheduleSupersededRetirement(mod, reg, asset, contentKeys)
 	}
 
 	return errors.Join(publishErrs...)
+}
+
+// Retiring superseded versions.
+//
+// A module's KEY_ID is <moduleId>:<version>, and each release of an OrbPro core
+// module is its own version with its own content key (d_R). The plugin registry
+// keeps ONE version per module, but the licensing runtime kept every version it
+// was ever handed: the old KEY_ID's host secret, its content_keys entry and the
+// key server's publication all stayed, and the old version stayed grantable
+// until the node restarted. Now publishing a version schedules the module's
+// other versions for retirement after a grace period (grant-policy.json
+// retire_superseded_after_seconds; default and maximum 10 minutes), so a
+// console that loaded the old release a moment ago can still finish its
+// handshake. Retiring a KEY_ID:
+//
+//   - refuses new handshakes for it at the host (the delivery admission gate
+//     answers its $LCH with version_retired);
+//   - asks the key server to zero its publication, when the licensing module
+//     declares server_retire_module (input: the version's $PLG on
+//     "module_descriptor", as server_publish_module takes it). Modules that do
+//     not declare it keep the copy in guest memory, unreachable behind the
+//     gate, until the next server_configure_runtime;
+//   - drops its content_keys entry;
+//   - zeroes and drops the host secret licensing/content/<KEY_ID>, and revokes
+//     the secrets lane approved for it.
+//
+// A version published again before its retirement fires is current and is left
+// alone.
+
+// licensingRetireMethodID is the key server method that zeroes one publication.
+const licensingRetireMethodID = "server_retire_module"
+
+// scheduleLicensingRetirement runs f after d. Tests replace it.
+var scheduleLicensingRetirement = func(d time.Duration, f func()) { time.AfterFunc(d, f) }
+
+var (
+	licensingRetirementsMu sync.Mutex
+	licensingRetirements   = make(map[string]struct{})
+)
+
+// scheduleSupersededRetirement schedules every content_keys KEY_ID of asset's
+// module other than asset's own. The caller holds licensingContentKeysMu.
+func scheduleSupersededRetirement(mod *modulert.Module, reg *license.PluginRegistry, asset *license.PluginAsset, contentKeys []any) {
+	moduleID := strings.TrimSpace(asset.ID)
+	current := publicationKeyID(asset)
+	grace := reg.GrantPolicyConfig().RetireSupersededAfter()
+	for _, keyID := range moduleContentKeyIDs(contentKeys, moduleID) {
+		if keyID == current {
+			continue
+		}
+		licensingRetirementsMu.Lock()
+		_, scheduled := licensingRetirements[keyID]
+		licensingRetirements[keyID] = struct{}{}
+		licensingRetirementsMu.Unlock()
+		if scheduled {
+			continue
+		}
+		log.Infof("grant-audit dir=retire module=%s version=%s outcome=scheduled after=%s superseded_by=%s",
+			moduleID, strings.TrimPrefix(keyID, moduleID+":"), grace, strings.TrimSpace(asset.Version))
+		keyID := keyID
+		scheduleLicensingRetirement(grace, func() {
+			licensingRetirementsMu.Lock()
+			delete(licensingRetirements, keyID)
+			licensingRetirementsMu.Unlock()
+			if err := retireSupersededPublication(mod, reg, moduleID, keyID); err != nil {
+				log.Errorf("grant-audit dir=retire module=%s key_id=%s outcome=error cause=%q", moduleID, keyID, err.Error())
+			}
+		})
+	}
+}
+
+// moduleContentKeyIDs lists the content_keys KEY_IDs that belong to moduleID.
+func moduleContentKeyIDs(contentKeys []any, moduleID string) []string {
+	prefix := moduleID + ":"
+	var ids []string
+	for _, e := range contentKeys {
+		entry, ok := e.(map[string]any)
+		if !ok {
+			continue
+		}
+		keyID, _ := entry["key_id"].(string)
+		if strings.HasPrefix(keyID, prefix) && len(keyID) > len(prefix) {
+			ids = append(ids, keyID)
+		}
+	}
+	return ids
+}
+
+// retireSupersededPublication retires one superseded KEY_ID of moduleID.
+func retireSupersededPublication(mod *modulert.Module, reg *license.PluginRegistry, moduleID, keyID string) error {
+	if mod == nil {
+		return fmt.Errorf("licensing module is required")
+	}
+	licensingContentKeysMu.Lock()
+	defer licensingContentKeysMu.Unlock()
+
+	if reg != nil {
+		if asset, ok := reg.Get(moduleID); ok && publicationKeyID(asset) == keyID {
+			return nil
+		}
+	}
+	nodeCtx := mod.NodeContext()
+	if nodeCtx == nil {
+		return fmt.Errorf("licensing module has no node context")
+	}
+	version := strings.TrimPrefix(keyID, moduleID+":")
+
+	// The host refuses it first, so nothing new starts while the rest runs.
+	licensingDeliveryAdmission.RetireKeyID(keyID)
+
+	var errs []error
+	keyServer := "kept-until-reconfigure"
+	if licensingModuleDeclaresMethod(mod, licensingRetireMethodID) {
+		frame, err := buildPublicationDescriptorFrame(&license.PluginAsset{ID: moduleID, Version: version})
+		if err == nil {
+			_, err = mod.InvokeMethodFrames(context.Background(), licensingRetireMethodID, []modulert.InvokeInputFrame{{
+				PortID:         "module_descriptor",
+				SchemaName:     "PLG.fbs",
+				FileIdentifier: "$PLG",
+				RootTypeName:   "PLG",
+				Payload:        frame,
+			}})
+		}
+		if err != nil {
+			errs = append(errs, fmt.Errorf("key server retire %q: %w", keyID, err))
+			keyServer = "error"
+		} else {
+			keyServer = "zeroed"
+		}
+	}
+
+	secretID := licensingContentKeySecretPrefix + keyID
+	contentKeys := licensingContentKeyEntries(nodeCtx.Config)
+	kept := contentKeys[:0]
+	for _, e := range contentKeys {
+		if entry, ok := e.(map[string]any); ok && entry["key_id"] == keyID {
+			if id, _ := entry["secret_id"].(string); id != "" {
+				secretID = id
+			}
+			continue
+		}
+		kept = append(kept, e)
+	}
+	if err := mod.SetConfigValue("content_keys", kept); err != nil {
+		errs = append(errs, fmt.Errorf("drop content key entry %q: %w", keyID, err))
+	}
+	if nodeCtx.HostSecrets != nil {
+		nodeCtx.HostSecrets.Delete(secretID)
+	}
+	if policy := nodeCtx.CapabilityPolicy; policy != nil {
+		capability := modulert.SecretsCapabilityPrefix + secretID
+		if policy.IsApproved(mod.ContentHash(), capability) {
+			if err := policy.Revoke(mod.ContentHash(), capability); err != nil {
+				errs = append(errs, fmt.Errorf("revoke secrets lane %q: %w", secretID, err))
+			}
+		}
+	}
+
+	log.Infof("grant-audit dir=retire module=%s version=%s outcome=retired key_server=%s host_secret=dropped",
+		moduleID, version, keyServer)
+	return errors.Join(errs...)
+}
+
+func licensingModuleDeclaresMethod(mod *modulert.Module, methodID string) bool {
+	manifest := mod.Manifest()
+	if manifest == nil {
+		return false
+	}
+	for _, method := range manifest.Methods {
+		if method.MethodID == methodID {
+			return true
+		}
+	}
+	return false
 }
 
 // catalogPublicationPlan is the host's admit-point ruling over the whole
@@ -1116,6 +1368,12 @@ func extractPublicationRecordCollectionBytes(protectedContent []byte) ([]byte, b
 }
 
 func buildPublicationDescriptorFrame(asset *license.PluginAsset) ([]byte, error) {
+	return buildDescriptorFrame(asset, nil)
+}
+
+// buildDescriptorFrame builds the $PLG for an asset; a non-nil verdict makes it
+// a listing (LISTING_STATUS, ENCRYPTED_WASM_HASH, ENCRYPTED_WASM_SIZE).
+func buildDescriptorFrame(asset *license.PluginAsset, verdict *listingVerdict) ([]byte, error) {
 	if asset == nil {
 		return nil, fmt.Errorf("publication asset is required")
 	}
@@ -1152,6 +1410,11 @@ func buildPublicationDescriptorFrame(asset *license.PluginAsset) ([]byte, error)
 	}
 
 	dependenciesOffset := buildDependenciesVector(builder, asset.Dependencies)
+
+	encryptedHashOffset := flatbuffers.UOffsetT(0)
+	if verdict != nil && len(verdict.encryptedHash) > 0 {
+		encryptedHashOffset = builder.CreateByteVector(verdict.encryptedHash)
+	}
 
 	nowMs := uint64(time.Now().UnixMilli())
 
@@ -1213,6 +1476,22 @@ func buildPublicationDescriptorFrame(asset *license.PluginAsset) ([]byte, error)
 		plg.PLGAddDEPENDENCIES(builder, dependenciesOffset)
 	}
 	plg.PLGAddMAX_GRANT_TIMEOUT_MS(builder, asset.GrantTimeoutLimitMs())
+	if verdict != nil {
+		status := plg.EnumValuespublicationState["Public"]
+		if !verdict.grantable {
+			status = plg.EnumValuespublicationState["Retired"]
+		}
+		// Public is the schema default, so on the wire a grantable listing
+		// carries no LISTING_STATUS and a refused one carries Retired. A
+		// listing from a node older than this verdict reads Public for
+		// everything; its encrypted listings also lack ENCRYPTED_WASM_HASH,
+		// which is how a gate tells the two apart.
+		plg.PLGAddLISTING_STATUS(builder, status)
+		if encryptedHashOffset != 0 {
+			plg.PLGAddENCRYPTED_WASM_HASH(builder, encryptedHashOffset)
+			plg.PLGAddENCRYPTED_WASM_SIZE(builder, verdict.encryptedSize)
+		}
+	}
 	plg.PLGAddCREATED_AT(builder, nowMs)
 	plg.PLGAddUPDATED_AT(builder, nowMs)
 	root := plg.PLGEnd(builder)

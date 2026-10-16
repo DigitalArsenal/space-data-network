@@ -16,6 +16,8 @@ import (
 	logging "github.com/ipfs/go-log/v2"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	"github.com/libp2p/go-libp2p/core/host"
+
+	"github.com/spacedatanetwork/sdn-server/internal/license"
 )
 
 var log = logging.Logger("plugins")
@@ -557,6 +559,14 @@ func (m *Manager) StartAll(ctx context.Context, runtime RuntimeContext) error {
 		m.cronWg.Wait()
 	}
 	m.cronClosed = false
+	// Every module-delivery stream handler a plugin installs goes through the
+	// node's delivery admission gate (internal/license/delivery_admission.go):
+	// the open-policy token bucket, the open share of the key server's pending
+	// table and the per-connection cap. The wrapped host is kept as the
+	// runtime, so a late-registered or restarted plugin is gated the same way.
+	if runtime.Host != nil {
+		runtime.Host = license.WrapDeliveryHost(runtime.Host, license.DefaultDeliveryAdmission())
+	}
 	m.runtime = runtime
 	m.loadRuntimeModuleInputState(runtime.BaseDataPath)
 
