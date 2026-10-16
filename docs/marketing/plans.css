@@ -69,14 +69,12 @@
 
 .pl-edge-box { border: 1px solid var(--edge-soft); border-radius: var(--radius-sm); background: var(--panel); padding: 18px; display: grid; gap: 16px; }
 /* The SpaceEdge lockup: the mark in front of the wordmark - Michroma (OFL, subset to its seven letters: fonts/),
-   slanted, the first letter of each word full height and the rest small capitals, a subtle silver gradient (owner
+   slanted, the first letter of each word full height and the rest small capitals, solid (owner
    2026-10-16) */
 @font-face { font-family: "SpaceEdge Wordmark"; font-style: normal; font-weight: 400; font-display: block; src: url("fonts/michroma-spaceedge.woff2") format("woff2"); }
 .pl-edge-mark { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 4px 18px; padding-block: 6px; }
-.se-wordmark { --silver: linear-gradient(180deg, #ffffff 0%, #e9ecf0 38%, #b9bfc7 62%, #dfe3e8 100%);
-  display: block; font: 400 clamp(26px, 5vw, 40px) / 1.1 "SpaceEdge Wordmark", var(--font-sans); letter-spacing: .04em; white-space: nowrap;
-  transform: skewX(-12deg); background: var(--silver); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; color: transparent; }
-:root[data-theme="light"] .se-wordmark { --silver: linear-gradient(180deg, #4a5058 0%, #23272c 40%, #0f1114 60%, #3a4047 100%); }
+.se-wordmark { display: block; font: 400 clamp(26px, 5vw, 40px) / 1.1 "SpaceEdge Wordmark", var(--font-sans); letter-spacing: .04em; white-space: nowrap;
+  transform: skewX(-12deg); color: var(--text); }
 .se-wordmark small { font-size: .74em; letter-spacing: .05em; }
 /* (the mark by the site's theme - data-theme on <html>, dark by default - not the system's) */
 .pl-edge-mark .se-mark-light, :root[data-theme="light"] .pl-edge-mark .se-mark-dark { display: none; }
