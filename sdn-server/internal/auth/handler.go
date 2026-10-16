@@ -451,6 +451,13 @@ func (h *Handler) handleChallenge(w http.ResponseWriter, r *http.Request) {
 	// sent is deliberately IGNORED and replaced with the node's own — that is
 	// what keeps a wallet's master xpub (§13.1) out of the store entirely.
 	if h.isNodeRootSigningKey(pubRaw) {
+		// SEC-001 hotfix: a root key is refused outright from off the box, and
+		// never falls through to the user lookup below.
+		if !rootPeerIsLocal(r) {
+			log.Warnf("SEC-001 hotfix: refused a root-key auth challenge from %s", clientIPForRequest(r))
+			h.writeAuthenticationFailure(w)
+			return
+		}
 		rootXPub := h.rootSessionXPub()
 		if rootXPub != "" {
 			challengeBytes := make([]byte, 32)
@@ -714,6 +721,11 @@ func (h *Handler) handleVerify(w http.ResponseWriter, r *http.Request) {
 	// the node's own xpub (set when the challenge was minted), so nothing the
 	// client supplied reaches the session or the store.
 	if pending.rootAdmin {
+		if !rootPeerIsLocal(r) {
+			log.Warnf("SEC-001 hotfix: refused a root sign-in from %s", clientIPForRequest(r))
+			h.writeAuthenticationFailure(w)
+			return
+		}
 		h.completeRootSignIn(w, r, pending)
 		return
 	}

@@ -242,6 +242,9 @@ func (h *Handler) sessionFromSignedRequest(r *http.Request) (*Session, error) {
 	// The node's own root account, recognised at the challenge, needs no store
 	// row (§14/§19) — the same rule completeRootSignIn applies.
 	if pending.rootAdmin {
+		if !rootPeerIsLocal(r) {
+			return nil, errors.New("signed request: root key refused off the box (SEC-001)")
+		}
 		return h.ephemeralSession(pending.xpub, rootTrustLevel, r, now), nil
 	}
 
