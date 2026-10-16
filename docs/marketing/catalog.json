@@ -73,7 +73,8 @@
         "Catalog delivered peer to peer over IPFS",
         "Owners and operators attached from SATCAT",
         "Full console on phones, with a payload catalog sized for phone memory",
-        "Rebindable hotkeys and one status log for every event"
+        "Rebindable hotkeys and one status log for every event",
+        "Engine delivered encrypted and unlocked per visit over the network, its signature checked before it runs"
       ],
       "standards": [
         "CCSDS OMM",
@@ -83,7 +84,7 @@
       "delivery": "console",
       "covers": [],
       "learnMore": "https://spaceaware.io",
-      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/engine/initEngine.ts; engine/phoneCatalog.ts; live probe 2026-10-13 build 20261013T204527Z (32,573 records over IPFS/bitswap); components/HotkeySettings.svelte; components/StatusLog.svelte"
+      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/engine/initEngine.ts; engine/phoneCatalog.ts; live probe 2026-10-13 build 20261013T204527Z (32,573 records over IPFS/bitswap); components/HotkeySettings.svelte; components/StatusLog.svelte; core delivery (SEC-006): engine/coreDelivery.ts, engine/coreProvider.json (SpaceAware-UI 62f1532), OrbPro packages/orbpro-integration/coreDeliveryBinding.js (OrbPro 1f1d9e5d39); live on spaceaware.io from build 20261015T224504Z"
     },
     {
       "id": "catalog-search",
