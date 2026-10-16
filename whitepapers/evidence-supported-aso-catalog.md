@@ -26,8 +26,8 @@ For most objects the only public input is the OMM, and the catalog takes it as i
 1. **Measured error as covariance.** An orbit propagated from an OMM's epoch state carries a covariance equal to the error measured for its orbit regime and element-set age. That error is measured against independent orbits in every regime that has them: GNSS analysis-centre orbits, laser ranging, LEO precise orbits, operator ephemerides and radio-occultation receivers. A covariance is labeled calibrated only where held-out data confirm it (section 2.2).
 2. **SDN's own atmosphere.** Drag uses JB2008 or NRLMSISE-00 with an open correction in the form of the Space Force's Dynamic Calibration of the Atmosphere, solved from public operator states. It explains 25–40 % of the density variation measured by satellites that did not calibrate it; 1–3-day position error is unchanged (ratios 0.98–1.02) (section 5.4).
 3. **Maneuvers.** A detector reads each object's element-set history for steps in orbital energy and plane, and reports each maneuver's time and size. On held-out data it found 22 of 25 ISS burns and all 6 GPS maneuvers in precise orbits; geostationary station-keeping is harder, 4 of 11 (section 5.5).
-4. **Better start states where data allow.** HPOP's force models agree with Orekit within 1 cm over a day (steps of at most 30 s; 2.5 cm at 300 s, section 7). Fitted to laser ranges, HPOP stays 20–60 times better than SGP4 to 7 days; fitted to an arc of corrected OMMs, it halves SGP4's error to two days in GPS (section 5.3). SGP4-XP sets that SDN fits to precise GNSS orbits err by a median 0.42 km over the seventh day, against 14 km for its SGP4 fits of the same orbits (exploratory, section 4).
-5. **Screening that stays safe when the covariance is large.** A large covariance spreads a collision's probability thin: on real OMM errors, a probability threshold of 1e-4 missed 2.7–16 % of true collisions. Where held-out data confirm the covariance, screening on the uncertainty region missed 0–0.4 %, at the cost of more false alerts, and every event also carries the covariance-free maximum probability<sup>[50](#r50)</sup>. Large uncertainty makes the screen cautious, not blind.
+4. **Better start states where data allow.** HPOP's force models agree with Orekit within 1 cm over a day (steps of at most 30 s; 2.5 cm at 300 s, section 7). Fitted to laser ranges, HPOP stays 20–60 times better than SGP4 to 7 days; fitted to an arc of corrected OMMs, it halves SGP4's error to two days in GPS (section 5.3). In LEO, drag from B* limits even a precise start state: 481 m at 24 h (section 5.3). SGP4-XP sets that SDN fits to precise GNSS orbits err by a median 0.42 km over the seventh day, against 14 km for its SGP4 fits of the same orbits (exploratory, section 4).
+5. **Screening when the covariance is large.** A large covariance spreads a collision's probability thin. In a synthetic study, with collisions built on the OMM errors of 4 reference objects, a probability threshold of 1e-4 missed 2.7–16 % of collisions; screening on the uncertainty region missed 0.2–0.4 %, with 21–45 % false alerts at a 1 km miss<sup>[50](#r50)</sup>. Every event also carries the Alfano maximum, the largest probability a spherical covariance of any size gives, which needs no covariance. Products built from public OMMs are advisory: public element sets alone must not drive conjunction assessment decisions<sup>[49](#r49),[53](#r53)</sup>.
 
 Three results go beyond published work:
 
@@ -68,7 +68,7 @@ Every object carries a covariance, from the first rule that applies:
 
 Rules 3 and 4 cover every object with an element set, so no object goes without a covariance.
 
-Each covariance carries a label: the rule, the source, the regime and age cell, and the verdict of held-out data for that cell. Calibrated means the realism rule of section 6 held on held-out data: mean d²/3 in [0.8, 1.25] and 95 % coverage in [0.93, 0.97]. Otherwise the label records the measured mean d²/3 and coverage. The element-set model is calibrated in 2 of 35 regime-and-age cells, LEO above 800 km at issue and at half a day; the HPOP epoch state with per-regime P₀ and Q in 5 (section 6). Screening on the uncertainty region relies on calibrated cells, and every screening event also carries the covariance-free maximum probability, which needs no covariance<sup>[50](#r50)</sup>.
+Each covariance carries a label: the rule, the source, the regime and age cell, and the verdict of held-out data for that cell. Calibrated means the realism rule of section 6 held on held-out data: mean d²/3 in [0.8, 1.25] and 95 % coverage in [0.93, 0.97]. Otherwise the label records the measured mean d²/3 and coverage. The element-set model is calibrated in 2 of 35 regime-and-age cells, LEO above 800 km at issue and at half a day; the HPOP epoch state with per-regime P₀ and Q in 5 (section 6). Screening on the uncertainty region relies on calibrated cells. Every screening event also carries the Alfano maximum, the largest probability a spherical covariance of any size gives, which needs no covariance<sup>[50](#r50)</sup>. It is not a bound for other shapes: at aspect ratios of 3, 10 and 100 to 1,000 the largest probability is about 3, 10 and 57 to 131 times higher, and LEO element-set covariances have aspect ratios of 2.4 to 191.
 
 Covariance propagates through HPOP's state-transition matrix with per-regime process noise, or grows with element-set age in the model of rule 3 (section 6).
 
@@ -146,7 +146,7 @@ AOE's sets are therefore not copies of Space-Track's: they are as accurate at th
 
 ### The handoff contract
 
-An OMM holds SGP4 mean elements, not osculating ones. The catalog evaluates SGP4 at zero elapsed time, transforms position and velocity from TEME to GCRF at the same instant, and starts HPOP from that state<sup>[8](#r8)</sup>. SGP4's drag term B* becomes the ballistic parameter
+An OMM holds SGP4 mean elements, not osculating ones. The catalog evaluates SGP4 at zero elapsed time, transforms position and velocity from TEME to GCRF at the same instant, and starts HPOP from that state<sup>[8](#r8)</sup>. The rotation uses the IAU 2006/2000A precession-nutation and the equation of the equinoxes. Against the GMST82 and IAU 1976/1980 rotations of Vallado et al.<sup>[8](#r8)</sup>, this convention moves positions by 2.0–2.6 m in LEO and 12–16 m at GEO; the catalog uses it throughout. SGP4's drag term B* becomes the ballistic parameter
 
 $$
 B = \frac{C_D A}{m} = \frac{2B^*}{\rho_0}
@@ -204,12 +204,12 @@ Each row is one method: its originators, our measured result (median 3D position
 | SGP4 on the latest public OMM | Hoots and Roehrich 1980<sup>[9](#r9)</sup>; Vallado et al. 2006<sup>[8](#r8)</sup> | At issue: 0.31 km (laser-ranged LEO) to 1.57 km (GPS); by horizon in section 10 | [E3][e3] |
 | Along-track correction at epoch (GPS) | Ly et al. 2020: 65 %<sup>[17](#r17)</sup>; Hallgarten La Casta and Amato 2025<sup>[18](#r18)</sup> | RMS at epoch 2.04 → 0.79 km (61 % [53, 67]); the single-model form 8 %; worse than SGP4 by 7 days (2.55 against 1.88 km); its covariance fails the coverage gate. On an orbital plane outside the fit: 6 % [2, 10] | [E1][e1] |
 | The epoch correction learned on other objects, by regime (LEO: static covariates and a 48-hour fleet nowcast; MEO/GEO: the form of Ly et al.) | Ly et al. 2020<sup>[17](#r17)</sup>; Hallgarten La Casta and Amato 2025<sup>[18](#r18)</sup> | Unseen LEO satellites: 25 % [18, 32] lower error at epoch, 51 % for Planet's own satellites; other operators' satellites −2 % [−17, 10]; 9 % at 1 day, 1 % at 3 days. MEO and GEO 4 %, worse by more than 10 % for 64 of 135 objects. A per-satellite bias holds 37 % of the along-track variance in GNSS, 1–5 % in LEO | [E16][e16] |
-| HPOP from the OMM's epoch state | Vallado et al. 2006<sup>[8](#r8)</sup>; Jankovic 2026<sup>[15](#r15)</sup> | Equal to SGP4 at epoch, then larger as the OMM's start-state error grows: at 24 h, 1.7 (GPS) to 11 (laser-ranged LEO) times SGP4's error; larger in all four regimes (GPS, LEO with precise orbits, laser-ranged LEO and MEO) by 72 h | [E7][e7] |
+| HPOP from the OMM's epoch state | Vallado et al. 2006<sup>[8](#r8)</sup>; Jankovic 2026<sup>[15](#r15)</sup> | Equal to SGP4 at epoch, then larger as the OMM's start-state error grows: at 24 h, 1.7 (GPS), 9.5 (LEO with precise orbits) and 11 (laser-ranged LEO) times SGP4's error; larger in all four regimes (GPS, LEO with precise orbits, laser-ranged LEO and MEO) by 72 h | [E7][e7] |
 | AOE's newest set | SpaceMapper<sup>[4](#r4)</sup> | Starlink: 18.9 times Space-Track's error at issue, from set age; 1.03–1.07 times at matched age (section 4) | [E15][e15] |
 | HPOP fitted to an arc of OMM epoch states | Levit and Marshall 2011<sup>[19](#r19)</sup> | Better than SGP4 only at short horizons: 0.32–0.51 of its error to 12 h (laser-ranged LEO), 0.36–0.53 to 48 h on E1-corrected GPS sets; undecided beyond | [E7][e7] |
 | HPOP fitted to a 4- or 7-day arc of OMM epoch states with drag fitted (LEO) | Levit and Marshall 2011<sup>[19](#r19)</sup> | 0.45 of SGP4's error at epoch and 0.39 at 6 h; 0.87 [0.62, 1.18] at 24 h and 1.40 [1.00, 1.92] at 72 h (not supported); laser-ranged spheres 0.28 at 24 h and 0.46 at 72 h. A fitted drag rate, weights with the measured correlation and the E13 density correction leave it unchanged | [E16][e16] |
 
-The start state sets the limit. Over 6 days, HPOP leaves 0.2 km along track from a GPS satellite's IGS state and 8.4 km from its OMM epoch state (medians of 508 arcs)<sup>[10](#r10)</sup>. Laser ranges fix the start state, and the prediction then stays 20 to 60 times better than SGP4 to 7 days [E6][e6].
+The start state sets the limit. Over 6 days, HPOP leaves 0.2 km along track from a GPS satellite's IGS state and 8.4 km from its OMM epoch state (medians of 508 arcs)<sup>[10](#r10)</sup>. Laser ranges fix the start state, and the prediction then stays 20 to 60 times better than SGP4 to 7 days [E6][e6]. In LEO, drag limits even a precise start: from the true state, with Cd·A/m from B* (0.01 m²/kg where B* ≤ 0), HPOP's median error is 481 m at 24 h and 4.5 km at 72 h [E7][e7].
 
 ### 5.4 Drag regime
 
@@ -302,7 +302,7 @@ State-transition matrices agree within 2e-5 and parameter sensitivities within 1
 
 ### Accuracy against precise orbits
 
-Experiment V1 starts the propagator from ILRS orbits of four geodetic spheres (LAGEOS-1/2 and ETALON-1/2; 16 seeds) and IGS orbits of 32 GPS satellites (96 seeds), adds forces one set at a time, and compares each 72-hour run with the same product [V1][v1]. GPS radiation pressure is a deliberately crude cannonball. Median (largest) 3D error:
+Experiment V1 starts the propagator from ILRS orbits of four geodetic spheres (LAGEOS-1/2 and ETALON-1/2; 16 seeds) and IGS orbits of 32 GPS satellites (96 seeds), adds forces one set at a time, and compares each 72-hour run with the same product [V1][v1]. GPS radiation pressure is a deliberately crude cannonball. Neither class feels significant drag; in LEO, drag from B* limits a precise start (section 5.3). Median (largest) 3D error:
 
 | Force set | Spheres, 24 h | Spheres, 72 h | GPS, 24 h | GPS, 72 h |
 | --- | ---: | ---: | ---: | ---: |
@@ -374,7 +374,7 @@ Conjunction screening<sup>[50](#r50)</sup> takes from one catalog snapshot, per 
 | Covariance | Supplied by the operator, fitted, or modeled (section 6), with its calibration label |
 | Hard-body radius | Supplied, half the catalog size, from radar cross-section, or the default, with its basis |
 
-An OMM supplies no covariance, so the catalog attaches one by the rule of section 2.2: built from the source's element-set errors against independent orbits and calibrated by regime and age, with its calibration label. Every event also carries the covariance-free maximum probability, which needs no covariance.
+An OMM supplies no covariance, so the catalog attaches one by the rule of section 2.2: built from the source's element-set errors against independent orbits and calibrated by regime and age, with its calibration label. Every event also carries the Alfano maximum, the largest probability a spherical covariance of any size gives, which needs no covariance. Products built from public OMMs are advisory: NASA's conjunction assessment handbook (Vol. 2, App. E) and the Space-Track user agreement state that public element sets alone must not drive conjunction assessment decisions<sup>[49](#r49),[53](#r53)</sup>.
 
 ## Appendix A. Terms
 
@@ -640,3 +640,7 @@ COMSPOC. Spacebook XP-TLE: extended-perturbation element sets fitted to Spaceboo
 ### R52
 
 U.S. Space Force. Astrodynamics Standards: Sgp4Prop 9.1.1.0, with SGP4 and SGP4-XP. Distributed through Space-Track. [Documentation](https://www.space-track.org/documentation#/astro)
+
+### R53
+
+Space-Track.org. User Agreement: "A TLE available to the public should not be used for conjunction assessment prediction." [User Agreement](https://www.space-track.org/documentation#/user_agree)
