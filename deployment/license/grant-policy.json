@@ -14,7 +14,8 @@
     { "match": "com.orbpro.fastest-path", "policy": "allowlist", "note": "Paid. Key-protected." },
     { "match": "com.orbpro.sensor-coverage", "policy": "allowlist", "note": "Paid. Key-protected. Its catalog entry must declare allowlist too: a catalog grant_policy outranks this rule." },
 
-    { "match": "com.orbpro.hpop", "policy": "open", "note": "Free (owner 2026-10-02)." },
+    { "match": "com.orbpro.hpop", "policy": "allowlist", "note": "Compatibility for older engines. Retain while those engines remain in use; catalog allowed_xpubs controls access." },
+    { "match": "com.orbpro.ffm", "policy": "allowlist", "note": "FFM replacement. Catalog allowed_xpubs plus proof of the account key; the license publication version matches PMM exactly." },
     { "match": "com.orbpro.viewshed-shader*", "policy": "open", "note": "Free." },
     { "match": "com.orbpro.access", "policy": "open", "note": "Free." },
     { "match": "com.orbpro.analysis.orbit-determination", "policy": "open", "note": "Free." },

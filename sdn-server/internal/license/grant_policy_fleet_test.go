@@ -18,7 +18,7 @@ var liveCatalogModuleIDs = []string{
 	"com.orbpro.access",
 	"com.orbpro.analysis.orbit-determination",
 	"com.orbpro.fastest-path",
-	"com.orbpro.hpop",
+	"com.orbpro.ffm",
 	"com.orbpro.maneuver",
 	"com.orbpro.rf-antenna-pattern",
 	"com.orbpro.rf-atmospheric-gaseous",
@@ -80,7 +80,7 @@ func loadFleetPolicy(t *testing.T) *GrantPolicyConfig {
 
 // Owner 2026-10-02: a paid module is key-protected on SDN (or shipped inside the
 // Sandcastle gallery, which never asks SDN), so with an EMPTY allowlist the
-// fleet policy refuses every paid module and nothing else (hpop is free).
+// fleet policy refuses every paid module and nothing else (ffm is free).
 func TestFleetPolicyClosesThePaidModules(t *testing.T) {
 	cfg := loadFleetPolicy(t)
 

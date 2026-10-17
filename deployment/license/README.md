@@ -16,7 +16,7 @@ The only entitlement control on the wire is `PLG.ALLOWED_XPUBS`, and the licensi
 key server reads an **empty** allowlist as *unrestricted*. That is a reasonable
 rule and it is also unfalsifiable: an empty allowlist cannot tell "this module is
 genuinely open" apart from "nobody set one". On 2026-08-07 a throwaway anonymous
-identity holding no entitlement was issued a grant for `com.orbpro.hpop`, and an
+identity holding no entitlement was issued a grant for `com.orbpro.ffm`, and an
 audit of the live catalog found **all 43 published modules with an empty
 allowlist**. See `graph/tasks/sdn-allowed-xpubs-not-enforced.md`.
 
@@ -87,6 +87,20 @@ the session key's proof for the requesting origin, so a copied xpub is not
 enough.
 
 ## Audit
+
+### FFM compatibility publication (2026-10-17)
+
+Host-01 serves `com.orbpro.ffm@1.4.1` alongside `com.orbpro.hpop@1.0.0`.
+Both license entries and their policy rules use `allowlist` with `allowed_xpubs: ["*"]`;
+the requester must still prove its account key for the requesting origin.
+Keep HPOP available while older engines remain in use.
+
+The FFM license publication's version must match the signed PMM row exactly.
+The console's protected delivery worker verifies the trailer-stripped SHA-256
+against that row before returning a compiled module. A fresh account for
+`https://spaceaware.io` must pass this delivery and compilation check after a
+publication. Catalog and policy changes use the existing node binary; binary
+deployments remain a separate coordinated operation.
 
 Every boot writes one `grant-audit dir=publish` line per module (module, policy,
 source, allowlist size, outcome) plus a summary naming the full open set and the

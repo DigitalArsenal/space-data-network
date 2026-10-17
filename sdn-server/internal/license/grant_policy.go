@@ -19,7 +19,7 @@ import (
 // entitlement control on the wire was PLG.ALLOWED_XPUBS, and the licensing key
 // server reads an EMPTY allowlist as "unrestricted". Every module in the live
 // catalog was published with an empty allowlist, so a throwaway anonymous
-// identity was granted com.orbpro.hpop. The allowlist alone cannot express the
+// identity was granted com.orbpro.ffm. The allowlist alone cannot express the
 // difference between "nobody bothered to set one" and "this module really is
 // open", so it fails open on the exact case that matters.
 //

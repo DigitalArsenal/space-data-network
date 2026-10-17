@@ -142,7 +142,7 @@ func TestIncrementalPublishLeavesOtherModulesAndTheSessionIntact(t *testing.T) {
 func TestIncrementalPublishStillHonoursTheAdmitPoint(t *testing.T) {
 	t.Parallel()
 
-	const refused = "com.orbpro.hpop"
+	const refused = "com.orbpro.ffm"
 
 	reg := writeTestPluginRegistryWithGrantPolicy(
 		t,
@@ -152,8 +152,8 @@ func TestIncrementalPublishStillHonoursTheAdmitPoint(t *testing.T) {
 			ID:                refused,
 			Version:           "1.0.0",
 			RequiredScope:     "orbpro.default",
-			EncryptedPath:     "hpop.wasm.enc",
-			KeyPath:           "hpop.key",
+			EncryptedPath:     "ffm.wasm.enc",
+			KeyPath:           "ffm.key",
 			ContentType:       "application/wasm+encrypted",
 			MaxGrantTimeoutMs: 30_000,
 		},
