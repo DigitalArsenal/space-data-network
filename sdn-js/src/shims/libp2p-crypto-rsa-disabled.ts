@@ -13,7 +13,7 @@
  * are secp256k1 (HD wallet) and go-libp2p peers are Ed25519. Nothing on the
  * wire is RSA.
  *
- * The OID keeps its real value so upstream's DER sniffing still RECOGNISES an
+ * The OID keeps its real value so upstream's DER sniffing still RECOGNIZES an
  * RSA key and routes it here to fail by name, rather than misparsing it.
  */
 
@@ -48,7 +48,7 @@ export function rsaKeySize(_key: unknown): number {
 export { randomBytes as getRandomValues } from '@libp2p/crypto';
 
 /**
- * rsa.js reaches for `utils.jwkToPkix` / `utils.jwkToPkcs1` when materialising a
+ * rsa.js reaches for `utils.jwkToPkix` / `utils.jwkToPkcs1` when materializing a
  * key's DER form. Those paths are only reachable from an RSA key, which cannot
  * be constructed here, so they throw by the same name rather than silently
  * returning empty bytes.

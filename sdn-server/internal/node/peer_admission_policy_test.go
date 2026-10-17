@@ -580,25 +580,25 @@ func TestBrowserProtocolsAloneScoreZero(t *testing.T) {
 	}
 }
 
-// TestTunnelledBrowserSurvivesTheTrim is the outage, expressed as a test: a
+// TestTunneledBrowserSurvivesTheTrim is the outage, expressed as a test: a
 // browser on the :443 root-path websocket tunnel arrives over loopback,
 // advertises nothing but commons, and MUST NOT end up at value 0 next to the
 // DHT churn that shares its protocol set.
-func TestTunnelledBrowserSurvivesTheTrim(t *testing.T) {
+func TestTunneledBrowserSurvivesTheTrim(t *testing.T) {
 	cm := testConnMgr(t)
 	c := newPeerAdmissionController(enabledPolicy(), cm, nil)
 
 	browser := testPeerID(t)
 	crawler := testPeerID(t)
 
-	tunnelled := []multiaddr.Multiaddr{
+	tunneled := []multiaddr.Multiaddr{
 		multiaddr.StringCast("/ip4/127.0.0.1/tcp/43122/ws"),
 	}
 	public := []multiaddr.Multiaddr{
 		multiaddr.StringCast("/ip4/203.0.113.9/tcp/51544"),
 	}
 
-	c.observeIdentified(browser, browserAdvertisedProtocols, nil, tunnelled)
+	c.observeIdentified(browser, browserAdvertisedProtocols, nil, tunneled)
 	c.observeIdentified(crawler, browserAdvertisedProtocols, nil, public)
 
 	browserInfo := cm.GetTagInfo(browser)
@@ -609,8 +609,8 @@ func TestTunnelledBrowserSurvivesTheTrim(t *testing.T) {
 	if info := cm.GetTagInfo(crawler); info != nil && info.Value != 0 {
 		t.Fatalf("public churn tag value = %+v, want 0 — loopback provenance must not be inferable from a public address", info)
 	}
-	if s := c.Stats(); s.TunnelledPeers != 1 {
-		t.Fatalf("tunnelled peers = %d, want 1", s.TunnelledPeers)
+	if s := c.Stats(); s.TunneledPeers != 1 {
+		t.Fatalf("tunneled peers = %d, want 1", s.TunneledPeers)
 	}
 	// The value ordering is the whole mechanism: BasicConnMgr trims ascending.
 	if browserInfo.Value <= 0 {
@@ -682,7 +682,7 @@ func TestTopicMembershipSweepIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestIsTunnelledPeerAddr(t *testing.T) {
+func TestIsTunneledPeerAddr(t *testing.T) {
 	for _, tc := range []struct {
 		addr string
 		want bool
@@ -695,12 +695,12 @@ func TestIsTunnelledPeerAddr(t *testing.T) {
 		{"/ip4/10.100.10.20/tcp/4001", false}, // private LAN is NOT the tunnel
 		{"/ip6/2606:4700::1111/tcp/443", false},
 	} {
-		if got := isTunnelledPeerAddr(multiaddr.StringCast(tc.addr)); got != tc.want {
-			t.Errorf("isTunnelledPeerAddr(%s) = %v, want %v", tc.addr, got, tc.want)
+		if got := isTunneledPeerAddr(multiaddr.StringCast(tc.addr)); got != tc.want {
+			t.Errorf("isTunneledPeerAddr(%s) = %v, want %v", tc.addr, got, tc.want)
 		}
 	}
-	if isTunnelledPeerAddr(nil) {
-		t.Error("nil multiaddr must not read as tunnelled")
+	if isTunneledPeerAddr(nil) {
+		t.Error("nil multiaddr must not read as tunneled")
 	}
 }
 

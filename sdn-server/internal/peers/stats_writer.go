@@ -25,7 +25,7 @@ import (
 // query became "no connection can be established in either direction": inbound
 // fds were accepted and never read (ss showed CLOSE-WAIT with unread Recv-Q),
 // the /p2p/ ws-upgrade proxy 502'd, DHT dials parked, and spaceaware.io/beta
-// served an empty catalogue. Already-established connections kept working, which
+// served an empty catalog. Already-established connections kept working, which
 // is precisely why the node looked healthy while being unreachable.
 //
 // Two changes fix it, and both are structural rather than a tuning knob:
@@ -36,7 +36,7 @@ import (
 //     background writer below. The in-memory counter update stays synchronous —
 //     it is a map lookup and a few field writes, it holds the lock for
 //     nanoseconds, and keeping it synchronous preserves the read-your-writes
-//     behaviour every existing caller and test expects. What is removed is the
+//     behavior every existing caller and test expects. What is removed is the
 //     part that could ever block: the store round-trip.
 //
 // Net effect: no gater callback can wait on the store, so a stalled store

@@ -14,7 +14,7 @@ import (
 // because the useful thing is the SHAPE of the cost, and a number baked into an
 // assertion goes stale the moment anyone improves it. Measured when written:
 // 68.3 guest calls and 8.2 handoffs per record, with the top exports being
-// result materialisation (cell_type, cell_number, column_name, column_count)
+// result materialization (cell_type, cell_number, column_name, column_count)
 // plus a malloc/free pair each. That is what says the remaining cost is
 // DISPATCH and result reading rather than SQL.
 func TestHandoffsPerStoredRecord(t *testing.T) {

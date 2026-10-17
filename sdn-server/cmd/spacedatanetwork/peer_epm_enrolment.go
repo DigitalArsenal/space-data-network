@@ -29,7 +29,7 @@ func loadEnrolledPeerEPMs(dir string, registry *peers.Registry) int {
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		log.Warnf("peer-epm-enrolment: cannot read %s: %v", dir, err)
+		log.Warnf("peer-epm-enrollment: cannot read %s: %v", dir, err)
 		return 0
 	}
 	loaded := 0
@@ -40,28 +40,28 @@ func loadEnrolledPeerEPMs(dir string, registry *peers.Registry) int {
 		path := filepath.Join(dir, entry.Name())
 		epmBytes, err := os.ReadFile(path)
 		if err != nil {
-			log.Warnf("peer-epm-enrolment: read %s: %v", path, err)
+			log.Warnf("peer-epm-enrollment: read %s: %v", path, err)
 			continue
 		}
 		if err := epm.VerifyEPMSignature(epmBytes); err != nil {
-			log.Warnf("peer-epm-enrolment: %s failed signature verification, skipped: %v", path, err)
+			log.Warnf("peer-epm-enrollment: %s failed signature verification, skipped: %v", path, err)
 			continue
 		}
 		peerIDStr, err := epm.PeerIDFromEPM(epmBytes)
 		if err != nil || peerIDStr == "" {
-			log.Warnf("peer-epm-enrolment: %s advertises no peer id, skipped: %v", path, err)
+			log.Warnf("peer-epm-enrollment: %s advertises no peer id, skipped: %v", path, err)
 			continue
 		}
 		pid, err := peer.Decode(peerIDStr)
 		if err != nil {
-			log.Warnf("peer-epm-enrolment: %s advertises invalid peer id %q, skipped: %v", path, peerIDStr, err)
+			log.Warnf("peer-epm-enrollment: %s advertises invalid peer id %q, skipped: %v", path, peerIDStr, err)
 			continue
 		}
 		tp, err := registry.GetPeer(pid)
 		if err != nil {
 			tp = &peers.TrustedPeer{ID: pid, TrustLevel: peers.Standard}
 			if addErr := registry.AddPeer(tp); addErr != nil {
-				log.Warnf("peer-epm-enrolment: add peer %s: %v", peerIDStr, addErr)
+				log.Warnf("peer-epm-enrollment: add peer %s: %v", peerIDStr, addErr)
 				continue
 			}
 			tp, err = registry.GetPeer(pid)
@@ -74,10 +74,10 @@ func loadEnrolledPeerEPMs(dir string, registry *peers.Registry) int {
 			tp.VCardData = vcardStr
 		}
 		if err := registry.UpdatePeer(tp); err != nil {
-			log.Warnf("peer-epm-enrolment: persist %s: %v", peerIDStr, err)
+			log.Warnf("peer-epm-enrollment: persist %s: %v", peerIDStr, err)
 		}
 		loaded++
-		log.Infof("peer-epm-enrolment: loaded signed EPM for %s from %s (%d bytes)", peerIDStr, entry.Name(), len(epmBytes))
+		log.Infof("peer-epm-enrollment: loaded signed EPM for %s from %s (%d bytes)", peerIDStr, entry.Name(), len(epmBytes))
 	}
 	return loaded
 }

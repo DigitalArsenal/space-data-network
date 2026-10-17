@@ -7,7 +7,7 @@
 // be done at wire speed minus back pressure latency."
 //
 // "Wire speed minus back pressure" is a RATIO, so a bare MB/s answers nothing.
-// The same synthesised stream is therefore driven four times — synthesis only,
+// The same synthesized stream is therefore driven four times — synthesis only,
 // a buffered append (wire speed), the same append fsynced at the store's own
 // commit cadence (the durable floor), and the store — and the headline is the
 // store's share of each. Two facts decide whether the number means anything at
@@ -85,7 +85,7 @@ func main() {
 		dir         = flag.String("dir", "", "target directory for the store and the baseline file (default: a fresh temp directory, removed on exit)")
 		schemaList  = flag.String("schemas", "", "comma-separated schema subset (e.g. OMM.fbs,CAT.fbs); default: every embedded standard")
 		schemaDir   = flag.String("schema-dir", "", "directory holding the embedded .fbs IDLs (default: located by walking up from the working directory)")
-		recordBytes = flag.Int("record-bytes", 1024, "target size of one synthesised record in bytes")
+		recordBytes = flag.Int("record-bytes", 1024, "target size of one synthesized record in bytes")
 		batch       = flag.Int("batch", 64, "records per StoreBatch call; 1 uses the per-record Store() path")
 		producer    = flag.String("producer", "sds-stream-bench", "producer peer ID the records are attributed to")
 		baseline    = flag.Bool("baseline", true, "measure the synthesis ceiling, wire speed and the durable disk floor as well as the store")
@@ -366,7 +366,7 @@ func run(cfg runConfig) error {
 	}
 
 	// AFTER THE CLOCK, NEVER INSIDE IT. A throughput number is only about the
-	// write path if the records actually travelled it: the engine mirror
+	// write path if the records actually traveled it: the engine mirror
 	// SKIPS a record it cannot place and answers no error while doing it
 	// (engineIngestablePayload exists because that silent drop once looked
 	// like a successful ingest), so a run that measured 1 GiB of writes the
@@ -405,7 +405,7 @@ func run(cfg runConfig) error {
 	return nil
 }
 
-// stream synthesises records until target bytes have been produced and hands
+// stream synthesizes records until target bytes have been produced and hands
 // them to the sink one schema-batch at a time. The stream is never
 // materialized: at most `batch` records exist at once, which is what makes a
 // 1 GiB run a stream and not an allocation.

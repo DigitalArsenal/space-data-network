@@ -1,5 +1,5 @@
 // Package adminaddr turns the daemon's admin BIND address into an address that
-// can actually be DIALLED, and into the URL a local process uses to reach its
+// can actually be DIALED, and into the URL a local process uses to reach its
 // own daemon.
 //
 // It was extracted from cmd/spacedatanetwork/admin_dial_addr.go verbatim (which

@@ -48,7 +48,7 @@ const walletBuildMode = await resolveWalletBuildMode({
 });
 console.log(
   walletBuildMode.external
-    ? `[sdn-js] HD wallet runtime EXTERNALISED via ${path.relative(packageRoot, walletBuildMode.adapterPath)}`
+    ? `[sdn-js] HD wallet runtime EXTERNALIZED via ${path.relative(packageRoot, walletBuildMode.adapterPath)}`
     : '[sdn-js] HD wallet runtime inlined (default package build)',
 );
 const hdWalletShims = new Map([
@@ -90,7 +90,7 @@ const sharedBuildOptions = {
   // replaced now - see each shim's header for what it changes (nothing, versus
   // the 3.0.0 bundle) and why.
   //
-  // The multiformats aliases stay for the same reason: product behaviour, not a
+  // The multiformats aliases stay for the same reason: product behavior, not a
   // version bridge. SHA-1 stays disabled, SHA-2 keeps routing through the native
   // boundary rather than shipping a second JS implementation.
   alias: {
@@ -120,7 +120,7 @@ const sharedBuildOptions = {
         // swaps in index.browser.js, and that happens AFTER this hook. Matching
         // the .browser name therefore never fires. `guard` is the file that
         // actually carries the WebCrypto, and existing-checks it so a
-        // reorganisation upstream fails the build instead of shipping quietly.
+        // reorganization upstream fails the build instead of shipping quietly.
         const leaves = [
           ['keys/ecdsa/index.js', 'keys/ecdsa/index.js', 'src/shims/libp2p-crypto-ecdsa-disabled.ts'],
           ['keys/rsa/index.js', 'keys/rsa/index.browser.js', 'src/shims/libp2p-crypto-rsa-disabled.ts'],
@@ -378,7 +378,7 @@ async function buildPackageEntries({ outdir, walletPlugins }) {
 await buildPackageEntries({ outdir: 'dist', walletPlugins: walletBuildMode.plugins });
 
 // The published `./external-wallet` subpath: the same entries with the HD
-// wallet runtime externalised through the committed adapter, under
+// wallet runtime externalized through the committed adapter, under
 // dist/external-wallet/. Embedders that ship their own reviewed runtime
 // consume this from npm (docs/EXTERNAL_WALLET_BUILD.md).
 const publishedExternalWallet = await resolvePublishedExternalWalletBuild({
@@ -386,7 +386,7 @@ const publishedExternalWallet = await resolvePublishedExternalWalletBuild({
   env: process.env,
 });
 console.log(
-  `[sdn-js] ./external-wallet subpath: HD wallet runtime EXTERNALISED via ${path.relative(packageRoot, publishedExternalWallet.adapterPath)} into ${publishedExternalWallet.outdir}`,
+  `[sdn-js] ./external-wallet subpath: HD wallet runtime EXTERNALIZED via ${path.relative(packageRoot, publishedExternalWallet.adapterPath)} into ${publishedExternalWallet.outdir}`,
 );
 await buildPackageEntries({
   outdir: publishedExternalWallet.outdir,

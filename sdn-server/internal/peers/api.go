@@ -282,7 +282,7 @@ func (h *APIHandler) peerView(tp *TrustedPeer) PeerView {
 //
 // VCard is the optional contact card for the peer. When present it is stored
 // verbatim as TrustedPeer.VCardData, and the EPM record derivable from it
-// (vcard.VCardToEPM — which honours an EPM already embedded in the card) is
+// (vcard.VCardToEPM — which honors an EPM already embedded in the card) is
 // stored as TrustedPeer.EPMData. A card that yields no EPM is still stored as
 // VCardData; the request is not failed for it.
 type AddPeerRequest struct {

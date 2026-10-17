@@ -179,10 +179,10 @@ func TestReadinessSharesBlockedProbeAndHonorsRequestCancellation(t *testing.T) {
 	cancel()
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/ready", nil).WithContext(ctx))
-	if w.Code != http.StatusServiceUnavailable || !strings.Contains(w.Body.String(), "probe cancelled") {
-		t.Fatalf("cancelled probe: %d %s", w.Code, w.Body.String())
+	if w.Code != http.StatusServiceUnavailable || !strings.Contains(w.Body.String(), "probe canceled") {
+		t.Fatalf("canceled probe: %d %s", w.Code, w.Body.String())
 	}
 	if n := calls.Load(); n != 1 {
-		t.Fatalf("cancelled request started another probe: %d", n)
+		t.Fatalf("canceled request started another probe: %d", n)
 	}
 }

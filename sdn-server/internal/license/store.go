@@ -257,7 +257,7 @@ func normalizeEntitlementStatus(status string) string {
 	case "", "active":
 		return entitlementStatusActive
 	case "cancelled", "canceled":
-		return entitlementStatusCancelled
+		return entitlementStatusCanceled
 	case "past_due", "pastdue", "past-due":
 		return entitlementStatusPastDue
 	case "suspended":
@@ -344,7 +344,7 @@ func entitlementStatusFromRecord(record *sdsent.ENT) string {
 	}
 	switch record.STATUS().String() {
 	case "Cancelled":
-		return entitlementStatusCancelled
+		return entitlementStatusCanceled
 	case "PastDue":
 		return entitlementStatusPastDue
 	case "Suspended":
@@ -361,7 +361,7 @@ func entitlementStatusFromRecord(record *sdsent.ENT) string {
 
 func addENTStatus(builder *flatbuffers.Builder, status string) {
 	switch normalizeEntitlementStatus(status) {
-	case entitlementStatusCancelled:
+	case entitlementStatusCanceled:
 		sdsent.ENTAddSTATUS(builder, 1)
 	case entitlementStatusPastDue:
 		sdsent.ENTAddSTATUS(builder, 2)

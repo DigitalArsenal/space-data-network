@@ -170,7 +170,7 @@ func (r *Registry) OnTransition(fn func(Alert, bool)) {
 // Raise reports that (kind, subject) is failing. The first report activates the
 // alert; every later one bumps Count, LastAt and LastError WITHOUT resetting
 // Since. An unrecognized severity is treated as a warning rather than dropped:
-// a mislabelled alert is still an alert.
+// a mislabeled alert is still an alert.
 func (r *Registry) Raise(kind, subject, severity, errText string) {
 	if r == nil || kind == "" {
 		return

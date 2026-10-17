@@ -406,7 +406,7 @@ func WithEngineHotWindow(records int) StoreOption {
 // default (engineDefaultGenericHotWindow). Config key
 // storage.engine_generic_hot_window.
 //
-// A value LARGER than WithEngineHotWindow is honoured, not clamped; the store
+// A value LARGER than WithEngineHotWindow is honored, not clamped; the store
 // warns at open, because the two windows share one 4 GiB engine.
 func WithEngineGenericHotWindow(records int) StoreOption {
 	return func(c *storeConfig) {
@@ -473,7 +473,7 @@ func NewFlatSQLStore(basePath string, validator *sds.Validator, opts ...StoreOpt
 		return nil, err
 	}
 	if cfg.engineGenericHotWindow > cfg.engineHotWindow {
-		// HONOURED, NOT CLAMPED — and therefore said out loud.
+		// HONORED, NOT CLAMPED — and therefore said out loud.
 		log.Warnf("FlatSQL engine: storage.engine_generic_hot_window (%d) is LARGER than storage.engine_hot_window (%d) — every generically routed standard now holds more records resident than the two decorated ones; all of them share the engine's 4 GiB ceiling",
 			cfg.engineGenericHotWindow, cfg.engineHotWindow)
 	}
@@ -660,7 +660,7 @@ func NewFlatSQLStore(basePath string, validator *sds.Validator, opts ...StoreOpt
 	// are the node's own state — its encrypted local EPM (read during identity
 	// bring-up, the instant this constructor returns), the directory, the pin
 	// ledger, dataset shard publications and their replay cursors, source
-	// licences, asset pin references. A daemon that resumed publication with
+	// licenses, asset pin references. A daemon that resumed publication with
 	// those tables half-populated would be serving from state it does not
 	// have yet. It is cheap: a resume mark plus chunk transactions.
 	auxReplayStart := time.Now()
@@ -2169,7 +2169,7 @@ func incrementSourceSummary(tx sqlExecer, schemaName string, tags SourceTags, re
 // accumulated it — count adds, bytes add, max_rowid takes the maximum,
 // first_seen is kept once set — so a window of n records leaves the summary on
 // the values n separate increments would have reached. That equivalence is the
-// whole licence for batching it: the summary is what the dashboard and the
+// whole license for batching it: the summary is what the dashboard and the
 // datasync high-water mark read.
 func incrementSourceSummaryBy(tx sqlExecer, schemaName string, tags SourceTags, recordCount, recordBytes, recordRowID int64) error {
 	if recordCount <= 0 {
@@ -2382,10 +2382,10 @@ func (s *FlatSQLStore) storeOne(schemaName string, data []byte, peerID string, s
 
 // SourceTags records source provenance needed for provider/batch-aware queries.
 //
-// License/LicenseURL/Citation/ShareAlike are the batch's licence terms as
+// License/LicenseURL/Citation/ShareAlike are the batch's license terms as
 // declared by the ingesting writer (the wasm parse node's ingest metadata).
 // They are carriage only: the per-record sdn_record_source_tags rows and the
-// record-catalog journal frames are unchanged, and the licence is persisted
+// record-catalog journal frames are unchanged, and the license is persisted
 // once per source batch (see SourceBatchLicense). The json tags keep them out
 // of the deterministic dataset export index when empty, so an unlicensed
 // export stays byte-identical to what this node published before.
@@ -2549,10 +2549,10 @@ type IndexedRecordQuery struct {
 
 // StoreWithSourceTags stores a FlatBuffer record and attaches provider/source metadata.
 func (s *FlatSQLStore) StoreWithSourceTags(schemaName string, data []byte, peerID string, signature []byte, tags SourceTags) (string, error) {
-	// The batch's licence is recorded BEFORE the records land: a record whose
-	// licence could not be persisted must never become publishable, because
+	// The batch's license is recorded BEFORE the records land: a record whose
+	// license could not be persisted must never become publishable, because
 	// republishing it without its terms is the thing this carriage exists to
-	// prevent. No-op when the writer declared no licence.
+	// prevent. No-op when the writer declared no license.
 	if err := s.recordSourceBatchLicense(schemaName, tags); err != nil {
 		return "", err
 	}
@@ -2657,7 +2657,7 @@ func (s *FlatSQLStore) StoreBatch(schemaName string, records [][]byte, peerID st
 // StoreBatchWithSourceTags stores FlatBuffer records in chunked store-lock
 // windows (storeWriteChunkSize records per lock hold + transaction).
 func (s *FlatSQLStore) StoreBatchWithSourceTags(schemaName string, records [][]byte, peerID string, signature []byte, tags SourceTags) (int, error) {
-	// See StoreWithSourceTags: licence first, then records.
+	// See StoreWithSourceTags: license first, then records.
 	if err := s.recordSourceBatchLicense(schemaName, tags); err != nil {
 		return 0, err
 	}
@@ -3555,7 +3555,7 @@ func (s *FlatSQLStore) garbageCollectBeforeLocked(cutoff int64) (int64, error) {
 				continue
 			}
 			// Each tag is checked against the producer tables by CID. `cid NOT
-			// IN (SELECT cid FROM <union read source>)` materialised every
+			// IN (SELECT cid FROM <union read source>)` materialized every
 			// record of the standard (plan guard).
 			if _, err := s.db.Exec(flatsqldrv.WithoutJournal(`
 				DELETE FROM sdn_record_source_tags
@@ -3800,13 +3800,13 @@ func (s *FlatSQLStore) Close() error {
 	s.stopFullTextIndexes()
 	s.stopFormat2FTS()
 	// Stop AND JOIN the background checkpointer before taking the write lock.
-	// Signalling alone is not enough: the loop may already be blocked on s.mu
+	// Signaling alone is not enough: the loop may already be blocked on s.mu
 	// inside a checkpoint, and it would then run against a store this function
 	// has already nil'd. Must happen with the lock NOT held — the loop is
 	// waiting for it.
 	s.stopCheckpointLoop()
 	// Same for the partition counting worker, the poisoned-engine watch and a
-	// post-recovery refill: all take the store lock. A refill is cancelled
+	// post-recovery refill: all take the store lock. A refill is canceled
 	// between pages.
 	s.stopPartitionCountRebuild()
 	s.stopEnginePoisonWatch()
@@ -5472,7 +5472,7 @@ func (s *FlatSQLStore) rawSourceSummaryHeadLocked(filter RawRecordQuery) (RawRec
 
 // countSchemaRecordsLocked counts a schema's indexed records held by any of
 // its producer tables. It is driven by sdn_record_index with one CID seek per
-// table; joining the union read source here materialised every record of a
+// table; joining the union read source here materialized every record of a
 // standard two producers publish, payloads included, on every datasync count
 // (plan guard, TestPlanGuardTrustedReadPaths). A peer filter matches a record
 // any holding table stores under that peer.
@@ -6463,7 +6463,7 @@ func indexedRecordProjection(col func(string) string) string {
 // indexedRecordLengthProjection is the BYTE PROBE: the frame length alone, the
 // value already recorded for every stored record. Reading it costs no payload
 // I/O, which is the whole point — a shard boundary must be decidable without
-// first materialising the shard it is trying to bound.
+// first materializing the shard it is trying to bound.
 func indexedRecordLengthProjection(col func(string) string) string {
 	return col("record_length")
 }
@@ -6498,7 +6498,7 @@ func normalizeIndexedRecordWindow(filter IndexedRecordQuery) (IndexedRecordQuery
 //
 // It exists so the byte probe (IndexedRecordWindowLimitForBytes) and the record
 // read (QueryIndexedRecords) can never drift: a shard boundary computed from
-// record_length must describe EXACTLY the rows the export then materialises,
+// record_length must describe EXACTLY the rows the export then materializes,
 // same filters, same ORDER BY, same LIMIT/OFFSET. Two hand-copied WHERE clauses
 // would be a silent mis-cut waiting to happen.
 //
@@ -6506,7 +6506,7 @@ func normalizeIndexedRecordWindow(filter IndexedRecordQuery) (IndexedRecordQuery
 // This used to join sdn_record_index to the standard's union read source
 // (UNION ALL of every producer table, GROUP BY cid) and to every tag row of the
 // schema grouped by cid. SQLite cannot push a join or a LIMIT through either
-// GROUP BY, so both were materialised in full — every record's payload — on
+// GROUP BY, so both were materialized in full — every record's payload — on
 // every call. On host-02 (2026-09-27) the $IQC shard reads and byte probes ran
 // past 30 s and 1 min over two producer tables, readers queued 1m23s behind
 // them, heading for the 5-minute budget that poisons the engine.
@@ -6722,7 +6722,7 @@ func recordHeldSQL(tables []string, cidExpr string) string {
 
 // recordColumnJoinsSQL LEFT JOINs each producer table as r0, r1, … on
 // cidExpr: a CID seek per table for rows already chosen, where joining the
-// union read source would materialise every record of the standard.
+// union read source would materialize every record of the standard.
 func recordColumnJoinsSQL(tables []string, cidExpr string) string {
 	var b strings.Builder
 	for i, t := range tables {
@@ -6797,7 +6797,7 @@ const DatasetShardFrameOverheadBytes = 4
 // publication's identity and its consumers' cursor.
 //
 // The probe reads record_length from the SAME window definition the export
-// then materialises (indexedRecordWindowSQL), so the count it returns is the
+// then materializes (indexedRecordWindowSQL), so the count it returns is the
 // count the export produces.
 func (s *FlatSQLStore) IndexedRecordWindowLimitForBytes(filter IndexedRecordQuery, maxBytes int64) (int, bool, error) {
 	if maxBytes <= 0 {

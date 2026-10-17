@@ -1293,7 +1293,7 @@ func derivePublicIdentityKeysFromXPub(xpub string, account uint32) (*xpubDerived
 // derivePublicIdentityKeysAtPaths derives the signing and encryption public
 // keys AT THE GIVEN PATHS from the account xpub.
 //
-// This exists because relabelling KEY_ADDRESS without re-deriving would make the
+// This exists because relabeling KEY_ADDRESS without re-deriving would make the
 // record LIE: the alias would advertise path X while the published key came
 // from path Y, and every verifier following the owner's paradigm (derive from
 // xpub + path) would compute a different key and conclude the signature was

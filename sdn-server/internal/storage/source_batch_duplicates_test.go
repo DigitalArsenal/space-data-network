@@ -59,7 +59,7 @@ func legacyReconcileSourceBatchIndexedDuplicates(s *FlatSQLStore, schemaName, pr
 	defer s.lockWrite("ReconcileSourceBatchIndexedDuplicates")()
 
 	// Each tag row's record is read by CID from the producer tables that
-	// hold it; joining the union read source materialised every record of the
+	// hold it; joining the union read source materialized every record of the
 	// standard on each call (plan guard).
 	tables, err := s.recordTablesForSchema(result.SchemaName)
 	if err != nil {

@@ -378,15 +378,15 @@ func TestRecoveredEngineStillResolvesEveryRoutedBaseName(t *testing.T) {
 }
 
 // ==========================================================================
-// CONFIGURED WINDOWS ARE HONOURED, NOT SILENTLY REWRITTEN
+// CONFIGURED WINDOWS ARE HONORED, NOT SILENTLY REWRITTEN
 // ==========================================================================
 
-// TestGenericHotWindowAboveTheDecoratedWindowIsHonoured: raising
+// TestGenericHotWindowAboveTheDecoratedWindowIsHonored: raising
 // storage.engine_generic_hot_window above storage.engine_hot_window used to
 // hand the operator engineHotWindow instead, with no warning and no mention in
 // the config comment. A key that quietly means something else over half its
 // range is worse than one that costs memory; the store warns at open instead.
-func TestGenericHotWindowAboveTheDecoratedWindowIsHonoured(t *testing.T) {
+func TestGenericHotWindowAboveTheDecoratedWindowIsHonored(t *testing.T) {
 	store := newEngineRecordsStoreWithOptions(t, filepath.Join(t.TempDir(), "store"),
 		WithEngineHotWindow(1000), WithEngineGenericHotWindow(5000))
 	defer store.Close()

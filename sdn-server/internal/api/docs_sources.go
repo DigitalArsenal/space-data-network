@@ -104,7 +104,7 @@ func sourcesRouteDecls() []staticRouteDecl {
 			operation: openAPIObj{
 				"operationId": "runConnector",
 				"summary":     "Fetch now",
-				"description": "Runs the connector once, honouring its politeness window; a run inside the window answers 429 with the next eligible instant.",
+				"description": "Runs the connector once, honoring its politeness window; a run inside the window answers 429 with the next eligible instant.",
 				"parameters":  []openAPIObj{pathParam("connectorId", "Connector identifier from the list.")},
 				"responses":   openAPIObj{"202": frames("$ICN", "The connector record after the run was accepted."), "401": operator, "429": errorFrame},
 			},

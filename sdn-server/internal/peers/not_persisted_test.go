@@ -64,7 +64,7 @@ func TestSetTrustLevel_ReportsWhenStorageRefusedTheWrite(t *testing.T) {
 	if !errors.Is(err, ErrNotPersisted) {
 		t.Fatalf("want ErrNotPersisted, got %v", err)
 	}
-	// The running node still honours the operator's intent until it restarts.
+	// The running node still honors the operator's intent until it restarts.
 	if got := registry.GetTrustLevel(id); got != Trusted {
 		t.Fatalf("in-memory level should still be Trusted, got %v", got)
 	}

@@ -14,7 +14,7 @@ import (
 // GET /api/apps — the $APPS feed.
 //
 // What is running on this node, and for each retrieval app, what it has
-// actually pulled: last_retrieved_at, the debounce window it honours, the size
+// actually pulled: last_retrieved_at, the debounce window it honors, the size
 // of the last pull, and the last publication notification — all keyed by SOURCE
 // ID, all read from the host's operational ledger (internal/sourcemetrics).
 //
@@ -162,7 +162,7 @@ type appSourceView struct {
 	IngestCount int64 `json:"ingest_count"`
 
 	// Invalidated marks a lane whose recorded success this node's record store
-	// could not corroborate at boot — the ledger travelled somewhere its
+	// could not corroborate at boot — the ledger traveled somewhere its
 	// records did not. The claim has been withdrawn, so the lane is retrievable
 	// again; the flag exists so the board says "this node lost that data"
 	// rather than silently showing a source that never retrieved anything.

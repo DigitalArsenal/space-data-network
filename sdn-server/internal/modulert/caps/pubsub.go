@@ -175,13 +175,13 @@ func (h *pubsubCapHandler) joinTopic(name string) (*pubsub.Topic, error) {
 
 // drainSubscription delivers incoming pubsub messages to the module as
 // InvokeMethod("on_pubsub_message", jsonPayload) calls. It stops when
-// the module's lifecycle context is cancelled or the subscription is closed.
+// the module's lifecycle context is canceled or the subscription is closed.
 func (h *pubsubCapHandler) drainSubscription(topic string, sub *pubsub.Subscription) {
 	ctx := h.mod.Context()
 	for {
 		msg, err := sub.Next(ctx)
 		if err != nil {
-			// Subscription cancelled or closed — stop the goroutine.
+			// Subscription canceled or closed — stop the goroutine.
 			return
 		}
 		h.deliverMessage(ctx, topic, msg)

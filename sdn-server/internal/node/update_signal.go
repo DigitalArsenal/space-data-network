@@ -620,7 +620,7 @@ func signalMatchesManifest(signal *update.Signal, manifest *update.Manifest, car
 // startUpdateSignalSubscriber wires the lane from Start(). It is deliberately
 // non-fatal in every direction: a box that cannot run the lane must still boot
 // and serve. What it must never do is fail SILENTLY — an install that is not
-// listening looks exactly like a publisher that never signalled, and telling
+// listening looks exactly like a publisher that never signaled, and telling
 // those apart after the fact has cost this fleet whole afternoons.
 func (n *Node) startUpdateSignalSubscriber() {
 	if n == nil {

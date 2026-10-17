@@ -197,7 +197,7 @@ func TestHTTPMountedPNMHistoryFlow(t *testing.T) {
 			t.Fatalf("provenance: publisher %q verified %v attribution %d key source %d", entry.str(entryPUBLISHER_PEER_ID),
 				entry.flag(entrySIGNATURE_VERIFIED), entry.byte(entryATTRIBUTION), entry.byte(entryKEY_SOURCE))
 		}
-		// PUBLISHER_KEY is the libp2p-marshalled key the capability was handed
+		// PUBLISHER_KEY is the libp2p-marshaled key the capability was handed
 		// (36 bytes for Ed25519), NOT the raw 32-byte key: since 982fc25d the
 		// surface publishes a key that names its own algorithm.
 		if string(entry.bytes(entryPUBLISHER_KEY)) != string(discoveryPublisherKey(t, celestrakPub)) {

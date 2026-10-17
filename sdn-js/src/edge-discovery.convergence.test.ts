@@ -2,7 +2,7 @@
  * BOOTSTRAP CONVERGENCE GUARD — "at any relay count, including zero."
  *
  * Filed as a scheduler task storm (graph task
- * `sdn-js-browser-runtime-2013-breaks-beta-catalogue`): the 2.0.13/2.0.14
+ * `sdn-js-browser-runtime-2013-breaks-beta-catalog`): the 2.0.13/2.0.14
  * bootstrap rework was accused of spinning an unbounded zero-delay retry loop
  * in the browser, on the theory that `ensureMinimumRelays` could not satisfy
  * its floor from a two-relay fleet. HERMES measured that premise and REFUTED
@@ -144,7 +144,7 @@ describe('bootstrap convergence (no task storm at any relay count)', () => {
       expect(fetchImpl).toHaveBeenCalledTimes(1);
     });
 
-    it('falls back to the static list after a failed lookup, without re-dialling', async () => {
+    it('falls back to the static list after a failed lookup, without re-dialing', async () => {
       const fetchImpl = vi.fn().mockResolvedValue({ ok: false, status: 503 });
       const relays = await getBootstrapRelays({
         routingEndpoint: 'http://127.0.0.1:5001',

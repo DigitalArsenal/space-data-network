@@ -84,7 +84,7 @@ func TestFirstFireFiresAWeeklySourceOnceItsWeekHasPassed(t *testing.T) {
 	}
 }
 
-// The GP lane's timer equals the debounce, so its boot behaviour is unchanged.
+// The GP lane's timer equals the debounce, so its boot behavior is unchanged.
 func TestFirstFireKeepsTheThreeHourLaneAsItWas(t *testing.T) {
 	n := newScheduleNode(t, true)
 	landBatch(n, gpAppID, "celestrak-gp", "gp-a", 5*time.Hour)

@@ -1,6 +1,6 @@
 package format2
 
-// Per-type engine configuration (design A19): an SDS type's behaviour is
+// Per-type engine configuration (design A19): an SDS type's behavior is
 // engine DATA, not Go code. The router registers each type with its binary
 // schema (the node's embedded BFBS, internal/sds) and a rule text that
 // reproduces storage.extractIndexedFields and record_supersede.go exactly:
@@ -141,7 +141,7 @@ var ErrSealedRuleField = errors.New("a field sealed at rest is an extraction-rul
 // field (encfield seals by field id); a rule reads the root field its path
 // starts with. The id resolves through the type's binary schema; the
 // registration's field name is checked as well, so neither a schema-less
-// type nor a mislabelled registration slips past.
+// type nor a mislabeled registration slips past.
 func SealedRuleField(code string) error {
 	sealed := encfield.EncryptedFields(code)
 	if len(sealed) == 0 {

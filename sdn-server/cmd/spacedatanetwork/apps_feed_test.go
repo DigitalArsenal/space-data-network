@@ -21,7 +21,7 @@ func TestAppsFeedIsAnonymousReadOnly(t *testing.T) {
 		}
 	}
 
-	// The allowlist is exact-match, so no neighbouring path is opened by it.
+	// The allowlist is exact-match, so no neighboring path is opened by it.
 	for _, path := range []string{"/api/apps/install", "/api/apps/", "/api/appsecret"} {
 		if isPublicAPIRequest(http.MethodGet, path) {
 			t.Fatalf("GET %s must not be anonymous; only the exact /api/apps feed is", path)

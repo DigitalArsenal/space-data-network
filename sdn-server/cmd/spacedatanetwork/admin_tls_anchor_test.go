@@ -218,7 +218,7 @@ func TestServerNameEmptyWhenCertCoversDialHost(t *testing.T) {
 	}
 }
 
-// No cert configured: leave the default system-root behaviour alone.
+// No cert configured: leave the default system-root behavior alone.
 func TestNoConfiguredCertLeavesSystemRoots(t *testing.T) {
 	cfg := config.Default()
 	cfg.Admin.TLSCertFile = ""

@@ -369,7 +369,7 @@ func TestCelesTrakSatcatIngestFlowRetrievesCAT(t *testing.T) {
 // HTML-escaped "&", and the guest's minimal JSON reader does not decode \u
 // escapes, so a configured "gp.php?GROUP=stations&FORMAT=csv" left the node as
 // "gp.php?GROUP=stationsu0026FORMAT=csv". The pull then burned its whole
-// timeout dialling a host that does not exist — with the flow reporting a
+// timeout dialing a host that does not exist — with the flow reporting a
 // clean run, because nothing in the flow had failed.
 //
 // Every real CelesTrak endpoint carries a multi-parameter query string, so this

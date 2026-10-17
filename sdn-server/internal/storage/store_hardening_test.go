@@ -4,7 +4,7 @@ package storage
 // reads after Close are errors (D7), eviction picks only live rows and runs in
 // bounded steps (D5), a clean stop reopens warm, the engine arena is held
 // under a byte budget (D4), the source-filtered window is driven from the
-// batch (D2), and a dataset import honours its caller's deadline (D8).
+// batch (D2), and a dataset import honors its caller's deadline (D8).
 
 import (
 	"context"
@@ -447,7 +447,7 @@ func TestSourceWindowIsDrivenFromTheBatch(t *testing.T) {
 
 // A dataset import returns at its caller's deadline even while a chunk is
 // stalled inside the store (a slow COMMIT), and starts no chunk after it.
-func TestDatasetImportHonoursItsDeadline(t *testing.T) {
+func TestDatasetImportHonorsItsDeadline(t *testing.T) {
 	tmp := t.TempDir()
 	validator, err := sds.NewValidator(nil)
 	if err != nil {

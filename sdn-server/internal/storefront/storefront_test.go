@@ -833,7 +833,7 @@ func TestRevokeGrantRecordsAuditAndBlocksVerification(t *testing.T) {
 		t.Fatalf("CompleteManualDevPayment failed: %v", err)
 	}
 
-	revoked, err := svc.RevokeGrant(ctx, grant.GrantID, req.BuyerPeerID, "provider-admin-peer", "buyer subscription cancelled")
+	revoked, err := svc.RevokeGrant(ctx, grant.GrantID, req.BuyerPeerID, "provider-admin-peer", "buyer subscription canceled")
 	if err != nil {
 		t.Fatalf("RevokeGrant failed: %v", err)
 	}
@@ -851,7 +851,7 @@ func TestRevokeGrantRecordsAuditAndBlocksVerification(t *testing.T) {
 	if events[len(events)-1].EventType != PaymentAuditGrantRevoked {
 		t.Fatalf("last audit event = %q, want %q", events[len(events)-1].EventType, PaymentAuditGrantRevoked)
 	}
-	if events[len(events)-1].Message != "buyer subscription cancelled" {
+	if events[len(events)-1].Message != "buyer subscription canceled" {
 		t.Fatalf("revocation message = %q", events[len(events)-1].Message)
 	}
 }

@@ -104,7 +104,7 @@ func TestProvenanceIsCoveredBySignature(t *testing.T) {
 	// The whole design rests on this: the installer trusts the lineage verdict
 	// because the same signature that authorizes the bytes authorizes the
 	// claim. If provenance could be edited in flight, a rollback could be
-	// relabelled a descendant by anyone on the path.
+	// relabeled a descendant by anyone on the path.
 	signer := newTestSigner(t)
 	bundleBytes := []byte("bundle payload")
 	wasmBytes := []byte("carrier payload")

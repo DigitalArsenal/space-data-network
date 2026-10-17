@@ -46,7 +46,7 @@ const (
 	StatusNeedsBulk     int32 = -20
 	StatusSnapshotGone  int32 = -21
 	StatusTimeout       int32 = -22
-	StatusCancelled     int32 = -23
+	StatusCanceled     int32 = -23
 	StatusNoMem         int32 = -24
 	StatusSQLError      int32 = -25
 	StatusNotAuthorized int32 = -26
@@ -503,7 +503,7 @@ func (s *Stmt) Read(ctx context.Context, dst []byte) (int, error) {
 	}
 }
 
-// Cancel asks the lane to end the statement (it ends with StatusCancelled).
+// Cancel asks the lane to end the statement (it ends with StatusCanceled).
 func (s *Stmt) Cancel() {
 	r := s.r
 	if !r.inst.Enter() {

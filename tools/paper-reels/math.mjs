@@ -6,7 +6,7 @@ export const TEX = {
   // Evidence-Supported ASO Catalog
   cat_handoff: String.raw`\mathrm{SGP4}(\text{OMM},\ \Delta t = 0) \;\longrightarrow\; (\mathbf r, \mathbf v)_{\mathrm{TEME}} \;\longrightarrow\; (\mathbf r, \mathbf v)_{\mathrm{GCRF}}`,
   cat_dyn: String.raw`\ddot{\mathbf r} = \mathbf a_{\mathrm{gen}}(\mathbf r,\dot{\mathbf r},t) + \mathbf a_{\mathrm{obj}}(\mathbf r,\dot{\mathbf r},t;\mathbf p) + \boldsymbol\delta(t)`,
-  cat_orekit: String.raw`\max_{72\ \text{cases},\ 24\ \text{h}} \big\lVert \mathbf r_{\mathrm{HPOP}} - \mathbf r_{\mathrm{Orekit}} \big\rVert \le 1\ \text{cm}`,
+  cat_orekit: String.raw`\max_{72\ \text{cases},\ 24\ \text{h}} \big\lVert \mathbf r_{\mathrm{FFM}} - \mathbf r_{\mathrm{Orekit}} \big\rVert \le 1\ \text{cm}`,
   cat_cov: String.raw`P(t) = \Phi(t,t_0)\,P_0\,\Phi(t,t_0)^{\mathsf T} + Q(t)`,
   cat_dn: String.raw`\frac{dn}{n}`,
   cat_rms: String.raw`P \;\leftarrow\; \max(1,\ \mathrm{RMS}_w)^2\,P`,

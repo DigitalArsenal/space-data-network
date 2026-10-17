@@ -27,7 +27,7 @@ describe('semantic datasets', () => {
     expect(findSemanticCountry('not-a-country')).toBeNull();
   });
 
-  it('builds all legacy catalogue owners from pinned SDS metadata', () => {
+  it('builds all legacy catalog owners from pinned SDS metadata', () => {
     expect(semanticDatasetSummaries()).toContainEqual({
       id: LEGACY_OWNER_COUNTRIES_DATASET_ID,
       version: 1,

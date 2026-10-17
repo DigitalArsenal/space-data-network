@@ -607,7 +607,7 @@ func TestUpdateSubscriberRecoverPendingDelegatesToUpdatePackage(t *testing.T) {
 // through its real Run/Subscribe loop (not handleMessage directly) against
 // an in-memory fake topic subscriber, proving the join+read-loop plumbing
 // itself works end to end and that Run returns cleanly when ctx is
-// cancelled.
+// canceled.
 func TestUpdateSubscriberRunProcessesFakeTopicMessages(t *testing.T) {
 	signer := newTestUpdateSigner(t, "release-key-1")
 	recipient, recipPriv := newX25519TestRecipient(t, "node-under-test")

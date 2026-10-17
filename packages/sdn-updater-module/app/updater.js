@@ -95,13 +95,13 @@ async function refresh() {
     const listed = await readJSON(response);
     roots = listed.update_roots || [];
     $('node-key-id').textContent = listed.node_key_id || '';
-    // A release approved here is signalled with the same key; then an uploaded key is wiped.
+    // A release approved here is signaled with the same key; then an uploaded key is wiped.
     for (const release of listed.distributions) {
       if (release.state === 'awaiting-signal-signature' && approved.has(release.update_id)) {
         await approve(release, 'signal');
         approved.delete(release.update_id);
-        status('key-status', `Release ${release.version} signalled to the fleet.`);
-        if (uploaded && approved.size === 0) await closeKey(`Release ${release.version} signalled to the fleet. The uploaded key was wiped.`);
+        status('key-status', `Release ${release.version} signaled to the fleet.`);
+        if (uploaded && approved.size === 0) await closeKey(`Release ${release.version} signaled to the fleet. The uploaded key was wiped.`);
       }
     }
     render(listed.distributions);

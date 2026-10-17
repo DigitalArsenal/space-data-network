@@ -73,7 +73,7 @@ const (
 	SystemDeployLedger = "/var/log/sdn-deploy-lock.ledger"
 
 	// RetiredInstallDeployLedger is the second ledger the 2026-08-09 census
-	// found on host-01. It is retired in favour of SystemDeployLedger and
+	// found on host-01. It is retired in favor of SystemDeployLedger and
 	// carries a pointer; deployment/scripts/unify-deploy-ledger.sh performs the
 	// conversion on a box. Named here so the code and the box agree on which
 	// file was retired and why.
@@ -186,7 +186,7 @@ func RecordDeployLedgerEntry(paths Paths, entry DeployLedgerEntry) error {
 		return &DeployLedgerRefusal{Err: err}
 	}
 	// Mirror. Best effort by design: on a box where /var/log is not writable
-	// (an unprivileged or containerised install) the in-bundle record above is
+	// (an unprivileged or containerized install) the in-bundle record above is
 	// still complete, and a mirror must never be able to block a legitimate
 	// apply. It must also never let a missing record pass unnoticed, which is
 	// why the authoritative copy is the one inside the tree being changed.

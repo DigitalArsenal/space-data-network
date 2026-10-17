@@ -223,7 +223,7 @@ func TestTBSFeedSyncMaterializesOnConsumerNode(t *testing.T) {
 	// The projected columns the cellular tile contract names
 	// (docs/cellular-density-tiles/contract.json pointFields) decode from the
 	// vtab itself, not only from _data — a positional vtable slip would show
-	// up here as a neighbouring field value.
+	// up here as a neighboring field value.
 	cols, err := consumerStore.engineDB.Query(
 		`SELECT ID, MCC, LATITUDE, LONGITUDE FROM TBS ORDER BY ID ASC`)
 	if err != nil {

@@ -15,7 +15,7 @@
  * go-libp2p peers are Ed25519, so nothing on the wire uses ECDSA.
  *
  * The OID constants keep their real values so upstream's DER sniffing still
- * RECOGNISES an ECDSA key and routes it here to fail with a clear message,
+ * RECOGNIZES an ECDSA key and routes it here to fail with a clear message,
  * rather than misparsing it as something else.
  *
  * This substitutes ONE leaf module. Everything else in `@libp2p/crypto` —

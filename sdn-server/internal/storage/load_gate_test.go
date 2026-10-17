@@ -13,7 +13,7 @@ import (
 // the gauntlet's own measure (graph/gauntlet/go-tier.mjs exports
 // GO_TIER_LOADAVG1 / GO_TIER_NCPU / GO_TIER_LOAD_RATIO); outside the gauntlet
 // it is read from the OS. A wall-clock assertion is only evidence when the box
-// could honour it: on a 28-core Studio a loadavg of 14 is 50 % busy, which is
+// could honor it: on a 28-core Studio a loadavg of 14 is 50 % busy, which is
 // where timing comparisons start lying (measured 2026-09-02: the warm-boot
 // order-of-magnitude check flipped under a parallel gauntlet + a migration).
 func loadRatio() float64 {

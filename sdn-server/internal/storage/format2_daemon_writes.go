@@ -9,9 +9,9 @@ package storage
 // the engine's; nothing here takes s.mu or writes a control row for a record.
 //
 // Writes wait for the type owner to label them (A20: the publish API and
-// module flows read their own writes at type level). Licences are LICENCE
+// module flows read their own writes at type level). Licenses are LICENSE
 // frames in the partition, ahead of the records (§6.1); the control table of
-// batch licences is still written, because it is what the export and the
+// batch licenses is still written, because it is what the export and the
 // connectors read (source_batch_license.go).
 
 import (

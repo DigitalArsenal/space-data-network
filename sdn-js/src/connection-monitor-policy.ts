@@ -39,7 +39,7 @@
  * connection-monitor-policy.test.ts, which fails if any of it stops holding):
  *
  * 1. `abortConnectionOnPingFailure` IS read now, defaulting to `true`
- *    (`connection-monitor.js`), so the abort is still the default behaviour —
+ *    (`connection-monitor.js`), so the abort is still the default behavior —
  *    the net effect on an sdn-js node is unchanged — but the flag is now a real
  *    lever rather than a lie.
  * 2. `cleanUp(signal)` IS called now, so the moving average really does adapt
@@ -62,7 +62,7 @@
  *
  * Callers can override per node (`connectionMonitor` in {@link SDNConfig}),
  * including `false` to switch the monitor off entirely. An explicit override is
- * honoured verbatim — a deployment that knows its own latency budget outranks
+ * honored verbatim — a deployment that knows its own latency budget outranks
  * this default.
  */
 
@@ -70,7 +70,7 @@
  * How often to ping each connection, in ms.
  *
  * Three times slower than libp2p's 10 s default: each ping is an opportunity
- * for this failure, the connections in question are dialled for delivery and
+ * for this failure, the connections in question are dialed for delivery and
  * live seconds-to-minutes, and nothing in sdn-js consumes `conn.rtt`.
  */
 export const SDN_CONNECTION_MONITOR_PING_INTERVAL_MS = 30_000;
@@ -113,7 +113,7 @@ export interface SdnConnectionMonitorInit {
   /**
    * Whether a failed heartbeat aborts the connection. libp2p 1.9.4 declared
    * this and never read it; 3.x reads it and defaults it to `true`, which is
-   * the behaviour this policy wants, so it is left unset.
+   * the behavior this policy wants, so it is left unset.
    */
   abortConnectionOnPingFailure?: boolean;
 }

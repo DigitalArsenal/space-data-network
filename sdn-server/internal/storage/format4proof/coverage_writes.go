@@ -48,7 +48,7 @@ const (
 var covSig = []byte("coverage-signature-0123456789abcdef0123456789abcdef0123456789abcd")
 
 // covTags are fully populated tags: url, content key, producer peer and
-// public key, licence (the fields the fixture leaves empty).
+// public key, license (the fields the fixture leaves empty).
 func covTags(source, batch string) storage.SourceTags {
 	return storage.SourceTags{ProviderID: FixtureProvider, SourceName: source, SourceURL: "https://feeds.example/gp?GROUP=active&FORMAT=" + batch,
 		BatchID: batch, ContentKeyID: "ckey-" + batch, ProducerPeerID: covPeer, ProducerPublicKey: "ed25519:" + covPeer,
@@ -799,7 +799,7 @@ func noradOf(rec []byte) string {
 }
 
 // X02: StoreBatchWithSourceTags with every tag field (source_url, content
-// key, producer peer and public key, licence) and a signature: NEW, the
+// key, producer peer and public key, license) and a signature: NEW, the
 // same identity with a new url (DUP + url, C-3), a new batch (RETAG: two
 // tags, the newest wins), MPE NEW, CAT supersede-on-ingest, IQC IDENT_DUP
 // (C-21, C-26); then every tag, lane, export and summary read back.
@@ -911,7 +911,7 @@ func exportOf(s *storage.FlatSQLStore, name string, q storage.IndexedRecordQuery
 
 // X03: the first write of a type the store does not hold (PNM: its derived
 // files are created then, C-32), through StoreWithSourceTags (NEW with a
-// licence, DUP, RETAG), Store (storeOne untagged, and a COPY from a second
+// license, DUP, RETAG), Store (storeOne untagged, and a COPY from a second
 // peer) and StoreBatch; plus StoreWithSourceTags of an IQC capture fetched
 // again (IDENT_DUP: the held CID is returned, f4CIDAt) and of an OMM held
 // CID; every returned CID compared.
@@ -926,7 +926,7 @@ func (c *cov) x03(omm, iqc [][]byte) []Shape {
 	ti := plainTags("IQEngine", "iqc-cov-single")
 	to := plainTags("celestrak-gp", "OMM-cov-single")
 	writes := []Call{
-		c.store("StoreWithSourceTags PNM new, licence", "PNM.fbs", p[0], covStorePeer, covSig, &t1),
+		c.store("StoreWithSourceTags PNM new, license", "PNM.fbs", p[0], covStorePeer, covSig, &t1),
 		c.store("StoreWithSourceTags PNM again", "PNM.fbs", p[0], covStorePeer, covSig, &t1),
 		c.store("StoreWithSourceTags PNM new batch", "PNM.fbs", p[0], covStorePeer, covSig, &t2),
 		c.store("Store PNM untagged", "PNM.fbs", p[1], covStorePeer, nil, nil),

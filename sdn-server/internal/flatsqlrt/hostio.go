@@ -437,7 +437,7 @@ func (h *HostIO) Size(handle int32) float64 {
 	return float64(info.Size())
 }
 
-// Close implements flatsql_io_close, honouring DELETE_ON_CLOSE. The engine's
+// Close implements flatsql_io_close, honoring DELETE_ON_CLOSE. The engine's
 // VFS also unlinks such files itself (fsClose), so the removal here is
 // belt-and-braces and a missing file is not an error.
 func (h *HostIO) Close(handle int32) int32 {

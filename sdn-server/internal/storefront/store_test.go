@@ -277,7 +277,7 @@ func TestStoreListingRecommendedRetention(t *testing.T) {
 	base := func(id, rule string) *Listing {
 		return &Listing{
 			ListingID: id, ListingKind: ListingKindDataStream, ProviderPeerID: "12D3KooWRetentionProvider",
-			Title: "Catalogue " + id, DataTypes: []string{"OMM"},
+			Title: "Catalog " + id, DataTypes: []string{"OMM"},
 			Pricing:          []PricingTier{{Name: "Open", PriceCurrency: "SDN"}},
 			AcceptedPayments: []PaymentMethod{PaymentMethodFree},
 			CreatedAt:        now, UpdatedAt: now, Version: 1, Active: true,

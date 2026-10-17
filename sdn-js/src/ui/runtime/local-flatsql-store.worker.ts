@@ -13,7 +13,7 @@
  * `getRemoteDataSummary`) are refused explicitly, never silently dropped.
  *
  * Bundled by the dashboard as `sdn-node-data-worker?worker&inline` (an iife
- * blob: worker), which is why the engine must be initialised with an ABSOLUTE
+ * blob: worker), which is why the engine must be initialized with an ABSOLUTE
  * `engine.wasmPath` — a blob: URL cannot resolve `./flatsql.wasm`.
  */
 import {

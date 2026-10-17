@@ -49,7 +49,7 @@ package storage
 //
 // The last two stop DATA from entering; only the first also stops the name
 // from resolving, and this file no longer claims otherwise. FAIL CLOSED: an
-// unrecognised standard is not routed rather than routed-and-hoped-about.
+// unrecognized standard is not routed rather than routed-and-hoped-about.
 //
 // The engine vtab is a pure cache: the control tables remain the source of
 // truth, so ingest failures are logged and skipped — only a trapped (poisoned)
@@ -332,7 +332,7 @@ const engineRecordSchema = `
 //
 // The table mirrors internal/sds/schemas/TBS.fbs field-for-field IN
 // DECLARATION ORDER — vtable slots are positional, so a reordered or elided
-// field would decode a NEIGHBOURING value, not a missing one. The two
+// field would decode a NEIGHBORING value, not a missing one. The two
 // trailing REQUIRED fields (SOURCES:[TBSProvenance], CONSENSUS:TBSConsensus)
 // are deliberately NOT projected as columns: they are a table vector and a
 // nested table, they sit last so omitting them cannot shift any preceding
@@ -666,7 +666,7 @@ func (s *FlatSQLStore) engineWindowFor(schemaName string) int {
 		return s.engineHotWindow
 	}
 	if s.engineGenericHotWindow > 0 {
-		// HONOURED EVEN WHEN IT EXCEEDS THE DECORATED WINDOW. This used to
+		// HONORED EVEN WHEN IT EXCEEDS THE DECORATED WINDOW. This used to
 		// require `< s.engineHotWindow`, which silently handed an operator who
 		// RAISED storage.engine_generic_hot_window the decorated window
 		// instead — a config key that quietly means something else for half

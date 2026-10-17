@@ -43,7 +43,7 @@ func TestMountConfigDoesNotLeakIntoTheSharedContext(t *testing.T) {
 	}
 }
 
-// Absence of configuration must stay indistinguishable from the behaviour
+// Absence of configuration must stay indistinguishable from the behavior
 // before this existed: the same shared context, untouched.
 func TestMountWithoutConfigKeepsTheSharedContextIdentity(t *testing.T) {
 	shared := &modulert.NodeContext{}

@@ -238,7 +238,7 @@ func runImportLegacySQLite(cmd *cobra.Command, args []string) error {
 			if saveErr := writeCheckpoint(); saveErr != nil {
 				log.Warnf("Failed to save checkpoint on cancellation: %v", saveErr)
 			}
-			return fmt.Errorf("import cancelled: %w", err)
+			return fmt.Errorf("import canceled: %w", err)
 		}
 
 		rows, err := src.QueryContext(ctx, query, checkpoint.LastRowID, importLegacyBatchSize)

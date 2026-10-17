@@ -34,12 +34,12 @@ func benchTemplates(t *testing.T, recordBytes int) ([]*schemaTemplate, *sds.Vali
 	return templates, v
 }
 
-// TestEverySchemaSynthesisesAnAdmissibleRecord is the whole premise of the
-// benchmark: a synthesised record the store would REFUSE measures nothing.
+// TestEverySchemaSynthesizesAnAdmissibleRecord is the whole premise of the
+// benchmark: a synthesized record the store would REFUSE measures nothing.
 // VerifyEnvelope is the admission check the write path applies with or without
 // the optional flatc WASM module, so passing it for all 236 standards is what
 // makes "streamed across all schemas" a true statement rather than a claim.
-func TestEverySchemaSynthesisesAnAdmissibleRecord(t *testing.T) {
+func TestEverySchemaSynthesizesAnAdmissibleRecord(t *testing.T) {
 	templates, v := benchTemplates(t, 1024)
 	b := flatbuffers.NewBuilder(8192)
 	for _, tpl := range templates {
@@ -63,11 +63,11 @@ func TestEverySchemaSynthesisesAnAdmissibleRecord(t *testing.T) {
 	}
 }
 
-// TestSynthesisedRecordsAreUnique guards the measurement itself. The store
+// TestSynthesizedRecordsAreUnique guards the measurement itself. The store
 // dedupes on the sha256 CID of the buffer and a repeat CID skips the insert,
 // the index row and the engine mirror entirely — so a synthesiser that
 // repeated itself would report the throughput of the dedupe path.
-func TestSynthesisedRecordsAreUnique(t *testing.T) {
+func TestSynthesizedRecordsAreUnique(t *testing.T) {
 	templates, _ := benchTemplates(t, 1024)
 	b := flatbuffers.NewBuilder(8192)
 	seen := make(map[string]string)
@@ -83,11 +83,11 @@ func TestSynthesisedRecordsAreUnique(t *testing.T) {
 	}
 }
 
-// TestSynthesisedRecordsHitTheRequestedSize keeps the reported MB/s tied to a
+// TestSynthesizedRecordsHitTheRequestedSize keeps the reported MB/s tied to a
 // record population the operator asked for: the filler length is solved per
 // standard, and a standard whose solution silently failed would quietly skew
 // the bytes-per-record mix the benchmark reports.
-func TestSynthesisedRecordsHitTheRequestedSize(t *testing.T) {
+func TestSynthesizedRecordsHitTheRequestedSize(t *testing.T) {
 	const want = 1024
 	templates, _ := benchTemplates(t, want)
 	b := flatbuffers.NewBuilder(8192)

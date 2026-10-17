@@ -264,7 +264,7 @@ export interface FlatSQLEngineRecordStoreOptions {
    * A `persistenceKey` looks like a request for durable storage, and until
    * 2.0.18 a schemas-less key silently downgraded to ONE `<key>:record-envelopes`
    * blob rewritten in full on every flush and re-ingested in full at boot —
-   * measured at 10,544,950 B for a live catalogue cache. That downgrade is
+   * measured at 10,544,950 B for a live catalog cache. That downgrade is
    * now refused rather than silent: pass `schemas` for the disk-backed
    * per-source lane, or pass this flag to say the journal is what you meant.
    */

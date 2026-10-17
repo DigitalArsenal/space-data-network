@@ -26,7 +26,7 @@ func TestStandardSchemaTextServesTheEngineTableBlock(t *testing.T) {
 		t.Fatalf("body is not the CNP engine block:\n%s", body)
 	}
 	if strings.Contains(body, "table OMM {") {
-		t.Fatalf("body carries a neighbouring table:\n%s", body)
+		t.Fatalf("body carries a neighboring table:\n%s", body)
 	}
 	if got := rec.Header().Get("Content-Type"); got != "text/plain; charset=utf-8" {
 		t.Fatalf("Content-Type = %q", got)

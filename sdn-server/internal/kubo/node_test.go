@@ -156,7 +156,7 @@ func TestOneProcessOnePeer(t *testing.T) {
 		t.Fatalf("A's gate did not refuse C (refusals %d)", gateA.refused.Load())
 	}
 	if err := a.Host().Connect(ctx, peer.AddrInfo{ID: idC, Addrs: c.Host().Addrs()}); err == nil {
-		t.Fatalf("A dialled C through its own gate")
+		t.Fatalf("A dialed C through its own gate")
 	}
 
 	// The node's gossipsub runs on the one host.

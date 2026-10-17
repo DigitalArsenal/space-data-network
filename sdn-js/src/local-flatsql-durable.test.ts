@@ -3,7 +3,7 @@
  *
  * `flatsql-io-store.test.ts` proves the shim works. This proves the PRODUCT
  * uses it: the engine every sdn-js node runs — the one `createLocalFlatSqlStore`
- * initialises, not one a test built for itself — reaches durable files through
+ * initializes, not one a test built for itself — reaches durable files through
  * the seven `flatsql_io_*` imports, backed by the node's own persistence store.
  *
  * Before this wiring `initFlatSQL` was called with no `io:` at all, so the
@@ -108,7 +108,7 @@ describe('production FlatSQL engine I/O wiring', () => {
     const persistenceStore = new MemoryFlatSqlPersistenceStore();
     const persistenceKey = 'durable-prod-lane';
 
-    // The PRODUCT entry point. Nothing test-specific initialises the engine.
+    // The PRODUCT entry point. Nothing test-specific initializes the engine.
     const store = await createLocalFlatSqlStore({
       persistenceKey,
       persistenceStore,

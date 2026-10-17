@@ -52,7 +52,7 @@ func TestLateRegisteredPluginIsStartedAndScheduled(t *testing.T) {
 		t.Fatalf("StartAll: %v", err)
 	}
 
-	// 1s is the shortest cadence resolveCronSchedule honours (anything
+	// 1s is the shortest cadence resolveCronSchedule honors (anything
 	// under a second falls back to its 30s floor).
 	p := &lateCronPlugin{id: "late.flow.service", interval: "1s"}
 	if err := m.Register(p); err != nil {

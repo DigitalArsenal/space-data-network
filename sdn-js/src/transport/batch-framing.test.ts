@@ -99,20 +99,20 @@ describe('incremental frame stream decoder', () => {
   });
 
   it('cancels the underlying ReadableStream when the consumer stops early', async () => {
-    let cancelled = false;
+    let canceled = false;
     const rs = new ReadableStream<Uint8Array>({
       pull(controller) {
         controller.enqueue(encodeSizePrefixedFrames([new Uint8Array(8)]));
       },
       cancel() {
-        cancelled = true;
+        canceled = true;
       },
     });
     const frames = iterateSizePrefixedFrameStream(rs);
     const first = await frames.next();
     expect(first.done).toBe(false);
     await frames.return(undefined);
-    expect(cancelled).toBe(true);
+    expect(canceled).toBe(true);
   });
 });
 

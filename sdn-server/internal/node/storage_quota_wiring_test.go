@@ -163,7 +163,7 @@ func TestEnforceStorageQuotaNoOpWhenMaxSizeUnresolvable(t *testing.T) {
 // seam test (mirrors the TTL-sweeper/catch-up-loop wiring pattern this
 // file's D1/D2 tests already use): one explicit tick must run
 // enforceStorageQuota, and the loop must exit promptly once n.ctx is
-// cancelled.
+// canceled.
 func TestRunStorageQuotaGCLoopEvictsAndRespectsShutdown(t *testing.T) {
 	n := newQuotaWiringTestNode(t)
 	n.config.Storage.MaxSize = "1B"
@@ -201,7 +201,7 @@ func TestRunStorageQuotaGCLoopEvictsAndRespectsShutdown(t *testing.T) {
 	}
 }
 
-func TestRunStorageQuotaGCLoopSkipsBufferedTickWhenAlreadyCancelled(t *testing.T) {
+func TestRunStorageQuotaGCLoopSkipsBufferedTickWhenAlreadyCanceled(t *testing.T) {
 	n := newQuotaWiringTestNode(t)
 	n.config.Storage.MaxSize = "1B"
 
@@ -230,7 +230,7 @@ func TestRunStorageQuotaGCLoopSkipsBufferedTickWhenAlreadyCancelled(t *testing.T
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
-		t.Fatal("runStorageQuotaGCWithTicks did not exit when started with a cancelled context")
+		t.Fatal("runStorageQuotaGCWithTicks did not exit when started with a canceled context")
 	}
 
 	after, err := n.store.LiveRecordBytes()
@@ -238,7 +238,7 @@ func TestRunStorageQuotaGCLoopSkipsBufferedTickWhenAlreadyCancelled(t *testing.T
 		t.Fatalf("LiveRecordBytes (after) failed: %v", err)
 	}
 	if after != before {
-		t.Fatalf("cancelled quota loop processed buffered tick: live bytes before=%d after=%d", before, after)
+		t.Fatalf("canceled quota loop processed buffered tick: live bytes before=%d after=%d", before, after)
 	}
 }
 

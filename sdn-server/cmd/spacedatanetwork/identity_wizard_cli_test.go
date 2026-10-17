@@ -876,7 +876,7 @@ func writeIdentityWizardSecretFile(t *testing.T, secret string) string {
 	return path
 }
 
-func TestIdentityWizardHonoursKeyPasswordFile(t *testing.T) {
+func TestIdentityWizardHonorsKeyPasswordFile(t *testing.T) {
 	const password = "file-sealed-password"
 	cfg, mnemonic := newSealedIdentityWizardNode(t, password)
 
@@ -967,7 +967,7 @@ func TestIdentityWizardUnreadableKeyPasswordFileIsAnErrorNotAFallback(t *testing
 	}
 }
 
-func TestIdentityWizardHonoursMnemonicFileEnv(t *testing.T) {
+func TestIdentityWizardHonorsMnemonicFileEnv(t *testing.T) {
 	const password = "file-sealed-password"
 	cfg, mnemonic := newSealedIdentityWizardNode(t, password)
 	t.Setenv(config.EnvKeyPasswordFile, writeIdentityWizardSecretFile(t, password))
@@ -1115,7 +1115,7 @@ func TestIdentityWizardNeverOpensStoreWhenDaemonAnswers(t *testing.T) {
 		t.Fatalf("profile source is not the daemon: %#v", source)
 	}
 	if store.opened {
-		t.Fatal("store handle was materialised on the daemon path")
+		t.Fatal("store handle was materialized on the daemon path")
 	}
 }
 
@@ -1145,7 +1145,7 @@ func TestIdentityWizardDeriveFailureNeverTakesTheStoreLock(t *testing.T) {
 	assertIdentityWizardStorePathUnlocked(t, cfg.Storage.Path)
 }
 
-func TestIdentityWizardCancelledRunReleasesTheStoreLock(t *testing.T) {
+func TestIdentityWizardCanceledRunReleasesTheStoreLock(t *testing.T) {
 	cfg := newIdentityWizardOrderConfig(t)
 	peerID, err := peer.Decode("12D3KooWDpJ7As7BWAwRMfu1VU2WCqNjvq387JEYKDBj4kx6nXTN")
 	if err != nil {
@@ -1158,7 +1158,7 @@ func TestIdentityWizardCancelledRunReleasesTheStoreLock(t *testing.T) {
 		t.Context(),
 		strings.NewReader("n\n"),
 		io.Discard,
-		identityWizardOptions{Sets: []string{"dn=Cancelled Node"}, Format: "json", PromptWriter: io.Discard},
+		identityWizardOptions{Sets: []string{"dn=Canceled Node"}, Format: "json", PromptWriter: io.Discard},
 		cfg,
 		identityWizardDeps{
 			DeriveIdentity: func(context.Context) (identityWizardNodeIdentity, error) {
@@ -1173,7 +1173,7 @@ func TestIdentityWizardCancelledRunReleasesTheStoreLock(t *testing.T) {
 			},
 		},
 	)
-	if err == nil || !strings.Contains(err.Error(), "cancelled") {
+	if err == nil || !strings.Contains(err.Error(), "canceled") {
 		t.Fatalf("runIdentityWizardWithDeps error = %v, want the cancellation error", err)
 	}
 	assertIdentityWizardStorePathUnlocked(t, cfg.Storage.Path)

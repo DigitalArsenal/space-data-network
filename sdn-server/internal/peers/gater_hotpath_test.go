@@ -17,7 +17,7 @@ package peers
 //	25x    40+ min Registry.IsStrictMode via InterceptPeerDial (outbound)
 //
 // The node accepted inbound TCP and never read it, could not dial out, answered
-// /p2p/<peerid> with 502, and spaceaware.io/beta served an empty catalogue —
+// /p2p/<peerid> with 502, and spaceaware.io/beta served an empty catalog —
 // from ONE stuck query. These tests fail if any of that becomes possible again.
 
 import (
@@ -31,7 +31,7 @@ import (
 // blockingPersistence is a store that never returns from Save — the reduced
 // form of a stalled FlatSQL engine.
 type blockingPersistence struct {
-	entered chan struct{} // signalled once Save has been called
+	entered chan struct{} // signaled once Save has been called
 	release chan struct{} // closed by the test to let Save finish
 }
 

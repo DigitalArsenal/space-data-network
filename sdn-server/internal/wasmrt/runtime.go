@@ -103,7 +103,7 @@ func IsPoisoned(err error) bool { return errors.Is(err, ErrModulePoisoned) }
 // NOT poisoning:
 //   - ErrFuelExhausted: WasmEdge aborts the guest itself at a well-defined
 //     instruction boundary and documents the VM as reusable.
-//   - a non-threaded async execution that was cancelled AND reaped. Threaded
+//   - a non-threaded async execution that was canceled AND reaped. Threaded
 //     timeouts and cancellation that cannot be reaped are poisoned at the call
 //     site because guest invariants or native-thread ownership are uncertain.
 //   - ctx cancellation before the guest was ever entered.

@@ -109,7 +109,7 @@ func TestVCFIsAdmittedByTheEmbeddedValidator(t *testing.T) {
 		t.Errorf("a real $VCF projection card was refused by the embedded validator: %v", err)
 	}
 
-	// A registered schema is not a licence to store arbitrary bytes.
+	// A registered schema is not a license to store arbitrary bytes.
 	if err := validator.Validate(ctx, "VCF.fbs", []byte(`{"CARD":"BEGIN:VCARD"}`)); err == nil {
 		t.Error("expected a JSON payload published as a $VCF FlatBuffer to be refused")
 	}

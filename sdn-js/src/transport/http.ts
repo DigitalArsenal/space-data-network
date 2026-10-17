@@ -226,7 +226,7 @@ export async function* iterateSizePrefixedFrameStream(
     }
   } finally {
     // A consumer that stops early closes the byte source too, so an
-    // underlying fetch body is cancelled rather than left downloading.
+    // underlying fetch body is canceled rather than left downloading.
     await chunks.return(undefined).catch(() => {});
   }
 }

@@ -99,7 +99,7 @@ func TestBuildObservedSDNPeersFiltersToAdvertisementEvidence(t *testing.T) {
 }
 
 // SUPERSEDED BY OWNER RULING 2026-07-30. This test asserted that a peer known
-// ONLY through an SDN advertisement — never dialled, never seen — belonged on
+// ONLY through an SDN advertisement — never dialed, never seen — belonged on
 // the board. The owner looked at the result of exactly that rule (34 such rows)
 // and said: "I have no idea what these peers are that are in the table" and "The
 // Peers table should not ever show peers that have never been seen, UNLESS they

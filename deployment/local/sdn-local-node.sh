@@ -213,7 +213,7 @@ verify_identity_isolation() {
   if docker exec "$CONTAINER_NAME" sh -c 'test -s /app/data/keys/mnemonic'; then
     ok "encrypted mnemonic present at /app/data/keys/mnemonic (self-generated, inside the volume)"
   else
-    warn "no /app/data/keys/mnemonic yet — identity may still be initialising"
+    warn "no /app/data/keys/mnemonic yet — identity may still be initializing"
   fi
 }
 

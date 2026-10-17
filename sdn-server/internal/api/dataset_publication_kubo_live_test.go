@@ -82,11 +82,11 @@ func startLiveKubo(t *testing.T) *liveKubo {
 	ready := make(chan struct{})
 	go func() {
 		scanner := bufio.NewScanner(stdout)
-		signalled := false
+		signaled := false
 		for scanner.Scan() {
-			if !signalled && strings.Contains(scanner.Text(), "Daemon is ready") {
+			if !signaled && strings.Contains(scanner.Text(), "Daemon is ready") {
 				close(ready)
-				signalled = true
+				signaled = true
 			}
 		}
 	}()

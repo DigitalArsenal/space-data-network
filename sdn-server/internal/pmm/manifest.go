@@ -85,7 +85,7 @@ type Entry struct {
 	// bytes of ContentHash (never the 64 hex characters). It is EMPTY until the
 	// Seal Council's domain-separation dissent is resolved by the owner; see
 	// SignArtifacts. PMM.SIGNATURE already covers every CONTENT_HASH through the
-	// canonical statement, so an empty value costs a bandwidth optimisation, not
+	// canonical statement, so an empty value costs a bandwidth optimization, not
 	// integrity.
 	ArtifactSignature string   `json:"ARTIFACT_SIGNATURE"`
 	TrustTier         string   `json:"TRUST_TIER"`

@@ -11,7 +11,7 @@ package trust
 //	u32LE(len(eventJSON)) || eventJSON || senderPub(32) || sig(64)
 //
 // eventJSON is the compact JSON of TrustEvent (deterministic field order via
-// struct marshalling), and sig = ed25519(senderPriv,
+// struct marshaling), and sig = ed25519(senderPriv,
 // "SDN-TRUST-EVT\0" || eventJSON). Events are signed-plaintext: a trust
 // status is an assertion the evaluator WANTS its web to see; authenticity
 // (not confidentiality) is the requirement.

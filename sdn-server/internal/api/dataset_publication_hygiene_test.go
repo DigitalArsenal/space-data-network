@@ -614,7 +614,7 @@ func TestPublishIPNSNameRequestShape(t *testing.T) {
 }
 
 // TestRetentionPassOnDemandReleasesWhatNoSeriesKeeps: a lane published with
-// retention off (keep_series 0, the pre-change behaviour) is cleaned by one
+// retention off (keep_series 0, the pre-change behavior) is cleaned by one
 // on-demand pass through the loopback admin route; the dry run reports
 // exactly what the applied pass releases and changes nothing.
 func TestRetentionPassOnDemandReleasesWhatNoSeriesKeeps(t *testing.T) {

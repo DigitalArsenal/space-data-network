@@ -20,7 +20,7 @@
  * wasm in flatsql's wasm/test-io-persistence.mjs; three harnesses, one answer.
  *
  * MemoryFlatSqlPersistenceStore is NOT skipped. It cannot survive a process,
- * and its DOCUMENTED behaviour — survive teardown inside the process, derive
+ * and its DOCUMENTED behavior — survive teardown inside the process, derive
  * fresh in a new one — is asserted, because that fallback is a real production
  * path and an untested fallback is not a fallback.
  */
@@ -298,7 +298,7 @@ describe('documented fallbacks (asserted, never skipped)', () => {
   test('MemoryFlatSqlPersistenceStore derives fresh in a NEW process', async () => {
     // A brand-new store models a process restart: the keys are simply gone.
     // The engine must report "no persisted state" and the caller must derive
-    // from the stream — the behaviour every host already has today.
+    // from the stream — the behavior every host already has today.
     const freshRouter = new FlatSqlIoRouter();
     freshRouter.register(
       'fresh/',

@@ -973,7 +973,7 @@ func (p *htrPipe) dropStagedHeaders() {
 }
 
 // finish closes the exchange: flush any carried bytes, then hold the flow to
-// the contract it declared. A JSON-labelled, body-bearing response that
+// the contract it declared. A JSON-labeled, body-bearing response that
 // produced NO bytes is not a JSON text, so the host answers an honest 502
 // instead of a silent empty 200 that reads like "no records".
 func (p *htrPipe) finish() {
@@ -1383,7 +1383,7 @@ func RegisterLazyFlowMounts(mux *http.ServeMux, mounts []config.FlowMount, deps 
 // LoadFlowServices does for flows.services[].config.
 //
 // An empty config block returns the shared context unchanged: absence of
-// configuration must stay indistinguishable from the behaviour before this
+// configuration must stay indistinguishable from the behavior before this
 // existed.
 func mountNodeContext(shared *modulert.NodeContext, cfg map[string]interface{}) *modulert.NodeContext {
 	if len(cfg) == 0 {

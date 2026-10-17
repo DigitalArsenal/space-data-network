@@ -90,7 +90,7 @@ type serviceStateJSON struct {
 	ControlEnabled bool `json:"control_enabled"`
 	// CanRestart / CanStop are the ONLY fields the dashboard reads to decide
 	// whether to render a control. Both require a proven supervisor AND the
-	// opt-in: fail-closed, and the UI never renders a greyed button that
+	// opt-in: fail-closed, and the UI never renders a grayed button that
 	// advertises a capability the node lacks (IRIS §5).
 	CanRestart bool `json:"can_restart"`
 	CanStop    bool `json:"can_stop"`

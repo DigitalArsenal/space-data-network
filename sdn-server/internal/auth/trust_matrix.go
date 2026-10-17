@@ -57,7 +57,7 @@ import (
 )
 
 // TrustMatrixEntry is the PRR projection of an operator identity. Field names
-// mirror internal/peers.TrustedPeer so the two surfaces are recognisably the
+// mirror internal/peers.TrustedPeer so the two surfaces are recognizably the
 // same record; the JSON keys are the node-local snake_case the auth API already
 // uses, NOT PRR's IDL capitalization — these are node-synthesized API fields,
 // and only an actual serialized SDS record carries IDL-capitalized keys.

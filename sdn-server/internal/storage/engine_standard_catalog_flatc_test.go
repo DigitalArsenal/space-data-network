@@ -386,7 +386,7 @@ const (
 	// flatcMutationContinue is `if !ok { continue }` in place of
 	// `if !ok { break }` (enginecatalog.Build's projection loop): skip a
 	// non-representable field and keep emitting. Every column after the skip
-	// then reads its NEIGHBOUR's slot.
+	// then reads its NEIGHBOR's slot.
 	flatcMutationContinue flatcMutation = "continue-past-unprojectable"
 	// flatcMutationNoTerminal drops Column.Terminal on a union
 	// discriminator, so the projection continues past a union — onto the
@@ -479,7 +479,7 @@ func flatcColumnMismatch(binding enginecatalog.Binding, root *flatcRoot) []strin
 		}
 		f := root.Fields[i]
 		if col.Name != f.Name {
-			add("%s: column %d is %q but flatc puts %q at slot %d — the column reads its NEIGHBOUR's value",
+			add("%s: column %d is %q but flatc puts %q at slot %d — the column reads its NEIGHBOR's value",
 				binding.Schema, i, col.Name, f.Name, i)
 		}
 		want := ""
@@ -501,7 +501,7 @@ func flatcColumnMismatch(binding enginecatalog.Binding, root *flatcRoot) []strin
 	}
 
 	// THE STOP POINT. Truncating a trailing run is safe; stopping EARLY
-	// silently drops columns, and stopping LATE is the neighbour-slot bug.
+	// silently drops columns, and stopping LATE is the neighbor-slot bug.
 	if n := len(binding.Columns); n < len(root.Fields) {
 		if next := root.Fields[n]; next.Kind.representable() {
 			add("%s: projection stops at %d columns, but flatc says slot %d (%s) is a readable %s — the run stopped early",
@@ -605,7 +605,7 @@ func TestUnprojectableFallbackSetMatchesFlatc(t *testing.T) {
 // Two properties make the read-back an actual assertion:
 //
 //   - every projected slot gets a DISTINCT value, so a column that reads its
-//     neighbour's slot returns the wrong one rather than a coincidence;
+//     neighbor's slot returns the wrong one rather than a coincidence;
 //   - the slots AFTER the projected run are POPULATED too (a real sub-table,
 //     a real vector), so a projection that ran one column too far reads live
 //     bytes instead of a conveniently absent field.

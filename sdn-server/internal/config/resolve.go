@@ -269,7 +269,7 @@ func DescribePermissionDenied(what string, path string, owner string, res Resolu
 // SDN_MNEMONIC_FILE=/run/secrets/sdn_mnemonic — and it GUARDS on the binary
 // supporting them (it greps the binary and refuses to import a phrase into an
 // image that would silently ignore the variable and generate a fresh identity
-// instead). Honouring them is therefore a compatibility contract with the
+// instead). Honoring them is therefore a compatibility contract with the
 // deploy path, not a convenience.
 //
 // A file is strictly better custody than an inline env var: it does not appear
@@ -329,7 +329,7 @@ func KeyPassword(cfg *Config) (string, error) {
 	return "", nil // caller applies the machine-derived default
 }
 
-// MnemonicPathResolved returns the mnemonic file to read, honouring
+// MnemonicPathResolved returns the mnemonic file to read, honoring
 // SDN_MNEMONIC_FILE. Empty config yields empty, like MnemonicPath.
 func MnemonicPathResolved(cfg *Config) string {
 	if path := strings.TrimSpace(os.Getenv(EnvMnemonicFile)); path != "" {

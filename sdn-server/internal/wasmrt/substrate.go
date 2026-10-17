@@ -79,7 +79,7 @@ func (r SubstrateReport) Patched() bool {
 		(!r.AOTChecked || (r.InterruptibleAOT && r.AOTAtomicMemargOffset && r.AOTLoopStopChecks))
 }
 
-// Tag names the runtime behaviour for AOT cache keys of Interruptible
+// Tag names the runtime behavior for AOT cache keys of Interruptible
 // artifacts: code compiled by one stop-token semantics must not be loaded by
 // the other.
 //

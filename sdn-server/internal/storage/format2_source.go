@@ -5,7 +5,7 @@ package storage
 // §16, T6). It opens a legacy record store the way the daemon does (the
 // auxiliary journal replayed, the engine hot window NOT hydrated) and reads
 // it: the (producer, standard) tables in rowid pages, the datasync index,
-// source tags, licences, and the three oracles store-migrate verifies
+// source tags, licenses, and the three oracles store-migrate verifies
 // against (sdn_partition_record_bytes, sdn_record_source_summary, the v1 cid
 // sequence per schema). It changes no record. The only write it makes is the
 // control copy (§14 interim: VACUUM INTO, then the record tables dropped in
@@ -275,7 +275,7 @@ func (m *MigrationSource) OrphanIndexRows(schema string, tables []LegacyTable) (
 const migrateHeldGroup = 64
 
 // migrateHeldSQL is true when cidExpr is held by one of tables: an EXISTS
-// seek per table (recordHeldSQL's terms), OR'ed flat in parenthesised groups
+// seek per table (recordHeldSQL's terms), OR'ed flat in parenthesized groups
 // of migrateHeldGroup and the groups again, so the expression's depth grows
 // with the logarithm of the table count. recordHeldSQL's single flat chain
 // passes SQLite's expression-depth limit (1000) at about 1,000 producer
@@ -572,8 +572,8 @@ func (m *MigrationSource) LaneRecount(schema string, tables []LegacyTable) ([]So
 	return out, nil
 }
 
-// Licences returns every source-batch licence.
-func (m *MigrationSource) Licences() ([]SourceBatchLicense, error) {
+// Licenses returns every source-batch license.
+func (m *MigrationSource) Licenses() ([]SourceBatchLicense, error) {
 	rows, err := m.s.db.Query(`SELECT schema_name, provider_id, source_name, batch_id, license, license_url, citation,
 		share_alike, updated_at FROM sdn_source_batch_license`)
 	if err != nil {

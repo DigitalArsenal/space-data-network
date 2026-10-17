@@ -111,7 +111,7 @@ func TestValidatorValidateBasic(t *testing.T) {
 		t.Error("Expected error for unknown schema")
 	}
 
-	// A known schema is NOT a licence to store arbitrary bytes. Without the flatc
+	// A known schema is NOT a license to store arbitrary bytes. Without the flatc
 	// WASM module (the state of every packaged deployment) validation used to
 	// degrade to a non-empty check, so this JSON blob was accepted and stored as
 	// if it were an OMM record. It must be rejected on structure + file identifier.

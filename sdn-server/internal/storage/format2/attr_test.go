@@ -27,7 +27,7 @@ func TestRecordAttrMatchesTheEngineGoldenBytes(t *testing.T) {
 		// The C++ case passes "src:source-b\x00key-f" through a const char*,
 		// so the key it stores stops at the NUL.
 		"full": {PeerID: []byte("12D3KooWPeer"), SupersedeKey: "src:source-b", SourceTimestamp: 1780000000123,
-			LicenceKey: "licence-g", Tag: SourceTag{ProviderID: "provider-a", SourceName: "source-b", BatchID: "batch-c",
+			LicenseKey: "licence-g", Tag: SourceTag{ProviderID: "provider-a", SourceName: "source-b", BatchID: "batch-c",
 				ContentKeyID: "content-d", ProducerPeerID: "12D3KooWProducer", ProducerPublicKey: "producer-key-e"}},
 		"tag_partial": {PeerID: []byte("peer"), Tag: SourceTag{ProviderID: "prov", BatchID: "b1"}},
 		"no_tag":      {PeerID: []byte("peer-only")},

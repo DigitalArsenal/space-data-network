@@ -55,7 +55,7 @@ func TestUntrustedBootstrapPeerIsAnnounced(t *testing.T) {
 	}
 	joined := strings.Join(ids, ",")
 	if !strings.Contains(joined, trustTestProducerID) {
-		t.Fatalf("the dialled-but-untrusted producer was not flagged; flagged: %q", joined)
+		t.Fatalf("the dialed-but-untrusted producer was not flagged; flagged: %q", joined)
 	}
 	if strings.Contains(joined, trustTestStaleID) {
 		t.Fatalf("a TRUSTED bootstrap peer was wrongly flagged; flagged: %q", joined)

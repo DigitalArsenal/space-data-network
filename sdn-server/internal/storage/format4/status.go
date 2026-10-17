@@ -14,7 +14,7 @@ const (
 	StatusCorrupt     int32 = -4 // the file is quarantined; reads elsewhere continue
 	StatusFormat      int32 = -5 // store/file format above this engine; marker/state mismatch; C-5 rule change
 	StatusBusy        int32 = -6 // a queue or partition credit is full: nothing was done
-	StatusCancelled   int32 = -7
+	StatusCanceled   int32 = -7
 	StatusBudget      int32 = -8
 	StatusUnsupported int32 = -9
 	StatusNoType      int32 = -10
@@ -37,7 +37,7 @@ var (
 	ErrCorrupt   error = statusSentinel(StatusCorrupt)
 	ErrNoSpace   error = statusSentinel(StatusNoSpace)
 	ErrBudget    error = statusSentinel(StatusBudget)
-	ErrCancelled error = statusSentinel(StatusCancelled)
+	ErrCanceled error = statusSentinel(StatusCanceled)
 	ErrStopped   error = statusSentinel(StatusStopped)
 	ErrFormat    error = statusSentinel(StatusFormat)
 	ErrSQL       error = statusSentinel(StatusSQL)
@@ -46,7 +46,7 @@ var (
 func statusSentinel(status int32) *StatusError { return &StatusError{Status: status} }
 
 // StatusError is every negative engine status. errors.Is(err, ErrBusy|
-// ErrNoType|ErrCorrupt|ErrNoSpace|ErrBudget|ErrCancelled|ErrStopped|
+// ErrNoType|ErrCorrupt|ErrNoSpace|ErrBudget|ErrCanceled|ErrStopped|
 // ErrFormat|ErrSQL) matches by status.
 type StatusError struct {
 	Op     string
@@ -88,8 +88,8 @@ func statusName(status int32) string {
 		return "format or state mismatch (P4_E_FORMAT)"
 	case StatusBusy:
 		return "busy, nothing done (P4_E_BUSY)"
-	case StatusCancelled:
-		return "cancelled (P4_E_CANCELLED)"
+	case StatusCanceled:
+		return "canceled (P4_E_CANCELED)"
 	case StatusBudget:
 		return "over budget (P4_E_BUDGET)"
 	case StatusUnsupported:

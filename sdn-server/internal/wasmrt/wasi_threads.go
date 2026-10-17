@@ -164,7 +164,7 @@ func (g *wasiThreadGroup) spawn(_ interface{}, frame *wasmedge.CallingFrame, arg
 // deliberately retains the poisoned VM if cancellation cannot complete.
 //
 // One cancel per round, not one per worker: every Async of a module shares the
-// executor's single stop token, so cancelling N workers back to back set the
+// executor's single stop token, so canceling N workers back to back set the
 // same token N times and an unpatched runtime let exactly one worker consume
 // it. interrupt() cancels, waits, and repeats.
 func (g *wasiThreadGroup) stop() bool {
@@ -208,7 +208,7 @@ func waitAll(workers []*wasiWorker, deadline time.Time) int {
 // interrupt stops every invocation on the module's executor. The patched
 // runtime (build-static-wasmedge.sh, 02-stop-token) makes one cancel reach
 // every thread; on an unpatched runtime a cancel reaches ONE thread, so this
-// keeps cancelling, one worker at a time, until they are all gone or the
+// keeps canceling, one worker at a time, until they are all gone or the
 // deadline passes. Returns the workers still running.
 func (g *wasiThreadGroup) interrupt(deadline time.Time) int {
 	g.mu.Lock()

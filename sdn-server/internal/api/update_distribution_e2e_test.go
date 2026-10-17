@@ -260,7 +260,7 @@ func TestApprovedReleaseIsSignedWithTheNodeKeyByDefault(t *testing.T) {
 	}
 
 	c.serveAndAskForSignal(d.ID, manifest)
-	if code, done, body := c.post(approve, []byte(`{"document":"signal"}`)); code != http.StatusOK || done.State != DistributionSignalled {
+	if code, done, body := c.post(approve, []byte(`{"document":"signal"}`)); code != http.StatusOK || done.State != DistributionSignaled {
 		t.Fatalf("approve the signal: %d %s", code, body)
 	}
 	c.assertPublishedSignalVerifies(roots)
@@ -305,7 +305,7 @@ func TestUploadedKeySignsOnlyOnceItIsAnUpdateRoot(t *testing.T) {
 		t.Fatalf("signRelease after closeKey signed: %s", out)
 	}
 	updater.uploadKey(uploaded)
-	if code, done, body := c.post(UpdateDistributionsRoute+"/"+d.ID+"/signal", updater.sign("signal", held.Signal)); code != http.StatusOK || done.State != DistributionSignalled {
+	if code, done, body := c.post(UpdateDistributionsRoute+"/"+d.ID+"/signal", updater.sign("signal", held.Signal)); code != http.StatusOK || done.State != DistributionSignaled {
 		t.Fatalf("the uploaded key's signal: %d %s", code, body)
 	}
 	c.assertPublishedSignalVerifies(roots)

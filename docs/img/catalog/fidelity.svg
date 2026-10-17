@@ -38,7 +38,7 @@
       <text x="650" y="108" font-size="15" font-weight="700">Semi-analytic</text>
 
       <circle cx="830" cy="132" r="9" fill="#f5a524" stroke="#f5a524" stroke-width="2"/>
-      <text x="830" y="108" font-size="15" font-weight="700">Numerical (HPOP)</text>
+      <text x="830" y="108" font-size="15" font-weight="700">Numerical (FFM)</text>
     </g>
     <!-- axis -->
     <line x1="120" y1="178" x2="840" y2="178" stroke="#8e8e93" stroke-width="1.5" marker-start="url(#b)" marker-end="url(#a)"/>

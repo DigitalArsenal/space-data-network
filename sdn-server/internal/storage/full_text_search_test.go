@@ -48,7 +48,7 @@ func TestFullTextIndexCoversColdRecordsAndResumes(t *testing.T) {
 		if i == 1 {
 			name = "München optical payload"
 		}
-		cid, err := store.StoreWithSourceTags("CAT.fbs", licenceTestCATRecord(uint32(i), name), "source-peer", nil, SourceTags{ProviderID: "provider-a", SourceName: "satcat", BatchID: "edition"})
+		cid, err := store.StoreWithSourceTags("CAT.fbs", licenseTestCATRecord(uint32(i), name), "source-peer", nil, SourceTags{ProviderID: "provider-a", SourceName: "satcat", BatchID: "edition"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -74,7 +74,7 @@ func TestFullTextIndexCoversColdRecordsAndResumes(t *testing.T) {
 			t.Fatalf("literal query %q matched %d records", text, n)
 		}
 	}
-	if _, err := store.StoreWithSourceTags("CAT.fbs", licenceTestCATRecord(206, "München optical instrument"), "source-peer", nil, SourceTags{ProviderID: "provider-a", SourceName: "satcat", BatchID: "edition"}); err != nil {
+	if _, err := store.StoreWithSourceTags("CAT.fbs", licenseTestCATRecord(206, "München optical instrument"), "source-peer", nil, SourceTags{ProviderID: "provider-a", SourceName: "satcat", BatchID: "edition"}); err != nil {
 		t.Fatal(err)
 	}
 	if n := fullTextMatches(t, store, "optical"); n != 2 {

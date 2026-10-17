@@ -93,7 +93,7 @@ export interface LocalFlatSqlSchema {
 export const LOCAL_FLATSQL_DEFAULT_SOURCE = 'local';
 
 /**
- * How the shared engine instance is initialised (dashboard window model,
+ * How the shared engine instance is initialized (dashboard window model,
  * owner ruling 2026-09-03). The FIRST store opened in a JS context decides:
  * with `wasmPath` the engine is the node's signed module artifact, verified
  * before it runs; without it, the Node/vitest lane loads the wasm beside
@@ -121,7 +121,7 @@ export interface LocalFlatSqlEngineOptions {
 
 export interface LocalFlatSqlStoreOptions {
   schemas: LocalFlatSqlSchema[];
-  /** Engine initialisation; honoured by the first store opened in this JS context. */
+  /** Engine initialization; honored by the first store opened in this JS context. */
   engine?: LocalFlatSqlEngineOptions | null;
   persistenceKey?: string | null;
   desktopPersistenceBaseUrl?: string | null;
@@ -451,7 +451,7 @@ async function openDurableStandardDatabase(
  *     module, FAILING CLOSED otherwise (the browser lane).
  *   - otherwise `initFlatSQL({ skipIntegrityCheck: true, io })` — the
  *     Node/vitest lane, unchanged.
- * A failed initialisation leaves no handles behind, so it is forgotten and the
+ * A failed initialization leaves no handles behind, so it is forgotten and the
  * next call may try again.
  */
 export async function getSharedFlatSql(engine?: LocalFlatSqlEngineOptions | null): Promise<FlatSQL> {

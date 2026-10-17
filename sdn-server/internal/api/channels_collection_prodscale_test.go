@@ -249,7 +249,7 @@ func TestChannelCollectionCostAtProdScale(t *testing.T) {
 // The pin-ledger probe answers one bit and must never materialize a row to do
 // it. Pinned as a PROPERTY, not a timing: HasPinLedgerEntry has to agree with
 // ListPinLedgerEntries in both directions, empty and populated, so a future
-// "optimisation" cannot quietly make the probe lie.
+// "optimization" cannot quietly make the probe lie.
 func TestHasPinLedgerEntryMatchesTheListItReplaces(t *testing.T) {
 	validator, err := sds.NewValidator(nil)
 	if err != nil {

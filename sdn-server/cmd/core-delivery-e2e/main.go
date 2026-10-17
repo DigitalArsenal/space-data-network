@@ -218,7 +218,7 @@ func run(ctx context.Context) int {
 		c, b := postJSON(ctx, base+"/api/auth/users", cookie, map[string]string{
 			"xpub": u.xpub, "name": u.name, "trust_level": "admin", "signing_pubkey_hex": hex.EncodeToString(u.pub),
 		})
-		add("fixture/enrol "+u.name, c/100 == 2, fmt.Sprintf("%d %s", c, clip(b)))
+		add("fixture/enroll "+u.name, c/100 == 2, fmt.Sprintf("%d %s", c, clip(b)))
 	}
 
 	// SEC-001 hotfix 3: sealed /api/rpc.

@@ -55,7 +55,7 @@ HAND.w = OMEGA_K * Math.pow(HAND.r, -1.5);
 const U_EPOCH = 0;
 HAND.u0 = U_EPOCH - HAND.w * tau(T_SPLIT - 0.4);
 
-// Two codes on one orbit: HPOP and Orekit.
+// Two codes on one orbit: FFM and Orekit.
 const TWIN = orbitThrough(cameraAt(T_OREKIT + 3.5), [1300, 560], 1.11, [-0.6, 1]);
 TWIN.w = OMEGA_K * Math.pow(TWIN.r, -1.5) * 0.8;
 TWIN.u0 = -TWIN.w * tau(T_OREKIT + 3.5);
@@ -158,7 +158,7 @@ export async function createReel(base = "") {
   }
 
   // ------------------------------------ the OMM-to-numerical handoff
-  const hpop = (u) => {
+  const ffm = (u) => {
     const k = Math.max(0, u - U_EPOCH);
     return { ...HAND, r: HAND.r + 0.09 * k * k };
   };
@@ -174,9 +174,9 @@ export async function createReel(base = "") {
     if (split > 0) {
       const uMax = U_EPOCH + 0.75 * split;
       strokePath(cam, (v) => orbitPos(HAND, v), U_EPOCH, uMax, CYAN, alpha * 0.95, 2.4, { dash: [10, 8] });
-      strokePath(cam, (v) => orbitPos(hpop(v), v - 0.22 * (v - U_EPOCH) ** 2), U_EPOCH, uMax, AMBER, alpha * 0.95, 2.6);
+      strokePath(cam, (v) => orbitPos(ffm(v), v - 0.22 * (v - U_EPOCH) ** 2), U_EPOCH, uMax, AMBER, alpha * 0.95, 2.6);
       const qa = head(cam, orbitPos(HAND, uMax), CYAN, alpha, 6);
-      const qb = head(cam, orbitPos(hpop(uMax), uMax - 0.22 * (uMax - U_EPOCH) ** 2), AMBER, alpha, 6);
+      const qb = head(cam, orbitPos(ffm(uMax), uMax - 0.22 * (uMax - U_EPOCH) ** 2), AMBER, alpha, 6);
       const lk = seg(t, T_SPLIT + 1.2, T_SPLIT + 1.6);
       if (qa && qb && lk > 0) {
         chip("SGP4", qa.x - 90, qa.y + 34, easeOutBack(lk), alpha, { color: CYAN, px: 20 });
@@ -202,7 +202,7 @@ export async function createReel(base = "") {
     }
   }
 
-  // ------------------------------------------------ HPOP against Orekit
+  // ------------------------------------------------- FFM against Orekit
   function drawTwin(cam, t, T, alpha) {
     if (alpha <= 0) return;
     const u = TWIN.u0 + TWIN.w * T;
@@ -219,7 +219,7 @@ export async function createReel(base = "") {
       sx.stroke();
       sx.restore();
       const lk = easeOutBack(seg(t, T_OREKIT + 0.8, T_OREKIT + 1.2));
-      chip("HPOP", q.x + 82, q.y - 26, lk, alpha, { color: AMBER, px: 20 });
+      chip("FFM", q.x + 82, q.y - 26, lk, alpha, { color: AMBER, px: 20 });
       chip("OREKIT 13.1", q.x + 122, q.y + 30, lk, alpha, { color: CYAN, px: 20 });
     }
     const orbits = ["400 km", "700 km SUN-SYNCHRONOUS", "GPS", "GEOSTATIONARY", "MOLNIYA"];
@@ -380,7 +380,7 @@ export async function createReel(base = "") {
     if (t > T_OREKIT - 0.05 && t < T_ACC + 0.1) {
       eq("orekit", 150, 250, T_OREKIT + 0.5, T_ACC - 0.45, t);
       label("LARGEST POSITION DIFFERENCE, IDENTICAL INPUTS", 152, 352, T_OREKIT + 0.9, T_ACC - 0.45, t, { px: 18 });
-      block([["Checked against", INK], ["an independent code.", AMBER]], "HPOP AND OREKIT AGREE WITHIN 1 CM OVER A DAY", T_OREKIT + 0.1, T_ACC - 0.4, t, 84);
+      block([["Checked against", INK], ["an independent code.", AMBER]], "FFM AND OREKIT AGREE WITHIN 1 CM OVER A DAY", T_OREKIT + 0.1, T_ACC - 0.4, t, 84);
     }
     if (t > T_ACC - 0.05 && t < T_VCM + 0.1) {
       block([["Add the physics.", INK], ["Watch the error fall.", AMBER]], null, T_ACC + 0.1, T_VCM - 0.4, t, 84);

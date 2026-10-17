@@ -35,7 +35,7 @@
     <rect x="612" y="150" width="182" height="180" rx="16" fill="#f5a524" fill-opacity=".1" stroke="#f5a524" stroke-opacity=".7"/>
     <text x="703" y="186" text-anchor="middle" font-size="17" font-weight="700">Open recipe</text>
     <text x="703" y="218" text-anchor="middle" fill-opacity=".75">Match objects</text>
-    <text x="703" y="244" text-anchor="middle" fill-opacity=".75">Fit orbits (HPOP)</text>
+    <text x="703" y="244" text-anchor="middle" fill-opacity=".75">Fit orbits (FFM)</text>
     <text x="703" y="270" text-anchor="middle" fill-opacity=".75">Validate</text>
     <text x="703" y="296" text-anchor="middle" fill-opacity=".75">Publish a version</text>
     <line x1="798" y1="240" x2="834" y2="240" stroke="#f5a524" stroke-width="2" marker-end="url(#a)"/>

@@ -90,7 +90,7 @@ func TestIRMIsAdmittedByTheEmbeddedValidator(t *testing.T) {
 		t.Errorf("a real $IRM resume mark was refused by the embedded validator: %v", err)
 	}
 
-	// A registered schema is not a licence to store arbitrary bytes.
+	// A registered schema is not a license to store arbitrary bytes.
 	if err := validator.Validate(ctx, "IRM.fbs", []byte(`{"JOB_ID":"not-a-flatbuffer"}`)); err == nil {
 		t.Error("expected a JSON payload published as an $IRM FlatBuffer to be refused")
 	}

@@ -17,9 +17,9 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 )
 
-const enrolmentTestPeerID = "12D3KooWDpJ7As7BWAwRMfu1VU2WCqNjvq387JEYKDBj4kx6nXTN"
+const enrollmentTestPeerID = "12D3KooWDpJ7As7BWAwRMfu1VU2WCqNjvq387JEYKDBj4kx6nXTN"
 
-// buildEnrolmentEPM assembles a size-prefixed $EPM advertising peerID via a
+// buildEnrollmentEPM assembles a size-prefixed $EPM advertising peerID via a
 // /p2p/ multiformat address, signed (or not) with the given secp256k1 hex sig.
 //
 // ALGORITHM, NOT ADDRESS_TYPE, DECLARES THE CURVE (§21, EPM.fbs:47-48 "lives in
@@ -29,11 +29,11 @@ const enrolmentTestPeerID = "12D3KooWDpJ7As7BWAwRMfu1VU2WCqNjvq387JEYKDBj4kx6nXT
 // record read as ed25519 (absent = ed25519), its ECDSA-DER signature could not
 // verify, and every enrolled peer silently failed to load. algorithm may be
 // left empty to build exactly that off-contract record on purpose.
-func buildEnrolmentEPM(pubHex, sigHex, peerID string, ts int64) []byte {
-	return buildEnrolmentEPMWithAlgorithm(pubHex, sigHex, peerID, ts, "secp256k1")
+func buildEnrollmentEPM(pubHex, sigHex, peerID string, ts int64) []byte {
+	return buildEnrollmentEPMWithAlgorithm(pubHex, sigHex, peerID, ts, "secp256k1")
 }
 
-func buildEnrolmentEPMWithAlgorithm(pubHex, sigHex, peerID string, ts int64, algorithm string) []byte {
+func buildEnrollmentEPMWithAlgorithm(pubHex, sigHex, peerID string, ts int64, algorithm string) []byte {
 	b := flatbuffers.NewBuilder(512)
 	pub := b.CreateString(pubHex)
 	at := b.CreateString("secp256k1")
@@ -76,12 +76,12 @@ func buildEnrolmentEPMWithAlgorithm(pubHex, sigHex, peerID string, ts int64, alg
 	return b.FinishedBytes()
 }
 
-func signedEnrolmentEPM(t *testing.T, peerID string) []byte {
+func signedEnrollmentEPM(t *testing.T, peerID string) []byte {
 	t.Helper()
-	return signedEnrolmentEPMWithAlgorithm(t, peerID, "secp256k1")
+	return signedEnrollmentEPMWithAlgorithm(t, peerID, "secp256k1")
 }
 
-func signedEnrolmentEPMWithAlgorithm(t *testing.T, peerID, algorithm string) []byte {
+func signedEnrollmentEPMWithAlgorithm(t *testing.T, peerID, algorithm string) []byte {
 	t.Helper()
 	priv, err := secp256k1.GeneratePrivateKey()
 	if err != nil {
@@ -89,14 +89,14 @@ func signedEnrolmentEPMWithAlgorithm(t *testing.T, peerID, algorithm string) []b
 	}
 	pubHex := hex.EncodeToString(priv.PubKey().SerializeCompressed())
 	const ts = int64(1785500000)
-	unsigned := buildEnrolmentEPMWithAlgorithm(pubHex, "", peerID, ts, algorithm)
+	unsigned := buildEnrollmentEPMWithAlgorithm(pubHex, "", peerID, ts, algorithm)
 	payload, err := sdnepm.EPMSigningPayload(unsigned)
 	if err != nil {
 		t.Fatalf("payload: %v", err)
 	}
 	digest := sha256.Sum256(payload)
 	sigHex := hex.EncodeToString(ecdsa.Sign(priv, digest[:]).Serialize())
-	return buildEnrolmentEPMWithAlgorithm(pubHex, sigHex, peerID, ts, algorithm)
+	return buildEnrollmentEPMWithAlgorithm(pubHex, sigHex, peerID, ts, algorithm)
 }
 
 // OWNER DIRECTIVE 2026-07-31 ("on instantiation, once the keys are
@@ -105,11 +105,11 @@ func signedEnrolmentEPMWithAlgorithm(t *testing.T, peerID, algorithm string) []b
 // crypto identity is held even while the peer is offline.
 func TestLoadEnrolledPeerEPMs(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "retriever.epm"), signedEnrolmentEPM(t, enrolmentTestPeerID), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "retriever.epm"), signedEnrollmentEPM(t, enrollmentTestPeerID), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	// Unsigned record must be refused.
-	if err := os.WriteFile(filepath.Join(dir, "unsigned.epm"), buildEnrolmentEPM("deadbeef", "", enrolmentTestPeerID, 1), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "unsigned.epm"), buildEnrollmentEPM("deadbeef", "", enrollmentTestPeerID, 1), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	// Non-EPM noise must be skipped.
@@ -122,7 +122,7 @@ func TestLoadEnrolledPeerEPMs(t *testing.T) {
 		t.Fatalf("loaded = %d, want 1 (signed only)", got)
 	}
 
-	pid, err := peer.Decode(enrolmentTestPeerID)
+	pid, err := peer.Decode(enrollmentTestPeerID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +158,7 @@ func TestLoadEnrolledPeerEPMsEmptyOrMissingDir(t *testing.T) {
 // verified under another.
 func TestLoadEnrolledPeerEPMsRefusesAddressTypeOnlyCurveDeclaration(t *testing.T) {
 	dir := t.TempDir()
-	epmBytes := signedEnrolmentEPMWithAlgorithm(t, enrolmentTestPeerID, "")
+	epmBytes := signedEnrollmentEPMWithAlgorithm(t, enrollmentTestPeerID, "")
 	if err := os.WriteFile(filepath.Join(dir, "address-type-only.epm"), epmBytes, 0o600); err != nil {
 		t.Fatal(err)
 	}

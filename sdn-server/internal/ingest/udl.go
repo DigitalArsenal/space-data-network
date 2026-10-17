@@ -32,7 +32,7 @@ import (
 //
 // CLASSIFICATION_MARKING handling: each record's CLASSIFICATION_MARKING is
 // passed to OMMBuilder.WithClassificationType so the value is stored in the
-// CCSDS CLASSIFICATION_TYPE field of the serialised OMM FlatBuffer.  Markings
+// CCSDS CLASSIFICATION_TYPE field of the serialized OMM FlatBuffer.  Markings
 // are also counted per-batch and written to the provenance JSON for audit
 // purposes (classification_markings counts).
 const (

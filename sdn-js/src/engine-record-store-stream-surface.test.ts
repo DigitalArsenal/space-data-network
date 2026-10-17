@@ -17,7 +17,7 @@
  *
  * The surface that replaces the broken path is `storeStream` / `readStream`,
  * and the property that makes it safe for a content-addressed consumer is the
- * BYTE-IDENTICAL round trip at catalogue scale, asserted here across teardown
+ * BYTE-IDENTICAL round trip at catalog scale, asserted here across teardown
  * and reopen.
  */
 
@@ -58,14 +58,14 @@ const digest = (bytes: Uint8Array) => createHash('sha256').update(Buffer.from(by
 const enc = (text: string) => new TextEncoder().encode(text);
 
 /**
- * The live catalogue's shape: 32,141 aligned size-prefixed $OMM frames in ONE
+ * The live catalog's shape: 32,141 aligned size-prefixed $OMM frames in ONE
  * buffer. Built once — every scale assertion below shares it.
  */
-const CATALOGUE_FRAME_COUNT = 32_141;
-let cataloguePromise: { streamBytes: Uint8Array; recordCount: number } | null = null;
-function catalogueShard(): { streamBytes: Uint8Array; recordCount: number } {
-  if (!cataloguePromise) cataloguePromise = buildBenchCorpus(CATALOGUE_FRAME_COUNT);
-  return cataloguePromise!;
+const CATALOG_FRAME_COUNT = 32_141;
+let catalogPromise: { streamBytes: Uint8Array; recordCount: number } | null = null;
+function catalogShard(): { streamBytes: Uint8Array; recordCount: number } {
+  if (!catalogPromise) catalogPromise = buildBenchCorpus(CATALOG_FRAME_COUNT);
+  return catalogPromise!;
 }
 
 /** Total bytes a persistence store is holding, and per key — the IndexedDB total. */
@@ -83,9 +83,9 @@ function persistedTotals(store: MemoryFlatSqlPersistenceStore): { total: number;
 
 describe('a size-prefixed stream is not a record (the 2.0.17 false positive)', () => {
   it('refuses the shard as a single record, exactly where the Go host refuses it', () => {
-    const { streamBytes } = catalogueShard();
-    // Catalogue scale, so the classifier is exercised on the real shape.
-    expect(countFlatBufferStreamFramesWithFileId(streamBytes, '$OMM')).toBe(CATALOGUE_FRAME_COUNT);
+    const { streamBytes } = catalogShard();
+    // Catalog scale, so the classifier is exercised on the real shape.
+    expect(countFlatBufferStreamFramesWithFileId(streamBytes, '$OMM')).toBe(CATALOG_FRAME_COUNT);
     expect(streamBytes.byteLength).toBeGreaterThan(10_000_000);
 
     // THE REGRESSION. In 2.0.17 this was `true` — the whole 10.5 MB shard
@@ -110,8 +110,8 @@ describe('a size-prefixed stream is not a record (the 2.0.17 false positive)', (
   });
 
   it('classifies the shard positively, and never mistakes opaque bytes for one', () => {
-    const { streamBytes } = catalogueShard();
-    expect(countFlatBufferStreamFramesWithFileId(streamBytes, '$OMM')).toBe(CATALOGUE_FRAME_COUNT);
+    const { streamBytes } = catalogShard();
+    expect(countFlatBufferStreamFramesWithFileId(streamBytes, '$OMM')).toBe(CATALOG_FRAME_COUNT);
     expect(countFlatBufferStreamFramesWithFileId(streamBytes, '$CAT')).toBe(0);
 
     // Opaque payloads, including ones whose leading u32 is enormous or whose
@@ -299,9 +299,9 @@ describe('THE ENVELOPE RULING — a shard lives in the lane, not in both', () =>
   });
 });
 
-describe('catalogue scale: the gate from the task, and byte identity', () => {
+describe('catalog scale: the gate from the task, and byte identity', () => {
   it('opens the lane, materializes every frame, and costs ONE shard on disk', async () => {
-    const { streamBytes } = catalogueShard();
+    const { streamBytes } = catalogShard();
     const persistenceStore = new MemoryFlatSqlPersistenceStore();
 
     // Opened the way the Orbital Console opens it — plus the schemas that
@@ -320,11 +320,11 @@ describe('catalogue scale: the gate from the task, and byte identity', () => {
         shardCid: digest(streamBytes),
       });
       expect(result.standardId).toBe('OMM');
-      expect(result.frames).toBe(CATALOGUE_FRAME_COUNT);
+      expect(result.frames).toBe(CATALOG_FRAME_COUNT);
 
       // GATE 2 — rows == frame count. On 2.0.17 with schemas passed: 0.
       const rows = await store.standardsStore!.query('SELECT COUNT(*) AS n FROM OMM', 'OMM');
-      expect(Number((rows.records[0] as Record<string, unknown>).n)).toBe(CATALOGUE_FRAME_COUNT);
+      expect(Number((rows.records[0] as Record<string, unknown>).n)).toBe(CATALOG_FRAME_COUNT);
 
       await getSharedFlatSqlIoRouter().flush();
 
@@ -357,7 +357,7 @@ describe('catalogue scale: the gate from the task, and byte identity', () => {
   }, 240_000);
 
   it('round-trips 32,141 frames BYTE-IDENTICALLY, across teardown and reopen', async () => {
-    const { streamBytes } = catalogueShard();
+    const { streamBytes } = catalogShard();
     const shardDigest = digest(streamBytes);
     const persistenceStore = new MemoryFlatSqlPersistenceStore();
     const open = () => FlatSQLStorage.open({
@@ -398,7 +398,7 @@ describe('catalogue scale: the gate from the task, and byte identity', () => {
     // journal replay goes straight to `insertEnvelope` + `mirrorIntoStandard`,
     // and the mirror now correctly declines a stream instead of feeding it to
     // a one-record ingest. No layout changed, so there is nothing to migrate.
-    const { streamBytes } = catalogueShard();
+    const { streamBytes } = catalogShard();
     const persistenceStore = new MemoryFlatSqlPersistenceStore();
 
     // Build the legacy state the way 2.0.17 did: shard through `store()`.
@@ -445,9 +445,9 @@ describe('catalogue scale: the gate from the task, and byte identity', () => {
 
       // The caller re-caches through the new surface and gets real rows.
       const result = await upgraded.storeStream(streamBytes, { source: 'celestrak-gp' });
-      expect(result.ingested).toBe(CATALOGUE_FRAME_COUNT);
+      expect(result.ingested).toBe(CATALOG_FRAME_COUNT);
       const after = await upgraded.standardsStore!.query('SELECT COUNT(*) AS n FROM OMM', 'OMM');
-      expect(Number((after.records[0] as Record<string, unknown>).n)).toBe(CATALOGUE_FRAME_COUNT);
+      expect(Number((after.records[0] as Record<string, unknown>).n)).toBe(CATALOG_FRAME_COUNT);
     } finally {
       await upgraded.close();
     }

@@ -95,7 +95,7 @@ export interface FlatSqlIoStoreOptions {
  * `MemoryFlatSqlPersistenceStore` is a legitimate backend here, not a stub: it
  * survives engine teardown within a process and is exactly what the ephemeral
  * lane should do. What it cannot do is survive the process, and the test matrix
- * asserts that documented behaviour rather than skipping it.
+ * asserts that documented behavior rather than skipping it.
  */
 export function createFlatSqlIoStoreBackend(
   store: LocalFlatSqlPersistenceStore,
@@ -279,7 +279,7 @@ type DurableDatabase = Pick<DurableFlatSqlDatabase, 'openState' | 'reindexAll' |
  * The boot sequence, in one place so every caller performs it identically:
  * open state, and on ANY negative code fall back to a full re-derivation from
  * the stream. Every negative code is recoverable and the worst case is exactly
- * the behaviour hosts have today — so a failure here is a cost, never a loss.
+ * the behavior hosts have today — so a failure here is a cost, never a loss.
  */
 export function restoreFlatSqlState<TDatabase extends DurableDatabase>(
   db: TDatabase,

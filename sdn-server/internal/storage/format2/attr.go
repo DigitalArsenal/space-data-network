@@ -39,7 +39,7 @@ type RecordAttr struct {
 	// seconds (the legacy tag row's created_at, served as materialized_at);
 	// 0 = absent.
 	SourceTimestamp int64
-	LicenceKey      string
+	LicenseKey      string
 	Tag             SourceTag
 	// MigratedGseq is store-migrate's legacy sdn_record_index.rowid for a
 	// FIRST copy (flatsql 3.2.0, PARTITION-STORE.md §31): the engine keeps it
@@ -85,8 +85,8 @@ func BuildRecordAttr(a RecordAttr) []byte {
 	if a.SupersedeKey != "" {
 		sk = b.CreateString(a.SupersedeKey)
 	}
-	if a.LicenceKey != "" {
-		lk = b.CreateString(a.LicenceKey)
+	if a.LicenseKey != "" {
+		lk = b.CreateString(a.LicenseKey)
 	}
 	b.StartObject(7)
 	b.PrependUint64Slot(6, a.MigratedGseq, 0)

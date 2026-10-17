@@ -102,7 +102,7 @@ func (s *FlatSQLStore) QuerySandboxedStream(sql string, caps flatsqlrt.SandboxCa
 // unsanitized — that path is the wire format) and encodes them to JSON inside
 // a wasm node. Those bytes never pass through here, so the host closes them
 // where they reach the socket instead: flowrt/httpmount_json_wire.go holds
-// every JSON-labelled response body of every mount to RFC 8259 (UTF-8, and
+// every JSON-labeled response body of every mount to RFC 8259 (UTF-8, and
 // never zero bytes). Sanitizing here as well is not redundant — the storage
 // capability answers module callers that never touch HTTP.
 //

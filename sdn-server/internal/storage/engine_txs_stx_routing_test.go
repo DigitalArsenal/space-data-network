@@ -81,7 +81,7 @@ func buildEngineSTX(t *testing.T, id, siteID string) []byte {
 }
 
 // TestTXSAndSTXAreEngineRoutedLikeEveryOtherStandard is the storage half of
-// the v1.198.0 pin, and it names the query the RF catalogue is actually read
+// the v1.198.0 pin, and it names the query the RF catalog is actually read
 // with.
 //
 // ALL-STANDARDS-ENGINE-ROUTED (owner law 2026-08-25): every embedded standard

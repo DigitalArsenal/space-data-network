@@ -242,7 +242,7 @@ func identityWizardMnemonic(cfg *config.Config) (string, error) {
 		}
 	}
 
-	// Same reason: MnemonicPathResolved honours SDN_MNEMONIC_FILE and yields
+	// Same reason: MnemonicPathResolved honors SDN_MNEMONIC_FILE and yields
 	// the identical default path (config.KeyDir joins <storage dir>/keys).
 	mnemonicPath := config.MnemonicPathResolved(cfg)
 	if err := keys.EnforceKeyFilePermissions(mnemonicPath); err != nil {
@@ -364,7 +364,7 @@ func runIdentityWizardWithProfile(ctx context.Context, in io.Reader, out io.Writ
 			return err
 		}
 		if !accepted {
-			return errors.New("identity wizard cancelled")
+			return errors.New("identity wizard canceled")
 		}
 	}
 

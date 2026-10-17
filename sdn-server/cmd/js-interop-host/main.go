@@ -34,7 +34,7 @@
 // both transports authenticate a self-signed certificate by hash rather than
 // through a CA, and those components are what make a browser accept the
 // connection.
-// The process runs until stdin reaches EOF or it is signalled.
+// The process runs until stdin reaches EOF or it is signaled.
 package main
 
 import (

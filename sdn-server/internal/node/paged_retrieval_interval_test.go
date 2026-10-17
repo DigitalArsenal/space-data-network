@@ -51,7 +51,7 @@ func recordPagedChunk(t *testing.T, n *Node, batchID string, age time.Duration) 
 }
 
 // WITHOUT the knob the lane is gated for three hours after a chunk lands —
-// the behaviour every other lane keeps, pinned here so the default cannot
+// the behavior every other lane keeps, pinned here so the default cannot
 // drift while this feature exists.
 func TestPagedLaneWithoutOverrideKeepsTheThreeHourWindow(t *testing.T) {
 	n := newPagedLaneNode(t, "")

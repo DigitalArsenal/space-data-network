@@ -6,7 +6,7 @@ Anthony "TJ" Koury III and Claude Opus 5.5
 
 Koury: Edgesource, Space Data Network · tj@edgesource.com. Claude: Anthropic.
 
-Technical whitepaper 1.0 | 11 October 2026
+Technical whitepaper 1.1 | 17 October 2026
 
 Numerical evidence cutoff: 11 October 2026
 
@@ -44,15 +44,17 @@ Publication is transactional: acquire and hash the bytes, verify, normalize, val
 
 Each experiment's numbers come from a run manifest: the repository and module commits, each module's WebAssembly SHA-256 and the SHA-256 of every input; reports are generated from metrics<sup>[4](#r4)</sup>. The experiments' public site runs the same modules in a web browser: a V1 seed reproduces the committed result exactly, and any Orekit case re-runs from its exact request. Space-Track element sets, SpaceX and Planet files and SET's indices are cited by URL and SHA-256, not copied.
 
+FFM (Full Force Model) is SDN's numerical orbit propagator and the force model it integrates by default: the geopotential, the Sun, Moon and planets, atmospheric drag, solar and Earth radiation pressure, solid and ocean tides and relativity, in the frames and time scales of profile FFM-1<sup>[10](#r10)</sup>.
+
 | Evidence | Commit |
 | --- | --- |
 | Experiments V1, E1–E8, E13 and E14 | orbit-accuracy-experiments `357d992d6c62daac4ccbb2fd230634ac292192b8` |
-| HPOP 1.3.0, its Orekit suite, screen and covariance calibration; maneuver detection 0.3.0 | space-data-network-modules `be9ac0db21cd95d52e184bb45d74d73dcf1f09ac` |
-| HPOP in V1 | space-data-network-modules `750b6399173a2678b8e8d0885557976d17a9ad5c` |
+| FFM 1.3.0, its Orekit suite, screen and covariance calibration; maneuver detection 0.3.0 | space-data-network-modules `be9ac0db21cd95d52e184bb45d74d73dcf1f09ac` |
+| FFM in V1 | space-data-network-modules `750b6399173a2678b8e8d0885557976d17a9ad5c` |
 | VCM adapter | space-data-network-modules `1879d8c5c17c061e157c100723a8423c59fd98e2` |
 | Vimpel conversion and refinement | space-data-network-modules `49e159d7003cac3d3e65b03170f11909fa86dd2c` |
 
-HPOP's WebAssembly binary in V1, SHA-256:
+FFM's WebAssembly binary in V1, SHA-256:
 
 ```text
 473d527175de6606ccf305c45b37218288634fa9de2dcab0d72564a190bdabd1
@@ -133,3 +135,7 @@ Haas, A., et al. Bringing the web up to speed with WebAssembly. PLDI 2017, 185�
 ### R9
 
 Taufer, M., et al. Homogeneous redundancy: a technique to ensure integrity of molecular simulation results using public computing. IPDPS 2005. [doi:10.1109/IPDPS.2005.247](https://doi.org/10.1109/IPDPS.2005.247)
+
+### R10
+
+Edgesource. FFM (Full Force Model): its definition and profile FFM-1. SDN modules repository (space-data-network-modules), commit 5cc2d3b68edcc89fcab61ab6168fa83f0ed32b86: `propagator/ffm/FFM.md`, `propagator/ffm/ffm-1.profile.json` (FFM-1 sha256=dd00c23b0d2df99ea1a95f59cd853cdae0d6eb3d2f96fb11b05a58e1073e10ec), checked against the module's code defaults by `propagator/ffm/tests/ffm-profile-check.mjs`. Private repository, available on request ([tj@edgesource.com](mailto:tj@edgesource.com)).

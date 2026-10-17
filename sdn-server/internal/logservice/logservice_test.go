@@ -443,11 +443,11 @@ func TestSecp256k1LogSignaturesHashOnce(t *testing.T) {
 	}
 
 	// A record that declares Ed25519 while carrying a secp256k1 signature is
-	// mislabelled, not merely unverifiable.
-	mislabelled := append([]PLGInfo(nil), entries...)
-	mislabelled[0].SignatureType = sds.SignatureTypeEd25519
-	if err := VerifyChain(mislabelled, pub); err == nil {
-		t.Fatal("VerifyChain accepted a secp256k1 signature labelled Ed25519")
+	// mislabeled, not merely unverifiable.
+	mislabeled := append([]PLGInfo(nil), entries...)
+	mislabeled[0].SignatureType = sds.SignatureTypeEd25519
+	if err := VerifyChain(mislabeled, pub); err == nil {
+		t.Fatal("VerifyChain accepted a secp256k1 signature labeled Ed25519")
 	}
 }
 

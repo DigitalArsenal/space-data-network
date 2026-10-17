@@ -42,7 +42,7 @@ const Unspecified = "UNSPECIFIED"
 // invented here, and TestMappingMatchesRatifiedVocabulary holds it to the
 // generated enums.
 //
-// Two members deserve a note because they look like judgement calls and are
+// Two members deserve a note because they look like judgment calls and are
 // not:
 //
 //   - Basilisk is a vendor-derived name that owner law 2026-08-06 forbids in a

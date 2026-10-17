@@ -98,7 +98,7 @@ type PolicyEngine interface {
 }
 
 // RequirePolicy returns a middleware that applies an ABAC policy check AFTER
-// the standard trust-level gate (defence in depth).  The caller supplies:
+// the standard trust-level gate (defense in depth).  The caller supplies:
 //   - action: the operation being attempted.
 //   - resourceFn: a function that extracts the Resource from the request; called
 //     only when a session is present and the engine is non-nil.

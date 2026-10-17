@@ -71,7 +71,7 @@ import (
 
 const (
 	// serviceNonceTTL is the Council's ceiling, not a chosen convenience: "TTL
-	// <= 120s". A minted nonce is a licence to darken the host; it expires while
+	// <= 120s". A minted nonce is a license to darken the host; it expires while
 	// the operator is still looking at the dialog that asked for it.
 	serviceNonceTTL = 120 * time.Second
 	// serviceActionMinInterval is the >= 60s rate limit (Hephaestus). Measured
@@ -83,7 +83,7 @@ const (
 	serviceNonceMax = 64
 )
 
-// serviceNonce is one minted licence. It binds everything that must not vary
+// serviceNonce is one minted license. It binds everything that must not vary
 // between the mint and the spend.
 type serviceNonce struct {
 	action    hostsvc.Action
@@ -119,7 +119,7 @@ func (s *serviceControlState) clock() time.Time {
 
 // mint creates a nonce bound to (action, unit, xpub) and returns its id and the
 // bytes the client must sign. Sweeps expired entries first, so the table cannot
-// fill with dead licences.
+// fill with dead licenses.
 func (s *serviceControlState) mint(action hostsvc.Action, unit, xpub string) (string, []byte, time.Time, error) {
 	challenge := make([]byte, 32)
 	if _, err := rand.Read(challenge); err != nil {
@@ -252,7 +252,7 @@ type serviceActionRequest struct {
 	ClientPubKeyHex string `json:"client_pubkey_hex"`
 }
 
-// handleServiceNonce mints the licence.
+// handleServiceNonce mints the license.
 //
 //	POST /api/node/service/nonce {"action":"restart"|"stop"}
 //
@@ -325,7 +325,7 @@ func handleServiceNonce(state *serviceControlState, authHandler *auth.Handler) h
 	}
 }
 
-// handleServiceAction spends the licence and acts.
+// handleServiceAction spends the license and acts.
 //
 //	POST /api/node/service/restart
 //	POST /api/node/service/stop
@@ -419,7 +419,7 @@ func handleServiceAction(state *serviceControlState, authHandler *auth.Handler) 
 		}
 
 		// SINGLE USE: consumed here, before verification, so a failed attempt
-		// burns the licence.
+		// burns the license.
 		pending, found := state.consume(req.NonceID)
 		if !found {
 			refuseService(w, http.StatusForbidden, serviceRefusal{Reason: "unknown_nonce", Action: string(action), Unit: probe.Unit, Message: "no such nonce, or it has already been used"})

@@ -10,7 +10,7 @@ package flowrt
 // contract the host itself writes onto the wire under a Content-Type it
 // stamps into the response header block:
 //
-//  1. A JSON text is UTF-8 (RFC 8259 §8.1). A body labelled application/json
+//  1. A JSON text is UTF-8 (RFC 8259 §8.1). A body labeled application/json
 //     that carries an invalid byte is not "slightly off" — every strict
 //     reader (encoding/json, JSON.parse over fetch, jq) rejects the WHOLE
 //     body, so one hostile string in one record poisons every other row in
@@ -40,7 +40,7 @@ package flowrt
 // grow a record encoder to cover for it.
 //
 // EXACTLY TWO PROPERTIES ARE ENFORCED HERE, AND WELL-FORMEDNESS IS NOT ONE OF
-// THEM. For every mount, on any response the flow itself labelled JSON, the
+// THEM. For every mount, on any response the flow itself labeled JSON, the
 // host guarantees that the body it writes is VALID UTF-8 (each invalid run
 // replaced with U+FFFD at the last possible moment) and that a body-bearing
 // status does not produce ZERO bytes (refused with an honest 502 instead of a
@@ -56,7 +56,7 @@ package flowrt
 // the HOST's, and that is what this file is.
 //
 // COST AND BLAST RADIUS. The scan runs only on responses the flow itself
-// labelled JSON — the FlatBuffer stream path (application/vnd.sdn.
+// labeled JSON — the FlatBuffer stream path (application/vnd.sdn.
 // flatbuffers.stream, the wirespeed lane) never enters it — and it is one
 // utf8.Valid pass over the body, which allocates nothing unless the body was
 // already going to be rejected. MEASURED on this laptop, unloaded: 130 MiB of
@@ -75,7 +75,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/httpabi"
 )
 
-// jsonWireGuard sanitizes a JSON-labelled response body as it streams. The
+// jsonWireGuard sanitizes a JSON-labeled response body as it streams. The
 // body arrives in frames, so a multi-byte rune can be SPLIT across frames:
 // the guard holds a trailing well-formed-so-far prefix back as carry rather
 // than mistaking it for an invalid byte and replacing it (which would corrupt
@@ -163,7 +163,7 @@ func utf8SequenceLen(c byte) int {
 	}
 }
 
-// declaresJSONBody reports whether the flow labelled this response as JSON —
+// declaresJSONBody reports whether the flow labeled this response as JSON —
 // application/json, text/json, or any structured suffix (+json), parameters
 // (charset, profile) ignored.
 func declaresJSONBody(headers []httpabi.Header) bool {

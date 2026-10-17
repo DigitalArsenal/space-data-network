@@ -107,7 +107,7 @@ type boundedReadinessProbe struct {
 
 func (p *boundedReadinessProbe) check(ctx context.Context, deps healthDeps) string {
 	if ctx.Err() != nil {
-		return "probe cancelled"
+		return "probe canceled"
 	}
 	p.mu.Lock()
 	attempt := p.pending
@@ -133,7 +133,7 @@ func (p *boundedReadinessProbe) check(ctx context.Context, deps healthDeps) stri
 	case <-attempt.done:
 		return attempt.reason
 	case <-ctx.Done():
-		return "probe cancelled"
+		return "probe canceled"
 	case <-timer.C:
 		return "readiness probe busy"
 	}

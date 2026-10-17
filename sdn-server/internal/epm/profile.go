@@ -72,7 +72,7 @@ func (s *Service) UpdateProfileFromEPM(data []byte) error {
 	return s.UpdateProfile(profile)
 }
 
-// EncodeProfileEPM serialises a profile as an unsigned, size-prefixed $EPM
+// EncodeProfileEPM serializes a profile as an unsigned, size-prefixed $EPM
 // FlatBuffer: the wire form PUT /api/node/epm accepts. The node re-signs and
 // re-keys the record itself, so key and signature fields are left empty.
 func EncodeProfileEPM(profile *Profile) ([]byte, error) {

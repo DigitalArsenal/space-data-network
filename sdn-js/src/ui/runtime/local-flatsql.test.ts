@@ -381,7 +381,7 @@ describe('local FlatSQL datastore', () => {
         standardId: 'CAT',
         tableName: 'CAT',
         fileId: '$CAT',
-        // The production engine catalogue lowers enum storage to its wire
+        // The production engine catalog lowers enum storage to its wire
         // scalar; mirror that representation for this focused execution lane.
         schema: CAT_SCHEMA_WITH_SCALAR_OWNER,
       }],

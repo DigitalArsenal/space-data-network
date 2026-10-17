@@ -19,7 +19,7 @@ package main
 // CHECK here and no daemon-lifecycle verb anywhere in this file: remote process
 // control over HTTP is a NEW HOST CAPABILITY and a trust-model expansion, which
 // is STOPPED FOR THE OWNER (Hermes charter; the auth half is Seal Council
-// territory). The dashboard does not render those buttons either — a greyed
+// territory). The dashboard does not render those buttons either — a grayed
 // button advertises a capability the node does not have.
 //
 // AUTHORITY. Admin-only, two independent locks, exactly like /api/node/epm's

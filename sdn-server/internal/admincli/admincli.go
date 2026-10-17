@@ -165,7 +165,7 @@ func Init(ctx context.Context, opts Options, term Terminal, keys ServerKeys, wal
 			return walletderive.Enrollment{}, err
 		}
 		if !ok {
-			return walletderive.Enrollment{}, errors.New("cancelled")
+			return walletderive.Enrollment{}, errors.New("canceled")
 		}
 	}
 

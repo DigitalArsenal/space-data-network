@@ -41,14 +41,14 @@ const (
 //
 // 64 MiB is chosen against MEASURED record sizes, not a round number:
 //   - $OMM frames run 228-268 B and $CAT 132-188 B (31,141 and 69,998 real
-//     frames walked in flatsql-abi-stream-contract-read), so a catalogue-scale
+//     frames walked in flatsql-abi-stream-contract-read), so a catalog-scale
 //     window of ~250K small records is ~60 MB — the count limits still bind
 //     first for ordinary feeds and shard identity for them does not change;
 //   - it is 1/8 of DefaultShardGroupCARMaxSourceBytes (512 MiB), so a CAR
 //     bundle still groups a useful number of shards;
 //   - it keeps one shard, its deterministic index, and the engine response
 //     that builds it comfortably inside the wasm32 4 GiB ceiling even when a
-//     query materialises a second copy.
+//     query materializes a second copy.
 //
 // A single record larger than the budget is still published WHOLE, as its own
 // shard: buffers are never split.
@@ -57,14 +57,14 @@ const DefaultDatasetPublicationMaxShardBytes int64 = 64 << 20
 // DatasetPublicationRequest describes a local request to export, pin, sign,
 // and announce a dataset update from the daemon's current FlatSQL store.
 //
-// There is deliberately NO licence field here. A publication's licence terms
+// There is deliberately NO license field here. A publication's license terms
 // are a property of the source batch that was ingested — recorded at ingest
 // from the parser module's own declaration (storage.ingest_with_source) and
 // looked up per batch at export time — not of the caller who asks for the
 // batch to be published. An override here would let a local caller re-license
 // somebody else's data by typing a different string into a request body,
-// which is exactly the failure the licence carriage exists to prevent. Fix a
-// wrong licence at the source (re-ingest the batch with correct metadata, or
+// which is exactly the failure the license carriage exists to prevent. Fix a
+// wrong license at the source (re-ingest the batch with correct metadata, or
 // UpsertSourceBatchLicense), then republish.
 type DatasetPublicationRequest struct {
 	DatastoreKey string `json:"datastoreKey,omitempty"`
@@ -77,7 +77,7 @@ type DatasetPublicationRequest struct {
 	ChunkSize    int    `json:"chunkSize,omitempty"`
 	// MaxShardBytes caps ONE shard in bytes. 0 = the node default
 	// (DefaultDatasetPublicationMaxShardBytes); negative = explicitly
-	// unbounded (the pre-2026-08-07 behaviour, kept so an operator can
+	// unbounded (the pre-2026-08-07 behavior, kept so an operator can
 	// reproduce an old shard exactly).
 	MaxShardBytes       int64    `json:"maxShardBytes,omitempty"`
 	FullCatalog         bool     `json:"fullCatalog,omitempty"`

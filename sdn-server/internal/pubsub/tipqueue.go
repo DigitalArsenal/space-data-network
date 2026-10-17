@@ -289,7 +289,7 @@ func (tq *TipQueue) receiveLoop() {
 		msg, err := tq.subscription.Next(tq.ctx)
 		if err != nil {
 			if tq.ctx.Err() != nil {
-				return // Context cancelled
+				return // Context canceled
 			}
 			log.Warnf("Error receiving PNM: %v", err)
 			continue

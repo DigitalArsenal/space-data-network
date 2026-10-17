@@ -1,6 +1,6 @@
 /**
- * The connection-monitor policy, and the third-party behaviour it exists to
- * neutralise (`sdn-delivery-client-aborts-its-own-dial-under-slow-load`).
+ * The connection-monitor policy, and the third-party behavior it exists to
+ * neutralize (`sdn-delivery-client-aborts-its-own-dial-under-slow-load`).
  *
  * Two halves, deliberately:
  *
@@ -67,7 +67,7 @@ describe("resolveConnectionMonitorInit", () => {
     expect(init.enabled).toBe(true);
   });
 
-  it("honours an explicit deadline verbatim", () => {
+  it("honors an explicit deadline verbatim", () => {
     const init = resolveConnectionMonitorInit({
       pingTimeout: { minTimeout: 90_000 },
     });
@@ -156,7 +156,7 @@ describe("libp2p connection-monitor contract (installed version)", () => {
     const source = readFileSync(monitorPath, "utf8");
     // libp2p 1.9.4 declared `abortConnectionOnPingFailure` in the .d.ts and
     // never read it, so the abort was unconditional. 3.x reads it and defaults
-    // it to true, which is the same net behaviour - so sdn-js leaves it unset.
+    // it to true, which is the same net behavior - so sdn-js leaves it unset.
     // The day the DEFAULT flips to false, a dead relay stops being reaped and
     // this policy needs a deliberate `abortConnectionOnPingFailure: true`.
     expect(source).toMatch(/abortConnectionOnPingFailure/);

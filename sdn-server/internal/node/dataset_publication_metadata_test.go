@@ -331,7 +331,7 @@ func TestDatasetMetadataReplayRotatesWithinBoundsAndHonorsCancellation(t *testin
 	cancel()
 	n.cacheStoredDatasetCatalogs(ctx, records)
 	if n.datasetCatalogReplayAt != 0 {
-		t.Fatal("cancelled catch-up consumed work")
+		t.Fatal("canceled catch-up consumed work")
 	}
 	n.cacheStoredDatasetCatalogs(context.Background(), records)
 	if n.datasetCatalogReplayAt != 128 {

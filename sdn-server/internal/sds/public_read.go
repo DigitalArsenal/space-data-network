@@ -29,20 +29,20 @@ import "strings"
 // Membership means: "records of this standard, as this node holds them, are
 // public data". Each entry names why.
 var publicReadSchemas = map[string]string{
-	// The catalogue itself. Already anonymous through the flow-served
+	// The catalog itself. Already anonymous through the flow-served
 	// omm/bulk route since loop C.4, and the reason the surface exists.
-	"OMM.fbs": "orbital element sets — the node's primary published catalogue",
-	"CAT.fbs": "catalogue entries (SATCAT lane) — public object metadata",
-	"MPE.fbs": "mean parameter ephemerides derived from the public catalogue",
+	"OMM.fbs": "orbital element sets — the node's primary published catalog",
+	"CAT.fbs": "catalog entries (SATCAT lane) — public object metadata",
+	"MPE.fbs": "mean parameter ephemerides derived from the public catalog",
 	"SPW.fbs": "space weather indices — a public feed by definition",
-	"WXF.fbs": "published weather forecast fields — attribution and source licence travel with each record and batch",
+	"WXF.fbs": "published weather forecast fields — attribution and source license travel with each record and batch",
 	"NCD.fbs": "published native-container descriptors — source byte length, content hash and container metadata make public resources verifiable",
 
 	// RF spectrum (rf-data-suite-program). SatNOGS DB is CC-BY-SA-4.0: the
-	// licence obliges attribution and share-alike, both of which travel in
+	// license obliges attribution and share-alike, both of which travel in
 	// the records (CITATION) and in the batch provenance. Neither is a
 	// reason to withhold the data — the opposite.
-	"RFB.fbs": "RF band specifications — published emitter catalogue (CC-BY-SA-4.0 carried in-record)",
+	"RFB.fbs": "RF band specifications — published emitter catalog (CC-BY-SA-4.0 carried in-record)",
 	"LKS.fbs": "link status — the RF companion standard, same public source class",
 
 	// Announcement / provenance records. These are ALREADY public: PNMs are
@@ -66,7 +66,7 @@ var publicReadSchemas = map[string]string{
 	// published groups unverifiable to a browser — the PNM/DPM rationale
 	// exactly. Ownership is the signing key on the envelope, never the read
 	// gate: anonymous READ does not imply anonymous PUBLISH.
-	"EGP.fbs": "entity groups — membership assertions over already-public catalogue records, already broadcast on public channel topics",
+	"EGP.fbs": "entity groups — membership assertions over already-public catalog records, already broadcast on public channel topics",
 }
 
 // IsPublicReadSchema reports whether records of this standard are served on the

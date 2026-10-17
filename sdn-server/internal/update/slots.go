@@ -279,7 +279,7 @@ func applyRollbackPrune(plan []string) (removed []string, errs []error) {
 // selectSlot resolves the rollback target.
 //
 // The default (empty selector) is the immediately-previous verified build —
-// slots[0] — because that is the only reverse target whose behaviour is known:
+// slots[0] — because that is the only reverse target whose behavior is known:
 // it was running on this box minutes ago. An older slot is reachable ONLY by
 // naming it, and that asymmetry is deliberate. A rollback that skips
 // generations silently reverts every lane that landed in between; the

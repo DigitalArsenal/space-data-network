@@ -38,7 +38,7 @@ const (
 // PeerIDFromPublicKey derives the libp2p peer ID for a public key supplied as
 // text. Accepted encodings, tried in this order:
 //
-//  1. A protobuf-marshalled libp2p public key (crypto.MarshalPublicKey output)
+//  1. A protobuf-marshaled libp2p public key (crypto.MarshalPublicKey output)
 //     in standard base64, raw-URL base64, or hex. This is the canonical wire
 //     form and carries its own key type.
 //  2. A raw 32-byte Ed25519 public key in hex or base64.
@@ -59,7 +59,7 @@ func PeerIDFromPublicKey(encoded string) (peer.ID, error) {
 		return "", fmt.Errorf("public_key must be hex or base64")
 	}
 
-	// 1. Marshalled libp2p public key (self-describing).
+	// 1. Marshaled libp2p public key (self-describing).
 	for _, raw := range raws {
 		if pub, err := libp2pcrypto.UnmarshalPublicKey(raw); err == nil {
 			return peer.IDFromPublicKey(pub)

@@ -227,7 +227,7 @@ describe("SDNNode.subscribeRaw", () => {
     );
     expect(jsonSeen).toEqual([{ NORAD_CAT_ID: 25544 }]);
 
-    // ...and binary is still dropped by that path (the documented behaviour
+    // ...and binary is still dropped by that path (the documented behavior
     // subscribeRaw exists to work around).
     pubsub.emit(PNM_TOPIC, makeSizePrefixedPNM(), "peer");
     expect(jsonSeen).toHaveLength(1);

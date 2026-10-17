@@ -135,7 +135,7 @@
               <tr><td>SGP4 / SDP4</td><td>An analytic general-perturbations theory: mean elements, zonal gravity terms, a simple drag term, and Sun, Moon and resonance terms for deep space.</td><td>The public element sets (two-line element sets and OMMs). Must be run with the same theory the elements were fit with. Good to about a kilometer near epoch, with errors growing by kilometers a day in low orbit.</td></tr>
               <tr><td>Vinti</td><td>An analytic solution in oblate spheroidal coordinates that carries Earth&rsquo;s oblateness exactly, and much of the next zonal terms, instead of as a series approximation.</td><td>Fast, accurate zonal-gravity propagation where drag is small or handled separately.</td></tr>
               <tr><td>Semi-analytic (for example DSST)</td><td>Averages out the fast, short-period motion, integrates the slowly changing mean elements with large steps, then adds the short-period terms back.</td><td>Long spans at modest cost: geostationary and high orbits, lifetime and reentry studies.</td></tr>
-              <tr><td>Numerical (HPOP)</td><td>Direct integration of the equations of motion with a high-degree gravity field, atmospheric drag from a density model corrected by observations, the Sun and Moon, solar radiation pressure, tides and relativity.</td><td>The high-accuracy catalog, precise ephemerides and conjunction screening, when the inputs support it.</td></tr>
+              <tr><td>Numerical (FFM, Full Force Model)</td><td>Direct integration of the equations of motion with a high-degree gravity field, atmospheric drag from a density model corrected by observations, the Sun and Moon, solar radiation pressure, tides and relativity.</td><td>The high-accuracy catalog, precise ephemerides and conjunction screening, when the inputs support it.</td></tr>
             </tbody>
           </table>
         </div>
@@ -190,7 +190,7 @@
           <li><b>Publish</b><span>A sensor operator, satellite owner or lab digitally signs each record with its own private key and publishes it from its node, free or for sale.</span></li>
           <li><b>Keep the original</b><span>Nodes store the exact bytes with the publisher&rsquo;s digital signature. Reprocessing never overwrites a provider&rsquo;s record.</span></li>
           <li><b>Match</b><span>Records from different sources are matched to one physical object by designator, history and trajectory. Ambiguous matches stay separate.</span></li>
-          <li><b>Fit</b><span>Each orbit is fit with the model its evidence supports, up to full numerical propagation (HPOP). Every record names its model, so one theory&rsquo;s elements are never run through another&rsquo;s propagator.</span></li>
+          <li><b>Fit</b><span>Each orbit is fit with the model its evidence supports, up to numerical propagation under the full force model (FFM). Every record names its model, so one theory&rsquo;s elements are never run through another&rsquo;s propagator.</span></li>
           <li><b>Publish a version</b><span>Each catalog version names its inputs, its recipe and the exact modules that ran. Anyone can rerun it.</span></li>
           <li><b>Screen</b><span>Conjunction screening runs as open WebAssembly modules. Operators can screen a maneuver encrypted, without handing it to a competitor.</span></li>
         </ol>

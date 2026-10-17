@@ -239,7 +239,7 @@ func TestExportDatasetWindowCarriesSourceBatchLicense(t *testing.T) {
 // carries them (this half was already correct — TestExportDatasetWindow
 // CarriesSourceBatchLicense above covers the half that was missing), and
 // must leave them unset (not empty-string) when the batch declares none, so
-// a licence-free batch still produces byte-identical vtables/signatures.
+// a license-free batch still produces byte-identical vtables/signatures.
 func TestBuildDPMSourceBatchWritesLicenseFields(t *testing.T) {
 	licensed := DatasetExportSourceBatch{
 		SourceName:   "satnogs-rfb",

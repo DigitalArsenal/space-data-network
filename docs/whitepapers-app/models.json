@@ -56,19 +56,19 @@
   {
     "paper": "evidence-supported-aso-catalog",
     "section_id": "6-uncertainty",
-    "title": "Covariance through HPOP’s state-transition matrix",
+    "title": "Covariance through FFM’s state-transition matrix",
     "url": "models/evidence-supported-aso-catalog/6-uncertainty.html"
   },
   {
     "paper": "evidence-supported-aso-catalog",
     "section_id": "agreement-with-orekit",
-    "title": "HPOP against Orekit 13.1",
+    "title": "FFM against Orekit 13.1",
     "url": "models/evidence-supported-aso-catalog/agreement-with-orekit.html"
   },
   {
     "paper": "evidence-supported-aso-catalog",
     "section_id": "accuracy-against-precise-orbits",
-    "title": "HPOP against precise orbits",
+    "title": "FFM against precise orbits",
     "url": "models/evidence-supported-aso-catalog/accuracy-against-precise-orbits.html"
   },
   {

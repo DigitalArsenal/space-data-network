@@ -157,9 +157,9 @@ func (s *FlatSQLStore) ExportDatasetWindow(outputDir string, filter IndexedRecor
 	if err != nil {
 		return nil, err
 	}
-	// Licence is batch-keyed state, not per-record: attach it after the
+	// License is batch-keyed state, not per-record: attach it after the
 	// deterministic shard/index bytes are fixed so an unlicensed export is
-	// byte-identical to the pre-licence behaviour.
+	// byte-identical to the pre-license behavior.
 	if err := s.attachSourceBatchLicenses(export); err != nil {
 		return nil, err
 	}
@@ -218,7 +218,7 @@ func (s *FlatSQLStore) RepairDatasetPublicationIndexFromShard(outputDir string, 
 		return nil, fmt.Errorf("repaired shard identity changed")
 	}
 	// A repaired publication is republished from this export, so it must carry
-	// the same licence terms the original DPM bound.
+	// the same license terms the original DPM bound.
 	if err := s.attachSourceBatchLicenses(export); err != nil {
 		return nil, err
 	}

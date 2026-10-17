@@ -12,7 +12,7 @@ import (
 //
 // The anonymous read surface was a literal list containing exactly one
 // per-schema route, "/api/v1/data/omm/bulk". A browser reading the live $RFB
-// catalogue therefore got 401 — and, because the CORS headers are only applied
+// catalog therefore got 401 — and, because the CORS headers are only applied
 // to requests the classifier calls public, it got that 401 WITHOUT
 // Access-Control-Allow-Origin, so the page saw an opaque network failure and
 // could not even report the refusal. Every future standard would have repeated
@@ -53,7 +53,7 @@ func TestPublicDataPlaneAdmitsPublishedStandardsAndRefusesTheRest(t *testing.T) 
 		path   string
 		public bool
 	}{
-		// The live RF catalogue — the read that 401'd.
+		// The live RF catalog — the read that 401'd.
 		{http.MethodGet, "/api/v1/data/rfb/bulk", true},
 		{http.MethodHead, "/api/v1/data/rfb/bulk", true},
 		{http.MethodOptions, "/api/v1/data/rfb/bulk", true},

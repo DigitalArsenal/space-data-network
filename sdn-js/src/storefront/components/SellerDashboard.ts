@@ -147,7 +147,7 @@ export function renderSellerDashboardHTML(props: SellerDashboardProps): string {
 }
 
 function purchaseStatusLabel(status: number): string {
-  const labels = ['Pending', 'Payment Detected', 'Confirmed', 'Completed', 'Failed', 'Cancelled', 'Refund Requested', 'Refunded', 'Expired'];
+  const labels = ['Pending', 'Payment Detected', 'Confirmed', 'Completed', 'Failed', 'Canceled', 'Refund Requested', 'Refunded', 'Expired'];
   return labels[status] ?? 'Unknown';
 }
 

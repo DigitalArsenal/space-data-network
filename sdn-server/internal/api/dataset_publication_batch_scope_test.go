@@ -88,7 +88,7 @@ func TestPublishDatasetUpdatePublishesTheWholeNamedBatch(t *testing.T) {
 }
 
 // An explicit Limit still wins: asking for a head is a legitimate request.
-func TestPublishDatasetUpdateHonoursAnExplicitHeadLimit(t *testing.T) {
+func TestPublishDatasetUpdateHonorsAnExplicitHeadLimit(t *testing.T) {
 	validator, err := sds.NewValidator(nil)
 	if err != nil {
 		t.Fatalf("NewValidator failed: %v", err)

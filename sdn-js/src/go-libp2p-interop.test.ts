@@ -1,5 +1,5 @@
 /**
- * THE INTEROP GATE: a real sdn-js client dialling a real go-libp2p host.
+ * THE INTEROP GATE: a real sdn-js client dialing a real go-libp2p host.
  *
  * sdn-js is the browser client for a network whose servers run go-libp2p
  * (sdn-server pins github.com/libp2p/go-libp2p v0.46.0). Until this file

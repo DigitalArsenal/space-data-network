@@ -62,7 +62,7 @@ type AdminMountDeps struct {
 	// core API uses). Nil means the wall is down (admin.require_auth false).
 	RequireAdmin func(http.HandlerFunc) http.HandlerFunc
 
-	// RunFlowNow fires a flow service's timer once, honouring the retrieval
+	// RunFlowNow fires a flow service's timer once, honoring the retrieval
 	// gate: skipped=true (with the gate's reason) when the debounce refused
 	// it; err when the flow is unknown or failed to start.
 	RunFlowNow func(ctx context.Context, programID string) (skipped bool, reason string, err error)

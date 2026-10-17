@@ -102,11 +102,11 @@ func (n *Node) runAutoRelayService(ctx context.Context) {
 				mu.Unlock()
 				res := relayResources()
 				log.Infof("Circuit-relay HOP service STARTED: AutoNAT reports this node publicly reachable, so it now "+
-					"carries traffic for peers that cannot be dialled (max %d reservations, %d circuits per peer, %s TTL). "+
+					"carries traffic for peers that cannot be dialed (max %d reservations, %d circuits per peer, %s TTL). "+
 					"Set network.enable_relay: never to opt out.",
 					res.MaxReservations, res.MaxCircuits, res.ReservationTTL)
 			case network.ReachabilityPrivate:
-				stop("AutoNAT reports this node is behind NAT; a node that cannot be dialled cannot relay")
+				stop("AutoNAT reports this node is behind NAT; a node that cannot be dialed cannot relay")
 			default:
 				// Unknown: leave whatever state we are in. Flapping the service
 				// on every inconclusive probe would be worse than either answer.

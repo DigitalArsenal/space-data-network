@@ -19,7 +19,7 @@ func TestDefaultConfigPublishesNoLaneAutomatically(t *testing.T) {
 }
 
 // The producer's SHIPPED config is the thing that actually decides whether the
-// RF catalogue reaches the consumer node. A config that no longer parses, or
+// RF catalog reaches the consumer node. A config that no longer parses, or
 // that quietly loses the lane, reproduces the original defect exactly — so the
 // checked-in file is loaded here rather than trusted.
 func TestShippedCelesTrakConfigCarriesTheRFBAutoPublishLane(t *testing.T) {

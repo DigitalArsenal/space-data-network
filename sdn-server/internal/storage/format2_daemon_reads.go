@@ -781,7 +781,7 @@ func (s *FlatSQLStore) f2WindowCount(ctx context.Context, q format2.WindowQuery)
 	}
 	return s.f2.counts.count(f2CountKey(q), mark, func() (int64, error) {
 		// A recount can outlive the page that started it: the store's
-		// context, cancelled at Close.
+		// context, canceled at Close.
 		ctx := s.f2ctx()
 		if len(targets) == 1 && targets[0].table == "" {
 			return s.ps.Count(ctx, q)
@@ -3269,7 +3269,7 @@ func f2SandboxError(err error) error {
 	switch se.Status {
 	case format2.StatusNotAuthorized:
 		code = flatsqlrt.SandboxCodeNotAuthorized
-	case format2.StatusTimeout, format2.StatusCancelled:
+	case format2.StatusTimeout, format2.StatusCanceled:
 		code = flatsqlrt.SandboxCodeTimeout
 	case format2.StatusTooLarge:
 		code = flatsqlrt.SandboxCodeByteCap

@@ -126,7 +126,7 @@ func loadCellularService(t *testing.T, h *celestrakIngestHarness, dist string, n
 }
 
 // loadCellularServiceWithPages takes the linear-memory ceiling explicitly,
-// because on this lane the ceiling IS a behaviour: a chunk whose decode does not
+// because on this lane the ceiling IS a behavior: a chunk whose decode does not
 // fit stops mid-flow with no error, and the pages a box is configured with
 // decide which chunk size is safe there. host-02 runs 8192.
 func loadCellularServiceWithPages(t *testing.T, h *celestrakIngestHarness, dist string, nodeConfig map[string]interface{}, pages uint32) *ServiceFlow {
@@ -205,7 +205,7 @@ func TestCellularIngestFlowLandsSitesUnderTheConfiguredProvider(t *testing.T) {
 		t.Fatalf("expected 6 $TBS sites tagged provider mls-archive, got %d (all tags: %v)", landed, counts)
 	}
 	// ATTRIBUTION. The MLS export shares a decoder with the OpenCelliD bulk
-	// export; it must not share an identity, or stored records carry a licence
+	// export; it must not share an identity, or stored records carry a license
 	// and an authority that never asserted them.
 	for tag := range counts {
 		if strings.HasPrefix(tag, "TBS.fbs|opencellid") {

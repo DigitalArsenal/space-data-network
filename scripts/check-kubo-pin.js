@@ -51,7 +51,7 @@ function linkedKuboVersion(goMod) {
   return /^\s*github\.com\/ipfs\/kubo\s+(v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\s*$/m.exec(goMod)?.[1] ?? null;
 }
 
-// directives returns the replace and exclude lines of a go.mod, normalised
+// directives returns the replace and exclude lines of a go.mod, normalized
 // (block form or single-line form, comments dropped), sorted.
 function directives(goMod) {
   const out = [];

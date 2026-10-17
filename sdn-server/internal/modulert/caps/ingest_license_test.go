@@ -1,8 +1,8 @@
 package caps
 
-// Dataset-publication licence carriage (graph task
+// Dataset-publication license carriage (graph task
 // sdn-dataset-publication-license-carriage): storage.ingest_with_source is the
-// ONLY authority for a batch's licence — the parser node that fetched the
+// ONLY authority for a batch's license — the parser node that fetched the
 // document declares its terms, the host records them against the batch, and
 // publication binds them into the DPM. These tests pin that seam.
 
@@ -50,7 +50,7 @@ func TestIngestWithSourceRecordsBatchLicense(t *testing.T) {
 		t.Fatalf("SourceBatchLicenseFor: %v", err)
 	}
 	if !found {
-		t.Fatalf("ingest did not record the declared batch licence")
+		t.Fatalf("ingest did not record the declared batch license")
 	}
 	if license.License != "CC-BY-SA-4.0" {
 		t.Fatalf("LICENSE = %q", license.License)
@@ -91,6 +91,6 @@ func TestIngestWithSourceWithoutLicenseRecordsNothing(t *testing.T) {
 	if _, found, err := store.SourceBatchLicenseFor("OMM.fbs", "space-data-network-02", "provider-gp", "batch-no-license"); err != nil {
 		t.Fatalf("SourceBatchLicenseFor: %v", err)
 	} else if found {
-		t.Fatalf("ingest without licence metadata invented a licence row")
+		t.Fatalf("ingest without license metadata invented a license row")
 	}
 }

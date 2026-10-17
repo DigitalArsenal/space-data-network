@@ -82,7 +82,7 @@ func TestCapabilityPolicyCLIValidationPrecedesAuthentication(t *testing.T) {
 	}
 }
 
-func TestCapabilityPolicyCLIRefusesAuthFailureAndWrongAcknowledgement(t *testing.T) {
+func TestCapabilityPolicyCLIRefusesAuthFailureAndWrongAcknowledgment(t *testing.T) {
 	for _, status := range []int{http.StatusForbidden, http.StatusOK} {
 		requests := 0
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -106,7 +106,7 @@ func TestCapabilityPolicyCLIRefusesAuthFailureAndWrongAcknowledgement(t *testing
 	}
 }
 
-func TestCapabilityPolicyCLIRequiresRequestedIdentityAcknowledgement(t *testing.T) {
+func TestCapabilityPolicyCLIRequiresRequestedIdentityAcknowledgment(t *testing.T) {
 	for _, field := range []string{"plugin_id", "signer_pubkey_hex"} {
 		t.Run(field, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -123,7 +123,7 @@ func TestCapabilityPolicyCLIRequiresRequestedIdentityAcknowledgement(t *testing.
 			cmd.SetOut(io.Discard)
 			cmd.SetErr(io.Discard)
 			if cmd.Execute() == nil {
-				t.Fatal("missing requested identity acknowledgement accepted")
+				t.Fatal("missing requested identity acknowledgment accepted")
 			}
 		})
 	}

@@ -1,25 +1,396 @@
 {
   "paths": [
-    { "glob": "docs/network-ecosystem-demo.mjs", "reason": "bundled third-party code (library error strings and comments), regenerated from its sources, not edited by hand" },
-    { "glob": "docs/superpowers/plans/2026-04-22-node-identity-epm-directory.md", "reason": "a dated plan whose code blocks quote the code as it was written; historical record" }
+    {
+      "glob": "docs/network-ecosystem-demo.mjs",
+      "reason": "bundled third-party code (library error strings and comments), regenerated from its sources, not edited by hand"
+    },
+    {
+      "glob": "docs/superpowers/plans/2026-04-22-node-identity-epm-directory.md",
+      "reason": "a dated plan whose code blocks quote the code as it was written; historical record"
+    },
+    {
+      "glob": "sdn-server/internal/sds/registry.go",
+      "reason": "schema titles lifted verbatim from the embedded SDS schemas and compared with them by registry_test; fixed in spacedatastandards.org"
+    },
+    {
+      "glob": "sdn-server/internal/sds/validator.go",
+      "reason": "comment names the SDS PNL title verbatim"
+    },
+    {
+      "glob": "sdn-server/cmd/spacedatanetwork/embedded/docs/**",
+      "reason": "embedded operator documentation; the docs session owns documentation and the operator-enrolment URL slug"
+    },
+    {
+      "glob": "deployment/wallet-wasm/**",
+      "reason": "staged copy of hd-wallet-wasm and its wallet UI (error code USER_CANCELLED is the library's wire value)"
+    },
+    {
+      "glob": "tools/paper-reels/**",
+      "reason": "paper reel generator belongs to the docs/papers session"
+    },
+    {
+      "glob": "scripts/check-govulncheck.test.mjs",
+      "reason": "gate script: editing it needs a gate_edit declaration; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "scripts/check-marketing-catalog.mjs",
+      "reason": "gate script: editing it needs a gate_edit declaration; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "scripts/check-npm-audit.mjs",
+      "reason": "gate script: editing it needs a gate_edit declaration; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "scripts/check-npm-audit.test.mjs",
+      "reason": "gate script: editing it needs a gate_edit declaration; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "scripts/check-sdn-js-dependency-layering.mjs",
+      "reason": "gate script: editing it needs a gate_edit declaration; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "sdn-server/internal/license/grant_audit_test.go",
+      "reason": "pending final pass: held by ffm-rename-console-20261016"
+    },
+    {
+      "glob": "sdn-server/internal/node/licensing_incremental_publish_test.go",
+      "reason": "pending final pass: held by ffm-rename-console-20261016"
+    },
+    {
+      "glob": ".github/actions/sdn-go-env/action.yml",
+      "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": ".github/workflows/beta-release-artifacts.yml",
+      "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": ".github/workflows/ci.yml",
+      "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "deployment/celestrak/config.yaml",
+      "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "deployment/release/beta-release-workflow.test.mjs",
+      "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "deployment/release/install-script.test.mjs",
+      "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "deployment/release/publish-fleet-update.mjs",
+      "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "deployment/release/publish-ui-update.mjs",
+      "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "scripts/install.sh",
+      "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "sdn-js/src/helia.test.ts",
+      "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "sdn-js/src/helia.ts",
+      "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "sdn-js/src/node.ts",
+      "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "sdn-server/cmd/spacedatanetwork/admin_ws_upgrade_test.go",
+      "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "sdn-server/cmd/spacedatanetwork/key_material_cli.go",
+      "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "sdn-server/cmd/spacedatanetwork/main.go",
+      "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "sdn-server/cmd/spacedatanetwork/main_test.go",
+      "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "sdn-server/cmd/spacedatanetwork/module_publish_cli.go",
+      "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "sdn-server/cmd/spacedatanetwork/store_migrate_format4_test.go",
+      "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "sdn-server/cmd/spacedatanetwork/store_migrate_test.go",
+      "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "sdn-server/docs/flatsql-store-v2.md",
+      "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "sdn-server/docs/kubo-in-process.md",
+      "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "sdn-server/docs/production-release-2026-09.md",
+      "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "sdn-server/docs/stream-flatbuffers-into-flatsql-survey.md",
+      "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "sdn-server/internal/admincli/manage.go",
+      "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "sdn-server/internal/api/coreapi_test.go",
+      "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "sdn-server/internal/api/publish.go",
+      "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "sdn-server/internal/api/ratelimit.go",
+      "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "sdn-server/internal/api/ratelimit_client_ip_test.go",
+      "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "sdn-server/internal/api/sources.go",
+      "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "sdn-server/internal/auth/handler.go",
+      "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "sdn-server/internal/auth/master_xpub_test.go",
+      "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "sdn-server/internal/auth/root_identity.go",
+      "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "sdn-server/internal/auth/root_identity_test.go",
+      "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "sdn-server/internal/auth/signed_request.go",
+      "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "sdn-server/internal/bootstrap/bootstrap.go",
+      "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "sdn-server/internal/config/config.go",
+      "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "sdn-server/internal/epm/sdnpeers_admission_test.go",
+      "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "sdn-server/internal/flatsqlrt/README.md",
+      "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "sdn-server/internal/modulert/caps/http.go",
+      "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "sdn-server/internal/modulert/caps/http_egress_test.go",
+      "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "sdn-server/internal/modulert/caps/storage.go",
+      "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "sdn-server/internal/modulert/caps/typed_hostcall_e2e_test.go",
+      "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "sdn-server/internal/modulert/hostbridge.go",
+      "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "sdn-server/internal/modulert/module.go",
+      "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "sdn-server/internal/node/grant_key_domain_separation_test.go",
+      "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "sdn-server/internal/node/identity_bundle.go",
+      "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "sdn-server/internal/node/libp2p_stream_admission_test.go",
+      "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "sdn-server/internal/node/node.go",
+      "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "sdn-server/internal/peers/identity_test.go",
+      "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "sdn-server/internal/peers/trust.go",
+      "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "sdn-server/internal/update/signal.go",
+      "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "sdn-server/internal/updatesign/updatesign.go",
+      "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "sdn-server/internal/wasm/hdwallet_identity.go",
+      "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "sdn-server/internal/storage/format2/attr_test.go",
+      "reason": "test strings are inputs of recorded golden bytes (licence-g in the hex); regenerate the golden to change them"
+    },
+    {
+      "glob": "**/testdata/**",
+      "reason": "test data are sha-pinned or recorded inputs; regenerate, do not edit"
+    },
+    {
+      "glob": "**/fixtures/**",
+      "reason": "test fixtures are inputs and recorded outputs; regenerate, do not edit"
+    },
+    {
+      "glob": "sdn-server/internal/modulert/publication_signature_vectors_test.go",
+      "reason": "vector names mirror the sha-pinned testdata/statement-domain-vectors.json"
+    }
   ],
   "phrases": [
-    { "pattern": "IERS Earth Orientation Centre", "reason": "proper name of the IERS office (Observatoire de Paris)" },
-    { "pattern": "IERS Rapid Service/Prediction Centre", "reason": "proper name of the IERS office (U.S. Naval Observatory)" },
-    { "pattern": "Rapid Service/Prediction Centre", "reason": "proper name of the IERS office (U.S. Naval Observatory)" },
-    { "pattern": "GFZ Helmholtz Centre for Geosciences", "reason": "proper name of the institution" },
-    { "pattern": "National Space Operations Centre", "reason": "proper name (UK National Space Operations Centre)" },
-    { "pattern": "Space Operations Centre", "reason": "proper name (UK Space Operations Centre, its badge credit)" },
-    { "pattern": "Space Situational Awareness Centre", "reason": "proper name (German Space Situational Awareness Centre, GSSAC)" },
-    { "pattern": "Defence Space Agency", "reason": "proper name (India's Defence Space Agency)" },
-    { "pattern": "Open Government Licence", "reason": "title of the UK licence (Open Government Licence v3.0)" },
-    { "pattern": "Generalisable bias correction of two-line element sets", "reason": "cited title (Hallgarten La Casta and Amato), published spelling" },
-    { "pattern": "Modelling the global ocean tides", "reason": "cited title (Lyard et al. 2006), published spelling" },
-    { "pattern": "never \"catalogue\"", "flags": "", "paths": ["docs/STYLE-GUIDE.md"], "reason": "the style guide names the variant it forbids" }
+    {
+      "pattern": "IERS Earth Orientation Centre",
+      "reason": "proper name of the IERS office (Observatoire de Paris)"
+    },
+    {
+      "pattern": "IERS Rapid Service/Prediction Centre",
+      "reason": "proper name of the IERS office (U.S. Naval Observatory)"
+    },
+    {
+      "pattern": "Rapid Service/Prediction Centre",
+      "reason": "proper name of the IERS office (U.S. Naval Observatory)"
+    },
+    {
+      "pattern": "GFZ Helmholtz Centre for Geosciences",
+      "reason": "proper name of the institution"
+    },
+    {
+      "pattern": "National Space Operations Centre",
+      "reason": "proper name (UK National Space Operations Centre)"
+    },
+    {
+      "pattern": "Space Operations Centre",
+      "reason": "proper name (UK Space Operations Centre, its badge credit)"
+    },
+    {
+      "pattern": "Space Situational Awareness Centre",
+      "reason": "proper name (German Space Situational Awareness Centre, GSSAC)"
+    },
+    {
+      "pattern": "Defence Space Agency",
+      "reason": "proper name (India's Defence Space Agency)"
+    },
+    {
+      "pattern": "Open Government Licence",
+      "reason": "title of the UK licence (Open Government Licence v3.0)"
+    },
+    {
+      "pattern": "Generalisable bias correction of two-line element sets",
+      "reason": "cited title (Hallgarten La Casta and Amato), published spelling"
+    },
+    {
+      "pattern": "Modelling the global ocean tides",
+      "reason": "cited title (Lyard et al. 2006), published spelling"
+    },
+    {
+      "pattern": "never \"catalogue\"",
+      "flags": "",
+      "paths": [
+        "docs/STYLE-GUIDE.md"
+      ],
+      "reason": "the style guide names the variant it forbids"
+    },
+    {
+      "pattern": "\"[Cc]ancelled\"|\\bcancelled\", \"canceled\"",
+      "flags": "",
+      "paths": [
+        "sdn-server/internal/license/**"
+      ],
+      "reason": "persisted entitlement status value 'cancelled' (the store accepts both spellings on read)"
+    },
+    {
+      "pattern": "flatsql_licence\\w*|licence_key|json:\"licences\"",
+      "flags": "",
+      "paths": [
+        "sdn-server/internal/storage/**",
+        "sdn-server/cmd/spacedatanetwork/store_*.go"
+      ],
+      "reason": "persisted FlatSQL table and column names and the migration report's JSON key"
+    },
+    {
+      "pattern": "\"signalled\"",
+      "flags": "",
+      "paths": [
+        "sdn-server/cmd/spacedatanetwork/update_*.go",
+        "sdn-server/internal/api/update_distribution*.go"
+      ],
+      "reason": "fleet update distribution state value, an API wire string"
+    },
+    {
+      "pattern": "mathjax-full/\\S+",
+      "flags": "",
+      "reason": "npm package path"
+    }
   ],
   "words": [
-    { "word": "enrolment", "paths": ["sdn-server/cmd/spacedatanetwork/embedded/docs/operator-enrolment.html"], "reason": "legacy page slug operator-enrolment.html, kept so old links resolve (DocsPanel)" },
-    { "word": "adaptor", "paths": ["tools/paper-reels/typeset.mjs"], "reason": "MathJax API names (liteAdaptor, js/adaptors)" },
-    { "word": "adaptors", "paths": ["tools/paper-reels/typeset.mjs"], "reason": "MathJax API path (mathjax-full/js/adaptors)" }
+    {
+      "word": "enrolment",
+      "paths": [
+        "sdn-server/cmd/spacedatanetwork/embedded/docs/operator-enrolment.html"
+      ],
+      "reason": "legacy page slug operator-enrolment.html, kept so old links resolve (DocsPanel)"
+    },
+    {
+      "word": "adaptor",
+      "paths": [
+        "tools/paper-reels/typeset.mjs"
+      ],
+      "reason": "MathJax API names (liteAdaptor, js/adaptors)"
+    },
+    {
+      "word": "adaptors",
+      "paths": [
+        "tools/paper-reels/typeset.mjs"
+      ],
+      "reason": "MathJax API path (mathjax-full/js/adaptors)"
+    }
   ]
 }

@@ -647,7 +647,7 @@ func (r *Retainer) unpin(ctx context.Context, cidValue string) error {
 }
 
 // Run performs one startup sweep and then exactly one sweep per configured
-// ticker event until its context is cancelled.
+// ticker event until its context is canceled.
 func (r *Retainer) Run(ctx context.Context, interval time.Duration, clock func() time.Time, report func(error)) {
 	if report == nil {
 		report = func(error) {}

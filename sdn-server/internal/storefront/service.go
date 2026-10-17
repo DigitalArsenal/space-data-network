@@ -42,7 +42,7 @@ type Service struct {
 	// ruling this lane signed with signingKey and stamped the fleet
 	// code-authority public key into every grant handed to an anonymous client.
 	//
-	// Nil means grants are NOT signed. That is the pre-existing behaviour when no
+	// Nil means grants are NOT signed. That is the pre-existing behavior when no
 	// key is available and it stays fail-closed: an unsigned grant is visibly
 	// unsigned, whereas silently falling back to signingKey would recreate the
 	// exact collision this field removes.

@@ -112,7 +112,7 @@ func TestCATSupersedeKeepsOneRowPerObject(t *testing.T) {
 		return [][]byte{
 			buildCATForTest("ISS "+suffix, "1998-067A", 25544, "", ""),
 			buildCATForTest("ANALYST "+suffix, "2026-900A", 0, "", ""),
-			buildCATForTest("CATALOGUED "+suffix, "2026-001A", 0, "https://catalog.example/v1", "obj-7"),
+			buildCATForTest("CATALOGED "+suffix, "2026-001A", 0, "https://catalog.example/v1", "obj-7"),
 			buildCATForTest("NAMELESS "+suffix, "", 0, "", ""),
 		}
 	}

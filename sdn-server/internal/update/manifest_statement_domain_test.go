@@ -134,11 +134,11 @@ func TestNoDowngradeBetweenForms(t *testing.T) {
 	legacy := domainTestManifest(t, "")
 	signDomainTestManifest(t, legacy, key, "")
 	legacy["signing"].(map[string]any)["statement_domain"] = sigdomain.DomainUpdateManifestV1
-	relabelled, err := json.Marshal(legacy)
+	relabeled, err := json.Marshal(legacy)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	if err := validateDomainTestManifest(t, relabelled, root); err == nil {
+	if err := validateDomainTestManifest(t, relabeled, root); err == nil {
 		t.Fatal("a legacy signature verified after a statement domain was added")
 	}
 

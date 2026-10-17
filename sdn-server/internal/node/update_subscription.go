@@ -96,7 +96,7 @@ func (a *UpdateAnnouncement) Marshal() ([]byte, error) {
 
 // updateTopicSubscription is the minimal read surface UpdateSubscriber
 // needs from a joined pub/sub subscription: block for the next message's
-// raw bytes, or return ctx's error once ctx is done/cancelled. A thin
+// raw bytes, or return ctx's error once ctx is done/canceled. A thin
 // adapter over *pubsub.Subscription's Next method (see
 // pubSubTopicSubscriber below, and internal/pubsub.TipQueue's receiveLoop
 // for the read-loop convention this mirrors) satisfies this for

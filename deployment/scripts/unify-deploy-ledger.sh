@@ -55,7 +55,7 @@ usage() {
     cat >&2 <<EOF
 Usage: $0 [--dry-run] [--install-ledger <path>]
 
-Retires the per-install deploy ledger in favour of the one system-wide operator
+Retires the per-install deploy ledger in favor of the one system-wide operator
 mirror, preserving its history verbatim and leaving a symlink in its place.
 
   --install-ledger <path>   default: ${INSTALL_LEDGER}

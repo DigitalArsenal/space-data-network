@@ -370,7 +370,7 @@ func TestFingerprintPrincipal(t *testing.T) {
 	}
 }
 
-func TestDefaultAuditPathHonoursOverride(t *testing.T) {
+func TestDefaultAuditPathHonorsOverride(t *testing.T) {
 	t.Setenv(auditLogEnv, "/custom/module-signing.jsonl")
 	if got := DefaultAuditPath(); got != "/custom/module-signing.jsonl" {
 		t.Fatalf("DefaultAuditPath() = %q, want the override", got)

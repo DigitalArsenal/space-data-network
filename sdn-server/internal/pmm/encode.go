@@ -36,7 +36,7 @@ func MarshalJSON(m *Manifest, browse []BrowseHint) ([]byte, error) {
 
 // MarshalBinary renders the size-prefixed $PMM FlatBuffer.
 //
-// Re-serialisation is safe: PMM.SIGNATURE covers the canonical STATEMENT, never
+// Re-serialization is safe: PMM.SIGNATURE covers the canonical STATEMENT, never
 // these bytes, so a different-but-equivalent buffer still verifies.
 func MarshalBinary(m *Manifest) ([]byte, error) {
 	if err := m.Validate(); err != nil {
@@ -105,7 +105,7 @@ func MarshalBinary(m *Manifest) ([]byte, error) {
 		// PRIMARY_CATEGORY ($CCT, SDS v1.186.0) supersedes PLUGIN_TYPE as the
 		// grouping vocabulary. It is carried HERE, on the manifest entry,
 		// rather than only on the linked $PLG, so an anonymous client can
-		// section the whole catalogue at boot without fetching one $PLG per
+		// section the whole catalog at boot without fetching one $PLG per
 		// module — which is the entire reason $PMM mirrors it.
 		//
 		// PLUGIN_TYPE keeps being written: $PLG declares it the fallback for

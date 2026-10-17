@@ -796,7 +796,7 @@ func egressReportsUnchanged(frames [][]byte) bool {
 // This error is HANDED TO THE LEDGER, NOT RETURNED FROM THE RUN. The ledger
 // records a reason only while an attempt's failure streak is still standing —
 // i.e. only when nothing landed — so a run that DID store a batch discards this
-// entirely and no successful run is ever recoloured by a 502 from one mirror.
+// entirely and no successful run is ever recolored by a 502 from one mirror.
 func (sf *ServiceFlow) retrievalDiagnosis(runErr error) error {
 	if runErr != nil {
 		return runErr

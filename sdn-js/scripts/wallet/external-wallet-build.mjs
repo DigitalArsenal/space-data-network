@@ -1,6 +1,6 @@
 /**
  * The committed, named way to build sdn-js with the HD wallet runtime
- * EXTERNALISED instead of inlined.
+ * EXTERNALIZED instead of inlined.
  *
  * Why this exists
  * ---------------
@@ -20,7 +20,7 @@
  * so an embedder supplies its own adapter with an environment variable instead
  * of patching this package's source.
  *
- * Every package build ALSO emits the externalised form, with the committed
+ * Every package build ALSO emits the externalized form, with the committed
  * adapter, under `dist/external-wallet/` and publishes it as the
  * `./external-wallet` export subpath (docs/EXTERNAL_WALLET_BUILD.md), so an
  * embedder consumes it from npm instead of building this package from source.
@@ -29,7 +29,7 @@
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-/** Set to `1`/`true` to build with the wallet runtime externalised. */
+/** Set to `1`/`true` to build with the wallet runtime externalized. */
 export const EXTERNAL_WALLET_ENV = 'SDN_JS_EXTERNAL_WALLET';
 
 /** Absolute (or package-relative) path to the module that replaces `hd-wallet-wasm`. */
@@ -46,7 +46,7 @@ export function defaultExternalWalletAdapterPath(packageRoot) {
 }
 
 /**
- * Whether this build externalises the wallet runtime. CLI flag wins over env so
+ * Whether this build externalizes the wallet runtime. CLI flag wins over env so
  * `npm run build:core -- --external-wallet` behaves the same as the named script.
  */
 export function isExternalWalletBuild({ argv = [], env = process.env } = {}) {

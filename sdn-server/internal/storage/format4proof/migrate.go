@@ -95,7 +95,7 @@ func checkMigrated(store string) []string {
 }
 
 // MigrateCrashLoop runs the reference migration (kept at ReferenceStore) and
-// the killed one, and writes a crash run labelled "migrate".
+// the killed one, and writes a crash run labeled "migrate".
 func MigrateCrashLoop(ctx context.Context, spec MigrateLoopSpec, logf Logf) (*Run, error) {
 	if spec.Kills <= 0 {
 		spec.Kills = 5

@@ -132,7 +132,7 @@ func (p *egressPacer) gate(host string) *egressHostGate {
 // the previous request to that host finished. The returned release function
 // stamps the completion time and frees the slot; it is always non-nil.
 //
-// A cancelled context aborts the wait and releases cleanly — the pacer never
+// A canceled context aborts the wait and releases cleanly — the pacer never
 // outlives the request budget it is pacing.
 func (p *egressPacer) acquire(ctx context.Context, host string) (release func(), waited time.Duration, err error) {
 	if host == "" {

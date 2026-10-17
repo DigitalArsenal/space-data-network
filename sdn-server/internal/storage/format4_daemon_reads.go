@@ -2413,7 +2413,7 @@ func f4SandboxError(err error) error {
 	}
 	code := ""
 	switch se.Status {
-	case format4.StatusCancelled:
+	case format4.StatusCanceled:
 		code = flatsqlrt.SandboxCodeTimeout
 	case format4.StatusBudget:
 		code = flatsqlrt.SandboxCodeByteCap

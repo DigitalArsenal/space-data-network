@@ -121,7 +121,7 @@ func TestEditedEncryptionPathIsApplied(t *testing.T) {
 }
 
 // TestInvalidPathIsRejectedAndAppliesNothing locks the fail-closed half: a bad
-// path must not partially apply. Silently dropping it — the old behaviour — is
+// path must not partially apply. Silently dropping it — the old behavior — is
 // what made the feature look like it worked.
 func TestInvalidPathIsRejectedAndAppliesNothing(t *testing.T) {
 	t.Parallel()

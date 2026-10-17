@@ -299,7 +299,7 @@ func TestUnknownFormatsAreRefusedWithGuidance(t *testing.T) {
 	}
 }
 
-// TestFormatNamesAreCaseAndSpaceTolerant locks light input normalisation — the
+// TestFormatNamesAreCaseAndSpaceTolerant locks light input normalization — the
 // operator typing "Mnemonic " should still hit the SECRET gate rather than
 // falling through to "unknown format".
 func TestFormatNamesAreCaseAndSpaceTolerant(t *testing.T) {
@@ -310,10 +310,10 @@ func TestFormatNamesAreCaseAndSpaceTolerant(t *testing.T) {
 	}
 	err := validateExportFormatSecretProbe(t, " Mnemonic ")
 	if err == nil {
-		t.Fatal("a padded, capitalised SECRET format bypassed the gate")
+		t.Fatal("a padded, capitalized SECRET format bypassed the gate")
 	}
 	if !strings.Contains(err.Error(), "--insecure-plaintext") {
-		t.Fatalf("normalised SECRET format hit the wrong error path: %v", err)
+		t.Fatalf("normalized SECRET format hit the wrong error path: %v", err)
 	}
 }
 

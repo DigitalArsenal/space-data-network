@@ -1,6 +1,6 @@
 package main
 
-// The sinks the same synthesised stream is driven into. They exist so the
+// The sinks the same synthesized stream is driven into. They exist so the
 // store's number has a FLOOR to be compared against: a throughput figure with
 // no baseline cannot distinguish "the store is slow" from "the disk is slow",
 // and the owner's requirement is wire speed MINUS BACK PRESSURE, which is a
@@ -21,7 +21,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
 
-// sink consumes one schema's batch of freshly synthesised records.
+// sink consumes one schema's batch of freshly synthesized records.
 type sink interface {
 	write(schema string, records [][]byte) error
 	close() error
@@ -122,7 +122,7 @@ func (s *storeSink) write(schema string, records [][]byte) error {
 	// above cannot be checked the same way (it answers the CID either way),
 	// which is why uniqueness is also asserted at synthesis time.
 	if inserted != len(records) {
-		return fmt.Errorf("store %s batch inserted %d of %d records: synthesised records are not unique", schema, inserted, len(records))
+		return fmt.Errorf("store %s batch inserted %d of %d records: synthesized records are not unique", schema, inserted, len(records))
 	}
 	return nil
 }

@@ -153,7 +153,7 @@ var ErrRateLimited = errors.New("rate limit exceeded")
 // rather than silently reopen the hole.
 type PushAuthorizer func(peer.ID) bool
 
-// AllowAnyPush restores the pre-2026-09-16 behaviour: accept records from any
+// AllowAnyPush restores the pre-2026-09-16 behavior: accept records from any
 // peer that can open a stream. It exists so that tests and any operator who
 // genuinely wants open ingest have to SAY SO, rather than getting it by
 // omission.
@@ -754,7 +754,7 @@ func (h *SDSExchangeHandler) HandlePubSubMessageStored(schema string, data []byt
 	// commitment about the bytes — a $PNM announcement legitimately arrives on
 	// another standard's topic, which is why that one case used to be
 	// hand-written here. Routing every message on its own file_identifier
-	// generalises that exception instead of special-casing it; the topic is
+	// generalizes that exception instead of special-casing it; the topic is
 	// still gated (HasSchema, above) and still logged.
 	decision, routeErr := h.validator.RouteBuffer(schema, data)
 	if routeErr != nil {

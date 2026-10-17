@@ -65,7 +65,7 @@ func TestLicensingConfigFrameBudgetsTransportNotJustClockDrift(t *testing.T) {
 	}
 }
 
-// TestStaleStampedRequestStillGetsAChallenge is the behavioural half, run
+// TestStaleStampedRequestStillGetsAChallenge is the behavioral half, run
 // against the REAL licensing key server. A request stamped 60 s before it
 // arrives is exactly the shape of the live failure — a browser that stamped,
 // then spent its budget walking dead candidate addresses — and it must now be
@@ -158,7 +158,7 @@ const (
 // 23680234 made the admit point fail closed: the default policy is `allowlist`,
 // an allowlist policy with an empty list publishes NOTHING, and a module that
 // was never published answers every challenge with module_not_found. That is
-// correct behaviour and it is why any test about what the key server does with
+// correct behavior and it is why any test about what the key server does with
 // a request must first make the module grantable — otherwise the test measures
 // the admit point and reports it as a challenge outcome.
 func writeGrantablePluginRegistry(t *testing.T, entries ...license.PluginCatalogEntry) *license.PluginRegistry {

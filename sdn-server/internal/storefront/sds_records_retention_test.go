@@ -25,7 +25,7 @@ func retentionFixture(rule string) Listing {
 		ListingID:            "l-retention",
 		ListingKind:          ListingKindDataStream,
 		ProviderPeerID:       "12D3KooWRetentionProvider",
-		Title:                "Catalogue feed",
+		Title:                "Catalog feed",
 		DataTypes:            []string{"OMM"},
 		DeliveryMethods:      []string{"PubSub"},
 		Pricing:              []PricingTier{{Name: "Open", PriceCurrency: "SDN"}},

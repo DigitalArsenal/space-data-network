@@ -43,7 +43,7 @@ func TestEngineUpgradeRecoversStreamAboveFormerDiscardLimit(t *testing.T) {
 	// of fixture rows. The original record journal is not needed for recovery.
 	name := strings.Repeat("x", 512*1024)
 	for i := 0; i < 66; i++ {
-		frame := licenceTestCATRecord(uint32(i+1), name)
+		frame := licenseTestCATRecord(uint32(i+1), name)
 		if int(binary.LittleEndian.Uint32(frame[:4])) != len(frame)-4 {
 			t.Fatal("expected size-prefixed CAT fixture")
 		}

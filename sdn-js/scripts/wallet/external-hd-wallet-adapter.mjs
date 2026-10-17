@@ -6,7 +6,7 @@
  * mode (`npm run build:browser-external-wallet`). Nothing here pulls
  * `hd-wallet-wasm`'s emscripten runtime into the bundle: the ~5 MB runtime is
  * obtained at RUNTIME from a provider the host installs, which is why the
- * externalised `dist/index.mjs` is roughly half the size of the default one.
+ * externalized `dist/index.mjs` is roughly half the size of the default one.
  *
  * Where the runtime comes from
  * ----------------------------

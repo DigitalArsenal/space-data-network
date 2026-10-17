@@ -276,7 +276,7 @@ func TestAttemptLogBoundsRetriesThatNeverSucceed(t *testing.T) {
 		t.Fatalf("second attempt did not advance the marker: %v -> %v", first, second)
 	}
 
-	// Survives a restart: otherwise every reboot is a fresh licence to retry.
+	// Survives a restart: otherwise every reboot is a fresh license to retry.
 	if err := store.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}

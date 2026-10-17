@@ -331,7 +331,7 @@ func TestLoopbackSelfGatedAdminPathsStayReachableWithoutSession(t *testing.T) {
 			t.Fatalf("%s is expected to be under the admin prefix", path)
 		}
 		if !isLoopbackSelfGatedAdminPath(path) {
-			t.Fatalf("%s must be recognised as loopback-self-gated", path)
+			t.Fatalf("%s must be recognized as loopback-self-gated", path)
 		}
 
 		reached := false

@@ -493,7 +493,7 @@ func TestRealDeliveryArtifacts(t *testing.T) {
 		// WASM magic here would fail 18 perfectly good decrypts. What must hold
 		// for all of them is that the payload opened at all — GCM already
 		// authenticated it, and for the unauthenticated CTR generation a
-		// recognisable content prefix is the check that the key schedule was
+		// recognizable content prefix is the check that the key schedule was
 		// right rather than producing plausible-looking garbage.
 		kind := "opaque"
 		switch {
@@ -505,7 +505,7 @@ func TestRealDeliveryArtifacts(t *testing.T) {
 			kind = "text/GLSL"
 		}
 		if kind == "opaque" {
-			t.Errorf("%s: decrypted %d bytes of unrecognised content: % x", entry.Name(), len(plaintext), plaintext[:4])
+			t.Errorf("%s: decrypted %d bytes of unrecognized content: % x", entry.Name(), len(plaintext), plaintext[:4])
 			failed++
 			continue
 		}

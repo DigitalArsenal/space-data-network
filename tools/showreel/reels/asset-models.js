@@ -23,7 +23,7 @@ const ORBIT = { ...orbitBasis(51.6 * D, 300 * D), r: 1.18 };
 ORBIT.w = OMEGA_K * Math.pow(ORBIT.r, -1.5);
 ORBIT.u0 = 0.2;
 
-// A satellite as edges: a box bus, two solar wings and a dish, in metres-ish units.
+// A satellite as edges: a box bus, two solar wings and a dish, in meters-ish units.
 const SHAPE = (() => {
   const E = [];
   const box = (cx, cy, cz, sx, sy, sz) => {

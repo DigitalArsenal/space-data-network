@@ -96,7 +96,7 @@ func certAnchorHint(certPath, serverName string, err error) string {
 //     only anchor.
 //
 // Returns nil when no daemon certificate is configured or readable, leaving the
-// default system-root behaviour untouched.
+// default system-root behavior untouched.
 func daemonTLSConfig(cfg *config.Config, res config.Resolution) (*tls.Config, string, error) {
 	if cfg == nil || !res.IsOwnDaemonConfig() {
 		return nil, "", nil
