@@ -7,16 +7,25 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/WXF"
 	flatbuffers "github.com/google/flatbuffers/go"
 	"github.com/ipfs/go-cid"
+	logging "github.com/ipfs/go-log/v2"
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format4"
+	"github.com/spacedatanetwork/sdn-server/internal/wasmrt"
+	"github.com/spacedatanetwork/sdn-server/plugins"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 func check(err error) {
@@ -46,9 +55,13 @@ func weather(id string, at time.Time) []byte {
 }
 
 func run() error {
+	logs := &logCapture{}
+	logging.SetPrimaryCore(zapcore.NewCore(zapcore.NewJSONEncoder(zap.NewProductionEncoderConfig()), zapcore.AddSync(logs), zapcore.InfoLevel))
+	logging.SetAllLoggers(logging.LevelInfo)
 	n := flag.Int("records", 24000, "expired records, split across three weather lanes")
 	flag.Parse()
 	require(*n >= 6 && *n%3 == 0, "records must be a multiple of three, at least six")
+	require(wasmrt.SubstrateStatus().Patched(), "the retention E2E requires the patched release runtime")
 	dir, err := os.MkdirTemp("", "record-expiry-e2e-")
 	if err != nil {
 		return err
@@ -99,6 +112,17 @@ func run() error {
 	}
 	seed("other", 3, cutoff-86400)
 	seed("probe", 16, cutoff-86400)
+	seed("capped", 7, cutoff-86400)
+	// Delete's native count is copies, including two peers holding one CID.
+	copyData := weather("two-peer-copies", now)
+	copyCID, err := (cid.Prefix{Version: 1, Codec: cid.Raw, MhType: 0x12, MhLength: 32}).Sum(copyData)
+	check(err)
+	for _, peer := range []string{"first-peer", "second-peer"} {
+		_, err := e.Put(ctx, format4.Batch{Type: "WXF", Peer: peer,
+			Tags:    []format4.Tag{{Provider: "weather", Source: "copies", Batch: "fixture"}},
+			Records: []format4.In{{CID: copyCID.String(), Plain: copyData, TS: cutoff - 86400}}})
+		check(err)
+	}
 	check(e.Close(ctx))
 	v, err := sds.NewValidator(nil)
 	check(err)
@@ -130,6 +154,23 @@ func run() error {
 		require(r.Deleted == 0 && !r.Capped, "second pass was not empty")
 	}
 	fmt.Printf("pass records=%d duration=%s\n", *n, time.Since(start))
+	q := storage.RecordExpiryQuery{SchemaName: "WXF.fbs", SourceName: "capped", BeforeUnix: cutoff, Batch: 2, MaxDeletes: 3}
+	r, err := s.ExpireRecords(q)
+	check(err)
+	require(r.Deleted == 3 && r.Capped, fmt.Sprintf("partial cap: %+v", r))
+	q.MaxDeletes, q.MaxDuration = 4, time.Nanosecond
+	r, err = s.ExpireRecords(q)
+	check(err)
+	require(r.Deleted == 0 && r.Capped, fmt.Sprintf("time cap: %+v", r))
+	q.MaxDuration = 0
+	r, err = s.ExpireRecords(q)
+	check(err)
+	require(r.Deleted == 4 && !r.Capped, fmt.Sprintf("exact cap: %+v", r))
+	r, err = s.ExpireRecords(storage.RecordExpiryQuery{SchemaName: "WXF.fbs", SourceName: "copies", BeforeUnix: cutoff, MaxDeletes: 1})
+	check(err)
+	require(r.Deleted == 2 && r.Missing == 0 && !r.Capped, fmt.Sprintf("copy count: %+v", r))
+	_, err = s.ExpireRecords(storage.RecordExpiryQuery{SchemaName: "WXF.fbs", BeforeUnix: cutoff})
+	require(err != nil, "an unscoped expiry was accepted")
 	check(s.Close())
 	s = nil
 	s, err = storage.NewFlatSQLStore(dir, v)
@@ -143,7 +184,70 @@ func run() error {
 		require(bytes.Equal(r.Data, data), "survivor bytes changed")
 	}
 	fmt.Printf("PASS: %d expired; %d cutoff/other-lane survivors byte-identical after reopen\n", *n, len(kept))
+	check(s.Close())
+	s = nil
+	checkScheduler()
+	for _, want := range []string{"Record expiry start", "Record expiry end", "deleted=8000", "missing=0", "capped=true", "duration=", "skipped: previous run still open", "cron \\\"expire\\\" start", "cron \\\"expire\\\" end"} {
+		if want == "deleted=8000" {
+			want = fmt.Sprintf("deleted=%d", *n/3)
+		}
+		require(strings.Contains(logs.String(), want), "missing Info log: "+want)
+	}
+	fmt.Println("PASS: work/time caps, exact boundary, lane guard, Info start/end/skip, nonoverlap and shutdown drain")
 	return nil
 }
+
+// Exercise the public manager lifecycle with a deliberately open invocation.
+// This proves the timer continues observing ticks and Close joins its worker.
+type slowCron struct {
+	calls   atomic.Int32
+	started chan struct{}
+	stopped atomic.Bool
+}
+
+func (p *slowCron) ID() string                                          { return "retention-e2e" }
+func (p *slowCron) Start(context.Context, plugins.RuntimeContext) error { return nil }
+func (p *slowCron) RegisterRoutes(*http.ServeMux)                       {}
+func (p *slowCron) Close() error {
+	require(p.stopped.Load(), "plugin closed before cron drained")
+	return nil
+}
+func (p *slowCron) CronMethods() []plugins.CronMethodSpec {
+	return []plugins.CronMethodSpec{{Method: "expire", DefaultInterval: "1s"}}
+}
+func (p *slowCron) CronFirstRunDelay(string, time.Duration) time.Duration { return time.Millisecond }
+func (p *slowCron) InvokeCron(ctx context.Context, _ string, _ []byte) ([]byte, error) {
+	require(p.calls.Add(1) == 1, "overlapping or queued invocation")
+	close(p.started)
+	<-ctx.Done()
+	p.stopped.Store(true)
+	return nil, ctx.Err()
+}
+func checkScheduler() {
+	m := plugins.New()
+	p := &slowCron{started: make(chan struct{})}
+	check(m.Register(p))
+	check(m.StartAll(context.Background(), plugins.RuntimeContext{}))
+	select {
+	case <-p.started:
+	case <-time.After(10 * time.Second):
+		panic("cron did not start")
+	}
+	time.Sleep(2200 * time.Millisecond)
+	check(m.Close())
+	require(p.calls.Load() == 1, "cron overlapped")
+}
+
+type logCapture struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (l *logCapture) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+func (l *logCapture) String() string { l.mu.Lock(); defer l.mu.Unlock(); return l.b.String() }
 
 func main() { check(run()) }

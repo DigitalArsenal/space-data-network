@@ -708,16 +708,47 @@ func (m *Manager) scheduleCronMethods(ctx context.Context, pluginID string, cp C
 			// (first + k*interval), exactly as an unphased ticker keeps its own.
 			ticker := time.NewTicker(interval)
 			defer ticker.Stop()
+			// Keep receiving ticks while the invocation is open. A single
+			// owned worker prevents overlap; joining it also makes Close and
+			// rescheduling wait before unloading or starting another worker.
+			var running <-chan struct{}
+			defer func() {
+				if running != nil {
+					<-running
+				}
+			}()
+			invoke := func() {
+				if ctx.Err() != nil {
+					return
+				}
+				if running != nil {
+					select {
+					case <-running:
+						running = nil
+					default:
+						log.Infof("Plugin %q cron %q skipped: previous run still open", pluginID, method)
+						return
+					}
+				}
+				done := make(chan struct{})
+				running = done
+				go func() {
+					defer close(done)
+					m.runScheduledCronMethod(ctx, pluginID, method, cp)
+				}()
+			}
 			if firstRun > 0 {
-				m.runScheduledCronMethod(ctx, pluginID, method, cp)
+				invoke()
 			}
 
 			for {
 				select {
 				case <-ctx.Done():
 					return
+				case <-running:
+					running = nil
 				case <-ticker.C:
-					m.runScheduledCronMethod(ctx, pluginID, method, cp)
+					invoke()
 				}
 			}
 		}()
@@ -772,6 +803,8 @@ func ScheduledRun(ctx context.Context) bool {
 
 // runScheduledCronMethod runs one scheduled invocation and records it.
 func (m *Manager) runScheduledCronMethod(ctx context.Context, pluginID, method string, cp CronProvider) {
+	started := time.Now()
+	log.Infof("Plugin %q cron %q start", pluginID, method)
 	run := RuntimeModuleScheduleRun{
 		ID:        runtimeModuleCommandID(time.Now().UTC(), 1),
 		MethodID:  method,
@@ -782,15 +815,14 @@ func (m *Manager) runScheduledCronMethod(ctx context.Context, pluginID, method s
 	if output, err := cp.InvokeCron(WithScheduledRun(ctx), method, nil); err != nil {
 		run.Status = "error"
 		run.Message = err.Error()
-		log.Debugf("Plugin %q cron %q: %v", pluginID, method, err)
 	} else if len(output) > 0 {
 		run.Status = "ok"
 		run.OutputSize = len(output)
-		log.Debugf("Plugin %q cron %q: %d bytes output", pluginID, method, len(output))
 	} else {
 		run.Status = "ok"
 	}
 	run.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+	log.Infof("Plugin %q cron %q end status=%s output_bytes=%d duration=%s error=%q", pluginID, method, run.Status, run.OutputSize, time.Since(started), run.Message)
 	m.recordRuntimeModuleScheduleRun(pluginID, method, run)
 }
 
