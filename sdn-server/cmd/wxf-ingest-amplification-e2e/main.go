@@ -58,7 +58,9 @@ func weather(id int) format4.In {
 	WXF.WXFAddVALUES(b, values)
 	WXF.WXFAddVALID_TIME_MS(b, 1792238400000+uint64(id/(tiles*len(fields)))*3600000)
 	WXF.FinishSizePrefixedWXFBuffer(b, WXF.WXFEnd(b))
-	data := b.FinishedBytes()
+	// The ingest connector splits the size-prefixed stream. The engine adds
+	// its own frame prefix; including it here would double-frame the record.
+	data := b.FinishedBytes()[4:]
 	c, err := (cid.Prefix{Version: 1, Codec: cid.Raw, MhType: 0x12, MhLength: 32}).Sum(data)
 	check(err)
 	return format4.In{CID: c.String(), Plain: data, TS: 1792238400}
@@ -83,12 +85,38 @@ func spec(fullText bool) format4.TypeSpec {
 	return s
 }
 
+func checkSearchFixture() {
+	_, _, err := flatsqlrt.PrewarmP4ThreadsAOT(storage.EngineAOTCacheDir())
+	check(err)
+	root, err := os.MkdirTemp("", "wxf-fts-fixture-")
+	check(err)
+	defer os.RemoveAll(root)
+	e := open(root, format4.CreateFresh)
+	defer func() { check(e.Close(ctx)) }()
+	check(e.RegisterType(spec(true)))
+	put(e, batch([]format4.In{weather(0)}, "fixture"))
+	for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); {
+		st, err := e.Stats()
+		check(err)
+		if st[39] == 1 {
+			fmt.Println("fixture_search_text=PASS")
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	panic("fixture did not reach the real FTS index")
+}
+
 func put(e *format4.Engine, b format4.Batch) int64 {
 	out, err := e.Put(ctx, b)
 	check(err)
 	require(len(out) == len(b.Records), "missing PUT outcomes")
 	for _, o := range out {
-		require(o.Action == format4.ActNew, fmt.Sprintf("PUT did not insert: %+v", o))
+		want := format4.ActNew
+		if b.Mode == format4.ModeMigrate {
+			want = format4.ActMigrated
+		}
+		require(o.Action == want, fmt.Sprintf("PUT did not insert: %+v", o))
 	}
 	return out[len(out)-1].Seq
 }
@@ -104,7 +132,7 @@ func size(path string) int64 {
 
 func seed(root string, target int64) (int, int64) {
 	stream := filepath.Join(root, "fsql4/P/WXF/noaa-ncep@gfs-0p25-sea.fsdata")
-	mode := format4.CreateFresh
+	mode := format4.CreateForMigration
 	if size(filepath.Join(root, "fsql4/STORE")) > 0 {
 		mode = format4.OpenExisting
 	}
@@ -118,17 +146,33 @@ func seed(root string, target int64) (int, int64) {
 	}
 	start, last := time.Now(), time.Now()
 	for size(stream) < target {
-		records := make([]format4.In, 2048)
+		// Migrate batches build the historical fixture efficiently while
+		// retaining the real lane's distinct batch per nine-field tile. A
+		// single seed tag would hide costs proportional to batch cardinality.
+		records := make([]format4.In, 9*227)
+		b := batch(records, "")
+		b.Mode, b.Tags = format4.ModeMigrate, nil
 		for i := range records {
 			records[i] = weather(n + i)
+			records[i].Seq = int64(n + i + 1)
+			records[i].Tags = []format4.TagAt{{Tag: i / len(fields), At: records[i].TS}}
+			if i%len(fields) == 0 {
+				tag := batch(nil, fmt.Sprintf("seed-tile-%d", (n+i)/len(fields))).Tags[0]
+				b.Tags = append(b.Tags, tag)
+			}
 		}
-		put(e, batch(records, "seed"))
+		put(e, b)
 		n += len(records)
 		check(os.WriteFile(filepath.Join(root, "seed-count"), []byte(fmt.Sprint(n)), 0600))
 		if time.Since(last) > 10*time.Second {
 			fmt.Printf("seed records=%d fsdata_bytes=%d elapsed=%s\n", n, size(stream), time.Since(start).Round(time.Millisecond))
 			last = time.Now()
 		}
+	}
+	if mode == format4.CreateForMigration {
+		_, err := e.Rebuild(ctx, "WXF", format4.RebuildPartitionIndexes)
+		check(err)
+		check(e.Activate(ctx))
 	}
 	fmt.Printf("fixture records=%d fsdata_bytes=%d seed_time=%s\n", n, size(stream), time.Since(start))
 	st, err := e.Types(ctx)
@@ -169,6 +213,7 @@ type measurement struct {
 }
 
 func measure(root, arm string, first int, fullText bool) measurement {
+	batchName := fmt.Sprintf("%s-%d", arm, first)
 	records := make([]format4.In, tiles*len(fields))
 	var payload int64
 	for i := range records {
@@ -199,9 +244,10 @@ func measure(root, arm string, first int, fullText bool) measurement {
 	start = time.Now()
 	var lastSeq int64
 	for i := 0; i < len(records); i += len(fields) {
-		lastSeq = put(e, batch(records[i:i+len(fields)], fmt.Sprintf("%s-tile-%d", arm, i/len(fields))))
+		lastSeq = put(e, batch(records[i:i+len(fields)], fmt.Sprintf("%s-tile-%d", batchName, i/len(fields))))
 	}
 	ingestTime := time.Since(start)
+	check(os.WriteFile(filepath.Join(root, "seed-count"), []byte(fmt.Sprint(first+len(records))), 0600))
 	settle := time.Now()
 	if fullText {
 		deadline := time.Now().Add(15 * time.Minute)
@@ -224,6 +270,9 @@ func measure(root, arm string, first int, fullText bool) measurement {
 	settleTime := time.Since(settle)
 	after, err := e.Stats()
 	check(err)
+	if fullText {
+		require(after[39]-before[39] == uint64(len(records)), "baseline did not index every grid in FTS")
+	}
 	// Close flushes checkpoints before physical write accounting is sampled.
 	check(e.Close(ctx))
 	written := diskWritten() - writtenBefore
@@ -252,15 +301,41 @@ func measure(root, arm string, first int, fullText bool) measurement {
 			require(bytes.Equal(r.Data, want[r.CID]), "record bytes changed")
 			require(r.Peer == "wxf-amplification-e2e" && r.TS == 1792238400, "record provenance changed")
 		}
+		tags, err := e.Tags(ctx, "WXF", ids)
+		check(err)
+		require(len(tags) == len(ids), "reopen missing source tags")
+		for _, tag := range tags {
+			require(tag.Provider == "noaa-ncep" && tag.Source == "gfs-0p25-sea" && tag.SourceURL == "https://example.test/gfs", "source tags changed")
+		}
+	}
+	got, err := e.Scan(ctx, format4.Query{Type: "WXF", Lane: format4.LaneFilter{Provider: "noaa-ncep", Source: "gfs-0p25-sea", Batch: batchName + "-tile-0"}, Limit: 10, Hydrate: true})
+	check(err)
+	require(len(got) == len(fields), "batch metadata lookup changed")
+	for _, r := range got {
+		require(r.Tag != nil && r.Tag.Batch == batchName+"-tile-0", "batch provenance changed")
+	}
+	if !fullText {
+		states, err := e.FTS(ctx)
+		check(err)
+		for _, s := range states {
+			if s.Type == "WXF" {
+				require(s.State == "off", "WXF full text re-enabled on reopen")
+			}
+		}
 	}
 	return m
 }
 
 func main() {
-	root := flag.String("root", "", "owned fixture directory; retained when specified")
+	root := flag.String("root", os.Getenv("SDN_WXF_E2E_ROOT"), "owned fixture directory; retained when specified")
 	seedBytes := flag.Int64("seed-bytes", 15_000_000_000, "minimum populated fsdata bytes")
 	baselineOnly := flag.Bool("baseline-only", false, "measure baseline before changing registration")
+	fixtureOnly := flag.Bool("fixture-only", false, "validate the synthetic grid before measuring")
 	flag.Parse()
+	checkSearchFixture()
+	if *fixtureOnly {
+		return
+	}
 	if *root == "" {
 		dir, err := os.MkdirTemp("", "wxf-ingest-amplification-")
 		check(err)
