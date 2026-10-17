@@ -40,7 +40,7 @@ const keyslotUnwrapHKDFInfo = "sdn-server/keyslot.unwrap/v1"
 // the first line of resolveKeySlot with "keyslot context is not available" —
 // the slot was never looked up and no crypto was ever attempted.
 //
-// The defect was invisible because the neighbours are fine: secrets.* is
+// The defect was invisible because the neighbors are fine: secrets.* is
 // registered with RegisterBridgeAware and node.publicKey answers off the bridge,
 // both of which carry the real NodeContext. So one flow, in one request, could
 // publish the node's X25519 wrapping-slot public key AND store a secret, while

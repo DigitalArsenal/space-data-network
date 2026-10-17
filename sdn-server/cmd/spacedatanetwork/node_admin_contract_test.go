@@ -734,7 +734,7 @@ func TestResolveAuthDBPathKeepsTheAuthStoreSeparate(t *testing.T) {
 		}
 	})
 
-	t.Run("absolute paths are honoured", func(t *testing.T) {
+	t.Run("absolute paths are honored", func(t *testing.T) {
 		t.Parallel()
 		cfg := config.Default()
 		cfg.Storage.Path = base

@@ -3,7 +3,7 @@ package main
 // Record synthesis for EVERY embedded SDS standard.
 //
 // internal/sds ships four concrete builders (OMM, EPM, PNM, CAT), so a
-// benchmark that must cover all 236 embedded standards has to synthesise the
+// benchmark that must cover all 236 embedded standards has to synthesize the
 // other 232 itself. That synthesis is not "random bytes with a header glued
 // on", and the reason is the write path:
 //
@@ -155,11 +155,11 @@ func buildTemplates(schemaDir string, schemas []string, v *sds.Validator, record
 
 		// Admission is proven HERE, once per standard, rather than per record:
 		// every record of a standard shares this layout, and a schema whose
-		// synthesised buffer the store would refuse must fail the run before
+		// synthesized buffer the store would refuse must fail the run before
 		// any throughput is reported rather than quietly skew it.
 		rec := t.build(builder, 1)
 		if err := v.VerifyEnvelope(name, rec); err != nil {
-			return nil, fmt.Errorf("synthesised %s record is not admissible: %w", name, err)
+			return nil, fmt.Errorf("synthesized %s record is not admissible: %w", name, err)
 		}
 		out = append(out, t)
 	}
@@ -232,7 +232,7 @@ func (t *schemaTemplate) build(b *flatbuffers.Builder, seq uint64) []byte {
 		}
 		// Slot() is called unconditionally, never PrependXSlot(o, x, d):
 		// PrependXSlot elides the write when the value equals the default, so
-		// a scalar column that happened to synthesise to 0 would vanish from
+		// a scalar column that happened to synthesize to 0 would vanish from
 		// the vtable and the record would not be the layout this template
 		// claims to produce.
 		b.Slot(i)

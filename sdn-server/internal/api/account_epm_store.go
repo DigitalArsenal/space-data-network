@@ -13,7 +13,7 @@ package api
 //     (sdn_pin_ledger) under role "account-epm". The ledger is what tells every
 //     retention/GC sweep that these bytes are held on purpose. On a node with
 //     no Kubo attached, THIS IS THE WHOLE PIN, and it is sufficient: the record
-//     is durable, served, and never collectable.
+//     is durable, served, and never collectible.
 //
 //  2. KUBO HOLDS THE BLOCK, when a blockstore is attached. The record bytes are
 //     put as a pinned CIDv1 raw block (sha2-256) — the same codec/hash the

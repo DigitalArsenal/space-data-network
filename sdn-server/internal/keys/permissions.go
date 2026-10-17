@@ -17,7 +17,7 @@ package keys
 //
 // WHY REFUSE THE KEY AND NOT THE PROCESS. ssh does not exit when it finds a bad
 // mode; it declines to use THAT key, says so unmistakably, and carries on.
-// That is the behaviour worth copying. Killing a daemon at boot over a mode bit
+// That is the behavior worth copying. Killing a daemon at boot over a mode bit
 // converts a confidentiality problem into an availability outage on every node
 // at once — and an operator who cannot start the node also cannot fix the
 // permission. Declining the key fails closed on the thing that is actually

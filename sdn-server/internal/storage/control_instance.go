@@ -3,7 +3,7 @@ package storage
 // control_instance.go — the control instance of a partitioned store
 // (formats 2 and 4): the legacy engine on its own control database, holding
 // the control tables only (directory, local EPMs, publications, pin ledger,
-// log index, asset pins, licences, metadata). It opens on TRUNCATE at
+// log index, asset pins, licenses, metadata). It opens on TRUNCATE at
 // SQLite's default synchronous=FULL: it carries no record bytes, so the WAL
 // patch and its NORMAL durability trade (flatsql_boot_state.go) are not
 // taken. It holds NO record table, so a record path that was not moved to
@@ -75,7 +75,7 @@ func (s *FlatSQLStore) initControlTables() error {
 		fn   func() error
 	}{
 		{"metadata", s.initMetadataTable},
-		{"source batch licences", s.initSourceBatchLicenseTable},
+		{"source batch licenses", s.initSourceBatchLicenseTable},
 		{"ingest identities", identities},
 		{"dataset publication series", s.initDatasetPublicationSeriesTables},
 		{"dataset shard publications", s.initDatasetShardPublicationTable},

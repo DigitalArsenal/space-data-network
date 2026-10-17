@@ -60,7 +60,7 @@ func legacyReconcileSourceBatch(s *FlatSQLStore, schemaName, providerID, sourceN
 	defer s.lockWrite("ReconcileSourceBatch")()
 
 	// Driven by the source's tag rows, each checked against the producer
-	// tables by CID: joining the union read source materialised every record
+	// tables by CID: joining the union read source materialized every record
 	// of the standard, four times per module ingest (plan guard).
 	tables, err := s.recordTablesForSchema(result.SchemaName)
 	if err != nil {

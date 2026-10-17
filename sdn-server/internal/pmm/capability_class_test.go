@@ -13,7 +13,7 @@ import (
 // $PLG lane is censused: decode the encoded record and count the shelf.
 //
 // $PMM mirrors PRIMARY_CATEGORY from $PLG so an anonymous client can section
-// the whole catalogue at boot without fetching one $PLG per module. If these
+// the whole catalog at boot without fetching one $PLG per module. If these
 // two lanes ever disagree, that boot-time sectioning is a lie, so both are
 // measured from the same declared PLUGIN_TYPE.
 func TestManifestEntriesCarryCapabilityClass(t *testing.T) {

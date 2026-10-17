@@ -134,7 +134,7 @@ func TestWXFValidatedBatchAutoPublishesWithAttribution(t *testing.T) {
 	manifest := DPM.GetRootAsDPM(manifestBytes, 0)
 	var source DPM.DPMSourceBatch
 	if !manifest.SOURCES(&source, 0) || string(source.LICENSE()) != tags.License || string(source.LICENSE_URL()) != tags.LicenseURL || string(source.CITATION()) != tags.Citation {
-		t.Fatal("signed manifest lost source licence")
+		t.Fatal("signed manifest lost source license")
 	}
 	var asset DPM.DPMAsset
 	if !manifest.ASSETS(&asset, 0) || len(asset.SCHEMA_HASH()) == 0 {
@@ -174,6 +174,6 @@ func TestWXFValidatedBatchAutoPublishesWithAttribution(t *testing.T) {
 	}
 	consumerLicense, found, err := consumer.SourceBatchLicenseFor("WXF.fbs", tags.ProviderID, tags.SourceName, tags.BatchID)
 	if err != nil || !found || consumerLicense.License != tags.License {
-		t.Fatalf("consumer lost licence: %+v found=%v err=%v", consumerLicense, found, err)
+		t.Fatalf("consumer lost license: %+v found=%v err=%v", consumerLicense, found, err)
 	}
 }

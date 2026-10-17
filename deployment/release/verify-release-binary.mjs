@@ -484,7 +484,7 @@ export function verifyReleaseBinary({
  * The incident's root cause was two producers writing one output path with no
  * mutual exclusion. `O_EXCL` is the mutual exclusion: the second holder cannot
  * create the lock file and refuses loudly instead of interleaving. The pid is
- * recorded so a lock left by a killed process is recognised as stale rather
+ * recorded so a lock left by a killed process is recognized as stale rather
  * than blocking the lane forever — but a lock held by a LIVE process is never
  * broken automatically, because "someone else is mid-write" is exactly the
  * state we must not proceed through.

@@ -209,7 +209,7 @@ func (r sourceBatchDuplicateRow) newerThan(o sourceBatchDuplicateRow) bool {
 // "evicted": a record with no duplicate at all was deleted, and a key's
 // newest record holding two tags was deleted along with the rows it beat
 // (TestReconcileDuplicatesNeverEvictsARecordForItsOwnSecondTag; the rework in
-// sdn b75d1e89b kept the window's behaviour exactly, defect included).
+// sdn b75d1e89b kept the window's behavior exactly, defect included).
 type sourceBatchDuplicateRank struct {
 	keys map[string]*sourceBatchDuplicateKey
 	// rows counts each CID's tag rows in the batch. A CID has one index row
@@ -475,7 +475,7 @@ type sourceBatchDuplicateRankRow struct {
 // (after, bound] (bound "" = no upper bound) that the reconcile ranks: rows
 // whose record is held by a producer table and whose index key is not empty.
 // Each tag's record is read by CID from the producer tables that hold it;
-// joining the union read source materialised every record of the standard on
+// joining the union read source materialized every record of the standard on
 // each call (plan guard). Caller holds s.mu.
 func (s *FlatSQLStore) readSourceBatchDuplicateSlice(scope SourceBatchDuplicateReconcileResult, after, bound string) ([]sourceBatchDuplicateRankRow, error) {
 	tables, err := s.recordTablesForSchema(scope.SchemaName)

@@ -143,7 +143,7 @@ fi
 # PeerID is derived at runtime and stored nowhere, so nothing on disk showed it.
 #
 # A PIN file records "this node's identity is only readable by THIS binary".
-# Honour it by default; overriding is an explicit, logged act.
+# Honor it by default; overriding is an explicit, logged act.
 PIN_STATE="$(ssh -o ConnectTimeout=10 "$TARGET" \
   "[ -s ${REMOTE_LIB_DIR}/PIN ] && grep -m1 '^binary_sha256=' ${REMOTE_LIB_DIR}/PIN | cut -d= -f2 || echo none" 2>/dev/null || echo none)"
 if [[ "$PIN_STATE" != "none" && -n "$PIN_STATE" ]]; then
@@ -294,7 +294,7 @@ LIBDIR=\$(cd \"\$SELF/../lib/spacedatanetwork\" 2>/dev/null && pwd -P)
 # and it also survives this file being regenerated, because the template that
 # regenerates it is this same text.
 #
-# A bundle is RECOGNISED only on the test bundle.ResolveCurrent itself applies -
+# A bundle is RECOGNIZED only on the test bundle.ResolveCurrent itself applies -
 # bin/<exe> beside manifest.json - so a half-extracted, staged or abandoned
 # directory can never hijack the entrypoint.
 BUNDLE=\$(cd \"\$SELF/../lib/sdn-bundle\" 2>/dev/null && pwd -P)

@@ -14,7 +14,7 @@ package storage
 // Two things still carry a mark inside the database:
 //
 //   - the AUXILIARY journal (auxiliary.flatsqlmeta): the node's own state —
-//     encrypted local EPM, pin ledger, dataset shard publications, licences,
+//     encrypted local EPM, pin ledger, dataset shard publications, licenses,
 //     asset-pin audit. It is replayed from its persisted resume mark at every
 //     boot, exactly as before, and it is the only journal this store keeps.
 //   - the ENGINE hot window: the FlatSQL record vtabs are a bounded CACHE of the
@@ -261,7 +261,7 @@ func openControlEngine(basePath, dbPath string) (*flatsqlrt.Runtime, *flatsqlrt.
 	// `discard` carries one decision from an attempt to the next: the engine's
 	// record state (arena + index + partition map) is a cache the next attempt
 	// must throw away BEFORE it opens that state. A mostly-dead arena is only
-	// recognisable once the state is open, and a poisoned runtime cannot be
+	// recognizable once the state is open, and a poisoned runtime cannot be
 	// asked anything, so both are answered by a fresh runtime that discards
 	// first (tryOpenControlDatabase).
 	var lastErr error
@@ -449,7 +449,7 @@ var errEnginePrepareFailed = errors.New("engine file-identifier registration")
 // trips a thirteenth is a test failure and not a surprise on a droplet.
 //
 // $TXS EARNED ITS R-TREE; it is not catalog noise. A Terrestrial Transmitter
-// Site carries LATITUDE/LONGITUDE straight out of its IDL and the RF catalogue
+// Site carries LATITUDE/LONGITUDE straight out of its IDL and the RF catalog
 // is read BY AREA ("which transmitters cover this ground"), so the derived
 // index is the one the query pattern actually wants. Its companion $STX takes
 // none and should not: a Scheduled Transmission holds no position of its own,
@@ -660,7 +660,7 @@ func tryOpenControlDatabase(engine *flatsqlrt.Runtime, dbPath, schemaText string
 	// runs, medians (flatsqlrt.TestWALBeatsTruncateAtEqualDurability, 50-row
 	// commits): TRUNCATE+FULL 1363, WAL+FULL 4353, WAL+NORMAL 9460 rows/s, so
 	// NORMAL over FULL is 2.17x there against 2.35x here — the same effect, not
-	// a microbenchmark artefact. But do NOT reuse that test's RECORDED figures
+	// a microbenchmark artifact. But do NOT reuse that test's RECORDED figures
 	// (1315 / 3840 / 19550, and the "14.9x" the old comment dangled): they do
 	// not reproduce on a loaded box, and 14.9x was NORMAL against TRUNCATE+FULL
 	// — a comparison this store stopped making when it left TRUNCATE. 2.35x is
@@ -1003,7 +1003,7 @@ func engineUnprobedPlan(what string, cause error) engineBootPlan {
 //
 // EVERY FAILURE FAILS CLOSED, and that is a correction: this probe used to
 // return an EMPTY plan whenever it could not read the file. An empty plan is
-// NOT "the behaviour this store had before the probe existed" — it is the full
+// NOT "the behavior this store had before the probe existed" — it is the full
 // 226-standard schema plus registerEngineFileIDs over every standard, which is
 // precisely the input that makes createUnifiedView issue
 // `DROP TABLE IF EXISTS "<CODE>"` against a colliding plain control table.
@@ -1164,7 +1164,7 @@ func engineViewProjectsColumns(text string, columns []string) bool {
 }
 
 // quotedSQLIdentifiers extracts the double-quoted identifiers of a SQL
-// fragment in order, honouring the "" escape.
+// fragment in order, honoring the "" escape.
 func quotedSQLIdentifiers(fragment string) []string {
 	var out []string
 	for i := 0; i < len(fragment); i++ {
@@ -1476,7 +1476,7 @@ func extendJournalDigest(h hash.Hash, f *os.File, off *int64, limit int64) error
 }
 
 // sealJournalDigest snapshots the running state and binds it to a specific
-// length. It CLONES rather than finalising, so the running state stays usable
+// length. It CLONES rather than finalizing, so the running state stays usable
 // for the next checkpoint.
 func sealJournalDigest(h hash.Hash, limit int64) (string, error) {
 	m, ok := h.(encoding.BinaryMarshaler)

@@ -168,7 +168,7 @@ describe('sdn-js package build', () => {
     expect(packageJson.exports?.['./status']?.types).toBe('./dist/status/index.d.ts');
     expect(packageJson.exports?.['./storefront']?.import).toBe('./dist/storefront/index.mjs');
     expect(packageJson.exports?.['./storefront']?.types).toBe('./dist/storefront/index.d.ts');
-    // The externalised-wallet build of the three wallet-bearing entries: the
+    // The externalized-wallet build of the three wallet-bearing entries: the
     // same API (same declarations), runtime obtained from the host.
     expect(packageJson.exports?.['./external-wallet']).toEqual({
       types: './dist/index.d.ts',

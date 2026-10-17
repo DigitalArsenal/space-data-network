@@ -73,7 +73,7 @@ const (
 // Prior art, both from unbounded engine calls: host-02 burned one vCPU (its
 // only vCPU) for 612 minutes inside a single WasmEdge_VMExecuteRegistered, and
 // host-01 lost all libp2p peering for 41+ minutes the same way. Zero disables
-// the bound and restores that behaviour; it should never be zero in production.
+// the bound and restores that behavior; it should never be zero in production.
 //
 // Override with SDN_FLATSQL_EXEC_TIMEOUT (a Go duration, e.g. "90s"), so an
 // operator can retune on a live host without a rebuild.
@@ -133,7 +133,7 @@ func WithFileIORoot(dir string) Option {
 
 // WithExecTimeout overrides the per-call wall-clock budget for engine calls
 // (see DefaultEngineExecTimeout). Zero keeps the default; a negative value is
-// rejected in favour of the default.
+// rejected in favor of the default.
 func WithExecTimeout(d time.Duration) Option {
 	return func(c *config) {
 		if d > 0 {
@@ -252,7 +252,7 @@ func (r *Runtime) MarkPoisoned() { r.poisoned = true }
 // free releases guest memory — UNLESS the runtime is poisoned, in which case it
 // does nothing at all.
 //
-// This is not an optimisation, it is the difference between a daemon that
+// This is not an optimization, it is the difference between a daemon that
 // reports a failed replay and a daemon that burns a core forever. Every alloc
 // site here frees through `defer`, so on a trap the deferred free runs on a
 // guest whose allocator state is exactly what the trap corrupted, and
@@ -449,7 +449,7 @@ func (r *Runtime) startDispatchLog() {
 	r.dispatchLogDone = make(chan struct{})
 	// The goroutine reads r.mod on every tick; Close nils r.mod. Close
 	// therefore stops this goroutine and WAITS for it (dispatchLogDone) before
-	// releasing the module — the race detector caught the unsynchronised
+	// releasing the module — the race detector caught the unsynchronized
 	// version (2026-09-02, TestRegisterLegacyPublicationPlanChunks...).
 	go func() {
 		defer close(r.dispatchLogDone)

@@ -77,7 +77,7 @@ func TestIndexedRecordWindowLimitForBytesCutsOnBytes(t *testing.T) {
 		t.Fatalf("generous budget admitted %d records, want the window's %d", got, records)
 	}
 
-	// No budget = the old behaviour, exactly.
+	// No budget = the old behavior, exactly.
 	got, _, err = store.IndexedRecordWindowLimitForBytes(filter, 0)
 	if err != nil {
 		t.Fatalf("IndexedRecordWindowLimitForBytes: %v", err)
@@ -106,7 +106,7 @@ func TestIndexedRecordWindowLimitForBytesNeverStallsOnAnOversizedRecord(t *testi
 	}
 }
 
-// The probe must describe the SAME rows the export then materialises — a
+// The probe must describe the SAME rows the export then materializes — a
 // boundary computed over a different window is a mis-cut shard.
 func TestIndexedRecordWindowLimitMatchesTheWindowItBounds(t *testing.T) {
 	store := newFixtureStore(t, filepath.Join(t.TempDir(), "store"))
@@ -137,7 +137,7 @@ func TestIndexedRecordWindowLimitMatchesTheWindowItBounds(t *testing.T) {
 		total += int64(len(record.Data)) + DatasetShardFrameOverheadBytes
 	}
 	if total > frame*6 {
-		t.Fatalf("materialised window is %d bytes, over the %d-byte budget it was cut to", total, frame*6)
+		t.Fatalf("materialized window is %d bytes, over the %d-byte budget it was cut to", total, frame*6)
 	}
 }
 

@@ -30,7 +30,7 @@ var appsCmd = &cobra.Command{
 An "app" here is a loaded runtime module or a timer-served flow bundle (an
 ingest app is the latter). 'apps list' reads the same anonymous $APPS feed a
 node board renders, including each source's retrieval metrics: when it was last
-pulled, the debounce window it honours, how large the last pull was, and the
+pulled, the debounce window it honors, how large the last pull was, and the
 last publication notification.`,
 }
 

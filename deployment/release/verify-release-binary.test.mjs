@@ -22,7 +22,7 @@ import {
 const sha256 = (b) => createHash('sha256').update(b).digest('hex');
 
 /**
- * Synthesise a linux/amd64 ELF whose header describes a file of exactly
+ * Synthesize a linux/amd64 ELF whose header describes a file of exactly
  * `size` bytes: 64-byte header, one program header, one section header placed
  * so the section table ends at EOF — the same shape the real daemon binary has
  * (its section header table ends at byte `size` exactly).
@@ -322,7 +322,7 @@ test('an unreadable lock fails CLOSED rather than being assumed stale', () => {
   });
 });
 
-test('a lock left by a dead process is reclaimed, not honoured forever', () => {
+test('a lock left by a dead process is reclaimed, not honored forever', () => {
   withTempDir((dir) => {
     const lock = join(dir, 'artifact.lock');
     // A pid that has certainly exited: spawn a process and let it die.

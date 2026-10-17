@@ -282,7 +282,7 @@ func (s *FlatSQLStore) installPartitionCounters() error {
 	// means "complete" too.
 	if _, err := tx.Exec(`UPDATE sdn_partition_record_bytes SET scanned_rowid = ? WHERE scanned_rowid > ?`,
 		partitionCountComplete, partitionCountComplete); err != nil {
-		return fmt.Errorf("normalise partition counter cursors: %w", err)
+		return fmt.Errorf("normalize partition counter cursors: %w", err)
 	}
 
 	partitions, err := s.listProducerStandardTables()

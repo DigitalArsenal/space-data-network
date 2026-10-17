@@ -29,7 +29,7 @@
     },
     "step3": {
       "title": "Node info",
-      "paragraph1": "Here you have information about the size of your repo, how many peers are connected, your peer ID and the IPFS flavour that's currently in use.",
+      "paragraph1": "Here you have information about the size of your repo, how many peers are connected, your peer ID and the IPFS flavor that's currently in use.",
       "paragraph2": "<0>Expand the <1>Advanced</1> link to see more info, such as the gateway URL and addresses. There's also a link inside the Advanced section to change your API address.</0>"
     },
     "step4": {

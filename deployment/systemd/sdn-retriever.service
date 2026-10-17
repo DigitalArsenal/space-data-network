@@ -1,6 +1,6 @@
 # sdn-retriever.service — the CelesTrak retriever/producer on host-02 (sfo2).
 #
-# OWNED BY: Hephaestus (unit, ports, enrolment). Hermes owns the flow runtime and
+# OWNED BY: Hephaestus (unit, ports, enrollment). Hermes owns the flow runtime and
 # the daemon's config/identity. Migrated from host-01 on 2026-07-28 by owner
 # ruling: "the celestrak.eth box is for the celestrak shit, the sdn.spaceaware.io
 # is for serving the encrypted modules." The host-01-flavored unit this file used
@@ -41,7 +41,7 @@
 #   5003  admin, LOOPBACK ONLY — this daemon serves no public HTTP surface.
 #
 # DIAL DIRECTION: host-01's sidecar dials US. Its own libp2p listener is
-# loopback-only, so it cannot be dialled back; see the config's bootstrap note.
+# loopback-only, so it cannot be dialed back; see the config's bootstrap note.
 
 [Unit]
 Description=SDN CelesTrak retriever/producer (host-02, celestrak.eth box)

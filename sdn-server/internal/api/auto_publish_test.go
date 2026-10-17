@@ -93,7 +93,7 @@ func TestAutoPublisherPublishesAConfiguredLane(t *testing.T) {
 		req.SourceName != "satnogs-db" || req.BatchID != "e6fad530" {
 		t.Fatalf("publication request = %+v, want the observed RFB batch identity", req)
 	}
-	// The trigger names a WINDOW, never a policy: no licence override, no
+	// The trigger names a WINDOW, never a policy: no license override, no
 	// full-catalog flag, no announcement-schema list invented by the host.
 	if req.FullCatalog || req.AnnounceExisting || req.Limit != 0 ||
 		req.ChunkSize != 0 || req.DatasetID != "" || len(req.AnnouncementSchemas) != 0 {
@@ -123,7 +123,7 @@ func TestAutoPublisherIsNilWithoutConfiguredLanes(t *testing.T) {
 	if publisher := NewAutoPublisher(newRecordingPublicationService(), nil); publisher != nil {
 		t.Fatal("NewAutoPublisher must return nil when no lane is configured")
 	}
-	// A lane with no schema would match everything; it is dropped, not honoured.
+	// A lane with no schema would match everything; it is dropped, not honored.
 	if publisher := NewAutoPublisher(newRecordingPublicationService(), []config.AutoPublishLane{{ProviderID: "p"}}); publisher != nil {
 		t.Fatal("a schema-less lane must not arm the publisher")
 	}

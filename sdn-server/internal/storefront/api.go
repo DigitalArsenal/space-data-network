@@ -1110,7 +1110,7 @@ func (h *APIHandler) handleAdminDashboard(w http.ResponseWriter, r *http.Request
 	}, 100, 0)
 	failed, _, _ := h.service.store.GetPurchasesByStatuses([]PurchaseStatus{
 		PurchaseStatusFailed,
-		PurchaseStatusCancelled,
+		PurchaseStatusCanceled,
 		PurchaseStatusExpired,
 	}, 100, 0)
 	disputes := make([]*Review, 0)

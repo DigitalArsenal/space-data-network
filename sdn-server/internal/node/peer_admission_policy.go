@@ -135,13 +135,13 @@ const (
 	// path, whatever protocol prefixes it happens to advertise.
 	admissionTagSDNTopic = "sdn-topic-member"
 
-	// admissionTagTunnelled marks a peer that reached us through the node's
+	// admissionTagTunneled marks a peer that reached us through the node's
 	// OWN loopback websocket tunnel — the :443 root-path upgrade proxy in
 	// cmd/spacedatanetwork (resolveLocalLibp2pWsProxyTarget). Those connections
 	// are not public swarm churn by construction: this process proxied them in
 	// itself, from a browser on our own admin listener. Trimming them is
 	// trimming our own users.
-	admissionTagTunnelled = "sdn-tunnelled"
+	admissionTagTunneled = "sdn-tunneled"
 
 	// admissionSDNPeerTagValue is large enough that any SDN peer outranks every
 	// untagged peer, and small enough to stay well inside the int arithmetic
@@ -213,7 +213,7 @@ var sdnProtocolPrefixes = []string{
 //  1. TOPIC MEMBERSHIP (admissionTagSDNTopic). A peer subscribed to one of this
 //     node's own SDN pubsub topics is consuming the SDN data path. That is what
 //     a browser IS to us, and it is not something a crawler does by accident.
-//  2. LOOPBACK TUNNEL PROVENANCE (admissionTagTunnelled). A connection whose
+//  2. LOOPBACK TUNNEL PROVENANCE (admissionTagTunneled). A connection whose
 //     remote address is loopback did not come off the public swarm: this
 //     process proxied it in itself, from the :443 root-path websocket upgrade
 //     interceptor. Public churn cannot forge that — it arrives on :4004 from a
@@ -412,7 +412,7 @@ func (p admissionPolicy) Summary() string {
 		return fmt.Sprintf(
 			"PEER ADMISSION POLICY DISABLED (network.admission.disabled): connection manager band %d..%d, "+
 				"no reserved headroom, pinned/trusted peers are NOT protected from trimming, "+
-				"SDN peers are NOT prioritised. Anonymous inbound churn competes with the fleet for every slot.",
+				"SDN peers are NOT prioritized. Anonymous inbound churn competes with the fleet for every slot.",
 			p.LowWater, p.HighWater)
 	}
 	s := fmt.Sprintf(
@@ -472,7 +472,7 @@ func sdnPeerTagValue(advertised []coreprotocol.ID, served map[coreprotocol.ID]st
 	return 0
 }
 
-// isTunnelledPeerAddr reports whether a connection's REMOTE multiaddr is
+// isTunneledPeerAddr reports whether a connection's REMOTE multiaddr is
 // loopback, i.e. the peer reached this node through something on this box
 // rather than off the public swarm.
 //
@@ -484,7 +484,7 @@ func sdnPeerTagValue(advertised []coreprotocol.ID, served map[coreprotocol.ID]st
 // 127.0.0.1. Public churn cannot present a loopback remote address.
 //
 // Pure over multiaddrs so the provenance decision is testable without a swarm.
-func isTunnelledPeerAddr(addr multiaddr.Multiaddr) bool {
+func isTunneledPeerAddr(addr multiaddr.Multiaddr) bool {
 	if addr == nil {
 		return false
 	}
@@ -501,12 +501,12 @@ func isTunnelledPeerAddr(addr multiaddr.Multiaddr) bool {
 	return false
 }
 
-// anyTunnelledAddr reports whether ANY of a peer's live connections came in
+// anyTunneledAddr reports whether ANY of a peer's live connections came in
 // through the loopback tunnel. Any is the right quantifier: a browser that also
 // happens to hold a public connection is still a browser.
-func anyTunnelledAddr(remoteAddrs []multiaddr.Multiaddr) bool {
+func anyTunneledAddr(remoteAddrs []multiaddr.Multiaddr) bool {
 	for _, addr := range remoteAddrs {
-		if isTunnelledPeerAddr(addr) {
+		if isTunneledPeerAddr(addr) {
 			return true
 		}
 	}
@@ -537,10 +537,10 @@ type PeerAdmissionStats struct {
 	// subscribed to one of this node's SDN pubsub topics. This is the BROWSER
 	// count: it is the number the 2026-08-06 outage would have shown collapsing.
 	TopicMemberPeers int64 `json:"topic_member_peers"`
-	// TunnelledPeers is how many peers are currently tagged because they
+	// TunneledPeers is how many peers are currently tagged because they
 	// arrived through the node's own loopback websocket tunnel (:443 root-path
 	// upgrade proxy).
-	TunnelledPeers int64 `json:"tunnelled_peers"`
+	TunneledPeers int64 `json:"tunneled_peers"`
 }
 
 // peerAdmissionController applies the resolved policy to a live host.
@@ -565,7 +565,7 @@ type peerAdmissionController struct {
 	identifiedPeers  atomic.Uint64
 	anonymousPeers   atomic.Uint64
 	topicMemberPeers atomic.Int64
-	tunnelledPeers   atomic.Int64
+	tunneledPeers   atomic.Int64
 
 	taggedTopicMu sync.Mutex
 	taggedTopic   map[peer.ID]struct{}
@@ -681,7 +681,7 @@ func (c *peerAdmissionController) HandleTrustChange(id peer.ID, _, newLevel peer
 // connection critical path. Polling network.Conns() would be both slower to
 // react and a second implementation of something the library already publishes.
 //
-// Returns once ctx is cancelled or the subscription closes.
+// Returns once ctx is canceled or the subscription closes.
 func (c *peerAdmissionController) Run(ctx context.Context, h host.Host) error {
 	if c == nil || !c.policy.Enabled || h == nil {
 		return nil
@@ -789,16 +789,16 @@ func (c *peerAdmissionController) observeIdentified(id peer.ID, advertised []cor
 	// Loopback provenance is decided FIRST and independently of protocols,
 	// because the peer this rescues — a browser on the :443 tunnel — advertises
 	// nothing but commons and would otherwise be scored 0 and evicted first.
-	if anyTunnelledAddr(remoteAddrs) {
+	if anyTunneledAddr(remoteAddrs) {
 		tunnelFirst := false
-		c.connMgr.UpsertTag(id, admissionTagTunnelled, func(existing int) int {
+		c.connMgr.UpsertTag(id, admissionTagTunneled, func(existing int) int {
 			if existing == 0 {
 				tunnelFirst = true
 			}
 			return admissionSDNPeerTagValue
 		})
 		if tunnelFirst {
-			c.tunnelledPeers.Add(1)
+			c.tunneledPeers.Add(1)
 		}
 	}
 
@@ -853,6 +853,6 @@ func (c *peerAdmissionController) Stats() PeerAdmissionStats {
 		IdentifiedPeers:    c.identifiedPeers.Load(),
 		AnonymousPeers:     c.anonymousPeers.Load(),
 		TopicMemberPeers:   c.topicMemberPeers.Load(),
-		TunnelledPeers:     c.tunnelledPeers.Load(),
+		TunneledPeers:     c.tunneledPeers.Load(),
 	}
 }

@@ -29,7 +29,7 @@ import (
 //     to the account that owns it; moving a daemon between accounts is a
 //     deliberate act with a deliberate step (`key reseal`), never a silent
 //     key-space fork. The previous root-sealed/user-opened failure becomes
-//     CORRECT, documented behaviour — loudly diagnosed — instead of a
+//     CORRECT, documented behavior — loudly diagnosed — instead of a
 //     mysterious decrypt error.
 //
 //  2. ABSENT and UNREADABLE are distinguishable. A source that does not exist
@@ -38,7 +38,7 @@ import (
 //     key. A source that EXISTS but cannot be READ is an ERROR: derivation
 //     refuses instead of sealing into a second key space. Fail closed.
 //
-// USERNAME NORMALISATION, recorded deliberately (design requirement 2): the
+// USERNAME NORMALIZATION, recorded deliberately (design requirement 2): the
 // input is the account NAME, not the uid — a name is what the owner asked for
 // and is what survives a uid reshuffle. It is taken from user.Current(),
 // trimmed, with a Windows-style "DOMAIN\" prefix stripped; it is otherwise
@@ -177,7 +177,7 @@ func fingerprintV4From(host, userName string, readings []sourceReading) (string,
 }
 
 // currentProcessUsername resolves the account NAME the process runs as (see
-// the normalisation note in the package comment above: name not uid, verbatim
+// the normalization note in the package comment above: name not uid, verbatim
 // case, DOMAIN\ prefix stripped, no env fallback, empty = error).
 func currentProcessUsername() (string, error) {
 	u, err := user.Current()

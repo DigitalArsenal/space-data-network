@@ -55,7 +55,7 @@ export enum PurchaseStatus {
   PaymentConfirmed = 2,
   Completed = 3,
   Failed = 4,
-  Cancelled = 5,
+  Canceled = 5,
   RefundRequested = 6,
   Refunded = 7,
   Expired = 8,

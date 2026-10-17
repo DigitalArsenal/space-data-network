@@ -1,4 +1,4 @@
-name: chocolatey
+name: chocolaty
 
 on:
   workflow_dispatch:
@@ -51,12 +51,12 @@ jobs:
 
       - name: Download .exe, update version, URL and hash
         run: node update.mjs ${{ env.CHOCO_RELEASE_NAME }}
-        working-directory: .\pkgs\chocolatey
+        working-directory: .\pkgs\chocolaty
 
       - name: Create .nupkg
         run: choco pack
-        working-directory: .\pkgs\chocolatey
+        working-directory: .\pkgs\chocolaty
 
-      - name: Publish to Chocolatey
-        run: choco push ipfs-desktop.${{ env.CHOCO_RELEASE_NAME }}.nupkg --key ${{ secrets.chocolatey_key }} --source "https://push.chocolatey.org"
-        working-directory: .\pkgs\chocolatey
+      - name: Publish to Chocolaty
+        run: choco push ipfs-desktop.${{ env.CHOCO_RELEASE_NAME }}.nupkg --key ${{ secrets.chocolaty_key }} --source "https://push.chocolatey.org"
+        working-directory: .\pkgs\chocolaty

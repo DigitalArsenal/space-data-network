@@ -60,7 +60,7 @@ func BuildObservedSDNPeers(snapshot *PeerGraphSnapshot, registryPeers []*peers.T
 		//
 		// What this deliberately kills: DHT rendezvous advertisement
 		// discoveries. Measured on the live feed 2026-07-30, 34 of 35 rows were
-		// exactly that — never dialled, no name, LAST_SEEN 0, no coordinates,
+		// exactly that — never dialed, no name, LAST_SEEN 0, no coordinates,
 		// and all carrying the identical agent string "spacedatanetwork/1.0.0"
 		// that the old code SYNTHESIZED for them from flags[0] a few lines
 		// below. Publishing an advertisement into a public DHT is a claim
@@ -74,7 +74,7 @@ func BuildObservedSDNPeers(snapshot *PeerGraphSnapshot, registryPeers []*peers.T
 		//
 		// This does not reopen what 2026-07-30 closed. That ruling's target
 		// was peers that had NEVER been seen — advertisement rows with
-		// LAST_SEEN 0 that this node had never dialled — and they stay out,
+		// LAST_SEEN 0 that this node had never dialed — and they stay out,
 		// because an advertisement leaves no record of contact. What is
 		// admitted now is the opposite case: a node this box has actually
 		// met, carrying the registry's own timestamp to prove it. "When a

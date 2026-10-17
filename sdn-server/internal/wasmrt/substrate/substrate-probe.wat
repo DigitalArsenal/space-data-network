@@ -1,6 +1,6 @@
 ;; Runtime substrate probe (design A21, A31). Embedded in the daemon and run by
 ;; `spacedatanetwork substrate-selftest` and before the first partition-store
-;; instance opens. It measures the runtime's behaviour; it trusts no version
+;; instance opens. It measures the runtime's behavior; it trusts no version
 ;; string and no patch manifest.
 ;;
 ;;   notify_without_store: a notify must wake a waiter even though the word

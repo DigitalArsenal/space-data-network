@@ -20,10 +20,10 @@ import (
 // were not run through the gate. graph/gauntlet/go-tier.mjs exports
 // GO_TIER_LOADAVG1 / GO_TIER_NCPU / GO_TIER_LOAD_RATIO for exactly this — a
 // test whose premise is a wall-clock window has to be able to say whether the
-// box was in a position to honour it.
+// box was in a position to honor it.
 //
 // The ratio is the number that matters. This box is a 28-core Mac Studio, where
-// a loadavg of 20 is 71 % utilisation: BUSY, not starved. A test that flips
+// a loadavg of 20 is 71 % utilization: BUSY, not starved. A test that flips
 // there is simply wrong (owner 2026-08-27), so nothing here treats mere
 // business as an excuse — only genuine oversubscription does.
 func gateLoad() (loadavg1 float64, ncpu float64, ratio float64) {
@@ -46,7 +46,7 @@ func gateLoad() (loadavg1 float64, ncpu float64, ratio float64) {
 // These tests pin the WIRING: the two anonymous store-backed surfaces really
 // do go through the bounded reader, really do report their own staleness, and
 // really do serve a second identical request without touching the store again.
-// The budget behaviour itself is covered in boundedread_test.go.
+// The budget behavior itself is covered in boundedread_test.go.
 
 func boundedTestStore(t *testing.T) *storage.FlatSQLStore {
 	t.Helper()
@@ -175,7 +175,7 @@ func TestStatsReportsItsOwnStaleness(t *testing.T) {
 	// test came to decide the whole sdn go-host-tier lane by ambient load
 	// (measured 2026-08-14: PASS at load ~1, FAIL at load 19.35, 1.3 s in
 	// isolation either way). So the premise is MEASURED rather than assumed:
-	// the assertion speaks only when the box actually honoured the window, and
+	// the assertion speaks only when the box actually honored the window, and
 	// a box that never does says so instead of voting red.
 	const attempts = 5
 	var first, second map[string]interface{}

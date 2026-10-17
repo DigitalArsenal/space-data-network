@@ -30,10 +30,10 @@ import (
 // were not run through the gate. graph/gauntlet/go-tier.mjs exports
 // GO_TIER_LOADAVG1 / GO_TIER_NCPU / GO_TIER_LOAD_RATIO for exactly this — a
 // test whose premise is a wall-clock window has to be able to say whether the
-// box was in a position to honour it.
+// box was in a position to honor it.
 //
 // The ratio is the number that matters. This box is a 28-core Mac Studio, where
-// a loadavg of 20 is 71 % utilisation: BUSY, not starved. A test that flips
+// a loadavg of 20 is 71 % utilization: BUSY, not starved. A test that flips
 // there is simply wrong (owner 2026-08-27), so nothing here treats mere
 // business as an excuse — only genuine oversubscription does.
 func gateLoad() (loadavg1 float64, ncpu float64, ratio float64) {

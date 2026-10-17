@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// TestMain neutralises process-table discovery for the whole package.
+// TestMain neutralizes process-table discovery for the whole package.
 //
 // Without this, every config test reads the DEVELOPER'S machine: a dev daemon
 // running locally would resolve config for tests that are about the directory
@@ -39,7 +39,7 @@ func writeProcFixture(t *testing.T, procs map[int][]string) string {
 	return root
 }
 
-// useProcFixture points discovery at a fixture procfs and neutralises the ps
+// useProcFixture points discovery at a fixture procfs and neutralizes the ps
 // fallback, so a test can never accidentally read the real machine.
 func useProcFixture(t *testing.T, procs map[int][]string) {
 	t.Helper()

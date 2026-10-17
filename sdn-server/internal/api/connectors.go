@@ -4,7 +4,7 @@ package api
 // record per (provider_id, source_name) lane this node holds or fetches,
 // computed live from the store's source summaries, the retrieval ledger
 // (internal/sourcemetrics), the running flow services and the dataset
-// publication ledger, resolved to an ORIGIN (an organisation, never a tag
+// publication ledger, resolved to an ORIGIN (an organization, never a tag
 // string — see connector_origins.go), persisted through the FlatSQL engine
 // like every other standard and served as size-prefixed $ICN frames.
 //
@@ -522,7 +522,7 @@ func (h *ConnectorsHandler) build() ([]Connector, error) {
 		// unless it produced them).
 		c.ProviderPeerID = agg.producer
 
-		// Newest batch + its licence (tier (a) of the origin order).
+		// Newest batch + its license (tier (a) of the origin order).
 		newestBatch := agg.newestBatch[c.TargetSchema]
 		if row != nil && strings.TrimSpace(row.LastBatchID) != "" {
 			c.LastBatchID = strings.TrimSpace(row.LastBatchID)

@@ -25,7 +25,7 @@ import (
 // reads the store on an anonymous hot path:
 //
 //   - the caller waits at most `budget`;
-//   - a slow load is abandoned by the CALLER, never cancelled — its result is
+//   - a slow load is abandoned by the CALLER, never canceled — its result is
 //     kept as the new last-known-good, so the wait is paid once, not per
 //     request;
 //   - single-flight per key: a flood of readers against a blocked store starts
@@ -139,7 +139,7 @@ type boundedResult struct {
 
 // read serves key within budget.
 //
-// load is called on its own goroutine and is never cancelled — abandoning a
+// load is called on its own goroutine and is never canceled — abandoning a
 // store read does not make the store any less busy, and the result is worth
 // keeping for the next caller. minRefresh suppresses the load entirely while
 // the cached value is younger than it.

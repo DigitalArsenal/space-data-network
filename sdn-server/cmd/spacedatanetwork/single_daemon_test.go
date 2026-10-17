@@ -68,7 +68,7 @@ func TestMultiDaemonOverrideRespectsFlagAndEnv(t *testing.T) {
 	allowMultiDaemonFlag = true
 	enabled, how := multiDaemonOverrideEnabled()
 	if !enabled || !strings.Contains(how, "--allow-multi-daemon") {
-		t.Fatalf("flag override not honoured: enabled=%v how=%q", enabled, how)
+		t.Fatalf("flag override not honored: enabled=%v how=%q", enabled, how)
 	}
 
 	allowMultiDaemonFlag = false

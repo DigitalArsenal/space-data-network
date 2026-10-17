@@ -86,9 +86,9 @@ test('there is no downgrade path in either direction', () => {
   assert.throws(() => validateUpdateManifest(stripped, options(stripped)), /invalid update signature/);
 
   // Legacy-signed bytes with a label bolted on: same, mirrored.
-  const relabelled = clone(golden.legacy_signed);
-  relabelled.signing.statement_domain = 'SDN-UPDATE-MANIFEST-V1';
-  assert.throws(() => validateUpdateManifest(relabelled, options(relabelled)), /invalid update signature/);
+  const relabeled = clone(golden.legacy_signed);
+  relabeled.signing.statement_domain = 'SDN-UPDATE-MANIFEST-V1';
+  assert.throws(() => validateUpdateManifest(relabeled, options(relabeled)), /invalid update signature/);
 });
 
 test('a tampered payload hash fails even with a valid signature attached', () => {

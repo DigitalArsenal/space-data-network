@@ -216,7 +216,7 @@ var updateRollbackCmd = &cobra.Command{
 	Short: "Restore a retained build (default: the immediately-previous one)",
 	Long: "Swaps the bundle back to a retained build and moves the displaced payload to " +
 		"updates/failed/<update-id>/. With no --slot this restores the immediately-previous " +
-		"verified build, which is the only reverse target whose behaviour is known. An older " +
+		"verified build, which is the only reverse target whose behavior is known. An older " +
 		"slot must be NAMED: skipping generations silently reverts every lane that landed in " +
 		"between. Stop the daemon first; a rollback rewrites the binary it is running.",
 	RunE: func(cmd *cobra.Command, _ []string) error {

@@ -52,7 +52,7 @@ type ProviderFeedUpdate struct {
 // (graph: sdn-publish-fleet-update-wraps-an-unverified-binary), where a
 // corrupt artifact was signed, indexed and served as the newest sequence. That
 // one was self-consistent, so this check would not have caught it — the
-// producer-side gate does that. This closes the neighbouring hole: an index
+// producer-side gate does that. This closes the neighboring hole: an index
 // entry and the manifest it resolves to disagreeing about which artifact is
 // being installed.
 //

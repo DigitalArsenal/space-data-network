@@ -370,7 +370,7 @@ func (s *slot) read(ctx context.Context, dst []byte) (int, error) {
 	}
 }
 
-// cancel asks the engine to end the request (it ends with P4_E_CANCELLED; a
+// cancel asks the engine to end the request (it ends with P4_E_CANCELED; a
 // running write completes).
 func (s *slot) cancel() {
 	m := s.m
@@ -437,7 +437,7 @@ func (s *slot) drain(ctx context.Context) error {
 	}
 }
 
-// abandonGrace is how long a cancelled request may take to reach DONE
+// abandonGrace is how long a canceled request may take to reach DONE
 // before its caller returns (§5.2 rules: one second).
 const abandonGrace = time.Second
 

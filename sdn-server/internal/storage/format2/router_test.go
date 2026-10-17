@@ -404,12 +404,12 @@ func TestWaitLabelsEndsAtTheDeadline(t *testing.T) {
 		func() (uint64, bool, error) { t.Fatal("labels read for an empty partition"); return 0, false, nil }); err != nil || st.timedOut {
 		t.Fatalf("empty partition: timedOut %v err %v", st.timedOut, err)
 	}
-	// A cancelled context ends it with the context's error; a closed store
+	// A canceled context ends it with the context's error; a closed store
 	// (stop, or a reader that says ErrStopped) with ErrStopped.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if _, err := waitLabels(ctx, nil, time.Now().Add(time.Hour), hi7, func() (uint64, bool, error) { return 0, true, nil }); err != context.Canceled {
-		t.Fatalf("cancelled context: %v", err)
+		t.Fatalf("canceled context: %v", err)
 	}
 	stop := make(chan struct{})
 	close(stop)
@@ -560,20 +560,20 @@ func TestConcurrentBatchesReportTheirOwnRejects(t *testing.T) {
 	wg.Wait()
 }
 
-// B2 (cutover review): a batch whose wait ends early (a cancelled or timed
+// B2 (cutover review): a batch whose wait ends early (a canceled or timed
 // out publish) gives its entries' rejects up. Rejects the engine records
 // after the caller left are dropped as they are drained, so a client that
-// keeps publishing refused records and cancelling cannot grow the
+// keeps publishing refused records and canceling cannot grow the
 // partition's reject set.
-func TestCancelledBatchesLeaveNoRejects(t *testing.T) {
+func TestCanceledBatchesLeaveNoRejects(t *testing.T) {
 	s := openTestStore(t, t.TempDir())
 	base := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	const peer = "source:reject-cancel"
-	cancelled := 0
+	canceled := 0
 	for k := 0; k < 40; k++ {
 		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Microsecond)
 		if _, err := s.PutBatch(ctx, "OMM.fbs", rejectedPuts(25, 200000+k*25, base), peer, nil, nil); err != nil {
-			cancelled++
+			canceled++
 		}
 		cancel()
 	}
@@ -603,7 +603,7 @@ func TestCancelledBatchesLeaveNoRejects(t *testing.T) {
 	kept, watched := len(p.rejects), len(p.forgotten)
 	p.mu.Unlock()
 	if kept != 0 || watched != 0 {
-		t.Fatalf("after %d cancelled batches: %d rejects kept, %d given-up entries still watched; want none", cancelled, kept, watched)
+		t.Fatalf("after %d canceled batches: %d rejects kept, %d given-up entries still watched; want none", canceled, kept, watched)
 	}
-	t.Logf("%d of 40 batches cancelled; no reject kept", cancelled)
+	t.Logf("%d of 40 batches canceled; no reject kept", canceled)
 }

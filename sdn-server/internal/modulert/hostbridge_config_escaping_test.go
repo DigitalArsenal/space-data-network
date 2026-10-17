@@ -20,7 +20,7 @@ const (
 // an operator's source URL: "gp.php?GROUP=stations&FORMAT=csv" reached the
 // guest as "gp.php?GROUP=stationsu0026FORMAT=csv" (the guest's minimal JSON
 // reader does not decode \u escapes), and the node then burned its entire
-// timeout dialling a host that does not exist.
+// timeout dialing a host that does not exist.
 func TestGetConfigDoesNotHTMLEscapeConfiguredValues(t *testing.T) {
 	const url = "https://celestrak.org/NORAD/elements/gp.php?GROUP=stations&FORMAT=csv"
 

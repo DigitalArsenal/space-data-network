@@ -70,7 +70,7 @@ func (beginner sqlAssetPinTransactionBeginner) BeginTx(ctx context.Context, opts
 }
 
 // beginAssetPinTransaction is the ONLY place an asset-pin transaction is
-// opened, and it deliberately opens it on a context that CANNOT be cancelled.
+// opened, and it deliberately opens it on a context that CANNOT be canceled.
 //
 // database/sql binds a transaction's life to the context it was begun with: it
 // runs an awaitDone goroutine that rolls the transaction back the moment that
@@ -88,7 +88,7 @@ func (beginner sqlAssetPinTransactionBeginner) BeginTx(ctx context.Context, opts
 // So the transaction is detached from cancellation and rolled back only by the
 // caller's own `defer tx.Rollback()`. Cancellation is still honored, and
 // honored EARLIER: every statement inside the transaction is executed with the
-// caller's context, so a cancelled caller fails at its next statement and
+// caller's context, so a canceled caller fails at its next statement and
 // unwinds through that deliberate rollback with no journal frame written and no
 // ledger poisoned. Past the journal append there is no context left that can
 // stop the commit, which is why no caller needs to reason about sql.ErrTxDone.

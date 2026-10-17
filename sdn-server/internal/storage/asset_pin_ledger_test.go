@@ -2342,7 +2342,7 @@ const (
 	cancelBeforeAnyStatement
 )
 
-type cancellingAssetPinTransactionBeginner struct {
+type cancelingAssetPinTransactionBeginner struct {
 	delegate assetPinTransactionBeginner
 	cancel   context.CancelFunc
 	at       assetPinCancelPoint
@@ -2352,7 +2352,7 @@ type cancellingAssetPinTransactionBeginner struct {
 	torndown *bool
 }
 
-func (beginner cancellingAssetPinTransactionBeginner) BeginTx(ctx context.Context, opts *sql.TxOptions) (assetPinTransaction, error) {
+func (beginner cancelingAssetPinTransactionBeginner) BeginTx(ctx context.Context, opts *sql.TxOptions) (assetPinTransaction, error) {
 	tx, err := beginner.delegate.BeginTx(ctx, opts)
 	if err != nil {
 		return nil, err
@@ -2361,14 +2361,14 @@ func (beginner cancellingAssetPinTransactionBeginner) BeginTx(ctx context.Contex
 		beginner.cancel()
 		return tx, nil
 	}
-	return &cancellingAssetPinTransaction{
+	return &cancelingAssetPinTransaction{
 		assetPinTransaction: tx,
 		cancel:              beginner.cancel,
 		torndown:            beginner.torndown,
 	}, nil
 }
 
-type cancellingAssetPinTransaction struct {
+type cancelingAssetPinTransaction struct {
 	assetPinTransaction
 	cancel   context.CancelFunc
 	torndown *bool
@@ -2379,7 +2379,7 @@ type cancellingAssetPinTransaction struct {
 // the caller's context and then gives database/sql a generous window to react
 // before delegating, so a transaction that is still bound to that context is
 // guaranteed to be dead by the time the real Commit runs.
-func (tx *cancellingAssetPinTransaction) Commit() error {
+func (tx *cancelingAssetPinTransaction) Commit() error {
 	tx.cancel()
 	deadline := time.Now().Add(250 * time.Millisecond)
 	for time.Now().Before(deadline) {
@@ -2495,7 +2495,7 @@ func newExpiredStagedAssetPinReferenceForTest(t *testing.T, store *FlatSQLStore,
 func assertAssetPinLedgerStillWritable(t *testing.T, store *FlatSQLStore, suffix string) {
 	t.Helper()
 	if err := store.requireWritable("probe asset pin ledger"); err != nil {
-		t.Fatalf("store is not writable after a cancelled caller: %v", err)
+		t.Fatalf("store is not writable after a canceled caller: %v", err)
 	}
 	probe := newExpiredStagedAssetPinReferenceForTest(t, store, "probe-"+suffix)
 	if _, ok, err := store.FindAssetPinReference(context.Background(), probe.ReferenceKey); err != nil || !ok {
@@ -2513,7 +2513,7 @@ func TestAssetPinMutationCommitSurvivesCallerCancellation(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			torndown := false
-			store.assetPinTransactions = cancellingAssetPinTransactionBeginner{
+			store.assetPinTransactions = cancelingAssetPinTransactionBeginner{
 				delegate: store.assetPinTransactions,
 				cancel:   cancel,
 				at:       cancelAtCommitBoundary,
@@ -2527,7 +2527,7 @@ func TestAssetPinMutationCommitSurvivesCallerCancellation(t *testing.T) {
 				t.Fatalf("database/sql rolled the asset pin transaction back when the caller's context died; the transaction must not be bound to the caller. %s error = %v", testCase.name, err)
 			}
 			if err != nil {
-				t.Fatalf("%s with a caller cancelled at the commit boundary: error = %v, want the mutation to commit", testCase.name, err)
+				t.Fatalf("%s with a caller canceled at the commit boundary: error = %v, want the mutation to commit", testCase.name, err)
 			}
 			if errors.Is(err, sql.ErrTxDone) || errors.Is(err, ErrAssetPinLedgerRecoveryRequired) {
 				t.Fatalf("%s error = %v, want neither ErrTxDone nor ledger recovery", testCase.name, err)
@@ -2545,7 +2545,7 @@ func TestAssetPinMutationCommitSurvivesCallerCancellation(t *testing.T) {
 	}
 }
 
-func TestAssetPinMutationCancelledBeforeAnyWriteRollsBackWithoutPoisoningLedger(t *testing.T) {
+func TestAssetPinMutationCanceledBeforeAnyWriteRollsBackWithoutPoisoningLedger(t *testing.T) {
 	for _, testCase := range assetPinCancellationCases() {
 		t.Run(testCase.name, func(t *testing.T) {
 			basePath := filepath.Join(t.TempDir(), "store")
@@ -2555,7 +2555,7 @@ func TestAssetPinMutationCancelledBeforeAnyWriteRollsBackWithoutPoisoningLedger(
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			torndown := false
-			store.assetPinTransactions = cancellingAssetPinTransactionBeginner{
+			store.assetPinTransactions = cancelingAssetPinTransactionBeginner{
 				delegate: store.assetPinTransactions,
 				cancel:   cancel,
 				at:       cancelBeforeAnyStatement,
@@ -2568,10 +2568,10 @@ func TestAssetPinMutationCancelledBeforeAnyWriteRollsBackWithoutPoisoningLedger(
 
 			// Cancellation is still honored — just earlier, and cleanly.
 			if !errors.Is(err, context.Canceled) {
-				t.Fatalf("%s with a cancelled caller: error = %v, want context.Canceled", testCase.name, err)
+				t.Fatalf("%s with a canceled caller: error = %v, want context.Canceled", testCase.name, err)
 			}
 			if errors.Is(err, ErrAssetPinLedgerRecoveryRequired) {
-				t.Fatalf("%s error = %v; a cancelled caller must never poison the ledger", testCase.name, err)
+				t.Fatalf("%s error = %v; a canceled caller must never poison the ledger", testCase.name, err)
 			}
 			if journalAfter := auxiliaryJournalSizeForTest(t, basePath); journalAfter != journalBefore {
 				t.Fatalf("auxiliary journal size = %d, want the unchanged %d: a rolled-back mutation must journal nothing", journalAfter, journalBefore)

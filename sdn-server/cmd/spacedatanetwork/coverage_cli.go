@@ -67,7 +67,7 @@ var accountsAddCmd = &cobra.Command{
 	Short: "Add a peer account by peer ID, public key, or vCard",
 	Long: `Add a peer account.
 
-Identity may be given as --peer-id or --public-key (a marshalled libp2p key, a
+Identity may be given as --peer-id or --public-key (a marshaled libp2p key, a
 raw 32-byte ed25519 key, or a raw 33-byte compressed secp256k1 key, in hex or
 base64). Supplying both is allowed only if they agree — a mismatch is refused
 rather than resolved to either.

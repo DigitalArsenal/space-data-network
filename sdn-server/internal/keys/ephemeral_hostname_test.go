@@ -14,7 +14,7 @@ func TestContainerDefaultHostnameShape(t *testing.T) {
 		"3f2a91c4de70a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f607182930",
 	} {
 		if !containerDefaultHostname.MatchString(host) {
-			t.Errorf("container default %q not recognised", host)
+			t.Errorf("container default %q not recognized", host)
 		}
 	}
 	for _, host := range []string{
@@ -34,7 +34,7 @@ func TestContainerDefaultHostnameShape(t *testing.T) {
 	}
 }
 
-func TestEphemeralHostnameHonoursOverride(t *testing.T) {
+func TestEphemeralHostnameHonorsOverride(t *testing.T) {
 	t.Setenv(AllowEphemeralHostnameEnv, "1")
 	if reason, ephemeral := EphemeralHostname(); ephemeral {
 		t.Fatalf("override ignored: %s", reason)

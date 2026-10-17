@@ -232,13 +232,13 @@ describe('IPFS artifact peer routing', () => {
   });
 
   it('cancels stalled provider discovery response bodies after the timeout', async () => {
-    let cancelled = false;
+    let canceled = false;
     const body = new ReadableStream<Uint8Array>({
       start(controller) {
         controller.enqueue(new Uint8Array([123]));
       },
       cancel() {
-        cancelled = true;
+        canceled = true;
       },
     });
 
@@ -258,7 +258,7 @@ describe('IPFS artifact peer routing', () => {
       failed: 0,
       discovered: 0,
     });
-    expect(cancelled).toBe(true);
+    expect(canceled).toBe(true);
   });
 
   it('starts provider discovery for shard CIDs concurrently so sync can reach shard downloads quickly', async () => {

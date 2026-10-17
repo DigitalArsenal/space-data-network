@@ -23,7 +23,7 @@ jobs:
           name: "node-${{ inputs.gh-node-version }}"
           label: "${{ inputs.gh-node-version }}"
           status: "Building..."
-          color: grey
+          color: gray
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
   test-node:

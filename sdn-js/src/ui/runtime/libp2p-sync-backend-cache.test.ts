@@ -15,7 +15,7 @@ import { Libp2pFlatSqlSyncBackendCache } from './libp2p-sync-backend-cache';
 // and then assert WHICH peers they went to. They used to wait exactly one
 // microtask (`await Promise.resolve()`) before asserting, which assumes the
 // implementation reaches its dispatch point within one tick — an assumption
-// about how many awaits are on that path, not about the behaviour under test.
+// about how many awaits are on that path, not about the behavior under test.
 // On a loaded CI runner the over-rotation test read
 // ['CelesTrak','CelesTrak','Mirror','CelesTrak'] and failed, while 947 other
 // tests passed and the same test passed locally three times running.

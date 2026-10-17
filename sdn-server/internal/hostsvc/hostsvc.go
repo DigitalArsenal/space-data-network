@@ -35,7 +35,7 @@
 // PLATFORM: systemd only, and that is deliberate rather than a gap. macOS
 // (launchd) and container runtimes are not systemd, so on those hosts the probe
 // reports nothing, the control surface refuses, and the dashboard renders no
-// lifecycle buttons at all — which is exactly the intended behaviour for a
+// lifecycle buttons at all — which is exactly the intended behavior for a
 // developer laptop and for a Docker node.
 package hostsvc
 
@@ -73,7 +73,7 @@ type State struct {
 	SubState    string
 	// Autostart is systemd's UnitFileState verbatim: "enabled", "disabled",
 	// "static", "indirect", "masked", "enabled-runtime", … It is NEVER
-	// normalised into a boolean — "static" and "indirect" are neither
+	// normalized into a boolean — "static" and "indirect" are neither
 	// enabled nor disabled, and flattening them would be the same
 	// fabrication the dashboard's hardcoded ENABLED was.
 	Autostart string
@@ -235,7 +235,7 @@ func showUnit(ctx context.Context, unit string) (map[string]string, error) {
 	)
 	// A fixed, empty environment: nothing about this call should depend on the
 	// daemon's own environment, and systemctl inherits no locale or paging
-	// behaviour that could reshape its output.
+	// behavior that could reshape its output.
 	cmd.Env = []string{}
 	out, err := cmd.Output()
 	if err != nil {

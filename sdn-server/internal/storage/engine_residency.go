@@ -177,7 +177,7 @@ type engineIngest struct {
 // engineLedgerSchema is the ledger's schema key: the canonical ".fbs" name.
 // sdn_record_index stores the writer's spelling verbatim (a record stored as
 // "OMM" and one stored as "OMM.fbs" are the same standard), so every ledger
-// read and write normalises first; the index side of a join uses
+// read and write normalizes first; the index side of a join uses
 // engineSchemaNameAliases.
 func engineLedgerSchema(schemaName string) string {
 	return normalizeSchemaNameForEpoch(schemaName)
@@ -974,7 +974,7 @@ var engineHotWindowPageBytes int64 = 32 << 20
 //
 // The page is chosen from the index alone and only its rows touch a record
 // table, by CID seek: joining the standard's union read source (GROUP BY cid
-// over every producer table) materialised every record of the standard, bytes
+// over every producer table) materialized every record of the standard, bytes
 // included, once PER PAGE — measured on host-02 (2026-09-27 18:08Z) as a
 // $IQC page that ran past the 5-minute budget and poisoned the engine.
 func engineWindowPageRefsSQL(tables []string, placeholders, extraWhere string) string {
@@ -1442,7 +1442,7 @@ func (s *FlatSQLStore) hydrateEngineHotWindow(ctx context.Context, lockPerSchema
 // warm open it reconciles and ingests only the tail; on a cold one it fills
 // each window from the control tables. It ends by flushing the engine's
 // record state and writing the coverage mark, so a restart before the next
-// checkpoint still opens warm. A cancelled pass is not an error and does not
+// checkpoint still opens warm. A canceled pass is not an error and does not
 // mark the window hydrated.
 func (s *FlatSQLStore) HydrateEngineHotWindowContext(ctx context.Context) (int, error) {
 	if s.engineHotHydrated.Load() {
@@ -1454,7 +1454,7 @@ func (s *FlatSQLStore) HydrateEngineHotWindowContext(ctx context.Context) (int, 
 	count, err := s.hydrateEngineHotWindow(ctx, true)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			log.Infof("FlatSQL engine hot-window hydration cancelled after %d records — the next boot resumes it", count)
+			log.Infof("FlatSQL engine hot-window hydration canceled after %d records — the next boot resumes it", count)
 			return count, nil
 		}
 		return count, err

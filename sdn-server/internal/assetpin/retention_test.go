@@ -314,19 +314,19 @@ func TestRetainerSweepBoundsEveryKuboCall(t *testing.T) {
 
 func TestRetainerMutationGateIsContextAwareAndRequired(t *testing.T) {
 	gate := NewMutationGate()
-	freeCancelled, cancelFree := context.WithCancel(context.Background())
+	freeCanceled, cancelFree := context.WithCancel(context.Background())
 	cancelFree()
-	if _, err := gate.Acquire(freeCancelled); !errors.Is(err, context.Canceled) {
-		t.Fatalf("Acquire(cancelled free gate) error = %v, want context.Canceled", err)
+	if _, err := gate.Acquire(freeCanceled); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Acquire(canceled free gate) error = %v, want context.Canceled", err)
 	}
 	release, err := gate.Acquire(context.Background())
 	if err != nil {
 		t.Fatalf("Acquire(first) error = %v", err)
 	}
-	cancelled, cancel := context.WithCancel(context.Background())
+	canceled, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := gate.Acquire(cancelled); !errors.Is(err, context.Canceled) {
-		t.Fatalf("Acquire(cancelled) error = %v, want context.Canceled", err)
+	if _, err := gate.Acquire(canceled); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Acquire(canceled) error = %v, want context.Canceled", err)
 	}
 	release()
 	secondRelease, err := gate.Acquire(context.Background())
@@ -458,10 +458,10 @@ func TestRetainerSweepHasGlobalDeadlineAndCancelableRecoveryPaging(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cancelled, cancel := context.WithCancel(context.Background())
+	canceled, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, _, err := fileStore.ListPage(cancelled, "", 1); !errors.Is(err, context.Canceled) {
-		t.Fatalf("ListPage(cancelled) error = %v, want context.Canceled", err)
+	if _, _, err := fileStore.ListPage(canceled, "", 1); !errors.Is(err, context.Canceled) {
+		t.Fatalf("ListPage(canceled) error = %v, want context.Canceled", err)
 	}
 	fileStore.mu.Lock()
 	blocked, cancelBlocked := context.WithTimeout(context.Background(), 20*time.Millisecond)

@@ -124,7 +124,7 @@ func ImportArchiveFromManifest(ctx context.Context, store *FlatSQLStore, opts Im
 	for _, entry := range entries {
 		entry.SchemaName = index.SchemaName
 		entry.ProviderPeerID = providerPeerID
-		// Ledger the key in its libp2p-marshalled form, which carries the key
+		// Ledger the key in its libp2p-marshaled form, which carries the key
 		// TYPE as well as the bytes — a bare hex blob cannot distinguish an
 		// Ed25519 key from a secp256k1 one.
 		if raw, err := crypto.MarshalPublicKey(opts.ProviderPublicKey); err == nil {

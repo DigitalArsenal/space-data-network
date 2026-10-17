@@ -11,7 +11,7 @@ package api
 // $NDS FlatBuffer, and BOTH surfaces answer from RAM —
 //
 //   GET /api/v1/dashboard/stats  the cached frame, byte for byte
-//   GET /api/v1/stats            the same cached numbers, marshalled to JSON
+//   GET /api/v1/stats            the same cached numbers, marshaled to JSON
 //                                for the existing consumers
 //
 // Neither handler touches the store. When the lane has never run (no store, or

@@ -1,7 +1,7 @@
 package wasm
 
 // Locks DeriveLegacyAuthPublicKey against the scheme hd-wallet-ui's LEGACY
-// identity schemes actually use, so the node can recognise its own root account
+// identity schemes actually use, so the node can recognize its own root account
 // when an operator signs in through today's raw-32 admit point (owner directive
 // 2026-07-27; §14 of graph/tasks/nst-node-admin-contract.md).
 //
@@ -66,7 +66,7 @@ func TestDeriveLegacyAuthPublicKeyMatchesTheDocumentedScheme(t *testing.T) {
 // TestLegacyAuthKeyDiffersFromTheSigningKey locks the fact that made the root
 // carve-out need TWO keys: for one seed, the legacy raw-challenge key and the
 // SLIP-10 §2 signing key are DIFFERENT. A node that registered only one of them
-// would silently fail to recognise its own root through the other wallet path.
+// would silently fail to recognize its own root through the other wallet path.
 func TestLegacyAuthKeyDiffersFromTheSigningKey(t *testing.T) {
 	hw := testHDWalletModule(t)
 	ctx := context.Background()

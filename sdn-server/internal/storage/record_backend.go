@@ -8,14 +8,14 @@ package storage
 // store's own paths. A partitioned store (format 2, and format 4 after it)
 // keeps them in an engine of its own, and every record read and write of the
 // node goes there instead: FlatSQLStore asks s.rb, once, at the top of each
-// record method (or, where format 1 normalises its arguments first, right
+// record method (or, where format 1 normalizes its arguments first, right
 // after that). s.rb is nil on format 1, so a format-1-only step (the hot
 // window, the arena, the checkpoint of the record state, the supersede chunk
 // loop) is guarded by s.rb == nil.
 //
 // The methods are the FlatSQLStore methods that dispatch, with their
 // signatures; where a dispatch sits mid-method the method takes what the
-// store already normalised. Nothing outside this package sees the interface.
+// store already normalized. Nothing outside this package sees the interface.
 
 import (
 	"context"
@@ -28,7 +28,7 @@ import (
 type recordBackend interface {
 	// ── writes ──────────────────────────────────────────────────────────
 	storeOne(schemaName string, data []byte, peerID string, signature []byte, tags *SourceTags) (string, error)
-	// StoreWithSourceTags runs after the batch licence is recorded.
+	// StoreWithSourceTags runs after the batch license is recorded.
 	StoreWithSourceTags(schemaName string, data []byte, peerID string, signature []byte, tags SourceTags) (string, error)
 	storeBatch(schemaName string, records [][]byte, peerID string, signature []byte, tags *SourceTags) (int, error)
 	StoreRoutedByProducer(schemaName string, data []byte, peerID string, signature []byte) (string, error)
@@ -61,7 +61,7 @@ type recordBackend interface {
 	queryRawRecords(filter RawRecordQuery, hydrate bool) ([]*Record, error)
 	QuerySourceTaggedRecords(query SourceTagQuery) ([]*Record, error)
 	QueryRecentRecords(schemaName string, limit int) ([]*Record, error)
-	// FullTablePageWithCursor takes the normalised query.
+	// FullTablePageWithCursor takes the normalized query.
 	FullTablePageWithCursor(query FullTablePageQuery) (FullTablePageResult, error)
 	Query(schemaName, whereClause string, args ...interface{}) ([][]byte, error)
 	QueryAll(schemaName string, limit int) ([][]byte, error)

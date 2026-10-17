@@ -25,7 +25,7 @@ import (
 // Ring entry kinds and flags (flatsql ps/ring.h).
 const (
 	EntRecord    uint16 = 1
-	EntLicence   uint16 = 2
+	EntLicense   uint16 = 2
 	EntTombCid   uint16 = 3
 	EntReconcile uint16 = 4
 	EntTxnBegin  uint16 = 6
@@ -777,7 +777,7 @@ func (p *Partition) TakeRejects(rseqs []uint64) map[uint64]int32 {
 }
 
 // Forget gives up the rejects of entries whose caller stopped waiting for
-// them (a cancelled wait, a batch that failed part way): a reject already
+// them (a canceled wait, a batch that failed part way): a reject already
 // drained is dropped, and one the engine records later is dropped as it is
 // drained. Nothing is kept for a waiter that is gone.
 func (p *Partition) Forget(rseqs []uint64) {

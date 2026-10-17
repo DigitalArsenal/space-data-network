@@ -137,7 +137,7 @@ func (b *OMMBuilder) WithCreationDate(creationDate string) *OMMBuilder {
 
 // WithClassificationType sets the CCSDS CLASSIFICATION_TYPE field for the
 // record.  The empty string is treated as "U" (unclassified) to match the
-// builder default.  Non-empty values are stored verbatim; normalisation and
+// builder default.  Non-empty values are stored verbatim; normalization and
 // vocabulary enforcement are the caller's responsibility.
 func (b *OMMBuilder) WithClassificationType(ct string) *OMMBuilder {
 	if ct == "" {

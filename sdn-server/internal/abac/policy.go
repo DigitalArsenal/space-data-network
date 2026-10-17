@@ -30,7 +30,7 @@ type Subject struct {
 	XPub string
 	// TrustLevel is the numeric trust ordinal (0=untrusted … 4=admin).
 	TrustLevel int
-	// Org is the organisation identifier resolved from EPM data (opaque string).
+	// Org is the organization identifier resolved from EPM data (opaque string).
 	Org string
 	// PeerID is the libp2p peer ID string.
 	PeerID string
@@ -81,7 +81,7 @@ type SubjectFilter struct {
 	// XPubs is a list of exact xpub values; the subject matches if its XPub is
 	// in the list (empty = no constraint).
 	XPubs []string `yaml:"xpubs,omitempty"`
-	// Orgs is a list of organisation identifiers; the subject matches if its Org
+	// Orgs is a list of organization identifiers; the subject matches if its Org
 	// is in the list (empty = no constraint).
 	Orgs []string `yaml:"orgs,omitempty"`
 }

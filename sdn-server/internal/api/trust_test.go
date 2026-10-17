@@ -776,7 +776,7 @@ func TestTrustSettingsAndEvaluateEndpoints(t *testing.T) {
 	}
 }
 
-func TestTrustRulesMutationsHonourProtect(t *testing.T) {
+func TestTrustRulesMutationsHonorProtect(t *testing.T) {
 	deny := func(http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) { http.Error(w, "nope", http.StatusUnauthorized) }
 	}

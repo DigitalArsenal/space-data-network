@@ -8,7 +8,7 @@ package modulert
 //
 //  1. A node-signed artifact — signature over
 //     sigdomain.Statement(DomainModulePublicationV1, contentHash) — verifies.
-//  2. A signature made over the BARE DIGEST but LABELLED with the module domain
+//  2. A signature made over the BARE DIGEST but LABELED with the module domain
 //     is REFUSED. This is the test that would fail if someone "simplified"
 //     signedMessageForPayload back to verifying over sum[:].
 //  3. A signature under a DIFFERENT REGISTERED domain (the reserved update
@@ -104,7 +104,7 @@ func TestVerifyAcceptsDomainSeparatedSignature(t *testing.T) {
 }
 
 // Property 2 — the regression gate on the whole design.
-func TestVerifyRefusesBareDigestSignatureLabelledWithDomain(t *testing.T) {
+func TestVerifyRefusesBareDigestSignatureLabeledWithDomain(t *testing.T) {
 	pub, priv := mustGenerateEd25519Key(t)
 	sum := sha256.Sum256(wasmHeader)
 

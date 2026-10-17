@@ -163,7 +163,7 @@ func TestSchemaDescriptions(t *testing.T) {
 }
 
 // A generated schema whose only comments are the Hash/Version header must
-// still describe itself from the curated catalogue, never as "Hash: …".
+// still describe itself from the curated catalog, never as "Hash: …".
 func TestGeneratedSchemasDescribeThemselves(t *testing.T) {
 	reg, err := NewSchemaRegistry()
 	if err != nil {
@@ -176,7 +176,7 @@ func TestGeneratedSchemasDescribeThemselves(t *testing.T) {
 		}
 		// The curated text wins over the schema's first field comment.
 		if want := schemaDescriptions[name]; want != "" && desc != want {
-			t.Errorf("%s description = %q, want the catalogue text %q", name, desc, want)
+			t.Errorf("%s description = %q, want the catalog text %q", name, desc, want)
 		}
 	}
 }

@@ -247,7 +247,7 @@ func TestMaterializeDatasetPublicationImportOutlivesItsFetchBudget(t *testing.T)
 	t.Logf("%d records imported in %s against a %s fetch budget", f.records, took.Round(time.Millisecond), budget)
 }
 
-// Cancelling the import's own context (the node context, at shutdown) still
+// Canceling the import's own context (the node context, at shutdown) still
 // stops it before the next chunk: the drain d988d443d protects is intact.
 func TestMaterializeDatasetPublicationImportStopsWhenItsContextEnds(t *testing.T) {
 	const chunks = 4

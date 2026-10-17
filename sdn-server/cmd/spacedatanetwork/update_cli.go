@@ -54,7 +54,7 @@ var updateCheckCmd = &cobra.Command{
 		// WHETHER THIS BOX IS LISTENING. "Why did that box not upgrade?" is the
 		// first question a push lane creates, and until now `update check` could
 		// not answer it: an install with the signal lane switched off looks
-		// exactly like a publisher that never signalled. Report the lane's
+		// exactly like a publisher that never signaled. Report the lane's
 		// posture and the reverse targets beside the feed facts, so one command
 		// answers both halves.
 		layout := bundle.ResolveCurrent()

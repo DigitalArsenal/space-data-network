@@ -97,7 +97,7 @@ func TestPublicKeysFromDirectoryJSONReturnsEveryAdvertisedSigningKey(t *testing.
 	}
 }
 
-// The publication picks its own key: an Ed25519-labelled PNM signed with the
+// The publication picks its own key: an Ed25519-labeled PNM signed with the
 // EPM's Ed25519 signing key verifies against exactly that key, even when the
 // provider is also known by a secp256k1 peer identity and another Ed25519
 // key. With only the peer identity known, the failure names the type

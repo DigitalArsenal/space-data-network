@@ -133,5 +133,5 @@ func (c *f2CountCache) entryLocked(key string) *f2CountEntry {
 	return e
 }
 
-// wait waits for the counts running (their context is cancelled first).
+// wait waits for the counts running (their context is canceled first).
 func (c *f2CountCache) wait() { c.recounts.Wait() }

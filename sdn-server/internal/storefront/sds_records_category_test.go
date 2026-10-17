@@ -155,7 +155,7 @@ func TestListingCategoryIsNotSelfDeclared(t *testing.T) {
 
 	record := sdsstf.GetRootAsSTF(encodeListingRecord(&listing, join), 0)
 	if got := record.PRIMARY_CATEGORY().String(); got != "PROPAGATION" {
-		t.Errorf("PRIMARY_CATEGORY = %q, want PROPAGATION — a self-declared category was honoured", got)
+		t.Errorf("PRIMARY_CATEGORY = %q, want PROPAGATION — a self-declared category was honored", got)
 	}
 }
 

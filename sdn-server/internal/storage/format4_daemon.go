@@ -72,7 +72,7 @@ var (
 
 // format4Daemon is the daemon-side state of a format-4 store.
 type format4Daemon struct {
-	// ctx is what record reads and writes run under: cancelled at Close,
+	// ctx is what record reads and writes run under: canceled at Close,
 	// never a deadline.
 	ctx    context.Context
 	cancel context.CancelFunc

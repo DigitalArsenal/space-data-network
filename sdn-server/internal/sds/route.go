@@ -85,7 +85,7 @@ type RouteDecision struct {
 	// Declared is the caller's out-of-band schema name, verbatim (possibly "").
 	Declared string
 	// Mismatch is true when a non-empty declared name disagrees with the
-	// header. It is NEVER resolved in favour of the declaration.
+	// header. It is NEVER resolved in favor of the declaration.
 	Mismatch bool
 }
 

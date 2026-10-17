@@ -750,7 +750,7 @@ func addPURPurchaseStatus(builder *flatbuffers.Builder, status PurchaseStatus) {
 		sdspur.PURAddSTATUS(builder, 3)
 	case PurchaseStatusFailed:
 		sdspur.PURAddSTATUS(builder, 4)
-	case PurchaseStatusCancelled:
+	case PurchaseStatusCanceled:
 		sdspur.PURAddSTATUS(builder, 5)
 	case PurchaseStatusRefundRequested:
 		sdspur.PURAddSTATUS(builder, 6)

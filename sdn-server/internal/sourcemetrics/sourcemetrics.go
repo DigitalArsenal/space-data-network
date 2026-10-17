@@ -45,7 +45,7 @@ const DBFileName = "source-metrics.db"
 // DefaultDebounceHours is the retrieval debounce the CelesTrak fetch policy
 // binds this node to: the same published payload is not re-pulled inside a 3 h
 // window. It is reported per source so an operator (and the $APPS widget) can
-// see the window the node is actually honouring.
+// see the window the node is actually honoring.
 const DefaultDebounceHours = 3.0
 
 // SourceID composes the ledger key from the provenance pair the wasm parser
@@ -100,7 +100,7 @@ type Ingest struct {
 	Records   int
 	Inserted  int
 	At        time.Time
-	// OriginID / OriginName / DatasetID name the upstream ORGANISATION and
+	// OriginID / OriginName / DatasetID name the upstream ORGANIZATION and
 	// dataset the module declared for the batch (ingest meta origin_id /
 	// origin_name / dataset_id). Written when non-empty, never blanked.
 	OriginID   string
@@ -163,7 +163,7 @@ type Source struct {
 	FetchCount  int64 `json:"fetch_count"`
 	IngestCount int64 `json:"ingest_count"`
 
-	// OriginID / OriginName / DatasetID are the upstream organisation and
+	// OriginID / OriginName / DatasetID are the upstream organization and
 	// dataset the ingest module declared for this lane (empty when it never
 	// did; the $ICN resolver then falls back to config and the registry).
 	OriginID   string `json:"origin_id,omitempty"`
@@ -427,7 +427,7 @@ func (s *Store) ensureSourceMetricsColumns() error {
 	for _, col := range []struct{ name, ddl string }{
 		{"invalidated_at", `ALTER TABLE source_metrics ADD COLUMN invalidated_at INTEGER NOT NULL DEFAULT 0`},
 		{"invalidated_reason", `ALTER TABLE source_metrics ADD COLUMN invalidated_reason TEXT NOT NULL DEFAULT ''`},
-		// Origin columns ($ICN provenance): the organisation and dataset the
+		// Origin columns ($ICN provenance): the organization and dataset the
 		// ingest module declared for the lane.
 		{"origin_id", `ALTER TABLE source_metrics ADD COLUMN origin_id TEXT NOT NULL DEFAULT ''`},
 		{"origin_name", `ALTER TABLE source_metrics ADD COLUMN origin_name TEXT NOT NULL DEFAULT ''`},

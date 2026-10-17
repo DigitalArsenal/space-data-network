@@ -18,7 +18,7 @@ import (
 // ARITHMETIC. Vtable slots are positional, so an enum resolved to the wrong
 // underlying scalar, a union that does not stop the run at its two-slot
 // boundary, or a dropped deprecated field would make a column decode its
-// NEIGHBOUR'S value — a wrong number, never a missing one.
+// NEIGHBOR'S value — a wrong number, never a missing one.
 //
 // THE WRITE SIDE IS NOT THE CATALOG. An earlier version of this test built
 // each synthetic record from the binding's own column list, which made it
@@ -28,7 +28,7 @@ import (
 // (engine_standard_catalog_flatc_test.go) — flatc's slot numbers, flatc's
 // field types, and live values in the slots PAST the projected run — and only
 // the read side is the catalog. A column that reads the wrong slot now reads
-// a real neighbouring value and fails.
+// a real neighboring value and fails.
 func TestGeneratedColumnsReadTheirOwnFieldValue(t *testing.T) {
 	catalog, err := enginecatalog.Build(embeddedSchemaDir, enginecatalog.PinnedSchemas)
 	if err != nil {
@@ -94,7 +94,7 @@ func TestGeneratedColumnsReadTheirOwnFieldValue(t *testing.T) {
 //   - continue-past-unprojectable: `if !ok { continue }` in place of
 //     `if !ok { break }` in enginecatalog.Build's projection loop, which
 //     skips a non-representable field and slides every later column onto its
-//     neighbour's slot;
+//     neighbor's slot;
 //   - drop-union-terminal: dropping Column.Terminal, which lets the
 //     projection run onto the value-offset slot flatc gives a union.
 //

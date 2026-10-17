@@ -10,7 +10,7 @@ package node
 //
 // # Why following the active EPM path locks the owner out
 //
-// The key the node must recognise at sign-in is the key THE WALLET PRESENTS,
+// The key the node must recognize at sign-in is the key THE WALLET PRESENTS,
 // and the wallet derives it at a path fixed by its own identity scheme:
 //
 //	hd-wallet-ui legacy schemes : m/44'/0'/<account>'/0/0   (bip32-scalar)
@@ -42,7 +42,7 @@ import (
 // TestRootAuthPathsAreWalletDeterminedConstants locks the two path templates
 // root recognition derives at. They must match what hd-wallet-ui derives, so
 // changing either is a deliberate, reviewable act rather than a side effect of
-// someone editing EPM behaviour.
+// someone editing EPM behavior.
 func TestRootAuthPathsAreWalletDeterminedConstants(t *testing.T) {
 	t.Parallel()
 
@@ -82,7 +82,7 @@ func TestRootAuthDerivationDoesNotReadTheEPM(t *testing.T) {
 				"%s imports %s.\n\n"+
 					"Root-admin recognition (§14) must NOT be able to read EPM state. The EPM's\n"+
 					"signing/encryption paths are operator-editable and rotatable (§18); the key the\n"+
-					"node must recognise at sign-in is the one the WALLET presents, at a path the\n"+
+					"node must recognize at sign-in is the one the WALLET presents, at a path the\n"+
 					"wallet hardcodes. Deriving root keys from the record instead would let an\n"+
 					"operator lock themselves out of their own node by pressing GEN KEY.",
 				file, path)

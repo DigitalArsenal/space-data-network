@@ -397,13 +397,13 @@ func VerifyDatasetPublicationReplay(ctx context.Context, store *FlatSQLStore, op
 //
 // THE FETCH BUDGET BOUNDS THE FETCH, NOT THE IMPORT. opts.FetchBudget covers
 // the manifest, shard and index fetches; the import runs under ctx alone.
-// When one budget covered both (d988d443d made the import honour it), a
+// When one budget covered both (d988d443d made the import honor it), a
 // shard that took longer to import than the budget left never landed: the
 // import stopped at the deadline, the retry started again at record 0, and
 // on host-01 (70-250 records/s) no 25-43K-record shard ever finished while
 // the store write lock was held about 90% of the time (2026-09-28). The
-// import still honours ctx (checked before every chunk, a stalled chunk
-// abandoned at once), so cancelling ctx still stops it promptly.
+// import still honors ctx (checked before every chunk, a stalled chunk
+// abandoned at once), so canceling ctx still stops it promptly.
 //
 // A shard the store already recorded as a replicated publication (the
 // feed-head path writes that row only after its import completes) is not
@@ -610,12 +610,12 @@ func materializeDatasetPublicationFromFiles(ctx, fetchCtx context.Context, store
 	}, nil
 }
 
-// recordManifestSourceBatchLicenses copies the licence terms a verified DPM
-// binds into the importing node's own batch-licence table, so that a
+// recordManifestSourceBatchLicenses copies the license terms a verified DPM
+// binds into the importing node's own batch-license table, so that a
 // subscriber that later republishes these records carries the same terms. The
 // schema's own words: "share-alike terms propagate from this batch to every
 // derived record" — that propagation has to survive the hop, or the second
-// publisher strips the licence off data it did not originate.
+// publisher strips the license off data it did not originate.
 //
 // DPMSourceBatch carries no provider id of its own, so provider attribution
 // follows the same rule the signature round-trip uses (rebuildUnsignedDataset
@@ -1374,9 +1374,9 @@ func buildDPMSourceBatch(builder *flatbuffers.Builder, source DatasetExportSourc
 	httpLastModified := builder.CreateString(source.HTTPLastModified)
 	retrievedAt := builder.CreateString(source.RetrievedAt)
 	parserVersion := builder.CreateString(source.ParserVersion)
-	// Licence fields are written ONLY when the batch declared them. A batch
-	// with no licence metadata must produce the exact bytes this node produced
-	// before licence carriage existed: an unset FlatBuffers slot leaves the
+	// License fields are written ONLY when the batch declared them. A batch
+	// with no license metadata must produce the exact bytes this node produced
+	// before license carriage existed: an unset FlatBuffers slot leaves the
 	// vtable — and therefore the manifest CID and the provider signature —
 	// unchanged. The share-alike flag has no DPM field; it stays node-side
 	// (SourceBatchLicense) and in the wasm-authored provenance sidecar.
@@ -1594,7 +1594,7 @@ func rebuildUnsignedDatasetManifest(manifest *dpm.DPM) ([]byte, error) {
 			RetrievedAt:      string(source.RETRIEVED_AT()),
 			ParserVersion:    string(source.PARSER_VERSION()),
 			RecordCount:      source.RECORD_COUNT(),
-			// Licence terms are part of the signed bytes: a manifest that
+			// License terms are part of the signed bytes: a manifest that
 			// carries them must be rebuilt with them or its own signature
 			// stops verifying.
 			License:    string(source.LICENSE()),

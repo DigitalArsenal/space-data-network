@@ -10,7 +10,7 @@ const { IS_MAC, PRODUCT_NAME, VERSION } = require('./common/consts')
 const { PHASES } = require('./node/ready')
 const autoLaunch = require('./auto-launch')
 
-const STATUS_COLOUR = {
+const STATUS_COLOR = {
   [PHASES.STARTING]: 'yellow',
   [PHASES.HYDRATING]: 'yellow',
   [PHASES.READY]: 'green',
@@ -41,8 +41,8 @@ function trayIcon (state) {
  * @param {string} phase
  */
 function statusIcon (phase) {
-  const colour = STATUS_COLOUR[phase] || 'gray'
-  const file = path.resolve(path.join(__dirname, '..', 'assets', 'icons', 'status', `${colour}@2x.png`))
+  const color = STATUS_COLOR[phase] || 'gray'
+  const file = path.resolve(path.join(__dirname, '..', 'assets', 'icons', 'status', `${color}@2x.png`))
   return nativeImage.createFromPath(file).resize({ width: 10, height: 10 })
 }
 

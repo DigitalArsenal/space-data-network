@@ -107,7 +107,7 @@ const (
 	PurchaseStatusPaymentConfirmed
 	PurchaseStatusCompleted
 	PurchaseStatusFailed
-	PurchaseStatusCancelled
+	PurchaseStatusCanceled
 	PurchaseStatusRefundRequested
 	PurchaseStatusRefunded
 	PurchaseStatusExpired
@@ -238,7 +238,7 @@ type Listing struct {
 	RecommendedRetention string `json:"RECOMMENDED_RETENTION"`
 }
 
-// retentionPolicyWord normalises a RECOMMENDED_RETENTION word: "" and any word
+// retentionPolicyWord normalizes a RECOMMENDED_RETENTION word: "" and any word
 // that is not a member of $STF.stfRetentionPolicy read as the default,
 // ReplaceCurrent; ArchiveAll is kept.
 func retentionPolicyWord(s string) string {

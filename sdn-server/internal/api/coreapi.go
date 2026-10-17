@@ -680,7 +680,7 @@ func (h *CoreAPIHandler) handlePubSubPublish(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
-	// ABAC policy check — runs after trust gate (defence in depth).
+	// ABAC policy check — runs after trust gate (defense in depth).
 	if h.policyEngine != nil {
 		session := auth.SessionFromContext(r.Context())
 		if session == nil {

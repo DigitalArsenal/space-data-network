@@ -60,7 +60,7 @@ const (
 	DistributionAwaitingManifest = "awaiting-manifest-signature"
 	DistributionManifestSigned   = "manifest-signed"
 	DistributionAwaitingSignal   = "awaiting-signal-signature"
-	DistributionSignalled        = "signalled"
+	DistributionSignaled        = "signalled"
 )
 
 type distribution struct {
@@ -266,8 +266,8 @@ func (h *CoreAPIHandler) handleDistributionSignature(w http.ResponseWriter, r *h
 			writeCoreAPIError(w, http.StatusBadGateway, "PUBLISH_FAILED", "the signal verified but could not be published: "+err.Error())
 			return
 		}
-		_ = h.distributions.with(id, func(d *distribution) error { d.State = DistributionSignalled; return nil })
-		log.Infof("Distribution %s signalled: every subscribed install will now fetch, verify and upgrade itself.", id)
+		_ = h.distributions.with(id, func(d *distribution) error { d.State = DistributionSignaled; return nil })
+		log.Infof("Distribution %s signaled: every subscribed install will now fetch, verify and upgrade itself.", id)
 	}
 	h.handleDistribution(w, withMethod(r, http.MethodGet))
 }

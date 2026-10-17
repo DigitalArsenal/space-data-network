@@ -102,7 +102,7 @@ func TestAddPeerByPublicKeyDerivesTheRegistryKey(t *testing.T) {
 	}
 }
 
-// TestAddPeerAcceptsPeerIDAlias locks that peer_id is honoured as an alias for
+// TestAddPeerAcceptsPeerIDAlias locks that peer_id is honored as an alias for
 // id, so a caller using the contract's field name is not silently rejected.
 func TestAddPeerAcceptsPeerIDAlias(t *testing.T) {
 	t.Parallel()

@@ -8,8 +8,8 @@ package main
 // daemon holds the store. Everything it does not name survives by
 // construction: the node's identity (keys/, which is outside the store
 // anyway), the auxiliary journal (the node's own EPM, pin ledger, dataset
-// publications, licences), the operator auth database, credentials, module
-// and licence state, flows, TLS material.
+// publications, licenses), the operator auth database, credentials, module
+// and license state, flows, TLS material.
 //
 // The record layers are re-derivable from their publishers; the rest is not.
 
@@ -68,7 +68,7 @@ Removed:  control.flatsqldb (+ -wal, -shm, -journal, .fsdata), flatsql-streams/,
           record-catalog.flatsqlmeta (+ .prefix), dataset-publication-replay/,
           dataset-feed-head-sync/, ui-cache/
 Kept:     everything else — auxiliary.flatsqlmeta (the node's own EPM, pin
-          ledger, dataset publications, licences), auth.db, secrets/,
+          ledger, dataset publications, licenses), auth.db, secrets/,
           modules/, customer-modules/, license/, flows/, TLS material, and the
           identity in keys/ (outside the store).
 

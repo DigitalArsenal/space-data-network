@@ -21,7 +21,7 @@ func TestFormat2BatchReportsEachRefusedRecord(t *testing.T) {
 	f2 := openFormat2ForTest(t, t.TempDir())
 	defer f2.Close()
 	base := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
-	good := f2TestOMM(26100, base, "REFUSED-NEIGHBOUR")
+	good := f2TestOMM(26100, base, "REFUSED-NEIGHBOR")
 	other := f2TestOMM(26101, base.Add(time.Minute), "REFUSED-OTHER")
 	bad := append([]byte(nil), f2TestOMM(26102, base.Add(2*time.Minute), "REFUSED")...)
 	copy(bad[4:8], []byte{0, 0, 0, 0}) // no file identifier: the engine refuses it

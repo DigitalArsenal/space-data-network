@@ -21,7 +21,7 @@ package main
 //     own access gate.
 //
 // A node the gateway has not met yet (owner 2026-10-06) is looked up in the
-// DHT and dialled once; it is served when it then identifies as an SDN node.
+// DHT and dialed once; it is served when it then identifies as an SDN node.
 // Lookups are bounded in number and time, and a miss is remembered for a
 // while, so naming random peers cannot turn the gateway into a DHT client for
 // hire.

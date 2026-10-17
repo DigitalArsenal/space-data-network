@@ -3,7 +3,7 @@ package api
 // Origin registry for ingest connectors (fbcs program).
 //
 // Provenance is structural: the PRODUCER of a record is the signed $EPM of the
-// node that ingested it, and the ORIGIN is the upstream organisation that
+// node that ingested it, and the ORIGIN is the upstream organization that
 // published the bytes. The origin rides on the $ICN connector record and is
 // resolved, in order, from
 //
@@ -14,8 +14,8 @@ package api
 //	(d) the host of the connector's endpoint URL,
 //	(e) nothing — never a tag string.
 //
-// Licence terms are NOT compiled here: only the module that pulled a document
-// knows which terms it carries, so licence fields arrive from the ingest meta
+// License terms are NOT compiled here: only the module that pulled a document
+// knows which terms it carries, so license fields arrive from the ingest meta
 // (sdn_source_batch_license) or from config.
 
 import (
@@ -165,7 +165,7 @@ func endpointHostOrigin(endpointURL string) (ConnectorOrigin, bool) {
 
 // ResolveConnectorOrigin applies the contract order. The first tier that
 // names an ORIGIN_ID supplies the identity; later tiers only fill fields the
-// chosen tier left empty (dataset id, licence, citation, cadence, primary
+// chosen tier left empty (dataset id, license, citation, cadence, primary
 // schema), and an origin NAME is taken from a later tier only when that tier
 // names the same origin.
 func ResolveConnectorOrigin(ledger *sourcemetrics.Source, configOrigins []config.ConnectorOriginConfig, providerID, sourceName, endpointURL string) ConnectorOrigin {

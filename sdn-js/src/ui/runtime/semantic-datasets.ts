@@ -59,7 +59,7 @@ const LEGACY_OWNER_METADATA = (legacyCountrySchema as unknown as {
 
 // The SDS descriptions are the canonical display values. This small overlay
 // adds the common country names people actually type without duplicating enum
-// ordinals in application code. CIS is the legacy catalogue owner for Russia.
+// ordinals in application code. CIS is the legacy catalog owner for Russia.
 const COUNTRY_OVERLAYS: Record<string, CountryOverlay> = {
   ARM: { aliases: ['Armenia', 'Armenian SSR'] },
   AZER: { aliases: ['Azerbaijan SSR'] },
@@ -261,7 +261,7 @@ function tokensMatchAt(
     } else if (sourceToken.normalized !== termToken.normalized) {
       return false;
     }
-    // Preserve the slash that distinguishes a joint catalogue owner such as
+    // Preserve the slash that distinguishes a joint catalog owner such as
     // France/Germany from an ask that independently names France and Germany.
     if (termToken.separatorAfter.includes('/') && !sourceToken.separatorAfter.includes('/')) {
       return false;

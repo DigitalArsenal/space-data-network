@@ -161,7 +161,7 @@ export interface FindSDNAdvertisementPeersOptions {
   signal?: AbortSignal;
   /**
    * Auto-dial newly discovered peers not already connected (default true) —
-   * the browser-side counterpart of Go's connect-on-discovery behaviour in
+   * the browser-side counterpart of Go's connect-on-discovery behavior in
    * `discoverSDNAdvertisementPeersNow` (advertisement_discovery.go:476-506).
    * Dial failures are non-fatal (peer may be unreachable/NATed); discovery
    * continues.
@@ -250,7 +250,7 @@ export interface ProvideSDNAdvertisementFlagOptions {
  * Optional by design: most browser nodes are content *consumers* and should
  * not call this. Call it only when the browser node should itself be
  * discoverable as an SDN peer. This performs a single provide(); callers
- * that want the Go daemon's periodic re-announce behaviour (node.go:2605-
+ * that want the Go daemon's periodic re-announce behavior (node.go:2605-
  * 2619, every 30s) should re-invoke this on their own interval — DHT
  * provider records expire (~24h upstream, republished at ~3h intervals by
  * convention) so a long-lived browser node should re-provide periodically.

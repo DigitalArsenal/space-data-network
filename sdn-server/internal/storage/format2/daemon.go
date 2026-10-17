@@ -133,23 +133,23 @@ func (s *Store) lanes(ctx context.Context, where string, params []Cell) ([]LaneC
 	return out, nil
 }
 
-// Licence is one live LICENCE entry of a partition (flatsql_licences).
-type Licence struct {
+// License is one live LICENSE entry of a partition (flatsql_licences).
+type License struct {
 	PID                 int64
 	Producer, Type, Key string
 	Pseq, ArrivalMs     int64
 	Body                []byte
 }
 
-// Licences returns every live licence entry.
-func (s *Store) Licences(ctx context.Context) ([]Licence, error) {
+// Licenses returns every live license entry.
+func (s *Store) Licenses(ctx context.Context) ([]License, error) {
 	res, err := s.point(ctx, Request{SQL: `SELECT pid, producer, type, licence_key, pseq, arrival, data FROM flatsql_licences`})
 	if err != nil {
 		return nil, err
 	}
-	out := make([]Licence, 0, len(res.Rows))
+	out := make([]License, 0, len(res.Rows))
 	for _, r := range res.Rows {
-		out = append(out, Licence{PID: r[0].Int64(), Producer: r[1].String(), Type: r[2].String(), Key: r[3].String(),
+		out = append(out, License{PID: r[0].Int64(), Producer: r[1].String(), Type: r[2].String(), Key: r[3].String(),
 			Pseq: r[4].Int64(), ArrivalMs: r[5].Int64(), Body: r[6].B})
 	}
 	return out, nil

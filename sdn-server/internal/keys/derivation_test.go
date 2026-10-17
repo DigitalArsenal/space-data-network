@@ -257,7 +257,7 @@ func TestMigrationFromLegacy(t *testing.T) {
 }
 
 // TestSecretMigrationLadder proves the node.key path (raw bytes) has the same
-// migration behaviour as the mnemonic path.
+// migration behavior as the mnemonic path.
 func TestSecretMigrationLadder(t *testing.T) {
 	secret := []byte{0x08, 0x02, 0x12, 0x40, 0xde, 0xad, 0xbe, 0xef}
 	enc, err := EncryptSecret(secret, DeriveV2Password())

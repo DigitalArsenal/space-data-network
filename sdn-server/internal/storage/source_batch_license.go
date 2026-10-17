@@ -8,9 +8,9 @@ import (
 	"time"
 )
 
-// SourceBatchLicense is the machine-readable licence a source batch carries.
+// SourceBatchLicense is the machine-readable license a source batch carries.
 //
-// Licence is a property of the SOURCE BATCH — one (schema, provider, source,
+// License is a property of the SOURCE BATCH — one (schema, provider, source,
 // batch) tuple — not of an individual record: every record parsed out of one
 // CC-BY-SA retrieval inherits the same terms. It is therefore stored once per
 // batch rather than duplicated across the per-record provenance rows in
@@ -33,9 +33,9 @@ type SourceBatchLicense struct {
 	UpdatedAt  int64  `json:"updated_at,omitempty"`
 }
 
-// IsEmpty reports a licence record that carries no licence statement at all.
-// Batches ingested without licence metadata publish exactly as before: no row
-// is written and no DPM licence field is emitted.
+// IsEmpty reports a license record that carries no license statement at all.
+// Batches ingested without license metadata publish exactly as before: no row
+// is written and no DPM license field is emitted.
 func (l SourceBatchLicense) IsEmpty() bool {
 	return strings.TrimSpace(l.License) == "" &&
 		strings.TrimSpace(l.LicenseURL) == "" &&
@@ -54,9 +54,9 @@ func normalizeSourceBatchLicense(license SourceBatchLicense) SourceBatchLicense 
 	return license
 }
 
-// sourceBatchLicenseFromTags lifts the licence a writer attached to its
-// SourceTags into the batch-keyed licence record. ok is false when the writer
-// supplied no licence metadata.
+// sourceBatchLicenseFromTags lifts the license a writer attached to its
+// SourceTags into the batch-keyed license record. ok is false when the writer
+// supplied no license metadata.
 func sourceBatchLicenseFromTags(schemaName string, tags SourceTags) (SourceBatchLicense, bool) {
 	license := normalizeSourceBatchLicense(SourceBatchLicense{
 		SchemaName: schemaName,
@@ -94,7 +94,7 @@ func (s *FlatSQLStore) initSourceBatchLicenseTable() error {
 	return nil
 }
 
-// UpsertSourceBatchLicense records the licence governing one source batch.
+// UpsertSourceBatchLicense records the license governing one source batch.
 // It is durable through the auxiliary metadata journal, like every other
 // non-record table.
 func (s *FlatSQLStore) UpsertSourceBatchLicense(license SourceBatchLicense) error {
@@ -155,7 +155,7 @@ func (s *FlatSQLStore) applySourceBatchLicenseUpsert(license SourceBatchLicense)
 	return nil
 }
 
-// SourceBatchLicenseFor loads the licence recorded for one source batch.
+// SourceBatchLicenseFor loads the license recorded for one source batch.
 func (s *FlatSQLStore) SourceBatchLicenseFor(schemaName, providerID, sourceName, batchID string) (SourceBatchLicense, bool, error) {
 	lookup := normalizeSourceBatchLicense(SourceBatchLicense{
 		SchemaName: schemaName,
@@ -188,9 +188,9 @@ func (s *FlatSQLStore) SourceBatchLicenseFor(schemaName, providerID, sourceName,
 	return license, true, nil
 }
 
-// recordSourceBatchLicense persists the licence a writer attached to its
+// recordSourceBatchLicense persists the license a writer attached to its
 // SourceTags. It is a no-op for the (overwhelmingly common) batch that carries
-// no licence metadata, so untagged ingest is byte-for-byte unchanged.
+// no license metadata, so untagged ingest is byte-for-byte unchanged.
 func (s *FlatSQLStore) recordSourceBatchLicense(schemaName string, tags SourceTags) error {
 	license, ok := sourceBatchLicenseFromTags(schemaName, tags)
 	if !ok {
@@ -199,10 +199,10 @@ func (s *FlatSQLStore) recordSourceBatchLicense(schemaName string, tags SourceTa
 	return s.UpsertSourceBatchLicense(license)
 }
 
-// attachSourceBatchLicenses fills the licence trio on an export's source-batch
+// attachSourceBatchLicenses fills the license trio on an export's source-batch
 // summaries so BuildSignedDatasetPublicationManifest can bind them into the
-// DPM. Batches with no recorded licence are left untouched (empty), which is
-// exactly the pre-licence publication.
+// DPM. Batches with no recorded license are left untouched (empty), which is
+// exactly the pre-license publication.
 //
 // The export's DatasetExportSourceBatch.SourceSHA256 IS the batch id (the
 // sha256 of the retrieved source payload) — see summarizeExportSourceBatches.

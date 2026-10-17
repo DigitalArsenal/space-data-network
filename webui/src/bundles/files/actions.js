@@ -314,7 +314,7 @@ const actions = () => ({
       // Skip ignored files
       .filter($ => !IGNORED_FILES.includes(basename($.path)))
       // Dropped files come as absolute, those added by the file input come
-      // as relative paths, so normalise all to be relative.
+      // as relative paths, so normalize all to be relative.
       .map($ => $.path[0] === '/' ? { ...$, path: $.path.slice(1) } : $)
 
     const totalSize = files.reduce((prev, { size }) => prev + size, 0)

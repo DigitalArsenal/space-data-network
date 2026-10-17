@@ -8,7 +8,7 @@ package storage
 // reads its own writes). Dedupe, copies, retags, the IQC ingest identity,
 // CAT supersede-on-ingest, the per-file batch counters and supersede are the
 // engine's; nothing here takes s.mu or writes a control row for a record. The
-// batch licence is a control row, written by the store before the PUT (W-e).
+// batch license is a control row, written by the store before the PUT (W-e).
 
 import (
 	"encoding/hex"
@@ -253,7 +253,7 @@ func (b format4Backend) storeOneOpt(schemaName string, data []byte, peerID strin
 	return b.f4HeldCID(typ, cids[0], outcomes[0])
 }
 
-// StoreWithSourceTags writes the record with its tag in one PUT; the licence
+// StoreWithSourceTags writes the record with its tag in one PUT; the license
 // is already recorded.
 func (b format4Backend) StoreWithSourceTags(schemaName string, data []byte, peerID string, signature []byte, tags SourceTags) (string, error) {
 	return b.storeOne(schemaName, data, peerID, signature, &tags)

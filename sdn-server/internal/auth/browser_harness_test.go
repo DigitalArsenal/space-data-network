@@ -43,7 +43,7 @@ import (
 //
 // What it does NOT do is store a credential. The module's store round trip
 // belongs to the (blocked) cellular lane and needs its signed runtime; what is
-// proven here is authority — that the write is authorised, accepted and
+// proven here is authority — that the write is authorized, accepted and
 // readable.
 func TestBrowserHarness(t *testing.T) {
 	addr := strings.TrimSpace(os.Getenv("SDN_AUTH_E2E_ADDR"))
@@ -132,7 +132,7 @@ func TestBrowserHarness(t *testing.T) {
 			// The live gateway admits the PREFLIGHT for a mounted flow route
 			// even where the write itself is gated — measured on host-01:
 			// OPTIONS /api/v1/cellular/credentials/opencellid -> 204 + ACAO
-			// while PUT on the same path -> 401. Modelling that exactly is what
+			// while PUT on the same path -> 401. Modeling that exactly is what
 			// makes this harness's browser evidence transferable to the node;
 			// a harness that failed the preflight would prove nothing about the
 			// refusal, because the refusal would never be requested.

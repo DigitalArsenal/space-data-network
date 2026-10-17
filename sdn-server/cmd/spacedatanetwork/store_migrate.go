@@ -22,7 +22,7 @@ package main
 //     before, so the arrivals log keeps the legacy cid order.
 //   - phase B, per table: the REPEAT copies (a table holding a CID an
 //     earlier table by name also holds).
-//   Licences are LICENCE entries, enqueued in a partition before its records.
+//   Licenses are LICENSE entries, enqueued in a partition before its records.
 //
 // VERIFICATION (§16.1 step 7), a hard fail before activation:
 //   - every partition's head (live_count, live_bytes) equals a recount of its
@@ -268,7 +268,7 @@ type inventoryReport struct {
 	FTS         map[string]int64       `json:"fts_progress,omitempty"`
 	GseqFloor   uint64                 `json:"gseq_floor"`
 	OverEntry   []inventoryPartition   `json:"over_ring_entry,omitempty"`
-	Licences    int                    `json:"licences"`
+	Licenses    int                    `json:"licences"`
 	Took        string                 `json:"took"`
 	Extra       map[string]interface{} `json:"extra,omitempty"`
 }
@@ -362,11 +362,11 @@ func migrateInventory(store string) (*inventoryReport, error) {
 		return nil, err
 	}
 	rep.GseqFloor = migrateGseqFloor(rep.MaxRowID, rep.FTS)
-	lic, err := src.Licences()
+	lic, err := src.Licenses()
 	if err != nil {
 		return nil, err
 	}
-	rep.Licences = len(lic)
+	rep.Licenses = len(lic)
 	rep.Took = time.Since(start).Round(time.Millisecond).String()
 	return rep, nil
 }
@@ -414,8 +414,8 @@ type migrateJournal struct {
 	PhaseADone map[string]bool  `json:"phase_a_done"` // schema
 	PhaseB     map[string]int64 `json:"phase_b"`      // table -> last rowid scanned
 	PhaseBDone map[string]bool  `json:"phase_b_done"` // table
-	Licences   map[string]bool  `json:"licences"`     // partition sql name -> licences enqueued
-	Acked      int64            `json:"acked"`        // entries acked (records, retags, licences)
+	Licenses   map[string]bool  `json:"licences"`     // partition sql name -> licenses enqueued
+	Acked      int64            `json:"acked"`        // entries acked (records, retags, licenses)
 	Records    int64            `json:"records"`      // record copies acked (FIRST + REPEAT)
 	Rejected   []migrateReject  `json:"rejected,omitempty"`
 	// Snapshot pass: what the delta starts after.
@@ -437,7 +437,7 @@ type migrateReject struct {
 func newMigrateJournal(source, mode string, floor uint64) *migrateJournal {
 	return &migrateJournal{Version: 1, Source: source, Mode: mode, GseqFloor: floor,
 		PhaseA: map[string]int64{}, PhaseADone: map[string]bool{}, PhaseB: map[string]int64{},
-		PhaseBDone: map[string]bool{}, Licences: map[string]bool{}}
+		PhaseBDone: map[string]bool{}, Licenses: map[string]bool{}}
 }
 
 func readMigrateJournal(path string) (*migrateJournal, error) {
@@ -454,7 +454,7 @@ func readMigrateJournal(path string) (*migrateJournal, error) {
 			*m = map[string]int64{}
 		}
 	}
-	for _, m := range []*map[string]bool{&j.PhaseADone, &j.PhaseBDone, &j.Licences} {
+	for _, m := range []*map[string]bool{&j.PhaseADone, &j.PhaseBDone, &j.Licenses} {
 		if *m == nil {
 			*m = map[string]bool{}
 		}
@@ -548,7 +548,7 @@ type migrator struct {
 	tables   []storage.LegacyTable
 	bySchema map[string][]storage.LegacyTable
 	specs    map[string]format2.TypeSpec
-	licences map[string][]storage.SourceBatchLicense // schema -> licences
+	licenses map[string][]storage.SourceBatchLicense // schema -> licenses
 	licKeys  map[string]bool                         // schema\x1fprovider\x1fsource\x1fbatch
 
 	parts       map[string]*format2.Partition // table name -> partition
@@ -737,21 +737,21 @@ func (m *migrator) loadLegacyShape() error {
 			m.specs[t.Schema] = spec
 		}
 	}
-	lics, err := m.src.Licences()
+	lics, err := m.src.Licenses()
 	if err != nil {
 		return err
 	}
-	m.licences = map[string][]storage.SourceBatchLicense{}
+	m.licenses = map[string][]storage.SourceBatchLicense{}
 	m.licKeys = map[string]bool{}
 	for _, l := range lics {
-		m.licences[l.SchemaName] = append(m.licences[l.SchemaName], l)
-		m.licKeys[l.SchemaName+"\x1f"+licenceKey(l.ProviderID, l.SourceName, l.BatchID)] = true
+		m.licenses[l.SchemaName] = append(m.licenses[l.SchemaName], l)
+		m.licKeys[l.SchemaName+"\x1f"+licenseKey(l.ProviderID, l.SourceName, l.BatchID)] = true
 	}
 	return nil
 }
 
-// licenceKey is the RecordAttr licence key of a (provider, source, batch).
-func licenceKey(provider, source, batch string) string {
+// licenseKey is the RecordAttr license key of a (provider, source, batch).
+func licenseKey(provider, source, batch string) string {
 	return provider + "\x1f" + source + "\x1f" + batch
 }
 
@@ -903,7 +903,7 @@ func (m *migrator) checkJournalAgainstHeads(ctx context.Context) error {
 }
 
 // partition returns (registering) a table's partition, enqueueing its
-// licences before its first record.
+// licenses before its first record.
 func (m *migrator) partition(ctx context.Context, t storage.LegacyTable) (*format2.Partition, error) {
 	if p := m.parts[t.Name]; p != nil {
 		return p, nil
@@ -914,11 +914,11 @@ func (m *migrator) partition(ctx context.Context, t storage.LegacyTable) (*forma
 		return nil, err
 	}
 	m.parts[t.Name] = p
-	if !m.j.Licences[t.Name] {
-		for _, l := range m.licences[t.Schema] {
+	if !m.j.Licenses[t.Name] {
+		for _, l := range m.licenses[t.Schema] {
 			body, _ := json.Marshal(l)
-			attr := format2.BuildRecordAttr(format2.RecordAttr{PeerID: []byte(t.Token), LicenceKey: licenceKey(l.ProviderID, l.SourceName, l.BatchID)})
-			if _, err := m.enqueue(ctx, p, t.Name, "", false, &format2.Entry{Kind: format2.EntLicence,
+			attr := format2.BuildRecordAttr(format2.RecordAttr{PeerID: []byte(t.Token), LicenseKey: licenseKey(l.ProviderID, l.SourceName, l.BatchID)})
+			if _, err := m.enqueue(ctx, p, t.Name, "", false, &format2.Entry{Kind: format2.EntLicense,
 				ArrivalMs: l.UpdatedAt * 1000, Attr: attr, Frame: frameBytes(body)}); err != nil {
 				return nil, err
 			}
@@ -926,7 +926,7 @@ func (m *migrator) partition(ctx context.Context, t storage.LegacyTable) (*forma
 		if err := m.drain(ctx); err != nil {
 			return nil, err
 		}
-		m.j.Licences[t.Name] = true
+		m.j.Licenses[t.Name] = true
 	}
 	return p, nil
 }
@@ -1031,8 +1031,8 @@ func (m *migrator) recordEntry(tbl storage.LegacyTable, r storage.LegacyRecord, 
 		// materialized_at (absent when the row has none); the arrival stays
 		// the record's timestamp.
 		attr.SourceTimestamp = tag.CreatedAt
-		if lk := licenceKey(tag.ProviderID, tag.SourceName, tag.BatchID); m.licKeys[tbl.Schema+"\x1f"+lk] {
-			attr.LicenceKey = lk
+		if lk := licenseKey(tag.ProviderID, tag.SourceName, tag.BatchID); m.licKeys[tbl.Schema+"\x1f"+lk] {
+			attr.LicenseKey = lk
 		}
 	}
 	e := &format2.Entry{Kind: format2.EntRecord, Flags: format2.FlagCidPresent, ArrivalMs: r.Timestamp * 1000,

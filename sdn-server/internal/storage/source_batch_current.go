@@ -289,7 +289,7 @@ func (s *FlatSQLStore) countCurrentReconcileHeld(scope SourceBatchReconcileResul
 				}
 				// Driven by the batch's tag rows, each checked against the
 				// producer tables by CID: joining the union read source
-				// materialised every record of the standard (plan guard).
+				// materialized every record of the standard (plan guard).
 				if err := s.db.QueryRow(`
 					SELECT COUNT(*)
 					FROM sdn_record_source_tags tags INDEXED BY idx_sdn_record_source_tags_batch_cid

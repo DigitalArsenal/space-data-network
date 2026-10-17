@@ -307,8 +307,8 @@ func (s *FlatSQLStore) PartitionStore() *format2.Store {
 	return s.ps
 }
 
-// f2ctx is the context format-2 reads and writes run under: cancelled at
-// Close, never a deadline (a lane statement is cancelled, not abandoned).
+// f2ctx is the context format-2 reads and writes run under: canceled at
+// Close, never a deadline (a lane statement is canceled, not abandoned).
 func (s *FlatSQLStore) f2ctx() context.Context {
 	if s.f2 == nil || s.f2.ctx == nil {
 		return context.Background()

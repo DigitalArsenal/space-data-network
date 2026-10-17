@@ -4,7 +4,7 @@ import "time"
 
 const (
 	entitlementStatusActive    = "active"
-	entitlementStatusCancelled = "cancelled"
+	entitlementStatusCanceled = "cancelled"
 	entitlementStatusPastDue   = "past_due"
 	entitlementStatusSuspended = "suspended"
 	entitlementStatusExpired   = "expired"

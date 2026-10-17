@@ -20,7 +20,7 @@ import { RAW_FLATBUFFER_STREAM_CONTENT_TYPE, type FetchLike } from './sdn-backen
 const require = createRequire(import.meta.url);
 const OMM_SCHEMA = readFileSync(require.resolve('spacedatastandards.org/schema/OMM/main.fbs'), 'utf8');
 
-interface CatalogueRecord {
+interface CatalogRecord {
   index: number;
   source: string;
   noradCatId: number;
@@ -29,7 +29,7 @@ interface CatalogueRecord {
 }
 
 /** 12 distinct OMM frames, newest first, under ['celestrak-gp' x 7, 'supplemental' x 5]. */
-function buildCatalogue(): CatalogueRecord[] {
+function buildCatalog(): CatalogRecord[] {
   return Array.from({ length: 12 }, (_, index) => {
     const source = index < 7 ? 'celestrak-gp' : 'supplemental';
     const noradCatId = 1000 + index;
@@ -86,7 +86,7 @@ interface RecordedRequest {
 }
 
 /** A node that only knows the DDL lane and the raw FlatBuffer lane. */
-function createFakeNode(catalogue: CatalogueRecord[], options: FakeNodeOptions = {}) {
+function createFakeNode(catalog: CatalogRecord[], options: FakeNodeOptions = {}) {
   const requests: RecordedRequest[] = [];
   const schemas: Record<string, string> = { OMM: OMM_SCHEMA, ...(options.schemas ?? {}) };
   const fetch: FetchLike = async (url, init) => {
@@ -117,7 +117,7 @@ function createFakeNode(catalogue: CatalogueRecord[], options: FakeNodeOptions =
       expect(headers.get('accept')).toBe(RAW_FLATBUFFER_STREAM_CONTENT_TYPE);
       expect(body.include_data).toBe(false);
       expect(body.schema).toBe('OMM.fbs');
-      let rows = catalogue;
+      let rows = catalog;
       if (typeof body.source_name === 'string') rows = rows.filter((row) => row.source === body.source_name);
       if (typeof body.sync_filter === 'string') {
         rows = options.rangeSupported ? [...rows].sort((left, right) => left.epoch.localeCompare(right.epoch)) : [];
@@ -247,7 +247,7 @@ describe('dashboard window state helpers', () => {
 
 describe('dashboard window runtime', () => {
   it('requires search coverage and distinguishes indexing from an unrelated service failure', async () => {
-    const node = createFakeNode(buildCatalogue());
+    const node = createFakeNode(buildCatalog());
     const store = await createOmmStore();
     let failure: string | null = null;
     const fetch: FetchLike = async (url, init) => {
@@ -270,8 +270,8 @@ describe('dashboard window runtime', () => {
   });
 
   it('registers a standard from the engine DDL lane and exposes the engine columns', async () => {
-    const catalogue = buildCatalogue();
-    const node = createFakeNode(catalogue);
+    const catalog = buildCatalog();
+    const node = createFakeNode(catalog);
     const runtime = createDashboardWindow({ store: await createOmmStore(), fetch: node.fetch, baseUrl: 'http://node.test' });
 
     const standard = await runtime.ensureStandard('OMM');
@@ -284,7 +284,7 @@ describe('dashboard window runtime', () => {
   });
 
   it('refuses a standard the engine does not hold when the store cannot add one', async () => {
-    const node = createFakeNode(buildCatalogue(), { schemas: { CNP: 'table CNP { ID: string; }\nroot_type CNP;\nfile_identifier "$CNP";' } });
+    const node = createFakeNode(buildCatalog(), { schemas: { CNP: 'table CNP { ID: string; }\nroot_type CNP;\nfile_identifier "$CNP";' } });
     const runtime = createDashboardWindow({ store: withoutAddStandard(await createOmmStore()), fetch: node.fetch, baseUrl: 'http://node.test' });
 
     await expect(runtime.ensureStandard('CNP')).rejects.toThrow('standard CNP is not registered in the local engine');
@@ -294,8 +294,8 @@ describe('dashboard window runtime', () => {
   });
 
   it('opens standards on demand in an engine store created with no schemas', async () => {
-    const catalogue = buildCatalogue();
-    const node = createFakeNode(catalogue);
+    const catalog = buildCatalog();
+    const node = createFakeNode(catalog);
     const store = await createLocalFlatSqlStore({ schemas: [] });
     const runtime = createDashboardWindow({ store, fetch: node.fetch, baseUrl: 'http://node.test' });
 
@@ -309,8 +309,8 @@ describe('dashboard window runtime', () => {
   });
 
   it('replaces the browser window with each remote FlatBuffer page and forwards its cursor', async () => {
-    const catalogue = buildCatalogue();
-    const node = createFakeNode(catalogue);
+    const catalog = buildCatalog();
+    const node = createFakeNode(catalog);
     const requests: any[] = [];
     const remoteFetch: FetchLike = async (url, init) => {
       if (!url.includes('/data/remote/')) return node.fetch(url, init);
@@ -318,7 +318,7 @@ describe('dashboard window runtime', () => {
       const request = JSON.parse(new TextDecoder().decode(body.subarray(4)));
       requests.push(request);
       expect(url).toBe('http://node.test/api/v1/data/remote/provider-peer');
-      const rows = catalogue.slice(request.cursor ? 3 : 0, request.cursor ? 6 : 3);
+      const rows = catalog.slice(request.cursor ? 3 : 0, request.cursor ? 6 : 3);
       const header = new TextEncoder().encode(JSON.stringify({ schema:'OMM.fbs', count:3, total_count:12, snapshot_id:'snapshot-a', next_cursor:'cursor-next' }));
       const bytes = new Uint8Array(4 + header.length + rows.reduce((n, r) => n + r.frame.length, 0));
       new DataView(bytes.buffer).setUint32(0, header.length, false);
@@ -346,8 +346,8 @@ describe('dashboard window runtime', () => {
   });
 
   it('adds a standard through the store when the engine DDL lane serves it', async () => {
-    const catalogue = buildCatalogue();
-    const node = createFakeNode(catalogue);
+    const catalog = buildCatalog();
+    const node = createFakeNode(catalog);
     const store = createRegistrableStore();
     const runtime = createDashboardWindow({ store, fetch: node.fetch, baseUrl: 'http://node.test' });
 
@@ -361,8 +361,8 @@ describe('dashboard window runtime', () => {
   });
 
   it('loads exactly one server page per state and reproduces server order + source partitions', async () => {
-    const catalogue = buildCatalogue();
-    const node = createFakeNode(catalogue);
+    const catalog = buildCatalog();
+    const node = createFakeNode(catalog);
     const store = await createOmmStore();
     const runtime = createDashboardWindow({ store, fetch: node.fetch, baseUrl: 'http://node.test' });
 
@@ -383,14 +383,14 @@ describe('dashboard window runtime', () => {
       pageSize: 5,
       batches: 1,
     });
-    expect(load.bytes).toBe(concatFrames(catalogue.slice(5, 10).map((row) => row.frame)).byteLength);
+    expect(load.bytes).toBe(concatFrames(catalog.slice(5, 10).map((row) => row.frame)).byteLength);
 
     const queries = node.queryRequests();
     expect(queries).toHaveLength(1);
     expect(queries[0].body).toEqual({ schema: 'OMM.fbs', include_data: false, limit: 5, offset: 5 });
 
     const rows = await runtime.query('SELECT _source, NORAD_CAT_ID FROM OMM ORDER BY _rowid ASC', 'OMM');
-    expect(rows.records).toEqual(catalogue.slice(5, 10).map((row) => ({ _source: `OMM@${row.source}`, NORAD_CAT_ID: row.noradCatId })));
+    expect(rows.records).toEqual(catalog.slice(5, 10).map((row) => ({ _source: `OMM@${row.source}`, NORAD_CAT_ID: row.noradCatId })));
     expect(rows.records.map((row) => row._source)).toEqual([
       'OMM@celestrak-gp', 'OMM@celestrak-gp', 'OMM@supplemental', 'OMM@supplemental', 'OMM@supplemental',
     ]);
@@ -400,7 +400,7 @@ describe('dashboard window runtime', () => {
     expect(await runtime.listSources('OMM')).toEqual(['celestrak-gp', 'supplemental']);
 
     const epochs = await runtime.query('SELECT EPOCH FROM OMM ORDER BY _rowid ASC', 'OMM');
-    expect(epochs.records.map((row) => row.EPOCH)).toEqual(catalogue.slice(5, 10).map((row) => row.epoch));
+    expect(epochs.records.map((row) => row.EPOCH)).toEqual(catalog.slice(5, 10).map((row) => row.epoch));
 
     const status = decodeWindowStatus(runtime.status('OMM'));
     expect(status).toMatchObject({
@@ -416,8 +416,8 @@ describe('dashboard window runtime', () => {
   });
 
   it('clears the previous page before ingesting the next one', async () => {
-    const catalogue = buildCatalogue();
-    const node = createFakeNode(catalogue);
+    const catalog = buildCatalog();
+    const node = createFakeNode(catalog);
     const store = await createOmmStore();
     const runtime = createDashboardWindow({ store, fetch: node.fetch, baseUrl: 'http://node.test' });
 
@@ -439,8 +439,8 @@ describe('dashboard window runtime', () => {
   });
 
   it('asks the node for one source lane only', async () => {
-    const catalogue = buildCatalogue();
-    const node = createFakeNode(catalogue);
+    const catalog = buildCatalog();
+    const node = createFakeNode(catalog);
     const runtime = createDashboardWindow({ store: await createOmmStore(), fetch: node.fetch, baseUrl: 'http://node.test' });
 
     const load = await runtime.loadPage({ schema: 'OMM', source: 'OMM@supplemental' }, { page: 1, limit: 50 });
@@ -451,8 +451,8 @@ describe('dashboard window runtime', () => {
   });
 
   it('loads a capped window in batches and reports the gap as a $DSS frame', async () => {
-    const catalogue = buildCatalogue();
-    const node = createFakeNode(catalogue);
+    const catalog = buildCatalog();
+    const node = createFakeNode(catalog);
     const store = await createOmmStore();
     const runtime = createDashboardWindow({ store, fetch: node.fetch, baseUrl: 'http://node.test' });
 
@@ -487,8 +487,8 @@ describe('dashboard window runtime', () => {
   });
 
   it('sends no sync_filter when the probe shows the node has no epochs for the standard', async () => {
-    const catalogue = buildCatalogue();
-    const node = createFakeNode(catalogue, { rangeSupported: false });
+    const catalog = buildCatalog();
+    const node = createFakeNode(catalog, { rangeSupported: false });
     const runtime = createDashboardWindow({ store: await createOmmStore(), fetch: node.fetch, baseUrl: 'http://node.test' });
     const state = { schema: 'OMM', range: { column: 'EPOCH', from: '2026-05-20T00:00:00Z', to: '2026-05-31T00:00:00Z' } };
 
@@ -513,8 +513,8 @@ describe('dashboard window runtime', () => {
   });
 
   it('sends the epoch range server-side once the probe confirms an epoch index', async () => {
-    const catalogue = buildCatalogue();
-    const node = createFakeNode(catalogue, { rangeSupported: true });
+    const catalog = buildCatalog();
+    const node = createFakeNode(catalog, { rangeSupported: true });
     const runtime = createDashboardWindow({ store: await createOmmStore(), fetch: node.fetch, baseUrl: 'http://node.test' });
 
     const load = await runtime.loadWindow({
@@ -529,17 +529,17 @@ describe('dashboard window runtime', () => {
     const batches = node.queryRequests().slice(1);
     expect(batches.every((request) => request.body?.sync_filter === load.syncFilter)).toBe(true);
     const epochs = await runtime.query('SELECT EPOCH FROM OMM ORDER BY _rowid ASC', 'OMM', { maxLimit: 100 });
-    expect(epochs.records.map((row) => row.EPOCH)).toEqual([...catalogue].reverse().map((row) => row.epoch));
+    expect(epochs.records.map((row) => row.EPOCH)).toEqual([...catalog].reverse().map((row) => row.epoch));
 
     const other = await runtime.loadWindow({ schema: 'OMM', range: { column: 'CREATION_DATE', from: '2026-01-01', to: '' } }, { batchRows: 5 });
     expect(other).toMatchObject({ serverRange: false, syncFilter: '', rangeText: 'CREATION_DATE >= 2026-01-01' });
   });
 
   it('stops a superseded load before its ingest', async () => {
-    const catalogue = buildCatalogue();
+    const catalog = buildCatalog();
     const gate = deferred();
     let gated = true;
-    const node = createFakeNode(catalogue, { beforeQuery: () => (gated ? gate.promise : Promise.resolve()) });
+    const node = createFakeNode(catalog, { beforeQuery: () => (gated ? gate.promise : Promise.resolve()) });
     const store = await createOmmStore();
     const runtime = createDashboardWindow({ store, fetch: node.fetch, baseUrl: 'http://node.test' });
 
@@ -559,7 +559,7 @@ describe('dashboard window runtime', () => {
   });
 
   it('propagates the HTTP status of a failed raw-lane request', async () => {
-    const node = createFakeNode(buildCatalogue(), { status: 503 });
+    const node = createFakeNode(buildCatalog(), { status: 503 });
     const runtime = createDashboardWindow({ store: await createOmmStore(), fetch: node.fetch, baseUrl: 'http://node.test' });
 
     await expect(runtime.loadPage({ schema: 'OMM' }, { page: 1, limit: 5 })).rejects.toThrow('/api/v1/data/query returned HTTP 503');
@@ -569,8 +569,8 @@ describe('dashboard window runtime', () => {
 
 describe('startDashboardDataRuntime', () => {
   it('publishes SDN_DATA_WINDOW and drives the window through the store it booted', async () => {
-    const catalogue = buildCatalogue();
-    const node = createFakeNode(catalogue);
+    const catalog = buildCatalog();
+    const node = createFakeNode(catalog);
     const store = createRegistrableStore();
     const handle = startDashboardDataRuntime({
       baseUrl: 'http://node.test',

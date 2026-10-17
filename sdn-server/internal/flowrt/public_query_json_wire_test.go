@@ -41,7 +41,7 @@ import (
 var hostileStringBytes = []byte{0xff, 0xfe, 0x80, 'A', 0xc3, '('}
 
 // TestPublicQueryJSONWireIsAlwaysAJSONText drives the production
-// /api/v1/query mount and holds every JSON-labelled answer to RFC 8259: it is
+// /api/v1/query mount and holds every JSON-labeled answer to RFC 8259: it is
 // UTF-8, and it is a value (never zero bytes).
 func TestPublicQueryJSONWireIsAlwaysAJSONText(t *testing.T) {
 	dist := publicQueryFlowDist(t)

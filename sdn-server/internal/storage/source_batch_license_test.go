@@ -1,12 +1,12 @@
 package storage
 
-// Dataset-publication licence carriage (graph task
+// Dataset-publication license carriage (graph task
 // sdn-dataset-publication-license-carriage): a CC-BY-SA source such as SatNOGS
-// $RFB may only be republished on SDN if its licence travels with it. These
-// tests pin the whole chain — ingest tags -> batch licence row -> export source
+// $RFB may only be republished on SDN if its license travels with it. These
+// tests pin the whole chain — ingest tags -> batch license row -> export source
 // batch -> signed DPM SOURCES -> DPM re-read — and pin the byte-stability of
 // the unlicensed path, which must publish exactly the bytes it published
-// before licence carriage existed.
+// before license carriage existed.
 
 import (
 	"bytes"
@@ -21,12 +21,12 @@ import (
 )
 
 const (
-	licenceTestSPDX     = "CC-BY-SA-4.0"
-	licenceTestURL      = "https://creativecommons.org/licenses/by-sa/4.0/"
-	licenceTestCitation = "SatNOGS DB contributors, CC BY-SA 4.0"
+	licenseTestSPDX     = "CC-BY-SA-4.0"
+	licenseTestURL      = "https://creativecommons.org/licenses/by-sa/4.0/"
+	licenseTestCitation = "SatNOGS DB contributors, CC BY-SA 4.0"
 )
 
-func newLicenceTestStore(t *testing.T) (*FlatSQLStore, string) {
+func newLicenseTestStore(t *testing.T) (*FlatSQLStore, string) {
 	t.Helper()
 	tmpDir := t.TempDir()
 	validator, err := sds.NewValidator(nil)
@@ -41,7 +41,7 @@ func newLicenceTestStore(t *testing.T) (*FlatSQLStore, string) {
 	return store, tmpDir
 }
 
-func licenceTestCATRecord(norad uint32, name string) []byte {
+func licenseTestCATRecord(norad uint32, name string) []byte {
 	return sds.NewCATBuilder().
 		WithNoradCatID(norad).
 		WithObjectName(name).
@@ -52,12 +52,12 @@ func licenceTestCATRecord(norad uint32, name string) []byte {
 }
 
 // TestSourceBatchLicenseCarriesIntoSignedDPM is the end-to-end assertion: a
-// batch ingested with licence metadata publishes a DPM whose SOURCES entry
+// batch ingested with license metadata publishes a DPM whose SOURCES entry
 // carries LICENSE / LICENSE_URL / CITATION, and that manifest still verifies
-// against its own provider signature (i.e. the licence is inside the signed
+// against its own provider signature (i.e. the license is inside the signed
 // bytes and the unsigned-manifest rebuild restores it).
 func TestSourceBatchLicenseCarriesIntoSignedDPM(t *testing.T) {
-	store, tmpDir := newLicenceTestStore(t)
+	store, tmpDir := newLicenseTestStore(t)
 
 	tags := SourceTags{
 		ProviderID:   "space-data-network-02",
@@ -65,25 +65,25 @@ func TestSourceBatchLicenseCarriesIntoSignedDPM(t *testing.T) {
 		SourceURL:    "https://db.satnogs.org/api/transmitters/",
 		BatchID:      "source-sha-satnogs-001",
 		ContentKeyID: "public",
-		License:      licenceTestSPDX,
-		LicenseURL:   licenceTestURL,
-		Citation:     licenceTestCitation,
+		License:      licenseTestSPDX,
+		LicenseURL:   licenseTestURL,
+		Citation:     licenseTestCitation,
 		ShareAlike:   true,
 	}
-	if _, err := store.StoreWithSourceTags("CAT.fbs", licenceTestCATRecord(25544, "ISS (ZARYA)"), "source:satnogs", nil, tags); err != nil {
+	if _, err := store.StoreWithSourceTags("CAT.fbs", licenseTestCATRecord(25544, "ISS (ZARYA)"), "source:satnogs", nil, tags); err != nil {
 		t.Fatalf("store licensed record: %v", err)
 	}
 
-	// The licence landed as batch-keyed state, not as per-record columns.
+	// The license landed as batch-keyed state, not as per-record columns.
 	license, found, err := store.SourceBatchLicenseFor("CAT.fbs", tags.ProviderID, tags.SourceName, tags.BatchID)
 	if err != nil {
 		t.Fatalf("SourceBatchLicenseFor: %v", err)
 	}
 	if !found {
-		t.Fatalf("ingest did not record a batch licence for %s/%s", tags.SourceName, tags.BatchID)
+		t.Fatalf("ingest did not record a batch license for %s/%s", tags.SourceName, tags.BatchID)
 	}
-	if license.License != licenceTestSPDX || license.LicenseURL != licenceTestURL || license.Citation != licenceTestCitation || !license.ShareAlike {
-		t.Fatalf("recorded batch licence = %+v", license)
+	if license.License != licenseTestSPDX || license.LicenseURL != licenseTestURL || license.Citation != licenseTestCitation || !license.ShareAlike {
+		t.Fatalf("recorded batch license = %+v", license)
 	}
 
 	export, err := store.ExportDatasetWindow(filepath.Join(tmpDir, "export"), IndexedRecordQuery{
@@ -102,22 +102,22 @@ func TestSourceBatchLicenseCarriesIntoSignedDPM(t *testing.T) {
 		t.Fatalf("SourceBatches = %d, want 1", len(export.SourceBatches))
 	}
 	batch := export.SourceBatches[0]
-	if batch.License != licenceTestSPDX || batch.LicenseURL != licenceTestURL || batch.Citation != licenceTestCitation {
-		t.Fatalf("export source batch licence = %+v", batch)
+	if batch.License != licenseTestSPDX || batch.LicenseURL != licenseTestURL || batch.Citation != licenseTestCitation {
+		t.Fatalf("export source batch license = %+v", batch)
 	}
 	if !batch.ShareAlike {
 		t.Fatalf("export source batch lost the share-alike flag: %+v", batch)
 	}
 
-	// The export index bytes must NOT have grown licence fields: licence is
+	// The export index bytes must NOT have grown license fields: license is
 	// batch state, and the per-record index is the hashed, signed surface.
 	indexBytes, err := os.ReadFile(export.IndexPath)
 	if err != nil {
 		t.Fatalf("read export index: %v", err)
 	}
-	for _, needle := range []string{licenceTestSPDX, licenceTestURL, licenceTestCitation, "License", "Citation"} {
+	for _, needle := range []string{licenseTestSPDX, licenseTestURL, licenseTestCitation, "License", "Citation"} {
 		if containsString(indexBytes, needle) {
-			t.Fatalf("export index leaked licence field %q into per-record bytes", needle)
+			t.Fatalf("export index leaked license field %q into per-record bytes", needle)
 		}
 	}
 
@@ -150,27 +150,27 @@ func TestSourceBatchLicenseCarriesIntoSignedDPM(t *testing.T) {
 	if !root.SOURCES(&source, 0) {
 		t.Fatalf("DPM SOURCES[0] missing")
 	}
-	if got := string(source.LICENSE()); got != licenceTestSPDX {
-		t.Fatalf("DPM LICENSE = %q, want %q", got, licenceTestSPDX)
+	if got := string(source.LICENSE()); got != licenseTestSPDX {
+		t.Fatalf("DPM LICENSE = %q, want %q", got, licenseTestSPDX)
 	}
-	if got := string(source.LICENSE_URL()); got != licenceTestURL {
-		t.Fatalf("DPM LICENSE_URL = %q, want %q", got, licenceTestURL)
+	if got := string(source.LICENSE_URL()); got != licenseTestURL {
+		t.Fatalf("DPM LICENSE_URL = %q, want %q", got, licenseTestURL)
 	}
-	if got := string(source.CITATION()); got != licenceTestCitation {
-		t.Fatalf("DPM CITATION = %q, want %q", got, licenceTestCitation)
+	if got := string(source.CITATION()); got != licenseTestCitation {
+		t.Fatalf("DPM CITATION = %q, want %q", got, licenseTestCitation)
 	}
 
 	// Signature verification rebuilds the unsigned manifest from the parsed
-	// DPM. If the rebuild dropped the licence the payload hash would change
+	// DPM. If the rebuild dropped the license the payload hash would change
 	// and this would fail — this is the round-trip assertion.
 	if _, err := VerifySignedDatasetPublicationManifest(manifest.Bytes, mustLibp2pEd25519FromAny(t, signingKey.Public().(ed25519.PublicKey))); err != nil {
 		t.Fatalf("licensed DPM does not verify against its own signature: %v", err)
 	}
 }
 
-// TestUnlicensedDatasetManifestBytesUnchanged pins the no-licence path: an
-// export whose batch declared no licence must produce the exact manifest bytes
-// this node produced before licence carriage existed. The golden hash below was
+// TestUnlicensedDatasetManifestBytesUnchanged pins the no-license path: an
+// export whose batch declared no license must produce the exact manifest bytes
+// this node produced before license carriage existed. The golden hash below was
 // captured from the pre-change tree (main @ c0a9bc22) with the same inputs.
 func TestUnlicensedDatasetManifestBytesUnchanged(t *testing.T) {
 	const goldenManifestSHA256 = "c49d7d5f1433865b77c4fb4b2ba902ab40b3c44258ea51c00f6721291e338341"
@@ -178,7 +178,7 @@ func TestUnlicensedDatasetManifestBytesUnchanged(t *testing.T) {
 	manifest := buildUnlicensedGoldenManifest(t)
 	if manifest.SHA256 != goldenManifestSHA256 {
 		t.Fatalf("unlicensed DPM bytes changed: sha256 = %s, want %s\n"+
-			"licence carriage must leave batches without licence metadata byte-identical",
+			"license carriage must leave batches without license metadata byte-identical",
 			manifest.SHA256, goldenManifestSHA256)
 	}
 
@@ -190,7 +190,7 @@ func TestUnlicensedDatasetManifestBytesUnchanged(t *testing.T) {
 	// Absent, not empty: an unset FlatBuffers slot is what keeps the vtable —
 	// and therefore the manifest CID and provider signature — unchanged.
 	if source.LICENSE() != nil || source.LICENSE_URL() != nil || source.CITATION() != nil {
-		t.Fatalf("unlicensed DPM wrote licence slots: LICENSE=%q LICENSE_URL=%q CITATION=%q",
+		t.Fatalf("unlicensed DPM wrote license slots: LICENSE=%q LICENSE_URL=%q CITATION=%q",
 			source.LICENSE(), source.LICENSE_URL(), source.CITATION())
 	}
 }
@@ -249,7 +249,7 @@ func buildUnlicensedGoldenManifest(t *testing.T) *DatasetPublicationManifest {
 	return manifest
 }
 
-// TestSourceBatchLicenseSurvivesStoreReopen proves the licence is durable
+// TestSourceBatchLicenseSurvivesStoreReopen proves the license is durable
 // through the auxiliary metadata journal, like every other non-record table.
 func TestSourceBatchLicenseSurvivesStoreReopen(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -268,9 +268,9 @@ func TestSourceBatchLicenseSurvivesStoreReopen(t *testing.T) {
 		ProviderID: "space-data-network-02",
 		SourceName: "satnogs-rfb",
 		BatchID:    "batch-reopen",
-		License:    licenceTestSPDX,
-		LicenseURL: licenceTestURL,
-		Citation:   licenceTestCitation,
+		License:    licenseTestSPDX,
+		LicenseURL: licenseTestURL,
+		Citation:   licenseTestCitation,
 		ShareAlike: true,
 	}); err != nil {
 		t.Fatalf("UpsertSourceBatchLicense: %v", err)
@@ -290,18 +290,18 @@ func TestSourceBatchLicenseSurvivesStoreReopen(t *testing.T) {
 		t.Fatalf("SourceBatchLicenseFor after reopen: %v", err)
 	}
 	if !found {
-		t.Fatalf("batch licence did not survive a store reopen")
+		t.Fatalf("batch license did not survive a store reopen")
 	}
-	if license.License != licenceTestSPDX || license.LicenseURL != licenceTestURL ||
-		license.Citation != licenceTestCitation || !license.ShareAlike {
-		t.Fatalf("reopened batch licence = %+v", license)
+	if license.License != licenseTestSPDX || license.LicenseURL != licenseTestURL ||
+		license.Citation != licenseTestCitation || !license.ShareAlike {
+		t.Fatalf("reopened batch license = %+v", license)
 	}
 }
 
 // TestUnlicensedIngestRecordsNoLicenseRow keeps the untagged path inert: no
-// licence row, no licence in the export, no behaviour change.
+// license row, no license in the export, no behavior change.
 func TestUnlicensedIngestRecordsNoLicenseRow(t *testing.T) {
-	store, tmpDir := newLicenceTestStore(t)
+	store, tmpDir := newLicenseTestStore(t)
 
 	tags := SourceTags{
 		ProviderID:   "space-data-network-02",
@@ -310,13 +310,13 @@ func TestUnlicensedIngestRecordsNoLicenseRow(t *testing.T) {
 		BatchID:      "source-sha-plain",
 		ContentKeyID: "public",
 	}
-	if _, err := store.StoreWithSourceTags("CAT.fbs", licenceTestCATRecord(40909, "SATELLITE-1001"), "source:fixture", nil, tags); err != nil {
+	if _, err := store.StoreWithSourceTags("CAT.fbs", licenseTestCATRecord(40909, "SATELLITE-1001"), "source:fixture", nil, tags); err != nil {
 		t.Fatalf("store unlicensed record: %v", err)
 	}
 	if _, found, err := store.SourceBatchLicenseFor("CAT.fbs", tags.ProviderID, tags.SourceName, tags.BatchID); err != nil {
 		t.Fatalf("SourceBatchLicenseFor: %v", err)
 	} else if found {
-		t.Fatalf("unlicensed ingest wrote a batch licence row")
+		t.Fatalf("unlicensed ingest wrote a batch license row")
 	}
 
 	export, err := store.ExportDatasetWindow(filepath.Join(tmpDir, "export"), IndexedRecordQuery{
@@ -335,7 +335,7 @@ func TestUnlicensedIngestRecordsNoLicenseRow(t *testing.T) {
 		t.Fatalf("SourceBatches = %d, want 1", len(export.SourceBatches))
 	}
 	if batch := export.SourceBatches[0]; batch.License != "" || batch.LicenseURL != "" || batch.Citation != "" || batch.ShareAlike {
-		t.Fatalf("unlicensed export invented licence terms: %+v", batch)
+		t.Fatalf("unlicensed export invented license terms: %+v", batch)
 	}
 
 	// The shard and index hashes an unlicensed publication advertises are
@@ -354,7 +354,7 @@ func TestUnlicensedIngestRecordsNoLicenseRow(t *testing.T) {
 	}
 	if export.IndexSHA256 != goldenIndexSHA256 {
 		t.Fatalf("unlicensed export index bytes changed: %s, want %s\n"+
-			"SourceTags licence fields must stay out of the per-record index when empty",
+			"SourceTags license fields must stay out of the per-record index when empty",
 			export.IndexSHA256, goldenIndexSHA256)
 	}
 }

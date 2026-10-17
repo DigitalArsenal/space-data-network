@@ -142,7 +142,7 @@ func runDeliveryBurst(t *testing.T, rm network.ResourceManager, clients int) (in
 		wg       sync.WaitGroup
 		gate     = make(chan struct{})
 		// connected is a BARRIER: every client holds its connection open until
-		// all of them have one. Without it the burst can serialise on a fast
+		// all of them have one. Without it the burst can serialize on a fast
 		// loopback and never actually be concurrent, which is the difference
 		// between reproducing the defect and merely not seeing it.
 		connected sync.WaitGroup
@@ -211,7 +211,7 @@ func runDeliveryBurst(t *testing.T, rm network.ResourceManager, clients int) (in
 	}
 	close(gate)
 	// Sample what the provider actually saw at the barrier, so a green result
-	// can never be a burst that quietly serialised. Every client that
+	// can never be a burst that quietly serialized. Every client that
 	// connected is still holding its connection open here: h.Connect returns
 	// only after identify, which the provider answers on a connection it has
 	// already added, so the count is complete.

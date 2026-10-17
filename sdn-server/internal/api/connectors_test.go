@@ -275,7 +275,7 @@ func TestConnectorsConfigOriginOutranksTheRegistry(t *testing.T) {
 		t.Fatalf("ORIGIN_NAME = %q, want the config value", string(gp.OriginName()))
 	}
 	if string(gp.License()) != "CelesTrak terms" || string(gp.LicenseUrl()) != "https://celestrak.org/webmaster.php" {
-		t.Fatalf("licence = %q / %q", string(gp.License()), string(gp.LicenseUrl()))
+		t.Fatalf("license = %q / %q", string(gp.License()), string(gp.LicenseUrl()))
 	}
 	// The registry still fills what config left empty.
 	if gp.PollIntervalMs() != 3*3600*1000 {

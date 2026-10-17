@@ -237,13 +237,13 @@ export function dashboardDependencyBoundary() {
   };
 }
 
-/** Keep browser navigation on the development catalogue's signed hostname. */
+/** Keep browser navigation on the development catalog's signed hostname. */
 /**
  * DEV ONLY — simulate the desktop app in a browser tab.
  *
  * The desktop app is an Electron window whose preload
  * (desktop/src/preload.js) exposes `window.sdn.isDesktop`, and this dashboard
- * keys desktop-only behaviour off it — above all hiding the external-wallet
+ * keys desktop-only behavior off it — above all hiding the external-wallet
  * lane, which needs an extension-injected provider that cannot exist there.
  * Without a way to fake that signal, every desktop change would need a full
  * electron-builder run to look at.

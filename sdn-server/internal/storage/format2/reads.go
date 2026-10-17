@@ -565,7 +565,7 @@ func (c *CIDSet) add(bin []byte) error {
 
 // AddWindowCIDs adds the binary CIDs a window's conditions match (no order,
 // no limit, no payload) to set, streamed: no statement result is held. It
-// ends in ErrWindowTooLarge (the statement cancelled) once the store's window
+// ends in ErrWindowTooLarge (the statement canceled) once the store's window
 // reads would hold more than their budget.
 func (s *Store) AddWindowCIDs(ctx context.Context, q WindowQuery, set *CIDSet) error {
 	if q.byBatch() {
@@ -615,7 +615,7 @@ func (s *Store) windowRows(ctx context.Context, q WindowQuery, cols string) ([][
 // from its SOURCE_EPOCH postings: design §9, the IQC incident query) only
 // until the window is full and the epoch second of the last kept row is
 // complete, then orders that prefix by (whole seconds DESC, text CID ASC).
-// The statement is cancelled once it has given enough rows.
+// The statement is canceled once it has given enough rows.
 func (s *Store) windowByEpoch(ctx context.Context, q WindowQuery, cols string) ([][]Cell, error) {
 	where, params, _ := q.where()
 	sql := fmt.Sprintf("SELECT %s, _epoch FROM %s%s ORDER BY _epoch DESC", cols, q.table(), where)

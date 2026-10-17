@@ -65,7 +65,7 @@ func TestReaderMemoryUnderAStatementMix(t *testing.T) {
 			return err
 		}},
 		{"flatsql_lanes", func() error { _, err := s.Lanes(ctx); return err }},
-		{"flatsql_licences", func() error { _, err := s.Licences(ctx); return err }},
+		{"flatsql_licences", func() error { _, err := s.Licenses(ctx); return err }},
 		{"PresentInPartition", func() error {
 			_, err := s.PresentInPartition(ctx, "OMM.fbs", "source:m07", []string{one})
 			return err

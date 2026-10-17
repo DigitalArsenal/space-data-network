@@ -235,7 +235,7 @@ func (s *FlatSQLStore) mirrorRoutedRecordFromExisting(exec sqlQueryExecer, schem
 
 // StoreRoutedByProducer stores a record into the (producer, standard) table for
 // its producer (peerID) and schema, keyed by the raw peer id rather than the
-// routedProducerID normalisation Store applies. It is Store without the engine
+// routedProducerID normalization Store applies. It is Store without the engine
 // mirror; a repeat CID in the producer's own table is a no-op.
 func (s *FlatSQLStore) StoreRoutedByProducer(schemaName string, data []byte, peerID string, signature []byte) (string, error) {
 	if s.rb != nil {

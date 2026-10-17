@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Clean-machine install smoke for a linux self-contained bundle: extract it in
-# a fresh Debian container, initialise a node, start the daemon, and prove
+# a fresh Debian container, initialize a node, start the daemon, and prove
 # that the probes answer and that Kubo runs inside the node.
 #
 #   deployment/release/install-smoke-container.sh dist/release-local/<ver>/out/spacedatanetwork-<ver>-linux-amd64.tar.gz [amd64|arm64]

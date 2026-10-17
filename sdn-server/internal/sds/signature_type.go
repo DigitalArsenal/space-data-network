@@ -60,7 +60,7 @@ func SignatureTypeForPubKey(key crypto.PubKey) (string, error) {
 // VerifySDSSignature checks sig over payload using the algorithm the record
 // DECLARES, refusing when the declared type and the key disagree. A record that
 // claims Ed25519 while carrying a secp256k1 key is not merely unverifiable, it
-// is mislabelled, and saying so is more useful than a bare signature failure.
+// is mislabeled, and saying so is more useful than a bare signature failure.
 func VerifySDSSignature(declaredType string, key crypto.PubKey, payload, sig []byte) error {
 	if key == nil {
 		return fmt.Errorf("public key is required")

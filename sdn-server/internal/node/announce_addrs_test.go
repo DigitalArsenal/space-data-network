@@ -74,9 +74,9 @@ func TestAnnounceAddrsIgnoreMalformedEntries(t *testing.T) {
 	}
 }
 
-// TestNoAnnounceLeavesDefaultBehaviour: with nothing configured the node must
-// keep go-libp2p's own address behaviour, not an identity factory of ours.
-func TestNoAnnounceLeavesDefaultBehaviour(t *testing.T) {
+// TestNoAnnounceLeavesDefaultBehavior: with nothing configured the node must
+// keep go-libp2p's own address behavior, not an identity factory of ours.
+func TestNoAnnounceLeavesDefaultBehavior(t *testing.T) {
 	t.Parallel()
 
 	if factory, rendered := announceAddrsFactory(nil); factory != nil || rendered != nil {

@@ -41,7 +41,7 @@ func TestWXFAdmissionUsesReleasedIdentifierAndMetadata(t *testing.T) {
 	}
 	decoded := WXF.GetSizePrefixedRootAsWXF(record, 0)
 	if decoded.TIME_BASIS() != WXF.EnumValueswxfTimeBasis["ValidTimeOnly"] || decoded.LICENSE_CLASS() != WXF.EnumValueswxfLicenseClass["OpenAttribution"] {
-		t.Fatal("released weather time-basis or licence enum was lost")
+		t.Fatal("released weather time-basis or license enum was lost")
 	}
 	bad := append([]byte(nil), record...)
 	copy(bad[8:12], "$CAT")

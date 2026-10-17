@@ -232,7 +232,7 @@ func aotArtifactPath(cacheDir, prefix string, wasm []byte) string {
 // a compute loop. Its cache key differs from the legacy engine's in two
 // parts, so neither can ever load the other's artifact:
 //   - "-intr": compiled Interruptible;
-//   - the runtime's stop-token behaviour (wasmrt.SubstrateReport.Tag): a
+//   - the runtime's stop-token behavior (wasmrt.SubstrateReport.Tag): a
 //     patched runtime reads the stop token that an upstream one consumes, and
 //     the compiled check is part of the artifact.
 

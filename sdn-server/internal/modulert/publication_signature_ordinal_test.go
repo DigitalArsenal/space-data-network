@@ -108,7 +108,7 @@ func TestFindModuleSignatureEntryToleratesStandardFormatting(t *testing.T) {
 				t.Fatalf("standard %q: %v", standard, err)
 			}
 			if len(got) == 0 {
-				t.Fatalf("standard %q was not recognised as MBL", standard)
+				t.Fatalf("standard %q was not recognized as MBL", standard)
 			}
 		})
 	}

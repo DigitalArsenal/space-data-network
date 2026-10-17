@@ -210,7 +210,7 @@ func newUpdateSigningClient(cmd *cobra.Command) (*adminClient, error) {
 
 	// Verification stays on SYSTEM roots: a public hostname implies a publicly
 	// issued certificate, and pinning the node's own self-signed anchor here
-	// would be the wrong trust store for the name being dialled.
+	// would be the wrong trust store for the name being dialed.
 	token, err := c.signInWithNodeRootKey(context.Background())
 	if err != nil {
 		return nil, err

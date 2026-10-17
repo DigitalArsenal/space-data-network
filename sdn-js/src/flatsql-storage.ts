@@ -53,7 +53,7 @@ export interface FlatSQLStorageOptions extends FlatSQLEngineRecordStoreOptions {
  * Compatibility alias over the engine record store, kept because it has been
  * part of the published surface since WS6.5. It inherits the whole store,
  * including the 2.0.18 stream surface (`storeStream` / `readStream`) — the
- * shard-shaped admit point a browser catalogue cache wants, as opposed to
+ * shard-shaped admit point a browser catalog cache wants, as opposed to
  * `store()`, which admits ONE record plus its provenance envelope.
  */
 export class FlatSQLStorage extends FlatSQLEngineRecordStore {

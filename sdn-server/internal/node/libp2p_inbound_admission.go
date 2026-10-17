@@ -121,14 +121,14 @@ const (
 	// upgraderAcceptQueueLength widens how many inbound connections the libp2p
 	// upgrader negotiates concurrently (go-libp2p default 16). This is the DRAIN
 	// rate for the handoff described above: with 16, a burst of slow or junk
-	// connections serialises behind a narrow window and pins slots while it
+	// connections serializes behind a narrow window and pins slots while it
 	// waits. 256 keeps the backlog draining well ahead of the measured arrival
 	// rate. It is a package-level `var` in go-libp2p precisely so hosts can tune
 	// it; libp2p exposes no Option that plumbs upgrader settings.
 	upgraderAcceptQueueLength = 256
 
 	// inboundAdmissionLogInterval throttles the admission report. Denials are
-	// summarised rather than logged per-connection: under a flood, per-event
+	// summarized rather than logged per-connection: under a flood, per-event
 	// logging is itself an outage amplifier.
 	inboundAdmissionLogInterval = 30 * time.Second
 )
@@ -148,9 +148,9 @@ func applyUpgraderAcceptQueueLength() {
 // connections, and if not, since when and how many has it refused?
 //
 // A blocked INBOUND connection is logged at ERROR, because on a node whose whole
-// purpose is to be dialled — by browsers over /p2p/, by host-02, by the module
+// purpose is to be dialed — by browsers over /p2p/, by host-02, by the module
 // publish lane — refusing inbound is an outage, not a statistic. Everything else
-// is counted and summarised.
+// is counted and summarized.
 type inboundAdmissionReporter struct {
 	allowedInbound  atomic.Uint64
 	blockedInbound  atomic.Uint64

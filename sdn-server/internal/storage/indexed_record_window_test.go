@@ -278,7 +278,7 @@ func planReadsWholeTables(plan []string) (string, bool) {
 }
 
 // No window plan may scan a record table or the tag table: every access to
-// them is a seek by CID. The union window materialised both in full.
+// them is a seek by CID. The union window materialized both in full.
 func TestIndexedRecordWindowPlanNeverScansTheRecordTables(t *testing.T) {
 	store := seedIndexedWindowStore(t)
 	tables, err := store.recordTablesForSchema("OMM.fbs")
@@ -410,7 +410,7 @@ func readEnginePageForTest(t *testing.T, s *FlatSQLStore, query string, args []a
 }
 
 // The engine hot-window page reads the rows the union page read, and seeks
-// each record by CID instead of materialising the standard per page: first
+// each record by CID instead of materializing the standard per page: first
 // the page's references and sizes (no payload), then the bytes of the rows
 // that fit the page's byte budget.
 func TestEngineWindowPageSeeksRecordsByCID(t *testing.T) {

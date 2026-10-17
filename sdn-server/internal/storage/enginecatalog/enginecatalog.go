@@ -14,7 +14,7 @@
 // cpp/src/schema_parser.cpp) assigns `fieldId = position in the emitted table`,
 // so an emitted column reads whatever slot its own position names. Skipping a
 // field in the middle would therefore shift every following column onto its
-// NEIGHBOUR's slot and decode a plausible wrong value — the worst possible
+// NEIGHBOR's slot and decode a plausible wrong value — the worst possible
 // failure, because it is silent. Truncating a TRAILING run cannot shift
 // anything, so the projection emits fields in declaration order and STOPS at
 // the first one whose type the engine cannot represent (a nested table, a
@@ -79,7 +79,7 @@
 // and it is closed WHERE THE BYTES LEAVE, which is not one place but two:
 // storage.QuerySandboxedJSON makes the bodies the ENGINE assembles valid
 // UTF-8 (see its doc, and TestSanitizingNeverTurnsAWithinCapAnswerIntoAFailure), and the
-// host's HTTP responder makes every JSON-labelled body valid UTF-8 on the way
+// host's HTTP responder makes every JSON-labeled body valid UTF-8 on the way
 // to the socket (flowrt/httpmount_json_wire.go), which is what covers the
 // full-record presentation a wasm encoder produces from raw record frames —
 // a path that never passes through this store's JSON writer at all. Claiming

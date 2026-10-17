@@ -114,7 +114,7 @@ func f4Rows(recs []*Record) []string {
 }
 
 // The writes keep format 1's answers: new counts, copies, retags, the
-// ingest identity, the licence row, the supersede counts and the refusals.
+// ingest identity, the license row, the supersede counts and the refusals.
 func TestFormat4WritesMatchFormat1(t *testing.T) {
 	onFormat4Engine(t, func(t *testing.T) {
 		legacy := reopenDeferred(t, t.TempDir())
@@ -140,7 +140,7 @@ func TestFormat4WritesMatchFormat1(t *testing.T) {
 			}
 			lic, found, err := s.SourceBatchLicenseFor("OMM.fbs", "p", "s", "b1")
 			if err != nil || !found || lic.License != "CC-BY-4.0" {
-				t.Fatalf("licence: %+v %v, %v", lic, found, err)
+				t.Fatalf("license: %+v %v, %v", lic, found, err)
 			}
 			if err := s.UpsertSourceTags("OMM.fbs", ComputeCID(sc.omm[5]), SourceTags{ProviderID: "p", SourceName: "s", BatchID: "b2"}); err != nil {
 				t.Fatal(err)
@@ -754,7 +754,7 @@ func buildPNMForTest(i int, fileID, signature string) []byte {
 // that field's plaintext never lands in an index (L2). The sealed
 // registrations are test-only (no embedded standard but KMF is sealed): PNM
 // with SIGNATURE sealed (no rule reads it), then PNM with FILE_ID sealed (its
-// COL 1 rule reads it), by name and mislabelled (the field id is what is
+// COL 1 rule reads it), by name and mislabeled (the field id is what is
 // sealed).
 func TestFormat4SealedTypesStayOffSQLAndOutOfIndexes(t *testing.T) {
 	onFormat4Engine(t, func(t *testing.T) {
@@ -813,7 +813,7 @@ func TestFormat4SealedTypesStayOffSQLAndOutOfIndexes(t *testing.T) {
 			}
 		}
 
-		// L2: FILE_ID sealed, by name and mislabelled. Every write is
+		// L2: FILE_ID sealed, by name and mislabeled. Every write is
 		// refused on both formats, nothing lands, the plaintext is nowhere.
 		for _, spec := range []encfield.FieldSpec{{Name: "FILE_ID", FieldID: 4}, {Name: "NOT_A_RULE_FIELD", FieldID: 4}} {
 			encfield.RegisterSchema("PNM", []encfield.FieldSpec{spec})

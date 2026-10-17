@@ -103,7 +103,7 @@ func decodeQRPhoto(dataURL string) (image.Image, bool) {
 	return img, err == nil
 }
 
-// downsampleQRThumbnail crops the photo's centre square and averages it down
+// downsampleQRThumbnail crops the photo's center square and averages it down
 // to edge×edge, flattened onto white (a contact photo has no transparency).
 // Each cell averages at most 8×8 samples, which is plenty for a thumbnail and
 // keeps a large photo cheap.

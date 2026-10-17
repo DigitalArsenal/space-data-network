@@ -14,7 +14,7 @@ package wasmrt
 //     inside an unpreemptible cgo call. Because it held the FlatSQLStore lock,
 //     and that lock is reachable from the libp2p connection gater, ALL peering
 //     stopped — /p2p/<peerid> returned 502 and spaceaware.io/beta lost its
-//     catalogue entirely. Deterministic, every boot.
+//     catalog entirely. Deterministic, every boot.
 //
 //  2. host-02 / celestrak.eth — AN UNBOUNDED DEDICATED-THREAD CALL.
 //     One WasmEdge_VMExecuteRegistered ran for 612 MINUTES, pinning the box's

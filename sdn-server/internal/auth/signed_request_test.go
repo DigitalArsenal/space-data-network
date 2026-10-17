@@ -228,7 +228,7 @@ func TestSignedRequestBurnsTheChallengeOnABadSignature(t *testing.T) {
 	}
 }
 
-// The signature authorises ONE method, ONE target and ONE body. Each of those
+// The signature authorizes ONE method, ONE target and ONE body. Each of those
 // is a separate way for a stolen header to be useless.
 func TestSignedRequestSignatureIsBoundToTheRequest(t *testing.T) {
 	t.Parallel()
@@ -281,7 +281,7 @@ func TestSignedRequestSignatureIsBoundToTheRequest(t *testing.T) {
 	}
 }
 
-// This mode is read-only with respect to identity: it can never enrol anybody
+// This mode is read-only with respect to identity: it can never enroll anybody
 // and can never bind a signing key.
 func TestSignedRequestRefusesUnboundAndBootstrapIdentities(t *testing.T) {
 	t.Parallel()

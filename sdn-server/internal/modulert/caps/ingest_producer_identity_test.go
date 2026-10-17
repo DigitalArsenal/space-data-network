@@ -94,7 +94,7 @@ func TestIngestIgnoresAModuleSuppliedProducerPeerID(t *testing.T) {
 	}
 }
 
-// An unwired NodePeerID degrades to the pre-existing behaviour rather than
+// An unwired NodePeerID degrades to the pre-existing behavior rather than
 // failing the ingest — attribution is worth less than the data.
 func TestIngestWithoutNodePeerIDStillStores(t *testing.T) {
 	handler, store := newIngestTestHandler(t, StorageCapOptions{MinFreeDiskBytes: 1})

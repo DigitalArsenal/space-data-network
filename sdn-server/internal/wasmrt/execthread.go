@@ -43,7 +43,7 @@ var (
 )
 
 // execBatchDisabled turns RunOnExecThread back into per-call dispatch.
-// SDN_WASMRT_EXEC_BATCH=0 (or "off"/"false") restores the pre-batch behaviour
+// SDN_WASMRT_EXEC_BATCH=0 (or "off"/"false") restores the pre-batch behavior
 // exactly. Read once: this must not be re-evaluated per call on the hot path.
 var execBatchDisabled = func() bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("SDN_WASMRT_EXEC_BATCH"))) {
@@ -138,7 +138,7 @@ func (m *Module) RunOnExecThread(ctx context.Context, fn func(GuestCaller) error
 	// *Module makes every guest call take the old per-call handoff again, so
 	// the before/after can be measured on the SAME process on the SAME box —
 	// the only comparison the evidence-admissibility law admits — and an
-	// operator who suspects this change can revert its behaviour with a unit
+	// operator who suspects this change can revert its behavior with a unit
 	// file line instead of a rollback binary.
 	if execBatchDisabled {
 		return fn(m)

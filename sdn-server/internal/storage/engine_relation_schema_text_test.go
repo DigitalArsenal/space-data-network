@@ -9,7 +9,7 @@ import (
 // to a browser-hosted engine is the node's own table declaration: the same
 // declared columns, in the same order, that engineRelationColumns derives for
 // the node's relation — nothing more (no meta columns, no comments, no
-// neighbouring tables) and nothing less.
+// neighboring tables) and nothing less.
 func TestEngineRelationSchemaTextIsTheEngineTableBlock(t *testing.T) {
 	for _, tc := range []struct {
 		name   string

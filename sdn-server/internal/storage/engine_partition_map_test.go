@@ -171,7 +171,7 @@ func TestArenaRemovedByHandDiscardsTheIndexAndMap(t *testing.T) {
 }
 
 // A map that is already polluted on disk — ranges that overlap, or reach past
-// the stream — is recognised at open and discarded with the arena, so the
+// the stream — is recognized at open and discarded with the arena, so the
 // window is rebuilt from the tables instead of routed by the wrong map.
 func TestPollutedPartitionMapIsDiscardedAtOpen(t *testing.T) {
 	t.Setenv(checkpointIntervalEnv, "0")

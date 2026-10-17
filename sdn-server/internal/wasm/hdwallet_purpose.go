@@ -142,7 +142,7 @@ const (
 	// ProvenanceDerivedFromNodeRootLegacyKDF — same intent, for a node whose
 	// identity predates the HD scheme and therefore has no seed to derive at a
 	// path. HKDF-SHA512 over the identity signing key under a versioned,
-	// purpose-labelled domain. Still derived, still nothing on disk.
+	// purpose-labeled domain. Still derived, still nothing on disk.
 	ProvenanceDerivedFromNodeRootLegacyKDF KeyProvenance = "derived-from-node-root-legacy-kdf"
 
 	// ProvenanceExternalConfigured — the opt-in EXCEPTION: an operator supplied

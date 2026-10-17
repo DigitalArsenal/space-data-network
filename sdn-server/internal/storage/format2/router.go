@@ -23,7 +23,7 @@ import (
 )
 
 // Tags is a write's source provenance (storage.SourceTags) and its batch
-// licence.
+// license.
 type Tags struct {
 	ProviderID, SourceName, SourceURL, BatchID, ContentKeyID, ProducerPeerID, ProducerPublicKey string
 	License, LicenseURL, Citation                                                               string
@@ -38,12 +38,12 @@ func (t *Tags) sourceTag() SourceTag {
 		ContentKeyID: t.ContentKeyID, ProducerPeerID: t.ProducerPeerID, ProducerPublicKey: t.ProducerPublicKey}
 }
 
-func (t *Tags) hasLicence() bool {
+func (t *Tags) hasLicense() bool {
 	return t != nil && (t.License != "" || t.LicenseURL != "" || t.Citation != "" || t.ShareAlike)
 }
 
-// LicenceKey is the RecordAttr licence key of a (provider, source, batch).
-func LicenceKey(provider, source, batch string) string {
+// LicenseKey is the RecordAttr license key of a (provider, source, batch).
+func LicenseKey(provider, source, batch string) string {
 	return provider + "\x1f" + source + "\x1f" + batch
 }
 
@@ -90,11 +90,11 @@ func CIDFromText(text string) ([]byte, error) {
 
 // PutBatch stores records of one schema from one producer with one set of
 // tags, and returns once every record is durable (or rejected), each
-// refused record with its own *RejectError. A batch licence is a LICENCE
-// entry in the same ring before the records, so "licence before records"
-// holds by pseq order (§6.1); a licence the engine refused fails the batch
-// with a *LicenceRejectError (its records are stored, under a licence key
-// no licence holds).
+// refused record with its own *RejectError. A batch license is a LICENSE
+// entry in the same ring before the records, so "license before records"
+// holds by pseq order (§6.1); a license the engine refused fails the batch
+// with a *LicenseRejectError (its records are stored, under a license key
+// no license holds).
 func (s *Store) PutBatch(ctx context.Context, schema string, puts []Put, peerID string, signature []byte, tags *Tags) ([]PutResult, error) {
 	spec, err := s.spec(schema)
 	if err != nil {
@@ -106,11 +106,11 @@ func (s *Store) PutBatch(ctx context.Context, schema string, puts []Put, peerID 
 	}
 	now := time.Now()
 	lk := ""
-	// rseqs are the batch's entries: its licence, then its records.
+	// rseqs are the batch's entries: its license, then its records.
 	rseqs := make([]uint64, 0, len(puts)+1)
-	if tags.hasLicence() {
-		lk = LicenceKey(tags.ProviderID, tags.SourceName, tags.BatchID)
-		rseq, err := p.Enqueue(ctx, licenceEntry(schema, peerID, tags, lk, now))
+	if tags.hasLicense() {
+		lk = LicenseKey(tags.ProviderID, tags.SourceName, tags.BatchID)
+		rseq, err := p.Enqueue(ctx, licenseEntry(schema, peerID, tags, lk, now))
 		if err != nil {
 			return nil, err
 		}
@@ -118,7 +118,7 @@ func (s *Store) PutBatch(ctx context.Context, schema string, puts []Put, peerID 
 	}
 	first := len(rseqs) // the first record's entry
 	attr := BuildRecordAttr(RecordAttr{PeerID: []byte(peerID), Signature: signature, SourceTimestamp: now.Unix(),
-		LicenceKey: lk, Tag: tags.sourceTag()})
+		LicenseKey: lk, Tag: tags.sourceTag()})
 	out := make([]PutResult, len(puts))
 	for i, put := range puts {
 		c := CIDBytes(put.Data)
@@ -166,14 +166,14 @@ func (s *Store) PutBatch(ctx context.Context, schema string, puts []Put, peerID 
 	}
 	if first > 0 {
 		if code, ok := rejects[rseqs[0]]; ok {
-			return out, &LicenceRejectError{Key: lk, Reject: &RejectError{Rseq: rseqs[0], Code: code}}
+			return out, &LicenseRejectError{Key: lk, Reject: &RejectError{Rseq: rseqs[0], Code: code}}
 		}
 	}
 	return out, nil
 }
 
-// licenceEntry is a batch's LICENCE entry.
-func licenceEntry(schema, peerID string, tags *Tags, lk string, now time.Time) *Entry {
+// licenseEntry is a batch's LICENSE entry.
+func licenseEntry(schema, peerID string, tags *Tags, lk string, now time.Time) *Entry {
 	body, _ := json.Marshal(struct {
 		SchemaName string `json:"schema_name"`
 		ProviderID string `json:"provider_id"`
@@ -185,22 +185,22 @@ func licenceEntry(schema, peerID string, tags *Tags, lk string, now time.Time) *
 		ShareAlike bool   `json:"share_alike,omitempty"`
 		UpdatedAt  int64  `json:"updated_at,omitempty"`
 	}{schema, tags.ProviderID, tags.SourceName, tags.BatchID, tags.License, tags.LicenseURL, tags.Citation, tags.ShareAlike, now.Unix()})
-	return &Entry{Kind: EntLicence, ArrivalMs: now.UnixMilli(),
-		Attr: BuildRecordAttr(RecordAttr{PeerID: []byte(peerID), LicenceKey: lk}), Frame: frame(body)}
+	return &Entry{Kind: EntLicense, ArrivalMs: now.UnixMilli(),
+		Attr: BuildRecordAttr(RecordAttr{PeerID: []byte(peerID), LicenseKey: lk}), Frame: frame(body)}
 }
 
-// LicenceRejectError: the engine refused a batch's licence. The batch's
+// LicenseRejectError: the engine refused a batch's license. The batch's
 // PutResults still say which records were stored.
-type LicenceRejectError struct {
+type LicenseRejectError struct {
 	Key    string
 	Reject *RejectError
 }
 
-func (e *LicenceRejectError) Error() string {
-	return fmt.Sprintf("format2: the batch licence %q was refused: %v", strings.ReplaceAll(e.Key, "\x1f", "/"), e.Reject)
+func (e *LicenseRejectError) Error() string {
+	return fmt.Sprintf("format2: the batch license %q was refused: %v", strings.ReplaceAll(e.Key, "\x1f", "/"), e.Reject)
 }
 
-func (e *LicenceRejectError) Unwrap() error { return e.Reject }
+func (e *LicenseRejectError) Unwrap() error { return e.Reject }
 
 // Reconcile keeps only batch `keep` of a (provider, source) lane in the
 // producer's partition: every other tag instance of the lane is retired and
@@ -253,7 +253,7 @@ func (s *Store) Delete(ctx context.Context, schema, peerID, cidText string) erro
 }
 
 // waitAck waits for rseq's ack and marks the partition however the wait
-// ends (acked, rejected, quarantined, cancelled): its head may have moved,
+// ends (acked, rejected, quarantined, canceled): its head may have moved,
 // and the next counter read reads it again, and no other head (B8).
 func (s *Store) waitAck(ctx context.Context, p *Partition, rseq uint64) error {
 	err := p.WaitAck(ctx, rseq)

@@ -1,5 +1,5 @@
 /**
- * The externalised-wallet build target must be reproducible from a clean
+ * The externalized-wallet build target must be reproducible from a clean
  * checkout of THIS package.
  *
  * History (graph task `sdn-js-dist-not-reproducible-from-gitlink`): the only
@@ -75,7 +75,7 @@ describe('external wallet build target', () => {
     expect(source.length).toBeGreaterThan(4_000_000);
   });
 
-  it('externalises the wallet runtime through the committed adapter', async () => {
+  it('externalizes the wallet runtime through the committed adapter', async () => {
     const mode = await walletBuild.resolveWalletBuildMode({
       packageRoot,
       argv: ['--external-wallet'],
@@ -157,13 +157,13 @@ describe('external wallet build target', () => {
 });
 
 // `npm test` runs `npm run build:core` first, so these read what the package
-// build emitted: the inlined default in dist/ and the published externalised
+// build emitted: the inlined default in dist/ and the published externalized
 // subpath in dist/external-wallet/, which mirrors it.
 describe('published ./external-wallet subpath', () => {
   const distRoot = path.join(packageRoot, 'dist');
 
   it.each(['index.mjs', 'ui/index.mjs', 'status/index.mjs'])(
-    'ships %s externalised beside the inlined default',
+    'ships %s externalized beside the inlined default',
     async (entry) => {
       const external = await readFile(path.join(distRoot, 'external-wallet', entry), 'utf8');
       const inlined = await readFile(path.join(distRoot, entry), 'utf8');
@@ -173,7 +173,7 @@ describe('published ./external-wallet subpath', () => {
     },
   );
 
-  it('ships the FlatSQL engine beside the externalised entries that load it', async () => {
+  it('ships the FlatSQL engine beside the externalized entries that load it', async () => {
     for (const target of ['flatsql.wasm', 'ui/flatsql.wasm']) {
       const [external, inlined] = await Promise.all([
         readFile(path.join(distRoot, 'external-wallet', target)),

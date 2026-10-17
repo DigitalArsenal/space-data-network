@@ -333,7 +333,7 @@ ensure_key_password() {
 }
 
 # image_supports_import reports whether the built image's binary actually
-# honours SDN_MNEMONIC_FILE. Older binaries silently ignore it and generate
+# honors SDN_MNEMONIC_FILE. Older binaries silently ignore it and generate
 # their own identity instead — which would leave the operator's phrase sitting
 # in the staging area while the node ran under a different key. We refuse to
 # stage anything in that case rather than fail open.

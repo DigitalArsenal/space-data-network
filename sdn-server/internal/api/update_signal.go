@@ -105,7 +105,7 @@ type updateSignalResponse struct {
 // registerUpdateSignalRoutes mounts the push endpoint on a node that can both
 // sign with the publisher key and reach the fleet's pub/sub, and says exactly
 // which half is missing when it cannot. A silent no-mount here is
-// indistinguishable from a publisher that simply never signalled — a confusion
+// indistinguishable from a publisher that simply never signaled — a confusion
 // this fleet has already paid for once.
 func (h *CoreAPIHandler) registerUpdateSignalRoutes(mux *http.ServeMux) {
 	if h.updateSigner == nil && h.distributions == nil {

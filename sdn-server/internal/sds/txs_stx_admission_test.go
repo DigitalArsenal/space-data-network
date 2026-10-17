@@ -59,7 +59,7 @@ func buildTXSSite(t *testing.T) []byte {
 }
 
 // buildSTXSchedule writes the smallest LEGAL $STX record that also carries the
-// join the RF catalogue is read on: SITE_ID pointing at a $TXS.ID.
+// join the RF catalog is read on: SITE_ID pointing at a $TXS.ID.
 //
 // The builders come from the STX package, not TXS, and that is the point:
 // STX.fbs includes ../TXS/main.fbs, so flatc emits its OWN copy of
@@ -99,7 +99,7 @@ func buildSTXSchedule(t *testing.T) []byte {
 // TestTXSAndSTXAreAdmittedByTheEmbeddedValidator is the reason the v1.198.0
 // pin exists.
 //
-// The RF-catalogue ingest builds $TXS facility records and $STX schedule rows
+// The RF-catalog ingest builds $TXS facility records and $STX schedule rows
 // in WASM and writes them through the SCHEMA-TYPED storage.write capability.
 // That lane is only as good as this node's embedded validator: a standard the
 // validator has never loaded is not one it can admit, so before this embed
@@ -127,7 +127,7 @@ func TestTXSAndSTXAreAdmittedByTheEmbeddedValidator(t *testing.T) {
 		{"STX.fbs", "$STX", "STX"},
 	} {
 		if !validator.HasSchema(tc.schema) {
-			t.Fatalf("%s is not loaded by the validator: RF-catalogue records cannot be written through storage.write", tc.schema)
+			t.Fatalf("%s is not loaded by the validator: RF-catalog records cannot be written through storage.write", tc.schema)
 		}
 		// storage.write -> FlatSQLStore.storeOne gates the table name through
 		// this helper before it touches the stream.
@@ -160,7 +160,7 @@ func TestTXSAndSTXAreAdmittedByTheEmbeddedValidator(t *testing.T) {
 		t.Errorf("a real $STX schedule row was refused by the embedded validator: %v", err)
 	}
 
-	// A registered schema is not a licence to store arbitrary bytes, and the
+	// A registered schema is not a license to store arbitrary bytes, and the
 	// two identifiers are not interchangeable: routing is on the record's own
 	// identifier, so a $TXS record offered as $STX must be refused.
 	if err := validator.Validate(ctx, "TXS.fbs", []byte(`{"ID":"not-a-flatbuffer"}`)); err == nil {
@@ -200,9 +200,9 @@ func TestTXSAndSTXAreAdmittedByTheEmbeddedValidator(t *testing.T) {
 // ruling, on the same reasoning the $VCF exclusion rests on.
 //
 // publicReadSchemas is an ALLOW list and it fails closed: embedding a standard
-// never makes it anonymously readable. The RF catalogue's source registers
+// never makes it anonymously readable. The RF catalog's source registers
 // carry per-source LICENSE terms in TXSProvenance, and this node has not yet
-// ruled that every licence it may ingest permits anonymous republication —
+// ruled that every license it may ingest permits anonymous republication —
 // $TXS.SOURCES is precisely the field that would decide it, record by record.
 // Serving the merged product anonymously before that check exists would
 // republish third-party register data on terms nobody verified. Adding either

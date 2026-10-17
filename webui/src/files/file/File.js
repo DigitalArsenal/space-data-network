@@ -16,7 +16,7 @@ import { NativeTypes } from 'react-dnd-html5-backend'
 import PinIcon from '../pin-icon/PinIcon.js'
 
 const File = ({
-  name, type, size, cid, path, pinned, t, selected, focused, translucent, coloured, cantSelect, cantDrag, isMfs, isRemotePin, isPendingPin, isFailedPin,
+  name, type, size, cid, path, pinned, t, selected, focused, translucent, colored, cantSelect, cantDrag, isMfs, isRemotePin, isPendingPin, isFailedPin,
   onAddFiles, onMove, onSelect, onNavigate, onSetPinning, onDismissFailedPin, handleContextMenuClick
 }) => {
   const dotsWrapper = useRef()
@@ -81,7 +81,7 @@ const File = ({
 
   const styles = { height: 55, overflow: 'visible' }
 
-  if (focused || (selected && !translucent) || coloured || (isOver && canDrop)) {
+  if (focused || (selected && !translucent) || colored || (isOver && canDrop)) {
     styles.backgroundColor = '#F0F6FA'
   } else if (translucent) {
     className += ' o-70'
@@ -154,7 +154,7 @@ File.propTypes = {
   onAddFiles: PropTypes.func.isRequired,
   onMove: PropTypes.func.isRequired,
   onDismissFailedPin: PropTypes.func.isRequired,
-  coloured: PropTypes.bool,
+  colored: PropTypes.bool,
   translucent: PropTypes.bool,
   handleContextMenuClick: PropTypes.func,
   pinned: PropTypes.bool,
@@ -162,7 +162,7 @@ File.propTypes = {
 }
 
 File.defaultProps = {
-  coloured: false,
+  colored: false,
   translucent: false
 }
 

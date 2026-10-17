@@ -550,7 +550,7 @@ if [[ -f "$SRC/include/host/wasi/inode.h" ]]; then
     "$SRC/include/host/wasi/inode.h"
 fi
 
-# SANITISE THE STATIC-MERGE SCRATCH DIRECTORIES (Windows).
+# SANITIZE THE STATIC-MERGE SCRATCH DIRECTORIES (Windows).
 #
 # The merge extracts each component into objs/<target>, and one target is
 # literally named `fmt::fmt`. A colon cannot appear in a Windows path, so the
@@ -668,7 +668,7 @@ cp "$SRC"/build/_deps/spdlog-build/libspdlog.a "$STATIC/lib/"
 cp -r "$SRC"/include/api/wasmedge             "$STATIC/include/"
 cp -r "$SRC"/build/include/api/wasmedge/*     "$STATIC/include/wasmedge/" 2>/dev/null || true
 # Say which runtime patches this prefix carries. Operators and the daemon's
-# `substrate-selftest` report read it; the self-test still measures behaviour
+# `substrate-selftest` report read it; the self-test still measures behavior
 # rather than trusting this file.
 {
   echo "wasmedge ${WASMEDGE_VERSION}"
@@ -872,7 +872,7 @@ echo "static prefix: $lld_staged lld archive(s) staged"
 #
 # MSYS2 ships lld as a PREBUILT package, compiled against LLVM as a DLL. Every
 # symbol LLVM annotates with LLVM_ABI therefore reaches lld's objects as an
-# import slot, `__imp_<mangled>`, and GNU ld will not synthesise an import slot
+# import slot, `__imp_<mangled>`, and GNU ld will not synthesize an import slot
 # from a static definition. Setting -DLLVM_BUILD_STATIC (see
 # scripts/wasmedge-static-env.sh) fixes the sources WE compile; it cannot reach
 # an archive somebody else already built.
@@ -884,7 +884,7 @@ echo "static prefix: $lld_staged lld archive(s) staged"
 # and linked fine, which is what pins this on the annotation rather than on
 # archive order.
 #
-# So synthesise the slots: an import slot is just a pointer-sized datum holding
+# So synthesize the slots: an import slot is just a pointer-sized datum holding
 # the address of the real symbol. Derived from nm rather than hardcoded to the
 # one symbol that happens to fail today, because which symbols carry LLVM_ABI
 # changes between LLVM releases.

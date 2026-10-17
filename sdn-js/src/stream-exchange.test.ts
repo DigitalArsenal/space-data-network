@@ -18,7 +18,7 @@
  * They replace the nine tests in helia.test.ts that covered
  * `addLegacyWritableStreamCompat` / `addLegacyEventedStreamCompat`: those
  * measured a hand-written bridge between libp2p 1 and libp2p 3 that no longer
- * exists. The behaviour they were protecting — a large payload is delivered
+ * exists. The behavior they were protecting — a large payload is delivered
  * whole, back-pressure is respected rather than dropped, a failed exchange
  * tears the stream down instead of hanging — is what is checked here, on the
  * code that now carries it.
