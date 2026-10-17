@@ -113,7 +113,7 @@ export async function createReel(base = "") {
       sx.font = font(500, 20, MONO);
       sx.letterSpacing = "0px";
       sx.fillStyle = INK;
-      ["inputs   4 records, levels 2–3", "dynamics HPOP, full force", "uncertainty  calibrated"].forEach((line, i) => sx.fillText(line, SOL[0] - 170, SOL[1] - 18 + i * 36));
+      ["inputs   4 records, levels 2–3", "dynamics FFM (full force)", "uncertainty  calibrated"].forEach((line, i) => sx.fillText(line, SOL[0] - 170, SOL[1] - 18 + i * 36));
       sx.restore();
       label("LINEAGE: EVERY SOURCE RECORD, NAMED", SOL[0] + 20, SOL[1] + 170, T_REC + 2.4, T_PUB - 0.45, t, { px: 18, color: CYAN, align: "center" });
     }
