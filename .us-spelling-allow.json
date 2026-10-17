@@ -267,6 +267,10 @@
     {
       "glob": "sdn-server/internal/wasm/hdwallet_identity.go",
       "reason": "pending final pass: file is edited in another lane's open worktree or is documentation owned by the docs session; swept by us-spelling-final-pass-20261016"
+    },
+    {
+      "glob": "sdn-server/internal/storage/format2/attr_test.go",
+      "reason": "test strings are inputs of recorded golden bytes (licence-g in the hex); regenerate the golden to change them"
     }
   ],
   "phrases": [
