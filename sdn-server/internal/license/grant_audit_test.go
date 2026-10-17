@@ -51,14 +51,14 @@ func buildChallengeFrame(t *testing.T, messageType int, moduleID, xpub, errorCod
 }
 
 func TestDecodeGrantAuditEventReadsAChallengeRequest(t *testing.T) {
-	frame := buildChallengeFrame(t, challengeMessageTypeRequest, "com.orbpro.hpop", testXpub, "")
+	frame := buildChallengeFrame(t, challengeMessageTypeRequest, "com.orbpro.ffm", testXpub, "")
 
 	event, ok := DecodeGrantAuditEvent("request", frame)
 
 	if !ok {
 		t.Fatal("an $LCH frame was not recognised by the audit tap")
 	}
-	if event.ModuleID != "com.orbpro.hpop" {
+	if event.ModuleID != "com.orbpro.ffm" {
 		t.Fatalf("ModuleID = %q", event.ModuleID)
 	}
 	if event.Outcome != "challenge-requested" {
@@ -70,7 +70,7 @@ func TestDecodeGrantAuditEventReadsAChallengeRequest(t *testing.T) {
 }
 
 func TestDecodeGrantAuditEventReadsARefusal(t *testing.T) {
-	frame := buildChallengeFrame(t, challengeMessageTypeError, "com.orbpro.hpop", testXpub, "xpub_not_allowed")
+	frame := buildChallengeFrame(t, challengeMessageTypeError, "com.orbpro.ffm", testXpub, "xpub_not_allowed")
 
 	event, ok := DecodeGrantAuditEvent("response", frame)
 
@@ -88,7 +88,7 @@ func TestDecodeGrantAuditEventReadsARefusal(t *testing.T) {
 // The whole point of fingerprinting: a delivery-lane log must never become an
 // index of which wallet asked for which module.
 func TestAuditLineNeverPrintsAnXpub(t *testing.T) {
-	frame := buildChallengeFrame(t, challengeMessageTypeRequest, "com.orbpro.hpop", testXpub, "")
+	frame := buildChallengeFrame(t, challengeMessageTypeRequest, "com.orbpro.ffm", testXpub, "")
 	event, _ := DecodeGrantAuditEvent("request", frame)
 	event.Policy = GrantPolicyAllowlist
 
@@ -97,7 +97,7 @@ func TestAuditLineNeverPrintsAnXpub(t *testing.T) {
 	if strings.Contains(line, testXpub) {
 		t.Fatalf("audit line leaks the raw xpub: %q", line)
 	}
-	for _, needle := range []string{"module=com.orbpro.hpop", "policy=allowlist", "outcome=challenge-requested", "requester=xpub:"} {
+	for _, needle := range []string{"module=com.orbpro.ffm", "policy=allowlist", "outcome=challenge-requested", "requester=xpub:"} {
 		if !strings.Contains(line, needle) {
 			t.Fatalf("audit line %q is missing %q", line, needle)
 		}
@@ -121,7 +121,7 @@ func TestDecodeGrantAuditEventIgnoresNonLicensingFrames(t *testing.T) {
 // unrecovered panic in a stream-handler goroutine kills the process. Every one
 // of these is a remote, unauthenticated frame.
 func TestDecodeGrantAuditEventSurvivesCraftedFrames(t *testing.T) {
-	valid := buildChallengeFrame(t, challengeMessageTypeRequest, "com.orbpro.hpop", testXpub, "")
+	valid := buildChallengeFrame(t, challengeMessageTypeRequest, "com.orbpro.ffm", testXpub, "")
 
 	crafted := map[string][]byte{
 		// The identifier is at bytes 4..8; the root uoffset at 0..4 is junk.

@@ -8,13 +8,13 @@ import (
 )
 
 // The defect this file guards (graph/tasks/sdn-allowed-xpubs-not-enforced.md):
-// a throwaway anonymous identity was granted com.orbpro.hpop because the only
+// a throwaway anonymous identity was granted com.orbpro.ffm because the only
 // entitlement control on the wire — ALLOWED_XPUBS — reads EMPTY as
 // "unrestricted". None of these cases had a test before; that is exactly why
 // the hole stayed invisible until someone tried it.
 
 func TestEvaluatePublicationRefusesAllowlistPolicyWithEmptyAllowlist(t *testing.T) {
-	asset := &PluginAsset{ID: "com.orbpro.hpop", Version: "1.0.0"}
+	asset := &PluginAsset{ID: "com.orbpro.ffm", Version: "1.0.0"}
 
 	decision := EvaluatePublication(asset, &GrantPolicyConfig{})
 
@@ -35,7 +35,7 @@ func TestEvaluatePublicationRefusesAllowlistPolicyWithEmptyAllowlist(t *testing.
 
 func TestEvaluatePublicationPublishesAllowlistPolicyWithEntries(t *testing.T) {
 	asset := &PluginAsset{
-		ID:           "com.orbpro.hpop",
+		ID:           "com.orbpro.ffm",
 		Version:      "1.0.0",
 		AllowedXpubs: []string{"xpubENTITLED"},
 	}
@@ -76,7 +76,7 @@ func TestEvaluatePublicationKeepsTheLinkKeyLaneOpen(t *testing.T) {
 
 func TestEvaluatePublicationNarrowsAnOpenModuleThatDeclaresAnAllowlist(t *testing.T) {
 	cfg := &GrantPolicyConfig{DefaultPolicy: GrantPolicyOpen}
-	asset := &PluginAsset{ID: "com.orbpro.hpop", AllowedXpubs: []string{"xpubENTITLED"}}
+	asset := &PluginAsset{ID: "com.orbpro.ffm", AllowedXpubs: []string{"xpubENTITLED"}}
 
 	decision := EvaluatePublication(asset, cfg)
 
@@ -105,7 +105,7 @@ func TestResolvePrecedence(t *testing.T) {
 	}{
 		{"catalog outranks the rule list", "com.orbpro.rf-fspl", GrantPolicyAllowlist, GrantPolicyAllowlist, GrantPolicySourceCatalog},
 		{"rule outranks the config default", "com.orbpro.rf-rain", "", GrantPolicyLinkKey, grantPolicySourceRulePrefix + "com.orbpro.rf-*]"},
-		{"config default catches the rest", "com.orbpro.hpop", "", GrantPolicyOpen, GrantPolicySourceConfigDefault},
+		{"config default catches the rest", "com.orbpro.ffm", "", GrantPolicyOpen, GrantPolicySourceConfigDefault},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -177,7 +177,7 @@ func TestLoadGrantPolicyConfigRoundTrip(t *testing.T) {
 	if got := cfg.Resolve("com.orbpro.rf-doppler-fresnel", "").Policy; got != GrantPolicyLinkKey {
 		t.Fatalf("Policy = %q, want %q", got, GrantPolicyLinkKey)
 	}
-	if got := cfg.Resolve("com.orbpro.hpop", "").Policy; got != GrantPolicyAllowlist {
+	if got := cfg.Resolve("com.orbpro.ffm", "").Policy; got != GrantPolicyAllowlist {
 		t.Fatalf("Policy = %q, want %q", got, GrantPolicyAllowlist)
 	}
 }
@@ -210,10 +210,10 @@ func TestXpubFingerprintNeverLeaksTheXpub(t *testing.T) {
 }
 
 func TestFormatPublicationAuditNamesModulePolicyAndOutcome(t *testing.T) {
-	asset := &PluginAsset{ID: "com.orbpro.hpop"}
+	asset := &PluginAsset{ID: "com.orbpro.ffm"}
 	line := FormatPublicationAudit(EvaluatePublication(asset, &GrantPolicyConfig{}))
 
-	for _, needle := range []string{"module=com.orbpro.hpop", "policy=allowlist", "outcome=REFUSED", "allowed_xpubs=0"} {
+	for _, needle := range []string{"module=com.orbpro.ffm", "policy=allowlist", "outcome=REFUSED", "allowed_xpubs=0"} {
 		if !strings.Contains(line, needle) {
 			t.Fatalf("audit line %q is missing %q", line, needle)
 		}
@@ -222,12 +222,12 @@ func TestFormatPublicationAuditNamesModulePolicyAndOutcome(t *testing.T) {
 
 func TestMatchModulePattern(t *testing.T) {
 	cases := map[string]bool{
-		"com.orbpro.rf-*|com.orbpro.rf-fspl":  true,
-		"com.orbpro.rf-*|com.orbpro.hpop":     false,
-		"com.orbpro.hpop|com.orbpro.hpop":     true,
-		"com.orbpro.hpop|com.orbpro.hpop.pro": false,
-		"*|anything":                          true,
-		"|com.orbpro.hpop":                    false,
+		"com.orbpro.rf-*|com.orbpro.rf-fspl": true,
+		"com.orbpro.rf-*|com.orbpro.ffm":     false,
+		"com.orbpro.ffm|com.orbpro.ffm":      true,
+		"com.orbpro.ffm|com.orbpro.ffm.pro":  false,
+		"*|anything":                         true,
+		"|com.orbpro.ffm":                    false,
 	}
 	for input, want := range cases {
 		parts := strings.SplitN(input, "|", 2)

@@ -16,7 +16,7 @@ The only entitlement control on the wire is `PLG.ALLOWED_XPUBS`, and the licensi
 key server reads an **empty** allowlist as *unrestricted*. That is a reasonable
 rule and it is also unfalsifiable: an empty allowlist cannot tell "this module is
 genuinely open" apart from "nobody set one". On 2026-08-07 a throwaway anonymous
-identity holding no entitlement was issued a grant for `com.orbpro.hpop`, and an
+identity holding no entitlement was issued a grant for `com.orbpro.ffm`, and an
 audit of the live catalog found **all 43 published modules with an empty
 allowlist**. See `graph/tasks/sdn-allowed-xpubs-not-enforced.md`.
 

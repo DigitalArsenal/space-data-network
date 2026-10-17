@@ -736,7 +736,7 @@ func publishCatalogAssets(mod *modulert.Module, reg *license.PluginRegistry, ids
 	// CONTENT KEY. Once a key is inside the guest the key server decides who
 	// gets a grant for it, and its rule for an empty ALLOWED_XPUBS is
 	// "unrestricted" — which is how a throwaway identity was granted
-	// com.orbpro.hpop. The host cannot and should not make grant decisions,
+	// com.orbpro.ffm. The host cannot and should not make grant decisions,
 	// but it does decide which keys it provisions at all, and provisioning a
 	// key for a module that declares a restriction it cannot express is the
 	// thing that fails open. So the gate is here: refuse the key, and no

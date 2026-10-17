@@ -49,7 +49,7 @@ func writePluginRoot(t *testing.T, entries []PluginCatalogEntry, policy string) 
 // apart.
 func TestRegistryRulesTheLivePairApart(t *testing.T) {
 	root := writePluginRoot(t, []PluginCatalogEntry{
-		{ID: "com.orbpro.hpop", Version: "1.0.0"},
+		{ID: "com.orbpro.ffm", Version: "1.0.0"},
 		{ID: "com.orbpro.rf-fspl", Version: "0.1.0"},
 	}, `{
       "default_policy": "allowlist",
@@ -63,12 +63,12 @@ func TestRegistryRulesTheLivePairApart(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	hpop, ok := reg.PublicationDecision("com.orbpro.hpop")
+	ffm, ok := reg.PublicationDecision("com.orbpro.ffm")
 	if !ok {
-		t.Fatal("com.orbpro.hpop is missing from the registry")
+		t.Fatal("com.orbpro.ffm is missing from the registry")
 	}
-	if hpop.Publish {
-		t.Fatal("com.orbpro.hpop was published with no entitlement — this is the P1 verbatim")
+	if ffm.Publish {
+		t.Fatal("com.orbpro.ffm was published with no entitlement — this is the P1 verbatim")
 	}
 
 	rf, ok := reg.PublicationDecision("com.orbpro.rf-fspl")
@@ -110,7 +110,7 @@ func TestRegistryCarriesACatalogDeclaredPolicy(t *testing.T) {
 
 func TestRegistryRejectsAnUnknownCatalogPolicy(t *testing.T) {
 	root := writePluginRoot(t, []PluginCatalogEntry{
-		{ID: "com.orbpro.hpop", Version: "1.0.0", GrantPolicy: "public"},
+		{ID: "com.orbpro.ffm", Version: "1.0.0", GrantPolicy: "public"},
 	}, "")
 
 	if _, err := LoadPluginRegistry(root); err == nil {
@@ -123,7 +123,7 @@ func TestRegistryRejectsAnUnknownCatalogPolicy(t *testing.T) {
 // one.
 func TestRegistryWithNoPolicyFileRefusesUnentitledModules(t *testing.T) {
 	root := writePluginRoot(t, []PluginCatalogEntry{
-		{ID: "com.orbpro.hpop", Version: "1.0.0"},
+		{ID: "com.orbpro.ffm", Version: "1.0.0"},
 	}, "")
 
 	reg, err := LoadPluginRegistry(root)
@@ -131,7 +131,7 @@ func TestRegistryWithNoPolicyFileRefusesUnentitledModules(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	decision, _ := reg.PublicationDecision("com.orbpro.hpop")
+	decision, _ := reg.PublicationDecision("com.orbpro.ffm")
 	if decision.Publish {
 		t.Fatal("with no policy file the node still published an unentitled module")
 	}
@@ -172,7 +172,7 @@ func TestAddEncryptedPluginRejectsAnUnknownPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = reg.AddEncryptedPlugin(EncryptedPluginUpload{
-		ID:              "com.orbpro.hpop",
+		ID:              "com.orbpro.ffm",
 		Version:         "1.0.0",
 		EncryptedBundle: []byte("encrypted"),
 		KeyMaterial:     []byte("0123456789abcdef0123456789abcdef"),

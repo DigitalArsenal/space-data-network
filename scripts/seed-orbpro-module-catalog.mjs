@@ -204,11 +204,11 @@ const DEFAULT_ORBPRO_MODULES = Object.freeze([
     keyExport: "recipientPrivateKeyHex",
   }),
   Object.freeze({
-    slug: "hpop",
+    slug: "ffm",
     protectedModulePath:
-      "packages/orbpro-integration/propagator.hpop/dist/hpop-encrypted.js",
+      "packages/orbpro-integration/propagator.ffm/dist/ffm-encrypted.js",
     protectedExports: Object.freeze([
-      Object.freeze({ exportName: "encryptedData", slug: "hpop" }),
+      Object.freeze({ exportName: "encryptedData", slug: "ffm" }),
     ]),
     keyExport: "recipientPrivateKeyHex",
   }),

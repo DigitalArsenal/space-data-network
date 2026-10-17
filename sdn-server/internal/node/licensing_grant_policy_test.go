@@ -14,7 +14,7 @@ import (
 // bootstrapLicensingModule is what hands the licensing runtime a module's
 // content key. Once the key is in the guest, an empty ALLOWED_XPUBS means
 // "grant to anyone" — which is how a throwaway anonymous identity was issued a
-// grant for com.orbpro.hpop. These tests assert the ruling that stops it, and
+// grant for com.orbpro.ffm. These tests assert the ruling that stops it, and
 // the one that must keep the owner's gallery link alive.
 
 func writeTestPluginRoot(t *testing.T, ids []string, policyJSON string) string {
@@ -73,18 +73,18 @@ func admitted(plan catalogPublicationPlan, id string) bool {
 
 // The P1, verbatim: an unentitled paid module must not reach the key server.
 func TestPlanRefusesAPaidModuleWithNoEntitlement(t *testing.T) {
-	root := writeTestPluginRoot(t, []string{"com.orbpro.hpop"}, `{
-      "modules": [{"match": "com.orbpro.hpop", "policy": "allowlist"}]
+	root := writeTestPluginRoot(t, []string{"com.orbpro.ffm"}, `{
+      "modules": [{"match": "com.orbpro.ffm", "policy": "allowlist"}]
     }`)
 
 	plan := planFor(t, root)
 
-	if admitted(plan, "com.orbpro.hpop") {
-		t.Fatal("com.orbpro.hpop was admitted with an empty allowlist — its content key would reach the key server, " +
+	if admitted(plan, "com.orbpro.ffm") {
+		t.Fatal("com.orbpro.ffm was admitted with an empty allowlist — its content key would reach the key server, " +
 			"which grants freely on an empty allowlist. This is the reported defect.")
 	}
-	if len(plan.Refused) != 1 || plan.Refused[0] != "com.orbpro.hpop" {
-		t.Fatalf("Refused = %v, want [com.orbpro.hpop]", plan.Refused)
+	if len(plan.Refused) != 1 || plan.Refused[0] != "com.orbpro.ffm" {
+		t.Fatalf("Refused = %v, want [com.orbpro.ffm]", plan.Refused)
 	}
 }
 
@@ -93,10 +93,10 @@ func TestPlanRefusesAPaidModuleWithNoEntitlement(t *testing.T) {
 // must still be granted to an xpub nobody has ever seen.
 func TestPlanKeepsTheLinkKeyGalleryLaneOpen(t *testing.T) {
 	root := writeTestPluginRoot(t,
-		[]string{"com.orbpro.rf-fspl", "com.orbpro.rf-rain", "com.orbpro.hpop"},
+		[]string{"com.orbpro.rf-fspl", "com.orbpro.rf-rain", "com.orbpro.ffm"},
 		`{
           "modules": [
-            {"match": "com.orbpro.hpop", "policy": "allowlist"},
+            {"match": "com.orbpro.ffm", "policy": "allowlist"},
             {"match": "com.orbpro.rf-*", "policy": "link-key", "note": "owner directive 2026-08-07"}
           ]
         }`)
@@ -108,8 +108,8 @@ func TestPlanKeepsTheLinkKeyGalleryLaneOpen(t *testing.T) {
 			t.Fatalf("%s was refused — that breaks the owner's sandcastle gallery link", id)
 		}
 	}
-	if admitted(plan, "com.orbpro.hpop") {
-		t.Fatal("com.orbpro.hpop was admitted alongside the open RF set; the two lanes must be ruled apart")
+	if admitted(plan, "com.orbpro.ffm") {
+		t.Fatal("com.orbpro.ffm was admitted alongside the open RF set; the two lanes must be ruled apart")
 	}
 	if len(plan.Open) != 2 {
 		t.Fatalf("Open = %v, want both RF modules listed in the boot ledger", plan.Open)
@@ -120,7 +120,7 @@ func TestPlanKeepsTheLinkKeyGalleryLaneOpen(t *testing.T) {
 // membership and the cross-curve EPM binding at proof time.
 func TestPlanAdmitsAnEntitledModule(t *testing.T) {
 	root := t.TempDir()
-	dir := filepath.Join(root, "com.orbpro.hpop")
+	dir := filepath.Join(root, "com.orbpro.ffm")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -130,10 +130,10 @@ func TestPlanAdmitsAnEntitledModule(t *testing.T) {
 		}
 	}
 	catalog, err := json.Marshal(license.PluginCatalogFile{Plugins: []license.PluginCatalogEntry{{
-		ID:            "com.orbpro.hpop",
+		ID:            "com.orbpro.ffm",
 		Version:       "1.0.0",
-		EncryptedPath: filepath.Join("com.orbpro.hpop", "bundle.wasm.enc"),
-		KeyPath:       filepath.Join("com.orbpro.hpop", "bundle.key"),
+		EncryptedPath: filepath.Join("com.orbpro.ffm", "bundle.wasm.enc"),
+		KeyPath:       filepath.Join("com.orbpro.ffm", "bundle.key"),
 		AllowedXpubs:  []string{"xpubENTITLEDCUSTOMER"},
 	}}})
 	if err != nil {
@@ -145,7 +145,7 @@ func TestPlanAdmitsAnEntitledModule(t *testing.T) {
 
 	plan := planFor(t, root)
 
-	if !admitted(plan, "com.orbpro.hpop") {
+	if !admitted(plan, "com.orbpro.ffm") {
 		t.Fatal("an entitled module was refused; the allowlist lane must still deliver to paying customers")
 	}
 	if len(plan.Open) != 0 {
@@ -156,7 +156,7 @@ func TestPlanAdmitsAnEntitledModule(t *testing.T) {
 // Fail-closed by default: a provider that never writes a policy file publishes
 // nothing it cannot enforce. This is the state every existing node is in.
 func TestPlanIsFailClosedWithNoPolicyFile(t *testing.T) {
-	root := writeTestPluginRoot(t, []string{"com.orbpro.hpop", "com.orbpro.rf-fspl"}, "")
+	root := writeTestPluginRoot(t, []string{"com.orbpro.ffm", "com.orbpro.rf-fspl"}, "")
 
 	plan := planFor(t, root)
 

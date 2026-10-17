@@ -6,7 +6,7 @@ import { assignedNode, canonicalModules, defaultPlacement, validatePlacement, se
 
 test('science and provider flows stay with their designated nodes', () => {
   const assignments = {
-    'propagator/hpop': 'tu-delft',
+    'propagator/ffm': 'tu-delft',
     'analysis/od': 'cu-boulder',
     'analysis/conjunction-assessment': 'ut-austin',
     'maneuver/star-search': 'ut-austin',
