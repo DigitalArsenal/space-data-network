@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Operator Enrolment — Space Data Network</title>
-<meta name="description" content="Operator Enrolment for the Space Data Network.">
+<title>Operator Enrollment — Space Data Network</title>
+<meta name="description" content="Operator Enrollment for the Space Data Network.">
 <style>
 :root {
   color-scheme: light;
@@ -95,12 +95,12 @@ hr { border: 0; border-top: 1px solid var(--gray-200); margin: 2.5rem 0; }
   <nav class="nav">
       <a href="server-overview.html">Server Overview</a>
       <a href="agent-api-guide.html">API Guide</a>
-      <a href="operator-enrolment.html" aria-current="page">Operator Enrolment</a>
+      <a href="operator-enrolment.html" aria-current="page">Operator Enrollment</a>
       <span class="grow"></span>
       <a href="space-data-network-docs.pdf">PDF</a>
     </nav>
 <main>
-<h1>OPERATOR ENROLMENT</h1>
+<h1>OPERATOR ENROLLMENT</h1>
 <h2>1. Operators and peers: one kind of thing with a trust level</h2>
 <p>A <strong>peer</strong> is a network identity: a libp2p peer ID that talks to this node over the network, carries data, and can be granted a trust level. An <strong>operator</strong> is a login identity: a BIP-32 account extended public key (an <strong>xpub</strong>) recorded in the node&#39;s user store, used with a wallet to sign in to the dashboard. Every operator derives a peer ID from its xpub, so one identity can be both a network participant and a login account.</p>
 <p><code>accounts list</code> shows the merged view — one row per identity, whether enrolled as a peer, an operator, or both:</p>
@@ -187,20 +187,20 @@ xpub6BosfCnifzxcFwrSzQiqu2DBVTshkCXacvNsWGYJVVhhawA7d4R5WSWGFNbi8Aw6ZRc1brxMyWMz
 <li>the <strong>64-hex Ed25519 signing public key</strong>,</li>
 <li>their preferred display <strong>name</strong> (optional).</li>
 </ol>
-<p><strong>What must never be handed over, in any channel:</strong> the recovery phrase, any private key, the extended private key. If a private value ever enters a chat, a paste, a logged terminal, or an agent transcript, the identity is compromised — generate a new one. (The CLI&#39;s custody classification: <code>key export --format mnemonic</code> is labelled &quot;THE ENTIRE NODE IDENTITY IN PLAINTEXT&quot; and <code>base64</code>/<code>hex</code>/<code>kubo</code>/<code>libp2p</code> formats are labelled &quot;SECRET&quot;.) Nothing in enrolment ever asks for a private value; an enrolment request that does is a scam or a bug.</p>
+<p><strong>What must never be handed over, in any channel:</strong> the recovery phrase, any private key, the extended private key. If a private value ever enters a chat, a paste, a logged terminal, or an agent transcript, the identity is compromised — generate a new one. (The CLI&#39;s custody classification: <code>key export --format mnemonic</code> is labeled &quot;THE ENTIRE NODE IDENTITY IN PLAINTEXT&quot; and <code>base64</code>/<code>hex</code>/<code>kubo</code>/<code>libp2p</code> formats are labeled &quot;SECRET&quot;.) Nothing in enrollment ever asks for a private value; an enrollment request that does is a scam or a bug.</p>
 <h3>Step 3 — what binds on first login (TOFU)</h3>
 <p>The signing key is bound <strong>on first successful login — trust on first use</strong>:</p>
 <ul>
-<li>Signing key pre-seeded at enrolment (recommended; it is a required field in the dashboard form): login just works; any other key is refused from day one.</li>
+<li>Signing key pre-seeded at enrollment (recommended; it is a required field in the dashboard form): login just works; any other key is refused from day one.</li>
 <li>Row created without a signing key (possible via config): the <strong>first</strong> wallet that completes a successful sign-in binds its key permanently; a conflicting key presented later is refused.</li>
-<li>The binding is a pin — whoever holds the phrase that first signed in owns the account permanently. An admin can pin the key in advance (dashboard form or config <code>signing_pubkey_hex</code>), mapping enrolment exactly to the key the holder presented.</li>
+<li>The binding is a pin — whoever holds the phrase that first signed in owns the account permanently. An admin can pin the key in advance (dashboard form or config <code>signing_pubkey_hex</code>), mapping enrollment exactly to the key the holder presented.</li>
 </ul>
 <p>Failure modes to avoid:</p>
 <ul>
 <li><strong>Enrolling the wrong signing key</strong> — the node holds a pin the operator cannot produce; the account can never sign in.</li>
 <li><strong>Omitting the signing key entirely</strong> — the row is a dead record: the dashboard sends no xpub at sign-in, the node resolves the operator by signing key, and a keyless row matches nothing.</li>
 </ul>
-<h2>3. Path A — enrol from the CLI (and the config path)</h2>
+<h2>3. Path A — enroll from the CLI (and the config path)</h2>
 <p><code>accounts trust --xpub</code> is the only CLI command that touches operator rows, and it <strong>updates an existing operator — it cannot create one</strong>. Proven on the wire against a live node:</p>
 <pre><code>$ spacedatanetwork accounts trust \
     --xpub xpub6BosfCnifzxcFwrSzQiqu2DBVTshkCXacvNsWGYJVVhhawA7d4R5WSWGFNbi8Aw6ZRc1brxMyWMzG3DSSSSoekkudhUd9yLb6qx39T9nMdj \
@@ -239,7 +239,7 @@ spacedatanetwork accounts list
 <blockquote>
 <p><strong>Not yet supported:</strong> no CLI command creates an operator row — <code>accounts add</code> creates <strong>peer</strong> rows only and explicitly refuses xpubs (&quot;it identifies a wallet account, not a libp2p host&quot;). Proposal: Section 8.</p>
 </blockquote>
-<h2>4. Path B — enrol from the dashboard UI</h2>
+<h2>4. Path B — enroll from the dashboard UI</h2>
 <ol>
 <li>Sign in as an administrator.</li>
 <li>Open <strong>Accounts</strong>, then the <strong>Operators</strong> tab.</li>
@@ -250,7 +250,7 @@ spacedatanetwork accounts list
 <li><strong>Signing public key (hex)</strong> — the 64-hex Ed25519 public key from the same ceremony, lowercased; the wallet UIs&#39; convenience copy button produces this directly.</li>
 </ul>
 </li>
-<li>Click <strong>Enrol</strong>. The node answers <code>201</code> for a new row; a duplicate xpub answers <code>409 user_exists</code>.</li>
+<li>Click <strong>Enroll</strong>. The node answers <code>201</code> for a new row; a duplicate xpub answers <code>409 user_exists</code>.</li>
 </ol>
 <p>The form posts exactly the two-value payload above to <code>POST /api/auth/users</code> with the session cookie. Any admin session can also edit a row&#39;s trust/name/signing key (the row&#39;s own edit control in the table) and <strong>Withdraw</strong> a row — see Section 7 for what withdrawal refuses.</p>
 <h2>5. Bootstrapping: where the first administrator comes from</h2>
@@ -309,7 +309,7 @@ spacedatanetwork accounts list
 <td>Reserved for the node&#39;s own identity — never granted to anyone else</td>
 </tr>
 </tbody></table>
-<p>Admin grants: all <code>/api/auth/users*</code> management (the Enrol/editing surface), the merged accounts view, peer trust management, and the rest of the admin-gated API. Every admin gate is a numeric comparison against tier 4.</p>
+<p>Admin grants: all <code>/api/auth/users*</code> management (the Enroll/editing surface), the merged accounts view, peer trust management, and the rest of the admin-gated API. Every admin gate is a numeric comparison against tier 4.</p>
 <p><strong>Who can assign what:</strong></p>
 <ul>
 <li><strong>Operators (the API):</strong> only <code>unknown</code> through <code>admin</code>. The API refuses <code>never</code> (operator lockout) and <code>ultimate</code> (self-identity) — wiring-proof:</li>
@@ -340,15 +340,15 @@ lockout is not yet supported)&quot;}
 <li><strong>Live sessions survive a demotion or removal.</strong> A session carries the trust level minted when it was created; it is not re-validated against the row on every request. A withdrawn operator keeps what they already hold in an open session until it expires — withdrawal stops <em>future</em> sign-ins immediately (the row is gone from the resolution path) but does not retroactively void open sessions.</li>
 </ul>
 <h2>8. Not yet supported, and the minimal scheme that would close it</h2>
-<p><strong>Gap 1 — the CLI prints only half the handover.</strong> <code>derive-xpub</code> prints the xpub but never the signing public key, so a CLI-only operator cannot produce both enrolment fields without a browser. <strong>Proposed (not built):</strong> extend <code>derive-xpub</code> to also derive and print the Ed25519 signing public key through the exact wallet unlock path sign-in uses (the same byte-identity guarantee the browser ceremony already guarantees), so its output becomes the complete handover block.</p>
+<p><strong>Gap 1 — the CLI prints only half the handover.</strong> <code>derive-xpub</code> prints the xpub but never the signing public key, so a CLI-only operator cannot produce both enrollment fields without a browser. <strong>Proposed (not built):</strong> extend <code>derive-xpub</code> to also derive and print the Ed25519 signing public key through the exact wallet unlock path sign-in uses (the same byte-identity guarantee the browser ceremony already guarantees), so its output becomes the complete handover block.</p>
 <p><strong>Gap 2 — no CLI create for operators.</strong> <code>accounts trust --xpub</code> updates only; creation lives in the dashboard form, first-admin bootstrap, and config seeding. <strong>Proposed (not built):</strong> a <code>POST /api/auth/users</code> call from the CLI (e.g. an <code>accounts add --xpub ... --signing-pubkey-hex ... --level ...</code> mode that disambiguates from peer creation by requiring the xpub flag), or a first-class <code>users</code> command group. Until one exists, the CLI path is: <code>derive-xpub</code> → edit <code>config.yaml</code> → restart.</p>
 <p>Neither proposal exists in the shipped binary; treat both as design.</p>
 <h2>9. Security notes: what never leaves the operator&#39;s machine</h2>
 <ul>
 <li><strong>The recovery phrase.</strong> The browser ceremony generates it locally and drops it when the dialog closes. Never type it into a chat, an email, a ticket, or a terminal command; a phrase that has appeared in a transcript or a log is compromised — generate a new one.</li>
-<li><strong>Private keys.</strong> The node never asks for them. Enrolment transports exactly two public values: the xpub and the Ed25519 public key.</li>
+<li><strong>Private keys.</strong> The node never asks for them. Enrollment transports exactly two public values: the xpub and the Ed25519 public key.</li>
 <li><strong>The node&#39;s own key material.</strong> At-rest keys are encrypted with a machine-derived key and fail closed if the machine changes. <code>key export --format mnemonic</code> prints the entire node identity in plaintext — that command belongs on the box, in a trusted session, not in any pipeline you cannot vouch for.</li>
-<li><strong>Master xpubs.</strong> A depth-0 master xpub is refused by the first-admin bootstrap because it would enumerate an entire wallet; always enrol the account-level xpub (<code>derive-xpub</code> output).</li>
+<li><strong>Master xpubs.</strong> A depth-0 master xpub is refused by the first-admin bootstrap because it would enumerate an entire wallet; always enroll the account-level xpub (<code>derive-xpub</code> output).</li>
 <li><strong>No enumeration.</strong> A sign-in attempt with an unknown xpub receives a valid-looking challenge that <em>can never verify</em> — probing for whether an account exists gets you silence, not information.</li>
 <li><strong>Session tokens.</strong> Browser sessions ride an HttpOnly cookie. Scripted administration passes a session token explicitly (<code>--session-token</code> / <code>SDN_SESSION_TOKEN</code>) — treat it as a bearer credential.</li>
 </ul>

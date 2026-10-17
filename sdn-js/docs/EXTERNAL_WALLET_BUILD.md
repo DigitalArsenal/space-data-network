@@ -1,8 +1,8 @@
-# Building sdn-js with the HD wallet runtime externalised
+# Building sdn-js with the HD wallet runtime externalized
 
 ## From npm: the `./external-wallet` subpath
 
-Every package build emits the externalised form beside the default one, and
+Every package build emits the externalized form beside the default one, and
 the npm package publishes it:
 
 | import | file |
@@ -65,14 +65,14 @@ order, and fails closed with the staging path named if neither is available:
    `deployment/wallet-wasm/stage-wallet-wasm.sh`). Override the URL with
    `globalThis['sdn.hd-wallet-wasm.runtime-url.v1']`.
 
-Only the runtime is externalised. EPM attestation is pure JavaScript over
+Only the runtime is externalized. EPM attestation is pure JavaScript over
 already-derived key material, so it stays bundled and works with no provider.
 
 ## Embedder hooks (no source patching)
 
 | variable | meaning |
 | --- | --- |
-| `SDN_JS_EXTERNAL_WALLET=1` | build with the runtime externalised (what the named script sets) |
+| `SDN_JS_EXTERNAL_WALLET=1` | build with the runtime externalized (what the named script sets) |
 | `SDN_JS_HD_WALLET_ADAPTER` | path to the module that replaces `hd-wallet-wasm`; defaults to the committed adapter |
 | `SDN_JS_ESBUILD_PLUGIN_MODULES` | `,`/`:`-separated modules exporting `createEsbuildPlugin({ packageRoot })`, appended after the in-package plugins |
 
@@ -81,7 +81,7 @@ environment variable.
 
 ## Packaging ruling (2026-09-28, supersedes 2026-08-07)
 
-The npm package **ships** the externalised build, as the explicit
+The npm package **ships** the externalized build, as the explicit
 `./external-wallet` subpath above.
 
 The 2026-08-07 ruling published only the build target and told embedders to

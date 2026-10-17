@@ -187,7 +187,7 @@ xpub6BosfCnifzxcFwrSzQiqu2DBVTshkCXacvNsWGYJVVhhawA7d4R5WSWGFNbi8Aw6ZRc1brxMyWMz
 <li>the <strong>64-hex Ed25519 signing public key</strong>,</li>
 <li>their preferred display <strong>name</strong> (optional).</li>
 </ol>
-<p><strong>What must never be handed over, in any channel:</strong> the recovery phrase, any private key, the extended private key. If a private value ever enters a chat, a paste, a logged terminal, or an agent transcript, the identity is compromised — generate a new one. (The CLI&#39;s custody classification: <code>key export --format mnemonic</code> is labelled &quot;THE ENTIRE NODE IDENTITY IN PLAINTEXT&quot; and <code>base64</code>/<code>hex</code>/<code>kubo</code>/<code>libp2p</code> formats are labelled &quot;SECRET&quot;.) Nothing in enrollment ever asks for a private value; an enrollment request that does is a scam or a bug.</p>
+<p><strong>What must never be handed over, in any channel:</strong> the recovery phrase, any private key, the extended private key. If a private value ever enters a chat, a paste, a logged terminal, or an agent transcript, the identity is compromised — generate a new one. (The CLI&#39;s custody classification: <code>key export --format mnemonic</code> is labeled &quot;THE ENTIRE NODE IDENTITY IN PLAINTEXT&quot; and <code>base64</code>/<code>hex</code>/<code>kubo</code>/<code>libp2p</code> formats are labeled &quot;SECRET&quot;.) Nothing in enrollment ever asks for a private value; an enrollment request that does is a scam or a bug.</p>
 <h3>Step 3 — what binds on first login (TOFU)</h3>
 <p>The signing key is bound <strong>on first successful login — trust on first use</strong>:</p>
 <ul>
@@ -200,7 +200,7 @@ xpub6BosfCnifzxcFwrSzQiqu2DBVTshkCXacvNsWGYJVVhhawA7d4R5WSWGFNbi8Aw6ZRc1brxMyWMz
 <li><strong>Enrolling the wrong signing key</strong> — the node holds a pin the operator cannot produce; the account can never sign in.</li>
 <li><strong>Omitting the signing key entirely</strong> — the row is a dead record: the dashboard sends no xpub at sign-in, the node resolves the operator by signing key, and a keyless row matches nothing.</li>
 </ul>
-<h2>3. Path A — enrol from the CLI (and the config path)</h2>
+<h2>3. Path A — enroll from the CLI (and the config path)</h2>
 <p><strong><code>spacedatanetwork admin init</code></strong> is the CLI enrollment path, and the one a remote node with no desktop app uses. Run it on the server. It prints the node&#39;s public keys and the fingerprint of its encryption key, then enrolls an admin from one of three sources:</p>
 <table>
 <thead>
@@ -271,7 +271,7 @@ spacedatanetwork accounts list
 <blockquote>
 <p><strong>Not yet supported:</strong> no CLI command creates an operator row — <code>accounts add</code> creates <strong>peer</strong> rows only and explicitly refuses xpubs (&quot;it identifies a wallet account, not a libp2p host&quot;). Proposal: Section 8.</p>
 </blockquote>
-<h2>4. Path B — enrol from the dashboard UI</h2>
+<h2>4. Path B — enroll from the dashboard UI</h2>
 <ol>
 <li>Sign in as an administrator.</li>
 <li>Open <strong>Accounts</strong>, then the <strong>Operators</strong> tab.</li>
@@ -282,7 +282,7 @@ spacedatanetwork accounts list
 <li><strong>Signing public key (hex)</strong> — the 64-hex Ed25519 public key from the same ceremony, lowercased; the wallet UIs&#39; convenience copy button produces this directly.</li>
 </ul>
 </li>
-<li>Click <strong>Enrol</strong>. The node answers <code>201</code> for a new row; a duplicate xpub answers <code>409 user_exists</code>.</li>
+<li>Click <strong>Enroll</strong>. The node answers <code>201</code> for a new row; a duplicate xpub answers <code>409 user_exists</code>.</li>
 </ol>
 <p>The form posts exactly the two-value payload above to <code>POST /api/auth/users</code> with the session cookie. Any admin session can also edit a row&#39;s trust/name/signing key (the row&#39;s own edit control in the table) and <strong>Withdraw</strong> a row — see Section 7 for what withdrawal refuses.</p>
 <h2>5. Bootstrapping: where the first administrator comes from</h2>
@@ -341,7 +341,7 @@ spacedatanetwork accounts list
 <td>Reserved for the node&#39;s own identity — never granted to anyone else</td>
 </tr>
 </tbody></table>
-<p>Admin grants: all <code>/api/auth/users*</code> management (the Enrol/editing surface), the merged accounts view, peer trust management, and the rest of the admin-gated API. Every admin gate is a numeric comparison against tier 4.</p>
+<p>Admin grants: all <code>/api/auth/users*</code> management (the Enroll/editing surface), the merged accounts view, peer trust management, and the rest of the admin-gated API. Every admin gate is a numeric comparison against tier 4.</p>
 <p><strong>Who can assign what:</strong></p>
 <ul>
 <li><strong>Operators (the API):</strong> only <code>unknown</code> through <code>admin</code>. The API refuses <code>never</code> (operator lockout) and <code>ultimate</code> (self-identity) — wiring-proof:</li>
@@ -384,7 +384,7 @@ spacedatanetwork admin remove &lt;account&gt;
 <li><strong>The recovery phrase.</strong> The browser ceremony generates it locally and drops it when the dialog closes. Never type it into a chat, an email, a ticket, or a terminal command; a phrase that has appeared in a transcript or a log is compromised — generate a new one.</li>
 <li><strong>Private keys.</strong> The node never asks for them. Enrollment transports exactly two public values: the xpub and the Ed25519 public key.</li>
 <li><strong>The node&#39;s own key material.</strong> At-rest keys are encrypted with a machine-derived key and fail closed if the machine changes. <code>key export --format mnemonic</code> prints the entire node identity in plaintext — that command belongs on the box, in a trusted session, not in any pipeline you cannot vouch for.</li>
-<li><strong>Master xpubs.</strong> A depth-0 master xpub is refused by the first-admin bootstrap because it would enumerate an entire wallet; always enrol the account-level xpub (<code>derive-xpub</code> output).</li>
+<li><strong>Master xpubs.</strong> A depth-0 master xpub is refused by the first-admin bootstrap because it would enumerate an entire wallet; always enroll the account-level xpub (<code>derive-xpub</code> output).</li>
 <li><strong>No enumeration.</strong> A sign-in attempt with an unknown xpub receives a valid-looking challenge that <em>can never verify</em> — probing for whether an account exists gets you silence, not information.</li>
 <li><strong>Session tokens.</strong> Browser sessions ride an HttpOnly cookie. Scripted administration passes a session token explicitly (<code>--session-token</code> / <code>SDN_SESSION_TOKEN</code>) — treat it as a bearer credential.</li>
 </ul>

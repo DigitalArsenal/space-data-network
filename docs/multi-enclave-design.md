@@ -64,7 +64,7 @@ ingest. The ABAC engine performs case-insensitive matching
 
 In IL5/IL6 deployments the node configuration must set
 `policies.enabled: true` and include a rule that denies `publish` for any
-record whose `classification` attribute is empty or unrecognised. This is an
+record whose `classification` attribute is empty or unrecognized. This is an
 operator responsibility enforced by the ABAC layer (see Section 5).
 
 ---

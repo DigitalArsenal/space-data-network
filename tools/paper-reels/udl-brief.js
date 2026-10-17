@@ -36,7 +36,7 @@ const HUB = [1600, 360];
 
 // The catalog paper's measured medians (its summary table).
 const BARS = [
-  ["GNSS ANALYSIS-CENTRE ORBIT", "3.5 cm", 0.06],
+  ["GNSS ANALYSIS-CENTER ORBIT", "3.5 cm", 0.06],
   ["LASER-RANGING FIT", "7 m", 0.22],
   ["PUBLIC OMM, AT ISSUE", "0.3–1.6 km", 0.92],
 ];

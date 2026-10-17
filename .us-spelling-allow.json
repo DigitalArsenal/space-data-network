@@ -1,0 +1,25 @@
+{
+  "paths": [
+    { "glob": "docs/network-ecosystem-demo.mjs", "reason": "bundled third-party code (library error strings and comments), regenerated from its sources, not edited by hand" },
+    { "glob": "docs/superpowers/plans/2026-04-22-node-identity-epm-directory.md", "reason": "a dated plan whose code blocks quote the code as it was written; historical record" }
+  ],
+  "phrases": [
+    { "pattern": "IERS Earth Orientation Centre", "reason": "proper name of the IERS office (Observatoire de Paris)" },
+    { "pattern": "IERS Rapid Service/Prediction Centre", "reason": "proper name of the IERS office (U.S. Naval Observatory)" },
+    { "pattern": "Rapid Service/Prediction Centre", "reason": "proper name of the IERS office (U.S. Naval Observatory)" },
+    { "pattern": "GFZ Helmholtz Centre for Geosciences", "reason": "proper name of the institution" },
+    { "pattern": "National Space Operations Centre", "reason": "proper name (UK National Space Operations Centre)" },
+    { "pattern": "Space Operations Centre", "reason": "proper name (UK Space Operations Centre, its badge credit)" },
+    { "pattern": "Space Situational Awareness Centre", "reason": "proper name (German Space Situational Awareness Centre, GSSAC)" },
+    { "pattern": "Defence Space Agency", "reason": "proper name (India's Defence Space Agency)" },
+    { "pattern": "Open Government Licence", "reason": "title of the UK licence (Open Government Licence v3.0)" },
+    { "pattern": "Generalisable bias correction of two-line element sets", "reason": "cited title (Hallgarten La Casta and Amato), published spelling" },
+    { "pattern": "Modelling the global ocean tides", "reason": "cited title (Lyard et al. 2006), published spelling" },
+    { "pattern": "never \"catalogue\"", "flags": "", "paths": ["docs/STYLE-GUIDE.md"], "reason": "the style guide names the variant it forbids" }
+  ],
+  "words": [
+    { "word": "enrolment", "paths": ["sdn-server/cmd/spacedatanetwork/embedded/docs/operator-enrolment.html"], "reason": "legacy page slug operator-enrolment.html, kept so old links resolve (DocsPanel)" },
+    { "word": "adaptor", "paths": ["tools/paper-reels/typeset.mjs"], "reason": "MathJax API names (liteAdaptor, js/adaptors)" },
+    { "word": "adaptors", "paths": ["tools/paper-reels/typeset.mjs"], "reason": "MathJax API path (mathjax-full/js/adaptors)" }
+  ]
+}
