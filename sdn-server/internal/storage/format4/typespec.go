@@ -66,7 +66,8 @@ func CIDOnlyTypeSpec(typ string, fid [4]byte) TypeSpec {
 // 2's (rules, BFBS, file identifier, flags; read-only reuse) plus IQC's
 // identity dedupe and 16 KiB pages, the A18 bound (OMM and TBS 400000, else
 // 10000), the epoch profile (OMM 1, MPE 2) and full text for every type
-// format 1 indexes: every routed standard whose records are not field-sealed.
+// format 1 indexes, except numeric weather grids. Field-sealed types have no
+// full-text index either.
 // A field-sealed standard (a sealed record's stored bytes are neither its
 // text nor a FlatBuffer) is CID-only on format 2, and so here: no SQL
 // relation, nothing extracted (contract C-46 (7)). The rules are format 2's,
@@ -81,8 +82,22 @@ func TypeSpecFor(schemaName string) (TypeSpec, error) {
 	if len(base.BFBS) == 0 {
 		return CIDOnlyTypeSpec(typ, base.FID), nil
 	}
-	spec := TypeSpec{TypeSpec: base, PageSize: 4096, A18Bound: a18BoundDefault, FullText: true}
+	spec := typeStorageOptions(typ)
+	spec.TypeSpec = base
+	return spec, nil
+}
+
+// typeStorageOptions keeps storage policy separate from schema validation and
+// extraction rules. Changing an optional derived index must not remove the
+// schema, record verification, SQL relation, or provenance indexes.
+func typeStorageOptions(typ string) TypeSpec {
+	spec := TypeSpec{PageSize: 4096, A18Bound: a18BoundDefault, FullText: true}
 	switch typ {
+	case "WXF":
+		// Grid samples are numeric payloads. Reflecting every float into text
+		// adds a second, large derived index to each ingest. The BFBS and
+		// ordinary record/source indexes still serve metadata and SQL reads.
+		spec.FullText = false
 	case "OMM":
 		spec.A18Bound = a18BoundDecorated
 		spec.EpochProfile = epochProfileOMM
@@ -94,7 +109,7 @@ func TypeSpecFor(schemaName string) (TypeSpec, error) {
 		spec.Identity = true
 		spec.PageSize = 16384
 	}
-	return spec, nil
+	return spec
 }
 
 func tlvBytes(out []byte, tag uint16, v []byte) []byte {
