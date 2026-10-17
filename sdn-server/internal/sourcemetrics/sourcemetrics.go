@@ -618,6 +618,19 @@ func (s *Store) clearAppFailuresLocked(appID string) {
 // way an ingest clears it, so an unchanged upstream never widens the window
 // or raises a lane alert.
 func (s *Store) RecordAttemptUnchanged(appID string) {
+	s.closeAttemptSucceeded(appID, "upstream unchanged (304), nothing new to land")
+}
+
+// RecordAttemptSucceeded closes an attempt that succeeded by the run's own
+// account, with no batch to show for it because none was owed: a flow that
+// declares no storage_ingest capability (record-retention) never lands one,
+// so "no batch landed" says nothing about it. The streak is cleared as an
+// ingest clears it.
+func (s *Store) RecordAttemptSucceeded(appID string) {
+	s.closeAttemptSucceeded(appID, "run succeeded; the flow stores nothing, so no batch was owed")
+}
+
+func (s *Store) closeAttemptSucceeded(appID, why string) {
 	if s == nil || s.db == nil {
 		return
 	}
@@ -628,30 +641,118 @@ func (s *Store) RecordAttemptUnchanged(appID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.clearAppFailuresLocked(appID)
-	log.Infof("Retrieval attempt for %s: upstream unchanged (304), nothing new to land", appID)
+	log.Infof("Retrieval attempt for %s: %s", appID, why)
 }
 
-// BeginManualRun books an operator's manual run, which never asks the
-// retrieval gate. The attempt is stamped now, so the publisher is still owed
-// its base window from this pull; the returned func records how the run ended.
-// A clean run (nil) is the operator's evidence that the lane works: it clears
-// the failure streak, and with it the backoff the operator just overrode. A
-// failed or cancelled run closes like any other attempt (RecordAttemptOutcome).
-func (s *Store) BeginManualRun(appID string) func(runErr error) {
+// AdmitManualRun admits an operator's manual run (dashboard Run now, `apps
+// run`). Only the provider's minimum interval holds it back; the failure
+// backoff, a penalty for the lane's own failures, does not (RetrievalDue).
+//
+// Admitted, the attempt is stamped now and finish records how the run ended:
+// nil (a clean run) clears the failure streak and with it the backoff the
+// operator overrode; an error or a cancellation closes like any attempt
+// (RecordAttemptOutcome). Inside the minimum interval finish is nil and
+// allowedAt is when the run may start.
+func (s *Store) AdmitManualRun(appID string, baseHours float64) (finish func(runErr error), allowedAt time.Time) {
+	if due, _, at := s.RetrievalDue(appID, baseHours, false); !due {
+		return nil, at
+	}
 	s.RecordAttempt(appID)
 	return func(runErr error) {
 		if runErr != nil {
 			s.RecordAttemptOutcome(appID, runErr)
 			return
 		}
-		if s == nil || s.db == nil {
-			return
-		}
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		s.clearAppFailuresLocked(appID)
-		log.Infof("Manual run of %s succeeded: failure streak and backoff cleared", strings.TrimSpace(appID))
+		s.closeAttemptSucceeded(appID, "manual run succeeded; failure streak and backoff cleared")
+	}, time.Time{}
+}
+
+// RetrievalDue answers the retrieval gate for one app: whether it may start a
+// pull now, why, and, when it may not, when it may. baseHours is the lane's own
+// base window (flows.services[].retrieval_interval); 0 keeps the node default
+// and each source row's own window. A paged source is not re-asking for the
+// same bytes, so the whole-payload default does not describe it.
+//
+// Two promises are kept. The provider's minimum interval: an attempt inside
+// the base window bars another one regardless of how it went, which is what a
+// publisher is actually owed (CelesTrak answers a double pull with a 403).
+// With backoff set, also the failure backoff: each consecutive failed attempt
+// doubles the window (capped), because a publisher that has started refusing
+// us is asking to be asked less often, and retrying on the same cadence is how
+// a node earns a longer ban instead of a shorter one. Scheduled pulls keep
+// both; an operator's manual run only the first.
+//
+// No ledger means no evidence of a recent pull: allow rather than silently
+// stall retrieval on a node whose metrics failed to open.
+func (s *Store) RetrievalDue(appID string, baseHours float64, backoff bool) (due bool, reason string, allowedAt time.Time) {
+	if s == nil || s.db == nil {
+		return true, "retrieval ledger unavailable", time.Time{}
 	}
+	sources, err := s.Sources()
+	if err != nil {
+		return true, "retrieval ledger unreadable; treating as never retrieved", time.Time{}
+	}
+	configured := baseHours > 0
+	if !configured {
+		baseHours = DefaultDebounceHours
+	}
+	now := s.now()
+	if last, failures := s.AttemptState(appID); last != nil {
+		if !backoff {
+			failures = 0
+		}
+		window := hoursDuration(EffectiveDebounceHoursFrom(baseHours, failures))
+		if age := now.Sub(*last); age < window {
+			allowedAt = last.Add(window)
+			if failures > 1 {
+				// Name the cause. A widened window whose reason lives nowhere
+				// cannot be judged stale, cleared on evidence, or acted on.
+				cause := "no cause recorded"
+				if recorded := s.AttemptFailureReason(appID); recorded != "" {
+					cause = "last: " + recorded
+				}
+				return false, fmt.Sprintf("last attempt %s ago is inside the %s backoff window (%d consecutive failures; %s)",
+					age.Round(time.Second), window, failures, cause), allowedAt
+			}
+			return false, fmt.Sprintf("last attempt %s ago is inside the %s debounce window",
+				age.Round(time.Second), window), allowedAt
+		}
+	}
+
+	seen := 0
+	for _, src := range sources {
+		if src.AppID != appID {
+			continue
+		}
+		seen++
+		if src.LastRetrievedAt == nil {
+			return true, "a source has never been retrieved", time.Time{}
+		}
+		window := hoursDuration(src.DebounceHours)
+		if window <= 0 {
+			window = hoursDuration(DefaultDebounceHours)
+		}
+		// The row stores the node-wide default; a lane the operator gave its
+		// own cadence must not be re-gated by it here.
+		if configured {
+			window = hoursDuration(baseHours)
+		}
+		if age := now.Sub(*src.LastRetrievedAt); age >= window {
+			return true, fmt.Sprintf("source %s last retrieved %s ago (debounce %s)",
+				src.SourceID, age.Round(time.Minute), window), time.Time{}
+		}
+		if at := src.LastRetrievedAt.Add(window); allowedAt.IsZero() || at.Before(allowedAt) {
+			allowedAt = at
+		}
+	}
+	if seen == 0 {
+		return true, "no source has ever been retrieved by this flow", time.Time{}
+	}
+	return false, "every source is inside its debounce window", allowedAt
+}
+
+func hoursDuration(hours float64) time.Duration {
+	return time.Duration(hours * float64(time.Hour)).Round(time.Millisecond)
 }
 
 // RecordAttemptOutcome closes the loop RecordAttempt opens. RecordAttempt

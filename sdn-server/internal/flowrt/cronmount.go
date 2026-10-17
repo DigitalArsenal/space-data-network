@@ -88,7 +88,7 @@ type ServiceFlow struct {
 	statsMu          sync.Mutex
 	retrievalGate    RetrievalGate
 	retrievalOutcome RetrievalOutcome
-	manualRunLedger  ManualRunLedger
+	manualRunGate    ManualRunGate
 	startedAt        time.Time
 	timerRunCount    uint64
 	errorCount       uint64
@@ -369,17 +369,19 @@ func (sf *ServiceFlow) SetRetrievalOutcome(outcome RetrievalOutcome) {
 	sf.retrievalOutcome = outcome
 }
 
-// ManualRunLedger books an operator's manual run (plugins.WithManualRun),
-// which never asks the RetrievalGate: calling it stamps the attempt, and the
-// func it returns records how the run ended — nil when it ran clean, including
-// an unchanged (304) upstream. Injected by the node like the gate.
-type ManualRunLedger func() (finish func(runErr error))
+// ManualRunGate admits an operator's manual run (plugins.WithManualRun) in
+// place of the RetrievalGate: the failure backoff does not hold it, a
+// provider's minimum interval does. Admitted, it stamps the attempt and
+// returns the func that records how the run ended (nil when it ran clean).
+// Otherwise finish is nil and allowedAt is when the run may start. Injected by
+// the node like the gate; nil admits every manual run and books nothing.
+type ManualRunGate func() (finish func(runErr error), allowedAt time.Time)
 
-// SetManualRunLedger installs the manual-run ledger. nil books nothing.
-func (sf *ServiceFlow) SetManualRunLedger(ledger ManualRunLedger) {
+// SetManualRunGate installs the manual-run gate.
+func (sf *ServiceFlow) SetManualRunGate(gate ManualRunGate) {
 	sf.statsMu.Lock()
 	defer sf.statsMu.Unlock()
-	sf.manualRunLedger = ledger
+	sf.manualRunGate = gate
 }
 
 // SchedulePhase reports how long after scheduling a trigger's FIRST timer run
@@ -451,22 +453,28 @@ func (sf *ServiceFlow) SetRetrievalGate(gate RetrievalGate) {
 // twice and earned a 403, which is precisely the outcome the 3 h window exists
 // to prevent. So the window is ENFORCED here, not merely reported on the board.
 //
-// An operator's manual run (plugins.WithManualRun) is operator intent and is
-// the exception: it runs at once, inside the window or a failure backoff, and
-// books its own attempt and outcome (ManualRunLedger). A clean manual run
-// clears the failure streak, so the backoff it overrode does not outlive it.
-// A payload of {"force":true} also bypasses the gate, booking nothing.
+// An operator's manual run (plugins.WithManualRun) passes the ManualRunGate
+// instead: it skips the failure backoff, never the provider's minimum
+// interval, which defers it (plugins.DeferredError). It books its own attempt
+// and outcome; a clean manual run clears the failure streak, so the backoff it
+// overrode does not outlive it. A payload of {"force":true} bypasses both
+// gates, booking nothing.
 func (sf *ServiceFlow) InvokeCron(ctx context.Context, method string, input []byte) (out []byte, err error) {
 	attempted := false
 	var finishManual func(error)
 	if plugins.ManualRun(ctx) {
 		sf.statsMu.Lock()
-		ledger := sf.manualRunLedger
+		gate := sf.manualRunGate
 		sf.statsMu.Unlock()
-		log.Infof("Flow service %q: trigger %q manual run: retrieval gate bypassed (operator intent)", sf.programID, method)
-		if ledger != nil {
-			finishManual = ledger()
+		if gate != nil {
+			var allowedAt time.Time
+			if finishManual, allowedAt = gate(); finishManual == nil {
+				deferred := &plugins.DeferredError{Reason: "provider minimum interval", Until: allowedAt}
+				log.Infof("Flow service %q: trigger %q manual run %s", sf.programID, method, deferred)
+				return nil, deferred
+			}
 		}
+		log.Infof("Flow service %q: trigger %q manual run: failure backoff bypassed (operator intent)", sf.programID, method)
 	} else if !cronInvokeForced(input) {
 		sf.statsMu.Lock()
 		gate := sf.retrievalGate
@@ -506,7 +514,7 @@ func (sf *ServiceFlow) InvokeCron(ctx context.Context, method string, input []by
 		sf.recordTimerResult(err)
 		if finishManual != nil {
 			diagnosis := sf.retrievalDiagnosis(err)
-			if errors.Is(diagnosis, ErrRetrievalUnchanged) {
+			if errors.Is(diagnosis, ErrRetrievalUnchanged) || errors.Is(diagnosis, ErrNothingToStore) {
 				diagnosis = nil
 			}
 			finishManual(diagnosis)
@@ -808,6 +816,26 @@ func readNodeRunDigest(rt *FlowRuntime) []nodeRunOutcome {
 // {"status":304,"unchanged":true,...}.
 var ErrRetrievalUnchanged = errors.New("upstream unchanged: the conditional fetch answered 304 and there was nothing new to land")
 
+// ErrNothingToStore is the diagnosis of a clean run of a flow that declares no
+// storage_ingest capability (record-retention): it can never land a batch, so
+// "no batch landed" is no evidence against it. The run's own result decides,
+// and this one succeeded; the ledger counts it as a success without a batch.
+var ErrNothingToStore = errors.New("run succeeded: the flow declares no storage_ingest, so no batch was owed")
+
+// storesRecords reports whether the flow can land a batch at all. Only a flow
+// whose manifest declares storage_ingest is granted that hostcall.
+func (sf *ServiceFlow) storesRecords() bool {
+	if sf.manifest == nil {
+		return true
+	}
+	for _, capability := range sf.manifest.Capabilities {
+		if capability == "storage_ingest" {
+			return true
+		}
+	}
+	return false
+}
+
 // egressReportsUnchanged reports whether any egress result frame of the run
 // is such an unchanged notice.
 func egressReportsUnchanged(frames [][]byte) bool {
@@ -842,6 +870,10 @@ func egressReportsUnchanged(frames [][]byte) bool {
 // that never ran at all: a pipeline whose tail never fired is starved, and
 // which node the frames stopped at is the whole diagnosis.
 //
+// A flow that stores nothing is judged by its own result instead: ok, error
+// (a drain error or a node that refused) or cancelled. Starved nodes and the
+// absence of a batch say nothing about it (ErrNothingToStore).
+//
 // This error is HANDED TO THE LEDGER, NOT RETURNED FROM THE RUN. The ledger
 // records a reason only while an attempt's failure streak is still standing —
 // i.e. only when nothing landed — so a run that DID store a batch discards this
@@ -868,10 +900,15 @@ func (sf *ServiceFlow) retrievalDiagnosis(runErr error) error {
 			starved = append(starved, label)
 		}
 	}
+	stores := sf.storesRecords()
 	switch {
+	case len(refused) > 0 && !stores:
+		return fmt.Errorf("node(s) refused: %s", strings.Join(refused, "; "))
 	case len(refused) > 0:
 		return fmt.Errorf("run completed but landed no batch; node(s) refused: %s",
 			strings.Join(refused, "; "))
+	case !stores:
+		return ErrNothingToStore
 	case unchanged:
 		// The tail of the pipeline is starved BY DESIGN: the fetch answered 304
 		// and the parser said so on egress. Nothing to store is not a failure.

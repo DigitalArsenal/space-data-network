@@ -2558,9 +2558,9 @@ func (n *Node) startFlowServices() error {
 			log.Warnf("Flow service %q failed to start: %v", sf.ID(), err)
 			continue
 		}
-		// Publisher fetch policy, ENFORCED. Every pull — cron tick or admin
-		// run-now — passes this gate, so the debounce window the node
-		// advertises on /api/apps is the window it actually honours.
+		// Publisher fetch policy, ENFORCED. Every automatic pull passes this
+		// gate, so the debounce window the node advertises on /api/apps is the
+		// window it actually honours; a manual run passes the gate below.
 		sf.SetRetrievalGate(func() (bool, string) {
 			allowed, reason := n.flowServiceRetrievalDue(serviceID)
 			if allowed && n.sourceMetrics != nil {
@@ -2579,16 +2579,20 @@ func (n *Node) startFlowServices() error {
 			if n.sourceMetrics == nil {
 				return
 			}
-			if errors.Is(runErr, flowrt.ErrRetrievalUnchanged) {
+			switch {
+			case errors.Is(runErr, flowrt.ErrRetrievalUnchanged):
 				n.sourceMetrics.RecordAttemptUnchanged(serviceID)
-				return
+			case errors.Is(runErr, flowrt.ErrNothingToStore):
+				n.sourceMetrics.RecordAttemptSucceeded(serviceID)
+			default:
+				n.sourceMetrics.RecordAttemptOutcome(serviceID, runErr)
 			}
-			n.sourceMetrics.RecordAttemptOutcome(serviceID, runErr)
 		})
-		// An operator's manual run skips the gate, so it books itself: a clean
-		// one clears the failure streak whose backoff it overrode.
-		sf.SetManualRunLedger(func() func(error) {
-			return n.sourceMetrics.BeginManualRun(serviceID)
+		// An operator's manual run is held only to the provider's minimum
+		// interval, not the failure backoff, and books its own outcome.
+		sf.SetManualRunGate(func() (func(error), time.Time) {
+			baseHours, _ := n.flowServiceRetrievalBaseHours(serviceID)
+			return n.sourceMetrics.AdmitManualRun(serviceID, baseHours)
 		})
 
 		if !started {
@@ -2816,80 +2820,13 @@ func (n *Node) reconcileRetrievalLedger(refire bool) {
 }
 
 // flowServiceRetrievalDue reports whether a flow's sources are past their
-// debounce window. A flow with no ledger rows has never retrieved anything and
-// is due by definition.
+// retrieval window, failure backoff included (sourcemetrics.RetrievalDue). A
+// flow with no ledger rows has never retrieved anything and is due by
+// definition.
 func (n *Node) flowServiceRetrievalDue(appID string) (bool, string) {
-	if n.sourceMetrics == nil {
-		// No ledger, no evidence of a recent pull — allow rather than
-		// silently stall retrieval on a node whose metrics failed to open.
-		return true, "retrieval ledger unavailable"
-	}
-	sources, err := n.sourceMetrics.Sources()
-	if err != nil {
-		return true, "retrieval ledger unreadable; treating as never retrieved"
-	}
-	// A lane may declare its OWN base window
-	// (flows.services[].retrieval_interval). A paged source is not re-asking
-	// for the same bytes, so the whole-payload default does not describe it.
-	baseHours := sourcemetrics.DefaultDebounceHours
-	if configured, ok := n.flowServiceRetrievalBaseHours(appID); ok {
-		baseHours = configured
-	}
-
-	// An attempt inside the debounce window bars another one regardless of how
-	// it went. This is what a publisher is actually owed.
-	if last, failures := n.sourceMetrics.AttemptState(appID); last != nil {
-		// Escalating backoff: each consecutive failed attempt doubles the
-		// window (capped). A publisher that has started refusing us is asking
-		// to be asked less often, and retrying on the same cadence is how a
-		// node earns a longer ban instead of a shorter one.
-		hours := sourcemetrics.EffectiveDebounceHoursFrom(baseHours, failures)
-		window := time.Duration(hours * float64(time.Hour))
-		if age := time.Since(*last); age < window {
-			if failures > 1 {
-				// Name the cause. A widened window whose reason lives nowhere
-				// cannot be judged stale, cleared on evidence, or acted on.
-				if cause := n.sourceMetrics.AttemptFailureReason(appID); cause != "" {
-					return false, fmt.Sprintf(
-						"last attempt %s ago is inside the %s backoff window (%d consecutive failures; last: %s)",
-						age.Round(time.Second), window, failures, cause)
-				}
-				return false, fmt.Sprintf(
-					"last attempt %s ago is inside the %s backoff window (%d consecutive failures; no cause recorded)",
-					age.Round(time.Second), window, failures)
-			}
-			return false, fmt.Sprintf("last attempt %s ago is inside the %s debounce window",
-				age.Round(time.Second), window)
-		}
-	}
-
-	seen := 0
-	for _, src := range sources {
-		if src.AppID != appID {
-			continue
-		}
-		seen++
-		if src.LastRetrievedAt == nil {
-			return true, "a source has never been retrieved"
-		}
-		window := time.Duration(src.DebounceHours * float64(time.Hour))
-		if window <= 0 {
-			window = time.Duration(sourcemetrics.DefaultDebounceHours * float64(time.Hour))
-		}
-		// The ledger row stores the node-wide default; a lane the operator
-		// gave its own cadence must not be re-gated by it here.
-		if configured, ok := n.flowServiceRetrievalBaseHours(appID); ok {
-			window = time.Duration(configured * float64(time.Hour))
-		}
-		if age := time.Since(*src.LastRetrievedAt); age >= window {
-			return true, fmt.Sprintf("source %s last retrieved %s ago (debounce %s)",
-				src.SourceID, age.Round(time.Minute), window)
-		}
-	}
-	if seen == 0 {
-		return true, "no source has ever been retrieved by this flow"
-	}
-	return false, "every source is inside its debounce window"
+	baseHours, _ := n.flowServiceRetrievalBaseHours(appID) // 0: node default
+	due, reason, _ := n.sourceMetrics.RetrievalDue(appID, baseHours, true)
+	return due, reason
 }
 
 // flowServiceRetrievalBaseHours reports the operator-configured base debounce

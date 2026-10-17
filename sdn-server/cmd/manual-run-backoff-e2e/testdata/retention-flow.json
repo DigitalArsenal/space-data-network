@@ -1,0 +1,55 @@
+{
+  "programId": "com.digitalarsenal.flows.record-retention",
+  "name": "SDN Record Retention Flow",
+  "version": "0.2.0",
+  "engineLinkage": "bridge",
+  "description": "Hourly rolling-window retention (typed contracts 1.0): the host-cron timer's TimerTick enters data-source/record-retention expire, which asks the node (storage.expire, an SDS $PIV hostcall) to delete each configured lane's records that arrived on the node more than window_hours ago (node config; default 72 h over WXF from provider noaa-ncep), through the store's record index. Owner 2026-10-12, the weather node: a rolling 3-day window, configurable, never an archive. Each lane pass's FlowNotice (FNTC: Expired / Missing / Skipped) ends at the flow egress. No JSON.",
+  "nodes": [
+    {
+      "nodeId": "expire",
+      "pluginId": "com.digitalarsenal.data-source.record-retention",
+      "methodId": "expire",
+      "kind": "transform",
+      "drainPolicy": "single-shot"
+    },
+    {
+      "nodeId": "egress",
+      "pluginId": "sdn.flow.egress",
+      "methodId": "emit",
+      "kind": "sink",
+      "drainPolicy": "single-shot"
+    }
+  ],
+  "edges": [
+    {
+      "edgeId": "expire-report",
+      "fromNodeId": "expire",
+      "fromPortId": "report",
+      "toNodeId": "egress",
+      "toPortId": "response",
+      "backpressurePolicy": "queue",
+      "queueDepth": 4
+    }
+  ],
+  "triggers": [
+    {
+      "triggerId": "timer-retention",
+      "kind": "timer",
+      "source": "host-cron",
+      "defaultIntervalMs": 3600000,
+      "description": "Retention pass timer, hourly: the window's edge moves an hour a pass."
+    }
+  ],
+  "triggerBindings": [
+    {
+      "triggerId": "timer-retention",
+      "targetNodeId": "expire",
+      "targetPortId": "tick",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    }
+  ],
+  "requiredPlugins": [
+    "com.digitalarsenal.data-source.record-retention"
+  ]
+}

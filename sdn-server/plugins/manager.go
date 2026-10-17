@@ -816,6 +816,18 @@ func WithManualRun(ctx context.Context) context.Context {
 // ManualRun reports whether ctx belongs to an operator's manual run.
 func ManualRun(ctx context.Context) bool { return runTrigger(ctx) == "manual" }
 
+// DeferredError is how a CronProvider declines a manual run it may not start
+// yet, such as one inside a publisher's minimum interval. It is not a failure:
+// the run is recorded as "deferred", with the time it becomes allowed.
+type DeferredError struct {
+	Reason string
+	Until  time.Time
+}
+
+func (e *DeferredError) Error() string {
+	return fmt.Sprintf("deferred: %s; allowed at %s", e.Reason, e.Until.UTC().Format(time.RFC3339))
+}
+
 // runScheduledCronMethod runs one scheduled invocation and records it.
 func (m *Manager) runScheduledCronMethod(ctx context.Context, pluginID, method string, cp CronProvider) {
 	started := time.Now()
@@ -1205,7 +1217,12 @@ func (m *Manager) RunRuntimeModuleScheduleNow(ctx context.Context, moduleID, met
 	log.Infof("Plugin %q manual run %q start", moduleID, methodID)
 	output, err := cp.InvokeCron(WithManualRun(ctx), methodID, nil)
 	run.FinishedAt = time.Now().UTC().Format(time.RFC3339)
-	if err != nil {
+	var deferred *DeferredError
+	if errors.As(err, &deferred) {
+		run.Status = "deferred"
+		run.Message = err.Error()
+		err = nil
+	} else if err != nil {
 		run.Status = "error"
 		run.Message = err.Error()
 	} else {
