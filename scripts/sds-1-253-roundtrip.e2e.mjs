@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -9,6 +10,21 @@ const server = join(root, 'sdn-server');
 const installed = join(root, 'sdn-js/node_modules');
 const sds = join(installed, 'spacedatastandards.org');
 assert.equal(JSON.parse(readFileSync(join(sds, 'package.json'))).version.split('+')[0], '1.253.0');
+const metadata = join(server, 'internal/sds');
+const manifest = JSON.parse(readFileSync(join(metadata, 'search-schemas/manifest.json')));
+assert.equal(manifest.sdsVersion, '1.253.0', 'search metadata matches the published dependency');
+const sha256 = file => createHash('sha256').update(readFileSync(file)).digest('hex');
+for (const [input, digest] of Object.entries(manifest.inputs)) {
+  const [source, ...parts] = input.split('/');
+  assert.ok(['published', 'embedded'].includes(source), input);
+  const base = source === 'published' ? join(sds, 'schema') : join(metadata, 'schemas');
+  assert.equal(sha256(join(base, ...parts)), digest, input);
+}
+assert.ok(Object.keys(manifest.outputs).length >= 200, 'full routed search catalog');
+for (const [output, digest] of Object.entries(manifest.outputs)) {
+  assert.equal(sha256(join(metadata, 'search-schemas', output)), digest, output);
+}
+console.log(`PASS SDS 1.253.0 search metadata: ${Object.keys(manifest.inputs).length} input hashes, ${Object.keys(manifest.outputs).length} output hashes`);
 const load = path => import(pathToFileURL(path));
 const flatbuffers = await load(join(installed, 'flatbuffers/js/flatbuffers.js'));
 const rfm = await load(join(sds, 'lib/js/RFM/main.js'));
