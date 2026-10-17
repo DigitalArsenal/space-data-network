@@ -271,6 +271,18 @@
     {
       "glob": "sdn-server/internal/storage/format2/attr_test.go",
       "reason": "test strings are inputs of recorded golden bytes (licence-g in the hex); regenerate the golden to change them"
+    },
+    {
+      "glob": "**/testdata/**",
+      "reason": "test data are sha-pinned or recorded inputs; regenerate, do not edit"
+    },
+    {
+      "glob": "**/fixtures/**",
+      "reason": "test fixtures are inputs and recorded outputs; regenerate, do not edit"
+    },
+    {
+      "glob": "sdn-server/internal/modulert/publication_signature_vectors_test.go",
+      "reason": "vector names mirror the sha-pinned testdata/statement-domain-vectors.json"
     }
   ],
   "phrases": [

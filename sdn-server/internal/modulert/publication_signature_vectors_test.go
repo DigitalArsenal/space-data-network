@@ -407,7 +407,7 @@ func TestWriteStatementDomainSignatureMaterial(t *testing.T) {
 			Expect:               expect{Verified: true, Reason: "ok", StatementDomain: mod, ContentHashHex: contentHash},
 		},
 		{
-			Name:                 "bare-digest-labeled-with-domain",
+			Name:                 "bare-digest-labelled-with-domain",
 			Why:                  "regression gate on the whole design: a bare-digest signature must not pass as a domain-separated one",
 			PortableHex:          hex.EncodeToString(portable),
 			SignatureEntry:       entry(mod, sum[:], contentHash),
