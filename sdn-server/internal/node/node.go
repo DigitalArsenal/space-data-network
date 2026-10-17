@@ -2585,6 +2585,11 @@ func (n *Node) startFlowServices() error {
 			}
 			n.sourceMetrics.RecordAttemptOutcome(serviceID, runErr)
 		})
+		// An operator's manual run skips the gate, so it books itself: a clean
+		// one clears the failure streak whose backoff it overrode.
+		sf.SetManualRunLedger(func() func(error) {
+			return n.sourceMetrics.BeginManualRun(serviceID)
+		})
 
 		if !started {
 			// Manager not started yet; StartAll will pick it up normally.

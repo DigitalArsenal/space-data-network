@@ -631,6 +631,29 @@ func (s *Store) RecordAttemptUnchanged(appID string) {
 	log.Infof("Retrieval attempt for %s: upstream unchanged (304), nothing new to land", appID)
 }
 
+// BeginManualRun books an operator's manual run, which never asks the
+// retrieval gate. The attempt is stamped now, so the publisher is still owed
+// its base window from this pull; the returned func records how the run ended.
+// A clean run (nil) is the operator's evidence that the lane works: it clears
+// the failure streak, and with it the backoff the operator just overrode. A
+// failed or cancelled run closes like any other attempt (RecordAttemptOutcome).
+func (s *Store) BeginManualRun(appID string) func(runErr error) {
+	s.RecordAttempt(appID)
+	return func(runErr error) {
+		if runErr != nil {
+			s.RecordAttemptOutcome(appID, runErr)
+			return
+		}
+		if s == nil || s.db == nil {
+			return
+		}
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		s.clearAppFailuresLocked(appID)
+		log.Infof("Manual run of %s succeeded: failure streak and backoff cleared", strings.TrimSpace(appID))
+	}
+}
+
 // RecordAttemptOutcome closes the loop RecordAttempt opens. RecordAttempt
 // counts every started retrieval as a failure and an ingest clears it, so a
 // streak that is still standing when the run returns is a real failure — and
