@@ -68,11 +68,11 @@
       </div>
       <div class="wrap">
         <dl class="paper-facts">
-          <div><dt>Edition</dt><dd>1.0</dd></div>
-          <div><dt>Published</dt><dd>11 October 2026</dd></div>
+          <div><dt>Edition</dt><dd>1.1</dd></div>
+          <div><dt>Published</dt><dd>17 October 2026</dd></div>
           <div><dt>Evidence cutoff</dt><dd><span>11 October 2026</span></dd></div>
           <div><dt>Sections</dt><dd>5</dd></div>
-          <div><dt>Reading time</dt><dd>6 min</dd></div>
+          <div><dt>Reading time</dt><dd>7 min</dd></div>
           <div><dt>Interactive models</dt><dd>1</dd></div>
         </dl>
       </div>
@@ -146,6 +146,7 @@
 <div class="sec-head sec-head-h2"><h2 id="3-publication-and-reproduction"><span class="sec-num">3</span>Publication and reproduction</h2><button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/evidence-supported-aso-catalog/10-publication-and-reproduction.html" data-model-title="A V1 seed, reproduced here" aria-label="Run it: A V1 seed, reproduced here"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span>Run it</button></div>
 <p>Publication is transactional: acquire and hash the bytes, verify, normalize, validate, sign a manifest, then announce the new catalog head. Consumers read one complete, immutable snapshot; each update names the object, the prior and new solutions, the epoch, the recipe and the provenance. Content addressing and independent replication keep a snapshot retrievable from any node that holds it.</p>
 <p>Each experiment&#39;s numbers come from a run manifest: the repository and module commits, each module&#39;s WebAssembly SHA-256 and the SHA-256 of every input; reports are generated from metrics<sup><a href="#r4">4</a></sup>. The experiments&#39; public site runs the same modules in a web browser: a V1 seed reproduces the committed result exactly, and any Orekit case re-runs from its exact request. Space-Track element sets, SpaceX and Planet files and SET&#39;s indices are cited by URL and SHA-256, not copied.</p>
+<p>FFM (Full Force Model) is SDN&#39;s numerical orbit propagator and the force model it integrates by default: the geopotential, the Sun, Moon and planets, atmospheric drag, solar and Earth radiation pressure, solid and ocean tides and relativity, in the frames and time scales of profile FFM-1<sup><a href="#r10">10</a></sup>.</p>
 <div class="table-frame"><table>
 <thead>
 <tr>
@@ -158,11 +159,11 @@
 <td>orbit-accuracy-experiments <code>357d992d6c62daac4ccbb2fd230634ac292192b8</code></td>
 </tr>
 <tr>
-<td>HPOP 1.3.0, its Orekit suite, screen and covariance calibration; maneuver detection 0.3.0</td>
+<td>FFM 1.3.0, its Orekit suite, screen and covariance calibration; maneuver detection 0.3.0</td>
 <td>space-data-network-modules <code>be9ac0db21cd95d52e184bb45d74d73dcf1f09ac</code></td>
 </tr>
 <tr>
-<td>HPOP in V1</td>
+<td>FFM in V1</td>
 <td>space-data-network-modules <code>750b6399173a2678b8e8d0885557976d17a9ad5c</code></td>
 </tr>
 <tr>
@@ -174,7 +175,7 @@
 <td>space-data-network-modules <code>49e159d7003cac3d3e65b03170f11909fa86dd2c</code></td>
 </tr>
 </tbody></table></div>
-<p>HPOP&#39;s WebAssembly binary in V1, SHA-256:</p>
+<p>FFM&#39;s WebAssembly binary in V1, SHA-256:</p>
 <pre><code class="language-text">473d527175de6606ccf305c45b37218288634fa9de2dcab0d72564a190bdabd1
 </code></pre>
 <h2 id="4-screening-that-checks-itself"><span class="sec-num">4</span>Screening that checks itself</h2>
@@ -261,6 +262,8 @@
 <p>Haas, A., et al. Bringing the web up to speed with WebAssembly. PLDI 2017, 185–200. <a href="https://doi.org/10.1145/3062341.3062363">doi:10.1145/3062341.3062363</a></p>
 <h3 id="r9">R9</h3>
 <p>Taufer, M., et al. Homogeneous redundancy: a technique to ensure integrity of molecular simulation results using public computing. IPDPS 2005. <a href="https://doi.org/10.1109/IPDPS.2005.247">doi:10.1109/IPDPS.2005.247</a></p>
+<h3 id="r10">R10</h3>
+<p>Edgesource. FFM (Full Force Model): its definition and profile FFM-1. SDN modules repository (space-data-network-modules), commit 5cc2d3b68edcc89fcab61ab6168fa83f0ed32b86: <code>propagator/ffm/FFM.md</code>, <code>propagator/ffm/ffm-1.profile.json</code> (FFM-1 sha256=dd00c23b0d2df99ea1a95f59cd853cdae0d6eb3d2f96fb11b05a58e1073e10ec), checked against the module&#39;s code defaults by <code>propagator/ffm/tests/ffm-profile-check.mjs</code>. Private repository, available on request (<a href="mailto:tj@edgesource.com">tj@edgesource.com</a>).</p>
 
         </article>
       </div>

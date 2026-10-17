@@ -203,15 +203,15 @@
   ],
   "say": [
     {
-      "claim": "The HPOP force model agrees with Orekit, GMAT, Tudat and Nyx to about 1 cm over 24 hours on identical inputs (meters where drag models differ).",
+      "claim": "FFM, the Full Force Model propagator, agrees with Orekit, GMAT, Tudat and Nyx to about 1 cm over 24 hours on identical inputs (meters where drag models differ).",
       "note": "Verifies the implementation, not orbit accuracy."
     },
     {
-      "claim": "From precise start states, HPOP predicts drag-free spheres to 4.8 m at 24 h and 13.9 m at 72 h, and GPS to 28.5 m at 24 h.",
+      "claim": "From precise start states, FFM predicts drag-free spheres to 4.8 m at 24 h and 13.9 m at 72 h, and GPS to 28.5 m at 24 h.",
       "note": "Not LEO: drag from B* gives 481 m at 24 h even from the true state."
     },
     {
-      "claim": "Fitted to laser ranges, HPOP's median error is 7 m at the fit and 9, 17 and 42 m at 1, 3 and 7 days, against 472 to 685 m for SGP4.",
+      "claim": "Fitted to laser ranges, FFM's median error is 7 m at the fit and 9, 17 and 42 m at 1, 3 and 7 days, against 472 to 685 m for SGP4.",
       "note": "Five laser-ranged spheres; the truth uses the same laser data."
     },
     {
@@ -231,7 +231,7 @@
       "note": ""
     },
     {
-      "claim": "Every covariance carries a held-out realism label: realistic in 2 of 35 cells for element sets and 5 of 35 for the HPOP epoch state.",
+      "claim": "Every covariance carries a held-out realism label: realistic in 2 of 35 cells for element sets and 5 of 35 for the FFM epoch state.",
       "note": "LEO only; few samples per cell."
     }
   ],
@@ -257,7 +257,7 @@
       "why": "No dilution flag or calibration label; real near misses of 5.7-14.3 m scored 1e-6 to 4e-5."
     },
     {
-      "claim": "HPOP screening as more accurate than SGP4",
+      "claim": "FFM screening as more accurate than SGP4",
       "why": "Started from public element sets it is 9.5-11 times worse in LEO at 24 h."
     },
     {

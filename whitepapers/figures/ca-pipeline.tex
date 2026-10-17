@@ -10,7 +10,7 @@
 \foreach \a/\b in {load/grid, grid/pair, pair/refine, refine/merge} \draw[flow] (\a) -- (\b);
 \draw[flow, dashed] (refine.north) -- ++(0,7mm) -| node[pos=0.25, above, note] {next time window (6\,h SGP4, 2\,h trajectories)} (load.north);
 \node[plain, below=12mm of load.south west, anchor=north west, text width=34mm] (sgp4) {SGP4 element sets, loaded once};
-\node[plain, right=9mm of sgp4, text width=58mm] (traj) {one propagator's trajectories (\texttt{\$PRW}), per window, e.g.\ the HPOP farm};
+\node[plain, right=9mm of sgp4, text width=58mm] (traj) {one propagator's trajectories (\texttt{\$PRW}), per window, e.g.\ the FFM farm};
 \path (sgp4) -- node[note] {or} (traj);
 \node[plain, below=12mm of merge.south east, anchor=north east, text width=40mm] (out) {conjunctions within 5\,km; excluded objects};
 \draw[flow] (sgp4.north) -- (sgp4.north |- load.south);

@@ -503,10 +503,10 @@
       "evidence": "sdn-js/spaceaware-ui/src/orbital-console/modes/modeCards.ts:293-380; modes/mnv/surface.ts:101-117; engine/applyManeuvers.ts; live modules.pmm maneuver-planner 0.6.1, com.orbpro.lambert-izzo 0.2.0"
     },
     {
-      "id": "hpop",
-      "name": "High-precision propagation",
+      "id": "ffm",
+      "name": "FFM (Full Force Model) propagation",
       "category": "flight-dynamics",
-      "tagline": "Numerically integrated orbits for precise work",
+      "tagline": "Orbits integrated under the full force model, for precise work",
       "summary": "Numerically integrated orbit propagation for work that needs more than analytical element sets, including the trajectories that feed catalog screening.",
       "capabilities": [
         "Numerical integration of orbital states with state transition matrices",
@@ -522,7 +522,7 @@
       "delivery": "sdn-module",
       "covers": [],
       "learnMore": "https://spacedatanetwork.org/whitepapers/fast-conjunction-assessment.html",
-      "evidence": "live modules.pmm com.orbpro.hpop 1.1.0 RECOMMENDED ANONYMOUS; live artifact /modules/com.orbpro.hpop/1.1.0/module.wasm strings (PRW execution, PPE trajectory, finite-burn, STM, NRLMSISE-00 and US Standard Atmosphere 1976; no OEM output); space-data-network-modules/propagator/hpop"
+      "evidence": "live modules.pmm com.orbpro.hpop 1.1.0 RECOMMENDED ANONYMOUS; live artifact /modules/com.orbpro.hpop/1.1.0/module.wasm strings (PRW execution, PPE trajectory, finite-burn, STM, NRLMSISE-00 and US Standard Atmosphere 1976; no OEM output); space-data-network-modules/propagator/ffm (com.orbpro.ffm 1.4.0, profile FFM-1, modules 5cc2d3b6)"
     },
     {
       "id": "propagator-suite",
@@ -979,7 +979,7 @@
         "object-intelligence",
         "conjunction-assessment",
         "catalog-screening",
-        "hpop",
+        "ffm",
         "covariance-analysis",
         "maneuver-detection",
         "maneuver-planning",
@@ -1026,7 +1026,7 @@
       "audience": "Mission designers and flight dynamics teams",
       "modules": [
         "maneuver-planning",
-        "hpop",
+        "ffm",
         "propagator-suite",
         "orbit-analysis-toolkit",
         "orbit-estimation",
@@ -1124,7 +1124,7 @@
         "orbit-estimation",
         "catalog-composer",
         "maneuver-planning",
-        "hpop",
+        "ffm",
         "propagator-suite",
         "orbit-analysis-toolkit",
         "ground-contact",

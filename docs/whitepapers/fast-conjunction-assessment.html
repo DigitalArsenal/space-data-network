@@ -69,8 +69,8 @@
       </div>
       <div class="wrap">
         <dl class="paper-facts">
-          <div><dt>Edition</dt><dd>2.1</dd></div>
-          <div><dt>Published</dt><dd>16 October 2026</dd></div>
+          <div><dt>Edition</dt><dd>2.2</dd></div>
+          <div><dt>Published</dt><dd>17 October 2026</dd></div>
           <div><dt>Evidence cutoff</dt><dd><span>11 October 2026</span></dd></div>
           <div><dt>Sections</dt><dd>9</dd></div>
           <div><dt>Reading time</dt><dd>43 min</dd></div>
@@ -101,7 +101,7 @@
           <li><a href="#4-one-propagator-per-run"><span class="toc-num">4</span><span>One propagator per run</span></a></li>
           <li><a href="#5-time-windows"><span class="toc-num">5</span><span>Time windows</span></a>
             <ol>
-              <li><a href="#the-hpop-propagation-farm"><span>The HPOP propagation farm</span></a></li>
+              <li><a href="#the-ffm-propagation-farm"><span>The FFM propagation farm</span></a></li>
             </ol>
           </li>
           <li><a href="#6-results"><span class="toc-num">6</span><span>Results</span></a>
@@ -142,7 +142,7 @@
         </nav>
         <article class="paper">
 <h2 id="executive-summary">Executive summary</h2>
-<p>Space Data Network (SDN) screens the full public catalog, 32,514 objects, all-vs-all over three days in 19 s with SGP4 on ordinary processors, and in 21 s with a GPU. With numerical high-precision orbit propagation (HPOP) under the full force model of <a href="#5-time-windows">section 5</a>, it takes 28 CPU-hours, 1.8 hours on 16 dedicated cores, almost all of it propagation; search and refinement take 138 s on 2 module threads. The screen finds every pair that comes within 5 km, and reports each close approach&#39;s time (TCA), miss distance, relative speed and Alfano maximum probability of collision. The measurements were taken on one 28-core workstation, in Node.js and in a standard web browser. In WasmEdge, the runtime SDN nodes use, the SGP4 screen takes 23 s. Every run on one catalog and propagator reports the same conjunctions.</p>
+<p>Space Data Network (SDN) screens the full public catalog, 32,514 objects, all-vs-all over three days in 19 s with SGP4 on ordinary processors, and in 21 s with a GPU. With FFM (Full Force Model), SDN&#39;s numerical propagator under the full force model of profile FFM-1<sup><a href="#r38">38</a></sup> (<a href="#5-time-windows">section 5</a>), it takes 28 CPU-hours, 1.8 hours on 16 dedicated cores, almost all of it propagation; search and refinement take 138 s on 2 module threads. The screen finds every pair that comes within 5 km, and reports each close approach&#39;s time (TCA), miss distance, relative speed and Alfano maximum probability of collision. The measurements were taken on one 28-core workstation, in Node.js and in a standard web browser. In WasmEdge, the runtime SDN nodes use, the SGP4 screen takes 23 s. Every run on one catalog and propagator reports the same conjunctions.</p>
 <p>Five design choices produce that speed:</p>
 <ol>
 <li><strong>A spatial grid proposes pairs; the module decides.</strong> At every 60 s step, a uniform grid finds the pairs that could be close among the 528.6 million, on a GPU (WebGPU) or in the WebAssembly (WASM) conjunction module on CPU threads. The module re-tests each candidate in f64 and refines it. Every reported number comes from the module.</li>
@@ -152,7 +152,7 @@
 <li><strong>Refinement proves, then solves.</strong> Where the range of a pair provably has one minimum, Newton&#39;s method on the range rate finds it in about ten evaluations.</li>
 </ol>
 <p>The screen reproduces the module&#39;s single-call screen where both can run. On 4,000 objects over one day, all 1,068 conjunctions match, with TCA within 0.64 ms and miss distance within 5 mm; the single call takes 32.9 s and the windowed screen 0.44 s.</p>
-<p>Against SOCRATES on the element sets SOCRATES itself used, TCA agrees within 0.5 ms and miss distance within 2.4 m for 95 % of cataloged pairs, the precision SOCRATES reports. Each event reports the Alfano maximum, the largest probability a spherical covariance of any size gives; it needs no covariance, and it is not a bound for elongated covariances. With an empirical model of element-set prediction error, events also carry a covariance-based probability, Foster&#39;s integral over the hard-body disk. On held-out precise orbits, element-set covariance of this kind is realistic in 2 of 35 regime-and-age cells, LEO above 800 km at 0 and 0.5 days, and the HPOP epoch state&#39;s in 5 of 35. In a synthetic study on the errors of 4 reference objects, a probability threshold of 1e-4 missed 2.7–16 % of collisions, whose probabilities a large covariance dilutes; screening on the uncertainty region missed 0.2–0.4 %, with 21–45 % false alerts at a 1 km miss (<a href="#7-uncertainty-and-probability-of-collision">section 7</a>). Products built from public element sets are advisory: public element sets alone must not drive conjunction assessment decisions<sup><a href="#r34">34</a>,<a href="#r35">35</a></sup>.</p>
+<p>Against SOCRATES on the element sets SOCRATES itself used, TCA agrees within 0.5 ms and miss distance within 2.4 m for 95 % of cataloged pairs, the precision SOCRATES reports. Each event reports the Alfano maximum, the largest probability a spherical covariance of any size gives; it needs no covariance, and it is not a bound for elongated covariances. With an empirical model of element-set prediction error, events also carry a covariance-based probability, Foster&#39;s integral over the hard-body disk. On held-out precise orbits, element-set covariance of this kind is realistic in 2 of 35 regime-and-age cells, LEO above 800 km at 0 and 0.5 days, and the FFM epoch state&#39;s in 5 of 35. In a synthetic study on the errors of 4 reference objects, a probability threshold of 1e-4 missed 2.7–16 % of collisions, whose probabilities a large covariance dilutes; screening on the uncertainty region missed 0.2–0.4 %, with 21–45 % false alerts at a 1 km miss (<a href="#7-uncertainty-and-probability-of-collision">section 7</a>). Products built from public element sets are advisory: public element sets alone must not drive conjunction assessment decisions<sup><a href="#r34">34</a>,<a href="#r35">35</a></sup>.</p>
 <p>Operators keep their most precise orbits and planned maneuvers private. <a href="#8-private-screening">Section 8</a> specifies <strong>private screening</strong>: two operators learn when their objects come close without exchanging trajectories, by computing distances on homomorphically encrypted positions.</p>
 <ul>
 <li><strong>Cost.</strong> Its arithmetic is measured: 0.17 s and 8.7 MB per pair-day at 1 s steps.</li>
@@ -165,7 +165,7 @@
 <h2 id="2-pipeline"><span class="sec-num">2</span>Pipeline</h2>
 <figure class="paper-fig"><img src="assets/ca-pipeline.svg" alt="Pipeline: load index, coarse grid, pair search on the GPU or in the module, refine, and merge windows; SGP4 element sets load once, a propagator's trajectories load per window" width="720"/><figcaption>Pipeline: load index, coarse grid, pair search on the GPU or in the module, refine, and merge windows; SGP4 element sets load once, a propagator's trajectories load per window</figcaption></figure>
 
-<p>The host code (JavaScript) moves records between the module and the GPU and contains no physics. The conjunction module, the SGP4 implementation, the HPOP propagator and the epoch-state converter are WASM modules. They are built with the SDN Module SDK and run unchanged in a browser, in the WasmEdge runtime and in its Docker image<sup><a href="#r3">3</a></sup>.</p>
+<p>The host code (JavaScript) moves records between the module and the GPU and contains no physics. The conjunction module, the SGP4 implementation, the FFM propagator and the epoch-state converter are WASM modules. They are built with the SDN Module SDK and run unchanged in a browser, in the WasmEdge runtime and in its Docker image<sup><a href="#r3">3</a></sup>.</p>
 <div class="table-frame"><table>
 <thead>
 <tr>
@@ -253,25 +253,25 @@
 <h2 id="4-one-propagator-per-run"><span class="sec-num">4</span>One propagator per run</h2>
 <p>A run screens one propagator&#39;s output. A resident index holds either mean elements, evaluated with the module&#39;s SGP4, or trajectories from one generator, identified by the Chebyshev ephemeris (PPE) record&#39;s <code>EPHEMERIS_SOURCE</code>. The module refuses an index that mixes them (<code>mixed-propagators</code>).</p>
 <p>Chebyshev series per interval are the standard form for precomputed ephemerides. NASA&#39;s SPICE toolkit stores them that way: SPK data types 2, 3, 14 and 20 hold Chebyshev coefficients for position, velocity or both<sup><a href="#r15">15</a></sup>, and JPL distributes its planetary ephemerides as Chebyshev polynomials fit to positions and velocities in 32-day intervals<sup><a href="#r16">16</a>,<a href="#r17">17</a></sup>. Deprit, Pickard and Poplarchek recommended Chebyshev approximation for compressing ephemerides because it minimizes the largest error over the interval<sup><a href="#r18">18</a></sup>. A Chebyshev interpolant of degree n is within a factor 2 + (2/π) log(n + 1) of the best polynomial approximation of that degree<sup><a href="#r19">19</a></sup>. The same form serves spacecraft and catalog orbits: onboard ephemeris generation<sup><a href="#r20">20</a></sup> and orbit information with continuous state and covariance at a predetermined accuracy<sup><a href="#r21">21</a></sup>. Open-source readers include jplephem (MIT License,<sup><a href="#r22">22</a></sup>) and ANISE (Mozilla Public License 2.0,<sup><a href="#r23">23</a></sup>); NAIF&#39;s toolkit is free to use under its own rules<sup><a href="#r15">15</a></sup>.</p>
-<p>Trajectories reach the module as their propagator exported them. The HPOP module&#39;s export is a size-prefixed <code>$PRW</code> record per object. The conjunction module&#39;s index preparation takes those records on its <code>trajectories</code> port without re-encoding, and the request carries only each object&#39;s identity. Trajectories in TT or TDB map to UTC linearly between their converted interval ends, using the vendored ERFA library<sup><a href="#r5">5</a></sup>. TDB − TT is evaluated once per minute and interpolated, exact to about 1e-14 s.</p>
+<p>Trajectories reach the module as their propagator exported them. The FFM module&#39;s export is a size-prefixed <code>$PRW</code> record per object. The conjunction module&#39;s index preparation takes those records on its <code>trajectories</code> port without re-encoding, and the request carries only each object&#39;s identity. Trajectories in TT or TDB map to UTC linearly between their converted interval ends, using the vendored ERFA library<sup><a href="#r5">5</a></sup>. TDB − TT is evaluated once per minute and interpolated, exact to about 1e-14 s.</p>
 <h2 id="5-time-windows"><span class="sec-num">5</span>Time windows</h2>
 <p>A long screen runs as consecutive windows; the merged result equals one screen of the whole span:</p>
 <ul>
 <li>A conjunction belongs to the window that holds its TCA.</li>
 <li>A TCA within the refinement tolerance of a shared edge is reported by both windows and kept once.</li>
 </ul>
-<p>Window length trades memory for per-window overhead. A day of HPOP&#39;s trajectories is about 240 KB per object, so HPOP screens in 1-hour windows: about 390 MB of trajectories for the full catalog, which the conjunction module indexes in 1.05 GiB of its 2 GiB. SGP4 windows reuse one index loaded at the start, so they are longer (6 hours).</p>
-<p>Tests check four windows against a single screen for both propagators. The SGP4 case uses CelesTrak element sets that include an object SGP4 cannot propagate. The HPOP case uses crossing orbits integrated by HPOP, passed through the <code>trajectories</code> port<sup><a href="#r2">2</a>,<a href="#r33">33</a></sup>.</p>
-<h3 id="the-hpop-propagation-farm">The HPOP propagation farm</h3>
+<p>Window length trades memory for per-window overhead. A day of FFM&#39;s trajectories is about 240 KB per object, so FFM screens in 1-hour windows: about 390 MB of trajectories for the full catalog, which the conjunction module indexes in 1.05 GiB of its 2 GiB. SGP4 windows reuse one index loaded at the start, so they are longer (6 hours).</p>
+<p>Tests check four windows against a single screen for both propagators. The SGP4 case uses CelesTrak element sets that include an object SGP4 cannot propagate. The FFM case uses crossing orbits integrated by FFM, passed through the <code>trajectories</code> port<sup><a href="#r2">2</a>,<a href="#r33">33</a></sup>.</p>
+<h3 id="the-ffm-propagation-farm">The FFM propagation farm</h3>
 <ol>
 <li>The epoch-state module converts each element set into a GCRF state at its epoch: SGP4 at zero elapsed time, then TEME to GCRF through ERFA, with the IAU 2006/2000A precession-nutation and the equation of the equinoxes. Against the GMST82 and IAU 1976/1980 rotations of Vallado et al.<sup><a href="#r36">36</a></sup>, this convention moves positions by 2.0–2.6 m in LEO and 12–16 m at GEO; the catalog and this screen use it throughout. This is the OMM-to-numerical handoff of the companion paper<sup><a href="#r1">1</a></sup>, <a href="evidence-supported-aso-catalog.html#4-normalization-and-model-dispatch">section 4</a>.</li>
-<li>HPOP resident instances, at most 1,024 objects each, integrate those states on worker threads with the force model below. Objects are dealt round-robin into about two instances per worker, so element sets of every age spread evenly.</li>
+<li>FFM resident instances, at most 1,024 objects each, integrate those states on worker threads with the force model below. Objects are dealt round-robin into about two instances per worker, so element sets of every age spread evenly.</li>
 <li>Each window, every instance exports the window and the records go to the browser unchanged. The next window is exported while the current one is screened.</li>
 </ol>
 <div class="table-frame"><table>
 <thead>
 <tr>
-<th>HPOP</th>
+<th>FFM</th>
 <th>Setting</th>
 </tr>
 </thead>
@@ -305,7 +305,7 @@
 </tr>
 <tr>
 <td>Reentry</td>
-<td>HPOP ends a trajectory at 100 km geodetic altitude; an object is screened through the last full window before its reentry</td>
+<td>FFM ends a trajectory at 100 km geodetic altitude; an object is screened through the last full window before its reentry</td>
 </tr>
 <tr>
 <td>Assumptions</td>
@@ -324,9 +324,9 @@
 <ul>
 <li><strong>Tolerance.</strong> Against 10⁻¹⁴, the integration&#39;s own error after three days is 0.1 m at 400 km, 1.2 m at 700 km sun-synchronous and 0.18 m for Molniya. At 10⁻¹¹ it is 6 to 9 m in LEO.</li>
 <li><strong>Segment length.</strong> A degree-12 series resolves about four cycles per segment. 300 s keeps the 70 × 70 field&#39;s shortest LEO terms, with periods near 80 s; over 600 s, the terms above degree 35 leave centimeter fit errors. Over four days the exported series stay within 0.31 mm of the integrator&#39;s dense output in LEO and 0.18 mm for Molniya.</li>
-<li><strong>One integration.</strong> A resident object takes the same steps as one HPOP request for that object. From a day before its epoch to three days after, the two agree within 0.05 mm in LEO, 9 µm for Molniya and 9 nm for GPS and geostationary orbits.</li>
+<li><strong>One integration.</strong> A resident object takes the same steps as one FFM request for that object. From a day before its epoch to three days after, the two agree within 0.05 mm in LEO, 9 µm for Molniya and 9 nm for GPS and geostationary orbits.</li>
 </ul>
-<p>HPOP integrates each object from its element epoch, so the first window carries that catch-up: 55,578 object-days from the element epochs to the screen&#39;s start, against 97,542 for the three days screened. HPOP drops cached intervals that end before the requested window, so an instance holds about one window per object.</p>
+<p>FFM integrates each object from its element epoch, so the first window carries that catch-up: 55,578 object-days from the element epochs to the screen&#39;s start, against 97,542 for the three days screened. FFM drops cached intervals that end before the requested window, so an instance holds about one window per object.</p>
 <h2 id="6-results"><span class="sec-num">6</span>Results</h2>
 <p>All runs used the Space-Track GP catalog of 30 September 2026, 32,514 objects<sup><a href="#r6">6</a></sup>. Screens started 2026-10-01T00:00Z, with a 5 km threshold and 60 s coarse steps, on a Mac Studio with 28 cores and 27 module threads. GPU runs used headless Chrome with Metal for WebGPU. The workstation was shared with other work (1-minute load average 15–65 on 28 cores), so times are upper bounds.</p>
 <h3 id="full-catalog-three-days">Full catalog, three days</h3>
@@ -366,7 +366,7 @@
 <td align="right">294,544</td>
 </tr>
 <tr>
-<td>HPOP, 72 × 1 h</td>
+<td>FFM, 72 × 1 h</td>
 <td>CPU, Node.js</td>
 <td align="right">6,383 s</td>
 <td align="right">97.7 s</td>
@@ -377,8 +377,8 @@
 <ul>
 <li>For each propagator, every run reports the same conjunctions with the same TCA and miss distance.</li>
 <li><strong>SGP4&#39;s</strong> remaining time is sampling: 4,321 steps × 32,514 SGP4 evaluations. On the GPU path the module samples (6.1 s) and the GPU searches (2.3 s).</li>
-<li><strong>HPOP&#39;s</strong> time is propagation: 99,929 CPU-seconds on 8 worker threads, 0.65 s per object-day, 36 % of it the catch-up from element epochs to the screen&#39;s start. The table&#39;s end-to-end time is that CPU time on 16 dedicated cores plus the 137.7 s of search and refinement on 2 module threads; on the shared workstation (1-minute load average median 44, maximum 82) the screen took 15,210 s<sup><a href="#r33">33</a></sup>.</li>
-<li>The two propagators report different conjunctions. Of HPOP&#39;s 283,700, 39,425 (14 %) are also in the SGP4 screen, the same pair with TCAs within 10 minutes; on those, TCAs differ by a median of 1.2 s and miss distances by 691 m. The share falls from 22 % of the first day&#39;s conjunctions to 9 % of the third&#39;s. Neither result is a measure of accuracy (<a href="#7-uncertainty-and-probability-of-collision">section 7</a>).</li>
+<li><strong>FFM&#39;s</strong> time is propagation: 99,929 CPU-seconds on 8 worker threads, 0.65 s per object-day, 36 % of it the catch-up from element epochs to the screen&#39;s start. The table&#39;s end-to-end time is that CPU time on 16 dedicated cores plus the 137.7 s of search and refinement on 2 module threads; on the shared workstation (1-minute load average median 44, maximum 82) the screen took 15,210 s<sup><a href="#r33">33</a></sup>.</li>
+<li>The two propagators report different conjunctions. Of FFM&#39;s 283,700, 39,425 (14 %) are also in the SGP4 screen, the same pair with TCAs within 10 minutes; on those, TCAs differ by a median of 1.2 s and miss distances by 691 m. The share falls from 22 % of the first day&#39;s conjunctions to 9 % of the third&#39;s. Neither result is a measure of accuracy (<a href="#7-uncertainty-and-probability-of-collision">section 7</a>).</li>
 </ul>
 <div class="sec-head sec-head-h3"><h3 id="step-size">Step size</h3><button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/fast-conjunction-assessment/step-size.html" data-model-title="Step size trades sampling for candidates" aria-label="Run it: Step size trades sampling for candidates"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span>Run it</button></div>
 <p>The candidate test is exhaustive at any step, so the step size trades sampling against candidates. SGP4, three days:</p>
@@ -501,7 +501,7 @@
 <div class="sec-head sec-head-h2"><h2 id="7-uncertainty-and-probability-of-collision"><span class="sec-num">7</span>Uncertainty and probability of collision</h2><button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/fast-conjunction-assessment/7-uncertainty-and-probability-of-collision.html" data-model-title="The Alfano maximum probability" aria-label="Run it: The Alfano maximum probability"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span>Run it</button></div>
 <p>The companion paper<sup><a href="#r1">1</a></sup> sets the conditions this screen respects, in its sections <a href="evidence-supported-aso-catalog.html#4-normalization-and-model-dispatch">4</a>, <a href="evidence-supported-aso-catalog.html#6-uncertainty">6</a> and <a href="evidence-supported-aso-catalog.html#11-what-conjunction-assessment-consumes">11</a>:</p>
 <ul>
-<li>An OMM supplies no covariance. The initial uncertainty of an OMM-seeded HPOP trajectory, including this paper&#39;s HPOP runs, is unknown: no validated representation of it exists.</li>
+<li>An OMM supplies no covariance. The initial uncertainty of an OMM-seeded FFM trajectory, including this paper&#39;s FFM runs, is unknown: no validated representation of it exists.</li>
 <li>A probability of collision requires relative-state uncertainty with independent calibration and stated cross-correlation, geometry and hard-body-radius assumptions.</li>
 <li>Public element sets alone must not drive conjunction assessment decisions: NASA&#39;s conjunction assessment handbook (Vol. 2, App. E) and the Space-Track user agreement say so<sup><a href="#r34">34</a>,<a href="#r35">35</a></sup>. Every product of this screen built from them is advisory.</li>
 </ul>
@@ -605,12 +605,12 @@
 <p>Events outside the model keep the Alfano maximum. These are a negative or too-old prediction age, or a stratum the model lacks.</p>
 <div class="sec-head sec-head-h3"><h3 id="propagated-and-fitted-covariance">Propagated and fitted covariance</h3><button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/fast-conjunction-assessment/propagated-and-fitted-covariance.html" data-model-title="EKF and UKF: covariance through the pass" aria-label="Run it: EKF and UKF: covariance through the pass"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span>Run it</button></div>
 <ul>
-<li><strong>Propagation.</strong> HPOP resident instances accept an initial covariance P₀ per object and return P(t) = Φ P₀ Φᵀ + Q, with the state transition matrix of the full force model. Q is a declared white-acceleration process noise, inertial or radial-transverse-normal, given as a spectral density and discretization interval. It is recorded in the trajectory (SDS 1.232.0). The state transition matrix matches finite differences, and Q matches its closed form.</li>
+<li><strong>Propagation.</strong> FFM resident instances accept an initial covariance P₀ per object and return P(t) = Φ P₀ Φᵀ + Q, with the state transition matrix of the full force model. Q is a declared white-acceleration process noise, inertial or radial-transverse-normal, given as a spectral density and discretization interval. It is recorded in the trajectory (SDS 1.232.0). The state transition matrix matches finite differences, and Q matches its closed form.</li>
 <li><strong>Orbit determination.</strong> Fits publish their formal covariance as an OCM. The OCM lists the noise models, weighting, observations used, process noise, a priori and convergence criteria, with biases neither estimated nor considered and no consider parameters. It is marked Uncalibrated.</li>
-<li><strong>HPOP covariance.</strong> It was checked the same way as the empirical model, for this paper&#39;s HPOP screen product: an element-set epoch state with P₀ measured at the epoch, then HPOP with the full force model of <a href="#5-time-windows">section 5</a> and the space weather released on the element set&#39;s day. A white-acceleration Q was fitted by maximum likelihood on the fit week; a regime kept Q = 0 where P₀ alone passed more fit-week strata<sup><a href="#r33">33</a></sup>.<ul>
+<li><strong>FFM covariance.</strong> It was checked the same way as the empirical model, for this paper&#39;s FFM screen product: an element-set epoch state with P₀ measured at the epoch, then FFM with the forces of <a href="#5-time-windows">section 5</a> and the space weather released on the element set&#39;s day. A white-acceleration Q was fitted by maximum likelihood on the fit week; a regime kept Q = 0 where P₀ alone passed more fit-week strata<sup><a href="#r33">33</a></sup>.<ul>
 <li><strong>Held out (E14<sup><a href="#r1">1</a></sup>): realistic in 5 of 35 regime-and-age cells, with P₀ alone.</strong> These are LEO 500 to 800 km at epoch and LEO above 800 km to 2 days. In LEO 500 to 800 km, mean d²/3 is 2.21 to 294 at 1 to 3 days.</li>
 <li><strong>GPS: FAILED at every age.</strong> The normal error stays within 0.15 km for a week, while the along-track error grows to 36 km RMS at 5 to 7 days, against 16 km predicted. Started from the independent reference state instead, the same force model&#39;s along-track error after 6 days is 0.2 km (median), and 1.0 km with the radiation-pressure coefficient doubled; started from the element set it is 8.4 km. The along-track error is the epoch state&#39;s.</li>
-<li><strong>LEO drag.</strong> Started from the true state with drag from B*, HPOP&#39;s median error in LEO with precise orbits is 481 m at 24 h and 4.5 km at 72 h. Started from element-set epoch states, as this screen is, it is 9.5 to 11 times SGP4&#39;s error in LEO at 24 h (E7<sup><a href="#r1">1</a></sup>).</li>
+<li><strong>LEO drag.</strong> Started from the true state with drag from B*, FFM&#39;s median error in LEO with precise orbits is 481 m at 24 h and 4.5 km at 72 h. Started from element-set epoch states, as this screen is, it is 9.5 to 11 times SGP4&#39;s error in LEO at 24 h (E7<sup><a href="#r1">1</a></sup>).</li>
 <li><strong>LEO below 500 km, MEO and GEO: not realistic at any age</strong> on the held-out test.</li>
 </ul>
 </li>
@@ -1054,23 +1054,23 @@ registered.</p>
 <td>About half of a 19 s screen: 140 million SGP4 evaluations</td>
 </tr>
 <tr>
-<td>HPOP propagation</td>
-<td>Over 99 % of the HPOP screen, 0.65 CPU-seconds per object-day</td>
+<td>FFM propagation</td>
+<td>Over 99 % of the FFM screen, 0.65 CPU-seconds per object-day</td>
 </tr>
 <tr>
 <td>Catch-up from element epochs</td>
-<td>The first HPOP window waits for every object to reach the screen start: 36 % of the object-days</td>
+<td>The first FFM window waits for every object to reach the screen start: 36 % of the object-days</td>
 </tr>
 <tr>
 <td>Memory per window</td>
-<td>About 390 MB of trajectories per 1-hour HPOP window, indexed in 1.05 GiB of the module&#39;s 2 GiB</td>
+<td>About 390 MB of trajectories per 1-hour FFM window, indexed in 1.05 GiB of the module&#39;s 2 GiB</td>
 </tr>
 <tr>
-<td>HPOP coefficients</td>
+<td>FFM coefficients</td>
 <td>Drag from each element set&#39;s B*, 0.01 m²/kg where B* ≤ 0; one radiation-pressure coefficient for every object</td>
 </tr>
 <tr>
-<td>HPOP accuracy in LEO</td>
+<td>FFM accuracy in LEO</td>
 <td>From element-set epoch states, 9.5 to 11 times SGP4&#39;s median error at 24 h; from the true state with drag from B*, 481 m at 24 h and 4.5 km at 72 h</td>
 </tr>
 <tr>
@@ -1079,7 +1079,7 @@ registered.</p>
 </tr>
 <tr>
 <td>Covariance realism</td>
-<td>Realistic on held-out data in 2 of 35 regime-and-age cells for element sets (LEO above 800 km, 0 and 0.5 days) and 5 of 35 for the HPOP epoch state; the passing cells rest on 10 to 14 reference objects, none of them debris</td>
+<td>Realistic on held-out data in 2 of 35 regime-and-age cells for element sets (LEO above 800 km, 0 and 0.5 days) and 5 of 35 for the FFM epoch state; the passing cells rest on 10 to 14 reference objects, none of them debris</td>
 </tr>
 <tr>
 <td>Probability method</td>
@@ -1094,7 +1094,7 @@ registered.</p>
 <td>Combined radius and covariance shape differ from SOCRATES&#39;s unpublished ones</td>
 </tr>
 </tbody></table></div>
-<p>This paper reports computation speed, agreement between implementations and with SOCRATES on identical inputs, and covariance realism where independent truth exists. Products built from public element sets are advisory and must not alone drive conjunction assessment decisions<sup><a href="#r34">34</a>,<a href="#r35">35</a></sup>. The paper does not establish operational readiness or orbit accuracy; the companion paper<sup><a href="#r1">1</a></sup> reports measurements of HPOP&#39;s accuracy in its sections <a href="evidence-supported-aso-catalog.html#7-dynamics-and-verification">7</a> and <a href="evidence-supported-aso-catalog.html#10-measured-accuracy">10</a>.</p>
+<p>This paper reports computation speed, agreement between implementations and with SOCRATES on identical inputs, and covariance realism where independent truth exists. Products built from public element sets are advisory and must not alone drive conjunction assessment decisions<sup><a href="#r34">34</a>,<a href="#r35">35</a></sup>. The paper does not establish operational readiness or orbit accuracy; the companion paper<sup><a href="#r1">1</a></sup> reports measurements of FFM&#39;s accuracy in its sections <a href="evidence-supported-aso-catalog.html#7-dynamics-and-verification">7</a> and <a href="evidence-supported-aso-catalog.html#10-measured-accuracy">10</a>.</p>
 <h2 id="references">References</h2>
 <h3 id="r1">R1</h3>
 <p>Koury, A. Evidence-Supported ASO Catalog. Space Data Network technical whitepaper 2.4, 16 October 2026. <a href="evidence-supported-aso-catalog.html">Paper</a></p>
@@ -1111,7 +1111,7 @@ registered.</p>
 <h3 id="r7">R7</h3>
 <p>CelesTrak. SOCRATES conjunction screening service. <a href="https://celestrak.org/SOCRATES/">Service</a></p>
 <h3 id="r8">R8</h3>
-<p>Edgesource. Conjunction uncertainty program: reference states, GP prediction-error model, calibration gate, covariance probability on screened events, HPOP process noise, orbit-determination covariance, SOCRATES replay and screening evaluation. Modules commit 82a566fd2cafc062a43643c8855cc7fd371155cd. Files: <code>analysis/reference-states/README.md</code>, <code>analysis/gp-error-model/docs/validation-2026-08.md</code>, <code>analysis/gp-error-model/docs/calibration-2026-08.md</code>, <code>analysis/conjunction-assessment/README.md</code>, <code>propagator/hpop/README.md</code>, <code>analysis/conjunction-assessment/docs/socrates-replay-2026-10-02.md</code>, <code>analysis/gp-error-model/docs/screening-evaluation-2026-08.md</code>. Private repository, available on request (<a href="mailto:tj@edgesource.com">tj@edgesource.com</a>).</p>
+<p>Edgesource. Conjunction uncertainty program: reference states, GP prediction-error model, calibration gate, covariance probability on screened events, FFM process noise, orbit-determination covariance, SOCRATES replay and screening evaluation. Modules commit 82a566fd2cafc062a43643c8855cc7fd371155cd. Files: <code>analysis/reference-states/README.md</code>, <code>analysis/gp-error-model/docs/validation-2026-08.md</code>, <code>analysis/gp-error-model/docs/calibration-2026-08.md</code>, <code>analysis/conjunction-assessment/README.md</code>, <code>analysis/conjunction-assessment/docs/socrates-replay-2026-10-02.md</code>, <code>analysis/gp-error-model/docs/screening-evaluation-2026-08.md</code>; commit 5cc2d3b68edcc89fcab61ab6168fa83f0ed32b86: <code>propagator/ffm/README.md</code>. Private repository, available on request (<a href="mailto:tj@edgesource.com">tj@edgesource.com</a>).</p>
 <h3 id="r9">R9</h3>
 <p>Foster, J. L. and Estes, H. S. A Parametric Analysis of Orbital Debris Collision Probability and Maneuver Rate for Space Vehicles. NASA JSC-25898, 1992.</p>
 <h3 id="r10">R10</h3>
@@ -1161,7 +1161,7 @@ registered.</p>
 <h3 id="r32">R32</h3>
 <p>Fehlberg, E. Classical Fifth-, Sixth-, Seventh-, and Eighth-Order Runge-Kutta Formulas with Stepsize Control. NASA Technical Report R-287, 1968. <a href="https://ntrs.nasa.gov/citations/19680027281">Report</a></p>
 <h3 id="r33">R33</h3>
-<p>Edgesource. HPOP on the resident path: force model, integrator and export, reentry, equivalence and interpolation tests, catalog cost, the propagation farm, the full-catalog screen (with the conjunction module of <a href="#r2">R2</a>&#39;s commit) and the HPOP covariance calibration. Modules commit e743f2a279ab8754a55b509ccd770e3415aaf3e6. Files: <code>propagator/hpop/README.md</code>, <code>propagator/hpop/catalog.mjs</code>, <code>analysis/conjunction-assessment/docs/gpu-all-vs-all.md</code>, <code>analysis/conjunction-assessment/docs/hpop-full-force-screen-2026-10.md</code>, <code>analysis/gp-error-model/docs/hpop-calibration-2026-08.md</code>. Private repository, available on request (<a href="mailto:tj@edgesource.com">tj@edgesource.com</a>).</p>
+<p>Edgesource. FFM on the resident path: force model, integrator and export, reentry, equivalence and interpolation tests, catalog cost, the propagation farm, the full-catalog screen (with the conjunction module of <a href="#r2">R2</a>&#39;s commit) and the FFM covariance calibration. Modules commit e743f2a279ab8754a55b509ccd770e3415aaf3e6: <code>analysis/conjunction-assessment/docs/gpu-all-vs-all.md</code>; commit 5cc2d3b68edcc89fcab61ab6168fa83f0ed32b86: <code>propagator/ffm/README.md</code>, <code>propagator/ffm/catalog.mjs</code>, <code>analysis/conjunction-assessment/docs/ffm-screen-2026-10.md</code>, <code>analysis/gp-error-model/docs/ffm-calibration-2026-08.md</code>. Private repository, available on request (<a href="mailto:tj@edgesource.com">tj@edgesource.com</a>).</p>
 <h3 id="r34">R34</h3>
 <p>NASA. Spacecraft Conjunction Assessment and Collision Avoidance Best Practices Handbook, Vol. 2, Technical Appendices, Appendix E, Use of Analytic Theory Orbital Data in Conjunction Assessment, August 2026. <a href="https://ntrs.nasa.gov/citations/20260000457">NTRS 20260000457</a></p>
 <h3 id="r35">R35</h3>
@@ -1170,6 +1170,8 @@ registered.</p>
 <p>Vallado, D. A., Crawford, P., Hujsak, R. and Kelso, T. S. Revisiting Spacetrack Report #3. AIAA 2006-6753, 2006. <a href="https://celestrak.org/publications/AIAA/2006-6753/AIAA-2006-6753.pdf">Paper</a></p>
 <h3 id="r37">R37</h3>
 <p>NASA Conjunction Assessment Risk Analysis. CARA_Analysis_Tools. <a href="https://github.com/nasa/CARA_Analysis_Tools">GitHub</a></p>
+<h3 id="r38">R38</h3>
+<p>Edgesource. FFM (Full Force Model): its definition and profile FFM-1. SDN modules repository (space-data-network-modules), commit 5cc2d3b68edcc89fcab61ab6168fa83f0ed32b86: <code>propagator/ffm/FFM.md</code>, <code>propagator/ffm/ffm-1.profile.json</code> (FFM-1 sha256=dd00c23b0d2df99ea1a95f59cd853cdae0d6eb3d2f96fb11b05a58e1073e10ec), checked against the module&#39;s code defaults by <code>propagator/ffm/tests/ffm-profile-check.mjs</code>. Private repository, available on request (<a href="mailto:tj@edgesource.com">tj@edgesource.com</a>).</p>
 
         </article>
       </div>
