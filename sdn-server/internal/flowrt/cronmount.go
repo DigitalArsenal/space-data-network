@@ -88,6 +88,7 @@ type ServiceFlow struct {
 	statsMu          sync.Mutex
 	retrievalGate    RetrievalGate
 	retrievalOutcome RetrievalOutcome
+	manualRunLedger  ManualRunLedger
 	startedAt        time.Time
 	timerRunCount    uint64
 	errorCount       uint64
@@ -368,6 +369,19 @@ func (sf *ServiceFlow) SetRetrievalOutcome(outcome RetrievalOutcome) {
 	sf.retrievalOutcome = outcome
 }
 
+// ManualRunLedger books an operator's manual run (plugins.WithManualRun),
+// which never asks the RetrievalGate: calling it stamps the attempt, and the
+// func it returns records how the run ended — nil when it ran clean, including
+// an unchanged (304) upstream. Injected by the node like the gate.
+type ManualRunLedger func() (finish func(runErr error))
+
+// SetManualRunLedger installs the manual-run ledger. nil books nothing.
+func (sf *ServiceFlow) SetManualRunLedger(ledger ManualRunLedger) {
+	sf.statsMu.Lock()
+	defer sf.statsMu.Unlock()
+	sf.manualRunLedger = ledger
+}
+
 // SchedulePhase reports how long after scheduling a trigger's FIRST timer run
 // should come, given the interval the scheduler resolved; see
 // plugins.CronFirstRunDelayer. It is host policy expressed against the node's
@@ -429,19 +443,31 @@ func (sf *ServiceFlow) SetRetrievalGate(gate RetrievalGate) {
 // port, the flow drains, and every egress result frame is collected into the
 // returned summary.
 //
-// DEBOUNCE. Every entry point that can start a pull comes through here — the
-// cron ticker AND the admin run-now route. A publisher's fetch policy is a
-// promise about how often this node asks it for the same bytes, and a promise
-// only a ticker keeps is not kept at all: firing run-now twice in three minutes
-// pulled the CelesTrak full catalog twice and earned a 403, which is precisely
-// the outcome the 3 h window exists to prevent. So the window is ENFORCED here,
-// not merely reported on the board.
+// DEBOUNCE. Every automatic entry point that can start a pull comes through
+// here — the cron ticker, the boot-time first fire and a connector lane's
+// FETCH NOW. A publisher's fetch policy is a promise about how often this node
+// asks it for the same bytes, and a promise only a ticker keeps is not kept at
+// all: firing run-now twice in three minutes pulled the CelesTrak full catalog
+// twice and earned a 403, which is precisely the outcome the 3 h window exists
+// to prevent. So the window is ENFORCED here, not merely reported on the board.
 //
-// An operator who genuinely needs a pull inside the window passes
-// {"force":true} — deliberate, visible in the result, and never the default.
+// An operator's manual run (plugins.WithManualRun) is operator intent and is
+// the exception: it runs at once, inside the window or a failure backoff, and
+// books its own attempt and outcome (ManualRunLedger). A clean manual run
+// clears the failure streak, so the backoff it overrode does not outlive it.
+// A payload of {"force":true} also bypasses the gate, booking nothing.
 func (sf *ServiceFlow) InvokeCron(ctx context.Context, method string, input []byte) (out []byte, err error) {
 	attempted := false
-	if !cronInvokeForced(input) {
+	var finishManual func(error)
+	if plugins.ManualRun(ctx) {
+		sf.statsMu.Lock()
+		ledger := sf.manualRunLedger
+		sf.statsMu.Unlock()
+		log.Infof("Flow service %q: trigger %q manual run: retrieval gate bypassed (operator intent)", sf.programID, method)
+		if ledger != nil {
+			finishManual = ledger()
+		}
+	} else if !cronInvokeForced(input) {
 		sf.statsMu.Lock()
 		gate := sf.retrievalGate
 		sf.statsMu.Unlock()
@@ -478,6 +504,13 @@ func (sf *ServiceFlow) InvokeCron(ctx context.Context, method string, input []by
 			err = ctx.Err()
 		}
 		sf.recordTimerResult(err)
+		if finishManual != nil {
+			diagnosis := sf.retrievalDiagnosis(err)
+			if errors.Is(diagnosis, ErrRetrievalUnchanged) {
+				diagnosis = nil
+			}
+			finishManual(diagnosis)
+		}
 		if attempted {
 			sf.statsMu.Lock()
 			outcome := sf.retrievalOutcome
@@ -519,7 +552,8 @@ var windowRecheck = 15 * time.Second
 // skipped at 2h59m40s and ran every 6 h) and spared the publisher nothing.
 // The window itself is never shortened: the run waits, re-asking the gate,
 // for up to a twentieth of the interval, then pulls or is skipped as before.
-// An operator's run-now never comes through here and is refused at once.
+// An unscheduled gated run (first fire, FETCH NOW) never comes through here
+// and is refused at once.
 func (sf *ServiceFlow) waitOutWindow(ctx context.Context, method string, gate RetrievalGate, reason string) (bool, string) {
 	deadline := time.Now().Add(sf.ScheduledInterval(method) / 20)
 	for time.Now().Before(deadline) {
