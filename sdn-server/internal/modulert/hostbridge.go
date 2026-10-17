@@ -2,6 +2,7 @@ package modulert
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/binary"
@@ -152,9 +153,11 @@ const HostcallImportModule = "space_data_module_host"
 // HostBridge is a per-module hostcall dispatcher. It holds the module's
 // granted capabilities and routes hostcall operations to the appropriate handler.
 type HostBridge struct {
-	granted     map[string]bool
-	capHandlers map[string]CapHandler // capability prefix → handler
-	nodeCtx     *NodeContext
+	granted       map[string]bool
+	capHandlers   map[string]CapHandler // capability prefix → handler
+	nodeCtx       *NodeContext
+	contextMu     sync.RWMutex
+	invocationCtx context.Context
 
 	// moduleHash is the content hash of the module this bridge serves (set at load), the identity
 	// host-held secret lanes are approved for.
@@ -256,6 +259,29 @@ func (hb *HostBridge) NodeContext() *NodeContext {
 		return nil
 	}
 	return hb.nodeCtx
+}
+
+// SetInvocationContext binds host I/O to a serialized guest invocation. The
+// invocation owner clears it after the guest returns; bridge readers do not
+// acquire the guest's execution lock, which is held during synchronous calls.
+func (hb *HostBridge) SetInvocationContext(ctx context.Context) {
+	hb.contextMu.Lock()
+	hb.invocationCtx = ctx
+	hb.contextMu.Unlock()
+}
+
+// InvocationContext returns the active invocation's context, or a background
+// context during initialization and for legacy callers with no invocation.
+func (hb *HostBridge) InvocationContext() context.Context {
+	if hb != nil {
+		hb.contextMu.RLock()
+		ctx := hb.invocationCtx
+		hb.contextMu.RUnlock()
+		if ctx != nil {
+			return ctx
+		}
+	}
+	return context.Background()
 }
 
 // RegisterCapHandler registers a handler for operations with the given prefix.

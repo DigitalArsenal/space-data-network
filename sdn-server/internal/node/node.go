@@ -1410,7 +1410,7 @@ func (n *Node) buildCapRegistry() *modulert.CapabilityRegistry {
 		}
 		caps.SetEgressMinIntervals(intervals)
 	}
-	reg.Register("http", caps.NewHTTPCapFactory())
+	reg.RegisterBridgeAware("http", caps.NewHTTPBridgeCapFactory())
 
 	// Crypto capabilities — always available (pure Go stdlib)
 	cryptoFac := caps.NewCryptoCapFactory()
@@ -5592,14 +5592,25 @@ func (n *Node) StopContext(ctx context.Context) error {
 	n.cancel()
 
 	drained := make(chan struct{})
+	var pluginCloseErr error
 	go func() {
 		n.wg.Wait()
+		// The plugin manager owns cron workers outside n.wg. Join them while
+		// storage and the source ledger are still open: a canceled invocation
+		// must persist its outcome before the ledger can be closed. Keep this
+		// join inside the same bounded shutdown drain.
+		if n.plugins != nil {
+			pluginCloseErr = n.plugins.Close()
+		}
 		close(drained)
 	}()
 	select {
 	case <-drained:
 	case <-ctx.Done():
 		return fmt.Errorf("node shutdown: background tasks did not drain before the deadline (store left OPEN deliberately; see StopContext): %w", ctx.Err())
+	}
+	if pluginCloseErr != nil {
+		log.Warnf("Error closing plugins: %v", pluginCloseErr)
 	}
 
 	// TipQueue owns its own internal context/wait group (it is usable
@@ -5635,12 +5646,6 @@ func (n *Node) StopContext(ctx context.Context) error {
 	if n.flowManager != nil {
 		n.flowManager.CloseAll()
 	}
-	if n.plugins != nil {
-		if err := n.plugins.Close(); err != nil {
-			log.Warnf("Error closing plugins: %v", err)
-		}
-	}
-
 	if n.autoTLSCertMgr != nil {
 		n.autoTLSCertMgr.Stop()
 		n.autoTLSCertMgr = nil

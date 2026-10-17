@@ -54,7 +54,7 @@ func observeFetch(url string, status int, bytes, durationMs int64, errMsg string
 //	    "headers": {"Content-Type": "application/json"},
 //	    "body": "utf8 string or base64 bytes",
 //	    "body_encoding": "utf8|base64",  // default: utf8
-//	    "timeout_ms": 30000,
+//	    "timeout_ms": 30000,           // total budget; host ceiling: 300000 ms
 //	    "max_bytes": 16777216,           // optional response-size clamp
 //	    "follow_redirects": false,      // optional; defaults to true
 //	    "response_encoding": "binary", // optional; raw hostcall segment
@@ -67,9 +67,21 @@ func observeFetch(url string, status int, bytes, durationMs int64, errMsg string
 // exceeding the effective bound is an ERROR, never a silent truncation
 // (loop C.8a: a silently truncated CelesTrak catalog would otherwise ingest
 // a partial batch as if it were complete).
+// A body read that makes no progress for 30 seconds cancels the request.
 func NewHTTPCapFactory() modulert.CapFactory {
 	return func(_ *modulert.Module) modulert.CapHandler {
 		return httpCapHandle
+	}
+}
+
+// NewHTTPBridgeCapFactory binds outbound requests to the invocation that owns
+// the bridge. Flow instances have no Module, so module lifecycle alone cannot
+// cancel their hostcalls.
+func NewHTTPBridgeCapFactory() modulert.BridgeCapFactory {
+	return func(_ *modulert.Module, bridge *modulert.HostBridge) modulert.CapHandler {
+		return func(operation string, payload []byte) ([]byte, error) {
+			return httpCapHandleContext(bridge.InvocationContext(), operation, payload)
+		}
 	}
 }
 
@@ -78,7 +90,16 @@ func NewHTTPCapFactory() modulert.CapFactory {
 // 100 MB read limit).
 const httpCapMaxResponseBytes = 100 * 1024 * 1024
 
+const (
+	httpCapMaxTimeout       = 5 * time.Minute
+	httpCapBodyStallTimeout = 30 * time.Second
+)
+
 func httpCapHandle(operation string, payload []byte) ([]byte, error) {
+	return httpCapHandleContext(context.Background(), operation, payload)
+}
+
+func httpCapHandleContext(parent context.Context, operation string, payload []byte) ([]byte, error) {
 	if operation != "http.request" {
 		return errCapJSON(fmt.Sprintf("unknown http operation: %s", operation)), nil
 	}
@@ -107,27 +128,29 @@ func httpCapHandle(operation string, payload []byte) ([]byte, error) {
 	if req.TimeoutMs <= 0 {
 		req.TimeoutMs = 30000
 	}
+	// Clamp before duration conversion so a large guest integer cannot overflow.
+	if req.TimeoutMs > int(httpCapMaxTimeout/time.Millisecond) {
+		req.TimeoutMs = int(httpCapMaxTimeout / time.Millisecond)
+	}
+	deadlineCtx, cancelDeadline := context.WithTimeout(parent, time.Duration(req.TimeoutMs)*time.Millisecond)
+	defer cancelDeadline()
+	ctx, cancelRead := context.WithCancelCause(deadlineCtx)
+	defer cancelRead(nil)
+	started := time.Now()
 
 	// Host egress pacing (see http_egress.go): serialize per destination host
-	// and honour the minimum spacing that host is owed. Pure connector policy —
+	// and honor the minimum spacing that host is owed. Pure connector policy —
 	// the calling module neither sees nor controls it. Waiting for the slot is
 	// bounded by the caller's own timeout budget so a jammed destination can
 	// never hold a flow instance open indefinitely.
 	destHost := egressHostKey(req.URL)
-	paceCtx, paceCancel := context.WithTimeout(context.Background(), time.Duration(req.TimeoutMs)*time.Millisecond)
-	release, paceWait, paceErr := sharedEgressPacer.acquire(paceCtx, destHost)
-	paceCancel()
+	release, paceWait, paceErr := sharedEgressPacer.acquire(ctx, destHost)
 	if paceErr != nil {
-		msg := fmt.Sprintf("egress pacing for %s timed out after %s waiting for the request slot", destHost, paceWait.Round(time.Millisecond))
+		msg := fmt.Sprintf("egress pacing for %s stopped after %s waiting for the request slot: %v", destHost, paceWait.Round(time.Millisecond), paceErr)
 		observeFetch(req.URL, 0, 0, paceWait.Milliseconds(), msg)
 		return errCapJSON(msg), nil
 	}
 	defer release()
-
-	started := time.Now()
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(req.TimeoutMs)*time.Millisecond)
-	defer cancel()
 
 	var bodyReader io.Reader
 	if req.Body != "" {
@@ -152,7 +175,7 @@ func httpCapHandle(operation string, payload []byte) ([]byte, error) {
 	// this URL carried, unless the module set its own. See http_validators.go.
 	applyFetchValidators(httpReq)
 
-	client := &http.Client{Timeout: time.Duration(req.TimeoutMs) * time.Millisecond}
+	client := &http.Client{}
 	if req.FollowRedirects != nil && !*req.FollowRedirects {
 		// Return the original response, including its body and every header.
 		// In particular, do not replay a POST body on a 307 or 308 redirect.
@@ -166,6 +189,7 @@ func httpCapHandle(operation string, payload []byte) ([]byte, error) {
 		return errCapJSON("request failed: " + err.Error()), nil
 	}
 	defer resp.Body.Close()
+	resp.Body = &httpCapBodyReader{ReadCloser: resp.Body, ctx: ctx, cancel: cancelRead}
 
 	// 304 Not Modified: the publisher confirmed the bytes we hold are current.
 	// No body is delivered; the parser treats the status as "unchanged".
@@ -245,6 +269,32 @@ func httpCapHandle(operation string, payload []byte) ([]byte, error) {
 	return okCapJSON(result), nil
 }
 
+// Each underlying read gets an inactivity budget. Progress resets that budget;
+// the request context still bounds the complete transfer, including pacing.
+// Canceling net/http's request interrupts the read without a detached reader
+// goroutine or a second copy of the response buffer.
+type httpCapBodyReader struct {
+	io.ReadCloser
+	ctx    context.Context
+	cancel context.CancelCauseFunc
+}
+
+func (r *httpCapBodyReader) Read(p []byte) (int, error) {
+	fired := make(chan struct{})
+	timer := time.AfterFunc(httpCapBodyStallTimeout, func() {
+		r.cancel(fmt.Errorf("HTTP response body stalled for %s", httpCapBodyStallTimeout))
+		close(fired)
+	})
+	n, err := r.ReadCloser.Read(p)
+	if !timer.Stop() {
+		<-fired
+	}
+	if cause := context.Cause(r.ctx); cause != nil {
+		return n, cause
+	}
+	return n, err
+}
+
 // readHTTPCapBody reads at most limit+1 bytes of a response body. With a
 // Content-Length within the limit the body lands in ONE buffer of exactly
 // that size: io.ReadAll grows its slice by doubling, so a 48 MiB ranged body
@@ -253,12 +303,14 @@ func httpCapHandle(operation string, payload []byte) ([]byte, error) {
 func readHTTPCapBody(resp *http.Response, limit int64) ([]byte, error) {
 	if n := resp.ContentLength; n >= 0 && n <= limit {
 		body := make([]byte, n)
-		if _, err := io.ReadFull(resp.Body, body); err != nil {
-			return body, err
+		if read, err := io.ReadFull(resp.Body, body); err != nil {
+			return body[:read], err
 		}
 		var one [1]byte
-		if extra, _ := io.ReadFull(resp.Body, one[:]); extra > 0 {
+		if extra, err := io.ReadFull(resp.Body, one[:]); extra > 0 {
 			return body, fmt.Errorf("the body is longer than its Content-Length %d", n)
+		} else if err != nil && err != io.EOF {
+			return body, err
 		}
 		return body, nil
 	}

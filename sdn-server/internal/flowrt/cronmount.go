@@ -439,7 +439,7 @@ func (sf *ServiceFlow) SetRetrievalGate(gate RetrievalGate) {
 //
 // An operator who genuinely needs a pull inside the window passes
 // {"force":true} — deliberate, visible in the result, and never the default.
-func (sf *ServiceFlow) InvokeCron(ctx context.Context, method string, input []byte) ([]byte, error) {
+func (sf *ServiceFlow) InvokeCron(ctx context.Context, method string, input []byte) (out []byte, err error) {
 	attempted := false
 	if !cronInvokeForced(input) {
 		sf.statsMu.Lock()
@@ -467,6 +467,26 @@ func (sf *ServiceFlow) InvokeCron(ctx context.Context, method string, input []by
 			attempted = true
 		}
 	}
+	var releaseSlot func()
+	defer func() {
+		if releaseSlot != nil {
+			defer releaseSlot()
+		}
+		// A guest may translate a canceled hostcall into a status frame and
+		// drain successfully. The caller's cancellation remains authoritative.
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		}
+		sf.recordTimerResult(err)
+		if attempted {
+			sf.statsMu.Lock()
+			outcome := sf.retrievalOutcome
+			sf.statsMu.Unlock()
+			if outcome != nil {
+				outcome(sf.retrievalDiagnosis(err))
+			}
+		}
+	}()
 	sf.statsMu.Lock()
 	slot, group := sf.exclusive, sf.exclusiveGroup
 	sf.statsMu.Unlock()
@@ -481,19 +501,9 @@ func (sf *ServiceFlow) InvokeCron(ctx context.Context, method string, input []by
 				return nil, ctx.Err()
 			}
 		}
-		defer func() { <-slot }()
+		releaseSlot = func() { <-slot }
 	}
-	out, err := sf.FireTrigger(ctx, method)
-	sf.recordTimerResult(err)
-	if attempted {
-		sf.statsMu.Lock()
-		outcome := sf.retrievalOutcome
-		sf.statsMu.Unlock()
-		if outcome != nil {
-			outcome(sf.retrievalDiagnosis(err))
-		}
-	}
-	return out, err
+	return sf.FireTrigger(ctx, method)
 }
 
 // windowRecheck is how often a scheduled run that the gate refused asks again.
@@ -581,6 +591,8 @@ func (sf *ServiceFlow) FireTrigger(ctx context.Context, triggerID string) ([]byt
 		}()
 	}
 	rt := sf.inst.rt
+	sf.inst.bridge.SetInvocationContext(ctx)
+	defer sf.inst.bridge.SetInvocationContext(nil)
 	defer sf.inst.bridge.ResetBodyRefs()
 
 	tick := timerTickFrame(trigger.TriggerID, time.Now(), trigger.Fired)
@@ -640,6 +652,9 @@ func (sf *ServiceFlow) FireTrigger(ctx context.Context, triggerID string) ([]byt
 	}
 
 	_, drainErr := rt.Drain(ctx, handlers, DrainOptions{MaxIterations: 1000})
+	if ctx.Err() != nil {
+		drainErr = ctx.Err()
+	}
 	// Read the node-state table BEFORE returning on a drain error: a run that
 	// died mid-drain is exactly the one whose per-node record is worth having.
 	sf.statsMu.Lock()
@@ -839,7 +854,9 @@ func (sf *ServiceFlow) recordTimerResult(err error) {
 	defer sf.statsMu.Unlock()
 	sf.timerRunCount++
 	sf.lastInvokeAt = time.Now().UTC()
-	if err != nil {
+	if errors.Is(err, context.Canceled) {
+		sf.lastTimerStatus = "cancelled"
+	} else if err != nil {
 		sf.errorCount++
 		sf.lastTimerStatus = "error"
 	} else {

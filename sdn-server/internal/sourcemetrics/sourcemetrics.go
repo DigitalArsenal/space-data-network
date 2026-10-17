@@ -22,6 +22,7 @@
 package sourcemetrics
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -661,6 +662,18 @@ func (s *Store) RecordAttemptOutcome(appID string, runErr error) {
 	}
 	if failures == 0 {
 		// A batch landed and already cleared the streak: nothing to explain.
+		return
+	}
+	if errors.Is(runErr, context.Canceled) {
+		// Undo only this attempt's pessimistic failure. Earlier failures and
+		// their diagnosis remain intact. Clear the attempt gate so the next
+		// tick can retry after shutdown, instead of waiting another window.
+		if _, err := s.db.Exec(`UPDATE app_attempts SET
+			consecutive_failures = consecutive_failures - 1, last_attempt_at = 0
+			WHERE app_id = ?`, appID); err != nil {
+			log.Debugf("cancel attempt %s: %v", appID, err)
+		}
+		log.Infof("Retrieval attempt for %s: cancelled", appID)
 		return
 	}
 

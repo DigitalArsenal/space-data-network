@@ -21,6 +21,7 @@ import (
 
 	"github.com/spacedatanetwork/sdn-server/internal/bundle"
 	"github.com/spacedatanetwork/sdn-server/internal/update"
+	"github.com/spacedatanetwork/sdn-server/internal/versioninfo"
 )
 
 // uiSet is one complete UI.
@@ -126,8 +127,8 @@ func (s *uiSource) load(stamp string) *uiSet {
 		return &fallback
 	}
 	if !pkg.ServesOn(s.running) {
-		log.Infof("UI package %s was made for builds %s and this node runs %q, so it serves the UI built into this binary.",
-			pkg.Version, strings.Join(pkg.BundleVersions, ", "), s.running)
+		log.Infof("UI package %s was made for builds %s and this node runs %q (bundle %q), so it serves the UI built into this binary.",
+			pkg.Version, strings.Join(pkg.BundleVersions, ", "), versioninfo.Version(), s.running)
 		return &fallback
 	}
 	set := &uiSet{label: pkg.Version, stamp: stamp, media: map[string][]byte{}}
