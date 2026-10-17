@@ -786,20 +786,35 @@ func cronFirstRunDelay(cp CronProvider, method string, interval time.Duration) t
 	return delay
 }
 
-// scheduledRunKey marks the context of a scheduled cron run, as opposed to an
-// operator's run-now.
-type scheduledRunKey struct{}
+// runTriggerKey carries why a cron method runs, with the values a
+// RuntimeModuleScheduleRun records as its Trigger: "scheduled" (the ticker) or
+// "manual" (an operator's run-now). One key, so a run is never both. Unmarked
+// runs (a boot-time first fire, a connector lane's FETCH NOW) are neither.
+type runTriggerKey struct{}
+
+func runTrigger(ctx context.Context) string {
+	trigger, _ := ctx.Value(runTriggerKey{}).(string)
+	return trigger
+}
 
 // WithScheduledRun marks ctx as a scheduled cron run.
 func WithScheduledRun(ctx context.Context) context.Context {
-	return context.WithValue(ctx, scheduledRunKey{}, true)
+	return context.WithValue(ctx, runTriggerKey{}, "scheduled")
 }
 
 // ScheduledRun reports whether ctx belongs to a scheduled cron run.
-func ScheduledRun(ctx context.Context) bool {
-	scheduled, _ := ctx.Value(scheduledRunKey{}).(bool)
-	return scheduled
+func ScheduledRun(ctx context.Context) bool { return runTrigger(ctx) == "scheduled" }
+
+// WithManualRun marks ctx as an operator's manual run (dashboard Run now, the
+// admin schedule run route, `spacedatanetwork apps run`). It is operator
+// intent: a provider runs it at once instead of holding it to a retrieval
+// window or backoff.
+func WithManualRun(ctx context.Context) context.Context {
+	return context.WithValue(ctx, runTriggerKey{}, "manual")
 }
+
+// ManualRun reports whether ctx belongs to an operator's manual run.
+func ManualRun(ctx context.Context) bool { return runTrigger(ctx) == "manual" }
 
 // runScheduledCronMethod runs one scheduled invocation and records it.
 func (m *Manager) runScheduledCronMethod(ctx context.Context, pluginID, method string, cp CronProvider) {
@@ -1187,18 +1202,20 @@ func (m *Manager) RunRuntimeModuleScheduleNow(ctx context.Context, moduleID, met
 		StartedAt: now.Format(time.RFC3339),
 		Status:    "running",
 	}
-	output, err := cp.InvokeCron(ctx, methodID, nil)
+	log.Infof("Plugin %q manual run %q start", moduleID, methodID)
+	output, err := cp.InvokeCron(WithManualRun(ctx), methodID, nil)
 	run.FinishedAt = time.Now().UTC().Format(time.RFC3339)
 	if err != nil {
 		run.Status = "error"
 		run.Message = err.Error()
-		m.recordRuntimeModuleScheduleRun(moduleID, methodID, run)
-		return run, err
+	} else {
+		run.Status = "ok"
+		run.OutputSize = len(output)
 	}
-	run.Status = "ok"
-	run.OutputSize = len(output)
+	log.Infof("Plugin %q manual run %q end status=%s output_bytes=%d duration=%s error=%q",
+		moduleID, methodID, run.Status, run.OutputSize, time.Since(now), run.Message)
 	m.recordRuntimeModuleScheduleRun(moduleID, methodID, run)
-	return run, nil
+	return run, err
 }
 
 // UpdateRuntimeModuleOption mutates a dashboard-exposed runtime option. Timer
