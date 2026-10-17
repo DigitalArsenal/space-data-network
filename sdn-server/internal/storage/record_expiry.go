@@ -36,6 +36,12 @@ type RecordExpiryResult struct {
 // paging the record index (the store's own catalog: every stored record, not
 // the engine's resident hot window).
 func (s *FlatSQLStore) ExpireRecords(q RecordExpiryQuery) (RecordExpiryResult, error) {
+	return s.expireRecordsIndexed(q)
+}
+
+// expireRecordsIndexed keeps the legacy index and single-record backend path
+// separate from retention's public validation and run reporting.
+func (s *FlatSQLStore) expireRecordsIndexed(q RecordExpiryQuery) (RecordExpiryResult, error) {
 	var res RecordExpiryResult
 	schema := strings.TrimSpace(q.SchemaName)
 	if schema == "" {
