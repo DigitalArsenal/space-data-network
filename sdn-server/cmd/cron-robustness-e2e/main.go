@@ -249,7 +249,10 @@ func run() {
 	// Hold a destination slot and prove a queued request spends its own budget
 	// waiting, without reaching the publisher; cancellation releases the slot.
 	mode.Store(0)
+	caps.SetEgressMinIntervals(map[string]time.Duration{"127.0.0.1": time.Millisecond})
+	defer caps.SetEgressMinIntervals(nil)
 	holdCtx, release := context.WithCancel(context.Background())
+	defer release()
 	bridge.SetInvocationContext(holdCtx)
 	holdDone := make(chan []byte, 1)
 	go func() { holdDone <- bridge.Dispatch("http.request", []byte(fmt.Sprintf(`{"url":%q}`, upstream.URL))) }()
