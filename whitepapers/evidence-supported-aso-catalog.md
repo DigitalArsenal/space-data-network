@@ -6,9 +6,9 @@ Anthony "TJ" Koury III and Claude Opus 5.5
 
 Koury: Edgesource, Space Data Network. Claude: Anthropic.
 
-Technical whitepaper 2.5 | 16 October 2026
+Technical whitepaper 2.6 | 17 October 2026
 
-Numerical evidence cutoff: 16 October 2026
+Numerical evidence cutoff: 17 October 2026
 
 ## 1 Summary
 
@@ -302,7 +302,7 @@ State-transition matrices agree within 2e-5 and parameter sensitivities within 1
 
 ### Agreement with independent implementations
 
-Four further implementations, in six versions or builds, ran the same 72 cases ([reference suite][ref]). Every difference beyond its agreement limit traces to a measured setting or model difference in the reference, and no limit was changed. HPOP 1.3.1 (module SHA-256 8c9c361b) ran at the suite setting above, steps of at most 300 s at 1e-13. Each case is scored by its largest 3D position difference over the 25 hourly samples in GCRF. The limits are 1 mm for point mass, 5 cm with the gravity field and third bodies, and 10 cm with radiation pressure or drag; GMAT's are 1 cm for point mass and 1.5 m with drag. They are agreement limits, not accuracy claims. A case a tool cannot model is skipped and not counted.
+Four further implementations, in six versions or builds, ran the same 72 cases ([reference suite][ref]). Every difference beyond its agreement limit traces to a measured setting or model difference in the reference, and no limit was changed. HPOP 1.4.0 (module SHA-256 eb05fc52) ran at the suite setting above, steps of at most 300 s at 1e-13. Each case is scored by its largest 3D position difference over the 25 hourly samples in GCRF. The limits are 1 mm for point mass, 5 cm with the gravity field and third bodies, and 10 cm with radiation pressure or drag; GMAT's are 1 cm for point mass and 1.5 m with drag. They are agreement limits, not accuracy claims. A case a tool cannot model is skipped and not counted.
 
 | Implementation | Version | Cases scored | Within the limit | Largest difference, no drag |
 | --- | --- | ---: | ---: | --- |
@@ -326,7 +326,9 @@ The cause-removed runs are diagnostics, reported beside the stock runs. A consta
 
 State-transition matrices agree within 1.8e-5 of Orekit's, 2.6e-5 of GMAT R2026a's and 2.6e-5 of tudatpy's (largest relative column difference); tudatpy's comparison includes the sensitivities to Cd·A/m, its rate, Cr·A/m and in-track acceleration. Nyx's is not a usable reference: its variational equations multiply the step-start matrix by the gradient, in the reverse order. GMAT R2022a, the WebAssembly Tudat build and Basilisk export no variational equations.
 
-Time and ephemerides were checked against ERFA 2.0.1<sup>[57](#r57)</sup> and CSPICE N0067<sup>[58](#r58)</sup>. TAI−UTC agrees exactly, TT from UTC within 5.6e-12 s, and the celestial-to-terrestrial rotation at the instant the force model evaluates within 0.0005 mas. Sun and Moon positions from DE440 agree with CSPICE within 0.03 mm at the same TDB date. Against JPL Horizons<sup>[59](#r59)</sup>, which serves DE441, HPOP's Sun and Moon differ by 1.5 m and 2.4 m. CSPICE with DE440 differs from Horizons by 1.4 m for Venus and 1.3 m for the Jupiter barycenter, so these differences come from the two ephemeris releases and their time realization.
+Time and ephemerides were checked against ERFA 2.0.1<sup>[57](#r57)</sup> and CSPICE N0067<sup>[58](#r58)</sup>. TAI−UTC agrees exactly, TT from UTC within 5.6e-12 s, and the celestial-to-terrestrial rotation at the instant the force model evaluates within 0.0005 mas. Sun and Moon positions from DE440 agree with CSPICE exactly at the same TDB date. Against JPL Horizons<sup>[59](#r59)</sup>, which serves DE441, HPOP's Sun and Moon differ by 1.5 m and 2.4 m. CSPICE with DE440 differs from Horizons by 1.4 m for Venus and 1.3 m for the Jupiter barycenter, so these differences come from the two ephemeris releases and their time realization.
+
+HPOP's classical frames (mean and true of date, TEME, and the Earth-fixed chain used when no Earth-orientation rows are given) were compared with ERFA's IAU 1976/1980 chain through pyerfa 2.0.1, under the same conventions (UT1 equal to UTC, no polar motion or frame bias), at 10,000 epochs in all 64 frame pairs: positions agree within 3.0e-8 m at geostationary radius and velocities within 3.7e-12 m/s. Against Orekit 13.1's classical frames, mean of date, true of date and TEME differ by 0.011–0.019 mas, 0.35–0.64 mm in LEO and 2.2–4.0 mm at geostationary radius; Orekit composes precession from the IERS 1996 polynomials, ERFA from IAU 1976's. The rotation the force model applies, the IAU 2006/2000A CIO chain with daily IERS rows, agrees with ERFA within 0.0005 mas and with Orekit within 0.0006 mas given the same Earth-orientation values; Orekit's cubic interpolation of the daily rows against HPOP's linear interpolation adds up to 0.26 mas (8.7 mm in LEO). SPICE's ITRF93 differs from the CIO chain by 8.9 mas, a spread between the two terrestrial-frame realizations.
 
 The SGP4 module was compared with Vallado's SGP4 verification set<sup>[8](#r8)</sup> (666 samples, near-Earth and deep space). At the same minutes since epoch, the shipped module agrees with Vallado's own code within 0.11 mm and 7.2e-8 m/s. At the requested epoch, rounding the request to one double-precision Julian date dominates the difference: up to 0.15 m near Earth and 9.7 m on Vallado's longest deep-space arcs. 17 of the 666 samples exceed the sum of the separately measured parts by up to 0.109 mm. The SGP4-XP module returns the Space Force library's states<sup>[52](#r52)</sup> exactly, the same doubles, on 640 SGP4 and SGP4-XP sets at seven times each.
 
@@ -662,7 +664,7 @@ Koury, A. Fast All-vs-All Conjunction Screening. Space Data Network technical wh
 [xp]: https://github.com/DigitalArsenal/space-data-network-modules/blob/1606dddebb112ff97feea050de65601bdcf4ae43/propagator/sgp4-xp/tests/measure/README.md
 [e13]: https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e13/README.md
 [e14]: https://github.com/DigitalArsenal/orbit-accuracy-experiments/tree/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e14
-[ref]: https://github.com/DigitalArsenal/space-data-network-modules/blob/01f0bbad93eba83ab8bf116133d8c6fc6f76a54d/propagator/hpop/tests/evidence/CONSOLIDATED.md
+[ref]: https://github.com/DigitalArsenal/space-data-network-modules/blob/7e536d808cf6fa46c4e8127e9adac125435a6890/propagator/hpop/tests/evidence/CONSOLIDATED.md
 
 ### R51
 
