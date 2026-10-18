@@ -2,6 +2,8 @@
  * Type definitions for HD wallet cryptographic operations
  */
 
+import type { HDWalletModule } from 'hd-wallet-wasm';
+
 /**
  * Derived key result from HD derivation
  */
@@ -72,6 +74,11 @@ export interface DerivedIdentity {
 export interface HDWalletOptions {
   /** Path to WASM file (optional, uses default paths if not provided) */
   wasmPath?: string;
+  /**
+   * The page's initialized hd-wallet-wasm module. sdn-js adopts it instead of
+   * initializing its own, so the page holds one wallet instance.
+   */
+  module?: HDWalletModule;
 }
 
 /**

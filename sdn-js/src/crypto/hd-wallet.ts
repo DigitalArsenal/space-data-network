@@ -63,9 +63,16 @@ let hdWalletModule: HDWalletModule | null = null;
 let moduleReady: Promise<void> | null = null;
 
 /**
- * Initialize the HD wallet WASM module
+ * Initialize the HD wallet WASM module. `options.module` is the page's own
+ * initialized hd-wallet-wasm module: sdn-js adopts it (and keeps it) instead
+ * of initializing its bundled copy. Without it, the bundled copy's init()
+ * shares the realm's instance of the same hd-wallet-wasm version.
  */
-export async function initHDWallet(_options: HDWalletOptions = {}): Promise<boolean> {
+export async function initHDWallet(options: HDWalletOptions = {}): Promise<boolean> {
+  if (options.module) {
+    hdWalletModule = options.module;
+    return true;
+  }
   if (hdWalletModule) {
     return true;
   }

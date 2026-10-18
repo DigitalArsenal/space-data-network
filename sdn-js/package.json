@@ -110,8 +110,8 @@
     "@noble/hashes": "^2.4.0",
     "flatbuffers": "^25.9.23",
     "flatsql": "2.0.3",
-    "hd-wallet-ui": "2.1.2",
-    "hd-wallet-wasm": "2.1.2",
+    "hd-wallet-ui": "2.1.3",
+    "hd-wallet-wasm": "2.1.3",
     "helia": "7.1.12",
     "idb": "^8.0.0",
     "libp2p": "^3.3.11",
@@ -142,7 +142,7 @@
   "overrides": {
     "dompurify": "3.4.15",
     "picomatch": "^4.0.4",
-    "hd-wallet-wasm": "2.1.2"
+    "hd-wallet-wasm": "2.1.3"
   },
   "engines": {
     "node": ">=18.0.0"
