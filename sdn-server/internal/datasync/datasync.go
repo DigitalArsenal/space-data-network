@@ -248,7 +248,7 @@ func Scan(store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (*ScanRes
 	filter.MaxRowID = cursor.MaxRowID
 	var totalCount int64
 	var snapshot Snapshot
-	if hasProvidedSnapshot && strings.TrimSpace(req.Search) == "" {
+	if hasProvidedSnapshot {
 		totalCount = req.TotalCount
 		snapshot = Snapshot{
 			SnapshotID:    strings.TrimSpace(req.SnapshotID),
@@ -277,8 +277,13 @@ func Scan(store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (*ScanRes
 			return nil, nil, err
 		}
 		snapshot = snapshotFromHead(filter, totalCount, NormalizeQueryProfile(req.QueryProfile), recordHead)
-		if strings.TrimSpace(req.Search) != "" && cursor.SnapshotID != "" && snapshot.SnapshotID != cursor.SnapshotID {
-			return nil, nil, fmt.Errorf("search results changed; refresh to start from the first page")
+		// A bounded continuation keeps its snapshot identity even when the
+		// caller omits the total and we count only the remaining range.
+		// The query hash above binds search and source filters to the cursor.
+		if cursor.MaxRowID > 0 && cursor.SnapshotID != "" {
+			snapshot.SnapshotID = cursor.SnapshotID
+			snapshot.Head = FirstNonEmpty(strings.TrimSpace(req.Head), cursor.SnapshotID)
+			snapshot.HighWaterMark = strings.TrimSpace(req.HighWaterMark)
 		}
 		filter.MaxRowID = snapshot.MaxRowID
 	}

@@ -24,6 +24,22 @@ import (
 
 var log = logging.Logger("format4")
 
+// Format-4 operations execute their SQL inside the engine. Report the actual
+// operation counters here; the control instance's statement logger cannot see
+// a HEAD walking a partition through many individually short indexed reads.
+var slowOperationThreshold = func() time.Duration {
+	if v := strings.TrimSpace(os.Getenv("SDN_FLATSQL_SLOW_QUERY_MS")); v != "" {
+		var ms int64
+		if _, err := fmt.Sscanf(v, "%d", &ms); err == nil {
+			if ms <= 0 {
+				return 0
+			}
+			return time.Duration(ms) * time.Millisecond
+		}
+	}
+	return 250 * time.Millisecond
+}()
+
 // Options opens a format-4 engine.
 type Options struct {
 	DataRoot      string // <data>; the engine root is <data>/fsql4
@@ -401,6 +417,10 @@ func (e *Engine) do(ctx context.Context, op uint32, class Class, req []byte, wan
 				return nil, err
 			}
 			continue
+		}
+		if class != ClassWrite && slowOperationThreshold > 0 && (o.run >= slowOperationThreshold || o.queue >= slowOperationThreshold) {
+			log.Warnf("FlatSQL slow operation: op=%s run=%s queue=%s rows=%d rows_examined=%d bytes_read=%d",
+				name, o.run, o.queue, o.rows, o.rowsExamined, o.bytesRead)
 		}
 		rs, derr := decodeRows(name, body, want)
 		if o.status != StatusOK {
