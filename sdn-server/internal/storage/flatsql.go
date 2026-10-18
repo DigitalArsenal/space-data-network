@@ -188,6 +188,8 @@ type FlatSQLStore struct {
 	// lifetime, released by Close.
 	lock *storeLock
 	mu   sync.RWMutex
+	// sourceBatchLicenses memoizes successful license writes, guarded by mu.
+	sourceBatchLicenses map[sourceBatchLicenseKey]SourceBatchLicense
 	// lockStats accounts s.mu itself — the lock the engine's slow-statement
 	// instrument cannot see (store_lock_accounting.go).
 	lockStats storeLockStats
@@ -5027,8 +5029,8 @@ type RecordIndexPageQuery struct {
 	// format 2 _arrival, format 4 TS). The rolling-window expiry
 	// (record_expiry.go) pages its lane with it.
 	ArrivedBefore *int64
-	Limit       int
-	Offset      int
+	Limit     int
+	Offset    int
 }
 
 // RecordIndexRow is one per-record row of the index-page surface. Pointer fields

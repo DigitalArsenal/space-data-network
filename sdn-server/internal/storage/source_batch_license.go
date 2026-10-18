@@ -33,6 +33,30 @@ type SourceBatchLicense struct {
 	UpdatedAt  int64  `json:"updated_at,omitempty"`
 }
 
+const sourceBatchLicenseMemoLimit = 256
+
+type sourceBatchLicenseKey struct {
+	schema, provider, source, batch string
+}
+
+func (l SourceBatchLicense) key() sourceBatchLicenseKey {
+	return sourceBatchLicenseKey{l.SchemaName, l.ProviderID, l.SourceName, l.BatchID}
+}
+
+func sameSourceBatchLicenseContent(a, b SourceBatchLicense) bool {
+	return a.License == b.License && a.LicenseURL == b.LicenseURL &&
+		a.Citation == b.Citation && a.ShareAlike == b.ShareAlike
+}
+
+// rememberSourceBatchLicense requires s.mu and a successful SQL apply and
+// journal append. Eviction makes a returning batch write once again.
+func (s *FlatSQLStore) rememberSourceBatchLicense(license SourceBatchLicense) {
+	if s.sourceBatchLicenses == nil || len(s.sourceBatchLicenses) >= sourceBatchLicenseMemoLimit {
+		s.sourceBatchLicenses = make(map[sourceBatchLicenseKey]SourceBatchLicense)
+	}
+	s.sourceBatchLicenses[license.key()] = license
+}
+
 // IsEmpty reports a license record that carries no license statement at all.
 // Batches ingested without license metadata publish exactly as before: no row
 // is written and no DPM license field is emitted.
@@ -117,6 +141,11 @@ func (s *FlatSQLStore) UpsertSourceBatchLicense(license SourceBatchLicense) erro
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	key := license.key()
+	if written, found := s.sourceBatchLicenses[key]; found && sameSourceBatchLicenseContent(written, license) {
+		return nil
+	}
+	delete(s.sourceBatchLicenses, key)
 	if err := s.applySourceBatchLicenseUpsert(license); err != nil {
 		return err
 	}
@@ -126,6 +155,7 @@ func (s *FlatSQLStore) UpsertSourceBatchLicense(license SourceBatchLicense) erro
 	}); err != nil {
 		return fmt.Errorf("append source batch license metadata: %w", err)
 	}
+	s.rememberSourceBatchLicense(license)
 	return nil
 }
 

@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -67,7 +69,9 @@ func observeFetch(url string, status int, bytes, durationMs int64, errMsg string
 // exceeding the effective bound is an ERROR, never a silent truncation
 // (loop C.8a: a silently truncated CelesTrak catalog would otherwise ingest
 // a partial batch as if it were complete).
-// A body read that makes no progress for 30 seconds cancels the request.
+// A body read that makes no progress for 30 seconds cancels the request. A
+// single-range 206 cut short resumes from its first missing byte
+// (resumeHTTPCapRange).
 func NewHTTPCapFactory() modulert.CapFactory {
 	return func(_ *modulert.Module) modulert.CapHandler {
 		return httpCapHandle
@@ -93,6 +97,9 @@ const httpCapMaxResponseBytes = 100 * 1024 * 1024
 const (
 	httpCapMaxTimeout       = 5 * time.Minute
 	httpCapBodyStallTimeout = 30 * time.Second
+	// httpCapRangeResumes bounds the follow-up requests one interrupted
+	// single-range GET may make (resumeHTTPCapRange).
+	httpCapRangeResumes = 4
 )
 
 func httpCapHandle(operation string, payload []byte) ([]byte, error) {
@@ -213,6 +220,9 @@ func httpCapHandleContext(parent context.Context, operation string, payload []by
 		limit = req.MaxBytes
 	}
 	respBody, err := readHTTPCapBody(resp, limit)
+	if err != nil && (errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF)) {
+		respBody, err = resumeHTTPCapRange(client, httpReq, resp, respBody, ctx, cancelRead)
+	}
 	if err != nil {
 		observeFetch(req.URL, resp.StatusCode, int64(len(respBody)), time.Since(started).Milliseconds(), err.Error())
 		return errCapJSON("failed to read response body: " + err.Error()), nil
@@ -315,4 +325,88 @@ func readHTTPCapBody(resp *http.Response, limit int64) ([]byte, error) {
 		return body, nil
 	}
 	return io.ReadAll(io.LimitReader(resp.Body, limit+1))
+}
+
+// resumeHTTPCapRange finishes a single-range GET whose 206 body ended before
+// its Content-Length: publishers such as Zenodo close long transfers mid-body
+// (host-01, 2026-10-18: 5,823,748 of 6,312,960 bytes, "unexpected EOF"). Each
+// follow-up asks for the first missing byte to the range's end. It must answer
+// 206 at that byte with the first answer's complete length, and with If-Range
+// whenever the first answer carried a strong ETag or a Last-Modified (Zenodo's
+// downloads carry neither), so a changed representation fails instead of
+// mixing bytes. It runs inside the request's own deadline and pacing slot,
+// makes at most httpCapRangeResumes requests, and each must make progress.
+// Anything else returns the original short read and error unchanged.
+func resumeHTTPCapRange(client *http.Client, req *http.Request, first *http.Response, got []byte,
+	ctx context.Context, cancel context.CancelCauseFunc) ([]byte, error) {
+	failed := fmt.Errorf("%w after %d of %d bytes", io.ErrUnexpectedEOF, len(got), first.ContentLength)
+	start, ok := singleByteRangeStart(req.Header.Get("Range"))
+	answered, total, answeredOK := contentRange(first.Header.Get("Content-Range"))
+	want := first.ContentLength
+	if req.Method != http.MethodGet || !ok || first.StatusCode != http.StatusPartialContent || !answeredOK || answered != start ||
+		want <= 0 || int64(cap(got)) != want {
+		return got, failed
+	}
+	validator := first.Header.Get("ETag")
+	if strings.HasPrefix(validator, "W/") {
+		validator = "" // If-Range needs a strong validator
+	}
+	if validator == "" {
+		validator = first.Header.Get("Last-Modified")
+	}
+	body, have := got[:want], int64(len(got))
+	for attempt := 1; have < want; attempt++ {
+		if attempt > httpCapRangeResumes {
+			return body[:have], fmt.Errorf("%w; %d range resumes did not finish it", failed, httpCapRangeResumes)
+		}
+		next := req.Clone(ctx)
+		next.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", start+have, start+want-1))
+		if validator != "" {
+			next.Header.Set("If-Range", validator)
+		}
+		resp, err := client.Do(next)
+		if err != nil {
+			return body[:have], fmt.Errorf("range resume at byte %d of %d: %w", have, want, err)
+		}
+		at, length, atOK := contentRange(resp.Header.Get("Content-Range"))
+		if resp.StatusCode != http.StatusPartialContent || !atOK || at != start+have || length != total || resp.ContentLength != want-have {
+			resp.Body.Close()
+			return body[:have], fmt.Errorf("range resume at byte %d of %d answered %d %q: the representation changed or the server ignores the range",
+				have, want, resp.StatusCode, resp.Header.Get("Content-Range"))
+		}
+		reader := &httpCapBodyReader{ReadCloser: resp.Body, ctx: ctx, cancel: cancel}
+		n, err := io.ReadFull(reader, body[have:])
+		resp.Body.Close()
+		have += int64(n)
+		if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
+			return body[:have], fmt.Errorf("range resume at byte %d of %d: %w", have, want, err)
+		}
+		if n == 0 {
+			return body[:have], fmt.Errorf("%w; a range resume made no progress", failed)
+		}
+	}
+	return body, nil
+}
+
+// singleByteRangeStart returns a from a Range of "bytes=a-b"; any other form is refused.
+func singleByteRangeStart(header string) (int64, bool) {
+	spec, ok := strings.CutPrefix(strings.TrimSpace(header), "bytes=")
+	first, last, dash := strings.Cut(spec, "-")
+	if !ok || !dash || strings.Contains(last, ",") {
+		return 0, false
+	}
+	a, errA := strconv.ParseInt(first, 10, 64)
+	b, errB := strconv.ParseInt(last, 10, 64)
+	return a, errA == nil && errB == nil && a >= 0 && a <= b
+}
+
+// contentRange returns a and total from a Content-Range of "bytes a-b/total"
+// (total "*", unknown, is refused).
+func contentRange(header string) (start, total int64, ok bool) {
+	spec, ok := strings.CutPrefix(strings.TrimSpace(header), "bytes ")
+	span, length, slash := strings.Cut(spec, "/")
+	first, _, dash := strings.Cut(span, "-")
+	start, errStart := strconv.ParseInt(first, 10, 64)
+	total, errTotal := strconv.ParseInt(length, 10, 64)
+	return start, total, ok && slash && dash && errStart == nil && errTotal == nil && start >= 0 && start < total
 }
