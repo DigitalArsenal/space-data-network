@@ -2971,6 +2971,31 @@ const engineStandardCatalogGraph = `
     SENY:double;
     SENZ:double;
   }
+  table SKT {
+    LAYER_ID:string;
+    FRAME:ubyte;
+    ORDER:uint8;
+    PIXEL:uint64;
+    MAX_ORDER:uint8;
+    CHILD_MASK:uint8;
+    PAYLOAD_KIND:ubyte;
+    REFINE:ubyte;
+    SPECTRAL_REGIME:ubyte;
+    BAND_ID:string;
+    WAVELENGTH_EFF_NM:double;
+    WAVELENGTH_MIN_NM:double;
+    WAVELENGTH_MAX_NM:double;
+    MAGNITUDE_SYSTEM:ubyte;
+    PLACE:ubyte;
+    EPOCH:double;
+    OBSERVER_ID:string;
+    POINT_COUNT:uint32;
+    MAG_BRIGHTEST:float;
+    MAG_LIMIT:float;
+    COLOR_ENCODING:ubyte;
+    COLOR_BLUE_BAND_ID:string;
+    COLOR_RED_BAND_ID:string;
+  }
   table SNR {
     TYPE:ubyte;
     MODE:ubyte;
@@ -3117,7 +3142,7 @@ const engineStandardCatalogGraph = `
     ID:string;
     CS_ID:long;
     GNC_CAT_ID:uint32;
-    GAIADR3_CAT_ID:long;
+    GAIA_DR3_SOURCE_ID:ulong;
     HIP_CAT_ID:uint32;
     CAT_VERSION:string;
     ASTROMETRY_ORIGIN:string;
@@ -3723,6 +3748,7 @@ var engineGeneratedStandardBindings = map[string]engineRoutedSchema{
 	"SHW.fbs":  {Table: "SHW", FileID: "$SHW"},
 	"SIT.fbs":  {Table: "SIT", FileID: "$SIT"},
 	"SKI.fbs":  {Table: "SKI", FileID: "$SKI"},
+	"SKT.fbs":  {Table: "SKT", FileID: "$SKT"},
 	"SNR.fbs":  {Table: "SNR", FileID: "$SNR"},
 	"SNW.fbs":  {Table: "SNW", FileID: "$SNW"},
 	"SOI.fbs":  {Table: "SOI", FileID: "$SOI"},

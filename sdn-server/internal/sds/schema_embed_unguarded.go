@@ -240,6 +240,7 @@ var unguardedEmbeddedSchemas = map[string]bool{
 	"SHW.fbs":  true,
 	"SIT.fbs":  true,
 	"SKI.fbs":  true,
+	"SKT.fbs":  true,
 	"SNR.fbs":  true,
 	"SNW.fbs":  true,
 	"SOI.fbs":  true,

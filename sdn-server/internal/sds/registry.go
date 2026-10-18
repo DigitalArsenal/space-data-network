@@ -353,6 +353,7 @@ var schemaDescriptions = map[string]string{
 	"SHW.fbs":  "Shader Wire",
 	"SIT.fbs":  "Satellite Impact Table - Impact risk assessments",
 	"SKI.fbs":  "Sky Imagery",
+	"SKT.fbs":  "Sky Tile - one HEALPix tile or heliocentric octree node of a sky layer: packed point sources or a pixel map",
 	"SNR.fbs":  "Sensor Systems",
 	"SNW.fbs":  "Sensor Runtime Wire",
 	"SOI.fbs":  "Space Object Identification Observation Set",

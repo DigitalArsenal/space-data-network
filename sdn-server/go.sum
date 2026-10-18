@@ -50,6 +50,8 @@ github.com/DigitalArsenal/spacedatastandards.org/lib/go v1.242.0 h1:LIWtkMWMjMHQ
 github.com/DigitalArsenal/spacedatastandards.org/lib/go v1.242.0/go.mod h1:jUkfHmlbPW9+dWnJ7+diHfAY6Pg1rQvbyVowHrGRzsU=
 github.com/DigitalArsenal/spacedatastandards.org/lib/go v1.253.0 h1:LEcECVK5o2Qi19udVi0Zy8GgYqUWovJZma6R122iB/c=
 github.com/DigitalArsenal/spacedatastandards.org/lib/go v1.253.0/go.mod h1:jUkfHmlbPW9+dWnJ7+diHfAY6Pg1rQvbyVowHrGRzsU=
+github.com/DigitalArsenal/spacedatastandards.org/lib/go v1.254.0 h1:6rDATs2TheBK21irRgFvcFZ3mVjE/i3+Lky7n5qfJXg=
+github.com/DigitalArsenal/spacedatastandards.org/lib/go v1.254.0/go.mod h1:jUkfHmlbPW9+dWnJ7+diHfAY6Pg1rQvbyVowHrGRzsU=
 github.com/Jorropo/jsync v1.0.1 h1:6HgRolFZnsdfzRUj+ImB9og1JYOxQoReSywkHOGSaUU=
 github.com/Jorropo/jsync v1.0.1/go.mod h1:jCOZj3vrBCri3bSU3ErUYvevKlnbssrXeCivybS5ABQ=
 github.com/OneOfOne/xxhash v1.2.2 h1:KMrpdQIwFcEqXDklaen+P1axHaj9BSKzvpUUfnHldSE=

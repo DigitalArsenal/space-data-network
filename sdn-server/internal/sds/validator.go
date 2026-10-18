@@ -297,6 +297,7 @@ var SupportedSchemas = []string{
 	"SHW.fbs",  // Shader Wire
 	"SIT.fbs",  // Satellite Impact Table
 	"SKI.fbs",  // Sky Imagery
+	"SKT.fbs",  // Sky Tile - HEALPix tile or heliocentric octree node (SDS v1.254.0)
 	"SNR.fbs",  // Sensor Systems
 	"SNW.fbs",  // Sensor Runtime Wire
 	"SOI.fbs",  // Space Object Identification Observation Set
