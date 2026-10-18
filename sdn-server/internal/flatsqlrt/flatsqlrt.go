@@ -176,6 +176,7 @@ type Runtime struct {
 	statSlow      atomic.Int64
 	statWaitNanos atomic.Int64
 	statHeldNanos atomic.Int64
+	queryObserver atomic.Pointer[func(QuerySample)]
 
 	// dispatchLogStop ends the periodic guest-call account (startDispatchLog).
 	dispatchLogStop chan struct{}
@@ -1184,13 +1185,30 @@ func (d *Database) Query(sql string, params ...interface{}) (*Result, error) {
 	d.rt.mod.Lock()
 	waited := time.Since(queued)
 	started := time.Now()
+	observer := d.rt.queryObserver.Load()
+	var sample QuerySample
+	var ioBefore HostIOStats
+	if observer != nil {
+		sample.SQL, sample.Waited = sql, waited
+		ioBefore = d.rt.io.Stats()
+	}
 	// Published BEFORE dispatch, cleared after: the statement that never
 	// returns is exactly the one accountQuery can never report (inflight.go).
 	endInFlight := d.rt.beginInFlight(sql)
 	defer func() {
 		endInFlight()
+		if observer != nil {
+			after := d.rt.io.Stats()
+			sample.Syncs = after.Syncs - ioBefore.Syncs
+			sample.SyncNanos = after.SyncNanos - ioBefore.SyncNanos
+		}
+		held := time.Since(started)
 		d.rt.mod.Unlock()
-		d.rt.accountQuery(sql, waited, time.Since(started))
+		d.rt.accountQuery(sql, waited, held)
+		if observer != nil {
+			sample.Held = held
+			(*observer)(sample)
+		}
 	}()
 
 	// ONE unit of work on the engine thread: the statement AND its whole
@@ -1255,6 +1273,25 @@ var slowQueryThreshold = func() time.Duration {
 func (r *Runtime) Stats() (queries, slow int64, totalWait, totalHeld time.Duration) {
 	return r.statQueries.Load(), r.statSlow.Load(),
 		time.Duration(r.statWaitNanos.Load()), time.Duration(r.statHeldNanos.Load())
+}
+
+// QuerySample is one slow-statement accounting sample, including the file
+// syncs performed while this statement held the engine lock.
+type QuerySample struct {
+	SQL              string
+	Waited, Held     time.Duration
+	Syncs, SyncNanos int64
+}
+
+// SetQueryObserver observes the same held/waited samples as the slow statement
+// log, including statements below its threshold. The observer runs after the
+// engine lock is released and must not call back into the engine.
+func (r *Runtime) SetQueryObserver(fn func(QuerySample)) {
+	if fn == nil {
+		r.queryObserver.Store(nil)
+		return
+	}
+	r.queryObserver.Store(&fn)
 }
 
 // accountQuery records one statement and logs it when it crossed the slow

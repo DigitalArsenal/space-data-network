@@ -38,6 +38,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/second-state/WasmEdge-go/wasmedge"
 	"github.com/spacedatanetwork/sdn-server/internal/wasmrt"
@@ -120,16 +121,19 @@ type HostIO struct {
 
 	mu    sync.Mutex
 	files []hostIOFile
+	// syncDelay is injected only by the control-write E2E, under mu.
+	syncDelay time.Duration
 
 	// Counters exist so a boot can be explained rather than guessed at: an
 	// unexpectedly slow open is either many small reads or a few large ones,
 	// and those have different fixes.
-	opens   atomic.Int64
-	reads   atomic.Int64
-	writes  atomic.Int64
-	syncs   atomic.Int64
-	bytesIn atomic.Int64
-	bytesOu atomic.Int64
+	opens     atomic.Int64
+	reads     atomic.Int64
+	writes    atomic.Int64
+	syncs     atomic.Int64
+	syncNanos atomic.Int64
+	bytesIn   atomic.Int64
+	bytesOu   atomic.Int64
 }
 
 // HostIOStats is a snapshot of the file layer's counters.
@@ -138,6 +142,7 @@ type HostIOStats struct {
 	Reads      int64
 	Writes     int64
 	Syncs      int64
+	SyncNanos  int64
 	BytesRead  int64
 	BytesWrote int64
 }
@@ -152,6 +157,7 @@ func (h *HostIO) Stats() HostIOStats {
 		Reads:      h.reads.Load(),
 		Writes:     h.writes.Load(),
 		Syncs:      h.syncs.Load(),
+		SyncNanos:  h.syncNanos.Load(),
 		BytesRead:  h.bytesIn.Load(),
 		BytesWrote: h.bytesOu.Load(),
 	}
@@ -413,11 +419,25 @@ func (h *HostIO) Sync(handle int32) int32 {
 	if s == nil {
 		return ioErrBadHandle
 	}
-	if err := s.f.Sync(); err != nil {
+	started := time.Now()
+	if h.syncDelay > 0 {
+		time.Sleep(h.syncDelay)
+	}
+	err := s.f.Sync()
+	h.syncNanos.Add(int64(time.Since(started)))
+	if err != nil {
 		return hostIOStatusFor(err)
 	}
 	h.syncs.Add(1)
 	return ioStatusSuccess
+}
+
+// SetSyncDelayForTesting models a slow disk without changing the engine or
+// delaying unrelated record I/O. A zero delay disables the E2E hook.
+func (h *HostIO) SetSyncDelayForTesting(delay time.Duration) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.syncDelay = delay
 }
 
 // Size implements flatsql_io_size. Returns a negative STATUS as a float64 on

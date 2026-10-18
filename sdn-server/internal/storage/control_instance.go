@@ -3,12 +3,13 @@ package storage
 // control_instance.go — the control instance of a partitioned store
 // (formats 2 and 4): the legacy engine on its own control database, holding
 // the control tables only (directory, local EPMs, publications, pin ledger,
-// log index, asset pins, licenses, metadata). It opens on TRUNCATE at
-// SQLite's default synchronous=FULL: it carries no record bytes, so the WAL
-// patch and its NORMAL durability trade (flatsql_boot_state.go) are not
-// taken. It holds NO record table, so a record path that was not moved to
-// the record backend fails loudly ("no such table") instead of reading or
-// writing an empty copy.
+// log index, asset pins, licenses, metadata). It opens on WAL with
+// synchronous=NORMAL, avoiding rollback-journal fsyncs under the control
+// engine lock on every autocommit. Auxiliary updates are acknowledged only
+// after their metadata journal append is synced; replay covers NORMAL's
+// last-commit loss window after a power failure. It holds NO record table,
+// so a record path that was not moved to the record backend fails loudly
+// ("no such table") instead of reading or writing an empty copy.
 
 import (
 	"errors"
@@ -19,7 +20,7 @@ import (
 )
 
 // openControlInstance opens the control instance of a partitioned store:
-// the legacy engine on dbPath, TRUNCATE, no record sources, no record state.
+// the legacy engine on dbPath, WAL/NORMAL, no record sources, no record state.
 func openControlInstance(basePath, dbPath string) (*flatsqlrt.Runtime, *flatsqlrt.Database, bootMark, error) {
 	if err := checkDatabaseFile(dbPath); err != nil {
 		return nil, nil, bootMark{}, err
@@ -34,7 +35,7 @@ func openControlInstance(basePath, dbPath string) (*flatsqlrt.Runtime, *flatsqlr
 	if mode := engine.Mode(); !mode.AOT {
 		log.Warnf("control instance INTERPRETED — no AOT artifact in %s (%s); run `spacedatanetwork prewarm-aot`", mode.CacheDir, mode.MissReason)
 	}
-	engineDB, err := engine.OpenDatabase(engineDatabaseSchema, "sdn-control", dbPath, flatsqlrt.JournalTruncate)
+	engineDB, err := engine.OpenDatabase(engineDatabaseSchema, "sdn-control", dbPath, flatsqlrt.JournalWAL)
 	if err != nil {
 		engine.Close()
 		return nil, nil, bootMark{}, fmt.Errorf("%w: %s: %v", errControlDatabaseUnusable, dbPath, err)
@@ -43,6 +44,13 @@ func openControlInstance(basePath, dbPath string) (*flatsqlrt.Runtime, *flatsqlr
 		engineDB.Destroy()
 		engine.Close()
 		return nil, nil, bootMark{}, fmt.Errorf("control instance: register file identifiers: %w", err)
+	}
+	// Keep this after registration, as in tryOpenControlDatabase: the first
+	// query consumes the engine's one-shot virtual-table registration.
+	if _, err := engineDB.Query("PRAGMA synchronous=NORMAL"); err != nil {
+		engineDB.Destroy()
+		engine.Close()
+		return nil, nil, bootMark{}, fmt.Errorf("control instance: set synchronous=NORMAL: %w", err)
 	}
 	disk, err := engineDB.IsDiskBacked()
 	if err != nil || !disk {

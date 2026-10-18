@@ -15,9 +15,8 @@ package storage
 //     a writer (reads-never-wait law).
 //   - THE CONTROL INSTANCE: the legacy engine on control2.flatsqldb, the
 //     control tables store-migrate copied out of control.flatsqldb (§14
-//     interim, until T8). It opens on TRUNCATE at SQLite's default
-//     synchronous=FULL: it no longer carries record bytes, so the WAL patch
-//     and its NORMAL durability trade (flatsql_boot_state.go) are not taken.
+//     interim, until T8). It opens on WAL with synchronous=NORMAL; synced
+//     auxiliary metadata supplies durable replay (control_instance.go).
 //     It holds NO record table: sds_p_*, sdn_record_index, the tag, summary
 //     and counter tables, the engine rows and the hot window do not exist
 //     there, so a record path that was not moved to the partition store fails
