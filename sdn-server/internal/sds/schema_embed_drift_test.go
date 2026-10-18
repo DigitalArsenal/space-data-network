@@ -7,26 +7,6 @@ import (
 	"sort"
 	"strings"
 	"testing"
-
-	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/APP"
-	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/CAT"
-	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/CCT"
-	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/CNP"
-	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/DSS"
-	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/EGP"
-	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/ICN"
-	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/IQC"
-	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/LKS"
-	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/MPE"
-	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/NCD"
-	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/OMM"
-	sdsplg "github.com/DigitalArsenal/spacedatastandards.org/lib/go/PLG"
-	sdspmm "github.com/DigitalArsenal/spacedatastandards.org/lib/go/PMM"
-	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/PNM"
-	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/RFB"
-	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/SPW"
-	sdsstf "github.com/DigitalArsenal/spacedatastandards.org/lib/go/STF"
-	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/WXF"
 )
 
 // WHY THIS GUARD EXISTS (2026-08-04, sdn-server-rfb-schema-embed-stale).
@@ -46,49 +26,9 @@ import (
 // pin. Either way the two authorities disagree, and this test says so with the
 // exact field names — it can no longer happen quietly.
 
-// driftGuardedSchemas are the standards this node DECODES or serves on the
-// anonymous data plane. Add a schema here whenever the host starts reading its
-// fields; the cost is one line and it can never then drift unnoticed.
-var driftGuardedSchemas = []struct {
-	file    string
-	binding interface{}
-}{
-	{"OMM.fbs", &OMM.OMM{}},
-	{"CAT.fbs", &CAT.CAT{}},
-	{"MPE.fbs", &MPE.MPE{}},
-	{"PNM.fbs", &PNM.PNM{}},
-	{"RFB.fbs", &RFB.RFB{}},
-	{"LKS.fbs", &LKS.LKS{}},
-	{"SPW.fbs", &SPW.SPW{}},
-	{"WXF.fbs", &WXF.WXF{}},
-	{"NCD.fbs", &NCD.NCD{}},
-	{"APP.fbs", &APP.APP{}},
-	// RF data suite (SDS v1.177.0). Guarded from the day they are embedded:
-	// both arrive with the pin bump, before any record exists, so the embed
-	// and the bindings are provably the same authority from record zero.
-	{"IQC.fbs", &IQC.IQC{}},
-	{"CNP.fbs", &CNP.CNP{}},
-	// The category lane (SDS v1.186.0, $CCT). These three carry
-	// PRIMARY_CATEGORY/CATEGORIES and this node WRITES all three, so they move
-	// out of the unguarded waiver on the same pin bump that gives them a
-	// category to write. $CCT itself is guarded because it is the vocabulary
-	// those fields join against: an embed that lagged it would let the strict
-	// validator disagree with the enum the encoders resolve through.
-	{"PLG.fbs", &sdsplg.PLG{}},
-	{"PMM.fbs", &sdspmm.PMM{}},
-	{"STF.fbs", &sdsstf.STF{}},
-	{"CCT.fbs", &CCT.CCT{}},
-	// Entity groups (SDS v1.193.0, $EGP). Guarded from the day it is embedded:
-	// the node serves $EGP on the anonymous data plane and decodes its fields,
-	// so the embed and the binding must be provably the same authority from
-	// record zero.
-	{"EGP.fbs", &EGP.EGP{}},
-	// Subscription + connector lanes (SDS v1.210.0 retention pin): the node
-	// decodes $DSS on POST /api/v1/sync (RETENTION rides on Subscribe) and $ICN
-	// on /api/v1/connectors, so both embeds are held to the linked bindings.
-	{"DSS.fbs", &DSS.DSS{}},
-	{"ICN.fbs", &ICN.ICN{}},
-}
+// driftGuardedSchemas (schema_embed_bindings_test.go) is GENERATED from the
+// embeds by internal/sds/gen: every embedded standard with a linked binding is
+// guarded, so the denominator can no longer be a list somebody remembered.
 
 func TestEmbeddedSchemasMatchLinkedBindings(t *testing.T) {
 	for _, guarded := range driftGuardedSchemas {
@@ -108,13 +48,20 @@ func TestEmbeddedSchemasMatchLinkedBindings(t *testing.T) {
 			if len(fields) == 0 {
 				t.Fatalf("%s: no fields parsed from table %s", guarded.file, root)
 			}
-			accessors := bindingFieldAccessors(guarded.binding)
+			accessors := bindingFieldAccessors(guarded.binding, fields)
 			if len(accessors) == 0 {
 				t.Fatalf("%s: no field accessors found on %T", guarded.file, guarded.binding)
 			}
 
-			missingInEmbed := difference(accessors, fields)
-			missingInBindings := difference(fields, accessors)
+			// flatc's Go generator names each accessor after the field and
+			// also emits its UpperCamel alias (R1_X -> R1X, version ->
+			// Version); a field counts as exposed under either name.
+			exposed := make([]string, 0, len(fields))
+			for _, field := range fields {
+				exposed = append(exposed, goAccessorName(field, accessors))
+			}
+			missingInEmbed := difference(accessors, append(exposed, fields...))
+			missingInBindings := difference(fields, fieldsWithAccessor(fields, accessors))
 
 			if len(missingInEmbed) > 0 {
 				t.Errorf("%s EMBED LAGS THE BINDINGS: the linked %T exposes %v, which the embedded IDL does not declare. "+
@@ -212,16 +159,74 @@ func tableFieldNames(idl, name string) []string {
 // (UPPER_SNAKE). The generator's camelCase aliases, Mutate* setters, vector
 // Length/Bytes helpers and Init/Table plumbing all carry lower-case letters and
 // are excluded by the pattern.
-func bindingFieldAccessors(binding interface{}) []string {
+// bindingFieldAccessors returns the binding's field accessors: every exported
+// method named like a verbatim UPPER_SNAKE field, plus every UpperCamel alias
+// of an IDL field (the only exported name a lower_snake field gets). An alias
+// is dropped when its verbatim twin is also present.
+func bindingFieldAccessors(binding interface{}, fields []string) []string {
 	t := reflect.TypeOf(binding)
-	var names []string
+	methods := map[string]bool{}
 	for i := 0; i < t.NumMethod(); i++ {
-		name := t.Method(i).Name
-		if accessorRe.MatchString(name) {
+		methods[t.Method(i).Name] = true
+	}
+	aliases := map[string]bool{}
+	for _, field := range fields {
+		if camel := upperCamel(field); camel != field && methods[camel] && !methods[field] {
+			aliases[camel] = true
+		}
+	}
+	var names []string
+	for name := range methods {
+		switch {
+		case aliases[name]:
+			names = append(names, name)
+		case accessorRe.MatchString(name) && !isCamelAliasOfVerbatim(name, methods, fields):
 			names = append(names, name)
 		}
 	}
 	return names
+}
+
+// isCamelAliasOfVerbatim reports whether name is the UpperCamel alias of an
+// IDL field whose verbatim accessor also exists (R1X beside R1_X).
+func isCamelAliasOfVerbatim(name string, methods map[string]bool, fields []string) bool {
+	for _, field := range fields {
+		if field != name && upperCamel(field) == name && methods[field] {
+			return true
+		}
+	}
+	return false
+}
+
+// goAccessorName is the accessor name the binding uses for field: the field
+// itself when exported verbatim, else its UpperCamel alias.
+func goAccessorName(field string, accessors []string) string {
+	if contains(accessors, field) {
+		return field
+	}
+	return upperCamel(field)
+}
+
+func fieldsWithAccessor(fields, accessors []string) []string {
+	var out []string
+	for _, field := range fields {
+		if contains(accessors, field) || contains(accessors, upperCamel(field)) {
+			out = append(out, field)
+		}
+	}
+	return out
+}
+
+// upperCamel is flatc's Go case conversion of a snake_case field name.
+func upperCamel(field string) string {
+	var b strings.Builder
+	for _, part := range strings.Split(field, "_") {
+		if part == "" {
+			continue
+		}
+		b.WriteString(strings.ToUpper(part[:1]) + strings.ToLower(part[1:]))
+	}
+	return b.String()
 }
 
 func difference(from, minus []string) []string {

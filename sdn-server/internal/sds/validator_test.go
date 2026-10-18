@@ -541,16 +541,14 @@ func TestValidatorConverterSchemaAvailability(t *testing.T) {
 	v := newConverterValidator(t)
 	ctx := context.Background()
 
-	// REC.fbs includes standards the node does not embed: registered for
-	// envelope validation, unavailable for conversion, and says why.
-	if !v.HasSchema("REC.fbs") {
-		t.Fatal("REC.fbs not registered")
+	// Every standard is embedded, so every include closure resolves: the
+	// converter loads every embedded schema, REC.fbs (which includes them all)
+	// among them.
+	if loaded, failed := v.PreloadConverterSchemas(ctx); failed != 0 || loaded != len(SupportedSchemas) {
+		t.Fatalf("converter loaded %d of %d embedded schemas, %d failed", loaded, len(SupportedSchemas), failed)
 	}
-	if err := v.ConverterError(ctx, "REC.fbs"); err == nil || !strings.Contains(err.Error(), "include") {
-		t.Fatalf("REC.fbs converter error = %v, want an unresolved include", err)
-	}
-	if _, err := v.JSONToFlatBuffer(ctx, "REC.fbs", []byte(`{}`), 0); err == nil || !strings.Contains(err.Error(), "not loaded in the flatc converter") {
-		t.Fatalf("REC.fbs conversion: err = %v", err)
+	if err := v.ConverterError(ctx, "REC.fbs"); err != nil {
+		t.Fatalf("REC.fbs converter error = %v, want nil", err)
 	}
 	if _, err := v.JSONToFlatBuffer(ctx, "NOPE.fbs", []byte(`{}`), 0); err == nil || !strings.Contains(err.Error(), "unknown schema") {
 		t.Fatalf("unknown schema conversion: err = %v", err)

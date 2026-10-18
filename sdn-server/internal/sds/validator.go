@@ -14,7 +14,6 @@ import (
 	"sync"
 	"sync/atomic"
 
-	standardsCLM "github.com/DigitalArsenal/spacedatastandards.org/lib/go/CLM"
 	logging "github.com/ipfs/go-log/v2"
 
 	"github.com/spacedatanetwork/sdn-server/internal/fbverify"
@@ -76,271 +75,27 @@ func ValidateSchemaName(name string) error {
 
 var log = logging.Logger("sds")
 
-// publishedBindingOnlySchemas are newly ratified standards whose published Go
-// binding is available before the next embedded-IDL refresh. They are admitted
-// by their binding's canonical file identifier, never by a repo-local shadow
-// schema. Full field validation for code that decodes one remains the typed
-// binding's responsibility (the claims handler does that for $CLM).
-var publishedBindingOnlySchemas = map[string]string{
-	"CLM.fbs": standardsCLM.CLMIdentifier,
-}
-
 //go:embed schemas/*.fbs
 var schemasFS embed.FS
 
-func init() {
-	// Suppress unused variable warning
-	_ = schemasFS
-}
+// SupportedSchemas is every schema file the node embeds, sorted: every Space
+// Data Standards (spacedatastandards.org) standard plus the SDN-internal
+// schemas (PGR, PLHD, PLOG, RHD). The embedded directory is the one authority
+// for the standard set; adding a standard is copying its IDL into schemas/.
+var SupportedSchemas = embeddedSchemaNames()
 
-// SupportedSchemas lists all SDS schema files registered with the validator.
-// It mirrors the .fbs files embedded in schemas/ — every Space Data Standards
-// (spacedatastandards.org) schema plus the SDN-internal schemas
-// (PGR, PLHD, PLOG, RHD).
-var SupportedSchemas = []string{
-	"ACI.fbs",  // Access Interval - one contiguous access window with its RF link samples (SDS v1.196.0)
-	"ACL.fbs",  // Access Control List - Data access grants
-	"ACM.fbs",  // Attitude Comprehensive Message
-	"ACR.fbs",  // Aircraft Dynamics
-	"ACW.fbs",  // Access Windows
-	"AEM.fbs",  // Attitude Ephemeris Message
-	"ANI.fbs",  // Analytic Imagery Product
-	"AOF.fbs",  // AOS Transfer Frame (CCSDS 732.0-B-3)
-	"APL.fbs",  // Atmospheric Propagation Loss Statistics (SDS v1.196.0)
-	"APP.fbs",  // Application Package Manifest
-	"APM.fbs",  // Attitude Parameter Message
-	"ARM.fbs",  // Armor and Protection
-	"AST.fbs",  // Astrodynamics
-	"ATD.fbs",  // Attitude Data Point
-	"ATM.fbs",  // Attitude Message
-	"AVL.fbs",  // Airspace Volume (SDS v1.196.0)
-	"BAL.fbs",  // Ballistics
-	"BEM.fbs",  // Antenna Beam
-	"BMC.fbs",  // Beam Contour
-	"BOV.fbs",  // Body Orientation and Velocity
-	"BSP.fbs",  // Body State Propagation
-	"BUS.fbs",  // Satellite Bus Specification
-	"CAQ.fbs",  // Catalog Query - Catalog query envelope
-	"CAT.fbs",  // Catalog
-	"CCT.fbs",  // Capability Category Taxonomy - the ratified category vocabulary ($PLG/$APP/$PMM/$STF include it)
-	"CDM.fbs",  // Conjunction Data Message
-	"CES.fbs",  // Catalog Embedding Shard
-	"CMR.fbs",  // Constellation Membership Record (SDS v1.186.0; included by REC)
-	"CFP.fbs",  // CCSDS File Delivery Protocol PDU (CCSDS 727.0-B-5)
-	"CHN.fbs",  // Communications Channel
-	"CLT.fbs",  // Command Link Transmission Unit Service (CCSDS 912.3-B-2)
-	"CMS.fbs",  // Communications Payload
-	"CMT.fbs",  // Commission Terms - revenue split binding a listing, store or publisher
-	"CNP.fbs",  // Constellation Network Performance (SDS v1.177.0)
-	"COM.fbs",  // Communications Systems
-	"COT.fbs",  // Cursor on Target Event
-	"CPS.fbs",  // Compressed Packet Stream (CCSDS fixed-length packet run)
-	"CQR.fbs",  // Conjunction Query and Result - screening, encounter-plane probability, launch windows (SDS v1.220.0; uncertainty provenance v1.231.0)
-	"CRD.fbs",  // Coordinate Systems
-	"CRM.fbs",  // Collision Risk Message
-	"CSM.fbs",  // Conjunction Summary Message
-	"CTR.fbs",  // Contact Report
-	"CVG.fbs",  // Coverage Grid Figure-of-Merit
-	"CVP.fbs",  // Coverage Geometry (SDS v1.196.0)
-	"CZM.fbs",  // CZML Document
-	"DFH.fbs",  // GEO Drift History
-	"DMG.fbs",  // Damage Models
-	"DOA.fbs",  // Difference of Arrival Geolocation
-	"DPM.fbs",  // Dataset Publication Manifest
-	"DSS.fbs",  // Data Sync Status
-	"DTT.fbs",  // Digital Terrain Tile - one addressable tile of a terrain elevation pyramid (SDS v1.196.0)
-	"EME.fbs",  // Electromagnetic Emissions
-	"ENC.fbs",  // Encryption Header
-	"ENT.fbs",  // Entitlement - provider subscription or account entitlement state
-	"ENV.fbs",  // Atmosphere and Environment
-	"EOO.fbs",  // Earth Orientation
-	"EGP.fbs",  // Entity Group - publishable set of entity references
-	"EMC.fbs",  // Electromagnetic Compatibility Assessment (SDS v1.196.0)
-	"EOP.fbs",  // Earth Orientation Parameters
-	"EPF.fbs",  // Aggregate Interference and Flux-Density Compliance (SDS v1.196.0)
-	"EPM.fbs",  // Entity Profile Manifest
-	"ESL.fbs",  // Entity/Standards Link
-	"ETM.fbs",  // Entity Metadata
-	"EWR.fbs",  // Electronic Warfare
-	"FCS.fbs",  // Fire Control Systems
-	"FPC.fbs",  // Fastest Path Compute
-	"FRM.fbs",  // Frame Transform
-	"FSB.fbs",  // FlatSQL Byte Stream - bounded typed chunk for append/query
-	"FSM.fbs",  // Field Stream Message - marketplace-protected live streams
-	"FSO.fbs",  // FlatSQL Operation - control, policy and status record
-	"FSP.fbs",  // Field Stream Policy - marketplace-protected live streams
-	"GDI.fbs",  // Ground Imagery
-	"GEL.fbs",  // Emitter Geolocation Solution (SDS v1.196.0)
-	"GEO.fbs",  // GEO Spacecraft Status
-	"GJN.fbs",  // GeoJSON FeatureCollection
-	"GNO.fbs",  // GNSS Observation
-	"GNP.fbs",  // Gazetteer Named Place (SDS v1.196.0)
-	"GPX.fbs",  // GPX Document
-	"GRV.fbs",  // Gravity Models
-	"GST.fbs",  // Ground/Tracking Station Definition
-	"GVH.fbs",  // Ground Vehicles
-	"HEL.fbs",  // Helicopter Dynamics
-	"HFC.fbs",  // Hypersonic Flight Conditions
-	"HYP.fbs",  // Hyperbolic Orbit
-	"ICN.fbs",  // Ingest Connector
-	"IDM.fbs",  // Initial Data Message
-	"ION.fbs",  // Ionospheric Observation
-	"IQC.fbs",  // IQ Capture - archived baseband recording (SDS v1.177.0)
-	"IRM.fbs",  // Ingest Resume Mark - durable checkpoint of one bulk-ingest job (REC 223) (SDS v1.196.0)
-	"IRO.fbs",  // Infrared Observation
-	"KMF.fbs",  // Key Material Frame
-	"KML.fbs",  // KML Document
-	"KRF.fbs",  // Key Reference Frame
-	"LAM.fbs",  // Launch Ascent Message
-	"LCC.fbs",  // Launch Collision Corridor
-	"LCF.fbs",  // Licensing Configuration Frame
-	"LCH.fbs",  // Licensing Challenge Message
-	"LDM.fbs",  // Launch Data Message
-	"LGR.fbs",  // Licensing Grant Message
-	"LKS.fbs",  // Link Status
-	"LMO.fbs",  // Lambert Solve Result
-	"LMR.fbs",  // Module Control Message
-	"LMS.fbs",  // Lambert Solve Request
-	"LND.fbs",  // Launch Detection
-	"LNE.fbs",  // Launch Event
-	"LPF.fbs",  // Licensing Proof Message
-	"LWK.fbs",  // Wrapped Module Content Key
-	"MBL.fbs",  // Module Bundle Listing
-	"MDP.fbs",  // Mission Design Problem - patched-conic broad search definition
-	"MDS.fbs",  // Mission Design Solution Set - candidate trajectories
-	"MEM.fbs",  // Measurement Error Model (SDS v1.203.0; included by ACW from v1.229.0)
-	"MET.fbs",  // Meteorological Data
-	"MFE.fbs",  // Manifold Element Set
-	"MNF.fbs",  // Orbit Manifold
-	"MNV.fbs",  // Spacecraft Maneuver
-	"MPE.fbs",  // Maneuver Planning Ephemeris
-	"MSL.fbs",  // Guided Missiles
-	"MST.fbs",  // Missile Track
-	"MTI.fbs",  // Moving Target Indicator
-	"NAV.fbs",  // Naval Vessels
-	"NCD.fbs",  // Native container descriptors (SDS v1.215.0)
-	"NUM.fbs",  // Numerical Methods
-	"OBD.fbs",  // Orbit Determination Results
-	"OBT.fbs",  // Orbit Track
-	"OCM.fbs",  // Orbit Comprehensive Message
-	"OEM.fbs",  // Orbit Ephemeris Message
-	"OMM.fbs",  // Orbit Mean-Elements Message
-	"OOA.fbs",  // On-Orbit Antenna
-	"OOB.fbs",  // On-Orbit Battery
-	"OOD.fbs",  // On-Orbit Object Details
-	"OOE.fbs",  // On-Orbit Event
-	"OOI.fbs",  // Object of Interest
-	"OOL.fbs",  // On-Orbit Object List
-	"OON.fbs",  // On-Orbit Object
-	"OOS.fbs",  // On-Orbit Solar Array
-	"OOT.fbs",  // On-Orbit Thruster
-	"OPM.fbs",  // Orbit Parameter Message
-	"OPP.fbs",  // Object Physical Properties - sourced physical description
-	"OSM.fbs",  // Orbit State Message
-	"PAP.fbs",  // Phased Array Pattern Synthesis (SDS v1.196.0)
-	"PCE.fbs",  // Parameter Catalog and Evaluation (SDS v1.201.0; included by PRW)
-	"PCF.fbs",  // Propagator Configuration
-	"PGM.fbs",  // Peer Group Membership Record
-	"PGR.fbs",  // Peer Graph Record - Peer network graph snapshot (SDN-internal)
-	"PHB.fbs",  // Photometric Band (SDS v1.225.0; included by STR)
-	"PHY.fbs",  // Physics and Rigid Body Dynamics
-	"PIV.fbs",  // Plugin Invoke - Plugin request/response envelopes
-	"PKB.fbs",  // Publisher Key-Broker Descriptor
-	"PLD.fbs",  // Payload
-	"PLG.fbs",  // Plugin Manifest - Signed plugin distribution record
-	"PLHD.fbs", // Publication Log Head - Log head announcement (SDN-internal)
-	"PLK.fbs",  // Plugin License Key
-	"PLOG.fbs", // Publication Log Entry - Internal compatibility log record (SDN-internal)
-	"PMM.fbs",  // Provider Module Manifest - what one provider node offers, signed
-	"PNL.fbs",  // Panelled (box-wing) Spacecraft Macro Model
-	"PNM.fbs",  // Publish Notification Message
-	"PPE.fbs",  // Polynomial Ephemeris
-	"PRR.fbs",  // Peer Registry Record
-	"PRG.fbs",  // Propagation Settings
-	"PRW.fbs",  // Propagator Runtime Wire
-	"PUR.fbs",  // Purchase Request - Marketplace purchases
-	"PVN.fbs",  // Product Provenance (SDS v1.246.0; included by SBD)
-	"QEM.fbs",  // Query Encoder Model
-	"RAF.fbs",  // Return All Frames Service (CCSDS 913.1-B-2)
-	"RBK.fbs",  // Rigid Body Kinematics
-	"RCF.fbs",  // Return Channel Frames Service (CCSDS 913.5-B-2)
-	"RDM.fbs",  // Reentry Data Message
-	"RDO.fbs",  // Radar Observation
-	"REC.fbs",  // Records
-	"REM.fbs",  // Reentry Evaluation Message
-	"REV.fbs",  // Review - Marketplace reviews
-	"RFB.fbs",  // RF Band Specification
-	"RFE.fbs",  // RF Emitter
-	"RFL.fbs",  // RF Link Sample (SDS v1.196.0)
-	"RFM.fbs",  // Reference Frame Message
-	"RFO.fbs",  // RF Observation
-	"RFS.fbs",  // RF Surface Material (SDS v1.196.0)
-	"RHD.fbs",  // Routing Header - Message routing metadata (SDN-internal)
-	"ROC.fbs",  // Re-entry Operations Corridor
-	"RPT.fbs",  // Verifiable Report descriptor
-	"RSD.fbs",  // Radar Sensitivity and Detection Performance (SDS v1.196.0)
-	"SAR.fbs",  // SAR Observation
-	"SBD.fbs",  // Small Body - asteroid or comet, heliocentric elements (SDS v1.248.0)
-	"SBM.fbs",  // Satellite Breakup Model
-	"SCC.fbs",  // Scenario Controls - scenario setup/state message bus envelope
-	"SCM.fbs",  // Spacecraft Message
-	"SCN.fbs",  // Scenario - canonical scene composition and simulation state
-	"SCV.fbs",  // Sensor Coverage
-	"SCX.fbs",  // Chain Settlement / Smart-Contract Descriptor
-	"SDF.fbs",  // Signed Distance Field
-	"SDL.fbs",  // Space Data Link Security (CCSDS 355.0-B-1)
-	"SDR.fbs",  // Sensor Detection Report
-	"SEN.fbs",  // Sensor Management
-	"SEO.fbs",  // Space Environment Observation
-	"SEV.fbs",  // Space Environment Observation Detail
-	"SHC.fbs",  // Spherical-Harmonic Coefficient Set - a gravity field
-	"SHW.fbs",  // Shader Wire
-	"SIT.fbs",  // Satellite Impact Table
-	"SKI.fbs",  // Sky Imagery
-	"SKT.fbs",  // Sky Tile - HEALPix tile or heliocentric octree node (SDS v1.254.0)
-	"SNR.fbs",  // Sensor Systems
-	"SNW.fbs",  // Sensor Runtime Wire
-	"SOI.fbs",  // Space Object Identification Observation Set
-	"SON.fbs",  // Sonar and Underwater Acoustics
-	"SPP.fbs",  // Space Packet Protocol (CCSDS 133.0-B-1)
-	"SPW.fbs",  // Space Weather Data Record
-	"SRI.fbs",  // Standards Record Index
-	"STF.fbs",  // Storefront Listing - Marketplace listings
-	"STO.fbs",  // Store Descriptor - storefront identity
-	"STR.fbs",  // Star Catalog Entry
-	"STV.fbs",  // State Vector
-	"STX.fbs",  // Scheduled Transmission - one broadcast schedule row for a terrestrial transmitter (REC 225) (SDS v1.198.0)
-	"SUB.fbs",  // Crypto-native Subscription Authorization
-	"SWR.fbs",  // Short-Wave Infrared Observation
-	"TAB.fbs",  // Typed Arena Buffer
-	"TBS.fbs",  // Terrestrial Base Station Site (SDS v1.186.0; included by REC)
-	"TCF.fbs",  // Telecommand Transfer Frame (CCSDS 232.0-B-3)
-	"TDM.fbs",  // Tracking Data Message
-	"TFN.fbs",  // Transport Facility Node (SDS v1.196.0)
-	"TIM.fbs",  // Time Message
-	"TKG.fbs",  // Tracking and Data Fusion
-	"TME.fbs",  // Time Systems
-	"TMF.fbs",  // Telemetry Transfer Frame (CCSDS 132.0-B-2)
-	"TMS.fbs",  // Track Model State (SDS v1.196.0)
-	"TNR.fbs",  // Trust Node Record
-	"TPN.fbs",  // Transponder
-	"TRE.fbs",  // Trust Edge Record
-	"TRP.fbs",  // Trust Rule Policy
-	"TRV.fbs",  // Trust Rule Verdict
-	"TRK.fbs",  // Track
-	"TRN.fbs",  // Terrain Models
-	"TRS.fbs",  // Terrain Raster Solve (SDS v1.196.0)
-	"TXS.fbs",  // Terrestrial Transmitter Site - merged, source-attributed transmitter facility (REC 226) (SDS v1.198.0)
-	"VAM.fbs",  // Visual Asset Manifest - ranked visual representations for one entity
-	"VCF.fbs",  // vCard Projection Card - canonical contact-card projection of one published EPM (REC 224) (SDS v1.197.0)
-	"VCM.fbs",  // Vector Covariance Message
-	"VEP.fbs",  // Vehicle Endurance Profile (SDS v1.196.0)
-	"VST.fbs",  // Viewer State - display and camera state for a scenario
-	"WKS.fbs",  // Workspace - scene snapshot + FlatSQL query state + share grants
-	"WPN.fbs",  // Weapons and Munitions
-	"WTH.fbs",  // Weather Data
-	"WXF.fbs",  // Weather forecast fields (SDS v1.215.0)
-	"XTC.fbs",  // XTCE SpaceSystem Document
+func embeddedSchemaNames() []string {
+	entries, err := schemasFS.ReadDir("schemas")
+	if err != nil {
+		panic(fmt.Sprintf("sds: embedded schemas unreadable: %v", err))
+	}
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".fbs") {
+			names = append(names, entry.Name())
+		}
+	}
+	return names // ReadDir returns entries sorted by name
 }
 
 // FieldLevelValidationEnv is the named switch for Validate's field-level parse
@@ -421,7 +176,6 @@ func NewValidator(flatc *wasm.FlatcModule) (*Validator, error) {
 		log.Warnf("Failed to load embedded schemas: %v", err)
 		// Continue without embedded schemas - they may be loaded later
 	}
-	v.registerPublishedBindingSchemas()
 
 	if flatc != nil {
 		v.convMu.Lock()
@@ -500,28 +254,6 @@ func (v *Validator) parseConverterSchemaLocked(ctx context.Context, name string)
 // <FAMILY>/main.fbs, the layout the SDS includes ("../MET/main.fbs") expect.
 func converterSchemaPath(schemaName string) string {
 	return strings.TrimSuffix(schemaName, ".fbs") + "/main.fbs"
-}
-
-func (v *Validator) registerPublishedBindingSchemas() {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	for name := range publishedBindingOnlySchemas {
-		// The published IDL, for structural verification only.
-		if content, err := bindingSchemasFS.ReadFile("binding-schemas/" + name); err == nil {
-			v.structure.AddSource(name, content)
-		}
-	}
-	for name, ident := range publishedBindingOnlySchemas {
-		v.identifiers[name] = ident
-		switch {
-		case v.ambiguousIdents[ident]:
-		case v.identifierSchemas[ident] == "" || v.identifierSchemas[ident] == name:
-			v.identifierSchemas[ident] = name
-		default:
-			delete(v.identifierSchemas, ident)
-			v.ambiguousIdents[ident] = true
-		}
-	}
 }
 
 func (v *Validator) loadEmbeddedSchemas(ctx context.Context) error {
@@ -638,8 +370,7 @@ func (v *Validator) Validate(ctx context.Context, schemaName string, data []byte
 	_, ok := v.schemas[schemaName]
 	v.mu.RUnlock()
 
-	_, bindingOnly := publishedBindingOnlySchemas[schemaName]
-	if !ok && !bindingOnly {
+	if !ok {
 		return fmt.Errorf("unknown schema: %s", schemaName)
 	}
 
@@ -656,7 +387,7 @@ func (v *Validator) Validate(ctx context.Context, schemaName string, data []byte
 
 	// Field-level parse: only for a schema the converter can load; one it
 	// cannot keeps the envelope verdict.
-	if ok && v.FieldLevelValidation() {
+	if v.FieldLevelValidation() {
 		if flatcID, err := v.converterID(ctx, schemaName); err == nil {
 			buf, opts := v.placeForVerifier(schemaName, data, 0)
 			if err := v.flatc.VerifyBinary(ctx, flatcID, buf, opts); err != nil {
@@ -700,14 +431,6 @@ func (v *Validator) placeForVerifier(schemaName string, data []byte, opts wasm.F
 		opts |= wasm.FlatcSizePrefixed
 	}
 	return view.Buf, opts
-}
-
-// IsPublishedBindingSchema reports whether name is admitted directly from a
-// published generated binding while its IDL is intentionally not copied into
-// this repository.
-func IsPublishedBindingSchema(name string) bool {
-	_, ok := publishedBindingOnlySchemas[name]
-	return ok
 }
 
 // FlatBuffers envelope constants.

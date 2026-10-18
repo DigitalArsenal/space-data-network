@@ -32,6 +32,16 @@ func TestEveryRoutedStandardHasACompleteSearchSchema(t *testing.T) {
 		err := store.db.QueryRow(`SELECT flatsql_record_text(?,?,?)`, table, builder.FinishedBytes(), binarySchema).Scan(&text)
 		// Empty records cannot satisfy required fields, but every routed
 		// standard must have valid, supported metadata before record validation.
+		// $REC is the envelope of every standard: at SDS 1.255.0 its search
+		// schema is 1,216,824 bytes, past flatsql's 1 MiB cap, so it alone is
+		// not full-text searchable (flatsql-search-schema-cap-rec-20261018).
+		// This fails the moment the cap lifts; then delete the carve-out.
+		if name == "REC.fbs" {
+			if err == nil || !strings.Contains(err.Error(), "Binary search schema exceeds bounds") || len(binarySchema) <= 1<<20 {
+				t.Errorf("REC.fbs search schema (%d bytes) now loads: delete this carve-out (%v)", len(binarySchema), err)
+			}
+			continue
+		}
 		if err != nil && !strings.Contains(err.Error(), "Invalid FlatBuffer search record") {
 			t.Errorf("unsupported complete schema %s: %v", name, err)
 		}

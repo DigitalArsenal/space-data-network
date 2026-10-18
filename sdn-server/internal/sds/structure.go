@@ -1,9 +1,7 @@
 package sds
 
 import (
-	"embed"
 	"fmt"
-	"strings"
 	"sync"
 
 	"github.com/spacedatanetwork/sdn-server/internal/fbverify"
@@ -27,40 +25,19 @@ import (
 // inside the buffer. It is native Go, linear in the buffer's size and always
 // on. A schema it cannot compile is refused, never waved through.
 
-// bindingSchemasFS holds the published IDL of the standards that are admitted
-// from their published Go binding before the next embedded-IDL refresh
-// (publishedBindingOnlySchemas). It is used ONLY to structurally verify their
-// buffers; routing still keys on the binding's own file identifier.
-//
-//go:embed binding-schemas/*.fbs
-var bindingSchemasFS embed.FS
-
 var (
 	defaultStructureOnce sync.Once
 	defaultStructure     *fbverify.Registry
 )
 
-// structureSources registers every embedded standard and every published
-// binding-only standard with r.
+// structureSources registers every embedded standard with r.
 func structureSources(r *fbverify.Registry) error {
-	for _, src := range []struct {
-		fs  embed.FS
-		dir string
-	}{{schemasFS, "schemas"}, {bindingSchemasFS, "binding-schemas"}} {
-		entries, err := src.fs.ReadDir(src.dir)
+	for _, name := range SupportedSchemas {
+		content, err := schemasFS.ReadFile(embeddedSchemaPath(name))
 		if err != nil {
 			return err
 		}
-		for _, entry := range entries {
-			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".fbs") {
-				continue
-			}
-			content, err := src.fs.ReadFile(src.dir + "/" + entry.Name())
-			if err != nil {
-				return err
-			}
-			r.AddSource(entry.Name(), content)
-		}
+		r.AddSource(name, content)
 	}
 	return nil
 }

@@ -42,3 +42,5 @@
 // The Validator type provides schema validation using file identifiers embedded
 // in FlatBuffer messages. See [Validator] for details.
 package sds
+
+//go:generate go run ./gen -schemas schemas -bindings ../../third_party/spacedatastandards-go -out schema_embed_bindings_test.go

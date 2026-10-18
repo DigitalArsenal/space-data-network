@@ -17,6 +17,20 @@ package storage
 // Everything past the stop point still travels in `_data`, which is the
 // whole record.
 const engineStandardCatalogGraph = `
+  table ABA {
+    ENTRY_ID:string;
+    NODE_PEER_ID:string;
+    PUBLIC_KEY:[ubyte];
+    SIGNATURE_ALGORITHM:string;
+    PROFILE_BYTES:[ubyte];
+    PROFILE_SHA256:[ubyte];
+    VISIBILITY:byte;
+    CREATED_AT:uint64;
+    UPDATED_AT:uint64;
+    DELETED:bool;
+    NOTE:string;
+    SIGNATURE:[ubyte];
+  }
   table ACI {
     ACI_ID:string;
     NAME:string;
@@ -94,6 +108,27 @@ const engineStandardCatalogGraph = `
     WEIGHT_ON_WHEELS:ubyte;
     RESERVED:ubyte;
   }
+  table ACT {
+    ACCOUNT_ID:string;
+    KIND:byte;
+    XPUB:string;
+    XPUB_FINGERPRINT:string;
+    NAME:string;
+    TRUST_LEVEL:byte;
+    SIGNING_PUBLIC_KEY:string;
+    EPM_CID:string;
+    PEER_ID:string;
+    CREATED_AT:int64;
+    LAST_SEEN:int64;
+    EXPIRES_AT:int64;
+    CHALLENGE_ID:string;
+    CHALLENGE:string;
+    SIGNATURE:[ubyte];
+    SIGNATURE_TYPE:string;
+    EXTERNAL_CHAIN:string;
+    EXTERNAL_ADDRESS:string;
+    LINKED:bool;
+  }
   table ACW {
     REQUEST:ubyte;
   }
@@ -101,6 +136,12 @@ const engineStandardCatalogGraph = `
     CCSDS_AEM_VERS:string;
     CREATION_DATE:string;
     ORIGINATOR:string;
+  }
+  table AGR {
+    KIND:byte;
+    SCHEMA_NAME:string;
+    SQL:string;
+    X_FIELD:string;
   }
   table ANI {
     ID:string;
@@ -154,12 +195,25 @@ const engineStandardCatalogGraph = `
     Q2:double;
     Q3:double;
     QC:double;
+    COMMENT:string;
+    CLASSIFICATION:string;
+    MESSAGE_ID:string;
+    CENTER_NAME:string;
+    TIME_SYSTEM:string;
   }
   table APP {
     ID:string;
     NAME:string;
     VERSION:string;
     DESCRIPTION:string;
+  }
+  table APR {
+    REQUEST_ID:string;
+    RECEIVED_AT_MS:int64;
+    METHOD:ubyte;
+    PATH:string;
+    ROUTE:string;
+    SCHEMA_NAME:string;
   }
   table ARM {
     THICKNESS:double;
@@ -175,6 +229,9 @@ const engineStandardCatalogGraph = `
     NORMAL_Y:double;
     NORMAL_Z:double;
     RESERVED:[ubyte];
+  }
+  table ASG {
+    PROBLEM:ubyte;
   }
   table AST {
     COMMAND:string;
@@ -289,6 +346,14 @@ const engineStandardCatalogGraph = `
     EPOCH:string;
     TIME_FROM_LAUNCH:double;
   }
+  table BPF {
+    PROFILE_ID:string;
+    NAME:string;
+    DESCRIPTION:string;
+    CREATED_AT:string;
+    UPDATED_AT:string;
+    TEMPLATE_SHA256:string;
+  }
   table BSP {
     INTERPOLATION_REQUEST:ubyte;
   }
@@ -328,7 +393,7 @@ const engineStandardCatalogGraph = `
     NORAD_CAT_ID:uint;
     OBJECT_TYPE:byte;
     OPS_STATUS_CODE:byte;
-    OWNER:byte;
+    OWNER:ubyte;
     LAUNCH_DATE:string;
     LAUNCH_SITE:string;
     DECAY_DATE:string;
@@ -414,6 +479,21 @@ const engineStandardCatalogGraph = `
     APID:string;
     SID:string;
     OWNER:string;
+  }
+  table CLM {
+    CLAIM_ID:string;
+    CLAIMANT_PEER_ID:string;
+    CLAIMANT_PROFILE_CID:string;
+    OBJECT_KIND:byte;
+    OBJECT_ID:string;
+    OBJECT_NAME:string;
+    ROLE:byte;
+    STATEMENT:string;
+    EVIDENCE_URL:string;
+    CREATED_AT:uint64;
+    UPDATED_AT:uint64;
+    DELETED:bool;
+    SIGNATURE:[ubyte];
   }
   table CLT {
     PDU_TYPE:byte;
@@ -595,6 +675,10 @@ const engineStandardCatalogGraph = `
   table CSM {
     OBJECT_1:ubyte;
   }
+  table CSO {
+    ID:string;
+    NAME:string;
+  }
   table CTR {
     ID:string;
     NAME:string;
@@ -628,6 +712,22 @@ const engineStandardCatalogGraph = `
     GENERATION:uint64;
     SUPERSEDES_COVERAGE_ID:string;
   }
+  table CVR {
+    RULE:byte;
+    MODEL_ID:string;
+    REGIME:string;
+    AGE_DAYS:double;
+    HORIZON_DAYS:double;
+    MEASURED_LINEAGE:string;
+    TEST_WINDOW:string;
+    MEAN_D2_OVER_3:double;
+    COVERAGE_95:double;
+    SAMPLES:uint;
+    OBJECTS:uint;
+    SCALE_FACTOR:double;
+    CALIBRATION:byte;
+    EVIDENCE:string;
+  }
   table CZM {
     NAME:string;
     VERSION:string;
@@ -636,6 +736,37 @@ const engineStandardCatalogGraph = `
     CLOCK_MULTIPLIER:double;
     CLOCK_RANGE:string;
     CLOCK_STEP:string;
+  }
+  table DAV {
+    STANDARD:string;
+    SCHEMA_NAME:string;
+    PROVIDER_ID:string;
+    SOURCE_NAME:string;
+    KNOWN:bool;
+    AVAILABLE:bool;
+    UNAVAILABLE_REASON:ubyte;
+    SELF_PUBLISHED:bool;
+    PINNED:bool;
+    FRESH:bool;
+    BATCH_ID:string;
+    RECORD_COUNT:uint64;
+    BYTE_COUNT:uint64;
+    PARTS:uint32;
+    PUBLISHED_AT_MS:int64;
+    PNM_CID:string;
+    PNM_FILE_ID:string;
+    PNM_PUBLISHED_AT_MS:int64;
+    PNM_SIGNATURE_VERIFIED:bool;
+    PUBLISHER_PEER_ID:string;
+    ETAG:string;
+    BODY_REF_TOKEN:uint64;
+    BODY_REF_SIZE:uint64;
+  }
+  table DCL {
+    ID:string;
+    CREATED_AT_MS:int64;
+    PRODUCER:string;
+    PRODUCT:ubyte;
   }
   table DFH {
     ID:string;
@@ -968,6 +1099,9 @@ const engineStandardCatalogGraph = `
     JOB_TITLE:string;
     OCCUPATION:string;
   }
+  table ERM {
+    STRATA_SETTINGS:ubyte;
+  }
   table ESL {
     LINK_KEY:string;
     ENTITY_ID:string;
@@ -1009,12 +1143,38 @@ const engineStandardCatalogGraph = `
     HAS_GP:bool;
     RESERVED:[ubyte];
   }
+  table ETS {
+    TRACK_ID:string;
+    SEGMENT_SEQ:uint32;
+    TRACK_CLOSED:bool;
+  }
+  table EVL {
+    LOCATION_REQUEST:ubyte;
+  }
   table EWR {
     SYSTEM_ID:uint;
     ENTITY_ID:uint;
     ESM_ACTIVE:bool;
     ECM_ACTIVE:bool;
     RWR_ACTIVE:bool;
+  }
+  table EXO {
+    PL_NAME:string;
+    HOSTNAME:string;
+    GAIA_DR3_ID:string;
+    SIMBAD_ID:string;
+  }
+  table FCK {
+    SELF_OFFSET:ulong;
+    PREVIOUS:ulong;
+    FEED_ID:uint;
+    TYPE:string;
+    PROVIDER:string;
+    SOURCE:string;
+    GENERATION:uint;
+    COMMITTED_AT:long;
+    APPLIED_THROUGH:ulong;
+    TYPE_SEQ_HIGH:ulong;
   }
   table FCS {
     MODE:ubyte;
@@ -1028,6 +1188,27 @@ const engineStandardCatalogGraph = `
     ROUNDS_REMAINING:ushort;
     TEMPERATURE:float;
     RESERVED:[ubyte];
+  }
+  table FIL {
+    PATH:string;
+    NAME:string;
+    KIND:ubyte;
+    MEDIA_TYPE:string;
+    SIZE:uint64;
+    CREATED_AT_MS:int64;
+    MODIFIED_AT_MS:int64;
+    DIGEST_ALGORITHM:ubyte;
+    DIGEST:[ubyte];
+    CONTENT:[ubyte];
+    APPEND:bool;
+    WRITTEN_AT_MS:int64;
+  }
+  table FMB {
+    SELF_OFFSET:ulong;
+    PREVIOUS:ulong;
+    FEED_ID:uint;
+    COMMITTED_AT:long;
+    TYPE_SEQ_HIGH:ulong;
   }
   table FPC {
     GRAPH_DEFINITION:ubyte;
@@ -1047,6 +1228,16 @@ const engineStandardCatalogGraph = `
     FILE_IDENTIFIER:string;
     DATA:[ubyte];
     SHA256:[ubyte];
+  }
+  table FSG {
+    SELF_OFFSET:ulong;
+    PREVIOUS:ulong;
+    FEED_ID:uint;
+    KIND:ubyte;
+    LEVEL:ubyte;
+    MIN_SEQ:ulong;
+    MAX_SEQ:ulong;
+    COVERS_THROUGH:ulong;
   }
   table FSM {
     MESSAGE_ID:string;
@@ -1077,6 +1268,26 @@ const engineStandardCatalogGraph = `
     STREAM_ID:string;
     SCHEMA_CODE:string;
     SCHEMA_HASH:[ubyte];
+  }
+  table GCT {
+    FIELD_ID:string;
+    TILING:byte;
+    LEVEL:uint8;
+    X:uint32;
+    Y:uint32;
+    CHILD_MASK:uint8;
+    MAX_LEVEL:uint8;
+    REFINE:byte;
+    GEOMETRIC_ERROR_M:float;
+    WEST_RAD:double;
+    SOUTH_RAD:double;
+    EAST_RAD:double;
+    NORTH_RAD:double;
+    MIN_HEIGHT_M:double;
+    MAX_HEIGHT_M:double;
+    ORIGIN_LON_RAD:double;
+    ORIGIN_LAT_RAD:double;
+    ORIGIN_HEIGHT_M:double;
   }
   table GDI {
     ID:string;
@@ -1133,6 +1344,10 @@ const engineStandardCatalogGraph = `
   }
   table GJN {
     FEATURES:ubyte;
+  }
+  table GLX {
+    ID:string;
+    NAME:string;
   }
   table GNO {
     ID:string;
@@ -1437,7 +1652,7 @@ const engineStandardCatalogGraph = `
     STEP_SIZE:double;
   }
   table LCC {
-    OWNER:byte;
+    OWNER:ubyte;
     NAME:string;
     DESCRIPTION:string;
     ACTIVE:bool;
@@ -1471,6 +1686,9 @@ const engineStandardCatalogGraph = `
   }
   table LDM {
     SITE:ubyte;
+  }
+  table LFV {
+    VIEW:string;
   }
   table LGR {
     MESSAGE_TYPE:byte;
@@ -1634,6 +1852,9 @@ const engineStandardCatalogGraph = `
     bundle_version:uint16;
     module_format:string;
   }
+  table MDE {
+    DETECT_OPTIONS:ubyte;
+  }
   table MDP {
     PROBLEM_ID:string;
     NAME:string;
@@ -1727,6 +1948,15 @@ const engineStandardCatalogGraph = `
     MEAN_ANOMALY:double;
     BSTAR:double;
     MEAN_ELEMENT_THEORY:byte;
+  }
+  table MPL {
+    ID:string;
+    CREATED_AT_MS:int64;
+    PLANNER:string;
+    PROBLEM:ubyte;
+    PLAN_EPOCH_MS:int64;
+    OBJECT_ID:string;
+    TARGET_OBJECT_ID:string;
   }
   table MSL {
     POSITION_X:double;
@@ -1869,6 +2099,37 @@ const engineStandardCatalogGraph = `
     ORIGINATOR:string;
     INTERNAL_FILE_NAME:string;
   }
+  table NDS {
+    GENERATED_AT:int64;
+  }
+  table NEV {
+    NODE_ID:string;
+    GENERATED_AT_MS:int64;
+  }
+  table NHS {
+    NODE_ID:string;
+    GENERATED_AT_MS:int64;
+    STARTED_AT_MS:int64;
+    UPTIME_S:uint64;
+    SERVICE_STATE:ubyte;
+    SERVICE_MODE:string;
+    SOFTWARE_VERSION:string;
+    STORAGE_PATH:string;
+    STORE_TOTAL_RECORDS:uint64;
+    STORE_TOTAL_BYTES:uint64;
+    HAS_DISK:bool;
+    DISK_CAPACITY_BYTES:uint64;
+    DISK_FREE_BYTES:uint64;
+    DISK_AVAILABLE_BYTES:uint64;
+    HAS_NETWORK:bool;
+    TOTAL_IN_BYTES:uint64;
+    TOTAL_OUT_BYTES:uint64;
+    RATE_IN_BPS:double;
+    RATE_OUT_BPS:double;
+  }
+  table NST {
+    NODES:ubyte;
+  }
   table NUM {
     ROOT_SOLVE_REQUEST:ubyte;
   }
@@ -1934,11 +2195,34 @@ const engineStandardCatalogGraph = `
   table OCM {
     HEADER:ubyte;
   }
+  table ODR {
+    RUN_ID:string;
+    STARTED_AT:string;
+    COMPLETED_AT:string;
+  }
   table OEM {
     CLASSIFICATION:string;
     CCSDS_OEM_VERS:double;
     CREATION_DATE:string;
     ORIGINATOR:string;
+  }
+  table OIL {
+    PROVIDER:string;
+    KIND:string;
+    LEFT_NAMESPACE:string;
+    RIGHT_NAMESPACE:string;
+    HEADER:string;
+    SHA256:string;
+    BYTES:uint64;
+    ROWS:uint32;
+    DUPLICATE_LINES:uint32;
+    LINK_COUNT:uint32;
+    CLEAN_COUNT:uint32;
+    AMBIGUOUS_COUNT:uint32;
+    LEFT_ID_COUNT:uint32;
+    RIGHT_ID_COUNT:uint32;
+    DATES_DIFFER_COUNT:uint32;
+    UNREADABLE_DATE_COUNT:uint32;
   }
   table OOA {
     ID:string;
@@ -2159,6 +2443,11 @@ const engineStandardCatalogGraph = `
     SOLAR_RAD_COEFF:double;
     DRAG_AREA:double;
     DRAG_COEFF:double;
+    COMMENT:string;
+    CLASSIFICATION:string;
+    MESSAGE_ID:string;
+    REF_FRAME_EPOCH:string;
+    COV_REF_FRAME:string;
   }
   table OPP {
     ID:string;
@@ -2330,8 +2619,17 @@ const engineStandardCatalogGraph = `
     SIGNATURE_TYPE:string;
     TIMESTAMP_SIGNATURE_TYPE:string;
   }
+  table PNV {
+    VERIFIER_PEER_ID:string;
+    GENERATED_AT_MS:int64;
+  }
   table PPE {
     COMMENT:ubyte;
+  }
+  table PPS {
+    RUN_ID:string;
+    CREATED_AT_MS:int64;
+    PROVIDER:string;
   }
   table PRG {
     NAME:string;
@@ -2342,6 +2640,10 @@ const engineStandardCatalogGraph = `
   }
   table PRW {
     INIT:ubyte;
+  }
+  table PSS {
+    SOLUTION_SET_ID:string;
+    PROBLEM_ID:string;
   }
   table PUR {
     REQUEST_ID:string;
@@ -2397,6 +2699,17 @@ const engineStandardCatalogGraph = `
     ENCODING:byte;
     NORMALIZATION:byte;
     VOCAB_SIZE:uint32;
+  }
+  table QRP {
+    KIND:byte;
+    STATUS:byte;
+    ERROR_CODE:string;
+    MESSAGE:string;
+    RETRY_AFTER_MS:uint32;
+    SCHEMA_NAME:string;
+    FILE_IDENTIFIER:string;
+    SQL:string;
+    SEARCH:string;
   }
   table RAF {
     PDU_TYPE:byte;
@@ -2689,10 +3002,23 @@ const engineStandardCatalogGraph = `
   table RHD {
     schema_type:string;
   }
+  table RND {
+    LENGTH:uint32;
+    BYTES:[ubyte];
+    SOURCE:ubyte;
+    GENERATED_AT_MS:int64;
+    GENERATOR_ID:string;
+    SEQUENCE:uint64;
+    SEED:[ubyte];
+  }
   table ROC {
     NAME:string;
     FAMILY:string;
     VARIANT:string;
+  }
+  table RPC {
+    VERSION:ubyte;
+    DIRECTION:byte;
   }
   table RPT {
     REPORT_ID:string;
@@ -2787,6 +3113,9 @@ const engineStandardCatalogGraph = `
     SENLON_END:double;
     TRANSACTION_ID:string;
   }
+  table SBC {
+    REQUEST:ubyte;
+  }
   table SBD {
     NUMBER:uint;
     DESIGNATION:string;
@@ -2862,6 +3191,9 @@ const engineStandardCatalogGraph = `
   }
   table SCN {
     SCENARIO_ID:string;
+  }
+  table SCR {
+    BLOCK:ubyte;
   }
   table SCV {
     ENVELOPE_KIND:ubyte;
@@ -2971,6 +3303,27 @@ const engineStandardCatalogGraph = `
     SENY:double;
     SENZ:double;
   }
+  table SKQ {
+    QUERY_ID:string;
+    QUERY_KIND:ubyte;
+    EPOCH_JD_TT:double;
+    EPOCH_JD_TT_FRACTION:double;
+    OBSERVER_ID:string;
+  }
+  table SKR {
+    QUERY_ID:string;
+    QUERY_KIND:ubyte;
+    STATUS:ubyte;
+    MESSAGE:string;
+    EPOCH_JD_TT:double;
+    EPOCH_JD_TT_FRACTION:double;
+    PLACE:ubyte;
+    ROW_COUNT:uint32;
+    ROWS_ADDED:uint32;
+    REJECTED_COUNT:uint32;
+    BAND_COUNT:uint32;
+    MATCHED_COUNT:uint32;
+  }
   table SKT {
     LAYER_ID:string;
     FRAME:ubyte;
@@ -2995,6 +3348,13 @@ const engineStandardCatalogGraph = `
     COLOR_ENCODING:ubyte;
     COLOR_BLUE_BAND_ID:string;
     COLOR_RED_BAND_ID:string;
+  }
+  table SLP {
+    PROBLEM_ID:string;
+    NAME:string;
+    KIND:ubyte;
+    PROPAGATOR_PORT_ID:string;
+    OBJECTIVE_EVALUATOR_PORT_ID:string;
   }
   table SNR {
     TYPE:ubyte;
@@ -3107,6 +3467,13 @@ const engineStandardCatalogGraph = `
     F107_OBS_LAST81:float;
     F107_ADJ_CENTER81:float;
     F107_ADJ_LAST81:float;
+  }
+  table SRG {
+    REGISTRY_ID:string;
+    UPSTREAM_REPOSITORY:string;
+    UPSTREAM_REVISION:string;
+    REGISTRY_PATH:string;
+    GENERATED_AT_MS:int64;
   }
   table SRI {
     RECORD_KEY:string;
@@ -3251,6 +3618,12 @@ const engineStandardCatalogGraph = `
     ALIGNMENT:uint;
     WIRE_FORMAT:ubyte;
   }
+  table TBP {
+    ID:string;
+    CREATED_AT_MS:int64;
+    PRODUCER:string;
+    PROBLEM:ubyte;
+  }
   table TCF {
     VERSION:ubyte;
     BYPASS_FLAG:bool;
@@ -3261,6 +3634,21 @@ const engineStandardCatalogGraph = `
     FRAME_SEQUENCE_NUM:ubyte;
     DATA:[ubyte];
     FECF:ushort;
+  }
+  table TCT {
+    STORM_ID:string;
+    STORM_NAME:string;
+    BASIN:byte;
+    TRACK_KIND:byte;
+    TRACK_ORIGIN:byte;
+    MODEL_CLASS:byte;
+    MODEL_ID:string;
+    MODEL_VERSION:string;
+    INIT_TIME_MS:uint64;
+    MEMBER_KIND:byte;
+    MEMBER_INDEX:uint16;
+    ENSEMBLE_SIZE:uint16;
+    WIND_AVERAGING_PERIOD_S:uint16;
   }
   table TDM {
     OBSERVER_ID:string;
@@ -3364,6 +3752,9 @@ const engineStandardCatalogGraph = `
     DELETED:bool;
     PROVIDER_PEER_ID:string;
     PROVIDER_SIGNATURE:[ubyte];
+  }
+  table TRH {
+    ANTENNAS:ubyte;
   }
   table TRK {
     ID:string;
@@ -3475,6 +3866,11 @@ const engineStandardCatalogGraph = `
   table VST {
     CAMERA:ubyte;
   }
+  table WHA {
+    ATTESTATION_ID:string;
+    SUBJECT_ID:string;
+    PURPOSE:string;
+  }
   table WKS {
     WORKSPACE_ID:string;
     NAME:string;
@@ -3537,6 +3933,9 @@ const engineStandardCatalogGraph = `
     TEMPORAL_KIND:byte;
     ACCUMULATION_HOURS:float;
   }
+  table XMT {
+    MATCH_REQUEST:ubyte;
+  }
   table XTC {
     NAME:string;
     SHORT_DESCRIPTION:string;
@@ -3551,18 +3950,23 @@ const engineStandardCatalogGraph = `
 // the schema — so this map and engineStandardCatalogGraph are generated
 // together and can never disagree.
 var engineGeneratedStandardBindings = map[string]engineRoutedSchema{
+	"ABA.fbs":  {Table: "ABA", FileID: "$ABA"},
 	"ACI.fbs":  {Table: "ACI", FileID: "$ACI"},
 	"ACL.fbs":  {Table: "ACL", FileID: "$ACL"},
 	"ACM.fbs":  {Table: "ACM", FileID: "$ACM"},
 	"ACR.fbs":  {Table: "ACR", FileID: "$ACR"},
+	"ACT.fbs":  {Table: "ACT", FileID: "$ACT"},
 	"ACW.fbs":  {Table: "ACW", FileID: "$ACW"},
 	"AEM.fbs":  {Table: "AEM", FileID: "$AEM"},
+	"AGR.fbs":  {Table: "AGR", FileID: "$AGR"},
 	"ANI.fbs":  {Table: "ANI", FileID: "$ANI"},
 	"AOF.fbs":  {Table: "AOF", FileID: "$AOF"},
 	"APL.fbs":  {Table: "APL", FileID: "$APL"},
 	"APM.fbs":  {Table: "APM", FileID: "$APM"},
 	"APP.fbs":  {Table: "APP", FileID: "$APP"},
+	"APR.fbs":  {Table: "APR", FileID: "$APR"},
 	"ARM.fbs":  {Table: "ARM", FileID: "$ARM"},
+	"ASG.fbs":  {Table: "ASG", FileID: "$ASG"},
 	"AST.fbs":  {Table: "AST", FileID: "$AST"},
 	"ATD.fbs":  {Table: "ATD", FileID: "$ATD"},
 	"ATM.fbs":  {Table: "ATM", FileID: "$ATM"},
@@ -3571,6 +3975,7 @@ var engineGeneratedStandardBindings = map[string]engineRoutedSchema{
 	"BEM.fbs":  {Table: "BEM", FileID: "$BEM"},
 	"BMC.fbs":  {Table: "BMC", FileID: "$BMC"},
 	"BOV.fbs":  {Table: "BOV", FileID: "$BOV"},
+	"BPF.fbs":  {Table: "BPF", FileID: "$BPF"},
 	"BSP.fbs":  {Table: "BSP", FileID: "$BSP"},
 	"BUS.fbs":  {Table: "BUS", FileID: "$BUS"},
 	"CAQ.fbs":  {Table: "CAQ", FileID: "$CAQ"},
@@ -3580,6 +3985,7 @@ var engineGeneratedStandardBindings = map[string]engineRoutedSchema{
 	"CES.fbs":  {Table: "CES", FileID: "$CES"},
 	"CFP.fbs":  {Table: "CFP", FileID: "$CFP"},
 	"CHN.fbs":  {Table: "CHN", FileID: "$CHN"},
+	"CLM.fbs":  {Table: "CLM", FileID: "$CLM"},
 	"CLT.fbs":  {Table: "CLT", FileID: "$CLT"},
 	"CMR.fbs":  {Table: "CMR", FileID: "$CMR"},
 	"CMS.fbs":  {Table: "CMS", FileID: "$CMS"},
@@ -3592,10 +3998,14 @@ var engineGeneratedStandardBindings = map[string]engineRoutedSchema{
 	"CRD.fbs":  {Table: "CRD", FileID: "$CRD"},
 	"CRM.fbs":  {Table: "CRM", FileID: "$CRM"},
 	"CSM.fbs":  {Table: "CSM", FileID: "$CSM"},
+	"CSO.fbs":  {Table: "CSO", FileID: "$CSO"},
 	"CTR.fbs":  {Table: "CTR", FileID: "$CTR"},
 	"CVG.fbs":  {Table: "CVG", FileID: "$CVG"},
 	"CVP.fbs":  {Table: "CVP", FileID: "$CVP"},
+	"CVR.fbs":  {Table: "CVR", FileID: "$CVR"},
 	"CZM.fbs":  {Table: "CZM", FileID: "$CZM"},
+	"DAV.fbs":  {Table: "DAV", FileID: "$DAV"},
+	"DCL.fbs":  {Table: "DCL", FileID: "$DCL"},
 	"DFH.fbs":  {Table: "DFH", FileID: "$DFH"},
 	"DMG.fbs":  {Table: "DMG", FileID: "$DMG"},
 	"DOA.fbs":  {Table: "DOA", FileID: "$DOA"},
@@ -3612,20 +4022,30 @@ var engineGeneratedStandardBindings = map[string]engineRoutedSchema{
 	"EOP.fbs":  {Table: "EOP", FileID: "$EOP"},
 	"EPF.fbs":  {Table: "EPF", FileID: "$EPF"},
 	"EPM.fbs":  {Table: "EPM", FileID: "$EPM"},
+	"ERM.fbs":  {Table: "ERM", FileID: "$ERM"},
 	"ESL.fbs":  {Table: "ESL", FileID: "$ESL"},
 	"ETM.fbs":  {Table: "ETM", FileID: "$ETM"},
+	"ETS.fbs":  {Table: "ETS", FileID: "$ETS"},
+	"EVL.fbs":  {Table: "EVL", FileID: "$EVL"},
 	"EWR.fbs":  {Table: "EWR", FileID: "$EWR"},
+	"EXO.fbs":  {Table: "EXO", FileID: "$EXO"},
+	"FCK.fbs":  {Table: "FCK", FileID: "$FCK"},
 	"FCS.fbs":  {Table: "FCS", FileID: "$FCS"},
+	"FIL.fbs":  {Table: "FIL", FileID: "$FIL"},
+	"FMB.fbs":  {Table: "FMB", FileID: "$FMB"},
 	"FPC.fbs":  {Table: "FPC", FileID: "$FPC"},
 	"FRM.fbs":  {Table: "FRM", FileID: "$FRM"},
 	"FSB.fbs":  {Table: "FSB", FileID: "$FSB"},
+	"FSG.fbs":  {Table: "FSG", FileID: "$FSG"},
 	"FSM.fbs":  {Table: "FSM", FileID: "$FSM"},
 	"FSO.fbs":  {Table: "FSO", FileID: "$FSO"},
 	"FSP.fbs":  {Table: "FSP", FileID: "$FSP"},
+	"GCT.fbs":  {Table: "GCT", FileID: "$GCT"},
 	"GDI.fbs":  {Table: "GDI", FileID: "$GDI"},
 	"GEL.fbs":  {Table: "GEL", FileID: "$GEL"},
 	"GEO.fbs":  {Table: "GEO", FileID: "$GEO"},
 	"GJN.fbs":  {Table: "GJN", FileID: "$GJN"},
+	"GLX.fbs":  {Table: "GLX", FileID: "$GLX"},
 	"GNO.fbs":  {Table: "GNO", FileID: "$GNO"},
 	"GNP.fbs":  {Table: "GNP", FileID: "$GNP"},
 	"GPX.fbs":  {Table: "GPX", FileID: "$GPX"},
@@ -3648,6 +4068,7 @@ var engineGeneratedStandardBindings = map[string]engineRoutedSchema{
 	"LCF.fbs":  {Table: "LCF", FileID: "$LCF"},
 	"LCH.fbs":  {Table: "LCH", FileID: "$LCH"},
 	"LDM.fbs":  {Table: "LDM", FileID: "$LDM"},
+	"LFV.fbs":  {Table: "LFV", FileID: "$LFV"},
 	"LGR.fbs":  {Table: "LGR", FileID: "$LGR"},
 	"LKS.fbs":  {Table: "LKS", FileID: "$LKS"},
 	"LMO.fbs":  {Table: "LMO", FileID: "$LMO"},
@@ -3658,6 +4079,7 @@ var engineGeneratedStandardBindings = map[string]engineRoutedSchema{
 	"LPF.fbs":  {Table: "LPF", FileID: "$LPF"},
 	"LWK.fbs":  {Table: "LWK", FileID: "$LWK"},
 	"MBL.fbs":  {Table: "MBL", FileID: "$MBL"},
+	"MDE.fbs":  {Table: "MDE", FileID: "$MDE"},
 	"MDP.fbs":  {Table: "MDP", FileID: "$MDP"},
 	"MDS.fbs":  {Table: "MDS", FileID: "$MDS"},
 	"MEM.fbs":  {Table: "MEM", FileID: "$MEM"},
@@ -3666,16 +4088,23 @@ var engineGeneratedStandardBindings = map[string]engineRoutedSchema{
 	"MNF.fbs":  {Table: "MNF", FileID: "$MNF"},
 	"MNV.fbs":  {Table: "MNV", FileID: "$MNV"},
 	"MPE.fbs":  {Table: "MPE", FileID: "$MPE"},
+	"MPL.fbs":  {Table: "MPL", FileID: "$MPL"},
 	"MSL.fbs":  {Table: "MSL", FileID: "$MSL"},
 	"MST.fbs":  {Table: "MST", FileID: "$MST"},
 	"MTI.fbs":  {Table: "MTI", FileID: "$MTI"},
 	"NAV.fbs":  {Table: "NAV", FileID: "$NAV"},
 	"NCD.fbs":  {Table: "NCD", FileID: "$NCD"},
+	"NDS.fbs":  {Table: "NDS", FileID: "$NDS"},
+	"NEV.fbs":  {Table: "NEV", FileID: "$NEV"},
+	"NHS.fbs":  {Table: "NHS", FileID: "$NHS"},
+	"NST.fbs":  {Table: "NST", FileID: "$NST"},
 	"NUM.fbs":  {Table: "NUM", FileID: "$NUM"},
 	"OBD.fbs":  {Table: "OBD", FileID: "$OBD"},
 	"OBT.fbs":  {Table: "OBT", FileID: "$OBT"},
 	"OCM.fbs":  {Table: "OCM", FileID: "$OCM"},
+	"ODR.fbs":  {Table: "ODR", FileID: "$ODR"},
 	"OEM.fbs":  {Table: "OEM", FileID: "$OEM"},
+	"OIL.fbs":  {Table: "OIL", FileID: "$OIL"},
 	"OOA.fbs":  {Table: "OOA", FileID: "$OOA"},
 	"OOB.fbs":  {Table: "OOB", FileID: "$OOB"},
 	"OOD.fbs":  {Table: "OOD", FileID: "$OOD"},
@@ -3705,13 +4134,17 @@ var engineGeneratedStandardBindings = map[string]engineRoutedSchema{
 	"PMM.fbs":  {Table: "PMM", FileID: "$PMM"},
 	"PNL.fbs":  {Table: "PNL", FileID: "$PNL"},
 	"PNM.fbs":  {Table: "PNM", FileID: "$PNM"},
+	"PNV.fbs":  {Table: "PNV", FileID: "$PNV"},
 	"PPE.fbs":  {Table: "PPE", FileID: "$PPE"},
+	"PPS.fbs":  {Table: "PPS", FileID: "$PPS"},
 	"PRG.fbs":  {Table: "PRG", FileID: "$PRG"},
 	"PRR.fbs":  {Table: "PRR", FileID: "$PRR"},
 	"PRW.fbs":  {Table: "PRW", FileID: "$PRW"},
+	"PSS.fbs":  {Table: "PSS", FileID: "$PSS"},
 	"PUR.fbs":  {Table: "PUR", FileID: "$PUR"},
 	"PVN.fbs":  {Table: "PVN", FileID: "$PVN"},
 	"QEM.fbs":  {Table: "QEM", FileID: "$QEM"},
+	"QRP.fbs":  {Table: "QRP", FileID: "$QRP"},
 	"RAF.fbs":  {Table: "RAF", FileID: "$RAF"},
 	"RBK.fbs":  {Table: "RBK", FileID: "$RBK"},
 	"RCF.fbs":  {Table: "RCF", FileID: "$RCF"},
@@ -3727,15 +4160,19 @@ var engineGeneratedStandardBindings = map[string]engineRoutedSchema{
 	"RFO.fbs":  {Table: "RFO", FileID: "$RFO"},
 	"RFS.fbs":  {Table: "RFS", FileID: "$RFS"},
 	"RHD.fbs":  {Table: "RHD", FileID: "$RHD"},
+	"RND.fbs":  {Table: "RND", FileID: "$RND"},
 	"ROC.fbs":  {Table: "ROC", FileID: "$ROC"},
+	"RPC.fbs":  {Table: "RPC", FileID: "$RPC"},
 	"RPT.fbs":  {Table: "RPT", FileID: "$RPT"},
 	"RSD.fbs":  {Table: "RSD", FileID: "$RSD"},
 	"SAR.fbs":  {Table: "SAR", FileID: "$SAR"},
+	"SBC.fbs":  {Table: "SBC", FileID: "$SBC"},
 	"SBD.fbs":  {Table: "SBD", FileID: "$SBD"},
 	"SBM.fbs":  {Table: "SBM", FileID: "$SBM"},
 	"SCC.fbs":  {Table: "SCC", FileID: "$SCC"},
 	"SCM.fbs":  {Table: "SCM", FileID: "$SCM"},
 	"SCN.fbs":  {Table: "SCN", FileID: "$SCN"},
+	"SCR.fbs":  {Table: "SCR", FileID: "$SCR"},
 	"SCV.fbs":  {Table: "SCV", FileID: "$SCV"},
 	"SCX.fbs":  {Table: "SCX", FileID: "$SCX"},
 	"SDF.fbs":  {Table: "SDF", FileID: "$SDF"},
@@ -3748,13 +4185,17 @@ var engineGeneratedStandardBindings = map[string]engineRoutedSchema{
 	"SHW.fbs":  {Table: "SHW", FileID: "$SHW"},
 	"SIT.fbs":  {Table: "SIT", FileID: "$SIT"},
 	"SKI.fbs":  {Table: "SKI", FileID: "$SKI"},
+	"SKQ.fbs":  {Table: "SKQ", FileID: "$SKQ"},
+	"SKR.fbs":  {Table: "SKR", FileID: "$SKR"},
 	"SKT.fbs":  {Table: "SKT", FileID: "$SKT"},
+	"SLP.fbs":  {Table: "SLP", FileID: "$SLP"},
 	"SNR.fbs":  {Table: "SNR", FileID: "$SNR"},
 	"SNW.fbs":  {Table: "SNW", FileID: "$SNW"},
 	"SOI.fbs":  {Table: "SOI", FileID: "$SOI"},
 	"SON.fbs":  {Table: "SON", FileID: "$SON"},
 	"SPP.fbs":  {Table: "SPP", FileID: "$SPP"},
 	"SPW.fbs":  {Table: "SPW", FileID: "$SPW"},
+	"SRG.fbs":  {Table: "SRG", FileID: "$SRG"},
 	"SRI.fbs":  {Table: "SRI", FileID: "$SRI"},
 	"STF.fbs":  {Table: "STF", FileID: "$STF"},
 	"STO.fbs":  {Table: "STO", FileID: "$STO"},
@@ -3764,7 +4205,9 @@ var engineGeneratedStandardBindings = map[string]engineRoutedSchema{
 	"SUB.fbs":  {Table: "SUB", FileID: "$SUB"},
 	"SWR.fbs":  {Table: "SWR", FileID: "$SWR"},
 	"TAB.fbs":  {Table: "TAB", FileID: "$TAB"},
+	"TBP.fbs":  {Table: "TBP", FileID: "$TBP"},
 	"TCF.fbs":  {Table: "TCF", FileID: "$TCF"},
+	"TCT.fbs":  {Table: "TCT", FileID: "$TCT"},
 	"TDM.fbs":  {Table: "TDM", FileID: "$TDM"},
 	"TFN.fbs":  {Table: "TFN", FileID: "$TFN"},
 	"TIM.fbs":  {Table: "TIM", FileID: "$TIM"},
@@ -3775,6 +4218,7 @@ var engineGeneratedStandardBindings = map[string]engineRoutedSchema{
 	"TNR.fbs":  {Table: "TNR", FileID: "$TNR"},
 	"TPN.fbs":  {Table: "TPN", FileID: "$TPN"},
 	"TRE.fbs":  {Table: "TRE", FileID: "$TRE"},
+	"TRH.fbs":  {Table: "TRH", FileID: "$TRH"},
 	"TRK.fbs":  {Table: "TRK", FileID: "$TRK"},
 	"TRN.fbs":  {Table: "TRN", FileID: "$TRN"},
 	"TRP.fbs":  {Table: "TRP", FileID: "$TRP"},
@@ -3786,10 +4230,12 @@ var engineGeneratedStandardBindings = map[string]engineRoutedSchema{
 	"VCM.fbs":  {Table: "VCM", FileID: "$VCM"},
 	"VEP.fbs":  {Table: "VEP", FileID: "$VEP"},
 	"VST.fbs":  {Table: "VST", FileID: "$VST"},
+	"WHA.fbs":  {Table: "WHA", FileID: "$WHA"},
 	"WKS.fbs":  {Table: "WKS", FileID: "$WKS"},
 	"WPN.fbs":  {Table: "WPN", FileID: "$WPN"},
 	"WTH.fbs":  {Table: "WTH", FileID: "$WTH"},
 	"WXF.fbs":  {Table: "WXF", FileID: "$WXF"},
+	"XMT.fbs":  {Table: "XMT", FileID: "$XMT"},
 	"XTC.fbs":  {Table: "XTC", FileID: "$XTC"},
 }
 
@@ -3813,16 +4259,21 @@ var engineUnroutableSchemas = map[string]string{
 // representable first field.
 var engineUnprojectableFirstFields = map[string]string{
 	"ACW.fbs": "REQUEST",
+	"ASG.fbs": "PROBLEM",
 	"BSP.fbs": "INTERPOLATION_REQUEST",
 	"CAQ.fbs": "REQUEST",
 	"CQR.fbs": "PAIR_REQUEST",
 	"CSM.fbs": "OBJECT_1",
+	"ERM.fbs": "STRATA_SETTINGS",
+	"EVL.fbs": "LOCATION_REQUEST",
 	"FPC.fbs": "GRAPH_DEFINITION",
 	"FRM.fbs": "FRAME_TRANSFORM_REQUEST",
 	"GJN.fbs": "FEATURES",
 	"HYP.fbs": "CAT_IDS",
 	"LDM.fbs": "SITE",
+	"MDE.fbs": "DETECT_OPTIONS",
 	"MEM.fbs": "ERROR_MODELS",
+	"NST.fbs": "NODES",
 	"NUM.fbs": "ROOT_SOLVE_REQUEST",
 	"OCM.fbs": "HEADER",
 	"PCE.fbs": "CATALOG",
@@ -3830,13 +4281,17 @@ var engineUnprojectableFirstFields = map[string]string{
 	"PPE.fbs": "COMMENT",
 	"PRW.fbs": "INIT",
 	"RBK.fbs": "RIGID_BODY_REQUEST",
+	"SBC.fbs": "REQUEST",
+	"SCR.fbs": "BLOCK",
 	"SDF.fbs": "CONFIG",
 	"SDR.fbs": "CONFIG",
 	"SHW.fbs": "COMPILE_REQUEST",
 	"SNW.fbs": "BATCH_REQUEST",
+	"TRH.fbs": "ANTENNAS",
 	"TRN.fbs": "SOURCES",
 	"TRS.fbs": "REQUEST",
 	"VST.fbs": "CAMERA",
+	"XMT.fbs": "MATCH_REQUEST",
 }
 
 // enginePinnedSchemas are routed, but their table text lives elsewhere as a

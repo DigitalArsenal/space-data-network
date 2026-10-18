@@ -1,5 +1,5 @@
-// Hash: 295cb82298e6f8e9e61e354f4784f494dafe9ca41b2d8ac1a2d729afb8e5f7a8
-// Version: 1.219.3
+// Hash: 4a0bf99ffff424b8ec0cb31f8572df40cc1a4a798afe3b516397a0d8dbdfa63f
+// Version: 1.219.6
 // -----------------------------------END_HEADER
 include "../FRM/main.fbs";
 include "../TIM/main.fbs";
@@ -272,6 +272,21 @@ enum prwDynamicParameter : ubyte {
 /// under nominal yaw steering, with the mass INITIAL_MASS_KG.
 enum prwRadiationPressureFamily : ubyte { CANNONBALL = 0, GNSS_BOX_WING = 1, NONE = 2 }
 
+/// Earth radiation pressure: the sunlight the Earth reflects (albedo) and the
+/// infrared it emits, pushing on an isotropic (cannonball) spacecraft. KNOCKE
+/// is Knocke, Ries and Tapley (1988, AIAA paper 88-4292): albedo and
+/// emissivity zonal to the second Legendre degree with the annual term of
+/// the first, from the elements of the Earth's surface the spacecraft sees
+/// (as Orekit's KnockeRediffusedForceModel evaluates it).
+enum prwEarthRadiationModel : ubyte { NONE = 0, KNOCKE = 1 }
+
+/// Ocean tide model for the central body's field. FES2004 is IERS
+/// Conventions (2010) section 6.3: the variations of the normalized Stokes
+/// coefficients of the FES2004 waves (the IERS file fes2004_Cnm-Snm.dat,
+/// eq. 6.15) at their Doodson arguments, in the field's Earth-fixed axes.
+/// The ocean pole tide is not included.
+enum prwOceanTideModel : ubyte { NONE = 0, FES2004 = 1 }
+
 /// GNSS spacecraft block, selecting the box-wing surfaces.
 enum prwGnssSpacecraftBlock : ubyte { UNSPECIFIED = 0, GPS_IIR = 1, GPS_IIR_M = 2, GPS_IIF = 3 }
 
@@ -322,7 +337,7 @@ table PRWSpaceWeather {
   KP_INDEX:double = 3;
 }
 
-/// Executable subset currently reachable through HPOP invoke. No implied
+/// Executable subset currently reachable through the FFM module's invoke. No implied
 /// support for coefficients, drag models or bodies the provider cannot supply.
 table PRWForceConfiguration {
   GRAVITY_CHOICE:prwGravitySelection = INFER_FLAGS;
@@ -379,6 +394,23 @@ table PRWForceConfiguration {
   GNSS_BLOCK:prwGnssSpacecraftBlock = UNSPECIFIED;
   /// ECOM2 coefficients; absent means no ECOM2 term.
   ECOM2:PRWEcom2;
+  /// Earth radiation pressure (albedo and infrared). It reads the Sun's
+  /// position from the request's ephemeris source.
+  EARTH_RADIATION:prwEarthRadiationModel = NONE;
+  /// Angular size of the Earth surface elements it sums, degrees.
+  EARTH_RADIATION_RESOLUTION_DEG:double = 15;
+  /// Isotropic Cr*A/m, m2/kg, the Earth's radiation acts on. Absent, it is the
+  /// cannonball's REFLECTIVITY_COEFFICIENT * AREA_M2 / INITIAL_MASS_KG, and
+  /// fitting SRP_AREA_OVER_MASS scales both.
+  EARTH_RADIATION_AREA_OVER_MASS_M2_KG:double;
+  /// True when EARTH_RADIATION_AREA_OVER_MASS_M2_KG carries a value; false means absent.
+  HAS_EARTH_RADIATION_AREA_OVER_MASS_M2_KG:bool = false;
+  /// Ocean tides. Their field is Earth-fixed, so a provider needs Earth
+  /// orientation (PRW.EARTH_ORIENTATION) to apply them.
+  OCEAN_TIDES:prwOceanTideModel = NONE;
+  /// Truncation of the ocean tide field.
+  OCEAN_TIDE_MAXIMUM_DEGREE:ushort = 30;
+  OCEAN_TIDE_MAXIMUM_ORDER:ushort = 30;
 }
 
 /// Row-major square matrix on [x,y,z,vx,vy,vz,(mass)], then the execution
@@ -725,6 +757,81 @@ table PRWVersionResult {
   MODULE_ID:string (required);
 }
 
+/// One propagation window: propagate one source (an element set, an
+/// initialized entity or a resident handle) from START to STOP, sampling at
+/// most STEP_SECONDS apart with the last sample exactly at STOP. The answer is
+/// one $OEM data block per query, in SEQUENCE order, covering [START, STOP];
+/// a provider that cannot answer returns an empty block whose COMMENT begins
+/// "REFUSED" and reports the reason in PRWWindowReport.
+table PRWWindowQuery {
+  /// Position of the query in the request, 0-based; answers keep this order.
+  SEQUENCE:uint;
+  /// 0-based index of the source record among the source records passed
+  /// with the request (e.g. the $OMM element sets, across all frames, in input
+  /// order). Ignored when ENTITY_HANDLE is used.
+  SET_INDEX:uint;
+  /// Entity handle of an initialized or resident source; 0 = use SET_INDEX.
+  ENTITY_HANDLE:uint;
+  /// Object key of the source as the requester names it (e.g. "NORAD:25544");
+  /// the answer block must be of this object.
+  OBJECT_KEY:string;
+  /// NORAD catalog number of the object; 0 = none (then OBJECT_ID identifies
+  /// it).
+  NORAD_CAT_ID:uint;
+  /// International designator or provider object identifier; empty = none.
+  OBJECT_ID:string;
+  /// Epoch of the source record, for reference; absent = not stated.
+  SOURCE_EPOCH:TIMInstant;
+  /// First and last instants of the window (UTC unless TIME_SYSTEM says
+  /// otherwise).
+  START:TIMInstant (required);
+  STOP:TIMInstant (required);
+  /// Largest sample spacing, seconds (> 0).
+  STEP_SECONDS:double;
+}
+
+/// A batch of propagation windows. Existing BATCH_REQUEST propagates every
+/// entity to one EPOCH; a window request propagates each query's source over
+/// its own [START, STOP] at STEP_SECONDS.
+table PRWWindowRequest {
+  QUERIES:[PRWWindowQuery];
+  /// Port of the propagator expected to answer; empty = the host's default.
+  PROPAGATOR_PORT_ID:string;
+  /// Neighbouring source records each window spans on either side (context
+  /// for the requester's replay); 0 = not stated.
+  NEIGHBOUR_SETS:uint;
+  /// Frame the answers should be in, as an RFM name (e.g. "TEME", "GCRF");
+  /// empty = the provider's native frame.
+  TARGET_FRAME:string;
+  /// How to answer, human-readable.
+  INSTRUCTIONS:string;
+}
+
+/// A window the provider refused.
+table PRWWindowRefusal {
+  /// The query's SEQUENCE.
+  SEQUENCE:uint;
+  /// The query's SET_INDEX.
+  SET_INDEX:uint;
+  /// Reason code, e.g. "set-out-of-range", "mean-element-theory-not-sgp4:X",
+  /// "invalid-span", "span-too-long", "sgp4-propagate".
+  REASON:string;
+}
+
+/// Summary of the answers to a window request.
+table PRWWindowReport {
+  /// Queries received, answered and refused.
+  QUERIES:uint;
+  ANSWERED:uint;
+  REFUSED:uint;
+  /// Source records received.
+  SOURCE_RECORDS:uint;
+  REFUSALS:[PRWWindowRefusal];
+  /// The propagator and its configuration, e.g. "SGP4, Vallado, WGS-72,
+  /// opsmode i; TEME, UTC, km and km/s".
+  PROVIDER:string;
+}
+
 /// Exactly one arm per envelope. Existing three arms keep their ordinals.
 table PRW {
   INIT:PRWInit;
@@ -749,6 +856,9 @@ table PRW {
   EARTH_ORIENTATION:PRWEarthOrientation;
   SPACE_WEATHER:PRWSpaceWeatherTable;
   JB2008_INDICES:PRWJB2008IndicesTable;
+  /// Propagation over windows: one $OEM block per query answers it.
+  WINDOW_REQUEST:PRWWindowRequest;
+  WINDOW_REPORT:PRWWindowReport;
 }
 
 root_type PRW;
