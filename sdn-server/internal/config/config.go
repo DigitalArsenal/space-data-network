@@ -884,6 +884,27 @@ type PublishingConfig struct {
 	// Empty (the default) disables the lane entirely.
 	LocalPublishAddr string `yaml:"local_publish_addr"`
 
+	// OpenSchemas are the standards anyone may publish through the single
+	// record route, and read by CID, WITHOUT an account on this node: a record
+	// that carries its own author signature (a shared scenario) needs a node to
+	// hold it, not a node account to vouch for it. Every sessionless open
+	// publish shares one node-wide budget: OpenMaxRecordBytes per record,
+	// OpenPublishesPerMinute, and the DefaultQuotaBytes quota of the one
+	// OpenPublisher identity. Each listed standard's publish and record-read
+	// routes are opened in the access gate. Empty (the default) opens nothing.
+	OpenSchemas []string `yaml:"open_schemas,omitempty"`
+	// OpenMaxRecordBytes caps one open record (default 1 MiB, Kubo's block limit).
+	OpenMaxRecordBytes int `yaml:"open_max_record_bytes,omitempty"`
+	// OpenPublishesPerMinute is the node-wide rate of open publishes (default 30).
+	OpenPublishesPerMinute int `yaml:"open_publishes_per_minute,omitempty"`
+
+	// IPFSSchemas are the standards whose published records this node also
+	// puts in its blockstore as pinned CIDv1 raw blocks (the record CID is the
+	// block CID) and announces to the routing system once, so any IPFS peer
+	// or gateway fetches them by CID. Needs admin.ipfs_api_url (the node's own
+	// Kubo). Empty (the default) keeps published records in the record store.
+	IPFSSchemas []string `yaml:"ipfs_schemas,omitempty"`
+
 	// AutoPublish declares which INGESTED source lanes are republished to the
 	// network as dataset publications, without an operator typing a curl.
 	//

@@ -107,6 +107,58 @@ func PutPinnedRawBlock(ctx context.Context, apiURL string, data []byte) (string,
 	return putRawBlockToLocalBlockstore(ctx, apiURL, data)
 }
 
+// ProvideOnce announces a CID the local blockstore holds to the routing system
+// through Kubo's own `provide once` (the sweep provider queues it for its
+// burst workers). It succeeds once Kubo reports the CID queued.
+func ProvideOnce(ctx context.Context, apiURL, cidValue string) error {
+	apiURL = strings.TrimSpace(apiURL)
+	cidValue = strings.TrimSpace(cidValue)
+	if apiURL == "" || cidValue == "" {
+		return fmt.Errorf("ipfs api url and cid are required")
+	}
+	endpoint, err := url.JoinPath(strings.TrimRight(apiURL, "/"), "/api/v0/provide/once")
+	if err != nil {
+		return fmt.Errorf("build IPFS URL: %w", err)
+	}
+	reqURL, err := url.Parse(endpoint)
+	if err != nil {
+		return fmt.Errorf("parse IPFS URL: %w", err)
+	}
+	reqURL.RawQuery = url.Values{"arg": {cidValue}, "enc": {"json"}}.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL.String(), nil)
+	if err != nil {
+		return fmt.Errorf("create IPFS provide request: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("post IPFS provide: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	if err != nil {
+		return fmt.Errorf("read IPFS provide response: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("IPFS provide failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	if streamErr := strings.TrimSpace(resp.Trailer.Get("X-Stream-Error")); streamErr != "" {
+		return fmt.Errorf("IPFS provide: %s", streamErr)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	for {
+		var event struct {
+			Queued string `json:"Queued"`
+		}
+		if err := decoder.Decode(&event); err != nil {
+			break
+		}
+		if strings.TrimSpace(event.Queued) == cidValue {
+			return nil
+		}
+	}
+	return fmt.Errorf("IPFS provide did not queue %s: %s", cidValue, strings.TrimSpace(string(body)))
+}
+
 func parseBlockPutCID(body []byte) (string, error) {
 	var result struct {
 		Key string `json:"Key"`

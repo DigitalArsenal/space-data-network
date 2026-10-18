@@ -82,6 +82,8 @@ type PublishHandler struct {
 	authHandler  *auth.Handler
 	logService   *logservice.Service
 	policyEngine auth.PolicyEngine // optional; nil = policies disabled
+	blockstore   RecordBlockstore  // optional; nil = records stay in the record store only
+	open         openLane
 }
 
 // NewPublishHandler creates a new publish handler.
@@ -125,9 +127,13 @@ func (h *PublishHandler) RegisterRoutes(mux *http.ServeMux) {
 		}
 	}
 
-	h.registerRoutes(mux, func(next http.HandlerFunc) http.HandlerFunc {
+	protect := func(next http.HandlerFunc) http.HandlerFunc {
 		return h.authHandler.RequireAuth(minTrust, next)
-	})
+	}
+	// The single-record route also serves publishing.open_schemas without a
+	// node session (publish_open.go); batches always need one.
+	mux.HandleFunc(publishPath, h.openOr(protect, h.handlePublish))
+	mux.HandleFunc("/api/v1/data/publish/batch/", protect(h.handlePublishBatch))
 }
 
 // RegisterUnauthenticatedRoutes explicitly mounts publishing for a node whose
@@ -365,13 +371,17 @@ func (h *PublishHandler) handlePublish(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeJSON(w, http.StatusCreated, map[string]interface{}{
+	response := map[string]interface{}{
 		"cid":       cid,
 		"schema":    schema,
 		"stored_at": time.Now().UTC().Format(time.RFC3339),
 		"bytes":     len(data),
 		"envelope":  string(envelope),
-	})
+	}
+	if published := h.publishToIPFS(r.Context(), schema, cid, data); published != nil {
+		response["ipfs"] = published
+	}
+	writeJSON(w, http.StatusCreated, response)
 }
 
 func (h *PublishHandler) handlePublishBatch(w http.ResponseWriter, r *http.Request) {

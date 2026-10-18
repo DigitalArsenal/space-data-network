@@ -1643,7 +1643,11 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			// sign-in use) plus admin.public_paths, minus
 			// admin.public_paths_deny. Everything else on a require_auth node
 			// needs an admin (owner order 2026-09-22).
-			publicGate, gateErr := accessgate.New(accessgate.DefaultPublic, cfg.Admin.PublicPaths, cfg.Admin.PublicPathsDeny)
+			// publishing.open_schemas open their own publish and record-read
+			// routes here (internal/api/publish_open.go); public_paths_deny
+			// still closes them.
+			publicPaths := append(append([]string{}, cfg.Admin.PublicPaths...), api.OpenSchemaPublicPaths(&cfg.Publishing)...)
+			publicGate, gateErr := accessgate.New(accessgate.DefaultPublic, publicPaths, cfg.Admin.PublicPathsDeny)
 			if gateErr != nil {
 				return fmt.Errorf("admin.public_paths: %w", gateErr)
 			}
@@ -1951,7 +1955,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				if store := n.Store(); store != nil {
 					var blockstore api.AccountEPMBlockstore
 					if ipfsAPIURL := strings.TrimSpace(cfg.Admin.IPFSAPIURL); ipfsAPIURL != "" {
-						blockstore = ipfsAccountEPMBlockstore{apiURL: ipfsAPIURL}
+						blockstore = ipfsRecordBlockstore{apiURL: ipfsAPIURL}
 					}
 					accountEPMStore := api.NewAccountEPMStore(store, n.PeerID().String(), blockstore)
 					authHandler.SetAccountEPMServices(n.EPMService(), accountEPMStore)
@@ -2056,6 +2060,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					quotas := api.NewStorageQuotaManager(n.Store(), cfg.Publishing.DefaultQuotaBytes)
 					publishAPI := api.NewPublishHandler(n.Store(), n.Validator(), quotas, &cfg.Publishing, authHandler)
 					publishAPI.SetLogService(n.LogService())
+					publishAPI.SetRecordBlockstore(recordBlockstore(cfg))
 					publishAPI.RegisterRoutes(adminMux)
 					log.Infof("Publish API available at %s://%s/api/v1/data/publish/", adminScheme, adminAddr)
 				}
@@ -2147,6 +2152,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				quotas := api.NewStorageQuotaManager(n.Store(), cfg.Publishing.DefaultQuotaBytes)
 				publishAPI := api.NewPublishHandler(n.Store(), n.Validator(), quotas, &cfg.Publishing, nil)
 				publishAPI.SetLogService(n.LogService())
+				publishAPI.SetRecordBlockstore(recordBlockstore(cfg))
 				publishAPI.RegisterUnauthenticatedRoutes(adminMux, n.PeerID().String())
 				log.Infof("Publish API available without authentication at %s://%s/api/v1/data/publish/", adminScheme, adminAddr)
 			}
