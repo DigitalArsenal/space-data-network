@@ -82,6 +82,9 @@ type flatcField struct {
 	// field carries its UNDERLYING scalar — the same resolution the engine
 	// needs and the generator claims to perform.
 	Type string
+	// StructAlign and StructSize lay out an inline struct field (flatc's
+	// Create<Struct> opens with builder.Prep(align, size)).
+	StructAlign, StructSize int
 }
 
 // flatcRoot is one standard's root table as flatc emitted it.
@@ -321,6 +324,17 @@ func loadFlatcRoot(code string) (*flatcRoot, error) {
 			}
 		case "Struct":
 			field.Kind = flatcStruct
+			structType := strings.TrimPrefix(accessors[name][0], "obj *")
+			rePrep := regexp.MustCompile(`(?m)^func Create` + regexp.QuoteMeta(structType) + `\(builder \*flatbuffers\.Builder[^{]*\{\n\tbuilder\.Prep\((\d+), (\d+)\)`)
+			for _, src := range sources {
+				if m := rePrep.FindStringSubmatch(src); m != nil {
+					field.StructAlign, _ = strconv.Atoi(m[1])
+					field.StructSize, _ = strconv.Atoi(m[2])
+				}
+			}
+			if field.StructSize == 0 {
+				return nil, fmt.Errorf("%s.%s: no Create%s layout in the vendored bindings", code, name, structType)
+			}
 		default:
 			scalar, ok := prependKindToScalar[spec.kind]
 			if !ok {
@@ -645,12 +659,15 @@ func flatcSyntheticRecord(root *flatcRoot, projected int) (want []any, buf []byt
 			b.PrependUOffsetTSlot(f.Slot, off, 0)
 			continue
 		}
-		if f.Kind != flatcScalar {
-			// Only an inline STRUCT reaches here: writing one needs the
-			// struct's own size and alignment, which this oracle does not
-			// parse. No embedded standard declares a struct in its root
-			// table today (TestNoRootTableDeclaresAnInlineStruct pins that),
-			// and leaving a slot unset cannot shift any other slot.
+		if f.Kind == flatcStruct {
+			// An inline struct is written in place, inside the table, with
+			// the layout flatc's Create<Struct> uses; nonzero bytes so a
+			// column that overran its run reads live data.
+			b.Prep(f.StructAlign, f.StructSize)
+			for k := 0; k < f.StructSize; k++ {
+				b.PrependByte(byte(f.Slot+k)%251 + 1)
+			}
+			b.PrependStructSlot(f.Slot, b.Offset(), 0)
 			continue
 		}
 		v := flatcScalarValue(b, f)
@@ -814,26 +831,6 @@ func flatcValueMismatch(db *flatsqlrt.Database, table string, cols []enginecatal
 		}
 	}
 	return problems
-}
-
-// TestNoRootTableDeclaresAnInlineStruct pins the one field kind the oracle
-// cannot WRITE. An inline struct occupies its slot directly, so building one
-// needs the struct's size and alignment; no embedded standard declares one in
-// a routed root table today, and if that changes the synthetic records would
-// silently leave that slot empty and weaken every value assertion after it.
-func TestNoRootTableDeclaresAnInlineStruct(t *testing.T) {
-	catalog, err := enginecatalog.Build(embeddedSchemaDir, enginecatalog.PinnedSchemas)
-	if err != nil {
-		t.Fatalf("build catalog: %v", err)
-	}
-	for _, root := range loadFlatcOracle(t, catalog.Bindings) {
-		for _, f := range root.Fields {
-			if f.Kind == flatcStruct {
-				t.Errorf("%s.%s (slot %d) is an inline struct: teach flatcSyntheticRecord to write it before this lands",
-					root.Code, f.Name, f.Slot)
-			}
-		}
-	}
 }
 
 // TestGeneratedColumnsMatchARecordBuiltWithTheFlatcBuilder anchors the

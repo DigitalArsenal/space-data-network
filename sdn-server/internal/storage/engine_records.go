@@ -301,6 +301,11 @@ const engineRecordSchema = `
     USER_DEFINED_EARTH_MODEL:string;
     USER_DEFINED_EPOCH_TIMESTAMP: double;
     USER_DEFINED_MICROSECONDS: double;
+    CLASSIFICATION:string;
+    MESSAGE_ID:string;
+    USER_DEFINED_PARAMETERS:[OMMUserDefinedParameter];
+    PROVENANCE:PVN;
+    COV_REALISM:CVR;
   }
   root_type OMM;
   file_identifier "$OMM";
