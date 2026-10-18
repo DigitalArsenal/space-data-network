@@ -27,8 +27,9 @@ const installed = join(root, 'sdn-js/node_modules');
 const sds = join(installed, 'spacedatastandards.org');
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const ok = (line) => console.log(`PASS ${line}`);
-const env = { ...process.env, WASMEDGE_DIR: join(process.env.HOME, '.sdn-wasmedge-static-macos-patched/prefix') };
-for (const name of ['CGO_CFLAGS', 'CGO_CXXFLAGS', 'CGO_LDFLAGS']) delete env[name];
+// The build and the node inherit the caller's WasmEdge environment (the gauntlet's, or
+// WASMEDGE_DIR=~/.sdn-wasmedge-static-macos-patched/prefix with the CGO vars unset by hand).
+const env = process.env;
 
 // 1. The pins and the embeds: every published standard, byte for byte.
 assert.equal(JSON.parse(readFileSync(join(sds, 'package.json'))).version.split('+')[0], VERSION);
