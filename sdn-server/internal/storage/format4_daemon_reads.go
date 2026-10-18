@@ -261,6 +261,12 @@ func f4SyncPred(clause string) (format4.Pred, error) {
 func f4RawQuery(typ string, filter RawRecordQuery, cursor bool) (q format4.Query, nothing bool, err error) {
 	q = format4.Query{Type: typ, Peer: strings.TrimSpace(filter.PeerID),
 		Lane: f4Lane(filter.ProviderID, filter.SourceName, filter.BatchID, filter.ProducerPeerID, filter.ProducerPublicKey)}
+	if cursor {
+		q.SeqAfter = max(filter.AfterRowID, 0)
+		if filter.MaxRowID > 0 {
+			q.SeqThrough = filter.MaxRowID
+		}
+	}
 	if c := strings.TrimSpace(filter.CID); c != "" {
 		if !f4CIDStored(c) {
 			return q, true, nil
@@ -274,12 +280,6 @@ func f4RawQuery(typ string, filter RawRecordQuery, cursor bool) (q format4.Query
 		if q.Search, err = fullTextMatchExpression(search); err != nil {
 			return q, false, err
 		}
-		if filter.MaxRowID > 0 {
-			q.SeqThrough = filter.MaxRowID
-		}
-	}
-	if cursor {
-		q.SeqAfter = max(filter.AfterRowID, 0)
 		if filter.MaxRowID > 0 {
 			q.SeqThrough = filter.MaxRowID
 		}
@@ -636,9 +636,8 @@ func f4Plain(q format4.Query) bool {
 		q.Search == "" && q.SeqAfter == 0 && q.SeqThrough == 0
 }
 
-// f4SourceSummaryHead reports a head format 1 reads from its source summary
-// (a tag filter and nothing else): it carries no record timestamp, and its
-// cursor boundary is the type's (rawRecordHeadLocked).
+// f4SourceSummaryHead reports unbounded source-summary metadata: a tag filter
+// and nothing else. Cursor snapshots use their bounded HEAD metadata instead.
 func f4SourceSummaryHead(q format4.Query) bool {
 	return !f4LaneEmpty(q.Lane) && q.CID == "" && q.Peer == "" && len(q.Preds) == 0 && q.Search == ""
 }
@@ -664,17 +663,36 @@ func (b format4Backend) f4Head(filter RawRecordQuery) (format4.Head, format4.Que
 	if err != nil {
 		return format4.Head{}, format4.Query{}, false, err
 	}
-	q, nothing, err := f4RawQuery(typ, filter, false)
-	if err != nil || nothing {
+	q, nothing, err := f4RawQuery(typ, filter, filter.UseRowIDCursor)
+	if err != nil || (nothing && !filter.UseRowIDCursor) {
 		return format4.Head{}, q, nothing, err
 	}
-	if f4Plain(q) {
+	if !nothing && f4Plain(q) {
 		h, err := b.f4TypeHead(typ)
 		return h, q, false, err
 	}
+	if filter.UseRowIDCursor {
+		if q.SeqThrough <= 0 {
+			// Pin the range before counting it. The maintained type summary
+			// supplies the boundary without reading any partition records.
+			h, err := b.f4TypeHead(typ)
+			if err != nil {
+				return format4.Head{}, q, false, err
+			}
+			q.SeqThrough = max(h.MaxSeq, q.SeqAfter)
+		}
+		if nothing || q.SeqAfter >= q.SeqThrough {
+			return format4.Head{MaxSeq: q.SeqThrough}, q, nothing, nil
+		}
+	}
 	h, err := b.d.api().Head(b.d.ctx, q)
 	if errors.Is(err, format4.ErrNoType) {
-		return format4.Head{}, q, false, nil
+		h, err = format4.Head{}, nil
+	}
+	if filter.UseRowIDCursor {
+		// The cursor carries the pinned boundary, including when no record
+		// after it matches the filter. HEAD's max is only the last match.
+		h.MaxSeq = q.SeqThrough
 	}
 	return h, q, false, err
 }
@@ -702,9 +720,9 @@ type f4Snapshot struct {
 // f4SnapKey keeps a raw filter's f4Snapshot (f4Keep).
 type f4SnapKey RawRecordQuery
 
-// RawRecordSnapshot is the count and the head from one HEAD: one committed
-// state (the seq bound and the count of what lies under it). Without a
-// search it is kept while the engine's counters stand (f4Keep).
+// RawRecordSnapshot counts the cursor's remaining range, or the whole filter
+// without a cursor. Its boundary comes from maintained counters before HEAD
+// reads the range. Without a search it is kept while the counters stand.
 func (b format4Backend) RawRecordSnapshot(filter RawRecordQuery) (int64, RawRecordHead, error) {
 	if err := b.closed(); err != nil {
 		return 0, RawRecordHead{}, err
@@ -753,12 +771,10 @@ func (b format4Backend) f4Snapshot(filter RawRecordQuery) (f4Snapshot, error) {
 		// A tag filter's times are its tag instances' (format 1's created_at).
 		head.MaxCreatedAtUnix, head.MaxSourceUpdatedAtUnix = h.MaxAt, h.MaxAt
 	}
-	if f4SourceSummaryHead(q) {
+	if !filter.UseRowIDCursor && f4SourceSummaryHead(q) {
 		// Format 1's source summary has no record timestamp, its times are
 		// its lanes' update times (MAX(updated_at): a DELETE or a CAT
-		// supersede-on-ingest restamps the lanes it leaves, C-39 E5), and a
-		// cursor's boundary is the type's newest seq, the one its pages run
-		// under.
+		// supersede-on-ingest restamps the lanes it leaves, C-39 E5).
 		head.MaxRecordTimestampUnix = 0
 		lanes, err := b.f4Lanes(q.Type)
 		if err != nil {
@@ -773,13 +789,6 @@ func (b format4Backend) f4Snapshot(filter RawRecordQuery) (f4Snapshot, error) {
 		}
 		if met {
 			head.MaxCreatedAtUnix, head.MaxSourceUpdatedAtUnix = updated, updated
-		}
-		if filter.UseRowIDCursor {
-			th, err := b.f4TypeHead(q.Type)
-			if err != nil {
-				return f4Snapshot{}, fmt.Errorf("raw record head failed: %w", err)
-			}
-			head.MaxRowID = th.MaxSeq
 		}
 	}
 	return f4Snapshot{n: h.N, head: head, q: q}, nil
