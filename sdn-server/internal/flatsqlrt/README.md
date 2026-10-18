@@ -213,17 +213,26 @@ threads, their indexer threads, read lanes and the maintenance thread share
 its memory, because the WAL index of every file must live in one linear
 memory.
 
-- npm package: `flatsql@3.7.1` (`https://registry.npmjs.org/flatsql/-/flatsql-3.7.1.tgz`),
-  published by flatsql's `npm-publish.yml` from tag `v3.7.1` with provenance
-- gitHead: `4845fd0176dafa96774b1ad37872128914f7ac43`
-- sha256: `7ae31439a7e79f9063c9c77ad2df5402d9efec063934b6a34d7837e4e56f0b7e`
+- npm package: `flatsql@3.7.2` (`https://registry.npmjs.org/flatsql/-/flatsql-3.7.2.tgz`),
+  published by flatsql's `npm-publish.yml` from tag `v3.7.2` with provenance
+- gitHead: `1b3ae18c00bb7a8917acc3db32b903d6ae8affea`
+- sha256: `7e60aba1d45d6d9d71df50dcb87cd2956f0d8ffae28bafcf786d7630a3b12462`
   (the package's `wasm/integrity.json`; `versioninfo.P4EngineSHA256`, the one pin)
-- 2,936,308 bytes; `wasm32-wasip1-threads`, wasi-sdk 30
+- 2,929,913 bytes; `wasm32-wasip1-threads`, wasi-sdk 30
+- 3.7.2: a write costs what it changes, not what the feed holds. A feed's
+  index transaction keeps only the instances it changes and the dictionary
+  entries it adds (3.7.1 copied the feed's whole instance table and dictionary
+  into every commit round), and a delete reads its seq bounds by rowid (3.7.1
+  scanned the seq index). Every answer is 3.7.1's. On a 15 GB WXF feed of
+  191,331 tile batches (flatsql p4_record_scaling, native): a GFS lead
+  40.1 s -> 5.3 s, a 500-record retention page 0.134 s -> 0.020 s, pages
+  while two leads write 0.237 s -> 0.038 s. Previous: `flatsql@3.7.1`, sha256
+  `7ae31439a7e79f9063c9c77ad2df5402d9efec063934b6a34d7837e4e56f0b7e`.
 - 3.7.1 (CONTRACT C-46/C-47/C-48): EPOCH counts and limited pages push the
   limit down again, full text reads each frame with its size prefix, a type
   with no records reports full text `ready`, epochs outside int64 are clamped,
   an index file an earlier format-4 build wrote is refused (`P4_E_FORMAT`),
-  default soft heap 576 MiB. Previous: `flatsql@3.7.0`, sha256
+  default soft heap 576 MiB. Before it `flatsql@3.7.0`, sha256
   `fe65b36fe8c4d015c25c76e4ccca5bd84c18ffc3cb05b045a2ae85bb3a4dbe21`.
 - The default store format: `SDN_STORE_FORMAT` unset (or `4`, alias
   `sqlite`) runs it, and `1` opts out. Under the default a fresh data
