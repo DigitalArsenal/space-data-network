@@ -17,8 +17,10 @@ import (
 const scanWriteBuffer = 256 << 10
 
 // ScanQuery decodes a $QRP{KIND=Request} into the record-scan query that
-// POST /api/v1/data/scan and the read-chunk op both run. A continuation
-// cursor carries its snapshot, so the next page does not count again.
+// POST /api/v1/data/scan and the read-chunk op both run. SQL is the
+// sync_filter grammar (`NORAD_CAT_ID = 25544 AND EPOCH BETWEEN a AND b`), the
+// same field /api/v1/data/query reads. A continuation cursor carries its
+// snapshot, so the next page does not count again.
 func ScanQuery(q *QRP.QRP) (datasync.QueryRequest, error) {
 	req := datasync.QueryRequest{
 		Schema:         NormalizeSchema(string(q.SCHEMA_NAME())),
@@ -27,6 +29,7 @@ func ScanQuery(q *QRP.QRP) (datasync.QueryRequest, error) {
 		BatchID:        string(q.BATCH_ID()),
 		ProducerPeerID: string(q.PRODUCER_PEER_ID()),
 		PeerID:         string(q.ORIGIN_ID()),
+		SyncFilter:     strings.TrimSpace(string(q.SQL())),
 		Search:         strings.TrimSpace(string(q.SEARCH())),
 		Cursor:         string(q.CURSOR()),
 		ResumeCursor:   string(q.RESUME_CURSOR()),
