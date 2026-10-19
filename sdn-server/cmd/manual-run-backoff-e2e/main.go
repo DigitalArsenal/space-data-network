@@ -243,6 +243,24 @@ func main() {
 		"failed manual run not booked: requests=%d failures=%d reason=%q", requests.Load(), failures, cause)
 	fmt.Printf("PASS failed manual run books its own outcome: 1 consecutive failure (%s)\n", cause)
 
+	// Explicit force runs inside both windows, without changing the ledger on
+	// either failure or success. A subsequent ordinary manual run still defers.
+	last, failures = ledger.AttemptState(gpID)
+	for _, fail := range []bool{true, false} {
+		failing.Store(fail)
+		before := requests.Load()
+		run, err = manager.RunRuntimeModuleScheduleNowWithInput(context.Background(), gpID, gpTrigger, []byte(`{"force":true}`))
+		require(err == nil && run.Status == "ok" && requests.Load() == before+1,
+			"forced manual run (publisher failing=%v): %+v %v requests=%d", fail, run, err, requests.Load())
+		after, afterFailures := ledger.AttemptState(gpID)
+		require(after != nil && after.Equal(*last) && afterFailures == failures && ledger.AttemptFailureReason(gpID) == cause,
+			"forced run changed ledger: last=%v failures=%d reason=%q", after, afterFailures, ledger.AttemptFailureReason(gpID))
+	}
+	run, err = manager.RunRuntimeModuleScheduleNow(context.Background(), gpID, gpTrigger)
+	require(err == nil && run.Status == "deferred" && requests.Load() == 4,
+		"ordinary manual run after force: %+v %v requests=%d", run, err, requests.Load())
+	fmt.Println("PASS forced manual runs bypass both windows and leave attempts, failures and outcomes unchanged")
+
 	// --- 2. A flow that stores nothing is judged by its own result.
 	var expires atomic.Int32
 	var expireFails atomic.Bool
@@ -283,6 +301,6 @@ func main() {
 		"refused retention run: skipped=%v (%s) expires=%d failures=%d reason=%q", skipped, reason, expires.Load(), failures, cause)
 	fmt.Printf("PASS refused retention run still counts: 1 consecutive failure (%s)\n", cause)
 
-	fmt.Printf("MANUAL-RUN-BACKOFF-E2E PASS: 7 scenarios, %d upstream requests, %d retention passes, %s\n",
+	fmt.Printf("MANUAL-RUN-BACKOFF-E2E PASS: 8 scenarios, %d upstream requests, %d retention passes, %s\n",
 		requests.Load(), expires.Load(), time.Since(t0).Round(time.Millisecond))
 }

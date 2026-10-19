@@ -1187,6 +1187,11 @@ func (m *Manager) SaveRuntimeModuleSchedule(ctx context.Context, moduleID, metho
 
 // RunRuntimeModuleScheduleNow executes a provider schedule method immediately.
 func (m *Manager) RunRuntimeModuleScheduleNow(ctx context.Context, moduleID, methodID string) (RuntimeModuleScheduleRun, error) {
+	return m.RunRuntimeModuleScheduleNowWithInput(ctx, moduleID, methodID, nil)
+}
+
+// RunRuntimeModuleScheduleNowWithInput passes the operator's payload to the schedule.
+func (m *Manager) RunRuntimeModuleScheduleNowWithInput(ctx context.Context, moduleID, methodID string, input []byte) (RuntimeModuleScheduleRun, error) {
 	if m == nil {
 		return RuntimeModuleScheduleRun{}, errors.New("plugin manager is nil")
 	}
@@ -1215,7 +1220,7 @@ func (m *Manager) RunRuntimeModuleScheduleNow(ctx context.Context, moduleID, met
 		Status:    "running",
 	}
 	log.Infof("Plugin %q manual run %q start", moduleID, methodID)
-	output, err := cp.InvokeCron(WithManualRun(ctx), methodID, nil)
+	output, err := cp.InvokeCron(WithManualRun(ctx), methodID, input)
 	run.FinishedAt = time.Now().UTC().Format(time.RFC3339)
 	var deferred *DeferredError
 	if errors.As(err, &deferred) {

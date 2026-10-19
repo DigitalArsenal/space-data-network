@@ -5213,7 +5213,12 @@ func handleModuleRuntimeMutation(mgr *plugins.Manager) http.HandlerFunc {
 					return
 				}
 				methodID := strings.TrimSuffix(key, "/run")
-				run, err := mgr.RunRuntimeModuleScheduleNow(r.Context(), moduleID, methodID)
+				input, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+				if err != nil {
+					http.Error(w, "invalid schedule input: "+err.Error(), http.StatusBadRequest)
+					return
+				}
+				run, err := mgr.RunRuntimeModuleScheduleNowWithInput(r.Context(), moduleID, methodID, input)
 				if err != nil {
 					http.Error(w, err.Error(), http.StatusBadRequest)
 					return

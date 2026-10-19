@@ -462,7 +462,9 @@ func (sf *ServiceFlow) SetRetrievalGate(gate RetrievalGate) {
 func (sf *ServiceFlow) InvokeCron(ctx context.Context, method string, input []byte) (out []byte, err error) {
 	attempted := false
 	var finishManual func(error)
-	if plugins.ManualRun(ctx) {
+	if cronInvokeForced(input) {
+		// A forced run bypasses both gates and books no attempt or outcome.
+	} else if plugins.ManualRun(ctx) {
 		sf.statsMu.Lock()
 		gate := sf.manualRunGate
 		sf.statsMu.Unlock()
@@ -475,7 +477,7 @@ func (sf *ServiceFlow) InvokeCron(ctx context.Context, method string, input []by
 			}
 		}
 		log.Infof("Flow service %q: trigger %q manual run: failure backoff bypassed (operator intent)", sf.programID, method)
-	} else if !cronInvokeForced(input) {
+	} else {
 		sf.statsMu.Lock()
 		gate := sf.retrievalGate
 		sf.statsMu.Unlock()
