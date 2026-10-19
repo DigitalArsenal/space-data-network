@@ -157,7 +157,7 @@ type SubscriptionsConfig struct {
 	//                    superseded or pinned (default);
 	//   replace-current  each publication replaces the lane's previous
 	//                    batch, so the node holds one current set;
-	//   archive-all      every publication stays and is pinned.
+	//   archive-all      every publication stays (pins follow the pin policy).
 	// CAT has its own built-in default, replace-current (owner 2026-10-06:
 	// "only CAT is replaced"). Standard defaults and per-lane rules are set
 	// with `spacedatanetwork channels retention` or the dashboard ($DSS
@@ -899,8 +899,8 @@ type PublishingConfig struct {
 	OpenPublishesPerMinute int `yaml:"open_publishes_per_minute,omitempty"`
 
 	// IPFSSchemas are the standards whose published records this node also
-	// puts in its blockstore as pinned CIDv1 raw blocks (the record CID is the
-	// block CID) and announces to the routing system once, so any IPFS peer
+	// puts in its blockstore as CIDv1 raw blocks (the record CID is the block
+	// CID; pinned when the node pin policy pins SHARE) and announces to the routing system once, so any IPFS peer
 	// or gateway fetches them by CID. Needs admin.ipfs_api_url (the node's own
 	// Kubo). Empty (the default) keeps published records in the record store.
 	IPFSSchemas []string `yaml:"ipfs_schemas,omitempty"`

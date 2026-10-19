@@ -12,6 +12,7 @@ import (
 	"time"
 
 	ps "github.com/libp2p/go-libp2p-pubsub"
+	"github.com/spacedatanetwork/sdn-server/internal/pinpolicy"
 	"github.com/spacedatanetwork/sdn-server/internal/tor"
 )
 
@@ -99,17 +100,16 @@ type DeliveryConfig struct {
 	WebhookTimeout time.Duration
 	// WebhookRetries is the number of retries for failed webhook calls
 	WebhookRetries int
-	// IPFSAPIEndpoint is the IPFS API endpoint for pinning
-	IPFSAPIEndpoint string
+	// Pins is the node pin policy IPFS deliveries add through.
+	Pins *pinpolicy.Policy
 }
 
 // DefaultDeliveryConfig returns default delivery configuration
 func DefaultDeliveryConfig() DeliveryConfig {
 	return DeliveryConfig{
-		MaxPayloadSize:  1 << 20, // 1MB
-		WebhookTimeout:  30 * time.Second,
-		WebhookRetries:  3,
-		IPFSAPIEndpoint: "http://localhost:5001",
+		MaxPayloadSize: 1 << 20, // 1MB
+		WebhookTimeout: 30 * time.Second,
+		WebhookRetries: 3,
 	}
 }
 
@@ -268,46 +268,23 @@ func (ds *DeliveryService) deliverDirect(ctx context.Context, req *DeliveryReque
 	}, nil
 }
 
-// deliverIPFSPin pins data to IPFS and returns the CID
+// deliverIPFSPin adds data to IPFS through the node pin policy
+// (STOREFRONT) and returns the CID.
 func (ds *DeliveryService) deliverIPFSPin(ctx context.Context, req *DeliveryRequest) (*DeliveryResult, error) {
-	if ds.config.IPFSAPIEndpoint == "" {
-		return nil, fmt.Errorf("IPFS API endpoint not configured")
+	pins := ds.config.Pins.Scope(pinpolicy.Storefront, "")
+	if !pins.Configured() {
+		return nil, fmt.Errorf("IPFS is not configured on this node")
 	}
-
-	// Add data to IPFS via API
-	url := ds.config.IPFSAPIEndpoint + "/api/v0/add"
-	body := bytes.NewReader(req.Data)
-
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, body)
+	added, err := pins.AddBytes(ctx, req.IPFSPinName, req.Data, pinpolicy.AddOptions{CIDv1: true})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create IPFS request: %w", err)
+		return nil, fmt.Errorf("failed to add to IPFS: %w", err)
 	}
-	httpReq.Header.Set("Content-Type", "application/octet-stream")
-
-	resp, err := ds.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed to pin to IPFS: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("IPFS pin failed with status: %d", resp.StatusCode)
-	}
-
-	var ipfsResp struct {
-		Hash string `json:"Hash"`
-		Size string `json:"Size"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&ipfsResp); err != nil {
-		return nil, fmt.Errorf("failed to decode IPFS response: %w", err)
-	}
-
 	return &DeliveryResult{
 		Success:     true,
 		Method:      string(DeliveryIPFSPin),
 		DeliveredAt: time.Now().Unix(),
 		BytesSent:   len(req.Data),
-		CID:         ipfsResp.Hash,
+		CID:         added.CID,
 	}, nil
 }
 

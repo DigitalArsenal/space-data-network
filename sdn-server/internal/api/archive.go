@@ -199,7 +199,7 @@ func (h *ArchiveHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		ProviderEPMCID:  h.deps.NodeEPMCID,
 		SigningKey:      h.deps.SigningKey,
 		PublishedAt:     now,
-		IPFSAPIURL:      strings.TrimSpace(h.deps.IPFSAPIURL),
+		Pins:            h.deps.Pins,
 		SourceFeedHeads: h.sourceFeedHeads(store, filter),
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), archiveImportTimeout)

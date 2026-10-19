@@ -48,6 +48,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/spacedatanetwork/sdn-server/internal/pinpolicy"
 )
 
 // PinLedgerRoleArchive is the pin-ledger role of the immutable archive plane.
@@ -95,10 +97,10 @@ type ArchiveDatasetOptions struct {
 	// nil = derive automatically from the store's current shard publications
 	// matching the filter (ArchiveSourceFeedHeads).
 	SourceFeedHeads []ArchiveSourceFeedHead
-	// IPFSAPIURL, when set, pins shard+index+manifest through Kubo. When
-	// empty the artifacts are still exported, signed, and ledgered (the
-	// caller owns pinning).
-	IPFSAPIURL string
+	// Pins, when configured, adds shard+index+manifest to IPFS through the
+	// node pin policy (PUBLICATION). Unconfigured, the artifacts are still
+	// exported, signed, and ledgered.
+	Pins *pinpolicy.Policy
 }
 
 // DatasetArchive reports one materialized archive.
@@ -255,12 +257,12 @@ func (s *FlatSQLStore) ArchiveDatasetSelection(ctx context.Context, filter Index
 		return nil, fmt.Errorf("archive manifest: %w", err)
 	}
 
-	if strings.TrimSpace(opts.IPFSAPIURL) != "" {
-		if _, err := PublishDatasetExportToIPFS(ctx, opts.IPFSAPIURL, export); err != nil {
-			return nil, fmt.Errorf("pin archive export: %w", err)
+	if pins := opts.Pins.Scope(pinpolicy.Publication, pinpolicy.PublicationFeed(export.SchemaName, "archive", opts.ArchiveID)); pins.Configured() {
+		if _, err := PublishDatasetExportToIPFS(ctx, pins, export); err != nil {
+			return nil, fmt.Errorf("add archive export: %w", err)
 		}
-		if _, err := PublishDatasetPublicationManifestToIPFS(ctx, opts.IPFSAPIURL, manifest); err != nil {
-			return nil, fmt.Errorf("pin archive manifest: %w", err)
+		if _, err := PublishDatasetPublicationManifestToIPFS(ctx, pins, manifest); err != nil {
+			return nil, fmt.Errorf("add archive manifest: %w", err)
 		}
 	}
 

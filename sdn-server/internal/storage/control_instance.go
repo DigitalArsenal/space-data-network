@@ -88,6 +88,7 @@ func (s *FlatSQLStore) initControlTables() error {
 		{"dataset publication series", s.initDatasetPublicationSeriesTables},
 		{"dataset shard publications", s.initDatasetShardPublicationTable},
 		{"pin ledger", s.initPinLedgerTable},
+		{"kubo pin ledger", s.initKuboPinTable},
 		{"asset pin ledger", s.initAssetPinLedgerTables},
 		{"publication replay state", s.initDatasetPublicationReplayStateTable},
 		{"directory", s.initDirectoryTable},

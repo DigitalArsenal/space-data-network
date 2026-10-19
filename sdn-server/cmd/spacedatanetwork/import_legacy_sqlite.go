@@ -22,6 +22,7 @@ import (
 	"github.com/google/flatbuffers/go"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/datasync"
+	"github.com/spacedatanetwork/sdn-server/internal/pinpolicy"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 	"github.com/spf13/cobra"
@@ -494,7 +495,7 @@ func legacyImportDatastoreIdentity(tags storage.SourceTags) storage.DatastoreIde
 type legacyArtifactPublisher struct {
 	store             *storage.FlatSQLStore
 	sourceTags        storage.SourceTags
-	ipfsAPIURL        string
+	pins              *pinpolicy.Policy
 	outputDir         string
 	signingKey        ed25519.PrivateKey
 	providerPeerID    string
@@ -563,10 +564,14 @@ func newLegacyArtifactPublisher(cfg *config.Config, store *storage.FlatSQLStore,
 			}
 		}
 	}
+	pins, err := pinpolicy.New(ipfsAPIURL, store)
+	if err != nil {
+		return nil, err
+	}
 	return &legacyArtifactPublisher{
 		store:             store,
 		sourceTags:        sourceTags,
-		ipfsAPIURL:        ipfsAPIURL,
+		pins:              pins,
 		outputDir:         outputDir,
 		signingKey:        signingKey,
 		providerPeerID:    providerPeerID,
@@ -614,7 +619,8 @@ func (p *legacyArtifactPublisher) PublishOMMBatch(ctx context.Context, offset, l
 	if err != nil {
 		return fmt.Errorf("export dataset records: %w", err)
 	}
-	published, err := storage.PublishDatasetExportToIPFS(ctx, p.ipfsAPIURL, export)
+	lane := p.pins.Scope(pinpolicy.Publication, pinpolicy.PublicationFeed("OMM.fbs", p.sourceTags.ProviderID, p.sourceTags.SourceName))
+	published, err := storage.PublishDatasetExportToIPFS(ctx, lane, export)
 	if err != nil {
 		return err
 	}
@@ -638,7 +644,7 @@ func (p *legacyArtifactPublisher) PublishOMMBatch(ctx context.Context, offset, l
 	if err != nil {
 		return err
 	}
-	manifestCID, err := storage.PublishDatasetPublicationManifestToIPFS(ctx, p.ipfsAPIURL, manifest)
+	manifestCID, err := storage.PublishDatasetPublicationManifestToIPFS(ctx, lane, manifest)
 	if err != nil {
 		return err
 	}

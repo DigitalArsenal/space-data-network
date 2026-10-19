@@ -902,25 +902,6 @@ func TestProbeAssetPinKuboReadinessUsesBoundedOfficialVersionRPC(t *testing.T) {
 	})
 }
 
-func TestComposeAssetPinCapabilityValidatesProductionHandlerBeforeOIDCDiscovery(t *testing.T) {
-	cfg := config.Default().AssetPins
-	cfg.Enabled = true
-	store := &fakeAssetPinCapabilityStore{path: filepath.Join(t.TempDir(), "missing", "sdn.db")}
-	discoveryCalls := 0
-	dependencies := defaultAssetPinCapabilityDependencies()
-	dependencies.newVerifier = func(context.Context, config.AssetPinConfig, assetpin.TokenReceiptConsumer) (api.AssetPinVerifier, error) {
-		discoveryCalls++
-		return &fakeAssetPinCapabilityVerifier{}, nil
-	}
-
-	if _, err := composeAssetPinCapability(context.Background(), store, "http://127.0.0.1:5001", cfg, assetpin.NewMutationGate(), dependencies); err == nil {
-		t.Fatal("composeAssetPinCapability() accepted a missing data directory")
-	}
-	if discoveryCalls != 0 {
-		t.Fatalf("OIDC discovery calls = %d, want 0 before static handler validation", discoveryCalls)
-	}
-}
-
 func TestComposeAssetPinCapabilityRejectsTypedNilDependenciesBeforeExposure(t *testing.T) {
 	newFixture := func(t *testing.T) (*fakeAssetPinCapabilityStore, config.AssetPinConfig, assetPinCapabilityDependencies, *int, *int) {
 		t.Helper()

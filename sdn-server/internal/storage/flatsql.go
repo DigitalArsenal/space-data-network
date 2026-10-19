@@ -937,6 +937,9 @@ func (s *FlatSQLStore) initTables() error {
 	if err := s.initPinLedgerTable(); err != nil {
 		return fmt.Errorf("failed to create pin ledger table: %w", err)
 	}
+	if err := s.initKuboPinTable(); err != nil {
+		return fmt.Errorf("failed to create kubo pin ledger table: %w", err)
+	}
 	if err := s.initAssetPinLedgerTables(); err != nil {
 		return fmt.Errorf("failed to create asset pin ledger tables: %w", err)
 	}

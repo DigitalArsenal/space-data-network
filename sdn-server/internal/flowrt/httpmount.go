@@ -329,6 +329,7 @@ func loadFlowInstance(wasmBytes []byte, pages uint32, linked bool, linkShim []by
 		rt.Release()
 		return nil, nil, fmt.Errorf("read flow manifest: %w", err)
 	}
+	rt.SetFlowID(manifest.PluginID)
 
 	// The engine-link capability is satisfied by the mount's engine link,
 	// not by a hostcall handler — exclude it from bridge provisioning.

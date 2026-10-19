@@ -229,6 +229,11 @@ func (tq *TipQueue) SetFetcher(fetcher ContentFetcher) {
 	tq.fetcher = fetcher
 }
 
+// Topic is the pubsub topic the queue receives tips on.
+func (tq *TipQueue) Topic() string {
+	return TopicName(pnmSchema)
+}
+
 // SetPinner sets the content pinner.
 func (tq *TipQueue) SetPinner(pinner ContentPinner) {
 	tq.mu.Lock()

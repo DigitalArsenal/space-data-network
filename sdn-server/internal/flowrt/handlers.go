@@ -56,6 +56,8 @@ func (m HandlerMap) Resolve(pluginID, methodID, dependencyID, nodeID string) Han
 
 // InvocationArgs holds the input context for a handler invocation.
 type InvocationArgs struct {
+	// FlowID is the program id of the flow the invocation runs in.
+	FlowID       string
 	NodeIndex    uint32
 	PluginID     string
 	MethodID     string

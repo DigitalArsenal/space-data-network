@@ -67,6 +67,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/modulert/caps"
 	"github.com/spacedatanetwork/sdn-server/internal/node"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
+	"github.com/spacedatanetwork/sdn-server/internal/pinpolicy"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/sealed"
 	"github.com/spacedatanetwork/sdn-server/internal/sourcemetrics"
@@ -952,6 +953,9 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to create node: %w", err)
 	}
+	// The node pin policy: one instance, built with the node (its store and
+	// Kubo), injected into every lane below that adds or pins content.
+	pins := n.PinPolicy()
 	var assetRetainer *assetpin.Retainer
 	var assetMutationGate *assetpin.MutationGate
 	if cfg.AssetPins.Enabled {
@@ -959,11 +963,10 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		if n.Store() == nil || strings.TrimSpace(n.Store().Path()) == "" {
 			return errors.New("asset retention requires local storage")
 		}
-		kuboURL, err := canonicalAssetPinKuboAPIURL(cfg.Admin.IPFSAPIURL)
-		if err != nil {
+		if _, err := canonicalAssetPinKuboAPIURL(cfg.Admin.IPFSAPIURL); err != nil {
 			return fmt.Errorf("configure asset retention Kubo client: %w", err)
 		}
-		retentionPins, err := assetpin.NewKuboRetentionClient(kuboURL)
+		retentionPins, err := api.NewKuboAssetPinner(pins)
 		if err != nil {
 			return fmt.Errorf("configure asset retention Kubo client: %w", err)
 		}
@@ -1156,7 +1159,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					cfg.Admin.IPFSAPIURL,
 					cfg.AssetPins,
 					assetMutationGate,
-					defaultAssetPinCapabilityDependencies(),
+					defaultAssetPinCapabilityDependencies(pins),
 				)
 				if err != nil {
 					return fmt.Errorf("configure asset pin capability: %w", err)
@@ -1302,12 +1305,13 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					publicationDir,
 				)
 				publicationService.SetChannelRecorder(channelAPI)
+				publicationService.SetPinPolicy(pins)
 				// Retention of this node's own publications and the
 				// config-gated IPNS pointer to each lane's current DPM
 				// (graph: sdn-publication-hygiene-20260928).
 				publicationService.SetPublicationPolicy(cfg.Publishing.Retention, cfg.Publishing.IPNSPointers)
 				if keep := cfg.Publishing.Retention.KeepSeries; keep > 0 {
-					log.Infof("Dataset publication retention: newest %d series per lane stay pinned (%d lane override(s))", keep, len(cfg.Publishing.Retention.Lanes))
+					log.Infof("Dataset publication retention: newest %d series per lane are kept (%d lane override(s))", keep, len(cfg.Publishing.Retention.Lanes))
 				} else {
 					log.Infof("Dataset publication retention: off (keep_series 0 keeps every series)")
 				}
@@ -1342,8 +1346,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					RunFlowNow:   runFlowServiceNow(n),
 					FlowServices: flowServiceInfos(n, cfg),
 					SyncLane:     n.SyncLane,
-					PinCID:       n.PinCID,
-					UnpinCID:     n.UnpinCID,
+					Pins:         pins,
 				}
 				api.MountRegisteredAdmin(adminMux, adminMountDeps)
 				log.Infof("FlatBuffer admin lanes mounted at %s://%s: %s", adminScheme, adminAddr, strings.Join(api.RegisteredAdminMountNames(), ", "))
@@ -1392,24 +1395,10 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 
 			// Demo API routes (encrypted WASM demo)
 			if demoPayloadPath := os.Getenv("SDN_DEMO_PAYLOAD_PATH"); demoPayloadPath != "" {
-				ipfsAPIURL := strings.TrimSpace(cfg.Admin.IPFSAPIURL)
-				demoAPI := api.NewDemoHandler(demoPayloadPath, ipfsAPIURL)
+				demoAPI := api.NewDemoHandler(demoPayloadPath)
 				demoAPI.RegisterRoutes(adminMux)
 				log.Infof("Demo available at %s://%s/demo", adminScheme, adminAddr)
 				log.Infof("Demo API available at %s://%s/api/v1/demo/payload", adminScheme, adminAddr)
-
-				// Pin demo payload to IPFS in background if configured
-				if ipfsAPIURL != "" {
-					go func() {
-						cid, err := demoAPI.PinToIPFS(ctx)
-						if err != nil {
-							log.Warnf("Failed to pin demo payload to IPFS: %v", err)
-						} else {
-							log.Infof("Demo payload pinned to IPFS: %s", cid)
-							log.Infof("IPFS gateway: https://ipfs.io/ipfs/%s", cid)
-						}
-					}()
-				}
 			}
 
 			// Optional: proxy Kubo RPC API so the React WebUI can talk to IPFS via the
@@ -1531,16 +1520,14 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 						// One-time listings pin their record set as a dataset shard
 						// through Kubo, like every publication (PUB-03).
 						sfSvc.SetDatasetPublisher(&storefront.KuboListingDatasetPublisher{
-							IPFSAPIURL: cfg.Admin.IPFSAPIURL,
-							OutputDir:  filepath.Join(filepath.Dir(cfg.Storage.Path), "dataset-publications", "listings"),
+							Pins:      pins,
+							OutputDir: filepath.Join(filepath.Dir(cfg.Storage.Path), "dataset-publications", "listings"),
 						})
 						sfCatalog := storefront.NewCatalog(sfStore, nil)
-						// The delivery lane pins signed publications through the node's
-						// Kubo, never a hardcoded localhost (Kubo refuses that host).
+						// The delivery lane adds signed publications through the
+						// node pin policy.
 						sfDeliveryConfig := storefront.DefaultDeliveryConfig()
-						if ipfsURL := strings.TrimSpace(cfg.Admin.IPFSAPIURL); ipfsURL != "" {
-							sfDeliveryConfig.IPFSAPIEndpoint = ipfsURL
-						}
+						sfDeliveryConfig.Pins = pins
 						sfDelivery := storefront.NewDeliveryService(sfDeliveryConfig, nil)
 						var chainVerifiers []storefront.ChainVerifier
 						if cfg.Blockchain.Ethereum.RPCURL != "" {
@@ -1779,7 +1766,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			))
 			// The models the page shows are imported by the operator and
 			// pinned by this node (homepage_site.go).
-			homepageModels := handleHomepageModels(func() string { return cfg.Admin.IPFSAPIURL })
+			homepageModels := handleHomepageModels(func() string { return cfg.Admin.IPFSAPIURL }, pins)
 			adminMux.HandleFunc("/api/v1/homepage/models", func(w http.ResponseWriter, r *http.Request) {
 				gateAdminOnlyHandler(w, r, homepageModels, authHandler, cfg.Admin.RequireAuth)
 			})
@@ -1942,7 +1929,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				// port stays nil and the endpoint refuses with 501 — a node
 				// without object storage says so instead of losing pictures.
 				if ipfsAPIURL := strings.TrimSpace(cfg.Admin.IPFSAPIURL); ipfsAPIURL != "" {
-					authHandler.SetProfilePhotoStore(ipfsProfilePhotoStore{apiURL: ipfsAPIURL})
+					authHandler.SetProfilePhotoStore(ipfsProfilePhotoStore{pins: pins})
 				}
 
 				// ACCOUNT EPMs (owner directive 2026-08-28). Two connectors and
@@ -1954,8 +1941,8 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				// 501 rather than losing somebody's identity.
 				if store := n.Store(); store != nil {
 					var blockstore api.AccountEPMBlockstore
-					if ipfsAPIURL := strings.TrimSpace(cfg.Admin.IPFSAPIURL); ipfsAPIURL != "" {
-						blockstore = ipfsRecordBlockstore{apiURL: ipfsAPIURL}
+					if accountPins := pins.Scope(pinpolicy.AccountEPM, ""); accountPins.Configured() {
+						blockstore = accountPins
 					}
 					accountEPMStore := api.NewAccountEPMStore(store, n.PeerID().String(), blockstore)
 					authHandler.SetAccountEPMServices(n.EPMService(), accountEPMStore)
@@ -2060,7 +2047,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					quotas := api.NewStorageQuotaManager(n.Store(), cfg.Publishing.DefaultQuotaBytes)
 					publishAPI := api.NewPublishHandler(n.Store(), n.Validator(), quotas, &cfg.Publishing, authHandler)
 					publishAPI.SetLogService(n.LogService())
-					publishAPI.SetRecordBlockstore(recordBlockstore(cfg))
+					publishAPI.SetRecordBlockstore(recordBlockstore(cfg, pins))
 					publishAPI.RegisterRoutes(adminMux)
 					log.Infof("Publish API available at %s://%s/api/v1/data/publish/", adminScheme, adminAddr)
 				}
@@ -2152,7 +2139,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				quotas := api.NewStorageQuotaManager(n.Store(), cfg.Publishing.DefaultQuotaBytes)
 				publishAPI := api.NewPublishHandler(n.Store(), n.Validator(), quotas, &cfg.Publishing, nil)
 				publishAPI.SetLogService(n.LogService())
-				publishAPI.SetRecordBlockstore(recordBlockstore(cfg))
+				publishAPI.SetRecordBlockstore(recordBlockstore(cfg, pins))
 				publishAPI.RegisterUnauthenticatedRoutes(adminMux, n.PeerID().String())
 				log.Infof("Publish API available without authentication at %s://%s/api/v1/data/publish/", adminScheme, adminAddr)
 			}
@@ -3266,12 +3253,12 @@ func (s *assetPinVerifierSlot) VerifyAndConsume(ctx context.Context, rawToken st
 	return s.verifier.VerifyAndConsume(ctx, rawToken, kind)
 }
 
-func defaultAssetPinCapabilityDependencies() assetPinCapabilityDependencies {
+func defaultAssetPinCapabilityDependencies(pins *pinpolicy.Policy) assetPinCapabilityDependencies {
 	return assetPinCapabilityDependencies{
 		clock:     func() time.Time { return time.Now().UTC() },
 		probeKubo: probeAssetPinKuboReadiness,
-		newPinner: func(apiURL string) (api.AssetPinPinner, error) {
-			return api.NewKuboAssetPinner(apiURL)
+		newPinner: func(string) (api.AssetPinPinner, error) {
+			return api.NewKuboAssetPinner(pins)
 		},
 		newHandler: func(options api.AssetPinHandlerOptions) (assetPinCapabilityRoutes, error) {
 			return api.NewAssetPinHandler(options)
@@ -4404,6 +4391,9 @@ func isAdminOnlyAPIPath(path string) bool {
 		// carries its own method-granular Admin gate where /api/node/epm is
 		// mounted on adminMux.
 		strings.HasPrefix(path, "/api/node/epm") ||
+		// The node pin policy: what this node keeps pinned is an operator
+		// decision, read and written by the operator only (node_pins.go).
+		strings.HasPrefix(path, "/api/node/pins") ||
 		// The node's own runtime state: storage path, disk capacity, libp2p
 		// bandwidth totals and the sparkline history. These describe the HOST,
 		// not public data, so unlike /api/v1/stats they are NOT on the

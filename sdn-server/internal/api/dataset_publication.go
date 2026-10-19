@@ -19,6 +19,7 @@ import (
 
 	channelmodel "github.com/spacedatanetwork/sdn-server/internal/channels"
 	"github.com/spacedatanetwork/sdn-server/internal/datasync"
+	"github.com/spacedatanetwork/sdn-server/internal/pinpolicy"
 	sdnpubsub "github.com/spacedatanetwork/sdn-server/internal/pubsub"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
@@ -321,6 +322,7 @@ type ConcreteDatasetPublicationService struct {
 	providerPeerID  string
 	providerEPMCID  string
 	ipfsAPIURL      string
+	pins            *pinpolicy.Policy
 	outputDir       string
 	channelRecorder DatasetPublicationChannelRecorder
 	now             func() time.Time
@@ -350,6 +352,18 @@ func NewConcreteDatasetPublicationService(
 		outputDir:      strings.TrimSpace(outputDir),
 		now:            func() time.Time { return time.Now().UTC() },
 		hygiene:        newPublicationHygiene(),
+	}
+}
+
+// lanePins is the PUBLICATION pin scope of one lane.
+func (s *ConcreteDatasetPublicationService) lanePins(schema, providerID, sourceName string) pinpolicy.Scope {
+	return s.pins.Scope(pinpolicy.Publication, pinpolicy.PublicationFeed(schema, providerID, sourceName))
+}
+
+// SetPinPolicy binds the node pin policy every publication adds through.
+func (s *ConcreteDatasetPublicationService) SetPinPolicy(pins *pinpolicy.Policy) {
+	if s != nil {
+		s.pins = pins
 	}
 }
 
@@ -868,7 +882,8 @@ func (s *ConcreteDatasetPublicationService) publishDatasetExport(
 	if export == nil {
 		return nil, storage.DatasetShardPublication{}, fmt.Errorf("dataset export is required")
 	}
-	published, err := storage.PublishDatasetExportToIPFS(ctx, s.ipfsAPIURL, export)
+	pins := s.lanePins(schema, sourceIdentity.ProviderID, sourceIdentity.SourceName)
+	published, err := storage.PublishDatasetExportToIPFS(ctx, pins, export)
 	if err != nil {
 		return nil, storage.DatasetShardPublication{}, err
 	}
@@ -893,7 +908,7 @@ func (s *ConcreteDatasetPublicationService) publishDatasetExport(
 	if err != nil {
 		return nil, storage.DatasetShardPublication{}, err
 	}
-	manifestCID, err := storage.PublishDatasetPublicationManifestToIPFS(ctx, s.ipfsAPIURL, manifest)
+	manifestCID, err := storage.PublishDatasetPublicationManifestToIPFS(ctx, pins, manifest)
 	if err != nil {
 		return nil, storage.DatasetShardPublication{}, err
 	}
@@ -1217,7 +1232,7 @@ func (s *ConcreteDatasetPublicationService) recordShardGroupCARBundle(ctx contex
 				rootCIDs = append(rootCIDs, publication.ShardCID)
 			}
 		}
-		publishedCAR, err := storage.PublishShardGroupCARToIPFS(ctx, s.ipfsAPIURL, carOutputDir, rootCIDs)
+		publishedCAR, err := storage.PublishShardGroupCARToIPFS(ctx, s.ipfsAPIURL, s.lanePins(schema, last.ProviderID, last.SourceName), carOutputDir, rootCIDs)
 		if err != nil {
 			return nil, fmt.Errorf("publish shard-group CAR bundle: %w", err)
 		}
@@ -1282,7 +1297,7 @@ func (s *ConcreteDatasetPublicationService) retireStaleShardGroupCARBundles(ctx 
 			}
 			continue
 		}
-		if err := storage.UnpinIPFSCID(ctx, s.ipfsAPIURL, entry.CID); err != nil {
+		if err := s.lanePins(entry.SchemaName, entry.ProviderID, entry.SourceName).Unpin(ctx, entry.CID); err != nil {
 			return fmt.Errorf("unpin stale shard-group CAR %s: %w", entry.CID, err)
 		}
 		entry.VerificationState = "stale"
@@ -1305,7 +1320,7 @@ func (s *ConcreteDatasetPublicationService) retireStaleShardGroupCARBundles(ctx 
 // row retired, so no manifest advertises it again; the shard it duplicated
 // stays pinned under its own row. Returns the bytes kubo no longer pins.
 func (s *ConcreteDatasetPublicationService) releaseRedundantShardGroupCAR(ctx context.Context, entry storage.PinLedgerEntry) (int64, error) {
-	if err := storage.UnpinIPFSCID(ctx, s.ipfsAPIURL, entry.CID); err != nil {
+	if err := s.lanePins(entry.SchemaName, entry.ProviderID, entry.SourceName).Unpin(ctx, entry.CID); err != nil {
 		return 0, fmt.Errorf("unpin one-shard CAR bundle %s: %w", entry.CID, err)
 	}
 	entry.VerificationState = storage.PinLedgerStateRetired

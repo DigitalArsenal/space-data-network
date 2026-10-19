@@ -17,6 +17,7 @@ import (
 	logging "github.com/ipfs/go-log/v2"
 
 	"github.com/spacedatanetwork/sdn-server/internal/modulert"
+	"github.com/spacedatanetwork/sdn-server/internal/pinpolicy"
 )
 
 // log carries host-side capability decisions. Cap errors travel back to wasm as
@@ -32,8 +33,8 @@ var log = logging.Logger("modulert-caps")
 //	cat        — {"cid":"Qm..."}                 → raw bytes
 //	add        — {"data":"base64..."}             → {"Hash":"Qm...","Size":N}
 //	ls         — {"cid":"Qm..."}                 → Kubo ls response
-//	pin_add    — {"cid":"Qm..."}                 → Kubo pin/add response
-//	pin_rm     — {"cid":"Qm..."}                 → Kubo pin/rm response
+//	pin_add    — {"cid":"Qm..."}                 → {"Pins":[cid],"Pinned":bool}
+//	pin_rm     — {"cid":"Qm..."}                 → {"Pins":[cid]}
 //	pin_ls     — {"type":"all|direct|..."}        → Kubo pin/ls response
 //	dag_get    — {"cid":"bafy..."}               → Kubo dag/get response
 //	name_resolve — {"name":"/ipns/..."}          → {"Path":"/ipfs/..."}
@@ -41,11 +42,18 @@ var log = logging.Logger("modulert-caps")
 //	id         — {}                               → Kubo id response
 //	swarm_peers — {}                              → Kubo swarm/peers response
 //	pubsub_publish — {"topic":"...", "data":"utf8 or base64"} → {}
-func NewIPFSCapFactory(apiURL string, httpClient *http.Client) modulert.CapFactory {
-	return func(_ *modulert.Module) modulert.CapHandler {
+//
+// add, pin_add and pin_rm go through the node pin policy (FLOW_ASSET, feed =
+// the module id): add always stores the bytes and returns the CID, pinned only
+// when the policy pins the module's assets; pin_add answers Pinned=false when
+// the policy does not pin them.
+func NewIPFSCapFactory(apiURL string, httpClient *http.Client, pins *pinpolicy.Policy) modulert.CapFactory {
+	return func(m *modulert.Module) modulert.CapHandler {
 		c := &ipfsCapClient{
 			apiURL: strings.TrimRight(apiURL, "/"),
 			http:   httpClient,
+			pins:   pins,
+			module: m,
 		}
 		if c.http == nil {
 			c.http = &http.Client{Timeout: 30 * time.Second}
@@ -57,6 +65,17 @@ func NewIPFSCapFactory(apiURL string, httpClient *http.Client) modulert.CapFacto
 type ipfsCapClient struct {
 	apiURL string
 	http   *http.Client
+	pins   *pinpolicy.Policy
+	module *modulert.Module
+}
+
+// assets is the module's FLOW_ASSET pin scope.
+func (c *ipfsCapClient) assets() pinpolicy.Scope {
+	id := ""
+	if c.module != nil {
+		id = c.module.ID()
+	}
+	return c.pins.Scope(pinpolicy.FlowAsset, id)
 }
 
 func (c *ipfsCapClient) handle(operation string, payload []byte) ([]byte, error) {
@@ -110,20 +129,15 @@ func (c *ipfsCapClient) handle(operation string, payload []byte) ([]byte, error)
 		if len(content) == 0 {
 			return errCapJSON("missing base64 or data"), nil
 		}
-		var buf bytes.Buffer
-		w := multipart.NewWriter(&buf)
-		part, _ := w.CreateFormFile("file", "data")
-		part.Write(content)
-		w.Close()
-		pin := "true"
+		noPin := false
 		if v, ok := p["pin"].(bool); ok && !v {
-			pin = "false"
+			noPin = true
 		}
-		resp, err := c.kuboPost(ctx, "/api/v0/add?pin="+pin, &buf, w.FormDataContentType())
+		added, err := c.assets().AddBytes(ctx, "data", content, pinpolicy.AddOptions{NoPin: noPin})
 		if err != nil {
 			return errCapJSON(err.Error()), nil
 		}
-		return okKuboJSON(resp), nil
+		return okKuboJSON(added.Raw), nil
 
 	case "ipfs.ls":
 		cid := str("cid")
@@ -141,30 +155,29 @@ func (c *ipfsCapClient) handle(operation string, payload []byte) ([]byte, error)
 		if cid == "" {
 			return errCapJSON("missing cid"), nil
 		}
-		resp, err := c.kuboPost(ctx, "/api/v0/pin/add?arg="+cid, nil, "")
+		pinned, err := c.assets().PinCID(ctx, cid, 0)
 		if err != nil {
 			return errCapJSON(err.Error()), nil
 		}
-		return okKuboJSON(resp), nil
+		result := map[string]interface{}{"Pins": []string{cid}, "Pinned": pinned}
+		if !pinned {
+			result["Pins"] = []string{}
+			result["Reason"] = "not pinned by the node pin policy"
+		}
+		return okCapJSON(result), nil
 
 	case "ipfs.pin_rm":
 		cid := str("cid")
 		if cid == "" {
 			return errCapJSON("missing cid"), nil
 		}
-		resp, err := c.kuboPost(ctx, "/api/v0/pin/rm?arg="+cid, nil, "")
-		if err != nil {
+		if err := c.assets().Unpin(ctx, cid); err != nil {
 			return errCapJSON(err.Error()), nil
 		}
-		return okKuboJSON(resp), nil
+		return okCapJSON(map[string]interface{}{"Pins": []string{cid}}), nil
 
 	case "ipfs.pin_ls":
-		pinType := str("type")
-		path := "/api/v0/pin/ls"
-		if pinType != "" {
-			path += "?type=" + pinType
-		}
-		resp, err := c.kuboPost(ctx, path, nil, "")
+		resp, err := c.pins.PinLs(ctx, str("type"))
 		if err != nil {
 			return errCapJSON(err.Error()), nil
 		}

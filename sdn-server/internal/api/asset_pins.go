@@ -25,6 +25,7 @@ import (
 
 	"github.com/spacedatanetwork/sdn-server/internal/assetpin"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
+	"github.com/spacedatanetwork/sdn-server/internal/pinpolicy"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
 
@@ -1050,41 +1051,36 @@ func (statFSAssetPinCapacity) AvailableBytes(path string) (uint64, error) {
 	return available, nil
 }
 
-// KuboAssetPinner binds the generic asset pinner contract to one Kubo API.
+// KuboAssetPinner binds the generic asset pinner contract to the node pin
+// policy (ASSET_MODEL). An asset is always added to the node's blockstore; it
+// is pinned only when the policy pins asset models.
 type KuboAssetPinner struct {
-	apiURL    string
-	retention *assetpin.KuboRetentionClient
+	pins pinpolicy.Scope
 }
 
-// NewKuboAssetPinner constructs the production storage-backed asset pinner.
-func NewKuboAssetPinner(apiURL string) (*KuboAssetPinner, error) {
-	parsed, err := url.Parse(strings.TrimSpace(apiURL))
-	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
-		return nil, errors.New("Kubo API URL must be an absolute HTTP URL")
+// NewKuboAssetPinner constructs the production asset pinner.
+func NewKuboAssetPinner(pins *pinpolicy.Policy) (*KuboAssetPinner, error) {
+	scope := pins.Scope(pinpolicy.AssetModel, "")
+	if !scope.Configured() {
+		return nil, pinpolicy.ErrNoKubo
 	}
-	canonicalURL := strings.TrimRight(parsed.String(), "/")
-	retention, err := assetpin.NewKuboRetentionClient(canonicalURL)
-	if err != nil {
-		return nil, err
-	}
-	return &KuboAssetPinner{apiURL: canonicalURL, retention: retention}, nil
+	return &KuboAssetPinner{pins: scope}, nil
 }
 
+// IsAssetCIDPinned reports the asset held: added, and pinned when the policy
+// pins asset models.
 func (p *KuboAssetPinner) IsAssetCIDPinned(ctx context.Context, cidValue string) (bool, error) {
-	if p == nil || p.retention == nil {
-		return false, errors.New("Kubo asset pinner is required")
-	}
-	return p.retention.IsAssetCIDPinned(ctx, cidValue)
+	return p.pins.Held(ctx, cidValue)
 }
 
 func (p *KuboAssetPinner) PinAssetGLB(ctx context.Context, path string) (string, error) {
-	return storage.PinAssetGLB(ctx, p.apiURL, path)
+	return storage.AddAssetGLB(ctx, p.pins, path)
 }
 
 func (p *KuboAssetPinner) CalculateAssetGLBCID(ctx context.Context, path string) (string, error) {
-	return storage.CalculateAssetGLBCID(ctx, p.apiURL, path)
+	return storage.CalculateAssetGLBCID(ctx, p.pins, path)
 }
 
 func (p *KuboAssetPinner) UnpinAssetCID(ctx context.Context, cidValue string) error {
-	return storage.UnpinAssetCID(ctx, p.apiURL, cidValue)
+	return p.pins.Unpin(ctx, cidValue)
 }

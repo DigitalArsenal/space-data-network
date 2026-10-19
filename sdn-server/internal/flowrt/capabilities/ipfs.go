@@ -15,6 +15,7 @@ import (
 
 	logging "github.com/ipfs/go-log/v2"
 	"github.com/spacedatanetwork/sdn-server/internal/flowrt"
+	"github.com/spacedatanetwork/sdn-server/internal/pinpolicy"
 )
 
 var log = logging.Logger("flowrt-caps")
@@ -25,6 +26,9 @@ const ipfsPluginID = "io.spacedatanetwork.ipfs"
 type IPFSConfig struct {
 	APIURL     string       // e.g. "http://127.0.0.1:5002"
 	HTTPClient *http.Client // optional; defaults to 30s timeout client
+	// Pins is the node pin policy add, pin_add and pin_rm go through
+	// (FLOW_ASSET, feed = the flow id).
+	Pins *pinpolicy.Policy
 }
 
 // NewIPFSHandlers returns flow handlers for IPFS operations.
@@ -48,6 +52,7 @@ func NewIPFSHandlers(cfg IPFSConfig) flowrt.HandlerMap {
 	c := &ipfsClient{
 		apiURL: strings.TrimRight(cfg.APIURL, "/"),
 		http:   cfg.HTTPClient,
+		pins:   cfg.Pins,
 	}
 	if c.http == nil {
 		c.http = &http.Client{Timeout: 30 * time.Second}
@@ -73,6 +78,12 @@ func NewIPFSHandlers(cfg IPFSConfig) flowrt.HandlerMap {
 type ipfsClient struct {
 	apiURL string
 	http   *http.Client
+	pins   *pinpolicy.Policy
+}
+
+// assets is the invoking flow's FLOW_ASSET pin scope.
+func (c *ipfsClient) assets(args *flowrt.InvocationArgs) pinpolicy.Scope {
+	return c.pins.Scope(pinpolicy.FlowAsset, args.FlowID)
 }
 
 // kuboPost calls a Kubo RPC endpoint via POST.
@@ -206,62 +217,55 @@ func (c *ipfsClient) cat(ctx context.Context, args *flowrt.InvocationArgs) (*flo
 	}, nil
 }
 
-// add adds bytes to IPFS and returns the CID.
+// add adds bytes to IPFS and returns the CID; pinned only when the node
+// pin policy pins the flow's assets.
 // Input: first frame's raw bytes are the file content
 func (c *ipfsClient) add(ctx context.Context, args *flowrt.InvocationArgs) (*flowrt.InvocationResult, error) {
 	if len(args.Frames) == 0 || len(args.Frames[0].Bytes) == 0 {
 		return errorResult(-1, "missing input data"), nil
 	}
-	var buf bytes.Buffer
-	w := multipart.NewWriter(&buf)
-	part, _ := w.CreateFormFile("file", "data")
-	part.Write(args.Frames[0].Bytes)
-	w.Close()
-
-	resp, err := c.kuboPost(ctx, "/api/v0/add?pin=true", &buf, w.FormDataContentType())
+	added, err := c.assets(args).AddBytes(ctx, "data", args.Frames[0].Bytes, pinpolicy.AddOptions{})
 	if err != nil {
 		return errorResult(-1, err.Error()), nil
 	}
-	return jsonOutput(resp), nil
+	return jsonOutput(added.Raw), nil
 }
 
-// pinAdd pins a CID.
+// pinAdd pins a CID when the node pin policy pins the flow's assets; the
+// answer says which ({"Pins":[...],"Pinned":bool}).
 // Input: {"cid": "Qm..."}
 func (c *ipfsClient) pinAdd(ctx context.Context, args *flowrt.InvocationArgs) (*flowrt.InvocationResult, error) {
 	cid := getFrameArg(args, "cid")
 	if cid == "" {
 		return errorResult(-1, "missing cid"), nil
 	}
-	resp, err := c.kuboPost(ctx, "/api/v0/pin/add?arg="+cid, nil, "")
+	pinned, err := c.assets(args).PinCID(ctx, cid, 0)
 	if err != nil {
 		return errorResult(-1, err.Error()), nil
 	}
-	return jsonOutput(resp), nil
+	if !pinned {
+		return jsonOutput([]byte(`{"Pins":[],"Pinned":false,"Reason":"not pinned by the node pin policy"}`)), nil
+	}
+	return jsonOutput([]byte(`{"Pins":["` + cid + `"],"Pinned":true}`)), nil
 }
 
-// pinRm unpins a CID.
+// pinRm releases the flow's hold on a CID.
 // Input: {"cid": "Qm..."}
 func (c *ipfsClient) pinRm(ctx context.Context, args *flowrt.InvocationArgs) (*flowrt.InvocationResult, error) {
 	cid := getFrameArg(args, "cid")
 	if cid == "" {
 		return errorResult(-1, "missing cid"), nil
 	}
-	resp, err := c.kuboPost(ctx, "/api/v0/pin/rm?arg="+cid, nil, "")
-	if err != nil {
+	if err := c.assets(args).Unpin(ctx, cid); err != nil {
 		return errorResult(-1, err.Error()), nil
 	}
-	return jsonOutput(resp), nil
+	return jsonOutput([]byte(`{"Pins":["` + cid + `"]}`)), nil
 }
 
 // pinLs lists pinned CIDs.
 // Input: {"type": "all|direct|indirect|recursive"} (optional)
 func (c *ipfsClient) pinLs(ctx context.Context, args *flowrt.InvocationArgs) (*flowrt.InvocationResult, error) {
-	pinType := getFrameArg(args, "type")
-	path := "/api/v0/pin/ls"
-	if pinType != "" {
-		path += "?type=" + pinType
-	}
-	resp, err := c.kuboPost(ctx, path, nil, "")
+	resp, err := c.pins.PinLs(ctx, getFrameArg(args, "type"))
 	if err != nil {
 		return errorResult(-1, err.Error()), nil
 	}

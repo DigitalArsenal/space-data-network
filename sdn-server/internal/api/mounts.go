@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/config"
+	"github.com/spacedatanetwork/sdn-server/internal/pinpolicy"
 	"github.com/spacedatanetwork/sdn-server/internal/sourcemetrics"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 	"github.com/spacedatanetwork/sdn-server/internal/trust"
@@ -72,9 +73,8 @@ type AdminMountDeps struct {
 	// SyncLane runs one bounded trusted-peer catch-up pass for a lane and
 	// returns how many shards were materialized.
 	SyncLane func(ctx context.Context, schema, providerID, sourceName string) (int, error)
-	// PinCID / UnpinCID pin or unpin one CID on the node's Kubo.
-	PinCID   func(ctx context.Context, cid string) error
-	UnpinCID func(ctx context.Context, cid string) error
+	// Pins is the node pin policy.
+	Pins *pinpolicy.Policy
 
 	TrustEvaluator *trust.Evaluator
 }

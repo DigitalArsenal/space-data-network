@@ -16,7 +16,8 @@ import (
 //     so the node holds one current set (a full replacement);
 //   - keep-all: every publication stays in the store; nothing is superseded
 //     and nothing is pinned;
-//   - archive-all: every publication stays and is pinned.
+//   - archive-all: every publication stays (Kubo pins follow the node pin
+//     policy, never the retention rule).
 //
 // A lane follows its standard's default until someone chooses a rule for
 // it. Owner 2026-10-06: CAT, "a record of the catalog state that is

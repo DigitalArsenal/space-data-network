@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/spacedatanetwork/sdn-server/internal/pinpolicy"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
 
@@ -33,19 +34,23 @@ type ListingDatasetPublisher interface {
 // KuboListingDatasetPublisher is the daemon's publisher: the records go
 // through the same export pipeline as dataset publications and archives (a
 // shard file plus its index under the node's publication directory) and are
-// pinned through Kubo. The CID it returns is the one Kubo serves; the
-// SHA-256 is of the shard bytes, so a fetched shard verifies whatever
-// chunking produced the CID.
+// added to IPFS through the node pin policy (STOREFRONT). The CID it returns
+// is the one Kubo serves; the SHA-256 is of the shard bytes, so a fetched
+// shard verifies whatever chunking produced the CID.
 type KuboListingDatasetPublisher struct {
-	IPFSAPIURL string
-	OutputDir  string
+	Pins      *pinpolicy.Policy
+	OutputDir string
 }
 
 // PublishListingDataset exports and pins one schema's records for a listing.
 // Each (listing, schema, update) gets its own immutable export directory.
 func (p *KuboListingDatasetPublisher) PublishListingDataset(ctx context.Context, listingID, updateID string, filter storage.IndexedRecordQuery, records []storage.DatasetExportRecord) (*ListingDatasetAsset, error) {
-	if p == nil || strings.TrimSpace(p.IPFSAPIURL) == "" {
-		return nil, errors.New("publishing a stored-records listing needs Kubo to pin the shard: set admin.ipfs_api_url (or run from a bundle, which manages Kubo)")
+	var pins pinpolicy.Scope
+	if p != nil {
+		pins = p.Pins.Scope(pinpolicy.Storefront, "")
+	}
+	if !pins.Configured() {
+		return nil, errors.New("publishing a stored-records listing needs Kubo to hold the shard: set admin.ipfs_api_url (or run from a bundle, which manages Kubo)")
 	}
 	if strings.TrimSpace(p.OutputDir) == "" {
 		return nil, errors.New("listing dataset publisher needs an output directory")
@@ -58,9 +63,9 @@ func (p *KuboListingDatasetPublisher) PublishListingDataset(ctx context.Context,
 	if err != nil {
 		return nil, fmt.Errorf("export listing %s records: %w", filter.SchemaName, err)
 	}
-	published, err := storage.PublishDatasetExportToIPFS(ctx, p.IPFSAPIURL, export)
+	published, err := storage.PublishDatasetExportToIPFS(ctx, pins, export)
 	if err != nil {
-		return nil, fmt.Errorf("pin listing %s shard: %w", filter.SchemaName, err)
+		return nil, fmt.Errorf("add listing %s shard: %w", filter.SchemaName, err)
 	}
 	return &ListingDatasetAsset{
 		Schema:     filter.SchemaName,

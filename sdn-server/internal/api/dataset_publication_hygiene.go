@@ -312,7 +312,7 @@ func (s *ConcreteDatasetPublicationService) executePublicationRetention(ctx cont
 	}
 	unpinned := make(map[string]bool, len(plan.Unpin))
 	for _, entry := range plan.Unpin {
-		if err := storage.UnpinIPFSCID(ctx, s.ipfsAPIURL, entry.CID); err != nil {
+		if err := s.lanePins(entry.SchemaName, entry.ProviderID, entry.SourceName).Unpin(ctx, entry.CID); err != nil {
 			log.Warnf("publication retention %s: unpin %s %s: %v (retried next pass)", lane.SchemaName, entry.Role, entry.CID, err)
 			continue
 		}

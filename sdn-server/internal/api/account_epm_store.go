@@ -44,10 +44,10 @@ const (
 )
 
 // AccountEPMBlockstore is the optional Kubo half of the pin: bytes in, the CID
-// Kubo reports back out, pinned. main.go binds it; an unbound blockstore is a
-// valid node.
+// Kubo reports back out, pinned (ACCOUNT_EPM, always pinned by the node pin
+// policy). main.go binds it; an unbound blockstore is a valid node.
 type AccountEPMBlockstore interface {
-	PutPinnedRawBlock(ctx context.Context, data []byte) (string, error)
+	PutBlock(ctx context.Context, data []byte) (string, error)
 }
 
 // AccountEPMStore stores and pins the $EPM records of accounts tied to this node.
@@ -115,7 +115,7 @@ func (s *AccountEPMStore) StoreAccountEPM(ctx context.Context, sourceName string
 
 	// Fail OPEN on Kubo: the record is already durable without it.
 	if s.blockstore != nil {
-		blockCID, err := s.blockstore.PutPinnedRawBlock(ctx, epmBytes)
+		blockCID, err := s.blockstore.PutBlock(ctx, epmBytes)
 		if err != nil {
 			log.Warnf("Could not pin account EPM %s in the local blockstore: %v", cid, err)
 		} else if strings.TrimSpace(blockCID) != cid {

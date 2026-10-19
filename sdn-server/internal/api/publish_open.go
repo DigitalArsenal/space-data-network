@@ -49,9 +49,10 @@ const (
 )
 
 // RecordBlockstore is the node's IPFS blockstore, as the publish route needs
-// it: bytes in, the pinned block's CID out; a held block announced once.
+// it: a record's bytes in, the block's CID out (pinned when the node pin
+// policy pins shares of that standard); a held block announced once.
 type RecordBlockstore interface {
-	PutPinnedRawBlock(ctx context.Context, data []byte) (string, error)
+	PutRecordBlock(ctx context.Context, schema string, data []byte) (cid string, pinned bool, err error)
 	ProvideOnce(ctx context.Context, cid string) error
 }
 
@@ -157,8 +158,7 @@ func (h *PublishHandler) openOr(protect func(http.HandlerFunc) http.HandlerFunc,
 	}
 }
 
-// publishToIPFS pins the stored record's bytes as a raw block and announces
-// it, when its standard is an IPFS schema and a blockstore is attached. nil
+// publishToIPFS stores the record's bytes as a raw block and announces it, when its standard is an IPFS schema and a blockstore is attached. nil
 // means the record is not published to IPFS on this node.
 func (h *PublishHandler) publishToIPFS(ctx context.Context, schema, cid string, data []byte) *IPFSPublication {
 	if h.blockstore == nil || !h.isIPFSSchema(schema) {
@@ -167,18 +167,18 @@ func (h *PublishHandler) publishToIPFS(ctx context.Context, schema, cid string, 
 	out := &IPFSPublication{CID: cid}
 	ctx, cancel := context.WithTimeout(ctx, recordBlockTimeout)
 	defer cancel()
-	blockCID, err := h.blockstore.PutPinnedRawBlock(ctx, data)
+	blockCID, pinned, err := h.blockstore.PutRecordBlock(ctx, schema, data)
 	if err != nil {
-		out.Error = "pin: " + err.Error()
-		log.Warnf("Could not pin %s record %s in the blockstore: %v", schema, cid, err)
+		out.Error = "store: " + err.Error()
+		log.Warnf("Could not store %s record %s in the blockstore: %v", schema, cid, err)
 		return out
 	}
 	if strings.TrimSpace(blockCID) != cid {
 		out.Error = "the blockstore holds the record as " + blockCID
-		log.Warnf("%s record %s pinned in the blockstore under a different CID (%s)", schema, cid, blockCID)
+		log.Warnf("%s record %s stored in the blockstore under a different CID (%s)", schema, cid, blockCID)
 		return out
 	}
-	out.Pinned = true
+	out.Pinned = pinned
 	if err := h.blockstore.ProvideOnce(ctx, cid); err != nil {
 		out.Error = "provide: " + err.Error()
 		log.Warnf("Could not announce %s record %s: %v", schema, cid, err)

@@ -14,6 +14,7 @@ import (
 
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/datasync"
+	"github.com/spacedatanetwork/sdn-server/internal/pinpolicy"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 	"github.com/spf13/cobra"
@@ -293,6 +294,10 @@ func registerLegacyPublicationPlan(ctx context.Context, options legacyPublicatio
 		return nil, fmt.Errorf("failed to open publication namespace: %w", err)
 	}
 	defer store.Close()
+	pins, err := pinpolicy.New(ipfsAPIURL, store)
+	if err != nil {
+		return nil, err
+	}
 
 	providerPublicKey := ""
 	if pubKey, ok := signingKey.Public().(ed25519.PublicKey); ok {
@@ -324,7 +329,7 @@ func registerLegacyPublicationPlan(ctx context.Context, options legacyPublicatio
 		if err != nil {
 			return nil, err
 		}
-		manifestCID, err := storage.PublishDatasetPublicationManifestToIPFS(ctx, ipfsAPIURL, manifest)
+		manifestCID, err := storage.PublishDatasetPublicationManifestToIPFS(ctx, pins.Scope(pinpolicy.Publication, pinpolicy.PublicationFeed(export.SchemaName, plan.SourceTags.ProviderID, plan.SourceTags.SourceName)), manifest)
 		if err != nil {
 			return nil, err
 		}
@@ -397,7 +402,7 @@ func registerLegacyPublicationPlan(ctx context.Context, options legacyPublicatio
 		if err != nil {
 			return nil, fmt.Errorf("load registered publication group: %w", err)
 		}
-		if err := recordRegisteredShardGroupCARBundle(ctx, store, ipfsAPIURL, outputDir, publications, plan.ProviderPeerID, providerPublicKey); err != nil {
+		if err := recordRegisteredShardGroupCARBundle(ctx, store, ipfsAPIURL, pins, outputDir, publications, plan.ProviderPeerID, providerPublicKey); err != nil {
 			return nil, err
 		}
 	}
@@ -448,6 +453,10 @@ func rebuildDatasetPublicationShardGroupCARBundles(ctx context.Context, options 
 		return nil, fmt.Errorf("failed to open storage: %w", err)
 	}
 	defer store.Close()
+	pins, err := pinpolicy.New(ipfsAPIURL, store)
+	if err != nil {
+		return nil, err
+	}
 
 	query := storage.DatasetShardPublicationQuery{
 		SchemaName:   schema,
@@ -468,7 +477,7 @@ func rebuildDatasetPublicationShardGroupCARBundles(ctx context.Context, options 
 			return nil, err
 		}
 	}
-	if err := recordRegisteredShardGroupCARBundle(ctx, store, ipfsAPIURL, outputDir, publications, strings.TrimSpace(options.ProviderPeerID), strings.TrimSpace(options.ProviderPublicKey)); err != nil {
+	if err := recordRegisteredShardGroupCARBundle(ctx, store, ipfsAPIURL, pins, outputDir, publications, strings.TrimSpace(options.ProviderPeerID), strings.TrimSpace(options.ProviderPublicKey)); err != nil {
 		return nil, err
 	}
 
@@ -638,7 +647,7 @@ func legacyPublicationGroupKey(pub storage.DatasetShardPublication) string {
 	return strings.Join([]string{pub.SchemaName, pub.ProviderID, pub.SourceName, pub.BatchID, pub.QueryProfile}, "\x00")
 }
 
-func recordRegisteredShardGroupCARBundle(ctx context.Context, store *storage.FlatSQLStore, ipfsAPIURL, outputDir string, publications []storage.DatasetShardPublication, providerPeerID, providerPublicKey string) error {
+func recordRegisteredShardGroupCARBundle(ctx context.Context, store *storage.FlatSQLStore, ipfsAPIURL string, pins *pinpolicy.Policy, outputDir string, publications []storage.DatasetShardPublication, providerPeerID, providerPublicKey string) error {
 	if store == nil {
 		return fmt.Errorf("publication pin registration requires store")
 	}
@@ -711,7 +720,7 @@ func recordRegisteredShardGroupCARBundle(ctx context.Context, store *storage.Fla
 				rootCIDs = append(rootCIDs, publication.ShardCID)
 			}
 		}
-		publishedCAR, err := storage.PublishShardGroupCARToIPFS(ctx, ipfsAPIURL, carOutputDir, rootCIDs)
+		publishedCAR, err := storage.PublishShardGroupCARToIPFS(ctx, ipfsAPIURL, pins.Scope(pinpolicy.Publication, pinpolicy.PublicationFeed(first.SchemaName, first.ProviderID, first.SourceName)), carOutputDir, rootCIDs)
 		if err != nil {
 			return fmt.Errorf("publish registered shard-group CAR bundle: %w", err)
 		}

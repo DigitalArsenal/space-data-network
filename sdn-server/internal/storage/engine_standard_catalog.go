@@ -2531,6 +2531,9 @@ const engineStandardCatalogGraph = `
     DRAG_MODEL:string;
     THERMAL_STATE:string;
   }
+  table PIN {
+    RULES:ubyte;
+  }
   table PIV {
     REQUEST:ubyte;
   }
@@ -4124,6 +4127,7 @@ var engineGeneratedStandardBindings = map[string]engineRoutedSchema{
 	"PGR.fbs":  {Table: "PGR", FileID: "$PGR"},
 	"PHB.fbs":  {Table: "PHB", FileID: "$PHB"},
 	"PHY.fbs":  {Table: "PHY", FileID: "$PHY"},
+	"PIN.fbs":  {Table: "PIN", FileID: "$PIN"},
 	"PIV.fbs":  {Table: "PIV", FileID: "$PIV"},
 	"PKB.fbs":  {Table: "PKB", FileID: "$PKB"},
 	"PLD.fbs":  {Table: "PLD", FileID: "$PLD"},
@@ -4277,6 +4281,7 @@ var engineUnprojectableFirstFields = map[string]string{
 	"NUM.fbs": "ROOT_SOLVE_REQUEST",
 	"OCM.fbs": "HEADER",
 	"PCE.fbs": "CATALOG",
+	"PIN.fbs": "RULES",
 	"PIV.fbs": "REQUEST",
 	"PPE.fbs": "COMMENT",
 	"PRW.fbs": "INIT",

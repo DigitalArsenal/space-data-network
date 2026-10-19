@@ -29,6 +29,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 
 	"github.com/spacedatanetwork/sdn-server/internal/channels"
+	"github.com/spacedatanetwork/sdn-server/internal/pinpolicy"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 	"github.com/spacedatanetwork/sdn-server/internal/syncwire"
 )
@@ -61,12 +62,11 @@ const (
 	DSSStateError   int8 = 4
 )
 
-// $DSS PIN_POLICY values (dssPinPolicy).
+// $DSS PIN_POLICY values (dssPinPolicy) the node reports: Pin when the
+// lane's PUBLICATION pin rule is on and holds the lane's CIDs, else None.
 const (
-	DSSPinNone    int8 = 0
-	DSSPinCache   int8 = 1
-	DSSPinPin     int8 = 2
-	DSSPinArchive int8 = 3
+	DSSPinNone int8 = 0
+	DSSPinPin  int8 = 2
 )
 
 // $DSS REQUESTED_ACTION values (dssAction).
@@ -84,11 +84,13 @@ const (
 	DSSActionSetRetention int8 = 7
 )
 
-// $DSS RETENTION values (dssRetention): the lane's rule for what the node
-// keeps. ReplaceCurrent supersedes the lane's previous batch with each
-// publication; KeepAll keeps every one in the store and pins nothing;
-// ArchiveAll keeps and pins every one. A lane without a rule of its own
-// follows its standard's default (channels.SubscriptionRegistry).
+// $DSS RETENTION values (dssRetention): the lane's rule for what the node's
+// store keeps. ReplaceCurrent supersedes the lane's previous batch with each
+// publication; KeepAll keeps every batch's records and drops older pulls'
+// files; ArchiveAll keeps every publication whole (records, files, ledger).
+// Retention never pins: Kubo pins follow the node pin policy. A lane without
+// a rule of its own follows its standard's default
+// (channels.SubscriptionRegistry).
 const (
 	DSSRetentionReplaceCurrent int8 = 0
 	DSSRetentionArchiveAll     int8 = 1
@@ -474,6 +476,8 @@ func (h *SyncHandler) build(filter SyncFilter) ([]SyncLane, error) {
 		subscriptions = deps.Channels.subscriptions
 	}
 
+	pinnedFeeds := deps.Pins.PinnedByFeed(pinpolicy.Publication)
+
 	out := make([]SyncLane, 0, len(order))
 	for _, key := range order {
 		agg := lanes[key]
@@ -527,9 +531,12 @@ func (h *SyncHandler) build(filter SyncFilter) ([]SyncLane, error) {
 		}
 		lane.Topic = channels.DiscoveryTopic(key.code())
 
-		// Pin policy from the ledger rows of the lane.
+		// Pin policy: the lane's PUBLICATION rule and what it holds.
 		pins := pinsByLane[key]
-		lane.PinPolicy = classifyPinPolicy(pins)
+		lane.PinPolicy = DSSPinNone
+		if feed := pinpolicy.PublicationFeed(key.schema, key.providerID, key.sourceName); deps.Pins.Allowed(pinpolicy.Publication, feed) && pinnedFeeds[feed] > 0 {
+			lane.PinPolicy = DSSPinPin
+		}
 
 		// Newest publication.
 		pub := newestPub[key]
@@ -625,24 +632,6 @@ func laneMatches(key laneKey, filter SyncFilter) bool {
 		return false
 	}
 	return true
-}
-
-// classifyPinPolicy maps a lane's ledger rows onto the $DSS PIN_POLICY words:
-// Archive when an archive-plane row exists, Pin when a verified permanent
-// shard pin exists, Cache when any row exists, else None.
-func classifyPinPolicy(entries []storage.PinLedgerEntry) int8 {
-	policy := DSSPinNone
-	for _, entry := range entries {
-		switch {
-		case entry.Role == storage.PinLedgerRoleArchive:
-			return DSSPinArchive
-		case entry.Role == "shard" && entry.VerificationState == "verified" && entry.TTL == 0:
-			policy = DSSPinPin
-		case policy == DSSPinNone:
-			policy = DSSPinCache
-		}
-	}
-	return policy
 }
 
 // encodeDSS serializes one size-prefixed $DSS frame.
@@ -915,7 +904,8 @@ func (h *SyncHandler) handleAction(w http.ResponseWriter, r *http.Request) {
 	case DSSActionSync:
 		h.startSync(key)
 	case DSSActionPin, DSSActionUnpin:
-		h.startPin(key, action == DSSActionPin)
+		WriteErrorFrame(w, http.StatusBadRequest, "bad_request", "Pinning is set by the node pin policy (/api/node/pins).", 0)
+		return
 	case DSSActionHydrate:
 		h.startHydrate(key)
 	default:
@@ -1110,124 +1100,6 @@ func (h *SyncHandler) startSync(key laneKey) {
 		n, err := h.deps.SyncLane(ctx, key.schema, key.providerID, key.sourceName)
 		finish(n, err)
 	}()
-}
-
-func (h *SyncHandler) startPin(key laneKey, pin bool) {
-	verb := "pin"
-	if !pin {
-		verb = "unpin"
-	}
-	if (pin && h.deps.PinCID == nil) || (!pin && h.deps.UnpinCID == nil) {
-		h.failLane(key, verb, "This node cannot "+verb+" that source.")
-		return
-	}
-	pub, ok := h.newestPublication(key)
-	if !ok {
-		h.failLane(key, verb, "That source has no publication to "+verb+".")
-		return
-	}
-	finish, ok := h.beginAction(key, verb)
-	if !ok {
-		return
-	}
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), syncActionTimeout)
-		defer cancel()
-		finish(h.pinPublication(ctx, key, pub, pin))
-	}()
-}
-
-// newestPublication finds the lane's newest publication (max FeedSequence).
-func (h *SyncHandler) newestPublication(key laneKey) (storage.DatasetShardPublication, bool) {
-	pubs, err := h.deps.Store.ListDatasetShardPublicationsForProfile(storage.DatasetPublicationQueryProfile, key.schema)
-	if err != nil {
-		return storage.DatasetShardPublication{}, false
-	}
-	var newest *storage.DatasetShardPublication
-	for i := range pubs {
-		pub := &pubs[i]
-		if strings.TrimSpace(pub.ProviderID) != key.providerID || strings.TrimSpace(pub.SourceName) != key.sourceName {
-			continue
-		}
-		if newest == nil || pub.FeedSequence > newest.FeedSequence ||
-			(pub.FeedSequence == newest.FeedSequence && pub.PublishedAt.After(newest.PublishedAt)) {
-			newest = pub
-		}
-	}
-	if newest == nil {
-		return storage.DatasetShardPublication{}, false
-	}
-	return *newest, true
-}
-
-// pinPublication pins (or unpins) every CID of a publication and records the
-// outcome in the pin ledger, mirroring the publication lane's own rows.
-func (h *SyncHandler) pinPublication(ctx context.Context, key laneKey, pub storage.DatasetShardPublication, pin bool) (int, error) {
-	type target struct {
-		cid, role, hash string
-		rows, bytes     int64
-	}
-	targets := []target{
-		{cid: pub.ShardCID, role: "shard", hash: pub.ShardSHA256, rows: int64(pub.RecordCount), bytes: pub.ByteCount},
-		{cid: pub.IndexCID, role: "index", hash: pub.IndexSHA256},
-		{cid: pub.ManifestCID, role: "manifest"},
-		{cid: pub.PNMCID, role: "pnm"},
-	}
-	state := "verified"
-	if !pin {
-		state = "unpinned"
-	}
-	snapshotID := pub.FeedHead
-	if snapshotID == "" {
-		snapshotID = pub.ManifestCID
-	}
-	now := time.Now().UTC()
-	done := 0
-	var errs []error
-	for _, t := range targets {
-		cid := strings.TrimSpace(t.cid)
-		if cid == "" {
-			continue
-		}
-		var err error
-		if pin {
-			err = h.deps.PinCID(ctx, cid)
-		} else {
-			err = h.deps.UnpinCID(ctx, cid)
-		}
-		if err != nil {
-			errs = append(errs, fmt.Errorf("%s %s: %w", t.role, cid, err))
-			continue
-		}
-		entry := storage.PinLedgerEntry{
-			CID:               cid,
-			SchemaName:        key.schema,
-			ProviderPeerID:    h.deps.NodePeerID,
-			ProviderID:        pub.ProviderID,
-			SourceName:        pub.SourceName,
-			BatchID:           pub.BatchID,
-			QueryProfile:      pub.QueryProfile,
-			SnapshotID:        snapshotID,
-			Head:              pub.FeedHead,
-			ByteHash:          t.hash,
-			Role:              t.role,
-			RowCount:          t.rows,
-			ByteCount:         t.bytes,
-			TTL:               0,
-			VerificationState: state,
-			VerifiedAt:        now,
-			UpdatedAt:         now,
-		}
-		if err := h.deps.Store.UpsertPinLedgerEntry(entry); err != nil {
-			errs = append(errs, fmt.Errorf("ledger %s %s: %w", t.role, cid, err))
-			continue
-		}
-		done++
-	}
-	if pin {
-		return pub.RecordCount, errors.Join(errs...)
-	}
-	return 0, errors.Join(errs...)
 }
 
 func (h *SyncHandler) startHydrate(key laneKey) {

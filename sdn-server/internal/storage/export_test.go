@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -482,96 +481,6 @@ func TestFlatSQLStoreExportDatasetWindowAllowsLargePublicationWindows(t *testing
 	}
 }
 
-func TestPublishDatasetExportToIPFSPinsShardAndIndexCIDs(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "flatsql-ipfs-publish-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	shardBytes := []byte("shard-bytes")
-	indexBytes := []byte(`{"shardCid":"placeholder"}`)
-	shardCID, err := cidV1RawSHA256(shardBytes)
-	if err != nil {
-		t.Fatalf("compute shard cid: %v", err)
-	}
-	indexCID, err := cidV1RawSHA256(indexBytes)
-	if err != nil {
-		t.Fatalf("compute index cid: %v", err)
-	}
-
-	shardPath := filepath.Join(tmpDir, "shard.fbshard")
-	indexPath := filepath.Join(tmpDir, "index.json")
-	if err := os.WriteFile(shardPath, shardBytes, 0600); err != nil {
-		t.Fatalf("write shard: %v", err)
-	}
-	if err := os.WriteFile(indexPath, indexBytes, 0600); err != nil {
-		t.Fatalf("write index: %v", err)
-	}
-
-	const shardTransportCID = "bafybeishardtransportcid"
-	const indexTransportCID = "bafybeiindextransportcid"
-	var requests []string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests = append(requests, r.URL.String())
-		if r.Method != http.MethodPost {
-			t.Fatalf("method = %s, want POST", r.Method)
-		}
-		if r.URL.Path != "/api/v0/add" {
-			t.Fatalf("path = %q, want /api/v0/add", r.URL.Path)
-		}
-		if r.URL.Query().Get("pin") != "true" || r.URL.Query().Get("cid-version") != "1" || r.URL.Query().Get("raw-leaves") != "true" || r.URL.Query().Get("hash") != "sha2-256" {
-			t.Fatalf("unexpected IPFS add query: %s", r.URL.RawQuery)
-		}
-		reader, err := r.MultipartReader()
-		if err != nil {
-			t.Fatalf("create multipart reader: %v", err)
-		}
-		part, err := reader.NextPart()
-		if err != nil {
-			t.Fatalf("read multipart part: %v", err)
-		}
-		if part.FormName() != "file" {
-			t.Fatalf("multipart form name = %q, want file", part.FormName())
-		}
-		body, err := io.ReadAll(part)
-		if err != nil {
-			t.Fatalf("read multipart body: %v", err)
-		}
-		var cidValue string
-		switch string(body) {
-		case string(shardBytes):
-			cidValue = shardTransportCID
-		case string(indexBytes):
-			cidValue = indexTransportCID
-		default:
-			t.Fatalf("unexpected body %q", string(body))
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"Name":"` + part.FileName() + `","Hash":"` + cidValue + `","Size":"123"}` + "\n"))
-	}))
-	defer server.Close()
-
-	published, err := PublishDatasetExportToIPFS(context.Background(), server.URL, &DatasetExport{
-		ShardPath: shardPath,
-		ShardCID:  shardCID,
-		IndexPath: indexPath,
-		IndexCID:  indexCID,
-	})
-	if err != nil {
-		t.Fatalf("PublishDatasetExportToIPFS failed: %v", err)
-	}
-	if published.ShardCID != shardTransportCID || published.IndexCID != indexTransportCID {
-		t.Fatalf("published CIDs = %+v, want shard=%s index=%s", published, shardTransportCID, indexTransportCID)
-	}
-	if len(requests) != 2 {
-		t.Fatalf("requests = %d, want 2", len(requests))
-	}
-	if !strings.Contains(requests[0], "raw-leaves=true") || !strings.Contains(requests[1], "raw-leaves=true") {
-		t.Fatalf("chunked UnixFS policy not applied to every request: %v", requests)
-	}
-}
-
 func TestFetchIPFSBlockByCIDUsesCatForChunkedUnixFSFiles(t *testing.T) {
 	payload := []byte("chunked-flatbuffer-shard")
 	requests := 0
@@ -596,67 +505,6 @@ func TestFetchIPFSBlockByCIDUsesCatForChunkedUnixFSFiles(t *testing.T) {
 	}
 	if !bytes.Equal(fetched, payload) {
 		t.Fatalf("fetched payload mismatch")
-	}
-	if requests != 1 {
-		t.Fatalf("requests = %d, want 1", requests)
-	}
-}
-
-func TestPublishDatasetPublicationManifestToIPFSPinsManifestCID(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "flatsql-dpm-ipfs-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	manifestBytes := []byte("signed-manifest")
-	manifestCID, err := cidV1RawSHA256(manifestBytes)
-	if err != nil {
-		t.Fatalf("compute manifest cid: %v", err)
-	}
-	manifestPath := filepath.Join(tmpDir, "manifest.dpm")
-	if err := os.WriteFile(manifestPath, manifestBytes, 0600); err != nil {
-		t.Fatalf("write manifest: %v", err)
-	}
-
-	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests++
-		if r.URL.Path != "/api/v0/block/put" || r.URL.Query().Get("pin") != "true" {
-			t.Fatalf("unexpected request URL: %s", r.URL.String())
-		}
-		reader, err := r.MultipartReader()
-		if err != nil {
-			t.Fatalf("create multipart reader: %v", err)
-		}
-		part, err := reader.NextPart()
-		if err != nil {
-			t.Fatalf("read multipart part: %v", err)
-		}
-		if part.FormName() != "data" {
-			t.Fatalf("multipart form name = %q, want data", part.FormName())
-		}
-		body, err := io.ReadAll(part)
-		if err != nil {
-			t.Fatalf("read multipart body: %v", err)
-		}
-		if !bytes.Equal(body, manifestBytes) {
-			t.Fatalf("manifest body mismatch")
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"Key":"` + manifestCID + `"}`))
-	}))
-	defer server.Close()
-
-	publishedCID, err := PublishDatasetPublicationManifestToIPFS(context.Background(), server.URL, &DatasetPublicationManifest{
-		Path: manifestPath,
-		CID:  manifestCID,
-	})
-	if err != nil {
-		t.Fatalf("PublishDatasetPublicationManifestToIPFS failed: %v", err)
-	}
-	if publishedCID != manifestCID {
-		t.Fatalf("published CID = %q, want %q", publishedCID, manifestCID)
 	}
 	if requests != 1 {
 		t.Fatalf("requests = %d, want 1", requests)

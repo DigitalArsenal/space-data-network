@@ -14,6 +14,8 @@ import (
 	"os"
 	"strings"
 	"sync"
+
+	"github.com/spacedatanetwork/sdn-server/internal/pinpolicy"
 )
 
 const (
@@ -33,6 +35,8 @@ const (
 	auxiliaryEventAssetPinReferenceDelete       = "asset_pin_reference_delete"
 	auxiliaryEventAssetPinAuditAppend           = "asset_pin_audit_append"
 	auxiliaryEventSourceBatchLicenseUpsert      = "source_batch_license_upsert"
+	auxiliaryEventKuboPinUpsert                 = "kubo_pin_upsert"
+	auxiliaryEventKuboPinDelete                 = "kubo_pin_delete"
 )
 
 type auxiliaryMetadataStore struct {
@@ -75,6 +79,7 @@ type auxiliaryMetadataEvent struct {
 	AssetPinReferenceDelete       *auxiliaryAssetPinReferenceDelete       `json:"asset_pin_reference_delete,omitempty"`
 	AssetPinAuditEvent            *AssetPinAuditEvent                     `json:"asset_pin_audit_event,omitempty"`
 	SourceBatchLicense            *SourceBatchLicense                     `json:"source_batch_license,omitempty"`
+	KuboPin                       *pinpolicy.Pin                          `json:"kubo_pin,omitempty"`
 }
 
 type auxiliaryMetadataFrame struct {
@@ -765,6 +770,16 @@ func (s *FlatSQLStore) applyAuxiliaryMetadataEvent(event auxiliaryMetadataEvent)
 			return fmt.Errorf("asset pin audit metadata event missing payload")
 		}
 		return s.applyAssetPinAuditAppend(*event.AssetPinAuditEvent)
+	case auxiliaryEventKuboPinUpsert:
+		if event.KuboPin == nil {
+			return fmt.Errorf("kubo pin metadata event missing payload")
+		}
+		return s.applyKuboPinUpsert(*event.KuboPin)
+	case auxiliaryEventKuboPinDelete:
+		if event.KuboPin == nil {
+			return fmt.Errorf("kubo pin delete metadata event missing payload")
+		}
+		return s.applyKuboPinDelete(*event.KuboPin)
 	default:
 		return fmt.Errorf("unknown auxiliary metadata event kind %q", event.Kind)
 	}

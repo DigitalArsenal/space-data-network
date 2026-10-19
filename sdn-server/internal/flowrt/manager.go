@@ -254,6 +254,8 @@ func (m *FlowManager) loadAndRegister(ctx context.Context, flow *InstalledFlow) 
 		return fmt.Errorf("create flow runtime: %w", err)
 	}
 
+	rt.SetFlowID(flow.ProgramID)
+
 	// Create plugin
 	fp := NewFlowPlugin(program, rt, m.capabilities, wasmPath)
 

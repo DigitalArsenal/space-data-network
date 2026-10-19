@@ -179,6 +179,7 @@ import (
 	bPGM "github.com/DigitalArsenal/spacedatastandards.org/lib/go/PGM"
 	bPHB "github.com/DigitalArsenal/spacedatastandards.org/lib/go/PHB"
 	bPHY "github.com/DigitalArsenal/spacedatastandards.org/lib/go/PHY"
+	bPIN "github.com/DigitalArsenal/spacedatastandards.org/lib/go/PIN"
 	bPIV "github.com/DigitalArsenal/spacedatastandards.org/lib/go/PIV"
 	bPKB "github.com/DigitalArsenal/spacedatastandards.org/lib/go/PKB"
 	bPLD "github.com/DigitalArsenal/spacedatastandards.org/lib/go/PLD"
@@ -477,6 +478,7 @@ var driftGuardedSchemas = []struct {
 	{"PLD.fbs", &bPLD.PLD{}},
 	{"PLG.fbs", &bPLG.PLG{}},
 	{"PLK.fbs", &bPLK.PLK{}},
+	{"PIN.fbs", &bPIN.PIN{}},
 	{"PMM.fbs", &bPMM.PMM{}},
 	{"PNL.fbs", &bPNL.PNL{}},
 	{"PNM.fbs", &bPNM.PNM{}},

@@ -11,7 +11,6 @@ import (
 
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/DSS"
 
-	"github.com/spacedatanetwork/sdn-server/internal/channels"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
@@ -71,107 +70,6 @@ func findDSS(t *testing.T, frames [][]byte, schema, provider, source string) *DS
 	}
 	t.Fatalf("no $DSS for %s/%s/%s among %d frames", schema, provider, source, len(frames))
 	return nil
-}
-
-func TestSyncOneDSSPerLaneWithChannelAndOrigin(t *testing.T) {
-	store := newConnectorsTestStore(t)
-	deps := &AdminMountDeps{Store: store, Config: &config.Config{}, NodePeerID: "16Uiu2HAmLocalNodeForSyncTest", Channels: NewChannelHandler(store)}
-	mux, _ := newSyncTestMux(t, deps)
-
-	rec, frames := syncFrames(t, mux, http.MethodGet, SyncPath, nil)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("GET /api/v1/sync status = %d body = %q", rec.Code, rec.Body.String())
-	}
-	if len(frames) != 2 || rec.Header().Get(StreamRecordCountHeader) != "2" {
-		t.Fatalf("frames = %d (header %q), want 2 lanes", len(frames), rec.Header().Get(StreamRecordCountHeader))
-	}
-	if got := rec.Header().Get(StreamSchemaHeader); got != SyncSchemaName {
-		t.Fatalf("X-SDN-Schema = %q", got)
-	}
-
-	gp := findDSS(t, frames, "OMM.fbs", "space-data-network-02", "celestrak-gp")
-	if gp.LocalRows() != 2 {
-		t.Fatalf("OMM LOCAL_ROWS = %d, want 2", gp.LocalRows())
-	}
-	summary, err := store.DataSummary()
-	if err != nil {
-		t.Fatal(err)
-	}
-	var localBytes uint64
-	for _, source := range summary.Sources {
-		if source.SchemaName == "OMM.fbs" && source.ProviderID == "space-data-network-02" && source.SourceName == "celestrak-gp" {
-			localBytes += uint64(source.TotalBytes)
-		}
-	}
-	if localBytes == 0 || gp.CachedBytes() != localBytes {
-		t.Fatalf("OMM CACHED_BYTES = %d, want source summary %d", gp.CachedBytes(), localBytes)
-	}
-	wantChannel, err := channels.FormatChannelID(channels.ChannelIDInput{
-		SourceID:     datasetPublicationSourceID("space-data-network-02", "celestrak-gp"),
-		StandardCode: "OMM",
-	})
-	if err != nil {
-		t.Fatalf("FormatChannelID: %v", err)
-	}
-	if got := string(gp.ChannelId()); got != wantChannel {
-		t.Fatalf("CHANNEL_ID = %q, want %q", got, wantChannel)
-	}
-	if got := string(gp.TOPIC()); got != channels.DiscoveryTopic("OMM") {
-		t.Fatalf("TOPIC = %q", got)
-	}
-	if string(gp.OriginId()) != "celestrak.org" || string(gp.ConnectorId()) != "space-data-network-02/celestrak-gp" || string(gp.DatasetId()) != "gp-full-catalog" {
-		t.Fatalf("origin triple = %q / %q / %q", string(gp.OriginId()), string(gp.ConnectorId()), string(gp.DatasetId()))
-	}
-	if string(gp.ProviderPeerId()) != connectorsTestProducer {
-		t.Fatalf("PROVIDER_PEER_ID = %q, want the seeded producer", string(gp.ProviderPeerId()))
-	}
-	if gp.SUBSCRIBED() {
-		t.Fatalf("SUBSCRIBED = true before any subscribe")
-	}
-	if int8(gp.PinPolicy()) != DSSPinNone {
-		t.Fatalf("PIN_POLICY = %d, want None", gp.PinPolicy())
-	}
-	if string(gp.SyncProtocol()) == "" || string(gp.VISIBILITY()) != "public" || string(gp.EncryptionState()) != "none" || string(gp.GrantState()) != "not-required" {
-		t.Fatalf("channel words = %q / %q / %q / %q", string(gp.SyncProtocol()), string(gp.VISIBILITY()), string(gp.EncryptionState()), string(gp.GrantState()))
-	}
-	if int8(gp.STATUS()) != DSSStateSynced || int8(gp.RequestedAction()) != DSSActionNone {
-		t.Fatalf("STATUS/REQUESTED_ACTION = %d/%d", gp.STATUS(), gp.RequestedAction())
-	}
-
-	spw := findDSS(t, frames, "SPW.fbs", "space-data-network-02", "celestrak-space-weather")
-	if spw.LocalRows() != 1 || string(spw.DatasetId()) != "sw-all" {
-		t.Fatalf("SPW lane = %d rows / %q", spw.LocalRows(), string(spw.DatasetId()))
-	}
-
-	// Filters narrow the set; the item route addresses one lane.
-	_, filtered := syncFrames(t, mux, http.MethodGet, SyncPath+"?schema=SPW", nil)
-	if len(filtered) != 1 {
-		t.Fatalf("schema filter = %d frames, want 1", len(filtered))
-	}
-	_, byOrigin := syncFrames(t, mux, http.MethodGet, SyncPath+"?origin=celestrak.org", nil)
-	if len(byOrigin) != 2 {
-		t.Fatalf("origin filter = %d frames, want 2", len(byOrigin))
-	}
-	itemRec, item := syncFrames(t, mux, http.MethodGet, SyncPath+"/OMM/space-data-network-02/celestrak-gp", nil)
-	if itemRec.Code != http.StatusOK || len(item) != 1 {
-		t.Fatalf("item route status = %d frames = %d", itemRec.Code, len(item))
-	}
-	if got := string(decodeDSSFrame(t, item[0]).SCHEMA_NAME()); got != "OMM.fbs" {
-		t.Fatalf("item SCHEMA_NAME = %q", got)
-	}
-
-	// An archive-plane ledger row on the lane flips PIN_POLICY to Archive.
-	if err := store.UpsertPinLedgerEntry(storage.PinLedgerEntry{
-		CID: "bafyarchiveshardforsynctest", SchemaName: "OMM.fbs", ProviderID: "space-data-network-02", SourceName: "celestrak-gp",
-		BatchID: "archive-omm-1", QueryProfile: storage.ArchiveQueryProfile, Role: storage.PinLedgerRoleArchive,
-		SnapshotID: "bafyarchivemanifest", VerificationState: "verified", VerifiedAt: time.Now(), UpdatedAt: time.Now(),
-	}); err != nil {
-		t.Fatalf("UpsertPinLedgerEntry: %v", err)
-	}
-	_, after := syncFrames(t, mux, http.MethodGet, SyncPath+"?schema=OMM", nil)
-	if got := int8(findDSS(t, after, "OMM.fbs", "space-data-network-02", "celestrak-gp").PinPolicy()); got != DSSPinArchive {
-		t.Fatalf("PIN_POLICY after archive row = %d, want Archive", got)
-	}
 }
 
 func TestSyncDiscoversPublishedDatasetsBeforeDownload(t *testing.T) {

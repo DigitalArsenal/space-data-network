@@ -180,11 +180,35 @@ Providers publish materialized datasets, and the whole lifecycle is signed end t
 1. A provider ingests source data and normalizes it into SDS FlatBuffers.
 2. Records are stored locally and mirrored into the engine's tables.
 3. The provider exports the authoritative set as a `DATA_SHARD` (the streams) plus a `QUERY_INDEX` asset.
-4. It builds and signs a dataset publication manifest (**DPM**) binding the file identifier, source and byte hashes, schema hash, and the assets' content addresses, and pins it to IPFS.
+4. It builds and signs a dataset publication manifest (**DPM**) binding the file identifier, source and byte hashes, schema hash, and the assets' content addresses, and adds it to IPFS.
 5. It signs and announces a publication notification (**PNM**) on the open pubsub topics.
 6. Consumers resolve the latest PNM by peer + standard, verify the signature against the publisher's identity, fetch the manifest and assets by content address over libp2p, verify hashes, roots, and signatures, and import the shard into their own store.
 
 Content addressing is what makes this safe without a trusted third party: bytes are their own addresses, and the signature chain binds names to bytes. Published-shard downloads run at near wire speed (the documented gate is 2 Gbit/s sustained, 99% of wire speed). Over HTTP, the same records are served against the per-schema anonymous allowlist of Section 3.
+
+### Pin policy
+
+A node stores and serves its records and files by content address whether or not they are pinned. A pin is a separate decision: it keeps bytes out of IPFS garbage collection and in the set the node announces as pinned. By default a node pins only its own EPM and its account EPMs. Everything else is added to the node's blockstore unpinned until the operator turns its class on.
+
+| Class | Covers | Feed |
+|---|---|---|
+| `NODE_EPM` | The node's own EPM. Always pinned. | — |
+| `ACCOUNT_EPM` | The EPMs of the node's accounts. Always pinned. | — |
+| `PUBLICATION` | Dataset publications: manifests, shards, indexes, PNMs, CAR bundles. | `<standard>/<provider>/<source>`, e.g. `OMM/celestrak/gp` |
+| `SHARE` | Records published as open shares. | The standard, e.g. `OMM` |
+| `FLOW_ASSET` | Files a flow or module adds or pins through its IPFS capability. | The flow or module id |
+| `TIP` | Content announced in pubsub tips. | The tip topic |
+| `STOREFRONT` | Storefront listings and their artifacts. | — |
+| `ASSET_MODEL` | 3D asset models. | — |
+| `SITE_ASSET` | Homepage site assets. | — |
+| `PROFILE_PHOTO` | Profile photos of the node and its accounts. | — |
+
+A rule turns a whole class on or off, or one feed within it; a feed rule overrides its class rule. The operator sets them in the SDN UI's pin menu, which reads and writes the node's policy as an SDS `$PIN`:
+
+- `GET /api/node/pins` answers one size-prefixed `$PIN`: every rule, whether it is on, whether it is locked, and the roots and bytes it holds pinned.
+- `POST /api/node/pins` takes one size-prefixed `$PIN` carrying only the rules to change (`CLASS`, `FEED`, `ENABLED`) and answers the whole policy. Turning a rule on pins what the node already holds under it, from its own blockstore. Turning it off unpins what the rule pinned, unless another enabled rule holds the same content.
+
+Both routes are operator only and use `application/vnd.sdn.flatbuffers.stream` with `X-SDN-Schema: PIN.fbs`. A change to `NODE_EPM` or `ACCOUNT_EPM` is refused. A lane's retention rule (`ReplaceCurrent`, `KeepAll`, `ArchiveAll`) decides what the node's store keeps; it never pins. Unpinned bytes stay in the blockstore until the operator runs IPFS garbage collection, which the node never runs on its own.
 
 ## 7. Everything compute is WASM; the host only connects
 

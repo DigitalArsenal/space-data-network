@@ -39,6 +39,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multibase"
 
+	"github.com/spacedatanetwork/sdn-server/internal/pinpolicy"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
 
@@ -405,9 +406,10 @@ var glbMagic = []byte{'g', 'l', 'T', 'F', 2, 0, 0, 0}
 
 // handleHomepageModels imports one model: a GLB request body, {"url"} the node
 // downloads over https, or {"cid"} the node fetches over IPFS. Only a glTF
-// binary within homepageModelMaxBytes is pinned. The answer is
-// {"cid", "bytes", "source_url"}. The caller gates it to the operator.
-func handleHomepageModels(apiURL func() string) http.HandlerFunc {
+// binary within homepageModelMaxBytes is kept, through the node pin policy
+// (SITE_ASSET). The answer is {"cid", "bytes", "source_url"}. The caller
+// gates it to the operator.
+func handleHomepageModels(apiURL func() string, pins *pinpolicy.Policy) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			w.Header().Set("Allow", "POST")
@@ -491,10 +493,10 @@ func handleHomepageModels(apiURL func() string) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 			return
 		}
-		id, err := storage.PinAssetGLB(ctx, api, path)
+		id, err := storage.AddAssetGLB(ctx, pins.Scope(pinpolicy.SiteAsset, ""), path)
 		if err != nil {
-			log.Warnf("homepage model pin: %v", err)
-			http.Error(w, "The node could not pin the model.", http.StatusBadGateway)
+			log.Warnf("homepage model add: %v", err)
+			http.Error(w, "The node could not keep the model.", http.StatusBadGateway)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")

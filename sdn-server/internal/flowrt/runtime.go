@@ -44,6 +44,14 @@ type FlowRuntime struct {
 	// releasing it. run() returns the drain execution error so the wrapper
 	// can poison the engine on a trap.
 	linkedSection func(run func() error) error
+
+	// flowID is the program id handlers see as InvocationArgs.FlowID.
+	flowID string
+}
+
+// SetFlowID names the flow this runtime runs (InvocationArgs.FlowID).
+func (rt *FlowRuntime) SetFlowID(id string) {
+	rt.flowID = id
 }
 
 // SetLinkedSection installs the linked-drain wrapper (see linkedSection).
@@ -442,6 +450,7 @@ func (rt *FlowRuntime) Drain(ctx context.Context, handlers HandlerMap, opts Drai
 
 		// Invoke handler
 		args := &InvocationArgs{
+			FlowID:       rt.flowID,
 			NodeIndex:    nodeIndex,
 			PluginID:     pluginID,
 			MethodID:     methodID,

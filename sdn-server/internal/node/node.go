@@ -67,6 +67,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/modulert/caps"
 	"github.com/spacedatanetwork/sdn-server/internal/ops"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
+	"github.com/spacedatanetwork/sdn-server/internal/pinpolicy"
 	"github.com/spacedatanetwork/sdn-server/internal/protocol"
 	sdnpubsub "github.com/spacedatanetwork/sdn-server/internal/pubsub"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
@@ -128,7 +129,9 @@ type Node struct {
 	dht  *dht.IpfsDHT
 	// kubo is upstream Kubo running in this process. Its host IS host and
 	// its public DHT IS dht: one peer, one identity (owner 2026-10-05).
-	kubo           *kubo.Node
+	kubo *kubo.Node
+	// pins is the node pin policy: every Kubo pin goes through it.
+	pins           *pinpolicy.Policy
 	pubsub         *pubsub.PubSub
 	topicsMu       sync.RWMutex
 	topics         map[string]*pubsub.Topic
@@ -968,6 +971,16 @@ func (n *Node) init() error {
 	syncHandler := logservice.NewSyncHandler(n.store)
 	n.protocol.SetSyncHandler(syncHandler)
 
+	// The pin policy, before anything below adds or pins content.
+	var pinLedger pinpolicy.Ledger
+	if n.store != nil {
+		pinLedger = n.store
+	}
+	n.pins, err = pinpolicy.New(n.config.Admin.IPFSAPIURL, pinLedger)
+	if err != nil {
+		return err
+	}
+
 	n.epmService = epm.NewService(n.identity, n.peerRegistry, n.host.ID(), xpubStr, basePath)
 	if n.store != nil {
 		n.epmService.SetProfileStore(n.store)
@@ -1161,6 +1174,7 @@ func (n *Node) init() error {
 		if n.config.Admin.IPFSAPIURL != "" {
 			ipfsHandlers := capabilities.NewIPFSHandlers(capabilities.IPFSConfig{
 				APIURL: n.config.Admin.IPFSAPIURL,
+				Pins:   n.pins,
 			})
 			flowCaps = flowCaps.Merge(ipfsHandlers)
 		}
@@ -1357,7 +1371,7 @@ func (n *Node) buildCapRegistry() *modulert.CapabilityRegistry {
 
 	// IPFS capability — prefer configured Kubo RPC, but fall back to a detected local daemon in dev.
 	if runtimeIPFSAPIURL := n.resolveRuntimeIPFSAPIURL(); runtimeIPFSAPIURL != "" {
-		reg.Register("ipfs", caps.NewIPFSCapFactory(runtimeIPFSAPIURL, nil))
+		reg.Register("ipfs", caps.NewIPFSCapFactory(runtimeIPFSAPIURL, nil, n.pins))
 	}
 
 	// Storage capabilities — require an initialized FlatSQL store
@@ -3642,7 +3656,7 @@ func (n *Node) buildTipQueue() *sdnpubsub.TipQueue {
 	ipfsAPIURL := strings.TrimSpace(n.config.Admin.IPFSAPIURL)
 	if ipfsAPIURL != "" {
 		tq.SetFetcher(newIPFSTipFetcher(ipfsAPIURL, tq.Config().MaxFetchBytes))
-		tq.SetPinner(newIPFSTipPinner(ipfsAPIURL))
+		tq.SetPinner(tipPinner{pins: n.pins.Scope(pinpolicy.Tip, tq.Topic())})
 	}
 	if store := n.store; store != nil {
 		// Archive-plane protection (graph task pin-archive-plane): the TTL
@@ -3934,66 +3948,20 @@ func (f *ipfsTipFetcher) statSize(ctx context.Context, client *http.Client, cidV
 	return stat.Size, true
 }
 
-// ipfsTipPinner adapts Kubo's pin/add + pin/rm RPCs to
-// pubsub.ContentPinner. Unpin reuses storage.UnpinIPFSCID; Pin has no
-// existing exported storage helper because storage's own pin helpers all
-// pin a *local file* while uploading it (PublishDatasetExportToIPFS,
-// PublishDatasetPublicationManifestToIPFS), not an already-known remote
-// CID by reference, so it talks to the Kubo RPC API directly here.
-type ipfsTipPinner struct {
-	apiURL string
-	client *http.Client
+// tipPinner adapts the node pin policy (TIP, feed = the tip topic) to
+// pubsub.ContentPinner. TTL is not sent to Kubo (pins have no TTL);
+// TipQueue.sweepExpiredPins enforces it by calling Unpin.
+type tipPinner struct {
+	pins pinpolicy.Scope
 }
 
-func newIPFSTipPinner(apiURL string) *ipfsTipPinner {
-	return &ipfsTipPinner{apiURL: apiURL, client: http.DefaultClient}
+func (p tipPinner) Pin(ctx context.Context, cidValue string, _ time.Duration) error {
+	_, err := p.pins.PinCID(ctx, cidValue, 0)
+	return err
 }
 
-// Pin recursively pins cidValue. TTL is intentionally not sent to Kubo
-// (pin/add has no TTL concept); TipQueue.sweepExpiredPins is what enforces
-// TTL by calling Unpin once a tip's PinExpiry has elapsed.
-func (p *ipfsTipPinner) Pin(ctx context.Context, cidValue string, _ time.Duration) error {
-	cidValue = strings.TrimSpace(cidValue)
-	if cidValue == "" {
-		return fmt.Errorf("cid is required")
-	}
-	if strings.TrimSpace(p.apiURL) == "" {
-		return fmt.Errorf("ipfs api url is required")
-	}
-	endpoint, err := url.JoinPath(strings.TrimRight(p.apiURL, "/"), "/api/v0/pin/add")
-	if err != nil {
-		return fmt.Errorf("build IPFS URL: %w", err)
-	}
-	reqURL, err := url.Parse(endpoint)
-	if err != nil {
-		return fmt.Errorf("parse IPFS URL: %w", err)
-	}
-	query := reqURL.Query()
-	query.Set("arg", cidValue)
-	query.Set("recursive", "true")
-	reqURL.RawQuery = query.Encode()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL.String(), nil)
-	if err != nil {
-		return fmt.Errorf("create IPFS pin/add request: %w", err)
-	}
-	client := p.client
-	if client == nil {
-		client = http.DefaultClient
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("post IPFS pin/add: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		return nil
-	}
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-	return fmt.Errorf("IPFS pin/add failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
-}
-
-func (p *ipfsTipPinner) Unpin(ctx context.Context, cidValue string) error {
-	return storage.UnpinIPFSCID(ctx, p.apiURL, cidValue)
+func (p tipPinner) Unpin(ctx context.Context, cidValue string) error {
+	return p.pins.Unpin(ctx, cidValue)
 }
 
 // handleTipQueueTip is the TipQueue OnTip handler: it drives the SAME
@@ -4304,7 +4272,7 @@ func (n *Node) supersedePinnedDatasetBatches(schema string, peers []string) {
 			rule := n.laneRetentionRule(schema, content.ProviderID, content.SourceName)
 			switch rule {
 			case channels.RetentionArchiveAll:
-				log.Debugf("gateway.pin supersede %s %s: %s/%s keeps and pins every version, batch %s left in place", peerID, schema, content.ProviderID, content.SourceName, content.BatchID)
+				log.Debugf("gateway.pin supersede %s %s: %s/%s keeps every version, batch %s left in place", peerID, schema, content.ProviderID, content.SourceName, content.BatchID)
 			case channels.RetentionKeepAll:
 				n.keepLaneHistory(schema, content.ProviderID, content.SourceName)
 			}
@@ -4619,9 +4587,9 @@ func (n *Node) materializeDatasetPublicationPNMInner(ctx context.Context, schema
 
 	// Materialization fetched these blocks through the local Kubo API, so
 	// they are already in the blockstore but unpinned. The lane's retention
-	// rule decides what happens next: ArchiveAll pins the whole referenced
-	// DAG (manifest, shard, index, PNM) and records it in the pin ledger;
-	// ReplaceCurrent keeps this batch as the lane's one current set and
+	// rule decides what the store keeps: ArchiveAll keeps the whole
+	// referenced DAG (manifest, shard, index, PNM) in the pin ledger (Kubo
+	// pins follow the node pin policy); ReplaceCurrent keeps this batch as the lane's one current set and
 	// evicts the previous one.
 	if n.host == nil || from != n.host.ID() {
 		n.applyLaneRetention(result.SchemaName, result.ProviderID, result.SourceName,
@@ -5540,33 +5508,12 @@ func (n *Node) installSourceMetricsObservers() {
 	caps.SetFetchValidatorObserver(metricsStore.RecordValidators)
 }
 
-// PinCID pins one CID on this node's Kubo (admin.ipfs_api_url). Without an
-// IPFS API the answer is a plain error, never a panic.
-func (n *Node) PinCID(ctx context.Context, cidValue string) error {
-	if n == nil || n.config == nil {
-		return errors.New("IPFS is not configured on this node")
+// PinPolicy is the node pin policy.
+func (n *Node) PinPolicy() *pinpolicy.Policy {
+	if n == nil {
+		return nil
 	}
-	apiURL := strings.TrimSpace(n.config.Admin.IPFSAPIURL)
-	if apiURL == "" {
-		return errors.New("IPFS is not configured on this node")
-	}
-	return newIPFSTipPinner(apiURL).Pin(ctx, cidValue, 0)
-}
-
-// UnpinCID unpins one CID on this node's Kubo.
-func (n *Node) UnpinCID(ctx context.Context, cidValue string) error {
-	if n == nil || n.config == nil {
-		return errors.New("IPFS is not configured on this node")
-	}
-	apiURL := strings.TrimSpace(n.config.Admin.IPFSAPIURL)
-	if apiURL == "" {
-		return errors.New("IPFS is not configured on this node")
-	}
-	cidValue = strings.TrimSpace(cidValue)
-	if cidValue == "" {
-		return errors.New("cid is required")
-	}
-	return storage.UnpinIPFSCID(ctx, apiURL, cidValue)
+	return n.pins
 }
 
 // SyncLane runs ONE bounded catch-up pass over every connected trusted peer
@@ -6320,9 +6267,9 @@ func (n *Node) retentionContext() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(base, datasetDAGPinTimeout)
 }
 
-// archiveLanePublication (archive-all): pin every CID of the publication and
-// record verified permanent rows in the pin ledger, so GET $DSS reports the
-// lane as pinned. Nothing is ever evicted.
+// archiveLanePublication (archive-all): keep every CID of the publication,
+// recorded as verified permanent rows in the pin ledger. Nothing is ever
+// evicted. Kubo pins follow the node pin policy (PUBLICATION).
 func (n *Node) archiveLanePublication(schema, providerID, sourceName string, imported storage.RetainCandidate, pins map[string]string) {
 	if len(pins) == 0 {
 		return
@@ -6344,14 +6291,11 @@ func (n *Node) archiveLanePublication(schema, providerID, sourceName string, imp
 		self = n.host.ID().String()
 	}
 	now := time.Now().UTC()
+	kubo := n.pins.Scope(pinpolicy.Publication, pinpolicy.PublicationFeed(schema, providerID, sourceName))
 	pinned := 0
 	for _, role := range []string{"shard", "index", "manifest", "pnm"} {
 		cid := pins[role]
 		if cid == "" {
-			continue
-		}
-		if err := n.PinCID(ctx, cid); err != nil {
-			log.Warnf("Retention for %s %s/%s: could not pin %s %s: %v", schema, providerID, sourceName, role, cid, err)
 			continue
 		}
 		entry := storage.PinLedgerEntry{
@@ -6381,10 +6325,16 @@ func (n *Node) archiveLanePublication(schema, providerID, sourceName string, imp
 			}
 		}
 		if err := n.store.UpsertPinLedgerEntry(entry); err != nil {
-			log.Warnf("Retention for %s %s/%s: pinned %s %s but could not record it: %v", schema, providerID, sourceName, role, cid, err)
+			log.Warnf("Retention for %s %s/%s: could not record %s %s: %v", schema, providerID, sourceName, role, cid, err)
 			continue
 		}
-		pinned++
+		if kubo.Configured() {
+			if ok, err := kubo.PinCID(ctx, cid, entry.ByteCount); err != nil {
+				log.Warnf("Retention for %s %s/%s: could not pin %s %s: %v", schema, providerID, sourceName, role, cid, err)
+			} else if ok {
+				pinned++
+			}
+		}
 	}
 	if pinned > 0 {
 		log.Infof("Retention for %s %s/%s: keeping every version — pinned %d CIDs of batch %s", schema, providerID, sourceName, pinned, strings.TrimSpace(imported.BatchID))
@@ -6450,7 +6400,7 @@ func (n *Node) releaseSupersededLanePins(schema, providerID, sourceName, keep st
 // releaseLanePins is releaseSupersededLanePins limited, when only is
 // non-nil, to the batches it names.
 func (n *Node) releaseLanePins(schema, providerID, sourceName, keep string, only map[string]bool) int {
-	if n.config == nil || strings.TrimSpace(n.config.Admin.IPFSAPIURL) == "" {
+	if !n.pins.Scope(pinpolicy.Publication, "").Configured() {
 		return 0
 	}
 	pubs, err := n.store.ListDatasetShardPublications(storage.DatasetShardPublicationQuery{
@@ -6499,7 +6449,7 @@ func (n *Node) releaseLanePins(schema, providerID, sourceName, keep string, only
 				continue
 			}
 			seen[cid] = true
-			if err := n.UnpinCID(ctx, cid); err != nil {
+			if err := n.pins.Scope(pinpolicy.Publication, pinpolicy.PublicationFeed(schema, pub.ProviderID, pub.SourceName)).Unpin(ctx, cid); err != nil {
 				log.Debugf("Retention for %s %s/%s: could not unpin %s %s: %v", schema, providerID, sourceName, role, cid, err)
 				continue
 			}
