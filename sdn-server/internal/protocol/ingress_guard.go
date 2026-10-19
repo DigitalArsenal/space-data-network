@@ -13,6 +13,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
+	"github.com/spacedatanetwork/sdn-server/internal/syncwire"
 )
 
 // PeerAuthorizer reports whether a remote peer holds a privilege. A nil
@@ -25,7 +26,7 @@ func AllowAnyPeer(peer.ID) bool { return true }
 
 // ErrReadNotAuthorized is returned to a peer that asks for data outside the
 // anonymous read surface without the privilege to read it.
-var ErrReadNotAuthorized = errors.New("not authorized: this schema is not on the public read surface")
+var ErrReadNotAuthorized = fmt.Errorf("%w: this schema is not on the public read surface", syncwire.ErrNotAuthorized)
 
 // ErrMalformedMessage marks a message whose handling panicked. The message
 // is dropped and the node keeps running.

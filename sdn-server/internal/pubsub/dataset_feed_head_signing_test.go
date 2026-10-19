@@ -22,8 +22,7 @@ func (p *capturingTopicPublisher) PublishToTopic(_ context.Context, topic string
 func signedTestAnnouncement(t *testing.T, key ed25519.PrivateKey) DatasetFeedHeadAnnouncement {
 	t.Helper()
 	ann := DatasetFeedHeadAnnouncement{
-		MessageType:  DatasetFeedHeadMessageType,
-		Schema:       OMMSchema,
+		SchemaName:   OMMSchema,
 		ProviderID:   "provider-1",
 		QueryProfile: "default",
 		FeedSequence: 7,
@@ -42,7 +41,7 @@ func TestSignAndVerifyDatasetFeedHead(t *testing.T) {
 		t.Fatal(err)
 	}
 	ann := signedTestAnnouncement(t, priv)
-	if ann.Signature == "" || ann.SignatureType != "Ed25519" || ann.SigningPublicKey == "" {
+	if len(ann.Signature) == 0 || ann.SignatureType != "Ed25519" || len(ann.SigningPublicKey) == 0 {
 		t.Fatalf("signature fields not populated: %+v", ann)
 	}
 	if err := VerifyDatasetFeedHead(ann, nil); err != nil {
@@ -77,7 +76,7 @@ func TestVerifyDatasetFeedHeadRejectsTampering(t *testing.T) {
 	}
 
 	unsigned := signedTestAnnouncement(t, priv)
-	unsigned.Signature = ""
+	unsigned.Signature = nil
 	if err := VerifyDatasetFeedHead(unsigned, nil); err == nil || !strings.Contains(err.Error(), "unsigned") {
 		t.Fatalf("expected unsigned rejection, got %v", err)
 	}
@@ -109,7 +108,7 @@ func TestPublishSignedDatasetFeedHeadSigns(t *testing.T) {
 		t.Fatal(err)
 	}
 	ann := DatasetFeedHeadAnnouncement{
-		Schema:       "OMM",
+		SchemaName:   "OMM",
 		QueryProfile: "default",
 		FeedSequence: 1,
 		FeedHead:     "bafyhead",

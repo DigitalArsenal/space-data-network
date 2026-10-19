@@ -3,7 +3,6 @@ package pubsub
 import (
 	"context"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -543,77 +542,6 @@ func TestPublishDatasetUpdatePNMRejectsInvalidPNM(t *testing.T) {
 	}
 	if len(publisher.published) != 0 {
 		t.Fatalf("published invalid PNM to %#v", publisher.published)
-	}
-}
-
-func TestPublishDatasetFeedHeadPublishesSchemaScopedTopic(t *testing.T) {
-	publisher := &recordingTopicPublisher{}
-
-	err := PublishDatasetFeedHead(context.Background(), publisher, DatasetFeedHeadAnnouncement{
-		Schema:       "OMM.fbs",
-		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-gp",
-		QueryProfile: "dataset-publication-offset-v1",
-		Offset:       5000,
-		Limit:        5000,
-		FeedSequence: 2,
-		PreviousHead: "head-1",
-		FeedHead:     "head-2",
-		ManifestCID:  "bafymanifest",
-		PNMCID:       "bafypnm",
-		PublishedAt:  time.Unix(1_778_436_060, 0).UTC(),
-	})
-	if err != nil {
-		t.Fatalf("PublishDatasetFeedHead failed: %v", err)
-	}
-
-	wantTopic := DatasetFeedHeadTopic("OMM.fbs")
-	if !reflect.DeepEqual(publisher.topics, []string{wantTopic}) {
-		t.Fatalf("topics = %#v, want %q", publisher.topics, wantTopic)
-	}
-	var payload DatasetFeedHeadAnnouncement
-	if err := json.Unmarshal(publisher.payloads[wantTopic], &payload); err != nil {
-		t.Fatalf("decode feed head payload: %v", err)
-	}
-	if payload.Offset != 5000 || payload.Limit != 5000 || payload.FeedSequence != 2 || payload.PreviousHead != "head-1" || payload.FeedHead != "head-2" || payload.ManifestCID != "bafymanifest" {
-		t.Fatalf("unexpected feed head payload: %+v", payload)
-	}
-}
-
-func TestParseDatasetFeedHeadAnnouncementNormalizesAndValidates(t *testing.T) {
-	payload := []byte(`{
-		"message_type": "sdn.dataset.feed_head.v1",
-		"schema": "OMM",
-		"provider_id": "space-data-network-02",
-		"source_name": "celestrak-gp",
-		"query_profile": "dataset-publication-offset-v1",
-		"offset": 10000,
-		"limit": 5000,
-		"feed_sequence": 3,
-		"previous_head": "head-2",
-		"feed_head": "head-3",
-		"manifest_cid": "bafymanifest"
-	}`)
-
-	ann, err := ParseDatasetFeedHeadAnnouncement(payload)
-	if err != nil {
-		t.Fatalf("ParseDatasetFeedHeadAnnouncement failed: %v", err)
-	}
-	if ann.MessageType != DatasetFeedHeadMessageType || ann.Schema != "OMM.fbs" || ann.Offset != 10000 || ann.Limit != 5000 || ann.FeedSequence != 3 || ann.FeedHead != "head-3" {
-		t.Fatalf("unexpected parsed feed head: %+v", ann)
-	}
-}
-
-func TestParseDatasetFeedHeadAnnouncementRejectsInvalidPayload(t *testing.T) {
-	_, err := ParseDatasetFeedHeadAnnouncement([]byte(`{
-		"message_type": "sdn.dataset.other",
-		"schema": "OMM.fbs",
-		"query_profile": "dataset-publication-offset-v1",
-		"feed_sequence": 1,
-		"feed_head": "head-1"
-	}`))
-	if err == nil {
-		t.Fatalf("expected invalid feed head payload to be rejected")
 	}
 }
 

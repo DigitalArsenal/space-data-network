@@ -74,7 +74,7 @@ vi.mock('./helia', () => ({
 }));
 
 const PEER = '12D3KooWRD6km1Tm6dfmpcUX1Uu1kM2rcMYPSk9HRyN3btNPRLym';
-const PROTOCOL = '/space-data-network/flatsql-sync/1.0.0';
+const PROTOCOL = '/space-data-network/flatsql-sync/2.0.0/read-chunk';
 
 /**
  * Run the SDN handler side of an exchange on the far end of a stream pair:

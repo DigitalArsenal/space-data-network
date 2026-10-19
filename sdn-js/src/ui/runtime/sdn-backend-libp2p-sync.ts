@@ -1,5 +1,7 @@
 import {
-  FLATSQL_SYNC_PROTOCOL_ID,
+  FLATSQL_SYNC_PROTOCOL_IDS,
+  FLATSQL_SYNC_READ_CHUNK_PROTOCOL_ID,
+  requestFlatSqlPublishedList,
   requestFlatSqlPublishedShard,
   requestFlatSqlPublishedShardBatch,
   requestFlatSqlSyncChunk,
@@ -10,6 +12,7 @@ import {
   type FlatSqlSyncDatastoreEntry,
   type FlatSqlSyncDatastoreList,
   type FlatSqlSyncManifest,
+  type FlatSqlPublishedList,
   type FlatSqlPublishedShard,
   type FlatSqlPublishedShardBatch,
   type FlatSqlSyncTransport,
@@ -49,6 +52,7 @@ export interface Libp2pFlatSqlSyncClient {
   readFlatSqlSyncChunk(query: FlatSqlSyncQuery): Promise<FlatSqlSyncChunk>;
   listFlatSqlSyncDatastores?(query: Pick<FlatSqlSyncQuery, 'targetPeerId' | 'candidateAddrs'>): Promise<FlatSqlSyncDatastoreList>;
   openFlatSqlSyncManifest?(query: FlatSqlSyncQuery): Promise<FlatSqlSyncManifest>;
+  listFlatSqlPublished?(query: FlatSqlSyncQuery): Promise<FlatSqlPublishedList>;
   readFlatSqlPublishedShard?(query: FlatSqlSyncQuery & { cid: string }): Promise<FlatSqlPublishedShard>;
   readFlatSqlPublishedShardBatch?(query: FlatSqlSyncQuery & { cids: string[] }): Promise<FlatSqlPublishedShardBatch>;
   measureWireSpeed?(query: FlatSqlWireSpeedProbeQuery): Promise<FlatSqlWireSpeedProbeResult>;
@@ -70,6 +74,12 @@ export interface Libp2pFlatSqlSyncBackendOptions {
 
 export interface Libp2pFlatSqlSyncClientOptions {
   requestTimeoutMs?: number;
+  /**
+   * Permit dialing private and loopback addresses (SDNConfig
+   * allowPrivateAddressDial): libp2p's connection gater denies them by
+   * default. Off by default; on only for a local provider.
+   */
+  allowPrivateAddressDial?: boolean;
 }
 
 const DEFAULT_SUMMARY_SCHEMAS = ['CAT.fbs', 'EPM.fbs', 'MPE.fbs', 'OMM.fbs', 'PNM.fbs', 'SPW.fbs'];
@@ -112,36 +122,18 @@ export function createLibp2pFlatSqlSyncBackend(options: Libp2pFlatSqlSyncBackend
     return clientPromise;
   }
 
-  async function requestChunk(query: RawDataQuery & {
-    op?: FlatSqlSyncQuery['op'];
-    scanHash?: string;
-    chunkHash?: string;
-    nextCursor?: string;
-    totalCount?: number;
-    highWaterMark?: string;
-    records?: RawDataRecord[];
-  }): Promise<FlatSqlSyncChunk> {
+  async function requestChunk(query: RawDataQuery): Promise<FlatSqlSyncChunk> {
     const client = await ensureClient();
     const request: FlatSqlSyncQuery = {
       targetPeerId,
       candidateAddrs,
-      op: query.op,
       schema: query.schema,
       batchId: query.batchId,
-      peerId: query.peerId,
+      originId: query.peerId,
       cursor: query.cursor,
-      snapshotId: query.snapshotId,
-      head: query.head,
-      nextCursor: query.nextCursor,
-      totalCount: query.totalCount,
-      highWaterMark: query.highWaterMark,
-      scanHash: query.scanHash,
-      chunkHash: query.chunkHash,
       queryProfile: query.queryProfile,
-      syncFilter: query.syncFilter,
+      search: query.search,
       limit: query.limit,
-      offset: query.offset,
-      records: query.records?.map(rawRecordToFlatSqlRef),
     };
     const queryHasDatastoreKey = Object.prototype.hasOwnProperty.call(query, 'datastoreKey') && query.datastoreKey !== undefined;
     const queryHasProviderId = Object.prototype.hasOwnProperty.call(query, 'providerId') && query.providerId !== undefined;
@@ -160,29 +152,12 @@ export function createLibp2pFlatSqlSyncBackend(options: Libp2pFlatSqlSyncBackend
     return client.readFlatSqlSyncChunk(request);
   }
 
-  // One scan page with its record bytes: the libp2p FlatSQL sync wire keeps
-  // its scan + read_chunk pair; the backend contract returns bytes inline.
+  // One read-chunk page carries its records inline.
   async function scanRawData(query: RawDataQuery): Promise<BackendResult<DataScanResult>> {
     try {
-      const scan = dataScanResultFromChunk(await requestChunk({ ...query, op: 'scan' }));
-      if (scan.results.length === 0) return createAvailableResult('scanRawData', scan);
-      const chunk = await requestChunk({
-        schema: scan.schema,
-        datastoreKey: query.datastoreKey,
-        op: 'read_chunk',
-        scanHash: scan.scanHash,
-        chunkHash: scan.chunkHash,
-        snapshotId: scan.snapshotId,
-        head: scan.head,
-        cursor: scan.cursor,
-        nextCursor: scan.nextCursor,
-        totalCount: scan.totalCount,
-        highWaterMark: scan.highWaterMark,
-        queryProfile: scan.queryProfile,
-        syncFilter: query.syncFilter,
-        records: scan.results,
-      });
-      return createAvailableResult('scanRawData', { ...scan, results: rawRecordsWithDataFromFlatSqlChunk(chunk, scan.results) });
+      const chunk = await requestChunk(query);
+      const scan = dataScanResultFromChunk(chunk);
+      return createAvailableResult('scanRawData', { ...scan, results: rawRecordsWithDataFromFlatSqlChunk(chunk) });
     } catch (error) {
       return createUnavailableResult('scanRawData', formatSyncError(error));
     }
@@ -207,8 +182,8 @@ export function createLibp2pFlatSqlSyncBackend(options: Libp2pFlatSqlSyncBackend
     getNodeSummary,
     async getHealth() {
       try {
-        await requestChunk({ schema: summarySchemas[0] ?? 'OMM.fbs', op: 'scan', limit: 1, offset: 0 });
-        return createAvailableResult('getHealth', { healthy: true, details: { protocol: FLATSQL_SYNC_PROTOCOL_ID, peerId: targetPeerId } });
+        await requestChunk({ schema: summarySchemas[0] ?? 'OMM.fbs', limit: 1 });
+        return createAvailableResult('getHealth', { healthy: true, details: { protocol: FLATSQL_SYNC_READ_CHUNK_PROTOCOL_ID, peerId: targetPeerId } });
       } catch (error) {
         return createUnavailableResult('getHealth', formatSyncError(error));
       }
@@ -253,7 +228,7 @@ export function createLibp2pFlatSqlSyncBackend(options: Libp2pFlatSqlSyncBackend
         addrs: candidateAddrs,
         trustLevel: 'configured',
         agentVersion: 'sdn-configured-node',
-        protocols: [FLATSQL_SYNC_PROTOCOL_ID],
+        protocols: [...FLATSQL_SYNC_PROTOCOL_IDS],
       }]);
     },
     async listTrustedPeers(): Promise<BackendResult<ObservedSdnPeer[]>> {
@@ -313,7 +288,7 @@ export function createLibp2pFlatSqlSyncBackend(options: Libp2pFlatSqlSyncBackend
     scanRawData,
     async queryRawData(query: RawDataQuery): Promise<BackendResult<RawDataRecord[]>> {
       try {
-        const chunk = await requestChunk({ ...query, op: 'read_chunk' });
+        const chunk = await requestChunk(query);
         return createAvailableResult('queryRawData', rawRecordsWithDataFromFlatSqlChunk(chunk));
       } catch (error) {
         return createUnavailableResult('queryRawData', formatSyncError(error));
@@ -378,13 +353,8 @@ export function createLibp2pFlatSqlSyncBackend(options: Libp2pFlatSqlSyncBackend
     for (const entry of datastores.results) {
       const schemaName = entry.identity.schemaName;
       if (!schemaName || schemaName === 'unknown') continue;
-      const chunk = await requestChunk({
-        schema: schemaName,
-        datastoreKey: entry.key,
-        op: 'scan',
-        limit: 1,
-        offset: 0,
-      });
+      // One record answers TOTAL_COUNT and a byte-size sample.
+      const chunk = await requestChunk({ schema: schemaName, datastoreKey: entry.key, limit: 1 });
       const count = Math.max(0, chunk.header.totalCount);
       const totalBytes = estimateTotalBytes(chunk.header.results, count);
       if (count <= 0) continue;
@@ -416,9 +386,7 @@ export function createLibp2pFlatSqlSyncBackend(options: Libp2pFlatSqlSyncBackend
           schema,
           ...(datastoreKey ? { datastoreKey } : {}),
           ...(schemaSourceName ? { sourceName: schemaSourceName } : { sourceName: '' }),
-          op: 'scan',
           limit: 1,
-          offset: 0,
         }));
       } catch (error) {
         firstError ??= error;
@@ -553,6 +521,7 @@ export async function createDefaultLibp2pFlatSqlSyncClient(
     streamMuxers: [yamux(LIBP2P_FLATSQL_SYNC_YAMUX_OPTIONS)],
     peerDiscovery: [],
     services,
+    ...(options.allowPrivateAddressDial === true ? { connectionGater: { denyDialMultiaddr: async () => false } } : {}),
   });
   await libp2p.start();
 
@@ -609,6 +578,9 @@ export async function createDefaultLibp2pFlatSqlSyncClient(
     },
     openFlatSqlSyncManifest(query) {
       return requestFlatSqlSyncManifest(transport, query);
+    },
+    listFlatSqlPublished(query) {
+      return requestFlatSqlPublishedList(transport, query);
     },
     readFlatSqlPublishedShard(query) {
       return requestFlatSqlPublishedShard(transport, query);
@@ -857,31 +829,25 @@ export function dataScanResultFromChunk(chunk: FlatSqlSyncChunk): DataScanResult
     totalCount: chunk.header.totalCount,
     count: chunk.header.count,
     limit: chunk.header.limit,
-    offset: chunk.header.offset,
+    offset: 0,
     cursor: chunk.header.cursor,
     nextCursor: chunk.header.nextCursor,
-    snapshotId: chunk.header.snapshotId,
-    head: chunk.header.head,
-    highWaterMark: chunk.header.highWaterMark,
-    scanHash: chunk.header.scanHash,
+    // The read-chunk cursor carries its snapshot; there is no separate id.
+    snapshotId: '',
+    head: '',
+    highWaterMark: '',
+    scanHash: '',
     chunkHash: chunk.header.chunkHash,
-    queryProfile: chunk.header.queryProfile,
-    syncProtocol: chunk.header.syncProtocol,
-    maxChunkSize: chunk.header.maxChunkSize,
-    transports: chunk.header.transports,
+    queryProfile: '',
+    syncProtocol: FLATSQL_SYNC_READ_CHUNK_PROTOCOL_ID,
+    maxChunkSize: 0,
+    transports: [],
     results: chunk.header.results.map(rawRecordFromFlatSqlRef),
   };
 }
 
-export function rawRecordsWithDataFromFlatSqlChunk(chunk: FlatSqlSyncChunk, fallbackRefs: RawDataRecord[] = []): RawDataRecord[] {
-  const refs = chunk.header.results.length > 0 ? chunk.header.results.map(rawRecordFromFlatSqlRef) : fallbackRefs;
-  if (refs.length > 0 && chunk.records.length < refs.length) {
-    throw new Error(`remote FlatSQL sync returned ${chunk.records.length}/${refs.length} FlatBuffer frames`);
-  }
-  return refs.map((record, index) => ({
-    ...record,
-    ...(chunk.records[index] ? { dataBytes: chunk.records[index] } : {}),
-  }));
+export function rawRecordsWithDataFromFlatSqlChunk(chunk: FlatSqlSyncChunk): RawDataRecord[] {
+  return chunk.header.results.map((ref, index) => ({ ...rawRecordFromFlatSqlRef(ref), dataBytes: chunk.records[index] }));
 }
 
 export function flatSqlRecordKeys(records: RawDataRecord[]): string[] {
@@ -904,21 +870,6 @@ function rawRecordFromFlatSqlRef(record: FlatSqlSyncRecordRef): RawDataRecord {
     sourceName: record.sourceName,
     batchId: record.batchId,
     producerPeerId: record.producerPeerId,
-    producerPublicKey: record.producerPublicKey,
-    timestamp: record.timestamp,
-    sizeBytes: record.sizeBytes,
-  };
-}
-
-function rawRecordToFlatSqlRef(record: RawDataRecord): FlatSqlSyncRecordRef {
-  return {
-    schemaName: record.schemaName,
-    cid: record.cid,
-    peerId: record.peerId,
-    providerId: record.providerId,
-    sourceName: record.sourceName,
-    batchId: record.batchId,
-    timestamp: record.timestamp,
     sizeBytes: record.sizeBytes,
   };
 }

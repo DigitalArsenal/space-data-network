@@ -11,17 +11,13 @@ package api
 // the schema declares and cross into the generated types through enumOf.
 
 import (
-	"encoding/binary"
-	"errors"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"strconv"
 	"time"
 
-	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/QRP"
-	flatbuffers "github.com/google/flatbuffers/go"
+	"github.com/spacedatanetwork/sdn-server/internal/syncwire"
 )
 
 const (
@@ -45,306 +41,49 @@ const (
 	// MaxRequestFrameBytes bounds a frame-stream request body.
 	MaxRequestFrameBytes int64 = 16 << 20
 
-	// framePrefixLength is the u32le length prefix.
-	framePrefixLength = 4
-	// frameIdentifierOffset is where the file identifier sits inside a
-	// prefixed frame: prefix (4) + root uoffset (4).
-	frameIdentifierOffset = 8
-	// frameIdentifierLength is the FlatBuffers file identifier width.
-	frameIdentifierLength = 4
+	framePrefixLength     = syncwire.FramePrefixLength
+	frameIdentifierOffset = syncwire.FrameIdentifierOffset
+	frameIdentifierLength = syncwire.FrameIdentifierLength
 )
 
-// $QRP KIND values (qrpKind).
+// The $QRP kit lives in internal/syncwire (shared with the libp2p lanes);
+// these names keep the api callers unchanged.
 const (
-	QRPKindRequest int8 = 0
-	QRPKindPage    int8 = 1
-	QRPKindError   int8 = 2
+	QRPKindRequest = syncwire.QRPKindRequest
+	QRPKindPage    = syncwire.QRPKindPage
+	QRPKindError   = syncwire.QRPKindError
+
+	QRPStatusOk      = syncwire.QRPStatusOk
+	QRPStatusPartial = syncwire.QRPStatusPartial
+	QRPStatusBusy    = syncwire.QRPStatusBusy
+	QRPStatusCold    = syncwire.QRPStatusCold
+	QRPStatusError   = syncwire.QRPStatusError
 )
 
-// $QRP STATUS values (qrpStatus).
-const (
-	QRPStatusOk      int8 = 0
-	QRPStatusPartial int8 = 1
-	QRPStatusBusy    int8 = 2
-	QRPStatusCold    int8 = 3
-	QRPStatusError   int8 = 4
+type (
+	QRPFields      = syncwire.QRPFields
+	QRPColumnField = syncwire.QRPColumnField
+	QRPCell        = syncwire.QRPCell
+	QRPTableField  = syncwire.QRPTableField
+)
+
+var (
+	BuildQRP        = syncwire.BuildQRP
+	ParseQRP        = syncwire.ParseQRP
+	FrameIdentifier = syncwire.FrameIdentifier
+	SplitFrames     = syncwire.SplitFrames
 )
 
 // enumOf converts a schema ordinal into the generated (unexported) enum type
 // named by one of the published EnumValues* maps.
 func enumOf[T ~int8](_ map[string]T, n int8) T { return T(n) }
 
-// QRPFields is every $QRP field the Go lanes write. Zero values are omitted
-// from the buffer (FlatBuffers defaults), so a Page header and an Error frame
-// share one builder.
-type QRPFields struct {
-	Kind           int8
-	Status         int8
-	ErrorCode      string
-	Message        string
-	RetryAfterMs   uint32
-	SchemaName     string
-	FileIdentifier string
-	ProviderID     string
-	SourceName     string
-	BatchID        string
-	ProducerPeerID string
-	OriginID       string
-	FromEpochMs    int64
-	ToEpochMs      int64
-	Page           uint32
-	Limit          uint32
-	Cursor         string
-	NextCursor     string
-	ResumeCursor   string
-	RecordCount    uint32
-	TotalCount     uint64
-	Scanned        uint64
-	Stored         uint64
-	Partial        bool
-	Truncated      bool
-	AsOfMs         int64
-	Stale          bool
-	ElapsedMs      uint32
-	GeneratedAtMs  int64
-	Etag           string
-	CID            string
-	ArchiveID      string
-	// HTTPStatus is the transport status an Error frame answers with.
-	HTTPStatus uint16
-	// Columns and Rows carry a projection page (typed cells in column
-	// order) instead of record frames.
-	Columns []QRPColumnField
-	Rows    [][]QRPCell
-}
-
-// QRPColumnField is one $QRP COLUMNS descriptor.
-type QRPColumnField struct {
-	Name string
-	Type string
-}
-
-// QRPCell is one QRPValue of a projection row: Text when IsText, Int when
-// IsInt, Null otherwise.
-type QRPCell struct {
-	IsText bool
-	Text   string
-	IsInt  bool
-	Int    int64
-}
-
-// $QRP QRPValue KIND values (qrpValueKind).
+// $QRP QRPValue KIND values (qrpValueKind) used by the api row builders.
 const (
 	qrpValueKindNull int8 = 0
 	qrpValueKindInt  int8 = 2
 	qrpValueKindText int8 = 4
 )
-
-func buildQRPColumns(b *flatbuffers.Builder, columns []QRPColumnField) flatbuffers.UOffsetT {
-	if len(columns) == 0 {
-		return 0
-	}
-	offsets := make([]flatbuffers.UOffsetT, len(columns))
-	for i, column := range columns {
-		name, typ := b.CreateString(column.Name), b.CreateString(column.Type)
-		QRP.QRPColumnStart(b)
-		QRP.QRPColumnAddNAME(b, name)
-		QRP.QRPColumnAddTYPE(b, typ)
-		offsets[i] = QRP.QRPColumnEnd(b)
-	}
-	QRP.QRPStartCOLUMNSVector(b, len(offsets))
-	for i := len(offsets) - 1; i >= 0; i-- {
-		b.PrependUOffsetT(offsets[i])
-	}
-	return b.EndVector(len(offsets))
-}
-
-func buildQRPRows(b *flatbuffers.Builder, rows [][]QRPCell) flatbuffers.UOffsetT {
-	if len(rows) == 0 {
-		return 0
-	}
-	rowOffsets := make([]flatbuffers.UOffsetT, len(rows))
-	for r, row := range rows {
-		cells := make([]flatbuffers.UOffsetT, len(row))
-		for c, cell := range row {
-			var text flatbuffers.UOffsetT
-			if cell.IsText {
-				text = b.CreateString(cell.Text)
-			}
-			QRP.QRPValueStart(b)
-			switch {
-			case cell.IsText:
-				QRP.QRPValueAddKIND(b, enumOf(QRP.EnumValuesqrpValueKind, qrpValueKindText))
-				QRP.QRPValueAddTEXT_VALUE(b, text)
-			case cell.IsInt:
-				QRP.QRPValueAddKIND(b, enumOf(QRP.EnumValuesqrpValueKind, qrpValueKindInt))
-				QRP.QRPValueAddINT_VALUE(b, cell.Int)
-			default:
-				QRP.QRPValueAddKIND(b, enumOf(QRP.EnumValuesqrpValueKind, qrpValueKindNull))
-			}
-			cells[c] = QRP.QRPValueEnd(b)
-		}
-		QRP.QRPRowStartCELLSVector(b, len(cells))
-		for i := len(cells) - 1; i >= 0; i-- {
-			b.PrependUOffsetT(cells[i])
-		}
-		cellVector := b.EndVector(len(cells))
-		QRP.QRPRowStart(b)
-		QRP.QRPRowAddCELLS(b, cellVector)
-		rowOffsets[r] = QRP.QRPRowEnd(b)
-	}
-	QRP.QRPStartROWSVector(b, len(rowOffsets))
-	for i := len(rowOffsets) - 1; i >= 0; i-- {
-		b.PrependUOffsetT(rowOffsets[i])
-	}
-	return b.EndVector(len(rowOffsets))
-}
-
-// BuildQRP serializes one size-prefixed $QRP frame.
-func BuildQRP(f QRPFields) []byte {
-	b := flatbuffers.NewBuilder(512)
-	str := func(s string) flatbuffers.UOffsetT {
-		if s == "" {
-			return 0
-		}
-		return b.CreateString(s)
-	}
-	errorCode := str(f.ErrorCode)
-	message := str(f.Message)
-	schemaName := str(f.SchemaName)
-	fileIdentifier := str(f.FileIdentifier)
-	providerID := str(f.ProviderID)
-	sourceName := str(f.SourceName)
-	batchID := str(f.BatchID)
-	producerPeerID := str(f.ProducerPeerID)
-	originID := str(f.OriginID)
-	cursor := str(f.Cursor)
-	nextCursor := str(f.NextCursor)
-	resumeCursor := str(f.ResumeCursor)
-	etag := str(f.Etag)
-	cid := str(f.CID)
-	archiveID := str(f.ArchiveID)
-	columns := buildQRPColumns(b, f.Columns)
-	rows := buildQRPRows(b, f.Rows)
-
-	QRP.QRPStart(b)
-	QRP.QRPAddKIND(b, enumOf(QRP.EnumValuesqrpKind, f.Kind))
-	QRP.QRPAddSTATUS(b, enumOf(QRP.EnumValuesqrpStatus, f.Status))
-	if errorCode != 0 {
-		QRP.QRPAddERROR_CODE(b, errorCode)
-	}
-	if message != 0 {
-		QRP.QRPAddMESSAGE(b, message)
-	}
-	QRP.QRPAddRETRY_AFTER_MS(b, f.RetryAfterMs)
-	if schemaName != 0 {
-		QRP.QRPAddSCHEMA_NAME(b, schemaName)
-	}
-	if fileIdentifier != 0 {
-		QRP.QRPAddFILE_IDENTIFIER(b, fileIdentifier)
-	}
-	if providerID != 0 {
-		QRP.QRPAddPROVIDER_ID(b, providerID)
-	}
-	if sourceName != 0 {
-		QRP.QRPAddSOURCE_NAME(b, sourceName)
-	}
-	if batchID != 0 {
-		QRP.QRPAddBATCH_ID(b, batchID)
-	}
-	if producerPeerID != 0 {
-		QRP.QRPAddPRODUCER_PEER_ID(b, producerPeerID)
-	}
-	if originID != 0 {
-		QRP.QRPAddORIGIN_ID(b, originID)
-	}
-	QRP.QRPAddFROM_EPOCH_MS(b, f.FromEpochMs)
-	QRP.QRPAddTO_EPOCH_MS(b, f.ToEpochMs)
-	QRP.QRPAddPAGE(b, f.Page)
-	QRP.QRPAddLIMIT(b, f.Limit)
-	if cursor != 0 {
-		QRP.QRPAddCURSOR(b, cursor)
-	}
-	if nextCursor != 0 {
-		QRP.QRPAddNEXT_CURSOR(b, nextCursor)
-	}
-	QRP.QRPAddRECORD_COUNT(b, f.RecordCount)
-	QRP.QRPAddTOTAL_COUNT(b, f.TotalCount)
-	QRP.QRPAddSCANNED(b, f.Scanned)
-	QRP.QRPAddSTORED(b, f.Stored)
-	QRP.QRPAddPARTIAL(b, f.Partial)
-	QRP.QRPAddTRUNCATED(b, f.Truncated)
-	QRP.QRPAddAS_OF_MS(b, f.AsOfMs)
-	QRP.QRPAddSTALE(b, f.Stale)
-	QRP.QRPAddELAPSED_MS(b, f.ElapsedMs)
-	QRP.QRPAddGENERATED_AT_MS(b, f.GeneratedAtMs)
-	if etag != 0 {
-		QRP.QRPAddETAG(b, etag)
-	}
-	if cid != 0 {
-		QRP.QRPAddCID(b, cid)
-	}
-	if archiveID != 0 {
-		QRP.QRPAddARCHIVE_ID(b, archiveID)
-	}
-	if columns != 0 {
-		QRP.QRPAddCOLUMNS(b, columns)
-	}
-	if rows != 0 {
-		QRP.QRPAddROWS(b, rows)
-	}
-	QRP.QRPAddHTTP_STATUS(b, f.HTTPStatus)
-	if resumeCursor != 0 {
-		QRP.QRPAddRESUME_CURSOR(b, resumeCursor)
-	}
-	root := QRP.QRPEnd(b)
-	QRP.FinishSizePrefixedQRPBuffer(b, root)
-	return b.FinishedBytes()
-}
-
-// ParseQRP decodes a $QRP frame. A size-prefixed frame is the wire form; a
-// bare finished buffer is tolerated for producers that call Finish directly.
-func ParseQRP(frame []byte) (*QRP.QRP, error) {
-	switch {
-	case len(frame) >= frameIdentifierOffset+frameIdentifierLength && QRP.SizePrefixedQRPBufferHasIdentifier(frame):
-		if int64(binary.LittleEndian.Uint32(frame[:framePrefixLength]))+framePrefixLength > int64(len(frame)) {
-			return nil, errors.New("$QRP frame is shorter than its length prefix")
-		}
-		return QRP.GetSizePrefixedRootAsQRP(frame, 0), nil
-	case len(frame) >= framePrefixLength+frameIdentifierLength && QRP.QRPBufferHasIdentifier(frame):
-		return QRP.GetRootAsQRP(frame, 0), nil
-	}
-	return nil, fmt.Errorf("frame is not a $QRP buffer (identifier %q)", FrameIdentifier(frame))
-}
-
-// FrameIdentifier returns the file identifier of a size-prefixed frame
-// (bytes 8..12), or "" when the frame is too short to carry one.
-func FrameIdentifier(frame []byte) string {
-	if len(frame) < frameIdentifierOffset+frameIdentifierLength {
-		return ""
-	}
-	return string(frame[frameIdentifierOffset : frameIdentifierOffset+frameIdentifierLength])
-}
-
-// SplitFrames splits an aligned size-prefixed stream into frames that KEEP
-// their length prefix, so each one is a complete size-prefixed buffer.
-func SplitFrames(stream []byte) ([][]byte, error) {
-	var frames [][]byte
-	off := 0
-	for off < len(stream) {
-		if len(stream)-off < framePrefixLength {
-			return nil, fmt.Errorf("truncated frame prefix at byte %d", off)
-		}
-		length := int(binary.LittleEndian.Uint32(stream[off : off+framePrefixLength]))
-		end := off + framePrefixLength + length
-		if length < 0 || end > len(stream) {
-			return nil, fmt.Errorf("frame at byte %d declares %d bytes but only %d remain", off, length, len(stream)-off-framePrefixLength)
-		}
-		frames = append(frames, stream[off:end])
-		off = end
-	}
-	return frames, nil
-}
 
 // ReadFrames reads a whole frame stream (at most max bytes) and splits it.
 // Frames are returned WITH their length prefix. A body longer than max is an
@@ -405,28 +144,16 @@ func WriteErrorFrame(w http.ResponseWriter, status int, code, msg string, retryA
 // writeStatusFrame is WriteErrorFrame with an explicit $QRP STATUS (Busy,
 // Cold or Error).
 func writeStatusFrame(w http.ResponseWriter, status int, qrpStatus int8, code, msg string, retryAfter time.Duration) {
-	var retryMs uint32
-	hdr := map[string]string{}
+	hdr := map[string]string{"Cache-Control": "no-store"}
 	if retryAfter > 0 {
-		ms := retryAfter.Milliseconds()
-		if ms > math.MaxUint32 {
-			ms = math.MaxUint32
-		}
-		if ms <= 0 {
-			ms = 1
-		}
-		retryMs = uint32(ms)
-		hdr["Retry-After"] = strconv.FormatInt(int64(math.Ceil(retryAfter.Seconds())), 10)
+		hdr["Retry-After"] = strconv.FormatInt(int64((retryAfter+time.Second-1)/time.Second), 10)
 	}
-	hdr["Cache-Control"] = "no-store"
-	frame := BuildQRP(QRPFields{
-		Kind:          QRPKindError,
-		Status:        qrpStatus,
-		ErrorCode:     code,
-		Message:       msg,
-		RetryAfterMs:  retryMs,
-		GeneratedAtMs: time.Now().UnixMilli(),
-		HTTPStatus:    uint16(status),
-	})
-	WriteFrameStream(w, status, [][]byte{frame}, hdr)
+	WriteFrameStream(w, status, [][]byte{syncwire.ErrorFrame(qrpStatus, code, msg, status, retryAfter)}, hdr)
+}
+
+// writeFailure answers err classified the way every transport answers it
+// (syncwire.Classify).
+func writeFailure(w http.ResponseWriter, err error) {
+	f := syncwire.Classify(err)
+	writeStatusFrame(w, f.HTTPStatus, f.Status, f.Code, err.Error(), f.RetryAfter)
 }

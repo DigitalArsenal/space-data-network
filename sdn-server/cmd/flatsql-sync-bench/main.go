@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/binary"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -15,7 +14,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peerstore"
 	"github.com/multiformats/go-multiaddr"
 
-	"github.com/spacedatanetwork/sdn-server/internal/protocol"
+	"github.com/spacedatanetwork/sdn-server/internal/syncwire"
 )
 
 func main() {
@@ -77,41 +76,14 @@ func run(peerID string, addrs []string, probeBytes int64, timeout time.Duration)
 		}
 	}
 
-	stream, err := h.NewStream(ctx, target, protocol.FlatSQLSyncProtocolID)
+	stream, header, err := syncwire.Call(ctx, h, target, syncwire.OpWireSpeedProbe, syncwire.QRPFields{MaxBytes: uint64(probeBytes)})
 	if err != nil {
-		return fmt.Errorf("open FlatSQL sync stream: %w", err)
+		return fmt.Errorf("wire-speed probe: %w", err)
 	}
 	defer stream.Close()
-
-	if err := writeJSONFrame(stream, map[string]any{
-		"op":          "wire_speed_probe",
-		"probe_bytes": probeBytes,
-	}); err != nil {
-		return fmt.Errorf("write probe request: %w", err)
-	}
-
-	var header struct {
-		Op           string `json:"op"`
-		Status       string `json:"status"`
-		SyncProtocol string `json:"sync_protocol"`
-		ProbeBytes   int64  `json:"probe_bytes"`
-		PayloadBytes int64  `json:"payload_bytes"`
-		Error        struct {
-			Message string `json:"message"`
-		} `json:"error"`
-	}
-	if err := readJSONFrame(stream, &header); err != nil {
-		return fmt.Errorf("read probe header: %w", err)
-	}
-	if header.Status == "error" {
-		return fmt.Errorf("remote probe error: %s", header.Error.Message)
-	}
-	if header.SyncProtocol != "" && header.SyncProtocol != protocol.FlatSQLSyncProtocolID {
-		return fmt.Errorf("unexpected sync protocol %s", header.SyncProtocol)
-	}
-	payloadBytes := header.PayloadBytes
+	payloadBytes := int64(header.MAX_BYTES())
 	if payloadBytes <= 0 {
-		payloadBytes = header.ProbeBytes
+		return fmt.Errorf("wire-speed probe header promised no payload bytes")
 	}
 
 	started := time.Now()
@@ -123,12 +95,12 @@ func run(peerID string, addrs []string, probeBytes int64, timeout time.Duration)
 	bytesPerSecond := float64(written) / elapsed.Seconds()
 	result := map[string]any{
 		"peer":               target.String(),
-		"probeBytes":         header.ProbeBytes,
+		"probeBytes":         probeBytes,
 		"payloadBytes":       written,
 		"elapsedMs":          float64(elapsed.Microseconds()) / 1000,
 		"bytesPerSecond":     int64(bytesPerSecond),
 		"mebibytesPerSec":    bytesPerSecond / 1024 / 1024,
-		"syncProtocol":       protocol.FlatSQLSyncProtocolID,
+		"syncProtocol":       syncwire.ProtocolID(syncwire.OpWireSpeedProbe),
 		"client":             "go-libp2p",
 		"remoteHttpFallback": false,
 		"sshFallback":        false,
@@ -139,33 +111,6 @@ func run(peerID string, addrs []string, probeBytes int64, timeout time.Duration)
 	}
 	fmt.Println(string(encoded))
 	return nil
-}
-
-func writeJSONFrame(writer io.Writer, payload any) error {
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-	var header [4]byte
-	binary.BigEndian.PutUint32(header[:], uint32(len(data)))
-	if _, err := writer.Write(header[:]); err != nil {
-		return err
-	}
-	_, err = writer.Write(data)
-	return err
-}
-
-func readJSONFrame(reader io.Reader, target any) error {
-	var header [4]byte
-	if _, err := io.ReadFull(reader, header[:]); err != nil {
-		return err
-	}
-	length := binary.BigEndian.Uint32(header[:])
-	payload := make([]byte, length)
-	if _, err := io.ReadFull(reader, payload); err != nil {
-		return err
-	}
-	return json.Unmarshal(payload, target)
 }
 
 type repeatedFlag []string

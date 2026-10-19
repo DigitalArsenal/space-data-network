@@ -90,7 +90,7 @@ function validateDatastoreChaosReport(datastoreReport, options = {}) {
     requireFaults = false,
     requireTargetMet = false,
   } = options;
-  if (datastoreReport?.transport?.protocol !== '/space-data-network/flatsql-sync/1.0.0') {
+  if (datastoreReport?.transport?.protocol !== '/space-data-network/flatsql-sync/2.0.0/') {
     throw new Error(`unexpected datastore protocol: ${datastoreReport?.transport?.protocol}`);
   }
   if (datastoreReport.transport.remoteHttpFallback || datastoreReport.transport.sshFallback) {

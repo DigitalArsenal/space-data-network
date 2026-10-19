@@ -280,7 +280,7 @@ npm run test:fetch-256gb
 
 `test:stream-256gb` streams one 256 GiB published FlatSQL shard through the
 provider-side sync handler. `test:fetch-256gb` fetches one 256 GiB published
-FlatSQL shard over live libp2p using `/space-data-network/flatsql-sync/1.0.0`.
+FlatSQL shard over live libp2p using `/space-data-network/flatsql-sync/2.0.0/read-shard-batch`.
 Both commands are opt-in long-running stress checks and default to a configured
 2 Gbit/s, 99% wire-speed gate. Override the lab profile with
 `SDN_TEST_LINK_GBIT=<gbits>` when running on faster or slower links.

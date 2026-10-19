@@ -5,7 +5,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const FLATSQL_SYNC_PROTOCOL_ID = '/space-data-network/flatsql-sync/1.0.0';
+// flatsql-sync 2.0.0: one protocol ID per op under this prefix.
+const FLATSQL_SYNC_PROTOCOL_PREFIX = '/space-data-network/flatsql-sync/2.0.0/';
 const DEFAULT_WIRE_SPEED_TARGET = 0.99;
 
 const DEFAULTS = {
@@ -101,7 +102,7 @@ export async function runChaosLocalNetwork(rawOptions = {}) {
       checkpointFile: options.checkpointFile,
     },
     transport: {
-      protocol: FLATSQL_SYNC_PROTOCOL_ID,
+      protocol: FLATSQL_SYNC_PROTOCOL_PREFIX,
       mode: 'local-virtual-libp2p-flatsql-shard-network',
       payloadFormat: 'concatenated-flatsql-size-prefixed-flatbuffers',
       remoteHttpFallback: false,
@@ -303,7 +304,7 @@ function createCheckpoint(options) {
   }
   return {
     version: 1,
-    protocol: FLATSQL_SYNC_PROTOCOL_ID,
+    protocol: FLATSQL_SYNC_PROTOCOL_PREFIX,
     consumers: {},
   };
 }

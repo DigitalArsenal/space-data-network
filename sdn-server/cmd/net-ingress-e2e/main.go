@@ -13,7 +13,7 @@
 //     is refused, no crash.
 //   - NET-02   : an unauthenticated flatsql-sync read of a non-public schema
 //     (PUR.fbs) is refused; a public schema (OMM.fbs) is served.
-//   - NET-06   : an unauthenticated wire_speed_probe is refused.
+//   - NET-06   : an unauthenticated wire-speed-probe is refused.
 //   - NET-07   : an excessive hostcall segmentCount is refused before it
 //     sizes an allocation (the guest-to-host boundary, driven
 //     directly — it is guest-reachable only, never networked).
@@ -27,6 +27,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -43,14 +44,14 @@ import (
 	"github.com/multiformats/go-multiaddr"
 
 	"github.com/spacedatanetwork/sdn-server/internal/modulert"
+	"github.com/spacedatanetwork/sdn-server/internal/syncwire"
 )
 
 const (
-	sdsProtocol          = "/spacedatanetwork/sds-exchange/1.0.0"
-	flatsqlProtocol      = "/space-data-network/flatsql-sync/1.0.0"
-	epmProtocol          = "/spacedatanetwork/epm-exchange/1.0.0"
-	msgPushData     byte = 0x02
-	msgQuery        byte = 0x03
+	sdsProtocol      = "/spacedatanetwork/sds-exchange/1.0.0"
+	epmProtocol      = "/spacedatanetwork/epm-exchange/1.0.0"
+	msgPushData byte = 0x02
+	msgQuery    byte = 0x03
 )
 
 var (
@@ -132,7 +133,7 @@ func main() {
 	add("NET-02/public-read-served", !ommRefused, "unauthenticated OMM.fbs read: "+ommDetail)
 
 	// NET-06: an unauthenticated wire-speed probe is refused.
-	add("NET-06/probe-unauthorized", wireProbeRefused(ctx, h, target.ID), "unauthenticated wire_speed_probe refused")
+	add("NET-06/probe-unauthorized", wireProbeRefused(ctx, h, target.ID), "unauthenticated wire-speed-probe refused")
 	requireLive(ctx, h, target.ID, *adminURL, add)
 
 	// NET-07: an excessive hostcall segmentCount is refused before allocation.
@@ -319,78 +320,35 @@ func epmReplyRefused(ctx context.Context, h host.Host, id peer.ID, data []byte) 
 // refused; a response that ran the handler (no error, or a non-authorization
 // error such as an empty store) counts as served.
 func readAuthRefused(ctx context.Context, h host.Host, id peer.ID, schema string) (refused bool, detail string) {
-	resp, err := flatsqlRequest(ctx, h, id, map[string]interface{}{"op": "read_chunk", "schema": schema, "limit": 10})
-	if err != nil {
-		return true, "stream error: " + err.Error()
-	}
-	if statusOf(resp) == "error" {
-		msg := errorMessage(resp)
-		if strings.Contains(msg, "public read surface") || strings.Contains(msg, "not authorized") {
-			return true, msg
+	err := flatsqlRequest(ctx, h, id, syncwire.OpReadChunk, syncwire.QRPFields{SchemaName: schema, Limit: 10})
+	var remote *syncwire.RemoteError
+	switch {
+	case err == nil:
+		return false, "served"
+	case errors.As(err, &remote):
+		if strings.Contains(remote.Message, "public read surface") || strings.Contains(remote.Message, "not authorized") {
+			return true, remote.Message
 		}
-		return false, "served (non-auth error: " + msg + ")"
+		return false, "served (non-auth error: " + remote.Message + ")"
 	}
-	return false, "served"
+	return true, "stream error: " + err.Error()
 }
 
 func wireProbeRefused(ctx context.Context, h host.Host, id peer.ID) bool {
-	resp, err := flatsqlRequest(ctx, h, id, map[string]interface{}{"op": "wire_speed_probe", "probe_bytes": 1 << 20})
+	return flatsqlRequest(ctx, h, id, syncwire.OpWireSpeedProbe, syncwire.QRPFields{MaxBytes: 1 << 20}) != nil
+}
+
+// flatsqlRequest sends one flatsql-sync 2.0.0 request and reads its first
+// reply frame: nil for a $QRP Page, a *syncwire.RemoteError for a $QRP Error.
+func flatsqlRequest(ctx context.Context, h host.Host, id peer.ID, op string, req syncwire.QRPFields) error {
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	s, _, err := syncwire.Call(ctx, h, id, op, req)
 	if err != nil {
-		return true
+		return err
 	}
-	return statusOf(resp) == "error"
-}
-
-func errorMessage(resp map[string]interface{}) string {
-	e, ok := resp["error"].(map[string]interface{})
-	if !ok {
-		return ""
-	}
-	m, _ := e["message"].(string)
-	return m
-}
-
-func flatsqlRequest(ctx context.Context, h host.Host, id peer.ID, req map[string]interface{}) (map[string]interface{}, error) {
-	s, err := openStream(ctx, h, id, flatsqlProtocol)
-	if err != nil {
-		return nil, err
-	}
-	defer s.Close()
-	_ = s.SetDeadline(time.Now().Add(20 * time.Second))
-	body, _ := json.Marshal(req)
-	var hdr [4]byte
-	binary.BigEndian.PutUint32(hdr[:], uint32(len(body)))
-	if _, err := s.Write(hdr[:]); err != nil {
-		return nil, err
-	}
-	if _, err := s.Write(body); err != nil {
-		return nil, err
-	}
-	var rh [4]byte
-	if _, err := io.ReadFull(s, rh[:]); err != nil {
-		return nil, err
-	}
-	n := binary.BigEndian.Uint32(rh[:])
-	if n == 0 || n > 32*1024*1024 {
-		return nil, fmt.Errorf("bad response frame length %d", n)
-	}
-	payload := make([]byte, n)
-	if _, err := io.ReadFull(s, payload); err != nil {
-		return nil, err
-	}
-	var resp map[string]interface{}
-	if err := json.Unmarshal(payload, &resp); err != nil {
-		return nil, err
-	}
-	return resp, nil
-}
-
-func statusOf(resp map[string]interface{}) string {
-	if resp == nil {
-		return ""
-	}
-	s, _ := resp["status"].(string)
-	return s
+	_ = s.Reset() // the payload after the header is not needed
+	return nil
 }
 
 // net07Refused drives the exact guest-to-host envelope decoder with an

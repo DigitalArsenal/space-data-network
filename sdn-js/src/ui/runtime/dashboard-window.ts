@@ -38,12 +38,12 @@ import {
 import type { WorkerSchemaSyncProgress } from './local-flatsql-worker-client';
 import type { RawDataQuery } from './sdn-backend';
 import { joinUrl, resolveFetch, type FetchLike } from './sdn-backend-adapter-utils';
-import { decodeQrpError } from './qrp-frames';
+import { FLATBUFFER_STREAM_TYPE, decodeQrpError } from './qrp-frames';
 import { decodeQrpRecordRuns, qrpPostInit, qrpRequestFromRawQuery } from './qrp-request';
 import { SerialTaskQueue } from './serial-task-queue';
 import { syncRowCountSummary } from './sync-progress';
 import { encodeWorkerSchemaSyncProgressFlatBuffer } from './worker-sync-status-flatbuffer';
-import { encodeFlatSqlSyncRequest, decodeFlatSqlSyncChunk } from '../../flatsql-sync';
+import { encodeFlatSqlReadChunkRequest, decodeFlatSqlSyncChunk } from '../../flatsql-sync';
 
 /** Window mode row cap: batches stop once the window holds this many rows. */
 export const WINDOW_MAX_ROWS = 20_000;
@@ -78,7 +78,7 @@ export interface DashboardWindowState {
   search?: string;
   range?: DashboardWindowRange | null;
   /** A remote cursor is opaque; it is never replaced with a local row offset. */
-  remote?: { peerId: string; providerId?: string; cursor?: string; snapshotId?: string; head?: string; totalCount?: number; highWaterMark?: string };
+  remote?: { peerId: string; providerId?: string; cursor?: string; totalCount?: number };
 }
 
 export type DashboardWindowMode = 'page' | 'window';
@@ -117,9 +117,6 @@ export interface DashboardWindowLoad {
   loadedAt: string;
   nextCursor?: string;
   cursor?: string;
-  highWaterMark?: string;
-  snapshotId?: string;
-  head?: string;
 }
 
 export interface DashboardWindowStandard {
@@ -212,9 +209,6 @@ interface RawLanePage {
   runs: Array<{ source: string; stream: Uint8Array }>;
   nextCursor?: string;
   cursor?: string;
-  highWaterMark?: string;
-  snapshotId?: string;
-  head?: string;
 }
 
 interface NormalizedRange {
@@ -425,7 +419,7 @@ class DashboardWindow implements DashboardWindowRuntime {
         pageSize: limit,
         batches: 1,
         loadedAt: new Date().toISOString(),
-        ...(state.remote ? { cursor: fetched.cursor, nextCursor: fetched.nextCursor, snapshotId: fetched.snapshotId, head: fetched.head, highWaterMark: fetched.highWaterMark } : {}),
+        ...(state.remote ? { cursor: fetched.cursor, nextCursor: fetched.nextCursor } : {}),
       };
       window.load = load;
       return { ...load };
@@ -670,27 +664,23 @@ class DashboardWindow implements DashboardWindowRuntime {
 
   private async fetchRemotePage(query: RawDataQuery, remote: NonNullable<DashboardWindowState['remote']>, signal?: AbortSignal): Promise<RawLanePage> {
     if (!remote.peerId || query.limit! > 1000) throw new Error('A remote node and a page of at most 1,000 records are required.');
-    const url = joinUrl(this.baseUrl, `/api/v1/data/remote/${encodeURIComponent(remote.peerId)}`);
+    // The node relays one $QRP read-chunk request to the peer over
+    // flatsql-sync 2.0.0 and answers the peer's reply verbatim.
+    const url = joinUrl(this.baseUrl, `/api/v1/data/remote/${encodeURIComponent(remote.peerId)}/read-chunk`);
     const response = await this.fetch(url, {
       method: 'POST', credentials: 'same-origin', signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(25_000)]) : AbortSignal.timeout(25_000),
-      headers: { 'Content-Type': 'application/octet-stream', Accept: 'application/octet-stream', 'X-Requested-With': 'XMLHttpRequest' },
-      body: new Uint8Array(encodeFlatSqlSyncRequest({ ...query, ...remote, targetPeerId: remote.peerId, peerId: undefined })).buffer,
+      headers: { 'Content-Type': FLATBUFFER_STREAM_TYPE, Accept: FLATBUFFER_STREAM_TYPE, 'X-Requested-With': 'XMLHttpRequest' },
+      body: encodeFlatSqlReadChunkRequest({ ...query, providerId: remote.providerId ?? query.providerId, cursor: remote.cursor }) as BodyInit,
     });
-    if (!response.ok) {
-      let message = '';
-      try { const error = await response.json(); message = error?.error?.message || error?.message || ''; } catch { /* transport may return an empty body */ }
-      throw new Error(message || 'The remote node could not serve this page. Try again.');
-    }
     const bytes = new Uint8Array(await response.arrayBuffer());
+    if (!response.ok) throw rawLaneError(url, response, bytes);
     if (bytes.byteLength > 8 * 1024 * 1024) throw new Error('The remote page exceeds the viewer byte limit.');
-    const chunk = decodeFlatSqlSyncChunk(bytes);
-    if (query.search && chunk.header.search !== query.search.trim()) throw new Error('This remote node needs a search-capable update before it can search all records.');
+    const chunk = await decodeFlatSqlSyncChunk(bytes);
     if (normalizeStandardCode(chunk.header.schema) !== normalizeStandardCode(query.schema)) throw new Error('The remote node returned a different dataset.');
     if (chunk.records.length > query.limit! || chunk.records.length !== chunk.header.count) throw new Error('The remote page has an inconsistent record count.');
-    if (remote.snapshotId && chunk.header.snapshotId !== remote.snapshotId) throw new Error('The remote snapshot changed. Refresh to start again.');
     return { bytes: chunk.recordStream.byteLength, recordCount: chunk.records.length, totalCount: chunk.header.totalCount,
-      runs: chunk.records.length ? [{ source: '', stream: chunk.recordStream }] : [],
-      cursor: chunk.header.cursor, nextCursor: chunk.header.nextCursor, snapshotId: chunk.header.snapshotId, head: chunk.header.head, highWaterMark: chunk.header.highWaterMark };
+      runs: chunk.runs.map((run) => ({ source: run.sourceName, stream: run.stream })),
+      cursor: chunk.header.cursor, nextCursor: chunk.header.nextCursor };
   }
 
   /**

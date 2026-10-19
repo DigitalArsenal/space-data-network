@@ -52,7 +52,6 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/channels"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/credstore"
-	"github.com/spacedatanetwork/sdn-server/internal/datasync"
 	"github.com/spacedatanetwork/sdn-server/internal/directory"
 	"github.com/spacedatanetwork/sdn-server/internal/epm"
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqldrv"
@@ -73,6 +72,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/sourcemetrics"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
+	"github.com/spacedatanetwork/sdn-server/internal/syncwire"
 	"github.com/spacedatanetwork/sdn-server/internal/versioninfo"
 	"github.com/spacedatanetwork/sdn-server/internal/wasm"
 	"github.com/spacedatanetwork/sdn-server/plugins"
@@ -918,7 +918,7 @@ func (n *Node) init() error {
 	n.tipQueue = n.buildTipQueue()
 	n.host.SetStreamHandler(protocol.SDSProtocolID, n.protocol.HandleStream)
 	if n.store != nil {
-		n.host.SetStreamHandler(protocol.FlatSQLSyncProtocolID, protocol.NewFlatSQLSyncHandler(n.store).SetPrivateReadAuthorizer(n.mayReadPrivate).HandleStream)
+		protocol.NewFlatSQLSyncHandler(n.store).SetPrivateReadAuthorizer(n.mayReadPrivate).Register(n.host)
 	}
 	n.host.SetStreamHandler(protocol.IDExchangeProtoID, protocol.HandleLegacyIDExchange)
 	n.host.SetStreamHandler(protocol.ChatProtoID, protocol.HandleLegacyChat)
@@ -3030,153 +3030,65 @@ func (n *Node) datasetShardPublicationAlreadyCached(publication storage.DatasetS
 	return err == nil && found && existing.ShardCID == publication.ShardCID && existing.IndexCID == publication.IndexCID
 }
 
-type datasetShardPublicationListResponse struct {
-	Op                    string                               `json:"op"`
-	Status                string                               `json:"status"`
-	Schema                string                               `json:"schema"`
-	SyncProtocol          string                               `json:"sync_protocol"`
-	PublicationOffset     int                                  `json:"publication_offset"`
-	PublicationCount      int                                  `json:"publication_count"`
-	TotalPublicationCount int                                  `json:"total_publication_count"`
-	Publications          []datasetShardPublicationListItemDTO `json:"publications"`
-	Error                 *struct {
-		Message string `json:"message"`
-	} `json:"error,omitempty"`
-}
-
-type datasetShardPublicationListItemDTO struct {
-	Schema       string    `json:"schema"`
-	ProviderID   string    `json:"provider_id"`
-	SourceName   string    `json:"source_name"`
-	BatchID      string    `json:"batch_id"`
-	QueryProfile string    `json:"query_profile"`
-	Offset       int       `json:"offset"`
-	Limit        int       `json:"limit"`
-	RecordCount  int       `json:"record_count"`
-	ByteCount    int64     `json:"byte_count"`
-	ShardCID     string    `json:"shard_cid"`
-	IndexCID     string    `json:"index_cid"`
-	ManifestCID  string    `json:"manifest_cid"`
-	PNMCID       string    `json:"pnm_cid"`
-	ShardSHA256  string    `json:"shard_sha256"`
-	IndexSHA256  string    `json:"index_sha256"`
-	QuerySHA256  string    `json:"query_sha256"`
-	ResultSHA256 string    `json:"result_sha256"`
-	FeedSequence int64     `json:"feed_sequence"`
-	PreviousHead string    `json:"previous_head"`
-	FeedHead     string    `json:"feed_head"`
-	PublishedAt  time.Time `json:"published_at"`
+// datasetShardPublicationListPage is one decoded list-published reply.
+type datasetShardPublicationListPage struct {
+	Total        int
+	NextCursor   string
+	Publications []storage.DatasetShardPublication
 }
 
 func (n *Node) listRemoteDatasetShardPublications(ctx context.Context, from peer.ID, schema string) ([]storage.DatasetShardPublication, error) {
 	var publications []storage.DatasetShardPublication
-	for offset := 0; ; {
-		page, err := n.listRemoteDatasetShardPublicationPage(ctx, from, schema, offset, datasetShardPublicationCatchupLimit)
+	for cursor := ""; ; {
+		page, err := n.listRemoteDatasetShardPublicationPage(ctx, from, schema, cursor, datasetShardPublicationCatchupLimit)
 		if err != nil {
 			return publications, err
 		}
 		if len(publications)+len(page.Publications) > 100000 {
 			return publications, fmt.Errorf("dataset-shard-list: publication count exceeds 100000")
 		}
-		for _, item := range page.Publications {
-			publications = append(publications, datasetShardPublicationFromListItem(schema, item))
-		}
-		nextOffset := page.PublicationOffset + page.PublicationCount
-		if page.PublicationCount == 0 || nextOffset >= page.TotalPublicationCount {
+		publications = append(publications, page.Publications...)
+		if len(page.Publications) == 0 || page.NextCursor == "" {
 			return publications, nil
 		}
-		offset = nextOffset
+		cursor = page.NextCursor
 	}
 }
 
-func (n *Node) listRemoteDatasetShardPublicationPage(ctx context.Context, from peer.ID, schema string, offset int, limit int) (response datasetShardPublicationListResponse, err error) {
-	stream, err := n.host.NewStream(ctx, from, protocol.FlatSQLSyncProtocolID)
+func (n *Node) listRemoteDatasetShardPublicationPage(ctx context.Context, from peer.ID, schema string, cursor string, limit int) (page datasetShardPublicationListPage, err error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	stream, reply, err := syncwire.Call(ctx, n.host, from, syncwire.OpListPublished, syncwire.QRPFields{
+		SchemaName: schema,
+		Filters:    []syncwire.QRPFilterField{{Field: syncwire.FilterQueryProfile, Op: syncwire.QRPFilterEq, Value: storage.DatasetPublicationQueryProfile}},
+		Cursor:     cursor,
+		Limit:      uint32(limit),
+	})
 	if err != nil {
-		return response, err
+		return page, fmt.Errorf("dataset-shard-list: %w", err)
 	}
 	defer stream.Close()
 	defer recoverPeerReply("dataset-shard-list", stream, &err)
-	_ = stream.SetDeadline(time.Now().Add(30 * time.Second))
-	stopReset := context.AfterFunc(ctx, func() { _ = stream.Reset() })
-	defer stopReset()
-	if err := protocol.WriteFlatSQLSyncJSONFrame(stream, map[string]interface{}{
-		"op":                 "list_published_shards",
-		"schema":             schema,
-		"query_profile":      storage.DatasetPublicationQueryProfile,
-		"publication_offset": offset,
-		"publication_limit":  limit,
-	}); err != nil {
-		return response, err
+	segs, err := syncwire.Segments(reply)
+	if err != nil {
+		return page, fmt.Errorf("dataset-shard-list: %w", err)
 	}
-	if err := protocol.ReadFlatSQLSyncJSONFrame(stream, datasync.StreamRequestMaxBytes, &response); err != nil {
-		return response, err
+	if len(segs) > limit || reply.TOTAL_COUNT() > 100000 {
+		return page, fmt.Errorf("dataset-shard-list: inconsistent page counts")
 	}
-	if response.Status != "ok" {
-		if response.Error != nil && response.Error.Message != "" {
-			return response, fmt.Errorf("dataset-shard-list: provider refused: %.1024q", response.Error.Message)
+	page.Total, page.NextCursor = int(reply.TOTAL_COUNT()), string(reply.NEXT_CURSOR())
+	for _, seg := range segs {
+		pub := seg.Publication()
+		if strings.TrimSpace(pub.SchemaName) == "" {
+			pub.SchemaName = schema
 		}
-		return response, fmt.Errorf("list published shards returned status %.128q", response.Status)
+		page.Publications = append(page.Publications, pub)
 	}
-	if response.Op != "list_published_shards" || response.SyncProtocol != protocol.FlatSQLSyncProtocolID {
-		return response, fmt.Errorf("unexpected list published shards operation or protocol")
-	}
-	if response.PublicationOffset != offset || response.PublicationCount != len(response.Publications) || response.PublicationCount > limit || response.TotalPublicationCount < offset || response.PublicationCount > response.TotalPublicationCount-offset {
-		return response, fmt.Errorf("dataset-shard-list: inconsistent page counts")
-	}
-	return response, nil
-}
-
-func datasetShardPublicationFromListItem(schema string, item datasetShardPublicationListItemDTO) storage.DatasetShardPublication {
-	schemaName := strings.TrimSpace(item.Schema)
-	if schemaName == "" {
-		schemaName = schema
-	}
-	return storage.DatasetShardPublication{
-		SchemaName:   schemaName,
-		ProviderID:   strings.TrimSpace(item.ProviderID),
-		SourceName:   strings.TrimSpace(item.SourceName),
-		BatchID:      strings.TrimSpace(item.BatchID),
-		QueryProfile: strings.TrimSpace(item.QueryProfile),
-		Offset:       item.Offset,
-		Limit:        item.Limit,
-		RecordCount:  item.RecordCount,
-		ByteCount:    item.ByteCount,
-		ShardCID:     strings.TrimSpace(item.ShardCID),
-		IndexCID:     strings.TrimSpace(item.IndexCID),
-		ManifestCID:  strings.TrimSpace(item.ManifestCID),
-		PNMCID:       strings.TrimSpace(item.PNMCID),
-		ShardSHA256:  strings.TrimSpace(item.ShardSHA256),
-		IndexSHA256:  strings.TrimSpace(item.IndexSHA256),
-		QuerySHA256:  strings.TrimSpace(item.QuerySHA256),
-		ResultSHA256: strings.TrimSpace(item.ResultSHA256),
-		FeedSequence: item.FeedSequence,
-		PreviousHead: strings.TrimSpace(item.PreviousHead),
-		FeedHead:     strings.TrimSpace(item.FeedHead),
-		PublishedAt:  item.PublishedAt,
-	}
+	return page, nil
 }
 
 func datasetShardPublicationAnnouncement(publication storage.DatasetShardPublication) sdnpubsub.DatasetFeedHeadAnnouncement {
-	return sdnpubsub.DatasetFeedHeadAnnouncement{
-		MessageType:  sdnpubsub.DatasetFeedHeadMessageType,
-		Schema:       publication.SchemaName,
-		ProviderID:   publication.ProviderID,
-		SourceName:   publication.SourceName,
-		BatchID:      publication.BatchID,
-		QueryProfile: publication.QueryProfile,
-		Offset:       publication.Offset,
-		Limit:        publication.Limit,
-		FeedSequence: publication.FeedSequence,
-		PreviousHead: publication.PreviousHead,
-		FeedHead:     publication.FeedHead,
-		RecordCount:  publication.RecordCount,
-		ByteCount:    publication.ByteCount,
-		ShardCID:     publication.ShardCID,
-		IndexCID:     publication.IndexCID,
-		ManifestCID:  publication.ManifestCID,
-		PNMCID:       publication.PNMCID,
-		PublishedAt:  publication.PublishedAt,
-	}
+	return syncwire.SegmentFromPublication(publication)
 }
 
 func (n *Node) materializeStoredDatasetPublicationPNMs(ctx context.Context, limit int) (int, error) {
@@ -3442,7 +3354,7 @@ func (n *Node) handleDatasetFeedHeadMessage(msg *pubsub.Message, schema string) 
 		log.Warnf("Invalid dataset feed-head announcement on %s from %s: %v", schema, msg.ReceivedFrom.ShortString(), err)
 		return
 	}
-	if ann.Signature != "" {
+	if len(ann.Signature) > 0 {
 		// Tampered or malformed signatures are always rejected.
 		if err := sdnpubsub.VerifyDatasetFeedHead(ann, nil); err != nil {
 			log.Warnf("Rejecting dataset feed head on %s from %s: %v", schema, msg.ReceivedFrom.ShortString(), err)
@@ -3452,8 +3364,8 @@ func (n *Node) handleDatasetFeedHeadMessage(msg *pubsub.Message, schema string) 
 		log.Warnf("Rejecting unsigned dataset feed head on %s from %s (security.require_signed_feed_heads)", schema, msg.ReceivedFrom.ShortString())
 		return
 	}
-	if ann.Schema != schema {
-		log.Debugf("Skipping dataset feed-head announcement on %s for schema %s", schema, ann.Schema)
+	if ann.SchemaName != schema {
+		log.Debugf("Skipping dataset feed-head announcement on %s for schema %s", schema, ann.SchemaName)
 		return
 	}
 	imported, err := n.materializeDatasetFeedHeadAnnouncement(n.ctx, ann, msg.ReceivedFrom)
@@ -4231,20 +4143,20 @@ func (n *Node) materializeDatasetFeedHeadAnnouncement(ctx context.Context, ann s
 		return 0, nil
 	}
 	if !n.peerRegistry.IsTrusted(from) {
-		log.Debugf("Skipping dataset feed head from non-trusted peer %s on %s", from.ShortString(), ann.Schema)
+		log.Debugf("Skipping dataset feed head from non-trusted peer %s on %s", from.ShortString(), ann.SchemaName)
 		return 0, nil
 	}
 	// A node's own lane never comes back to it from a peer. Its records are
 	// here already, and its publication hygiene retires old series on
 	// purpose: re-importing them made host-02 replace its own OMM lane over
 	// and over (2026-10-06).
-	if n.laneProducedHere(ann.Schema, ann.ProviderID, ann.SourceName) {
-		log.Debugf("Skipping dataset feed head %s from %s: this node produces %s %s/%s", ann.FeedHead, from.ShortString(), ann.Schema, ann.ProviderID, ann.SourceName)
+	if n.laneProducedHere(ann.SchemaName, ann.ProviderID, ann.SourceName) {
+		log.Debugf("Skipping dataset feed head %s from %s: this node produces %s %s/%s", ann.FeedHead, from.ShortString(), ann.SchemaName, ann.ProviderID, ann.SourceName)
 		return 0, nil
 	}
 	// Trusted is not "everything": a lane is imported only when this node
 	// holds it already or its configuration lists it (trusted_import.go).
-	if !n.trustedPeerLaneImportAllowed(from, ann.Schema, ann.ProviderID, ann.SourceName, ann.QueryProfile) {
+	if !n.trustedPeerLaneImportAllowed(from, ann.SchemaName, ann.ProviderID, ann.SourceName, ann.QueryProfile) {
 		return 0, nil
 	}
 	if strings.TrimSpace(ann.ShardCID) == "" || strings.TrimSpace(ann.IndexCID) == "" {
@@ -4294,11 +4206,11 @@ func (n *Node) materializeDatasetFeedHeadAnnouncement(ctx context.Context, ann s
 	// Pinned-dataset supersede (gateway loop G.4): a newly materialized
 	// publication may complete a newer batch for a pinned provider — evict
 	// the superseded batch so pins do not accumulate.
-	n.scheduleDatasetSupersede(ann.Schema)
+	n.scheduleDatasetSupersede(ann.SchemaName)
 	// Subscription retention: the lane's rule decides whether this batch
 	// replaces the previous one or joins the archive.
 	if n.host == nil || from != n.host.ID() {
-		n.applyLaneRetention(ann.Schema, pub.ProviderID, pub.SourceName,
+		n.applyLaneRetention(ann.SchemaName, pub.ProviderID, pub.SourceName,
 			storage.RetainCandidate{BatchID: pub.BatchID, PublishedAt: pub.PublishedAt},
 			datasetPublicationPins(pub.ShardCID, pub.IndexCID, pub.ManifestCID, pub.PNMCID))
 	}
@@ -4306,27 +4218,9 @@ func (n *Node) materializeDatasetFeedHeadAnnouncement(ctx context.Context, ann s
 }
 
 func datasetShardPublicationFromFeedHead(ann sdnpubsub.DatasetFeedHeadAnnouncement, shardHeader, indexHeader datasetFeedHeadAssetHeader, index *storage.DatasetExportIndex) storage.DatasetShardPublication {
-	pub := storage.DatasetShardPublication{
-		SchemaName:   ann.Schema,
-		ProviderID:   ann.ProviderID,
-		SourceName:   ann.SourceName,
-		BatchID:      ann.BatchID,
-		QueryProfile: ann.QueryProfile,
-		Offset:       ann.Offset,
-		Limit:        ann.Limit,
-		RecordCount:  ann.RecordCount,
-		ByteCount:    ann.ByteCount,
-		ShardCID:     ann.ShardCID,
-		IndexCID:     ann.IndexCID,
-		ManifestCID:  ann.ManifestCID,
-		PNMCID:       ann.PNMCID,
-		ShardSHA256:  shardHeader.SHA256,
-		IndexSHA256:  indexHeader.SHA256,
-		FeedSequence: ann.FeedSequence,
-		PreviousHead: ann.PreviousHead,
-		FeedHead:     ann.FeedHead,
-		PublishedAt:  ann.PublishedAt,
-	}
+	pub := ann.Publication()
+	pub.ShardSHA256 = shardHeader.SHA256
+	pub.IndexSHA256 = indexHeader.SHA256
 	if index != nil {
 		if pub.ProviderID == "" {
 			pub.ProviderID = index.ProviderID
@@ -4484,55 +4378,57 @@ func copyDatasetFeedHeadAssetFile(src, dest string) error {
 	return nil
 }
 
+// datasetFeedHeadAssetHeader is what a read-shard / read-index reply
+// header promises about the bytes that follow it.
 type datasetFeedHeadAssetHeader struct {
-	Op             string `json:"op"`
-	Status         string `json:"status"`
-	Schema         string `json:"schema"`
-	Role           string `json:"role"`
-	CID            string `json:"cid"`
-	ByteCount      int64  `json:"byte_count"`
-	SHA256         string `json:"sha256"`
-	SyncProtocol   string `json:"sync_protocol"`
-	ImmutableBytes bool   `json:"immutable_bytes"`
-	Error          struct {
-		Message string `json:"message"`
-	} `json:"error"`
+	SHA256    string
+	ByteCount int64
 }
 
+// fetchDatasetFeedHeadAssetToFile reads one published shard (role "shard",
+// op read-shard) or index (role "index", op read-index) whole into
+// outputPath and checks its length and SHA-256 against the reply header.
 func (n *Node) fetchDatasetFeedHeadAssetToFile(ctx context.Context, ann sdnpubsub.DatasetFeedHeadAnnouncement, from peer.ID, cidValue string, role string, outputPath string) (header datasetFeedHeadAssetHeader, err error) {
-	stream, err := n.host.NewStream(ctx, from, protocol.FlatSQLSyncProtocolID)
+	op := syncwire.OpReadShard
+	if role == syncwire.RoleIndex {
+		op = syncwire.OpReadIndex
+	}
+	ctx, cancel := context.WithTimeout(ctx, datasetPublicationFetchBudget)
+	defer cancel()
+	stream, reply, err := syncwire.Call(ctx, n.host, from, op, syncwire.QRPFields{
+		SchemaName: ann.SchemaName,
+		ProviderID: ann.ProviderID,
+		SourceName: ann.SourceName,
+		BatchID:    ann.BatchID,
+		Filters:    []syncwire.QRPFilterField{{Field: syncwire.FilterQueryProfile, Op: syncwire.QRPFilterEq, Value: ann.QueryProfile}},
+		CID:        cidValue,
+	})
 	if err != nil {
-		return header, fmt.Errorf("open FlatSQL sync stream to %s: %w", from.ShortString(), err)
+		return header, fmt.Errorf("published %s asset %s: %w", role, cidValue, err)
 	}
 	defer stream.Close()
 	defer recoverPeerReply("dataset-asset-reply", stream, &err)
-	_ = stream.SetDeadline(time.Now().Add(datasetPublicationFetchBudget))
 	stopReset := context.AfterFunc(ctx, func() { _ = stream.Reset() })
 	defer stopReset()
-	if err := protocol.WriteFlatSQLSyncJSONFrame(stream, map[string]interface{}{
-		"op":            "read_published_asset",
-		"schema":        ann.Schema,
-		"provider_id":   ann.ProviderID,
-		"source_name":   ann.SourceName,
-		"batch_id":      ann.BatchID,
-		"query_profile": ann.QueryProfile,
-		"cid":           cidValue,
-		"role":          role,
-	}); err != nil {
-		return header, fmt.Errorf("request published %s asset %s: %w", role, cidValue, err)
+	segs, err := syncwire.Segments(reply)
+	if err != nil {
+		return header, fmt.Errorf("published %s asset header: %w", role, err)
 	}
-	if err := protocol.ReadFlatSQLSyncJSONFrame(stream, datasync.StreamRequestMaxBytes, &header); err != nil {
-		return header, fmt.Errorf("read published %s asset header %s: %w", role, cidValue, err)
+	if len(segs) != 1 {
+		return header, fmt.Errorf("published %s asset header carries %d rows, want 1", role, len(segs))
 	}
-	if header.Status == "error" {
-		return header, fmt.Errorf("provider rejected published %s asset: %.1024q", role, header.Error.Message)
+	seg := segs[0]
+	assetCID, assetSHA := seg.ShardCID, seg.ShardSHA256
+	if role == syncwire.RoleIndex {
+		assetCID, assetSHA = seg.IndexCID, seg.IndexSHA256
 	}
-	if header.Op != "read_published_asset" || header.Status != "ok" || header.Role != role || header.CID != cidValue || header.SyncProtocol != protocol.FlatSQLSyncProtocolID || !header.ImmutableBytes {
+	if seg.Role != role || assetCID != cidValue || seg.ByteOffset != 0 || seg.ByteLength != seg.ByteCount {
 		return header, fmt.Errorf("published %s asset header mismatch", role)
 	}
-	if header.Schema != ann.Schema {
-		return header, fmt.Errorf("published %s asset schema = %q, want %q", role, header.Schema, ann.Schema)
+	if seg.SchemaName != ann.SchemaName {
+		return header, fmt.Errorf("published %s asset schema = %q, want %q", role, seg.SchemaName, ann.SchemaName)
 	}
+	header = datasetFeedHeadAssetHeader{SHA256: assetSHA, ByteCount: seg.ByteLength}
 	if header.ByteCount <= 0 {
 		return header, fmt.Errorf("published %s asset %s has invalid byte count %d", role, cidValue, header.ByteCount)
 	}
@@ -5912,12 +5808,6 @@ func (n *Node) PublishDatasetFeedHead(ctx context.Context, ann sdnpubsub.Dataset
 		return sdnpubsub.PublishSignedDatasetFeedHead(ctx, n, ann, ed25519.PrivateKey(key))
 	}
 	return sdnpubsub.PublishDatasetFeedHead(ctx, n, ann)
-}
-
-// PublishCAResultSummary publishes a signed CA result summary to the private
-// result channel for a managed private node.
-func (n *Node) PublishCAResultSummary(ctx context.Context, publication sdnpubsub.CAResultPublication) error {
-	return sdnpubsub.PublishCAResultSummary(ctx, n, publication)
 }
 
 // PeerRegistry returns the trusted peer registry.

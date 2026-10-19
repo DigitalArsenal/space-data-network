@@ -3,13 +3,11 @@ package api
 import (
 	"context"
 	"crypto/ed25519"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -18,12 +16,10 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multiaddr"
 
-	"github.com/spacedatanetwork/sdn-server/internal/abac"
 	"github.com/spacedatanetwork/sdn-server/internal/auth"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/modulesign"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
-	sdnpubsub "github.com/spacedatanetwork/sdn-server/internal/pubsub"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 	"github.com/spacedatanetwork/sdn-server/internal/update"
@@ -31,24 +27,9 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/versioninfo"
 )
 
-// topicPublisher is the minimal interface needed to publish to a named topic.
-type topicPublisher interface {
-	PublishToTopic(ctx context.Context, topicName string, data []byte) error
-}
-
-type schemaPublisher interface {
-	Publish(schema string, data []byte) error
-}
-
-func publishSchemaPubSubMessage(ctx context.Context, publisher topicPublisher, schema string, data []byte) (string, error) {
-	topicName := sdnpubsub.TopicName(schema)
-	if schemaPub, ok := publisher.(schemaPublisher); ok {
-		return topicName, schemaPub.Publish(schema, data)
-	}
-	return topicName, publisher.PublishToTopic(ctx, topicName, data)
-}
-
-// CoreAPIHandler handles the /api/v1/ identity, stats, peers, and pubsub endpoints.
+// CoreAPIHandler handles the /api/v1/ control endpoints (identity, version,
+// stats, peers, connect); its pubsub routes live in pubsub_routes.go and its
+// remote-record relay in remote_records.go.
 type CoreAPIHandler struct {
 	peerID       peer.ID
 	h2pHost      host.Host
@@ -211,18 +192,11 @@ func (h *CoreAPIHandler) RegisterRoutesWithFlowMounts(mux *http.ServeMux, flowCl
 	// from RAM. See dashboard_stats.go.
 	mux.HandleFunc(DashboardStatsPath, h.withRL(h.handleDashboardStats))
 
-	// PubSub topic listing — public GET.
-	mux.HandleFunc("/api/v1/pubsub/topics", h.withRL(h.handleTopics))
 	mux.HandleFunc("/api/v1/standards", h.withRL(h.handleStandards))
 	// Engine DDL per standard for browser-hosted engines — public GET.
 	mux.HandleFunc("/api/v1/standards/", h.withRL(h.handleStandardSchemaText))
-	mux.HandleFunc("POST /api/v1/data/remote/{peerID}", h.withReadRL(h.handleRemoteRecords))
-
-	// PubSub publish — requires standard auth when authHandler is present.
-	mux.HandleFunc("/api/v1/pubsub/publish", h.withRL(h.requireAuth(peers.Standard, h.handlePubSubPublish)))
-
-	// PubSub messages — public GET.
-	mux.HandleFunc("/api/v1/pubsub/messages", h.withRL(h.handlePubSubMessages))
+	h.registerRemoteRecordRoutes(mux)
+	h.registerPubSubRoutes(mux)
 
 	// Content-bound module signing — POST /api/v1/admin/modules/sign, Admin
 	// session required, mounted only when this node holds a publisher key.
@@ -605,163 +579,5 @@ func (h *CoreAPIHandler) handlePeerConnect(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"peer_id":   ai.ID.String(),
 		"connected": true,
-	})
-}
-
-// ---------------------------------------------------------------------------
-// PubSub
-// ---------------------------------------------------------------------------
-
-func (h *CoreAPIHandler) handleTopics(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeCoreAPIError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed")
-		return
-	}
-
-	topics := []string{}
-	if h.pubsubSvc != nil {
-		topics = h.pubsubSvc.GetTopics()
-	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"topics": topics})
-}
-
-func (h *CoreAPIHandler) handlePubSubPublish(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeCoreAPIError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed")
-		return
-	}
-
-	if h.publisher == nil {
-		writeCoreAPIError(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", "pubsub publishing not available")
-		return
-	}
-
-	var req struct {
-		Schema string `json:"schema"`
-		Data   string `json:"data"` // base64-encoded FlatBuffer bytes
-	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 10*1024*1024)).Decode(&req); err != nil {
-		writeCoreAPIError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid JSON: "+err.Error())
-		return
-	}
-	if req.Schema == "" {
-		writeCoreAPIError(w, http.StatusBadRequest, "INVALID_REQUEST", "schema is required")
-		return
-	}
-	if req.Data == "" {
-		writeCoreAPIError(w, http.StatusBadRequest, "INVALID_REQUEST", "data is required")
-		return
-	}
-
-	if err := sds.ValidateSchemaName(req.Schema); err != nil {
-		writeCoreAPIError(w, http.StatusBadRequest, "INVALID_SCHEMA", "invalid schema name: "+err.Error())
-		return
-	}
-
-	data, err := base64.StdEncoding.DecodeString(req.Data)
-	if err != nil {
-		// Try URL-safe base64.
-		data, err = base64.URLEncoding.DecodeString(req.Data)
-		if err != nil {
-			writeCoreAPIError(w, http.StatusBadRequest, "INVALID_DATA", "data must be base64-encoded")
-			return
-		}
-	}
-	if len(data) == 0 {
-		writeCoreAPIError(w, http.StatusBadRequest, "INVALID_DATA", "data is empty after decoding")
-		return
-	}
-
-	// Validate FlatBuffer data against the schema.
-	if h.validator != nil {
-		if err := h.validator.Validate(r.Context(), req.Schema, data); err != nil {
-			writeCoreAPIError(w, http.StatusBadRequest, "VALIDATION_FAILED", "validation failed: "+err.Error())
-			return
-		}
-	}
-
-	// ABAC policy check — runs after trust gate (defense in depth).
-	if h.policyEngine != nil {
-		session := auth.SessionFromContext(r.Context())
-		if session == nil {
-			writeCoreAPIError(w, http.StatusUnauthorized, "UNAUTHORIZED", "not authenticated")
-			return
-		}
-		sub := abac.Subject{
-			XPub:       session.XPub,
-			TrustLevel: int(session.TrustLevel),
-			Attrs:      map[string]string{},
-		}
-		res := abac.Resource{Schema: req.Schema}
-		decision := h.policyEngine.Evaluate(sub, abac.ActionPublish, res)
-		if !decision.Allowed {
-			writeCoreAPIError(w, http.StatusForbidden, "POLICY_DENIED", "access denied by policy: "+decision.Reason)
-			return
-		}
-	}
-
-	topicName, err := publishSchemaPubSubMessage(r.Context(), h.publisher, req.Schema, data)
-	if err != nil {
-		writeCoreAPIError(w, http.StatusInternalServerError, "PUBLISH_FAILED", "failed to publish: "+err.Error())
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"schema":       req.Schema,
-		"topic":        topicName,
-		"bytes":        len(data),
-		"published_at": time.Now().UTC().Format(time.RFC3339),
-	})
-}
-
-func (h *CoreAPIHandler) handlePubSubMessages(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeCoreAPIError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed")
-		return
-	}
-
-	schema := strings.TrimSpace(r.URL.Query().Get("schema"))
-	limitStr := strings.TrimSpace(r.URL.Query().Get("limit"))
-
-	limit := 50
-	if limitStr != "" {
-		if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 {
-			limit = parsed
-		}
-	}
-	if limit > 1000 {
-		limit = 1000
-	}
-
-	if schema == "" {
-		writeCoreAPIError(w, http.StatusBadRequest, "INVALID_REQUEST", "schema query parameter is required")
-		return
-	}
-	if err := sds.ValidateSchemaName(schema); err != nil {
-		writeCoreAPIError(w, http.StatusBadRequest, "INVALID_SCHEMA", "invalid schema name: "+err.Error())
-		return
-	}
-
-	if h.store == nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"schema": schema, "records": []interface{}{}})
-		return
-	}
-
-	raw, err := h.store.QueryAll(schema, limit)
-	if err != nil {
-		writeCoreAPIError(w, http.StatusInternalServerError, "QUERY_FAILED", "query failed: "+err.Error())
-		return
-	}
-
-	// Return base64-encoded records.
-	encoded := make([]string, 0, len(raw))
-	for _, b := range raw {
-		encoded = append(encoded, base64.StdEncoding.EncodeToString(b))
-	}
-
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"schema":  schema,
-		"count":   len(encoded),
-		"records": encoded,
 	})
 }

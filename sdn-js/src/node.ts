@@ -84,6 +84,17 @@ const TOPIC_PREFIX = "/spacedatanetwork/sds/";
  * other while stop() still cancels both.
  */
 const RAW_SUBSCRIPTION_PREFIX = "raw:";
+
+/** A size-prefixed FlatBuffer frame: u32 little-endian length + a root with a file identifier. */
+function assertSizePrefixedFrame(frame: Uint8Array): void {
+  if (!(frame instanceof Uint8Array) || frame.byteLength < 12) {
+    throw new Error("publish takes one size-prefixed SDS FlatBuffer frame");
+  }
+  const length = new DataView(frame.buffer, frame.byteOffset, 4).getUint32(0, true);
+  if (length + 4 !== frame.byteLength) {
+    throw new Error(`publish frame declares ${length} bytes, carries ${frame.byteLength - 4}`);
+  }
+}
 type Libp2pCreateOptions = NonNullable<Parameters<typeof createLibp2p>[0]>;
 export const LEGACY_ID_EXCHANGE_PROTOCOL =
   "/space-data-network/id-exchange/1.0.0";
@@ -264,7 +275,7 @@ export interface SDNConfig {
 }
 
 export interface SDNNodeEvents {
-  onMessage?: (schema: SchemaName, data: unknown, from: string) => void;
+  onMessage?: (schema: SchemaName, frame: Uint8Array, from: string) => void;
   onPeerConnected?: (peerId: string) => void;
   onPeerDisconnected?: (peerId: string) => void;
   onModuleDeliveryEvent?: (event: ModuleDeliveryEvent) => void;
@@ -512,12 +523,8 @@ export class SDNNode {
   }
 
   /**
-   * Publish data to a schema topic
-   */
-  /**
-   * Publish raw binary payloads (e.g. signed PNM/SDS FlatBuffers) to a
-   * schema topic — publish() JSON-wraps objects; FlatBuffer envelopes must
-   * go out verbatim.
+   * Publish a payload to a schema topic verbatim, with no local store (e.g.
+   * signed PNM envelopes); publish() is the stored, frame-checked form.
    */
   async publishRaw(schema: SchemaName | string, data: Uint8Array): Promise<string> {
     if (!this.libp2p) {
@@ -529,26 +536,27 @@ export class SDNNode {
     return topicName;
   }
 
-  async publish(schema: SchemaName, data: object): Promise<string> {
+  /**
+   * Publish one size-prefixed SDS FlatBuffer record frame (u32 little-endian
+   * length + root) to a schema topic verbatim, and store it locally. Returns
+   * the stored record's CID ("" without storage).
+   */
+  async publish(schema: SchemaName, frame: Uint8Array): Promise<string> {
     if (!this.libp2p) {
       throw new Error("Node not initialized");
     }
+    assertSizePrefixedFrame(frame);
 
-    // Convert to binary (in production, use FlatBuffers via WASM)
-    const jsonStr = JSON.stringify(data);
-    const binary = new TextEncoder().encode(jsonStr);
-
-    // Publish to topic
     const topicName = TOPIC_PREFIX + schema;
     const pubsub = this.libp2p.services.pubsub as GossipSub;
-    await pubsub.publish(topicName, binary);
+    await pubsub.publish(topicName, frame);
 
     // Store locally
     let cid = "";
     if (this.storage) {
       cid = await this.storage.store(
         schema,
-        binary,
+        frame,
         this.peerId,
         new Uint8Array(0),
       );
@@ -577,11 +585,12 @@ export class SDNNode {
   }
 
   /**
-   * Subscribe to a schema topic
+   * Subscribe to a schema topic. Every message (one size-prefixed SDS
+   * FlatBuffer frame) is stored locally and handed to the handler verbatim.
    */
   async subscribe(
     schema: SchemaName,
-    handler?: (data: unknown, from: string) => void,
+    handler?: (frame: Uint8Array, from: string) => void,
   ): Promise<void> {
     if (!this.libp2p) {
       throw new Error("Node not initialized");
@@ -603,18 +612,8 @@ export class SDNNode {
       (evt: CustomEvent) => {
         if (evt.detail.topic !== topicName) return;
 
-        const msgData = evt.detail.data;
-        if (msgData.length === 0) return;
-
-        // Decode JSON (in production, use FlatBuffers via WASM)
-        const jsonStr = new TextDecoder().decode(msgData);
-        let parsed: unknown;
-        try {
-          parsed = JSON.parse(jsonStr);
-        } catch {
-          console.warn("Failed to parse message");
-          return;
-        }
+        const msgData = evt.detail.data as Uint8Array;
+        if (!msgData || msgData.length === 0) return;
 
         const from = evt.detail.from.toString();
 
@@ -635,8 +634,8 @@ export class SDNNode {
         }
 
         // Call handlers
-        handler?.(parsed, from);
-        this.events.onMessage?.(schema, parsed, from);
+        handler?.(msgData, from);
+        this.events.onMessage?.(schema, msgData, from);
       },
       { signal: controller.signal },
     );
@@ -645,17 +644,12 @@ export class SDNNode {
   /**
    * Subscribe to the raw bytes of a schema topic.
    *
-   * The counterpart to publishRaw(): subscribe() JSON.parses every payload and
-   * drops anything that is not JSON, but live SDS traffic (PNM announcements on
-   * /spacedatanetwork/sds/PNM.fbs, module-delivery envelopes) is binary
-   * size-prefixed FlatBuffers, so the JSON path silently discards 100% of it.
-   *
-   * This is a connector, not a codec: the payload is handed to the caller
+   * The counterpart to publishRaw(). This is a connector, not a codec: the payload is handed to the caller
    * VERBATIM — no decode, no schema validation, and no implicit local storage
    * (exactly as publishRaw performs no implicit store). Decoding is the
    * caller's job, which keeps FlatBuffer/IDL knowledge out of the host lib.
    *
-   * Raw and JSON subscriptions are tracked independently, so a topic may carry
+   * Raw and stored subscriptions are tracked independently, so a topic may carry
    * both at once without either cancelling the other.
    */
   async subscribeRaw(
@@ -689,7 +683,7 @@ export class SDNNode {
   }
 
   /**
-   * Cancel a raw subscription without disturbing a JSON subscribe() on the
+   * Cancel a raw subscription without disturbing a stored subscribe() on the
    * same topic (and vice versa): the gossipsub topic is only left once no
    * subscription of either kind remains.
    */
@@ -882,7 +876,7 @@ export class SDNNode {
 
   /**
    * Bounded datasync session (loop D.4): walk a peer's flatsql-sync cursor
-   * chain (`read_chunk` over the server's rowid-snapshot cursor — the
+   * chain (`read-chunk` over the server's rowid-snapshot cursor — the
    * sdn_record_index rowid space) and materialize every chunk into the
    * engine store with true provenance. Stops when the peer reports no next
    * cursor, a chunk comes back empty, or `maxChunks` is reached.

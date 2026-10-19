@@ -8,10 +8,11 @@ import (
 
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
+	coreprotocol "github.com/libp2p/go-libp2p/core/protocol"
 	"github.com/libp2p/go-libp2p/core/test"
 	rcmgr "github.com/libp2p/go-libp2p/p2p/host/resource-manager"
 
-	"github.com/spacedatanetwork/sdn-server/internal/protocol"
+	"github.com/spacedatanetwork/sdn-server/internal/syncwire"
 )
 
 func TestNodeSourceInstallsFlatSQLSyncResourceManager(t *testing.T) {
@@ -52,7 +53,7 @@ func TestFlatSQLSyncResourceManagerAllowsBulkInboundRangeStreams(t *testing.T) {
 		if err != nil {
 			t.Fatalf("OpenStream #%d failed: %v", i+1, err)
 		}
-		if err := scope.SetProtocol(protocol.FlatSQLSyncProtocolID); err != nil {
+		if err := scope.SetProtocol(coreprotocol.ID(syncwire.ProtocolID(syncwire.OpReadChunk))); err != nil {
 			scope.Done()
 			t.Fatalf("SetProtocol #%d failed: %v", i+1, err)
 		}

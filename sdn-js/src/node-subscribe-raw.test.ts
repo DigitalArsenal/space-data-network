@@ -5,9 +5,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  *
  * Regression cover for the live defect recorded in upstream-sdn-2: real PNM
  * announcements on /spacedatanetwork/sds/PNM.fbs are size-prefixed FlatBuffers
- * ("$PNM" file identifier at byte offset 8), and subscribe()'s JSON.parse path
- * discards 100% of them. These tests pin BOTH halves: raw bytes arrive intact,
- * and the JSON path is unchanged.
+ * ("$PNM" file identifier at byte offset 8). These tests pin that raw bytes
+ * arrive intact and that raw and stored subscriptions stay independent.
  */
 
 const createLibp2pMock = vi.fn();
@@ -191,7 +190,6 @@ describe("SDNNode.subscribeRaw", () => {
     pubsub.emit(PNM_TOPIC, makeSizePrefixedPNM(), "12D3KooWPublisher");
 
     expect(seen).toHaveLength(1);
-    // subscribe()'s "Failed to parse message" path must never be taken here.
     expect(warn).not.toHaveBeenCalled();
 
     warn.mockRestore();
@@ -212,57 +210,27 @@ describe("SDNNode.subscribeRaw", () => {
     await node.stop();
   });
 
-  it("leaves the JSON subscribe() path unchanged", async () => {
+  it("runs a raw and a stored subscription on one topic without either evicting the other", async () => {
     const { node, pubsub } = await createNodeWithPubSub();
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const jsonSeen: unknown[] = [];
-
-    await node.subscribe("PNM.fbs", (data: unknown) => jsonSeen.push(data));
-
-    // JSON still decodes.
-    pubsub.emit(
-      PNM_TOPIC,
-      new TextEncoder().encode(JSON.stringify({ NORAD_CAT_ID: 25544 })),
-      "peer",
-    );
-    expect(jsonSeen).toEqual([{ NORAD_CAT_ID: 25544 }]);
-
-    // ...and binary is still dropped by that path (the documented behavior
-    // subscribeRaw exists to work around).
-    pubsub.emit(PNM_TOPIC, makeSizePrefixedPNM(), "peer");
-    expect(jsonSeen).toHaveLength(1);
-    expect(warn).toHaveBeenCalled();
-
-    warn.mockRestore();
-    await node.stop();
-  });
-
-  it("runs a raw and a JSON subscription on one topic without either evicting the other", async () => {
-    const { node, pubsub } = await createNodeWithPubSub();
-    vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const raw: Uint8Array[] = [];
-    const json: unknown[] = [];
+    const stored: Uint8Array[] = [];
 
     await node.subscribeRaw("PNM.fbs", (bytes: Uint8Array) => raw.push(bytes));
-    await node.subscribe("PNM.fbs", (data: unknown) => json.push(data));
+    await node.subscribe("PNM.fbs", (frame: Uint8Array) => stored.push(frame));
 
     pubsub.emit(PNM_TOPIC, makeSizePrefixedPNM(), "peer");
-    pubsub.emit(
-      PNM_TOPIC,
-      new TextEncoder().encode(JSON.stringify({ ok: true })),
-      "peer",
-    );
+    pubsub.emit(PNM_TOPIC, makeSizePrefixedPNM(), "peer");
 
-    expect(raw).toHaveLength(2); // raw sees everything on the topic
-    expect(json).toEqual([{ ok: true }]);
+    expect(raw).toHaveLength(2);
+    expect(stored).toHaveLength(2);
 
-    // Dropping the JSON side must not tear down the topic the raw side needs.
+    // Dropping the stored side must not tear down the topic the raw side needs.
     await node.unsubscribe("PNM.fbs");
     expect(pubsub.unsubscribed).not.toContain(PNM_TOPIC);
 
     pubsub.emit(PNM_TOPIC, makeSizePrefixedPNM(), "peer");
     expect(raw).toHaveLength(3);
-    expect(json).toHaveLength(1);
+    expect(stored).toHaveLength(2);
 
     // Only when the last subscription goes does the topic get left.
     await node.unsubscribeRaw("PNM.fbs");

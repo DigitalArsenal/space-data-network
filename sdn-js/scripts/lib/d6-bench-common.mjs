@@ -14,6 +14,8 @@ import { createRequire } from 'node:module';
 
 import * as flatbuffers from 'flatbuffers';
 import { OMM } from 'spacedatastandards.org/lib/js/OMM/OMM.js';
+import { QRP } from 'spacedatastandards.org/lib/js/QRP/QRP.js';
+import { qrpKind } from 'spacedatastandards.org/lib/js/QRP/qrpKind.js';
 
 const require = createRequire(import.meta.url);
 
@@ -100,13 +102,46 @@ export function buildBenchCorpus(recordCount) {
   return { recordCount, streamBytes, frames };
 }
 
-/** Wire framing of a flatsql-sync response: [u32 BE json length][JSON header][aligned frames]. */
-export function encodeSyncResponseBytes(header, streamBytes) {
-  const json = new TextEncoder().encode(JSON.stringify(header));
-  const bytes = new Uint8Array(4 + json.byteLength + streamBytes.byteLength);
-  new DataView(bytes.buffer).setUint32(0, json.byteLength, false);
-  bytes.set(json, 4);
-  bytes.set(streamBytes, 4 + json.byteLength);
+/**
+ * A flatsql-sync 2.0.0 read-chunk reply: runs of [$QRP{KIND=Page} header]
+ * [RECORD_COUNT size-prefixed record frames], one run per lane.
+ * `runs`: [{ providerId, sourceName, batchId, originId, frames }].
+ */
+export function encodeSyncResponseBytes(page, runs) {
+  const parts = [];
+  for (const run of runs) {
+    const b = new flatbuffers.Builder(256);
+    const str = (value) => (value ? b.createString(value) : 0);
+    const schema = str(page.schema);
+    const cursor = str(page.cursor);
+    const nextCursor = str(page.nextCursor);
+    const etag = str(page.etag);
+    const providerId = str(run.providerId);
+    const sourceName = str(run.sourceName);
+    const batchId = str(run.batchId);
+    const originId = str(run.originId);
+    QRP.startQRP(b);
+    QRP.addKind(b, qrpKind.Page);
+    if (schema) QRP.addSchemaName(b, schema);
+    if (providerId) QRP.addProviderId(b, providerId);
+    if (sourceName) QRP.addSourceName(b, sourceName);
+    if (batchId) QRP.addBatchId(b, batchId);
+    if (originId) QRP.addOriginId(b, originId);
+    if (cursor) QRP.addCursor(b, cursor);
+    if (nextCursor) QRP.addNextCursor(b, nextCursor);
+    if (etag) QRP.addEtag(b, etag);
+    QRP.addLimit(b, page.limit ?? 0);
+    QRP.addRecordCount(b, run.frames.length);
+    QRP.addTotalCount(b, BigInt(page.totalCount ?? 0));
+    QRP.finishSizePrefixedQRPBuffer(b, QRP.endQRP(b));
+    parts.push(b.asUint8Array().slice(), ...run.frames);
+  }
+  const bytes = new Uint8Array(parts.reduce((total, part) => total + part.byteLength, 0));
+  let offset = 0;
+  for (const part of parts) {
+    bytes.set(part, offset);
+    offset += part.byteLength;
+  }
   return bytes;
 }
 

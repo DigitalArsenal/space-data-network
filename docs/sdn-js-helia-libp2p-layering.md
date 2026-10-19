@@ -212,7 +212,7 @@ got wrong, all **verified**:
 
 | protocol | JS | Go |
 |---|---|---|
-| `/space-data-network/flatsql-sync/1.0.0` | `flatsql-sync.ts:1` | `internal/datasync/datasync.go:21` |
+| `/space-data-network/flatsql-sync/2.0.0/<op>` (one ID per op; $QRP request, $QRP page or error reply) | `flatsql-sync.ts` (`FLATSQL_SYNC_PROTOCOL_PREFIX`) | `internal/syncwire/protocol.go` (`ProtocolPrefix`) |
 | `/space-data-network/module-delivery/1.0.0` | `module-delivery.ts:30` | `internal/modulert/manifest.go:28` |
 
 The Go node deliberately omits `dht.ProtocolPrefix` so it speaks stock

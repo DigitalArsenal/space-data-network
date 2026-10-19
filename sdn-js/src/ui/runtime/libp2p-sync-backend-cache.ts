@@ -77,7 +77,6 @@ export class Libp2pFlatSqlSyncBackendCache {
     if (!client.openFlatSqlSyncManifest) throw new Error('remote FlatSQL sync manifest is unavailable');
     return await client.openFlatSqlSyncManifest(withSyncDefaults({
       ...query,
-      op: 'open_manifest',
       targetPeerId: normalizedOptions.targetPeerId,
       candidateAddrs: normalizedOptions.candidateAddrs,
     }, query, normalizedOptions));
@@ -92,7 +91,6 @@ export class Libp2pFlatSqlSyncBackendCache {
     if (!client.readFlatSqlPublishedShard) throw new Error('remote FlatSQL published shard stream is unavailable');
     return await client.readFlatSqlPublishedShard(withSyncDefaults({
       ...query,
-      op: 'read_published_shard',
       targetPeerId: normalizedOptions.targetPeerId,
       candidateAddrs: normalizedOptions.candidateAddrs,
     }, query, normalizedOptions));
@@ -132,7 +130,6 @@ export class Libp2pFlatSqlSyncBackendCache {
     if (!client.readFlatSqlPublishedShardBatch) throw new Error('remote FlatSQL published shard batch stream is unavailable');
     return await client.readFlatSqlPublishedShardBatch(withSyncDefaults({
       ...query,
-      op: 'read_published_shard_batch',
       targetPeerId: normalizedOptions.targetPeerId,
       candidateAddrs: normalizedOptions.candidateAddrs,
     }, query, normalizedOptions));

@@ -165,12 +165,12 @@ Stream protocols:
 - `/spacedatanetwork/sds-exchange/1.0.0` — record exchange
 - `/space-data-network/id-exchange/1.0.0` — identity records
 - `/space-data-network/chat/1.0.0`
-- `/space-data-network/flatsql-sync/1.0.0` — published shard sync (the high-throughput data lane)
+- `/space-data-network/flatsql-sync/2.0.0/<op>` — record and published-shard sync (the high-throughput data lane); one protocol per op, `$QRP` frames only
 
 ### Pubsub lanes
 
 - **Per-schema data topics** — `/spacedatanetwork/sds/<SCHEMA>` — the streaming record lane: one topic per standard, joined for every validated schema. Publication notifications ride the PNM standard's own data topic, `/spacedatanetwork/sds/PNM.fbs`.
-- **Feed heads** — `/space-data-network/feed-heads/1.0.0/<schema>` — small, signed, mutable pointer messages. A feed head announces where a standard's latest immutable materialized set lives (record count, byte count, shard / query-index / manifest CIDs, publication CID) and is what replicas subscribe to *before* fetching the immutable shards.
+- **Feed heads** — `/space-data-network/feed-heads/2.0.0/<schema>` — small, signed, mutable pointer messages (one `$QRP` Page carrying one SEGMENT row). A feed head announces where a standard's latest immutable materialized set lives (record count, byte count, shard / query-index / manifest CIDs, publication CID) and is what replicas subscribe to *before* fetching the immutable shards.
 - **Adjuncts** — `/spacedatanetwork/edge-relays` (relay announcements), storefront topics `/sdn/storefront/{listings,purchases,reviews}`, per-buyer delivery topics `/sdn/data/{listing_id}/{buyer_peer_id}`, and channel discovery topics.
 
 ### The publication lifecycle (dataset lane)

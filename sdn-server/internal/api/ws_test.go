@@ -1,14 +1,10 @@
 package api
 
 import (
-	"encoding/base64"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -84,73 +80,3 @@ func TestWSHandlerRejectsCrossOriginUpgrade(t *testing.T) {
 // handshake with an Origin header matching the test server's own host, then
 // exercises the existing subscribe/publish round trip end to end to confirm
 // the CheckOrigin tightening did not break legitimate same-origin use.
-func TestWSHandlerAllowsSameOriginSubscribeRoundTrip(t *testing.T) {
-	t.Parallel()
-
-	handler := NewWSHandler(nil, nil)
-	srv := httptest.NewServer(handler)
-	defer srv.Close()
-
-	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
-	parsed, err := url.Parse(srv.URL)
-	if err != nil {
-		t.Fatalf("parse test server URL: %v", err)
-	}
-	header := http.Header{}
-	header.Set("Origin", "http://"+parsed.Host)
-
-	conn, resp, err := websocket.DefaultDialer.Dial(wsURL, header)
-	if err != nil {
-		t.Fatalf("same-origin WebSocket dial failed: %v", err)
-	}
-	defer conn.Close()
-	if resp.StatusCode != http.StatusSwitchingProtocols {
-		t.Fatalf("dial status = %d, want %d", resp.StatusCode, http.StatusSwitchingProtocols)
-	}
-
-	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-
-	subMsg, err := json.Marshal(wsClientMsg{Type: "subscribe", Schema: "OMM.fbs"})
-	if err != nil {
-		t.Fatalf("marshal subscribe: %v", err)
-	}
-	if err := conn.WriteMessage(websocket.TextMessage, subMsg); err != nil {
-		t.Fatalf("write subscribe: %v", err)
-	}
-
-	var subAck wsServerMsg
-	if err := conn.ReadJSON(&subAck); err != nil {
-		t.Fatalf("read subscribe ack: %v", err)
-	}
-	if subAck.Type != "subscribed" || subAck.Schema != "OMM.fbs" {
-		t.Fatalf("subscribe ack = %+v, want type=subscribed schema=OMM.fbs", subAck)
-	}
-
-	payload := []byte("round-trip-payload")
-	pubMsg, err := json.Marshal(wsClientMsg{
-		Type:   "publish",
-		Schema: "OMM.fbs",
-		Data:   base64.StdEncoding.EncodeToString(payload),
-	})
-	if err != nil {
-		t.Fatalf("marshal publish: %v", err)
-	}
-	if err := conn.WriteMessage(websocket.TextMessage, pubMsg); err != nil {
-		t.Fatalf("write publish: %v", err)
-	}
-
-	var broadcast wsServerMsg
-	if err := conn.ReadJSON(&broadcast); err != nil {
-		t.Fatalf("read broadcast: %v", err)
-	}
-	if broadcast.Type != "message" || broadcast.Schema != "OMM.fbs" {
-		t.Fatalf("broadcast = %+v, want type=message schema=OMM.fbs", broadcast)
-	}
-	decoded, err := base64.StdEncoding.DecodeString(broadcast.Data)
-	if err != nil {
-		t.Fatalf("decode broadcast data: %v", err)
-	}
-	if string(decoded) != string(payload) {
-		t.Fatalf("broadcast payload = %q, want %q", decoded, payload)
-	}
-}

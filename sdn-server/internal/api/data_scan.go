@@ -22,22 +22,17 @@ package api
 // $QRP{KIND=Error} frame. JSON is refused.
 
 import (
-	"bufio"
 	"errors"
 	"mime"
 	"net/http"
-	"strings"
-	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/datasync"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
+	"github.com/spacedatanetwork/sdn-server/internal/syncwire"
 )
 
 // scanRequestMaxBytes bounds the one $QRP request frame.
 const scanRequestMaxBytes int64 = 64 << 10
-
-// scanWriteBuffer batches small record frames into large socket writes.
-const scanWriteBuffer = 256 << 10
 
 func (h *DataQueryHandler) handleScan(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -61,28 +56,23 @@ func (h *DataQueryHandler) handleScan(w http.ResponseWriter, r *http.Request) {
 
 	page, records, err := datasync.ScanPage(h.store, req, datasync.MaxSyncChunkLimit)
 	if err != nil {
-		switch {
-		case errors.Is(err, storage.ErrEngineRebuilding):
-			writeStatusFrame(w, http.StatusServiceUnavailable, QRPStatusBusy, "engine_rebuilding", "The record engine is rebuilding; retry shortly.", 30*time.Second)
-		case errors.Is(err, storage.ErrSearchIndexBuilding):
-			writeStatusFrame(w, http.StatusServiceUnavailable, QRPStatusCold, "search_index_building", err.Error(), 2*time.Second)
-		case errors.Is(err, datasync.ErrResumeCursorExpired):
-			WriteErrorFrame(w, http.StatusGone, "resume_cursor_expired", err.Error(), 0)
-		case errors.Is(err, datasync.ErrResumeCursorQuery):
-			WriteErrorFrame(w, http.StatusBadRequest, "resume_cursor_query_mismatch", err.Error(), 0)
-		case errors.Is(err, datasync.ErrResumeCursorInvalid):
-			WriteErrorFrame(w, http.StatusBadRequest, "invalid_resume_cursor", err.Error(), 0)
-		default:
-			WriteErrorFrame(w, http.StatusBadRequest, "bad_request", err.Error(), 0)
-		}
+		writeFailure(w, err)
 		return
 	}
-	writeScanPage(w, h.store, page, records)
+	hdr := w.Header()
+	hdr.Set("Content-Type", StreamContentType)
+	hdr.Set(StreamFormatHeader, StreamFormat)
+	hdr.Set(StreamSchemaHeader, page.Schema)
+	hdr.Set("Cache-Control", "no-store")
+	if page.NextCursor != "" {
+		hdr.Set(StreamNextCursorHeader, page.NextCursor)
+	}
+	w.WriteHeader(http.StatusOK)
+	_ = syncwire.WriteScanPage(w, h.store, page, records)
 }
 
 // readScanRequest decodes the one $QRP{KIND=Request} frame into the sync
-// query. A continuation cursor carries its snapshot, so the next page does
-// not count again.
+// query (syncwire.ScanQuery, shared with the libp2p read-chunk op).
 func readScanRequest(r *http.Request) (datasync.QueryRequest, error) {
 	frames, err := ReadFrames(r.Body, scanRequestMaxBytes)
 	if err != nil {
@@ -98,27 +88,12 @@ func readScanRequest(r *http.Request) (datasync.QueryRequest, error) {
 	if int8(q.KIND()) != QRPKindRequest {
 		return datasync.QueryRequest{}, errors.New("scan takes a $QRP frame of KIND Request")
 	}
-	req := datasync.QueryRequest{
-		Schema:         normalizeRecordIndexSchema(string(q.SCHEMA_NAME())),
-		ProviderID:     string(q.PROVIDER_ID()),
-		SourceName:     string(q.SOURCE_NAME()),
-		BatchID:        string(q.BATCH_ID()),
-		ProducerPeerID: string(q.PRODUCER_PEER_ID()),
-		PeerID:         string(q.ORIGIN_ID()),
-		Search:         strings.TrimSpace(string(q.SEARCH())),
-		Cursor:         string(q.CURSOR()),
-		ResumeCursor:   string(q.RESUME_CURSOR()),
-		Limit:          int(q.LIMIT()),
-		IncludeData:    true,
-	}
-	if req.Schema == "" {
-		return datasync.QueryRequest{}, errors.New("SCHEMA_NAME is required")
-	}
-	if snapshotID, total, ok := datasync.CursorSnapshot(req.Cursor); ok {
-		req.SnapshotID, req.Head, req.TotalCount = snapshotID, snapshotID, total
-	}
-	return req, nil
+	return syncwire.ScanQuery(q)
 }
+
+// scanWriteBuffer batches small record frames into large socket writes
+// (the /data/query record runs, data_query_qrp.go).
+const scanWriteBuffer = 256 << 10
 
 // scanLane is the provenance a run header carries.
 type scanLane struct {
@@ -127,64 +102,4 @@ type scanLane struct {
 
 func laneOf(rec *storage.Record) scanLane {
 	return scanLane{rec.SourceTags.ProviderID, rec.SourceTags.SourceName, rec.SourceTags.BatchID, rec.SourceTags.ProducerPeerID, rec.PeerID}
-}
-
-// writeScanPage streams the page runs straight to the client.
-func writeScanPage(w http.ResponseWriter, store *storage.FlatSQLStore, page *datasync.Page, records []*storage.Record) {
-	h := w.Header()
-	h.Set("Content-Type", StreamContentType)
-	h.Set(StreamFormatHeader, StreamFormat)
-	h.Set(StreamSchemaHeader, page.Schema)
-	h.Set("Cache-Control", "no-store")
-	if page.NextCursor != "" {
-		h.Set(StreamNextCursorHeader, page.NextCursor)
-	}
-	w.WriteHeader(http.StatusOK)
-
-	fileIdentifier := ""
-	if len(records) > 0 && len(records[0].Data) >= frameIdentifierOffset {
-		fileIdentifier = string(records[0].Data[framePrefixLength:frameIdentifierOffset])
-	}
-	header := func(lane scanLane, count int) []byte {
-		return BuildQRP(QRPFields{
-			Kind:           QRPKindPage,
-			Status:         QRPStatusOk,
-			SchemaName:     page.Schema,
-			FileIdentifier: fileIdentifier,
-			ProviderID:     lane.providerID,
-			SourceName:     lane.sourceName,
-			BatchID:        lane.batchID,
-			ProducerPeerID: lane.producerPeerID,
-			OriginID:       lane.originID,
-			Limit:          uint32(page.Limit),
-			Cursor:         page.Cursor,
-			NextCursor:     page.NextCursor,
-			ResumeCursor:   page.ResumeCursor,
-			RecordCount:    uint32(count),
-			TotalCount:     uint64(page.TotalCount),
-			Etag:           page.ChunkHash,
-			GeneratedAtMs:  time.Now().UnixMilli(),
-		})
-	}
-
-	out := bufio.NewWriterSize(w, scanWriteBuffer)
-	defer out.Flush()
-	if len(records) == 0 {
-		_, _ = out.Write(header(scanLane{}, 0))
-		return
-	}
-	for start := 0; start < len(records); {
-		lane := laneOf(records[start])
-		end := start + 1
-		for end < len(records) && laneOf(records[end]) == lane {
-			end++
-		}
-		if _, err := out.Write(header(lane, end-start)); err != nil {
-			return
-		}
-		if err := store.WriteRawRecordFrames(out, records[start:end]); err != nil {
-			return
-		}
-		start = end
-	}
 }

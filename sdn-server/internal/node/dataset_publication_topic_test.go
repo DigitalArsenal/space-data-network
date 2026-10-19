@@ -18,9 +18,9 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 	"github.com/spacedatanetwork/sdn-server/internal/protocol"
-	sdnpubsub "github.com/spacedatanetwork/sdn-server/internal/pubsub"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
+	"github.com/spacedatanetwork/sdn-server/internal/syncwire"
 )
 
 func TestDatasetPublicationFileIDSchema(t *testing.T) {
@@ -154,7 +154,7 @@ func TestMaterializeDatasetFeedHeadAnnouncementImportsShardOverFlatSQLSync(t *te
 		t.Fatalf("provider host: %v", err)
 	}
 	defer providerHost.Close()
-	providerHost.SetStreamHandler(protocol.FlatSQLSyncProtocolID, protocol.NewFlatSQLSyncHandler(providerStore).HandleStream)
+	protocol.NewFlatSQLSyncHandler(providerStore).Register(providerHost)
 	subscriberHost, err := libp2p.New(libp2p.NoListenAddrs)
 	if err != nil {
 		t.Fatalf("subscriber host: %v", err)
@@ -188,25 +188,7 @@ func TestMaterializeDatasetFeedHeadAnnouncementImportsShardOverFlatSQLSync(t *te
 	shardSum := sha256.Sum256(shardBytes)
 	indexSum := sha256.Sum256(indexBytes)
 
-	imported, err := n.materializeDatasetFeedHeadAnnouncement(ctx, sdnpubsub.DatasetFeedHeadAnnouncement{
-		MessageType:  sdnpubsub.DatasetFeedHeadMessageType,
-		Schema:       published.SchemaName,
-		ProviderID:   published.ProviderID,
-		SourceName:   published.SourceName,
-		BatchID:      published.BatchID,
-		QueryProfile: published.QueryProfile,
-		Offset:       published.Offset,
-		Limit:        published.Limit,
-		FeedSequence: published.FeedSequence,
-		FeedHead:     published.FeedHead,
-		RecordCount:  published.RecordCount,
-		ByteCount:    published.ByteCount,
-		ShardCID:     published.ShardCID,
-		IndexCID:     published.IndexCID,
-		ManifestCID:  published.ManifestCID,
-		PublishedAt:  published.PublishedAt,
-		PreviousHead: published.PreviousHead,
-	}, providerHost.ID())
+	imported, err := n.materializeDatasetFeedHeadAnnouncement(ctx, syncwire.SegmentFromPublication(published), providerHost.ID())
 	if err != nil {
 		t.Fatalf("materializeDatasetFeedHeadAnnouncement failed: %v", err)
 	}
@@ -341,7 +323,7 @@ func TestCatchUpDatasetShardPublicationsListsRemoteShardIndex(t *testing.T) {
 		t.Fatalf("provider host: %v", err)
 	}
 	defer providerHost.Close()
-	providerHost.SetStreamHandler(protocol.FlatSQLSyncProtocolID, protocol.NewFlatSQLSyncHandler(providerStore).HandleStream)
+	protocol.NewFlatSQLSyncHandler(providerStore).Register(providerHost)
 	subscriberHost, err := libp2p.New(libp2p.NoListenAddrs)
 	if err != nil {
 		t.Fatalf("subscriber host: %v", err)

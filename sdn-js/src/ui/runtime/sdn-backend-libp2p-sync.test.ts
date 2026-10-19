@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { FLATSQL_SYNC_PROTOCOL_ID, type FlatSqlSyncChunk, type FlatSqlSyncQuery } from '../../flatsql-sync';
+import type { FlatSqlSyncChunk, FlatSqlSyncQuery } from '../../flatsql-sync';
 import {
   LIBP2P_FLATSQL_SYNC_YAMUX_OPTIONS,
   createLibp2pFlatSqlSyncBackend,
@@ -126,11 +126,9 @@ describe('libp2p FlatSQL sync backend', () => {
     expect(calls[0]).toMatchObject({
       targetPeerId: '16Uiu2HCelesTrak',
       candidateAddrs: ['/ip4/167.172.219.213/tcp/8080/ws/p2p/16Uiu2HCelesTrak'],
-      op: 'scan',
       schema: 'CAT.fbs',
       providerId: 'space-data-network-02',
       limit: 1,
-      offset: 0,
     });
   });
 
@@ -165,12 +163,10 @@ describe('libp2p FlatSQL sync backend', () => {
     });
     expect(calls).toEqual([
       expect.objectContaining({
-        op: 'scan',
         schema: 'CAT.fbs',
         providerId: 'space-data-network-02',
         sourceName: 'celestrak-satcat-csv',
         limit: 1,
-        offset: 0,
       }),
     ]);
   });
@@ -210,7 +206,7 @@ describe('libp2p FlatSQL sync backend', () => {
             count: 1,
             results: [{
               key: 'sdn-ds-v1-history',
-              updatedAt: 1778712000,
+              updatedAtMs: 1778712000,
               identity: {
                 schemaName: 'OMM.fbs',
                 sourcePeerId: 'source:history',
@@ -246,11 +242,9 @@ describe('libp2p FlatSQL sync backend', () => {
     });
     expect(calls).toEqual([
       expect.objectContaining({
-        op: 'scan',
         schema: 'OMM.fbs',
         datastoreKey: 'sdn-ds-v1-history',
         limit: 1,
-        offset: 0,
       }),
     ]);
   });
@@ -269,7 +263,7 @@ describe('libp2p FlatSQL sync backend', () => {
             count: 1,
             results: [{
               key: 'sdn-ds-v1-omm-history',
-              updatedAt: 1778712000,
+              updatedAtMs: 1778712000,
               identity: {
                 schemaName: 'OMM.fbs',
                 sourcePeerId: 'source:history',
@@ -313,12 +307,10 @@ describe('libp2p FlatSQL sync backend', () => {
     });
     const catScan = calls.find((call) => call.schema === 'CAT.fbs');
     expect(catScan).toMatchObject({
-      op: 'scan',
       schema: 'CAT.fbs',
       providerId: 'space-data-network-02',
       sourceName: 'celestrak-satcat-csv',
       limit: 1,
-      offset: 0,
     });
   });
 
@@ -350,7 +342,6 @@ describe('libp2p FlatSQL sync backend', () => {
     });
     expect(calls).toEqual([
       expect.objectContaining({
-        op: 'scan',
         schema: 'OMM.fbs',
         providerId: 'space-data-network-02',
         sourceName: 'celestrak-gp',
@@ -399,199 +390,6 @@ describe('libp2p FlatSQL sync backend', () => {
         id: 'getDataSummary',
         state: 'unavailable',
         reason: 'failed to dial /space-data-network/flatsql-sync/1.0.0',
-      },
-    });
-  });
-
-  it('scans raw FlatBuffers with their bytes through the sync protocol without HTTP', async () => {
-    const rawRecord = new Uint8Array([9, 8, 7, 6]);
-    const calls: FlatSqlSyncQuery[] = [];
-    const backend = createLibp2pFlatSqlSyncBackend({
-      targetPeerId: '16Uiu2HCelesTrak',
-      candidateAddrs: ['/ip4/167.172.219.213/tcp/8080/ws/p2p/16Uiu2HCelesTrak'],
-      providerId: 'space-data-network-02',
-      syncClient: {
-        async readFlatSqlSyncChunk(query) {
-          calls.push(query);
-          if (query.op === 'read_chunk') {
-            return {
-              header: headerOnlyChunk('OMM.fbs', 1, {
-                count: 1,
-                results: [recordRef()],
-                chunkHash: 'chunk-hash',
-                scanHash: 'scan-hash',
-              }).header,
-              records: [rawRecord],
-              recordStream: flatSqlSizePrefixedStream([rawRecord]),
-            };
-          }
-          return {
-            header: headerOnlyChunk('OMM.fbs', 1, {
-              count: 1,
-              results: [recordRef()],
-              chunkHash: 'chunk-hash',
-              scanHash: 'scan-hash',
-              nextCursor: 'cursor-2',
-            }).header,
-            records: [],
-            recordStream: new Uint8Array(),
-          };
-        },
-      },
-    });
-
-    const scan = await backend.scanRawData({ schema: 'OMM.fbs', limit: 1, offset: 0 });
-    expect(scan).toMatchObject({
-      ok: true,
-      data: {
-        schema: 'OMM.fbs',
-        totalCount: 1,
-        scanHash: 'scan-hash',
-        chunkHash: 'chunk-hash',
-        results: [{ cid: 'omm-cid-1', providerId: 'space-data-network-02', dataBytes: rawRecord }],
-      },
-    });
-    expect(calls).toEqual([
-      expect.objectContaining({
-        op: 'scan',
-        targetPeerId: '16Uiu2HCelesTrak',
-        candidateAddrs: ['/ip4/167.172.219.213/tcp/8080/ws/p2p/16Uiu2HCelesTrak'],
-        schema: 'OMM.fbs',
-        providerId: 'space-data-network-02',
-      }),
-      expect.objectContaining({
-        op: 'read_chunk',
-        targetPeerId: '16Uiu2HCelesTrak',
-        candidateAddrs: ['/ip4/167.172.219.213/tcp/8080/ws/p2p/16Uiu2HCelesTrak'],
-        schema: 'OMM.fbs',
-        scanHash: 'scan-hash',
-        chunkHash: 'chunk-hash',
-        records: [expect.objectContaining({ cid: 'omm-cid-1' })],
-      }),
-    ]);
-  });
-
-  it('carries datastore namespaces through the libp2p scan and read_chunk requests', async () => {
-    const rawRecord = new Uint8Array([1, 3, 3, 7]);
-    const calls: FlatSqlSyncQuery[] = [];
-    const backend = createLibp2pFlatSqlSyncBackend({
-      targetPeerId: '16Uiu2HCelesTrak',
-      candidateAddrs: ['/ip4/167.172.219.213/tcp/8080/ws/p2p/16Uiu2HCelesTrak'],
-      datastoreKey: 'sdn-ds-v1-history',
-      syncClient: {
-        async readFlatSqlSyncChunk(query) {
-          calls.push(query);
-          if (query.op === 'read_chunk') {
-            return {
-              header: headerOnlyChunk('OMM.fbs', 1, {
-                count: 1,
-                results: [recordRef()],
-                scanHash: 'namespace-scan-hash',
-                chunkHash: 'namespace-scan-hash',
-              }).header,
-              records: [rawRecord],
-              recordStream: flatSqlSizePrefixedStream([rawRecord]),
-            };
-          }
-          return headerOnlyChunk('OMM.fbs', 1, {
-            count: 1,
-            results: [recordRef()],
-            scanHash: 'namespace-scan-hash',
-            chunkHash: 'namespace-scan-hash',
-          });
-        },
-      },
-    });
-
-    await expect(backend.scanRawData({ schema: 'OMM.fbs', limit: 1 })).resolves.toMatchObject({
-      ok: true,
-      data: { results: [{ cid: 'omm-cid-1', dataBytes: rawRecord }] },
-    });
-
-    expect(calls).toEqual([
-      expect.objectContaining({ op: 'scan', datastoreKey: 'sdn-ds-v1-history' }),
-      expect.objectContaining({ op: 'read_chunk', datastoreKey: 'sdn-ds-v1-history' }),
-    ]);
-  });
-
-  it('queries raw data with one direct read_chunk stream instead of scan plus row-ref stream', async () => {
-    const rawRecord = new Uint8Array([9, 8, 7, 6]);
-    const calls: FlatSqlSyncQuery[] = [];
-    const backend = createLibp2pFlatSqlSyncBackend({
-      targetPeerId: '16Uiu2HCelesTrak',
-      candidateAddrs: ['/ip4/167.172.219.213/tcp/8080/ws/p2p/16Uiu2HCelesTrak'],
-      providerId: 'space-data-network-02',
-      sourceName: 'celestrak-gp',
-      syncClient: {
-        async readFlatSqlSyncChunk(query) {
-          calls.push(query);
-          return {
-            header: headerOnlyChunk('OMM.fbs', 2_005_702, {
-              count: 1,
-              limit: 50_000,
-              nextCursor: 'cursor-50000',
-              results: [recordRef()],
-              chunkHash: 'chunk-hash',
-              scanHash: 'scan-hash',
-            }).header,
-            records: [rawRecord],
-            recordStream: flatSqlSizePrefixedStream([rawRecord]),
-          };
-        },
-      },
-    });
-
-    await expect(backend.queryRawData({
-      schema: 'OMM.fbs',
-      syncFilter: "EPOCH >= '2026-05-01T00:00:00Z'",
-      limit: 50_000,
-      offset: 10_000,
-    })).resolves.toMatchObject({
-      ok: true,
-      data: [{ cid: 'omm-cid-1', dataBytes: rawRecord }],
-    });
-
-    expect(calls).toEqual([
-      expect.objectContaining({
-        op: 'read_chunk',
-        targetPeerId: '16Uiu2HCelesTrak',
-        candidateAddrs: ['/ip4/167.172.219.213/tcp/8080/ws/p2p/16Uiu2HCelesTrak'],
-        schema: 'OMM.fbs',
-        providerId: 'space-data-network-02',
-        sourceName: 'celestrak-gp',
-        syncFilter: "EPOCH >= '2026-05-01T00:00:00Z'",
-        limit: 50_000,
-        offset: 10_000,
-      }),
-    ]);
-  });
-
-  it('fails scans whose read_chunk returns refs without matching FlatBuffer frames', async () => {
-    const backend = createLibp2pFlatSqlSyncBackend({
-      targetPeerId: '16Uiu2HCelesTrak',
-      candidateAddrs: ['/ip4/167.172.219.213/tcp/8080/ws/p2p/16Uiu2HCelesTrak'],
-      syncClient: {
-        async readFlatSqlSyncChunk(query) {
-          return {
-            header: headerOnlyChunk('OMM.fbs', 1, {
-              count: 1,
-              results: [recordRef()],
-              chunkHash: query.chunkHash ?? 'chunk-hash',
-              scanHash: query.scanHash ?? 'scan-hash',
-            }).header,
-            records: [],
-            recordStream: new Uint8Array(),
-          };
-        },
-      },
-    });
-
-    await expect(backend.scanRawData({ schema: 'OMM.fbs', limit: 1 })).resolves.toMatchObject({
-      ok: false,
-      capability: {
-        id: 'scanRawData',
-        state: 'unavailable',
-        reason: 'remote FlatSQL sync returned 0/1 FlatBuffer frames',
       },
     });
   });
@@ -698,54 +496,22 @@ function messageStreamDouble(options: {
   };
 }
 
-function headerOnlyChunk(schema: string, totalCount: number, patch: Partial<FlatSqlSyncChunk['header']> = {}): FlatSqlSyncChunk {
+function headerOnlyChunk(schema: string, totalCount: number): FlatSqlSyncChunk {
   return {
     header: {
       schema,
+      fileIdentifier: '',
       totalCount,
       count: 0,
       limit: 1,
-      offset: 0,
       cursor: 'MA',
       nextCursor: '',
-      snapshotId: 'snapshot-1',
-      head: 'snapshot-1',
-      highWaterMark: `snapshot-1:${totalCount}`,
-      scanHash: `${schema}:scan`,
+      resumeCursor: '',
       chunkHash: `${schema}:chunk`,
-      queryProfile: 'ordered-offset-v1',
-      syncProtocol: FLATSQL_SYNC_PROTOCOL_ID,
-      maxChunkSize: 25_000,
-      transports: ['libp2p-websocket', 'libp2p-webrtc'],
       results: [],
-      ...patch,
     },
+    runs: [],
     records: [],
     recordStream: new Uint8Array(),
   };
-}
-
-function recordRef() {
-  return {
-    schemaName: 'OMM.fbs',
-    cid: 'omm-cid-1',
-    peerId: 'source:celestrak',
-    providerId: 'space-data-network-02',
-    sourceName: 'celestrak-gp',
-    sizeBytes: 4,
-  };
-}
-
-function flatSqlSizePrefixedStream(records: Uint8Array[]): Uint8Array {
-  const totalLength = records.reduce((sum, frame) => sum + 4 + frame.byteLength, 0);
-  const out = new Uint8Array(totalLength);
-  const view = new DataView(out.buffer);
-  let offset = 0;
-  for (const frame of records) {
-    view.setUint32(offset, frame.byteLength, true);
-    offset += 4;
-    out.set(frame, offset);
-    offset += frame.byteLength;
-  }
-  return out;
 }

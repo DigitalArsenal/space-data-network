@@ -21,9 +21,9 @@ func TestScanSourceNameOnlyFilterReturnsAbsentAndPresentRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("absent source Scan: %v", err)
 	}
-	if absent.TotalCount != 0 || absent.Count != 0 || len(records) != 0 || len(absent.Results) != 0 {
-		t.Fatalf("absent source returned total=%d count=%d records=%d results=%d",
-			absent.TotalCount, absent.Count, len(records), len(absent.Results))
+	if absent.TotalCount != 0 || absent.Count != 0 || len(records) != 0 {
+		t.Fatalf("absent source returned total=%d count=%d records=%d",
+			absent.TotalCount, absent.Count, len(records))
 	}
 
 	present, records, err := Scan(store, QueryRequest{
@@ -34,9 +34,9 @@ func TestScanSourceNameOnlyFilterReturnsAbsentAndPresentRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("present source Scan: %v", err)
 	}
-	if present.TotalCount != 3 || present.Count != 3 || len(records) != 3 || len(present.Results) != 3 {
-		t.Fatalf("present source returned total=%d count=%d records=%d results=%d; want 3",
-			present.TotalCount, present.Count, len(records), len(present.Results))
+	if present.TotalCount != 3 || present.Count != 3 || len(records) != 3 {
+		t.Fatalf("present source returned total=%d count=%d records=%d; want 3",
+			present.TotalCount, present.Count, len(records))
 	}
 	for i, record := range records {
 		if record.SourceTags.SourceName != "source-alpha" {

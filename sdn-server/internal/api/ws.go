@@ -1,17 +1,17 @@
 package api
 
 import (
-	"encoding/base64"
-	"encoding/json"
 	"net/http"
 	"net/url"
 	"strings"
 	"sync"
-	"time"
 
+	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/DSS"
+	flatbuffers "github.com/google/flatbuffers/go"
 	"github.com/gorilla/websocket"
 
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
+	"github.com/spacedatanetwork/sdn-server/internal/syncwire"
 )
 
 var wsUpgrader = websocket.Upgrader{
@@ -51,21 +51,35 @@ func checkSameOriginHost(r *http.Request) bool {
 	return strings.EqualFold(u.Host, r.Host)
 }
 
-// wsClientMsg is the envelope sent from the browser / client to the server.
-type wsClientMsg struct {
-	Type   string `json:"type"`   // "subscribe" | "publish" | "unsubscribe"
-	Schema string `json:"schema"` // e.g. "OMM.fbs"
-	Data   string `json:"data"`   // base64-encoded FlatBuffer bytes (publish only)
+// /ws speaks binary FlatBuffer frames only; every message is one
+// size-prefixed SDS frame.
+//
+//	client -> node: $DSS{REQUESTED_ACTION=Subscribe|Unsubscribe, SCHEMA_NAME}
+//	                subscribes or unsubscribes; any other SDS record frame is
+//	                a publish (schema = its file identifier).
+//	node -> client: $DSS{SCHEMA_NAME, SUBSCRIBED} acknowledges; a delivered
+//	                message is the published record frame verbatim; an error
+//	                is one $QRP{KIND=Error} frame. Text frames are refused.
+
+// $DSS dssAction values.
+const (
+	dssActionSubscribe   int8 = 2
+	dssActionUnsubscribe int8 = 3
+)
+
+// dssAckFrame is the $DSS{SCHEMA_NAME, SUBSCRIBED} acknowledgement.
+func dssAckFrame(schema string, subscribed bool) []byte {
+	b := flatbuffers.NewBuilder(64)
+	name := b.CreateString(schema)
+	DSS.DSSStart(b)
+	DSS.DSSAddSCHEMA_NAME(b, name)
+	DSS.DSSAddSUBSCRIBED(b, subscribed)
+	DSS.FinishSizePrefixedDSSBuffer(b, DSS.DSSEnd(b))
+	return b.FinishedBytes()
 }
 
-// wsServerMsg is the envelope sent from the server to the client.
-type wsServerMsg struct {
-	Type   string `json:"type"` // "message" | "subscribed" | "unsubscribed" | "error"
-	Schema string `json:"schema,omitempty"`
-	Data   string `json:"data,omitempty"` // base64-encoded bytes
-	From   string `json:"from,omitempty"` // originating peer ID string
-	TS     string `json:"ts,omitempty"`   // RFC3339 timestamp
-	Error  string `json:"error,omitempty"`
+func wsErrorFrame(code, msg string) []byte {
+	return syncwire.ErrorFrame(syncwire.QRPStatusError, code, msg, http.StatusBadRequest, 0)
 }
 
 // wsConn wraps a single WebSocket connection.
@@ -74,14 +88,10 @@ type wsConn struct {
 	conn *websocket.Conn
 }
 
-func (c *wsConn) send(msg wsServerMsg) error {
-	data, err := json.Marshal(msg)
-	if err != nil {
-		return err
-	}
+func (c *wsConn) send(frame []byte) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.conn.WriteMessage(websocket.TextMessage, data)
+	return c.conn.WriteMessage(websocket.BinaryMessage, frame)
 }
 
 // wsHub manages WebSocket connections, routing published messages to subscribers.
@@ -136,26 +146,27 @@ func (h *wsHub) remove(c *wsConn) {
 	}
 }
 
-// broadcast sends a server message to all connections subscribed to schema.
-func (h *wsHub) broadcast(schema string, msg wsServerMsg) {
+// broadcast sends a frame to all connections subscribed to schema.
+func (h *wsHub) broadcast(schema string, frame []byte) {
 	h.mu.RLock()
 	conns := make([]*wsConn, len(h.subs[schema]))
 	copy(conns, h.subs[schema])
 	h.mu.RUnlock()
 
 	for _, c := range conns {
-		_ = c.send(msg)
+		_ = c.send(frame)
 	}
 }
 
 // WSHandler is an http.Handler that upgrades connections to WebSocket and
-// handles subscribe / publish messages.
+// handles subscribe / publish frames.
 type WSHandler struct {
 	hub *wsHub
 }
 
 // NewWSHandler creates a WSHandler with the given publisher and validator.
-// Either may be nil — the handler degrades gracefully.
+// The publisher may be nil (local delivery only); without a validator every
+// frame is refused, since no schema can be resolved.
 func NewWSHandler(publisher topicPublisher, validator *sds.Validator) *WSHandler {
 	return &WSHandler{hub: newWSHub(publisher, validator)}
 }
@@ -174,83 +185,59 @@ func (wh *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	for {
-		_, raw, err := conn.ReadMessage()
+		kind, raw, err := conn.ReadMessage()
 		if err != nil {
 			break
 		}
-
-		var msg wsClientMsg
-		if err := json.Unmarshal(raw, &msg); err != nil {
-			_ = c.send(wsServerMsg{Type: "error", Error: "invalid JSON"})
+		if kind != websocket.BinaryMessage {
+			_ = c.send(wsErrorFrame("text_frame_refused", "/ws takes binary size-prefixed FlatBuffer frames only"))
 			continue
 		}
-
-		switch msg.Type {
-		case "subscribe":
-			if msg.Schema == "" {
-				_ = c.send(wsServerMsg{Type: "error", Error: "schema is required"})
+		frames, err := SplitFrames(raw)
+		if err != nil || len(frames) != 1 {
+			_ = c.send(wsErrorFrame("invalid_frame", "each message is exactly one size-prefixed SDS frame"))
+			continue
+		}
+		frame := frames[0]
+		if wh.hub.validator == nil {
+			_ = c.send(wsErrorFrame("service_unavailable", "the schema index is not available"))
+			continue
+		}
+		if DSS.SizePrefixedDSSBufferHasIdentifier(frame) {
+			if err := sds.VerifySizePrefixedStructure(SyncSchemaName, frame); err != nil {
+				_ = c.send(wsErrorFrame("invalid_frame", "malformed $DSS frame: "+err.Error()))
 				continue
 			}
-			if err := sds.ValidateSchemaName(msg.Schema); err != nil {
-				_ = c.send(wsServerMsg{Type: "error", Error: "invalid schema: " + err.Error()})
-				continue
-			}
-			wh.hub.subscribe(msg.Schema, c)
-			_ = c.send(wsServerMsg{Type: "subscribed", Schema: msg.Schema})
-
-		case "unsubscribe":
-			if msg.Schema == "" {
-				_ = c.send(wsServerMsg{Type: "error", Error: "schema is required"})
-				continue
-			}
-			wh.hub.unsubscribe(msg.Schema, c)
-			_ = c.send(wsServerMsg{Type: "unsubscribed", Schema: msg.Schema})
-
-		case "publish":
-			if msg.Schema == "" {
-				_ = c.send(wsServerMsg{Type: "error", Error: "schema is required"})
-				continue
-			}
-			if msg.Data == "" {
-				_ = c.send(wsServerMsg{Type: "error", Error: "data is required"})
-				continue
-			}
-			if err := sds.ValidateSchemaName(msg.Schema); err != nil {
-				_ = c.send(wsServerMsg{Type: "error", Error: "invalid schema: " + err.Error()})
-				continue
-			}
-
-			data, err := base64.StdEncoding.DecodeString(msg.Data)
-			if err != nil {
-				data, err = base64.URLEncoding.DecodeString(msg.Data)
-				if err != nil {
-					_ = c.send(wsServerMsg{Type: "error", Error: "data must be base64-encoded"})
+			request := DSS.GetSizePrefixedRootAsDSS(frame, 0)
+			schema := syncwire.NormalizeSchema(string(request.SCHEMA_NAME()))
+			action := int8(request.REQUESTED_ACTION())
+			if action == dssActionSubscribe || action == dssActionUnsubscribe {
+				if err := sds.ValidateSchemaName(schema); err != nil {
+					_ = c.send(wsErrorFrame("invalid_schema", "invalid schema: "+err.Error()))
 					continue
 				}
-			}
-
-			if wh.hub.validator != nil {
-				if err := wh.hub.validator.Validate(r.Context(), msg.Schema, data); err != nil {
-					_ = c.send(wsServerMsg{Type: "error", Error: "validation failed: " + err.Error()})
-					continue
+				if action == dssActionSubscribe {
+					wh.hub.subscribe(schema, c)
+				} else {
+					wh.hub.unsubscribe(schema, c)
 				}
+				_ = c.send(dssAckFrame(schema, action == dssActionSubscribe))
+				continue
 			}
-
-			// Broadcast to local subscribers first (zero-copy, same process).
-			wh.hub.broadcast(msg.Schema, wsServerMsg{
-				Type:   "message",
-				Schema: msg.Schema,
-				Data:   base64.StdEncoding.EncodeToString(data),
-				TS:     time.Now().UTC().Format(time.RFC3339),
-			})
-
-			// Then propagate over libp2p pubsub if available.
-			if wh.hub.publisher != nil {
-				_, _ = publishSchemaPubSubMessage(r.Context(), wh.hub.publisher, msg.Schema, data)
-			}
-
-		default:
-			_ = c.send(wsServerMsg{Type: "error", Error: "unknown message type: " + msg.Type})
+		}
+		schema, ok := recordFrameSchema(wh.hub.validator, frame)
+		if !ok {
+			_ = c.send(wsErrorFrame("invalid_schema", "the frame's file identifier names no known standard"))
+			continue
+		}
+		if err := wh.hub.validator.Validate(r.Context(), schema, frame); err != nil {
+			_ = c.send(wsErrorFrame("validation_failed", "validation failed: "+err.Error()))
+			continue
+		}
+		// Local subscribers first (same process), then libp2p pubsub.
+		wh.hub.broadcast(schema, frame)
+		if wh.hub.publisher != nil {
+			_, _ = publishSchemaPubSubMessage(r.Context(), wh.hub.publisher, schema, frame)
 		}
 	}
 }

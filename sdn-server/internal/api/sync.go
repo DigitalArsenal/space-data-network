@@ -29,8 +29,8 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 
 	"github.com/spacedatanetwork/sdn-server/internal/channels"
-	"github.com/spacedatanetwork/sdn-server/internal/datasync"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
+	"github.com/spacedatanetwork/sdn-server/internal/syncwire"
 )
 
 func init() {
@@ -482,7 +482,7 @@ func (h *SyncHandler) build(filter SyncFilter) ([]SyncLane, error) {
 			LocalRows:    uint64(nonNegative64(agg.localRows)),
 			CachedBytes:  uint64(nonNegative64(agg.localBytes)),
 			QueryProfile: storage.DatasetPublicationQueryProfile,
-			SyncProtocol: datasync.ProtocolID,
+			SyncProtocol: syncwire.ProtocolPrefix,
 			Visibility:   "public",
 			Encryption:   "none",
 			GrantState:   "not-required",

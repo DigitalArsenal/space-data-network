@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/OMM"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/PNM"
 	flatbuffers "github.com/google/flatbuffers/go"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -293,4 +294,21 @@ func countStored(t *testing.T, store *storage.FlatSQLStore, schema string) int {
 		t.Fatalf("QueryAll %s failed: %v", schema, err)
 	}
 	return len(recs)
+}
+
+// buildFixtureOMM builds one size-prefixed OMM record.
+func buildFixtureOMM(t *testing.T, norad uint32, objectName string) []byte {
+	t.Helper()
+	builder := flatbuffers.NewBuilder(256)
+	objectNameOffset := builder.CreateString(objectName)
+	objectIDOffset := builder.CreateString("2023-078J")
+	epochOffset := builder.CreateString("2026-05-10T12:00:00Z")
+	OMM.OMMStart(builder)
+	OMM.OMMAddNORAD_CAT_ID(builder, norad)
+	OMM.OMMAddOBJECT_NAME(builder, objectNameOffset)
+	OMM.OMMAddOBJECT_ID(builder, objectIDOffset)
+	OMM.OMMAddEPOCH(builder, epochOffset)
+	omm := OMM.OMMEnd(builder)
+	OMM.FinishSizePrefixedOMMBuffer(builder, omm)
+	return append([]byte(nil), builder.FinishedBytes()...)
 }

@@ -221,18 +221,18 @@ func TestMaterializeDatasetPublicationPNMMarksAFeedHeadImportedShardWithoutRefet
 		t.Fatalf("feed-head import: %d records, %v", imported, err)
 	}
 	ann := sdnpubsub.DatasetFeedHeadAnnouncement{
-		Schema:       "CAT.fbs",
-		ProviderID:   f.tags.ProviderID,
-		SourceName:   f.tags.SourceName,
-		BatchID:      f.tags.BatchID,
-		QueryProfile: storage.DatasetPublicationQueryProfile,
-		Limit:        10,
-		RecordCount:  f.export.RecordCount,
-		ByteCount:    f.export.ShardBytes,
-		ShardCID:     f.export.ShardCID,
-		IndexCID:     f.export.IndexCID,
-		ManifestCID:  f.manifestCID,
-		PublishedAt:  time.Unix(1700007777, 0).UTC(),
+		SchemaName:    "CAT.fbs",
+		ProviderID:    f.tags.ProviderID,
+		SourceName:    f.tags.SourceName,
+		BatchID:       f.tags.BatchID,
+		QueryProfile:  storage.DatasetPublicationQueryProfile,
+		Limit:         10,
+		RecordCount:   int64(f.export.RecordCount),
+		ByteCount:     f.export.ShardBytes,
+		ShardCID:      f.export.ShardCID,
+		IndexCID:      f.export.IndexCID,
+		ManifestCID:   f.manifestCID,
+		PublishedAtMs: time.Unix(1700007777, 0).UnixMilli(),
 	}
 	shardHeader := datasetFeedHeadAssetHeader{SHA256: f.export.ShardSHA256, ByteCount: f.export.ShardBytes}
 	indexHeader := datasetFeedHeadAssetHeader{SHA256: f.export.IndexSHA256, ByteCount: f.export.IndexBytes}

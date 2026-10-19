@@ -15,7 +15,7 @@ import (
 
 	"github.com/spacedatanetwork/sdn-server/internal/license"
 	"github.com/spacedatanetwork/sdn-server/internal/modulert"
-	"github.com/spacedatanetwork/sdn-server/internal/protocol"
+	"github.com/spacedatanetwork/sdn-server/internal/syncwire"
 )
 
 const flatSQLSyncBulkStreamLimit = 512
@@ -369,21 +369,25 @@ func applyFlatSQLSyncResourceLimits(limits *rcmgr.ScalingLimitConfig) {
 	ensureBaseStreamLimit(&limits.PeerBaseLimit, flatSQLSyncBulkStreamLimit*2, flatSQLSyncBulkStreamLimit*2, flatSQLSyncBulkStreamLimit*4)
 	ensureBaseStreamLimit(&limits.ProtocolBaseLimit, flatSQLSyncBulkStreamLimit*4, flatSQLSyncBulkStreamLimit*4, flatSQLSyncBulkStreamLimit*8)
 
-	limits.AddProtocolPeerLimit(
-		coreprotocol.ID(protocol.FlatSQLSyncProtocolID),
-		rcmgr.BaseLimit{
-			StreamsInbound:  flatSQLSyncBulkStreamLimit,
-			StreamsOutbound: flatSQLSyncBulkStreamLimit,
-			Streams:         flatSQLSyncBulkStreamLimit * 2,
-			Memory:          256 << 20,
-		},
-		rcmgr.BaseLimitIncrease{
-			StreamsInbound:  flatSQLSyncBulkStreamLimit / 4,
-			StreamsOutbound: flatSQLSyncBulkStreamLimit / 4,
-			Streams:         flatSQLSyncBulkStreamLimit / 2,
-			Memory:          64 << 20,
-		},
-	)
+	// One protocol ID per flatsql-sync 2.0.0 op: each op gets the bulk
+	// per-peer budget.
+	for _, op := range syncwire.Ops {
+		limits.AddProtocolPeerLimit(
+			coreprotocol.ID(syncwire.ProtocolID(op)),
+			rcmgr.BaseLimit{
+				StreamsInbound:  flatSQLSyncBulkStreamLimit,
+				StreamsOutbound: flatSQLSyncBulkStreamLimit,
+				Streams:         flatSQLSyncBulkStreamLimit * 2,
+				Memory:          256 << 20,
+			},
+			rcmgr.BaseLimitIncrease{
+				StreamsInbound:  flatSQLSyncBulkStreamLimit / 4,
+				StreamsOutbound: flatSQLSyncBulkStreamLimit / 4,
+				Streams:         flatSQLSyncBulkStreamLimit / 2,
+				Memory:          64 << 20,
+			},
+		)
+	}
 }
 
 // applyModuleDeliveryResourceLimits gives the module delivery and publish

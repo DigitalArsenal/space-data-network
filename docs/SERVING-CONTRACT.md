@@ -33,7 +33,7 @@ matching executable as `build_sha256`, and a fleet must show one value.
 | `catalog.index_state` | same route | `index_state` per schema is `building` or `ready`; a client does not search a schema whose index is `building` |
 | `data.query` | `POST /api/v1/data/query` | JSON body with `schema`, `offset`, `limit`, optional `provider_id`, `source_name`, `batch_id`, `producer_peer_id`, `cursor`, `search`, `query_profile`, `include_data`; `Accept: application/vnd.sdn.flatbuffers.stream` returns u32 size-prefixed frames of bare records with `x-sdn-total-count` |
 | `data.search` | `POST /api/v1/search/data` | full-text over the canonical record; returns the same frame form |
-| `data.remote` | `POST /api/v1/data/remote/{peerID}` | body = u32BE length + JSON `{op:"read_chunk"|"read_published_shard", schema, limit ≤ 1000, offset ≤ 16000, source_name?, cursor?}`; answer = u32BE length + JSON header (`sync_protocol`, `count`, `total_count`, `results[]{cid,size_bytes}`, `cursor`) followed by the frames; 20 s deadline, 8 MiB cap, HTTP 502 when the remote node does not answer in time |
+| `data.remote` | `POST /api/v1/data/remote/{peerID}/{op}` | `op` = `read-chunk` (LIMIT 1..1000), `list-published` (LIMIT 1..1000, CURSOR offset ≤ 16000) or `read-shard` (CID, CURSOR byte offset, MAX_BYTES 1..4 MiB); body = one `$QRP` Request frame (`application/vnd.sdn.flatbuffers.stream`, ≤ 64 KiB); answer = the peer's flatsql-sync 2.0.0 reply verbatim; errors are one `$QRP` Error frame; 20 s deadline, 8 MiB cap, HTTP 502 when the remote node does not answer in time |
 | `publish.batch` | `POST /api/v1/data/publish/batch/{schema}` (admin alias `/api/v1/admin/publish/batch`) | u32 LE length-framed bodies; a size-prefixed FlatBuffer (identifier at byte 8) is normalized to the bare record before its CID is computed; the response names the envelope form that arrived |
 
 ## Records
@@ -44,10 +44,31 @@ matching executable as `build_sha256`, and a fleet must show one value.
 
 ## Node-to-node
 
-`/space-data-network/flatsql-sync/1.0.0`, request ops `read_chunk`, `scan`,
-`open_snapshot`, `open_manifest`, `list_datastores`, `ack_progress`,
-`read_published_shard`, `read_published_shard_batch`, `read_published_asset`.
-A `source_name`-only filter is indexed (`(schema_name, source_name, cid)`).
+flatsql-sync 2.0.0: one libp2p protocol per op,
+`/space-data-network/flatsql-sync/2.0.0/<op>`. 1.0.0 is not served (a dial
+fails negotiation). Request = one size-prefixed `$QRP` Request frame (u32 LE
+length). Every reply starts with a `$QRP` Page or Error frame.
+
+| op | request | reply |
+| --- | --- | --- |
+| `read-chunk` | SCHEMA_NAME, lane, SEARCH, CURSOR / RESUME_CURSOR, LIMIT | same as `POST /api/v1/data/scan`: runs of [Page][RECORD_COUNT record frames] |
+| `open-manifest` | SCHEMA_NAME, lane, LIMIT | Page: TOTAL_COUNT, ETAG = manifest id, CURSOR = snapshot, SEGMENT rows (ROLE `segment` / `shard-group-car`) |
+| `list-published` | SCHEMA_NAME, lane, CURSOR = offset, LIMIT | Page: TOTAL_COUNT, CURSOR, NEXT_CURSOR, SEGMENT rows |
+| `read-shard`, `read-index` | SCHEMA_NAME, lane, CID, CURSOR = byte offset, MAX_BYTES = length (0 = rest) | Page with one SEGMENT row (BYTE_OFFSET, BYTE_LENGTH, BYTE_COUNT = file size), then BYTE_LENGTH bytes |
+| `read-shard-batch` | SCHEMA_NAME, lane, FILTERS SHARD_CID In `a,b,c` | Page with one row per shard, then the shards concatenated |
+| `wire-speed-probe` | MAX_BYTES | Page MAX_BYTES = payload, then that many bytes (private-read peers) |
+| `list-datastores` | — | Page rows DATASTORE_KEY, SCHEMA_NAME, PROVIDER_ID, SOURCE_NAME, BATCH_ID, QUERY_PROFILE, PRODUCER_PEER_ID, PRODUCER_PUBLIC_KEY, UPDATED_AT_MS (private-read peers) |
+
+Lane = PROVIDER_ID, SOURCE_NAME, BATCH_ID (+ PRODUCER_PEER_ID, ORIGIN_ID for
+`read-chunk`). FILTERS: QUERY_PROFILE Eq, DATASTORE_KEY Eq (private-read
+peers). SEGMENT rows use one column set (`syncwire.SegmentColumns`), read by
+column name; empty strings and bytes are Null cells. A `source_name`-only
+filter is indexed (`(schema_name, source_name, cid)`).
+
+Feed heads: topic `/space-data-network/feed-heads/2.0.0/<SCHEMA>.fbs`, message =
+one `$QRP` Page with one SEGMENT row; SIGNATURE (Bytes) = Ed25519 over
+`"SDN-FEED-HEAD\0"` + that frame rebuilt with SIGNATURE and SIGNATURE_TYPE Null;
+SIGNATURE_TYPE `Ed25519`; SIGNING_PUBLIC_KEY (Bytes, 32).
 
 ## Maintenance (admin session or loopback dev auto-admin)
 

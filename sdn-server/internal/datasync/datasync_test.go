@@ -479,9 +479,6 @@ func TestScanAppliesSubscriptionSyncFilterBeforeReturningRefs(t *testing.T) {
 	if len(records) != 1 || records[0].CID != matchCID {
 		t.Fatalf("scan records = %+v, want one CID %s", records, matchCID)
 	}
-	if len(scan.Results) != 1 || scan.Results[0]["cid"] != matchCID {
-		t.Fatalf("scan result refs = %+v, want CID %s", scan.Results, matchCID)
-	}
 }
 
 func TestScanUsesSnapshotRowIDCursorForProviderPagination(t *testing.T) {

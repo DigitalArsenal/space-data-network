@@ -342,7 +342,7 @@ export interface EnginePublishedShardIngestOptions {
   providerPeerId?: string | null;
   providerPublicKey?: string | null;
   /** Manifest the shard was announced in (provenance fallback: provider/source/batch/head). */
-  manifest?: Pick<FlatSqlSyncManifest, 'providerId' | 'sourceName' | 'batchId' | 'schema' | 'queryProfile' | 'snapshotId' | 'head' | 'highWaterMark'> | null;
+  manifest?: Pick<FlatSqlSyncManifest, 'providerId' | 'sourceName' | 'batchId' | 'schema' | 'queryProfile' | 'snapshotId'> | null;
   /** Manifest segment for this shard (feed head / chunk-hash fallback). */
   segment?: Pick<FlatSqlSyncManifestSegment, 'rowCount' | 'chunkHash' | 'shardSha256' | 'feedHead'> | null;
   /** Write per-record envelope index rows (cid = sha256, the server computeCID). Default true. */
@@ -741,7 +741,7 @@ export class FlatSQLEngineRecordStore {
   }
 
   /**
-   * Datasync-fed ingest (loop D.4): materialize a flatsql-sync `read_chunk`
+   * Datasync-fed ingest (loop D.4): materialize a flatsql-sync `read-chunk`
    * response into the engine store with its TRUE provenance. Every record
    * ref's provider/source/batch tags route the record into its per-provider
    * source partition (`registerSource` shadow tables — the server layout),
@@ -790,13 +790,14 @@ export class FlatSQLEngineRecordStore {
     }
 
     let indexedEnvelopes = 0;
+    const timestampMs = this.nowMs();
     for (const ref of refs) {
       if (!ref.cid) continue;
       if (this.upsertSyncEnvelope({
         schema: schemaName,
         cid: ref.cid,
         peerId: ref.peerId || ref.producerPeerId || '',
-        timestampMs: parseSyncTimestampMs(ref.timestamp, this.nowMs),
+        timestampMs,
       })) {
         indexedEnvelopes += 1;
       }
@@ -818,7 +819,7 @@ export class FlatSQLEngineRecordStore {
 
   /**
    * Datasync-fed ingest (loop D.4): materialize a published FlatSQL shard
-   * (`read_published_shard` response, or a manifest segment fetched over
+   * (`read-shard` response, or a manifest segment fetched over
    * IPFS) into the engine store. The shard's provider/source/batch
    * provenance routes into a per-provider engine source partition, the pin
    * ledger records the shard exactly like the webUI sync worker does
@@ -897,9 +898,9 @@ export class FlatSQLEngineRecordStore {
       sourceName,
       batchId,
       queryProfile: header.queryProfile || options.manifest?.queryProfile || 'dataset-publication-offset-v1',
-      snapshotId: options.segment?.feedHead || options.manifest?.snapshotId || header.head || null,
-      head: options.segment?.feedHead || header.head || options.manifest?.head || null,
-      highWaterMark: options.manifest?.highWaterMark || null,
+      snapshotId: options.segment?.feedHead || options.manifest?.snapshotId || header.feedHead || null,
+      head: options.segment?.feedHead || header.feedHead || null,
+      highWaterMark: null,
       byteHash: expectedSha || options.segment?.chunkHash || null,
       role: 'shard',
       rowCount: expectedRows > 0 ? expectedRows : frameCount,
@@ -1288,17 +1289,9 @@ function syncIngestRecordFromRef(
     providerId: ref.providerId ?? null,
     sourceName: ref.sourceName ?? null,
     batchId: ref.batchId ?? null,
-    timestamp: ref.timestamp ?? null,
+    timestamp: null,
     dataBytes: frame,
   };
-}
-
-function parseSyncTimestampMs(timestamp: string | undefined, nowMs: () => number): number {
-  if (timestamp) {
-    const parsed = Date.parse(timestamp);
-    if (Number.isFinite(parsed)) return parsed;
-  }
-  return nowMs();
 }
 
 /** Frame count of an aligned little-endian size-prefixed record stream. */

@@ -10,7 +10,7 @@ import (
 
 // WIRE-SPEED PROBE BUDGET (security re-audit NET-06, 2026-10-15).
 //
-// wire_speed_probe streams up to maxWireSpeedProbeBytes of filler to the
+// wire-speed-probe streams up to maxWireSpeedProbeBytes of filler to the
 // caller. Open to anyone, with up to 512 concurrent sync streams per peer, it
 // let one peer turn the node's uplink into an amplifier. It now needs
 // private-read authority (FlatSQLSyncHandler.authorize), and even an
@@ -56,21 +56,21 @@ func (b *wireSpeedProbeBudget) acquire(id peer.ID, probeBytes int64) (func(), er
 			b.sweepLocked(now)
 		}
 		if len(b.peers) >= maxWireSpeedProbePeers {
-			return nil, fmt.Errorf("wire_speed_probe: too many probing peers; retry later")
+			return nil, fmt.Errorf("wire-speed-probe: too many probing peers; retry later")
 		}
 		st = &wireSpeedProbePeer{tokens: wireSpeedProbePeerBurstBytes, last: now}
 		b.peers[id] = st
 	}
 	st.refill(now)
 	if st.active {
-		return nil, fmt.Errorf("wire_speed_probe: a probe from this peer is already running")
+		return nil, fmt.Errorf("wire-speed-probe: a probe from this peer is already running")
 	}
 	if b.active >= maxConcurrentWireSpeedProbes {
-		return nil, fmt.Errorf("wire_speed_probe: %d probes already running; retry later", b.active)
+		return nil, fmt.Errorf("wire-speed-probe: %d probes already running; retry later", b.active)
 	}
 	if st.tokens < float64(probeBytes) {
 		wait := time.Duration((float64(probeBytes) - st.tokens) / wireSpeedProbePeerRefillBytesPerSecond * float64(time.Second))
-		return nil, fmt.Errorf("wire_speed_probe: byte budget exhausted; retry in %s", wait.Round(time.Second))
+		return nil, fmt.Errorf("wire-speed-probe: byte budget exhausted; retry in %s", wait.Round(time.Second))
 	}
 	st.tokens -= float64(probeBytes)
 	st.active = true

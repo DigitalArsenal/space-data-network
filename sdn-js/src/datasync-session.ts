@@ -1,8 +1,7 @@
 /**
  * Datasync session (loop D.4): a bounded walk of a peer's flatsql-sync
- * cursor chain (`read_chunk` over the server's rowid-snapshot cursor — the
- * sdn_record_index rowid space, GROUND TRUTH: wire-stable for deployed
- * peers) that materializes every chunk into THE engine record store with
+ * cursor chain (flatsql-sync 2.0.0 `read-chunk` over the server's
+ * rowid-snapshot cursor; the cursor carries its snapshot) that materializes every chunk into THE engine record store with
  * true provider/source/batch provenance.
  */
 import type {
@@ -35,16 +34,15 @@ export interface FlatSqlSchemaSyncSummary {
   indexedEnvelopes: number;
   /** Engine source partitions touched (true provider/source provenance). */
   sources: string[];
-  snapshotId: string;
-  head: string;
-  highWaterMark: string;
-  /** Resume cursor (rowid-snapshot space) — empty when the walk completed. */
+  /** Continuation cursor (rowid-snapshot space): empty when the walk completed. */
   nextCursor: string;
+  /** Set when the walk completed: resumes this query with records stored since. */
+  resumeCursor: string;
   complete: boolean;
 }
 
 /**
- * Walk `read_chunk` pages from `transport` and materialize each into
+ * Walk `read-chunk` pages from `transport` and materialize each into
  * `store` (per-provider engine source partitions + envelope index rows +
  * ingested-keys dedupe — see FlatSQLEngineRecordStore.ingestSyncChunk).
  * Stops when the peer reports no next cursor, a chunk comes back empty, or
@@ -66,25 +64,15 @@ export async function syncFlatSqlSchemaIntoStore(
     ingestedRecords: 0,
     indexedEnvelopes: 0,
     sources: [],
-    snapshotId: query.snapshotId ?? '',
-    head: query.head ?? '',
-    highWaterMark: '',
     nextCursor: query.cursor ?? '',
+    resumeCursor: '',
     complete: false,
   };
   const sources = new Set<string>();
   let cursor = query.cursor ?? '';
-  let snapshotId = query.snapshotId ?? '';
-  let head = query.head ?? '';
 
   while (summary.chunks < chunkBudget) {
-    const chunk = await transport.readFlatSqlSyncChunk({
-      ...query,
-      op: 'read_chunk',
-      ...(cursor
-        ? { cursor, snapshotId: snapshotId || undefined, head: head || undefined }
-        : {}),
-    });
+    const chunk = await transport.readFlatSqlSyncChunk({ ...query, ...(cursor ? { cursor } : {}) });
     summary.chunks += 1;
     const result = await store.ingestSyncChunk(chunk, {
       ...ingestOptions,
@@ -95,13 +83,9 @@ export async function syncFlatSqlSchemaIntoStore(
     summary.ingestedRecords += result.ingestedRecords;
     summary.indexedEnvelopes += result.indexedEnvelopes;
     for (const source of result.sources) sources.add(source);
-    snapshotId = chunk.header.snapshotId || snapshotId;
-    head = chunk.header.head || head;
-    summary.snapshotId = snapshotId;
-    summary.head = head;
-    summary.highWaterMark = chunk.header.highWaterMark || summary.highWaterMark;
-    cursor = chunk.header.nextCursor ?? '';
+    cursor = chunk.header.nextCursor;
     summary.nextCursor = cursor;
+    summary.resumeCursor = chunk.header.resumeCursor;
     if (!cursor || chunk.header.count === 0) {
       summary.complete = true;
       break;

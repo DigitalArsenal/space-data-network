@@ -12,6 +12,7 @@ import {
 } from '../dist/ui/index.mjs';
 
 const QUERY_PROFILE = 'dataset-publication-offset-v1';
+const FLATSQL_SYNC_PROTOCOL_PREFIX = '/space-data-network/flatsql-sync/2.0.0/';
 const DEFAULT_PUBLISHED_SHARD_RANGE_BYTES = 16 * 1024 * 1024;
 const DEFAULT_PUBLISHED_SHARD_RANGE_CONCURRENCY = 1;
 const DEFAULT_PUBLISHED_SHARD_BATCH_BYTES = 64 * 1024 * 1024;
@@ -44,7 +45,6 @@ export async function runThroughputHarness(options, now = () => Date.now()) {
       targetPeerId: options.peer,
       candidateAddrs: options.addrs,
       schema: options.schema,
-      op: 'open_manifest',
       providerId: options.providerId,
       sourceName: options.sourceName,
       queryProfile: QUERY_PROFILE,
@@ -113,7 +113,7 @@ export async function runThroughputHarness(options, now = () => Date.now()) {
       schema: options.schema,
       target: options.target,
       artifactRouting: {
-         protocol: '/space-data-network/flatsql-sync/1.0.0',
+         protocol: FLATSQL_SYNC_PROTOCOL_PREFIX,
          mode: artifactRoutingMode(options.transferMode, shardSources.length),
          clientPoolSize: shardClients.length,
          sourceCount: shardSources.length,
@@ -312,8 +312,8 @@ async function fetchPublishedShardBytesViaRanges(options) {
         byteOffset: range.offset,
         byteLength: range.length,
       }, (options.preferredSourceIndex ?? 0) + range.index, options.sourceStats, options.sourceScores);
-      const headerOffset = shard.header.byteOffset ?? range.offset;
-      const headerLength = shard.header.byteLength ?? shard.header.byteCount;
+      const headerOffset = shard.header.byteOffset;
+      const headerLength = shard.header.byteLength;
       if (headerOffset !== range.offset || headerLength !== range.length || shard.streamBytes.byteLength !== range.length) {
         throw new Error(`published shard ${options.cid} returned range ${headerOffset}+${headerLength}/${range.offset}+${range.length}`);
       }
@@ -606,7 +606,7 @@ function usage() {
     'Usage: npm run measure:flatsql-sync -- --peer <peerId> --addr <multiaddr> [options]',
     '',
     'Measures CelesTrak published-shard download throughput against libp2p wire speed.',
-    'Manifest discovery and bulk shard bytes both use /space-data-network/flatsql-sync/1.0.0 over libp2p.',
+    `Manifest discovery and bulk shard bytes both use ${FLATSQL_SYNC_PROTOCOL_PREFIX}{open-manifest,read-shard,read-shard-batch} over libp2p.`,
     'Bulk shard bytes are fetched as published-shard byte ranges or bounded published-shard batches.',
     'There is no Kubo gateway, remote HTTP, or SSH data fallback in this harness.',
     '',
@@ -666,8 +666,8 @@ async function stopClients(clients) {
 //                         (the RemoteEpochStreamClient / queryData ingest
 //                         path: per-frame fnv1a32 ledger keys)
 //   sync-chunk            ingestSyncChunk on a decoded flatsql-sync
-//                         read_chunk response (true provenance: per-record
-//                         refs route to per-provider partitions + envelope
+//                         read-chunk reply (true provenance: per-run lanes
+//                         route to per-provider partitions + envelope
 //                         index rows)
 //   published-shard       ingestPublishedShard, sha256-verified, per-frame
 //                         envelope cids (server computeCID — wasm sha256
@@ -701,8 +701,7 @@ async function runLocalIngestBenchmark(argv) {
     envInt,
     argValue,
   } = await import('./lib/d6-bench-common.mjs');
-  const { FlatSQLEngineRecordStore, decodeFlatSqlSyncChunk, FLATSQL_SYNC_PROTOCOL_ID } =
-    await import('../dist/index.mjs');
+  const { FlatSQLEngineRecordStore, decodeFlatSqlSyncChunk } = await import('../dist/index.mjs');
 
   const recordCounts = (argValue(argv, '--records') ?? process.env.SDN_D6_INGEST_RECORDS ?? '29000,250000')
     .split(',')
@@ -721,45 +720,18 @@ async function runLocalIngestBenchmark(argv) {
     const sizeMB = sizeBytes / (1024 * 1024);
     const shardSha256 = createHash('sha256').update(corpus.streamBytes).digest('hex');
 
-    // flatsql-sync read_chunk response with per-record provenance refs
-    // (two providers, alternating — the D.4 wire shape), decoded ONCE
-    // through the real transport decoder (decode is libp2p-transport work,
-    // not store-ingest work; kept outside the timed window).
-    const providers = [
-      { providerId: 'space-data-network-02', sourceName: 'celestrak-gp', batchId: 'bench-batch-a' },
-      { providerId: 'demo-provider', sourceName: 'spacetrack-gp', batchId: 'bench-batch-b' },
-    ];
-    const refs = corpus.frames.map((frame, index) => {
-      const p = providers[index % providers.length];
-      return {
-        schema_name: 'OMM.fbs',
-        cid: `bench-cid-${index}`,
-        peer_id: 'bench-peer',
-        provider_id: p.providerId,
-        source_name: p.sourceName,
-        batch_id: p.batchId,
-        timestamp: '2026-05-10T12:00:00Z',
-        size_bytes: frame.byteLength,
-      };
-    });
-    const chunk = decodeFlatSqlSyncChunk(encodeSyncResponseBytes({
-      schema: 'OMM.fbs',
-      total_count: recordCount,
-      count: recordCount,
-      limit: recordCount,
-      offset: 0,
-      cursor: 'bench-cursor',
-      next_cursor: '',
-      snapshot_id: 'bench-snapshot',
-      head: 'bench-snapshot',
-      scan_hash: 'bench-scan',
-      chunk_hash: 'bench-scan',
-      query_profile: 'dataset-publication-offset-v1',
-      sync_protocol: FLATSQL_SYNC_PROTOCOL_ID,
-      max_chunk_size: recordCount,
-      transports: ['wss'],
-      results: refs,
-    }, corpus.streamBytes));
+    // flatsql-sync read-chunk reply with two provider lanes (one run each),
+    // decoded ONCE through the real transport decoder (decode is
+    // libp2p-transport work, not store-ingest work; kept outside the timed
+    // window).
+    const half = Math.ceil(corpus.frames.length / 2);
+    const chunk = await decodeFlatSqlSyncChunk(encodeSyncResponseBytes(
+      { schema: 'OMM.fbs', totalCount: recordCount, limit: recordCount, cursor: 'bench-cursor', etag: 'bench-scan' },
+      [
+        { providerId: 'space-data-network-02', sourceName: 'celestrak-gp', batchId: 'bench-batch-a', originId: 'bench-peer', frames: corpus.frames.slice(0, half) },
+        { providerId: 'demo-provider', sourceName: 'spacetrack-gp', batchId: 'bench-batch-b', originId: 'bench-peer', frames: corpus.frames.slice(half) },
+      ],
+    ));
     const publishedShard = (cid) => ({
       header: {
         cid,
@@ -768,7 +740,7 @@ async function runLocalIngestBenchmark(argv) {
         sourceName: 'celestrak-gp',
         batchId: 'bench-batch-a',
         queryProfile: 'dataset-publication-offset-v1',
-        head: 'bench-head',
+        feedHead: 'bench-head',
         rowCount: recordCount,
         shardSha256,
       },

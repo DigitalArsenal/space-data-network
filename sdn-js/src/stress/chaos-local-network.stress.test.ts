@@ -94,7 +94,7 @@ describe('local virtual SDN chaos network', () => {
         expectedRowsPerConsumer: 16_000,
       });
       expect(report.transport).toMatchObject({
-        protocol: '/space-data-network/flatsql-sync/1.0.0',
+        protocol: '/space-data-network/flatsql-sync/2.0.0/',
         remoteHttpFallback: false,
         sshFallback: false,
       });

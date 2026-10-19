@@ -22,6 +22,7 @@ import (
 	sdnpubsub "github.com/spacedatanetwork/sdn-server/internal/pubsub"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
+	"github.com/spacedatanetwork/sdn-server/internal/syncwire"
 	"github.com/spacedatanetwork/sdn-server/internal/typedfb/ingestresult"
 )
 
@@ -1132,25 +1133,7 @@ func (s *ConcreteDatasetPublicationService) announceDatasetPublication(ctx conte
 
 func (s *ConcreteDatasetPublicationService) announceDatasetFeedHead(ctx context.Context, publishedShard storage.DatasetShardPublication) error {
 	if headPublisher, ok := s.publisher.(DatasetFeedHeadPublisher); ok {
-		if err := headPublisher.PublishDatasetFeedHead(ctx, sdnpubsub.DatasetFeedHeadAnnouncement{
-			Schema:       publishedShard.SchemaName,
-			ProviderID:   publishedShard.ProviderID,
-			SourceName:   publishedShard.SourceName,
-			BatchID:      publishedShard.BatchID,
-			QueryProfile: publishedShard.QueryProfile,
-			Offset:       publishedShard.Offset,
-			Limit:        publishedShard.Limit,
-			FeedSequence: publishedShard.FeedSequence,
-			PreviousHead: publishedShard.PreviousHead,
-			FeedHead:     publishedShard.FeedHead,
-			RecordCount:  publishedShard.RecordCount,
-			ByteCount:    publishedShard.ByteCount,
-			ShardCID:     publishedShard.ShardCID,
-			IndexCID:     publishedShard.IndexCID,
-			ManifestCID:  publishedShard.ManifestCID,
-			PNMCID:       publishedShard.PNMCID,
-			PublishedAt:  publishedShard.PublishedAt,
-		}); err != nil {
+		if err := headPublisher.PublishDatasetFeedHead(ctx, syncwire.SegmentFromPublication(publishedShard)); err != nil {
 			return err
 		}
 	}

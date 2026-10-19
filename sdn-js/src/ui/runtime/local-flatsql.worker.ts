@@ -40,7 +40,7 @@ import { encodeWorkerSchemaSyncProgressFlatBuffer } from './worker-sync-status-f
 import type { DataSummary, RawDataRecord, SdnBackend } from './sdn-backend';
 import type { EngineEpochQueryRequest } from '../../epoch-query-sql';
 import type { QueryParam } from 'flatsql/wasm';
-import type { FlatSqlSyncManifest, FlatSqlSyncManifestSegment } from '../../flatsql-sync';
+import { FLATSQL_SYNC_READ_SHARD_PROTOCOL_ID, type FlatSqlSyncManifest, type FlatSqlSyncManifestSegment } from '../../flatsql-sync';
 import type {
   WorkerFlatSqlSyncBackendConfig,
   WorkerRemotePageRequest,
@@ -231,12 +231,20 @@ async function queryRemotePage(request: WorkerRemotePageRequest): Promise<Worker
     'Remote page chunk',
     {
       targetPeerId: '',
-      ...request.query,
-      op: 'read_chunk',
+      schema: request.query.schema,
+      datastoreKey: request.query.datastoreKey,
+      providerId: request.query.providerId,
+      sourceName: request.query.sourceName,
+      batchId: request.query.batchId,
+      originId: request.query.peerId,
+      cursor: request.query.cursor,
+      queryProfile: request.query.queryProfile,
+      search: request.query.search,
+      limit: request.query.limit,
     },
   );
   const scan = dataScanResultFromChunk(chunk);
-  const records = rawRecordsWithDataFromFlatSqlChunk(chunk, scan.results);
+  const records = rawRecordsWithDataFromFlatSqlChunk(chunk);
   if (chunk.recordStream.byteLength > 0 && scan.results.length > 0) {
     await currentStore.ingestFlatBufferStream(request.standardId, chunk.recordStream, {
       source: request.source,
@@ -261,13 +269,12 @@ async function syncSchemaInWorker(id: number, request: WorkerSchemaSyncRequest):
   let recordsSincePersist = 0;
   const canResume = localRows > 0;
   let nextCursor = canResume ? request.initialProgress.nextCursor ?? '' : '';
-  let snapshotId = canResume ? request.initialProgress.snapshotId ?? '' : '';
-  let head = canResume ? request.initialProgress.head ?? '' : '';
-  let highWaterMark = canResume ? request.initialProgress.highWaterMark ?? '' : '';
+  const snapshotId = canResume ? request.initialProgress.snapshotId ?? '' : '';
+  const head = canResume ? request.initialProgress.head ?? '' : '';
+  const highWaterMark = canResume ? request.initialProgress.highWaterMark ?? '' : '';
   let queryProfile = normalizeSyncQueryProfile(request.queryProfile ?? (canResume ? request.initialProgress.queryProfile : null));
   const syncFilter = request.syncFilter?.trim() || undefined;
   let verifiedChunks = canResume ? request.initialProgress.verifiedChunks.slice(-256) : [];
-  let snapshotVerifiedForSession = false;
   let downloadedBytes = 0;
   let manifestDiscoveryMs = 0;
   let networkTransferMs = 0;
@@ -312,7 +319,7 @@ async function syncSchemaInWorker(id: number, request: WorkerSchemaSyncRequest):
     if (publishedManifest && publishedManifest.segments.length > 0) {
       const publishedSegments = publishedSegmentsForRetention(publishedManifest.segments, {
         retentionPolicy: request.retentionPolicy,
-        manifestHead: publishedManifest.manifest.head,
+        manifestHead: publishedManifest.manifest.snapshotId,
       });
       await syncBackendCache.releaseControlClient(request.backendConfig);
       return await syncPublishedSegments({
@@ -368,65 +375,25 @@ async function syncSchemaInWorker(id: number, request: WorkerSchemaSyncRequest):
         return { progress, stats: currentStats };
       }
 
-      let networkStartedAt = Date.now();
-      let chunk = await withRemoteSyncChunkOperation(
+      // The read-chunk cursor carries its snapshot: a continuation reads the
+      // snapshot the walk started on, and the walk restarts without one.
+      const networkStartedAt = Date.now();
+      const chunk = await withRemoteSyncChunkOperation(
         request.backendConfig,
         'Remote sync chunk',
         {
           targetPeerId: '',
           schema: request.schema,
-          op: 'read_chunk',
           limit: request.pageSize,
-          ...(syncFilter ? { syncFilter } : {}),
-          ...(nextCursor
-            ? {
-                cursor: nextCursor,
-                snapshotId: snapshotId || undefined,
-                head: head || undefined,
-                ...(snapshotVerifiedForSession
-                  ? {
-                      totalCount: totalRows,
-                      highWaterMark: highWaterMark || undefined,
-                    }
-                  : {}),
-            queryProfile,
-          }
-            : { offset, queryProfile }),
+          queryProfile,
+          ...(nextCursor ? { cursor: nextCursor } : {}),
         },
       );
       networkTransferMs += Math.max(0, Date.now() - networkStartedAt);
 
-      let scan = dataScanResultFromChunk(chunk);
+      const scan = dataScanResultFromChunk(chunk);
       downloadedBytes += chunk.recordStream.byteLength;
 
-      if (nextCursor && head && scan.head && scan.head !== head) {
-        nextCursor = '';
-        offset = localRows;
-        snapshotVerifiedForSession = false;
-        networkStartedAt = Date.now();
-        chunk = await withRemoteSyncChunkOperation(
-          request.backendConfig,
-          'Remote sync snapshot refresh',
-          {
-            targetPeerId: '',
-            schema: request.schema,
-            op: 'read_chunk',
-            limit: request.pageSize,
-            offset,
-            queryProfile,
-            ...(syncFilter ? { syncFilter } : {}),
-          },
-        );
-        networkTransferMs += Math.max(0, Date.now() - networkStartedAt);
-        scan = dataScanResultFromChunk(chunk);
-        downloadedBytes += chunk.recordStream.byteLength;
-      }
-
-      snapshotId = scan.snapshotId || snapshotId;
-      head = scan.head || head;
-      highWaterMark = scan.highWaterMark || highWaterMark;
-      snapshotVerifiedForSession = true;
-      queryProfile = scan.queryProfile || queryProfile;
       totalRows = Math.max(totalRows, scan.totalCount ?? 0, offset + scan.results.length);
       if (scan.results.length === 0) break;
 
@@ -438,7 +405,7 @@ async function syncSchemaInWorker(id: number, request: WorkerSchemaSyncRequest):
       });
       flatSqlMaterializationMs += Math.max(0, Date.now() - materializationStartedAt);
       recordsSincePersist += ingestedRows;
-      const chunkHash = scan.chunkHash || scan.scanHash;
+      const chunkHash = scan.chunkHash;
       if (chunkHash && !verifiedChunks.includes(chunkHash)) {
         verifiedChunks = [...verifiedChunks, chunkHash].slice(-256);
       }
@@ -740,7 +707,7 @@ async function syncPublishedSegments(options: {
         nextCursor: segment.nextCursor || null,
         queryProfile: 'dataset-publication-offset-v1',
         chunkHash,
-        syncProtocol: '/space-data-network/flatsql-sync/1.0.0',
+        syncProtocol: FLATSQL_SYNC_READ_SHARD_PROTOCOL_ID,
         syncFilter: options.request.syncFilter?.trim() || null,
         verifiedChunks,
         lastSyncedAt: new Date().toISOString(),
@@ -821,7 +788,6 @@ async function openPublishedManifest(
   const manifest = await withRemoteSyncManifestOperation(backendConfig, 'Remote published shard manifest', {
     targetPeerId: '',
     schema,
-    op: 'open_manifest',
     queryProfile,
     limit: PUBLISHED_MANIFEST_SYNC_CHUNK_SIZE,
   });
@@ -856,9 +822,9 @@ function pinLedgerEntryForPublishedSegment(options: {
     sourceName: options.manifest.sourceName ?? options.request.backendConfig.sourceName ?? null,
     batchId: options.manifest.batchId ?? null,
     queryProfile: options.manifest.queryProfile || 'dataset-publication-offset-v1',
-    snapshotId: options.segment.feedHead || options.manifest.snapshotId || options.manifest.head || null,
-    head: options.segment.feedHead || options.manifest.head || null,
-    highWaterMark: options.manifest.highWaterMark || null,
+    snapshotId: options.segment.feedHead || options.manifest.snapshotId || null,
+    head: options.segment.feedHead || options.manifest.snapshotId || null,
+    highWaterMark: null,
     byteHash: options.segment.shardSha256 || options.segment.chunkHash || null,
     role: 'shard',
     rowCount: Math.max(0, Math.floor(options.segment.rowCount)),
@@ -972,7 +938,6 @@ async function fetchPublishedSegmentBatch(options: {
     const batch = await withRemotePublishedShardBatchOperation(backendConfigs, 'Published shard batch', {
       targetPeerId: '',
       schema: options.request.schema,
-      op: 'read_published_shard_batch',
       queryProfile: 'dataset-publication-offset-v1',
       cids,
     }, options.batch.preferredSourceIndex);
@@ -1098,7 +1063,6 @@ async function fetchPublishedShardBytesViaLibp2pRanges(options: {
     const shard = await withRemotePublishedShardOperation(backendConfigs, `Published shard ${options.cid}`, {
       targetPeerId: '',
       schema: options.request.schema,
-      op: 'read_published_shard',
       queryProfile: 'dataset-publication-offset-v1',
       cid: options.cid,
     }, 0);
@@ -1124,14 +1088,13 @@ async function fetchPublishedShardBytesViaLibp2pRanges(options: {
       const shard = await withRemotePublishedShardOperation(backendConfigs, `Published shard ${options.cid} range ${range.offset}`, {
         targetPeerId: '',
         schema: options.request.schema,
-        op: 'read_published_shard',
         queryProfile: 'dataset-publication-offset-v1',
         cid: options.cid,
         byteOffset: range.offset,
         byteLength: range.length,
       }, publishedShardPreferredSourceIndex(options.segment, range.index));
-      const headerOffset = shard.header.byteOffset ?? range.offset;
-      const headerLength = shard.header.byteLength ?? shard.header.byteCount;
+      const headerOffset = shard.header.byteOffset;
+      const headerLength = shard.header.byteLength;
       if (headerOffset !== range.offset || headerLength !== range.length || shard.streamBytes.byteLength !== range.length) {
         throw new Error(`published shard ${options.cid} returned range ${headerOffset}+${headerLength}/${range.offset}+${range.length}`);
       }

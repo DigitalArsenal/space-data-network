@@ -9,16 +9,15 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"io"
-	"math"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/QRP"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -27,6 +26,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/protocol"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
+	"github.com/spacedatanetwork/sdn-server/internal/syncwire"
 )
 
 const (
@@ -147,55 +147,32 @@ type LiveFlatSQLPublishedShardFetchResult struct {
 	ConfiguredTargetMet              bool
 }
 
+// liveFlatSQLManifest is the decoded open-manifest reply.
 type liveFlatSQLManifest struct {
-	TotalCount int64 `json:"total_count"`
-	Segments   []struct {
-		CID         string `json:"cid"`
-		IndexCID    string `json:"index_cid"`
-		ByteCount   int64  `json:"byte_count"`
-		ShardSHA256 string `json:"shard_sha256"`
-	} `json:"segments"`
+	TotalCount int64
+	Segments   []liveFlatSQLSegment
 }
 
+type liveFlatSQLSegment struct {
+	CID         string
+	IndexCID    string
+	ByteCount   int64
+	ShardSHA256 string
+}
+
+// liveFlatSQLBatchHeader is the decoded read-shard-batch reply header.
 type liveFlatSQLBatchHeader struct {
-	Op           string `json:"op"`
-	Status       string `json:"status"`
-	SyncProtocol string `json:"sync_protocol"`
-	ByteCount    int64  `json:"byte_count"`
-	Shards       []struct {
-		CID         string `json:"cid"`
-		IndexCID    string `json:"index_cid"`
-		ByteCount   int64  `json:"byte_count"`
-		ShardSHA256 string `json:"shard_sha256"`
-	} `json:"shards"`
-	Error struct {
-		Message string `json:"message"`
-	} `json:"error"`
+	ByteCount int64
+	Shards    []liveFlatSQLSegment
 }
 
-type liveFlatSQLProbeHeader struct {
-	Op           string `json:"op"`
-	Status       string `json:"status"`
-	SyncProtocol string `json:"sync_protocol"`
-	ProbeBytes   int64  `json:"probe_bytes"`
-	PayloadBytes int64  `json:"payload_bytes"`
-	Error        struct {
-		Message string `json:"message"`
-	} `json:"error"`
-}
-
+// liveFlatSQLShardHeader is the decoded read-shard reply header.
 type liveFlatSQLShardHeader struct {
-	Op             string `json:"op"`
-	Status         string `json:"status"`
-	SyncProtocol   string `json:"sync_protocol"`
-	CID            string `json:"cid"`
-	ByteCount      int64  `json:"byte_count"`
-	ByteOffset     int64  `json:"byte_offset"`
-	ByteLength     int64  `json:"byte_length"`
-	TotalByteCount int64  `json:"total_byte_count"`
-	Error          struct {
-		Message string `json:"message"`
-	} `json:"error"`
+	CID            string
+	ByteCount      int64
+	ByteOffset     int64
+	ByteLength     int64
+	TotalByteCount int64
 }
 
 // RunLiveFlatSQLReplicationBenchmark creates two live libp2p hosts, serves a
@@ -517,14 +494,14 @@ func RunLiveFlatSQLMultiProviderRangeBenchmark(ctx context.Context, opts LiveFla
 		return nil, fmt.Errorf("create provider A libp2p host: %w", err)
 	}
 	defer providerHostA.Close()
-	providerHostA.SetStreamHandler(protocol.FlatSQLSyncProtocolID, liveFlatSQLProviderHandler(providerStoreA).HandleStream)
+	liveFlatSQLProviderHandler(providerStoreA).Register(providerHostA)
 
 	providerHostB, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"))
 	if err != nil {
 		return nil, fmt.Errorf("create provider B libp2p host: %w", err)
 	}
 	defer providerHostB.Close()
-	providerHostB.SetStreamHandler(protocol.FlatSQLSyncProtocolID, liveFlatSQLProviderHandler(providerStoreB).HandleStream)
+	liveFlatSQLProviderHandler(providerStoreB).Register(providerHostB)
 
 	subscriberHost, err := libp2p.New(libp2p.NoListenAddrs)
 	if err != nil {
@@ -942,7 +919,7 @@ func generateLiveFlatSQLExportRecords(ctx context.Context, targetBytes int64, ta
 }
 
 // liveFlatSQLProviderHandler serves the harness's own subscriber. The
-// harness measures the wire with wire_speed_probe, which needs private-read
+// harness measures the wire with wire-speed-probe, which needs private-read
 // authority (security re-audit NET-06); every peer here is the harness.
 func liveFlatSQLProviderHandler(store *storage.FlatSQLStore) *protocol.FlatSQLSyncHandler {
 	return protocol.NewFlatSQLSyncHandler(store).SetPrivateReadAuthorizer(protocol.AllowAnyPeer)
@@ -953,7 +930,7 @@ func startLiveFlatSQLPeers(ctx context.Context, providerStore *storage.FlatSQLSt
 	if err != nil {
 		return nil, nil, fmt.Errorf("create provider libp2p host: %w", err)
 	}
-	providerHost.SetStreamHandler(protocol.FlatSQLSyncProtocolID, liveFlatSQLProviderHandler(providerStore).HandleStream)
+	liveFlatSQLProviderHandler(providerStore).Register(providerHost)
 	subscriberHost, err := libp2p.New(libp2p.NoListenAddrs)
 	if err != nil {
 		_ = providerHost.Close()
@@ -968,56 +945,60 @@ func startLiveFlatSQLPeers(ctx context.Context, providerStore *storage.FlatSQLSt
 	return providerHost, subscriberHost, nil
 }
 
-func requestLiveFlatSQLManifest(ctx context.Context, client host.Host, target peer.ID, opts LiveFlatSQLReplicationOptions) (*liveFlatSQLManifest, error) {
-	stream, err := client.NewStream(ctx, target, protocol.FlatSQLSyncProtocolID)
+func liveFlatSQLLane(opts LiveFlatSQLReplicationOptions) syncwire.QRPFields {
+	return syncwire.QRPFields{
+		SchemaName: opts.SchemaName,
+		ProviderID: opts.ProviderID,
+		SourceName: opts.SourceName,
+		BatchID:    opts.BatchID,
+		Filters:    []syncwire.QRPFilterField{{Field: syncwire.FilterQueryProfile, Op: syncwire.QRPFilterEq, Value: storage.DatasetPublicationQueryProfile}},
+	}
+}
+
+func liveFlatSQLSegments(reply *QRP.QRP) ([]liveFlatSQLSegment, error) {
+	segs, err := syncwire.Segments(reply)
 	if err != nil {
-		return nil, fmt.Errorf("open FlatSQL manifest stream: %w", err)
+		return nil, err
+	}
+	out := make([]liveFlatSQLSegment, 0, len(segs))
+	for _, seg := range segs {
+		if seg.Role == syncwire.RoleShardGroupCAR {
+			continue
+		}
+		out = append(out, liveFlatSQLSegment{CID: seg.ShardCID, IndexCID: seg.IndexCID, ByteCount: seg.ByteCount, ShardSHA256: seg.ShardSHA256})
+	}
+	return out, nil
+}
+
+func requestLiveFlatSQLManifest(ctx context.Context, client host.Host, target peer.ID, opts LiveFlatSQLReplicationOptions) (*liveFlatSQLManifest, error) {
+	stream, reply, err := syncwire.Call(ctx, client, target, syncwire.OpOpenManifest, liveFlatSQLLane(opts))
+	if err != nil {
+		return nil, fmt.Errorf("FlatSQL manifest: %w", err)
 	}
 	defer stream.Close()
-	if err := writeLiveFlatSQLFrame(stream, map[string]interface{}{
-		"op":            "open_manifest",
-		"schema":        opts.SchemaName,
-		"provider_id":   opts.ProviderID,
-		"source_name":   opts.SourceName,
-		"batch_id":      opts.BatchID,
-		"query_profile": storage.DatasetPublicationQueryProfile,
-	}); err != nil {
+	segments, err := liveFlatSQLSegments(reply)
+	if err != nil {
 		return nil, err
 	}
-	var manifest liveFlatSQLManifest
-	if err := readLiveFlatSQLFrame(stream, &manifest); err != nil {
-		return nil, err
-	}
+	manifest := &liveFlatSQLManifest{TotalCount: int64(reply.TOTAL_COUNT()), Segments: segments}
 	if manifest.TotalCount <= 0 || len(manifest.Segments) == 0 {
 		return nil, fmt.Errorf("published FlatSQL manifest has no segments")
 	}
-	return &manifest, nil
+	return manifest, nil
 }
 
 func measureLiveFlatSQLWireSpeed(ctx context.Context, client host.Host, target peer.ID, probeBytes int64) (int64, time.Duration, error) {
-	stream, err := client.NewStream(ctx, target, protocol.FlatSQLSyncProtocolID)
+	stream, reply, err := syncwire.Call(ctx, client, target, syncwire.OpWireSpeedProbe, syncwire.QRPFields{MaxBytes: uint64(probeBytes)})
 	if err != nil {
-		return 0, 0, fmt.Errorf("open FlatSQL wire-speed stream: %w", err)
+		return 0, 0, fmt.Errorf("wire-speed probe: %w", err)
 	}
 	defer stream.Close()
-	if err := writeLiveFlatSQLFrame(stream, map[string]interface{}{
-		"op":          "wire_speed_probe",
-		"probe_bytes": probeBytes,
-	}); err != nil {
-		return 0, 0, err
-	}
-	var header liveFlatSQLProbeHeader
-	if err := readLiveFlatSQLFrame(stream, &header); err != nil {
-		return 0, 0, err
-	}
-	if header.Status == "error" {
-		return 0, 0, fmt.Errorf("wire-speed probe failed: %s", header.Error.Message)
-	}
-	if header.PayloadBytes <= 0 {
+	payloadBytes := int64(reply.MAX_BYTES())
+	if payloadBytes <= 0 {
 		return 0, 0, fmt.Errorf("wire-speed probe returned no payload bytes")
 	}
 	started := time.Now()
-	readBytes, err := io.CopyN(io.Discard, stream, header.PayloadBytes)
+	readBytes, err := io.CopyN(io.Discard, stream, payloadBytes)
 	if err != nil {
 		return readBytes, time.Since(started), fmt.Errorf("read wire-speed probe payload: %w", err)
 	}
@@ -1056,28 +1037,20 @@ func downloadLiveFlatSQLShardBatchToFile(ctx context.Context, client host.Host, 
 }
 
 func downloadLiveFlatSQLShardBatchToWriter(ctx context.Context, client host.Host, target peer.ID, opts LiveFlatSQLReplicationOptions, cids []string, writer io.Writer) (int64, liveFlatSQLBatchHeader, time.Duration, error) {
-	stream, err := client.NewStream(ctx, target, protocol.FlatSQLSyncProtocolID)
+	req := liveFlatSQLLane(opts)
+	req.Filters = append(req.Filters, syncwire.QRPFilterField{Field: syncwire.FilterShardCID, Op: syncwire.QRPFilterIn, Value: strings.Join(cids, ",")})
+	stream, reply, err := syncwire.Call(ctx, client, target, syncwire.OpReadShardBatch, req)
 	if err != nil {
-		return 0, liveFlatSQLBatchHeader{}, 0, fmt.Errorf("open published FlatSQL shard stream: %w", err)
+		return 0, liveFlatSQLBatchHeader{}, 0, fmt.Errorf("published FlatSQL shard download: %w", err)
 	}
 	defer stream.Close()
-	if err := writeLiveFlatSQLFrame(stream, map[string]interface{}{
-		"op":            "read_published_shard_batch",
-		"schema":        opts.SchemaName,
-		"provider_id":   opts.ProviderID,
-		"source_name":   opts.SourceName,
-		"batch_id":      opts.BatchID,
-		"query_profile": storage.DatasetPublicationQueryProfile,
-		"cids":          cids,
-	}); err != nil {
+	shards, err := liveFlatSQLSegments(reply)
+	if err != nil {
 		return 0, liveFlatSQLBatchHeader{}, 0, err
 	}
-	var header liveFlatSQLBatchHeader
-	if err := readLiveFlatSQLFrame(stream, &header); err != nil {
-		return 0, liveFlatSQLBatchHeader{}, 0, err
-	}
-	if header.Status == "error" {
-		return 0, header, 0, fmt.Errorf("published FlatSQL shard download failed: %s", header.Error.Message)
+	header := liveFlatSQLBatchHeader{Shards: shards}
+	for _, shard := range shards {
+		header.ByteCount += shard.ByteCount
 	}
 	if header.ByteCount <= 0 {
 		return 0, header, 0, fmt.Errorf("published FlatSQL shard batch returned no bytes")
@@ -1092,31 +1065,19 @@ func downloadLiveFlatSQLShardBatchToWriter(ctx context.Context, client host.Host
 }
 
 func downloadLiveFlatSQLShardRangeToFile(ctx context.Context, client host.Host, target peer.ID, opts LiveFlatSQLReplicationOptions, cid string, offset int64, length int64, outputPath string) (int64, liveFlatSQLShardHeader, error) {
-	stream, err := client.NewStream(ctx, target, protocol.FlatSQLSyncProtocolID)
+	req := liveFlatSQLLane(opts)
+	req.CID, req.Cursor, req.MaxBytes = cid, strconv.FormatInt(offset, 10), uint64(max(length, 0))
+	stream, reply, err := syncwire.Call(ctx, client, target, syncwire.OpReadShard, req)
 	if err != nil {
-		return 0, liveFlatSQLShardHeader{}, fmt.Errorf("open published FlatSQL shard range stream: %w", err)
+		return 0, liveFlatSQLShardHeader{}, fmt.Errorf("published FlatSQL shard range download: %w", err)
 	}
 	defer stream.Close()
-	if err := writeLiveFlatSQLFrame(stream, map[string]interface{}{
-		"op":            "read_published_shard",
-		"schema":        opts.SchemaName,
-		"provider_id":   opts.ProviderID,
-		"source_name":   opts.SourceName,
-		"batch_id":      opts.BatchID,
-		"query_profile": storage.DatasetPublicationQueryProfile,
-		"cid":           cid,
-		"byte_offset":   offset,
-		"byte_length":   length,
-	}); err != nil {
-		return 0, liveFlatSQLShardHeader{}, err
+	segs, err := syncwire.Segments(reply)
+	if err != nil || len(segs) != 1 {
+		return 0, liveFlatSQLShardHeader{}, fmt.Errorf("published FlatSQL shard range header: rows=%d err=%v", len(segs), err)
 	}
-	var header liveFlatSQLShardHeader
-	if err := readLiveFlatSQLFrame(stream, &header); err != nil {
-		return 0, liveFlatSQLShardHeader{}, err
-	}
-	if header.Status == "error" {
-		return 0, header, fmt.Errorf("published FlatSQL shard range download failed: %s", header.Error.Message)
-	}
+	header := liveFlatSQLShardHeader{CID: segs[0].ShardCID, ByteCount: segs[0].ByteLength, ByteOffset: segs[0].ByteOffset,
+		ByteLength: segs[0].ByteLength, TotalByteCount: segs[0].ByteCount}
 	if header.ByteCount <= 0 {
 		return 0, header, fmt.Errorf("published FlatSQL shard range returned no bytes")
 	}
@@ -1190,45 +1151,6 @@ func verifyLiveFlatSQLShardFile(path string, expectedSHA256 string) error {
 		if got := hex.EncodeToString(hasher.Sum(nil)); got != expectedSHA256 {
 			return fmt.Errorf("published FlatSQL shard SHA-256 = %s, want %s", got, expectedSHA256)
 		}
-	}
-	return nil
-}
-
-func writeLiveFlatSQLFrame(writer io.Writer, payload interface{}) error {
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-	if len(data) > math.MaxUint32 {
-		return fmt.Errorf("FlatSQL sync frame exceeds uint32 length")
-	}
-	var header [4]byte
-	binary.BigEndian.PutUint32(header[:], uint32(len(data)))
-	if _, err := writer.Write(header[:]); err != nil {
-		return err
-	}
-	_, err = writer.Write(data)
-	return err
-}
-
-func readLiveFlatSQLFrame(reader io.Reader, target interface{}) error {
-	var header [4]byte
-	if _, err := io.ReadFull(reader, header[:]); err != nil {
-		return fmt.Errorf("read FlatSQL sync frame header: %w", err)
-	}
-	length := binary.BigEndian.Uint32(header[:])
-	if length == 0 {
-		return fmt.Errorf("empty FlatSQL sync frame")
-	}
-	if length > 32*1024*1024 {
-		return fmt.Errorf("FlatSQL sync frame exceeds 32 MiB")
-	}
-	payload := make([]byte, length)
-	if _, err := io.ReadFull(reader, payload); err != nil {
-		return fmt.Errorf("read FlatSQL sync frame payload: %w", err)
-	}
-	if err := json.Unmarshal(payload, target); err != nil {
-		return fmt.Errorf("decode FlatSQL sync frame: %w", err)
 	}
 	return nil
 }
