@@ -148,10 +148,9 @@ func run(ctx context.Context) (err error) {
 	if err := indexPage(ctx, node.base); err != nil {
 		fail("index: %v", err)
 	}
-	if resume != "" {
-		if err := resumeAfterRebuild(ctx, &node, *binary, root, resume); err != nil {
-			fail("resume after a rebuild: %v", err)
-		}
+	node.stop()
+	if err := resumeAfterRebuild(ctx, *binary); err != nil {
+		fail("resume after a rebuild: %v", err)
 	}
 	if len(failures) > 0 {
 		return errors.New(strings.Join(failures, "; "))
@@ -742,10 +741,31 @@ func refusals(ctx context.Context, base, token string) error {
 	return nil
 }
 
-// resumeAfterRebuild: after `reindex` the store has a new scan generation
-// and a cursor issued before it answers 410 resume_cursor_expired.
-func resumeAfterRebuild(ctx context.Context, n **node, binary, root, token string) error {
-	(*n).stop()
+// rebuildRows is the small store the rebuild case runs on: `reindex`
+// rewrites the whole record index, minutes on the 1M feed.
+const rebuildRows = 10_000
+
+// resumeAfterRebuild: on a fresh store, a full scan's RESUME_CURSOR answers
+// 410 resume_cursor_expired once `reindex` has rebuilt the store (a new scan
+// generation).
+func resumeAfterRebuild(ctx context.Context, binary string) error {
+	root, err := os.MkdirTemp("", "data-scan-e2e-rebuild-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(root)
+	if _, err := storeRecords(root, 0, rebuildRows); err != nil {
+		return err
+	}
+	n, err := boot(ctx, binary, root)
+	if err != nil {
+		return err
+	}
+	token, _, err := fullScan(ctx, n.base, rebuildRows)
+	n.stop()
+	if err != nil {
+		return fmt.Errorf("scan before the rebuild: %w", err)
+	}
 	home, config, _, err := nodeHome(root)
 	if err != nil {
 		return err
@@ -756,11 +776,11 @@ func resumeAfterRebuild(ctx context.Context, n **node, binary, root, token strin
 	if out, err := reindex.CombinedOutput(); err != nil {
 		return fmt.Errorf("reindex: %v: %s", err, lastLines(out, 8))
 	}
-	fmt.Println("reindex: the record index rebuilt")
+	fmt.Printf("reindex: the record index of the %d-record store rebuilt\n", rebuildRows)
 	rebuilt, err := boot(ctx, binary, root)
 	if err != nil {
 		return fmt.Errorf("boot after reindex: %w", err)
 	}
-	*n = rebuilt
+	defer rebuilt.stop()
 	return refuse(ctx, rebuilt.base, "a resume cursor issued before the rebuild", scanRequest{resume: token}, http.StatusGone, "resume_cursor_expired")
 }
