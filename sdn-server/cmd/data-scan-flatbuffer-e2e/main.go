@@ -13,6 +13,7 @@
 // after `reindex` (a rebuild) it answers 410 resume_cursor_expired.
 //
 //	data-scan-flatbuffer-e2e --binary <node> [--rows N] [--data DIR] [--seed-only] [--boot-only]
+//	data-scan-flatbuffer-e2e --append N --data DIR    (node stopped: N fresh records, one new batch)
 package main
 
 import (
@@ -32,6 +33,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -94,7 +96,20 @@ func run(ctx context.Context) (err error) {
 	dataDir := flag.String("data", "", "seeded store directory to keep or reuse")
 	seedOnly := flag.Bool("seed-only", false, "seed --data and exit")
 	bootOnly := flag.Bool("boot-only", false, "boot the node on --data, print its URL, wait for a signal")
+	appendN := flag.Int("append", 0, "append N fresh records to the seeded store --data (node stopped) and exit")
 	flag.Parse()
+
+	if *appendN > 0 {
+		if *dataDir == "" {
+			return errors.New("--append needs --data <seeded store>")
+		}
+		first, err := appendRecords(*dataDir, *appendN)
+		if err != nil {
+			return fmt.Errorf("append: %w", err)
+		}
+		fmt.Printf("appended records %d..%d to %s\n", first, first+*appendN-1, *dataDir)
+		return nil
+	}
 
 	root := *dataDir
 	if root == "" {
@@ -160,7 +175,7 @@ func run(ctx context.Context) (err error) {
 
 func seed(root string, rows int) error {
 	start := time.Now()
-	format4, err := storeRecords(root, 0, rows)
+	format4, err := storeRecords(root, 0, rows, seedLane)
 	if err != nil {
 		return err
 	}
@@ -168,10 +183,37 @@ func seed(root string, rows int) error {
 	return os.WriteFile(filepath.Join(root, ".seeded"), []byte(fmt.Sprint(rows)), 0o644)
 }
 
+// seedLane is the seed's lane of the batch that starts at record first: the
+// source rotates every seedBatch records.
+func seedLane(first int) storage.SourceTags {
+	return storage.SourceTags{ProviderID: provider, SourceName: laneOf(first), BatchID: fmt.Sprintf("b%04d", first/seedBatch), ProducerPeerID: producerPeer}
+}
+
+// appendRecords stores the next n records of a seeded store (the node
+// stopped) as one new batch on the lane of its last record, and returns the
+// first record's number.
+func appendRecords(root string, n int) (int, error) {
+	marker := filepath.Join(root, ".seeded")
+	raw, err := os.ReadFile(marker)
+	if err != nil {
+		return 0, fmt.Errorf("%s is not a seeded store: %w", root, err)
+	}
+	first, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if err != nil || first <= 0 {
+		return 0, fmt.Errorf("%s: bad record count %q", marker, raw)
+	}
+	lane := seedLane(first - 1)
+	lane.BatchID = fmt.Sprintf("append-%08d", first)
+	if _, err := storeRecords(root, first, first+n, func(int) storage.SourceTags { return lane }); err != nil {
+		return 0, err
+	}
+	return first, os.WriteFile(marker, []byte(fmt.Sprint(first+n)), 0o644)
+}
+
 // storeRecords stores records [from, to) straight into the store (the node
-// stopped), in seedBatch batches of one source lane each, from the one
+// stopped), in seedBatch batches tagged by laneAt(batch start), from the one
 // producer.
-func storeRecords(root string, from, to int) (format4 bool, err error) {
+func storeRecords(root string, from, to int, laneAt func(first int) storage.SourceTags) (format4 bool, err error) {
 	validator, err := sds.NewValidator(nil)
 	if err != nil {
 		return false, err
@@ -186,8 +228,7 @@ func storeRecords(root string, from, to int) (format4 bool, err error) {
 		for i := range batch {
 			batch[i] = record(first + i)
 		}
-		tags := storage.SourceTags{ProviderID: provider, SourceName: laneOf(first), BatchID: fmt.Sprintf("b%04d", first/seedBatch), ProducerPeerID: producerPeer}
-		stored, err := store.StoreBatchWithSourceTags(schema, batch, producerPeer, nil, tags)
+		stored, err := store.StoreBatchWithSourceTags(schema, batch, producerPeer, nil, laneAt(first))
 		if err != nil {
 			_ = store.Close()
 			return false, err
@@ -644,8 +685,9 @@ const (
 )
 
 // resumeRounds: nothing new, then rounds of resumeBatch new records each,
-// then the refusals. Each round stops the node, stores the new records the
-// way the seed did and boots again, so the cursor also survives a restart.
+// then the refusals. Each round stops the node, appends the new records as
+// one batch (the --append path) and boots again, so the cursor also survives
+// a restart.
 // It returns the newest RESUME_CURSOR.
 func resumeRounds(ctx context.Context, n **node, binary, root, token string, rows int, scanWall time.Duration) (string, error) {
 	idle, err := resumeScan(ctx, (*n).base, token)
@@ -661,8 +703,12 @@ func resumeRounds(ctx context.Context, n **node, binary, root, token string, row
 	var walls []time.Duration
 	for round := 1; round <= resumeRoundCount; round++ {
 		(*n).stop()
-		if _, err := storeRecords(root, next, next+resumeBatch); err != nil {
-			return "", fmt.Errorf("round %d: store: %w", round, err)
+		first, err := appendRecords(root, resumeBatch)
+		if err != nil {
+			return "", fmt.Errorf("round %d: append: %w", round, err)
+		}
+		if first != next {
+			return "", fmt.Errorf("round %d: appended from record %d, want %d", round, first, next)
 		}
 		booted, err := boot(ctx, binary, root)
 		if err != nil {
@@ -754,7 +800,7 @@ func resumeAfterRebuild(ctx context.Context, binary string) error {
 		return err
 	}
 	defer os.RemoveAll(root)
-	if _, err := storeRecords(root, 0, rebuildRows); err != nil {
+	if err := seed(root, rebuildRows); err != nil {
 		return err
 	}
 	n, err := boot(ctx, binary, root)
