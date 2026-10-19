@@ -193,6 +193,16 @@ func boot(ctx context.Context, binary, root string) (*node, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Kubo's RPC API and gateway on free loopback ports: the defaults (5002,
+	// 8080) may belong to another node on this machine.
+	kuboAPI, err := freePort()
+	if err != nil {
+		return nil, err
+	}
+	kuboGateway, err := freePort()
+	if err != nil {
+		return nil, err
+	}
 	config := filepath.Join(home, "config.yaml")
 	yaml := strings.Join([]string{
 		"mode: full",
@@ -201,6 +211,7 @@ func boot(ctx context.Context, binary, root string) (*node, error) {
 		"peers:", "  strict_mode: false", "  enable_dht: false", "  enable_mdns: false",
 		"admin:", "  enabled: true", fmt.Sprintf("  listen_addr: \"127.0.0.1:%d\"", port), "  require_auth: true", "  tls_mode: disabled",
 		"  local_console: true", "  remote_requires_sealed: false",
+		fmt.Sprintf("  ipfs_api_url: \"http://127.0.0.1:%d\"", kuboAPI), fmt.Sprintf("  ipfs_gateway_url: \"http://127.0.0.1:%d\"", kuboGateway),
 		// No flow mounts: the native data routes alone own /api/v1/data/.
 		"flows:", "  mounts: []",
 		"setup:", fmt.Sprintf("  data_path: %q", root), "",
