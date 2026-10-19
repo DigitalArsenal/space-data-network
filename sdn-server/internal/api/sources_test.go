@@ -15,6 +15,7 @@ import (
 	"time"
 
 	standardsEPM "github.com/DigitalArsenal/spacedatastandards.org/lib/go/EPM"
+	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/QRP"
 	flatbuffers "github.com/google/flatbuffers/go"
 
 	"github.com/spacedatanetwork/sdn-server/internal/epm"
@@ -285,10 +286,7 @@ func TestResolvedSourcesComposesDirectoryIdentity(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatalf("resolved sources -> %d: %s", w.Code, w.Body.String())
 	}
-	var resp resolvedSourcesResponse
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	resp := decodeResolvedSourcesPage(t, w.Body.Bytes())
 
 	byLane := map[string]resolvedSourceRow{}
 	for _, row := range resp.Sources {
@@ -383,10 +381,7 @@ func TestResolvedSourcesMarksLocalLanesSelf(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatalf("resolved sources -> %d: %s", w.Code, w.Body.String())
 	}
-	var resp resolvedSourcesResponse
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	resp := decodeResolvedSourcesPage(t, w.Body.Bytes())
 	for _, row := range resp.Sources {
 		if row.ProducerPeerID != local {
 			continue
@@ -397,4 +392,42 @@ func TestResolvedSourcesMarksLocalLanesSelf(t *testing.T) {
 		return
 	}
 	t.Fatalf("local lane missing from %+v", resp.Sources)
+}
+
+// decodeResolvedSourcesPage reads the sources $QRP page back into rows.
+func decodeResolvedSourcesPage(t *testing.T, body []byte) struct{ Sources []resolvedSourceRow } {
+	t.Helper()
+	frames, err := SplitFrames(body)
+	if err != nil || len(frames) != 1 {
+		t.Fatalf("sources answered %d frames (%v), want one $QRP page", len(frames), err)
+	}
+	q, err := ParseQRP(frames[0])
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	idx := map[string]int{}
+	var col QRP.QRPColumn
+	for i := 0; i < q.COLUMNSLength(); i++ {
+		q.COLUMNS(&col, i)
+		idx[string(col.NAME())] = i
+	}
+	var out struct{ Sources []resolvedSourceRow }
+	var row QRP.QRPRow
+	var v QRP.QRPValue
+	for r := 0; r < q.ROWSLength(); r++ {
+		q.ROWS(&row, r)
+		text := func(name string) string { row.CELLS(&v, idx[name]); return string(v.TEXT_VALUE()) }
+		num := func(name string) int64 { row.CELLS(&v, idx[name]); return v.INT_VALUE() }
+		flag := func(name string) bool { row.CELLS(&v, idx[name]); return v.BOOL_VALUE() }
+		org := &resolvedOrganization{Name: text("organization_name"), State: text("organization_state"),
+			PeerID: text("organization_peer_id"), EPMCID: text("organization_epm_cid"),
+			Self: flag("organization_self"), Unnamed: flag("organization_unnamed")}
+		if ev := text("organization_evidence"); ev != "" {
+			org.Evidence = strings.Split(ev, ", ")
+		}
+		out.Sources = append(out.Sources, resolvedSourceRow{Schema: text("schema"), ProviderID: text("provider_id"),
+			SourceName: text("source_name"), BatchID: text("batch_id"), ProducerPeerID: text("producer_peer_id"),
+			Count: num("count"), TotalBytes: num("total_bytes"), Organization: org})
+	}
+	return out
 }

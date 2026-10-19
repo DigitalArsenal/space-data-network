@@ -3,12 +3,9 @@ package api
 
 import (
 	"crypto/sha256"
-	"encoding/base64"
-	"encoding/binary"
 	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -23,11 +20,9 @@ import (
 	"time"
 
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/CAT"
-	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/MPE"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/OMM"
 
 	"github.com/spacedatanetwork/sdn-server/internal/config"
-	"github.com/spacedatanetwork/sdn-server/internal/datasync"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
 
@@ -45,30 +40,6 @@ type DataQueryHandler struct {
 	// (data_bulk_scope.go).
 	namedOnly []config.LaneSelector
 }
-
-const (
-	rawFlatBufferStreamContentType = datasync.RawFlatBufferStreamType
-	rawDataDefaultLimit            = datasync.DefaultLimit
-	rawDataMaxQueryLimit           = datasync.MaxQueryLimit
-	// rawDataMaxRawStreamLimit caps one raw FlatBuffer stream page of
-	// /api/v1/data/query. A browser-hosted engine fills its window in
-	// batches of this order (never a mirror), so the raw lane admits far more
-	// per call than the JSON projection (rawDataMaxQueryLimit), while staying
-	// under storage's own rawRecordMaxQueryLimit.
-	rawDataMaxRawStreamLimit = 20000
-)
-
-// Raw-lane window headers (raw FlatBuffer stream responses of
-// /api/v1/data/query only). They let a client ingesting the frames into its
-// own engine know what the node holds for the same filter, where this page
-// sits, and which source lane each run of frames came from — without any
-// JSON projection of the records.
-const (
-	rawDataTotalCountHeader = "X-SDN-Total-Count"
-	rawDataOffsetHeader     = "X-SDN-Offset"
-	rawDataLimitHeader      = "X-SDN-Limit"
-	rawDataSourceRunsHeader = "X-SDN-Source-Runs"
-)
 
 // NewDataQueryHandler creates a new data query handler with a RAM-only index
 // cache: every cached page is lost on restart.
@@ -121,24 +92,22 @@ func (h *DataQueryHandler) RegisterRoutes(mux *http.ServeMux) {
 	h.RegisterResolvedSourcesRoute(mux)
 	mux.HandleFunc("/api/v1/data/datastores", h.handleDatastores)
 	mux.HandleFunc("/api/v1/data/scan", h.handleScan)
-	mux.HandleFunc("/api/v1/data/query", h.handleRawQuery)
-	mux.HandleFunc("/api/v1/data/epoch", h.handleEpochQuery)
+	mux.HandleFunc("/api/v1/data/query", h.handleDataQuery)
 	mux.HandleFunc("/api/v1/data/local-replica-stats", h.handleLocalReplicaStats)
 	mux.HandleFunc("/api/v1/data/records/", h.handleRawRecord)
 }
 
 func (h *DataQueryHandler) handleHealth(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		WriteErrorFrame(w, http.StatusMethodNotAllowed, "method_not_allowed", "health takes GET", 0)
 		return
 	}
-
-	payload := map[string]interface{}{
-		"status":    "ok",
-		"component": "spaceaware-data-api",
-		"time":      time.Now().UTC().Format(time.RFC3339),
-	}
-	writeJSON(w, http.StatusOK, payload)
+	writeTablePage(w, qrpTable{
+		Status:  QRPStatusOk,
+		Columns: []qrpCol{{Name: "component", Type: colString}, {Name: "status", Type: colString}},
+		Rows:    [][]qrpVal{{textVal("spaceaware-data-api"), textVal("ok")}},
+		AsOfMs:  time.Now().UnixMilli(),
+	})
 }
 
 // recordIndexMaxLimit caps a single index page — the surface is a UI drill-down,
@@ -307,9 +276,12 @@ func digitsOnly(s string) string {
 	return b.String()
 }
 
+// handleSummary answers one page: a row per (schema, source lane) with the
+// lane's records and bytes, then a schema-total row per schema (source
+// columns empty), then the store total (schema empty).
 func (h *DataQueryHandler) handleSummary(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		WriteErrorFrame(w, http.StatusMethodNotAllowed, "method_not_allowed", "summary takes GET", 0)
 		return
 	}
 	if !h.ensureStore(w) {
@@ -317,20 +289,31 @@ func (h *DataQueryHandler) handleSummary(w http.ResponseWriter, r *http.Request)
 	}
 	summary, err := h.store.DataSummary()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeDataReadError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"total_records": summary.TotalRecords,
-		"total_bytes":   summary.TotalBytes,
-		"schemas":       schemaSummaryRows(summary.Schemas),
-		"sources":       sourceSummaryRows(summary.Sources),
-	})
+	cols := []qrpCol{
+		{Name: "schema_name", Type: colString}, {Name: "provider_id", Type: colString}, {Name: "source_name", Type: colString},
+		{Name: "batch_id", Type: colString}, {Name: "producer_peer_id", Type: colString}, {Name: "producer_public_key", Type: colString},
+		{Name: "count", Type: colInt64}, {Name: "total_bytes", Type: colInt64, Unit: "B"},
+	}
+	rows := make([][]qrpVal, 0, len(summary.Sources)+len(summary.Schemas)+1)
+	for _, src := range summary.Sources {
+		rows = append(rows, []qrpVal{textVal(src.SchemaName), textVal(src.ProviderID), textVal(src.SourceName),
+			textVal(src.BatchID), textVal(src.ProducerPeerID), textVal(src.ProducerPublicKey), intVal(src.Count), intVal(src.TotalBytes)})
+	}
+	for _, sch := range summary.Schemas {
+		rows = append(rows, []qrpVal{textVal(sch.SchemaName), textVal(""), textVal(""), textVal(""), textVal(""), textVal(""),
+			intVal(sch.Count), intVal(sch.TotalBytes)})
+	}
+	rows = append(rows, []qrpVal{textVal(""), textVal(""), textVal(""), textVal(""), textVal(""), textVal(""),
+		intVal(summary.TotalRecords), intVal(summary.TotalBytes)})
+	writeTablePage(w, qrpTable{Status: QRPStatusOk, Columns: cols, Rows: rows, TotalCount: uint64(summary.TotalRecords), AsOfMs: time.Now().UnixMilli()})
 }
 
 func (h *DataQueryHandler) handleDatastores(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		WriteErrorFrame(w, http.StatusMethodNotAllowed, "method_not_allowed", "datastores takes GET", 0)
 		return
 	}
 	if !h.ensureStore(w) {
@@ -338,26 +321,36 @@ func (h *DataQueryHandler) handleDatastores(w http.ResponseWriter, r *http.Reque
 	}
 	entries, err := h.store.ListDatastoreIdentities()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeDataReadError(w, err)
 		return
 	}
-	results := make([]map[string]interface{}, 0, len(entries))
-	for _, entry := range entries {
-		results = append(results, map[string]interface{}{
-			"key":        entry.Key,
-			"identity":   entry.Identity,
-			"updated_at": entry.UpdatedAt,
-		})
+	names := []string{"key", "identity_schema_name", "identity_source_peer_id", "identity_source_public_key", "identity_provider_id",
+		"identity_source_name", "identity_batch_head", "identity_query_profile", "identity_canonical_params", "identity_snapshot_id",
+		"identity_high_water_mark", "identity_artifact_hash"}
+	cols := make([]qrpCol, 0, len(names)+1)
+	for _, name := range names {
+		cols = append(cols, qrpCol{Name: name, Type: colString})
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"count":   len(results),
-		"results": results,
-	})
+	cols = append(cols, qrpCol{Name: "updated_at", Type: colInt64, Unit: "s"})
+	rows := make([][]qrpVal, 0, len(entries))
+	for _, e := range entries {
+		id := e.Identity
+		params := make([]string, 0, len(id.CanonicalParams))
+		for k, v := range id.CanonicalParams {
+			params = append(params, k+"="+v)
+		}
+		sort.Strings(params)
+		rows = append(rows, []qrpVal{textVal(e.Key), textVal(id.SchemaName), textVal(id.SourcePeerID), textVal(id.SourcePublicKey),
+			textVal(id.ProviderID), textVal(id.SourceName), textVal(id.BatchHead), textVal(id.QueryProfile),
+			textVal(strings.Join(params, ", ")), textVal(id.SnapshotID), textVal(id.HighWaterMark), textVal(id.ArtifactHash),
+			intVal(e.UpdatedAt)})
+	}
+	writeTablePage(w, qrpTable{Status: QRPStatusOk, Columns: cols, Rows: rows, TotalCount: uint64(len(rows)), AsOfMs: time.Now().UnixMilli()})
 }
 
 func (h *DataQueryHandler) handleLocalReplicaStats(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		WriteErrorFrame(w, http.StatusMethodNotAllowed, "method_not_allowed", "local-replica-stats takes GET", 0)
 		return
 	}
 	if !h.ensureStore(w) {
@@ -375,128 +368,30 @@ func (h *DataQueryHandler) handleLocalReplicaStats(w http.ResponseWriter, r *htt
 		QueryProfile:      firstNonEmptyDataString(values.Get("query_profile"), values.Get("queryProfile")),
 	})
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		WriteErrorFrame(w, http.StatusBadRequest, "bad_request", err.Error(), 0)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"count":   len(stats),
-		"results": localReplicaStatsRows(stats),
-	})
-}
-
-func (h *DataQueryHandler) handleRawQuery(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
+	cols := []qrpCol{
+		{Name: "schema_name", Type: colString}, {Name: "provider_peer_id", Type: colString}, {Name: "provider_public_key", Type: colString},
+		{Name: "provider_id", Type: colString}, {Name: "source_name", Type: colString}, {Name: "batch_id", Type: colString},
+		{Name: "query_profile", Type: colString}, {Name: "local_rows", Type: colInt64}, {Name: "pinned_rows", Type: colInt64},
+		{Name: "cached_bytes", Type: colInt64, Unit: "B"}, {Name: "pinned_bytes", Type: colInt64, Unit: "B"},
+		{Name: "snapshot_id", Type: colString}, {Name: "head", Type: colString}, {Name: "high_water_mark", Type: colString},
+		{Name: "last_synced_at", Type: colInt64, Unit: "ms"},
 	}
-	if !h.ensureStore(w) {
-		return
+	rows := make([][]qrpVal, 0, len(stats))
+	for _, st := range stats {
+		rows = append(rows, []qrpVal{textVal(st.SchemaName), textVal(st.ProviderPeerID), textVal(st.ProviderPublicKey),
+			textVal(st.ProviderID), textVal(st.SourceName), textVal(st.BatchID), textVal(st.QueryProfile),
+			intVal(st.LocalRows), intVal(st.PinnedRows), intVal(st.CachedBytes), intVal(st.PinnedBytes),
+			textVal(st.SnapshotID), textVal(st.Head), textVal(st.HighWaterMark), timeMsOrNull(st.LastSyncedAt)})
 	}
-
-	var req rawDataQueryRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64*1024)).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON body")
-		return
-	}
-	schemaName := strings.TrimSpace(firstNonEmptyDataString(req.Schema, req.SchemaName))
-	if schemaName == "" {
-		writeError(w, http.StatusBadRequest, "schema is required")
-		return
-	}
-	rawStream := requestedRawFlatBufferStream(r)
-	limit := req.Limit
-	if limit <= 0 {
-		limit = rawDataDefaultLimit
-	}
-	maxLimit := rawDataMaxQueryLimit
-	if rawStream {
-		maxLimit = rawDataMaxRawStreamLimit
-	}
-	if limit > maxLimit {
-		limit = maxLimit
-	}
-	offset := req.Offset
-	if offset < 0 {
-		offset = 0
-	}
-
-	queryStore, closeQueryStore, err := h.storeForDatastoreKey(req.DatastoreKey)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	defer closeQueryStore()
-
-	filter := storage.RawRecordQuery{
-		SchemaName:        schemaName,
-		ProviderID:        firstNonEmptyDataString(req.ProviderID, req.ProviderId),
-		SourceName:        req.SourceName,
-		BatchID:           firstNonEmptyDataString(req.BatchID, req.BatchId),
-		ProducerPeerID:    firstNonEmptyDataString(req.ProducerPeerID, req.ProducerPeerId),
-		ProducerPublicKey: firstNonEmptyDataString(req.ProducerPublicKey, req.ProducerPublicKeyCamel),
-		PeerID:            firstNonEmptyDataString(req.PeerID, req.PeerId),
-		SyncFilter:        req.SyncFilter,
-		Search:            req.Search,
-		Limit:             limit,
-		Offset:            offset,
-	}
-	// A small-body lane filtered on its own fields (sbd_query.go).
-	if sbd, ok, err := parseSBDFilter(schemaName, req.SyncFilter); ok {
-		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		h.serveSBDQuery(w, r, queryStore, schemaName, filter, sbd, offset, limit, req.IncludeData)
-		return
-	}
-	records, err := queryStore.QueryRawRecords(filter)
-	if err != nil {
-		if errors.Is(err, storage.ErrSearchIndexBuilding) {
-			w.Header().Set("Retry-After", "2")
-			writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
-				"error": map[string]interface{}{"code": "SEARCH_INDEX_BUILDING", "message": err.Error()},
-			})
-			return
-		}
-		if errors.Is(err, storage.ErrEngineRebuilding) {
-			writeEngineRebuilding(w, r)
-			return
-		}
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	if rawStream {
-		// Window headers first: the stream writer calls WriteHeader.
-		if strings.TrimSpace(req.Search) != "" {
-			w.Header().Set("X-SDN-Search-Applied", "fts5-v1")
-		}
-		countFilter := filter
-		countFilter.Limit, countFilter.Offset = 0, 0
-		if total, countErr := queryStore.CountRawRecords(countFilter); countErr == nil {
-			w.Header().Set(rawDataTotalCountHeader, strconv.FormatInt(total, 10))
-		}
-		w.Header().Set(rawDataOffsetHeader, strconv.Itoa(offset))
-		w.Header().Set(rawDataLimitHeader, strconv.Itoa(limit))
-		w.Header().Set(rawDataSourceRunsHeader, encodeRawRecordSourceRuns(records))
-		writeFlatBufferPayloadStreamWithContentType(w, schemaName, recordsToPayloads(records), rawFlatBufferStreamContentType)
-		return
-	}
-
-	results := make([]map[string]interface{}, 0, len(records))
-	for _, rec := range records {
-		results = append(results, rawRecordRow(schemaName, rec, req.IncludeData))
-	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"schema":  schemaName,
-		"count":   len(results),
-		"results": results,
-	})
+	writeTablePage(w, qrpTable{Status: QRPStatusOk, Columns: cols, Rows: rows, TotalCount: uint64(len(rows)), AsOfMs: time.Now().UnixMilli()})
 }
 
 func (h *DataQueryHandler) handleRawRecord(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		WriteErrorFrame(w, http.StatusMethodNotAllowed, "method_not_allowed", "records takes GET or HEAD", 0)
 		return
 	}
 	if !h.ensureStore(w) {
@@ -506,23 +401,23 @@ func (h *DataQueryHandler) handleRawRecord(w http.ResponseWriter, r *http.Reques
 	suffix := strings.TrimPrefix(r.URL.Path, "/api/v1/data/records/")
 	parts := strings.SplitN(suffix, "/", 2)
 	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
-		writeError(w, http.StatusBadRequest, "expected /api/v1/data/records/{schema}/{cid}")
+		WriteErrorFrame(w, http.StatusBadRequest, "bad_request", "expected /api/v1/data/records/{schema}/{cid}", 0)
 		return
 	}
 	schemaName, err := url.PathUnescape(parts[0])
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid schema")
+		WriteErrorFrame(w, http.StatusBadRequest, "bad_request", "invalid schema", 0)
 		return
 	}
 	recordID, err := url.PathUnescape(parts[1])
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid record id")
+		WriteErrorFrame(w, http.StatusBadRequest, "bad_request", "invalid record id", 0)
 		return
 	}
 
 	record, err := h.store.GetRawRecord(schemaName, recordID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, err.Error())
+		WriteErrorFrame(w, http.StatusNotFound, "not_found", err.Error(), 0)
 		return
 	}
 	w.Header().Set("Content-Type", "application/x-flatbuffers")
@@ -533,132 +428,6 @@ func (h *DataQueryHandler) handleRawRecord(w http.ResponseWriter, r *http.Reques
 	if r.Method != http.MethodHead {
 		_, _ = w.Write(record.Data)
 	}
-}
-
-func (h *DataQueryHandler) handleEpochQuery(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if !h.ensureStore(w) {
-		return
-	}
-
-	query, err := epochRecordQueryFromRequest(r)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	if query.Profile == storage.EpochProfileCoverage {
-		coverage, err := h.store.QueryEpochCoverage(query)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"schema":      query.SchemaName,
-			"profile":     query.Profile,
-			"query":       epochQueryResponse(query),
-			"count":       len(coverage),
-			"total_count": len(coverage),
-			"results":     epochCoverageRows(coverage),
-		})
-		return
-	}
-
-	totalCount, err := h.store.CountEpochRecords(query)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	matches, err := h.store.QueryEpochRecords(query)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	rows := make([]map[string]interface{}, 0, len(matches))
-	includeData := parseBool(r, "include_data")
-	for _, match := range matches {
-		rows = append(rows, epochMatchRow(query.SchemaName, match, includeData))
-	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"schema":      query.SchemaName,
-		"profile":     query.Profile,
-		"query":       epochQueryResponse(query),
-		"count":       len(rows),
-		"total_count": totalCount,
-		"results":     rows,
-	})
-}
-
-func writeJSON(w http.ResponseWriter, status int, payload interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(payload)
-}
-
-func writeError(w http.ResponseWriter, status int, message string) {
-	writeJSON(w, status, map[string]interface{}{
-		"error": map[string]interface{}{
-			"message": message,
-		},
-	})
-}
-
-type rawDataQueryRequest struct {
-	DatastoreKey           string `json:"datastore_key"`
-	Schema                 string `json:"schema"`
-	SchemaName             string `json:"schema_name"`
-	ProviderID             string `json:"provider_id"`
-	ProviderId             string `json:"providerId"`
-	SourceName             string `json:"source_name"`
-	BatchID                string `json:"batch_id"`
-	BatchId                string `json:"batchId"`
-	ProducerPeerID         string `json:"producer_peer_id"`
-	ProducerPeerId         string `json:"producerPeerId"`
-	ProducerPublicKey      string `json:"producer_public_key"`
-	ProducerPublicKeyCamel string `json:"producerPublicKey"`
-	PeerID                 string `json:"peer_id"`
-	PeerId                 string `json:"peerId"`
-	Cursor                 string `json:"cursor"`
-	SnapshotID             string `json:"snapshot_id"`
-	Head                   string `json:"head"`
-	QueryProfile           string `json:"query_profile"`
-	SyncFilter             string `json:"sync_filter"`
-	Search                 string `json:"search,omitempty"`
-	Limit                  int    `json:"limit"`
-	Offset                 int    `json:"offset"`
-	IncludeData            bool   `json:"include_data"`
-}
-
-func schemaSummaryRows(schemas []storage.DataSchemaSummary) []map[string]interface{} {
-	rows := make([]map[string]interface{}, 0, len(schemas))
-	for _, schema := range schemas {
-		rows = append(rows, map[string]interface{}{
-			"schema_name": schema.SchemaName,
-			"count":       schema.Count,
-			"total_bytes": schema.TotalBytes,
-		})
-	}
-	return rows
-}
-
-func sourceSummaryRows(sources []storage.DataSourceSummary) []map[string]interface{} {
-	rows := make([]map[string]interface{}, 0, len(sources))
-	for _, source := range sources {
-		rows = append(rows, map[string]interface{}{
-			"schema_name":         source.SchemaName,
-			"provider_id":         source.ProviderID,
-			"source_name":         source.SourceName,
-			"batch_id":            source.BatchID,
-			"producer_peer_id":    source.ProducerPeerID,
-			"producer_public_key": source.ProducerPublicKey,
-			"count":               source.Count,
-			"total_bytes":         source.TotalBytes,
-		})
-	}
-	return rows
 }
 
 func localReplicaStatsRows(stats []storage.LocalReplicaStats) []map[string]interface{} {
@@ -689,200 +458,6 @@ func localReplicaStatsRows(stats []storage.LocalReplicaStats) []map[string]inter
 	return rows
 }
 
-func epochRecordQueryFromRequest(r *http.Request) (storage.EpochRecordQuery, error) {
-	values := r.URL.Query()
-	schemaName := strings.TrimSpace(values.Get("schema"))
-	if schemaName == "" {
-		schemaName = strings.TrimSpace(values.Get("schema_name"))
-	}
-	if schemaName == "" {
-		return storage.EpochRecordQuery{}, fmt.Errorf("missing required query parameter: schema")
-	}
-	profile := strings.TrimSpace(values.Get("profile"))
-	if profile == "" {
-		profile = storage.EpochProfileDay
-	}
-	query := storage.EpochRecordQuery{
-		SchemaName: schemaName,
-		Profile:    profile,
-		Day:        strings.TrimSpace(values.Get("day")),
-		ProviderID: strings.TrimSpace(values.Get("provider_id")),
-		SourceName: strings.TrimSpace(values.Get("source_name")),
-		BatchID:    strings.TrimSpace(values.Get("batch_id")),
-		EntityID:   strings.TrimSpace(values.Get("entity_id")),
-		Limit:      parseLimit(r, 1000, 250000),
-	}
-	if raw := strings.TrimSpace(values.Get("at")); raw != "" {
-		at, err := time.Parse(time.RFC3339, raw)
-		if err != nil {
-			return storage.EpochRecordQuery{}, fmt.Errorf("invalid at %q (expected RFC3339)", raw)
-		}
-		query.At = at
-	}
-	if raw := strings.TrimSpace(values.Get("from")); raw != "" {
-		from, err := time.Parse(time.RFC3339, raw)
-		if err != nil {
-			return storage.EpochRecordQuery{}, fmt.Errorf("invalid from %q (expected RFC3339)", raw)
-		}
-		query.From = &from
-	}
-	if raw := strings.TrimSpace(values.Get("to")); raw != "" {
-		to, err := time.Parse(time.RFC3339, raw)
-		if err != nil {
-			return storage.EpochRecordQuery{}, fmt.Errorf("invalid to %q (expected RFC3339)", raw)
-		}
-		query.To = &to
-	}
-	if raw := strings.TrimSpace(values.Get("norad_cat_id")); raw != "" {
-		parsed, err := strconv.ParseUint(raw, 10, 32)
-		if err != nil {
-			return storage.EpochRecordQuery{}, fmt.Errorf("invalid norad_cat_id")
-		}
-		value := uint32(parsed)
-		query.NoradCatID = &value
-	}
-	if raw := strings.TrimSpace(values.Get("max_delta_seconds")); raw != "" {
-		parsed, err := strconv.ParseInt(raw, 10, 64)
-		if err != nil || parsed < 0 {
-			return storage.EpochRecordQuery{}, fmt.Errorf("invalid max_delta_seconds")
-		}
-		query.MaxDeltaSeconds = parsed
-	}
-	return query, nil
-}
-
-func epochQueryResponse(query storage.EpochRecordQuery) map[string]interface{} {
-	response := map[string]interface{}{
-		"schema":      query.SchemaName,
-		"profile":     query.Profile,
-		"provider_id": query.ProviderID,
-		"source_name": query.SourceName,
-		"batch_id":    query.BatchID,
-		"limit":       query.Limit,
-	}
-	if query.Day != "" {
-		response["day"] = query.Day
-	}
-	if !query.At.IsZero() {
-		response["at"] = query.At.UTC().Format(time.RFC3339)
-	}
-	if query.From != nil {
-		response["from"] = query.From.UTC().Format(time.RFC3339)
-	}
-	if query.To != nil {
-		response["to"] = query.To.UTC().Format(time.RFC3339)
-	}
-	if query.NoradCatID != nil {
-		response["norad_cat_id"] = *query.NoradCatID
-	}
-	if query.EntityID != "" {
-		response["entity_id"] = query.EntityID
-	}
-	if query.MaxDeltaSeconds > 0 {
-		response["max_delta_seconds"] = query.MaxDeltaSeconds
-	}
-	return response
-}
-
-func epochMatchRow(schemaName string, match storage.EpochRecordMatch, includeData bool) map[string]interface{} {
-	row := rawRecordRow(schemaName, match.Record, includeData)
-	row["entity_key"] = match.EntityKey
-	row["match_quality"] = map[string]interface{}{
-		"requested_epoch": match.RequestedEpoch.UTC().Format(time.RFC3339),
-		"matched_epoch":   match.MatchedEpoch.UTC().Format(time.RFC3339),
-		"delta_seconds":   match.DeltaSeconds,
-		"match_type":      match.MatchType,
-	}
-	// HARD RULE (user 2026-07-06, json-schema-capitalization-rule): JSON
-	// properties that render SDS-record fields carry the schema IDL names
-	// EXACTLY (schema/OMM/main.fbs, schema/MPE/main.fbs) — never lowercased.
-	// API-synthesized envelope fields (entity_key, match_quality, cid, …)
-	// stay lowercase snake_case: the case distinction separates schema data
-	// from API metadata.
-	switch schemaName {
-	case "OMM.fbs":
-		if omm, err := decodeOMM(match.Record.Data); err == nil {
-			row["NORAD_CAT_ID"] = omm.NORAD_CAT_ID()
-			row["OBJECT_NAME"] = string(omm.OBJECT_NAME())
-			row["OBJECT_ID"] = string(omm.OBJECT_ID())
-			row["EPOCH"] = string(omm.EPOCH())
-			row["MEAN_MOTION"] = omm.MEAN_MOTION()
-		}
-	case "MPE.fbs":
-		if mpe, err := decodeMPE(match.Record.Data); err == nil {
-			row["ENTITY_ID"] = strings.TrimSpace(string(mpe.ENTITY_ID()))
-			row["EPOCH"] = mpe.EPOCH()
-			row["MEAN_MOTION"] = mpe.MEAN_MOTION()
-		}
-	}
-	return row
-}
-
-func epochCoverageRows(coverage []storage.EpochCoverageBucket) []map[string]interface{} {
-	rows := make([]map[string]interface{}, 0, len(coverage))
-	for _, bucket := range coverage {
-		rows = append(rows, map[string]interface{}{
-			"day":          bucket.Day,
-			"count":        bucket.Count,
-			"oldest_epoch": bucket.OldestEpoch.UTC().Format(time.RFC3339),
-			"newest_epoch": bucket.NewestEpoch.UTC().Format(time.RFC3339),
-		})
-	}
-	return rows
-}
-
-func rawRecordRow(schemaName string, rec *storage.Record, includeData bool) map[string]interface{} {
-	row := map[string]interface{}{
-		"schema_name":    schemaName,
-		"cid":            rec.CID,
-		"peer_id":        rec.PeerID,
-		"timestamp":      rec.Timestamp.UTC().Format(time.RFC3339),
-		"size_bytes":     recordSizeBytes(rec),
-		"flatbuffer_uri": fmt.Sprintf("/api/v1/data/records/%s/%s", url.PathEscape(schemaName), url.PathEscape(rec.CID)),
-	}
-	if includeData {
-		row["data_base64"] = base64.StdEncoding.EncodeToString(rec.Data)
-	}
-	if len(rec.Signature) > 0 {
-		row["signature_base64"] = base64.StdEncoding.EncodeToString(rec.Signature)
-	}
-	if !rec.MaterializedAt.IsZero() {
-		row["materialized_at"] = rec.MaterializedAt.UTC().Format(time.RFC3339)
-	}
-	if rec.SourceTags.ProviderID != "" {
-		row["provider_id"] = rec.SourceTags.ProviderID
-	}
-	if rec.SourceTags.SourceName != "" {
-		row["source_name"] = rec.SourceTags.SourceName
-	}
-	if rec.SourceTags.SourceURL != "" {
-		row["source_url"] = rec.SourceTags.SourceURL
-	}
-	if rec.SourceTags.BatchID != "" {
-		row["batch_id"] = rec.SourceTags.BatchID
-	}
-	if rec.SourceTags.ContentKeyID != "" {
-		row["content_key_id"] = rec.SourceTags.ContentKeyID
-	}
-	if rec.SourceTags.ProducerPeerID != "" {
-		row["producer_peer_id"] = rec.SourceTags.ProducerPeerID
-	}
-	if rec.SourceTags.ProducerPublicKey != "" {
-		row["producer_public_key"] = rec.SourceTags.ProducerPublicKey
-	}
-	return row
-}
-
-func recordSizeBytes(rec *storage.Record) int64 {
-	if len(rec.Data) > 0 {
-		return int64(len(rec.Data))
-	}
-	if rec.RecordLength > 0 {
-		return rec.RecordLength
-	}
-	return 0
-}
-
 func firstNonEmptyDataString(values ...string) string {
 	for _, value := range values {
 		if trimmed := strings.TrimSpace(value); trimmed != "" {
@@ -894,7 +469,7 @@ func firstNonEmptyDataString(values ...string) string {
 
 func (h *DataQueryHandler) ensureStore(w http.ResponseWriter) bool {
 	if h.store == nil {
-		writeError(w, http.StatusServiceUnavailable, "local storage unavailable in edge mode")
+		WriteErrorFrame(w, http.StatusServiceUnavailable, "storage_unavailable", "local storage unavailable in edge mode", 0)
 		return false
 	}
 	return true
@@ -925,11 +500,6 @@ func parseLimit(r *http.Request, defaultValue, maxValue int) int {
 		limit = maxValue
 	}
 	return limit
-}
-
-func parseBool(r *http.Request, key string) bool {
-	raw := strings.TrimSpace(strings.ToLower(r.URL.Query().Get(key)))
-	return raw == "1" || raw == "true" || raw == "yes"
 }
 
 type bulkExportFormat string
@@ -968,13 +538,12 @@ func (h *DataQueryHandler) handleCATBulkExport(w http.ResponseWriter, r *http.Re
 
 func (h *DataQueryHandler) handleBulkExport(w http.ResponseWriter, r *http.Request, schemaName, standard string) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		WriteErrorFrame(w, http.StatusMethodNotAllowed, "method_not_allowed", "bulk export takes GET", 0)
 		return
 	}
 	format, err := requestedBulkExportFormat(r)
 	if err != nil {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		http.Error(w, err.Error()+".", http.StatusBadRequest)
+		WriteErrorFrame(w, http.StatusBadRequest, "bad_request", err.Error()+".", 0)
 		return
 	}
 	if !h.ensureStore(w) {
@@ -983,7 +552,7 @@ func (h *DataQueryHandler) handleBulkExport(w http.ResponseWriter, r *http.Reque
 
 	records, err := h.bulkExportRecords(r, schemaName)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeDataReadError(w, err)
 		return
 	}
 	w.Header().Set("X-SDN-Schema", schemaName)
@@ -1001,7 +570,7 @@ func (h *DataQueryHandler) handleBulkExport(w http.ResponseWriter, r *http.Reque
 
 	binding, err := bulkBindingForSchema(schemaName)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		WriteErrorFrame(w, http.StatusInternalServerError, "internal", err.Error(), 0)
 		return
 	}
 
@@ -1581,93 +1150,6 @@ func writeBulkJSONLines(writer io.Writer, binding *bulkBinding, records []*stora
 	return nil
 }
 
-func requestedRawFlatBufferStream(r *http.Request) bool {
-	format := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("format")))
-	if format == "raw-flatbuffer-stream" || format == "flatbuffer-stream" || format == "flatbuffers-stream" {
-		return true
-	}
-	accept := strings.ToLower(strings.TrimSpace(r.Header.Get("Accept")))
-	return strings.Contains(accept, rawFlatBufferStreamContentType) ||
-		strings.Contains(accept, "application/vnd.sdn.raw-flatbuffer-stream")
-}
-
-// encodeRawRecordSourceRuns run-length encodes the source lane of a raw
-// result set in frame order: consecutive records with the same
-// SourceTags.SourceName collapse into one `<name>:<count>` pair, pairs are
-// comma-joined, an empty source name is written as `-`. Names are
-// path-escaped (with `:` escaped too) so a client can split on `,`, then on
-// the last `:`, and decode the name with decodeURIComponent. Empty when there
-// are no records.
-func encodeRawRecordSourceRuns(records []*storage.Record) string {
-	if len(records) == 0 {
-		return ""
-	}
-	var out strings.Builder
-	runName := ""
-	runCount := 0
-	flush := func() {
-		if runCount == 0 {
-			return
-		}
-		if out.Len() > 0 {
-			out.WriteByte(',')
-		}
-		if runName == "" {
-			out.WriteByte('-')
-		} else {
-			out.WriteString(strings.ReplaceAll(url.PathEscape(runName), ":", "%3A"))
-		}
-		out.WriteByte(':')
-		out.WriteString(strconv.Itoa(runCount))
-	}
-	for i, rec := range records {
-		name := ""
-		if rec != nil {
-			name = rec.SourceTags.SourceName
-		}
-		if i == 0 || name != runName {
-			flush()
-			runName, runCount = name, 0
-		}
-		runCount++
-	}
-	flush()
-	return out.String()
-}
-
-func recordsToPayloads(records []*storage.Record) [][]byte {
-	payloads := make([][]byte, 0, len(records))
-	for _, rec := range records {
-		payloads = append(payloads, rec.Data)
-	}
-	return payloads
-}
-
-func writeFlatBufferPayloadStreamWithContentType(w http.ResponseWriter, schema string, payloads [][]byte, contentType string) {
-	w.Header().Set("Content-Type", contentType)
-	w.Header().Set("X-SDN-Schema", schema)
-	w.Header().Set("X-SDN-Record-Count", strconv.Itoa(len(payloads)))
-	w.Header().Set("X-SDN-Stream-Format", "flatsql-size-prefixed-le-u32")
-	w.WriteHeader(http.StatusOK)
-
-	_, _ = w.Write(flatBufferPayloadStreamBytes(payloads))
-}
-
-func flatBufferPayloadStreamBytes(payloads [][]byte) []byte {
-	total := 0
-	for _, payload := range payloads {
-		total += 4 + len(payload)
-	}
-	stream := make([]byte, 0, total)
-	var lenBuf [4]byte
-	for _, payload := range payloads {
-		binary.LittleEndian.PutUint32(lenBuf[:], uint32(len(payload)))
-		stream = append(stream, lenBuf[:]...)
-		stream = append(stream, payload...)
-	}
-	return stream
-}
-
 func writeFlatBufferRecordStreamWithContentType(w http.ResponseWriter, schema string, records []*storage.Record, contentType string, store *storage.FlatSQLStore) {
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("X-SDN-Schema", schema)
@@ -1705,29 +1187,4 @@ func decodeCAT(data []byte) (*CAT.CAT, error) {
 	default:
 		return nil, fmt.Errorf("invalid CAT buffer")
 	}
-}
-
-func decodeMPE(data []byte) (*MPE.MPE, error) {
-	switch {
-	case MPE.SizePrefixedMPEBufferHasIdentifier(data):
-		return MPE.GetSizePrefixedRootAsMPE(data, 0), nil
-	case MPE.MPEBufferHasIdentifier(data):
-		return MPE.GetRootAsMPE(data, 0), nil
-	default:
-		return nil, fmt.Errorf("invalid MPE buffer")
-	}
-}
-
-// writeEngineRebuilding answers a reader that arrived while a poisoned engine
-// is being rebuilt: 503 with Retry-After, as an error frame for a stream
-// client and as JSON otherwise. The reader never waits on the rebuild
-// (storage.ErrEngineRebuilding; OPS-07).
-func writeEngineRebuilding(w http.ResponseWriter, r *http.Request) {
-	const retry = 30 * time.Second
-	if requestedRawFlatBufferStream(r) {
-		WriteErrorFrame(w, http.StatusServiceUnavailable, "engine_rebuilding", "The record engine is rebuilding; retry shortly.", retry)
-		return
-	}
-	w.Header().Set("Retry-After", "30")
-	writeError(w, http.StatusServiceUnavailable, "record engine is rebuilding; retry shortly")
 }

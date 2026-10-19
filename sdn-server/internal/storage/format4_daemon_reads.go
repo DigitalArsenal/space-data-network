@@ -27,6 +27,7 @@ package storage
 // then CID, or CID order), index pages and epoch rankings.
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/binary"
@@ -2871,4 +2872,210 @@ func (b format4Backend) PublicQuerySurface() ([]QuerySurfaceTable, error) {
 			PlaceholderColumns: r.Placeholder, Records: records})
 	}
 	return surface, nil
+}
+
+// SandboxCellKind is a typed sandbox cell's SQLite storage class.
+type SandboxCellKind uint8
+
+const (
+	SandboxNull SandboxCellKind = iota
+	SandboxInt
+	SandboxReal
+	SandboxText
+	SandboxBlob
+)
+
+// SandboxCell is one typed cell: Int, Real, or Bytes (Text and Blob).
+type SandboxCell struct {
+	Kind  SandboxCellKind
+	Int   int64
+	Real  float64
+	Bytes []byte
+}
+
+// SandboxRows is one sandboxed SELECT as typed rows. A BLOB keeps its bytes;
+// nothing is rendered as JSON or text. Truncated marks a row or byte cap hit.
+type SandboxRows struct {
+	Columns   []string
+	Rows      [][]SandboxCell
+	Truncated bool
+}
+
+func sandboxCellOf(c format2.Cell) SandboxCell {
+	switch c.Type {
+	case format2.CellInt:
+		return SandboxCell{Kind: SandboxInt, Int: c.I}
+	case format2.CellReal:
+		return SandboxCell{Kind: SandboxReal, Real: c.F}
+	case format2.CellText:
+		return SandboxCell{Kind: SandboxText, Bytes: bytes.Clone(c.B)}
+	case format2.CellBlob:
+		return SandboxCell{Kind: SandboxBlob, Bytes: bytes.Clone(c.B)}
+	default:
+		return SandboxCell{Kind: SandboxNull}
+	}
+}
+
+// sandboxRowCollector keeps rows up to the caps; more rows or bytes mark the
+// answer truncated and stop the read.
+type sandboxRowCollector struct {
+	out             SandboxRows
+	maxRows         int
+	maxBytes, bytes uint64
+}
+
+var errSandboxRowsFull = errors.New("sandbox rows: caps reached")
+
+func (c *sandboxRowCollector) add(row []format2.Cell) error {
+	if len(c.out.Rows) >= c.maxRows {
+		c.out.Truncated = true
+		return errSandboxRowsFull
+	}
+	cells := make([]SandboxCell, len(row))
+	for i, cell := range row {
+		cells[i] = sandboxCellOf(cell)
+		c.bytes += uint64(len(cells[i].Bytes)) + 8
+	}
+	if c.bytes > c.maxBytes {
+		c.out.Truncated = true
+		return errSandboxRowsFull
+	}
+	c.out.Rows = append(c.out.Rows, cells)
+	return nil
+}
+
+// QuerySandboxedRows runs one untrusted read-only SELECT on the sandbox path
+// and answers typed rows. caps.MaxRows (default 1000) and caps.MaxBytes
+// (default 4 MiB) truncate; caps.Timeout (default 5 s) bounds the statement.
+func (s *FlatSQLStore) QuerySandboxedRows(sql string, caps flatsqlrt.SandboxCaps, params ...interface{}) (*SandboxRows, error) {
+	if caps.MaxRows == 0 || caps.MaxRows > 1000 {
+		caps.MaxRows = 1000
+	}
+	if caps.MaxBytes == 0 {
+		caps.MaxBytes = 4 << 20
+	}
+	if caps.Timeout <= 0 {
+		caps.Timeout = 5 * time.Second
+	}
+	col := &sandboxRowCollector{maxRows: int(caps.MaxRows), maxBytes: caps.MaxBytes}
+	col.out.Columns = []string{}
+	switch b := s.rb.(type) {
+	case format4Backend:
+		if err := b.closed(); err != nil {
+			return nil, err
+		}
+		// The collector enforces the byte cap by truncation, not rejection.
+		ctx, cancel, req, err := b.f4SandboxRequest(sql, flatsqlrt.SandboxCaps{MaxRows: caps.MaxRows, Timeout: caps.Timeout}, params)
+		if err != nil {
+			return nil, err
+		}
+		defer cancel()
+		var dec format2.RB1Decoder
+		dec.OnRow = col.add
+		_, err = b.d.api().SQL(ctx, req, func(chunk []byte) error { return dec.Feed(chunk) })
+		if dec.Names != nil {
+			col.out.Columns = dec.Names
+		}
+		if err != nil && !errors.Is(err, errSandboxRowsFull) {
+			return nil, b.f4SandboxErr(err)
+		}
+	case format2Backend:
+		if err := s.f2Closed(); err != nil {
+			return nil, err
+		}
+		ctx, cancel, req, err := f2SandboxRequest(s.f2ctx(), sql, flatsqlrt.SandboxCaps{MaxRows: caps.MaxRows, Timeout: caps.Timeout}, params)
+		if err != nil {
+			return nil, err
+		}
+		defer cancel()
+		res, err := s.ps.SandboxQuery(ctx, req)
+		if err != nil {
+			return nil, f2SandboxError(err)
+		}
+		if res.Names != nil {
+			col.out.Columns = res.Names
+		}
+		for _, row := range res.Rows {
+			if col.add(row) != nil {
+				break
+			}
+		}
+	default:
+		if err := s.legacySandboxRows(sql, caps, col, params); err != nil {
+			return nil, err
+		}
+	}
+	return &col.out, nil
+}
+
+// legacySandboxRows is QuerySandboxedRows on a format 1 store: the
+// statement passes SandboxedSelect's checks, then runs read-locked under the
+// timeout.
+func (s *FlatSQLStore) legacySandboxRows(sql string, caps flatsqlrt.SandboxCaps, col *sandboxRowCollector, params []interface{}) error {
+	stmt := strings.TrimSuffix(strings.TrimSpace(sql), ";")
+	upper := strings.ToUpper(stmt)
+	switch {
+	case stmt == "":
+		return &flatsqlrt.SandboxError{Code: flatsqlrt.SandboxCodeEmptyStatement, Message: "sandbox: empty statement"}
+	case strings.Contains(stmt, ";"):
+		return &flatsqlrt.SandboxError{Code: flatsqlrt.SandboxCodeMultiStatement, Message: "sandbox: one statement only"}
+	case !strings.HasPrefix(upper, "SELECT") && !strings.HasPrefix(upper, "WITH"):
+		return &flatsqlrt.SandboxError{Code: flatsqlrt.SandboxCodeNotSelect, Message: "sandbox: SELECT statements only"}
+	}
+	if m := sandboxForbidden.FindString(stmt); m != "" {
+		return &flatsqlrt.SandboxError{Code: flatsqlrt.SandboxCodeNotAuthorized, Message: fmt.Sprintf("sandbox: %q is not allowed", strings.ToLower(m))}
+	}
+	if s.db == nil {
+		return errors.New("sandboxed select: store is not open")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), caps.Timeout)
+	defer cancel()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	rows, err := s.db.QueryContext(ctx, stmt, params...)
+	if err != nil {
+		return fmt.Errorf("sandboxed select: %w", err)
+	}
+	defer rows.Close()
+	names, err := rows.Columns()
+	if err != nil {
+		return fmt.Errorf("sandboxed select: columns: %w", err)
+	}
+	col.out.Columns = names
+	values := make([]any, len(names))
+	ptrs := make([]any, len(names))
+	for i := range values {
+		ptrs[i] = &values[i]
+	}
+	for rows.Next() {
+		if err := rows.Scan(ptrs...); err != nil {
+			return fmt.Errorf("sandboxed select: scan: %w", err)
+		}
+		row := make([]format2.Cell, len(values))
+		for i, v := range values {
+			switch t := v.(type) {
+			case nil:
+				row[i] = format2.Null()
+			case int64:
+				row[i] = format2.Int(t)
+			case float64:
+				row[i] = format2.Real(t)
+			case bool:
+				row[i] = format2.Int(map[bool]int64{true: 1}[t])
+			case string:
+				row[i] = format2.Text(t)
+			case []byte:
+				row[i] = format2.Blob(t)
+			default:
+				row[i] = format2.Text(fmt.Sprint(t))
+			}
+		}
+		if col.add(row) != nil {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("sandboxed select: %w", err)
+	}
+	return nil
 }

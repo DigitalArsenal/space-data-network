@@ -35,7 +35,9 @@ import {
   nodeSummaryFromProfile,
   normalizeConjunctionScreenResult,
   normalizeDataSearchResult,
-  normalizeDataSummary,
+  dataSummaryFromQrp,
+  getQrpTable,
+  healthFromQrp,
   normalizeNodeAccessPayload,
   normalizeObjectPayload,
   normalizePeerPayload,
@@ -108,9 +110,9 @@ export function createDesktopLocalBackend(options: DesktopLocalBackendOptions = 
     },
     getNodeSummary,
     async getHealth() {
-      const health = await getJson<unknown>(fetchLike, joinUrl(desktopBase, '/api/v1/data/health'), 'getHealth');
-      if (!health.ok) return createDegradedResult('getHealth', health.capability.reason ?? 'desktop health route unavailable', { healthy: false, details: {} });
-      return createAvailableResult('getHealth', { healthy: true, details: isRecord(health.data) ? health.data : { value: health.data } });
+      const health = await getQrpTable(fetchLike, joinUrl(desktopBase, '/api/v1/data/health'), 'getHealth');
+      if (!health.ok || !health.data) return createDegradedResult('getHealth', health.capability.reason ?? 'desktop health route unavailable', { healthy: false, details: {} });
+      return createAvailableResult('getHealth', healthFromQrp(health.data));
     },
     getNodeProfile,
     async saveNodeProfile(profile: Record<string, unknown>): Promise<BackendResult<Record<string, unknown>>> {
@@ -292,14 +294,14 @@ export function createDesktopLocalBackend(options: DesktopLocalBackendOptions = 
       return createDegradedResult('inspectObject', `object ${id} is not available in the local index`);
     },
     async getDataSummary(): Promise<BackendResult<DataSummary>> {
-      const result = await getJson<unknown>(
+      const result = await getQrpTable(
         fetchLike,
         joinUrl(desktopBase, '/api/v1/data/summary'),
         'getDataSummary',
         authRequest(),
       );
-      if (!result.ok) return createDegradedResult('getDataSummary', result.capability.reason ?? 'data summary unavailable');
-      return createAvailableResult('getDataSummary', normalizeDataSummary(result.data));
+      if (!result.ok || !result.data) return createDegradedResult('getDataSummary', result.capability.reason ?? 'data summary unavailable');
+      return createAvailableResult('getDataSummary', dataSummaryFromQrp(result.data));
     },
     async searchProviders(request: SharedSearchRequest): Promise<BackendResult<SearchResult<ProviderSearchRow>>> {
       const result = await getJson<unknown>(
@@ -325,9 +327,7 @@ export function createDesktopLocalBackend(options: DesktopLocalBackendOptions = 
       return scanRawDataViaQrp(fetchLike, desktopBase, 'scanRawData', query);
     },
     async queryRawData(query: RawDataQuery): Promise<BackendResult<RawDataRecord[]>> {
-      // ONE stream request (loop D.3): the aligned FlatBuffer record stream
-      // plus its X-SDN-* headers replace the base64-era JSON metadata
-      // round-trip that used to precede it.
+      // ONE $QRP request; the answer's run headers name each record's lane.
       return queryRawDataViaStream(fetchLike, desktopBase, 'queryRawData', query);
     },
     async readRawDataRecord(schemaName: string, cid: string): Promise<BackendResult<RawDataRecordBytes>> {

@@ -5,7 +5,8 @@ import type { CallToolResult, ReadResourceResult } from "@modelcontextprotocol/s
 
 import { SdnClient } from "../src/client.js";
 import { createServer } from "../src/server.js";
-import { startMockSdn, NODE_INFO, REGISTRY_PEERS, type MockSdn } from "./mock-sdn.js";
+import { recordCid } from "../src/qrp.js";
+import { startMockSdn, EPOCH_RECORD, NODE_INFO, QUERY_RECORD, REGISTRY_PEERS, type MockSdn } from "./mock-sdn.js";
 
 let mock: MockSdn;
 let client: Client;
@@ -120,7 +121,18 @@ describe("sdn_query_records", () => {
     expect(result.isError).toBeFalsy();
     const payload = parsed(result);
     expect(payload.schema).toBe("OMM.fbs");
-    expect(payload.results[0].cid).toBe("bafkreimockcid");
+    expect(payload.records[0]).toEqual({
+      cid: recordCid(QUERY_RECORD.subarray(4)),
+      size_bytes: QUERY_RECORD.byteLength - 4,
+      file_identifier: "$OMM",
+      provider_id: "celestrak",
+      source_name: "gp",
+      batch_id: "b-1",
+      producer_peer_id: "",
+      origin_id: NODE_INFO.peer_id,
+    });
+    expect(payload.records[0].cid).toMatch(/^bafkrei/);
+    expect(mock.state.queries.at(-1)).toMatchObject({ schema: "OMM.fbs", provider_id: "celestrak", limit: 5, page: 1 });
   });
 
   it("routes time-range filters to the epoch index", async () => {
@@ -130,8 +142,13 @@ describe("sdn_query_records", () => {
     })) as CallToolResult;
     expect(result.isError).toBeFalsy();
     const payload = parsed(result);
-    expect(payload.profile).toBe("day");
-    expect(payload.results[0].cid).toBe("bafkreimockepochcid");
+    expect(payload.records[0].cid).toBe(recordCid(EPOCH_RECORD.subarray(4)));
+    expect(mock.state.queries.at(-1)).toMatchObject({
+      schema: "OMM.fbs",
+      time_profile: 1,
+      from_epoch_ms: Date.parse("2026-06-01T00:00:00Z"),
+      to_epoch_ms: Date.parse("2026-06-10T00:00:00Z"),
+    });
   });
 
   it("surfaces server validation errors", async () => {

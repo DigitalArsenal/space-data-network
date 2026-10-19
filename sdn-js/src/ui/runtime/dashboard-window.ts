@@ -5,8 +5,8 @@
  * node runs and is fed by the SAME size-prefixed FlatBuffer record frames —
  * but as a WINDOW, never a mirror. For every UI state (standard, source lane,
  * epoch range) the client asks the node for exactly the rows that state
- * needs on the raw lane (`POST /api/v1/data/query` with
- * `Accept: application/vnd.sdn.flatbuffers.stream`), ingests the frames into
+ * needs on the raw lane (`POST /api/v1/data/query`, one $QRP request frame;
+ * the answer is $QRP page runs of verbatim record frames), ingests each run into
  * `<Table>@<source>` partitions of the local engine, runs the screen's SQL
  * locally, and drops the window when the state changes. The node never
  * projects a record to JSON for the dashboard; the local engine projects
@@ -27,7 +27,6 @@
  */
 
 import {
-  flatSqlSizePrefixedStreamInfo,
   type LocalFlatSqlClearOptions,
   type LocalFlatSqlQueryOptions,
   type LocalFlatSqlQueryResult,
@@ -38,13 +37,9 @@ import {
 } from './local-flatsql';
 import type { WorkerSchemaSyncProgress } from './local-flatsql-worker-client';
 import type { RawDataQuery } from './sdn-backend';
-import {
-  authRawFlatbufferStreamRequest,
-  joinUrl,
-  rawDataQueryPayload,
-  resolveFetch,
-  type FetchLike,
-} from './sdn-backend-adapter-utils';
+import { joinUrl, resolveFetch, type FetchLike } from './sdn-backend-adapter-utils';
+import { decodeQrpError } from './qrp-frames';
+import { decodeQrpRecordRuns, qrpPostInit, qrpRequestFromRawQuery } from './qrp-request';
 import { SerialTaskQueue } from './serial-task-queue';
 import { syncRowCountSummary } from './sync-progress';
 import { encodeWorkerSchemaSyncProgressFlatBuffer } from './worker-sync-status-flatbuffer';
@@ -99,16 +94,16 @@ export interface DashboardWindowLoad {
   source: string;
   /** Rows the local engine holds for this state. */
   windowRows: number;
-  /** Rows the node stores for this state (X-SDN-Total-Count). */
+  /** Rows the node stores for this state ($QRP TOTAL_COUNT). */
   storedRows: number;
   /** True when the window holds fewer rows than the node stores for the state. */
   partial: boolean;
   /** Frame bytes ingested for this load. */
   bytes: number;
   serverOrder: DashboardWindowServerOrder;
-  /** True when the node applied the epoch range (sync_filter) server-side. */
+  /** True when the node applied the epoch range ($QRP SQL) server-side. */
   serverRange: boolean;
-  /** The `sync_filter` sent to the node ('' when none). */
+  /** The $QRP SQL range clause sent to the node ('' when none). */
   syncFilter: string;
   /** Human-readable range text for status ('' when the state has no range). */
   rangeText: string;
@@ -145,11 +140,6 @@ export interface DashboardWindowLoadOptions {
   maxRows?: number;
   maxBytes?: number;
   batchRows?: number;
-}
-
-export interface DashboardWindowSourceRun {
-  source: string;
-  count: number;
 }
 
 /** The subset of the local FlatSQL store the window runtime drives. */
@@ -214,10 +204,12 @@ interface StandardWindowState {
 }
 
 interface RawLanePage {
-  bytes: Uint8Array;
+  /** Frame bytes received. */
+  bytes: number;
   recordCount: number;
   totalCount: number | null;
-  runs: DashboardWindowSourceRun[] | null;
+  /** Aligned size-prefixed record streams, one per source run, in answer order. */
+  runs: Array<{ source: string; stream: Uint8Array }>;
   nextCursor?: string;
   cursor?: string;
   highWaterMark?: string;
@@ -265,24 +257,6 @@ export function dashboardWindowStateKey(state: DashboardWindowState): string {
   const key = [code, (state.source ?? '').trim(), range?.column ?? '', range?.from ?? '', range?.to ?? ''].join('|');
   const searchKey = state.search?.trim() ? `${key}|search:${JSON.stringify(state.search.trim())}` : key;
   return state.remote ? `${searchKey}|${JSON.stringify(state.remote)}` : searchKey;
-}
-
-/** Parse `X-SDN-Source-Runs` (`<pathEscaped source or ->:<count>` pairs, comma-joined, frame order). */
-export function parseSourceRunsHeader(value: string | null | undefined): DashboardWindowSourceRun[] | null {
-  const text = (value ?? '').trim();
-  if (!text) return null;
-  const runs: DashboardWindowSourceRun[] = [];
-  for (const part of text.split(',')) {
-    const item = part.trim();
-    if (!item) continue;
-    const separator = item.lastIndexOf(':');
-    if (separator < 0) return null;
-    const count = Number(item.slice(separator + 1));
-    if (!Number.isInteger(count) || count < 0) return null;
-    const escaped = item.slice(0, separator);
-    runs.push({ source: escaped === '-' ? '' : decodePathSegment(escaped), count });
-  }
-  return runs;
 }
 
 /** Frame start offsets of an aligned u32-LE size-prefixed stream, plus the end offset. */
@@ -427,10 +401,10 @@ class DashboardWindow implements DashboardWindowRuntime {
         ? await this.fetchRemotePage(query, state.remote, options.signal)
         : await this.fetchRawPage(query, options.signal);
       this.assertCurrent(window, generation, standardId);
-      const bytes = fetched.bytes.byteLength;
+      const bytes = fetched.bytes;
       await this.ingestRuns(standardId, fetched, key, offset, source);
       const windowRows = await this.windowRows(standardId);
-      // Without X-SDN-Total-Count the node stores at least what it just paged.
+      // Without a total the node stores at least what it just paged.
       const storedRows = fetched.totalCount ?? Math.max(windowRows, offset + fetched.recordCount);
       const load: DashboardWindowLoad = {
         key,
@@ -483,24 +457,25 @@ class DashboardWindow implements DashboardWindowRuntime {
       let bytes = 0;
       let batches = 0;
       let storedRows: number | null = null;
+      // The node pages by PAGE (offset = (PAGE-1)*LIMIT): every batch asks
+      // for a whole batchRows page; the last one ingests only what fits.
+      const limit = batchRows;
       for (;;) {
-        const limit = Math.min(batchRows, maxRows - received);
-        if (limit <= 0) break;
-        const fetched = await this.fetchRawPage({
+        if (maxRows - received <= 0) break;
+        const fetched = takeRecords(await this.fetchRawPage({
           schema: `${standardId}.fbs`,
           ...(state.search?.trim() ? { search: state.search.trim() } : {}),
           ...(source ? { sourceName: source } : {}),
           ...(syncFilter ? { syncFilter } : {}),
           limit,
           offset,
-        });
+        }), maxRows - received);
         this.assertCurrent(window, generation, standardId);
         batches += 1;
-        const batchBytes = fetched.bytes.byteLength;
         await this.ingestRuns(standardId, fetched, key, offset, source);
         received += fetched.recordCount;
-        bytes += batchBytes;
-        offset += fetched.recordCount;
+        bytes += fetched.bytes;
+        offset += limit;
         if (fetched.totalCount != null) storedRows = fetched.totalCount;
         if (fetched.recordCount < limit) break;
         if (received >= maxRows || bytes >= maxBytes) break;
@@ -662,43 +637,34 @@ class DashboardWindow implements DashboardWindowRuntime {
   /** Once per standard: does the node's index carry epochs for it? */
   private async probeServerRange(standardId: string): Promise<boolean> {
     const url = joinUrl(this.baseUrl, '/api/v1/data/query');
-    const response = await this.fetch(url, authRawFlatbufferStreamRequest(rawDataQueryPayload({
+    const response = await this.fetch(url, qrpPostInit({
       schema: `${standardId}.fbs`,
       limit: 1,
-      offset: 0,
-      syncFilter: DASHBOARD_WINDOW_RANGE_PROBE_FILTER,
-    })));
+      page: 1,
+      sql: DASHBOARD_WINDOW_RANGE_PROBE_FILTER,
+    }));
+    const body = new Uint8Array(await response.arrayBuffer());
     if (!response.ok) {
       // The node refused the filter for this standard: no server-side range.
       if (response.status >= 400 && response.status < 500) return false;
-      throw new Error(`${url} returned HTTP ${response.status}`);
+      throw rawLaneError(url, response, body);
     }
-    const bytes = new Uint8Array(await response.arrayBuffer());
-    const total = headerInteger(response, 'x-sdn-total-count');
-    if (total != null) return total > 0;
-    return flatSqlSizePrefixedStreamInfo(bytes).totalRecordCount > 0;
+    const runs = decodeQrpRecordRuns(body);
+    return runs[0].totalCount > 0 || runs.some((run) => run.count > 0);
   }
 
   private async fetchRawPage(query: RawDataQuery, signal?: AbortSignal): Promise<RawLanePage> {
     const url = joinUrl(this.baseUrl, '/api/v1/data/query');
-    const response = await this.fetch(url, { ...authRawFlatbufferStreamRequest(rawDataQueryPayload(query)), ...(signal ? { signal } : {}) });
-    if (!response.ok) {
-      let message = '';
-      let code;
-      try { const error = await response.json(); message = error?.error?.message || error?.message || ''; code = error?.error?.code; } catch { /* no JSON error body */ }
-      throw Object.assign(new Error(message || `${url} returned HTTP ${response.status}`), {
-        retryAfterMs: Number(response.headers.get('retry-after')) * 1000 || undefined,
-        code,
-      });
-    }
-    if (query.search && response.headers.get('x-sdn-search-applied') !== 'fts5-v1') throw new Error('This node needs a search-capable update before it can search all records.');
-    const bytes = new Uint8Array(await response.arrayBuffer());
-    const info = flatSqlSizePrefixedStreamInfo(bytes);
+    const response = await this.fetch(url, qrpPostInit(qrpRequestFromRawQuery(query), signal));
+    const body = new Uint8Array(await response.arrayBuffer());
+    if (!response.ok) throw rawLaneError(url, response, body);
+    const runs = decodeQrpRecordRuns(body);
+    if (query.search && runs[0].search !== query.search.trim()) throw new Error('This node needs a search-capable update before it can search all records.');
     return {
-      bytes,
-      recordCount: info.totalRecordCount,
-      totalCount: headerInteger(response, 'x-sdn-total-count'),
-      runs: parseSourceRunsHeader(response.headers?.get?.('x-sdn-source-runs')),
+      bytes: body.byteLength,
+      recordCount: runs.reduce((total, run) => total + run.count, 0),
+      totalCount: runs[0].totalCount,
+      runs: runs.filter((run) => run.count > 0).map((run) => ({ source: run.sourceName, stream: run.stream })),
     };
   }
 
@@ -722,14 +688,15 @@ class DashboardWindow implements DashboardWindowRuntime {
     if (normalizeStandardCode(chunk.header.schema) !== normalizeStandardCode(query.schema)) throw new Error('The remote node returned a different dataset.');
     if (chunk.records.length > query.limit! || chunk.records.length !== chunk.header.count) throw new Error('The remote page has an inconsistent record count.');
     if (remote.snapshotId && chunk.header.snapshotId !== remote.snapshotId) throw new Error('The remote snapshot changed. Refresh to start again.');
-    return { bytes: chunk.recordStream, recordCount: chunk.records.length, totalCount: chunk.header.totalCount, runs: null,
+    return { bytes: chunk.recordStream.byteLength, recordCount: chunk.records.length, totalCount: chunk.header.totalCount,
+      runs: chunk.records.length ? [{ source: '', stream: chunk.recordStream }] : [],
       cursor: chunk.header.cursor, nextCursor: chunk.header.nextCursor, snapshotId: chunk.header.snapshotId, head: chunk.header.head, highWaterMark: chunk.header.highWaterMark };
   }
 
   /**
-   * Split the aligned stream at the node's source-run boundaries (zero-copy
-   * views; a worker store slices only the run it transfers) and ingest each
-   * run into its `<Table>@<source>` partition — the node's own ensureEngineSource.
+   * Ingest each $QRP source run (a zero-copy view of the answer; a worker
+   * store slices only the run it transfers) into its `<Table>@<source>`
+   * partition — the node's own ensureEngineSource.
    */
   private async ingestRuns(
     standardId: string,
@@ -738,31 +705,40 @@ class DashboardWindow implements DashboardWindowRuntime {
     offset: number,
     stateSource: string,
   ): Promise<number> {
-    if (page.recordCount === 0) return 0;
-    const bounds = sizePrefixedFrameBoundaries(page.bytes);
-    const declaredRuns = page.runs?.filter((run) => run.count > 0) ?? [];
-    const declaredCount = declaredRuns.reduce((total, run) => total + run.count, 0);
-    const runs = declaredCount === page.recordCount && declaredRuns.length > 0
-      ? declaredRuns
-      : [{ source: '', count: page.recordCount }];
-    let frameIndex = 0;
     let ingested = 0;
-    for (let runIndex = 0; runIndex < runs.length; runIndex += 1) {
-      const run = runs[runIndex];
-      const start = bounds[frameIndex];
-      const end = bounds[frameIndex + run.count];
-      const slice = start === 0 && end === page.bytes.byteLength
-        ? page.bytes
-        : page.bytes.subarray(start, end);
-      ingested += await this.store.ingestFlatBufferStream(standardId, slice, {
+    for (let runIndex = 0; runIndex < page.runs.length; runIndex += 1) {
+      const run = page.runs[runIndex];
+      ingested += await this.store.ingestFlatBufferStream(standardId, run.stream, {
         source: run.source || stateSource || DASHBOARD_WINDOW_UNKNOWN_SOURCE,
         persist: false,
         recordKeyPrefix: `window:${key}:${offset}:${runIndex}:`,
       });
-      frameIndex += run.count;
     }
     return ingested;
   }
+}
+
+/** The first `max` records of a page (runs past the cap are cut at a frame boundary). */
+function takeRecords(page: RawLanePage, max: number): RawLanePage {
+  if (page.recordCount <= max) return page;
+  const runs: RawLanePage['runs'] = [];
+  let left = max;
+  for (const run of page.runs) {
+    if (left <= 0) break;
+    const bounds = sizePrefixedFrameBoundaries(run.stream);
+    const count = bounds.length - 1;
+    runs.push(count <= left ? run : { source: run.source, stream: run.stream.subarray(0, bounds[left]) });
+    left -= Math.min(count, left);
+  }
+  return { ...page, recordCount: max, runs };
+}
+
+function rawLaneError(url: string, response: Response, body: Uint8Array): Error {
+  const error = decodeQrpError(body);
+  return Object.assign(new Error(error?.message || `${url} returned HTTP ${response.status}`), {
+    retryAfterMs: error?.retryAfterMs || undefined,
+    code: error?.code || undefined,
+  });
 }
 
 function normalizeRange(range: DashboardWindowRange | null | undefined): NormalizedRange | null {
@@ -789,25 +765,10 @@ function rangeText(range: NormalizedRange): string {
   return clauses.join(' AND ');
 }
 
-function headerInteger(response: Response, name: string): number | null {
-  const raw = response.headers?.get?.(name);
-  if (raw == null || raw.trim() === '') return null;
-  const value = Number(raw);
-  return Number.isFinite(value) && value >= 0 ? Math.floor(value) : null;
-}
-
 function clampInteger(value: number | null | undefined, min: number, max: number, fallback: number): number {
   const numeric = Math.floor(Number(value));
   if (!Number.isFinite(numeric) || numeric <= 0) return fallback;
   return Math.max(min, Math.min(max, numeric));
-}
-
-function decodePathSegment(value: string): string {
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return value;
-  }
 }
 
 function sqlIdentifier(name: string): string {

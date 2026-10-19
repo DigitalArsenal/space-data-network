@@ -22,7 +22,17 @@ import {
 } from './sdn-backend';
 import { normalizeIpfsArtifactPeerAddrs } from './ipfs-artifact-peers';
 import { FLATBUFFER_STREAM_TYPE, decodeQrpError, decodeQrpScanStream, encodeQrpScanRequest } from './qrp-frames';
-import { sha256 } from '@noble/hashes/sha2.js';
+import {
+  decodeQrpTablePage,
+  qrpNumber,
+  qrpPostInit,
+  qrpRequestFromRawQuery,
+  qrpRowObjects,
+  qrpStatus,
+  qrpText,
+  type QrpTablePage,
+  type QrpCell,
+} from './qrp-request';
 
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 export const RAW_FLATBUFFER_STREAM_CONTENT_TYPE = 'application/vnd.sdn.flatbuffers.stream';
@@ -138,28 +148,79 @@ export function normalizeStorageSummary(payload: unknown): StorageSummary {
   };
 }
 
-export function normalizeDataSummary(payload: unknown): DataSummary {
-  const record = isRecord(payload) ? payload : {};
+/**
+ * GET of a route that answers one $QRP Page of COLUMNS + ROWS
+ * (/api/v1/data/{health,summary,datastores,local-replica-stats,sources}).
+ */
+export async function getQrpTable(
+  fetchLike: FetchLike,
+  url: string,
+  capabilityId: string,
+  init?: RequestInit,
+): Promise<BackendResult<QrpTablePage>> {
+  try {
+    const headers = new Headers(init?.headers);
+    headers.set('accept', FLATBUFFER_STREAM_TYPE);
+    const response = await fetchLike(url, { ...init, headers });
+    const body = new Uint8Array(await response.arrayBuffer());
+    if (!response.ok) {
+      const error = decodeQrpError(body);
+      return createDegradedResult(capabilityId, `${url} returned HTTP ${response.status}${error ? `: ${error.code} ${error.message}` : ''}`);
+    }
+    return createAvailableResult(capabilityId, decodeQrpTablePage(body));
+  } catch (error) {
+    return createDegradedResult(capabilityId, error instanceof Error ? error.message : String(error));
+  }
+}
+
+/**
+ * /api/v1/data/summary: one row per (schema, lane), then one total row per
+ * schema (every lane field ''), then the store total (schema_name '' too).
+ * Columns: schema_name, provider_id, source_name, batch_id,
+ * producer_peer_id, producer_public_key, count, total_bytes.
+ */
+export function dataSummaryFromQrp(page: QrpTablePage): DataSummary {
+  const rows = qrpRowObjects(page);
+  const laneless = (row: Record<string, QrpCell>) =>
+    ['provider_id', 'source_name', 'batch_id', 'producer_peer_id', 'producer_public_key'].every((name) => qrpText(row, name) === '');
+  const store = rows.find((row) => laneless(row) && qrpText(row, 'schema_name') === '');
+  const totals = rows.filter((row) => laneless(row) && qrpText(row, 'schema_name') !== '');
+  const lanes = rows.filter((row) => !laneless(row));
+  const schemas = totals.map((row) => ({
+    schemaName: qrpText(row, 'schema_name'),
+    count: qrpNumber(row, 'count') ?? 0,
+    totalBytes: qrpNumber(row, 'total_bytes') ?? 0,
+  }));
+  const sources = lanes.map((row) => ({
+    schemaName: qrpText(row, 'schema_name') || 'unknown',
+    providerId: qrpText(row, 'provider_id'),
+    sourceName: qrpText(row, 'source_name'),
+    batchId: qrpText(row, 'batch_id'),
+    producerPeerId: qrpText(row, 'producer_peer_id'),
+    producerPublicKey: qrpText(row, 'producer_public_key'),
+    count: qrpNumber(row, 'count') ?? 0,
+    totalBytes: qrpNumber(row, 'total_bytes') ?? 0,
+  }));
+  const counted = schemas.length ? schemas : sources;
   return {
-    totalRecords: readNumber(record, 'total_records', 'totalRecords') ?? 0,
-    totalBytes: readNumber(record, 'total_bytes', 'totalBytes') ?? 0,
-    schemas: recordsFromValue(record.schemas).map((entry) => ({
-      schemaName: readString(entry, 'schema_name', 'schemaName') ?? 'unknown',
-      count: readNumber(entry, 'count') ?? 0,
-      totalBytes: readNumber(entry, 'total_bytes', 'totalBytes') ?? 0,
-    })),
-    sources: recordsFromValue(record.sources).map((entry) => ({
-      datastoreKey: readString(entry, 'datastore_key', 'datastoreKey') ?? undefined,
-      schemaName: readString(entry, 'schema_name', 'schemaName') ?? 'unknown',
-      providerId: readString(entry, 'provider_id', 'providerId') ?? '',
-      sourceName: readString(entry, 'source_name', 'sourceName') ?? '',
-      batchId: readString(entry, 'batch_id', 'batchId') ?? '',
-      producerPeerId: readString(entry, 'producer_peer_id', 'producerPeerId') ?? '',
-      producerPublicKey: readString(entry, 'producer_public_key', 'producerPublicKey') ?? '',
-      count: readNumber(entry, 'count') ?? 0,
-      totalBytes: readNumber(entry, 'total_bytes', 'totalBytes') ?? 0,
-    })),
+    totalRecords: store ? qrpNumber(store, 'count') ?? 0 : counted.reduce((total, entry) => total + entry.count, 0),
+    totalBytes: store ? qrpNumber(store, 'total_bytes') ?? 0 : counted.reduce((total, entry) => total + entry.totalBytes, 0),
+    schemas,
+    sources,
   };
+}
+
+/** /api/v1/data/health: STATUS Ok (or Cold) plus rows [component, status]. */
+export function healthFromQrp(page: QrpTablePage): { healthy: boolean; details: Record<string, unknown> } {
+  const details: Record<string, unknown> = {
+    status: page.status === qrpStatus.Ok ? 'ok' : page.status === qrpStatus.Cold ? 'cold' : String(page.status),
+    generated_at_ms: page.generatedAtMs,
+  };
+  for (const row of qrpRowObjects(page)) {
+    const component = qrpText(row, 'component');
+    if (component) details[component] = qrpText(row, 'status');
+  }
+  return { healthy: page.status === qrpStatus.Ok, details };
 }
 
 /**
@@ -231,71 +292,10 @@ export async function scanRawDataViaQrp(
 }
 
 /**
- * Parse an aligned size-prefixed FlatBuffer record stream. The wire format
- * is u32 LITTLE-ENDIAN length prefixes — the FlatSQL engine framing the
- * server advertises as `X-SDN-Stream-Format: flatsql-size-prefixed-le-u32`
- * (sdn-server writeFlatBufferPayloadStream / WriteRawRecordFrames). Frames
- * are zero-copy subarray views into `bytes`.
- */
-export function parseRawFlatbufferStream(bytes: Uint8Array): Uint8Array[] {
-  const records: Uint8Array[] = [];
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  let offset = 0;
-  while (offset < bytes.byteLength) {
-    if (offset + 4 > bytes.byteLength) throw new Error('truncated raw FlatBuffer stream frame header');
-    const length = view.getUint32(offset, true);
-    offset += 4;
-    if (offset + length > bytes.byteLength) throw new Error('truncated raw FlatBuffer stream frame payload');
-    records.push(bytes.subarray(offset, offset + length));
-    offset += length;
-  }
-  return records;
-}
-
-/** Datasync raw-query JSON payload (shared by the remote + desktop adapters). */
-export function rawDataQueryPayload(query: RawDataQuery): Record<string, unknown> {
-  return {
-    schema: query.schema,
-    include_data: false,
-    ...(query.datastoreKey ? { datastore_key: query.datastoreKey } : {}),
-    ...(query.providerId ? { provider_id: query.providerId } : {}),
-    ...(query.sourceName ? { source_name: query.sourceName } : {}),
-    ...(query.batchId ? { batch_id: query.batchId } : {}),
-    ...(query.peerId ? { peer_id: query.peerId } : {}),
-    ...(query.cursor ? { cursor: query.cursor } : {}),
-    ...(query.snapshotId ? { snapshot_id: query.snapshotId } : {}),
-    ...(query.head ? { head: query.head } : {}),
-    ...(query.queryProfile ? { query_profile: query.queryProfile } : {}),
-    ...(query.syncFilter ? { sync_filter: query.syncFilter } : {}),
-    ...(query.search ? { search: query.search } : {}),
-    ...(typeof query.limit === 'number' ? { limit: query.limit } : {}),
-    ...(typeof query.offset === 'number' ? { offset: query.offset } : {}),
-  };
-}
-
-/** Authenticated POST that asks for the aligned FlatBuffer record stream. */
-export function authRawFlatbufferStreamRequest(body: Record<string, unknown>): RequestInit {
-  return {
-    method: 'POST',
-    credentials: 'include',
-    headers: {
-      'content-type': 'application/json',
-      'x-requested-with': 'sdn-ui',
-      accept: RAW_FLATBUFFER_STREAM_CONTENT_TYPE,
-    },
-    body: JSON.stringify(body),
-  };
-}
-
-/**
- * Raw data query in ONE stream request (loop D.3 — the base64-era double
- * round-trip is gone): POST `/api/v1/data/query` with the FlatBuffer-stream
- * Accept header; the response headers carry the schema
- * (`X-SDN-Schema`) and record count (`X-SDN-Record-Count`), the body is the
- * aligned size-prefixed record stream. Record identity is reconstructed
- * client-side: cid = sha256 hex of the payload bytes — exactly the server's
- * computeCID (sdn-server internal/storage/flatsql.go) — and the query's own
- * provider/source/batch filters stamp the provenance columns they pinned.
+ * Raw data query in ONE $QRP request (sdn-server /api/v1/data/query): POST
+ * one $QRP{KIND=Request} frame, decode the page runs and their verbatim
+ * record frames. Each record carries its store CID (CIDv1 raw, sha2-256 of
+ * the frame bytes) and the lane its run header names.
  */
 export async function queryRawDataViaStream(
   fetchLike: FetchLike,
@@ -305,34 +305,27 @@ export async function queryRawDataViaStream(
 ): Promise<BackendResult<RawDataRecord[]>> {
   const url = joinUrl(baseUrl, '/api/v1/data/query');
   try {
-    const response = await fetchLike(url, authRawFlatbufferStreamRequest(rawDataQueryPayload(query)));
+    const response = await fetchLike(url, qrpPostInit(qrpRequestFromRawQuery(query)));
+    const body = new Uint8Array(await response.arrayBuffer());
     if (!response.ok) {
-      return createDegradedResult(capabilityId, `${url} returned HTTP ${response.status}`);
+      const error = decodeQrpError(body);
+      return createDegradedResult(capabilityId, `${url} returned HTTP ${response.status}${error ? `: ${error.code} ${error.message}` : ''}`);
     }
-    const streamBytes = new Uint8Array(await response.arrayBuffer());
-    const schemaName = response.headers?.get?.('x-sdn-schema') ?? query.schema;
-    const frames = parseRawFlatbufferStream(streamBytes);
-    const records = await Promise.all(frames.map(async (frame): Promise<RawDataRecord> => ({
-      schemaName,
-      cid: await sha256Hex(frame),
-      peerId: query.peerId ?? '',
-      ...(query.providerId ? { providerId: query.providerId } : {}),
-      ...(query.sourceName ? { sourceName: query.sourceName } : {}),
-      ...(query.batchId ? { batchId: query.batchId } : {}),
-      sizeBytes: frame.byteLength,
-      dataBytes: frame,
+    const { page, records } = await decodeQrpScanStream(body);
+    return createAvailableResult(capabilityId, records.map((record): RawDataRecord => ({
+      schemaName: page.schemaName,
+      cid: record.cid,
+      peerId: record.originId,
+      ...(record.providerId ? { providerId: record.providerId } : {}),
+      ...(record.sourceName ? { sourceName: record.sourceName } : {}),
+      ...(record.batchId ? { batchId: record.batchId } : {}),
+      ...(record.producerPeerId ? { producerPeerId: record.producerPeerId } : {}),
+      sizeBytes: record.bytes.byteLength,
+      dataBytes: record.bytes,
     })));
-    return createAvailableResult(capabilityId, records);
   } catch (error) {
     return createDegradedResult(capabilityId, error instanceof Error ? error.message : String(error));
   }
-}
-
-async function sha256Hex(data: Uint8Array): Promise<string> {
-  const digest = await sha256(new Uint8Array(data));
-  let hex = '';
-  for (const byte of digest) hex += byte.toString(16).padStart(2, '0');
-  return hex;
 }
 
 export function conjunctionScreenPayload(request: ConjunctionScreenRequest): Record<string, unknown> {

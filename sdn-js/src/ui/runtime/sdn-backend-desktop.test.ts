@@ -1,5 +1,6 @@
-import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
+import { FLATBUFFER_STREAM_TYPE, recordCid } from './qrp-frames';
+import { decodeQrpRequest, encodeQrpRunAnswer, encodeQrpTablePage, type QrpCell } from './qrp-request';
 import * as flatbuffers from 'flatbuffers';
 import { EPM } from 'spacedatastandards.org/lib/js/EPM/EPM.js';
 import { EntityType } from 'spacedatastandards.org/lib/js/EPM/EntityType.js';
@@ -191,19 +192,13 @@ describe('desktop-local SDN backend', () => {
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       calls.push({ url, init });
       if (url === 'http://127.0.0.1:17890/api/v1/data/summary') {
-        return jsonResponse({
-          total_records: 1,
-          total_bytes: 128,
-          schemas: [{ schema_name: 'EPM.fbs', count: 1, total_bytes: 128 }],
-          sources: [{ schema_name: 'EPM.fbs', provider_id: 'local-node', source_name: 'local-epm', batch_id: 'local', count: 1, total_bytes: 128 }],
-        });
+        return qrpTableResponse([{ name: 'schema_name' }, { name: 'source_name' }, { name: 'provider_id' }, { name: 'batch_id' }, { name: 'producer_peer_id' }, { name: 'producer_public_key' }, { name: 'count', type: 'int64' }, { name: 'total_bytes', type: 'int64' }], [['EPM.fbs', '', '', '', '', '', 1, 128], ['EPM.fbs', 'local-epm', 'local-node', 'local', '', '', 1, 128]]);
       }
       if (url === 'http://127.0.0.1:17890/api/v1/data/query') {
         expect(init?.method).toBe('POST');
         expect(init?.credentials).toBe('include');
-        // ONE request (loop D.3): only the stream shape is ever asked for.
-        expect(acceptHeader(init)).toContain('application/vnd.sdn.flatbuffers.stream');
-        return flatbufferStreamResponse([new Uint8Array([0, 1, 2, 3])], 'EPM.fbs');
+        expect(acceptHeader(init)).toContain(FLATBUFFER_STREAM_TYPE);
+        return qrpQueryResponse([new Uint8Array([0, 1, 2, 3])], 'EPM.fbs', { providerId: 'local-node', sourceName: 'local-epm' });
       }
       if (url === 'http://127.0.0.1:17890/api/v1/data/records/EPM.fbs/12D3KooWEPM') {
         return flatbufferResponse(new Uint8Array([0, 1, 2, 3]));
@@ -226,8 +221,8 @@ describe('desktop-local SDN backend', () => {
       ok: true,
       data: [{
         schemaName: 'EPM.fbs',
-        // cid = sha256 hex of the payload bytes — the server's computeCID.
-        cid: createHash('sha256').update(new Uint8Array([0, 1, 2, 3])).digest('hex'),
+        // cid = the store's CIDv1 (raw codec, sha2-256) of the frame bytes.
+        cid: await recordCid(new Uint8Array([0, 1, 2, 3])),
         providerId: 'local-node',
         sourceName: 'local-epm',
         dataBytes: new Uint8Array([0, 1, 2, 3]),
@@ -241,10 +236,9 @@ describe('desktop-local SDN backend', () => {
       expect.objectContaining({ url: 'http://127.0.0.1:17890/api/v1/data/summary', init: expect.objectContaining({ credentials: 'include' }) }),
       expect.objectContaining({ url: 'http://127.0.0.1:17890/api/v1/data/query', init: expect.objectContaining({ method: 'POST', credentials: 'include' }) }),
     ]));
-    // The base64-era double round-trip is GONE: exactly ONE query request.
     expect(calls.filter((call) => call.url === 'http://127.0.0.1:17890/api/v1/data/query')).toHaveLength(1);
     for (const call of calls.filter((entry) => entry.url === 'http://127.0.0.1:17890/api/v1/data/query')) {
-      expect(JSON.parse(String(call.init?.body))).toMatchObject({ sync_filter: "FILE_ID LIKE 'celestrak:%'" });
+      expect(decodeQrpRequest(call.init?.body as Uint8Array)).toMatchObject({ sql: "FILE_ID LIKE 'celestrak:%'", limit: 10, page: 1 });
     }
   });
 
@@ -549,28 +543,19 @@ function jsonResponse(payload: unknown, status = 200) {
   } as Response;
 }
 
-function flatbufferStreamResponse(records: Uint8Array[], schemaName = 'OMM.fbs') {
-  const size = records.reduce((total, record) => total + 4 + record.byteLength, 0);
-  const body = new Uint8Array(size);
-  const view = new DataView(body.buffer);
-  let offset = 0;
-  for (const record of records) {
-    // u32 LITTLE-ENDIAN framing — the real server's
-    // X-SDN-Stream-Format: flatsql-size-prefixed-le-u32 wire format.
-    view.setUint32(offset, record.byteLength, true);
-    offset += 4;
-    body.set(record, offset);
-    offset += record.byteLength;
-  }
-  return new Response(body, {
-    status: 200,
-    headers: {
-      'content-type': 'application/vnd.sdn.flatbuffers.stream',
-      'x-sdn-schema': schemaName,
-      'x-sdn-record-count': String(records.length),
-      'x-sdn-stream-format': 'flatsql-size-prefixed-le-u32',
-    },
+/** The node's $QRP answers: a COLUMNS + ROWS page, and /data/query runs. */
+function qrpTableResponse(columns: Array<{ name: string; type?: string }>, rows: QrpCell[][]) {
+  return new Response(encodeQrpTablePage({ columns, rows }) as BodyInit, { status: 200, headers: { 'content-type': FLATBUFFER_STREAM_TYPE } });
+}
+
+function qrpQueryResponse(records: Uint8Array[], schemaName: string, lane: { providerId?: string; sourceName?: string; originId?: string } = {}) {
+  const frames = records.map((record) => {
+    const frame = new Uint8Array(4 + record.byteLength);
+    new DataView(frame.buffer).setUint32(0, record.byteLength, true);
+    frame.set(record, 4);
+    return frame;
   });
+  return new Response(encodeQrpRunAnswer([{ schemaName, ...lane, records: frames }]) as BodyInit, { status: 200, headers: { 'content-type': FLATBUFFER_STREAM_TYPE } });
 }
 
 function acceptHeader(init?: RequestInit): string {

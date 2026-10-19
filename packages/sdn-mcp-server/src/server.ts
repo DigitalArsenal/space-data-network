@@ -145,9 +145,10 @@ export function createServer(client: SdnClient): McpServer {
       description:
         "Query records stored on this SDN node for a schema. Supports provenance filters " +
         "(provider_id, source_name, batch_id, producer_peer_id, peer_id) plus pagination " +
-        "(limit/offset). Providing any time filter (from/to as RFC3339, day as YYYY-MM-DD, " +
-        "at, norad_cat_id, entity_id) switches to the epoch index for time-range queries. " +
-        "Set include_data to true to get each record's raw FlatBuffer payload base64-encoded.",
+        "(limit, and offset as a multiple of limit). Providing any time filter (from/to as " +
+        "RFC3339, day as YYYY-MM-DD, at, norad_cat_id, entity_id) switches to the epoch index " +
+        "for time-range queries. Each record is returned as its store CID, size and file " +
+        "identifier with its lane; fetch bytes by CID from /api/v1/data/records/{schema}/{cid}.",
       inputSchema: {
         schema: z.string().describe("SDS schema name, e.g. OMM.fbs"),
         provider_id: z.string().optional().describe("Filter by provider identifier"),
@@ -156,11 +157,7 @@ export function createServer(client: SdnClient): McpServer {
         producer_peer_id: z.string().optional().describe("Filter by producing peer ID"),
         peer_id: z.string().optional().describe("Filter by storing peer ID"),
         limit: z.number().int().positive().optional().describe("Max records (server default 100)"),
-        offset: z.number().int().nonnegative().optional().describe("Pagination offset"),
-        include_data: z
-          .boolean()
-          .optional()
-          .describe("Include base64-encoded FlatBuffer record bytes"),
+        offset: z.number().int().nonnegative().optional().describe("Pagination offset (a multiple of limit)"),
         from: z.string().optional().describe("Epoch range start, RFC3339 (switches to epoch query)"),
         to: z.string().optional().describe("Epoch range end, RFC3339 (switches to epoch query)"),
         at: z.string().optional().describe("Point-in-time epoch lookup, RFC3339"),
@@ -191,7 +188,7 @@ export function createServer(client: SdnClient): McpServer {
             source_name: args.source_name,
             batch_id: args.batch_id,
             limit: args.limit,
-            include_data: args.include_data,
+            offset: args.offset,
           });
         }
         return await client.queryRecords({
@@ -203,7 +200,6 @@ export function createServer(client: SdnClient): McpServer {
           peer_id: args.peer_id,
           limit: args.limit,
           offset: args.offset,
-          include_data: args.include_data,
         });
       })
   );

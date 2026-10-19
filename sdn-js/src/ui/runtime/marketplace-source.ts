@@ -1,6 +1,7 @@
 import { decodeCanonicalPlgListing, inferStandardsUsed } from './plg-listings';
 import { decodeCanonicalStfListing } from './stf-listings';
-import { parseRawFlatbufferStream, RAW_FLATBUFFER_STREAM_CONTENT_TYPE } from './sdn-backend-adapter-utils';
+import { decodeQrpError, decodeQrpScanStream } from './qrp-frames';
+import { qrpPostInit } from './qrp-request';
 import type {
   CanonicalFieldStreamPolicy,
   CanonicalListing,
@@ -13,8 +14,8 @@ export interface MarketplaceFetchLikeResponse {
   ok: boolean;
   status: number;
   json(): Promise<unknown>;
-  /** Required for the FlatBuffer record-stream listing path (real fetch has it). */
-  arrayBuffer?(): Promise<ArrayBuffer>;
+  /** The $QRP listing answer (real fetch has it). */
+  arrayBuffer(): Promise<ArrayBuffer>;
 }
 
 export type MarketplaceFetchLike = (
@@ -100,9 +101,7 @@ export async function loadMarketplaceListingsFromServer(
     storefrontError = new Error(`storefront listing query failed (${storefront.status})`);
   }
 
-  // Base64-free listing fallback (loop D.3): ONE datasync stream request —
-  // the aligned FlatBuffer record stream replaces the retired
-  // `data/query/PLG?include_data=true&format=json` base64 envelope.
+  // Listing fallback: ONE $QRP query; the records arrive verbatim.
   const plgResponse = await fetchImpl(
     `${normalizedBaseUrl}/api/v1/data/query`,
     listingStreamRequest('PLG.fbs'),
@@ -113,9 +112,9 @@ export async function loadMarketplaceListingsFromServer(
       if (storefront.status === 404) {
         return [];
       }
-      throw storefrontError ?? new Error(`listing query failed (${plgResponse.status})`);
+      throw storefrontError ?? await listingQueryError('listing', plgResponse);
     }
-    throw new Error(`listing query failed (${plgResponse.status})`);
+    throw await listingQueryError('listing', plgResponse);
   }
 
   listings.push(...(await listingStreamFrames(plgResponse))
@@ -129,22 +128,17 @@ export async function loadMarketplaceListingsFromServer(
 }
 
 function listingStreamRequest(schemaName: string): RequestInit {
-  return {
-    method: 'POST',
-    credentials: 'include',
-    headers: {
-      'content-type': 'application/json',
-      accept: RAW_FLATBUFFER_STREAM_CONTENT_TYPE,
-    },
-    body: JSON.stringify({ schema: schemaName, limit: 25 }),
-  };
+  return qrpPostInit({ schema: schemaName, limit: 25 });
 }
 
 async function listingStreamFrames(response: MarketplaceFetchLikeResponse): Promise<Uint8Array[]> {
-  if (typeof response.arrayBuffer !== 'function') {
-    return [];
-  }
-  return parseRawFlatbufferStream(new Uint8Array(await response.arrayBuffer()));
+  const { records } = await decodeQrpScanStream(new Uint8Array(await response.arrayBuffer()));
+  return records.map((record) => record.bytes);
+}
+
+async function listingQueryError(label: string, response: MarketplaceFetchLikeResponse): Promise<Error> {
+  const error = decodeQrpError(new Uint8Array(await response.arrayBuffer()));
+  return new Error(`${label} query failed (${response.status})${error ? `: ${error.code} ${error.message}` : ''}`);
 }
 
 async function loadStorefrontListings(
@@ -355,7 +349,7 @@ async function loadStfListings(
     if (response.status === 404) {
       return [];
     }
-    throw new Error(`STF listing query failed (${response.status})`);
+    throw await listingQueryError('STF listing', response);
   }
 
   return (await listingStreamFrames(response))

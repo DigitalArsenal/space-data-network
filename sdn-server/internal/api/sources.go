@@ -99,11 +99,6 @@ type resolvedSourceRow struct {
 	Organization   *resolvedOrganization `json:"organization"`
 }
 
-type resolvedSourcesResponse struct {
-	AsOf    string              `json:"as_of"`
-	Sources []resolvedSourceRow `json:"sources"`
-}
-
 // RegisterResolvedSourcesRoute mounts the resolved-sources lane beside the
 // other data routes; the admin wall's standing policy applies unchanged (this
 // endpoint invents no auth semantics — spec rule: nothing here gets ahead of
@@ -427,7 +422,7 @@ func canonicalDomain(domain string) bool {
 
 func (h *DataQueryHandler) handleResolvedSources(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "GET only")
+		WriteErrorFrame(w, http.StatusMethodNotAllowed, "method_not_allowed", "sources takes GET", 0)
 		return
 	}
 	if !h.ensureStore(w) {
@@ -435,7 +430,7 @@ func (h *DataQueryHandler) handleResolvedSources(w http.ResponseWriter, r *http.
 	}
 	summary, err := h.store.DataSummary()
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, err.Error())
+		writeStatusFrame(w, http.StatusServiceUnavailable, QRPStatusBusy, "store_unavailable", err.Error(), 2*time.Second)
 		return
 	}
 
@@ -476,8 +471,30 @@ func (h *DataQueryHandler) handleResolvedSources(w http.ResponseWriter, r *http.
 		}
 		return rows[i].Count > rows[j].Count
 	})
-	writeJSON(w, http.StatusOK, resolvedSourcesResponse{
-		AsOf:    time.Now().UTC().Format(time.RFC3339),
-		Sources: rows,
-	})
+	writeTablePage(w, resolvedSourcesPage(rows, time.Now()))
+}
+
+// resolvedSourcesPage is the sources table: the former JSON keys, the
+// organization flattened by "_", evidence joined by ", ".
+func resolvedSourcesPage(rows []resolvedSourceRow, asOf time.Time) qrpTable {
+	cols := []qrpCol{
+		{Name: "schema", Type: colString}, {Name: "provider_id", Type: colString}, {Name: "source_name", Type: colString},
+		{Name: "batch_id", Type: colString}, {Name: "producer_peer_id", Type: colString}, {Name: "count", Type: colInt64},
+		{Name: "total_bytes", Type: colInt64, Unit: "B"}, {Name: "organization_name", Type: colString},
+		{Name: "organization_state", Type: colString}, {Name: "organization_peer_id", Type: colString},
+		{Name: "organization_epm_cid", Type: colString}, {Name: "organization_self", Type: colBool},
+		{Name: "organization_unnamed", Type: colBool}, {Name: "organization_evidence", Type: colString},
+	}
+	out := make([][]qrpVal, 0, len(rows))
+	for _, row := range rows {
+		org := row.Organization
+		if org == nil {
+			org = &resolvedOrganization{}
+		}
+		out = append(out, []qrpVal{textVal(row.Schema), textVal(row.ProviderID), textVal(row.SourceName),
+			textVal(row.BatchID), textVal(row.ProducerPeerID), intVal(row.Count), intVal(row.TotalBytes),
+			textVal(org.Name), textVal(org.State), textVal(org.PeerID), textVal(org.EPMCID),
+			boolVal(org.Self), boolVal(org.Unnamed), textVal(strings.Join(org.Evidence, ", "))})
+	}
+	return qrpTable{Status: QRPStatusOk, Columns: cols, Rows: out, TotalCount: uint64(len(out)), AsOfMs: asOf.UnixMilli()}
 }

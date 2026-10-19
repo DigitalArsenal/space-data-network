@@ -33,7 +33,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"net/http"
 	"regexp"
 	"sort"
 	"strconv"
@@ -595,45 +594,4 @@ func readSBDSeqs(store sbdStore, base storage.RawRecordQuery, seqs []int64) ([]*
 		start = end + 1
 	}
 	return out, nil
-}
-
-// serveSBDQuery answers handleRawQuery for a small-body field filter, in the
-// same two shapes (the raw FlatBuffer stream with its window headers, or
-// JSON rows).
-func (h *DataQueryHandler) serveSBDQuery(w http.ResponseWriter, r *http.Request, store sbdStore, schemaName string,
-	base storage.RawRecordQuery, f *sbdFilter, offset, limit int, includeData bool) {
-	records, total, err := querySBD(r.Context(), store, base, f, offset, limit)
-	if errors.Is(err, errSBDBusy) {
-		w.Header().Set("Retry-After", "5")
-		writeError(w, http.StatusServiceUnavailable, err.Error())
-		return
-	}
-	if err != nil {
-		if errors.Is(err, storage.ErrEngineRebuilding) {
-			writeEngineRebuilding(w, r)
-			return
-		}
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	w.Header().Set(rawDataTotalCountHeader, strconv.Itoa(total))
-	w.Header().Set("X-SDN-Filter-Applied", "sbd-fields-v1")
-	if requestedRawFlatBufferStream(r) {
-		w.Header().Set(rawDataOffsetHeader, strconv.Itoa(offset))
-		w.Header().Set(rawDataLimitHeader, strconv.Itoa(limit))
-		w.Header().Set(rawDataSourceRunsHeader, encodeRawRecordSourceRuns(records))
-		writeFlatBufferPayloadStreamWithContentType(w, schemaName, recordsToPayloads(records), rawFlatBufferStreamContentType)
-		return
-	}
-	results := make([]map[string]interface{}, 0, len(records))
-	for _, rec := range records {
-		results = append(results, rawRecordRow(schemaName, rec, includeData))
-	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"schema":  schemaName,
-		"count":   len(results),
-		"total":   total,
-		"offset":  offset,
-		"results": results,
-	})
 }

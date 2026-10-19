@@ -9,6 +9,7 @@ import { paymentMethod } from 'spacedatastandards.org/lib/js/STF/paymentMethod.j
 import { PricingTier } from 'spacedatastandards.org/lib/js/STF/PricingTier.js';
 
 import { loadMarketplaceListingsFromServer } from './marketplace-source';
+import { decodeQrpRequest, encodeQrpRunAnswer } from './qrp-request';
 
 describe('loadMarketplaceListingsFromServer', () => {
   it('prefers module-delivery PLG listings when that API is available', async () => {
@@ -100,15 +101,14 @@ describe('loadMarketplaceListingsFromServer', () => {
       }),
     ]);
 
-    // The STF listing fallback is ONE datasync stream request — the retired
-    // base64 `data/query/STF?include_data=true&format=json` envelope is gone.
+    // The STF listing fallback is ONE $QRP query.
     expect(fetchMock).toHaveBeenCalledWith(
       'https://sdn.spaceaware.io/api/v1/data/query',
       expect.objectContaining({
         method: 'POST',
         credentials: 'include',
-        headers: expect.objectContaining({ accept: 'application/vnd.sdn.flatbuffers.stream' }),
-        body: JSON.stringify({ schema: 'STF.fbs', limit: 25 }),
+        headers: expect.objectContaining({ 'content-type': 'application/vnd.sdn.flatbuffers.stream' }),
+        body: requestBody('STF.fbs'),
       }),
     );
   });
@@ -203,8 +203,8 @@ describe('loadMarketplaceListingsFromServer', () => {
       'https://sdn.spaceaware.io/api/v1/data/query',
       expect.objectContaining({
         method: 'POST',
-        headers: expect.objectContaining({ accept: 'application/vnd.sdn.flatbuffers.stream' }),
-        body: JSON.stringify({ schema: 'PLG.fbs', limit: 25 }),
+        headers: expect.objectContaining({ 'content-type': 'application/vnd.sdn.flatbuffers.stream' }),
+        body: requestBody('PLG.fbs'),
       }),
     );
   });
@@ -568,17 +568,15 @@ function createPlgBytes(options: {
   return builder.asUint8Array();
 }
 
+/** The node's /data/query answer: one $QRP run of the listing records. */
 function flatbufferStreamListingResponse(records: Uint8Array[]) {
-  const size = records.reduce((total, record) => total + 4 + record.byteLength, 0);
-  const body = new Uint8Array(size);
-  const view = new DataView(body.buffer);
-  let offset = 0;
-  for (const record of records) {
-    view.setUint32(offset, record.byteLength, true); // LE — flatsql-size-prefixed-le-u32
-    offset += 4;
-    body.set(record, offset);
-    offset += record.byteLength;
-  }
+  const frames = records.map((record) => {
+    const frame = new Uint8Array(4 + record.byteLength);
+    new DataView(frame.buffer).setUint32(0, record.byteLength, true);
+    frame.set(record, 4);
+    return frame;
+  });
+  const body = encodeQrpRunAnswer([{ schemaName: 'listing.fbs', records: frames }]).slice();
   return {
     ok: true,
     status: 200,
@@ -589,6 +587,13 @@ function flatbufferStreamListingResponse(records: Uint8Array[]) {
       return body.buffer as ArrayBuffer;
     },
   };
+}
+
+function requestBody(schema: string) {
+  return expect.toSatisfy((body: unknown) => {
+    const request = decodeQrpRequest(body as Uint8Array);
+    return request.schema === schema && request.limit === 25;
+  });
 }
 
 function createStfBytes(): Uint8Array {

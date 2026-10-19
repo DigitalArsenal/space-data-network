@@ -106,7 +106,7 @@ func TestRequireAuth_APIPathsGet401NotRedirect(t *testing.T) {
 	h := NewHandler(nil, sessions, time.Hour, "", "")
 
 	// Unauthenticated browser-shaped request (no Accept: application/json).
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/data/epoch", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/data/summary", nil)
 	req.Header.Set("Accept", "text/html,application/xhtml+xml")
 	rec := httptest.NewRecorder()
 	h.RequireAuth(peers.Standard, func(w http.ResponseWriter, r *http.Request) {

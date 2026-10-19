@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 import * as flatbuffers from 'flatbuffers';
 import { OMM } from 'spacedatastandards.org/lib/js/OMM/OMM.js';
 import { PNM } from 'spacedatastandards.org/lib/js/PNM/PNM.js';
+import { decodeQrpRequest, encodeQrpErrorFrame, encodeQrpRunAnswer, encodeQrpTablePage, qrpStatus } from '../src/ui/runtime/qrp-request';
 
 const realPeerId = '16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3';
 const celestrakXpub = 'xpub6D36ciSsN66eJutmvXs1VXmtqnWkcMqZEbMh4FP6bpANfJpfP6oY48P7XnCWdd4NwfpHir8bU7eo3KcC45jsuN6LXwA5SYmL6sNeQwYPJjY';
@@ -235,21 +236,21 @@ test('data route keeps first-load counts as loading when remote counts are not k
       await route.fallback();
       return;
     }
-    await route.fulfill({ status: 503, body: 'summary warming up' });
+    await route.fulfill({ status: 503, contentType: QRP_STREAM, body: qrpBusy('summary warming up') });
   });
   await page.context().route('**/api/v1/data/scan', async (route) => {
     if (new URL(route.request().url()).pathname !== '/api/v1/data/scan') {
       await route.fallback();
       return;
     }
-    await route.fulfill({ status: 503, body: 'scan warming up' });
+    await route.fulfill({ status: 503, contentType: QRP_STREAM, body: qrpBusy('scan warming up') });
   });
   await page.context().route('**/api/v1/data/query', async (route) => {
     if (new URL(route.request().url()).pathname !== '/api/v1/data/query') {
       await route.fallback();
       return;
     }
-    await route.fulfill({ status: 503, body: 'query warming up' });
+    await route.fulfill({ status: 503, contentType: QRP_STREAM, body: qrpBusy('query warming up') });
   });
 
   await page.goto('/?api=http://127.0.0.1:5174&gateway=http%3A%2F%2F127.0.0.1%3A8081#/data');
@@ -346,36 +347,6 @@ test('data catalog rows highlight and expand actions when clicked', async ({ pag
       'local:OMM': { mode: 'sync', storageCap: 1, storageUnit: 'GB' },
     }));
   });
-  await page.context().unroute('**/api/v1/data/scan');
-  await page.context().route('**/api/v1/data/scan', async (route) => {
-    if (new URL(route.request().url()).pathname !== '/api/v1/data/scan') {
-      await route.fallback();
-      return;
-    }
-    const body = route.request().postDataJSON();
-    await route.fulfill({
-      contentType: 'application/json',
-      body: JSON.stringify({
-        schema: body.schema ?? 'OMM.fbs',
-        total_count: 0,
-        count: 0,
-        limit: body.limit ?? 10,
-        offset: body.offset ?? 0,
-        cursor: '',
-        next_cursor: '',
-        snapshot_id: 'catalog-row-expansion-snapshot',
-        head: 'catalog-row-expansion-snapshot',
-        high_water_mark: '',
-        scan_hash: 'catalog-row-expansion-scan',
-        chunk_hash: 'catalog-row-expansion-scan',
-        query_profile: 'ordered-offset-v1',
-        sync_protocol: '/space-data-network/flatsql-sync/1.0.0',
-        max_chunk_size: 50000,
-        transports: ['libp2p-websocket', 'libp2p-webrtc'],
-        results: [],
-      }),
-    });
-  });
 
   await page.goto('/?api=http://127.0.0.1:5174&gateway=http%3A%2F%2F127.0.0.1%3A8081#/data');
   await page.getByRole('button', { name: 'Store' }).click();
@@ -450,36 +421,6 @@ test('subscriptions search by message type and expose schema health actions', as
       'local:OMM': { mode: 'sync', storageCap: 1, storageUnit: 'GB' },
       'local:CAT': { mode: 'sync', storageCap: 1, storageUnit: 'GB' },
     }));
-  });
-  await page.context().unroute('**/api/v1/data/scan');
-  await page.context().route('**/api/v1/data/scan', async (route) => {
-    if (new URL(route.request().url()).pathname !== '/api/v1/data/scan') {
-      await route.fallback();
-      return;
-    }
-    const body = route.request().postDataJSON();
-    await route.fulfill({
-      contentType: 'application/json',
-      body: JSON.stringify({
-        schema: body.schema ?? 'CAT.fbs',
-        total_count: 0,
-        count: 0,
-        limit: body.limit ?? 10,
-        offset: body.offset ?? 0,
-        cursor: '',
-        next_cursor: '',
-        snapshot_id: 'message-type-snapshot',
-        head: 'message-type-snapshot',
-        high_water_mark: '',
-        scan_hash: 'message-type-scan',
-        chunk_hash: 'message-type-scan',
-        query_profile: 'ordered-offset-v1',
-        sync_protocol: '/space-data-network/flatsql-sync/1.0.0',
-        max_chunk_size: 50000,
-        transports: ['libp2p-websocket', 'libp2p-webrtc'],
-        results: [],
-      }),
-    });
   });
 
   await page.goto('/?api=http://127.0.0.1:5174&gateway=http%3A%2F%2F127.0.0.1%3A8081#/data');
@@ -608,7 +549,6 @@ test('data route keeps same-schema subscriptions separated by datastore namespac
   });
 
   await page.context().unroute('**/api/v1/data/summary');
-  await page.context().unroute('**/api/v1/data/scan');
   await page.context().unroute('**/api/v1/data/stream');
 
   await page.context().route('**/api/v1/data/summary', async (route) => {
@@ -616,78 +556,13 @@ test('data route keeps same-schema subscriptions separated by datastore namespac
       await route.fallback();
       return;
     }
-    await route.fulfill({
-      contentType: 'application/json',
-      body: JSON.stringify({
-        total_records: 46_636_153,
-        total_bytes: 1_337_000_000,
-        schemas: [{ schema_name: 'OMM.fbs', count: 46_636_153, total_bytes: 1_337_000_000 }],
-        sources: [
-          {
-            datastore_key: 'sdn-ds-history',
-            schema_name: 'OMM.fbs',
-            provider_id: 'local',
-            source_name: 'celestrak-gp-historical',
-            batch_id: 'history',
-            count: 44_349_135,
-            total_bytes: 1_000_000_000,
-          },
-          {
-            datastore_key: 'sdn-ds-live',
-            schema_name: 'OMM.fbs',
-            provider_id: 'local',
-            source_name: 'celestrak-gp',
-            batch_id: 'live',
-            count: 2_287_018,
-            total_bytes: 337_000_000,
-          },
-        ],
-      }),
-    });
+    await route.fulfill({ contentType: QRP_STREAM, body: summaryBody([['OMM.fbs', 46_636_153, 1_337_000_000]], [
+        { schema: 'OMM.fbs', provider: 'local', source: 'celestrak-gp-historical', batch: 'history', count: 44_349_135, bytes: 1_000_000_000 },
+        { schema: 'OMM.fbs', provider: 'local', source: 'celestrak-gp', batch: 'live', count: 2_287_018, bytes: 337_000_000 },
+      ]) });
   });
 
   const scanDatastoreKeys: string[] = [];
-  await page.context().route('**/api/v1/data/scan', async (route) => {
-    if (new URL(route.request().url()).pathname !== '/api/v1/data/scan') {
-      await route.fallback();
-      return;
-    }
-    const body = route.request().postDataJSON();
-    expect(body.schema).toBe('OMM.fbs');
-    const datastoreKey = body.datastore_key ?? body.datastoreKey ?? '';
-    scanDatastoreKeys.push(datastoreKey);
-    await route.fulfill({
-      contentType: 'application/json',
-      body: JSON.stringify({
-        schema: 'OMM.fbs',
-        total_count: datastoreKey === 'sdn-ds-live' ? 2_287_018 : 44_349_135,
-        count: 1,
-        limit: 10,
-        offset: 0,
-        cursor: 'MA',
-        next_cursor: '',
-        snapshot_id: `${datastoreKey}-snapshot`,
-        head: `${datastoreKey}-head`,
-        high_water_mark: `${datastoreKey}:1`,
-        scan_hash: `${datastoreKey}-scan`,
-        chunk_hash: `${datastoreKey}-scan`,
-        query_profile: 'ordered-offset-v1',
-        sync_protocol: '/space-data-network/flatsql-sync/1.0.0',
-        max_chunk_size: 50000,
-        transports: ['http', 'libp2p-websocket', 'libp2p-webrtc'],
-        results: [{
-          schema_name: 'OMM.fbs',
-          cid: `${datastoreKey}-cid`,
-          peer_id: 'source:celestrak',
-          provider_id: 'local',
-          source_name: datastoreKey === 'sdn-ds-live' ? 'celestrak-gp' : 'celestrak-gp-historical',
-          batch_id: datastoreKey === 'sdn-ds-live' ? 'live' : 'history',
-          timestamp: '2026-05-11T04:02:25Z',
-          size_bytes: 288,
-        }],
-      }),
-    });
-  });
   await page.context().route('**/api/v1/data/stream', async (route) => {
     if (new URL(route.request().url()).pathname !== '/api/v1/data/stream') {
       await route.fallback();
@@ -741,14 +616,13 @@ test('data route runs local SQL against locally synced CelesTrak rows without re
   });
 
   await page.context().unroute('**/api/v1/data/summary');
-  await page.context().unroute('**/api/v1/data/scan');
   await page.context().unroute('**/api/v1/data/stream');
   await page.context().unroute('**/api/v1/data/query');
 
   const remoteQueryBodies: string[] = [];
   await page.context().route('**/api/v1/data/query**', async (route) => {
     remoteQueryBodies.push(route.request().postData() ?? route.request().url());
-    await route.fulfill({ status: 418, body: 'remote SQL is not allowed for local LLM queries' });
+    await route.fulfill({ status: 418, contentType: QRP_STREAM, body: qrpError('remote_sql_refused', 'remote SQL is not allowed for local LLM queries') });
   });
 
   await page.context().route('**/api/v1/data/summary', async (route) => {
@@ -756,76 +630,11 @@ test('data route runs local SQL against locally synced CelesTrak rows without re
       await route.fallback();
       return;
     }
-    await route.fulfill({
-      contentType: 'application/json',
-      body: JSON.stringify({
-        total_records: 2_287_018,
-        total_bytes: 337_000_000,
-        schemas: [{ schema_name: 'OMM.fbs', count: 2_287_018, total_bytes: 337_000_000 }],
-        sources: [{
-          datastore_key: 'sdn-ds-live',
-          schema_name: 'OMM.fbs',
-          provider_id: 'local',
-          source_name: 'celestrak-gp',
-          batch_id: 'live',
-          count: 2_287_018,
-          total_bytes: 337_000_000,
-        }],
-      }),
-    });
+    await route.fulfill({ contentType: QRP_STREAM, body: summaryBody([['OMM.fbs', 2_287_018, 337_000_000]], [
+        { schema: 'OMM.fbs', provider: 'local', source: 'celestrak-gp', batch: 'live', count: 2_287_018, bytes: 337_000_000 },
+      ]) });
   });
 
-  await page.context().route('**/api/v1/data/scan', async (route) => {
-    if (new URL(route.request().url()).pathname !== '/api/v1/data/scan') {
-      await route.fallback();
-      return;
-    }
-    const body = route.request().postDataJSON();
-    expect(body).toMatchObject({ schema: 'OMM.fbs', datastore_key: 'sdn-ds-live' });
-    await route.fulfill({
-      contentType: 'application/json',
-      body: JSON.stringify({
-        schema: 'OMM.fbs',
-        total_count: 2_287_018,
-        count: 2,
-        limit: 10,
-        offset: 0,
-        cursor: 'MA',
-        next_cursor: '',
-        snapshot_id: 'sdn-ds-live-snapshot',
-        head: 'sdn-ds-live-head',
-        high_water_mark: 'sdn-ds-live:1',
-        scan_hash: 'sdn-ds-live-scan',
-        chunk_hash: 'sdn-ds-live-scan',
-        query_profile: 'ordered-offset-v1',
-        sync_protocol: '/space-data-network/flatsql-sync/1.0.0',
-        max_chunk_size: 50000,
-        transports: ['libp2p-websocket', 'libp2p-webrtc'],
-        results: [
-          {
-            schema_name: 'OMM.fbs',
-            cid: 'sdn-ds-live-cid',
-            peer_id: 'source:celestrak',
-            provider_id: 'local',
-            source_name: 'celestrak-gp',
-            batch_id: 'live',
-            timestamp: '2026-05-11T04:02:25Z',
-            size_bytes: 288,
-          },
-          {
-            schema_name: 'OMM.fbs',
-            cid: 'sdn-ds-live-high-orbit-cid',
-            peer_id: 'source:celestrak',
-            provider_id: 'local',
-            source_name: 'celestrak-gp',
-            batch_id: 'live',
-            timestamp: '2026-05-11T04:02:26Z',
-            size_bytes: 288,
-          },
-        ],
-      }),
-    });
-  });
 
   await page.context().route('**/api/v1/data/stream', async (route) => {
     if (new URL(route.request().url()).pathname !== '/api/v1/data/stream') {
@@ -1134,186 +943,20 @@ async function installSdnFixtures(page: Page): Promise<void> {
     });
   });
   await page.route('**/api/local/sdn-nodes/space-data-network-02/api/v1/data/summary', async (route) => {
-    await route.fulfill({
-      contentType: 'application/json',
-      body: JSON.stringify({
-        total_records: 2515,
-        total_bytes: 363_312,
-        schemas: [
-          { schema_name: 'CAT.fbs', count: 2500, total_bytes: 360_000 },
-          { schema_name: 'EPM.fbs', count: 1, total_bytes: 144 },
-          { schema_name: 'OMM.fbs', count: 2, total_bytes: 576 },
-          { schema_name: 'PNM.fbs', count: 12, total_bytes: 1728 },
-        ],
-        sources: [
-          {
-            schema_name: 'PNM.fbs',
-            provider_id: 'space-data-network-02',
-            source_name: 'celestrak-publication-log',
-            batch_id: 'fixture-pnm-batch',
-            count: 12,
-            total_bytes: 1728,
-          },
-          {
-            schema_name: 'OMM.fbs',
-            provider_id: 'space-data-network-02',
-            source_name: 'celestrak-gp',
-            batch_id: 'fixture-batch',
-            count: 2,
-            total_bytes: 576,
-          },
-        ],
-      }),
-    });
+    await route.fulfill({ contentType: QRP_STREAM, body: summaryBody([['CAT.fbs', 2500, 360_000], ['EPM.fbs', 1, 144], ['OMM.fbs', 2, 576], ['PNM.fbs', 12, 1728]], [
+        { schema: 'PNM.fbs', provider: 'space-data-network-02', source: 'celestrak-publication-log', batch: 'fixture-pnm-batch', count: 12, bytes: 1728 },
+        { schema: 'OMM.fbs', provider: 'space-data-network-02', source: 'celestrak-gp', batch: 'fixture-batch', count: 2, bytes: 576 },
+      ]) });
   });
   await page.context().route('**/api/v1/data/summary', async (route) => {
     if (new URL(route.request().url()).pathname !== '/api/v1/data/summary') {
       await route.fallback();
       return;
     }
-    await route.fulfill({
-      contentType: 'application/json',
-      body: JSON.stringify({
-        total_records: 2515,
-        total_bytes: 363_312,
-        schemas: [
-          { schema_name: 'CAT.fbs', count: 2500, total_bytes: 360_000 },
-          { schema_name: 'EPM.fbs', count: 1, total_bytes: 144 },
-          { schema_name: 'OMM.fbs', count: 2, total_bytes: 576 },
-          { schema_name: 'PNM.fbs', count: 12, total_bytes: 1728 },
-        ],
-        sources: [
-          {
-            schema_name: 'PNM.fbs',
-            provider_id: 'local',
-            source_name: 'celestrak-publication-log',
-            batch_id: 'fixture-pnm-batch',
-            count: 12,
-            total_bytes: 1728,
-          },
-          {
-            schema_name: 'OMM.fbs',
-            provider_id: 'local',
-            source_name: 'celestrak-gp',
-            batch_id: 'fixture-batch',
-            count: 2,
-            total_bytes: 576,
-          },
-        ],
-      }),
-    });
-  });
-  await page.route('**/api/local/sdn-nodes/space-data-network-02/api/v1/data/scan', async (route) => {
-    const body = route.request().postDataJSON();
-    if (body.schema !== 'PNM.fbs') {
-      expect(body.include_data).toBe(false);
-      await route.fulfill({
-        contentType: 'application/json',
-        body: JSON.stringify(emptyScanResult(String(body.schema ?? 'CAT.fbs'), Number(body.limit ?? 10), Number(body.offset ?? 0))),
-      });
-      return;
-    }
-    expect(body.include_data).toBe(false);
-    const cursorOffset = typeof body.cursor === 'string' && body.cursor
-      ? Number(Buffer.from(body.cursor, 'base64url').toString('utf8'))
-      : 0;
-    const offset = Number(body.offset ?? cursorOffset);
-    const limit = Number(body.limit ?? 10);
-    if (offset > 0) expect(limit).toBe(25_000);
-    const pageRefs = PNM_FIXTURE_REFS.slice(offset, offset + limit);
-    const nextOffset = offset + pageRefs.length;
-    const nextCursor = nextOffset < PNM_FIXTURE_REFS.length
-      ? Buffer.from(String(nextOffset), 'utf8').toString('base64url')
-      : '';
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    await route.fulfill({
-      contentType: 'application/json',
-      body: JSON.stringify({
-        schema: 'PNM.fbs',
-        total_count: PNM_FIXTURE_REFS.length,
-        count: pageRefs.length,
-        limit,
-        offset,
-        cursor: Buffer.from(String(offset), 'utf8').toString('base64url'),
-        next_cursor: nextCursor,
-        snapshot_id: 'fixture-snapshot',
-        head: 'fixture-snapshot',
-        high_water_mark: '1:2:3:2',
-        scan_hash: 'fixture-scan-hash',
-        chunk_hash: 'fixture-scan-hash',
-        query_profile: 'ordered-offset-v1',
-        sync_protocol: '/space-data-network/flatsql-sync/1.0.0',
-        max_chunk_size: 50000,
-        transports: ['http', 'libp2p-websocket', 'libp2p-webrtc'],
-        results: pageRefs.map(({ cid }, index) => ({
-          schema_name: 'PNM.fbs',
-          cid,
-          peer_id: 'source:celestrak',
-          provider_id: 'space-data-network-02',
-          source_name: 'celestrak-publication-log',
-          batch_id: 'fixture-pnm-batch',
-          timestamp: `2026-05-11T04:${String(offset + index).padStart(2, '0')}:25Z`,
-          size_bytes: 144,
-        })),
-      }),
-    });
-  });
-  await page.context().route('**/api/v1/data/scan', async (route) => {
-    if (new URL(route.request().url()).pathname !== '/api/v1/data/scan') {
-      await route.fallback();
-      return;
-    }
-    const body = route.request().postDataJSON();
-    if (body.schema !== 'PNM.fbs') {
-      expect(body.include_data).toBe(false);
-      await route.fulfill({
-        contentType: 'application/json',
-        body: JSON.stringify(emptyScanResult(String(body.schema ?? 'CAT.fbs'), Number(body.limit ?? 10), Number(body.offset ?? 0))),
-      });
-      return;
-    }
-    expect(body.include_data).toBe(false);
-    const cursorOffset = typeof body.cursor === 'string' && body.cursor
-      ? Number(Buffer.from(body.cursor, 'base64url').toString('utf8'))
-      : 0;
-    const offset = Number(body.offset ?? cursorOffset);
-    const limit = Number(body.limit ?? 10);
-    const pageRefs = PNM_FIXTURE_REFS.slice(offset, offset + limit);
-    const nextOffset = offset + pageRefs.length;
-    const nextCursor = nextOffset < PNM_FIXTURE_REFS.length
-      ? Buffer.from(String(nextOffset), 'utf8').toString('base64url')
-      : '';
-    await route.fulfill({
-      contentType: 'application/json',
-      body: JSON.stringify({
-        schema: 'PNM.fbs',
-        total_count: PNM_FIXTURE_REFS.length,
-        count: pageRefs.length,
-        limit,
-        offset,
-        cursor: Buffer.from(String(offset), 'utf8').toString('base64url'),
-        next_cursor: nextCursor,
-        snapshot_id: 'fixture-snapshot',
-        head: 'fixture-snapshot',
-        high_water_mark: '1:2:3:2',
-        scan_hash: 'fixture-scan-hash',
-        chunk_hash: 'fixture-scan-hash',
-        query_profile: 'ordered-offset-v1',
-        sync_protocol: '/space-data-network/flatsql-sync/1.0.0',
-        max_chunk_size: 50000,
-        transports: ['http', 'libp2p-websocket', 'libp2p-webrtc'],
-        results: pageRefs.map(({ cid }, index) => ({
-          schema_name: 'PNM.fbs',
-          cid,
-          peer_id: 'source:celestrak',
-          provider_id: 'local',
-          source_name: 'celestrak-publication-log',
-          batch_id: 'fixture-pnm-batch',
-          timestamp: `2026-05-11T04:${String(offset + index).padStart(2, '0')}:25Z`,
-          size_bytes: 144,
-        })),
-      }),
-    });
+    await route.fulfill({ contentType: QRP_STREAM, body: summaryBody([['CAT.fbs', 2500, 360_000], ['EPM.fbs', 1, 144], ['OMM.fbs', 2, 576], ['PNM.fbs', 12, 1728]], [
+        { schema: 'PNM.fbs', provider: 'local', source: 'celestrak-publication-log', batch: 'fixture-pnm-batch', count: 12, bytes: 1728 },
+        { schema: 'OMM.fbs', provider: 'local', source: 'celestrak-gp', batch: 'fixture-batch', count: 2, bytes: 576 },
+      ]) });
   });
   await page.route('**/api/local/sdn-nodes/space-data-network-02/api/v1/data/stream', async (route) => {
     const body = route.request().postDataJSON();
@@ -1348,74 +991,25 @@ async function installSdnFixtures(page: Page): Promise<void> {
     });
   });
   await page.route('**/api/local/sdn-nodes/space-data-network-02/api/v1/data/query', async (route) => {
-    const body = route.request().postDataJSON();
+    const body = decodeQrpRequest(route.request().postDataBuffer() ?? Buffer.alloc(0));
+    const limit = body.limit ?? 10;
+    const offset = ((body.page ?? 1) - 1) * limit;
     if (body.schema === 'PNM.fbs') {
-      const offset = Number(body.offset ?? 0);
-      const limit = Number(body.limit ?? 10);
       const pageRefs = PNM_FIXTURE_REFS.slice(offset, offset + limit);
-      if (route.request().headers().accept?.includes('application/vnd.sdn.flatbuffers.stream')) {
-        await route.fulfill({
-          contentType: 'application/vnd.sdn.flatbuffers.stream',
-          body: rawFlatbufferStream(pageRefs.map((record) => record.bytes)),
-        });
-        return;
-      }
       await route.fulfill({
-        contentType: 'application/json',
-        body: JSON.stringify({
-          results: pageRefs.map(({ cid }, index) => ({
-            schema_name: 'PNM.fbs',
-            cid,
-            peer_id: 'source:celestrak',
-            provider_id: 'space-data-network-02',
-            source_name: 'celestrak-publication-log',
-            batch_id: 'fixture-pnm-batch',
-            timestamp: `2026-05-11T04:${String(offset + index).padStart(2, '0')}:25Z`,
-            size_bytes: 144,
-            data_base64: pageRefs[index].bytes.toString('base64'),
-          })),
-        }),
+        contentType: QRP_STREAM,
+        body: queryAnswer('PNM.fbs', { providerId: 'space-data-network-02', sourceName: 'celestrak-publication-log', batchId: 'fixture-pnm-batch' }, pageRefs.map((record) => record.bytes), body.page, limit, PNM_FIXTURE_REFS.length),
       });
       return;
     }
     if (body.schema !== 'OMM.fbs') {
-      if (route.request().headers().accept?.includes('application/vnd.sdn.flatbuffers.stream')) {
-        await route.fulfill({
-          contentType: 'application/vnd.sdn.flatbuffers.stream',
-          body: rawFlatbufferStream([]),
-        });
-        return;
-      }
-      await route.fulfill({
-        contentType: 'application/json',
-        body: JSON.stringify({ results: [] }),
-      });
+      await route.fulfill({ contentType: QRP_STREAM, body: queryAnswer(body.schema, {}, [], body.page, limit, 0) });
       return;
     }
-    expect(body).toMatchObject({ schema: 'OMM.fbs', limit: 10, offset: 0 });
-    if (route.request().headers().accept?.includes('application/vnd.sdn.flatbuffers.stream')) {
-      await route.fulfill({
-        contentType: 'application/vnd.sdn.flatbuffers.stream',
-        body: rawFlatbufferStream([STARLINK_6292_OMM_BYTES]),
-      });
-      return;
-    }
+    expect(body).toMatchObject({ schema: 'OMM.fbs', limit: 10, page: 1 });
     await route.fulfill({
-      contentType: 'application/json',
-      body: JSON.stringify({
-        results: [
-          {
-            schema_name: 'OMM.fbs',
-            cid: 'celestrak-omm-1',
-            peer_id: 'source:celestrak',
-            provider_id: 'space-data-network-02',
-            source_name: 'celestrak-gp',
-            batch_id: 'fixture-batch',
-            timestamp: '2026-05-11T04:02:25Z',
-            size_bytes: 288,
-          },
-        ],
-      }),
+      contentType: QRP_STREAM,
+      body: queryAnswer('OMM.fbs', { providerId: 'space-data-network-02', sourceName: 'celestrak-gp', batchId: 'fixture-batch' }, [STARLINK_6292_OMM_BYTES], body.page, limit, 1),
     });
   });
   await page.context().route('**/api/v1/data/query', async (route) => {
@@ -1423,75 +1017,25 @@ async function installSdnFixtures(page: Page): Promise<void> {
       await route.fallback();
       return;
     }
-    const body = route.request().postDataJSON();
-    expect(body.query).toBeUndefined();
+    const body = decodeQrpRequest(route.request().postDataBuffer() ?? Buffer.alloc(0));
+    const limit = body.limit ?? 10;
+    const offset = ((body.page ?? 1) - 1) * limit;
     if (body.schema === 'PNM.fbs') {
-      const offset = Number(body.offset ?? 0);
-      const limit = Number(body.limit ?? 10);
       const pageRefs = PNM_FIXTURE_REFS.slice(offset, offset + limit);
-      if (route.request().headers().accept?.includes('application/vnd.sdn.flatbuffers.stream')) {
-        await route.fulfill({
-          contentType: 'application/vnd.sdn.flatbuffers.stream',
-          body: rawFlatbufferStream(pageRefs.map((record) => record.bytes)),
-        });
-        return;
-      }
       await route.fulfill({
-        contentType: 'application/json',
-        body: JSON.stringify({
-          results: pageRefs.map(({ cid }, index) => ({
-            schema_name: 'PNM.fbs',
-            cid,
-            peer_id: 'source:celestrak',
-            provider_id: 'local',
-            source_name: 'celestrak-publication-log',
-            batch_id: 'fixture-pnm-batch',
-            timestamp: `2026-05-11T04:${String(offset + index).padStart(2, '0')}:25Z`,
-            size_bytes: 144,
-            data_base64: pageRefs[index].bytes.toString('base64'),
-          })),
-        }),
+        contentType: QRP_STREAM,
+        body: queryAnswer('PNM.fbs', { providerId: 'local', sourceName: 'celestrak-publication-log', batchId: 'fixture-pnm-batch' }, pageRefs.map((record) => record.bytes), body.page, limit, PNM_FIXTURE_REFS.length),
       });
       return;
     }
     if (body.schema !== 'OMM.fbs') {
-      if (route.request().headers().accept?.includes('application/vnd.sdn.flatbuffers.stream')) {
-        await route.fulfill({
-          contentType: 'application/vnd.sdn.flatbuffers.stream',
-          body: rawFlatbufferStream([]),
-        });
-        return;
-      }
-      await route.fulfill({
-        contentType: 'application/json',
-        body: JSON.stringify({ results: [] }),
-      });
+      await route.fulfill({ contentType: QRP_STREAM, body: queryAnswer(body.schema, {}, [], body.page, limit, 0) });
       return;
     }
-    expect(body).toMatchObject({ schema: 'OMM.fbs', limit: 10, offset: 0 });
-    if (route.request().headers().accept?.includes('application/vnd.sdn.flatbuffers.stream')) {
-      await route.fulfill({
-        contentType: 'application/vnd.sdn.flatbuffers.stream',
-        body: rawFlatbufferStream([STARLINK_6292_OMM_BYTES]),
-      });
-      return;
-    }
+    expect(body).toMatchObject({ schema: 'OMM.fbs', limit: 10, page: 1 });
     await route.fulfill({
-      contentType: 'application/json',
-      body: JSON.stringify({
-        results: [
-          {
-            schema_name: 'OMM.fbs',
-            cid: 'celestrak-omm-1',
-            peer_id: 'source:celestrak',
-            provider_id: 'local',
-            source_name: 'celestrak-gp',
-            batch_id: 'fixture-batch',
-            timestamp: '2026-05-11T04:02:25Z',
-            size_bytes: 288,
-          },
-        ],
-      }),
+      contentType: QRP_STREAM,
+      body: queryAnswer('OMM.fbs', { providerId: 'local', sourceName: 'celestrak-gp', batchId: 'fixture-batch' }, [STARLINK_6292_OMM_BYTES], body.page, limit, 1),
     });
   });
   await page.route('**/api/v0/repo/stat', async (route) => {
@@ -1536,6 +1080,57 @@ const PNM_FIXTURE_REFS = Array.from({ length: 12 }, (_, index) => {
   };
 });
 
+const QRP_STREAM = 'application/vnd.sdn.flatbuffers.stream';
+
+function qrpBody(bytes: Uint8Array): Buffer {
+  return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+}
+
+/** The node's refusal while a store is warming: one $QRP Error frame, STATUS Busy. */
+function qrpBusy(message: string): Buffer {
+  return qrpBody(encodeQrpErrorFrame('busy', message, qrpStatus.Busy, 1000));
+}
+
+function qrpError(code: string, message: string): Buffer {
+  return qrpBody(encodeQrpErrorFrame(code, message));
+}
+
+const SUMMARY_COLUMNS = ['schema_name', 'provider_id', 'source_name', 'batch_id', 'producer_peer_id', 'producer_public_key', 'count', 'total_bytes']
+  .map((name) => ({ name, type: name === 'count' || name === 'total_bytes' ? 'int64' : 'string' }));
+
+/** /api/v1/data/summary: lane rows, then one total row per schema (lane fields ''), then the store total (schema_name ''). */
+function summaryBody(
+  schemas: Array<[string, number, number]>,
+  lanes: Array<{ schema: string; provider: string; source: string; batch: string; count: number; bytes: number }>,
+): Buffer {
+  const rows = [
+    ...lanes.map((lane) => [lane.schema, lane.provider, lane.source, lane.batch, '', '', lane.count, lane.bytes]),
+    ...schemas.map(([schema, count, bytes]) => [schema, '', '', '', '', '', count, bytes]),
+    ['', '', '', '', '', '', schemas.reduce((total, entry) => total + entry[1], 0), schemas.reduce((total, entry) => total + entry[2], 0)],
+  ];
+  return qrpBody(encodeQrpTablePage({ columns: SUMMARY_COLUMNS, rows }));
+}
+
+/** /api/v1/data/query: one $QRP run header naming the lane, then the verbatim record frames. */
+function queryAnswer(
+  schemaName: string,
+  lane: { providerId?: string; sourceName?: string; batchId?: string },
+  records: Buffer[],
+  page: number | undefined,
+  limit: number,
+  totalCount: number,
+): Buffer {
+  return qrpBody(encodeQrpRunAnswer([{
+    schemaName,
+    ...lane,
+    originId: 'source:celestrak',
+    page: page ?? 1,
+    limit,
+    totalCount,
+    records: records.map((record) => rawFlatbufferStream([record])),
+  }]));
+}
+
 function rawFlatbufferStream(records: Buffer[]): Buffer {
   // u32 LITTLE-ENDIAN length framing — the FlatSQL engine wire format
   // (`X-SDN-Stream-Format: flatsql-size-prefixed-le-u32`), matching
@@ -1548,30 +1143,6 @@ function rawFlatbufferStream(records: Buffer[]): Buffer {
     chunks.push(header, record);
   }
   return Buffer.concat(chunks);
-}
-
-function emptyScanResult(schema: string, limit: number, offset: number): Record<string, unknown> {
-  const standardId = schema.replace(/\.fbs$/i, '').toLowerCase() || 'data';
-  const totalCount = schema === 'CAT.fbs' ? 2500 : schema === 'OMM.fbs' ? 2 : schema === 'EPM.fbs' ? 1 : 0;
-  return {
-    schema,
-    total_count: totalCount,
-    count: 0,
-    limit,
-    offset,
-    cursor: Buffer.from(String(offset), 'utf8').toString('base64url'),
-    next_cursor: '',
-    snapshot_id: `fixture-${standardId}-snapshot`,
-    head: `fixture-${standardId}-snapshot`,
-    high_water_mark: '',
-    scan_hash: `fixture-${standardId}-scan-hash`,
-    chunk_hash: `fixture-${standardId}-scan-hash`,
-    query_profile: 'dataset-publication-offset-v1',
-    sync_protocol: '/space-data-network/flatsql-sync/1.0.0',
-    max_chunk_size: 50000,
-    transports: ['http', 'libp2p-websocket', 'libp2p-webrtc'],
-    results: [],
-  };
 }
 
 function buildOmmBytes(fields: {

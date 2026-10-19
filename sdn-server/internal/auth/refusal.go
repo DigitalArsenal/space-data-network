@@ -17,8 +17,15 @@ import (
 //
 // TestEveryAuthWallRefusalGoesThroughWriteAuthRefusal pins that no bare
 // writeJSON refusal creeps back into middleware.go.
+//
+// A data route (gateway.IsDataRoute) is refused with one $QRP Error frame;
+// other paths keep the JSON envelope.
 func writeAuthRefusal(w http.ResponseWriter, r *http.Request, status int, body errorResponse) {
 	gateway.DecorateRefusal(w, r)
+	if r != nil && r.URL != nil && gateway.IsDataRoute(r.URL.Path) {
+		writeQRPRefusal(w, status, body)
+		return
+	}
 	writeJSON(w, status, body)
 }
 

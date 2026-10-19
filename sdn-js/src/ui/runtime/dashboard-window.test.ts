@@ -9,13 +9,14 @@ import {
   createDashboardWindow,
   dashboardWindowStateKey,
   isDashboardWindowSuperseded,
-  parseSourceRunsHeader,
   sourceNameForState,
   type WindowStore,
 } from './dashboard-window';
 import { decodeWindowStatus, startDashboardDataRuntime } from './dashboard-data-runtime';
 import { createLocalFlatSqlStore, type LocalFlatSqlSchema, type LocalFlatSqlStore } from './local-flatsql';
-import { RAW_FLATBUFFER_STREAM_CONTENT_TYPE, type FetchLike } from './sdn-backend-adapter-utils';
+import type { FetchLike } from './sdn-backend-adapter-utils';
+import { FLATBUFFER_STREAM_TYPE } from './qrp-frames';
+import { decodeQrpRequest, encodeQrpErrorFrame, encodeQrpRunAnswer, qrpStatus, type QrpRequest } from './qrp-request';
 
 const require = createRequire(import.meta.url);
 const OMM_SCHEMA = readFileSync(require.resolve('spacedatastandards.org/schema/OMM/main.fbs'), 'utf8');
@@ -62,18 +63,24 @@ function concatFrames(frames: Uint8Array[]): Uint8Array<ArrayBuffer> {
   return out;
 }
 
-function sourceRunsHeader(sources: string[]): string {
-  const runs: Array<{ source: string; count: number }> = [];
-  for (const source of sources) {
+/** The node's /data/query answer: one $QRP run per consecutive source lane. */
+function runAnswer(rows: CatalogRecord[], request: QrpRequest, totalCount: number, searchApplied: boolean): Uint8Array<ArrayBuffer> {
+  const runs: Array<{ source: string; rows: CatalogRecord[] }> = [];
+  for (const row of rows) {
     const last = runs[runs.length - 1];
-    if (last && last.source === source) last.count += 1;
-    else runs.push({ source, count: 1 });
+    if (last && last.source === row.source) last.rows.push(row);
+    else runs.push({ source: row.source, rows: [row] });
   }
-  return runs.map((run) => `${run.source ? encodeURIComponent(run.source) : '-'}:${run.count}`).join(',');
+  const header = { schemaName: 'OMM.fbs', fileIdentifier: '$OMM', page: request.page, limit: request.limit, totalCount, ...(searchApplied && request.search ? { search: request.search } : {}) };
+  const answer = runs.length
+    ? encodeQrpRunAnswer(runs.map((run) => ({ ...header, sourceName: run.source, records: run.rows.map((row) => row.frame) })))
+    : encodeQrpRunAnswer([{ ...header, records: [] }]);
+  return concatFrames([answer]);
 }
 
 interface FakeNodeOptions {
   rangeSupported?: boolean;
+  searchApplied?: boolean;
   status?: number;
   beforeQuery?: () => Promise<void>;
   schemas?: Record<string, string>;
@@ -82,7 +89,7 @@ interface FakeNodeOptions {
 interface RecordedRequest {
   url: string;
   method: string;
-  body: Record<string, unknown> | null;
+  body: QrpRequest | null;
 }
 
 /** A node that only knows the DDL lane and the raw FlatBuffer lane. */
@@ -92,7 +99,7 @@ function createFakeNode(catalog: CatalogRecord[], options: FakeNodeOptions = {})
   const fetch: FetchLike = async (url, init) => {
     const path = new URL(url, 'http://node.test').pathname;
     const method = (init?.method ?? 'GET').toUpperCase();
-    const body = typeof init?.body === 'string' ? JSON.parse(init.body) as Record<string, unknown> : null;
+    const body = init?.body instanceof Uint8Array ? decodeQrpRequest(init.body) : null;
     requests.push({ url, method, body });
 
     const standardMatch = /^\/api\/v1\/standards\/([A-Z0-9]+)\.fbs$/.exec(path);
@@ -112,31 +119,23 @@ function createFakeNode(catalog: CatalogRecord[], options: FakeNodeOptions = {})
 
     if (path === '/api/v1/data/query' && method === 'POST' && body) {
       if (options.beforeQuery) await options.beforeQuery();
-      if (options.status && options.status !== 200) return new Response('unavailable', { status: options.status });
+      if (options.status && options.status !== 200) {
+        return new Response(concatFrames([encodeQrpErrorFrame('unavailable', '')]), { status: options.status, headers: { 'content-type': FLATBUFFER_STREAM_TYPE } });
+      }
       const headers = new Headers(init?.headers as Record<string, string>);
-      expect(headers.get('accept')).toBe(RAW_FLATBUFFER_STREAM_CONTENT_TYPE);
-      expect(body.include_data).toBe(false);
+      expect(headers.get('content-type')).toBe(FLATBUFFER_STREAM_TYPE);
       expect(body.schema).toBe('OMM.fbs');
       let rows = catalog;
-      if (typeof body.source_name === 'string') rows = rows.filter((row) => row.source === body.source_name);
-      if (typeof body.sync_filter === 'string') {
+      if (body.sourceName) rows = rows.filter((row) => row.source === body.sourceName);
+      if (body.sql) {
         rows = options.rangeSupported ? [...rows].sort((left, right) => left.epoch.localeCompare(right.epoch)) : [];
       }
-      const offset = Number(body.offset ?? 0);
-      const limit = Number(body.limit ?? rows.length);
+      const limit = body.limit ?? rows.length;
+      const offset = ((body.page ?? 1) - 1) * limit;
       const page = rows.slice(offset, offset + limit);
-      return new Response(concatFrames(page.map((row) => row.frame)), {
+      return new Response(runAnswer(page, body, rows.length, options.searchApplied === true), {
         status: 200,
-        headers: {
-          'content-type': RAW_FLATBUFFER_STREAM_CONTENT_TYPE,
-          'x-sdn-schema': 'OMM.fbs',
-          'x-sdn-stream-format': 'flatsql-size-prefixed-le-u32',
-          'x-sdn-record-count': String(page.length),
-          'x-sdn-total-count': String(rows.length),
-          'x-sdn-offset': String(offset),
-          'x-sdn-limit': String(limit),
-          'x-sdn-source-runs': sourceRunsHeader(page.map((row) => row.source)),
-        },
+        headers: { 'content-type': FLATBUFFER_STREAM_TYPE },
       });
     }
 
@@ -230,19 +229,6 @@ describe('dashboard window state helpers', () => {
     expect(sourceNameForState({ schema: 'OMM', source: '' })).toBe('');
     expect(sourceNameForState({ schema: 'OMM' })).toBe('');
   });
-
-  it('parses X-SDN-Source-Runs in frame order', () => {
-    expect(parseSourceRunsHeader('celestrak-gp:2,supplemental:3')).toEqual([
-      { source: 'celestrak-gp', count: 2 },
-      { source: 'supplemental', count: 3 },
-    ]);
-    expect(parseSourceRunsHeader('-:4,space%20track:1')).toEqual([
-      { source: '', count: 4 },
-      { source: 'space track', count: 1 },
-    ]);
-    expect(parseSourceRunsHeader('')).toBeNull();
-    expect(parseSourceRunsHeader('broken')).toBeNull();
-  });
 });
 
 describe('dashboard window runtime', () => {
@@ -252,8 +238,8 @@ describe('dashboard window runtime', () => {
     let failure: string | null = null;
     const fetch: FetchLike = async (url, init) => {
       if (!url.endsWith('/data/query') || failure === null) return node.fetch(url, init);
-      return new Response(JSON.stringify({ error: { message: failure, ...(failure === 'building' ? { code: 'SEARCH_INDEX_BUILDING' } : {}) } }), {
-        status: 503, headers: { 'content-type': 'application/json', 'retry-after': '2' },
+      return new Response(concatFrames([encodeQrpErrorFrame(failure === 'building' ? 'SEARCH_INDEX_BUILDING' : '', failure, qrpStatus.Busy, 2000)]), {
+        status: 503, headers: { 'content-type': FLATBUFFER_STREAM_TYPE },
       });
     };
     const runtime = createDashboardWindow({ store, fetch, baseUrl: 'http://node.test' });
@@ -261,11 +247,15 @@ describe('dashboard window runtime', () => {
       const state = { schema: 'OMM', source: 'celestrak-gp', search: 'optical' };
       const page = { page: 1, limit: 3 };
       await expect(runtime.loadPage(state, page)).rejects.toThrow('search-capable update');
-      expect(node.queryRequests()[0].body).toMatchObject({ search: 'optical', source_name: 'celestrak-gp' });
+      expect(node.queryRequests()[0].body).toMatchObject({ search: 'optical', sourceName: 'celestrak-gp' });
       failure = 'building';
       await expect(runtime.loadPage(state, page)).rejects.toMatchObject({ code: 'SEARCH_INDEX_BUILDING', retryAfterMs: 2000 });
       failure = 'offline';
       await expect(runtime.loadPage(state, page)).rejects.toMatchObject({ message: 'offline', code: undefined });
+      failure = null;
+      const applied = createFakeNode(buildCatalog(), { searchApplied: true });
+      const searched = createDashboardWindow({ store, fetch: applied.fetch, baseUrl: 'http://node.test' });
+      await expect(searched.loadPage(state, page)).resolves.toMatchObject({ windowRows: 3 });
     } finally { store.destroy(); }
   });
 
@@ -383,11 +373,11 @@ describe('dashboard window runtime', () => {
       pageSize: 5,
       batches: 1,
     });
-    expect(load.bytes).toBe(concatFrames(catalog.slice(5, 10).map((row) => row.frame)).byteLength);
+    expect(load.bytes).toBeGreaterThan(concatFrames(catalog.slice(5, 10).map((row) => row.frame)).byteLength);
 
     const queries = node.queryRequests();
     expect(queries).toHaveLength(1);
-    expect(queries[0].body).toEqual({ schema: 'OMM.fbs', include_data: false, limit: 5, offset: 5 });
+    expect(queries[0].body).toEqual({ schema: 'OMM.fbs', limit: 5, page: 2 });
 
     const rows = await runtime.query('SELECT _source, NORAD_CAT_ID FROM OMM ORDER BY _rowid ASC', 'OMM');
     expect(rows.records).toEqual(catalog.slice(5, 10).map((row) => ({ _source: `OMM@${row.source}`, NORAD_CAT_ID: row.noradCatId })));
@@ -445,7 +435,7 @@ describe('dashboard window runtime', () => {
 
     const load = await runtime.loadPage({ schema: 'OMM', source: 'OMM@supplemental' }, { page: 1, limit: 50 });
     expect(load).toMatchObject({ key: 'OMM|OMM@supplemental|||', source: 'supplemental', windowRows: 5, storedRows: 5 });
-    expect(node.queryRequests()[0].body).toMatchObject({ source_name: 'supplemental', limit: 50, offset: 0 });
+    expect(node.queryRequests()[0].body).toMatchObject({ sourceName: 'supplemental', limit: 50, page: 1 });
     const rows = await runtime.query('SELECT DISTINCT _source FROM OMM', 'OMM');
     expect(rows.records).toEqual([{ _source: 'OMM@supplemental' }]);
   });
@@ -470,8 +460,8 @@ describe('dashboard window runtime', () => {
     const queries = node.queryRequests();
     expect(queries).toHaveLength(2);
     expect(queries.map((request) => request.body)).toEqual([
-      { schema: 'OMM.fbs', include_data: false, limit: 5, offset: 0 },
-      { schema: 'OMM.fbs', include_data: false, limit: 3, offset: 5 },
+      { schema: 'OMM.fbs', limit: 5, page: 1 },
+      { schema: 'OMM.fbs', limit: 5, page: 2 },
     ]);
 
     const ids = await runtime.query('SELECT NORAD_CAT_ID FROM OMM ORDER BY _rowid ASC', 'OMM');
@@ -486,7 +476,7 @@ describe('dashboard window runtime', () => {
     expect(decodeWindowStatus(runtime.status('OMM'))).toMatchObject({ status: 'synced', missingRows: 0 });
   });
 
-  it('sends no sync_filter when the probe shows the node has no epochs for the standard', async () => {
+  it('sends no SQL range when the probe shows the node has no epochs for the standard', async () => {
     const catalog = buildCatalog();
     const node = createFakeNode(catalog, { rangeSupported: false });
     const runtime = createDashboardWindow({ store: await createOmmStore(), fetch: node.fetch, baseUrl: 'http://node.test' });
@@ -503,12 +493,12 @@ describe('dashboard window runtime', () => {
       storedRows: 12,
     });
     const queries = node.queryRequests();
-    expect(queries[0].body).toMatchObject({ limit: 1, offset: 0, sync_filter: DASHBOARD_WINDOW_RANGE_PROBE_FILTER });
-    expect(queries.slice(1).every((request) => !('sync_filter' in (request.body ?? {})))).toBe(true);
+    expect(queries[0].body).toMatchObject({ limit: 1, page: 1, sql: DASHBOARD_WINDOW_RANGE_PROBE_FILTER });
+    expect(queries.slice(1).every((request) => !('sql' in (request.body ?? {})))).toBe(true);
     expect(queries).toHaveLength(1 + 3);
 
     await runtime.loadWindow(state, { batchRows: 5 });
-    expect(node.queryRequests().filter((request) => request.body?.sync_filter === DASHBOARD_WINDOW_RANGE_PROBE_FILTER)).toHaveLength(1);
+    expect(node.queryRequests().filter((request) => request.body?.sql === DASHBOARD_WINDOW_RANGE_PROBE_FILTER)).toHaveLength(1);
     expect(decodeWindowStatus(runtime.status('OMM')).syncFilter).toBe('EPOCH >= 2026-05-20T00:00:00Z AND EPOCH <= 2026-05-31T00:00:00Z');
   });
 
@@ -527,7 +517,7 @@ describe('dashboard window runtime', () => {
       syncFilter: 'EPOCH >= 2026-05-20T00:00:00Z AND EPOCH <= 2026-05-31T00:00:00Z',
     });
     const batches = node.queryRequests().slice(1);
-    expect(batches.every((request) => request.body?.sync_filter === load.syncFilter)).toBe(true);
+    expect(batches.every((request) => request.body?.sql === load.syncFilter)).toBe(true);
     const epochs = await runtime.query('SELECT EPOCH FROM OMM ORDER BY _rowid ASC', 'OMM', { maxLimit: 100 });
     expect(epochs.records.map((row) => row.EPOCH)).toEqual([...catalog].reverse().map((row) => row.epoch));
 
