@@ -157,6 +157,8 @@ func EngineAOTCacheDir() string { return engineAOTCacheDir() }
 // bounded hot-window CACHE of the routed standards over the same records,
 // tracked by a durable residency ledger (engine_residency.go).
 type FlatSQLStore struct {
+	scanGenerationMu       sync.Mutex // guards scanGeneration (scan_generation.go)
+	scanGeneration         []byte
 	fullTextMu             sync.Mutex
 	fullTextStates         map[string]*fullTextIndexState
 	fullTextSlots          chan struct{}
@@ -4527,7 +4529,14 @@ func (s *FlatSQLStore) localEPMKeys() ([][]byte, error) {
 }
 
 // RebuildIndex scans all schema tables and repopulates sdn_record_index.
-func (s *FlatSQLStore) RebuildIndex() (map[string]int64, error) {
+// A rebuild starts a new scan generation: resume cursors issued before it
+// expire.
+func (s *FlatSQLStore) RebuildIndex() (summary map[string]int64, err error) {
+	defer func() {
+		if err == nil {
+			s.rotateScanGeneration()
+		}
+	}()
 	if s.rb != nil {
 		return s.rb.RebuildIndex()
 	}
@@ -4536,7 +4545,7 @@ func (s *FlatSQLStore) RebuildIndex() (map[string]int64, error) {
 	}
 	defer s.lockWrite("RebuildIndex")()
 
-	summary := make(map[string]int64)
+	summary = make(map[string]int64)
 
 	for _, schemaName := range s.validator.Schemas() {
 		tableName, err := s.recordReadSource(schemaName)
@@ -5029,8 +5038,8 @@ type RecordIndexPageQuery struct {
 	// format 2 _arrival, format 4 TS). The rolling-window expiry
 	// (record_expiry.go) pages its lane with it.
 	ArrivedBefore *int64
-	Limit     int
-	Offset    int
+	Limit         int
+	Offset        int
 }
 
 // RecordIndexRow is one per-record row of the index-page surface. Pointer fields
@@ -5318,6 +5327,25 @@ func (s *FlatSQLStore) RawRecordHead(filter RawRecordQuery) (RawRecordHead, erro
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.rawRecordHeadLocked(filter)
+}
+
+// RecordSequenceHead is the newest position of the sequence a rowid cursor
+// walks, read without counting: format 1's global sdn_record_index rowid
+// (MAX(rowid) is one b-tree seek), or the record backend's boundary for the
+// filter's remaining range.
+func (s *FlatSQLStore) RecordSequenceHead(filter RawRecordQuery) (int64, error) {
+	if s.rb != nil {
+		filter.UseRowIDCursor = true
+		head, err := s.rb.RawRecordHead(filter)
+		return head.MaxRowID, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var head int64
+	if err := s.db.QueryRow(`SELECT COALESCE(MAX(rowid), 0) FROM sdn_record_index`).Scan(&head); err != nil {
+		return 0, fmt.Errorf("record sequence head: %w", err)
+	}
+	return head, nil
 }
 
 // RawRecordSnapshot reads the count and head under one catalog lock so live

@@ -12,6 +12,11 @@ package api
 // (PROVIDER_ID, SOURCE_NAME, BATCH_ID, PRODUCER_PEER_ID, ORIGIN_ID = storing
 // peer) and repeats the page fields (CURSOR, NEXT_CURSOR, TOTAL_COUNT, LIMIT,
 // ETAG = page chunk hash). An empty page is one header with RECORD_COUNT 0.
+// The last page (NEXT_CURSOR empty) carries RESUME_CURSOR: a Request with it
+// returns only the records stored since, and its own last page carries a
+// fresh one. A resume cursor of another query is refused (400
+// resume_cursor_query_mismatch); after a rebuild it expires (410
+// resume_cursor_expired: rescan from the first page).
 // Record frames are the stored bytes behind a u32le length; a reader derives
 // each record's cid as the sha256 hex of those bytes. Every error is one
 // $QRP{KIND=Error} frame. JSON is refused.
@@ -61,6 +66,12 @@ func (h *DataQueryHandler) handleScan(w http.ResponseWriter, r *http.Request) {
 			writeStatusFrame(w, http.StatusServiceUnavailable, QRPStatusBusy, "engine_rebuilding", "The record engine is rebuilding; retry shortly.", 30*time.Second)
 		case errors.Is(err, storage.ErrSearchIndexBuilding):
 			writeStatusFrame(w, http.StatusServiceUnavailable, QRPStatusCold, "search_index_building", err.Error(), 2*time.Second)
+		case errors.Is(err, datasync.ErrResumeCursorExpired):
+			WriteErrorFrame(w, http.StatusGone, "resume_cursor_expired", err.Error(), 0)
+		case errors.Is(err, datasync.ErrResumeCursorQuery):
+			WriteErrorFrame(w, http.StatusBadRequest, "resume_cursor_query_mismatch", err.Error(), 0)
+		case errors.Is(err, datasync.ErrResumeCursorInvalid):
+			WriteErrorFrame(w, http.StatusBadRequest, "invalid_resume_cursor", err.Error(), 0)
 		default:
 			WriteErrorFrame(w, http.StatusBadRequest, "bad_request", err.Error(), 0)
 		}
@@ -96,6 +107,7 @@ func readScanRequest(r *http.Request) (datasync.QueryRequest, error) {
 		PeerID:         string(q.ORIGIN_ID()),
 		Search:         strings.TrimSpace(string(q.SEARCH())),
 		Cursor:         string(q.CURSOR()),
+		ResumeCursor:   string(q.RESUME_CURSOR()),
 		Limit:          int(q.LIMIT()),
 		IncludeData:    true,
 	}
@@ -147,6 +159,7 @@ func writeScanPage(w http.ResponseWriter, store *storage.FlatSQLStore, page *dat
 			Limit:          uint32(page.Limit),
 			Cursor:         page.Cursor,
 			NextCursor:     page.NextCursor,
+			ResumeCursor:   page.ResumeCursor,
 			RecordCount:    uint32(count),
 			TotalCount:     uint64(page.TotalCount),
 			Etag:           page.ChunkHash,
