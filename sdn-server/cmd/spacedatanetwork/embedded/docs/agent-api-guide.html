@@ -133,10 +133,12 @@ curl http://localhost:7173/api/v1/catalog
 # 3. The anonymous record index (CIDs + a few indexed columns, no content).
 #    The answer is ONE $QRP{KIND=Page} FlatBuffer frame
 #    (application/vnd.sdn.flatbuffers.stream: [u32le length][FlatBuffer]):
-curl -o page.qrp &quot;http://localhost:7173/api/v1/data/index?schema=TBS&amp;page=1&amp;limit=3&quot;
-# -&gt; TOTAL_COUNT 1078755, PAGE 1, LIMIT 3, STALE false, AS_OF_MS;
-#    COLUMNS [cid, norad, epoch_ms]; each ROWS[i].CELLS holds the cid (Text)
-#    and norad and epoch_ms (Int, or Null). sdn-js: decodeQrpIndexPage(bytes).
+curl -o page.qrp &quot;http://localhost:7173/api/v1/data/index?schema=TBS&amp;limit=3&quot;
+# -&gt; TOTAL_COUNT 1078755, PAGE 1, LIMIT 3, CURSOR, NEXT_CURSOR, STALE false,
+#    AS_OF_MS; COLUMNS [cid, norad, epoch_ms]; each ROWS[i].CELLS holds the
+#    cid (Text) and norad and epoch_ms (Int, or Null), in store order. Read on
+#    with &amp;cursor=&lt;NEXT_CURSOR&gt; until NEXT_CURSOR comes back empty.
+#    sdn-js: decodeQrpIndexPage(bytes).
 
 # 4. Health check and the human-readable API reference (both anonymous):
 curl -o health.qrp http://localhost:7173/api/v1/data/health
@@ -172,9 +174,10 @@ EPM-derived addresses, chain proofs, listen addresses, onion address.</li>
 <li><code>GET /api/relay/status</code> — peer_id, connections, configured_nodes,
 max_connections, load, mode, versions, uptime_seconds.</li>
 <li><code>GET /api/v1/catalog</code>, <code>/api/v1/data/health</code></li>
-<li><code>GET /api/v1/data/index?schema=&lt;CODE&gt;&amp;page=&amp;limit=</code> — anonymous CID index,
-answered as one <code>$QRP</code> page frame (capped at 200 rows/page; <code>limit</code> &gt; 200
-clamped).</li>
+<li><code>GET /api/v1/data/index?schema=&lt;CODE&gt;&amp;limit=&amp;cursor=</code> — anonymous CID
+index, answered as one <code>$QRP</code> page frame in store order (at most 20,000
+rows a page; a larger <code>limit</code> is clamped). It pages as <code>/api/v1/data/query</code>
+does (<em>Querying records</em>, section 4).</li>
 <li><code>GET /api/v1/pubsub/topics</code>, <code>/api/v1/pubsub/messages?schema=&amp;limit=</code></li>
 <li><code>GET /api/v1/channels</code>, <code>/api/v1/channels/&lt;standardCode&gt;</code></li>
 <li><code>GET /api/apps</code>, <code>/api/v1/apps/default</code>, <code>/api/v1/apps/records/&lt;...&gt;</code> —
@@ -430,10 +433,31 @@ one size-prefixed <code>$QRP{KIND=Request}</code> frame; JSON is refused with <c
 <code>SEARCH</code>; <code>FROM_EPOCH_MS</code> and <code>TO_EPOCH_MS</code>; <code>TIME_PROFILE</code> (<code>All</code>,
 <code>Nearest</code>, <code>AsOf</code>, <code>Latest</code>) with <code>PROFILE_EPOCH_MS</code>; <code>FILTERS</code>
 (<code>NORAD_CAT_ID</code>, <code>ENTITY_ID</code>, <code>MAX_DELTA_SECONDS</code>); <code>PAGE</code> (1-based);
-<code>LIMIT</code> (at most 20,000); <code>ARCHIVE_ID</code>. A query pages by <code>PAGE</code>, not by
-cursor.</li>
+<code>LIMIT</code> (at most 20,000); <code>CURSOR</code>; <code>ARCHIVE_ID</code>.</li>
 <li>The answer has the scan&#39;s shape: runs of a <code>$QRP{KIND=Page}</code> lane header
 and its <code>RECORD_COUNT</code> records, verbatim.</li>
+<li>Order: store sequence ascending, the scan&#39;s order, so a batch comes back in
+the order it was stored. There is no other order: <code>SORT_FIELD</code> or
+<code>SORT_DESC</code> is refused with a <code>$QRP</code> Error <code>400</code>.</li>
+<li>The first page (no <code>CURSOR</code>) pins a snapshot at the lane&#39;s sequence head. It
+holds the snapshot&#39;s records <code>[(PAGE-1)×LIMIT, PAGE×LIMIT)</code>, and
+<code>TOTAL_COUNT</code> counts the snapshot.</li>
+<li>Every page header carries <code>CURSOR</code> and <code>NEXT_CURSOR</code>, both opaque and issued
+by the node. <code>NEXT_CURSOR</code> is empty on the snapshot&#39;s last page. Send it back
+as <code>CURSOR</code> with the same query: the next <code>LIMIT</code> records come from the same
+snapshot, <code>PAGE</code> is not used, and <code>TOTAL_COUNT</code> stays the same. A cursor
+walk returns every record of the snapshot exactly once, even while ingest or
+expiry runs. Records stored after the first page are not in it.</li>
+<li><code>PAGE</code> without a cursor pins a fresh snapshot for each page, so
+<code>TOTAL_COUNT</code> can grow. Sequences only grow, so a <code>PAGE</code> walk is exact under
+append but not under expiry. Walk with the cursor for an exact read.</li>
+<li>Refused with a <code>$QRP</code> Error <code>400</code>: a malformed cursor, a cursor issued for
+another lane or query, and <code>CURSOR</code> on a <code>TIME_PROFILE</code> query or on a
+small-body (<code>SBD</code>) query with an <code>SQL</code> field filter. Those two keep their own
+order and page by <code>PAGE</code>: a time profile in the epoch index&#39;s profile order,
+a small-body filter in sequence order.</li>
+<li>The index (<code>GET /api/v1/data/index</code>) pages the same way, with the cursor as
+<code>&amp;cursor=</code>. Its rows (<code>cid</code>, <code>norad</code>, <code>epoch_ms</code>) come in the query&#39;s order.</li>
 <li>Time profiles ride on the query; there is no separate epoch route. A time
 profile needs the schema&#39;s epoch profile: a schema without one answers <code>400</code>.</li>
 </ul>

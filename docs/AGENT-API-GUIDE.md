@@ -38,10 +38,12 @@ curl http://localhost:7173/api/v1/catalog
 # 3. The anonymous record index (CIDs + a few indexed columns, no content).
 #    The answer is ONE $QRP{KIND=Page} FlatBuffer frame
 #    (application/vnd.sdn.flatbuffers.stream: [u32le length][FlatBuffer]):
-curl -o page.qrp "http://localhost:7173/api/v1/data/index?schema=TBS&page=1&limit=3"
-# -> TOTAL_COUNT 1078755, PAGE 1, LIMIT 3, STALE false, AS_OF_MS;
-#    COLUMNS [cid, norad, epoch_ms]; each ROWS[i].CELLS holds the cid (Text)
-#    and norad and epoch_ms (Int, or Null). sdn-js: decodeQrpIndexPage(bytes).
+curl -o page.qrp "http://localhost:7173/api/v1/data/index?schema=TBS&limit=3"
+# -> TOTAL_COUNT 1078755, PAGE 1, LIMIT 3, CURSOR, NEXT_CURSOR, STALE false,
+#    AS_OF_MS; COLUMNS [cid, norad, epoch_ms]; each ROWS[i].CELLS holds the
+#    cid (Text) and norad and epoch_ms (Int, or Null), in store order. Read on
+#    with &cursor=<NEXT_CURSOR> until NEXT_CURSOR comes back empty.
+#    sdn-js: decodeQrpIndexPage(bytes).
 
 # 4. Health check and the human-readable API reference (both anonymous):
 curl -o health.qrp http://localhost:7173/api/v1/data/health
@@ -79,9 +81,10 @@ in three cases.
    - `GET /api/relay/status` — peer_id, connections, configured_nodes,
      max_connections, load, mode, versions, uptime_seconds.
    - `GET /api/v1/catalog`, `/api/v1/data/health`
-   - `GET /api/v1/data/index?schema=<CODE>&page=&limit=` — anonymous CID index,
-     answered as one `$QRP` page frame (capped at 200 rows/page; `limit` > 200
-     clamped).
+   - `GET /api/v1/data/index?schema=<CODE>&limit=&cursor=` — anonymous CID
+     index, answered as one `$QRP` page frame in store order (at most 20,000
+     rows a page; a larger `limit` is clamped). It pages as `/api/v1/data/query`
+     does (*Querying records*, section 4).
    - `GET /api/v1/pubsub/topics`, `/api/v1/pubsub/messages?schema=&limit=`
    - `GET /api/v1/channels`, `/api/v1/channels/<standardCode>`
    - `GET /api/apps`, `/api/v1/apps/default`, `/api/v1/apps/records/<...>` —
@@ -372,10 +375,31 @@ one size-prefixed `$QRP{KIND=Request}` frame; JSON is refused with `415` and
   `SEARCH`; `FROM_EPOCH_MS` and `TO_EPOCH_MS`; `TIME_PROFILE` (`All`,
   `Nearest`, `AsOf`, `Latest`) with `PROFILE_EPOCH_MS`; `FILTERS`
   (`NORAD_CAT_ID`, `ENTITY_ID`, `MAX_DELTA_SECONDS`); `PAGE` (1-based);
-  `LIMIT` (at most 20,000); `ARCHIVE_ID`. A query pages by `PAGE`, not by
-  cursor.
+  `LIMIT` (at most 20,000); `CURSOR`; `ARCHIVE_ID`.
 - The answer has the scan's shape: runs of a `$QRP{KIND=Page}` lane header
   and its `RECORD_COUNT` records, verbatim.
+- Order: store sequence ascending, the scan's order, so a batch comes back in
+  the order it was stored. There is no other order: `SORT_FIELD` or
+  `SORT_DESC` is refused with a `$QRP` Error `400`.
+- The first page (no `CURSOR`) pins a snapshot at the lane's sequence head. It
+  holds the snapshot's records `[(PAGE-1)×LIMIT, PAGE×LIMIT)`, and
+  `TOTAL_COUNT` counts the snapshot.
+- Every page header carries `CURSOR` and `NEXT_CURSOR`, both opaque and issued
+  by the node. `NEXT_CURSOR` is empty on the snapshot's last page. Send it back
+  as `CURSOR` with the same query: the next `LIMIT` records come from the same
+  snapshot, `PAGE` is not used, and `TOTAL_COUNT` stays the same. A cursor
+  walk returns every record of the snapshot exactly once, even while ingest or
+  expiry runs. Records stored after the first page are not in it.
+- `PAGE` without a cursor pins a fresh snapshot for each page, so
+  `TOTAL_COUNT` can grow. Sequences only grow, so a `PAGE` walk is exact under
+  append but not under expiry. Walk with the cursor for an exact read.
+- Refused with a `$QRP` Error `400`: a malformed cursor, a cursor issued for
+  another lane or query, and `CURSOR` on a `TIME_PROFILE` query or on a
+  small-body (`SBD`) query with an `SQL` field filter. Those two keep their own
+  order and page by `PAGE`: a time profile in the epoch index's profile order,
+  a small-body filter in sequence order.
+- The index (`GET /api/v1/data/index`) pages the same way, with the cursor as
+  `&cursor=`. Its rows (`cid`, `norad`, `epoch_ms`) come in the query's order.
 - Time profiles ride on the query; there is no separate epoch route. A time
   profile needs the schema's epoch profile: a schema without one answers `400`.
 

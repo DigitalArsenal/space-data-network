@@ -258,12 +258,12 @@ List and manage accounts (network peers and login operators are one thing)
 <li><code>/spacedatanetwork/sds-exchange/1.0.0</code> — record exchange</li>
 <li><code>/space-data-network/id-exchange/1.0.0</code> — identity records</li>
 <li><code>/space-data-network/chat/1.0.0</code></li>
-<li><code>/space-data-network/flatsql-sync/1.0.0</code> — published shard sync (the high-throughput data lane)</li>
+<li><code>/space-data-network/flatsql-sync/2.0.0/&lt;op&gt;</code> — record and published-shard sync (the high-throughput data lane); one protocol per op, <code>$QRP</code> frames only</li>
 </ul>
 <h3>Pubsub lanes</h3>
 <ul>
 <li><strong>Per-schema data topics</strong> — <code>/spacedatanetwork/sds/&lt;SCHEMA&gt;</code> — the streaming record lane: one topic per standard, joined for every validated schema. Publication notifications ride the PNM standard&#39;s own data topic, <code>/spacedatanetwork/sds/PNM.fbs</code>.</li>
-<li><strong>Feed heads</strong> — <code>/space-data-network/feed-heads/1.0.0/&lt;schema&gt;</code> — small, signed, mutable pointer messages. A feed head announces where a standard&#39;s latest immutable materialized set lives (record count, byte count, shard / query-index / manifest CIDs, publication CID) and is what replicas subscribe to <em>before</em> fetching the immutable shards.</li>
+<li><strong>Feed heads</strong> — <code>/space-data-network/feed-heads/2.0.0/&lt;schema&gt;</code> — small, signed, mutable pointer messages (one <code>$QRP</code> Page carrying one SEGMENT row). A feed head announces where a standard&#39;s latest immutable materialized set lives (record count, byte count, shard / query-index / manifest CIDs, publication CID) and is what replicas subscribe to <em>before</em> fetching the immutable shards.</li>
 <li><strong>Adjuncts</strong> — <code>/spacedatanetwork/edge-relays</code> (relay announcements), storefront topics <code>/sdn/storefront/{listings,purchases,reviews}</code>, per-buyer delivery topics <code>/sdn/data/{listing_id}/{buyer_peer_id}</code>, and channel discovery topics.</li>
 </ul>
 <h3>The publication lifecycle (dataset lane)</h3>
@@ -272,11 +272,78 @@ List and manage accounts (network peers and login operators are one thing)
 <li>A provider ingests source data and normalizes it into SDS FlatBuffers.</li>
 <li>Records are stored locally and mirrored into the engine&#39;s tables.</li>
 <li>The provider exports the authoritative set as a <code>DATA_SHARD</code> (the streams) plus a <code>QUERY_INDEX</code> asset.</li>
-<li>It builds and signs a dataset publication manifest (<strong>DPM</strong>) binding the file identifier, source and byte hashes, schema hash, and the assets&#39; content addresses, and pins it to IPFS.</li>
+<li>It builds and signs a dataset publication manifest (<strong>DPM</strong>) binding the file identifier, source and byte hashes, schema hash, and the assets&#39; content addresses, and adds it to IPFS.</li>
 <li>It signs and announces a publication notification (<strong>PNM</strong>) on the open pubsub topics.</li>
 <li>Consumers resolve the latest PNM by peer + standard, verify the signature against the publisher&#39;s identity, fetch the manifest and assets by content address over libp2p, verify hashes, roots, and signatures, and import the shard into their own store.</li>
 </ol>
 <p>Content addressing is what makes this safe without a trusted third party: bytes are their own addresses, and the signature chain binds names to bytes. Published-shard downloads run at near wire speed (the documented gate is 2 Gbit/s sustained, 99% of wire speed). Over HTTP, the same records are served against the per-schema anonymous allowlist of Section 3.</p>
+<h3>Pin policy</h3>
+<p>A node stores and serves its records and files by content address whether or not they are pinned. A pin is a separate decision: it keeps bytes out of IPFS garbage collection and in the set the node announces as pinned. By default a node pins only its own EPM and its account EPMs. Everything else is added to the node&#39;s blockstore unpinned until the operator turns its class on.</p>
+<table>
+<thead>
+<tr>
+<th>Class</th>
+<th>Covers</th>
+<th>Feed</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>NODE_EPM</code></td>
+<td>The node&#39;s own EPM. Always pinned.</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>ACCOUNT_EPM</code></td>
+<td>The EPMs of the node&#39;s accounts. Always pinned.</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>PUBLICATION</code></td>
+<td>Dataset publications: manifests, shards, indexes, PNMs, CAR bundles.</td>
+<td><code>&lt;standard&gt;/&lt;provider&gt;/&lt;source&gt;</code>, e.g. <code>OMM/celestrak/gp</code></td>
+</tr>
+<tr>
+<td><code>SHARE</code></td>
+<td>Records published as open shares.</td>
+<td>The standard, e.g. <code>OMM</code></td>
+</tr>
+<tr>
+<td><code>FLOW_ASSET</code></td>
+<td>Files a flow or module adds or pins through its IPFS capability.</td>
+<td>The flow or module id</td>
+</tr>
+<tr>
+<td><code>TIP</code></td>
+<td>Content announced in pubsub tips.</td>
+<td>The tip topic</td>
+</tr>
+<tr>
+<td><code>STOREFRONT</code></td>
+<td>Storefront listings and their artifacts.</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>ASSET_MODEL</code></td>
+<td>3D asset models.</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>SITE_ASSET</code></td>
+<td>Homepage site assets.</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>PROFILE_PHOTO</code></td>
+<td>Profile photos of the node and its accounts.</td>
+<td>—</td>
+</tr>
+</tbody></table>
+<p>A rule turns a whole class on or off, or one feed within it; a feed rule overrides its class rule. The operator sets them in the SDN UI&#39;s pin menu, which reads and writes the node&#39;s policy as an SDS <code>$PIN</code>:</p>
+<ul>
+<li><code>GET /api/node/pins</code> answers one size-prefixed <code>$PIN</code>: every rule, whether it is on, whether it is locked, and the roots and bytes it holds pinned.</li>
+<li><code>POST /api/node/pins</code> takes one size-prefixed <code>$PIN</code> carrying only the rules to change (<code>CLASS</code>, <code>FEED</code>, <code>ENABLED</code>) and answers the whole policy. Turning a rule on pins what the node already holds under it, from its own blockstore. Turning it off unpins what the rule pinned, unless another enabled rule holds the same content.</li>
+</ul>
+<p>Both routes are operator only and use <code>application/vnd.sdn.flatbuffers.stream</code> with <code>X-SDN-Schema: PIN.fbs</code>. A change to <code>NODE_EPM</code> or <code>ACCOUNT_EPM</code> is refused. A lane&#39;s retention rule (<code>ReplaceCurrent</code>, <code>KeepAll</code>, <code>ArchiveAll</code>) decides what the node&#39;s store keeps; it never pins. Unpinned bytes stay in the blockstore until the operator runs IPFS garbage collection, which the node never runs on its own.</p>
 <h2>7. Everything compute is WASM; the host only connects</h2>
 <p><strong>All functionality is WASM.</strong> The Go host and the browser JavaScript host are thin, application-blind connector layers exposing the same small set of generic hooks (network, storage, file I/O, signing). A module compiled once runs identically under WasmEdge on a node and in a browser tab, threaded through the wasi-threads contract. Divergence between the two runtimes is treated as a defect, caught by running identical scenarios against both artifacts.</p>
 <p>In practice:</p>
