@@ -111,6 +111,8 @@ export interface FlatSqlSyncQuery {
   originId?: string;
   queryProfile?: string;
   search?: string;
+  /** read-chunk: the sync_filter grammar ($QRP SQL), e.g. `NORAD_CAT_ID = 25544 AND EPOCH BETWEEN a AND b`. */
+  syncFilter?: string;
   /** read-chunk: node-issued page cursor; list-published: node-issued offset. */
   cursor?: string;
   /** read-chunk: the RESUME_CURSOR of an earlier complete walk of this query. */
@@ -445,6 +447,7 @@ interface QrpRequestFields {
   batchId?: string;
   producerPeerId?: string;
   originId?: string;
+  sql?: string;
   search?: string;
   cursor?: string;
   resumeCursor?: string;
@@ -464,6 +467,7 @@ function encodeQrpRequest(fields: QrpRequestFields): Uint8Array {
   const batchId = str(fields.batchId);
   const producerPeerId = str(fields.producerPeerId);
   const originId = str(fields.originId);
+  const sql = str(fields.sql);
   const search = str(fields.search);
   const cursor = str(fields.cursor);
   const resumeCursor = str(fields.resumeCursor);
@@ -480,6 +484,7 @@ function encodeQrpRequest(fields: QrpRequestFields): Uint8Array {
   if (batchId) QRP.addBatchId(b, batchId);
   if (producerPeerId) QRP.addProducerPeerId(b, producerPeerId);
   if (originId) QRP.addOriginId(b, originId);
+  if (sql) QRP.addSql(b, sql);
   if (search) QRP.addSearch(b, search);
   if (filters) QRP.addFilters(b, filters);
   if (cursor) QRP.addCursor(b, cursor);
@@ -510,12 +515,13 @@ function laneFields(query: FlatSqlSyncQuery): QrpRequestFields {
   };
 }
 
-/** read-chunk request: lane, SEARCH, CURSOR | RESUME_CURSOR, LIMIT. */
+/** read-chunk request: lane, SQL (sync_filter), SEARCH, CURSOR | RESUME_CURSOR, LIMIT. */
 export function encodeFlatSqlReadChunkRequest(query: Omit<FlatSqlSyncQuery, 'targetPeerId'>): Uint8Array {
   return encodeQrpRequest({
     ...laneFields(query as FlatSqlSyncQuery),
     producerPeerId: query.producerPeerId,
     originId: query.originId,
+    sql: query.syncFilter,
     search: query.search,
     ...(query.cursor ? { cursor: query.cursor } : { resumeCursor: query.resumeCursor }),
     limit: query.limit,
