@@ -38,6 +38,11 @@ export interface QrpScanRequest {
   search?: string;
   limit?: number;
   cursor?: string;
+  /**
+   * The RESUME_CURSOR of an earlier complete scan of this same query: the
+   * scan returns only records stored since. Never sent with `cursor`.
+   */
+  resumeCursor?: string;
 }
 
 export interface QrpScanPage {
@@ -46,6 +51,11 @@ export interface QrpScanPage {
   limit: number;
   cursor: string;
   nextCursor: string;
+  /**
+   * Set on the last page (nextCursor empty): resumes this query after this
+   * scan. Opaque; a 410 resume_cursor_expired answer means rescan.
+   */
+  resumeCursor: string;
   totalCount: number;
   /** Page chunk hash. */
   etag: string;
@@ -96,6 +106,7 @@ export function encodeQrpScanRequest(request: QrpScanRequest): Uint8Array {
   const originId = str(request.originId);
   const search = str(request.search);
   const cursor = str(request.cursor);
+  const resumeCursor = str(request.resumeCursor);
   QRP.startQRP(b);
   QRP.addKind(b, qrpKind.Request);
   QRP.addSchemaName(b, schema);
@@ -106,6 +117,7 @@ export function encodeQrpScanRequest(request: QrpScanRequest): Uint8Array {
   if (originId) QRP.addOriginId(b, originId);
   if (search) QRP.addSearch(b, search);
   if (cursor) QRP.addCursor(b, cursor);
+  if (resumeCursor) QRP.addResumeCursor(b, resumeCursor);
   if (request.limit) QRP.addLimit(b, request.limit);
   QRP.finishSizePrefixedQRPBuffer(b, QRP.endQRP(b));
   return b.asUint8Array();
@@ -173,6 +185,7 @@ export async function decodeQrpScanStream(body: Uint8Array): Promise<{ page: Qrp
       limit: header.LIMIT(),
       cursor: header.CURSOR() ?? '',
       nextCursor: header.NEXT_CURSOR() ?? '',
+      resumeCursor: header.RESUME_CURSOR() ?? '',
       totalCount: Number(header.TOTAL_COUNT()),
       etag: header.ETAG() ?? '',
     };

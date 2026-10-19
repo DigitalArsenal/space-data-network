@@ -4,6 +4,14 @@
 // verbatim record frames, byte-identical and in order; JSON is refused; the
 // stream route is gone; GET /api/v1/data/index answers one $QRP page.
 //
+// Incremental resume ($QRP RESUME_CURSOR): the last page of the full scan
+// carries a node-issued resume cursor. After N records are stored, a
+// Request with it returns exactly those N, byte-identical and in order, and
+// a fresh cursor; with nothing new it returns zero records and a cursor. Its
+// time is reported per round, against the full scan. A different query, a
+// forged and a tampered cursor are refused. The cursor survives restarts;
+// after `reindex` (a rebuild) it answers 410 resume_cursor_expired.
+//
 //	data-scan-flatbuffer-e2e --binary <node> [--rows N] [--data DIR] [--seed-only] [--boot-only]
 package main
 
@@ -23,6 +31,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -111,7 +120,7 @@ func run(ctx context.Context) (err error) {
 	if err != nil {
 		return err
 	}
-	defer node.stop()
+	defer func() { node.stop() }()
 	if *bootOnly {
 		fmt.Printf("BOOTED %s\n", node.base)
 		<-ctx.Done()
@@ -124,14 +133,25 @@ func run(ctx context.Context) (err error) {
 		failures = append(failures, msg)
 		fmt.Println("FAIL " + msg)
 	}
-	if err := fullScan(ctx, node.base, *rows); err != nil {
+	resume, scanWall, err := fullScan(ctx, node.base, *rows)
+	if err != nil {
 		fail("full scan: %v", err)
+	}
+	if err == nil {
+		if resume, err = resumeRounds(ctx, &node, *binary, root, resume, *rows, scanWall); err != nil {
+			fail("resume: %v", err)
+		}
 	}
 	if err := refusesJSON(ctx, node.base); err != nil {
 		fail("json refusal: %v", err)
 	}
 	if err := indexPage(ctx, node.base); err != nil {
 		fail("index: %v", err)
+	}
+	if resume != "" {
+		if err := resumeAfterRebuild(ctx, &node, *binary, root, resume); err != nil {
+			fail("resume after a rebuild: %v", err)
+		}
 	}
 	if len(failures) > 0 {
 		return errors.New(strings.Join(failures, "; "))
@@ -140,17 +160,29 @@ func run(ctx context.Context) (err error) {
 }
 
 func seed(root string, rows int) error {
-	validator, err := sds.NewValidator(nil)
+	start := time.Now()
+	format4, err := storeRecords(root, 0, rows)
 	if err != nil {
 		return err
+	}
+	fmt.Printf("seed rows=%d time=%s format4=%t\n", rows, time.Since(start).Round(time.Millisecond), format4)
+	return os.WriteFile(filepath.Join(root, ".seeded"), []byte(fmt.Sprint(rows)), 0o644)
+}
+
+// storeRecords stores records [from, to) straight into the store (the node
+// stopped), in seedBatch batches of one source lane each, from the one
+// producer.
+func storeRecords(root string, from, to int) (format4 bool, err error) {
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		return false, err
 	}
 	store, err := storage.NewFlatSQLStore(root, validator)
 	if err != nil {
-		return err
+		return false, err
 	}
-	start := time.Now()
-	for first := 0; first < rows; first += seedBatch {
-		n := min(seedBatch, rows-first)
+	for first := from; first < to; first += seedBatch {
+		n := min(seedBatch, to-first)
 		batch := make([][]byte, n)
 		for i := range batch {
 			batch[i] = record(first + i)
@@ -159,18 +191,15 @@ func seed(root string, rows int) error {
 		stored, err := store.StoreBatchWithSourceTags(schema, batch, producerPeer, nil, tags)
 		if err != nil {
 			_ = store.Close()
-			return err
+			return false, err
 		}
 		if stored != n {
 			_ = store.Close()
-			return fmt.Errorf("batch at %d stored %d of %d", first, stored, n)
+			return false, fmt.Errorf("batch at %d stored %d of %d", first, stored, n)
 		}
 	}
-	if err := store.Close(); err != nil {
-		return err
-	}
-	fmt.Printf("seed rows=%d time=%s format4=%t\n", rows, time.Since(start).Round(time.Millisecond), store.Format4())
-	return os.WriteFile(filepath.Join(root, ".seeded"), []byte(fmt.Sprint(rows)), 0o644)
+	format4 = store.Format4()
+	return format4, store.Close()
 }
 
 type node struct {
@@ -188,12 +217,12 @@ func freePort() (int, error) {
 	return l.Addr().(*net.TCPAddr).Port, nil
 }
 
-// boot starts the node isolated, the way graph/e2e/sdn-server.mjs does, with
-// the scan, stream and record routes open to anonymous callers.
-func boot(ctx context.Context, binary, root string) (*node, error) {
-	home, err := os.MkdirTemp("", "data-scan-e2e-home-")
-	if err != nil {
-		return nil, err
+// nodeHome is an isolated HOME (sharing the machine's flatsql AOT cache) with
+// the node's config: the scan, stream and record routes open to anonymous
+// callers.
+func nodeHome(root string) (home, config string, adminPort int, err error) {
+	if home, err = os.MkdirTemp("", "data-scan-e2e-home-"); err != nil {
+		return
 	}
 	if userHome, err := os.UserHomeDir(); err == nil {
 		aot := filepath.Join(userHome, "Library", "Caches", "flatsql-aot")
@@ -202,21 +231,27 @@ func boot(ctx context.Context, binary, root string) (*node, error) {
 			_ = os.Symlink(aot, filepath.Join(home, "Library", "Caches", "flatsql-aot"))
 		}
 	}
-	port, err := freePort()
-	if err != nil {
-		return nil, err
+	if adminPort, err = freePort(); err != nil {
+		return
 	}
-	config := filepath.Join(home, "config.yaml")
+	config = filepath.Join(home, "config.yaml")
 	yaml := strings.Join([]string{
 		"mode: full",
 		"network:", "  listen:", "    - /ip4/127.0.0.1/tcp/0", "  bootstrap: []", "  edge_relays: []", "  enable_relay: false",
 		"storage:", fmt.Sprintf("  path: %q", root), "  max_size: 20GB",
 		"peers:", "  strict_mode: false", "  enable_dht: false", "  enable_mdns: false",
-		"admin:", "  enabled: true", fmt.Sprintf("  listen_addr: \"127.0.0.1:%d\"", port), "  require_auth: true", "  tls_mode: disabled",
+		"admin:", "  enabled: true", fmt.Sprintf("  listen_addr: \"127.0.0.1:%d\"", adminPort), "  require_auth: true", "  tls_mode: disabled",
 		"  public_paths:", "    - \"POST /api/v1/data/scan\"", "    - \"POST /api/v1/data/stream\"", "    - \"/api/v1/data/records/\"",
 		"setup:", fmt.Sprintf("  data_path: %q", root), "",
 	}, "\n")
-	if err := os.WriteFile(config, []byte(yaml), 0o644); err != nil {
+	err = os.WriteFile(config, []byte(yaml), 0o644)
+	return
+}
+
+// boot starts the node isolated, the way graph/e2e/sdn-server.mjs does.
+func boot(ctx context.Context, binary, root string) (*node, error) {
+	home, config, port, err := nodeHome(root)
+	if err != nil {
 		return nil, err
 	}
 	logFile, err := os.Create(filepath.Join(home, "daemon.log"))
@@ -261,6 +296,9 @@ func boot(ctx context.Context, binary, root string) (*node, error) {
 
 // stop ends exactly the process group this harness started.
 func (n *node) stop() {
+	if n == nil {
+		return
+	}
 	if n.cmd != nil && n.cmd.Process != nil {
 		pgid := n.cmd.Process.Pid
 		_ = syscall.Kill(-pgid, syscall.SIGTERM)
@@ -271,6 +309,7 @@ func (n *node) stop() {
 			time.Sleep(500 * time.Millisecond)
 		}
 		_ = syscall.Kill(-pgid, syscall.SIGKILL)
+		n.cmd = nil
 	}
 	_ = os.RemoveAll(n.home)
 }
@@ -283,19 +322,33 @@ func lastLines(b []byte, n int) string {
 	return strings.Join(lines, " | ")
 }
 
-func requestFrame(cursor string) []byte {
+// scanRequest is one $QRP{KIND=Request}: a page cursor or a resume cursor,
+// optionally narrowed to one source lane.
+type scanRequest struct {
+	cursor, resume, sourceName string
+}
+
+func requestFrame(r scanRequest) []byte {
 	b := flatbuffers.NewBuilder(256)
-	schemaName := b.CreateString(schema)
-	var cur flatbuffers.UOffsetT
-	if cursor != "" {
-		cur = b.CreateString(cursor)
+	str := func(s string) flatbuffers.UOffsetT {
+		if s == "" {
+			return 0
+		}
+		return b.CreateString(s)
 	}
+	schemaName, cur, resume, source := b.CreateString(schema), str(r.cursor), str(r.resume), str(r.sourceName)
 	QRP.QRPStart(b)
 	QRP.QRPAddKIND(b, QRP.EnumValuesqrpKind["Request"])
 	QRP.QRPAddSCHEMA_NAME(b, schemaName)
 	QRP.QRPAddLIMIT(b, pageLimit)
 	if cur != 0 {
 		QRP.QRPAddCURSOR(b, cur)
+	}
+	if resume != 0 {
+		QRP.QRPAddRESUME_CURSOR(b, resume)
+	}
+	if source != 0 {
+		QRP.QRPAddSOURCE_NAME(b, source)
 	}
 	QRP.FinishSizePrefixedQRPBuffer(b, QRP.QRPEnd(b))
 	return b.FinishedBytes()
@@ -336,8 +389,10 @@ func post(ctx context.Context, url, contentType string, body []byte) (int, http.
 }
 
 // fullScan pages the whole lane set and checks every frame against the
-// seeded record of the same position, byte for byte.
-func fullScan(ctx context.Context, base string, rows int) error {
+// seeded record of the same position, byte for byte. It returns the last
+// page's RESUME_CURSOR (only the last page carries one) and the wall time.
+func fullScan(ctx context.Context, base string, rows int) (string, time.Duration, error) {
+	resume := ""
 	cursor, seen, pages, runs := "", 0, 0, 0
 	var payloadBytes int64
 	var total uint64
@@ -345,52 +400,57 @@ func fullScan(ctx context.Context, base string, rows int) error {
 	var firstPage, slowest time.Duration
 	for {
 		tp := time.Now()
-		status, hdr, body, err := post(ctx, base+"/api/v1/data/scan", streamType, requestFrame(cursor))
+		status, hdr, body, err := post(ctx, base+"/api/v1/data/scan", streamType, requestFrame(scanRequest{cursor: cursor}))
 		if d := time.Since(tp); pages == 0 {
 			firstPage = d
 		} else if d > slowest {
 			slowest = d
 		}
 		if err != nil {
-			return err
+			return "", 0, err
 		}
 		if status != http.StatusOK {
-			return fmt.Errorf("page %d answered %d (%s)", pages+1, status, errorText(body))
+			return "", 0, fmt.Errorf("page %d answered %d (%s)", pages+1, status, errorText(body))
 		}
 		if ct := hdr.Get("Content-Type"); ct != streamType {
-			return fmt.Errorf("page %d Content-Type %q", pages+1, ct)
+			return "", 0, fmt.Errorf("page %d Content-Type %q", pages+1, ct)
 		}
 		fs, err := frames(body)
 		if err != nil {
-			return fmt.Errorf("page %d: %w", pages+1, err)
+			return "", 0, fmt.Errorf("page %d: %w", pages+1, err)
 		}
 		pages++
 		next := ""
 		for k := 0; k < len(fs); {
 			if !isQRP(fs[k]) {
-				return fmt.Errorf("page %d frame %d is not a $QRP header", pages, k)
+				return "", 0, fmt.Errorf("page %d frame %d is not a $QRP header", pages, k)
 			}
 			h := QRP.GetRootAsQRP(fs[k], 0)
 			if h.KIND() != QRP.EnumValuesqrpKind["Page"] {
-				return fmt.Errorf("page %d header kind %v", pages, h.KIND())
+				return "", 0, fmt.Errorf("page %d header kind %v", pages, h.KIND())
 			}
 			runs++
 			total, next = h.TOTAL_COUNT(), string(h.NEXT_CURSOR())
+			if r := string(h.RESUME_CURSOR()); (r != "") != (next == "") {
+				return "", 0, fmt.Errorf("page %d: RESUME_CURSOR %q with NEXT_CURSOR %q; only the last page carries one", pages, r, next)
+			} else if r != "" {
+				resume = r
+			}
 			count := int(h.RECORD_COUNT())
 			k++
 			if k+count > len(fs) {
-				return fmt.Errorf("page %d run declares %d records, %d frames remain", pages, count, len(fs)-k)
+				return "", 0, fmt.Errorf("page %d run declares %d records, %d frames remain", pages, count, len(fs)-k)
 			}
 			for _, payload := range fs[k : k+count] {
 				if seen >= rows {
-					return fmt.Errorf("more than %d records served", rows)
+					return "", 0, fmt.Errorf("more than %d records served", rows)
 				}
 				if string(h.SOURCE_NAME()) != laneOf(seen) || string(h.BATCH_ID()) != fmt.Sprintf("b%04d", seen/seedBatch) ||
 					string(h.PROVIDER_ID()) != provider || string(h.PRODUCER_PEER_ID()) != producerPeer {
-					return fmt.Errorf("record %d run header lane %s/%s/%s, want %s/%s", seen, h.PROVIDER_ID(), h.SOURCE_NAME(), h.BATCH_ID(), provider, laneOf(seen))
+					return "", 0, fmt.Errorf("record %d run header lane %s/%s/%s, want %s/%s", seen, h.PROVIDER_ID(), h.SOURCE_NAME(), h.BATCH_ID(), provider, laneOf(seen))
 				}
 				if want := record(seen); sha256.Sum256(payload) != sha256.Sum256(want) {
-					return fmt.Errorf("record %d bytes differ from the stored record (%d vs %d bytes)", seen, len(payload), len(want))
+					return "", 0, fmt.Errorf("record %d bytes differ from the stored record (%d vs %d bytes)", seen, len(payload), len(want))
 				}
 				payloadBytes += int64(len(payload))
 				seen++
@@ -406,10 +466,13 @@ func fullScan(ctx context.Context, base string, rows int) error {
 	fmt.Printf("full_scan rows=%d pages=%d runs=%d total_count=%d wall_s=%.2f rows_per_s=%.0f payload_mb_per_s=%.1f first_page_ms=%d slowest_continuation_ms=%d\n",
 		seen, pages, runs, total, wall.Seconds(), float64(seen)/wall.Seconds(), float64(payloadBytes)/1e6/wall.Seconds(), firstPage.Milliseconds(), slowest.Milliseconds())
 	if seen != rows || total != uint64(rows) {
-		return fmt.Errorf("served %d records, TOTAL_COUNT %d, seeded %d", seen, total, rows)
+		return "", 0, fmt.Errorf("served %d records, TOTAL_COUNT %d, seeded %d", seen, total, rows)
 	}
-	fmt.Println("PASS full scan: every record byte-identical, in order, lanes in run headers")
-	return verifyAgainstRecordRoute(ctx, base)
+	if resume == "" {
+		return "", 0, errors.New("the last page carries no RESUME_CURSOR")
+	}
+	fmt.Println("PASS full scan: every record byte-identical, in order, lanes in run headers; the last page carries RESUME_CURSOR")
+	return resume, wall, verifyAgainstRecordRoute(ctx, base)
 }
 
 // verifyAgainstRecordRoute reads one record back through the raw record
@@ -509,4 +572,195 @@ func indexPage(ctx context.Context, base string) error {
 	}
 	fmt.Printf("PASS index: one $QRP page, %d rows of %d, cids seeded\n", q.ROWSLength(), q.TOTAL_COUNT())
 	return nil
+}
+
+// resumeRound is what one resume answered: every record frame in order, the
+// fresh RESUME_CURSOR and the wall time.
+type resumeRound struct {
+	records [][]byte
+	resume  string
+	wall    time.Duration
+}
+
+// resumeScan pages a scan that starts from a RESUME_CURSOR.
+func resumeScan(ctx context.Context, base, token string) (resumeRound, error) {
+	var out resumeRound
+	t0 := time.Now()
+	req := scanRequest{resume: token}
+	for pages := 1; ; pages++ {
+		status, _, body, err := post(ctx, base+"/api/v1/data/scan", streamType, requestFrame(req))
+		if err != nil {
+			return out, err
+		}
+		if status != http.StatusOK {
+			return out, fmt.Errorf("resume page %d answered %d (%s)", pages, status, errorText(body))
+		}
+		fs, err := frames(body)
+		if err != nil {
+			return out, err
+		}
+		next := ""
+		for k := 0; k < len(fs); {
+			if !isQRP(fs[k]) {
+				return out, fmt.Errorf("resume page %d frame %d is not a $QRP header", pages, k)
+			}
+			h := QRP.GetRootAsQRP(fs[k], 0)
+			next, out.resume = string(h.NEXT_CURSOR()), string(h.RESUME_CURSOR())
+			count := int(h.RECORD_COUNT())
+			k++
+			if k+count > len(fs) {
+				return out, fmt.Errorf("resume run declares %d records, %d frames remain", count, len(fs)-k)
+			}
+			out.records = append(out.records, fs[k:k+count]...)
+			k += count
+		}
+		if next == "" {
+			break
+		}
+		req = scanRequest{cursor: next}
+	}
+	out.wall = time.Since(t0)
+	if out.resume == "" {
+		return out, errors.New("the resumed scan's last page carries no RESUME_CURSOR")
+	}
+	return out, nil
+}
+
+// wantRecords checks a resume returned exactly records [first, first+n).
+func wantRecords(got [][]byte, first, n int) error {
+	if len(got) != n {
+		return fmt.Errorf("resume returned %d records, want %d", len(got), n)
+	}
+	for j, payload := range got {
+		if !bytes.Equal(payload, record(first+j)) {
+			return fmt.Errorf("resumed record %d is not published record %d", j, first+j)
+		}
+	}
+	return nil
+}
+
+const (
+	resumeRoundCount = 3
+	resumeBatch      = 1000
+)
+
+// resumeRounds: nothing new, then rounds of resumeBatch new records each,
+// then the refusals. Each round stops the node, stores the new records the
+// way the seed did and boots again, so the cursor also survives a restart.
+// It returns the newest RESUME_CURSOR.
+func resumeRounds(ctx context.Context, n **node, binary, root, token string, rows int, scanWall time.Duration) (string, error) {
+	idle, err := resumeScan(ctx, (*n).base, token)
+	if err != nil {
+		return "", fmt.Errorf("resume with nothing new: %w", err)
+	}
+	if len(idle.records) != 0 {
+		return "", fmt.Errorf("resume with nothing new returned %d records", len(idle.records))
+	}
+	fmt.Printf("PASS resume, nothing new: 0 records, a fresh RESUME_CURSOR, %d ms (full scan %.2f s)\n", idle.wall.Milliseconds(), scanWall.Seconds())
+	token = idle.resume
+	next := rows
+	var walls []time.Duration
+	for round := 1; round <= resumeRoundCount; round++ {
+		(*n).stop()
+		if _, err := storeRecords(root, next, next+resumeBatch); err != nil {
+			return "", fmt.Errorf("round %d: store: %w", round, err)
+		}
+		booted, err := boot(ctx, binary, root)
+		if err != nil {
+			return "", fmt.Errorf("round %d: %w", round, err)
+		}
+		*n = booted
+		got, err := resumeScan(ctx, booted.base, token)
+		if err != nil {
+			return "", fmt.Errorf("round %d: %w", round, err)
+		}
+		if err := wantRecords(got.records, next, resumeBatch); err != nil {
+			return "", fmt.Errorf("round %d: %w", round, err)
+		}
+		walls = append(walls, got.wall)
+		fmt.Printf("PASS resume round %d (after a restart): feed %d records, the %d new returned byte-identical and in order, %d ms\n", round, next+resumeBatch, resumeBatch, got.wall.Milliseconds())
+		token, next = got.resume, next+resumeBatch
+	}
+	slowest := slices.Max(walls)
+	fmt.Printf("resume_ms rounds=%v slowest=%d full_scan_ms=%d ratio=%.4f\n", millis(walls), slowest.Milliseconds(), scanWall.Milliseconds(), slowest.Seconds()/scanWall.Seconds())
+	// A resume that read the feed would cost about a full scan; one that
+	// seeks costs its new records, a small fraction of it.
+	if slowest*20 > scanWall {
+		return "", fmt.Errorf("a resume of %d records took %s, over 5%% of the %s full scan: it does not seek", resumeBatch, slowest, scanWall)
+	}
+	return token, refusals(ctx, (*n).base, token)
+}
+
+func millis(ds []time.Duration) []int64 {
+	out := make([]int64, len(ds))
+	for i, d := range ds {
+		out[i] = d.Milliseconds()
+	}
+	return out
+}
+
+// refuse posts one request and wants status and the $QRP Error code.
+func refuse(ctx context.Context, base, what string, req scanRequest, wantStatus int, wantCode string) error {
+	status, _, body, err := post(ctx, base+"/api/v1/data/scan", streamType, requestFrame(req))
+	if err != nil {
+		return err
+	}
+	fs, ferr := frames(body)
+	if ferr != nil || len(fs) != 1 || !isQRP(fs[0]) {
+		return fmt.Errorf("%s answered %d with %d bytes, want one $QRP Error frame", what, status, len(body))
+	}
+	q := QRP.GetRootAsQRP(fs[0], 0)
+	if status != wantStatus || q.KIND() != QRP.EnumValuesqrpKind["Error"] || string(q.ERROR_CODE()) != wantCode {
+		return fmt.Errorf("%s answered %d %s (%s), want %d %s", what, status, q.ERROR_CODE(), q.MESSAGE(), wantStatus, wantCode)
+	}
+	fmt.Printf("PASS %s refused: %d %s\n", what, status, q.ERROR_CODE())
+	return nil
+}
+
+func refusals(ctx context.Context, base, token string) error {
+	tampered := []byte(token) // one MAC hex digit changed
+	if tampered[len(tampered)-1] == '0' {
+		tampered[len(tampered)-1] = '1'
+	} else {
+		tampered[len(tampered)-1] = '0'
+	}
+	for _, c := range []struct {
+		what   string
+		req    scanRequest
+		status int
+		code   string
+	}{
+		{"a resume for a different query", scanRequest{resume: token, sourceName: lanes[0]}, http.StatusBadRequest, "resume_cursor_query_mismatch"},
+		{"a client-made cursor", scanRequest{resume: "rowid-snapshot:after_row_id=1000000"}, http.StatusBadRequest, "invalid_resume_cursor"},
+		{"a tampered resume cursor", scanRequest{resume: string(tampered)}, http.StatusGone, "resume_cursor_expired"},
+		{"a page cursor with a resume cursor", scanRequest{resume: token, cursor: token}, http.StatusBadRequest, "bad_request"},
+	} {
+		if err := refuse(ctx, base, c.what, c.req, c.status, c.code); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// resumeAfterRebuild: after `reindex` the store has a new scan generation
+// and a cursor issued before it answers 410 resume_cursor_expired.
+func resumeAfterRebuild(ctx context.Context, n **node, binary, root, token string) error {
+	(*n).stop()
+	home, config, _, err := nodeHome(root)
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(home)
+	reindex := exec.CommandContext(ctx, binary, "reindex", "--config", config)
+	reindex.Dir, reindex.Env = home, append(os.Environ(), "HOME="+home)
+	if out, err := reindex.CombinedOutput(); err != nil {
+		return fmt.Errorf("reindex: %v: %s", err, lastLines(out, 8))
+	}
+	fmt.Println("reindex: the record index rebuilt")
+	rebuilt, err := boot(ctx, binary, root)
+	if err != nil {
+		return fmt.Errorf("boot after reindex: %w", err)
+	}
+	*n = rebuilt
+	return refuse(ctx, rebuilt.base, "a resume cursor issued before the rebuild", scanRequest{resume: token}, http.StatusGone, "resume_cursor_expired")
 }

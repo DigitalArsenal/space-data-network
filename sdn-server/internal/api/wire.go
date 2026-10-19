@@ -96,6 +96,7 @@ type QRPFields struct {
 	Limit          uint32
 	Cursor         string
 	NextCursor     string
+	ResumeCursor   string
 	RecordCount    uint32
 	TotalCount     uint64
 	Scanned        uint64
@@ -109,6 +110,8 @@ type QRPFields struct {
 	Etag           string
 	CID            string
 	ArchiveID      string
+	// HTTPStatus is the transport status an Error frame answers with.
+	HTTPStatus uint16
 	// Columns and Rows carry a projection page (typed cells in column
 	// order) instead of record frames.
 	Columns []QRPColumnField
@@ -217,6 +220,7 @@ func BuildQRP(f QRPFields) []byte {
 	originID := str(f.OriginID)
 	cursor := str(f.Cursor)
 	nextCursor := str(f.NextCursor)
+	resumeCursor := str(f.ResumeCursor)
 	etag := str(f.Etag)
 	cid := str(f.CID)
 	archiveID := str(f.ArchiveID)
@@ -288,6 +292,10 @@ func BuildQRP(f QRPFields) []byte {
 	}
 	if rows != 0 {
 		QRP.QRPAddROWS(b, rows)
+	}
+	QRP.QRPAddHTTP_STATUS(b, f.HTTPStatus)
+	if resumeCursor != 0 {
+		QRP.QRPAddRESUME_CURSOR(b, resumeCursor)
 	}
 	root := QRP.QRPEnd(b)
 	QRP.FinishSizePrefixedQRPBuffer(b, root)
@@ -418,6 +426,7 @@ func writeStatusFrame(w http.ResponseWriter, status int, qrpStatus int8, code, m
 		Message:       msg,
 		RetryAfterMs:  retryMs,
 		GeneratedAtMs: time.Now().UnixMilli(),
+		HTTPStatus:    uint16(status),
 	})
 	WriteFrameStream(w, status, [][]byte{frame}, hdr)
 }

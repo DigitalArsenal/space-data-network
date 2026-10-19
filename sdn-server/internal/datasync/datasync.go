@@ -55,6 +55,7 @@ type QueryRequest struct {
 	PeerID                 string `json:"peer_id"`
 	PeerId                 string `json:"peerId"`
 	Cursor                 string `json:"cursor"`
+	ResumeCursor           string `json:"-"` // $QRP RESUME_CURSOR (resume_cursor.go)
 	SnapshotID             string `json:"snapshot_id"`
 	Head                   string `json:"head"`
 	HighWaterMark          string `json:"high_water_mark"`
@@ -209,6 +210,7 @@ type Page struct {
 	Limit         int
 	Cursor        string
 	NextCursor    string
+	ResumeCursor  string // last page only: resumes this query after this scan
 	SnapshotID    string
 	Head          string
 	HighWaterMark string
@@ -287,6 +289,16 @@ func ScanPage(store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (*Pag
 
 	filter := FilterFromRequest(req, limit, offset)
 	queryHash := rawRecordQueryHash(filter, NormalizeQueryProfile(req.QueryProfile))
+	if strings.TrimSpace(req.ResumeCursor) != "" {
+		if strings.TrimSpace(req.Cursor) != "" {
+			return nil, nil, fmt.Errorf("a scan request carries CURSOR or RESUME_CURSOR, not both")
+		}
+		after, err := openResumeCursor(store.ScanGeneration(), req.ResumeCursor, queryHash)
+		if err != nil {
+			return nil, nil, err
+		}
+		cursor = rawRecordCursor{AfterRowID: after, Resume: true}
+	}
 	if req.Cursor != "" && (cursor.QueryHash != "" || strings.TrimSpace(req.Search) != "" || strings.TrimSpace(req.SyncFilter) != "") && cursor.QueryHash != queryHash {
 		return nil, nil, fmt.Errorf("cursor belongs to a different search or data source; restart from the first page")
 	}
@@ -298,7 +310,21 @@ func ScanPage(store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (*Pag
 	filter.MaxRowID = cursor.MaxRowID
 	var totalCount int64
 	var snapshot Snapshot
-	if hasProvidedSnapshot {
+	if cursor.Resume {
+		// A resume and its continuations never count: they pin the
+		// sequence head and read forward from the issuing scan's boundary,
+		// so they cost the records stored since, not the feed. TOTAL_COUNT
+		// is 0 (unknown).
+		if filter.MaxRowID <= 0 {
+			head, err := store.RecordSequenceHead(filter)
+			if err != nil {
+				return nil, nil, err
+			}
+			filter.MaxRowID = max(head, filter.AfterRowID)
+		}
+		id := FirstNonEmpty(cursor.SnapshotID, resumeSnapshotID(queryHash, filter.AfterRowID, filter.MaxRowID))
+		snapshot = Snapshot{SnapshotID: id, Head: id, MaxRowID: filter.MaxRowID}
+	} else if hasProvidedSnapshot {
 		totalCount = req.TotalCount
 		snapshot = Snapshot{
 			SnapshotID:    strings.TrimSpace(req.SnapshotID),
@@ -349,7 +375,7 @@ func ScanPage(store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (*Pag
 	}
 	encode := func(afterRowID int64) string {
 		return encodeRawRecordCursor(rawRecordCursor{AfterRowID: afterRowID, MaxRowID: filter.MaxRowID,
-			SnapshotID: snapshot.SnapshotID, QueryHash: queryHash, TotalCount: totalCount})
+			SnapshotID: snapshot.SnapshotID, QueryHash: queryHash, TotalCount: totalCount, Resume: cursor.Resume})
 	}
 	nextCursor := ""
 	if len(records) > 0 {
@@ -358,6 +384,11 @@ func ScanPage(store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (*Pag
 			nextCursor = encode(lastRowID)
 		}
 	}
+	resumeCursor := ""
+	if nextCursor == "" {
+		// Every record through the pinned boundary has been served.
+		resumeCursor = issueResumeCursor(store.ScanGeneration(), max(filter.MaxRowID, filter.AfterRowID), queryHash)
+	}
 	return &Page{
 		Schema:        schemaName,
 		Search:        strings.TrimSpace(req.Search),
@@ -365,6 +396,7 @@ func ScanPage(store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (*Pag
 		Limit:         limit,
 		Cursor:        encode(filter.AfterRowID),
 		NextCursor:    nextCursor,
+		ResumeCursor:  resumeCursor,
 		SnapshotID:    snapshot.SnapshotID,
 		Head:          snapshot.Head,
 		HighWaterMark: snapshot.HighWaterMark,
@@ -980,6 +1012,9 @@ type rawRecordCursor struct {
 	// TotalCount is the snapshot's match count, carried so a continuation
 	// page does not count again.
 	TotalCount int64 `json:"total_count,omitempty"`
+	// Resume marks a page of a scan resumed from a RESUME_CURSOR: it never
+	// counts (ScanPage).
+	Resume bool `json:"resume,omitempty"`
 }
 
 func rawRecordQueryHash(filter storage.RawRecordQuery, profile string) string {

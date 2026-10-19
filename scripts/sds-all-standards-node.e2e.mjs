@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 
-const VERSION = '1.255.0';
+const VERSION = '1.257.0';
 // Standards the node did not embed before this pin (CVR first, FMB/FCK/FSG new
 // at 1.255.0), then existing standards that must still round-trip.
 const ADDED = ['ABA', 'ACT', 'AGR', 'APR', 'ASG', 'BPF', 'CLM', 'CSO', 'CVR', 'DAV', 'DCL', 'ERM', 'ETS', 'EVL', 'EXO', 'FCK',
