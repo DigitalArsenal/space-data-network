@@ -53,6 +53,21 @@ var typeRules = map[string]string{
 	"RFB": "col 0 u64pos:NORAD_CAT_ID\ncol 1 str:ID_TRANSMITTER|str:ID\n",
 }
 
+// TypeIndexCol0 reports where a type's COL0 (the index's NORAD column) is
+// read without extracting it from the record: keyed is true when the
+// object rule starts with COL0, so a record's engine key is COL0 (flatsql
+// p4 kIsCol0); extracted is true when the type has a COL0 rule that is not
+// its key, so COL0 comes from the record bytes.
+func TypeIndexCol0(schema string) (keyed, extracted bool) {
+	rules := typeRules[typeName(schema)]
+	if !strings.Contains(rules, "col 0 ") {
+		return false, false
+	}
+	_, object, ok := strings.Cut(rules, "object ")
+	keyed = ok && (object == "0" || strings.HasPrefix(object, "0,") || strings.HasPrefix(object, "0\n"))
+	return keyed, !keyed
+}
+
 // Type config flags (flatsql TypeConfig::Flag).
 const (
 	TypeVerifyBFBS uint32 = 1

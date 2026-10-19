@@ -23,6 +23,7 @@ import (
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/OMM"
 
 	"github.com/spacedatanetwork/sdn-server/internal/config"
+	"github.com/spacedatanetwork/sdn-server/internal/datasync"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
 
@@ -110,16 +111,23 @@ func (h *DataQueryHandler) handleHealth(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-// recordIndexMaxLimit caps a single index page — the surface is a UI drill-down,
-// not a bulk export.
-const recordIndexMaxLimit = 200
+// recordIndexMaxLimit caps a single index page at the query page's cap: an
+// index row is a CID, a NORAD and an epoch, no record bytes.
+const recordIndexMaxLimit = dataQueryMaxLimit
 
 // handleRecordIndex serves an ANONYMOUS per-record index page for an explicitly
 // selected SDS schema:
 //
-//	GET /api/v1/data/index?schema=OMM.fbs&source_name=&provider_id=&batch_id=&norad=&page=&limit=
-//	-> one $QRP{KIND=Page} frame: TOTAL_COUNT, PAGE, LIMIT, STALE, AS_OF_MS,
-//	   COLUMNS [cid string, norad int64, epoch_ms int64], ROWS (Null = absent)
+//	GET /api/v1/data/index?schema=OMM.fbs&source_name=&provider_id=&batch_id=&norad=&page=&limit=&cursor=
+//	-> one $QRP{KIND=Page} frame: TOTAL_COUNT, PAGE, LIMIT, CURSOR, NEXT_CURSOR,
+//	   STALE, AS_OF_MS, COLUMNS [cid string, norad int64, epoch_ms int64],
+//	   ROWS (Null = absent)
+//
+// Rows are in store sequence order (the scan's and /data/query's), paged
+// exactly as /data/query pages a raw lane: a page without cursor pins a
+// snapshot at the sequence head (TOTAL_COUNT counts it) and serves its
+// [(page-1)*limit, page*limit); NEXT_CURSOR (empty on the snapshot's last
+// page) continues that snapshot after the page's last row, page unused.
 //
 // It reads sdn_record_index (joined to sdn_record_source_tags for the source
 // lane filter) — no FlatBuffer payloads are hydrated. norad is a NORAD substring
@@ -147,7 +155,7 @@ func (h *DataQueryHandler) handleRecordIndex(w http.ResponseWriter, r *http.Requ
 		limit = recordIndexMaxLimit
 	}
 
-	query := storage.RecordIndexPageQuery{
+	query := storage.RecordIndexSeqQuery{RecordIndexPageQuery: storage.RecordIndexPageQuery{
 		SchemaName: schema,
 		ProviderID: firstNonEmptyDataString(values.Get("provider_id"), values.Get("providerId")),
 		SourceName: firstNonEmptyDataString(values.Get("source_name"), values.Get("sourceName")),
@@ -155,6 +163,15 @@ func (h *DataQueryHandler) handleRecordIndex(w http.ResponseWriter, r *http.Requ
 		NoradLike:  digitsOnly(values.Get("norad")),
 		Limit:      limit,
 		Offset:     (page - 1) * limit,
+	}}
+	laneHash := recordIndexLaneHash(query.RecordIndexPageQuery)
+	if raw := strings.TrimSpace(values.Get("cursor")); raw != "" {
+		cursor, ok, err := datasync.ParseRawRecordCursor(raw)
+		if err != nil || !ok || cursor.MaxRowID <= 0 || cursor.QueryHash != laneHash {
+			WriteErrorFrame(w, http.StatusBadRequest, "bad_request", "cursor is not a NEXT_CURSOR of this index query; restart from the first page", 0)
+			return
+		}
+		query.AfterSeq, query.ThroughSeq, query.Offset = cursor.AfterRowID, cursor.MaxRowID, 0
 	}
 
 	// BOUNDED. This is an anonymous read of the single-writer record store: a
@@ -169,11 +186,11 @@ func (h *DataQueryHandler) handleRecordIndex(w http.ResponseWriter, r *http.Requ
 		indexCache = nil
 	}
 	res := indexCache.read(recordIndexCacheKey(query), storeReadBudget, storeReadMinRefresh, func() (interface{}, error) {
-		rows, total, err := h.store.RecordIndexPage(query)
+		page, err := h.store.RecordIndexSeqPage(query)
 		if err != nil {
 			return nil, err
 		}
-		return &recordIndexPage{Rows: rows, Total: total}, nil
+		return &page, nil
 	})
 
 	if !res.OK {
@@ -188,6 +205,16 @@ func (h *DataQueryHandler) handleRecordIndex(w http.ResponseWriter, r *http.Requ
 	pageData, _ := res.Value.(*recordIndexPage)
 	if pageData == nil {
 		pageData = &recordIndexPage{}
+	}
+	encodeCursor := func(after int64) string {
+		return datasync.EncodeRawRecordCursor(after, pageData.Through, "index-"+strconv.FormatInt(pageData.Through, 10), laneHash)
+	}
+	cursor, nextCursor := encodeCursor(query.AfterSeq), ""
+	if n := len(pageData.Rows); n > 0 {
+		cursor = encodeCursor(pageData.Rows[0].Seq - 1)
+		if last := pageData.Rows[n-1].Seq; n >= limit && last < pageData.Through {
+			nextCursor = encodeCursor(last)
+		}
 	}
 	rows := make([][]QRPCell, 0, len(pageData.Rows))
 	for _, rr := range pageData.Rows {
@@ -207,6 +234,8 @@ func (h *DataQueryHandler) handleRecordIndex(w http.ResponseWriter, r *http.Requ
 		Page:          uint32(page),
 		Limit:         uint32(limit),
 		TotalCount:    uint64(pageData.Total),
+		Cursor:        cursor,
+		NextCursor:    nextCursor,
 		Stale:         !res.Fresh,
 		GeneratedAtMs: time.Now().UnixMilli(),
 		Columns:       []QRPColumnField{{Name: "cid", Type: "string"}, {Name: "norad", Type: "int64"}, {Name: "epoch_ms", Type: "int64"}},
@@ -218,22 +247,30 @@ func (h *DataQueryHandler) handleRecordIndex(w http.ResponseWriter, r *http.Requ
 	WriteFrameStream(w, http.StatusOK, [][]byte{BuildQRP(fields)}, map[string]string{StreamSchemaHeader: schema})
 }
 
-// recordIndexPage is one cached answer of the index surface: the page and the
-// total it was counted against, kept together so a stale answer is internally
-// consistent.
-type recordIndexPage struct {
-	Rows  []storage.RecordIndexRow
-	Total int64
-}
-
 // recordIndexCacheKey identifies one index query. Every filter participates —
 // two different filters are two different answers, and sharing a cache slot
 // between them would serve one query's rows under another's parameters.
-func recordIndexCacheKey(q storage.RecordIndexPageQuery) string {
+func recordIndexCacheKey(q storage.RecordIndexSeqQuery) string {
 	return strings.Join([]string{
 		q.SchemaName, q.ProviderID, q.SourceName, q.BatchID, q.NoradLike,
 		strconv.Itoa(q.Limit), strconv.Itoa(q.Offset),
+		strconv.FormatInt(q.AfterSeq, 10), strconv.FormatInt(q.ThroughSeq, 10),
 	}, "\x00")
+}
+
+// recordIndexPage is one cached answer of the index surface (the bounded
+// read's value, restored by boundedpersist.go): the rows, the total and the
+// snapshot head they were read against, kept together so a stale answer is
+// internally consistent.
+type recordIndexPage = storage.RecordIndexSeqPage
+
+// recordIndexLaneHash binds an index cursor to its query's filters, so a
+// cursor of one lane (or of /data/query) never pages another.
+func recordIndexLaneHash(q storage.RecordIndexPageQuery) string {
+	sum := sha256.Sum256([]byte(strings.Join([]string{
+		"index", q.SchemaName, q.ProviderID, q.SourceName, q.BatchID, q.NoradLike,
+	}, "\x00")))
+	return hex.EncodeToString(sum[:])
 }
 
 // normalizeRecordIndexSchema maps a caller schema alias to the canonical stored

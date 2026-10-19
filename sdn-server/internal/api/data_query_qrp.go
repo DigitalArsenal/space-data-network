@@ -6,6 +6,20 @@ package api
 // epoch index; FILTERS carry its keys (NORAD_CAT_ID, ENTITY_ID,
 // MAX_DELTA_SECONDS). SQL is the sync-filter clause, small-body field filters
 // included (sbd_query.go). Every error is one $QRP Error frame.
+//
+// Order and paging. A raw-lane page (no TIME_PROFILE) is the scan's order:
+// store sequence ascending, each record once (datasync.ScanPage). A page
+// without CURSOR pins a snapshot at the lane's sequence head: its records are
+// the snapshot's [(PAGE-1)*LIMIT, PAGE*LIMIT) in sequence order and
+// TOTAL_COUNT counts the snapshot. Its header carries CURSOR and, unless it is
+// the snapshot's last page, NEXT_CURSOR; a request with CURSOR reads the next
+// LIMIT records of that same snapshot (PAGE is not used), so a cursor walk
+// returns every record of the snapshot exactly once under concurrent ingest
+// and expiry. A PAGE walk without CURSOR pins a fresh snapshot per page;
+// sequences only grow, so it is exact under append, not under expiry.
+// SORT_FIELD and SORT_DESC are refused: sequence order is the one order.
+// A small-body (SBD) page is sequence order with PAGE offsets; a TIME_PROFILE
+// page is the epoch index's profile order. Neither takes CURSOR.
 
 import (
 	"bufio"
@@ -21,6 +35,7 @@ import (
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/QRP"
 	flatbuffers "github.com/google/flatbuffers/go"
 
+	"github.com/spacedatanetwork/sdn-server/internal/datasync"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
 
@@ -57,6 +72,15 @@ type dataQuery struct {
 	epoch     *storage.EpochRecordQuery
 	page      int
 	limit     int
+	cursor    string
+}
+
+// queryPage is one answered page: its records, the total they were counted
+// against and the cursors around them (raw-lane pages only).
+type queryPage struct {
+	records            []*storage.Record
+	total              int64
+	cursor, nextCursor string
 }
 
 func (h *DataQueryHandler) handleDataQuery(w http.ResponseWriter, r *http.Request) {
@@ -84,24 +108,24 @@ func (h *DataQueryHandler) handleDataQuery(w http.ResponseWriter, r *http.Reques
 	}
 	defer closeStore()
 
-	records, total, err := runDataQuery(r.Context(), store, q)
+	page, err := runDataQuery(r.Context(), store, q)
 	if err != nil {
 		writeDataReadError(w, err)
 		return
 	}
-	writeQueryRuns(w, store, q, records, total)
+	writeQueryRuns(w, store, q, page)
 }
 
 // runDataQuery selects one page and its total.
-func runDataQuery(ctx context.Context, store *storage.FlatSQLStore, q dataQuery) ([]*storage.Record, int64, error) {
+func runDataQuery(ctx context.Context, store *storage.FlatSQLStore, q dataQuery) (queryPage, error) {
 	if q.epoch != nil {
 		total, err := store.CountEpochRecords(*q.epoch)
 		if err != nil {
-			return nil, 0, err
+			return queryPage{}, err
 		}
 		matches, err := store.QueryEpochRecords(*q.epoch)
 		if err != nil {
-			return nil, 0, err
+			return queryPage{}, err
 		}
 		offset := (q.page - 1) * q.limit
 		records := make([]*storage.Record, 0, q.limit)
@@ -110,26 +134,65 @@ func runDataQuery(ctx context.Context, store *storage.FlatSQLStore, q dataQuery)
 				records = append(records, matches[i].Record)
 			}
 		}
-		return records, total, nil
+		return queryPage{records: records, total: total}, nil
 	}
-	if sbd, ok, err := parseSBDFilter(q.raw.SchemaName, q.raw.SyncFilter); ok {
+	sbd, isSBD, err := parseSBDFilter(q.raw.SchemaName, q.raw.SyncFilter)
+	if isSBD {
 		if err != nil {
-			return nil, 0, err
+			return queryPage{}, err
+		}
+		if q.cursor != "" {
+			return queryPage{}, errors.New("CURSOR pages a raw lane; a small-body field filter pages by PAGE")
 		}
 		records, total, err := querySBD(ctx, store, q.raw, sbd, q.raw.Offset, q.raw.Limit)
-		return records, int64(total), err
+		return queryPage{records: records, total: int64(total)}, err
 	}
-	records, err := store.QueryRawRecords(q.raw)
+	return runRawLanePage(store, q)
+}
+
+// runRawLanePage is one raw-lane page of the snapshot scan (the package
+// comment's order and paging). PAGE N without CURSOR walks the first N-1
+// pages of a fresh snapshot as record refs (no record bytes), then reads
+// page N under that snapshot.
+func runRawLanePage(store *storage.FlatSQLStore, q dataQuery) (queryPage, error) {
+	req := datasync.QueryRequest{
+		Schema:         q.raw.SchemaName,
+		ProviderID:     q.raw.ProviderID,
+		SourceName:     q.raw.SourceName,
+		BatchID:        q.raw.BatchID,
+		ProducerPeerID: q.raw.ProducerPeerID,
+		PeerID:         q.raw.PeerID,
+		SyncFilter:     q.raw.SyncFilter,
+		Search:         q.raw.Search,
+		Limit:          q.limit,
+	}
+	continueAt := func(cursor string) {
+		req.Cursor = cursor
+		req.SnapshotID, req.Head, req.TotalCount = "", "", 0
+		if snapshotID, total, ok := datasync.CursorSnapshot(cursor); ok {
+			req.SnapshotID, req.Head, req.TotalCount = snapshotID, snapshotID, total
+		}
+	}
+	continueAt(q.cursor)
+	if q.cursor == "" {
+		for skipped := 1; skipped < q.page; skipped++ {
+			page, _, err := datasync.ScanPage(store, req, dataQueryMaxLimit)
+			if err != nil {
+				return queryPage{}, err
+			}
+			if page.NextCursor == "" {
+				// The snapshot ends before page q.page.
+				return queryPage{total: page.TotalCount}, nil
+			}
+			continueAt(page.NextCursor)
+		}
+	}
+	req.IncludeData = true
+	page, records, err := datasync.ScanPage(store, req, dataQueryMaxLimit)
 	if err != nil {
-		return nil, 0, err
+		return queryPage{}, err
 	}
-	countFilter := q.raw
-	countFilter.Limit, countFilter.Offset = 0, 0
-	total, err := store.CountRawRecords(countFilter)
-	if err != nil {
-		return nil, 0, err
-	}
-	return records, total, nil
+	return queryPage{records: records, total: page.TotalCount, cursor: page.Cursor, nextCursor: page.NextCursor}, nil
 }
 
 // writeDataReadError maps a store read failure onto one $QRP Error frame.
@@ -170,6 +233,10 @@ func readDataQuery(r *http.Request) (dataQuery, error) {
 		archiveID: strings.TrimSpace(string(f.ARCHIVE_ID())),
 		page:      max(int(f.PAGE()), 1),
 		limit:     int(f.LIMIT()),
+		cursor:    strings.TrimSpace(string(f.CURSOR())),
+	}
+	if len(f.SORT_FIELD()) > 0 || f.SORT_DESC() {
+		return dataQuery{}, errors.New("query pages are in store sequence order: SORT_FIELD and SORT_DESC are not supported")
 	}
 	if q.limit <= 0 {
 		q.limit = dataQueryDefaultLimit
@@ -195,8 +262,8 @@ func readDataQuery(r *http.Request) (dataQuery, error) {
 		}
 		return q, nil
 	}
-	if q.raw.ProducerPeerID != "" || q.raw.PeerID != "" || q.raw.SyncFilter != "" || q.raw.Search != "" {
-		return dataQuery{}, errors.New("a TIME_PROFILE query takes PROVIDER_ID, SOURCE_NAME, BATCH_ID and FILTERS, not PRODUCER_PEER_ID, ORIGIN_ID, SQL or SEARCH")
+	if q.raw.ProducerPeerID != "" || q.raw.PeerID != "" || q.raw.SyncFilter != "" || q.raw.Search != "" || q.cursor != "" {
+		return dataQuery{}, errors.New("a TIME_PROFILE query takes PROVIDER_ID, SOURCE_NAME, BATCH_ID and FILTERS, not PRODUCER_PEER_ID, ORIGIN_ID, SQL, SEARCH or CURSOR")
 	}
 	if q.page*q.limit > dataQueryMaxPageDepth {
 		return dataQuery{}, fmt.Errorf("PAGE*LIMIT exceeds %d on a TIME_PROFILE query", dataQueryMaxPageDepth)
@@ -260,7 +327,8 @@ func readDataQuery(r *http.Request) (dataQuery, error) {
 
 // writeQueryRuns streams one page as lane runs; an empty page is one header
 // with RECORD_COUNT 0.
-func writeQueryRuns(w http.ResponseWriter, store *storage.FlatSQLStore, q dataQuery, records []*storage.Record, total int64) {
+func writeQueryRuns(w http.ResponseWriter, store *storage.FlatSQLStore, q dataQuery, page queryPage) {
+	records := page.records
 	h := w.Header()
 	h.Set("Content-Type", StreamContentType)
 	h.Set(StreamFormatHeader, StreamFormat)
@@ -286,7 +354,9 @@ func writeQueryRuns(w http.ResponseWriter, store *storage.FlatSQLStore, q dataQu
 			page:           uint32(q.page),
 			limit:          uint32(q.limit),
 			recordCount:    uint32(count),
-			totalCount:     uint64(max(total, 0)),
+			totalCount:     uint64(max(page.total, 0)),
+			cursor:         page.cursor,
+			nextCursor:     page.nextCursor,
 			generatedAtMs:  generated,
 		})
 	}
@@ -314,11 +384,12 @@ func writeQueryRuns(w http.ResponseWriter, store *storage.FlatSQLStore, q dataQu
 
 // runHeader is one query run's $QRP{KIND=Page} header.
 type runHeader struct {
-	lane                                 scanLane
-	schemaName, fileIdentifier, search   string
-	page, limit, recordCount             uint32
-	totalCount                           uint64
-	generatedAtMs                        int64
+	lane                               scanLane
+	schemaName, fileIdentifier, search string
+	cursor, nextCursor                 string
+	page, limit, recordCount           uint32
+	totalCount                         uint64
+	generatedAtMs                      int64
 }
 
 func buildRunHeader(f runHeader) []byte {
@@ -332,6 +403,7 @@ func buildRunHeader(f runHeader) []byte {
 	schemaName, fileIdentifier, search := str(f.schemaName), str(f.fileIdentifier), str(f.search)
 	providerID, sourceName, batchID := str(f.lane.providerID), str(f.lane.sourceName), str(f.lane.batchID)
 	producerPeerID, originID := str(f.lane.producerPeerID), str(f.lane.originID)
+	cursor, nextCursor := str(f.cursor), str(f.nextCursor)
 	QRP.QRPStart(b)
 	QRP.QRPAddKIND(b, enumOf(QRP.EnumValuesqrpKind, QRPKindPage))
 	QRP.QRPAddSTATUS(b, enumOf(QRP.EnumValuesqrpStatus, QRPStatusOk))
@@ -342,6 +414,7 @@ func buildRunHeader(f runHeader) []byte {
 		{schemaName, QRP.QRPAddSCHEMA_NAME}, {fileIdentifier, QRP.QRPAddFILE_IDENTIFIER}, {search, QRP.QRPAddSEARCH},
 		{providerID, QRP.QRPAddPROVIDER_ID}, {sourceName, QRP.QRPAddSOURCE_NAME}, {batchID, QRP.QRPAddBATCH_ID},
 		{producerPeerID, QRP.QRPAddPRODUCER_PEER_ID}, {originID, QRP.QRPAddORIGIN_ID},
+		{cursor, QRP.QRPAddCURSOR}, {nextCursor, QRP.QRPAddNEXT_CURSOR},
 	} {
 		if field.off != 0 {
 			field.add(b, field.off)

@@ -5051,24 +5051,96 @@ type RecordIndexRow struct {
 	NoradCatID *int64
 	EpochUnix  *int64
 	CID        string
+	// Seq is the record's store sequence (RecordIndexSeqPage rows only).
+	Seq int64
 }
 
-// RecordIndexPage returns a page of indexed records (newest EPOCH first) plus
-// the total match count, over sdn_record_index joined to sdn_record_source_tags
-// for the source-lane filter. No FlatBuffer payloads are hydrated.
-func (s *FlatSQLStore) RecordIndexPage(q RecordIndexPageQuery) ([]RecordIndexRow, int64, error) {
+// RecordIndexSeqQuery is one page of the index in store sequence order
+// under a pinned snapshot: the rows with AfterSeq < seq <= ThroughSeq, at
+// Offset. ThroughSeq 0 pins the snapshot at the current sequence head.
+type RecordIndexSeqQuery struct {
+	RecordIndexPageQuery
+	AfterSeq, ThroughSeq int64
+}
+
+// RecordIndexSeqPage is a RecordIndexSeqQuery's answer: the rows, the
+// snapshot's match count (every seq <= Through, AfterSeq ignored) and the
+// pinned snapshot head.
+type RecordIndexSeqPage struct {
+	Rows    []RecordIndexRow
+	Total   int64
+	Through int64
+}
+
+// RecordIndexSeqPage is the /api/v1/data/index page: store sequence order
+// (the scan's), each record once, bounded by the snapshot head so a cursor
+// walk under concurrent ingest sees every snapshot record exactly once.
+func (s *FlatSQLStore) RecordIndexSeqPage(q RecordIndexSeqQuery) (RecordIndexSeqPage, error) {
+	if q.Limit <= 0 {
+		q.Limit = 50
+	}
+	q.Offset = max(q.Offset, 0)
 	if s.rb != nil {
-		return s.rb.RecordIndexPage(q)
+		f4, ok := s.rb.(format4Backend)
+		if !ok {
+			return RecordIndexSeqPage{}, errors.New("record index pages need store format 4 or 1")
+		}
+		return f4.recordIndexSeqPage(q)
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	whereSQL, args := recordIndexPageWhere(q.RecordIndexPageQuery)
+	through := q.ThroughSeq
+	if through <= 0 {
+		if err := s.db.QueryRow(`SELECT COALESCE(MAX(rowid), 0) FROM sdn_record_index`).Scan(&through); err != nil {
+			return RecordIndexSeqPage{}, fmt.Errorf("record index head: %w", err)
+		}
+	}
+	out := RecordIndexSeqPage{Through: through, Rows: []RecordIndexRow{}}
+	countArgs := append(append([]interface{}{}, args...), through)
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM sdn_record_index ix WHERE `+whereSQL+` AND ix.rowid <= ?`, countArgs...).Scan(&out.Total); err != nil {
+		return RecordIndexSeqPage{}, fmt.Errorf("count record index page: %w", err)
+	}
+	pageArgs := append(append([]interface{}{}, args...), q.AfterSeq, through, q.Limit, q.Offset)
+	rows, err := s.db.Query(`
+		SELECT ix.rowid, ix.norad_cat_id, ix.epoch_unix, ix.cid
+		FROM sdn_record_index ix
+		WHERE `+whereSQL+` AND ix.rowid > ? AND ix.rowid <= ?
+		ORDER BY ix.rowid ASC
+		LIMIT ? OFFSET ?`, pageArgs...)
+	if err != nil {
+		return RecordIndexSeqPage{}, fmt.Errorf("query record index page: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var row RecordIndexRow
+		var norad, epoch sql.NullInt64
+		if err := rows.Scan(&row.Seq, &norad, &epoch, &row.CID); err != nil {
+			return RecordIndexSeqPage{}, fmt.Errorf("scan record index page: %w", err)
+		}
+		if norad.Valid {
+			v := norad.Int64
+			row.NoradCatID = &v
+		}
+		if epoch.Valid {
+			v := epoch.Int64
+			row.EpochUnix = &v
+		}
+		out.Rows = append(out.Rows, row)
+	}
+	if err := rows.Err(); err != nil {
+		return RecordIndexSeqPage{}, fmt.Errorf("iterate record index page: %w", err)
+	}
+	return out, nil
+}
 
+// recordIndexPageWhere is the index page's format-1 filter over
+// sdn_record_index ix: the schema, the source lane (EXISTS over the source
+// tags, so a record with several tag rows is not multiplied), the NORAD
+// substring and the arrival bound.
+func recordIndexPageWhere(q RecordIndexPageQuery) (string, []interface{}) {
 	where := []string{"ix.schema_name = ?"}
 	args := []interface{}{q.SchemaName}
-
-	// Source attribution filter — restrict to records carrying a matching source
-	// tag. Applied via EXISTS (never a JOIN) so a record with several producer
-	// tag rows is not multiplied. Skipped entirely when no lane filter is set.
 	var tagConds []string
 	var tagArgs []interface{}
 	if strings.TrimSpace(q.ProviderID) != "" {
@@ -5097,7 +5169,19 @@ func (s *FlatSQLStore) RecordIndexPage(q RecordIndexPageQuery) ([]RecordIndexRow
 		where = append(where, "ix.source_timestamp < ?")
 		args = append(args, *q.ArrivedBefore)
 	}
-	whereSQL := strings.Join(where, " AND ")
+	return strings.Join(where, " AND "), args
+}
+
+// RecordIndexPage returns a page of indexed records (newest EPOCH first) plus
+// the total match count, over sdn_record_index joined to sdn_record_source_tags
+// for the source-lane filter. No FlatBuffer payloads are hydrated.
+func (s *FlatSQLStore) RecordIndexPage(q RecordIndexPageQuery) ([]RecordIndexRow, int64, error) {
+	if s.rb != nil {
+		return s.rb.RecordIndexPage(q)
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	whereSQL, args := recordIndexPageWhere(q)
 
 	var total int64
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM sdn_record_index ix WHERE `+whereSQL, args...).Scan(&total); err != nil {

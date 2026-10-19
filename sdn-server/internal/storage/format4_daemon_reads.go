@@ -1610,6 +1610,96 @@ func (b format4Backend) RecordIndexPage(q RecordIndexPageQuery) ([]RecordIndexRo
 	return out, head.N, nil
 }
 
+// recordIndexSeqPage is RecordIndexSeqPage on format 4: one engine SCAN in
+// seq order inside the pinned snapshot, plus the snapshot's HEAD count.
+// COL0 is the record key when the type keys on it, else it is extracted
+// from the record bytes (the engine INDEX PAGE does the same).
+func (b format4Backend) recordIndexSeqPage(q RecordIndexSeqQuery) (RecordIndexSeqPage, error) {
+	if err := b.closed(); err != nil {
+		return RecordIndexSeqPage{}, err
+	}
+	typ, err := f4Type(q.SchemaName)
+	if err != nil {
+		return RecordIndexSeqPage{}, err
+	}
+	keyed, extracted := format2.TypeIndexCol0(q.SchemaName)
+	hasEpoch := format2.TypeHasEpoch(q.SchemaName)
+	sq := format4.Query{Type: typ, Lane: f4Lane(q.ProviderID, q.SourceName, q.BatchID, "", "")}
+	if q.NoradLike != "" {
+		sq.Preds = append(sq.Preds, f4Pred(format4.FieldCol0, format4.OpLike, format2.Text("%"+q.NoradLike+"%")))
+	}
+	if q.ArrivedBefore != nil {
+		sq.Preds = append(sq.Preds, f4Pred(format4.FieldTS, format4.OpLt, format2.Int(*q.ArrivedBefore)))
+	}
+	sq.SeqThrough = q.ThroughSeq
+	if sq.SeqThrough <= 0 {
+		h, err := b.f4TypeHead(typ)
+		if err != nil {
+			return RecordIndexSeqPage{}, err
+		}
+		sq.SeqThrough = h.MaxSeq
+	}
+	out := RecordIndexSeqPage{Through: sq.SeqThrough, Rows: []RecordIndexRow{}}
+	if sq.SeqThrough <= 0 || q.AfterSeq >= sq.SeqThrough {
+		if sq.SeqThrough > 0 {
+			h, err := b.d.api().Head(b.d.ctx, sq)
+			if err != nil && !errors.Is(err, format4.ErrNoType) {
+				return RecordIndexSeqPage{}, fmt.Errorf("count record index page: %w", err)
+			}
+			out.Total = h.N
+		}
+		return out, nil
+	}
+	api, ctx := b.d.api(), b.d.ctx
+	var (
+		head    format4.Head
+		headErr error
+		counted = make(chan struct{})
+	)
+	go func() {
+		defer close(counted)
+		head, headErr = api.Head(ctx, sq)
+	}()
+	pq := sq
+	pq.SeqAfter, pq.Order, pq.Limit, pq.Offset, pq.Hydrate = max(q.AfterSeq, 0), format4.OrderSeqAsc, int64(q.Limit), int64(q.Offset), extracted
+	recs, err := api.Scan(ctx, pq)
+	<-counted
+	if errors.Is(headErr, format4.ErrNoType) || errors.Is(err, format4.ErrNoType) {
+		return out, nil
+	}
+	if headErr != nil {
+		return RecordIndexSeqPage{}, fmt.Errorf("count record index page: %w", headErr)
+	}
+	if err != nil {
+		return RecordIndexSeqPage{}, fmt.Errorf("query record index page: %w", err)
+	}
+	out.Total = head.N
+	for _, r := range recs {
+		row := RecordIndexRow{CID: r.CID, Seq: r.Seq}
+		switch {
+		case keyed && r.Key != "":
+			if n, err := strconv.ParseInt(r.Key, 10, 64); err == nil {
+				row.NoradCatID = &n
+			}
+		case extracted && r.Data != nil:
+			data, err := b.s.openStoredRecordBytes(q.SchemaName, r.Data)
+			if err != nil {
+				return RecordIndexSeqPage{}, err
+			}
+			if f, err := extractIndexedFields(q.SchemaName, data); err == nil && f.noradCatID != nil {
+				n := int64(*f.noradCatID)
+				row.NoradCatID = &n
+			}
+		}
+		if hasEpoch && r.HasEpoch {
+			e := r.Epoch
+			row.EpochUnix = &e
+		}
+		out.Rows = append(out.Rows, row)
+	}
+	return out, nil
+}
+
 // ---- epoch profiles (epoch_profiles.go) ------------------------------------------------
 
 // f4EpochQuery is an epoch profile query's filters as an engine EPOCH op.
