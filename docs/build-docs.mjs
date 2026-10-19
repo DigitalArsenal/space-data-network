@@ -46,6 +46,7 @@ const DOCS = [
 ];
 
 const SITE = 'Space Data Network';
+const REPO_DOCS = 'https://github.com/DigitalArsenal/space-data-network/blob/main/docs/';
 
 /*
  * The dashboard's design system, as plain CSS.
@@ -158,7 +159,10 @@ function rewriteLinks(html) {
       .replaceAll(`href="./${d.src}"`, `href="${d.slug}.html"`)
       .replaceAll(`href="${d.src}"`, `href="${d.slug}.html"`);
   }
-  return out;
+  // Any other in-repo doc is not a page here, so a relative .md link would 404 inside the node: link its rendered
+  // copy on GitHub instead.
+  return out.replace(/href="(?:\.\/)?([A-Za-z0-9_-]+\.md)"/g, (link, name) =>
+    existsSync(join(HERE, name)) ? `href="${REPO_DOCS}${name}"` : link);
 }
 
 function navFor(active) {

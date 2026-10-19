@@ -35,15 +35,17 @@ curl http://localhost:7173/api/v1/catalog
 #     "rate_limits":{"max_record_bytes":10485760,"publish_per_minute":10,"query_per_minute":1000},
 #     "schemas":[{"name":"TBS.fbs","record_count":1078755,"total_bytes":758000000}, ...]}
 
-# 3. The anonymous record index (CIDs + a few indexed columns, no content):
-curl "http://localhost:7173/api/v1/data/index?schema=TBS&page=1&limit=3"
-# -> {"as_of":"2026-08-27T18:52:13Z","limit":3,"page":1,"rows":[
-#       {"cid":"bafkreia2224p3z4dnboyfhfach4bhalke76gch7tb73gto5e6nj5fi2k5a","epoch":null,"norad":null}, ...],
-#     "schema":"TBS.fbs","stale":false,"total":1078755}
+# 3. The anonymous record index (CIDs + a few indexed columns, no content).
+#    The answer is ONE $QRP{KIND=Page} FlatBuffer frame
+#    (application/vnd.sdn.flatbuffers.stream: [u32le length][FlatBuffer]):
+curl -o page.qrp "http://localhost:7173/api/v1/data/index?schema=TBS&page=1&limit=3"
+# -> TOTAL_COUNT 1078755, PAGE 1, LIMIT 3, STALE false, AS_OF_MS;
+#    COLUMNS [cid, norad, epoch_ms]; each ROWS[i].CELLS holds the cid (Text)
+#    and norad and epoch_ms (Int, or Null). sdn-js: decodeQrpIndexPage(bytes).
 
 # 4. Health check and the human-readable API reference (both anonymous):
-curl http://localhost:7173/api/v1/data/health
-# -> {"component":"spaceaware-data-api","status":"ok","time":"..."}
+curl -o health.qrp http://localhost:7173/api/v1/data/health
+# -> one $QRP{KIND=Page} frame: COLUMNS component, status, time; one row
 
 curl http://localhost:7173/api/v1/docs
 # -> 200 text/html  (the Gateway API reference UI; zero off-node requests)
@@ -77,8 +79,9 @@ in three cases.
    - `GET /api/relay/status` — peer_id, connections, configured_nodes,
      max_connections, load, mode, versions, uptime_seconds.
    - `GET /api/v1/catalog`, `/api/v1/data/health`
-   - `GET /api/v1/data/index?schema=<CODE>&page=&limit=` — anonymous CID index
-     (capped at 200 rows/page; `limit` > 200 clamped).
+   - `GET /api/v1/data/index?schema=<CODE>&page=&limit=` — anonymous CID index,
+     answered as one `$QRP` page frame (capped at 200 rows/page; `limit` > 200
+     clamped).
    - `GET /api/v1/pubsub/topics`, `/api/v1/pubsub/messages?schema=&limit=`
    - `GET /api/v1/channels`, `/api/v1/channels/<standardCode>`
    - `GET /api/apps`, `/api/v1/apps/default`, `/api/v1/apps/records/<...>` —
@@ -123,11 +126,11 @@ both answer `401` (verified live):
 ```bash
 curl -i "http://localhost:7173/api/v1/data/tbs/bulk?limit=1"
 # -> HTTP/1.1 401 Unauthorized
-#    {"code":"unauthorized","message":"not authenticated"}
+#    one $QRP{KIND=Error} frame: ERROR_CODE unauthorized, HTTP_STATUS 401
 
 curl -i "http://localhost:7173/api/v1/data/iqc/bulk?limit=1"
 # -> HTTP/1.1 401 Unauthorized
-#    {"code":"unauthorized","message":"not authenticated"}
+#    one $QRP{KIND=Error} frame: ERROR_CODE unauthorized, HTTP_STATUS 401
 ```
 
 - Accept spelling is flexible: `OMM`, `omm`, `OMM.fbs` all resolve.
@@ -246,7 +249,7 @@ Trust levels: `never`, `unknown`, `marginal`, `standard`, `full`, `admin`,
 - `standard` (default floor for publishing): write data (section 4).
 - `admin`: everything, including the operator matrix (`/api/auth/users`), peer
   trust management (`/api/peers`), the admin data surface
-  (`/api/v1/data/scan|stream|query|records|...`), imports/exports, and
+  (`/api/v1/data/scan|query|records|...`), imports/exports, and
   `GET /api/accounts` (the merged account view).
 - `ultimate` is reserved for the node's own identity. Operator rows: `unknown`
   through `admin`, never `never` (lockout) and never `ultimate`; both refused
@@ -316,6 +319,80 @@ async iterable of record buffers and carries it in size-bounded batch requests
 (default 8 MiB each, under the server's batch body cap), aggregating the
 per-record results. Unbounded sources publish without buffering the whole set.
 
+
+### Scanning a lane
+
+`POST /api/v1/data/scan` (admin, unless the operator lists it in
+`admin.public_paths`) pages through every stored record of one standard,
+optionally one lane. It is FlatBuffers only: the request body is one
+size-prefixed `$QRP{KIND=Request}` frame with content type
+`application/vnd.sdn.flatbuffers.stream`, and JSON is refused with `415`.
+
+- Request fields: `SCHEMA_NAME` (required); `PROVIDER_ID`, `SOURCE_NAME`,
+  `BATCH_ID`, `PRODUCER_PEER_ID`, `ORIGIN_ID` (the storing peer), `SEARCH`,
+  `LIMIT` (at most 50,000) and `CURSOR` (optional).
+- Response: runs of one `$QRP{KIND=Page}` header followed by exactly
+  `RECORD_COUNT` record frames, the stored bytes verbatim. Each header names
+  its lane (`PROVIDER_ID`, `SOURCE_NAME`, `BATCH_ID`, `PRODUCER_PEER_ID`,
+  `ORIGIN_ID`) and repeats the page fields (`CURSOR`, `NEXT_CURSOR`,
+  `TOTAL_COUNT`, `LIMIT`, `ETAG`, `SCHEMA_NAME`, `FILE_IDENTIFIER`). An empty
+  page is one header with `RECORD_COUNT` 0.
+- A record's CID comes from its bytes: CIDv1, raw codec, sha2-256
+  (`bafkrei...`), the id `/api/v1/data/records/<schema>/<cid>` serves.
+- Paging: send `CURSOR` = `NEXT_CURSOR` until it comes back empty. The cursor
+  is opaque; `ETAG` identifies a page.
+- Resume: the last page of a complete scan (`NEXT_CURSOR` empty) carries a
+  `RESUME_CURSOR` on every run header. Send it back as `RESUME_CURSOR`, never
+  with `CURSOR`, with the same query (schema, lane fields, search): the answer
+  holds only the rows stored after that scan, byte-identical and in store
+  order, paged by `NEXT_CURSOR`, and its last page carries a fresh
+  `RESUME_CURSOR`. With nothing new it is one empty page and a fresh cursor.
+  `TOTAL_COUNT` is 0 (unknown) on resumed pages. The cost follows the new rows,
+  not the feed, and the cursor survives restarts. It is opaque and only the
+  node issues it.
+- Errors: one `$QRP{KIND=Error}` frame with `ERROR_CODE`, `MESSAGE` and
+  `RETRY_AFTER_MS`. `STATUS` `Busy` or `Cold` means retry after that delay.
+  `410` `resume_cursor_expired` (the store was rebuilt or compacted) means drop
+  the cursor and scan again from the first page. `400`
+  `resume_cursor_query_mismatch`, `invalid_resume_cursor` and `bad_request`
+  (`CURSOR` with `RESUME_CURSOR`) refuse a resume as sent.
+
+sdn-js: `encodeQrpScanRequest`, `decodeQrpScanStream`, `decodeQrpIndexPage` and
+`decodeQrpError` (`sdn-js/src/ui/runtime/qrp-frames.ts`).
+
+
+### Querying records
+
+`POST /api/v1/data/query` (admin) selects records with conditions. The body is
+one size-prefixed `$QRP{KIND=Request}` frame; JSON is refused with `415` and
+`GET` with `405` (`method_not_allowed`).
+
+- Fields: `SCHEMA_NAME`; the lane fields `PROVIDER_ID`, `SOURCE_NAME`,
+  `BATCH_ID`, `PRODUCER_PEER_ID`, `ORIGIN_ID`; `SQL` (the sync-filter grammar);
+  `SEARCH`; `FROM_EPOCH_MS` and `TO_EPOCH_MS`; `TIME_PROFILE` (`All`,
+  `Nearest`, `AsOf`, `Latest`) with `PROFILE_EPOCH_MS`; `FILTERS`
+  (`NORAD_CAT_ID`, `ENTITY_ID`, `MAX_DELTA_SECONDS`); `PAGE` (1-based);
+  `LIMIT` (at most 20,000); `ARCHIVE_ID`. A query pages by `PAGE`, not by
+  cursor.
+- The answer has the scan's shape: runs of a `$QRP{KIND=Page}` lane header
+  and its `RECORD_COUNT` records, verbatim.
+- Time profiles ride on the query; there is no separate epoch route. A time
+  profile needs the schema's epoch profile: a schema without one answers `400`.
+
+The node's status routes answer one `$QRP{KIND=Page}` each, with `COLUMNS` and
+typed `ROWS` (cells `Text`, `Int`, `Float`, `Bool`, `Bytes` or `Null`):
+`GET /api/v1/data/health`, `/api/v1/data/summary`, `/api/v1/data/datastores`,
+`/api/v1/data/local-replica-stats` and `/api/v1/data/sources`. In `summary`,
+the lane rows come first, then one total row per schema (lane fields empty),
+then the store total (`schema_name` empty).
+
+`POST /api/v1/query` (admin) runs SQL in the node's sandbox: a `$QRP` Request
+with `SQL` and `PARAMETERS`, answered by one `COLUMNS` + `ROWS` page, with
+blobs as `Bytes` cells.
+
+sdn-js: `src/ui/runtime/qrp-request.ts` builds the requests and
+`src/ui/runtime/qrp-frames.ts` decodes the answers.
+
 ### What is verified — and what is not
 
 Verified on admission: session identity, trust tier, policy, quota, and
@@ -352,21 +429,27 @@ flow-based ingestion; separate lanes from the vendor HTTP API above.
 
 ## 5. Refusal semantics — what a client should do
 
-HTTP status first, body shape second: the auth wall uses `{"code","message"}`;
-the data API uses `{"error":{"message":...}}`.
+HTTP status first, body shape second. On the data routes (`/api/v1/data/*`,
+`/api/v1/query` and the rest of the data plane) a refusal is one
+`$QRP{KIND=Error}` frame (`ERROR_CODE`, `MESSAGE`, `STATUS`, `RETRY_AFTER_MS`,
+`HTTP_STATUS`), and the HTTP status matches it. Elsewhere the auth wall
+answers `{"code","message"}`.
 
 | Status | Body (real examples) | Meaning | What the client should do |
 |---|---|---|---|
-| 200 | index/catalog rows; bulk stream; `{"status":"ok"}` | Success | Nothing |
+| 200 | `$QRP` index page; catalog rows; bulk stream; `{"status":"ok"}` | Success | Nothing |
 | 201 | `{"cid":"...","schema":"...","stored_at":"...","bytes":N}` | Record stored | Trust the CID; use it for reference |
 | 304 | empty | `If-None-Match` hit on a conditional read | Use your cached copy |
+| 503 | `$QRP` Error frame: `STATUS` Busy, `ERROR_CODE` `STORE_BUSY`, `RETRY_AFTER_MS` | The store is busy (index, scan) | Retry after `RETRY_AFTER_MS` |
 | 400 | `{"code":"invalid_timestamp","message":"timestamp outside allowable skew"}` | Bad request: skew, malformed body, route/header schema mismatch, invalid trust level, unknown operator on config-managed row | Fix the request; do not retry unchanged |
-| 401 | `{"code":"unauthorized","message":"not authenticated"}` | No or expired session; OR standard not on the anonymous allow-list (bulk reads) | TBS/IQC bulk: give up, permanent by design. Otherwise: sign in (section 3) |
+| 401 | `$QRP` Error `unauthorized` on data routes; `{"code":"unauthorized","message":"not authenticated"}` elsewhere | No or expired session; OR standard not on the anonymous allow-list (bulk reads) | TBS/IQC bulk: give up, permanent by design. Otherwise: sign in (section 3) |
+| 400 | `$QRP` Error `resume_cursor_query_mismatch`, `invalid_resume_cursor`, `bad_request` | A scan resume refused as sent | Resend the same query with the node's own `RESUME_CURSOR`; never build one |
+| 410 | `$QRP` Error `resume_cursor_expired` | The store was rebuilt or compacted since the cursor was issued | Drop the cursor; scan again from the first page |
+| 415 | `$QRP` Error `unsupported_media_type` | A JSON body on a FlatBuffer route | Send one size-prefixed `$QRP` Request |
 | 403 | `{"code":"forbidden"}`; `data publishing is disabled on this node`; `schema not allowed...`; `access denied by policy...`; `CSRF validation failed (...)` | Below required trust tier, or a policy/CSRF refusal | Elevate trust or change lanes. CSRF: by design for cross-origin browsers — use the documented request signing scheme or a server-side caller |
-| 404 | `{"error":{"message":...}}` | No such route / record / flow param | Check the path; never retry blindly |
+| 404 | `$QRP` Error `not_found` on data routes (a record miss); `{"error":{"message":...}}` elsewhere | No such route / record / flow param | Check the path; never retry blindly |
 | 413 | `request body too large` | Over max record bytes (10 MiB default) | Shrink or split the payload |
 | 429 | `{"code":"too_many_requests",...}` | Challenge/verify or publish rate limit | Back off; respect `Retry-After` if present |
-| 503 | `{"error":{"code":"STORE_BUSY","message":"record store is busy; no cached page for this query yet"},"stale":true}` + `Retry-After: 1` | Record-store read lock held (e.g. a running ingest); no cached index page yet | Retry after ~1 s; the node answers from a cache once one exists |
 | 503 | `flow unavailable: engine hot window not ready` (plain text) | Standard is public but the query engine has not hydrated its hot window | Retry with backoff — warm-up, not denial; light routes stay live |
 | 503 | `local storage unavailable in edge mode` | Edge mode, no local store | Read-only node |
 
@@ -392,9 +475,7 @@ flows are mounted. Discover instead:
    send `If-None-Match`; 304 comes back cheap). Read the stamps:
    - `x-sdn-served-by: flow|native` and `x-sdn-anonymous: true|false` per
      operation, stamped with the EFFECTIVE decision at boot.
-   - Unstamped entries are planned routes not mounted yet. Verified live on the
-     authoring node: `/api/v1/query` appears in the spec with no stamp and
-     answers `401` today.
+   - Unstamped entries are planned routes not mounted yet.
    - The spec is not a complete route map — the light read surfaces
      (`/api/v1/catalog`, `/api/v1/data/index`, `/api/v1/version`,
      `/api/v1/pubsub/topics`, ...) live outside it. Cross-check both sources.
@@ -439,7 +520,7 @@ flows are mounted. Discover instead:
   only (creation paths: section 3).
 - TLS "origin" mode: TLS is `disabled`, `static`, or managed (automatic
   certificates). HTTP stays plaintext in local/dev modes.
-- `/api/v1/query`, `/api/v1/standards`, `/api/v1/peers/{peerId}/pnm`,
+- `/api/v1/standards`, `/api/v1/peers/{peerId}/pnm`,
   `/api/v1/peers/{peerId}/{standard}/latest`: planned gateway routes served
   only when the corresponding flow bundle is mounted on a node. Unstamped in
   the OpenAPI spec today; probe before relying on them.
@@ -451,8 +532,8 @@ flows are mounted. Discover instead:
 ## 8. Reference — what requires a session
 
 Everything under `/api/**` not listed in section 2 requires a session.
-`admin`-gated examples: `/api/v1/data/scan`, `/api/v1/data/stream`,
-`/api/v1/data/query`, `/api/v1/data/records/<schema>/<cid>`, `/api/accounts`,
+`admin`-gated examples: `/api/v1/data/scan`,
+`/api/v1/data/query`, `/api/v1/query`, `/api/v1/data/records/<schema>/<cid>`, `/api/accounts`,
 `/api/peers/*` — including `/api/peers/sdn`, `/api/peers/graph` and
 `/api/peers/graph/schema`, all of which answer `401` without a session,
 `/api/auth/users`, `/api/v1/conjunction/screen`,
