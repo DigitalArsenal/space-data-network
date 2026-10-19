@@ -13,7 +13,6 @@ import {
   type ObservedSdnPeer,
   type RawDataQuery,
   type RawDataRecord,
-  type RawDataStreamRequest,
   type SearchResult,
   type SharedSearchRequest,
   type DataSearchRow,
@@ -22,6 +21,7 @@ import {
   type StorageSummary,
 } from './sdn-backend';
 import { normalizeIpfsArtifactPeerAddrs } from './ipfs-artifact-peers';
+import { FLATBUFFER_STREAM_TYPE, decodeQrpError, decodeQrpScanStream, encodeQrpScanRequest } from './qrp-frames';
 import { sha256 } from '@noble/hashes/sha2.js';
 
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
@@ -162,44 +162,72 @@ export function normalizeDataSummary(payload: unknown): DataSummary {
   };
 }
 
-export function normalizeDataScanResult(payload: unknown): DataScanResult {
-  const record = isRecord(payload) ? payload : {};
-  return {
-    schema: readString(record, 'schema') ?? 'unknown',
-    totalCount: readNumber(record, 'total_count', 'totalCount') ?? 0,
-    count: readNumber(record, 'count') ?? 0,
-    limit: readNumber(record, 'limit') ?? 0,
-    offset: readNumber(record, 'offset') ?? 0,
-    cursor: readString(record, 'cursor') ?? '',
-    nextCursor: readString(record, 'next_cursor', 'nextCursor') ?? '',
-    snapshotId: readString(record, 'snapshot_id', 'snapshotId') ?? '',
-    head: readString(record, 'head') ?? '',
-    highWaterMark: readString(record, 'high_water_mark', 'highWaterMark') ?? '',
-    scanHash: readString(record, 'scan_hash', 'scanHash') ?? '',
-    chunkHash: readString(record, 'chunk_hash', 'chunkHash') ?? '',
-    queryProfile: readString(record, 'query_profile', 'queryProfile') ?? '',
-    syncProtocol: readString(record, 'sync_protocol', 'syncProtocol') ?? '',
-    maxChunkSize: readNumber(record, 'max_chunk_size', 'maxChunkSize') ?? 0,
-    transports: readStringArray(record.transports),
-    results: normalizeRawDataRecords(record),
-  };
-}
-
-export function normalizeRawDataRecords(payload: unknown): RawDataRecord[] {
-  return recordsFromPayload(payload).map((record): RawDataRecord => {
-    return {
-      schemaName: readString(record, 'schema_name', 'schemaName') ?? 'unknown',
-      cid: readString(record, 'cid', 'CID', 'id') ?? '',
-      peerId: readString(record, 'peer_id', 'peerId') ?? '',
-      providerId: readString(record, 'provider_id', 'providerId') ?? undefined,
-      sourceName: readString(record, 'source_name', 'sourceName') ?? undefined,
-      batchId: readString(record, 'batch_id', 'batchId') ?? undefined,
-      producerPeerId: readString(record, 'producer_peer_id', 'producerPeerId') ?? undefined,
-      producerPublicKey: readString(record, 'producer_public_key', 'producerPublicKey') ?? undefined,
-      timestamp: readString(record, 'timestamp') ?? undefined,
-      sizeBytes: readNumber(record, 'size_bytes', 'sizeBytes') ?? 0,
-    };
-  }).filter((record) => record.schemaName !== 'unknown' && record.cid !== '');
+/**
+ * One page of the FlatBuffer-only scan (sdn-server data_scan.go): POST one
+ * $QRP request frame, decode the $QRP page runs and their verbatim record
+ * frames. Each record carries its bytes, its store CID and its lane.
+ */
+export async function scanRawDataViaQrp(
+  fetchLike: FetchLike,
+  baseUrl: string | null | undefined,
+  capabilityId: string,
+  query: RawDataQuery,
+): Promise<BackendResult<DataScanResult>> {
+  const url = joinUrl(baseUrl, '/api/v1/data/scan');
+  try {
+    const response = await fetchLike(url, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'content-type': FLATBUFFER_STREAM_TYPE, accept: FLATBUFFER_STREAM_TYPE, 'x-requested-with': 'sdn-ui' },
+      body: encodeQrpScanRequest({
+        schema: query.schema,
+        providerId: query.providerId,
+        sourceName: query.sourceName,
+        batchId: query.batchId,
+        originId: query.peerId,
+        search: query.search,
+        cursor: query.cursor,
+        limit: query.limit,
+      }) as BodyInit,
+    });
+    const body = new Uint8Array(await response.arrayBuffer());
+    if (!response.ok) {
+      const error = decodeQrpError(body);
+      return createDegradedResult(capabilityId, `${url} returned HTTP ${response.status}${error ? `: ${error.code} ${error.message}` : ''}`);
+    }
+    const { page, records } = await decodeQrpScanStream(body);
+    return createAvailableResult(capabilityId, {
+      schema: page.schemaName,
+      totalCount: page.totalCount,
+      count: records.length,
+      limit: page.limit,
+      offset: 0,
+      cursor: page.cursor,
+      nextCursor: page.nextCursor,
+      snapshotId: '',
+      head: '',
+      highWaterMark: '',
+      scanHash: page.etag,
+      chunkHash: page.etag,
+      queryProfile: '',
+      syncProtocol: 'http:/api/v1/data/scan',
+      maxChunkSize: page.limit,
+      transports: ['http'],
+      results: records.map((record): RawDataRecord => ({
+        schemaName: page.schemaName,
+        cid: record.cid,
+        peerId: record.originId,
+        ...(record.providerId ? { providerId: record.providerId } : {}),
+        ...(record.sourceName ? { sourceName: record.sourceName } : {}),
+        ...(record.batchId ? { batchId: record.batchId } : {}),
+        ...(record.producerPeerId ? { producerPeerId: record.producerPeerId } : {}),
+        sizeBytes: record.bytes.byteLength,
+        dataBytes: record.bytes,
+      })),
+    });
+  } catch (error) {
+    return createDegradedResult(capabilityId, error instanceof Error ? error.message : String(error));
+  }
 }
 
 /**
@@ -222,14 +250,6 @@ export function parseRawFlatbufferStream(bytes: Uint8Array): Uint8Array[] {
     offset += length;
   }
   return records;
-}
-
-export function attachRawFlatbufferStream(records: RawDataRecord[], streamBytes: Uint8Array): RawDataRecord[] {
-  const payloads = parseRawFlatbufferStream(streamBytes);
-  return records.map((record, index) => ({
-    ...record,
-    ...(payloads[index] ? { dataBytes: payloads[index] } : {}),
-  }));
 }
 
 /** Datasync raw-query JSON payload (shared by the remote + desktop adapters). */
@@ -313,32 +333,6 @@ async function sha256Hex(data: Uint8Array): Promise<string> {
   let hex = '';
   for (const byte of digest) hex += byte.toString(16).padStart(2, '0');
   return hex;
-}
-
-export function rawDataStreamPayload(request: RawDataStreamRequest): Record<string, unknown> {
-  return {
-    schema: request.schema,
-    ...(request.datastoreKey ? { datastore_key: request.datastoreKey } : {}),
-    ...(request.scanHash ? { scan_hash: request.scanHash } : {}),
-    ...(request.chunkHash ? { chunk_hash: request.chunkHash } : {}),
-    ...(request.snapshotId ? { snapshot_id: request.snapshotId } : {}),
-    ...(request.head ? { head: request.head } : {}),
-    ...(request.cursor ? { cursor: request.cursor } : {}),
-    ...(request.nextCursor ? { next_cursor: request.nextCursor } : {}),
-    ...(typeof request.totalCount === 'number' ? { total_count: request.totalCount } : {}),
-    ...(request.highWaterMark ? { high_water_mark: request.highWaterMark } : {}),
-    ...(request.queryProfile ? { query_profile: request.queryProfile } : {}),
-    ...(request.syncFilter ? { sync_filter: request.syncFilter } : {}),
-    ...(request.search ? { search: request.search } : {}),
-    records: request.records.map((record) => ({
-      schema_name: record.schemaName,
-      cid: record.cid,
-      peer_id: record.peerId,
-      ...(record.providerId ? { provider_id: record.providerId } : {}),
-      ...(record.sourceName ? { source_name: record.sourceName } : {}),
-      ...(record.batchId ? { batch_id: record.batchId } : {}),
-    })),
-  };
 }
 
 export function conjunctionScreenPayload(request: ConjunctionScreenRequest): Record<string, unknown> {

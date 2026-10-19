@@ -372,23 +372,6 @@ export interface ChannelBackend {
   monitor(channelId: string, options?: ChannelActionOptions): Promise<BackendResult<ChannelMonitor>>;
 }
 
-export interface RawDataStreamRequest {
-  schema: string;
-  datastoreKey?: string;
-  scanHash?: string;
-  chunkHash?: string;
-  snapshotId?: string;
-  head?: string;
-  cursor?: string;
-  nextCursor?: string;
-  totalCount?: number;
-  highWaterMark?: string;
-  queryProfile?: string;
-  syncFilter?: string;
-  search?: string;
-  records: RawDataRecord[];
-}
-
 export interface SdnHealth {
   healthy: boolean;
   details: Record<string, unknown>;
@@ -446,7 +429,6 @@ export interface SdnBackend {
   searchProviders(request: SharedSearchRequest): Promise<BackendResult<SearchResult<ProviderSearchRow>>>;
   searchData(request: SharedSearchRequest): Promise<BackendResult<SearchResult<DataSearchRow>>>;
   scanRawData(query: RawDataQuery): Promise<BackendResult<DataScanResult>>;
-  streamRawData(request: RawDataStreamRequest): Promise<BackendResult<RawDataRecord[]>>;
   queryRawData(query: RawDataQuery): Promise<BackendResult<RawDataRecord[]>>;
   readRawDataRecord(schemaName: string, cid: string): Promise<BackendResult<RawDataRecordBytes>>;
   screenConjunction(request: ConjunctionScreenRequest): Promise<BackendResult<ConjunctionScreenResult>>;

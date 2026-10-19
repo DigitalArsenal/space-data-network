@@ -36,7 +36,6 @@ import {
   type RawDataQuery,
   type RawDataRecord,
   type RawDataRecordBytes,
-  type RawDataStreamRequest,
   type SearchResult,
   type DataSearchRow,
   type ProviderSearchRow,
@@ -161,36 +160,31 @@ export function createLibp2pFlatSqlSyncBackend(options: Libp2pFlatSqlSyncBackend
     return client.readFlatSqlSyncChunk(request);
   }
 
+  // One scan page with its record bytes: the libp2p FlatSQL sync wire keeps
+  // its scan + read_chunk pair; the backend contract returns bytes inline.
   async function scanRawData(query: RawDataQuery): Promise<BackendResult<DataScanResult>> {
     try {
-      const chunk = await requestChunk({ ...query, op: 'scan' });
-      return createAvailableResult('scanRawData', dataScanResultFromChunk(chunk));
+      const scan = dataScanResultFromChunk(await requestChunk({ ...query, op: 'scan' }));
+      if (scan.results.length === 0) return createAvailableResult('scanRawData', scan);
+      const chunk = await requestChunk({
+        schema: scan.schema,
+        datastoreKey: query.datastoreKey,
+        op: 'read_chunk',
+        scanHash: scan.scanHash,
+        chunkHash: scan.chunkHash,
+        snapshotId: scan.snapshotId,
+        head: scan.head,
+        cursor: scan.cursor,
+        nextCursor: scan.nextCursor,
+        totalCount: scan.totalCount,
+        highWaterMark: scan.highWaterMark,
+        queryProfile: scan.queryProfile,
+        syncFilter: query.syncFilter,
+        records: scan.results,
+      });
+      return createAvailableResult('scanRawData', { ...scan, results: rawRecordsWithDataFromFlatSqlChunk(chunk, scan.results) });
     } catch (error) {
       return createUnavailableResult('scanRawData', formatSyncError(error));
-    }
-  }
-
-  async function streamRawData(request: RawDataStreamRequest): Promise<BackendResult<RawDataRecord[]>> {
-    try {
-      const chunk = await requestChunk({
-        schema: request.schema,
-        datastoreKey: request.datastoreKey,
-        op: 'read_chunk',
-        scanHash: request.scanHash,
-        chunkHash: request.chunkHash,
-        snapshotId: request.snapshotId,
-        head: request.head,
-        cursor: request.cursor,
-        nextCursor: request.nextCursor,
-        totalCount: request.totalCount,
-        highWaterMark: request.highWaterMark,
-        queryProfile: request.queryProfile,
-        syncFilter: request.syncFilter,
-        records: request.records,
-      });
-      return createAvailableResult('streamRawData', rawRecordsWithDataFromFlatSqlChunk(chunk, request.records));
-    } catch (error) {
-      return createUnavailableResult('streamRawData', formatSyncError(error));
     }
   }
 
@@ -317,7 +311,6 @@ export function createLibp2pFlatSqlSyncBackend(options: Libp2pFlatSqlSyncBackend
       return createCapabilityResult('searchData', 'remote-only', 'data search requires the authenticated SDN HTTP API or a live-DHT search adapter');
     },
     scanRawData,
-    streamRawData,
     async queryRawData(query: RawDataQuery): Promise<BackendResult<RawDataRecord[]>> {
       try {
         const chunk = await requestChunk({ ...query, op: 'read_chunk' });

@@ -200,7 +200,57 @@ func FilterFromRequest(req QueryRequest, limit, offset int) storage.RawRecordQue
 	}
 }
 
+// Page is one scan page before any wire encoding: the records in row-id
+// order, the snapshot they were read against and the cursors around them.
+type Page struct {
+	Schema        string
+	Search        string
+	TotalCount    int64
+	Limit         int
+	Cursor        string
+	NextCursor    string
+	SnapshotID    string
+	Head          string
+	HighWaterMark string
+	ChunkHash     string
+	QueryProfile  string
+}
+
+// Scan answers one page as the JSON-framed ScanResponse of the libp2p
+// FlatSQL sync protocol.
 func Scan(store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (*ScanResponse, []*storage.Record, error) {
+	page, records, err := ScanPage(store, req, maxLimit)
+	if err != nil {
+		return nil, nil, err
+	}
+	results := make([]map[string]interface{}, 0, len(records))
+	for _, rec := range records {
+		results = append(results, RecordRow(page.Schema, rec, false))
+	}
+	return &ScanResponse{
+		Schema:        page.Schema,
+		Search:        page.Search,
+		TotalCount:    page.TotalCount,
+		Count:         len(results),
+		Limit:         page.Limit,
+		Cursor:        page.Cursor,
+		NextCursor:    page.NextCursor,
+		SnapshotID:    page.SnapshotID,
+		Head:          page.Head,
+		HighWaterMark: page.HighWaterMark,
+		ScanHash:      page.ChunkHash,
+		ChunkHash:     page.ChunkHash,
+		QueryProfile:  page.QueryProfile,
+		SyncProtocol:  ProtocolID,
+		MaxChunkSize:  MaxSyncChunkLimit,
+		Transports:    append([]string(nil), SupportedTransports...),
+		Results:       results,
+	}, records, nil
+}
+
+// ScanPage reads one page of the rowid-snapshot scan. req.IncludeData
+// hydrates the record bytes in the same read; otherwise records are refs.
+func ScanPage(store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (*Page, []*storage.Record, error) {
 	if store == nil {
 		return nil, nil, fmt.Errorf("FlatSQL store is unavailable")
 	}
@@ -287,44 +337,40 @@ func Scan(store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (*ScanRes
 		}
 		filter.MaxRowID = snapshot.MaxRowID
 	}
-	records, err := store.QueryRawRecordRefs(filter)
+	var records []*storage.Record
+	var err error
+	if req.IncludeData {
+		records, err = store.QueryRawRecords(filter)
+	} else {
+		records, err = store.QueryRawRecordRefs(filter)
+	}
 	if err != nil {
 		return nil, nil, err
 	}
-	results := make([]map[string]interface{}, 0, len(records))
-	for _, rec := range records {
-		results = append(results, RecordRow(schemaName, rec, false))
+	encode := func(afterRowID int64) string {
+		return encodeRawRecordCursor(rawRecordCursor{AfterRowID: afterRowID, MaxRowID: filter.MaxRowID,
+			SnapshotID: snapshot.SnapshotID, QueryHash: queryHash, TotalCount: totalCount})
 	}
 	nextCursor := ""
-	responseCursor := EncodeRawRecordCursor(filter.AfterRowID, filter.MaxRowID, snapshot.SnapshotID, queryHash)
 	if len(records) > 0 {
 		lastRowID := records[len(records)-1].RowID
 		if len(records) >= limit && filter.MaxRowID > 0 && lastRowID < filter.MaxRowID {
-			nextCursor = EncodeRawRecordCursor(lastRowID, filter.MaxRowID, snapshot.SnapshotID, queryHash)
+			nextCursor = encode(lastRowID)
 		}
 	}
-	chunkHash := ScanHash(schemaName, records)
-	response := &ScanResponse{
+	return &Page{
 		Schema:        schemaName,
 		Search:        strings.TrimSpace(req.Search),
 		TotalCount:    totalCount,
-		Count:         len(results),
 		Limit:         limit,
-		Offset:        offset,
-		Cursor:        responseCursor,
+		Cursor:        encode(filter.AfterRowID),
 		NextCursor:    nextCursor,
 		SnapshotID:    snapshot.SnapshotID,
 		Head:          snapshot.Head,
 		HighWaterMark: snapshot.HighWaterMark,
-		ScanHash:      chunkHash,
-		ChunkHash:     chunkHash,
+		ChunkHash:     ScanHash(schemaName, records),
 		QueryProfile:  NormalizeQueryProfile(req.QueryProfile),
-		SyncProtocol:  ProtocolID,
-		MaxChunkSize:  MaxSyncChunkLimit,
-		Transports:    append([]string(nil), SupportedTransports...),
-		Results:       results,
-	}
-	return response, records, nil
+	}, records, nil
 }
 
 func OpenManifest(store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (*ManifestResponse, error) {
@@ -931,6 +977,9 @@ type rawRecordCursor struct {
 	MaxRowID   int64  `json:"max_row_id"`
 	SnapshotID string `json:"snapshot_id,omitempty"`
 	QueryHash  string `json:"query_hash,omitempty"`
+	// TotalCount is the snapshot's match count, carried so a continuation
+	// page does not count again.
+	TotalCount int64 `json:"total_count,omitempty"`
 }
 
 func rawRecordQueryHash(filter storage.RawRecordQuery, profile string) string {
@@ -944,24 +993,35 @@ func rawRecordQueryHash(filter storage.RawRecordQuery, profile string) string {
 }
 
 func EncodeRawRecordCursor(afterRowID, maxRowID int64, snapshotID string, queryHash ...string) string {
-	if afterRowID < 0 {
-		afterRowID = 0
-	}
-	cursor := rawRecordCursor{
-		Version:    1,
-		Mode:       "rowid-snapshot",
-		AfterRowID: afterRowID,
-		MaxRowID:   maxRowID,
-		SnapshotID: strings.TrimSpace(snapshotID),
-	}
+	cursor := rawRecordCursor{AfterRowID: afterRowID, MaxRowID: maxRowID, SnapshotID: snapshotID}
 	if len(queryHash) > 0 {
 		cursor.QueryHash = queryHash[0]
 	}
+	return encodeRawRecordCursor(cursor)
+}
+
+func encodeRawRecordCursor(cursor rawRecordCursor) string {
+	if cursor.AfterRowID < 0 {
+		cursor.AfterRowID = 0
+	}
+	cursor.Version, cursor.Mode = 1, "rowid-snapshot"
+	cursor.SnapshotID = strings.TrimSpace(cursor.SnapshotID)
 	raw, err := json.Marshal(cursor)
 	if err != nil {
 		return ""
 	}
 	return base64.RawURLEncoding.EncodeToString(raw)
+}
+
+// CursorSnapshot returns the snapshot identity and match count a cursor
+// carries, so a caller can resume a paged scan without counting again.
+// ok is false for an empty or foreign cursor.
+func CursorSnapshot(cursor string) (snapshotID string, totalCount int64, ok bool) {
+	parsed, found, err := ParseRawRecordCursor(cursor)
+	if err != nil || !found || parsed.SnapshotID == "" || parsed.TotalCount <= 0 {
+		return "", 0, false
+	}
+	return parsed.SnapshotID, parsed.TotalCount, true
 }
 
 func ParseRawRecordCursor(cursor string) (rawRecordCursor, bool, error) {

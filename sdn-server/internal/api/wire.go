@@ -109,6 +109,92 @@ type QRPFields struct {
 	Etag           string
 	CID            string
 	ArchiveID      string
+	// Columns and Rows carry a projection page (typed cells in column
+	// order) instead of record frames.
+	Columns []QRPColumnField
+	Rows    [][]QRPCell
+}
+
+// QRPColumnField is one $QRP COLUMNS descriptor.
+type QRPColumnField struct {
+	Name string
+	Type string
+}
+
+// QRPCell is one QRPValue of a projection row: Text when IsText, Int when
+// IsInt, Null otherwise.
+type QRPCell struct {
+	IsText bool
+	Text   string
+	IsInt  bool
+	Int    int64
+}
+
+// $QRP QRPValue KIND values (qrpValueKind).
+const (
+	qrpValueKindNull int8 = 0
+	qrpValueKindInt  int8 = 2
+	qrpValueKindText int8 = 4
+)
+
+func buildQRPColumns(b *flatbuffers.Builder, columns []QRPColumnField) flatbuffers.UOffsetT {
+	if len(columns) == 0 {
+		return 0
+	}
+	offsets := make([]flatbuffers.UOffsetT, len(columns))
+	for i, column := range columns {
+		name, typ := b.CreateString(column.Name), b.CreateString(column.Type)
+		QRP.QRPColumnStart(b)
+		QRP.QRPColumnAddNAME(b, name)
+		QRP.QRPColumnAddTYPE(b, typ)
+		offsets[i] = QRP.QRPColumnEnd(b)
+	}
+	QRP.QRPStartCOLUMNSVector(b, len(offsets))
+	for i := len(offsets) - 1; i >= 0; i-- {
+		b.PrependUOffsetT(offsets[i])
+	}
+	return b.EndVector(len(offsets))
+}
+
+func buildQRPRows(b *flatbuffers.Builder, rows [][]QRPCell) flatbuffers.UOffsetT {
+	if len(rows) == 0 {
+		return 0
+	}
+	rowOffsets := make([]flatbuffers.UOffsetT, len(rows))
+	for r, row := range rows {
+		cells := make([]flatbuffers.UOffsetT, len(row))
+		for c, cell := range row {
+			var text flatbuffers.UOffsetT
+			if cell.IsText {
+				text = b.CreateString(cell.Text)
+			}
+			QRP.QRPValueStart(b)
+			switch {
+			case cell.IsText:
+				QRP.QRPValueAddKIND(b, enumOf(QRP.EnumValuesqrpValueKind, qrpValueKindText))
+				QRP.QRPValueAddTEXT_VALUE(b, text)
+			case cell.IsInt:
+				QRP.QRPValueAddKIND(b, enumOf(QRP.EnumValuesqrpValueKind, qrpValueKindInt))
+				QRP.QRPValueAddINT_VALUE(b, cell.Int)
+			default:
+				QRP.QRPValueAddKIND(b, enumOf(QRP.EnumValuesqrpValueKind, qrpValueKindNull))
+			}
+			cells[c] = QRP.QRPValueEnd(b)
+		}
+		QRP.QRPRowStartCELLSVector(b, len(cells))
+		for i := len(cells) - 1; i >= 0; i-- {
+			b.PrependUOffsetT(cells[i])
+		}
+		cellVector := b.EndVector(len(cells))
+		QRP.QRPRowStart(b)
+		QRP.QRPRowAddCELLS(b, cellVector)
+		rowOffsets[r] = QRP.QRPRowEnd(b)
+	}
+	QRP.QRPStartROWSVector(b, len(rowOffsets))
+	for i := len(rowOffsets) - 1; i >= 0; i-- {
+		b.PrependUOffsetT(rowOffsets[i])
+	}
+	return b.EndVector(len(rowOffsets))
 }
 
 // BuildQRP serializes one size-prefixed $QRP frame.
@@ -134,6 +220,8 @@ func BuildQRP(f QRPFields) []byte {
 	etag := str(f.Etag)
 	cid := str(f.CID)
 	archiveID := str(f.ArchiveID)
+	columns := buildQRPColumns(b, f.Columns)
+	rows := buildQRPRows(b, f.Rows)
 
 	QRP.QRPStart(b)
 	QRP.QRPAddKIND(b, enumOf(QRP.EnumValuesqrpKind, f.Kind))
@@ -194,6 +282,12 @@ func BuildQRP(f QRPFields) []byte {
 	}
 	if archiveID != 0 {
 		QRP.QRPAddARCHIVE_ID(b, archiveID)
+	}
+	if columns != 0 {
+		QRP.QRPAddCOLUMNS(b, columns)
+	}
+	if rows != 0 {
+		QRP.QRPAddROWS(b, rows)
 	}
 	root := QRP.QRPEnd(b)
 	QRP.FinishSizePrefixedQRPBuffer(b, root)
@@ -297,6 +391,12 @@ func WriteFrameStream(w http.ResponseWriter, status int, frames [][]byte, hdr ma
 // retry hint. retryAfter > 0 also sets the Retry-After header (whole seconds,
 // rounded up).
 func WriteErrorFrame(w http.ResponseWriter, status int, code, msg string, retryAfter time.Duration) {
+	writeStatusFrame(w, status, QRPStatusError, code, msg, retryAfter)
+}
+
+// writeStatusFrame is WriteErrorFrame with an explicit $QRP STATUS (Busy,
+// Cold or Error).
+func writeStatusFrame(w http.ResponseWriter, status int, qrpStatus int8, code, msg string, retryAfter time.Duration) {
 	var retryMs uint32
 	hdr := map[string]string{}
 	if retryAfter > 0 {
@@ -313,7 +413,7 @@ func WriteErrorFrame(w http.ResponseWriter, status int, code, msg string, retryA
 	hdr["Cache-Control"] = "no-store"
 	frame := BuildQRP(QRPFields{
 		Kind:          QRPKindError,
-		Status:        QRPStatusError,
+		Status:        qrpStatus,
 		ErrorCode:     code,
 		Message:       msg,
 		RetryAfterMs:  retryMs,

@@ -403,7 +403,7 @@ describe('libp2p FlatSQL sync backend', () => {
     });
   });
 
-  it('scans and streams raw FlatBuffers through the sync protocol without HTTP', async () => {
+  it('scans raw FlatBuffers with their bytes through the sync protocol without HTTP', async () => {
     const rawRecord = new Uint8Array([9, 8, 7, 6]);
     const calls: FlatSqlSyncQuery[] = [];
     const backend = createLibp2pFlatSqlSyncBackend({
@@ -448,20 +448,8 @@ describe('libp2p FlatSQL sync backend', () => {
         totalCount: 1,
         scanHash: 'scan-hash',
         chunkHash: 'chunk-hash',
-        results: [{ cid: 'omm-cid-1', providerId: 'space-data-network-02' }],
+        results: [{ cid: 'omm-cid-1', providerId: 'space-data-network-02', dataBytes: rawRecord }],
       },
-    });
-
-    const stream = await backend.streamRawData({
-      schema: 'OMM.fbs',
-      scanHash: 'scan-hash',
-      chunkHash: 'chunk-hash',
-      records: scan.data?.results ?? [],
-    });
-
-    expect(stream).toMatchObject({
-      ok: true,
-      data: [{ cid: 'omm-cid-1', dataBytes: rawRecord }],
     });
     expect(calls).toEqual([
       expect.objectContaining({
@@ -483,7 +471,7 @@ describe('libp2p FlatSQL sync backend', () => {
     ]);
   });
 
-  it('carries datastore namespaces through libp2p scan and stream requests', async () => {
+  it('carries datastore namespaces through the libp2p scan and read_chunk requests', async () => {
     const rawRecord = new Uint8Array([1, 3, 3, 7]);
     const calls: FlatSqlSyncQuery[] = [];
     const backend = createLibp2pFlatSqlSyncBackend({
@@ -515,14 +503,9 @@ describe('libp2p FlatSQL sync backend', () => {
       },
     });
 
-    const scan = await backend.scanRawData({ schema: 'OMM.fbs', limit: 1 });
-    await expect(backend.streamRawData({
-      schema: 'OMM.fbs',
-      scanHash: scan.data?.scanHash,
-      records: scan.data?.results ?? [],
-    })).resolves.toMatchObject({
+    await expect(backend.scanRawData({ schema: 'OMM.fbs', limit: 1 })).resolves.toMatchObject({
       ok: true,
-      data: [{ cid: 'omm-cid-1', dataBytes: rawRecord }],
+      data: { results: [{ cid: 'omm-cid-1', dataBytes: rawRecord }] },
     });
 
     expect(calls).toEqual([
@@ -583,7 +566,7 @@ describe('libp2p FlatSQL sync backend', () => {
     ]);
   });
 
-  it('fails stream requests that return refs without matching FlatBuffer frames', async () => {
+  it('fails scans whose read_chunk returns refs without matching FlatBuffer frames', async () => {
     const backend = createLibp2pFlatSqlSyncBackend({
       targetPeerId: '16Uiu2HCelesTrak',
       candidateAddrs: ['/ip4/167.172.219.213/tcp/8080/ws/p2p/16Uiu2HCelesTrak'],
@@ -603,15 +586,10 @@ describe('libp2p FlatSQL sync backend', () => {
       },
     });
 
-    await expect(backend.streamRawData({
-      schema: 'OMM.fbs',
-      scanHash: 'scan-hash',
-      chunkHash: 'chunk-hash',
-      records: [recordRef()],
-    })).resolves.toMatchObject({
+    await expect(backend.scanRawData({ schema: 'OMM.fbs', limit: 1 })).resolves.toMatchObject({
       ok: false,
       capability: {
-        id: 'streamRawData',
+        id: 'scanRawData',
         state: 'unavailable',
         reason: 'remote FlatSQL sync returned 0/1 FlatBuffer frames',
       },

@@ -50,8 +50,6 @@ const (
 	rawFlatBufferStreamContentType = datasync.RawFlatBufferStreamType
 	rawDataDefaultLimit            = datasync.DefaultLimit
 	rawDataMaxQueryLimit           = datasync.MaxQueryLimit
-	rawDataMaxSyncChunkLimit       = datasync.MaxSyncChunkLimit
-	rawDataStreamRequestMaxBytes   = datasync.StreamRequestMaxBytes
 	// rawDataMaxRawStreamLimit caps one raw FlatBuffer stream page of
 	// /api/v1/data/query. A browser-hosted engine fills its window in
 	// batches of this order (never a mirror), so the raw lane admits far more
@@ -98,8 +96,9 @@ func NewDataQueryHandlerWithUICache(store *storage.FlatSQLStore, uiCacheDir stri
 
 // RegisterRoutes registers the NATIVE data API routes: health/summary
 // introspection, the streaming CSV/JSONL bulk-export adapters, and the datasync
-// sync surface (scan/stream/query/records — the sdn-js remote backend and
-// node-to-node HTTP sync contract).
+// record surface (scan/query/records — the sdn-js remote backend). The scan
+// is FlatBuffer-only: $QRP request and page frames around verbatim records
+// (data_scan.go).
 //
 // The record-serving "manual http" endpoints that used to live here
 // (omm, omm/bulk, mpe, mpe/bulk, cat, cat/bulk, spw/bulk, secure/omm) were
@@ -122,7 +121,6 @@ func (h *DataQueryHandler) RegisterRoutes(mux *http.ServeMux) {
 	h.RegisterResolvedSourcesRoute(mux)
 	mux.HandleFunc("/api/v1/data/datastores", h.handleDatastores)
 	mux.HandleFunc("/api/v1/data/scan", h.handleScan)
-	mux.HandleFunc("/api/v1/data/stream", h.handleRawStream)
 	mux.HandleFunc("/api/v1/data/query", h.handleRawQuery)
 	mux.HandleFunc("/api/v1/data/epoch", h.handleEpochQuery)
 	mux.HandleFunc("/api/v1/data/local-replica-stats", h.handleLocalReplicaStats)
@@ -151,24 +149,26 @@ const recordIndexMaxLimit = 200
 // selected SDS schema:
 //
 //	GET /api/v1/data/index?schema=OMM.fbs&source_name=&provider_id=&batch_id=&norad=&page=&limit=
-//	-> {total, page, limit, rows:[{norad, epoch (RFC3339), cid}]}
+//	-> one $QRP{KIND=Page} frame: TOTAL_COUNT, PAGE, LIMIT, STALE, AS_OF_MS,
+//	   COLUMNS [cid string, norad int64, epoch_ms int64], ROWS (Null = absent)
 //
 // It reads sdn_record_index (joined to sdn_record_source_tags for the source
 // lane filter) — no FlatBuffer payloads are hydrated. norad is a NORAD substring
 // (digits only), matched via CAST(norad_cat_id AS TEXT) LIKE. Read-only.
 func (h *DataQueryHandler) handleRecordIndex(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		WriteErrorFrame(w, http.StatusMethodNotAllowed, "method_not_allowed", "index takes GET", 0)
 		return
 	}
-	if !h.ensureStore(w) {
+	if h.store == nil {
+		WriteErrorFrame(w, http.StatusServiceUnavailable, "storage_unavailable", "local storage unavailable in edge mode", 0)
 		return
 	}
 
 	values := r.URL.Query()
 	schema := normalizeRecordIndexSchema(firstNonEmptyDataString(values.Get("schema"), values.Get("schema_name"), values.Get("schemaName")))
 	if schema == "" {
-		writeError(w, http.StatusBadRequest, "schema is required")
+		WriteErrorFrame(w, http.StatusBadRequest, "bad_request", "schema is required", 0)
 		return
 	}
 
@@ -211,17 +211,8 @@ func (h *DataQueryHandler) handleRecordIndex(w http.ResponseWriter, r *http.Requ
 		// Never read successfully: the store has been busy since boot for this
 		// query. Say so. Returning an empty page would be a lie indistinguishable
 		// from "this schema holds no records", and a UI would render "none".
-		w.Header().Set("Retry-After", "1")
-		writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
-			"error": map[string]string{
-				"code":    "STORE_BUSY",
-				"message": "record store is busy; no cached page for this query yet",
-			},
-			"schema": schema,
-			"page":   page,
-			"limit":  limit,
-			"stale":  true,
-		})
+		writeStatusFrame(w, http.StatusServiceUnavailable, QRPStatusBusy, "STORE_BUSY",
+			"record store is busy; no cached page for this query yet", time.Second)
 		return
 	}
 
@@ -229,36 +220,33 @@ func (h *DataQueryHandler) handleRecordIndex(w http.ResponseWriter, r *http.Requ
 	if pageData == nil {
 		pageData = &recordIndexPage{}
 	}
-
-	out := make([]map[string]interface{}, 0, len(pageData.Rows))
+	rows := make([][]QRPCell, 0, len(pageData.Rows))
 	for _, rr := range pageData.Rows {
-		m := map[string]interface{}{"cid": rr.CID}
+		row := []QRPCell{{IsText: true, Text: rr.CID}, {}, {}}
 		if rr.NoradCatID != nil {
-			m["norad"] = *rr.NoradCatID
-		} else {
-			m["norad"] = nil
+			row[1] = QRPCell{IsInt: true, Int: int64(*rr.NoradCatID)}
 		}
 		if rr.EpochUnix != nil {
-			m["epoch"] = time.Unix(*rr.EpochUnix, 0).UTC().Format(time.RFC3339)
-		} else {
-			m["epoch"] = nil
+			row[2] = QRPCell{IsInt: true, Int: *rr.EpochUnix * 1000}
 		}
-		out = append(out, m)
+		rows = append(rows, row)
 	}
-	payload := map[string]interface{}{
-		"schema": schema,
-		"total":  pageData.Total,
-		"page":   page,
-		"limit":  limit,
-		"rows":   out,
-		// stale/as_of are API-synthesized fields: lowercase, unlike SDS record
-		// keys which keep their IDL capitalization.
-		"stale": !res.Fresh,
+	fields := QRPFields{
+		Kind:          QRPKindPage,
+		Status:        QRPStatusOk,
+		SchemaName:    schema,
+		Page:          uint32(page),
+		Limit:         uint32(limit),
+		TotalCount:    uint64(pageData.Total),
+		Stale:         !res.Fresh,
+		GeneratedAtMs: time.Now().UnixMilli(),
+		Columns:       []QRPColumnField{{Name: "cid", Type: "string"}, {Name: "norad", Type: "int64"}, {Name: "epoch_ms", Type: "int64"}},
+		Rows:          rows,
 	}
 	if !res.AsOf.IsZero() {
-		payload["as_of"] = res.AsOf.UTC().Format(time.RFC3339)
+		fields.AsOfMs = res.AsOf.UnixMilli()
 	}
-	writeJSON(w, http.StatusOK, payload)
+	WriteFrameStream(w, http.StatusOK, [][]byte{BuildQRP(fields)}, map[string]string{StreamSchemaHeader: schema})
 }
 
 // recordIndexPage is one cached answer of the index surface: the page and the
@@ -506,88 +494,6 @@ func (h *DataQueryHandler) handleRawQuery(w http.ResponseWriter, r *http.Request
 	})
 }
 
-func (h *DataQueryHandler) handleScan(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if !h.ensureStore(w) {
-		return
-	}
-
-	var req rawDataQueryRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64*1024)).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON body")
-		return
-	}
-	queryStore, closeQueryStore, err := h.storeForDatastoreKey(req.DatastoreKey)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	defer closeQueryStore()
-
-	response, _, err := datasync.Scan(queryStore, rawQueryToSyncRequest(req), rawDataMaxSyncChunkLimit)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, response)
-}
-
-func (h *DataQueryHandler) handleRawStream(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if !h.ensureStore(w) {
-		return
-	}
-
-	var req rawDataStreamRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, rawDataStreamRequestMaxBytes)).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON body")
-		return
-	}
-	schemaName := strings.TrimSpace(firstNonEmptyDataString(req.Schema, req.SchemaName))
-	if schemaName == "" {
-		writeError(w, http.StatusBadRequest, "schema is required")
-		return
-	}
-	queryStore, closeQueryStore, err := h.storeForDatastoreKey(req.DatastoreKey)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	defer closeQueryStore()
-
-	computedHash, records, err := datasync.ResolveStreamRecords(queryStore, rawStreamToSyncRequest(req))
-	if err != nil {
-		status := http.StatusNotFound
-		if strings.Contains(err.Error(), "required") || strings.Contains(err.Error(), "limit") || strings.Contains(err.Error(), "schema") {
-			status = http.StatusBadRequest
-		}
-		if strings.Contains(err.Error(), "scan hash") {
-			status = http.StatusConflict
-		}
-		writeError(w, status, err.Error())
-		return
-	}
-
-	w.Header().Set("X-SDN-Scan-Hash", computedHash)
-	w.Header().Set("X-SDN-Chunk-Hash", firstNonEmptyDataString(req.ChunkHash, computedHash))
-	w.Header().Set("X-SDN-Sync-Protocol", datasync.ProtocolID)
-	w.Header().Set("X-SDN-Snapshot-ID", req.SnapshotID)
-	w.Header().Set("X-SDN-Head", req.Head)
-	w.Header().Set("X-SDN-Cursor", req.Cursor)
-	w.Header().Set("X-SDN-Next-Cursor", req.NextCursor)
-	if req.TotalCount > 0 {
-		w.Header().Set("X-SDN-Total-Count", strconv.FormatInt(req.TotalCount, 10))
-	}
-	w.Header().Set("X-SDN-High-Water-Mark", req.HighWaterMark)
-	writeFlatBufferRecordStreamWithContentType(w, schemaName, records, rawFlatBufferStreamContentType, queryStore)
-}
-
 func (h *DataQueryHandler) handleRawRecord(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -724,110 +630,6 @@ type rawDataQueryRequest struct {
 	Limit                  int    `json:"limit"`
 	Offset                 int    `json:"offset"`
 	IncludeData            bool   `json:"include_data"`
-}
-
-type rawDataStreamRequest struct {
-	DatastoreKey  string                `json:"datastore_key"`
-	Schema        string                `json:"schema"`
-	SchemaName    string                `json:"schema_name"`
-	ScanHash      string                `json:"scan_hash"`
-	ChunkHash     string                `json:"chunk_hash"`
-	SnapshotID    string                `json:"snapshot_id"`
-	Head          string                `json:"head"`
-	Cursor        string                `json:"cursor"`
-	NextCursor    string                `json:"next_cursor"`
-	TotalCount    int64                 `json:"total_count"`
-	HighWaterMark string                `json:"high_water_mark"`
-	QueryProfile  string                `json:"query_profile"`
-	SyncFilter    string                `json:"sync_filter"`
-	Search        string                `json:"search,omitempty"`
-	Records       []rawDataStreamRecord `json:"records"`
-}
-
-type rawDataStreamRecord struct {
-	Schema                 string `json:"schema"`
-	SchemaName             string `json:"schema_name"`
-	CID                    string `json:"cid"`
-	ID                     string `json:"id"`
-	ProviderID             string `json:"provider_id"`
-	ProviderId             string `json:"providerId"`
-	SourceName             string `json:"source_name"`
-	BatchID                string `json:"batch_id"`
-	BatchId                string `json:"batchId"`
-	ProducerPeerID         string `json:"producer_peer_id"`
-	ProducerPeerId         string `json:"producerPeerId"`
-	ProducerPublicKey      string `json:"producer_public_key"`
-	ProducerPublicKeyCamel string `json:"producerPublicKey"`
-	PeerID                 string `json:"peer_id"`
-	PeerId                 string `json:"peerId"`
-}
-
-func rawQueryToSyncRequest(req rawDataQueryRequest) datasync.QueryRequest {
-	return datasync.QueryRequest{
-		Schema:                 req.Schema,
-		SchemaName:             req.SchemaName,
-		ProviderID:             req.ProviderID,
-		ProviderId:             req.ProviderId,
-		SourceName:             req.SourceName,
-		BatchID:                req.BatchID,
-		BatchId:                req.BatchId,
-		ProducerPeerID:         req.ProducerPeerID,
-		ProducerPeerId:         req.ProducerPeerId,
-		ProducerPublicKey:      req.ProducerPublicKey,
-		ProducerPublicKeyCamel: req.ProducerPublicKeyCamel,
-		PeerID:                 req.PeerID,
-		PeerId:                 req.PeerId,
-		Cursor:                 req.Cursor,
-		SnapshotID:             req.SnapshotID,
-		Head:                   req.Head,
-		QueryProfile:           req.QueryProfile,
-		SyncFilter:             req.SyncFilter,
-		Search:                 req.Search,
-		Limit:                  req.Limit,
-		Offset:                 req.Offset,
-		IncludeData:            req.IncludeData,
-	}
-}
-
-func rawStreamToSyncRequest(req rawDataStreamRequest) datasync.StreamRequest {
-	records := make([]datasync.RecordRef, 0, len(req.Records))
-	for _, ref := range req.Records {
-		records = append(records, datasync.RecordRef{
-			Schema:                 ref.Schema,
-			SchemaName:             ref.SchemaName,
-			CID:                    ref.CID,
-			ID:                     ref.ID,
-			ProviderID:             ref.ProviderID,
-			ProviderId:             ref.ProviderId,
-			SourceName:             ref.SourceName,
-			BatchID:                ref.BatchID,
-			BatchId:                ref.BatchId,
-			ProducerPeerID:         ref.ProducerPeerID,
-			ProducerPeerId:         ref.ProducerPeerId,
-			ProducerPublicKey:      ref.ProducerPublicKey,
-			ProducerPublicKeyCamel: ref.ProducerPublicKeyCamel,
-			PeerID:                 ref.PeerID,
-			PeerId:                 ref.PeerId,
-		})
-	}
-	return datasync.StreamRequest{
-		QueryRequest: datasync.QueryRequest{
-			Schema:       req.Schema,
-			SchemaName:   req.SchemaName,
-			Cursor:       req.Cursor,
-			SnapshotID:   req.SnapshotID,
-			Head:         req.Head,
-			QueryProfile: req.QueryProfile,
-			SyncFilter:   req.SyncFilter,
-			Search:       req.Search,
-		},
-		ScanHash:      req.ScanHash,
-		ChunkHash:     req.ChunkHash,
-		NextCursor:    req.NextCursor,
-		TotalCount:    req.TotalCount,
-		HighWaterMark: req.HighWaterMark,
-		Records:       records,
-	}
 }
 
 func schemaSummaryRows(schemas []storage.DataSchemaSummary) []map[string]interface{} {
@@ -1071,26 +873,6 @@ func rawRecordRow(schemaName string, rec *storage.Record, includeData bool) map[
 	return row
 }
 
-func scanHash(schemaName string, records []*storage.Record) string {
-	hash := sha256.New()
-	for _, rec := range records {
-		_, _ = fmt.Fprintf(
-			hash,
-			"%s\x00%s\x00%s\x00%d\x00%s\x00%s\x00%s\x00%s\x00%s\n",
-			schemaName,
-			rec.CID,
-			rec.PeerID,
-			recordSizeBytes(rec),
-			rec.SourceTags.ProviderID,
-			rec.SourceTags.SourceName,
-			rec.SourceTags.BatchID,
-			rec.SourceTags.ProducerPeerID,
-			rec.SourceTags.ProducerPublicKey,
-		)
-	}
-	return hex.EncodeToString(hash.Sum(nil))
-}
-
 func recordSizeBytes(rec *storage.Record) int64 {
 	if len(rec.Data) > 0 {
 		return int64(len(rec.Data))
@@ -1099,25 +881,6 @@ func recordSizeBytes(rec *storage.Record) int64 {
 		return rec.RecordLength
 	}
 	return 0
-}
-
-func encodeScanCursor(offset int) string {
-	if offset < 0 {
-		offset = 0
-	}
-	return base64.RawURLEncoding.EncodeToString([]byte(strconv.Itoa(offset)))
-}
-
-func parseScanCursor(cursor string) (int, error) {
-	raw, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(cursor))
-	if err != nil {
-		return 0, fmt.Errorf("invalid cursor")
-	}
-	offset, err := strconv.Atoi(string(raw))
-	if err != nil || offset < 0 {
-		return 0, fmt.Errorf("invalid cursor")
-	}
-	return offset, nil
 }
 
 func firstNonEmptyDataString(values ...string) string {

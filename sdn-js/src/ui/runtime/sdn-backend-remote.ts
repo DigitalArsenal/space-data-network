@@ -20,7 +20,6 @@ import {
   type RawDataQuery,
   type RawDataRecord,
   type RawDataRecordBytes,
-  type RawDataStreamRequest,
   type SearchResult,
   type SharedSearchRequest,
   type DataSearchRow,
@@ -37,18 +36,14 @@ import {
   nodeSummaryFromProfile,
   normalizeConjunctionScreenResult,
   normalizeDataSearchResult,
-  normalizeDataScanResult,
   normalizeDataSummary,
   normalizeNodeAccessPayload,
   normalizeObjectPayload,
   normalizePeerPayload,
   normalizeProviderSearchResult,
-  attachRawFlatbufferStream,
   normalizeStorageSummary,
-  authRawFlatbufferStreamRequest,
+  scanRawDataViaQrp,
   queryRawDataViaStream,
-  rawDataQueryPayload,
-  rawDataStreamPayload,
   sharedSearchPayload,
   recordsFromPayload,
   resolveFetch,
@@ -283,26 +278,7 @@ export function createRemoteSdnBackend(options: RemoteSdnBackendOptions): SdnBac
       return createAvailableResult('searchData', normalizeDataSearchResult(result.data));
     },
     async scanRawData(query: RawDataQuery): Promise<BackendResult<DataScanResult>> {
-      const result = await getJson<unknown>(
-        fetchLike,
-        joinUrl(serverBase, '/api/v1/data/scan'),
-        'scanRawData',
-        authJsonRequest('POST', rawDataQueryPayload(query)),
-      );
-      if (!result.ok) return result as BackendResult<DataScanResult>;
-      return createAvailableResult('scanRawData', normalizeDataScanResult(result.data));
-    },
-    async streamRawData(request: RawDataStreamRequest): Promise<BackendResult<RawDataRecord[]>> {
-      const stream = await getBytes(
-        fetchLike,
-        joinUrl(serverBase, '/api/v1/data/stream'),
-        'streamRawData',
-        authRawFlatbufferStreamRequest(rawDataStreamPayload(request)),
-      );
-      if (!stream.ok || !stream.data) {
-        return createDegradedResult('streamRawData', stream.capability.reason ?? 'raw FlatBuffer stream unavailable');
-      }
-      return createAvailableResult('streamRawData', attachRawFlatbufferStream(request.records, stream.data));
+      return scanRawDataViaQrp(fetchLike, serverBase, 'scanRawData', query);
     },
     async queryRawData(query: RawDataQuery): Promise<BackendResult<RawDataRecord[]>> {
       // ONE stream request (loop D.3): the aligned FlatBuffer record stream

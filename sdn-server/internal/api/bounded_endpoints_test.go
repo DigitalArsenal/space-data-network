@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/QRP"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -82,57 +83,48 @@ func TestRecordIndexIsServedThroughTheBoundedReader(t *testing.T) {
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
 
-	get := func() map[string]interface{} {
+	get := func(query string) *QRP.QRP {
 		t.Helper()
 		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/data/index?schema=OMM&limit=10", nil))
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/data/index?"+query, nil))
 		if rec.Code != http.StatusOK {
-			t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+			t.Fatalf("status = %d", rec.Code)
 		}
-		var body map[string]interface{}
-		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		page, err := ParseQRP(rec.Body.Bytes())
+		if err != nil {
 			t.Fatalf("decode: %v", err)
 		}
-		return body
+		return page
 	}
 
-	first := get()
-	if first["stale"] != false {
-		t.Fatalf("first read reported stale=%v, want false", first["stale"])
+	first := get("schema=OMM&limit=10")
+	if first.STALE() {
+		t.Fatal("first read reported stale, want fresh")
 	}
-	if first["as_of"] == nil {
-		t.Fatal("answer carried no as_of stamp")
+	if first.AS_OF_MS() == 0 {
+		t.Fatal("answer carried no AS_OF_MS stamp")
 	}
-	rows, _ := first["rows"].([]interface{})
-	if len(rows) != 2 {
-		t.Fatalf("rows = %d, want 2", len(rows))
+	if first.ROWSLength() != 2 {
+		t.Fatalf("rows = %d, want 2", first.ROWSLength())
 	}
 
 	// Inside the min-refresh window the same query is answered from cache —
 	// the store is not touched, and the answer says so honestly.
-	second := get()
-	if second["stale"] != true {
-		t.Fatalf("second read reported stale=%v, want true (served from cache)", second["stale"])
+	second := get("schema=OMM&limit=10")
+	if !second.STALE() {
+		t.Fatal("second read reported fresh, want stale (served from cache)")
 	}
-	if second["total"] != first["total"] {
-		t.Fatalf("cached total %v != fresh total %v", second["total"], first["total"])
+	if second.TOTAL_COUNT() != first.TOTAL_COUNT() {
+		t.Fatalf("cached total %d != fresh total %d", second.TOTAL_COUNT(), first.TOTAL_COUNT())
 	}
 
 	// A different query must not be answered from the first query's slot.
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/data/index?schema=OMM&limit=10&norad=25544", nil))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("filtered status = %d", rec.Code)
+	filtered := get("schema=OMM&limit=10&norad=25544")
+	if filtered.TOTAL_COUNT() == first.TOTAL_COUNT() {
+		t.Fatalf("filtered query reused the unfiltered cache slot (total=%d)", filtered.TOTAL_COUNT())
 	}
-	var filtered map[string]interface{}
-	if err := json.Unmarshal(rec.Body.Bytes(), &filtered); err != nil {
-		t.Fatalf("decode filtered: %v", err)
-	}
-	if filtered["total"] == first["total"] {
-		t.Fatalf("filtered query reused the unfiltered cache slot (total=%v)", filtered["total"])
-	}
-	if filtered["stale"] != false {
-		t.Fatalf("distinct query reported stale=%v, want a fresh load", filtered["stale"])
+	if filtered.STALE() {
+		t.Fatal("distinct query reported stale, want a fresh load")
 	}
 }
 
