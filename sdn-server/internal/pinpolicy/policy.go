@@ -7,7 +7,9 @@
 // bytes out of IPFS garbage collection and in the pinned reprovide set. By
 // default the node pins only its own $EPM and its account $EPMs. Every other
 // class is off until an operator turns it on, for the whole class or for one
-// feed within it (a feed rule overrides its class rule).
+// feed within it (a feed rule overrides its class rule). The node keeps and
+// persists only the rules an operator set: a class without one follows its
+// default, so a change of default reaches every node that never chose.
 //
 // Every add and pin goes through a Scope (one class, one feed). Content the
 // policy does not allow is still added (the CID is computed and the blocks
@@ -132,7 +134,9 @@ type Policy struct {
 	kubo   *kuboClient
 	ledger Ledger
 
-	mu        sync.RWMutex
+	mu sync.RWMutex
+	// rules holds only what an operator set, by class or by feed; a class
+	// without a rule follows pinnedByDefault.
 	rules     map[ruleKey]bool
 	updatedAt uint64
 
@@ -147,7 +151,7 @@ func New(apiURL string, ledger Ledger) (*Policy, error) {
 	p := &Policy{
 		kubo:   newKuboClient(apiURL),
 		ledger: ledger,
-		rules:  defaultRules(),
+		rules:  map[ruleKey]bool{},
 	}
 	if ledger == nil {
 		return p, nil
@@ -173,13 +177,9 @@ func New(apiURL string, ledger Ledger) (*Policy, error) {
 	return p, nil
 }
 
-func defaultRules() map[ruleKey]bool {
-	rules := make(map[ruleKey]bool, classCount)
-	for c := Class(0); c < classCount; c++ {
-		rules[ruleKey{class: c}] = c.Locked()
-	}
-	return rules
-}
+// pinnedByDefault reports a class the node pins when no operator rule says
+// otherwise.
+func (c Class) pinnedByDefault() bool { return c.Locked() }
 
 // Allowed reports whether the policy pins content of class (and feed).
 func (p *Policy) Allowed(class Class, feed string) bool {
@@ -200,7 +200,10 @@ func (p *Policy) allowedLocked(class Class, feed string) bool {
 			return enabled
 		}
 	}
-	return p.rules[ruleKey{class: class}]
+	if enabled, ok := p.rules[ruleKey{class: class}]; ok {
+		return enabled
+	}
+	return class.pinnedByDefault()
 }
 
 // effectiveLocked is the rule that governs content of (class, feed).
@@ -251,17 +254,27 @@ func (p *Policy) Encode() []byte {
 	return encodeFrame(rules, updatedAt)
 }
 
-// rulesLocked lists every rule: class rules first, then feed rules, each by
-// class then feed.
+// rulesLocked lists every rule in force: one per class (the operator's, else
+// the default), then every feed rule, by class then feed.
 func (p *Policy) rulesLocked() []RuleChange {
+	rules := make([]RuleChange, 0, int(classCount)+len(p.rules))
+	for c := Class(0); c < classCount; c++ {
+		rules = append(rules, RuleChange{Class: c, Enabled: p.allowedLocked(c, ""), Locked: c.Locked()})
+	}
+	for _, rule := range p.operatorRulesLocked() {
+		if rule.Feed != "" {
+			rules = append(rules, rule)
+		}
+	}
+	return rules
+}
+
+// operatorRulesLocked lists the rules an operator set: class rules first,
+// then feed rules, each by class then feed.
+func (p *Policy) operatorRulesLocked() []RuleChange {
 	rules := make([]RuleChange, 0, len(p.rules))
 	for key, enabled := range p.rules {
-		rules = append(rules, RuleChange{
-			Class:   key.class,
-			Feed:    key.feed,
-			Enabled: enabled || key.class.Locked(),
-			Locked:  key.class.Locked(),
-		})
+		rules = append(rules, RuleChange{Class: key.class, Feed: key.feed, Enabled: enabled})
 	}
 	sort.Slice(rules, func(i, j int) bool {
 		if (rules[i].Feed == "") != (rules[j].Feed == "") {
@@ -423,17 +436,10 @@ func (p *Policy) Apply(ctx context.Context, frame []byte) ([]byte, error) {
 	return p.Encode(), nil
 }
 
-// persistFrameLocked is the policy as stored: every changeable rule, no
-// counts.
+// persistFrameLocked is the policy as stored: the operator's rules only (a
+// locked class never has one), no counts.
 func (p *Policy) persistFrameLocked() []byte {
-	rules := p.rulesLocked()
-	kept := rules[:0]
-	for _, rule := range rules {
-		if !rule.Locked {
-			kept = append(kept, rule)
-		}
-	}
-	return encodeFrame(kept, p.updatedAt)
+	return encodeFrame(p.operatorRulesLocked(), p.updatedAt)
 }
 
 // reconcile brings every ledgered CID of class to what the policy now says:
