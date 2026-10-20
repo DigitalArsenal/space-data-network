@@ -1,15 +1,23 @@
 // pin-policy-e2e boots a node built from this checkout on a fresh data
-// directory with its own Kubo and proves the node pin policy ($PIN):
+// directory with its own Kubo and proves the node pin policy ($PIN) and its
+// default (owner 2026-10-19: the node's $EPMs, what it publishes and the files
+// its flows add are pinned; every other class is off):
 //
-//	a. a dataset publication of a seeded lane, an open publish (share) and the
-//	   module and flow IPFS capabilities' add + pin_add leave Kubo's recursive
-//	   and direct pin set holding only $EPM records;
-//	b. GET /api/node/pins answers the default policy: NODE_EPM and ACCOUNT_EPM
-//	   on and locked (NODE_EPM holding bytes), every other class off and empty;
-//	c. POST enabling PUBLICATION for the lane's feed pins the lane's manifest,
-//	   shard and index, and disabling it unpins them;
+//	a. with no operator rule, a dataset publication of a seeded lane is
+//	   pinned (manifest, shard and index), and the module and flow IPFS
+//	   capabilities' add and pin_add pin; an open publish (share) is not
+//	   pinned; every other pinned root is an $EPM record or counted under
+//	   PUBLICATION;
+//	b. GET /api/node/pins answers the default: NODE_EPM and ACCOUNT_EPM on and
+//	   locked, PUBLICATION and FLOW_ASSET on, every other class off and empty;
+//	c. turning the PUBLICATION class off unpins the lane (its bytes stay in
+//	   the blockstore), and the node persists that one operator rule only;
 //	d. a change to NODE_EPM, a JSON body and a request without an operator
-//	   session are refused.
+//	   session are refused;
+//	e. after a restart the persisted operator rule still wins: the lane stays
+//	   unpinned;
+//	f. a restart with no operator rule (the state a node rolled from an older
+//	   default is in) pins at boot what the node ledgered unpinned.
 //
 //	pin-policy-e2e --binary <node>
 package main
@@ -53,6 +61,8 @@ const (
 	batch      = "b-lane-a"
 	peerID     = "pin-policy-e2e"
 	pinsPath   = "/api/node/pins"
+	// policyFile is where the store persists the operator's rules.
+	policyFile = "pin-policy.pin"
 )
 
 var day0 = time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
@@ -113,30 +123,52 @@ func run(ctx context.Context) error {
 	if err := seed(root); err != nil {
 		return fmt.Errorf("seed: %w", err)
 	}
-	node, err := boot(ctx, *binary, root)
+	node, err := prepare(*binary, root)
 	if err != nil {
 		return err
 	}
-	defer node.stop()
+	defer node.cleanup()
+	if err := node.start(ctx); err != nil {
+		return err
+	}
 	c := client{base: node.base}
 	k := kubo{base: node.kubo}
-	feed := pinpolicy.PublicationFeed(schema, provider, lane)
 
 	var pub published
-	check("a publication, share and capability adds pin only $EPM records", func() error {
+	check("a with no operator rule a publication and capability adds pin; a share does not", func() error {
 		var err error
 		if pub, err = exercise(ctx, c, k); err != nil {
 			return err
 		}
-		return onlyEPMPinned(ctx, k, pub)
+		return pinnedByDefault(ctx, c, k, pub)
 	}())
 	check("b GET /api/node/pins answers the default policy", defaultPolicy(ctx, c))
-	if pub.manifest != "" {
-		check("c PUBLICATION feed rule pins and unpins the lane", toggleLane(ctx, c, k, feed, pub))
+	laneReady := pub.manifest != ""
+	if laneReady {
+		check("c PUBLICATION off unpins the lane and persists one operator rule", publicationOff(ctx, c, k, root, pub))
 	} else {
-		check("c PUBLICATION feed rule pins and unpins the lane", errors.New("no publication to pin (a failed)"))
+		check("c PUBLICATION off unpins the lane and persists one operator rule", errors.New("no publication (a failed)"))
 	}
 	check("d refusals: locked rule, JSON body, no operator session", refusals(ctx, c))
+
+	node.stop()
+	if err := node.start(ctx); err != nil {
+		return err
+	}
+	if laneReady {
+		check("e after a restart the operator's PUBLICATION off still wins", operatorRuleWins(ctx, c, k, pub))
+	}
+
+	node.stop()
+	if err := os.Remove(filepath.Join(root, policyFile)); err != nil {
+		return fmt.Errorf("drop the operator rule: %w", err)
+	}
+	if err := node.start(ctx); err != nil {
+		return err
+	}
+	if laneReady {
+		check("f with no operator rule the node pins at boot what it ledgered unpinned", bootReconcile(ctx, c, k, pub))
+	}
 	if len(failures) > 0 {
 		return fmt.Errorf("%d check(s) failed: %s", len(failures), strings.Join(failures, "; "))
 	}
@@ -203,7 +235,7 @@ func exercise(ctx context.Context, c client, k kubo) (published, error) {
 	fmt.Printf("     publication %s: manifest %s shard %s index %s\n", pinpolicy.PublicationFeed(schema, provider, lane), out.manifest, out.shard, out.index)
 
 	// A shared record (the publish route puts IPFS-schema records in the
-	// blockstore).
+	// blockstore). SHARE stays off by default.
 	a, err = c.do(ctx, http.MethodPost, "/api/v1/data/publish/"+schema, "application/octet-stream", omm(99001, 7), false)
 	if err != nil {
 		return out, err
@@ -220,7 +252,7 @@ func exercise(ctx context.Context, c client, k kubo) (published, error) {
 	// The module and flow IPFS capabilities, driven through their host
 	// handlers against the node's own Kubo (a capability call from a running
 	// module or flow needs a signed artifact; these are the handlers such a
-	// call reaches). The policy is the default one: FLOW_ASSET off.
+	// call reaches). The policy is a fresh one with no operator rule.
 	pins, err := pinpolicy.New(k.base, nil)
 	if err != nil {
 		return out, err
@@ -237,8 +269,8 @@ func exercise(ctx context.Context, c client, k kubo) (published, error) {
 	if resp, err = module("ipfs.pin_add", []byte(`{"cid":"`+moduleCID+`"}`)); err != nil {
 		return out, err
 	}
-	if !bytes.Contains(resp, []byte(`"Pinned":false`)) || !bytes.Contains(resp, []byte(`"ok":true`)) {
-		return out, fmt.Errorf("module ipfs.pin_add answered %s, want ok with Pinned false", clip(resp))
+	if !bytes.Contains(resp, []byte(`"Pinned":true`)) || !bytes.Contains(resp, []byte(`"ok":true`)) {
+		return out, fmt.Errorf("module ipfs.pin_add answered %s, want ok with Pinned true", clip(resp))
 	}
 	flow := capabilities.NewIPFSHandlers(capabilities.IPFSConfig{APIURL: k.base, Pins: pins})
 	args := &flowrt.InvocationArgs{FlowID: "pin-policy-e2e-flow", Frames: []flowrt.FrameData{{PortID: "input", Bytes: []byte("pin-policy-e2e error model")}}}
@@ -249,11 +281,11 @@ func exercise(ctx context.Context, c client, k kubo) (published, error) {
 	flowCID := first(hashRE, result.Outputs[0].Bytes)
 	args.Frames = []flowrt.FrameData{{PortID: "input", Bytes: []byte(`{"cid":"` + flowCID + `"}`)}}
 	result, err = flow["io.spacedatanetwork.ipfs:pin_add"](ctx, args)
-	if err != nil || result.StatusCode != 0 || len(result.Outputs) == 0 || !bytes.Contains(result.Outputs[0].Bytes, []byte(`"Pinned":false`)) {
+	if err != nil || result.StatusCode != 0 || len(result.Outputs) == 0 || !bytes.Contains(result.Outputs[0].Bytes, []byte(`"Pinned":true`)) {
 		return out, fmt.Errorf("flow pin_add: %v %+v", err, result)
 	}
 	out.capability = []string{moduleCID, flowCID}
-	fmt.Printf("     module add %s, flow add %s: added, pin_add Pinned=false\n", moduleCID, flowCID)
+	fmt.Printf("     module add %s, flow add %s: pin_add Pinned=true\n", moduleCID, flowCID)
 	for _, cid := range append(append(out.lane(), out.share), out.capability...) {
 		if ok, err := k.has(ctx, cid); err != nil || !ok {
 			return out, fmt.Errorf("%s is not in the node's blockstore (%v)", cid, err)
@@ -263,31 +295,59 @@ func exercise(ctx context.Context, c client, k kubo) (published, error) {
 	return out, nil
 }
 
-func onlyEPMPinned(ctx context.Context, k kubo, pub published) error {
+// pinnedByDefault checks Kubo's pin set after a: the lane and the capability
+// files pinned, the share not, and nothing else but $EPM records and what
+// the node counts under PUBLICATION.
+func pinnedByDefault(ctx context.Context, c client, k kubo, pub published) error {
 	// Background lanes (tips, retention) settle within a few seconds.
 	time.Sleep(3 * time.Second)
 	pinned, err := k.pins(ctx)
 	if err != nil {
 		return err
 	}
-	if len(pinned) == 0 {
-		return errors.New("Kubo pins nothing: the node's own $EPM is missing")
+	for _, cid := range append(pub.lane(), pub.capability...) {
+		if pinned[cid] != "recursive" {
+			return fmt.Errorf("%s is %q in Kubo, want recursive", cid, pinned[cid])
+		}
 	}
+	if kind, ok := pinned[pub.share]; ok {
+		return fmt.Errorf("the share %s is pinned (%s)", pub.share, kind)
+	}
+	capability := map[string]bool{}
+	for _, cid := range pub.capability {
+		capability[cid] = true
+	}
+	epms, others := 0, 0
 	for _, cid := range sortedKeys(pinned) {
+		if capability[cid] {
+			continue
+		}
 		data, err := k.block(ctx, cid)
 		if err != nil {
 			return fmt.Errorf("pinned %s: %w", cid, err)
 		}
-		if !isEPM(data) {
-			return fmt.Errorf("pinned %s (%s) is not an $EPM record (%d bytes)", cid, pinned[cid], len(data))
+		if isEPM(data) {
+			epms++
+		} else {
+			others++
 		}
 	}
-	for _, cid := range append(append(pub.lane(), pub.share), pub.capability...) {
-		if _, ok := pinned[cid]; ok {
-			return fmt.Errorf("%s is pinned", cid)
-		}
+	if epms == 0 {
+		return errors.New("Kubo pins no $EPM record: the node's own $EPM is missing")
 	}
-	fmt.Printf("     Kubo pins %d root(s), every one an $EPM record: %s\n", len(pinned), strings.Join(sortedKeys(pinned), ", "))
+	a, err := c.do(ctx, http.MethodGet, pinsPath, "", nil, false)
+	if err != nil {
+		return err
+	}
+	rules, err := readPolicy(a)
+	if err != nil {
+		return err
+	}
+	publication, _ := findRule(rules, pinpolicy.Publication, "")
+	if uint64(others) != publication.PinnedRoots {
+		return fmt.Errorf("Kubo pins %d root(s) that are not $EPM records or capability files, PUBLICATION counts %d", others, publication.PinnedRoots)
+	}
+	fmt.Printf("     Kubo pins the lane's manifest, shard and index, both capability files, %d $EPM record(s) and %d PUBLICATION root(s) in all; the share is not pinned\n", epms, others)
 	return nil
 }
 
@@ -296,7 +356,7 @@ func isEPM(data []byte) bool {
 }
 
 // ---------------------------------------------------------------------------
-// b, c, d
+// b to f
 
 func readPolicy(a answer) ([]pinpolicy.RuleChange, error) {
 	if a.status != http.StatusOK {
@@ -309,6 +369,14 @@ func readPolicy(a answer) ([]pinpolicy.RuleChange, error) {
 	return rules, err
 }
 
+func getPolicy(ctx context.Context, c client) ([]pinpolicy.RuleChange, error) {
+	a, err := c.do(ctx, http.MethodGet, pinsPath, "", nil, false)
+	if err != nil {
+		return nil, err
+	}
+	return readPolicy(a)
+}
+
 func findRule(rules []pinpolicy.RuleChange, class pinpolicy.Class, feed string) (pinpolicy.RuleChange, bool) {
 	for _, rule := range rules {
 		if rule.Class == class && rule.Feed == feed {
@@ -319,11 +387,7 @@ func findRule(rules []pinpolicy.RuleChange, class pinpolicy.Class, feed string) 
 }
 
 func defaultPolicy(ctx context.Context, c client) error {
-	a, err := c.do(ctx, http.MethodGet, pinsPath, "", nil, false)
-	if err != nil {
-		return err
-	}
-	rules, err := readPolicy(a)
+	rules, err := getPolicy(ctx, c)
 	if err != nil {
 		return err
 	}
@@ -332,7 +396,8 @@ func defaultPolicy(ctx context.Context, c client) error {
 		if !ok {
 			return fmt.Errorf("no %s class rule", class)
 		}
-		if class.Locked() {
+		switch class {
+		case pinpolicy.NodeEPM, pinpolicy.AccountEPM:
 			if !rule.Enabled || !rule.Locked {
 				return fmt.Errorf("%s enabled=%t locked=%t, want both", class, rule.Enabled, rule.Locked)
 			}
@@ -340,10 +405,20 @@ func defaultPolicy(ctx context.Context, c client) error {
 				return fmt.Errorf("NODE_EPM holds %d roots / %d bytes, want > 0", rule.PinnedRoots, rule.PinnedBytes)
 			}
 			fmt.Printf("     %-13s on, locked, %d root(s) %d bytes\n", class, rule.PinnedRoots, rule.PinnedBytes)
-			continue
-		}
-		if rule.Enabled || rule.Locked || rule.PinnedRoots != 0 || rule.PinnedBytes != 0 {
-			return fmt.Errorf("%s enabled=%t locked=%t roots=%d bytes=%d, want off and empty", class, rule.Enabled, rule.Locked, rule.PinnedRoots, rule.PinnedBytes)
+		case pinpolicy.Publication:
+			if !rule.Enabled || rule.Locked || rule.PinnedRoots < 3 || rule.PinnedBytes == 0 {
+				return fmt.Errorf("PUBLICATION enabled=%t locked=%t roots=%d bytes=%d, want on, switchable, >= 3 roots, > 0 bytes", rule.Enabled, rule.Locked, rule.PinnedRoots, rule.PinnedBytes)
+			}
+			fmt.Printf("     %-13s on, switchable, %d root(s) %d bytes\n", class, rule.PinnedRoots, rule.PinnedBytes)
+		case pinpolicy.FlowAsset:
+			if !rule.Enabled || rule.Locked {
+				return fmt.Errorf("FLOW_ASSET enabled=%t locked=%t, want on and switchable", rule.Enabled, rule.Locked)
+			}
+			fmt.Printf("     %-13s on, switchable\n", class)
+		default:
+			if rule.Enabled || rule.Locked || rule.PinnedRoots != 0 || rule.PinnedBytes != 0 {
+				return fmt.Errorf("%s enabled=%t locked=%t roots=%d bytes=%d, want off and empty", class, rule.Enabled, rule.Locked, rule.PinnedRoots, rule.PinnedBytes)
+			}
 		}
 	}
 	if len(rules) != int(pinpolicy.ProfilePhoto)+1 {
@@ -353,60 +428,103 @@ func defaultPolicy(ctx context.Context, c client) error {
 	return nil
 }
 
-func toggleLane(ctx context.Context, c client, k kubo, feed string, pub published) error {
-	set := func(enabled bool) (pinpolicy.RuleChange, error) {
-		frame := pinpolicy.EncodeChanges(pinpolicy.RuleChange{Class: pinpolicy.Publication, Feed: feed, Enabled: enabled})
-		a, err := c.do(ctx, http.MethodPost, pinsPath, streamType, frame, false)
-		if err != nil {
-			return pinpolicy.RuleChange{}, err
-		}
-		rules, err := readPolicy(a)
-		if err != nil {
-			return pinpolicy.RuleChange{}, err
-		}
-		rule, ok := findRule(rules, pinpolicy.Publication, feed)
-		if !ok {
-			return rule, fmt.Errorf("the answer has no PUBLICATION %s rule", feed)
-		}
-		return rule, nil
-	}
-	rule, err := set(true)
-	if err != nil {
-		return err
-	}
-	if !rule.Enabled || rule.PinnedBytes == 0 || rule.PinnedRoots < 3 {
-		return fmt.Errorf("enabled rule: enabled=%t roots=%d bytes=%d, want on, >= 3 roots, > 0 bytes", rule.Enabled, rule.PinnedRoots, rule.PinnedBytes)
-	}
+// lanePinned reports how many of the lane's CIDs Kubo pins recursively.
+func lanePinned(ctx context.Context, k kubo, pub published) (int, error) {
 	pinned, err := k.pins(ctx)
 	if err != nil {
-		return err
+		return 0, err
 	}
+	n := 0
 	for _, cid := range pub.lane() {
-		if pinned[cid] != "recursive" {
-			return fmt.Errorf("after enable %s is %q in Kubo, want recursive", cid, pinned[cid])
+		if pinned[cid] == "recursive" {
+			n++
 		}
 	}
-	fmt.Printf("     enable %s: %d root(s) %d bytes; manifest, shard and index pinned\n", feed, rule.PinnedRoots, rule.PinnedBytes)
-	if rule, err = set(false); err != nil {
+	return n, nil
+}
+
+func publicationOff(ctx context.Context, c client, k kubo, root string, pub published) error {
+	frame := pinpolicy.EncodeChanges(pinpolicy.RuleChange{Class: pinpolicy.Publication, Enabled: false})
+	a, err := c.do(ctx, http.MethodPost, pinsPath, streamType, frame, false)
+	if err != nil {
 		return err
 	}
+	rules, err := readPolicy(a)
+	if err != nil {
+		return err
+	}
+	rule, _ := findRule(rules, pinpolicy.Publication, "")
 	if rule.Enabled || rule.PinnedRoots != 0 || rule.PinnedBytes != 0 {
-		return fmt.Errorf("disabled rule: enabled=%t roots=%d bytes=%d, want off and empty", rule.Enabled, rule.PinnedRoots, rule.PinnedBytes)
+		return fmt.Errorf("PUBLICATION after off: enabled=%t roots=%d bytes=%d, want off and empty", rule.Enabled, rule.PinnedRoots, rule.PinnedBytes)
 	}
-	if pinned, err = k.pins(ctx); err != nil {
-		return err
-	}
-	for _, cid := range pub.lane() {
-		if kind, ok := pinned[cid]; ok {
-			return fmt.Errorf("after disable %s is still pinned (%s)", cid, kind)
-		}
+	if n, err := lanePinned(ctx, k, pub); err != nil || n != 0 {
+		return fmt.Errorf("after off %d of the lane's CIDs are still pinned (%v)", n, err)
 	}
 	for _, cid := range pub.lane() {
 		if ok, err := k.has(ctx, cid); err != nil || !ok {
-			return fmt.Errorf("after disable %s left the blockstore (%v): unpin must not collect", cid, err)
+			return fmt.Errorf("after off %s left the blockstore (%v): unpin must not collect", cid, err)
 		}
 	}
-	fmt.Printf("     disable %s: 0 roots, 0 bytes; unpinned, bytes still held\n", feed)
+	fmt.Println("     PUBLICATION off: 0 roots, 0 bytes; the lane unpinned, its bytes still held")
+	stored, err := os.ReadFile(filepath.Join(root, policyFile))
+	if err != nil {
+		return fmt.Errorf("read the persisted policy: %w", err)
+	}
+	persisted, _, err := pinpolicy.Decode(stored)
+	if err != nil {
+		return fmt.Errorf("decode the persisted policy: %w", err)
+	}
+	if len(persisted) != 1 || persisted[0].Class != pinpolicy.Publication || persisted[0].Feed != "" || persisted[0].Enabled {
+		return fmt.Errorf("the persisted policy holds %+v, want the one operator rule PUBLICATION off", persisted)
+	}
+	fmt.Printf("     %s holds the one operator rule (PUBLICATION off) and no defaults\n", policyFile)
+	return nil
+}
+
+func operatorRuleWins(ctx context.Context, c client, k kubo, pub published) error {
+	// The boot reconcile runs in the background; give it the time f gives it.
+	time.Sleep(5 * time.Second)
+	rules, err := getPolicy(ctx, c)
+	if err != nil {
+		return err
+	}
+	if rule, _ := findRule(rules, pinpolicy.Publication, ""); rule.Enabled || rule.PinnedRoots != 0 {
+		return fmt.Errorf("PUBLICATION after restart: enabled=%t roots=%d, want the operator's off", rule.Enabled, rule.PinnedRoots)
+	}
+	if rule, _ := findRule(rules, pinpolicy.FlowAsset, ""); !rule.Enabled {
+		return errors.New("FLOW_ASSET is off after restart: one operator rule froze another class")
+	}
+	if n, err := lanePinned(ctx, k, pub); err != nil || n != 0 {
+		return fmt.Errorf("after restart %d of the lane's CIDs are pinned (%v)", n, err)
+	}
+	fmt.Println("     PUBLICATION still off, FLOW_ASSET still on; the lane stays unpinned")
+	return nil
+}
+
+func bootReconcile(ctx context.Context, c client, k kubo, pub published) error {
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		n, err := lanePinned(ctx, k, pub)
+		if err != nil {
+			return err
+		}
+		if n == len(pub.lane()) {
+			break
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("%d of the lane's %d CIDs pinned 60 s after boot", n, len(pub.lane()))
+		}
+		time.Sleep(time.Second)
+	}
+	rules, err := getPolicy(ctx, c)
+	if err != nil {
+		return err
+	}
+	rule, _ := findRule(rules, pinpolicy.Publication, "")
+	if !rule.Enabled || rule.PinnedRoots < 3 || rule.PinnedBytes == 0 {
+		return fmt.Errorf("PUBLICATION after boot: enabled=%t roots=%d bytes=%d, want on, >= 3 roots, > 0 bytes", rule.Enabled, rule.PinnedRoots, rule.PinnedBytes)
+	}
+	fmt.Printf("     no operator rule: PUBLICATION on by default, the boot pinned the lane's manifest, shard and index (%d root(s) %d bytes)\n", rule.PinnedRoots, rule.PinnedBytes)
 	return nil
 }
 
@@ -451,11 +569,7 @@ func refusals(ctx context.Context, c client) error {
 		fmt.Printf("     %s without an operator session: %d\n", method, a.status)
 	}
 	// The refused change left the policy as it was.
-	a, err = c.do(ctx, http.MethodGet, pinsPath, "", nil, false)
-	if err != nil {
-		return err
-	}
-	rules, err := readPolicy(a)
+	rules, err := getPolicy(ctx, c)
 	if err != nil {
 		return err
 	}
@@ -468,11 +582,15 @@ func refusals(ctx context.Context, c client) error {
 // ---------------------------------------------------------------------------
 // node
 
+// node is one node home and config, booted as often as the harness needs on
+// the same store, Kubo repo and identity.
 type node struct {
-	base string
-	kubo string
-	cmd  *exec.Cmd
-	home string
+	binary string
+	base   string
+	kubo   string
+	config string
+	home   string
+	cmd    *exec.Cmd
 }
 
 func freePort() (int, error) {
@@ -484,10 +602,10 @@ func freePort() (int, error) {
 	return l.Addr().(*net.TCPAddr).Port, nil
 }
 
-// boot starts the node isolated with the auth wall on and the loopback
-// console admitted as the operator: a plain loopback call is the operator, a
-// call carrying a proxy header is anonymous.
-func boot(ctx context.Context, binary, root string) (*node, error) {
+// prepare writes the node's home and config: isolated, with the auth wall on
+// and the loopback console admitted as the operator (a plain loopback call
+// is the operator, a call carrying a proxy header is anonymous).
+func prepare(binary, root string) (*node, error) {
 	home, err := os.MkdirTemp("", "pin-policy-e2e-home-")
 	if err != nil {
 		return nil, err
@@ -522,31 +640,42 @@ func boot(ctx context.Context, binary, root string) (*node, error) {
 	if err := os.WriteFile(config, []byte(yaml), 0o644); err != nil {
 		return nil, err
 	}
-	logFile, err := os.Create(filepath.Join(home, "daemon.log"))
+	return &node{
+		binary: binary,
+		base:   fmt.Sprintf("http://127.0.0.1:%d", port),
+		kubo:   fmt.Sprintf("http://127.0.0.1:%d", kuboAPI),
+		config: config,
+		home:   home,
+	}, nil
+}
+
+// start boots the node and waits for health 200.
+func (n *node) start(ctx context.Context) error {
+	logFile, err := os.OpenFile(filepath.Join(n.home, "daemon.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	cmd := exec.Command(binary, "daemon", "--allow-multi-daemon", "--config", config)
-	cmd.Dir, cmd.Stdout, cmd.Stderr = home, logFile, logFile
-	cmd.Env = append(os.Environ(), "HOME="+home)
+	defer logFile.Close()
+	cmd := exec.Command(n.binary, "daemon", "--allow-multi-daemon", "--config", n.config)
+	cmd.Dir, cmd.Stdout, cmd.Stderr = n.home, logFile, logFile
+	cmd.Env = append(os.Environ(), "HOME="+n.home)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
-		return nil, err
+		return err
 	}
-	n := &node{base: fmt.Sprintf("http://127.0.0.1:%d", port), kubo: fmt.Sprintf("http://127.0.0.1:%d", kuboAPI), cmd: cmd, home: home}
+	n.cmd = cmd
 	exited := make(chan error, 1)
 	go func() { exited <- cmd.Wait() }()
 	t0 := time.Now()
 	for time.Since(t0) < 5*time.Minute {
 		select {
 		case err := <-exited:
-			tail, _ := os.ReadFile(filepath.Join(home, "daemon.log"))
+			tail, _ := os.ReadFile(filepath.Join(n.home, "daemon.log"))
 			n.cmd = nil
-			n.stop()
-			return nil, fmt.Errorf("node exited before health (%v): %s", err, lastLines(tail, 8))
+			return fmt.Errorf("node exited before health (%v): %s", err, lastLines(tail, 8))
 		case <-ctx.Done():
 			n.stop()
-			return nil, ctx.Err()
+			return ctx.Err()
 		case <-time.After(500 * time.Millisecond):
 		}
 		resp, err := http.Get(n.base + "/api/v1/health")
@@ -554,27 +683,33 @@ func boot(ctx context.Context, binary, root string) (*node, error) {
 			resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
 				fmt.Printf("PASS boot pid=%d %s (Kubo %s) after %.1f s\n", cmd.Process.Pid, n.base, n.kubo, time.Since(t0).Seconds())
-				return n, nil
+				return nil
 			}
 		}
 	}
 	n.stop()
-	return nil, errors.New("no health 200 within 5 min")
+	return errors.New("no health 200 within 5 min")
 }
 
 // stop ends exactly the process group this harness started.
 func (n *node) stop() {
-	if n.cmd != nil && n.cmd.Process != nil {
-		pgid := n.cmd.Process.Pid
-		_ = syscall.Kill(-pgid, syscall.SIGTERM)
-		for i := 0; i < 60; i++ {
-			if syscall.Kill(-pgid, 0) != nil {
-				break
-			}
-			time.Sleep(500 * time.Millisecond)
-		}
-		_ = syscall.Kill(-pgid, syscall.SIGKILL)
+	if n.cmd == nil || n.cmd.Process == nil {
+		return
 	}
+	pgid := n.cmd.Process.Pid
+	_ = syscall.Kill(-pgid, syscall.SIGTERM)
+	for i := 0; i < 120; i++ {
+		if syscall.Kill(-pgid, 0) != nil {
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	_ = syscall.Kill(-pgid, syscall.SIGKILL)
+	n.cmd = nil
+}
+
+func (n *node) cleanup() {
+	n.stop()
 	if os.Getenv("PIN_POLICY_E2E_KEEP") == "" {
 		_ = os.RemoveAll(n.home)
 	} else {

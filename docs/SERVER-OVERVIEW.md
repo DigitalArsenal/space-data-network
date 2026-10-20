@@ -188,7 +188,7 @@ Content addressing is what makes this safe without a trusted third party: bytes 
 
 ### Pin policy
 
-A node stores and serves its records and files by content address whether or not they are pinned. A pin is a separate decision: it keeps bytes out of IPFS garbage collection and in the set the node announces as pinned. By default a node pins only its own EPM and its account EPMs. Everything else is added to the node's blockstore unpinned until the operator turns its class on.
+A node stores and serves its records and files by content address whether or not they are pinned. A pin is a separate decision: it keeps bytes out of IPFS garbage collection and in the set the node announces as pinned. By default a node pins its own EPM and its account EPMs (always), what it publishes (`PUBLICATION`) and the files its flows and modules add (`FLOW_ASSET`). Everything else is added to the node's blockstore unpinned until the operator turns its class on. The node stores only the rules the operator set, so a class without one follows the default, and at boot it pins or unpins what it ledgered under an earlier policy.
 
 | Class | Covers | Feed |
 |---|---|---|
@@ -208,7 +208,7 @@ A rule turns a whole class on or off, or one feed within it; a feed rule overrid
 - `GET /api/node/pins` answers one size-prefixed `$PIN`: every rule, whether it is on, whether it is locked, and the roots and bytes it holds pinned.
 - `POST /api/node/pins` takes one size-prefixed `$PIN` carrying only the rules to change (`CLASS`, `FEED`, `ENABLED`) and answers the whole policy. Turning a rule on pins what the node already holds under it, from its own blockstore. Turning it off unpins what the rule pinned, unless another enabled rule holds the same content.
 
-Both routes are operator only and use `application/vnd.sdn.flatbuffers.stream` with `X-SDN-Schema: PIN.fbs`. A change to `NODE_EPM` or `ACCOUNT_EPM` is refused. A lane's retention rule (`ReplaceCurrent`, `KeepAll`, `ArchiveAll`) decides what the node's store keeps; it never pins. Unpinned bytes stay in the blockstore until the operator runs IPFS garbage collection, which the node never runs on its own.
+Both routes are operator only and use `application/vnd.sdn.flatbuffers.stream` with `X-SDN-Schema: PIN.fbs`. A change to `NODE_EPM` or `ACCOUNT_EPM` is refused. A mirrored lane's retention rule (`ReplaceCurrent`, `KeepAll`, `ArchiveAll`) decides what the node's store keeps of it. Only `ArchiveAll` pins, as far as the lane's `PUBLICATION` rule allows; the default `KeepAll` pins nothing the node mirrors. Unpinned bytes stay in the blockstore until the operator runs IPFS garbage collection, which the node never runs on its own.
 
 ## 7. Everything compute is WASM; the host only connects
 

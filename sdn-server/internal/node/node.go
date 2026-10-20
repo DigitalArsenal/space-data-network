@@ -2288,6 +2288,15 @@ func (n *Node) Start(ctx context.Context) error {
 	n.wg.Add(1)
 	go n.maintainBootstrapConnections(pinnedPeers)
 
+	// Pin or unpin what the node ledgered under an earlier pin policy (an
+	// older default, or a rule changed while it was down). n.ctx: Stop
+	// cancels n.ctx, which is what lets n.wg drain.
+	n.wg.Add(1)
+	go func() {
+		defer n.wg.Done()
+		n.pins.Reconcile(n.ctx)
+	}()
+
 	// Per-schema PubSub topic setup can be expensive on full SDS catalogs and
 	// should not block the admin/data HTTP listener from coming up.
 	n.wg.Add(1)

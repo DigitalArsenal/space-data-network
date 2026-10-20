@@ -5,17 +5,20 @@
 // Pinning is separate from storage. The node's own store keeps and serves its
 // records and files by CID whether or not they are pinned; a Kubo pin keeps
 // bytes out of IPFS garbage collection and in the pinned reprovide set. By
-// default the node pins only its own $EPM and its account $EPMs. Every other
-// class is off until an operator turns it on, for the whole class or for one
-// feed within it (a feed rule overrides its class rule). The node keeps and
-// persists only the rules an operator set: a class without one follows its
-// default, so a change of default reaches every node that never chose.
+// default the node pins its own $EPM and its account $EPMs (always), what it
+// publishes (PUBLICATION) and the files its flows and modules add
+// (FLOW_ASSET); every other class is off. An operator turns any class but the
+// two $EPM classes on or off, for the whole class or for one feed within it
+// (a feed rule overrides its class rule). The node keeps and persists only
+// the rules an operator set: a class without one follows its default, so a
+// change of default reaches every node that never chose.
 //
 // Every add and pin goes through a Scope (one class, one feed). Content the
 // policy does not allow is still added (the CID is computed and the blocks
 // land in the local blockstore) but not pinned. The ledger records every CID a
 // scope added or pinned, so enabling a rule later pins what is already held
-// locally, and disabling it unpins exactly what it pinned.
+// locally, and disabling it unpins exactly what it pinned. Reconcile, run at
+// boot, does the same for what the node ledgered under an earlier policy.
 package pinpolicy
 
 import (
@@ -178,8 +181,11 @@ func New(apiURL string, ledger Ledger) (*Policy, error) {
 }
 
 // pinnedByDefault reports a class the node pins when no operator rule says
-// otherwise.
-func (c Class) pinnedByDefault() bool { return c.Locked() }
+// otherwise (owner 2026-10-19): its own and its accounts' $EPMs, what it
+// publishes, and the files its flows and modules add.
+func (c Class) pinnedByDefault() bool {
+	return c.Locked() || c == Publication || c == FlowAsset
+}
 
 // Allowed reports whether the policy pins content of class (and feed).
 func (p *Policy) Allowed(class Class, feed string) bool {
@@ -442,6 +448,22 @@ func (p *Policy) persistFrameLocked() []byte {
 	return encodeFrame(p.operatorRulesLocked(), p.updatedAt)
 }
 
+// Reconcile brings every class's ledgered CIDs to what the policy says, one
+// class at a time between rule changes. The node runs it once at boot, so
+// what it ledgered under an earlier policy (an older default, or a rule
+// changed while it was down) is pinned or unpinned without waiting for the
+// content's next add.
+func (p *Policy) Reconcile(ctx context.Context) {
+	if p == nil {
+		return
+	}
+	for c := Class(0); c < classCount && ctx.Err() == nil; c++ {
+		p.applyMu.Lock()
+		p.reconcile(ctx, c)
+		p.applyMu.Unlock()
+	}
+}
+
 // reconcile brings every ledgered CID of class to what the policy now says:
 // a CID it allows is pinned from the bytes the node holds (never fetched from
 // the network); a CID it no longer allows is unpinned unless another allowed
@@ -455,10 +477,17 @@ func (p *Policy) reconcile(ctx context.Context, class Class) {
 		log.Warnf("pin policy: ledger of %s unavailable: %v", class, err)
 		return
 	}
-	pinned, unpinned := 0, 0
+	var pinned, unpinned, failed int
+	var pinnedBytes int64
+	var firstErr error
+	fail := func(err error) {
+		if failed++; firstErr == nil {
+			firstErr = err
+		}
+	}
 	for _, row := range rows {
 		if ctx.Err() != nil {
-			return
+			break
 		}
 		want := p.Allowed(row.Class, row.Feed)
 		switch {
@@ -467,7 +496,7 @@ func (p *Policy) reconcile(ctx context.Context, class Class) {
 			err := p.kubo.pinAdd(pinCtx, row.CID, true)
 			cancel()
 			if err != nil {
-				log.Warnf("pin policy: %s %s %s not pinned (not held locally?): %v", class, row.Feed, row.CID, err)
+				fail(fmt.Errorf("pin %s %s (not held locally?): %w", row.Feed, row.CID, err))
 				continue
 			}
 			row.Pinned, row.At = true, time.Now().UTC()
@@ -475,10 +504,11 @@ func (p *Policy) reconcile(ctx context.Context, class Class) {
 				log.Warnf("pin policy: pinned %s but could not ledger it: %v", row.CID, err)
 			}
 			pinned++
+			pinnedBytes += max(row.Bytes, 0)
 		case !want && row.Pinned:
 			if !p.heldElsewhere(row) {
 				if err := p.kubo.pinRm(ctx, row.CID); err != nil {
-					log.Warnf("pin policy: could not unpin %s: %v", row.CID, err)
+					fail(fmt.Errorf("unpin %s %s: %w", row.Feed, row.CID, err))
 					continue
 				}
 			}
@@ -490,7 +520,10 @@ func (p *Policy) reconcile(ctx context.Context, class Class) {
 		}
 	}
 	if pinned > 0 || unpinned > 0 {
-		log.Infof("Pin policy %s: pinned %d, unpinned %d", class, pinned, unpinned)
+		log.Infof("Pin policy %s: pinned %d (%d bytes), unpinned %d", class, pinned, pinnedBytes, unpinned)
+	}
+	if failed > 0 {
+		log.Warnf("pin policy %s: %d ledgered CID(s) left as they were; first: %v", class, failed, firstErr)
 	}
 }
 
