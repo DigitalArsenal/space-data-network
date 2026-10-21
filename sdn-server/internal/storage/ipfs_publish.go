@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -15,7 +16,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ipfs/boxo/blockservice"
+	"github.com/ipfs/boxo/blockstore"
+	chunker "github.com/ipfs/boxo/chunker"
+	"github.com/ipfs/boxo/ipld/merkledag"
+	"github.com/ipfs/boxo/ipld/unixfs/importer/balanced"
+	ihelpers "github.com/ipfs/boxo/ipld/unixfs/importer/helpers"
 	"github.com/ipfs/go-cid"
+	"github.com/ipfs/go-datastore"
+	dssync "github.com/ipfs/go-datastore/sync"
 	car "github.com/ipld/go-car/v2"
 	carstorage "github.com/ipld/go-car/v2/storage"
 	mh "github.com/multiformats/go-multihash"
@@ -62,17 +71,82 @@ func PublishDatasetExportToIPFS(ctx context.Context, pins pinpolicy.Scope, expor
 	}, nil
 }
 
-// PublishDatasetPublicationManifestToIPFS stores a signed dataset manifest as
-// a raw block through the node pin policy.
+// PublishDatasetPublicationManifestToIPFS stores a signed dataset manifest
+// through the node pin policy under DatasetManifestCID: one raw block when it
+// fits the 2 MiB block limit, else a chunked UnixFS file, so a lane with any
+// number of source batches publishes.
 func PublishDatasetPublicationManifestToIPFS(ctx context.Context, pins pinpolicy.Scope, manifest *DatasetPublicationManifest) (string, error) {
 	if manifest == nil {
 		return "", fmt.Errorf("dataset publication manifest is required")
 	}
-	manifestCID, err := putRawBlockFile(ctx, pins, manifest.Path, manifest.CID)
+	info, err := os.Stat(manifest.Path)
 	if err != nil {
 		return "", fmt.Errorf("put manifest: %w", err)
 	}
-	return manifestCID, nil
+	if info.Size() <= maxRawDatasetManifestBytes {
+		manifestCID, err := putRawBlockFile(ctx, pins, manifest.Path, manifest.CID)
+		if err != nil {
+			return "", fmt.Errorf("put manifest: %w", err)
+		}
+		return manifestCID, nil
+	}
+	data, err := os.ReadFile(manifest.Path)
+	if err != nil {
+		return "", fmt.Errorf("put manifest: read %s: %w", manifest.Path, err)
+	}
+	want, err := DatasetManifestCID(data)
+	if err != nil {
+		return "", fmt.Errorf("put manifest: %w", err)
+	}
+	if manifest.CID != "" && manifest.CID != want {
+		return "", fmt.Errorf("put manifest: local CID %s does not match expected CID %s", want, manifest.CID)
+	}
+	added, err := pins.AddBytes(ctx, filepath.Base(manifest.Path), data, pinpolicy.AddOptions{CIDv1: true})
+	if err != nil {
+		return "", fmt.Errorf("add manifest: %w", err)
+	}
+	if added.CID != want {
+		return "", fmt.Errorf("add manifest: IPFS CID %s does not match local CID %s", added.CID, want)
+	}
+	return added.CID, nil
+}
+
+// maxRawDatasetManifestBytes is the largest manifest stored as one raw block:
+// the 2 MiB bitswap and Kubo block limit.
+const maxRawDatasetManifestBytes = 2 << 20
+
+// unixFSChunkBytes is Kubo's default UnixFS chunk size.
+const unixFSChunkBytes = 262144
+
+// DatasetManifestCID is the CID a signed $DPM is published under: a CIDv1 raw
+// block when the manifest fits the block limit, else the root of its CIDv1
+// UnixFS file (256 KiB raw-leaf chunks, the add Kubo does with cid-version 1).
+// Every reader fetches by it through cat, which resolves both.
+func DatasetManifestCID(data []byte) (string, error) {
+	if len(data) <= maxRawDatasetManifestBytes {
+		return cidV1RawSHA256(data)
+	}
+	return cidV1UnixFSSHA256(data)
+}
+
+func cidV1UnixFSSHA256(data []byte) (string, error) {
+	store := blockstore.NewBlockstore(dssync.MutexWrap(datastore.NewMapDatastore()))
+	dagService := merkledag.NewDAGService(blockservice.New(store, nil))
+	params := ihelpers.DagBuilderParams{
+		Dagserv:    dagService,
+		RawLeaves:  true,
+		Maxlinks:   ihelpers.DefaultLinksPerBlock,
+		CidBuilder: cid.Prefix{Version: 1, Codec: cid.DagProtobuf, MhType: mh.SHA2_256, MhLength: -1},
+	}
+	builder, err := params.New(chunker.NewSizeSplitter(bytes.NewReader(data), unixFSChunkBytes))
+	if err != nil {
+		return "", fmt.Errorf("unixfs builder: %w", err)
+	}
+	root, err := balanced.Layout(builder)
+	if err != nil {
+		return "", fmt.Errorf("unixfs layout: %w", err)
+	}
+	return root.Cid().String(), nil
 }
 
 // FetchIPFSBlockByCID fetches immutable bytes from a Kubo RPC API. The CID may

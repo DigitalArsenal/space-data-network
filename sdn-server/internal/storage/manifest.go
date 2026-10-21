@@ -195,7 +195,7 @@ func VerifySignedDatasetPublicationManifest(manifestBytes []byte, providerPublic
 	if err != nil {
 		return DatasetPublicationManifestTrustEvidence{}, err
 	}
-	manifestCID, err := cidV1RawSHA256(manifestBytes)
+	manifestCID, err := DatasetManifestCID(manifestBytes)
 	if err != nil {
 		return DatasetPublicationManifestTrustEvidence{}, fmt.Errorf("compute manifest CID: %w", err)
 	}
@@ -316,8 +316,10 @@ func VerifyDatasetPublicationReplay(ctx context.Context, store *FlatSQLStore, op
 	if err != nil {
 		return nil, fmt.Errorf("fetch manifest CID %s: %w", manifestCID, err)
 	}
-	if err := verifyBytesCIDAndHash("manifest", manifestBytes, manifestCID, ""); err != nil {
-		return nil, err
+	if localCID, err := DatasetManifestCID(manifestBytes); err != nil {
+		return nil, fmt.Errorf("compute manifest CID: %w", err)
+	} else if localCID != manifestCID {
+		return nil, fmt.Errorf("manifest CID %s does not match expected CID %s", localCID, manifestCID)
 	}
 	manifest, unsignedManifest, err := parseAndVerifyDatasetManifest(manifestBytes, opts.ProviderPublicKey)
 	if err != nil {
@@ -1241,7 +1243,7 @@ func BuildSignedDatasetPublicationManifest(outputDir string, opts DatasetPublica
 		return nil, err
 	}
 	manifestSHA := sha256Hex(signed)
-	manifestCID, err := cidV1RawSHA256(signed)
+	manifestCID, err := DatasetManifestCID(signed)
 	if err != nil {
 		return nil, fmt.Errorf("compute manifest CID: %w", err)
 	}

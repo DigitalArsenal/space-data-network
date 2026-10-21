@@ -370,7 +370,7 @@ func (h *ArchiveHandler) heldArchives(schema string) ([]heldArchive, error) {
 		}
 		for _, path := range candidates {
 			data, err := os.ReadFile(path)
-			if err != nil || storage.ComputeCID(data) != key.manifestCID {
+			if err != nil || !datasetManifestHasCID(data, key.manifestCID) {
 				continue
 			}
 			g.path, g.bytes = path, data
@@ -526,7 +526,7 @@ func (h *ArchiveHandler) planeManifests() []heldArchive {
 		}
 		out = append(out, heldArchive{
 			archiveID:   strings.TrimSpace(string(manifest.DATASET_ID())),
-			manifestCID: storage.ComputeCID(storage.BareDPMBytes(data)),
+			manifestCID: datasetManifestCIDOrEmpty(storage.BareDPMBytes(data)),
 			path:        path,
 			bytes:       storage.BareDPMBytes(data),
 		})
@@ -592,7 +592,7 @@ func (h *ArchiveHandler) handleImport(w http.ResponseWriter, r *http.Request) {
 			ctx, cancel := context.WithTimeout(r.Context(), time.Minute)
 			data, err := storage.FetchIPFSBlockByCID(ctx, apiURL, manifestCID)
 			cancel()
-			if err == nil && storage.ComputeCID(storage.BareDPMBytes(data)) == manifestCID {
+			if err == nil && datasetManifestHasCID(storage.BareDPMBytes(data), manifestCID) {
 				manifestBytes = storage.BareDPMBytes(data)
 			}
 		}
@@ -744,4 +744,20 @@ func epmSigningKeys(record *standardsEPM.EPM) []crypto.PubKey {
 		keys = append(keys, pub)
 	}
 	return keys
+}
+
+// datasetManifestHasCID reports whether data is the $DPM published under cid
+// (storage.DatasetManifestCID: a raw block, or a UnixFS root for a manifest
+// over the block limit).
+func datasetManifestHasCID(data []byte, cid string) bool {
+	got, err := storage.DatasetManifestCID(data)
+	return err == nil && got == cid
+}
+
+func datasetManifestCIDOrEmpty(data []byte) string {
+	got, err := storage.DatasetManifestCID(data)
+	if err != nil {
+		return ""
+	}
+	return got
 }

@@ -60,7 +60,7 @@ func ImportArchiveFromManifest(ctx context.Context, store *FlatSQLStore, opts Im
 	if err != nil {
 		return nil, err
 	}
-	manifestCID, err := cidV1RawSHA256(manifestBytes)
+	manifestCID, err := DatasetManifestCID(manifestBytes)
 	if err != nil {
 		return nil, fmt.Errorf("compute manifest CID: %w", err)
 	}
