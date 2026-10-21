@@ -180,7 +180,7 @@ Providers publish materialized datasets, and the whole lifecycle is signed end t
 1. A provider ingests source data and normalizes it into SDS FlatBuffers.
 2. Records are stored locally and mirrored into the engine's tables.
 3. The provider exports the authoritative set as a `DATA_SHARD` (the streams) plus a `QUERY_INDEX` asset.
-4. It builds and signs a dataset publication manifest (**DPM**) binding the file identifier, source and byte hashes, schema hash, and the assets' content addresses, and adds it to IPFS.
+4. It builds and signs a dataset publication manifest (**DPM**) binding the file identifier, source and byte hashes, schema hash, and the assets' content addresses, and adds it to IPFS under one CID: a raw block while it fits Kubo's 2 MiB block limit, else a chunked UnixFS file (a lane with thousands of source batches carries one entry per batch), so every reader fetches it by CID.
 5. It signs and announces a publication notification (**PNM**) on the open pubsub topics.
 6. Consumers resolve the latest PNM by peer + standard, verify the signature against the publisher's identity, fetch the manifest and assets by content address over libp2p, verify hashes, roots, and signatures, and import the shard into their own store.
 
