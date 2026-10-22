@@ -178,8 +178,9 @@ func httpCapHandleContext(parent context.Context, operation string, payload []by
 	for k, v := range req.Headers {
 		httpReq.Header.Set(k, v)
 	}
-	// Publisher politeness (fbcs): present the validators the last 2xx for
-	// this URL carried, unless the module set its own. See http_validators.go.
+	// Publisher politeness (fbcs): for an unauthenticated GET, present the
+	// validators the last 2xx for this URL carried, unless the module set its
+	// own. See http_validators.go.
 	applyFetchValidators(httpReq)
 
 	client := &http.Client{}
@@ -311,6 +312,13 @@ func (r *httpCapBodyReader) Read(p []byte) (int, error) {
 // passed through 512 B..64 MiB of garbage and peaked near twice its size in
 // the node's heap (host-01, 7 GB, coordinator D3; owner A1 2026-10-13).
 func readHTTPCapBody(resp *http.Response, limit int64) ([]byte, error) {
+	// These responses have no message body. In particular, HEAD's
+	// Content-Length describes the representation a GET would return.
+	if (resp.Request != nil && resp.Request.Method == http.MethodHead) ||
+		(resp.StatusCode >= 100 && resp.StatusCode < 200) ||
+		resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusNotModified {
+		return nil, nil
+	}
 	if n := resp.ContentLength; n >= 0 && n <= limit {
 		body := make([]byte, n)
 		if read, err := io.ReadFull(resp.Body, body); err != nil {

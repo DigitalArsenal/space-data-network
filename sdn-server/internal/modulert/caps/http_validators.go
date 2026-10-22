@@ -2,7 +2,7 @@ package caps
 
 // HTTP response validators for the egress connector (fbcs program, CelesTrak
 // politeness). The host remembers the ETag / Last-Modified a publisher sent
-// with a 2xx and presents them on the next GET for the same URL as
+// with a 2xx and presents them on the next unauthenticated GET for the same URL as
 // If-None-Match / If-Modified-Since, so an unchanged payload costs the
 // publisher a 304 instead of a full body. The module keeps its own headers
 // when it sets either validator itself.
@@ -68,15 +68,25 @@ func observeFetchValidators(url, etag, lastModified string) {
 	}
 }
 
-// applyFetchValidators adds If-None-Match / If-Modified-Since to a GET that
-// carries neither, from the stored validators for its URL. A request that
-// already presents either validator is left exactly as the module wrote it.
+// applyFetchValidators adds If-None-Match / If-Modified-Since to an
+// unauthenticated GET that carries neither, from the stored validators for its
+// URL. A request that already presents either validator is left exactly as the
+// module wrote it.
 func applyFetchValidators(req *http.Request) {
 	if req == nil || req.Method != http.MethodGet {
 		return
 	}
 	if req.Header.Get("If-None-Match") != "" || req.Header.Get("If-Modified-Since") != "" {
 		return
+	}
+	// The URL-only ledger cannot identify a credential-specific representation.
+	// Credentialed fetches must receive the full body unless the caller itself
+	// requests revalidation, including signed object-store requests.
+	for name := range req.Header {
+		name = strings.ToLower(name)
+		if name == "authorization" || name == "proxy-authorization" || name == "cookie" || strings.HasPrefix(name, "x-amz-") {
+			return
+		}
 	}
 	etag, lastModified := fetchValidatorsFor(req.URL.String())
 	if etag = strings.TrimSpace(etag); etag != "" {
