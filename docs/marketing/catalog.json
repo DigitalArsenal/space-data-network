@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated": "2026-10-16",
+  "updated": "2026-10-22",
   "consoleBuild": "20261013T204527Z",
   "pricing": {
     "status": "request",
@@ -202,13 +202,15 @@
       "id": "analyze-toolkit",
       "name": "Analyze toolkit",
       "category": "console",
-      "tagline": "RIC box, range, measure and markup",
+      "tagline": "RIC box, range, measure, markup, proximity and events",
       "summary": "Box a formation in its leader's radial, in-track and cross-track frame, read live range and range rate, measure on the globe and pin notes.",
       "capabilities": [
         "RIC box with per-axis fit",
         "Live range and range rate between objects",
         "Click-to-measure distance on the globe",
-        "Markup notes and lines"
+        "Markup notes and lines",
+        "Rendezvous and proximity charts from element-set history: R/I/C, separation, range rate, plane angle and ROE",
+        "Event view from SDS records with models, sensors, maneuvers, lighting and provenance"
       ],
       "standards": [
         "RIC frame"
@@ -1213,6 +1215,8 @@
     "ANL:RANGE",
     "ANL:MEASURE",
     "ANL:MARKUP",
+    "ANL:RPO",
+    "ANL:EVENT",
     "TRK:COLLECT PLAN",
     "TRK:SAR STRIP"
   ],
@@ -1292,6 +1296,18 @@
     {
       "key": "imagery:geotiff-cog",
       "reason": "GeoTIFF and Cloud-Optimized GeoTIFF layers: files/geotiff 0.2.0 is not yet offered by the node module catalog"
+    },
+    {
+      "key": "module:storage-credentials",
+      "reason": "Node-internal capability: wallet-sealed storage credentials opened on the node. Not a module people buy"
+    },
+    {
+      "key": "module:storage-object-s3",
+      "reason": "Node-internal capability: S3-compatible object-store access for node flows. Not a module people buy"
+    },
+    {
+      "key": "module:deep-space-catalogs",
+      "reason": "Beyond-Earth catalog lanes are live on the network but the console shows none yet; listed when the console catalog groups ship"
     }
   ]
 }
