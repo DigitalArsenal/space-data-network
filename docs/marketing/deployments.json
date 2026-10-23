@@ -1,6 +1,6 @@
 {
  "version": 1,
- "generatedAt": "2026-10-22T23:24:18.026Z",
+ "generatedAt": "2026-10-23T03:56:22.412Z",
  "generator": "scripts/build-marketing-deployments.mjs",
  "schemasAsked": 287,
  "hosts": [
@@ -15,7 +15,7 @@
    "note": "",
    "catalog": {
     "provider": "SpaceAware SDN Node",
-    "updated": "2026-10-22T18:31:31.144Z",
+    "updated": "2026-10-23T00:31:31.224Z",
     "modules": 103
    },
    "flows": 27,
@@ -158,12 +158,12 @@
    "kind": "module",
    "id": "com.digitalarsenal.analysis.milky-way-model",
    "name": "Milky Way model",
-   "version": "0.3.0",
+   "version": "0.4.0",
    "family": "Analysis",
-   "what": "The Milky Way's G, BP and RP starlight and dust baked in C++ WASM from published models (Juric 2008, Flynn 2006, Robin 2003, Drimmel & Spergel 2001, Reid 2019, Wegg & Gerhard 2013, Portail 2017), with the local 3D dust map of Edenhofer et al. 2024 loaded from its SDN publication.",
+   "what": "The Milky Way's SDSS r, g and i starlight and dust baked in C++ WASM from published models (Juric 2008, Flynn 2006, Robin 2003, Drimmel & Spergel 2001, Reid 2019, Wegg & Gerhard 2013, Portail 2017, Bland-Hawthorn & Gerhard 2016; colors by Riello et al. 2021), drawn as SDSS gri composites are (Lupton et al. 2004, fitted to SkyServer), with the local 3D dust map of Edenhofer et al. 2024 loaded from its SDN publication.",
    "access": "free",
    "license": "Apache-2.0",
-   "updated": "2026-10-21T00:03:59.508Z"
+   "updated": "2026-10-22T23:19:27.651Z"
   },
   {
    "host": "host-01",
@@ -1400,9 +1400,9 @@
    "access": "free",
    "origin": "produced",
    "producer": "16Uiu2HAmNpWvv4aG4U67cex3LfUJpdrXKXbvcxn6Gm33RPM3MTCf",
-   "records": 11,
-   "publications": 1,
-   "lastPublished": "2026-10-22T00:35:19.000Z",
+   "records": 22,
+   "publications": 2,
+   "lastPublished": "2026-10-23T00:35:21.000Z",
    "license": "LicenseRef-NASA-JPL-Horizons-PD",
    "citation": "Ephemeris: NASA/JPL-Caltech Horizons",
    "sourceUrl": "https://ssd.jpl.nasa.gov/api/horizons.api"
@@ -1463,9 +1463,9 @@
    "access": "free",
    "origin": "produced",
    "producer": "16Uiu2HAmNpWvv4aG4U67cex3LfUJpdrXKXbvcxn6Gm33RPM3MTCf",
-   "records": 4,
-   "publications": 1,
-   "lastPublished": "2026-10-22T00:35:16.000Z",
+   "records": 8,
+   "publications": 2,
+   "lastPublished": "2026-10-23T00:35:15.000Z",
    "license": "LicenseRef-NASA-JPL-Horizons-PD",
    "citation": "Ephemeris: NASA/JPL-Caltech Horizons",
    "sourceUrl": "https://ssd.jpl.nasa.gov/api/horizons.api"
@@ -1484,9 +1484,9 @@
    "access": "free",
    "origin": "produced",
    "producer": "16Uiu2HAmNpWvv4aG4U67cex3LfUJpdrXKXbvcxn6Gm33RPM3MTCf",
-   "records": 2,
-   "publications": 1,
-   "lastPublished": "2026-10-22T00:35:16.000Z",
+   "records": 4,
+   "publications": 2,
+   "lastPublished": "2026-10-23T00:35:15.000Z",
    "license": "LicenseRef-NASA-JPL-Horizons-PD",
    "citation": "Ephemeris: NASA/JPL-Caltech Horizons",
    "sourceUrl": "https://ssd.jpl.nasa.gov/api/horizons.api"
@@ -1505,9 +1505,9 @@
    "access": "free",
    "origin": "produced",
    "producer": "16Uiu2HAmNpWvv4aG4U67cex3LfUJpdrXKXbvcxn6Gm33RPM3MTCf",
-   "records": 15,
-   "publications": 1,
-   "lastPublished": "2026-10-22T00:35:19.000Z",
+   "records": 30,
+   "publications": 2,
+   "lastPublished": "2026-10-23T00:35:20.000Z",
    "license": "LicenseRef-NASA-JPL-Horizons-PD",
    "citation": "Ephemeris: NASA/JPL-Caltech Horizons",
    "sourceUrl": "https://ssd.jpl.nasa.gov/api/horizons.api"
@@ -1526,9 +1526,9 @@
    "access": "free",
    "origin": "produced",
    "producer": "16Uiu2HAmNpWvv4aG4U67cex3LfUJpdrXKXbvcxn6Gm33RPM3MTCf",
-   "records": 1,
-   "publications": 1,
-   "lastPublished": "2026-10-22T00:35:18.000Z",
+   "records": 2,
+   "publications": 2,
+   "lastPublished": "2026-10-23T00:35:19.000Z",
    "license": "LicenseRef-NASA-JPL-Horizons-PD",
    "citation": "Ephemeris: NASA/JPL-Caltech Horizons",
    "sourceUrl": "https://ssd.jpl.nasa.gov/api/horizons.api"
@@ -1547,9 +1547,9 @@
    "access": "free",
    "origin": "produced",
    "producer": "16Uiu2HAmNpWvv4aG4U67cex3LfUJpdrXKXbvcxn6Gm33RPM3MTCf",
-   "records": 6,
-   "publications": 1,
-   "lastPublished": "2026-10-22T00:35:16.000Z",
+   "records": 12,
+   "publications": 2,
+   "lastPublished": "2026-10-23T00:35:15.000Z",
    "license": "LicenseRef-NASA-JPL-Horizons-PD",
    "citation": "Ephemeris: NASA/JPL-Caltech Horizons",
    "sourceUrl": "https://ssd.jpl.nasa.gov/api/horizons.api"
@@ -1568,9 +1568,9 @@
    "access": "free",
    "origin": "produced",
    "producer": "16Uiu2HAmNpWvv4aG4U67cex3LfUJpdrXKXbvcxn6Gm33RPM3MTCf",
-   "records": 5,
-   "publications": 1,
-   "lastPublished": "2026-10-22T00:35:17.000Z",
+   "records": 10,
+   "publications": 2,
+   "lastPublished": "2026-10-23T00:35:18.000Z",
    "license": "LicenseRef-NASA-JPL-Horizons-PD",
    "citation": "Ephemeris: NASA/JPL-Caltech Horizons",
    "sourceUrl": "https://ssd.jpl.nasa.gov/api/horizons.api"
@@ -1589,9 +1589,9 @@
    "access": "free",
    "origin": "produced",
    "producer": "16Uiu2HAmNpWvv4aG4U67cex3LfUJpdrXKXbvcxn6Gm33RPM3MTCf",
-   "records": 1,
-   "publications": 1,
-   "lastPublished": "2026-10-22T00:35:17.000Z",
+   "records": 2,
+   "publications": 2,
+   "lastPublished": "2026-10-23T00:35:18.000Z",
    "license": "LicenseRef-NASA-JPL-Horizons-PD",
    "citation": "Ephemeris: NASA/JPL-Caltech Horizons",
    "sourceUrl": "https://ssd.jpl.nasa.gov/api/horizons.api"
@@ -1610,9 +1610,9 @@
    "access": "free",
    "origin": "produced",
    "producer": "16Uiu2HAmNpWvv4aG4U67cex3LfUJpdrXKXbvcxn6Gm33RPM3MTCf",
-   "records": 1,
-   "publications": 1,
-   "lastPublished": "2026-10-22T00:35:18.000Z",
+   "records": 2,
+   "publications": 2,
+   "lastPublished": "2026-10-23T00:35:19.000Z",
    "license": "LicenseRef-NASA-JPL-Horizons-PD",
    "citation": "Ephemeris: NASA/JPL-Caltech Horizons",
    "sourceUrl": "https://ssd.jpl.nasa.gov/api/horizons.api"
@@ -1631,9 +1631,9 @@
    "access": "free",
    "origin": "produced",
    "producer": "16Uiu2HAmNpWvv4aG4U67cex3LfUJpdrXKXbvcxn6Gm33RPM3MTCf",
-   "records": 4,
-   "publications": 1,
-   "lastPublished": "2026-10-22T00:35:16.000Z",
+   "records": 8,
+   "publications": 2,
+   "lastPublished": "2026-10-23T00:35:17.000Z",
    "license": "LicenseRef-NASA-JPL-Horizons-PD",
    "citation": "Ephemeris: NASA/JPL-Caltech Horizons",
    "sourceUrl": "https://ssd.jpl.nasa.gov/api/horizons.api"
@@ -1652,9 +1652,9 @@
    "access": "free",
    "origin": "produced",
    "producer": "16Uiu2HAmNpWvv4aG4U67cex3LfUJpdrXKXbvcxn6Gm33RPM3MTCf",
-   "records": 4,
-   "publications": 1,
-   "lastPublished": "2026-10-22T00:35:17.000Z",
+   "records": 8,
+   "publications": 2,
+   "lastPublished": "2026-10-23T00:35:17.000Z",
    "license": "LicenseRef-NASA-JPL-Horizons-PD",
    "citation": "Ephemeris: NASA/JPL-Caltech Horizons",
    "sourceUrl": "https://ssd.jpl.nasa.gov/api/horizons.api"
@@ -1673,9 +1673,9 @@
    "access": "free",
    "origin": "produced",
    "producer": "16Uiu2HAmNpWvv4aG4U67cex3LfUJpdrXKXbvcxn6Gm33RPM3MTCf",
-   "records": 2,
-   "publications": 1,
-   "lastPublished": "2026-10-22T00:35:17.000Z",
+   "records": 4,
+   "publications": 2,
+   "lastPublished": "2026-10-23T00:35:18.000Z",
    "license": "LicenseRef-NASA-JPL-Horizons-PD",
    "citation": "Ephemeris: NASA/JPL-Caltech Horizons",
    "sourceUrl": "https://ssd.jpl.nasa.gov/api/horizons.api"
@@ -1811,7 +1811,7 @@
    "kind": "flow",
    "id": "PNM:nasa-lola/moon-terrain",
    "name": "moon-terrain",
-   "what": "Publish Notification Message from 127.0.0.1",
+   "what": "Publish Notification Message from pds-geosciences.wustl.edu",
    "publishes": {
     "schema": "PNM.fbs",
     "provider": "nasa-lola",
@@ -1820,12 +1820,12 @@
    "access": "free",
    "origin": "produced",
    "producer": "16Uiu2HAmNpWvv4aG4U67cex3LfUJpdrXKXbvcxn6Gm33RPM3MTCf",
-   "records": 249339,
+   "records": 249851,
    "publications": 5,
-   "lastPublished": "2026-10-22T23:23:10.000Z",
+   "lastPublished": "2026-10-23T00:12:12.000Z",
    "license": "Public domain (NASA)",
    "citation": "LOLA: NASA/GSFC (Smith et al.)",
-   "sourceUrl": "http://127.0.0.1:8790"
+   "sourceUrl": "https://pds-geosciences.wustl.edu/lro/lro-l-lola-3-rdr-v1/lrolol_1xxx/data/lola_gdr/"
   },
   {
    "host": "host-01",
@@ -1862,9 +1862,9 @@
    "access": "free",
    "origin": "produced",
    "producer": "16Uiu2HAmNpWvv4aG4U67cex3LfUJpdrXKXbvcxn6Gm33RPM3MTCf",
-   "records": 53,
+   "records": 106,
    "publications": 1,
-   "lastPublished": "2026-10-16T00:22:39.000Z",
+   "lastPublished": "2026-10-22T23:59:10.000Z",
    "license": "",
    "citation": "Ephemerides and orientation: NASA/JPL NAIF (DE440, JPL satellite and small-body ephemerides), IAU WGCCRE 2015",
    "sourceUrl": "https://naif.jpl.nasa.gov/pub/naif/generic_kernels/"
@@ -2240,9 +2240,9 @@
    "access": "free",
    "origin": "produced",
    "producer": "16Uiu2HAmGjaPxkWFSXBbmhs9K5x1Zo6euJw95VjS6Jj2bcPpYr2U",
-   "records": 43,
-   "publications": 1,
-   "lastPublished": "2026-10-22T22:57:28.000Z",
+   "records": 86,
+   "publications": 2,
+   "lastPublished": "2026-10-23T01:57:08.000Z",
    "license": "CC-BY-4.0 (GFZ); public domain (NOAA SWPC)",
    "citation": "GFZ Helmholtz Centre for Geosciences; Matzka et al. (2021), doi:10.1029/2020SW002641; F10.7: DRAO/Natural Resources Canada. NOAA SWPC. Center81 includes forecasts; GFZ preferred, NOAA fills gaps; SN excluded.",
    "sourceUrl": "https://kp.gfz.de/fileadmin/files_for_gfz_cms/Kp_ap_Ap_SN_F107_since_1932.txt"
@@ -2269,5 +2269,5 @@
    "sourceUrl": "https://archive.org/download/MLS_Full_Cell_Export_Final/MLS-full-cell-export-final.csv.gz"
   }
  ],
- "ms": 69574
+ "ms": 63806
 }
