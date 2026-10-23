@@ -1,8 +1,8 @@
 /*
  * SpaceAware module inventory (spacedatanetwork.org/marketing.html).
- * A working reference for the marketing team: every module, bundle, console
- * card and left-out item from marketing/catalog.json, searchable, filterable,
- * sortable and exportable. The JSON is the single source; this file only reads it.
+ * A working reference for the marketing team: every module, data source, bundle,
+ * console card and left-out item from marketing/catalog.json, searchable,
+ * filterable, sortable and exportable. The JSON is the single source; this file only reads it.
  */
 (() => {
   "use strict";
@@ -14,6 +14,7 @@
 
   const VIEWS = [
     { id: "modules", label: "Modules" },
+    { id: "sources", label: "Data sources" },
     { id: "matrix", label: "Bundle matrix" },
     { id: "bundles", label: "Bundles" },
     { id: "cards", label: "Console cards" },
@@ -49,11 +50,13 @@
   }
 
   // Lookups built once from the catalog.
-  let byCategory, bundlesOf, coveredBy, excludedReason, allStandards;
+  let byCategory, bundlesOf, sourcesOf, coveredBy, excludedReason, allStandards;
   function index() {
     byCategory = new Map(catalog.categories.map((c) => [c.id, c]));
     bundlesOf = new Map(catalog.modules.map((m) => [m.id, []]));
     for (const b of catalog.bundles) for (const id of b.modules) bundlesOf.get(id)?.push(b);
+    sourcesOf = new Map(catalog.modules.map((m) => [m.id, []]));
+    for (const src of catalog.sources ?? []) for (const id of src.modules) sourcesOf.get(id)?.push(src);
     coveredBy = new Map();
     for (const m of catalog.modules) for (const key of m.covers ?? []) {
       if (!coveredBy.has(key)) coveredBy.set(key, []);
@@ -71,12 +74,14 @@
     return norm([
       m.id, m.name, m.tagline, m.summary, ...(m.capabilities ?? []), ...(m.standards ?? []),
       categoryName(m.category), accessName(m.access), deliveryName(m.delivery),
-      ...(bundlesOf.get(m.id) ?? []).map((b) => b.name), ...(m.covers ?? []), m.evidence,
+      ...(bundlesOf.get(m.id) ?? []).map((b) => b.name), ...(sourcesOf.get(m.id) ?? []).flatMap((src) => [src.name, src.provider]),
+      ...(m.covers ?? []), m.evidence,
     ].join(" "));
   }
 
-  function filteredModules() {
-    const terms = norm(state.q).split(/\s+/).filter(Boolean);
+  // The module filters; the search is left out when a view searches its own rows (data sources).
+  function filteredModules({ search = true } = {}) {
+    const terms = search ? norm(state.q).split(/\s+/).filter(Boolean) : [];
     const list = catalog.modules.filter((m) => {
       if (state.category && m.category !== state.category) return false;
       if (state.access && m.access !== state.access) return false;
@@ -129,7 +134,7 @@
     const t = $("[data-inv=toolbar]");
     t.innerHTML = `
       <label class="inv-search"><span class="sr">Search</span>
-        <input type="search" data-key="q" placeholder="Search names, capabilities, standards, evidence" value="${esc(state.q)}" autocomplete="off" spellcheck="false">
+        <input type="search" data-key="q" placeholder="Search names, capabilities, standards, data sources, evidence" value="${esc(state.q)}" autocomplete="off" spellcheck="false">
       </label>
       <div class="inv-selects">
         <label><span>Category</span><select data-key="category">${option("", "All", state.category)}${catalog.categories.map((c) => option(c.id, c.name, state.category)).join("")}</select></label>
@@ -159,7 +164,7 @@
     const stat = (n, label) => `<div class="inv-stat"><b>${n}</b><span>${esc(label)}</span></div>`;
     const accessStats = Object.entries(catalog.access).map(([k, v]) => stat(count((m) => m.access === k), v)).join("");
     $("[data-inv=summary]").innerHTML =
-      stat(mods.length, "Modules") + stat(catalog.bundles.length, "Bundles") + stat(catalog.categories.length, "Categories") + accessStats +
+      stat(mods.length, "Modules") + stat((catalog.sources ?? []).length, "Data sources") + stat(catalog.bundles.length, "Bundles") + stat(catalog.categories.length, "Categories") + accessStats +
       stat((catalog.notListed ?? []).length, "Not listed");
     const priced = catalog.pricing?.approvedPriceList ? "Approved price list on file" : "No approved prices yet: every bundle is “request pricing”";
     $("[data-inv=meta]").innerHTML =
@@ -183,6 +188,7 @@
           <div>
             <h4>Bundles</h4><p>${bundles.map((b) => chip(b.name)).join(" ") || "None"}</p>
             <h4>Standards</h4><p>${(m.standards ?? []).map((s) => chip(s)).join(" ") || "None"}</p>
+            <h4>Data sources</h4><p>${(sourcesOf.get(m.id) ?? []).map((src) => chip(src.name)).join(" ") || "None: it computes on the data you give it"}</p>
             ${(m.covers ?? []).length ? `<h4>Console cards</h4><p>${m.covers.map((c) => chip(c, "mono")).join(" ")}</p>` : ""}
             ${m.learnMore ? `<h4>Learn more</h4><p><a href="${esc(m.learnMore)}" target="_blank" rel="noopener">${esc(m.learnMore)}</a></p>` : ""}
             <h4>Evidence</h4><p class="inv-evidence">${esc(m.evidence)}</p>
@@ -220,6 +226,31 @@
     return list.length
       ? `<table class="inv-table inv-modules"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`
       : `<p class="inv-empty">No modules match these filters.</p>`;
+  }
+
+  // ---- Data sources -----------------------------------------------------------
+  // Every source behind the modules the filters leave, searched by its own text.
+  function filteredSources() {
+    const terms = norm(state.q).split(/\s+/).filter(Boolean);
+    const shown = new Set(filteredModules({ search: false }).map((m) => m.id));
+    const mods = new Map(catalog.modules.map((m) => [m.id, m]));
+    return (catalog.sources ?? []).filter((src) => {
+      if (!src.modules.some((id) => shown.has(id))) return false;
+      const text = norm([src.name, src.provider, src.data, src.lane, src.terms, catalog.arrival[src.arrival], ...src.via,
+        ...src.modules.map((id) => mods.get(id)?.name)].join(" "));
+      return terms.every((t) => text.includes(t));
+    });
+  }
+  function renderSources(list) {
+    if (!list.length) return `<p class="inv-empty">No data sources match these filters.</p>`;
+    const mods = new Map(catalog.modules.map((m) => [m.id, m]));
+    return `<p class="inv-note">Where the data behind each module comes from, how it reaches the console or the node, and the terms it comes under.</p>
+      <table class="inv-table inv-sources"><thead><tr><th scope="col">Source</th><th scope="col">Data</th><th scope="col">How it arrives</th><th scope="col">Powers</th><th scope="col">Terms</th></tr></thead><tbody>${list.map((src) => `
+      <tr><td data-col="Source"><a class="inv-name" href="${esc(src.url)}" target="_blank" rel="noopener">${esc(src.name)}</a><span class="inv-tag">${esc(src.provider)}</span></td>
+      <td data-col="Data">${esc(src.data)}</td>
+      <td data-col="How it arrives">${esc(catalog.arrival[src.arrival])}${src.lane ? `<code class="inv-lane">${esc(src.lane)}</code>` : ""}</td>
+      <td data-col="Powers">${src.modules.map((id) => `<button type="button" class="inv-link" data-jump="${esc(id)}">${esc(mods.get(id)?.name ?? id)}</button>`).join(", ")}</td>
+      <td data-col="Terms">${src.termsUrl ? `<a href="${esc(src.termsUrl)}" target="_blank" rel="noopener">${esc(src.terms)}</a>` : esc(src.terms)}</td></tr>`).join("")}</tbody></table>`;
   }
 
   // ---- Bundle matrix ------------------------------------------------------------
@@ -292,8 +323,10 @@
   // ---- Render loop ------------------------------------------------------------
   function render() {
     const list = filteredModules();
+    const sources = filteredSources();
     const counts = {
       modules: list.length,
+      sources: sources.length,
       matrix: list.length,
       bundles: catalog.bundles.length,
       cards: (catalog.consoleCards ?? []).length,
@@ -306,23 +339,26 @@
     }
     const view = $("[data-inv=view]");
     view.innerHTML =
-      state.view === "matrix" ? renderMatrix(list)
+      state.view === "sources" ? renderSources(sources)
+      : state.view === "matrix" ? renderMatrix(list)
       : state.view === "bundles" ? renderBundles()
       : state.view === "cards" ? renderCards()
       : state.view === "excluded" ? renderExcluded()
       : renderModules(list);
-    const filtersApply = state.view === "modules" || state.view === "matrix";
+    const filtersApply = state.view === "modules" || state.view === "matrix" || state.view === "sources";
     document.body.classList.toggle("inv-module-filters-off", !filtersApply);
-    $("[data-inv=result]").textContent = filtersApply ? `${list.length} of ${catalog.modules.length} modules` : "";
+    $("[data-inv=result]").textContent = state.view === "sources" ? `${sources.length} of ${(catalog.sources ?? []).length} data sources`
+      : filtersApply ? `${list.length} of ${catalog.modules.length} modules` : "";
     writeHash();
   }
 
   function toCsv(list) {
     const cell = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-    const header = ["id", "name", "category", "access", "delivery", "bundles", "standards", "tagline", "summary", "capabilities", "console cards", "learn more", "evidence"];
+    const header = ["id", "name", "category", "access", "delivery", "bundles", "standards", "data sources", "tagline", "summary", "capabilities", "console cards", "learn more", "evidence"];
     const rows = list.map((m) => [
       m.id, m.name, categoryName(m.category), accessName(m.access), deliveryName(m.delivery),
       (bundlesOf.get(m.id) ?? []).map((b) => b.name).join("; "), (m.standards ?? []).join("; "),
+      (sourcesOf.get(m.id) ?? []).map((src) => src.name).join("; "),
       m.tagline, m.summary, (m.capabilities ?? []).join("; "), (m.covers ?? []).join("; "), m.learnMore ?? "", m.evidence ?? "",
     ].map(cell).join(","));
     return [header.map(cell).join(","), ...rows].join("\r\n");

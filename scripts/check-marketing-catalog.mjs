@@ -4,6 +4,8 @@
 // SpaceAware console:
 //   - ids are unique, and every reference (category, access, delivery,
 //     bundle member) resolves;
+//   - every data source names its provider, data, terms and how it arrives,
+//     and powers at least one module that exists;
 //   - every module sits in at least one bundle, and the complete bundle holds
 //     every module;
 //   - no bundle or module shows a price unless an approved price list is named;
@@ -56,6 +58,15 @@ for (const m of catalog.modules) {
   for (const field of ["name", "tagline", "summary"]) if (!m[field]) fail(`module ${m.id}: missing ${field}`);
   if (!Array.isArray(m.capabilities) || !m.capabilities.length) fail(`module ${m.id}: no capabilities`);
   if (!m.evidence) fail(`module ${m.id}: no evidence`);
+}
+
+unique(catalog.sources ?? [], "data source");
+for (const src of catalog.sources ?? []) {
+  for (const field of ["name", "provider", "url", "data", "terms"]) if (!src[field]) fail(`data source ${src.id}: missing ${field}`);
+  if (!(src.arrival in (catalog.arrival ?? {}))) fail(`data source ${src.id}: unknown arrival ${src.arrival}`);
+  if (!Array.isArray(src.via)) fail(`data source ${src.id}: via must be a list`);
+  if (!Array.isArray(src.modules) || !src.modules.length) fail(`data source ${src.id}: powers no module`);
+  else for (const id of src.modules) if (!modules.has(id)) fail(`data source ${src.id}: unknown module ${id}`);
 }
 
 const bundled = new Set();

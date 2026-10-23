@@ -95,6 +95,10 @@
 .inv-members button, .inv-link { all: unset; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
 .inv-members button:focus-visible, .inv-link:focus-visible { outline: 2px solid var(--accent); }
 .inv-cards code, .inv-excluded code { font-size: 12px; }
+.inv-sources td { font-size: 13px; }
+.inv-sources a.inv-name { color: var(--text); font-size: 14px; }
+.inv-sources a { color: var(--accent); }
+.inv-lane { display: block; margin-top: 2px; font-size: 11px; color: var(--muted); word-break: break-word; }
 
 @media (max-width: 980px) {
   .inv-selects { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -107,10 +111,10 @@
   .inv-head { padding-top: 24px; }
   .inv-selects { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .inv-detail-grid { grid-template-columns: 1fr; gap: 4px; }
-  .inv-modules thead, .inv-cards thead, .inv-excluded thead { display: none; }
-  .inv-modules tr, .inv-cards tr, .inv-excluded tr { display: block; border-bottom: 1px solid var(--border); padding: 6px 0; }
-  .inv-modules td, .inv-cards td, .inv-excluded td { display: block; border: 0; padding: 2px 4px; }
-  .inv-modules td[data-col]:not([data-col=Module])::before,
+  .inv-modules thead, .inv-cards thead, .inv-excluded thead, .inv-sources thead { display: none; }
+  .inv-modules tr, .inv-cards tr, .inv-excluded tr, .inv-sources tr { display: block; border-bottom: 1px solid var(--border); padding: 6px 0; }
+  .inv-modules td, .inv-cards td, .inv-excluded td, .inv-sources td { display: block; border: 0; padding: 2px 4px; }
+  .inv-modules td[data-col]:not([data-col=Module])::before, .inv-sources td[data-col]:not([data-col=Source])::before,
   .inv-cards td[data-col]::before, .inv-excluded td[data-col]::before {
     content: attr(data-col) ": "; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted);
   }
