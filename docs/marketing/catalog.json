@@ -764,7 +764,8 @@
         "Look from one object to another",
         "Ride or follow any object",
         "Keyframed camera paths on the timeline",
-        "Pace curves for smooth moves"
+        "Pace curves for smooth moves",
+        "Lens focal length from 8 to 2000 mm, with presets from ultra wide to a 1200 mm Moon telephoto"
       ],
       "standards": [],
       "access": "free",
@@ -773,7 +774,7 @@
         "CAM"
       ],
       "learnMore": "https://spaceaware.io",
-      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/modes/modeCards.ts:555-571; modes/cam/surface.ts:23-44; modes/cam/pace.ts; modes/cam/cameraPath.ts"
+      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/modes/modeCards.ts:555-571; modes/cam/surface.ts:23-44; modes/cam/pace.ts; modes/cam/cameraPath.ts; components/CameraMenu.svelte; store/cameraLens.ts"
     },
     {
       "id": "star-field",
