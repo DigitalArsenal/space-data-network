@@ -1,0 +1,7 @@
+{
+  "name": "react-native-webrtc",
+  "version": "124.0.6-sdn.stub",
+  "description": "Empty stand-in. @libp2p/webrtc depends on react-native-webrtc only for its react-native entry (dist/src/webrtc/index.react-native.js), which browser and Node builds never load; the real package pulls react-native (about 225 packages) in as a peer. sdn-js targets browsers and Node only.",
+  "private": true,
+  "main": "index.js"
+}
