@@ -1,6 +1,6 @@
 {
  "version": 1,
- "generatedAt": "2026-10-23T03:56:22.412Z",
+ "generatedAt": "2026-10-23T09:52:12.454Z",
  "generator": "scripts/build-marketing-deployments.mjs",
  "schemasAsked": 287,
  "hosts": [
@@ -15,7 +15,7 @@
    "note": "",
    "catalog": {
     "provider": "SpaceAware SDN Node",
-    "updated": "2026-10-23T00:31:31.224Z",
+    "updated": "2026-10-23T06:31:31.111Z",
     "modules": 103
    },
    "flows": 27,
@@ -30,7 +30,7 @@
    "peerId": "16Uiu2HAmGjaPxkWFSXBbmhs9K5x1Zo6euJw95VjS6Jj2bcPpYr2U",
    "build": "spacedatanetwork/1.1.0 · 1.0.6-updatelane.24c0512bc",
    "note": "",
-   "flows": 12,
+   "flows": 13,
    "mirrored": 0
   },
   {
@@ -110,12 +110,12 @@
    "kind": "module",
    "id": "com.digitalarsenal.analysis.gp-error-model",
    "name": "GP prediction-error model",
-   "version": "0.8.1",
+   "version": "0.9.0",
    "family": "Analysis",
    "what": "Empirical SGP4 prediction error by orbit regime and prediction age, in RTN. Element sets are propagated to later element sets of the same object (consecutive-set differences, which are not truth) or to independent reference states (GCRF, from analysis/reference-states). Batches accumulate counts, moments and histograms; finalize gives mean, covariance, quantiles, robust sigma and clipped covariance per stratum. With a model on accumulate (reference mode), each error is also tested against its stratum's model covariance (Mahalanobis d^2 against chi-square with 3 degrees of freedom, every sample counted) and finalize gates each stratum CALIBRATED, FAILED or INSUFFICIENT; scale_model fits per-stratum scale factors to reference-state errors. screening_evaluation scores a probabilistic (Foster Pc), a bounded-set and a possibility (admissible-set) screening rule on independent cases built from reference-state errors with synthetic true misses. hpop_arcs and hpop_coverage calibrate HPOP covariance (P0 at the element-set epoch, white-acceleration process noise) against reference states.",
    "access": "free",
    "license": "Apache-2.0",
-   "updated": "2026-10-22T06:35:25.623Z"
+   "updated": "2026-10-23T06:20:46.095Z"
   },
   {
    "host": "host-01",
@@ -158,12 +158,12 @@
    "kind": "module",
    "id": "com.digitalarsenal.analysis.milky-way-model",
    "name": "Milky Way model",
-   "version": "0.4.0",
+   "version": "0.4.1",
    "family": "Analysis",
    "what": "The Milky Way's SDSS r, g and i starlight and dust baked in C++ WASM from published models (Juric 2008, Flynn 2006, Robin 2003, Drimmel & Spergel 2001, Reid 2019, Wegg & Gerhard 2013, Portail 2017, Bland-Hawthorn & Gerhard 2016; colors by Riello et al. 2021), drawn as SDSS gri composites are (Lupton et al. 2004, fitted to SkyServer), with the local 3D dust map of Edenhofer et al. 2024 loaded from its SDN publication.",
    "access": "free",
    "license": "Apache-2.0",
-   "updated": "2026-10-22T23:19:27.651Z"
+   "updated": "2026-10-23T01:29:47.018Z"
   },
   {
    "host": "host-01",
@@ -2103,6 +2103,27 @@
   {
    "host": "host-02",
    "kind": "flow",
+   "id": "EOP:eop/usno-finals2000a",
+   "name": "usno-finals2000a",
+   "what": "Earth Orientation Parameters records from maia.usno.navy.mil",
+   "publishes": {
+    "schema": "EOP.fbs",
+    "provider": "eop",
+    "source": "usno-finals2000a"
+   },
+   "access": "free",
+   "origin": "produced",
+   "producer": "16Uiu2HAmGjaPxkWFSXBbmhs9K5x1Zo6euJw95VjS6Jj2bcPpYr2U",
+   "records": 20024,
+   "publications": 1,
+   "lastPublished": "2026-10-23T09:15:54.000Z",
+   "license": "LicenseRef-US-Government-Work-Public-Domain",
+   "citation": "U.S. Naval Observatory, IERS Rapid Service/Prediction Center: finals2000A (Bulletin A columns), https://maia.usno.navy.mil/ser7/finals2000A.all. U.S. Government work, public domain.",
+   "sourceUrl": "https://maia.usno.navy.mil/ser7/finals2000A.all"
+  },
+  {
+   "host": "host-02",
+   "kind": "flow",
    "id": "IQC:space-data-network-02/IQEngine",
    "name": "IQEngine",
    "what": "RF IQ Capture Metadata records from iqengine.org",
@@ -2242,7 +2263,7 @@
    "producer": "16Uiu2HAmGjaPxkWFSXBbmhs9K5x1Zo6euJw95VjS6Jj2bcPpYr2U",
    "records": 86,
    "publications": 2,
-   "lastPublished": "2026-10-23T01:57:08.000Z",
+   "lastPublished": "2026-10-23T08:57:09.000Z",
    "license": "CC-BY-4.0 (GFZ); public domain (NOAA SWPC)",
    "citation": "GFZ Helmholtz Centre for Geosciences; Matzka et al. (2021), doi:10.1029/2020SW002641; F10.7: DRAO/Natural Resources Canada. NOAA SWPC. Center81 includes forecasts; GFZ preferred, NOAA fills gaps; SN excluded.",
    "sourceUrl": "https://kp.gfz.de/fileadmin/files_for_gfz_cms/Kp_ap_Ap_SN_F107_since_1932.txt"
@@ -2269,5 +2290,5 @@
    "sourceUrl": "https://archive.org/download/MLS_Full_Cell_Export_Final/MLS-full-cell-export-final.csv.gz"
   }
  ],
- "ms": 63806
+ "ms": 63603
 }
