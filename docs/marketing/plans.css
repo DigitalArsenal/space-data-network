@@ -154,3 +154,8 @@
 .se-grid > div { display: grid; gap: 6px; align-content: start; min-width: 0; }
 .se-table { min-width: 0; }
 .pl-section h4 { margin: 0; }
+
+/* Launch: targets, waves and the launch kit. */
+.ln-table tbody th a { display: block; color: var(--accent); font-size: 12px; }
+.ln-table .ln-plan { min-width: 340px; }
+.ln-table ol { margin: 0; padding-left: 18px; display: grid; gap: 4px; color: var(--text-2); }

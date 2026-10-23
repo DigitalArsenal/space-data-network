@@ -6,7 +6,7 @@
   <script src="assets/sdn-chrome/sdn-chrome.js"></script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="robots" content="noindex, nofollow">
-  <meta name="description" content="Internal reference for the marketing team: SpaceAware plans and prices, the plan builder, SpaceEdge, UDL data by plan, and every module and bundle.">
+  <meta name="description" content="Internal reference for the marketing team: SpaceAware plans and prices, the plan builder, SpaceEdge, UDL data by plan, the launch plan, and every module and bundle.">
   <meta name="theme-color" content="#000000">
   <title>SpaceAware Plans and Modules · Space Data Network</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' fill='none'><defs><linearGradient id='t' gradientUnits='userSpaceOnUse' x1='16' y1='29' x2='16' y2='3'><stop offset='0' stop-color='%23f5a524' stop-opacity='0'/><stop offset='.55' stop-color='%23f5a524' stop-opacity='.55'/><stop offset='1' stop-color='%23f5a524'/></linearGradient></defs><circle cx='16' cy='16' r='13' stroke='%23f5f5f7' stroke-width='1.6' opacity='.3'/><path d='M16 29A13 13 0 0 1 16 3' stroke='url(%23t)' stroke-width='2.2' stroke-linecap='round'/><path d='M16 10.2L10.4 20.1H21.6Z' stroke='%23f5f5f7' stroke-width='1.6' stroke-linejoin='round'/><circle cx='16' cy='10.2' r='2.6' fill='%23f5f5f7'/><circle cx='10.4' cy='20.1' r='2.6' fill='%23f5f5f7'/><circle cx='21.6' cy='20.1' r='2.6' fill='%23f5f5f7'/><circle cx='16' cy='3' r='2.5' fill='%23f5a524'/></svg>">
@@ -53,8 +53,8 @@
 
   <!-- An internal working reference for the marketing team (owner 2026-10-14; plans,
        SpaceEdge, UDL and the audience levels added 2026-10-16): plans from
-       marketing/plans.json, UDL rows from marketing/udl-matrix.json, modules from
-       marketing/catalog.json. Parked: noindex, not in the nav. -->
+       marketing/plans.json, UDL rows from marketing/udl-matrix.json, launch targets from
+       marketing/launch.json (2026-10-22), modules from marketing/catalog.json. Parked: noindex, not in the nav. -->
   <main>
     <div class="inv-wrap">
       <section class="pl-hero" aria-labelledby="pl-title">
@@ -68,6 +68,7 @@
           <button type="button" data-goto="spaceedge">SpaceEdge</button>
           <button type="button" data-goto="udl">UDL data</button>
           <button type="button" data-goto="positioning">Positioning</button>
+          <button type="button" data-goto="launch">Launch</button>
           <button type="button" data-goto="modules">Modules</button>
         </nav>
         <p class="inv-meta"><a href="marketing/deployed.html">Deployed on the network</a>: every module and flow live on each host now, and what it does.</p>
@@ -157,6 +158,20 @@
         <div class="pl-scroll" data-po="targets"></div>
       </section>
 
+      <section class="pl-section" id="launch" aria-labelledby="ln-title">
+        <h2 id="ln-title">Launch</h2>
+        <p data-ln="copy"></p>
+        <div class="inv-summary" data-ln="stats"></div>
+        <h3>Waves</h3>
+        <div class="pl-groups" data-ln="waves"></div>
+        <h3>Launch kit</h3>
+        <div class="po-leads" data-ln="kit"></div>
+        <h3>Targets</h3>
+        <div data-ln="controls"></div>
+        <p class="ud-result" data-ln="result" aria-live="polite"></p>
+        <div class="pl-scroll" data-ln="table"></div>
+      </section>
+
       <section class="inv-head pl-section" id="modules" aria-labelledby="inv-title">
         <h2 id="inv-title">Module Inventory</h2>
         <p class="inv-lede" data-copy="modules"></p>
@@ -200,6 +215,7 @@
   <script src="marketing/udl.js"></script>
   <script src="marketing/positioning.js"></script>
   <script src="marketing/spaceedge.js"></script>
+  <script src="marketing/launch.js"></script>
   <script src="assets/ai-credits/ai-credits.js" defer></script>
 </body>
 </html>
