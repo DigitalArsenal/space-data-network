@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated": "2026-10-22",
+  "updated": "2026-10-23",
   "consoleBuild": "20261013T204527Z",
   "pricing": {
     "status": "request",
@@ -23,6 +23,15 @@
     "console": "SpaceAware console",
     "sdn-module": "SDN module",
     "node": "SDN node"
+  },
+  "arrival": {
+    "sdn-lane": "SDN publication, read peer to peer and checked against its signature",
+    "node-ingest": "Fetched by an SDN data-source module on the node that runs it",
+    "provider-stream": "Streams to the browser from the provider's public service",
+    "bucket": "Streams from the SpaceAware storage bucket",
+    "bundled": "Ships inside the console or the engine",
+    "built-in": "Built into the module: published tables and models",
+    "sdn-service": "Streams from an SDN node's tile service"
   },
   "categories": [
     {
@@ -966,6 +975,751 @@
       "covers": [],
       "learnMore": "https://spacedatanetwork.org/modules.html",
       "evidence": "live modules.pmm CORE foundation and hostcap rows; space-data-network-modules/foundation/*, hostcap/*; every modules.pmm row named here is ANONYMOUS (live manifest 2026-10-13)"
+    }
+  ],
+  "sources": [
+    {
+      "id": "celestrak-gp",
+      "name": "CelesTrak GP element sets",
+      "provider": "CelesTrak",
+      "url": "https://celestrak.org/NORAD/elements/",
+      "data": "OMM element sets for every object in the public catalog. The node keeps every pull, so the lane is also each object's element-set history.",
+      "arrival": "sdn-lane",
+      "lane": "OMM.fbs · celestrak-gp",
+      "via": [
+        "data-source/celestrak-request",
+        "data-source/celestrak-parser"
+      ],
+      "modules": [
+        "catalog-globe",
+        "catalog-search",
+        "object-intelligence",
+        "analyze-toolkit",
+        "conjunction-assessment",
+        "catalog-screening",
+        "covariance-analysis",
+        "maneuver-detection",
+        "launch-reentry",
+        "track-custody",
+        "ground-contact",
+        "rf-link-analysis",
+        "catalog-composer",
+        "data-sources"
+      ],
+      "terms": "CelesTrak usage policy",
+      "termsUrl": "https://celestrak.org/usage-policy.php"
+    },
+    {
+      "id": "celestrak-satcat",
+      "name": "CelesTrak SATCAT",
+      "provider": "CelesTrak",
+      "url": "https://celestrak.org/satcat/",
+      "data": "Names, owners, launch dates, international designators and decay dates for every cataloged object.",
+      "arrival": "sdn-lane",
+      "lane": "CAT.fbs",
+      "via": [
+        "data-source/celestrak-request",
+        "data-source/celestrak-parser"
+      ],
+      "modules": [
+        "catalog-globe",
+        "catalog-search",
+        "object-intelligence",
+        "catalog-composer",
+        "data-sources"
+      ],
+      "terms": "CelesTrak usage policy",
+      "termsUrl": "https://celestrak.org/usage-policy.php"
+    },
+    {
+      "id": "celestrak-reference",
+      "name": "CelesTrak reference tables",
+      "provider": "CelesTrak",
+      "url": "https://celestrak.org/satcat/launchsites.php",
+      "data": "Launch sites, owner and source codes, and the GP groups that become entity groups and constellations.",
+      "arrival": "sdn-lane",
+      "lane": "SIT.fbs, EGP.fbs, CMR.fbs",
+      "via": [
+        "data-source/celestrak-reference"
+      ],
+      "modules": [
+        "context-layers",
+        "catalog-search",
+        "data-sources"
+      ],
+      "terms": "CelesTrak usage policy",
+      "termsUrl": "https://celestrak.org/usage-policy.php"
+    },
+    {
+      "id": "celestrak-supgp",
+      "name": "CelesTrak supplemental GP",
+      "provider": "CelesTrak",
+      "url": "https://celestrak.org/NORAD/elements/supplemental/",
+      "data": "Element sets fitted to operator ephemeris and other public data, including the GLONASS constellation.",
+      "arrival": "node-ingest",
+      "via": [
+        "data-source/celestrak-supgp",
+        "data-source/glonass-source"
+      ],
+      "modules": [
+        "catalog-composer",
+        "data-sources"
+      ],
+      "terms": "CelesTrak usage policy",
+      "termsUrl": "https://celestrak.org/usage-policy.php"
+    },
+    {
+      "id": "celestrak-socrates",
+      "name": "CelesTrak SOCRATES",
+      "provider": "CelesTrak",
+      "url": "https://celestrak.org/SOCRATES/",
+      "data": "Published close-approach reports. Our screening geometry is checked against them on identical element sets.",
+      "arrival": "node-ingest",
+      "via": [
+        "data-source/celestrak-parser"
+      ],
+      "modules": [
+        "conjunction-assessment",
+        "catalog-screening"
+      ],
+      "terms": "CelesTrak usage policy",
+      "termsUrl": "https://celestrak.org/usage-policy.php"
+    },
+    {
+      "id": "space-track",
+      "name": "Space-Track GP history and SATCAT",
+      "provider": "U.S. Space Force (Space-Track.org)",
+      "url": "https://www.space-track.org",
+      "data": "Element-set history back to 1959 and daily SATCAT and GP snapshots: the archive behind GP history records and the prediction-error model.",
+      "arrival": "node-ingest",
+      "via": [
+        "data-source/spacetrack-source",
+        "data-source/gp-archive-records"
+      ],
+      "modules": [
+        "covariance-analysis",
+        "maneuver-detection",
+        "data-sources"
+      ],
+      "terms": "Space-Track user agreement: used for results, never republished",
+      "termsUrl": "https://www.space-track.org/documentation"
+    },
+    {
+      "id": "gcat",
+      "name": "GCAT",
+      "provider": "Jonathan McDowell",
+      "url": "https://planet4589.org/space/gcat/",
+      "data": "The General Catalog of Artificial Space Objects, read as its own catalog edition.",
+      "arrival": "node-ingest",
+      "via": [
+        "data-source/catalog-source",
+        "data-source/enrichment"
+      ],
+      "modules": [
+        "catalog-composer"
+      ],
+      "terms": "CC BY 4.0",
+      "termsUrl": "https://planet4589.org/space/gcat/"
+    },
+    {
+      "id": "mccants",
+      "name": "McCants element sets",
+      "provider": "Mike McCants",
+      "url": "https://mmccants.org/tles/",
+      "data": "Hobbyist-observed element sets for objects missing from the public catalog, read as their own catalog edition.",
+      "arrival": "node-ingest",
+      "via": [
+        "data-source/catalog-source"
+      ],
+      "modules": [
+        "catalog-composer"
+      ],
+      "terms": "Provider terms",
+      "termsUrl": "https://mmccants.org/tles/discussion.html"
+    },
+    {
+      "id": "vimpel",
+      "name": "Vimpel catalog",
+      "provider": "JSC Vimpel",
+      "url": "https://spacedata.vimpel.ru/",
+      "data": "Element sets published by JSC Vimpel, mainly high-orbit objects.",
+      "arrival": "node-ingest",
+      "via": [
+        "data-source/vimpel-source"
+      ],
+      "modules": [
+        "catalog-composer"
+      ],
+      "terms": "Provider terms",
+      "termsUrl": "https://spacedata.vimpel.ru/"
+    },
+    {
+      "id": "starlink-ephemeris",
+      "name": "Starlink ephemerides",
+      "provider": "SpaceX",
+      "url": "https://api.starlink.com/public-files/ephemerides/",
+      "data": "Operator-predicted positions for every Starlink satellite, several times a day.",
+      "arrival": "node-ingest",
+      "via": [
+        "data-source/spacex-starlink-source"
+      ],
+      "modules": [
+        "orbit-estimation",
+        "covariance-analysis",
+        "data-sources"
+      ],
+      "terms": "No license stated: used for results, not republished"
+    },
+    {
+      "id": "oneweb-ephemeris",
+      "name": "OneWeb ephemerides",
+      "provider": "Eutelsat OneWeb",
+      "url": "https://ephemeris.oneweb.net/",
+      "data": "Operator-predicted positions for the OneWeb constellation.",
+      "arrival": "node-ingest",
+      "via": [
+        "data-source/oneweb-source"
+      ],
+      "modules": [
+        "orbit-estimation",
+        "covariance-analysis",
+        "data-sources"
+      ],
+      "terms": "No license stated: used for results, not republished"
+    },
+    {
+      "id": "intelsat-ephemeris",
+      "name": "Intelsat ephemerides",
+      "provider": "Intelsat",
+      "url": "https://my.intelsat.com/ephemeris/public",
+      "data": "Operator ephemeris for the Intelsat geostationary fleet.",
+      "arrival": "node-ingest",
+      "via": [
+        "data-source/intelsat-source"
+      ],
+      "modules": [
+        "orbit-estimation",
+        "covariance-analysis",
+        "data-sources"
+      ],
+      "terms": "No license stated: used for results, not republished"
+    },
+    {
+      "id": "iss-oem",
+      "name": "ISS trajectory data",
+      "provider": "NASA Johnson Space Center",
+      "url": "https://nasa-public-data.s3.amazonaws.com/iss-coords/current/",
+      "data": "The ISS predicted trajectory as a CCSDS OEM.",
+      "arrival": "node-ingest",
+      "via": [
+        "data-source/iss-source",
+        "data-source/oem-source-iss"
+      ],
+      "modules": [
+        "orbit-estimation",
+        "covariance-analysis",
+        "ccsds-interchange",
+        "data-sources"
+      ],
+      "terms": "Public domain (NASA)"
+    },
+    {
+      "id": "ilrs-laser-ranging",
+      "name": "ILRS laser ranging",
+      "provider": "International Laser Ranging Service, through the EUROLAS Data Center (DGFI-TUM)",
+      "url": "https://edc.dgfi.tum.de/",
+      "data": "CPF orbit predictions and CRD normal points for laser-tracked satellites: the independent truth our propagator and covariance are measured against.",
+      "arrival": "node-ingest",
+      "via": [
+        "data-source/cpf-source",
+        "data-source/ilrs-crd-source"
+      ],
+      "modules": [
+        "covariance-analysis",
+        "ffm",
+        "data-sources"
+      ],
+      "terms": "Free use with the ILRS citation",
+      "termsUrl": "https://ilrs.gsfc.nasa.gov/about/cite.html"
+    },
+    {
+      "id": "igs-sp3",
+      "name": "IGS precise GNSS orbits",
+      "provider": "International GNSS Service (BKG mirror) and the ESA Navigation Office",
+      "url": "https://igs.bkg.bund.de",
+      "data": "SP3 precise orbits for GPS, GLONASS, Galileo and BeiDou satellites.",
+      "arrival": "node-ingest",
+      "via": [
+        "data-source/sp3-precise-source"
+      ],
+      "modules": [
+        "covariance-analysis",
+        "ccsds-interchange"
+      ],
+      "terms": "Open, with attribution to the IGS",
+      "termsUrl": "https://igs.org/"
+    },
+    {
+      "id": "navcen-gps-almanac",
+      "name": "GPS almanacs",
+      "provider": "U.S. Coast Guard Navigation Center",
+      "url": "https://www.navcen.uscg.gov/",
+      "data": "SEM and YUMA almanacs for the GPS constellation.",
+      "arrival": "node-ingest",
+      "via": [
+        "data-source/gps-source"
+      ],
+      "modules": [
+        "orbit-analysis-toolkit",
+        "data-sources"
+      ],
+      "terms": "Public domain (U.S. Government)"
+    },
+    {
+      "id": "planet-ephemerides",
+      "name": "Planet ephemerides",
+      "provider": "Planet Labs",
+      "url": "https://ephemerides.planet-labs.com/",
+      "data": "Operator states for Planet's fleet, from which the open drag correction (open-DCA) is fitted beside NRLMSISE-00.",
+      "arrival": "sdn-lane",
+      "lane": "DCL.fbs · open-dca / planet-nrlmsise00 (derived)",
+      "via": [
+        "data-source/operator-states-public"
+      ],
+      "modules": [
+        "ffm",
+        "catalog-screening"
+      ],
+      "terms": "Provider terms",
+      "termsUrl": "https://ephemerides.planet-labs.com/"
+    },
+    {
+      "id": "iers-eop",
+      "name": "Earth orientation parameters",
+      "provider": "IERS, through the USNO finals2000A series",
+      "url": "https://maia.usno.navy.mil/ser7/",
+      "data": "Polar motion, UT1 and nutation corrections applied to every frame conversion.",
+      "arrival": "sdn-lane",
+      "lane": "EOP.fbs · usno-finals2000a",
+      "via": [
+        "data-source/eop-request",
+        "data-source/eop-parser"
+      ],
+      "modules": [
+        "ffm",
+        "catalog-screening",
+        "propagator-suite",
+        "data-sources"
+      ],
+      "terms": "Public (IERS and U.S. Naval Observatory)"
+    },
+    {
+      "id": "gfz-noaa-space-weather",
+      "name": "Space weather indices",
+      "provider": "GFZ Potsdam (Kp, ap) and NOAA SWPC (forecasts)",
+      "url": "https://kp.gfz.de/",
+      "data": "Geomagnetic indices and solar flux, measured and forecast, for atmospheric drag.",
+      "arrival": "sdn-lane",
+      "lane": "SPW.fbs · gfz-noaa",
+      "via": [
+        "data-source/space-weather"
+      ],
+      "modules": [
+        "ffm",
+        "catalog-screening",
+        "propagator-suite"
+      ],
+      "terms": "GFZ CC BY 4.0; NOAA public domain",
+      "termsUrl": "https://kp.gfz.de/en/data"
+    },
+    {
+      "id": "naif-spice",
+      "name": "NAIF SPICE kernels",
+      "provider": "NASA JPL Navigation and Ancillary Information Facility",
+      "url": "https://naif.jpl.nasa.gov/naif/data.html",
+      "data": "Planetary ephemerides (DE440s), moon ephemerides and body orientation: Sun and Moon for propagation, and every body's position in the solar system view.",
+      "arrival": "sdn-lane",
+      "lane": "PNM.fbs · naif / ssb-kernels",
+      "via": [
+        "data-source/naif-kernels"
+      ],
+      "modules": [
+        "solar-system",
+        "ffm"
+      ],
+      "terms": "Public domain (NASA)"
+    },
+    {
+      "id": "lowell-astorb",
+      "name": "Lowell asteroid orbits (astorb)",
+      "provider": "Lowell Observatory",
+      "url": "https://asteroid.lowell.edu/astorb/",
+      "data": "Orbits of every numbered asteroid, and the largest tenth the console shows by default.",
+      "arrival": "sdn-lane",
+      "lane": "SBD.fbs · lowell-astorb",
+      "via": [
+        "data-source/lowell-astorb"
+      ],
+      "modules": [
+        "solar-system"
+      ],
+      "terms": "Provider terms",
+      "termsUrl": "https://asteroid.lowell.edu/astorb/"
+    },
+    {
+      "id": "body-imagery",
+      "name": "Planet and moon imagery",
+      "provider": "USGS Astrogeology mosaics of NASA, ESA, DLR and STScI missions (LRO, MESSENGER, Magellan, Galileo, Voyager, Cassini, Dawn, New Horizons, Mars Express, Hubble OPAL)",
+      "url": "https://astrogeology.usgs.gov/",
+      "data": "Global surface imagery for the 19 bodies, each with its own credit in the console's CREDITS menu.",
+      "arrival": "bucket",
+      "via": [
+        "data-source/body-imagery",
+        "data-source/body-imagery-tiles"
+      ],
+      "modules": [
+        "solar-system"
+      ],
+      "terms": "Mostly public domain; Phobos ESA CC BY-SA 3.0 IGO; each product's credit in the console"
+    },
+    {
+      "id": "body-terrain",
+      "name": "Moon and Mars relief",
+      "provider": "NASA PDS Geosciences: LRO LOLA (Moon), MGS MOLA and the HRSC-MOLA blend (Mars)",
+      "url": "https://pds-geosciences.wustl.edu/",
+      "data": "Elevation models for the Moon's and Mars's terrain.",
+      "arrival": "bucket",
+      "via": [
+        "data-source/terrain-source"
+      ],
+      "modules": [
+        "solar-system"
+      ],
+      "terms": "Public (NASA PDS and USGS); credits in the console"
+    },
+    {
+      "id": "edenhofer-dust",
+      "name": "Local 3D dust map",
+      "provider": "Edenhofer et al. 2024",
+      "url": "https://zenodo.org/records/10658339",
+      "data": "Interstellar dust within 1,250 parsecs, for the Milky Way model seen from outside the solar system.",
+      "arrival": "sdn-lane",
+      "lane": "PCE.fbs · edenhofer2024 / local-dust-1250pc",
+      "via": [
+        "data-source/dust-map-3d"
+      ],
+      "modules": [
+        "solar-system"
+      ],
+      "terms": "CC BY 4.0"
+    },
+    {
+      "id": "drimmel-spergel",
+      "name": "Galactic dust and arm model",
+      "provider": "Drimmel and Spergel 2001",
+      "url": "https://doi.org/10.1086/321556",
+      "data": "Disk, spiral-arm and local dust and stellar light of the Milky Way, normalized to COBE/DIRBE.",
+      "arrival": "built-in",
+      "via": [],
+      "modules": [
+        "solar-system"
+      ],
+      "terms": "Published model (ApJ 556, 181)"
+    },
+    {
+      "id": "star-catalogs",
+      "name": "Star catalogs",
+      "provider": "NASA SKY2000, the Yale Bright Star Catalog and USNO UCAC4",
+      "url": "https://heasarc.gsfc.nasa.gov/",
+      "data": "Stars to magnitude 6.5 first, then the deeper catalog to magnitude 10.",
+      "arrival": "sdn-lane",
+      "lane": "STR.fbs, PNM.fbs · orbpro-star-catalog",
+      "via": [
+        "com.digitalarsenal.flows.star-catalog-ingest"
+      ],
+      "modules": [
+        "star-field"
+      ],
+      "terms": "Public (NASA, Yale, USNO)"
+    },
+    {
+      "id": "eso-milky-way",
+      "name": "Milky Way panorama",
+      "provider": "ESO/S. Brunier (eso0932a)",
+      "url": "https://www.eso.org/public/images/eso0932a/",
+      "data": "The all-sky Milky Way image behind the star field.",
+      "arrival": "sdn-lane",
+      "lane": "PNM.fbs · orbpro-star-catalog / sky-assets",
+      "via": [
+        "com.digitalarsenal.flows.star-catalog-ingest"
+      ],
+      "modules": [
+        "star-field"
+      ],
+      "terms": "CC BY 4.0",
+      "termsUrl": "https://www.eso.org/public/copyright/"
+    },
+    {
+      "id": "tycho-skybox",
+      "name": "Default sky",
+      "provider": "NASA Tycho-2 star map",
+      "url": "https://svs.gsfc.nasa.gov/",
+      "data": "The free sky drawn when the star field is off.",
+      "arrival": "bundled",
+      "via": [],
+      "modules": [
+        "globe-environment"
+      ],
+      "terms": "Public domain (NASA)"
+    },
+    {
+      "id": "blue-black-marble",
+      "name": "Blue Marble and Black Marble",
+      "provider": "NASA Earth Observatory",
+      "url": "https://earthobservatory.nasa.gov/",
+      "data": "Day and night Earth imagery built into the engine.",
+      "arrival": "bundled",
+      "via": [],
+      "modules": [
+        "imagery-studio",
+        "globe-environment"
+      ],
+      "terms": "Public domain (NASA)"
+    },
+    {
+      "id": "esri-basemaps",
+      "name": "Esri World Imagery, street map and shaded relief",
+      "provider": "Esri",
+      "url": "https://www.esri.com",
+      "data": "High-resolution satellite imagery and basemaps.",
+      "arrival": "provider-stream",
+      "via": [],
+      "modules": [
+        "imagery-studio",
+        "imagery-detection"
+      ],
+      "terms": "Esri terms, credited “Powered by Esri”",
+      "termsUrl": "https://developers.arcgis.com/documentation/esri-and-data-attribution/"
+    },
+    {
+      "id": "osm-tiles",
+      "name": "OpenStreetMap",
+      "provider": "OpenStreetMap contributors",
+      "url": "https://www.openstreetmap.org",
+      "data": "The street map layer.",
+      "arrival": "provider-stream",
+      "via": [],
+      "modules": [
+        "imagery-studio"
+      ],
+      "terms": "ODbL, credited on screen",
+      "termsUrl": "https://www.openstreetmap.org/copyright"
+    },
+    {
+      "id": "nasa-gibs",
+      "name": "NASA GIBS",
+      "provider": "NASA Global Imagery Browse Services (ESDIS)",
+      "url": "https://www.earthdata.nasa.gov/gibs",
+      "data": "NASA's Earth observation imagery layers with their full time ranges. The layer catalog arrives over SDN; the tiles stream from GIBS.",
+      "arrival": "sdn-lane",
+      "lane": "PNM.fbs · nasa-gibs / layer-catalog",
+      "via": [
+        "data-source/gibs"
+      ],
+      "modules": [
+        "imagery-studio"
+      ],
+      "terms": "NASA open data, no restrictions"
+    },
+    {
+      "id": "aws-terrain-tiles",
+      "name": "Terrain Tiles on AWS",
+      "provider": "Mapzen Terrarium on AWS Open Data, from USGS 3DEP, SRTM, GMTED2010, ETOPO1, EU-DEM and national surveys",
+      "url": "https://registry.opendata.aws/terrain-tiles/",
+      "data": "Global elevation for Earth's terrain relief (the default source).",
+      "arrival": "provider-stream",
+      "via": [],
+      "modules": [
+        "globe-environment"
+      ],
+      "terms": "Attribution required, listed in the CREDITS menu",
+      "termsUrl": "https://github.com/tilezen/joerd/blob/master/docs/attribution.md"
+    },
+    {
+      "id": "copernicus-dem",
+      "name": "Copernicus DEM GLO-30",
+      "provider": "European Union and ESA (Copernicus), DLR and Airbus",
+      "url": "https://dataspace.copernicus.eu/",
+      "data": "30 m global elevation, served as the SDN terrain tileset when the default source is unavailable.",
+      "arrival": "sdn-service",
+      "lane": "terrain.spacedatanetwork.org",
+      "via": [
+        "data-source/terrain-ingest"
+      ],
+      "modules": [
+        "globe-environment"
+      ],
+      "terms": "Copernicus licence, credited on screen",
+      "termsUrl": "https://dataspace.copernicus.eu/"
+    },
+    {
+      "id": "geonames",
+      "name": "GeoNames gazetteer",
+      "provider": "GeoNames",
+      "url": "https://www.geonames.org",
+      "data": "Place names and positions for place search and placemarks.",
+      "arrival": "sdn-lane",
+      "lane": "GNP.fbs (published by sdn.spaceaware.io)",
+      "via": [
+        "data-source/geonames-source",
+        "data-source/geonames-ingest"
+      ],
+      "modules": [
+        "catalog-search",
+        "context-layers"
+      ],
+      "terms": "CC BY 4.0",
+      "termsUrl": "https://creativecommons.org/licenses/by/4.0/"
+    },
+    {
+      "id": "natural-earth",
+      "name": "Natural Earth boundaries",
+      "provider": "Natural Earth",
+      "url": "https://www.naturalearthdata.com",
+      "data": "Country and region outlines for place search and region selection.",
+      "arrival": "bundled",
+      "via": [],
+      "modules": [
+        "catalog-search",
+        "scene-builder"
+      ],
+      "terms": "Public domain"
+    },
+    {
+      "id": "facility-sources",
+      "name": "Facility records",
+      "provider": "Wikidata, the Research Organization Registry (ROR), Global Energy Monitor and OpenStreetMap",
+      "url": "https://www.wikidata.org",
+      "data": "Nearly 6,000 facilities with positions and cited lifecycle status.",
+      "arrival": "bundled",
+      "via": [],
+      "modules": [
+        "context-layers"
+      ],
+      "terms": "Wikidata CC0; ROR CC0; Global Energy Monitor CC BY 4.0; OpenStreetMap ODbL"
+    },
+    {
+      "id": "open-meteo",
+      "name": "Open-Meteo",
+      "provider": "Open-Meteo",
+      "url": "https://open-meteo.com",
+      "data": "Wind and marine forecasts: the console's sea state, and forecast records on the node.",
+      "arrival": "provider-stream",
+      "via": [
+        "data-source/open-meteo"
+      ],
+      "modules": [
+        "globe-environment",
+        "data-sources"
+      ],
+      "terms": "CC BY 4.0",
+      "termsUrl": "https://open-meteo.com/en/license"
+    },
+    {
+      "id": "weathernext",
+      "name": "WeatherNext",
+      "provider": "Google DeepMind and Google Research",
+      "url": "https://storage.googleapis.com/weathernext-public/terms-of-use.pdf",
+      "data": "AI weather forecasts, including cloud cover and cyclone tracks.",
+      "arrival": "node-ingest",
+      "via": [
+        "data-source/weathernext-source",
+        "data-source/weathernext-parser"
+      ],
+      "modules": [
+        "data-sources"
+      ],
+      "terms": "WeatherNext terms of use",
+      "termsUrl": "https://storage.googleapis.com/weathernext-public/terms-of-use.pdf"
+    },
+    {
+      "id": "satnogs",
+      "name": "SatNOGS DB",
+      "provider": "Libre Space Foundation",
+      "url": "https://db.satnogs.org",
+      "data": "Satellite transmitters, frequencies and modes.",
+      "arrival": "node-ingest",
+      "via": [
+        "data-source/satnogs-source"
+      ],
+      "modules": [
+        "data-sources"
+      ],
+      "terms": "CC BY-SA 4.0"
+    },
+    {
+      "id": "iqengine-sigmf",
+      "name": "SigMF signal captures",
+      "provider": "IQEngine",
+      "url": "https://www.iqengine.org",
+      "data": "Recorded RF signal captures in SigMF.",
+      "arrival": "node-ingest",
+      "via": [
+        "data-source/sigmf-captures"
+      ],
+      "modules": [
+        "data-sources"
+      ],
+      "terms": "Provider terms",
+      "termsUrl": "https://www.iqengine.org"
+    },
+    {
+      "id": "launch-library",
+      "name": "Launch Library 2",
+      "provider": "The Space Devs",
+      "url": "https://thespacedevs.com/llapi",
+      "data": "Upcoming launches with windows, vehicles and pads, for launch notices and window screening.",
+      "arrival": "sdn-lane",
+      "lane": "LDM.fbs (launch provider node)",
+      "via": [
+        "data-source/launch-schedule"
+      ],
+      "modules": [
+        "launch-reentry"
+      ],
+      "terms": "Provider terms",
+      "termsUrl": "https://thespacedevs.com/llapi"
+    },
+    {
+      "id": "itu-r",
+      "name": "ITU-R propagation recommendations",
+      "provider": "International Telecommunication Union",
+      "url": "https://www.itu.int/rec/R-REC-P",
+      "data": "Path loss, rain, gas, cloud and fog, diffraction and terrain models and their tables (P.525, P.526, P.530, P.618, P.676, P.835, P.838, P.840, P.452, P.1812).",
+      "arrival": "built-in",
+      "via": [
+        "com.orbpro.rf-*"
+      ],
+      "modules": [
+        "rf-link-analysis",
+        "ground-contact"
+      ],
+      "terms": "Published ITU-R Recommendations"
+    },
+    {
+      "id": "spacecraft-models",
+      "name": "Spacecraft 3D models",
+      "provider": "NASA 3D Resources, NASA SVS, Poly Haven and others, each model's source and license recorded",
+      "url": "https://nasa3d.arc.nasa.gov/",
+      "data": "Spacecraft models, delivered over SDN and checked against their hashes.",
+      "arrival": "sdn-lane",
+      "via": [
+        "asset-models"
+      ],
+      "modules": [
+        "scene-builder"
+      ],
+      "terms": "Per model; only redistributable sources are used"
     }
   ],
   "bundles": [
