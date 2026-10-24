@@ -533,7 +533,7 @@
       "delivery": "sdn-module",
       "covers": [],
       "learnMore": "https://spacedatanetwork.org/whitepapers/fast-conjunction-assessment.html",
-      "evidence": "live modules.pmm com.orbpro.hpop 1.1.0 RECOMMENDED ANONYMOUS; live artifact /modules/com.orbpro.hpop/1.1.0/module.wasm strings (PRW execution, PPE trajectory, finite-burn, STM, NRLMSISE-00 and US Standard Atmosphere 1976; no OEM output); space-data-network-modules/propagator/ffm (com.orbpro.ffm 1.4.0, profile FFM-1, modules 5cc2d3b6)"
+      "evidence": "live modules.pmm com.orbpro.ffm 1.4.1 RECOMMENDED ANONYMOUS (signed 2026-10-24T23:11Z, owner 2026-10-24: FFM is free); live artifact /modules/com.orbpro.ffm/1.4.1/module.wasm, trailer-stripped sha256 8c57bee3 = the row's CONTENT_HASH, strings (PRW execution, PPE trajectory, finite-burn, STM, NRLMSISE-00 and US Standard Atmosphere 1976; no OEM output); live licensing grant-audit com.orbpro.ffm policy=open, anonymous grant verified; space-data-network-modules/propagator/ffm (com.orbpro.ffm 1.4.1)"
     },
     {
       "id": "propagator-suite",

@@ -86,21 +86,35 @@ The xpub is the wallet's account xpub (`m/44'/0'/0'`). The wallet must also sign
 the session key's proof for the requesting origin, so a copied xpub is not
 enough.
 
+## FFM is free (owner 2026-10-24)
+
+`com.orbpro.ffm` and its compatibility name `com.orbpro.hpop` are `open`: any
+identity that passes the licensing challenge is granted, with no account. Their
+rules here say `open`, and their `catalog.json` rows declare `open` with no
+`allowed_xpubs` (a listed xpub narrows `open` back to `allowlist`).
+`com.spacedatanetwork.sdn-ap-propagator` (SDN-AP is open source and free) has
+the same `open` rule, so its publication is granted to any identity unless its
+own row declares otherwise.
+
+The signed `modules.pmm` row for `com.orbpro.ffm` is `ANONYMOUS`: it publishes
+the module's portable bytes at `/modules/com.orbpro.ffm/<version>/module.wasm`,
+and a client verifies the trailer-stripped SHA-256 against the row's
+`CONTENT_HASH`. `modules.pmm` and the licensing `catalog.json` are separate
+declarations; changing one never changes the other. The node re-signs
+`modules.pmm` every 6 hours and at boot.
+
+A new publication of a module retires its earlier versions after
+`retire_superseded_after_seconds` (default and maximum 10 minutes), so a grant
+request must name the version the catalog row currently holds.
+
+Check the live grant with an anonymous identity (stack
+`deployment/module-grant-probe.mjs`):
+
+```
+node deployment/module-grant-probe.mjs https://spaceaware.io --anon --only com.orbpro.ffm
+```
+
 ## Audit
-
-### FFM compatibility publication (2026-10-17)
-
-Host-01 serves `com.orbpro.ffm@1.4.1` alongside `com.orbpro.hpop@1.0.0`.
-Both license entries and their policy rules use `allowlist` with `allowed_xpubs: ["*"]`;
-the requester must still prove its account key for the requesting origin.
-Keep HPOP available while older engines remain in use.
-
-The FFM license publication's version must match the signed PMM row exactly.
-The console's protected delivery worker verifies the trailer-stripped SHA-256
-against that row before returning a compiled module. A fresh account for
-`https://spaceaware.io` must pass this delivery and compilation check after a
-publication. Catalog and policy changes use the existing node binary; binary
-deployments remain a separate coordinated operation.
 
 Every boot writes one `grant-audit dir=publish` line per module (module, policy,
 source, allowlist size, outcome) plus a summary naming the full open set and the
