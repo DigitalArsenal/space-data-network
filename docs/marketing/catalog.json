@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated": "2026-10-23",
+  "updated": "2026-10-24",
   "consoleBuild": "20261013T204527Z",
   "pricing": {
     "status": "request",
@@ -2063,6 +2063,22 @@
     {
       "key": "module:deep-space-catalogs",
       "reason": "Beyond-Earth catalog lanes are live on the network but the console shows none yet; listed when the console catalog groups ship"
+    },
+    {
+      "key": "module:rinex-0.2.0",
+      "reason": "RINEX 3.02 to 3.05 observation files read into GNSS observation records, and GPS, QZSS, Galileo and BeiDou broadcast ephemerides evaluated into OEM positions and velocities; 13,496 observation values identical to an independent reader, broadcast GPS positions a median 1.67 m from the CODE final orbits: files/rinex 0.2.0 is not in the live module catalog"
+    },
+    {
+      "key": "module:orbit-products-0.2.0",
+      "reason": "Sentinel EOF orbit files read into OEM, and NAIF CK type 3 attitude kernels read and written as AEM; a kernel written here reads back in CSPICE to 2.2e-16 rad: files/orbit-products 0.2.0 is not in the live module catalog, which carries 0.1.2"
+    },
+    {
+      "key": "module:estimation-0.5.0",
+      "reason": "Relative-navigation Kalman filters (Hill-Clohessy-Wiltshire, Schweighart-Sedwick J2, Tschauner-Hempel, Yamanaka-Ankersen) and opt-in innovation recovery; on full-force truth, 0 false reinitializations, filter consistency (NEES) 3.9 to 5.6 against 6 expected, recovery at the second observation after 10 cm/s and 1 m/s burns: analysis/estimation 0.5.0 is not in the live module catalog, which carries 0.2.0"
+    },
+    {
+      "key": "module:ffm-2.0.0",
+      "reason": "Integrators DOPRI5, RK6(5)8M, RK8(7)13M, Verner 9(8) and RKN12(10)17M, and event location inside the integrator (apsides, planes, true anomaly, argument of latitude, latitude extrema, umbra and penumbra, closest approach, expression events); event epochs within 0.7 µs of the exact two-body epochs across 11 integrators: propagator/ffm 2.0.0 is not in the live module catalog, which carries com.orbpro.ffm 1.4.1"
     }
   ]
 }
