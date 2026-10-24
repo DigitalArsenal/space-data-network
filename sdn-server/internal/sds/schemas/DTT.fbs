@@ -1,5 +1,5 @@
-// Hash: 00f13f0a331557b828913f0ab311ac6e383d167ff1c9da6006e0a3be3eacc09e
-// Version: 1.191.0
+// Hash: ac6c7610099a25322059064b5a706e6549dac6ecae1d8ffbc31dc8d69ff2f3c6
+// Version: 1.191.1
 // -----------------------------------END_HEADER
 /// Scheme that maps a LEVEL/X/Y address to a region of the ellipsoid. The
 /// scheme is stated, never inferred from tile counts. Ordinals are wire
@@ -138,7 +138,16 @@ table DTTPayloadRef {
   /// one independently of the CID.
   DIGEST:string;
   /// Content encoding applied to the block before hashing, verbatim, when the
-  /// bytes are stored compressed.
+  /// bytes are stored compressed or re-encoded. The token is an HTTP
+  /// content-coding (for example gzip) or a publisher-named lossless
+  /// re-encoding of the PAYLOAD_FORMAT bytes (for example
+  /// qm-edge-matched-planes-v1, a quantized mesh whose topology is rebuilt
+  /// from a descriptor). Decoding the stored bytes yields the PAYLOAD_FORMAT
+  /// bytes exactly; a consumer that does not know the token refuses the block.
+  /// SIZE_BYTES and DIGEST describe the stored bytes. A file of size-prefixed
+  /// records may itself be stored compressed as a whole (for example gzip,
+  /// named with a .gz suffix); that wrapping belongs to the file, not to the
+  /// block, and is not stated here.
   CONTENT_ENCODING:string;
   /// Media type of the block as the publisher serves it.
   MEDIA_TYPE:string;

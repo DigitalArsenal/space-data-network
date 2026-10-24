@@ -1,5 +1,5 @@
-// Hash: 08de4812943d109ae6d33a52ef8fe90eb53d4a1992077325043593199bb2f0ac
-// Version: 1.100.1
+// Hash: 3608e0543a673fc4aced0d3c65e756865e811359aed037aaee73c5ebbdaba778
+// Version: 1.100.2
 // -----------------------------------END_HEADER
 include "../ATM/main.fbs";
 include "../BOV/main.fbs";
@@ -158,6 +158,18 @@ table lamInsertionOrbit {
   PERIAPSIS_ALTITUDE_UNCERTAINTY_M:double;
   /// One-sigma uncertainty of APOAPSIS_ALTITUDE_M in meters.
   APOAPSIS_ALTITUDE_UNCERTAINTY_M:double;
+  /// One-sigma uncertainty of SEMI_MAJOR_AXIS_M in meters. Meaningful only when
+  /// HAS_SEMI_MAJOR_AXIS_UNCERTAINTY_M.
+  SEMI_MAJOR_AXIS_UNCERTAINTY_M:double;
+  /// True when SEMI_MAJOR_AXIS_UNCERTAINTY_M carries a value; false (the
+  /// default) means absent, and a consumer applies its vehicle-class default.
+  HAS_SEMI_MAJOR_AXIS_UNCERTAINTY_M:bool = false;
+  /// One-sigma uncertainty of INCLINATION_DEG in degrees. Meaningful only when
+  /// HAS_INCLINATION_UNCERTAINTY_DEG.
+  INCLINATION_UNCERTAINTY_DEG:double;
+  /// True when INCLINATION_UNCERTAINTY_DEG carries a value; false (the default)
+  /// means absent, and a consumer applies its vehicle-class default.
+  HAS_INCLINATION_UNCERTAINTY_DEG:bool = false;
 }
 
 /// Launch Ascent Message
