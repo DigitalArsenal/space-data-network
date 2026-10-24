@@ -7146,6 +7146,8 @@ const GG = [
   // GEO Spacecraft Status
   "GJN.fbs",
   // GeoJSON FeatureCollection
+  "GNM.fbs",
+  // GNSS Navigation Message - broadcast clock and orbit parameters of one satellite
   "GNO.fbs",
   // GNSS Observation
   "GPX.fbs",

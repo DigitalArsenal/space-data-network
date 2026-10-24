@@ -293,7 +293,7 @@ func verifiedPublisherDomains(record *standardsEPM.EPM, peerID string, now time.
 }
 
 func verifyPublisherDomainProof(record *standardsEPM.EPM, proof *standardsEPM.DomainProof, peerID string, now time.Time) (string, bool) {
-	domain := strings.TrimSpace(string(proof.DOMAIN()))
+	domain := strings.TrimSpace(string(proof.DNS_DOMAIN()))
 	publicHex := strings.TrimSpace(string(proof.PUBLIC_KEY()))
 	algorithm := strings.ToLower(strings.TrimSpace(string(proof.ALGORITHM())))
 	if algorithm == "" {

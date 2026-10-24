@@ -46,6 +46,11 @@ const (
 	RecordTypeExtendedFMB  RecordTypeExtended = 284
 	RecordTypeExtendedFSG  RecordTypeExtended = 285
 	RecordTypeExtendedPIN  RecordTypeExtended = 286
+	RecordTypeExtendedSDI  RecordTypeExtended = 287
+	RecordTypeExtendedSFE  RecordTypeExtended = 288
+	RecordTypeExtendedSRO  RecordTypeExtended = 289
+	RecordTypeExtendedSRT  RecordTypeExtended = 290
+	RecordTypeExtendedGNM  RecordTypeExtended = 291
 )
 
 var EnumNamesRecordTypeExtended = map[RecordTypeExtended]string{
@@ -81,6 +86,11 @@ var EnumNamesRecordTypeExtended = map[RecordTypeExtended]string{
 	RecordTypeExtendedFMB:  "FMB",
 	RecordTypeExtendedFSG:  "FSG",
 	RecordTypeExtendedPIN:  "PIN",
+	RecordTypeExtendedSDI:  "SDI",
+	RecordTypeExtendedSFE:  "SFE",
+	RecordTypeExtendedSRO:  "SRO",
+	RecordTypeExtendedSRT:  "SRT",
+	RecordTypeExtendedGNM:  "GNM",
 }
 
 var EnumValuesRecordTypeExtended = map[string]RecordTypeExtended{
@@ -116,6 +126,11 @@ var EnumValuesRecordTypeExtended = map[string]RecordTypeExtended{
 	"FMB":  RecordTypeExtendedFMB,
 	"FSG":  RecordTypeExtendedFSG,
 	"PIN":  RecordTypeExtendedPIN,
+	"SDI":  RecordTypeExtendedSDI,
+	"SFE":  RecordTypeExtendedSFE,
+	"SRO":  RecordTypeExtendedSRO,
+	"SRT":  RecordTypeExtendedSRT,
+	"GNM":  RecordTypeExtendedGNM,
 }
 
 func (v RecordTypeExtended) String() string {

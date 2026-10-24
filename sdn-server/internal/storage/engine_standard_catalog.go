@@ -727,6 +727,10 @@ const engineStandardCatalogGraph = `
     SCALE_FACTOR:double;
     CALIBRATION:byte;
     EVIDENCE:string;
+    HISTORY_SAMPLES:uint;
+    HISTORY_SETS:uint;
+    HISTORY_WINDOW:string;
+    SHRINKAGE_WEIGHT:double;
   }
   table CZM {
     NAME:string;
@@ -1348,6 +1352,22 @@ const engineStandardCatalogGraph = `
   table GLX {
     ID:string;
     NAME:string;
+  }
+  table GNM {
+    SATELLITE_ID:string;
+    CONSTELLATION:byte;
+    MESSAGE_TYPE:byte;
+    TIME_SYSTEM:string;
+    TOC:string;
+    CLOCK_BIAS:double;
+    CLOCK_DRIFT:double;
+    CLOCK_DRIFT_RATE:double;
+    TRANSMISSION_TIME:double;
+    HEALTH:uint;
+    HAS_HEALTH:bool;
+    ACCURACY:double;
+    ACCURACY_INDEX:int;
+    HAS_ACCURACY_INDEX:bool;
   }
   table GNO {
     ID:string;
@@ -2480,20 +2500,9 @@ const engineStandardCatalogGraph = `
     CATALOG:ubyte;
   }
   table PCF {
-    STEP_SIZE:double;
-    TOLERANCE:double;
-    MIN_STEP:double;
-    MAX_STEP:double;
-    MAX_ITERATIONS:uint;
-    GRAVITY_DEGREE:ushort;
-    GRAVITY_ORDER:ushort;
-    INTEGRATOR:ubyte;
-    OUTPUT_FRAME:ubyte;
-    FORCE_FLAGS:ushort;
-    DRAG_COEFFICIENT:float;
-    SRP_COEFFICIENT:float;
-    AREA_MASS_RATIO:float;
-    RESERVED:[ubyte];
+    CONFIGURATION_ID:string;
+    PROFILE:string;
+    THEORY:ubyte;
   }
   table PGM {
     GROUP_NAME:string;
@@ -3215,6 +3224,37 @@ const engineStandardCatalogGraph = `
   table SDF {
     CONFIG:ubyte;
   }
+  table SDI {
+    OBSERVATORY:string;
+    INSTRUMENT:string;
+    MEASUREMENT:string;
+    WAVELENGTH_NM:double;
+    IMAGE_ID:string;
+    REQUESTED_AT:string;
+    OBSERVED_AT:string;
+    DATE_OBS:string;
+    TIME_SCALE:string;
+    CADENCE_S:double;
+    EXPOSURE_S:double;
+    IMAGE_CID:string;
+    IMAGE_MEDIA_TYPE:string;
+    IMAGE_DIGEST:string;
+    IMAGE_SIZE_BYTES:uint64;
+    HEADER_CID:string;
+    WIDTH:uint32;
+    HEIGHT:uint32;
+    CTYPE1:string;
+    CTYPE2:string;
+    CUNIT1:string;
+    CUNIT2:string;
+    CRPIX1:double;
+    CRPIX2:double;
+    CRVAL1:double;
+    CRVAL2:double;
+    CDELT1:double;
+    CDELT2:double;
+    CROTA2:double;
+  }
   table SDL {
     SPI:ushort;
     IV_LENGTH:ubyte;
@@ -3265,6 +3305,32 @@ const engineStandardCatalogGraph = `
     OB_UO_M:string;
     OB_VALUE:double;
     OB_STRING:string;
+  }
+  table SFE {
+    EVENT_ID:string;
+    PRODUCT:string;
+    OBSERVATORY:string;
+    PLATFORM:string;
+    EVENT_KIND:byte;
+    EVENT_TYPE_CODE:string;
+    BEGIN_TIME:string;
+    PEAK_TIME:string;
+    END_TIME:string;
+    BEGIN_QUALIFIER:string;
+    PEAK_QUALIFIER:string;
+    END_QUALIFIER:string;
+    XRAY_CLASS:string;
+    OPTICAL_IMPORTANCE:string;
+    PEAK_FLUX_W_M2:double;
+    INTEGRATED_FLUX_J_M2:double;
+    PASSBAND_MIN_NM:double;
+    PASSBAND_MAX_NM:double;
+    REGION_NUMBER:uint32;
+    HAS_REGION_NUMBER:bool;
+    HG_LATITUDE_DEG:double;
+    HG_LONGITUDE_DEG:double;
+    STATUS:string;
+    REVISION:string;
   }
   table SHC {
     MODEL_NAME:string;
@@ -3494,6 +3560,35 @@ const engineStandardCatalogGraph = `
     PROVIDER_ID:string;
     SOURCE_NAME:string;
     BATCH_ID:string;
+  }
+  table SRO {
+    REGION_NUMBER:uint32;
+    REGION_AUTHORITY:string;
+    ISSUED_AT:string;
+    OBSERVED_DATE:string;
+    POSITION_EPOCH:string;
+    REGION_KIND:byte;
+    LOCATION_TOKEN:string;
+    HG_LATITUDE_DEG:double;
+    HG_LONGITUDE_DEG:double;
+    CARRINGTON_LONGITUDE_DEG:double;
+    AREA_MSH:double;
+    LONGITUDINAL_EXTENT_DEG:double;
+    SPOT_COUNT:uint32;
+    HAS_SPOT_COUNT:bool;
+    MCINTOSH_CLASS:string;
+    MAGNETIC_CLASS:string;
+  }
+  table SRT {
+    TILESET_ID:string;
+    TILESET_NAME:string;
+    QUANTITY:byte;
+    QUANTITY_NAME:string;
+    UNIT:string;
+    SAMPLE_TYPE:byte;
+    SCALE_FACTOR:double;
+    ADD_OFFSET:double;
+    NO_DATA_VALUE:double;
   }
   table STF {
     LISTING_ID:string;
@@ -4049,6 +4144,7 @@ var engineGeneratedStandardBindings = map[string]engineRoutedSchema{
 	"GEO.fbs":  {Table: "GEO", FileID: "$GEO"},
 	"GJN.fbs":  {Table: "GJN", FileID: "$GJN"},
 	"GLX.fbs":  {Table: "GLX", FileID: "$GLX"},
+	"GNM.fbs":  {Table: "GNM", FileID: "$GNM"},
 	"GNO.fbs":  {Table: "GNO", FileID: "$GNO"},
 	"GNP.fbs":  {Table: "GNP", FileID: "$GNP"},
 	"GPX.fbs":  {Table: "GPX", FileID: "$GPX"},
@@ -4180,11 +4276,13 @@ var engineGeneratedStandardBindings = map[string]engineRoutedSchema{
 	"SCV.fbs":  {Table: "SCV", FileID: "$SCV"},
 	"SCX.fbs":  {Table: "SCX", FileID: "$SCX"},
 	"SDF.fbs":  {Table: "SDF", FileID: "$SDF"},
+	"SDI.fbs":  {Table: "SDI", FileID: "$SDI"},
 	"SDL.fbs":  {Table: "SDL", FileID: "$SDL"},
 	"SDR.fbs":  {Table: "SDR", FileID: "$SDR"},
 	"SEN.fbs":  {Table: "SEN", FileID: "$SEN"},
 	"SEO.fbs":  {Table: "SEO", FileID: "$SEO"},
 	"SEV.fbs":  {Table: "SEV", FileID: "$SEV"},
+	"SFE.fbs":  {Table: "SFE", FileID: "$SFE"},
 	"SHC.fbs":  {Table: "SHC", FileID: "$SHC"},
 	"SHW.fbs":  {Table: "SHW", FileID: "$SHW"},
 	"SIT.fbs":  {Table: "SIT", FileID: "$SIT"},
@@ -4201,6 +4299,8 @@ var engineGeneratedStandardBindings = map[string]engineRoutedSchema{
 	"SPW.fbs":  {Table: "SPW", FileID: "$SPW"},
 	"SRG.fbs":  {Table: "SRG", FileID: "$SRG"},
 	"SRI.fbs":  {Table: "SRI", FileID: "$SRI"},
+	"SRO.fbs":  {Table: "SRO", FileID: "$SRO"},
+	"SRT.fbs":  {Table: "SRT", FileID: "$SRT"},
 	"STF.fbs":  {Table: "STF", FileID: "$STF"},
 	"STO.fbs":  {Table: "STO", FileID: "$STO"},
 	"STR.fbs":  {Table: "STR", FileID: "$STR"},

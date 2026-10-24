@@ -236,6 +236,7 @@ var schemaDescriptions = map[string]string{
 	"GDI.fbs":  "Ground Imagery",
 	"GEO.fbs":  "GEO Spacecraft Status",
 	"GJN.fbs":  "GeoJSON FeatureCollection",
+	"GNM.fbs":  "GNSS Navigation Message - broadcast clock and orbit parameters of one satellite",
 	"GNO.fbs":  "GNSS Observation",
 	"GPX.fbs":  "GPX Document",
 	"GRV.fbs":  "Gravity Models",

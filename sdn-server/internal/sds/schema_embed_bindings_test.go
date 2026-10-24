@@ -100,6 +100,7 @@ import (
 	bGEO "github.com/DigitalArsenal/spacedatastandards.org/lib/go/GEO"
 	bGJN "github.com/DigitalArsenal/spacedatastandards.org/lib/go/GJN"
 	bGLX "github.com/DigitalArsenal/spacedatastandards.org/lib/go/GLX"
+	bGNM "github.com/DigitalArsenal/spacedatastandards.org/lib/go/GNM"
 	bGNO "github.com/DigitalArsenal/spacedatastandards.org/lib/go/GNO"
 	bGNP "github.com/DigitalArsenal/spacedatastandards.org/lib/go/GNP"
 	bGPX "github.com/DigitalArsenal/spacedatastandards.org/lib/go/GPX"
@@ -229,11 +230,13 @@ import (
 	bSCV "github.com/DigitalArsenal/spacedatastandards.org/lib/go/SCV"
 	bSCX "github.com/DigitalArsenal/spacedatastandards.org/lib/go/SCX"
 	bSDF "github.com/DigitalArsenal/spacedatastandards.org/lib/go/SDF"
+	bSDI "github.com/DigitalArsenal/spacedatastandards.org/lib/go/SDI"
 	bSDL "github.com/DigitalArsenal/spacedatastandards.org/lib/go/SDL"
 	bSDR "github.com/DigitalArsenal/spacedatastandards.org/lib/go/SDR"
 	bSEN "github.com/DigitalArsenal/spacedatastandards.org/lib/go/SEN"
 	bSEO "github.com/DigitalArsenal/spacedatastandards.org/lib/go/SEO"
 	bSEV "github.com/DigitalArsenal/spacedatastandards.org/lib/go/SEV"
+	bSFE "github.com/DigitalArsenal/spacedatastandards.org/lib/go/SFE"
 	bSHC "github.com/DigitalArsenal/spacedatastandards.org/lib/go/SHC"
 	bSHW "github.com/DigitalArsenal/spacedatastandards.org/lib/go/SHW"
 	bSIT "github.com/DigitalArsenal/spacedatastandards.org/lib/go/SIT"
@@ -250,6 +253,8 @@ import (
 	bSPW "github.com/DigitalArsenal/spacedatastandards.org/lib/go/SPW"
 	bSRG "github.com/DigitalArsenal/spacedatastandards.org/lib/go/SRG"
 	bSRI "github.com/DigitalArsenal/spacedatastandards.org/lib/go/SRI"
+	bSRO "github.com/DigitalArsenal/spacedatastandards.org/lib/go/SRO"
+	bSRT "github.com/DigitalArsenal/spacedatastandards.org/lib/go/SRT"
 	bSTF "github.com/DigitalArsenal/spacedatastandards.org/lib/go/STF"
 	bSTO "github.com/DigitalArsenal/spacedatastandards.org/lib/go/STO"
 	bSTR "github.com/DigitalArsenal/spacedatastandards.org/lib/go/STR"
@@ -394,6 +399,7 @@ var driftGuardedSchemas = []struct {
 	{"GEO.fbs", &bGEO.GEO{}},
 	{"GJN.fbs", &bGJN.GJN{}},
 	{"GLX.fbs", &bGLX.GLX{}},
+	{"GNM.fbs", &bGNM.GNM{}},
 	{"GNO.fbs", &bGNO.GNO{}},
 	{"GNP.fbs", &bGNP.GNP{}},
 	{"GPX.fbs", &bGPX.GPX{}},
@@ -473,12 +479,12 @@ var driftGuardedSchemas = []struct {
 	{"PGM.fbs", &bPGM.PGM{}},
 	{"PHB.fbs", &bPHB.PHB{}},
 	{"PHY.fbs", &bPHY.PHY{}},
+	{"PIN.fbs", &bPIN.PIN{}},
 	{"PIV.fbs", &bPIV.PIV{}},
 	{"PKB.fbs", &bPKB.PKB{}},
 	{"PLD.fbs", &bPLD.PLD{}},
 	{"PLG.fbs", &bPLG.PLG{}},
 	{"PLK.fbs", &bPLK.PLK{}},
-	{"PIN.fbs", &bPIN.PIN{}},
 	{"PMM.fbs", &bPMM.PMM{}},
 	{"PNL.fbs", &bPNL.PNL{}},
 	{"PNM.fbs", &bPNM.PNM{}},
@@ -523,11 +529,13 @@ var driftGuardedSchemas = []struct {
 	{"SCV.fbs", &bSCV.SCV{}},
 	{"SCX.fbs", &bSCX.SCX{}},
 	{"SDF.fbs", &bSDF.SDF{}},
+	{"SDI.fbs", &bSDI.SDI{}},
 	{"SDL.fbs", &bSDL.SDL{}},
 	{"SDR.fbs", &bSDR.SDR{}},
 	{"SEN.fbs", &bSEN.SEN{}},
 	{"SEO.fbs", &bSEO.SEO{}},
 	{"SEV.fbs", &bSEV.SEV{}},
+	{"SFE.fbs", &bSFE.SFE{}},
 	{"SHC.fbs", &bSHC.SHC{}},
 	{"SHW.fbs", &bSHW.SHW{}},
 	{"SIT.fbs", &bSIT.SIT{}},
@@ -544,6 +552,8 @@ var driftGuardedSchemas = []struct {
 	{"SPW.fbs", &bSPW.SPW{}},
 	{"SRG.fbs", &bSRG.SRG{}},
 	{"SRI.fbs", &bSRI.SRI{}},
+	{"SRO.fbs", &bSRO.SRO{}},
+	{"SRT.fbs", &bSRT.SRT{}},
 	{"STF.fbs", &bSTF.STF{}},
 	{"STO.fbs", &bSTO.STO{}},
 	{"STR.fbs", &bSTR.STR{}},

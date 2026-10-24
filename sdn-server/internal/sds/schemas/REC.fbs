@@ -1,5 +1,5 @@
-// Hash: ce5d342221072b1f7dbf4ee13cd2c038795a48f1863be2bd690e470a57234228
-// Version: 1.44.84
+// Hash: aa1a2984ad3bfbf6c894188255822b2fbc5c058f71da96675cf7ea1f6541184f
+// Version: 1.44.87
 // -----------------------------------END_HEADER
 include "../ABA/main.fbs";
 include "../ACI/main.fbs";
@@ -97,6 +97,7 @@ include "../GEL/main.fbs";
 include "../GEO/main.fbs";
 include "../GJN/main.fbs";
 include "../GLX/main.fbs";
+include "../GNM/main.fbs";
 include "../GNO/main.fbs";
 include "../GNP/main.fbs";
 include "../GPX/main.fbs";
@@ -176,6 +177,7 @@ include "../PCF/main.fbs";
 include "../PGM/main.fbs";
 include "../PHB/main.fbs";
 include "../PHY/main.fbs";
+include "../PIN/main.fbs";
 include "../PIV/main.fbs";
 include "../PKB/main.fbs";
 include "../PLD/main.fbs";
@@ -224,11 +226,13 @@ include "../SCR/main.fbs";
 include "../SCV/main.fbs";
 include "../SCX/main.fbs";
 include "../SDF/main.fbs";
+include "../SDI/main.fbs";
 include "../SDL/main.fbs";
 include "../SDR/main.fbs";
 include "../SEN/main.fbs";
 include "../SEO/main.fbs";
 include "../SEV/main.fbs";
+include "../SFE/main.fbs";
 include "../SHC/main.fbs";
 include "../SHW/main.fbs";
 include "../SIT/main.fbs";
@@ -245,6 +249,8 @@ include "../SPP/main.fbs";
 include "../SPW/main.fbs";
 include "../SRG/main.fbs";
 include "../SRI/main.fbs";
+include "../SRO/main.fbs";
+include "../SRT/main.fbs";
 include "../STF/main.fbs";
 include "../STO/main.fbs";
 include "../STR/main.fbs";
@@ -406,7 +412,13 @@ enum RecordTypeExtended : ushort {
   GLX = 282,
   FCK = 283,
   FMB = 284,
-  FSG = 285
+  FSG = 285,
+  PIN = 286,
+  SDI = 287,
+  SFE = 288,
+  SRO = 289,
+  SRT = 290,
+  GNM = 291
 }  // Wide record types
 
 /// Individual record wrapper for any standard type

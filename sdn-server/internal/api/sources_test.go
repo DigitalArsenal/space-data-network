@@ -133,7 +133,7 @@ func buildSignedPublisherEPMProfile(t *testing.T, peerID, name, dn, chain, addre
 			domainAlgorithmOffset := b.CreateString("ed25519")
 			domainEncodingOffset := b.CreateString("raw-ed25519")
 			standardsEPM.DomainProofStart(b)
-			standardsEPM.DomainProofAddDOMAIN(b, domainOffset)
+			standardsEPM.DomainProofAddDNS_DOMAIN(b, domainOffset)
 			standardsEPM.DomainProofAddPUBLIC_KEY(b, domainPublicOffset)
 			standardsEPM.DomainProofAddKEY_PATH(b, keyPathOffset)
 			standardsEPM.DomainProofAddSIGNATURE(b, domainSignatureOffset)

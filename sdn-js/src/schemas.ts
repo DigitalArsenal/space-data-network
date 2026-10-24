@@ -52,6 +52,7 @@ export const SUPPORTED_SCHEMAS = [
   'GDI.fbs',    // Ground Imagery
   'GEO.fbs',    // GEO Spacecraft Status
   'GJN.fbs',    // GeoJSON FeatureCollection
+  'GNM.fbs',    // GNSS Navigation Message - broadcast clock and orbit parameters of one satellite
   'GNO.fbs',    // GNSS Observation
   'GPX.fbs',    // GPX Document
   'GRV.fbs',    // Gravity Models
@@ -225,6 +226,7 @@ export const SCHEMA_DESCRIPTIONS: Record<SchemaName, string> = {
   'GDI.fbs': 'Ground Imagery',
   'GEO.fbs': 'GEO Spacecraft Status',
   'GJN.fbs': 'GeoJSON FeatureCollection',
+  'GNM.fbs': 'GNSS Navigation Message - broadcast clock and orbit parameters of one satellite',
   'GNO.fbs': 'GNSS Observation',
   'GPX.fbs': 'GPX Document',
   'GRV.fbs': 'Gravity Models',
@@ -396,6 +398,7 @@ export const SDS_SCHEMAS: Record<SchemaName, string> = {
   'GDI.fbs': '',
   'GEO.fbs': '',
   'GJN.fbs': '',
+  'GNM.fbs': '',
   'GNO.fbs': '',
   'GPX.fbs': '',
   'GRV.fbs': '',
