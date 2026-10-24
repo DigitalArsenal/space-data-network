@@ -1560,7 +1560,7 @@
       "modules": [
         "globe-environment"
       ],
-      "terms": "Copernicus licence, credited on screen",
+      "terms": "Copernicus license, credited on screen",
       "termsUrl": "https://dataspace.copernicus.eu/"
     },
     {
@@ -2066,7 +2066,7 @@
     },
     {
       "key": "module:rinex-0.2.0",
-      "reason": "RINEX 3.02 to 3.05 observation files read into GNSS observation records, and GPS, QZSS, Galileo and BeiDou broadcast ephemerides evaluated into OEM positions and velocities; 13,496 observation values identical to an independent reader, broadcast GPS positions a median 1.67 m from the CODE final orbits: files/rinex 0.2.0 is not in the live module catalog"
+      "reason": "RINEX 3.02 to 3.05 observation files read into GNSS observation records, and GPS, QZSS, Galileo and BeiDou (MEO and IGSO) broadcast ephemerides evaluated into OEM ephemeris states; 13,496 observation values in an IGS station file identical to an independent reader, broadcast GPS positions a median 1.67 m from the CODE final orbits (30 satellites, one day): files/rinex 0.2.0 is not in the live module catalog"
     },
     {
       "key": "module:orbit-products-0.2.0",
@@ -2074,11 +2074,11 @@
     },
     {
       "key": "module:estimation-0.5.0",
-      "reason": "Relative-navigation Kalman filters (Hill-Clohessy-Wiltshire, Schweighart-Sedwick J2, Tschauner-Hempel, Yamanaka-Ankersen) and opt-in innovation recovery; on full-force truth, 0 false reinitializations, filter consistency (NEES) 3.9 to 5.6 against 6 expected, recovery at the second observation after 10 cm/s and 1 m/s burns: analysis/estimation 0.5.0 is not in the live module catalog, which carries 0.2.0"
+      "reason": "Relative-navigation Kalman filters (Hill-Clohessy-Wiltshire, Schweighart-Sedwick J2, Tschauner-Hempel, Yamanaka-Ankersen) and opt-in innovation recovery; against full-force model truth, 0 false reinitializations, filter consistency (NEES) 3.9 to 5.6 against 6 expected, and recovery at the second observation after 10 cm/s and 1 m/s burns: analysis/estimation 0.5.0 is not in the live module catalog, which carries 0.2.0"
     },
     {
       "key": "module:ffm-2.0.0",
-      "reason": "Integrators DOPRI5, RK6(5)8M, RK8(7)13M, Verner 9(8) and RKN12(10)17M, and event location inside the integrator (apsides, planes, true anomaly, argument of latitude, latitude extrema, umbra and penumbra, closest approach, expression events); event epochs within 0.7 µs of the exact two-body epochs across 11 integrators: propagator/ffm 2.0.0 is not in the live module catalog, which carries com.orbpro.ffm 1.4.1"
+      "reason": "Integrators DOPRI5, RK6(5)8M, RK8(7)13M, Verner 9(8) and RKN12(10)17M, and event location inside the integrator (apsides, planes, true anomaly, argument of latitude, latitude extrema, umbra and penumbra, closest approach, expression events); against exact two-body epochs, every event but eclipse and closest approach lands within 0.7 µs across 11 integrators: propagator/ffm 2.0.0 is not in the live module catalog, which carries com.orbpro.ffm 1.4.1"
     }
   ]
 }
