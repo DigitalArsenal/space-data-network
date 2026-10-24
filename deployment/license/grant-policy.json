@@ -14,7 +14,6 @@
     { "match": "com.orbpro.fastest-path", "policy": "allowlist", "note": "Paid. Key-protected." },
     { "match": "com.orbpro.sensor-coverage", "policy": "allowlist", "note": "Paid. Key-protected. Its catalog entry must declare allowlist too: a catalog grant_policy outranks this rule." },
 
-    { "match": "com.orbpro.hpop", "policy": "open", "note": "Free (owner 2026-10-24). The compatibility name of FFM for older engines." },
     { "match": "com.orbpro.ffm", "policy": "open", "note": "Free (owner 2026-10-24: \"It's free, our SDN-AP is going to be open source and free\")." },
     { "match": "com.spacedatanetwork.sdn-ap-propagator", "policy": "open", "note": "Free (owner 2026-10-24): SDN-AP is open source and free." },
     { "match": "com.orbpro.viewshed-shader*", "policy": "open", "note": "Free." },
