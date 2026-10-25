@@ -69,11 +69,11 @@
       </div>
       <div class="wrap">
         <dl class="paper-facts">
-          <div><dt>Edition</dt><dd>2.7</dd></div>
-          <div><dt>Published</dt><dd>17 October 2026</dd></div>
+          <div><dt>Edition</dt><dd>2.8</dd></div>
+          <div><dt>Published</dt><dd>25 October 2026</dd></div>
           <div><dt>Evidence cutoff</dt><dd><span>17 October 2026</span></dd></div>
           <div><dt>Sections</dt><dd>11</dd></div>
-          <div><dt>Reading time</dt><dd>42 min</dd></div>
+          <div><dt>Reading time</dt><dd>43 min</dd></div>
           <div><dt>Interactive models</dt><dd>16</dd></div>
         </dl>
       </div>
@@ -965,7 +965,7 @@
 <li>Failed: an added force did not reduce every seed&#39;s error (14 violations, all without tesseral harmonics).</li>
 <li>Failed: a 20×20 field without the Sun and Moon beat zonals alone for only 53 of 96 GPS seeds.</li>
 </ol>
-<p>FFM&#39;s resident path, which holds the catalog in memory, reproduces its execution path to 0.052 mm over four days, at 0.645 s per object-day on one thread<sup><a href="#r10">10</a></sup>.</p>
+<p>FFM&#39;s resident path, which holds the catalog in memory, reproduces its execution path to 0.052 mm over four days, at 0.645 s per object-day on one thread, with RK78 at tolerance 1e-12 and steps of at most 300 s<sup><a href="#r10">10</a></sup>.</p>
 <div class="sec-head sec-head-h2"><h2 id="8-association-and-selection"><span class="sec-num">8</span>Association and selection</h2><button class="run-it" type="button" data-model-url="https://digitalarsenal.github.io/orbit-accuracy-experiments/models/evidence-supported-aso-catalog/8-association-and-selection.html" data-model-title="Associating observations with the catalog" aria-label="Run it: Associating observations with the catalog"><span class="run-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span>Run it</button></div>
 <p>Association asks whether records describe one object; selection picks a solution for an epoch, interval and use; estimation derives a new one. Candidates come from provider crosswalks, such as Vimpel&#39;s datefirst file of Vimpel and NORAD numbers, international designators and native-identifier histories; names and bare numbers are not join keys. Compatibility is tested on normalized ephemerides over shared intervals. Each candidate link is compatible, rejected, ambiguous or insufficient, and accepted links stay reversible. Selection takes, per regime and horizon, the source with the lowest median error on a training window of at least 30 samples <a href="https://github.com/DigitalArsenal/orbit-accuracy-experiments/blob/357d992d6c62daac4ccbb2fd230634ac292192b8/results/e3/README.md">E3</a>.</p>
 <div class="table-frame"><table>

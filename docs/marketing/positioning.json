@@ -1,11 +1,11 @@
 {
   "version": 1,
-  "updated": "2026-10-16",
+  "updated": "2026-10-25",
   "incumbent": "ASW, the Astrodynamics Support Workstation (Omitron)",
   "peer": "LeoLabs",
   "copy": {
     "executive": "ASW is the incumbent: the first and only Air Force certified special-perturbations catalog, at more than 15 government sites and free to government. Its proven edge is covariance realism. We lead on screening speed, reproducibility, open standards, public evidence and cost for commercial and allied operators. We are behind on covariance realism, orbit determination from observations, calibrated density and accreditation. Products built from public data are advisory.",
-    "operator": "Use SpaceAware for fast, repeatable screening and analysis of the whole catalog, with geometry that matches SOCRATES. Its products built from public element sets support awareness and triage, not maneuver decisions.",
+    "operator": "Use SpaceAware for fast, repeatable screening and analysis of the entire catalog. Its products built from public element sets support awareness and triage, not maneuver decisions.",
     "integrator": "One WebAssembly build gives byte-identical results in a browser, on WasmEdge and on air-gapped hosts, and reads and writes SDS FlatBuffers and CCSDS messages. Covariance realism, Pc methods and the CDM's full field set are behind ASW today."
   },
   "aswLeads": [
@@ -28,7 +28,7 @@
   ],
   "weLead": [
     {
-      "text": "Speed and continuity: the full catalog screened all-vs-all in 19 s; an incremental re-screen gives results byte-identical to a full one"
+      "text": "Speed and continuity: the entire catalog screened all-vs-all in 19 s; an incremental re-screen gives results byte-identical to a full one"
     },
     {
       "text": "Open interchange: SDS FlatBuffers and CCSDS messages anyone can read and check"
@@ -37,7 +37,7 @@
       "text": "Portable, reproducible execution: one WebAssembly build, byte-identical in the browser, on WasmEdge and air-gapped"
     },
     {
-      "text": "Fidelity and evidence: frames and gravity cross-checked against Orekit, with pre-registered, held-out results published"
+      "text": "Fidelity and evidence: accuracy measured against laser ranges and precise orbits, with pre-registered, held-out results published"
     },
     {
       "text": "Cost for commercial and allied operators, whom free-to-government pricing does not reach"
@@ -165,7 +165,7 @@
     },
     {
       "name": "Throughput and latency",
-      "asw": "About 30,000 objects and 600,000 CDMs a day",
+      "asw": "The entire catalog, about 600,000 CDMs a day",
       "status": [
         [
           "Ahead",
@@ -203,20 +203,12 @@
   ],
   "say": [
     {
-      "claim": "FFM, the Full Force Model propagator, agrees with Orekit, GMAT, Tudat and Nyx to about 1 cm over 24 hours on identical inputs (meters where drag models differ).",
-      "note": "Verifies the implementation, not orbit accuracy."
-    },
-    {
       "claim": "From precise start states, FFM predicts drag-free spheres to 4.8 m at 24 h and 13.9 m at 72 h, and GPS to 28.5 m at 24 h.",
       "note": "Not LEO: drag from B* gives 481 m at 24 h even from the true state."
     },
     {
-      "claim": "Fitted to laser ranges, FFM's median error is 7 m at the fit and 9, 17 and 42 m at 1, 3 and 7 days, against 472 to 685 m for SGP4.",
+      "claim": "Fitted to laser ranges, FFM's median error against the laser ranges is 7 m at the fit and 9, 17 and 42 m at 1, 3 and 7 days.",
       "note": "Five laser-ranged spheres; the truth uses the same laser data."
-    },
-    {
-      "claim": "Screening geometry reproduces SOCRATES on identical element sets: 95th percentile 2.4 m.",
-      "note": "Agreement with SOCRATES, not recall. Objects numbered 100000 and above: 20.8 m."
     },
     {
       "claim": "Collision probability is Foster's integral over the hard-body disk, agreeing with NASA CARA Analysis Tools test cases within 4.7e-4; events outside the two-dimensional assumptions are evaluated with Hall's expected-collision models or Monte Carlo.",
@@ -257,8 +249,8 @@
       "why": "No dilution flag or calibration label; real near misses of 5.7-14.3 m scored 1e-6 to 4e-5."
     },
     {
-      "claim": "FFM screening as more accurate than SGP4",
-      "why": "Started from public element sets it is 9.5-11 times worse in LEO at 24 h."
+      "claim": "FFM screening from public element sets as more accurate",
+      "why": "It starts from the set's epoch state and inherits its error: against precise orbits, its LEO error at 24 h is larger than the set's own prediction."
     },
     {
       "claim": "Meter-level LEO prediction",

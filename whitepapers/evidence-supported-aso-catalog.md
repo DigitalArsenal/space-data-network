@@ -6,7 +6,7 @@ Anthony "TJ" Koury III and Claude Opus 5.5
 
 Koury: Edgesource, Space Data Network. Claude: Anthropic.
 
-Technical whitepaper 2.7 | 17 October 2026
+Technical whitepaper 2.8 | 25 October 2026
 
 Numerical evidence cutoff: 17 October 2026
 
@@ -352,7 +352,7 @@ The GPS maxima beyond a day are one satellite, NORAD 35752, in every force set. 
 3. Failed: an added force did not reduce every seed's error (14 violations, all without tesseral harmonics).
 4. Failed: a 20×20 field without the Sun and Moon beat zonals alone for only 53 of 96 GPS seeds.
 
-FFM's resident path, which holds the catalog in memory, reproduces its execution path to 0.052 mm over four days, at 0.645 s per object-day on one thread<sup>[10](#r10)</sup>.
+FFM's resident path, which holds the catalog in memory, reproduces its execution path to 0.052 mm over four days, at 0.645 s per object-day on one thread, with RK78 at tolerance 1e-12 and steps of at most 300 s<sup>[10](#r10)</sup>.
 
 ## 8 Association and selection
 

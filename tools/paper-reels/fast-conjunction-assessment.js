@@ -410,15 +410,14 @@ export async function createReel(base = "") {
 
     // -------------------------------------------------------- the type
     if (t < T_PAIRS + 0.1) {
-      eyebrow("WHITEPAPER · EDITION 1.9", 2, 0.5, T_PAIRS - 0.45, t);
+      eyebrow("WHITEPAPER · EDITION 2.3", 2, 0.5, T_PAIRS - 0.45, t);
       block([["Will anything", INK], ["come too close?", AMBER]], "EVERY CATALOG OBJECT, CHECKED AGAINST EVERY OTHER", 0.6, T_PAIRS - 0.4, t, 88);
     }
     if (t > T_PAIRS - 0.05 && t < T_BOUND + 0.1) {
       eq("pairs", 150, 250, T_PAIRS + 0.4, T_BOUND - 0.45, t);
       label("PAIRS AMONG n OBJECTS", 152, 340, T_PAIRS + 0.7, T_BOUND - 0.45, t, { px: 18 });
       stat("4,321", "STEPS OF 60 s OVER THREE DAYS", 152, 470, T_PAIRS + 1.4, T_BOUND - 0.45, t, { px: 64, color: INK });
-      stat("~2.3 trillion", "PAIR-STEPS", 680, 470, T_PAIRS + 1.8, T_BOUND - 0.45, t, { px: 64 });
-      block([["32,514 objects.", INK], ["528.6 million pairs.", AMBER]], "AT 10 km/s, A CLOSE PASS LASTS UNDER A SECOND", T_PAIRS + 0.1, T_BOUND - 0.4, t, 84);
+      block([["The entire catalog.", INK], ["Every pair.", AMBER]], "AT 10 km/s, A CLOSE PASS LASTS UNDER A SECOND", T_PAIRS + 0.1, T_BOUND - 0.4, t, 84);
     }
     if (t > T_BOUND - 0.05 && t < T_GRID + 0.1) {
       eq("bound", 150, 214, T_BOUND + 0.4, T_GRID - 0.45, t);
@@ -444,7 +443,7 @@ export async function createReel(base = "") {
     if (t > T_PRIV - 0.05 && t < T_END + 0.1) {
       block([["Screen together", INK], ["without sharing orbits.", AMBER]], "DISTANCES COMPUTED ON ENCRYPTED POSITIONS", T_PRIV + 0.1, T_END - 0.4, t, 84);
     }
-    paperLockup({ eyebrow: "WHITEPAPER · EDITION 1.9", title: ["Fast All-vs-All", "Conjunction Screening"], byline: "Anthony “TJ” Koury III and Claude Opus 5.5", t0: T_END + 0.3 }, t);
+    paperLockup({ eyebrow: "WHITEPAPER · EDITION 2.3", title: ["Fast All-vs-All", "Conjunction Screening"], byline: "Anthony “TJ” Koury III and Claude Opus 5.5", t0: T_END + 0.3 }, t);
 
     bloom();
     hud(t, frameIndex, T_END + 0.1);

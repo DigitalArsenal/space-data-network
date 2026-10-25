@@ -6,7 +6,7 @@ Anthony "TJ" Koury III and Claude Opus 5.5
 
 Koury: Edgesource, Space Data Network · tj@edgesource.com. Claude: Anthropic.
 
-Technical whitepaper 2.2 | 17 October 2026
+Technical whitepaper 2.3 | 25 October 2026
 
 Numerical evidence cutoff: 11 October 2026
 
@@ -124,7 +124,7 @@ A long screen runs as consecutive windows; the merged result equals one screen o
 - A conjunction belongs to the window that holds its TCA.
 - A TCA within the refinement tolerance of a shared edge is reported by both windows and kept once.
 
-Window length trades memory for per-window overhead. A day of FFM's trajectories is about 240 KB per object, so FFM screens in 1-hour windows: about 390 MB of trajectories for the full catalog, which the conjunction module indexes in 1.05 GiB of its 2 GiB. SGP4 windows reuse one index loaded at the start, so they are longer (6 hours).
+Window length trades memory for per-window overhead. A day of FFM's trajectories, in 300 s segments, is about 240 KB per object, so FFM screens in 1-hour windows: about 390 MB of trajectories for the full catalog, which the conjunction module indexes in 1.05 GiB of its 2 GiB. SGP4 windows reuse one index loaded at the start, so they are longer (6 hours).
 
 Tests check four windows against a single screen for both propagators. The SGP4 case uses CelesTrak element sets that include an object SGP4 cannot propagate. The FFM case uses crossing orbits integrated by FFM, passed through the `trajectories` port<sup>[2](#r2),[33](#r33)</sup>.
 
@@ -171,7 +171,7 @@ All runs used the Space-Track GP catalog of 30 September 2026, 32,514 objects<su
 
 - For each propagator, every run reports the same conjunctions with the same TCA and miss distance.
 - **SGP4's** remaining time is sampling: 4,321 steps × 32,514 SGP4 evaluations. On the GPU path the module samples (6.1 s) and the GPU searches (2.3 s).
-- **FFM's** time is propagation: 99,929 CPU-seconds on 8 worker threads, 0.65 s per object-day, 36 % of it the catch-up from element epochs to the screen's start. The table's end-to-end time is that CPU time on 16 dedicated cores plus the 137.7 s of search and refinement on 2 module threads; on the shared workstation (1-minute load average median 44, maximum 82) the screen took 15,210 s<sup>[33](#r33)</sup>.
+- **FFM's** time is propagation: 99,929 CPU-seconds on 8 worker threads, 0.65 s per object-day with RK78 at tolerance 1e-12 and steps of at most 300 s, 36 % of it the catch-up from element epochs to the screen's start. The table's end-to-end time is that CPU time on 16 dedicated cores plus the 137.7 s of search and refinement on 2 module threads; on the shared workstation (1-minute load average median 44, maximum 82) the screen took 15,210 s<sup>[33](#r33)</sup>.
 - The two propagators report different conjunctions. Of FFM's 283,700, 39,425 (14 %) are also in the SGP4 screen, the same pair with TCAs within 10 minutes; on those, TCAs differ by a median of 1.2 s and miss distances by 691 m. The share falls from 22 % of the first day's conjunctions to 9 % of the third's. Neither result is a measure of accuracy (section 7).
 
 ### Step size
@@ -639,7 +639,7 @@ registered.
 | Limit | Effect |
 | --- | --- |
 | SGP4 sampling | About half of a 19 s screen: 140 million SGP4 evaluations |
-| FFM propagation | Over 99 % of the FFM screen, 0.65 CPU-seconds per object-day |
+| FFM propagation | Over 99 % of the FFM screen, 0.65 CPU-seconds per object-day (RK78 at tolerance 1e-12, steps of at most 300 s) |
 | Catch-up from element epochs | The first FFM window waits for every object to reach the screen start: 36 % of the object-days |
 | Memory per window | About 390 MB of trajectories per 1-hour FFM window, indexed in 1.05 GiB of the module's 2 GiB |
 | FFM coefficients | Drag from each element set's B*, 0.01 m²/kg where B* ≤ 0; one radiation-pressure coefficient for every object |
