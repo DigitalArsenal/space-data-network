@@ -1277,15 +1277,12 @@ export async function createReel(base = "") {
 }
 
 // BEGIN GENERATED DATA
-// Recorded output of the SDN-AP module: propagator/sdn-ap/dist/isomorphic/module.wasm, sha256 b9bc708baa502800fe372ae9904f9951a72e72d6ed014afb431cad884f874fa5,
-// public modules repository at c0c5da38, run in Node v25.4.0 through space-data-module-sdk 0.9.14's browser harness on
-// 2026-10-24. Seeded populations only (no catalog data); epoch 2026-10-24 12:00:00 UTC; the environment in force is the
-// module's own (F10.7 150, F10.7a 150, Ap 15). Positions and velocities are TEME km and km/s (Int16 with one scale per
-// track), Earth-fixed km where named; series are Float32. BANK describes each array (offset and length into the bytes
-// below, 700248 bytes, hexadecimal) and holds the numbers the module reported (BANK.facts).
-// Regenerate: the generator (a Node script that opens the module, builds the seeded populations, calls sdnap_init_elements,
-// sdnap_propagate_minutes_soa / sdnap_propagate_soa, sdnap_xp_native, sdnap_osculating_states, sdnap_reentry_reference,
-// sdnap_density_probe, sdnap_frame_probe and sdnap_geodetic_height_km, then packs the result) is kept with the lane's scratch.
+// Recorded output of the SDN-AP module: propagator/sdn-ap/dist/isomorphic/module.wasm, sha256 b9bc708baa502800fe372ae9904f9951a72e72d6ed014afb431cad884f874fa5
+// (the public modules repository at c0c5da38). Seeded populations only (no catalog data); epoch 2026-10-24 12:00:00 UTC;
+// the environment in force is the module's own (F10.7 150, F10.7a 150, Ap 15). Positions and velocities are TEME km and
+// km/s (Int16 with one scale per track), Earth-fixed km where named; series are Float32. BANK describes each array
+// (offset and length into the bytes below, 700248 bytes, hexadecimal) and holds the numbers the module reported (BANK.facts).
+// Regenerate or reproduce it with tools/showreel/sdn-ap-record/record.mjs (--embed, --check).
 const BANK = {
  "facts": {
   "environment": {
@@ -3505,7 +3502,6 @@ const BANK = {
   }
  },
  "binaryBytes": 700248,
- "deflatedBytes": 700248,
  "moduleSha256": "b9bc708baa502800fe372ae9904f9951a72e72d6ed014afb431cad884f874fa5"
 };
 const BANK_HEX = `
