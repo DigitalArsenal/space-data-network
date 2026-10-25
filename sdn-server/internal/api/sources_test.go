@@ -397,10 +397,21 @@ func TestDomainProofMultiDomainVerifies(t *testing.T) {
 	}
 }
 
+// distinctDomains is n canonical names, none alike.
+func distinctDomains(n int) []string {
+	names := make([]string, n)
+	for i := range names {
+		names[i] = fmt.Sprintf("host-%02d.observatory.example", i)
+	}
+	return names
+}
+
 func TestDomainProofRefusals(t *testing.T) {
 	const peerID = "16UiuREFUSED"
 	one := []string{"observatory.example"}
 	two := []string{"observatory.example", "radio.observatory.example"}
+	overCap := distinctDomains(maxDomainsPerProof + 1)
+	badFirstOverCap := append([]string{"Bad.Example"}, distinctDomains(maxDomainsPerProof)...)
 	statement := func(version string, domains []string, issued, expires int64) func(publicHex, peerID string) string {
 		return func(publicHex, peer string) string {
 			return testDomainStatement(version, domains, publicHex, peer, issued, expires)
@@ -419,6 +430,10 @@ func TestDomainProofRefusals(t *testing.T) {
 	}{
 		{name: "empty DOMAINS vector, validly signed", proof: domainProofSpec{domains: []string{}}, want: errDomainProofNoDomains},
 		{name: "no DOMAINS vector", proof: domainProofSpec{}, want: errDomainProofNoDomains},
+		{name: "a name listed twice, side by side", proof: domainProofSpec{domains: []string{two[0], two[0]}}, want: errDomainProofRepeatedName},
+		{name: "a name listed twice, apart", proof: domainProofSpec{domains: []string{two[0], two[1], two[0]}}, want: errDomainProofRepeatedName},
+		{name: "one name more than the cap", proof: domainProofSpec{domains: overCap}, want: errDomainProofTooManyNames},
+		{name: "over the cap, decided before any name is read", proof: domainProofSpec{domains: badFirstOverCap}, want: errDomainProofTooManyNames},
 		{
 			name:  "proof written under SDS 1.265.0: the retired slot is not read",
 			proof: domainProofSpec{legacyDomain: "observatory.example", statement: valid("sdn-domain-proof/1", one)},
@@ -521,6 +536,99 @@ func TestDomainProofsAreVerifiedIndependently(t *testing.T) {
 	}
 	if got := verifiedPublisherDomains(record, peerID, time.Now()); !reflect.DeepEqual(got, good) {
 		t.Fatalf("verified domains = %v, want only the names of the proof that verifies: %v", got, good)
+	}
+}
+
+func TestDomainProofNameCap(t *testing.T) {
+	const peerID = "16UiuNAMECAP"
+	atCap := distinctDomains(maxDomainsPerProof)
+	if maxDomainsPerProof != 32 {
+		t.Fatalf("maxDomainsPerProof = %d; docs/domain-proofs.md says 32", maxDomainsPerProof)
+	}
+
+	record, proof := domainProofRecord(t, peerID, domainProofSpec{domains: atCap})
+	proven, err := verifyPublisherDomainProof(record, proof, peerID, time.Now())
+	if err != nil || !reflect.DeepEqual(proven, atCap) {
+		t.Fatalf("a proof of exactly %d names: proven %d names, err %v", maxDomainsPerProof, len(proven), err)
+	}
+
+	for _, n := range []int{maxDomainsPerProof + 1, 2 * maxDomainsPerProof, 500} {
+		record, proof := domainProofRecord(t, peerID, domainProofSpec{domains: distinctDomains(n)})
+		if _, err := verifyPublisherDomainProof(record, proof, peerID, time.Now()); !errors.Is(err, errDomainProofTooManyNames) {
+			t.Fatalf("a proof of %d names: refusal = %v, want %v", n, err, errDomainProofTooManyNames)
+		}
+	}
+
+	// The cap is per proof: a record keeps the proofs that are within it.
+	data := buildSignedPublisherEPMProfile(t, peerID, "State University Radio Observatory", "", "", "",
+		domainProofSpec{domains: distinctDomains(maxDomainsPerProof + 1)},
+		domainProofSpec{domains: []string{"observatory.example", "radio.observatory.example"}},
+	)
+	got := verifiedPublisherDomains(standardsEPM.GetSizePrefixedRootAsEPM(data, 0), peerID, time.Now())
+	if want := []string{"observatory.example", "radio.observatory.example"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("verified domains = %v, want only those of the proof within the cap: %v", got, want)
+	}
+}
+
+func TestDomainProofRepeatedNameIsJudgedInCanonicalForm(t *testing.T) {
+	const peerID = "16UiuREPEATS"
+	// Names must already be canonical, so a repeat is an exact repeat. A name
+	// that repeats another only after lowercasing, trimming or dropping a
+	// trailing dot is refused as not canonical, at the first such name.
+	for _, tc := range []struct {
+		name    string
+		domains []string
+		repeat  bool
+	}{
+		{"exact repeat", []string{"observatory.example", "observatory.example"}, true},
+		{"uppercase twin", []string{"Observatory.example", "observatory.example"}, false},
+		{"trailing-dot twin", []string{"observatory.example", "observatory.example."}, false},
+		{"padded twin", []string{"observatory.example", " observatory.example"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			record, proof := domainProofRecord(t, peerID, domainProofSpec{domains: tc.domains})
+			_, err := verifyPublisherDomainProof(record, proof, peerID, time.Now())
+			if err == nil {
+				t.Fatal("proof accepted")
+			}
+			if got := errors.Is(err, errDomainProofRepeatedName); got != tc.repeat {
+				t.Fatalf("refusal = %q; repeated-name refusal = %v, want %v", err, got, tc.repeat)
+			}
+			if tc.repeat && !strings.Contains(err.Error(), "DOMAINS[1] repeats DOMAINS[0]") {
+				t.Fatalf("refusal %q does not say which names repeat", err)
+			}
+		})
+	}
+}
+
+func TestDomainProofSameNameInTwoProofsIsNotARepeat(t *testing.T) {
+	const peerID = "16UiuTWOPROOFS"
+	data := buildSignedPublisherEPMProfile(t, peerID, "State University Radio Observatory", "", "", "",
+		domainProofSpec{domains: []string{"observatory.example", "radio.observatory.example"}},
+		domainProofSpec{domains: []string{"observatory.example", "telescope.example.org"}},
+	)
+	got := verifiedPublisherDomains(standardsEPM.GetSizePrefixedRootAsEPM(data, 0), peerID, time.Now())
+	want := []string{"observatory.example", "radio.observatory.example", "telescope.example.org"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("verified domains = %v, want each name once: %v", got, want)
+	}
+}
+
+// docs/domain-proofs.md states the cap and names both refusals as the node does.
+func TestDomainProofLimitsAreDocumented(t *testing.T) {
+	doc, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "domain-proofs.md"))
+	if err != nil {
+		t.Fatalf("read docs/domain-proofs.md: %v", err)
+	}
+	for name, want := range map[string]string{
+		"the cap":              fmt.Sprintf("at most %d names", maxDomainsPerProof),
+		"the too-many refusal": errDomainProofTooManyNames.Error(),
+		"the repeated refusal": errDomainProofRepeatedName.Error(),
+		"the empty refusal":    errDomainProofNoDomains.Error(),
+	} {
+		if !strings.Contains(string(doc), want) {
+			t.Errorf("docs/domain-proofs.md does not carry %s: %q", name, want)
+		}
 	}
 }
 
