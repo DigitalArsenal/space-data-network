@@ -68,8 +68,39 @@ export function heightKm(m, r) {
   return h;
 }
 
-/** SPEC 1.4: the mean semi-major axis (km) of a Brouwer mean motion (rev/day), a = R_E (k_e / n)^(2/3), n in rad/min. */
-export const meanA = (revPerDay) => RE * Math.pow(KE / ((revPerDay * 2 * Math.PI) / 1440), 2 / 3);
+/** sdnap_mean_elements_at: the mean semi-major axis (km) of row i of the loaded set (SGP4XP or SDN-AP) at `minutes`. */
+export function meanAKm(m, i, minutes) {
+  const p = m.x.sdnap_alloc(48);
+  const status = m.x.sdnap_mean_elements_at(i, minutes, p);
+  const a = view(m, p, 1)[0];
+  m.x.sdnap_free(p);
+  if (status !== 0) throw new Error(`sdnap_mean_elements_at refused row ${i} at ${minutes} min (${status})`);
+  return a;
+}
+
+/** sdnap_osculating_elements: the osculating semi-major axis (km) of a TEME state (km, km/s). */
+export function oscAKm(m, state) {
+  const pr = m.x.sdnap_alloc(24);
+  const pv = m.x.sdnap_alloc(24);
+  const po = m.x.sdnap_alloc(48);
+  view(m, pr, 3).set(state.slice(0, 3));
+  view(m, pv, 3).set(state.slice(3, 6));
+  const status = m.x.sdnap_osculating_elements(pr, pv, po);
+  const a = view(m, po, 1)[0];
+  for (const p of [pr, pv, po]) m.x.sdnap_free(p);
+  if (status !== 0) throw new Error(`sdnap_osculating_elements refused the state (${status})`);
+  return a;
+}
+
+/** sdnap_frame_to_uvw: a TEME vector's radial, in-track and cross-track components in the frame of the state (r, v). */
+export function toUvw(m, r, v, vec) {
+  const p = m.x.sdnap_alloc(96);
+  view(m, p, 9).set([...r, ...v, ...vec]);
+  m.x.sdnap_frame_to_uvw(p, p + 24, p + 48, p + 72);
+  const out = Array.from(view(m, p + 72, 3));
+  m.x.sdnap_free(p);
+  return out;
+}
 
 /** SPEC 1.4 inverted: the Brouwer mean motion (rev/day) of a mean semi-major axis (km). */
 export const revPerDay = (aKm) => ((KE / Math.pow(aKm / RE, 1.5)) * 1440) / (2 * Math.PI);

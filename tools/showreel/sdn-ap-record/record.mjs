@@ -12,18 +12,16 @@
 // this recording only: seeded populations (no catalog data), the epoch 2026-10-24 12:00 UTC, and the environment
 // the module itself holds (F10.7 150, Ap 15).
 //
-// This is recording and conformance tooling, never imported by the reel. Beyond moving bytes it does arithmetic
-// only for display: SPEC 1.4's mean motion to semi-major axis, vis-viva for the osculating semi-major axis the
-// chart plots against the module's mean (the module's own osculating states are the input), and the projection of
-// the module's two states onto its own radial and velocity directions. Every orbit, density, height and
-// reentry time is the module's.
+// This is recording and conformance tooling, never imported by the reel. Every orbit, density, height, reentry
+// time, semi-major axis (sdnap_mean_elements_at, sdnap_osculating_elements) and radial and in-track offset
+// (sdnap_frame_to_uvw) is the module's; JS moves bytes and counts.
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import {
-  EPOCH_FRAC, EPOCH_WHOLE, MU, densityKgM3, environmentAtEpoch, frameProbe, heightKm, jdAt, meanA, openSdnAp, oscStates, reentryRef, spinAt, stateAt,
+  EPOCH_FRAC, EPOCH_WHOLE, densityKgM3, environmentAtEpoch, frameProbe, heightKm, jdAt, meanAKm, openSdnAp, oscAKm, oscStates, reentryRef, spinAt, stateAt, toUvw,
 } from "./module.mjs";
 import { SIDEREAL, makePopulations } from "./populations.mjs";
 
@@ -150,8 +148,8 @@ function record({ m, THEORY, FRAME, sha256 }) {
     out.facts.cislunar = { meanMotionRevDay: 0.1, eccentricity: 0.9, perigeeRadiusKm: rmin, apogeeRadiusKm: rmax, periodDays: 10 };
   }
 
-  // Mean against osculating: one low orbit for three revolutions. The module's states give the osculating semi-major
-  // axis (vis-viva); its mean motion gives the mean one (SPEC 1.4).
+  // Mean against osculating: one low orbit for three revolutions. The module gives the osculating semi-major axis of
+  // each of its states (sdnap_osculating_elements) and the theory's mean one (sdnap_mean_elements_at).
   {
     m.init([row({ meanMotion: 15.2, ecc: 0.001, inc: 51.6, raan: 120, argp: 90, ma: 0, norad: 20 })]);
     const minutes = 285;
@@ -163,8 +161,8 @@ function record({ m, THEORY, FRAME, sha256 }) {
     for (let k = 0; k < n; k++) {
       const st = trace(0, k);
       s.set(st, 6 * k);
-      aOsc.push(1 / (2 / Math.hypot(st[0], st[1], st[2]) - (st[3] ** 2 + st[4] ** 2 + st[5] ** 2) / MU));
-      aMean.push(meanA(m.xpNative(0, k).eqnx[5]));
+      aOsc.push(oscAKm(m, st));
+      aMean.push(meanAKm(m, 0, k));
       alt.push(heightKm(m, st));
     }
     out.tracks.mo = { ...packStates(s, { dt: 1, minutes }), aOsc: pack(f32(aOsc), "f32"), aMean: pack(f32(aMean), "f32"), alt: pack(f32(alt), "f32") };
@@ -257,7 +255,7 @@ function record({ m, THEORY, FRAME, sha256 }) {
   }
 
   // A maneuver: +1 m/s along the velocity at 20 minutes, with and without it, for 24 hours; the burned object's position
-  // relative to the unburned one along the unburned object's velocity and radius.
+  // relative to the unburned one in the unburned object's radial and in-track axes (sdnap_frame_to_uvw).
   {
     m.init([row({ meanMotion: 15.5, ecc: 0.0005, inc: 51.6, raan: 120, argp: 90, ma: 30, bterm: 0.012, agom: 0.01, norad: 90030 })]);
     const y0 = trace(0, 0);
@@ -276,8 +274,9 @@ function record({ m, THEORY, FRAME, sha256 }) {
       const v = [free[6 * k + 3], free[6 * k + 4], free[6 * k + 5]];
       const d = [burned[6 * k] - r[0], burned[6 * k + 1] - r[1], burned[6 * k + 2] - r[2]];
       sep.push(Math.hypot(...d));
-      radialKm.push((d[0] * r[0] + d[1] * r[1] + d[2] * r[2]) / Math.hypot(...r));
-      alongKm.push((d[0] * v[0] + d[1] * v[1] + d[2] * v[2]) / Math.hypot(...v));
+      const [radial, along] = toUvw(m, r, v, d);
+      radialKm.push(radial);
+      alongKm.push(along);
     }
     out.tracks.man = {
       n,
