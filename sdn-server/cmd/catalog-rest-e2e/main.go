@@ -279,7 +279,6 @@ func lastLines(b []byte, n int) string {
 	return strings.Join(lines, " | ")
 }
 
-
 type answer struct {
 	status int
 	hdr    http.Header

@@ -59,6 +59,7 @@ var catalogTheories = []string{"SGP4", "SGP4XP", "SDNAP"}
 
 type catalogSelection struct {
 	at        time.Time
+	digest    string
 	records   []*storage.Record
 	published time.Time
 	renders   map[string]*catalogRender
@@ -170,19 +171,30 @@ func (h *DataQueryHandler) catalogRecords(now time.Time) ([]*storage.Record, tim
 	return records, published, nil
 }
 
-func (h *DataQueryHandler) catalogSelect() (*catalogSelection, error) {
+func (h *DataQueryHandler) catalogSelect() (*catalogSelection, time.Time, error) {
 	now := h.catalogNow()
 	h.catalog.mu.Lock()
 	defer h.catalog.mu.Unlock()
 	if s := h.catalog.last; s != nil && now.Sub(s.at) < catalogSelectionTTL && !now.Before(s.at) {
-		return s, nil
+		return s, s.published, nil
 	}
 	records, published, err := h.catalogRecords(now)
 	if err != nil {
-		return nil, err
+		return nil, time.Time{}, err
 	}
-	h.catalog.last = &catalogSelection{at: now, records: records, published: published, renders: map[string]*catalogRender{}}
-	return h.catalog.last, nil
+	sum := sha256.New()
+	for _, rec := range records {
+		fmt.Fprintf(sum, "%s\x00", rec.CID)
+	}
+	digest := hex.EncodeToString(sum.Sum(nil))
+	// The same records as the last selection keep its renders: a refresh that
+	// finds nothing new costs the queries, not a re-encoding of the catalog.
+	if prev := h.catalog.last; prev != nil && prev.digest == digest {
+		prev.at, prev.published = now, published
+		return prev, published, nil
+	}
+	h.catalog.last = &catalogSelection{at: now, digest: digest, records: records, published: published, renders: map[string]*catalogRender{}}
+	return h.catalog.last, published, nil
 }
 
 func catalogTheoryFilter(records []*storage.Record, theory string) ([]*storage.Record, error) {
@@ -266,7 +278,7 @@ func (h *DataQueryHandler) handleCatalogCurrent(w http.ResponseWriter, r *http.R
 	if !h.ensureStore(w) {
 		return
 	}
-	selection, err := h.catalogSelect()
+	selection, published, err := h.catalogSelect()
 	if err != nil {
 		writeDataReadError(w, err)
 		return
@@ -308,9 +320,9 @@ func (h *DataQueryHandler) handleCatalogCurrent(w http.ResponseWriter, r *http.R
 
 	hdr := w.Header()
 	hdr.Set("ETag", render.etag)
-	hdr.Set("Cache-Control", catalogCacheControl(h.catalogNow(), selection.published))
-	if !selection.published.IsZero() {
-		hdr.Set("Last-Modified", selection.published.UTC().Format(http.TimeFormat))
+	hdr.Set("Cache-Control", catalogCacheControl(h.catalogNow(), published))
+	if !published.IsZero() {
+		hdr.Set("Last-Modified", published.UTC().Format(http.TimeFormat))
 	}
 	hdr.Set("X-SDN-Schema", "OMM.fbs")
 	hdr.Set("X-Content-Type-Options", "nosniff")
