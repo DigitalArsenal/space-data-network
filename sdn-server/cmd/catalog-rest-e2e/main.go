@@ -1,6 +1,6 @@
 // catalog-rest-e2e boots a node built from this checkout on a seeded catalog
-// (SGP4, SGP4XP and SDN-AP element sets, the SDN-AP ones with COVARIANCE) and
-// proves GET /api/v1/data/catalog/current: both formats round-trip, the
+// (SGP4 and SGP4XP element sets, the SGP4XP ones with COVARIANCE, and a stored
+// SDNAP set the route must not serve) and proves GET /api/v1/data/catalog/current: both formats round-trip, the
 // theory selector, the entity tag and 304, and the headers a shared cache
 // needs, all read anonymously (a proxy header refuses the loopback console).
 //
@@ -53,7 +53,7 @@ type seeded struct {
 }
 
 // buildOMM writes one element set of a theory; cov is the 21-value covariance
-// of an SDN-AP set.
+// of an SGP4XP set.
 func buildOMM(norad uint32, theory string, epoch time.Time, cov []float64) []byte {
 	b := flatbuffers.NewBuilder(1024)
 	name := b.CreateString(fmt.Sprintf("OBJ-%d", norad))
@@ -96,8 +96,9 @@ func covariance(seed float64) []float64 {
 	return out
 }
 
-// fixture: ISS in all three theories (the SDN-AP set with covariance), one
-// object with an older and a nearer SGP4 set, one with SGP4 only.
+// fixture: ISS in both theories (the SGP4XP set with covariance) and a stored
+// SDNAP set the route must not serve, one object with an older and a nearer SGP4
+// set and an SDNAP set, one with SGP4 only.
 func fixture(now time.Time) []seeded {
 	var out []seeded
 	add := func(norad uint32, theory, lane string, ago time.Duration, cov []float64, want bool) {
@@ -105,11 +106,11 @@ func fixture(now time.Time) []seeded {
 		out = append(out, seeded{norad, theory, lane, epoch, cov, buildOMM(norad, theory, epoch, cov), want})
 	}
 	add(25544, "SGP4", "celestrak-gp", 2*time.Hour, nil, true)
-	add(25544, "SGP4XP", "supplemental", 3*time.Hour, nil, true)
-	add(25544, "SDNAP", "sdn-ap", time.Hour, covariance(1e-3), true)
+	add(25544, "SGP4XP", "supplemental", 3*time.Hour, covariance(1e-3), true)
+	add(25544, "SDNAP", "sdn-ap", time.Hour, covariance(1e-3), false)
 	add(43013, "SGP4", "celestrak-gp", 30*time.Hour, nil, false)
 	add(43013, "SGP4", "celestrak-gp", 5*time.Hour, nil, true)
-	add(43013, "SDNAP", "sdn-ap", 4*time.Hour, covariance(2e-3), true)
+	add(43013, "SDNAP", "sdn-ap", 4*time.Hour, covariance(2e-3), false)
 	add(99999, "SGP4", "celestrak-gp", 26*time.Hour, nil, true)
 	return out
 }
@@ -434,7 +435,7 @@ func run(ctx context.Context) error {
 	base := node.base
 
 	var fbTag, jsonTag string
-	check("FlatBuffers: one record per object and theory, nearest epoch, SDN-AP COVARIANCE intact", func() error {
+	check("FlatBuffers: one record per object and theory, nearest epoch, SGP4XP COVARIANCE intact, no stored SDNAP record served", func() error {
 		a, err := get(ctx, base, "GET", "", nil)
 		if err != nil {
 			return err
@@ -554,7 +555,7 @@ func run(ctx context.Context) error {
 		}
 		return nil
 	}())
-	for _, theory := range []string{"SGP4", "SGP4XP", "SDNAP"} {
+	for _, theory := range []string{"SGP4", "SGP4XP"} {
 		theory := theory
 		check("theory="+theory+": only that theory, both formats", func() error {
 			a, err := get(ctx, base, "GET", "?theory="+theory, nil)
@@ -582,12 +583,12 @@ func run(ctx context.Context) error {
 			return nil
 		}())
 	}
-	check("refusals are $QRP FlatBuffers and never cached: history parameter, bad theory, bad format, POST", func() error {
+	check("refusals are $QRP FlatBuffers and never cached: history parameter, bad theory (SDNAP included), bad format, POST", func() error {
 		for _, c := range []struct {
 			method, query string
 			want          int
 		}{
-			{"GET", "?epoch=2026-01-01T00:00:00Z", 400}, {"GET", "?day=2026-01-01", 400}, {"GET", "?theory=DSST", 400},
+			{"GET", "?epoch=2026-01-01T00:00:00Z", 400}, {"GET", "?day=2026-01-01", 400}, {"GET", "?theory=DSST", 400}, {"GET", "?theory=SDNAP", 400},
 			{"GET", "?format=csv", 400}, {"POST", "", 401},
 		} {
 			a, err := get(ctx, base, c.method, c.query, nil)

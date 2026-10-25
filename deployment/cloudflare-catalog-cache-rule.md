@@ -18,7 +18,7 @@ Rules > Cache Rules > Create rule
 - Cache eligibility: Eligible for cache
 - Edge TTL: Use cache-control header if present, bypass cache if not
 - Browser TTL: Respect origin TTL
-- Cache key: default (the query string stays in the key, so `?format=json` and `?theory=SDNAP` are separate entries)
+- Cache key: default (the query string stays in the key, so `?format=json` and `?theory=SGP4XP` are separate entries)
 - Respect strong ETags: on
 - Serve stale content while revalidating: on
 

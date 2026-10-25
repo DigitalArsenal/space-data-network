@@ -3,17 +3,17 @@ package api
 // TODAY'S CURRENT CATALOG over one GET (owner 2026-10-25): every object the
 // node holds, once per mean-element theory, as the node's own $OMM records.
 //
-//	GET /api/v1/data/catalog/current[?format=flatbuffer|json][&theory=SGP4|SGP4XP|SDNAP|all]
+//	GET /api/v1/data/catalog/current[?format=flatbuffer|json][&theory=SGP4|SGP4XP|all]
 //
 //	format   flatbuffer (default): the size-prefixed $OMM stream, byte for byte
 //	         the stored records. json: the FlatBuffers JSON form of the same
 //	         records (the IDL's field names, enums by name), one array.
-//	theory   which MEAN_ELEMENT_THEORY: SGP4, SGP4XP, SDNAP (SDN-AP, with its
-//	         COVARIANCE) or all (default).
+//	theory   which MEAN_ELEMENT_THEORY: SGP4, SGP4XP or all (default). A stored
+//	         record of another theory (SDNAP, removed 2026-10-25) is not served.
 //
 // There is no history: the answer is the records nearest now for each object
 // and theory. Nothing else is accepted, so the cache key space is two formats
-// times five theories.
+// times three theory values.
 //
 // CACHING. The entity tag is the SHA-256 of the format, the theory and the
 // record CIDs (a CID is the hash of the record's bytes), so it changes exactly
@@ -55,7 +55,7 @@ const (
 	catalogQueryLimit   = 250000
 )
 
-var catalogTheories = []string{"SGP4", "SGP4XP", "SDNAP"}
+var catalogTheories = []string{"SGP4", "SGP4XP"}
 
 type catalogSelection struct {
 	at        time.Time
@@ -74,6 +74,16 @@ type catalogCurrentState struct {
 	mu   sync.Mutex
 	last *catalogSelection
 	now  func() time.Time
+}
+
+// catalogServes reports whether the catalog serves a mean-element theory.
+func catalogServes(theory string) bool {
+	for _, t := range catalogTheories {
+		if t == theory {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *DataQueryHandler) catalogNow() time.Time {
@@ -122,7 +132,11 @@ func (h *DataQueryHandler) catalogRecords(now time.Time) ([]*storage.Record, tim
 		if err != nil {
 			return err
 		}
-		k := key{omm.NORAD_CAT_ID(), omm.MEAN_ELEMENT_THEORY().String()}
+		theory := omm.MEAN_ELEMENT_THEORY().String()
+		if !catalogServes(theory) {
+			return nil
+		}
+		k := key{omm.NORAD_CAT_ID(), theory}
 		delta := m.MatchedEpoch.Unix() - now.Unix()
 		if delta < 0 {
 			delta = -delta
@@ -266,12 +280,8 @@ func (h *DataQueryHandler) handleCatalogCurrent(w http.ResponseWriter, r *http.R
 	theory := "all"
 	if raw := strings.ToUpper(strings.TrimSpace(values.Get("theory"))); raw != "" && raw != "ALL" {
 		theory = raw
-		known := false
-		for _, t := range catalogTheories {
-			known = known || t == theory
-		}
-		if !known {
-			WriteErrorFrame(w, http.StatusBadRequest, "bad_request", "unsupported theory; use SGP4, SGP4XP, SDNAP or all.", 0)
+		if !catalogServes(theory) {
+			WriteErrorFrame(w, http.StatusBadRequest, "bad_request", "unsupported theory; use SGP4, SGP4XP or all.", 0)
 			return
 		}
 	}
