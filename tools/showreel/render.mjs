@@ -13,15 +13,16 @@
 // name is drawn anywhere in it, and every number the reel declares in `facts`
 // names its source.
 // Needs Playwright (any installed copy: set PLAYWRIGHT_MODULE to its path; else
-// the one in the repository or in sdn-js is used), an ffmpeg with libx264 and
-// libsvtav1, and ImageMagick (the poster).
+// the repository's, sdn-js's, or the newest of the shared sdn-js dependency
+// bundles under ~/.cache/sdn-deps is used), an ffmpeg with libx264 and libsvtav1,
+// and ImageMagick (the poster).
 // Options are strict: an unknown option, or one without its value, stops the run.
 
 import { spawnSync } from "node:child_process";
-import { createReadStream, existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createReadStream, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, extname, join, normalize, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -60,6 +61,15 @@ async function loadChromium() {
     candidates.push(pathToFileURL(join(dirname(found), "index.mjs")).href);
   } catch {
     // no sdn-js install
+  }
+  // tools/deps-bundle keeps one read-only bundle per lockfile; a worktree that was never attached finds Playwright there
+  const bundles = join(homedir(), ".cache", "sdn-deps", "sdn-js");
+  if (existsSync(bundles)) {
+    const found = readdirSync(bundles)
+      .map((name) => join(bundles, name, "node_modules", "playwright", "index.mjs"))
+      .filter((file) => existsSync(file))
+      .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
+    candidates.push(...found.map((file) => pathToFileURL(file).href));
   }
   for (const candidate of candidates) {
     try {
