@@ -64,17 +64,17 @@ export const FACTS = {
   quietArcs: { value: 48, source: `${README}, Measured (test/events.e2e.mjs): no false alarm on 48 burn-free arcs of 72 h` },
   config: {
     value: [["THEORY", "SDNAP"], ["OUTPUT.STEP_SECONDS", "60"], ["OUTPUT.MAXIMUM_STATES", "500000"], ["FIT.DEFAULT_SPAN_HOURS", "48"], ["REENTRY.ALTITUDE_KM", "80"]],
-    source: `${README}, Interface: Configuration ($PCF 1.0): THEORY, OUTPUT.STEP_SECONDS 60 s, MAXIMUM_STATES 500,000, FIT.DEFAULT_SPAN_HOURS 48 h, REENTRY ALTITUDE_KM 80 km`,
+    source: `${README}, Interface: Configuration ($PCF 1.0.2): THEORY, OUTPUT.STEP_SECONDS 60 s, MAXIMUM_STATES 500,000, FIT.DEFAULT_SPAN_HOURS 48 h, REENTRY ALTITUDE_KM 80 km`,
   },
   // from the recorded run (BANK.facts)
-  meanKm: { value: () => BANK.facts.mo.aMeanKm, source: `${RUN}: mean semi-major axis of the 15.2 rev/day set, SPEC 1.4 from the module's mean motion` },
-  swingKm: { value: () => BANK.facts.mo.aOscMaxKm - BANK.facts.mo.aOscMinKm, source: `${RUN}: osculating semi-major axis, maximum minus minimum over three revolutions` },
-  cyclesPerRev: { value: () => BANK.facts.mo.cyclesPerRevolution, source: `${RUN}: crossings of the mean by the osculating semi-major axis` },
+  meanKm: { value: () => BANK.facts.mo.aMeanKm, source: `${RUN}: sdnap_mean_elements_at, the theory's mean semi-major axis of the 15.2 rev/day set` },
+  swingKm: { value: () => BANK.facts.mo.aOscMaxKm - BANK.facts.mo.aOscMinKm, source: `${RUN}: sdnap_osculating_elements of the module's states, the osculating semi-major axis, maximum minus minimum over three revolutions` },
+  cyclesPerRev: { value: () => BANK.facts.mo.cyclesPerRevolution, source: `${RUN}: crossings of the sdnap_mean_elements_at mean by the sdnap_osculating_elements semi-major axis, per revolution` },
   reentryDays: { value: () => BANK.facts.drag.reentryDays, source: `${RUN}: sdnap_reentry_reference, 16.08 rev/day, B_eff 0.02 m^2/kg, F10.7 150, Ap 15` },
   startAltKm: { value: () => BANK.facts.drag.startAltitudeKm, source: `${RUN}: sdnap_geodetic_height_km of the epoch state` },
-  burnDvMS: { value: () => BANK.facts.man.dvMS, source: `${RUN}: the impulse given to sdnap_osculating_states along the velocity` },
-  sepKm: { value: () => [BANK.facts.man.sepAfter1hKm, BANK.facts.man.sepAfter3hKm, BANK.facts.man.sepAfter24hKm], source: `${RUN}: distance between the burned and the unburned sdnap_osculating_states` },
-  apogeeKm: { value: () => BANK.facts.cislunar.apogeeRadiusKm, source: `${RUN}: largest geocentric radius of the 0.1 rev/day, e 0.9 set over 20 days` },
+  burnDvMS: { value: () => BANK.facts.man.dvMS, source: `${RUN}: the impulse given to sdnap_osculating_states along its in-track axis (V)` },
+  sepKm: { value: () => [BANK.facts.man.sepAfter1hKm, BANK.facts.man.sepAfter3hKm, BANK.facts.man.sepAfter24hKm], source: `${RUN}: distance between the burned and the unburned sdnap_osculating_states, 1 h, 3 h and 24 h after the epoch` },
+  apogeeKm: { value: () => BANK.facts.cislunar.apogeeRadiusKm, source: `${RUN}: largest geocentric radius of the 0.1 rev/day, e 0.9 set's states, hourly over 20 days` },
 };
 const fact = (name) => (typeof FACTS[name].value === "function" ? FACTS[name].value() : FACTS[name].value);
 
