@@ -28,6 +28,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -269,6 +270,24 @@ func verifiedPublisherEPMBytes(data []byte, peerID string) (*standardsEPM.EPM, b
 	return standardsEPM.GetSizePrefixedRootAsEPM(data, 0), true
 }
 
+// domainProofVersion is the first line of the statement an issuer signs
+// (docs/domain-proofs.md). The statement names every domain of the proof's
+// DOMAINS vector, so /2 replaced /1, which had room for one; /1 is not read.
+const domainProofVersion = "sdn-domain-proof/2"
+
+var (
+	// errDomainProofNoDomains refuses a DomainProof whose DOMAINS vector is
+	// empty. SDS 1.266.0 deprecated the single-domain slot in place, so a proof
+	// written under 1.264.0 or 1.265.0 decodes with DOMAINS empty. It is not
+	// read from the old slot; the issuer signs a new proof.
+	errDomainProofNoDomains = errors.New("domain proof lists no DOMAINS; issue it again as " + domainProofVersion)
+	// errDomainProofStatement refuses a SIGNED_PAYLOAD that is not exactly the
+	// statement the record's own DOMAINS, key and peer produce.
+	errDomainProofStatement = errors.New("domain proof SIGNED_PAYLOAD is not the " + domainProofVersion + " statement of this record")
+)
+
+// verifiedPublisherDomains is every domain named by a proof of the record that
+// verifies, sorted. A proof counts whole: one refused name refuses the proof.
 func verifiedPublisherDomains(record *standardsEPM.EPM, peerID string, now time.Time) []string {
 	if record == nil {
 		return nil
@@ -279,8 +298,11 @@ func verifiedPublisherDomains(record *standardsEPM.EPM, peerID string, now time.
 		if !record.DOMAIN_PROOFS(proof, i) {
 			continue
 		}
-		domain, ok := verifyPublisherDomainProof(record, proof, peerID, now)
-		if ok {
+		proven, err := verifyPublisherDomainProof(record, proof, peerID, now)
+		if err != nil {
+			continue
+		}
+		for _, domain := range proven {
 			seen[domain] = struct{}{}
 		}
 	}
@@ -292,56 +314,97 @@ func verifiedPublisherDomains(record *standardsEPM.EPM, peerID string, now time.
 	return domains
 }
 
-func verifyPublisherDomainProof(record *standardsEPM.EPM, proof *standardsEPM.DomainProof, peerID string, now time.Time) (string, bool) {
-	domain := strings.TrimSpace(string(proof.DNS_DOMAIN()))
+// proofDomains is the proof's DOMAINS vector, in order. An empty vector, or a
+// name that is not canonical, refuses the proof.
+func proofDomains(proof *standardsEPM.DomainProof) ([]string, error) {
+	count := proof.DOMAINSLength()
+	if count == 0 {
+		return nil, errDomainProofNoDomains
+	}
+	domains := make([]string, count)
+	for i := range domains {
+		domains[i] = string(proof.DOMAINS(i))
+		if !canonicalDomain(domains[i]) {
+			return nil, fmt.Errorf("domain proof DOMAINS[%d] is not a canonical domain name", i)
+		}
+	}
+	return domains, nil
+}
+
+// domainProofStatement is the statement an issuer signs: the version line, one
+// domain= line per name in DOMAINS order, then key, peerid, issued and expires,
+// every line ended by LF.
+func domainProofStatement(domains []string, algorithm, publicHex, peerID string, issued, expires int64) []byte {
+	var statement bytes.Buffer
+	statement.WriteString(domainProofVersion + "\n")
+	for _, domain := range domains {
+		statement.WriteString("domain=" + domain + "\n")
+	}
+	fmt.Fprintf(&statement, "key=%s:%s\npeerid=%s\nissued=%d\nexpires=%d\n", algorithm, publicHex, peerID, issued, expires)
+	return statement.Bytes()
+}
+
+// verifyPublisherDomainProof returns the domains the proof binds when every
+// name is canonical, the signed statement is byte for byte the one the
+// record's DOMAINS, key and peer produce, it is inside its validity window and
+// the signature verifies; otherwise the reason it is refused.
+func verifyPublisherDomainProof(record *standardsEPM.EPM, proof *standardsEPM.DomainProof, peerID string, now time.Time) ([]string, error) {
+	domains, err := proofDomains(proof)
+	if err != nil {
+		return nil, err
+	}
 	publicHex := strings.TrimSpace(string(proof.PUBLIC_KEY()))
 	algorithm := strings.ToLower(strings.TrimSpace(string(proof.ALGORITHM())))
 	if algorithm == "" {
 		algorithm = "ed25519"
 	}
-	if !canonicalDomain(domain) || publicHex == "" || publicHex != strings.ToLower(publicHex) ||
-		!epmCarriesSigningKey(record, publicHex, algorithm) {
-		return "", false
+	if publicHex == "" || publicHex != strings.ToLower(publicHex) || !epmCarriesSigningKey(record, publicHex, algorithm) {
+		return nil, errors.New("domain proof PUBLIC_KEY is not a lowercase signing key of this profile")
 	}
 
 	payload, err := decodeCanonicalHex(string(proof.SIGNED_PAYLOAD()))
 	if err != nil {
-		return "", false
+		return nil, fmt.Errorf("domain proof SIGNED_PAYLOAD: %w", err)
 	}
+	// issued= and expires= end the statement (a final LF leaves an empty last
+	// element). They are the only fields read from it; the whole statement must
+	// then equal the one the record's own fields produce.
 	lines := strings.Split(string(payload), "\n")
-	if len(lines) != 7 || lines[0] != "sdn-domain-proof/1" || lines[6] != "" ||
-		lines[1] != "domain="+domain || lines[2] != "key="+algorithm+":"+publicHex ||
-		lines[3] != "peerid="+peerID {
-		return "", false
+	if len(lines) < 3 {
+		return nil, errDomainProofStatement
 	}
-	issued, err := parseCanonicalProofTime(lines[4], "issued=")
+	issued, err := parseCanonicalProofTime(lines[len(lines)-3], "issued=")
 	if err != nil {
-		return "", false
+		return nil, errDomainProofStatement
 	}
-	expires, err := parseCanonicalProofTime(lines[5], "expires=")
+	expires, err := parseCanonicalProofTime(lines[len(lines)-2], "expires=")
 	if err != nil {
-		return "", false
+		return nil, errDomainProofStatement
 	}
-	canonical := fmt.Sprintf("sdn-domain-proof/1\ndomain=%s\nkey=%s:%s\npeerid=%s\nissued=%d\nexpires=%d\n",
-		domain, algorithm, publicHex, peerID, issued, expires)
-	if !bytes.Equal(payload, []byte(canonical)) {
-		return "", false
+	if !bytes.Equal(payload, domainProofStatement(domains, algorithm, publicHex, peerID, issued, expires)) {
+		return nil, errDomainProofStatement
 	}
 	const clockSkew = int64(300)
 	nowUnix := now.Unix()
-	if issued > nowUnix+clockSkew || (expires != 0 && expires < nowUnix-clockSkew) {
-		return "", false
+	if issued > nowUnix+clockSkew {
+		return nil, errors.New("domain proof is not valid yet")
+	}
+	if expires != 0 && expires < nowUnix-clockSkew {
+		return nil, errors.New("domain proof has expired")
 	}
 
 	publicKey, err := decodeCanonicalHex(publicHex)
 	if err != nil {
-		return "", false
+		return nil, fmt.Errorf("domain proof PUBLIC_KEY: %w", err)
 	}
 	signature, err := decodeCanonicalHex(string(proof.SIGNATURE()))
-	if err != nil || !verifyDomainSignature(algorithm, publicKey, payload, signature) {
-		return "", false
+	if err != nil {
+		return nil, fmt.Errorf("domain proof SIGNATURE: %w", err)
 	}
-	return domain, true
+	if !verifyDomainSignature(algorithm, publicKey, payload, signature) {
+		return nil, errors.New("domain proof SIGNATURE does not verify")
+	}
+	return domains, nil
 }
 
 func epmCarriesSigningKey(record *standardsEPM.EPM, publicHex, algorithm string) bool {
@@ -408,7 +471,7 @@ func verifyDomainSignature(algorithm string, publicKey, payload, signature []byt
 }
 
 func canonicalDomain(domain string) bool {
-	if domain == "" || domain != strings.ToLower(domain) || strings.HasSuffix(domain, ".") || strings.Contains(domain, "..") {
+	if domain == "" || domain != strings.ToLower(domain) || strings.HasPrefix(domain, ".") || strings.HasSuffix(domain, ".") || strings.Contains(domain, "..") {
 		return false
 	}
 	for _, ch := range domain {
