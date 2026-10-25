@@ -481,6 +481,7 @@ func TestDomainProofOneBadNameRefusesTheProof(t *testing.T) {
 		"Observatory.example",   // uppercase
 		"bad_name.example",      // underscore
 		"observatory.example.",  // trailing dot
+		".observatory.example",  // empty first label
 		" observatory.example",  // leading space
 		"observatory.example\n", // line feed
 		"m\u00fcnchen.example",  // IDN not in punycode

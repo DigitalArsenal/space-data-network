@@ -6,7 +6,8 @@ each proof. It lists every verified domain as evidence beside the publisher's
 name. A proof never raises the publisher's rung (source-tag, signed, bonded).
 
 Nothing in SDN issues proofs. The publisher's wallet or tooling signs the
-statement below and stores the result in the EPM.
+statement below and stores the result in the EPM. The node checks the statement
+and its signature; it does not look up DNS.
 
 ## Record
 

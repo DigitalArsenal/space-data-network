@@ -471,7 +471,7 @@ func verifyDomainSignature(algorithm string, publicKey, payload, signature []byt
 }
 
 func canonicalDomain(domain string) bool {
-	if domain == "" || domain != strings.ToLower(domain) || strings.HasSuffix(domain, ".") || strings.Contains(domain, "..") {
+	if domain == "" || domain != strings.ToLower(domain) || strings.HasPrefix(domain, ".") || strings.HasSuffix(domain, ".") || strings.Contains(domain, "..") {
 		return false
 	}
 	for _, ch := range domain {
