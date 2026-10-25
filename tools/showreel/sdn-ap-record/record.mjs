@@ -254,8 +254,9 @@ function record({ m, THEORY, FRAME, sha256 }) {
     out.facts.density = Object.fromEntries([150, 200, 250, 300, 400, 500, 600, 800].map((h) => [h, densityKgM3(m, 0, h)]));
   }
 
-  // A maneuver: +1 m/s along the velocity at 20 minutes, with and without it, for 24 hours; the burned object's position
-  // relative to the unburned one in the unburned object's radial and in-track axes (sdnap_frame_to_uvw).
+  // A maneuver: +1 m/s along the in-track axis V at 20 minutes (sdnap_osculating_states takes a burn in its radial,
+  // in-track and cross-track components), with and without it, for 24 hours; the burned object's position relative
+  // to the unburned one in the unburned object's radial and in-track axes (sdnap_frame_to_uvw).
   {
     m.init([row({ meanMotion: 15.5, ecc: 0.0005, inc: 51.6, raan: 120, argp: 90, ma: 30, bterm: 0.012, agom: 0.01, norad: 90030 })]);
     const y0 = trace(0, 0);
