@@ -1,6 +1,6 @@
 // The seeded populations the reel flies: synthetic orbits in every regime, from a fixed seed. No catalog data is
 // used or reproduced (the data license policy forbids republishing element sets derived per object).
-import { RE, revPerDay, spinAt } from "./module.mjs";
+import { RE, meanMotionOf, spinAt } from "./module.mjs";
 
 const SEED = 20261024;
 export const SIDEREAL = 1.00273791; // rev/day: one turn of the Earth, in revolutions per solar day
@@ -23,14 +23,20 @@ export function makePopulations(m, row) {
   const theta = (spinAt(m, 0) * 180) / Math.PI; // the Earth's rotation angle at the epoch, degrees
   const rows = [];
   const add = (kind, o) => rows.push({ kind, ...row({ norad: rows.length + 1, ...o }) });
+  // The Brouwer mean motion (rev/day) of a mean semi-major axis (km): the module's sdnap_mean_motion_of. Each orbit's
+  // draws stay in the order they had, so the seeded populations are the ones the reel records.
+  const mm = (aKm, e, i) => meanMotionOf(m, aKm, e, i);
   // low orbit: four constellation-like shells (53, 43, 70 and 97.6 degrees), then scattered orbits
   const shell = (planes, per, inc, alt, phase) => {
     for (let p = 0; p < planes; p++) {
       for (let k = 0; k < per; k++) {
+        const a = RE + alt + (R() - 0.5) * 6;
+        const ecc = 0.0001 + 0.0004 * R();
+        const i = inc + (R() - 0.5) * 0.1;
         add("leo", {
-          meanMotion: revPerDay(RE + alt + (R() - 0.5) * 6),
-          ecc: 0.0001 + 0.0004 * R(),
-          inc: inc + (R() - 0.5) * 0.1,
+          meanMotion: mm(a, ecc, i),
+          ecc,
+          inc: i,
           raan: (360 * p) / planes,
           argp: R() * 360,
           ma: ((360 * k) / per + (phase * 360 * p) / (planes * per)) % 360,
@@ -46,7 +52,9 @@ export function makePopulations(m, row) {
   shell(10, 16, 97.6, 560, 0.5);
   for (let i = 0; i < 544; i++) {
     const inc = [52, 65, 82, 98, 28.5, 74][Math.floor(R() * 6)] + (R() - 0.5) * 3;
-    add("leo", { meanMotion: revPerDay(RE + 450 + 850 * R()), ecc: 0.0005 + 0.008 * R(), inc, raan: R() * 360, argp: R() * 360, ma: R() * 360, bterm: 0.003 + 0.03 * R(), agom: 0.005 + 0.02 * R() });
+    const a = RE + 450 + 850 * R();
+    const ecc = 0.0005 + 0.008 * R();
+    add("leo", { meanMotion: mm(a, ecc, inc), ecc, inc, raan: R() * 360, argp: R() * 360, ma: R() * 360, bterm: 0.003 + 0.03 * R(), agom: 0.005 + 0.02 * R() });
   }
   // medium orbit: a navigation-class constellation, 6 planes of 4 at 55 degrees with a half-day period, and six others
   for (let p = 0; p < 6; p++) {
@@ -55,7 +63,9 @@ export function makePopulations(m, row) {
     }
   }
   for (let i = 0; i < 6; i++) {
-    add("meo", { meanMotion: revPerDay(RE + 19100 + 400 * R()), ecc: 0.002, inc: 56 + 8 * R(), raan: R() * 360, argp: R() * 360, ma: R() * 360, bterm: 0.01, agom: 0.02 });
+    const a = RE + 19100 + 400 * R();
+    const inc = 56 + 8 * R();
+    add("meo", { meanMotion: mm(a, 0.002, inc), ecc: 0.002, inc, raan: R() * 360, argp: R() * 360, ma: R() * 360, bterm: 0.01, agom: 0.02 });
   }
   // geostationary belt: the mean anomaly puts each object at a random Earth-fixed longitude at the epoch
   for (let i = 0; i < 160; i++) {
@@ -80,7 +90,9 @@ export function makePopulations(m, row) {
   for (let i = 0; i < 40; i++) {
     const rp = RE + 250 + 450 * R();
     const ra = RE + 35786 + 1500 * (R() - 0.5);
-    add("heo", { meanMotion: revPerDay((rp + ra) / 2), ecc: (ra - rp) / (ra + rp), inc: 5 + 25 * R(), raan: R() * 360, argp: R() * 360, ma: R() * 360, bterm: 0.01, agom: 0.02 });
+    const ecc = (ra - rp) / (ra + rp);
+    const inc = 5 + 25 * R();
+    add("heo", { meanMotion: mm((rp + ra) / 2, ecc, inc), ecc, inc, raan: R() * 360, argp: R() * 360, ma: R() * 360, bterm: 0.01, agom: 0.02 });
   }
   return rows;
 }

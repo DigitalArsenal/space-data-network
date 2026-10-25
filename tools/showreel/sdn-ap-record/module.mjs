@@ -11,8 +11,6 @@ export const EPOCH_WHOLE = 2461337.5; // 2026-10-24 00:00 UTC as a Julian date
 export const EPOCH_FRAC = 0.5; // 12:00 UTC
 const D50_OFFSET = 2433281.5; // Julian date of 1950 January 0.0, the module's day count
 export const RE = 6378.1363; // km, EGM-96 (SPEC 1.3)
-export const MU = 398600.4415; // km^3/s^2, EGM-96 (SPEC 1.3)
-export const KE = 0.074366859954178854; // SPEC 1.3
 const DEG = Math.PI / 180;
 
 /** Opens the module of a checkout of the public modules repository: { m, THEORY, FRAME, sha256 }. */
@@ -102,8 +100,12 @@ export function toUvw(m, r, v, vec) {
   return out;
 }
 
-/** SPEC 1.4 inverted: the Brouwer mean motion (rev/day) of a mean semi-major axis (km). */
-export const revPerDay = (aKm) => ((KE / Math.pow(aKm / RE, 1.5)) * 1440) / (2 * Math.PI);
+/** sdnap_mean_motion_of: the Brouwer mean motion (rev/day) of a mean semi-major axis (km), eccentricity and inclination (deg). */
+export function meanMotionOf(m, aKm, e, iDeg) {
+  const n = m.x.sdnap_mean_motion_of(aKm, e, iDeg);
+  if (!Number.isFinite(n)) throw new Error(`sdnap_mean_motion_of refused a ${aKm} km, e ${e}, i ${iDeg}`);
+  return n;
+}
 
 /**
  * sdnap_osculating_states, the module's own osculating integrator: TEME states at ascending times `ts` (s from the

@@ -2,8 +2,8 @@
 // (tools/showreel/reels/sdn-ap.js) shows can be reproduced.
 //   node tools/showreel/sdn-ap-record/record.mjs [--modules DIR] [--check | --embed]
 // --modules names a checkout of the public modules repository (default: $SDN_MODULES_ROOT, else
-// ../space-data-network-modules): propagator/sdn-ap at the commit whose module bytes the reel records (c0c5da38,
-// dist/isomorphic/module.wasm sha256 b9bc708baa50...). `git archive <commit> propagator/sdn-ap | tar -x -C DIR` is enough.
+// ../space-data-network-modules): propagator/sdn-ap at the commit whose module bytes the reel records (c5b418ec,
+// dist/isomorphic/module.wasm sha256 5e2cf5255180...). `git archive <commit> propagator/sdn-ap | tar -x -C DIR` is enough.
 // The module is opened through that tree's own test helper, so its dependencies must be installed: from the stack,
 // node tools/deps-bundle/deps-bundle.mjs attach DIR/propagator/sdn-ap
 // With no mode it records and prints a summary. --check records and compares with the data block embedded in the
@@ -343,7 +343,7 @@ function formatBlock({ bank, data }) {
   const lines = data.toString("hex").match(/.{1,160}/g).join("\n");
   return `${BEGIN}
 // Recorded output of the SDN-AP module: propagator/sdn-ap/dist/isomorphic/module.wasm, sha256 ${bank.moduleSha256}
-// (the public modules repository at c0c5da38). Seeded populations only (no catalog data); epoch 2026-10-24 12:00:00 UTC;
+// (the public modules repository at c5b418ec). Seeded populations only (no catalog data); epoch 2026-10-24 12:00:00 UTC;
 // the environment in force is the module's own (F10.7 150, F10.7a 150, Ap 15). Positions and velocities are TEME km and
 // km/s (Int16 with one scale per track), Earth-fixed km where named; series are Float32. BANK describes each array
 // (offset and length into the bytes below, ${bank.binaryBytes} bytes, hexadecimal) and holds the numbers the module reported (BANK.facts).
