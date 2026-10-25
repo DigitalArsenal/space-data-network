@@ -40,6 +40,9 @@ type DataQueryHandler struct {
 	// namedOnly are the lanes the unfiltered bulk lists leave out
 	// (data_bulk_scope.go).
 	namedOnly []config.LaneSelector
+	// catalog is the current-catalog read's selection and renders
+	// (catalog_current.go).
+	catalog catalogCurrentState
 }
 
 // NewDataQueryHandler creates a new data query handler with a RAM-only index
@@ -85,6 +88,7 @@ func NewDataQueryHandlerWithUICache(store *storage.FlatSQLStore, uiCacheDir stri
 func (h *DataQueryHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/data/omm/bulk", h.handleOMMBulkExport)
 	mux.HandleFunc("/api/v1/data/cat/bulk", h.handleCATBulkExport)
+	mux.HandleFunc(CatalogCurrentPath, h.handleCatalogCurrent)
 	mux.HandleFunc("/api/v1/data/health", h.handleHealth)
 	mux.HandleFunc("/api/v1/data/index", h.handleRecordIndex)
 	mux.HandleFunc("/api/v1/data/summary", h.handleSummary)

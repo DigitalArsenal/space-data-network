@@ -1642,6 +1642,9 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				if method != http.MethodGet && method != http.MethodHead && method != http.MethodOptions {
 					return false
 				}
+				if path == api.CatalogCurrentPath {
+					return sds.IsPublicReadSchema("OMM")
+				}
 				code, ok := dataPlaneBulkSchema(path)
 				return ok && sds.IsPublicReadSchema(code)
 			}
