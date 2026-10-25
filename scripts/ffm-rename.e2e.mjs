@@ -60,13 +60,23 @@ await check("arguments", () => {
   );
 });
 
-await check("grant policy uses com.orbpro.ffm with no legacy rule", async () => {
+// The node's rule match: exact, or a single trailing "*" (internal/license matchModulePattern).
+const ruleMatches = (pattern, moduleId) =>
+  pattern === "*" ||
+  (pattern.endsWith("*") ? moduleId.startsWith(pattern.slice(0, -1)) : pattern === moduleId);
+
+await check("grant policy: com.orbpro.ffm is open, and no rule can match the legacy name", async () => {
   const policy = JSON.parse(
     await fs.readFile(path.join(root, "deployment/license/grant-policy.json"), "utf8"),
   );
   assert.ok(Array.isArray(policy.modules), "Policy must contain module rules");
-  assert.equal(policy.modules.filter((rule) => rule.match === "com.orbpro.ffm").length, 1);
-  assert.ok(policy.modules.every((rule) => rule.match !== legacyModuleId));
+  const ffmRules = policy.modules.filter((rule) => rule.match === "com.orbpro.ffm");
+  assert.equal(ffmRules.length, 1);
+  assert.equal(ffmRules[0].policy, "open", "FFM is free");
+  assert.deepEqual(
+    policy.modules.filter((rule) => ruleMatches(rule.match, legacyModuleId)).map((rule) => rule.match),
+    [],
+  );
 });
 
 await check("FFM catalog slug, artifact path, and encryptedData export", () => {

@@ -88,10 +88,11 @@ enough.
 
 ## FFM is free (owner 2026-10-24)
 
-`com.orbpro.ffm` and its compatibility name `com.orbpro.hpop` are `open`: any
-identity that passes the licensing challenge is granted, with no account. Their
-rules here say `open`, and their `catalog.json` rows declare `open` with no
-`allowed_xpubs` (a listed xpub narrows `open` back to `allowlist`).
+`com.orbpro.ffm` is `open`: any identity that passes the licensing challenge is
+granted, with no account. Its rule here says `open`, and its `catalog.json` row
+declares `open` with no `allowed_xpubs` (a listed xpub narrows `open` back to
+`allowlist`). FFM has one name: no row or rule exists for any other, and a
+request for an unknown module is refused.
 `com.spacedatanetwork.sdn-ap-propagator` (SDN-AP is open source and free) has
 the same `open` rule, so its publication is granted to any identity unless its
 own row declares otherwise.
@@ -103,15 +104,22 @@ and a client verifies the trailer-stripped SHA-256 against the row's
 declarations; changing one never changes the other. The node re-signs
 `modules.pmm` every 6 hours and at boot.
 
+FFM is published once: its license row and its `modules.pmm` row carry the same
+version, and the bytes a grant delivers hash to the row's `CONTENT_HASH`. The
+probe below fails a module that breaks either when given `--same-version`.
+
 A new publication of a module retires its earlier versions after
 `retire_superseded_after_seconds` (default and maximum 10 minutes), so a grant
 request must name the version the catalog row currently holds.
 
-Check the live grant with an anonymous identity (stack
-`deployment/module-grant-probe.mjs`):
+Check the live state with the stack probe. It proves a fresh anonymous identity
+for the origin, requests each module over the grant lane, checks the delivered
+bytes against the signed catalog, and exits 0 only when every probed module is
+granted:
 
 ```
-node deployment/module-grant-probe.mjs https://spaceaware.io --anon --only com.orbpro.ffm
+node deployment/module-grant-probe.mjs https://spaceaware.io --anon --only com.orbpro.ffm      # GRANTED, exit 0
+node deployment/module-grant-probe.mjs https://spaceaware.io --anon --only com.orbpro.rf-fspl   # REFUSED (paid), exit 1
 ```
 
 ## Audit
