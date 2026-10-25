@@ -171,6 +171,12 @@ export async function createReel(base = "") {
   // the objects that start on a stable point stay (module run), checked against the recorded run
   const stable = [7, 25].map((i) => ({ i, lon: BANK.facts.res.startLonDeg[i], drift: BANK.facts.res.endLonDeg[i] - BANK.facts.res.startLonDeg[i] }));
   if (stable.some((s) => Math.abs(s.drift) > 0.5)) throw new Error("recorded run: the stable-point objects drifted");
+  // the radius the recorded geostationary objects start at (km), for the guide ring and the stable-point marks
+  const geoRadiusKm = (() => {
+    let sum = 0;
+    for (let i = 0; i < res.count; i++) sum += Math.hypot(res.xyz[i * res.n * 3], res.xyz[i * res.n * 3 + 1]);
+    return sum / res.count;
+  })();
   const lonOf = (i, d) => {
     const a = (i * res.n + d) * 3;
     return Math.atan2(res.xyz[a + 1], res.xyz[a]);
@@ -688,7 +694,7 @@ export async function createReel(base = "") {
     const rho = Math.pow(10, densAt(clamp(altNow, aLo, aHi)));
     const exp = Math.floor(Math.log10(rho));
     mono(`${fix(altNow, 0)} KM`, cx1 - 6, ay0 + 52, 40, AMBER, a, "right", 1, 700);
-    mono(`${fix(rho / Math.pow(10, exp), 1)} × 10${sup(exp)} KG/M³ AT PERIGEE`, cx1 - 6, ay0 + 84, 16, MUTED, a, "right", 1.5, 600);
+    mono(`${fix(rho / Math.pow(10, exp), 1)} × 10${sup(exp)} KG/M³`, cx1 - 6, ay0 + 84, 16, MUTED, a, "right", 1.5, 600);
     mono(`DAY ${fix(now / 86400, 1)}`, cx1, y + 52, 20, INK, a, "right", 2, 700);
     if (k >= 0.999) {
       const kk = clamp(easeOutBack(seg(tf, T.s5 - 0.9, T.s5 - 0.45)));
@@ -717,7 +723,7 @@ export async function createReel(base = "") {
     // the two stable points: where the objects that start there stay
     const wells = stable.map((s) => ({ lon: s.lon * D, label: `${Math.abs(Math.round(s.lon))}°${s.lon < 0 ? "W" : "E"}` }));
     for (const wl of wells) {
-      const p = ecefWorld(Math.cos(wl.lon) * 42164, Math.sin(wl.lon) * 42164, 0);
+      const p = ecefWorld(Math.cos(wl.lon) * geoRadiusKm, Math.sin(wl.lon) * geoRadiusKm, 0);
       const q = project(cam, p);
       if (!q) continue;
       const kw = easeOutExpo(seg(t, T.s5 + 0.9, T.s5 + 1.6));
@@ -737,7 +743,7 @@ export async function createReel(base = "") {
     const ringPts = [];
     for (let s = 0; s <= 180; s++) {
       const an = (s / 180) * Math.PI * 2;
-      ringPts.push(ecefWorld(Math.cos(an) * 42164, Math.sin(an) * 42164, 0));
+      ringPts.push(ecefWorld(Math.cos(an) * geoRadiusKm, Math.sin(an) * geoRadiusKm, 0));
     }
     polyline(cam, ringPts, "rgba(245,245,247,1)", 0.18 * a, 1.4, 0);
     const o = new Float64Array(3);
