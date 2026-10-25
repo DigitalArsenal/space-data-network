@@ -171,7 +171,8 @@ guide page (`docs/media/audio/`):
 | Covariance | `covariance.mp3` |
 | DeltaV | `delta-v.mp3` |
 
-- Each video carries one section of Orbital Insertion or Covariance, faded in
+- Each video carries one section of one of the three tracks, the one most
+  evocative for its subject, with the tracks varied across videos, faded in
   over 1 s and out over the last 1.5 s (`tools/showreel`, `meta.audio`).
 - Videos start muted (browsers only autoplay muted video); the player's sound
   button turns the music on, and the choice carries to every video.
