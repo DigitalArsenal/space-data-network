@@ -121,7 +121,7 @@ chapter titles in sentence case ("Digitally signed at the source").
   `docs/assets/sdn-chrome/` (copied verbatim to each site): the SDN mark and
   the site name on the left, the site's links, a light/dark switch (dark by
   default, remembered), and below 900 px a menu button whose menu repeats the
-  links. The stack section lists all eight sites; the footer carries the SDN
+  links. The stack section lists all seven sites; the footer carries the SDN
   mark, the site's links, its license, "© Edgesource Corporation" and
   tj@edgesource.com. A site without its own light palette sets
   `data-sdn-light="invert"` on `<html>`.
