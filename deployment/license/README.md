@@ -104,6 +104,10 @@ and a client verifies the trailer-stripped SHA-256 against the row's
 declarations; changing one never changes the other. The node re-signs
 `modules.pmm` every 6 hours and at boot.
 
+FFM is published once: its license row and its `modules.pmm` row carry the same
+version, and the bytes a grant delivers hash to the row's `CONTENT_HASH`. The
+probe below fails a module that breaks either when given `--same-version`.
+
 A new publication of a module retires its earlier versions after
 `retire_superseded_after_seconds` (default and maximum 10 minutes), so a grant
 request must name the version the catalog row currently holds.
