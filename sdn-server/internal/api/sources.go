@@ -281,10 +281,25 @@ var (
 	// written under 1.264.0 or 1.265.0 decodes with DOMAINS empty. It is not
 	// read from the old slot; the issuer signs a new proof.
 	errDomainProofNoDomains = errors.New("domain proof lists no DOMAINS; issue it again as " + domainProofVersion)
+	// errDomainProofTooManyNames refuses a DomainProof that binds more than
+	// maxDomainsPerProof names. It is decided from the vector's length, before
+	// any name is read.
+	errDomainProofTooManyNames = fmt.Errorf("domain proof binds more than %d names", maxDomainsPerProof)
+	// errDomainProofRepeatedName refuses a DomainProof whose DOMAINS lists the
+	// same name twice. Names must already be canonical, so a repeat is an exact
+	// repeat; a name that matches another only after lowercasing or dropping a
+	// trailing dot is refused as not canonical.
+	errDomainProofRepeatedName = errors.New("domain proof repeats a name")
 	// errDomainProofStatement refuses a SIGNED_PAYLOAD that is not exactly the
 	// statement the record's own DOMAINS, key and peer produce.
 	errDomainProofStatement = errors.New("domain proof SIGNED_PAYLOAD is not the " + domainProofVersion + " statement of this record")
 )
+
+// maxDomainsPerProof is the most names one proof binds (docs/domain-proofs.md).
+// One operator's apex and its subdomains fit well inside it. Checking a name
+// costs far less than the proof's one signature check, so the number limits
+// what a proof carries; it is not a speed guard.
+const maxDomainsPerProof = 32
 
 // verifiedPublisherDomains is every domain named by a proof of the record that
 // verifies, sorted. A proof counts whole: one refused name refuses the proof.
@@ -314,19 +329,28 @@ func verifiedPublisherDomains(record *standardsEPM.EPM, peerID string, now time.
 	return domains
 }
 
-// proofDomains is the proof's DOMAINS vector, in order. An empty vector, or a
-// name that is not canonical, refuses the proof.
+// proofDomains is the proof's DOMAINS vector, in order. An empty vector, more
+// than maxDomainsPerProof names, a name that is not canonical, or a name listed
+// twice refuses the proof.
 func proofDomains(proof *standardsEPM.DomainProof) ([]string, error) {
 	count := proof.DOMAINSLength()
 	if count == 0 {
 		return nil, errDomainProofNoDomains
 	}
+	if count > maxDomainsPerProof {
+		return nil, errDomainProofTooManyNames
+	}
 	domains := make([]string, count)
+	firstAt := make(map[string]int, count)
 	for i := range domains {
 		domains[i] = string(proof.DOMAINS(i))
 		if !canonicalDomain(domains[i]) {
 			return nil, fmt.Errorf("domain proof DOMAINS[%d] is not a canonical domain name", i)
 		}
+		if first, repeated := firstAt[domains[i]]; repeated {
+			return nil, fmt.Errorf("%w: DOMAINS[%d] repeats DOMAINS[%d]", errDomainProofRepeatedName, i, first)
+		}
+		firstAt[domains[i]] = i
 	}
 	return domains, nil
 }

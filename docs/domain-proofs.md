@@ -16,7 +16,7 @@ every name in its `DOMAINS`.
 
 | Field | Content |
 | --- | --- |
-| `DOMAINS` | `[string]`, one or more fully qualified names in statement order. Lowercase ASCII (`a-z`, `0-9`, `-`, `.`), internationalized names in punycode, no trailing dot, no empty label. Never empty. |
+| `DOMAINS` | `[string]`, one to 32 fully qualified names in statement order, none twice. Lowercase ASCII (`a-z`, `0-9`, `-`, `.`), internationalized names in punycode, no trailing dot, no empty label. |
 | `PUBLIC_KEY` | Lowercase hex, no `0x`. A signing key in the same EPM's `KEYS`. |
 | `ALGORITHM` | `ed25519` (absent means `ed25519`) or `secp256k1`, the algorithm of that key. |
 | `SIGNED_PAYLOAD` | Lowercase hex of the statement bytes. |
@@ -60,6 +60,16 @@ of `SIGNED_PAYLOAD` is refused.
 - `secp256k1`: ECDSA over the SHA-256 digest of the statement bytes. `SIGNATURE`
   is the DER encoding as hex. `PUBLIC_KEY` is the SEC1 public key as hex.
 
+## Limits
+
+A proof binds at most 32 names, and no name twice. One operator's apex and its
+subdomains fit well inside 32. A node checks a proof whole, so it refuses a
+longer list without reading any name.
+
+Names are compared as written, and each must already be canonical. A name that
+repeats another only after lowercasing, trimming or dropping a trailing dot is
+refused as not canonical.
+
 ## Validity
 
 A proof is valid from `issued` minus 300 seconds. It stays valid until `expires`
@@ -69,8 +79,12 @@ plus 300 seconds, or without end when `expires` is `0`.
 
 A proof is refused as a whole, and adds no evidence for any of its names, when:
 
-- `DOMAINS` is absent or empty. Proofs written under SDS 1.264.0 or 1.265.0
-  decode with `DOMAINS` empty; issue them again.
+- `DOMAINS` is absent or empty: `domain proof lists no DOMAINS; issue it again as sdn-domain-proof/2`.
+  Proofs written under SDS 1.264.0 or 1.265.0 decode with `DOMAINS` empty; issue
+  them again.
+- `DOMAINS` holds more than 32 names: `domain proof binds more than 32 names`.
+- a name appears twice in `DOMAINS`: `domain proof repeats a name`, followed by
+  the two positions.
 - any name in `DOMAINS` is not canonical.
 - `PUBLIC_KEY` is not a signing key of the same EPM with the same algorithm.
 - `SIGNED_PAYLOAD` is not the statement above, byte for byte. An
