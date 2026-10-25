@@ -29,7 +29,7 @@ import {
   add, sub, mul, dot, cross, len, norm, mix3, rng, makeTau, lookAt, geoDir, limbCamera, project, occluded, loadImage, createStudio,
 } from "../kit.js";
 
-export const meta = { name: "sdn-ap-reel", media: "docs/media/sdn-ap", poster: 640, crf: [27, 38], audio: { track: "covariance", start: 146.49 } };
+export const meta = { name: "sdn-ap-reel", media: "docs/media/sdn-ap", poster: 640, seconds: [60, 90], crf: [27, 38], audio: { track: "covariance", start: 146.49 } };
 
 const DURATION = 78;
 const FPS = 30;
@@ -792,13 +792,14 @@ export async function createReel(base = "") {
     const tEnd = T.s7 - 0.3;
     const k = clamp((tf - tStart) / (tEnd - tStart));
     const burnAt = TR.man.burnAtSeconds / 60;
-    // the clock: ten minutes in, the burn at twenty, then the day in a fast sweep
-    const minutes = k < 0.18 ? lerp(10, 22, k / 0.18) : 22 + (1440 - 22) * Math.pow((k - 0.18) / 0.82, 2.2);
+    // the clock: ten minutes in, the burn at twenty (on a beat of the music: 49.01 s), then the day in a fast sweep
+    const kBurnAt = (49.01 - tStart) / (tEnd - tStart);
+    const minutes = k < kBurnAt ? lerp(10, burnAt, k / kBurnAt) : burnAt + (1440 - burnAt) * Math.pow((k - kBurnAt) / (1 - kBurnAt), 2.2);
     const cur = manAt(minutes * 60);
     const burned = minutes >= burnAt;
     const sep = burned ? cur.sep : 0;
     const along = burned ? cur.along : 0;
-    const tBurn = tStart + 0.15 * (tEnd - tStart);
+    const tBurn = 49.01;
     mono("ALONG THE ORBIT · KM", x + 40, y + 52, 17, MUTED, a, "left", 3, 600);
     const hh = Math.floor(minutes / 60);
     mono(`T + ${pad2(hh)}:${pad2(minutes - hh * 60)} H · TIME-LAPSE`, x + w - 40, y + 52, 17, INK, a, "right", 2, 700);
