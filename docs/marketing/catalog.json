@@ -105,7 +105,8 @@
         "Name, catalog number and international designator search",
         "Operator and constellation search",
         "SQL predicates over the catalog",
-        "Place names and typed coordinates with boundary outlines"
+        "Place names and typed coordinates with boundary outlines",
+        "Moon places: every crewed and robotic landing site, maria, craters, mountains and rilles (IAU/USGS Gazetteer, NASA NSSDCA); picking one centers the Moon and flies there"
       ],
       "standards": [
         "FlatSQL",
@@ -115,7 +116,7 @@
       "delivery": "console",
       "covers": [],
       "learnMore": "https://spaceaware.io",
-      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/components/SearchPanel.svelte:141-152; search/EntitySearch.ts; search/constellations.ts; geo/geoPlaces.ts; geo/coordinateQuery.ts"
+      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/components/SearchPanel.svelte:141-152; search/EntitySearch.ts; search/constellations.ts; geo/geoPlaces.ts; geo/coordinateQuery.ts; geo/moonPlaces.ts; tools/moon-place-search-verify.mjs"
     },
     {
       "id": "object-intelligence",
