@@ -548,6 +548,49 @@ export async function createStudio({ base = "", hudTitle = "SPACE DATA NETWORK",
       sx.stroke();
     }
   }
+  // The dark rounded surface instruments and charts sit on: hairline border,
+  // the scene still visible through it.
+  function panel(x, y, w, h, alpha = 1, radius = 18) {
+    if (alpha <= 0) return;
+    sx.save();
+    sx.globalAlpha = alpha;
+    sx.beginPath();
+    sx.roundRect(x, y, w, h, radius);
+    sx.fillStyle = "rgba(8,8,10,0.68)";
+    sx.fill();
+    sx.strokeStyle = "rgba(255,255,255,0.14)";
+    sx.lineWidth = 1.5;
+    sx.stroke();
+    sx.restore();
+  }
+  // A label on an elbow leader from the point (px, py): a title and an
+  // optional mono line under it; side -1 (default for dx < 0) puts the text to the left.
+  function leaderLabel(px, py, dx, dy, title, sub, color, alpha, side = dx >= 0 ? 1 : -1) {
+    if (alpha <= 0) return;
+    const ex = px + dx;
+    const ey = py + dy;
+    sx.save();
+    sx.globalAlpha = alpha;
+    sx.strokeStyle = color;
+    sx.lineWidth = 1.6;
+    sx.beginPath();
+    sx.moveTo(px, py);
+    sx.lineTo(px + dx * 0.45, ey);
+    sx.lineTo(ex + side * 18, ey);
+    sx.stroke();
+    sx.fillStyle = color;
+    sx.textAlign = side > 0 ? "left" : "right";
+    sx.font = font(700, 26, SANS);
+    sx.letterSpacing = "3px";
+    sx.fillText(title, ex + side * 28, ey + (sub ? -4 : 9));
+    if (sub) {
+      sx.font = font(500, 20, MONO);
+      sx.letterSpacing = "1.5px";
+      sx.fillStyle = MUTED;
+      sx.fillText(sub, ex + side * 28, ey + 26);
+    }
+    sx.restore();
+  }
   // Style-guide line icons on a 24-unit box.
   function icon(size, cx, cy, color, alpha, draw) {
     if (alpha <= 0 || size <= 0) return;
@@ -1071,7 +1114,7 @@ export async function createStudio({ base = "", hudTitle = "SPACE DATA NETWORK",
   };
 
   return {
-    glc, sx, gx, font, maskText, GLYPHS, decodeText, dotGlow, drawMark, hud, scrim, pill, icon, badge, padlock, keyIcon,
+    glc, sx, gx, font, maskText, GLYPHS, decodeText, dotGlow, drawMark, hud, scrim, pill, panel, leaderLabel, icon, badge, padlock, keyIcon,
     bezierPts, pointOn, strokeOn, stamp, renderEarth, drawSatellites, drawOrbitPath, arcPoint, strokeArc,
     LX, CAP_Y, BIG, EYE, CAP, LETTERS, lineYs, caption, block, shiftBlock, questionBadge,
     strokeOrbitArc, eyebrow, lockup, beginSubframe, bloom, makeRenderFrame, cutPulses, canvas: out,
