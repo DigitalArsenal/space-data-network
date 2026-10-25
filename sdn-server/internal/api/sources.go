@@ -285,6 +285,10 @@ var (
 	// maxDomainsPerProof names. It is decided from the vector's length, before
 	// any name is read.
 	errDomainProofTooManyNames = fmt.Errorf("domain proof binds more than %d names", maxDomainsPerProof)
+	// errDomainProofRecordTooManyNames refuses a record whose verified proofs
+	// bind more than maxDomainsPerRecord distinct names together, however the
+	// names are spread over its proofs.
+	errDomainProofRecordTooManyNames = fmt.Errorf("domain proofs of one record bind more than %d names", maxDomainsPerRecord)
 	// errDomainProofRepeatedName refuses a DomainProof whose DOMAINS lists the
 	// same name twice. Names must already be canonical, so a repeat is an exact
 	// repeat; a name that matches another only after lowercasing or dropping a
@@ -301,32 +305,59 @@ var (
 // what a proof carries; it is not a speed guard.
 const maxDomainsPerProof = 32
 
-// verifiedPublisherDomains is every domain named by a proof of the record that
-// verifies, sorted. A proof counts whole: one refused name refuses the proof.
+// maxDomainsPerRecord is the most distinct names the verified proofs of one
+// record bind together (docs/domain-proofs.md). The per-proof limit alone lets a
+// publisher spread names over many proofs, and the node lists every verified
+// name beside the publisher wherever it shows that publisher, so the bound is
+// on the record.
+const maxDomainsPerRecord = 32
+
+// verifiedPublisherDomains is every domain the record's proofs bind, sorted.
+// It is empty for a record that is refused whole; see verifyRecordDomainProofs.
 func verifiedPublisherDomains(record *standardsEPM.EPM, peerID string, now time.Time) []string {
+	domains, _ := verifyRecordDomainProofs(record, peerID, now)
+	return domains
+}
+
+// verifyRecordDomainProofs checks each DomainProof of the record and returns the
+// names the proofs that verify bind together, sorted, with the reason each
+// refused proof was refused, in record order. A proof counts whole: one refused
+// name refuses the proof, and a refused proof counts for nothing. A name that
+// two proofs both bind counts once.
+//
+// A record whose verified proofs bind more than maxDomainsPerRecord names is
+// refused whole: no name is returned and the last refusal is
+// errDomainProofRecordTooManyNames. Checking stops at the proof that crosses the
+// limit, since later proofs can only add names.
+func verifyRecordDomainProofs(record *standardsEPM.EPM, peerID string, now time.Time) ([]string, []error) {
 	if record == nil {
-		return nil
+		return nil, nil
 	}
-	seen := map[string]struct{}{}
+	var refusals []error
+	bound := map[string]struct{}{}
 	proof := new(standardsEPM.DomainProof)
 	for i := 0; i < record.DOMAIN_PROOFSLength(); i++ {
 		if !record.DOMAIN_PROOFS(proof, i) {
 			continue
 		}
-		proven, err := verifyPublisherDomainProof(record, proof, peerID, now)
+		names, err := verifyPublisherDomainProof(record, proof, peerID, now)
 		if err != nil {
+			refusals = append(refusals, fmt.Errorf("DOMAIN_PROOFS[%d]: %w", i, err))
 			continue
 		}
-		for _, domain := range proven {
-			seen[domain] = struct{}{}
+		for _, name := range names {
+			bound[name] = struct{}{}
+		}
+		if len(bound) > maxDomainsPerRecord {
+			return nil, append(refusals, fmt.Errorf("DOMAIN_PROOFS[%d]: %w", i, errDomainProofRecordTooManyNames))
 		}
 	}
-	domains := make([]string, 0, len(seen))
-	for domain := range seen {
-		domains = append(domains, domain)
+	domains := make([]string, 0, len(bound))
+	for name := range bound {
+		domains = append(domains, name)
 	}
 	sort.Strings(domains)
-	return domains
+	return domains, refusals
 }
 
 // proofDomains is the proof's DOMAINS vector, in order. An empty vector, more

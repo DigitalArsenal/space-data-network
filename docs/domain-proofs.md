@@ -2,8 +2,9 @@
 
 A domain proof is a statement signed by a publisher's EPM signing key that binds
 one or more domain names to that publisher. A node that holds the EPM verifies
-each proof. It lists every verified domain as evidence beside the publisher's
-name. A proof never raises the publisher's rung (source-tag, signed, bonded).
+each proof. It lists the verified domains as evidence beside the publisher's
+name, within the limits below. A proof never raises the publisher's rung
+(source-tag, signed, bonded).
 
 Nothing in SDN issues proofs. The publisher's wallet or tooling signs the
 statement below and stores the result in the EPM. The node checks the statement
@@ -70,6 +71,14 @@ Names are compared as written, and each must already be canonical. A name that
 repeats another only after lowercasing, trimming or dropping a trailing dot is
 refused as not canonical.
 
+The proofs of one record bind at most 32 distinct names together. The limit is
+on the record, because a node lists a publisher's verified names wherever it
+shows that publisher, and spreading names over several proofs must not raise
+it. A name that two proofs both bind counts once, and a proof that is refused
+counts for nothing. A record whose verified proofs bind more than 32 names is
+refused whole: the node lists none of its names, not the first 32, whatever the
+order of its proofs.
+
 ## Validity
 
 A proof is valid from `issued` minus 300 seconds. It stays valid until `expires`
@@ -92,6 +101,11 @@ A proof is refused as a whole, and adds no evidence for any of its names, when:
   peer ID and another key all fail here.
 - the proof is outside its validity window.
 - `SIGNATURE` does not verify.
+
+A record is refused as a whole, and the node lists none of its names, when the
+proofs that verify bind more than 32 distinct names together:
+`domain proofs of one record bind more than 32 names`, followed by the position
+of the proof that crossed the limit.
 
 ## Test vector
 

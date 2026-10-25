@@ -406,6 +406,15 @@ func distinctDomains(n int) []string {
 	return names
 }
 
+// namesFrom is count canonical names from the series "<prefix>-<from>", "<prefix>-<from+1>", ...
+func namesFrom(prefix string, from, count int) []string {
+	names := make([]string, count)
+	for i := range names {
+		names[i] = fmt.Sprintf("%s-%03d.observatory.example", prefix, from+i)
+	}
+	return names
+}
+
 func TestDomainProofRefusals(t *testing.T) {
 	const peerID = "16UiuREFUSED"
 	one := []string{"observatory.example"}
@@ -570,6 +579,146 @@ func TestDomainProofNameCap(t *testing.T) {
 	}
 }
 
+// The record is the unit a node lists evidence for, so the cap is on the names
+// the verified proofs of a record bind together, however they are spread.
+func TestDomainProofRecordNameCap(t *testing.T) {
+	const peerID = "16UiuRECORDCAP"
+	if maxDomainsPerRecord != 32 {
+		t.Fatalf("maxDomainsPerRecord = %d; docs/domain-proofs.md says 32", maxDomainsPerRecord)
+	}
+	recordOf := func(specs ...domainProofSpec) *standardsEPM.EPM {
+		data := buildSignedPublisherEPMProfile(t, peerID, "State University Radio Observatory", "", "", "", specs...)
+		return standardsEPM.GetSizePrefixedRootAsEPM(data, 0)
+	}
+	sorted := func(lists ...[]string) []string {
+		var all []string
+		for _, list := range lists {
+			all = append(all, list...)
+		}
+		sort.Strings(all)
+		return all
+	}
+	// wantRefusedWhole checks the record yields no name and ends with the named refusal at proof index.
+	wantRefusedWhole := func(t *testing.T, record *standardsEPM.EPM, index int) {
+		t.Helper()
+		domains, refusals := verifyRecordDomainProofs(record, peerID, time.Now())
+		if len(domains) != 0 {
+			t.Fatalf("a record over the cap still lists %d names", len(domains))
+		}
+		if len(refusals) == 0 || !errors.Is(refusals[len(refusals)-1], errDomainProofRecordTooManyNames) {
+			t.Fatalf("refusals = %v, want the last to be %v", refusals, errDomainProofRecordTooManyNames)
+		}
+		if want := fmt.Sprintf("DOMAIN_PROOFS[%d]", index); !strings.Contains(refusals[len(refusals)-1].Error(), want) {
+			t.Fatalf("refusal %q does not name the proof that crossed the cap, %s", refusals[len(refusals)-1], want)
+		}
+		if got := verifiedPublisherDomains(record, peerID, time.Now()); len(got) != 0 {
+			t.Fatalf("verifiedPublisherDomains lists %d names for a refused record", len(got))
+		}
+	}
+
+	t.Run("exactly 32 names over two proofs verify", func(t *testing.T) {
+		a, b := namesFrom("a", 0, 16), namesFrom("b", 0, 16)
+		domains, refusals := verifyRecordDomainProofs(recordOf(domainProofSpec{domains: a}, domainProofSpec{domains: b}), peerID, time.Now())
+		if len(refusals) != 0 || !reflect.DeepEqual(domains, sorted(a, b)) {
+			t.Fatalf("32 names over two proofs: %d names, refusals %v", len(domains), refusals)
+		}
+	})
+	t.Run("one name over, split across two proofs", func(t *testing.T) {
+		wantRefusedWhole(t, recordOf(domainProofSpec{domains: namesFrom("a", 0, 16)}, domainProofSpec{domains: namesFrom("b", 0, 17)}), 1)
+	})
+	t.Run("hundreds of names split into proofs that are each within the per-proof cap", func(t *testing.T) {
+		specs := make([]domainProofSpec, 15)
+		for i := range specs {
+			specs[i] = domainProofSpec{domains: namesFrom(fmt.Sprintf("p%02d", i), 0, maxDomainsPerProof)}
+		}
+		wantRefusedWhole(t, recordOf(specs...), 1)
+	})
+	t.Run("a name two proofs bind counts once", func(t *testing.T) {
+		a, b := namesFrom("shared", 0, 20), namesFrom("shared", 10, 20) // 10 names in common, 30 distinct
+		domains, refusals := verifyRecordDomainProofs(recordOf(domainProofSpec{domains: a}, domainProofSpec{domains: b}), peerID, time.Now())
+		if len(refusals) != 0 || len(domains) != 30 {
+			t.Fatalf("two overlapping proofs: %d names, refusals %v; want 30 distinct", len(domains), refusals)
+		}
+	})
+	t.Run("a full record may still carry a proof that adds no name", func(t *testing.T) {
+		full := namesFrom("full", 0, maxDomainsPerRecord)
+		domains, refusals := verifyRecordDomainProofs(recordOf(domainProofSpec{domains: full}, domainProofSpec{domains: full[:5]}, domainProofSpec{domains: full[3:9]}), peerID, time.Now())
+		if len(refusals) != 0 || !reflect.DeepEqual(domains, sorted(full)) {
+			t.Fatalf("a full record with proofs that repeat its names: %d names, refusals %v", len(domains), refusals)
+		}
+	})
+	t.Run("a refused proof counts for nothing", func(t *testing.T) {
+		stale, live := namesFrom("stale", 0, 30), namesFrom("live", 0, 30)
+		record := recordOf(domainProofSpec{domains: stale, badSignature: true}, domainProofSpec{domains: live})
+		domains, refusals := verifyRecordDomainProofs(record, peerID, time.Now())
+		if !reflect.DeepEqual(domains, sorted(live)) {
+			t.Fatalf("verified names = %d, want the 30 of the proof that verifies", len(domains))
+		}
+		if len(refusals) != 1 || errors.Is(refusals[0], errDomainProofRecordTooManyNames) || !strings.Contains(refusals[0].Error(), "DOMAIN_PROOFS[0]") {
+			t.Fatalf("refusals = %v, want only the bad signature of DOMAIN_PROOFS[0]", refusals)
+		}
+	})
+	t.Run("the order of the proofs does not change the outcome", func(t *testing.T) {
+		orders := func(a, b, c []string) [][]domainProofSpec {
+			return [][]domainProofSpec{
+				{{domains: a}, {domains: b}, {domains: c}},
+				{{domains: c}, {domains: b}, {domains: a}},
+				{{domains: b}, {domains: c}, {domains: a}},
+			}
+		}
+		// 30 names: every order lists all of them.
+		a, b, c := namesFrom("a", 0, 10), namesFrom("b", 0, 10), namesFrom("c", 0, 10)
+		for _, order := range orders(a, b, c) {
+			domains, refusals := verifyRecordDomainProofs(recordOf(order...), peerID, time.Now())
+			if len(refusals) != 0 || !reflect.DeepEqual(domains, sorted(a, b, c)) {
+				t.Fatalf("30 names over three proofs: %d names, refusals %v", len(domains), refusals)
+			}
+		}
+		// 36 names: every order is refused whole, at the third proof, not trimmed to the first 32.
+		a, b, c = namesFrom("a", 0, 12), namesFrom("b", 0, 12), namesFrom("c", 0, 12)
+		for _, order := range orders(a, b, c) {
+			wantRefusedWhole(t, recordOf(order...), 2)
+		}
+	})
+	t.Run("proofs refused for another reason are reported beside the cap", func(t *testing.T) {
+		record := recordOf(
+			domainProofSpec{domains: namesFrom("a", 0, 20)},
+			domainProofSpec{domains: []string{"Bad.Example"}},
+			domainProofSpec{domains: namesFrom("b", 0, 20)},
+		)
+		_, refusals := verifyRecordDomainProofs(record, peerID, time.Now())
+		if len(refusals) != 2 || !strings.Contains(refusals[0].Error(), "DOMAIN_PROOFS[1]") || !errors.Is(refusals[1], errDomainProofRecordTooManyNames) {
+			t.Fatalf("refusals = %v, want DOMAIN_PROOFS[1] not canonical, then the record cap at DOMAIN_PROOFS[2]", refusals)
+		}
+	})
+}
+
+// What the cap bounds is what a viewer sees: one evidence line per listed name.
+func TestDomainProofRecordCapBoundsTheEvidence(t *testing.T) {
+	const peerID = "16UiuEVIDENCECAP"
+	evidenceLines := func(specs ...domainProofSpec) (int, string) {
+		data := buildSignedPublisherEPMProfile(t, peerID, "State University Radio Observatory", "", "", "", specs...)
+		identity := publisherIdentity{epmBytes: func(string) []byte { return data }}
+		org := resolvePublisherOrganization(nil, "lane", peerID, nil, identity)
+		lines := 0
+		for _, sentence := range org.Evidence {
+			if strings.HasPrefix(sentence, "A verified domain-control proof links this publisher to ") {
+				lines++
+			}
+		}
+		return lines, org.State
+	}
+
+	lines, state := evidenceLines(domainProofSpec{domains: namesFrom("a", 0, 20)}, domainProofSpec{domains: namesFrom("b", 0, 12)})
+	if lines != maxDomainsPerRecord || state != organizationStateSigned {
+		t.Fatalf("32 names over two proofs: %d evidence lines, state %q; want 32 and signed", lines, state)
+	}
+	lines, state = evidenceLines(domainProofSpec{domains: namesFrom("a", 0, 20)}, domainProofSpec{domains: namesFrom("b", 0, 13)})
+	if lines != 0 || state != organizationStateSigned {
+		t.Fatalf("33 names over two proofs: %d evidence lines, state %q; want none, and still signed", lines, state)
+	}
+}
+
 func TestDomainProofRepeatedNameIsJudgedInCanonicalForm(t *testing.T) {
 	const peerID = "16UiuREPEATS"
 	// Names must already be canonical, so a repeat is an exact repeat. A name
@@ -622,6 +771,8 @@ func TestDomainProofLimitsAreDocumented(t *testing.T) {
 	}
 	for name, want := range map[string]string{
 		"the cap":              fmt.Sprintf("at most %d names", maxDomainsPerProof),
+		"the record cap":       fmt.Sprintf("at most %d distinct names", maxDomainsPerRecord),
+		"the record refusal":   errDomainProofRecordTooManyNames.Error(),
 		"the too-many refusal": errDomainProofTooManyNames.Error(),
 		"the repeated refusal": errDomainProofRepeatedName.Error(),
 		"the empty refusal":    errDomainProofNoDomains.Error(),
