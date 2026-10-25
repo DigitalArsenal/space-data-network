@@ -41,7 +41,7 @@
     ['module-sdk', 'Module SDK', 'https://digitalarsenal.github.io/space-data-module-sdk/', 'Module SDK docs', 'Apache-2.0',
       'Build, test, digitally sign and package the WebAssembly modules that SDN nodes and browsers run.',
       '<rect x="3" y="3" width="18" height="18" rx="3"/><path d="M7 9l1.5 6 1.5-4 1.5 4L13 9M15 15l1.5-6 1.5 6M15.5 13h2"/>'],
-    ['hd-wallet', 'HD Wallet', 'https://wallet.spacedatanetwork.org/', 'wallet.spacedatanetwork.org', 'Apache-2.0',
+    ['hd-wallet', 'HD Wallet', 'https://digitalarsenal.github.io/hd-wallet-wasm/', 'HD Wallet docs', 'Apache-2.0',
       'One set of keys, kept in your browser, for signing in, digitally signing data and paying on many networks.',
       '<circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M16 7l3 3M14 9l2 2"/>'],
     ['sdn-ap', 'SDN-AP', 'https://digitalarsenal.github.io/sdn-ap/', 'SDN-AP docs', 'Apache-2.0',
