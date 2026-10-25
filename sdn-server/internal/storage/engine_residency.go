@@ -792,6 +792,49 @@ var engineHotWindowPageBytes int64 = 32 << 20
 // included, once PER PAGE — measured on host-02 (2026-09-27 18:08Z) as a
 // $IQC page that ran past the 5-minute budget and poisoned the engine.
 func engineWindowPageRefsSQL(tables []string, placeholders, extraWhere string) string {
+	return engineWindowPageRefsQuery(tables, placeholders, extraWhere, false)
+}
+
+// engineHotWindowRowIDSpan bounds the index-rowid span ONE rowid-walking
+// hot-window statement reads, and engineHotWindowRowIDWalk the span a whole
+// pass may walk that way before it keeps the schema-index plan.
+//
+// THE PAGE BOUND WAS NEVER A BOUND ON WORK. sdn_record_index has no index on
+// (schema_name, rowid): `schema_name IN (…) AND rowid > ? ORDER BY rowid`
+// takes the (schema_name, cid) primary-key index, reads EVERY entry of the
+// schema to test the rowid, and sorts what passes. Each 2,000-row page cost
+// the whole schema. Measured on the SDN archive's json-shard 0
+// (/opt/data/sdn-archive, 5,915,494 $MPE records, 2026-10-25): the warm tail
+// page with NOTHING past the coverage mark held the engine 12.7-14.7 s
+// (514 MB of host reads), every open, and twelve shards run it together each
+// cron tick. Their hydrations died on the 5-minute per-call budget ("(batch)"
+// exceeded 5m0s), 109 times per shard. A smaller page only means more full
+// walks.
+//
+// Written `+idx.schema_name`, the schema test cannot use an index, so the
+// planner walks the table b-tree by rowid from the cursor and stops at the
+// LIMIT: the cost is the span walked, not the store. That wins whenever the
+// span past the cursor is short (a warm tail, a window floor near the head,
+// the newest-window rebuild of a dense schema); the schema index still wins
+// for a sparse schema far behind the head, so a pass farther than
+// engineHotWindowRowIDWalk from the head keeps the old plan.
+var (
+	engineHotWindowRowIDSpan int64 = 1 << 18
+	engineHotWindowRowIDWalk int64 = 1 << 22
+)
+
+// engineWindowPageRefsRowIDSQL is engineWindowPageRefsSQL over the index rowid
+// span (cursor, end], walked by rowid. Arguments: the aliases, cursor, end,
+// the extraWhere arguments, the row limit.
+func engineWindowPageRefsRowIDSQL(tables []string, placeholders, extraWhere string) string {
+	return engineWindowPageRefsQuery(tables, placeholders, extraWhere, true)
+}
+
+func engineWindowPageRefsQuery(tables []string, placeholders, extraWhere string, byRowID bool) string {
+	schemaTerm, rowidTerm := "idx.schema_name", "idx.rowid > ?"
+	if byRowID {
+		schemaTerm, rowidTerm = "+idx.schema_name", "idx.rowid > ? AND idx.rowid <= ?"
+	}
 	size := "NULL"
 	if len(tables) > 0 {
 		var b strings.Builder
@@ -807,14 +850,14 @@ func engineWindowPageRefsSQL(tables []string, placeholders, extraWhere string) s
 		FROM (
 			SELECT idx.rowid AS rid, idx.cid AS cid, idx.schema_name AS schema_name
 			FROM sdn_record_index idx
-			WHERE idx.schema_name IN (%s) AND idx.rowid > ?%s AND %s
+			WHERE %s IN (%s) AND %s%s AND %s
 			ORDER BY idx.rowid ASC
 			LIMIT ?
 		) page%s
 		LEFT JOIN sdn_record_source_tags tags
 		  ON tags.schema_name = page.schema_name AND tags.cid = page.cid
 		ORDER BY page.rid ASC, tags.created_at ASC
-	`, size, placeholders, extraWhere, recordHeldSQL(tables, "idx.cid"), recordColumnJoinsSQL(tables, "page.cid"))
+	`, size, schemaTerm, placeholders, rowidTerm, extraWhere, recordHeldSQL(tables, "idx.cid"), recordColumnJoinsSQL(tables, "page.cid"))
 }
 
 // engineRecordDataByCIDSQL reads the stored bytes of n records by CID, one
@@ -852,20 +895,39 @@ func (s *FlatSQLStore) ingestEngineWindowPages(schemaName string, cursor int64, 
 	total := 0
 	for {
 		pageRows, taken := 0, 0
+		// spanEnd > 0: this page walked the index rowid span (cursor, spanEnd]
+		// by rowid (engineHotWindowRowIDSpan); head is the index head then.
+		var spanEnd, head int64
 		if err := locked(func() error {
 			tables, err := s.recordTablesForSchema(schemaName)
 			if err != nil {
 				return err
 			}
-			args := make([]any, 0, len(aliases)+2+len(extraArgs))
+			byRowID := false
+			if err := s.db.QueryRow(`SELECT COALESCE(MAX(rowid), 0) FROM sdn_record_index`).Scan(&head); err == nil && head-cursor <= engineHotWindowRowIDWalk {
+				if cursor >= head {
+					return nil // nothing past the cursor
+				}
+				byRowID = true
+				spanEnd = cursor + engineHotWindowRowIDSpan
+				if spanEnd > head {
+					spanEnd = head
+				}
+			}
+			args := make([]any, 0, len(aliases)+3+len(extraArgs))
 			for _, alias := range aliases {
 				args = append(args, alias)
 			}
 			args = append(args, cursor)
+			query := engineWindowPageRefsSQL(tables, placeholders, extraWhere)
+			if byRowID {
+				args = append(args, spanEnd)
+				query = engineWindowPageRefsRowIDSQL(tables, placeholders, extraWhere)
+			}
 			args = append(args, extraArgs...)
 			args = append(args, engineHotWindowPage)
 			started := time.Now()
-			rows, err := s.db.Query(engineWindowPageRefsSQL(tables, placeholders, extraWhere), args...)
+			rows, err := s.db.Query(query, args...)
 			if err != nil {
 				return err
 			}
@@ -946,7 +1008,11 @@ func (s *FlatSQLStore) ingestEngineWindowPages(schemaName string, cursor int64, 
 			return total, err
 		}
 		if pageRows < engineHotWindowPage && taken == pageRows {
-			return total, nil
+			// Every matching row up to the end of what this page read is in.
+			if spanEnd == 0 || spanEnd >= head {
+				return total, nil
+			}
+			cursor = spanEnd
 		}
 	}
 }
@@ -967,24 +1033,15 @@ func (s *FlatSQLStore) rebuildEngineWindowForSchema(schemaName string, locked en
 		return 0, nil
 	}
 	aliases := engineSchemaNameAliases(schemaName)
-	placeholders := strings.TrimSuffix(strings.Repeat("?, ", len(aliases)), ", ")
-	args := make([]any, 0, len(aliases)+1)
-	for _, alias := range aliases {
-		args = append(args, alias)
-	}
-	args = append(args, window-1)
 	// The lower bound of the window: the rowid of the window-th newest record.
 	cursor := int64(0)
 	if err := locked(func() error {
-		var floor sql.NullInt64
-		if err := s.db.QueryRow(fmt.Sprintf(`
-			SELECT idx.rowid FROM sdn_record_index idx
-			WHERE idx.schema_name IN (%s)
-			ORDER BY idx.rowid DESC LIMIT 1 OFFSET ?`, placeholders), args...).Scan(&floor); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		floor, err := s.engineWindowFloorLocked(aliases, "", nil, int64(window-1))
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("locate %s hot-window floor: %w", schemaName, err)
 		}
-		if floor.Valid && floor.Int64 > 0 {
-			cursor = floor.Int64 - 1
+		if err == nil && floor > 0 {
+			cursor = floor - 1
 		}
 		return nil
 	}); err != nil {
@@ -1009,6 +1066,73 @@ func (s *FlatSQLStore) rebuildEngineWindowForSchema(schemaName string, locked en
 		}
 		return nil
 	})
+}
+
+// engineWindowFloorLocked returns the index rowid of the (offset+1)-th newest
+// record of a schema (any of its aliases) that also matches extraWhere, or
+// sql.ErrNoRows when there are fewer. Caller holds the store write lock.
+//
+// It counts back from the index head in rowid spans of engineHotWindowRowIDSpan
+// (`+idx.schema_name`, see engineHotWindowRowIDSpan), one bounded statement per
+// span, and locates the floor inside the span that reaches it. Only a floor
+// farther than engineHotWindowRowIDWalk from the head falls back to the schema
+// index, whose plan reads and sorts every entry of the schema (2.6 s natively
+// on a 5.9M-record shard, one uninterruptible engine call).
+func (s *FlatSQLStore) engineWindowFloorLocked(aliases []string, extraWhere string, extraArgs []any, offset int64) (int64, error) {
+	placeholders := strings.TrimSuffix(strings.Repeat("?, ", len(aliases)), ", ")
+	spanArgs := func(lo, hi int64, tail ...any) []any {
+		args := make([]any, 0, len(aliases)+len(extraArgs)+2+len(tail))
+		args = append(args, lo, hi)
+		for _, alias := range aliases {
+			args = append(args, alias)
+		}
+		args = append(args, extraArgs...)
+		return append(args, tail...)
+	}
+	var head int64
+	if err := s.db.QueryRow(`SELECT COALESCE(MAX(rowid), 0) FROM sdn_record_index`).Scan(&head); err == nil {
+		need := offset + 1
+		hi := head
+		for hi > 0 && head-hi < engineHotWindowRowIDWalk {
+			lo := hi - engineHotWindowRowIDSpan
+			if lo < 0 {
+				lo = 0
+			}
+			var n int64
+			if err := s.db.QueryRow(fmt.Sprintf(`
+				SELECT COUNT(*) FROM sdn_record_index idx
+				WHERE idx.rowid > ? AND idx.rowid <= ? AND +idx.schema_name IN (%s)%s`, placeholders, extraWhere),
+				spanArgs(lo, hi)...).Scan(&n); err != nil {
+				return 0, err
+			}
+			if n >= need {
+				var floor int64
+				err := s.db.QueryRow(fmt.Sprintf(`
+					SELECT idx.rowid FROM sdn_record_index idx
+					WHERE idx.rowid > ? AND idx.rowid <= ? AND +idx.schema_name IN (%s)%s
+					ORDER BY idx.rowid DESC LIMIT 1 OFFSET ?`, placeholders, extraWhere),
+					spanArgs(lo, hi, need-1)...).Scan(&floor)
+				return floor, err
+			}
+			need -= n
+			hi = lo
+		}
+		if hi <= 0 {
+			return 0, sql.ErrNoRows // the whole index walked: fewer matching records
+		}
+	}
+	args := make([]any, 0, len(aliases)+len(extraArgs)+1)
+	for _, alias := range aliases {
+		args = append(args, alias)
+	}
+	args = append(args, extraArgs...)
+	args = append(args, offset)
+	var floor int64
+	err := s.db.QueryRow(fmt.Sprintf(`
+		SELECT idx.rowid FROM sdn_record_index idx
+		WHERE idx.schema_name IN (%s)%s
+		ORDER BY idx.rowid DESC LIMIT 1 OFFSET ?`, placeholders, extraWhere), args...).Scan(&floor)
+	return floor, err
 }
 
 // warmEngineSchema brings one routed schema's window current after a WARM
@@ -1058,27 +1182,15 @@ func (s *FlatSQLStore) warmEngineSchema(schemaName string, fromRowID int64, lock
 		if deficit <= 0 {
 			return nil
 		}
-		aliases := engineSchemaNameAliases(schemaName)
-		args := make([]any, 0, len(aliases)+2)
-		for _, alias := range aliases {
-			args = append(args, alias)
-		}
-		args = append(args, ledgerArgs...)
-		args = append(args, deficit-1)
-		var floor sql.NullInt64
-		err = s.db.QueryRow(fmt.Sprintf(`
-			SELECT idx.rowid FROM sdn_record_index idx
-			WHERE idx.schema_name IN (%s)%s
-			ORDER BY idx.rowid DESC LIMIT 1 OFFSET ?`,
-			strings.TrimSuffix(strings.Repeat("?, ", len(aliases)), ", "), notInLedger), args...).Scan(&floor)
+		floor, err := s.engineWindowFloorLocked(engineSchemaNameAliases(schemaName), notInLedger, ledgerArgs, deficit-1)
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
 			// Fewer untracked records than the deficit: take them all.
-			floor = sql.NullInt64{Int64: 1, Valid: true}
+			floor = 1
 		case err != nil:
 			return fmt.Errorf("locate %s backfill floor: %w", schemaName, err)
 		}
-		n, err := s.ingestEngineWindowPages(schemaName, floor.Int64-1, notInLedger, ledgerArgs, func(fn func() error) error { return fn() })
+		n, err := s.ingestEngineWindowPages(schemaName, floor-1, notInLedger, ledgerArgs, func(fn func() error) error { return fn() })
 		backfilled += n
 		return err
 	}); err != nil {
