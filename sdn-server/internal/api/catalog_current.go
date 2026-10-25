@@ -45,7 +45,7 @@ const (
 	CatalogCurrentPath = "/api/v1/data/catalog/current"
 
 	// catalogPublicationInterval is how often the catalog node publishes
-	// (the supplemental-omm flow's hourly timer).
+	// (its flows' hourly timer).
 	catalogPublicationInterval = time.Hour
 	// catalogMinSharedTTL keeps a shared cache from revalidating faster than
 	// the node can recompute.
