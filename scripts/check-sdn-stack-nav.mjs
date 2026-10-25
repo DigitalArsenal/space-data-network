@@ -9,7 +9,6 @@ const links = [
   ["sdn", "SDN", "https://spacedatanetwork.org/"],
   ["module-sdk", "Module SDK", "https://digitalarsenal.github.io/space-data-module-sdk/"],
   ["hd-wallet", "HD Wallet", "https://digitalarsenal.github.io/hd-wallet-wasm/"],
-  ["sdn-ap", "SDN-AP", "https://digitalarsenal.github.io/sdn-ap/"],
 ];
 
 const headerTokens = [
@@ -31,10 +30,10 @@ const WALLET_DIR = "docs/assets/sdn-wallet";
 // requests no other origin for it. The wallet client files are this site's own
 // copies, pinned by digest.
 const approvedRelease = Object.freeze({
-  navVersion: "1.1.0",
-  navScriptUrl: "/assets/vendor/sdn-stack-nav/1.1.0/sdn-stack-nav.2e5d4efc654388c85b79e53b1b148268e4083d9252f2a367ea257ccb50d270cd.js",
-  navScriptIntegrity: "sha384-XohIVyQyKflz7lf3TTrmIrihUTLtUhJaj/tTBlloTUjOItTmdQGLLFOmXWQwuwFg",
-  navStyleUrl: "/assets/vendor/sdn-stack-nav/1.1.0/sdn-stack-nav.36a36359ce18322185e9ff179f88175bab67d5ad84a14d9c08a54f2ff27267e7.css",
+  navVersion: "1.2.0",
+  navScriptUrl: "/assets/vendor/sdn-stack-nav/1.2.0/sdn-stack-nav.ba268c55a1551bcacc390ac01347c319335a1660787b55b4b239df00fc3c1a4c.js",
+  navScriptIntegrity: "sha384-4BDI84CnpZ83otmTHK/KzA5+4pw8q5l+3LInURbEVJY96/iLGzCZUZsCyxjZ1Kpb",
+  navStyleUrl: "/assets/vendor/sdn-stack-nav/1.2.0/sdn-stack-nav.36a36359ce18322185e9ff179f88175bab67d5ad84a14d9c08a54f2ff27267e7.css",
   navStyleIntegrity: "sha384-c4M8Fg+kYaeOYYtJVr7jJsde24IhSWkWaRyAOHEZU9jozhRck089aw+mnHwxymds",
   walletFiles: Object.freeze({
     [`${WALLET_DIR}/sdn-wallet-public-client.css`]: "c3f68d1cfd88478f10d836a5e829d1dfc6a10157972cf0f7d4d319d0636f2cc4",
