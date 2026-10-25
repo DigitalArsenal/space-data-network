@@ -2,7 +2,8 @@ import React, { useCallback, useRef, useState, useMemo, useEffect } from 'react'
 import ReactFauxDOM from 'react-faux-dom'
 import { connect } from 'redux-bundler-react'
 import { withTranslation } from 'react-i18next'
-import * as d3 from 'd3'
+import { geoEquirectangular, geoPath } from 'd3-geo'
+import { select } from 'd3-selection'
 import CountryFlag from 'react-country-flag'
 import { debounce } from 'redux-bundler'
 
@@ -120,12 +121,12 @@ const PeersCount = connect('selectPeers', ({ peers }) => peers ? peers.length : 
 const GeoPath = ({ width, height, children }) => {
   // https://github.com/d3/d3-geo/blob/master/README.md#geoEquirectangular
   const path = useMemo(() => {
-    const projection = d3.geoEquirectangular()
+    const projection = geoEquirectangular()
       .scale(height / Math.PI)
       .translate([width / 2, height / 2])
       .precision(0.1)
     // https://github.com/d3/d3-geo/blob/master/README.md#paths
-    return d3.geoPath().projection(projection)
+    return geoPath().projection(projection)
   }, [width, height])
 
   return children({ path })
@@ -146,7 +147,7 @@ const getDotsColor = (numberOfDots) => {
 // Just the dots on the map, this gets called a lot.
 const MapPins = connect('selectPeersCoordinates', ({ width, height, path, peersCoordinates, handleMouseEnter, handleMouseLeave }) => {
   const coords = peersCoordinates || []
-  const el = d3.select(ReactFauxDOM.createElement('svg'))
+  const el = select(ReactFauxDOM.createElement('svg'))
     .attr('width', width)
     .attr('height', height)
     .attr('viewBox', `0 0 ${width} ${height}`)
@@ -160,7 +161,7 @@ const MapPins = connect('selectPeersCoordinates', ({ width, height, path, peersC
       .attr('d', path.pointRadius(() => getDotsSize(peerIds.length)))
       .attr('fill', () => getDotsColor(peerIds.length))
       .attr('class', 'mapDot')
-      .on('mouseenter', () => handleMouseEnter(peerIds, d3.event.relatedTarget))
+      .on('mouseenter', (event) => handleMouseEnter(peerIds, event.relatedTarget))
       .on('mouseleave', () => handleMouseLeave())
   })
 

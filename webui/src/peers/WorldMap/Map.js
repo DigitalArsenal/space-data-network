@@ -1,4 +1,5 @@
-import * as d3 from 'd3'
+import { geoGraticule } from 'd3-geo'
+import { select } from 'd3-selection'
 import * as topojson from 'topojson-client'
 import ReactFauxDOM from 'react-faux-dom'
 import worldData from './world.json'
@@ -6,9 +7,9 @@ import worldData from './world.json'
 // Earth! It's complicated, so try not to re-render so much
 const Map = ({ width, height, path }) => {
   // https://github.com/d3/d3-geo/blob/master/README.md#geoGraticule
-  const graticule = d3.geoGraticule()
+  const graticule = geoGraticule()
 
-  const el = d3.select(ReactFauxDOM.createElement('svg'))
+  const el = select(ReactFauxDOM.createElement('svg'))
     .attr('width', width)
     .attr('height', height)
 

@@ -5,7 +5,7 @@ import PQueue from 'p-queue'
 import HLRU from 'hashlru'
 import { multiaddr } from '@multiformats/multiaddr'
 import ms from 'milliseconds'
-import ip from 'ip'
+import ipaddr from 'ipaddr.js'
 import { createContextSelector } from '../helpers/context-bridge'
 import pkgJson from '../../package.json'
 
@@ -216,8 +216,32 @@ const shallowEqualObjects = (a, b) => {
   return keysA.every(key => a[key] === b[key])
 }
 
+// Addresses that are not routed on the public internet: RFC 1918, link-local,
+// loopback, unique local (fc00::/7) and unspecified, IPv4-mapped IPv6 included.
+const PRIVATE_RANGES = new Set(['private', 'linkLocal', 'loopback', 'uniqueLocal', 'unspecified'])
+const parseIP = (address) => {
+  try {
+    return ipaddr.process(address)
+  } catch (_) {
+    return null
+  }
+}
+const isPrivateIP = (address) => {
+  const parsed = parseIP(address)
+  return parsed !== null && PRIVATE_RANGES.has(parsed.range())
+}
+const inSubnet = (address, cidr) => {
+  const parsed = parseIP(address)
+  try {
+    const [network, bits] = ipaddr.parseCIDR(cidr)
+    return parsed !== null && parsed.kind() === network.kind() && parsed.match(network, bits)
+  } catch (_) {
+    return false
+  }
+}
+
 const isPublicIP = t =>
-  (t[0] === 4 || t[0] === 41) && !ip.isPrivate(t[1])
+  (t[0] === 4 || t[0] === 41) && !isPrivateIP(t[1])
 
 const toLocationString = loc => {
   if (!loc) return null
@@ -257,7 +281,7 @@ const getPublicIP = (identity) => {
     try {
       const addr = multiaddr(maddr).nodeAddress()
 
-      if ((ip.isV4Format(addr.address) || ip.isV6Format(addr.address)) && !ip.isPrivate(addr.address)) {
+      if (parseIP(addr.address) !== null && !isPrivateIP(addr.address)) {
         _cachedPublicIP = addr.address
         return _cachedPublicIP
       }
@@ -282,16 +306,15 @@ const isPrivateAndNearby = (maddr, identity) => {
     return { isPrivate, isNearby }
   }
 
-  // At this point, addr.address and publicIP must be valid IP addresses. Hence,
-  // none of the calls bellow for ip library should fail.
-  isPrivate = ip.isPrivate(addr.address)
+  isPrivate = isPrivateIP(addr.address)
 
-  if (publicIP) {
-    if (ip.isV4Format(addr.address)) {
-      isNearby = ip.cidrSubnet(`${publicIP}/24`).contains(addr.address)
-    } else if (ip.isV6Format(addr.address)) {
-      isNearby = ip.cidrSubnet(`${publicIP}/48`).contains(addr.address) &&
-        !ip.cidrSubnet('fc00::/8').contains(addr.address)
+  const parsed = parseIP(addr.address)
+  if (publicIP && parsed !== null) {
+    if (parsed.kind() === 'ipv4') {
+      isNearby = inSubnet(addr.address, `${publicIP}/24`)
+    } else {
+      isNearby = inSubnet(addr.address, `${publicIP}/48`) &&
+        !inSubnet(addr.address, 'fc00::/8')
       // peerIP6 ∉ fc00::/8 to fix case of cjdns where IPs are not spatial allocated.
     }
   }

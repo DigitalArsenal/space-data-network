@@ -1,0 +1,10 @@
+{
+  "name": "@ipshipyard/libp2p-auto-tls",
+  "version": "2.0.2-sdn.stub",
+  "description": "Stand-in without ACME. @helia/libp2p imports autoTLS for createHelia's Node defaults; sdn-js builds its own libp2p node and calls createHeliaLight, so autoTLS is never called. The real package pulls acme-client, and with it node-forge (GHSA-86w9-cpqp-85rv, no patched release) and axios. Calling autoTLS() here throws.",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "exports": { ".": { "types": "./index.d.ts", "default": "./index.js" } }
+}

@@ -138,13 +138,16 @@
     "vite": "^6.0.0",
     "vite-plugin-singlefile": "^2.3.3",
     "vitest": "^3.2.4",
-    "react-native-webrtc": "file:stubs/react-native-webrtc"
+    "react-native-webrtc": "file:stubs/react-native-webrtc",
+    "@ipshipyard/libp2p-auto-tls": "file:stubs/libp2p-auto-tls"
   },
   "overrides": {
-    "dompurify": "3.4.15",
+    "dompurify": "3.4.17",
     "picomatch": "^4.0.4",
     "hd-wallet-wasm": "2.1.3",
-    "react-native-webrtc": "$react-native-webrtc"
+    "react-native-webrtc": "$react-native-webrtc",
+    "@ipshipyard/libp2p-auto-tls": "$@ipshipyard/libp2p-auto-tls",
+    "undici": "8.12.2"
   },
   "engines": {
     "node": ">=18.0.0"

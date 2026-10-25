@@ -1,7 +1,5 @@
 module github.com/spacedatanetwork/sdn-server/tests/encryption/go
 
-go 1.24.0
+go 1.26.0
 
-toolchain go1.24.12
-
-require golang.org/x/crypto v0.47.0
+require golang.org/x/crypto v0.58.0
