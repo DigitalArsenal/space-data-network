@@ -22,8 +22,7 @@
   "delivery": {
     "console": "SpaceAware console",
     "sdn-module": "SDN module",
-    "node": "SDN node",
-    "open-source": "Open-source package"
+    "node": "SDN node"
   },
   "arrival": {
     "sdn-lane": "SDN publication, read peer to peer and checked against its signature",
@@ -561,27 +560,6 @@
       "covers": [],
       "learnMore": "https://spacedatanetwork.org/modules.html",
       "evidence": "live modules.pmm com.orbpro.sgp4 1.1.0, com.orbpro.keplerian.reference 1.0.0, com.digitalarsenal.propagator.ephemeris 0.1.1, atmosphere-model 0.1.0, cislunar-propagator 0.1.0, hypersonics-propagator 0.1.1; every modules.pmm row named here is ANONYMOUS (live manifest 2026-10-13)"
-    },
-    {
-      "id": "sdn-ap",
-      "name": "SDN-AP propagation",
-      "category": "flight-dynamics",
-      "tagline": "Where satellites and debris will be, for the entire catalog at once",
-      "summary": "Free, open-source software that predicts where satellites and debris will be, for the entire catalog at once, in a browser or on a server. Apache-2.0, © Edgesource Corporation.",
-      "capabilities": [
-        "SGP4, SGP4-XP-compatible and SDN-AP theories",
-        "The entire catalog in one WebAssembly module, in a browser or on a server",
-        "Accuracy against precise orbits, the day after a one-day fit (median): 41-86 m for laser-ranged satellites in LEO and MEO, 35-56 m for navigation satellites in MEO, IGSO and GEO, 279 m for the ISS, 203-233 m in highly elliptical orbits",
-        "Reentry windows checked against 16 observed reentries (380 predictions): with each object scored on a window calibrated on the others, 78 % of the observed times fall within 1 sigma and 86 % within 2"
-      ],
-      "standards": [
-        "CCSDS OMM"
-      ],
-      "access": "free",
-      "delivery": "open-source",
-      "covers": [],
-      "learnMore": "https://digitalarsenal.github.io/sdn-ap/",
-      "evidence": "space-data-network-modules/propagator/sdn-ap (@spacedatanetwork/sdn-ap-propagator 0.1.0, plugin com.spacedatanetwork.sdn-ap-propagator 0.1.0; LICENSE Apache-2.0, NOTICE Copyright 2026 Edgesource Corporation), modules origin/main d320822f; not in the live modules.pmm on 2026-10-25 (103 rows, no SDN-AP row), npm package not yet published; accuracy: orbit-accuracy-experiments results/sdn-ap-baselines/table.json (ef07889), arms.sdnap.days[1].median for every Earth row except leo-starlink-ffm (its truth is a model); reentry: propagator/sdn-ap/test/results/reentry-calibration.json out_of_fold_leave_one_object_out.sampleA_cords (n 380, within1 0.7763, within2 0.8632; CORDS observed reentry times)"
     },
     {
       "id": "orbit-analysis-toolkit",
@@ -1808,7 +1786,6 @@
         "maneuver-planning",
         "ffm",
         "propagator-suite",
-        "sdn-ap",
         "orbit-analysis-toolkit",
         "orbit-estimation",
         "launch-reentry",
@@ -1874,7 +1851,6 @@
         "ccsds-interchange",
         "module-building-blocks",
         "propagator-suite",
-        "sdn-ap",
         "embed-api"
       ],
       "pricing": "request",
@@ -1908,7 +1884,6 @@
         "maneuver-planning",
         "ffm",
         "propagator-suite",
-        "sdn-ap",
         "orbit-analysis-toolkit",
         "ground-contact",
         "rf-link-analysis",
