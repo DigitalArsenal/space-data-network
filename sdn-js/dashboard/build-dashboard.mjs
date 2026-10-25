@@ -168,6 +168,18 @@ if (!hashes.includes(mapHash)) {
 // the built page's inline-script hash(es) so a strict script-src 'self' can run
 // the single-file bundle. Fonts/WS/records are same-origin ('self'); wss:/https:
 // let the same file connect to a remote node's feed when opened cross-origin.
+//
+// font-src ALSO admits data:, deliberately (sdn-dashboard-csp-data-font-20261024).
+// The single-file build inlines every asset the page imports, by contract
+// (viteSingleFile; vite.config.mjs lets only .wasm and .mp4 stay files): the 28
+// @fontsource Inter faces are data: URLs in the page, and ag-grid's stylesheet
+// embeds its icon font (agGridQuartz) the same way. A data: URL carries its own
+// bytes and names no origin, so admitting it widens nothing the node's own bytes
+// do not already hold; the fonts the node serves stay 'self' (/fonts/*.woff2).
+// Dropping data: here would refuse all of them and ag-grid's icons. The CLIENT
+// build (spaceaware-ui, font-src 'self') has no such contract: it lifts its
+// stylesheets' inline fonts into files instead (src/vite.config.ts,
+// extractInlineCssFonts), so its policy did not change.
 const csp = [
   "default-src 'self'",
   "base-uri 'none'",
@@ -256,6 +268,7 @@ const homeCsp = [
   `script-src 'self' 'wasm-unsafe-eval' ${homeHashes.join(' ')}`,
   "connect-src 'self' blob:",
   "style-src 'self' 'unsafe-inline'",
+  // data: for the same reason as the dashboard's: the single-file build inlines the page's fonts.
   "font-src 'self' data:",
   "img-src 'self' data: blob:"
 ].join('; ');
