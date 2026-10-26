@@ -18,7 +18,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/wasm"
 )
 
-// TestPCFAndPRWEventsFromPublishedJS is the E2E for the SDS 1.263/1.264/1.271
+// TestPCFAndPRWEventsFromPublishedJS is the E2E for the SDS 1.263/1.264/1.271/1.272
 // refreshes: records built by the PUBLISHED spacedatastandards.org JavaScript
 // bindings (testdata/pcf-prw/build-fixtures.mjs, run against sdn-js's
 // installed package) are admitted and decoded by the node's embedded schemas
@@ -44,8 +44,8 @@ func TestPCFAndPRWEventsFromPublishedJS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(pcfIDL), "// Version: 1.0.5\n") {
-		t.Fatal("the embedded PCF.fbs is not $PCF 1.0.5")
+	if !strings.Contains(string(pcfIDL), "// Version: 1.0.6\n") {
+		t.Fatal("the embedded PCF.fbs is not $PCF 1.0.6")
 	}
 
 	t.Run("PCF 1.0", func(t *testing.T) {
