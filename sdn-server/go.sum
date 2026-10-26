@@ -46,8 +46,8 @@ github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03
 github.com/BurntSushi/xgb v0.0.0-20160522181843-27f122750802/go.mod h1:IVnqGOEym/WlBOVXweHU+Q+/VP0lqqI8lqeDx9IjBqo=
 github.com/DataDog/zstd v1.5.7 h1:ybO8RBeh29qrxIhCA9E8gKY6xfONU9T6G6aP9DTKfLE=
 github.com/DataDog/zstd v1.5.7/go.mod h1:g4AWEaM3yOg3HYfnJ3YIawPnVdXJh9QME85blwSAmyw=
-github.com/DigitalArsenal/spacedatastandards.org/lib/go v1.266.0 h1:uBjw1WoM9zZqG1im3PmTkX7sckBeH5onLhQTXBWk8QI=
-github.com/DigitalArsenal/spacedatastandards.org/lib/go v1.266.0/go.mod h1:jUkfHmlbPW9+dWnJ7+diHfAY6Pg1rQvbyVowHrGRzsU=
+github.com/DigitalArsenal/spacedatastandards.org/lib/go v1.271.0 h1:ywp5rShBELex/8GkW5aXb1U0oIeMU2JHcy79Y4ie4cY=
+github.com/DigitalArsenal/spacedatastandards.org/lib/go v1.271.0/go.mod h1:jUkfHmlbPW9+dWnJ7+diHfAY6Pg1rQvbyVowHrGRzsU=
 github.com/Jorropo/jsync v1.0.1 h1:6HgRolFZnsdfzRUj+ImB9og1JYOxQoReSywkHOGSaUU=
 github.com/Jorropo/jsync v1.0.1/go.mod h1:jCOZj3vrBCri3bSU3ErUYvevKlnbssrXeCivybS5ABQ=
 github.com/OneOfOne/xxhash v1.2.2 h1:KMrpdQIwFcEqXDklaen+P1axHaj9BSKzvpUUfnHldSE=

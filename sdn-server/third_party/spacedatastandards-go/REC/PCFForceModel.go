@@ -1191,29 +1191,58 @@ func (rcv *PCFForceModel) MutateNeutralWind(n pcfNeutralWind) bool {
 	return rcv.MutateNEUTRAL_WIND(n)
 }
 
-/// Empirical along-track terms of the averaged theories. Absent (the
-/// default): the theory's own.
-func (rcv *PCFForceModel) EMPIRICAL_TERMS(obj *PCFEmpiricalTerms) *PCFEmpiricalTerms {
+/// Highest degree of the harmonic field of the third body that has one (the
+/// Moon's on an Earth orbiter, the Earth's on a lunar orbiter); dimensionless.
+/// The field's acceleration at the frame origin is subtracted. Default 0:
+/// third bodies are point masses only.
+func (rcv *PCFForceModel) THIRD_BODY_MAXIMUM_DEGREE() uint16 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(102))
 	if o != 0 {
-		x := rcv._tab.Indirect(o + rcv._tab.Pos)
-		if obj == nil {
-			obj = new(PCFEmpiricalTerms)
-		}
-		obj.Init(rcv._tab.Bytes, x)
-		return obj
+		return rcv._tab.GetUint16(o + rcv._tab.Pos)
 	}
-	return nil
+	return 0
 }
 
-func (rcv *PCFForceModel) EmpiricalTerms(obj *PCFEmpiricalTerms) *PCFEmpiricalTerms {
-	return rcv.EMPIRICAL_TERMS(obj)
+func (rcv *PCFForceModel) ThirdBodyMaximumDegree() uint16 {
+	return rcv.THIRD_BODY_MAXIMUM_DEGREE()
 }
 
-/// Empirical along-track terms of the averaged theories. Absent (the
-/// default): the theory's own.
+/// Highest degree of the harmonic field of the third body that has one (the
+/// Moon's on an Earth orbiter, the Earth's on a lunar orbiter); dimensionless.
+/// The field's acceleration at the frame origin is subtracted. Default 0:
+/// third bodies are point masses only.
+func (rcv *PCFForceModel) MutateTHIRD_BODY_MAXIMUM_DEGREE(n uint16) bool {
+	return rcv._tab.MutateUint16Slot(102, n)
+}
+
+func (rcv *PCFForceModel) MutateThirdBodyMaximumDegree(n uint16) bool {
+	return rcv.MutateTHIRD_BODY_MAXIMUM_DEGREE(n)
+}
+
+/// Highest order of that field; dimensionless. Default 0.
+func (rcv *PCFForceModel) THIRD_BODY_MAXIMUM_ORDER() uint16 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(104))
+	if o != 0 {
+		return rcv._tab.GetUint16(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *PCFForceModel) ThirdBodyMaximumOrder() uint16 {
+	return rcv.THIRD_BODY_MAXIMUM_ORDER()
+}
+
+/// Highest order of that field; dimensionless. Default 0.
+func (rcv *PCFForceModel) MutateTHIRD_BODY_MAXIMUM_ORDER(n uint16) bool {
+	return rcv._tab.MutateUint16Slot(104, n)
+}
+
+func (rcv *PCFForceModel) MutateThirdBodyMaximumOrder(n uint16) bool {
+	return rcv.MutateTHIRD_BODY_MAXIMUM_ORDER(n)
+}
+
 func PCFForceModelStart(builder *flatbuffers.Builder) {
-	builder.StartObject(50)
+	builder.StartObject(51)
 }
 func PCFForceModelAddGRAVITY_CHOICE(builder *flatbuffers.Builder, GRAVITY_CHOICE pcfGravitySelection) {
 	builder.PrependByteSlot(0, byte(GRAVITY_CHOICE), 0)
@@ -1515,11 +1544,17 @@ func PCFForceModelAddNEUTRAL_WIND(builder *flatbuffers.Builder, NEUTRAL_WIND pcf
 func PCFForceModelAddNeutralWind(builder *flatbuffers.Builder, NEUTRAL_WIND pcfNeutralWind) {
 	PCFForceModelAddNEUTRAL_WIND(builder, NEUTRAL_WIND)
 }
-func PCFForceModelAddEMPIRICAL_TERMS(builder *flatbuffers.Builder, EMPIRICAL_TERMS flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(49, flatbuffers.UOffsetT(EMPIRICAL_TERMS), 0)
+func PCFForceModelAddTHIRD_BODY_MAXIMUM_DEGREE(builder *flatbuffers.Builder, THIRD_BODY_MAXIMUM_DEGREE uint16) {
+	builder.PrependUint16Slot(49, THIRD_BODY_MAXIMUM_DEGREE, 0)
 }
-func PCFForceModelAddEmpiricalTerms(builder *flatbuffers.Builder, EMPIRICAL_TERMS flatbuffers.UOffsetT) {
-	PCFForceModelAddEMPIRICAL_TERMS(builder, EMPIRICAL_TERMS)
+func PCFForceModelAddThirdBodyMaximumDegree(builder *flatbuffers.Builder, THIRD_BODY_MAXIMUM_DEGREE uint16) {
+	PCFForceModelAddTHIRD_BODY_MAXIMUM_DEGREE(builder, THIRD_BODY_MAXIMUM_DEGREE)
+}
+func PCFForceModelAddTHIRD_BODY_MAXIMUM_ORDER(builder *flatbuffers.Builder, THIRD_BODY_MAXIMUM_ORDER uint16) {
+	builder.PrependUint16Slot(50, THIRD_BODY_MAXIMUM_ORDER, 0)
+}
+func PCFForceModelAddThirdBodyMaximumOrder(builder *flatbuffers.Builder, THIRD_BODY_MAXIMUM_ORDER uint16) {
+	PCFForceModelAddTHIRD_BODY_MAXIMUM_ORDER(builder, THIRD_BODY_MAXIMUM_ORDER)
 }
 func PCFForceModelEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

@@ -18,16 +18,15 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/wasm"
 )
 
-// TestPCFAndPRWEventsFromPublishedJS is the E2E for the SDS 1.263/1.264
-// refresh: records built by the PUBLISHED spacedatastandards.org JavaScript
+// TestPCFAndPRWEventsFromPublishedJS is the E2E for the SDS 1.263/1.264/1.271
+// refreshes: records built by the PUBLISHED spacedatastandards.org JavaScript
 // bindings (testdata/pcf-prw/build-fixtures.mjs, run against sdn-js's
 // installed package) are admitted and decoded by the node's embedded schemas
 // and by the Go bindings it links.
 //
 //   - $PCF 1.0 carrying every table: integrator, forces (space weather,
-//     ECOM2), mean-element and segment options, fit policy, three event
-//     definitions (one with an expression program), maneuver detection,
-//     reentry, launch priors and output.
+//     ECOM2), fit policy, three event definitions (one with an expression
+//     program) and output.
 //   - $PRW execution request whose EVENTS are the same PCFEventDefinition
 //     tables, beside the shared PCFIntegratorSettings and PCFForceModel.
 //   - $PRW execution result whose EVENTS are located PRWEventRecords.
@@ -45,8 +44,8 @@ func TestPCFAndPRWEventsFromPublishedJS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(pcfIDL), "// Version: 1.0.0\n") {
-		t.Fatal("the embedded PCF.fbs is not $PCF 1.0.0")
+	if !strings.Contains(string(pcfIDL), "// Version: 1.0.5\n") {
+		t.Fatal("the embedded PCF.fbs is not $PCF 1.0.5")
 	}
 
 	t.Run("PCF 1.0", func(t *testing.T) {
@@ -66,8 +65,6 @@ func TestPCFAndPRWEventsFromPublishedJS(t *testing.T) {
 		pcfJSONEquals(t, doc, "DE440", "FORCES", "EPHEMERIS_SOURCE")
 		pcfJSONEquals(t, doc, "DCA_COMMON_MODE", "FORCES", "DENSITY_CORRECTION")
 		pcfJSONEquals(t, doc, "HWM14", "FORCES", "NEUTRAL_WIND")
-		pcfJSONEquals(t, doc, 18.0, "MEAN_ELEMENT", "ZONAL_MAXIMUM_DEGREE")
-		pcfJSONEquals(t, doc, 60.0, "SEGMENTS", "MOON_GRAVITY_MAXIMUM_DEGREE")
 		pcfJSONEquals(t, doc, 3, "FIT", "CANDIDATE_SPANS_HOURS", "#")
 		pcfJSONEquals(t, doc, 0.5, "FIT", "DRAG_PRIOR", "SIGMA")
 		pcfJSONEquals(t, doc, 3, "EVENTS", "#")
@@ -75,16 +72,13 @@ func TestPCFAndPRWEventsFromPublishedJS(t *testing.T) {
 		pcfJSONEquals(t, doc, 0.8660254037844386, "EVENTS", 1, "PLANE_NORMAL", "Z")
 		pcfJSONEquals(t, doc, "STOP", "EVENTS", 2, "ACTION")
 		pcfJSONEquals(t, doc, 3, "EVENTS", 2, "EXPRESSION", "TERMS", "#")
-		pcfJSONEquals(t, doc, "UNSCENTED", "REENTRY", "WINDOW_METHOD")
-		pcfJSONEquals(t, doc, "CORRELATION_TIME", "MANEUVER_DETECTION", "CORRELATION_MODEL")
-		pcfJSONEquals(t, doc, 1.5, "LAUNCH", "SEPARATION_SIGMA_M_S")
 		pcfJSONEquals(t, doc, "GCRF", "OUTPUT", "FRAME")
 
 		if !PCF.PCFBufferHasIdentifier(raw) {
 			t.Fatal("the JS-built buffer does not carry the $PCF identifier")
 		}
 		cfg := PCF.GetRootAsPCF(raw, 0)
-		if string(cfg.CONFIGURATION_ID()) != "sdn-sds-1-264-fixture" || cfg.THEORY() != PCF.EnumValuespcfTheory["FFM"] {
+		if string(cfg.CONFIGURATION_ID()) != "sdn-sds-1-271-fixture" || cfg.THEORY() != PCF.EnumValuespcfTheory["FFM"] {
 			t.Fatalf("identity: %q theory %v", cfg.CONFIGURATION_ID(), cfg.THEORY())
 		}
 		integrator := cfg.INTEGRATOR(nil)
