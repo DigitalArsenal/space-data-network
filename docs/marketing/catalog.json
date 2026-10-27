@@ -280,7 +280,7 @@
         "CNJ"
       ],
       "learnMore": "https://spacedatanetwork.org/collision-avoidance.html",
-      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/modes/modeCards.ts:243-292; modes/cnj/surface.ts:599-610,743-770; modes/cnj/cdmExport.e2e.test.ts; modes/cnj/CnjPanel.svelte:220-243; modules analysis/conjunction-assessment tests/cdmCcsdsConformance.e2e.mjs (xmllint against the CCSDS NDM/XML 4.0.0 schema, Orekit CdmParser); source verification: UI 0a36a1fec6 src/tools/ca-unavailable-verify.mjs and modules a40b3b6a7a analysis/conjunction-assessment/tests/lowVelocityCovariance.test.mjs (retained covariance and explicitly unavailable Pc, browser and native WasmEdge)"
+      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/modes/modeCards.ts:243-292; modes/cnj/surface.ts:599-610,743-770; modes/cnj/cdmExport.e2e.test.ts; modes/cnj/CnjPanel.svelte:220-243; modules analysis/conjunction-assessment tests/cdmCcsdsConformance.e2e.mjs (xmllint against the CCSDS NDM/XML 4.0.0 schema, Orekit CdmParser); source verification: UI 0a36a1fec6 src/tools/ca-unavailable-verify.mjs and modules a40b3b6a7a analysis/conjunction-assessment/tests/lowVelocityCovariance.test.mjs (retained covariance and explicitly unavailable Pc, browser and native WasmEdge); modules 26772d7db analysis/conjunction-assessment/tests/ncCascade.e2e.mjs verifies sequential 2D-Nc, 3D-Nc and sampled Pc with published CARA references and finite-window diagnostics. Sampling is SDMC-style two-body propagation; Lebedev and BFMC are not implemented. Source validation is not evidence of a refreshed live deployment."
     },
     {
       "id": "catalog-screening",
@@ -304,7 +304,7 @@
       "delivery": "sdn-module",
       "covers": [],
       "learnMore": "https://spacedatanetwork.org/whitepapers/fast-conjunction-assessment.html",
-      "evidence": "live modules.pmm conjunction-assessment 0.6.0; space-data-network-modules commits 40d04048, b9bb45f5, aa06ae30, beff6f1b (all-vs-all GPU/CPU, time windows, covariance Pc) at or before 0.6.0; live artifact /modules/conjunction-assessment/0.6.0/module.wasm exports coarse_grid, refine_candidates, screen_window, screen_catalog; every modules.pmm row named here is ANONYMOUS (live manifest 2026-10-13)"
+      "evidence": "live modules.pmm conjunction-assessment 0.6.0; space-data-network-modules commits 40d04048, b9bb45f5, aa06ae30, beff6f1b (all-vs-all GPU/CPU, time windows, covariance Pc) at or before 0.6.0; live artifact /modules/conjunction-assessment/0.6.0/module.wasm exports coarse_grid, refine_candidates, screen_window, screen_catalog; every modules.pmm row named here is ANONYMOUS (live manifest 2026-10-13); source validation: modules 26772d7db analysis/conjunction-assessment/tests/ncCascade.e2e.mjs checks numerical convergence separately from Nc applicability and retains covariance when CQR cannot represent the fallback probability method. The source refinement has not been verified on the live deployment."
     },
     {
       "id": "covariance-analysis",
