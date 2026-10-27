@@ -536,7 +536,7 @@
       "delivery": "sdn-module",
       "covers": [],
       "learnMore": "https://spacedatanetwork.org/whitepapers/fast-conjunction-assessment.html",
-      "evidence": "live modules.pmm com.orbpro.ffm 1.4.1 RECOMMENDED ANONYMOUS (signed 2026-10-24T23:11Z, owner 2026-10-24: FFM is free); live artifact /modules/com.orbpro.ffm/1.4.1/module.wasm, trailer-stripped sha256 8c57bee3 = the row's CONTENT_HASH, strings (PRW execution, PPE trajectory, finite-burn, STM, NRLMSISE-00 and US Standard Atmosphere 1976; no OEM output); live licensing grant-audit com.orbpro.ffm policy=open, anonymous grant verified; space-data-network-modules/propagator/ffm (com.orbpro.ffm 1.4.1)"
+      "evidence": "live modules.pmm com.orbpro.ffm 1.4.1 RECOMMENDED ANONYMOUS (signed 2026-10-24T23:11Z, owner 2026-10-24: FFM is free); live artifact /modules/com.orbpro.ffm/1.4.1/module.wasm, trailer-stripped sha256 8c57bee3 = the row's CONTENT_HASH, strings (PRW execution, PPE trajectory, finite-burn, STM, NRLMSISE-00 and US Standard Atmosphere 1976; no OEM output); live licensing grant-audit com.orbpro.ffm policy=open, anonymous grant verified; space-data-network-modules/propagator/ffm (com.orbpro.ffm 1.4.1); covariance-preserving implementation com.orbpro.ffm 2.0.1 at modules 5746b0f53504d4d8a83c4ec7921f4a34b85901a6: dimensionless validation preserves valid mixed-unit state/parameter covariance, browser and pinned WasmEdge E2E verifies independent force-free covariance and invalid-input rejection; numerical matrix acceptance is not empirical calibration; implementation update only, production deployment not requested"
     },
     {
       "id": "propagator-suite",
