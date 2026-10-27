@@ -39,7 +39,7 @@ import { DEFAULT_WIRE_SPEED_TARGET, measuredWireSpeedUtilization, meetsWireSpeed
 import { encodeWorkerSchemaSyncProgressFlatBuffer } from './worker-sync-status-flatbuffer';
 import type { DataSummary, RawDataRecord, SdnBackend } from './sdn-backend';
 import type { EngineEpochQueryRequest } from '../../epoch-query-sql';
-import type { QueryParam } from 'flatsql/wasm';
+import type { FlatSqlQueryParam as QueryParam } from 'space-data-module-sdk/runtime-host';
 import { FLATSQL_SYNC_READ_SHARD_PROTOCOL_ID, type FlatSqlSyncManifest, type FlatSqlSyncManifestSegment } from '../../flatsql-sync';
 import type {
   WorkerFlatSqlSyncBackendConfig,
@@ -54,6 +54,7 @@ type WorkerRequest =
   | { id: number; type: 'addStandard'; schema: LocalFlatSqlSchema }
   | { id: number; type: 'ingestRecords'; standardId: string; records: RawDataRecord[]; sourceOrOptions?: unknown }
   | { id: number; type: 'ingestFlatBufferStream'; standardId: string; streamBytes: Uint8Array; options?: LocalFlatSqlStreamIngestOptions | null }
+  | { id: number; type: 'removeRecords'; standardId: string; records: Uint8Array[] }
   | { id: number; type: 'clearStandard'; standardId: string; options?: LocalFlatSqlClearOptions }
   | { id: number; type: 'flush'; standardId?: string }
   | { id: number; type: 'query'; sql: string; standardId?: string; options?: LocalFlatSqlQueryOptions }
@@ -106,7 +107,7 @@ async function handleRequest(request: WorkerRequest): Promise<void> {
   try {
     switch (request.type) {
       case 'init':
-        store?.destroy();
+        await store?.destroy();
         await syncBackendCache.destroy();
         store = await createLocalFlatSqlStore(request.options);
         postSuccess(request.id, undefined, await stats({ includeCachedBytes: false }));
@@ -135,6 +136,10 @@ async function handleRequest(request: WorkerRequest): Promise<void> {
         postSuccess(request.id, ingested, await stats({ includeCachedBytes: false }));
         return;
       }
+      case 'removeRecords':
+        await requireStore().removeRecords(request.standardId, request.records);
+        postSuccess(request.id);
+        return;
       case 'clearStandard': {
         const currentStore = requireStore();
         await currentStore.clearStandard(request.standardId, request.options);
@@ -196,7 +201,7 @@ async function handleRequest(request: WorkerRequest): Promise<void> {
         postSyncSuccess(request.id, await schemaSyncQueue.enqueue(() => syncSchemaInWorker(request.id, request.request)));
         return;
       case 'destroy':
-        store?.destroy();
+        await store?.destroy();
         store = null;
         await syncBackendCache.destroy();
         postSuccess(request.id);
@@ -630,7 +635,7 @@ async function syncPublishedSegments(options: {
           error: `Storage cap reached at ${options.request.capBytes} bytes`,
         });
         postProgress(options.id, progress, currentStats);
-        replacementStore?.destroy();
+        await replacementStore?.destroy();
         return { progress, stats: currentStats };
       }
 
@@ -723,9 +728,9 @@ async function syncPublishedSegments(options: {
       flatSqlMaterializationMs += Math.max(0, Date.now() - materializationStartedAt);
       unpersistedBytes = 0;
       materializationStore = options.currentStore;
-      replacementStore.destroy();
+      await replacementStore.destroy();
     } else if (replacementStore) {
-      replacementStore.destroy();
+      await replacementStore.destroy();
       unpersistedBytes = 0;
     } else if (unpersistedBytes > 0) {
       const materializationStartedAt = Date.now();
@@ -764,7 +769,7 @@ async function syncPublishedSegments(options: {
     postProgress(options.id, progress, currentStats);
     return { progress, stats: currentStats };
   } catch (error) {
-    replacementStore?.destroy();
+    await replacementStore?.destroy();
     await options.currentStore.flush(options.request.standardId).catch(() => undefined);
     currentStats = await Promise.resolve(options.currentStore.getStats({ includeCachedBytes: true })).catch(() => currentStats);
     progress = progressFor(progress, {

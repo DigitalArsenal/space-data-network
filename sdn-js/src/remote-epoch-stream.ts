@@ -14,7 +14,7 @@ export interface EpochStreamLocalStore {
     options?: { source?: string | null } | null,
   ): Promise<number>;
   /** Retained for compatibility; conditional responses do not query this store. */
-  queryEpochRawStream(standardId: string, request?: EngineEpochQueryRequest | null): Uint8Array;
+  queryEpochRawStream(standardId: string, request?: EngineEpochQueryRequest | null): Promise<Uint8Array>;
 }
 
 export interface RemoteEpochStreamRequest {

@@ -477,6 +477,7 @@
       "summary": "Builds one combined catalog from many sources with clear precedence and conflict review, and hands element sets over to numerical states.",
       "capabilities": [
         "Composed catalog with source precedence and conflict review",
+        "Search every catalog object by name or international designator and review overlapping sources",
         "Supplemental catalog synthesis",
         "GCAT and McCants catalog editions read with their own identities",
         "Element sets handed over to numerical states in GCRF"
@@ -490,7 +491,7 @@
       "delivery": "sdn-module",
       "covers": [],
       "learnMore": "https://spacedatanetwork.org/catalog.html",
-      "evidence": "live modules.pmm com.digitalarsenal.analysis.catalog-composer 0.1.9, com.orbpro.catalog-synthesis 0.1.0, data-source.catalog-source 0.2.0, analysis.epoch-state 0.1.0; every modules.pmm row named here is ANONYMOUS (live manifest 2026-10-13)"
+      "evidence": "Catalog composer 0.5.0 delivered APP: analysis/catalog-composer/tests/unified-search-e2e.mjs verifies 205-object pagination, Unicode/designator search, overlap review and repeated composition on desktop/mobile. Previous live modules.pmm com.digitalarsenal.analysis.catalog-composer 0.1.9, com.orbpro.catalog-synthesis 0.1.0, data-source.catalog-source 0.2.0, analysis.epoch-state 0.1.0; every modules.pmm row named here is ANONYMOUS (live manifest 2026-10-13)"
     },
     {
       "id": "maneuver-planning",

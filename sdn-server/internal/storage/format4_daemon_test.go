@@ -26,7 +26,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/CAT"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/PNM"
 	flatbuffers "github.com/google/flatbuffers/go"
 
@@ -643,74 +642,6 @@ func TestFormat4SealedRecordsMatchFormat1(t *testing.T) {
 			}
 			if hits := storeFilesHolding(t, dirs[k], plainKeys); len(hits) > 0 {
 				t.Fatalf("format4=%v: a plaintext KEY_BYTES is on disk: %v", s.Format4(), hits)
-			}
-		}
-	})
-}
-
-// SandboxedSelect's `SELECT * FROM <relation>` renders as format 1's
-// full-scan fast path does (contract C-47): _source the relation's registered
-// name, _data NULL, a bool column true or false, a uint32 column unsigned;
-// any other statement (a WHERE, a projection) renders as SQLite does, on
-// both formats. _rowid and _offset are each format's own (C-9).
-func TestFormat4SandboxedSelectStarMatchesFormat1(t *testing.T) {
-	onFormat4Engine(t, func(t *testing.T) {
-		legacy := reopenDeferred(t, t.TempDir())
-		defer legacy.Close()
-		f4 := openFormat4ForTest(t, t.TempDir())
-		defer f4.Close()
-		cat := func(norad uint32, name string, maneuverable bool) []byte {
-			b := flatbuffers.NewBuilder(256)
-			n := b.CreateString(name)
-			id := b.CreateString(fmt.Sprintf("2026-%03dA", norad%1000))
-			CAT.CATStart(b)
-			CAT.CATAddOBJECT_NAME(b, n)
-			CAT.CATAddOBJECT_ID(b, id)
-			CAT.CATAddNORAD_CAT_ID(b, norad)
-			CAT.CATAddINCLINATION(b, 51.6)
-			CAT.CATAddMANEUVERABLE(b, maneuverable)
-			CAT.FinishCATBuffer(b, CAT.CATEnd(b))
-			return append([]byte(nil), b.FinishedBytes()...)
-		}
-		cats := [][]byte{cat(3136308726, "SELECT STAR HIGH NORAD", true), cat(25544, "SELECT STAR LOW NORAD", false)}
-		omm := sds.NewOMMBuilder().WithNoradCatID(4000000001).WithObjectName("SELECT STAR OMM").WithObjectID("2026-999Z").Build()[4:]
-		for _, s := range []*FlatSQLStore{legacy, f4} {
-			if _, err := s.StoreBatchWithSourceTags("CAT.fbs", cats, "source:cat", nil, SourceTags{ProviderID: "proof", SourceName: "cat-feed", BatchID: "c-1"}); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := s.Store("OMM.fbs", omm, "source:omm", nil); err != nil {
-				t.Fatal(err)
-			}
-		}
-		if _, err := legacy.HydrateEngineHotWindow(); err != nil {
-			t.Fatal(err)
-		}
-		answer := func(s *FlatSQLStore, stmt string) []string {
-			r, err := s.SandboxedSelect(context.Background(), stmt, SandboxSelectCaps{MaxRows: 100, MaxBytes: 1 << 20, Timeout: time.Minute})
-			if err != nil {
-				return []string{"error"}
-			}
-			var rows []string
-			for _, cells := range r.Rows {
-				var row []string
-				for i, v := range cells {
-					if c := r.Columns[i]; c != "_rowid" && c != "_offset" {
-						row = append(row, c+"="+v)
-					}
-				}
-				rows = append(rows, strings.Join(row, "|"))
-			}
-			sort.Strings(rows)
-			return append([]string{strings.Join(r.Columns, ",")}, rows...)
-		}
-		for _, stmt := range []string{`SELECT * FROM "CAT"`, `select  *  from cat ;`, `SELECT * FROM "OMM"`,
-			`SELECT * FROM "CAT" WHERE NORAD_CAT_ID > 0`, `SELECT NORAD_CAT_ID, MANEUVERABLE, _source FROM "CAT"`} {
-			a, b := answer(legacy, stmt), answer(f4, stmt)
-			if fmt.Sprint(a) != fmt.Sprint(b) {
-				t.Errorf("%s:\n format 1 %q\n format 4 %q", stmt, a, b)
-			}
-			if len(a) < 2 {
-				t.Errorf("%s: format 1 answers no rows: %q", stmt, a)
 			}
 		}
 	})

@@ -2488,8 +2488,11 @@ func (b format4Backend) WarmFullTextIndexes() (scheduled, skipped []string, err 
 // f4SQL runs one statement and hands each row to onRow (cells valid during
 // the call only); it returns the column names.
 func (b format4Backend) f4SQL(ctx context.Context, req format4.SQLRequest, onRow func([]format2.Cell) error) ([]string, error) {
-	dec := format2.RB1Decoder{OnRow: onRow}
+	dec := format4.QRPDecoder{OnRow: onRow}
 	_, err := b.d.api().SQL(ctx, req, func(chunk []byte) error { return dec.Feed(chunk) })
+	if err == nil {
+		err = dec.Finish()
+	}
 	return dec.Names, err
 }
 
@@ -2675,7 +2678,7 @@ func (b format4Backend) QuerySandboxedJSON(sql string, caps flatsqlrt.SandboxCap
 	var keys [][]byte
 	rows := 0
 	errByteCap := &flatsqlrt.SandboxError{Code: flatsqlrt.SandboxCodeByteCap, Message: fmt.Sprintf("sandbox: byte-cap: result exceeds %d bytes", caps.MaxBytes)}
-	var dec format2.RB1Decoder
+	var dec format4.QRPDecoder
 	dec.OnRow = func(row []format2.Cell) error {
 		if keys == nil {
 			keys = make([][]byte, len(dec.Names))
@@ -2725,6 +2728,9 @@ func (b format4Backend) QuerySandboxedJSON(sql string, caps flatsqlrt.SandboxCap
 		return nil
 	}
 	_, err = b.d.api().SQL(ctx, req, func(chunk []byte) error { return dec.Feed(chunk) })
+	if err == nil {
+		err = dec.Finish()
+	}
 	cols := len(dec.Names)
 	if errors.Is(err, errByteCap) {
 		return nil, rows, cols, errByteCap
@@ -2753,7 +2759,7 @@ func (b format4Backend) sandboxedSelect(ctx context.Context, stmt string, maxRow
 	errDone := errors.New("format4: sandboxed select is full")
 	scan, fast := f4FullScanOf(stmt)
 	var render func(i int, c format2.Cell) string
-	var dec format2.RB1Decoder
+	var dec format4.QRPDecoder
 	dec.OnRow = func(r []format2.Cell) error {
 		if len(out.Rows) >= maxRows {
 			out.Truncated = true
@@ -2777,6 +2783,9 @@ func (b format4Backend) sandboxedSelect(ctx context.Context, stmt string, maxRow
 	}
 	_, err := b.d.api().SQL(ctx, format4.SQLRequest{SQL: stmt, Class: format4.ClassSandbox, Sandbox: true,
 		Caps: format4.Caps{MaxResultRows: uint64(maxRows) + 1}}, func(chunk []byte) error { return dec.Feed(chunk) })
+	if err == nil {
+		err = dec.Finish()
+	}
 	if dec.Names != nil {
 		out.Columns = dec.Names
 	}
@@ -3060,9 +3069,12 @@ func (s *FlatSQLStore) QuerySandboxedRows(sql string, caps flatsqlrt.SandboxCaps
 			return nil, err
 		}
 		defer cancel()
-		var dec format2.RB1Decoder
+		var dec format4.QRPDecoder
 		dec.OnRow = col.add
 		_, err = b.d.api().SQL(ctx, req, func(chunk []byte) error { return dec.Feed(chunk) })
+		if err == nil {
+			err = dec.Finish()
+		}
 		if dec.Names != nil {
 			col.out.Columns = dec.Names
 		}

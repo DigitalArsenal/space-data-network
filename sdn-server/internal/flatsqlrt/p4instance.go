@@ -8,14 +8,14 @@ package flatsqlrt
 //     it loads, checked to run native; its own VM, executor and shared
 //     memory, so it poisons only itself;
 //   - the C host I/O module (hostio_native.c) in its "env";
-//   - malloc and free are flatsql_p4_alloc and flatsql_p4_free;
-//   - boot: _initialize -> flatsql_p4_init(config TLV) -> flatsql_p4_layout
+//   - malloc and free are flatsql_alloc and flatsql_free;
+//   - boot: _initialize -> flatsql_init(config TLV) -> flatsql_layout
 //     (640 bytes, version 1) -> the doorbell over doorbell[0..nThreads) (each
 //     thread's state word follows its doorbell) and the completion poller ->
-//     the heap grown to the memory's maximum (growHeap) -> flatsql_p4_start;
-//   - stop: the stop word, notifies, flatsql_p4_stop(deadline ms), a wait
+//     the heap grown to the memory's maximum (growHeap) -> flatsql_start;
+//   - stop: the stop word, notifies, flatsql_stop(deadline ms), a wait
 //     for the service threads, then an executor stop for any that remain; a
-//     fenced (poisoned) instance cannot run flatsql_p4_stop, so it goes
+//     fenced (poisoned) instance cannot run flatsql_stop, so it goes
 //     straight to the executor stop and OnFailure runs at once.
 //
 // Format 4 has ONE instance for writers, read lanes and maintenance (the
@@ -47,8 +47,8 @@ type P4Config struct {
 	Store         *NativeStore // the node's shared native store; StoreRoot opens a private one
 	StoreRoot     string
 	FDBudget      int    // open fds the instance's host I/O keeps (0: P4FDBudget)
-	InitConfig    []byte // flatsql_p4_init's config TLV
-	MaxThreads    int    // guest threads (default 24)
+	InitConfig    []byte // flatsql_init's config TLV
+	MaxThreads    int    // guest threads (default 64, the engine layout's limit)
 	// ControlBudget bounds each control call (default 5 min: init replays
 	// journals and recovers WALs, activation checkpoints every file).
 	ControlBudget time.Duration
@@ -138,6 +138,11 @@ func OpenP4Instance(cfg P4Config) (*P4Instance, error) {
 	if cfg.ControlBudget <= 0 {
 		cfg.ControlBudget = 5 * time.Minute
 	}
+	if cfg.MaxThreads <= 0 {
+		// The unified engine sizes its lanes from the host's core count.
+		// Match its 64-entry layout instead of the older instance's 24-thread cap.
+		cfg.MaxThreads = 64
+	}
 	p4 := &P4Instance{}
 	ps, err := OpenPSInstance(PSConfig{
 		// One instance does everything; its I/O runs at the writer class.
@@ -175,29 +180,29 @@ func (p *PSInstance) initP4() error {
 			return fmt.Errorf("flatsqlrt: p4 config: %w", err)
 		}
 	}
-	v, err := p.control("flatsql_p4_init", int32(ptr), int32(len(p.cfg.InitConfig)))
+	v, err := p.control("flatsql_init", int32(ptr), int32(len(p.cfg.InitConfig)))
 	if ptr != 0 {
 		p.mod.Deallocate(ptr)
 	}
 	if err != nil {
-		return fmt.Errorf("flatsqlrt: flatsql_p4_init: %w", err)
+		return fmt.Errorf("flatsqlrt: flatsql_init: %w", err)
 	}
 	if rc := wasmrt.ToInt32(v[0]); rc < 0 {
-		return &P4CallError{Export: "flatsql_p4_init", Status: rc}
+		return &P4CallError{Export: "flatsql_init", Status: rc}
 	}
 	out, err := p.mod.AllocateSize(P4LayoutBytes)
 	if err != nil {
 		return err
 	}
-	v, err = p.control("flatsql_p4_layout", int32(out))
+	v, err = p.control("flatsql_layout", int32(out))
 	if err != nil {
 		p.mod.Deallocate(out)
-		return fmt.Errorf("flatsqlrt: flatsql_p4_layout: %w", err)
+		return fmt.Errorf("flatsqlrt: flatsql_layout: %w", err)
 	}
 	raw := p.mem.ReadBytes(out, P4LayoutBytes)
 	p.mod.Deallocate(out)
 	if n := wasmrt.ToInt32(v[0]); n != P4LayoutBytes {
-		return fmt.Errorf("flatsqlrt: flatsql_p4_layout wrote %d bytes, want %d (engine ABI changed)", n, P4LayoutBytes)
+		return fmt.Errorf("flatsqlrt: flatsql_layout wrote %d bytes, want %d (engine ABI changed)", n, P4LayoutBytes)
 	}
 	u := func(off int) uint32 { return binary.LittleEndian.Uint32(raw[off:]) }
 	if u(0) != p4LayoutVersion || u(4) != P4LayoutBytes || u(8) != p4SlotHeader {
@@ -219,19 +224,19 @@ func (p *PSInstance) initP4() error {
 	}
 	p.engineLayout = raw
 	p.layout.DoorbellCount = uint32(n)
-	if p.doorbell, err = p.mod.StartDoorbellAt(p.mem, "flatsql_p4_wake", p.doorbellAddrs); err != nil {
+	if p.doorbell, err = p.mod.StartDoorbellAt(p.mem, "flatsql_wake", p.doorbellAddrs); err != nil {
 		return err
 	}
 	p.poller = wasmrt.StartCompletionPoller(p.mem, p.cfg.PollInterval)
 	p.growHeap()
-	v, err = p.control("flatsql_p4_start")
+	v, err = p.control("flatsql_start")
 	if err == nil && wasmrt.ToInt32(v[0]) < 0 {
-		err = &P4CallError{Export: "flatsql_p4_start", Status: wasmrt.ToInt32(v[0])}
+		err = &P4CallError{Export: "flatsql_start", Status: wasmrt.ToInt32(v[0])}
 	}
 	if err != nil {
 		p.doorbell.Close()
 		p.poller.Close()
-		return fmt.Errorf("flatsqlrt: flatsql_p4_start: %w", err)
+		return fmt.Errorf("flatsqlrt: flatsql_start: %w", err)
 	}
 	p.started = int(wasmrt.ToInt32(v[0]))
 	return nil
@@ -239,12 +244,12 @@ func (p *PSInstance) initP4() error {
 
 // growHeap grows the shared memory to its maximum before the engine's
 // threads start (flatsql docs/STORE-FORMAT-4.md, host: "grow the shared heap
-// before flatsql_p4_start"). A sandbox lane makes its heap arena (config tag
+// before flatsql_start"). A sandbox lane makes its heap arena (config tag
 // 48, 64 MiB by default) at its first untrusted statement, while every
 // thread runs; with the heap grown first, the arenas and every later
 // allocation come from space the guest allocator already holds, and the
 // memory never grows under running threads. Blocks taken through
-// flatsql_p4_alloc halve from 1 GiB to 1 MiB until each size fails, then
+// flatsql_alloc halve from 1 GiB to 1 MiB until each size fails, then
 // are all freed: the allocator keeps the space (wasm memory never shrinks),
 // and pages nothing touches cost no resident memory.
 func (p *PSInstance) growHeap() {
@@ -263,7 +268,7 @@ func (p *PSInstance) growHeap() {
 	}
 }
 
-// EngineLayout returns the raw flatsql_p4_layout block.
+// EngineLayout returns the raw flatsql_layout block.
 func (p *P4Instance) EngineLayout() []byte { return p.ps.EngineLayout() }
 
 // Memory returns the shared-memory accessor; bracket accesses with Enter/Exit.
@@ -287,7 +292,7 @@ func (p *P4Instance) Failure() error { return p.ps.Failure() }
 // Fence fences the instance as a trap does (fault injection).
 func (p *P4Instance) Fence(cause error) { p.ps.Fence(cause) }
 
-// Started returns how many service threads flatsql_p4_start reported.
+// Started returns how many service threads flatsql_start reported.
 func (p *P4Instance) Started() int { return p.ps.Started() }
 
 // AOTPath is the artifact the instance runs.
@@ -359,7 +364,7 @@ func (p *P4Instance) ControlOut(export string, capacity int) ([]byte, int32, err
 }
 
 // StopWithin stops the instance with deadline as its cooperative bound and
-// returns flatsql_p4_stop's status (P4_OK, or P4_E_BUSY when it did not drain
+// returns flatsql_stop's status (P4_OK, or P4_E_BUSY when it did not drain
 // in time). A second stop returns the first one's answer.
 func (p *P4Instance) StopWithin(deadline time.Duration) (int32, error) {
 	err := p.ps.StopWithin(deadline)

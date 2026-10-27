@@ -33,8 +33,8 @@ export async function ingestChannelStreamToFlatSql(
   const { access: _access, ...ingestorOptions } = options;
   assertChannelStreamMatchesStandardCode(channelId, stream.data);
   const ingestor = createChannelFlatSqlIngestor(ingestorOptions);
-  ingestor.pushChunk(stream.data);
-  ingestor.finish();
+  await ingestor.pushChunk(stream.data);
+  await ingestor.finish();
   return createAvailableResult('channels.ingestFlatSql', {
     channelId,
     rows: ingestor.rows,

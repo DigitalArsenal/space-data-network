@@ -28,7 +28,6 @@ import {
   type EnginePublishedShardIngestOptions,
   type EngineSyncChunkIngestOptions,
   type EngineSyncIngestResult,
-  type SnapshotPersistence,
 } from "./engine-record-store";
 import {
   syncFlatSqlSchemaIntoStore,
@@ -217,18 +216,15 @@ export interface SDNConfig {
   /**
    * Record store backend. 'flatsql' (default) is THE node store: the
    * FlatSQL-WASM engine record store (loop D.1 — same engine, SQL, and
-   * source-partition layout as sdn-server), journal-persisted to IndexedDB
-   * under storeName by default or through storagePersistence when given;
+   * source-partition layout as sdn-server), persisted in OPFS (browser) or the filesystem (Node) under storeName;
    * or pass a ready store instance. The legacy 'indexeddb' SDNStorage
    * backend was REMOVED in loop D.5 — passing it now throws.
    */
   storageBackend?: 'flatsql' | NodeRecordStorage;
-  /** Envelope journal persistence for the engine store (e.g. HeliaSnapshotPersistence). */
-  storagePersistence?: SnapshotPersistence;
   /**
    * SDS standards mirrored into per-standard engine databases
    * (per-provider `registerSource` shadow tables + unified views, mirroring
-   * the server layout). Optional: the envelope store works without them.
+   * the server layout). Required before records of a standard can be stored.
    */
   storageSchemas?: LocalFlatSqlSchema[];
   /**
@@ -477,16 +473,9 @@ export class SDNNode {
       }
       if (backend === "flatsql") {
         this.storage = await FlatSQLEngineRecordStore.open({
-          persistence: this.config.storagePersistence,
           persistenceKey: this.config.storeName || "sdn-store",
           schemas: this.config.storageSchemas,
           queryProfiles: this.config.storageQueryProfiles,
-          // Declared, not defaulted: an SDN node is a RECORD store first
-          // (store/get/query over `sdn_record_index` + the envelope journal),
-          // so with no `storageSchemas` the journal is what this node means.
-          // Configure `storageSchemas` to add the disk-backed per-source lane
-          // and the stream surface over it.
-          envelopeJournalOnly: true,
         });
       } else {
         this.storage = backend;
@@ -754,7 +743,7 @@ export class SDNNode {
    * SQL/params — returning the ALIGNED size-prefixed FlatBuffer stream.
    * Requires the default `flatsql` storage backend with `storageSchemas`.
    */
-  queryEpochRawStream(standardId: string, request?: EngineEpochQueryRequest): Uint8Array {
+  async queryEpochRawStream(standardId: string, request?: EngineEpochQueryRequest): Promise<Uint8Array> {
     if (!this.storage) {
       throw new Error("Storage not enabled");
     }

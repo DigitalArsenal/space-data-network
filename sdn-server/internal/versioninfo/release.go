@@ -70,7 +70,7 @@ const (
 	// embeds. Empty means no format-4 engine is embedded. flatsqlrt refuses to
 	// start a binary whose embedded bytes are not this engine (empty bytes
 	// with no pin, else bytes with exactly this sha256).
-	P4EngineSHA256 = "7e60aba1d45d6d9d71df50dcb87cd2956f0d8ffae28bafcf786d7630a3b12462"
+	P4EngineSHA256 = "e28b8cde71f2fcac5493bc2263f3c24ed0449dee03faac1e9386471d0ebf5e6f"
 
 	// P4StoreFormat is format 4's fsql4/STORE format: the format a format-4
 	// store is at, and the one the format-4 engine opens.

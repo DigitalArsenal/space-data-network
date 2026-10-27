@@ -32,13 +32,14 @@ import {
   type LocalFlatSqlStreamIngestOptions,
 } from './local-flatsql';
 import type { EngineEpochQueryRequest } from '../../epoch-query-sql';
-import type { QueryParam } from 'flatsql/wasm';
+import type { FlatSqlQueryParam as QueryParam } from 'space-data-module-sdk/runtime-host';
 
 type WorkerRequest =
   | { id: number; type: 'init'; options: LocalFlatSqlStoreOptions }
   | { id: number; type: 'addStandard'; schema: LocalFlatSqlSchema }
   | { id: number; type: 'ingestRecords'; standardId: string; records: LocalFlatSqlIngestRecord[]; sourceOrOptions?: string | LocalFlatSqlIngestOptions | null }
   | { id: number; type: 'ingestFlatBufferStream'; standardId: string; streamBytes: Uint8Array; options?: LocalFlatSqlStreamIngestOptions | null }
+  | { id: number; type: 'removeRecords'; standardId: string; records: Uint8Array[] }
   | { id: number; type: 'clearStandard'; standardId: string; options?: LocalFlatSqlClearOptions }
   | { id: number; type: 'flush'; standardId?: string }
   | { id: number; type: 'query'; sql: string; standardId?: string; options?: LocalFlatSqlQueryOptions }
@@ -74,7 +75,7 @@ async function handleRequest(request: WorkerRequest): Promise<void> {
   try {
     switch (request.type) {
       case 'init':
-        store?.destroy();
+        await store?.destroy();
         store = await createLocalFlatSqlStore(request.options);
         postSuccess(id, undefined, await stats({ includeCachedBytes: false }));
         return;
@@ -92,6 +93,10 @@ async function handleRequest(request: WorkerRequest): Promise<void> {
         postSuccess(id, ingested, await stats({ includeCachedBytes: false }));
         return;
       }
+      case 'removeRecords':
+        await requireStore().removeRecords(request.standardId, request.records);
+        postSuccess(request.id);
+        return;
       case 'clearStandard':
         await requireStore().clearStandard(request.standardId, request.options);
         postSuccess(id, undefined, await stats({ includeCachedBytes: false }));
@@ -143,7 +148,7 @@ async function handleRequest(request: WorkerRequest): Promise<void> {
         postFailure(id, `${request.type} is ${SYNC_LANE_UNAVAILABLE}`);
         return;
       case 'destroy':
-        store?.destroy();
+        await store?.destroy();
         store = null;
         postSuccess(id);
         return;

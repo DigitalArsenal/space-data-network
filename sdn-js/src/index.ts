@@ -129,9 +129,6 @@ export type { StoredRecord, QueryFilter } from './storage';
 // THE SDNNode store (loop D.1): the FlatSQL-WASM engine record store.
 export {
   FlatSQLEngineRecordStore,
-  PersistenceStoreSnapshotPersistence,
-  MemorySnapshotPersistence,
-  HeliaSnapshotPersistence,
   flatBufferMatchesFileId,
   // Shard classification (2.0.18): a size-prefixed STREAM is not a record.
   flatBufferStreamMatchesFileId,
@@ -140,8 +137,6 @@ export {
 export type {
   FlatSQLEngineRecordStoreOptions,
   EngineQueryParam,
-  SnapshotPersistence,
-  HeliaLike,
   // Datasync-fed store (loop D.4): sync/published-shard ingest into the engine.
   EngineSyncChunkIngestOptions,
   EnginePublishedShardIngestOptions,
@@ -195,10 +190,6 @@ export {
   LOCAL_FLATSQL_DEFAULT_SOURCE,
   // Disk-backed engine surface: where a standard's index + arena live inside a
   // persistence key's namespace, and the router the seven imports are bound to.
-  flatSqlDatabasePathForKey,
-  flatSqlIoPrefixForKey,
-  getSharedFlatSqlIoRouter,
-  registerFlatSqlIoStore,
   decodeFlatSqlSizePrefixedStream,
   iterateFlatSqlSizePrefixedStream,
   engineEpochSpecForSchema,
@@ -221,8 +212,6 @@ export type {
   LocalFlatSqlPersistenceStore,
 } from './local-flatsql';
 // Compatibility alias over the engine record store (published surface).
-export { FlatSQLStorage } from './flatsql-storage';
-export type { FlatSQLStorageOptions } from './flatsql-storage';
 export type { NodeRecordStorage } from './node';
 // Datasync session (loop D.4): bounded cursor walk into the engine store.
 export { syncFlatSqlSchemaIntoStore } from './datasync-session';

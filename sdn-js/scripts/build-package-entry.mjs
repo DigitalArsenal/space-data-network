@@ -160,30 +160,15 @@ const sharedBuildOptions = {
     // SDK no exceptions") that plugin was the violation stated out loud. The
     // dependency, the shim and the `./astro` entry below all went with it.
     {
-      // Loop D.1: the FlatSQL-WASM engine (THE SDNNode store) is bundled
-      // into the package entries. Its emscripten glue / wasm loader import
-      // the Node builtins `module` and `node:crypto` on Node-only code
-      // paths; for the browser-platform bundle those imports are mapped to
-      // runtime-conditional shims (real builtins in Node, inert in
-      // browsers). Scoped to importers inside node_modules/flatsql so no
-      // other dependency resolution changes.
-      name: 'flatsql-node-builtin-shims',
+      // Preserve the generic hosts as standalone modules: their workers and
+      // artifact URLs resolve relative to the same published runtime directory.
+      name: 'binary-runtime-assets',
       setup(pluginBuild) {
-        const flatsqlDir = `node_modules${path.sep}flatsql${path.sep}`;
-        const shimByBuiltin = new Map([
-          ['module', 'src/shims/flatsql-node-module.ts'],
-          ['node:crypto', 'src/shims/flatsql-node-crypto.ts'],
-          ['fs', 'src/shims/flatsql-node-builtins.ts'],
-          ['path', 'src/shims/flatsql-node-builtins.ts'],
-          ['url', 'src/shims/flatsql-node-builtins.ts'],
-        ]);
-        pluginBuild.onResolve({ filter: /^(module|node:crypto|fs|path|url)$/ }, (args) => {
-          if (!args.importer.includes(flatsqlDir)) {
-            return null;
-          }
-          const shim = shimByBuiltin.get(args.path);
-          return shim ? { path: path.join(packageRoot, shim) } : null;
-        });
+        pluginBuild.onResolve({ filter: /^\.\/runtime\/(node|browser)-host\.mjs$/ }, args =>
+          args.importer.includes(`${path.sep}flatsql${path.sep}`) ? { path: args.path, external: true } : null);
+        pluginBuild.onResolve({ filter: /^(node:.*|module|fs|path|url)$/ }, args =>
+          /[\\/]node_modules[\\/](flatsql|flatc-wasm)[\\/]/.test(args.importer)
+            ? { path: args.path, external: true } : null);
       },
     },
     {
@@ -345,11 +330,9 @@ const sharedBuildOptions = {
   },
 };
 
-// The bundled flatsql emscripten glue locates its wasm binary relative to
-// the importing module's URL (new URL('flatsql.wasm', import.meta.url)).
-// Ship the engine binary beside every dist entry that may initialize it so
-// the lookup works from the published package in both Node and browsers.
-const flatsqlWasm = path.join(packageRoot, 'node_modules/flatsql/wasm/flatsql.wasm');
+// Copy the identical published engine and its generic hosts beside the entries
+// that use import.meta.url. No Emscripten factory or alternate engine artifact.
+const flatsqlAssets = path.join(packageRoot, 'node_modules/flatsql/wasm');
 
 async function buildPackageEntries({ outdir, walletPlugins }) {
   await build({
@@ -370,8 +353,10 @@ async function buildPackageEntries({ outdir, walletPlugins }) {
       '.js': '.mjs',
     },
   });
-  for (const target of ['flatsql.wasm', 'ui/flatsql.wasm']) {
-    await fs.copyFile(flatsqlWasm, path.join(packageRoot, outdir, target));
+  for (const entryDir of ['', 'transport', 'ui', 'status', 'storefront']) {
+    const target = path.join(packageRoot, outdir, entryDir);
+    for (const file of ['flatsql.wasm', 'integrity.json']) await fs.copyFile(path.join(flatsqlAssets, file), path.join(target, file));
+    await fs.cp(path.join(flatsqlAssets, 'runtime'), path.join(target, 'runtime'), { recursive: true });
   }
 }
 

@@ -15,7 +15,7 @@ import {
 } from './local-flatsql';
 import type { DataScanResult, DataSummary, RawDataQuery, RawDataRecord } from './sdn-backend';
 import type { EngineEpochQueryRequest } from '../../epoch-query-sql';
-import type { QueryParam } from 'flatsql/wasm';
+import type { FlatSqlQueryParam as QueryParam } from 'space-data-module-sdk/runtime-host';
 import { decodeWorkerSchemaSyncProgressFlatBuffer } from './worker-sync-status-flatbuffer';
 
 export interface WorkerFlatSqlSyncBackendConfig {
@@ -124,6 +124,7 @@ type WorkerRequest =
   | { id: number; type: 'addStandard'; schema: LocalFlatSqlSchema }
   | { id: number; type: 'ingestRecords'; standardId: string; records: RawDataRecord[]; sourceOrOptions?: string | LocalFlatSqlIngestOptions | null }
   | { id: number; type: 'ingestFlatBufferStream'; standardId: string; streamBytes: Uint8Array; options?: LocalFlatSqlStreamIngestOptions | null }
+  | { id: number; type: 'removeRecords'; standardId: string; records: Uint8Array[] }
   | { id: number; type: 'clearStandard'; standardId: string; options?: LocalFlatSqlClearOptions }
   | { id: number; type: 'flush'; standardId?: string }
   | { id: number; type: 'query'; sql: string; standardId?: string; options?: LocalFlatSqlQueryOptions }
@@ -322,12 +323,20 @@ class WorkerLocalFlatSqlStoreClient implements WorkerLocalFlatSqlStore {
     });
   }
 
-  destroy(): void {
-    if (this.destroyed) return;
-    this.destroyed = true;
-    this.rejectAll(new Error('FlatSQL worker store was destroyed'));
-    this.worker.postMessage({ id: 0, type: 'destroy' } satisfies WorkerRequest);
-    this.worker.terminate();
+  private closing?: Promise<void>;
+  destroy(): Promise<void> {
+    return this.closing ??= (async () => {
+      if (this.destroyed) return;
+      try { await this.request<void>({ id: 0, type: 'destroy' }); }
+      finally {
+        this.destroyed = true;
+        this.rejectAll(new Error('FlatSQL worker store was destroyed'));
+        this.worker.terminate();
+      }
+    })();
+  }
+  async removeRecords(standardId: string, records: Uint8Array[]): Promise<void> {
+    await this.request<void>({ id: 0, type: 'removeRecords', standardId, records });
   }
 
   private request<T>(request: WorkerRequest, transferables: Transferable[] = []): Promise<T> {
@@ -396,7 +405,9 @@ function decodeWorkerSchemaSyncWireUpdate(update: WorkerSchemaSyncWireUpdate): W
  */
 function workerInitOptions(options: LocalFlatSqlStoreOptions): LocalFlatSqlStoreOptions {
   if (!options.engine) return options;
-  return { ...options, engine: { wasmPath: options.engine.wasmPath ?? null, publisherKey: options.engine.publisherKey ?? null } };
+  const { computeSHA384: _digest, verify, ...engine } = options.engine;
+  if (verify) throw new Error('Worker engines use a signed artifact URL or the published integrity manifest');
+  return { ...options, engine };
 }
 
 function prepareRecordsForWorker(records: RawDataRecord[], transfer: boolean): { records: RawDataRecord[]; transferables: Transferable[] } {

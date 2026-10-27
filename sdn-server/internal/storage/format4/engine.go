@@ -57,10 +57,10 @@ type Options struct {
 
 // Control exports (contract §3.3), called on the instance's exec thread.
 const (
-	exportRegisterType = "flatsql_p4_register_type"
-	exportSetQuota     = "flatsql_p4_set_quota"
-	exportActivate     = "flatsql_p4_activate"
-	exportStats        = "flatsql_p4_stats"
+	exportRegisterType = "flatsql_register_type"
+	exportSetQuota     = "flatsql_set_quota"
+	exportActivate     = "flatsql_activate"
+	exportStats        = "flatsql_stats"
 	statsEntries       = 40 // §3.10; the engine may append more
 	statsCap           = 8 * 256
 )
@@ -216,7 +216,7 @@ func (e *Engine) attach(mem memory, h host, ctl control, raw []byte) error {
 	return nil
 }
 
-// encodeConfig is flatsql_p4_init's TLV (§3.3): the root, the create mode,
+// encodeConfig is flatsql_init's TLV (§3.3): the root, the create mode,
 // the floor and cores, then the tuning; zero is the engine default.
 func encodeConfig(engineRoot string, opt Options) []byte {
 	cores := opt.Cores
@@ -387,7 +387,7 @@ func (b *busyRetry) wait(ctx context.Context, op, msg string) error {
 	}
 }
 
-// do runs one request and decodes its RB1 response. P4_E_BUSY means nothing
+// do runs one request and decodes its SDS QRP response. P4_E_BUSY means nothing
 // was done: it is retried (busyRetry), for writes and reads alike (reads
 // never return ErrBusy). A write brackets the memo.
 func (e *Engine) do(ctx context.Context, op uint32, class Class, req []byte, want []string) (*rows, error) {
@@ -836,7 +836,7 @@ func (e *Engine) FTS(ctx context.Context) ([]FTSState, error) {
 	return out, nil
 }
 
-// SQL runs one statement and streams its output (RB1, or raw frames with
+// SQL runs one statement and streams its output (QRP pages, or raw frames with
 // Raw) to sink. A sandboxed statement runs on the sandbox lane unless a class
 // is given.
 func (e *Engine) SQL(ctx context.Context, req SQLRequest, sink func(chunk []byte) error) (SQLStats, error) {
@@ -856,9 +856,9 @@ func (e *Engine) SQL(ctx context.Context, req SQLRequest, sink func(chunk []byte
 	if req.Sandbox {
 		flags |= flagSandbox
 	}
-	body := tlv(nil).raw(tagSQL, []byte(req.SQL))
-	if p := format2.EncodeParams(req.Params); p != nil {
-		body = body.raw(tagParams, p)
+	body, encodeErr := encodeSQLRequest(req)
+	if encodeErr != nil {
+		return SQLStats{}, encodeErr
 	}
 	var busy busyRetry
 	for {

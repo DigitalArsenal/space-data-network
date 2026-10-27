@@ -87,7 +87,7 @@ const (
 	// PSABIEngine is the FlatSQL engine's own ABI (see the note above).
 	PSABIEngine
 	// PSABIP4 is the format-4 engine's ABI (p4instance.go): one instance,
-	// flatsql_p4_init(config), a 640-byte layout, a doorbell per thread.
+	// flatsql_init(config), a 640-byte layout, a doorbell per thread.
 	PSABIP4
 )
 
@@ -102,7 +102,7 @@ func (a PSABI) exports() psExports {
 	case PSABIEngine:
 		return psExports{malloc: "flatsql_ps_alloc", free: "flatsql_ps_free", stop: "flatsql_ps_stop"}
 	case PSABIP4:
-		return psExports{malloc: "flatsql_p4_alloc", free: "flatsql_p4_free", stop: "flatsql_p4_stop"}
+		return psExports{malloc: "flatsql_alloc", free: "flatsql_free", stop: "flatsql_stop"}
 	}
 	return psExports{stop: "flatsql_ps_stop"}
 }
@@ -887,7 +887,7 @@ func (p *PSInstance) shutdown(deadline time.Duration) error {
 		}
 	}
 	if p.mod.Poisoned() && p.cfg.ABI == PSABIP4 {
-		// The format-4 engine's threads leave only through flatsql_p4_stop,
+		// The format-4 engine's threads leave only through flatsql_stop,
 		// which a poisoned instance never runs: nothing can drain, so a
 		// fenced instance goes straight to the executor stop and its owner
 		// hears of the failure at once.

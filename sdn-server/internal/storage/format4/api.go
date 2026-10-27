@@ -13,11 +13,11 @@
 // The C ABI and this API are unchanged by the feed layout: a tag still names
 // its (provider, source, batch, ...) and the engine files it by its feed.
 //
-// The engine is the published flatsql-p4-threads.wasm
+// The engine is the published flatsql.wasm
 // (flatsqlrt/p4artifact.go): ONE threaded WasmEdge instance holds the writer
 // pool, the read lanes and the maintenance thread (flatsqlrt/p4instance.go).
 // Go talks to it through a mailbox of request slots in the instance's shared
-// memory (mailbox.go): a request is a TLV, a response is RB1 row blocks
+// memory (mailbox.go): storage controls are packed messages and SQL requests are SDS QRP, a response is SDS QRP pages
 // streamed through the slot's ring. Go never calls a guest export on a hot
 // path; control exports (registration, quota, activation, stats, stop) run on
 // the instance's exec thread.

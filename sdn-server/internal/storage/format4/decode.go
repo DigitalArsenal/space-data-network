@@ -1,6 +1,6 @@
 package format4
 
-// The response side of the wire (contract §3.6): RB1 blocks with fixed
+// The response side of the wire (contract §3.6): SDS QRP pages with fixed
 // column names. A response whose header does not carry exactly the expected
 // columns is an engine ABI change and fails loudly.
 
@@ -35,7 +35,7 @@ var (
 	colsSurface = []string{"name", "kind", "source", "column", "placeholder", "bound"}
 )
 
-// rows is a decoded RB1 response.
+// rows is a decoded QRP response.
 type rows struct {
 	op    string
 	names []string
@@ -43,12 +43,15 @@ type rows struct {
 }
 
 func decodeRows(op string, body []byte, want []string) (*rows, error) {
-	var d format2.RB1Decoder
+	var d QRPDecoder
 	if err := d.Feed(body); err != nil {
 		return nil, fmt.Errorf("format4: %s response: %w", op, err)
 	}
 	if !d.Done() {
 		return nil, fmt.Errorf("format4: %s response has no end record", op)
+	}
+	if d.End.Status != 0 {
+		return nil, &StatusError{Op: op, Status: d.End.Status}
 	}
 	if d.Names != nil && !sameStrings(d.Names, want) {
 		return nil, fmt.Errorf("format4: %s response columns %v, want %v (engine ABI changed)", op, d.Names, want)
