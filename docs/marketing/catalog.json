@@ -262,9 +262,10 @@
       "summary": "Screen one satellite against the whole catalog or a chosen object, compute collision probability and plan an avoidance burn. Free on spaceaware.io with no account.",
       "capabilities": [
         "Screen against the full catalog or a single object",
-        "Collision probability for each event",
+        "Collision probability where available; unavailable results remain unassessed",
+        "Source or empirical covariance provenance retained when probability is unavailable",
         "Conjunction data messages in CCSDS 508.0-B-1 KVN and XML, as FlatBuffer or JSON, with OCM orbits",
-        "Avoidance burn with post-burn miss distance and collision probability",
+        "Avoidance burn with post-burn miss distance and collision probability where available",
         "Operator notification package ready to send",
         "Close events and export results"
       ],
@@ -279,18 +280,18 @@
         "CNJ"
       ],
       "learnMore": "https://spacedatanetwork.org/collision-avoidance.html",
-      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/modes/modeCards.ts:243-292; modes/cnj/surface.ts:599-610,743-770; modes/cnj/cdmExport.e2e.test.ts; modes/cnj/CnjPanel.svelte:220-243; modules analysis/conjunction-assessment tests/cdmCcsdsConformance.e2e.mjs (xmllint against the CCSDS NDM/XML 4.0.0 schema, Orekit CdmParser)"
+      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/modes/modeCards.ts:243-292; modes/cnj/surface.ts:599-610,743-770; modes/cnj/cdmExport.e2e.test.ts; modes/cnj/CnjPanel.svelte:220-243; modules analysis/conjunction-assessment tests/cdmCcsdsConformance.e2e.mjs (xmllint against the CCSDS NDM/XML 4.0.0 schema, Orekit CdmParser); source verification: UI 0a36a1fec6 src/tools/ca-unavailable-verify.mjs and modules a40b3b6a7a analysis/conjunction-assessment/tests/lowVelocityCovariance.test.mjs (retained covariance and explicitly unavailable Pc, browser and native WasmEdge)"
     },
     {
       "id": "catalog-screening",
       "name": "All-vs-all catalog screening",
       "category": "space-safety",
       "tagline": "Every object against every other, GPU or CPU",
-      "summary": "Screens the whole catalog, every object against every other, on GPU or CPU. Produces conjunction data messages with collision probability from SGP4 or high-precision trajectories.",
+      "summary": "Screens the whole catalog, every object against every other, on GPU or CPU. Produces conjunction data messages from SGP4 or high-precision trajectories, with collision probability where it can be computed.",
       "capabilities": [
         "All-vs-all pair search on a WebGPU device or the CPU",
         "SGP4 or numerically integrated trajectories in time windows",
-        "Collision probability from covariance on each screened event",
+        "Covariance-based collision probability where computable; source covariance retained when unavailable",
         "CDM output for every event"
       ],
       "standards": [
