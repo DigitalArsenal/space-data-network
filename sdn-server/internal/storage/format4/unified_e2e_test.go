@@ -135,6 +135,40 @@ func TestUnifiedFlatBufferQueryReopen(t *testing.T) {
 		t.Fatalf("reopen: %+v %v", restored, err)
 	}
 	query("SELECT geo_contains(_data,2,2) FROM \"GJN@geo\"")
+	copy := in
+	copy.Sig = []byte{8, 9}
+	copy.TS++
+	_, err = e.Put(ctx, format4.Batch{Type: "GJN", Peer: "second-peer", Tags: []format4.Tag{{Provider: "second", Source: "archive", Batch: "batch-2"}, {Provider: "second", Source: "geo", Batch: "batch-3"}}, Records: []format4.In{copy}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkProvenance := func() {
+		t.Helper()
+		d := query("SELECT p.provider,p.source,p.batch,p.peer,p.ts,p.sig FROM (SELECT DISTINCT _cid FROM GJN) r JOIN flatsql_provenance('GJN',r._cid) p ORDER BY p.provider,p.source,p.batch")
+		if len(d.Rows) != 3 {
+			t.Fatalf("provenance copies: %+v", d.Rows)
+		}
+		for i, want := range [][4]string{{"customer", "geo", "batch-1", "fixture-peer"}, {"second", "archive", "batch-2", "second-peer"}, {"second", "geo", "batch-3", "second-peer"}} {
+			for j, text := range want {
+				if string(d.Rows[i][j].B) != text {
+					t.Fatalf("provenance row %d field %d: %+v", i, j, d.Rows[i])
+				}
+			}
+			wantCopy := in
+			if i > 0 {
+				wantCopy = copy
+			}
+			if d.Rows[i][4].I != wantCopy.TS || !bytes.Equal(d.Rows[i][5].B, wantCopy.Sig) {
+				t.Fatalf("provenance signature/timestamp row %d: %+v", i, d.Rows[i])
+			}
+		}
+	}
+	checkProvenance()
+	if err = e.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	e = openReal(t, root, format4.OpenExisting, 0, nil)
+	checkProvenance()
 	if err = e.Close(ctx); err != nil {
 		t.Fatal(err)
 	}

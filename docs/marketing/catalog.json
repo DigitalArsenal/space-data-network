@@ -491,7 +491,7 @@
       "delivery": "sdn-module",
       "covers": [],
       "learnMore": "https://spacedatanetwork.org/catalog.html",
-      "evidence": "Catalog composer 0.5.0 delivered APP: analysis/catalog-composer/tests/unified-search-e2e.mjs verifies 205-object pagination, Unicode/designator search, overlap review and repeated composition on desktop/mobile. Previous live modules.pmm com.digitalarsenal.analysis.catalog-composer 0.1.9, com.orbpro.catalog-synthesis 0.1.0, data-source.catalog-source 0.2.0, analysis.epoch-state 0.1.0; every modules.pmm row named here is ANONYMOUS (live manifest 2026-10-13)"
+      "evidence": "Catalog composer 0.5.1 delivered APP with FlatSQL 3.12.1: analysis/catalog-composer/tests/unified-search-e2e.mjs verifies 205-object pagination, Unicode/designator search, overlap review and repeated composition on desktop/mobile. Previous live modules.pmm com.digitalarsenal.analysis.catalog-composer 0.1.9, com.orbpro.catalog-synthesis 0.1.0, data-source.catalog-source 0.2.0, analysis.epoch-state 0.1.0; every modules.pmm row named here is ANONYMOUS (live manifest 2026-10-13)"
     },
     {
       "id": "maneuver-planning",

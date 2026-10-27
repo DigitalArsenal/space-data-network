@@ -56,6 +56,8 @@ export interface LocalFlatSqlStoreOptions {
 export interface ClearLocalFlatSqlStoreOptions {
   persistenceKey: string;
   standardIds: string[];
+  engine?: LocalFlatSqlEngineOptions | null;
+  schemas?: Pick<LocalFlatSqlSchema, 'standardId' | 'tableName'>[];
   desktopPersistenceBaseUrl?: string | null;
   fetch?: FetchLike | null;
   persistenceStore?: LocalFlatSqlPersistenceStore | null;
@@ -280,10 +282,15 @@ export async function createLocalFlatSqlStore(options: LocalFlatSqlStoreOptions)
   } catch (error) { await db.close(); throw error; }
 }
 export async function clearLocalFlatSqlStore(options: ClearLocalFlatSqlStoreOptions): Promise<void> {
-  const db = await FlatSQL.open({ root: rootForKey(options.persistenceKey) });
+  const ids = new Set(options.standardIds.map(normalizeStandardId));
+  const names = new Map(options.schemas?.map(schema => [normalizeStandardId(schema.standardId), schema.tableName]));
+  const db = await FlatSQL.open(await engineOptions({ ...options, schemas: [] }));
   try {
-    for (const standard of options.standardIds) {
-      const name = normalizeStandardId(standard);
+    const surface = decodeFlatSqlResult(await db.surface());
+    const tables = new Set(surface.rows.filter(row => row[2] === '').map(row => row[0]));
+    for (const id of ids) {
+      const name = names.get(id) ?? id;
+      if (!tables.has(name)) continue;
       for (;;) {
         const { rows } = decodeFlatSqlResult(await db.execute(encodeFlatSqlQuery(`SELECT _data FROM ${quoteIdentifier(name)} LIMIT 64`)));
         if (!rows.length) break;
@@ -291,7 +298,10 @@ export async function clearLocalFlatSqlStore(options: ClearLocalFlatSqlStoreOpti
       }
     }
   } finally { await db.close(); }
-  await createLocalFlatSqlPersistenceStore(options).deleteKey(persistedPinLedgerKey(options.persistenceKey));
+  const persistence = createLocalFlatSqlPersistenceStore(options), key = persistedPinLedgerKey(options.persistenceKey);
+  const remaining = [...(await readPersistedPinLedgerEntries(persistence, key)).values()].filter(entry => !ids.has(entry.standardId));
+  if (remaining.length) await writePersistedPinLedgerEntries(persistence, key, remaining);
+  else await persistence.deleteKey(key);
 }
 class WasmLocalFlatSqlStore implements LocalFlatSqlStore {
   private readonly schemas = new Map<string, LocalFlatSqlSchema>();
@@ -375,19 +385,29 @@ class WasmLocalFlatSqlStore implements LocalFlatSqlStore {
   }
   async replaceStandardFrom(id: string, replacement: LocalFlatSqlStore, entries: LocalFlatSqlPinLedgerEntry[], options: LocalFlatSqlPinLedgerWriteOptions = {}): Promise<void> {
     if (!(replacement instanceof WasmLocalFlatSqlStore)) throw new Error('Replacement must be a FlatSQL store');
-    const schema = replacement.schema(id);
+    if (replacement === this) throw new Error('Replacement must be a separate staging store');
+    const schema = replacement.schema(id), target = this.schema(id);
+    if (schema.fileId !== target.fileId || schema.bfbs!.length !== target.bfbs!.length || !schema.bfbs!.every((byte, i) => byte === target.bfbs![i]))
+      throw new Error('Replacement schema must match the destination');
+    const pins = entries.map(normalizePinLedgerEntry);
     // The staging store is fully ingested before the durable store changes.
     await this.clearStandard(id, { persist: false });
-    for (const source of await replacement.listSources(id)) {
-      let after = 0;
-      for (;;) {
-        const result = await replacement.rows(`SELECT _rowid, _data, _signature, _peer, _ts FROM ${quoteIdentifier(schema.tableName + '@' + source)} WHERE _rowid > ?1 ORDER BY _rowid LIMIT 64`, [after]);
-        if (!result.rows.length) break;
-        await this.ingestRecords(id, result.rows.map(([_seq, data, signature, peer, timestamp]) => ({ schemaName: id, cid: '', dataBytes: data as Uint8Array, signature: signature as Uint8Array, peerId: String(peer ?? ''), timestamp: new Date(Number(timestamp) * 1000).toISOString() })), source);
-        after = Number(result.rows.at(-1)![0]);
+    let after: QueryParam = 0;
+    for (;;) {
+      const result = await replacement.rows(`SELECT _rowid, _cid, _data FROM ${quoteIdentifier(schema.tableName)} WHERE _rowid > ?1 ORDER BY _rowid LIMIT 64`, [after]);
+      if (!result.rows.length) break;
+      for (const [seq, cid, data] of result.rows) {
+        const copies = await replacement.rows('SELECT provider,source,batch,peer,ts,sig FROM flatsql_provenance(?1,?2) WHERE seq=?3', [schema.tableName, cid as string, seq as number | bigint]);
+        if (!copies.rows.length) throw new Error('Staged record has no provenance');
+        await this.ingestRecords(id, copies.rows.map(([provider, source, batch, peer, timestamp, signature]) => ({
+          schemaName: id, cid: cid as string, dataBytes: data as Uint8Array, signature: signature as Uint8Array | undefined,
+          providerId: provider as string | null, sourceName: source as string | null, batchId: batch as string | null,
+          peerId: peer as string, timestamp: new Date(Number(timestamp) * 1000).toISOString(),
+        })));
       }
+      after = result.rows.at(-1)![0] as number | bigint;
     }
-    await this.recordPinLedgerEntries(entries, options);
+    await this.recordPinLedgerEntries(pins, options);
   }
   async recordPinLedgerEntries(entries: LocalFlatSqlPinLedgerEntry[], options: LocalFlatSqlPinLedgerWriteOptions = {}): Promise<void> {
     for (const candidate of entries) { const entry = normalizePinLedgerEntry(candidate); this.pinLedger.set(pinLedgerEntryKey(entry), entry); }
@@ -400,8 +420,11 @@ class WasmLocalFlatSqlStore implements LocalFlatSqlStore {
   }
   async listSources(id: string): Promise<string[]> {
     const schema = this.schema(id);
-    const result = await this.rows(`SELECT DISTINCT _source FROM ${quoteIdentifier(schema.tableName)} ORDER BY _source`);
-    return result.rows.map(row => String(row[0]).slice(schema.tableName.length + 1));
+    const surface = decodeFlatSqlResult(await this.db.surface());
+    const sources = new Set(surface.rows.filter(row => row[2] && row[0] === schema.tableName + '@' + row[2]).map(row => String(row[2])));
+    const local = await this.rows(`SELECT _rowid FROM ${quoteIdentifier(schema.tableName + '@local')} LIMIT 1`);
+    if (local.rows.length) sources.add('local');
+    return [...sources].sort();
   }
   async query(sql: string, id?: string, options: LocalFlatSqlQueryOptions = {}): Promise<LocalFlatSqlQueryResult> {
     if (id) this.schema(id);
