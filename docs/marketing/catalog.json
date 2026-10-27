@@ -989,7 +989,7 @@
       "url": "https://celestrak.org/NORAD/elements/",
       "data": "OMM element sets for every object in the public catalog. The node keeps every pull, so the lane is also each object's element-set history.",
       "arrival": "sdn-lane",
-      "lane": "OMM.fbs \u00b7 celestrak-gp",
+      "lane": "OMM.fbs · celestrak-gp",
       "via": [
         "data-source/celestrak-request",
         "data-source/celestrak-parser"
@@ -1286,7 +1286,7 @@
       "url": "https://ephemerides.planet-labs.com/",
       "data": "Operator states for Planet's fleet, from which the open drag correction (open-DCA) is fitted beside NRLMSISE-00.",
       "arrival": "sdn-lane",
-      "lane": "DCL.fbs \u00b7 open-dca / planet-nrlmsise00 (derived)",
+      "lane": "DCL.fbs · open-dca / planet-nrlmsise00 (derived)",
       "via": [
         "data-source/operator-states-public"
       ],
@@ -1304,7 +1304,7 @@
       "url": "https://maia.usno.navy.mil/ser7/",
       "data": "Polar motion, UT1 and nutation corrections applied to every frame conversion.",
       "arrival": "sdn-lane",
-      "lane": "EOP.fbs \u00b7 usno-finals2000a",
+      "lane": "EOP.fbs · usno-finals2000a",
       "via": [
         "data-source/eop-request",
         "data-source/eop-parser"
@@ -1324,7 +1324,7 @@
       "url": "https://kp.gfz.de/",
       "data": "Geomagnetic indices and solar flux, measured and forecast, for atmospheric drag.",
       "arrival": "sdn-lane",
-      "lane": "SPW.fbs \u00b7 gfz-noaa",
+      "lane": "SPW.fbs · gfz-noaa",
       "via": [
         "data-source/space-weather"
       ],
@@ -1343,7 +1343,7 @@
       "url": "https://naif.jpl.nasa.gov/naif/data.html",
       "data": "Planetary ephemerides (DE440s), moon ephemerides and body orientation: Sun and Moon for propagation, and every body's position in the solar system view.",
       "arrival": "sdn-lane",
-      "lane": "PNM.fbs \u00b7 naif / ssb-kernels",
+      "lane": "PNM.fbs · naif / ssb-kernels",
       "via": [
         "data-source/naif-kernels"
       ],
@@ -1360,7 +1360,7 @@
       "url": "https://asteroid.lowell.edu/astorb/",
       "data": "Orbits of every numbered asteroid, and the largest tenth the console shows by default.",
       "arrival": "sdn-lane",
-      "lane": "SBD.fbs \u00b7 lowell-astorb",
+      "lane": "SBD.fbs · lowell-astorb",
       "via": [
         "data-source/lowell-astorb"
       ],
@@ -1408,7 +1408,7 @@
       "url": "https://zenodo.org/records/10658339",
       "data": "Interstellar dust within 1,250 parsecs, for the Milky Way model seen from outside the solar system.",
       "arrival": "sdn-lane",
-      "lane": "PCE.fbs \u00b7 edenhofer2024 / local-dust-1250pc",
+      "lane": "PCE.fbs · edenhofer2024 / local-dust-1250pc",
       "via": [
         "data-source/dust-map-3d"
       ],
@@ -1437,7 +1437,7 @@
       "url": "https://heasarc.gsfc.nasa.gov/",
       "data": "Stars to magnitude 6.5 first, then the deeper catalog to magnitude 10.",
       "arrival": "sdn-lane",
-      "lane": "STR.fbs, PNM.fbs \u00b7 orbpro-star-catalog",
+      "lane": "STR.fbs, PNM.fbs · orbpro-star-catalog",
       "via": [
         "com.digitalarsenal.flows.star-catalog-ingest"
       ],
@@ -1453,7 +1453,7 @@
       "url": "https://www.eso.org/public/images/eso0932a/",
       "data": "The all-sky Milky Way image behind the star field.",
       "arrival": "sdn-lane",
-      "lane": "PNM.fbs \u00b7 orbpro-star-catalog / sky-assets",
+      "lane": "PNM.fbs · orbpro-star-catalog / sky-assets",
       "via": [
         "com.digitalarsenal.flows.star-catalog-ingest"
       ],
@@ -1502,7 +1502,7 @@
         "imagery-studio",
         "imagery-detection"
       ],
-      "terms": "Esri terms, credited \u201cPowered by Esri\u201d",
+      "terms": "Esri terms, credited “Powered by Esri”",
       "termsUrl": "https://developers.arcgis.com/documentation/esri-and-data-attribution/"
     },
     {
@@ -1526,7 +1526,7 @@
       "url": "https://www.earthdata.nasa.gov/gibs",
       "data": "NASA's Earth observation imagery layers with their full time ranges. The layer catalog arrives over SDN; the tiles stream from GIBS.",
       "arrival": "sdn-lane",
-      "lane": "PNM.fbs \u00b7 nasa-gibs / layer-catalog",
+      "lane": "PNM.fbs · nasa-gibs / layer-catalog",
       "via": [
         "data-source/gibs"
       ],
@@ -2081,7 +2081,7 @@
     },
     {
       "key": "module:ffm-2.0.0",
-      "reason": "Integrators DOPRI5, RK6(5)8M, RK8(7)13M, Verner 9(8) and RKN12(10)17M, and event location inside the integrator (apsides, planes, true anomaly, argument of latitude, latitude extrema, umbra and penumbra, closest approach, expression events); against exact two-body epochs, every event but eclipse and closest approach lands within 0.7 \u00b5s across 11 integrators: propagator/ffm 2.0.0 is not in the live module catalog, which carries com.orbpro.ffm 1.4.1"
+      "reason": "Integrators DOPRI5, RK6(5)8M, RK8(7)13M, Verner 9(8) and RKN12(10)17M, and event location inside the integrator (apsides, planes, true anomaly, argument of latitude, latitude extrema, umbra and penumbra, closest approach, expression events); against exact two-body epochs, every event but eclipse and closest approach lands within 0.7 µs across 11 integrators: propagator/ffm 2.0.0 is not in the live module catalog, which carries com.orbpro.ffm 1.4.1"
     }
   ]
 }
