@@ -2076,8 +2076,8 @@
       "reason": "Sentinel EOF orbit files read into OEM, and NAIF CK type 3 attitude kernels read and written as AEM; a kernel written here reads back in CSPICE to 2.2e-16 rad: files/orbit-products 0.2.0 is not in the live module catalog, which carries 0.1.2"
     },
     {
-      "key": "module:estimation-0.5.0",
-      "reason": "Relative-navigation Kalman filters (Hill-Clohessy-Wiltshire, Schweighart-Sedwick J2, Tschauner-Hempel, Yamanaka-Ankersen) and opt-in innovation recovery; against full-force model truth, 0 false reinitializations, filter consistency (NEES) 3.9 to 5.6 against 6 expected, and recovery at the second observation after 10 cm/s and 1 m/s burns: analysis/estimation 0.5.0 is not in the live module catalog, which carries 0.2.0"
+      "key": "module:estimation-0.6.0",
+      "reason": "Orbit fits that do not fail when the propagator refuses a step: each fitted drag and radiation-pressure coefficient stays in its physical range, a refused or worse step becomes a smaller one, and convergence scales with how well the data fit; from three first guesses where the previous fit stepped the drag coefficient negative, the fit reaches Orekit's solution within 4e-4 of a formal sigma, and a fit whose data read thrust as negative drag ends with drag held at zero. Also relative-navigation Kalman filters (Hill-Clohessy-Wiltshire, Schweighart-Sedwick J2, Tschauner-Hempel, Yamanaka-Ankersen) and opt-in innovation recovery, recovering at the second observation after 10 cm/s and 1 m/s burns: analysis/estimation 0.6.0 is not in the live module catalog, which carries 0.2.0"
     },
     {
       "key": "module:ffm-2.0.0",
