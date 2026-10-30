@@ -284,17 +284,14 @@
     ctx.fillRect(0, mid + 1, w, 1);
 
     // The play bar at the current position, standing out nearest the viewer.
+    // Solid black, one CSS pixel wide, snapped to whole device pixels so it
+    // never straddles two of them (a fractional x antialiases and shimmers).
     if (this.pos > 0 || lift > 0.01) {
-      var px = pad + head * pitch, k = Math.max(lift, 0.35);
-      var top = 3;
-      ctx.save();
-      var pg = ctx.createLinearGradient(0, top, 0, mid);
-      pg.addColorStop(0, rgba(hot, k));
-      pg.addColorStop(0.75, rgba(mix(hot, acc, 0.5), k));
-      pg.addColorStop(1, rgba(acc, 0));
-      ctx.fillStyle = pg;
-      ctx.fillRect(px - 0.5, top, 1, mid - top);   // one pixel, no cap
-      ctx.restore();
+      var px = pad + head * pitch, dpr = this.dpr;
+      var x0 = Math.round((px - 0.5) * dpr), x1 = Math.max(x0 + 1, Math.round((px + 0.5) * dpr));
+      var y0 = Math.round((mid - 0.75 * (mid - 3)) * dpr), y1 = Math.round(mid * dpr);
+      ctx.fillStyle = palette.light ? '#1d1d1f' : '#fff';
+      ctx.fillRect(x0 / dpr, y0 / dpr, (x1 - x0) / dpr, (y1 - y0) / dpr);
     }
   };
 
