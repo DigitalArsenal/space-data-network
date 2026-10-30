@@ -1,8 +1,11 @@
 /* Soundtrack player for the style guide: each track plays in the page over its
  * waveform. The bars already played stay lit; the bars under the playhead stay
- * on the baseline and grow, as if nearer the viewer. One track
- * plays at a time. The waveform is a precomputed RMS profile (data-peaks,
- * 0..99), so nothing is decoded until a track is played. */
+ * on the baseline and grow, as if nearer the viewer. One track plays at a time.
+ * The deck above the list plays the queue in list order: previous, play or
+ * pause, next, shuffle, repeat (off, all, one). Rows reorder by drag (the
+ * number), the up and down arrows, or Alt plus an arrow key on the number.
+ * Order and modes are kept in localStorage. The waveform is a precomputed RMS
+ * profile (data-peaks, 0..99), so nothing is decoded until a track is played. */
 (function () {
   'use strict';
 
@@ -10,18 +13,30 @@
   var LIFT_SCALE = 0.6;      // how much taller a fully lifted bar gets
   var LIFT_WIDEN = 0.5;      // how much wider a fully lifted bar gets
   var BAR_PITCH = 6;         // px per bar at most (thinner screens merge bars)
+  var RESTART_AFTER = 3;     // seconds: Previous restarts a track played past this
+  var STATE_KEY = 'sdn.soundtrack';
+  var REPEAT_MODES = ['off', 'all', 'one'];
 
   var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   var audio = new Audio();
   audio.preload = 'none';
   var current = null;        // the player whose src is loaded
-  var players = [];
+  var players = [];          // the queue, in play order
+  var repeat = 'off';        // 'off' | 'all' | 'one'
+  var shuffle = false;
+  var history = [];          // shuffle: tracks played before the current one
+  var round = [];            // shuffle: tracks heard since the queue last wrapped
+  var dragSrc = null;        // the player whose number is being dragged
+  var dropTarget = null, dropAfter = false;
+  var deckEl = null, mainBtn = null, nowEl = null, shuffleBtn = null, repeatBtn = null;
 
   function fmt(t) {
     if (!isFinite(t) || t < 0) t = 0;
     var m = Math.floor(t / 60), s = Math.floor(t % 60);
     return m + ':' + (s < 10 ? '0' : '') + s;
   }
+
+  function pad2(n) { return (n < 10 ? '0' : '') + n; }
 
   function parseColor(str) {
     var c = document.createElement('canvas').getContext('2d');
@@ -58,6 +73,10 @@
     this.wave = el.querySelector('.st-wave');
     this.canvas = this.wave.querySelector('canvas');
     this.timeEl = el.querySelector('.st-time');
+    this.grip = el.querySelector('.st-grip');
+    this.noEl = el.querySelector('.st-no');
+    this.up = el.querySelector('[data-act="up"]');
+    this.down = el.querySelector('[data-act="down"]');
     this.pos = 0;            // 0..1 playback position
     this.hover = -1;         // 0..1 hover position, -1 when none
     this.lift = 0;           // eased 0..1: how far the playhead section is raised
@@ -70,6 +89,25 @@
   Player.prototype.bind = function () {
     var self = this;
     this.btn.addEventListener('click', function () { self.toggle(); });
+    this.up.addEventListener('click', function () { nudge(self, -1); });
+    this.down.addEventListener('click', function () { nudge(self, 1); });
+    this.grip.addEventListener('keydown', function (e) {
+      if (!e.altKey) return;
+      if (e.key === 'ArrowUp') { e.preventDefault(); nudge(self, -1); }
+      else if (e.key === 'ArrowDown') { e.preventDefault(); nudge(self, 1); }
+    });
+    this.grip.addEventListener('dragstart', function (e) {
+      dragSrc = self;
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', self.title);
+      e.dataTransfer.setDragImage(self.el, 24, 24);
+      self.el.classList.add('is-dragging');
+    });
+    this.grip.addEventListener('dragend', function () {
+      self.el.classList.remove('is-dragging');
+      dragSrc = null;
+      clearDrop();
+    });
     var dragging = false;
     function at(e) {
       var r = self.wave.getBoundingClientRect();
@@ -108,11 +146,24 @@
     current = this;
     audio.src = this.src;
     audio.currentTime = this.pos * (this.duration || 0);
+    updateDeck();
   };
 
   Player.prototype.toggle = function () {
     if (current === this && !audio.paused) { audio.pause(); return; }
     this.load();
+    var self = this;
+    var p = audio.play();
+    if (p && p.catch) p.catch(function () { self.failed(); });
+  };
+
+  // Starts this track from its beginning, whatever it was doing.
+  Player.prototype.restart = function () {
+    this.pos = 0;
+    this.load();
+    audio.currentTime = 0;
+    this.updateTime();
+    this.draw();
     var self = this;
     var p = audio.play();
     if (p && p.catch) p.catch(function () { self.failed(); });
@@ -135,6 +186,7 @@
     this.el.classList.remove('is-playing');
     this.btn.setAttribute('aria-label', 'Play ' + this.title);
     animate();
+    updateDeck();
   };
 
   Player.prototype.failed = function () {
@@ -234,19 +286,14 @@
     // The play bar at the current position, standing out nearest the viewer.
     if (this.pos > 0 || lift > 0.01) {
       var px = pad + head * pitch, k = Math.max(lift, 0.35);
-      var top = 3, pw = Math.max(2.5, bw * 0.75);
+      var top = 3;
       ctx.save();
       var pg = ctx.createLinearGradient(0, top, 0, mid);
       pg.addColorStop(0, rgba(hot, k));
       pg.addColorStop(0.75, rgba(mix(hot, acc, 0.5), k));
       pg.addColorStop(1, rgba(acc, 0));
       ctx.fillStyle = pg;
-      roundRect(ctx, px - pw / 2, top, pw, mid - top, pw / 2);
-      ctx.fill();
-      ctx.beginPath();                        // the cap
-      ctx.arc(px, top + pw / 2, pw * 1.15, 0, Math.PI * 2);
-      ctx.fillStyle = rgba(palette.light ? hot : [255, 248, 230, 1], k);
-      ctx.fill();
+      ctx.fillRect(px - 0.5, top, 1, mid - top);   // one pixel, no cap
       ctx.restore();
     }
   };
@@ -288,19 +335,219 @@
     if (busy) raf = requestAnimationFrame(tick);
   }
 
+  // ---------------------------------------------------------------- queue
+
+  // The track that comes after (dir 1) or before (dir -1) the current one.
+  // Automatic moves (a track ended) stop at the end of the queue unless
+  // repeat is "all"; manual moves always wrap.
+  function neighbor(dir, auto) {
+    var list = players, n = list.length;
+    if (!n) return null;
+    var wrap = !auto || repeat === 'all';
+    if (shuffle && dir > 0) {
+      var pool = list.filter(function (p) { return p !== current && round.indexOf(p) < 0; });
+      if (!pool.length) {
+        if (!wrap) return null;
+        round = [];
+        pool = list.filter(function (p) { return p !== current; });
+        if (!pool.length) return current || list[0];   // a single track repeats
+      }
+      return pool[Math.floor(Math.random() * pool.length)];
+    }
+    var i = current ? list.indexOf(current) : -1;
+    var j = i < 0 ? (dir > 0 ? 0 : n - 1) : i + dir;
+    if (j < 0 || j >= n) {
+      if (!wrap) return null;
+      j = (j + n) % n;
+    }
+    return list[j];
+  }
+
+  function go(p, fromHistory) {
+    if (!p) return;
+    if (!fromHistory && shuffle && current && current !== p) {
+      history.push(current);
+      if (history.length > 100) history.shift();
+    }
+    if (shuffle && round.indexOf(p) < 0) round.push(p);
+    p.restart();
+  }
+
+  function previous() {
+    if (!current) return go(neighbor(-1, false));
+    if (audio.currentTime > RESTART_AFTER) return current.restart();
+    if (shuffle && history.length) return go(history.pop(), true);
+    go(neighbor(-1, false));
+  }
+
+  function next() { go(neighbor(1, false)); }
+
+  function playPause() {
+    if (current) current.toggle();
+    else go(neighbor(1, false));
+  }
+
+  function setShuffle(on) {
+    shuffle = on;
+    history = [];
+    round = current ? [current] : [];
+    saveState();
+    updateDeck();
+  }
+
+  function cycleRepeat() {
+    repeat = REPEAT_MODES[(REPEAT_MODES.indexOf(repeat) + 1) % REPEAT_MODES.length];
+    saveState();
+    updateDeck();
+  }
+
+  // ---------------------------------------------------------------- order
+
+  function renumber() {
+    players.forEach(function (p, i) { p.noEl.textContent = pad2(i + 1); });
+  }
+
+  // Puts the rows in queue order and renumbers them. Moving a row in the DOM
+  // does not interrupt a track that is playing.
+  function applyOrder() {
+    var box = players[0].el.parentNode;
+    players.forEach(function (p) { box.appendChild(p.el); });
+    renumber();
+    saveState();
+  }
+
+  function nudge(p, dir) {
+    var i = players.indexOf(p), j = i + dir;
+    if (j < 0 || j >= players.length) return;
+    players.splice(i, 1);
+    players.splice(j, 0, p);
+    applyOrder();
+    (dir < 0 ? p.up : p.down).focus();
+  }
+
+  function place(src, target, after) {
+    if (src === target) return;
+    players.splice(players.indexOf(src), 1);
+    players.splice(players.indexOf(target) + (after ? 1 : 0), 0, src);
+    applyOrder();
+  }
+
+  function resetOrder() {
+    players.sort(function (a, b) { return a.orig - b.orig; });
+    applyOrder();
+  }
+
+  function playerAt(node) {
+    for (var i = 0; i < players.length; i++) if (players[i].el === node) return players[i];
+    return null;
+  }
+
+  function clearDrop() {
+    players.forEach(function (p) { p.el.classList.remove('is-drop-before', 'is-drop-after'); });
+    dropTarget = null;
+    dropAfter = false;
+  }
+
+  function bindDrop(box) {
+    box.addEventListener('dragover', function (e) {
+      if (!dragSrc) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      var node = e.target.closest ? e.target.closest('.st-track') : null;
+      var target = node ? playerAt(node) : null;
+      clearDrop();
+      if (!target || target === dragSrc) return;
+      var r = node.getBoundingClientRect();
+      dropAfter = e.clientY > r.top + r.height / 2;
+      dropTarget = target;
+      target.el.classList.add(dropAfter ? 'is-drop-after' : 'is-drop-before');
+    });
+    box.addEventListener('dragleave', function (e) {
+      if (!box.contains(e.relatedTarget)) clearDrop();
+    });
+    box.addEventListener('drop', function (e) {
+      if (!dragSrc) return;
+      e.preventDefault();
+      if (dropTarget) place(dragSrc, dropTarget, dropAfter);
+      clearDrop();
+    });
+  }
+
+  // ---------------------------------------------------------------- deck
+
+  function updateDeck() {
+    if (!deckEl) return;
+    var playing = !!(current && current.playing);
+    deckEl.classList.toggle('is-playing', playing);
+    mainBtn.setAttribute('aria-label', playing ? 'Pause' : 'Play');
+    nowEl.textContent = current ? current.title : 'Pick a track';
+    shuffleBtn.setAttribute('aria-pressed', String(shuffle));
+    shuffleBtn.classList.toggle('is-on', shuffle);
+    repeatBtn.textContent = 'Repeat ' + repeat;
+    repeatBtn.classList.toggle('is-on', repeat !== 'off');
+  }
+
+  function bindDeck() {
+    deckEl = document.querySelector('[data-soundtrack]');
+    if (!deckEl) return;
+    mainBtn = deckEl.querySelector('[data-act="toggle"]');
+    nowEl = deckEl.querySelector('.st-title');
+    shuffleBtn = deckEl.querySelector('[data-act="shuffle"]');
+    repeatBtn = deckEl.querySelector('[data-act="repeat"]');
+    deckEl.querySelector('[data-act="prev"]').addEventListener('click', previous);
+    mainBtn.addEventListener('click', playPause);
+    deckEl.querySelector('[data-act="next"]').addEventListener('click', next);
+    shuffleBtn.addEventListener('click', function () { setShuffle(!shuffle); });
+    repeatBtn.addEventListener('click', cycleRepeat);
+    deckEl.querySelector('[data-act="reset"]').addEventListener('click', resetOrder);
+    var total = players.reduce(function (sum, p) { return sum + p.duration; }, 0);
+    deckEl.querySelector('.st-count').textContent = players.length + ' tracks · ' + fmt(total);
+  }
+
+  // Order and modes survive a reload. A saved title not in the page is ignored.
+  function saveState() {
+    try {
+      localStorage.setItem(STATE_KEY, JSON.stringify({
+        order: players.map(function (p) { return p.title; }),
+        repeat: repeat,
+        shuffle: shuffle
+      }));
+    } catch (err) { /* storage off: the page still works */ }
+  }
+
+  function loadState() {
+    var s = null;
+    try { s = JSON.parse(localStorage.getItem(STATE_KEY) || 'null'); } catch (err) { s = null; }
+    if (!s) return;
+    if (Array.isArray(s.order)) {
+      var rank = function (p) { var r = s.order.indexOf(p.title); return r < 0 ? 999 + p.orig : r; };
+      players.sort(function (a, b) { return rank(a) - rank(b); });
+      applyOrder();
+    }
+    if (REPEAT_MODES.indexOf(s.repeat) >= 0) repeat = s.repeat;
+    shuffle = s.shuffle === true;
+    round = current ? [current] : [];
+  }
+
+  // ---------------------------------------------------------------- audio
+
   audio.addEventListener('play', function () {
     if (!current) return;
     current.playing = true;
     current.el.classList.add('is-playing');
     current.btn.setAttribute('aria-label', 'Pause ' + current.title);
     animate();
+    updateDeck();
   });
   audio.addEventListener('pause', function () { if (current) current.stopped(); });
   audio.addEventListener('ended', function () {
     if (!current) return;
-    current.pos = 0;
-    current.updateTime();
-    current.stopped();
+    var me = current;
+    me.pos = 0;
+    me.updateTime();
+    me.stopped();
+    if (repeat === 'one') { me.restart(); return; }
+    go(neighbor(1, true));
   });
   audio.addEventListener('loadedmetadata', function () {
     if (!current) return;
@@ -314,8 +561,18 @@
 
   function init() {
     var els = document.querySelectorAll('.st-track');
-    for (var i = 0; i < els.length; i++) players.push(new Player(els[i]));
+    for (var i = 0; i < els.length; i++) {
+      var p = new Player(els[i]);
+      p.orig = i;
+      players.push(p);
+    }
     if (!players.length) return;
+    var box = players[0].el.parentNode;
+    bindDrop(box);
+    bindDeck();
+    loadState();
+    renumber();
+    updateDeck();
     if (window.ResizeObserver) {
       var ro = new ResizeObserver(function (entries) {
         entries.forEach(function (en) {

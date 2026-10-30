@@ -170,6 +170,7 @@ guide page (`docs/media/audio/`):
 | Orbital Insertion | `orbital-insertion.mp3` |
 | Covariance | `covariance.mp3` |
 | DeltaV | `delta-v.mp3` |
+| T Minus 0 | `t-minus-0.mp3` |
 
 - Each video carries one section of one of the three tracks, the one most
   evocative for its subject, with the tracks varied across videos, faded in

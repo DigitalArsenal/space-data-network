@@ -1,21 +1,130 @@
 /* Soundtrack player (style guide). Colors come from the site tokens, so the
  * light/dark switch carries over; the waveform canvas reads them too. */
-.st-tracks { display: grid; gap: 12px; margin-top: 20px; }
+
+/* The deck: queue transport, now playing, shuffle and repeat, reset order. */
+.st-deck { margin-top: 20px; }
+.st-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 16px;
+  padding: 12px 14px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+.st-transport { display: flex; align-items: center; gap: 8px; }
+.st-ctl {
+  width: 36px; height: 36px;
+  display: grid; place-items: center;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  transition: transform .15s, background .2s, color .2s, border-color .2s;
+}
+.st-ctl:hover { background: var(--wash); transform: scale(1.05); }
+.st-ctl:active { transform: scale(.97); }
+.st-ctl svg { width: 16px; height: 16px; fill: currentColor; }
+.st-ctl-main { width: 44px; height: 44px; background: var(--hi-bg); color: var(--hi-fg); border-color: var(--hi-bg); }
+.st-ctl-main:hover { background: var(--hi-bg); }
+.st-ctl-main svg { width: 18px; height: 18px; }
+.st-ctl-main .st-i-pause { display: none; }
+.st-deck.is-playing .st-ctl-main .st-i-play { display: none; }
+.st-deck.is-playing .st-ctl-main .st-i-pause { display: block; }
+.st-ctl:focus-visible, .st-mode:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+.st-now { flex: 1 1 200px; min-width: 0; display: grid; gap: 2px; }
+.st-count { color: var(--muted); font-family: var(--font-mono); font-size: 12px; font-variant-numeric: tabular-nums; }
+.st-title { font-weight: 600; font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.st-modes { display: flex; flex-wrap: wrap; gap: 8px; }
+.st-mode {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 7px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.st-mode:hover { background: var(--wash); color: var(--text); }
+.st-mode.is-on {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--border));
+  background: var(--accent-soft);
+}
+
+.st-tracks { display: grid; gap: 12px; margin-top: 12px; }
 
 .st-track {
+  position: relative;
   display: grid;
-  grid-template-columns: auto minmax(120px, 170px) minmax(0, 1fr) auto;
+  grid-template-columns: auto auto minmax(120px, 170px) minmax(0, 1fr) auto;
   align-items: center;
   gap: 18px;
   padding: 14px 18px;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  transition: border-color .2s;
+  transition: border-color .2s, opacity .2s;
 }
 .st-track.is-playing {
   border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
 }
+.st-track.is-dragging { opacity: .45; }
+.st-track.is-drop-before::before,
+.st-track.is-drop-after::after {
+  content: "";
+  position: absolute;
+  left: 14px; right: 14px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+.st-track.is-drop-before::before { top: -7px; }
+.st-track.is-drop-after::after { bottom: -7px; }
+
+/* Order column: up arrow, the number (drag handle), down arrow. */
+.st-order { display: grid; justify-items: center; gap: 2px; }
+.st-nudge {
+  width: 26px; height: 20px;
+  display: grid; place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.st-nudge:hover { background: var(--wash); color: var(--text); }
+.st-nudge svg {
+  width: 14px; height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.st-grip {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  cursor: grab;
+}
+.st-grip:hover { color: var(--text); background: var(--wash); }
+.st-grip:active { cursor: grabbing; }
+.st-nudge:focus-visible, .st-grip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .st-play {
   width: 46px; height: 46px;
@@ -51,12 +160,15 @@
 .st-track .btn { padding: 10px 18px; font-size: 14px; }
 
 @media (max-width: 640px) {
+  .st-bar { padding: 12px; }
+  .st-now { flex-basis: 100%; order: -1; }
   .st-track {
-    grid-template-columns: auto minmax(0, 1fr) auto;
-    grid-template-areas: "play meta dl" "wave wave wave";
-    gap: 4px 14px;
+    grid-template-columns: auto auto minmax(0, 1fr) auto;
+    grid-template-areas: "order play meta dl" "order wave wave wave";
+    gap: 4px 12px;
     padding: 14px;
   }
+  .st-order { grid-area: order; }
   .st-play { grid-area: play; }
   .st-meta { grid-area: meta; }
   .st-wave { grid-area: wave; height: 76px; }
