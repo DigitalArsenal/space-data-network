@@ -1280,24 +1280,6 @@
       "terms": "Public domain (U.S. Government)"
     },
     {
-      "id": "planet-ephemerides",
-      "name": "Planet ephemerides",
-      "provider": "Planet Labs",
-      "url": "https://ephemerides.planet-labs.com/",
-      "data": "Operator states for Planet's fleet, from which the open drag correction (open-DCA) is fitted beside NRLMSISE-00.",
-      "arrival": "sdn-lane",
-      "lane": "DCL.fbs · open-dca / planet-nrlmsise00 (derived)",
-      "via": [
-        "data-source/operator-states-public"
-      ],
-      "modules": [
-        "ffm",
-        "catalog-screening"
-      ],
-      "terms": "Provider terms",
-      "termsUrl": "https://ephemerides.planet-labs.com/"
-    },
-    {
       "id": "iers-eop",
       "name": "Earth orientation parameters",
       "provider": "IERS, through the USNO finals2000A series",
@@ -2082,6 +2064,10 @@
     {
       "key": "module:ffm-2.0.0",
       "reason": "Integrators DOPRI5, RK6(5)8M, RK8(7)13M, Verner 9(8) and RKN12(10)17M, and event location inside the integrator (apsides, planes, true anomaly, argument of latitude, latitude extrema, umbra and penumbra, closest approach, expression events); against exact two-body epochs, every event but eclipse and closest approach lands within 0.7 µs across 11 integrators: propagator/ffm 2.0.0 is not in the live module catalog, which carries com.orbpro.ffm 1.4.1"
+    },
+    {
+      "key": "source:planet-ephemerides",
+      "reason": "Planet's operator states feed the open drag correction on the DCL.fbs open-dca lane, which the console does not read."
     }
   ]
 }
