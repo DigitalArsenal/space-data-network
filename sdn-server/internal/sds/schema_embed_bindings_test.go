@@ -41,6 +41,7 @@ import (
 	bCHN "github.com/DigitalArsenal/spacedatastandards.org/lib/go/CHN"
 	bCLM "github.com/DigitalArsenal/spacedatastandards.org/lib/go/CLM"
 	bCLT "github.com/DigitalArsenal/spacedatastandards.org/lib/go/CLT"
+	bCME "github.com/DigitalArsenal/spacedatastandards.org/lib/go/CME"
 	bCMR "github.com/DigitalArsenal/spacedatastandards.org/lib/go/CMR"
 	bCMS "github.com/DigitalArsenal/spacedatastandards.org/lib/go/CMS"
 	bCMT "github.com/DigitalArsenal/spacedatastandards.org/lib/go/CMT"
@@ -261,7 +262,9 @@ import (
 	bSTV "github.com/DigitalArsenal/spacedatastandards.org/lib/go/STV"
 	bSTX "github.com/DigitalArsenal/spacedatastandards.org/lib/go/STX"
 	bSUB "github.com/DigitalArsenal/spacedatastandards.org/lib/go/SUB"
+	bSWA "github.com/DigitalArsenal/spacedatastandards.org/lib/go/SWA"
 	bSWR "github.com/DigitalArsenal/spacedatastandards.org/lib/go/SWR"
+	bSWS "github.com/DigitalArsenal/spacedatastandards.org/lib/go/SWS"
 	bTAB "github.com/DigitalArsenal/spacedatastandards.org/lib/go/TAB"
 	bTBP "github.com/DigitalArsenal/spacedatastandards.org/lib/go/TBP"
 	bTBS "github.com/DigitalArsenal/spacedatastandards.org/lib/go/TBS"
@@ -340,6 +343,7 @@ var driftGuardedSchemas = []struct {
 	{"CHN.fbs", &bCHN.CHN{}},
 	{"CLM.fbs", &bCLM.CLM{}},
 	{"CLT.fbs", &bCLT.CLT{}},
+	{"CME.fbs", &bCME.CME{}},
 	{"CMR.fbs", &bCMR.CMR{}},
 	{"CMS.fbs", &bCMS.CMS{}},
 	{"CMT.fbs", &bCMT.CMT{}},
@@ -560,7 +564,9 @@ var driftGuardedSchemas = []struct {
 	{"STV.fbs", &bSTV.STV{}},
 	{"STX.fbs", &bSTX.STX{}},
 	{"SUB.fbs", &bSUB.SUB{}},
+	{"SWA.fbs", &bSWA.SWA{}},
 	{"SWR.fbs", &bSWR.SWR{}},
+	{"SWS.fbs", &bSWS.SWS{}},
 	{"TAB.fbs", &bTAB.TAB{}},
 	{"TBP.fbs", &bTBP.TBP{}},
 	{"TBS.fbs", &bTBS.TBS{}},

@@ -504,6 +504,16 @@ const engineStandardCatalogGraph = `
     INVOKE_ID:uint;
     DATA:[ubyte];
   }
+  table CME {
+    EVENT_ID:string;
+    CATALOG:string;
+    START_TIME:string;
+    SOURCE_LOCATION:string;
+    HG_LATITUDE_DEG:double;
+    HG_LONGITUDE_DEG:double;
+    REGION_NUMBER:uint32;
+    HAS_REGION_NUMBER:bool;
+  }
   table CMR {
     MEMBERSHIP_ID:string;
     NORAD_CAT_ID:uint;
@@ -3698,6 +3708,21 @@ const engineStandardCatalogGraph = `
     LISTING_ID:string;
     AUTH_KIND:byte;
   }
+  table SWA {
+    PRODUCT_ID:string;
+    MESSAGE_CODE:string;
+    SERIAL_NUMBER:string;
+    REFERS_TO_SERIAL:string;
+    KIND:byte;
+    ISSUED_AT:string;
+    BEGIN_TIME:string;
+    END_TIME:string;
+    VALID_FROM:string;
+    VALID_TO:string;
+    SCALE_FAMILY:byte;
+    SCALE_LEVEL:ubyte;
+    MESSAGE:string;
+  }
   table SWR {
     ID:string;
     ON_ORBIT:string;
@@ -3709,6 +3734,12 @@ const engineStandardCatalogGraph = `
     LON:double;
     LOCATION_NAME:string;
     BAD_WAVE:string;
+  }
+  table SWS {
+    SERIES_ID:string;
+    QUANTITY:ushort;
+    QUANTITY_NAME:string;
+    UNITS:string;
   }
   table TAB {
     OFFSET:uint;
@@ -4085,6 +4116,7 @@ var engineGeneratedStandardBindings = map[string]engineRoutedSchema{
 	"CHN.fbs":  {Table: "CHN", FileID: "$CHN"},
 	"CLM.fbs":  {Table: "CLM", FileID: "$CLM"},
 	"CLT.fbs":  {Table: "CLT", FileID: "$CLT"},
+	"CME.fbs":  {Table: "CME", FileID: "$CME"},
 	"CMR.fbs":  {Table: "CMR", FileID: "$CMR"},
 	"CMS.fbs":  {Table: "CMS", FileID: "$CMS"},
 	"CMT.fbs":  {Table: "CMT", FileID: "$CMT"},
@@ -4307,7 +4339,9 @@ var engineGeneratedStandardBindings = map[string]engineRoutedSchema{
 	"STV.fbs":  {Table: "STV", FileID: "$STV"},
 	"STX.fbs":  {Table: "STX", FileID: "$STX"},
 	"SUB.fbs":  {Table: "SUB", FileID: "$SUB"},
+	"SWA.fbs":  {Table: "SWA", FileID: "$SWA"},
 	"SWR.fbs":  {Table: "SWR", FileID: "$SWR"},
+	"SWS.fbs":  {Table: "SWS", FileID: "$SWS"},
 	"TAB.fbs":  {Table: "TAB", FileID: "$TAB"},
 	"TBP.fbs":  {Table: "TBP", FileID: "$TBP"},
 	"TCF.fbs":  {Table: "TCF", FileID: "$TCF"},

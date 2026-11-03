@@ -1,7 +1,23 @@
 #!/bin/bash
-
-rm -R internal/spacedatastandards/*
-
-cp -R ../spacedatastandards.org/lib/go/* internal/spacedatastandards/ 
-
-cp ../spacedatastandards.org/dist/manifest.json serverconfig/
+set -euo pipefail
+cd "$(dirname "$0")/.."
+# Refresh only from the published dependencies pinned by this checkout.
+node <<'NODE'
+const fs = require('node:fs');
+const path = require('node:path');
+const { execFileSync } = require('node:child_process');
+const pkg = path.resolve('sdn-js/node_modules/spacedatastandards.org');
+const version = JSON.parse(fs.readFileSync(path.join(pkg, 'package.json'))).version;
+const pin = JSON.parse(fs.readFileSync('sdn-js/package.json')).dependencies['spacedatastandards.org'];
+const mod = JSON.parse(execFileSync('go', ['list', '-m', '-json', 'github.com/DigitalArsenal/spacedatastandards.org/lib/go'], { cwd: 'sdn-server' }));
+if (version !== pin || mod.Version !== `v${version}` || mod.Replace || !mod.Dir)
+  throw new Error('Install matching published npm and Go dependencies before copying SDS');
+const schemas = fs.readdirSync(path.join(pkg, 'schema'), { withFileTypes: true }).filter(e => e.isDirectory());
+const copies = schemas.map(e => [e.name, fs.readFileSync(path.join(pkg, 'schema', e.name, 'main.fbs'))]);
+for (const [name, bytes] of copies) fs.writeFileSync(`sdn-server/internal/sds/schemas/${name}.fbs`, bytes);
+// The binding tree is a complete module snapshot, including removals.
+const destination = 'sdn-server/third_party/spacedatastandards-go';
+fs.rmSync(destination, { recursive: true, force: true });
+fs.cpSync(mod.Dir, destination, { recursive: true });
+console.log(`Copied ${copies.length} published SDS ${version} schemas and Go module ${mod.Version}`);
+NODE

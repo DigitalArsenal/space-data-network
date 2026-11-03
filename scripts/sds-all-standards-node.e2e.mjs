@@ -1,4 +1,4 @@
-// SDS 1.255.0 on the node, every standard (sdn-sds-1-255-all-standards-20261018):
+// SDS 1.273.0 on the node (sdn-sds-1273-refresh-20261103):
 // the node built from this checkout embeds every published standard byte for
 // byte, accepts a publish of a real $CVR record, one record of every standard
 // new to the node, a $DPM CAR_ARCHIVE asset with THROUGH_SEQ, and records of
@@ -13,13 +13,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 
-const VERSION = '1.257.0';
-// Standards the node did not embed before this pin (CVR first, FMB/FCK/FSG new
-// at 1.255.0), then existing standards that must still round-trip.
-const ADDED = ['ABA', 'ACT', 'AGR', 'APR', 'ASG', 'BPF', 'CLM', 'CSO', 'CVR', 'DAV', 'DCL', 'ERM', 'ETS', 'EVL', 'EXO', 'FCK',
-  'FIL', 'FMB', 'FSG', 'GCT', 'GLX', 'LFV', 'MDE', 'MPL', 'NDS', 'NEV', 'NHS', 'NST', 'ODR', 'OIL', 'PNV', 'PPS', 'PSS', 'QRP',
-  'RND', 'RPC', 'SBC', 'SCR', 'SKQ', 'SKR', 'SLP', 'SRG', 'TBP', 'TCT', 'TRH', 'WHA', 'XMT'];
-const EXISTING = ['OMM', 'CAT', 'CDM', 'OCM', 'STR', 'SKT', 'DPM'];
+const VERSION = '1.273.0';
+const ADDED = ['SWS', 'CME', 'SWA'];
+const EXISTING = ['OMM', 'CAT', 'CDM', 'OCM', 'STR', 'SKT', 'DPM', 'WXF'];
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const server = join(root, 'sdn-server');
@@ -121,11 +117,64 @@ records.push(await record('CVR', (cvr, m) => Object.assign(cvr, {
   MEAN_D2_OVER_3: 1.04, COVERAGE_95: 0.947, SAMPLES: 18432, OBJECTS: 612, SCALE_FACTOR: 1.18,
   CALIBRATION: m.covarianceCalibration.Calibrated, EVIDENCE: 'bafkreifixturecvrevidence',
 })));
-for (const code of ADDED.filter((c) => c !== 'CVR')) {
-  if (!identOf(idlOf(code))) { ok(`${code}: no file_identifier, embedded for its include closure only`); continue; }
-  records.push(await record(code));
+// Synthetic, populated space-weather records, using the published object API.
+// Nested measurements, arrivals, provenance and aligned sample columns must survive.
+const spaceWeather = {
+  SWS: (o, m) => Object.assign(o, {
+    SERIES_ID: 'fixture:solar-wind-speed', QUANTITY: m.swsQuantity.ProtonSpeed,
+    QUANTITY_NAME: 'proton_speed', UNITS: 'km/s', STATUS: m.swsValueStatus.RealTime,
+    LOCATION: m.swsLocation.AtSpacecraft, PLATFORMS: ['ACE'], INSTRUMENT: 'SWEPAM',
+    CADENCE_S: 60, SAMPLE_CONVENTION: m.swsSampleConvention.Instant,
+    EPOCHS_MS: [1793721600000n, 1793721660000n], VALUES: [425.5, 431.25],
+    SIGMAS: [2.5, 3.25], QUALITY: [0, 1], ACTIVE: [true, false], SAMPLE_COUNTS: [12, 11],
+    SAMPLE_STATUS: [m.swsValueStatus.RealTime, m.swsValueStatus.Provisional], SAMPLE_PLATFORM: [0, 0],
+    FLAG_NAMES: ['quality'], FLAG_VALUES: [0, 1],
+  }),
+  CME: (o, m) => Object.assign(o, {
+    EVENT_ID: 'fixture:2026-11-03T12:00:00-CME-001', CATALOG: 'synthetic-e2e',
+    START_TIME: '2026-11-03T12:00:00Z', SOURCE_LOCATION: 'N12W05',
+    HG_LATITUDE_DEG: 12, HG_LONGITUDE_DEG: 5, REGION_NUMBER: 14270, HAS_REGION_NUMBER: true,
+    INSTRUMENTS: ['LASCO C2'], LINKED_EVENT_IDS: ['fixture:flare-001'], NOTE: 'Synthetic CME fixture',
+    MEASUREMENTS: [Object.assign(new m.CMEMeasurementT(), {
+      CATALOG: 'synthetic-e2e', TECHNIQUE: 'cone', IS_MOST_ACCURATE: true,
+      REFERENCE_TIME: '2026-11-03T12:30:00Z', REFERENCE_HEIGHT_RSUN: 21.5,
+      HG_LATITUDE_DEG: 12, HG_LONGITUDE_DEG: 5, HALF_ANGLE_DEG: 35,
+      SPEED_KM_S: 850, ACCELERATION_M_S2: -4.5, TYPE_CODE: 'C',
+    })],
+    ARRIVALS: [Object.assign(new m.CMEArrivalT(), {
+      TARGET: 'Earth', KIND: m.cmeArrivalKind.Predicted, MODEL: 'synthetic-cone',
+      SOURCE_EVENT_ID: 'fixture:run-001', ISSUED_AT: '2026-11-03T13:00:00Z',
+      ARRIVAL_TIME: '2026-11-05T12:00:00Z', ARRIVAL_UNCERTAINTY_H: 6, DURATION_H: 12,
+      GLANCING_BLOW: true, HAS_GLANCING_BLOW: true, KP_PREDICTED: [4, 6], KP_CLOCK_ANGLES_DEG: [90, 180],
+    })],
+  }),
+  SWA: (o, m) => Object.assign(o, {
+    PRODUCT_ID: 'K05A', MESSAGE_CODE: 'ALTK05', SERIAL_NUMBER: '2051', REFERS_TO_SERIAL: '2050',
+    KIND: m.swaMessageKind.Alert, ISSUED_AT: '2026-11-03T12:00:00Z',
+    BEGIN_TIME: '2026-11-03T11:55:00Z', END_TIME: '2026-11-03T15:00:00Z',
+    VALID_FROM: '2026-11-03T12:00:00Z', VALID_TO: '2026-11-03T15:00:00Z',
+    SCALE_FAMILY: m.swaScaleFamily.Geomagnetic, SCALE_LEVEL: 1,
+    MESSAGE: 'Synthetic E2E alert: geomagnetic K-index of 5.\nThis is a test record.',
+  }),
+};
+for (const code of ADDED) {
+  assert.ok(identOf(idlOf(code)), `${code} must be publishable`);
+  records.push(await record(code, (o, m) => {
+    spaceWeather[code](o, m);
+    Object.assign(o.PROVENANCE, { SOURCE_ID: 'synthetic-e2e', ORIGINATOR: 'SDN E2E',
+      PROVIDER_ID: 'sdn-sds-1273', PRODUCER: `spacedatastandards.org@${VERSION}`,
+      LICENSE_CLASS: m.pvnLicenseClass.Reproducible, LICENSE_ID: 'CC0-1.0', LINEAGE: 'synthetic' });
+    o.SOURCE_DIGEST = 'fixture:source-digest';
+    o.RETRIEVED_AT = '2026-11-03T12:01:00Z';
+  }));
 }
-for (const code of EXISTING.filter((c) => c !== 'DPM')) records.push(await record(code));
+for (const code of EXISTING.filter((c) => c !== 'DPM')) records.push(await record(code, code === 'WXF' ? (o, m) => {
+  assert.equal(typeof m.wxfVariable.AuroraProbability, 'number');
+  Object.assign(o, { VARIABLE: m.wxfVariable.AuroraProbability, VARIABLE_NAME: 'aurora_probability',
+    UNITS: '%', MODEL_ID: 'synthetic-ovation', VALID_TIME_MS: 1793721600000n,
+    TIME_BASIS: m.wxfTimeBasis.ValidTimeOnly, VALUES: [10, 25, 50, 75], VALUE_MIN: 10, VALUE_MAX: 75 });
+  Object.assign(o.GRID, { LAT0: 65, LON0: -20, DLAT: 1, DLON: 1, NLAT: 2, NLON: 2 });
+} : undefined));
 records.push(await record('DPM', (dpm, m) => {
   const asset = Object.assign(new m.DPMAssetT(), { ASSET_KIND: m.publicationAssetKind.CAR_ARCHIVE, CID: 'bafybeifixturecarroot',
     DATA_ROOT: 'bafybeifixturecarroot', BYTE_LENGTH: 1048576n, THROUGH_SEQ: 987654321n });
@@ -199,9 +248,17 @@ try {
   }
 } finally {
   child.kill('SIGTERM');
-  await Promise.race([new Promise((r) => child.once('exit', r)), new Promise((r) => setTimeout(r, 30000))]);
+  if (child.exitCode === null && child.signalCode === null) {
+    let timeout;
+    await Promise.race([new Promise((r) => child.once('exit', r)), new Promise((r) => { timeout = setTimeout(r, 30000); })]);
+    clearTimeout(timeout);
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill('SIGKILL');
+      await new Promise((r) => child.once('exit', r));
+    }
+  }
   if (failures.length) console.error(readFileSync(join(dir, 'sdn.log'), 'utf8').split('\n').filter((l) => /ERROR|WARN/.test(l)).slice(-20).join('\n'));
   rmSync(dir, { recursive: true, force: true });
 }
 assert.deepEqual(failures, [], `records that did not round-trip:\n${failures.join('\n')}`);
-console.log(`PASS SDS ${VERSION}: ${records.length} records (CVR, ${ADDED.length - 1} more added standards, DPM CAR_ARCHIVE, existing standards) round-trip through the node by CID`);
+console.log(`PASS SDS ${VERSION}: ${records.length} records (${ADDED.join(', ')}, CVR, DPM CAR_ARCHIVE, existing standards including WXF AuroraProbability) round-trip through the node by CID`);
