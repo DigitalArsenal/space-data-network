@@ -30,7 +30,9 @@ const env = process.env;
 // 1. The pins and the embeds: every published standard, byte for byte.
 assert.equal(JSON.parse(readFileSync(join(sds, 'package.json'))).version.split('+')[0], VERSION);
 const go = (args, timeout = 900000) => {
-  const r = spawnSync('go', args, { cwd: server, encoding: 'utf8', timeout, env });
+  // The repo wrapper supplies the static WasmEdge link flags and noplugin tag.
+  const command = args[0] === 'build' ? join(root, 'scripts/go-with-wasmedge.sh') : 'go';
+  const r = spawnSync(command, args, { cwd: server, encoding: 'utf8', timeout, env });
   assert.ifError(r.error);
   assert.equal(r.status, 0, r.stdout + r.stderr);
   return r.stdout;
