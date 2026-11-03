@@ -1,4 +1,4 @@
-// SDS 1.273.0 on the node (sdn-sds-1273-refresh-20261103):
+// SDS 1.274.0 on the node (sdn-sds-1274-refresh-20261103):
 // the node built from this checkout embeds every published standard byte for
 // byte, accepts a publish of a real $CVR record, one record of every standard
 // new to the node, a $DPM CAR_ARCHIVE asset with THROUGH_SEQ, and records of
@@ -13,8 +13,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 
-const VERSION = '1.273.0';
-const ADDED = ['SWS', 'CME', 'SWA'];
+const VERSION = '1.274.0';
+const SPACE_WEATHER = ['SWS', 'CME', 'SWA'];
 const EXISTING = ['OMM', 'CAT', 'CDM', 'OCM', 'STR', 'SKT', 'DPM', 'WXF'];
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -159,12 +159,12 @@ const spaceWeather = {
     MESSAGE: 'Synthetic E2E alert: geomagnetic K-index of 5.\nThis is a test record.',
   }),
 };
-for (const code of ADDED) {
+for (const code of SPACE_WEATHER) {
   assert.ok(identOf(idlOf(code)), `${code} must be publishable`);
   records.push(await record(code, (o, m) => {
     spaceWeather[code](o, m);
     Object.assign(o.PROVENANCE, { SOURCE_ID: 'synthetic-e2e', ORIGINATOR: 'SDN E2E',
-      PROVIDER_ID: 'sdn-sds-1273', PRODUCER: `spacedatastandards.org@${VERSION}`,
+      PROVIDER_ID: 'sdn-sds-1274', PRODUCER: `spacedatastandards.org@${VERSION}`,
       LICENSE_CLASS: m.pvnLicenseClass.Reproducible, LICENSE_ID: 'CC0-1.0', LINEAGE: 'synthetic' });
     o.SOURCE_DIGEST = 'fixture:source-digest';
     o.RETRIEVED_AT = '2026-11-03T12:01:00Z';
@@ -184,6 +184,45 @@ records.push(await record('DPM', (dpm, m) => {
 }));
 const dpm = records.at(-1);
 assert.ok(dpm.object.ASSETS?.[0]?.THROUGH_SEQ === 987654321n, 'DPM carries a CAR_ARCHIVE asset with THROUGH_SEQ');
+
+// Verbatim SDS fixture at e2035df534, scripts/fixtures/sfe-xray-flares-7-day.json.
+// NOAA SWPC public domain; retrieved 2026-11-03T19:09:09.361967+00:00.
+// Follow SDS scripts/e2e/sfe-swpc-flares.mjs: the captured null ratio plus
+// separate synthetic zero/nonzero ratio cases, never changing the source row.
+const sfeFixture = readFileSync(join(metadata, 'testdata/sfe-xray-flares-7-day.json'));
+assert.equal(sha256(sfeFixture), 'bef21ff899a4ccbb5154a5bd88dbc7e95a059d72210466f9c830ebb8e7276c68');
+const [swpc] = JSON.parse(sfeFixture);
+const sfeMapping = { time_tag: 'EVENT_ID', begin_time: 'BEGIN_TIME', begin_class: 'BEGIN_XRAY_CLASS',
+  max_time: 'PEAK_TIME', max_class: 'XRAY_CLASS', max_xrlong: 'PEAK_FLUX_W_M2',
+  max_ratio: 'PEAK_RATIO', max_ratio_time: 'PEAK_RATIO_TIME', current_int_xrlong: 'INTEGRATED_FLUX_J_M2',
+  end_time: 'END_TIME', end_class: 'END_XRAY_CLASS', satellite: 'PLATFORM' };
+for (const row of [swpc, ...[0, 0.1234567890123456].map(ratio => ({ ...swpc,
+  time_tag: '2026-10-27T21:13:00Z', max_ratio: ratio, max_ratio_time: '2026-10-27T21:18:00Z' }))]) {
+  assert.deepEqual(Object.keys(row).sort(), Object.keys(sfeMapping).sort());
+  const fixture = await record('SFE', (o, m) => {
+    Object.assign(o, { PRODUCT: 'xray-flares-7-day.json', EVENT_KIND: m.sfeEventKind.XRAY,
+      SOURCE_DIGEST: sha256(sfeFixture), RETRIEVED_AT: '2026-11-03T19:09:09.361967+00:00' });
+    Object.assign(o.PROVENANCE, {
+      SOURCE_ID: 'https://services.swpc.noaa.gov/json/goes/primary/xray-flares-7-day.json',
+      SOURCE_KIND: m.pvnSourceKind.Observation, ORIGINATOR: 'NOAA SWPC', PROVIDER_ID: 'NOAA SWPC',
+      PRODUCER: 'sds-all-standards-node.e2e.mjs', LICENSE_CLASS: m.pvnLicenseClass.Reproducible,
+      LICENSE_ID: 'US Government public domain',
+      LINEAGE: row === swpc ? 'Verbatim SWPC excerpt' : 'Synthetic populated-ratio variant of SWPC excerpt',
+    });
+    for (const [key, field] of Object.entries(sfeMapping)) {
+      o[field] = key === 'satellite' ? String(row[key]) : key === 'max_ratio' && row[key] === null ? NaN : row[key];
+    }
+  });
+  fixture.verify = output => {
+    // Check raw values before JSON normalization so NaN cannot pass as null.
+    assert.deepEqual(output, fixture.object, 'all SFE fields and defaults survive the node');
+    const restored = Object.fromEntries(Object.entries(sfeMapping).map(([key, field]) => [key,
+      key === 'satellite' ? Number(output[field]) : key === 'max_ratio' && Number.isNaN(output[field]) ? null : output[field]]));
+    assert.deepEqual(restored, row, 'all 12 SWPC source fields survive the node');
+    ok(`SFE SWPC ${row === swpc ? 'captured null-ratio' : `synthetic ratio=${row.max_ratio}`}: all 12 source fields and all four new fields round-trip by CID`);
+  };
+  records.push(fixture);
+}
 
 // 3. The node built from this checkout, a fresh store, a loopback publish lane.
 const freePort = () => new Promise((resolve, reject) => {
@@ -230,7 +269,7 @@ try {
   ok(`the node built from this checkout is up (pid ${child.pid})`);
 
   // 4. Publish each; the node stores it and returns it by its CID, every field intact.
-  for (const { code, type, m, bytes, object } of records) {
+  for (const { code, type, m, bytes, object, verify } of records) {
     try {
       const res = await fetch(`http://127.0.0.1:${port.lane}/api/v1/data/publish/${code}.fbs`, { method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: bytes });
       const text = await res.text();
@@ -241,8 +280,9 @@ try {
       assert.equal(got.status, 200, `${code} get by CID: HTTP ${got.status} ${(await got.clone().text()).slice(0, 300)}`);
       const back = new Uint8Array(await got.arrayBuffer());
       assert.equal(Buffer.from(back).toString('latin1', 4, 8), identOf(idlOf(code)), `${code} identifier`);
-      const decoded = plain(m[type][`getRootAs${type}`](new flatbuffers.ByteBuffer(back)).unpack());
-      assert.deepEqual(decoded, plain(object), `${code}: every field round-trips`);
+      const decoded = m[type][`getRootAs${type}`](new flatbuffers.ByteBuffer(back)).unpack();
+      assert.deepEqual(plain(decoded), plain(object), `${code}: every field round-trips`);
+      verify?.(decoded);
       ok(`${code}: published (${bytes.length} B), stored and returned by CID ${cid}, ${Buffer.compare(Buffer.from(back), Buffer.from(bytes)) === 0 ? 'byte-identical' : 'fields identical'}`);
     } catch (error) {
       failures.push(`${code}: ${error.message.split('\n')[0]}`);
@@ -263,4 +303,4 @@ try {
   rmSync(dir, { recursive: true, force: true });
 }
 assert.deepEqual(failures, [], `records that did not round-trip:\n${failures.join('\n')}`);
-console.log(`PASS SDS ${VERSION}: ${records.length} records (${ADDED.join(', ')}, CVR, DPM CAR_ARCHIVE, existing standards including WXF AuroraProbability) round-trip through the node by CID`);
+console.log(`PASS SDS ${VERSION}: ${records.length} records (SFE captured SWPC row and two populated-ratio variants, ${SPACE_WEATHER.join(', ')}, CVR, DPM CAR_ARCHIVE, existing standards including WXF AuroraProbability) round-trip through the node by CID`);
