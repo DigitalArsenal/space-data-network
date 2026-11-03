@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated": "2026-10-25",
+  "updated": "2026-11-03",
   "consoleBuild": "20261013T204527Z",
   "pricing": {
     "status": "request",
@@ -232,6 +232,29 @@
       ],
       "learnMore": "https://spaceaware.io",
       "evidence": "sdn-js/spaceaware-ui/src/orbital-console/modes/modeCards.ts:573-585; modes/anl/surface.ts:113-122; modes/anl/ricBox.ts; modes/anl/range.ts; modes/anl/measure.ts; modes/anl/markup.ts"
+    },
+    {
+      "id": "solar-space-weather",
+      "name": "Solar mode",
+      "category": "console",
+      "tagline": "Space weather on the timeline",
+      "summary": "Planetary Kp per three hours on the console timeline, each bar shaded by its NOAA geomagnetic storm level, from the SDN space weather lane. Free on spaceaware.io with no account.",
+      "capabilities": [
+        "Planetary Kp per three hours on a timeline row, labeled with its value and NOAA G level",
+        "Storm levels G1 to G5 in their own shades",
+        "Stacked panels on one time axis, one per unit, each on its own scale"
+      ],
+      "standards": [
+        "SDS SPW",
+        "NOAA Space Weather Scales"
+      ],
+      "access": "free",
+      "delivery": "console",
+      "covers": [
+        "SOL"
+      ],
+      "learnMore": "https://spaceaware.io",
+      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/modes/modeCards.ts (SOL, F10, SIGNED_OUT_MODES); modes/sol/surface.ts; modes/sol/solarLanes.ts (the SPW.fbs space-weather / gfz-noaa lane, $DPM-checked); charts/render.ts drawStack; tokens.css --storm-g0..5; verification src/tools/solar-mode-verify.mjs (Kp bars equal the $SPW records read independently from the producer over libp2p)"
     },
     {
       "id": "spaceaware-account",
@@ -1304,7 +1327,7 @@
       "name": "Space weather indices",
       "provider": "GFZ Potsdam (Kp, ap) and NOAA SWPC (forecasts)",
       "url": "https://kp.gfz.de/",
-      "data": "Geomagnetic indices and solar flux, measured and forecast, for atmospheric drag.",
+      "data": "Geomagnetic indices and solar flux, measured and forecast, for atmospheric drag and the Solar mode's Kp row.",
       "arrival": "sdn-lane",
       "lane": "SPW.fbs · gfz-noaa",
       "via": [
@@ -1313,7 +1336,8 @@
       "modules": [
         "ffm",
         "catalog-screening",
-        "propagator-suite"
+        "propagator-suite",
+        "solar-space-weather"
       ],
       "terms": "GFZ CC BY 4.0; NOAA public domain",
       "termsUrl": "https://kp.gfz.de/en/data"
@@ -1727,6 +1751,7 @@
         "maneuver-planning",
         "launch-reentry",
         "analyze-toolkit",
+        "solar-space-weather",
         "mission-timeline",
         "data-publishing",
         "spaceaware-account"
@@ -1754,6 +1779,7 @@
         "catalog-composer",
         "maneuver-detection",
         "analyze-toolkit",
+        "solar-space-weather",
         "mission-timeline",
         "spaceaware-account"
       ],
@@ -1854,6 +1880,7 @@
         "context-layers",
         "mission-timeline",
         "analyze-toolkit",
+        "solar-space-weather",
         "spaceaware-account",
         "conjunction-assessment",
         "catalog-screening",
@@ -1957,6 +1984,9 @@
     "ANL:MARKUP",
     "ANL:RPO",
     "ANL:EVENT",
+    "SOL:WIND",
+    "SOL:KP",
+    "SOL:EVENTS",
     "TRK:COLLECT PLAN",
     "TRK:SAR STRIP"
   ],
