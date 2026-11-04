@@ -3600,6 +3600,11 @@ const engineStandardCatalogGraph = `
     ADD_OFFSET:double;
     NO_DATA_VALUE:double;
   }
+  table SSY {
+    ID:string;
+    NAME:string;
+    ABBREVIATION:string;
+  }
   table STF {
     LISTING_ID:string;
     PROVIDER_PEER_ID:string;
@@ -4333,6 +4338,7 @@ var engineGeneratedStandardBindings = map[string]engineRoutedSchema{
 	"SRI.fbs":  {Table: "SRI", FileID: "$SRI"},
 	"SRO.fbs":  {Table: "SRO", FileID: "$SRO"},
 	"SRT.fbs":  {Table: "SRT", FileID: "$SRT"},
+	"SSY.fbs":  {Table: "SSY", FileID: "$SSY"},
 	"STF.fbs":  {Table: "STF", FileID: "$STF"},
 	"STO.fbs":  {Table: "STO", FileID: "$STO"},
 	"STR.fbs":  {Table: "STR", FileID: "$STR"},

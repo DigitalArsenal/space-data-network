@@ -1,4 +1,4 @@
-// SDS 1.274.0 on the node (sdn-sds-1274-refresh-20261103):
+// SDS 1.275.0 on the node (sdn-vendor-ssy-20261103):
 // the node built from this checkout embeds every published standard byte for
 // byte, accepts a publish of a real $CVR record, one record of every standard
 // new to the node, a $DPM CAR_ARCHIVE asset with THROUGH_SEQ, and records of
@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 
-const VERSION = '1.274.0';
+const VERSION = '1.275.0';
 const SPACE_WEATHER = ['SWS', 'CME', 'SWA'];
 const EXISTING = ['OMM', 'CAT', 'CDM', 'OCM', 'STR', 'SKT', 'DPM', 'WXF'];
 
@@ -224,6 +224,65 @@ for (const row of [swpc, ...[0, 0.1234567890123456].map(ratio => ({ ...swpc,
   records.push(fixture);
 }
 
+// Release-pinned SDS LVDB excerpt and measurement mapping (278d9ed59b).
+const lvdbBytes = readFileSync(join(metadata, 'testdata/ssy-lvdb-v1.1.1.json'));
+assert.equal(sha256(lvdbBytes), '57fc532ebaed4bafeb77f4bc8d1dff5926f55fd126e3d1a05460849f2bdfdbed');
+const lvdb = JSON.parse(lvdbBytes);
+assert.deepEqual(lvdb.rows.map(r => r.key), ['antlia_2', 'aquarius_3']);
+const measurements = {
+  distance_modulus: ['DISTANCE_MODULUS', 'mag', 'ref_distance'],
+  rhalf: ['RHALF', 'arcmin', 'ref_structure'],
+  ellipticity: ['ELLIPTICITY', '1', 'ref_structure'],
+  position_angle: ['POSITION_ANGLE', 'deg', 'ref_structure'],
+  apparent_magnitude_v: ['APPARENT_MAG_V', 'mag', 'ref_m_v'],
+  vlos_systemic: ['VLOS_SYSTEMIC', 'km/s', 'ref_vlos'],
+  vlos_sigma: ['VLOS_SIGMA', 'km/s', 'ref_vlos'],
+  pmra: ['PMRA', 'mas/yr', 'ref_proper_motion'],
+  pmdec: ['PMDEC', 'mas/yr', 'ref_proper_motion'],
+  metallicity_spectroscopic: ['METALLICITY_SPECTROSCOPIC', 'dex', 'ref_metallicity_spectroscopic'],
+  metallicity_spectroscopic_sigma: ['METALLICITY_SPECTROSCOPIC_SIGMA', 'dex', 'ref_metallicity_spectroscopic'],
+  flux_HI: ['FLUX_HI', 'Jy km/s', 'ref_flux_HI'],
+  age: ['AGE', 'Gyr', 'ref_age'],
+};
+const scalar = s => s === '' || s === undefined ? NaN : Number(s);
+for (const row of lvdb.rows) {
+  const fixture = await record('SSY', (o, m) => {
+    Object.assign(o, new m.SSYT(), { ID: `lvdb:${row.key}`, NAME: row.name,
+      SYSTEM_CLASS: m.ssySystemKind.DWARF_GALAXY, HOST_ID: `lvdb:${row.host}`,
+      SOURCE_CATALOG: 'Local Volume Database', SOURCE_RELEASE: 'v1.1.1', SOURCE_KEY: row.key,
+      SOURCE_TABLE: row.table, SOURCE_URL: lvdb.url, SOURCE_SHA256: [lvdb.sha256],
+      LICENSE: lvdb.license, RETRIEVED_AT: lvdb.retrieved_at,
+      UNCERTAINTY_CONVENTION: 'ERR1/ERR2 = 84th/16th percentiles', LIMIT_CONFIDENCE: 0.95 });
+    for (const [key, [field, unit, ref]] of Object.entries(measurements)) {
+      const limit = row[key] === '' && row[`${key}_ul`] ? 1 : 0;
+      const value = scalar(limit ? row[`${key}_ul`] : row[key]);
+      if (Number.isNaN(value)) continue;
+      const bibcode = row[ref].slice(-19);
+      o[field] = Object.assign(new m.EXOParameterT(), { VALUE: value,
+        ERR1: scalar(row[`${key}_ep`]), ERR2: -scalar(row[`${key}_em`]), LIMIT: limit, UNIT: unit,
+        REFERENCE_BIBCODE: bibcode, REFERENCE_TEXT: row[ref],
+        REFERENCE_URL: `https://ui.adsabs.harvard.edu/abs/${bibcode}`, RETRIEVED_AT: lvdb.retrieved_at });
+    }
+  });
+  fixture.verify = output => {
+    assert.deepEqual(output, fixture.object, 'SSY fields, NaN uncertainties and absent defaults survive');
+    if (row.key === 'antlia_2') {
+      const p = output.DISTANCE_MODULUS;
+      assert.deepEqual([p.VALUE, p.ERR1, p.ERR2, p.REFERENCE_BIBCODE], [20.47, 0.09, -0.09, '2022ApJ...926...78V']);
+    } else {
+      const p = output.VLOS_SIGMA;
+      assert.deepEqual([p.VALUE, p.LIMIT, p.UNIT, p.REFERENCE_BIBCODE], [3.5, 1, 'km/s', '2025ApJ...979..164C']);
+      assert.ok(Number.isNaN(p.ERR1) && Number.isNaN(p.ERR2));
+      assert.equal(output.FLUX_HI, null);
+    }
+    ok(`SSY LVDB ${row.key}: measurements, uncertainties, upper limits, citations and license round-trip by CID`);
+  };
+  records.push(fixture);
+}
+const rec = await load(join(sds, 'lib/js/REC/main.js'));
+assert.equal(rec.RecordTypeExtended.SSY, 295);
+const qrp = await load(join(sds, 'lib/js/QRP/main.js'));
+
 // 3. The node built from this checkout, a fresh store, a loopback publish lane.
 const freePort = () => new Promise((resolve, reject) => {
   const s = createServer();
@@ -283,6 +342,15 @@ try {
       const decoded = m[type][`getRootAs${type}`](new flatbuffers.ByteBuffer(back)).unpack();
       assert.deepEqual(plain(decoded), plain(object), `${code}: every field round-trips`);
       verify?.(decoded);
+      if (code === 'SSY') {
+        const listed = await fetch(`${admin}/api/v1/data/index?schema=SSY.fbs&limit=100`);
+        assert.equal(listed.status, 200, 'SSY lane index');
+        const page = qrp.QRP.getSizePrefixedRootAsQRP(new flatbuffers.ByteBuffer(new Uint8Array(await listed.arrayBuffer()))).unpack();
+        assert.equal(page.STATUS, qrp.qrpStatus.Ok);
+        assert.equal(page.SCHEMA_NAME, 'SSY.fbs');
+        assert.ok(page.ROWS.some(row => row.CELLS[0].TEXT_VALUE === cid), 'published CID listed on SSY.fbs lane');
+        ok(`SSY.fbs lane lists ${object.SOURCE_KEY} CID ${cid}`);
+      }
       ok(`${code}: published (${bytes.length} B), stored and returned by CID ${cid}, ${Buffer.compare(Buffer.from(back), Buffer.from(bytes)) === 0 ? 'byte-identical' : 'fields identical'}`);
     } catch (error) {
       failures.push(`${code}: ${error.message.split('\n')[0]}`);
