@@ -759,6 +759,28 @@
       "evidence": "Landed 2026-10-15 (multi-body rounds 3-4): OrbPro scene.bodies/setCentralBody (OrbPro eff2b00a9b), modules propagator/solar-system-bodies, data-source/lowell-astorb, naif-kernels, body-imagery, keplerian-reference 1.8.2 (modules d8b7fb1d), console SOLAR SYSTEM search group, Center chip and settings (SpaceAware-UI 608ed18, landed in dae4edd); clean-build checks 2026-10-15: nav 19/19 clicks centered with imagery, 1e22 m and back from pitch -0.15/-0.6/-1.2/+0.3, ACC drawn 0.056 arcsec, D9 cutoff, phone. Not on spaceaware.io until the console is republished (publish hold 2026-10-15)."
     },
     {
+      "id": "local-volume",
+      "name": "Local Volume explorer",
+      "category": "earth-sky",
+      "tagline": "The galaxies and star clusters around the Milky Way, with every value's source",
+      "summary": "Fly out to the dwarf galaxies, globular clusters and host galaxies of the Local Volume, placed in 3D by their published distances. A filterable table lists every system, and the info box shows each value with its errors or limit and a link to the paper it comes from. No account is needed.",
+      "capabilities": [
+        "Every system of the Local Volume Database placed by its heliocentric distance and sky position",
+        "A table filtered by name, class, host, confirmation, distance and absolute magnitude, sorted on any column",
+        "Each value with its asymmetric errors or its upper or lower limit, and an ADS link to its reference",
+        "Choose a system to fly the camera to it, out to M31 and beyond",
+        "Data over the Space Data Network as SDS Stellar System records"
+      ],
+      "standards": [
+        "SDS SSY"
+      ],
+      "access": "free",
+      "delivery": "console",
+      "covers": [],
+      "learnMore": "https://spaceaware.io",
+      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/data/localVolumePublications.ts (lane SSY.fbs lvdb/comb-all, every shard of the batch checked against its signed DPM), layers/galacticObjects (placement, GALAXIES table, INFO values with errors, limits and ADS links, LOCAL VOLUME credits), signed out; SpaceAware-UI 092f2fbb, pinned in sdn 2ac0f86b9; E2E src/tools/local-volume-verify.mjs (1,727 systems over 8 shards from a local node, host M 31 = 41, Antlia II (m-M)0 20.47 +0.09 -0.09 mag, Aquarius III sigma < 3.5 km/s, M 31 viewed and picked). host-01 does not publish the lane yet."
+    },
+    {
       "id": "camera-cinematics",
       "name": "Camera and cinematics",
       "category": "earth-sky",
@@ -1354,6 +1376,22 @@
       "termsUrl": "https://asteroid.lowell.edu/astorb/"
     },
     {
+      "id": "lvdb",
+      "name": "Local Volume Database",
+      "provider": "Andrew Pace and contributors (Pace 2025, OJAp 8, 142)",
+      "url": "https://github.com/apace7/local_volume_database",
+      "data": "Dwarf galaxies, globular clusters, host galaxies and candidates of the Local Volume, each value with its errors, limits and reference.",
+      "arrival": "sdn-lane",
+      "lane": "SSY.fbs · lvdb / comb-all",
+      "via": [
+        "data-source/lvdb-source"
+      ],
+      "modules": [
+        "local-volume"
+      ],
+      "terms": "CC0 1.0"
+    },
+    {
       "id": "body-imagery",
       "name": "Planet and moon imagery",
       "provider": "USGS Astrogeology mosaics of NASA, ESA, DLR and STScI missions (LRO, MESSENGER, Magellan, Galileo, Voyager, Cassini, Dawn, New Horizons, Mars Express, Hubble OPAL)",
@@ -1886,7 +1924,8 @@
         "ccsds-interchange",
         "data-sources",
         "module-building-blocks",
-        "solar-system"
+        "solar-system",
+        "local-volume"
       ],
       "pricing": "request",
       "price": null
