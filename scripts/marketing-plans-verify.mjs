@@ -9,6 +9,8 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const { stampMarketingAssets } = await import('./marketing-assets-stamp.mjs');
+assert.deepEqual(stampMarketingAssets(), [], 'Marketing asset URLs carry the current content stamp (node scripts/marketing-assets-stamp.mjs)');
 const arg = (name) => { const i = process.argv.indexOf(name); return i < 0 ? null : process.argv[i + 1]; };
 let stack = arg('--stack-root') || process.env.GAUNTLET_GATE_ROOT || process.env.GAUNTLET_STACK_ROOT;
 if (!stack) {
