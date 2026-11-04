@@ -1,4 +1,51 @@
-/* Plans, plan builder, SpaceEdge and UDL data, on site.css tokens beside the module inventory. */
+/* Marketing overview and supporting references, using the site's shared tokens. */
+.mp-main { padding-bottom: 64px; }
+.mp-hero { padding: 64px 0 44px; max-width: 900px; }
+.mp-hero h1 { font-size: clamp(32px, 4.5vw, 56px); line-height: 1.12; letter-spacing: -.035em; margin: 14px 0 22px; }
+.mp-lede { font-size: 19px; line-height: 1.65; color: var(--text-2); max-width: 780px; }
+.mp-nav { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: center; margin-top: 24px; }
+.mp-section { padding: 28px 0; scroll-margin-top: 110px; }
+.mp-section > h2, .mp-data-rule h2, .mp-reference h2 { font-size: clamp(24px, 3vw, 32px); margin-bottom: 12px; letter-spacing: -.02em; }
+.mp-section > p { color: var(--text-2); margin-bottom: 20px; }
+.mp-plans { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+.mp-plan { display: flex; flex-direction: column; gap: 14px; padding: 24px 20px; border: 1px solid var(--border-strong); border-radius: 12px; background: var(--panel); min-width: 0; }
+.mp-plan[data-plan="analysis"] { border-top: 3px solid var(--accent); padding-top: 22px; }
+.mp-plan h3 { font-size: 25px; }
+.mp-audience { font-size: 12px; color: var(--muted); letter-spacing: .05em; text-transform: uppercase; }
+.mp-price { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
+.mp-price strong { font-size: 36px; letter-spacing: -.03em; }
+.mp-price span { color: var(--muted); font-size: 14px; }
+.mp-summary { line-height: 1.55; min-height: 72px; }
+.mp-plan ul { padding-left: 18px; margin: 0; font-size: 14px; color: var(--text-2); line-height: 1.6; }
+.mp-plan li + li { margin-top: 8px; }
+.mp-example { font-size: 13px; line-height: 1.6; color: var(--muted); border-top: 1px solid var(--border); padding-top: 14px; margin-top: auto; }
+.mp-plan .btn { white-space: normal; text-align: center; }
+.mp-note { font-size: 12px; line-height: 1.6; color: var(--muted); }
+.mp-section > .mp-note { margin-top: 14px; }
+.mp-data-rule { border-left: 3px solid var(--accent); padding: 24px 28px; margin: 22px 0; background: var(--wash); }
+.mp-data-rule p { max-width: 900px; line-height: 1.7; color: var(--text-2); }
+.mp-table { width: 100%; border-collapse: collapse; font-size: 15px; }
+.mp-table th, .mp-table td { padding: 16px 20px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+.mp-table thead { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
+.mp-table tbody th { width: 26%; }
+.mp-table td:last-child { white-space: nowrap; }
+.mp-talking { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; }
+.mp-talking article { border-top: 1px solid var(--border-strong); padding-top: 18px; }
+.mp-talking h3 { font-size: 17px; margin-bottom: 10px; }
+.mp-talking p { color: var(--text-2); font-size: 14px; line-height: 1.65; }
+.mp-reference { display: grid; gap: 12px; justify-items: start; margin-top: 28px; padding-top: 28px; border-top: 1px solid var(--border); }
+.mp-details { margin: 24px 0 64px; padding: 20px; border: 1px solid var(--border); border-radius: 10px; }
+.mp-details > summary { cursor: pointer; font-weight: 600; }
+.mp-nav a:focus-visible, .mp-details summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 5px; }
+@media (max-width: 1100px) { .mp-plans { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 640px) {
+  .mp-hero { padding: 32px 0 20px; }
+  .mp-lede { font-size: 16px; }
+  .mp-plans, .mp-talking { grid-template-columns: 1fr; }
+  .mp-summary { min-height: 0; }
+  .mp-table th, .mp-table td { padding: 12px 10px; font-size: 13px; }
+  .mp-data-rule { padding: 20px; }
+}
 .inv { --edge: #8ab4e8; --edge-soft: rgba(138, 180, 232, 0.14); --ok: #6fd3a0; --ok-soft: rgba(111, 211, 160, 0.13);
   --teal: #6fcfd9; --teal-soft: rgba(111, 207, 217, 0.13); --own: #c6a3f2; --own-soft: rgba(198, 163, 242, 0.14);
   --part: #f0c36a; --part-soft: rgba(240, 195, 106, 0.14); --gap: #f29a92; --gap-soft: rgba(242, 154, 146, 0.14); }
@@ -46,26 +93,6 @@
 .pl-group p { color: var(--muted); font-size: 13px; }
 .pl-group ul { margin: 0; padding-left: 18px; font-size: 13px; color: var(--text-2); }
 .pl-group a { font-size: 13px; color: var(--accent); }
-
-.pl-builder { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
-.pl-form, .pl-quote { border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--panel); padding: 16px; display: grid; gap: 14px; min-width: 0; }
-.pl-form h3, .pl-quote h4 { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
-.pl-pick { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.pl-check { display: inline-flex; gap: 8px; align-items: center; padding: 6px 12px; border: 1px solid var(--border-strong); border-radius: 999px; cursor: pointer; font-size: 14px; }
-.pl-check input { accent-color: var(--accent); }
-.pl-opts { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; }
-.pl-num { display: grid; gap: 2px; }
-.pl-num span { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
-.pl-num input { width: 120px; height: 34px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--border-strong); background: var(--panel-solid); color: var(--text); font: 15px var(--font-sans); }
-.pl-price { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
-.pl-price b { font-size: clamp(28px, 4vw, 38px); letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
-.pl-price span, .pl-price-sm span { color: var(--muted); font-size: 14px; }
-.pl-price-sm { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
-.pl-save { color: var(--ok); font-size: 14px; }
-.pl-lines { margin: 0; padding-left: 18px; font-size: 14px; color: var(--text-2); }
-.pl-quote details { border-top: 1px solid var(--border); padding-top: 8px; font-size: 14px; }
-.pl-quote summary { cursor: pointer; font-weight: 600; }
-.pl-quote details ul { margin: 6px 0 0; padding-left: 18px; color: var(--text-2); font-size: 13px; }
 
 .pl-edge-box { border: 1px solid var(--edge-soft); border-radius: var(--radius-sm); background: var(--panel); padding: 18px; display: grid; gap: 16px; }
 /* The SpaceEdge lockup: the mark in front of the wordmark - Michroma (OFL, subset to its seven letters: fonts/),

@@ -1,6 +1,6 @@
 {
  "source": "UDL Services API 1.28.0 (spacedatastandards.org input_schemas/udl/udl_openapi.json)",
- "updated": "2026-10-16",
+ "updated": "2026-11-04",
  "areas": [
   {
    "id": "orb",
@@ -57,10 +57,9 @@
    ],
    "group": "Orbits",
    "plans": {
-    "free": "View",
-    "pro": "Open",
-    "team": "Open",
-    "enterprise": "Open",
+    "free": "Open",
+    "analysis": "Open",
+    "ai": "Open",
     "spaceedge": "UDL"
    },
    "note": "CelesTrak and Space-Track general perturbations (GP) element sets"
@@ -77,13 +76,12 @@
    ],
    "group": "Orbits",
    "plans": {
-    "free": "View",
-    "pro": "Open",
-    "team": "Open",
-    "enterprise": "Own",
+    "free": "Open",
+    "analysis": "Open",
+    "ai": "Open",
     "spaceedge": "UDL"
    },
-   "note": "Propagated from public element sets; Enterprise adds their own"
+   "note": "Propagated from public element sets; customer-supplied states can be used in analysis"
   },
   {
    "area": "orb",
@@ -97,10 +95,9 @@
    ],
    "group": "Orbits",
    "plans": {
-    "free": "View",
-    "pro": "Open",
-    "team": "Open",
-    "enterprise": "Own",
+    "free": "Open",
+    "analysis": "Open",
+    "ai": "Open",
     "spaceedge": "UDL"
    },
    "note": "CelesTrak supplemental GP (operator ephemerides)"
@@ -119,9 +116,8 @@
    "group": "Orbits",
    "plans": {
     "free": "—",
-    "pro": "—",
-    "team": "—",
-    "enterprise": "Own",
+    "analysis": "Own",
+    "ai": "Own",
     "spaceedge": "UDL"
    },
    "note": "No public source"
@@ -138,10 +134,9 @@
    ],
    "group": "Orbits",
    "plans": {
-    "free": "View",
-    "pro": "Derived",
-    "team": "Derived",
-    "enterprise": "Own",
+    "free": "Derived",
+    "analysis": "Derived",
+    "ai": "Derived",
     "spaceedge": "UDL"
    },
    "note": "CelesTrak SOCRATES, plus our own screening (SCR) on public element sets"
@@ -158,10 +153,9 @@
    ],
    "group": "Orbits",
    "plans": {
-    "free": "—",
-    "pro": "Derived",
-    "team": "Derived",
-    "enterprise": "Derived",
+    "free": "Derived",
+    "analysis": "Derived",
+    "ai": "Derived",
     "spaceedge": "UDL"
    },
    "note": "Detected by us from public element-set history"
@@ -178,9 +172,8 @@
    "group": "Orbits",
    "plans": {
     "free": "—",
-    "pro": "—",
-    "team": "—",
-    "enterprise": "Own",
+    "analysis": "Own",
+    "ai": "Own",
     "spaceedge": "UDL"
    },
    "note": "No public source"
@@ -203,10 +196,9 @@
    ],
    "group": "Orbits",
    "plans": {
-    "free": "View",
-    "pro": "Partial",
-    "team": "Partial",
-    "enterprise": "Partial",
+    "free": "Partial",
+    "analysis": "Partial",
+    "ai": "Partial",
     "spaceedge": "UDL"
    },
    "note": "Public SATCAT gives identity and basics; details and objects of interest are UDL only"
@@ -238,9 +230,8 @@
    "group": "Orbits",
    "plans": {
     "free": "—",
-    "pro": "—",
-    "team": "—",
-    "enterprise": "Own",
+    "analysis": "Own",
+    "ai": "Own",
     "spaceedge": "UDL"
    },
    "note": "No public source"
@@ -256,10 +247,9 @@
    ],
    "group": "Orbits",
    "plans": {
-    "free": "—",
-    "pro": "Partial",
-    "team": "Partial",
-    "enterprise": "Partial",
+    "free": "Partial",
+    "analysis": "Partial",
+    "ai": "Partial",
     "spaceedge": "UDL"
    },
    "note": "Space-Track decay and re-entry messages cover part of it"
@@ -277,10 +267,9 @@
    ],
    "group": "Orbits",
    "plans": {
-    "free": "—",
-    "pro": "Derived",
-    "team": "Derived",
-    "enterprise": "Derived",
+    "free": "Derived",
+    "analysis": "Derived",
+    "ai": "Derived",
     "spaceedge": "UDL"
    },
    "note": "Derived from public element sets"
@@ -299,9 +288,8 @@
    "group": "Orbits",
    "plans": {
     "free": "—",
-    "pro": "—",
-    "team": "—",
-    "enterprise": "—",
+    "analysis": "—",
+    "ai": "—",
     "spaceedge": "UDL"
    },
    "note": "Lost-object and maneuver hypotheses from UDL processing"
@@ -328,9 +316,8 @@
    "group": "Orbits",
    "plans": {
     "free": "—",
-    "pro": "—",
-    "team": "—",
-    "enterprise": "—",
+    "analysis": "—",
+    "ai": "—",
     "spaceedge": "UDL"
    },
    "note": "Commercially licensed through UDL"
@@ -347,12 +334,11 @@
    "group": "Orbits",
    "plans": {
     "free": "—",
-    "pro": "—",
-    "team": "—",
-    "enterprise": "Own",
+    "analysis": "Own",
+    "ai": "Own",
     "spaceedge": "UDL"
    },
-   "note": "Commercial optical networks sell their own; Enterprise brings theirs"
+   "note": "Commercial optical networks sell their own; customers bring authorized observations"
   },
   {
    "area": "obs",
@@ -368,9 +354,8 @@
    "group": "Orbits",
    "plans": {
     "free": "—",
-    "pro": "—",
-    "team": "—",
-    "enterprise": "Own",
+    "analysis": "Own",
+    "ai": "Own",
     "spaceedge": "UDL"
    },
    "note": ""
@@ -387,9 +372,8 @@
    "group": "Orbits",
    "plans": {
     "free": "—",
-    "pro": "—",
-    "team": "—",
-    "enterprise": "Own",
+    "analysis": "Own",
+    "ai": "Own",
     "spaceedge": "UDL"
    },
    "note": ""
@@ -407,9 +391,8 @@
    "group": "Orbits",
    "plans": {
     "free": "—",
-    "pro": "—",
-    "team": "—",
-    "enterprise": "Own",
+    "analysis": "Own",
+    "ai": "Own",
     "spaceedge": "UDL"
    },
    "note": ""
@@ -426,9 +409,8 @@
    "group": "Orbits",
    "plans": {
     "free": "—",
-    "pro": "—",
-    "team": "—",
-    "enterprise": "Own",
+    "analysis": "Own",
+    "ai": "Own",
     "spaceedge": "UDL"
    },
    "note": ""
@@ -445,9 +427,8 @@
    "group": "Orbits",
    "plans": {
     "free": "—",
-    "pro": "—",
-    "team": "—",
-    "enterprise": "Own",
+    "analysis": "Own",
+    "ai": "Own",
     "spaceedge": "UDL"
    },
    "note": "Photometry and signatures for identifying objects"
@@ -465,10 +446,9 @@
    ],
    "group": "Orbits",
    "plans": {
-    "free": "—",
-    "pro": "Partial",
-    "team": "Partial",
-    "enterprise": "Partial",
+    "free": "Partial",
+    "analysis": "Partial",
+    "ai": "Partial",
     "spaceedge": "UDL"
    },
    "note": "IGS ground networks cover part of it; raw IF samples are UDL only"
@@ -483,9 +463,8 @@
    "group": "Orbits",
    "plans": {
     "free": "—",
-    "pro": "—",
-    "team": "—",
-    "enterprise": "Own",
+    "analysis": "Own",
+    "ai": "Own",
     "spaceedge": "UDL"
    },
    "note": ""
@@ -502,9 +481,8 @@
    "group": "Orbits",
    "plans": {
     "free": "—",
-    "pro": "—",
-    "team": "—",
-    "enterprise": "Own",
+    "analysis": "Own",
+    "ai": "Own",
     "spaceedge": "UDL"
    },
    "note": ""
@@ -521,9 +499,8 @@
    "group": "Defense Ops",
    "plans": {
     "free": "—",
-    "pro": "—",
-    "team": "—",
-    "enterprise": "—",
+    "analysis": "—",
+    "ai": "—",
     "spaceedge": "UDL"
    },
    "note": ""
@@ -540,9 +517,8 @@
    "group": "Defense Ops",
    "plans": {
     "free": "—",
-    "pro": "—",
-    "team": "—",
-    "enterprise": "—",
+    "analysis": "—",
+    "ai": "—",
     "spaceedge": "UDL"
    },
    "note": ""
@@ -560,9 +536,8 @@
    "group": "Defense Ops",
    "plans": {
     "free": "—",
-    "pro": "—",
-    "team": "—",
-    "enterprise": "—",
+    "analysis": "—",
+    "ai": "—",
     "spaceedge": "UDL"
    },
    "note": ""
@@ -579,9 +554,8 @@
    "group": "Defense Ops",
    "plans": {
     "free": "—",
-    "pro": "—",
-    "team": "—",
-    "enterprise": "—",
+    "analysis": "—",
+    "ai": "—",
     "spaceedge": "UDL"
    },
    "note": ""
@@ -598,9 +572,8 @@
    "group": "Orbits",
    "plans": {
     "free": "—",
-    "pro": "—",
-    "team": "—",
-    "enterprise": "Own",
+    "analysis": "Own",
+    "ai": "Own",
     "spaceedge": "UDL"
    },
    "note": ""
@@ -617,9 +590,8 @@
    "group": "Defense Ops",
    "plans": {
     "free": "—",
-    "pro": "—",
-    "team": "—",
-    "enterprise": "Own",
+    "analysis": "Own",
+    "ai": "Own",
     "spaceedge": "UDL"
    },
    "note": ""
@@ -636,9 +608,8 @@
    "group": "Defense Ops",
    "plans": {
     "free": "—",
-    "pro": "—",
-    "team": "—",
-    "enterprise": "Own",
+    "analysis": "Own",
+    "ai": "Own",
     "spaceedge": "UDL"
    },
    "note": ""
@@ -653,9 +624,8 @@
    "group": "Defense Ops",
    "plans": {
     "free": "—",
-    "pro": "—",
-    "team": "—",
-    "enterprise": "—",
+    "analysis": "—",
+    "ai": "—",
     "spaceedge": "UDL"
    },
    "note": ""
@@ -671,10 +641,9 @@
    ],
    "group": "Orbits, Weather",
    "plans": {
-    "free": "View",
-    "pro": "Open",
-    "team": "Open",
-    "enterprise": "Open",
+    "free": "Open",
+    "analysis": "Open",
+    "ai": "Open",
     "spaceedge": "UDL"
    },
    "note": "NOAA SWPC, CelesTrak space weather, SET JB2008 (45-day lag). UDL adds real-time SET/HASDM for drag"
@@ -691,10 +660,9 @@
    ],
    "group": "Weather",
    "plans": {
-    "free": "View",
-    "pro": "Open",
-    "team": "Open",
-    "enterprise": "Open",
+    "free": "Open",
+    "analysis": "Open",
+    "ai": "Open",
     "spaceedge": "UDL"
    },
    "note": "NOAA GOES particles and magnetometer"
@@ -712,9 +680,8 @@
    "group": "Weather",
    "plans": {
     "free": "—",
-    "pro": "—",
-    "team": "—",
-    "enterprise": "Own",
+    "analysis": "Own",
+    "ai": "Own",
     "spaceedge": "UDL"
    },
    "note": "Raw dosimeter readings and status from particle sensors on satellites"
@@ -730,10 +697,9 @@
    ],
    "group": "Weather",
    "plans": {
-    "free": "—",
-    "pro": "Open",
-    "team": "Open",
-    "enterprise": "Open",
+    "free": "Open",
+    "analysis": "Open",
+    "ai": "Open",
     "spaceedge": "UDL"
    },
    "note": "GIRO ionosonde network"
@@ -752,9 +718,8 @@
    "group": "All",
    "plans": {
     "free": "Open",
-    "pro": "Open",
-    "team": "Open",
-    "enterprise": "Open",
+    "analysis": "Open",
+    "ai": "Open",
     "spaceedge": "UDL"
    },
    "note": "IERS bulletins; every version needs them"
@@ -771,10 +736,9 @@
    ],
    "group": "Weather",
    "plans": {
-    "free": "View",
-    "pro": "Open",
-    "team": "Open",
-    "enterprise": "Open",
+    "free": "Open",
+    "analysis": "Open",
+    "ai": "Open",
     "spaceedge": "UDL"
    },
    "note": "NOAA GFS and geostationary satellites (our Weather module)"
@@ -790,10 +754,9 @@
    ],
    "group": "Weather",
    "plans": {
-    "free": "View",
-    "pro": "Open",
-    "team": "Open",
-    "enterprise": "Open",
+    "free": "Open",
+    "analysis": "Open",
+    "ai": "Open",
     "spaceedge": "UDL"
    },
    "note": "METAR and aviation weather. Feeds the sensor-site cloud outlook"
@@ -809,10 +772,9 @@
    ],
    "group": "Solar System",
    "plans": {
-    "free": "View",
-    "pro": "Open",
-    "team": "Open",
-    "enterprise": "Open",
+    "free": "Open",
+    "analysis": "Open",
+    "ai": "Open",
     "spaceedge": "UDL"
    },
    "note": "Gaia DR3 and Hipparcos; also used to calibrate optical sensors"
@@ -828,10 +790,9 @@
    ],
    "group": "Orbits",
    "plans": {
-    "free": "View",
-    "pro": "Open",
-    "team": "Open",
-    "enterprise": "Open",
+    "free": "Open",
+    "analysis": "Open",
+    "ai": "Open",
     "spaceedge": "UDL"
    },
    "note": "Public launch schedules"
@@ -855,10 +816,9 @@
    ],
    "group": "Orbits",
    "plans": {
-    "free": "—",
-    "pro": "Partial",
-    "team": "Partial",
-    "enterprise": "Partial",
+    "free": "Partial",
+    "analysis": "Partial",
+    "ai": "Partial",
     "spaceedge": "UDL"
    },
    "note": "Public references cover the main vehicles and sites"
@@ -879,9 +839,8 @@
    "group": "Defense Ops",
    "plans": {
     "free": "—",
-    "pro": "—",
-    "team": "—",
-    "enterprise": "Own",
+    "analysis": "Own",
+    "ai": "Own",
     "spaceedge": "UDL"
    },
    "note": "ITU filings cover part of the bands"
@@ -900,9 +859,8 @@
    "group": "Orbits",
    "plans": {
     "free": "—",
-    "pro": "—",
-    "team": "—",
-    "enterprise": "Own",
+    "analysis": "Own",
+    "ai": "Own",
     "spaceedge": "UDL"
    },
    "note": "Operators bring their own"
@@ -922,10 +880,9 @@
    ],
    "group": "Orbits",
    "plans": {
-    "free": "—",
-    "pro": "Partial",
-    "team": "Partial",
-    "enterprise": "Own",
+    "free": "Partial",
+    "analysis": "Partial",
+    "ai": "Partial",
     "spaceedge": "UDL"
    },
    "note": "Operator-published frequency plans"
@@ -943,9 +900,8 @@
    "group": "Defense Ops",
    "plans": {
     "free": "—",
-    "pro": "—",
-    "team": "—",
-    "enterprise": "Own",
+    "analysis": "Own",
+    "ai": "Own",
     "spaceedge": "UDL"
    },
    "note": ""
@@ -964,9 +920,8 @@
    "group": "Defense Ops",
    "plans": {
     "free": "—",
-    "pro": "—",
-    "team": "—",
-    "enterprise": "—",
+    "analysis": "—",
+    "ai": "—",
     "spaceedge": "UDL"
    },
    "note": "TDOA/FDOA solutions"
@@ -987,9 +942,8 @@
    "group": "Orbits",
    "plans": {
     "free": "—",
-    "pro": "—",
-    "team": "—",
-    "enterprise": "Own",
+    "analysis": "Own",
+    "ai": "Own",
     "spaceedge": "UDL"
    },
    "note": ""
@@ -1009,9 +963,8 @@
    "group": "Defense Ops",
    "plans": {
     "free": "—",
-    "pro": "—",
-    "team": "—",
-    "enterprise": "Own",
+    "analysis": "Own",
+    "ai": "Own",
     "spaceedge": "UDL"
    },
    "note": "Responses, plans and ISR collections have no standard yet"
@@ -1030,10 +983,9 @@
    ],
    "group": "All",
    "plans": {
-    "free": "View",
-    "pro": "Partial",
-    "team": "Partial",
-    "enterprise": "Own",
+    "free": "Partial",
+    "analysis": "Partial",
+    "ai": "Partial",
     "spaceedge": "UDL"
    },
    "note": "Public observatory and ground-station lists"
@@ -1066,9 +1018,8 @@
    "group": "Defense Ops",
    "plans": {
     "free": "—",
-    "pro": "—",
-    "team": "—",
-    "enterprise": "—",
+    "analysis": "—",
+    "ai": "—",
     "spaceedge": "UDL"
    },
    "note": "Only aircraft dynamics and airspace have standards"
@@ -1089,9 +1040,8 @@
    "group": "Defense Ops",
    "plans": {
     "free": "—",
-    "pro": "—",
-    "team": "—",
-    "enterprise": "—",
+    "analysis": "—",
+    "ai": "—",
     "spaceedge": "UDL"
    },
    "note": ""
@@ -1109,12 +1059,11 @@
    "group": "Defense Ops",
    "plans": {
     "free": "—",
-    "pro": "—",
-    "team": "—",
-    "enterprise": "Own",
+    "analysis": "Own",
+    "ai": "Own",
     "spaceedge": "UDL"
    },
-   "note": "Commercial AIS feeds; Enterprise brings their own"
+   "note": "Commercial AIS feeds; customers bring authorized feeds"
   },
   {
    "area": "def",
@@ -1132,9 +1081,8 @@
    "group": "Defense Ops",
    "plans": {
     "free": "—",
-    "pro": "—",
-    "team": "—",
-    "enterprise": "—",
+    "analysis": "—",
+    "ai": "—",
     "spaceedge": "UDL"
    },
    "note": ""
@@ -1155,9 +1103,8 @@
    "group": "Defense Ops",
    "plans": {
     "free": "—",
-    "pro": "—",
-    "team": "—",
-    "enterprise": "—",
+    "analysis": "—",
+    "ai": "—",
     "spaceedge": "UDL"
    },
    "note": "Only Cursor on Target has a standard"
@@ -1174,9 +1121,8 @@
    "group": "Defense Ops",
    "plans": {
     "free": "—",
-    "pro": "—",
-    "team": "—",
-    "enterprise": "—",
+    "analysis": "—",
+    "ai": "—",
     "spaceedge": "UDL"
    },
    "note": ""
@@ -1191,9 +1137,8 @@
    "group": "Defense Ops",
    "plans": {
     "free": "—",
-    "pro": "—",
-    "team": "—",
-    "enterprise": "—",
+    "analysis": "—",
+    "ai": "—",
     "spaceedge": "UDL"
    },
    "note": ""
@@ -1222,9 +1167,8 @@
    "group": "All",
    "plans": {
     "free": "Open",
-    "pro": "Open",
-    "team": "Open",
-    "enterprise": "Open",
+    "analysis": "Open",
+    "ai": "Open",
     "spaceedge": "UDL"
    },
    "note": "Country codes and catalog owners are public"

@@ -1,5 +1,5 @@
 /*
- * SpaceAware module inventory (spacedatanetwork.org/marketing.html).
+ * SpaceAware module inventory (spacedatanetwork.org/marketing-modules.html).
  * A working reference for the marketing team: every module, data source, bundle,
  * console card and left-out item from marketing/catalog.json, searchable,
  * filterable, sortable and exportable. The JSON is the single source; this file only reads it.
@@ -23,14 +23,15 @@
   const COLUMNS = [
     { id: "name", label: "Module" },
     { id: "category", label: "Category" },
-    { id: "access", label: "Access" },
+    { id: "plan", label: "Plan" },
     { id: "delivery", label: "Delivery" },
     { id: "bundles", label: "Bundles" },
     { id: "standards", label: "Standards" },
   ];
-  const DEFAULT = { view: "modules", q: "", category: "", access: "", delivery: "", bundle: "", standard: "", group: "", sort: "name", dir: "asc" };
+  const DEFAULT = { view: "modules", q: "", plan: "", category: "", access: "", delivery: "", bundle: "", standard: "", group: "", sort: "name", dir: "asc" };
 
   let catalog = null;
+  let plans = null;
   let state = { ...DEFAULT };
   const open = new Set();
 
@@ -39,9 +40,10 @@
     const next = { ...DEFAULT };
     for (const key of Object.keys(DEFAULT)) if (params.has(key)) next[key] = params.get(key);
     if (!VIEWS.some((v) => v.id === next.view)) next.view = DEFAULT.view;
+    if (next.plan && !plans.some((p) => p.id === next.plan)) next.plan = "";
     return next;
   }
-  // The hash is shared with plans.js (level, plan builder): keep its keys, write only ours.
+  // Search, filters and view survive reload and can be shared as a link.
   function writeHash() {
     const params = new URLSearchParams(location.hash.slice(1));
     for (const [key, value] of Object.entries(state)) value !== DEFAULT[key] ? params.set(key, value) : params.delete(key);
@@ -69,11 +71,13 @@
   const categoryName = (id) => byCategory.get(id)?.name ?? id;
   const accessName = (id) => catalog.access[id] ?? id;
   const deliveryName = (id) => catalog.delivery[id] ?? id;
+  const planName = (id) => plans.find((p) => p.id === id)?.name ?? id;
+  const inPlan = (m, id) => m.plan === id || (id === "free" && m.freeCapabilities?.length);
 
   function haystack(m) {
     return norm([
       m.id, m.name, m.tagline, m.summary, ...(m.capabilities ?? []), ...(m.standards ?? []),
-      categoryName(m.category), accessName(m.access), deliveryName(m.delivery),
+      categoryName(m.category), planName(m.plan), ...(m.freeCapabilities ?? []), accessName(m.access), deliveryName(m.delivery),
       ...(bundlesOf.get(m.id) ?? []).map((b) => b.name), ...(sourcesOf.get(m.id) ?? []).flatMap((src) => [src.name, src.provider]),
       ...(m.covers ?? []), m.evidence,
     ].join(" "));
@@ -84,6 +88,7 @@
     const terms = search ? norm(state.q).split(/\s+/).filter(Boolean) : [];
     const list = catalog.modules.filter((m) => {
       if (state.category && m.category !== state.category) return false;
+      if (state.plan && !inPlan(m, state.plan)) return false;
       if (state.access && m.access !== state.access) return false;
       if (state.delivery && m.delivery !== state.delivery) return false;
       if (state.bundle && !(bundlesOf.get(m.id) ?? []).some((b) => b.id === state.bundle)) return false;
@@ -97,6 +102,7 @@
     const key = (m) => {
       switch (state.sort) {
         case "category": return categoryName(m.category);
+        case "plan": return plans.findIndex((p) => p.id === m.plan);
         case "access": return accessName(m.access);
         case "delivery": return deliveryName(m.delivery);
         case "bundles": return (bundlesOf.get(m.id) ?? []).length;
@@ -116,6 +122,7 @@
   function groupKey(m) {
     switch (state.group) {
       case "category": return [categoryName(m.category)];
+      case "plan": return [planName(m.plan)];
       case "access": return [accessName(m.access)];
       case "delivery": return [deliveryName(m.delivery)];
       case "bundle": {
@@ -137,12 +144,13 @@
         <input type="search" data-key="q" placeholder="Search names, capabilities, standards, data sources, evidence" value="${esc(state.q)}" autocomplete="off" spellcheck="false">
       </label>
       <div class="inv-selects">
+        <label><span>Capability tier</span><select data-key="plan">${option("", "All plans", state.plan)}${plans.map((p) => option(p.id, p.name, state.plan)).join("")}</select></label>
         <label><span>Category</span><select data-key="category">${option("", "All", state.category)}${catalog.categories.map((c) => option(c.id, c.name, state.category)).join("")}</select></label>
-        <label><span>Access</span><select data-key="access">${option("", "All", state.access)}${Object.entries(catalog.access).map(([k, v]) => option(k, v, state.access)).join("")}</select></label>
+        <label><span>Runtime access</span><select data-key="access">${option("", "All", state.access)}${Object.entries(catalog.access).map(([k, v]) => option(k, v, state.access)).join("")}</select></label>
         <label><span>Delivery</span><select data-key="delivery">${option("", "All", state.delivery)}${Object.entries(catalog.delivery).map(([k, v]) => option(k, v, state.delivery)).join("")}</select></label>
         <label><span>Bundle</span><select data-key="bundle">${option("", "All", state.bundle)}${catalog.bundles.map((b) => option(b.id, b.name, state.bundle)).join("")}</select></label>
         <label><span>Standard</span><select data-key="standard">${option("", "All", state.standard)}${allStandards.map((s) => option(s, s, state.standard)).join("")}</select></label>
-        <label><span>Group by</span><select data-key="group">${option("", "None", state.group)}${option("category", "Category", state.group)}${option("access", "Access", state.group)}${option("delivery", "Delivery", state.group)}${option("bundle", "Bundle", state.group)}</select></label>
+        <label><span>Group by</span><select data-key="group">${option("", "None", state.group)}${option("plan", "Plan", state.group)}${option("category", "Category", state.group)}${option("access", "Runtime access", state.group)}${option("delivery", "Delivery", state.group)}${option("bundle", "Bundle", state.group)}</select></label>
       </div>
       <div class="inv-actions">
         <button type="button" class="btn btn-small" data-act="csv">Export CSV</button>
@@ -160,15 +168,14 @@
   // ---- Summary -------------------------------------------------------------
   function renderSummary() {
     const mods = catalog.modules;
-    const count = (pred) => mods.filter(pred).length;
     const stat = (n, label) => `<div class="inv-stat"><b>${n}</b><span>${esc(label)}</span></div>`;
-    const accessStats = Object.entries(catalog.access).map(([k, v]) => stat(count((m) => m.access === k), v)).join("");
     $("[data-inv=summary]").innerHTML =
-      stat(mods.length, "Modules") + stat((catalog.sources ?? []).length, "Data sources") + stat(catalog.bundles.length, "Bundles") + stat(catalog.categories.length, "Categories") + accessStats +
+      stat(mods.length, "Modules") + stat((catalog.sources ?? []).length, "Data sources") + stat(catalog.bundles.length, "Bundles") + stat(catalog.categories.length, "Categories") + stat(plans.length, "Plans") +
       stat((catalog.notListed ?? []).length, "Not listed");
-    const priced = catalog.pricing?.approvedPriceList ? "Approved price list on file" : "No approved prices yet: every bundle is “request pricing”";
+    const priced = "Plan assignments follow the current marketing plan. Higher tiers include lower tiers; the filter shows where each capability starts.";
     $("[data-inv=meta]").innerHTML =
       `Catalog version ${esc(catalog.version)} &middot; updated ${esc(catalog.updated)} &middot; reviewed against console build ${esc(catalog.consoleBuild)} &middot; ${esc(priced)}`;
+    $("[data-inv=planned]").innerHTML = catalog.plannedCapabilities.map((c) => `<article data-program="${esc(c.id)}"><h3>${esc(c.name)}</h3><p><b>${esc(planName(c.plan))}</b> · ${esc(c.status)}</p><p>${esc(c.summary)}</p></article>`).join("");
   }
 
   // ---- Modules view -----------------------------------------------------------
@@ -182,6 +189,8 @@
       <tr class="inv-detail"><td colspan="${COLUMNS.length}">
         <div class="inv-detail-grid">
           <div>
+            <h4>Plan</h4><p>${esc(planName(m.plan))}${m.planNote ? ` — ${esc(m.planNote)}` : ""}</p>
+            ${m.freeCapabilities?.length ? `<h4>Always in Free</h4><ul>${m.freeCapabilities.map((c) => `<li>${esc(c)}</li>`).join("")}</ul>` : ""}
             <h4>Summary</h4><p>${esc(m.summary)}</p>
             <h4>Capabilities</h4><ul>${(m.capabilities ?? []).map((c) => `<li>${esc(c)}</li>`).join("")}</ul>
           </div>
@@ -192,6 +201,7 @@
             ${(m.covers ?? []).length ? `<h4>Console cards</h4><p>${m.covers.map((c) => chip(c, "mono")).join(" ")}</p>` : ""}
             ${m.learnMore ? `<h4>Learn more</h4><p><a href="${esc(m.learnMore)}" target="_blank" rel="noopener">${esc(m.learnMore)}</a></p>` : ""}
             <h4>Evidence</h4><p class="inv-evidence">${esc(m.evidence)}</p>
+            <h4>Current runtime access</h4><p>${esc(accessName(m.access))}. This implementation evidence is separate from the plan assignment above.</p>
             <p class="inv-id">id: <code>${esc(m.id)}</code></p>
           </div>
         </div>
@@ -200,7 +210,7 @@
       <tr class="inv-row${isOpen ? " open" : ""}" data-id="${esc(m.id)}" tabindex="0" aria-expanded="${isOpen}">
         <td data-col="Module"><span class="inv-name">${esc(m.name)}</span><span class="inv-tag">${esc(m.tagline)}</span></td>
         <td data-col="Category">${esc(categoryName(m.category))}</td>
-        <td data-col="Access">${chip(accessName(m.access), `acc-${m.access}`)}</td>
+        <td data-col="Plan">${chip(planName(m.plan))}${m.freeCapabilities?.length ? '<small class="inv-tag">Public results in Free</small>' : ""}</td>
         <td data-col="Delivery">${esc(deliveryName(m.delivery))}</td>
         <td data-col="Bundles"><span class="inv-num">${bundles.length}</span></td>
         <td data-col="Standards">${(m.standards ?? []).map((s) => chip(s)).join(" ")}</td>
@@ -225,7 +235,7 @@
     }
     return list.length
       ? `<table class="inv-table inv-modules"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`
-      : `<p class="inv-empty">No modules match these filters.</p>`;
+      : `<p class="inv-empty">No modules match these filters.${state.plan === "spaceedge" ? ' <a href="#program-capabilities">See SpaceEdge program capabilities below.</a>' : ""}</p>`;
   }
 
   // ---- Data sources -----------------------------------------------------------
@@ -280,7 +290,7 @@
     return `<div class="inv-bundles">${list.map((b) => {
       const members = b.modules.map((id) => mods.get(id)).filter(Boolean);
       const byAccess = Object.keys(catalog.access).map((k) => [k, members.filter((m) => m.access === k).length]).filter(([, n]) => n);
-      const price = b.price != null ? esc(b.price) : "Request pricing";
+      const price = 'Capability grouping; see <a href="marketing.html">plans</a>';
       return `<article class="inv-bundle">
         <header><h3>${esc(b.name)}</h3><span class="inv-num">${members.length} modules</span></header>
         <p class="inv-tag">${esc(b.tagline)}</p>
@@ -354,9 +364,9 @@
 
   function toCsv(list) {
     const cell = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-    const header = ["id", "name", "category", "access", "delivery", "bundles", "standards", "data sources", "tagline", "summary", "capabilities", "console cards", "learn more", "evidence"];
+    const header = ["id", "name", "category", "plan", "free capabilities", "runtime access", "delivery", "bundles", "standards", "data sources", "tagline", "summary", "capabilities", "console cards", "learn more", "evidence"];
     const rows = list.map((m) => [
-      m.id, m.name, categoryName(m.category), accessName(m.access), deliveryName(m.delivery),
+      m.id, m.name, categoryName(m.category), planName(m.plan), (m.freeCapabilities ?? []).join("; "), accessName(m.access), deliveryName(m.delivery),
       (bundlesOf.get(m.id) ?? []).map((b) => b.name).join("; "), (m.standards ?? []).join("; "),
       (sourcesOf.get(m.id) ?? []).map((src) => src.name).join("; "),
       m.tagline, m.summary, (m.capabilities ?? []).join("; "), (m.covers ?? []).join("; "), m.learnMore ?? "", m.evidence ?? "",
@@ -451,9 +461,13 @@
 
   async function start() {
     try {
-      const response = await fetch("marketing/catalog.json", { cache: "no-cache" });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      catalog = await response.json();
+      const [catalogData, planData] = await Promise.all(["catalog", "plans"].map(async (name) => {
+        const response = await fetch(`marketing/${name}.json`, { cache: "no-cache" });
+        if (!response.ok) throw new Error(`${name}: HTTP ${response.status}`);
+        return response.json();
+      }));
+      catalog = catalogData;
+      plans = planData.plans;
     } catch (error) {
       $("[data-inv=view]").innerHTML = `<p class="inv-empty">The inventory could not load marketing/catalog.json (${esc(error.message)}).</p>`;
       return;

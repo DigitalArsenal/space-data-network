@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated": "2026-10-22",
+  "updated": "2026-11-04",
   "copy": "Where we launch, in what order, and how. Fifty targets in four waves: profiles first, so every listing exists before traffic arrives; then the open-source launch to developers; then SpaceAware's launch week; then the directories. Weeks count from launch day L, which the team sets. SpaceEdge is sold through government programs, so no target lists it.",
   "products": {
     "spaceaware": { "name": "SpaceAware", "url": "https://spaceaware.io", "line": "One workspace for space operations" },
@@ -44,7 +44,7 @@
       "title": "Rules",
       "items": [
         "Links: spaceaware.io, spacedatanetwork.org and GitHub, each tagged utm_source=<target id>. Contact: tj@edgesource.com.",
-        "Price: say “Free plan”. The other prices are proposed; quote none until the list is approved.",
+        "Plans: Free for free and non-commercial data capabilities; Analysis $5/month for sensors and advanced analysis; AI $40/month; SpaceEdge for space combat and customer-authorized UDL. Use marketing/plans.json as the price source.",
         "Post from a real, established account; say we built it. No paid or traded votes, no vote requests.",
         "No third-party badges or backlinks on our sites without the owner's approval; where a free listing needs one, take the queue or skip.",
         "Reviews come only from real users, never paid for or written by staff."
@@ -62,8 +62,8 @@
       "plan": ["Company profile with SpaceAware and Space Data Network.", "Post open roles when we hire."],
       "watch": "A hiring marketplace: candidates see this profile. No pay or equity figures without approval." },
     { "id": "g2", "name": "G2", "url": "https://g2.com", "kind": "Review site", "wave": 0, "fit": "High", "product": ["spaceaware"], "cost": "Free seller profile; paid tiers optional",
-      "plan": ["Claim the free seller profile: category, description, screenshots, “Free plan” as the price.", "From L+30, send active Pro and Team users G2's own review request."],
-      "watch": "Team and Enterprise buyers read it. Real-user reviews only." },
+      "plan": ["Claim the free seller profile: category, description, screenshots, “Free plan” as the price.", "From L+30, send active Analysis and AI users G2's own review request."],
+      "watch": "Organization buyers read it. Real-user reviews only." },
     { "id": "capterra", "name": "Capterra", "url": "https://capterra.com", "kind": "Review site", "wave": 0, "fit": "Medium", "product": ["spaceaware"], "cost": "Free basic listing; pay-per-click optional",
       "plan": ["Open one Gartner Digital Markets vendor account: it lists the product on Capterra, GetApp and Software Advice.", "Leave pay-per-click off. Request reviews from L+30."],
       "watch": "Real-user reviews only." },
@@ -71,7 +71,7 @@
       "plan": ["Covered by the Capterra vendor account. Check the listing, categories and screenshots render."],
       "watch": "One account, three sites: change copy in one place." },
     { "id": "trustradius", "name": "TrustRadius", "url": "https://trustradius.com", "kind": "Review site", "wave": 0, "fit": "Medium", "product": ["spaceaware"], "cost": "Free vendor profile",
-      "plan": ["Claim the vendor profile.", "Request reviews from Team and Enterprise users from L+30."],
+      "plan": ["Claim the vendor profile.", "Request reviews from Analysis and AI users from L+30."],
       "watch": "Enterprise B2B readers. Real-user reviews only." },
     { "id": "alternativeto", "name": "AlternativeTo", "url": "https://alternativeto.net", "kind": "Directory", "wave": 0, "fit": "High", "product": ["spaceaware", "sdn"], "cost": "Free",
       "plan": ["List SpaceAware (web) and Space Data Network (open source, MIT; desktop and node).", "Suggest each as an alternative on the pages of the orbit viewers and analysis tools people already search there."],

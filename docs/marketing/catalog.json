@@ -1,13 +1,13 @@
 {
   "version": 1,
-  "updated": "2026-10-25",
+  "updated": "2026-11-04",
   "consoleBuild": "20261013T204527Z",
   "pricing": {
-    "status": "request",
-    "approvedPriceList": null,
+    "status": "owner-directed",
+    "approvedPriceList": "plans.json — owner direction, 2026-11-04",
     "cta": {
-      "label": "Request pricing",
-      "href": "mailto:tj@edgesource.com?subject=SpaceAware%20pricing"
+      "label": "See plans",
+      "href": "marketing.html"
     },
     "open": {
       "label": "Open SpaceAware",
@@ -93,7 +93,8 @@
       "delivery": "console",
       "covers": [],
       "learnMore": "https://spaceaware.io",
-      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/engine/initEngine.ts; engine/phoneCatalog.ts; live probe 2026-10-13 build 20261013T204527Z (the entire catalog over IPFS/bitswap); components/HotkeySettings.svelte; components/StatusLog.svelte; core delivery (SEC-006): engine/coreDelivery.ts, engine/coreProvider.json (SpaceAware-UI 62f1532), OrbPro packages/orbpro-integration/coreDeliveryBinding.js (OrbPro 1f1d9e5d39); live on spaceaware.io from build 20261015T224504Z"
+      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/engine/initEngine.ts; engine/phoneCatalog.ts; live probe 2026-10-13 build 20261013T204527Z (the entire catalog over IPFS/bitswap); components/HotkeySettings.svelte; components/StatusLog.svelte; core delivery (SEC-006): engine/coreDelivery.ts, engine/coreProvider.json (SpaceAware-UI 62f1532), OrbPro packages/orbpro-integration/coreDeliveryBinding.js (OrbPro 1f1d9e5d39); live on spaceaware.io from build 20261015T224504Z",
+      "plan": "free"
     },
     {
       "id": "catalog-search",
@@ -116,7 +117,8 @@
       "delivery": "console",
       "covers": [],
       "learnMore": "https://spaceaware.io",
-      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/components/SearchPanel.svelte:141-152; search/EntitySearch.ts; search/constellations.ts; geo/geoPlaces.ts; geo/coordinateQuery.ts; geo/moonPlaces.ts; tools/moon-place-search-verify.mjs"
+      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/components/SearchPanel.svelte:141-152; search/EntitySearch.ts; search/constellations.ts; geo/geoPlaces.ts; geo/coordinateQuery.ts; geo/moonPlaces.ts; tools/moon-place-search-verify.mjs",
+      "plan": "free"
     },
     {
       "id": "object-intelligence",
@@ -138,7 +140,8 @@
       "delivery": "console",
       "covers": [],
       "learnMore": "https://spaceaware.io",
-      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/components/ObjectCard.svelte; components/FrameView.svelte; engine/ommOverview.ts; engine/elementsOverlay.ts"
+      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/components/ObjectCard.svelte; components/FrameView.svelte; engine/ommOverview.ts; engine/elementsOverlay.ts",
+      "plan": "free"
     },
     {
       "id": "scene-builder",
@@ -161,7 +164,8 @@
       "delivery": "console",
       "covers": [],
       "learnMore": "https://spaceaware.io",
-      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/entities/EntitiesMenu.svelte; entities/EntityWizard.svelte; entities/GraphicsPanel.svelte; groups/groupStore.ts; regions/regionModes.ts:39-81; selection/selectionController.svelte.ts; engine/assetModels.ts"
+      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/entities/EntitiesMenu.svelte; entities/EntityWizard.svelte; entities/GraphicsPanel.svelte; groups/groupStore.ts; regions/regionModes.ts:39-81; selection/selectionController.svelte.ts; engine/assetModels.ts",
+      "plan": "free"
     },
     {
       "id": "context-layers",
@@ -185,7 +189,8 @@
       "delivery": "console",
       "covers": [],
       "learnMore": "https://spaceaware.io",
-      "evidence": "live probe 2026-10-13 ENTITIES > SOURCES counts; sdn-js/spaceaware-ui/src/orbital-console/sources/sourceEndpoint.ts:97-114; sources/publishedSites.ts; sources/facilities.ts"
+      "evidence": "live probe 2026-10-13 ENTITIES > SOURCES counts; sdn-js/spaceaware-ui/src/orbital-console/sources/sourceEndpoint.ts:97-114; sources/publishedSites.ts; sources/facilities.ts",
+      "plan": "free"
     },
     {
       "id": "mission-timeline",
@@ -206,7 +211,8 @@
       "delivery": "console",
       "covers": [],
       "learnMore": "https://spaceaware.io",
-      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/components/GanttSettingsBar.svelte:135-138; components/EventsDrawer.svelte; components/WarpBar.svelte; components/TimezonePicker.svelte; modes/reports.ts (REPORT card in TRK, DET, CNJ, MNV, COM and RF; none in CAM or ANL)"
+      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/components/GanttSettingsBar.svelte:135-138; components/EventsDrawer.svelte; components/WarpBar.svelte; components/TimezonePicker.svelte; modes/reports.ts (REPORT card in TRK, DET, CNJ, MNV, COM and RF; none in CAM or ANL)",
+      "plan": "free"
     },
     {
       "id": "analyze-toolkit",
@@ -231,7 +237,8 @@
         "ANL"
       ],
       "learnMore": "https://spaceaware.io",
-      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/modes/modeCards.ts:573-585; modes/anl/surface.ts:113-122; modes/anl/ricBox.ts; modes/anl/range.ts; modes/anl/measure.ts; modes/anl/markup.ts"
+      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/modes/modeCards.ts:573-585; modes/anl/surface.ts:113-122; modes/anl/ricBox.ts; modes/anl/range.ts; modes/anl/measure.ts; modes/anl/markup.ts",
+      "plan": "free"
     },
     {
       "id": "spaceaware-account",
@@ -252,7 +259,8 @@
       "delivery": "console",
       "covers": [],
       "learnMore": "https://spaceaware.io",
-      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/session/walletSession.svelte.ts:46-49; session/keptSession.ts:32-37; modes/modeCards.ts:643-653 (SIGNED_OUT_MODES = CNJ, CAM, ANL); data/modules/protectedDelivery.ts (entitled rows only); sdn-server/internal/license/plugins.go:89-111"
+      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/session/walletSession.svelte.ts:46-49; session/keptSession.ts:32-37; modes/modeCards.ts:643-653 (SIGNED_OUT_MODES = CNJ, CAM, ANL); data/modules/protectedDelivery.ts (entitled rows only); sdn-server/internal/license/plugins.go:89-111",
+      "plan": "free"
     },
     {
       "id": "conjunction-assessment",
@@ -280,7 +288,12 @@
         "CNJ"
       ],
       "learnMore": "https://spacedatanetwork.org/collision-avoidance.html",
-      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/modes/modeCards.ts:243-292; modes/cnj/surface.ts:599-610,743-770; modes/cnj/cdmExport.e2e.test.ts; modes/cnj/CnjPanel.svelte:220-243; modules analysis/conjunction-assessment tests/cdmCcsdsConformance.e2e.mjs (xmllint against the CCSDS NDM/XML 4.0.0 schema, Orekit CdmParser); source verification: UI e154dba7dc src/tools/ca-unavailable-verify.mjs and modules fc3771b48c analysis/conjunction-assessment/tests/lowVelocityCovariance.test.mjs (retained covariance and explicitly unavailable Pc, browser and native WasmEdge); modules fc3771b48c analysis/conjunction-assessment/tests/ncCascade.e2e.mjs verifies sequential 2D-Nc, 3D-Nc and sampled Pc with published CARA references, analytic Lebedev sphere integrals, independent angular/time refinement and finite-window diagnostics. Sampling is SDMC-style two-body propagation; high-fidelity BFMC is not implemented. Source validation is not evidence of a refreshed live deployment."
+      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/modes/modeCards.ts:243-292; modes/cnj/surface.ts:599-610,743-770; modes/cnj/cdmExport.e2e.test.ts; modes/cnj/CnjPanel.svelte:220-243; modules analysis/conjunction-assessment tests/cdmCcsdsConformance.e2e.mjs (xmllint against the CCSDS NDM/XML 4.0.0 schema, Orekit CdmParser); source verification: UI e154dba7dc src/tools/ca-unavailable-verify.mjs and modules fc3771b48c analysis/conjunction-assessment/tests/lowVelocityCovariance.test.mjs (retained covariance and explicitly unavailable Pc, browser and native WasmEdge); modules fc3771b48c analysis/conjunction-assessment/tests/ncCascade.e2e.mjs verifies sequential 2D-Nc, 3D-Nc and sampled Pc with published CARA references, analytic Lebedev sphere integrals, independent angular/time refinement and finite-window diagnostics. Sampling is SDMC-style two-body propagation; high-fidelity BFMC is not implemented. Source validation is not evidence of a refreshed live deployment.",
+      "plan": "analysis",
+      "freeCapabilities": [
+        "Published close-approach results from free sources"
+      ],
+      "planNote": "The plan covers custom sensor or advanced analysis tools. Free-source data and published results remain in Free."
     },
     {
       "id": "catalog-screening",
@@ -304,7 +317,12 @@
       "delivery": "sdn-module",
       "covers": [],
       "learnMore": "https://spacedatanetwork.org/whitepapers/fast-conjunction-assessment.html",
-      "evidence": "live modules.pmm conjunction-assessment 0.6.0; space-data-network-modules commits 40d04048, b9bb45f5, aa06ae30, beff6f1b (all-vs-all GPU/CPU, time windows, covariance Pc) at or before 0.6.0; live artifact /modules/conjunction-assessment/0.6.0/module.wasm exports coarse_grid, refine_candidates, screen_window, screen_catalog; every modules.pmm row named here is ANONYMOUS (live manifest 2026-10-13); source validation: modules 26772d7db analysis/conjunction-assessment/tests/ncCascade.e2e.mjs checks numerical convergence separately from Nc applicability and retains covariance when CQR cannot represent the fallback probability method. The source refinement has not been verified on the live deployment."
+      "evidence": "live modules.pmm conjunction-assessment 0.6.0; space-data-network-modules commits 40d04048, b9bb45f5, aa06ae30, beff6f1b (all-vs-all GPU/CPU, time windows, covariance Pc) at or before 0.6.0; live artifact /modules/conjunction-assessment/0.6.0/module.wasm exports coarse_grid, refine_candidates, screen_window, screen_catalog; every modules.pmm row named here is ANONYMOUS (live manifest 2026-10-13); source validation: modules 26772d7db analysis/conjunction-assessment/tests/ncCascade.e2e.mjs checks numerical convergence separately from Nc applicability and retains covariance when CQR cannot represent the fallback probability method. The source refinement has not been verified on the live deployment.",
+      "plan": "analysis",
+      "freeCapabilities": [
+        "Published public catalog-screening results"
+      ],
+      "planNote": "The plan covers custom sensor or advanced analysis tools. Free-source data and published results remain in Free."
     },
     {
       "id": "covariance-analysis",
@@ -327,7 +345,12 @@
       "delivery": "sdn-module",
       "covers": [],
       "learnMore": "https://spacedatanetwork.org/whitepapers/evidence-supported-aso-catalog.html",
-      "evidence": "live modules.pmm covariance-analysis 0.1.0, com.digitalarsenal.analysis.gp-error-model 0.1.0, com.digitalarsenal.analysis.reference-states 0.1.0; every modules.pmm row named here is ANONYMOUS (live manifest 2026-10-13)"
+      "evidence": "live modules.pmm covariance-analysis 0.1.0, com.digitalarsenal.analysis.gp-error-model 0.1.0, com.digitalarsenal.analysis.reference-states 0.1.0; every modules.pmm row named here is ANONYMOUS (live manifest 2026-10-13)",
+      "plan": "analysis",
+      "freeCapabilities": [
+        "Published public uncertainty and orbit-error products"
+      ],
+      "planNote": "The plan covers custom sensor or advanced analysis tools. Free-source data and published results remain in Free."
     },
     {
       "id": "maneuver-detection",
@@ -349,7 +372,12 @@
       "delivery": "sdn-module",
       "covers": [],
       "learnMore": "https://spacedatanetwork.org/whitepapers/evidence-supported-aso-catalog.html",
-      "evidence": "live modules.pmm com.digitalarsenal.analysis.maneuver-detection 0.1.0 (manifest description); every modules.pmm row named here is ANONYMOUS (live manifest 2026-10-13)"
+      "evidence": "live modules.pmm com.digitalarsenal.analysis.maneuver-detection 0.1.0 (manifest description); every modules.pmm row named here is ANONYMOUS (live manifest 2026-10-13)",
+      "plan": "analysis",
+      "freeCapabilities": [
+        "Published maneuver indicators from public element history"
+      ],
+      "planNote": "The plan covers custom sensor or advanced analysis tools. Free-source data and published results remain in Free."
     },
     {
       "id": "launch-reentry",
@@ -372,7 +400,12 @@
       "delivery": "sdn-module",
       "covers": [],
       "learnMore": "https://spacedatanetwork.org/modules.html",
-      "evidence": "live modules.pmm com.digitalarsenal.analysis.launch-cola 0.1.0, launch-trajectory 0.1.0, launch-ascent-analysis 0.1.0, reentry-analysis 0.1.0, data-source.launch-schedule 0.1.0; every modules.pmm row named here is ANONYMOUS (live manifest 2026-10-13)"
+      "evidence": "live modules.pmm com.digitalarsenal.analysis.launch-cola 0.1.0, launch-trajectory 0.1.0, launch-ascent-analysis 0.1.0, reentry-analysis 0.1.0, data-source.launch-schedule 0.1.0; every modules.pmm row named here is ANONYMOUS (live manifest 2026-10-13)",
+      "plan": "analysis",
+      "freeCapabilities": [
+        "Launch events and public launch data"
+      ],
+      "planNote": "The plan covers custom sensor or advanced analysis tools. Free-source data and published results remain in Free."
     },
     {
       "id": "track-custody",
@@ -400,7 +433,9 @@
         "TRK"
       ],
       "learnMore": "https://spaceaware.io",
-      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/modes/modeCards.ts:89-205; modes/trk/surface.ts:100-200; modes/trk/export.ts:4"
+      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/modes/modeCards.ts:89-205; modes/trk/surface.ts:100-200; modes/trk/export.ts:4",
+      "plan": "analysis",
+      "planNote": "The plan covers custom sensor or advanced analysis tools. Free-source data and published results remain in Free."
     },
     {
       "id": "sensor-coverage",
@@ -422,7 +457,9 @@
         "TRK:COVERAGE"
       ],
       "learnMore": "https://spaceaware.io",
-      "evidence": "live modules.pmm com.orbpro.sensor-coverage 0.3.0 OPTIONAL ENTITLED; sdn-js/spaceaware-ui/src/orbital-console/modes/trk/surface.ts:133-135; store/moduleHost.ts:14; deployment/license/grant-policy.json"
+      "evidence": "live modules.pmm com.orbpro.sensor-coverage 0.3.0 OPTIONAL ENTITLED; sdn-js/spaceaware-ui/src/orbital-console/modes/trk/surface.ts:133-135; store/moduleHost.ts:14; deployment/license/grant-policy.json",
+      "plan": "analysis",
+      "planNote": "The plan covers custom sensor or advanced analysis tools. Free-source data and published results remain in Free."
     },
     {
       "id": "observation-simulator",
@@ -445,7 +482,9 @@
       "delivery": "sdn-module",
       "covers": [],
       "learnMore": "https://spacedatanetwork.org/modules.html",
-      "evidence": "live modules.pmm com.digitalarsenal.analysis.observation-simulator 0.1.0 (manifest description); every modules.pmm row named here is ANONYMOUS (live manifest 2026-10-13)"
+      "evidence": "live modules.pmm com.digitalarsenal.analysis.observation-simulator 0.1.0 (manifest description); every modules.pmm row named here is ANONYMOUS (live manifest 2026-10-13)",
+      "plan": "analysis",
+      "planNote": "The plan covers custom sensor or advanced analysis tools. Free-source data and published results remain in Free."
     },
     {
       "id": "orbit-estimation",
@@ -467,7 +506,12 @@
       "delivery": "sdn-module",
       "covers": [],
       "learnMore": "https://spacedatanetwork.org/modules.html",
-      "evidence": "live modules.pmm orbit-determination 0.1.2, com.orbpro.od-fit-pipeline 0.1.0, com.digitalarsenal.analysis.estimation 0.2.0; space-data-network-modules/analysis/od, analysis/estimation; every modules.pmm row named here is ANONYMOUS (live manifest 2026-10-13)"
+      "evidence": "live modules.pmm orbit-determination 0.1.2, com.orbpro.od-fit-pipeline 0.1.0, com.digitalarsenal.analysis.estimation 0.2.0; space-data-network-modules/analysis/od, analysis/estimation; every modules.pmm row named here is ANONYMOUS (live manifest 2026-10-13)",
+      "plan": "analysis",
+      "freeCapabilities": [
+        "Public orbit-fit products and reference ephemerides"
+      ],
+      "planNote": "The plan covers custom sensor or advanced analysis tools. Free-source data and published results remain in Free."
     },
     {
       "id": "catalog-composer",
@@ -491,7 +535,8 @@
       "delivery": "sdn-module",
       "covers": [],
       "learnMore": "https://spacedatanetwork.org/catalog.html",
-      "evidence": "Catalog composer 0.5.1 delivered APP with FlatSQL 3.12.1: analysis/catalog-composer/tests/unified-search-e2e.mjs verifies 205-object pagination, Unicode/designator search, overlap review and repeated composition on desktop/mobile. Previous live modules.pmm com.digitalarsenal.analysis.catalog-composer 0.1.9, com.orbpro.catalog-synthesis 0.1.0, data-source.catalog-source 0.2.0, analysis.epoch-state 0.1.0; every modules.pmm row named here is ANONYMOUS (live manifest 2026-10-13)"
+      "evidence": "Catalog composer 0.5.1 delivered APP with FlatSQL 3.12.1: analysis/catalog-composer/tests/unified-search-e2e.mjs verifies 205-object pagination, Unicode/designator search, overlap review and repeated composition on desktop/mobile. Previous live modules.pmm com.digitalarsenal.analysis.catalog-composer 0.1.9, com.orbpro.catalog-synthesis 0.1.0, data-source.catalog-source 0.2.0, analysis.epoch-state 0.1.0; every modules.pmm row named here is ANONYMOUS (live manifest 2026-10-13)",
+      "plan": "free"
     },
     {
       "id": "maneuver-planning",
@@ -514,7 +559,9 @@
         "MNV"
       ],
       "learnMore": "https://spaceaware.io",
-      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/modes/modeCards.ts:293-380; modes/mnv/surface.ts:101-117; engine/applyManeuvers.ts; live modules.pmm maneuver-planner 0.6.1, com.orbpro.lambert-izzo 0.2.0"
+      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/modes/modeCards.ts:293-380; modes/mnv/surface.ts:101-117; engine/applyManeuvers.ts; live modules.pmm maneuver-planner 0.6.1, com.orbpro.lambert-izzo 0.2.0",
+      "plan": "analysis",
+      "planNote": "The plan covers custom sensor or advanced analysis tools. Free-source data and published results remain in Free."
     },
     {
       "id": "ffm",
@@ -536,7 +583,12 @@
       "delivery": "sdn-module",
       "covers": [],
       "learnMore": "https://spacedatanetwork.org/whitepapers/fast-conjunction-assessment.html",
-      "evidence": "live modules.pmm com.orbpro.ffm 1.4.1 RECOMMENDED ANONYMOUS (signed 2026-10-24T23:11Z, owner 2026-10-24: FFM is free); live artifact /modules/com.orbpro.ffm/1.4.1/module.wasm, trailer-stripped sha256 8c57bee3 = the row's CONTENT_HASH, strings (PRW execution, PPE trajectory, finite-burn, STM, NRLMSISE-00 and US Standard Atmosphere 1976; no OEM output); live licensing grant-audit com.orbpro.ffm policy=open, anonymous grant verified; space-data-network-modules/propagator/ffm (com.orbpro.ffm 1.4.1); covariance-preserving implementation com.orbpro.ffm 2.0.1 at modules 5746b0f53504d4d8a83c4ec7921f4a34b85901a6: dimensionless validation preserves valid mixed-unit state/parameter covariance, browser and pinned WasmEdge E2E verifies independent force-free covariance and invalid-input rejection; numerical matrix acceptance is not empirical calibration; implementation update only, production deployment not requested"
+      "evidence": "live modules.pmm com.orbpro.ffm 1.4.1 RECOMMENDED ANONYMOUS (signed 2026-10-24T23:11Z, owner 2026-10-24: FFM is free); live artifact /modules/com.orbpro.ffm/1.4.1/module.wasm, trailer-stripped sha256 8c57bee3 = the row's CONTENT_HASH, strings (PRW execution, PPE trajectory, finite-burn, STM, NRLMSISE-00 and US Standard Atmosphere 1976; no OEM output); live licensing grant-audit com.orbpro.ffm policy=open, anonymous grant verified; space-data-network-modules/propagator/ffm (com.orbpro.ffm 1.4.1); covariance-preserving implementation com.orbpro.ffm 2.0.1 at modules 5746b0f53504d4d8a83c4ec7921f4a34b85901a6: dimensionless validation preserves valid mixed-unit state/parameter covariance, browser and pinned WasmEdge E2E verifies independent force-free covariance and invalid-input rejection; numerical matrix acceptance is not empirical calibration; implementation update only, production deployment not requested",
+      "plan": "analysis",
+      "freeCapabilities": [
+        "Published orbit predictions based on free data"
+      ],
+      "planNote": "The plan covers custom sensor or advanced analysis tools. Free-source data and published results remain in Free."
     },
     {
       "id": "propagator-suite",
@@ -561,7 +613,8 @@
       "delivery": "sdn-module",
       "covers": [],
       "learnMore": "https://spacedatanetwork.org/modules.html",
-      "evidence": "live modules.pmm com.orbpro.sgp4 1.1.0, com.orbpro.keplerian.reference 1.0.0, com.digitalarsenal.propagator.ephemeris 0.1.1, atmosphere-model 0.1.0, cislunar-propagator 0.1.0, hypersonics-propagator 0.1.1; every modules.pmm row named here is ANONYMOUS (live manifest 2026-10-13)"
+      "evidence": "live modules.pmm com.orbpro.sgp4 1.1.0, com.orbpro.keplerian.reference 1.0.0, com.digitalarsenal.propagator.ephemeris 0.1.1, atmosphere-model 0.1.0, cislunar-propagator 0.1.0, hypersonics-propagator 0.1.1; every modules.pmm row named here is ANONYMOUS (live manifest 2026-10-13)",
+      "plan": "free"
     },
     {
       "id": "orbit-analysis-toolkit",
@@ -584,7 +637,9 @@
       "delivery": "sdn-module",
       "covers": [],
       "learnMore": "https://spacedatanetwork.org/modules.html",
-      "evidence": "live modules.pmm com.digitalarsenal.propagator.events 0.1.0, com.orbpro.access 1.0.0, com.digitalarsenal.analysis.parameters 0.1.0, com.orbpro.analysis.targeting 0.1.0, com.orbpro.dop 1.0.1; every modules.pmm row named here is ANONYMOUS (live manifest 2026-10-13)"
+      "evidence": "live modules.pmm com.digitalarsenal.propagator.events 0.1.0, com.orbpro.access 1.0.0, com.digitalarsenal.analysis.parameters 0.1.0, com.orbpro.analysis.targeting 0.1.0, com.orbpro.dop 1.0.1; every modules.pmm row named here is ANONYMOUS (live manifest 2026-10-13)",
+      "plan": "analysis",
+      "planNote": "The plan covers custom sensor or advanced analysis tools. Free-source data and published results remain in Free."
     },
     {
       "id": "ground-contact",
@@ -604,7 +659,9 @@
         "COM"
       ],
       "learnMore": "https://spaceaware.io",
-      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/modes/com/surface.ts:194-230; modes/modeCards.ts:382-436"
+      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/modes/com/surface.ts:194-230; modes/modeCards.ts:382-436",
+      "plan": "analysis",
+      "planNote": "The plan covers custom sensor or advanced analysis tools. Free-source data and published results remain in Free."
     },
     {
       "id": "rf-link-analysis",
@@ -637,7 +694,9 @@
         "COM:UPLINK"
       ],
       "learnMore": "https://spaceaware.io",
-      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/modes/com/surface.ts:232-279,430-438; modes/rf/surface.ts:175-228; store/moduleHost.ts:10; live modules.pmm com.orbpro.rf-* (link-budget 0.6.0, longley-rice 0.3.0, rain 0.3.0, cloud-fog 0.2.0, atmospheric-gaseous 0.3.0, diffraction 0.4.0, antenna-pattern 0.3.0, emi-cosite 0.1.0, aggregate-interference 0.1.0) ENTITLED; modes/rf/engine.ts:428-457 (co-channel C/I, I/N); modes/rf/surface.ts:193 (EMITTER LOG armable)"
+      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/modes/com/surface.ts:232-279,430-438; modes/rf/surface.ts:175-228; store/moduleHost.ts:10; live modules.pmm com.orbpro.rf-* (link-budget 0.6.0, longley-rice 0.3.0, rain 0.3.0, cloud-fog 0.2.0, atmospheric-gaseous 0.3.0, diffraction 0.4.0, antenna-pattern 0.3.0, emi-cosite 0.1.0, aggregate-interference 0.1.0) ENTITLED; modes/rf/engine.ts:428-457 (co-channel C/I, I/N); modes/rf/surface.ts:193 (EMITTER LOG armable)",
+      "plan": "analysis",
+      "planNote": "The plan covers custom sensor or advanced analysis tools. Free-source data and published results remain in Free."
     },
     {
       "id": "fastest-path",
@@ -654,7 +713,9 @@
       "delivery": "sdn-module",
       "covers": [],
       "learnMore": "https://spacedatanetwork.org/modules.html",
-      "evidence": "live modules.pmm com.orbpro.fastest-path 1.0.0 OPTIONAL ENTITLED"
+      "evidence": "live modules.pmm com.orbpro.fastest-path 1.0.0 OPTIONAL ENTITLED",
+      "plan": "analysis",
+      "planNote": "The plan covers custom sensor or advanced analysis tools. Free-source data and published results remain in Free."
     },
     {
       "id": "imagery-studio",
@@ -682,7 +743,8 @@
       "delivery": "console",
       "covers": [],
       "learnMore": "https://spaceaware.io",
-      "evidence": "every body's stack landed 2026-11-04: SpaceAware-UI 9d02039 (feature-body-imagery-layers-20261103; src/tools/body-imagery-layers-verify.mjs on the Moon, Mars and the Earth); landed 2026-10-15: SpaceAware-UI 7d24ed6, OrbPro 39ce5adc82 (LiveImageryProvider); headless gate on the merged build (add flow for every layer type, rect and corner video with clock sync, layer-set share, phone 390 px); sdn-js/spaceaware-ui/src/orbital-console/components/imagery/AddLayerForm.svelte; CapabilitiesPicker.svelte; VideoTransport.svelte; LayerSetShare.svelte; engine/videoLayers.ts; not in console build 20261013T204527Z"
+      "evidence": "every body's stack landed 2026-11-04: SpaceAware-UI 9d02039 (feature-body-imagery-layers-20261103; src/tools/body-imagery-layers-verify.mjs on the Moon, Mars and the Earth); landed 2026-10-15: SpaceAware-UI 7d24ed6, OrbPro 39ce5adc82 (LiveImageryProvider); headless gate on the merged build (add flow for every layer type, rect and corner video with clock sync, layer-set share, phone 390 px); sdn-js/spaceaware-ui/src/orbital-console/components/imagery/AddLayerForm.svelte; CapabilitiesPicker.svelte; VideoTransport.svelte; LayerSetShare.svelte; engine/videoLayers.ts; not in console build 20261013T204527Z",
+      "plan": "free"
     },
     {
       "id": "imagery-detection",
@@ -704,7 +766,9 @@
         "DET"
       ],
       "learnMore": "https://spaceaware.io",
-      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/modes/modeCards.ts:207-240; modes/det/surface.ts:542-560; modes/det/detectionModels.svelte.ts:38-45 (objects:true models); components/imagery/LayerAdvanced.svelte:155"
+      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/modes/modeCards.ts:207-240; modes/det/surface.ts:542-560; modes/det/detectionModels.svelte.ts:38-45 (objects:true models); components/imagery/LayerAdvanced.svelte:155",
+      "plan": "ai",
+      "planNote": "AI detection is in AI. Viewing the source imagery remains Free."
     },
     {
       "id": "globe-environment",
@@ -730,7 +794,8 @@
       "delivery": "console",
       "covers": [],
       "learnMore": "https://spaceaware.io",
-      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/components/SettingsPanel.svelte:203-570; engine/referenceGrid.ts:1-10; components/CreditsMenu.svelte"
+      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/components/SettingsPanel.svelte:203-570; engine/referenceGrid.ts:1-10; components/CreditsMenu.svelte",
+      "plan": "free"
     },
     {
       "id": "solar-system",
@@ -756,7 +821,8 @@
       "delivery": "console",
       "covers": [],
       "learnMore": "https://spaceaware.io",
-      "evidence": "Landed 2026-10-15 (multi-body rounds 3-4): OrbPro scene.bodies/setCentralBody (OrbPro eff2b00a9b), modules propagator/solar-system-bodies, data-source/lowell-astorb, naif-kernels, body-imagery, keplerian-reference 1.8.2 (modules d8b7fb1d), console SOLAR SYSTEM search group, Center chip and settings (SpaceAware-UI 608ed18, landed in dae4edd); clean-build checks 2026-10-15: nav 19/19 clicks centered with imagery, 1e22 m and back from pitch -0.15/-0.6/-1.2/+0.3, ACC drawn 0.056 arcsec, D9 cutoff, phone. Not on spaceaware.io until the console is republished (publish hold 2026-10-15)."
+      "evidence": "Landed 2026-10-15 (multi-body rounds 3-4): OrbPro scene.bodies/setCentralBody (OrbPro eff2b00a9b), modules propagator/solar-system-bodies, data-source/lowell-astorb, naif-kernels, body-imagery, keplerian-reference 1.8.2 (modules d8b7fb1d), console SOLAR SYSTEM search group, Center chip and settings (SpaceAware-UI 608ed18, landed in dae4edd); clean-build checks 2026-10-15: nav 19/19 clicks centered with imagery, 1e22 m and back from pitch -0.15/-0.6/-1.2/+0.3, ACC drawn 0.056 arcsec, D9 cutoff, phone. Not on spaceaware.io until the console is republished (publish hold 2026-10-15).",
+      "plan": "free"
     },
     {
       "id": "local-volume",
@@ -778,7 +844,8 @@
       "delivery": "console",
       "covers": [],
       "learnMore": "https://spaceaware.io",
-      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/data/localVolumePublications.ts (lane SSY.fbs lvdb/comb-all, every shard of the batch checked against its signed DPM), layers/galacticObjects (placement, GALAXIES table, INFO values with errors, limits and ADS links, LOCAL VOLUME credits), signed out; SpaceAware-UI 092f2fbb, pinned in sdn 2ac0f86b9; E2E src/tools/local-volume-verify.mjs (1,727 systems over 8 shards from a local node, host M 31 = 41, Antlia II (m-M)0 20.47 +0.09 -0.09 mag, Aquarius III sigma < 3.5 km/s, M 31 viewed and picked). host-01 does not publish the lane yet."
+      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/data/localVolumePublications.ts (lane SSY.fbs lvdb/comb-all, every shard of the batch checked against its signed DPM), layers/galacticObjects (placement, GALAXIES table, INFO values with errors, limits and ADS links, LOCAL VOLUME credits), signed out; SpaceAware-UI 092f2fbb, pinned in sdn 2ac0f86b9; E2E src/tools/local-volume-verify.mjs (1,727 systems over 8 shards from a local node, host M 31 = 41, Antlia II (m-M)0 20.47 +0.09 -0.09 mag, Aquarius III sigma < 3.5 km/s, M 31 viewed and picked). host-01 does not publish the lane yet.",
+      "plan": "free"
     },
     {
       "id": "camera-cinematics",
@@ -800,11 +867,12 @@
         "CAM"
       ],
       "learnMore": "https://spaceaware.io",
-      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/modes/modeCards.ts:555-571; modes/cam/surface.ts:23-44; modes/cam/pace.ts; modes/cam/cameraPath.ts; components/CameraMenu.svelte; store/cameraLens.ts"
+      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/modes/modeCards.ts:555-571; modes/cam/surface.ts:23-44; modes/cam/pace.ts; modes/cam/cameraPath.ts; components/CameraMenu.svelte; store/cameraLens.ts",
+      "plan": "free"
     },
     {
       "id": "star-field",
-      "name": "Premium star field",
+      "name": "Star field",
       "category": "earth-sky",
       "tagline": "A real star catalog and the Milky Way as your sky",
       "summary": "Replace the default sky with a real star catalog and the Milky Way, seen as a camera would see them: true physics or tuned for looks, including the sky seen from the object the camera rides.",
@@ -824,7 +892,9 @@
       "delivery": "console",
       "covers": [],
       "learnMore": "https://spaceaware.io",
-      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/engine/starField.ts, engine/starFieldContent.ts (sky background and Milky Way detail by CID, star-field-camera 0.5.0 preset/exposure/observer; SpaceAware-UI efd011d, landed in dae4edd); components/SettingsPanel.svelte STARS / STAR RENDERING; engine/attribution.ts sky credits; license-catalog grant (no modules.pmm row)"
+      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/engine/starField.ts, engine/starFieldContent.ts (sky background and Milky Way detail by CID, star-field-camera 0.5.0 preset/exposure/observer; SpaceAware-UI efd011d, landed in dae4edd); components/SettingsPanel.svelte STARS / STAR RENDERING; engine/attribution.ts sky credits; license-catalog grant (no modules.pmm row)",
+      "plan": "free",
+      "planNote": "Free under the November 4 plan direction: star catalogs and the Milky Way presentation use free or attributed data. Runtime access below records the currently implemented policy."
     },
     {
       "id": "sensor-shaders",
@@ -841,7 +911,9 @@
       "delivery": "sdn-module",
       "covers": [],
       "learnMore": "https://spacedatanetwork.org/modules.html",
-      "evidence": "live modules.pmm com.orbpro.sensor-shaders 1.0.0 OPTIONAL ENTITLED"
+      "evidence": "live modules.pmm com.orbpro.sensor-shaders 1.0.0 OPTIONAL ENTITLED",
+      "plan": "analysis",
+      "planNote": "The plan covers custom sensor or advanced analysis tools. Free-source data and published results remain in Free."
     },
     {
       "id": "sdn-node",
@@ -862,7 +934,8 @@
       "delivery": "node",
       "covers": [],
       "learnMore": "https://spacedatanetwork.org/network.html",
-      "evidence": "https://spacedatanetwork.org/install.sh (200); release v1.0.5-beta.70; sdn-server"
+      "evidence": "https://spacedatanetwork.org/install.sh (200); release v1.0.5-beta.70; sdn-server",
+      "plan": "free"
     },
     {
       "id": "data-publishing",
@@ -885,7 +958,8 @@
       "delivery": "node",
       "covers": [],
       "learnMore": "https://spacedatanetwork.org/onboarding.html",
-      "evidence": "docs/onboarding.html (live); sdn-server/internal/subscription; /api/v1/data/publish"
+      "evidence": "docs/onboarding.html (live); sdn-server/internal/subscription; /api/v1/data/publish",
+      "plan": "free"
     },
     {
       "id": "provenance-identity",
@@ -907,7 +981,8 @@
       "delivery": "node",
       "covers": [],
       "learnMore": "https://spacedatanetwork.org/security.html",
-      "evidence": "sdn-server/internal/epm, sigdomain, vcard; docs/security.html; whitepapers/provenance-and-security.html"
+      "evidence": "sdn-server/internal/epm, sigdomain, vcard; docs/security.html; whitepapers/provenance-and-security.html",
+      "plan": "free"
     },
     {
       "id": "embed-api",
@@ -928,7 +1003,8 @@
       "delivery": "console",
       "covers": [],
       "learnMore": "https://spaceaware.io",
-      "evidence": "sdn-js/spaceaware-ui/src/client/embed/protocol.js:1-66; client/embed/spaceawareGuest.js:11-80 (v1 offers ping, getState, select, setClock; setTheme and loadRecords not offered); live index.html embed/guest.43bc3f8bfbc6.js"
+      "evidence": "sdn-js/spaceaware-ui/src/client/embed/protocol.js:1-66; client/embed/spaceawareGuest.js:11-80 (v1 offers ping, getState, select, setClock; setTheme and loadRecords not offered); live index.html embed/guest.43bc3f8bfbc6.js",
+      "plan": "free"
     },
     {
       "id": "ccsds-interchange",
@@ -951,7 +1027,8 @@
       "delivery": "sdn-module",
       "covers": [],
       "learnMore": "https://spacedatanetwork.org/modules.html",
-      "evidence": "live modules.pmm com.digitalarsenal.files.ccsds-messages 0.1.0 (live artifact exports read_aem, read_tdm, write_aem, write_tdm only; the ten-message 0.2.0 is on space-data-network-modules main but not published) and com.digitalarsenal.files.orbit-products 0.1.2 (SPK, SP3, Code-500, OEM KVN); every modules.pmm row named here is ANONYMOUS (live manifest 2026-10-13)"
+      "evidence": "live modules.pmm com.digitalarsenal.files.ccsds-messages 0.1.0 (live artifact exports read_aem, read_tdm, write_aem, write_tdm only; the ten-message 0.2.0 is on space-data-network-modules main but not published) and com.digitalarsenal.files.orbit-products 0.1.2 (SPK, SP3, Code-500, OEM KVN); every modules.pmm row named here is ANONYMOUS (live manifest 2026-10-13)",
+      "plan": "free"
     },
     {
       "id": "data-sources",
@@ -977,7 +1054,8 @@
       "delivery": "sdn-module",
       "covers": [],
       "learnMore": "https://spacedatanetwork.org/onboarding.html",
-      "evidence": "live modules.pmm data-source.* rows (celestrak-parser/request/reference, gp-archive-records, ephemeris-source, oem-source-iss, eop-parser/request, satnogs-source, sigmf-captures, open-meteo, weathernext-parser, retrieval) and com.orbpro.{celestrak-supgp,spacex-starlink-source,oneweb-source,intelsat-source,iss-source,cpf-source,glonass-source,gps-source}; com.orbpro.gps-source manifest name 'GPS Almanac (NAVCEN SEM/YUMA) Data Source'; every modules.pmm row named here is ANONYMOUS (live manifest 2026-10-13); source validation: modules cc64880aee735 data-source/spacex-starlink-source 1.2.0 retains exact Modified ITC epochs and all supplied covariance entries in their declared frame. tests/covarianceE2E.mjs matches SpaceX published numeric values and the independent native CA parser in browser and WasmEdge; absent covariance remains unavailable Pc with a separately labeled maximum bound. SDK compliance and UI e154dba7dc production CA panel/unit interactions pass. This validates input fidelity, not covariance calibration or a refreshed live deployment."
+      "evidence": "live modules.pmm data-source.* rows (celestrak-parser/request/reference, gp-archive-records, ephemeris-source, oem-source-iss, eop-parser/request, satnogs-source, sigmf-captures, open-meteo, weathernext-parser, retrieval) and com.orbpro.{celestrak-supgp,spacex-starlink-source,oneweb-source,intelsat-source,iss-source,cpf-source,glonass-source,gps-source}; com.orbpro.gps-source manifest name 'GPS Almanac (NAVCEN SEM/YUMA) Data Source'; every modules.pmm row named here is ANONYMOUS (live manifest 2026-10-13); source validation: modules cc64880aee735 data-source/spacex-starlink-source 1.2.0 retains exact Modified ITC epochs and all supplied covariance entries in their declared frame. tests/covarianceE2E.mjs matches SpaceX published numeric values and the independent native CA parser in browser and WasmEdge; absent covariance remains unavailable Pc with a separately labeled maximum bound. SDK compliance and UI e154dba7dc production CA panel/unit interactions pass. This validates input fidelity, not covariance calibration or a refreshed live deployment.",
+      "plan": "free"
     },
     {
       "id": "module-building-blocks",
@@ -1001,7 +1079,8 @@
       "delivery": "sdn-module",
       "covers": [],
       "learnMore": "https://spacedatanetwork.org/modules.html",
-      "evidence": "live modules.pmm CORE foundation and hostcap rows; space-data-network-modules/foundation/*, hostcap/*; every modules.pmm row named here is ANONYMOUS (live manifest 2026-10-13)"
+      "evidence": "live modules.pmm CORE foundation and hostcap rows; space-data-network-modules/foundation/*, hostcap/*; every modules.pmm row named here is ANONYMOUS (live manifest 2026-10-13)",
+      "plan": "free"
     }
   ],
   "sources": [
@@ -2108,6 +2187,29 @@
     {
       "key": "source:planet-ephemerides",
       "reason": "Planet's operator states feed the open drag correction on the DCL.fbs open-dca lane, which the console does not read."
+    }
+  ],
+  "plannedCapabilities": [
+    {
+      "id": "ai-assistance",
+      "name": "AI assistance and analysis workflows",
+      "plan": "ai",
+      "status": "Plan scope; module delivery not established in this catalog",
+      "summary": "AI assistance belongs in the $40 monthly plan. Imagery object detection is the currently cataloged AI module."
+    },
+    {
+      "id": "space-combat",
+      "name": "Space combat",
+      "plan": "spaceedge",
+      "status": "Program capability; delivery scoped per contract",
+      "summary": "Space combat scenarios and analysis belong in SpaceEdge."
+    },
+    {
+      "id": "udl-access",
+      "name": "Unified Data Library access",
+      "plan": "spaceedge",
+      "status": "Customer-authorized integration; coverage and delivery tracked below",
+      "summary": "Use the customer’s own UDL account and permissions. Public-source equivalents remain Free."
     }
   ]
 }

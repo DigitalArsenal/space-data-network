@@ -10,29 +10,26 @@
   const $ = (sel, root = document) => root.querySelector(sel);
   const esc = (value) =>
     String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-  const PLANS = [
-    { id: "free", name: "Free" }, { id: "pro", name: "Pro" }, { id: "team", name: "Team" },
-    { id: "enterprise", name: "Enterprise" }, { id: "spaceedge", name: "SpaceEdge" },
-  ];
+  let PLANS = [];
   const GROUPS = ["All groups", "Orbits", "Weather", "Solar System", "Defense Ops"];
-  const CHIP = { UDL: "udl", Open: "open", View: "view", Derived: "derived", Partial: "partial", Own: "own" };
-  const LEGEND = [["UDL", "Live from UDL"], ["Open", "Open public source"], ["View", "Open source, view only"],
+  const CHIP = { UDL: "udl", Open: "open", Derived: "derived", Partial: "partial", Own: "own" };
+  const LEGEND = [["UDL", "Customer-authorized UDL access"], ["Open", "Open public source"],
     ["Derived", "Computed from open data"], ["Partial", "Open source covers part"], ["Own", "The customer's own data"], ["—", "Not available"]];
 
   let data = null;
   const f = { group: "All groups", q: "", plan: "", only: "" };
 
   const types = (rows) => rows.reduce((n, r) => n + r.udl.length, 0);
-  const openTiers = ["free", "pro", "team", "enterprise"];
+  const openTiers = ["free", "analysis", "ai"];
   const edgeOnly = (r) => openTiers.every((t) => r.plans[t] === "—");
-  const publicEquivalent = (r) => r.plans.pro !== "—" || r.plans.team !== "—";
+  const publicEquivalent = (r) => r.plans.free !== "—";
   const gap = (r) => !r.sds.length;
 
   function stats() {
     const rows = data.rows;
     const items = [
       [types(rows), "UDL data types"],
-      [types(rows.filter(publicEquivalent)), "with an open or derived equivalent in Pro and Team"],
+      [types(rows.filter(publicEquivalent)), "with a public equivalent in Free"],
       [types(rows.filter(edgeOnly)), "only in SpaceEdge"],
       [types(rows.filter(gap)), "with no SDS record yet"],
     ];
@@ -100,18 +97,15 @@
       else return;
       render();
     });
-    // The plan builder's "UDL data in <plan>" button.
-    document.addEventListener("udl:plan", (e) => {
-      f.plan = e.detail === "spaceedge" ? "" : e.detail;
-      f.only = e.detail === "spaceedge" ? "edge" : "";
-      f.group = "All groups";
-      controls();
-      render();
-    });
   }
 
-  fetch("marketing/udl-matrix.json", { cache: "no-cache" }).then((r) => r.json()).then((d) => {
+  Promise.all(["udl-matrix", "plans"].map(async (name) => {
+    const r = await fetch(`marketing/${name}.json`, { cache: "no-cache" });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r.json();
+  })).then(([d, plans]) => {
     data = d;
+    PLANS = plans.plans;
     $("[data-udl=source]").textContent = d.source;
     stats();
     controls();

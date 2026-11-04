@@ -1,8 +1,8 @@
 {
   "version": 1,
-  "updated": "2026-10-16",
+  "updated": "2026-11-04",
   "copy": {
-    "executive": "What government programs buy beyond SpaceAware: security built for accreditation, the warfighting functions in the terms both research and operations use, real-time collaboration, integration with legacy systems at the edge, and deployment into CDAO environments. Each line says whether it is live today or a target.",
+    "executive": "SpaceEdge is the government offering: SpaceAware capabilities plus space combat and access to the Unified Data Library (UDL), using the customer’s authorized account. Security, collaboration and deployment are scoped to the program. Each item below retains its delivery status.",
     "operator": "The same tools, named as your mission uses them, with your organization's data and UDL beside the open catalog, shared with the people you work with, and running where your systems are, including disconnected ones.",
     "integrator": "A Space Data Network node runs as a sidecar beside legacy systems, converting their messages to signed SDS records; modules are WebAssembly that runs in the browser, on WasmEdge on small hosts and offline. Certifications are listed as targets until each is granted."
   },
@@ -26,6 +26,7 @@
     ]
   },
   "warfighting": [
+    {"academic": "Space combat scenario modeling and analysis", "military": "Space combat", "status": "Program scope; delivery to be confirmed"},
     { "academic": "Communications and spectrum analysis: link budgets, interference, propagation loss", "military": "Electromagnetic spectrum operations: spectrum management and electromagnetic warfare support", "status": "Live" },
     { "academic": "Emitter location from time and frequency difference of arrival", "military": "RF geolocation (TDOA/FDOA) from UDL", "status": "Target" },
     { "academic": "Relative-motion analysis in the RIC frame; rendezvous and transfer planning", "military": "Rendezvous and proximity operations (RPO): approach characterization and inspection planning", "status": "Live" },
