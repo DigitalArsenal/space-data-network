@@ -371,4 +371,4 @@ try {
   rmSync(dir, { recursive: true, force: true });
 }
 assert.deepEqual(failures, [], `records that did not round-trip:\n${failures.join('\n')}`);
-console.log(`PASS SDS ${VERSION}: ${records.length} records (SFE captured SWPC row and two populated-ratio variants, ${SPACE_WEATHER.join(', ')}, CVR, DPM CAR_ARCHIVE, existing standards including WXF AuroraProbability) round-trip through the node by CID`);
+console.log(`PASS SDS ${VERSION}: ${records.length} records (SSY LVDB antlia_2 and aquarius_3, SFE captured SWPC row and two populated-ratio variants, ${SPACE_WEATHER.join(', ')}, CVR, DPM CAR_ARCHIVE, existing standards including WXF AuroraProbability) round-trip through the node by CID`);

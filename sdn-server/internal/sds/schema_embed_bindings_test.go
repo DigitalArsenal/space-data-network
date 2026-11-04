@@ -256,6 +256,7 @@ import (
 	bSRI "github.com/DigitalArsenal/spacedatastandards.org/lib/go/SRI"
 	bSRO "github.com/DigitalArsenal/spacedatastandards.org/lib/go/SRO"
 	bSRT "github.com/DigitalArsenal/spacedatastandards.org/lib/go/SRT"
+	bSSY "github.com/DigitalArsenal/spacedatastandards.org/lib/go/SSY"
 	bSTF "github.com/DigitalArsenal/spacedatastandards.org/lib/go/STF"
 	bSTO "github.com/DigitalArsenal/spacedatastandards.org/lib/go/STO"
 	bSTR "github.com/DigitalArsenal/spacedatastandards.org/lib/go/STR"
@@ -558,6 +559,7 @@ var driftGuardedSchemas = []struct {
 	{"SRI.fbs", &bSRI.SRI{}},
 	{"SRO.fbs", &bSRO.SRO{}},
 	{"SRT.fbs", &bSRT.SRT{}},
+	{"SSY.fbs", &bSSY.SSY{}},
 	{"STF.fbs", &bSTF.STF{}},
 	{"STO.fbs", &bSTO.STO{}},
 	{"STR.fbs", &bSTR.STR{}},
