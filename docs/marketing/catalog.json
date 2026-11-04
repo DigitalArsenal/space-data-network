@@ -661,8 +661,9 @@
       "name": "Globe imagery studio",
       "category": "earth-sky",
       "tagline": "Stack, tune and compare imagery and video layers",
-      "summary": "Stack and reorder imagery layers with full per-layer controls, compare two dates, and add any imagery or video layer by URL or from your own files.",
+      "summary": "Stack and reorder imagery layers with full per-layer controls on the Earth and on every planet and moon, compare two dates, and add any imagery or video layer by URL or from your own files.",
       "capabilities": [
+        "A layer stack on every planet and moon: add its imagery products, drag them into order, remove them and tune each one in its own menu",
         "Built-in Blue Marble, Black Marble, world imagery, street map, shaded relief and OpenStreetMap",
         "Brightness, contrast, hue, gamma and day/night alpha per layer",
         "Split view, color-to-alpha and cut-outs",
@@ -681,7 +682,7 @@
       "delivery": "console",
       "covers": [],
       "learnMore": "https://spaceaware.io",
-      "evidence": "landed 2026-10-15: SpaceAware-UI 7d24ed6, OrbPro 39ce5adc82 (LiveImageryProvider); headless gate on the merged build (add flow for every layer type, rect and corner video with clock sync, layer-set share, phone 390 px); sdn-js/spaceaware-ui/src/orbital-console/components/imagery/AddLayerForm.svelte; CapabilitiesPicker.svelte; VideoTransport.svelte; LayerSetShare.svelte; engine/videoLayers.ts; not in console build 20261013T204527Z"
+      "evidence": "every body's stack landed 2026-11-04: SpaceAware-UI 9d02039 (feature-body-imagery-layers-20261103; src/tools/body-imagery-layers-verify.mjs on the Moon, Mars and the Earth); landed 2026-10-15: SpaceAware-UI 7d24ed6, OrbPro 39ce5adc82 (LiveImageryProvider); headless gate on the merged build (add flow for every layer type, rect and corner video with clock sync, layer-set share, phone 390 px); sdn-js/spaceaware-ui/src/orbital-console/components/imagery/AddLayerForm.svelte; CapabilitiesPicker.svelte; VideoTransport.svelte; LayerSetShare.svelte; engine/videoLayers.ts; not in console build 20261013T204527Z"
     },
     {
       "id": "imagery-detection",
