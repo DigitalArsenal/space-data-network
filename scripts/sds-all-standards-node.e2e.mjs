@@ -343,12 +343,19 @@ try {
       assert.deepEqual(plain(decoded), plain(object), `${code}: every field round-trips`);
       verify?.(decoded);
       if (code === 'SSY') {
-        const listed = await fetch(`${admin}/api/v1/data/index?schema=SSY.fbs&limit=100`);
-        assert.equal(listed.status, 200, 'SSY lane index');
-        const page = qrp.QRP.getSizePrefixedRootAsQRP(new flatbuffers.ByteBuffer(new Uint8Array(await listed.arrayBuffer()))).unpack();
-        assert.equal(page.STATUS, qrp.qrpStatus.Ok);
-        assert.equal(page.SCHEMA_NAME, 'SSY.fbs');
-        assert.ok(page.ROWS.some(row => row.CELLS[0].TEXT_VALUE === cid), 'published CID listed on SSY.fbs lane');
+        // Index pages are cached snapshots; allow the next snapshot to include
+        // a record published immediately after the preceding index request.
+        const deadline = Date.now() + 30000;
+        for (;;) {
+          const listed = await fetch(`${admin}/api/v1/data/index?schema=SSY.fbs&limit=100`);
+          assert.equal(listed.status, 200, 'SSY lane index');
+          const page = qrp.QRP.getSizePrefixedRootAsQRP(new flatbuffers.ByteBuffer(new Uint8Array(await listed.arrayBuffer()))).unpack();
+          assert.equal(page.STATUS, qrp.qrpStatus.Ok);
+          assert.equal(page.SCHEMA_NAME, 'SSY.fbs');
+          if (page.ROWS.some(row => row.CELLS[0].TEXT_VALUE === cid)) break;
+          assert.ok(Date.now() < deadline, 'published CID listed on SSY.fbs lane within 30s');
+          await new Promise(resolve => setTimeout(resolve, 250));
+        }
         ok(`SSY.fbs lane lists ${object.SOURCE_KEY} CID ${cid}`);
       }
       ok(`${code}: published (${bytes.length} B), stored and returned by CID ${cid}, ${Buffer.compare(Buffer.from(back), Buffer.from(bytes)) === 0 ? 'byte-identical' : 'fields identical'}`);
