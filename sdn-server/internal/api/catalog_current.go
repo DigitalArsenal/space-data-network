@@ -35,7 +35,10 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"io"
+	"math"
 	"net/http"
 	"reflect"
 	"sort"
@@ -289,6 +292,63 @@ func catalogJSONBinding(schema string) (*bulkBinding, error) {
 	return catalogOCMBinding, catalogOCMBindingErr
 }
 
+// catalogWriteJSONArray is writeBulkJSONArray with a field whose value is not
+// a finite number (the IDL's "nan when not stated" defaults of $OCM) written as
+// null, which JSON can carry.
+func catalogWriteJSONArray(writer io.Writer, binding *bulkBinding, records []*storage.Record) error {
+	if _, err := io.WriteString(writer, "["); err != nil {
+		return err
+	}
+	encoder := json.NewEncoder(writer)
+	encoder.SetEscapeHTML(false)
+	for index, record := range records {
+		if index > 0 {
+			if _, err := io.WriteString(writer, ","); err != nil {
+				return err
+			}
+		}
+		root, err := binding.decode(record.Data)
+		if err != nil {
+			return err
+		}
+		object, err := bindingObject(root, binding.fields)
+		if err != nil {
+			return err
+		}
+		if err := encoder.Encode(catalogFiniteJSON(object)); err != nil {
+			return err
+		}
+	}
+	_, err := io.WriteString(writer, "]")
+	return err
+}
+
+// catalogFiniteJSON replaces every NaN or infinite number in a binding object
+// with nil.
+func catalogFiniteJSON(value interface{}) interface{} {
+	switch v := value.(type) {
+	case map[string]interface{}:
+		for key, child := range v {
+			v[key] = catalogFiniteJSON(child)
+		}
+		return v
+	case []interface{}:
+		for i, child := range v {
+			v[i] = catalogFiniteJSON(child)
+		}
+		return v
+	case float64:
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			return nil
+		}
+	case float32:
+		if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
+			return nil
+		}
+	}
+	return value
+}
+
 // catalogRenderBody writes a theory's answer: the flatbuffer stream, or the
 // JSON form (one array, or one array per file identifier for all).
 func (h *DataQueryHandler) catalogRenderBody(body *bytes.Buffer, format bulkExportFormat, theory string, lanes []string, sets []catalogSet) ([]*storage.Record, error) {
@@ -315,7 +375,7 @@ func (h *DataQueryHandler) catalogRenderBody(body *bytes.Buffer, format bulkExpo
 		if err != nil {
 			return nil, err
 		}
-		if err := writeBulkJSONArray(body, binding, records); err != nil {
+		if err := catalogWriteJSONArray(body, binding, records); err != nil {
 			return nil, err
 		}
 	}
