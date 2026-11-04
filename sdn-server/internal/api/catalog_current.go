@@ -1,19 +1,26 @@
 package api
 
 // TODAY'S CURRENT CATALOG over one GET (owner 2026-10-25): every object the
-// node holds, once per mean-element theory, as the node's own $OMM records.
+// node holds, once per mean-element theory. One record type per theory lane
+// (program design row 9): SGP4 sets are the node's stored $OMM records, SGP4XP
+// and AP sets its stored $OCM element-set records (MEAN_ELEMENTS). An SGP4 set
+// is never served as $OCM and an SGP4XP or AP set never as $OMM.
 //
-//	GET /api/v1/data/catalog/current[?format=flatbuffer|json][&theory=SGP4|SGP4XP|all]
+//	GET /api/v1/data/catalog/current[?format=flatbuffer|json][&theory=SGP4|SGP4XP|AP|all]
 //
-//	format   flatbuffer (default): the size-prefixed $OMM stream, byte for byte
-//	         the stored records. json: the FlatBuffers JSON form of the same
-//	         records (the IDL's field names, enums by name), one array.
-//	theory   which MEAN_ELEMENT_THEORY: SGP4, SGP4XP or all (default). A stored
-//	         record of another theory (SDNAP, removed 2026-10-25) is not served.
+//	theory   SGP4: the $OMM lane (MEAN_ELEMENT_THEORY SGP4). SGP4XP or AP: the
+//	         $OCM lane (MEAN_ELEMENTS.MEAN_ELEMENT_THEORY). all (default): both
+//	         lanes. Any other value is refused.
+//	format   flatbuffer (default): one size-prefixed stream, byte for byte the
+//	         stored records, each under its own file identifier ($OMM frames,
+//	         then $OCM frames). json: the FlatBuffers JSON form of the same
+//	         records (the IDL's field names, enums by name): one array for one
+//	         lane; for all, {"$OMM": [...], "$OCM": [...]}.
 //
-// There is no history: the answer is the records nearest now for each object
-// and theory. Nothing else is accepted, so the cache key space is two formats
-// times three theory values.
+// There is no history: the answer is the record nearest now for each object
+// and theory ($OMM: NORAD_CAT_ID and EPOCH; $OCM: Metadata.NORAD_CAT_ID and
+// MEAN_ELEMENTS.EPOCH). Nothing else is accepted, so the cache key space is two
+// formats times four theory values.
 //
 // CACHING. The entity tag is the SHA-256 of the format, the theory and the
 // record CIDs (a CID is the hash of the record's bytes), so it changes exactly
@@ -30,11 +37,14 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/OCM"
 
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
@@ -55,19 +65,35 @@ const (
 	catalogQueryLimit   = 250000
 )
 
-var catalogTheories = []string{"SGP4", "SGP4XP"}
+// catalogLanes is the record type of each served theory, in serving order.
+var catalogLanes = []struct{ theory, schema string }{
+	{"SGP4", "OMM.fbs"},
+	{"SGP4XP", "OCM.fbs"},
+	{"AP", "OCM.fbs"},
+}
+
+// catalogTheoryError is the refusal of any other theory.
+const catalogTheoryError = "unsupported theory; use SGP4, SGP4XP, AP or all."
+
+// catalogSet is one served record, its lane's schema and its theory.
+type catalogSet struct {
+	record *storage.Record
+	schema string
+	theory string
+}
 
 type catalogSelection struct {
 	at        time.Time
 	digest    string
-	records   []*storage.Record
+	sets      []catalogSet
 	published time.Time
 	renders   map[string]*catalogRender
 }
 
 type catalogRender struct {
-	body []byte
-	etag string
+	body   []byte
+	etag   string
+	schema string
 }
 
 type catalogCurrentState struct {
@@ -76,14 +102,15 @@ type catalogCurrentState struct {
 	now  func() time.Time
 }
 
-// catalogServes reports whether the catalog serves a mean-element theory.
-func catalogServes(theory string) bool {
-	for _, t := range catalogTheories {
-		if t == theory {
-			return true
+// catalogLaneSchema is the record type a theory is served as; ok is false for
+// a theory the catalog does not serve.
+func catalogLaneSchema(theory string) (string, bool) {
+	for _, l := range catalogLanes {
+		if l.theory == theory {
+			return l.schema, true
 		}
 	}
-	return false
+	return "", false
 }
 
 func (h *DataQueryHandler) catalogNow() time.Time {
@@ -93,60 +120,63 @@ func (h *DataQueryHandler) catalogNow() time.Time {
 	return time.Now().UTC()
 }
 
-// catalogRecords selects today's current records of every theory: per lane the
-// record nearest now for each object, plus every record of today's UTC day (a
-// lane that holds several theories of one object keeps each), reduced to the
-// record nearest now for each (object, theory).
-func (h *DataQueryHandler) catalogRecords(now time.Time) ([]*storage.Record, time.Time, error) {
+type catalogLane struct{ provider, source string }
+
+// catalogSourceLanes is every provider and source lane holding records of a
+// schema, less the named-only lanes.
+func (h *DataQueryHandler) catalogSourceLanes(summary *storage.DataSummary, schema string) []catalogLane {
+	seen := map[catalogLane]bool{}
+	var lanes []catalogLane
+	if summary == nil {
+		return nil
+	}
+	for _, src := range summary.Sources {
+		l := catalogLane{src.ProviderID, src.SourceName}
+		if src.SchemaName != schema || src.Count <= 0 || seen[l] {
+			continue
+		}
+		seen[l] = true
+		if config.AnyLaneMatches(h.namedOnly, "", schema, l.provider, l.source) {
+			continue
+		}
+		lanes = append(lanes, l)
+	}
+	return lanes
+}
+
+// catalogRecords selects today's current sets of both lanes: per object and
+// theory the record nearest now. The $OMM lane reads, per source lane, the
+// record nearest now for each object plus every record of today's UTC day (a
+// lane that holds several theories of one object keeps each); the $OCM lane
+// reads the store's nearest element set per (NORAD_CAT_ID, theory).
+func (h *DataQueryHandler) catalogRecords(now time.Time) ([]catalogSet, time.Time, error) {
 	summary, err := h.store.DataSummary()
 	if err != nil {
 		return nil, time.Time{}, err
-	}
-	type lane struct{ provider, source string }
-	seen := map[lane]bool{}
-	var lanes []lane
-	if summary != nil {
-		for _, src := range summary.Sources {
-			l := lane{src.ProviderID, src.SourceName}
-			if src.SchemaName != "OMM.fbs" || src.Count <= 0 || seen[l] {
-				continue
-			}
-			seen[l] = true
-			if config.AnyLaneMatches(h.namedOnly, "", "OMM.fbs", l.provider, l.source) {
-				continue
-			}
-			lanes = append(lanes, l)
-		}
 	}
 	type key struct {
 		norad  uint32
 		theory string
 	}
 	type pick struct {
-		record *storage.Record
-		delta  int64
+		set   catalogSet
+		delta int64
 	}
-	best := map[key]pick{}
-	consider := func(m storage.EpochRecordMatch) error {
-		omm, err := decodeOMM(m.Record.Data)
-		if err != nil {
-			return err
+	best := map[string]map[key]pick{"OMM.fbs": {}, "OCM.fbs": {}}
+	consider := func(schema string, norad uint32, theory string, epoch time.Time, r *storage.Record) {
+		if lane, ok := catalogLaneSchema(theory); !ok || lane != schema {
+			return
 		}
-		theory := omm.MEAN_ELEMENT_THEORY().String()
-		if !catalogServes(theory) {
-			return nil
-		}
-		k := key{omm.NORAD_CAT_ID(), theory}
-		delta := m.MatchedEpoch.Unix() - now.Unix()
+		k := key{norad, theory}
+		delta := epoch.Unix() - now.Unix()
 		if delta < 0 {
 			delta = -delta
 		}
-		if prev, ok := best[k]; !ok || delta < prev.delta || (delta == prev.delta && m.Record.CID < prev.record.CID) {
-			best[k] = pick{m.Record, delta}
+		if prev, ok := best[schema][k]; !ok || delta < prev.delta || (delta == prev.delta && r.CID < prev.set.record.CID) {
+			best[schema][k] = pick{catalogSet{r, schema, theory}, delta}
 		}
-		return nil
 	}
-	for _, l := range lanes {
+	for _, l := range h.catalogSourceLanes(summary, "OMM.fbs") {
 		for _, q := range []storage.EpochRecordQuery{
 			{Profile: storage.EpochProfileNearest, At: now},
 			{Profile: storage.EpochProfileDay, Day: now.Format("2006-01-02")},
@@ -157,32 +187,45 @@ func (h *DataQueryHandler) catalogRecords(now time.Time) ([]*storage.Record, tim
 				return nil, time.Time{}, err
 			}
 			for _, m := range matches {
-				if err := consider(m); err != nil {
+				omm, err := decodeOMM(m.Record.Data)
+				if err != nil {
 					return nil, time.Time{}, err
 				}
+				consider("OMM.fbs", omm.NORAD_CAT_ID(), omm.MEAN_ELEMENT_THEORY().String(), m.MatchedEpoch, m.Record)
 			}
 		}
 	}
-	keys := make([]key, 0, len(best))
-	for k := range best {
-		keys = append(keys, k)
-	}
-	sort.Slice(keys, func(i, j int) bool {
-		if keys[i].norad != keys[j].norad {
-			return keys[i].norad < keys[j].norad
+	for _, l := range h.catalogSourceLanes(summary, "OCM.fbs") {
+		sets, err := h.store.QueryOCMElementSetsNearest(l.provider, l.source, now)
+		if err != nil {
+			return nil, time.Time{}, err
 		}
-		return keys[i].theory < keys[j].theory
-	})
-	records := make([]*storage.Record, 0, len(keys))
+		for _, set := range sets {
+			consider("OCM.fbs", set.NoradCatID, set.Theory, set.Epoch, set.Record)
+		}
+	}
+	var sets []catalogSet
 	var published time.Time
-	for _, k := range keys {
-		r := best[k].record
-		records = append(records, r)
-		if r.Timestamp.After(published) {
-			published = r.Timestamp
+	for _, schema := range []string{"OMM.fbs", "OCM.fbs"} {
+		keys := make([]key, 0, len(best[schema]))
+		for k := range best[schema] {
+			keys = append(keys, k)
+		}
+		sort.Slice(keys, func(i, j int) bool {
+			if keys[i].norad != keys[j].norad {
+				return keys[i].norad < keys[j].norad
+			}
+			return keys[i].theory < keys[j].theory
+		})
+		for _, k := range keys {
+			set := best[schema][k].set
+			sets = append(sets, set)
+			if set.record.Timestamp.After(published) {
+				published = set.record.Timestamp
+			}
 		}
 	}
-	return records, published, nil
+	return sets, published, nil
 }
 
 func (h *DataQueryHandler) catalogSelect() (*catalogSelection, time.Time, error) {
@@ -192,13 +235,13 @@ func (h *DataQueryHandler) catalogSelect() (*catalogSelection, time.Time, error)
 	if s := h.catalog.last; s != nil && now.Sub(s.at) < catalogSelectionTTL && !now.Before(s.at) {
 		return s, s.published, nil
 	}
-	records, published, err := h.catalogRecords(now)
+	sets, published, err := h.catalogRecords(now)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
 	sum := sha256.New()
-	for _, rec := range records {
-		fmt.Fprintf(sum, "%s\x00", rec.CID)
+	for _, set := range sets {
+		fmt.Fprintf(sum, "%s\x00", set.record.CID)
 	}
 	digest := hex.EncodeToString(sum.Sum(nil))
 	// The same records as the last selection keep its renders: a refresh that
@@ -207,25 +250,79 @@ func (h *DataQueryHandler) catalogSelect() (*catalogSelection, time.Time, error)
 		prev.at, prev.published = now, published
 		return prev, published, nil
 	}
-	h.catalog.last = &catalogSelection{at: now, digest: digest, records: records, published: published, renders: map[string]*catalogRender{}}
+	h.catalog.last = &catalogSelection{at: now, digest: digest, sets: sets, published: published, renders: map[string]*catalogRender{}}
 	return h.catalog.last, published, nil
 }
 
-func catalogTheoryFilter(records []*storage.Record, theory string) ([]*storage.Record, error) {
-	if theory == "all" {
-		return records, nil
+// catalogTheoryRecords is the selection's records of one lane schema and a
+// theory (all: every theory of that schema).
+func catalogTheoryRecords(sets []catalogSet, schema, theory string) []*storage.Record {
+	var out []*storage.Record
+	for _, set := range sets {
+		if set.schema == schema && (theory == "all" || set.theory == theory) {
+			out = append(out, set.record)
+		}
 	}
-	out := make([]*storage.Record, 0, len(records))
-	for _, r := range records {
-		omm, err := decodeOMM(r.Data)
+	return out
+}
+
+var (
+	catalogOCMBindingOnce sync.Once
+	catalogOCMBinding     *bulkBinding
+	catalogOCMBindingErr  error
+)
+
+// catalogJSONBinding is the generated-binding JSON form of a lane's schema.
+func catalogJSONBinding(schema string) (*bulkBinding, error) {
+	if schema != "OCM.fbs" {
+		return bulkBindingForSchema(schema)
+	}
+	catalogOCMBindingOnce.Do(func() {
+		binding := &bulkBinding{
+			schemaName: schema,
+			rootType:   reflect.TypeOf((*OCM.OCM)(nil)),
+			decode:     func(data []byte) (interface{}, error) { return storage.DecodeOCM(data) },
+		}
+		binding.fields, catalogOCMBindingErr = generatedBindingFields(binding.rootType)
+		catalogOCMBinding = binding
+	})
+	return catalogOCMBinding, catalogOCMBindingErr
+}
+
+// catalogRenderBody writes a theory's answer: the flatbuffer stream, or the
+// JSON form (one array, or one array per file identifier for all).
+func (h *DataQueryHandler) catalogRenderBody(body *bytes.Buffer, format bulkExportFormat, theory string, lanes []string, sets []catalogSet) ([]*storage.Record, error) {
+	var all []*storage.Record
+	if format == bulkFormatJSON && len(lanes) > 1 {
+		body.WriteString("{")
+	}
+	for i, schema := range lanes {
+		records := catalogTheoryRecords(sets, schema, theory)
+		all = append(all, records...)
+		if format != bulkFormatJSON {
+			if err := h.store.WriteRawRecordFrames(body, records); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		if len(lanes) > 1 {
+			if i > 0 {
+				body.WriteString(",")
+			}
+			fmt.Fprintf(body, "%q:", "$"+strings.TrimSuffix(schema, ".fbs"))
+		}
+		binding, err := catalogJSONBinding(schema)
 		if err != nil {
 			return nil, err
 		}
-		if omm.MEAN_ELEMENT_THEORY().String() == theory {
-			out = append(out, r)
+		if err := writeBulkJSONArray(body, binding, records); err != nil {
+			return nil, err
 		}
 	}
-	return out, nil
+	if format == bulkFormatJSON && len(lanes) > 1 {
+		body.WriteString("}")
+	}
+	return all, nil
 }
 
 // catalogCacheControl is public, shared for the time left before the next
@@ -278,12 +375,14 @@ func (h *DataQueryHandler) handleCatalogCurrent(w http.ResponseWriter, r *http.R
 		return
 	}
 	theory := "all"
+	lanes := []string{"OMM.fbs", "OCM.fbs"}
 	if raw := strings.ToUpper(strings.TrimSpace(values.Get("theory"))); raw != "" && raw != "ALL" {
-		theory = raw
-		if !catalogServes(theory) {
-			WriteErrorFrame(w, http.StatusBadRequest, "bad_request", "unsupported theory; use SGP4, SGP4XP or all.", 0)
+		schema, ok := catalogLaneSchema(raw)
+		if !ok {
+			WriteErrorFrame(w, http.StatusBadRequest, "bad_request", catalogTheoryError, 0)
 			return
 		}
+		theory, lanes = raw, []string{schema}
 	}
 	if !h.ensureStore(w) {
 		return
@@ -298,22 +397,9 @@ func (h *DataQueryHandler) handleCatalogCurrent(w http.ResponseWriter, r *http.R
 	render := selection.renders[cacheKey]
 	h.catalog.mu.Unlock()
 	if render == nil {
-		records, err := catalogTheoryFilter(selection.records, theory)
-		if err != nil {
-			WriteErrorFrame(w, http.StatusInternalServerError, "internal", err.Error(), 0)
-			return
-		}
 		var body bytes.Buffer
-		if format == bulkFormatJSON {
-			binding, err := bulkBindingForSchema("OMM.fbs")
-			if err == nil {
-				err = writeBulkJSONArray(&body, binding, records)
-			}
-			if err != nil {
-				WriteErrorFrame(w, http.StatusInternalServerError, "internal", err.Error(), 0)
-				return
-			}
-		} else if err := h.store.WriteRawRecordFrames(&body, records); err != nil {
+		records, err := h.catalogRenderBody(&body, format, theory, lanes, selection.sets)
+		if err != nil {
 			WriteErrorFrame(w, http.StatusInternalServerError, "internal", err.Error(), 0)
 			return
 		}
@@ -322,7 +408,7 @@ func (h *DataQueryHandler) handleCatalogCurrent(w http.ResponseWriter, r *http.R
 		for _, rec := range records {
 			fmt.Fprintf(sum, "\x00%s", rec.CID)
 		}
-		render = &catalogRender{body: body.Bytes(), etag: `"` + hex.EncodeToString(sum.Sum(nil)) + `"`}
+		render = &catalogRender{body: body.Bytes(), etag: `"` + hex.EncodeToString(sum.Sum(nil)) + `"`, schema: strings.Join(lanes, ",")}
 		h.catalog.mu.Lock()
 		selection.renders[cacheKey] = render
 		h.catalog.mu.Unlock()
@@ -334,7 +420,7 @@ func (h *DataQueryHandler) handleCatalogCurrent(w http.ResponseWriter, r *http.R
 	if !published.IsZero() {
 		hdr.Set("Last-Modified", published.UTC().Format(http.TimeFormat))
 	}
-	hdr.Set("X-SDN-Schema", "OMM.fbs")
+	hdr.Set("X-SDN-Schema", render.schema)
 	hdr.Set("X-Content-Type-Options", "nosniff")
 	if match := r.Header.Get("If-None-Match"); match != "" && etagMatches(match, render.etag) {
 		w.WriteHeader(http.StatusNotModified)
