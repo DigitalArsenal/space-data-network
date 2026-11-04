@@ -19,6 +19,14 @@ if (!stack) {
   }
 }
 assert(stack, 'Pass --stack-root pointing to the stack browser harness');
+if (arg('--stack-root') || process.env.GAUNTLET_GATE_ROOT) {
+  const registry = JSON.parse(fs.readFileSync(path.join(stack, 'graph/gauntlet/visual-impact.json'), 'utf8'));
+  assert(registry.features['marketing-plans'], 'Marketing overview is registered');
+  assert(registry.features['marketing-inventory'].dependsOn.includes('marketing-plans'), 'Inventory tracks plan changes');
+  for (const page of ['docs/marketing.html', 'docs/marketing-modules.html']) {
+    assert(registry.routes.some((r) => r.component === 'sdn' && r.paths.includes(page)), `Visual coverage routes ${page}`);
+  }
+}
 const { withHeadlessShell, openTab } = await import(pathToFileURL(path.join(stack, 'graph/e2e/headless.mjs')));
 const out = arg('--out') || fs.mkdtempSync(path.join(os.tmpdir(), 'marketing-plans-e2e-'));
 fs.mkdirSync(out, { recursive: true });
