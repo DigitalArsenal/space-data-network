@@ -11,15 +11,13 @@
     $("[data-plans=headline]").textContent = data.headline;
     $("[data-plans=intro]").textContent = data.intro;
     $("[data-plans=data-rule]").textContent = data.dataRule;
-    $("[data-plans=status]").textContent = data.statusLabel;
     $("[data-plans=cards]").innerHTML = data.plans.map((p) => `<article class="mp-plan" data-plan="${esc(p.id)}">
       <p class="mp-audience">${esc(p.audience)}</p><h3>${esc(p.name)}</h3>
       <p class="mp-price"><strong>${esc(price(p))}</strong>${p.monthlyPrice > 0 ? "<span>/ month</span>" : ""}</p>
       <p class="mp-summary">${esc(p.summary)}</p>
       <ul>${p.includes.map((item) => `<li>${esc(item)}</li>`).join("")}</ul>
       <p class="mp-example">${esc(p.example)}</p>
-      <a class="btn" href="${esc(p.href)}">${esc(p.cta)}</a>
-      ${p.note ? `<p class="mp-note">${esc(p.note)}</p>` : ""}</article>`).join("");
+      <a class="btn" href="${esc(p.href)}">${esc(p.cta)}</a></article>`).join("");
     const plans = new Map(data.plans.map((p) => [p.id, p]));
     $("[data-plans=capabilities]").innerHTML = data.capabilities.map((c) => `<tr>
       <th scope="row">${esc(c.name)}</th><td>${esc(c.description)}</td>

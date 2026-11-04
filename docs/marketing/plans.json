@@ -2,7 +2,6 @@
   "version": 2,
   "updated": "2026-11-04",
   "currency": "USD",
-  "statusLabel": "Plan direction and monthly prices set by the owner, November 4, 2026.",
   "headline": "Explore for free. Add analysis. Add AI.",
   "intro": "SpaceAware brings satellites, Earth, weather and the solar system into one workspace. Start with free data and exploration, add tools for sensors and advanced analysis, then add AI. SpaceEdge brings space combat and UDL access to government programs.",
   "dataRule": "Capabilities that use free or non-commercial data belong in Free. Public data views, imagery, weather, stars and source-based results stay available without a subscription or sign-in, with their attribution and usage terms. Paying for a plan does not change those terms.",
@@ -29,8 +28,7 @@
       "summary": "Add AI to everything in Analysis.",
       "includes": ["AI assistance in the workspace", "AI-assisted analysis workflows", "AI object detection in imagery", "All sensors and advanced analysis in the $5 plan"],
       "example": "Use AI to help investigate a scene or identify objects in imagery.",
-      "cta": "See AI capabilities", "href": "marketing-modules.html#plan=ai",
-      "note": "AI assistance is part of this plan's scope; available modules and delivery status are listed in the reference."
+      "cta": "See AI capabilities", "href": "marketing-modules.html#plan=ai"
     },
     {
       "id": "spaceedge", "name": "SpaceEdge", "monthlyPrice": null, "priceLabel": "Contact us",
@@ -38,8 +36,7 @@
       "summary": "Add space combat and UDL access to the SpaceAware capability set.",
       "includes": ["Space combat scenarios and analysis", "Unified Data Library (UDL) access", "The customer's authorized data and permissions", "Deployment and support scoped to the program"],
       "example": "Bring a program's authorized UDL data into its mission workspace.",
-      "cta": "Discuss SpaceEdge", "href": "mailto:tj@edgesource.com?subject=SpaceEdge",
-      "note": "UDL requires the customer's own authorized account. Space combat and other program capabilities are scoped by delivery status."
+      "cta": "Discuss SpaceEdge", "href": "mailto:tj@edgesource.com?subject=SpaceEdge"
     }
   ],
   "capabilities": [

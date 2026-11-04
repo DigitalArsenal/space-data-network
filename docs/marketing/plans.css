@@ -18,10 +18,9 @@
 .mp-summary { line-height: 1.55; min-height: 72px; }
 .mp-plan ul { padding-left: 18px; margin: 0; font-size: 14px; color: var(--text-2); line-height: 1.6; }
 .mp-plan li + li { margin-top: 8px; }
-.mp-example { font-size: 13px; line-height: 1.6; color: var(--muted); border-top: 1px solid var(--border); padding-top: 14px; margin-top: auto; }
-.mp-plan .btn { white-space: normal; text-align: center; }
+.mp-example { font-size: 13px; line-height: 1.6; color: var(--muted); border-top: 1px solid var(--border); padding-top: 14px; }
+.mp-plan .btn { white-space: normal; text-align: center; margin-top: auto; }
 .mp-note { font-size: 12px; line-height: 1.6; color: var(--muted); }
-.mp-section > .mp-note { margin-top: 14px; }
 .mp-data-rule { border-left: 3px solid var(--accent); padding: 24px 28px; margin: 22px 0; background: var(--wash); }
 .mp-data-rule p { max-width: 900px; line-height: 1.7; color: var(--text-2); }
 .mp-table { width: 100%; border-collapse: collapse; font-size: 15px; }
