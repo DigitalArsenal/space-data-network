@@ -97,9 +97,9 @@ try {
       assert.match(await evaluate('document.querySelector("[data-plans=data-rule]").textContent'), /without a subscription or sign-in/);
       assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".mp-rights-group"), e=>e.dataset.rights)'), ['general', 'non-commercial', 'results'], 'Three rights groups');
       const inGroup = (group, id) => evaluate(`!!document.querySelector('[data-rights="${group}"] [data-source="${id}"]')`);
-      assert(await inGroup('general', 'celestrak-gp') && await inGroup('general', 'osm-tiles'), 'General-purpose sources listed');
-      assert(await inGroup('non-commercial', 'open-meteo'), 'Non-commercial source listed');
-      assert(await inGroup('results', 'space-track') && await inGroup('results', 'starlink-ephemeris'), 'Results-only sources listed');
+      assert(await inGroup('general', 'celestrak-gp') && await inGroup('general', 'osm-tiles') && await inGroup('general', 'space-track') && await inGroup('general', 'open-meteo') && await inGroup('general', 'launch-library'), 'General-purpose sources listed (owner 2026-11-04: publish it all)');
+      assert.equal(await evaluate('document.querySelectorAll(\'[data-rights="non-commercial"] [data-source]\').length'), 0, 'No free source is non-commercial only');
+      assert(await inGroup('results', 'vimpel') && await inGroup('results', 'starlink-ephemeris'), 'Results-only sources listed');
       assert.equal(await evaluate('document.querySelectorAll(".mp-rights-group [data-source]").length'), await evaluate('(async () => (await (await fetch("/marketing/catalog.json")).json()).sources.length)()'), 'Every catalog source sits in one rights group');
       await click('a[href="#plans"]');
       assert.equal(await evaluate('location.hash'), '#plans');

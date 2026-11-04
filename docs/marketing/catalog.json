@@ -1239,8 +1239,8 @@
         "maneuver-detection",
         "data-sources"
       ],
-      "terms": "Space-Track user agreement: used for results, never republished",
-      "licenseClass": "CiteOnly",
+      "terms": "USSPACECOM blanket approval to redistribute basic SSA data (element sets, SATCAT, decay data) with citation",
+      "licenseClass": "Reproducible",
       "termsUrl": "https://www.space-track.org/documentation"
     },
     {
@@ -1797,8 +1797,8 @@
         "globe-environment",
         "data-sources"
       ],
-      "terms": "Data CC BY 4.0 through the free API, which Open-Meteo limits to non-commercial use",
-      "licenseClass": "NonCommercial",
+      "terms": "Data CC BY 4.0, republished with credit; fetched through the free API, whose own limit is non-commercial use",
+      "licenseClass": "Reproducible",
       "licenseId": "CC-BY-4.0",
       "termsUrl": "https://open-meteo.com/en/license"
     },
@@ -1869,8 +1869,8 @@
       "modules": [
         "launch-reentry"
       ],
-      "terms": "No data license stated; free up to 15 requests per hour",
-      "licenseClass": "Unspecified",
+      "terms": "No data license stated; free up to 15 requests per hour; republished with credit to The Space Devs",
+      "licenseClass": "Reproducible",
       "termsUrl": "https://thespacedevs.com/llapi"
     },
     {
