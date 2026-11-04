@@ -1083,6 +1083,33 @@
       "plan": "free"
     }
   ],
+  "licenseClasses": {
+    "Reproducible": {
+      "group": "general",
+      "label": "General purpose",
+      "meaning": "May be republished for any use, commercial included, with the credit the terms ask."
+    },
+    "ShareAlike": {
+      "group": "general",
+      "label": "General purpose, share-alike",
+      "meaning": "May be republished for any use under the same terms, which every derived record carries."
+    },
+    "NonCommercial": {
+      "group": "non-commercial",
+      "label": "Non-commercial only",
+      "meaning": "May be republished for non-commercial use only."
+    },
+    "CiteOnly": {
+      "group": "results",
+      "label": "Results only",
+      "meaning": "Computed on and cited; the records themselves are never republished."
+    },
+    "Unspecified": {
+      "group": "results",
+      "label": "Results only (no license stated)",
+      "meaning": "No terms stated, so treated as results only."
+    }
+  },
   "sources": [
     {
       "id": "celestrak-gp",
@@ -1112,7 +1139,8 @@
         "catalog-composer",
         "data-sources"
       ],
-      "terms": "CelesTrak usage policy",
+      "terms": "CelesTrak usage policy: free to all users, rate-limited; credit CelesTrak",
+      "licenseClass": "Reproducible",
       "termsUrl": "https://celestrak.org/usage-policy.php"
     },
     {
@@ -1134,7 +1162,8 @@
         "catalog-composer",
         "data-sources"
       ],
-      "terms": "CelesTrak usage policy",
+      "terms": "CelesTrak usage policy: free to all users, rate-limited; credit CelesTrak",
+      "licenseClass": "Reproducible",
       "termsUrl": "https://celestrak.org/usage-policy.php"
     },
     {
@@ -1153,7 +1182,8 @@
         "catalog-search",
         "data-sources"
       ],
-      "terms": "CelesTrak usage policy",
+      "terms": "CelesTrak usage policy: free to all users, rate-limited; credit CelesTrak",
+      "licenseClass": "Reproducible",
       "termsUrl": "https://celestrak.org/usage-policy.php"
     },
     {
@@ -1171,7 +1201,8 @@
         "catalog-composer",
         "data-sources"
       ],
-      "terms": "CelesTrak usage policy",
+      "terms": "CelesTrak usage policy: free to all users, rate-limited; credit CelesTrak",
+      "licenseClass": "Reproducible",
       "termsUrl": "https://celestrak.org/usage-policy.php"
     },
     {
@@ -1188,7 +1219,8 @@
         "conjunction-assessment",
         "catalog-screening"
       ],
-      "terms": "CelesTrak usage policy",
+      "terms": "CelesTrak usage policy; reports are compared against, not republished",
+      "licenseClass": "CiteOnly",
       "termsUrl": "https://celestrak.org/usage-policy.php"
     },
     {
@@ -1208,6 +1240,7 @@
         "data-sources"
       ],
       "terms": "Space-Track user agreement: used for results, never republished",
+      "licenseClass": "CiteOnly",
       "termsUrl": "https://www.space-track.org/documentation"
     },
     {
@@ -1225,6 +1258,8 @@
         "catalog-composer"
       ],
       "terms": "CC BY 4.0",
+      "licenseClass": "Reproducible",
+      "licenseId": "CC-BY-4.0",
       "termsUrl": "https://planet4589.org/space/gcat/"
     },
     {
@@ -1240,7 +1275,8 @@
       "modules": [
         "catalog-composer"
       ],
-      "terms": "Provider terms",
+      "terms": "No license stated: used for results, not republished",
+      "licenseClass": "CiteOnly",
       "termsUrl": "https://mmccants.org/tles/discussion.html"
     },
     {
@@ -1256,7 +1292,8 @@
       "modules": [
         "catalog-composer"
       ],
-      "terms": "Provider terms",
+      "terms": "Provider terms: used for results, not republished",
+      "licenseClass": "CiteOnly",
       "termsUrl": "https://spacedata.vimpel.ru/"
     },
     {
@@ -1274,7 +1311,8 @@
         "covariance-analysis",
         "data-sources"
       ],
-      "terms": "No license stated: used for results, not republished"
+      "terms": "No license stated: used for results, not republished",
+      "licenseClass": "CiteOnly"
     },
     {
       "id": "oneweb-ephemeris",
@@ -1291,7 +1329,8 @@
         "covariance-analysis",
         "data-sources"
       ],
-      "terms": "No license stated: used for results, not republished"
+      "terms": "No license stated: used for results, not republished",
+      "licenseClass": "CiteOnly"
     },
     {
       "id": "intelsat-ephemeris",
@@ -1308,7 +1347,8 @@
         "covariance-analysis",
         "data-sources"
       ],
-      "terms": "No license stated: used for results, not republished"
+      "terms": "No license stated: used for results, not republished",
+      "licenseClass": "CiteOnly"
     },
     {
       "id": "iss-oem",
@@ -1327,7 +1367,8 @@
         "ccsds-interchange",
         "data-sources"
       ],
-      "terms": "Public domain (NASA)"
+      "terms": "Public domain (NASA)",
+      "licenseClass": "Reproducible"
     },
     {
       "id": "ilrs-laser-ranging",
@@ -1346,6 +1387,7 @@
         "data-sources"
       ],
       "terms": "Free use with the ILRS citation",
+      "licenseClass": "Reproducible",
       "termsUrl": "https://ilrs.gsfc.nasa.gov/about/cite.html"
     },
     {
@@ -1362,7 +1404,8 @@
         "covariance-analysis",
         "ccsds-interchange"
       ],
-      "terms": "Open, with attribution to the IGS",
+      "terms": "Open access, with attribution to the IGS",
+      "licenseClass": "Reproducible",
       "termsUrl": "https://igs.org/"
     },
     {
@@ -1379,7 +1422,8 @@
         "orbit-analysis-toolkit",
         "data-sources"
       ],
-      "terms": "Public domain (U.S. Government)"
+      "terms": "Public domain (U.S. Government)",
+      "licenseClass": "Reproducible"
     },
     {
       "id": "iers-eop",
@@ -1399,7 +1443,8 @@
         "propagator-suite",
         "data-sources"
       ],
-      "terms": "Public (IERS and U.S. Naval Observatory)"
+      "terms": "Public (IERS and U.S. Naval Observatory)",
+      "licenseClass": "Reproducible"
     },
     {
       "id": "gfz-noaa-space-weather",
@@ -1418,6 +1463,8 @@
         "propagator-suite"
       ],
       "terms": "GFZ CC BY 4.0; NOAA public domain",
+      "licenseClass": "Reproducible",
+      "licenseId": "CC-BY-4.0",
       "termsUrl": "https://kp.gfz.de/en/data"
     },
     {
@@ -1435,7 +1482,8 @@
         "solar-system",
         "ffm"
       ],
-      "terms": "Public domain (NASA)"
+      "terms": "Public domain (NASA)",
+      "licenseClass": "Reproducible"
     },
     {
       "id": "lowell-astorb",
@@ -1451,7 +1499,8 @@
       "modules": [
         "solar-system"
       ],
-      "terms": "Provider terms",
+      "terms": "Free use, copying and transmission with attribution to Lowell Observatory",
+      "licenseClass": "Reproducible",
       "termsUrl": "https://asteroid.lowell.edu/astorb/"
     },
     {
@@ -1468,7 +1517,9 @@
       "modules": [
         "local-volume"
       ],
-      "terms": "CC0 1.0"
+      "terms": "CC0 1.0",
+      "licenseClass": "Reproducible",
+      "licenseId": "CC0-1.0"
     },
     {
       "id": "body-imagery",
@@ -1484,7 +1535,8 @@
       "modules": [
         "solar-system"
       ],
-      "terms": "Mostly public domain; Phobos ESA CC BY-SA 3.0 IGO; each product's credit in the console"
+      "terms": "Mostly public domain; Phobos ESA CC BY-SA 3.0 IGO (share-alike); each product’s credit in the console",
+      "licenseClass": "Reproducible"
     },
     {
       "id": "body-terrain",
@@ -1499,7 +1551,8 @@
       "modules": [
         "solar-system"
       ],
-      "terms": "Public (NASA PDS and USGS); credits in the console"
+      "terms": "Public (NASA PDS and USGS); credits in the console",
+      "licenseClass": "Reproducible"
     },
     {
       "id": "edenhofer-dust",
@@ -1515,7 +1568,9 @@
       "modules": [
         "solar-system"
       ],
-      "terms": "CC BY 4.0"
+      "terms": "CC BY 4.0",
+      "licenseClass": "Reproducible",
+      "licenseId": "CC-BY-4.0"
     },
     {
       "id": "drimmel-spergel",
@@ -1528,7 +1583,8 @@
       "modules": [
         "solar-system"
       ],
-      "terms": "Published model (ApJ 556, 181)"
+      "terms": "Published model (ApJ 556, 181), implemented and cited",
+      "licenseClass": "Reproducible"
     },
     {
       "id": "star-catalogs",
@@ -1544,7 +1600,8 @@
       "modules": [
         "star-field"
       ],
-      "terms": "Public (NASA, Yale, USNO)"
+      "terms": "Public (NASA, Yale, USNO)",
+      "licenseClass": "Reproducible"
     },
     {
       "id": "eso-milky-way",
@@ -1560,7 +1617,9 @@
       "modules": [
         "star-field"
       ],
-      "terms": "CC BY 4.0",
+      "terms": "CC BY 4.0 (no ESO endorsement implied)",
+      "licenseClass": "Reproducible",
+      "licenseId": "CC-BY-4.0",
       "termsUrl": "https://www.eso.org/public/copyright/"
     },
     {
@@ -1574,7 +1633,8 @@
       "modules": [
         "globe-environment"
       ],
-      "terms": "Public domain (NASA)"
+      "terms": "Public domain (NASA)",
+      "licenseClass": "Reproducible"
     },
     {
       "id": "blue-black-marble",
@@ -1588,7 +1648,8 @@
         "imagery-studio",
         "globe-environment"
       ],
-      "terms": "Public domain (NASA)"
+      "terms": "Public domain (NASA)",
+      "licenseClass": "Reproducible"
     },
     {
       "id": "esri-basemaps",
@@ -1602,7 +1663,8 @@
         "imagery-studio",
         "imagery-detection"
       ],
-      "terms": "Esri terms, credited “Powered by Esri”",
+      "terms": "Esri Master Agreement: tiles stream from Esri, credited “Powered by Esri”, never republished",
+      "licenseClass": "CiteOnly",
       "termsUrl": "https://developers.arcgis.com/documentation/esri-and-data-attribution/"
     },
     {
@@ -1617,6 +1679,8 @@
         "imagery-studio"
       ],
       "terms": "ODbL, credited on screen",
+      "licenseClass": "ShareAlike",
+      "licenseId": "ODbL-1.0",
       "termsUrl": "https://www.openstreetmap.org/copyright"
     },
     {
@@ -1633,7 +1697,8 @@
       "modules": [
         "imagery-studio"
       ],
-      "terms": "NASA open data, no restrictions"
+      "terms": "NASA open data, no restrictions",
+      "licenseClass": "Reproducible"
     },
     {
       "id": "aws-terrain-tiles",
@@ -1646,7 +1711,8 @@
       "modules": [
         "globe-environment"
       ],
-      "terms": "Attribution required, listed in the CREDITS menu",
+      "terms": "Public-domain and open-government elevation; attribution listed in the CREDITS menu",
+      "licenseClass": "Reproducible",
       "termsUrl": "https://github.com/tilezen/joerd/blob/master/docs/attribution.md"
     },
     {
@@ -1663,7 +1729,8 @@
       "modules": [
         "globe-environment"
       ],
-      "terms": "Copernicus license, credited on screen",
+      "terms": "Copernicus free, full and open access; credited on screen",
+      "licenseClass": "Reproducible",
       "termsUrl": "https://dataspace.copernicus.eu/"
     },
     {
@@ -1683,6 +1750,8 @@
         "context-layers"
       ],
       "terms": "CC BY 4.0",
+      "licenseClass": "Reproducible",
+      "licenseId": "CC-BY-4.0",
       "termsUrl": "https://creativecommons.org/licenses/by/4.0/"
     },
     {
@@ -1697,7 +1766,8 @@
         "catalog-search",
         "scene-builder"
       ],
-      "terms": "Public domain"
+      "terms": "Public domain",
+      "licenseClass": "Reproducible"
     },
     {
       "id": "facility-sources",
@@ -1710,7 +1780,8 @@
       "modules": [
         "context-layers"
       ],
-      "terms": "Wikidata CC0; ROR CC0; Global Energy Monitor CC BY 4.0; OpenStreetMap ODbL"
+      "terms": "Wikidata CC0; ROR CC0; Global Energy Monitor CC BY 4.0; OpenStreetMap ODbL (share-alike)",
+      "licenseClass": "ShareAlike"
     },
     {
       "id": "open-meteo",
@@ -1726,7 +1797,9 @@
         "globe-environment",
         "data-sources"
       ],
-      "terms": "CC BY 4.0",
+      "terms": "Data CC BY 4.0 through the free API, which Open-Meteo limits to non-commercial use",
+      "licenseClass": "NonCommercial",
+      "licenseId": "CC-BY-4.0",
       "termsUrl": "https://open-meteo.com/en/license"
     },
     {
@@ -1743,7 +1816,9 @@
       "modules": [
         "data-sources"
       ],
-      "terms": "WeatherNext terms of use",
+      "terms": "CC BY 4.0 for data older than one hour; the real-time hour under Google’s experimental terms, used for results only",
+      "licenseClass": "Reproducible",
+      "licenseId": "CC-BY-4.0",
       "termsUrl": "https://storage.googleapis.com/weathernext-public/terms-of-use.pdf"
     },
     {
@@ -1759,7 +1834,9 @@
       "modules": [
         "data-sources"
       ],
-      "terms": "CC BY-SA 4.0"
+      "terms": "CC BY-SA 4.0",
+      "licenseClass": "ShareAlike",
+      "licenseId": "CC-BY-SA-4.0"
     },
     {
       "id": "iqengine-sigmf",
@@ -1774,7 +1851,8 @@
       "modules": [
         "data-sources"
       ],
-      "terms": "Provider terms",
+      "terms": "Per capture; used for results, not republished",
+      "licenseClass": "CiteOnly",
       "termsUrl": "https://www.iqengine.org"
     },
     {
@@ -1791,7 +1869,8 @@
       "modules": [
         "launch-reentry"
       ],
-      "terms": "Provider terms",
+      "terms": "No data license stated; free up to 15 requests per hour",
+      "licenseClass": "Unspecified",
       "termsUrl": "https://thespacedevs.com/llapi"
     },
     {
@@ -1808,7 +1887,8 @@
         "rf-link-analysis",
         "ground-contact"
       ],
-      "terms": "Published ITU-R Recommendations"
+      "terms": "Models implemented from the published ITU-R Recommendations, cited",
+      "licenseClass": "Reproducible"
     },
     {
       "id": "spacecraft-models",
@@ -1823,7 +1903,8 @@
       "modules": [
         "scene-builder"
       ],
-      "terms": "Per model; only redistributable sources are used"
+      "terms": "Per model; only redistributable sources are used",
+      "licenseClass": "Reproducible"
     }
   ],
   "bundles": [

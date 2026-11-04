@@ -23,6 +23,19 @@
 .mp-note { font-size: 12px; line-height: 1.6; color: var(--muted); }
 .mp-data-rule { border-left: 3px solid var(--accent); padding: 24px 28px; margin: 22px 0; background: var(--wash); }
 .mp-data-rule p { max-width: 900px; line-height: 1.7; color: var(--text-2); }
+.mp-rights { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; margin-top: 24px; }
+.mp-rights-group { border-top: 1px solid var(--border-strong); padding-top: 16px; min-width: 0; }
+/* The general-purpose group holds most sources: it spans the row and its list flows in columns. */
+.mp-rights-group[data-rights="general"] { grid-column: 1 / -1; }
+.mp-rights-group[data-rights="general"] ul { display: block; columns: 3; column-gap: 24px; }
+.mp-rights-group[data-rights="general"] li { break-inside: avoid; margin-bottom: 8px; }
+.mp-rights-group h3 { font-size: 16px; margin-bottom: 6px; }
+.mp-rights-group h3 span { color: var(--muted); font-weight: 400; font-size: 13px; margin-left: 6px; }
+.mp-rights-group > p { font-size: 13px; line-height: 1.6; margin-bottom: 12px; }
+.mp-rights-group ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.mp-rights-group li { display: grid; gap: 2px; font-size: 14px; line-height: 1.4; }
+.mp-rights-group li a { color: var(--text); font-weight: 500; }
+.mp-rights-group li small { font-size: 12px; color: var(--muted); line-height: 1.5; }
 .mp-table { width: 100%; border-collapse: collapse; font-size: 15px; }
 .mp-table th, .mp-table td { padding: 16px 20px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
 .mp-table thead { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
@@ -36,11 +49,12 @@
 .mp-details { margin: 24px 0 64px; padding: 20px; border: 1px solid var(--border); border-radius: 10px; }
 .mp-details > summary { cursor: pointer; font-weight: 600; }
 .mp-nav a:focus-visible, .mp-details summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 5px; }
-@media (max-width: 1100px) { .mp-plans { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 1100px) { .mp-plans { grid-template-columns: repeat(2, minmax(0, 1fr)); } .mp-rights-group[data-rights="general"] ul { columns: 2; } }
 @media (max-width: 640px) {
   .mp-hero { padding: 32px 0 20px; }
   .mp-lede { font-size: 16px; }
-  .mp-plans, .mp-talking { grid-template-columns: 1fr; }
+  .mp-plans, .mp-talking, .mp-rights { grid-template-columns: 1fr; }
+  .mp-rights-group[data-rights="general"] ul { columns: 1; }
   .mp-summary { min-height: 0; }
   .mp-table th, .mp-table td { padding: 12px 10px; font-size: 13px; }
   .mp-data-rule { padding: 20px; }

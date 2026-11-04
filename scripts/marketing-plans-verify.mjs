@@ -79,7 +79,8 @@ try {
       const screenshot = async (name) => {
         const { cssContentSize: size } = await cdp.send('Page.getLayoutMetrics');
         const full = name.startsWith('overview');
-        const shot = await cdp.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: full, ...(full ? { clip: { x: 0, y: 0, width: size.width, height: size.height, scale: 1 } } : {}) });
+        // Full-page captures stop at the headless renderer's 8192 px surface limit (the phone overview runs longer).
+        const shot = await cdp.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: full, ...(full ? { clip: { x: 0, y: 0, width: size.width, height: Math.min(size.height, 8192), scale: 1 } } : {}) });
         fs.writeFileSync(path.join(out, name + '.png'), Buffer.from(shot.data, 'base64'));
       };
       const navigate = async (url, ready) => { await cdp.send('Page.navigate', { url: origin + url }); await waitFor(ready); };
@@ -94,6 +95,12 @@ try {
       assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".mp-plan"), e=>[e.dataset.plan,e.querySelector(".mp-price strong").textContent])'), [['free', '$0'], ['analysis', '$5'], ['ai', '$40'], ['spaceedge', 'Contact us']]);
       assert.equal(await evaluate('document.querySelectorAll("[data-inv]").length'), 0, 'Overview must not contain inventory controls');
       assert.match(await evaluate('document.querySelector("[data-plans=data-rule]").textContent'), /without a subscription or sign-in/);
+      assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".mp-rights-group"), e=>e.dataset.rights)'), ['general', 'non-commercial', 'results'], 'Three rights groups');
+      const inGroup = (group, id) => evaluate(`!!document.querySelector('[data-rights="${group}"] [data-source="${id}"]')`);
+      assert(await inGroup('general', 'celestrak-gp') && await inGroup('general', 'osm-tiles'), 'General-purpose sources listed');
+      assert(await inGroup('non-commercial', 'open-meteo'), 'Non-commercial source listed');
+      assert(await inGroup('results', 'space-track') && await inGroup('results', 'starlink-ephemeris'), 'Results-only sources listed');
+      assert.equal(await evaluate('document.querySelectorAll(".mp-rights-group [data-source]").length'), await evaluate('(async () => (await (await fetch("/marketing/catalog.json")).json()).sources.length)()'), 'Every catalog source sits in one rights group');
       await click('a[href="#plans"]');
       assert.equal(await evaluate('location.hash'), '#plans');
       await evaluate('scrollTo(0,0)');
@@ -136,6 +143,7 @@ try {
         await click(`[data-view="${view}"]`);
         assert.equal(await evaluate(`document.querySelector('[data-view="${view}"]').getAttribute('aria-selected')`), 'true');
         assert(await evaluate('document.querySelector("[data-inv=view]").textContent.trim().length > 0'));
+        if (view === 'sources') assert.match(await evaluate('document.querySelector(".inv-sources thead").textContent'), /Rights/);
       }
       await click('[data-sort=name]');
       assert.equal(await evaluate('document.querySelector("th[aria-sort=descending]").textContent.trim()'), 'Module ↓');

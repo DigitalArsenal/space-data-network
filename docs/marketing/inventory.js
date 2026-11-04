@@ -246,7 +246,7 @@
     const mods = new Map(catalog.modules.map((m) => [m.id, m]));
     return (catalog.sources ?? []).filter((src) => {
       if (!src.modules.some((id) => shown.has(id))) return false;
-      const text = norm([src.name, src.provider, src.data, src.lane, src.terms, catalog.arrival[src.arrival], ...src.via,
+      const text = norm([src.name, src.provider, src.data, src.lane, src.terms, catalog.licenseClasses[src.licenseClass].label, catalog.arrival[src.arrival], ...src.via,
         ...src.modules.map((id) => mods.get(id)?.name)].join(" "));
       return terms.every((t) => text.includes(t));
     });
@@ -255,11 +255,12 @@
     if (!list.length) return `<p class="inv-empty">No data sources match these filters.</p>`;
     const mods = new Map(catalog.modules.map((m) => [m.id, m]));
     return `<p class="inv-note">Where the data behind each module comes from, how it reaches the console or the node, and the terms it comes under.</p>
-      <table class="inv-table inv-sources"><thead><tr><th scope="col">Source</th><th scope="col">Data</th><th scope="col">How it arrives</th><th scope="col">Powers</th><th scope="col">Terms</th></tr></thead><tbody>${list.map((src) => `
+      <table class="inv-table inv-sources"><thead><tr><th scope="col">Source</th><th scope="col">Data</th><th scope="col">How it arrives</th><th scope="col">Powers</th><th scope="col">Rights</th><th scope="col">Terms</th></tr></thead><tbody>${list.map((src) => `
       <tr><td data-col="Source"><a class="inv-name" href="${esc(src.url)}" target="_blank" rel="noopener">${esc(src.name)}</a><span class="inv-tag">${esc(src.provider)}</span></td>
       <td data-col="Data">${esc(src.data)}</td>
       <td data-col="How it arrives">${esc(catalog.arrival[src.arrival])}${src.lane ? `<code class="inv-lane">${esc(src.lane)}</code>` : ""}</td>
       <td data-col="Powers">${src.modules.map((id) => `<button type="button" class="inv-link" data-jump="${esc(id)}">${esc(mods.get(id)?.name ?? id)}</button>`).join(", ")}</td>
+      <td data-col="Rights"><span class="inv-tag" title="${esc(catalog.licenseClasses[src.licenseClass].meaning)}">${esc(catalog.licenseClasses[src.licenseClass].label)}</span></td>
       <td data-col="Terms">${src.termsUrl ? `<a href="${esc(src.termsUrl)}" target="_blank" rel="noopener">${esc(src.terms)}</a>` : esc(src.terms)}</td></tr>`).join("")}</tbody></table>`;
   }
 
