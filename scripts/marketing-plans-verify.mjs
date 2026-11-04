@@ -38,8 +38,9 @@ const server = http.createServer((req, res) => {
   res.writeHead(200, { 'content-type': mime[path.extname(file)] || 'application/octet-stream' });
   if (req.method === 'HEAD') res.end(); else fs.createReadStream(file).pipe(res);
 });
-await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-const origin = `http://127.0.0.1:${server.address().port}`;
+const liveURL = arg('--url');
+if (!liveURL) await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+const origin = liveURL ? new URL(liveURL).origin : `http://127.0.0.1:${server.address().port}`;
 const errors = [], failedAssets = [], requests = new Map();
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 try {
@@ -161,6 +162,6 @@ try {
       assert.deepEqual(errors, [], 'Browser errors'); assert.deepEqual(failedAssets, [], 'Failed local assets');
     } finally { await close(); }
   });
-  fs.writeFileSync(path.join(out, 'result.json'), JSON.stringify({ passed: true, errors, failedAssets }, null, 2));
+  fs.writeFileSync(path.join(out, 'result.json'), JSON.stringify({ passed: true, origin, errors, failedAssets }, null, 2));
   console.log(`MARKETING E2E PASS: four tiers, free data, filters, details, CSV, references, navigation and mobile. Screenshots: ${out}`);
 } finally { server.close(); }
