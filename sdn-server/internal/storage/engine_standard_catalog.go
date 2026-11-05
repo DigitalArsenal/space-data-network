@@ -741,6 +741,13 @@ const engineStandardCatalogGraph = `
     HISTORY_SETS:uint;
     HISTORY_WINDOW:string;
     SHRINKAGE_WEIGHT:double;
+    TRUTH_EPOCHS:uint;
+    COVERAGE_1_SIGMA_AXIS1:double;
+    COVERAGE_1_SIGMA_AXIS2:double;
+    COVERAGE_1_SIGMA_AXIS3:double;
+    COVERAGE_3_SIGMA_AXIS1:double;
+    COVERAGE_3_SIGMA_AXIS2:double;
+    COVERAGE_3_SIGMA_AXIS3:double;
   }
   table CZM {
     NAME:string;
@@ -2710,6 +2717,11 @@ const engineStandardCatalogGraph = `
     LICENSE_CLASS:byte;
     LICENSE_ID:string;
     LINEAGE:string;
+    SOURCE_URL:string;
+    SOURCE_VERSION:string;
+    RETRIEVED_AT:string;
+    SOURCE_SHA256:string;
+    SOURCE_BYTES:uint64;
   }
   table QEM {
     MODEL_ID:string;
@@ -3436,22 +3448,14 @@ const engineStandardCatalogGraph = `
     OBJECTIVE_EVALUATOR_PORT_ID:string;
   }
   table SNR {
-    TYPE:ubyte;
-    MODE:ubyte;
-    RESERVED1:ushort;
-    MAX_RANGE:double;
-    MIN_RANGE:double;
-    FOV_AZIMUTH:float;
-    FOV_ELEVATION:float;
-    ANGULAR_RESOLUTION:float;
-    RANGE_RESOLUTION:float;
-    UPDATE_RATE:float;
-    DETECTION_THRESHOLD:float;
-    AZIMUTH_SCAN_RATE:float;
-    ELEVATION_SCAN_RATE:float;
-    POWER:float;
-    FREQUENCY:float;
-    RESERVED:[ubyte];
+    SENSOR_ID:string;
+    NAME:string;
+    NORAD_CAT_ID:uint;
+    OBJECT_ID:string;
+    SITE_ID:string;
+    ENTITY_ID:string;
+    TYPE:byte;
+    EMISSION:byte;
   }
   table SNW {
     BATCH_REQUEST:ubyte;
