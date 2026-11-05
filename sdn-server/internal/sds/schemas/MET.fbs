@@ -1,5 +1,5 @@
-// Hash: b3249acd994f8b190d3bbeea88831d347a6be6701e43508ec72d41ce2d92fef2
-// Version: 1.0.6
+// Hash: 49eb7321b0feffc01a882b2aa9d647f461dd52bedf9597695c892a8b648b4531
+// Version: 1.0.7
 // -----------------------------------END_HEADER
 enum meanElementSource : byte {
   /// Simplified General Perturbation Model 4
@@ -11,9 +11,9 @@ enum meanElementSource : byte {
   DSST,
   /// Universal Semianalytical Method
   USM,
-  /// SDN Advanced Propagator (AP): SGP4-XP with parts of the theory replaced (the drag
-  /// atmosphere, tesseral and zonal gravity terms). Its sets fly only on AP. 4 is left
-  /// unused: it was a cut value of an earlier theory.
+  /// SDN Advanced Propagator (AP): an advanced propagator that builds on the entire history of astrodynamics
+  /// (NRLMSISE-00 drag on the day's space weather; tesseral and zonal gravity terms). Its sets fly only on
+  /// AP. 4 is left unused: it was a cut value of an earlier theory.
   AP = 5,
   /// Not stated. A reader of an element set refuses UNSPECIFIED by name: the theory of a
   /// set is always written.

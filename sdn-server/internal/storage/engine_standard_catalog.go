@@ -2722,6 +2722,7 @@ const engineStandardCatalogGraph = `
     RETRIEVED_AT:string;
     SOURCE_SHA256:string;
     SOURCE_BYTES:uint64;
+    PRODUCER_SHA256:string;
   }
   table QEM {
     MODEL_ID:string;

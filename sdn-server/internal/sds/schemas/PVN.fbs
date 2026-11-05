@@ -1,5 +1,5 @@
-// Hash: 17556e26188665ce53622bcc252cf7d18bfed0bc6a913ea1c1b320052614dfd4
-// Version: 1.245.2
+// Hash: 0fdc7397212b0ee65c0a9363d9ee1df5ca323b23e863b4ba899809934c30c936
+// Version: 1.245.3
 // -----------------------------------END_HEADER
 // Product Provenance (PVN)
 //
@@ -84,6 +84,11 @@ table PVN {
   /// Number of source bytes SOURCE_SHA256 covers: the length of the prefix when
   /// the source was fetched by range. 0 when not stated.
   SOURCE_BYTES: uint64;
+  /// SHA-256 of the build of PRODUCER that made the product (its dist
+  /// module.wasm), 64 lowercase hexadecimal characters. Stamped by the host
+  /// that loaded the producing module: a module cannot hash its own bytes.
+  /// Empty when not stated.
+  PRODUCER_SHA256: string;
 }
 
 root_type PVN;
