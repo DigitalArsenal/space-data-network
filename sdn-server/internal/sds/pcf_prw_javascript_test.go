@@ -44,8 +44,8 @@ func TestPCFAndPRWEventsFromPublishedJS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(pcfIDL), "// Version: 1.0.6\n") {
-		t.Fatal("the embedded PCF.fbs is not $PCF 1.0.6")
+	if !strings.Contains(string(pcfIDL), "// Version: 1.0.7\n") {
+		t.Fatal("the embedded PCF.fbs is not $PCF 1.0.7")
 	}
 
 	t.Run("PCF 1.0", func(t *testing.T) {
