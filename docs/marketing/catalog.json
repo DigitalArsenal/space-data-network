@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated": "2026-11-04",
+  "updated": "2026-11-05",
   "consoleBuild": "20261013T204527Z",
   "pricing": {
     "status": "owner-directed",
@@ -165,6 +165,30 @@
       "covers": [],
       "learnMore": "https://spaceaware.io",
       "evidence": "sdn-js/spaceaware-ui/src/orbital-console/entities/EntitiesMenu.svelte; entities/EntityWizard.svelte; entities/GraphicsPanel.svelte; groups/groupStore.ts; regions/regionModes.ts:39-81; selection/selectionController.svelte.ts; engine/assetModels.ts",
+      "plan": "free"
+    },
+    {
+      "id": "entity-sensors",
+      "name": "Sensors on your entities",
+      "category": "sda",
+      "tagline": "Add a sensor to any satellite, spacecraft or ground site and see what it sees",
+      "summary": "In an entity's customization, add sensors to satellites, spacecraft and your own ground sites from templates, set each one's band on a labeled spectrum, and see its volume and viewshed on the globe, visible and occluded areas in their own colors. Each sensor is a Space Data Standards sensor record. No account is needed.",
+      "capabilities": [
+        "Templates for a visible camera, IR imager, telescope, search and tracking radar, SAR, phased-array early warning, passive RF, comms antenna, lidar and your own custom sensor",
+        "A labeled spectrum selector: ITU-R V.431 bands, IEEE 521 radar letters and optical, infrared and ultraviolet ranges, with an expandable chart of typical uses",
+        "Shape and presets, range and pointing: nadir, fixed or track",
+        "RF antenna pattern, gain, power and bandwidth",
+        "Visible and occluded viewshed colors, drawn by the OrbPro sensor engine",
+        "Each sensor saved as an SDS Sensor (SNR) record"
+      ],
+      "standards": [
+        "SDS SNR"
+      ],
+      "access": "free",
+      "delivery": "console",
+      "covers": [],
+      "learnMore": "https://spaceaware.io",
+      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/entities (CUSTOMIZATION, SENSORS panel with sensor templates and spectrum selector), drawn by the OrbPro sensor engine, SNR.fbs records, signed out; live on spaceaware.io 2026-11-05, SpaceAware-UI 1f1bc6b2, pinned in sdn 41312f3f9.",
       "plan": "free"
     },
     {
@@ -855,7 +879,8 @@
       "summary": "Turn on lunar orbit, cislunar space, the Earth-Moon and Sun-Earth Lagrange regions, each planet's orbit or heliocentric space, and see the spacecraft in it where JPL Horizons places them. A craft that moved from one regime to another is in each catalog for the time it spent there. No account is needed.",
       "capabilities": [
         "Each regime its own catalog, listed with its count, off until it is turned on, the centered body's own orbiters on",
-        "Trajectories from the published JPL Horizons states, interpolated by the engine as published",
+        "Every spacecraft Horizons lists is found, each placed in the regime it flies in",
+        "Trajectories from the published JPL Horizons states, and from NAIF SPICE mission kernels where NAIF publishes them, interpolated by the engine as published",
         "One spacecraft across catalogs: each catalog draws it only over its own segments",
         "Choose a spacecraft on the globe to see its catalog, NAIF ID, COSPAR ID, segment and source",
         "Data over the Space Data Network as SDS Orbit Ephemeris Message records"
@@ -868,7 +893,7 @@
       "delivery": "console",
       "covers": [],
       "learnMore": "https://spaceaware.io",
-      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/data/deepSpaceCatalogs.ts (listing EGP.fbs deep-space-spacecraft/catalogs, each group's OEM.fbs lane, every shard checked against its signed DPM), layers/deepSpaceCraft (BEYOND EARTH entities section, placement from the published states with the engine's Hermite interpolation and the engine's Moon and Sun, INFO, SPACECRAFT credits), signed out; SpaceAware-UI 0674b26b, pinned in sdn f2b5ca78; E2E src/tools/regime-catalogs-verify.mjs against host-01 (11 catalogs, 44 craft records; LRO 1,847 km and ARTEMIS P1 17,420 km from the Moon; CAPSTONE in earth-moon-lagrange; LRO picked on the globe; Wind drawn by sun-earth-l1 and cislunar each over its own segments). Planet-centered craft are drawn once the planets' ephemerides are loaded.",
+      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/data/deepSpaceCatalogs.ts (listing EGP.fbs deep-space-spacecraft/catalogs, each group's OEM.fbs lane, every shard checked against its signed DPM), layers/deepSpaceCraft (BEYOND EARTH entities section, placement from the published states with the engine's Hermite interpolation and the engine's Moon and Sun, INFO, SPACECRAFT credits), signed out; SpaceAware-UI 0674b26b, pinned in sdn f2b5ca78; discovery of every Horizons spacecraft, a geocentric probe per craft and NAIF SPICE mission SPK directories (LRO from the PDS archive, Artemis II from NAIF ARTEMIS) from space-data-network-modules data-source/deep-space-spacecraft 0.3.0.",
       "plan": "free"
     },
     {
@@ -1082,6 +1107,31 @@
       "plan": "free"
     },
     {
+      "id": "sensor-definitions",
+      "name": "Real-world sensor definitions",
+      "category": "sda",
+      "tagline": "Earth-observation, weather and ground surveillance sensors as standard records",
+      "summary": "A data-source module that publishes real-world sensors as Space Data Standards sensor records: spectral bands in hertz, field of view, mounting, RF and optical parameters, and the source, retrieval time and license of every value. Earth-observation and weather payloads come from WMO OSCAR/Space, joined to satellites by NORAD ID through the CelesTrak SATCAT; ground space-surveillance sensors come from cited Wikipedia pages. Refreshed weekly over the Space Data Network.",
+      "capabilities": [
+        "Spectral bands in hertz, field of view, mounting, RF and optical parameters",
+        "Provenance on every value: source, retrieval time, method and license",
+        "A value with no source is left unknown, never guessed",
+        "Satellite sensors joined by NORAD ID through the CelesTrak SATCAT",
+        "Ground space-surveillance sensors with the cited page revision",
+        "Refreshed weekly and published over the Space Data Network"
+      ],
+      "standards": [
+        "SDS SNR",
+        "SDS PVN"
+      ],
+      "access": "free",
+      "delivery": "node",
+      "covers": [],
+      "learnMore": "https://spacedatanetwork.org/onboarding.html",
+      "evidence": "space-data-network-modules data-source/sensor-definitions 0.1.0 (modules 4d830a3660), lanes space and ground over SNR.fbs, one PVN per source system; not yet in the live module catalog",
+      "plan": "free"
+    },
+    {
       "id": "module-building-blocks",
       "name": "Module building blocks",
       "category": "network",
@@ -1172,19 +1222,21 @@
       "name": "CelesTrak SATCAT",
       "provider": "CelesTrak",
       "url": "https://celestrak.org/satcat/",
-      "data": "Names, owners, launch dates, international designators and decay dates for every cataloged object.",
+      "data": "Names, owners, launch dates, international designators and decay dates for every cataloged object. Also the join from a satellite's sensors to its NORAD ID.",
       "arrival": "sdn-lane",
       "lane": "CAT.fbs",
       "via": [
         "data-source/celestrak-request",
-        "data-source/celestrak-parser"
+        "data-source/celestrak-parser",
+        "data-source/sensor-definitions"
       ],
       "modules": [
         "catalog-globe",
         "catalog-search",
         "object-intelligence",
         "catalog-composer",
-        "data-sources"
+        "data-sources",
+        "sensor-definitions"
       ],
       "terms": "CelesTrak usage policy: free to all users, rate-limited; credit CelesTrak",
       "licenseClass": "Reproducible",
@@ -1496,15 +1548,17 @@
       "name": "NAIF SPICE kernels",
       "provider": "NASA JPL Navigation and Ancillary Information Facility",
       "url": "https://naif.jpl.nasa.gov/naif/data.html",
-      "data": "Planetary ephemerides (DE440s), moon ephemerides and body orientation: Sun and Moon for propagation, and every body's position in the solar system view.",
+      "data": "Planetary ephemerides (DE440s), moon ephemerides and body orientation: Sun and Moon for propagation, and every body's position in the solar system view. Mission trajectory kernels for spacecraft at the Moon and in cislunar space: LRO from the PDS archive and Artemis II from NAIF.",
       "arrival": "sdn-lane",
-      "lane": "PNM.fbs · naif / ssb-kernels",
+      "lane": "PNM.fbs · naif / ssb-kernels; OEM.fbs · deep-space-spacecraft / <catalog>",
       "via": [
-        "data-source/naif-kernels"
+        "data-source/naif-kernels",
+        "data-source/deep-space-spacecraft"
       ],
       "modules": [
         "solar-system",
-        "ffm"
+        "ffm",
+        "beyond-earth-catalogs"
       ],
       "terms": "Public domain (NASA)",
       "licenseClass": "Reproducible"
@@ -1526,6 +1580,41 @@
       "terms": "Free use, copying and transmission with attribution to Lowell Observatory",
       "licenseClass": "Reproducible",
       "termsUrl": "https://asteroid.lowell.edu/astorb/"
+    },
+    {
+      "id": "wmo-oscar-space",
+      "name": "WMO OSCAR/Space",
+      "provider": "World Meteorological Organization",
+      "url": "https://space.oscar.wmo.int",
+      "data": "Satellites and the instruments each carries: status, launch date and per-instrument channel tables with central wavelength or frequency and bandwidth.",
+      "arrival": "node-ingest",
+      "via": [
+        "data-source/sensor-definitions"
+      ],
+      "modules": [
+        "sensor-definitions"
+      ],
+      "terms": "May be used and redistributed freely; any publication using the information should acknowledge WMO",
+      "licenseClass": "Reproducible",
+      "termsUrl": "https://space.oscar.wmo.int/pages/disclaimer"
+    },
+    {
+      "id": "wikipedia",
+      "name": "Wikipedia",
+      "provider": "Wikimedia Foundation and contributors",
+      "url": "https://www.wikipedia.org",
+      "data": "Facts about ground space-surveillance sensors quoted from cited pages, each record naming the page revision.",
+      "arrival": "node-ingest",
+      "via": [
+        "data-source/sensor-definitions"
+      ],
+      "modules": [
+        "sensor-definitions"
+      ],
+      "terms": "CC BY-SA 4.0; the revision is cited in every record",
+      "licenseClass": "ShareAlike",
+      "licenseId": "CC-BY-SA-4.0",
+      "termsUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
     },
     {
       "id": "lvdb",
@@ -1550,7 +1639,7 @@
       "name": "JPL Horizons spacecraft ephemerides",
       "provider": "NASA/JPL Solar System Dynamics Group",
       "url": "https://ssd.jpl.nasa.gov/horizons/",
-      "data": "Trajectories of spacecraft beyond Earth orbit, published by regime: lunar orbit, cislunar space, the Earth-Moon and Sun-Earth Lagrange regions, each planet's orbit and heliocentric space.",
+      "data": "Trajectories of every spacecraft Horizons lists beyond Earth orbit, found by discovery and published by regime: lunar orbit, cislunar space, the Earth-Moon and Sun-Earth Lagrange regions, each planet's orbit and heliocentric space, with a geocentric probe per craft.",
       "arrival": "sdn-lane",
       "lane": "OEM.fbs · deep-space-spacecraft / <catalog>; EGP.fbs · deep-space-spacecraft / catalogs",
       "via": [
@@ -1985,6 +2074,8 @@
         "catalog-search",
         "object-intelligence",
         "scene-builder",
+        "entity-sensors",
+        "sensor-definitions",
         "context-layers",
         "track-custody",
         "sensor-coverage",
@@ -2034,6 +2125,7 @@
         "orbit-analysis-toolkit",
         "sensor-shaders",
         "scene-builder",
+        "entity-sensors",
         "globe-environment",
         "spaceaware-account"
       ],
@@ -2051,6 +2143,8 @@
         "imagery-detection",
         "globe-environment",
         "scene-builder",
+        "entity-sensors",
+        "sensor-definitions",
         "context-layers",
         "catalog-search",
         "camera-cinematics",
@@ -2072,6 +2166,7 @@
         "provenance-identity",
         "data-publishing",
         "data-sources",
+        "sensor-definitions",
         "ccsds-interchange",
         "module-building-blocks",
         "propagator-suite",
@@ -2091,6 +2186,7 @@
         "catalog-search",
         "object-intelligence",
         "scene-builder",
+        "entity-sensors",
         "context-layers",
         "mission-timeline",
         "analyze-toolkit",
@@ -2124,6 +2220,7 @@
         "embed-api",
         "ccsds-interchange",
         "data-sources",
+        "sensor-definitions",
         "module-building-blocks",
         "solar-system",
         "local-volume",
