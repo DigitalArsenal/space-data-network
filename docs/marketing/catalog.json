@@ -848,6 +848,30 @@
       "plan": "free"
     },
     {
+      "id": "beyond-earth-catalogs",
+      "name": "Beyond-Earth spacecraft catalogs",
+      "category": "earth-sky",
+      "tagline": "Spacecraft at the Moon, the Lagrange points, the planets and beyond, one catalog per regime",
+      "summary": "Turn on lunar orbit, cislunar space, the Earth-Moon and Sun-Earth Lagrange regions, each planet's orbit or heliocentric space, and see the spacecraft in it where JPL Horizons places them. A craft that moved from one regime to another is in each catalog for the time it spent there. No account is needed.",
+      "capabilities": [
+        "Each regime its own catalog, listed with its count, off until it is turned on, the centered body's own orbiters on",
+        "Trajectories from the published JPL Horizons states, interpolated by the engine as published",
+        "One spacecraft across catalogs: each catalog draws it only over its own segments",
+        "Choose a spacecraft on the globe to see its catalog, NAIF ID, COSPAR ID, segment and source",
+        "Data over the Space Data Network as SDS Orbit Ephemeris Message records"
+      ],
+      "standards": [
+        "SDS OEM",
+        "SDS EGP"
+      ],
+      "access": "free",
+      "delivery": "console",
+      "covers": [],
+      "learnMore": "https://spaceaware.io",
+      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/data/deepSpaceCatalogs.ts (listing EGP.fbs deep-space-spacecraft/catalogs, each group's OEM.fbs lane, every shard checked against its signed DPM), layers/deepSpaceCraft (BEYOND EARTH entities section, placement from the published states with the engine's Hermite interpolation and the engine's Moon and Sun, INFO, SPACECRAFT credits), signed out; SpaceAware-UI 0674b26b, pinned in sdn f2b5ca78; E2E src/tools/regime-catalogs-verify.mjs against host-01 (11 catalogs, 44 craft records; LRO 1,847 km and ARTEMIS P1 17,420 km from the Moon; CAPSTONE in earth-moon-lagrange; LRO picked on the globe; Wind drawn by sun-earth-l1 and cislunar each over its own segments). Planet-centered craft are drawn once the planets' ephemerides are loaded.",
+      "plan": "free"
+    },
+    {
       "id": "camera-cinematics",
       "name": "Camera and cinematics",
       "category": "earth-sky",
@@ -1522,6 +1546,23 @@
       "licenseId": "CC0-1.0"
     },
     {
+      "id": "jpl-horizons",
+      "name": "JPL Horizons spacecraft ephemerides",
+      "provider": "NASA/JPL Solar System Dynamics Group",
+      "url": "https://ssd.jpl.nasa.gov/horizons/",
+      "data": "Trajectories of spacecraft beyond Earth orbit, published by regime: lunar orbit, cislunar space, the Earth-Moon and Sun-Earth Lagrange regions, each planet's orbit and heliocentric space.",
+      "arrival": "sdn-lane",
+      "lane": "OEM.fbs · deep-space-spacecraft / <catalog>; EGP.fbs · deep-space-spacecraft / catalogs",
+      "via": [
+        "data-source/deep-space-spacecraft"
+      ],
+      "modules": [
+        "beyond-earth-catalogs"
+      ],
+      "terms": "U.S. Government work, public domain; credit: Ephemeris: NASA/JPL-Caltech Horizons",
+      "licenseClass": "Reproducible"
+    },
+    {
       "id": "body-imagery",
       "name": "Planet and moon imagery",
       "provider": "USGS Astrogeology mosaics of NASA, ESA, DLR and STScI missions (LRO, MESSENGER, Magellan, Galileo, Voyager, Cassini, Dawn, New Horizons, Mars Express, Hubble OPAL)",
@@ -2085,7 +2126,8 @@
         "data-sources",
         "module-building-blocks",
         "solar-system",
-        "local-volume"
+        "local-volume",
+        "beyond-earth-catalogs"
       ],
       "pricing": "request",
       "price": null
@@ -2244,10 +2286,6 @@
     {
       "key": "module:storage-object-s3",
       "reason": "Node-internal capability: S3-compatible object-store access for node flows. Not a module people buy"
-    },
-    {
-      "key": "module:deep-space-catalogs",
-      "reason": "Beyond-Earth catalog lanes are live on the network but the console shows none yet; listed when the console catalog groups ship"
     },
     {
       "key": "module:rinex-0.2.0",
