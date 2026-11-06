@@ -94,6 +94,8 @@ try {
       console.log('Marketing overview loaded');
       assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".mp-plan"), e=>[e.dataset.plan,e.querySelector(".mp-price strong").textContent])'), [['free', '$0'], ['analysis', '$5'], ['ai', '$40'], ['spaceedge', 'Contact us']]);
       assert.equal(await evaluate('document.querySelectorAll("[data-inv]").length'), 0, 'Overview must not contain inventory controls');
+      // High-definition weather clouds are an Analysis capability; only the 4K clouds are Free (owner 2026-11-06).
+      assert.deepEqual(await evaluate(`['free', 'analysis', 'ai', 'spaceedge'].map((p) => Array.from(document.querySelectorAll('[data-plan="' + p + '"] li'), (e) => e.textContent).filter((s) => /clouds/i.test(s)))`), [['Weather with 4K clouds and space weather, from free sources'], ['High-definition weather clouds'], [], []], 'Free lists the 4K clouds and Analysis the high-definition weather clouds');
       assert.match(await evaluate('document.querySelector("[data-plans=data-rule]").textContent'), /without a subscription or sign-in/);
       assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".mp-rights-group"), e=>e.dataset.rights)'), ['general', 'non-commercial', 'results'], 'Three rights groups');
       const inGroup = (group, id) => evaluate(`!!document.querySelector('[data-rights="${group}"] [data-source="${id}"]')`);
@@ -124,6 +126,7 @@ try {
       await click('[data-plan="analysis"] a');
       await waitFor('document.querySelector("[data-key=plan]")?.value === "analysis"');
       console.log('Inventory navigation and plan filter loaded');
+      assert.match(await evaluate('document.querySelector("[data-inv=planned] [data-program=hd-weather-clouds]")?.textContent || ""'), /High-definition weather clouds.*Analysis/s, 'Module reference places high-definition weather clouds in Analysis');
       assert(await evaluate('!!document.querySelector(".inv-row[data-id=sensor-coverage]")'));
       await fill('[data-key=q]', 'sensor');
       assert(await evaluate('document.querySelectorAll(".inv-row").length > 0 && document.querySelectorAll(".inv-row").length < 16'), 'Search narrows the Analysis tier');

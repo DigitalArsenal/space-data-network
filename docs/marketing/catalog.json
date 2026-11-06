@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated": "2026-11-05",
+  "updated": "2026-11-06",
   "consoleBuild": "20261013T204527Z",
   "pricing": {
     "status": "owner-directed",
@@ -2406,6 +2406,13 @@
     }
   ],
   "plannedCapabilities": [
+    {
+      "id": "hd-weather-clouds",
+      "name": "High-definition weather clouds",
+      "plan": "analysis",
+      "status": "Plan scope; module delivery not established in this catalog",
+      "summary": "High-definition weather clouds belong in the $5 monthly plan. The 4K clouds stay in Free."
+    },
     {
       "id": "ai-assistance",
       "name": "AI assistance and analysis workflows",

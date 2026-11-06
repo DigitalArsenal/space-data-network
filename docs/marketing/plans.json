@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "updated": "2026-11-04",
+  "updated": "2026-11-06",
   "currency": "USD",
   "headline": "Explore for free. Add analysis. Add AI.",
   "intro": "SpaceAware brings satellites, Earth, weather and the solar system into one workspace. Start with free data and exploration, add tools for sensors and advanced analysis, then add AI. SpaceEdge brings space combat and UDL access to government programs.",
@@ -29,7 +29,7 @@
       "includes": [
         "Live satellite catalog, search and object information",
         "Earth and planetary imagery, terrain and maps",
-        "Weather and space weather from free sources",
+        "Weather with 4K clouds and space weather, from free sources",
         "Stars, galaxies, the Moon and the solar system",
         "Public orbit products and source-based results",
         "Free data under general-purpose or non-commercial rights, each with its credit (listed below)"
@@ -50,7 +50,8 @@
         "Custom conjunction and uncertainty studies",
         "Orbit fitting and advanced propagation studies",
         "Maneuver, rendezvous and ground-contact planning",
-        "Radio links, interference and network analysis"
+        "Radio links, interference and network analysis",
+        "High-definition weather clouds"
       ],
       "example": "Compare where to place a sensor and when it can see an object.",
       "cta": "See Analysis modules",
@@ -101,7 +102,7 @@
     },
     {
       "name": "Earth, weather and space weather",
-      "description": "Explore imagery, terrain, clouds, forecasts and solar activity from free sources.",
+      "description": "Explore imagery, terrain, 4K clouds, forecasts and solar activity from free sources.",
       "plan": "free"
     },
     {
@@ -117,6 +118,11 @@
     {
       "name": "Advanced analysis",
       "description": "Run custom orbit, maneuver, conjunction, communications and uncertainty studies.",
+      "plan": "analysis"
+    },
+    {
+      "name": "High-definition weather clouds",
+      "description": "See the weather as high-definition clouds. The 4K clouds stay in Free.",
       "plan": "analysis"
     },
     {
