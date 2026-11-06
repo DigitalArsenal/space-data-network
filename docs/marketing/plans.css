@@ -1,6 +1,11 @@
 /* Marketing overview and supporting references, using the site's shared tokens. */
 .mp-main { padding-bottom: 64px; }
 .mp-hero { padding: 64px 0 44px; max-width: 900px; }
+/* The Edgesource Space lockup above the headline, drawn for the site's theme (owner 2026-11-06) */
+.mp-brand { margin: 36px 0 28px; }
+.mp-brand img { display: block; width: min(100%, 460px); height: auto; }
+.mp-brand .mp-brand-light, :root[data-theme="light"] .mp-brand .mp-brand-dark { display: none; }
+:root[data-theme="light"] .mp-brand .mp-brand-light { display: block; }
 .mp-hero h1 { font-size: clamp(32px, 4.5vw, 56px); line-height: 1.12; letter-spacing: -.035em; margin: 14px 0 22px; }
 .mp-lede { font-size: 19px; line-height: 1.65; color: var(--text-2); max-width: 780px; }
 .mp-nav { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: center; margin-top: 24px; }
@@ -10,7 +15,8 @@
 .mp-plans { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
 .mp-plan { display: flex; flex-direction: column; gap: 14px; padding: 24px 20px; border: 1px solid var(--border-strong); border-radius: 12px; background: var(--panel); min-width: 0; }
 .mp-plan[data-plan="analysis"] { border-top: 3px solid var(--accent); padding-top: 22px; }
-.mp-plan h3 { font-size: 25px; }
+.mp-plan h3 { font-size: 25px; display: flex; align-items: center; gap: 10px; }
+.mp-plan h3 img { flex: none; }
 .mp-audience { font-size: 12px; color: var(--muted); letter-spacing: .05em; text-transform: uppercase; }
 .mp-price { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
 .mp-price strong { font-size: 36px; letter-spacing: -.03em; }
@@ -117,8 +123,9 @@
   transform: skewX(-12deg); color: var(--text); }
 .se-wordmark small { font-size: .74em; letter-spacing: .05em; }
 /* (the mark by the site's theme - data-theme on <html>, dark by default - not the system's) */
-.pl-edge-mark .se-mark-light, :root[data-theme="light"] .pl-edge-mark .se-mark-dark { display: none; }
-:root[data-theme="light"] .pl-edge-mark .se-mark-light { display: block; }
+.se-mark-light, :root[data-theme="light"] .se-mark-dark { display: none; }
+:root[data-theme="light"] .se-mark-light { display: block; }
+.pl-section > .pl-edge-mark { justify-content: flex-start; }
 .pl-edge-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
 .pl-edge-cols h3 { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 600; margin-bottom: 6px; }
 .pl-edge-cols ul { margin: 0 0 10px; padding-left: 18px; font-size: 14px; color: var(--text-2); }

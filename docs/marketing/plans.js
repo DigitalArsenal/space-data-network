@@ -13,7 +13,7 @@
     $("[data-plans=intro]").textContent = data.intro;
     $("[data-plans=data-rule]").textContent = data.dataRule;
     $("[data-plans=cards]").innerHTML = data.plans.map((p) => `<article class="mp-plan" data-plan="${esc(p.id)}">
-      <p class="mp-audience">${esc(p.audience)}</p><h3>${esc(p.name)}</h3>
+      <p class="mp-audience">${esc(p.audience)}</p><h3>${p.mark ? `<img class="se-mark-dark" src="${esc(p.mark.dark)}" alt="" width="30" height="30"><img class="se-mark-light" src="${esc(p.mark.light)}" alt="" width="30" height="30">` : ""}${esc(p.name)}</h3>
       <p class="mp-price"><strong>${esc(price(p))}</strong>${p.monthlyPrice > 0 ? "<span>/ month</span>" : ""}</p>
       <p class="mp-summary">${esc(p.summary)}</p>
       <ul>${p.includes.map((item) => `<li>${esc(item)}</li>`).join("")}</ul>

@@ -101,11 +101,17 @@ try {
       assert.equal(await evaluate('document.querySelectorAll(\'[data-rights="non-commercial"] [data-source]\').length'), 0, 'No free source is non-commercial only');
       assert(await inGroup('results', 'vimpel') && await inGroup('results', 'starlink-ephemeris'), 'Results-only sources listed');
       assert.equal(await evaluate('document.querySelectorAll(".mp-rights-group [data-source]").length'), await evaluate('(async () => (await (await fetch("/marketing/catalog.json")).json()).sources.length)()'), 'Every catalog source sits in one rights group');
+      // The hero carries the Edgesource Space lockup and the SpaceEdge card its mark, each drawn for the site's theme (owner 2026-11-06).
+      const drawn = (selector) => evaluate(`Promise.all(Array.from(document.querySelectorAll(${JSON.stringify(selector)})).filter((i) => i.getClientRects().length).map((i) => i.decode().then(() => i.naturalWidth > 0 && i.getBoundingClientRect().width > 20 ? i.src.split('/').pop() : 'not drawn ' + i.src, () => 'broken ' + i.src)))`);
+      assert.deepEqual(await drawn('.mp-hero .mp-brand img'), ['edgesource-space-dark.svg'], 'Hero shows the Edgesource Space logo');
+      assert.deepEqual(await drawn('[data-plan="spaceedge"] h3 img'), ['spaceedge-mark-dark.svg'], 'SpaceEdge card shows the SpaceEdge mark');
       await click('a[href="#plans"]');
       assert.equal(await evaluate('location.hash'), '#plans');
       await evaluate('scrollTo(0,0)');
       await noOverflow(); await localLinks(); await screenshot('overview-desktop');
       await click('[data-sdn-theme-toggle]');
+      assert.deepEqual(await drawn('.mp-hero .mp-brand img'), ['edgesource-space-light.svg'], 'Hero logo follows the light theme');
+      assert.deepEqual(await drawn('[data-plan="spaceedge"] h3 img'), ['spaceedge-mark-light.svg'], 'SpaceEdge mark follows the light theme');
       await screenshot('overview-alternate-theme');
       await click('[data-sdn-theme-toggle]');
       await cdp.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
@@ -154,6 +160,9 @@ try {
       await click('#reference-details > summary');
       await waitFor('document.querySelectorAll("[data-udl=table] tbody tr").length > 10');
       assert.deepEqual(await evaluate('Array.from(document.querySelectorAll("[data-uplan] option")).slice(1).map(e=>e.value)'), ['free', 'analysis', 'ai', 'spaceedge']);
+      assert.deepEqual(await drawn('#spaceedge .pl-edge-mark img'), ['spaceedge-mark-dark.svg'], 'SpaceEdge section shows the SpaceEdge logo');
+      assert.equal(await evaluate('document.querySelector("#spaceedge .se-wordmark").textContent'), 'SPACEEDGE');
+      await evaluate('document.querySelector("#edge-title").scrollIntoView({block:"center",behavior:"instant"})'); await screenshot('spaceedge-section');
       await fill('[data-uq]', 'Star catalog');
       assert.deepEqual(await evaluate('Array.from(document.querySelectorAll("[data-udl=table] tbody td.ud-t"),e=>e.textContent)'), ['Open', 'Open', 'Open', 'UDL']);
       await click('[data-wording=military]');

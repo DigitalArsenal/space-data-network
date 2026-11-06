@@ -76,6 +76,7 @@
     {
       "id": "spaceedge",
       "name": "SpaceEdge",
+      "mark": { "dark": "marketing/spaceedge-mark-dark.svg", "light": "marketing/spaceedge-mark-light.svg" },
       "monthlyPrice": null,
       "priceLabel": "Contact us",
       "audience": "Government programs",
