@@ -105,6 +105,8 @@ try {
       const drawn = (selector) => evaluate(`Promise.all(Array.from(document.querySelectorAll(${JSON.stringify(selector)})).filter((i) => i.getClientRects().length).map((i) => i.decode().then(() => i.naturalWidth > 0 && i.getBoundingClientRect().width > 20 ? i.src.split('/').pop() : 'not drawn ' + i.src, () => 'broken ' + i.src)))`);
       assert.deepEqual(await drawn('.mp-hero .mp-brand img'), ['edgesource-space-dark.svg'], 'Hero shows the Edgesource Space logo');
       assert.deepEqual(await drawn('[data-plan="spaceedge"] h3 img'), ['spaceedge-mark-dark.svg'], 'SpaceEdge card shows the SpaceEdge mark');
+      // The SpaceEdge name on its card is set in the SpaceEdge wordmark face, as on the old page (owner 2026-11-06).
+      assert.deepEqual(await evaluate(`(async () => { const e = document.querySelector('[data-plan="spaceedge"] h3 .se-wordmark'); const family = getComputedStyle(e).fontFamily.split(',')[0].replace(/"/g, ''); return [e.textContent, family, (await document.fonts.load('21px "' + family + '"', e.textContent)).length]; })()`), ['SPACEEDGE', 'SpaceEdge Wordmark', 1], 'SpaceEdge card name is drawn in the SpaceEdge wordmark font');
       await click('a[href="#plans"]');
       assert.equal(await evaluate('location.hash'), '#plans');
       await evaluate('scrollTo(0,0)');

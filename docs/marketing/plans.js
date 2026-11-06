@@ -4,6 +4,8 @@
   const $ = (selector) => document.querySelector(selector);
   const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
   const price = (p) => p.monthlyPrice === null ? p.priceLabel : p.monthlyPrice === 0 ? "$0" : `$${p.monthlyPrice}`;
+  // The SpaceEdge wordmark: the first letter of each word full height, the rest small capitals (plans.css .se-wordmark)
+  const wordmark = (name) => name.split(/(?=[A-Z])/).map((w) => `${esc(w[0])}<small>${esc(w.slice(1).toUpperCase())}</small>`).join("");
   const load = (url) => fetch(url, { cache: "no-cache" }).then((r) => {
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     return r.json();
@@ -13,7 +15,7 @@
     $("[data-plans=intro]").textContent = data.intro;
     $("[data-plans=data-rule]").textContent = data.dataRule;
     $("[data-plans=cards]").innerHTML = data.plans.map((p) => `<article class="mp-plan" data-plan="${esc(p.id)}">
-      <p class="mp-audience">${esc(p.audience)}</p><h3>${p.mark ? `<img class="se-mark-dark" src="${esc(p.mark.dark)}" alt="" width="30" height="30"><img class="se-mark-light" src="${esc(p.mark.light)}" alt="" width="30" height="30">` : ""}${esc(p.name)}</h3>
+      <p class="mp-audience">${esc(p.audience)}</p><h3>${p.mark ? `<img class="se-mark-dark" src="${esc(p.mark.dark)}" alt="" width="30" height="30"><img class="se-mark-light" src="${esc(p.mark.light)}" alt="" width="30" height="30"><span class="se-wordmark" role="img" aria-label="${esc(p.name)}">${wordmark(p.name)}</span>` : esc(p.name)}</h3>
       <p class="mp-price"><strong>${esc(price(p))}</strong>${p.monthlyPrice > 0 ? "<span>/ month</span>" : ""}</p>
       <p class="mp-summary">${esc(p.summary)}</p>
       <ul>${p.includes.map((item) => `<li>${esc(item)}</li>`).join("")}</ul>

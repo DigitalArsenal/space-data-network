@@ -17,6 +17,7 @@
 .mp-plan[data-plan="analysis"] { border-top: 3px solid var(--accent); padding-top: 22px; }
 .mp-plan h3 { font-size: 25px; display: flex; align-items: center; gap: 10px; }
 .mp-plan h3 img { flex: none; }
+.mp-plan h3 .se-wordmark { font-size: 21px; }
 .mp-audience { font-size: 12px; color: var(--muted); letter-spacing: .05em; text-transform: uppercase; }
 .mp-price { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
 .mp-price strong { font-size: 36px; letter-spacing: -.03em; }
