@@ -3,7 +3,7 @@
 .mp-hero { padding: 64px 0 44px; max-width: 900px; }
 /* The Edgesource Space lockup above the headline, drawn for the site's theme (owner 2026-11-06) */
 .mp-brand { margin: 36px 0 28px; }
-.mp-brand img { display: block; width: min(100%, 460px); height: auto; }
+.mp-brand img { display: block; width: min(100%, 420px); height: auto; }
 .mp-brand .mp-brand-light, :root[data-theme="light"] .mp-brand .mp-brand-dark { display: none; }
 :root[data-theme="light"] .mp-brand .mp-brand-light { display: block; }
 .mp-hero h1 { font-size: clamp(32px, 4.5vw, 56px); line-height: 1.12; letter-spacing: -.035em; margin: 14px 0 22px; }
