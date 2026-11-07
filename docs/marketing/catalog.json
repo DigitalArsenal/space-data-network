@@ -324,10 +324,10 @@
       "name": "All-vs-all catalog screening",
       "category": "space-safety",
       "tagline": "Every object against every other, GPU or CPU",
-      "summary": "Screens the whole catalog, every object against every other, on GPU or CPU. Produces conjunction data messages from SGP4 or high-precision trajectories, with collision probability where it can be computed.",
+      "summary": "Screens the whole catalog, every object against every other, on GPU or CPU. Produces conjunction data messages from SGP4 trajectories, with collision probability where it can be computed.",
       "capabilities": [
         "All-vs-all pair search on a WebGPU device or the CPU",
-        "SGP4 or numerically integrated trajectories in time windows",
+        "SGP4 trajectories in time windows",
         "Covariance-based collision probability where computable; source covariance retained when unavailable",
         "CDM output for every event"
       ],
@@ -542,13 +542,12 @@
       "name": "Catalog composer",
       "category": "sda",
       "tagline": "One combined catalog with source precedence",
-      "summary": "Builds one combined catalog from many sources with clear precedence and conflict review, and hands element sets over to numerical states.",
+      "summary": "Builds one combined catalog from many sources with clear precedence and conflict review.",
       "capabilities": [
         "Composed catalog with source precedence and conflict review",
         "Search every catalog object by name or international designator and review overlapping sources",
         "Supplemental catalog synthesis",
-        "GCAT and McCants catalog editions read with their own identities",
-        "Element sets handed over to numerical states in GCRF"
+        "GCAT and McCants catalog editions read with their own identities"
       ],
       "standards": [
         "SDS CAT",
@@ -592,12 +591,11 @@
       "name": "FFM (Full Force Model) propagation",
       "category": "flight-dynamics",
       "tagline": "Orbits integrated under the full force model, for precise work",
-      "summary": "Numerically integrated orbit propagation for work that needs more than analytical element sets, including the trajectories that feed catalog screening.",
+      "summary": "Numerically integrated orbit propagation for work that needs more than analytical element sets, from states fitted to precise data, never from an element set's SGP4 state.",
       "capabilities": [
         "Numerical integration of orbital states with state transition matrices",
         "Atmospheric drag from NRLMSISE-00 or the 1976 US Standard Atmosphere",
-        "Finite burns",
-        "Trajectories that feed all-vs-all screening"
+        "Finite burns"
       ],
       "standards": [
         "SDS PRW",
