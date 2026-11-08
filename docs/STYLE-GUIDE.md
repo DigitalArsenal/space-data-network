@@ -172,7 +172,7 @@ guide page (`docs/media/audio/`):
 | DeltaV | `delta-v.mp3` |
 | T Minus 0 | `t-minus-0.mp3` |
 | Cislunar | `cislunar.mp3` |
-| lagrange_point | `lagrange_point.mp3` |
+| Lagrange Point | `lagrange_point.mp3` |
 
 - Each video carries one section of one of the tracks, the one most
   evocative for its subject, with the tracks varied across videos, faded in
