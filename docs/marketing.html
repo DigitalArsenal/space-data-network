@@ -6,7 +6,7 @@
   <script src="assets/sdn-chrome/sdn-chrome.js"></script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="robots" content="noindex, nofollow">
-  <meta name="description" content="SpaceAware explained simply: Free data capabilities, sensors and advanced analysis for $5 per month, AI for $40 per month, and SpaceEdge for space combat and UDL.">
+  <meta name="description" content="SpaceAware plans: the entire catalog and public data free; Plus for $5 per month; Analysis for $29 per month; AI that runs the analysis for you for $79 per month; SpaceEdge for government programs.">
   <meta name="theme-color" content="#000000">
   <title>SpaceAware Plans and Capabilities · Space Data Network</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' fill='none'><defs><linearGradient id='t' gradientUnits='userSpaceOnUse' x1='16' y1='29' x2='16' y2='3'><stop offset='0' stop-color='%23f5a524' stop-opacity='0'/><stop offset='.55' stop-color='%23f5a524' stop-opacity='.55'/><stop offset='1' stop-color='%23f5a524'/></linearGradient></defs><circle cx='16' cy='16' r='13' stroke='%23f5f5f7' stroke-width='1.6' opacity='.3'/><path d='M16 29A13 13 0 0 1 16 3' stroke='url(%23t)' stroke-width='2.2' stroke-linecap='round'/><path d='M16 10.2L10.4 20.1H21.6Z' stroke='%23f5f5f7' stroke-width='1.6' stroke-linejoin='round'/><circle cx='16' cy='10.2' r='2.6' fill='%23f5f5f7'/><circle cx='10.4' cy='20.1' r='2.6' fill='%23f5f5f7'/><circle cx='21.6' cy='20.1' r='2.6' fill='%23f5f5f7'/><circle cx='16' cy='3' r='2.5' fill='%23f5a524'/></svg>">
@@ -17,7 +17,7 @@
 <!-- SDN_CONSUMER_ASSETS_END -->
   <link rel="stylesheet" href="site.css">
   <link rel="stylesheet" href="marketing/inventory.css?v=e4d78d2fe62c">
-  <link rel="stylesheet" href="marketing/plans.css?v=9db84943df81">
+  <link rel="stylesheet" href="marketing/plans.css?v=f20030da5e00">
   <style>
     :root {
       --sdn-stack-footer-height: 40px;
@@ -54,22 +54,36 @@
   <main class="mp-main inv-wrap">
     <section class="mp-hero">
       <p class="mp-brand"><img class="mp-brand-dark" src="marketing/edgesource-space-dark.svg" alt="Edgesource Space" width="470" height="169"><img class="mp-brand-light" src="marketing/edgesource-space-light.svg" alt="Edgesource Space" width="470" height="169"></p>
-      <p class="eyebrow">SpaceAware · Marketing guide</p>
-      <h1 data-plans="headline">Explore for free. Add analysis. Add AI.</h1>
+      <p class="eyebrow">SpaceAware</p>
+      <h1 data-plans="headline">The entire catalog, free. Engineering answers when you need them.</h1>
       <p class="mp-lede" data-plans="intro"></p>
-      <nav class="mp-nav" aria-label="Marketing"><a class="btn" href="#plans">Compare plans</a><a class="btn" href="marketing-modules.html">Search all modules</a></nav>
+      <nav class="mp-nav" aria-label="Plans"><a class="btn btn-primary" href="https://spaceaware.io">Open SpaceAware</a><a class="btn" href="#plans">Compare plans</a></nav>
+    </section>
+    <section id="sdn-ap" class="mp-section mp-ap" aria-labelledby="ap-title">
+      <p class="eyebrow">Under the catalog</p>
+      <h2 id="ap-title">Orbits You Can Check</h2>
+      <p class="mp-ap-lede">SDN-AP is Space Data Network's advanced propagator, built on the entire history of astrodynamics. It keeps the compact element sets and the speed of a mean-element theory, and fits each set to precise orbits, operator ephemerides or observations.</p>
+      <div class="mp-ap-points">
+        <article><h3>Scored against truth</h3><p>The published comparison fits SGP4, SGP4-XP and SDN-AP to the same precise orbits and scores each against the same truth. At day 1 and day 7, SDN-AP beats SGP4 in every orbit class, and SGP4-XP in every class except highly elliptical orbits, where the two are close.</p></article>
+        <article><h3>The catalog it feeds</h3><p>We are building SpaceAware's catalog on it: SDN-AP element sets wherever operator or precise data exists, and SGP4 for everything else.</p></article>
+        <article><h3>Free to study</h3><p>SDN-AP is free for non-commercial use. Every cell of the comparison names its count and its build.</p></article>
+      </div>
+      <nav class="mp-nav" aria-label="SDN-AP"><a class="btn" href="https://digitalarsenal.github.io/sdn-ap/comparison.html">See the comparison</a><a class="btn" href="https://digitalarsenal.github.io/sdn-ap/">SDN-AP website</a></nav>
     </section>
     <section id="plans" class="mp-section" aria-labelledby="plans-title">
-      <h2 id="plans-title">Four plans, one clear progression</h2>
-      <p>Each paid plan includes the capabilities of the one before it.</p>
+      <p class="eyebrow">Plans</p>
+      <h2 id="plans-title">Pay For Processing, Not For Data</h2>
+      <p>Each plan includes everything in the one before it.</p>
       <div class="mp-plans" data-plans="cards"><noscript>Read the <a href="marketing/plans.json">plan definitions</a>.</noscript></div>
+      <div class="mp-edge" data-plans="edge"></div>
     </section>
-    <section class="mp-data-rule" aria-labelledby="free-title"><h2 id="free-title">Free data stays free</h2><p data-plans="data-rule"></p><div class="mp-rights" data-plans="rights"></div></section>
+    <section class="mp-data-rule" aria-labelledby="free-title"><h2 id="free-title">Free Data Stays Free</h2><p data-plans="data-rule"></p>
+      <details class="mp-sources"><summary data-plans="sources-summary">Every source and its terms</summary><div class="mp-rights" data-plans="rights"></div></details></section>
     <section class="mp-section" aria-labelledby="capabilities-title">
-      <h2 id="capabilities-title">Where each capability belongs</h2>
-      <div class="pl-scroll"><table class="mp-table"><thead><tr><th scope="col">Capability</th><th scope="col">What the customer can do</th><th scope="col">Starts in</th></tr></thead><tbody data-plans="capabilities"></tbody></table></div>
+      <p class="eyebrow">Capabilities</p>
+      <h2 id="capabilities-title">Which Plan Has It</h2>
+      <div class="pl-scroll"><table class="mp-table"><thead><tr><th scope="col">Capability</th><th scope="col">What you can do</th><th scope="col">Starts in</th></tr></thead><tbody data-plans="capabilities"></tbody></table></div>
     </section>
-    <section class="mp-section" aria-labelledby="explain-title"><h2 id="explain-title">How to explain it</h2><div class="mp-talking" data-plans="talking-points"></div></section>
     <section class="mp-reference"><h2>Need the details?</h2><p>Search every cataloged module, check its plan and data sources, and review delivery evidence.</p><a class="btn" href="marketing-modules.html">Open the module reference</a></section>
   </main>
   <footer class="sdn-footer">
@@ -89,6 +103,6 @@
     </div>
   </footer>
 
-  <script src="marketing/plans.js?v=be2ebba59ca0"></script>
+  <script src="marketing/plans.js?v=4c72af0098c4"></script>
 </body>
 </html>
