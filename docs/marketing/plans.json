@@ -1,10 +1,10 @@
 {
-  "version": 2,
-  "updated": "2026-11-06",
+  "version": 3,
+  "updated": "2026-11-08",
   "currency": "USD",
-  "headline": "Explore for free. Add analysis. Add AI.",
-  "intro": "SpaceAware brings satellites, Earth, weather and the solar system into one workspace. Start with free data and exploration, add tools for sensors and advanced analysis, then add AI. SpaceEdge brings space combat and UDL access to government programs.",
-  "dataRule": "Capabilities that use free data belong in Free. Public data views, imagery, weather, stars and source-based results stay available without a subscription or sign-in, with their attribution and usage terms. Paying for a plan does not change those terms. Every source carries one rights class, below.",
+  "headline": "The entire catalog, free. Engineering answers when you need them.",
+  "intro": "SpaceAware puts satellites, Earth, weather and the solar system in one workspace in your browser. Public data stays free and visible without signing in. Plans add the analysis modules, and AI that runs them for you.",
+  "dataRule": "Public records stay free and visible without signing in, each with its credit and terms. Plans pay for processing, never for the records themselves, and paying does not change any source's terms. Every source carries one rights class.",
   "rights": {
     "general": {
       "title": "General-purpose rights",
@@ -24,34 +24,49 @@
       "id": "free",
       "name": "Free",
       "monthlyPrice": 0,
-      "audience": "Explore and understand",
+      "audience": "Explore",
       "summary": "See what is happening in space and on Earth.",
       "includes": [
-        "Live satellite catalog, search and object information",
+        "The entire satellite catalog, with search and object details",
         "Earth and planetary imagery, terrain and maps",
         "Weather with 4K clouds and space weather, from free sources",
         "Stars, galaxies, the Moon and the solar system",
-        "Public orbit products and source-based results",
-        "Free data under general-purpose or non-commercial rights, each with its credit (listed below)"
+        "Public orbit products and source-based results"
       ],
       "example": "Look up a satellite, explore the Moon or follow a storm.",
-      "cta": "Explore Free",
+      "cta": "Open SpaceAware",
+      "href": "https://spaceaware.io"
+    },
+    {
+      "id": "plus",
+      "name": "Plus",
+      "monthlyPrice": 5,
+      "audience": "For enthusiasts",
+      "inherits": "free",
+      "summary": "Everything in Free, with the weather in high definition.",
+      "includes": [
+        "High-definition weather clouds",
+        "Everything in Free"
+      ],
+      "example": "Watch a storm system build in full detail.",
+      "note": "High-definition clouds are in build.",
+      "cta": "Open SpaceAware",
       "href": "https://spaceaware.io"
     },
     {
       "id": "analysis",
       "name": "Analysis",
-      "monthlyPrice": 5,
-      "audience": "Plan and analyze",
-      "inherits": "free",
-      "summary": "Add sensors and advanced analysis to everything in Free.",
+      "monthlyPrice": 29,
+      "audience": "For analysts and engineers",
+      "inherits": "plus",
+      "summary": "Run the engineering studies yourself.",
       "includes": [
         "Sensor placement, coverage and observation planning",
         "Custom conjunction and uncertainty studies",
         "Orbit fitting and advanced propagation studies",
         "Maneuver, rendezvous and ground-contact planning",
         "Radio links, interference and network analysis",
-        "High-definition weather clouds"
+        "Everything in Plus"
       ],
       "example": "Compare where to place a sensor and when it can see an object.",
       "cta": "See Analysis modules",
@@ -60,17 +75,22 @@
     {
       "id": "ai",
       "name": "AI",
-      "monthlyPrice": 40,
-      "audience": "Work with AI",
+      "monthlyPrice": 79,
+      "audience": "Ask in plain language",
       "inherits": "analysis",
-      "summary": "Add AI to everything in Analysis.",
+      "summary": "Describe the problem. AI plans the study and runs SpaceAware's modules to answer it.",
       "includes": [
-        "AI assistance in the workspace",
-        "AI-assisted analysis workflows",
+        "AI that sets up a whole scenario and runs the Analysis modules for you",
+        "Answers from the same deterministic modules you run by hand, with every step shown and repeatable",
         "AI object detection in imagery",
-        "All sensors and advanced analysis in the $5 plan"
+        "Everything in Analysis"
       ],
-      "example": "Use AI to help investigate a scene or identify objects in imagery.",
+      "examples": [
+        "Plan my next maneuver to stay out of known sensor coverage.",
+        "Design a constellation that covers one site around the clock.",
+        "Show every threat to my satellite, in every domain."
+      ],
+      "note": "Scenario orchestration is in build. Imagery object detection is available now.",
       "cta": "See AI capabilities",
       "href": "marketing-modules.html#plan=ai"
     },
@@ -82,10 +102,10 @@
       "priceLabel": "Contact us",
       "audience": "Government programs",
       "inherits": "ai",
-      "summary": "Add space combat and UDL access to the SpaceAware capability set.",
+      "summary": "Everything in AI, on a program's own authorized data, deployed where the program needs it.",
       "includes": [
         "Space combat scenarios and analysis",
-        "Unified Data Library (UDL) access",
+        "Unified Data Library (UDL) access through the customer's own account",
         "The customer's authorized data and permissions",
         "Deployment and support scoped to the program"
       ],
@@ -97,7 +117,7 @@
   "capabilities": [
     {
       "name": "Satellites and public orbit data",
-      "description": "Find objects, inspect their orbits and follow published results.",
+      "description": "Find any object in the catalog, inspect its orbit and follow published results.",
       "plan": "free"
     },
     {
@@ -111,6 +131,11 @@
       "plan": "free"
     },
     {
+      "name": "High-definition weather clouds",
+      "description": "See the weather as high-definition clouds. The 4K clouds stay in Free.",
+      "plan": "plus"
+    },
+    {
       "name": "Sensors",
       "description": "Plan sensor locations, coverage and observations.",
       "plan": "analysis"
@@ -121,13 +146,8 @@
       "plan": "analysis"
     },
     {
-      "name": "High-definition weather clouds",
-      "description": "See the weather as high-definition clouds. The 4K clouds stay in Free.",
-      "plan": "analysis"
-    },
-    {
       "name": "AI",
-      "description": "Add AI assistance and AI analysis, including imagery object detection.",
+      "description": "Ask in plain language and have AI run the modules, plus imagery object detection.",
       "plan": "ai"
     },
     {
@@ -144,15 +164,19 @@
   "talkingPoints": [
     {
       "title": "Start with what the customer wants to do",
-      "text": "Explore data: Free. Plan sensors or run advanced studies: Analysis. Work with AI: AI. Space combat or UDL: SpaceEdge."
+      "text": "Explore data: Free. Weather in high definition: Plus. Run engineering studies: Analysis. Have AI run them: AI. Space combat or UDL: SpaceEdge."
     },
     {
       "title": "Keep the data free",
-      "text": "Free and non-commercial data capabilities stay in Free. Paid plans add software tools and workflows; they do not sell access to those datasets or expand their usage rights."
+      "text": "Free and non-commercial data capabilities stay in Free. Paid plans add processing, software tools and workflows; they do not sell access to those datasets or expand their usage rights."
     },
     {
       "title": "Use the right product name",
-      "text": "SpaceAware is the workspace. Space Data Network carries data and software. OrbPro is the visualization engine. SpaceEdge is the government offering."
+      "text": "SpaceAware is the workspace. Space Data Network carries data and software. SDN-AP is the propagator. OrbPro is the visualization engine. SpaceEdge is the government offering."
+    },
+    {
+      "title": "Keep government separate",
+      "text": "The public plans page shows SpaceEdge in its own band below the four plans. Lead with SpaceEdge only with government buyers."
     }
   ]
 }

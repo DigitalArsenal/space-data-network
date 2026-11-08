@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated": "2026-11-06",
+  "updated": "2026-11-08",
   "consoleBuild": "20261013T204527Z",
   "pricing": {
     "status": "owner-directed",
@@ -2409,16 +2409,16 @@
     {
       "id": "hd-weather-clouds",
       "name": "High-definition weather clouds",
-      "plan": "analysis",
+      "plan": "plus",
       "status": "Plan scope; module delivery not established in this catalog",
-      "summary": "High-definition weather clouds belong in the $5 monthly plan. The 4K clouds stay in Free."
+      "summary": "High-definition weather clouds belong in the $5 monthly Plus plan. The 4K clouds stay in Free."
     },
     {
       "id": "ai-assistance",
-      "name": "AI assistance and analysis workflows",
+      "name": "AI scenario orchestration",
       "plan": "ai",
       "status": "Plan scope; module delivery not established in this catalog",
-      "summary": "AI assistance belongs in the $40 monthly plan. Imagery object detection is the currently cataloged AI module."
+      "summary": "AI orchestration belongs in the $79 monthly plan: the customer describes a problem in plain language, and the AI sets up the scenario and runs SpaceAware's modules, whose deterministic results it shows step by step. Imagery object detection is the currently cataloged AI module."
     },
     {
       "id": "space-combat",

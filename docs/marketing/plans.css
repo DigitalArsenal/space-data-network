@@ -12,6 +12,7 @@
 .mp-section { padding: 28px 0; scroll-margin-top: 110px; }
 .mp-section > h2, .mp-data-rule h2, .mp-reference h2 { font-size: clamp(24px, 3vw, 32px); margin-bottom: 12px; letter-spacing: -.02em; }
 .mp-section > p { color: var(--text-2); margin-bottom: 20px; }
+.mp-section > .eyebrow { color: var(--accent); margin-bottom: 10px; }
 .mp-plans { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
 .mp-plan { display: flex; flex-direction: column; gap: 14px; padding: 24px 20px; border: 1px solid var(--border-strong); border-radius: 12px; background: var(--panel); min-width: 0; }
 .mp-plan[data-plan="analysis"] { border-top: 3px solid var(--accent); padding-top: 22px; }
@@ -28,6 +29,29 @@
 .mp-example { font-size: 13px; line-height: 1.6; color: var(--muted); border-top: 1px solid var(--border); padding-top: 14px; }
 .mp-plan .btn { white-space: normal; text-align: center; margin-top: auto; }
 .mp-note { font-size: 12px; line-height: 1.6; color: var(--muted); }
+/* The AI card's example questions, in the customer's words */
+.mp-plan .mp-asks { list-style: none; padding: 14px 0 0; border-top: 1px solid var(--border); font-size: 13px; color: var(--muted); }
+.mp-plan .mp-asks li + li { margin-top: 6px; }
+/* SDN-AP: what the catalog is built on, three short points and the comparison link */
+.mp-ap { border-top: 1px solid var(--border); padding-top: 44px; }
+.mp-ap .mp-ap-lede { font-size: 17px; line-height: 1.65; max-width: 820px; }
+.mp-ap-points { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; margin: 8px 0 4px; }
+.mp-ap-points article { border-top: 1px solid var(--border-strong); padding-top: 16px; min-width: 0; }
+.mp-ap-points h3 { font-size: 17px; margin-bottom: 8px; }
+.mp-ap-points p { color: var(--text-2); font-size: 14px; line-height: 1.65; }
+/* A plan priced by contact (SpaceEdge) sits in its own band under the four plans */
+.mp-edge:empty { display: none; }
+.mp-band { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px 40px; align-items: start; margin-top: 16px; padding: 24px 28px; border: 1px solid var(--border-strong); border-radius: 12px; background: var(--panel); }
+.mp-band > div { display: grid; gap: 12px; justify-items: start; }
+.mp-band h3 { display: flex; align-items: center; gap: 12px; }
+.mp-band h3 .se-wordmark { font-size: 24px; }
+.mp-band .mp-summary { min-height: 0; color: var(--text-2); }
+.mp-band ul { margin: 0; padding-left: 18px; font-size: 14px; color: var(--text-2); line-height: 1.6; }
+.mp-band li + li { margin-top: 8px; }
+/* The source list, folded under the data rule */
+.mp-sources { margin-top: 18px; }
+.mp-sources > summary { cursor: pointer; font-weight: 600; font-size: 15px; }
+.mp-sources > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
 .mp-data-rule { border-left: 3px solid var(--accent); padding: 24px 28px; margin: 22px 0; background: var(--wash); }
 .mp-data-rule p { max-width: 900px; line-height: 1.7; color: var(--text-2); }
 .mp-rights { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; margin-top: 24px; }
@@ -57,9 +81,11 @@
 .mp-details > summary { cursor: pointer; font-weight: 600; }
 .mp-nav a:focus-visible, .mp-details summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 5px; }
 @media (max-width: 1100px) { .mp-plans { grid-template-columns: repeat(2, minmax(0, 1fr)); } .mp-rights-group[data-rights="general"] ul { columns: 2; } }
+@media (max-width: 900px) { .mp-ap-points, .mp-band { grid-template-columns: 1fr; } }
 @media (max-width: 640px) {
   .mp-hero { padding: 32px 0 20px; }
   .mp-lede { font-size: 16px; }
+  .mp-band { padding: 20px; }
   .mp-plans, .mp-talking, .mp-rights { grid-template-columns: 1fr; }
   .mp-rights-group[data-rights="general"] ul { columns: 1; }
   .mp-summary { min-height: 0; }

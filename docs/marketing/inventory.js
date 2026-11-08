@@ -32,6 +32,7 @@
 
   let catalog = null;
   let plans = null;
+  let talkingPoints = [];
   let state = { ...DEFAULT };
   const open = new Set();
 
@@ -176,6 +177,7 @@
     $("[data-inv=meta]").innerHTML =
       `Catalog version ${esc(catalog.version)} &middot; updated ${esc(catalog.updated)} &middot; reviewed against console build ${esc(catalog.consoleBuild)} &middot; ${esc(priced)}`;
     $("[data-inv=planned]").innerHTML = catalog.plannedCapabilities.map((c) => `<article data-program="${esc(c.id)}"><h3>${esc(c.name)}</h3><p><b>${esc(planName(c.plan))}</b> · ${esc(c.status)}</p><p>${esc(c.summary)}</p></article>`).join("");
+    $("[data-inv=talking]").innerHTML = talkingPoints.map((t) => `<article><h3>${esc(t.title)}</h3><p>${esc(t.text)}</p></article>`).join("");
   }
 
   // ---- Modules view -----------------------------------------------------------
@@ -469,6 +471,7 @@
       }));
       catalog = catalogData;
       plans = planData.plans;
+      talkingPoints = planData.talkingPoints ?? [];
     } catch (error) {
       $("[data-inv=view]").innerHTML = `<p class="inv-empty">The inventory could not load marketing/catalog.json (${esc(error.message)}).</p>`;
       return;
