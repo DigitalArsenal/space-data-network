@@ -125,6 +125,11 @@ chapter titles in sentence case ("Digitally signed at the source").
   mark, the site's links, its license, "© Edgesource Corporation" and
   tj@edgesource.com. A site without its own light palette sets
   `data-sdn-light="invert"` on `<html>`.
+- No one-sided borders. A card, tab, panel or row is never marked by a line on
+  one edge (an accent stripe across the top, a colored left edge, an underline
+  under a tab). A border, where there is one, is the same on all four sides.
+  Rows are told apart by spacing or fill.
+- The active tab is filled amber with black text. It carries no accent line.
 - No page-level horizontal scroll at any width. Test at 390 px.
 
 ## 5. Imagery
