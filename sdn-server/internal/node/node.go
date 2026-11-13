@@ -818,6 +818,11 @@ func (n *Node) init() error {
 	n.host = n.kubo.Host()
 	n.dht = n.kubo.WANDHT()
 	kuboClientURLs(&n.config.Admin, n.kubo)
+	n.wg.Add(1)
+	go func() {
+		defer n.wg.Done()
+		n.kubo.MonitorBitswapSends(n.ctx, n.alerts)
+	}()
 	if autoTLSCertMgr != nil {
 		autoTLSCertMgr.ProvideHost(n.host)
 		if err := autoTLSCertMgr.Start(); err != nil {
