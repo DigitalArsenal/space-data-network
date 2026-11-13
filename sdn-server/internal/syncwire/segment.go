@@ -14,37 +14,40 @@ import (
 // shard of a batch read. Strings and bytes left empty travel as Null cells;
 // integers always travel as Int cells.
 type Segment struct {
-	SchemaName       string
-	ProviderID       string
-	SourceName       string
-	BatchID          string
-	QueryProfile     string
-	Role             string
-	SegmentIndex     int64
-	Offset           int64
-	Limit            int64
-	Cursor           string
-	NextCursor       string
-	RecordCount      int64
-	ByteCount        int64
-	ByteOffset       int64
-	ByteLength       int64
-	ChunkHash        string
-	ShardCID         string
-	IndexCID         string
-	ManifestCID      string
-	PNMCID           string
-	ShardSHA256      string
-	IndexSHA256      string
-	QuerySHA256      string
-	ResultSHA256     string
-	FeedSequence     int64
-	PreviousHead     string
-	FeedHead         string
-	PublishedAtMs    int64
-	Signature        []byte
-	SignatureType    string
-	SigningPublicKey []byte
+	SchemaName              string
+	ProviderID              string
+	SourceName              string
+	BatchID                 string
+	QueryProfile            string
+	Role                    string
+	SegmentIndex            int64
+	Offset                  int64
+	Limit                   int64
+	Cursor                  string
+	NextCursor              string
+	RecordCount             int64
+	ByteCount               int64
+	ByteOffset              int64
+	ByteLength              int64
+	ChunkHash               string
+	ShardCID                string
+	IndexCID                string
+	ManifestCID             string
+	PNMCID                  string
+	ShardSHA256             string
+	IndexSHA256             string
+	QuerySHA256             string
+	ResultSHA256            string
+	FeedSequence            int64
+	PreviousHead            string
+	FeedHead                string
+	PublishedAtMs           int64
+	Signature               []byte
+	SignatureType           string
+	SigningPublicKey        []byte
+	Availability            string
+	AvailabilityReason      string
+	AvailabilityCheckedAtMs int64
 }
 
 // Segment ROLE values.
@@ -112,6 +115,9 @@ var segmentColumns = []segmentColumn{
 	bytesCol("SIGNATURE", func(s *Segment) *[]byte { return &s.Signature }),
 	strCol("SIGNATURE_TYPE", func(s *Segment) *string { return &s.SignatureType }),
 	bytesCol("SIGNING_PUBLIC_KEY", func(s *Segment) *[]byte { return &s.SigningPublicKey }),
+	strCol("AVAILABILITY", func(s *Segment) *string { return &s.Availability }),
+	strCol("AVAILABILITY_REASON", func(s *Segment) *string { return &s.AvailabilityReason }),
+	intCol("AVAILABILITY_CHECKED_AT_MS", func(s *Segment) *int64 { return &s.AvailabilityCheckedAtMs }),
 }
 
 // SegmentColumns is the COLUMNS descriptor of every segment page.

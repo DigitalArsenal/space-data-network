@@ -85,6 +85,7 @@ export const FLATSQL_SYNC_SEGMENT_COLUMNS = [
   ['SHARD_SHA256', 'string'], ['INDEX_SHA256', 'string'], ['QUERY_SHA256', 'string'], ['RESULT_SHA256', 'string'],
   ['FEED_SEQUENCE', 'int64'], ['PREVIOUS_HEAD', 'string'], ['FEED_HEAD', 'string'], ['PUBLISHED_AT_MS', 'int64'],
   ['SIGNATURE', 'bytes'], ['SIGNATURE_TYPE', 'string'], ['SIGNING_PUBLIC_KEY', 'bytes'],
+  ['AVAILABILITY', 'string'], ['AVAILABILITY_REASON', 'string'], ['AVAILABILITY_CHECKED_AT_MS', 'int64'],
 ] as const;
 
 export interface FlatSqlSyncTransport {
@@ -243,6 +244,10 @@ export interface FlatSqlSegmentRow {
   signature: Uint8Array | null;
   signatureType: string;
   signingPublicKey: Uint8Array | null;
+  /** A local file check by the responding holder, not a transfer guarantee. Absent on older nodes. */
+  availability?: 'available' | 'unavailable';
+  availabilityReason?: string;
+  availabilityCheckedAtMs?: number;
 }
 
 export interface FlatSqlSyncManifest {
@@ -661,6 +666,14 @@ function opt(value: string): string | undefined {
 }
 
 /** Decodes the SEGMENT_COLUMNS rows of a $QRP page by column NAME. */
+function publicationAvailability(row: Record<string, Cell>): 'available' | 'unavailable' | undefined {
+  const value = text(row, 'AVAILABILITY');
+  if (!value) return undefined;
+  if (value !== 'available' && value !== 'unavailable') throw new Error('Invalid publication availability state');
+  return value;
+}
+
+/** Decodes the SEGMENT_COLUMNS rows of a $QRP page by column NAME. */
 export function decodeFlatSqlSegmentRows(q: QRP): FlatSqlSegmentRow[] {
   return rowObjects(q).map((row) => ({
     schemaName: text(row, 'SCHEMA_NAME'),
@@ -691,6 +704,9 @@ export function decodeFlatSqlSegmentRows(q: QRP): FlatSqlSegmentRow[] {
     previousHead: text(row, 'PREVIOUS_HEAD'),
     feedHead: text(row, 'FEED_HEAD'),
     publishedAtMs: int(row, 'PUBLISHED_AT_MS'),
+    availability: publicationAvailability(row),
+    availabilityReason: text(row, 'AVAILABILITY_REASON') || undefined,
+    availabilityCheckedAtMs: int(row, 'AVAILABILITY_CHECKED_AT_MS') || undefined,
     signature: bytesCell(row, 'SIGNATURE'),
     signatureType: text(row, 'SIGNATURE_TYPE'),
     signingPublicKey: bytesCell(row, 'SIGNING_PUBLIC_KEY'),
