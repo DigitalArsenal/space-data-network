@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -19,7 +18,6 @@ import (
 
 func TestPublishedCompletion(t *testing.T) {
 	const publicationListBytes = 1 << 20
-	const publicationListReads = 32
 	t.Setenv("SDN_STORE_FORMAT", "4")
 	validator, err := sds.NewValidator(nil)
 	if err != nil {
@@ -177,33 +175,6 @@ func TestPublishedCompletion(t *testing.T) {
 	if err != nil || len(rows) != 2 || rows[0].BatchCompletion != "" || rows[1].BatchCompletion != "complete" {
 		t.Fatalf("completion leaked to another revision: %+v %v", rows, err)
 	}
-	// A fresh peer may read exactly the bounded quota, then receives a typed refusal.
-	flood, err := libp2p.New(libp2p.NoListenAddrs)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer flood.Close()
-	if err := flood.Connect(ctx, peer.AddrInfo{ID: h.ID(), Addrs: h.Addrs()}); err != nil {
-		t.Fatal(err)
-	}
-	for i := 0; i <= publicationListReads; i++ {
-		s, err := flood.NewStream(ctx, h.ID(), libprotocol.ID(syncwire.ProtocolID("list-published")))
-		if err != nil {
-			t.Fatal(err)
-		}
-		_ = s.SetDeadline(time.Now().Add(10 * time.Second))
-		if err := syncwire.Request(s, syncwire.QRPFields{SchemaName: "OMM.fbs", Limit: 1}); err != nil {
-			t.Fatal(err)
-		}
-		_, _, err = syncwire.ReadPage(s)
-		_ = s.Close()
-		if i == publicationListReads {
-			var refusal *syncwire.RemoteError
-			if !errors.As(err, &refusal) || refusal.Code != "rate_limited" || refusal.HTTPStatus != 429 {
-				t.Fatalf("read %d: expected typed rate limit refusal, got %v", i+1, err)
-			}
-		} else if err != nil {
-			t.Fatalf("read %d: %v", i+1, err)
-		}
-	}
+	// Burst admission, typed refusal, recovery and peer churn are exercised
+	// together over real nodes in protocol.TestListingReadBudget.
 }
