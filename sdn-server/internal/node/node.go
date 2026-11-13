@@ -925,6 +925,7 @@ func (n *Node) init() error {
 	n.protocol.SetPubSubPNMHandler(n.handleDatasetPublicationPNM)
 	n.tipQueue = n.buildTipQueue()
 	n.host.SetStreamHandler(protocol.SDSProtocolID, n.protocol.HandleStream)
+	epm.RegisterPeerDirectory(n.host, n.peerRegistry)
 	if n.store != nil {
 		protocol.NewFlatSQLSyncHandler(n.store).SetPrivateReadAuthorizer(n.mayReadPrivate).Register(n.host)
 	}
