@@ -422,7 +422,9 @@ func (s *ConcreteDatasetPublicationService) PublishDatasetUpdate(ctx context.Con
 	if err != nil {
 		return nil, err
 	}
-	activeService.afterPublication(ctx, activeReq, schema, result, carCIDs, fingerprint, startedAt)
+	if err := activeService.afterPublication(ctx, activeReq, schema, result, carCIDs, fingerprint, startedAt); err != nil {
+		return nil, err
+	}
 	return result, nil
 }
 
