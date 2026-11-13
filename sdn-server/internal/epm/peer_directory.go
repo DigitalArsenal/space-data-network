@@ -83,8 +83,9 @@ func (d *PeerDirectory) handle(s network.Stream) {
 	// FlatBuffers accessors panic on invalid offsets. Malformed remote input
 	// resets the stream; it must not terminate the node or become an empty page.
 	defer func() {
-		if recover() != nil {
+		if failure := recover(); failure != nil {
 			_ = s.Reset()
+			log.Warnf("peer-directory request refused: invalid buffer: %v", failure)
 		}
 	}()
 	_ = s.SetDeadline(time.Now().Add(10 * time.Second))
@@ -236,6 +237,9 @@ func (d *PeerDirectory) project(owner peer.ID, now time.Time) *directorySnapshot
 		if len(agent) > 256 {
 			agent = ""
 		}
+		if !isSDNAgentVersion(agent) && len(selected) == 0 {
+			continue
+		}
 		profile := ""
 		if len(p.EPMData) > 0 {
 			profile, _ = ComputeEPMCID(p.EPMData)
@@ -289,11 +293,11 @@ func publicBrowserAddr(a ma.Multiaddr, id peer.ID) bool {
 	if len(a.String()) > 512 || !manet.IsPublicAddr(a) {
 		return false
 	}
-	secure, ws, webtransport, webrtc := false, false, false, false
+	secure, ws, webtransport, webrtc, certHash := false, false, false, false, false
 	valid := true
 	ma.ForEach(a, func(c ma.Component) bool {
 		switch c.Protocol().Code {
-		case ma.P_DNS, ma.P_DNS4, ma.P_DNS6:
+		case ma.P_DNS, ma.P_DNS4, ma.P_DNS6, ma.P_SNI:
 			name := strings.ToLower(strings.TrimSuffix(c.Value(), "."))
 			if !strings.Contains(name, ".") || !manet.IsPublicAddr(ma.StringCast("/dns4/"+name)) || strings.HasSuffix(name, ".local") || strings.HasSuffix(name, ".internal") || strings.HasSuffix(name, ".localhost") {
 				valid = false
@@ -313,6 +317,8 @@ func publicBrowserAddr(a ma.Multiaddr, id peer.ID) bool {
 			webtransport = true
 		case ma.P_WEBRTC_DIRECT:
 			webrtc = true
+		case ma.P_CERTHASH:
+			certHash = true
 		case ma.P_P2P:
 			if c.Value() != id.String() {
 				valid = false
@@ -322,5 +328,5 @@ func publicBrowserAddr(a ma.Multiaddr, id peer.ID) bool {
 		}
 		return valid
 	})
-	return valid && ((ws && secure) || webtransport || webrtc)
+	return valid && ((ws && secure) || ((webtransport || webrtc) && certHash))
 }
