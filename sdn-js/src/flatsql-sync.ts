@@ -86,6 +86,7 @@ export const FLATSQL_SYNC_SEGMENT_COLUMNS = [
   ['FEED_SEQUENCE', 'int64'], ['PREVIOUS_HEAD', 'string'], ['FEED_HEAD', 'string'], ['PUBLISHED_AT_MS', 'int64'],
   ['SIGNATURE', 'bytes'], ['SIGNATURE_TYPE', 'string'], ['SIGNING_PUBLIC_KEY', 'bytes'],
   ['AVAILABILITY', 'string'], ['AVAILABILITY_REASON', 'string'], ['AVAILABILITY_CHECKED_AT_MS', 'int64'],
+  ['BATCH_COMPLETION', 'string'], ['BATCH_REVISION', 'string'], ['BATCH_TOTAL_RECORDS', 'int64'],
 ] as const;
 
 export interface FlatSqlSyncTransport {
@@ -248,6 +249,13 @@ export interface FlatSqlSegmentRow {
   availability?: 'available' | 'unavailable';
   availabilityReason?: string;
   availabilityCheckedAtMs?: number;
+  /** Completed producer revision of the requested publication scope, including an explicit record cap.
+   * Group by batchRevision and require contiguous offsets covering batchTotalRecords before loading.
+   * Absent for legacy/unrecorded publications: those retain the final-short-shard heuristic.
+   * Completion does not prove holder availability or the size of the underlying source dataset. */
+  batchCompletion?: 'complete';
+  batchRevision?: string;
+  batchTotalRecords?: number;
 }
 
 export interface FlatSqlSyncManifest {
@@ -679,6 +687,14 @@ function publicationAvailability(row: Record<string, Cell>): 'available' | 'unav
   return value;
 }
 
+function publicationCompletion(row: Record<string, Cell>): Pick<FlatSqlSegmentRow, 'batchCompletion' | 'batchRevision' | 'batchTotalRecords'> {
+  const state = text(row, 'BATCH_COMPLETION');
+  if (!state) return {};
+  const revision = text(row, 'BATCH_REVISION'), total = int(row, 'BATCH_TOTAL_RECORDS');
+  if (state !== 'complete' || !revision || !Number.isSafeInteger(total) || total <= 0) throw new Error('Invalid publication completion');
+  return { batchCompletion: state, batchRevision: revision, batchTotalRecords: total };
+}
+
 /** Decodes the SEGMENT_COLUMNS rows of a $QRP page by column NAME. */
 export function decodeFlatSqlSegmentRows(q: QRP): FlatSqlSegmentRow[] {
   return rowObjects(q).map((row) => ({
@@ -713,6 +729,7 @@ export function decodeFlatSqlSegmentRows(q: QRP): FlatSqlSegmentRow[] {
     availability: publicationAvailability(row),
     availabilityReason: text(row, 'AVAILABILITY_REASON') || undefined,
     availabilityCheckedAtMs: int(row, 'AVAILABILITY_CHECKED_AT_MS') || undefined,
+    ...publicationCompletion(row),
     signature: bytesCell(row, 'SIGNATURE'),
     signatureType: text(row, 'SIGNATURE_TYPE'),
     signingPublicKey: bytesCell(row, 'SIGNING_PUBLIC_KEY'),
