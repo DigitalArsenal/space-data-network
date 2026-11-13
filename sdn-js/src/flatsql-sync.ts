@@ -296,9 +296,15 @@ export interface FlatSqlSyncManifestSegment {
   feedHead?: string;
 }
 
-/** list-published: one page of the node's servable dataset publications. */
+export interface FlatSqlPublishedListOptions {
+  /** Include metadata for files the answering node does not hold. Defaults to false. */
+  includeUnavailable?: boolean;
+}
+
+/** list-published: one page, excluding known-unavailable publications by default. */
 export interface FlatSqlPublishedList {
   schema: string;
+  /** Node's unfiltered count. Follow nextCursor even when the filtered page is empty. */
   totalCount: number;
   limit: number;
   /** Node-issued offset of this page. */
@@ -397,11 +403,11 @@ export async function requestFlatSqlSyncManifest(
 
 export async function requestFlatSqlPublishedList(
   transport: FlatSqlSyncTransport,
-  query: FlatSqlSyncQuery,
+  query: FlatSqlSyncQuery & FlatSqlPublishedListOptions,
 ): Promise<FlatSqlPublishedList> {
   const response = await transport.dialProtocol(
     query.targetPeerId, FLATSQL_SYNC_LIST_PUBLISHED_PROTOCOL_ID, encodeFlatSqlPublishedListRequest(query), query.candidateAddrs);
-  return decodeFlatSqlPublishedList(response);
+  return decodeFlatSqlPublishedList(response, query);
 }
 
 export async function requestFlatSqlPublishedShard(
@@ -828,8 +834,11 @@ export function decodeFlatSqlSyncManifest(bytes: Uint8Array): FlatSqlSyncManifes
   };
 }
 
-/** Decodes a list-published reply (one $QRP Page of SEGMENT_COLUMNS rows). */
-export function decodeFlatSqlPublishedList(bytes: Uint8Array): FlatSqlPublishedList {
+/** Decodes a list-published reply; legacy rows with no availability retain their behavior. */
+export function decodeFlatSqlPublishedList(
+  bytes: Uint8Array,
+  options: FlatSqlPublishedListOptions = {},
+): FlatSqlPublishedList {
   const q = readOnlyPage(bytes, 'publication list');
   return {
     schema: q.SCHEMA_NAME() ?? '',
@@ -837,7 +846,7 @@ export function decodeFlatSqlPublishedList(bytes: Uint8Array): FlatSqlPublishedL
     limit: q.LIMIT(),
     cursor: q.CURSOR() ?? '',
     nextCursor: q.NEXT_CURSOR() ?? '',
-    publications: decodeFlatSqlSegmentRows(q),
+    publications: decodeFlatSqlSegmentRows(q).filter((row) => options.includeUnavailable || row.availability !== 'unavailable'),
   };
 }
 

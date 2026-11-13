@@ -109,12 +109,7 @@ func TestPublishedAvailability(t *testing.T) {
 	if err := os.Remove(shard); err != nil {
 		t.Fatal(err)
 	}
-	missing := list("unavailable", "shard_missing")
-	if path := os.Getenv("SDN_AVAILABILITY_GOLDEN"); path != "" {
-		if err := os.WriteFile(path, missing, 0644); err != nil {
-			t.Fatal(err)
-		}
-	}
+	list("unavailable", "shard_missing")
 	reply := request("read-shard", syncwire.QRPFields{SchemaName: "OMM.fbs", CID: pub.ShardCID, MaxBytes: 1})
 	q, err := syncwire.ParseQRP(reply)
 	if err != nil {
@@ -135,4 +130,37 @@ func TestPublishedAvailability(t *testing.T) {
 		t.Fatal(err)
 	}
 	list("unavailable", "index_missing")
+
+	// An older, available batch must survive a newer unavailable revision.
+	olderTags := tags
+	olderTags.BatchID = "older"
+	olderRecord := sds.NewOMMBuilder().WithNoradCatID(999998).WithObjectName("Older availability fixture").Build()
+	if _, err := store.StoreWithSourceTags("OMM.fbs", olderRecord, "older-fixture", nil, olderTags); err != nil {
+		t.Fatal(err)
+	}
+	olderExport, err := store.ExportDatasetWindow(filepath.Join(store.DatasetPublicationOutputDir(), "OMM"), storage.IndexedRecordQuery{SchemaName: "OMM.fbs", ProviderID: tags.ProviderID, SourceName: tags.SourceName, BatchID: olderTags.BatchID, Limit: 10, AllowLargeResultSet: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	older := storage.DatasetShardPublication{SchemaName: "OMM.fbs", ProviderID: tags.ProviderID, SourceName: tags.SourceName, BatchID: olderTags.BatchID, QueryProfile: storage.DatasetPublicationQueryProfile, Limit: 10, RecordCount: olderExport.RecordCount, ByteCount: olderExport.ShardBytes, ShardCID: olderExport.ShardCID, IndexCID: olderExport.IndexCID, ShardSHA256: olderExport.ShardSHA256, IndexSHA256: olderExport.IndexSHA256, QuerySHA256: olderExport.QuerySHA256, ResultSHA256: olderExport.ResultSHA256, PublishedAt: pub.PublishedAt.Add(-time.Hour)}
+	if err := store.UpsertDatasetShardPublication(older); err != nil {
+		t.Fatal(err)
+	}
+	data := request("list-published", syncwire.QRPFields{SchemaName: "OMM.fbs", Limit: 10})
+	q, err = syncwire.ParseQRP(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := syncwire.Segments(q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 || rows[0].BatchID != tags.BatchID || rows[0].Availability != "unavailable" || rows[1].BatchID != "older" || rows[1].Availability != "available" || rows[0].PublishedAtMs <= rows[1].PublishedAtMs {
+		t.Fatalf("expected newer unavailable and older available batches: %+v", rows)
+	}
+	if path := os.Getenv("SDN_AVAILABILITY_GOLDEN"); path != "" {
+		if err := os.WriteFile(path, data, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
