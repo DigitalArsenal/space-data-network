@@ -54,6 +54,8 @@ const (
 	KindEngineRebuilding = "engine_rebuilding"
 	// KindUpdateFailed: a pushed update did not install on this box.
 	KindUpdateFailed = "update_failed"
+	// KindBitswapSendStalled: connected demand for held blocks has no send progress.
+	KindBitswapSendStalled = "bitswap_send_stalled"
 )
 
 // Severities. Two levels only: something an operator should look at, and
