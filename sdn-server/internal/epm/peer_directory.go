@@ -2,7 +2,6 @@ package epm
 
 import (
 	"crypto/rand"
-	"encoding/base64"
 	"fmt"
 	"sort"
 	"strings"
@@ -153,11 +152,7 @@ func (d *PeerDirectory) page(owner peer.ID, now time.Time, limit int, cursor str
 	end := min(offset+limit, len(snap.rows))
 	next := ""
 	if end < len(snap.rows) {
-		var token [24]byte
-		if _, err := rand.Read(token[:]); err != nil {
-			return nil, err
-		}
-		next = base64.RawURLEncoding.EncodeToString(token[:])
+		next = rand.Text()
 	}
 	for {
 		page := syncwire.BuildQRP(syncwire.QRPFields{Kind: syncwire.QRPKindPage, ProducerPeerID: d.host.ID().String(), AsOfMs: snap.created.UnixMilli(), NextCursor: next, RecordCount: uint32(end - offset), TotalCount: uint64(len(snap.rows)), Truncated: snap.truncated, Columns: directoryColumns, Rows: snap.rows[offset:end]})
@@ -172,11 +167,7 @@ func (d *PeerDirectory) page(owner peer.ID, now time.Time, limit int, cursor str
 			return nil, fmt.Errorf("directory row exceeds page bound")
 		}
 		if next == "" {
-			var token [24]byte
-			if _, err := rand.Read(token[:]); err != nil {
-				return nil, err
-			}
-			next = base64.RawURLEncoding.EncodeToString(token[:])
+			next = rand.Text()
 		}
 	}
 }
@@ -304,7 +295,7 @@ func publicBrowserAddr(a ma.Multiaddr, id peer.ID) bool {
 		switch c.Protocol().Code {
 		case ma.P_DNS, ma.P_DNS4, ma.P_DNS6:
 			name := strings.ToLower(strings.TrimSuffix(c.Value(), "."))
-			if !strings.Contains(name, ".") || strings.HasSuffix(name, ".local") || strings.HasSuffix(name, ".internal") || strings.HasSuffix(name, ".localhost") {
+			if !strings.Contains(name, ".") || !manet.IsPublicAddr(ma.StringCast("/dns4/"+name)) || strings.HasSuffix(name, ".local") || strings.HasSuffix(name, ".internal") || strings.HasSuffix(name, ".localhost") {
 				valid = false
 			}
 		case ma.P_IP4, ma.P_IP6:
@@ -326,7 +317,7 @@ func publicBrowserAddr(a ma.Multiaddr, id peer.ID) bool {
 			if c.Value() != id.String() {
 				valid = false
 			}
-		case ma.P_CIRCUIT, ma.P_DNSADDR:
+		case ma.P_CIRCUIT, ma.P_DNSADDR, ma.P_IP6ZONE:
 			valid = false
 		}
 		return valid
