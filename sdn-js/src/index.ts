@@ -560,3 +560,4 @@ export type { AuthProvider } from './transport/auth';
 export { tleToOMM } from './format/tle';
 export type { OmmRecord, TleLines } from './format/tle';
 export * from './peer-directory';
+export * from './peer-epm';
