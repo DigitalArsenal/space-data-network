@@ -19,7 +19,8 @@ import (
 )
 
 // One E2E: real identify observations, public projection, snapshot pagination,
-// private-only exclusion and flood refusal over authenticated libp2p streams.
+// private-only exclusion over authenticated libp2p streams. Read-budget refusal,
+// recovery and peer churn are covered by protocol.TestListingReadBudget.
 func TestPublicPeerDirectory(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -132,26 +133,5 @@ func TestPublicPeerDirectory(t *testing.T) {
 	last, _ := syncwire.ParseQRP(second)
 	if string(last.NEXT_CURSOR()) != "" || len(seen) != 2 {
 		t.Fatal("pagination did not finish")
-	}
-	for i := 2; i < directoryReadsPerMinute; i++ {
-		frame, err := request(cursor)
-		if err != nil {
-			t.Fatal(err)
-		}
-		q, _ := syncwire.ParseQRP(frame)
-		if int8(q.KIND()) != syncwire.QRPKindPage {
-			t.Fatalf("early refusal at read %d", i+1)
-		}
-	}
-	flood, err := request(cursor)
-	if err != nil {
-		t.Fatal(err)
-	}
-	refusal, err := syncwire.ParseQRP(flood)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if int8(refusal.KIND()) != syncwire.QRPKindError || string(refusal.ERROR_CODE()) != "rate_limited" {
-		t.Fatal("flood was not refused")
 	}
 }
