@@ -570,3 +570,4 @@ export type { AuthProvider } from './transport/auth';
 // browser harness. Parsing element text is not propagating it, so it stays.
 export { tleToOMM } from './format/tle';
 export type { OmmRecord, TleLines } from './format/tle';
+export * from './peer-directory';
