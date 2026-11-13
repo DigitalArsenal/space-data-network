@@ -48,6 +48,9 @@ type Segment struct {
 	Availability            string
 	AvailabilityReason      string
 	AvailabilityCheckedAtMs int64
+	BatchCompletion         string
+	BatchRevision           string
+	BatchTotalRecords       int64
 }
 
 // Segment ROLE values.
@@ -118,6 +121,9 @@ var segmentColumns = []segmentColumn{
 	strCol("AVAILABILITY", func(s *Segment) *string { return &s.Availability }),
 	strCol("AVAILABILITY_REASON", func(s *Segment) *string { return &s.AvailabilityReason }),
 	intCol("AVAILABILITY_CHECKED_AT_MS", func(s *Segment) *int64 { return &s.AvailabilityCheckedAtMs }),
+	strCol("BATCH_COMPLETION", func(s *Segment) *string { return &s.BatchCompletion }),
+	strCol("BATCH_REVISION", func(s *Segment) *string { return &s.BatchRevision }),
+	intCol("BATCH_TOTAL_RECORDS", func(s *Segment) *int64 { return &s.BatchTotalRecords }),
 }
 
 // SegmentColumns is the COLUMNS descriptor of every segment page.
