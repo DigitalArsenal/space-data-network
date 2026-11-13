@@ -45,7 +45,7 @@ export interface PeerDirectoryTransport {
 export function encodeObservedSDNPeersRequest(query: Pick<ObservedSDNPeersQuery, 'limit' | 'cursor'>): Uint8Array {
   const limit = query.limit ?? 128;
   if (!Number.isInteger(limit) || limit < 1 || limit > 128) throw new Error('Directory limit must be between 1 and 128');
-  if (query.cursor && !/^[A-Za-z0-9_-]{32}$/.test(query.cursor)) throw new Error('Invalid directory cursor');
+  if (query.cursor && !/^[A-Z2-7]{26}$/.test(query.cursor)) throw new Error('Invalid directory cursor');
   const b = new flatbuffers.Builder(128);
   const cursor = query.cursor ? b.createString(query.cursor) : 0;
   QRP.startQRP(b);
@@ -100,7 +100,7 @@ export function decodeObservedSDNPeers(bytes: Uint8Array): ObservedSDNPeersPage 
   const snapshotAtMs = Number(q.AS_OF_MS()), totalCount = Number(q.TOTAL_COUNT());
   const reporterPeerId = q.PRODUCER_PEER_ID() ?? '', nextCursor = q.NEXT_CURSOR() ?? '';
   if (!reporterPeerId || !Number.isSafeInteger(snapshotAtMs) || snapshotAtMs <= 0 || !Number.isSafeInteger(totalCount) || totalCount < peers.length ||
-      (nextCursor && !/^[A-Za-z0-9_-]{32}$/.test(nextCursor))) throw new Error('Invalid directory snapshot');
+      (nextCursor && !/^[A-Z2-7]{26}$/.test(nextCursor))) throw new Error('Invalid directory snapshot');
   return { reporterPeerId, snapshotAtMs, peers, nextCursor, totalCount, truncated: q.TRUNCATED() };
 }
 
