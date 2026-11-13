@@ -21,7 +21,8 @@ import (
 // limits, relay bounds, the NAT watchdog). Kubo's versions of those are
 // switched off in its config (see Config.settings). One thing of Kubo's is
 // always kept: the connection gate it installs, which is ANDed with the
-// node's.
+// node's. Kubo's routing constructor is also kept, so libp2p builds
+// the routed host before the Bitswap stream policy wraps it.
 func hostOption(options []libp2p.Option, gate connmgr.ConnectionGater) kubolibp2p.HostOption {
 	return func(id peer.ID, ps peerstore.Peerstore, kuboOptions ...libp2p.Option) (host.Host, error) {
 		key := ps.PrivKey(id)
@@ -41,7 +42,15 @@ func hostOption(options []libp2p.Option, gate connmgr.ConnectionGater) kubolibp2
 			return nil, fmt.Errorf("kubo: the node's host options carry a connection gate; pass it as Config.Gate")
 		}
 		cfg.ConnectionGater = composeGates(kubo.ConnectionGater, gate)
-		return cfg.NewNode()
+		// Let Kubo's routing callback populate its initialrouting output. If
+		// it is discarded, Kubo wraps our result in RoutedHost afterward,
+		// putting FindPeer outside the Bitswap stream policy.
+		cfg.Routing = kubo.Routing
+		h, err := cfg.NewNode()
+		if err != nil {
+			return nil, err
+		}
+		return &bitswapHost{Host: h}, nil
 	}
 }
 
