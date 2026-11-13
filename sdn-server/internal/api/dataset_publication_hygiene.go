@@ -13,9 +13,9 @@ package api
 //     its current DPM, published through the Kubo RPC (name/publish) — Kubo
 //     itself is untouched, this is the SDN layer calling its API.
 //
-// None of it can fail a publication that already succeeded: the records are
-// exported, pinned, signed and announced by then. A hygiene failure is logged
-// and the next publication of the lane retries it.
+// The series record is the durable completion marker. Its failure is returned
+// to the publisher even though individual shards may already be announced.
+// Retention and pointer maintenance remain independent of that marker.
 
 import (
 	"context"
@@ -135,10 +135,10 @@ func (s *ConcreteDatasetPublicationService) DatasetPublicationUnchanged(ctx cont
 }
 
 // afterPublication records the series, applies retention and queues the IPNS
-// pointer. It never fails the publication.
-func (s *ConcreteDatasetPublicationService) afterPublication(ctx context.Context, req DatasetPublicationRequest, schema string, result *DatasetPublicationResult, carCIDs []string, fingerprint string, startedAt time.Time) {
+// pointer. The publication is complete only once its series record is durable.
+func (s *ConcreteDatasetPublicationService) afterPublication(ctx context.Context, req DatasetPublicationRequest, schema string, result *DatasetPublicationResult, carCIDs []string, fingerprint string, startedAt time.Time) error {
 	if s == nil || s.store == nil || result == nil {
-		return
+		return fmt.Errorf("cannot record publication completion without a store and result")
 	}
 	retention, pointers, sweepAge := s.hygiene.policy()
 	lane := storage.DatasetPublicationLane{SchemaName: schema, ProviderID: req.ProviderID, SourceName: req.SourceName}
@@ -171,7 +171,7 @@ func (s *ConcreteDatasetPublicationService) afterPublication(ctx context.Context
 	series.SeriesID = storage.DatasetPublicationSeriesID(lane, req.BatchID, windows)
 
 	if err := s.store.RecordDatasetPublicationSeries(series, s.providerPeerID); err != nil {
-		log.Warnf("record %s %s/%s publication series: %v", schema, req.ProviderID, req.SourceName, err)
+		return fmt.Errorf("record publication completion: %w", err)
 	} else if keep, snapshots := retention.PolicyFor(schema, req.ProviderID, req.SourceName); keep > 0 {
 		policy := storage.DatasetPublicationRetentionPolicy{KeepSeries: keep, SnapshotBatches: snapshots}
 		if _, err := s.applyPublicationRetention(ctx, lane, policy); err != nil {
@@ -204,6 +204,7 @@ func (s *ConcreteDatasetPublicationService) afterPublication(ctx context.Context
 			Lane:     schema + " " + req.ProviderID + "/" + req.SourceName,
 		})
 	}
+	return nil
 }
 
 // redundantShardGroupCARs lists a lane's verified one-shard CAR bundles in
