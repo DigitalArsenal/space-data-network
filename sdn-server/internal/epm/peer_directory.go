@@ -16,6 +16,7 @@ import (
 	manet "github.com/multiformats/go-multiaddr/net"
 
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
+	"github.com/spacedatanetwork/sdn-server/internal/readbudget"
 	"github.com/spacedatanetwork/sdn-server/internal/syncwire"
 )
 
@@ -28,8 +29,10 @@ const (
 	directorySnapshotBytes  = 2 << 20
 	directorySnapshots      = 16
 	directoryReadsPerMinute = 32
-	directoryAddrCount      = 8
-	directoryProtocolCount  = 16
+	// SOURCES reads at most two pages per pass, ordinarily twice a minute.
+	directoryReadBurst     = 64
+	directoryAddrCount     = 8
+	directoryProtocolCount = 16
 )
 
 // The public projection is an allowlist. In particular it never serializes a
@@ -49,6 +52,7 @@ var directoryColumns = func() []syncwire.QRPColumnField {
 type directorySnapshot struct {
 	owner     peer.ID
 	created   time.Time
+	lastRead  time.Time
 	rows      [][]syncwire.QRPCell
 	truncated bool
 }
@@ -56,24 +60,20 @@ type directoryCursor struct {
 	snapshot *directorySnapshot
 	offset   int
 }
-type directoryQuota struct {
-	since time.Time
-	reads int
-}
 
-// PeerDirectory serves immutable, peer-bound snapshots for two minutes. Global
-// snapshot and quota caps bound memory even when requesters change identities.
+// PeerDirectory serves immutable, peer-bound snapshots for up to two minutes. Global
+// snapshot and quota caps evict old entries when requesters change identities.
 type PeerDirectory struct {
 	host      host.Host
 	registry  *peers.Registry
 	mu        sync.Mutex
 	cursors   map[string]directoryCursor
 	snapshots []*directorySnapshot
-	quotas    map[peer.ID]directoryQuota
+	reads     *readbudget.Budget
 }
 
 func RegisterPeerDirectory(h host.Host, registry *peers.Registry) *PeerDirectory {
-	d := &PeerDirectory{host: h, registry: registry, cursors: make(map[string]directoryCursor), quotas: make(map[peer.ID]directoryQuota)}
+	d := &PeerDirectory{host: h, registry: registry, cursors: make(map[string]directoryCursor), reads: readbudget.New(time.Minute/directoryReadsPerMinute, directoryReadBurst)}
 	h.SetStreamHandler(PeerDirectoryProtocolID, d.handle)
 	return d
 }
@@ -89,22 +89,12 @@ func (d *PeerDirectory) handle(s network.Stream) {
 		}
 	}()
 	_ = s.SetDeadline(time.Now().Add(10 * time.Second))
-	d.mu.Lock()
 	now := time.Now()
-	d.expire(now)
 	owner := s.Conn().RemotePeer()
-	q, known := d.quotas[owner]
-	if (!known && len(d.quotas) >= 1024) || q.reads >= directoryReadsPerMinute {
-		d.mu.Unlock()
-		_, _ = s.Write(syncwire.ErrorFrame(syncwire.QRPStatusBusy, "rate_limited", "Directory read limit reached", 429, time.Minute))
+	if retry := d.reads.Allow(owner); retry > 0 {
+		_, _ = s.Write(syncwire.ErrorFrame(syncwire.QRPStatusBusy, "rate_limited", "Directory read limit reached", 429, retry))
 		return
 	}
-	if !known {
-		q.since = now
-	}
-	q.reads++
-	d.quotas[owner] = q
-	d.mu.Unlock()
 	frame, err := syncwire.ReadFrame(s, 4096)
 	if err != nil {
 		_ = s.Reset()
@@ -145,11 +135,24 @@ func (d *PeerDirectory) page(owner peer.ID, now time.Time, limit int, cursor str
 		snap, offset = c.snapshot, c.offset
 	} else {
 		if len(d.snapshots) >= directorySnapshots {
-			return syncwire.ErrorFrame(syncwire.QRPStatusBusy, "snapshot_limit", "Directory snapshot limit reached", 503, 2*time.Minute), nil
+			oldest := 0
+			for i, candidate := range d.snapshots {
+				if candidate.lastRead.Before(d.snapshots[oldest].lastRead) {
+					oldest = i
+				}
+			}
+			evicted := d.snapshots[oldest]
+			for token, c := range d.cursors {
+				if c.snapshot == evicted {
+					delete(d.cursors, token)
+				}
+			}
+			d.snapshots = append(d.snapshots[:oldest], d.snapshots[oldest+1:]...)
 		}
 		snap = d.project(owner, now)
 		d.snapshots = append(d.snapshots, snap)
 	}
+	snap.lastRead = time.Now()
 	end := min(offset+limit, len(snap.rows))
 	next := ""
 	if end < len(snap.rows) {
@@ -185,11 +188,6 @@ func (d *PeerDirectory) expire(now time.Time) {
 	for token, c := range d.cursors {
 		if now.Sub(c.snapshot.created) >= 2*time.Minute {
 			delete(d.cursors, token)
-		}
-	}
-	for id, q := range d.quotas {
-		if now.Sub(q.since) >= time.Minute {
-			delete(d.quotas, id)
 		}
 	}
 }

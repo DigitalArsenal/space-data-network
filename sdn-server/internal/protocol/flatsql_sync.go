@@ -26,6 +26,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 
 	"github.com/spacedatanetwork/sdn-server/internal/datasync"
+	"github.com/spacedatanetwork/sdn-server/internal/readbudget"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 	"github.com/spacedatanetwork/sdn-server/internal/syncwire"
@@ -46,7 +47,7 @@ type FlatSQLSyncHandler struct {
 	// to the wire-speed probe (NET-02, NET-06). Unset: nobody.
 	readAuthorizer   PeerAuthorizer
 	probes           *wireSpeedProbeBudget
-	publicationReads publicationListBudget
+	publicationReads *readbudget.Budget
 }
 
 // syncRequest is one decoded $QRP request.
@@ -72,7 +73,7 @@ type syncRequest struct {
 // sds.IsPublicReadSchema names, from the node's own datastore. Everything
 // else needs SetPrivateReadAuthorizer.
 func NewFlatSQLSyncHandler(store *storage.FlatSQLStore) *FlatSQLSyncHandler {
-	return &FlatSQLSyncHandler{store: store, probes: newWireSpeedProbeBudget()}
+	return &FlatSQLSyncHandler{store: store, probes: newWireSpeedProbeBudget(), publicationReads: newPublicationListBudget()}
 }
 
 // SetPrivateReadAuthorizer installs the check that admits a peer to private
@@ -161,8 +162,8 @@ func (h *FlatSQLSyncHandler) HandleStream(op string, s network.Stream) {
 	_ = s.SetReadDeadline(time.Now().Add(DefaultReadTimeout))
 	if op == syncwire.OpListPublished {
 		_ = s.SetDeadline(time.Now().Add(10 * time.Second))
-		if !h.publicationReads.allow(streamPeer(s)) {
-			_, _ = s.Write(syncwire.ErrorFrame(syncwire.QRPStatusBusy, "rate_limited", "Publication read limit reached", 429, time.Minute))
+		if retry := h.publicationReads.Allow(streamPeer(s)); retry > 0 {
+			_, _ = s.Write(syncwire.ErrorFrame(syncwire.QRPStatusBusy, "rate_limited", "Publication read limit reached", 429, retry))
 			return
 		}
 	}
