@@ -44,8 +44,9 @@ type FlatSQLSyncHandler struct {
 	// readAuthorizer admits a peer to schemas outside the anonymous read
 	// surface, to other registered datastores, to the datastore listing and
 	// to the wire-speed probe (NET-02, NET-06). Unset: nobody.
-	readAuthorizer PeerAuthorizer
-	probes         *wireSpeedProbeBudget
+	readAuthorizer   PeerAuthorizer
+	probes           *wireSpeedProbeBudget
+	publicationReads publicationListBudget
 }
 
 // syncRequest is one decoded $QRP request.
@@ -158,6 +159,13 @@ func (h *FlatSQLSyncHandler) HandleStream(op string, s network.Stream) {
 	defer s.Close()
 	defer recoverStream("flatsql-sync/"+op, s)
 	_ = s.SetReadDeadline(time.Now().Add(DefaultReadTimeout))
+	if op == syncwire.OpListPublished {
+		_ = s.SetDeadline(time.Now().Add(10 * time.Second))
+		if !h.publicationReads.allow(streamPeer(s)) {
+			_, _ = s.Write(syncwire.ErrorFrame(syncwire.QRPStatusBusy, "rate_limited", "Publication read limit reached", 429, time.Minute))
+			return
+		}
+	}
 
 	req, err := decodeSyncRequest(op, s)
 	if err != nil {
@@ -341,22 +349,21 @@ func (h *FlatSQLSyncHandler) handleListPublished(w io.Writer, req syncRequest) e
 	if req.schema == "" {
 		return fmt.Errorf("published shard schema is required")
 	}
-	publications, err := activeStore.ListDatasetShardPublications(req.publicationQuery())
-	if err != nil {
-		return err
-	}
 	offset := 0
 	if req.cursor != "" {
 		if offset, err = strconv.Atoi(req.cursor); err != nil || offset < 0 {
 			return fmt.Errorf("list-published CURSOR %q is not a node-issued offset", truncateName(req.cursor))
 		}
 	}
-	offset = min(offset, len(publications))
 	limit := req.limit
-	if limit <= 0 || offset+limit > len(publications) {
-		limit = len(publications) - offset
+	if limit <= 0 || limit > publicationListRows {
+		limit = publicationListRows
 	}
-	selected := publications[offset : offset+limit]
+	selected, total, err := activeStore.ListDatasetShardPublicationsPage(req.publicationQuery(), offset, limit)
+	if err != nil {
+		return err
+	}
+	offset = min(offset, total)
 	completion, err := activeStore.DatasetPublicationCompletions(selected)
 	if err != nil {
 		return err
@@ -370,22 +377,25 @@ func (h *FlatSQLSyncHandler) handleListPublished(w io.Writer, req syncRequest) e
 		segs[i].BatchRevision = completion[i].Revision
 		segs[i].BatchTotalRecords = completion[i].TotalRecords
 	}
-	next := ""
-	if offset+limit < len(publications) {
-		next = strconv.Itoa(offset + limit)
+	for {
+		next := ""
+		if offset+len(segs) < total {
+			next = strconv.Itoa(offset + len(segs))
+		}
+		page := syncwire.SegmentPage(syncwire.QRPFields{
+			SchemaName: req.schema, ProviderID: req.providerID, SourceName: req.sourceName, BatchID: req.batchID,
+			Limit: uint32(len(segs)), Cursor: strconv.Itoa(offset), NextCursor: next,
+			TotalCount: uint64(total), GeneratedAtMs: time.Now().UnixMilli(),
+		}, segs)
+		if len(page) <= publicationListBytes {
+			_, err = w.Write(page)
+			return err
+		}
+		if len(segs) <= 1 {
+			return fmt.Errorf("publication metadata exceeds page byte limit")
+		}
+		segs = segs[:len(segs)/2]
 	}
-	_, err = w.Write(syncwire.SegmentPage(syncwire.QRPFields{
-		SchemaName:    req.schema,
-		ProviderID:    req.providerID,
-		SourceName:    req.sourceName,
-		BatchID:       req.batchID,
-		Limit:         uint32(limit),
-		Cursor:        strconv.Itoa(offset),
-		NextCursor:    next,
-		TotalCount:    uint64(len(publications)),
-		GeneratedAtMs: time.Now().UnixMilli(),
-	}, segs))
-	return err
 }
 
 // Availability is a time-qualified local file check, not a transfer or hash
