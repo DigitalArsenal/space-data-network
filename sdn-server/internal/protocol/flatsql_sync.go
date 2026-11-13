@@ -357,11 +357,18 @@ func (h *FlatSQLSyncHandler) handleListPublished(w io.Writer, req syncRequest) e
 		limit = len(publications) - offset
 	}
 	selected := publications[offset : offset+limit]
+	completion, err := activeStore.DatasetPublicationCompletions(selected)
+	if err != nil {
+		return err
+	}
 	segs := make([]syncwire.Segment, len(selected))
 	for i, pub := range selected {
 		segs[i] = syncwire.SegmentFromPublication(pub)
 		segs[i].Availability, segs[i].AvailabilityReason = datasetPublicationAvailability(activeStore, pub)
 		segs[i].AvailabilityCheckedAtMs = time.Now().UnixMilli()
+		segs[i].BatchCompletion = completion[i].State
+		segs[i].BatchRevision = completion[i].Revision
+		segs[i].BatchTotalRecords = completion[i].TotalRecords
 	}
 	next := ""
 	if offset+limit < len(publications) {
