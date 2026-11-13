@@ -51,6 +51,7 @@ export {
 export type {
   FlatSqlSegmentRow,
   FlatSqlPublishedList,
+  FlatSqlPublishedListOptions,
   FlatSqlPublishedShard,
   FlatSqlPublishedShardHeader,
   FlatSqlPublishedShardBatch,
