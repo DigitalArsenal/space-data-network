@@ -249,8 +249,10 @@ export interface FlatSqlSegmentRow {
   availability?: 'available' | 'unavailable';
   availabilityReason?: string;
   availabilityCheckedAtMs?: number;
-  /** Producer completion, bound to batchRevision. Absent for legacy/unrecorded publications:
-   * those retain the existing final-short-shard behavior. Completion does not prove holder availability. */
+  /** Completed producer revision of the requested publication scope, including an explicit record cap.
+   * Group by batchRevision and require contiguous offsets covering batchTotalRecords before loading.
+   * Absent for legacy/unrecorded publications: those retain the final-short-shard heuristic.
+   * Completion does not prove holder availability or the size of the underlying source dataset. */
   batchCompletion?: 'complete';
   batchRevision?: string;
   batchTotalRecords?: number;

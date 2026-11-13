@@ -1,10 +1,16 @@
 package storage
 
-import "strings"
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"time"
+)
 
-// DatasetPublicationCompletion is derived from the existing durable series
-// ledger. An empty State means no authoritative completion record is known;
-// adopted legacy series are never promoted to completed publications.
+// DatasetPublicationCompletion describes one finished producer revision of the
+// requested publication scope, not the size of the underlying source dataset.
+// An empty State means no authoritative completion record is known.
 type DatasetPublicationCompletion struct {
 	State        string
 	Revision     string
@@ -12,52 +18,51 @@ type DatasetPublicationCompletion struct {
 }
 
 // DatasetPublicationCompletions binds each row to the newest completed producer
-// revision that names its exact assets. Completion describes the producer's
-// publication, not whether this holder still has every asset of that revision.
-// No storage schema or historical record is changed.
+// revision naming its exact assets. Completion does not prove holder availability.
+// Existing series/member tables suffice; adopted legacy series remain unknown.
+// Each lookup returns at most one row, never materializing a lane's history.
 func (s *FlatSQLStore) DatasetPublicationCompletions(rows []DatasetShardPublication) ([]DatasetPublicationCompletion, error) {
-	type completed struct {
-		series  DatasetPublicationSeries
-		members map[DatasetPublicationSeriesMember]bool
+	if len(rows) > 1000 {
+		return nil, errors.New("publication completion page is too large")
 	}
-	byLane := make(map[DatasetPublicationLane][]completed)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	out := make([]DatasetPublicationCompletion, len(rows))
 	for i, row := range rows {
 		if row.QueryProfile != DatasetPublicationQueryProfile {
 			continue
 		}
-		lane := DatasetPublicationLane{SchemaName: row.SchemaName, ProviderID: row.ProviderID, SourceName: row.SourceName}
-		all, ok := byLane[lane]
-		if !ok {
-			series, err := s.ListDatasetPublicationSeries(lane)
-			if err != nil {
-				return nil, err
-			}
-			for _, item := range series {
-				if item.SeriesID == "" || strings.HasPrefix(item.SeriesID, "legacy:") || item.RecordCount <= 0 {
-					continue
-				}
-				members := make(map[DatasetPublicationSeriesMember]bool, len(item.Members))
-				for _, member := range item.Members {
-					members[member] = true
-				}
-				all = append(all, completed{item, members})
-			}
-			byLane[lane] = all
+		err := s.db.QueryRowContext(ctx, `
+			SELECT series.series_id, series.record_count
+			FROM sdn_dataset_publication_series AS series
+			WHERE series.schema_name = ? AND series.provider_id = ? AND series.source_name = ?
+			  AND series.batch_id = ? AND series.series_id != '' AND series.series_id NOT LIKE 'legacy:%'
+			  AND series.record_count > 0 AND series.record_count >= ?
+			  AND EXISTS (SELECT 1 FROM sdn_dataset_publication_series_cids AS member
+			    WHERE member.schema_name = series.schema_name AND member.provider_id = series.provider_id
+			      AND member.source_name = series.source_name AND member.series_id = series.series_id
+			      AND member.cid = ? AND member.role = 'shard')
+			  AND EXISTS (SELECT 1 FROM sdn_dataset_publication_series_cids AS member
+			    WHERE member.schema_name = series.schema_name AND member.provider_id = series.provider_id
+			      AND member.source_name = series.source_name AND member.series_id = series.series_id
+			      AND member.cid = ? AND member.role = 'index')
+			  AND (? = '' OR EXISTS (SELECT 1 FROM sdn_dataset_publication_series_cids AS member
+			    WHERE member.schema_name = series.schema_name AND member.provider_id = series.provider_id
+			      AND member.source_name = series.source_name AND member.series_id = series.series_id
+			      AND member.cid = ? AND member.role = 'manifest'))
+			ORDER BY series.published_at DESC, series.rowid DESC LIMIT 1`,
+			row.SchemaName, row.ProviderID, row.SourceName, row.BatchID, int64(row.Offset)+int64(row.RecordCount),
+			row.ShardCID, row.IndexCID, row.ManifestCID, row.ManifestCID,
+		).Scan(&out[i].Revision, &out[i].TotalRecords)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
 		}
-		for _, item := range all {
-			if item.series.BatchID != row.BatchID || item.series.RecordCount < row.RecordCount {
-				continue
-			}
-			if !item.members[DatasetPublicationSeriesMember{CID: row.ShardCID, Role: PinLedgerRoleShard}] || !item.members[DatasetPublicationSeriesMember{CID: row.IndexCID, Role: PinLedgerRoleIndex}] {
-				continue
-			}
-			if row.ManifestCID != "" && !item.members[DatasetPublicationSeriesMember{CID: row.ManifestCID, Role: PinLedgerRoleManifest}] {
-				continue
-			}
-			out[i] = DatasetPublicationCompletion{State: "complete", Revision: item.series.SeriesID, TotalRecords: int64(item.series.RecordCount)}
-			break
+		if err != nil {
+			return nil, fmt.Errorf("read publication completion: %w", err)
 		}
+		out[i].State = "complete"
 	}
 	return out, nil
 }

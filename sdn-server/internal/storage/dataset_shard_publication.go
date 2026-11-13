@@ -456,12 +456,26 @@ func (s *FlatSQLStore) DatasetPublicationOutputDir() string {
 }
 
 func (s *FlatSQLStore) ListDatasetShardPublications(query DatasetShardPublicationQuery) ([]DatasetShardPublication, error) {
+	publications, _, err := s.listDatasetShardPublications(query, 0, 0)
+	return publications, err
+}
+
+// ListDatasetShardPublicationsPage bounds the public listing's materialized rows.
+// The count and page are read under the same store lock, in the existing order.
+func (s *FlatSQLStore) ListDatasetShardPublicationsPage(query DatasetShardPublicationQuery, offset, limit int) ([]DatasetShardPublication, int, error) {
+	if offset < 0 || limit <= 0 || limit > 1000 {
+		return nil, 0, errors.New("invalid publication page bounds")
+	}
+	return s.listDatasetShardPublications(query, offset, limit)
+}
+
+func (s *FlatSQLStore) listDatasetShardPublications(query DatasetShardPublicationQuery, pageOffset, pageLimit int) ([]DatasetShardPublication, int, error) {
 	query = normalizeDatasetShardPublicationQuery(query)
 	if query.SchemaName == "" {
-		return nil, errors.New("schema name is required")
+		return nil, 0, errors.New("schema name is required")
 	}
 	if query.QueryProfile == "" {
-		return nil, errors.New("query profile is required")
+		return nil, 0, errors.New("query profile is required")
 	}
 
 	where := []string{`schema_name = ?`, `query_profile = ?`}
@@ -488,11 +502,20 @@ func (s *FlatSQLStore) ListDatasetShardPublications(query DatasetShardPublicatio
 	}
 
 	if err := s.recoverDatasetShardEngineIfPoisoned(); err != nil {
-		return nil, fmt.Errorf("list dataset shard publications: %w", err)
+		return nil, 0, fmt.Errorf("list dataset shard publications: %w", err)
 	}
 
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	total := 0
+	pageSQL := ""
+	if pageLimit > 0 {
+		if err := s.db.QueryRow(`SELECT COUNT(*) FROM sdn_dataset_shard_publications WHERE `+strings.Join(where, " AND "), args...).Scan(&total); err != nil {
+			return nil, 0, fmt.Errorf("count dataset shard publications: %w", err)
+		}
+		pageSQL = ` LIMIT ? OFFSET ?`
+		args = append(args, pageLimit, min(pageOffset, total))
+	}
 	rows, err := s.db.Query(`
 		SELECT schema_name, provider_id, source_name, batch_id, query_profile,
 		       window_offset, window_limit, record_count, byte_count,
@@ -502,9 +525,9 @@ func (s *FlatSQLStore) ListDatasetShardPublications(query DatasetShardPublicatio
 		FROM sdn_dataset_shard_publications
 		WHERE `+strings.Join(where, " AND ")+`
 		ORDER BY feed_sequence ASC, window_offset ASC, published_at DESC
-	`, args...)
+	`+pageSQL, args...)
 	if err != nil {
-		return nil, fmt.Errorf("list dataset shard publications: %w", err)
+		return nil, 0, fmt.Errorf("list dataset shard publications: %w", err)
 	}
 	defer rows.Close()
 
@@ -512,14 +535,14 @@ func (s *FlatSQLStore) ListDatasetShardPublications(query DatasetShardPublicatio
 	for rows.Next() {
 		pub, err := scanDatasetShardPublication(rows)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		publications = append(publications, pub)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("list dataset shard publications rows: %w", err)
+		return nil, 0, fmt.Errorf("list dataset shard publications rows: %w", err)
 	}
-	return publications, nil
+	return publications, total, nil
 }
 
 // ListDatasetShardPublicationsForProfile lists EVERY publication row in a query
