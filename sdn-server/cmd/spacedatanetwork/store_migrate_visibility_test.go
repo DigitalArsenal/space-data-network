@@ -4,8 +4,6 @@ import (
 	"context"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format4"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format4/marker"
-	"os"
-	"path/filepath"
 	"testing"
 )
 
@@ -19,11 +17,7 @@ func TestMigrate4RegistrationKeepsBoundedLayout(t *testing.T) {
 	if spec.UnlimitedVisibility || spec.A18Bound == 0 {
 		t.Fatal("migration must require a separate explicit opt-in")
 	}
-	cache := os.Getenv("PARTB_AOT_CACHE")
-	if cache == "" {
-		cache = t.TempDir()
-	}
-	m := migrator4{root: root, rep: &migrate4Report{}, opt: migrate4Options{CompileOnMiss: true, AOTCacheDir: filepath.Join(cache, "missing-capability")},
+	m := migrator4{root: root, rep: &migrate4Report{}, opt: migrate4Options{CompileOnMiss: true, AOTCacheDir: t.TempDir()},
 		schemas: []string{"OCM.fbs"}, specs: map[string]format4.TypeSpec{"OCM.fbs": spec}}
 	for _, mode := range []format4.CreateMode{format4.CreateFresh, format4.OpenExisting} {
 		if err := m.openTarget(context.Background(), mode); err != nil {
