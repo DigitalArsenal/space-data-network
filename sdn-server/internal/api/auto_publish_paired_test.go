@@ -19,8 +19,8 @@ import (
 
 func pairedRules() []config.AutoPublishLane {
 	return []config.AutoPublishLane{
-		{PairedPublication: true, Schema: "CAT.fbs", ProviderID: "synthetic-node", SourceName: "catalog-index", MinInterval: time.Millisecond},
-		{Schema: "CAT.fbs", ProviderID: "synthetic-node", SourceName: "catalog-index", PublishScope: "source"},
+		{Schema: "CAT.fbs", ProviderID: "synthetic-node", SourceName: "catalog-index", MinInterval: time.Millisecond},
+		{Schema: "CAT.fbs", ProviderID: "synthetic-node", SourceName: "catalog-index", PublishScope: "source", PairedPublication: true},
 	}
 }
 func pairedObservation(batch string) IngestedBatch {
@@ -387,6 +387,7 @@ func TestPairedPublicationTwoRulesRequireOptIn(t *testing.T) {
 	for _, sourceFirst := range []bool{false, true} {
 		rules := pairedRules()
 		rules[0].PairedPublication = false
+		rules[1].PairedPublication = false
 		if sourceFirst {
 			rules[0], rules[1] = rules[1], rules[0]
 		}

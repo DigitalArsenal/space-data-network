@@ -86,6 +86,12 @@ func (p *AutoPublisher) wakePublications() {
 func (p *AutoPublisher) observePairedBatch(rule config.AutoPublishLane, schema, provider, source, batch string, observed bool) {
 	req := DatasetPublicationRequest{Schema: schema, ProviderID: provider, SourceName: source, BatchID: batch, MaxShardBytes: rule.MaxShardBytes}
 	key := autoPublishBatchKey(req)
+	durableOrder := uint64(0)
+	if ordered, ok := p.service.(interface {
+		PublicationBatchOrder(DatasetPublicationRequest) uint64
+	}); ok {
+		durableOrder = ordered.PublicationBatchOrder(req)
+	}
 	p.mu.Lock()
 	state := p.pairedPending[key]
 	if state == nil {
@@ -96,10 +102,20 @@ func (p *AutoPublisher) observePairedBatch(rule config.AutoPublishLane, schema, 
 			return
 		}
 		p.pairedSequence++
+		if durableOrder > p.pairedSequence {
+			p.pairedSequence = durableOrder
+		}
 		state = &pairedBatchPublication{order: p.pairedSequence, request: req, rule: rule, due: p.now().Add(rule.Settle)}
 		p.pairedPending[key] = state
 	} else if observed && rule.Settle > 0 {
 		state.due = p.now().Add(rule.Settle)
+	}
+	if durableOrder > 0 {
+		state.order = durableOrder
+	}
+	if observed && state.inFlight {
+		p.pairedSequence++
+		state.order = p.pairedSequence
 	}
 	if observed {
 		state.generation++
@@ -309,4 +325,13 @@ func (s *ConcreteDatasetPublicationService) LastSourcePublication(ctx context.Co
 		return time.Time{}, err
 	}
 	return series.PublishedAt, nil
+}
+
+func (s *ConcreteDatasetPublicationService) PublicationBatchOrder(req DatasetPublicationRequest) uint64 {
+	for _, b := range s.store.RetainedPublicationBatches() {
+		if b.Schema == req.Schema && b.Provider == req.ProviderID && b.Source == req.SourceName && b.Batch == req.BatchID {
+			return b.Sequence
+		}
+	}
+	return 0
 }

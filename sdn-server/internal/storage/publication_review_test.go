@@ -44,7 +44,12 @@ func TestPublicationReviewRefusalAndMarkerRecovery(t *testing.T) {
 		t.Fatalf("export includes refused record: %d", n)
 	}
 	b.d.engine.Store(api)
-	s.publicationFault = func(stage string) error { return errors.New("synthetic acknowledgement I/O") }
+	s.publicationFault = func(stage string) error {
+		if stage == "applied" {
+			return errors.New("synthetic acknowledgement I/O")
+		}
+		return nil
+	}
 	_, err = b.storeBatch("CAT.fbs", rows[:1], "synthetic", nil, &SourceTags{ProviderID: "synthetic", SourceName: "index", BatchID: "marker"})
 	if err == nil {
 		t.Fatal("marker failure hidden")

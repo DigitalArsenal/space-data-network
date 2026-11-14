@@ -26,7 +26,7 @@ func TestCatalogPublicationContract(t *testing.T) {
 	pairedCommit(t, store, "changed-two", 900002)
 	service := catalogNoopPublication{&ConcreteDatasetPublicationService{store: store}}
 
-	batch := config.AutoPublishLane{Schema: "CAT.fbs", ProviderID: "synthetic-node", SourceName: "catalog-index", PublishScope: "batch", MinInterval: 5 * time.Minute}
+	batch := config.AutoPublishLane{PairedPublication: true, Schema: "CAT.fbs", ProviderID: "synthetic-node", SourceName: "catalog-index", PublishScope: "batch", MinInterval: 5 * time.Minute}
 	snapshot := batch
 	snapshot.PublishScope = "source"
 	snapshot.MinInterval = 24 * time.Hour

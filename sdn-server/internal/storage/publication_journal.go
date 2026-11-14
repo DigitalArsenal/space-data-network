@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/spacedatanetwork/sdn-server/internal/encfield"
@@ -186,6 +187,9 @@ func (b format4Backend) putRetained(op, schema string, records [][]byte, peer st
 		seq = s.publicationEntries[n-1].Sequence + 1
 	}
 	e := publicationEntry{Sequence: seq, Schema: schema, Tags: tags, Peer: peer, Signature: sig, Identity: opt.identity, OwnTS: opt.ownTS}
+	if err := s.publicationStep("prepare"); err != nil {
+		return nil, nil, err
+	}
 	temp, err := os.MkdirTemp(s.publicationDir(), ".prepare-")
 	if err != nil {
 		return nil, nil, err
@@ -198,6 +202,9 @@ func (b format4Backend) putRetained(op, schema string, records [][]byte, peer st
 	digest := sha256.New()
 	writer := io.MultiWriter(f, digest)
 	for _, data := range records {
+		if err = s.publicationStep("write"); err != nil {
+			break
+		}
 		if uint64(len(data)) > uint64(^uint32(0)) {
 			err = errors.New("publication record exceeds frame limit")
 			break
@@ -210,7 +217,10 @@ func (b format4Backend) putRetained(op, schema string, records [][]byte, peer st
 		}
 	}
 	if err == nil {
-		err = f.Sync()
+		err = s.publicationStep("data-sync")
+		if err == nil {
+			err = f.Sync()
+		}
 	}
 	closeErr := f.Close()
 	if err == nil {
@@ -224,7 +234,16 @@ func (b format4Backend) putRetained(op, schema string, records [][]byte, peer st
 	if err != nil {
 		return nil, nil, err
 	}
+	if err = s.publicationStep("metadata"); err != nil {
+		return nil, nil, err
+	}
+	if err = publicationAtomicFile(filepath.Join(temp, "source.json"), raw); err != nil {
+		return nil, nil, err
+	}
 	if err = publicationAtomicFile(filepath.Join(temp, "entry.json"), raw); err != nil {
+		return nil, nil, err
+	}
+	if err = s.publicationStep("rename"); err != nil {
 		return nil, nil, err
 	}
 	if err = os.Rename(temp, s.publicationEntryDir(seq)); err != nil {
@@ -233,14 +252,23 @@ func (b format4Backend) putRetained(op, schema string, records [][]byte, peer st
 	s.publicationMu.Lock()
 	s.publicationEntries = append(s.publicationEntries, e)
 	s.publicationMu.Unlock()
-	if err = publicationSyncDir(s.publicationDir()); err != nil {
+	err = s.publicationStep("directory-sync")
+	if err == nil {
+		err = publicationSyncDir(s.publicationDir())
+	}
+	if err != nil {
 		s.pausePublication(e, err)
 		return nil, nil, err
 	}
 	if s.publicationHook != nil {
 		s.publicationHook("prepared")
 	}
-	cids, out, writeErr := b.f4PutDirect(op, schema, records, peer, sig, &tags, opt)
+	var cids []string
+	var out []format4.Outcome
+	writeErr := s.publicationStep("engine")
+	if writeErr == nil {
+		cids, out, writeErr = b.f4PutDirect(op, schema, records, peer, sig, &tags, opt)
+	}
 	if writeErr == nil && s.publicationHook != nil {
 		s.publicationHook("stored")
 	}
@@ -371,6 +399,19 @@ func (s *FlatSQLStore) recoverPublicationJournal() error {
 			err = errors.New("invalid publication journal sequence")
 		}
 		if err != nil {
+			damaged := err
+			scopeRaw, scopeErr := os.ReadFile(filepath.Join(s.publicationDir(), dir.Name(), "source.json"))
+			seq, seqErr := strconv.ParseUint(dir.Name(), 10, 64)
+			if scopeErr == nil && json.Unmarshal(scopeRaw, &e) == nil && seqErr == nil {
+				e.Sequence = seq
+				e.Applied = false
+				s.publicationEntries = append(s.publicationEntries, e)
+				s.pausePublication(e, damaged)
+				continue
+			}
+			if seqErr == nil {
+				s.publicationEntries = append(s.publicationEntries, publicationEntry{Sequence: seq})
+			}
 			// Scope cannot be trusted; isolate configured publication sources while
 			// leaving ordinary storage and the node available for repair.
 			for _, x := range s.publicationSources {
@@ -694,4 +735,11 @@ func (s *FlatSQLStore) PublicationBatchComplete(schema, provider, source, batch 
 		}
 	}
 	return found
+}
+
+func (s *FlatSQLStore) publicationStep(name string) error {
+	if s.publicationFault != nil {
+		return s.publicationFault(name)
+	}
+	return nil
 }

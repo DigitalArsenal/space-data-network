@@ -449,19 +449,31 @@ func TestCatalogSnapshotConcurrentReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	done := make(chan struct{})
-	go func() { defer close(done); catalogPutDay(t, s, 1, "OCM", "CAT") }()
-	c := newCatalogConsumer()
-	for _, p := range []*storage.PublicationSelection{snap.Products, snap.Index} {
-		for offset := 0; offset < 32; offset += 7 {
-			ex, err := s.ExportDatasetWindow(t.TempDir(), storage.IndexedRecordQuery{SchemaName: p.Schema, ProviderID: p.Provider, SourceName: p.Source, Selection: p, Offset: offset, Limit: 7})
-			if err != nil {
-				t.Fatal(err)
+	dir := t.TempDir()
+	done := make(chan error, 1)
+	exports := make(chan *storage.DatasetExport, 16)
+	go func() {
+		defer close(exports)
+		for _, p := range []*storage.PublicationSelection{snap.Products, snap.Index} {
+			for offset := 0; offset < 32; offset += 7 {
+				ex, err := s.ExportDatasetWindow(dir, storage.IndexedRecordQuery{SchemaName: p.Schema, ProviderID: p.Provider, SourceName: p.Source, Selection: p, Offset: offset, Limit: 7})
+				if err != nil {
+					done <- err
+					return
+				}
+				exports <- ex
 			}
-			c.apply(t, ex)
 		}
+		done <- nil
+	}()
+	catalogPutDay(t, s, 1, "OCM", "CAT")
+	c := newCatalogConsumer()
+	for ex := range exports {
+		c.apply(t, ex)
 	}
-	<-done
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
 	c.validate(t)
 	if len(c.selected) != 32 || len(c.products) != 32 {
 		t.Fatal("selection changed during export")
