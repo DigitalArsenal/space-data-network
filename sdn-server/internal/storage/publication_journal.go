@@ -392,7 +392,7 @@ func (s *FlatSQLStore) PublicationRecoveryStatus() map[string]string {
 	}
 	for _, e := range s.publicationEntries {
 		for kind, f := range map[string]publicationFailure{"generation": e.GenerationFailure, "batch": e.BatchFailure} {
-			if f.Attempts >= 3 {
+			if !e.Published && f.Attempts >= 3 {
 				out[e.Schema+"/"+e.Tags.ProviderID+"/"+e.Tags.SourceName+"/"+e.Tags.BatchID+"/"+kind] = f.Reason
 			}
 		}
@@ -810,6 +810,7 @@ func (s *FlatSQLStore) RetryPublicationRecovery() {
 			e.Published = publishedErr == nil
 			_, generationErr := os.Stat(filepath.Join(s.publicationEntryDir(e.Sequence), "generation"))
 			e.Generation = generationErr == nil
+			s.loadPublicationFailures(&e)
 			err = s.markPublicationApplied(e)
 		}
 		if err != nil {

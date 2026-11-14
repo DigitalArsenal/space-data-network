@@ -395,3 +395,66 @@ func TestPublicationShardCopyFallback(t *testing.T) {
 		t.Fatal("existing bytes overwritten")
 	}
 }
+
+func TestPublicationBatchQuarantineAndRequeue(t *testing.T) {
+	t.Setenv("SDN_STORE_FORMAT", "4")
+	dir := t.TempDir()
+	s := journalTestStore(t, dir)
+	if err := s.ConfigurePublicationSources([]PublicationSource{{Schema: "CAT.fbs", Provider: "synthetic", Source: "index"}}); err != nil {
+		t.Fatal(err)
+	}
+	journalTestPut(t, s, "bad")
+	journalTestPut(t, s, "later")
+	for i := 1; i <= 3; i++ {
+		quarantined, err := s.RecordPublicationFailure("CAT.fbs", "synthetic", "index", "bad", errors.New("inert transport failure"))
+		if err != nil || quarantined != (i == 3) {
+			t.Fatalf("attempt %d: %v %v", i, quarantined, err)
+		}
+	}
+	s.Close()
+	s = journalTestStore(t, dir)
+	defer s.Close()
+	pending := s.RetainedPublicationBatches()
+	if len(pending) != 1 || pending[0].Batch != "later" {
+		t.Fatal("quarantined batch blocked source")
+	}
+	if err := s.ManagePublicationBatch("CAT.fbs", "synthetic", "index", "bad", "requeue"); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.RetainedPublicationBatches()) != 2 {
+		t.Fatal("requeue lost payload")
+	}
+}
+func TestPublicationIndependentRecoveryCauses(t *testing.T) {
+	t.Setenv("SDN_STORE_FORMAT", "4")
+	dir := t.TempDir()
+	s := journalTestStore(t, dir)
+	if err := s.ConfigurePublicationSources([]PublicationSource{{Schema: "CAT.fbs", Provider: "synthetic", Source: "index"}}); err != nil {
+		t.Fatal(err)
+	}
+	journalTestPut(t, s, "one")
+	journalTestPut(t, s, "two")
+	paths := []string{filepath.Join(s.publicationEntryDir(1), "records.sds"), filepath.Join(s.publicationEntryDir(2), "records.sds")}
+	s.Close()
+	for _, path := range paths {
+		if err := os.Rename(path, path+".unavailable"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s = journalTestStore(t, dir)
+	defer s.Close()
+	if err := os.Rename(paths[0]+".unavailable", paths[0]); err != nil {
+		t.Fatal(err)
+	}
+	s.RetryPublicationRecovery()
+	if len(s.PublicationRecoveryStatus()) == 0 {
+		t.Fatal("first repair cleared second cause")
+	}
+	if err := os.Rename(paths[1]+".unavailable", paths[1]); err != nil {
+		t.Fatal(err)
+	}
+	s.RetryPublicationRecovery()
+	if len(s.PublicationRecoveryStatus()) != 0 {
+		t.Fatal("complete repair did not clear pause")
+	}
+}
