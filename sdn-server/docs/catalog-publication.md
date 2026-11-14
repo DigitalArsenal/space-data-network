@@ -4,7 +4,8 @@ Retention adds a synchronous SDS copy before the storage engine commits. Disk
 use grows with history; automatic journal reclamation is absent. Retained writes
 serialize per store. Concurrent calls with the same source, batch, peer, signature,
 and write options coalesce while waiting for that serialization, up to 4,096
-records per group. Every caller waits for the shared durable outcome. Separately
+records across calls. A larger single batch retains one intent. Every caller
+waits for the shared durable outcome. Separately
 acknowledged sequential writes require individual transactions; producers reduce
 that cost with `StoreBatchWithSourceTags`, which journals the entire call together. Identical source-tag repeats do not
 journal again. Changed batch identities or export metadata require retention.
@@ -14,8 +15,8 @@ the shard writer. Readers copy the applied-entry index under a short lock;
 reference validation, hashing, and export run outside the ingestion lock. Limits
 are 100,000 journal entries, 200,000 indexed records, 128 MiB of accounted
 reference metadata, 100,000 records per selection, 64 MiB of accounted metadata
-per shard index, and 16 MiB per payload. Admission refuses work exceeding these
-limits before replacing live records. These are storage/export bounds, not a
+per shard index, and 16 MiB per payload. Ingestion limits are checked before replacing live records. Selection and
+shard-index limits refuse export before publication. These are storage/export bounds, not a
 bound on the entire node's heap. A synthetic 100,000-product selection test
 checks retained heap growth against 128 MiB. Partition sources and drain/retire
 retained history before exhausting capacity.
@@ -125,7 +126,7 @@ an empty product list to communicate product removal in its ordinary update stre
 To stop retention, drain every changed batch, remove `retain_for_publication`,
 `paired_publication`, `catalog_product_source`, and exclusion settings for the
 participating sources, and set `stop_publication_retention: true` on their exact
-source rules. Restart. Pending or failed entries refuse retirement; completed
+source rules. Restart. Pending or unapplied entries refuse retirement; completed
 sources return to ordinary storage/export behavior. Removing a rule by itself
 does not disable durable retention. If publication is disabled while durable
 retention remains active, startup emits an explicit warning. After every source
