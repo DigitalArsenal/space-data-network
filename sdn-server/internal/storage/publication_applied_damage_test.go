@@ -198,3 +198,87 @@ func TestPublicationAppliedProductDamageRefusesClosure(t *testing.T) {
 		})
 	}
 }
+
+func TestPublicationProductClosureRejectsMissingReferences(t *testing.T) {
+	t.Setenv("SDN_STORE_FORMAT", "4")
+	s, _, _ := appliedDamageCatalog(t, true)
+	defer s.Close()
+	v := s.publicationView()
+	defer v.publicationRelease()
+	// Model the old recovery state: an applied product chunk has no references
+	// and no source pause. Bypass the new readiness guard to test closure itself.
+	v.publicationFailures = nil
+	v.publicationEntries[0].Refs = nil
+	v.publicationEntries[0].ReadReady = true
+	snap, err := v.captureCatalogLocked(v.publicationSources[0], v.publicationCutoffLocked())
+	if err == nil {
+		snap.Close()
+		t.Fatal("missing product escaped closure validation")
+	}
+	if !strings.Contains(err.Error(), "unresolved product reference") {
+		t.Fatalf("wrong control: %v", err)
+	}
+}
+
+func TestPublicationAppliedRuntimeDamageAndTerminalDiscard(t *testing.T) {
+	t.Setenv("SDN_STORE_FORMAT", "4")
+	s, dir, _ := appliedDamageCatalog(t, false)
+	defer func() { s.Close() }()
+	entry := s.publicationEntries[len(s.publicationEntries)-1]
+	if !entry.Generation {
+		t.Fatal("fixture is not a terminal chunk")
+	}
+	path := filepath.Join(s.publicationEntryDir(entry.Sequence), "records.sds")
+	original, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	damageAppliedFile(t, path, "checksum", original)
+	p, err := s.SelectPublication("CAT.fbs", "synthetic", "index", entry.Tags.BatchID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, readErr := p.Record(0)
+	p.Close()
+	if !IsPublicationContentError(readErr) {
+		t.Fatal("runtime corruption not detected", readErr)
+	}
+	if _, err := s.RecordPublicationFailure("CAT.fbs", "synthetic", "index", entry.Tags.BatchID, readErr); err != nil {
+		t.Fatal(err)
+	}
+	if snap, err := s.CaptureCatalogSnapshot("synthetic", "index", 0); err == nil {
+		snap.Close()
+		t.Fatal("runtime corruption did not pause source")
+	}
+	if err := s.ManagePublicationBatch("CAT.fbs", "synthetic", "index", entry.Tags.BatchID, "requeue"); err != nil {
+		t.Fatal(err)
+	}
+	s.RetryPublicationRecovery()
+	if snap, err := s.CaptureCatalogSnapshot("synthetic", "index", 0); err == nil {
+		snap.Close()
+		t.Fatal("requeue bypassed corrupt bytes")
+	}
+	// Old quarantine receipts cannot delay recovery of an applied stream.
+	if err := s.quarantineUnreadablePublication(entry, readErr); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, original, 0600); err != nil {
+		t.Fatal(err)
+	}
+	s.RetryPublicationRecovery()
+	requireAppliedSnapshotCount(t, s, 2)
+	damageAppliedFile(t, path, "missing", original)
+	s.Close()
+	s = journalTestStore(t, dir)
+	if err := s.ManagePublicationBatch("CAT.fbs", "synthetic", "index", entry.Tags.BatchID, "discard"); err != nil {
+		t.Fatal(err)
+	}
+	s.RetryPublicationRecovery()
+	requireAppliedSnapshotCount(t, s, 1)
+	if s.latestCatalogGeneration(s.publicationSources[0]) != entry.Sequence {
+		t.Fatal("terminal discard changed generation cutoff")
+	}
+	s.Close()
+	s = journalTestStore(t, dir)
+	requireAppliedSnapshotCount(t, s, 1)
+}

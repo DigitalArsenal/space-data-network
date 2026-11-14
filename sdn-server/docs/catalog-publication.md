@@ -235,6 +235,25 @@ An operator can discard or requeue any unfinished batch, including one with no
 recorded failure. A durable discard of an unapplied intent prevents its replay.
 Requeue also resets terminal-generation failures. Quarantined bytes count against capacity.
 
+An applied entry with missing, truncated, or checksum-failing retained bytes pauses
+publication for its source. Complete snapshots and batches refuse unreadable
+applied entries in their selection, including older chunks that hold winning
+records. Paired snapshots also refuse unreadable product entries; the product
+closure check independently rejects unresolved references. Other sources and
+node startup remain available. The last announced good snapshot remains the
+latest; no incomplete replacement is exported. Recovery status identifies the
+entry sequence and batch. Restoring the original bytes resumes publication on
+the recovery pass, without waiting for the six-hour quarantine timer.
+
+Only never-applied unreadable entries enter quarantine without a source pause.
+An operator can explicitly discard an unreadable applied entry even if its batch
+was published. Discard excludes its records from publication; objects whose
+winning record it held are missing until the producer writes them again. A
+durable per-source status notice records this consequence after restart and
+payload reclamation. That acknowledgement remains visible after replacement
+records arrive. A product discard does not waive the index's product closure
+check: the producer must repair or replace references before a snapshot succeeds.
+
 Paired generation admission reserves both product and index space before its
 first product transaction. Products still precede index chunks, and the final
 index batch retains its `:complete` suffix. Publication of either side waits
