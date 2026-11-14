@@ -22,6 +22,7 @@ type sourcePublicationState struct {
 	nextAttempt time.Time
 	attempts    int
 	retrying    bool
+	checkpoint  bool
 	periodic    bool
 }
 
@@ -47,18 +48,7 @@ func (p *AutoPublisher) sourceStateLocked(lane config.AutoPublishLane) *sourcePu
 		interval: interval,
 		periodic: p.isPairedSource(key.schema, key.provider, key.source),
 	}
-	if state.periodic {
-		if checkpoint, ok := p.service.(interface {
-			LastSourcePublication(context.Context, DatasetPublicationRequest) (time.Time, error)
-		}); ok {
-			at, err := checkpoint.LastSourcePublication(context.Background(), state.request)
-			if err != nil {
-				log.Warnf("source publication checkpoint: %v", err)
-			} else if !at.IsZero() {
-				state.nextAttempt = at.Add(interval)
-			}
-		}
-	}
+
 	p.sources[key] = state
 	return state
 }
@@ -111,6 +101,7 @@ func (p *AutoPublisher) sourcePublicationDelay() (time.Duration, bool) {
 }
 
 func (p *AutoPublisher) publishReadySource(ctx context.Context) {
+	p.loadSourceCheckpoints(ctx)
 	p.mu.Lock()
 	now := p.now()
 	var selected *sourcePublicationState
@@ -176,5 +167,39 @@ func (p *AutoPublisher) publishReadySource(ctx context.Context) {
 	}
 	if p.onPublished != nil {
 		p.onPublished(req, result, err)
+	}
+}
+
+func (p *AutoPublisher) loadSourceCheckpoints(ctx context.Context) {
+	checkpoint, ok := p.service.(interface {
+		LastSourcePublication(context.Context, DatasetPublicationRequest) (time.Time, error)
+	})
+	if !ok {
+		return
+	}
+	p.mu.Lock()
+	var states []*sourcePublicationState
+	for _, state := range p.sources {
+		if state.periodic && !state.checkpoint {
+			state.checkpoint = true
+			states = append(states, state)
+		}
+	}
+	p.mu.Unlock()
+	for _, state := range states {
+		runCtx, cancel := context.WithTimeout(ctx, autoPublishTimeout)
+		at, err := checkpoint.LastSourcePublication(runCtx, state.request)
+		cancel()
+		p.mu.Lock()
+		if err != nil {
+			state.checkpoint = false
+			state.nextAttempt = p.now().Add(p.retryBackoff(1))
+		} else if !at.IsZero() {
+			state.nextAttempt = at.Add(state.interval)
+		}
+		p.mu.Unlock()
+		if err != nil {
+			log.Warnf("source publication checkpoint: %v", err)
+		}
 	}
 }

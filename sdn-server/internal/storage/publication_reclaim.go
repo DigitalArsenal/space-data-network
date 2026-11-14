@@ -227,6 +227,7 @@ func (s *FlatSQLStore) reclaimPublicationLocked() error {
 		// Remove references before a caller can acquire a new pin.
 		for i, old := range s.publicationEntries {
 			if old.Sequence == e.Sequence {
+				s.indexPublicationTags(old, -1)
 				s.publicationEntries = append(s.publicationEntries[:i], s.publicationEntries[i+1:]...)
 				break
 			}

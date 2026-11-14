@@ -333,7 +333,7 @@ func (s *FlatSQLStore) retryCatalogGenerationsLocked() {
 	defer v.publicationRelease()
 	for _, e := range v.publicationEntries {
 		_, paired := v.catalogSource(e.Schema, e.Tags.ProviderID, e.Tags.SourceName)
-		if paired && e.Applied && !e.Generation && e.GenerationFailure.Attempts < 3 && e.Schema == "CAT.fbs" && strings.HasSuffix(e.Tags.BatchID, ":complete") {
+		if paired && e.Applied && !e.Published && !e.Generation && e.GenerationFailure.Attempts < 3 && e.Schema == "CAT.fbs" && strings.HasSuffix(e.Tags.BatchID, ":complete") {
 			if _, err := s.completeCatalogGenerationAtLocked(e.Tags.ProviderID, e.Tags.SourceName, e.Sequence); err != nil {
 				log.Warnf("catalog generation remains incomplete: %v", err)
 			}

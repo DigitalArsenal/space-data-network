@@ -111,16 +111,7 @@ func (s *FlatSQLStore) publicationTagAlreadyRetained(schema, cid string, tags So
 	if s.publicationFailures[publicationSourceKey{schema, tags.ProviderID, tags.SourceName}] != nil {
 		return false
 	}
-	for _, e := range s.publicationEntries {
-		if e.Applied && e.Schema == schema && e.Tags == tags {
-			for _, r := range e.Refs {
-				if r.CID == cid {
-					return true
-				}
-			}
-		}
-	}
-	return false
+	return s.publicationTags[publicationTagKey{schema, cid, tags}] > 0
 }
 
 func publicationReferenceBytes(r publicationRecordRef) int64 {
@@ -142,4 +133,25 @@ func publicationIdentity(schema string, data []byte) (identity string, err error
 		}
 	}()
 	return recordSupersedeKey(schema, data), nil
+}
+
+type publicationTagKey struct {
+	schema, cid string
+	tags        SourceTags
+}
+
+func (s *FlatSQLStore) indexPublicationTags(e publicationEntry, delta int) {
+	if !e.Applied {
+		return
+	}
+	if s.publicationTags == nil {
+		s.publicationTags = map[publicationTagKey]int{}
+	}
+	for _, r := range e.Refs {
+		k := publicationTagKey{e.Schema, r.CID, e.Tags}
+		s.publicationTags[k] += delta
+		if s.publicationTags[k] <= 0 {
+			delete(s.publicationTags, k)
+		}
+	}
 }

@@ -208,7 +208,7 @@ func TestPairedPublicationDefersRateLimitAndQueuePressure(t *testing.T) {
 	for i := 0; i < autoPublishQueueDepth+8; i++ {
 		publisher.ObserveIngest(pairedObservation(fmt.Sprint(i)))
 	}
-	if len(publisher.queue) != autoPublishQueueDepth || len(publisher.pairedPending) != autoPublishQueueDepth+8 {
+	if len(publisher.queue) != 1 || len(publisher.pairedPending) != autoPublishQueueDepth+8 {
 		t.Fatal("queue overflow lost pending identities")
 	}
 	publisher.Start(context.Background())

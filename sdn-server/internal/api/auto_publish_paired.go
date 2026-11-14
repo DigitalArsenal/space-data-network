@@ -203,6 +203,7 @@ func (p *AutoPublisher) publicationDelay() (time.Duration, bool) {
 }
 
 func (p *AutoPublisher) publishPairedBatch(ctx context.Context, req DatasetPublicationRequest) bool {
+	defer p.queueReadyPairedBatches()
 	key := autoPublishBatchKey(req)
 	p.mu.Lock()
 	state := p.pairedPending[key]
@@ -361,4 +362,8 @@ func (s *ConcreteDatasetPublicationService) PublicationRecoveryStatus() map[stri
 
 func (s *ConcreteDatasetPublicationService) RecordPublicationFailure(req DatasetPublicationRequest, err error) (bool, error) {
 	return s.store.RecordPublicationFailure(req.Schema, req.ProviderID, req.SourceName, req.BatchID, err)
+}
+
+func (s *ConcreteDatasetPublicationService) PublicationRetainedSources() []storage.PublicationSource {
+	return s.store.PublicationRetainedSources()
 }

@@ -87,3 +87,9 @@ func (s *FlatSQLStore) catalogExclusions(schema, provider, source string) (map[s
 }
 
 func (s *FlatSQLStore) PublicationRetentionEnabled() bool { return s.publicationEnabled.Load() }
+
+func (s *FlatSQLStore) PublicationRetainedSources() []PublicationSource {
+	s.publicationMu.Lock()
+	defer s.publicationMu.Unlock()
+	return append([]PublicationSource(nil), s.publicationSources...)
+}

@@ -116,7 +116,9 @@ func (s *FlatSQLStore) ManagePublicationBatch(schema, provider, source, batch, a
 		if err := publicationSyncDir(s.publicationEntryDir(e.Sequence)); err != nil {
 			return err
 		}
-		s.publicationEntries[i].GenerationFailure = publicationFailure{}
+		if action == "requeue" {
+			s.publicationEntries[i].GenerationFailure = publicationFailure{}
+		}
 		s.publicationEntries[i].BatchFailure = publicationFailure{}
 	}
 	return nil

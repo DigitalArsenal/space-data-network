@@ -244,10 +244,14 @@ func (b format4Backend) putRetained(op, schema string, records [][]byte, peer st
 	if err = s.publicationStep("metadata"); err != nil {
 		return nil, nil, err
 	}
-	if err = publicationAtomicFile(filepath.Join(temp, "source.json"), raw); err != nil {
+	scope, _ := json.Marshal(publicationEntry{Sequence: e.Sequence, Schema: e.Schema, Tags: e.Tags})
+	if err = publicationPrepareFile(filepath.Join(temp, "source.json"), scope); err != nil {
 		return nil, nil, err
 	}
-	if err = publicationAtomicFile(filepath.Join(temp, "entry.json"), raw); err != nil {
+	if err = publicationPrepareFile(filepath.Join(temp, "entry.json"), raw); err != nil {
+		return nil, nil, err
+	}
+	if err = publicationSyncDir(temp); err != nil {
 		return nil, nil, err
 	}
 	if err = s.publicationStep("rename"); err != nil {
@@ -358,8 +362,10 @@ func (s *FlatSQLStore) markPublicationApplied(e publicationEntry) error {
 	defer s.publicationMu.Unlock()
 	for i := range s.publicationEntries {
 		if s.publicationEntries[i].Sequence == e.Sequence {
+			s.indexPublicationTags(s.publicationEntries[i], -1)
 			e.Applied = true
 			e.ReadReady = true
+			s.indexPublicationTags(e, 1)
 			s.publicationEntries[i] = e
 			break
 		}
@@ -527,6 +533,10 @@ func (s *FlatSQLStore) recoverPublicationJournal() error {
 			s.pausePublication(e, err)
 		}
 	}
+	s.publicationTags = map[publicationTagKey]int{}
+	for _, e := range s.publicationEntries {
+		s.indexPublicationTags(e, 1)
+	}
 	s.publishSourceKeys()
 	s.publicationEnabled.Store(len(s.publicationSources) > 0)
 	s.retryCatalogGenerationsLocked()
@@ -690,7 +700,7 @@ func (s *FlatSQLStore) retainedSelectionLocked(schema, provider, source, batch s
 	byKey := map[string]publicationRecordRef{}
 	terminalComplete := false
 	for _, e := range s.publicationEntries {
-		if !e.Applied || e.Sequence > cutoff || e.Schema != schema || e.Tags.ProviderID != provider || e.Tags.SourceName != source || (batch != "" && e.Tags.BatchID != batch) {
+		if !e.Applied || (batch == "" && e.GenerationFailure.Attempts >= 3) || e.Sequence > cutoff || e.Schema != schema || e.Tags.ProviderID != provider || e.Tags.SourceName != source || (batch != "" && e.Tags.BatchID != batch) {
 			continue
 		}
 		p.Cutoff = e.Sequence
@@ -862,4 +872,20 @@ func (s *FlatSQLStore) publicationStep(name string) error {
 		return s.publicationFault(name)
 	}
 	return nil
+}
+
+func publicationPrepareFile(path string, raw []byte) error {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(raw)
+	if err == nil {
+		err = f.Sync()
+	}
+	closeErr := f.Close()
+	if err != nil {
+		return err
+	}
+	return closeErr
 }

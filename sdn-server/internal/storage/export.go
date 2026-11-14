@@ -126,7 +126,7 @@ func (s *FlatSQLStore) ExportDatasetWindow(outputDir string, filter IndexedRecor
 	if selection == nil {
 		var err error
 		selection, err = s.SelectPublication(filter.SchemaName, filter.ProviderID, filter.SourceName, filter.BatchID)
- defer selection.Close()
+		defer selection.Close()
 		if err != nil {
 			return nil, err
 		}
@@ -337,6 +337,9 @@ func (s *FlatSQLStore) datasetExportRecordsFromShardFile(schemaName string, shar
 // source such as a legacy SQLite archive. It does not insert the records into
 // the provider's FlatSQL store.
 func ExportDatasetRecords(outputDir string, filter IndexedRecordQuery, records []DatasetExportRecord) (*DatasetExport, error) {
+	if filter.Selection == nil {
+		return exportOrdinaryDatasetRecords(outputDir, filter, records)
+	}
 	if outputDir == "" {
 		return nil, fmt.Errorf("output dir is required")
 	}
@@ -455,7 +458,7 @@ func ExportDatasetRecords(outputDir string, filter IndexedRecordQuery, records [
 	if err := shardFile.Close(); err != nil {
 		return nil, err
 	}
-	if err := os.Link(shardFile.Name(), shardPath); err != nil {
+	if err := installPublicationShard(shardFile.Name(), shardPath); err != nil {
 		if !os.IsExist(err) {
 			return nil, err
 		}
@@ -675,4 +678,36 @@ func cidV1RawSHA256(data []byte) (string, error) {
 		return "", err
 	}
 	return cid.NewCidV1(cid.Raw, hash).String(), nil
+}
+
+// A filesystem without hard links uses exclusive creation and a streamed copy.
+func installPublicationShard(from, to string) error {
+	return installPublicationShardWith(from, to, os.Link)
+}
+func installPublicationShardWith(from, to string, link func(string, string) error) error {
+	err := link(from, to)
+	if err == nil || os.IsExist(err) {
+		return err
+	}
+	input, err := os.Open(from)
+	if err != nil {
+		return err
+	}
+	defer input.Close()
+	output, err := os.OpenFile(to, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(output, input)
+	if err == nil {
+		err = output.Sync()
+	}
+	closeErr := output.Close()
+	if err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		os.Remove(to)
+	}
+	return err
 }

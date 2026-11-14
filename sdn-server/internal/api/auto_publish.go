@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/config"
+	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
 
 // WHY THIS FILE EXISTS (2026-08-04, sdn-rfb-publish-to-consumer-node).
@@ -124,11 +125,12 @@ type AutoPublisher struct {
 // succeeded, batches currently waiting for a retry, and batches given up on
 // after autoPublishMaxAttempts.
 type AutoPublishStats struct {
-	BacklogError   string            `json:"backlogError,omitempty"`
-	RecoveryErrors map[string]string `json:"recoveryErrors,omitempty"`
-	Published      int64
-	Retrying       int64
-	Failed         int64
+	BacklogError     string                      `json:"backlogError,omitempty"`
+	RetentionSources []storage.PublicationSource `json:"retentionSources,omitempty"`
+	RecoveryErrors   map[string]string           `json:"recoveryErrors,omitempty"`
+	Published        int64
+	Retrying         int64
+	Failed           int64
 	// Unchanged counts publications skipped because the lane's set is
 	// exactly what its last publication exported.
 	Unchanged int64
@@ -209,6 +211,19 @@ func (p *AutoPublisher) Stats() AutoPublishStats {
 	var recovery map[string]string
 	if source, ok := p.service.(interface{ PublicationRecoveryStatus() map[string]string }); ok {
 		recovery = source.PublicationRecoveryStatus()
+	}
+	if retained, ok := p.service.(interface {
+		PublicationRetainedSources() []storage.PublicationSource
+	}); ok {
+		if recovery == nil {
+			recovery = map[string]string{}
+		}
+		for _, x := range retained.PublicationRetainedSources() {
+			_, hasBatch := p.matchScope(x.Schema, x.Provider, x.Source, false)
+			if !hasBatch {
+				recovery[x.Schema+"/"+x.Provider+"/"+x.Source] = "retention active without a publication rule"
+			}
+		}
 	}
 	return AutoPublishStats{RecoveryErrors: recovery, BacklogError: p.backlogError, Published: p.published, Retrying: p.retrying, Failed: p.failed, Unchanged: p.unchanged}
 }

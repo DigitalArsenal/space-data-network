@@ -166,6 +166,7 @@ type FlatSQLStore struct {
 	publicationSources    []PublicationSource
 	publicationEntries    []publicationEntry
 	publicationRelease    func()
+	publicationTags       map[publicationTagKey]int
 	publicationPins       map[string]int
 	publicationHighWater  uint64
 	publicationReclaimed  uint64

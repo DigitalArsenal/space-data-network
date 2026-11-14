@@ -7,6 +7,12 @@ import (
 )
 
 func (c *Config) validatePublicationSources() error {
+	for i := range c.Publishing.AutoPublish {
+		rule := &c.Publishing.AutoPublish[i]
+		if rule.RetainForPublication || rule.PairedPublication || rule.CatalogProductSource != "" || rule.StopPublicationRetention || len(rule.RequeuePublicationBatches) > 0 || len(rule.DiscardPublicationBatches) > 0 {
+			rule.Schema = strings.ToUpper(strings.TrimSuffix(strings.ToLower(strings.TrimSpace(rule.Schema)), ".fbs")) + ".fbs"
+		}
+	}
 	retained := map[string]bool{}
 	key := func(schema, provider, source string) string {
 		return strings.TrimSuffix(strings.TrimSpace(schema), ".fbs") + "/" + strings.TrimSpace(provider) + "/" + strings.TrimSpace(source)
@@ -17,6 +23,20 @@ func (c *Config) validatePublicationSources() error {
 		}
 	}
 	for _, rule := range c.Publishing.AutoPublish {
+		if len(rule.RequeuePublicationBatches) > 0 || len(rule.DiscardPublicationBatches) > 0 {
+			if strings.TrimSpace(rule.ProviderID) == "" || strings.TrimSpace(rule.SourceName) == "" || strings.ContainsAny(rule.ProviderID+rule.SourceName, "*?[") {
+				return fmt.Errorf("publication batch actions require exact provider_id and source_name")
+			}
+			seen := map[string]bool{}
+			for _, batch := range rule.RequeuePublicationBatches {
+				seen[batch] = true
+			}
+			for _, batch := range rule.DiscardPublicationBatches {
+				if seen[batch] {
+					return fmt.Errorf("cannot requeue and discard the same batch")
+				}
+			}
+		}
 		if rule.StopPublicationRetention && retained[key(rule.Schema, rule.ProviderID, rule.SourceName)] {
 			return fmt.Errorf("stop_publication_retention and retain_for_publication cannot both be true")
 		}
