@@ -360,6 +360,14 @@ jobs:
           cache-dependency-path: package-lock.json
       - name: Install root JS dependencies
         run: npm ci
+      # The module's build imports esbuild and space-data-module-sdk, which its
+      # own package-lock.json pins. They used to resolve from the root tree only
+      # because the root's tarball copy of space-data-module-sdk pulled esbuild
+      # in; with the npm release of the SDK it does not, and v1.1.0 run
+      # 43640268636 failed here with "Cannot find package 'esbuild' imported
+      # from packages/sdn-updater-module/build.mjs".
+      - name: Install updater module dependencies
+        run: npm --prefix packages/sdn-updater-module ci --no-audit --fund=false
       - name: Build updater module wasm
         run: npm --prefix packages/sdn-updater-module run build
       - uses: actions/upload-artifact@v4
