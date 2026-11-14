@@ -64,6 +64,43 @@ func (s *FlatSQLStore) ExcludeCatalogRecords(provider, source string, cids []str
 		}
 		excluded[id] = true
 	}
+	// Persist product takedowns before the index takedown. Mixed journal entries
+	// retain their bytes, but later product batch captures filter these identifiers.
+	if x, ok := s.catalogSource("CAT.fbs", provider, source); ok {
+		products, err := s.catalogExclusions("OCM.fbs", provider, x.ProductSource)
+		if err != nil {
+			return err
+		}
+		for _, e := range s.publicationEntries {
+			if e.Schema != "CAT.fbs" || e.Tags.ProviderID != provider || e.Tags.SourceName != source {
+				continue
+			}
+			for _, r := range e.Refs {
+				if !excluded[r.CID()] {
+					continue
+				}
+				data, err := r.read()
+				if err != nil {
+					return err
+				}
+				cat, err := parseCAT(data)
+				if err != nil {
+					return err
+				}
+				for i := 0; i < cat.PRODUCTSLength(); i++ {
+					id, err := catalogProductCID(cat, i)
+					if err != nil {
+						return err
+					}
+					products[id] = true
+				}
+			}
+		}
+		raw, _ := json.Marshal(products)
+		if err := publicationAtomicFile(s.exclusionPath(provider, x.ProductSource)+".products", raw); err != nil {
+			return err
+		}
+	}
 	raw, err := json.Marshal(excluded)
 	if err != nil {
 		return err
@@ -72,10 +109,14 @@ func (s *FlatSQLStore) ExcludeCatalogRecords(provider, source string, cids []str
 }
 func (s *FlatSQLStore) catalogExclusions(schema, provider, source string) (map[string]bool, error) {
 	out := map[string]bool{}
-	if schema != "CAT.fbs" {
+	if schema != "CAT.fbs" && schema != "OCM.fbs" {
 		return out, nil
 	}
-	raw, err := os.ReadFile(s.exclusionPath(provider, source))
+	path := s.exclusionPath(provider, source)
+	if schema == "OCM.fbs" {
+		path += ".products"
+	}
+	raw, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return out, nil
 	}

@@ -354,6 +354,9 @@ func (s *FlatSQLStore) markPublicationApplied(e publicationEntry) error {
 	}
 	s.publicationMu.Unlock()
 
+	if s.publicationHook != nil {
+		s.publicationHook("outcome-persisted")
+	}
 	refs, err := s.publicationReferences(e)
 	if err != nil {
 		return err
@@ -789,7 +792,7 @@ func (s *FlatSQLStore) retainedSelectionLocked(schema, provider, source, batch s
 		return nil, err
 	}
 	for _, r := range byKey {
-		if excluded[r.CID()] {
+		if excluded[r.CID()] || excluded[r.FramedCID()] {
 			continue
 		}
 		p.refs = append(p.refs, r)
