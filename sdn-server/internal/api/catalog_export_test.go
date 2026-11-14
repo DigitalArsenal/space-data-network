@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/json"
@@ -12,6 +13,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -305,5 +307,154 @@ func TestCatalogSupersededBatchRecovery(t *testing.T) {
 	}
 	if catBatches != 2 || len(s.events) != committed {
 		t.Fatalf("publication completeness gate: committed %d batches, exported %d after restart (CAT %d of 2; OCM %d of 2); old CAT export: %v", committed, len(s.events), catBatches, ocmBatches, oldCATError)
+	}
+}
+
+func catalogPutDay(t *testing.T, s *storage.FlatSQLStore, day int, schemas ...string) {
+	t.Helper()
+	for _, schema := range schemas {
+		source := "catalog-products"
+		if schema == "CAT" {
+			source = "catalog-index"
+		}
+		rows := catalogReadShard(t, filepath.Join("testdata", "catalog-history", fmt.Sprintf("day%d-%s.sds", day, schema)))
+		for i := range rows {
+			rows[i] = rows[i][4:]
+		}
+		if _, err := s.StoreBatchWithSourceTags(schema+".fbs", rows, "synthetic", nil, storage.SourceTags{ProviderID: "synthetic-node", SourceName: source, BatchID: fmt.Sprintf("day%d", day)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+func catalogSnapshotConsumer(t *testing.T, s *storage.FlatSQLStore, cutoff uint64) (*catalogConsumer, uint64) {
+	t.Helper()
+	snap, exports, err := s.ExportCatalogSnapshot(t.TempDir(), "synthetic-node", "catalog-index", cutoff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := newCatalogConsumer()
+	for _, ex := range exports {
+		c.apply(t, ex)
+	}
+	c.validate(t)
+	return c, snap.Cutoff
+}
+func TestCatalogSnapshotCutoffAndRetention(t *testing.T) {
+	t.Setenv("SDN_STORE_FORMAT", "4")
+	dir := t.TempDir()
+	s := pairedStore(t, dir)
+	defer s.Close()
+	catalogEnableRetention(t, s)
+	catalogPutDay(t, s, 0, "OCM", "CAT")
+	initial, cutoff := catalogSnapshotConsumer(t, s, 0)
+	snap, err := s.CaptureCatalogSnapshot("synthetic-node", "catalog-index", cutoff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Product storage followed by process restart leaves the previous complete index.
+	catalogPutDay(t, s, 1, "OCM")
+	if err = s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s = pairedStore(t, dir)
+	defer s.Close()
+	interrupted, _ := catalogSnapshotConsumer(t, s, 0)
+	if !reflect.DeepEqual(initial.selected, interrupted.selected) || !reflect.DeepEqual(initial.products, interrupted.products) {
+		t.Fatal("product-only restart changed the completed snapshot")
+	}
+	catalogPutDay(t, s, 1, "CAT")
+	catalogPutDay(t, s, 2, "OCM", "CAT")
+	catalogPutDay(t, s, 3, "OCM", "CAT")
+	fresh, _ := catalogSnapshotConsumer(t, s, 0)
+	// Apply real post-cutoff shards, including CAT changes in chronological order.
+	for _, batch := range s.RetainedPublicationBatches() {
+		if batch.Sequence <= cutoff {
+			continue
+		}
+		ex, err := catalogActualExport(s, t.TempDir(), DatasetPublicationRequest{Schema: batch.Schema, ProviderID: batch.Provider, SourceName: batch.Source, BatchID: batch.Batch})
+		if err != nil {
+			t.Fatal(err)
+		}
+		initial.apply(t, ex)
+	}
+	initial.validate(t)
+	if !reflect.DeepEqual(initial.selected, fresh.selected) {
+		t.Fatal("snapshot plus post-cutoff exports differs from fresh snapshot")
+	}
+	for _, v := range fresh.selected {
+		if !bytes.Equal(initial.products[v.CID], fresh.products[v.CID]) {
+			t.Fatal("selected product bytes differ")
+		}
+	}
+	// Expiry removes live rows while both selected and pending publication bytes survive.
+	for _, x := range []struct{ schema, source string }{{"CAT.fbs", "catalog-index"}, {"OCM.fbs", "catalog-products"}} {
+		if _, err = s.ExpireRecords(storage.RecordExpiryQuery{SchemaName: x.schema, ProviderID: "synthetic-node", SourceName: x.source, BeforeUnix: time.Now().Add(time.Hour).Unix()}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pinned := newCatalogConsumer()
+	for _, p := range []*storage.PublicationSelection{snap.Products, snap.Index} {
+		ex, err := s.ExportDatasetWindow(t.TempDir(), storage.IndexedRecordQuery{SchemaName: p.Schema, ProviderID: p.Provider, SourceName: p.Source, Selection: p})
+		if err != nil {
+			t.Fatal(err)
+		}
+		pinned.apply(t, ex)
+	}
+	pinned.validate(t)
+	before, _ := catalogSnapshotConsumer(t, s, cutoff)
+	if !reflect.DeepEqual(before.selected, pinned.selected) {
+		t.Fatal("retained selection changed")
+	}
+	after, _ := catalogSnapshotConsumer(t, s, 0)
+	if !reflect.DeepEqual(after.selected, fresh.selected) {
+		t.Fatal("expiry changed catalog snapshot")
+	}
+}
+func TestCatalogSnapshotRefusesMissingProduct(t *testing.T) {
+	t.Setenv("SDN_STORE_FORMAT", "4")
+	s := pairedStore(t, t.TempDir())
+	defer s.Close()
+	catalogEnableRetention(t, s)
+	catalogPutDay(t, s, 0, "CAT")
+	_, exports, err := s.ExportCatalogSnapshot(t.TempDir(), "synthetic-node", "catalog-index", 0)
+	if err == nil || exports != nil {
+		t.Fatal("unresolved snapshot exposed")
+	}
+	catalogPutDay(t, s, 0, "OCM")
+	c, _ := catalogSnapshotConsumer(t, s, 0)
+	if len(c.selected) != 32 || len(c.products) != 32 {
+		t.Fatal("resolved snapshot has wrong cardinality")
+	}
+}
+func TestCatalogSnapshotConcurrentReplacement(t *testing.T) {
+	t.Setenv("SDN_STORE_FORMAT", "4")
+	s := pairedStore(t, t.TempDir())
+	defer s.Close()
+	catalogEnableRetention(t, s)
+	catalogPutDay(t, s, 0, "OCM", "CAT")
+	snap, err := s.CaptureCatalogSnapshot("synthetic-node", "catalog-index", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() { defer close(done); catalogPutDay(t, s, 1, "OCM", "CAT") }()
+	c := newCatalogConsumer()
+	for _, p := range []*storage.PublicationSelection{snap.Products, snap.Index} {
+		for offset := 0; offset < 32; offset += 7 {
+			ex, err := s.ExportDatasetWindow(t.TempDir(), storage.IndexedRecordQuery{SchemaName: p.Schema, ProviderID: p.Provider, SourceName: p.Source, Selection: p, Offset: offset, Limit: 7})
+			if err != nil {
+				t.Fatal(err)
+			}
+			c.apply(t, ex)
+		}
+	}
+	<-done
+	c.validate(t)
+	if len(c.selected) != 32 || len(c.products) != 32 {
+		t.Fatal("selection changed during export")
+	}
+	old, _ := catalogSnapshotConsumer(t, s, snap.Cutoff)
+	if !reflect.DeepEqual(old.selected, c.selected) {
+		t.Fatal("concurrent replacement changed selected generation")
 	}
 }
