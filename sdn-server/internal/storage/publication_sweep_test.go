@@ -3,6 +3,7 @@ package storage
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"testing"
 )
 
@@ -47,4 +48,35 @@ func TestPublicationReclamationConcurrentAppendAndPausedSource(t *testing.T) {
 		t.Fatal("paused source reclaimed")
 	}
 	t.Logf("concurrent_appends=%d reclaimed=%d skipped_sources=%d", appends, stats.Reclaimed, stats.Skipped)
+}
+
+func TestPublicationReclamationPassBound(t *testing.T) {
+	t.Setenv("SDN_STORE_FORMAT", "4")
+	s := journalTestStore(t, t.TempDir())
+	defer s.Close()
+	if err := s.ConfigurePublicationSources([]PublicationSource{{Schema: "CAT.fbs", Provider: "synthetic", Source: "index"}}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 70; i++ {
+		journalTestPut(t, s, fmt.Sprintf("batch-%d", i))
+	}
+	for i, e := range s.publicationEntries {
+		if err := publicationAtomicFile(filepath.Join(s.publicationEntryDir(e.Sequence), "published"), []byte("1\n")); err != nil {
+			t.Fatal(err)
+		}
+		s.accountPublicationPending(e, -1)
+		s.publicationEntries[i].Published = true
+	}
+	if err := s.ReclaimPublication(); err != nil {
+		t.Fatal(err)
+	}
+	stats := s.PublicationJournalStats()
+	if stats.Reclaimed != 64 || stats.Entries != 6 {
+		t.Fatalf("unbounded retirement pass: %+v", stats)
+	}
+	s.RetryPublicationRecovery()
+	stats = s.PublicationJournalStats()
+	if stats.Entries != 1 || stats.Reclaimed != 69 {
+		t.Fatalf("reconciliation did not drain remainder: %+v", stats)
+	}
 }

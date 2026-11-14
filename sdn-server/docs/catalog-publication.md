@@ -205,7 +205,8 @@ their own catalog pair. Sweeps preserve concurrent appends and their product
 closure; a busy independent source does not cancel a sweep. Cached product
 digests avoid repeated index-payload reads during reclamation. File removal runs
 after releasing the write lock; durable receipts and atomic directory retirement
-still serialize against retained ingestion. Resident counts and backlog admission
+still serialize against retained ingestion. Each pass retires at most 64 entries;
+thirty-second reconciliation continues incomplete sweeps. Resident counts and backlog admission
 use incremental counters; view pins visit entries rather than every reference.
 Completion receipts use a single checksummed binary checkpoint, migrated from
 individual receipt files. Checkpoint bytes still grow by 48 bytes per historical

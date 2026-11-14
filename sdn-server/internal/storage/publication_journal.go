@@ -922,6 +922,9 @@ func (s *FlatSQLStore) RetryPublicationRecovery() {
 	s.publicationMu.Unlock()
 	s.publicationWriteMu.Unlock()
 	s.retryCatalogGenerationsLocked()
+	if err := s.ReclaimPublication(); err != nil {
+		log.Warnf("publication reclamation retry: %v", err)
+	}
 }
 
 // CompletePublication records successful batch publication independently of

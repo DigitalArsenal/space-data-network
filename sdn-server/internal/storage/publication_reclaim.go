@@ -272,6 +272,11 @@ func (s *FlatSQLStore) reclaimPublicationLocked() (result error) {
 	if len(candidates) == 0 {
 		return nil
 	}
+	// Limit serialized metadata I/O per pass; reconciliation continues the sweep.
+	if len(candidates) > 64 {
+		candidates = candidates[:64]
+		s.noteReclamationSkip("reclamation pass limited to 64 entries; remaining entries retained")
+	}
 	for _, e := range candidates {
 		plan.Pending = append(plan.Pending, e.Sequence)
 	}
