@@ -518,12 +518,15 @@ func (s *FlatSQLStore) recoverPublicationJournal() error {
 		}
 		for attempt := 0; attempt < 3; attempt++ {
 			var out []format4.Outcome
-			_, out, err = s.rb.(format4Backend).f4PutDirect("recover publication", e.Schema, data, e.Peer, e.Signature, &e.Tags, f4PutOpt{identity: e.Identity, ownTS: e.OwnTS})
-			var refused *RefusedRecordsError
-			if err != nil && !errors.As(err, &refused) {
-				continue
+			if !e.OutcomeKnown {
+				_, out, err = s.rb.(format4Backend).f4PutDirect("recover publication", e.Schema, data, e.Peer, e.Signature, &e.Tags, f4PutOpt{identity: e.Identity, ownTS: e.OwnTS})
+				var refused *RefusedRecordsError
+				if err != nil && !errors.As(err, &refused) {
+					continue
+				}
+				e.Refused = publicationRefusals(out)
+				e.OutcomeKnown = true
 			}
-			e.Refused = publicationRefusals(out)
 			err = s.markPublicationApplied(e)
 			if err == nil {
 				break
@@ -540,7 +543,10 @@ func (s *FlatSQLStore) recoverPublicationJournal() error {
 	s.publishSourceKeys()
 	s.publicationEnabled.Store(len(s.publicationSources) > 0)
 	s.retryCatalogGenerationsLocked()
-	return s.reclaimPublicationLocked()
+	if err := s.reclaimPublicationLocked(); err != nil {
+		log.Warnf("startup publication reclamation deferred: %v", err)
+	}
+	return nil
 }
 func (s *FlatSQLStore) publicationRecords(e publicationEntry) ([]DatasetExportRecord, error) {
 	f, err := os.Open(filepath.Join(s.publicationEntryDir(e.Sequence), "records.sds"))
@@ -831,7 +837,12 @@ func (s *FlatSQLStore) CompletePublication(p *PublicationSelection) error {
 		return nil
 	}
 	s.publicationWriteMu.Lock()
-	defer s.publicationWriteMu.Unlock()
+	locked := true
+	defer func() {
+		if locked {
+			s.publicationWriteMu.Unlock()
+		}
+	}()
 	for i, e := range s.publicationEntries {
 		if e.Applied && !e.Published && e.Sequence <= p.Cutoff && e.Schema == p.Schema && e.Tags.ProviderID == p.Provider && e.Tags.SourceName == p.Source && e.Tags.BatchID == p.Batch {
 			if err := publicationAtomicFile(filepath.Join(s.publicationEntryDir(e.Sequence), "published"), []byte("1\n")); err != nil {
@@ -842,7 +853,12 @@ func (s *FlatSQLStore) CompletePublication(p *PublicationSelection) error {
 			s.publicationMu.Unlock()
 		}
 	}
-	return s.reclaimPublicationLocked()
+	s.publicationWriteMu.Unlock()
+	locked = false
+	if err := s.reclaimPublicationLocked(); err != nil {
+		log.Warnf("publication reclamation deferred: %v", err)
+	}
+	return nil
 }
 
 // RetainsPublicationSource distinguishes retained recovery from live progress.

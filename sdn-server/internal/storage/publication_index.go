@@ -116,7 +116,7 @@ func (s *FlatSQLStore) publicationTagAlreadyRetained(schema, cid string, tags So
 
 func publicationReferenceBytes(r publicationRecordRef) int64 {
 	t := r.Tags
-	return int64(unsafe.Sizeof(r)) + 128 + int64(len(r.CID)+len(r.FramedCID)+len(r.Identity)+len(r.Path)+len(t.ProviderID)+len(t.SourceName)+len(t.SourceURL)+len(t.BatchID)+len(t.ContentKeyID)+len(t.ProducerPeerID)+len(t.ProducerPublicKey)+len(t.License)+len(t.LicenseURL)+len(t.Citation))
+	return int64(unsafe.Sizeof(r)+unsafe.Sizeof(publicationTagKey{})) + 256 + int64(len(r.CID)+len(r.FramedCID)+len(r.Identity)+len(r.Path)+len(t.ProviderID)+len(t.SourceName)+len(t.SourceURL)+len(t.BatchID)+len(t.ContentKeyID)+len(t.ProducerPeerID)+len(t.ProducerPublicKey)+len(t.License)+len(t.LicenseURL)+len(t.Citation))
 }
 func publicationReferencesBytes(refs []publicationRecordRef) int64 {
 	var n int64

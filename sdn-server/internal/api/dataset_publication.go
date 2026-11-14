@@ -436,14 +436,22 @@ func (s *ConcreteDatasetPublicationService) publishSelectedDatasetUpdate(ctx con
 				return nil, err
 			}
 			defer catalogSnapshot.Close()
- activeService.selection = catalogSnapshot.Index
+			activeService.selection = catalogSnapshot.Index
 		}
 	}
 	if catalogSnapshot == nil {
 		activeService.selection, err = activeStore.SelectPublication(schema, activeReq.ProviderID, activeReq.SourceName, activeReq.BatchID)
- defer activeService.selection.Close()
+		defer activeService.selection.Close()
 		if err != nil {
 			return nil, err
+		}
+	}
+	if activeService.selection != nil && activeReq.BatchID != "" {
+		if _, count := activeService.selection.Fingerprint(); count == 0 {
+			if err := activeStore.CompletePublication(activeService.selection); err != nil {
+				return nil, err
+			}
+			return &DatasetPublicationResult{RecordCount: 0}, nil
 		}
 	}
 	// A compact CAT snapshot publishes its selected products before its index.

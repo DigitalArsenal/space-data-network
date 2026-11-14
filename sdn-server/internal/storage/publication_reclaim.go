@@ -56,7 +56,7 @@ func (s *FlatSQLStore) pinPublicationEntriesLocked(entries []publicationEntry) f
 			defer s.publicationMu.Unlock()
 			for path := range paths {
 				s.publicationPins[path]--
-				if s.publicationPins[path] == 0 {
+				if s.publicationPins[path] <= 1 {
 					delete(s.publicationPins, path)
 				}
 			}
@@ -103,40 +103,40 @@ func (s *FlatSQLStore) recoverPublicationReclamation() error {
 // ReclaimPublication removes completed payloads outside the latest source view,
 // last complete catalog generation, pending closure, and active selections.
 func (s *FlatSQLStore) ReclaimPublication() error {
-	s.publicationWriteMu.Lock()
-	defer s.publicationWriteMu.Unlock()
 	return s.reclaimPublicationLocked()
 }
 func (s *FlatSQLStore) reclaimPublicationLocked() error {
-	// Writers are serialized; concurrent readers only change pin counts.
+	v := s.publicationView()
+	defer v.publicationRelease()
+	// Pin an immutable view for all closure reads without holding the write lock.
 	keep := map[string]bool{}
 	add := func(p *PublicationSelection) {
 		for _, r := range p.refs {
 			keep[r.Path] = true
 		}
 	}
-	for _, x := range s.publicationSources {
-		if s.publicationFailures[publicationSourceKey{x.Schema, x.Provider, x.Source}] != nil {
+	for _, x := range v.publicationSources {
+		if v.publicationFailures[publicationSourceKey{x.Schema, x.Provider, x.Source}] != nil {
 			return nil
 		}
 		if x.Schema == "CAT.fbs" {
-			p, err := s.retainedSelectionLocked(x.Schema, x.Provider, x.Source, "", s.publicationCutoffLocked())
+			p, err := v.retainedSelectionLocked(x.Schema, x.Provider, x.Source, "", v.publicationCutoffLocked())
 			if err != nil {
 				return err
 			}
 			add(p)
 			if x.ProductSource != "" {
-				cutoff := s.latestCatalogGeneration(x)
-				keep[filepath.Join(s.publicationEntryDir(cutoff), "records.sds")] = true
-				for _, e := range s.publicationEntries {
-					if e.Schema == "OCM.fbs" && e.Tags.ProviderID == x.Provider && e.Tags.SourceName == x.ProductSource && e.Sequence > cutoff {
+				cutoff := v.latestCatalogGeneration(x)
+				keep[filepath.Join(v.publicationEntryDir(cutoff), "recordv.sds")] = true
+				for _, e := range v.publicationEntries {
+					if e.Schema == "OCM.fbs" && e.Tagv.ProviderID == x.Provider && e.Tagv.SourceName == x.ProductSource && e.Sequence > cutoff {
 						for _, r := range e.Refs {
 							keep[r.Path] = true
 						}
 					}
 				}
 				if cutoff != 0 {
-					snap, err := s.captureCatalogLocked(x, cutoff)
+					snap, err := v.captureCatalogLocked(x, cutoff)
 					if err != nil {
 						return err
 					}
@@ -146,13 +146,13 @@ func (s *FlatSQLStore) reclaimPublicationLocked() error {
 			}
 		} else {
 			paired := false
-			for _, c := range s.publicationSources {
+			for _, c := range v.publicationSources {
 				if c.Provider == x.Provider && c.ProductSource == x.Source {
 					paired = true
 				}
 			}
 			if !paired {
-				p, err := s.retainedSelectionLocked(x.Schema, x.Provider, x.Source, "", s.publicationCutoffLocked())
+				p, err := v.retainedSelectionLocked(x.Schema, x.Provider, x.Source, "", v.publicationCutoffLocked())
 				if err != nil {
 					return err
 				}
@@ -163,7 +163,7 @@ func (s *FlatSQLStore) reclaimPublicationLocked() error {
 	// Every pending or live index retains its referenced products, including an
 	// incomplete generation whose products arrived before its terminal index.
 	wanted := map[string]bool{}
-	for _, e := range s.publicationEntries {
+	for _, e := range v.publicationEntries {
 		if e.Schema != "CAT.fbs" || !e.Applied {
 			continue
 		}
@@ -182,18 +182,30 @@ func (s *FlatSQLStore) reclaimPublicationLocked() error {
 					if err != nil {
 						return err
 					}
-					wanted[e.Tags.ProviderID+"\x00"+id] = true
+					wanted[e.Tagv.ProviderID+"\x00"+id] = true
 				}
 			}
 		}
 	}
-	for _, e := range s.publicationEntries {
+	for _, e := range v.publicationEntries {
 		if e.Schema == "OCM.fbs" {
 			for _, r := range e.Refs {
-				if wanted[e.Tags.ProviderID+"\x00"+r.CID] || wanted[e.Tags.ProviderID+"\x00"+r.FramedCID] {
+				if wanted[e.Tagv.ProviderID+"\x00"+r.CID] || wanted[e.Tagv.ProviderID+"\x00"+r.FramedCID] {
 					keep[r.Path] = true
 				}
 			}
+		}
+	}
+	s.publicationWriteMu.Lock()
+	defer s.publicationWriteMu.Unlock()
+	// If ingestion or completion changed the captured view, a later sweep retries.
+	if len(s.publicationEntries) != len(v.publicationEntries) {
+		return nil
+	}
+	for i, e := range s.publicationEntries {
+		old := v.publicationEntries[i]
+		if e.Sequence != old.Sequence || e.Applied != old.Applied || e.Published != old.Published || e.Generation != old.Generation || len(e.Refs) != len(old.Refs) {
+			return nil
 		}
 	}
 	s.publicationMu.Lock()
@@ -201,7 +213,7 @@ func (s *FlatSQLStore) reclaimPublicationLocked() error {
 	var candidates []publicationEntry
 	for _, e := range s.publicationEntries {
 		path := filepath.Join(s.publicationEntryDir(e.Sequence), "records.sds")
-		if e.Applied && e.Published && !keep[path] && s.publicationPins[path] == 0 {
+		if e.Applied && e.Published && !keep[path] && s.publicationPins[path] <= 1 {
 			candidates = append(candidates, e)
 		}
 	}

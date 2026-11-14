@@ -209,6 +209,7 @@ func (p *AutoPublisher) Stats() AutoPublishStats {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	var recovery map[string]string
+	var retainedSources []storage.PublicationSource
 	if source, ok := p.service.(interface{ PublicationRecoveryStatus() map[string]string }); ok {
 		recovery = source.PublicationRecoveryStatus()
 	}
@@ -218,14 +219,15 @@ func (p *AutoPublisher) Stats() AutoPublishStats {
 		if recovery == nil {
 			recovery = map[string]string{}
 		}
-		for _, x := range retained.PublicationRetainedSources() {
+		retainedSources = retained.PublicationRetainedSources()
+		for _, x := range retainedSources {
 			_, hasBatch := p.matchScope(x.Schema, x.Provider, x.Source, false)
 			if !hasBatch {
 				recovery[x.Schema+"/"+x.Provider+"/"+x.Source] = "retention active without a publication rule"
 			}
 		}
 	}
-	return AutoPublishStats{RecoveryErrors: recovery, BacklogError: p.backlogError, Published: p.published, Retrying: p.retrying, Failed: p.failed, Unchanged: p.unchanged}
+	return AutoPublishStats{RetentionSources: retainedSources, RecoveryErrors: recovery, BacklogError: p.backlogError, Published: p.published, Retrying: p.retrying, Failed: p.failed, Unchanged: p.unchanged}
 }
 
 // unchangedSinceLastPublication asks the service whether req's set is the one
