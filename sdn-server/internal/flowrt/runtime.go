@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	logging "github.com/ipfs/go-log/v2"
 	"github.com/spacedatanetwork/sdn-server/internal/modulert"
@@ -390,7 +391,7 @@ func (rt *FlowRuntime) drain(ctx context.Context, handlers HandlerMap, opts Drai
 					return result, fmt.Errorf("linked drain: %w", err)
 				}
 			} else {
-				if err := runLinked(); err != nil && ctx.Err() != nil {
+				if err := runLinked(); err != nil && flowContextDone(ctx, err) {
 					return result, fmt.Errorf("linked drain: %w", err)
 				}
 			}
@@ -597,16 +598,31 @@ func (rt *FlowRuntime) dispatchDirectWith(ctx context.Context, nodeIndex uint32,
 		name = underscoreRuntimeExportName(name)
 	}
 	if _, err := execute(ctx, name, int32(64)); err != nil {
-		if ctx.Err() != nil {
+		if flowContextDone(ctx, err) {
 			return fmt.Errorf("direct dispatch: %w", err)
 		}
 		// Preserve the legacy alternate-export attempt and completion on failure.
 		if name == runtimeExportDispatchCurrentInvocation {
-			if _, err := execute(ctx, underscoreRuntimeExportName(name), int32(64)); err != nil && ctx.Err() != nil {
+			if _, err := execute(ctx, underscoreRuntimeExportName(name), int32(64)); err != nil && flowContextDone(ctx, err) {
 				return fmt.Errorf("direct dispatch: %w", err)
 			}
 		}
 	}
 	rt.CompleteInvocation(nodeIndex)
 	return nil
+}
+
+// WasmEdge's async wait rounds a deadline down to whole milliseconds. Join the
+// context timer across that final fraction before deciding to use the fallback.
+func flowContextDone(ctx context.Context, err error) bool {
+	if ctx.Err() != nil {
+		return true
+	}
+	if errors.Is(err, wasmrt.ErrExecutionTimeout) {
+		if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) <= time.Millisecond {
+			<-ctx.Done()
+			return true
+		}
+	}
+	return false
 }
