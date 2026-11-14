@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -111,12 +112,12 @@ func (s *FlatSQLStore) publicationTagAlreadyRetained(schema, cid string, tags So
 	if s.publicationFailures[publicationSourceKey{schema, tags.ProviderID, tags.SourceName}] != nil {
 		return false
 	}
-	return s.publicationTags[publicationTagKey{schema, cid, tags}] > 0
+	return s.publicationTags[publicationTagIdentity(schema, cid, tags)] > 0
 }
 
 func publicationReferenceBytes(r publicationRecordRef) int64 {
 	t := r.Tags
-	return int64(unsafe.Sizeof(r)+unsafe.Sizeof(publicationTagKey{})) + 256 + int64(len(r.CID)+len(r.FramedCID)+len(r.Identity)+len(r.Path)+len(t.ProviderID)+len(t.SourceName)+len(t.SourceURL)+len(t.BatchID)+len(t.ContentKeyID)+len(t.ProducerPeerID)+len(t.ProducerPublicKey)+len(t.License)+len(t.LicenseURL)+len(t.Citation))
+	return int64(unsafe.Sizeof(r)+unsafe.Sizeof(publicationTagKey{})) + 192 + int64(len(r.CID)+len(r.FramedCID)+len(r.Identity)+len(r.Path)+len(t.ProviderID)+len(t.SourceName)+len(t.SourceURL)+len(t.BatchID)+len(t.ContentKeyID)+len(t.ProducerPeerID)+len(t.ProducerPublicKey)+len(t.License)+len(t.LicenseURL)+len(t.Citation))
 }
 func publicationReferencesBytes(refs []publicationRecordRef) int64 {
 	var n int64
@@ -135,9 +136,19 @@ func publicationIdentity(schema string, data []byte) (identity string, err error
 	return recordSupersedeKey(schema, data), nil
 }
 
-type publicationTagKey struct {
-	schema, cid string
-	tags        SourceTags
+type publicationTagKey [32]byte
+
+func publicationTagIdentity(schema, cid string, tags SourceTags) publicationTagKey {
+	raw, _ := json.Marshal(tags)
+	h := sha256.New()
+	h.Write([]byte(schema))
+	h.Write([]byte{0})
+	h.Write([]byte(cid))
+	h.Write([]byte{0})
+	h.Write(raw)
+	var key publicationTagKey
+	copy(key[:], h.Sum(nil))
+	return key
 }
 
 func (s *FlatSQLStore) indexPublicationTags(e publicationEntry, delta int) {
@@ -148,7 +159,7 @@ func (s *FlatSQLStore) indexPublicationTags(e publicationEntry, delta int) {
 		s.publicationTags = map[publicationTagKey]int{}
 	}
 	for _, r := range e.Refs {
-		k := publicationTagKey{e.Schema, r.CID, e.Tags}
+		k := publicationTagIdentity(e.Schema, r.CID, e.Tags)
 		s.publicationTags[k] += delta
 		if s.publicationTags[k] <= 0 {
 			delete(s.publicationTags, k)
