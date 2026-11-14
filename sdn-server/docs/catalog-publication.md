@@ -79,7 +79,8 @@ using those same selections across every bounded shard window. The existing
 JSON index sidecar carries `publicationCutoff`; no SDS schema, signing method,
 or transport is changed. The cutoff is local to the producer's retained store. Treat the CAT publication
 as the generation commit and pair it with the OCM sidecar at that same cutoff;
-an OCM announcement alone does not commit a catalog generation. Retained older
+an OCM announcement alone does not commit a catalog generation. An index with
+no product references has an empty closure and needs no product shard. Retained older
 series remain available across interruption between the two announcements.
 
 To reconstruct a later catalog, apply the snapshot and changed batches whose

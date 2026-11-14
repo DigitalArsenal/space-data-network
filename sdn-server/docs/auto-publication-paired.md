@@ -12,15 +12,15 @@ Configure both scopes for the same schema, provider, and source:
 ```yaml
 publishing:
   auto_publish:
-    - schema: CAT.fbs
+    - schema: OCM.fbs
       provider_id: catalog-producer
-      source_name: catalog-index
+      source_name: catalog-products
       publish_scope: batch
       min_interval: 5m
       settle: 10s
-    - schema: CAT.fbs
+    - schema: OCM.fbs
       provider_id: catalog-producer
-      source_name: catalog-index
+      source_name: catalog-products
       publish_scope: source
       min_interval: 24h
   retention:
