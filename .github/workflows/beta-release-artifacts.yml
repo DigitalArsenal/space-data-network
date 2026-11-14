@@ -1362,7 +1362,13 @@ jobs:
         with:
           node-version: '24'
       - name: Install artifacts and verify SDN network
-        run: npm run test:release-artifacts:docker -- --release-dir dist --timeout-ms 180000
+        # 600 s per service, not 180: a node's FIRST start compiles its FlatSQL
+        # and module AOT artifacts, and v1.1.0 run 43650420385's full-deb
+        # container was still starting when 180 s ran out (its log: AOT
+        # compile and substrate self-test done ~85 s in, health never
+        # answered). The same artifacts on bare runners took 76-173 s just to
+        # reach the bootstrap nodes (diagnostic run 43652965924).
+        run: npm run test:release-artifacts:docker -- --release-dir dist --timeout-ms 600000
 
   release:
     name: Publish beta GitHub release

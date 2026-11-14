@@ -582,8 +582,16 @@ function sleep(ms) {
   });
 }
 
+// How long a service took to answer, from the start of its wait, in seconds.
+// Printed pass or fail: a first start compiles AOT artifacts, and the margin
+// against the timeout is the number worth watching from release to release.
+export function formatAnswered(label, containerName, startedAt, now = Date.now()) {
+  return `${label} answered after ${((now - startedAt) / 1000).toFixed(1)} s (${containerName})`;
+}
+
 async function waitForJson({ containerName, url, label, predicate, timeoutMs }) {
-  const deadline = Date.now() + timeoutMs;
+  const startedAt = Date.now();
+  const deadline = startedAt + timeoutMs;
   let last = '';
 
   while (Date.now() < deadline) {
@@ -597,6 +605,7 @@ async function waitForJson({ containerName, url, label, predicate, timeoutMs }) 
       try {
         const parsed = JSON.parse(last);
         if (predicate(parsed)) {
+          log(formatAnswered(label, containerName, startedAt));
           return parsed;
         }
       } catch (error) {
@@ -609,7 +618,7 @@ async function waitForJson({ containerName, url, label, predicate, timeoutMs }) 
     await sleep(2000);
   }
 
-  throw new Error(`Timed out waiting for ${label} at ${containerName} (${url}). Last response: ${last}`);
+  throw new Error(`Timed out waiting for ${label} at ${containerName} (${url}) after ${(timeoutMs / 1000).toFixed(0)} s. Last response: ${last}`);
 }
 
 // Go prints the fatal line FIRST and then every goroutine, so a plain tail of a
@@ -671,6 +680,10 @@ async function runNetworkTest({ images, workDir, platform, prefix, timeoutMs }) 
       timeoutMs,
       predicate: (body) => body.status === 'ok'
     });
+    // The first node's whole first start, on a pass too: what it compiled and
+    // how long each stage took before health answered.
+    const firstStart = runDocker(['logs', '--timestamps', containers[0]], { allowFailure: true });
+    console.log(`--- docker logs ${containers[0]} (first start, full) ---\n${firstStart.stdout || ''}${firstStart.stderr || ''}`);
 
     const seedStatus = await waitForJson({
       containerName: containers[0],
