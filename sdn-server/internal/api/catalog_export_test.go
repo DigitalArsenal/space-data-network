@@ -12,8 +12,11 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -352,10 +355,10 @@ func TestCatalogSnapshotCutoffAndRetention(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Product storage followed by process restart leaves the previous complete index.
-	catalogPutDay(t, s, 1, "OCM")
 	if err = s.Close(); err != nil {
 		t.Fatal(err)
 	}
+	catalogKillAfterProducts(t, dir)
 	s = pairedStore(t, dir)
 	defer s.Close()
 	interrupted, _ := catalogSnapshotConsumer(t, s, 0)
@@ -456,5 +459,57 @@ func TestCatalogSnapshotConcurrentReplacement(t *testing.T) {
 	old, _ := catalogSnapshotConsumer(t, s, snap.Cutoff)
 	if !reflect.DeepEqual(old.selected, c.selected) {
 		t.Fatal("concurrent replacement changed selected generation")
+	}
+}
+
+func TestCatalogProductCommitCrashChild(t *testing.T) {
+	dir := os.Getenv("SDN_CATALOG_PRODUCT_CRASH")
+	if dir == "" {
+		t.Skip("subprocess only")
+	}
+	s := pairedStore(t, dir)
+	catalogPutDay(t, s, 1, "OCM")
+	if err := os.WriteFile(filepath.Join(dir, "product-ready"), []byte("ready"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		time.Sleep(time.Second)
+	}
+}
+func catalogKillAfterProducts(t *testing.T, dir string) {
+	t.Helper()
+	cmd := exec.Command(os.Args[0], "-test.run=^TestCatalogProductCommitCrashChild$", "-test.timeout=2m")
+	cmd.Env = append(os.Environ(), "SDN_CATALOG_PRODUCT_CRASH="+dir)
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	killed := false
+	defer func() {
+		if !killed {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		}
+	}()
+	deadline := time.Now().Add(time.Minute)
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "product-ready")); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("product commit did not finish")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	command, err := exec.Command("ps", "-p", strconv.Itoa(cmd.Process.Pid), "-o", "command=").Output()
+	if err != nil || !strings.Contains(string(command), "TestCatalogProductCommitCrashChild") {
+		t.Fatal("child identity verification failed", err)
+	}
+	if err = cmd.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	err = cmd.Wait()
+	killed = true
+	if err == nil {
+		t.Fatal("expected abrupt product-only process failure")
 	}
 }

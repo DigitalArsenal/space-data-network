@@ -96,3 +96,78 @@ func TestPublicationJournalCrashRecovery(t *testing.T) {
 		})
 	}
 }
+
+func TestPublicationJournalContinuedBatchAndTag(t *testing.T) {
+	t.Setenv("SDN_STORE_FORMAT", "4")
+	s := journalTestStore(t, t.TempDir())
+	defer s.Close()
+	if err := s.ConfigurePublicationSources([]PublicationSource{{Schema: "CAT.fbs", Provider: "synthetic", Source: "index"}}); err != nil {
+		t.Fatal(err)
+	}
+	journalTestPut(t, s, "stream")
+	first, err := s.SelectPublication("CAT.fbs", "synthetic", "index", "stream")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := sds.NewCATBuilder().WithNoradCatID(900002).WithObjectName("synthetic-second").Build()
+	cid, err := s.StoreWithSourceTags("CAT.fbs", raw, "synthetic", nil, SourceTags{ProviderID: " synthetic ", SourceName: " index ", BatchID: "stream"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := s.RetainedPublicationBatches()
+	if len(rows) != 1 || rows[0].Sequence <= first.Cutoff {
+		t.Fatal("continued batch missing after cutoff")
+	}
+	selection, err := s.SelectPublication("CAT.fbs", "synthetic", "index", "stream")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, count := selection.Fingerprint()
+	if count != 2 {
+		t.Fatal("continued batch dropped records")
+	}
+	if err = s.UpsertSourceTags("CAT.fbs", cid, SourceTags{ProviderID: "synthetic", SourceName: "index", BatchID: "retagged"}); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Delete("CAT.fbs", cid); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.ExportDatasetWindow(t.TempDir(), IndexedRecordQuery{SchemaName: "CAT.fbs", ProviderID: "synthetic", SourceName: "index", BatchID: "retagged"}); err != nil {
+		t.Fatal(err)
+	}
+	again, err := s.SelectPublication("CAT.fbs", "synthetic", "index", "stream")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Cutoff != selection.Cutoff {
+		t.Fatal("unrelated batch changed retry cutoff")
+	}
+}
+func TestPublicationJournalChecksumAndActivation(t *testing.T) {
+	t.Setenv("SDN_STORE_FORMAT", "4")
+	s := journalTestStore(t, t.TempDir())
+	defer s.Close()
+	journalTestPut(t, s, "ordinary")
+	if err := s.ConfigurePublicationSources([]PublicationSource{{Schema: "CAT.fbs", Provider: "synthetic", Source: "index"}}); err == nil {
+		t.Fatal("nonempty unretained source accepted")
+	}
+	if err := s.ConfigurePublicationSources([]PublicationSource{{Schema: "CAT.fbs", Provider: "synthetic", Source: "retained"}}); err != nil {
+		t.Fatal(err)
+	}
+	raw := sds.NewCATBuilder().WithNoradCatID(900003).WithObjectName("synthetic-checksum").Build()
+	if _, err := s.StoreWithSourceTags("CAT.fbs", raw, "synthetic", nil, SourceTags{ProviderID: "synthetic", SourceName: "retained", BatchID: "one"}); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(s.publicationEntryDir(1), "records.sds")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data[len(data)-1] ^= 1
+	if err = os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.SelectPublication("CAT.fbs", "synthetic", "retained", "one"); err == nil {
+		t.Fatal("corrupt journal bytes accepted")
+	}
+}
