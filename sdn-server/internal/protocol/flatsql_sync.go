@@ -372,7 +372,7 @@ func (h *FlatSQLSyncHandler) handleListPublished(w io.Writer, req syncRequest) e
 	segs := make([]syncwire.Segment, len(selected))
 	for i, pub := range selected {
 		segs[i] = syncwire.SegmentFromPublication(pub)
-		segs[i].Availability, segs[i].AvailabilityReason = datasetPublicationAvailability(activeStore, pub)
+		segs[i].Availability, segs[i].AvailabilityReason = activeStore.DatasetPublicationAvailability(pub)
 		segs[i].AvailabilityCheckedAtMs = time.Now().UnixMilli()
 		segs[i].BatchCompletion = completion[i].State
 		segs[i].BatchRevision = completion[i].Revision
@@ -397,38 +397,6 @@ func (h *FlatSQLSyncHandler) handleListPublished(w io.Writer, req syncRequest) e
 		}
 		segs = segs[:len(segs)/2]
 	}
-}
-
-// Availability is a time-qualified local file check, not a transfer or hash
-// guarantee. Reasons are stable public codes; filesystem paths never leave here.
-func datasetPublicationAvailability(store *storage.FlatSQLStore, pub storage.DatasetShardPublication) (string, string) {
-	shardPath, err := store.DatasetPublicationShardPath(pub)
-	if err != nil {
-		return "unavailable", "invalid_shard_metadata"
-	}
-	indexPath, err := store.DatasetPublicationIndexPath(pub)
-	if err != nil {
-		return "unavailable", "invalid_index_metadata"
-	}
-	for _, asset := range []struct {
-		role, path string
-		size       int64
-	}{{"shard", shardPath, pub.ByteCount}, {"index", indexPath, 0}} {
-		info, err := os.Stat(asset.path)
-		if os.IsNotExist(err) {
-			return "unavailable", asset.role + "_missing"
-		}
-		if err != nil {
-			return "unavailable", asset.role + "_stat_failed"
-		}
-		if !info.Mode().IsRegular() {
-			return "unavailable", asset.role + "_not_regular"
-		}
-		if asset.size > 0 && info.Size() != asset.size {
-			return "unavailable", asset.role + "_size_mismatch"
-		}
-	}
-	return "available", ""
 }
 
 // publishedAsset is one publication's shard or index file.
