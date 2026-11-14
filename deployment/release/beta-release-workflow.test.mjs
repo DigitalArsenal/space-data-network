@@ -582,6 +582,21 @@ test('npm release publishing maps beta releases to the beta dist-tag', () => {
   assert.match(workflow, /echo "tag=beta"/);
 });
 
+test('npm publishing asks npm first and skips everything for a version it already has', () => {
+  // The v1.1.0 release asked to publish sdn-js 4.0.0, already on npm, and
+  // failed at the test step anyway (run 43642811010).
+  const workflow = readRepoFile('.github/workflows/npm-publish-sdn-js.yml');
+  const order = ['Is this version already on npm?', 'Install dependencies', 'Test', 'Build', 'Publish to npm']
+    .map((name) => workflow.indexOf(`- name: ${name}\n`));
+  assert.ok(order.every((at) => at > 0), `missing step: ${order}`);
+  assert.deepEqual([...order].sort((a, b) => a - b), order, 'the npm check must run before install, test and build');
+  const gate = "if: ${{ steps.published.outputs.already == 'false' || (github.event_name == 'workflow_dispatch' && inputs.dry_run) }}";
+  for (const name of ['Install dependencies', 'Test', 'Verify helia/libp2p dependency layering', 'Build', 'Verify package contents']) {
+    const step = workflow.slice(workflow.indexOf(`- name: ${name}\n`)).split('\n      - ')[0];
+    assert.ok(step.includes(gate), `${name} must be skipped when the version is already on npm`);
+  }
+});
+
 test('release workflows install nFPM from a pinned Go module version', () => {
   for (const workflowPath of [
     '.github/workflows/beta-release-artifacts.yml',
