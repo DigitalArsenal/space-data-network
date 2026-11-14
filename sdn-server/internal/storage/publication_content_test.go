@@ -16,14 +16,14 @@ func TestPublicationSelectionLimitIsContentError(t *testing.T) {
 		refs[i].file = f
 		binary.LittleEndian.PutUint32(refs[i].Digest[:4], uint32(i))
 	}
-	s := &FlatSQLStore{basePath: t.TempDir(), publicationEntries: []publicationEntry{{Applied: true, Sequence: 1, Schema: "CAT.fbs", Tags: f.Tags, Refs: refs}}}
+	s := &FlatSQLStore{basePath: t.TempDir(), publicationEntries: []publicationEntry{{Applied: true, ReadReady: true, Sequence: 1, Schema: "CAT.fbs", Tags: f.Tags, Refs: refs}}}
 	_, err := s.retainedSelectionLocked("CAT.fbs", "synthetic", "index", "oversized", 1)
 	if !IsPublicationContentError(err) {
 		t.Fatalf("oversized immutable selection remains retryable: %v", err)
 	}
 }
 
-func TestPublicationDamagedBatchDoesNotBlockSource(t *testing.T) {
+func TestPublicationNeverAppliedDamageDoesNotBlockSource(t *testing.T) {
 	t.Setenv("SDN_STORE_FORMAT", "4")
 	for _, damage := range []string{"checksum", "truncated", "missing"} {
 		t.Run(damage, func(t *testing.T) {
@@ -32,12 +32,22 @@ func TestPublicationDamagedBatchDoesNotBlockSource(t *testing.T) {
 			if err := s.ConfigurePublicationSources([]PublicationSource{{Schema: "CAT.fbs", Provider: "synthetic", Source: "index"}}); err != nil {
 				t.Fatal(err)
 			}
-			journalTestPut(t, s, "bad")
-			p, err := s.SelectPublication("CAT.fbs", "synthetic", "index", "bad")
-			if err != nil {
-				t.Fatal(err)
+			s.publicationFault = func(step string) error {
+				if step == "engine" {
+					return errors.New("stopped before engine write")
+				}
+				return nil
 			}
-			path := p.refs[0].Path()
+			_, rows := reclamationRecords(0, 1)
+			if _, err := s.StoreBatchWithSourceTags("CAT.fbs", rows, "synthetic", nil, SourceTags{ProviderID: "synthetic", SourceName: "index", BatchID: "bad"}); err == nil {
+				t.Fatal("fault not reached")
+			}
+			s.publicationFault = nil
+			entry := s.publicationEntries[0]
+			if entry.Applied {
+				t.Fatal("fixture was applied")
+			}
+			path := filepath.Join(s.publicationEntryDir(entry.Sequence), "records.sds")
 			raw, err := os.ReadFile(path)
 			if err != nil {
 				t.Fatal(err)
@@ -54,8 +64,7 @@ func TestPublicationDamagedBatchDoesNotBlockSource(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = p.Record(0)
-			p.Close()
+			_, err = s.publicationRecords(entry)
 			if !IsPublicationContentError(err) {
 				t.Fatalf("unclassified immutable input: %v", err)
 			}
@@ -64,6 +73,7 @@ func TestPublicationDamagedBatchDoesNotBlockSource(t *testing.T) {
 					t.Fatal(saveErr)
 				}
 			}
+			s.RetryPublicationRecovery()
 			journalTestPut(t, s, "good")
 			if batches := s.RetainedPublicationBatches(); len(batches) != 1 || batches[0].Batch != "good" {
 				t.Fatalf("blocked source: %+v", batches)
