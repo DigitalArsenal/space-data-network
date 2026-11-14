@@ -968,7 +968,7 @@ type DatasetPublicationFileSweep struct {
 //
 //   - car/shard-group-*.car: every bundle is pinned in kubo when it is built;
 //     the local file is a staging copy.
-//   - shards/*.fbshard, indexes/*.index.json: files whose content hash no
+//   - shards/*.fbshard, indexes/*.index.json or *.index.fb: files whose content hash no
 //     remaining publication row of the schema names (windows overwritten by a
 //     later series and rows retention retired).
 func (s *FlatSQLStore) SweepDatasetPublicationFiles(outputDir, schemaName string, minAge time.Duration, now time.Time) (DatasetPublicationFileSweep, error) {

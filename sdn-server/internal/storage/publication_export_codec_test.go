@@ -106,14 +106,16 @@ func TestOrdinaryPublicationFlatBufferIndex(t *testing.T) {
 	if _, err := parseDatasetExportIndexBytes(legacy); err != nil {
 		t.Fatal(err)
 	}
-	legacyPath := strings.TrimSuffix(export.IndexPath, ".fb") + ".json"
+	legacyRow := row
+	legacyRow.IndexSHA256 = sha256Hex(legacy)
+	legacyPath, err := store.DatasetPublicationIndexPath(legacyRow)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(legacyPath, legacy, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(export.IndexPath); err != nil {
-		t.Fatal(err)
-	}
-	if path, err := store.DatasetPublicationIndexPath(row); err != nil || path != legacyPath {
+	if path, err := store.DatasetPublicationIndexPath(legacyRow); err != nil || path != legacyPath || !strings.HasSuffix(path, ".index.json") {
 		t.Fatal("released index lookup lost", err)
 	}
 }
