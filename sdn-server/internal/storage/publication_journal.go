@@ -426,10 +426,19 @@ func (s *FlatSQLStore) markPublicationApplied(e publicationEntry) error {
 func (s *FlatSQLStore) pausePublication(e publicationEntry, err error) {
 	s.publicationMu.Lock()
 	defer s.publicationMu.Unlock()
+	s.pausePublicationLocked(e, err)
+}
+func (s *FlatSQLStore) pausePublicationLocked(e publicationEntry, err error) {
 	if s.publicationFailures == nil {
 		s.publicationFailures = map[publicationSourceKey]error{}
 	}
+	err = fmt.Errorf("entry %d batch %q unreadable: %w", e.Sequence, e.Tags.BatchID, err)
 	s.publicationFailures[publicationSourceKey{e.Schema, e.Tags.ProviderID, e.Tags.SourceName}] = err
+	for i := range s.publicationEntries {
+		if s.publicationEntries[i].Sequence == e.Sequence && e.Applied {
+			s.publicationEntries[i].ReadReady = false
+		}
+	}
 	log.Errorf("publication source requires operator recovery (%s): %v", e.Schema, err)
 }
 
@@ -446,6 +455,19 @@ func (s *FlatSQLStore) PublicationRecoveryStatus() map[string]string {
 	}
 	for key, reason := range s.publicationQuarantineStatus {
 		out[strings.SplitN(key, "/", 2)[1]] = reason
+	}
+	// Keep the operator's data-loss acknowledgement after payload reclamation.
+	if raw, err := os.ReadFile(filepath.Join(s.publicationDir(), "discard-effects.json")); err == nil {
+		var effects map[string]string
+		if err := json.Unmarshal(raw, &effects); err != nil {
+			out["discard-effects"] = err.Error()
+		} else {
+			for key, reason := range effects {
+				out[key+"/discard"] = reason
+			}
+		}
+	} else if !os.IsNotExist(err) {
+		out["discard-effects"] = err.Error()
 	}
 	return out
 }
@@ -543,6 +565,19 @@ func (s *FlatSQLStore) recoverPublicationJournal() error {
 		} else if errors.Is(err, os.ErrNotExist) {
 			err = s.loadPublicationOutcome(&e)
 		}
+		_, completedErr := os.Stat(filepath.Join(s.publicationEntryDir(e.Sequence), "published"))
+		e.Published = e.Discarded || completedErr == nil
+		_, generationErr := os.Stat(filepath.Join(s.publicationEntryDir(e.Sequence), "generation"))
+		e.Generation = generationErr == nil
+		s.loadPublicationFailures(&e)
+		if e.Discarded && e.Applied && err == nil {
+			// A durable discard also excludes an applied payload after restart.
+			if err = s.recordPublicationDiscardEffect(e); err != nil {
+				s.pausePublication(e, err)
+			}
+			s.publicationEntries[len(s.publicationEntries)-1] = e
+			continue
+		}
 		if err == nil {
 			e.Refs, err = s.publicationReferences(e)
 			if err == nil {
@@ -562,7 +597,7 @@ func (s *FlatSQLStore) recoverPublicationJournal() error {
 		e.ReadReady = err == nil
 		s.publicationEntries[len(s.publicationEntries)-1] = e
 		if err != nil {
-			if IsPublicationContentError(err) {
+			if !e.Applied && IsPublicationContentError(err) {
 				if e.Discarded {
 					continue
 				}
@@ -575,12 +610,6 @@ func (s *FlatSQLStore) recoverPublicationJournal() error {
 			s.pausePublication(e, err)
 			continue
 		}
-		_, completedErr := os.Stat(filepath.Join(s.publicationEntryDir(e.Sequence), "published"))
-		e.Published = completedErr == nil
-		_, generationErr := os.Stat(filepath.Join(s.publicationEntryDir(e.Sequence), "generation"))
-		e.Generation = generationErr == nil
-		s.loadPublicationFailures(&e)
-		s.publicationEntries[len(s.publicationEntries)-1] = e
 		if e.Applied {
 			continue
 		}
@@ -816,13 +845,22 @@ func (s *FlatSQLStore) retainedSelectionLocked(schema, provider, source, batch s
 	byKey := map[string]publicationRecordRef{}
 	terminalComplete := false
 	for _, e := range s.publicationEntries {
-		if e.Aborted || !e.Applied || (batch == "" && e.GenerationFailure.Attempts >= 3) || e.Sequence > cutoff || e.Schema != schema || e.Tags.ProviderID != provider || e.Tags.SourceName != source || (batch != "" && e.Tags.BatchID != batch) {
+		if e.Aborted || !e.Applied || e.Sequence > cutoff || e.Schema != schema || e.Tags.ProviderID != provider || e.Tags.SourceName != source || (batch != "" && e.Tags.BatchID != batch) {
+			continue
+		}
+		if !e.Discarded && !e.ReadReady {
+			return nil, fmt.Errorf("applied publication entry %d batch %q unreadable; restore it or explicitly discard it", e.Sequence, e.Tags.BatchID)
+		}
+		if !e.Discarded && batch == "" && e.GenerationFailure.Attempts >= 3 {
 			continue
 		}
 		p.Cutoff = e.Sequence
 		p.SourceCutoff = e.SourceSequence
 		p.SourceSequences = append(p.SourceSequences, e.SourceSequence)
 		terminalComplete = e.Generation
+		if e.Discarded {
+			continue
+		}
 		for _, r := range e.Refs {
 			key := r.CID()
 			if schema == "CAT.fbs" && batch == "" && r.Identity() != "" {
@@ -899,7 +937,7 @@ func (s *FlatSQLStore) RetryPublicationRecovery() {
 	resolved := map[publicationSourceKey]bool{}
 	failed := map[publicationSourceKey]bool{}
 	for _, e := range s.publicationEntries {
-		if e.Discarded || e.BatchFailure.Attempts >= 3 || (e.Applied && e.ReadReady) {
+		if e.Discarded || (!e.Applied && e.BatchFailure.Attempts >= 3) || (e.Applied && e.ReadReady) {
 			continue
 		}
 		key := publicationSourceKey{e.Schema, e.Tags.ProviderID, e.Tags.SourceName}
@@ -958,10 +996,21 @@ func (s *FlatSQLStore) RetryPublicationRecovery() {
 			_, generationErr := os.Stat(filepath.Join(s.publicationEntryDir(e.Sequence), "generation"))
 			e.Generation = generationErr == nil
 			s.loadPublicationFailures(&e)
+			if e.Applied {
+				// Restoring an applied stream also repairs quarantine receipts from
+				// versions that treated that stream as an unapplied intent.
+				err = os.Remove(filepath.Join(s.publicationEntryDir(e.Sequence), "batch-failure.json"))
+				if os.IsNotExist(err) {
+					err = nil
+				}
+				e.BatchFailure = publicationFailure{}
+			}
+		}
+		if err == nil {
 			err = s.markPublicationApplied(e)
 		}
 		if err != nil {
-			if IsPublicationContentError(err) {
+			if !e.Applied && IsPublicationContentError(err) {
 				if saveErr := s.quarantineUnreadablePublication(e, err); saveErr == nil {
 					continue
 				} else {
@@ -984,7 +1033,7 @@ func (s *FlatSQLStore) RetryPublicationRecovery() {
 		}
 		unresolved := false
 		for _, e := range s.publicationEntries {
-			if !e.Discarded && e.BatchFailure.Attempts < 3 && (!e.Applied || !e.ReadReady) {
+			if !e.Discarded && (e.Applied || e.BatchFailure.Attempts < 3) && (!e.Applied || !e.ReadReady) {
 				if e.Schema == "" || key == (publicationSourceKey{e.Schema, e.Tags.ProviderID, e.Tags.SourceName}) {
 					unresolved = true
 					break

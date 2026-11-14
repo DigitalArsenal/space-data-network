@@ -3,6 +3,7 @@ package storage
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -80,6 +81,12 @@ func (s *FlatSQLStore) RecordPublicationFailure(schema, provider, source, batch 
 	attempts++
 	found := false
 	for i, e := range s.publicationEntries {
+		if e.Schema == schema && e.Tags.ProviderID == provider && e.Tags.SourceName == source && e.Tags.BatchID == batch && e.Applied && !e.Discarded {
+			if _, readErr := s.publicationReferences(e); readErr != nil {
+				s.pausePublicationLocked(e, readErr)
+				continue
+			}
+		}
 		if e.Schema == schema && e.Tags.ProviderID == provider && e.Tags.SourceName == source && e.Tags.BatchID == batch && !e.Published {
 			f := publicationFailure{Attempts: attempts, Reason: cause.Error(), RetryAt: time.Now().Add(6 * time.Hour)}
 			raw, _ := json.Marshal(f)
@@ -100,7 +107,8 @@ func (s *FlatSQLStore) RecordPublicationFailure(schema, provider, source, batch 
 }
 
 // ManagePublicationBatch applies an explicit operator requeue or discard to a
-// unfinished batch. Discard acknowledges lost publication without deleting live data.
+// unfinished batch or an unreadable applied batch. Discard acknowledges lost
+// publication without deleting live data.
 func (s *FlatSQLStore) ManagePublicationBatch(schema, provider, source, batch, action string) error {
 	if action != "requeue" && action != "discard" {
 		return errors.New("publication action must be requeue or discard")
@@ -113,12 +121,17 @@ func (s *FlatSQLStore) ManagePublicationBatch(schema, provider, source, batch, a
 		if e.Schema != schema || e.Tags.ProviderID != provider || e.Tags.SourceName != source || e.Tags.BatchID != batch {
 			continue
 		}
-		if e.Published {
+		if e.Discarded || (e.Published && (!e.Applied || e.ReadReady)) {
 			continue
 		}
 		if action == "discard" {
 			if err := publicationAtomicFile(filepath.Join(s.publicationEntryDir(e.Sequence), "discarded"), []byte("1\n")); err != nil {
 				return err
+			}
+			if e.Applied {
+				if err := s.recordPublicationDiscardEffect(e); err != nil {
+					return err
+				}
 			}
 			if err := publicationAtomicFile(filepath.Join(s.publicationEntryDir(e.Sequence), "published"), []byte("1\n")); err != nil {
 				return err
@@ -143,6 +156,27 @@ func (s *FlatSQLStore) ManagePublicationBatch(schema, provider, source, batch, a
 		s.updatePublicationQuarantine(s.publicationEntries[i])
 	}
 	return nil
+}
+
+// One durable notice per source preserves the explicit loss acknowledgement
+// after entry reclamation. Replacing records does not erase that audit notice.
+func (s *FlatSQLStore) recordPublicationDiscardEffect(e publicationEntry) error {
+	path := filepath.Join(s.publicationDir(), "discard-effects.json")
+	effects := map[string]string{}
+	raw, err := os.ReadFile(path)
+	if err == nil {
+		err = json.Unmarshal(raw, &effects)
+	}
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	key := e.Schema + "/" + e.Tags.ProviderID + "/" + e.Tags.SourceName
+	effects[key] = fmt.Sprintf("applied entry %d batch %q explicitly discarded; objects whose winning record it held are missing until the producer writes them again; earlier discard acknowledgements also remain in effect", e.Sequence, e.Tags.BatchID)
+	raw, err = json.Marshal(effects)
+	if err != nil {
+		return err
+	}
+	return publicationAtomicFile(path, raw)
 }
 
 // PublicationContentError identifies a deterministic defect in one retained batch.
@@ -173,7 +207,8 @@ func publicationReadError(err error) error {
 }
 
 // An integrity failure during recovery cannot provide a selection for a normal
-// publication attempt. Set that entry aside immediately, without pausing others.
+// publication attempt. Only never-applied entries can be set aside without a
+// source pause; applied entries belong to the complete view.
 func (s *FlatSQLStore) quarantineUnreadablePublication(e publicationEntry, cause error) error {
 	f := publicationFailure{Attempts: 3, Reason: cause.Error(), RetryAt: time.Now().Add(6 * time.Hour)}
 	raw, _ := json.Marshal(f)

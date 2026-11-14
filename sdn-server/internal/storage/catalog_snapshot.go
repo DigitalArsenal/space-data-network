@@ -77,6 +77,12 @@ func (s *FlatSQLStore) captureCatalogLocked(x PublicationSource, cutoff uint64) 
 			continue
 		}
 		products.SourceCutoff = max(products.SourceCutoff, e.SourceSequence)
+		if e.Discarded {
+			continue
+		}
+		if !e.ReadReady {
+			return nil, fmt.Errorf("applied product entry %d batch %q unreadable; restore it or explicitly discard it", e.Sequence, e.Tags.BatchID)
+		}
 		for _, r := range e.Refs {
 			if wanted[r.CID()] || wanted[r.FramedCID()] {
 				selected[r.CID()] = r
