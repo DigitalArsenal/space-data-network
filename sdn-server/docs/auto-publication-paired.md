@@ -37,11 +37,14 @@ The existing five-minute default remains. Opted-in source snapshots default to
 identities select both scopes; the first rule within each scope determines its
 options. Configuration requires `keep_series: 0`, including matching overrides.
 
-Batches publish in retained journal order (observation order for ordinary sources).
+Retained batches publish in journal order across restarts. Ordinary sources use
+observation order in process and the storage progress table's batch-identifier
+order at restart; they have no retained journal sequence.
 A burst starts after `min_interval` and captures the pending ordered prefix.
 Its batches dispatch back to back; the interval applies to burst start, not each
-successful batch. A failed predecessor blocks newer batches of that source while
-other sources can progress. Batches arriving during a burst, including continuation
+successful batch. A failed predecessor waits with backoff; only each source's head enters the dispatch
+queue. After three failed attempts, a retained batch is durably set aside and newer
+batches proceed. Ordinary sources without durable retention continue retrying. Batches arriving during a burst, including continuation
 of an in-flight batch, wait for the following interval. Settle waits for quiet after
 an observation. The bounded dispatch queue does not discard pending identities.
 

@@ -1,7 +1,9 @@
 # Durable catalog publication
 
-Retention adds a synchronous SDS copy before the storage engine commits. Disk
-use grows with history; automatic journal reclamation is absent. Retained writes
+Retention adds a synchronous SDS copy before the storage engine commits. Payload disk
+use follows the live catalog, pending or quarantined batches, and active selections.
+Completed obsolete entries are reclaimed automatically; a small completion receipt
+remains per historical batch. Retained writes
 serialize per store. Concurrent calls with the same source, batch, peer, signature,
 and write options coalesce while waiting for that serialization, up to 4,096
 records across calls. A larger single batch retains one intent. Every caller
@@ -18,8 +20,10 @@ reference metadata, 100,000 records per selection, 64 MiB of accounted metadata
 per shard index, and 16 MiB per payload. Ingestion limits are checked before replacing live records. Selection and
 shard-index limits refuse export before publication. These are storage/export bounds, not a
 bound on the entire node's heap. A synthetic 100,000-product selection test
-checks retained heap growth against 128 MiB. Partition across separate stores and drain/retire
-retained history before exhausting capacity.
+checks retained heap growth against 128 MiB. Drain pending work and resolve quarantined batches before exhausting capacity.
+The tag-lookup index uses one hash lookup per record. Each sequential call still
+requires a durable intent; prepared scope metadata contains only recovery identity,
+and its directory is synchronized once after both metadata files.
 
 Enable retention on empty CAT and OCM sources in store format 4. Existing
 unretained history cannot be reconstructed. Sealed standards are refused; CAT
@@ -76,8 +80,15 @@ reason in logs and `recoveryErrors` in automatic-publication status, and permits
 the node and other sources to operate. Unreadable metadata uses a separate scope
 copy; if both copies are unusable, all retained sources are paused conservatively.
 Ordinary sources remain available. Applied streams are also checksum-verified at
-startup. Orphan preparation directories are removed. Restore corrupt journal
-files from a verified backup before restarting; deleting a pending intent loses
+startup. Only unreclaimed streams are read: startup work scales with their payload
+bytes plus reference metadata, up to 200,000 records at the 16 MiB per-record
+limit (3.125 TiB of payload in the theoretical maximum). The reference-metadata
+limit can bind earlier. This is an I/O bound, not a measured startup duration.
+Orphan preparation and reclaimed directories are removed. A transient read error
+never makes an applied entry eligible for an engine write. Thirty-second recovery
+retries unreadable index state and clears its pause after all affected entries recover.
+Export read errors fail that attempt without pausing ingestion. Restore corrupt journal
+files from a verified backup; deleting a pending intent loses
 the durable handoff.
 
 Successful announcement and series bookkeeping precede a separate durable
@@ -94,7 +105,11 @@ chunk. An embedded producer can instead call `CompleteCatalogGeneration` after
 all writes. Closure is validated at the index's cutoff before the generation
 marker becomes durable. Product-only writes, partial index writes, and unresolved
 new generations leave the last completed generation visible. Before the first
-complete generation, snapshot capture returns an error.
+complete generation, snapshot capture returns an error. Closure reads use a pinned
+index cutoff outside the ingestion lock. Three unresolved closure attempts durably
+quarantine that terminal batch; later generations proceed while the previous complete
+generation remains selectable. The suffix has no special meaning on a retained CAT
+source without `catalog_product_source`.
 
 Selection uses the last CAT record for each catalog identity in journal order,
 then resolves exactly its referenced OCM payload or size-prefixed record CIDs.
@@ -111,14 +126,18 @@ sidecar at the shared cutoff. Apply changed batches in journal order through a
 completed generation. A batch crossing a snapshot cutoff is replayed in full;
 duplicate records are harmless. With a fixed exclusion policy, the snapshot plus
 post-cutoff batches produces the same selected map as a fresh compact snapshot.
+A captured selection pins its files through `Close`; callers release both sets
+with `CatalogSnapshot.Close`. The production exporter releases its selections
+after publication. Older unpinned cutoffs can disappear through reclamation.
 Retries of a pinned selection produce identical content identifiers. A changed
 selection or export metadata can produce different identifiers.
 
 Ordinary deletion and expiry do not remove retained records from snapshots. For
 an operator takedown, set `catalog_exclude_cids` on a retained CAT source rule to
 an array of the CAT payload CIDs to remove. Exclusions are durable and additive;
-they remove those selected index records and their unreferenced products from
-future captures without restoring older versions. A replacement full snapshot
+they remove those selected index records from future snapshots and pending CAT
+batch selections, with unreferenced products omitted from compact snapshots,
+without restoring older versions. A replacement full snapshot
 communicates the new exclusion policy. Existing immutable exports and captured
 selections are not revoked. A producer can instead publish a new CAT record with
 an empty product list to communicate product removal in its ordinary update stream.
@@ -129,11 +148,33 @@ participating sources, and set `stop_publication_retention: true` on their exact
 source rules. Restart. Pending or unapplied entries refuse retirement; completed
 sources return to ordinary storage/export behavior. Removing a rule by itself
 does not disable durable retention. If publication is disabled while durable
-retention remains active, startup emits an explicit warning. After every source
+retention remains active, startup emits an explicit warning. Node runtime status
+reports `publicationRetainedSources`, `publicationRecoveryErrors`, and
+`publicationJournal` even when automatic publication is disabled. After every source
 has retired, stop the node and remove the `publication-journal` directory inside
 its data directory. Keep backups and published shards according to their normal
 retention policy. A future retained source requires an empty source at activation.
 
-Reclamation requires successful changed-batch publication and absence from every
-retained generation or live selection. The implementation conservatively retains
-bytes; source retirement is the supported whole-journal removal boundary.
+After publication and at startup, reclamation keeps the latest source view, the
+last complete generation and its product closure, unannounced or quarantined
+entries, products newer than the completed index, and every active selection.
+A durable sequence checkpoint and batch receipt precede directory retirement;
+startup finishes deletion of retired directories. Applied, published entries with
+no remaining reference lose both payloads and resident index references. Journal
+statistics count entries, records, reference bytes, payload bytes, pins, and reclaimed
+entries. Small receipts remain; payload and reference counts plateau with a stable
+catalog and drained publications. The 30-day synthetic control ingests 2,000 objects
+per day, publishes 60 batches, and compares the last snapshot with a fresh snapshot.
+
+After three failed retained batch attempts, its bytes remain quarantined, its reason
+appears in recovery status and logs, and dispatch continues for its source. On that
+source's exact rule, set `requeue_publication_batches` to a list of batch identifiers
+to retry, or `discard_publication_batches` to explicitly acknowledge their lost
+publication. Restart applies the action; remove the action setting afterwards.
+An unapplied storage intent cannot be discarded by this mechanism. Requeue also
+resets terminal-generation failures. Quarantined bytes count against capacity.
+
+Ordinary sources use the existing buffered shard-export path. Retained exports
+stream to a temporary file and install immutable output through a hard link, with
+exclusive creation and streamed copy on filesystems without hard-link support.
+The output digest is checked when the destination already exists.
