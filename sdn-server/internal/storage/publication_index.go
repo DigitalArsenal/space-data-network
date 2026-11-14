@@ -89,3 +89,21 @@ func (s *FlatSQLStore) publicationView() *FlatSQLStore {
 	}
 	return v
 }
+
+func (s *FlatSQLStore) publicationTagAlreadyRetained(schema, cid string, tags SourceTags) bool {
+	s.publicationMu.Lock()
+	defer s.publicationMu.Unlock()
+	if s.publicationFailures[publicationSourceKey{schema, tags.ProviderID, tags.SourceName}] != nil {
+		return false
+	}
+	for _, e := range s.publicationEntries {
+		if e.Applied && e.Schema == schema && e.Tags == tags {
+			for _, r := range e.Refs {
+				if r.CID == cid {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}

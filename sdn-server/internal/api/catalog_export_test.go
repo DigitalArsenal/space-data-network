@@ -431,6 +431,7 @@ func TestCatalogSnapshotRefusesMissingProduct(t *testing.T) {
 		t.Fatal("unresolved snapshot exposed")
 	}
 	catalogPutDay(t, s, 0, "OCM")
+	catalogPutDay(t, s, 0, "CAT")
 	if _, err := s.CompleteCatalogGeneration("synthetic-node", "catalog-index"); err != nil {
 		t.Fatal(err)
 	}

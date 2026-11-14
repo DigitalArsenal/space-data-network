@@ -245,6 +245,9 @@ func (s *FlatSQLStore) completeCatalogGenerationLocked(provider, source string) 
 	if err != nil {
 		return 0, err
 	}
+	if _, err = v.captureCatalogLocked(x, snap.Cutoff); err != nil {
+		return 0, fmt.Errorf("commit product records before the final index batch: %w", err)
+	}
 	if snap.Cutoff == 0 {
 		return 0, errors.New("catalog generation has no index records")
 	}

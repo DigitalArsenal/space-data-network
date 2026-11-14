@@ -126,7 +126,16 @@ func (s *ConcreteDatasetPublicationService) DatasetPublicationUnchanged(ctx cont
 	if s.store.PublicationBatchComplete(schema, req.ProviderID, req.SourceName, req.BatchID) {
 		return true, nil
 	}
-	current := s.publicationFingerprint(req, schema)
+	selection, selectErr := s.store.SelectPublication(schema, req.ProviderID, req.SourceName, req.BatchID)
+	if selectErr != nil {
+		return false, selectErr
+	}
+	current := ""
+	if selection != nil {
+		current, _ = selection.Fingerprint()
+	} else {
+		current = s.publicationFingerprint(req, schema)
+	}
 	if current == "" {
 		return false, nil
 	}
@@ -138,7 +147,13 @@ func (s *ConcreteDatasetPublicationService) DatasetPublicationUnchanged(ctx cont
 	if err != nil || !ok {
 		return false, err
 	}
-	return latest.Fingerprint != "" && latest.Fingerprint == current, nil
+	unchanged := latest.Fingerprint != "" && latest.Fingerprint == current
+	if unchanged && selection != nil {
+		if err := s.store.CompletePublication(selection); err != nil {
+			return false, err
+		}
+	}
+	return unchanged, nil
 }
 
 // afterPublication records the series, applies retention and queues the IPNS

@@ -311,6 +311,12 @@ func (s *FlatSQLStore) markPublicationApplied(e publicationEntry) error {
 		return err
 	}
 	e.Refs = refs
+	if len(refs) == 0 {
+		if err := publicationAtomicFile(filepath.Join(s.publicationEntryDir(e.Sequence), "published"), []byte("1\n")); err != nil {
+			return err
+		}
+		e.Published = true
+	}
 	s.publicationMu.Lock()
 	for i := range s.publicationEntries {
 		if s.publicationEntries[i].Sequence == e.Sequence {
@@ -662,12 +668,25 @@ func (s *FlatSQLStore) publicationSourceEnabled(schema, provider, source string)
 func (s *FlatSQLStore) RetryPublicationRecovery() {
 	s.publicationWriteMu.Lock()
 	defer s.publicationWriteMu.Unlock()
+	resolved := map[publicationSourceKey]bool{}
+	failed := map[publicationSourceKey]bool{}
 	for _, e := range s.publicationEntries {
 		if e.Applied {
 			continue
 		}
 		key := publicationSourceKey{e.Schema, e.Tags.ProviderID, e.Tags.SourceName}
-		records, err := s.publicationRecords(e)
+		raw, err := os.ReadFile(filepath.Join(s.publicationEntryDir(e.Sequence), "entry.json"))
+		var saved publicationEntry
+		if err == nil {
+			err = json.Unmarshal(raw, &saved)
+		}
+		if err == nil && (saved.Sequence != e.Sequence || saved.Schema != e.Schema || saved.Tags != e.Tags) {
+			err = errors.New("publication entry scope mismatch")
+		}
+		var records []DatasetExportRecord
+		if err == nil {
+			records, err = s.publicationRecords(e)
+		}
 		if err == nil && !e.OutcomeKnown {
 			data := make([][]byte, len(records))
 			for i, r := range records {
@@ -685,13 +704,19 @@ func (s *FlatSQLStore) RetryPublicationRecovery() {
 			err = s.markPublicationApplied(e)
 		}
 		if err != nil {
+			failed[key] = true
 			s.pausePublication(e, err)
 		} else {
-			s.publicationMu.Lock()
-			delete(s.publicationFailures, key)
-			s.publicationMu.Unlock()
+			resolved[key] = true
 		}
 	}
+	s.publicationMu.Lock()
+	for key := range resolved {
+		if !failed[key] {
+			delete(s.publicationFailures, key)
+		}
+	}
+	s.publicationMu.Unlock()
 }
 
 // CompletePublication records successful batch publication independently of

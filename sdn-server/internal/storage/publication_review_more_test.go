@@ -5,7 +5,9 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
-	"fmt"
+	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/CAT"
+	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/OCM"
+	flatbuffers "github.com/google/flatbuffers/go"
 	"github.com/spacedatanetwork/sdn-server/internal/encfield"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"os"
@@ -132,8 +134,8 @@ func TestPublicationReviewReadDoesNotWaitForWriter(t *testing.T) {
 func TestPublicationReviewHistoryMemory(t *testing.T) {
 	dir := t.TempDir()
 	s := &FlatSQLStore{basePath: dir}
-	// 100000 synthetic history records for one catalog identity; no engine or signing.
-	e := publicationEntry{Sequence: 1, Schema: "CAT.fbs", Tags: SourceTags{ProviderID: "synthetic", SourceName: "index"}, Applied: true, Generation: true}
+	// 100000 small synthetic products, one selected product; no engine or signing.
+	e := publicationEntry{Sequence: 1, Schema: "OCM.fbs", Tags: SourceTags{ProviderID: "synthetic", SourceName: "products"}, Applied: true}
 	if err := os.MkdirAll(s.publicationEntryDir(1), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +145,15 @@ func TestPublicationReviewHistoryMemory(t *testing.T) {
 	}
 	h := sha256.New()
 	for i := 0; i < 100000; i++ {
-		data := sds.NewCATBuilder().WithNoradCatID(900001).WithObjectName(fmt.Sprintf("synthetic-%d", i)).Build()
+		builder := flatbuffers.NewBuilder(128)
+		OCM.MetadataStart(builder)
+		OCM.MetadataAddNORAD_CAT_ID(builder, uint32(900000+i))
+		metadata := OCM.MetadataEnd(builder)
+		OCM.OCMStart(builder)
+		OCM.OCMAddMETADATA(builder, metadata)
+		root := OCM.OCMEnd(builder)
+		builder.FinishWithFileIdentifier(root, []byte("$OCM"))
+		data := builder.FinishedBytes()
 		frame := make([]byte, 4+len(data))
 		binary.LittleEndian.PutUint32(frame, uint32(len(data)))
 		copy(frame[4:], data)
@@ -161,7 +171,29 @@ func TestPublicationReviewHistoryMemory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.publicationEntries = []publicationEntry{e}
+	builder := flatbuffers.NewBuilder(512)
+	id := builder.CreateString(e.Refs[len(e.Refs)-1].CID)
+	CAT.CATProductStart(builder)
+	CAT.CATProductAddRECORD_CID(builder, id)
+	ref := CAT.CATProductEnd(builder)
+	CAT.CATStartPRODUCTSVector(builder, 1)
+	builder.PrependUOffsetT(ref)
+	products := builder.EndVector(1)
+	CAT.CATStart(builder)
+	CAT.CATAddNORAD_CAT_ID(builder, 900001)
+	CAT.CATAddPRODUCTS(builder, products)
+	root := CAT.CATEnd(builder)
+	builder.FinishWithFileIdentifier(root, []byte("$CAT"))
+	payload := builder.FinishedBytes()
+	indexPath := filepath.Join(dir, "index.sds")
+	frame := make([]byte, 4+len(payload))
+	binary.LittleEndian.PutUint32(frame, uint32(len(payload)))
+	copy(frame[4:], payload)
+	if err = os.WriteFile(indexPath, frame, 0600); err != nil {
+		t.Fatal(err)
+	}
+	index := publicationEntry{Sequence: 2, Schema: "CAT.fbs", Tags: SourceTags{ProviderID: "synthetic", SourceName: "index"}, Applied: true, Generation: true, Refs: []publicationRecordRef{{CID: computeCID(payload), Path: indexPath, Offset: 4, Size: uint32(len(payload)), Identity: "synthetic"}}}
+	s.publicationEntries = []publicationEntry{e, index}
 	s.publicationSources = []PublicationSource{{Schema: "CAT.fbs", Provider: "synthetic", Source: "index", ProductSource: "products"}}
 	snap, err := s.CaptureCatalogSnapshot("synthetic", "index", 0)
 	if err != nil {
@@ -172,7 +204,7 @@ func TestPublicationReviewHistoryMemory(t *testing.T) {
 	runtime.KeepAlive(s)
 	growth := int64(after.HeapAlloc) - int64(before.HeapAlloc)
 	t.Logf("history_records=100000 selected_index=%d selected_products=%d retained_heap_growth_bytes=%d", len(snap.Index.refs), len(snap.Products.refs), growth)
-	if len(snap.Index.refs) != 1 || len(snap.Products.refs) != 0 || growth > 128<<20 {
+	if len(snap.Index.refs) != 1 || len(snap.Products.refs) != 1 || growth > 128<<20 {
 		t.Fatal("history payloads retained in snapshot")
 	}
 }
@@ -181,5 +213,35 @@ func TestPublicationReviewCatalogStandardsUnsealed(t *testing.T) {
 		if encfield.HasEncryptedFields(schema) {
 			t.Fatalf("retained standard %s has sealed fields", schema)
 		}
+	}
+}
+
+func TestPublicationReviewNoopTags(t *testing.T) {
+	t.Setenv("SDN_STORE_FORMAT", "4")
+	s := journalTestStore(t, t.TempDir())
+	defer s.Close()
+	if err := s.ConfigurePublicationSources([]PublicationSource{{Schema: "CAT.fbs", Provider: "synthetic", Source: "index"}}); err != nil {
+		t.Fatal(err)
+	}
+	journalTestPut(t, s, "one")
+	p, err := s.SelectPublication("CAT.fbs", "synthetic", "index", "one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := p.Records()[0]
+	n := len(s.publicationEntries)
+	if err = s.UpsertSourceTags("CAT.fbs", r.CID, r.SourceTags); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.publicationEntries) != n {
+		t.Fatal("identical tags journaled again")
+	}
+	tags := r.SourceTags
+	tags.BatchID = "another"
+	if err = s.UpsertSourceTags("CAT.fbs", r.CID, tags); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.publicationEntries) != n+1 {
+		t.Fatal("new publication identity lost")
 	}
 }

@@ -359,6 +359,13 @@ func (b format4Backend) UpsertSourceTags(schemaName, cid string, tags SourceTags
 	if b.s.publicationEnabled.Load() {
 		retained := b.s.publicationSourceEnabled(schemaName, tags.ProviderID, tags.SourceName)
 		if retained {
+			if b.s.publicationTagAlreadyRetained(schemaName, cid, tags) {
+				typ, err := f4Type(schemaName)
+				if err != nil {
+					return err
+				}
+				return b.f4Retag(schemaName, typ, cid, f4Tag(tags))
+			}
 			r, err := b.s.GetRecord(schemaName, cid)
 			if err != nil {
 				return err
