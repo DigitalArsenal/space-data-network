@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
@@ -29,6 +30,21 @@ func TestEmbeddedLayoutStampMatchesCapability(t *testing.T) {
 	}
 	if versioninfo.MaxStoreLayout != layout {
 		t.Fatalf("stamp %d, embedded capability requires %d", versioninfo.MaxStoreLayout, layout)
+	}
+	spec, err := TypeSpecFor("KMF.fbs")
+	if err != nil || len(spec.BFBS) != 0 {
+		t.Fatalf("sealed registration: %v", err)
+	}
+	if err := e.RegisterType(spec); err != nil {
+		t.Fatal(err)
+	}
+	for _, sandbox := range []bool{false, true} {
+		for _, projection := range []string{"COUNT(*)", "_cid", "_data", "*"} {
+			_, err := e.SQL(ctx, SQLRequest{SQL: "SELECT " + projection + " FROM KMF", Sandbox: sandbox}, func([]byte) error { return nil })
+			if err == nil || !strings.Contains(err.Error(), "no such table") {
+				t.Fatalf("shipped sealed SQL: %v", err)
+			}
+		}
 	}
 }
 
