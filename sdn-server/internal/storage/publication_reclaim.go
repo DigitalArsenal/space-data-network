@@ -85,20 +85,23 @@ func (s *FlatSQLStore) recoverPublicationReclamation() error {
 			return err
 		}
 		s.publicationHighWater = c.HighWater
-		s.publicationReclaimed = c.Reclaimed
+		reclaimed := c.Reclaimed
 		for _, seq := range c.Pending {
 			if _, statErr := os.Stat(s.publicationEntryDir(seq)); os.IsNotExist(statErr) {
-				s.publicationReclaimed++
+				reclaimed++
 			} else if statErr != nil {
 				return statErr
 			}
 		}
-		c.Reclaimed = s.publicationReclaimed
+		c.Reclaimed = reclaimed
 		c.Pending = nil
 		settled, _ := json.Marshal(c)
 		if err = publicationAtomicFile(filepath.Join(s.publicationDir(), "reclamation.json"), settled); err != nil {
 			return err
 		}
+		s.publicationMu.Lock()
+		s.publicationReclaimed = reclaimed
+		s.publicationMu.Unlock()
 	} else if !os.IsNotExist(err) {
 		return err
 	}
