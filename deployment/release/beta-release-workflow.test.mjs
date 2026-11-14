@@ -484,6 +484,15 @@ test('every CLI target links WasmEdge in and ships no runtime beside the binary'
   const cliJob = workflow.slice(workflow.indexOf('  cli:'), workflow.indexOf('  cli-update-feed:'));
   assert.match(cliJob, /name:\s*Restore the static WasmEdge prefix[\s\S]*fail-on-cache-miss:\s*true/);
   assert.match(cliJob, /go-with-wasmedge\.sh build -o/);
+
+  // GNU ld dies on the Windows link (exit 5, run 43646565818); lld links it.
+  // Windows only, after the prefix is restored and before the build.
+  assert.match(cliJob, /install: >-[\s\S]*?mingw-w64-x86_64-lld[\s\S]*?- name: Install Windows CLI build tools/);
+  const lld = /- name: Link the Windows CLI with lld\n\s+if: matrix\.target_os == 'windows'\n\s+run: \|\n\s+printf ' -fuse-ld=lld' >> "\$\{WASMEDGE_DIR\}\/link\.flags"/;
+  assert.match(cliJob, lld);
+  const at = (name) => cliJob.indexOf(`- name: ${name}`);
+  assert.ok(at('Restore the static WasmEdge prefix') < at('Link the Windows CLI with lld'));
+  assert.ok(at('Link the Windows CLI with lld') < at('Build target SDN binary'));
 });
 
 test('the static WasmEdge cache key covers everything that shapes a prefix', () => {
