@@ -101,7 +101,11 @@ func TestCatalogReviewExclusionsAndStableCutoff(t *testing.T) {
 	if err != nil || before.Cutoff != after.Cutoff {
 		t.Fatal("unrelated writes changed generation", err)
 	}
-	id := before.Index.Records()[0].CID
+	records, err := before.Index.Records()
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := records[0].CID
 	if err = s.ExcludeCatalogRecords("synthetic-node", "catalog-index", []string{id}); err != nil {
 		t.Fatal(err)
 	}
@@ -171,5 +175,42 @@ func TestCatalogReviewSnapshotCheckpoint(t *testing.T) {
 	p.publishReadySource(context.Background())
 	if len(service.events) != before {
 		t.Fatal("unchanged periodic snapshot republished")
+	}
+}
+
+type orderedRetryService struct {
+	attempts []string
+	fail     bool
+}
+
+func (s *orderedRetryService) PublishDatasetUpdate(_ context.Context, req DatasetPublicationRequest) (*DatasetPublicationResult, error) {
+	s.attempts = append(s.attempts, req.BatchID)
+	if s.fail {
+		s.fail = false
+		return nil, errors.New("inert retry")
+	}
+	return &DatasetPublicationResult{ManifestCID: "synthetic"}, nil
+}
+func TestPairedPublicationRetryPreservesOrder(t *testing.T) {
+	service := &orderedRetryService{fail: true}
+	p := NewAutoPublisher(service, pairedRules())
+	now := time.Now()
+	p.now = func() time.Time { return now }
+	p.retryBackoff = func(int) time.Duration { return time.Second }
+	p.ObserveIngest(pairedObservation("first"))
+	p.ObserveIngest(pairedObservation("second"))
+	for len(p.queue) > 0 {
+		p.publishPairedBatch(context.Background(), <-p.queue)
+	}
+	if !reflect.DeepEqual(service.attempts, []string{"first"}) {
+		t.Fatal("newer batch passed failed predecessor")
+	}
+	now = now.Add(time.Second)
+	p.queueReadyPairedBatches()
+	for len(p.queue) > 0 {
+		p.publishPairedBatch(context.Background(), <-p.queue)
+	}
+	if !reflect.DeepEqual(service.attempts, []string{"first", "first", "second"}) {
+		t.Fatal("retry changed batch order", service.attempts)
 	}
 }

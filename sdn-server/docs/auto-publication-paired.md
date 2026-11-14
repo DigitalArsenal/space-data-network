@@ -1,16 +1,18 @@
 # Batch updates and periodic source snapshots
 
-Paired publication retains pending batch identities in memory and scans stored
-batch summaries at startup and every 30 seconds. Its memory and recovery work
-grow with retained batches. Full-source snapshots add export, pinning, and
-announcement work. Retaining completion history and source records consumes
-disk space. A crash after announcement handoff can repeat the same content
-identifier; consumers deduplicate content identifiers.
+Paired publication adds pending identities, durable recovery scans, and full-source
+exports. Completion receipts and recoverable input consume disk space. Retained
+sources refuse new batches when 4,096 batches are pending; automatic publication
+also bounds its in-memory backlog at 4,096 and exposes `backlogError` when exceeded.
+Stop ingestion and drain publication after that error. Ordinary append-only sources
+must retain their input until completion; only the explicit CAT/OCM retention option
+protects superseded or expired bytes.
 
-Configure both scopes for the same schema, provider, and source:
+Paired behavior requires an explicit source opt-in:
 
 ```yaml
 publishing:
+  enabled: true
   auto_publish:
     - schema: OCM.fbs
       provider_id: catalog-producer
@@ -22,46 +24,45 @@ publishing:
       provider_id: catalog-producer
       source_name: catalog-products
       publish_scope: source
+      paired_publication: true
       min_interval: 24h
   retention:
     keep_series: 0
 ```
 
-The batch rule publishes each changed batch. Pending requests survive rate
-limits, a full 16-entry dispatch queue, and transient failures. Retries continue
-with capped backoff. A zero-insert replay can recover a committed batch. Settle
-waits for quiet after the last observation that inserted records.
+Without `paired_publication` or `retain_for_publication`, existing configurations
+keep first-matching-rule behavior, including configurations containing both scopes.
+The existing five-minute default remains. Opted-in source snapshots default to
+24 hours. Their interval is independent of batch publication. Exact opted-in
+identities select both scopes; the first rule within each scope determines its
+options. Configuration requires `keep_series: 0`, including matching overrides.
 
-The source rule publishes all retained records of that exact source at startup
-and periodically, including when no ingest arrives. Its interval is independent
-of the batch rule and defaults to 24 hours when the two scopes are paired.
-Rule order does not select one scope over the other. The first matching rule
-within each scope determines its options. Batch filters retain their wildcard
-and case-insensitive matching; source identities are exact and case-sensitive.
-A single batch or source rule without retention options retains its existing scheduling behavior,
-including its five-minute default and existing retry policy.
+Batches publish in retained journal order (observation order for ordinary sources).
+A burst starts after `min_interval` and captures the pending ordered prefix.
+Its batches dispatch back to back; the interval applies to burst start, not each
+successful batch. A failed predecessor blocks newer batches of that source while
+other sources can progress. Batches arriving during a burst, including continuation
+of an in-flight batch, wait for the following interval. Settle waits for quiet after
+an observation. The bounded dispatch queue does not discard pending identities.
 
-For the configuration above, use append-retained source records, retain completed
-publication series (`keep_series: 0`), and retain the producer's store across
-restarts. A retention override for the configured source also needs
-`keep_series: 0`. Deleting source records before export makes those records
-unrecoverable. Enabling publication on an existing source includes retained
-historical batches without a matching completion fingerprint.
+Startup and thirty-second reconciliation recover committed batches whose observer
+never ran. A zero-insert replay can recover a committed batch. Retries use capped
+backoff. A successful service completion acknowledges progress; a shard row alone
+does not. Retained sources also keep per-entry completion receipts outside series
+retention. Restart can repeat an announcement after handoff and before durable
+completion; consumers deduplicate its content identifier.
 
-Recovery reads committed batch identities from the store, including commits
-whose ingest observer did not run. The existing publication series ledger
-acknowledges an unchanged batch only after the publication service succeeds.
-A shard row alone is not completion. The existing service reuses recorded
-shards and announcements after an incomplete attempt; the dataset-publication
-service, shard format, DPM/PNM conventions, and transport are unchanged.
+Source snapshots check their fingerprint before export. Their last successful
+publication time survives restart through the existing series ledger. Unchanged
+sources are skipped at startup and at periodic intervals. A changed source becomes
+eligible after its configured interval. An ordinary source snapshot contains its
+retained history, including superseded products if those records remain stored.
 
-An ordinary source snapshot contains retained source history. For durable CAT
-replacement and compact CAT/OCM snapshots, use the explicit storage and exporter
-options in [Durable catalog publication](catalog-publication.md). Those options
-retain pending bytes independently of live-record replacement or expiry.
+To disable pairing without durable retention, remove `paired_publication`; the
+ordinary first-rule behavior applies. For replacement-safe batches, compact
+snapshots, generation commits, recovery status, operator takedowns, and the
+supported retention stop procedure, see [Durable catalog publication](catalog-publication.md).
 
-Tests use an inert publication service with real storage and completion
-bookkeeping. Process exits at storage commit, shard creation, announcement
-handoff, and completion verify recovery without keys, signatures, or network
-traffic. They exercise both store formats. They do not exercise signed network
-delivery or replace the repository's publication integration tests.
+Focused tests use synthetic records and inert transport. They exercise durable
+storage and bookkeeping, process interruption, ordering and retries, configuration
+compatibility, and production snapshot sequencing at the signing/transport boundary.

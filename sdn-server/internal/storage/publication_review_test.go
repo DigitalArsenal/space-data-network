@@ -103,3 +103,53 @@ func TestPublicationReviewCorruptionIsolation(t *testing.T) {
 		t.Fatal("other retained source blocked", err)
 	}
 }
+
+type publicationIOAPI struct {
+	format4.API
+	calls *int
+}
+
+func (a publicationIOAPI) Put(ctx context.Context, b format4.Batch) ([]format4.Outcome, error) {
+	if len(b.Tags) > 0 && b.Tags[0].Source == "index" {
+		*a.calls++
+		return nil, errors.New("synthetic persistent engine I/O")
+	}
+	return a.API.Put(ctx, b)
+}
+func TestPublicationReviewBoundedStartupRecovery(t *testing.T) {
+	t.Setenv("SDN_STORE_FORMAT", "4")
+	dir := t.TempDir()
+	s := journalTestStore(t, dir)
+	if err := s.ConfigurePublicationSources([]PublicationSource{{Schema: "CAT.fbs", Provider: "synthetic", Source: "index"}, {Schema: "CAT.fbs", Provider: "synthetic", Source: "other"}}); err != nil {
+		t.Fatal(err)
+	}
+	s.publicationFault = func(stage string) error {
+		if stage == "engine" {
+			return errors.New("synthetic interruption")
+		}
+		return nil
+	}
+	raw := sds.NewCATBuilder().WithNoradCatID(900001).Build()
+	if _, err := s.StoreWithSourceTags("CAT.fbs", raw, "synthetic", nil, SourceTags{ProviderID: "synthetic", SourceName: "index", BatchID: "pending"}); err == nil {
+		t.Fatal("fault missing")
+	}
+	s.Close()
+	original := format4OpenEngine
+	calls := 0
+	format4OpenEngine = func(ctx context.Context, opt format4.Options) (format4.API, error) {
+		api, err := original(ctx, opt)
+		if err != nil {
+			return nil, err
+		}
+		return publicationIOAPI{api, &calls}, nil
+	}
+	defer func() { format4OpenEngine = original }()
+	s = journalTestStore(t, dir)
+	defer s.Close()
+	if calls != 3 || len(s.PublicationRecoveryStatus()) != 1 {
+		t.Fatalf("attempts=%d paused=%d", calls, len(s.PublicationRecoveryStatus()))
+	}
+	if _, err := s.StoreWithSourceTags("CAT.fbs", raw, "synthetic", nil, SourceTags{ProviderID: "synthetic", SourceName: "other", BatchID: "healthy"}); err != nil {
+		t.Fatal("unrelated retained source blocked", err)
+	}
+}

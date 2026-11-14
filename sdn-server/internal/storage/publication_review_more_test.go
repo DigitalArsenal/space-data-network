@@ -228,7 +228,11 @@ func TestPublicationReviewNoopTags(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := p.Records()[0]
+	records, err := p.Records()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := records[0]
 	n := len(s.publicationEntries)
 	if err = s.UpsertSourceTags("CAT.fbs", r.CID, r.SourceTags); err != nil {
 		t.Fatal(err)

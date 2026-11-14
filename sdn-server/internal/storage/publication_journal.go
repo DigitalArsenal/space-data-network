@@ -619,20 +619,20 @@ func (p *PublicationSelection) Fingerprint() (string, int) {
 	}
 	return hex.EncodeToString(h.Sum(nil)), len(p.refs)
 }
-func (p *PublicationSelection) Records() []DatasetExportRecord {
+func (p *PublicationSelection) Records() ([]DatasetExportRecord, error) {
 	out, err := p.window(IndexedRecordQuery{SchemaName: p.Schema, ProviderID: p.Provider, SourceName: p.Source, BatchID: p.Batch})
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	for i := range out {
 		data, err := out[i].load()
 		if err != nil {
-			return nil
+			return nil, err
 		}
 		out[i].Data = data
 		out[i].load = nil
 	}
-	return out
+	return out, nil
 }
 func (s *FlatSQLStore) retainedSelectionLocked(schema, provider, source, batch string, cutoff uint64) (*PublicationSelection, error) {
 	if err := s.publicationFailures[publicationSourceKey{schema, provider, source}]; err != nil {

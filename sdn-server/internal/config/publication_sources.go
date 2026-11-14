@@ -17,7 +17,7 @@ func (c *Config) validatePublicationSources() error {
 		}
 	}
 	for _, rule := range c.Publishing.AutoPublish {
-		if rule.StopPublicationRetention && rule.RetainForPublication {
+		if rule.StopPublicationRetention && retained[key(rule.Schema, rule.ProviderID, rule.SourceName)] {
 			return fmt.Errorf("stop_publication_retention and retain_for_publication cannot both be true")
 		}
 		if len(rule.CatalogExcludeCIDs) > 0 && (strings.TrimSuffix(rule.Schema, ".fbs") != "CAT" || !retained[key(rule.Schema, rule.ProviderID, rule.SourceName)]) {
