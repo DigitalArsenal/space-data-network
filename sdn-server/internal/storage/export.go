@@ -41,6 +41,7 @@ type DatasetExport struct {
 // DatasetExportRecord is one already-materialized FlatBuffer record to include
 // in a dataset export without first inserting it into a FlatSQL store.
 type DatasetExportRecord struct {
+	load       func() ([]byte, error)
 	CID        string
 	Data       []byte
 	SourceTags SourceTags
@@ -351,9 +352,26 @@ func ExportDatasetRecords(outputDir string, filter IndexedRecordQuery, records [
 	}
 	querySHA := sha256Hex(queryJSON)
 
-	shard := bytes.Buffer{}
+	if err := os.MkdirAll(filepath.Join(outputDir, "shards"), 0700); err != nil {
+		return nil, err
+	}
+	shardFile, err := os.CreateTemp(filepath.Join(outputDir, "shards"), ".export-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.Remove(shardFile.Name())
+	defer shardFile.Close()
+	shardHash := sha256.New()
+	shard := io.MultiWriter(shardFile, shardHash)
+	shardSize := int64(0)
 	indexRecords := make([]DatasetExportIndexRecord, 0, len(records))
 	for _, record := range records {
+		if record.load != nil {
+			record.Data, err = record.load()
+			if err != nil {
+				return nil, err
+			}
+		}
 		if len(record.Data) > int(^uint32(0)) {
 			return nil, fmt.Errorf("record %s exceeds uint32 shard frame length", record.CID)
 		}
@@ -361,8 +379,9 @@ func ExportDatasetRecords(outputDir string, filter IndexedRecordQuery, records [
 		if recordCID == "" {
 			recordCID = computeCID(record.Data)
 		}
-		offset := int64(shard.Len())
-		if err := binary.Write(&shard, binary.LittleEndian, uint32(len(record.Data))); err != nil {
+		offset := shardSize
+		shardSize += 4 + int64(len(record.Data))
+		if err := binary.Write(shard, binary.LittleEndian, uint32(len(record.Data))); err != nil {
 			return nil, fmt.Errorf("write shard length: %w", err)
 		}
 		if _, err := shard.Write(record.Data); err != nil {
@@ -387,12 +406,12 @@ func ExportDatasetRecords(outputDir string, filter IndexedRecordQuery, records [
 		})
 	}
 
-	shardBytes := shard.Bytes()
-	shardSHA := sha256Hex(shardBytes)
-	shardCID, err := cidV1RawSHA256(shardBytes)
+	shardSHA := hex.EncodeToString(shardHash.Sum(nil))
+	encoded, err := mh.Encode(shardHash.Sum(nil), mh.SHA2_256)
 	if err != nil {
-		return nil, fmt.Errorf("compute shard CID: %w", err)
+		return nil, err
 	}
+	shardCID := cid.NewCidV1(cid.Raw, encoded).String()
 	index := DatasetExportIndex{
 		Version:      1,
 		SchemaName:   filter.SchemaName,
@@ -424,7 +443,13 @@ func ExportDatasetRecords(outputDir string, filter IndexedRecordQuery, records [
 
 	shardPath := filepath.Join(outputDir, "shards", index.ShardFile)
 	indexPath := filepath.Join(outputDir, "indexes", fmt.Sprintf("%s-%s.index.json", querySHA[:16], indexSHA[:16]))
-	if err := writeImmutableExportFile(shardPath, shardBytes); err != nil {
+	if err := shardFile.Sync(); err != nil {
+		return nil, err
+	}
+	if err := shardFile.Close(); err != nil {
+		return nil, err
+	}
+	if err := os.Link(shardFile.Name(), shardPath); err != nil && !os.IsExist(err) {
 		return nil, err
 	}
 	if err := writeImmutableExportFile(indexPath, indexBytes); err != nil {
@@ -440,7 +465,7 @@ func ExportDatasetRecords(outputDir string, filter IndexedRecordQuery, records [
 		ShardPath:      shardPath,
 		ShardSHA256:    shardSHA,
 		ShardCID:       shardCID,
-		ShardBytes:     int64(len(shardBytes)),
+		ShardBytes:     shardSize,
 		IndexPath:      indexPath,
 		IndexSHA256:    indexSHA,
 		IndexCID:       indexCID,

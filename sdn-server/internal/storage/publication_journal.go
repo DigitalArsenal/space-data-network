@@ -21,7 +21,8 @@ import (
 // ProductSource on CAT selects its OCM closure for source snapshots.
 type PublicationSource struct{ Schema, Provider, Source, ProductSource string }
 type publicationEntry struct {
-	Published       bool `json:"-"`
+	Refs            []publicationRecordRef `json:"-"`
+	Published       bool                   `json:"-"`
 	Digest          string
 	Sequence        uint64
 	Schema          string
@@ -59,6 +60,8 @@ func (s *FlatSQLStore) ConfigurePublicationSources(sources []PublicationSource) 
 	if _, ok := s.rb.(format4Backend); !ok {
 		return errors.New("publication retention requires store format 4")
 	}
+	s.publicationWriteMu.Lock()
+	defer s.publicationWriteMu.Unlock()
 	s.publicationMu.Lock()
 	defer s.publicationMu.Unlock()
 	if err := s.requireWritable("configure publication retention"); err != nil {
@@ -151,6 +154,9 @@ func (b format4Backend) putRetained(op, schema string, records [][]byte, peer st
 			return nil, nil, err
 		}
 	}
+	if len(s.publicationEntries) >= maxPublicationEntries {
+		return nil, nil, errors.New("publication journal capacity reached; complete and retire retained history before ingestion")
+	}
 	seq := uint64(1)
 	if n := len(s.publicationEntries); n > 0 {
 		seq = s.publicationEntries[n-1].Sequence + 1
@@ -200,7 +206,9 @@ func (b format4Backend) putRetained(op, schema string, records [][]byte, peer st
 	if err = os.Rename(temp, s.publicationEntryDir(seq)); err != nil {
 		return nil, nil, err
 	}
+	s.publicationMu.Lock()
 	s.publicationEntries = append(s.publicationEntries, e)
+	s.publicationMu.Unlock()
 	if err = publicationSyncDir(s.publicationDir()); err != nil {
 		s.pausePublication(e, err)
 		return nil, nil, err
@@ -243,12 +251,19 @@ func publicationRefusals(out []format4.Outcome) map[int]int32 {
 	return refused
 }
 func (s *FlatSQLStore) markPublicationApplied(e publicationEntry) error {
+	refs, err := s.publicationReferences(e)
+	if err != nil {
+		return err
+	}
+	e.Refs = refs
+	s.publicationMu.Lock()
 	for i := range s.publicationEntries {
 		if s.publicationEntries[i].Sequence == e.Sequence {
 			s.publicationEntries[i].Refused = e.Refused
 			s.publicationEntries[i].OutcomeKnown = true
 		}
 	}
+	s.publicationMu.Unlock()
 	raw, err := json.Marshal(e.Refused)
 	if err != nil {
 		return err
@@ -261,6 +276,8 @@ func (s *FlatSQLStore) markPublicationApplied(e publicationEntry) error {
 	if err = publicationAtomicFile(filepath.Join(s.publicationEntryDir(e.Sequence), "applied"), raw); err != nil {
 		return err
 	}
+	s.publicationMu.Lock()
+	defer s.publicationMu.Unlock()
 	for i := range s.publicationEntries {
 		if s.publicationEntries[i].Sequence == e.Sequence {
 			e.Applied = true
@@ -271,6 +288,8 @@ func (s *FlatSQLStore) markPublicationApplied(e publicationEntry) error {
 	return nil
 }
 func (s *FlatSQLStore) pausePublication(e publicationEntry, err error) {
+	s.publicationMu.Lock()
+	defer s.publicationMu.Unlock()
 	if s.publicationFailures == nil {
 		s.publicationFailures = map[publicationSourceKey]error{}
 	}
@@ -492,22 +511,29 @@ type PublicationBatch struct {
 type PublicationSelection struct {
 	Cutoff                          uint64
 	Schema, Provider, Source, Batch string
-	records                         []DatasetExportRecord
+	refs                            []publicationRecordRef
 }
 
 func (p *PublicationSelection) Fingerprint() (string, int) {
 	h := newPublicationSetHash(p.Schema, p.Provider, p.Source, p.Batch)
-	for _, r := range p.records {
+	for _, r := range p.refs {
 		h.Write([]byte(r.CID))
 		h.Write([]byte{'\n'})
 	}
-	return hex.EncodeToString(h.Sum(nil)), len(p.records)
+	return hex.EncodeToString(h.Sum(nil)), len(p.refs)
 }
 func (p *PublicationSelection) Records() []DatasetExportRecord {
-	out := make([]DatasetExportRecord, len(p.records))
-	for i, r := range p.records {
-		out[i] = r
-		out[i].Data = append([]byte(nil), r.Data...)
+	out, err := p.window(IndexedRecordQuery{SchemaName: p.Schema, ProviderID: p.Provider, SourceName: p.Source, BatchID: p.Batch})
+	if err != nil {
+		return nil
+	}
+	for i := range out {
+		data, err := out[i].load()
+		if err != nil {
+			return nil
+		}
+		out[i].Data = data
+		out[i].load = nil
 	}
 	return out
 }
@@ -515,36 +541,28 @@ func (s *FlatSQLStore) retainedSelectionLocked(schema, provider, source, batch s
 	if err := s.publicationFailures[publicationSourceKey{schema, provider, source}]; err != nil {
 		return nil, fmt.Errorf("publication source paused: %w", err)
 	}
-	p := &PublicationSelection{Cutoff: cutoff, Schema: schema, Provider: provider, Source: source, Batch: batch}
-	if batch != "" {
-		p.Cutoff = 0
-	}
-	byKey := map[string]DatasetExportRecord{}
+	p := &PublicationSelection{Schema: schema, Provider: provider, Source: source, Batch: batch}
+	byKey := map[string]publicationRecordRef{}
 	for _, e := range s.publicationEntries {
 		if !e.Applied || e.Sequence > cutoff || e.Schema != schema || e.Tags.ProviderID != provider || e.Tags.SourceName != source || (batch != "" && e.Tags.BatchID != batch) {
 			continue
 		}
-		if batch != "" {
-			p.Cutoff = e.Sequence
-		}
-		records, err := s.publicationRecords(e)
-		if err != nil {
-			return nil, err
-		}
-		for _, r := range records {
+		p.Cutoff = e.Sequence
+		for _, r := range e.Refs {
 			key := r.CID
-			if schema == "CAT.fbs" && batch == "" {
-				if id := recordSupersedeKey(schema, r.Data); id != "" {
-					key = id
-				}
+			if schema == "CAT.fbs" && batch == "" && r.Identity != "" {
+				key = r.Identity
 			}
 			byKey[key] = r
 		}
+		if len(byKey) > maxPublicationSelectionRecords {
+			return nil, errors.New("publication selection exceeds 100000 records; partition the source")
+		}
 	}
 	for _, r := range byKey {
-		p.records = append(p.records, r)
+		p.refs = append(p.refs, r)
 	}
-	sort.Slice(p.records, func(i, j int) bool { return p.records[i].CID < p.records[j].CID })
+	sort.Slice(p.refs, func(i, j int) bool { return p.refs[i].CID < p.refs[j].CID })
 	return p, nil
 }
 
@@ -565,8 +583,8 @@ func (s *FlatSQLStore) publicationSourceEnabled(schema, provider, source string)
 // RetryPublicationRecovery retries interrupted storage and acknowledgement writes
 // once per call. Reconciliation calls it between publication attempts.
 func (s *FlatSQLStore) RetryPublicationRecovery() {
-	s.publicationMu.Lock()
-	defer s.publicationMu.Unlock()
+	s.publicationWriteMu.Lock()
+	defer s.publicationWriteMu.Unlock()
 	for _, e := range s.publicationEntries {
 		if e.Applied {
 			continue
@@ -592,7 +610,9 @@ func (s *FlatSQLStore) RetryPublicationRecovery() {
 		if err != nil {
 			s.pausePublication(e, err)
 		} else {
+			s.publicationMu.Lock()
 			delete(s.publicationFailures, key)
+			s.publicationMu.Unlock()
 		}
 	}
 }
@@ -603,14 +623,16 @@ func (s *FlatSQLStore) CompletePublication(p *PublicationSelection) error {
 	if p == nil || p.Batch == "" {
 		return nil
 	}
-	s.publicationMu.Lock()
-	defer s.publicationMu.Unlock()
+	s.publicationWriteMu.Lock()
+	defer s.publicationWriteMu.Unlock()
 	for i, e := range s.publicationEntries {
 		if e.Applied && !e.Published && e.Sequence <= p.Cutoff && e.Schema == p.Schema && e.Tags.ProviderID == p.Provider && e.Tags.SourceName == p.Source && e.Tags.BatchID == p.Batch {
 			if err := publicationAtomicFile(filepath.Join(s.publicationEntryDir(e.Sequence), "published"), []byte("1\n")); err != nil {
 				return err
 			}
+			s.publicationMu.Lock()
 			s.publicationEntries[i].Published = true
+			s.publicationMu.Unlock()
 		}
 	}
 	return nil

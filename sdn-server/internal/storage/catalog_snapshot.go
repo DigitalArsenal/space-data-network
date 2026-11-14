@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/CAT"
@@ -40,23 +39,17 @@ func (s *FlatSQLStore) captureCatalogLocked(x PublicationSource, cutoff uint64) 
 	if err != nil {
 		return nil, err
 	}
-	products, err := s.retainedSelectionLocked("OCM.fbs", x.Provider, x.ProductSource, "", cutoff)
-	if err != nil {
+	products := &PublicationSelection{Schema: "OCM.fbs", Provider: x.Provider, Source: x.ProductSource}
+	if err := s.publicationFailures[publicationSourceKey{"OCM.fbs", x.Provider, x.ProductSource}]; err != nil {
 		return nil, err
 	}
-	available := map[string]DatasetExportRecord{}
-	for _, r := range products.records {
-		available[r.CID] = r
-		// Catalog controllers identify the size-prefixed SDS record. The store
-		// indexes its unframed payload, so resolve both exact byte encodings.
-		framed := make([]byte, 4+len(r.Data))
-		binary.LittleEndian.PutUint32(framed, uint32(len(r.Data)))
-		copy(framed[4:], r.Data)
-		available[computeCID(framed)] = r
-	}
-	selected := map[string]DatasetExportRecord{}
-	for _, r := range index.records {
-		cat, err := parseCAT(r.Data)
+	wanted := map[string]bool{}
+	for _, r := range index.refs {
+		data, err := r.read()
+		if err != nil {
+			return nil, err
+		}
+		cat, err := parseCAT(data)
 		if err != nil {
 			return nil, err
 		}
@@ -65,19 +58,35 @@ func (s *FlatSQLStore) captureCatalogLocked(x PublicationSource, cutoff uint64) 
 			if !cat.PRODUCTS(&product, i) {
 				return nil, errors.New("invalid catalog product")
 			}
-			id := string(product.RECORD_CID())
-			p, ok := available[id]
-			if !ok {
-				return nil, errors.New("catalog snapshot has an unresolved product reference")
-			}
-			selected[p.CID] = p
+			wanted[string(product.RECORD_CID())] = true
+		}
+		if len(wanted) > maxPublicationSelectionRecords {
+			return nil, errors.New("catalog closure exceeds 100000 records; partition the source")
 		}
 	}
-	products.records = nil
-	for _, r := range selected {
-		products.records = append(products.records, r)
+	selected := map[string]publicationRecordRef{}
+	for _, e := range s.publicationEntries {
+		if !e.Applied || e.Sequence > cutoff || e.Schema != "OCM.fbs" || e.Tags.ProviderID != x.Provider || e.Tags.SourceName != x.ProductSource {
+			continue
+		}
+		for _, r := range e.Refs {
+			if wanted[r.CID] || wanted[r.FramedCID] {
+				selected[r.CID] = r
+				delete(wanted, r.CID)
+				delete(wanted, r.FramedCID)
+			}
+		}
 	}
-	sort.Slice(products.records, func(i, j int) bool { return products.records[i].CID < products.records[j].CID })
+	if len(wanted) != 0 {
+		return nil, errors.New("catalog snapshot has an unresolved product reference")
+	}
+	for _, r := range selected {
+		products.refs = append(products.refs, r)
+	}
+	sort.Slice(products.refs, func(i, j int) bool { return products.refs[i].CID < products.refs[j].CID })
+	// Pair identities follow this index source's cutoff, never unrelated writes.
+	cutoff = index.Cutoff
+	products.Cutoff = cutoff
 	return &CatalogSnapshot{Cutoff: cutoff, Index: index, Products: products}, nil
 }
 
@@ -85,8 +94,7 @@ func (s *FlatSQLStore) captureCatalogLocked(x PublicationSource, cutoff uint64) 
 // A cutoff of zero selects the latest completed journal transaction. Nonzero
 // cutoffs make a retry reproduce the same selection after concurrent ingestion.
 func (s *FlatSQLStore) CaptureCatalogSnapshot(provider, indexSource string, cutoff uint64) (*CatalogSnapshot, error) {
-	s.publicationMu.Lock()
-	defer s.publicationMu.Unlock()
+	s = s.publicationView()
 	x, ok := s.catalogSource("CAT.fbs", provider, indexSource)
 	if !ok {
 		return nil, errors.New("catalog snapshot source is not configured")
@@ -111,8 +119,7 @@ func (s *FlatSQLStore) SelectPublication(schema, provider, source, batch string)
 	if !s.publicationEnabled.Load() || !s.publicationSourceEnabled(schema, provider, source) {
 		return nil, nil
 	}
-	s.publicationMu.Lock()
-	defer s.publicationMu.Unlock()
+	s = s.publicationView()
 	if !s.retainsPublication(schema, provider, source) {
 		return nil, nil
 	}
@@ -142,7 +149,7 @@ func (s *FlatSQLStore) ExportCatalogSnapshot(dir, provider, source string, cutof
 	}
 	var exports []*DatasetExport
 	for _, p := range []*PublicationSelection{snap.Products, snap.Index} {
-		if len(p.records) == 0 {
+		if len(p.refs) == 0 {
 			continue
 		}
 		ex, err := s.ExportDatasetWindow(filepath.Join(dir, p.Schema), IndexedRecordQuery{SchemaName: p.Schema, ProviderID: p.Provider, SourceName: p.Source, Selection: p})
@@ -163,25 +170,35 @@ func (p *PublicationSelection) window(q IndexedRecordQuery) ([]DatasetExportReco
 	if q.Offset < 0 {
 		return nil, fmt.Errorf("negative publication offset")
 	}
-	start := min(q.Offset, len(p.records))
-	end := len(p.records)
+	start := min(q.Offset, len(p.refs))
+	end := len(p.refs)
 	if q.Limit > 0 {
 		end = start + min(q.Limit, end-start)
 	}
-	return p.records[start:end], nil
+	out := make([]DatasetExportRecord, 0, end-start)
+	for _, r := range p.refs[start:end] {
+		out = append(out, DatasetExportRecord{CID: r.CID, SourceTags: r.Tags, load: r.read})
+	}
+	return out, nil
 }
 func (p *PublicationSelection) ByteWindow(q IndexedRecordQuery, budget int64) (int, bool, error) {
-	rows, err := p.window(q)
-	if err != nil {
+	if _, err := p.window(q); err != nil {
 		return 0, false, err
 	}
+	start := min(q.Offset, len(p.refs))
+	end := len(p.refs)
+	if q.Limit > 0 {
+		end = min(end, start+q.Limit)
+	}
+	rows := p.refs[start:end]
 	var bytes int64
 	for i, r := range rows {
-		bytes += int64(4 + len(r.Data))
+		bytes += int64(4 + r.Size)
 		if bytes > budget && i > 0 {
 			return i, true, nil
 		}
 	}
+
 	return len(rows), false, nil
 }
 
