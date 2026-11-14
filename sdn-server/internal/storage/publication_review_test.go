@@ -153,3 +153,35 @@ func TestPublicationReviewBoundedStartupRecovery(t *testing.T) {
 		t.Fatal("unrelated retained source blocked", err)
 	}
 }
+
+func TestPublicationReviewMetadataQuarantine(t *testing.T) {
+	t.Setenv("SDN_STORE_FORMAT", "4")
+	dir := t.TempDir()
+	s := journalTestStore(t, dir)
+	if err := s.ConfigurePublicationSources([]PublicationSource{{Schema: "CAT.fbs", Provider: "synthetic", Source: "index"}, {Schema: "CAT.fbs", Provider: "synthetic", Source: "other"}}); err != nil {
+		t.Fatal(err)
+	}
+	journalTestPut(t, s, "initial")
+	entry := filepath.Join(s.publicationEntryDir(1), "entry.json")
+	orphan := filepath.Join(s.publicationDir(), ".prepare-orphan")
+	s.Close()
+	if err := os.WriteFile(entry, []byte("damaged"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(orphan, 0700); err != nil {
+		t.Fatal(err)
+	}
+	s = journalTestStore(t, dir)
+	defer s.Close()
+	s.RetryPublicationRecovery()
+	if len(s.PublicationRecoveryStatus()) != 1 {
+		t.Fatal("metadata corruption was not scoped or quarantine was cleared")
+	}
+	if _, err := os.Stat(orphan); !os.IsNotExist(err) {
+		t.Fatal("orphan preparation remains", err)
+	}
+	raw := sds.NewCATBuilder().WithNoradCatID(900003).Build()
+	if _, err := s.StoreWithSourceTags("CAT.fbs", raw, "synthetic", nil, SourceTags{ProviderID: "synthetic", SourceName: "other", BatchID: "healthy"}); err != nil {
+		t.Fatal("unrelated source stopped", err)
+	}
+}
