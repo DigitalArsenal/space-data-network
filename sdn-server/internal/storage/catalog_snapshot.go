@@ -172,3 +172,11 @@ func (p *PublicationSelection) ByteWindow(q IndexedRecordQuery, budget int64) (i
 	}
 	return len(rows), false, nil
 }
+
+// CatalogProductSource identifies the configured product closure of a CAT source.
+func (s *FlatSQLStore) CatalogProductSource(provider, source string) (string, bool) {
+	s.publicationMu.Lock()
+	defer s.publicationMu.Unlock()
+	x, ok := s.catalogSource("CAT.fbs", provider, source)
+	return x.ProductSource, ok
+}

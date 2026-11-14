@@ -48,6 +48,8 @@ type DatasetExportRecord struct {
 
 // DatasetExportIndex is the replayable query/index sidecar for a shard.
 type DatasetExportIndex struct {
+	PublicationCutoff uint64 `json:"publicationCutoff,omitempty"`
+
 	Version      int                          `json:"version"`
 	SchemaName   string                       `json:"schemaName"`
 	ProviderID   string                       `json:"providerId,omitempty"`
@@ -128,6 +130,7 @@ func (s *FlatSQLStore) ExportDatasetWindow(outputDir string, filter IndexedRecor
 		}
 	}
 	if selection != nil {
+		filter.Selection = selection
 		records, err := selection.window(filter)
 		if err != nil {
 			return nil, err
@@ -405,6 +408,9 @@ func ExportDatasetRecords(outputDir string, filter IndexedRecordQuery, records [
 		Records:      indexRecords,
 		Indexes:      buildDatasetExportIndexes(indexRecords),
 	}
+	if filter.Selection != nil {
+		index.PublicationCutoff = filter.Selection.Cutoff
+	}
 	indexBytes, err := json.MarshalIndent(index, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("marshal dataset export index: %w", err)
@@ -522,6 +528,7 @@ func isActiveCatalogOpsStatus(status string) bool {
 
 func canonicalQueryJSON(filter IndexedRecordQuery) ([]byte, error) {
 	payload := struct {
+		PublicationCutoff   uint64  `json:"publicationCutoff,omitempty"`
 		SchemaName          string  `json:"schemaName"`
 		Day                 string  `json:"day,omitempty"`
 		NoradCatID          *uint32 `json:"noradCatId,omitempty"`
@@ -555,6 +562,9 @@ func canonicalQueryJSON(filter IndexedRecordQuery) ([]byte, error) {
 		Offset:              filter.Offset,
 		AllowLargeResultSet: filter.AllowLargeResultSet,
 		OrderByCID:          filter.OrderByCID,
+	}
+	if filter.Selection != nil {
+		payload.PublicationCutoff = filter.Selection.Cutoff
 	}
 	if filter.From != nil {
 		payload.From = filter.From.UTC().Format(time.RFC3339Nano)

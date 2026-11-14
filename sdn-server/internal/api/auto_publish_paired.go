@@ -53,9 +53,9 @@ func (p *AutoPublisher) matchScope(schema, provider, source string, full bool) (
 }
 
 func (p *AutoPublisher) isPairedSource(schema, provider, source string) bool {
-	_, batch := p.matchScope(schema, provider, source, false)
+	rule, batch := p.matchScope(schema, provider, source, false)
 	_, snapshot := p.matchScope(schema, provider, source, true)
-	return batch && snapshot
+	return batch && (snapshot || rule.RetainForPublication)
 }
 
 type pairedBatchPublication struct {
@@ -105,7 +105,7 @@ func (p *AutoPublisher) recoverPairedBatches(ctx context.Context) {
 	enabled := false
 	for _, rule := range p.lanes {
 		key := sourceKey(rule)
-		if rule.PublishScope == "source" && p.isPairedSource(key.schema, key.provider, key.source) {
+		if p.isPairedSource(key.schema, key.provider, key.source) {
 			enabled = true
 			break
 		}

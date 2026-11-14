@@ -316,6 +316,8 @@ func requireDatasetUpdatesLocalClient(w http.ResponseWriter, r *http.Request, ro
 // ConcreteDatasetPublicationService exports local records and publishes one
 // signed DPM announcement PNM through the running node.
 type ConcreteDatasetPublicationService struct {
+	selection *storage.PublicationSelection
+
 	store           *storage.FlatSQLStore
 	publisher       DatasetUpdatePublisher
 	signingKey      ed25519.PrivateKey
@@ -415,6 +417,41 @@ func (s *ConcreteDatasetPublicationService) PublishDatasetUpdate(ctx context.Con
 	// not interleave their windows.
 	unlock := activeService.hygiene.lockLane(schema, activeReq.ProviderID, activeReq.SourceName)
 	defer unlock()
+	activeService.selection, err = activeStore.SelectPublication(schema, activeReq.ProviderID, activeReq.SourceName, activeReq.BatchID)
+	if err != nil {
+		return nil, err
+	}
+	// A compact CAT snapshot publishes its selected products before its index.
+	// Both series use one validated cutoff and own immutable bytes throughout.
+	if activeReq.FullCatalog && schema == "CAT.fbs" && activeService.selection != nil {
+		if productSource, ok := activeStore.CatalogProductSource(activeReq.ProviderID, activeReq.SourceName); ok {
+			snap, captureErr := activeStore.CaptureCatalogSnapshot(activeReq.ProviderID, activeReq.SourceName, activeService.selection.Cutoff)
+			if captureErr != nil {
+				return nil, captureErr
+			}
+			activeService.selection = snap.Index
+			productService := activeService
+			productService.selection = snap.Products
+			productReq := activeReq
+			productReq.Schema = "OCM.fbs"
+			productReq.SourceName = productSource
+			productReq.BatchID = ""
+			productReq.DatasetID = ""
+			productUnlock := activeService.hygiene.lockLane("OCM.fbs", productReq.ProviderID, productReq.SourceName)
+			if _, count := snap.Products.Fingerprint(); count > 0 {
+				result, cars, publishErr := productService.publishDatasetUpdateScope(ctx, productReq, "OCM.fbs")
+				if publishErr == nil {
+					publishErr = productService.afterPublication(ctx, productReq, "OCM.fbs", result, cars, productService.publicationFingerprint(productReq, "OCM.fbs"), activeService.now())
+				}
+				productUnlock()
+				if publishErr != nil {
+					return nil, publishErr
+				}
+			} else {
+				productUnlock()
+			}
+		}
+	}
 	startedAt := activeService.now()
 	fingerprint := activeService.publicationFingerprint(activeReq, schema)
 
@@ -674,7 +711,21 @@ func (s *ConcreteDatasetPublicationService) byteBoundedExportFilter(
 	limit, offset int,
 ) (storage.IndexedRecordQuery, int, error) {
 	filter := datasetPublicationExportFilter(req, schema, limit, offset)
+	filter.Selection = s.selection
 	budget := datasetPublicationShardByteBudget(req)
+	if s.selection != nil {
+		if budget > 0 {
+			bounded, truncated, err := s.selection.ByteWindow(filter, budget)
+			if err != nil {
+				return filter, limit, err
+			}
+			if truncated && bounded > 0 && bounded < limit {
+				filter.Limit = bounded
+				return filter, bounded, nil
+			}
+		}
+		return filter, limit, nil
+	}
 	if budget <= 0 || s.store == nil {
 		return filter, limit, nil
 	}
@@ -850,6 +901,7 @@ func unlimitedDatasetPublicationLimit() int {
 
 func (s *ConcreteDatasetPublicationService) publishDatasetUpdatePart(ctx context.Context, req DatasetPublicationRequest, schema string, filter storage.IndexedRecordQuery, sourceIdentity datasetPublicationSourceIdentity, updateID string) (*DatasetPublicationResult, error) {
 	export, err := s.store.ExportDatasetWindow(filepath.Join(s.outputDir, safeDatasetPathComponent(schema)), storage.IndexedRecordQuery{
+		Selection:           filter.Selection,
 		SchemaName:          filter.SchemaName,
 		ProviderID:          filter.ProviderID,
 		SourceName:          filter.SourceName,
