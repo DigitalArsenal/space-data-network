@@ -944,9 +944,14 @@ type datasetShardRecordReader func(record DatasetExportIndexRecord) ([]byte, err
 
 func parseDatasetExportIndexBytes(indexBytes []byte) (*DatasetExportIndex, error) {
 	var index DatasetExportIndex
-	if err := json.Unmarshal(indexBytes, &index); err != nil {
-		return nil, fmt.Errorf("parse dataset export index: %w", err)
-	}
+	if len(indexBytes) < 12 || string(indexBytes[8:12]) != "$PST" {
+        // Released export indexes retain their original compatibility reader.
+        if err := json.Unmarshal(indexBytes, &index); err != nil {
+            return nil, fmt.Errorf("parse dataset export index: %w", err)
+        }
+    } else if err := unmarshalPublication(indexBytes, &index); err != nil {
+        return nil, fmt.Errorf("parse dataset export index: %w", err)
+    }
 	if index.Version != 1 {
 		return nil, fmt.Errorf("dataset export index version = %d, want 1", index.Version)
 	}

@@ -126,7 +126,7 @@ func TestPublicationCorruptWatermarksRebuild(t *testing.T) {
 	reclamationDay(t, s, 1, 2)
 	terminalPublish(t, s)
 	high := s.publicationHighWater
-	path := filepath.Join(s.publicationDir(), "watermarks.json")
+	path := filepath.Join(s.publicationDir(), "watermarks.fb")
 	s.Close()
 	if err := os.WriteFile(path, []byte("{torn"), 0600); err != nil {
 		t.Fatal(err)

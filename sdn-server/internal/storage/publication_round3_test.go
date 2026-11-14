@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -24,11 +23,11 @@ func TestPublicationSourceSequenceGapConsumer(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		var index DatasetExportIndex
-		if err = json.Unmarshal(raw, &index); err != nil {
+		index, err := parseDatasetExportIndexBytes(raw)
+		if err != nil {
 			t.Fatal(err)
 		}
-		return index
+		return *index
 	}
 	consumer := map[string]string{}
 	cursor := uint64(0)
@@ -113,8 +112,8 @@ func TestPublicationMetadataRepairWithoutRestart(t *testing.T) {
 			dir := t.TempDir()
 			s := reclamationStore(t, dir)
 			reclamationDay(t, s, 0, 2)
-			entry := filepath.Join(s.publicationEntryDir(1), "entry.json")
-			scope := filepath.Join(s.publicationEntryDir(1), "source.json")
+			entry := filepath.Join(s.publicationEntryDir(1), "entry.fb")
+			scope := filepath.Join(s.publicationEntryDir(1), "source.fb")
 			saved, _ := os.ReadFile(entry)
 			savedScope, _ := os.ReadFile(scope)
 			s.Close()

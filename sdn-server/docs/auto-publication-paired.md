@@ -32,7 +32,7 @@ publishing:
 
 Without `paired_publication` or `retain_for_publication`, existing configurations
 keep first-matching-rule behavior, including configurations containing both scopes.
-The existing five-minute default remains. Opted-in source snapshots default to
+A zero batch `min_interval` selects the five-minute default. Opted-in source snapshots default to
 24 hours. Their interval is independent of batch publication. Exact opted-in
 identities select both scopes; the first rule within each scope determines its
 options. Configuration requires `keep_series: 0`, including matching overrides.

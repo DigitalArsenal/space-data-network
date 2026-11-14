@@ -162,7 +162,7 @@ func TestPublicationReviewMetadataQuarantine(t *testing.T) {
 		t.Fatal(err)
 	}
 	journalTestPut(t, s, "initial")
-	entry := filepath.Join(s.publicationEntryDir(1), "entry.json")
+	entry := filepath.Join(s.publicationEntryDir(1), "entry.fb")
 	orphan := filepath.Join(s.publicationDir(), ".prepare-orphan")
 	s.Close()
 	if err := os.WriteFile(entry, []byte("damaged"), 0600); err != nil {

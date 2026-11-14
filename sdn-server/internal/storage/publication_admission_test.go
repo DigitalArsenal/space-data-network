@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -91,9 +90,9 @@ func TestPublicationReservationAndInterruptedAbort(t *testing.T) {
 		t.Fatal(err)
 	}
 	seq := s.publicationHighWater
-	plan := filepath.Join(s.publicationDir(), "generation-abort.json")
+	plan := filepath.Join(s.publicationDir(), "generation-abort.fb")
 	s.Close()
-	raw, _ := json.Marshal([]uint64{seq})
+	raw, _ := marshalPublication([]uint64{seq})
 	if err := os.WriteFile(plan, raw, 0600); err != nil {
 		t.Fatal(err)
 	}

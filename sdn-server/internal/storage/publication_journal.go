@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -157,11 +156,11 @@ func (s *FlatSQLStore) ConfigurePublicationSources(sources []PublicationSource) 
 	if err := os.MkdirAll(s.publicationDir(), 0700); err != nil {
 		return err
 	}
-	raw, err := json.Marshal(merged)
+	raw, err := marshalPublication(merged)
 	if err != nil {
 		return err
 	}
-	if err = publicationAtomicFile(filepath.Join(s.publicationDir(), "sources.json"), raw); err != nil {
+	if err = publicationAtomicFile(filepath.Join(s.publicationDir(), "sources.fb"), raw); err != nil {
 		return err
 	}
 	if err = publicationSyncDir(s.basePath); err != nil {
@@ -268,18 +267,18 @@ func (b format4Backend) putRetained(op, schema string, records [][]byte, peer st
 		return nil, nil, err
 	}
 	e.Digest = hex.EncodeToString(digest.Sum(nil))
-	raw, err := json.Marshal(e)
+	raw, err := marshalPublication(e)
 	if err != nil {
 		return nil, nil, err
 	}
 	if err = s.publicationStep("metadata"); err != nil {
 		return nil, nil, err
 	}
-	scope, _ := json.Marshal(publicationEntry{Sequence: e.Sequence, SourceSequence: e.SourceSequence, Schema: e.Schema, Tags: e.Tags})
-	if err = publicationPrepareFile(filepath.Join(temp, "source.json"), scope); err != nil {
+	scope, _ := marshalPublication(publicationEntry{Sequence: e.Sequence, SourceSequence: e.SourceSequence, Schema: e.Schema, Tags: e.Tags})
+	if err = publicationPrepareFile(filepath.Join(temp, "source.fb"), scope); err != nil {
 		return nil, nil, err
 	}
-	if err = publicationPrepareFile(filepath.Join(temp, "entry.json"), raw); err != nil {
+	if err = publicationPrepareFile(filepath.Join(temp, "entry.fb"), raw); err != nil {
 		return nil, nil, err
 	}
 	if err = publicationSyncDir(temp); err != nil {
@@ -351,7 +350,7 @@ func publicationRefusals(out []format4.Outcome) map[int]int32 {
 }
 func (s *FlatSQLStore) markPublicationApplied(e publicationEntry) error {
 	// Persist the engine outcome before opening or indexing the SDS stream.
-	rawOutcome, _ := json.Marshal(e.Refused)
+	rawOutcome, _ := marshalPublication(e.Refused)
 	if err := publicationAtomicFile(filepath.Join(s.publicationEntryDir(e.Sequence), "outcome"), rawOutcome); err != nil {
 		return err
 	}
@@ -397,7 +396,7 @@ func (s *FlatSQLStore) markPublicationApplied(e publicationEntry) error {
 		}
 	}
 	s.publicationMu.Unlock()
-	raw, err := json.Marshal(e.Refused)
+	raw, err := marshalPublication(e.Refused)
 	if err != nil {
 		return err
 	}
@@ -463,9 +462,9 @@ func (s *FlatSQLStore) PublicationRecoveryStatus() map[string]string {
 		}
 	}
 	// Keep the operator's data-loss acknowledgement after payload reclamation.
-	if raw, err := os.ReadFile(filepath.Join(s.publicationDir(), "discard-effects.json")); err == nil {
+	if raw, err := os.ReadFile(filepath.Join(s.publicationDir(), "discard-effects.fb")); err == nil {
 		var effects map[string]string
-		if err := json.Unmarshal(raw, &effects); err != nil {
+		if err := unmarshalPublication(raw, &effects); err != nil {
 			out["discard-effects"] = err.Error()
 		} else {
 			for key, reason := range effects {
@@ -478,14 +477,14 @@ func (s *FlatSQLStore) PublicationRecoveryStatus() map[string]string {
 	return out
 }
 func (s *FlatSQLStore) recoverPublicationJournal() error {
-	raw, err := os.ReadFile(filepath.Join(s.publicationDir(), "sources.json"))
+	raw, err := os.ReadFile(filepath.Join(s.publicationDir(), "sources.fb"))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	if err = json.Unmarshal(raw, &s.publicationSources); err != nil {
+	if err = unmarshalPublication(raw, &s.publicationSources); err != nil {
 		return err
 	}
 	watermarkErr := s.loadPublicationWatermarks()
@@ -520,18 +519,18 @@ func (s *FlatSQLStore) recoverPublicationJournal() error {
 		if seq, parseErr := strconv.ParseUint(dir.Name(), 10, 64); parseErr == nil && seq > s.publicationHighWater {
 			s.publicationHighWater = seq
 		}
-		raw, err = os.ReadFile(filepath.Join(s.publicationDir(), dir.Name(), "entry.json"))
+		raw, err = os.ReadFile(filepath.Join(s.publicationDir(), dir.Name(), "entry.fb"))
 		if err == nil {
-			err = json.Unmarshal(raw, &e)
+			err = unmarshalPublication(raw, &e)
 		}
 		if err == nil && filepath.Base(s.publicationEntryDir(e.Sequence)) != dir.Name() {
 			err = errors.New("invalid publication journal sequence")
 		}
 		if err != nil {
 			damaged := err
-			scopeRaw, scopeErr := os.ReadFile(filepath.Join(s.publicationDir(), dir.Name(), "source.json"))
+			scopeRaw, scopeErr := os.ReadFile(filepath.Join(s.publicationDir(), dir.Name(), "source.fb"))
 			seq, seqErr := strconv.ParseUint(dir.Name(), 10, 64)
-			if scopeErr == nil && json.Unmarshal(scopeRaw, &e) == nil && seqErr == nil {
+			if scopeErr == nil && unmarshalPublication(scopeRaw, &e) == nil && seqErr == nil {
 				e.Sequence = seq
 				e.Applied = false
 				s.publicationEntries = append(s.publicationEntries, e)
@@ -563,9 +562,7 @@ func (s *FlatSQLStore) recoverPublicationJournal() error {
 		}
 		raw, err = os.ReadFile(filepath.Join(s.publicationEntryDir(e.Sequence), "applied"))
 		if err == nil {
-			if string(raw) != "1\n" {
-				err = json.Unmarshal(raw, &e.Refused)
-			}
+			err = unmarshalPublication(raw, &e.Refused)
 			e.Applied = true
 			e.OutcomeKnown = true
 		} else if errors.Is(err, os.ErrNotExist) {
@@ -662,8 +659,8 @@ func (s *FlatSQLStore) recoverPublicationJournal() error {
 			s.publicationSourceWater[id] = max(s.publicationSourceWater[id], s.publicationHighWater)
 		}
 		m := publicationWatermarks{Global: s.publicationHighWater, Sources: s.publicationSourceWater}
-		raw, _ := json.Marshal(m)
-		if err := publicationAtomicFile(filepath.Join(s.publicationDir(), "watermarks.json"), raw); err != nil {
+		raw, _ := marshalPublication(m)
+		if err := publicationAtomicFile(filepath.Join(s.publicationDir(), "watermarks.fb"), raw); err != nil {
 			for _, x := range s.publicationSources {
 				s.pausePublication(publicationEntry{Schema: x.Schema, Tags: SourceTags{ProviderID: x.Provider, SourceName: x.Source}}, err)
 			}
@@ -947,10 +944,10 @@ func (s *FlatSQLStore) RetryPublicationRecovery() {
 			continue
 		}
 		key := publicationSourceKey{e.Schema, e.Tags.ProviderID, e.Tags.SourceName}
-		raw, err := os.ReadFile(filepath.Join(s.publicationEntryDir(e.Sequence), "entry.json"))
+		raw, err := os.ReadFile(filepath.Join(s.publicationEntryDir(e.Sequence), "entry.fb"))
 		var saved publicationEntry
 		if err == nil {
-			err = json.Unmarshal(raw, &saved)
+			err = unmarshalPublication(raw, &saved)
 		}
 		if err == nil && (saved.Sequence != e.Sequence || (e.Schema != "" && (saved.Schema != e.Schema || saved.Tags != e.Tags))) {
 			err = errors.New("publication entry scope mismatch")
@@ -968,9 +965,7 @@ func (s *FlatSQLStore) RetryPublicationRecovery() {
 			raw, markerErr := os.ReadFile(filepath.Join(s.publicationEntryDir(e.Sequence), "applied"))
 			if markerErr == nil {
 				e.Applied, e.OutcomeKnown = true, true
-				if string(raw) != "1\n" {
-					err = json.Unmarshal(raw, &e.Refused)
-				}
+				err = unmarshalPublication(raw, &e.Refused)
 			} else if !errors.Is(markerErr, os.ErrNotExist) {
 				err = markerErr
 			} else if e.Applied {
@@ -1005,7 +1000,7 @@ func (s *FlatSQLStore) RetryPublicationRecovery() {
 			if e.Applied {
 				// Restoring an applied stream also repairs quarantine receipts from
 				// versions that treated that stream as an unapplied intent.
-				err = os.Remove(filepath.Join(s.publicationEntryDir(e.Sequence), "batch-failure.json"))
+				err = os.Remove(filepath.Join(s.publicationEntryDir(e.Sequence), "batch-failure.fb"))
 				if os.IsNotExist(err) {
 					err = nil
 				}

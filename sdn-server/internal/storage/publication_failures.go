@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -17,13 +16,13 @@ type publicationFailure struct {
 }
 
 func (s *FlatSQLStore) loadPublicationFailures(e *publicationEntry) {
-	for name, target := range map[string]*publicationFailure{"generation-failure.json": &e.GenerationFailure, "batch-failure.json": &e.BatchFailure} {
+	for name, target := range map[string]*publicationFailure{"generation-failure.fb": &e.GenerationFailure, "batch-failure.fb": &e.BatchFailure} {
 		raw, err := os.ReadFile(filepath.Join(s.publicationEntryDir(e.Sequence), name))
 		if os.IsNotExist(err) {
 			continue
 		}
 		if err == nil {
-			err = json.Unmarshal(raw, target)
+			err = unmarshalPublication(raw, target)
 		}
 		if err != nil {
 			*target = publicationFailure{Attempts: 3, Reason: "failure receipt unreadable: " + err.Error(), RetryAt: time.Now().Add(6 * time.Hour)}
@@ -45,8 +44,8 @@ func (s *FlatSQLStore) recordGenerationFailure(e publicationEntry, cause error) 
 			f.Attempts++
 			f.Reason = cause.Error()
 			f.RetryAt = time.Now().Add(6 * time.Hour)
-			raw, _ := json.Marshal(f)
-			if err := publicationAtomicFile(filepath.Join(s.publicationEntryDir(e.Sequence), "generation-failure.json"), raw); err != nil {
+			raw, _ := marshalPublication(f)
+			if err := publicationAtomicFile(filepath.Join(s.publicationEntryDir(e.Sequence), "generation-failure.fb"), raw); err != nil {
 				return err
 			}
 			s.accountPublicationPending(s.publicationEntries[i], -1)
@@ -89,8 +88,8 @@ func (s *FlatSQLStore) RecordPublicationFailure(schema, provider, source, batch 
 		}
 		if e.Schema == schema && e.Tags.ProviderID == provider && e.Tags.SourceName == source && e.Tags.BatchID == batch && !e.Published {
 			f := publicationFailure{Attempts: attempts, Reason: cause.Error(), RetryAt: time.Now().Add(6 * time.Hour)}
-			raw, _ := json.Marshal(f)
-			if err := publicationAtomicFile(filepath.Join(s.publicationEntryDir(e.Sequence), "batch-failure.json"), raw); err != nil {
+			raw, _ := marshalPublication(f)
+			if err := publicationAtomicFile(filepath.Join(s.publicationEntryDir(e.Sequence), "batch-failure.fb"), raw); err != nil {
 				return false, err
 			}
 			s.accountPublicationPending(s.publicationEntries[i], -1)
@@ -139,7 +138,7 @@ func (s *FlatSQLStore) ManagePublicationBatch(schema, provider, source, batch, a
 			s.publicationEntries[i].Published = true
 			s.publicationEntries[i].Discarded = true
 		}
-		for _, name := range []string{"generation-failure.json", "batch-failure.json"} {
+		for _, name := range []string{"generation-failure.fb", "batch-failure.fb"} {
 			if err := os.Remove(filepath.Join(s.publicationEntryDir(e.Sequence), name)); err != nil && !os.IsNotExist(err) {
 				return err
 			}
@@ -161,11 +160,11 @@ func (s *FlatSQLStore) ManagePublicationBatch(schema, provider, source, batch, a
 // One durable notice per source preserves the explicit loss acknowledgement
 // after entry reclamation. Replacing records does not erase that audit notice.
 func (s *FlatSQLStore) recordPublicationDiscardEffect(e publicationEntry) error {
-	path := filepath.Join(s.publicationDir(), "discard-effects.json")
+	path := filepath.Join(s.publicationDir(), "discard-effects.fb")
 	effects := map[string]string{}
 	raw, err := os.ReadFile(path)
 	if err == nil {
-		err = json.Unmarshal(raw, &effects)
+		err = unmarshalPublication(raw, &effects)
 	}
 	if err != nil && !os.IsNotExist(err) {
 		return err
@@ -175,7 +174,7 @@ func (s *FlatSQLStore) recordPublicationDiscardEffect(e publicationEntry) error 
 	}
 	key := e.Schema + "/" + e.Tags.ProviderID + "/" + e.Tags.SourceName
 	effects[key] = fmt.Sprintf("applied entry %d batch %q explicitly discarded; objects whose winning record it held are missing until the producer writes them again; earlier discard acknowledgements also remain in effect", e.Sequence, e.Tags.BatchID)
-	raw, err = json.Marshal(effects)
+	raw, err = marshalPublication(effects)
 	if err != nil {
 		return err
 	}
@@ -214,8 +213,8 @@ func publicationReadError(err error) error {
 // source pause; applied entries belong to the complete view.
 func (s *FlatSQLStore) quarantineUnreadablePublication(e publicationEntry, cause error) error {
 	f := publicationFailure{Attempts: 3, Reason: cause.Error(), RetryAt: time.Now().Add(6 * time.Hour)}
-	raw, _ := json.Marshal(f)
-	if err := publicationAtomicFile(filepath.Join(s.publicationEntryDir(e.Sequence), "batch-failure.json"), raw); err != nil {
+	raw, _ := marshalPublication(f)
+	if err := publicationAtomicFile(filepath.Join(s.publicationEntryDir(e.Sequence), "batch-failure.fb"), raw); err != nil {
 		return err
 	}
 	s.publicationMu.Lock()
@@ -257,7 +256,7 @@ func (s *FlatSQLStore) loadPublicationOutcome(e *publicationEntry) error {
 	if err != nil {
 		return err
 	}
-	if err = json.Unmarshal(raw, &e.Refused); err != nil {
+	if err = unmarshalPublication(raw, &e.Refused); err != nil {
 		return err
 	}
 	e.OutcomeKnown = true

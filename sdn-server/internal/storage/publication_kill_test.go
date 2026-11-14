@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -27,7 +26,7 @@ func TestPublicationReclamationKillChild(t *testing.T) {
 		for _, r := range rows {
 			ids = append(ids, r.CID)
 		}
-		raw, _ := json.Marshal(ids)
+		raw, _ := marshalPublication(ids)
 		if err = os.WriteFile(filepath.Join(dir, "ready"), raw, 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -102,7 +101,7 @@ func TestPublicationDurableKillBoundaries(t *testing.T) {
 				t.Fatal(err)
 			}
 			var before []string
-			if err = json.Unmarshal(raw, &before); err != nil {
+			if err = unmarshalPublication(raw, &before); err != nil {
 				t.Fatal(err)
 			}
 			s = journalTestStore(t, dir)

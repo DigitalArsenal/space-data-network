@@ -2,7 +2,6 @@ package storage
 
 import (
 	"crypto/sha256"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -29,11 +28,11 @@ func (s *FlatSQLStore) StopPublicationRetention(schema, provider, source string)
 		}
 		sources = append(sources, x)
 	}
-	raw, err := json.Marshal(sources)
+	raw, err := marshalPublication(sources)
 	if err != nil {
 		return err
 	}
-	if err = publicationAtomicFile(filepath.Join(s.publicationDir(), "sources.json"), raw); err != nil {
+	if err = publicationAtomicFile(filepath.Join(s.publicationDir(), "sources.fb"), raw); err != nil {
 		return err
 	}
 	s.publicationSources = sources
@@ -43,7 +42,7 @@ func (s *FlatSQLStore) StopPublicationRetention(schema, provider, source string)
 }
 func (s *FlatSQLStore) exclusionPath(provider, source string) string {
 	sum := sha256.Sum256([]byte(provider + "\x00" + source))
-	return filepath.Join(s.publicationDir(), fmt.Sprintf("exclude-%x.json", sum))
+	return filepath.Join(s.publicationDir(), fmt.Sprintf("exclude-%x.fb", sum))
 }
 
 // ExcludeCatalogRecords is an additive operator takedown for future captures.
@@ -96,12 +95,12 @@ func (s *FlatSQLStore) ExcludeCatalogRecords(provider, source string, cids []str
 				}
 			}
 		}
-		raw, _ := json.Marshal(products)
+		raw, _ := marshalPublication(products)
 		if err := publicationAtomicFile(s.exclusionPath(provider, x.ProductSource)+".products", raw); err != nil {
 			return err
 		}
 	}
-	raw, err := json.Marshal(excluded)
+	raw, err := marshalPublication(excluded)
 	if err != nil {
 		return err
 	}
@@ -123,7 +122,7 @@ func (s *FlatSQLStore) catalogExclusions(schema, provider, source string) (map[s
 	if err != nil {
 		return nil, err
 	}
-	err = json.Unmarshal(raw, &out)
+	err = unmarshalPublication(raw, &out)
 	return out, err
 }
 

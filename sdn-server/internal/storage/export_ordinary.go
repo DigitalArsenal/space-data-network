@@ -3,7 +3,6 @@ package storage
 import (
 	"bytes"
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -83,11 +82,10 @@ func exportOrdinaryDatasetRecords(outputDir string, filter IndexedRecordQuery, r
 		Records:      indexRecords,
 		Indexes:      buildDatasetExportIndexes(indexRecords),
 	}
-	indexBytes, err := json.MarshalIndent(index, "", "  ")
+	indexBytes, err := marshalPublication(index)
 	if err != nil {
 		return nil, fmt.Errorf("marshal dataset export index: %w", err)
 	}
-	indexBytes = append(indexBytes, '\n')
 	indexSHA := sha256Hex(indexBytes)
 	indexCID, err := cidV1RawSHA256(indexBytes)
 	if err != nil {
@@ -95,7 +93,7 @@ func exportOrdinaryDatasetRecords(outputDir string, filter IndexedRecordQuery, r
 	}
 
 	shardPath := filepath.Join(outputDir, "shards", index.ShardFile)
-	indexPath := filepath.Join(outputDir, "indexes", fmt.Sprintf("%s-%s.index.json", querySHA[:16], indexSHA[:16]))
+	indexPath := filepath.Join(outputDir, "indexes", fmt.Sprintf("%s-%s.index.fb", querySHA[:16], indexSHA[:16]))
 	if err := writeImmutableExportFile(shardPath, shardBytes); err != nil {
 		return nil, err
 	}

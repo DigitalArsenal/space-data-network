@@ -467,7 +467,7 @@ func TestPublicationReclamationMetadataRepair(t *testing.T) {
 	reclamationPublish(t, s, nil)
 	reclamationDay(t, s, 1, 2)
 	reclamationPublish(t, s, nil)
-	file := filepath.Join(s.publicationDir(), "reclamation.json")
+	file := filepath.Join(s.publicationDir(), "reclamation.fb")
 	saved, err := os.ReadFile(file)
 	if err != nil {
 		t.Fatal(err)

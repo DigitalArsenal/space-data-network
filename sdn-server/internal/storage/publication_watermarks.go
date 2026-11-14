@@ -2,7 +2,6 @@ package storage
 
 import (
 	"crypto/sha256"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -28,8 +27,8 @@ func (s *FlatSQLStore) savePublicationWatermarks(global uint64, schema, provider
 	}
 	id := publicationSourceID(schema, provider, source)
 	m.Sources[id] = max(m.Sources[id], seq)
-	raw, _ := json.Marshal(m)
-	if err := publicationAtomicFile(filepath.Join(s.publicationDir(), "watermarks.json"), raw); err != nil {
+	raw, _ := marshalPublication(m)
+	if err := publicationAtomicFile(filepath.Join(s.publicationDir(), "watermarks.fb"), raw); err != nil {
 		return err
 	}
 	s.publicationHighWater = m.Global
@@ -37,7 +36,7 @@ func (s *FlatSQLStore) savePublicationWatermarks(global uint64, schema, provider
 	return nil
 }
 func (s *FlatSQLStore) loadPublicationWatermarks() error {
-	raw, err := os.ReadFile(filepath.Join(s.publicationDir(), "watermarks.json"))
+	raw, err := os.ReadFile(filepath.Join(s.publicationDir(), "watermarks.fb"))
 	if os.IsNotExist(err) {
 		return nil
 	}
@@ -45,7 +44,7 @@ func (s *FlatSQLStore) loadPublicationWatermarks() error {
 		return err
 	}
 	var m publicationWatermarks
-	if err = json.Unmarshal(raw, &m); err != nil {
+	if err = unmarshalPublication(raw, &m); err != nil {
 		return err
 	}
 	s.publicationHighWater = max(s.publicationHighWater, m.Global)
@@ -63,8 +62,8 @@ func (s *FlatSQLStore) migratePublicationSourceSequences() error {
 		id := publicationSourceID(e.Schema, e.Tags.ProviderID, e.Tags.SourceName)
 		if e.SourceSequence == 0 {
 			e.SourceSequence = high[id] + 1
-			raw, _ := json.Marshal(e)
-			if err := publicationAtomicFile(filepath.Join(s.publicationEntryDir(e.Sequence), "entry.json"), raw); err != nil {
+			raw, _ := marshalPublication(e)
+			if err := publicationAtomicFile(filepath.Join(s.publicationEntryDir(e.Sequence), "entry.fb"), raw); err != nil {
 				return err
 			}
 			s.publicationEntries[i] = e

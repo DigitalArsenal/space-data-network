@@ -5,7 +5,6 @@ import (
 	"encoding/base32"
 	"encoding/binary"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/ipfs/go-cid"
@@ -20,7 +19,6 @@ import (
 const maxPublicationEntries = 100000
 const maxPublicationSelectionRecords = 100000
 const maxPublicationRecordBytes = 16 << 20
-const maxPublicationReferenceBytes int64 = 128 << 20
 
 // References contain immutable file offsets; exported payload memory is one record.
 type publicationRefFile struct {
@@ -238,7 +236,7 @@ func publicationIdentity(schema string, data []byte) (identity string, err error
 type publicationTagKey [32]byte
 
 func publicationTagIdentity(schema, cid string, tags SourceTags) publicationTagKey {
-	raw, _ := json.Marshal(tags)
+	raw, _ := marshalPublication(tags)
 	h := sha256.New()
 	h.Write([]byte(schema))
 	h.Write([]byte{0})

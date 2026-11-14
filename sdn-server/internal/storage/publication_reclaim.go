@@ -2,7 +2,6 @@ package storage
 
 import (
 	"crypto/sha256"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/CAT"
@@ -86,10 +85,10 @@ func (s *FlatSQLStore) recoverPublicationReclamation() error {
 	if err := s.recoverPublicationReceipts(); err != nil {
 		return err
 	}
-	raw, err := os.ReadFile(filepath.Join(s.publicationDir(), "reclamation.json"))
+	raw, err := os.ReadFile(filepath.Join(s.publicationDir(), "reclamation.fb"))
 	if err == nil {
 		var c publicationReclaimCheckpoint
-		if err = json.Unmarshal(raw, &c); err != nil {
+		if err = unmarshalPublication(raw, &c); err != nil {
 			// The independent watermarks and receipt checkpoint preserve allocation
 			// and completion; this sweep plan is derived metadata.
 			c = publicationReclaimCheckpoint{HighWater: s.publicationHighWater, Reclaimed: uint64(len(s.publicationReceipts))}
@@ -106,8 +105,8 @@ func (s *FlatSQLStore) recoverPublicationReclamation() error {
 		}
 		c.Reclaimed = reclaimed
 		c.Pending = nil
-		settled, _ := json.Marshal(c)
-		if err = publicationAtomicFile(filepath.Join(s.publicationDir(), "reclamation.json"), settled); err != nil {
+		settled, _ := marshalPublication(c)
+		if err = publicationAtomicFile(filepath.Join(s.publicationDir(), "reclamation.fb"), settled); err != nil {
 			return err
 		}
 		s.publicationMu.Lock()
@@ -280,8 +279,8 @@ func (s *FlatSQLStore) reclaimPublicationLocked() (result error) {
 	for _, e := range candidates {
 		plan.Pending = append(plan.Pending, e.Sequence)
 	}
-	checkpoint, _ := json.Marshal(plan)
-	if err := publicationAtomicFile(filepath.Join(s.publicationDir(), "reclamation.json"), checkpoint); err != nil {
+	checkpoint, _ := marshalPublication(plan)
+	if err := publicationAtomicFile(filepath.Join(s.publicationDir(), "reclamation.fb"), checkpoint); err != nil {
 		return err
 	}
 	var tombs []string

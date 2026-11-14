@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -113,8 +112,8 @@ func (s *FlatSQLStore) abortPublicationGeneration(x PublicationSource) error {
 	if len(sequences) == 0 {
 		return nil
 	}
-	raw, _ := json.Marshal(sequences)
-	if err := publicationAtomicFile(filepath.Join(s.publicationDir(), "generation-abort.json"), raw); err != nil {
+	raw, _ := marshalPublication(sequences)
+	if err := publicationAtomicFile(filepath.Join(s.publicationDir(), "generation-abort.fb"), raw); err != nil {
 		return err
 	}
 	if err := s.recoverPublicationGenerationAbort(); err != nil {
@@ -156,7 +155,7 @@ func (s *FlatSQLStore) publicationAdmissionError(schema string, tags SourceTags,
 }
 
 func (s *FlatSQLStore) recoverPublicationGenerationAbort() error {
-	path := filepath.Join(s.publicationDir(), "generation-abort.json")
+	path := filepath.Join(s.publicationDir(), "generation-abort.fb")
 	raw, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return nil
@@ -165,7 +164,7 @@ func (s *FlatSQLStore) recoverPublicationGenerationAbort() error {
 		return err
 	}
 	var sequences []uint64
-	if err := json.Unmarshal(raw, &sequences); err != nil {
+	if err := unmarshalPublication(raw, &sequences); err != nil {
 		return err
 	}
 	for _, seq := range sequences {
