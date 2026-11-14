@@ -2,7 +2,7 @@
 
 Retention adds a synchronous SDS copy before the storage engine commits. Payload disk
 use follows the live catalog, pending or quarantined batches, and active selections.
-Completed obsolete entries are reclaimed automatically; a small completion receipt
+Completed obsolete entries are reclaimed automatically; a 48-byte completion-checkpoint frame
 remains per historical batch. Retained writes
 serialize per store. Concurrent calls with the same source, batch, peer, signature,
 and write options coalesce while waiting for that serialization, up to 4,096
@@ -15,9 +15,18 @@ journal again. Changed batch identities or export metadata require retention.
 Snapshots hold immutable file references and hydrate one record at a time into
 the shard writer. Readers copy the applied-entry index under a short lock;
 reference validation, hashing, and export run outside the ingestion lock. Limits
-are 100,000 journal entries, 200,000 indexed records, 128 MiB of accounted
-reference metadata, 100,000 records per selection, 64 MiB of accounted metadata
-per shard index, and 16 MiB per payload. Ingestion limits are checked before replacing live records. Selection and
+are 100,000 journal entries, 100,000 records per selection, 64 MiB of accounted metadata
+per shard index, and 16 MiB per payload. Each retained source has
+`catalog_object_limit` (1 through 100,000; omitted or zero defaults to 100,000).
+The store reserves two generations per source: reference capacity is
+`2 * sum(catalog_object_limit)`, and accounted reference-byte capacity is
+`256 * reference_capacity + 1 MiB * retained_source_count`. A CAT/OCM pair
+configured for N objects reserves 4N references. Configuration validates the
+range at startup. The reference structure occupies 88 bytes; binary content
+digests, offsets, and lengths are inline, while paths and tags are shared per
+entry. Accounted bytes also include identity strings, cached product digests,
+and the tag lookup index. Pending work and held selections consume this reserve.
+Use bounded export windows rather than one oversized shard. Ingestion limits are checked before replacing live records. Selection and
 shard-index limits refuse export before publication. These are storage/export bounds, not a
 bound on the entire node's heap. A synthetic 100,000-product selection test
 checks retained heap growth against 128 MiB. Drain pending work and resolve quarantined batches before exhausting capacity.
@@ -41,12 +50,14 @@ publishing:
       provider_id: catalog-producer
       source_name: catalog-products
       retain_for_publication: true
+      catalog_object_limit: 100000
       min_interval: 5m
       settle: 10s
     - schema: CAT.fbs
       provider_id: catalog-producer
       source_name: catalog-index
       retain_for_publication: true
+      catalog_object_limit: 100000
       min_interval: 5m
       settle: 10s
     - schema: CAT.fbs
@@ -59,13 +70,15 @@ publishing:
 ```
 
 `catalog_product_source` alone does not enable retention. Both participating
-sources require `retain_for_publication`. A retained batch source enters deferred
+sources require `retain_for_publication`. A retained OCM source requires its CAT
+index; standalone product retention is refused. A retained batch source enters deferred
 publication without a separate snapshot rule. Unconfigured sources retain their
 existing behavior, including the live CAT overwrite policy.
 
 Each transaction synchronizes its size-prefixed SDS stream and metadata, renames
-its directory, and synchronizes the parent before engine PUT. The applied marker
-records per-record refusals as completed outcomes. Accepted records remain
+its directory, and synchronizes the parent before engine PUT. A durable engine-outcome file precedes
+reference indexing and the applied marker; both record per-record refusals.
+Recovery uses that outcome even when the reference step failed. Accepted records remain
 publishable, and the caller receives the engine's refusal for rejected records.
 Refused records never enter an export. Preparation is an accepted durable intent:
 recovery can finish a call whose caller received no success response.
@@ -81,10 +94,14 @@ the node and other sources to operate. Unreadable metadata uses a separate scope
 copy; if both copies are unusable, all retained sources are paused conservatively.
 Ordinary sources remain available. Applied streams are also checksum-verified at
 startup. Only unreclaimed streams are read: startup work scales with their payload
-bytes plus reference metadata, up to 200,000 records at the 16 MiB per-record
-limit (3.125 TiB of payload in the theoretical maximum). The reference-metadata
+bytes plus reference metadata. Startup parses every kept CAT payload once to
+cache its product identifiers. At a paired 100,000-object capacity, 400,000
+records at the 16 MiB per-record limit imply a theoretical 6.25 TiB payload bound. The reference-metadata
 limit can bind earlier. This is an I/O bound, not a measured startup duration.
-Orphan preparation and reclaimed directories are removed. A transient read error
+Orphan preparation and reclaimed directories and abandoned `.write-*` files are removed.
+Corrupt derived reclamation plans are rebuilt from independent allocation
+watermarks and the completion checkpoint. Repairing entry metadata in place
+clears source isolation on reconciliation, including an unknown-scope pause. A transient read error
 never makes an applied entry eligible for an engine write. Thirty-second recovery
 retries unreadable index state and clears its pause after all affected entries recover.
 Export read errors fail that attempt without pausing ingestion. Restore corrupt journal
@@ -106,7 +123,7 @@ all writes. Closure is validated at the index's cutoff before the generation
 marker becomes durable. Product-only writes, partial index writes, and unresolved
 new generations leave the last completed generation visible. Before the first
 complete generation, snapshot capture returns an error. Closure reads use a pinned
-index cutoff outside the ingestion lock. Three unresolved closure attempts durably
+index cutoff outside the ingestion lock. Three deterministic content failures durably
 quarantine that terminal batch; later generations proceed while the previous complete
 generation remains selectable. The suffix has no special meaning on a retained CAT
 source without `catalog_product_source`.
@@ -118,12 +135,29 @@ cutoff is the last index-source sequence included; unrelated writes do not chang
 it. `CaptureCatalogSnapshot` binds both selections to that cutoff. Production
 publication captures once, publishes selected products, then publishes the CAT
 index. A product failure prevents index publication. The JSON sidecar carries
-`publicationCutoff`; the SDS schemas, signatures, and transport are unchanged.
+`publicationCutoff` for the shared internal capture and `publicationSourceCutoff`
+for the source-local consumer cursor. The SDS schemas, signatures, and transport
+are unchanged.
 An empty product list selects no product for that catalog identity.
 
 Treat the CAT publication as the generation commit and pair it with the product
-sidecar at the shared cutoff. Apply changed batches in journal order through a
-completed generation. A batch crossing a snapshot cutoff is replayed in full;
+sidecar at the shared cutoff. Apply changed batches through a completed generation.
+Read the JSON index through the announced index CID: retained batches carry
+`publicationSourceSequences`, the ordered durable sequence numbers of their
+source transactions. `publicationSourceCutoff` identifies the source snapshot
+coverage. Sequence numbers are scoped by schema, provider, and source; unrelated
+sources do not advance them. After applying all shard windows, ignore already
+applied sequences and require every new number to equal the previous number
+plus one. A gap means a quarantined, excluded, or interrupted transaction:
+stop applying deltas and fetch the latest complete snapshot with coverage at
+least through the observed gap. If that snapshot is older, wait for a newer
+complete generation. Replace the local selected map from that snapshot, then
+resume contiguous deltas. Product and index cursors are independent; apply the
+products before committing the index generation. A legacy index without source
+sequence fields requires a full snapshot to establish the cursor. A continued
+batch can contain several transaction numbers. All its windows carry the same
+sequence list; advance only after all windows are applied. Empty excluded batches
+produce no announcement and are detected through the same gap rule. A batch crossing a snapshot cutoff is replayed in full;
 duplicate records are harmless. With a fixed exclusion policy, the snapshot plus
 post-cutoff batches produces the same selected map as a fresh compact snapshot.
 A captured selection pins its files through `Close`; callers release both sets
@@ -136,10 +170,14 @@ Ordinary deletion and expiry do not remove retained records from snapshots. For
 an operator takedown, set `catalog_exclude_cids` on a retained CAT source rule to
 an array of the CAT payload CIDs to remove. Exclusions are durable and additive;
 they remove those selected index records from future snapshots and pending CAT
-batch selections, with unreferenced products omitted from compact snapshots,
+batch selections and their referenced products from pending OCM batch selections,
+with unreferenced products omitted from compact snapshots,
 without restoring older versions. A replacement full snapshot
 communicates the new exclusion policy. Existing immutable exports and captured
-selections are not revoked. A producer can instead publish a new CAT record with
+selections are not revoked. A takedown does not erase payload bytes from a mixed
+journal entry: one live or pending record retains the entire entry. The maximum
+retained unit is one ingest transaction, bounded by reference capacity and the
+16 MiB per-record limit; producers bound their batch sizes accordingly. A producer can instead publish a new CAT record with
 an empty product list to communicate product removal in its ordinary update stream.
 
 To stop retention, drain every changed batch, remove `retain_for_publication`,
@@ -148,7 +186,7 @@ participating sources, and set `stop_publication_retention: true` on their exact
 source rules. Restart. Pending or unapplied entries refuse retirement; completed
 sources return to ordinary storage/export behavior. Removing a rule by itself
 does not disable durable retention. If publication is disabled while durable
-retention remains active, startup emits an explicit warning. Node runtime status
+retention remains active, startup and hourly checks emit an explicit warning. Node runtime status
 reports `publicationRetainedSources`, `publicationRecoveryErrors`, and
 `publicationJournal` even when automatic publication is disabled. After every source
 has retired, stop the node and remove the `publication-journal` directory inside
@@ -161,16 +199,33 @@ entries, products newer than the completed index, and every active selection.
 A durable sequence checkpoint and batch receipt precede directory retirement;
 startup finishes deletion of retired directories. Applied, published entries with
 no remaining reference lose both payloads and resident index references. Journal
-statistics count entries, records, reference bytes, payload bytes, pins, and reclaimed
-entries. Small receipts remain; payload and reference counts plateau with a stable
+statistics count entries, records, reference bytes, payload bytes, pins, reclaimed
+entries, skipped sweeps, and the latest skip reason. Paused sources block only
+their own catalog pair. Sweeps preserve concurrent appends and their product
+closure; a busy independent source does not cancel a sweep. Cached product
+digests avoid repeated index-payload reads during reclamation. File removal runs
+after releasing the write lock; durable receipts and atomic directory retirement
+still serialize against retained ingestion. Resident counts and backlog admission
+use incremental counters; view pins visit entries rather than every reference.
+Completion receipts use a single checksummed binary checkpoint, migrated from
+individual receipt files. Checkpoint bytes still grow by 48 bytes per historical
+receipt; exact historical completion lookup requires retaining those identities.
+Small receipt metadata remains; payload and reference counts plateau with a stable
 catalog and drained publications. The 30-day synthetic control ingests 2,000 objects
 per day, publishes 60 batches, and compares the last snapshot with a fresh snapshot.
 
-After three failed retained batch attempts, its bytes remain quarantined, its reason
+After three content-specific retained batch attempts, its bytes remain quarantined, its reason
 appears in recovery status and logs, and dispatch continues for its source. On that
 source's exact rule, set `requeue_publication_batches` to a list of batch identifiers
 to retry, or `discard_publication_batches` to explicitly acknowledge their lost
-publication. Restart applies the action; remove the action setting afterwards.
+publication. Restart applies these configuration actions; remove the action setting afterwards.
+Without a restart, POST to `/api/v1/admin/dataset-updates/batch` from a direct
+loopback client with `schema`, `providerId`, `sourceName`, `batchId`, and
+`action` (`requeue` or `discard`). Remote and reverse-proxied requests are refused.
+Quarantined batches also requeue automatically after six hours. Transport, service,
+shutdown, and transient filesystem errors retry without a quarantine count, with
+backoff capped at 30 minutes. Concurrent validation of the same captured
+generation failure increments its counter once.
 An unapplied storage intent cannot be discarded by this mechanism. Requeue also
 resets terminal-generation failures. Quarantined bytes count against capacity.
 
