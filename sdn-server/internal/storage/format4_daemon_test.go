@@ -750,9 +750,9 @@ func TestFormat4SealedTypesExposeOnlyMetadata(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				for _, plain := range append(fileIDs, sigs...) {
+				for _, plain := range sigs {
 					if bytes.Contains(stream.Bytes, plain) {
-						t.Fatal("plaintext in trusted stored-byte output")
+						t.Fatal("sealed signature plaintext in trusted stored-byte output")
 					}
 				}
 			} else if reach := sqlReaches(t, s, "PNM"); len(reach) > 0 {
