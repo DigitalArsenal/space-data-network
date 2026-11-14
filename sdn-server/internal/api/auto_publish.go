@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/config"
+	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
 
 // WHY THIS FILE EXISTS (2026-08-04, sdn-rfb-publish-to-consumer-node).
@@ -78,7 +79,11 @@ type AutoPublisher struct {
 	service DatasetPublicationService
 	lanes   []config.AutoPublishLane
 
-	queue chan DatasetPublicationRequest
+	queue          chan DatasetPublicationRequest
+	pairedPending  map[string]*pairedBatchPublication
+	pairedSequence uint64
+	pairedTurns    map[sourcePublicationKey]uint64
+	backlogError   string
 	// Source scope uses bounded per-configured-source state, independent of
 	// the batch queue, so queue pressure cannot discard its final event.
 	sourceWake chan struct{}
@@ -120,9 +125,12 @@ type AutoPublisher struct {
 // succeeded, batches currently waiting for a retry, and batches given up on
 // after autoPublishMaxAttempts.
 type AutoPublishStats struct {
-	Published int64
-	Retrying  int64
-	Failed    int64
+	BacklogError     string                      `json:"backlogError,omitempty"`
+	RetentionSources []storage.PublicationSource `json:"retentionSources,omitempty"`
+	RecoveryErrors   map[string]string           `json:"recoveryErrors,omitempty"`
+	Published        int64
+	Retrying         int64
+	Failed           int64
 	// Unchanged counts publications skipped because the lane's set is
 	// exactly what its last publication exported.
 	Unchanged int64
@@ -180,6 +188,7 @@ func NewAutoPublisher(service DatasetPublicationService, lanes []config.AutoPubl
 		service:          service,
 		lanes:            valid,
 		queue:            make(chan DatasetPublicationRequest, autoPublishQueueDepth),
+		pairedPending:    make(map[string]*pairedBatchPublication),
 		sourceWake:       make(chan struct{}, 1),
 		sources:          make(map[sourcePublicationKey]*sourcePublicationState),
 		lastPublished:    make(map[string]time.Time),
@@ -199,7 +208,26 @@ func (p *AutoPublisher) Stats() AutoPublishStats {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return AutoPublishStats{Published: p.published, Retrying: p.retrying, Failed: p.failed, Unchanged: p.unchanged}
+	var recovery map[string]string
+	var retainedSources []storage.PublicationSource
+	if source, ok := p.service.(interface{ PublicationRecoveryStatus() map[string]string }); ok {
+		recovery = source.PublicationRecoveryStatus()
+	}
+	if retained, ok := p.service.(interface {
+		PublicationRetainedSources() []storage.PublicationSource
+	}); ok {
+		if recovery == nil {
+			recovery = map[string]string{}
+		}
+		retainedSources = retained.PublicationRetainedSources()
+		for _, x := range retainedSources {
+			_, hasBatch := p.matchScope(x.Schema, x.Provider, x.Source, false)
+			if !hasBatch {
+				recovery[x.Schema+"/"+x.Provider+"/"+x.Source] = "retention active without a publication rule"
+			}
+		}
+	}
+	return AutoPublishStats{RetentionSources: retainedSources, RecoveryErrors: recovery, BacklogError: p.backlogError, Published: p.published, Retrying: p.retrying, Failed: p.failed, Unchanged: p.unchanged}
 }
 
 // unchangedSinceLastPublication asks the service whether req's set is the one
@@ -269,10 +297,14 @@ func (p *AutoPublisher) Stop() {
 
 func (p *AutoPublisher) run(ctx context.Context) {
 	defer close(p.done)
+	p.recoverPairedBatches(ctx)
+	reconcile := time.NewTicker(30 * time.Second)
+	defer reconcile.Stop()
 	for {
+		p.queueReadyPairedBatches()
 		var timer *time.Timer
 		var timerC <-chan time.Time
-		if delay, pending := p.sourcePublicationDelay(); pending {
+		if delay, pending := p.publicationDelay(); pending {
 			timer = time.NewTimer(delay)
 			timerC = timer.C
 		}
@@ -290,7 +322,12 @@ func (p *AutoPublisher) run(ctx context.Context) {
 			return
 		case req := <-p.queue:
 			stopTimer()
-			p.publish(ctx, req)
+			if !p.publishPairedBatch(ctx, req) {
+				p.publish(ctx, req)
+			}
+		case <-reconcile.C:
+			stopTimer()
+			p.recoverPairedBatches(ctx)
 		case <-p.sourceWake:
 			stopTimer()
 			p.publishReadySource(ctx)
@@ -362,7 +399,7 @@ func (p *AutoPublisher) ObserveIngest(batch IngestedBatch) {
 	if p == nil {
 		return
 	}
-	if batch.Inserted <= 0 {
+	if batch.Inserted <= 0 && !p.isPairedSource(normalizeAutoPublishSchema(batch.Schema), strings.TrimSpace(batch.ProviderID), strings.TrimSpace(batch.SourceName)) {
 		// Nothing new landed. Republishing an unchanged window would announce
 		// a shard the network already has.
 		return
@@ -377,6 +414,11 @@ func (p *AutoPublisher) ObserveIngest(batch IngestedBatch) {
 		return
 	}
 
+	if p.isPairedSource(schema, provider, source) {
+		lane, _ := p.matchScope(schema, provider, source, false)
+		p.observePairedBatch(lane, schema, provider, source, batchID, batch.Inserted > 0)
+		return
+	}
 	lane, ok := p.matchLane(schema, provider, source)
 	if !ok {
 		return

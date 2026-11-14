@@ -102,6 +102,10 @@ func (s *ConcreteDatasetPublicationService) publicationFingerprint(req DatasetPu
 	if strings.TrimSpace(req.ProviderID) == "" || strings.TrimSpace(req.SourceName) == "" {
 		return ""
 	}
+	if s.selection != nil {
+		h, _ := s.selection.Fingerprint()
+		return h
+	}
 	fingerprint, _, err := s.store.PagedDatasetPublicationSetFingerprint(schema, req.ProviderID, req.SourceName, req.BatchID)
 	if err != nil {
 		log.Warnf("publication fingerprint %s %s/%s: %v", schema, req.ProviderID, req.SourceName, err)
@@ -119,7 +123,20 @@ func (s *ConcreteDatasetPublicationService) DatasetPublicationUnchanged(ctx cont
 		return false, nil
 	}
 	schema := normalizeDatasetPublicationSchema(req.Schema)
-	current := s.publicationFingerprint(req, schema)
+	if s.store.PublicationBatchComplete(schema, req.ProviderID, req.SourceName, req.BatchID) {
+		return true, nil
+	}
+	selection, selectErr := s.store.SelectPublication(schema, req.ProviderID, req.SourceName, req.BatchID)
+	defer selection.Close()
+	if selectErr != nil {
+		return false, selectErr
+	}
+	current := ""
+	if selection != nil {
+		current, _ = selection.Fingerprint()
+	} else {
+		current = s.publicationFingerprint(req, schema)
+	}
 	if current == "" {
 		return false, nil
 	}
@@ -131,7 +148,13 @@ func (s *ConcreteDatasetPublicationService) DatasetPublicationUnchanged(ctx cont
 	if err != nil || !ok {
 		return false, err
 	}
-	return latest.Fingerprint != "" && latest.Fingerprint == current, nil
+	unchanged := latest.Fingerprint != "" && latest.Fingerprint == current
+	if unchanged && selection != nil {
+		if err := s.store.CompletePublication(selection); err != nil {
+			return false, err
+		}
+	}
+	return unchanged, nil
 }
 
 // afterPublication records the series, applies retention and queues the IPNS
@@ -177,6 +200,9 @@ func (s *ConcreteDatasetPublicationService) afterPublication(ctx context.Context
 		if _, err := s.applyPublicationRetention(ctx, lane, policy); err != nil {
 			log.Warnf("publication retention %s %s/%s: %v", schema, req.ProviderID, req.SourceName, err)
 		}
+	}
+	if err := s.store.CompletePublication(s.selection); err != nil {
+		return fmt.Errorf("retain publication completion: %w", err)
 	}
 	s.releaseRedundantShardGroupCARs(ctx, lane)
 	if s.outputDir != "" {

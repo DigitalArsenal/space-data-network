@@ -517,6 +517,46 @@ func (n *Node) init() error {
 		if err != nil {
 			return fmt.Errorf("failed to create storage: %w", err)
 		}
+		var publicationSources []storage.PublicationSource
+		for _, rule := range n.config.Publishing.AutoPublish {
+			if rule.RetainForPublication {
+				schema := strings.TrimSuffix(rule.Schema, ".fbs") + ".fbs"
+				publicationSources = append(publicationSources, storage.PublicationSource{Schema: schema, Provider: rule.ProviderID, Source: rule.SourceName, ProductSource: rule.CatalogProductSource, CatalogObjectLimit: rule.CatalogObjectLimit})
+			}
+		}
+		for i := range publicationSources {
+			for _, rule := range n.config.Publishing.AutoPublish {
+				if strings.TrimSuffix(rule.Schema, ".fbs")+".fbs" == publicationSources[i].Schema && strings.TrimSpace(rule.ProviderID) == strings.TrimSpace(publicationSources[i].Provider) && strings.TrimSpace(rule.SourceName) == strings.TrimSpace(publicationSources[i].Source) && rule.CatalogProductSource != "" {
+					publicationSources[i].ProductSource = rule.CatalogProductSource
+				}
+			}
+		}
+		if err := n.store.ConfigurePublicationSources(publicationSources); err != nil {
+			return fmt.Errorf("publication retention: %w", err)
+		}
+		for _, rule := range n.config.Publishing.AutoPublish {
+			schema := strings.TrimSuffix(rule.Schema, ".fbs") + ".fbs"
+			for action, batches := range map[string][]string{"requeue": rule.RequeuePublicationBatches, "discard": rule.DiscardPublicationBatches} {
+				for _, batch := range batches {
+					if err := n.store.ManagePublicationBatch(schema, strings.TrimSpace(rule.ProviderID), strings.TrimSpace(rule.SourceName), batch, action); err != nil {
+						return err
+					}
+				}
+			}
+			if rule.StopPublicationRetention {
+				if err := n.store.StopPublicationRetention(schema, strings.TrimSpace(rule.ProviderID), strings.TrimSpace(rule.SourceName)); err != nil {
+					return err
+				}
+			}
+			if len(rule.CatalogExcludeCIDs) > 0 {
+				if err := n.store.ExcludeCatalogRecords(strings.TrimSpace(rule.ProviderID), strings.TrimSpace(rule.SourceName), rule.CatalogExcludeCIDs); err != nil {
+					return err
+				}
+			}
+		}
+		if (!n.config.Publishing.Enabled || len(n.config.Publishing.AutoPublish) == 0) && n.store.PublicationRetentionEnabled() {
+			log.Warn("publishing is disabled but durable publication retention remains active; drain pending batches and use stop_publication_retention to stop journaling")
+		}
 		// Warm derived search indexes so a restarted node serves its first
 		// cold search instead of answering SEARCH_INDEX_BUILDING. Builds run
 		// one at a time in the background on the store's existing slot.
@@ -1560,7 +1600,13 @@ func (n *Node) buildNodeStatusMaterials() caps.NodeStatusMaterials {
 // new state, no new sampler, no shaping: the dashboard reads exactly what a
 // module with node_status_read reads.
 func (n *Node) RuntimeStatusSnapshot() map[string]interface{} {
-	return caps.NodeStatusSnapshot(n.buildNodeStatusMaterials())
+	out := caps.NodeStatusSnapshot(n.buildNodeStatusMaterials())
+	if n.store != nil && n.store.PublicationRetentionEnabled() {
+		out["publicationRetainedSources"] = n.store.PublicationRetainedSources()
+		out["publicationRecoveryErrors"] = n.store.PublicationRecoveryStatus()
+		out["publicationJournal"] = n.store.PublicationJournalStats()
+	}
+	return out
 }
 
 // buildNodeActivityMaterials wires the node's shared activityRing into the
@@ -2352,6 +2398,24 @@ func (n *Node) Start(ctx context.Context) error {
 		go n.runBandwidthHistorySampler()
 	}
 
+	if n.store != nil && n.store.PublicationRetentionEnabled() && !n.config.Publishing.Enabled {
+		n.wg.Add(1)
+		go func() {
+			defer n.wg.Done()
+			ticker := time.NewTicker(time.Hour)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-n.ctx.Done():
+					return
+				case <-ticker.C:
+					if n.store.PublicationRetentionEnabled() {
+						log.Warn("publishing is disabled while retained publication data remains active; drain pending batches and stop retention explicitly")
+					}
+				}
+			}
+		}()
+	}
 	// Start EPM auto-publish via PubSub (every 30 minutes)
 	if n.epmService != nil && n.epmService.GetNodeEPM() != nil {
 		n.wg.Add(1)

@@ -95,6 +95,20 @@ type f4PutOpt struct {
 // the write's tag in the same transaction (C-26; format 1's
 // tagIdentityRepeats).
 func (b format4Backend) f4Put(op, schemaName string, records [][]byte, peerID string, signature []byte, tags *SourceTags, opt f4PutOpt) ([]string, []format4.Outcome, error) {
+	if !b.s.publicationEnabled.Load() || tags == nil {
+		return b.f4PutDirect(op, schemaName, records, peerID, signature, tags, opt)
+	}
+	if tags != nil {
+		normalized := normalizeSourceTags(*tags)
+		tags = &normalized
+	}
+	if !b.s.publicationSourceEnabled(schemaName, tags.ProviderID, tags.SourceName) || len(records) == 0 {
+		return b.f4PutDirect(op, schemaName, records, peerID, signature, tags, opt)
+	}
+	return b.groupPublicationPut(op, schemaName, records, peerID, signature, *tags, opt)
+}
+
+func (b format4Backend) f4PutDirect(op, schemaName string, records [][]byte, peerID string, signature []byte, tags *SourceTags, opt f4PutOpt) ([]string, []format4.Outcome, error) {
 	if err := b.s.requireWritable(op); err != nil {
 		return nil, nil, err
 	}
@@ -333,6 +347,24 @@ func (b format4Backend) UpsertSourceTags(schemaName, cid string, tags SourceTags
 	tags = normalizeSourceTags(tags)
 	if err := ValidateSourceTags(tags); err != nil {
 		return err
+	}
+	if b.s.publicationEnabled.Load() {
+		retained := b.s.publicationSourceEnabled(schemaName, tags.ProviderID, tags.SourceName)
+		if retained {
+			if b.s.publicationTagAlreadyRetained(schemaName, cid, tags) {
+				typ, err := f4Type(schemaName)
+				if err != nil {
+					return err
+				}
+				return b.f4Retag(schemaName, typ, cid, f4Tag(tags))
+			}
+			r, err := b.s.GetRecord(schemaName, cid)
+			if err != nil {
+				return err
+			}
+			_, _, err = b.f4Put("retain source tag", schemaName, [][]byte{r.Data}, "", nil, &tags, f4PutOpt{})
+			return err
+		}
 	}
 	typ, err := f4Type(schemaName)
 	if err != nil {

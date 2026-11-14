@@ -22,13 +22,15 @@ type sourcePublicationState struct {
 	nextAttempt time.Time
 	attempts    int
 	retrying    bool
+	checkpoint  bool
+	periodic    bool
 }
 
 func sourceKey(lane config.AutoPublishLane) sourcePublicationKey {
 	return sourcePublicationKey{normalizeAutoPublishSchema(lane.Schema), strings.TrimSpace(lane.ProviderID), strings.TrimSpace(lane.SourceName)}
 }
 
-// Caller holds p.mu. First matching lane wins, just as in batch scope.
+// Caller holds p.mu. The first matching source rule defines its schedule.
 func (p *AutoPublisher) sourceStateLocked(lane config.AutoPublishLane) *sourcePublicationState {
 	key := sourceKey(lane)
 	if state := p.sources[key]; state != nil {
@@ -37,11 +39,16 @@ func (p *AutoPublisher) sourceStateLocked(lane config.AutoPublishLane) *sourcePu
 	interval := lane.MinInterval
 	if interval <= 0 {
 		interval = autoPublishDefaultMinInterval
+		if p.isPairedSource(key.schema, key.provider, key.source) {
+			interval = 24 * time.Hour
+		}
 	}
 	state := &sourcePublicationState{
 		request:  DatasetPublicationRequest{Schema: key.schema, ProviderID: key.provider, SourceName: key.source, FullCatalog: true, MaxShardBytes: lane.MaxShardBytes},
 		interval: interval,
+		periodic: p.isPairedSource(key.schema, key.provider, key.source),
 	}
+
 	p.sources[key] = state
 	return state
 }
@@ -53,6 +60,9 @@ func (p *AutoPublisher) seedSourcePublicationsLocked() {
 		}
 		key := sourceKey(lane)
 		matched, ok := p.matchLane(key.schema, key.provider, key.source)
+		if p.isPairedSource(key.schema, key.provider, key.source) {
+			matched, ok = p.matchScope(key.schema, key.provider, key.source, true)
+		}
 		if ok && matched.PublishScope == "source" {
 			p.sourceStateLocked(matched).dirty = true
 		}
@@ -76,7 +86,7 @@ func (p *AutoPublisher) sourcePublicationDelay() (time.Duration, bool) {
 	var earliest time.Time
 	found := false
 	for _, state := range p.sources {
-		if state.dirty && (!found || state.nextAttempt.Before(earliest)) {
+		if (state.dirty || state.periodic) && (!found || state.nextAttempt.Before(earliest)) {
 			earliest = state.nextAttempt
 			found = true
 		}
@@ -91,11 +101,12 @@ func (p *AutoPublisher) sourcePublicationDelay() (time.Duration, bool) {
 }
 
 func (p *AutoPublisher) publishReadySource(ctx context.Context) {
+	p.loadSourceCheckpoints(ctx)
 	p.mu.Lock()
 	now := p.now()
 	var selected *sourcePublicationState
 	for _, state := range p.sources {
-		if state.dirty && !state.nextAttempt.After(now) && (selected == nil || state.nextAttempt.Before(selected.nextAttempt)) {
+		if (state.dirty || state.periodic) && !state.nextAttempt.After(now) && (selected == nil || state.nextAttempt.Before(selected.nextAttempt)) {
 			selected = state
 		}
 	}
@@ -156,5 +167,39 @@ func (p *AutoPublisher) publishReadySource(ctx context.Context) {
 	}
 	if p.onPublished != nil {
 		p.onPublished(req, result, err)
+	}
+}
+
+func (p *AutoPublisher) loadSourceCheckpoints(ctx context.Context) {
+	checkpoint, ok := p.service.(interface {
+		LastSourcePublication(context.Context, DatasetPublicationRequest) (time.Time, error)
+	})
+	if !ok {
+		return
+	}
+	p.mu.Lock()
+	var states []*sourcePublicationState
+	for _, state := range p.sources {
+		if state.periodic && !state.checkpoint {
+			state.checkpoint = true
+			states = append(states, state)
+		}
+	}
+	p.mu.Unlock()
+	for _, state := range states {
+		runCtx, cancel := context.WithTimeout(ctx, autoPublishTimeout)
+		at, err := checkpoint.LastSourcePublication(runCtx, state.request)
+		cancel()
+		p.mu.Lock()
+		if err != nil {
+			state.checkpoint = false
+			state.nextAttempt = p.now().Add(p.retryBackoff(1))
+		} else if !at.IsZero() {
+			state.nextAttempt = at.Add(state.interval)
+		}
+		p.mu.Unlock()
+		if err != nil {
+			log.Warnf("source publication checkpoint: %v", err)
+		}
 	}
 }

@@ -448,6 +448,9 @@ func newFormat4Store(basePath string, validator *sds.Validator, cfg storeConfig)
 		store.checkpointRunning.Store(true)
 		go store.runCheckpointLoop(interval)
 	}
+	if err := store.recoverPublicationJournal(); err != nil {
+		return fail(err)
+	}
 	store.startEnginePoisonWatch()
 	opened = true
 	return store, nil

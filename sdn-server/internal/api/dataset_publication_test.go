@@ -1253,7 +1253,11 @@ func newDatasetPublicationKuboTestServer(t *testing.T, pinned map[string][]byte)
 		case "/api/v0/block/put":
 			responseKey = "Key"
 			wantField = "data"
-			if r.URL.Query().Get("pin") != "true" || r.URL.Query().Get("format") != "raw" {
+			codec := r.URL.Query().Get("cid-codec")
+			if codec == "" {
+				codec = r.URL.Query().Get("format")
+			}
+			if r.URL.Query().Get("pin") != "true" || codec != "raw" {
 				t.Fatalf("unexpected IPFS block put query: %s", r.URL.RawQuery)
 			}
 		case "/api/v0/dag/export":

@@ -50,6 +50,7 @@ package storage
 // the history accumulated before it.
 
 import (
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -234,12 +235,16 @@ func newPublicationSetHash(schemaName, providerID, sourceName, batchID string) h
 // LatestDatasetPublicationSeries returns the newest recorded series of a lane
 // for one batch scope ("" = the source scope / full catalog).
 func (s *FlatSQLStore) LatestDatasetPublicationSeries(lane DatasetPublicationLane, batchID string) (DatasetPublicationSeries, bool, error) {
+	return s.LatestDatasetPublicationSeriesContext(context.Background(), lane, batchID)
+}
+
+func (s *FlatSQLStore) LatestDatasetPublicationSeriesContext(ctx context.Context, lane DatasetPublicationLane, batchID string) (DatasetPublicationSeries, bool, error) {
 	lane = lane.normalized()
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	var series DatasetPublicationSeries
 	var publishedAt int64
-	err := s.db.QueryRow(`
+	err := s.db.QueryRowContext(ctx, `
 		SELECT schema_name, provider_id, source_name, series_id, batch_id, record_count, manifest_cid, fingerprint, published_at
 		FROM sdn_dataset_publication_series
 		WHERE schema_name = ? AND provider_id = ? AND source_name = ? AND batch_id = ?
@@ -874,6 +879,7 @@ func datasetPublicationRowFiles(schemaDir string, row DatasetShardPublication) [
 	}
 	if len(row.QuerySHA256) >= 16 && len(row.IndexSHA256) >= 16 {
 		out = append(out, filepath.Join(schemaDir, "indexes", row.QuerySHA256[:16]+"-"+row.IndexSHA256[:16]+".index.json"))
+		out = append(out, filepath.Join(schemaDir, "indexes", row.QuerySHA256[:16]+"-"+row.IndexSHA256[:16]+".index.fb"))
 	}
 	return out
 }
@@ -918,6 +924,8 @@ func (l livePublicationFiles) referenced(path string) bool {
 		return l.shards[contentHalf(strings.TrimSuffix(name, ".fbshard"))]
 	case strings.HasSuffix(name, ".index.json"):
 		return l.indexes[contentHalf(strings.TrimSuffix(name, ".index.json"))]
+	case strings.HasSuffix(name, ".index.fb"):
+		return l.indexes[contentHalf(strings.TrimSuffix(name, ".index.fb"))]
 	}
 	return true
 }
@@ -960,7 +968,7 @@ type DatasetPublicationFileSweep struct {
 //
 //   - car/shard-group-*.car: every bundle is pinned in kubo when it is built;
 //     the local file is a staging copy.
-//   - shards/*.fbshard, indexes/*.index.json: files whose content hash no
+//   - shards/*.fbshard, indexes/*.index.json or *.index.fb: files whose content hash no
 //     remaining publication row of the schema names (windows overwritten by a
 //     later series and rows retention retired).
 func (s *FlatSQLStore) SweepDatasetPublicationFiles(outputDir, schemaName string, minAge time.Duration, now time.Time) (DatasetPublicationFileSweep, error) {
@@ -1002,7 +1010,7 @@ func (s *FlatSQLStore) SweepDatasetPublicationFiles(outputDir, schemaName string
 					continue
 				}
 			case "indexes":
-				if !strings.HasSuffix(name, ".index.json") || live.referenced(path) {
+				if (!strings.HasSuffix(name, ".index.json") && !strings.HasSuffix(name, ".index.fb")) || live.referenced(path) {
 					continue
 				}
 			}

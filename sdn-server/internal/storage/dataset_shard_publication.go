@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -450,7 +451,14 @@ func (s *FlatSQLStore) DatasetPublicationIndexPath(pub DatasetShardPublication) 
 		return "", errors.New("index sha256 is required")
 	}
 	fileName := fmt.Sprintf("%s-%s.index.json", pub.QuerySHA256[:16], pub.IndexSHA256[:16])
-	return filepath.Join(s.DatasetPublicationOutputDir(), datasetPublicationPathComponent(pub.SchemaName), "indexes", fileName), nil
+	legacy := filepath.Join(s.DatasetPublicationOutputDir(), datasetPublicationPathComponent(pub.SchemaName), "indexes", fileName)
+	binary := strings.TrimSuffix(legacy, ".json") + ".fb"
+	if _, err := os.Stat(binary); err == nil {
+		return binary, nil
+	} else if !os.IsNotExist(err) {
+		return "", err
+	}
+	return legacy, nil
 }
 
 func (s *FlatSQLStore) DatasetPublicationOutputDir() string {

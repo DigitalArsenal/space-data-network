@@ -10,7 +10,6 @@ package storage
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -369,8 +368,19 @@ func TestSupersedeSourceBatchesKeepsRecordsSharedWithKeptBatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read index: %v", err)
 	}
-	rewritten := []byte(strings.ReplaceAll(string(indexBytes), "batch-a", "batch-a2"))
-	rewrittenPath := filepath.Join(tmpDir, "index-batch-a2.json")
+	index, err := parseDatasetExportIndexBytes(indexBytes)
+	if err != nil {
+		t.Fatalf("parse index: %v", err)
+	}
+	index.BatchID = "batch-a2"
+	for i := range index.Records {
+		index.Records[i].SourceTags.BatchID = "batch-a2"
+	}
+	rewritten, err := marshalPublication(*index)
+	if err != nil {
+		t.Fatalf("encode rewritten index: %v", err)
+	}
+	rewrittenPath := filepath.Join(tmpDir, "index-batch-a2.fb")
 	if err := os.WriteFile(rewrittenPath, rewritten, 0o600); err != nil {
 		t.Fatalf("write rewritten index: %v", err)
 	}

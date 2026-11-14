@@ -155,6 +155,7 @@ func NewDatasetPublicationHandler(service DatasetPublicationService) *DatasetPub
 func (h *DatasetPublicationHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/admin/dataset-updates/publish", h.handlePublish)
 	mux.HandleFunc("/api/v1/admin/dataset-updates/retention", h.handleRetention)
+	mux.HandleFunc("/api/v1/admin/dataset-updates/batch", h.handlePublicationBatch)
 }
 
 // handleRetention plans (dry run) or applies one retention pass over a lane of
@@ -316,6 +317,8 @@ func requireDatasetUpdatesLocalClient(w http.ResponseWriter, r *http.Request, ro
 // ConcreteDatasetPublicationService exports local records and publishes one
 // signed DPM announcement PNM through the running node.
 type ConcreteDatasetPublicationService struct {
+	selection *storage.PublicationSelection
+
 	store           *storage.FlatSQLStore
 	publisher       DatasetUpdatePublisher
 	signingKey      ed25519.PrivateKey
@@ -410,15 +413,80 @@ func (s *ConcreteDatasetPublicationService) PublishDatasetUpdate(ctx context.Con
 	if activeReq.AnnounceExisting {
 		return activeService.announceExistingDatasetPublications(ctx, activeReq, schema)
 	}
+	return activeService.publishSelectedDatasetUpdate(ctx, activeReq, schema, func(service *ConcreteDatasetPublicationService, ctx context.Context, req DatasetPublicationRequest, schema string) (*DatasetPublicationResult, []string, error) {
+		return service.publishDatasetUpdateScope(ctx, req, schema)
+	})
+}
+
+// publishSelectedDatasetUpdate owns production selection, sequencing and durable
+// completion; the supplied operation is the signing/transport boundary.
+func (s *ConcreteDatasetPublicationService) publishSelectedDatasetUpdate(ctx context.Context, activeReq DatasetPublicationRequest, schema string, publish func(*ConcreteDatasetPublicationService, context.Context, DatasetPublicationRequest, string) (*DatasetPublicationResult, []string, error)) (*DatasetPublicationResult, error) {
+	activeService := *s
+	activeStore := s.store
+	var err error
 	// One publication per lane at a time: retention decides what is current
 	// from what a lane has published, so two publications of one lane must
 	// not interleave their windows.
 	unlock := activeService.hygiene.lockLane(schema, activeReq.ProviderID, activeReq.SourceName)
 	defer unlock()
+	var catalogSnapshot *storage.CatalogSnapshot
+	if activeReq.FullCatalog && strings.TrimSpace(activeReq.BatchID) == "" && schema == "CAT.fbs" {
+		if _, ok := activeStore.CatalogProductSource(activeReq.ProviderID, activeReq.SourceName); ok {
+			catalogSnapshot, err = activeStore.CaptureCatalogSnapshot(activeReq.ProviderID, activeReq.SourceName, 0)
+			if err != nil {
+				return nil, err
+			}
+			defer catalogSnapshot.Close()
+			activeService.selection = catalogSnapshot.Index
+		}
+	}
+	if catalogSnapshot == nil {
+		activeService.selection, err = activeStore.SelectPublication(schema, activeReq.ProviderID, activeReq.SourceName, activeReq.BatchID)
+		defer activeService.selection.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+	if activeService.selection != nil && activeReq.BatchID != "" {
+		if _, count := activeService.selection.Fingerprint(); count == 0 {
+			if err := activeStore.CompletePublication(activeService.selection); err != nil {
+				return nil, err
+			}
+			return &DatasetPublicationResult{RecordCount: 0}, nil
+		}
+	}
+	// A compact CAT snapshot publishes its selected products before its index.
+	// Both series use one validated cutoff and own immutable bytes throughout.
+	if activeReq.FullCatalog && strings.TrimSpace(activeReq.BatchID) == "" && schema == "CAT.fbs" && activeService.selection != nil {
+		if productSource, ok := activeStore.CatalogProductSource(activeReq.ProviderID, activeReq.SourceName); ok {
+			snap := catalogSnapshot
+			activeService.selection = snap.Index
+			productService := activeService
+			productService.selection = snap.Products
+			productReq := activeReq
+			productReq.Schema = "OCM.fbs"
+			productReq.SourceName = productSource
+			productReq.BatchID = ""
+			productReq.DatasetID = ""
+			productUnlock := activeService.hygiene.lockLane("OCM.fbs", productReq.ProviderID, productReq.SourceName)
+			if _, count := snap.Products.Fingerprint(); count > 0 {
+				result, cars, publishErr := publish(&productService, ctx, productReq, "OCM.fbs")
+				if publishErr == nil {
+					publishErr = productService.afterPublication(ctx, productReq, "OCM.fbs", result, cars, productService.publicationFingerprint(productReq, "OCM.fbs"), activeService.now())
+				}
+				productUnlock()
+				if publishErr != nil {
+					return nil, publishErr
+				}
+			} else {
+				productUnlock()
+			}
+		}
+	}
 	startedAt := activeService.now()
 	fingerprint := activeService.publicationFingerprint(activeReq, schema)
 
-	result, carCIDs, err := activeService.publishDatasetUpdateScope(ctx, activeReq, schema)
+	result, carCIDs, err := publish(&activeService, ctx, activeReq, schema)
 	if err != nil {
 		return nil, err
 	}
@@ -674,7 +742,21 @@ func (s *ConcreteDatasetPublicationService) byteBoundedExportFilter(
 	limit, offset int,
 ) (storage.IndexedRecordQuery, int, error) {
 	filter := datasetPublicationExportFilter(req, schema, limit, offset)
+	filter.Selection = s.selection
 	budget := datasetPublicationShardByteBudget(req)
+	if s.selection != nil {
+		if budget > 0 {
+			bounded, truncated, err := s.selection.ByteWindow(filter, budget)
+			if err != nil {
+				return filter, limit, err
+			}
+			if truncated && bounded > 0 && bounded < limit {
+				filter.Limit = bounded
+				return filter, bounded, nil
+			}
+		}
+		return filter, limit, nil
+	}
 	if budget <= 0 || s.store == nil {
 		return filter, limit, nil
 	}
@@ -850,6 +932,7 @@ func unlimitedDatasetPublicationLimit() int {
 
 func (s *ConcreteDatasetPublicationService) publishDatasetUpdatePart(ctx context.Context, req DatasetPublicationRequest, schema string, filter storage.IndexedRecordQuery, sourceIdentity datasetPublicationSourceIdentity, updateID string) (*DatasetPublicationResult, error) {
 	export, err := s.store.ExportDatasetWindow(filepath.Join(s.outputDir, safeDatasetPathComponent(schema)), storage.IndexedRecordQuery{
+		Selection:           filter.Selection,
 		SchemaName:          filter.SchemaName,
 		ProviderID:          filter.ProviderID,
 		SourceName:          filter.SourceName,

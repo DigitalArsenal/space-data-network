@@ -41,6 +41,7 @@ type DatasetExport struct {
 // DatasetExportRecord is one already-materialized FlatBuffer record to include
 // in a dataset export without first inserting it into a FlatSQL store.
 type DatasetExportRecord struct {
+	load       func() ([]byte, error)
 	CID        string
 	Data       []byte
 	SourceTags SourceTags
@@ -48,6 +49,10 @@ type DatasetExportRecord struct {
 
 // DatasetExportIndex is the replayable query/index sidecar for a shard.
 type DatasetExportIndex struct {
+	PublicationCutoff          uint64   `json:"publicationCutoff,omitempty"`
+	PublicationSourceCutoff    uint64   `json:"publicationSourceCutoff,omitempty"`
+	PublicationSourceSequences []uint64 `json:"publicationSourceSequences,omitempty"`
+
 	Version      int                          `json:"version"`
 	SchemaName   string                       `json:"schemaName"`
 	ProviderID   string                       `json:"providerId,omitempty"`
@@ -118,6 +123,30 @@ func (s *FlatSQLStore) ExportDatasetWindow(outputDir string, filter IndexedRecor
 	}
 	if filter.SchemaName == "" {
 		return nil, fmt.Errorf("schema name is required")
+	}
+	selection := filter.Selection
+	if selection == nil {
+		var err error
+		selection, err = s.SelectPublication(filter.SchemaName, filter.ProviderID, filter.SourceName, filter.BatchID)
+		defer selection.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+	if selection != nil {
+		filter.Selection = selection
+		records, err := selection.window(filter)
+		if err != nil {
+			return nil, err
+		}
+		ex, err := ExportDatasetRecords(outputDir, filter, records)
+		if err != nil {
+			return nil, err
+		}
+		if err = s.attachSourceBatchLicenses(ex); err != nil {
+			return nil, err
+		}
+		return ex, nil
 	}
 	records, err := s.QueryIndexedRecords(filter)
 	if err != nil {
@@ -310,6 +339,9 @@ func (s *FlatSQLStore) datasetExportRecordsFromShardFile(schemaName string, shar
 // source such as a legacy SQLite archive. It does not insert the records into
 // the provider's FlatSQL store.
 func ExportDatasetRecords(outputDir string, filter IndexedRecordQuery, records []DatasetExportRecord) (*DatasetExport, error) {
+	if filter.Selection == nil {
+		return exportOrdinaryDatasetRecords(outputDir, filter, records)
+	}
 	if outputDir == "" {
 		return nil, fmt.Errorf("output dir is required")
 	}
@@ -326,9 +358,27 @@ func ExportDatasetRecords(outputDir string, filter IndexedRecordQuery, records [
 	}
 	querySHA := sha256Hex(queryJSON)
 
-	shard := bytes.Buffer{}
+	if err := os.MkdirAll(filepath.Join(outputDir, "shards"), 0700); err != nil {
+		return nil, err
+	}
+	shardFile, err := os.CreateTemp(filepath.Join(outputDir, "shards"), ".export-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.Remove(shardFile.Name())
+	defer shardFile.Close()
+	shardHash := sha256.New()
+	shard := io.MultiWriter(shardFile, shardHash)
+	shardSize := int64(0)
 	indexRecords := make([]DatasetExportIndexRecord, 0, len(records))
+	var indexMetadataBytes int64
 	for _, record := range records {
+		if record.load != nil {
+			record.Data, err = record.load()
+			if err != nil {
+				return nil, err
+			}
+		}
 		if len(record.Data) > int(^uint32(0)) {
 			return nil, fmt.Errorf("record %s exceeds uint32 shard frame length", record.CID)
 		}
@@ -336,8 +386,9 @@ func ExportDatasetRecords(outputDir string, filter IndexedRecordQuery, records [
 		if recordCID == "" {
 			recordCID = computeCID(record.Data)
 		}
-		offset := int64(shard.Len())
-		if err := binary.Write(&shard, binary.LittleEndian, uint32(len(record.Data))); err != nil {
+		offset := shardSize
+		shardSize += 4 + int64(len(record.Data))
+		if err := binary.Write(shard, binary.LittleEndian, uint32(len(record.Data))); err != nil {
 			return nil, fmt.Errorf("write shard length: %w", err)
 		}
 		if _, err := shard.Write(record.Data); err != nil {
@@ -346,7 +397,14 @@ func ExportDatasetRecords(outputDir string, filter IndexedRecordQuery, records [
 
 		fields, err := extractIndexedFields(filter.SchemaName, record.Data)
 		if err != nil {
+			if filter.Selection != nil {
+				err = publicationContentError(err)
+			}
 			return nil, fmt.Errorf("extract index fields for %s: %w", record.CID, err)
+		}
+		indexMetadataBytes += int64(512+len(recordCID)+len(fields.entityID)+len(fields.objectType)+len(fields.opsStatusCode)+len(fields.epochDay)) + publicationSourceTagsBytes(record.SourceTags)
+		if filter.Selection != nil && indexMetadataBytes > 64<<20 {
+			return nil, fmt.Errorf("publication shard index exceeds 64 MiB; reduce max_shard_bytes")
 		}
 		indexRecords = append(indexRecords, DatasetExportIndexRecord{
 			CID:           recordCID,
@@ -362,12 +420,12 @@ func ExportDatasetRecords(outputDir string, filter IndexedRecordQuery, records [
 		})
 	}
 
-	shardBytes := shard.Bytes()
-	shardSHA := sha256Hex(shardBytes)
-	shardCID, err := cidV1RawSHA256(shardBytes)
+	shardSHA := hex.EncodeToString(shardHash.Sum(nil))
+	encoded, err := mh.Encode(shardHash.Sum(nil), mh.SHA2_256)
 	if err != nil {
-		return nil, fmt.Errorf("compute shard CID: %w", err)
+		return nil, err
 	}
+	shardCID := cid.NewCidV1(cid.Raw, encoded).String()
 	index := DatasetExportIndex{
 		Version:      1,
 		SchemaName:   filter.SchemaName,
@@ -383,6 +441,13 @@ func ExportDatasetRecords(outputDir string, filter IndexedRecordQuery, records [
 		Records:      indexRecords,
 		Indexes:      buildDatasetExportIndexes(indexRecords),
 	}
+	if filter.Selection != nil {
+		index.PublicationCutoff = filter.Selection.Cutoff
+		index.PublicationSourceCutoff = filter.Selection.SourceCutoff
+		if filter.Selection.Batch != "" {
+			index.PublicationSourceSequences = filter.Selection.SourceSequences
+		}
+	}
 	indexBytes, err := json.MarshalIndent(index, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("marshal dataset export index: %w", err)
@@ -396,8 +461,32 @@ func ExportDatasetRecords(outputDir string, filter IndexedRecordQuery, records [
 
 	shardPath := filepath.Join(outputDir, "shards", index.ShardFile)
 	indexPath := filepath.Join(outputDir, "indexes", fmt.Sprintf("%s-%s.index.json", querySHA[:16], indexSHA[:16]))
-	if err := writeImmutableExportFile(shardPath, shardBytes); err != nil {
+	if err := shardFile.Sync(); err != nil {
 		return nil, err
+	}
+	if err := shardFile.Close(); err != nil {
+		return nil, err
+	}
+	if err := installPublicationShard(shardFile.Name(), shardPath); err != nil {
+		if !os.IsExist(err) {
+			return nil, err
+		}
+		existing, err := os.Open(shardPath)
+		if err != nil {
+			return nil, err
+		}
+		hash := sha256.New()
+		size, readErr := io.Copy(hash, existing)
+		closeErr := existing.Close()
+		if readErr != nil {
+			return nil, readErr
+		}
+		if closeErr != nil {
+			return nil, closeErr
+		}
+		if size != shardSize || hex.EncodeToString(hash.Sum(nil)) != shardSHA {
+			return nil, fmt.Errorf("refusing to overwrite immutable export file %s with different bytes", shardPath)
+		}
 	}
 	if err := writeImmutableExportFile(indexPath, indexBytes); err != nil {
 		return nil, err
@@ -412,7 +501,7 @@ func ExportDatasetRecords(outputDir string, filter IndexedRecordQuery, records [
 		ShardPath:      shardPath,
 		ShardSHA256:    shardSHA,
 		ShardCID:       shardCID,
-		ShardBytes:     int64(len(shardBytes)),
+		ShardBytes:     shardSize,
 		IndexPath:      indexPath,
 		IndexSHA256:    indexSHA,
 		IndexCID:       indexCID,
@@ -500,23 +589,26 @@ func isActiveCatalogOpsStatus(status string) bool {
 
 func canonicalQueryJSON(filter IndexedRecordQuery) ([]byte, error) {
 	payload := struct {
-		SchemaName          string  `json:"schemaName"`
-		Day                 string  `json:"day,omitempty"`
-		NoradCatID          *uint32 `json:"noradCatId,omitempty"`
-		EntityID            string  `json:"entityId,omitempty"`
-		ObjectType          string  `json:"objectType,omitempty"`
-		OpsStatusCode       string  `json:"opsStatusCode,omitempty"`
-		ActivePayloads      bool    `json:"activePayloads,omitempty"`
-		CAReadyResidentSet  bool    `json:"caReadyResidentSet,omitempty"`
-		From                string  `json:"from,omitempty"`
-		To                  string  `json:"to,omitempty"`
-		ProviderID          string  `json:"providerId,omitempty"`
-		SourceName          string  `json:"sourceName,omitempty"`
-		BatchID             string  `json:"batchId,omitempty"`
-		Limit               int     `json:"limit,omitempty"`
-		Offset              int     `json:"offset,omitempty"`
-		AllowLargeResultSet bool    `json:"allowLargeResultSet,omitempty"`
-		OrderByCID          bool    `json:"orderByCid,omitempty"`
+		PublicationCutoff          uint64   `json:"publicationCutoff,omitempty"`
+		PublicationSourceCutoff    uint64   `json:"publicationSourceCutoff,omitempty"`
+		PublicationSourceSequences []uint64 `json:"publicationSourceSequences,omitempty"`
+		SchemaName                 string   `json:"schemaName"`
+		Day                        string   `json:"day,omitempty"`
+		NoradCatID                 *uint32  `json:"noradCatId,omitempty"`
+		EntityID                   string   `json:"entityId,omitempty"`
+		ObjectType                 string   `json:"objectType,omitempty"`
+		OpsStatusCode              string   `json:"opsStatusCode,omitempty"`
+		ActivePayloads             bool     `json:"activePayloads,omitempty"`
+		CAReadyResidentSet         bool     `json:"caReadyResidentSet,omitempty"`
+		From                       string   `json:"from,omitempty"`
+		To                         string   `json:"to,omitempty"`
+		ProviderID                 string   `json:"providerId,omitempty"`
+		SourceName                 string   `json:"sourceName,omitempty"`
+		BatchID                    string   `json:"batchId,omitempty"`
+		Limit                      int      `json:"limit,omitempty"`
+		Offset                     int      `json:"offset,omitempty"`
+		AllowLargeResultSet        bool     `json:"allowLargeResultSet,omitempty"`
+		OrderByCID                 bool     `json:"orderByCid,omitempty"`
 	}{
 		SchemaName:          filter.SchemaName,
 		Day:                 filter.Day,
@@ -533,6 +625,13 @@ func canonicalQueryJSON(filter IndexedRecordQuery) ([]byte, error) {
 		Offset:              filter.Offset,
 		AllowLargeResultSet: filter.AllowLargeResultSet,
 		OrderByCID:          filter.OrderByCID,
+	}
+	if filter.Selection != nil {
+		payload.PublicationCutoff = filter.Selection.Cutoff
+		payload.PublicationSourceCutoff = filter.Selection.SourceCutoff
+		if filter.Selection.Batch != "" {
+			payload.PublicationSourceSequences = filter.Selection.SourceSequences
+		}
 	}
 	if filter.From != nil {
 		payload.From = filter.From.UTC().Format(time.RFC3339Nano)
@@ -594,4 +693,36 @@ func cidV1RawSHA256(data []byte) (string, error) {
 		return "", err
 	}
 	return cid.NewCidV1(cid.Raw, hash).String(), nil
+}
+
+// A filesystem without hard links uses exclusive creation and a streamed copy.
+func installPublicationShard(from, to string) error {
+	return installPublicationShardWith(from, to, os.Link)
+}
+func installPublicationShardWith(from, to string, link func(string, string) error) error {
+	err := link(from, to)
+	if err == nil || os.IsExist(err) {
+		return err
+	}
+	input, err := os.Open(from)
+	if err != nil {
+		return err
+	}
+	defer input.Close()
+	output, err := os.OpenFile(to, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(output, input)
+	if err == nil {
+		err = output.Sync()
+	}
+	closeErr := output.Close()
+	if err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		os.Remove(to)
+	}
+	return err
 }
