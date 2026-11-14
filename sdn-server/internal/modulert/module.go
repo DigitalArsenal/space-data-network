@@ -786,7 +786,11 @@ func (m *Module) InvokeCron(ctx context.Context, method string, input []byte) ([
 	// caller-supplied ctx deadline still narrows the budget (see
 	// wasmrt.effectiveTimeout / ExecuteContext).
 	ctx = wasmrt.WithExecBudget(ctx, m.scheduledBudget())
-	output, err := m.InvokeMethod(ctx, method, input)
+	frames, err := scheduledInputFrames(m.manifest, method, input)
+	var output []byte
+	if err == nil {
+		output, err = m.InvokeMethodFrames(ctx, method, frames)
+	}
 	m.recordTimerResult(err)
 	return output, err
 }
