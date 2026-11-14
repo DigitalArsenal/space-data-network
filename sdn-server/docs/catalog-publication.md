@@ -77,7 +77,10 @@ Deleting live records alone does not revise the retained catalog generation.
 together. Production publication exports all selected products before the index,
 using those same selections across every bounded shard window. The existing
 JSON index sidecar carries `publicationCutoff`; no SDS schema, signing method,
-or transport is changed. The cutoff is local to the producer's retained store.
+or transport is changed. The cutoff is local to the producer's retained store. Treat the CAT publication
+as the generation commit and pair it with the OCM sidecar at that same cutoff;
+an OCM announcement alone does not commit a catalog generation. Retained older
+series remain available across interruption between the two announcements.
 
 To reconstruct a later catalog, apply the snapshot and changed batches whose
 latest journal sequence exceeds its cutoff. A streamed batch crossing the
