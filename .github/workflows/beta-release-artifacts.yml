@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Optional beta release version, for example v1.0.3-beta.7. Leave blank to use v<package version>-beta.<run number>.
+        description: Optional release version, a beta such as v1.0.3-beta.7 or a stable release such as v1.1.0. Leave blank to use v<package version>-beta.<run number>.
         required: false
         type: string
 
@@ -1366,6 +1366,9 @@ jobs:
         env:
           VERSION: ${{ needs.beta-version.outputs.package_version }}
           RELEASE_TAG: ${{ needs.beta-version.outputs.release_tag }}
+          # beta or stable: words the notes and the manifest. The update
+          # channel the payloads carry stays `--channel release` either way.
+          RELEASE_MATURITY: ${{ needs.beta-version.outputs.channel }}
         run: deployment/release/assemble-beta-release-artifacts.sh
       - uses: softprops/action-gh-release@v2
         with:

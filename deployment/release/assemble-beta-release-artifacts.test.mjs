@@ -125,6 +125,77 @@ test('assembles beta release files, manifest, body, and checksums', () => {
   assert.doesNotMatch(checksums, /spacedatanetwork-checksums\.txt/);
 });
 
+function writeStableFixtures(distDir) {
+  for (const artifact of [
+    'cli/spacedatanetwork-1.1.0-linux-amd64.tar.gz',
+    'cli/spacedatanetwork-1.1.0-linux-arm64.tar.gz',
+    'cli/spacedatanetwork-1.1.0-darwin-amd64.tar.gz',
+    'cli/spacedatanetwork-1.1.0-darwin-arm64.tar.gz',
+    'cli/spacedatanetwork-1.1.0-windows-amd64.zip',
+    'desktop/space-data-network-desktop-1.1.0-mac-arm64.dmg',
+    'desktop/space-data-network-desktop-1.1.0-mac-arm64.zip',
+    'desktop/space-data-network-desktop-1.1.0-linux-x86_64.AppImage',
+    'desktop/space-data-network-desktop-1.1.0-linux-amd64.deb',
+    'desktop/space-data-network-desktop-1.1.0-linux-x64.tar.xz',
+    'container-images/spacedatanetwork-container-1.1.0-linux-amd64.tar.gz'
+  ]) {
+    writeFixture(distDir, artifact, 'fixture');
+  }
+}
+
+test('a stable release is worded as a release, not a beta', () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'sdn-stable-release-'));
+  const distDir = join(tempRoot, 'dist');
+  const releaseDir = join(distDir, 'release');
+  writeStableFixtures(distDir);
+
+  execFileSync('bash', [scriptPath], {
+    cwd: repoRoot,
+    env: {
+      ...process.env,
+      DIST_DIR: distDir,
+      RELEASE_DIR: releaseDir,
+      VERSION: '1.1.0',
+      RELEASE_TAG: 'v1.1.0',
+      RELEASE_MATURITY: 'stable',
+      GITHUB_SHA: '0123456789abcdef0123456789abcdef01234567'
+    },
+    stdio: 'pipe'
+  });
+
+  const notes = readFileSync(join(releaseDir, 'SDN-BETA-RELEASE.md'), 'utf8');
+  assert.match(notes, /^# Space Data Network v1\.1\.0\n/);
+  assert.match(notes, /This is a stable release\./);
+  assert.match(notes, /`dockerdigitalarsenal\/space-data-network:v1\.1\.0`/);
+  assert.doesNotMatch(notes, /beta/i);
+
+  const manifest = JSON.parse(readFileSync(join(releaseDir, 'spacedatanetwork-beta-manifest.json'), 'utf8'));
+  assert.equal(manifest.releaseTag, 'v1.1.0');
+  assert.equal(manifest.channel, 'stable');
+});
+
+test('a release maturity other than beta or stable is refused', () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'sdn-stable-release-bad-maturity-'));
+  const distDir = join(tempRoot, 'dist');
+  writeStableFixtures(distDir);
+
+  assert.throws(() => {
+    execFileSync('bash', [scriptPath], {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        DIST_DIR: distDir,
+        RELEASE_DIR: join(distDir, 'release'),
+        VERSION: '1.1.0',
+        RELEASE_TAG: 'v1.1.0',
+        RELEASE_MATURITY: 'release',
+        GITHUB_SHA: '0123456789abcdef0123456789abcdef01234567'
+      },
+      stdio: 'pipe'
+    });
+  }, /RELEASE_MATURITY must be beta or stable; received release/);
+});
+
 test('fails when a PROVEN-platform CLI artifact is missing', () => {
   const tempRoot = mkdtempSync(join(tmpdir(), 'sdn-beta-release-missing-cli-'));
   const distDir = join(tempRoot, 'dist');

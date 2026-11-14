@@ -8,6 +8,17 @@ release_dir="${RELEASE_DIR:-${dist_dir}/release}"
 version="${VERSION:?VERSION is required}"
 release_tag="${RELEASE_TAG:-v${version}}"
 commit="${GITHUB_SHA:-$(git -C "${root}" rev-parse HEAD)}"
+# Release maturity (prepare-beta-release.mjs's `channel` output): it words the
+# notes and the manifest only. It is NOT the update channel — the payloads
+# below are stamped `--channel release` whatever this says.
+release_maturity="${RELEASE_MATURITY:-beta}"
+case "${release_maturity}" in
+  beta|stable) ;;
+  *)
+    echo "RELEASE_MATURITY must be beta or stable; received ${release_maturity}" >&2
+    exit 1
+    ;;
+esac
 
 rm -rf "${release_dir}"
 mkdir -p "${release_dir}"
@@ -180,13 +191,23 @@ if [[ -f "${dist_dir}/container-digests.json" ]]; then
   cp "${dist_dir}/container-digests.json" "${release_dir}/"
 fi
 
-cat > "${release_dir}/SDN-BETA-RELEASE.md" <<EOF
+if [[ "${release_maturity}" == stable ]]; then
+  cat > "${release_dir}/SDN-BETA-RELEASE.md" <<EOF
+# Space Data Network ${release_tag}
+
+This is a stable release. Use the release number \`${release_tag}\` when reporting issues or pinning deployments.
+
+## Included artifacts
+EOF
+else
+  cat > "${release_dir}/SDN-BETA-RELEASE.md" <<EOF
 # Space Data Network ${release_tag} Beta
 
 These artifacts are beta builds. Use the release number \`${release_tag}\` when reporting issues or pinning deployments.
 
 ## Included artifacts
 EOF
+fi
 
 while IFS= read -r artifact; do
   printf -- '- `%s`\n' "${artifact}" >> "${release_dir}/SDN-BETA-RELEASE.md"
@@ -242,11 +263,13 @@ if [[ ${#missing_optional[@]} -gt 0 ]]; then
   } >> "${release_dir}/SDN-BETA-RELEASE.md"
 fi
 
+image_tag_text='<beta-version>'
+if [[ "${release_maturity}" == stable ]]; then
+  image_tag_text="${release_tag}"
+fi
+printf '\n## Container images\n\n- `dockerdigitalarsenal/space-data-network:%s`\n' "${image_tag_text}" >> "${release_dir}/SDN-BETA-RELEASE.md"
+
 cat >> "${release_dir}/SDN-BETA-RELEASE.md" <<'EOF'
-
-## Container images
-
-- `dockerdigitalarsenal/space-data-network:<beta-version>`
 
 The same image defaults to a full node. Operators who need edge-relay mode can override the container command.
 
@@ -256,12 +279,12 @@ Load them with `docker load --input <file>`.
 Verify downloaded files with `spacedatanetwork-checksums.txt`.
 EOF
 
-node - "${release_dir}" "${version}" "${release_tag}" "${commit}" <<'NODE'
+node - "${release_dir}" "${version}" "${release_tag}" "${commit}" "${release_maturity}" <<'NODE'
 import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-const [releaseDir, version, releaseTag, commit] = process.argv.slice(2);
+const [releaseDir, version, releaseTag, commit, maturity] = process.argv.slice(2);
 const artifacts = readdirSync(releaseDir)
   .filter((name) => name !== 'spacedatanetwork-checksums.txt')
   .filter((name) => statSync(join(releaseDir, name)).isFile())
@@ -280,7 +303,7 @@ writeFileSync(
   `${JSON.stringify({
     releaseTag,
     version,
-    channel: 'beta',
+    channel: maturity,
     commit,
     generatedAt: new Date().toISOString(),
     artifacts

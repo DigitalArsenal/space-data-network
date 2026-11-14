@@ -736,3 +736,17 @@ test('released bundles and their update feed are stamped with the public release
   const assemble = readRepoFile('deployment/release/assemble-beta-release-artifacts.sh');
   assert.doesNotMatch(assemble, /--channel beta/);
 });
+
+test('release maturity reaches only the release notes, never a --channel', () => {
+  // prepare-beta-release.mjs's `channel` output is the release MATURITY (beta
+  // or stable), not an update channel. It words the notes and the manifest;
+  // a bundle or payload stamped with it would leave the public channel.
+  const workflow = readRepoFile('.github/workflows/beta-release-artifacts.yml');
+  const uses = [...workflow.matchAll(/^.*needs\.beta-version\.outputs\.channel.*$/gm)].map((m) => m[0].trim());
+  assert.deepEqual(uses, ['RELEASE_MATURITY: ${{ needs.beta-version.outputs.channel }}']);
+  assert.match(workflow, /name: Assemble beta release artifacts\n\s+env:[\s\S]*?RELEASE_MATURITY:[\s\S]*?run: deployment\/release\/assemble-beta-release-artifacts\.sh/);
+  assert.doesNotMatch(workflow, /--channel \$\{\{/);
+
+  const assemble = readRepoFile('deployment/release/assemble-beta-release-artifacts.sh');
+  assert.doesNotMatch(assemble, /--channel "?\$\{?release_maturity/);
+});
