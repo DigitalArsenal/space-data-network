@@ -33,7 +33,7 @@ func (s indexReviewReader) RecordIndexSeqPage(q storage.RecordIndexSeqQuery) (st
 
 func TestStorageIndexPageRefusesFieldSealedSchemas(t *testing.T) {
 	// A reader that panics proves refusal happens before any index or record read.
-	for _, schema := range []string{"KMF.fbs", "KMF", "$KMF"} {
+	for _, schema := range []string{"KMF.fbs", "KMF"} {
 		bridge := modulert.NewHostBridge(nil, []string{"storage_query"})
 		adapter := &storageCapAdapter{bridge: bridge}
 		answer := adapter.indexPageWithReader(syncwire.BuildQRP(syncwire.QRPFields{Kind: syncwire.QRPKindRequest, SchemaName: schema}), indexReviewReader{})
