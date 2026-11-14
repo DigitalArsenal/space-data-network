@@ -23,7 +23,7 @@ func TestMigrate4RegistrationKeepsBoundedLayout(t *testing.T) {
 	if cache == "" {
 		cache = t.TempDir()
 	}
-	m := migrator4{root: root, opt: migrate4Options{CompileOnMiss: true, AOTCacheDir: filepath.Join(cache, "missing-capability")},
+	m := migrator4{root: root, rep: &migrate4Report{}, opt: migrate4Options{CompileOnMiss: true, AOTCacheDir: filepath.Join(cache, "missing-capability")},
 		schemas: []string{"OCM.fbs"}, specs: map[string]format4.TypeSpec{"OCM.fbs": spec}}
 	for _, mode := range []format4.CreateMode{format4.CreateFresh, format4.OpenExisting} {
 		if err := m.openTarget(context.Background(), mode); err != nil {
