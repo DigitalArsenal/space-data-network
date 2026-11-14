@@ -245,6 +245,8 @@ through cleanup. The last completed snapshot remains available. Refusals name
 `catalog_object_limit`, the capacity, and retained use. Pending batches preserve
 their bytes during publication lag; after completion, reclamation coalesces
 history to the latest generation and remaining pending batches.
+After a capacity refusal, the producer retries the complete generation, including
+its products; an index-only retry cannot recover released product payloads.
 
 First-production consumers follow snapshots only and replace their catalog on
 each announced snapshot. Changed-batch consumers require additional ordering

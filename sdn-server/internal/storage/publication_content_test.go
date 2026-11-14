@@ -1,12 +1,27 @@
 package storage
 
 import (
+	"encoding/binary"
 	"errors"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+func TestPublicationSelectionLimitIsContentError(t *testing.T) {
+	f := &publicationRefFile{Tags: SourceTags{ProviderID: "synthetic", SourceName: "index", BatchID: "oversized"}}
+	refs := make([]publicationRecordRef, maxPublicationSelectionRecords+1)
+	for i := range refs {
+		refs[i].file = f
+		binary.LittleEndian.PutUint32(refs[i].Digest[:4], uint32(i))
+	}
+	s := &FlatSQLStore{basePath: t.TempDir(), publicationEntries: []publicationEntry{{Applied: true, Sequence: 1, Schema: "CAT.fbs", Tags: f.Tags, Refs: refs}}}
+	_, err := s.retainedSelectionLocked("CAT.fbs", "synthetic", "index", "oversized", 1)
+	if !IsPublicationContentError(err) {
+		t.Fatalf("oversized immutable selection remains retryable: %v", err)
+	}
+}
 
 func TestPublicationDamagedBatchDoesNotBlockSource(t *testing.T) {
 	t.Setenv("SDN_STORE_FORMAT", "4")
