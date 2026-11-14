@@ -131,8 +131,13 @@ jobs:
             runner: ubuntu-24.04-arm
             container: ubuntu:20.04
             toolchain: focal-llvm16
+          # macos-15, not macos-14: GitHub no longer runs macos-14 (run
+          # 43639422366 was cancelled at once with "The configuration
+          # 'macos-14-arm64-us-default' is not supported"), and with this leg
+          # cancelled every downstream job is skipped. Same runner in the cli,
+          # desktop and published-installer-smoke legs below.
           - label: darwin-arm64
-            runner: macos-14
+            runner: macos-15
             toolchain: brew-llvm18
           - label: darwin-amd64
             runner: macos-15-intel
@@ -593,7 +598,7 @@ jobs:
             binary_name: spacedatanetwork
           - target_os: darwin
             target_arch: arm64
-            runner: macos-14
+            runner: macos-15
             toolchain: brew-llvm18
             archive_extension: tar.gz
             binary_name: spacedatanetwork
@@ -1002,7 +1007,7 @@ jobs:
         include:
           - target_os: macos
             target_arch: arm64
-            runner: macos-14
+            runner: macos-15
             cli_artifact: cli-darwin-arm64
             cli_bundle: spacedatanetwork-VERSION-darwin-arm64.tar.gz
             builder_args: --mac dmg zip --arm64
@@ -1398,7 +1403,7 @@ jobs:
           - target_os: linux
             runner: ubuntu-latest
           - target_os: macos
-            runner: macos-14
+            runner: macos-15
           - target_os: windows
             runner: windows-latest
             experimental: true
