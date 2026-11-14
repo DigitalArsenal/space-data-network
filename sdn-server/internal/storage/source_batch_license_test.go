@@ -13,6 +13,7 @@ import (
 	"crypto/ed25519"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -338,16 +339,23 @@ func TestUnlicensedIngestRecordsNoLicenseRow(t *testing.T) {
 		t.Fatalf("unlicensed export invented license terms: %+v", batch)
 	}
 
-	// The shard and index hashes an unlicensed publication advertises are
-	// pinned for the same store contents and the same query: SourceTags grew
-	// fields, so this pins that they stay absent from the serialized
-	// per-record provenance. The index golden moved once, deliberately, when
-	// $CAT records started carrying OBJECT_ID as entityId
-	// (sdn-stream-flatbuffers-into-flatsql: un-numbered objects need an
-	// identity); the shard bytes are unchanged from main @ c0a9bc22.
+	// The SDS shard remains byte-exact. The index golden pins the typed
+	// PublicationState export index. Its decoded per-record provenance must
+	// also remain unchanged, including every empty license field.
+	indexBytes, err := os.ReadFile(export.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var index DatasetExportIndex
+	if err := unmarshalPublication(indexBytes, &index); err != nil {
+		t.Fatalf("decode typed export index: %v", err)
+	}
+	if len(index.Records) != 1 || !reflect.DeepEqual(index.Records[0].SourceTags, tags) {
+		t.Fatal("unlicensed per-record provenance changed")
+	}
 	const (
 		goldenShardSHA256 = "ea928be73710cd3691364ac89b9dbc95fac95c9fb5e7f02884c977e7085f73ea"
-		goldenIndexSHA256 = "f16dc42dfeff3785834176546d5fda93e8e838c106e225ddfe5c4b063dfa125f"
+		goldenIndexSHA256 = "ab081e16f6b48625ef1668d6711cbf7ab665225e4961b37d028e987f9c8fbb88"
 	)
 	if export.ShardSHA256 != goldenShardSHA256 {
 		t.Fatalf("unlicensed shard bytes changed: %s, want %s", export.ShardSHA256, goldenShardSHA256)
