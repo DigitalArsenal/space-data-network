@@ -7,6 +7,7 @@ import (
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/CAT"
 	"path/filepath"
 	"sort"
+	"strings"
 )
 
 // CatalogSnapshot binds a complete CAT view and its exact OCM closure to the
@@ -103,6 +104,10 @@ func (s *FlatSQLStore) CaptureCatalogSnapshot(provider, indexSource string, cuto
 // SelectPublication returns nil for an ordinary source, preserving its existing
 // export behavior. Retained batches and catalog snapshots use journal bytes.
 func (s *FlatSQLStore) SelectPublication(schema, provider, source, batch string) (*PublicationSelection, error) {
+	schema = strings.TrimSpace(schema)
+	provider = strings.TrimSpace(provider)
+	source = strings.TrimSpace(source)
+	batch = strings.TrimSpace(batch)
 	if !s.publicationEnabled.Load() {
 		return nil, nil
 	}

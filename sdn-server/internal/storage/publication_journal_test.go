@@ -151,7 +151,7 @@ func TestPublicationJournalChecksumAndActivation(t *testing.T) {
 	if err := s.ConfigurePublicationSources([]PublicationSource{{Schema: "CAT.fbs", Provider: "synthetic", Source: "index"}}); err == nil {
 		t.Fatal("nonempty unretained source accepted")
 	}
-	if err := s.ConfigurePublicationSources([]PublicationSource{{Schema: "CAT.fbs", Provider: "synthetic", Source: "retained"}}); err != nil {
+	if err := s.ConfigurePublicationSources([]PublicationSource{{Schema: "CAT.fbs", Provider: " synthetic ", Source: " retained "}}); err != nil {
 		t.Fatal(err)
 	}
 	raw := sds.NewCATBuilder().WithNoradCatID(900003).WithObjectName("synthetic-checksum").Build()

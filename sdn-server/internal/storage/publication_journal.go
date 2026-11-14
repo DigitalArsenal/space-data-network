@@ -63,6 +63,9 @@ func (s *FlatSQLStore) ConfigurePublicationSources(sources []PublicationSource) 
 	}
 	merged := append([]PublicationSource(nil), s.publicationSources...)
 	for _, x := range sources {
+		x.Provider = strings.TrimSpace(x.Provider)
+		x.Source = strings.TrimSpace(x.Source)
+		x.ProductSource = strings.TrimSpace(x.ProductSource)
 		if (x.Schema != "CAT.fbs" && x.Schema != "OCM.fbs") || x.Provider == "" || x.Source == "" {
 			return errors.New("publication retention requires CAT/OCM and exact provider/source")
 		}

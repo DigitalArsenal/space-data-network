@@ -423,7 +423,7 @@ func (s *ConcreteDatasetPublicationService) PublishDatasetUpdate(ctx context.Con
 	}
 	// A compact CAT snapshot publishes its selected products before its index.
 	// Both series use one validated cutoff and own immutable bytes throughout.
-	if activeReq.FullCatalog && schema == "CAT.fbs" && activeService.selection != nil {
+	if activeReq.FullCatalog && strings.TrimSpace(activeReq.BatchID) == "" && schema == "CAT.fbs" && activeService.selection != nil {
 		if productSource, ok := activeStore.CatalogProductSource(activeReq.ProviderID, activeReq.SourceName); ok {
 			snap, captureErr := activeStore.CaptureCatalogSnapshot(activeReq.ProviderID, activeReq.SourceName, activeService.selection.Cutoff)
 			if captureErr != nil {
