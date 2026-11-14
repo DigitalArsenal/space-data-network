@@ -171,6 +171,7 @@ func TestPublicationReviewHistoryMemory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	e.ReadReady = true
 	builder := flatbuffers.NewBuilder(512)
 	id := builder.CreateString(e.Refs[len(e.Refs)-1].CID())
 	CAT.CATProductStart(builder)
@@ -192,7 +193,7 @@ func TestPublicationReviewHistoryMemory(t *testing.T) {
 	if err = os.WriteFile(indexPath, frame, 0600); err != nil {
 		t.Fatal(err)
 	}
-	index := publicationEntry{Sequence: 2, Schema: "CAT.fbs", Tags: SourceTags{ProviderID: "synthetic", SourceName: "index"}, Applied: true, Generation: true, Refs: []publicationRecordRef{newPublicationReference(&publicationRefFile{Path: indexPath}, payload, 4, "synthetic")}}
+	index := publicationEntry{Sequence: 2, Schema: "CAT.fbs", Tags: SourceTags{ProviderID: "synthetic", SourceName: "index"}, Applied: true, ReadReady: true, Generation: true, Refs: []publicationRecordRef{newPublicationReference(&publicationRefFile{Path: indexPath}, payload, 4, "synthetic")}}
 	s.publicationEntries = []publicationEntry{e, index}
 	s.publicationSources = []PublicationSource{{Schema: "CAT.fbs", Provider: "synthetic", Source: "index", ProductSource: "products"}}
 	snap, err := s.CaptureCatalogSnapshot("synthetic", "index", 0)

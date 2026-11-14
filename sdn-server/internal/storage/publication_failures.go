@@ -170,6 +170,9 @@ func (s *FlatSQLStore) recordPublicationDiscardEffect(e publicationEntry) error 
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
+	if effects == nil {
+		effects = map[string]string{}
+	}
 	key := e.Schema + "/" + e.Tags.ProviderID + "/" + e.Tags.SourceName
 	effects[key] = fmt.Sprintf("applied entry %d batch %q explicitly discarded; objects whose winning record it held are missing until the producer writes them again; earlier discard acknowledgements also remain in effect", e.Sequence, e.Tags.BatchID)
 	raw, err = json.Marshal(effects)
