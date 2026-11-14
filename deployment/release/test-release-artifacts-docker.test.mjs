@@ -12,7 +12,8 @@ import {
   generateEdgeArgs,
   parseDockerLoadImage,
   buildFullNodeRunArgs,
-  buildEdgeNodeRunArgs
+  buildEdgeNodeRunArgs,
+  formatAnswered
 } from './test-release-artifacts-docker.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -284,6 +285,22 @@ test('the published-package smoke test asserts exports sdn-js actually has', () 
       `the smoke test requires "${name}", which sdn-js deliberately does not export`,
     );
   }
+});
+
+test('a service that answers reports how many seconds it took', () => {
+  assert.equal(
+    formatAnswered('full DEB health', 'sdn-artifact-1-full-deb', 1_000, 128_450),
+    'full DEB health answered after 127.5 s (sdn-artifact-1-full-deb)',
+  );
+});
+
+test('the network test prints the first node\'s whole first start and the time each wait took', () => {
+  const harness = readFileSync(join(repoRoot, 'deployment/release/test-release-artifacts-docker.mjs'), 'utf8');
+  assert.match(harness, /log\(formatAnswered\(label, containerName, startedAt\)\)/);
+  assert.match(harness, /label: 'full DEB health'[\s\S]*?\}\);\n[\s\S]{0,200}?runDocker\(\['logs', '--timestamps', containers\[0\]\]/);
+  assert.match(harness, /after \$\{\(timeoutMs \/ 1000\)\.toFixed\(0\)\} s\. Last response/);
+  const workflow = readFileSync(join(repoRoot, '.github/workflows/beta-release-artifacts.yml'), 'utf8');
+  assert.match(workflow, /test:release-artifacts:docker -- --release-dir dist --timeout-ms 600000/);
 });
 
 test('the generated node config obeys the daemon\'s own auth-off rule', () => {
