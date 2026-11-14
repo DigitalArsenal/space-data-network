@@ -2323,6 +2323,8 @@ func (n *Node) Start(ctx context.Context) error {
 		go n.runDatasetPublicationPNMCatchup()
 		n.wg.Add(1)
 		go n.runDatasetShardPublicationCatchup()
+		n.wg.Add(1)
+		go n.runDatasetPublicationAvailability()
 	}
 
 	// TipQueue TTL enforcement (Task D1): Kubo/IPFS pins have no native
@@ -3027,7 +3029,11 @@ func (n *Node) catchUpDatasetShardPublicationsFromPeerCounting(ctx context.Conte
 			if !n.trustedPeerLaneImportAllowed(from, publication.SchemaName, publication.ProviderID, publication.SourceName, publication.QueryProfile) {
 				continue
 			}
-			if n.datasetShardPublicationAlreadyCached(publication) {
+			cached, err := n.datasetShardPublicationAlreadyCached(publication)
+			if err != nil {
+				return total, err
+			}
+			if cached {
 				continue
 			}
 			imported, err := n.materializeDatasetFeedHeadAnnouncement(ctx, datasetShardPublicationAnnouncement(publication), from)
@@ -3043,9 +3049,9 @@ func (n *Node) catchUpDatasetShardPublicationsFromPeerCounting(ctx context.Conte
 	return total, errors.Join(errs...)
 }
 
-func (n *Node) datasetShardPublicationAlreadyCached(publication storage.DatasetShardPublication) bool {
+func (n *Node) datasetShardPublicationAlreadyCached(publication storage.DatasetShardPublication) (bool, error) {
 	if n == nil || n.store == nil {
-		return false
+		return false, nil
 	}
 	existing, found, err := n.store.FindDatasetShardPublication(storage.DatasetShardPublicationQuery{
 		SchemaName:   publication.SchemaName,
@@ -3056,29 +3062,42 @@ func (n *Node) datasetShardPublicationAlreadyCached(publication storage.DatasetS
 		Offset:       publication.Offset,
 		Limit:        publication.Limit,
 	})
-	return err == nil && found && existing.ShardCID == publication.ShardCID && existing.IndexCID == publication.IndexCID
+	if err != nil {
+		return false, err
+	}
+	if found && existing.ShardCID == publication.ShardCID && existing.IndexCID == publication.IndexCID {
+		return true, nil
+	}
+	state, retired, err := n.store.DatasetPublicationReplayState(storage.DatasetPublicationRetirementKey(publication))
+	return retired && state.State == "retired", err
 }
 
 // datasetShardPublicationListPage is one decoded list-published reply.
 type datasetShardPublicationListPage struct {
 	Total        int
+	Rows         int
 	NextCursor   string
 	Publications []storage.DatasetShardPublication
 }
 
 func (n *Node) listRemoteDatasetShardPublications(ctx context.Context, from peer.ID, schema string) ([]storage.DatasetShardPublication, error) {
 	var publications []storage.DatasetShardPublication
+	seen := 0
 	for cursor := ""; ; {
 		page, err := n.listRemoteDatasetShardPublicationPage(ctx, from, schema, cursor, datasetShardPublicationCatchupLimit)
 		if err != nil {
 			return publications, err
 		}
-		if len(publications)+len(page.Publications) > 100000 {
+		seen += page.Rows
+		if seen > 100000 {
 			return publications, fmt.Errorf("dataset-shard-list: publication count exceeds 100000")
 		}
 		publications = append(publications, page.Publications...)
-		if len(page.Publications) == 0 || page.NextCursor == "" {
+		if page.NextCursor == "" {
 			return publications, nil
+		}
+		if page.Rows == 0 || page.NextCursor == cursor {
+			return publications, fmt.Errorf("dataset-shard-list: cursor did not advance")
 		}
 		cursor = page.NextCursor
 	}
@@ -3106,7 +3125,13 @@ func (n *Node) listRemoteDatasetShardPublicationPage(ctx context.Context, from p
 		return page, fmt.Errorf("dataset-shard-list: inconsistent page counts")
 	}
 	page.Total, page.NextCursor = int(reply.TOTAL_COUNT()), string(reply.NEXT_CURSOR())
+	page.Rows = len(segs)
 	for _, seg := range segs {
+		// A listing is discovery, not possession. Do not try to mirror history
+		// whose provider explicitly reports that it cannot serve its files.
+		if seg.Availability == "unavailable" {
+			continue
+		}
 		pub := seg.Publication()
 		if strings.TrimSpace(pub.SchemaName) == "" {
 			pub.SchemaName = schema
@@ -4140,6 +4165,13 @@ func (n *Node) materializeDatasetFeedHeadAnnouncement(ctx context.Context, ann s
 	// Trusted is not "everything": a lane is imported only when this node
 	// holds it already or its configuration lists it (trusted_import.go).
 	if !n.trustedPeerLaneImportAllowed(from, ann.SchemaName, ann.ProviderID, ann.SourceName, ann.QueryProfile) {
+		return 0, nil
+	}
+	retirement, retired, err := n.store.DatasetPublicationReplayState(storage.DatasetPublicationRetirementKey(ann.Publication()))
+	if err != nil {
+		return 0, fmt.Errorf("read publication retirement: %w", err)
+	}
+	if retired && retirement.State == "retired" {
 		return 0, nil
 	}
 	if strings.TrimSpace(ann.ShardCID) == "" || strings.TrimSpace(ann.IndexCID) == "" {
