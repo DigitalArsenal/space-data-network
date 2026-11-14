@@ -29,7 +29,7 @@ func sourceKey(lane config.AutoPublishLane) sourcePublicationKey {
 	return sourcePublicationKey{normalizeAutoPublishSchema(lane.Schema), strings.TrimSpace(lane.ProviderID), strings.TrimSpace(lane.SourceName)}
 }
 
-// Caller holds p.mu. First matching lane wins, just as in batch scope.
+// Caller holds p.mu. The first matching source rule defines its schedule.
 func (p *AutoPublisher) sourceStateLocked(lane config.AutoPublishLane) *sourcePublicationState {
 	key := sourceKey(lane)
 	if state := p.sources[key]; state != nil {

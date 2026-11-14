@@ -87,8 +87,14 @@ func (p *AutoPublisher) observePairedBatch(rule config.AutoPublishLane, schema, 
 	if observed {
 		state.generation++
 	}
+	if !state.queued && !state.inFlight && !p.pairedBatchDueLocked(state).After(p.now()) {
+		select {
+		case p.queue <- state.request:
+			state.queued = true
+		default:
+		}
+	}
 	p.mu.Unlock()
-	p.queueReadyPairedBatches()
 	p.wakePublications()
 }
 
@@ -137,7 +143,7 @@ func (p *AutoPublisher) queueReadyPairedBatches() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for _, state := range p.pairedPending {
-		if state.inFlight || state.queued || state.due.After(p.now()) {
+		if state.inFlight || state.queued || p.pairedBatchDueLocked(state).After(p.now()) {
 			continue
 		}
 		select {
@@ -158,7 +164,7 @@ func (p *AutoPublisher) publicationDelay() (time.Duration, bool) {
 		if state.queued || state.inFlight {
 			continue
 		}
-		d := state.due.Sub(now)
+		d := p.pairedBatchDueLocked(state).Sub(now)
 		if d < 0 {
 			d = 0
 		}
@@ -178,14 +184,7 @@ func (p *AutoPublisher) publishPairedBatch(ctx context.Context, req DatasetPubli
 		return p.isPairedSource(req.Schema, req.ProviderID, req.SourceName)
 	}
 	state.queued = false
-	interval := state.rule.MinInterval
-	if interval <= 0 {
-		interval = autoPublishDefaultMinInterval
-	}
-	due := p.lastPublished[autoPublishLaneKey(state.rule)].Add(interval)
-	if state.due.After(due) {
-		due = state.due
-	}
+	due := p.pairedBatchDueLocked(state)
 	if due.After(p.now()) {
 		state.due = due
 		p.mu.Unlock()
@@ -236,4 +235,17 @@ func (p *AutoPublisher) publishPairedBatch(ctx context.Context, req DatasetPubli
 		p.onPublished(req, result, err)
 	}
 	return true
+}
+
+// Caller holds p.mu. Apply the shared rate clock before admitting more work.
+func (p *AutoPublisher) pairedBatchDueLocked(state *pairedBatchPublication) time.Time {
+	interval := state.rule.MinInterval
+	if interval <= 0 {
+		interval = autoPublishDefaultMinInterval
+	}
+	due := p.lastPublished[autoPublishLaneKey(state.rule)].Add(interval)
+	if state.due.After(due) {
+		due = state.due
+	}
+	return due
 }
