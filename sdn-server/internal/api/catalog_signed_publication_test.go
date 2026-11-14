@@ -103,10 +103,12 @@ func TestRetainedCatalogSignedPublicationLoopback(t *testing.T) {
 		expected, _ := catalogSnapshotConsumer(t, producer, 0)
 		actual := newCatalogConsumer()
 		for _, item := range []struct{ schema, source string }{{"OCM.fbs", "catalog-products"}, {"CAT.fbs", "catalog-index"}} {
-			ex, err := consumer.ExportDatasetWindow(t.TempDir(), storage.IndexedRecordQuery{SchemaName: item.schema, ProviderID: "synthetic-node", SourceName: item.source})
+			// The consumer can retain both 32-product generations.
+			ex, err := consumer.ExportDatasetWindow(t.TempDir(), storage.IndexedRecordQuery{SchemaName: item.schema, ProviderID: "synthetic-node", SourceName: item.source, Limit: 100})
 			if err != nil {
 				t.Fatal(err)
 			}
+
 			actual.apply(t, ex)
 		}
 		actual.validate(t)

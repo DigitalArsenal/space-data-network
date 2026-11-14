@@ -50,7 +50,7 @@ func TestCatalogPublicationContract(t *testing.T) {
 	restarted := NewAutoPublisher(service, []config.AutoPublishLane{batch, snapshot})
 	restarted.seedSourcePublicationsLocked()
 	restarted.recoverPairedBatches(context.Background())
-	evidence := map[string]int{"changedBatches": 2, "batchFirstQueued": len(p.queue), "batchFirstSnapshotSources": len(p.sources), "sourceFirstQueued": len(reversed.queue), "sourceFirstSnapshotSources": len(reversed.sources), "restartedBatchQueue": len(restarted.queue)}
+	evidence := map[string]int{"changedBatches": 2, "batchFirstQueued": len(p.queue), "batchFirstSnapshotSources": len(p.sources), "sourceFirstQueued": len(reversed.queue), "sourceFirstSnapshotSources": len(reversed.sources), "restartedBatchQueue": len(restarted.queue), "batchFirstPending": len(p.pairedPending), "sourceFirstPending": len(reversed.pairedPending), "restartedPending": len(restarted.pairedPending)}
 	raw, _ := json.MarshalIndent(evidence, "", "  ")
 	if root := os.Getenv("CATALOG_DIAGNOSTICS"); root != "" {
 		os.WriteFile(filepath.Join(root, "session5-publication-gate.json"), raw, 0600)
@@ -58,13 +58,14 @@ func TestCatalogPublicationContract(t *testing.T) {
 	if len(p.sources) != 1 {
 		t.Errorf("batch-first configuration did not arm the requested daily full-source snapshot")
 	}
-	if len(p.queue) != 2 {
-		t.Errorf("two changed batches yielded %d pending batch publications", len(p.queue))
+	// Ordered dispatch exposes one ready head while both batches remain pending.
+	if len(p.pairedPending) != 2 || len(p.queue) != 1 {
+		t.Errorf("two changed batches require two pending and one ready publication: pending=%d ready=%d", len(p.pairedPending), len(p.queue))
 	}
-	if len(reversed.queue) != 2 {
-		t.Errorf("source-first configuration yielded %d pending changed-batch publications", len(reversed.queue))
+	if len(reversed.pairedPending) != 2 || len(reversed.queue) != 1 {
+		t.Errorf("source-first configuration: pending=%d ready=%d", len(reversed.pairedPending), len(reversed.queue))
 	}
-	if len(restarted.queue) != 2 {
-		t.Errorf("new publisher has %d pending changed batches; startup seeds source snapshots only", len(restarted.queue))
+	if len(restarted.pairedPending) != 2 || len(restarted.queue) != 1 {
+		t.Errorf("restarted publisher: pending=%d ready=%d", len(restarted.pairedPending), len(restarted.queue))
 	}
 }
