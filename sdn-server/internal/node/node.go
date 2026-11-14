@@ -65,6 +65,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/metrics"
 	"github.com/spacedatanetwork/sdn-server/internal/modulert"
 	"github.com/spacedatanetwork/sdn-server/internal/modulert/caps"
+	"github.com/spacedatanetwork/sdn-server/internal/nodereadme"
 	"github.com/spacedatanetwork/sdn-server/internal/ops"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 	"github.com/spacedatanetwork/sdn-server/internal/pinpolicy"
@@ -2301,6 +2302,14 @@ func (n *Node) Start(ctx context.Context) error {
 	go func() {
 		defer n.wg.Done()
 		n.pins.Reconcile(n.ctx)
+	}()
+
+	// Every node pins the SDN README, whatever its rules say, and pins it
+	// again if anything removes it (internal/nodereadme).
+	n.wg.Add(1)
+	go func() {
+		defer n.wg.Done()
+		n.pins.KeepDocuments(n.ctx, []pinpolicy.Document{{Name: nodereadme.Name, Bytes: nodereadme.Bytes()}})
 	}()
 
 	// Per-schema PubSub topic setup can be expensive on full SDS catalogs and

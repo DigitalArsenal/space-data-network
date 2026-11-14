@@ -145,6 +145,10 @@ type Policy struct {
 
 	// applyMu serializes rule changes with their reconcile pass.
 	applyMu sync.Mutex
+
+	// documents are the files the node pins whatever the rules say
+	// (documents.go).
+	documents keptDocuments
 }
 
 // New loads the persisted policy (the default when none). apiURL is the
