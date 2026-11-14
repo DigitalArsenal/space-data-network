@@ -383,7 +383,7 @@ func (h *FlatSQLSyncHandler) handleListPublished(w io.Writer, req syncRequest) e
 		if offset+len(segs) < total {
 			next = strconv.Itoa(offset + len(segs))
 		}
-		page := syncwire.SegmentPage(syncwire.QRPFields{
+		page := syncwire.PublicationSegmentPage(syncwire.QRPFields{
 			SchemaName: req.schema, ProviderID: req.providerID, SourceName: req.sourceName, BatchID: req.batchID,
 			Limit: uint32(len(segs)), Cursor: strconv.Itoa(offset), NextCursor: next,
 			TotalCount: uint64(total), GeneratedAtMs: time.Now().UnixMilli(),
