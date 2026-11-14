@@ -168,7 +168,7 @@ func TestPublicationJournalChecksumAndActivation(t *testing.T) {
 	if err = os.WriteFile(path, data, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.SelectPublication("CAT.fbs", "synthetic", "retained", "one"); err == nil {
+	if _, err = s.ExportDatasetWindow(t.TempDir(), IndexedRecordQuery{SchemaName: "CAT.fbs", ProviderID: "synthetic", SourceName: "retained", BatchID: "one"}); err == nil {
 		t.Fatal("corrupt journal bytes accepted")
 	}
 }

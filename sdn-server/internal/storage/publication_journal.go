@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/spacedatanetwork/sdn-server/internal/encfield"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format4"
 )
 
@@ -70,6 +71,9 @@ func (s *FlatSQLStore) ConfigurePublicationSources(sources []PublicationSource) 
 	}
 	merged := append([]PublicationSource(nil), s.publicationSources...)
 	for _, x := range sources {
+		if encfield.HasEncryptedFields(strings.TrimSuffix(x.Schema, ".fbs")) {
+			return errors.New("publication retention refuses standards with sealed fields")
+		}
 		x.Provider = strings.TrimSpace(x.Provider)
 		x.Source = strings.TrimSpace(x.Source)
 		x.ProductSource = strings.TrimSpace(x.ProductSource)
@@ -584,7 +588,14 @@ func (s *FlatSQLStore) retainedSelectionLocked(schema, provider, source, batch s
 			return nil, errors.New("publication selection exceeds 100000 records; partition the source")
 		}
 	}
+	excluded, err := s.catalogExclusions(schema, provider, source)
+	if err != nil {
+		return nil, err
+	}
 	for _, r := range byKey {
+		if batch == "" && excluded[r.CID] {
+			continue
+		}
 		p.refs = append(p.refs, r)
 	}
 	sort.Slice(p.refs, func(i, j int) bool { return p.refs[i].CID < p.refs[j].CID })

@@ -534,6 +534,19 @@ func (n *Node) init() error {
 		if err := n.store.ConfigurePublicationSources(publicationSources); err != nil {
 			return fmt.Errorf("publication retention: %w", err)
 		}
+		for _, rule := range n.config.Publishing.AutoPublish {
+			schema := strings.TrimSuffix(rule.Schema, ".fbs") + ".fbs"
+			if rule.StopPublicationRetention {
+				if err := n.store.StopPublicationRetention(schema, strings.TrimSpace(rule.ProviderID), strings.TrimSpace(rule.SourceName)); err != nil {
+					return err
+				}
+			}
+			if len(rule.CatalogExcludeCIDs) > 0 {
+				if err := n.store.ExcludeCatalogRecords(strings.TrimSpace(rule.ProviderID), strings.TrimSpace(rule.SourceName), rule.CatalogExcludeCIDs); err != nil {
+					return err
+				}
+			}
+		}
 		// Warm derived search indexes so a restarted node serves its first
 		// cold search instead of answering SEARCH_INDEX_BUILDING. Builds run
 		// one at a time in the background on the store's existing slot.

@@ -412,6 +412,17 @@ func (s *ConcreteDatasetPublicationService) PublishDatasetUpdate(ctx context.Con
 	if activeReq.AnnounceExisting {
 		return activeService.announceExistingDatasetPublications(ctx, activeReq, schema)
 	}
+	return activeService.publishSelectedDatasetUpdate(ctx, activeReq, schema, func(service *ConcreteDatasetPublicationService, ctx context.Context, req DatasetPublicationRequest, schema string) (*DatasetPublicationResult, []string, error) {
+		return service.publishDatasetUpdateScope(ctx, req, schema)
+	})
+}
+
+// publishSelectedDatasetUpdate owns production selection, sequencing and durable
+// completion; the supplied operation is the signing/transport boundary.
+func (s *ConcreteDatasetPublicationService) publishSelectedDatasetUpdate(ctx context.Context, activeReq DatasetPublicationRequest, schema string, publish func(*ConcreteDatasetPublicationService, context.Context, DatasetPublicationRequest, string) (*DatasetPublicationResult, []string, error)) (*DatasetPublicationResult, error) {
+	activeService := *s
+	activeStore := s.store
+	var err error
 	// One publication per lane at a time: retention decides what is current
 	// from what a lane has published, so two publications of one lane must
 	// not interleave their windows.
@@ -448,7 +459,7 @@ func (s *ConcreteDatasetPublicationService) PublishDatasetUpdate(ctx context.Con
 			productReq.DatasetID = ""
 			productUnlock := activeService.hygiene.lockLane("OCM.fbs", productReq.ProviderID, productReq.SourceName)
 			if _, count := snap.Products.Fingerprint(); count > 0 {
-				result, cars, publishErr := productService.publishDatasetUpdateScope(ctx, productReq, "OCM.fbs")
+				result, cars, publishErr := publish(&productService, ctx, productReq, "OCM.fbs")
 				if publishErr == nil {
 					publishErr = productService.afterPublication(ctx, productReq, "OCM.fbs", result, cars, productService.publicationFingerprint(productReq, "OCM.fbs"), activeService.now())
 				}
@@ -464,7 +475,7 @@ func (s *ConcreteDatasetPublicationService) PublishDatasetUpdate(ctx context.Con
 	startedAt := activeService.now()
 	fingerprint := activeService.publicationFingerprint(activeReq, schema)
 
-	result, carCIDs, err := activeService.publishDatasetUpdateScope(ctx, activeReq, schema)
+	result, carCIDs, err := publish(&activeService, ctx, activeReq, schema)
 	if err != nil {
 		return nil, err
 	}

@@ -1060,6 +1060,10 @@ func normalizePublishingSchema(schema string) string {
 type AutoPublishLane struct {
 	// PairedPublication opts this exact source into deferred batches and periodic snapshots.
 	PairedPublication bool `yaml:"paired_publication,omitempty"`
+	// StopPublicationRetention removes this source only after every retained batch completed.
+	StopPublicationRetention bool `yaml:"stop_publication_retention,omitempty"`
+	// CatalogExcludeCIDs removes selected CAT records from future snapshots.
+	CatalogExcludeCIDs []string `yaml:"catalog_exclude_cids,omitempty"`
 
 	// RetainForPublication durably retains CAT/OCM batches before replacement.
 	// It requires exact provider/source identities and store format 4.

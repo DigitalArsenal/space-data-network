@@ -47,6 +47,18 @@ func (p *AutoPublisher) sourceStateLocked(lane config.AutoPublishLane) *sourcePu
 		interval: interval,
 		periodic: p.isPairedSource(key.schema, key.provider, key.source),
 	}
+	if state.periodic {
+		if checkpoint, ok := p.service.(interface {
+			LastSourcePublication(context.Context, DatasetPublicationRequest) (time.Time, error)
+		}); ok {
+			at, err := checkpoint.LastSourcePublication(context.Background(), state.request)
+			if err != nil {
+				log.Warnf("source publication checkpoint: %v", err)
+			} else if !at.IsZero() {
+				state.nextAttempt = at.Add(interval)
+			}
+		}
+	}
 	p.sources[key] = state
 	return state
 }
@@ -123,7 +135,7 @@ func (p *AutoPublisher) publishReadySource(ctx context.Context) {
 	p.mu.Unlock()
 
 	runCtx, cancel := context.WithTimeout(ctx, autoPublishTimeout)
-	if !selected.periodic && p.unchangedSinceLastPublication(runCtx, req) {
+	if p.unchangedSinceLastPublication(runCtx, req) {
 		cancel()
 		p.mu.Lock()
 		selected.attempts = 0

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/config"
+	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
 
 // DatasetPublicationBatchSource enumerates committed identities from storage.
@@ -297,4 +298,15 @@ func (p *AutoPublisher) firstPairedLocked(state *pairedBatchPublication) bool {
 		}
 	}
 	return true
+}
+
+func (s *ConcreteDatasetPublicationService) LastSourcePublication(ctx context.Context, req DatasetPublicationRequest) (time.Time, error) {
+	if err := ctx.Err(); err != nil {
+		return time.Time{}, err
+	}
+	series, ok, err := s.store.LatestDatasetPublicationSeries(storage.DatasetPublicationLane{SchemaName: req.Schema, ProviderID: req.ProviderID, SourceName: req.SourceName}, "")
+	if err != nil || !ok {
+		return time.Time{}, err
+	}
+	return series.PublishedAt, nil
 }
