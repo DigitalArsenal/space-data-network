@@ -54,3 +54,21 @@ func TestPublicationSourceConfigurationRejectsOlderStore(t *testing.T) {
 		t.Fatalf("older store accepted: %v", err)
 	}
 }
+
+func TestPublicationSourceSchemaCaseAndActions(t *testing.T) {
+	t.Setenv("SDN_STORE_FORMAT", "4")
+	c := Default()
+	c.Publishing.Enabled = true
+	c.Publishing.Retention.KeepSeries = 0
+	c.Publishing.AutoPublish = []AutoPublishLane{{Schema: "cat.FBS", ProviderID: "synthetic", SourceName: "index", RetainForPublication: true, RequeuePublicationBatches: []string{"bad"}}}
+	if err := c.validatePublicationSources(); err != nil {
+		t.Fatal(err)
+	}
+	if c.Publishing.AutoPublish[0].Schema != "CAT.fbs" {
+		t.Fatal("schema not canonical")
+	}
+	c.Publishing.AutoPublish[0].DiscardPublicationBatches = []string{"bad"}
+	if err := c.validatePublicationSources(); err == nil {
+		t.Fatal("conflicting actions accepted")
+	}
+}

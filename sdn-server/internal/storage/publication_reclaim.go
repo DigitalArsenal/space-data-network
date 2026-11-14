@@ -72,7 +72,10 @@ func (s *FlatSQLStore) publicationReceiptExists(schema, provider, source, batch 
 	return err == nil
 }
 
-type publicationReclaimCheckpoint struct{ HighWater, Reclaimed uint64 }
+type publicationReclaimCheckpoint struct {
+	HighWater, Reclaimed uint64
+	Pending              []uint64
+}
 
 func (s *FlatSQLStore) recoverPublicationReclamation() error {
 	raw, err := os.ReadFile(filepath.Join(s.publicationDir(), "reclamation.json"))
@@ -83,6 +86,19 @@ func (s *FlatSQLStore) recoverPublicationReclamation() error {
 		}
 		s.publicationHighWater = c.HighWater
 		s.publicationReclaimed = c.Reclaimed
+		for _, seq := range c.Pending {
+			if _, statErr := os.Stat(s.publicationEntryDir(seq)); os.IsNotExist(statErr) {
+				s.publicationReclaimed++
+			} else if statErr != nil {
+				return statErr
+			}
+		}
+		c.Reclaimed = s.publicationReclaimed
+		c.Pending = nil
+		settled, _ := json.Marshal(c)
+		if err = publicationAtomicFile(filepath.Join(s.publicationDir(), "reclamation.json"), settled); err != nil {
+			return err
+		}
 	} else if !os.IsNotExist(err) {
 		return err
 	}
@@ -220,7 +236,11 @@ func (s *FlatSQLStore) reclaimPublicationLocked() error {
 	if len(candidates) == 0 {
 		return nil
 	}
-	checkpoint, _ := json.Marshal(publicationReclaimCheckpoint{s.publicationHighWater, s.publicationReclaimed + uint64(len(candidates))})
+	plan := publicationReclaimCheckpoint{HighWater: s.publicationHighWater, Reclaimed: s.publicationReclaimed}
+	for _, e := range candidates {
+		plan.Pending = append(plan.Pending, e.Sequence)
+	}
+	checkpoint, _ := json.Marshal(plan)
 	if err := publicationAtomicFile(filepath.Join(s.publicationDir(), "reclamation.json"), checkpoint); err != nil {
 		return err
 	}
