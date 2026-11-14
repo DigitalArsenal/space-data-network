@@ -50,6 +50,7 @@ func (s *FlatSQLStore) recordGenerationFailure(e publicationEntry, cause error) 
 			s.accountPublicationPending(s.publicationEntries[i], -1)
 			s.publicationEntries[i].GenerationFailure = f
 			s.accountPublicationPending(s.publicationEntries[i], 1)
+			s.updatePublicationQuarantine(s.publicationEntries[i])
 			if f.Attempts >= 3 {
 				log.Warnf("catalog generation quarantined after three attempts: %v", cause)
 			}
@@ -87,6 +88,7 @@ func (s *FlatSQLStore) RecordPublicationFailure(schema, provider, source, batch 
 			s.accountPublicationPending(s.publicationEntries[i], -1)
 			s.publicationEntries[i].BatchFailure = f
 			s.accountPublicationPending(s.publicationEntries[i], 1)
+			s.updatePublicationQuarantine(s.publicationEntries[i])
 			found = true
 		}
 	}
@@ -136,6 +138,7 @@ func (s *FlatSQLStore) ManagePublicationBatch(schema, provider, source, batch, a
 		s.publicationEntries[i].BatchFailure = publicationFailure{}
 		s.accountPublicationPending(e, -1)
 		s.accountPublicationPending(s.publicationEntries[i], 1)
+		s.updatePublicationQuarantine(s.publicationEntries[i])
 	}
 	return nil
 }

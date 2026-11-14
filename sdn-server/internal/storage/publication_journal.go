@@ -431,12 +431,8 @@ func (s *FlatSQLStore) PublicationRecoveryStatus() map[string]string {
 	for k, err := range s.publicationFailures {
 		out[k.schema+"/"+k.provider+"/"+k.source] = err.Error()
 	}
-	for _, e := range s.publicationEntries {
-		for kind, f := range map[string]publicationFailure{"generation": e.GenerationFailure, "batch": e.BatchFailure} {
-			if !e.Published && f.Attempts >= 3 {
-				out[e.Schema+"/"+e.Tags.ProviderID+"/"+e.Tags.SourceName+"/"+e.Tags.BatchID+"/"+kind] = f.Reason
-			}
-		}
+	for key, reason := range s.publicationQuarantineStatus {
+		out[key] = reason
 	}
 	return out
 }
@@ -906,8 +902,8 @@ func (s *FlatSQLStore) RetryPublicationRecovery() {
 		}
 	}
 	s.publicationMu.Lock()
-	// Unknown-scope recovery affects every configured source until the last
-	// unreadable entry is repaired. Recompute from all unresolved entries.
+	// Unknown-scope recovery isolates every configured source while any entry
+	// remains unreadable. Recompute from all unresolved entries.
 	for key := range s.publicationFailures {
 		unresolved := false
 		for _, e := range s.publicationEntries {

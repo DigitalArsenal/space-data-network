@@ -174,6 +174,7 @@ type FlatSQLStore struct {
 	publicationReferenceCountBytes int64
 	publicationPayloadCountBytes   int64
 	publicationPendingCounts       map[publicationSourceKey]map[string]int
+	publicationQuarantineStatus    map[string]string
 	publicationHighWater           uint64
 	publicationReclaimed           uint64
 	publicationReclaimSkips        uint64

@@ -2,6 +2,11 @@ package storage
 
 // Incremental resident counters keep admission and status independent of history.
 func (s *FlatSQLStore) accountPublicationEntry(e publicationEntry, delta int) {
+	statusEntry := e
+	if delta < 0 {
+		statusEntry.Published = true
+	}
+	s.updatePublicationQuarantine(statusEntry)
 	if !e.Applied {
 		return
 	}
@@ -28,5 +33,19 @@ func (s *FlatSQLStore) accountPublicationPending(e publicationEntry, delta int) 
 	batches[e.Tags.BatchID] += delta
 	if batches[e.Tags.BatchID] <= 0 {
 		delete(batches, e.Tags.BatchID)
+	}
+}
+
+func (s *FlatSQLStore) updatePublicationQuarantine(e publicationEntry) {
+	if s.publicationQuarantineStatus == nil {
+		s.publicationQuarantineStatus = map[string]string{}
+	}
+	prefix := e.Schema + "/" + e.Tags.ProviderID + "/" + e.Tags.SourceName + "/" + e.Tags.BatchID + "/"
+	for kind, f := range map[string]publicationFailure{"generation": e.GenerationFailure, "batch": e.BatchFailure} {
+		if !e.Published && f.Attempts >= 3 {
+			s.publicationQuarantineStatus[prefix+kind] = f.Reason
+		} else {
+			delete(s.publicationQuarantineStatus, prefix+kind)
+		}
 	}
 }

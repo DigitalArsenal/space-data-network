@@ -19,11 +19,6 @@ func publicationSourceID(schema, provider, source string) string {
 func (s *FlatSQLStore) nextPublicationSourceSequence(schema, provider, source string) uint64 {
 	id := publicationSourceID(schema, provider, source)
 	n := s.publicationSourceWater[id]
-	for _, e := range s.publicationEntries {
-		if e.Schema == schema && e.Tags.ProviderID == provider && e.Tags.SourceName == source {
-			n = max(n, e.SourceSequence)
-		}
-	}
 	return n + 1
 }
 func (s *FlatSQLStore) savePublicationWatermarks(global uint64, schema, provider, source string, seq uint64) error {

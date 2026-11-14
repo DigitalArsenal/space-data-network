@@ -220,3 +220,30 @@ func TestPublicationUnappliedRequeueAndCapacityReduction(t *testing.T) {
 		t.Fatal("capacity reduced below retained use")
 	}
 }
+
+func TestPublicationReceiptCompactionContinuedBatch(t *testing.T) {
+	t.Setenv("SDN_STORE_FORMAT", "4")
+	s := journalTestStore(t, t.TempDir())
+	defer s.Close()
+	if err := s.ConfigurePublicationSources([]PublicationSource{{Schema: "CAT.fbs", Provider: "synthetic", Source: "index"}}); err != nil {
+		t.Fatal(err)
+	}
+	for day := 0; day < 5; day++ {
+		_, rows := reclamationRecords(day, 1)
+		if _, err := s.StoreBatchWithSourceTags("CAT.fbs", rows, "synthetic", nil, SourceTags{ProviderID: "synthetic", SourceName: "index", BatchID: "continued"}); err != nil {
+			t.Fatal(err)
+		}
+		terminalPublish(t, s)
+	}
+	stat, err := os.Stat(filepath.Join(s.publicationDir(), "receipts.checkpoint"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stat.Size() != 48 {
+		t.Fatal("continued receipt duplicated", stat.Size())
+	}
+	paths, _ := filepath.Glob(filepath.Join(s.publicationDir(), "receipt-*"))
+	if len(paths) != 0 {
+		t.Fatal("individual receipts remain")
+	}
+}
