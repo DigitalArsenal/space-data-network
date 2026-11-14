@@ -61,12 +61,20 @@ func TestPublicationBatchAdminFlatBuffers(t *testing.T) {
 		{"torn", raw[:len(raw)-1], http.StatusBadRequest},
 		{"flipped", flipped, http.StatusBadRequest},
 		{"implicit-json", []byte(`{"schema":"CAT.fbs"}`), http.StatusBadRequest},
+		{"remote", raw, http.StatusForbidden},
+		{"proxy", raw, http.StatusForbidden},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := &batchActionService{}
 			h := NewDatasetPublicationHandler(s)
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/dataset-updates/batch", bytes.NewReader(tc.data))
 			req.RemoteAddr = "127.0.0.1:1234"
+			if tc.name == "remote" {
+				req.RemoteAddr = "203.0.113.9:1234"
+			}
+			if tc.name == "proxy" {
+				req.Header.Set("X-Forwarded-For", "203.0.113.9")
+			}
 			w := httptest.NewRecorder()
 			h.handlePublicationBatch(w, req)
 			if w.Code != tc.status || w.Header().Get("Content-Type") != StreamContentType {

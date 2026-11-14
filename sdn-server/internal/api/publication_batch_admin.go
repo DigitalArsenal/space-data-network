@@ -23,7 +23,8 @@ func (h *DatasetPublicationHandler) handlePublicationBatch(w http.ResponseWriter
 		fail(http.StatusMethodNotAllowed, "Method not allowed")
 		return
 	}
-	if !requireDatasetUpdatesLocalClient(w, r, "publication batch action") {
+	if err := requireLoopbackClient(r); err != nil {
+		fail(http.StatusForbidden, "publication batch action is only available to local daemon clients: "+err.Error())
 		return
 	}
 	manager, ok := h.service.(interface {
