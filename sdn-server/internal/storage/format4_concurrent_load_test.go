@@ -33,7 +33,7 @@ import (
 //	SDN_F4_STRESS    writer goroutines (required; 0 = none)
 //	SDN_F4_READERS   index-page readers (default 2)
 //	SDN_F4_SERIAL    "" | writes | all: the engine's call gate (format4.SerializeMode)
-//	SDN_F4_SHAPE     snapshot (default) | marker | bigput | smallcurrent, see below
+//	SDN_F4_SHAPE     snapshot (default) | marker | bigput | smallcurrent | supersedeonly, see below
 //	SDN_F4_POPULATE  rounds ONE goroutine writes before the timed load, no reader running
 //	SDN_F4_STATEKB   shapes snapshot and bigput: every state record this many KiB (default 50 to 89)
 //	SDN_F4_DURATION  the timed load (default 5m)
@@ -52,7 +52,8 @@ import (
 // (count, put, supersede), 256 product records (2.5 MB, put alone), 256 index
 // rows (put alone) and a second compacting snapshot. Shape "bigput": the
 // snapshot shape with every write a bare put (no count, no supersede). Shape
-// "smallcurrent": the snapshot shape with the state record a marker.
+// "smallcurrent": the snapshot shape with the state record a marker. Shape
+// "supersedeonly": only the per-object count, put and supersede of a marker.
 func TestFormat4ConcurrentFlowLoad(t *testing.T) {
 	ws, ok := os.LookupEnv("SDN_F4_STRESS")
 	if !ok || strings.TrimSpace(ws) == "" {
@@ -75,7 +76,7 @@ func TestFormat4ConcurrentFlowLoad(t *testing.T) {
 		shape = "snapshot"
 	}
 	switch shape {
-	case "snapshot", "marker", "bigput", "smallcurrent":
+	case "snapshot", "marker", "bigput", "smallcurrent", "supersedeonly":
 	default:
 		t.Fatalf("SDN_F4_SHAPE=%q", shape)
 	}
@@ -376,6 +377,11 @@ func TestFormat4ConcurrentFlowLoad(t *testing.T) {
 	case "smallcurrent":
 		roundOf = func(id, round int) error {
 			return bulkRound(id, round, current, flowMarkerRecord(provider, id*1000000+round))
+		}
+	case "supersedeonly":
+		roundOf = func(id, round int) error {
+			tags := SourceTags{ProviderID: provider, SourceName: fmt.Sprintf("synthetic-state-%d", id), BatchID: fmt.Sprintf("b-%d-%d", id, round)}
+			return current(id, "state", "NEV.fbs", tags, [][]byte{flowMarkerRecord(provider, id*1000000+round)})
 		}
 	}
 	writer := func(id, rounds int) (done int) {
