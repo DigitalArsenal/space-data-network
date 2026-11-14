@@ -56,7 +56,7 @@ func (s *FlatSQLStore) pinPublicationEntriesLocked(entries []publicationEntry) f
 			defer s.publicationMu.Unlock()
 			for path := range paths {
 				s.publicationPins[path]--
-				if s.publicationPins[path] <= 1 {
+				if s.publicationPins[path] == 0 {
 					delete(s.publicationPins, path)
 				}
 			}
@@ -129,7 +129,7 @@ func (s *FlatSQLStore) reclaimPublicationLocked() error {
 				cutoff := v.latestCatalogGeneration(x)
 				keep[filepath.Join(v.publicationEntryDir(cutoff), "recordv.sds")] = true
 				for _, e := range v.publicationEntries {
-					if e.Schema == "OCM.fbs" && e.Tagv.ProviderID == x.Provider && e.Tagv.SourceName == x.ProductSource && e.Sequence > cutoff {
+					if e.Schema == "OCM.fbs" && e.Tags.ProviderID == x.Provider && e.Tags.SourceName == x.ProductSource && e.Sequence > cutoff {
 						for _, r := range e.Refs {
 							keep[r.Path] = true
 						}
@@ -182,7 +182,7 @@ func (s *FlatSQLStore) reclaimPublicationLocked() error {
 					if err != nil {
 						return err
 					}
-					wanted[e.Tagv.ProviderID+"\x00"+id] = true
+					wanted[e.Tags.ProviderID+"\x00"+id] = true
 				}
 			}
 		}
@@ -190,7 +190,7 @@ func (s *FlatSQLStore) reclaimPublicationLocked() error {
 	for _, e := range v.publicationEntries {
 		if e.Schema == "OCM.fbs" {
 			for _, r := range e.Refs {
-				if wanted[e.Tagv.ProviderID+"\x00"+r.CID] || wanted[e.Tagv.ProviderID+"\x00"+r.FramedCID] {
+				if wanted[e.Tags.ProviderID+"\x00"+r.CID] || wanted[e.Tags.ProviderID+"\x00"+r.FramedCID] {
 					keep[r.Path] = true
 				}
 			}
