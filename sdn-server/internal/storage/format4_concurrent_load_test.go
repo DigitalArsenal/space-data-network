@@ -35,7 +35,8 @@ import (
 //	SDN_F4_SERIAL    "" | writes | all: the engine's call gate (format4.SerializeMode)
 //	SDN_F4_SHAPE     snapshot (default) | marker | bigput | smallcurrent | supersedeonly, see below
 //	SDN_F4_POPULATE  rounds ONE goroutine writes before the timed load, no reader running
-//	SDN_F4_STATEKB   shapes snapshot and bigput: every state record this many KiB (default 50 to 89)
+//	SDN_F4_STATEKB   shapes snapshot and bigput: every state record this many KiB (default 50 to 89);
+//	                 shape supersedeonly: the state record is this many KiB instead of a marker
 //	SDN_F4_DURATION  the timed load (default 5m)
 //	SDN_F4_MAXTRAPS  end the load after this many traps (0: no bound)
 //	SDN_F4_MAXMB     end the load when the store directory passes this size (default 3072)
@@ -381,7 +382,11 @@ func TestFormat4ConcurrentFlowLoad(t *testing.T) {
 	case "supersedeonly":
 		roundOf = func(id, round int) error {
 			tags := SourceTags{ProviderID: provider, SourceName: fmt.Sprintf("synthetic-state-%d", id), BatchID: fmt.Sprintf("b-%d-%d", id, round)}
-			return current(id, "state", "NEV.fbs", tags, [][]byte{flowMarkerRecord(provider, id*1000000+round)})
+			state := flowMarkerRecord(provider, id*1000000+round)
+			if stateKB > 0 {
+				state = flowLoadRecord("NEV", id*1000000+round, stateKB<<10)
+			}
+			return current(id, "state", "NEV.fbs", tags, [][]byte{state})
 		}
 	}
 	writer := func(id, rounds int) (done int) {
