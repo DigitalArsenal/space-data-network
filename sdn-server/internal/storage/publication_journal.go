@@ -200,7 +200,7 @@ func (b format4Backend) putRetained(op, schema string, records [][]byte, peer st
 	}
 	seq := s.publicationHighWater + 1
 	if n := len(s.publicationEntries); n > 0 {
-		seq = s.publicationEntries[n-1].Sequence + 1
+		seq = max(seq, s.publicationEntries[n-1].Sequence+1)
 	}
 	e := publicationEntry{Sequence: seq, Schema: schema, Tags: tags, Peer: peer, Signature: sig, Identity: opt.identity, OwnTS: opt.ownTS}
 	if err := s.publicationStep("prepare"); err != nil {

@@ -146,7 +146,7 @@ func (s *FlatSQLStore) reclaimPublicationLocked() error {
 			add(p)
 			if x.ProductSource != "" {
 				cutoff := v.latestCatalogGeneration(x)
-				keep[filepath.Join(v.publicationEntryDir(cutoff), "recordv.sds")] = true
+				keep[filepath.Join(v.publicationEntryDir(cutoff), "records.sds")] = true
 				for _, e := range v.publicationEntries {
 					if e.Schema == "OCM.fbs" && e.Tags.ProviderID == x.Provider && e.Tags.SourceName == x.ProductSource && e.Sequence > cutoff {
 						for _, r := range e.Refs {
