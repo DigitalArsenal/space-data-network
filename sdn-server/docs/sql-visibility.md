@@ -57,8 +57,8 @@ quarantine and visibility rules. Filtered counts use the normal query path.
 
 `storage.row_cache_bytes` maps to `format4.Tuning.RowCacheBytes` and engine config
 tag 51. Zero selects 32 MiB. A nonzero value must be at least 16 KiB. The shared
-budget covers cached row-order pages and verification metadata, including pinned
-pages. Failed admission returns a distinct row-cache budget error, separate
+budget covers cached row-order pages, verification metadata, views and run
+descriptors, including pinned entries. Failed admission returns a distinct row-cache budget error, separate
 from statement and result limits. This budget does not bound every allocation,
 checkpoint builder or staging structure. Sustained ingest can exhaust the
 fixed guest memory even when the row cache is below its limit.
