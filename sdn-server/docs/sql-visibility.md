@@ -30,8 +30,10 @@ persisted intent and preserves the newer layout.
 
 The node backend is called format 4; its engine stream marker is format 5.
 The directory remains `fsql4`. Directory names alone do not identify the disk
-format. Use the marker reader to validate `fsql4/STORE` and `fsql4/MIGRATED`,
-including lengths, magic, CRC32C and matching UUIDs. STORE encodes stream format
+format. `spacedatanetwork status --config <config>` prints backend format,
+stream format, layout and required layout. `spacedatanetwork store-migrate
+--store <data> --status` reads the markers without opening an engine or changing
+files. The marker reader validates lengths, magic, CRC32C and UUIDs. STORE encodes stream format
 at byte 4 and layout at byte 6, both little-endian. A valid `STORE.unlimited`
 promotion intent also requires layout 2 support. Corrupt or mixed markers
 require recovery, not creation of an empty replacement store.
