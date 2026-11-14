@@ -901,3 +901,17 @@ func TestFormat4LogEntriesMatchFormat1(t *testing.T) {
 		}
 	})
 }
+
+func TestFormat4RowCacheSetting(t *testing.T) {
+	onFormat4Engine(t, func(t *testing.T) {
+		t.Setenv(format4.FormatEnv, "4")
+		if store, err := NewFlatSQLStore(t.TempDir(), nil, WithRowCacheBytes(16383)); err == nil {
+			store.Close()
+			t.Fatal("undersized cache setting was ignored")
+		}
+		store := openFormat4ForTest(t, t.TempDir(), WithRowCacheBytes(16384))
+		if err := store.Close(); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
