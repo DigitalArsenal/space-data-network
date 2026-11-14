@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func reclamationRecords(day, count int) ([][]byte, [][]byte) {
@@ -250,5 +251,147 @@ func TestPublicationAppliedReadRetryNeverReplays(t *testing.T) {
 	}
 	if _, err = p.Record(0); err != nil {
 		t.Fatal("export retry failed", err)
+	}
+}
+
+func TestPublicationFailedGenerationContinues(t *testing.T) {
+	t.Setenv("SDN_STORE_FORMAT", "4")
+	dir := t.TempDir()
+	s := reclamationStore(t, dir)
+	reclamationDay(t, s, 0, 2)
+	reclamationPublish(t, s, nil)
+	_, bad := reclamationRecords(1, 2)
+	if _, err := s.StoreBatchWithSourceTags("CAT.fbs", bad, "synthetic", nil, SourceTags{ProviderID: "synthetic", SourceName: "index", BatchID: "bad:complete"}); err == nil {
+		t.Fatal("unresolved generation accepted")
+	}
+	for i := 0; i < 5; i++ {
+		s.RetryPublicationRecovery()
+	}
+	for _, e := range s.publicationEntries {
+		if e.Tags.BatchID == "bad:complete" && e.GenerationFailure.Attempts != 3 {
+			t.Fatalf("attempts=%d", e.GenerationFailure.Attempts)
+		}
+	}
+	for _, b := range s.RetainedPublicationBatches() {
+		if b.Batch == "bad:complete" {
+			t.Fatal("quarantined generation still blocks dispatch")
+		}
+	}
+	s.Close()
+	s = journalTestStore(t, dir)
+	defer s.Close()
+	if len(s.PublicationRecoveryStatus()) == 0 {
+		t.Fatal("quarantine status lost")
+	}
+	reclamationDay(t, s, 2, 2)
+	reclamationPublish(t, s, nil)
+	snap, err := s.CaptureCatalogSnapshot("synthetic", "index", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap.Close()
+	if err = s.ManagePublicationBatch("CAT.fbs", "synthetic", "index", "bad:complete", "requeue"); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, b := range s.RetainedPublicationBatches() {
+		found = found || b.Batch == "bad:complete"
+	}
+	if !found {
+		t.Fatal("requeue did not restore batch")
+	}
+	for i := 0; i < 3; i++ {
+		s.RetryPublicationRecovery()
+	}
+	if err = s.ManagePublicationBatch("CAT.fbs", "synthetic", "index", "bad:complete", "discard"); err != nil {
+		t.Fatal(err)
+	}
+	if !s.PublicationBatchComplete("CAT.fbs", "synthetic", "index", "bad:complete") {
+		t.Fatal("discard not durable completion")
+	}
+}
+func TestPublicationGenerationReadDoesNotBlockWriter(t *testing.T) {
+	t.Setenv("SDN_STORE_FORMAT", "4")
+	s := reclamationStore(t, t.TempDir())
+	defer s.Close()
+	reclamationDay(t, s, 0, 2)
+	captured, release := make(chan struct{}), make(chan struct{})
+	s.publicationHook = func(stage string) {
+		if stage == "generation-captured" {
+			close(captured)
+			<-release
+		}
+	}
+	done := make(chan error, 1)
+	go func() {
+		products, index := reclamationRecords(1, 2)
+		_, err := s.StoreBatchWithSourceTags("OCM.fbs", products, "synthetic", nil, SourceTags{ProviderID: "synthetic", SourceName: "products", BatchID: "new"})
+		if err == nil {
+			_, err = s.StoreBatchWithSourceTags("CAT.fbs", index, "synthetic", nil, SourceTags{ProviderID: "synthetic", SourceName: "index", BatchID: "new:complete"})
+		}
+		done <- err
+	}()
+	<-captured
+	other := make(chan error, 1)
+	go func() {
+		products, _ := reclamationRecords(2, 2)
+		_, err := s.StoreBatchWithSourceTags("OCM.fbs", products, "synthetic", nil, SourceTags{ProviderID: "synthetic", SourceName: "products", BatchID: "other"})
+		other <- err
+	}()
+	select {
+	case err := <-other:
+		if err != nil {
+			t.Error(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Error("generation capture held global write lock")
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+func TestPublicationPlainTerminalAndBatchExclusion(t *testing.T) {
+	t.Setenv("SDN_STORE_FORMAT", "4")
+	s := journalTestStore(t, t.TempDir())
+	defer s.Close()
+	if err := s.ConfigurePublicationSources([]PublicationSource{{Schema: "CAT.fbs", Provider: "synthetic", Source: "index"}}); err != nil {
+		t.Fatal(err)
+	}
+	journalTestPut(t, s, "plain:complete")
+	p, err := s.SelectPublication("CAT.fbs", "synthetic", "index", "plain:complete")
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := p.refs[0].CID
+	p.Close()
+	if err = s.ExcludeCatalogRecords("synthetic", "index", []string{id}); err != nil {
+		t.Fatal(err)
+	}
+	p, err = s.SelectPublication("CAT.fbs", "synthetic", "index", "plain:complete")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	if len(p.refs) != 0 {
+		t.Fatal("excluded record remained in pending batch")
+	}
+}
+func TestPublicationShardCopyFallback(t *testing.T) {
+	dir := t.TempDir()
+	from, to := filepath.Join(dir, "from"), filepath.Join(dir, "to")
+	if err := os.WriteFile(from, []byte("synthetic bytes"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	noLink := func(string, string) error { return errors.New("unsupported") }
+	if err := installPublicationShardWith(from, to, noLink); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(to)
+	if string(got) != "synthetic bytes" {
+		t.Fatal("copy changed bytes")
+	}
+	if err := installPublicationShardWith(from, to, noLink); !os.IsExist(err) {
+		t.Fatal("existing bytes overwritten")
 	}
 }
