@@ -69,7 +69,7 @@ func (s *FlatSQLStore) captureCatalogLocked(x PublicationSource, cutoff uint64) 
 			if !ok {
 				return nil, errors.New("catalog snapshot has an unresolved product reference")
 			}
-			selected[id] = p
+			selected[p.CID] = p
 		}
 	}
 	products.records = nil
@@ -172,7 +172,7 @@ func (p *PublicationSelection) ByteWindow(q IndexedRecordQuery, budget int64) (i
 	}
 	var bytes int64
 	for i, r := range rows {
-		bytes += int64(len(r.Data))
+		bytes += int64(4 + len(r.Data))
 		if bytes > budget && i > 0 {
 			return i, true, nil
 		}

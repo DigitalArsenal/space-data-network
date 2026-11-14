@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -20,6 +21,7 @@ import (
 // ProductSource on CAT selects its OCM closure for source snapshots.
 type PublicationSource struct{ Schema, Provider, Source, ProductSource string }
 type publicationEntry struct {
+	Digest          string
 	Sequence        uint64
 	Schema          string
 	Tags            SourceTags
@@ -80,6 +82,13 @@ func (s *FlatSQLStore) ConfigurePublicationSources(sources []PublicationSource) 
 			}
 		}
 		if !found {
+			count, err := s.CountRawRecords(RawRecordQuery{SchemaName: x.Schema, ProviderID: x.Provider, SourceName: x.Source})
+			if err != nil {
+				return err
+			}
+			if count > 0 {
+				return errors.New("enable publication retention on an empty source before initial ingestion")
+			}
 			merged = append(merged, x)
 		}
 	}
@@ -149,15 +158,17 @@ func (b format4Backend) putRetained(op, schema string, records [][]byte, peer st
 	if err != nil {
 		return nil, nil, err
 	}
+	digest := sha256.New()
+	writer := io.MultiWriter(f, digest)
 	for _, data := range records {
 		if uint64(len(data)) > uint64(^uint32(0)) {
 			err = errors.New("publication record exceeds frame limit")
 			break
 		}
-		if err = binary.Write(f, binary.LittleEndian, uint32(len(data))); err != nil {
+		if err = binary.Write(writer, binary.LittleEndian, uint32(len(data))); err != nil {
 			break
 		}
-		if _, err = f.Write(data); err != nil {
+		if _, err = writer.Write(data); err != nil {
 			break
 		}
 	}
@@ -171,6 +182,7 @@ func (b format4Backend) putRetained(op, schema string, records [][]byte, peer st
 	if err != nil {
 		return nil, nil, err
 	}
+	e.Digest = hex.EncodeToString(digest.Sum(nil))
 	raw, err := json.Marshal(e)
 	if err != nil {
 		return nil, nil, err
@@ -248,6 +260,9 @@ func (s *FlatSQLStore) recoverPublicationJournal() error {
 		}
 		s.publicationEntries = append(s.publicationEntries, e)
 		if !e.Applied {
+			if batch != "" {
+				p.Cutoff = e.Sequence
+			}
 			records, err := s.publicationRecords(e)
 			if err != nil {
 				return err
@@ -279,10 +294,12 @@ func (s *FlatSQLStore) publicationRecords(e publicationEntry) ([]DatasetExportRe
 		return nil, err
 	}
 	remaining := info.Size()
+	digest := sha256.New()
+	reader := io.TeeReader(f, digest)
 	var out []DatasetExportRecord
 	for remaining > 0 {
 		var n uint32
-		if err = binary.Read(f, binary.LittleEndian, &n); err != nil {
+		if err = binary.Read(reader, binary.LittleEndian, &n); err != nil {
 			return nil, err
 		}
 		remaining -= 4
@@ -290,11 +307,14 @@ func (s *FlatSQLStore) publicationRecords(e publicationEntry) ([]DatasetExportRe
 			return nil, errors.New("invalid publication SDS frame")
 		}
 		data := make([]byte, int(n))
-		if _, err = io.ReadFull(f, data); err != nil {
+		if _, err = io.ReadFull(reader, data); err != nil {
 			return nil, err
 		}
 		remaining -= int64(n)
 		out = append(out, DatasetExportRecord{CID: computeCID(data), Data: data, SourceTags: e.Tags})
+	}
+	if e.Digest != hex.EncodeToString(digest.Sum(nil)) {
+		return nil, errors.New("publication journal checksum mismatch")
 	}
 	return out, nil
 }
@@ -335,19 +355,19 @@ func publicationAtomicFile(path string, raw []byte) error {
 func (s *FlatSQLStore) RetainedPublicationBatches() []PublicationBatch {
 	s.publicationMu.Lock()
 	defer s.publicationMu.Unlock()
-	var out []PublicationBatch
-	seen := map[string]bool{}
+	byKey := map[string]PublicationBatch{}
 	for _, e := range s.publicationEntries {
 		if !e.Applied {
 			continue
 		}
 		key := e.Schema + "\x00" + e.Tags.ProviderID + "\x00" + e.Tags.SourceName + "\x00" + e.Tags.BatchID
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		out = append(out, PublicationBatch{e.Schema, e.Tags.ProviderID, e.Tags.SourceName, e.Tags.BatchID, e.Sequence})
+		byKey[key] = PublicationBatch{e.Schema, e.Tags.ProviderID, e.Tags.SourceName, e.Tags.BatchID, e.Sequence}
 	}
+	var out []PublicationBatch
+	for _, v := range byKey {
+		out = append(out, v)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Sequence < out[j].Sequence })
 	return out
 }
 
@@ -384,10 +404,16 @@ func (p *PublicationSelection) Records() []DatasetExportRecord {
 }
 func (s *FlatSQLStore) retainedSelectionLocked(schema, provider, source, batch string, cutoff uint64) (*PublicationSelection, error) {
 	p := &PublicationSelection{Cutoff: cutoff, Schema: schema, Provider: provider, Source: source, Batch: batch}
+	if batch != "" {
+		p.Cutoff = 0
+	}
 	byKey := map[string]DatasetExportRecord{}
 	for _, e := range s.publicationEntries {
 		if !e.Applied || e.Sequence > cutoff || e.Schema != schema || e.Tags.ProviderID != provider || e.Tags.SourceName != source || (batch != "" && e.Tags.BatchID != batch) {
 			continue
+		}
+		if batch != "" {
+			p.Cutoff = e.Sequence
 		}
 		records, err := s.publicationRecords(e)
 		if err != nil {
