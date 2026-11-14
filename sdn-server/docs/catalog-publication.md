@@ -24,7 +24,7 @@ retained history before exhausting capacity.
 Enable retention on empty CAT and OCM sources in store format 4. Existing
 unretained history cannot be reconstructed. Sealed standards are refused; CAT
 and OCM have no sealed fields. Provider and source identities must be exact.
-Configuration validation requires publication to be enabled and completed series
+Configuration validation requires a matching batch rule, publication to be enabled, and completed series
 to be retained, including matching retention overrides.
 
 ```yaml

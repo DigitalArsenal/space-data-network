@@ -13,6 +13,7 @@ func TestPublicationSourceConfiguration(t *testing.T) {
 	}{
 		{"legacy", func(c *Config) { c.Publishing.AutoPublish = nil }, ""},
 		{"retained", func(c *Config) {}, ""},
+		{"source_only", func(c *Config) { c.Publishing.AutoPublish[0].PublishScope = "source" }, "batch rule"},
 		{"disabled", func(c *Config) { c.Publishing.Enabled = false }, "publishing.enabled"},
 		{"wildcard", func(c *Config) { c.Publishing.AutoPublish[0].SourceName = "*" }, "exact"},
 		{"schema", func(c *Config) { c.Publishing.AutoPublish[0].Schema = "OMM" }, "CAT and OCM"},
@@ -40,5 +41,16 @@ func TestPublicationSourceConfiguration(t *testing.T) {
 				t.Fatalf("error %v want %s", err, tc.want)
 			}
 		})
+	}
+}
+
+func TestPublicationSourceConfigurationRejectsOlderStore(t *testing.T) {
+	t.Setenv("SDN_STORE_FORMAT", "1")
+	c := Default()
+	c.Publishing.Enabled = true
+	c.Publishing.Retention.KeepSeries = 0
+	c.Publishing.AutoPublish = []AutoPublishLane{{Schema: "CAT", ProviderID: "synthetic", SourceName: "index", RetainForPublication: true}}
+	if err := c.validatePublicationSources(); err == nil || !strings.Contains(err.Error(), "SDN_STORE_FORMAT=4") {
+		t.Fatalf("older store accepted: %v", err)
 	}
 }

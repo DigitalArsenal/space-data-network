@@ -34,6 +34,20 @@ func (c *Config) validatePublicationSources() error {
 		}
 		schema := strings.TrimSuffix(strings.TrimSpace(rule.Schema), ".fbs")
 		if rule.RetainForPublication {
+			batch := false
+			for _, candidate := range c.Publishing.AutoPublish {
+				if strings.ToLower(strings.TrimSpace(candidate.PublishScope)) == "source" || strings.TrimSuffix(strings.TrimSpace(candidate.Schema), ".fbs") != schema {
+					continue
+				}
+				provider, source := strings.TrimSpace(candidate.ProviderID), strings.TrimSpace(candidate.SourceName)
+				if (provider == "" || strings.EqualFold(provider, strings.TrimSpace(rule.ProviderID))) && (source == "" || strings.EqualFold(source, strings.TrimSpace(rule.SourceName))) {
+					batch = true
+					break
+				}
+			}
+			if !batch {
+				return fmt.Errorf("retain_for_publication requires a matching batch rule to drain retained entries")
+			}
 			if schema != "CAT" && schema != "OCM" {
 				return fmt.Errorf("retain_for_publication supports only CAT and OCM")
 			}
