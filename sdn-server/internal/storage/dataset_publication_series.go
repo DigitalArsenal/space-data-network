@@ -50,6 +50,7 @@ package storage
 // the history accumulated before it.
 
 import (
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -234,12 +235,16 @@ func newPublicationSetHash(schemaName, providerID, sourceName, batchID string) h
 // LatestDatasetPublicationSeries returns the newest recorded series of a lane
 // for one batch scope ("" = the source scope / full catalog).
 func (s *FlatSQLStore) LatestDatasetPublicationSeries(lane DatasetPublicationLane, batchID string) (DatasetPublicationSeries, bool, error) {
+	return s.LatestDatasetPublicationSeriesContext(context.Background(), lane, batchID)
+}
+
+func (s *FlatSQLStore) LatestDatasetPublicationSeriesContext(ctx context.Context, lane DatasetPublicationLane, batchID string) (DatasetPublicationSeries, bool, error) {
 	lane = lane.normalized()
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	var series DatasetPublicationSeries
 	var publishedAt int64
-	err := s.db.QueryRow(`
+	err := s.db.QueryRowContext(ctx, `
 		SELECT schema_name, provider_id, source_name, series_id, batch_id, record_count, manifest_cid, fingerprint, published_at
 		FROM sdn_dataset_publication_series
 		WHERE schema_name = ? AND provider_id = ? AND source_name = ? AND batch_id = ?

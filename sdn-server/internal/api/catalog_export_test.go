@@ -171,7 +171,7 @@ func TestCatalogCompactSnapshot(t *testing.T) {
 	var measurements []map[string]any
 	for day := 0; day <= 3; day++ {
 		for _, item := range []struct{ schema, source string }{{"OCM", "catalog-products"}, {"CAT", "catalog-index"}} {
-			rows := catalogReadShard(t, filepath.Join("testdata", "catalog-history", fmt.Sprintf("day%d-%s.sds", day, item.schema)))
+			rows := catalogReadShard(t, catalogGeneratedPath(t, day, item.schema))
 			for i := range rows {
 				rows[i] = rows[i][4:]
 			}
@@ -214,7 +214,7 @@ func TestCatalogCompactSnapshot(t *testing.T) {
 	// Control: a separately retained current source compacts, but replacement of
 	// its two standards is not an atomic snapshot publication boundary.
 	putMirror := func(day int, schema, source, batch string) {
-		rows := catalogReadShard(t, filepath.Join("testdata", "catalog-history", fmt.Sprintf("day%d-%s.sds", day, schema)))
+		rows := catalogReadShard(t, catalogGeneratedPath(t, day, schema))
 		for i := range rows {
 			rows[i] = rows[i][4:]
 		}
@@ -270,7 +270,7 @@ func TestCatalogSupersededBatchRecovery(t *testing.T) {
 	committed := 0
 	for day := 0; day < 2; day++ {
 		for _, item := range []struct{ schema, source string }{{"OCM", "catalog-products"}, {"CAT", "catalog-index"}} {
-			rows := catalogReadShard(t, filepath.Join("testdata", "catalog-history", fmt.Sprintf("day%d-%s.sds", day, item.schema)))
+			rows := catalogReadShard(t, catalogGeneratedPath(t, day, item.schema))
 			for i := range rows {
 				rows[i] = rows[i][4:]
 			}
@@ -318,7 +318,7 @@ func catalogPutDay(t *testing.T, s *storage.FlatSQLStore, day int, schemas ...st
 		if schema == "CAT" {
 			source = "catalog-index"
 		}
-		rows := catalogReadShard(t, filepath.Join("testdata", "catalog-history", fmt.Sprintf("day%d-%s.sds", day, schema)))
+		rows := catalogReadShard(t, catalogGeneratedPath(t, day, schema))
 		for i := range rows {
 			rows[i] = rows[i][4:]
 		}

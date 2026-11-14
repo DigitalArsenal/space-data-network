@@ -65,7 +65,7 @@ func TestCatalogReviewIncompleteGenerationFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rows := catalogReadShard(t, "testdata/catalog-history/day1-CAT.sds")
+	rows := catalogReadShard(t, catalogGeneratedPath(t, 1, "CAT"))
 	if _, err = s.StoreBatchWithSourceTags("CAT.fbs", [][]byte{rows[0][4:]}, "synthetic", nil, storage.SourceTags{ProviderID: "synthetic-node", SourceName: "catalog-index", BatchID: "incomplete"}); err != nil {
 		t.Fatal(err)
 	}

@@ -340,7 +340,7 @@ func (s *ConcreteDatasetPublicationService) LastSourcePublication(ctx context.Co
 	if err := ctx.Err(); err != nil {
 		return time.Time{}, err
 	}
-	series, ok, err := s.store.LatestDatasetPublicationSeries(storage.DatasetPublicationLane{SchemaName: req.Schema, ProviderID: req.ProviderID, SourceName: req.SourceName}, "")
+	series, ok, err := s.store.LatestDatasetPublicationSeriesContext(ctx, storage.DatasetPublicationLane{SchemaName: req.Schema, ProviderID: req.ProviderID, SourceName: req.SourceName}, "")
 	if err != nil || !ok {
 		return time.Time{}, err
 	}

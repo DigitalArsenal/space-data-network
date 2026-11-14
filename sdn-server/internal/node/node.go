@@ -1600,7 +1600,13 @@ func (n *Node) buildNodeStatusMaterials() caps.NodeStatusMaterials {
 // new state, no new sampler, no shaping: the dashboard reads exactly what a
 // module with node_status_read reads.
 func (n *Node) RuntimeStatusSnapshot() map[string]interface{} {
-	return caps.NodeStatusSnapshot(n.buildNodeStatusMaterials())
+	out := caps.NodeStatusSnapshot(n.buildNodeStatusMaterials())
+	if n.store != nil {
+		out["publicationRetainedSources"] = n.store.PublicationRetainedSources()
+		out["publicationRecoveryErrors"] = n.store.PublicationRecoveryStatus()
+		out["publicationJournal"] = n.store.PublicationJournalStats()
+	}
+	return out
 }
 
 // buildNodeActivityMaterials wires the node's shared activityRing into the
