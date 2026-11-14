@@ -15,7 +15,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -527,14 +526,15 @@ func catalogKillAfterProducts(t *testing.T, dir string) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	command, err := exec.Command("ps", "-p", strconv.Itoa(cmd.Process.Pid), "-o", "command=").Output()
-	if err != nil || !strings.Contains(string(command), "TestCatalogProductCommitCrashChild") {
-		t.Fatal("child identity verification failed", err)
+	command := strings.Join(cmd.Args, " ")
+	if cmd.Path != os.Args[0] || !strings.Contains(command, "-test.run=^TestCatalogProductCommitCrashChild$") {
+		t.Fatal("owned child identity verification failed", command)
 	}
-	if err = cmd.Process.Kill(); err != nil {
+	t.Logf("stopping owned child %d: %s", cmd.Process.Pid, command)
+	if err := cmd.Process.Kill(); err != nil {
 		t.Fatal(err)
 	}
-	err = cmd.Wait()
+	err := cmd.Wait()
 	killed = true
 	if err == nil {
 		t.Fatal("expected abrupt product-only process failure")
