@@ -95,8 +95,9 @@ func TestPublicationReviewCorruptionIsolation(t *testing.T) {
 	}
 	s = journalTestStore(t, dir)
 	defer s.Close()
-	if len(s.PublicationRecoveryStatus()) != 1 {
-		t.Fatal("corrupt source not isolated")
+	status := s.PublicationRecoveryStatus()
+	if len(status) != 2 || status["CAT.fbs/synthetic/index"] == "" || status["CAT.fbs/synthetic/index/initial/entry-1"] == "" {
+		t.Fatalf("corrupt source and applied entry not isolated: %v", status)
 	}
 	raw := sds.NewCATBuilder().WithNoradCatID(900003).Build()
 	if _, err := s.StoreWithSourceTags("CAT.fbs", raw, "synthetic", nil, SourceTags{ProviderID: "synthetic", SourceName: "other", BatchID: "good"}); err != nil {
