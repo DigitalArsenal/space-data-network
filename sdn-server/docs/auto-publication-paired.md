@@ -38,10 +38,10 @@ of the batch rule and defaults to 24 hours when the two scopes are paired.
 Rule order does not select one scope over the other. The first matching rule
 within each scope determines its options. Batch filters retain their wildcard
 and case-insensitive matching; source identities are exact and case-sensitive.
-A single batch or source rule retains its existing scheduling behavior,
+A single batch or source rule without retention options retains its existing scheduling behavior,
 including its five-minute default and existing retry policy.
 
-Use append-retained source records for this configuration, retain completed
+For the configuration above, use append-retained source records, retain completed
 publication series (`keep_series: 0`), and retain the producer's store across
 restarts. A retention override for the configured source also needs
 `keep_series: 0`. Deleting source records before export makes those records
@@ -55,9 +55,10 @@ A shard row alone is not completion. The existing service reuses recorded
 shards and announcements after an incomplete attempt; the dataset-publication
 service, shard format, DPM/PNM conventions, and transport are unchanged.
 
-A source snapshot contains retained source history. Selecting one logical
-catalog product per object is the catalog builder's responsibility; the
-publisher does not compact or reinterpret its records.
+An ordinary source snapshot contains retained source history. For durable CAT
+replacement and compact CAT/OCM snapshots, use the explicit storage and exporter
+options in [Durable catalog publication](catalog-publication.md). Those options
+retain pending bytes independently of live-record replacement or expiry.
 
 Tests use an inert publication service with real storage and completion
 bookkeeping. Process exits at storage commit, shard creation, announcement

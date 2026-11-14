@@ -513,3 +513,53 @@ func catalogKillAfterProducts(t *testing.T, dir string) {
 		t.Fatal("expected abrupt product-only process failure")
 	}
 }
+
+func TestCatalogRateLimitedSupersedingBatches(t *testing.T) {
+	t.Setenv("SDN_STORE_FORMAT", "4")
+	dir := t.TempDir()
+	s := pairedStore(t, dir)
+	defer s.Close()
+	catalogEnableRetention(t, s)
+	service := &catalogExportService{ConcreteDatasetPublicationService: &ConcreteDatasetPublicationService{store: s}, dir: t.TempDir()}
+	rules := catalogRules()
+	for i := range rules {
+		rules[i].MinInterval = time.Hour
+	}
+	p := NewAutoPublisher(service, rules)
+	now := time.Now()
+	p.now = func() time.Time { return now }
+	catalogPutDay(t, s, 0, "OCM", "CAT")
+	p.recoverPairedBatches(context.Background())
+	for len(p.queue) > 0 {
+		p.publishPairedBatch(context.Background(), <-p.queue)
+	}
+	if len(service.events) != 2 {
+		t.Fatal("initial batches missing")
+	}
+	for day := 1; day <= 3; day++ {
+		catalogPutDay(t, s, day, "OCM", "CAT")
+		p.recoverPairedBatches(context.Background())
+		p.queueReadyPairedBatches()
+		for len(p.queue) > 0 {
+			p.publishPairedBatch(context.Background(), <-p.queue)
+		}
+	}
+	if len(service.events) != 2 || len(p.pairedPending) != 6 {
+		t.Fatal("rate limit dropped or prematurely published a batch")
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s = pairedStore(t, dir)
+	defer s.Close()
+	service.ConcreteDatasetPublicationService = &ConcreteDatasetPublicationService{store: s}
+	catalogDrain(t, NewAutoPublisher(service, rules))
+	if len(service.events) != 8 {
+		t.Fatal("superseded rate-limited batches lost after restart")
+	}
+	replay := NewAutoPublisher(service, rules)
+	replay.recoverPairedBatches(context.Background())
+	if len(replay.pairedPending) != 0 {
+		t.Fatal("completed batch remained pending")
+	}
+}
