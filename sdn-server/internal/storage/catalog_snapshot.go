@@ -106,6 +106,16 @@ func (s *FlatSQLStore) CaptureCatalogSnapshot(provider, indexSource string, cuto
 			return nil, errors.New("no completed catalog generation; commit the final index batch with :complete")
 		}
 	}
+	complete := false
+	for _, e := range s.publicationEntries {
+		if e.Sequence == cutoff && e.Generation && e.Schema == "CAT.fbs" && e.Tags.ProviderID == provider && e.Tags.SourceName == indexSource {
+			complete = true
+			break
+		}
+	}
+	if !complete {
+		return nil, errors.New("catalog cutoff is not a completed generation")
+	}
 	if cutoff > head {
 		return nil, errors.New("catalog cutoff exceeds committed head")
 	}
@@ -236,12 +246,18 @@ func (s *FlatSQLStore) CompleteCatalogGeneration(provider, source string) (uint6
 	return s.completeCatalogGenerationLocked(provider, source)
 }
 func (s *FlatSQLStore) completeCatalogGenerationLocked(provider, source string) (uint64, error) {
+	return s.completeCatalogGenerationAtLocked(provider, source, 0)
+}
+func (s *FlatSQLStore) completeCatalogGenerationAtLocked(provider, source string, cutoff uint64) (uint64, error) {
 	v := s.publicationView()
 	x, ok := v.catalogSource("CAT.fbs", provider, source)
 	if !ok {
 		return 0, errors.New("catalog_product_source is not configured")
 	}
-	snap, err := v.captureCatalogLocked(x, v.publicationCutoffLocked())
+	if cutoff == 0 {
+		cutoff = v.publicationCutoffLocked()
+	}
+	snap, err := v.captureCatalogLocked(x, cutoff)
 	if err != nil {
 		return 0, err
 	}
@@ -250,6 +266,9 @@ func (s *FlatSQLStore) completeCatalogGenerationLocked(provider, source string) 
 	}
 	if snap.Cutoff == 0 {
 		return 0, errors.New("catalog generation has no index records")
+	}
+	if err = s.publicationStep("generation"); err != nil {
+		return 0, err
 	}
 	if err = publicationAtomicFile(filepath.Join(s.publicationEntryDir(snap.Cutoff), "generation"), []byte("1\n")); err != nil {
 		return 0, err
@@ -262,4 +281,14 @@ func (s *FlatSQLStore) completeCatalogGenerationLocked(provider, source string) 
 		}
 	}
 	return snap.Cutoff, nil
+}
+
+func (s *FlatSQLStore) retryCatalogGenerationsLocked() {
+	for _, e := range s.publicationEntries {
+		if e.Applied && !e.Generation && e.Schema == "CAT.fbs" && strings.HasSuffix(e.Tags.BatchID, ":complete") {
+			if _, err := s.completeCatalogGenerationAtLocked(e.Tags.ProviderID, e.Tags.SourceName, e.Sequence); err != nil {
+				log.Warnf("catalog generation remains incomplete: %v", err)
+			}
+		}
+	}
 }

@@ -231,7 +231,7 @@ func (p *AutoPublisher) publishPairedBatch(ctx context.Context, req DatasetPubli
 				p.pairedTurns[sourceKey] = pending.order
 			}
 		}
-		p.lastPublished[autoPublishLaneKey(state.rule)] = p.now()
+		p.lastPublished[strings.Join([]string{"paired", state.request.Schema, state.request.ProviderID, state.request.SourceName}, "\x00")] = p.now()
 	}
 	state.inFlight = true
 	generation := state.generation
@@ -262,6 +262,9 @@ func (p *AutoPublisher) publishPairedBatch(ctx context.Context, req DatasetPubli
 	} else {
 		if generation == state.generation {
 			delete(p.pairedPending, key)
+			if len(p.pairedPending) < 4096 {
+				p.backlogError = ""
+			}
 		}
 		if unchanged {
 			p.unchanged++
@@ -289,7 +292,7 @@ func (p *AutoPublisher) pairedBatchDueLocked(state *pairedBatchPublication) time
 	if interval <= 0 {
 		interval = autoPublishDefaultMinInterval
 	}
-	due := p.lastPublished[autoPublishLaneKey(state.rule)].Add(interval)
+	due := p.lastPublished[strings.Join([]string{"paired", state.request.Schema, state.request.ProviderID, state.request.SourceName}, "\x00")].Add(interval)
 	if state.due.After(due) {
 		due = state.due
 	}

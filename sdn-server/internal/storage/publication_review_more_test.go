@@ -249,3 +249,67 @@ func TestPublicationReviewNoopTags(t *testing.T) {
 		t.Fatal("new publication identity lost")
 	}
 }
+
+func TestPublicationReviewTerminalGenerationRecovery(t *testing.T) {
+	t.Setenv("SDN_STORE_FORMAT", "4")
+	dir := t.TempDir()
+	s := journalTestStore(t, dir)
+	if err := s.ConfigurePublicationSources([]PublicationSource{{Schema: "CAT.fbs", Provider: "synthetic", Source: "index", ProductSource: "products"}, {Schema: "OCM.fbs", Provider: "synthetic", Source: "products"}}); err != nil {
+		t.Fatal(err)
+	}
+	raw := sds.NewCATBuilder().WithNoradCatID(900001).Build()
+	s.publicationFault = func(stage string) error {
+		if stage == "generation" {
+			return errors.New("synthetic generation marker failure")
+		}
+		return nil
+	}
+	_, err := s.StoreWithSourceTags("CAT.fbs", raw, "synthetic", nil, SourceTags{ProviderID: "synthetic", SourceName: "index", BatchID: "first:complete"})
+	if err == nil {
+		t.Fatal("generation failure hidden")
+	}
+	if _, err = s.CaptureCatalogSnapshot("synthetic", "index", 0); err == nil {
+		t.Fatal("incomplete generation exposed")
+	}
+	s.publicationFault = nil
+	s.RetryPublicationRecovery()
+	before, err := s.CaptureCatalogSnapshot("synthetic", "index", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.publicationFault = func(stage string) error {
+		if stage == "generation" {
+			return errors.New("synthetic generation marker failure")
+		}
+		return nil
+	}
+	_, err = s.StoreWithSourceTags("CAT.fbs", raw, "synthetic", nil, SourceTags{ProviderID: "synthetic", SourceName: "index", BatchID: "second:complete"})
+	if err == nil {
+		t.Fatal("generation failure hidden")
+	}
+	s.Close()
+	s = journalTestStore(t, dir)
+	defer s.Close()
+	after, err := s.CaptureCatalogSnapshot("synthetic", "index", 0)
+	if err != nil || after.Cutoff <= before.Cutoff {
+		t.Fatal("restart lost terminal generation", err)
+	}
+}
+func TestPublicationReviewBatchGrouping(t *testing.T) {
+	t.Setenv("SDN_STORE_FORMAT", "4")
+	s := journalTestStore(t, t.TempDir())
+	defer s.Close()
+	if err := s.ConfigurePublicationSources([]PublicationSource{{Schema: "CAT.fbs", Provider: "synthetic", Source: "index"}}); err != nil {
+		t.Fatal(err)
+	}
+	var records [][]byte
+	for i := 0; i < 128; i++ {
+		records = append(records, sds.NewCATBuilder().WithNoradCatID(uint32(900000+i)).Build())
+	}
+	if _, err := s.StoreBatchWithSourceTags("CAT.fbs", records, "synthetic", nil, SourceTags{ProviderID: "synthetic", SourceName: "index", BatchID: "group"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.publicationEntries) != 1 || len(s.publicationEntries[0].Refs) != 128 {
+		t.Fatal("batch did not share a journal transaction")
+	}
+}

@@ -502,6 +502,7 @@ func (s *FlatSQLStore) recoverPublicationJournal() error {
 	}
 	s.publishSourceKeys()
 	s.publicationEnabled.Store(len(s.publicationSources) > 0)
+	s.retryCatalogGenerationsLocked()
 	return nil
 }
 func (s *FlatSQLStore) publicationRecords(e publicationEntry) ([]DatasetExportRecord, error) {
@@ -640,11 +641,13 @@ func (s *FlatSQLStore) retainedSelectionLocked(schema, provider, source, batch s
 	}
 	p := &PublicationSelection{Schema: schema, Provider: provider, Source: source, Batch: batch}
 	byKey := map[string]publicationRecordRef{}
+	terminalComplete := false
 	for _, e := range s.publicationEntries {
 		if !e.Applied || e.Sequence > cutoff || e.Schema != schema || e.Tags.ProviderID != provider || e.Tags.SourceName != source || (batch != "" && e.Tags.BatchID != batch) {
 			continue
 		}
 		p.Cutoff = e.Sequence
+		terminalComplete = e.Generation
 		for _, r := range e.Refs {
 			key := r.CID
 			if schema == "CAT.fbs" && batch == "" && r.Identity != "" {
@@ -655,6 +658,9 @@ func (s *FlatSQLStore) retainedSelectionLocked(schema, provider, source, batch s
 		if len(byKey) > maxPublicationSelectionRecords {
 			return nil, errors.New("publication selection exceeds 100000 records; partition the source")
 		}
+	}
+	if schema == "CAT.fbs" && strings.HasSuffix(batch, ":complete") && !terminalComplete {
+		return nil, errors.New("terminal catalog batch has no completed generation")
 	}
 	excluded, err := s.catalogExclusions(schema, provider, source)
 	if err != nil {
@@ -738,6 +744,7 @@ func (s *FlatSQLStore) RetryPublicationRecovery() {
 		}
 	}
 	s.publicationMu.Unlock()
+	s.retryCatalogGenerationsLocked()
 }
 
 // CompletePublication records successful batch publication independently of
