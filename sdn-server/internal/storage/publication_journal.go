@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/encfield"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format4"
@@ -776,6 +777,7 @@ func (s *FlatSQLStore) publicationSourceEnabled(schema, provider, source string)
 // RetryPublicationRecovery retries interrupted storage and acknowledgement writes
 // once per call. Reconciliation calls it between publication attempts.
 func (s *FlatSQLStore) RetryPublicationRecovery() {
+	s.retryQuarantinedPublication(time.Now())
 	s.publicationWriteMu.Lock()
 	if s.publicationGlobalFailure != nil {
 		high := s.publicationHighWater

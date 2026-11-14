@@ -406,7 +406,7 @@ func TestPublicationBatchQuarantineAndRequeue(t *testing.T) {
 	journalTestPut(t, s, "bad")
 	journalTestPut(t, s, "later")
 	for i := 1; i <= 3; i++ {
-		quarantined, err := s.RecordPublicationFailure("CAT.fbs", "synthetic", "index", "bad", errors.New("inert transport failure"))
+		quarantined, err := s.RecordPublicationFailure("CAT.fbs", "synthetic", "index", "bad", &PublicationContentError{Cause: errors.New("invalid retained content")})
 		if err != nil || quarantined != (i == 3) {
 			t.Fatalf("attempt %d: %v %v", i, quarantined, err)
 		}

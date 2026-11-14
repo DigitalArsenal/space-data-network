@@ -5,11 +5,13 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 type publicationFailure struct {
 	Attempts int
 	Reason   string
+	RetryAt  time.Time
 }
 
 func (s *FlatSQLStore) loadPublicationFailures(e *publicationEntry) {
@@ -22,21 +24,25 @@ func (s *FlatSQLStore) loadPublicationFailures(e *publicationEntry) {
 			err = json.Unmarshal(raw, target)
 		}
 		if err != nil {
-			*target = publicationFailure{3, "failure receipt unreadable: " + err.Error()}
+			*target = publicationFailure{Attempts: 3, Reason: "failure receipt unreadable: " + err.Error(), RetryAt: time.Now().Add(6 * time.Hour)}
 		}
 	}
 }
 func (s *FlatSQLStore) recordGenerationFailure(e publicationEntry, cause error) error {
+	if !IsPublicationContentError(cause) {
+		return nil
+	}
 	s.publicationMu.Lock()
 	defer s.publicationMu.Unlock()
 	for i, current := range s.publicationEntries {
 		if current.Sequence == e.Sequence {
-			if current.Generation {
+			if current.Generation || current.GenerationFailure.Attempts != e.GenerationFailure.Attempts {
 				return nil
 			}
 			f := current.GenerationFailure
 			f.Attempts++
 			f.Reason = cause.Error()
+			f.RetryAt = time.Now().Add(6 * time.Hour)
 			raw, _ := json.Marshal(f)
 			if err := publicationAtomicFile(filepath.Join(s.publicationEntryDir(e.Sequence), "generation-failure.json"), raw); err != nil {
 				return err
@@ -51,8 +57,12 @@ func (s *FlatSQLStore) recordGenerationFailure(e publicationEntry, cause error) 
 }
 
 // RecordPublicationFailure durably sets aside a retained batch after three failed
-// attempts. Its payload remains available for explicit requeue or discard.
+// content attempts. Transient failures do not advance this count. Retained
+// payloads are retried after six hours or an explicit requeue.
 func (s *FlatSQLStore) RecordPublicationFailure(schema, provider, source, batch string, cause error) (bool, error) {
+	if !IsPublicationContentError(cause) {
+		return false, nil
+	}
 	s.publicationWriteMu.Lock()
 	defer s.publicationWriteMu.Unlock()
 	s.publicationMu.Lock()
@@ -67,7 +77,7 @@ func (s *FlatSQLStore) RecordPublicationFailure(schema, provider, source, batch 
 	found := false
 	for i, e := range s.publicationEntries {
 		if e.Schema == schema && e.Tags.ProviderID == provider && e.Tags.SourceName == source && e.Tags.BatchID == batch && !e.Published {
-			f := publicationFailure{attempts, cause.Error()}
+			f := publicationFailure{Attempts: attempts, Reason: cause.Error(), RetryAt: time.Now().Add(6 * time.Hour)}
 			raw, _ := json.Marshal(f)
 			if err := publicationAtomicFile(filepath.Join(s.publicationEntryDir(e.Sequence), "batch-failure.json"), raw); err != nil {
 				return false, err
@@ -99,8 +109,8 @@ func (s *FlatSQLStore) ManagePublicationBatch(schema, provider, source, batch, a
 		if e.BatchFailure.Attempts < 3 && e.GenerationFailure.Attempts < 3 {
 			continue
 		}
-		if !e.Applied {
-			return errors.New("unapplied batch cannot be discarded or requeued")
+		if !e.Applied && action == "discard" {
+			return errors.New("unapplied batch cannot be discarded")
 		}
 		if action == "discard" {
 			if err := publicationAtomicFile(filepath.Join(s.publicationEntryDir(e.Sequence), "published"), []byte("1\n")); err != nil {
@@ -122,4 +132,33 @@ func (s *FlatSQLStore) ManagePublicationBatch(schema, provider, source, batch, a
 		s.publicationEntries[i].BatchFailure = publicationFailure{}
 	}
 	return nil
+}
+
+// PublicationContentError identifies a deterministic defect in one retained batch.
+// Service, transport, cancellation, and filesystem errors remain retryable.
+type PublicationContentError struct{ Cause error }
+
+func (e *PublicationContentError) Error() string { return e.Cause.Error() }
+func (e *PublicationContentError) Unwrap() error { return e.Cause }
+func IsPublicationContentError(err error) bool {
+	var e *PublicationContentError
+	return errors.As(err, &e)
+}
+func (s *FlatSQLStore) retryQuarantinedPublication(now time.Time) {
+	s.publicationMu.Lock()
+	var retry []publicationEntry
+	for _, e := range s.publicationEntries {
+		for _, f := range []publicationFailure{e.BatchFailure, e.GenerationFailure} {
+			if !e.Published && f.Attempts >= 3 && (f.RetryAt.IsZero() || !now.Before(f.RetryAt)) {
+				retry = append(retry, e)
+				break
+			}
+		}
+	}
+	s.publicationMu.Unlock()
+	for _, e := range retry {
+		if err := s.ManagePublicationBatch(e.Schema, e.Tags.ProviderID, e.Tags.SourceName, e.Tags.BatchID, "requeue"); err != nil {
+			log.Warnf("publication automatic requeue: %v", err)
+		}
+	}
 }

@@ -58,12 +58,12 @@ func (s *FlatSQLStore) captureCatalogLocked(x PublicationSource, cutoff uint64) 
 		}
 		cat, err := parseCAT(data)
 		if err != nil {
-			return nil, err
+			return nil, &PublicationContentError{Cause: err}
 		}
 		for i := 0; i < cat.PRODUCTSLength(); i++ {
 			var product CAT.CATProduct
 			if !cat.PRODUCTS(&product, i) {
-				return nil, errors.New("invalid catalog product")
+				return nil, &PublicationContentError{Cause: errors.New("invalid catalog product")}
 			}
 			wanted[string(product.RECORD_CID())] = true
 		}
@@ -85,7 +85,7 @@ func (s *FlatSQLStore) captureCatalogLocked(x PublicationSource, cutoff uint64) 
 		}
 	}
 	if len(wanted) != 0 {
-		return nil, errors.New("catalog snapshot has an unresolved product reference")
+		return nil, &PublicationContentError{Cause: errors.New("catalog snapshot has an unresolved product reference")}
 	}
 	for _, r := range selected {
 		products.refs = append(products.refs, r)

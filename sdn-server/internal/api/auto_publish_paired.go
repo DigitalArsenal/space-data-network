@@ -211,6 +211,10 @@ func (p *AutoPublisher) publishPairedBatch(ctx context.Context, req DatasetPubli
 		p.mu.Unlock()
 		return p.isPairedSource(req.Schema, req.ProviderID, req.SourceName)
 	}
+	if state.inFlight {
+		p.mu.Unlock()
+		return true
+	}
 	state.queued = false
 	if !p.firstPairedLocked(state) {
 		p.mu.Unlock()
