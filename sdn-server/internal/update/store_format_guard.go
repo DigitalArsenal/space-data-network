@@ -104,7 +104,8 @@ type StoreFormat struct {
 //
 // Format 4 comes first: fsql4/MIGRATED or fsql4/STORE present (in any state:
 // a migration in progress, an activation a crash cut short, a finished store)
-// is format 4. The rules below do not run for it.
+// requires its stream format (at least the current stream format 5). The
+// legacy rules below do not run for it.
 //
 // A store is format 2 or above once it is ACTIVATED: fsql2/MIGRATED exists
 // (store-migrate's last step, and a fresh format-2 store is created with it),
@@ -122,7 +123,7 @@ func ReadStoreFormat(root string) (StoreFormat, error) {
 	if m, err := marker.Read(root); err != nil {
 		return sf, err
 	} else if m.Format4() {
-		sf.Format = versioninfo.P4StoreFormat
+		sf.Format = max(versioninfo.P4StoreFormat, int(m.Format))
 		sf.Layout = max(1, int(m.RequiredLayout))
 		sf.Evidence = format4Evidence(m)
 		sf.Evidence += fmt.Sprintf(", stream format %d layout %d", m.Format, sf.Layout)
