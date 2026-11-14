@@ -3,6 +3,7 @@ package storage
 import (
 	"crypto/sha256"
 	"fmt"
+	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"os"
 	"path/filepath"
 	"testing"
@@ -52,6 +53,67 @@ func TestPublicationReceiptTailAndSourceIsolation(t *testing.T) {
 				t.Fatal("unrelated receipts lost")
 			}
 		})
+	}
+}
+
+func TestPublicationReceiptMiddleCorruptionKeepsOtherSourceWritable(t *testing.T) {
+	t.Setenv("SDN_STORE_FORMAT", "4")
+	dir := t.TempDir()
+	s := journalTestStore(t, dir)
+	if err := s.ConfigurePublicationSources([]PublicationSource{{Schema: "CAT.fbs", Provider: "synthetic", Source: "a"}, {Schema: "CAT.fbs", Provider: "synthetic", Source: "b"}}); err != nil {
+		t.Fatal(err)
+	}
+	put := func(source string, day int) error {
+		data := sds.NewCATBuilder().WithNoradCatID(900001).WithObjectName(fmt.Sprintf("synthetic-%d", day)).Build()
+		_, err := s.StoreWithSourceTags("CAT.fbs", data, "synthetic", nil, SourceTags{ProviderID: "synthetic", SourceName: source, BatchID: fmt.Sprint(day)})
+		return err
+	}
+	for day := 0; day < 3; day++ {
+		for _, source := range []string{"a", "b"} {
+			if err := put(source, day); err != nil {
+				t.Fatal(err)
+			}
+			p, err := s.SelectPublication("CAT.fbs", "synthetic", source, fmt.Sprint(day))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = s.CompletePublication(p); err != nil {
+				t.Fatal(err)
+			}
+			p.Close()
+			if err = s.ReclaimPublication(); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	path := filepath.Join(s.publicationDir(), publicationReceiptFile("CAT.fbs", "synthetic", "a"))
+	raw, err := os.ReadFile(path)
+	if err != nil || len(raw) < 96 {
+		t.Fatal("missing middle frame", err)
+	}
+	s.Close()
+	bad := append([]byte(nil), raw...)
+	bad[40] ^= 1
+	if err = os.WriteFile(path, bad, 0600); err != nil {
+		t.Fatal(err)
+	}
+	s = journalTestStore(t, dir)
+	defer s.Close()
+	if status := s.PublicationRecoveryStatus(); len(status) != 1 || status["CAT.fbs/synthetic/a"] == "" {
+		t.Fatal("corruption escaped source", status)
+	}
+	if err = put("b", 3); err != nil {
+		t.Fatal("healthy source stopped", err)
+	}
+	if err = put("a", 3); err == nil {
+		t.Fatal("damaged source did not pause")
+	}
+	if err = os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	s.RetryPublicationRecovery()
+	if err = put("a", 3); err != nil {
+		t.Fatal("repaired source remained paused", err)
 	}
 }
 
