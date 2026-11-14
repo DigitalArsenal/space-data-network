@@ -104,8 +104,8 @@ type StoreFormat struct {
 //
 // Format 4 comes first: fsql4/MIGRATED or fsql4/STORE present (in any state:
 // a migration in progress, an activation a crash cut short, a finished store)
-// requires its stream format (at least the current stream format 5). The
-// legacy rules below do not run for it.
+// requires backend compatibility level 4. The stream marker's format 5 and
+// the binary's historical backend stamp 4 describe different contracts.
 //
 // A store is format 2 or above once it is ACTIVATED: fsql2/MIGRATED exists
 // (store-migrate's last step, and a fresh format-2 store is created with it),
@@ -123,7 +123,10 @@ func ReadStoreFormat(root string) (StoreFormat, error) {
 	if m, err := marker.Read(root); err != nil {
 		return sf, err
 	} else if m.Format4() {
-		sf.Format = max(versioninfo.P4StoreFormat, int(m.Format))
+		sf.Format = versioninfo.P4StoreFormat
+		if m.Format > marker.StoreFormat {
+			sf.Format = int(m.Format)
+		}
 		sf.Layout = max(1, int(m.RequiredLayout))
 		sf.Evidence = format4Evidence(m)
 		sf.Evidence += fmt.Sprintf(", stream format %d layout %d", m.Format, sf.Layout)
@@ -443,6 +446,7 @@ type StoreFormatRefusal struct {
 	Version string
 	// SlotMaxStoreFormat is the highest store format the slot's binary opens.
 	SlotMaxStoreFormat int
+	SlotMaxStoreLayout int
 	Slot               string // what the slot's binaries say (slotStamp.describe)
 	Store              StoreFormat
 }
@@ -454,6 +458,9 @@ func (e *StoreFormatRefusal) Error() string {
 	}
 	if v := strings.TrimSpace(e.Version); v != "" && !strings.Contains(e.Target, v) {
 		what += " (version " + v + ")"
+	}
+	if e.SlotMaxStoreFormat >= e.Store.Format && max(1, e.SlotMaxStoreLayout) < max(1, e.Store.Layout) {
+		return fmt.Sprintf("store-format guard REFUSED to %s: store layout %d requires a supporting binary; candidate supports layout %d; nothing was swapped", what, e.Store.Layout, max(1, e.SlotMaxStoreLayout))
 	}
 	return fmt.Sprintf("store-format guard REFUSED to %s: the slot %s, but the record store at %s is format %d (%s). "+
 		"That build would refuse or damage the store, so nothing was swapped and the running build stays. "+
@@ -494,14 +501,12 @@ func guardStoreFormat(action, target, version string, store StoreFormat, stamp f
 	if !applies || (s.Format >= store.Format && max(1, s.Layout) >= max(1, store.Layout)) {
 		return nil
 	}
-	if s.Format >= store.Format {
-		return fmt.Errorf("store-format guard REFUSED to %s %s: store layout %d requires a binary supporting that layout; candidate supports layout %d; nothing was swapped", action, target, store.Layout, max(1, s.Layout))
-	}
 	refusal := &StoreFormatRefusal{
 		Action:             action,
 		Target:             target,
 		Version:            version,
 		SlotMaxStoreFormat: s.Format,
+		SlotMaxStoreLayout: max(1, s.Layout),
 		Slot:               s.describe(),
 		Store:              store,
 	}

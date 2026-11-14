@@ -72,9 +72,9 @@ const (
 	// with no pin, else bytes with exactly this sha256).
 	P4EngineSHA256 = "75f33a69d462a07a15e0c2aa2e2e601f8b49c3c8101f29302782aadf82a32e06"
 
-	// P4StoreFormat is the stream marker format used by backend format 4: the format its
-	// store is at, and the one the format-4 engine opens.
-	P4StoreFormat = 5
+	// P4StoreFormat is the backend compatibility stamp used by released nodes.
+	// Its engine writes stream format 5; layout compatibility is stamped separately.
+	P4StoreFormat = 4
 
 	// p4Pinned is 1 when this build pins (and so embeds) a format-4 engine,
 	// else 0.

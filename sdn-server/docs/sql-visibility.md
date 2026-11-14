@@ -20,11 +20,10 @@ startup. Registration updates SQL schema state without a second engine open.
 
 Back up the store before enabling the option. Registration permanently promotes
 the STORE marker to layout 2. Turning the setting off afterward refuses startup;
-it does not restore a bounded store. The update guard checks both stream format
+it does not restore a bounded store. The update guard checks backend compatibility
 and layout when considering a rollback slot. A binary declaring only layout 1
-cannot reopen layout 2. Historical slots stamped only for stream format 4 are
-conservatively refused against stream-format-5 stores, even when an old stamp
-understates the embedded engine. Recovery from an interrupted promotion honors the
+cannot reopen layout 2. Historical slots stamped for backend format 4 can reopen
+layout 1 with stream format 5, matching the shipped engine. Recovery from an interrupted promotion honors the
 persisted intent and preserves the newer layout.
 
 ## Identify the store

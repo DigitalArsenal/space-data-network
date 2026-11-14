@@ -92,8 +92,8 @@ func TestReadStoreFormatSeesFormat4First(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			sf, err := ReadStoreFormat(tc.setup(t))
-			if err != nil || sf.Format != 5 || !strings.Contains(sf.Evidence, tc.evidence) {
-				t.Fatalf("ReadStoreFormat = %+v, %v; want stream format 5 with evidence %q", sf, err, tc.evidence)
+			if err != nil || sf.Format != 4 || !strings.Contains(sf.Evidence, tc.evidence) {
+				t.Fatalf("ReadStoreFormat = %+v, %v; want backend compatibility 4 with evidence %q", sf, err, tc.evidence)
 			}
 		})
 	}
@@ -116,7 +116,7 @@ func TestApplyOnAFormat4Store(t *testing.T) {
 		{"format-2 build", "tar.gz", releaseLayout(2, "two"), true, 2},
 		{"format-3 build", "tar.gz", fleetLayout(3, "three"), true, 3},
 		{"payload without a daemon binary", "tar.gz", map[string]string{"bin/spacedatanetwork": launcherScript}, true, 1},
-		{"format-4 build", "tar.gz", releaseLayout(4, "four"), true, 4},
+		{"format-4 build", "tar.gz", releaseLayout(4, "four"), false, 0},
 		{"format-5 build", "tar.gz", releaseLayout(5, "five"), false, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -135,9 +135,9 @@ func TestApplyOnAFormat4Store(t *testing.T) {
 				}
 				return
 			}
-			requireRefusal(t, err, "apply", tc.slotMax, 5)
+			requireRefusal(t, err, "apply", tc.slotMax, 4)
 			_, err = Apply(paths, ApplyOptions{UpdateID: "u-x", StoreRoot: store})
-			refusal := requireRefusal(t, err, "apply", tc.slotMax, 5)
+			refusal := requireRefusal(t, err, "apply", tc.slotMax, 4)
 			if !strings.Contains(refusal.Error(), "fsql4/") {
 				t.Fatalf("refusal does not name the format-4 markers: %v", refusal)
 			}
@@ -175,7 +175,7 @@ func TestRollbackOnAFormat4Store(t *testing.T) {
 		t.Fatalf("inventory %+v, %v", inv, err)
 	}
 	_, err = RollbackLast(paths, RollbackOptions{Reason: "health gate", StoreRoot: store})
-	requireRefusal(t, err, "rollback", 3, 5)
+	requireRefusal(t, err, "rollback", 3, 4)
 	for _, slot := range inv.Slots {
 		_, err := Rollback(paths, RollbackOptions{Slot: slot.Path, Reason: "named", StoreRoot: store})
 		var want int
@@ -185,7 +185,7 @@ func TestRollbackOnAFormat4Store(t *testing.T) {
 		default:
 			want = 1 // A, unstamped
 		}
-		requireRefusal(t, err, "rollback", want, 5)
+		requireRefusal(t, err, "rollback", want, 4)
 	}
 	if got := readFile(t, filepath.Join(root, "bin", "spacedatanetwork")); got != fleetLayout(5, "C5")["bin/spacedatanetwork"] {
 		t.Fatal("a refused rollback swapped the bundle")
