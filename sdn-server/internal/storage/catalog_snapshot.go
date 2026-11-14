@@ -101,7 +101,10 @@ func (s *FlatSQLStore) CaptureCatalogSnapshot(provider, indexSource string, cuto
 	}
 	head := s.publicationCutoffLocked()
 	if cutoff == 0 {
-		cutoff = head
+		cutoff = s.latestCatalogGeneration(x)
+		if cutoff == 0 {
+			return nil, errors.New("no completed catalog generation; commit the final index batch with :complete")
+		}
 	}
 	if cutoff > head {
 		return nil, errors.New("catalog cutoff exceeds committed head")
@@ -126,6 +129,10 @@ func (s *FlatSQLStore) SelectPublication(schema, provider, source, batch string)
 	cutoff := s.publicationCutoffLocked()
 	if batch == "" {
 		if x, ok := s.catalogSource(schema, provider, source); ok {
+			cutoff = s.latestCatalogGeneration(x)
+			if cutoff == 0 {
+				return nil, errors.New("no completed catalog generation")
+			}
 			snap, err := s.captureCatalogLocked(x, cutoff)
 			if err != nil {
 				return nil, err
@@ -208,4 +215,48 @@ func (s *FlatSQLStore) CatalogProductSource(provider, source string) (string, bo
 	defer s.publicationMu.Unlock()
 	x, ok := s.catalogSource("CAT.fbs", provider, source)
 	return x.ProductSource, ok
+}
+
+func (s *FlatSQLStore) latestCatalogGeneration(x PublicationSource) uint64 {
+	var cutoff uint64
+	for _, e := range s.publicationEntries {
+		if e.Applied && e.Generation && e.Schema == "CAT.fbs" && e.Tags.ProviderID == x.Provider && e.Tags.SourceName == x.Source {
+			cutoff = e.Sequence
+		}
+	}
+	return cutoff
+}
+
+// CompleteCatalogGeneration is the producer's explicit commit after every
+// product and index chunk is durable. A terminal index batch ending :complete
+// invokes the same operation. Uncommitted writes leave the last generation visible.
+func (s *FlatSQLStore) CompleteCatalogGeneration(provider, source string) (uint64, error) {
+	s.publicationWriteMu.Lock()
+	defer s.publicationWriteMu.Unlock()
+	return s.completeCatalogGenerationLocked(provider, source)
+}
+func (s *FlatSQLStore) completeCatalogGenerationLocked(provider, source string) (uint64, error) {
+	v := s.publicationView()
+	x, ok := v.catalogSource("CAT.fbs", provider, source)
+	if !ok {
+		return 0, errors.New("catalog_product_source is not configured")
+	}
+	snap, err := v.captureCatalogLocked(x, v.publicationCutoffLocked())
+	if err != nil {
+		return 0, err
+	}
+	if snap.Cutoff == 0 {
+		return 0, errors.New("catalog generation has no index records")
+	}
+	if err = publicationAtomicFile(filepath.Join(s.publicationEntryDir(snap.Cutoff), "generation"), []byte("1\n")); err != nil {
+		return 0, err
+	}
+	s.publicationMu.Lock()
+	defer s.publicationMu.Unlock()
+	for i, e := range s.publicationEntries {
+		if e.Sequence == snap.Cutoff {
+			s.publicationEntries[i].Generation = true
+		}
+	}
+	return snap.Cutoff, nil
 }

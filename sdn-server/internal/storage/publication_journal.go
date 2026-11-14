@@ -21,6 +21,7 @@ import (
 // ProductSource on CAT selects its OCM closure for source snapshots.
 type PublicationSource struct{ Schema, Provider, Source, ProductSource string }
 type publicationEntry struct {
+	Generation      bool                   `json:"-"`
 	Refs            []publicationRecordRef `json:"-"`
 	Published       bool                   `json:"-"`
 	Digest          string
@@ -258,6 +259,9 @@ func (b format4Backend) putRetained(op, schema string, records [][]byte, peer st
 		s.pausePublication(e, markerErr)
 		return cids, out, fmt.Errorf("engine write completed; publication acknowledgement pending: %w", markerErr)
 	}
+	if writeErr == nil && schema == "CAT.fbs" && strings.HasSuffix(tags.BatchID, ":complete") {
+		_, writeErr = s.completeCatalogGenerationLocked(tags.ProviderID, tags.SourceName)
+	}
 	return cids, out, writeErr
 }
 func publicationRefusals(out []format4.Outcome) map[int]int32 {
@@ -381,7 +385,7 @@ func (s *FlatSQLStore) recoverPublicationJournal() error {
 			err = nil
 		}
 		if err == nil {
-			_, err = s.publicationRecords(e)
+			e.Refs, err = s.publicationReferences(e)
 		} // Applied streams are checked too.
 		if err != nil {
 			s.pausePublication(e, err)
@@ -389,6 +393,8 @@ func (s *FlatSQLStore) recoverPublicationJournal() error {
 		}
 		_, completedErr := os.Stat(filepath.Join(s.publicationEntryDir(e.Sequence), "published"))
 		e.Published = completedErr == nil
+		_, generationErr := os.Stat(filepath.Join(s.publicationEntryDir(e.Sequence), "generation"))
+		e.Generation = generationErr == nil
 		s.publicationEntries[len(s.publicationEntries)-1] = e
 		if e.Applied {
 			continue

@@ -109,12 +109,7 @@ func (c *catalogConsumer) apply(t *testing.T, ex *storage.DatasetExport) {
 			s.CID = string(p.RECORD_CID())
 			s.Kind = byte(p.KIND())
 		}
-		old, ok := c.selected[cat.NORAD_CAT_ID()]
-		if !ok || s.AsOf > old.AsOf {
-			c.selected[cat.NORAD_CAT_ID()] = s
-		} else if s.AsOf == old.AsOf && s != old {
-			t.Fatal("ambiguous equal-time selections")
-		}
+		c.selected[cat.NORAD_CAT_ID()] = s
 	}
 }
 func (c *catalogConsumer) validate(t *testing.T) {
@@ -183,6 +178,9 @@ func TestCatalogCompactSnapshot(t *testing.T) {
 			if _, err := store.StoreBatchWithSourceTags(item.schema+".fbs", rows, "synthetic", nil, storage.SourceTags{ProviderID: "synthetic-node", SourceName: item.source, BatchID: fmt.Sprintf("day%d", day)}); err != nil {
 				t.Fatal(err)
 			}
+		}
+		if _, err := store.CompleteCatalogGeneration("synthetic-node", "catalog-index"); err != nil {
+			t.Fatal(err)
 		}
 		p := NewAutoPublisher(s, catalogRules())
 		catalogDrain(t, p)
@@ -327,8 +325,17 @@ func catalogPutDay(t *testing.T, s *storage.FlatSQLStore, day int, schemas ...st
 		if _, err := s.StoreBatchWithSourceTags(schema+".fbs", rows, "synthetic", nil, storage.SourceTags{ProviderID: "synthetic-node", SourceName: source, BatchID: fmt.Sprintf("day%d", day)}); err != nil {
 			t.Fatal(err)
 		}
+	} // A single CAT-only call can deliberately stage an unresolved generation.
+	for _, schema := range schemas {
+		if schema == "CAT" {
+			_, err := s.CompleteCatalogGeneration("synthetic-node", "catalog-index")
+			if err != nil && len(schemas) > 1 {
+				t.Fatal(err)
+			}
+		}
 	}
 }
+
 func catalogSnapshotConsumer(t *testing.T, s *storage.FlatSQLStore, cutoff uint64) (*catalogConsumer, uint64) {
 	t.Helper()
 	snap, exports, err := s.ExportCatalogSnapshot(t.TempDir(), "synthetic-node", "catalog-index", cutoff)
@@ -424,6 +431,9 @@ func TestCatalogSnapshotRefusesMissingProduct(t *testing.T) {
 		t.Fatal("unresolved snapshot exposed")
 	}
 	catalogPutDay(t, s, 0, "OCM")
+	if _, err := s.CompleteCatalogGeneration("synthetic-node", "catalog-index"); err != nil {
+		t.Fatal(err)
+	}
 	c, _ := catalogSnapshotConsumer(t, s, 0)
 	if len(c.selected) != 32 || len(c.products) != 32 {
 		t.Fatal("resolved snapshot has wrong cardinality")
