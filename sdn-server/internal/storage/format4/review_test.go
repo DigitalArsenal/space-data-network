@@ -31,10 +31,8 @@ func TestEmbeddedLayoutStampMatchesCapability(t *testing.T) {
 	if versioninfo.MaxStoreLayout != layout {
 		t.Fatalf("stamp %d, embedded capability requires %d", versioninfo.MaxStoreLayout, layout)
 	}
-	spec, err := TypeSpecFor("KMF.fbs")
-	if err != nil || len(spec.BFBS) != 0 {
-		t.Fatalf("sealed registration: %v", err)
-	}
+	// The node uses its CID-only fallback for the encrypted embedded standard.
+	spec := CIDOnlyTypeSpec("KMF", [4]byte{'$', 'K', 'M', 'F'})
 	if err := e.RegisterType(spec); err != nil {
 		t.Fatal(err)
 	}

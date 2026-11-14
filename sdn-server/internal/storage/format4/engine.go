@@ -111,6 +111,13 @@ func Open(ctx context.Context, opt Options) (*Engine, error) {
 	if len(wasm) == 0 {
 		return nil, flatsqlrt.ErrNoP4Artifact
 	}
+	if opt.Create != OpenExisting && opt.Store == nil {
+		// The host opens the data root before the capability probe. Engine
+		// files remain absent until that probe succeeds and initialization runs.
+		if err := os.MkdirAll(root, 0o700); err != nil {
+			return nil, err
+		}
+	}
 	engineRoot := filepath.Join(root, marker.Dir)
 	fdBudget, basis := flatsqlrt.P4FDBudget(opt.FDBudget)
 	if opt.Tuning.ReaderConns == 0 {
