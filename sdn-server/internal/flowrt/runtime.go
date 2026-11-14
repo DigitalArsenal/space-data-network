@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	logging "github.com/ipfs/go-log/v2"
 	"github.com/spacedatanetwork/sdn-server/internal/modulert"
@@ -339,6 +340,11 @@ func (rt *FlowRuntime) GetIngressRuntimeState(index uint32) (*FlowIngressRuntime
 // Drain runs the flow scheduling loop: get ready node → begin invocation →
 // dispatch to handler → apply result → repeat until idle or maxIterations.
 func (rt *FlowRuntime) Drain(ctx context.Context, handlers HandlerMap, opts DrainOptions) (*DrainResult, error) {
+	return rt.drain(ctx, handlers, opts, rt.mod.ExecuteContext)
+}
+
+// drain separates guest dispatch from host scheduling for failure-path tests.
+func (rt *FlowRuntime) drain(ctx context.Context, handlers HandlerMap, opts DrainOptions, execute func(context.Context, string, ...interface{}) ([]interface{}, error)) (*DrainResult, error) {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 
@@ -348,6 +354,10 @@ func (rt *FlowRuntime) Drain(ctx context.Context, handlers HandlerMap, opts Drai
 	}
 
 	result := &DrainResult{}
+	linkedExport := runtimeExportDrainLinked
+	if rt.hasDrainLinked && !rt.mod.HasFunction(linkedExport) {
+		linkedExport = underscoreRuntimeExportName(linkedExport)
+	}
 
 	for i := 0; i < maxIter; i++ {
 		select {
@@ -366,7 +376,7 @@ func (rt *FlowRuntime) Drain(ctx context.Context, handlers HandlerMap, opts Drai
 		// engine body-refs are harvested before it is released.
 		if rt.hasDrainLinked {
 			runLinked := func() error {
-				res, err := rt.mod.Execute(runtimeExportDrainLinked, int32(maxIter))
+				res, err := execute(ctx, linkedExport, int32(maxIter))
 				if err != nil {
 					return err
 				}
@@ -381,7 +391,9 @@ func (rt *FlowRuntime) Drain(ctx context.Context, handlers HandlerMap, opts Drai
 					return result, fmt.Errorf("linked drain: %w", err)
 				}
 			} else {
-				_ = runLinked() // best-effort, host loop below is the fallback
+				if err := runLinked(); err != nil && flowContextDone(ctx, err) {
+					return result, fmt.Errorf("linked drain: %w", err)
+				}
 			}
 		}
 
@@ -425,7 +437,9 @@ func (rt *FlowRuntime) Drain(ctx context.Context, handlers HandlerMap, opts Drai
 			result.HandlersSkipped++
 
 			if info.DispatchModel == "linked-direct" {
-				rt.dispatchDirect(nodeIndex)
+				if err := rt.dispatchDirectWith(ctx, nodeIndex, execute); err != nil {
+					return result, err
+				}
 				result.NodesInvoked++
 				continue
 			}
@@ -574,11 +588,41 @@ func (rt *FlowRuntime) writeOutputFrames(outputs []FrameOutput) (uint32, uint32)
 }
 
 // dispatchDirect calls the linked-direct dispatch for the current invocation.
-func (rt *FlowRuntime) dispatchDirect(nodeIndex uint32) {
-	res, err := rt.mod.Execute(runtimeExportDispatchCurrentInvocation, int32(64))
-	if err != nil {
-		rt.mod.Execute(underscoreRuntimeExportName(runtimeExportDispatchCurrentInvocation), int32(64))
+func (rt *FlowRuntime) dispatchDirect(ctx context.Context, nodeIndex uint32) error {
+	return rt.dispatchDirectWith(ctx, nodeIndex, rt.mod.ExecuteContext)
+}
+
+func (rt *FlowRuntime) dispatchDirectWith(ctx context.Context, nodeIndex uint32, execute func(context.Context, string, ...interface{}) ([]interface{}, error)) error {
+	name := runtimeExportDispatchCurrentInvocation
+	if !rt.mod.HasFunction(name) {
+		name = underscoreRuntimeExportName(name)
 	}
-	_ = res
+	if _, err := execute(ctx, name, int32(64)); err != nil {
+		if flowContextDone(ctx, err) {
+			return fmt.Errorf("direct dispatch: %w", err)
+		}
+		// Preserve the legacy alternate-export attempt and completion on failure.
+		if name == runtimeExportDispatchCurrentInvocation {
+			if _, err := execute(ctx, underscoreRuntimeExportName(name), int32(64)); err != nil && flowContextDone(ctx, err) {
+				return fmt.Errorf("direct dispatch: %w", err)
+			}
+		}
+	}
 	rt.CompleteInvocation(nodeIndex)
+	return nil
+}
+
+// WasmEdge's async wait rounds a deadline down to whole milliseconds. Join the
+// context timer across that final fraction before deciding to use the fallback.
+func flowContextDone(ctx context.Context, err error) bool {
+	if ctx.Err() != nil {
+		return true
+	}
+	if errors.Is(err, wasmrt.ErrExecutionTimeout) {
+		if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) <= time.Millisecond {
+			<-ctx.Done()
+			return true
+		}
+	}
+	return false
 }

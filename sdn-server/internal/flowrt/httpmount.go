@@ -33,6 +33,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
@@ -62,6 +63,9 @@ var ErrFlowNotInstalled = errors.New("flow is not installed")
 // FlowMountDeps carries the host services a mounted flow's declared
 // capabilities are satisfied from. Nothing here makes request-level decisions.
 type FlowMountDeps struct {
+	// ExecutionTimeout is the host-granted service budget; zero preserves defaults.
+	ExecutionTimeout time.Duration
+
 	// CapRegistry provides capability handlers for the flow's manifest
 	// capability set. Loading REJECTS if a declared capability has no factory.
 	CapRegistry *modulert.CapabilityRegistry
@@ -296,6 +300,10 @@ func loadFlowInstance(wasmBytes []byte, pages uint32, linked bool, linkShim []by
 
 	opts := []wasmrt.Option{
 		wasmrt.WithHostModule(modulert.HostcallImportModule, bridge.BuildWasmEdgeHostFuncs()),
+	}
+
+	if deps.ExecutionTimeout > 0 {
+		opts = append(opts, wasmrt.WithExecTimeout(deps.ExecutionTimeout))
 	}
 
 	var engineRT *flatsqlrt.Runtime

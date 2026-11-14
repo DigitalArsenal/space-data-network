@@ -599,9 +599,23 @@ func cronInvokeForced(input []byte) bool {
 	return payload.Force
 }
 
+// executionContext carries the service grant and a deadline across guest calls.
+func (sf *ServiceFlow) executionContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if sf.deps.ExecutionTimeout <= 0 {
+		return ctx, func() {}
+	}
+	ctx = wasmrt.WithExecBudget(ctx, wasmrt.ExecBudget{Timeout: sf.deps.ExecutionTimeout})
+	return context.WithTimeout(ctx, sf.deps.ExecutionTimeout)
+}
+
 // FireTrigger runs one named timer trigger to completion (also the direct
 // entry point for tests and the admin surface).
 func (sf *ServiceFlow) FireTrigger(ctx context.Context, triggerID string) ([]byte, error) {
+	ctx, cancel := sf.executionContext(ctx)
+	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	var trigger *serviceTrigger
 	for i := range sf.triggers {
 		if sf.triggers[i].TriggerID == triggerID {
@@ -672,7 +686,7 @@ func (sf *ServiceFlow) FireTrigger(ctx context.Context, triggerID string) ([]byt
 	}
 	// A refused frame is a run that cannot start: say so instead of draining
 	// an empty flow and reporting that nothing ran.
-	res, err := rt.Module().Execute(runtimeExportEnqueueTriggerFrame, int32(trigger.Index), int32(framePtr))
+	res, err := rt.Module().ExecuteContext(ctx, runtimeExportEnqueueTriggerFrame, int32(trigger.Index), int32(framePtr))
 	if err != nil {
 		return nil, fmt.Errorf("flow service %q trigger %q: enqueue the tick: %w", sf.programID, triggerID, err)
 	}
@@ -1033,6 +1047,13 @@ func LoadFlowServices(services []config.FlowService, deps FlowMountDeps) ([]*Ser
 			return fail(fmt.Errorf("flow service requires a flow reference"))
 		}
 		serviceDeps := deps
+		if raw := strings.TrimSpace(service.ExecutionTimeout); raw != "" {
+			d, err := time.ParseDuration(raw)
+			if err != nil || d <= 0 {
+				return fail(fmt.Errorf("flow service %q execution_timeout %q must be a positive duration", service.Flow, raw))
+			}
+			serviceDeps.ExecutionTimeout = d
+		}
 		if service.MemoryPages > 0 {
 			serviceDeps.MaxMemoryPages = service.MemoryPages
 		}
