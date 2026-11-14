@@ -18,10 +18,14 @@ reference validation, hashing, and export run outside the ingestion lock. Limits
 are 100,000 journal entries, 100,000 records per selection, 64 MiB of accounted metadata
 per shard index, and 16 MiB per payload. Each retained source has
 `catalog_object_limit` (1 through 100,000; omitted or zero defaults to 100,000).
-The store reserves two generations per source: reference capacity is
-`2 * sum(catalog_object_limit)`, and accounted reference-byte capacity is
+Each source has a generation allowance of
+`min(100000, catalog_object_limit + ceil(catalog_object_limit / 4))`.
+The store reserves four generations per source: reference capacity is
+`4 * sum(generation_allowance)`, and accounted reference-byte capacity is
 `256 * reference_capacity + 1 MiB * retained_source_count`. A CAT/OCM pair
-configured for N objects reserves 4N references. Configuration validates the
+configured for N objects reserves up to 10N references, capped at 800,000 for
+the pair. Lowering or removing a setting preserves the durable capacity and
+logs the configured capacity and retained use. Configuration validates the
 range at startup. The reference structure occupies 88 bytes; binary content
 digests, offsets, and lengths are inline, while paths and tags are shared per
 entry. Accounted bytes also include identity strings, cached product digests,
@@ -95,8 +99,8 @@ copy; if both copies are unusable, all retained sources are paused conservativel
 Ordinary sources remain available. Applied streams are also checksum-verified at
 startup. Only unreclaimed streams are read: startup work scales with their payload
 bytes plus reference metadata. Startup parses every kept CAT payload once to
-cache its product identifiers. At a paired 100,000-object capacity, 400,000
-records at the 16 MiB per-record limit imply a theoretical 6.25 TiB payload bound. The reference-metadata
+cache its product identifiers. At a paired 100,000-object capacity, 800,000
+records at the 16 MiB per-record limit imply a theoretical 12.5 TiB payload bound. The reference-metadata
 limit can bind earlier. This is an I/O bound, not a measured startup duration.
 Orphan preparation and reclaimed directories and abandoned `.write-*` files are removed.
 Corrupt derived reclamation plans are rebuilt from independent allocation
@@ -227,8 +231,43 @@ Quarantined batches also requeue automatically after six hours. Transport, servi
 shutdown, and transient filesystem errors retry without a quarantine count, with
 backoff capped at 30 minutes. Concurrent validation of the same captured
 generation failure increments its counter once.
-An unapplied storage intent cannot be discarded by this mechanism. Requeue also
-resets terminal-generation failures. Quarantined bytes count against capacity.
+An operator can discard or requeue any unfinished batch, including one with no
+recorded failure. A durable discard of an unapplied intent prevents its replay.
+Requeue also resets terminal-generation failures. Quarantined bytes count against capacity.
+
+Paired generation admission reserves both product and index space before its
+first product transaction. Products still precede index chunks, and the final
+index batch retains its `:complete` suffix. Publication of either side waits
+for that generation's terminal commit. A capacity refusal cancels the staged
+generation through a durable abort plan and releases its publication payloads;
+live records are unchanged by cancellation. Active readers retain their pins
+through cleanup. The last completed snapshot remains available. Refusals name
+`catalog_object_limit`, the capacity, and retained use. Pending batches preserve
+their bytes during publication lag; after completion, reclamation coalesces
+history to the latest generation and remaining pending batches.
+
+First-production consumers follow snapshots only and replace their catalog on
+each announced snapshot. Changed-batch consumers require additional ordering
+and takedown handling.
+
+Receipt checkpoints use one file per source with 48-byte frames. A truncated or
+bad-checksum final frame is a torn tail: recovery logs, truncates, and syncs it.
+A corrupt middle frame pauses its source. Legacy global checkpoints remain
+readable; an ambiguous middle-frame failure in that format requires global
+publication repair because its frames contain no source identity. An unreadable
+watermarks file is rebuilt from entries, receipts, and reclamation metadata.
+The recovered global sequence supplies a conservative source-sequence floor;
+this can create a gap but cannot reuse an older cursor. Failure to persist that
+repair pauses retained sources while ordinary storage remains available.
+
+Immutable input checksum, framing, identity, and selection-bound failures are
+content errors. Transport, cancellation, configuration, output-filesystem, and
+resource errors remain retryable service failures. Unreadable immutable entry
+payloads at recovery are isolated immediately; normal publication content
+attempts retain the three-failure threshold.
+
+Selection sorts compare digest bytes without allocating CID strings and retain
+the existing lowercase-base32 lexical order, including its digit ordering.
 
 Ordinary sources use the existing buffered shard-export path. Retained exports
 stream to a temporary file and install immutable output through a hard link, with

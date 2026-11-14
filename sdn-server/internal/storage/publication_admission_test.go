@@ -1,6 +1,9 @@
 package storage
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -63,6 +66,48 @@ func TestPublicationGenerationAdmissionAndHeadroom(t *testing.T) {
 	if err := s.ReclaimPublication(); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestPublicationReservationAndInterruptedAbort(t *testing.T) {
+	t.Setenv("SDN_STORE_FORMAT", "4")
+	dir := t.TempDir()
+	s := reclamationStore(t, dir)
+	if err := s.ConfigurePublicationSources([]PublicationSource{{Schema: "CAT.fbs", Provider: "synthetic", Source: "index", ProductSource: "products", CatalogObjectLimit: 2}, {Schema: "OCM.fbs", Provider: "synthetic", Source: "products", CatalogObjectLimit: 2}, {Schema: "CAT.fbs", Provider: "synthetic", Source: "other", CatalogObjectLimit: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	products, indexes := reclamationRecords(0, 2)
+	if _, err := s.StoreBatchWithSourceTags("OCM.fbs", products, "synthetic", nil, SourceTags{ProviderID: "synthetic", SourceName: "products", BatchID: "reserved"}); err != nil {
+		t.Fatal(err)
+	}
+	_, filler := reclamationRecords(1, s.publicationRecordLimit()-2)
+	if _, err := s.StoreBatchWithSourceTags("CAT.fbs", filler, "synthetic", nil, SourceTags{ProviderID: "synthetic", SourceName: "other", BatchID: "fill"}); err == nil {
+		t.Fatal("unrelated source consumed reserved index capacity")
+	}
+	if _, err := s.StoreBatchWithSourceTags("CAT.fbs", indexes, "synthetic", nil, SourceTags{ProviderID: "synthetic", SourceName: "index", BatchID: "reserved:complete"}); err != nil {
+		t.Fatal(err)
+	}
+	products, _ = reclamationRecords(1, 2)
+	if _, err := s.StoreBatchWithSourceTags("OCM.fbs", products, "synthetic", nil, SourceTags{ProviderID: "synthetic", SourceName: "products", BatchID: "interrupted"}); err != nil {
+		t.Fatal(err)
+	}
+	seq := s.publicationHighWater
+	plan := filepath.Join(s.publicationDir(), "generation-abort.json")
+	s.Close()
+	raw, _ := json.Marshal([]uint64{seq})
+	if err := os.WriteFile(plan, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	s = journalTestStore(t, dir)
+	defer s.Close()
+	if got := s.PublicationJournalStats().Records; got != 4 {
+		t.Fatalf("interrupted abort retained staged products: %d", got)
+	}
+	snap, err := s.CaptureCatalogSnapshot("synthetic", "index", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap.Close()
+	reclamationDay(t, s, 2, 2)
 }
 
 func TestPublicationThreeGenerationLagCoalesces(t *testing.T) {
