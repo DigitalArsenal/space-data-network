@@ -5,13 +5,20 @@ import { fileURLToPath } from 'node:url';
 const modulePath = fileURLToPath(import.meta.url);
 const repoRoot = resolve(dirname(modulePath), '../..');
 
+const betaTagPattern = /^v\d+\.\d+\.\d+-beta(?:\.[0-9A-Za-z-]+)*$/;
+// A stable release is a plain vX.Y.Z, given explicitly: a blank version still
+// means the next beta, so nothing becomes stable by default.
+const stableTagPattern = /^v\d+\.\d+\.\d+$/;
+
 function normalizeBetaTag(inputVersion, packageVersion, runNumber) {
   const explicitVersion = String(inputVersion ?? '').trim();
   const rawVersion = explicitVersion || `${String(packageVersion).replace(/^v/, '')}-beta.${runNumber}`;
   const releaseTag = rawVersion.startsWith('v') ? rawVersion : `v${rawVersion}`;
 
-  if (!/^v\d+\.\d+\.\d+-beta(?:\.[0-9A-Za-z-]+)*$/.test(releaseTag)) {
-    throw new Error(`Release version must be a beta version like v1.0.3-beta.42; received ${releaseTag}`);
+  if (!betaTagPattern.test(releaseTag) && !stableTagPattern.test(releaseTag)) {
+    throw new Error(
+      `Release version must be a beta version like v1.0.3-beta.42 or a stable version like v1.1.0; received ${releaseTag}`
+    );
   }
 
   return releaseTag;
@@ -29,19 +36,22 @@ export function computeBetaRelease({ packageVersion, runNumber, inputVersion = '
   const releaseTag = normalizeBetaTag(inputVersion, packageVersion, runNumber);
   const versionWithoutPrefix = releaseTag.slice(1);
   const nativePackageVersion = versionWithoutPrefix.replace('-beta', '~beta');
+  const stable = stableTagPattern.test(releaseTag);
 
   return {
     releaseTag,
     packageVersion: versionWithoutPrefix,
     nativePackageVersion,
-    releaseName: `Space Data Network ${releaseTag} Beta`,
+    releaseName: stable ? `Space Data Network ${releaseTag}` : `Space Data Network ${releaseTag} Beta`,
     // Release MATURITY (and the npm dist-tag), not the update channel a
     // bundle is stamped with. Never wire this into build-self-contained-cli
     // or build-cli-update-payload: 'beta' is the internal fleet dev lane's
     // channel, and a public bundle pointed at it installs binary-only
-    // payloads that amputate runtime/.
-    channel: 'beta',
-    npmTag: 'beta'
+    // payloads that amputate runtime/. Bundles and the update feed are
+    // stamped `--channel release` for a beta and a stable release alike; the
+    // workflow passes this value only to the release notes and manifest.
+    channel: stable ? 'stable' : 'beta',
+    npmTag: stable ? 'latest' : 'beta'
   };
 }
 
