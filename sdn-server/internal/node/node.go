@@ -536,6 +536,13 @@ func (n *Node) init() error {
 		}
 		for _, rule := range n.config.Publishing.AutoPublish {
 			schema := strings.TrimSuffix(rule.Schema, ".fbs") + ".fbs"
+			for action, batches := range map[string][]string{"requeue": rule.RequeuePublicationBatches, "discard": rule.DiscardPublicationBatches} {
+				for _, batch := range batches {
+					if err := n.store.ManagePublicationBatch(schema, strings.TrimSpace(rule.ProviderID), strings.TrimSpace(rule.SourceName), batch, action); err != nil {
+						return err
+					}
+				}
+			}
 			if rule.StopPublicationRetention {
 				if err := n.store.StopPublicationRetention(schema, strings.TrimSpace(rule.ProviderID), strings.TrimSpace(rule.SourceName)); err != nil {
 					return err

@@ -265,8 +265,6 @@ func (s *FlatSQLStore) latestCatalogGeneration(x PublicationSource) uint64 {
 // product and index chunk is durable. A terminal index batch ending :complete
 // invokes the same operation. Uncommitted writes leave the last generation visible.
 func (s *FlatSQLStore) CompleteCatalogGeneration(provider, source string) (uint64, error) {
-	s.publicationWriteMu.Lock()
-	defer s.publicationWriteMu.Unlock()
 	return s.completeCatalogGenerationLocked(provider, source)
 }
 func (s *FlatSQLStore) completeCatalogGenerationLocked(provider, source string) (uint64, error) {
@@ -282,16 +280,38 @@ func (s *FlatSQLStore) completeCatalogGenerationAtLocked(provider, source string
 	if cutoff == 0 {
 		cutoff = v.publicationCutoffLocked()
 	}
-	snap, err := v.captureCatalogLocked(x, cutoff)
-	if err != nil {
-		return 0, err
+	var terminal publicationEntry
+	for _, e := range v.publicationEntries {
+		if e.Applied && e.Sequence <= cutoff && e.Schema == "CAT.fbs" && e.Tags.ProviderID == provider && e.Tags.SourceName == source {
+			terminal = e
+		}
 	}
-	if _, err = v.captureCatalogLocked(x, snap.Cutoff); err != nil {
-		return 0, fmt.Errorf("commit product records before the final index batch: %w", err)
+	if terminal.Sequence == 0 {
+		return 0, errors.New("catalog generation has no index records")
+	}
+	if terminal.Generation {
+		return terminal.Sequence, nil
+	}
+	if terminal.GenerationFailure.Attempts >= 3 {
+		return 0, fmt.Errorf("catalog generation quarantined: %s", terminal.GenerationFailure.Reason)
+	}
+	snap, err := v.captureCatalogLocked(x, terminal.Sequence)
+	if err != nil {
+		s.publicationWriteMu.Lock()
+		defer s.publicationWriteMu.Unlock()
+		if saveErr := s.recordGenerationFailure(terminal, err); saveErr != nil {
+			return 0, saveErr
+		}
+		return 0, err
 	}
 	if snap.Cutoff == 0 {
 		return 0, errors.New("catalog generation has no index records")
 	}
+	if s.publicationHook != nil {
+		s.publicationHook("generation-captured")
+	}
+	s.publicationWriteMu.Lock()
+	defer s.publicationWriteMu.Unlock()
 	if err = s.publicationStep("generation"); err != nil {
 		return 0, err
 	}
@@ -309,8 +329,11 @@ func (s *FlatSQLStore) completeCatalogGenerationAtLocked(provider, source string
 }
 
 func (s *FlatSQLStore) retryCatalogGenerationsLocked() {
-	for _, e := range s.publicationEntries {
-		if e.Applied && !e.Generation && e.Schema == "CAT.fbs" && strings.HasSuffix(e.Tags.BatchID, ":complete") {
+	v := s.publicationView()
+	defer v.publicationRelease()
+	for _, e := range v.publicationEntries {
+		_, paired := v.catalogSource(e.Schema, e.Tags.ProviderID, e.Tags.SourceName)
+		if paired && e.Applied && !e.Generation && e.GenerationFailure.Attempts < 3 && e.Schema == "CAT.fbs" && strings.HasSuffix(e.Tags.BatchID, ":complete") {
 			if _, err := s.completeCatalogGenerationAtLocked(e.Tags.ProviderID, e.Tags.SourceName, e.Sequence); err != nil {
 				log.Warnf("catalog generation remains incomplete: %v", err)
 			}

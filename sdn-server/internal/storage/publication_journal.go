@@ -24,21 +24,23 @@ import (
 // ProductSource on CAT selects its OCM closure for source snapshots.
 type PublicationSource struct{ Schema, Provider, Source, ProductSource string }
 type publicationEntry struct {
-	ReferenceBytes  int64                  `json:"-"`
-	Generation      bool                   `json:"-"`
-	Refs            []publicationRecordRef `json:"-"`
-	Published       bool                   `json:"-"`
-	Digest          string
-	Sequence        uint64
-	Schema          string
-	Tags            SourceTags
-	Peer            string
-	Signature       []byte
-	Identity, OwnTS bool
-	ReadReady       bool `json:"-"`
-	OutcomeKnown    bool `json:"-"`
-	Applied         bool
-	Refused         map[int]int32 `json:",omitempty"`
+	ReferenceBytes    int64                  `json:"-"`
+	GenerationFailure publicationFailure     `json:"-"`
+	BatchFailure      publicationFailure     `json:"-"`
+	Generation        bool                   `json:"-"`
+	Refs              []publicationRecordRef `json:"-"`
+	Published         bool                   `json:"-"`
+	Digest            string
+	Sequence          uint64
+	Schema            string
+	Tags              SourceTags
+	Peer              string
+	Signature         []byte
+	Identity, OwnTS   bool
+	ReadReady         bool `json:"-"`
+	OutcomeKnown      bool `json:"-"`
+	Applied           bool
+	Refused           map[int]int32 `json:",omitempty"`
 }
 
 func (s *FlatSQLStore) publicationDir() string {
@@ -168,7 +170,7 @@ func (b format4Backend) putRetained(op, schema string, records [][]byte, peer st
 	for _, old := range s.publicationEntries {
 		indexed += len(old.Refs)
 		referenceBytes += old.ReferenceBytes
-		if !old.Published && old.Schema == schema && old.Tags.ProviderID == tags.ProviderID && old.Tags.SourceName == tags.SourceName {
+		if !old.Published && old.BatchFailure.Attempts < 3 && old.GenerationFailure.Attempts < 3 && old.Schema == schema && old.Tags.ProviderID == tags.ProviderID && old.Tags.SourceName == tags.SourceName {
 			pending[old.Tags.BatchID] = true
 		}
 	}
@@ -297,9 +299,7 @@ func (b format4Backend) putRetained(op, schema string, records [][]byte, peer st
 		s.pausePublication(e, markerErr)
 		return cids, out, fmt.Errorf("engine write completed; publication acknowledgement pending: %w", markerErr)
 	}
-	if writeErr == nil && schema == "CAT.fbs" && strings.HasSuffix(tags.BatchID, ":complete") {
-		_, writeErr = s.completeCatalogGenerationLocked(tags.ProviderID, tags.SourceName)
-	}
+
 	return cids, out, writeErr
 }
 func publicationRefusals(out []format4.Outcome) map[int]int32 {
@@ -383,6 +383,13 @@ func (s *FlatSQLStore) PublicationRecoveryStatus() map[string]string {
 	out := map[string]string{}
 	for k, err := range s.publicationFailures {
 		out[k.schema+"/"+k.provider+"/"+k.source] = err.Error()
+	}
+	for _, e := range s.publicationEntries {
+		for kind, f := range map[string]publicationFailure{"generation": e.GenerationFailure, "batch": e.BatchFailure} {
+			if f.Attempts >= 3 {
+				out[e.Schema+"/"+e.Tags.ProviderID+"/"+e.Tags.SourceName+"/"+e.Tags.BatchID+"/"+kind] = f.Reason
+			}
+		}
 	}
 	return out
 }
@@ -486,6 +493,7 @@ func (s *FlatSQLStore) recoverPublicationJournal() error {
 		e.Published = completedErr == nil
 		_, generationErr := os.Stat(filepath.Join(s.publicationEntryDir(e.Sequence), "generation"))
 		e.Generation = generationErr == nil
+		s.loadPublicationFailures(&e)
 		s.publicationEntries[len(s.publicationEntries)-1] = e
 		if e.Applied {
 			continue
@@ -602,7 +610,7 @@ func (s *FlatSQLStore) RetainedPublicationBatches() []PublicationBatch {
 	defer s.publicationMu.Unlock()
 	byKey := map[string]PublicationBatch{}
 	for _, e := range s.publicationEntries {
-		if !e.Applied || e.Published || s.publicationFailures[publicationSourceKey{e.Schema, e.Tags.ProviderID, e.Tags.SourceName}] != nil {
+		if !e.Applied || e.Published || e.BatchFailure.Attempts >= 3 || e.GenerationFailure.Attempts >= 3 || s.publicationFailures[publicationSourceKey{e.Schema, e.Tags.ProviderID, e.Tags.SourceName}] != nil {
 			continue
 		}
 		key := e.Schema + "\x00" + e.Tags.ProviderID + "\x00" + e.Tags.SourceName + "\x00" + e.Tags.BatchID
@@ -698,7 +706,8 @@ func (s *FlatSQLStore) retainedSelectionLocked(schema, provider, source, batch s
 			return nil, errors.New("publication selection exceeds 100000 records; partition the source")
 		}
 	}
-	if schema == "CAT.fbs" && strings.HasSuffix(batch, ":complete") && !terminalComplete {
+	_, paired := s.catalogSource(schema, provider, source)
+	if paired && schema == "CAT.fbs" && strings.HasSuffix(batch, ":complete") && !terminalComplete {
 		return nil, errors.New("terminal catalog batch has no completed generation")
 	}
 	excluded, err := s.catalogExclusions(schema, provider, source)
@@ -706,7 +715,7 @@ func (s *FlatSQLStore) retainedSelectionLocked(schema, provider, source, batch s
 		return nil, err
 	}
 	for _, r := range byKey {
-		if batch == "" && excluded[r.CID] {
+		if excluded[r.CID] {
 			continue
 		}
 		p.refs = append(p.refs, r)
@@ -733,7 +742,6 @@ func (s *FlatSQLStore) publicationSourceEnabled(schema, provider, source string)
 // once per call. Reconciliation calls it between publication attempts.
 func (s *FlatSQLStore) RetryPublicationRecovery() {
 	s.publicationWriteMu.Lock()
-	defer s.publicationWriteMu.Unlock()
 	resolved := map[publicationSourceKey]bool{}
 	failed := map[publicationSourceKey]bool{}
 	for _, e := range s.publicationEntries {
@@ -802,6 +810,7 @@ func (s *FlatSQLStore) RetryPublicationRecovery() {
 		}
 	}
 	s.publicationMu.Unlock()
+	s.publicationWriteMu.Unlock()
 	s.retryCatalogGenerationsLocked()
 }
 

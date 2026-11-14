@@ -170,7 +170,7 @@ func (p *AutoPublisher) queueReadyPairedBatches() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for _, state := range p.orderedPairedLocked() {
-		if state.inFlight || state.queued || p.pairedBatchDueLocked(state).After(p.now()) {
+		if !p.firstPairedLocked(state) || state.inFlight || state.queued || p.pairedBatchDueLocked(state).After(p.now()) {
 			continue
 		}
 		select {
@@ -248,6 +248,18 @@ func (p *AutoPublisher) publishPairedBatch(ctx context.Context, req DatasetPubli
 			err = fmt.Errorf("publication returned no completion")
 		}
 	}
+	quarantined := false
+	if err != nil {
+		if recorder, ok := p.service.(interface {
+			RecordPublicationFailure(DatasetPublicationRequest, error) (bool, error)
+		}); ok {
+			var saveErr error
+			quarantined, saveErr = recorder.RecordPublicationFailure(req, err)
+			if saveErr != nil {
+				log.Warnf("save publication failure: %v", saveErr)
+			}
+		}
+	}
 	p.mu.Lock()
 	state.inFlight = false
 	if state.retrying {
@@ -255,10 +267,14 @@ func (p *AutoPublisher) publishPairedBatch(ctx context.Context, req DatasetPubli
 		state.retrying = false
 	}
 	if err != nil {
-		state.attempts++
-		state.retrying = true
-		p.retrying++
-		state.due = p.now().Add(p.retryBackoff(state.attempts))
+		if quarantined {
+			delete(p.pairedPending, key)
+		} else {
+			state.attempts++
+			state.retrying = true
+			p.retrying++
+			state.due = p.now().Add(p.retryBackoff(state.attempts))
+		}
 	} else {
 		if generation == state.generation {
 			delete(p.pairedPending, key)
@@ -341,4 +357,8 @@ func (s *ConcreteDatasetPublicationService) PublicationBatchOrder(req DatasetPub
 
 func (s *ConcreteDatasetPublicationService) PublicationRecoveryStatus() map[string]string {
 	return s.store.PublicationRecoveryStatus()
+}
+
+func (s *ConcreteDatasetPublicationService) RecordPublicationFailure(req DatasetPublicationRequest, err error) (bool, error) {
+	return s.store.RecordPublicationFailure(req.Schema, req.ProviderID, req.SourceName, req.BatchID, err)
 }

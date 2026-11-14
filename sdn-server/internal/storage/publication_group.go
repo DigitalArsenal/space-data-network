@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format4"
+	"strings"
 )
 
 type publicationGroupKey struct {
@@ -74,7 +75,13 @@ func (b format4Backend) groupPublicationPut(op, schema string, records [][]byte,
 		if err == nil {
 			cids, outcomes, err = b.putRetained(op, schema, joined, peer, sig, tags, opt)
 		}
+		cutoff := s.publicationHighWater
 		s.publicationWriteMu.Unlock()
+		if err == nil && schema == "CAT.fbs" && strings.HasSuffix(tags.BatchID, ":complete") {
+			if _, paired := s.CatalogProductSource(tags.ProviderID, tags.SourceName); paired {
+				_, err = s.completeCatalogGenerationAtLocked(tags.ProviderID, tags.SourceName, cutoff)
+			}
+		}
 		offset := 0
 		for _, r := range requests {
 			end := offset + len(r.records)

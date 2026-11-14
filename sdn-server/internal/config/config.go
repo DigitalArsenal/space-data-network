@@ -1061,7 +1061,9 @@ type AutoPublishLane struct {
 	// PairedPublication opts this exact source into deferred batches and periodic snapshots.
 	PairedPublication bool `yaml:"paired_publication,omitempty"`
 	// StopPublicationRetention removes this source only after every retained batch completed.
-	StopPublicationRetention bool `yaml:"stop_publication_retention,omitempty"`
+	RequeuePublicationBatches []string `yaml:"requeue_publication_batches,omitempty"`
+	DiscardPublicationBatches []string `yaml:"discard_publication_batches,omitempty"`
+	StopPublicationRetention  bool     `yaml:"stop_publication_retention,omitempty"`
 	// CatalogExcludeCIDs removes selected CAT records from future snapshots.
 	CatalogExcludeCIDs []string `yaml:"catalog_exclude_cids,omitempty"`
 
