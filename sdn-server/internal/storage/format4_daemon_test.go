@@ -69,12 +69,9 @@ func format4TestWasm(t *testing.T) []byte {
 func onFormat4Engine(t *testing.T, body func(t *testing.T)) {
 	wasm := format4TestWasm(t)
 	prev := format4OpenEngine
+	cache := t.TempDir()
 	format4OpenEngine = func(ctx context.Context, opt format4.Options) (format4.API, error) {
-		base, err := os.UserCacheDir()
-		if err != nil {
-			base = os.TempDir()
-		}
-		opt.Wasm, opt.CompileOnMiss, opt.AOTCacheDir = wasm, true, filepath.Join(base, "sdn-format4-test-aot")
+		opt.Wasm, opt.CompileOnMiss, opt.AOTCacheDir = wasm, true, cache
 		return prev(ctx, opt)
 	}
 	t.Cleanup(func() { format4OpenEngine = prev })
@@ -122,7 +119,10 @@ func TestFormat4UnlimitedVisibilityOptIn(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Setenv(format4.FormatEnv, "4")
-		if _, err := NewFlatSQLStore(root, nil); err == nil || !strings.Contains(err.Error(), "unlimited_sql_visibility") {
+		if unexpected, err := NewFlatSQLStore(root, nil); err == nil || !strings.Contains(err.Error(), "unlimited_sql_visibility") {
+			if unexpected != nil {
+				unexpected.Close()
+			}
 			t.Fatalf("disabled promoted store: %v", err)
 		}
 		store = openFormat4ForTest(t, root, WithUnlimitedSQLVisibility(true))
@@ -201,16 +201,15 @@ func TestFormat4MissingCapabilityLeavesNoStore(t *testing.T) {
 	format4OpenEngine = func(ctx context.Context, opt format4.Options) (format4.API, error) {
 		opt.Wasm = flatsqlrt.P4ThreadsWasm()
 		opt.CompileOnMiss = true
-		cache := os.Getenv("PARTB_AOT_CACHE")
-		if cache == "" {
-			cache = t.TempDir()
-		}
-		opt.AOTCacheDir = filepath.Join(cache, "missing-capability")
+		opt.AOTCacheDir = t.TempDir()
 		return format4.Open(ctx, opt)
 	}
 	t.Setenv(format4.FormatEnv, "4")
 	root := t.TempDir()
-	_, err := NewFlatSQLStore(root, nil, WithUnlimitedSQLVisibility(true))
+	unexpected, err := NewFlatSQLStore(root, nil, WithUnlimitedSQLVisibility(true))
+	if unexpected != nil {
+		unexpected.Close()
+	}
 	if !errors.Is(err, format4.ErrUnlimitedRelationsUnsupported) {
 		t.Fatalf("missing capability: %v", err)
 	}

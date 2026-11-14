@@ -33,7 +33,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/wasmrt"
 )
 
-var ErrP4Capabilities = errors.New("format4: requires an engine with unlimited-relations capability (not available in release 3.12.1)")
+var ErrP4Capabilities = errors.New("format4: requires an engine with unlimited-relations capability")
 
 // The engine's layout block (flatsql_p4.h FlatsqlP4Layout).
 const (
