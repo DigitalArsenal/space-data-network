@@ -2,7 +2,6 @@ package storage
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -86,11 +85,14 @@ func TestPublicationDurableKillBoundaries(t *testing.T) {
 				}
 				time.Sleep(20 * time.Millisecond)
 			}
-			// Inspect the exact child command before killing that PID.
-			command, err := exec.Command("ps", "-p", fmt.Sprint(cmd.Process.Pid), "-o", "command=").Output()
-			if err != nil || !strings.Contains(string(command), "TestPublicationReclamationKillChild") {
-				t.Fatalf("unexpected child command: %v", err)
+			// Inspect the full command owned by this Cmd before stopping its
+			// child handle. No shell or externally supplied PID is involved;
+			// this also works where setuid ps cannot run inside a sandbox.
+			command := strings.Join(cmd.Args, " ")
+			if cmd.Path != os.Args[0] || !strings.Contains(command, "-test.run=^TestPublicationReclamationKillChild$") {
+				t.Fatalf("unexpected owned child command: %s", command)
 			}
+			t.Logf("stopping owned child %d: %s", cmd.Process.Pid, command)
 			if err = cmd.Process.Kill(); err != nil {
 				t.Fatal(err)
 			}
