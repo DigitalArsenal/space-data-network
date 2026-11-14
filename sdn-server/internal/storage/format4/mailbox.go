@@ -184,6 +184,7 @@ type call struct {
 	flags uint32
 	req   []byte
 	caps  Caps
+	drop  bool // tests (DropNextWriteForTest): written into a slot, never queued
 }
 
 func poolOf(c Class) int {
@@ -246,6 +247,9 @@ func (m *mailbox) trySubmit(c call) (*slot, error) {
 		m.mem.Store64(h+offMaxResBytes, c.caps.MaxResultBytes)
 		m.mem.Store64(h+offSubmitNs, uint64(time.Since(m.start)))
 		m.mem.Store32(h+offState, slotQueued)
+		if c.drop { // no engine thread will ever see it: it is never answered
+			return &slot{m: m, pool: p, hdr: h, ring: rq + m.lay.reqBytes[p], ringCap: uint64(m.lay.ringBytes[p]), submit: time.Now()}, nil
+		}
 		if !m.enqueue(int(c.class)-1, i+m.first(p)) {
 			m.mem.Store32(h+offState, slotFree)
 			return nil, errNoSlot
