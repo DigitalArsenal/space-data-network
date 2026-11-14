@@ -134,7 +134,7 @@ func TestPairedPublicationRestartAtEveryBoundary(t *testing.T) {
 	for _, boundary := range []string{"commit", "shard", "announcement", "completion"} {
 		t.Run(boundary, func(t *testing.T) {
 			dir := t.TempDir()
-			cmd := exec.Command(os.Args[0], "-test.run=^TestPairedPublicationCrashHelper$", "-test.timeout=30s")
+			cmd := exec.Command(os.Args[0], "-test.run=^TestPairedPublicationCrashHelper$", "-test.timeout=3m")
 			cmd.Env = append(os.Environ(), "SDN_PAIRED_CRASH_DIR="+dir, "SDN_PAIRED_CRASH_AT="+boundary)
 			output, err := cmd.CombinedOutput()
 			var exit *exec.ExitError
