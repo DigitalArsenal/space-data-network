@@ -47,6 +47,9 @@ func (p *signedCatalogLoopback) PublishDatasetUpdatePNM(ctx context.Context, ann
 }
 
 func TestRetainedCatalogSignedPublicationLoopback(t *testing.T) {
+	if testing.Short() {
+		t.Skip("signed catalog replay and rejection checks require a full test run")
+	}
 	t.Setenv("SDN_STORE_FORMAT", "4")
 	ctx := context.Background()
 	root := t.TempDir()
