@@ -28,6 +28,8 @@ func pairedObservation(batch string) IngestedBatch {
 }
 func pairedStore(t *testing.T, dir string) *storage.FlatSQLStore {
 	t.Helper()
+	// Publication fixtures select the retained-source store format explicitly.
+	t.Setenv("SDN_STORE_FORMAT", "4")
 	validator, err := sds.NewValidator(nil)
 	if err != nil {
 		t.Fatal(err)
