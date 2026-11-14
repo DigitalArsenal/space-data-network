@@ -74,8 +74,24 @@ jobs:
 
       - name: Build the Kubo web UI
         working-directory: webui
+        # The build needs no browser. Without these, playwright-chromium's
+        # install script downloads one and fails the whole step on a runner
+        # image Playwright does not support (v1.1.0 run 43639416751: "Playwright
+        # does not support chromium on ubuntu26.04-x64"). The same three
+        # variables deployment/ipfs/ipfs-deploy.sh sets for the release lane.
+        #
+        # --ignore-scripts as well, then the repo's own postinstall
+        # (patch-package): the kubo devDependency's install script fetches a
+        # binary from dist.ipfs.tech that only the e2e tests use, and that host
+        # being down failed v1.1.0 run 43640270780 ("Socket closed before the
+        # connection was established"). security.yml builds the same way.
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+          PUPPETEER_SKIP_DOWNLOAD: '1'
+          CYPRESS_INSTALL_BINARY: '0'
         run: |
-          npm ci --no-audit --fund=false
+          npm ci --no-audit --fund=false --ignore-scripts
+          npm run postinstall
           npm run build
           test -f build/index.html
 

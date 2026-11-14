@@ -59,19 +59,68 @@ function latestTag() {
     const stderr = (error.stderr || '').trim();
     console.error('[docs-release] could not read the newest release tag from GitHub.');
     if (stderr) console.error(`[docs-release] gh: ${stderr}`);
-    console.error('[docs-release] pass --tag <vX.Y.Z-beta.N> to check against a known tag,');
+    console.error('[docs-release] pass --tag <vX.Y.Z or vX.Y.Z-beta.N> to check against a known tag,');
     console.error('[docs-release] or give the step a token (GH_TOKEN: ${{ github.token }}).');
     process.exit(1);
   }
 }
 
+// A release tag is a beta (v1.0.5-beta.70) or, since v1.1.0, a stable vX.Y.Z.
+export function isReleaseTag(tag) {
+  return /^v\d+\.\d+\.\d+(?:-beta\.\d+)?$/.test(String(tag));
+}
+
+// A STABLE release has no "beta" to be found by, and a bare X.Y.Z is not
+// necessarily ours: the site also names WasmEdge 0.16.4 and module versions.
+// So a stable version counts as advertised only where nothing but a release
+// can stand — a release download URL or the Docker image tag — and every
+// spelling of exactly that version is then rewritten. Boundaries keep it off
+// longer numbers (11.1.0, 1.1.0.2) and off a beta of the same X.Y.Z, which
+// RELEASE_LITERAL owns.
+const STABLE_ANCHORS = [
+  /\/releases\/download\/v(\d+\.\d+\.\d+)\//g,
+  new RegExp(`${DOCKER_IMAGE.replace(/[/.]/g, '\\$&')}:v?(\\d+\\.\\d+\\.\\d+)(?![0-9A-Za-z_.-])`, 'g'),
+];
+
+export function advertisedStableVersions(text) {
+  const versions = new Set();
+  for (const anchor of STABLE_ANCHORS) {
+    for (const m of text.matchAll(anchor)) versions.add(m[1]);
+  }
+  return [...versions];
+}
+
+function stableLiteral(versions) {
+  const alternatives = versions.map((v) => v.replace(/\./g, '\\.')).join('|');
+  return new RegExp(`(?<![0-9A-Za-z.])v?(?:${alternatives})(?!\\d|\\.\\d|[-.]beta)`, 'g');
+}
+
+// Every release literal the site carries, for the --check report.
+export function releaseLiterals(text) {
+  const stable = advertisedStableVersions(text);
+  return [...new Set([
+    ...(text.match(RELEASE_LITERAL) ?? []),
+    ...(stable.length ? text.match(stableLiteral(stable)) ?? [] : []),
+  ])];
+}
+
 export function rewrite(text, tag) {
   const bare = tag.replace(/^v/, '');
   const dotted = bare.replace('-beta.', '.beta.');
-  const versioned = text.replace(RELEASE_LITERAL, (m) => {
+  let versioned = text.replace(RELEASE_LITERAL, (m) => {
     if (m.startsWith('v')) return tag;
     return m.includes('.beta.') ? dotted : bare;
   });
+  const stable = advertisedStableVersions(text);
+  if (stable.length) {
+    // A stable version is spelled the same with dashes or dots, so the
+    // container asset (the one dotted name the site links) is told apart by
+    // its prefix: a beta written there must be dotted again.
+    versioned = versioned.replace(stableLiteral(stable), (m, offset, whole) => {
+      if (m.startsWith('v')) return tag;
+      return whole.slice(Math.max(0, offset - 'container-'.length), offset) === 'container-' ? dotted : bare;
+    });
+  }
   // A FOURTH spelling, and the only one that is not ours to choose: the Docker
   // image tag is whatever the registry actually holds, and that is the
   // v-prefixed one. index.html and onboarding.html were authored without the
@@ -83,54 +132,6 @@ export function rewrite(text, tag) {
     new RegExp(`(${DOCKER_IMAGE.replace(/[/.]/g, '\\$&')}:)${TAG_CHARS}`, 'g'),
     `$1${tag}`,
   );
-}
-
-const args = process.argv.slice(2);
-const check = args.includes('--check');
-const tagFlag = args.indexOf('--tag');
-const tag = tagFlag !== -1 ? args[tagFlag + 1] : latestTag();
-
-if (!/^v\d+\.\d+\.\d+-beta\.\d+$/.test(tag)) {
-  console.error(`[docs-release] not a release tag: ${tag}`);
-  process.exit(1);
-}
-
-let stale = [];
-for (const rel of FILES) {
-  const path = resolve(ROOT, rel);
-  const before = readFileSync(path, 'utf8');
-  const after = rewrite(before, tag);
-  if (before === after) continue;
-  if (check) {
-    const found = [...new Set(before.match(RELEASE_LITERAL) ?? [])].join(', ');
-    stale.push(`${rel} (has ${found}, newest release is ${tag})`);
-  } else {
-    writeFileSync(path, after);
-    console.log(`[docs-release] ${rel} -> ${tag}`);
-  }
-}
-
-// EVERY DOWNLOAD LINK MUST NAME AN ASSET THAT EXISTS.
-// The container link read 1.0.5-beta.N while the asset is 1.0.5.beta.N, so it
-// 404'd from the day it was written — a version sync alone would have kept it
-//404ing at a newer version. Rewriting a literal is not the same as checking it.
-if (check) {
-  const names = new Set(JSON.parse(execFileSync('gh', [
-    'release', 'view', tag, '--repo', 'DigitalArsenal/space-data-network',
-    '--json', 'assets',
-  ], { encoding: 'utf8' })).assets.map((a) => a.name));
-  const broken = [];
-  for (const rel of FILES) {
-    const text = readFileSync(resolve(ROOT, rel), 'utf8');
-    for (const m of text.matchAll(/releases\/download\/[^/"']+\/([^"')\s]+)/g)) {
-      if (!names.has(m[1])) broken.push(`${rel}: ${m[1]}`);
-    }
-  }
-  if (broken.length > 0) {
-    console.error(`[docs-release] the site links assets that are not in ${tag}:`);
-    for (const b of broken) console.error(`    - ${b}`);
-    process.exit(1);
-  }
 }
 
 // AND EVERY DOCKER TAG MUST EXIST IN THE REGISTRY.
@@ -151,32 +152,87 @@ async function dockerTags() {
   return new Set((await res.json()).tags ?? []);
 }
 
-if (check) {
-  let tags;
-  try {
-    tags = await dockerTags();
-  } catch (error) {
-    console.error(`[docs-release] could not list Docker Hub tags: ${error.message}`);
+async function main() {
+  const args = process.argv.slice(2);
+  const check = args.includes('--check');
+  const tagFlag = args.indexOf('--tag');
+  const tag = tagFlag !== -1 ? args[tagFlag + 1] : latestTag();
+
+  if (!isReleaseTag(tag)) {
+    console.error(`[docs-release] not a release tag: ${tag}`);
     process.exit(1);
   }
-  const missing = [];
+
+  const stale = [];
   for (const rel of FILES) {
-    const text = readFileSync(resolve(ROOT, rel), 'utf8');
-    for (const m of text.matchAll(new RegExp(`${DOCKER_IMAGE.replace(/[/.]/g, '\\$&')}:(${TAG_CHARS})`, 'g'))) {
-      if (!tags.has(m[1])) missing.push(`${rel}: ${DOCKER_IMAGE}:${m[1]}`);
+    const path = resolve(ROOT, rel);
+    const before = readFileSync(path, 'utf8');
+    const after = rewrite(before, tag);
+    if (before === after) continue;
+    if (check) {
+      const found = releaseLiterals(before).join(', ');
+      stale.push(`${rel} (has ${found}, newest release is ${tag})`);
+    } else {
+      writeFileSync(path, after);
+      console.log(`[docs-release] ${rel} -> ${tag}`);
     }
   }
-  if (missing.length > 0) {
-    console.error('[docs-release] the site names Docker tags that do not exist:');
-    for (const m of missing) console.error(`    - ${m}`);
+
+  // EVERY DOWNLOAD LINK MUST NAME AN ASSET THAT EXISTS.
+  // The container link read 1.0.5-beta.N while the asset is 1.0.5.beta.N, so it
+  // 404'd from the day it was written — a version sync alone would have kept it
+  // 404ing at a newer version. Rewriting a literal is not the same as checking it.
+  if (check) {
+    const names = new Set(JSON.parse(execFileSync('gh', [
+      'release', 'view', tag, '--repo', 'DigitalArsenal/space-data-network',
+      '--json', 'assets',
+    ], { encoding: 'utf8' })).assets.map((a) => a.name));
+    const broken = [];
+    for (const rel of FILES) {
+      const text = readFileSync(resolve(ROOT, rel), 'utf8');
+      for (const m of text.matchAll(/releases\/download\/[^/"']+\/([^"')\s]+)/g)) {
+        if (!names.has(m[1])) broken.push(`${rel}: ${m[1]}`);
+      }
+    }
+    if (broken.length > 0) {
+      console.error(`[docs-release] the site links assets that are not in ${tag}:`);
+      for (const b of broken) console.error(`    - ${b}`);
+      process.exit(1);
+    }
+  }
+
+  if (check) {
+    let tags;
+    try {
+      tags = await dockerTags();
+    } catch (error) {
+      console.error(`[docs-release] could not list Docker Hub tags: ${error.message}`);
+      process.exit(1);
+    }
+    const missing = [];
+    for (const rel of FILES) {
+      const text = readFileSync(resolve(ROOT, rel), 'utf8');
+      for (const m of text.matchAll(new RegExp(`${DOCKER_IMAGE.replace(/[/.]/g, '\\$&')}:(${TAG_CHARS})`, 'g'))) {
+        if (!tags.has(m[1])) missing.push(`${rel}: ${DOCKER_IMAGE}:${m[1]}`);
+      }
+    }
+    if (missing.length > 0) {
+      console.error('[docs-release] the site names Docker tags that do not exist:');
+      for (const m of missing) console.error(`    - ${m}`);
+      process.exit(1);
+    }
+  }
+
+  if (check && stale.length > 0) {
+    console.error('[docs-release] the published site advertises a release that is not the newest:');
+    for (const s of stale) console.error(`    - ${s}`);
+    console.error('Run: node scripts/sync-docs-release.mjs');
     process.exit(1);
   }
+  console.log(check ? `[docs-release] site matches ${tag}` : `[docs-release] synced to ${tag}`);
 }
 
-if (check && stale.length > 0) {
-  console.error('[docs-release] the published site advertises a release that is not the newest:');
-  for (const s of stale) console.error(`    - ${s}`);
-  console.error('Run: node scripts/sync-docs-release.mjs');
-  process.exit(1);
+// Run as a script only: the tests import rewrite() without asking GitHub.
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  await main();
 }
-console.log(check ? `[docs-release] site matches ${tag}` : `[docs-release] synced to ${tag}`);

@@ -47,6 +47,8 @@ table ExportIndex {
 }
 table BatchAction { schema:string; provider:string; source:string; batch:string; action:string; }
 // Durable auxiliary publication-upsert record. Cutoffs are absent outside paired snapshots.
+// unavailable_since is this node's own first observation (Unix seconds) that the
+// row's local assets were missing; 0 means available. Journal replay must keep it.
 table PublicationRow {
   schema_name:string; provider_id:string; source_name:string; batch_id:string;
   query_profile:string; offset:long; limit:long; record_count:long; byte_count:long;
@@ -55,6 +57,7 @@ table PublicationRow {
   feed_sequence:long; previous_head:string; feed_head:string;
   published_at:string;
   publication_cutoff:long = null; publication_source_cutoff:long = null;
+  unavailable_since:long;
 }
 union Body {
   JournalEntry, SourceList, Outcome, Watermarks, Failure, SequenceList,

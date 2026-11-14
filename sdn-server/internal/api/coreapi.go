@@ -312,7 +312,7 @@ func (h *CoreAPIHandler) handleVersion(w http.ResponseWriter, r *http.Request) {
 		writeCoreAPIError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	body := map[string]interface{}{
 		"agent_version":     versioninfo.AgentVersion,
 		"suite_version":     versioninfo.SuiteVersion,
 		"standards_version": versioninfo.SpaceDataStandardsVersion,
@@ -327,7 +327,15 @@ func (h *CoreAPIHandler) handleVersion(w http.ResponseWriter, r *http.Request) {
 		// scripts/check-kubo-pin.js now holds the pin and this constant
 		// together. See sdn-server/docs/kubo-fork-audit.md.
 		"kubo_version": versioninfo.KuboVersion,
-	})
+	}
+	// release_tag is present only on a binary cut as a release. The agent
+	// version alone cannot say so: a release tagged with the suite version
+	// reads the same as a development build. The admin UI links the version to
+	// this tag's release notes.
+	if versioninfo.IsRelease() {
+		body["release_tag"] = strings.TrimSpace(versioninfo.ReleaseTag)
+	}
+	writeJSON(w, http.StatusOK, body)
 }
 
 // ---------------------------------------------------------------------------

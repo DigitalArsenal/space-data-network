@@ -222,6 +222,7 @@ func publicationRowFB(x DatasetShardPublication) *pst.PublicationRowT {
 		ResultSha256: x.ResultSHA256, FeedSequence: x.FeedSequence, PreviousHead: x.PreviousHead,
 		FeedHead: x.FeedHead, PublishedAt: x.PublishedAt.Format(time.RFC3339Nano),
 		PublicationCutoff: x.PublicationCutoff, PublicationSourceCutoff: x.PublicationSourceCutoff,
+		UnavailableSince: x.UnavailableSince,
 	}
 }
 
@@ -241,7 +242,7 @@ func publicationRowFromFB(x *pst.PublicationRowT) (DatasetShardPublication, erro
 		ShardSHA256: x.ShardSha256, IndexSHA256: x.IndexSha256, QuerySHA256: x.QuerySha256,
 		ResultSHA256: x.ResultSha256, FeedSequence: x.FeedSequence, PreviousHead: x.PreviousHead,
 		FeedHead: x.FeedHead, PublishedAt: at, PublicationCutoff: x.PublicationCutoff,
-		PublicationSourceCutoff: x.PublicationSourceCutoff,
+		PublicationSourceCutoff: x.PublicationSourceCutoff, UnavailableSince: x.UnavailableSince,
 	}, nil
 }
 

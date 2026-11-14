@@ -53,7 +53,53 @@ type Options struct {
 	Store         *flatsqlrt.NativeStore // the node's shared native I/O store, as format 2
 	FDBudget      int                    // open-fd budget of the instance's host I/O (0: flatsqlrt.P4FDBudget); sizes Tuning.ReaderConns when that is 0
 	OnFailure     func(error)            // instance trapped or hung; the Engine is fenced
+	Serialize     SerializeMode          // call gate (SerializeOff: none); a diagnostic control, see SerializeMode
+
+	// RequestDeadline bounds every request whose caller set no earlier
+	// deadline (0: DefaultRequestDeadline; negative: none). QUOTA_GC and
+	// REBUILD are not bounded.
+	RequestDeadline time.Duration
+	// WriteHang fences the engine as hung when a write request stays
+	// unanswered this long while no QUOTA_GC or REBUILD runs (0:
+	// DefaultWriteHang; negative: never). OnFailure then runs as for a trap.
+	WriteHang time.Duration
 }
+
+// The request bounds. The node calls the engine with the store's lifetime
+// context, so a request the engine never answers would wait for as long as
+// the store is open: on 2026-11-14 (flatsql 3.12.1, engine head 70026dcb) a
+// node's writes stopped being answered for good while reads went on, and the
+// in-process reproducer showed a write unanswered for 4m33s with the
+// engine's writer thread looping in checkpointAppend and nothing trapping, so
+// nothing fenced the engine. With these bounds such a write fences the engine
+// (the store reopens it, as after a trap) and no request waits forever.
+const (
+	DefaultRequestDeadline = 5 * time.Minute
+	DefaultWriteHang       = 2 * time.Minute
+)
+
+// ErrUnanswered: the engine did not answer a request within its request
+// deadline (the request was canceled; a write may still commit).
+var ErrUnanswered = errors.New("format4: the engine did not answer within the request deadline")
+
+// ErrWriteHang is the cause the engine is fenced with when a write stays
+// unanswered past Options.WriteHang.
+var ErrWriteHang = errors.New("format4: write path hung")
+
+// SerializeMode selects the Engine's call gate: one request of the gated kind
+// inside the engine at a time, the others wait on the Go side (bounded by
+// their ctx). It is a DIAGNOSTIC control for the concurrent-load reproducer
+// (TestFormat4ConcurrentFlowLoad), not a guard: on 2026-11-14 the engine
+// (flatsql 3.12.1, head 70026dcb) trapped as often with every call
+// serialized as without the gate, so it does not remove that defect. The
+// daemon leaves it off.
+type SerializeMode uint8
+
+const (
+	SerializeOff    SerializeMode = iota // no gate: the engine's own concurrency
+	SerializeWrites                      // one write request at a time; reads are free
+	SerializeAll                         // one request or control call at a time
+)
 
 // Control exports (contract §3.3), called on the instance's exec thread.
 const (
@@ -84,6 +130,163 @@ type Engine struct {
 	once    sync.Once
 	stopErr error
 	memo    memo // counter answers kept between writes (memo.go)
+
+	// gate is the call gate of Options.Serialize (nil: none). A buffered
+	// channel, so a waiter leaves when its ctx ends.
+	gate      chan struct{}
+	serialize SerializeMode
+
+	deadline  time.Duration // Options.RequestDeadline resolved (0: none)
+	writeHang time.Duration // Options.WriteHang resolved (0: never)
+	longOps   atomic.Int32  // QUOTA_GC and REBUILD requests in flight
+	dropWrite atomic.Bool   // DropNextWriteForTest
+}
+
+// DropNextWriteForTest makes the next PUT, SUPERSEDE or DELETE request
+// unanswerable: it is written into a slot but never queued, so no engine
+// thread sees it and its caller waits as for an engine that stopped
+// answering writes. For the store's write-hang tests only.
+func (e *Engine) DropNextWriteForTest() { e.dropWrite.Store(true) }
+
+// configure applies the Options that shape the Go side of the Engine.
+func (e *Engine) configure(opt Options) {
+	e.serialize = opt.Serialize
+	if opt.Serialize != SerializeOff {
+		e.gate = make(chan struct{}, 1)
+	}
+	e.deadline = resolveBound(opt.RequestDeadline, DefaultRequestDeadline)
+	e.writeHang = resolveBound(opt.WriteHang, DefaultWriteHang)
+}
+
+func resolveBound(d, def time.Duration) time.Duration {
+	switch {
+	case d < 0:
+		return 0
+	case d == 0:
+		return def
+	}
+	return d
+}
+
+// longOp reports the maintenance requests that may run for minutes.
+func longOp(op uint32) bool { return op == opQuotaGC || op == opRebuild }
+
+// bound is a request's context: the caller's, ended after the request
+// deadline unless the caller's own deadline comes first.
+func (e *Engine) bound(ctx context.Context, op uint32) (context.Context, context.CancelFunc) {
+	if e.deadline <= 0 || longOp(op) {
+		return ctx, func() {}
+	}
+	if d, ok := ctx.Deadline(); ok && time.Until(d) <= e.deadline {
+		return ctx, func() {}
+	}
+	return context.WithTimeoutCause(ctx, e.deadline, ErrUnanswered)
+}
+
+// failed maps a request's error: the request deadline's own expiry is
+// ErrUnanswered (and still context.DeadlineExceeded), the rest as stopped.
+func (e *Engine) failed(ctx context.Context, op string, err error) error {
+	if errors.Is(err, context.DeadlineExceeded) && errors.Is(context.Cause(ctx), ErrUnanswered) {
+		return fmt.Errorf("format4: %s: %w after %s: %w", op, ErrUnanswered, e.deadline, err)
+	}
+	return e.stopped(op, err)
+}
+
+// watch guards one write request from submit to answer: unanswered for
+// writeHang while no long request is in flight, it fences the engine (hung).
+// The returned stop ends the guard.
+func (e *Engine) watch(op uint32, class Class) (stop func()) {
+	if longOp(op) {
+		e.longOps.Add(1)
+		return func() { e.longOps.Add(-1) }
+	}
+	if class != ClassWrite || e.writeHang <= 0 {
+		return func() {}
+	}
+	var (
+		mu    sync.Mutex
+		done  bool
+		timer *time.Timer
+		fire  func()
+	)
+	since := time.Now()
+	fire = func() {
+		mu.Lock()
+		if done {
+			mu.Unlock()
+			return
+		}
+		if e.longOps.Load() > 0 { // a QUOTA_GC or REBUILD may hold the writer
+			timer = time.AfterFunc(e.writeHang, fire)
+			mu.Unlock()
+			return
+		}
+		done = true
+		mu.Unlock()
+		e.hung(opNames[op], time.Since(since))
+	}
+	mu.Lock()
+	timer = time.AfterFunc(e.writeHang, fire)
+	mu.Unlock()
+	return func() {
+		mu.Lock()
+		done = true
+		timer.Stop()
+		mu.Unlock()
+	}
+}
+
+// fencer is the instance's fence (*flatsqlrt.P4Instance): host I/O revoked,
+// the instance stopped, OnFailure run, as for a trap.
+type fencer interface{ Fence(cause error) }
+
+// hung fences the engine whose write op has been unanswered for waited.
+func (e *Engine) hung(op string, waited time.Duration) {
+	if e.live(op) != nil {
+		return // fenced or closing already
+	}
+	cause := fmt.Errorf("%w: %s unanswered for %s", ErrWriteHang, op, waited.Round(time.Millisecond))
+	log.Errorf("format 4: write %s unanswered for %s; fencing the engine as hung (the store reopens it)", op, waited.Round(time.Second))
+	if f, ok := e.ctl.(fencer); ok {
+		f.Fence(cause)
+		return
+	}
+	e.fence(cause)
+}
+
+// enter takes the call gate for one request (write: a ClassWrite request)
+// when the mode covers it; held says whether leave must be called.
+func (e *Engine) enter(ctx context.Context, write bool) (held bool, err error) {
+	if e.gate == nil || (e.serialize == SerializeWrites && !write) {
+		return false, nil
+	}
+	select {
+	case e.gate <- struct{}{}:
+		return true, nil
+	default:
+	}
+	select {
+	case e.gate <- struct{}{}:
+		return true, nil
+	case <-ctx.Done():
+		return false, ctx.Err()
+	}
+}
+
+func (e *Engine) leave(held bool) {
+	if held {
+		<-e.gate
+	}
+}
+
+// control runs a control call under the gate (SerializeAll only).
+func (e *Engine) control(fn func() (int32, error)) (int32, error) {
+	held, err := e.enter(context.Background(), false)
+	if err != nil {
+		return 0, err
+	}
+	defer e.leave(held)
+	return fn()
 }
 
 var _ API = (*Engine)(nil)
@@ -120,6 +323,7 @@ func Open(ctx context.Context, opt Options) (*Engine, error) {
 	}
 	log.Infof("format 4: host I/O fd budget %d (%s), %d reader connections", fdBudget, basis, opt.Tuning.ReaderConns)
 	e := &Engine{}
+	e.configure(opt)
 	inst, err := flatsqlrt.OpenP4Instance(flatsqlrt.P4Config{
 		Wasm: wasm, AOTCacheDir: opt.AOTCacheDir, CompileOnMiss: opt.CompileOnMiss,
 		Store: opt.Store, StoreRoot: root, FDBudget: fdBudget, InitConfig: encodeConfig(engineRoot, opt),
@@ -281,7 +485,7 @@ func (e *Engine) RegisterType(spec TypeSpec) error {
 	}
 	e.memo.begin()
 	defer e.memo.end(false)
-	rc, err := e.ctl.ControlBytes(exportRegisterType, spec.Encode())
+	rc, err := e.control(func() (int32, error) { return e.ctl.ControlBytes(exportRegisterType, spec.Encode()) })
 	return statusOf("register_type "+spec.TypeName(), rc, err)
 }
 
@@ -292,7 +496,7 @@ func (e *Engine) SetQuota(bytes int64) error {
 	if bytes < 0 {
 		return &StatusError{Op: "set_quota", Status: StatusArg, Msg: "negative quota"}
 	}
-	rc, err := e.ctl.ControlCall(exportSetQuota, float64(bytes))
+	rc, err := e.control(func() (int32, error) { return e.ctl.ControlCall(exportSetQuota, float64(bytes)) })
 	if err := statusOf("set_quota", rc, err); err != nil {
 		return err
 	}
@@ -309,7 +513,7 @@ func (e *Engine) Activate(ctx context.Context) error {
 	}
 	e.memo.begin()
 	defer e.memo.end(false)
-	rc, err := e.ctl.ControlCall(exportActivate)
+	rc, err := e.control(func() (int32, error) { return e.ctl.ControlCall(exportActivate) })
 	return statusOf("activate", rc, err)
 }
 
@@ -317,7 +521,11 @@ func (e *Engine) Stats() ([]uint64, error) {
 	if err := e.live("stats"); err != nil {
 		return nil, err
 	}
-	b, rc, err := e.ctl.ControlOut(exportStats, statsCap)
+	var b []byte
+	rc, err := e.control(func() (rc int32, err error) {
+		b, rc, err = e.ctl.ControlOut(exportStats, statsCap)
+		return rc, err
+	})
 	if err := statusOf("stats", rc, err); err != nil {
 		return nil, err
 	}
@@ -392,6 +600,8 @@ func (b *busyRetry) wait(ctx context.Context, op, msg string) error {
 // never return ErrBusy). A write brackets the memo.
 func (e *Engine) do(ctx context.Context, op uint32, class Class, req []byte, want []string) (*rows, error) {
 	name := opNames[op]
+	ctx, cancel := e.bound(ctx, op)
+	defer cancel()
 	abandoned := false
 	if class == ClassWrite {
 		e.memo.begin()
@@ -403,18 +613,26 @@ func (e *Engine) do(ctx context.Context, op uint32, class Class, req []byte, wan
 			return nil, err
 		}
 		var body []byte
-		o, err := e.mb.run(ctx, call{op: op, class: class, req: req}, true, func(b []byte) error {
+		held, err := e.enter(ctx, class == ClassWrite)
+		if err != nil {
+			return nil, e.failed(ctx, name, err)
+		}
+		drop := class == ClassWrite && !longOp(op) && e.dropWrite.CompareAndSwap(true, false)
+		stop := e.watch(op, class)
+		o, err := e.mb.run(ctx, call{op: op, class: class, req: req, drop: drop}, true, func(b []byte) error {
 			body = append(body, b...)
 			return nil
 		})
+		stop()
+		e.leave(held)
 		if err != nil {
 			// A write whose caller leaves may still commit (abandon).
 			abandoned = class == ClassWrite && !errors.Is(err, ErrStopped)
-			return nil, e.stopped(name, err)
+			return nil, e.failed(ctx, name, err)
 		}
 		if o.status == StatusBusy {
 			if err := busy.wait(ctx, name, o.err); err != nil {
-				return nil, err
+				return nil, e.failed(ctx, name, err)
 			}
 			continue
 		}
@@ -860,12 +1078,18 @@ func (e *Engine) SQL(ctx context.Context, req SQLRequest, sink func(chunk []byte
 	if encodeErr != nil {
 		return SQLStats{}, encodeErr
 	}
+	ctx, cancel := e.bound(ctx, opSQL)
+	defer cancel()
 	var busy busyRetry
 	for {
 		if err := e.live("SQL"); err != nil {
 			return SQLStats{}, err
 		}
 		sent := false
+		held, err := e.enter(ctx, false)
+		if err != nil {
+			return SQLStats{}, e.failed(ctx, "SQL", err)
+		}
 		o, err := e.mb.run(ctx, call{op: opSQL, class: class, flags: flags, req: body, caps: req.Caps}, false, func(b []byte) error {
 			sent = true
 			if sink == nil {
@@ -873,13 +1097,14 @@ func (e *Engine) SQL(ctx context.Context, req SQLRequest, sink func(chunk []byte
 			}
 			return sink(b)
 		})
+		e.leave(held)
 		if err != nil {
-			return SQLStats{}, e.stopped("SQL", err)
+			return SQLStats{}, e.failed(ctx, "SQL", err)
 		}
 		st := SQLStats{Rows: o.rows, RowsExamined: o.rowsExamined, BytesRead: o.bytesRead, Queue: o.queue, Run: o.run}
 		if o.status == StatusBusy && !sent {
 			if err := busy.wait(ctx, "SQL", o.err); err != nil {
-				return st, err
+				return st, e.failed(ctx, "SQL", err)
 			}
 			continue
 		}

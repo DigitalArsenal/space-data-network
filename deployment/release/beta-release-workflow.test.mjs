@@ -292,6 +292,8 @@ test('beta release workflow publishes public beta artifacts', () => {
   assert.match(workflow, /merge-multiple:\s*true/);
   assert.match(workflow, /prerelease:\s*false/);
   assert.match(workflow, /make_latest:\s*true/);
+  // Existing notes on a release published before its assets are kept.
+  assert.match(workflow, /body_path: dist\/release\/SDN-BETA-RELEASE\.md[\s\S]*?append_body: true[\s\S]*?make_latest: true/);
   assert.match(workflow, /release_name/);
   assert.match(workflow, /docker\.io/);
   assert.match(workflow, /dockerdigitalarsenal\/space-data-network/);
@@ -392,6 +394,15 @@ test('beta release workflow builds updater wasm once before platform CLI archive
   const workflow = readRepoFile('.github/workflows/beta-release-artifacts.yml');
 
   assert.match(workflow, /updater-wasm:\s*\n\s*name:\s*Build updater module wasm/);
+  // The module's own lockfile pins its build tools (esbuild, the SDK); the
+  // root tree no longer carries them.
+  const updaterJob = workflow.slice(workflow.indexOf('  updater-wasm:'), workflow.indexOf('  docker:'));
+  assert.match(updaterJob, /npm --prefix packages\/sdn-updater-module ci[\s\S]*npm --prefix packages\/sdn-updater-module run build/);
+  // The SDK compiles with clang for wasm32-wasip1-threads: a pinned wasi-sdk,
+  // checked by sha256, reaches it through the SDN_WASI_* overrides first.
+  assert.match(updaterJob, /WASI_SDK_SHA256: [0-9a-f]{64}\n/);
+  assert.match(updaterJob, /sha256sum -c -/);
+  assert.match(updaterJob, /SDN_WASI_CLANGXX=[\s\S]*SDN_WASI_SYSROOT=[\s\S]*npm --prefix packages\/sdn-updater-module run build/);
   assert.match(workflow, /name:\s*updater-module-wasm[\s\S]*path:\s*packages\/sdn-updater-module\/dist\/isomorphic\/module\.wasm/);
   assert.match(workflow, /needs:\s*\[beta-version, ipfs, updater-wasm, wasmedge-static\]/);
   assert.match(workflow, /name:\s*updater-module-wasm[\s\S]*path:\s*packages\/sdn-updater-module\/dist\/isomorphic/);
@@ -437,6 +448,23 @@ test('beta release workflow downloads only the ipfs build tool, with retries and
   assert.match(downloader, /--retry-all-errors/);
   assert.match(downloader, /tar -tzf/);
   assert.match(downloader, /unzip -tq/);
+  // dist.ipfs.tech has gone down twice; Kubo's GitHub release is the fallback,
+  // and only with the sha512 GitHub publishes beside each asset.
+  assert.match(downloader, /https:\/\/github\.com\/ipfs\/kubo\/releases\/download/);
+  assert.match(downloader, /\$\{mirror_url\}\.sha512/);
+  assert.match(downloader, /"\$\{expected\}" == "\$\{actual\}"/);
+});
+
+test('no web UI install runs the kubo devDependency download', () => {
+  // Its postinstall fetches from dist.ipfs.tech, which only the e2e tests
+  // need; every release-lane install skips scripts and runs patch-package.
+  for (const [path, text] of [
+    ['deployment/ipfs/ipfs-deploy.sh', readRepoFile('deployment/ipfs/ipfs-deploy.sh')],
+    ['.github/workflows/docker-publish.yml', readRepoFile('.github/workflows/docker-publish.yml')],
+  ]) {
+    assert.match(text, /npm ci --no-audit --fund=false --ignore-scripts/, path);
+    assert.match(text, /npm run postinstall/, path);
+  }
 });
 
 test('every CLI target links WasmEdge in and ships no runtime beside the binary', () => {
@@ -514,8 +542,11 @@ test('beta release workflow builds desktop app artifacts for every supported OS'
   // and a second copy in desktop/assets/sdn-ui was the old architecture.
   assert.match(workflow, /desktop:[\s\S]*?needs:\s*\[beta-version, cli\]/);
   assert.doesNotMatch(workflow, /desktop\/assets\/sdn-ui\//);
-  assert.match(workflow, /target_os:\s*macos[\s\S]*runner:\s*macos-14/);
+  // macos-15 for Apple Silicon: GitHub no longer runs macos-14, and a leg on
+  // an unsupported runner is cancelled before it starts (run 43639422366).
+  assert.match(workflow, /target_os:\s*macos[\s\S]*runner:\s*macos-15(?!-)/);
   assert.match(workflow, /target_os:\s*macos[\s\S]*runner:\s*macos-15-intel/);
+  assert.doesNotMatch(workflow, /runner:\s*macos-14\b/);
   assert.match(workflow, /target_os:\s*windows[\s\S]*runner:\s*windows-latest/);
   assert.match(workflow, /target_os:\s*linux[\s\S]*runner:\s*ubuntu-latest/);
   assert.match(workflow, /npm --prefix desktop ci/);
@@ -539,7 +570,7 @@ test('beta release workflow smoke-tests published installers after release', () 
   assert.match(workflow, /published-installer-smoke:[\s\S]*needs:\s*\[beta-version, release\]/);
   assert.match(workflow, /SDN_VERSION:\s*\$\{\{ needs\.beta-version\.outputs\.release_tag \}\}/);
   assert.match(workflow, /target_os:\s*linux[\s\S]*runner:\s*ubuntu-latest/);
-  assert.match(workflow, /target_os:\s*macos[\s\S]*runner:\s*macos-14/);
+  assert.match(workflow, /target_os:\s*macos[\s\S]*runner:\s*macos-15(?!-)/);
   assert.match(workflow, /target_os:\s*windows[\s\S]*runner:\s*windows-latest/);
   assert.match(workflow, /node deployment\/release\/published-install-smoke\.mjs --platform \$\{\{ matrix\.target_os \}\}/);
 });
@@ -585,6 +616,11 @@ test('container publish workflow ships one Docker Hub image', () => {
   assert.match(workflow, /username:\s*dockerdigitalarsenal/);
   assert.match(workflow, /secrets\.DOCKERHUB_TOKEN/);
   assert.match(workflow, /deployment\/docker\/Dockerfile/);
+  // The web UI build downloads no browser (see ipfs-deploy.sh, same three).
+  const webuiStep = /- name: Build the Kubo web UI[\s\S]*?run: \|/.exec(workflow)?.[0] ?? '';
+  assert.match(webuiStep, /PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'/);
+  assert.match(webuiStep, /PUPPETEER_SKIP_DOWNLOAD: '1'/);
+  assert.match(webuiStep, /CYPRESS_INSTALL_BINARY: '0'/);
   assert.doesNotMatch(workflow, /matrix:/);
   assert.doesNotMatch(workflow, /Dockerfile\.full/);
   assert.doesNotMatch(workflow, /Dockerfile\.edge/);
@@ -735,4 +771,18 @@ test('released bundles and their update feed are stamped with the public release
   // Same for the local/offline assembly lane, which publishes the same feed.
   const assemble = readRepoFile('deployment/release/assemble-beta-release-artifacts.sh');
   assert.doesNotMatch(assemble, /--channel beta/);
+});
+
+test('release maturity reaches only the release notes, never a --channel', () => {
+  // prepare-beta-release.mjs's `channel` output is the release MATURITY (beta
+  // or stable), not an update channel. It words the notes and the manifest;
+  // a bundle or payload stamped with it would leave the public channel.
+  const workflow = readRepoFile('.github/workflows/beta-release-artifacts.yml');
+  const uses = [...workflow.matchAll(/^.*needs\.beta-version\.outputs\.channel.*$/gm)].map((m) => m[0].trim());
+  assert.deepEqual(uses, ['RELEASE_MATURITY: ${{ needs.beta-version.outputs.channel }}']);
+  assert.match(workflow, /name: Assemble beta release artifacts\n\s+env:[\s\S]*?RELEASE_MATURITY:[\s\S]*?run: deployment\/release\/assemble-beta-release-artifacts\.sh/);
+  assert.doesNotMatch(workflow, /--channel \$\{\{/);
+
+  const assemble = readRepoFile('deployment/release/assemble-beta-release-artifacts.sh');
+  assert.doesNotMatch(assemble, /--channel "?\$\{?release_maturity/);
 });

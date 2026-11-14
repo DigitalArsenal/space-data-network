@@ -58,10 +58,10 @@ package storage
 // NOT touched, deliberately:
 //   - superseded publication METADATA rows (sdn_dataset_shard_publications):
 //     they are the few-hundred-byte provenance record AND the trusted-peer
-//     catch-up dedup key (datasetShardPublicationAlreadyCached) — deleting
-//     them would make the next catch-up cycle re-materialize the very batch
-//     the supersede just evicted. Only their cached shard/index FILES are
-//     removed; a batch with rows but no files is simply not servable;
+//     catch-up dedup key (datasetShardPublicationAlreadyCached). Only cached
+//     shard/index FILES are removed here. Availability reconciliation retires
+//     the listing after a day of absence, preserving its dedup identity in
+//     the publication replay ledger;
 //   - the provider's OWN publication history (callers must not supersede
 //     the node's own provider identity; the node-level hook skips self).
 

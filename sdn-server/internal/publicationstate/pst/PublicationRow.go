@@ -30,6 +30,7 @@ type PublicationRowT struct {
 	PublishedAt string `json:"published_at"`
 	PublicationCutoff *int64 `json:"publication_cutoff"`
 	PublicationSourceCutoff *int64 `json:"publication_source_cutoff"`
+	UnavailableSince int64 `json:"unavailable_since"`
 }
 
 func (t *PublicationRowT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -128,6 +129,7 @@ func (t *PublicationRowT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffset
 	if t.PublicationSourceCutoff != nil {
 		PublicationRowAddpublication_source_cutoff(builder, *t.PublicationSourceCutoff)
 	}
+	PublicationRowAddunavailable_since(builder, t.UnavailableSince)
 	return PublicationRowEnd(builder)
 }
 
@@ -155,6 +157,7 @@ func (rcv *PublicationRow) UnPackTo(t *PublicationRowT) {
 	t.PublishedAt = string(rcv.PublishedAt())
 	t.PublicationCutoff = rcv.PublicationCutoff()
 	t.PublicationSourceCutoff = rcv.PublicationSourceCutoff()
+	t.UnavailableSince = rcv.UnavailableSince()
 }
 
 func (rcv *PublicationRow) UnPack() *PublicationRowT {
@@ -535,8 +538,28 @@ func (rcv *PublicationRow) MutatePublicationSourceCutoff(n int64) bool {
 	return rcv.Mutatepublication_source_cutoff(n)
 }
 
+func (rcv *PublicationRow) unavailable_since() int64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(50))
+	if o != 0 {
+		return rcv._tab.GetInt64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *PublicationRow) UnavailableSince() int64 {
+	return rcv.unavailable_since()
+}
+
+func (rcv *PublicationRow) Mutateunavailable_since(n int64) bool {
+	return rcv._tab.MutateInt64Slot(50, n)
+}
+
+func (rcv *PublicationRow) MutateUnavailableSince(n int64) bool {
+	return rcv.Mutateunavailable_since(n)
+}
+
 func PublicationRowStart(builder *flatbuffers.Builder) {
-	builder.StartObject(23)
+	builder.StartObject(24)
 }
 func PublicationRowAddschema_name(builder *flatbuffers.Builder, schema_name flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(schema_name), 0)
@@ -677,6 +700,12 @@ func PublicationRowAddpublication_source_cutoff(builder *flatbuffers.Builder, pu
 }
 func PublicationRowAddPublicationSourceCutoff(builder *flatbuffers.Builder, publication_source_cutoff int64) {
 	PublicationRowAddpublication_source_cutoff(builder, publication_source_cutoff)
+}
+func PublicationRowAddunavailable_since(builder *flatbuffers.Builder, unavailable_since int64) {
+	builder.PrependInt64Slot(23, unavailable_since, 0)
+}
+func PublicationRowAddUnavailableSince(builder *flatbuffers.Builder, unavailable_since int64) {
+	PublicationRowAddunavailable_since(builder, unavailable_since)
 }
 func PublicationRowEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

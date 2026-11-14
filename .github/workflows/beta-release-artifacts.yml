@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Optional beta release version, for example v1.0.3-beta.7. Leave blank to use v<package version>-beta.<run number>.
+        description: Optional release version, a beta such as v1.0.3-beta.7 or a stable release such as v1.1.0. Leave blank to use v<package version>-beta.<run number>.
         required: false
         type: string
 
@@ -131,8 +131,13 @@ jobs:
             runner: ubuntu-24.04-arm
             container: ubuntu:20.04
             toolchain: focal-llvm16
+          # macos-15, not macos-14: GitHub no longer runs macos-14 (run
+          # 43639422366 was cancelled at once with "The configuration
+          # 'macos-14-arm64-us-default' is not supported"), and with this leg
+          # cancelled every downstream job is skipped. Same runner in the cli,
+          # desktop and published-installer-smoke legs below.
           - label: darwin-arm64
-            runner: macos-14
+            runner: macos-15
             toolchain: brew-llvm18
           - label: darwin-amd64
             runner: macos-15-intel
@@ -319,6 +324,11 @@ jobs:
           cache: npm
           cache-dependency-path: sdn-js/package-lock.json
       - name: Install Kubo
+        # Two tries at dist.ipfs.tech, not five: five cost about twelve minutes
+        # on the release's critical path before the GitHub-release fallback
+        # in download-kubo.sh was reached, while that host was down.
+        env:
+          KUBO_DOWNLOAD_ATTEMPTS: '2'
         run: |
           deployment/release/download-kubo.sh \
             --version "${KUBO_VERSION}" \
@@ -355,6 +365,42 @@ jobs:
           cache-dependency-path: package-lock.json
       - name: Install root JS dependencies
         run: npm ci
+      # The module's build imports esbuild and space-data-module-sdk, which its
+      # own package-lock.json pins. They used to resolve from the root tree only
+      # because the root's tarball copy of space-data-module-sdk pulled esbuild
+      # in; with the npm release of the SDK it does not, and v1.1.0 run
+      # 43640268636 failed here with "Cannot find package 'esbuild' imported
+      # from packages/sdn-updater-module/build.mjs".
+      - name: Install updater module dependencies
+        run: npm --prefix packages/sdn-updater-module ci --no-audit --fund=false
+      # space-data-module-sdk compiles the module with clang for
+      # wasm32-wasip1-threads and needs a WASI sysroot; no runner image has
+      # one. v1.1.0 run 43642178922 failed with 'WASI clang driver
+      # "wasm32-wasi-clang++" was not found on PATH'. wasi-sdk is the
+      # WebAssembly project's own clang + sysroot, pinned by version and by the
+      # sha256 GitHub reports for the asset, and handed to the SDK through its
+      # documented SDN_WASI_* overrides.
+      - name: Install the WASI toolchain
+        env:
+          WASI_SDK_VERSION: '34'
+          WASI_SDK_SHA256: b761e3a0721dbae9c09a0059e5fdb2bf917d1b4a8a7b430fb3b5aafb0984b2c4
+        run: |
+          set -euo pipefail
+          archive="wasi-sdk-${WASI_SDK_VERSION}.0-x86_64-linux.tar.gz"
+          curl -fL --retry 3 --retry-delay 5 --connect-timeout 30 -o "${RUNNER_TEMP}/${archive}" \
+            "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-${WASI_SDK_VERSION}/${archive}"
+          echo "${WASI_SDK_SHA256}  ${RUNNER_TEMP}/${archive}" | sha256sum -c -
+          mkdir -p "${RUNNER_TEMP}/wasi-sdk"
+          tar -xzf "${RUNNER_TEMP}/${archive}" -C "${RUNNER_TEMP}/wasi-sdk" --strip-components=1
+          sdk="${RUNNER_TEMP}/wasi-sdk"
+          test -x "${sdk}/bin/clang++"
+          test -f "${sdk}/share/wasi-sysroot/lib/wasm32-wasip1-threads/libc.a"
+          {
+            echo "SDN_WASI_CLANG=${sdk}/bin/clang"
+            echo "SDN_WASI_CLANGXX=${sdk}/bin/clang++"
+            echo "SDN_WASI_SYSROOT=${sdk}/share/wasi-sysroot"
+          } >> "$GITHUB_ENV"
+          "${sdk}/bin/clang++" --version | head -1
       - name: Build updater module wasm
         run: npm --prefix packages/sdn-updater-module run build
       - uses: actions/upload-artifact@v4
@@ -593,7 +639,7 @@ jobs:
             binary_name: spacedatanetwork
           - target_os: darwin
             target_arch: arm64
-            runner: macos-14
+            runner: macos-15
             toolchain: brew-llvm18
             archive_extension: tar.gz
             binary_name: spacedatanetwork
@@ -1002,7 +1048,7 @@ jobs:
         include:
           - target_os: macos
             target_arch: arm64
-            runner: macos-14
+            runner: macos-15
             cli_artifact: cli-darwin-arm64
             cli_bundle: spacedatanetwork-VERSION-darwin-arm64.tar.gz
             builder_args: --mac dmg zip --arm64
@@ -1366,6 +1412,9 @@ jobs:
         env:
           VERSION: ${{ needs.beta-version.outputs.package_version }}
           RELEASE_TAG: ${{ needs.beta-version.outputs.release_tag }}
+          # beta or stable: words the notes and the manifest. The update
+          # channel the payloads carry stays `--channel release` either way.
+          RELEASE_MATURITY: ${{ needs.beta-version.outputs.channel }}
         run: deployment/release/assemble-beta-release-artifacts.sh
       - uses: softprops/action-gh-release@v2
         with:
@@ -1373,6 +1422,12 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: ${{ needs.beta-version.outputs.release_name }}
           body_path: dist/release/SDN-BETA-RELEASE.md
+          # A release may already exist for the tag, with notes written by a
+          # person (v1.1.0 was published by hand before its assets were built).
+          # Append the generated artifact notes to them instead of replacing
+          # them; for a new release the existing body is empty and this is the
+          # same as before.
+          append_body: true
           prerelease: false
           make_latest: true
           files: dist/release/*
@@ -1395,7 +1450,7 @@ jobs:
           - target_os: linux
             runner: ubuntu-latest
           - target_os: macos
-            runner: macos-14
+            runner: macos-15
           - target_os: windows
             runner: windows-latest
             experimental: true
