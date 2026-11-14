@@ -879,6 +879,7 @@ func datasetPublicationRowFiles(schemaDir string, row DatasetShardPublication) [
 	}
 	if len(row.QuerySHA256) >= 16 && len(row.IndexSHA256) >= 16 {
 		out = append(out, filepath.Join(schemaDir, "indexes", row.QuerySHA256[:16]+"-"+row.IndexSHA256[:16]+".index.json"))
+		out = append(out, filepath.Join(schemaDir, "indexes", row.QuerySHA256[:16]+"-"+row.IndexSHA256[:16]+".index.fb"))
 	}
 	return out
 }
@@ -923,6 +924,8 @@ func (l livePublicationFiles) referenced(path string) bool {
 		return l.shards[contentHalf(strings.TrimSuffix(name, ".fbshard"))]
 	case strings.HasSuffix(name, ".index.json"):
 		return l.indexes[contentHalf(strings.TrimSuffix(name, ".index.json"))]
+	case strings.HasSuffix(name, ".index.fb"):
+		return l.indexes[contentHalf(strings.TrimSuffix(name, ".index.fb"))]
 	}
 	return true
 }
@@ -1007,7 +1010,7 @@ func (s *FlatSQLStore) SweepDatasetPublicationFiles(outputDir, schemaName string
 					continue
 				}
 			case "indexes":
-				if !strings.HasSuffix(name, ".index.json") || live.referenced(path) {
+				if (!strings.HasSuffix(name, ".index.json") && !strings.HasSuffix(name, ".index.fb")) || live.referenced(path) {
 					continue
 				}
 			}

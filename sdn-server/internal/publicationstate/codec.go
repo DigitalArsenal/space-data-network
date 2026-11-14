@@ -17,6 +17,11 @@ import (
 //go:embed schema/PublicationState.fbs
 var schema []byte
 
+const SchemaName = "PublicationState.fbs"
+
+// SchemaSHA256 identifies the IDL used by published binary replay indexes.
+func SchemaSHA256() string { return fmt.Sprintf("%x", sha256.Sum256(schema)) }
+
 var registry = func() *fbverify.Registry {
 	r := fbverify.NewRegistry()
 	r.AddSource("PublicationState.fbs", schema)

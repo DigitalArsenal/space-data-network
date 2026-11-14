@@ -22,6 +22,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 
 	"github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/spacedatanetwork/sdn-server/internal/publicationstate"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 )
 
@@ -577,6 +578,9 @@ func materializeDatasetPublicationFromFiles(ctx, fetchCtx context.Context, store
 	defer cleanup()
 	shardPath := filepath.Join(workDir, datasetPublicationPathComponent(shardAsset.CID)+".fbshard")
 	indexPath := filepath.Join(workDir, datasetPublicationPathComponent(indexAsset.CID)+".index.json")
+	if indexAsset.Schema == publicationstate.SchemaName {
+		indexPath = strings.TrimSuffix(indexPath, ".json") + ".fb"
+	}
 	if err := fetchDatasetPublicationCIDToFile(fetchCtx, opts.FetchByCIDToFile, opts.FetchRetryDelays, shardAsset.CID, shardPath); err != nil {
 		return nil, fmt.Errorf("fetch shard CID %s: %w", shardAsset.CID, err)
 	}
@@ -945,13 +949,13 @@ type datasetShardRecordReader func(record DatasetExportIndexRecord) ([]byte, err
 func parseDatasetExportIndexBytes(indexBytes []byte) (*DatasetExportIndex, error) {
 	var index DatasetExportIndex
 	if len(indexBytes) < 12 || string(indexBytes[8:12]) != "$PST" {
-        // Released export indexes retain their original compatibility reader.
-        if err := json.Unmarshal(indexBytes, &index); err != nil {
-            return nil, fmt.Errorf("parse dataset export index: %w", err)
-        }
-    } else if err := unmarshalPublication(indexBytes, &index); err != nil {
-        return nil, fmt.Errorf("parse dataset export index: %w", err)
-    }
+		// Released export indexes retain their original compatibility reader.
+		if err := json.Unmarshal(indexBytes, &index); err != nil {
+			return nil, fmt.Errorf("parse dataset export index: %w", err)
+		}
+	} else if err := unmarshalPublication(indexBytes, &index); err != nil {
+		return nil, fmt.Errorf("parse dataset export index: %w", err)
+	}
 	if index.Version != 1 {
 		return nil, fmt.Errorf("dataset export index version = %d, want 1", index.Version)
 	}
@@ -1290,10 +1294,14 @@ func buildDatasetPublicationManifestBytes(opts DatasetPublicationManifestOptions
 	providerEPMCID := builder.CreateString(opts.ProviderEPMCID)
 	publishedAt := builder.CreateString(opts.PublishedAt.UTC().Format(time.RFC3339Nano))
 	signatureTypeOffset := builder.CreateString(signatureType)
+	indexSchema, indexSchemaHash := "DPM.index.json", opts.SchemaHash
+	if strings.HasSuffix(export.IndexPath, ".index.fb") {
+		indexSchema, indexSchemaHash = publicationstate.SchemaName, publicationstate.SchemaSHA256()
+	}
 
 	assetOffsets := []flatbuffers.UOffsetT{
 		buildDPMAsset(builder, "data", export.ShardCID, "/ipfs/"+export.ShardCID, filepath.Base(export.ShardPath), fileIDValue, export.ShardBytes, export.ShardSHA256, export.ResultSHA256, export.SchemaName, opts.SchemaHash, export.ContentKeyID),
-		buildDPMAsset(builder, "index", export.IndexCID, "/ipfs/"+export.IndexCID, filepath.Base(export.IndexPath), fileIDValue, export.IndexBytes, export.IndexSHA256, "", "DPM.index.json", opts.SchemaHash, export.ContentKeyID),
+		buildDPMAsset(builder, "index", export.IndexCID, "/ipfs/"+export.IndexCID, filepath.Base(export.IndexPath), fileIDValue, export.IndexBytes, export.IndexSHA256, "", indexSchema, indexSchemaHash, export.ContentKeyID),
 	}
 	for _, aux := range opts.AuxiliaryAssets {
 		if strings.TrimSpace(aux.CID) == "" {
