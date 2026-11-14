@@ -102,6 +102,59 @@ func openFormat4ForTest(t testing.TB, dir string, opts ...StoreOption) *FlatSQLS
 	return s
 }
 
+func TestFormat4UnlimitedVisibilityOptIn(t *testing.T) {
+	onFormat4Engine(t, func(t *testing.T) {
+		root := t.TempDir()
+		store := openFormat4ForTest(t, root)
+		m, err := marker.Read(root)
+		if err != nil || m.Layout != 1 {
+			t.Fatalf("default layout: %+v %v", m, err)
+		}
+		if err := store.Close(); err != nil {
+			t.Fatal(err)
+		}
+		store = openFormat4ForTest(t, root, WithUnlimitedSQLVisibility(true))
+		m, err = marker.Read(root)
+		if err != nil || m.Layout != 2 {
+			t.Fatalf("opt-in layout: %+v %v", m, err)
+		}
+		if err := store.Close(); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv(format4.FormatEnv, "4")
+		if _, err := NewFlatSQLStore(root, nil); err == nil || !strings.Contains(err.Error(), "unlimited_sql_visibility") {
+			t.Fatalf("disabled promoted store: %v", err)
+		}
+		store = openFormat4ForTest(t, root, WithUnlimitedSQLVisibility(true))
+		if err := store.Close(); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+func TestFormat4MissingCapabilityLeavesNoStore(t *testing.T) {
+	format4TestWasm(t) // require the native runtime, but probe the shipped bytes
+	prev := format4OpenEngine
+	defer func() { format4OpenEngine = prev }()
+	format4OpenEngine = func(ctx context.Context, opt format4.Options) (format4.API, error) {
+		opt.Wasm = flatsqlrt.P4ThreadsWasm()
+		opt.CompileOnMiss = true
+		opt.AOTCacheDir = filepath.Join(os.Getenv("PARTB_AOT_CACHE"), "missing-capability")
+		return format4.Open(ctx, opt)
+	}
+	t.Setenv(format4.FormatEnv, "4")
+	root := t.TempDir()
+	_, err := NewFlatSQLStore(root, nil, WithUnlimitedSQLVisibility(true))
+	if !errors.Is(err, format4.ErrUnlimitedRelationsUnsupported) {
+		t.Fatalf("missing capability: %v", err)
+	}
+	for _, name := range []string{marker.Dir, auxiliaryMetadataFileName, marker.LegacyControl} {
+		if _, err := os.Stat(filepath.Join(root, name)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("failed capability left %s: %v", name, err)
+		}
+	}
+}
+
 // f4Rows is a record list keyed for comparison: CID, bytes and stored
 // length (C-12: a copy's peer and signature are any one copy's).
 func f4Rows(recs []*Record) []string {
