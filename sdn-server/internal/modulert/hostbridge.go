@@ -117,7 +117,7 @@ var builtinOperations = []string{
 }
 
 var capabilityOperations = map[string][]string{
-	"storage": {"storage.query", "storage.write", "storage.delete", "storage.expire", "storage.ingest_with_source",
+	"storage": {"storage.index_page", "storage.query", "storage.write", "storage.delete", "storage.expire", "storage.ingest_with_source",
 		"storage.flatsql_query_stream", "storage.flatsql_epoch_stream", "storage.query_sandboxed", "storage.query_surface",
 		"storage.flatsql_cache_key"},
 	"crypto": {"crypto.hash", "crypto.sign", "crypto.verify", "crypto.encrypt", "crypto.decrypt", "crypto.key_agreement",

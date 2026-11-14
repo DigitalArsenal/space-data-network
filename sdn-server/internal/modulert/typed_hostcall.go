@@ -378,6 +378,14 @@ func (hb *HostBridge) answerTyped(call *typedCall) (*typedAnswer, error) {
 		return &typedAnswer{raw: map[string][]byte{"config": encoded}}, nil
 	}
 
+	// The page request and answer are existing QRP/record streams, carried directly.
+	if call.op == "storage.index_page" {
+		result, segments, err := decodeHandlerAnswer(hb.Dispatch(call.op, call.raw["request"]))
+		if err != nil {
+			return nil, err
+		}
+		return streamAnswer(call, result, segments)
+	}
 	adapter := typedAdapters[call.op]
 	request := map[string]any{}
 	var err error

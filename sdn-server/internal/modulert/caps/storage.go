@@ -195,6 +195,9 @@ type storageCapAdapter struct {
 }
 
 func (s *storageCapAdapter) handle(operation string, payload []byte) ([]byte, error) {
+	if operation == "storage.index_page" {
+		return s.indexPage(payload), nil
+	}
 	var p map[string]interface{}
 	if len(payload) > 0 {
 		json.Unmarshal(payload, &p) //nolint:errcheck
