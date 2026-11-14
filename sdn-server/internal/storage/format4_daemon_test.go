@@ -703,7 +703,7 @@ func TestFormat4SealedTypesExposeOnlyMetadata(t *testing.T) {
 		tags := SourceTags{ProviderID: "proof", SourceName: "sealed-pnm", BatchID: "s-1"}
 
 		// L1: SIGNATURE sealed. The records store and read back on both
-		// formats; the stream store exposes metadata without plaintext fields.
+		// formats; the stream store exposes metadata only to trusted SQL.
 		encfield.RegisterSchema("PNM", []encfield.FieldSpec{{Name: "SIGNATURE", FieldID: 5}})
 		stores := open()
 		for _, s := range stores {
@@ -732,13 +732,19 @@ func TestFormat4SealedTypesExposeOnlyMetadata(t *testing.T) {
 			}
 			if s.Format4() {
 				caps := flatsqlrt.SandboxCaps{Timeout: time.Minute}
-				payload, _, _, err := s.QuerySandboxedJSON(`SELECT COUNT(_cid) AS n FROM PNM`, caps)
-				if err != nil || string(payload) != `[{"n":4}]` {
-					t.Fatalf("metadata count: %s, %v", payload, err)
+				for _, query := range []string{`SELECT COUNT(_cid) FROM PNM`, `SELECT _cid FROM PNM`, `SELECT _data FROM PNM`, `SELECT * FROM PNM`} {
+					payload, _, _, err := s.QuerySandboxedJSON(query, caps)
+					if err == nil { t.Fatalf("sealed relation reachable by sandbox: %s",query) }
+					for _, plain := range append(fileIDs,sigs...) {
+						if bytes.Contains(payload,plain) || strings.Contains(err.Error(),string(plain)) { t.Fatal("plaintext in sandbox response") }
+					}
 				}
-				if _, _, _, err := s.QuerySandboxedJSON(`SELECT SIGNATURE FROM PNM`, caps); err == nil {
-					t.Fatal("sealed field exposed through SQL")
+				if _, err := s.QueryRawStream(`SELECT SIGNATURE FROM PNM`); err == nil || !strings.Contains(err.Error(),"no such column") {
+					t.Fatalf("trusted SQL must reject sealed field as no such column: %v",err)
 				}
+				stream,err:=s.QueryRawStream(`SELECT _data FROM PNM`)
+				if err!=nil {t.Fatal(err)}
+				for _,plain:=range append(fileIDs,sigs...) { if bytes.Contains(stream.Bytes,plain) { t.Fatal("plaintext in trusted stored-byte output") } }
 			} else if reach := sqlReaches(t, s, "PNM"); len(reach) > 0 {
 				t.Fatalf("legacy sealed standard is on the public SQL surface: %v", reach)
 			}
