@@ -848,7 +848,7 @@ func (s *FlatSQLStore) retainedSelectionLocked(schema, provider, source, batch s
 		}
 		p.refs = append(p.refs, r)
 	}
-	sort.Slice(p.refs, func(i, j int) bool { return p.refs[i].CID() < p.refs[j].CID() })
+	sort.Slice(p.refs, func(i, j int) bool { return publicationDigestLess(p.refs[i].Digest, p.refs[j].Digest) })
 	return p, nil
 }
 

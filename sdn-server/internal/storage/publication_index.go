@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"github.com/ipfs/go-cid"
 	"io"
+	"math/bits"
 	"os"
 	"path/filepath"
 	"strings"
@@ -51,6 +52,32 @@ func (r publicationRecordRef) Identity() string {
 		return ""
 	}
 	return r.file.Identities[r.identity-1]
+}
+
+// Compare binary digests without allocating CID strings. Preserve the existing
+// lowercase base32 lexical order: digits precede letters in ASCII. A raw byte
+// comparison would change shard identities for the same selection.
+func publicationDigestLess(a, b [32]byte) bool {
+	for i := range a {
+		if a[i] == b[i] {
+			continue
+		}
+		// The common CID header occupies 32 bits. Find the first differing
+		// base32 symbol, including the symbol shared with the header.
+		start := ((32+i*8+bits.LeadingZeros8(a[i]^b[i]))/5)*5 - 32
+		symbol := func(d [32]byte) byte {
+			var v byte
+			for bit := start; bit < start+5; bit++ {
+				v <<= 1
+				if bit >= 0 && bit < 256 {
+					v |= (d[bit/8] >> (7 - uint(bit%8))) & 1
+				}
+			}
+			return (v + 6) % 32
+		}
+		return symbol(a) < symbol(b)
+	}
+	return false
 }
 func newPublicationReference(file *publicationRefFile, data []byte, offset int64, identity string) publicationRecordRef {
 	var framed [4]byte

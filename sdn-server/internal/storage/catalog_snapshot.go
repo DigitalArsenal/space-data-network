@@ -91,7 +91,7 @@ func (s *FlatSQLStore) captureCatalogLocked(x PublicationSource, cutoff uint64) 
 	for _, r := range selected {
 		products.refs = append(products.refs, r)
 	}
-	sort.Slice(products.refs, func(i, j int) bool { return products.refs[i].CID() < products.refs[j].CID() })
+	sort.Slice(products.refs, func(i, j int) bool { return publicationDigestLess(products.refs[i].Digest, products.refs[j].Digest) })
 	// Pair identities follow this index source's cutoff, never unrelated writes.
 	cutoff = index.Cutoff
 	products.Cutoff = cutoff
