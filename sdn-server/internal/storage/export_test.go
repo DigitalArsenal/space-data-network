@@ -125,8 +125,8 @@ func TestFlatSQLStoreExportDatasetWindowWritesShardAndIndex(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read index failed: %v", err)
 	}
-	var index DatasetExportIndex
-	if err := json.Unmarshal(indexBytes, &index); err != nil {
+	index, err := parseDatasetExportIndexBytes(indexBytes)
+	if err != nil {
 		t.Fatalf("unmarshal index failed: %v", err)
 	}
 	if index.SchemaName != "CAT.fbs" {
