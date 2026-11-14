@@ -392,6 +392,10 @@ test('beta release workflow builds updater wasm once before platform CLI archive
   const workflow = readRepoFile('.github/workflows/beta-release-artifacts.yml');
 
   assert.match(workflow, /updater-wasm:\s*\n\s*name:\s*Build updater module wasm/);
+  // The module's own lockfile pins its build tools (esbuild, the SDK); the
+  // root tree no longer carries them.
+  const updaterJob = workflow.slice(workflow.indexOf('  updater-wasm:'), workflow.indexOf('  docker:'));
+  assert.match(updaterJob, /npm --prefix packages\/sdn-updater-module ci[\s\S]*npm --prefix packages\/sdn-updater-module run build/);
   assert.match(workflow, /name:\s*updater-module-wasm[\s\S]*path:\s*packages\/sdn-updater-module\/dist\/isomorphic\/module\.wasm/);
   assert.match(workflow, /needs:\s*\[beta-version, ipfs, updater-wasm, wasmedge-static\]/);
   assert.match(workflow, /name:\s*updater-module-wasm[\s\S]*path:\s*packages\/sdn-updater-module\/dist\/isomorphic/);
@@ -437,6 +441,23 @@ test('beta release workflow downloads only the ipfs build tool, with retries and
   assert.match(downloader, /--retry-all-errors/);
   assert.match(downloader, /tar -tzf/);
   assert.match(downloader, /unzip -tq/);
+  // dist.ipfs.tech has gone down twice; Kubo's GitHub release is the fallback,
+  // and only with the sha512 GitHub publishes beside each asset.
+  assert.match(downloader, /https:\/\/github\.com\/ipfs\/kubo\/releases\/download/);
+  assert.match(downloader, /\$\{mirror_url\}\.sha512/);
+  assert.match(downloader, /"\$\{expected\}" == "\$\{actual\}"/);
+});
+
+test('no web UI install runs the kubo devDependency download', () => {
+  // Its postinstall fetches from dist.ipfs.tech, which only the e2e tests
+  // need; every release-lane install skips scripts and runs patch-package.
+  for (const [path, text] of [
+    ['deployment/ipfs/ipfs-deploy.sh', readRepoFile('deployment/ipfs/ipfs-deploy.sh')],
+    ['.github/workflows/docker-publish.yml', readRepoFile('.github/workflows/docker-publish.yml')],
+  ]) {
+    assert.match(text, /npm ci --no-audit --fund=false --ignore-scripts/, path);
+    assert.match(text, /npm run postinstall/, path);
+  }
 });
 
 test('every CLI target links WasmEdge in and ships no runtime beside the binary', () => {

@@ -46,7 +46,13 @@ case "${archive}" in
     ;;
 esac
 
-url="https://dist.ipfs.tech/kubo/${version}/kubo_${version}_${platform}.${archive}"
+asset="kubo_${version}_${platform}.${archive}"
+url="https://dist.ipfs.tech/kubo/${version}/${asset}"
+# The same archive from Kubo's own GitHub release, used when dist.ipfs.tech does
+# not answer (it was down on 2026-10-02/03 and again on 2026-11-14, when the
+# v1.1.0 release could not start). Each GitHub asset has a published .sha512
+# beside it, and the fallback is accepted only when it matches.
+mirror_url="${KUBO_MIRROR_BASE_URL:-https://github.com/ipfs/kubo/releases/download}/${version}/${asset}"
 work_dir="$(mktemp -d)"
 archive_path="${work_dir}/kubo.${archive}"
 
@@ -113,7 +119,31 @@ for attempt in $(seq 1 "${attempts}"); do
   fi
 done
 
-echo "failed to download a valid Kubo archive from ${url}" >&2
+echo "failed to download a valid Kubo archive from ${url}; trying ${mirror_url}" >&2
+
+sha512_of() {
+  if command -v sha512sum >/dev/null 2>&1; then
+    sha512sum "$1" | cut -d' ' -f1
+  else
+    shasum -a 512 "$1" | cut -d' ' -f1
+  fi
+}
+
+rm -f "${archive_path}"
+if curl -fL --retry 3 --retry-delay 5 ${retry_all_errors} --connect-timeout 30 --max-time 300 -o "${archive_path}" "${mirror_url}" \
+  && curl -fL --retry 3 --retry-delay 5 ${retry_all_errors} --connect-timeout 30 --max-time 60 -o "${archive_path}.sha512" "${mirror_url}.sha512"; then
+  expected="$(tr -s '[:space:]' ' ' < "${archive_path}.sha512" | cut -d' ' -f1 | tr '[:upper:]' '[:lower:]')"
+  actual="$(sha512_of "${archive_path}")"
+  if [[ -n "${expected}" && "${expected}" == "${actual}" ]] && validate_archive; then
+    echo "Downloaded $(wc -c < "${archive_path}" | tr -d '[:space:]') bytes from ${mirror_url} (sha512 matches ${mirror_url}.sha512)"
+    extract_archive
+    echo "Extracted Kubo ${version} for ${platform} to ${output_dir}"
+    exit 0
+  fi
+  echo "the archive from ${mirror_url} does not match its published sha512 (expected ${expected:-none}, got ${actual})" >&2
+fi
+
+echo "failed to download a valid Kubo archive from ${url} or ${mirror_url}" >&2
 if [[ -f "${archive_path}" ]]; then
   echo "last response preview:" >&2
   head -c 200 "${archive_path}" >&2 || true

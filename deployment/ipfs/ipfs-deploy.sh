@@ -34,7 +34,13 @@ if [[ ! -f "${root}/webui/build/index.html" ]]; then
   (
     cd "${root}/webui"
     log "Installing IPFS WebUI dependencies"
-    run_with_timeout "${WEBUI_NPM_CI_TIMEOUT_SECONDS:-900}" npm ci --no-audit --fund=false
+    # --ignore-scripts, then the repo's own postinstall (patch-package): the
+    # kubo devDependency's install script fetches a binary from dist.ipfs.tech
+    # that only the e2e tests use, and that host being down stopped the v1.1.0
+    # release before it built anything (as it stopped security.yml on
+    # 2026-10-02/03). The build needs none of the install scripts.
+    run_with_timeout "${WEBUI_NPM_CI_TIMEOUT_SECONDS:-900}" npm ci --no-audit --fund=false --ignore-scripts
+    npm run postinstall
     log "Building IPFS WebUI"
     run_with_timeout "${WEBUI_BUILD_TIMEOUT_SECONDS:-900}" npm run build
   )
