@@ -157,6 +157,25 @@ func (b format4Backend) putRetained(op, schema string, records [][]byte, peer st
 	if len(s.publicationEntries) >= maxPublicationEntries {
 		return nil, nil, errors.New("publication journal capacity reached; complete and retire retained history before ingestion")
 	}
+	pending := map[string]bool{}
+	indexed := 0
+	for _, old := range s.publicationEntries {
+		indexed += len(old.Refs)
+		if !old.Published && old.Schema == schema && old.Tags.ProviderID == tags.ProviderID && old.Tags.SourceName == tags.SourceName {
+			pending[old.Tags.BatchID] = true
+		}
+	}
+	if !pending[tags.BatchID] && len(pending) >= 4096 {
+		return nil, nil, errors.New("retained publication backlog exceeds 4096 batches; stop ingestion and complete publication")
+	}
+	if indexed+len(records) > 200000 {
+		return nil, nil, errors.New("publication index exceeds 200000 records; drain and retire retained history")
+	}
+	for _, data := range records {
+		if len(data) > maxPublicationRecordBytes {
+			return nil, nil, errors.New("publication record exceeds 16 MiB")
+		}
+	}
 	seq := uint64(1)
 	if n := len(s.publicationEntries); n > 0 {
 		seq = s.publicationEntries[n-1].Sequence + 1

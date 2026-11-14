@@ -78,8 +78,11 @@ type AutoPublisher struct {
 	service DatasetPublicationService
 	lanes   []config.AutoPublishLane
 
-	queue         chan DatasetPublicationRequest
-	pairedPending map[string]*pairedBatchPublication
+	queue          chan DatasetPublicationRequest
+	pairedPending  map[string]*pairedBatchPublication
+	pairedSequence uint64
+	pairedTurns    map[sourcePublicationKey]uint64
+	backlogError   string
 	// Source scope uses bounded per-configured-source state, independent of
 	// the batch queue, so queue pressure cannot discard its final event.
 	sourceWake chan struct{}
@@ -121,9 +124,10 @@ type AutoPublisher struct {
 // succeeded, batches currently waiting for a retry, and batches given up on
 // after autoPublishMaxAttempts.
 type AutoPublishStats struct {
-	Published int64
-	Retrying  int64
-	Failed    int64
+	BacklogError string `json:"backlogError,omitempty"`
+	Published    int64
+	Retrying     int64
+	Failed       int64
 	// Unchanged counts publications skipped because the lane's set is
 	// exactly what its last publication exported.
 	Unchanged int64
@@ -201,7 +205,7 @@ func (p *AutoPublisher) Stats() AutoPublishStats {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return AutoPublishStats{Published: p.published, Retrying: p.retrying, Failed: p.failed, Unchanged: p.unchanged}
+	return AutoPublishStats{BacklogError: p.backlogError, Published: p.published, Retrying: p.retrying, Failed: p.failed, Unchanged: p.unchanged}
 }
 
 // unchangedSinceLastPublication asks the service whether req's set is the one

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -63,6 +64,7 @@ func (p *AutoPublisher) isPairedSource(schema, provider, source string) bool {
 }
 
 type pairedBatchPublication struct {
+	order      uint64
 	inFlight   bool
 	generation uint64
 	request    DatasetPublicationRequest
@@ -86,7 +88,14 @@ func (p *AutoPublisher) observePairedBatch(rule config.AutoPublishLane, schema, 
 	p.mu.Lock()
 	state := p.pairedPending[key]
 	if state == nil {
-		state = &pairedBatchPublication{request: req, rule: rule, due: p.now().Add(rule.Settle)}
+		if len(p.pairedPending) >= 4096 {
+			p.backlogError = "publication backlog exceeds 4096 batches; stop ingestion and drain publication"
+			p.mu.Unlock()
+			log.Error(p.backlogError)
+			return
+		}
+		p.pairedSequence++
+		state = &pairedBatchPublication{order: p.pairedSequence, request: req, rule: rule, due: p.now().Add(rule.Settle)}
 		p.pairedPending[key] = state
 	} else if observed && rule.Settle > 0 {
 		state.due = p.now().Add(rule.Settle)
@@ -94,14 +103,8 @@ func (p *AutoPublisher) observePairedBatch(rule config.AutoPublishLane, schema, 
 	if observed {
 		state.generation++
 	}
-	if !state.queued && !state.inFlight && !p.pairedBatchDueLocked(state).After(p.now()) {
-		select {
-		case p.queue <- state.request:
-			state.queued = true
-		default:
-		}
-	}
 	p.mu.Unlock()
+	p.queueReadyPairedBatches()
 	p.wakePublications()
 }
 
@@ -149,7 +152,7 @@ func (p *AutoPublisher) recoverPairedBatches(ctx context.Context) {
 func (p *AutoPublisher) queueReadyPairedBatches() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	for _, state := range p.pairedPending {
+	for _, state := range p.orderedPairedLocked() {
 		if state.inFlight || state.queued || p.pairedBatchDueLocked(state).After(p.now()) {
 			continue
 		}
@@ -168,7 +171,7 @@ func (p *AutoPublisher) publicationDelay() (time.Duration, bool) {
 	defer p.mu.Unlock()
 	now := p.now()
 	for _, state := range p.pairedPending {
-		if state.queued || state.inFlight {
+		if state.queued || state.inFlight || !p.firstPairedLocked(state) {
 			continue
 		}
 		d := p.pairedBatchDueLocked(state).Sub(now)
@@ -191,11 +194,27 @@ func (p *AutoPublisher) publishPairedBatch(ctx context.Context, req DatasetPubli
 		return p.isPairedSource(req.Schema, req.ProviderID, req.SourceName)
 	}
 	state.queued = false
+	if !p.firstPairedLocked(state) {
+		p.mu.Unlock()
+		return true
+	}
 	due := p.pairedBatchDueLocked(state)
 	if due.After(p.now()) {
 		state.due = due
 		p.mu.Unlock()
 		return true
+	}
+	if p.pairedTurns == nil {
+		p.pairedTurns = map[sourcePublicationKey]uint64{}
+	}
+	sourceKey := sourcePublicationKey{req.Schema, req.ProviderID, req.SourceName}
+	if state.order > p.pairedTurns[sourceKey] {
+		for _, pending := range p.pairedPending {
+			if samePairedSource(state, pending) && pending.order > p.pairedTurns[sourceKey] {
+				p.pairedTurns[sourceKey] = pending.order
+			}
+		}
+		p.lastPublished[autoPublishLaneKey(state.rule)] = p.now()
 	}
 	state.inFlight = true
 	generation := state.generation
@@ -231,7 +250,6 @@ func (p *AutoPublisher) publishPairedBatch(ctx context.Context, req DatasetPubli
 			p.unchanged++
 		} else {
 			p.published++
-			p.lastPublished[autoPublishLaneKey(state.rule)] = p.now()
 		}
 	}
 	p.mu.Unlock()
@@ -246,6 +264,10 @@ func (p *AutoPublisher) publishPairedBatch(ctx context.Context, req DatasetPubli
 
 // Caller holds p.mu. Apply the shared rate clock before admitting more work.
 func (p *AutoPublisher) pairedBatchDueLocked(state *pairedBatchPublication) time.Time {
+	key := sourcePublicationKey{state.request.Schema, state.request.ProviderID, state.request.SourceName}
+	if state.order <= p.pairedTurns[key] {
+		return state.due
+	}
 	interval := state.rule.MinInterval
 	if interval <= 0 {
 		interval = autoPublishDefaultMinInterval
@@ -255,4 +277,24 @@ func (p *AutoPublisher) pairedBatchDueLocked(state *pairedBatchPublication) time
 		due = state.due
 	}
 	return due
+}
+
+func samePairedSource(a, b *pairedBatchPublication) bool {
+	return a.request.Schema == b.request.Schema && a.request.ProviderID == b.request.ProviderID && a.request.SourceName == b.request.SourceName
+}
+func (p *AutoPublisher) orderedPairedLocked() []*pairedBatchPublication {
+	out := make([]*pairedBatchPublication, 0, len(p.pairedPending))
+	for _, s := range p.pairedPending {
+		out = append(out, s)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].order < out[j].order })
+	return out
+}
+func (p *AutoPublisher) firstPairedLocked(state *pairedBatchPublication) bool {
+	for _, other := range p.pairedPending {
+		if samePairedSource(state, other) && other.order < state.order {
+			return false
+		}
+	}
+	return true
 }
