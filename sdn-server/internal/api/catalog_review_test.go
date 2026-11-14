@@ -101,11 +101,11 @@ func TestCatalogReviewExclusionsAndStableCutoff(t *testing.T) {
 	if err != nil || before.Cutoff != after.Cutoff {
 		t.Fatal("unrelated writes changed generation", err)
 	}
-	records, err := before.Index.Records()
+	record, err := before.Index.Record(0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	id := records[0].CID
+	id := record.CID
 	if err = s.ExcludeCatalogRecords("synthetic-node", "catalog-index", []string{id}); err != nil {
 		t.Fatal(err)
 	}
@@ -212,5 +212,30 @@ func TestPairedPublicationRetryPreservesOrder(t *testing.T) {
 	}
 	if !reflect.DeepEqual(service.attempts, []string{"first", "first", "second"}) {
 		t.Fatal("retry changed batch order", service.attempts)
+	}
+}
+
+func TestPairedPublicationIndependentSourceClocks(t *testing.T) {
+	service := newRecordingPublicationService()
+	rules := pairedRules()
+	rules[0].ProviderID = ""
+	rules[0].SourceName = ""
+	other := rules[1]
+	other.SourceName = "another"
+	rules = append(rules, other)
+	p := NewAutoPublisher(service, rules)
+	now := time.Now()
+	p.now = func() time.Time { return now }
+	p.ObserveIngest(pairedObservation("first"))
+	p.publishPairedBatch(context.Background(), <-p.queue)
+	observation := pairedObservation("second")
+	observation.SourceName = "another"
+	p.ObserveIngest(observation)
+	if len(p.queue) != 1 {
+		t.Fatal("one source consumed another source's interval")
+	}
+	p.publishPairedBatch(context.Background(), <-p.queue)
+	if len(service.snapshot()) != 2 {
+		t.Fatal("second source did not publish")
 	}
 }

@@ -454,8 +454,26 @@ func ExportDatasetRecords(outputDir string, filter IndexedRecordQuery, records [
 	if err := shardFile.Close(); err != nil {
 		return nil, err
 	}
-	if err := os.Link(shardFile.Name(), shardPath); err != nil && !os.IsExist(err) {
-		return nil, err
+	if err := os.Link(shardFile.Name(), shardPath); err != nil {
+		if !os.IsExist(err) {
+			return nil, err
+		}
+		existing, err := os.Open(shardPath)
+		if err != nil {
+			return nil, err
+		}
+		hash := sha256.New()
+		size, readErr := io.Copy(hash, existing)
+		closeErr := existing.Close()
+		if readErr != nil {
+			return nil, readErr
+		}
+		if closeErr != nil {
+			return nil, closeErr
+		}
+		if size != shardSize || hex.EncodeToString(hash.Sum(nil)) != shardSHA {
+			return nil, fmt.Errorf("refusing to overwrite immutable export file %s with different bytes", shardPath)
+		}
 	}
 	if err := writeImmutableExportFile(indexPath, indexBytes); err != nil {
 		return nil, err

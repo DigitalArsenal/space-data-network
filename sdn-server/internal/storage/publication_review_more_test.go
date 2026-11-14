@@ -228,11 +228,11 @@ func TestPublicationReviewNoopTags(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	records, err := p.Records()
+	record, err := p.Record(0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := records[0]
+	r := record
 	n := len(s.publicationEntries)
 	if err = s.UpsertSourceTags("CAT.fbs", r.CID, r.SourceTags); err != nil {
 		t.Fatal(err)
@@ -311,5 +311,26 @@ func TestPublicationReviewBatchGrouping(t *testing.T) {
 	}
 	if len(s.publicationEntries) != 1 || len(s.publicationEntries[0].Refs) != 128 {
 		t.Fatal("batch did not share a journal transaction")
+	}
+}
+
+func TestPublicationReviewImmutableShard(t *testing.T) {
+	raw := sds.NewCATBuilder().WithNoradCatID(900001).Build()
+	rows := []DatasetExportRecord{{CID: computeCID(raw), Data: raw}}
+	q := IndexedRecordQuery{SchemaName: "CAT.fbs"}
+	dir := t.TempDir()
+	first, err := ExportDatasetRecords(dir, q, rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := ExportDatasetRecords(dir, q, rows)
+	if err != nil || first.ShardCID != second.ShardCID || first.IndexCID != second.IndexCID {
+		t.Fatal("repeat export changed identifiers", err)
+	}
+	if err = os.WriteFile(first.ShardPath, []byte("damaged"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = ExportDatasetRecords(dir, q, rows); err == nil {
+		t.Fatal("corrupt existing immutable shard accepted")
 	}
 }

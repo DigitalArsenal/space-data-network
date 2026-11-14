@@ -94,6 +94,7 @@ func (s *FlatSQLStore) captureCatalogLocked(x PublicationSource, cutoff uint64) 
 // A cutoff of zero selects the latest completed journal transaction. Nonzero
 // cutoffs make a retry reproduce the same selection after concurrent ingestion.
 func (s *FlatSQLStore) CaptureCatalogSnapshot(provider, indexSource string, cutoff uint64) (*CatalogSnapshot, error) {
+	original := s
 	s = s.publicationView()
 	x, ok := s.catalogSource("CAT.fbs", provider, indexSource)
 	if !ok {
@@ -119,7 +120,12 @@ func (s *FlatSQLStore) CaptureCatalogSnapshot(provider, indexSource string, cuto
 	if cutoff > head {
 		return nil, errors.New("catalog cutoff exceeds committed head")
 	}
-	return s.captureCatalogLocked(x, cutoff)
+	snap, err := s.captureCatalogLocked(x, cutoff)
+	if err == nil {
+		snap.Index.store = original
+		snap.Products.store = original
+	}
+	return snap, err
 }
 
 // SelectPublication returns nil for an ordinary source, preserving its existing
@@ -132,6 +138,7 @@ func (s *FlatSQLStore) SelectPublication(schema, provider, source, batch string)
 	if !s.publicationEnabled.Load() || !s.publicationSourceEnabled(schema, provider, source) {
 		return nil, nil
 	}
+	original := s
 	s = s.publicationView()
 	if !s.retainsPublication(schema, provider, source) {
 		return nil, nil
@@ -147,13 +154,19 @@ func (s *FlatSQLStore) SelectPublication(schema, provider, source, batch string)
 			if err != nil {
 				return nil, err
 			}
+			snap.Index.store = original
+			snap.Products.store = original
 			if schema == "CAT.fbs" {
 				return snap.Index, nil
 			}
 			return snap.Products, nil
 		}
 	}
-	return s.retainedSelectionLocked(schema, provider, source, batch, cutoff)
+	p, err := s.retainedSelectionLocked(schema, provider, source, batch, cutoff)
+	if err == nil {
+		p.store = original
+	}
+	return p, err
 }
 
 // ExportCatalogSnapshot writes both deterministic SDS shards only after closure
@@ -194,7 +207,7 @@ func (p *PublicationSelection) window(q IndexedRecordQuery) ([]DatasetExportReco
 	}
 	out := make([]DatasetExportRecord, 0, end-start)
 	for _, r := range p.refs[start:end] {
-		out = append(out, DatasetExportRecord{CID: r.CID, SourceTags: r.Tags, load: r.read})
+		out = append(out, DatasetExportRecord{CID: r.CID, SourceTags: r.Tags, load: func() ([]byte, error) { return p.readReference(r) }})
 	}
 	return out, nil
 }

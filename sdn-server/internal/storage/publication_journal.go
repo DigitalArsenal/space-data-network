@@ -319,6 +319,16 @@ func (s *FlatSQLStore) markPublicationApplied(e publicationEntry) error {
 	}
 	e.Refs = refs
 	e.ReferenceBytes = publicationReferencesBytes(refs)
+	total, count := e.ReferenceBytes, len(refs)
+	for _, old := range s.publicationEntries {
+		if old.Sequence != e.Sequence {
+			total += old.ReferenceBytes
+			count += len(old.Refs)
+		}
+	}
+	if total > maxPublicationReferenceBytes || count > 200000 {
+		return errors.New("publication recovery exceeds reference index capacity")
+	}
 	if len(refs) == 0 {
 		if err := publicationAtomicFile(filepath.Join(s.publicationEntryDir(e.Sequence), "published"), []byte("1\n")); err != nil {
 			return err
@@ -607,6 +617,7 @@ type PublicationBatch struct {
 // Reclamation requires batch completion AND no retained selection or snapshot
 // reference; journal reclamation is deliberately absent.
 type PublicationSelection struct {
+	store                           *FlatSQLStore
 	Cutoff                          uint64
 	Schema, Provider, Source, Batch string
 	refs                            []publicationRecordRef
@@ -620,21 +631,24 @@ func (p *PublicationSelection) Fingerprint() (string, int) {
 	}
 	return hex.EncodeToString(h.Sum(nil)), len(p.refs)
 }
-func (p *PublicationSelection) Records() ([]DatasetExportRecord, error) {
-	out, err := p.window(IndexedRecordQuery{SchemaName: p.Schema, ProviderID: p.Provider, SourceName: p.Source, BatchID: p.Batch})
-	if err != nil {
-		return nil, err
+
+// Record hydrates one selected record, bounded by the journal payload limit.
+func (p *PublicationSelection) Record(index int) (DatasetExportRecord, error) {
+	if index < 0 || index >= len(p.refs) {
+		return DatasetExportRecord{}, errors.New("publication record index out of bounds")
 	}
-	for i := range out {
-		data, err := out[i].load()
-		if err != nil {
-			return nil, err
-		}
-		out[i].Data = data
-		out[i].load = nil
-	}
-	return out, nil
+	r := p.refs[index]
+	data, err := p.readReference(r)
+	return DatasetExportRecord{CID: r.CID, Data: data, SourceTags: r.Tags}, err
 }
+func (p *PublicationSelection) readReference(r publicationRecordRef) ([]byte, error) {
+	data, err := r.read()
+	if err != nil && p.store != nil {
+		p.store.pausePublication(publicationEntry{Schema: p.Schema, Tags: r.Tags}, err)
+	}
+	return data, err
+}
+
 func (s *FlatSQLStore) retainedSelectionLocked(schema, provider, source, batch string, cutoff uint64) (*PublicationSelection, error) {
 	if err := s.publicationFailures[publicationSourceKey{schema, provider, source}]; err != nil {
 		return nil, fmt.Errorf("publication source paused: %w", err)
