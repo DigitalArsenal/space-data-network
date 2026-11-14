@@ -1061,6 +1061,23 @@ func normalizePublishingSchema(schema string) string {
 // requires exact provider/source identities. The schema may be written
 // either as the standard code ("RFB") or the schema file ("RFB.fbs").
 type AutoPublishLane struct {
+	// PairedPublication opts this exact source into deferred batches and periodic snapshots.
+	PairedPublication bool `yaml:"paired_publication,omitempty"`
+	// StopPublicationRetention removes this source only after every retained batch completed.
+	RequeuePublicationBatches []string `yaml:"requeue_publication_batches,omitempty"`
+	DiscardPublicationBatches []string `yaml:"discard_publication_batches,omitempty"`
+	StopPublicationRetention  bool     `yaml:"stop_publication_retention,omitempty"`
+	// CatalogExcludeCIDs removes selected CAT records from future snapshots.
+	CatalogExcludeCIDs []string `yaml:"catalog_exclude_cids,omitempty"`
+
+	// RetainForPublication durably retains CAT/OCM batches before replacement.
+	// It requires exact provider/source identities and store format 4.
+	RetainForPublication bool `yaml:"retain_for_publication,omitempty"`
+	CatalogObjectLimit   int  `yaml:"catalog_object_limit,omitempty"`
+	// CatalogProductSource selects a compact CAT/OCM snapshot for this CAT
+	// source. Both sources require retention before their first ingest.
+	CatalogProductSource string `yaml:"catalog_product_source,omitempty"`
+
 	// PublishScope selects "batch" (the default) or "source". Source scope
 	// requires exact, case-sensitive provider and source names. It publishes
 	// all stored batches for that source and catches up once at startup.
@@ -1077,12 +1094,10 @@ type AutoPublishLane struct {
 	// "satnogs-db".
 	SourceName string `yaml:"source_name,omitempty"`
 
-	// MinInterval rate-limits this lane. Source scope retains pending ingests
-	// until the interval elapses; batch scope skips a batch that lands sooner
-	// than this after the lane's last publication. Zero uses the built-in
-	// default (5m). A publication exports, pins and announces a whole shard,
-	// so a misconfigured 1-minute ingest timer must not turn into a
-	// publication storm.
+	// MinInterval controls publication frequency. A source rule paired with a
+	// batch rule publishes periodic full snapshots (default 24h); batch requests
+	// wait through rate limits and recover from committed storage on startup.
+	// A single rule retains its original behavior and default interval (5m).
 	MinInterval time.Duration `yaml:"min_interval,omitempty"`
 
 	// MaxShardBytes caps ONE published shard in bytes, in addition to the
@@ -2374,6 +2389,9 @@ func (c *Config) validate() error {
 		if lane.KeepSeries < 0 {
 			return fmt.Errorf("publishing.retention.lanes[%d].keep_series must not be negative", i)
 		}
+	}
+	if err := c.validatePublicationSources(); err != nil {
+		return err
 	}
 	for i, pointer := range c.Publishing.IPNSPointers {
 		if strings.TrimSpace(pointer.Schema) == "" {

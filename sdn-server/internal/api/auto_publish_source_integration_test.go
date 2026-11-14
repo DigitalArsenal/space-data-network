@@ -14,6 +14,7 @@ import (
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/NCD"
 	flatbuffers "github.com/google/flatbuffers/go"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
+	"github.com/spacedatanetwork/sdn-server/internal/pinpolicy"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
@@ -57,6 +58,11 @@ func TestAutoPublisherSourceReplaysAllRawHashBatchesAfterStartup(t *testing.T) {
 	}
 	announcer := &fakeDatasetUpdatePublisher{}
 	service := NewConcreteDatasetPublicationService(store, announcer, privateKey, "fixture-producer", "bafy-provider-epm", kubo.URL, filepath.Join(dir, "publications"))
+	pins, err := pinpolicy.New(kubo.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.SetPinPolicy(pins)
 	publisher := NewAutoPublisher(service, []config.AutoPublishLane{{Schema: "NCD.fbs", ProviderID: provider, SourceName: source, PublishScope: "source", MinInterval: time.Hour}})
 	type outcome struct {
 		result *DatasetPublicationResult

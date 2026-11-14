@@ -87,6 +87,7 @@ export const FLATSQL_SYNC_SEGMENT_COLUMNS = [
   ['SIGNATURE', 'bytes'], ['SIGNATURE_TYPE', 'string'], ['SIGNING_PUBLIC_KEY', 'bytes'],
   ['AVAILABILITY', 'string'], ['AVAILABILITY_REASON', 'string'], ['AVAILABILITY_CHECKED_AT_MS', 'int64'],
   ['BATCH_COMPLETION', 'string'], ['BATCH_REVISION', 'string'], ['BATCH_TOTAL_RECORDS', 'int64'],
+  ['PUBLICATION_CUTOFF', 'int64'], ['PUBLICATION_SOURCE_CUTOFF', 'int64'],
 ] as const;
 
 export interface FlatSqlSyncTransport {
@@ -256,6 +257,9 @@ export interface FlatSqlSegmentRow {
   batchCompletion?: 'complete';
   batchRevision?: string;
   batchTotalRecords?: number;
+  /** Paired snapshot cutoffs. Absent for ordinary publications and older nodes. */
+  publicationCutoff?: number;
+  publicationSourceCutoff?: number;
 }
 
 export interface FlatSqlSyncManifest {
@@ -668,6 +672,13 @@ function int(row: Record<string, Cell>, name: string): number {
   return value;
 }
 
+function snapshotCutoff(row: Record<string, Cell>, name: string): number | undefined {
+  if (row[name] == null) return undefined;
+  const value = int(row, name);
+  if (!Number.isSafeInteger(value) || value < 0) throw new Error(`Invalid snapshot cutoff ${name}`);
+  return value;
+}
+
 function bytesCell(row: Record<string, Cell>, name: string): Uint8Array | null {
   const value = row[name];
   if (value == null) return null;
@@ -730,6 +741,8 @@ export function decodeFlatSqlSegmentRows(q: QRP): FlatSqlSegmentRow[] {
     availabilityReason: text(row, 'AVAILABILITY_REASON') || undefined,
     availabilityCheckedAtMs: int(row, 'AVAILABILITY_CHECKED_AT_MS') || undefined,
     ...publicationCompletion(row),
+    publicationCutoff: snapshotCutoff(row, 'PUBLICATION_CUTOFF'),
+    publicationSourceCutoff: snapshotCutoff(row, 'PUBLICATION_SOURCE_CUTOFF'),
     signature: bytesCell(row, 'SIGNATURE'),
     signatureType: text(row, 'SIGNATURE_TYPE'),
     signingPublicKey: bytesCell(row, 'SIGNING_PUBLIC_KEY'),

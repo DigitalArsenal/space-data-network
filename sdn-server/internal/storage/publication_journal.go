@@ -1,0 +1,1133 @@
+package storage
+
+import (
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"runtime"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/spacedatanetwork/sdn-server/internal/encfield"
+	"github.com/spacedatanetwork/sdn-server/internal/storage/format4"
+)
+
+// PublicationSource opts an exact source into durable publication retention.
+// ProductSource on CAT selects its OCM closure for source snapshots.
+type PublicationSource struct {
+	Schema, Provider, Source, ProductSource string
+	CatalogObjectLimit                      int `json:",omitempty"`
+}
+type publicationEntry struct {
+	ReferenceBytes    int64                  `json:"-"`
+	GenerationFailure publicationFailure     `json:"-"`
+	BatchFailure      publicationFailure     `json:"-"`
+	Generation        bool                   `json:"-"`
+	Refs              []publicationRecordRef `json:"-"`
+	Published         bool                   `json:"-"`
+	Discarded         bool                   `json:"-"`
+	Aborted           bool                   `json:"-"`
+	Digest            string
+	Sequence          uint64
+	SourceSequence    uint64
+	Schema            string
+	Tags              SourceTags
+	Peer              string
+	Signature         []byte
+	Identity, OwnTS   bool
+	ReadReady         bool `json:"-"`
+	OutcomeKnown      bool `json:"-"`
+	Applied           bool
+	Refused           map[int]int32 `json:",omitempty"`
+}
+
+func (s *FlatSQLStore) publicationDir() string {
+	return filepath.Join(s.basePath, "publication-journal")
+}
+func (s *FlatSQLStore) publicationEntryDir(seq uint64) string {
+	return filepath.Join(s.publicationDir(), fmt.Sprintf("%020d", seq))
+}
+func (s *FlatSQLStore) retainsPublication(schema, provider, source string) bool {
+	for _, x := range s.publicationSources {
+		if x.Schema == schema && x.Provider == provider && x.Source == source {
+			return true
+		}
+	}
+	return false
+}
+
+// ConfigurePublicationSources is called before ingestion starts. Settings are
+// durable and additive: removing a publishing rule cannot discard pending data.
+// Existing records require reingestion before their first retained snapshot.
+func (s *FlatSQLStore) ConfigurePublicationSources(sources []PublicationSource) error {
+	if len(sources) == 0 {
+		return nil
+	}
+	if _, ok := s.rb.(format4Backend); !ok {
+		return errors.New("publication retention requires store format 4")
+	}
+	s.publicationWriteMu.Lock()
+	defer s.publicationWriteMu.Unlock()
+	s.publicationMu.Lock()
+	defer s.publicationMu.Unlock()
+	if err := s.requireWritable("configure publication retention"); err != nil {
+		return err
+	}
+	merged := append([]PublicationSource(nil), s.publicationSources...)
+	for _, x := range sources {
+		if x.CatalogObjectLimit < 0 || x.CatalogObjectLimit > maxPublicationSelectionRecords {
+			return errors.New("catalog_object_limit must be between 1 and 100000, or zero for the default")
+		}
+		if encfield.HasEncryptedFields(strings.TrimSuffix(x.Schema, ".fbs")) {
+			return errors.New("publication retention refuses standards with sealed fields")
+		}
+		x.Provider = strings.TrimSpace(x.Provider)
+		x.Source = strings.TrimSpace(x.Source)
+		x.ProductSource = strings.TrimSpace(x.ProductSource)
+		if (x.Schema != "CAT.fbs" && x.Schema != "OCM.fbs") || x.Provider == "" || x.Source == "" {
+			return errors.New("publication retention requires CAT/OCM and exact provider/source")
+		}
+		if x.ProductSource != "" && x.Schema != "CAT.fbs" {
+			return errors.New("catalog_product_source requires CAT")
+		}
+		found := false
+		for i, old := range merged {
+			if old.Schema == x.Schema && old.Provider == x.Provider && old.Source == x.Source {
+				if old.ProductSource != "" && x.ProductSource != "" && old.ProductSource != x.ProductSource {
+					return errors.New("catalog product source cannot change")
+				}
+				if x.CatalogObjectLimit != 0 && (len(s.publicationEntries) == 0 || (old.CatalogObjectLimit != 0 && x.CatalogObjectLimit >= old.CatalogObjectLimit)) {
+					merged[i].CatalogObjectLimit = x.CatalogObjectLimit
+				} else if x.CatalogObjectLimit != old.CatalogObjectLimit {
+					log.Warnf("catalog_object_limit decrease ignored; durable capacity=%d, retained use=%d references, %d bytes", old.CatalogObjectLimit, s.publicationRecordCount, s.publicationReferenceCountBytes)
+				}
+				if x.ProductSource != "" {
+					merged[i].ProductSource = x.ProductSource
+				}
+				found = true
+			}
+		}
+		if !found {
+			count, err := s.CountRawRecords(RawRecordQuery{SchemaName: x.Schema, ProviderID: x.Provider, SourceName: x.Source})
+			if err != nil {
+				return err
+			}
+			if count > 0 {
+				return errors.New("enable publication retention on an empty source before initial ingestion")
+			}
+			merged = append(merged, x)
+		}
+	}
+	for _, x := range merged {
+		if x.Schema == "OCM.fbs" {
+			paired := false
+			for _, c := range merged {
+				paired = paired || (c.Schema == "CAT.fbs" && c.Provider == x.Provider && c.ProductSource == x.Source)
+			}
+			if !paired {
+				return errors.New("retained OCM source requires its CAT index")
+			}
+		}
+		if x.ProductSource != "" {
+			found := false
+			for _, p := range merged {
+				if p.Schema == "OCM.fbs" && p.Provider == x.Provider && p.Source == x.ProductSource {
+					found = true
+				}
+			}
+			if !found {
+				return errors.New("catalog product source requires its own retention option")
+			}
+		}
+	}
+	candidate := &FlatSQLStore{publicationSources: merged}
+	if s.publicationRecordCount > candidate.publicationRecordLimit() || s.publicationReferenceCountBytes > candidate.publicationByteLimit() {
+		log.Warnf("catalog_object_limit below retained use=%d references, %d bytes; preserving durable capacity", s.publicationRecordCount, s.publicationReferenceCountBytes)
+		merged = append([]PublicationSource(nil), s.publicationSources...)
+	}
+	if err := os.MkdirAll(s.publicationDir(), 0700); err != nil {
+		return err
+	}
+	raw, err := marshalPublication(merged)
+	if err != nil {
+		return err
+	}
+	if err = publicationAtomicFile(filepath.Join(s.publicationDir(), "sources.fb"), raw); err != nil {
+		return err
+	}
+	if err = publicationSyncDir(s.basePath); err != nil {
+		return err
+	}
+	s.publicationSources = merged
+	s.publishSourceKeys()
+	s.publicationEnabled.Store(true)
+	return nil
+}
+
+// A prepared SDS stream and metadata are synced and renamed before engine PUT.
+// No later retained write passes an interrupted PUT. Startup replays that intent
+// before exposing the store, then durably marks it applied. Thus a crash after
+// PUT and before the marker loses neither its bytes nor its batch identity.
+func (b format4Backend) putRetained(op, schema string, records [][]byte, peer string, sig []byte, tags SourceTags, opt f4PutOpt) ([]string, []format4.Outcome, error) {
+	s := b.s
+	if err := s.requireWritable(op); err != nil {
+		return nil, nil, err
+	}
+	tags = normalizeSourceTags(tags)
+	if err := ValidateSourceTags(tags); err != nil {
+		return nil, nil, err
+	}
+	if tags.BatchID == "" {
+		return nil, nil, errors.New("retained publication requires batch id")
+	}
+	if err := s.admitPublicationGeneration(schema, tags, len(records)); err != nil {
+		return nil, nil, err
+	}
+
+	if len(s.publicationEntries) >= maxPublicationEntries {
+		return nil, nil, s.publicationAdmissionError(schema, tags, fmt.Errorf("publication journal entry capacity=%d, use=%d; catalog_object_limit controls reference capacity only", maxPublicationEntries, len(s.publicationEntries)))
+	}
+	pending := s.publicationPendingCounts[publicationSourceKey{schema, tags.ProviderID, tags.SourceName}]
+	indexed := s.publicationRecordCount
+	referenceBytes := s.publicationReferenceCountBytes
+	if pending[tags.BatchID] == 0 && len(pending) >= 4096 {
+		return nil, nil, s.publicationAdmissionError(schema, tags, fmt.Errorf("retained publication backlog capacity=4096 batches, use=%d; catalog_object_limit controls reference capacity only", len(pending)))
+	}
+	if indexed+len(records) > s.publicationRecordLimit() {
+		return nil, nil, s.publicationAdmissionError(schema, tags, fmt.Errorf("catalog_object_limit reference capacity=%d, retained use=%d, requested=%d", s.publicationRecordLimit(), indexed, len(records)))
+	}
+	for _, data := range records {
+		referenceBytes += 168 + int64(len(recordSupersedeKey(schema, data))) + 16
+		if referenceBytes > s.publicationByteLimit() {
+			if x, ok := s.catalogSource(schema, tags.ProviderID, tags.SourceName); ok {
+				if err := s.abortPublicationGeneration(x); err != nil {
+					return nil, nil, err
+				}
+			}
+			return nil, nil, fmt.Errorf("catalog_object_limit byte capacity=%d, retained use=%d, requested total=%d", s.publicationByteLimit(), s.publicationReferenceCountBytes, referenceBytes)
+		}
+		if len(data) > maxPublicationRecordBytes {
+			return nil, nil, errors.New("publication record exceeds 16 MiB")
+		}
+	}
+	seq := s.publicationHighWater + 1
+	if n := len(s.publicationEntries); n > 0 {
+		seq = max(seq, s.publicationEntries[n-1].Sequence+1)
+	}
+	sourceSeq := s.nextPublicationSourceSequence(schema, tags.ProviderID, tags.SourceName)
+	e := publicationEntry{Sequence: seq, SourceSequence: sourceSeq, Schema: schema, Tags: tags, Peer: peer, Signature: sig, Identity: opt.identity, OwnTS: opt.ownTS}
+	if err := s.publicationStep("prepare"); err != nil {
+		return nil, nil, err
+	}
+	temp, err := os.MkdirTemp(s.publicationDir(), ".prepare-")
+	if err != nil {
+		return nil, nil, err
+	}
+	defer os.RemoveAll(temp)
+	f, err := os.OpenFile(filepath.Join(temp, "records.sds"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		return nil, nil, err
+	}
+	digest := sha256.New()
+	writer := io.MultiWriter(f, digest)
+	for _, data := range records {
+		if err = s.publicationStep("write"); err != nil {
+			break
+		}
+		if uint64(len(data)) > uint64(^uint32(0)) {
+			err = errors.New("publication record exceeds frame limit")
+			break
+		}
+		if err = binary.Write(writer, binary.LittleEndian, uint32(len(data))); err != nil {
+			break
+		}
+		if _, err = writer.Write(data); err != nil {
+			break
+		}
+	}
+	if err == nil {
+		err = s.publicationStep("data-sync")
+		if err == nil {
+			err = f.Sync()
+		}
+	}
+	closeErr := f.Close()
+	if err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	e.Digest = hex.EncodeToString(digest.Sum(nil))
+	raw, err := marshalPublication(e)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err = s.publicationStep("metadata"); err != nil {
+		return nil, nil, err
+	}
+	scope, _ := marshalPublication(publicationEntry{Sequence: e.Sequence, SourceSequence: e.SourceSequence, Schema: e.Schema, Tags: e.Tags})
+	if err = publicationPrepareFile(filepath.Join(temp, "source.fb"), scope); err != nil {
+		return nil, nil, err
+	}
+	if err = publicationPrepareFile(filepath.Join(temp, "entry.fb"), raw); err != nil {
+		return nil, nil, err
+	}
+	if err = publicationSyncDir(temp); err != nil {
+		return nil, nil, err
+	}
+	if err = s.publicationStep("rename"); err != nil {
+		return nil, nil, err
+	}
+	if err = s.savePublicationWatermarks(seq, schema, tags.ProviderID, tags.SourceName, sourceSeq); err != nil {
+		return nil, nil, err
+	}
+	if err = os.Rename(temp, s.publicationEntryDir(seq)); err != nil {
+		return nil, nil, err
+	}
+	s.publicationMu.Lock()
+	s.publicationEntries = append(s.publicationEntries, e)
+	s.publicationHighWater = seq
+	s.publicationMu.Unlock()
+	err = s.publicationStep("directory-sync")
+	if err == nil {
+		err = publicationSyncDir(s.publicationDir())
+	}
+	if err != nil {
+		s.pausePublication(e, err)
+		return nil, nil, err
+	}
+	if s.publicationHook != nil {
+		s.publicationHook("prepared")
+	}
+	var cids []string
+	var out []format4.Outcome
+	writeErr := s.publicationStep("engine")
+	if writeErr == nil {
+		cids, out, writeErr = b.f4PutDirect(op, schema, records, peer, sig, &tags, opt)
+	}
+	if writeErr == nil && s.publicationHook != nil {
+		s.publicationHook("stored")
+	}
+	var refused *RefusedRecordsError
+	if writeErr != nil && !errors.As(writeErr, &refused) {
+		s.pausePublication(e, writeErr)
+		return cids, out, writeErr
+	}
+	e.Refused = publicationRefusals(out)
+	// The engine's per-record outcome is final even when a record was refused.
+	// Retrying a failed completion write does not replay a successful PUT.
+	var markerErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		markerErr = s.markPublicationApplied(e)
+		if markerErr == nil {
+			break
+		}
+	}
+	if markerErr != nil {
+		s.pausePublication(e, markerErr)
+		return cids, out, fmt.Errorf("engine write completed; publication acknowledgement pending: %w", markerErr)
+	}
+
+	return cids, out, writeErr
+}
+func publicationRefusals(out []format4.Outcome) map[int]int32 {
+	refused := map[int]int32{}
+	for i, o := range out {
+		if o.Action == format4.ActRejected {
+			refused[i] = o.Reject
+		}
+	}
+	return refused
+}
+func (s *FlatSQLStore) markPublicationApplied(e publicationEntry) error {
+	// Persist the engine outcome before opening or indexing the SDS stream.
+	rawOutcome, _ := marshalPublication(e.Refused)
+	if err := publicationAtomicFile(filepath.Join(s.publicationEntryDir(e.Sequence), "outcome"), rawOutcome); err != nil {
+		return err
+	}
+	s.publicationMu.Lock()
+	for i := range s.publicationEntries {
+		if s.publicationEntries[i].Sequence == e.Sequence {
+			s.publicationEntries[i].OutcomeKnown = true
+			s.publicationEntries[i].Refused = e.Refused
+		}
+	}
+	s.publicationMu.Unlock()
+
+	if s.publicationHook != nil {
+		s.publicationHook("outcome-persisted")
+	}
+	refs, err := s.publicationReferences(e)
+	if err != nil {
+		return err
+	}
+	e.Refs = refs
+	e.ReferenceBytes = publicationReferencesBytes(refs)
+	total, count := e.ReferenceBytes, len(refs)
+	for _, old := range s.publicationEntries {
+		if old.Sequence != e.Sequence {
+			total += old.ReferenceBytes
+			count += len(old.Refs)
+		}
+	}
+	if total > s.publicationByteLimit() || count > s.publicationRecordLimit() {
+		return errors.New("publication recovery exceeds reference index capacity")
+	}
+	if len(refs) == 0 {
+		if err := publicationAtomicFile(filepath.Join(s.publicationEntryDir(e.Sequence), "published"), []byte("1\n")); err != nil {
+			return err
+		}
+		e.Published = true
+	}
+	s.publicationMu.Lock()
+	for i := range s.publicationEntries {
+		if s.publicationEntries[i].Sequence == e.Sequence {
+			s.publicationEntries[i].Refused = e.Refused
+			s.publicationEntries[i].OutcomeKnown = true
+		}
+	}
+	s.publicationMu.Unlock()
+	raw, err := marshalPublication(e.Refused)
+	if err != nil {
+		return err
+	}
+	if s.publicationFault != nil {
+		if err = s.publicationFault("applied"); err != nil {
+			return err
+		}
+	}
+	if err = publicationAtomicFile(filepath.Join(s.publicationEntryDir(e.Sequence), "applied"), raw); err != nil {
+		return err
+	}
+	s.publicationMu.Lock()
+	defer s.publicationMu.Unlock()
+	for i := range s.publicationEntries {
+		if s.publicationEntries[i].Sequence == e.Sequence {
+			s.indexPublicationTags(s.publicationEntries[i], -1)
+			e.Applied = true
+			e.ReadReady = true
+			s.indexPublicationTags(e, 1)
+			s.publicationEntries[i] = e
+			break
+		}
+	}
+	return nil
+}
+func (s *FlatSQLStore) pausePublication(e publicationEntry, err error) {
+	s.publicationMu.Lock()
+	defer s.publicationMu.Unlock()
+	s.pausePublicationLocked(e, err)
+}
+func (s *FlatSQLStore) pausePublicationLocked(e publicationEntry, err error) {
+	if s.publicationFailures == nil {
+		s.publicationFailures = map[publicationSourceKey]error{}
+	}
+	err = fmt.Errorf("entry %d batch %q unreadable: %w", e.Sequence, e.Tags.BatchID, err)
+	s.publicationFailures[publicationSourceKey{e.Schema, e.Tags.ProviderID, e.Tags.SourceName}] = err
+	for i := range s.publicationEntries {
+		if s.publicationEntries[i].Sequence == e.Sequence && e.Applied {
+			s.publicationEntries[i].ReadReady = false
+		}
+	}
+	log.Errorf("publication source requires operator recovery (%s): %v", e.Schema, err)
+}
+
+// PublicationRecoveryStatus reports isolated sources requiring operator recovery.
+func (s *FlatSQLStore) PublicationRecoveryStatus() map[string]string {
+	s.publicationMu.Lock()
+	defer s.publicationMu.Unlock()
+	out := map[string]string{}
+	if s.publicationGlobalFailure != nil {
+		out["journal"] = s.publicationGlobalFailure.Error()
+	}
+	for k, err := range s.publicationFailures {
+		out[k.schema+"/"+k.provider+"/"+k.source] = err.Error()
+	}
+	for key, reason := range s.publicationQuarantineStatus {
+		out[strings.SplitN(key, "/", 2)[1]] = reason
+	}
+	for _, e := range s.publicationEntries {
+		if e.Applied && !e.ReadReady && !e.Discarded && !e.Aborted {
+			key := fmt.Sprintf("%s/%s/%s/%s/entry-%d", e.Schema, e.Tags.ProviderID, e.Tags.SourceName, e.Tags.BatchID, e.Sequence)
+			out[key] = fmt.Sprintf("applied entry %d batch %q unreadable; publication paused", e.Sequence, e.Tags.BatchID)
+		}
+	}
+	// Keep the operator's data-loss acknowledgement after payload reclamation.
+	if raw, err := os.ReadFile(filepath.Join(s.publicationDir(), "discard-effects.fb")); err == nil {
+		var effects map[string]string
+		if err := unmarshalPublication(raw, &effects); err != nil {
+			out["discard-effects"] = err.Error()
+		} else {
+			for key, reason := range effects {
+				out[key+"/discard"] = reason
+			}
+		}
+	} else if !os.IsNotExist(err) {
+		out["discard-effects"] = err.Error()
+	}
+	return out
+}
+func (s *FlatSQLStore) recoverPublicationJournal() error {
+	raw, err := os.ReadFile(filepath.Join(s.publicationDir(), "sources.fb"))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if err = unmarshalPublication(raw, &s.publicationSources); err != nil {
+		return err
+	}
+	watermarkErr := s.loadPublicationWatermarks()
+	if watermarkErr != nil {
+		log.Warnf("rebuilding unreadable publication watermarks: %v", watermarkErr)
+	}
+	if err := s.recoverPublicationGenerationAbort(); err != nil {
+		return err
+	}
+	if err := s.recoverPublicationReclamation(); err != nil {
+		s.publicationGlobalFailure = err
+		log.Errorf("publication reclamation metadata requires repair: %v", err)
+	}
+	dirs, err := os.ReadDir(s.publicationDir())
+	if err != nil {
+		return err
+	}
+	for _, dir := range dirs {
+		if !dir.IsDir() {
+			continue
+		}
+		if strings.HasPrefix(dir.Name(), ".prepare-") {
+			if err = os.RemoveAll(filepath.Join(s.publicationDir(), dir.Name())); err != nil {
+				log.Warnf("publication temporary cleanup: %v", err)
+			}
+			continue
+		}
+		if strings.HasPrefix(dir.Name(), ".") {
+			continue
+		}
+		var e publicationEntry
+		if seq, parseErr := strconv.ParseUint(dir.Name(), 10, 64); parseErr == nil && seq > s.publicationHighWater {
+			s.publicationHighWater = seq
+		}
+		raw, err = os.ReadFile(filepath.Join(s.publicationDir(), dir.Name(), "entry.fb"))
+		if err == nil {
+			err = unmarshalPublication(raw, &e)
+		}
+		if err == nil && filepath.Base(s.publicationEntryDir(e.Sequence)) != dir.Name() {
+			err = errors.New("invalid publication journal sequence")
+		}
+		if err != nil {
+			damaged := err
+			scopeRaw, scopeErr := os.ReadFile(filepath.Join(s.publicationDir(), dir.Name(), "source.fb"))
+			seq, seqErr := strconv.ParseUint(dir.Name(), 10, 64)
+			if scopeErr == nil && unmarshalPublication(scopeRaw, &e) == nil && seqErr == nil {
+				e.Sequence = seq
+				e.Applied = false
+				s.publicationEntries = append(s.publicationEntries, e)
+				s.pausePublication(e, damaged)
+				continue
+			}
+			if seqErr == nil {
+				s.publicationEntries = append(s.publicationEntries, publicationEntry{Sequence: seq})
+			}
+			// Scope cannot be trusted; isolate configured publication sources while
+			// leaving ordinary storage and the node available for repair.
+			for _, x := range s.publicationSources {
+				s.pausePublication(publicationEntry{Schema: x.Schema, Tags: SourceTags{ProviderID: x.Provider, SourceName: x.Source}}, err)
+			}
+			continue
+		}
+		s.publicationEntries = append(s.publicationEntries, e)
+		if _, abortErr := os.Stat(filepath.Join(s.publicationEntryDir(e.Sequence), "aborted")); abortErr == nil {
+			e.Aborted, e.Discarded, e.Published = true, true, true
+			s.publicationEntries[len(s.publicationEntries)-1] = e
+			continue
+		}
+		if _, discardErr := os.Stat(filepath.Join(s.publicationEntryDir(e.Sequence), "discarded")); discardErr == nil {
+			e.Discarded, e.Published = true, true
+			s.publicationEntries[len(s.publicationEntries)-1] = e
+			if _, appliedErr := os.Stat(filepath.Join(s.publicationEntryDir(e.Sequence), "applied")); os.IsNotExist(appliedErr) {
+				continue
+			}
+		}
+		raw, err = os.ReadFile(filepath.Join(s.publicationEntryDir(e.Sequence), "applied"))
+		if err == nil {
+			err = unmarshalPublication(raw, &e.Refused)
+			e.Applied = true
+			e.OutcomeKnown = true
+		} else if errors.Is(err, os.ErrNotExist) {
+			err = s.loadPublicationOutcome(&e)
+		}
+		_, completedErr := os.Stat(filepath.Join(s.publicationEntryDir(e.Sequence), "published"))
+		e.Published = e.Discarded || completedErr == nil
+		_, generationErr := os.Stat(filepath.Join(s.publicationEntryDir(e.Sequence), "generation"))
+		e.Generation = generationErr == nil
+		s.loadPublicationFailures(&e)
+		if e.Discarded && e.Applied && err == nil {
+			// A durable discard also excludes an applied payload after restart.
+			if err = s.recordPublicationDiscardEffect(e); err != nil {
+				s.pausePublication(e, err)
+			}
+			s.publicationEntries[len(s.publicationEntries)-1] = e
+			continue
+		}
+		if err == nil {
+			e.Refs, err = s.publicationReferences(e)
+			if err == nil {
+				e.ReferenceBytes = publicationReferencesBytes(e.Refs)
+				total := e.ReferenceBytes
+				count := len(e.Refs)
+				for _, old := range s.publicationEntries {
+					total += old.ReferenceBytes
+					count += len(old.Refs)
+				}
+				if total > s.publicationByteLimit() || count > s.publicationRecordLimit() {
+					err = errors.New("publication recovery exceeds reference index capacity")
+					e.Refs = nil
+				}
+			}
+		} // Applied streams are checked too.
+		e.ReadReady = err == nil
+		s.publicationEntries[len(s.publicationEntries)-1] = e
+		if err != nil {
+			if !e.Applied && IsPublicationContentError(err) {
+				if e.Discarded {
+					continue
+				}
+				if saveErr := s.quarantineUnreadablePublication(e, err); saveErr == nil {
+					continue
+				} else {
+					err = saveErr
+				}
+			}
+			s.pausePublication(e, err)
+			continue
+		}
+		if e.Applied {
+			continue
+		}
+		if s.publicationFailures[publicationSourceKey{e.Schema, e.Tags.ProviderID, e.Tags.SourceName}] != nil {
+			continue
+		}
+		records, readErr := s.publicationRecords(e)
+		if readErr != nil {
+			s.pausePublication(e, readErr)
+			continue
+		}
+		data := make([][]byte, len(records))
+		for i, r := range records {
+			data[i] = r.Data
+		}
+		for attempt := 0; attempt < 3; attempt++ {
+			var out []format4.Outcome
+			if !e.OutcomeKnown {
+				_, out, err = s.rb.(format4Backend).f4PutDirect("recover publication", e.Schema, data, e.Peer, e.Signature, &e.Tags, f4PutOpt{identity: e.Identity, ownTS: e.OwnTS})
+				var refused *RefusedRecordsError
+				if err != nil && !errors.As(err, &refused) {
+					continue
+				}
+				e.Refused = publicationRefusals(out)
+				e.OutcomeKnown = true
+			}
+			err = s.markPublicationApplied(e)
+			if err == nil {
+				break
+			}
+		}
+		if err != nil {
+			s.pausePublication(e, err)
+		}
+	}
+	if err := s.migratePublicationSourceSequences(); err != nil {
+		return err
+	}
+	if watermarkErr != nil {
+		// Global journal sequence bounds every source-local sequence. Recovered
+		// receipts, reclamation plans and entry directories establish that floor.
+		for _, x := range s.publicationSources {
+			id := publicationSourceID(x.Schema, x.Provider, x.Source)
+			s.publicationSourceWater[id] = max(s.publicationSourceWater[id], s.publicationHighWater)
+		}
+		m := publicationWatermarks{Global: s.publicationHighWater, Sources: s.publicationSourceWater}
+		raw, _ := marshalPublication(m)
+		if err := publicationAtomicFile(filepath.Join(s.publicationDir(), "watermarks.fb"), raw); err != nil {
+			for _, x := range s.publicationSources {
+				s.pausePublication(publicationEntry{Schema: x.Schema, Tags: SourceTags{ProviderID: x.Provider, SourceName: x.Source}}, err)
+			}
+		}
+	}
+	s.publicationTags = map[publicationTagKey]int{}
+	s.publicationRecordCount = 0
+	s.publicationReferenceCountBytes = 0
+	s.publicationPayloadCountBytes = 0
+	s.publicationPendingCounts = nil
+	for _, e := range s.publicationEntries {
+		s.indexPublicationTags(e, 1)
+	}
+	s.publishSourceKeys()
+	s.publicationEnabled.Store(len(s.publicationSources) > 0)
+	s.retryCatalogGenerationsLocked()
+	if err := s.reclaimPublicationLocked(); err != nil {
+		log.Warnf("startup publication reclamation deferred: %v", err)
+	}
+	return nil
+}
+func (s *FlatSQLStore) publicationRecords(e publicationEntry) ([]DatasetExportRecord, error) {
+	f, err := os.Open(filepath.Join(s.publicationEntryDir(e.Sequence), "records.sds"))
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	remaining := info.Size()
+	digest := sha256.New()
+	reader := io.TeeReader(f, digest)
+	var out []DatasetExportRecord
+	ordinal := 0
+	for remaining > 0 {
+		var n uint32
+		if err = binary.Read(reader, binary.LittleEndian, &n); err != nil {
+			return nil, err
+		}
+		remaining -= 4
+		if n < 8 || int64(n) > remaining {
+			return nil, errors.New("invalid publication SDS frame")
+		}
+		data := make([]byte, int(n))
+		if _, err = io.ReadFull(reader, data); err != nil {
+			return nil, err
+		}
+		remaining -= int64(n)
+		if _, refused := e.Refused[ordinal]; !refused {
+			out = append(out, DatasetExportRecord{CID: computeCID(data), Data: data, SourceTags: e.Tags})
+		}
+		ordinal++
+	}
+	if e.Digest != hex.EncodeToString(digest.Sum(nil)) {
+		return nil, errors.New("publication journal checksum mismatch")
+	}
+	return out, nil
+}
+func publicationSyncDir(dir string) error {
+	f, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return f.Sync()
+}
+func publicationAtomicFile(path string, raw []byte) error {
+	f, err := os.CreateTemp(filepath.Dir(path), ".write-")
+	if err != nil {
+		return err
+	}
+	name := f.Name()
+	defer os.Remove(name)
+	_, err = f.Write(raw)
+	if err == nil {
+		err = f.Sync()
+	}
+	ce := f.Close()
+	if err == nil {
+		err = ce
+	}
+	if err != nil {
+		return err
+	}
+	if err = os.Rename(name, path); err != nil {
+		return err
+	}
+	return publicationSyncDir(filepath.Dir(path))
+}
+
+// RetainedPublicationBatches includes superseded and expired batches. Completion
+// is decided by the existing publication series ledger, not by input retention.
+func (s *FlatSQLStore) RetainedPublicationBatches() []PublicationBatch {
+	s.publicationMu.Lock()
+	defer s.publicationMu.Unlock()
+	if s.publicationGlobalFailure != nil {
+		return nil
+	}
+	byKey := map[string]PublicationBatch{}
+	for _, e := range s.publicationEntries {
+		if !e.Applied || e.Published || e.BatchFailure.Attempts >= 3 || e.GenerationFailure.Attempts >= 3 || s.publicationFailures[publicationSourceKey{e.Schema, e.Tags.ProviderID, e.Tags.SourceName}] != nil {
+			continue
+		}
+		key := e.Schema + "\x00" + e.Tags.ProviderID + "\x00" + e.Tags.SourceName + "\x00" + e.Tags.BatchID
+		byKey[key] = PublicationBatch{e.Schema, e.Tags.ProviderID, e.Tags.SourceName, e.Tags.BatchID, e.Sequence}
+	}
+	var out []PublicationBatch
+	for _, v := range byKey {
+		out = append(out, v)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Sequence < out[j].Sequence })
+	return out
+}
+
+type PublicationBatch struct {
+	Schema, Provider, Source, Batch string
+	Sequence                        uint64
+}
+
+// PublicationSelection owns immutable bytes at a durable cutoff. The journal
+// retains those bytes independently of live-record expiry and replacement.
+// Close releases its file pins after export; the current generation stays retained.
+type PublicationSelection struct {
+	store                           *FlatSQLStore
+	release                         func()
+	closeOnce                       sync.Once
+	cleanup                         runtime.Cleanup
+	SourceCutoff                    uint64
+	SourceSequences                 []uint64
+	Cutoff                          uint64
+	Schema, Provider, Source, Batch string
+	refs                            []publicationRecordRef
+}
+
+// Close releases the selection's retention pins. It is safe to call repeatedly.
+func (p *PublicationSelection) Close() {
+	if p != nil {
+		p.closeOnce.Do(func() {
+			p.cleanup.Stop()
+			if p.release != nil {
+				p.release()
+			}
+		})
+	}
+}
+func (p *PublicationSelection) pin(s *FlatSQLStore) {
+	p.store = s
+	s.publicationMu.Lock()
+	p.release = s.pinPublicationEntriesLocked([]publicationEntry{{Refs: p.refs}})
+	s.publicationMu.Unlock()
+	p.cleanup = runtime.AddCleanup(p, func(release func()) { release() }, p.release)
+}
+func (p *PublicationSelection) Fingerprint() (string, int) {
+	h := newPublicationSetHash(p.Schema, p.Provider, p.Source, p.Batch)
+	for _, r := range p.refs {
+		h.Write([]byte(r.CID()))
+		h.Write([]byte{'\n'})
+	}
+	return hex.EncodeToString(h.Sum(nil)), len(p.refs)
+}
+
+// Record hydrates one selected record, bounded by the journal payload limit.
+func (p *PublicationSelection) Record(index int) (DatasetExportRecord, error) {
+	if index < 0 || index >= len(p.refs) {
+		return DatasetExportRecord{}, errors.New("publication record index out of bounds")
+	}
+	r := p.refs[index]
+	data, err := p.readReference(r)
+	return DatasetExportRecord{CID: r.CID(), Data: data, SourceTags: r.Tags()}, err
+}
+func (p *PublicationSelection) readReference(r publicationRecordRef) ([]byte, error) {
+	return r.read()
+}
+
+func (s *FlatSQLStore) retainedSelectionLocked(schema, provider, source, batch string, cutoff uint64) (*PublicationSelection, error) {
+	if s.publicationGlobalFailure != nil {
+		return nil, s.publicationGlobalFailure
+	}
+	if err := s.publicationFailures[publicationSourceKey{schema, provider, source}]; err != nil {
+		return nil, fmt.Errorf("publication source paused: %w", err)
+	}
+	p := &PublicationSelection{Schema: schema, Provider: provider, Source: source, Batch: batch}
+	byKey := map[string]publicationRecordRef{}
+	terminalComplete := false
+	for _, e := range s.publicationEntries {
+		if e.Aborted || !e.Applied || e.Sequence > cutoff || e.Schema != schema || e.Tags.ProviderID != provider || e.Tags.SourceName != source || (batch != "" && e.Tags.BatchID != batch) {
+			continue
+		}
+		if !e.Discarded && !e.ReadReady {
+			return nil, fmt.Errorf("applied publication entry %d batch %q unreadable; restore it or explicitly discard it", e.Sequence, e.Tags.BatchID)
+		}
+		if !e.Discarded && batch == "" && e.GenerationFailure.Attempts >= 3 {
+			continue
+		}
+		p.Cutoff = e.Sequence
+		p.SourceCutoff = e.SourceSequence
+		p.SourceSequences = append(p.SourceSequences, e.SourceSequence)
+		terminalComplete = e.Generation
+		if e.Discarded {
+			continue
+		}
+		for _, r := range e.Refs {
+			key := r.CID()
+			if schema == "CAT.fbs" && batch == "" && r.Identity() != "" {
+				key = r.Identity()
+			}
+			byKey[key] = r
+		}
+		if len(byKey) > maxPublicationSelectionRecords {
+			return nil, publicationContentError(errors.New("publication selection exceeds 100000 records; partition the source"))
+		}
+	}
+	_, paired := s.catalogSource(schema, provider, source)
+	if paired && schema == "CAT.fbs" && strings.HasSuffix(batch, ":complete") && !terminalComplete {
+		return nil, errors.New("terminal catalog batch has no completed generation")
+	}
+	excluded, err := s.catalogExclusions(schema, provider, source)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range byKey {
+		if excluded[r.CID()] || excluded[r.FramedCID()] {
+			continue
+		}
+		p.refs = append(p.refs, r)
+	}
+	sort.Slice(p.refs, func(i, j int) bool { return publicationDigestLess(p.refs[i].Digest, p.refs[j].Digest) })
+	return p, nil
+}
+
+type publicationSourceKey struct{ schema, provider, source string }
+
+func (s *FlatSQLStore) publishSourceKeys() {
+	keys := map[publicationSourceKey]bool{}
+	for _, x := range s.publicationSources {
+		keys[publicationSourceKey{x.Schema, x.Provider, x.Source}] = true
+	}
+	s.publicationSourceKeys.Store(&keys)
+}
+func (s *FlatSQLStore) publicationSourceEnabled(schema, provider, source string) bool {
+	keys := s.publicationSourceKeys.Load()
+	return keys != nil && (*keys)[publicationSourceKey{schema, provider, source}]
+}
+
+// RetryPublicationRecovery retries interrupted storage and acknowledgement writes
+// once per call. Reconciliation calls it between publication attempts.
+func (s *FlatSQLStore) RetryPublicationRecovery() {
+	s.retryQuarantinedPublication(time.Now())
+	s.publicationWriteMu.Lock()
+	s.publicationMu.Lock()
+	retryReceipts := false
+	for _, err := range s.publicationFailures {
+		var receiptErr *publicationReceiptError
+		retryReceipts = retryReceipts || errors.As(err, &receiptErr)
+	}
+	s.publicationMu.Unlock()
+	if retryReceipts {
+		if err := s.recoverPublicationReceipts(); err != nil {
+			s.publicationGlobalFailure = err
+		}
+	}
+	if s.publicationGlobalFailure != nil {
+		high := s.publicationHighWater
+		err := s.recoverPublicationReclamation()
+		s.publicationHighWater = max(high, s.publicationHighWater)
+		s.publicationMu.Lock()
+		s.publicationGlobalFailure = err
+		s.publicationMu.Unlock()
+		if err != nil {
+			s.publicationWriteMu.Unlock()
+			return
+		}
+	}
+
+	resolved := map[publicationSourceKey]bool{}
+	failed := map[publicationSourceKey]bool{}
+	for _, e := range s.publicationEntries {
+		if e.Discarded || (!e.Applied && e.BatchFailure.Attempts >= 3) || (e.Applied && e.ReadReady) {
+			continue
+		}
+		key := publicationSourceKey{e.Schema, e.Tags.ProviderID, e.Tags.SourceName}
+		raw, err := os.ReadFile(filepath.Join(s.publicationEntryDir(e.Sequence), "entry.fb"))
+		var saved publicationEntry
+		if err == nil {
+			err = unmarshalPublication(raw, &saved)
+		}
+		if err == nil && (saved.Sequence != e.Sequence || (e.Schema != "" && (saved.Schema != e.Schema || saved.Tags != e.Tags))) {
+			err = errors.New("publication entry scope mismatch")
+		}
+		if err == nil {
+			saved.Applied = e.Applied
+			saved.OutcomeKnown = e.OutcomeKnown
+			saved.Refused = e.Refused
+			e = saved
+			key = publicationSourceKey{e.Schema, e.Tags.ProviderID, e.Tags.SourceName}
+		}
+		// Only absence of the applied marker permits replay. An unreadable or
+		// corrupt marker never converts a completed engine write into an intent.
+		if err == nil {
+			raw, markerErr := os.ReadFile(filepath.Join(s.publicationEntryDir(e.Sequence), "applied"))
+			if markerErr == nil {
+				e.Applied, e.OutcomeKnown = true, true
+				err = unmarshalPublication(raw, &e.Refused)
+			} else if !errors.Is(markerErr, os.ErrNotExist) {
+				err = markerErr
+			} else if e.Applied {
+				err = errors.New("applied publication marker disappeared")
+			} else {
+				err = s.loadPublicationOutcome(&e)
+			}
+		}
+		var records []DatasetExportRecord
+		if err == nil {
+			records, err = s.publicationRecords(e)
+		}
+		if err == nil && !e.OutcomeKnown {
+			data := make([][]byte, len(records))
+			for i, r := range records {
+				data[i] = r.Data
+			}
+			var out []format4.Outcome
+			_, out, err = s.rb.(format4Backend).f4PutDirect("retry publication", e.Schema, data, e.Peer, e.Signature, &e.Tags, f4PutOpt{identity: e.Identity, ownTS: e.OwnTS})
+			var refused *RefusedRecordsError
+			if err == nil || errors.As(err, &refused) {
+				e.Refused = publicationRefusals(out)
+				err = nil
+			}
+		}
+		if err == nil {
+			_, publishedErr := os.Stat(filepath.Join(s.publicationEntryDir(e.Sequence), "published"))
+			e.Published = publishedErr == nil
+			_, generationErr := os.Stat(filepath.Join(s.publicationEntryDir(e.Sequence), "generation"))
+			e.Generation = generationErr == nil
+			s.loadPublicationFailures(&e)
+			if e.Applied {
+				// Restoring an applied stream also repairs quarantine receipts from
+				// versions that treated that stream as an unapplied intent.
+				err = os.Remove(filepath.Join(s.publicationEntryDir(e.Sequence), "batch-failure.fb"))
+				if os.IsNotExist(err) {
+					err = nil
+				}
+				e.BatchFailure = publicationFailure{}
+			}
+		}
+		if err == nil {
+			err = s.markPublicationApplied(e)
+		}
+		if err != nil {
+			if !e.Applied && IsPublicationContentError(err) {
+				if saveErr := s.quarantineUnreadablePublication(e, err); saveErr == nil {
+					continue
+				} else {
+					err = saveErr
+				}
+			}
+			failed[key] = true
+			s.pausePublication(e, err)
+		} else {
+			resolved[key] = true
+		}
+	}
+	s.publicationMu.Lock()
+	// Unknown-scope recovery isolates every configured source while any entry
+	// remains unreadable. Recompute from all unresolved entries.
+	for key := range s.publicationFailures {
+		var receiptErr *publicationReceiptError
+		if errors.As(s.publicationFailures[key], &receiptErr) {
+			continue
+		}
+		unresolved := false
+		for _, e := range s.publicationEntries {
+			if !e.Discarded && (e.Applied || e.BatchFailure.Attempts < 3) && (!e.Applied || !e.ReadReady) {
+				if e.Schema == "" || key == (publicationSourceKey{e.Schema, e.Tags.ProviderID, e.Tags.SourceName}) {
+					unresolved = true
+					break
+				}
+			}
+		}
+		if !unresolved && !failed[key] {
+			delete(s.publicationFailures, key)
+		}
+	}
+	_ = resolved
+	s.publicationMu.Unlock()
+	s.publicationWriteMu.Unlock()
+	s.retryCatalogGenerationsLocked()
+	if err := s.ReclaimPublication(); err != nil {
+		log.Warnf("publication reclamation retry: %v", err)
+	}
+}
+
+// CompletePublication records successful batch publication independently of
+// series retention. A continued batch only completes through its captured cutoff.
+func (s *FlatSQLStore) CompletePublication(p *PublicationSelection) error {
+	if p == nil || p.Batch == "" {
+		return nil
+	}
+	s.publicationWriteMu.Lock()
+	locked := true
+	defer func() {
+		if locked {
+			s.publicationWriteMu.Unlock()
+		}
+	}()
+	for i, e := range s.publicationEntries {
+		if e.Applied && !e.Published && e.Sequence <= p.Cutoff && e.Schema == p.Schema && e.Tags.ProviderID == p.Provider && e.Tags.SourceName == p.Source && e.Tags.BatchID == p.Batch {
+			if err := publicationAtomicFile(filepath.Join(s.publicationEntryDir(e.Sequence), "published"), []byte("1\n")); err != nil {
+				return err
+			}
+			s.publicationMu.Lock()
+			s.accountPublicationPending(s.publicationEntries[i], -1)
+			s.publicationEntries[i].Published = true
+			s.updatePublicationQuarantine(s.publicationEntries[i])
+			s.publicationMu.Unlock()
+		}
+	}
+	s.publicationWriteMu.Unlock()
+	locked = false
+	if err := s.reclaimPublicationLocked(); err != nil {
+		log.Warnf("publication reclamation deferred: %v", err)
+	}
+	return nil
+}
+
+// RetainsPublicationSource distinguishes retained recovery from live progress.
+func (s *FlatSQLStore) RetainsPublicationSource(schema, provider, source string) bool {
+	return s.publicationSourceEnabled(schema, provider, source)
+}
+func (s *FlatSQLStore) PublicationBatchComplete(schema, provider, source, batch string) bool {
+	if batch == "" {
+		return false
+	}
+	s.publicationMu.Lock()
+	defer s.publicationMu.Unlock()
+	found := false
+	for _, e := range s.publicationEntries {
+		if e.Schema == schema && e.Tags.ProviderID == provider && e.Tags.SourceName == source && e.Tags.BatchID == batch {
+			found = true
+			if !e.Applied || !e.Published {
+				return false
+			}
+		}
+	}
+	return found || s.publicationReceiptExists(schema, provider, source, batch)
+}
+
+func (s *FlatSQLStore) publicationStep(name string) error {
+	if s.publicationFault != nil {
+		return s.publicationFault(name)
+	}
+	return nil
+}
+
+func publicationPrepareFile(path string, raw []byte) error {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(raw)
+	if err == nil {
+		err = f.Sync()
+	}
+	closeErr := f.Close()
+	if err != nil {
+		return err
+	}
+	return closeErr
+}

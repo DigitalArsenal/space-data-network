@@ -12,7 +12,7 @@ import (
 // Segment is one SEGMENT_COLUMNS row: a dataset publication (list-published,
 // read-shard, feed heads), a manifest segment or bundle (open-manifest), or a
 // shard of a batch read. Strings and bytes left empty travel as Null cells;
-// integers always travel as Int cells.
+// required integers travel as Int cells. Optional snapshot cutoffs use Null.
 type Segment struct {
 	SchemaName              string
 	ProviderID              string
@@ -51,6 +51,8 @@ type Segment struct {
 	BatchCompletion         string
 	BatchRevision           string
 	BatchTotalRecords       int64
+	PublicationCutoff       *int64
+	PublicationSourceCutoff *int64
 }
 
 // Segment ROLE values.
@@ -73,6 +75,7 @@ type segmentColumn struct {
 	str       func(*Segment) *string
 	num       func(*Segment) *int64
 	raw       func(*Segment) *[]byte
+	optional  func(*Segment) **int64
 }
 
 func strCol(name string, f func(*Segment) *string) segmentColumn {
@@ -83,6 +86,9 @@ func intCol(name string, f func(*Segment) *int64) segmentColumn {
 }
 func bytesCol(name string, f func(*Segment) *[]byte) segmentColumn {
 	return segmentColumn{name: name, typ: colBytes, raw: f}
+}
+func optionalIntCol(name string, f func(*Segment) **int64) segmentColumn {
+	return segmentColumn{name: name, typ: colInt, optional: f}
 }
 
 // segmentColumns is THE column set, in wire order.
@@ -124,6 +130,8 @@ var segmentColumns = []segmentColumn{
 	strCol("BATCH_COMPLETION", func(s *Segment) *string { return &s.BatchCompletion }),
 	strCol("BATCH_REVISION", func(s *Segment) *string { return &s.BatchRevision }),
 	intCol("BATCH_TOTAL_RECORDS", func(s *Segment) *int64 { return &s.BatchTotalRecords }),
+	optionalIntCol("PUBLICATION_CUTOFF", func(s *Segment) **int64 { return &s.PublicationCutoff }),
+	optionalIntCol("PUBLICATION_SOURCE_CUTOFF", func(s *Segment) **int64 { return &s.PublicationSourceCutoff }),
 }
 
 // SegmentColumns is the COLUMNS descriptor of every segment page.
@@ -144,6 +152,10 @@ func (s Segment) Cells() []QRPCell {
 			cells[i] = TextCell(*c.str(&s))
 		case c.num != nil:
 			cells[i] = IntCell(*c.num(&s))
+		case c.optional != nil:
+			if n := *c.optional(&s); n != nil {
+				cells[i] = IntCell(*n)
+			}
 		default:
 			cells[i] = BytesCell(*c.raw(&s))
 		}
@@ -163,10 +175,14 @@ func SegmentRows(segs []Segment) [][]QRPCell {
 // Segments decodes the SEGMENT rows of a page by column NAME. A missing
 // column reads as its zero value; a cell of the wrong kind is an error.
 func Segments(q *QRP.QRP) ([]Segment, error) {
+	return segmentsWithColumns(q, segmentColumns)
+}
+
+func segmentsWithColumns(q *QRP.QRP, descriptors []segmentColumn) ([]Segment, error) {
 	columns, rows := Rows(q)
 	out := make([]Segment, len(rows))
 	for r, row := range rows {
-		for _, c := range segmentColumns {
+		for _, c := range descriptors {
 			i, ok := columns[c.name]
 			if !ok || i >= len(row) {
 				continue
@@ -180,6 +196,9 @@ func Segments(q *QRP.QRP) ([]Segment, error) {
 				*c.str(&out[r]) = cell.Text
 			case c.num != nil && cell.IsInt:
 				*c.num(&out[r]) = cell.Int
+			case c.optional != nil && cell.IsInt:
+				n := cell.Int
+				*c.optional(&out[r]) = &n
 			case c.raw != nil && cell.IsBytes:
 				*c.raw(&out[r]) = cell.Bytes
 			default:
@@ -193,26 +212,28 @@ func Segments(q *QRP.QRP) ([]Segment, error) {
 // SegmentFromPublication is the row of one dataset publication.
 func SegmentFromPublication(pub storage.DatasetShardPublication) Segment {
 	s := Segment{
-		SchemaName:   pub.SchemaName,
-		ProviderID:   pub.ProviderID,
-		SourceName:   pub.SourceName,
-		BatchID:      pub.BatchID,
-		QueryProfile: pub.QueryProfile,
-		Offset:       int64(pub.Offset),
-		Limit:        int64(pub.Limit),
-		RecordCount:  int64(pub.RecordCount),
-		ByteCount:    pub.ByteCount,
-		ShardCID:     pub.ShardCID,
-		IndexCID:     pub.IndexCID,
-		ManifestCID:  pub.ManifestCID,
-		PNMCID:       pub.PNMCID,
-		ShardSHA256:  pub.ShardSHA256,
-		IndexSHA256:  pub.IndexSHA256,
-		QuerySHA256:  pub.QuerySHA256,
-		ResultSHA256: pub.ResultSHA256,
-		FeedSequence: pub.FeedSequence,
-		PreviousHead: pub.PreviousHead,
-		FeedHead:     pub.FeedHead,
+		SchemaName:              pub.SchemaName,
+		ProviderID:              pub.ProviderID,
+		SourceName:              pub.SourceName,
+		BatchID:                 pub.BatchID,
+		QueryProfile:            pub.QueryProfile,
+		Offset:                  int64(pub.Offset),
+		Limit:                   int64(pub.Limit),
+		RecordCount:             int64(pub.RecordCount),
+		ByteCount:               pub.ByteCount,
+		ShardCID:                pub.ShardCID,
+		IndexCID:                pub.IndexCID,
+		ManifestCID:             pub.ManifestCID,
+		PNMCID:                  pub.PNMCID,
+		ShardSHA256:             pub.ShardSHA256,
+		IndexSHA256:             pub.IndexSHA256,
+		QuerySHA256:             pub.QuerySHA256,
+		ResultSHA256:            pub.ResultSHA256,
+		FeedSequence:            pub.FeedSequence,
+		PreviousHead:            pub.PreviousHead,
+		FeedHead:                pub.FeedHead,
+		PublicationCutoff:       pub.PublicationCutoff,
+		PublicationSourceCutoff: pub.PublicationSourceCutoff,
 	}
 	if !pub.PublishedAt.IsZero() {
 		s.PublishedAtMs = pub.PublishedAt.UnixMilli()
@@ -223,26 +244,28 @@ func SegmentFromPublication(pub storage.DatasetShardPublication) Segment {
 // Publication is the dataset publication a row names.
 func (s Segment) Publication() storage.DatasetShardPublication {
 	pub := storage.DatasetShardPublication{
-		SchemaName:   s.SchemaName,
-		ProviderID:   s.ProviderID,
-		SourceName:   s.SourceName,
-		BatchID:      s.BatchID,
-		QueryProfile: s.QueryProfile,
-		Offset:       int(s.Offset),
-		Limit:        int(s.Limit),
-		RecordCount:  int(s.RecordCount),
-		ByteCount:    s.ByteCount,
-		ShardCID:     s.ShardCID,
-		IndexCID:     s.IndexCID,
-		ManifestCID:  s.ManifestCID,
-		PNMCID:       s.PNMCID,
-		ShardSHA256:  s.ShardSHA256,
-		IndexSHA256:  s.IndexSHA256,
-		QuerySHA256:  s.QuerySHA256,
-		ResultSHA256: s.ResultSHA256,
-		FeedSequence: s.FeedSequence,
-		PreviousHead: s.PreviousHead,
-		FeedHead:     s.FeedHead,
+		SchemaName:              s.SchemaName,
+		ProviderID:              s.ProviderID,
+		SourceName:              s.SourceName,
+		BatchID:                 s.BatchID,
+		QueryProfile:            s.QueryProfile,
+		Offset:                  int(s.Offset),
+		Limit:                   int(s.Limit),
+		RecordCount:             int(s.RecordCount),
+		ByteCount:               s.ByteCount,
+		ShardCID:                s.ShardCID,
+		IndexCID:                s.IndexCID,
+		ManifestCID:             s.ManifestCID,
+		PNMCID:                  s.PNMCID,
+		ShardSHA256:             s.ShardSHA256,
+		IndexSHA256:             s.IndexSHA256,
+		QuerySHA256:             s.QuerySHA256,
+		ResultSHA256:            s.ResultSHA256,
+		FeedSequence:            s.FeedSequence,
+		PreviousHead:            s.PreviousHead,
+		FeedHead:                s.FeedHead,
+		PublicationCutoff:       s.PublicationCutoff,
+		PublicationSourceCutoff: s.PublicationSourceCutoff,
 	}
 	if s.PublishedAtMs > 0 {
 		pub.PublishedAt = time.UnixMilli(s.PublishedAtMs).UTC()

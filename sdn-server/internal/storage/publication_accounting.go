@@ -1,0 +1,53 @@
+package storage
+
+import "strconv"
+
+// Incremental resident counters keep admission and status independent of history.
+func (s *FlatSQLStore) accountPublicationEntry(e publicationEntry, delta int) {
+	statusEntry := e
+	if delta < 0 {
+		statusEntry.Published = true
+	}
+	s.updatePublicationQuarantine(statusEntry)
+	if !e.Applied {
+		return
+	}
+	s.publicationRecordCount += delta * len(e.Refs)
+	s.publicationReferenceCountBytes += int64(delta) * e.ReferenceBytes
+	for _, r := range e.Refs {
+		s.publicationPayloadCountBytes += int64(delta) * (int64(r.Size) + 4)
+	}
+	s.accountPublicationPending(e, delta)
+}
+func (s *FlatSQLStore) accountPublicationPending(e publicationEntry, delta int) {
+	if !e.Applied || e.Published || e.BatchFailure.Attempts >= 3 || e.GenerationFailure.Attempts >= 3 {
+		return
+	}
+	if s.publicationPendingCounts == nil {
+		s.publicationPendingCounts = map[publicationSourceKey]map[string]int{}
+	}
+	key := publicationSourceKey{e.Schema, e.Tags.ProviderID, e.Tags.SourceName}
+	batches := s.publicationPendingCounts[key]
+	if batches == nil {
+		batches = map[string]int{}
+		s.publicationPendingCounts[key] = batches
+	}
+	batches[e.Tags.BatchID] += delta
+	if batches[e.Tags.BatchID] <= 0 {
+		delete(batches, e.Tags.BatchID)
+	}
+}
+
+func (s *FlatSQLStore) updatePublicationQuarantine(e publicationEntry) {
+	if s.publicationQuarantineStatus == nil {
+		s.publicationQuarantineStatus = map[string]string{}
+	}
+	prefix := strconv.FormatUint(e.Sequence, 10) + "/" + e.Schema + "/" + e.Tags.ProviderID + "/" + e.Tags.SourceName + "/" + e.Tags.BatchID + "/"
+	for kind, f := range map[string]publicationFailure{"generation": e.GenerationFailure, "batch": e.BatchFailure} {
+		if !e.Published && f.Attempts >= 3 {
+			s.publicationQuarantineStatus[prefix+kind] = f.Reason
+		} else {
+			delete(s.publicationQuarantineStatus, prefix+kind)
+		}
+	}
+}

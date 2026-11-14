@@ -576,6 +576,12 @@ func encodeAuxiliaryMetadataEvent(event auxiliaryMetadataEvent) ([]byte, error) 
 	if event.Kind == "" {
 		return nil, fmt.Errorf("auxiliary metadata event kind is required")
 	}
+	if event.Kind == auxiliaryEventDatasetShardPublicationUpsert {
+		if event.DatasetShardPublication == nil {
+			return nil, fmt.Errorf("publication-upsert record is required")
+		}
+		return marshalPublication(*event.DatasetShardPublication)
+	}
 	return json.Marshal(auxiliaryMetadataFrame{
 		Version: auxiliaryMetadataFrameVersion,
 		Event:   event,
@@ -583,6 +589,13 @@ func encodeAuxiliaryMetadataEvent(event auxiliaryMetadataEvent) ([]byte, error) 
 }
 
 func decodeAuxiliaryMetadataEvent(payload []byte) (auxiliaryMetadataEvent, error) {
+	if len(payload) >= 12 && string(payload[8:12]) == "$PST" {
+		var pub DatasetShardPublication
+		if err := unmarshalPublication(payload, &pub); err != nil {
+			return auxiliaryMetadataEvent{}, err
+		}
+		return auxiliaryMetadataEvent{Kind: auxiliaryEventDatasetShardPublicationUpsert, DatasetShardPublication: &pub}, nil
+	}
 	var frame auxiliaryMetadataFrame
 	if err := json.Unmarshal(payload, &frame); err != nil {
 		return auxiliaryMetadataEvent{}, err
