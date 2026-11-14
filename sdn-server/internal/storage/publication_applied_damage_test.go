@@ -282,3 +282,30 @@ func TestPublicationAppliedRuntimeDamageAndTerminalDiscard(t *testing.T) {
 	s = journalTestStore(t, dir)
 	requireAppliedSnapshotCount(t, s, 1)
 }
+
+func TestPublicationSelectionUnreadableScope(t *testing.T) {
+	s := &FlatSQLStore{basePath: t.TempDir(), publicationEntries: []publicationEntry{
+		{Sequence: 1, Schema: "CAT.fbs", Applied: true, ReadReady: true, Tags: SourceTags{ProviderID: "synthetic", SourceName: "index", BatchID: "good"}},
+		{Sequence: 2, Schema: "CAT.fbs", Applied: true, Tags: SourceTags{ProviderID: "synthetic", SourceName: "index", BatchID: "bad"}, BatchFailure: publicationFailure{Attempts: 3}, GenerationFailure: publicationFailure{Attempts: 3}},
+	}}
+	for _, q := range []struct {
+		source, batch string
+		cutoff        uint64
+		blocked       bool
+	}{
+		{"index", "", 1, false}, {"other", "", 2, false}, {"index", "good", 2, false},
+		{"index", "", 2, true}, {"index", "bad", 2, true},
+	} {
+		p, err := s.retainedSelectionLocked("CAT.fbs", "synthetic", q.source, q.batch, q.cutoff)
+		if (err != nil) != q.blocked {
+			t.Fatalf("selection %+v: %v", q, err)
+		}
+		if p != nil {
+			p.Close()
+		}
+	}
+	s.publicationEntries[1].Discarded = true
+	if _, err := s.retainedSelectionLocked("CAT.fbs", "synthetic", "index", "", 2); err != nil {
+		t.Fatal("explicit discard still blocked", err)
+	}
+}
