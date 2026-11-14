@@ -913,12 +913,17 @@ func a18Shapes(op BenchOp) ([]Shape, error) {
 	for _, p := range ps {
 		sql, name := p.SQL, strings.TrimPrefix(p.SQL, "SELECT _data FROM ")
 		pol := Policy{Unordered: true}
-		if typ, source, ok := strings.Cut(a18Relation(sql), "@"); ok {
+		typ, source, sourceRelation := strings.Cut(a18Relation(sql), "@")
+		catalogWindow := typ == "OCM" || typ == "CAT"
+		if sourceRelation || catalogWindow {
 			spec, err := format4.TypeSpecFor(typ + ".fbs")
 			if err != nil {
 				return nil, fmt.Errorf("%s: %w", sql, err)
 			}
 			pol.Superset, pol.MaxRows, pol.Accepted = true, int(spec.A18Bound), c31Accepted
+			if !sourceRelation {
+				pol.Accepted = "Catalog visibility: stream OCM/CAT retain 100,000 SQL rows; legacy retains its configured window"
+			}
 			same, err := c31SameQuestion(op.ID, name, sql, typ+".fbs", source, int64(spec.A18Bound))
 			if err != nil {
 				return nil, err
@@ -1034,7 +1039,7 @@ func c31Format1SQL(walk string, tables []string) string {
 	}
 	return `SELECT ` + data + ` FROM (SELECT i.cid, i.norad_cat_id FROM sdn_record_index i ` + walk + `
 		WHERE i.schema_name = ?1
-		  AND EXISTS (SELECT 1 FROM sdn_record_source_tags t WHERE t.schema_name = ?1 AND t.source_name = ?2 AND t.cid = i.cid)
+		  AND (?2 = '' OR EXISTS (SELECT 1 FROM sdn_record_source_tags t WHERE t.schema_name = ?1 AND t.source_name = ?2 AND t.cid = i.cid))
 		  AND (` + strings.Join(held, " OR ") + `)
 		ORDER BY i.rowid DESC LIMIT ?3) w`
 }

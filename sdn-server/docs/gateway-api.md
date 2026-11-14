@@ -685,12 +685,13 @@ two encodings are defined without inventing a fake fb framing:
 `GET /api/v1/query` returns the surface enumerated LIVE from the engine
 (`storage.PublicQuerySurface`): every readable relation (unified views
 with `_source`, shadow tables per provider-source) with columns and
-current hot-window record counts, plus the effective caps. The same set
-is what the authorizer permits — the listing and the enforcement derive
-from the same engine state. Honesty note: the surface is the engine HOT
-WINDOW (up to `storage.engine_hot_window` records per schema, default
-400K) — the same data `omm/bulk` serves; full history lives in the
-append-only stream files, not in SQL.
+current visible record counts, plus the effective caps. Legacy storage exposes
+its configured hot window. Stream storage bounds OCM/CAT SQL relations at
+100,000 rows, OMM/TBS at 400,000 and other types at 10,000. These are visibility
+windows, separate from execution budgets. The larger catalog window makes
+scans and joins more expensive; a sandboxed payload lookup can exceed its byte
+budget before returning a result. Full durable history can exceed these SQL
+windows and remains available through the storage scan APIs.
 
 ### Alias-vs-supersede decision (the old query routes)
 
