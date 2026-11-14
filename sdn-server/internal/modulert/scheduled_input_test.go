@@ -3,6 +3,7 @@ package modulert
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"testing"
 )
@@ -52,27 +53,29 @@ func TestScheduledInputLegacyCompatibility(t *testing.T) {
 	}
 	for name, alter := range cases {
 		t.Run(name, func(t *testing.T) {
-			for _, payload := range [][]byte{nil, {}, {1, 2, 3}} {
-				m := scheduledTestManifest()
-				alter(m)
-				frames, err := scheduledInputFrames(m, "run", payload)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if len(frames) != 1 || !bytes.Equal(frames[0].Payload, payload) {
-					t.Fatalf("lost frame or payload: %+v", frames)
-				}
-				got, err := encodePluginInvokeRequestFrames("run", frames)
-				if err != nil {
-					t.Fatal(err)
-				}
-				want, err := encodePluginInvokeRequestFrames("run", []InvokeInputFrame{{PortID: "request", Payload: payload}})
-				if err != nil {
-					t.Fatal(err)
-				}
-				if !bytes.Equal(got, want) {
-					t.Fatal("legacy invocation bytes changed")
-				}
+			for index, payload := range [][]byte{nil, {}, {1, 2, 3}} {
+				t.Run(fmt.Sprintf("payload-%d", index), func(t *testing.T) {
+					m := scheduledTestManifest()
+					alter(m)
+					frames, err := scheduledInputFrames(m, "run", payload)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if len(frames) != 1 || !bytes.Equal(frames[0].Payload, payload) {
+						t.Fatalf("lost frame or payload: %+v", frames)
+					}
+					got, err := encodePluginInvokeRequestFrames("run", frames)
+					if err != nil {
+						t.Fatal(err)
+					}
+					want, err := encodePluginInvokeRequestFrames("run", []InvokeInputFrame{{PortID: "request", Payload: payload}})
+					if err != nil {
+						t.Fatal(err)
+					}
+					if !bytes.Equal(got, want) {
+						t.Fatal("legacy invocation bytes changed")
+					}
+				})
 			}
 		})
 	}
