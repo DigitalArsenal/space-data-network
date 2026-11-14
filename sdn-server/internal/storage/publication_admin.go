@@ -85,3 +85,5 @@ func (s *FlatSQLStore) catalogExclusions(schema, provider, source string) (map[s
 	err = json.Unmarshal(raw, &out)
 	return out, err
 }
+
+func (s *FlatSQLStore) PublicationRetentionEnabled() bool { return s.publicationEnabled.Load() }

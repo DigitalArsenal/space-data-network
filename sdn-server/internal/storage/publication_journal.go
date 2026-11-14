@@ -23,6 +23,7 @@ import (
 // ProductSource on CAT selects its OCM closure for source snapshots.
 type PublicationSource struct{ Schema, Provider, Source, ProductSource string }
 type publicationEntry struct {
+	ReferenceBytes  int64                  `json:"-"`
 	Generation      bool                   `json:"-"`
 	Refs            []publicationRecordRef `json:"-"`
 	Published       bool                   `json:"-"`
@@ -165,8 +166,10 @@ func (b format4Backend) putRetained(op, schema string, records [][]byte, peer st
 	}
 	pending := map[string]bool{}
 	indexed := 0
+	var referenceBytes int64
 	for _, old := range s.publicationEntries {
 		indexed += len(old.Refs)
+		referenceBytes += old.ReferenceBytes
 		if !old.Published && old.Schema == schema && old.Tags.ProviderID == tags.ProviderID && old.Tags.SourceName == tags.SourceName {
 			pending[old.Tags.BatchID] = true
 		}
@@ -178,6 +181,10 @@ func (b format4Backend) putRetained(op, schema string, records [][]byte, peer st
 		return nil, nil, errors.New("publication index exceeds 200000 records; drain and retire retained history")
 	}
 	for _, data := range records {
+		referenceBytes += publicationReferenceBytes(publicationRecordRef{CID: strings.Repeat("x", 59), FramedCID: strings.Repeat("x", 59), Identity: recordSupersedeKey(schema, data), Path: filepath.Join(s.publicationDir(), "00000000000000000000", "records.sds"), Tags: tags})
+		if referenceBytes > maxPublicationReferenceBytes {
+			return nil, nil, errors.New("publication reference index exceeds 128 MiB; drain and retire retained history")
+		}
 		if len(data) > maxPublicationRecordBytes {
 			return nil, nil, errors.New("publication record exceeds 16 MiB")
 		}
@@ -311,6 +318,7 @@ func (s *FlatSQLStore) markPublicationApplied(e publicationEntry) error {
 		return err
 	}
 	e.Refs = refs
+	e.ReferenceBytes = publicationReferencesBytes(refs)
 	if len(refs) == 0 {
 		if err := publicationAtomicFile(filepath.Join(s.publicationEntryDir(e.Sequence), "published"), []byte("1\n")); err != nil {
 			return err
@@ -437,6 +445,19 @@ func (s *FlatSQLStore) recoverPublicationJournal() error {
 		}
 		if err == nil {
 			e.Refs, err = s.publicationReferences(e)
+			if err == nil {
+				e.ReferenceBytes = publicationReferencesBytes(e.Refs)
+				total := e.ReferenceBytes
+				count := len(e.Refs)
+				for _, old := range s.publicationEntries {
+					total += old.ReferenceBytes
+					count += len(old.Refs)
+				}
+				if total > maxPublicationReferenceBytes || count > 200000 {
+					err = errors.New("publication recovery exceeds reference index capacity")
+					e.Refs = nil
+				}
+			}
 		} // Applied streams are checked too.
 		if err != nil {
 			s.pausePublication(e, err)

@@ -8,11 +8,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"unsafe"
 )
 
 const maxPublicationEntries = 100000
 const maxPublicationSelectionRecords = 100000
 const maxPublicationRecordBytes = 16 << 20
+const maxPublicationReferenceBytes int64 = 128 << 20
 
 // References contain immutable file offsets; exported payload memory is one record.
 type publicationRecordRef struct {
@@ -47,6 +49,7 @@ func (s *FlatSQLStore) publicationReferences(e publicationEntry) ([]publicationR
 	h := sha256.New()
 	reader := io.TeeReader(f, h)
 	var refs []publicationRecordRef
+	var referenceBytes int64
 	offset := int64(0)
 	ordinal := 0
 	for {
@@ -68,6 +71,12 @@ func (s *FlatSQLStore) publicationReferences(e publicationEntry) ([]publicationR
 		}
 		if _, refused := e.Refused[ordinal]; !refused {
 			refs = append(refs, publicationRecordRef{CID: computeCID(data[4:]), FramedCID: computeCID(data), Identity: recordSupersedeKey(e.Schema, data[4:]), Path: path, Offset: offset + 4, Size: size, Tags: e.Tags})
+		}
+		if _, refused := e.Refused[ordinal]; !refused {
+			referenceBytes += publicationReferenceBytes(refs[len(refs)-1])
+			if referenceBytes > maxPublicationReferenceBytes || len(refs) > 200000 {
+				return nil, errors.New("publication reference index exceeds capacity")
+			}
 		}
 		offset += 4 + int64(size)
 		ordinal++
@@ -106,4 +115,16 @@ func (s *FlatSQLStore) publicationTagAlreadyRetained(schema, cid string, tags So
 		}
 	}
 	return false
+}
+
+func publicationReferenceBytes(r publicationRecordRef) int64 {
+	t := r.Tags
+	return int64(unsafe.Sizeof(r)) + 128 + int64(len(r.CID)+len(r.FramedCID)+len(r.Identity)+len(r.Path)+len(t.ProviderID)+len(t.SourceName)+len(t.SourceURL)+len(t.BatchID)+len(t.ContentKeyID)+len(t.ProducerPeerID)+len(t.ProducerPublicKey)+len(t.License)+len(t.LicenseURL)+len(t.Citation))
+}
+func publicationReferencesBytes(refs []publicationRecordRef) int64 {
+	var n int64
+	for _, r := range refs {
+		n += publicationReferenceBytes(r)
+	}
+	return n
 }

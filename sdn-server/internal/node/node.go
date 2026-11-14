@@ -547,6 +547,9 @@ func (n *Node) init() error {
 				}
 			}
 		}
+		if !n.config.Publishing.Enabled && n.store.PublicationRetentionEnabled() {
+			log.Warn("publishing is disabled but durable publication retention remains active; drain pending batches and use stop_publication_retention to stop journaling")
+		}
 		// Warm derived search indexes so a restarted node serves its first
 		// cold search instead of answering SEARCH_INDEX_BUILDING. Builds run
 		// one at a time in the background on the store's existing slot.

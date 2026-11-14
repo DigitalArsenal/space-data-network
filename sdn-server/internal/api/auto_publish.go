@@ -124,10 +124,11 @@ type AutoPublisher struct {
 // succeeded, batches currently waiting for a retry, and batches given up on
 // after autoPublishMaxAttempts.
 type AutoPublishStats struct {
-	BacklogError string `json:"backlogError,omitempty"`
-	Published    int64
-	Retrying     int64
-	Failed       int64
+	BacklogError   string            `json:"backlogError,omitempty"`
+	RecoveryErrors map[string]string `json:"recoveryErrors,omitempty"`
+	Published      int64
+	Retrying       int64
+	Failed         int64
 	// Unchanged counts publications skipped because the lane's set is
 	// exactly what its last publication exported.
 	Unchanged int64
@@ -205,7 +206,11 @@ func (p *AutoPublisher) Stats() AutoPublishStats {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return AutoPublishStats{BacklogError: p.backlogError, Published: p.published, Retrying: p.retrying, Failed: p.failed, Unchanged: p.unchanged}
+	var recovery map[string]string
+	if source, ok := p.service.(interface{ PublicationRecoveryStatus() map[string]string }); ok {
+		recovery = source.PublicationRecoveryStatus()
+	}
+	return AutoPublishStats{RecoveryErrors: recovery, BacklogError: p.backlogError, Published: p.published, Retrying: p.retrying, Failed: p.failed, Unchanged: p.unchanged}
 }
 
 // unchangedSinceLastPublication asks the service whether req's set is the one

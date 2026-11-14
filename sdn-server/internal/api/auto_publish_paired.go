@@ -98,7 +98,7 @@ func (p *AutoPublisher) observePairedBatch(rule config.AutoPublishLane, schema, 
 		if len(p.pairedPending) >= 4096 {
 			p.backlogError = "publication backlog exceeds 4096 batches; stop ingestion and drain publication"
 			p.mu.Unlock()
-			log.Error(p.backlogError)
+			log.Error("publication backlog exceeds 4096 batches; stop ingestion and drain publication")
 			return
 		}
 		p.pairedSequence++
@@ -334,4 +334,8 @@ func (s *ConcreteDatasetPublicationService) PublicationBatchOrder(req DatasetPub
 		}
 	}
 	return 0
+}
+
+func (s *ConcreteDatasetPublicationService) PublicationRecoveryStatus() map[string]string {
+	return s.store.PublicationRecoveryStatus()
 }

@@ -365,6 +365,7 @@ func ExportDatasetRecords(outputDir string, filter IndexedRecordQuery, records [
 	shard := io.MultiWriter(shardFile, shardHash)
 	shardSize := int64(0)
 	indexRecords := make([]DatasetExportIndexRecord, 0, len(records))
+	var indexMetadataBytes int64
 	for _, record := range records {
 		if record.load != nil {
 			record.Data, err = record.load()
@@ -391,6 +392,10 @@ func ExportDatasetRecords(outputDir string, filter IndexedRecordQuery, records [
 		fields, err := extractIndexedFields(filter.SchemaName, record.Data)
 		if err != nil {
 			return nil, fmt.Errorf("extract index fields for %s: %w", record.CID, err)
+		}
+		indexMetadataBytes += int64(512+len(recordCID)+len(fields.entityID)+len(fields.objectType)+len(fields.opsStatusCode)+len(fields.epochDay)) + publicationReferenceBytes(publicationRecordRef{Tags: record.SourceTags})
+		if filter.Selection != nil && indexMetadataBytes > 64<<20 {
+			return nil, fmt.Errorf("publication shard index exceeds 64 MiB; reduce max_shard_bytes")
 		}
 		indexRecords = append(indexRecords, DatasetExportIndexRecord{
 			CID:           recordCID,
