@@ -324,6 +324,11 @@ jobs:
           cache: npm
           cache-dependency-path: sdn-js/package-lock.json
       - name: Install Kubo
+        # Two tries at dist.ipfs.tech, not five: five cost about twelve minutes
+        # on the release's critical path before the GitHub-release fallback
+        # in download-kubo.sh was reached, while that host was down.
+        env:
+          KUBO_DOWNLOAD_ATTEMPTS: '2'
         run: |
           deployment/release/download-kubo.sh \
             --version "${KUBO_VERSION}" \
@@ -368,6 +373,34 @@ jobs:
       # from packages/sdn-updater-module/build.mjs".
       - name: Install updater module dependencies
         run: npm --prefix packages/sdn-updater-module ci --no-audit --fund=false
+      # space-data-module-sdk compiles the module with clang for
+      # wasm32-wasip1-threads and needs a WASI sysroot; no runner image has
+      # one. v1.1.0 run 43642178922 failed with 'WASI clang driver
+      # "wasm32-wasi-clang++" was not found on PATH'. wasi-sdk is the
+      # WebAssembly project's own clang + sysroot, pinned by version and by the
+      # sha256 GitHub reports for the asset, and handed to the SDK through its
+      # documented SDN_WASI_* overrides.
+      - name: Install the WASI toolchain
+        env:
+          WASI_SDK_VERSION: '34'
+          WASI_SDK_SHA256: b761e3a0721dbae9c09a0059e5fdb2bf917d1b4a8a7b430fb3b5aafb0984b2c4
+        run: |
+          set -euo pipefail
+          archive="wasi-sdk-${WASI_SDK_VERSION}.0-x86_64-linux.tar.gz"
+          curl -fL --retry 3 --retry-delay 5 --connect-timeout 30 -o "${RUNNER_TEMP}/${archive}" \
+            "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-${WASI_SDK_VERSION}/${archive}"
+          echo "${WASI_SDK_SHA256}  ${RUNNER_TEMP}/${archive}" | sha256sum -c -
+          mkdir -p "${RUNNER_TEMP}/wasi-sdk"
+          tar -xzf "${RUNNER_TEMP}/${archive}" -C "${RUNNER_TEMP}/wasi-sdk" --strip-components=1
+          sdk="${RUNNER_TEMP}/wasi-sdk"
+          test -x "${sdk}/bin/clang++"
+          test -f "${sdk}/share/wasi-sysroot/lib/wasm32-wasip1-threads/libc.a"
+          {
+            echo "SDN_WASI_CLANG=${sdk}/bin/clang"
+            echo "SDN_WASI_CLANGXX=${sdk}/bin/clang++"
+            echo "SDN_WASI_SYSROOT=${sdk}/share/wasi-sysroot"
+          } >> "$GITHUB_ENV"
+          "${sdk}/bin/clang++" --version | head -1
       - name: Build updater module wasm
         run: npm --prefix packages/sdn-updater-module run build
       - uses: actions/upload-artifact@v4

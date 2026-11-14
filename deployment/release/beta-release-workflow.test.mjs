@@ -396,6 +396,11 @@ test('beta release workflow builds updater wasm once before platform CLI archive
   // root tree no longer carries them.
   const updaterJob = workflow.slice(workflow.indexOf('  updater-wasm:'), workflow.indexOf('  docker:'));
   assert.match(updaterJob, /npm --prefix packages\/sdn-updater-module ci[\s\S]*npm --prefix packages\/sdn-updater-module run build/);
+  // The SDK compiles with clang for wasm32-wasip1-threads: a pinned wasi-sdk,
+  // checked by sha256, reaches it through the SDN_WASI_* overrides first.
+  assert.match(updaterJob, /WASI_SDK_SHA256: [0-9a-f]{64}\n/);
+  assert.match(updaterJob, /sha256sum -c -/);
+  assert.match(updaterJob, /SDN_WASI_CLANGXX=[\s\S]*SDN_WASI_SYSROOT=[\s\S]*npm --prefix packages\/sdn-updater-module run build/);
   assert.match(workflow, /name:\s*updater-module-wasm[\s\S]*path:\s*packages\/sdn-updater-module\/dist\/isomorphic\/module\.wasm/);
   assert.match(workflow, /needs:\s*\[beta-version, ipfs, updater-wasm, wasmedge-static\]/);
   assert.match(workflow, /name:\s*updater-module-wasm[\s\S]*path:\s*packages\/sdn-updater-module\/dist\/isomorphic/);
