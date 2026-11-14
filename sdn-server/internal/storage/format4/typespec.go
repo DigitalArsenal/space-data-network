@@ -10,12 +10,13 @@ import (
 // Tags 1-7 are format 2's, encoded by format2.TypeSpec.Encode (RingCap is
 // ignored by format 4); the rest are format 4's.
 type TypeSpec struct {
-	format2.TypeSpec        // tags 1-7 exactly as format2.TypeSpec.Encode (RingCap ignored)
-	PageSize         uint32 // 8
-	Identity         bool   // 9
-	A18Bound         uint32 // 10
-	EpochProfile     uint8  // 11: 0 none, 1 OMM, 2 MPE
-	FullText         bool   // 12
+	format2.TypeSpec           // tags 1-7 exactly as format2.TypeSpec.Encode (RingCap ignored)
+	PageSize            uint32 // 8
+	Identity            bool   // 9
+	A18Bound            uint32 // 10
+	UnlimitedVisibility bool   // tag 10 is present with zero, after a capability check
+	EpochProfile        uint8  // 11: 0 none, 1 OMM, 2 MPE
+	FullText            bool   // 12
 }
 
 // Epoch profiles (type spec tag 11): how an EPOCH op keys an entity.
@@ -35,7 +36,9 @@ func (t TypeSpec) Encode() []byte {
 	if t.Identity {
 		out = tlvU8(out, 9, 1)
 	}
-	if t.A18Bound != 0 {
+	if t.UnlimitedVisibility {
+		out = tlvU32(out, 10, 0)
+	} else if t.A18Bound != 0 {
 		out = tlvU32(out, 10, t.A18Bound)
 	}
 	if t.EpochProfile != 0 {
@@ -47,30 +50,22 @@ func (t TypeSpec) Encode() []byte {
 	return out
 }
 
-// A18 bounds (contract §3.3 tag 10; C-24): the newest-N window of a type's
-// SQL relations, as format 1's engine hot windows (engineWindowFor): 400000
-// for the decorated standards OMM and TBS, 10000 for every other type.
-const (
-	a18BoundDecorated = 400_000
-	a18BoundDefault   = 10_000
-)
-
 // CIDOnlyTypeSpec is format 2's CID-only registration (format2.CIDOnlyTypeSpec,
-// contract C-25) on format 4: 4 KiB pages and the default A18 bound, no
+// contract C-25) on format 4: 4 KiB pages and unlimited visibility, no
 // epoch profile, no identity, no full text.
 func CIDOnlyTypeSpec(typ string, fid [4]byte) TypeSpec {
-	return TypeSpec{TypeSpec: format2.CIDOnlyTypeSpec(typ, fid), PageSize: 4096, A18Bound: a18BoundDefault}
+	return TypeSpec{TypeSpec: format2.CIDOnlyTypeSpec(typ, fid), PageSize: 4096, UnlimitedVisibility: true}
 }
 
 // TypeSpecFor builds the registration of an embedded SDS standard: format
 // 2's (rules, BFBS, file identifier, flags; read-only reuse) plus IQC's
-// identity dedupe and 16 KiB pages, the A18 bound (OMM and TBS 400000, else
-// 10000), the epoch profile (OMM 1, MPE 2) and full text for every type
+// identity dedupe and 16 KiB pages, unlimited visibility, the epoch profile
+// (OMM 1, MPE 2) and full text for every type
 // format 1 indexes, except numeric weather grids. Field-sealed types have no
 // full-text index either.
 // A field-sealed standard (a sealed record's stored bytes are neither its
-// text nor a FlatBuffer) is CID-only on format 2, and so here: no SQL
-// relation, nothing extracted (contract C-46 (7)). The rules are format 2's,
+// text nor a FlatBuffer) has a metadata-only SQL relation with no extracted
+// plaintext fields. The rules are format 2's,
 // unchanged (contract v15: one file per source feed x standard, no bucket
 // rule).
 func TypeSpecFor(schemaName string) (TypeSpec, error) {
@@ -91,7 +86,7 @@ func TypeSpecFor(schemaName string) (TypeSpec, error) {
 // extraction rules. Changing an optional derived index must not remove the
 // schema, record verification, SQL relation, or provenance indexes.
 func typeStorageOptions(typ string) TypeSpec {
-	spec := TypeSpec{PageSize: 4096, A18Bound: a18BoundDefault, FullText: true}
+	spec := TypeSpec{PageSize: 4096, UnlimitedVisibility: true, FullText: true}
 	switch typ {
 	case "WXF":
 		// Grid samples are numeric payloads. Reflecting every float into text
@@ -99,10 +94,7 @@ func typeStorageOptions(typ string) TypeSpec {
 		// ordinary record/source indexes still serve metadata and SQL reads.
 		spec.FullText = false
 	case "OMM":
-		spec.A18Bound = a18BoundDecorated
 		spec.EpochProfile = epochProfileOMM
-	case "TBS":
-		spec.A18Bound = a18BoundDecorated
 	case "MPE":
 		spec.EpochProfile = epochProfileMPE
 	case "IQC":

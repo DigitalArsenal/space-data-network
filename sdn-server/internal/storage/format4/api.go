@@ -49,6 +49,7 @@ const (
 // onto config tags (contract §3.3). Quota has one mode, the oldest records by
 // arrival (v11: config tag 47 is ignored), so there is no field for it.
 type Tuning struct {
+	RowCacheBytes                                                              uint64 // shared row-order/verified-metadata cache; zero selects 32 MiB
 	WriterThreads, ReaderLanes, BulkLanes, SandboxLanes, WriteSlots, ReadSlots uint32
 	WriteRequestBytes, ReadRequestBytes, RingBytes                             uint32
 	EngineBytes, PendingMapBytes, SoftHeap, HardHeap                           uint64

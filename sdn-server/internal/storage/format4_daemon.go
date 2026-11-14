@@ -434,6 +434,18 @@ func newFormat4Store(basePath string, validator *sds.Validator, cfg storeConfig)
 	if err := d.registerTypes(validator); err != nil {
 		return fail(err)
 	}
+	// New readers load the persisted registration policy before serving SQL.
+	cctx, cancelReaders := context.WithTimeout(context.Background(), format4CloseDeadline)
+	closeErr := d.api().Close(cctx)
+	cancelReaders()
+	if closeErr != nil {
+		return fail(fmt.Errorf("format 4: restart readers: %w", closeErr))
+	}
+	reopened, err := format4OpenEngine(d.ctx, d.opt)
+	if err != nil {
+		return fail(fmt.Errorf("format 4: reopen after registration: %w", err))
+	}
+	d.engine.Store(&format4Engine{reopened})
 	if cfg.quotaBytes > 0 {
 		if err := d.api().SetQuota(cfg.quotaBytes); err != nil {
 			return fail(fmt.Errorf("format 4: set the quota: %w", err))
@@ -517,7 +529,7 @@ func (d *format4Daemon) registerTypes(validator *sds.Validator) error {
 			continue
 		}
 		if err := d.ensureType(schema); err != nil {
-			log.Warnf("format 4: %s is not registered: %v", schema, err)
+			return fmt.Errorf("format 4: %s is not registered: %w", schema, err)
 		}
 	}
 	return nil

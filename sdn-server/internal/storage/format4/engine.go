@@ -231,7 +231,7 @@ func encodeConfig(engineRoot string, opt Options) []byte {
 		u32(11, t.RingBytes).u64(12, opt.GseqFloor).u32(13, uint32(cores)).u64(20, t.EngineBytes).
 		u32(21, t.WriterConns).u32(22, t.WriterCacheKiB).u32(23, t.ReaderConns).u32(24, t.ReaderCacheKiB).
 		u64(25, t.PendingMapBytes).u64(26, t.SoftHeap).u64(27, t.HardHeap).u32(40, t.GroupCommitRecords).
-		u32(41, t.GroupCommitMs)
+		u32(41, t.GroupCommitMs).u64(51, t.RowCacheBytes)
 	return append(c, t.Extra...)
 }
 
@@ -278,6 +278,12 @@ func statusOf(op string, rc int32, err error) error {
 func (e *Engine) RegisterType(spec TypeSpec) error {
 	if err := e.live("register_type"); err != nil {
 		return err
+	}
+	if spec.UnlimitedVisibility {
+		capabilities, err := e.ctl.ControlCall("flatsql_capabilities")
+		if err != nil || capabilities < 0 || capabilities&1 == 0 {
+			return fmt.Errorf("format4: engine lacks unlimited relation support: %v", err)
+		}
 	}
 	e.memo.begin()
 	defer e.memo.end(false)
