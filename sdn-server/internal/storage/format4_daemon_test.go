@@ -139,7 +139,11 @@ func TestFormat4MissingCapabilityLeavesNoStore(t *testing.T) {
 	format4OpenEngine = func(ctx context.Context, opt format4.Options) (format4.API, error) {
 		opt.Wasm = flatsqlrt.P4ThreadsWasm()
 		opt.CompileOnMiss = true
-		opt.AOTCacheDir = filepath.Join(os.Getenv("PARTB_AOT_CACHE"), "missing-capability")
+		cache := os.Getenv("PARTB_AOT_CACHE")
+		if cache == "" {
+			cache = t.TempDir()
+		}
+		opt.AOTCacheDir = filepath.Join(cache, "missing-capability")
 		return format4.Open(ctx, opt)
 	}
 	t.Setenv(format4.FormatEnv, "4")
