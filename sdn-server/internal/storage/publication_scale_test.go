@@ -26,7 +26,7 @@ func TestPublicationCatalogScaleDaily(t *testing.T) {
 				if peak.Records != want || peak.ReferenceBytes > s.publicationByteLimit() {
 					t.Fatalf("peak=%+v want=%d cap=%d", peak, want, s.publicationByteLimit())
 				}
-				reclamationPublish(t, s, nil)
+				scalePublish(t, s)
 				plateau := s.PublicationJournalStats()
 				if plateau.Records != 2*n || plateau.Entries != 2 {
 					t.Fatalf("plateau=%+v", plateau)
@@ -37,5 +37,27 @@ func TestPublicationCatalogScaleDaily(t *testing.T) {
 				t.Logf("objects=%d day=%d reference_struct_bytes=%d peak_records=%d peak_reference_bytes=%d plateau_records=%d plateau_reference_bytes=%d total_heap_bytes=%d", n, day, unsafe.Sizeof(publicationRecordRef{}), peak.Records, peak.ReferenceBytes, plateau.Records, plateau.ReferenceBytes, m.HeapAlloc)
 			}
 		})
+	}
+}
+
+func scalePublish(t *testing.T, s *FlatSQLStore) {
+	t.Helper()
+	for _, b := range s.RetainedPublicationBatches() {
+		p, err := s.SelectPublication(b.Schema, b.Provider, b.Source, b.Batch)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for offset := 0; offset < len(p.refs); offset += 10000 {
+			if _, err = s.ExportDatasetWindow(t.TempDir(), IndexedRecordQuery{SchemaName: b.Schema, ProviderID: b.Provider, SourceName: b.Source, BatchID: b.Batch, Selection: p, Limit: 10000, Offset: offset}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err = s.CompletePublication(p); err != nil {
+			t.Fatal(err)
+		}
+		p.Close()
+	}
+	if err := s.ReclaimPublication(); err != nil {
+		t.Fatal(err)
 	}
 }

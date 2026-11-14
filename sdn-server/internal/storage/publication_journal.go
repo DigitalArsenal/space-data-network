@@ -36,6 +36,7 @@ type publicationEntry struct {
 	Published         bool                   `json:"-"`
 	Digest            string
 	Sequence          uint64
+	SourceSequence    uint64
 	Schema            string
 	Tags              SourceTags
 	Peer              string
@@ -203,7 +204,8 @@ func (b format4Backend) putRetained(op, schema string, records [][]byte, peer st
 	if n := len(s.publicationEntries); n > 0 {
 		seq = max(seq, s.publicationEntries[n-1].Sequence+1)
 	}
-	e := publicationEntry{Sequence: seq, Schema: schema, Tags: tags, Peer: peer, Signature: sig, Identity: opt.identity, OwnTS: opt.ownTS}
+	sourceSeq := s.nextPublicationSourceSequence(schema, tags.ProviderID, tags.SourceName)
+	e := publicationEntry{Sequence: seq, SourceSequence: sourceSeq, Schema: schema, Tags: tags, Peer: peer, Signature: sig, Identity: opt.identity, OwnTS: opt.ownTS}
 	if err := s.publicationStep("prepare"); err != nil {
 		return nil, nil, err
 	}
@@ -254,7 +256,7 @@ func (b format4Backend) putRetained(op, schema string, records [][]byte, peer st
 	if err = s.publicationStep("metadata"); err != nil {
 		return nil, nil, err
 	}
-	scope, _ := json.Marshal(publicationEntry{Sequence: e.Sequence, Schema: e.Schema, Tags: e.Tags})
+	scope, _ := json.Marshal(publicationEntry{Sequence: e.Sequence, SourceSequence: e.SourceSequence, Schema: e.Schema, Tags: e.Tags})
 	if err = publicationPrepareFile(filepath.Join(temp, "source.json"), scope); err != nil {
 		return nil, nil, err
 	}
@@ -265,6 +267,9 @@ func (b format4Backend) putRetained(op, schema string, records [][]byte, peer st
 		return nil, nil, err
 	}
 	if err = s.publicationStep("rename"); err != nil {
+		return nil, nil, err
+	}
+	if err = s.savePublicationWatermarks(seq, schema, tags.ProviderID, tags.SourceName, sourceSeq); err != nil {
 		return nil, nil, err
 	}
 	if err = os.Rename(temp, s.publicationEntryDir(seq)); err != nil {
@@ -423,6 +428,9 @@ func (s *FlatSQLStore) recoverPublicationJournal() error {
 	if err = json.Unmarshal(raw, &s.publicationSources); err != nil {
 		return err
 	}
+	if err := s.loadPublicationWatermarks(); err != nil {
+		return err
+	}
 	if err := s.recoverPublicationReclamation(); err != nil {
 		s.publicationGlobalFailure = err
 		log.Errorf("publication reclamation metadata requires repair: %v", err)
@@ -550,6 +558,9 @@ func (s *FlatSQLStore) recoverPublicationJournal() error {
 			s.pausePublication(e, err)
 		}
 	}
+	if err := s.migratePublicationSourceSequences(); err != nil {
+		return err
+	}
 	s.publicationTags = map[publicationTagKey]int{}
 	for _, e := range s.publicationEntries {
 		s.indexPublicationTags(e, 1)
@@ -670,6 +681,8 @@ type PublicationSelection struct {
 	release                         func()
 	closeOnce                       sync.Once
 	cleanup                         runtime.Cleanup
+	SourceCutoff                    uint64
+	SourceSequences                 []uint64
 	Cutoff                          uint64
 	Schema, Provider, Source, Batch string
 	refs                            []publicationRecordRef
@@ -730,6 +743,8 @@ func (s *FlatSQLStore) retainedSelectionLocked(schema, provider, source, batch s
 			continue
 		}
 		p.Cutoff = e.Sequence
+		p.SourceCutoff = e.SourceSequence
+		p.SourceSequences = append(p.SourceSequences, e.SourceSequence)
 		terminalComplete = e.Generation
 		for _, r := range e.Refs {
 			key := r.CID()

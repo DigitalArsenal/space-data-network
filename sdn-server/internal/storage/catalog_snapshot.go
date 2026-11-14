@@ -76,6 +76,7 @@ func (s *FlatSQLStore) captureCatalogLocked(x PublicationSource, cutoff uint64) 
 		if !e.Applied || e.Sequence > cutoff || e.Schema != "OCM.fbs" || e.Tags.ProviderID != x.Provider || e.Tags.SourceName != x.ProductSource {
 			continue
 		}
+		products.SourceCutoff = max(products.SourceCutoff, e.SourceSequence)
 		for _, r := range e.Refs {
 			if wanted[r.CID()] || wanted[r.FramedCID()] {
 				selected[r.CID()] = r

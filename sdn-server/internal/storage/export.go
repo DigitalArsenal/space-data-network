@@ -49,7 +49,9 @@ type DatasetExportRecord struct {
 
 // DatasetExportIndex is the replayable query/index sidecar for a shard.
 type DatasetExportIndex struct {
-	PublicationCutoff uint64 `json:"publicationCutoff,omitempty"`
+	PublicationCutoff          uint64   `json:"publicationCutoff,omitempty"`
+	PublicationSourceCutoff    uint64   `json:"publicationSourceCutoff,omitempty"`
+	PublicationSourceSequences []uint64 `json:"publicationSourceSequences,omitempty"`
 
 	Version      int                          `json:"version"`
 	SchemaName   string                       `json:"schemaName"`
@@ -438,6 +440,10 @@ func ExportDatasetRecords(outputDir string, filter IndexedRecordQuery, records [
 	}
 	if filter.Selection != nil {
 		index.PublicationCutoff = filter.Selection.Cutoff
+		index.PublicationSourceCutoff = filter.Selection.SourceCutoff
+		if filter.Selection.Batch != "" {
+			index.PublicationSourceSequences = filter.Selection.SourceSequences
+		}
 	}
 	indexBytes, err := json.MarshalIndent(index, "", "  ")
 	if err != nil {
@@ -580,24 +586,26 @@ func isActiveCatalogOpsStatus(status string) bool {
 
 func canonicalQueryJSON(filter IndexedRecordQuery) ([]byte, error) {
 	payload := struct {
-		PublicationCutoff   uint64  `json:"publicationCutoff,omitempty"`
-		SchemaName          string  `json:"schemaName"`
-		Day                 string  `json:"day,omitempty"`
-		NoradCatID          *uint32 `json:"noradCatId,omitempty"`
-		EntityID            string  `json:"entityId,omitempty"`
-		ObjectType          string  `json:"objectType,omitempty"`
-		OpsStatusCode       string  `json:"opsStatusCode,omitempty"`
-		ActivePayloads      bool    `json:"activePayloads,omitempty"`
-		CAReadyResidentSet  bool    `json:"caReadyResidentSet,omitempty"`
-		From                string  `json:"from,omitempty"`
-		To                  string  `json:"to,omitempty"`
-		ProviderID          string  `json:"providerId,omitempty"`
-		SourceName          string  `json:"sourceName,omitempty"`
-		BatchID             string  `json:"batchId,omitempty"`
-		Limit               int     `json:"limit,omitempty"`
-		Offset              int     `json:"offset,omitempty"`
-		AllowLargeResultSet bool    `json:"allowLargeResultSet,omitempty"`
-		OrderByCID          bool    `json:"orderByCid,omitempty"`
+		PublicationCutoff          uint64   `json:"publicationCutoff,omitempty"`
+		PublicationSourceCutoff    uint64   `json:"publicationSourceCutoff,omitempty"`
+		PublicationSourceSequences []uint64 `json:"publicationSourceSequences,omitempty"`
+		SchemaName                 string   `json:"schemaName"`
+		Day                        string   `json:"day,omitempty"`
+		NoradCatID                 *uint32  `json:"noradCatId,omitempty"`
+		EntityID                   string   `json:"entityId,omitempty"`
+		ObjectType                 string   `json:"objectType,omitempty"`
+		OpsStatusCode              string   `json:"opsStatusCode,omitempty"`
+		ActivePayloads             bool     `json:"activePayloads,omitempty"`
+		CAReadyResidentSet         bool     `json:"caReadyResidentSet,omitempty"`
+		From                       string   `json:"from,omitempty"`
+		To                         string   `json:"to,omitempty"`
+		ProviderID                 string   `json:"providerId,omitempty"`
+		SourceName                 string   `json:"sourceName,omitempty"`
+		BatchID                    string   `json:"batchId,omitempty"`
+		Limit                      int      `json:"limit,omitempty"`
+		Offset                     int      `json:"offset,omitempty"`
+		AllowLargeResultSet        bool     `json:"allowLargeResultSet,omitempty"`
+		OrderByCID                 bool     `json:"orderByCid,omitempty"`
 	}{
 		SchemaName:          filter.SchemaName,
 		Day:                 filter.Day,
@@ -617,6 +625,10 @@ func canonicalQueryJSON(filter IndexedRecordQuery) ([]byte, error) {
 	}
 	if filter.Selection != nil {
 		payload.PublicationCutoff = filter.Selection.Cutoff
+		payload.PublicationSourceCutoff = filter.Selection.SourceCutoff
+		if filter.Selection.Batch != "" {
+			payload.PublicationSourceSequences = filter.Selection.SourceSequences
+		}
 	}
 	if filter.From != nil {
 		payload.From = filter.From.UTC().Format(time.RFC3339Nano)
