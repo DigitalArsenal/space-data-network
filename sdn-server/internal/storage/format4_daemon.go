@@ -526,6 +526,7 @@ func (d *format4Daemon) registerTypes(validator *sds.Validator) error {
 	if validator == nil {
 		return nil
 	}
+	var schemas []string
 	for _, schema := range validator.Schemas() {
 		// These schemas describe the engine's own journal/checkpoint frames;
 		// their identifiers cannot be registered as user record types.
@@ -536,8 +537,30 @@ func (d *format4Daemon) registerTypes(validator *sds.Validator) error {
 		if _, err := sds.SchemaNameToTable(schema); err != nil {
 			continue
 		}
+		schemas = append(schemas, schema)
+	}
+	if d.opt.UnlimitedVisibility {
+		preflight, ok := d.api().(interface{ ValidateType(format4.TypeSpec) error })
+		if !ok {
+			return fmt.Errorf("unlimited SQL visibility requires registration validation")
+		}
+		for _, schema := range schemas {
+			spec, err := d.format4TypeSpec(schema)
+			if err == nil {
+				err = preflight.ValidateType(spec)
+			}
+			if err != nil {
+				return fmt.Errorf("format 4: registration preflight %s: %w", schema, err)
+			}
+		}
+	}
+	for _, schema := range schemas {
 		if err := d.ensureType(schema); err != nil {
 			if d.opt.UnlimitedVisibility || errors.Is(err, format4.ErrUnlimitedRelationsUnsupported) {
+				if m, readErr := marker.Read(d.opt.DataRoot); d.opt.UnlimitedVisibility && readErr == nil && m.RequiredLayout >= 2 {
+					log.Errorf("format 4: %s unavailable after layout promotion: %v", schema, err)
+					continue
+				}
 				return fmt.Errorf("format 4: %s is not registered: %w", schema, err)
 			}
 			log.Warnf("format 4: %s is not registered: %v", schema, err)
@@ -557,9 +580,12 @@ func (d *format4Daemon) ensureType(schema string) error {
 	if err != nil {
 		return err
 	}
-	before, err := marker.Read(d.opt.DataRoot)
-	if err != nil {
-		return err
+	var before marker.Markers
+	if spec.UnlimitedVisibility {
+		before, err = marker.Read(d.opt.DataRoot)
+		if err != nil {
+			return err
+		}
 	}
 	if spec.UnlimitedVisibility && before.Layout < 2 {
 		log.Infof("format 4: promoting stream format %d from layout %d to layout 2 for unlimited SQL visibility", before.Format, before.Layout)

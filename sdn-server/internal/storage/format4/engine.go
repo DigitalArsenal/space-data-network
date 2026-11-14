@@ -278,6 +278,19 @@ func statusOf(op string, rc int32, err error) error {
 
 // ---- control ----------------------------------------------------------------
 
+// ValidateType checks registration compatibility without changing the store.
+func (e *Engine) ValidateType(spec TypeSpec) error {
+	if err := e.live("validate_type"); err != nil {
+		return err
+	}
+	probe, ok := e.ctl.(interface{ HasFunction(string) bool })
+	if !ok || !probe.HasFunction("flatsql_validate_type") {
+		return fmt.Errorf("%w: registration validation export is absent", ErrUnlimitedRelationsUnsupported)
+	}
+	rc, err := e.ctl.ControlBytes("flatsql_validate_type", spec.Encode())
+	return statusOf("validate_type "+spec.TypeName(), rc, err)
+}
+
 func (e *Engine) RegisterType(spec TypeSpec) error {
 	if err := e.live("register_type"); err != nil {
 		return err
