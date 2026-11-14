@@ -456,6 +456,12 @@ func (s *FlatSQLStore) PublicationRecoveryStatus() map[string]string {
 	for key, reason := range s.publicationQuarantineStatus {
 		out[strings.SplitN(key, "/", 2)[1]] = reason
 	}
+	for _, e := range s.publicationEntries {
+		if e.Applied && !e.ReadReady && !e.Discarded && !e.Aborted {
+			key := fmt.Sprintf("%s/%s/%s/%s/entry-%d", e.Schema, e.Tags.ProviderID, e.Tags.SourceName, e.Tags.BatchID, e.Sequence)
+			out[key] = fmt.Sprintf("applied entry %d batch %q unreadable; publication paused", e.Sequence, e.Tags.BatchID)
+		}
+	}
 	// Keep the operator's data-loss acknowledgement after payload reclamation.
 	if raw, err := os.ReadFile(filepath.Join(s.publicationDir(), "discard-effects.json")); err == nil {
 		var effects map[string]string

@@ -64,7 +64,7 @@ func TestPublicationNeverAppliedDamageDoesNotBlockSource(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = s.publicationRecords(entry)
+			_, err = s.publicationReferences(entry)
 			if !IsPublicationContentError(err) {
 				t.Fatalf("unclassified immutable input: %v", err)
 			}
