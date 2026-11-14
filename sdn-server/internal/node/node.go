@@ -2229,15 +2229,14 @@ func (n *Node) Start(ctx context.Context) error {
 		}
 	}
 
-	// Parse and validate bootstrap addresses with peer ID pinning. If the
-	// configured set is empty or invalid, fall back to the built-in default
-	// peers so DHT discovery still comes up.
+	// Parse configured pinned peers. An explicitly empty list disables peer
+	// bootstrap; absent and invalid lists use the built-in defaults.
 	pinnedPeers, usedFallback, err := bootstrap.ResolveBootstrapPeers(n.config.Network.Bootstrap)
 	if err != nil {
 		log.Warnf("Error resolving bootstrap addresses: %v", err)
 	}
 	if usedFallback {
-		log.Warn("Configured bootstrap peers were empty or invalid; falling back to built-in defaults")
+		log.Warn("Configured bootstrap peers were absent or invalid; falling back to built-in defaults")
 	}
 
 	// A CONFIGURED BOOTSTRAP LIST REPLACES THE DEFAULTS, IT DOES NOT EXTEND
@@ -5129,6 +5128,9 @@ func (m *mdnsNotifee) HandlePeerFound(pi peer.AddrInfo) {
 
 func (n *Node) runMDNS() {
 	defer n.wg.Done()
+	if !n.config.Peers.EnableMDNS {
+		return
+	}
 
 	notifee := &mdnsNotifee{
 		node: n,
