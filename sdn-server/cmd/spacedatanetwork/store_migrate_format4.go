@@ -85,7 +85,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -1640,17 +1639,6 @@ func (m *migrator4) finishActivation() error {
 }
 
 // ---- machine numbers ----------------------------------------------------------------
-
-func maxRSSBytes() int64 {
-	var ru syscall.Rusage
-	if err := syscall.Getrusage(syscall.RUSAGE_SELF, &ru); err != nil {
-		return -1
-	}
-	if runtime.GOOS == "darwin" {
-		return int64(ru.Maxrss) // bytes
-	}
-	return int64(ru.Maxrss) * 1024 // KiB
-}
 
 // migrateLoadAverage is the 1-minute load average (-1 when unknown).
 func migrateLoadAverage() float64 {
