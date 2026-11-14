@@ -9,6 +9,7 @@ import (
 )
 
 func TestPublicationStateIntegrity(t *testing.T) {
+	cutoff, sourceCutoff := int64(9), int64(3)
 	bodies := []*pst.BodyT{
 		{Type: pst.BodyJournalEntry, Value: &pst.JournalEntryT{Sequence: 7, Schema: "CAT.fbs", Tags: &pst.SourceTagsT{ProviderId: "synthetic"}, Refused: []*pst.RefusalT{}}},
 		{Type: pst.BodySourceList, Value: &pst.SourceListT{Sources: []*pst.RetainedSourceT{{Schema: "CAT.fbs", Provider: "synthetic", Source: "index"}}}},
@@ -22,6 +23,7 @@ func TestPublicationStateIntegrity(t *testing.T) {
 		{Type: pst.BodyReclamation, Value: &pst.ReclamationT{HighWater: 7, Reclaimed: 2, Pending: []uint64{3}}},
 		{Type: pst.BodyExportIndex, Value: &pst.ExportIndexT{Version: 1, SchemaName: "CAT.fbs", RecordCount: 1, PublicationSourceSequences: []uint64{}, Records: []*pst.IndexRecordT{{Cid: "synthetic", Length: 16}}}},
 		{Type: pst.BodyBatchAction, Value: &pst.BatchActionT{Schema: "CAT.fbs", Provider: "synthetic", Source: "index", Batch: "batch", Action: "requeue"}},
+		{Type: pst.BodyPublicationRow, Value: &pst.PublicationRowT{SchemaName: "CAT.fbs", PublishedAt: "2026-01-01T00:00:00Z", PublicationCutoff: &cutoff, PublicationSourceCutoff: &sourceCutoff}},
 	}
 	for _, body := range bodies {
 		t.Run(body.Type.String(), func(t *testing.T) {

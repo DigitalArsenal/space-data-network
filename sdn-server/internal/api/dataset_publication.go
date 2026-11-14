@@ -317,7 +317,8 @@ func requireDatasetUpdatesLocalClient(w http.ResponseWriter, r *http.Request, ro
 // ConcreteDatasetPublicationService exports local records and publishes one
 // signed DPM announcement PNM through the running node.
 type ConcreteDatasetPublicationService struct {
-	selection *storage.PublicationSelection
+	selection      *storage.PublicationSelection
+	pairedSnapshot bool
 
 	store           *storage.FlatSQLStore
 	publisher       DatasetUpdatePublisher
@@ -422,6 +423,7 @@ func (s *ConcreteDatasetPublicationService) PublishDatasetUpdate(ctx context.Con
 // completion; the supplied operation is the signing/transport boundary.
 func (s *ConcreteDatasetPublicationService) publishSelectedDatasetUpdate(ctx context.Context, activeReq DatasetPublicationRequest, schema string, publish func(*ConcreteDatasetPublicationService, context.Context, DatasetPublicationRequest, string) (*DatasetPublicationResult, []string, error)) (*DatasetPublicationResult, error) {
 	activeService := *s
+	activeService.pairedSnapshot = false
 	activeStore := s.store
 	var err error
 	// One publication per lane at a time: retention decides what is current
@@ -438,6 +440,7 @@ func (s *ConcreteDatasetPublicationService) publishSelectedDatasetUpdate(ctx con
 			}
 			defer catalogSnapshot.Close()
 			activeService.selection = catalogSnapshot.Index
+			activeService.pairedSnapshot = true
 		}
 	}
 	if catalogSnapshot == nil {
@@ -967,6 +970,15 @@ func (s *ConcreteDatasetPublicationService) publishDatasetExport(
 	if export == nil {
 		return nil, storage.DatasetShardPublication{}, fmt.Errorf("dataset export is required")
 	}
+	var publicationCutoff, publicationSourceCutoff *int64
+	if s.pairedSnapshot {
+		const maxCutoff = uint64(1<<63 - 1)
+		if filter.Selection == nil || filter.Selection.Cutoff > maxCutoff || filter.Selection.SourceCutoff > maxCutoff {
+			return nil, storage.DatasetShardPublication{}, fmt.Errorf("paired snapshot cutoffs must fit int64")
+		}
+		cutoff, sourceCutoff := int64(filter.Selection.Cutoff), int64(filter.Selection.SourceCutoff)
+		publicationCutoff, publicationSourceCutoff = &cutoff, &sourceCutoff
+	}
 	pins := s.lanePins(schema, sourceIdentity.ProviderID, sourceIdentity.SourceName)
 	published, err := storage.PublishDatasetExportToIPFS(ctx, pins, export)
 	if err != nil {
@@ -1014,24 +1026,26 @@ func (s *ConcreteDatasetPublicationService) publishDatasetExport(
 		}
 	}
 	shardPublication := storage.DatasetShardPublication{
-		SchemaName:   schema,
-		ProviderID:   sourceIdentity.ProviderID,
-		SourceName:   sourceIdentity.SourceName,
-		BatchID:      sourceIdentity.BatchID,
-		QueryProfile: storage.DatasetPublicationQueryProfile,
-		Offset:       filter.Offset,
-		Limit:        filter.Limit,
-		RecordCount:  export.RecordCount,
-		ByteCount:    export.ShardBytes,
-		ShardCID:     export.ShardCID,
-		IndexCID:     export.IndexCID,
-		ManifestCID:  manifest.CID,
-		PNMCID:       pnmCID,
-		ShardSHA256:  export.ShardSHA256,
-		IndexSHA256:  export.IndexSHA256,
-		QuerySHA256:  export.QuerySHA256,
-		ResultSHA256: export.ResultSHA256,
-		PublishedAt:  publishedAt,
+		SchemaName:              schema,
+		ProviderID:              sourceIdentity.ProviderID,
+		SourceName:              sourceIdentity.SourceName,
+		BatchID:                 sourceIdentity.BatchID,
+		QueryProfile:            storage.DatasetPublicationQueryProfile,
+		Offset:                  filter.Offset,
+		Limit:                   filter.Limit,
+		RecordCount:             export.RecordCount,
+		ByteCount:               export.ShardBytes,
+		ShardCID:                export.ShardCID,
+		IndexCID:                export.IndexCID,
+		ManifestCID:             manifest.CID,
+		PNMCID:                  pnmCID,
+		ShardSHA256:             export.ShardSHA256,
+		IndexSHA256:             export.IndexSHA256,
+		QuerySHA256:             export.QuerySHA256,
+		ResultSHA256:            export.ResultSHA256,
+		PublishedAt:             publishedAt,
+		PublicationCutoff:       publicationCutoff,
+		PublicationSourceCutoff: publicationSourceCutoff,
 	}
 	if err := s.store.UpsertDatasetShardPublication(shardPublication); err != nil {
 		return nil, storage.DatasetShardPublication{}, fmt.Errorf("record dataset shard publication: %w", err)

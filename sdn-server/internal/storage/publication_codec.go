@@ -83,6 +83,8 @@ func marshalPublication(v any) ([]byte, error) {
 		body = pst.BodyT{Type: pst.BodyReclamation, Value: &pst.ReclamationT{HighWater: x.HighWater, Reclaimed: x.Reclaimed, Pending: x.Pending}}
 	case DatasetExportIndex:
 		body = pst.BodyT{Type: pst.BodyExportIndex, Value: publicationExportFB(x)}
+	case DatasetShardPublication:
+		body = pst.BodyT{Type: pst.BodyPublicationRow, Value: publicationRowFB(x)}
 	default:
 		return nil, fmt.Errorf("unsupported publication state type %T", v)
 	}
@@ -114,6 +116,8 @@ func unmarshalPublication(data []byte, target any) error {
 		kind = pst.BodyReclamation
 	case *DatasetExportIndex:
 		kind = pst.BodyExportIndex
+	case *DatasetShardPublication:
+		kind = pst.BodyPublicationRow
 	default:
 		return fmt.Errorf("unsupported publication state target %T", target)
 	}
@@ -198,8 +202,47 @@ func unmarshalPublication(data []byte, target any) error {
 		*out = publicationReclaimCheckpoint{HighWater: x.HighWater, Reclaimed: x.Reclaimed, Pending: x.Pending}
 	case *DatasetExportIndex:
 		*out = publicationExportFromFB(body.Value.(*pst.ExportIndexT))
+	case *DatasetShardPublication:
+		value, err := publicationRowFromFB(body.Value.(*pst.PublicationRowT))
+		if err != nil {
+			return err
+		}
+		*out = value
 	}
 	return nil
+}
+
+func publicationRowFB(x DatasetShardPublication) *pst.PublicationRowT {
+	return &pst.PublicationRowT{
+		SchemaName: x.SchemaName, ProviderId: x.ProviderID, SourceName: x.SourceName,
+		BatchId: x.BatchID, QueryProfile: x.QueryProfile, Offset: int64(x.Offset),
+		Limit: int64(x.Limit), RecordCount: int64(x.RecordCount), ByteCount: x.ByteCount,
+		ShardCid: x.ShardCID, IndexCid: x.IndexCID, ManifestCid: x.ManifestCID, PnmCid: x.PNMCID,
+		ShardSha256: x.ShardSHA256, IndexSha256: x.IndexSHA256, QuerySha256: x.QuerySHA256,
+		ResultSha256: x.ResultSHA256, FeedSequence: x.FeedSequence, PreviousHead: x.PreviousHead,
+		FeedHead: x.FeedHead, PublishedAt: x.PublishedAt.Format(time.RFC3339Nano),
+		PublicationCutoff: x.PublicationCutoff, PublicationSourceCutoff: x.PublicationSourceCutoff,
+	}
+}
+
+func publicationRowFromFB(x *pst.PublicationRowT) (DatasetShardPublication, error) {
+	at, err := time.Parse(time.RFC3339Nano, x.PublishedAt)
+	if err != nil {
+		return DatasetShardPublication{}, fmt.Errorf("invalid publication time: %w", err)
+	}
+	if int64(int(x.Offset)) != x.Offset || int64(int(x.Limit)) != x.Limit || int64(int(x.RecordCount)) != x.RecordCount {
+		return DatasetShardPublication{}, fmt.Errorf("publication window exceeds host integer range")
+	}
+	return DatasetShardPublication{
+		SchemaName: x.SchemaName, ProviderID: x.ProviderId, SourceName: x.SourceName,
+		BatchID: x.BatchId, QueryProfile: x.QueryProfile, Offset: int(x.Offset),
+		Limit: int(x.Limit), RecordCount: int(x.RecordCount), ByteCount: x.ByteCount,
+		ShardCID: x.ShardCid, IndexCID: x.IndexCid, ManifestCID: x.ManifestCid, PNMCID: x.PnmCid,
+		ShardSHA256: x.ShardSha256, IndexSHA256: x.IndexSha256, QuerySHA256: x.QuerySha256,
+		ResultSHA256: x.ResultSha256, FeedSequence: x.FeedSequence, PreviousHead: x.PreviousHead,
+		FeedHead: x.FeedHead, PublishedAt: at, PublicationCutoff: x.PublicationCutoff,
+		PublicationSourceCutoff: x.PublicationSourceCutoff,
+	}, nil
 }
 
 func publicationRowsFB(rows []int) []int32 {
