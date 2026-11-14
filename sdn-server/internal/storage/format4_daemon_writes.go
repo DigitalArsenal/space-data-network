@@ -95,6 +95,21 @@ type f4PutOpt struct {
 // the write's tag in the same transaction (C-26; format 1's
 // tagIdentityRepeats).
 func (b format4Backend) f4Put(op, schemaName string, records [][]byte, peerID string, signature []byte, tags *SourceTags, opt f4PutOpt) ([]string, []format4.Outcome, error) {
+	if !b.s.publicationEnabled.Load() {
+		return b.f4PutDirect(op, schemaName, records, peerID, signature, tags, opt)
+	}
+	b.s.publicationMu.Lock()
+	defer b.s.publicationMu.Unlock()
+	if b.s.publicationFailure != nil {
+		return nil, nil, b.s.publicationFailure
+	}
+	if tags == nil || !b.s.retainsPublication(schemaName, tags.ProviderID, tags.SourceName) || len(records) == 0 {
+		return b.f4PutDirect(op, schemaName, records, peerID, signature, tags, opt)
+	}
+	return b.putRetained(op, schemaName, records, peerID, signature, *tags, opt)
+}
+
+func (b format4Backend) f4PutDirect(op, schemaName string, records [][]byte, peerID string, signature []byte, tags *SourceTags, opt f4PutOpt) ([]string, []format4.Outcome, error) {
 	if err := b.s.requireWritable(op); err != nil {
 		return nil, nil, err
 	}

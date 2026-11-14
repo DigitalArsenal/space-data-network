@@ -119,6 +119,28 @@ func (s *FlatSQLStore) ExportDatasetWindow(outputDir string, filter IndexedRecor
 	if filter.SchemaName == "" {
 		return nil, fmt.Errorf("schema name is required")
 	}
+	selection := filter.Selection
+	if selection == nil {
+		var err error
+		selection, err = s.SelectPublication(filter.SchemaName, filter.ProviderID, filter.SourceName, filter.BatchID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if selection != nil {
+		records, err := selection.window(filter)
+		if err != nil {
+			return nil, err
+		}
+		ex, err := ExportDatasetRecords(outputDir, filter, records)
+		if err != nil {
+			return nil, err
+		}
+		if err = s.attachSourceBatchLicenses(ex); err != nil {
+			return nil, err
+		}
+		return ex, nil
+	}
 	records, err := s.QueryIndexedRecords(filter)
 	if err != nil {
 		return nil, err

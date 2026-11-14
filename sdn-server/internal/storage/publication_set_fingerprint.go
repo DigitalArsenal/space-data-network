@@ -20,6 +20,12 @@ var publicationSetFingerprintPage int64 = 20000
 // round 2, coordinator D3). The fingerprint and the count are the same.
 // Other stores answer as DatasetPublicationSetFingerprint does.
 func (s *FlatSQLStore) PagedDatasetPublicationSetFingerprint(schemaName, providerID, sourceName, batchID string) (string, int, error) {
+	if p, err := s.SelectPublication(schemaName, providerID, sourceName, batchID); err != nil {
+		return "", 0, err
+	} else if p != nil {
+		h, n := p.Fingerprint()
+		return h, n, nil
+	}
 	b, ok := s.rb.(format4Backend)
 	if !ok {
 		return s.DatasetPublicationSetFingerprint(schemaName, providerID, sourceName, batchID)

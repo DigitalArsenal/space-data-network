@@ -25,6 +25,9 @@ func (s *ConcreteDatasetPublicationService) AutoPublishBatches(ctx context.Conte
 		return nil, err
 	}
 	out := make([]IngestedBatch, 0, len(rows))
+	for _, row := range s.store.RetainedPublicationBatches() {
+		out = append(out, IngestedBatch{Schema: row.Schema, ProviderID: row.Provider, SourceName: row.Source, BatchID: row.Batch})
+	}
 	for _, row := range rows {
 		out = append(out, IngestedBatch{Schema: row.SchemaName, ProviderID: row.ProviderID, SourceName: row.SourceName, BatchID: row.BatchID})
 	}

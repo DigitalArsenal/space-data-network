@@ -517,6 +517,16 @@ func (n *Node) init() error {
 		if err != nil {
 			return fmt.Errorf("failed to create storage: %w", err)
 		}
+		var publicationSources []storage.PublicationSource
+		for _, rule := range n.config.Publishing.AutoPublish {
+			if rule.RetainForPublication || rule.CatalogProductSource != "" {
+				schema := strings.TrimSuffix(rule.Schema, ".fbs") + ".fbs"
+				publicationSources = append(publicationSources, storage.PublicationSource{Schema: schema, Provider: rule.ProviderID, Source: rule.SourceName, ProductSource: rule.CatalogProductSource})
+			}
+		}
+		if err := n.store.ConfigurePublicationSources(publicationSources); err != nil {
+			return fmt.Errorf("publication retention: %w", err)
+		}
 		// Warm derived search indexes so a restarted node serves its first
 		// cold search instead of answering SEARCH_INDEX_BUILDING. Builds run
 		// one at a time in the background on the store's existing slot.

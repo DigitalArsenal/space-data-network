@@ -1058,6 +1058,13 @@ func normalizePublishingSchema(schema string) string {
 // requires exact provider/source identities. The schema may be written
 // either as the standard code ("RFB") or the schema file ("RFB.fbs").
 type AutoPublishLane struct {
+	// RetainForPublication durably retains CAT/OCM batches before replacement.
+	// It requires exact provider/source identities and store format 4.
+	RetainForPublication bool `yaml:"retain_for_publication,omitempty"`
+	// CatalogProductSource selects a compact CAT/OCM snapshot for this CAT
+	// source. Both sources require retention before their first ingest.
+	CatalogProductSource string `yaml:"catalog_product_source,omitempty"`
+
 	// PublishScope selects "batch" (the default) or "source". Source scope
 	// requires exact, case-sensitive provider and source names. It publishes
 	// all stored batches for that source and catches up once at startup.
