@@ -687,7 +687,7 @@ func buildPNMForTest(i int, fileID, signature string) []byte {
 // with SIGNATURE sealed (no rule reads it), then PNM with FILE_ID sealed (its
 // COL 1 rule reads it), by name and mislabeled (the field id is what is
 // sealed).
-func TestFormat4SealedTypesStayOffSQLAndOutOfIndexes(t *testing.T) {
+func TestFormat4SealedTypesExposeOnlyMetadata(t *testing.T) {
 	onFormat4Engine(t, func(t *testing.T) {
 		t.Cleanup(func() { encfield.RegisterSchema("PNM", nil) })
 		open := func() [2]*FlatSQLStore {
@@ -703,7 +703,7 @@ func TestFormat4SealedTypesStayOffSQLAndOutOfIndexes(t *testing.T) {
 		tags := SourceTags{ProviderID: "proof", SourceName: "sealed-pnm", BatchID: "s-1"}
 
 		// L1: SIGNATURE sealed. The records store and read back on both
-		// formats; SQL reaches none of them on either.
+		// formats; the stream store exposes metadata without plaintext fields.
 		encfield.RegisterSchema("PNM", []encfield.FieldSpec{{Name: "SIGNATURE", FieldID: 5}})
 		stores := open()
 		for _, s := range stores {
@@ -730,8 +730,17 @@ func TestFormat4SealedTypesStayOffSQLAndOutOfIndexes(t *testing.T) {
 					t.Fatalf("format4=%v: PNM %s is stored unsealed", s.Format4(), r.CID)
 				}
 			}
-			if reach := sqlReaches(t, s, "PNM"); len(reach) > 0 {
-				t.Fatalf("format4=%v: a sealed standard is on the public SQL surface: %v", s.Format4(), reach)
+			if s.Format4() {
+				caps := flatsqlrt.SandboxCaps{Timeout: time.Minute}
+				payload, _, _, err := s.QuerySandboxedJSON(`SELECT COUNT(_cid) AS n FROM PNM`, caps)
+				if err != nil || string(payload) != `[{"n":4}]` {
+					t.Fatalf("metadata count: %s, %v", payload, err)
+				}
+				if _, _, _, err := s.QuerySandboxedJSON(`SELECT SIGNATURE FROM PNM`, caps); err == nil {
+					t.Fatal("sealed field exposed through SQL")
+				}
+			} else if reach := sqlReaches(t, s, "PNM"); len(reach) > 0 {
+				t.Fatalf("legacy sealed standard is on the public SQL surface: %v", reach)
 			}
 		}
 		for _, s := range stores {

@@ -88,6 +88,8 @@ type Engine struct {
 
 var _ API = (*Engine)(nil)
 
+var ErrUnlimitedRelationsUnsupported = errors.New("format4: engine lacks unlimited relation support")
+
 // Open initializes and starts the engine (init + start). *Engine implements
 // API.
 func Open(ctx context.Context, opt Options) (*Engine, error) {
@@ -282,7 +284,7 @@ func (e *Engine) RegisterType(spec TypeSpec) error {
 	if spec.UnlimitedVisibility {
 		capabilities, err := e.ctl.ControlCall("flatsql_capabilities")
 		if err != nil || capabilities < 0 || capabilities&1 == 0 {
-			return fmt.Errorf("format4: engine lacks unlimited relation support: %v", err)
+			return fmt.Errorf("%w: %v", ErrUnlimitedRelationsUnsupported, err)
 		}
 	}
 	e.memo.begin()

@@ -529,7 +529,10 @@ func (d *format4Daemon) registerTypes(validator *sds.Validator) error {
 			continue
 		}
 		if err := d.ensureType(schema); err != nil {
-			return fmt.Errorf("format 4: %s is not registered: %w", schema, err)
+			if errors.Is(err, format4.ErrUnlimitedRelationsUnsupported) {
+				return fmt.Errorf("format 4: %s is not registered: %w", schema, err)
+			}
+			log.Warnf("format 4: %s is not registered: %v", schema, err)
 		}
 	}
 	return nil
