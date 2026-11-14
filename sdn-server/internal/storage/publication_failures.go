@@ -116,7 +116,6 @@ func (s *FlatSQLStore) ManagePublicationBatch(schema, provider, source, batch, a
 		if !e.Applied && action == "discard" {
 			return errors.New("unapplied batch cannot be discarded")
 		}
-		s.accountPublicationPending(s.publicationEntries[i], -1)
 		if action == "discard" {
 			if err := publicationAtomicFile(filepath.Join(s.publicationEntryDir(e.Sequence), "published"), []byte("1\n")); err != nil {
 				return err
@@ -135,6 +134,7 @@ func (s *FlatSQLStore) ManagePublicationBatch(schema, provider, source, batch, a
 			s.publicationEntries[i].GenerationFailure = publicationFailure{}
 		}
 		s.publicationEntries[i].BatchFailure = publicationFailure{}
+		s.accountPublicationPending(e, -1)
 		s.accountPublicationPending(s.publicationEntries[i], 1)
 	}
 	return nil

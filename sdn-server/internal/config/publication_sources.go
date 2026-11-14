@@ -74,6 +74,15 @@ func (c *Config) validatePublicationSources() error {
 			if !batch {
 				return fmt.Errorf("retain_for_publication requires a matching batch rule to drain retained entries")
 			}
+			if schema == "OCM" {
+				paired := false
+				for _, other := range c.Publishing.AutoPublish {
+					paired = paired || (strings.TrimSuffix(other.Schema, ".fbs") == "CAT" && strings.TrimSpace(other.ProviderID) == strings.TrimSpace(rule.ProviderID) && strings.TrimSpace(other.CatalogProductSource) == strings.TrimSpace(rule.SourceName))
+				}
+				if !paired {
+					return fmt.Errorf("retained OCM source requires its CAT index")
+				}
+			}
 			if schema != "CAT" && schema != "OCM" {
 				return fmt.Errorf("retain_for_publication supports only CAT and OCM")
 			}

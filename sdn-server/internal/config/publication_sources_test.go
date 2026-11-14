@@ -83,3 +83,22 @@ func TestPublicationSourceMixedCaseBatchRule(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestPublicationCatalogCapacityConfiguration(t *testing.T) {
+	for _, limit := range []int{-1, 0, 33000, 100000, 100001} {
+		c := Default()
+		c.Publishing.Enabled = true
+		c.Publishing.Retention.KeepSeries = 0
+		c.Publishing.AutoPublish = []AutoPublishLane{{Schema: "CAT", ProviderID: "synthetic", SourceName: "index", RetainForPublication: true, CatalogObjectLimit: limit}}
+		err := c.validatePublicationSources()
+		if (err != nil) != (limit < 0 || limit > 100000) {
+			t.Fatalf("limit=%d err=%v", limit, err)
+		}
+	}
+	c := Default()
+	c.Publishing.Enabled = true
+	c.Publishing.AutoPublish = []AutoPublishLane{{Schema: "", ProviderID: "synthetic", SourceName: "index", RetainForPublication: true}}
+	if err := c.validatePublicationSources(); err == nil || c.Publishing.AutoPublish[0].Schema == ".fbs" {
+		t.Fatal("empty schema canonicalized")
+	}
+}

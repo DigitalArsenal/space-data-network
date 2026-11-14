@@ -2396,6 +2396,24 @@ func (n *Node) Start(ctx context.Context) error {
 		go n.runBandwidthHistorySampler()
 	}
 
+	if n.store != nil && n.store.PublicationRetentionEnabled() && !n.config.Publishing.Enabled {
+		n.wg.Add(1)
+		go func() {
+			defer n.wg.Done()
+			ticker := time.NewTicker(time.Hour)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-n.ctx.Done():
+					return
+				case <-ticker.C:
+					if n.store.PublicationRetentionEnabled() {
+						log.Warn("publishing is disabled while retained publication data remains active; drain pending batches and stop retention explicitly")
+					}
+				}
+			}
+		}()
+	}
 	// Start EPM auto-publish via PubSub (every 30 minutes)
 	if n.epmService != nil && n.epmService.GetNodeEPM() != nil {
 		n.wg.Add(1)
