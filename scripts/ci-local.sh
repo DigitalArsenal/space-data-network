@@ -213,7 +213,8 @@ run_preflight() {
   step "Release artifact check suites"
   (cd "$ROOT" && node --test \
     deployment/release/assemble-beta-release-artifacts.test.mjs \
-    scripts/merge-mac-update-feed.test.mjs)
+    scripts/merge-mac-update-feed.test.mjs \
+    scripts/sync-docs-release.test.mjs)
   pass "release artifact check suites"
 
   # THE SUITES NOTHING RAN. A 2026-09-18 sweep found 35 of the 43 root-level
