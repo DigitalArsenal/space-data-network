@@ -722,7 +722,9 @@ jobs:
           # package, this job installs no LLVM, and the only symptom is
           # "cannot find -lxml2" at the very end of a Go build. ws2_32, bcrypt,
           # ole32, uuid, ntdll, ktmw32 and dbghelp all come from mingw-w64-crt
-          # with gcc; zstd is linked by full path out of the prefix.
+          # with gcc; zstd is linked by full path out of the prefix. lld is the
+          # linker the Windows CLI links with (see "Link the Windows CLI with
+          # lld" below).
           install: >-
             mingw-w64-x86_64-gcc
             mingw-w64-x86_64-zlib
@@ -730,6 +732,7 @@ jobs:
             mingw-w64-x86_64-libxml2
             mingw-w64-x86_64-xz
             mingw-w64-x86_64-libiconv
+            mingw-w64-x86_64-lld
       - name: Install Windows CLI build tools
         if: matrix.target_os == 'windows'
         env:
@@ -824,6 +827,19 @@ jobs:
       # already in its env, unused. SDN_GO_LDFLAGS is the supported way in —
       # go keeps the LAST -ldflags it is given, so passing it as an argument here
       # would silently drop the static link line (see go-with-wasmedge.sh).
+      # GNU ld dies linking the Windows CLI: "collect2.exe: error: ld returned 5
+      # exit status" with no other output (v1.1.0 run 43646565818, both
+      # attempts), and the same with binutils 2.46-4, the version beta.70
+      # linked with, and without Go 1.26's fix_debug_gdb_scripts.ld (exit 8).
+      # lld links it: 370127872 bytes, `version` answers 1.1.0 (diagnostic run
+      # 43649816106; 4 CPUs, 13 GB RAM and 218 GB of D: free, so not the
+      # machine). link.flags is the restored prefix's own copy in this
+      # workspace; the cached prefix, and every other target, are unchanged.
+      - name: Link the Windows CLI with lld
+        if: matrix.target_os == 'windows'
+        run: |
+          printf ' -fuse-ld=lld' >> "${WASMEDGE_DIR}/link.flags"
+          ld.lld --version | head -1
       - name: Build target SDN binary
         env:
           SDN_GO_LDFLAGS: -X github.com/spacedatanetwork/sdn-server/internal/versioninfo.ReleaseTag=${{ needs.beta-version.outputs.release_tag }}
