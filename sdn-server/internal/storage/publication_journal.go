@@ -260,9 +260,6 @@ func (s *FlatSQLStore) recoverPublicationJournal() error {
 		}
 		s.publicationEntries = append(s.publicationEntries, e)
 		if !e.Applied {
-			if batch != "" {
-				p.Cutoff = e.Sequence
-			}
 			records, err := s.publicationRecords(e)
 			if err != nil {
 				return err

@@ -95,8 +95,12 @@ type f4PutOpt struct {
 // the write's tag in the same transaction (C-26; format 1's
 // tagIdentityRepeats).
 func (b format4Backend) f4Put(op, schemaName string, records [][]byte, peerID string, signature []byte, tags *SourceTags, opt f4PutOpt) ([]string, []format4.Outcome, error) {
-	if !b.s.publicationEnabled.Load() {
+	if !b.s.publicationEnabled.Load() || tags == nil {
 		return b.f4PutDirect(op, schemaName, records, peerID, signature, tags, opt)
+	}
+	if tags != nil {
+		normalized := normalizeSourceTags(*tags)
+		tags = &normalized
 	}
 	b.s.publicationMu.Lock()
 	defer b.s.publicationMu.Unlock()
@@ -348,6 +352,19 @@ func (b format4Backend) UpsertSourceTags(schemaName, cid string, tags SourceTags
 	tags = normalizeSourceTags(tags)
 	if err := ValidateSourceTags(tags); err != nil {
 		return err
+	}
+	if b.s.publicationEnabled.Load() {
+		b.s.publicationMu.Lock()
+		retained := b.s.retainsPublication(schemaName, tags.ProviderID, tags.SourceName)
+		b.s.publicationMu.Unlock()
+		if retained {
+			r, err := b.s.GetRecord(schemaName, cid)
+			if err != nil {
+				return err
+			}
+			_, _, err = b.f4Put("retain source tag", schemaName, [][]byte{r.Data}, "", nil, &tags, f4PutOpt{})
+			return err
+		}
 	}
 	typ, err := f4Type(schemaName)
 	if err != nil {
