@@ -189,3 +189,66 @@ func TestPublicationReclamationPinsAndCrash(t *testing.T) {
 		})
 	}
 }
+
+func TestPublicationAppliedReadRetryNeverReplays(t *testing.T) {
+	t.Setenv("SDN_STORE_FORMAT", "4")
+	dir := t.TempDir()
+	s := reclamationStore(t, dir)
+	reclamationDay(t, s, 0, 2)
+	reclamationDay(t, s, 1, 2)
+	path := filepath.Join(s.publicationEntryDir(2), "records.sds")
+	s.Close()
+	if err := os.Rename(path, path+".unavailable"); err != nil {
+		t.Fatal(err)
+	}
+	s = journalTestStore(t, dir)
+	defer s.Close()
+	if len(s.PublicationRecoveryStatus()) == 0 {
+		t.Fatal("missing read failure")
+	}
+	// If recovery replays an applied entry this hook makes the control fail.
+	before, err := s.QueryIndexedRecords(IndexedRecordQuery{SchemaName: "CAT.fbs", ProviderID: "synthetic", SourceName: "index"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Rename(path+".unavailable", path); err != nil {
+		t.Fatal(err)
+	}
+	s.RetryPublicationRecovery()
+	if len(s.PublicationRecoveryStatus()) != 0 {
+		t.Fatal("read repair did not clear pause")
+	}
+	after, err := s.QueryIndexedRecords(IndexedRecordQuery{SchemaName: "CAT.fbs", ProviderID: "synthetic", SourceName: "index"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(before) != len(after) {
+		t.Fatal("recovery changed live records")
+	}
+	for i := range before {
+		if before[i].CID != after[i].CID {
+			t.Fatal("applied old entry became live")
+		}
+	}
+	p, err := s.SelectPublication("CAT.fbs", "synthetic", "index", "day-01:complete")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	current := p.refs[0].Path
+	if err = os.Rename(current, current+".unavailable"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = p.Record(0); err == nil {
+		t.Fatal("export fault hidden")
+	}
+	if len(s.PublicationRecoveryStatus()) != 0 {
+		t.Fatal("export failure paused writes")
+	}
+	if err = os.Rename(current+".unavailable", current); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = p.Record(0); err != nil {
+		t.Fatal("export retry failed", err)
+	}
+}

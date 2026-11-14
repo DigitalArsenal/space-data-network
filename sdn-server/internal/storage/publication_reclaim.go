@@ -127,6 +127,14 @@ func (s *FlatSQLStore) reclaimPublicationLocked() error {
 			add(p)
 			if x.ProductSource != "" {
 				cutoff := s.latestCatalogGeneration(x)
+				keep[filepath.Join(s.publicationEntryDir(cutoff), "records.sds")] = true
+				for _, e := range s.publicationEntries {
+					if e.Schema == "OCM.fbs" && e.Tags.ProviderID == x.Provider && e.Tags.SourceName == x.ProductSource && e.Sequence > cutoff {
+						for _, r := range e.Refs {
+							keep[r.Path] = true
+						}
+					}
+				}
 				if cutoff != 0 {
 					snap, err := s.captureCatalogLocked(x, cutoff)
 					if err != nil {

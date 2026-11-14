@@ -35,6 +35,7 @@ type publicationEntry struct {
 	Peer            string
 	Signature       []byte
 	Identity, OwnTS bool
+	ReadReady       bool `json:"-"`
 	OutcomeKnown    bool `json:"-"`
 	Applied         bool
 	Refused         map[int]int32 `json:",omitempty"`
@@ -358,6 +359,7 @@ func (s *FlatSQLStore) markPublicationApplied(e publicationEntry) error {
 	for i := range s.publicationEntries {
 		if s.publicationEntries[i].Sequence == e.Sequence {
 			e.Applied = true
+			e.ReadReady = true
 			s.publicationEntries[i] = e
 			break
 		}
@@ -453,7 +455,8 @@ func (s *FlatSQLStore) recoverPublicationJournal() error {
 			if string(raw) != "1\n" {
 				err = json.Unmarshal(raw, &e.Refused)
 			}
-			e.Applied = err == nil
+			e.Applied = true
+			e.OutcomeKnown = true
 		} else if errors.Is(err, os.ErrNotExist) {
 			err = nil
 		}
@@ -473,6 +476,8 @@ func (s *FlatSQLStore) recoverPublicationJournal() error {
 				}
 			}
 		} // Applied streams are checked too.
+		e.ReadReady = err == nil
+		s.publicationEntries[len(s.publicationEntries)-1] = e
 		if err != nil {
 			s.pausePublication(e, err)
 			continue
@@ -666,11 +671,7 @@ func (p *PublicationSelection) Record(index int) (DatasetExportRecord, error) {
 	return DatasetExportRecord{CID: r.CID, Data: data, SourceTags: r.Tags}, err
 }
 func (p *PublicationSelection) readReference(r publicationRecordRef) ([]byte, error) {
-	data, err := r.read()
-	if err != nil && p.store != nil {
-		p.store.pausePublication(publicationEntry{Schema: p.Schema, Tags: r.Tags}, err)
-	}
-	return data, err
+	return r.read()
 }
 
 func (s *FlatSQLStore) retainedSelectionLocked(schema, provider, source, batch string, cutoff uint64) (*PublicationSelection, error) {
@@ -736,7 +737,7 @@ func (s *FlatSQLStore) RetryPublicationRecovery() {
 	resolved := map[publicationSourceKey]bool{}
 	failed := map[publicationSourceKey]bool{}
 	for _, e := range s.publicationEntries {
-		if e.Applied {
+		if e.Applied && e.ReadReady {
 			continue
 		}
 		key := publicationSourceKey{e.Schema, e.Tags.ProviderID, e.Tags.SourceName}
@@ -747,6 +748,21 @@ func (s *FlatSQLStore) RetryPublicationRecovery() {
 		}
 		if err == nil && (saved.Sequence != e.Sequence || saved.Schema != e.Schema || saved.Tags != e.Tags) {
 			err = errors.New("publication entry scope mismatch")
+		}
+		// Only absence of the applied marker permits replay. An unreadable or
+		// corrupt marker never converts a completed engine write into an intent.
+		if err == nil {
+			raw, markerErr := os.ReadFile(filepath.Join(s.publicationEntryDir(e.Sequence), "applied"))
+			if markerErr == nil {
+				e.Applied, e.OutcomeKnown = true, true
+				if string(raw) != "1\n" {
+					err = json.Unmarshal(raw, &e.Refused)
+				}
+			} else if !errors.Is(markerErr, os.ErrNotExist) {
+				err = markerErr
+			} else if e.Applied {
+				err = errors.New("applied publication marker disappeared")
+			}
 		}
 		var records []DatasetExportRecord
 		if err == nil {
@@ -766,6 +782,10 @@ func (s *FlatSQLStore) RetryPublicationRecovery() {
 			}
 		}
 		if err == nil {
+			_, publishedErr := os.Stat(filepath.Join(s.publicationEntryDir(e.Sequence), "published"))
+			e.Published = publishedErr == nil
+			_, generationErr := os.Stat(filepath.Join(s.publicationEntryDir(e.Sequence), "generation"))
+			e.Generation = generationErr == nil
 			err = s.markPublicationApplied(e)
 		}
 		if err != nil {
