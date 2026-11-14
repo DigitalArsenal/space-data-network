@@ -281,6 +281,10 @@ func TestCatalogSupersededBatchRecovery(t *testing.T) {
 			committed++
 			observed.ObserveIngest(IngestedBatch{Schema: item.schema + ".fbs", ProviderID: "synthetic-node", SourceName: item.source, BatchID: batch, Inserted: 32})
 		}
+		// Recovery operates on admitted, complete product/index generations.
+		if _, err := store.CompleteCatalogGeneration("synthetic-node", "catalog-index"); err != nil {
+			t.Fatal(err)
+		}
 	}
 	// Restart before export. The two schemas have identical ingest ordering and
 	// no explicit deletion/reconciliation: only the storage schema differs.
