@@ -15,6 +15,9 @@ import (
 // Each historical batch uses one 48-byte checkpoint frame rather than a file.
 // An eight-byte checksum detects incomplete durable appends.
 func (s *FlatSQLStore) appendPublicationReceipt(id [32]byte, seq uint64) error {
+	return s.appendPublicationReceiptFile("receipts.checkpoint", id, seq)
+}
+func (s *FlatSQLStore) appendPublicationReceiptFile(name string, id [32]byte, seq uint64) error {
 	if s.publicationReceipts == nil {
 		s.publicationReceipts = map[[32]byte]uint64{}
 	}
@@ -26,7 +29,7 @@ func (s *FlatSQLStore) appendPublicationReceipt(id [32]byte, seq uint64) error {
 	binary.LittleEndian.PutUint64(frame[32:40], seq)
 	sum := sha256.Sum256(frame[:40])
 	copy(frame[40:], sum[:8])
-	f, err := os.OpenFile(filepath.Join(s.publicationDir(), "receipts.checkpoint"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	f, err := os.OpenFile(filepath.Join(s.publicationDir(), name), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 	if err != nil {
 		return err
 	}
@@ -47,20 +50,28 @@ func (s *FlatSQLStore) appendPublicationReceipt(id [32]byte, seq uint64) error {
 	return publicationSyncDir(s.publicationDir())
 }
 func (s *FlatSQLStore) savePublicationReceipt(e publicationEntry) error {
-	return s.appendPublicationReceipt(sha256.Sum256([]byte(e.Schema+"\x00"+e.Tags.ProviderID+"\x00"+e.Tags.SourceName+"\x00"+e.Tags.BatchID)), e.Sequence)
+	return s.appendPublicationReceiptFile(publicationReceiptFile(e.Schema, e.Tags.ProviderID, e.Tags.SourceName), sha256.Sum256([]byte(e.Schema+"\x00"+e.Tags.ProviderID+"\x00"+e.Tags.SourceName+"\x00"+e.Tags.BatchID)), e.Sequence)
 }
-func (s *FlatSQLStore) recoverPublicationReceipts() error {
-	path := filepath.Join(s.publicationDir(), "receipts.checkpoint")
+func publicationReceiptFile(schema, provider, source string) string {
+	return "receipts-" + publicationSourceID(schema, provider, source) + ".checkpoint"
+}
+
+type publicationReceiptError struct{ error }
+
+func (s *FlatSQLStore) readPublicationReceipts(path string, receipts map[[32]byte]uint64) error {
 	raw, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	receipts := map[[32]byte]uint64{}
 	valid := 0
 	for valid+48 <= len(raw) {
 		frame := raw[valid : valid+48]
 		sum := sha256.Sum256(frame[:40])
 		if !bytes.Equal(frame[40:], sum[:8]) {
+			if valid+48 == len(raw) {
+				log.Warn("truncating torn final publication receipt frame")
+				break
+			}
 			return errors.New("publication receipt checkpoint checksum mismatch")
 		}
 		var id [32]byte
@@ -71,9 +82,47 @@ func (s *FlatSQLStore) recoverPublicationReceipts() error {
 		valid += 48
 	}
 	if valid != len(raw) {
-		if err = os.Truncate(path, int64(valid)); err != nil {
+		f, openErr := os.OpenFile(path, os.O_WRONLY, 0600)
+		if openErr != nil {
+			return openErr
+		}
+		err = f.Truncate(int64(valid))
+		if err == nil {
+			err = f.Sync()
+		}
+		closeErr := f.Close()
+		if err == nil {
+			err = closeErr
+		}
+		if err != nil {
 			return err
 		}
+	}
+	return nil
+}
+func (s *FlatSQLStore) recoverPublicationReceipts() error {
+	receipts := map[[32]byte]uint64{}
+	// Legacy frames carry no source identity. Keep them readable; an ambiguous
+	// middle-frame failure requires repair rather than guessing its source.
+	if err := s.readPublicationReceipts(filepath.Join(s.publicationDir(), "receipts.checkpoint"), receipts); err != nil {
+		return err
+	}
+	for _, x := range s.publicationSources {
+		key := publicationSourceKey{x.Schema, x.Provider, x.Source}
+		err := s.readPublicationReceipts(filepath.Join(s.publicationDir(), publicationReceiptFile(x.Schema, x.Provider, x.Source)), receipts)
+		s.publicationMu.Lock()
+		if s.publicationFailures == nil {
+			s.publicationFailures = map[publicationSourceKey]error{}
+		}
+		if err != nil {
+			s.publicationFailures[key] = &publicationReceiptError{err}
+		} else {
+			var old *publicationReceiptError
+			if errors.As(s.publicationFailures[key], &old) {
+				delete(s.publicationFailures, key)
+			}
+		}
+		s.publicationMu.Unlock()
 	}
 	s.publicationMu.Lock()
 	s.publicationReceipts = receipts

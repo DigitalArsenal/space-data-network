@@ -238,7 +238,7 @@ func TestPublicationReceiptCompactionContinuedBatch(t *testing.T) {
 		}
 		terminalPublish(t, s)
 	}
-	stat, err := os.Stat(filepath.Join(s.publicationDir(), "receipts.checkpoint"))
+	stat, err := os.Stat(filepath.Join(s.publicationDir(), publicationReceiptFile("CAT.fbs", "synthetic", "index")))
 	if err != nil {
 		t.Fatal(err)
 	}

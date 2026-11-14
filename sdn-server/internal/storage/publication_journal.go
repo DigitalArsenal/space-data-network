@@ -460,8 +460,9 @@ func (s *FlatSQLStore) recoverPublicationJournal() error {
 	if err = json.Unmarshal(raw, &s.publicationSources); err != nil {
 		return err
 	}
-	if err := s.loadPublicationWatermarks(); err != nil {
-		return err
+	watermarkErr := s.loadPublicationWatermarks()
+	if watermarkErr != nil {
+		log.Warnf("rebuilding unreadable publication watermarks: %v", watermarkErr)
 	}
 	if err := s.recoverPublicationGenerationAbort(); err != nil {
 		return err
@@ -617,6 +618,21 @@ func (s *FlatSQLStore) recoverPublicationJournal() error {
 	}
 	if err := s.migratePublicationSourceSequences(); err != nil {
 		return err
+	}
+	if watermarkErr != nil {
+		// Global journal sequence bounds every source-local sequence. Recovered
+		// receipts, reclamation plans and entry directories establish that floor.
+		for _, x := range s.publicationSources {
+			id := publicationSourceID(x.Schema, x.Provider, x.Source)
+			s.publicationSourceWater[id] = max(s.publicationSourceWater[id], s.publicationHighWater)
+		}
+		m := publicationWatermarks{Global: s.publicationHighWater, Sources: s.publicationSourceWater}
+		raw, _ := json.Marshal(m)
+		if err := publicationAtomicFile(filepath.Join(s.publicationDir(), "watermarks.json"), raw); err != nil {
+			for _, x := range s.publicationSources {
+				s.pausePublication(publicationEntry{Schema: x.Schema, Tags: SourceTags{ProviderID: x.Provider, SourceName: x.Source}}, err)
+			}
+		}
 	}
 	s.publicationTags = map[publicationTagKey]int{}
 	s.publicationRecordCount = 0
@@ -855,6 +871,18 @@ func (s *FlatSQLStore) publicationSourceEnabled(schema, provider, source string)
 func (s *FlatSQLStore) RetryPublicationRecovery() {
 	s.retryQuarantinedPublication(time.Now())
 	s.publicationWriteMu.Lock()
+	s.publicationMu.Lock()
+	retryReceipts := false
+	for _, err := range s.publicationFailures {
+		var receiptErr *publicationReceiptError
+		retryReceipts = retryReceipts || errors.As(err, &receiptErr)
+	}
+	s.publicationMu.Unlock()
+	if retryReceipts {
+		if err := s.recoverPublicationReceipts(); err != nil {
+			s.publicationGlobalFailure = err
+		}
+	}
 	if s.publicationGlobalFailure != nil {
 		high := s.publicationHighWater
 		err := s.recoverPublicationReclamation()
@@ -950,6 +978,10 @@ func (s *FlatSQLStore) RetryPublicationRecovery() {
 	// Unknown-scope recovery isolates every configured source while any entry
 	// remains unreadable. Recompute from all unresolved entries.
 	for key := range s.publicationFailures {
+		var receiptErr *publicationReceiptError
+		if errors.As(s.publicationFailures[key], &receiptErr) {
+			continue
+		}
 		unresolved := false
 		for _, e := range s.publicationEntries {
 			if !e.Discarded && e.BatchFailure.Attempts < 3 && (!e.Applied || !e.ReadReady) {
