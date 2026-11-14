@@ -28,6 +28,9 @@ package wasmrt
 //                             at every block, 182 of them in front of each
 //                             SQLite VDBE opcode dispatch.
 //
+//   AOTAtomicStoreStack       Every atomic store consumes both operands
+//                             (07-atomic-store-stack).
+//
 // AOTSpeedup is reported, not judged: on an unpatched runtime Interruptible
 // AOT code exchanges the shared stop token at every loop iteration, and the
 // cache-line traffic alone holds four spinning threads to a few times the
@@ -53,6 +56,9 @@ import (
 //go:embed substrate/substrate-probe.wasm
 var substrateProbeWasm []byte
 
+//go:embed substrate/atomic-store-probe.wasm
+var atomicStoreProbeWasm []byte
+
 // SubstrateProbeWasm returns the embedded probe (tests and tooling).
 func SubstrateProbeWasm() []byte { return append([]byte(nil), substrateProbeWasm...) }
 
@@ -64,6 +70,7 @@ type SubstrateReport struct {
 	InterruptibleAOT         bool          `json:"interruptible_aot"`
 	AOTAtomicMemargOffset    bool          `json:"aot_atomic_memarg_offset"`
 	AOTLoopStopChecks        bool          `json:"aot_loop_stop_checks"`
+	AOTAtomicStoreStack      bool          `json:"aot_atomic_store_stack"`
 	AOTChecked               bool          `json:"aot_checked"`
 	ThreadsStoppedBySingle   int           `json:"threads_stopped_by_one_stop"`
 	ThreadsSpawned           int           `json:"threads_spawned"`
@@ -76,7 +83,7 @@ type SubstrateReport struct {
 // Patched reports whether the runtime behaves like the patched build.
 func (r SubstrateReport) Patched() bool {
 	return r.AtomicNotifyWithoutStore && r.StopReachesEveryThread &&
-		(!r.AOTChecked || (r.InterruptibleAOT && r.AOTAtomicMemargOffset && r.AOTLoopStopChecks))
+		(!r.AOTChecked || (r.InterruptibleAOT && r.AOTAtomicMemargOffset && r.AOTLoopStopChecks && r.AOTAtomicStoreStack))
 }
 
 // Tag names the runtime behavior for AOT cache keys of Interruptible
@@ -90,9 +97,14 @@ func (r SubstrateReport) Patched() bool {
 // "sdn4" adds AOTLoopStopChecks: artifacts compiled before 05-loop-stop-checks
 // carry a stop check at every block and run the engine 2-3x slower, so the key
 // changes and every host recompiles them.
+// "sdn5" adds AOTAtomicStoreStack: artifacts made by a compiler that leaves
+// the address on its value stack after an atomic store are recompiled.
 func (r SubstrateReport) Tag() string {
 	if r.AtomicNotifyWithoutStore && r.StopReachesEveryThread {
 		if r.AOTAtomicMemargOffset && r.AOTLoopStopChecks {
+			if r.AOTAtomicStoreStack {
+				return "sdn5"
+			}
 			return "sdn4"
 		}
 		if r.AOTAtomicMemargOffset {
@@ -143,6 +155,15 @@ func RunSubstrateSelfTest(opts SubstrateOptions) SubstrateReport {
 
 	if !opts.SkipAOT {
 		rep.AOTChecked = true
+		if interpreted, err := probeAtomicStoreStack(atomicStoreProbeWasm); err != nil {
+			fail("interpreted atomic store stack: %v", err)
+		} else if compiled, err := compileThreadedAOT(atomicStoreProbeWasm); err != nil {
+			fail("AOT atomic store stack compile: %v", err)
+		} else if ok, err := probeAtomicStoreStack(compiled); err != nil {
+			fail("AOT atomic store stack: %v", err)
+		} else {
+			rep.AOTAtomicStoreStack = interpreted && ok
+		}
 		compiled, cerr := compileProbeAOT()
 		if cerr != nil {
 			fail("interruptible AOT compile: %v", cerr)
@@ -191,10 +212,10 @@ func SubstrateStatus() SubstrateReport {
 		if !substrateReport.Patched() {
 			level = "WARN"
 		}
-		fmt.Fprintf(os.Stderr, "[wasmrt] %s substrate self-test: runtime %s notify-without-store=%t stop-reaches-every-thread=%t interruptible-aot=%t (%.1fx) aot-atomic-memarg-offset=%t aot-loop-stop-checks=%t in %s %v\n",
+		fmt.Fprintf(os.Stderr, "[wasmrt] %s substrate self-test: runtime %s notify-without-store=%t stop-reaches-every-thread=%t interruptible-aot=%t (%.1fx) aot-atomic-memarg-offset=%t aot-loop-stop-checks=%t aot-atomic-store-stack=%t in %s %v\n",
 			level, substrateReport.RuntimeVersion, substrateReport.AtomicNotifyWithoutStore,
 			substrateReport.StopReachesEveryThread, substrateReport.InterruptibleAOT, substrateReport.AOTSpeedup,
-			substrateReport.AOTAtomicMemargOffset, substrateReport.AOTLoopStopChecks,
+			substrateReport.AOTAtomicMemargOffset, substrateReport.AOTLoopStopChecks, substrateReport.AOTAtomicStoreStack,
 			substrateReport.Elapsed.Round(time.Millisecond), substrateReport.Errors)
 	})
 	return substrateReport
@@ -412,4 +433,31 @@ func compileThreadedAOT(wasm []byte) ([]byte, error) {
 		return nil, err
 	}
 	return os.ReadFile(path)
+}
+
+// probeAtomicStoreStack checks all seven store opcodes, including narrow stores.
+// The defective compiler returns -2 instead of 98 after leaving address 0 above 100.
+func probeAtomicStoreStack(wasm []byte) (bool, error) {
+	m, err := NewModule(wasm, WithMaxThreads(1), WithExecTimeout(3*time.Second))
+	if err != nil {
+		return false, err
+	}
+	defer m.Release()
+	ok := true
+	for _, name := range atomicStoreProbeExports {
+		v, err := m.Execute(name)
+		if err != nil {
+			return false, fmt.Errorf("%s: %w", name, err)
+		}
+		if len(v) != 1 {
+			return false, fmt.Errorf("%s: unexpected result arity", name)
+		}
+		ok = ok && ToInt32(v[0]) == 98
+	}
+	return ok, nil
+}
+
+var atomicStoreProbeExports = []string{
+	"i32.atomic.store", "i64.atomic.store", "i32.atomic.store8", "i32.atomic.store16",
+	"i64.atomic.store8", "i64.atomic.store16", "i64.atomic.store32",
 }

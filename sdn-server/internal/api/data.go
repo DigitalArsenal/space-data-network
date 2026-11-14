@@ -271,10 +271,7 @@ type recordIndexPage = storage.RecordIndexSeqPage
 // recordIndexLaneHash binds an index cursor to its query's filters, so a
 // cursor of one lane (or of /data/query) never pages another.
 func recordIndexLaneHash(q storage.RecordIndexPageQuery) string {
-	sum := sha256.Sum256([]byte(strings.Join([]string{
-		"index", q.SchemaName, q.ProviderID, q.SourceName, q.BatchID, q.NoradLike,
-	}, "\x00")))
-	return hex.EncodeToString(sum[:])
+	return datasync.RecordIndexQueryHash(q)
 }
 
 // normalizeRecordIndexSchema maps a caller schema alias to the canonical stored

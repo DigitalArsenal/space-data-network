@@ -33,6 +33,7 @@ var publicReadSchemas = map[string]string{
 	// omm/bulk route since loop C.4, and the reason the surface exists.
 	"OMM.fbs": "orbital element sets — the node's primary published catalog",
 	"CAT.fbs": "catalog entries (SATCAT lane) — public object metadata",
+	"OCM.fbs": "orbit comprehensive messages — public orbital products from every source",
 	"MPE.fbs": "mean parameter ephemerides derived from the public catalog",
 	"SPW.fbs": "space weather indices — a public feed by definition",
 	"WXF.fbs": "published weather forecast fields — attribution and source license travel with each record and batch",

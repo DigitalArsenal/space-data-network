@@ -1,0 +1,12 @@
+diff --git a/lib/llvm/compiler.cpp b/lib/llvm/compiler.cpp
+--- a/lib/llvm/compiler.cpp
++++ b/lib/llvm/compiler.cpp
+@@ -4030,7 +4030,7 @@
+       V = Builder.createZExtOrTrunc(V, TargetType);
+     }
+     V = switchEndian(V);
+-    auto Offset = Builder.createZExt(Stack.back(), Context.Int64Ty);
++    auto Offset = Builder.createZExt(stackPop(), Context.Int64Ty);
+     if (MemoryOffset != 0) {
+       Offset = Builder.createAdd(Offset, LLContext.getInt64(MemoryOffset));
+     }

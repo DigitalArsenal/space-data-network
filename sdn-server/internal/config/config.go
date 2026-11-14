@@ -732,6 +732,9 @@ type FlowsConfig struct {
 
 // FlowService declares one timer-served flow.
 type FlowService struct {
+	// ExecutionTimeout bounds one timer run. Empty preserves the runtime defaults.
+	ExecutionTimeout string `yaml:"execution_timeout,omitempty"`
+
 	// Flow references the flow module: an installed flow program ID, or a
 	// filesystem path to a compiled flow bundle directory (containing
 	// runtime.wasm + flow.json) or directly to a .wasm artifact.

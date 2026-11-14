@@ -94,6 +94,10 @@ fi
 #                   matcher (16-19 ns -> ~5 ns per call; SQLite calls through
 #                   function pointers in every B-tree seek and page fetch).
 #
+#   07-atomic-store-stack
+#                   AOT atomic stores consume both the value and the address.
+#                   Retaining the address corrupts subsequent stack operations.
+#
 # THE PATCH TEXT LIVES IN THIS FILE, deliberately. The CI prefix cache key and
 # the Dockerfile's static layer are both keyed on this file's bytes, so a patch
 # change can never reuse a prefix built without it. The copies in
@@ -493,6 +497,23 @@ index b67238b..d77b063 100644
 SDN_WASMEDGE_PATCH_EOF
 }
 
+write_sdn_patch_07_atomic_store_stack() {
+  cat <<'SDN_WASMEDGE_PATCH_EOF'
+diff --git a/lib/llvm/compiler.cpp b/lib/llvm/compiler.cpp
+--- a/lib/llvm/compiler.cpp
++++ b/lib/llvm/compiler.cpp
+@@ -4030,7 +4030,7 @@
+       V = Builder.createZExtOrTrunc(V, TargetType);
+     }
+     V = switchEndian(V);
+-    auto Offset = Builder.createZExt(Stack.back(), Context.Int64Ty);
++    auto Offset = Builder.createZExt(stackPop(), Context.Int64Ty);
+     if (MemoryOffset != 0) {
+       Offset = Builder.createAdd(Offset, LLContext.getInt64(MemoryOffset));
+     }
+SDN_WASMEDGE_PATCH_EOF
+}
+
 SDN_PATCH_DIR="${WORK}/sdn-patches"
 SDN_PATCH_STAMP=""
 if [[ "$WASMEDGE_VERSION" == "0.16.4" ]]; then
@@ -510,6 +531,7 @@ if [[ "$WASMEDGE_VERSION" == "0.16.4" ]]; then
   write_sdn_patch_04_atomic_memarg_offset > "$SDN_PATCH_DIR/04-atomic-memarg-offset.patch"
   write_sdn_patch_05_loop_stop_checks > "$SDN_PATCH_DIR/05-loop-stop-checks.patch"
   write_sdn_patch_06_call_indirect > "$SDN_PATCH_DIR/06-call-indirect.patch"
+  write_sdn_patch_07_atomic_store_stack > "$SDN_PATCH_DIR/07-atomic-store-stack.patch"
   for sdn_patch in "$SDN_PATCH_DIR"/*.patch; do
     if git -C "$SRC" apply --reverse --check "$sdn_patch" >/dev/null 2>&1; then
       echo "WasmEdge patch already applied: $(basename "$sdn_patch")"
