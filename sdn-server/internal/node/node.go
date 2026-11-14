@@ -5129,6 +5129,9 @@ func (m *mdnsNotifee) HandlePeerFound(pi peer.AddrInfo) {
 
 func (n *Node) runMDNS() {
 	defer n.wg.Done()
+	if !n.config.Peers.EnableMDNS {
+		return
+	}
 
 	notifee := &mdnsNotifee{
 		node: n,

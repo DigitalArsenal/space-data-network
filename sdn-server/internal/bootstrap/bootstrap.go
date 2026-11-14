@@ -312,8 +312,12 @@ func HasPublicDHTBootstrap(peers []PeerInfo) bool {
 }
 
 // ResolveBootstrapPeers parses the configured bootstrap list and falls back to
-// the built-in defaults if no valid pinned peers remain.
+// the built-in defaults if an absent or invalid list has no pinned peers.
+// An explicitly empty list disables bootstrap peers.
 func ResolveBootstrapPeers(addresses []string) ([]PeerInfo, bool, error) {
+	if addresses != nil && len(addresses) == 0 {
+		return nil, false, nil
+	}
 	parsed, err := ParseBootstrapAddresses(addresses)
 	if err != nil {
 		return nil, false, err
