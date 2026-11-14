@@ -42,6 +42,9 @@ type DatasetShardPublication struct {
 	PreviousHead string
 	FeedHead     string
 	PublishedAt  time.Time
+	// UnavailableSince is a local observation, never the producer's clock.
+	// It is journaled so a restart cannot extend unavailable history forever.
+	UnavailableSince int64 `json:",omitempty"`
 }
 
 // DatasetShardPublicationQuery looks up a published shard for a sync window.
@@ -210,6 +213,7 @@ func (s *FlatSQLStore) initDatasetShardPublicationTable() error {
 		{"feed_sequence", "INTEGER NOT NULL DEFAULT 0"},
 		{"previous_head", "TEXT NOT NULL DEFAULT ''"},
 		{"feed_head", "TEXT NOT NULL DEFAULT ''"},
+		{"unavailable_since", "INTEGER NOT NULL DEFAULT 0"},
 	} {
 		if err := s.ensureColumn("sdn_dataset_shard_publications", column.name, column.typ); err != nil {
 			return err
@@ -294,9 +298,9 @@ func (s *FlatSQLStore) applyDatasetShardPublicationUpsert(pub DatasetShardPublic
 			window_offset, window_limit, record_count, byte_count,
 			shard_cid, index_cid, manifest_cid, pnm_cid,
 			shard_sha256, index_sha256, query_sha256, result_sha256,
-			feed_sequence, previous_head, feed_head, published_at, updated_at
+			feed_sequence, previous_head, feed_head, published_at, unavailable_since, updated_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now'))
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now'))
 		ON CONFLICT(schema_name, provider_id, source_name, batch_id, query_profile, window_offset, window_limit)
 		DO UPDATE SET
 			record_count = excluded.record_count,
@@ -313,13 +317,14 @@ func (s *FlatSQLStore) applyDatasetShardPublicationUpsert(pub DatasetShardPublic
 			previous_head = excluded.previous_head,
 			feed_head = excluded.feed_head,
 			published_at = excluded.published_at,
+			unavailable_since = excluded.unavailable_since,
 			updated_at = excluded.updated_at
 	`, pub.SchemaName, pub.ProviderID, pub.SourceName, pub.BatchID, pub.QueryProfile,
 		pub.Offset, pub.Limit, pub.RecordCount, pub.ByteCount,
 		pub.ShardCID, pub.IndexCID, pub.ManifestCID, pub.PNMCID,
 		pub.ShardSHA256, pub.IndexSHA256, pub.QuerySHA256, pub.ResultSHA256,
 		pub.FeedSequence, pub.PreviousHead, pub.FeedHead,
-		pub.PublishedAt.Unix())
+		pub.PublishedAt.Unix(), pub.UnavailableSince)
 	if err != nil {
 		return fmt.Errorf("upsert dataset shard publication: %w", err)
 	}
@@ -396,7 +401,7 @@ func (s *FlatSQLStore) FindDatasetShardPublicationByCID(query DatasetShardPublic
 		       window_offset, window_limit, record_count, byte_count,
 		       shard_cid, index_cid, manifest_cid, pnm_cid,
 		       shard_sha256, index_sha256, query_sha256, result_sha256,
-		       feed_sequence, previous_head, feed_head, published_at
+		       feed_sequence, previous_head, feed_head, published_at, unavailable_since
 		FROM sdn_dataset_shard_publications
 		WHERE `+strings.Join(where, " AND ")+`
 		ORDER BY feed_sequence ASC, window_offset ASC, published_at DESC
@@ -521,7 +526,7 @@ func (s *FlatSQLStore) listDatasetShardPublications(query DatasetShardPublicatio
 		       window_offset, window_limit, record_count, byte_count,
 		       shard_cid, index_cid, manifest_cid, pnm_cid,
 		       shard_sha256, index_sha256, query_sha256, result_sha256,
-		       feed_sequence, previous_head, feed_head, published_at
+		       feed_sequence, previous_head, feed_head, published_at, unavailable_since
 		FROM sdn_dataset_shard_publications
 		WHERE `+strings.Join(where, " AND ")+`
 		ORDER BY feed_sequence ASC, window_offset ASC, published_at DESC
@@ -559,6 +564,15 @@ func (s *FlatSQLStore) listDatasetShardPublications(query DatasetShardPublicatio
 // pin-ledger probe — is what made GET /api/v1/channels exceed 240 s
 // (sdn-pin-ledger-probe-costs-76-seconds). One query answers the same question.
 func (s *FlatSQLStore) ListDatasetShardPublicationsForProfile(queryProfile, schemaName string) ([]DatasetShardPublication, error) {
+	if err := s.recoverDatasetShardEngineIfPoisoned(); err != nil {
+		return nil, fmt.Errorf("list dataset shard publications for profile: %w", err)
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.listDatasetShardPublicationsForProfileLocked(queryProfile, schemaName)
+}
+
+func (s *FlatSQLStore) listDatasetShardPublicationsForProfileLocked(queryProfile, schemaName string) ([]DatasetShardPublication, error) {
 	queryProfile = strings.TrimSpace(queryProfile)
 	if queryProfile == "" {
 		return nil, errors.New("query profile is required")
@@ -570,18 +584,12 @@ func (s *FlatSQLStore) ListDatasetShardPublicationsForProfile(queryProfile, sche
 		args = append(args, schemaName)
 	}
 
-	if err := s.recoverDatasetShardEngineIfPoisoned(); err != nil {
-		return nil, fmt.Errorf("list dataset shard publications for profile: %w", err)
-	}
-
-	s.mu.RLock()
-	defer s.mu.RUnlock()
 	rows, err := s.db.Query(`
 		SELECT schema_name, provider_id, source_name, batch_id, query_profile,
 		       window_offset, window_limit, record_count, byte_count,
 		       shard_cid, index_cid, manifest_cid, pnm_cid,
 		       shard_sha256, index_sha256, query_sha256, result_sha256,
-		       feed_sequence, previous_head, feed_head, published_at
+		       feed_sequence, previous_head, feed_head, published_at, unavailable_since
 		FROM sdn_dataset_shard_publications
 		WHERE `+strings.Join(where, " AND ")+`
 		ORDER BY schema_name ASC, feed_sequence ASC, window_offset ASC, published_at DESC
@@ -805,7 +813,7 @@ func (s *FlatSQLStore) findDatasetShardPublicationLocked(query DatasetShardPubli
 		       window_offset, window_limit, record_count, byte_count,
 		       shard_cid, index_cid, manifest_cid, pnm_cid,
 		       shard_sha256, index_sha256, query_sha256, result_sha256,
-		       feed_sequence, previous_head, feed_head, published_at
+		       feed_sequence, previous_head, feed_head, published_at, unavailable_since
 		FROM sdn_dataset_shard_publications
 		WHERE `+strings.Join(where, " AND ")+`
 		ORDER BY published_at DESC
@@ -936,6 +944,7 @@ func scanDatasetShardPublication(scanner datasetShardPublicationScanner) (Datase
 		&pub.PreviousHead,
 		&pub.FeedHead,
 		&publishedAt,
+		&pub.UnavailableSince,
 	); err != nil {
 		return DatasetShardPublication{}, err
 	}
