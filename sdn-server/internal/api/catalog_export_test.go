@@ -182,9 +182,17 @@ func TestCatalogCompactSnapshot(t *testing.T) {
 		p := NewAutoPublisher(s, catalogRules())
 		catalogDrain(t, p)
 		start := len(s.events)
+		p.onPublished = func(_ DatasetPublicationRequest, _ *DatasetPublicationResult, err error) {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
 		p.seedSourcePublicationsLocked()
 		p.publishReadySource(context.Background())
 		p.publishReadySource(context.Background())
+		if len(s.events) != start+2 {
+			t.Fatal("two source snapshots required")
+		}
 		c := newCatalogConsumer()
 		row := map[string]any{"day": day}
 		for _, e := range s.events[start:] {

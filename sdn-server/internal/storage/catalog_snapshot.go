@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/CAT"
@@ -45,6 +46,12 @@ func (s *FlatSQLStore) captureCatalogLocked(x PublicationSource, cutoff uint64) 
 	available := map[string]DatasetExportRecord{}
 	for _, r := range products.records {
 		available[r.CID] = r
+		// Catalog controllers identify the size-prefixed SDS record. The store
+		// indexes its unframed payload, so resolve both exact byte encodings.
+		framed := make([]byte, 4+len(r.Data))
+		binary.LittleEndian.PutUint32(framed, uint32(len(r.Data)))
+		copy(framed[4:], r.Data)
+		available[computeCID(framed)] = r
 	}
 	selected := map[string]DatasetExportRecord{}
 	for _, r := range index.records {
