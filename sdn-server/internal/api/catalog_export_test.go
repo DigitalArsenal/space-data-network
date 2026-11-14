@@ -129,7 +129,7 @@ func catalogRules() []config.AutoPublishLane {
 	var r []config.AutoPublishLane
 	for _, x := range []struct{ schema, source string }{{"OCM.fbs", "catalog-products"}, {"CAT.fbs", "catalog-index"}} {
 		for _, scope := range []string{"batch", "source"} {
-			r = append(r, config.AutoPublishLane{Schema: x.schema, ProviderID: "synthetic-node", SourceName: x.source, PublishScope: scope, MinInterval: time.Millisecond})
+			r = append(r, config.AutoPublishLane{PairedPublication: true, Schema: x.schema, ProviderID: "synthetic-node", SourceName: x.source, PublishScope: scope, MinInterval: time.Millisecond})
 		}
 	}
 	return r

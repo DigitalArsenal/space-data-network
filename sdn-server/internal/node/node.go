@@ -519,9 +519,16 @@ func (n *Node) init() error {
 		}
 		var publicationSources []storage.PublicationSource
 		for _, rule := range n.config.Publishing.AutoPublish {
-			if rule.RetainForPublication || rule.CatalogProductSource != "" {
+			if rule.RetainForPublication {
 				schema := strings.TrimSuffix(rule.Schema, ".fbs") + ".fbs"
 				publicationSources = append(publicationSources, storage.PublicationSource{Schema: schema, Provider: rule.ProviderID, Source: rule.SourceName, ProductSource: rule.CatalogProductSource})
+			}
+		}
+		for i := range publicationSources {
+			for _, rule := range n.config.Publishing.AutoPublish {
+				if strings.TrimSuffix(rule.Schema, ".fbs")+".fbs" == publicationSources[i].Schema && strings.TrimSpace(rule.ProviderID) == strings.TrimSpace(publicationSources[i].Provider) && strings.TrimSpace(rule.SourceName) == strings.TrimSpace(publicationSources[i].Source) && rule.CatalogProductSource != "" {
+					publicationSources[i].ProductSource = rule.CatalogProductSource
+				}
 			}
 		}
 		if err := n.store.ConfigurePublicationSources(publicationSources); err != nil {

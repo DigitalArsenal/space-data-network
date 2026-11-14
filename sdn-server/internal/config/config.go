@@ -1058,6 +1058,9 @@ func normalizePublishingSchema(schema string) string {
 // requires exact provider/source identities. The schema may be written
 // either as the standard code ("RFB") or the schema file ("RFB.fbs").
 type AutoPublishLane struct {
+	// PairedPublication opts this exact source into deferred batches and periodic snapshots.
+	PairedPublication bool `yaml:"paired_publication,omitempty"`
+
 	// RetainForPublication durably retains CAT/OCM batches before replacement.
 	// It requires exact provider/source identities and store format 4.
 	RetainForPublication bool `yaml:"retain_for_publication,omitempty"`
@@ -2376,6 +2379,9 @@ func (c *Config) validate() error {
 		if lane.KeepSeries < 0 {
 			return fmt.Errorf("publishing.retention.lanes[%d].keep_series must not be negative", i)
 		}
+	}
+	if err := c.validatePublicationSources(); err != nil {
+		return err
 	}
 	for i, pointer := range c.Publishing.IPNSPointers {
 		if strings.TrimSpace(pointer.Schema) == "" {

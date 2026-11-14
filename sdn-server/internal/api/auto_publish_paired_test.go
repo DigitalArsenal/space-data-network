@@ -19,7 +19,7 @@ import (
 
 func pairedRules() []config.AutoPublishLane {
 	return []config.AutoPublishLane{
-		{Schema: "CAT.fbs", ProviderID: "synthetic-node", SourceName: "catalog-index", MinInterval: time.Millisecond},
+		{PairedPublication: true, Schema: "CAT.fbs", ProviderID: "synthetic-node", SourceName: "catalog-index", MinInterval: time.Millisecond},
 		{Schema: "CAT.fbs", ProviderID: "synthetic-node", SourceName: "catalog-index", PublishScope: "source"},
 	}
 }
@@ -380,5 +380,32 @@ func TestPairedPublicationRecoveryFiltersConfiguredSource(t *testing.T) {
 	p.recoverPairedBatches(context.Background())
 	if len(p.queue) != 0 {
 		t.Fatal("recovery published an unconfigured source")
+	}
+}
+
+func TestPairedPublicationTwoRulesRequireOptIn(t *testing.T) {
+	for _, sourceFirst := range []bool{false, true} {
+		rules := pairedRules()
+		rules[0].PairedPublication = false
+		if sourceFirst {
+			rules[0], rules[1] = rules[1], rules[0]
+		}
+		p := &AutoPublisher{lanes: rules, sources: map[sourcePublicationKey]*sourcePublicationState{}}
+		if p.isPairedSource("CAT.fbs", "synthetic-node", "catalog-index") {
+			t.Fatal("existing rules opted in implicitly")
+		}
+		first, ok := p.matchLane("CAT.fbs", "synthetic-node", "catalog-index")
+		if !ok || first.PublishScope != rules[0].PublishScope {
+			t.Fatal("first matching rule changed")
+		}
+		p.seedSourcePublicationsLocked()
+		if len(p.sources) != map[bool]int{false: 0, true: 1}[sourceFirst] {
+			t.Fatal("startup differs from first-rule behavior")
+		}
+		for _, state := range p.sources {
+			if state.interval != autoPublishDefaultMinInterval || state.periodic {
+				t.Fatal("legacy default changed")
+			}
+		}
 	}
 }

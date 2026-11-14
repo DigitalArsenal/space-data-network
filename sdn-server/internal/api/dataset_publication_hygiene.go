@@ -123,6 +123,9 @@ func (s *ConcreteDatasetPublicationService) DatasetPublicationUnchanged(ctx cont
 		return false, nil
 	}
 	schema := normalizeDatasetPublicationSchema(req.Schema)
+	if s.store.PublicationBatchComplete(schema, req.ProviderID, req.SourceName, req.BatchID) {
+		return true, nil
+	}
 	current := s.publicationFingerprint(req, schema)
 	if current == "" {
 		return false, nil
@@ -181,6 +184,9 @@ func (s *ConcreteDatasetPublicationService) afterPublication(ctx context.Context
 		if _, err := s.applyPublicationRetention(ctx, lane, policy); err != nil {
 			log.Warnf("publication retention %s %s/%s: %v", schema, req.ProviderID, req.SourceName, err)
 		}
+	}
+	if err := s.store.CompletePublication(s.selection); err != nil {
+		return fmt.Errorf("retain publication completion: %w", err)
 	}
 	s.releaseRedundantShardGroupCARs(ctx, lane)
 	if s.outputDir != "" {

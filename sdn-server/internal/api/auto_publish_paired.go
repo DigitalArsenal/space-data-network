@@ -30,6 +30,9 @@ func (s *ConcreteDatasetPublicationService) AutoPublishBatches(ctx context.Conte
 		out = append(out, IngestedBatch{Schema: row.Schema, ProviderID: row.Provider, SourceName: row.Source, BatchID: row.Batch})
 	}
 	for _, row := range rows {
+		if s.store.RetainsPublicationSource(row.SchemaName, row.ProviderID, row.SourceName) {
+			continue
+		}
 		out = append(out, IngestedBatch{Schema: row.SchemaName, ProviderID: row.ProviderID, SourceName: row.SourceName, BatchID: row.BatchID})
 	}
 	return out, nil
@@ -55,8 +58,8 @@ func (p *AutoPublisher) matchScope(schema, provider, source string, full bool) (
 
 func (p *AutoPublisher) isPairedSource(schema, provider, source string) bool {
 	rule, batch := p.matchScope(schema, provider, source, false)
-	_, snapshot := p.matchScope(schema, provider, source, true)
-	return batch && (snapshot || rule.RetainForPublication)
+	snapshot, _ := p.matchScope(schema, provider, source, true)
+	return batch && (rule.PairedPublication || snapshot.PairedPublication || rule.RetainForPublication)
 }
 
 type pairedBatchPublication struct {

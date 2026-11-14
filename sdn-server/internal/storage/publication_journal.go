@@ -21,6 +21,7 @@ import (
 // ProductSource on CAT selects its OCM closure for source snapshots.
 type PublicationSource struct{ Schema, Provider, Source, ProductSource string }
 type publicationEntry struct {
+	Published       bool `json:"-"`
 	Digest          string
 	Sequence        uint64
 	Schema          string
@@ -348,6 +349,8 @@ func (s *FlatSQLStore) recoverPublicationJournal() error {
 			s.pausePublication(e, err)
 			continue
 		}
+		_, completedErr := os.Stat(filepath.Join(s.publicationEntryDir(e.Sequence), "published"))
+		e.Published = completedErr == nil
 		s.publicationEntries[len(s.publicationEntries)-1] = e
 		if e.Applied {
 			continue
@@ -463,7 +466,7 @@ func (s *FlatSQLStore) RetainedPublicationBatches() []PublicationBatch {
 	defer s.publicationMu.Unlock()
 	byKey := map[string]PublicationBatch{}
 	for _, e := range s.publicationEntries {
-		if !e.Applied || s.publicationFailures[publicationSourceKey{e.Schema, e.Tags.ProviderID, e.Tags.SourceName}] != nil {
+		if !e.Applied || e.Published || s.publicationFailures[publicationSourceKey{e.Schema, e.Tags.ProviderID, e.Tags.SourceName}] != nil {
 			continue
 		}
 		key := e.Schema + "\x00" + e.Tags.ProviderID + "\x00" + e.Tags.SourceName + "\x00" + e.Tags.BatchID
@@ -592,4 +595,45 @@ func (s *FlatSQLStore) RetryPublicationRecovery() {
 			delete(s.publicationFailures, key)
 		}
 	}
+}
+
+// CompletePublication records successful batch publication independently of
+// series retention. A continued batch only completes through its captured cutoff.
+func (s *FlatSQLStore) CompletePublication(p *PublicationSelection) error {
+	if p == nil || p.Batch == "" {
+		return nil
+	}
+	s.publicationMu.Lock()
+	defer s.publicationMu.Unlock()
+	for i, e := range s.publicationEntries {
+		if e.Applied && !e.Published && e.Sequence <= p.Cutoff && e.Schema == p.Schema && e.Tags.ProviderID == p.Provider && e.Tags.SourceName == p.Source && e.Tags.BatchID == p.Batch {
+			if err := publicationAtomicFile(filepath.Join(s.publicationEntryDir(e.Sequence), "published"), []byte("1\n")); err != nil {
+				return err
+			}
+			s.publicationEntries[i].Published = true
+		}
+	}
+	return nil
+}
+
+// RetainsPublicationSource distinguishes retained recovery from live progress.
+func (s *FlatSQLStore) RetainsPublicationSource(schema, provider, source string) bool {
+	return s.publicationSourceEnabled(schema, provider, source)
+}
+func (s *FlatSQLStore) PublicationBatchComplete(schema, provider, source, batch string) bool {
+	if batch == "" {
+		return false
+	}
+	s.publicationMu.Lock()
+	defer s.publicationMu.Unlock()
+	found := false
+	for _, e := range s.publicationEntries {
+		if e.Schema == schema && e.Tags.ProviderID == provider && e.Tags.SourceName == source && e.Tags.BatchID == batch {
+			found = true
+			if !e.Applied || !e.Published {
+				return false
+			}
+		}
+	}
+	return found
 }
