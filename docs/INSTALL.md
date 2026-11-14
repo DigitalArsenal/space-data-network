@@ -3,7 +3,7 @@
 This is the operator path for a fresh node: what to install, which ports to
 open, what to change in the generated config before the node is reachable,
 how to keep the keys, how to mirror a publisher, and how to publish and
-archive. It describes v1.0.5-beta.70 (2026-09-18).
+archive. It describes v1.1.0 (2026-11-14).
 
 ## 1. Get a build
 
@@ -15,7 +15,7 @@ irm https://spacedatanetwork.org/install.ps1 | iex
 ```
 
 The installers resolve the newest node release on GitHub (today
-v1.0.5-beta.70: macOS Apple Silicon and Intel, Linux x86-64 and arm64, and
+v1.1.0: macOS Apple Silicon and Intel, Linux x86-64 and arm64, and
 Windows x86-64), verify the checksum,
 unpack the self-contained bundle under `~/.spacedatanetwork/bundles`, link
 `spacedatanetwork` and `sdn` under `~/.spacedatanetwork/bin`, and initialize
@@ -39,9 +39,10 @@ from `/usr/local/lib/hd-wallet-wasi.wasm`; a bundle carries it under
 ### Desktop app
 
 The desktop app (`space-data-network-desktop-<version>-<os>-<arch>` on the
-release page) ships for macOS on Apple Silicon and Intel, for Windows x64 as
-both an installer and a portable exe, and for Linux x64 as an AppImage, a .deb
-and a .tar.xz. It carries the same bundle, starts the node on launch, opens the
+release page) ships for Windows x64 as both an installer and a portable exe,
+and for Linux x64 as an AppImage, a .deb and a .tar.xz. The macOS desktop app
+is not in v1.1.0; on macOS use the command-line install above. It carries the
+same bundle, starts the node on launch, opens the
 node's own dashboard in its window, and keeps the store and keys under the
 app's user-data directory. Its menu shows the node's recovery phrase once, on
 request. Nothing below applies to the app except sections 4 (ports, if you want
@@ -83,7 +84,7 @@ first output appears.
 ```sh
 docker run -d --name sdn --hostname sdn --restart unless-stopped \
   -v sdn-data:/app/data -p 127.0.0.1:5001:5001 -p 4001:4001 -p 4001:4001/udp \
-  dockerdigitalarsenal/space-data-network:v1.0.5-beta.70
+  dockerdigitalarsenal/space-data-network:v1.1.0
 ```
 
 The image (`linux/amd64`) carries the node, WasmEdge with a prewarmed AOT
@@ -105,11 +106,11 @@ it with `spacedatanetwork key reseal` before recreating the container.
 `docker exec sdn
 /app/spacedatanetwork show-identity --config /app/config/full-docker.yaml --show-mnemonic`
 prints the recovery phrase. A `docker load` archive of the same image ships
-with each release. Its name spells the version with DOTS, not the tag's
-hyphen — `spacedatanetwork-container-1.0.5.beta.70-linux-amd64.tar.gz`, not
-`…-1.0.5-beta.70-…`, which 404s. Native Linux packages use the same dotted
-spelling, for the same reason: a release asset name cannot carry SemVer's
-hyphen.
+with each release: `spacedatanetwork-container-1.1.0-linux-amd64.tar.gz`.
+For a beta, that name spells the version with DOTS, not the tag's hyphen
+(`X.Y.Z.beta.N`, not `X.Y.Z-beta.N`, which 404s). Native Linux packages use
+the same dotted spelling, for the same reason: a release asset name cannot
+carry SemVer's hyphen.
 
 ### Relaying
 
