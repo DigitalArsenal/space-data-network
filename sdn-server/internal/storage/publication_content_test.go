@@ -92,6 +92,9 @@ func TestPublicationNeverAppliedDamageDoesNotBlockSource(t *testing.T) {
 }
 
 func TestPublicationOperatorManagesAnyUnfinishedBatch(t *testing.T) {
+	if testing.Short() {
+		t.Skip("operator recovery across unfinished states requires a full test run")
+	}
 	t.Setenv("SDN_STORE_FORMAT", "4")
 	for _, attempts := range []int{0, 1, 2, 3} {
 		s := journalTestStore(t, t.TempDir())

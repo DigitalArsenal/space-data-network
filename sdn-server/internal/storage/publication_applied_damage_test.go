@@ -68,6 +68,9 @@ func requireAppliedSnapshotCount(t *testing.T, s *FlatSQLStore, count int) {
 }
 
 func TestPublicationAppliedIndexDamagePausesSnapshots(t *testing.T) {
+	if testing.Short() {
+		t.Skip("applied-index damage recovery matrix requires a full test run")
+	}
 	t.Setenv("SDN_STORE_FORMAT", "4")
 	for _, older := range []bool{false, true} {
 		for _, damage := range []string{"missing", "truncated", "checksum"} {
