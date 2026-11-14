@@ -194,16 +194,16 @@ func (b format4Backend) putRetained(op, schema string, records [][]byte, peer st
 	}
 
 	if len(s.publicationEntries) >= maxPublicationEntries {
-		return nil, nil, errors.New("publication journal capacity reached; complete and retire retained history before ingestion")
+		return nil, nil, s.publicationAdmissionError(schema, tags, fmt.Errorf("publication journal entry capacity=%d, use=%d; catalog_object_limit controls reference capacity only", maxPublicationEntries, len(s.publicationEntries)))
 	}
 	pending := s.publicationPendingCounts[publicationSourceKey{schema, tags.ProviderID, tags.SourceName}]
 	indexed := s.publicationRecordCount
 	referenceBytes := s.publicationReferenceCountBytes
 	if pending[tags.BatchID] == 0 && len(pending) >= 4096 {
-		return nil, nil, errors.New("retained publication backlog exceeds 4096 batches; stop ingestion and complete publication")
+		return nil, nil, s.publicationAdmissionError(schema, tags, fmt.Errorf("retained publication backlog capacity=4096 batches, use=%d; catalog_object_limit controls reference capacity only", len(pending)))
 	}
 	if indexed+len(records) > s.publicationRecordLimit() {
-		return nil, nil, fmt.Errorf("catalog_object_limit reference capacity=%d, retained use=%d, requested=%d", s.publicationRecordLimit(), indexed, len(records))
+		return nil, nil, s.publicationAdmissionError(schema, tags, fmt.Errorf("catalog_object_limit reference capacity=%d, retained use=%d, requested=%d", s.publicationRecordLimit(), indexed, len(records)))
 	}
 	for _, data := range records {
 		referenceBytes += 168 + int64(len(recordSupersedeKey(schema, data))) + 16

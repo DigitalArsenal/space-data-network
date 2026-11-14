@@ -50,6 +50,19 @@ func (s *FlatSQLStore) generationUsage(x PublicationSource) (cutoff uint64, prod
 func (s *FlatSQLStore) admitPublicationGeneration(schema string, tags SourceTags, count int) error {
 	x, paired := s.catalogSource(schema, tags.ProviderID, tags.SourceName)
 	if !paired {
+		reserved := 0
+		for _, pair := range s.publicationSources {
+			if pair.ProductSource == "" {
+				continue
+			}
+			_, p, c := s.generationUsage(pair)
+			if p+c > 0 {
+				reserved += max(0, 2*publicationGenerationLimit(pair)-p-c)
+			}
+		}
+		if s.publicationRecordCount+count+reserved > s.publicationRecordLimit() {
+			return fmt.Errorf("catalog_object_limit reference capacity=%d, retained use=%d, generation reservation=%d, request=%d", s.publicationRecordLimit(), s.publicationRecordCount, reserved, count)
+		}
 		return nil
 	}
 	_, products, indexes := s.generationUsage(x)
@@ -122,14 +135,24 @@ func (s *FlatSQLStore) abortPublicationGeneration(x PublicationSource) error {
 		path := filepath.Join(s.publicationEntryDir(e.Sequence), "records.sds")
 		if s.publicationPins[path] == 0 {
 			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-				return err
+				log.Warnf("aborted publication payload cleanup deferred: %v", err)
+			} else {
+				e.Refs, e.ReferenceBytes = nil, 0
 			}
-			e.Refs, e.ReferenceBytes = nil, 0
 		}
 		s.publicationEntries[i] = e
 		s.indexPublicationTags(e, 1)
 	}
 	return nil
+}
+
+func (s *FlatSQLStore) publicationAdmissionError(schema string, tags SourceTags, cause error) error {
+	if x, paired := s.catalogSource(schema, tags.ProviderID, tags.SourceName); paired {
+		if err := s.abortPublicationGeneration(x); err != nil {
+			return err
+		}
+	}
+	return cause
 }
 
 func (s *FlatSQLStore) recoverPublicationGenerationAbort() error {
