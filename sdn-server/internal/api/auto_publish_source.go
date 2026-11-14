@@ -22,6 +22,7 @@ type sourcePublicationState struct {
 	nextAttempt time.Time
 	attempts    int
 	retrying    bool
+	periodic    bool
 }
 
 func sourceKey(lane config.AutoPublishLane) sourcePublicationKey {
@@ -37,10 +38,14 @@ func (p *AutoPublisher) sourceStateLocked(lane config.AutoPublishLane) *sourcePu
 	interval := lane.MinInterval
 	if interval <= 0 {
 		interval = autoPublishDefaultMinInterval
+		if p.isPairedSource(key.schema, key.provider, key.source) {
+			interval = 24 * time.Hour
+		}
 	}
 	state := &sourcePublicationState{
 		request:  DatasetPublicationRequest{Schema: key.schema, ProviderID: key.provider, SourceName: key.source, FullCatalog: true, MaxShardBytes: lane.MaxShardBytes},
 		interval: interval,
+		periodic: p.isPairedSource(key.schema, key.provider, key.source),
 	}
 	p.sources[key] = state
 	return state
@@ -53,6 +58,9 @@ func (p *AutoPublisher) seedSourcePublicationsLocked() {
 		}
 		key := sourceKey(lane)
 		matched, ok := p.matchLane(key.schema, key.provider, key.source)
+		if p.isPairedSource(key.schema, key.provider, key.source) {
+			matched, ok = p.matchScope(key.schema, key.provider, key.source, true)
+		}
 		if ok && matched.PublishScope == "source" {
 			p.sourceStateLocked(matched).dirty = true
 		}
@@ -76,7 +84,7 @@ func (p *AutoPublisher) sourcePublicationDelay() (time.Duration, bool) {
 	var earliest time.Time
 	found := false
 	for _, state := range p.sources {
-		if state.dirty && (!found || state.nextAttempt.Before(earliest)) {
+		if (state.dirty || state.periodic) && (!found || state.nextAttempt.Before(earliest)) {
 			earliest = state.nextAttempt
 			found = true
 		}
@@ -95,7 +103,7 @@ func (p *AutoPublisher) publishReadySource(ctx context.Context) {
 	now := p.now()
 	var selected *sourcePublicationState
 	for _, state := range p.sources {
-		if state.dirty && !state.nextAttempt.After(now) && (selected == nil || state.nextAttempt.Before(selected.nextAttempt)) {
+		if (state.dirty || state.periodic) && !state.nextAttempt.After(now) && (selected == nil || state.nextAttempt.Before(selected.nextAttempt)) {
 			selected = state
 		}
 	}
@@ -115,7 +123,7 @@ func (p *AutoPublisher) publishReadySource(ctx context.Context) {
 	p.mu.Unlock()
 
 	runCtx, cancel := context.WithTimeout(ctx, autoPublishTimeout)
-	if p.unchangedSinceLastPublication(runCtx, req) {
+	if !selected.periodic && p.unchangedSinceLastPublication(runCtx, req) {
 		cancel()
 		p.mu.Lock()
 		selected.attempts = 0

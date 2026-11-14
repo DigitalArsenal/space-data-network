@@ -1074,12 +1074,10 @@ type AutoPublishLane struct {
 	// "satnogs-db".
 	SourceName string `yaml:"source_name,omitempty"`
 
-	// MinInterval rate-limits this lane. Source scope retains pending ingests
-	// until the interval elapses; batch scope skips a batch that lands sooner
-	// than this after the lane's last publication. Zero uses the built-in
-	// default (5m). A publication exports, pins and announces a whole shard,
-	// so a misconfigured 1-minute ingest timer must not turn into a
-	// publication storm.
+	// MinInterval controls publication frequency. A source rule paired with a
+	// batch rule publishes periodic full snapshots (default 24h); batch requests
+	// wait through rate limits and recover from committed storage on startup.
+	// A single rule retains its original behavior and default interval (5m).
 	MinInterval time.Duration `yaml:"min_interval,omitempty"`
 
 	// MaxShardBytes caps ONE published shard in bytes, in addition to the

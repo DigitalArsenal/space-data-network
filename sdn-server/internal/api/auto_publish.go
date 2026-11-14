@@ -78,7 +78,8 @@ type AutoPublisher struct {
 	service DatasetPublicationService
 	lanes   []config.AutoPublishLane
 
-	queue chan DatasetPublicationRequest
+	queue         chan DatasetPublicationRequest
+	pairedPending map[string]*pairedBatchPublication
 	// Source scope uses bounded per-configured-source state, independent of
 	// the batch queue, so queue pressure cannot discard its final event.
 	sourceWake chan struct{}
@@ -180,6 +181,7 @@ func NewAutoPublisher(service DatasetPublicationService, lanes []config.AutoPubl
 		service:          service,
 		lanes:            valid,
 		queue:            make(chan DatasetPublicationRequest, autoPublishQueueDepth),
+		pairedPending:    make(map[string]*pairedBatchPublication),
 		sourceWake:       make(chan struct{}, 1),
 		sources:          make(map[sourcePublicationKey]*sourcePublicationState),
 		lastPublished:    make(map[string]time.Time),
@@ -269,10 +271,14 @@ func (p *AutoPublisher) Stop() {
 
 func (p *AutoPublisher) run(ctx context.Context) {
 	defer close(p.done)
+	p.recoverPairedBatches(ctx)
+	reconcile := time.NewTicker(30 * time.Second)
+	defer reconcile.Stop()
 	for {
+		p.queueReadyPairedBatches()
 		var timer *time.Timer
 		var timerC <-chan time.Time
-		if delay, pending := p.sourcePublicationDelay(); pending {
+		if delay, pending := p.publicationDelay(); pending {
 			timer = time.NewTimer(delay)
 			timerC = timer.C
 		}
@@ -290,7 +296,12 @@ func (p *AutoPublisher) run(ctx context.Context) {
 			return
 		case req := <-p.queue:
 			stopTimer()
-			p.publish(ctx, req)
+			if !p.publishPairedBatch(ctx, req) {
+				p.publish(ctx, req)
+			}
+		case <-reconcile.C:
+			stopTimer()
+			p.recoverPairedBatches(ctx)
 		case <-p.sourceWake:
 			stopTimer()
 			p.publishReadySource(ctx)
@@ -362,7 +373,7 @@ func (p *AutoPublisher) ObserveIngest(batch IngestedBatch) {
 	if p == nil {
 		return
 	}
-	if batch.Inserted <= 0 {
+	if batch.Inserted <= 0 && !p.isPairedSource(normalizeAutoPublishSchema(batch.Schema), strings.TrimSpace(batch.ProviderID), strings.TrimSpace(batch.SourceName)) {
 		// Nothing new landed. Republishing an unchanged window would announce
 		// a shard the network already has.
 		return
@@ -377,6 +388,11 @@ func (p *AutoPublisher) ObserveIngest(batch IngestedBatch) {
 		return
 	}
 
+	if p.isPairedSource(schema, provider, source) {
+		lane, _ := p.matchScope(schema, provider, source, false)
+		p.observePairedBatch(lane, schema, provider, source, batchID, true)
+		return
+	}
 	lane, ok := p.matchLane(schema, provider, source)
 	if !ok {
 		return
