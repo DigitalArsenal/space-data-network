@@ -513,11 +513,6 @@ func acquireGPArchiveRunLock(out string) (bool, func(), error) {
 	}
 }
 
-func gpArchiveProcessAlive(pid int) bool {
-	err := syscall.Kill(pid, 0)
-	return err == nil || errors.Is(err, syscall.EPERM)
-}
-
 func (o *gpArchiveOptions) normalize() error {
 	o.Out = strings.TrimSpace(o.Out)
 	o.ZipPath = strings.TrimSpace(o.ZipPath)
