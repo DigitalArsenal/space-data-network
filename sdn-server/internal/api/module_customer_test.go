@@ -29,6 +29,24 @@ func (c *testModuleCustomer) TestPurchaseModule(context.Context, json.RawMessage
 	}
 	return json.RawMessage(`{"status":"downloaded"}`), nil
 }
+
+// With test-mode delivery off, an admin's read has nothing to list (204)
+// rather than a 404 the dashboard logs on every page; nothing is delivered.
+func TestModuleCustomerReadWithTestModeOffListsNothing(t *testing.T) {
+	c := &testModuleCustomer{}
+	h := NewCoreAPIHandler("", nil, nil, c, nil, nil, nil, auth.NewHandler(nil, nil, time.Hour, "", ""), nil)
+	mux := http.NewServeMux()
+	h.registerModuleCustomerRoutes(mux)
+	t.Setenv("SDN_STOREFRONT_DEV_PAYMENTS", "")
+	r := httptest.NewRequest("GET", "/api/v1/modules/customer", nil)
+	r = r.WithContext(auth.ContextWithSession(r.Context(), &auth.Session{XPub: "admin", TrustLevel: peers.Admin}))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+	if w.Code != http.StatusNoContent || w.Body.Len() != 0 || c.calls != 0 {
+		t.Fatalf("read with test mode off: %d %q (calls %d)", w.Code, w.Body, c.calls)
+	}
+}
+
 func TestModuleCustomerRouteRequiresAdminAndExplicitTestMode(t *testing.T) {
 	c := &testModuleCustomer{}
 	h := NewCoreAPIHandler("", nil, nil, c, nil, nil, nil, auth.NewHandler(nil, nil, time.Hour, "", ""), nil)

@@ -21,6 +21,14 @@ func (h *CoreAPIHandler) registerModuleCustomerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/modules/customer", h.withRL(h.requireAdminStrict(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		if os.Getenv("SDN_STOREFRONT_DEV_PAYMENTS") != "1" {
+			// Test-mode delivery is off: a read has nothing to list (the
+			// dashboard asks on every page, and a 404 there read as a
+			// failed request in every browser console); a purchase is
+			// still not a route this node serves.
+			if r.Method == http.MethodGet {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
 			http.NotFound(w, r)
 			return
 		}
