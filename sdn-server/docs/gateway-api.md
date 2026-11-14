@@ -685,12 +685,14 @@ two encodings are defined without inventing a fake fb framing:
 `GET /api/v1/query` returns the surface enumerated LIVE from the engine
 (`storage.PublicQuerySurface`): every readable relation (unified views
 with `_source`, shadow tables per provider-source) with columns and
-current hot-window record counts, plus the effective caps. The same set
-is what the authorizer permits — the listing and the enforcement derive
-from the same engine state. Honesty note: the surface is the engine HOT
-WINDOW (up to `storage.engine_hot_window` records per schema, default
-400K) — the same data `omm/bulk` serves; full history lives in the
-append-only stream files, not in SQL.
+current visible record counts, plus the effective caps. Metadata-only sealed
+relations are excluded from the public catalog and denied by the sandbox.
+Legacy storage exposes its configured hot window. The stream backend uses
+bounded windows by default; `storage.unlimited_sql_visibility: true` enables
+complete visibility only with a supporting engine and permanently promotes the
+store layout. Execution budgets still apply and can reject expensive scans or
+joins. See [SQL visibility and compatibility](sql-visibility.md) for defaults,
+access restrictions, cache configuration and rollback implications.
 
 ### Alias-vs-supersede decision (the old query routes)
 

@@ -1,43 +1,75 @@
-# Complete SQL visibility
+# SQL visibility and store compatibility
 
-Scans, sorts, and joins can examine more records and exceed an execution budget.
-Row, byte, result, deadline, and memory limits remain safeguards: exhaustion is an
-error, rather than a successful result containing only the newest records.
+Complete visibility can make scans, sorts and joins examine more records. Row,
+byte, result, deadline and memory budgets still apply. Exhaustion is an error;
+it does not turn an incomplete query into a successful result.
 
-The format-4 host registers every standard with explicit unlimited visibility
-(type-spec tag 10, uint32 zero). A missing tag retains the engine's historical
-default. Registration requires bit 0 of `flatsql_capabilities`; a missing export
-or capability fails startup. The matching FlatSQL implementation is required;
-the previously embedded artifact cannot serve this policy. SQL readers reopen
-after registration to load the persisted policy. Opaque and field-sealed types
-expose metadata and stored bytes, without reflected plaintext fields.
+## Enable complete visibility explicitly
 
-The engine promotes the STORE marker to layout 2 before persisting an unlimited
-registration. Engines supporting only layout 1 refuse that store. Changing an
-unlimited registration back to a bounded registration also fails. Back up the
-store before enabling this policy. An interrupted marker write fails closed;
-marker recovery must preserve layout 2 and use the supporting engine.
+`storage.unlimited_sql_visibility` defaults to `false`. Bounded registrations
+retain the existing 10,000-row default and 400,000-row OMM/TBS windows. With a
+supporting engine, setting it to `true` registers explicit unlimited visibility
+for every standard (type-spec tag 13, uint8 one). Missing tag 13, including the
+historical tag 10 value zero, keeps bounded behavior.
 
-## Identify the store before enabling
+The embedded FlatSQL 3.12.1 artifact does not support this option. Enabling it
+requires a published artifact exporting `flatsql_capabilities` with bit 0 set.
+The host checks that export before engine initialization and before creating
+engine or auxiliary database files. A failed standard registration aborts
+startup. Registration updates SQL schema state without a second engine open.
 
-Use the configured data root. Inspect `fsql4/STORE` and `fsql4/MIGRATED` with the
-marker reader, checking lengths, magic, CRC32C, and matching UUIDs. The engine's
-format-5 stream implementation uses this historical `fsql4` directory name:
-directory names alone do not identify the disk format. STORE contains its
-little-endian format at byte 4 and layout at byte 6. Format 5, layout 2 requires
-unlimited-relation support. A corrupt or mixed marker pair requires recovery,
-not creation of an empty replacement store.
+Back up the store before enabling the option. Registration permanently promotes
+the STORE marker to layout 2. Turning the setting off afterward refuses startup;
+it does not restore a bounded store. The update guard checks both stream format
+and layout when considering a rollback slot. A binary declaring only layout 1
+cannot reopen layout 2. Recovery from an interrupted promotion honors the
+persisted intent and preserves the newer layout.
 
-A regular legacy `control.flatsqldb` without an activated stream store requires
-the legacy migration path. Its SQL mirror, residency ledger, eviction, and
-warm-boot reconciliation remain necessary. This change does not migrate legacy
-data or remove those mechanisms. A separate migration must enumerate all live
-durable rows, preserve bytes and provenance, validate counts and keys, survive
-interruption, and retain the old store through validated activation. Comparing
-only SQL mirror counts cannot prove migration completeness.
+## Identify the store
 
-`format4.Tuning.RowCacheBytes` maps to engine config tag 51. Zero selects the
-32 MiB shared row-order and verified-metadata cache. Pinned pages count against
-admission; exhausted admission returns an explicit budget error. This cache
-budget does not bound every engine allocation, checkpoint builder, or staging
-structure.
+The node backend is called format 4; its engine stream marker is format 5.
+The directory remains `fsql4`. Directory names alone do not identify the disk
+format. Use the marker reader to validate `fsql4/STORE` and `fsql4/MIGRATED`,
+including lengths, magic, CRC32C and matching UUIDs. STORE encodes stream format
+at byte 4 and layout at byte 6, both little-endian. A valid `STORE.unlimited`
+promotion intent also requires layout 2 support. Corrupt or mixed markers
+require recovery, not creation of an empty replacement store.
+
+## Query access and budgets
+
+Complete visibility does not grant access to additional private data. Opaque
+and field-sealed types are omitted from the public SQL catalog and denied by
+the sandbox, including metadata counts and raw-record shortcuts. Trusted
+storage queries can read their metadata and stored bytes. Field sealing hides
+the designated fields; other fields can remain readable in those bytes. CIDs
+are computed from plaintext and can reveal equality with a guessed record.
+
+The direct SQL HTTP route requires administrator trust. Module `storage_query`
+uses sandboxed SQL with defaults of 200,000 output rows, five seconds and
+128 MiB output. Its engine scan limits are separately one million examined rows
+and 256 MiB bytes read. These are execution limits, not visibility windows.
+Interactive storage queries have different limits. Point lookups with canonical
+binary `_cid` equality use the index; scans and joins can still be expensive.
+Unfiltered whole-type `COUNT(*)` and `COUNT(_cid)` use live metadata, subject to
+quarantine and visibility rules. Filtered counts use the normal query path.
+
+## Cache configuration
+
+`storage.row_cache_bytes` maps to `format4.Tuning.RowCacheBytes` and engine config
+tag 51. Zero selects 32 MiB. A nonzero value must be at least 16 KiB. The shared
+budget covers cached row-order pages and verification metadata, including pinned
+pages. Failed admission returns a distinct row-cache budget error, separate
+from statement and result limits. This budget does not bound every allocation,
+checkpoint builder or staging structure. Sustained ingest can exhaust the
+fixed guest memory even when the row cache is below its limit.
+
+## Legacy migration
+
+A legacy `control.flatsqldb` needs `store-migrate --to 4` before using the stream
+backend. Migration uses bounded registrations by default. Complete visibility
+is enabled separately through the node setting after migration and validation;
+the migration command does not silently promote layout. Its verification reads
+durable records, bytes and provenance independently of SQL windows. Keep the
+legacy store backup until activation and verification succeed. The legacy SQL
+mirror, residency ledger, eviction and warm-boot reconciliation remain necessary
+for legacy stores; this option does not retire them.
