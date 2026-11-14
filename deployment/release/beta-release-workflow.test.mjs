@@ -514,8 +514,11 @@ test('beta release workflow builds desktop app artifacts for every supported OS'
   // and a second copy in desktop/assets/sdn-ui was the old architecture.
   assert.match(workflow, /desktop:[\s\S]*?needs:\s*\[beta-version, cli\]/);
   assert.doesNotMatch(workflow, /desktop\/assets\/sdn-ui\//);
-  assert.match(workflow, /target_os:\s*macos[\s\S]*runner:\s*macos-14/);
+  // macos-15 for Apple Silicon: GitHub no longer runs macos-14, and a leg on
+  // an unsupported runner is cancelled before it starts (run 43639422366).
+  assert.match(workflow, /target_os:\s*macos[\s\S]*runner:\s*macos-15(?!-)/);
   assert.match(workflow, /target_os:\s*macos[\s\S]*runner:\s*macos-15-intel/);
+  assert.doesNotMatch(workflow, /runner:\s*macos-14\b/);
   assert.match(workflow, /target_os:\s*windows[\s\S]*runner:\s*windows-latest/);
   assert.match(workflow, /target_os:\s*linux[\s\S]*runner:\s*ubuntu-latest/);
   assert.match(workflow, /npm --prefix desktop ci/);
@@ -539,7 +542,7 @@ test('beta release workflow smoke-tests published installers after release', () 
   assert.match(workflow, /published-installer-smoke:[\s\S]*needs:\s*\[beta-version, release\]/);
   assert.match(workflow, /SDN_VERSION:\s*\$\{\{ needs\.beta-version\.outputs\.release_tag \}\}/);
   assert.match(workflow, /target_os:\s*linux[\s\S]*runner:\s*ubuntu-latest/);
-  assert.match(workflow, /target_os:\s*macos[\s\S]*runner:\s*macos-14/);
+  assert.match(workflow, /target_os:\s*macos[\s\S]*runner:\s*macos-15(?!-)/);
   assert.match(workflow, /target_os:\s*windows[\s\S]*runner:\s*windows-latest/);
   assert.match(workflow, /node deployment\/release\/published-install-smoke\.mjs --platform \$\{\{ matrix\.target_os \}\}/);
 });
@@ -585,6 +588,11 @@ test('container publish workflow ships one Docker Hub image', () => {
   assert.match(workflow, /username:\s*dockerdigitalarsenal/);
   assert.match(workflow, /secrets\.DOCKERHUB_TOKEN/);
   assert.match(workflow, /deployment\/docker\/Dockerfile/);
+  // The web UI build downloads no browser (see ipfs-deploy.sh, same three).
+  const webuiStep = /- name: Build the Kubo web UI[\s\S]*?run: \|/.exec(workflow)?.[0] ?? '';
+  assert.match(webuiStep, /PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'/);
+  assert.match(webuiStep, /PUPPETEER_SKIP_DOWNLOAD: '1'/);
+  assert.match(webuiStep, /CYPRESS_INSTALL_BINARY: '0'/);
   assert.doesNotMatch(workflow, /matrix:/);
   assert.doesNotMatch(workflow, /Dockerfile\.full/);
   assert.doesNotMatch(workflow, /Dockerfile\.edge/);
