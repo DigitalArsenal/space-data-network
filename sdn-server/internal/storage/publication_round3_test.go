@@ -247,3 +247,21 @@ func TestPublicationReceiptCompactionContinuedBatch(t *testing.T) {
 		t.Fatal("individual receipts remain")
 	}
 }
+
+func TestPublicationQuarantineStatusContinuedEntries(t *testing.T) {
+	s := &FlatSQLStore{}
+	e := publicationEntry{Sequence: 1, Schema: "CAT.fbs", Tags: SourceTags{ProviderID: "synthetic", SourceName: "index", BatchID: "continued"}, BatchFailure: publicationFailure{Attempts: 3, Reason: "bad content"}}
+	s.updatePublicationQuarantine(e)
+	e.Sequence = 2
+	e.BatchFailure = publicationFailure{}
+	s.updatePublicationQuarantine(e)
+	if len(s.PublicationRecoveryStatus()) != 1 {
+		t.Fatal("later entry cleared earlier quarantine")
+	}
+	e.Sequence = 1
+	e.Published = true
+	s.updatePublicationQuarantine(e)
+	if len(s.PublicationRecoveryStatus()) != 0 {
+		t.Fatal("completed entry remained quarantined")
+	}
+}

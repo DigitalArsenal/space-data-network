@@ -432,7 +432,7 @@ func (s *FlatSQLStore) PublicationRecoveryStatus() map[string]string {
 		out[k.schema+"/"+k.provider+"/"+k.source] = err.Error()
 	}
 	for key, reason := range s.publicationQuarantineStatus {
-		out[key] = reason
+		out[strings.SplitN(key, "/", 2)[1]] = reason
 	}
 	return out
 }
@@ -945,6 +945,7 @@ func (s *FlatSQLStore) CompletePublication(p *PublicationSelection) error {
 			s.publicationMu.Lock()
 			s.accountPublicationPending(s.publicationEntries[i], -1)
 			s.publicationEntries[i].Published = true
+			s.updatePublicationQuarantine(s.publicationEntries[i])
 			s.publicationMu.Unlock()
 		}
 	}

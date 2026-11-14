@@ -1,5 +1,7 @@
 package storage
 
+import "strconv"
+
 // Incremental resident counters keep admission and status independent of history.
 func (s *FlatSQLStore) accountPublicationEntry(e publicationEntry, delta int) {
 	statusEntry := e
@@ -40,7 +42,7 @@ func (s *FlatSQLStore) updatePublicationQuarantine(e publicationEntry) {
 	if s.publicationQuarantineStatus == nil {
 		s.publicationQuarantineStatus = map[string]string{}
 	}
-	prefix := e.Schema + "/" + e.Tags.ProviderID + "/" + e.Tags.SourceName + "/" + e.Tags.BatchID + "/"
+	prefix := strconv.FormatUint(e.Sequence, 10) + "/" + e.Schema + "/" + e.Tags.ProviderID + "/" + e.Tags.SourceName + "/" + e.Tags.BatchID + "/"
 	for kind, f := range map[string]publicationFailure{"generation": e.GenerationFailure, "batch": e.BatchFailure} {
 		if !e.Published && f.Attempts >= 3 {
 			s.publicationQuarantineStatus[prefix+kind] = f.Reason
