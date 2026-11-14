@@ -10,51 +10,54 @@ import (
 type Body byte
 
 const (
-	BodyNONE         Body = 0
-	BodyJournalEntry Body = 1
-	BodySourceList   Body = 2
-	BodyOutcome      Body = 3
-	BodyWatermarks   Body = 4
-	BodyFailure      Body = 5
-	BodySequenceList Body = 6
-	BodyExclusions   Body = 7
-	BodySourceTags   Body = 8
-	BodyNoticeList   Body = 9
-	BodyReclamation  Body = 10
-	BodyExportIndex  Body = 11
-	BodyBatchAction  Body = 12
+	BodyNONE           Body = 0
+	BodyJournalEntry   Body = 1
+	BodySourceList     Body = 2
+	BodyOutcome        Body = 3
+	BodyWatermarks     Body = 4
+	BodyFailure        Body = 5
+	BodySequenceList   Body = 6
+	BodyExclusions     Body = 7
+	BodySourceTags     Body = 8
+	BodyNoticeList     Body = 9
+	BodyReclamation    Body = 10
+	BodyExportIndex    Body = 11
+	BodyBatchAction    Body = 12
+	BodyPublicationRow Body = 13
 )
 
 var EnumNamesBody = map[Body]string{
-	BodyNONE:         "NONE",
-	BodyJournalEntry: "JournalEntry",
-	BodySourceList:   "SourceList",
-	BodyOutcome:      "Outcome",
-	BodyWatermarks:   "Watermarks",
-	BodyFailure:      "Failure",
-	BodySequenceList: "SequenceList",
-	BodyExclusions:   "Exclusions",
-	BodySourceTags:   "SourceTags",
-	BodyNoticeList:   "NoticeList",
-	BodyReclamation:  "Reclamation",
-	BodyExportIndex:  "ExportIndex",
-	BodyBatchAction:  "BatchAction",
+	BodyNONE:           "NONE",
+	BodyJournalEntry:   "JournalEntry",
+	BodySourceList:     "SourceList",
+	BodyOutcome:        "Outcome",
+	BodyWatermarks:     "Watermarks",
+	BodyFailure:        "Failure",
+	BodySequenceList:   "SequenceList",
+	BodyExclusions:     "Exclusions",
+	BodySourceTags:     "SourceTags",
+	BodyNoticeList:     "NoticeList",
+	BodyReclamation:    "Reclamation",
+	BodyExportIndex:    "ExportIndex",
+	BodyBatchAction:    "BatchAction",
+	BodyPublicationRow: "PublicationRow",
 }
 
 var EnumValuesBody = map[string]Body{
-	"NONE":         BodyNONE,
-	"JournalEntry": BodyJournalEntry,
-	"SourceList":   BodySourceList,
-	"Outcome":      BodyOutcome,
-	"Watermarks":   BodyWatermarks,
-	"Failure":      BodyFailure,
-	"SequenceList": BodySequenceList,
-	"Exclusions":   BodyExclusions,
-	"SourceTags":   BodySourceTags,
-	"NoticeList":   BodyNoticeList,
-	"Reclamation":  BodyReclamation,
-	"ExportIndex":  BodyExportIndex,
-	"BatchAction":  BodyBatchAction,
+	"NONE":           BodyNONE,
+	"JournalEntry":   BodyJournalEntry,
+	"SourceList":     BodySourceList,
+	"Outcome":        BodyOutcome,
+	"Watermarks":     BodyWatermarks,
+	"Failure":        BodyFailure,
+	"SequenceList":   BodySequenceList,
+	"Exclusions":     BodyExclusions,
+	"SourceTags":     BodySourceTags,
+	"NoticeList":     BodyNoticeList,
+	"Reclamation":    BodyReclamation,
+	"ExportIndex":    BodyExportIndex,
+	"BatchAction":    BodyBatchAction,
+	"PublicationRow": BodyPublicationRow,
 }
 
 func (v Body) String() string {
@@ -98,6 +101,8 @@ func (t *BodyT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 		return t.Value.(*ExportIndexT).Pack(builder)
 	case BodyBatchAction:
 		return t.Value.(*BatchActionT).Pack(builder)
+	case BodyPublicationRow:
+		return t.Value.(*PublicationRowT).Pack(builder)
 	}
 	return 0
 }
@@ -152,6 +157,10 @@ func (rcv Body) UnPack(table flatbuffers.Table) *BodyT {
 		var x BatchAction
 		x.Init(table.Bytes, table.Pos)
 		return &BodyT{Type: BodyBatchAction, Value: x.UnPack()}
+	case BodyPublicationRow:
+		var x PublicationRow
+		x.Init(table.Bytes, table.Pos)
+		return &BodyT{Type: BodyPublicationRow, Value: x.UnPack()}
 	}
 	return nil
 }

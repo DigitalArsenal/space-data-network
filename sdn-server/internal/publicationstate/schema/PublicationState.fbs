@@ -46,9 +46,19 @@ table ExportIndex {
   shard_file:string; record_count:int; records:[IndexRecord]; indexes:MaterializedIndexes;
 }
 table BatchAction { schema:string; provider:string; source:string; batch:string; action:string; }
+// Durable auxiliary publication-upsert record. Cutoffs are absent outside paired snapshots.
+table PublicationRow {
+  schema_name:string; provider_id:string; source_name:string; batch_id:string;
+  query_profile:string; offset:long; limit:long; record_count:long; byte_count:long;
+  shard_cid:string; index_cid:string; manifest_cid:string; pnm_cid:string;
+  shard_sha256:string; index_sha256:string; query_sha256:string; result_sha256:string;
+  feed_sequence:long; previous_head:string; feed_head:string;
+  published_at:string;
+  publication_cutoff:long = null; publication_source_cutoff:long = null;
+}
 union Body {
   JournalEntry, SourceList, Outcome, Watermarks, Failure, SequenceList,
-  Exclusions, SourceTags, NoticeList, Reclamation, ExportIndex, BatchAction
+  Exclusions, SourceTags, NoticeList, Reclamation, ExportIndex, BatchAction, PublicationRow
 }
 // Checksum is SHA-256 of the whole size-prefixed buffer with these 32 bytes zero.
 table PublicationState { version:ushort = 1; payload:Body; checksum:[ubyte]; }
