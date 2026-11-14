@@ -32,3 +32,35 @@ func TestMigrate4RegistrationKeepsBoundedLayout(t *testing.T) {
 		}
 	}
 }
+
+func TestMigrate4VerificationOpensPromotedLayout(t *testing.T) {
+	root := t.TempDir()
+	spec, err := format4.TypeSpecFor("OCM.fbs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := migrator4{root: root, rep: &migrate4Report{}, opt: migrate4Options{CompileOnMiss: true, AOTCacheDir: t.TempDir(), Wasm: engineWasm(t)},
+		schemas: []string{"OCM.fbs"}, specs: map[string]format4.TypeSpec{"OCM.fbs": spec}}
+	ctx := context.Background()
+	if err := m.openTarget(ctx, format4.CreateFresh); err != nil {
+		t.Fatal(err)
+	}
+	spec.UnlimitedVisibility = true
+	if err := m.api.RegisterType(spec); err != nil {
+		m.closeTarget(ctx)
+		t.Fatal(err)
+	}
+	if err := m.closeTarget(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.openTarget(ctx, format4.OpenExisting); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.closeTarget(ctx); err != nil {
+		t.Fatal(err)
+	}
+	state, err := marker.Read(root)
+	if err != nil || state.Layout != 2 {
+		t.Fatalf("promoted verification: %+v %v", state, err)
+	}
+}
