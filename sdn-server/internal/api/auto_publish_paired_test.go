@@ -334,6 +334,8 @@ func (*pairedNilPublication) PublishDatasetUpdate(context.Context, DatasetPublic
 func TestPairedPublicationIngestDuringAttemptIsRetained(t *testing.T) {
 	service := &blockingPublicationService{release: make(chan struct{}), entered: make(chan struct{}, 1)}
 	p := NewAutoPublisher(service, pairedRules())
+	now := time.Now()
+	p.now = func() time.Time { return now }
 	p.ObserveIngest(pairedObservation("parts"))
 	request := <-p.queue
 	done := make(chan struct{})
@@ -348,6 +350,11 @@ func TestPairedPublicationIngestDuringAttemptIsRetained(t *testing.T) {
 	if len(p.pairedPending) != 1 {
 		t.Fatal("ingest during attempt was erased by completion")
 	}
+	p.queueReadyPairedBatches()
+	if len(p.queue) != 0 {
+		t.Fatal("continuation bypassed the publication interval")
+	}
+	now = now.Add(time.Hour)
 	p.queueReadyPairedBatches()
 	if len(p.queue) != 1 {
 		t.Fatal("later ingest has no queued continuation")
