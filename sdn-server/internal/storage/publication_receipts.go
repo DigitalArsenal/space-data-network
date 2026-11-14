@@ -18,7 +18,7 @@ func (s *FlatSQLStore) appendPublicationReceipt(id [32]byte, seq uint64) error {
 	if s.publicationReceipts == nil {
 		s.publicationReceipts = map[[32]byte]uint64{}
 	}
-	if s.publicationReceipts[id] >= seq {
+	if s.publicationReceipts[id] != 0 {
 		return nil
 	}
 	var frame [48]byte

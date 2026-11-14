@@ -185,3 +185,38 @@ func TestPublicationUnpairedProductRefused(t *testing.T) {
 		t.Fatal("unbounded product source allowed")
 	}
 }
+
+func TestPublicationUnappliedRequeueAndCapacityReduction(t *testing.T) {
+	t.Setenv("SDN_STORE_FORMAT", "4")
+	s := journalTestStore(t, t.TempDir())
+	defer s.Close()
+	if err := s.ConfigurePublicationSources([]PublicationSource{{Schema: "CAT.fbs", Provider: "synthetic", Source: "index"}}); err != nil {
+		t.Fatal(err)
+	}
+	s.publicationFault = func(stage string) error {
+		if stage == "engine" {
+			return errors.New("engine unavailable")
+		}
+		return nil
+	}
+	_, rows := reclamationRecords(0, 3)
+	if _, err := s.StoreBatchWithSourceTags("CAT.fbs", rows, "synthetic", nil, SourceTags{ProviderID: "synthetic", SourceName: "index", BatchID: "repair"}); err == nil {
+		t.Fatal("fault absent")
+	}
+	for i := 0; i < 3; i++ {
+		if _, err := s.RecordPublicationFailure("CAT.fbs", "synthetic", "index", "repair", &PublicationContentError{Cause: errors.New("bad attempt")}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.ManagePublicationBatch("CAT.fbs", "synthetic", "index", "repair", "requeue"); err != nil {
+		t.Fatal("unapplied requeue failed", err)
+	}
+	s.publicationFault = nil
+	s.RetryPublicationRecovery()
+	if len(s.PublicationRecoveryStatus()) != 0 || len(s.RetainedPublicationBatches()) != 1 {
+		t.Fatal("runtime requeue did not recover")
+	}
+	if err := s.ConfigurePublicationSources([]PublicationSource{{Schema: "CAT.fbs", Provider: "synthetic", Source: "index", CatalogObjectLimit: 1}}); err == nil {
+		t.Fatal("capacity reduced below retained use")
+	}
+}

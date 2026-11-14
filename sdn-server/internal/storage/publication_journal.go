@@ -145,6 +145,10 @@ func (s *FlatSQLStore) ConfigurePublicationSources(sources []PublicationSource) 
 			}
 		}
 	}
+	candidate := &FlatSQLStore{publicationSources: merged}
+	if s.publicationRecordCount > candidate.publicationRecordLimit() || s.publicationReferenceCountBytes > candidate.publicationByteLimit() {
+		return errors.New("configured catalog capacity is below retained usage")
+	}
 	if err := os.MkdirAll(s.publicationDir(), 0700); err != nil {
 		return err
 	}
