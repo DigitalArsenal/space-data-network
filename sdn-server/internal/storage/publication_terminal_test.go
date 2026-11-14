@@ -23,7 +23,7 @@ func TestPublicationExcludedTerminalRetainsGeneration(t *testing.T) {
 	if err := s.ExcludeCatalogRecords("synthetic", "index", []string{computeCID(index[1])}); err != nil {
 		t.Fatal(err)
 	}
-	reclamationPublish(t, s, nil)
+	terminalPublish(t, s)
 	if _, err := os.Stat(filepath.Join(s.publicationEntryDir(3), "generation")); err != nil {
 		t.Fatal("terminal marker reclaimed", err)
 	}
@@ -56,7 +56,7 @@ func TestPublicationSequenceAfterNewestReclaimed(t *testing.T) {
 	if err := s.ExcludeCatalogRecords("synthetic", "index", []string{computeCID(index[1])}); err != nil {
 		t.Fatal(err)
 	}
-	reclamationPublish(t, s, nil)
+	terminalPublish(t, s)
 	if len(s.publicationEntries) != 1 || s.publicationHighWater != 2 {
 		t.Fatalf("entries=%d high=%d", len(s.publicationEntries), s.publicationHighWater)
 	}
@@ -64,11 +64,28 @@ func TestPublicationSequenceAfterNewestReclaimed(t *testing.T) {
 	if s.publicationHighWater != 3 {
 		t.Fatal("reused sequence", s.publicationHighWater)
 	}
-	reclamationPublish(t, s, nil)
+	terminalPublish(t, s)
 	s.Close()
 	s = journalTestStore(t, dir)
 	put("restart", index[0])
 	if s.publicationHighWater != 4 {
 		t.Fatal("restart reused sequence", s.publicationHighWater)
+	}
+}
+
+func terminalPublish(t *testing.T, s *FlatSQLStore) {
+	t.Helper()
+	for _, b := range s.RetainedPublicationBatches() {
+		p, err := s.SelectPublication(b.Schema, b.Provider, b.Source, b.Batch)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = s.CompletePublication(p); err != nil {
+			t.Fatal(err)
+		}
+		p.Close()
+	}
+	if err := s.ReclaimPublication(); err != nil {
+		t.Fatal(err)
 	}
 }

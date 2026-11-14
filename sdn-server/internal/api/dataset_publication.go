@@ -155,6 +155,7 @@ func NewDatasetPublicationHandler(service DatasetPublicationService) *DatasetPub
 func (h *DatasetPublicationHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/admin/dataset-updates/publish", h.handlePublish)
 	mux.HandleFunc("/api/v1/admin/dataset-updates/retention", h.handleRetention)
+	mux.HandleFunc("/api/v1/admin/dataset-updates/batch", h.handlePublicationBatch)
 }
 
 // handleRetention plans (dry run) or applies one retention pass over a lane of
