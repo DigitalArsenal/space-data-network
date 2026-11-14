@@ -387,6 +387,9 @@ func (s *FlatSQLStore) PublicationRecoveryStatus() map[string]string {
 	s.publicationMu.Lock()
 	defer s.publicationMu.Unlock()
 	out := map[string]string{}
+	if s.publicationGlobalFailure != nil {
+		out["journal"] = s.publicationGlobalFailure.Error()
+	}
 	for k, err := range s.publicationFailures {
 		out[k.schema+"/"+k.provider+"/"+k.source] = err.Error()
 	}
@@ -411,7 +414,8 @@ func (s *FlatSQLStore) recoverPublicationJournal() error {
 		return err
 	}
 	if err := s.recoverPublicationReclamation(); err != nil {
-		return err
+		s.publicationGlobalFailure = err
+		log.Errorf("publication reclamation metadata requires repair: %v", err)
 	}
 	dirs, err := os.ReadDir(s.publicationDir())
 	if err != nil {
@@ -624,6 +628,9 @@ func publicationAtomicFile(path string, raw []byte) error {
 func (s *FlatSQLStore) RetainedPublicationBatches() []PublicationBatch {
 	s.publicationMu.Lock()
 	defer s.publicationMu.Unlock()
+	if s.publicationGlobalFailure != nil {
+		return nil
+	}
 	byKey := map[string]PublicationBatch{}
 	for _, e := range s.publicationEntries {
 		if !e.Applied || e.Published || e.BatchFailure.Attempts >= 3 || e.GenerationFailure.Attempts >= 3 || s.publicationFailures[publicationSourceKey{e.Schema, e.Tags.ProviderID, e.Tags.SourceName}] != nil {
@@ -699,6 +706,9 @@ func (p *PublicationSelection) readReference(r publicationRecordRef) ([]byte, er
 }
 
 func (s *FlatSQLStore) retainedSelectionLocked(schema, provider, source, batch string, cutoff uint64) (*PublicationSelection, error) {
+	if s.publicationGlobalFailure != nil {
+		return nil, s.publicationGlobalFailure
+	}
 	if err := s.publicationFailures[publicationSourceKey{schema, provider, source}]; err != nil {
 		return nil, fmt.Errorf("publication source paused: %w", err)
 	}
@@ -758,6 +768,19 @@ func (s *FlatSQLStore) publicationSourceEnabled(schema, provider, source string)
 // once per call. Reconciliation calls it between publication attempts.
 func (s *FlatSQLStore) RetryPublicationRecovery() {
 	s.publicationWriteMu.Lock()
+	if s.publicationGlobalFailure != nil {
+		high := s.publicationHighWater
+		err := s.recoverPublicationReclamation()
+		s.publicationHighWater = max(high, s.publicationHighWater)
+		s.publicationMu.Lock()
+		s.publicationGlobalFailure = err
+		s.publicationMu.Unlock()
+		if err != nil {
+			s.publicationWriteMu.Unlock()
+			return
+		}
+	}
+
 	resolved := map[publicationSourceKey]bool{}
 	failed := map[publicationSourceKey]bool{}
 	for _, e := range s.publicationEntries {

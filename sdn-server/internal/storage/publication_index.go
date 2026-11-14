@@ -97,7 +97,7 @@ func (s *FlatSQLStore) publicationReferences(e publicationEntry) ([]publicationR
 func (s *FlatSQLStore) publicationView() *FlatSQLStore {
 	s.publicationMu.Lock()
 	defer s.publicationMu.Unlock()
-	v := &FlatSQLStore{basePath: s.basePath, publicationSources: append([]PublicationSource(nil), s.publicationSources...), publicationEntries: append([]publicationEntry(nil), s.publicationEntries...), publicationFailures: map[publicationSourceKey]error{}}
+	v := &FlatSQLStore{basePath: s.basePath, publicationSources: append([]PublicationSource(nil), s.publicationSources...), publicationEntries: append([]publicationEntry(nil), s.publicationEntries...), publicationFailures: map[publicationSourceKey]error{}, publicationGlobalFailure: s.publicationGlobalFailure}
 	for k, e := range s.publicationFailures {
 		v.publicationFailures[k] = e
 	}

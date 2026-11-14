@@ -68,6 +68,9 @@ func (b format4Backend) groupPublicationPut(op, schema string, records [][]byte,
 		}
 		s.publicationMu.Lock()
 		failure := s.publicationFailures[publicationSourceKey{schema, tags.ProviderID, tags.SourceName}]
+		if failure == nil {
+			failure = s.publicationGlobalFailure
+		}
 		s.publicationMu.Unlock()
 		var cids []string
 		var outcomes []format4.Outcome
