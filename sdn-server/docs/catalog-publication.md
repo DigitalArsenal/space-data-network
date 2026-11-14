@@ -18,7 +18,7 @@ reference metadata, 100,000 records per selection, 64 MiB of accounted metadata
 per shard index, and 16 MiB per payload. Ingestion limits are checked before replacing live records. Selection and
 shard-index limits refuse export before publication. These are storage/export bounds, not a
 bound on the entire node's heap. A synthetic 100,000-product selection test
-checks retained heap growth against 128 MiB. Partition sources and drain/retire
+checks retained heap growth against 128 MiB. Partition across separate stores and drain/retire
 retained history before exhausting capacity.
 
 Enable retention on empty CAT and OCM sources in store format 4. Existing
