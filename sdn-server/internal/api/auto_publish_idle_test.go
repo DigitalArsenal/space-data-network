@@ -36,3 +36,37 @@ func TestPairedPublicationRealLoopIdleBehindHead(t *testing.T) {
 		}
 	}
 }
+
+type blockedCheckpointService struct {
+	*recordingPublicationService
+	entered chan struct{}
+}
+
+func (s *blockedCheckpointService) LastSourcePublication(ctx context.Context, _ DatasetPublicationRequest) (time.Time, error) {
+	close(s.entered)
+	<-ctx.Done()
+	return time.Time{}, ctx.Err()
+}
+func TestPairedPublicationCheckpointDoesNotHoldMutex(t *testing.T) {
+	service := &blockedCheckpointService{newRecordingPublicationService(), make(chan struct{})}
+	p := NewAutoPublisher(service, pairedRules())
+	p.seedSourcePublicationsLocked()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() { p.publishReadySource(ctx); close(done) }()
+	<-service.entered
+	observed := make(chan struct{})
+	go func() { p.Stats(); close(observed) }()
+	select {
+	case <-observed:
+	case <-time.After(time.Second):
+		t.Error("checkpoint held publisher mutex")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("checkpoint ignored caller cancellation")
+	}
+}
