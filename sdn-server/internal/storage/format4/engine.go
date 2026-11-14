@@ -43,17 +43,17 @@ var slowOperationThreshold = func() time.Duration {
 // Options opens a format-4 engine.
 type Options struct {
 	UnlimitedVisibility bool
-	DataRoot      string // <data>; the engine root is <data>/fsql4
-	Create        CreateMode
-	GseqFloor     uint64 // CreateFresh / CreateForMigration
-	Cores         int    // 0 = runtime.NumCPU()
-	Tuning        Tuning
-	Wasm          []byte // nil = flatsqlrt.P4ThreadsWasm()
-	AOTCacheDir   string
-	CompileOnMiss bool                   // tests and prewarm only
-	Store         *flatsqlrt.NativeStore // the node's shared native I/O store, as format 2
-	FDBudget      int                    // open-fd budget of the instance's host I/O (0: flatsqlrt.P4FDBudget); sizes Tuning.ReaderConns when that is 0
-	OnFailure     func(error)            // instance trapped or hung; the Engine is fenced
+	DataRoot            string // <data>; the engine root is <data>/fsql4
+	Create              CreateMode
+	GseqFloor           uint64 // CreateFresh / CreateForMigration
+	Cores               int    // 0 = runtime.NumCPU()
+	Tuning              Tuning
+	Wasm                []byte // nil = flatsqlrt.P4ThreadsWasm()
+	AOTCacheDir         string
+	CompileOnMiss       bool                   // tests and prewarm only
+	Store               *flatsqlrt.NativeStore // the node's shared native I/O store, as format 2
+	FDBudget            int                    // open-fd budget of the instance's host I/O (0: flatsqlrt.P4FDBudget); sizes Tuning.ReaderConns when that is 0
+	OnFailure           func(error)            // instance trapped or hung; the Engine is fenced
 }
 
 // Control exports (contract §3.3), called on the instance's exec thread.
@@ -119,10 +119,12 @@ func Open(ctx context.Context, opt Options) (*Engine, error) {
 	log.Infof("format 4: host I/O fd budget %d (%s), %d reader connections", fdBudget, basis, opt.Tuning.ReaderConns)
 	e := &Engine{}
 	var required uint32
-	if opt.UnlimitedVisibility { required = 1 }
+	if opt.UnlimitedVisibility {
+		required = 1
+	}
 	inst, err := flatsqlrt.OpenP4Instance(flatsqlrt.P4Config{
 		RequiredCapabilities: required,
-		Wasm: wasm, AOTCacheDir: opt.AOTCacheDir, CompileOnMiss: opt.CompileOnMiss,
+		Wasm:                 wasm, AOTCacheDir: opt.AOTCacheDir, CompileOnMiss: opt.CompileOnMiss,
 		Store: opt.Store, StoreRoot: root, FDBudget: fdBudget, InitConfig: encodeConfig(engineRoot, opt),
 		OnFailure: func(_ *flatsqlrt.P4Instance, cause error) {
 			e.fence(cause)
@@ -286,8 +288,12 @@ func (e *Engine) RegisterType(spec TypeSpec) error {
 			return fmt.Errorf("%w: required unlimited-relations engine; embedded release %s has no supporting export", ErrUnlimitedRelationsUnsupported, flatsqlrt.P4ThreadsPackage)
 		}
 		capabilities, err := e.ctl.ControlCall("flatsql_capabilities")
-		if err != nil { return fmt.Errorf("%w: %v", ErrUnlimitedRelationsUnsupported, err) }
-		if capabilities < 0 || capabilities&1 == 0 { return fmt.Errorf("%w: unlimited-relations capability is absent (bits %d)", ErrUnlimitedRelationsUnsupported, capabilities) }
+		if err != nil {
+			return fmt.Errorf("%w: %v", ErrUnlimitedRelationsUnsupported, err)
+		}
+		if capabilities < 0 || capabilities&1 == 0 {
+			return fmt.Errorf("%w: unlimited-relations capability is absent (bits %d)", ErrUnlimitedRelationsUnsupported, capabilities)
+		}
 	}
 	e.memo.begin()
 	defer e.memo.end(false)

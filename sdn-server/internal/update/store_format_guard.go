@@ -95,6 +95,7 @@ type StoreFormat struct {
 	// Format is 1 for a format-1 store (and for a directory holding no store
 	// yet), else the STORE.format of an activated format-2 store.
 	Format int
+	Layout int
 	// Evidence names the markers that decided Format, for the log line.
 	Evidence string
 }
@@ -122,7 +123,9 @@ func ReadStoreFormat(root string) (StoreFormat, error) {
 		return sf, err
 	} else if m.Format4() {
 		sf.Format = versioninfo.P4StoreFormat
+		sf.Layout = max(1, int(m.RequiredLayout))
 		sf.Evidence = format4Evidence(m)
+		sf.Evidence += fmt.Sprintf(", stream format %d layout %d", m.Format, sf.Layout)
 		return sf, nil
 	}
 	migrated, err := pathExists(filepath.Join(root, storeEngineDir, storeMigratedFile))
@@ -236,6 +239,7 @@ func isDaemonBinaryPath(rel string) bool {
 // slotStamp is what a payload's daemon binaries say about the store formats
 // they open.
 type slotStamp struct {
+	Layout int
 	// Format is the lowest stamp among the payload's daemon executables; 1
 	// for an executable with no stamp, or for a payload with no executable.
 	Format int
@@ -296,9 +300,12 @@ func (s *slotStamp) scanExecutable(rel string, r io.Reader) error {
 	if !executableMagic(head) {
 		return nil
 	}
-	format, found, err := versioninfo.ReadStoreFormatStamp(br)
+	format, found, layout, _, err := versioninfo.ReadStoreCompatibilityStamp(br)
 	if err != nil {
 		return fmt.Errorf("scan %s: %w", rel, err)
+	}
+	if len(s.Binaries) == 0 || layout < s.Layout {
+		s.Layout = layout
 	}
 	s.add(rel, format, found)
 	return nil
@@ -483,8 +490,11 @@ func guardStoreFormat(action, target, version string, store StoreFormat, stamp f
 		s = slotStamp{Format: versioninfo.Format1StoreFormat, Unstamped: []string{fmt.Sprintf("unreadable: %v", err)}, Binaries: []string{"?"}}
 		applies = true
 	}
-	if !applies || s.Format >= store.Format {
+	if !applies || (s.Format >= store.Format && max(1, s.Layout) >= max(1, store.Layout)) {
 		return nil
+	}
+	if s.Format >= store.Format {
+		return fmt.Errorf("store-format guard REFUSED to %s %s: store layout %d requires a binary supporting that layout; candidate supports layout %d; nothing was swapped", action, target, store.Layout, max(1, s.Layout))
 	}
 	refusal := &StoreFormatRefusal{
 		Action:             action,

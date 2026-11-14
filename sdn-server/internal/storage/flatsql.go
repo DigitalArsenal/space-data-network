@@ -364,7 +364,7 @@ type StoreOption func(*storeConfig)
 
 type storeConfig struct {
 	unlimitedSQLVisibility bool
-	rowCacheBytes uint64
+	rowCacheBytes          uint64
 	engineHotWindow        int
 	engineGenericHotWindow int
 	deferBootRebuilds      bool

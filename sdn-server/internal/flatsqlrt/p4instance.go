@@ -24,8 +24,8 @@ package flatsqlrt
 // the boot and the control calls, nothing about records.
 
 import (
-	"errors"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -45,14 +45,14 @@ const (
 // P4Config configures the instance.
 type P4Config struct {
 	RequiredCapabilities uint32
-	Wasm          []byte // the portable artifact; it runs only AOT-compiled
-	AOTCacheDir   string
-	CompileOnMiss bool         // compile a missing artifact (tests, prewarm)
-	Store         *NativeStore // the node's shared native store; StoreRoot opens a private one
-	StoreRoot     string
-	FDBudget      int    // open fds the instance's host I/O keeps (0: P4FDBudget)
-	InitConfig    []byte // flatsql_init's config TLV
-	MaxThreads    int    // guest threads (default 64, the engine layout's limit)
+	Wasm                 []byte // the portable artifact; it runs only AOT-compiled
+	AOTCacheDir          string
+	CompileOnMiss        bool         // compile a missing artifact (tests, prewarm)
+	Store                *NativeStore // the node's shared native store; StoreRoot opens a private one
+	StoreRoot            string
+	FDBudget             int    // open fds the instance's host I/O keeps (0: P4FDBudget)
+	InitConfig           []byte // flatsql_init's config TLV
+	MaxThreads           int    // guest threads (default 64, the engine layout's limit)
 	// ControlBudget bounds each control call (default 5 min: init replays
 	// journals and recovers WALs, activation checkpoints every file).
 	ControlBudget time.Duration
@@ -176,8 +176,10 @@ func (p *PSInstance) initP4() error {
 			return fmt.Errorf("%w: required capability bits %d, found no export (%s)", ErrP4Capabilities, p.cfg.RequiredP4Capabilities, P4ThreadsPackage)
 		}
 		values, err := p.control("flatsql_capabilities")
-		if err != nil { return fmt.Errorf("%w: %v", ErrP4Capabilities, err) }
-		if len(values) == 0 || uint32(wasmrt.ToInt32(values[0])) & p.cfg.RequiredP4Capabilities != p.cfg.RequiredP4Capabilities {
+		if err != nil {
+			return fmt.Errorf("%w: %v", ErrP4Capabilities, err)
+		}
+		if len(values) == 0 || uint32(wasmrt.ToInt32(values[0]))&p.cfg.RequiredP4Capabilities != p.cfg.RequiredP4Capabilities {
 			return fmt.Errorf("%w: required capability bits %d are absent", ErrP4Capabilities, p.cfg.RequiredP4Capabilities)
 		}
 	}

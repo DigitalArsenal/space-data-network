@@ -26,7 +26,7 @@ const (
 	epochProfileMPE  uint8 = 2 // entity = COL1 -> COL0 -> cid
 )
 
-// Encode serializes the spec: format 2's tags 1-7, then tags 8-12 in
+// Encode serializes the spec: format 2's tags 1-7, then tags 8-13 in
 // ascending order, each only when set (absent = the engine default).
 func (t TypeSpec) Encode() []byte {
 	out := t.TypeSpec.Encode()
@@ -52,7 +52,7 @@ func (t TypeSpec) Encode() []byte {
 }
 
 // CIDOnlyTypeSpec is format 2's CID-only registration (format2.CIDOnlyTypeSpec,
-// contract C-25) on format 4: 4 KiB pages and unlimited visibility, no
+// contract C-25) on format 4: 4 KiB pages and the default bounded visibility, no
 // epoch profile, no identity, no full text.
 func CIDOnlyTypeSpec(typ string, fid [4]byte) TypeSpec {
 	return TypeSpec{TypeSpec: format2.CIDOnlyTypeSpec(typ, fid), PageSize: 4096, A18Bound: a18BoundDefault}
@@ -60,7 +60,7 @@ func CIDOnlyTypeSpec(typ string, fid [4]byte) TypeSpec {
 
 // TypeSpecFor builds the registration of an embedded SDS standard: format
 // 2's (rules, BFBS, file identifier, flags; read-only reuse) plus IQC's
-// identity dedupe and 16 KiB pages, unlimited visibility, the epoch profile
+// identity dedupe and 16 KiB pages, bounded visibility, the epoch profile
 // (OMM 1, MPE 2) and full text for every type
 // format 1 indexes, except numeric weather grids. Field-sealed types have no
 // full-text index either.
@@ -109,7 +109,7 @@ func typeStorageOptions(typ string) TypeSpec {
 }
 
 const (
-	a18BoundDefault uint32 = 10_000
+	a18BoundDefault   uint32 = 10_000
 	a18BoundDecorated uint32 = 400_000
 )
 

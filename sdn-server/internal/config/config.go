@@ -1533,7 +1533,7 @@ type StorageConfig struct {
 	UnlimitedSQLVisibility bool `yaml:"unlimited_sql_visibility,omitempty"`
 	// RowCacheBytes is the stream engine's shared row-order cache (0: 32 MiB).
 	RowCacheBytes uint64 `yaml:"row_cache_bytes,omitempty"`
-	Path string `yaml:"path"`
+	Path          string `yaml:"path"`
 
 	// MoveTo is a folder the node moves its data into at the next start,
 	// before it opens anything (the dashboard's storage editor; owner

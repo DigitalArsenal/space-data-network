@@ -99,11 +99,13 @@ func Read(dataRoot string) (Markers, error) {
 	}
 	m.RequiredLayout = m.Layout
 	intent, _, err := readFile(filepath.Join(dir, "STORE.unlimited"))
-	if err != nil { return m, err }
-	if len(intent)==storeLen && binary.LittleEndian.Uint32(intent)==storeMagic &&
-		binary.LittleEndian.Uint16(intent[4:])==StoreFormat && binary.LittleEndian.Uint16(intent[6:])==2 &&
-		binary.LittleEndian.Uint32(intent[56:])==crc32.Checksum(intent[:56],castagnoli) {
-		m.RequiredLayout=max(m.RequiredLayout,2)
+	if err != nil {
+		return m, err
+	}
+	if len(intent) == storeLen && binary.LittleEndian.Uint32(intent) == storeMagic &&
+		binary.LittleEndian.Uint16(intent[4:]) == StoreFormat && binary.LittleEndian.Uint16(intent[6:]) == 2 &&
+		binary.LittleEndian.Uint32(intent[56:]) == crc32.Checksum(intent[:56], castagnoli) {
+		m.RequiredLayout = max(m.RequiredLayout, 2)
 	}
 	switch info, err := os.Stat(filepath.Join(dataRoot, LegacyControl)); {
 	case err == nil:
