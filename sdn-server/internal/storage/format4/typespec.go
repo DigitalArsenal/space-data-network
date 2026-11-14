@@ -49,10 +49,12 @@ func (t TypeSpec) Encode() []byte {
 
 // A18 bounds (contract §3.3 tag 10; C-24): the newest-N window of a type's
 // SQL relations, as format 1's engine hot windows (engineWindowFor): 400000
-// for the decorated standards OMM and TBS, 10000 for every other type.
+// for the decorated standards OMM and TBS, 100000 for OCM and CAT,
+// and 10000 for other types.
 const (
 	a18BoundDecorated = 400_000
 	a18BoundDefault   = 10_000
+	a18BoundCatalog   = 100_000
 )
 
 // CIDOnlyTypeSpec is format 2's CID-only registration (format2.CIDOnlyTypeSpec,
@@ -65,7 +67,7 @@ func CIDOnlyTypeSpec(typ string, fid [4]byte) TypeSpec {
 // TypeSpecFor builds the registration of an embedded SDS standard: format
 // 2's (rules, BFBS, file identifier, flags; read-only reuse) plus IQC's
 // identity dedupe and 16 KiB pages, the A18 bound (OMM and TBS 400000, else
-// 10000), the epoch profile (OMM 1, MPE 2) and full text for every type
+// OCM and CAT 100000, others 10000), the epoch profile (OMM 1, MPE 2) and full text for every type
 // format 1 indexes, except numeric weather grids. Field-sealed types have no
 // full-text index either.
 // A field-sealed standard (a sealed record's stored bytes are neither its
@@ -93,6 +95,8 @@ func TypeSpecFor(schemaName string) (TypeSpec, error) {
 func typeStorageOptions(typ string) TypeSpec {
 	spec := TypeSpec{PageSize: 4096, A18Bound: a18BoundDefault, FullText: true}
 	switch typ {
+	case "OCM", "CAT":
+		spec.A18Bound = a18BoundCatalog
 	case "WXF":
 		// Grid samples are numeric payloads. Reflecting every float into text
 		// adds a second, large derived index to each ingest. The BFBS and
