@@ -2,9 +2,11 @@
 
 Retention adds a synchronous SDS copy before the storage engine commits. Disk
 use grows with history; automatic journal reclamation is absent. Retained writes
-serialize per store. Separately acknowledged single-record writes each require a
-durable transaction; producers reduce this cost with `StoreBatchWithSourceTags`,
-which journals the entire call together. Identical source-tag repeats do not
+serialize per store. Concurrent calls with the same source, batch, peer, signature,
+and write options coalesce while waiting for that serialization, up to 4,096
+records per group. Every caller waits for the shared durable outcome. Separately
+acknowledged sequential writes require individual transactions; producers reduce
+that cost with `StoreBatchWithSourceTags`, which journals the entire call together. Identical source-tag repeats do not
 journal again. Changed batch identities or export metadata require retention.
 
 Snapshots hold immutable file references and hydrate one record at a time into

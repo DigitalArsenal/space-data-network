@@ -105,15 +105,7 @@ func (b format4Backend) f4Put(op, schemaName string, records [][]byte, peerID st
 	if !b.s.publicationSourceEnabled(schemaName, tags.ProviderID, tags.SourceName) || len(records) == 0 {
 		return b.f4PutDirect(op, schemaName, records, peerID, signature, tags, opt)
 	}
-	b.s.publicationWriteMu.Lock()
-	defer b.s.publicationWriteMu.Unlock()
-	b.s.publicationMu.Lock()
-	failure := b.s.publicationFailures[publicationSourceKey{schemaName, tags.ProviderID, tags.SourceName}]
-	b.s.publicationMu.Unlock()
-	if failure != nil {
-		return nil, nil, failure
-	}
-	return b.putRetained(op, schemaName, records, peerID, signature, *tags, opt)
+	return b.groupPublicationPut(op, schemaName, records, peerID, signature, *tags, opt)
 }
 
 func (b format4Backend) f4PutDirect(op, schemaName string, records [][]byte, peerID string, signature []byte, tags *SourceTags, opt f4PutOpt) ([]string, []format4.Outcome, error) {

@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
@@ -156,11 +155,7 @@ func (b format4Backend) putRetained(op, schema string, records [][]byte, peer st
 	if tags.BatchID == "" {
 		return nil, nil, errors.New("retained publication requires batch id")
 	}
-	for _, data := range records {
-		if err := s.validator.Validate(context.Background(), schema, data); err != nil {
-			return nil, nil, err
-		}
-	}
+
 	if len(s.publicationEntries) >= maxPublicationEntries {
 		return nil, nil, errors.New("publication journal capacity reached; complete and retire retained history before ingestion")
 	}

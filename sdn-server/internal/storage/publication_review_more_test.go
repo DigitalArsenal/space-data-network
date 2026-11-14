@@ -355,3 +355,50 @@ func TestPublicationReviewCorruptTableDoesNotPanic(t *testing.T) {
 		t.Fatal("corrupt table accepted")
 	}
 }
+
+func TestPublicationReviewConcurrentBatchGrouping(t *testing.T) {
+	t.Setenv("SDN_STORE_FORMAT", "4")
+	s := journalTestStore(t, t.TempDir())
+	defer s.Close()
+	if err := s.ConfigurePublicationSources([]PublicationSource{{Schema: "CAT.fbs", Provider: "synthetic", Source: "index"}}); err != nil {
+		t.Fatal(err)
+	}
+	s.publicationWriteMu.Lock()
+	done := make(chan error, 128)
+	for i := 0; i < 128; i++ {
+		go func(i int) {
+			raw := sds.NewCATBuilder().WithNoradCatID(uint32(900000 + i)).Build()
+			id, err := s.StoreWithSourceTags("CAT.fbs", raw, "synthetic", nil, SourceTags{ProviderID: "synthetic", SourceName: "index", BatchID: "group"})
+			if err == nil && id != computeCID(raw) {
+				err = errors.New("group result belongs to another caller")
+			}
+			done <- err
+		}(i)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	queued := 0
+	for time.Now().Before(deadline) {
+		s.publicationGroupMu.Lock()
+		queued = 0
+		for _, group := range s.publicationGroups {
+			queued += len(group.requests)
+		}
+		s.publicationGroupMu.Unlock()
+		if queued == 128 {
+			break
+		}
+		runtime.Gosched()
+	}
+	s.publicationWriteMu.Unlock()
+	for i := 0; i < 128; i++ {
+		if err := <-done; err != nil {
+			t.Error(err)
+		}
+	}
+	if queued != 128 {
+		t.Fatalf("only %d calls entered group before deadline", queued)
+	}
+	if len(s.publicationEntries) != 1 || len(s.publicationEntries[0].Refs) != 128 {
+		t.Fatal("concurrent batch calls did not share a durable transaction")
+	}
+}

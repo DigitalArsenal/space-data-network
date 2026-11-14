@@ -159,6 +159,8 @@ func EngineAOTCacheDir() string { return engineAOTCacheDir() }
 type FlatSQLStore struct {
 	publicationSourceKeys atomic.Pointer[map[publicationSourceKey]bool]
 	publicationEnabled    atomic.Bool
+	publicationGroupMu    sync.Mutex
+	publicationGroups     map[publicationGroupKey]*publicationWriteGroup
 	publicationWriteMu    sync.Mutex
 	publicationMu         sync.Mutex
 	publicationSources    []PublicationSource
