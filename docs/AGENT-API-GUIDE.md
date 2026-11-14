@@ -115,13 +115,24 @@ default for a store that also holds key material, access grants,
 node-internal ledgers.
 
 Public: `OMM` (orbital element sets — the primary catalog), `CAT` (catalog
-entries), `MPE` (mean parameter ephemerides), `SPW` (space weather indices),
+entries), `OCM` (orbit comprehensive messages), `MPE` (mean parameter ephemerides),
+`SPW` (space weather indices), `WXF` (published weather forecast fields),
+`NCD` (published native-container descriptors),
 `RFB` (published emitter catalog), `LKS` (link status), `PNM` (publication
 notifications — already broadcast on public pubsub topics), `DPM` (dataset
 publication manifests — already pinned publicly), `EPM` (entity profile
 messages — the identity records), `APP` (application package manifests),
 `EGP` (entity groups — membership assertions over already-public catalog
 records).
+
+Every `OCM` source on a node is anonymously readable, including sources outside
+the catalog. The standard-level classification applies to record sync
+`read-chunk` and `open-manifest` and to SDS exchange record requests and queries.
+These reads need no session or private-read authorization. Source filters select
+records; they do not restrict public access to a particular provider. Published
+manifests and shards also remain readable by content identifier. The list in
+`sdn-server/internal/sds/public_read.go` defines the complete public set; unlisted
+standards retain their existing read authorization requirements.
 
 NOT public: `TBS` (telemetry bitstreams), `IQC` (integripulse quality check) —
 both answer `401` (verified live):
