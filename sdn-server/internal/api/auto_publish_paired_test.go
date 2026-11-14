@@ -128,6 +128,9 @@ func TestPairedPublicationCrashHelper(t *testing.T) {
 }
 
 func TestPairedPublicationRestartAtEveryBoundary(t *testing.T) {
+	if testing.Short() {
+		t.Skip("paired-publication restart boundary matrix requires a full test run")
+	}
 	for _, boundary := range []string{"commit", "shard", "announcement", "completion"} {
 		t.Run(boundary, func(t *testing.T) {
 			dir := t.TempDir()
