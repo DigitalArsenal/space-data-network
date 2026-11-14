@@ -8,7 +8,6 @@ import (
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/CAT"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 )
@@ -74,6 +73,10 @@ func (s *FlatSQLStore) publicationReceiptPath(schema, provider, source, batch st
 	return filepath.Join(s.publicationDir(), fmt.Sprintf("receipt-%x", sum))
 }
 func (s *FlatSQLStore) publicationReceiptExists(schema, provider, source, batch string) bool {
+	id := sha256.Sum256([]byte(schema + "\x00" + provider + "\x00" + source + "\x00" + batch))
+	if s.publicationReceipts[id] != 0 {
+		return true
+	}
 	_, err := os.Stat(s.publicationReceiptPath(schema, provider, source, batch))
 	return err == nil
 }
@@ -84,13 +87,19 @@ type publicationReclaimCheckpoint struct {
 }
 
 func (s *FlatSQLStore) recoverPublicationReclamation() error {
+	if err := s.recoverPublicationReceipts(); err != nil {
+		return err
+	}
 	raw, err := os.ReadFile(filepath.Join(s.publicationDir(), "reclamation.json"))
 	if err == nil {
 		var c publicationReclaimCheckpoint
 		if err = json.Unmarshal(raw, &c); err != nil {
-			return err
+			// The independent watermarks and receipt checkpoint preserve allocation
+			// and completion; this sweep plan is derived metadata.
+			c = publicationReclaimCheckpoint{HighWater: s.publicationHighWater, Reclaimed: uint64(len(s.publicationReceipts))}
+			log.Warn("rebuilt damaged publication reclamation plan")
 		}
-		s.publicationHighWater = c.HighWater
+		s.publicationHighWater = max(s.publicationHighWater, c.HighWater)
 		reclaimed := c.Reclaimed
 		for _, seq := range c.Pending {
 			if _, statErr := os.Stat(s.publicationEntryDir(seq)); os.IsNotExist(statErr) {
@@ -276,7 +285,7 @@ func (s *FlatSQLStore) reclaimPublicationLocked() (result error) {
 	}
 	var tombs []string
 	for _, e := range candidates {
-		if err := publicationAtomicFile(s.publicationReceiptPath(e.Schema, e.Tags.ProviderID, e.Tags.SourceName, e.Tags.BatchID), []byte(strconv.FormatUint(e.Sequence, 10)+"\n")); err != nil {
+		if err := s.savePublicationReceipt(e); err != nil {
 			return err
 		}
 		if err := s.publicationStep("reclaim-receipt"); err != nil {

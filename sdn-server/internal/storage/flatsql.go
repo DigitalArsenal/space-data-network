@@ -169,6 +169,7 @@ type FlatSQLStore struct {
 	publicationTags          map[publicationTagKey]int
 	publicationPins          map[string]int
 	publicationSourceWater   map[string]uint64
+	publicationReceipts      map[[32]byte]uint64
 	publicationHighWater     uint64
 	publicationReclaimed     uint64
 	publicationReclaimSkips  uint64

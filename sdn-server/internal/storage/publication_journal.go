@@ -124,6 +124,15 @@ func (s *FlatSQLStore) ConfigurePublicationSources(sources []PublicationSource) 
 		}
 	}
 	for _, x := range merged {
+		if x.Schema == "OCM.fbs" {
+			paired := false
+			for _, c := range merged {
+				paired = paired || (c.Schema == "CAT.fbs" && c.Provider == x.Provider && c.ProductSource == x.Source)
+			}
+			if !paired {
+				return errors.New("retained OCM source requires its CAT index")
+			}
+		}
 		if x.ProductSource != "" {
 			found := false
 			for _, p := range merged {
@@ -331,6 +340,20 @@ func publicationRefusals(out []format4.Outcome) map[int]int32 {
 	return refused
 }
 func (s *FlatSQLStore) markPublicationApplied(e publicationEntry) error {
+	// Persist the engine outcome before opening or indexing the SDS stream.
+	rawOutcome, _ := json.Marshal(e.Refused)
+	if err := publicationAtomicFile(filepath.Join(s.publicationEntryDir(e.Sequence), "outcome"), rawOutcome); err != nil {
+		return err
+	}
+	s.publicationMu.Lock()
+	for i := range s.publicationEntries {
+		if s.publicationEntries[i].Sequence == e.Sequence {
+			s.publicationEntries[i].OutcomeKnown = true
+			s.publicationEntries[i].Refused = e.Refused
+		}
+	}
+	s.publicationMu.Unlock()
+
 	refs, err := s.publicationReferences(e)
 	if err != nil {
 		return err
@@ -493,7 +516,7 @@ func (s *FlatSQLStore) recoverPublicationJournal() error {
 			e.Applied = true
 			e.OutcomeKnown = true
 		} else if errors.Is(err, os.ErrNotExist) {
-			err = nil
+			err = s.loadPublicationOutcome(&e)
 		}
 		if err == nil {
 			e.Refs, err = s.publicationReferences(e)
@@ -819,8 +842,15 @@ func (s *FlatSQLStore) RetryPublicationRecovery() {
 		if err == nil {
 			err = json.Unmarshal(raw, &saved)
 		}
-		if err == nil && (saved.Sequence != e.Sequence || saved.Schema != e.Schema || saved.Tags != e.Tags) {
+		if err == nil && (saved.Sequence != e.Sequence || (e.Schema != "" && (saved.Schema != e.Schema || saved.Tags != e.Tags))) {
 			err = errors.New("publication entry scope mismatch")
+		}
+		if err == nil {
+			saved.Applied = e.Applied
+			saved.OutcomeKnown = e.OutcomeKnown
+			saved.Refused = e.Refused
+			e = saved
+			key = publicationSourceKey{e.Schema, e.Tags.ProviderID, e.Tags.SourceName}
 		}
 		// Only absence of the applied marker permits replay. An unreadable or
 		// corrupt marker never converts a completed engine write into an intent.
@@ -835,6 +865,8 @@ func (s *FlatSQLStore) RetryPublicationRecovery() {
 				err = markerErr
 			} else if e.Applied {
 				err = errors.New("applied publication marker disappeared")
+			} else {
+				err = s.loadPublicationOutcome(&e)
 			}
 		}
 		var records []DatasetExportRecord
@@ -870,11 +902,23 @@ func (s *FlatSQLStore) RetryPublicationRecovery() {
 		}
 	}
 	s.publicationMu.Lock()
-	for key := range resolved {
-		if !failed[key] {
+	// Unknown-scope recovery affects every configured source until the last
+	// unreadable entry is repaired. Recompute from all unresolved entries.
+	for key := range s.publicationFailures {
+		unresolved := false
+		for _, e := range s.publicationEntries {
+			if !e.Applied || !e.ReadReady {
+				if e.Schema == "" || key == (publicationSourceKey{e.Schema, e.Tags.ProviderID, e.Tags.SourceName}) {
+					unresolved = true
+					break
+				}
+			}
+		}
+		if !unresolved && !failed[key] {
 			delete(s.publicationFailures, key)
 		}
 	}
+	_ = resolved
 	s.publicationMu.Unlock()
 	s.publicationWriteMu.Unlock()
 	s.retryCatalogGenerationsLocked()

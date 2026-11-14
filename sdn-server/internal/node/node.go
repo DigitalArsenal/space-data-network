@@ -1601,7 +1601,7 @@ func (n *Node) buildNodeStatusMaterials() caps.NodeStatusMaterials {
 // module with node_status_read reads.
 func (n *Node) RuntimeStatusSnapshot() map[string]interface{} {
 	out := caps.NodeStatusSnapshot(n.buildNodeStatusMaterials())
-	if n.store != nil {
+	if n.store != nil && n.store.PublicationRetentionEnabled() {
 		out["publicationRetainedSources"] = n.store.PublicationRetainedSources()
 		out["publicationRecoveryErrors"] = n.store.PublicationRecoveryStatus()
 		out["publicationJournal"] = n.store.PublicationJournalStats()

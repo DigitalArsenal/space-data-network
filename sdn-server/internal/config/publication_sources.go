@@ -13,6 +13,9 @@ func (c *Config) validatePublicationSources() error {
 			return fmt.Errorf("catalog_object_limit must be between 1 and 100000, or zero for the default")
 		}
 		if rule.RetainForPublication || rule.PairedPublication || rule.CatalogProductSource != "" || rule.StopPublicationRetention || len(rule.RequeuePublicationBatches) > 0 || len(rule.DiscardPublicationBatches) > 0 {
+			if strings.TrimSpace(rule.Schema) == "" {
+				return fmt.Errorf("publication schema is required")
+			}
 			rule.Schema = strings.ToUpper(strings.TrimSuffix(strings.ToLower(strings.TrimSpace(rule.Schema)), ".fbs")) + ".fbs"
 		}
 	}

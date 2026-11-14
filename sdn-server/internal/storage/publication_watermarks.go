@@ -62,7 +62,7 @@ func (s *FlatSQLStore) loadPublicationWatermarks() error {
 func (s *FlatSQLStore) migratePublicationSourceSequences() error {
 	high := map[string]uint64{}
 	for i, e := range s.publicationEntries {
-		if e.Schema == "" {
+		if e.Schema == "" || !e.ReadReady {
 			continue
 		}
 		id := publicationSourceID(e.Schema, e.Tags.ProviderID, e.Tags.SourceName)

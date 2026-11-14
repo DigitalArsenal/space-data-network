@@ -162,3 +162,18 @@ func (s *FlatSQLStore) retryQuarantinedPublication(now time.Time) {
 		}
 	}
 }
+
+func (s *FlatSQLStore) loadPublicationOutcome(e *publicationEntry) error {
+	raw, err := os.ReadFile(filepath.Join(s.publicationEntryDir(e.Sequence), "outcome"))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if err = json.Unmarshal(raw, &e.Refused); err != nil {
+		return err
+	}
+	e.OutcomeKnown = true
+	return nil
+}

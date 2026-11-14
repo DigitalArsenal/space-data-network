@@ -184,8 +184,8 @@ func TestPublicationReclamationPinsAndCrash(t *testing.T) {
 			if len(dirs) > 0 {
 				t.Fatal("abandoned reclamation")
 			}
-			if _, err = os.Stat(s.publicationReceiptPath("CAT.fbs", "synthetic", "index", "day-00:complete")); err != nil {
-				t.Fatal("missing receipt", err)
+			if !s.publicationReceiptExists("CAT.fbs", "synthetic", "index", "day-00:complete") {
+				t.Fatal("missing receipt")
 			}
 		})
 	}
@@ -478,8 +478,8 @@ func TestPublicationReclamationMetadataRepair(t *testing.T) {
 	}
 	s = journalTestStore(t, dir)
 	defer s.Close()
-	if len(s.PublicationRecoveryStatus()) == 0 {
-		t.Fatal("invalid checkpoint not isolated")
+	if len(s.PublicationRecoveryStatus()) != 0 {
+		t.Fatal("derived checkpoint damage paused ingestion")
 	}
 	if err = os.WriteFile(file, saved, 0600); err != nil {
 		t.Fatal(err)
