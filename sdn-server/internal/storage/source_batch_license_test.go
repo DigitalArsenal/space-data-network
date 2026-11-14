@@ -350,7 +350,7 @@ func TestUnlicensedIngestRecordsNoLicenseRow(t *testing.T) {
 	if err := unmarshalPublication(indexBytes, &index); err != nil {
 		t.Fatalf("decode typed export index: %v", err)
 	}
-	if len(index.Records) != 1 || !reflect.DeepEqual(index.Records[0].SourceTags, tags) {
+	if len(index.Records) != 1 || !reflect.DeepEqual(index.Records[0].SourceTags, normalizeSourceTags(tags)) {
 		t.Fatal("unlicensed per-record provenance changed")
 	}
 	const (
