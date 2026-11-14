@@ -239,3 +239,19 @@ func TestPairedPublicationIndependentSourceClocks(t *testing.T) {
 		t.Fatal("second source did not publish")
 	}
 }
+
+func TestPairedPublicationRetentionOnSourceRule(t *testing.T) {
+	rules := pairedRules()
+	rules[1].PairedPublication = false
+	rules[1].RetainForPublication = true
+	p := NewAutoPublisher(newRecordingPublicationService(), rules)
+	if !p.isPairedSource("CAT.fbs", "synthetic-node", "catalog-index") {
+		t.Fatal("explicit source retention did not enable recovery")
+	}
+	p.seedSourcePublicationsLocked()
+	for _, state := range p.sources {
+		if !state.periodic || state.interval != 24*time.Hour {
+			t.Fatal("retained source lacks periodic snapshot")
+		}
+	}
+}
