@@ -164,5 +164,649 @@
       ]
     },
     "Typed": false
+  },
+  {
+    "Name": "flows/celestrak-ingest/dist/eop/plugin-manifest.json:timer_eop",
+    "MethodID": "timer_eop",
+    "Manifest": {
+      "Methods": [
+        {
+          "MethodID": "timer_eop",
+          "InputPorts": [
+            {
+              "PortID": "tick",
+              "AcceptedTypeSets": [
+                {
+                  "AllowedTypes": [
+                    {
+                      "SchemaName": "TimerTick.fbs",
+                      "FileIdentifier": "TICK",
+                      "RootType": "TimerTick"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "Typed": true
+  },
+  {
+    "Name": "flows/celestrak-ingest/dist/gp/plugin-manifest.json:timer_gp",
+    "MethodID": "timer_gp",
+    "Manifest": {
+      "Methods": [
+        {
+          "MethodID": "timer_gp",
+          "InputPorts": [
+            {
+              "PortID": "tick",
+              "AcceptedTypeSets": [
+                {
+                  "AllowedTypes": [
+                    {
+                      "SchemaName": "TimerTick.fbs",
+                      "FileIdentifier": "TICK",
+                      "RootType": "TimerTick"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "Typed": true
+  },
+  {
+    "Name": "flows/celestrak-ingest/dist/satcat/plugin-manifest.json:timer_satcat",
+    "MethodID": "timer_satcat",
+    "Manifest": {
+      "Methods": [
+        {
+          "MethodID": "timer_satcat",
+          "InputPorts": [
+            {
+              "PortID": "tick",
+              "AcceptedTypeSets": [
+                {
+                  "AllowedTypes": [
+                    {
+                      "SchemaName": "TimerTick.fbs",
+                      "FileIdentifier": "TICK",
+                      "RootType": "TimerTick"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "Typed": true
+  },
+  {
+    "Name": "flows/celestrak-ingest/dist/socrates/plugin-manifest.json:timer_socrates",
+    "MethodID": "timer_socrates",
+    "Manifest": {
+      "Methods": [
+        {
+          "MethodID": "timer_socrates",
+          "InputPorts": [
+            {
+              "PortID": "tick",
+              "AcceptedTypeSets": [
+                {
+                  "AllowedTypes": [
+                    {
+                      "SchemaName": "TimerTick.fbs",
+                      "FileIdentifier": "TICK",
+                      "RootType": "TimerTick"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "Typed": true
+  },
+  {
+    "Name": "flows/celestrak-ingest/dist/spw/plugin-manifest.json:timer_spw",
+    "MethodID": "timer_spw",
+    "Manifest": {
+      "Methods": [
+        {
+          "MethodID": "timer_spw",
+          "InputPorts": [
+            {
+              "PortID": "tick",
+              "AcceptedTypeSets": [
+                {
+                  "AllowedTypes": [
+                    {
+                      "SchemaName": "TimerTick.fbs",
+                      "FileIdentifier": "TICK",
+                      "RootType": "TimerTick"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "Typed": true
+  },
+  {
+    "Name": "flows/celestrak-reference/dist/gp-groups/plugin-manifest.json:timer_gp_groups",
+    "MethodID": "timer_gp_groups",
+    "Manifest": {
+      "Methods": [
+        {
+          "MethodID": "timer_gp_groups",
+          "InputPorts": [
+            {
+              "PortID": "tick",
+              "AcceptedTypeSets": [
+                {
+                  "AllowedTypes": [
+                    {
+                      "SchemaName": "TimerTick.fbs",
+                      "FileIdentifier": "TICK",
+                      "RootType": "TimerTick"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "Typed": true
+  },
+  {
+    "Name": "flows/celestrak-reference/dist/satcat-reference/plugin-manifest.json:timer_satcat_reference",
+    "MethodID": "timer_satcat_reference",
+    "Manifest": {
+      "Methods": [
+        {
+          "MethodID": "timer_satcat_reference",
+          "InputPorts": [
+            {
+              "PortID": "tick",
+              "AcceptedTypeSets": [
+                {
+                  "AllowedTypes": [
+                    {
+                      "SchemaName": "TimerTick.fbs",
+                      "FileIdentifier": "TICK",
+                      "RootType": "TimerTick"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "Typed": true
+  },
+  {
+    "Name": "flows/eop/dist/runtime/plugin-manifest.json:daily",
+    "MethodID": "daily",
+    "Manifest": {
+      "Methods": [
+        {
+          "MethodID": "daily",
+          "InputPorts": [
+            {
+              "PortID": "tick",
+              "AcceptedTypeSets": [
+                {
+                  "AllowedTypes": [
+                    {
+                      "SchemaName": "TimerTick.fbs",
+                      "FileIdentifier": "TICK",
+                      "RootType": "TimerTick"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "Typed": true
+  },
+  {
+    "Name": "flows/imager-observation-ingest/dist/plugin-manifest.json:timer_imager",
+    "MethodID": "timer_imager",
+    "Manifest": {
+      "Methods": [
+        {
+          "MethodID": "timer_imager",
+          "InputPorts": [
+            {
+              "PortID": "tick",
+              "AcceptedTypeSets": [
+                {
+                  "AllowedTypes": [
+                    {
+                      "SchemaName": "TimerTick.fbs",
+                      "FileIdentifier": "TICK",
+                      "RootType": "TimerTick"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "Typed": true
+  },
+  {
+    "Name": "flows/lvdb-source/dist/runtime/plugin-manifest.json:minute",
+    "MethodID": "minute",
+    "Manifest": {
+      "Methods": [
+        {
+          "MethodID": "minute",
+          "InputPorts": [
+            {
+              "PortID": "tick",
+              "AcceptedTypeSets": [
+                {
+                  "AllowedTypes": [
+                    {
+                      "SchemaName": "TimerTick.fbs",
+                      "FileIdentifier": "TICK",
+                      "RootType": "TimerTick"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "Typed": true
+  },
+  {
+    "Name": "flows/mlab-connectivity-ingest/dist/cnp/plugin-manifest.json:timer_mlab_connectivity",
+    "MethodID": "timer_mlab_connectivity",
+    "Manifest": {
+      "Methods": [
+        {
+          "MethodID": "timer_mlab_connectivity",
+          "InputPorts": [
+            {
+              "PortID": "tick",
+              "AcceptedTypeSets": [
+                {
+                  "AllowedTypes": [
+                    {
+                      "SchemaName": "TimerTick.fbs",
+                      "FileIdentifier": "TICK",
+                      "RootType": "TimerTick"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "Typed": true
+  },
+  {
+    "Name": "flows/nwp-field-ingest/dist/plugin-manifest.json:timer_nwp",
+    "MethodID": "timer_nwp",
+    "Manifest": {
+      "Methods": [
+        {
+          "MethodID": "timer_nwp",
+          "InputPorts": [
+            {
+              "PortID": "tick",
+              "AcceptedTypeSets": [
+                {
+                  "AllowedTypes": [
+                    {
+                      "SchemaName": "TimerTick.fbs",
+                      "FileIdentifier": "TICK",
+                      "RootType": "TimerTick"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "Typed": true
+  },
+  {
+    "Name": "flows/object-covariance/dist/runtime/plugin-manifest.json:refresh",
+    "MethodID": "refresh",
+    "Manifest": {
+      "Methods": [
+        {
+          "MethodID": "refresh",
+          "InputPorts": [
+            {
+              "PortID": "tick",
+              "AcceptedTypeSets": [
+                {
+                  "AllowedTypes": [
+                    {
+                      "SchemaName": "TimerTick.fbs",
+                      "FileIdentifier": "TICK",
+                      "RootType": "TimerTick"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "Typed": true
+  },
+  {
+    "Name": "flows/open-dca/dist/runtime/plugin-manifest.json:daily",
+    "MethodID": "daily",
+    "Manifest": {
+      "Methods": [
+        {
+          "MethodID": "daily",
+          "InputPorts": [
+            {
+              "PortID": "tick",
+              "AcceptedTypeSets": [
+                {
+                  "AllowedTypes": [
+                    {
+                      "SchemaName": "TimerTick.fbs",
+                      "FileIdentifier": "TICK",
+                      "RootType": "TimerTick"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "Typed": true
+  },
+  {
+    "Name": "flows/record-retention/dist/plugin-manifest.json:timer_retention",
+    "MethodID": "timer_retention",
+    "Manifest": {
+      "Methods": [
+        {
+          "MethodID": "timer_retention",
+          "InputPorts": [
+            {
+              "PortID": "tick",
+              "AcceptedTypeSets": [
+                {
+                  "AllowedTypes": [
+                    {
+                      "SchemaName": "TimerTick.fbs",
+                      "FileIdentifier": "TICK",
+                      "RootType": "TimerTick"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "Typed": true
+  },
+  {
+    "Name": "flows/satnogs-ingest/dist/rf/plugin-manifest.json:timer_satnogs_rf",
+    "MethodID": "timer_satnogs_rf",
+    "Manifest": {
+      "Methods": [
+        {
+          "MethodID": "timer_satnogs_rf",
+          "InputPorts": [
+            {
+              "PortID": "tick",
+              "AcceptedTypeSets": [
+                {
+                  "AllowedTypes": [
+                    {
+                      "SchemaName": "TimerTick.fbs",
+                      "FileIdentifier": "TICK",
+                      "RootType": "TimerTick"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "Typed": true
+  },
+  {
+    "Name": "flows/sigmf-captures-ingest/dist/iqc/plugin-manifest.json:timer_sigmf_captures",
+    "MethodID": "timer_sigmf_captures",
+    "Manifest": {
+      "Methods": [
+        {
+          "MethodID": "timer_sigmf_captures",
+          "InputPorts": [
+            {
+              "PortID": "tick",
+              "AcceptedTypeSets": [
+                {
+                  "AllowedTypes": [
+                    {
+                      "SchemaName": "TimerTick.fbs",
+                      "FileIdentifier": "TICK",
+                      "RootType": "TimerTick"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "Typed": true
+  },
+  {
+    "Name": "flows/space-weather/dist/runtime/plugin-manifest.json:hourly",
+    "MethodID": "hourly",
+    "Manifest": {
+      "Methods": [
+        {
+          "MethodID": "hourly",
+          "InputPorts": [
+            {
+              "PortID": "tick",
+              "AcceptedTypeSets": [
+                {
+                  "AllowedTypes": [
+                    {
+                      "SchemaName": "TimerTick.fbs",
+                      "FileIdentifier": "TICK",
+                      "RootType": "TimerTick"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "Typed": true
+  },
+  {
+    "Name": "flows/swpc-realtime/dist/runtime/plugin-manifest.json:minute",
+    "MethodID": "minute",
+    "Manifest": {
+      "Methods": [
+        {
+          "MethodID": "minute",
+          "InputPorts": [
+            {
+              "PortID": "tick",
+              "AcceptedTypeSets": [
+                {
+                  "AllowedTypes": [
+                    {
+                      "SchemaName": "TimerTick.fbs",
+                      "FileIdentifier": "TICK",
+                      "RootType": "TimerTick"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "Typed": true
+  },
+  {
+    "Name": "flows/terrain-ingest/dist/plugin-manifest.json:timer_terrain_ingest",
+    "MethodID": "timer_terrain_ingest",
+    "Manifest": {
+      "Methods": [
+        {
+          "MethodID": "timer_terrain_ingest",
+          "InputPorts": [
+            {
+              "PortID": "tick",
+              "AcceptedTypeSets": [
+                {
+                  "AllowedTypes": [
+                    {
+                      "SchemaName": "TimerTick.fbs",
+                      "FileIdentifier": "TICK",
+                      "RootType": "TimerTick"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "Typed": true
+  },
+  {
+    "Name": "flows/terrain-refresh/dist/plugin-manifest.json:terrain_refresh_watch",
+    "MethodID": "terrain_refresh_watch",
+    "Manifest": {
+      "Methods": [
+        {
+          "MethodID": "terrain_refresh_watch",
+          "InputPorts": [
+            {
+              "PortID": "tick",
+              "AcceptedTypeSets": [
+                {
+                  "AllowedTypes": [
+                    {
+                      "SchemaName": "TimerTick.fbs",
+                      "FileIdentifier": "TICK",
+                      "RootType": "TimerTick"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "Typed": true
+  },
+  {
+    "Name": "flows/weathernext-ingest/dist/clouds/plugin-manifest.json:timer_wx_clouds",
+    "MethodID": "timer_wx_clouds",
+    "Manifest": {
+      "Methods": [
+        {
+          "MethodID": "timer_wx_clouds",
+          "InputPorts": [
+            {
+              "PortID": "tick",
+              "AcceptedTypeSets": [
+                {
+                  "AllowedTypes": [
+                    {
+                      "SchemaName": "TimerTick.fbs",
+                      "FileIdentifier": "TICK",
+                      "RootType": "TimerTick"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "Typed": true
+  },
+  {
+    "Name": "flows/weathernext-ingest/dist/cyclones/plugin-manifest.json:timer_wx_cyclones",
+    "MethodID": "timer_wx_cyclones",
+    "Manifest": {
+      "Methods": [
+        {
+          "MethodID": "timer_wx_cyclones",
+          "InputPorts": [
+            {
+              "PortID": "tick",
+              "AcceptedTypeSets": [
+                {
+                  "AllowedTypes": [
+                    {
+                      "SchemaName": "TimerTick.fbs",
+                      "FileIdentifier": "TICK",
+                      "RootType": "TimerTick"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "Typed": true
   }
 ]
