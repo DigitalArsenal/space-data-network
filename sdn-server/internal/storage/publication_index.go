@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -70,7 +71,11 @@ func (s *FlatSQLStore) publicationReferences(e publicationEntry) ([]publicationR
 			return nil, err
 		}
 		if _, refused := e.Refused[ordinal]; !refused {
-			refs = append(refs, publicationRecordRef{CID: computeCID(data[4:]), FramedCID: computeCID(data), Identity: recordSupersedeKey(e.Schema, data[4:]), Path: path, Offset: offset + 4, Size: size, Tags: e.Tags})
+			identity, err := publicationIdentity(e.Schema, data[4:])
+			if err != nil {
+				return nil, err
+			}
+			refs = append(refs, publicationRecordRef{CID: computeCID(data[4:]), FramedCID: computeCID(data), Identity: identity, Path: path, Offset: offset + 4, Size: size, Tags: e.Tags})
 		}
 		if _, refused := e.Refused[ordinal]; !refused {
 			referenceBytes += publicationReferenceBytes(refs[len(refs)-1])
@@ -127,4 +132,13 @@ func publicationReferencesBytes(refs []publicationRecordRef) int64 {
 		n += publicationReferenceBytes(r)
 	}
 	return n
+}
+
+func publicationIdentity(schema string, data []byte) (identity string, err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("invalid publication identity fields: %v", recovered)
+		}
+	}()
+	return recordSupersedeKey(schema, data), nil
 }

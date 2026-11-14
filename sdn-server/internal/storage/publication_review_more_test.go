@@ -334,3 +334,24 @@ func TestPublicationReviewImmutableShard(t *testing.T) {
 		t.Fatal("corrupt existing immutable shard accepted")
 	}
 }
+
+func TestPublicationReviewCorruptTableDoesNotPanic(t *testing.T) {
+	s := &FlatSQLStore{basePath: t.TempDir()}
+	e := publicationEntry{Sequence: 1, Schema: "CAT.fbs"}
+	if err := os.MkdirAll(s.publicationEntryDir(1), 0700); err != nil {
+		t.Fatal(err)
+	}
+	data := sds.NewCATBuilder().WithNoradCatID(900001).Build()
+	frame := make([]byte, 4+len(data))
+	binary.LittleEndian.PutUint32(frame, uint32(len(data)))
+	copy(frame[4:], data)
+	sum := sha256.Sum256(frame)
+	e.Digest = hex.EncodeToString(sum[:])
+	binary.LittleEndian.PutUint32(frame[4:8], ^uint32(0))
+	if err := os.WriteFile(filepath.Join(s.publicationEntryDir(1), "records.sds"), frame, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.publicationReferences(e); err == nil {
+		t.Fatal("corrupt table accepted")
+	}
+}
