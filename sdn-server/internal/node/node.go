@@ -504,6 +504,8 @@ func (n *Node) init() error {
 		storeOpts := []storage.StoreOption{
 			storage.WithEngineHotWindow(n.config.Storage.EngineHotWindow),
 			storage.WithEngineGenericHotWindow(n.config.Storage.EngineGenericHotWindow),
+			storage.WithUnlimitedSQLVisibility(n.config.Storage.UnlimitedSQLVisibility),
+			storage.WithRowCacheBytes(n.config.Storage.RowCacheBytes),
 			storage.WithAuxiliaryReplayChunkBytes(n.config.Storage.AuxiliaryReplayChunkBytes),
 			storage.WithDeferredBootRebuilds(),
 		}

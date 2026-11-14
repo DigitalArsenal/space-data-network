@@ -14,7 +14,7 @@ type TypeSpec struct {
 	PageSize            uint32 // 8
 	Identity            bool   // 9
 	A18Bound            uint32 // 10
-	UnlimitedVisibility bool   // tag 10 is present with zero, after a capability check
+	UnlimitedVisibility bool   // tag 13: explicit opt-in, after a capability check
 	EpochProfile        uint8  // 11: 0 none, 1 OMM, 2 MPE
 	FullText            bool   // 12
 }
@@ -36,9 +36,7 @@ func (t TypeSpec) Encode() []byte {
 	if t.Identity {
 		out = tlvU8(out, 9, 1)
 	}
-	if t.UnlimitedVisibility {
-		out = tlvU32(out, 10, 0)
-	} else if t.A18Bound != 0 {
+	if t.A18Bound != 0 {
 		out = tlvU32(out, 10, t.A18Bound)
 	}
 	if t.EpochProfile != 0 {
@@ -47,6 +45,9 @@ func (t TypeSpec) Encode() []byte {
 	if t.FullText {
 		out = tlvU8(out, 12, 1)
 	}
+	if t.UnlimitedVisibility {
+		out = tlvU8(out, 13, 1)
+	}
 	return out
 }
 
@@ -54,7 +55,7 @@ func (t TypeSpec) Encode() []byte {
 // contract C-25) on format 4: 4 KiB pages and unlimited visibility, no
 // epoch profile, no identity, no full text.
 func CIDOnlyTypeSpec(typ string, fid [4]byte) TypeSpec {
-	return TypeSpec{TypeSpec: format2.CIDOnlyTypeSpec(typ, fid), PageSize: 4096, UnlimitedVisibility: true}
+	return TypeSpec{TypeSpec: format2.CIDOnlyTypeSpec(typ, fid), PageSize: 4096, A18Bound: a18BoundDefault}
 }
 
 // TypeSpecFor builds the registration of an embedded SDS standard: format
@@ -86,7 +87,10 @@ func TypeSpecFor(schemaName string) (TypeSpec, error) {
 // extraction rules. Changing an optional derived index must not remove the
 // schema, record verification, SQL relation, or provenance indexes.
 func typeStorageOptions(typ string) TypeSpec {
-	spec := TypeSpec{PageSize: 4096, UnlimitedVisibility: true, FullText: true}
+	spec := TypeSpec{PageSize: 4096, A18Bound: a18BoundDefault, FullText: true}
+	if typ == "OMM" || typ == "TBS" {
+		spec.A18Bound = a18BoundDecorated
+	}
 	switch typ {
 	case "WXF":
 		// Grid samples are numeric payloads. Reflecting every float into text
@@ -103,6 +107,11 @@ func typeStorageOptions(typ string) TypeSpec {
 	}
 	return spec
 }
+
+const (
+	a18BoundDefault uint32 = 10_000
+	a18BoundDecorated uint32 = 400_000
+)
 
 func tlvBytes(out []byte, tag uint16, v []byte) []byte {
 	out = binary.LittleEndian.AppendUint16(out, tag)

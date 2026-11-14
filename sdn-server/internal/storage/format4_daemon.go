@@ -324,6 +324,8 @@ func newFormat4Store(basePath string, validator *sds.Validator, cfg storeConfig)
 		return nil, fmt.Errorf("format 4: %w", err)
 	}
 	d.opt = format4.Options{
+		UnlimitedVisibility: cfg.unlimitedSQLVisibility,
+		Tuning: format4.Tuning{RowCacheBytes: cfg.rowCacheBytes},
 		DataRoot:      dataRoot,
 		Create:        mode,
 		GseqFloor:     1,
@@ -434,18 +436,6 @@ func newFormat4Store(basePath string, validator *sds.Validator, cfg storeConfig)
 	if err := d.registerTypes(validator); err != nil {
 		return fail(err)
 	}
-	// New readers load the persisted registration policy before serving SQL.
-	cctx, cancelReaders := context.WithTimeout(context.Background(), format4CloseDeadline)
-	closeErr := d.api().Close(cctx)
-	cancelReaders()
-	if closeErr != nil {
-		return fail(fmt.Errorf("format 4: restart readers: %w", closeErr))
-	}
-	reopened, err := format4OpenEngine(d.ctx, d.opt)
-	if err != nil {
-		return fail(fmt.Errorf("format 4: reopen after registration: %w", err))
-	}
-	d.engine.Store(&format4Engine{reopened})
 	if cfg.quotaBytes > 0 {
 		if err := d.api().SetQuota(cfg.quotaBytes); err != nil {
 			return fail(fmt.Errorf("format 4: set the quota: %w", err))
@@ -515,7 +505,9 @@ func Format4TypeSpec(schema string, ident func(schema string) (string, bool)) (f
 
 // format4TypeSpec is Format4TypeSpec with the daemon's validator.
 func (d *format4Daemon) format4TypeSpec(schema string) (format4.TypeSpec, error) {
-	return Format4TypeSpec(schema, d.ident)
+	spec, err := Format4TypeSpec(schema, d.ident)
+	spec.UnlimitedVisibility = d.opt.UnlimitedVisibility
+	return spec, err
 }
 
 // registerTypes registers every standard the validator embeds (§5.5 step 7).
@@ -529,7 +521,7 @@ func (d *format4Daemon) registerTypes(validator *sds.Validator) error {
 			continue
 		}
 		if err := d.ensureType(schema); err != nil {
-			if errors.Is(err, format4.ErrUnlimitedRelationsUnsupported) {
+			if d.opt.UnlimitedVisibility || errors.Is(err, format4.ErrUnlimitedRelationsUnsupported) {
 				return fmt.Errorf("format 4: %s is not registered: %w", schema, err)
 			}
 			log.Warnf("format 4: %s is not registered: %v", schema, err)

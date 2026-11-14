@@ -42,6 +42,7 @@ var slowOperationThreshold = func() time.Duration {
 
 // Options opens a format-4 engine.
 type Options struct {
+	UnlimitedVisibility bool
 	DataRoot      string // <data>; the engine root is <data>/fsql4
 	Create        CreateMode
 	GseqFloor     uint64 // CreateFresh / CreateForMigration
