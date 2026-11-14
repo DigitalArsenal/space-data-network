@@ -256,3 +256,16 @@ func SegmentPage(f QRPFields, segs []Segment) []byte {
 	f.Columns, f.Rows = SegmentColumns, SegmentRows(segs)
 	return BuildQRP(f)
 }
+
+// PublicationSegmentPage adds a direct content address for the signed PNM.
+// Keep this listing-only column outside SegmentColumns: feed-head signatures
+// cover the existing canonical SegmentPage bytes.
+func PublicationSegmentPage(f QRPFields, segs []Segment) []byte {
+	f.Kind, f.Status = QRPKindPage, QRPStatusOk
+	f.Columns = append(append([]QRPColumnField(nil), SegmentColumns...), QRPColumnField{Name: "ANNOUNCEMENT_CID", Type: colString})
+	f.Rows = SegmentRows(segs)
+	for i := range segs {
+		f.Rows[i] = append(f.Rows[i], TextCell(segs[i].PNMCID))
+	}
+	return BuildQRP(f)
+}
