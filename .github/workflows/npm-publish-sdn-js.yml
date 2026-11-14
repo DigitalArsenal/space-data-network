@@ -45,7 +45,35 @@ jobs:
           cache: 'npm'
           cache-dependency-path: sdn-js/package-lock.json
 
+      # EVERY SDN release fires this workflow, and an SDN release does not
+      # change sdn-js's version — so npm is asked to publish a version it
+      # already has and answers 403. That has failed on every release since at
+      # least v1.0.4-beta.18 (2026-09-04); the last genuine publish was
+      # sdn-js 3.0.0 in August. A job that is red on every release is one
+      # people stop reading, which is the opposite of what a publish gate is
+      # for. Ask npm first, and skip with a reason instead of failing.
+      #
+      # FIRST, before install, test and build: the v1.1.0 release (run
+      # 43642811010) asked to publish sdn-js 4.0.0, which npm already has, and
+      # still failed, at the test step, on a suite that main's CI also fails.
+      # A version that will not be published has nothing to gate. A new
+      # version, or a dry run, still runs every step below.
+      - name: Is this version already on npm?
+        id: published
+        working-directory: sdn-js
+        run: |
+          name=$(node -p "require('./package.json').name")
+          version=$(node -p "require('./package.json').version")
+          if npm view "${name}@${version}" version >/dev/null 2>&1; then
+            echo "already=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::${name}@${version} is already on npm — nothing to publish. Bump sdn-js's version to publish a new one."
+          else
+            echo "already=false" >> "$GITHUB_OUTPUT"
+            echo "${name}@${version} is not on npm yet; publishing."
+          fi
+
       - name: Install dependencies
+        if: ${{ steps.published.outputs.already == 'false' || (github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
         working-directory: sdn-js
         run: npm ci
 
@@ -56,6 +84,7 @@ jobs:
       # same suite on pushes to main; running it here is what makes the ARTIFACT
       # gated rather than the branch.
       - name: Test
+        if: ${{ steps.published.outputs.already == 'false' || (github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
         working-directory: sdn-js
         run: npm test
 
@@ -64,13 +93,16 @@ jobs:
       # copy of each package on the critical path. This is the last point before
       # the tree reaches every consumer of the package.
       - name: Verify helia/libp2p dependency layering
+        if: ${{ steps.published.outputs.already == 'false' || (github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
         run: node scripts/check-sdn-js-dependency-layering.mjs
 
       - name: Build
+        if: ${{ steps.published.outputs.already == 'false' || (github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
         working-directory: sdn-js
         run: npm run build:package
 
       - name: Verify package contents
+        if: ${{ steps.published.outputs.already == 'false' || (github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
         working-directory: sdn-js
         run: |
           echo "=== Package contents ==="
@@ -106,27 +138,6 @@ jobs:
                 echo "tag=latest" >> $GITHUB_OUTPUT
                 ;;
             esac
-          fi
-
-      # EVERY SDN release fires this workflow, and an SDN release does not
-      # change sdn-js's version — so npm is asked to publish a version it
-      # already has and answers 403. That has failed on every release since at
-      # least v1.0.4-beta.18 (2026-09-04); the last genuine publish was
-      # sdn-js 3.0.0 in August. A job that is red on every release is one
-      # people stop reading, which is the opposite of what a publish gate is
-      # for. Ask npm first, and skip with a reason instead of failing.
-      - name: Is this version already on npm?
-        id: published
-        working-directory: sdn-js
-        run: |
-          name=$(node -p "require('./package.json').name")
-          version=$(node -p "require('./package.json').version")
-          if npm view "${name}@${version}" version >/dev/null 2>&1; then
-            echo "already=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::${name}@${version} is already on npm — nothing to publish. Bump sdn-js's version to publish a new one."
-          else
-            echo "already=false" >> "$GITHUB_OUTPUT"
-            echo "${name}@${version} is not on npm yet; publishing."
           fi
 
       - name: Publish to npm
