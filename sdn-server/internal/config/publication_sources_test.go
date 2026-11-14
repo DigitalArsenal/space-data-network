@@ -72,3 +72,14 @@ func TestPublicationSourceSchemaCaseAndActions(t *testing.T) {
 		t.Fatal("conflicting actions accepted")
 	}
 }
+
+func TestPublicationSourceMixedCaseBatchRule(t *testing.T) {
+	t.Setenv("SDN_STORE_FORMAT", "4")
+	c := Default()
+	c.Publishing.Enabled = true
+	c.Publishing.Retention.KeepSeries = 0
+	c.Publishing.AutoPublish = []AutoPublishLane{{Schema: "cat.FBS", ProviderID: "synthetic", SourceName: "index"}, {Schema: "CAT", ProviderID: "synthetic", SourceName: "index", PublishScope: "source", RetainForPublication: true}}
+	if err := c.validatePublicationSources(); err != nil {
+		t.Fatal(err)
+	}
+}

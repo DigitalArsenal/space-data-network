@@ -15,7 +15,7 @@ func (c *Config) validatePublicationSources() error {
 	}
 	retained := map[string]bool{}
 	key := func(schema, provider, source string) string {
-		return strings.TrimSuffix(strings.TrimSpace(schema), ".fbs") + "/" + strings.TrimSpace(provider) + "/" + strings.TrimSpace(source)
+		return strings.ToUpper(strings.TrimSuffix(strings.ToLower(strings.TrimSpace(schema)), ".fbs")) + "/" + strings.TrimSpace(provider) + "/" + strings.TrimSpace(source)
 	}
 	for _, rule := range c.Publishing.AutoPublish {
 		if rule.RetainForPublication {
@@ -56,7 +56,7 @@ func (c *Config) validatePublicationSources() error {
 		if rule.RetainForPublication {
 			batch := false
 			for _, candidate := range c.Publishing.AutoPublish {
-				if strings.ToLower(strings.TrimSpace(candidate.PublishScope)) == "source" || strings.TrimSuffix(strings.TrimSpace(candidate.Schema), ".fbs") != schema {
+				if strings.ToLower(strings.TrimSpace(candidate.PublishScope)) == "source" || strings.ToUpper(strings.TrimSuffix(strings.ToLower(strings.TrimSpace(candidate.Schema)), ".fbs")) != schema {
 					continue
 				}
 				provider, source := strings.TrimSpace(candidate.ProviderID), strings.TrimSpace(candidate.SourceName)
