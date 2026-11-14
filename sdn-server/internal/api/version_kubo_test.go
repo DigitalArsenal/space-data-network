@@ -34,3 +34,29 @@ func TestVersionCarriesKubo(t *testing.T) {
 		t.Errorf("missing suite/standards: %v", body)
 	}
 }
+
+// A release build names its tag so the admin UI can link the release notes; a
+// development build carries no release_tag at all.
+func TestVersionReleaseTag(t *testing.T) {
+	get := func() map[string]string {
+		h := &CoreAPIHandler{}
+		rec := httptest.NewRecorder()
+		h.handleVersion(rec, httptest.NewRequest(http.MethodGet, "/api/v1/version", nil))
+		var body map[string]string
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("json: %v", err)
+		}
+		return body
+	}
+	prev := versioninfo.ReleaseTag
+	defer func() { versioninfo.ReleaseTag = prev }()
+
+	versioninfo.ReleaseTag = ""
+	if tag, ok := get()["release_tag"]; ok {
+		t.Errorf("development build reported release_tag %q", tag)
+	}
+	versioninfo.ReleaseTag = "v1.2.3"
+	if tag := get()["release_tag"]; tag != "v1.2.3" {
+		t.Errorf("release_tag = %q, want v1.2.3", tag)
+	}
+}
