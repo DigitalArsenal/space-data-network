@@ -5162,6 +5162,13 @@ func (m *mdnsNotifee) HandlePeerFound(pi peer.AddrInfo) {
 func (n *Node) runMDNS() {
 	defer n.wg.Done()
 
+	// `peers.enable_mdns: false` means this node neither announces itself
+	// on the local network nor dials what it hears there.
+	if n.config != nil && !n.config.Peers.EnableMDNS {
+		log.Infof("mDNS discovery is off (peers.enable_mdns: false)")
+		return
+	}
+
 	notifee := &mdnsNotifee{
 		node: n,
 	}
