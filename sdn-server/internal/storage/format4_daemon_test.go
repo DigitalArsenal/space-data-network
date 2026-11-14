@@ -132,6 +132,68 @@ func TestFormat4UnlimitedVisibilityOptIn(t *testing.T) {
 	})
 }
 
+// Registration and SQL only: this test creates no identities or signing keys.
+func TestFormat4AllSchemasSQLIsolation(t *testing.T) {
+	ctx := context.Background()
+	v, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, err := format4.Open(ctx, format4.Options{DataRoot: t.TempDir(), Create: format4.CreateFresh,
+		Wasm: format4TestWasm(t), CompileOnMiss: true, AOTCacheDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e.Close(ctx)
+	var specs []format4.TypeSpec
+	for _, schema := range v.Schemas() {
+		if id, ok := v.FileIdentifier(schema); ok && (id == "$FMB" || id == "$FCK" || id == "$FSG") {
+			continue
+		}
+		if _, err := sds.SchemaNameToTable(schema); err != nil {
+			continue
+		}
+		spec, err := Format4TypeSpec(schema, v.FileIdentifier)
+		if err != nil {
+			t.Fatal(err)
+		}
+		spec.UnlimitedVisibility = true
+		if err := e.ValidateType(spec); err != nil {
+			t.Fatalf("preflight %s: %v", schema, err)
+		}
+		specs = append(specs, spec)
+	}
+	if _, err := e.SQL(ctx, format4.SQLRequest{SQL: "SELECT 1"}, func([]byte) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	for _, spec := range specs {
+		if err := e.RegisterType(spec); err != nil {
+			t.Fatal(err)
+		}
+	}
+	opaque := 0
+	for _, spec := range specs {
+		for _, sandbox := range []bool{false, true} {
+			for _, projection := range []string{"COUNT(*)", "COUNT(_cid)", "_cid", "_data", "*"} {
+				_, err := e.SQL(ctx, format4.SQLRequest{SQL: "SELECT " + projection + " FROM " + spec.TypeName(), Sandbox: sandbox}, func([]byte) error { return nil })
+				if len(spec.BFBS) == 0 && (err == nil || !strings.Contains(err.Error(), "no such table")) {
+					t.Fatalf("opaque %s exposed: %v", spec.TypeName(), err)
+				}
+				if err != nil && !strings.Contains(err.Error(), "no such table") {
+					t.Fatalf("schema %s prevented SQL: %v", spec.TypeName(), err)
+				}
+			}
+		}
+		if len(spec.BFBS) == 0 {
+			opaque++
+		}
+	}
+	if opaque == 0 {
+		t.Fatal("no sealed or opaque registration covered")
+	}
+	t.Logf("registered schemas=%d opaque=%d; trusted and sandbox SQL checked", len(specs), opaque)
+}
+
 func TestFormat4MissingCapabilityLeavesNoStore(t *testing.T) {
 	format4TestWasm(t) // require the native runtime, but probe the shipped bytes
 	prev := format4OpenEngine
