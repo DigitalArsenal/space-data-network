@@ -184,17 +184,10 @@ func (b format4Backend) putRetained(op, schema string, records [][]byte, peer st
 	if len(s.publicationEntries) >= maxPublicationEntries {
 		return nil, nil, errors.New("publication journal capacity reached; complete and retire retained history before ingestion")
 	}
-	pending := map[string]bool{}
-	indexed := 0
-	var referenceBytes int64
-	for _, old := range s.publicationEntries {
-		indexed += len(old.Refs)
-		referenceBytes += old.ReferenceBytes
-		if !old.Published && old.BatchFailure.Attempts < 3 && old.GenerationFailure.Attempts < 3 && old.Schema == schema && old.Tags.ProviderID == tags.ProviderID && old.Tags.SourceName == tags.SourceName {
-			pending[old.Tags.BatchID] = true
-		}
-	}
-	if !pending[tags.BatchID] && len(pending) >= 4096 {
+	pending := s.publicationPendingCounts[publicationSourceKey{schema, tags.ProviderID, tags.SourceName}]
+	indexed := s.publicationRecordCount
+	referenceBytes := s.publicationReferenceCountBytes
+	if pending[tags.BatchID] == 0 && len(pending) >= 4096 {
 		return nil, nil, errors.New("retained publication backlog exceeds 4096 batches; stop ingestion and complete publication")
 	}
 	if indexed+len(records) > s.publicationRecordLimit() {
@@ -588,6 +581,10 @@ func (s *FlatSQLStore) recoverPublicationJournal() error {
 		return err
 	}
 	s.publicationTags = map[publicationTagKey]int{}
+	s.publicationRecordCount = 0
+	s.publicationReferenceCountBytes = 0
+	s.publicationPayloadCountBytes = 0
+	s.publicationPendingCounts = nil
 	for _, e := range s.publicationEntries {
 		s.indexPublicationTags(e, 1)
 	}
@@ -946,6 +943,7 @@ func (s *FlatSQLStore) CompletePublication(p *PublicationSelection) error {
 				return err
 			}
 			s.publicationMu.Lock()
+			s.accountPublicationPending(s.publicationEntries[i], -1)
 			s.publicationEntries[i].Published = true
 			s.publicationMu.Unlock()
 		}

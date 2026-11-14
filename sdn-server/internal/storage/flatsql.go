@@ -157,27 +157,31 @@ func EngineAOTCacheDir() string { return engineAOTCacheDir() }
 // bounded hot-window CACHE of the routed standards over the same records,
 // tracked by a durable residency ledger (engine_residency.go).
 type FlatSQLStore struct {
-	publicationSourceKeys    atomic.Pointer[map[publicationSourceKey]bool]
-	publicationEnabled       atomic.Bool
-	publicationGroupMu       sync.Mutex
-	publicationGroups        map[publicationGroupKey]*publicationWriteGroup
-	publicationWriteMu       sync.Mutex
-	publicationMu            sync.Mutex
-	publicationSources       []PublicationSource
-	publicationEntries       []publicationEntry
-	publicationRelease       func()
-	publicationTags          map[publicationTagKey]int
-	publicationPins          map[string]int
-	publicationSourceWater   map[string]uint64
-	publicationReceipts      map[[32]byte]uint64
-	publicationHighWater     uint64
-	publicationReclaimed     uint64
-	publicationReclaimSkips  uint64
-	publicationReclaimReason string
-	publicationGlobalFailure error
-	publicationFailures      map[publicationSourceKey]error
-	publicationFault         func(string) error // storage fault injection in tests
-	publicationHook          func(string)       // process-failure tests
+	publicationSourceKeys          atomic.Pointer[map[publicationSourceKey]bool]
+	publicationEnabled             atomic.Bool
+	publicationGroupMu             sync.Mutex
+	publicationGroups              map[publicationGroupKey]*publicationWriteGroup
+	publicationWriteMu             sync.Mutex
+	publicationMu                  sync.Mutex
+	publicationSources             []PublicationSource
+	publicationEntries             []publicationEntry
+	publicationRelease             func()
+	publicationTags                map[publicationTagKey]int
+	publicationPins                map[string]int
+	publicationSourceWater         map[string]uint64
+	publicationReceipts            map[[32]byte]uint64
+	publicationRecordCount         int
+	publicationReferenceCountBytes int64
+	publicationPayloadCountBytes   int64
+	publicationPendingCounts       map[publicationSourceKey]map[string]int
+	publicationHighWater           uint64
+	publicationReclaimed           uint64
+	publicationReclaimSkips        uint64
+	publicationReclaimReason       string
+	publicationGlobalFailure       error
+	publicationFailures            map[publicationSourceKey]error
+	publicationFault               func(string) error // storage fault injection in tests
+	publicationHook                func(string)       // process-failure tests
 
 	scanGenerationMu       sync.Mutex // guards scanGeneration (scan_generation.go)
 	scanGeneration         []byte

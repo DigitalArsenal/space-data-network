@@ -25,13 +25,9 @@ func (s *FlatSQLStore) PublicationJournalStats() PublicationJournalStats {
 	s.publicationMu.Lock()
 	defer s.publicationMu.Unlock()
 	out := PublicationJournalStats{Entries: len(s.publicationEntries), Reclaimed: s.publicationReclaimed, Skipped: s.publicationReclaimSkips, LastSkip: s.publicationReclaimReason}
-	for _, e := range s.publicationEntries {
-		out.Records += len(e.Refs)
-		out.ReferenceBytes += e.ReferenceBytes
-		for _, r := range e.Refs {
-			out.PayloadBytes += int64(r.Size) + 4
-		}
-	}
+	out.Records = s.publicationRecordCount
+	out.ReferenceBytes = s.publicationReferenceCountBytes
+	out.PayloadBytes = s.publicationPayloadCountBytes
 	for _, n := range s.publicationPins {
 		out.Pins += n
 	}

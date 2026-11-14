@@ -47,7 +47,9 @@ func (s *FlatSQLStore) recordGenerationFailure(e publicationEntry, cause error) 
 			if err := publicationAtomicFile(filepath.Join(s.publicationEntryDir(e.Sequence), "generation-failure.json"), raw); err != nil {
 				return err
 			}
+			s.accountPublicationPending(s.publicationEntries[i], -1)
 			s.publicationEntries[i].GenerationFailure = f
+			s.accountPublicationPending(s.publicationEntries[i], 1)
 			if f.Attempts >= 3 {
 				log.Warnf("catalog generation quarantined after three attempts: %v", cause)
 			}
@@ -82,7 +84,9 @@ func (s *FlatSQLStore) RecordPublicationFailure(schema, provider, source, batch 
 			if err := publicationAtomicFile(filepath.Join(s.publicationEntryDir(e.Sequence), "batch-failure.json"), raw); err != nil {
 				return false, err
 			}
+			s.accountPublicationPending(s.publicationEntries[i], -1)
 			s.publicationEntries[i].BatchFailure = f
+			s.accountPublicationPending(s.publicationEntries[i], 1)
 			found = true
 		}
 	}
@@ -112,6 +116,7 @@ func (s *FlatSQLStore) ManagePublicationBatch(schema, provider, source, batch, a
 		if !e.Applied && action == "discard" {
 			return errors.New("unapplied batch cannot be discarded")
 		}
+		s.accountPublicationPending(s.publicationEntries[i], -1)
 		if action == "discard" {
 			if err := publicationAtomicFile(filepath.Join(s.publicationEntryDir(e.Sequence), "published"), []byte("1\n")); err != nil {
 				return err
@@ -130,6 +135,7 @@ func (s *FlatSQLStore) ManagePublicationBatch(schema, provider, source, batch, a
 			s.publicationEntries[i].GenerationFailure = publicationFailure{}
 		}
 		s.publicationEntries[i].BatchFailure = publicationFailure{}
+		s.accountPublicationPending(s.publicationEntries[i], 1)
 	}
 	return nil
 }

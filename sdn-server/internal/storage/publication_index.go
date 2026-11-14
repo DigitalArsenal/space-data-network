@@ -224,6 +224,7 @@ func publicationTagIdentity(schema, cid string, tags SourceTags) publicationTagK
 }
 
 func (s *FlatSQLStore) indexPublicationTags(e publicationEntry, delta int) {
+	s.accountPublicationEntry(e, delta)
 	if !e.Applied {
 		return
 	}
