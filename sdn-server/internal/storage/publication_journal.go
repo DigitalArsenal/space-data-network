@@ -122,6 +122,7 @@ func (s *FlatSQLStore) ConfigurePublicationSources(sources []PublicationSource) 
 		return err
 	}
 	s.publicationSources = merged
+	s.publishSourceKeys()
 	s.publicationEnabled.Store(true)
 	return nil
 }
@@ -280,6 +281,7 @@ func (s *FlatSQLStore) recoverPublicationJournal() error {
 			}
 		}
 	}
+	s.publishSourceKeys()
 	s.publicationEnabled.Store(len(s.publicationSources) > 0)
 	return nil
 }
@@ -434,4 +436,18 @@ func (s *FlatSQLStore) retainedSelectionLocked(schema, provider, source, batch s
 	}
 	sort.Slice(p.records, func(i, j int) bool { return p.records[i].CID < p.records[j].CID })
 	return p, nil
+}
+
+type publicationSourceKey struct{ schema, provider, source string }
+
+func (s *FlatSQLStore) publishSourceKeys() {
+	keys := map[publicationSourceKey]bool{}
+	for _, x := range s.publicationSources {
+		keys[publicationSourceKey{x.Schema, x.Provider, x.Source}] = true
+	}
+	s.publicationSourceKeys.Store(&keys)
+}
+func (s *FlatSQLStore) publicationSourceEnabled(schema, provider, source string) bool {
+	keys := s.publicationSourceKeys.Load()
+	return keys != nil && (*keys)[publicationSourceKey{schema, provider, source}]
 }

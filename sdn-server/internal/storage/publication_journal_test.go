@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -169,5 +170,25 @@ func TestPublicationJournalChecksumAndActivation(t *testing.T) {
 	}
 	if _, err = s.SelectPublication("CAT.fbs", "synthetic", "retained", "one"); err == nil {
 		t.Fatal("corrupt journal bytes accepted")
+	}
+}
+
+func TestPublicationJournalFailureIsSourceScoped(t *testing.T) {
+	t.Setenv("SDN_STORE_FORMAT", "4")
+	s := journalTestStore(t, t.TempDir())
+	defer s.Close()
+	if err := s.ConfigurePublicationSources([]PublicationSource{{Schema: "CAT.fbs", Provider: "synthetic", Source: "retained"}}); err != nil {
+		t.Fatal(err)
+	}
+	s.publicationMu.Lock()
+	s.publicationFailure = errors.New("synthetic retained-write failure")
+	s.publicationMu.Unlock()
+	journalTestPut(t, s, "ordinary")
+	raw := sds.NewCATBuilder().WithNoradCatID(900004).WithObjectName("synthetic-blocked").Build()
+	if _, err := s.StoreWithSourceTags("CAT.fbs", raw, "synthetic", nil, SourceTags{ProviderID: "synthetic", SourceName: "retained", BatchID: "blocked"}); err == nil {
+		t.Fatal("interrupted retained write did not block")
+	}
+	if _, err := s.ExportDatasetWindow(t.TempDir(), IndexedRecordQuery{SchemaName: "CAT.fbs", ProviderID: "synthetic", SourceName: "index", BatchID: "ordinary"}); err != nil {
+		t.Fatal("ordinary source affected by retention failure", err)
 	}
 }

@@ -108,7 +108,7 @@ func (s *FlatSQLStore) SelectPublication(schema, provider, source, batch string)
 	provider = strings.TrimSpace(provider)
 	source = strings.TrimSpace(source)
 	batch = strings.TrimSpace(batch)
-	if !s.publicationEnabled.Load() {
+	if !s.publicationEnabled.Load() || !s.publicationSourceEnabled(schema, provider, source) {
 		return nil, nil
 	}
 	s.publicationMu.Lock()

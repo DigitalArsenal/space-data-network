@@ -102,13 +102,13 @@ func (b format4Backend) f4Put(op, schemaName string, records [][]byte, peerID st
 		normalized := normalizeSourceTags(*tags)
 		tags = &normalized
 	}
+	if !b.s.publicationSourceEnabled(schemaName, tags.ProviderID, tags.SourceName) || len(records) == 0 {
+		return b.f4PutDirect(op, schemaName, records, peerID, signature, tags, opt)
+	}
 	b.s.publicationMu.Lock()
 	defer b.s.publicationMu.Unlock()
 	if b.s.publicationFailure != nil {
 		return nil, nil, b.s.publicationFailure
-	}
-	if tags == nil || !b.s.retainsPublication(schemaName, tags.ProviderID, tags.SourceName) || len(records) == 0 {
-		return b.f4PutDirect(op, schemaName, records, peerID, signature, tags, opt)
 	}
 	return b.putRetained(op, schemaName, records, peerID, signature, *tags, opt)
 }
@@ -354,9 +354,7 @@ func (b format4Backend) UpsertSourceTags(schemaName, cid string, tags SourceTags
 		return err
 	}
 	if b.s.publicationEnabled.Load() {
-		b.s.publicationMu.Lock()
-		retained := b.s.retainsPublication(schemaName, tags.ProviderID, tags.SourceName)
-		b.s.publicationMu.Unlock()
+		retained := b.s.publicationSourceEnabled(schemaName, tags.ProviderID, tags.SourceName)
 		if retained {
 			r, err := b.s.GetRecord(schemaName, cid)
 			if err != nil {
