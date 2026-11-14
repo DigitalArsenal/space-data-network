@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/ipfs/go-cid"
 	"io"
 	"os"
 	"path/filepath"
@@ -22,9 +23,11 @@ const maxPublicationReferenceBytes int64 = 128 << 20
 
 // References contain immutable file offsets; exported payload memory is one record.
 type publicationRefFile struct {
-	Path       string
-	Tags       SourceTags
-	Identities []string
+	Path          string
+	Tags          SourceTags
+	Identities    []string
+	Products      [][32]byte
+	ProductsError error
 }
 type publicationRecordRef struct {
 	Digest, FramedDigest [32]byte
@@ -116,6 +119,29 @@ func (s *FlatSQLStore) publicationReferences(e publicationEntry) ([]publicationR
 				return nil, err
 			}
 			refs = append(refs, newPublicationReference(metadata, data[4:], offset+4, identity))
+			if e.Schema == "CAT.fbs" {
+				cat, parseErr := parseCAT(data[4:])
+				if parseErr != nil {
+					metadata.ProductsError = parseErr
+				} else {
+					for i := 0; i < cat.PRODUCTSLength(); i++ {
+						id, err := catalogProductCID(cat, i)
+						if err != nil {
+							metadata.ProductsError = err
+							continue
+						}
+						c, err := cid.Decode(id)
+						if err != nil || len(c.Hash()) != 34 {
+							metadata.ProductsError = errors.New("invalid catalog product identifier")
+							continue
+						}
+						var digest [32]byte
+						copy(digest[:], c.Hash()[2:])
+						metadata.Products = append(metadata.Products, digest)
+					}
+				}
+			}
+
 		}
 		if _, refused := e.Refused[ordinal]; !refused {
 			referenceBytes += publicationReferenceBytes(refs[len(refs)-1])
@@ -168,7 +194,7 @@ func publicationReferencesBytes(refs []publicationRecordRef) int64 {
 	}
 	if len(refs) > 0 {
 		f := refs[0].file
-		n += int64(unsafe.Sizeof(*f)+uintptr(cap(f.Identities))*unsafe.Sizeof("")) + int64(len(f.Path)) + publicationSourceTagsBytes(f.Tags)
+		n += int64(unsafe.Sizeof(*f)+uintptr(cap(f.Identities))*unsafe.Sizeof("")) + int64(len(f.Path)) + publicationSourceTagsBytes(f.Tags) + int64(cap(f.Products))*32
 	}
 	return n
 }

@@ -170,6 +170,8 @@ type FlatSQLStore struct {
 	publicationPins          map[string]int
 	publicationHighWater     uint64
 	publicationReclaimed     uint64
+	publicationReclaimSkips  uint64
+	publicationReclaimReason string
 	publicationGlobalFailure error
 	publicationFailures      map[publicationSourceKey]error
 	publicationFault         func(string) error // storage fault injection in tests
