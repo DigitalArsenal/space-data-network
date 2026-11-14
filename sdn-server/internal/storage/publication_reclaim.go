@@ -43,7 +43,7 @@ func (s *FlatSQLStore) pinPublicationEntriesLocked(entries []publicationEntry) f
 	paths := map[string]bool{}
 	for _, e := range entries {
 		for _, r := range e.Refs {
-			paths[r.Path] = true
+			paths[r.Path()] = true
 		}
 	}
 	for path := range paths {
@@ -131,7 +131,7 @@ func (s *FlatSQLStore) reclaimPublicationLocked() error {
 	keep := map[string]bool{}
 	add := func(p *PublicationSelection) {
 		for _, r := range p.refs {
-			keep[r.Path] = true
+			keep[r.Path()] = true
 		}
 	}
 	for _, x := range v.publicationSources {
@@ -150,7 +150,7 @@ func (s *FlatSQLStore) reclaimPublicationLocked() error {
 				for _, e := range v.publicationEntries {
 					if e.Schema == "OCM.fbs" && e.Tags.ProviderID == x.Provider && e.Tags.SourceName == x.ProductSource && e.Sequence > cutoff {
 						for _, r := range e.Refs {
-							keep[r.Path] = true
+							keep[r.Path()] = true
 						}
 					}
 				}
@@ -187,7 +187,7 @@ func (s *FlatSQLStore) reclaimPublicationLocked() error {
 			continue
 		}
 		for _, r := range e.Refs {
-			if !e.Published || keep[r.Path] {
+			if !e.Published || keep[r.Path()] {
 				data, err := r.read()
 				if err != nil {
 					return err
@@ -209,8 +209,8 @@ func (s *FlatSQLStore) reclaimPublicationLocked() error {
 	for _, e := range v.publicationEntries {
 		if e.Schema == "OCM.fbs" {
 			for _, r := range e.Refs {
-				if wanted[e.Tags.ProviderID+"\x00"+r.CID] || wanted[e.Tags.ProviderID+"\x00"+r.FramedCID] {
-					keep[r.Path] = true
+				if wanted[e.Tags.ProviderID+"\x00"+r.CID()] || wanted[e.Tags.ProviderID+"\x00"+r.FramedCID()] {
+					keep[r.Path()] = true
 				}
 			}
 		}

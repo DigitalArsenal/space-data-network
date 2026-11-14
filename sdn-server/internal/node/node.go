@@ -521,7 +521,7 @@ func (n *Node) init() error {
 		for _, rule := range n.config.Publishing.AutoPublish {
 			if rule.RetainForPublication {
 				schema := strings.TrimSuffix(rule.Schema, ".fbs") + ".fbs"
-				publicationSources = append(publicationSources, storage.PublicationSource{Schema: schema, Provider: rule.ProviderID, Source: rule.SourceName, ProductSource: rule.CatalogProductSource})
+				publicationSources = append(publicationSources, storage.PublicationSource{Schema: schema, Provider: rule.ProviderID, Source: rule.SourceName, ProductSource: rule.CatalogProductSource, CatalogObjectLimit: rule.CatalogObjectLimit})
 			}
 		}
 		for i := range publicationSources {

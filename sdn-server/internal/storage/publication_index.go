@@ -2,6 +2,7 @@ package storage
 
 import (
 	"crypto/sha256"
+	"encoding/base32"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -10,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"unsafe"
 )
 
@@ -19,15 +21,51 @@ const maxPublicationRecordBytes = 16 << 20
 const maxPublicationReferenceBytes int64 = 128 << 20
 
 // References contain immutable file offsets; exported payload memory is one record.
+type publicationRefFile struct {
+	Path       string
+	Tags       SourceTags
+	Identities []string
+}
 type publicationRecordRef struct {
-	CID, FramedCID, Identity, Path string
-	Offset                         int64
-	Size                           uint32
-	Tags                           SourceTags
+	Digest, FramedDigest [32]byte
+	Offset               int64
+	Size, identity       uint32
+	file                 *publicationRefFile
+}
+
+func publicationDigestCID(d [32]byte) string {
+	var raw [36]byte
+	copy(raw[:4], []byte{1, 0x55, 0x12, 0x20})
+	copy(raw[4:], d[:])
+	return "b" + strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(raw[:]))
+}
+func (r publicationRecordRef) CID() string       { return publicationDigestCID(r.Digest) }
+func (r publicationRecordRef) FramedCID() string { return publicationDigestCID(r.FramedDigest) }
+func (r publicationRecordRef) Path() string      { return r.file.Path }
+func (r publicationRecordRef) Tags() SourceTags  { return r.file.Tags }
+func (r publicationRecordRef) Identity() string {
+	if r.identity == 0 {
+		return ""
+	}
+	return r.file.Identities[r.identity-1]
+}
+func newPublicationReference(file *publicationRefFile, data []byte, offset int64, identity string) publicationRecordRef {
+	var framed [4]byte
+	binary.LittleEndian.PutUint32(framed[:], uint32(len(data)))
+	h := sha256.New()
+	h.Write(framed[:])
+	h.Write(data)
+	r := publicationRecordRef{Digest: sha256.Sum256(data), Offset: offset, Size: uint32(len(data)), file: file}
+	copy(r.FramedDigest[:], h.Sum(nil))
+	if identity != "" {
+		file.Identities = append(file.Identities, identity)
+		r.identity = uint32(len(file.Identities))
+	}
+	return r
 }
 
 func (r publicationRecordRef) read() ([]byte, error) {
-	f, err := os.Open(r.Path)
+	f, err := os.Open(r.Path())
 	if err != nil {
 		return nil, err
 	}
@@ -36,7 +74,7 @@ func (r publicationRecordRef) read() ([]byte, error) {
 	if _, err = f.ReadAt(data, r.Offset); err != nil {
 		return nil, err
 	}
-	if computeCID(data) != r.CID {
+	if sha256.Sum256(data) != r.Digest {
 		return nil, errors.New("publication record checksum mismatch")
 	}
 	return data, nil
@@ -51,6 +89,7 @@ func (s *FlatSQLStore) publicationReferences(e publicationEntry) ([]publicationR
 	h := sha256.New()
 	reader := io.TeeReader(f, h)
 	var refs []publicationRecordRef
+	metadata := &publicationRefFile{Path: path, Tags: e.Tags}
 	var referenceBytes int64
 	offset := int64(0)
 	ordinal := 0
@@ -76,11 +115,11 @@ func (s *FlatSQLStore) publicationReferences(e publicationEntry) ([]publicationR
 			if err != nil {
 				return nil, err
 			}
-			refs = append(refs, publicationRecordRef{CID: computeCID(data[4:]), FramedCID: computeCID(data), Identity: identity, Path: path, Offset: offset + 4, Size: size, Tags: e.Tags})
+			refs = append(refs, newPublicationReference(metadata, data[4:], offset+4, identity))
 		}
 		if _, refused := e.Refused[ordinal]; !refused {
 			referenceBytes += publicationReferenceBytes(refs[len(refs)-1])
-			if referenceBytes > maxPublicationReferenceBytes || len(refs) > 200000 {
+			if referenceBytes > s.publicationByteLimit() || len(refs) > s.publicationRecordLimit() {
 				return nil, errors.New("publication reference index exceeds capacity")
 			}
 		}
@@ -115,14 +154,21 @@ func (s *FlatSQLStore) publicationTagAlreadyRetained(schema, cid string, tags So
 	return s.publicationTags[publicationTagIdentity(schema, cid, tags)] > 0
 }
 
+// 88 bytes for the reference plus conservative tag-index and identity accounting.
 func publicationReferenceBytes(r publicationRecordRef) int64 {
-	t := r.Tags
-	return int64(unsafe.Sizeof(r)+unsafe.Sizeof(publicationTagKey{})) + 192 + int64(len(r.CID)+len(r.FramedCID)+len(r.Identity)+len(r.Path)+len(t.ProviderID)+len(t.SourceName)+len(t.SourceURL)+len(t.BatchID)+len(t.ContentKeyID)+len(t.ProducerPeerID)+len(t.ProducerPublicKey)+len(t.License)+len(t.LicenseURL)+len(t.Citation))
+	return int64(unsafe.Sizeof(r)) + 80 + int64(len(r.Identity()))
+}
+func publicationSourceTagsBytes(t SourceTags) int64 {
+	return int64(unsafe.Sizeof(t)) + int64(len(t.ProviderID)+len(t.SourceName)+len(t.SourceURL)+len(t.BatchID)+len(t.ContentKeyID)+len(t.ProducerPeerID)+len(t.ProducerPublicKey)+len(t.License)+len(t.LicenseURL)+len(t.Citation))
 }
 func publicationReferencesBytes(refs []publicationRecordRef) int64 {
 	var n int64
 	for _, r := range refs {
 		n += publicationReferenceBytes(r)
+	}
+	if len(refs) > 0 {
+		f := refs[0].file
+		n += int64(unsafe.Sizeof(*f)+uintptr(cap(f.Identities))*unsafe.Sizeof("")) + int64(len(f.Path)) + publicationSourceTagsBytes(f.Tags)
 	}
 	return n
 }
@@ -159,7 +205,7 @@ func (s *FlatSQLStore) indexPublicationTags(e publicationEntry, delta int) {
 		s.publicationTags = map[publicationTagKey]int{}
 	}
 	for _, r := range e.Refs {
-		k := publicationTagIdentity(e.Schema, r.CID, e.Tags)
+		k := publicationTagIdentity(e.Schema, r.CID(), e.Tags)
 		s.publicationTags[k] += delta
 		if s.publicationTags[k] <= 0 {
 			delete(s.publicationTags, k)

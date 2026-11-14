@@ -236,7 +236,7 @@ func TestPublicationAppliedReadRetryNeverReplays(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer p.Close()
-	current := p.refs[0].Path
+	current := p.refs[0].Path()
 	if err = os.Rename(current, current+".unavailable"); err != nil {
 		t.Fatal(err)
 	}
@@ -363,7 +363,7 @@ func TestPublicationPlainTerminalAndBatchExclusion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	id := p.refs[0].CID
+	id := p.refs[0].CID()
 	p.Close()
 	if err = s.ExcludeCatalogRecords("synthetic", "index", []string{id}); err != nil {
 		t.Fatal(err)

@@ -1070,6 +1070,7 @@ type AutoPublishLane struct {
 	// RetainForPublication durably retains CAT/OCM batches before replacement.
 	// It requires exact provider/source identities and store format 4.
 	RetainForPublication bool `yaml:"retain_for_publication,omitempty"`
+	CatalogObjectLimit   int  `yaml:"catalog_object_limit,omitempty"`
 	// CatalogProductSource selects a compact CAT/OCM snapshot for this CAT
 	// source. Both sources require retention before their first ingest.
 	CatalogProductSource string `yaml:"catalog_product_source,omitempty"`

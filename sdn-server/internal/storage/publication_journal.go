@@ -22,7 +22,10 @@ import (
 
 // PublicationSource opts an exact source into durable publication retention.
 // ProductSource on CAT selects its OCM closure for source snapshots.
-type PublicationSource struct{ Schema, Provider, Source, ProductSource string }
+type PublicationSource struct {
+	Schema, Provider, Source, ProductSource string
+	CatalogObjectLimit                      int `json:",omitempty"`
+}
 type publicationEntry struct {
 	ReferenceBytes    int64                  `json:"-"`
 	GenerationFailure publicationFailure     `json:"-"`
@@ -77,6 +80,9 @@ func (s *FlatSQLStore) ConfigurePublicationSources(sources []PublicationSource) 
 	}
 	merged := append([]PublicationSource(nil), s.publicationSources...)
 	for _, x := range sources {
+		if x.CatalogObjectLimit < 0 || x.CatalogObjectLimit > maxPublicationSelectionRecords {
+			return errors.New("catalog_object_limit must be between 1 and 100000, or zero for the default")
+		}
 		if encfield.HasEncryptedFields(strings.TrimSuffix(x.Schema, ".fbs")) {
 			return errors.New("publication retention refuses standards with sealed fields")
 		}
@@ -94,6 +100,9 @@ func (s *FlatSQLStore) ConfigurePublicationSources(sources []PublicationSource) 
 			if old.Schema == x.Schema && old.Provider == x.Provider && old.Source == x.Source {
 				if old.ProductSource != "" && x.ProductSource != "" && old.ProductSource != x.ProductSource {
 					return errors.New("catalog product source cannot change")
+				}
+				if x.CatalogObjectLimit != 0 {
+					merged[i].CatalogObjectLimit = x.CatalogObjectLimit
 				}
 				if x.ProductSource != "" {
 					merged[i].ProductSource = x.ProductSource
@@ -177,13 +186,13 @@ func (b format4Backend) putRetained(op, schema string, records [][]byte, peer st
 	if !pending[tags.BatchID] && len(pending) >= 4096 {
 		return nil, nil, errors.New("retained publication backlog exceeds 4096 batches; stop ingestion and complete publication")
 	}
-	if indexed+len(records) > 200000 {
-		return nil, nil, errors.New("publication index exceeds 200000 records; drain and retire retained history")
+	if indexed+len(records) > s.publicationRecordLimit() {
+		return nil, nil, errors.New("publication index exceeds configured catalog capacity; drain and retire retained history")
 	}
 	for _, data := range records {
-		referenceBytes += publicationReferenceBytes(publicationRecordRef{CID: strings.Repeat("x", 59), FramedCID: strings.Repeat("x", 59), Identity: recordSupersedeKey(schema, data), Path: filepath.Join(s.publicationDir(), "00000000000000000000", "records.sds"), Tags: tags})
-		if referenceBytes > maxPublicationReferenceBytes {
-			return nil, nil, errors.New("publication reference index exceeds 128 MiB; drain and retire retained history")
+		referenceBytes += 168 + int64(len(recordSupersedeKey(schema, data))) + 16
+		if referenceBytes > s.publicationByteLimit() {
+			return nil, nil, errors.New("publication reference index exceeds configured byte capacity; drain and retire retained history")
 		}
 		if len(data) > maxPublicationRecordBytes {
 			return nil, nil, errors.New("publication record exceeds 16 MiB")
@@ -329,7 +338,7 @@ func (s *FlatSQLStore) markPublicationApplied(e publicationEntry) error {
 			count += len(old.Refs)
 		}
 	}
-	if total > maxPublicationReferenceBytes || count > 200000 {
+	if total > s.publicationByteLimit() || count > s.publicationRecordLimit() {
 		return errors.New("publication recovery exceeds reference index capacity")
 	}
 	if len(refs) == 0 {
@@ -487,7 +496,7 @@ func (s *FlatSQLStore) recoverPublicationJournal() error {
 					total += old.ReferenceBytes
 					count += len(old.Refs)
 				}
-				if total > maxPublicationReferenceBytes || count > 200000 {
+				if total > s.publicationByteLimit() || count > s.publicationRecordLimit() {
 					err = errors.New("publication recovery exceeds reference index capacity")
 					e.Refs = nil
 				}
@@ -686,7 +695,7 @@ func (p *PublicationSelection) pin(s *FlatSQLStore) {
 func (p *PublicationSelection) Fingerprint() (string, int) {
 	h := newPublicationSetHash(p.Schema, p.Provider, p.Source, p.Batch)
 	for _, r := range p.refs {
-		h.Write([]byte(r.CID))
+		h.Write([]byte(r.CID()))
 		h.Write([]byte{'\n'})
 	}
 	return hex.EncodeToString(h.Sum(nil)), len(p.refs)
@@ -699,7 +708,7 @@ func (p *PublicationSelection) Record(index int) (DatasetExportRecord, error) {
 	}
 	r := p.refs[index]
 	data, err := p.readReference(r)
-	return DatasetExportRecord{CID: r.CID, Data: data, SourceTags: r.Tags}, err
+	return DatasetExportRecord{CID: r.CID(), Data: data, SourceTags: r.Tags()}, err
 }
 func (p *PublicationSelection) readReference(r publicationRecordRef) ([]byte, error) {
 	return r.read()
@@ -722,9 +731,9 @@ func (s *FlatSQLStore) retainedSelectionLocked(schema, provider, source, batch s
 		p.Cutoff = e.Sequence
 		terminalComplete = e.Generation
 		for _, r := range e.Refs {
-			key := r.CID
-			if schema == "CAT.fbs" && batch == "" && r.Identity != "" {
-				key = r.Identity
+			key := r.CID()
+			if schema == "CAT.fbs" && batch == "" && r.Identity() != "" {
+				key = r.Identity()
 			}
 			byKey[key] = r
 		}
@@ -741,12 +750,12 @@ func (s *FlatSQLStore) retainedSelectionLocked(schema, provider, source, batch s
 		return nil, err
 	}
 	for _, r := range byKey {
-		if excluded[r.CID] {
+		if excluded[r.CID()] {
 			continue
 		}
 		p.refs = append(p.refs, r)
 	}
-	sort.Slice(p.refs, func(i, j int) bool { return p.refs[i].CID < p.refs[j].CID })
+	sort.Slice(p.refs, func(i, j int) bool { return p.refs[i].CID() < p.refs[j].CID() })
 	return p, nil
 }
 

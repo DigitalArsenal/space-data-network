@@ -77,10 +77,10 @@ func (s *FlatSQLStore) captureCatalogLocked(x PublicationSource, cutoff uint64) 
 			continue
 		}
 		for _, r := range e.Refs {
-			if wanted[r.CID] || wanted[r.FramedCID] {
-				selected[r.CID] = r
-				delete(wanted, r.CID)
-				delete(wanted, r.FramedCID)
+			if wanted[r.CID()] || wanted[r.FramedCID()] {
+				selected[r.CID()] = r
+				delete(wanted, r.CID())
+				delete(wanted, r.FramedCID())
 			}
 		}
 	}
@@ -90,7 +90,7 @@ func (s *FlatSQLStore) captureCatalogLocked(x PublicationSource, cutoff uint64) 
 	for _, r := range selected {
 		products.refs = append(products.refs, r)
 	}
-	sort.Slice(products.refs, func(i, j int) bool { return products.refs[i].CID < products.refs[j].CID })
+	sort.Slice(products.refs, func(i, j int) bool { return products.refs[i].CID() < products.refs[j].CID() })
 	// Pair identities follow this index source's cutoff, never unrelated writes.
 	cutoff = index.Cutoff
 	products.Cutoff = cutoff
@@ -218,7 +218,7 @@ func (p *PublicationSelection) window(q IndexedRecordQuery) ([]DatasetExportReco
 	}
 	out := make([]DatasetExportRecord, 0, end-start)
 	for _, r := range p.refs[start:end] {
-		out = append(out, DatasetExportRecord{CID: r.CID, SourceTags: r.Tags, load: func() ([]byte, error) { return p.readReference(r) }})
+		out = append(out, DatasetExportRecord{CID: r.CID(), SourceTags: r.Tags(), load: func() ([]byte, error) { return p.readReference(r) }})
 	}
 	return out, nil
 }
