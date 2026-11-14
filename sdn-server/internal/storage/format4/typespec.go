@@ -64,9 +64,9 @@ func CIDOnlyTypeSpec(typ string, fid [4]byte) TypeSpec {
 // (OMM 1, MPE 2) and full text for every type
 // format 1 indexes, except numeric weather grids. Field-sealed types have no
 // full-text index either.
-// A field-sealed standard (a sealed record's stored bytes are neither its
-// text nor a FlatBuffer) has a metadata-only SQL relation with no extracted
-// plaintext fields. The rules are format 2's,
+// A field-sealed standard has a trusted metadata-only SQL relation with no
+// extracted plaintext fields; public SQL denies it. Stored bytes can retain
+// unsealed fields. The rules are format 2's,
 // unchanged (contract v15: one file per source feed x standard, no bucket
 // rule).
 func TypeSpecFor(schemaName string) (TypeSpec, error) {

@@ -494,7 +494,8 @@ func createLegacyControlDir(basePath string) error {
 // or, for a routed standard with no embedded binary schema (an encrypted one,
 // C-25), the CID-only spec with its file identifier (ident, the validator's).
 // Such a type still stores and serves its frames by CID, arrival and tags;
-// the engine extracts nothing from it and it has no SQL relation.
+// the engine extracts nothing from it. Trusted SQL exposes metadata and stored
+// bytes; the public sandbox denies its metadata-only relation.
 func Format4TypeSpec(schema string, ident func(schema string) (string, bool)) (format4.TypeSpec, error) {
 	spec, err := format4.TypeSpecFor(schema)
 	if err == nil || ident == nil || errors.Is(err, format2.ErrSealedRuleField) {
@@ -527,6 +528,12 @@ func (d *format4Daemon) registerTypes(validator *sds.Validator) error {
 		return nil
 	}
 	for _, schema := range validator.Schemas() {
+		// These schemas describe the engine's own journal/checkpoint frames;
+		// their identifiers cannot be registered as user record types.
+		if id, ok := d.ident(schema); ok && (id == "$FMB" || id == "$FCK" || id == "$FSG") {
+			log.Debugf("format 4: %s is an engine container schema, not a record type", schema)
+			continue
+		}
 		if _, err := sds.SchemaNameToTable(schema); err != nil {
 			continue
 		}
