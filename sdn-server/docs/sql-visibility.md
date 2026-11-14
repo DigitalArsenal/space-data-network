@@ -40,14 +40,12 @@ require recovery, not creation of an empty replacement store.
 ## Query access and budgets
 
 Complete visibility does not grant access to additional private data. Opaque
-and field-sealed types are omitted from the public SQL catalog and denied by
-the sandbox, including metadata counts and raw-record shortcuts. Trusted
-storage queries can read their metadata and stored bytes. Field sealing hides
-the designated fields; other fields can remain readable in those bytes. CIDs
-are computed from plaintext and can reveal equality with a guessed record.
+and field-sealed types have no SQL relation, including through trusted module
+queries, metadata counts and raw-record shortcuts. Durable CID access remains
+subject to the existing storage authorization.
 
-The direct SQL HTTP route requires administrator trust. Module `storage_query`
-uses sandboxed SQL with defaults of 200,000 output rows, five seconds and
+The direct SQL HTTP route requires administrator trust. Public sandboxed SQL
+uses defaults of 200,000 output rows, five seconds and
 128 MiB output. Its engine scan limits are separately one million examined rows
 and 256 MiB bytes read. These are execution limits, not visibility windows.
 Interactive storage queries have different limits. Point lookups with canonical

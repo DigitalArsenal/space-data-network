@@ -744,7 +744,7 @@ func buildPNMForTest(i int, fileID, signature string) []byte {
 // with SIGNATURE sealed (no rule reads it), then PNM with FILE_ID sealed (its
 // COL 1 rule reads it), by name and mislabeled (the field id is what is
 // sealed).
-func TestFormat4SealedTypesExposeOnlyMetadata(t *testing.T) {
+func TestFormat4SealedTypesHaveNoSQLRelation(t *testing.T) {
 	onFormat4Engine(t, func(t *testing.T) {
 		t.Cleanup(func() { encfield.RegisterSchema("PNM", nil) })
 		open := func() [2]*FlatSQLStore {
@@ -760,7 +760,7 @@ func TestFormat4SealedTypesExposeOnlyMetadata(t *testing.T) {
 		tags := SourceTags{ProviderID: "proof", SourceName: "sealed-pnm", BatchID: "s-1"}
 
 		// L1: SIGNATURE sealed. The records store and read back on both
-		// formats; the stream store exposes metadata only to trusted SQL.
+		// formats; neither store creates a SQL relation.
 		encfield.RegisterSchema("PNM", []encfield.FieldSpec{{Name: "SIGNATURE", FieldID: 5}})
 		stores := open()
 		for _, s := range stores {
@@ -791,8 +791,8 @@ func TestFormat4SealedTypesExposeOnlyMetadata(t *testing.T) {
 				caps := flatsqlrt.SandboxCaps{Timeout: time.Minute}
 				for _, query := range []string{`SELECT COUNT(_cid) FROM PNM`, `SELECT _cid FROM PNM`, `SELECT _data FROM PNM`, `SELECT * FROM PNM`} {
 					payload, _, _, err := s.QuerySandboxedJSON(query, caps)
-					if err == nil {
-						t.Fatalf("sealed relation reachable by sandbox: %s", query)
+					if err == nil || !strings.Contains(err.Error(), "no such table") {
+						t.Fatalf("sealed relation must be absent: %s: %v", query, err)
 					}
 					for _, plain := range append(fileIDs, sigs...) {
 						if bytes.Contains(payload, plain) || strings.Contains(err.Error(), string(plain)) {
@@ -800,16 +800,9 @@ func TestFormat4SealedTypesExposeOnlyMetadata(t *testing.T) {
 						}
 					}
 				}
-				if _, err := s.QueryRawStream(`SELECT SIGNATURE FROM PNM`); err == nil || !strings.Contains(err.Error(), "no such column") {
-					t.Fatalf("trusted SQL must reject sealed field as no such column: %v", err)
-				}
-				stream, err := s.QueryRawStream(`SELECT _data FROM PNM`)
-				if err != nil {
-					t.Fatal(err)
-				}
-				for _, plain := range sigs {
-					if bytes.Contains(stream.Bytes, plain) {
-						t.Fatal("sealed signature plaintext in trusted stored-byte output")
+				for _, query := range []string{`SELECT SIGNATURE FROM PNM`, `SELECT COUNT(*) FROM PNM`, `SELECT _cid FROM PNM`, `SELECT _data FROM PNM`, `SELECT * FROM PNM`} {
+					if _, err := s.QueryRawStream(query); err == nil || !strings.Contains(err.Error(), "no such table") {
+						t.Fatalf("trusted SQL must report no such table: %s: %v", query, err)
 					}
 				}
 			} else if reach := sqlReaches(t, s, "PNM"); len(reach) > 0 {

@@ -494,8 +494,7 @@ func createLegacyControlDir(basePath string) error {
 // or, for a routed standard with no embedded binary schema (an encrypted one,
 // C-25), the CID-only spec with its file identifier (ident, the validator's).
 // Such a type still stores and serves its frames by CID, arrival and tags;
-// the engine extracts nothing from it. Trusted SQL exposes metadata and stored
-// bytes; the public sandbox denies its metadata-only relation.
+// the engine extracts nothing from it and creates no SQL relation.
 func Format4TypeSpec(schema string, ident func(schema string) (string, bool)) (format4.TypeSpec, error) {
 	spec, err := format4.TypeSpecFor(schema)
 	if err == nil || ident == nil || errors.Is(err, format2.ErrSealedRuleField) {
