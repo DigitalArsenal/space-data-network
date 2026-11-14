@@ -46,6 +46,7 @@ func TestPublicationTransientFailuresAndAutomaticRetry(t *testing.T) {
 	}
 }
 func TestPublicationGenerationAttemptCountedOnce(t *testing.T) {
+	t.Setenv("SDN_STORE_FORMAT", "4")
 	s := reclamationStore(t, t.TempDir())
 	defer s.Close()
 	reclamationDay(t, s, 0, 1)
