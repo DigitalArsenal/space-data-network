@@ -339,6 +339,11 @@ func (rt *FlowRuntime) GetIngressRuntimeState(index uint32) (*FlowIngressRuntime
 // Drain runs the flow scheduling loop: get ready node → begin invocation →
 // dispatch to handler → apply result → repeat until idle or maxIterations.
 func (rt *FlowRuntime) Drain(ctx context.Context, handlers HandlerMap, opts DrainOptions) (*DrainResult, error) {
+	return rt.drain(ctx, handlers, opts, rt.mod.ExecuteContext)
+}
+
+// drain separates guest dispatch from host scheduling for failure-path tests.
+func (rt *FlowRuntime) drain(ctx context.Context, handlers HandlerMap, opts DrainOptions, execute func(context.Context, string, ...interface{}) ([]interface{}, error)) (*DrainResult, error) {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 
@@ -370,7 +375,7 @@ func (rt *FlowRuntime) Drain(ctx context.Context, handlers HandlerMap, opts Drai
 		// engine body-refs are harvested before it is released.
 		if rt.hasDrainLinked {
 			runLinked := func() error {
-				res, err := rt.mod.ExecuteContext(ctx, linkedExport, int32(maxIter))
+				res, err := execute(ctx, linkedExport, int32(maxIter))
 				if err != nil {
 					return err
 				}
@@ -431,7 +436,7 @@ func (rt *FlowRuntime) Drain(ctx context.Context, handlers HandlerMap, opts Drai
 			result.HandlersSkipped++
 
 			if info.DispatchModel == "linked-direct" {
-				if err := rt.dispatchDirect(ctx, nodeIndex); err != nil {
+				if err := rt.dispatchDirectWith(ctx, nodeIndex, execute); err != nil {
 					return result, err
 				}
 				result.NodesInvoked++
@@ -583,17 +588,21 @@ func (rt *FlowRuntime) writeOutputFrames(outputs []FrameOutput) (uint32, uint32)
 
 // dispatchDirect calls the linked-direct dispatch for the current invocation.
 func (rt *FlowRuntime) dispatchDirect(ctx context.Context, nodeIndex uint32) error {
+	return rt.dispatchDirectWith(ctx, nodeIndex, rt.mod.ExecuteContext)
+}
+
+func (rt *FlowRuntime) dispatchDirectWith(ctx context.Context, nodeIndex uint32, execute func(context.Context, string, ...interface{}) ([]interface{}, error)) error {
 	name := runtimeExportDispatchCurrentInvocation
 	if !rt.mod.HasFunction(name) {
 		name = underscoreRuntimeExportName(name)
 	}
-	if _, err := rt.mod.ExecuteContext(ctx, name, int32(64)); err != nil {
+	if _, err := execute(ctx, name, int32(64)); err != nil {
 		if ctx.Err() != nil {
 			return fmt.Errorf("direct dispatch: %w", err)
 		}
 		// Preserve the legacy alternate-export attempt and completion on failure.
 		if name == runtimeExportDispatchCurrentInvocation {
-			if _, err := rt.mod.ExecuteContext(ctx, underscoreRuntimeExportName(name), int32(64)); err != nil && ctx.Err() != nil {
+			if _, err := execute(ctx, underscoreRuntimeExportName(name), int32(64)); err != nil && ctx.Err() != nil {
 				return fmt.Errorf("direct dispatch: %w", err)
 			}
 		}
