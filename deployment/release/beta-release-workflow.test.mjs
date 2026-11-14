@@ -292,6 +292,8 @@ test('beta release workflow publishes public beta artifacts', () => {
   assert.match(workflow, /merge-multiple:\s*true/);
   assert.match(workflow, /prerelease:\s*false/);
   assert.match(workflow, /make_latest:\s*true/);
+  // Existing notes on a release published before its assets are kept.
+  assert.match(workflow, /body_path: dist\/release\/SDN-BETA-RELEASE\.md[\s\S]*?append_body: true[\s\S]*?make_latest: true/);
   assert.match(workflow, /release_name/);
   assert.match(workflow, /docker\.io/);
   assert.match(workflow, /dockerdigitalarsenal\/space-data-network/);
