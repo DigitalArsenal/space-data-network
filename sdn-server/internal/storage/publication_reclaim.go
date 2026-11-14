@@ -193,7 +193,7 @@ func (s *FlatSQLStore) reclaimPublicationLocked() (result error) {
 				add(p)
 			}
 			for _, e := range v.publicationEntries {
-				if e.Schema == "OCM.fbs" && e.Tags.ProviderID == x.Provider && e.Tags.SourceName == x.ProductSource && e.Sequence > cutoff {
+				if !e.Aborted && e.Schema == "OCM.fbs" && e.Tags.ProviderID == x.Provider && e.Tags.SourceName == x.ProductSource && e.Sequence > cutoff {
 					keep[filepath.Join(v.publicationEntryDir(e.Sequence), "records.sds")] = true
 				}
 			}
@@ -220,10 +220,10 @@ func (s *FlatSQLStore) reclaimPublicationLocked() (result error) {
 	for _, e := range s.publicationEntries {
 		path := filepath.Join(s.publicationEntryDir(e.Sequence), "records.sds")
 		old, exists := captured[e.Sequence]
-		if !exists || !old.Applied || !old.Published {
+		if !e.Aborted && (!exists || !old.Applied || !old.Published) {
 			keep[path] = true
 		}
-		if e.Schema != "CAT.fbs" || !e.Applied || (!keep[path] && e.Published) {
+		if e.Aborted || e.Schema != "CAT.fbs" || !e.Applied || (!keep[path] && e.Published) {
 			continue
 		}
 		if len(e.Refs) == 0 {
@@ -263,7 +263,7 @@ func (s *FlatSQLStore) reclaimPublicationLocked() (result error) {
 	for _, e := range s.publicationEntries {
 		path := filepath.Join(s.publicationEntryDir(e.Sequence), "records.sds")
 		old, exists := captured[e.Sequence]
-		if exists && old.Applied && old.Published && e.Applied && e.Published && !blocked[key(e)] && !keep[path] && s.publicationPins[path] <= 1 {
+		if exists && (old.Aborted || old.Applied && old.Published) && (e.Aborted || e.Applied && e.Published) && !blocked[key(e)] && !keep[path] && s.publicationPins[path] <= 1 {
 			candidates = append(candidates, e)
 		}
 	}

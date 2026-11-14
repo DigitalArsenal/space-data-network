@@ -1,0 +1,89 @@
+package storage
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestPublicationGenerationAdmissionAndHeadroom(t *testing.T) {
+	t.Setenv("SDN_STORE_FORMAT", "4")
+	dir := t.TempDir()
+	s := reclamationStore(t, dir)
+	configure := func(limit int) error {
+		return s.ConfigurePublicationSources([]PublicationSource{{Schema: "CAT.fbs", Provider: "synthetic", Source: "index", ProductSource: "products", CatalogObjectLimit: limit}, {Schema: "OCM.fbs", Provider: "synthetic", Source: "products", CatalogObjectLimit: limit}})
+	}
+	if err := configure(4); err != nil {
+		t.Fatal(err)
+	}
+	// Overshoot by one object fits the explicit 25% headroom on both sides.
+	reclamationDay(t, s, 0, 5)
+	terminalPublish(t, s)
+	before := s.PublicationJournalStats().Records
+	products, indexes := reclamationRecords(1, 6)
+	put := func(schema, source, batch string, records [][]byte) error {
+		_, err := s.StoreBatchWithSourceTags(schema, records, "synthetic", nil, SourceTags{ProviderID: "synthetic", SourceName: source, BatchID: batch})
+		return err
+	}
+	if err := put("OCM.fbs", "products", "oversized", products); err == nil || !strings.Contains(err.Error(), "catalog_object_limit=4") {
+		t.Fatalf("missing capacity refusal: %v", err)
+	}
+	if s.PublicationJournalStats().Records != before {
+		t.Fatal("oversized products partially admitted")
+	}
+	if err := put("OCM.fbs", "products", "staged", products[:5]); err != nil {
+		t.Fatal(err)
+	}
+	if p, err := s.SelectPublication("OCM.fbs", "synthetic", "products", "staged"); err == nil {
+		p.Close()
+		t.Fatal("uncommitted generation announced")
+	}
+	// The index refuses the generation as a unit, releasing its staged products.
+	if err := put("CAT.fbs", "index", "oversized:complete", indexes); err == nil {
+		t.Fatal("oversized index admitted")
+	}
+	if s.PublicationJournalStats().Records != before {
+		t.Fatalf("aborted products retained: %+v", s.PublicationJournalStats())
+	}
+	s.Close()
+	s = journalTestStore(t, dir)
+	defer s.Close()
+	reclamationDay(t, s, 2, 5)
+	if err := configure(1); err != nil {
+		t.Fatal("decrease blocked opening", err)
+	}
+	if s.publicationSources[0].CatalogObjectLimit != 4 {
+		t.Fatal("capacity was lowered")
+	}
+	if err := configure(0); err != nil {
+		t.Fatal("removed setting blocked opening", err)
+	}
+	if s.publicationSources[0].CatalogObjectLimit != 4 {
+		t.Fatal("removed setting lost durable capacity")
+	}
+	if err := s.ReclaimPublication(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPublicationThreeGenerationLagCoalesces(t *testing.T) {
+	t.Setenv("SDN_STORE_FORMAT", "4")
+	s := reclamationStore(t, t.TempDir())
+	defer s.Close()
+	if err := s.ConfigurePublicationSources([]PublicationSource{{Schema: "CAT.fbs", Provider: "synthetic", Source: "index", ProductSource: "products", CatalogObjectLimit: 8}, {Schema: "OCM.fbs", Provider: "synthetic", Source: "products", CatalogObjectLimit: 8}}); err != nil {
+		t.Fatal(err)
+	}
+	for day := 0; day < 3; day++ {
+		reclamationDay(t, s, day, 8)
+	}
+	if got := s.PublicationJournalStats().Records; got != 48 {
+		t.Fatalf("pending bytes lost: %d", got)
+	}
+	terminalPublish(t, s)
+	if err := s.ReclaimPublication(); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.PublicationJournalStats().Records; got != 16 {
+		t.Fatalf("completed generations did not coalesce: %d", got)
+	}
+	reclamationDay(t, s, 3, 8)
+}

@@ -35,6 +35,7 @@ type publicationEntry struct {
 	Refs              []publicationRecordRef `json:"-"`
 	Published         bool                   `json:"-"`
 	Discarded         bool                   `json:"-"`
+	Aborted           bool                   `json:"-"`
 	Digest            string
 	Sequence          uint64
 	SourceSequence    uint64
@@ -104,8 +105,10 @@ func (s *FlatSQLStore) ConfigurePublicationSources(sources []PublicationSource) 
 				if old.ProductSource != "" && x.ProductSource != "" && old.ProductSource != x.ProductSource {
 					return errors.New("catalog product source cannot change")
 				}
-				if x.CatalogObjectLimit != 0 {
+				if x.CatalogObjectLimit != 0 && (len(s.publicationEntries) == 0 || (old.CatalogObjectLimit != 0 && x.CatalogObjectLimit >= old.CatalogObjectLimit)) {
 					merged[i].CatalogObjectLimit = x.CatalogObjectLimit
+				} else if x.CatalogObjectLimit != old.CatalogObjectLimit {
+					log.Warnf("catalog_object_limit decrease ignored; durable capacity=%d, retained use=%d references, %d bytes", old.CatalogObjectLimit, s.publicationRecordCount, s.publicationReferenceCountBytes)
 				}
 				if x.ProductSource != "" {
 					merged[i].ProductSource = x.ProductSource
@@ -148,7 +151,8 @@ func (s *FlatSQLStore) ConfigurePublicationSources(sources []PublicationSource) 
 	}
 	candidate := &FlatSQLStore{publicationSources: merged}
 	if s.publicationRecordCount > candidate.publicationRecordLimit() || s.publicationReferenceCountBytes > candidate.publicationByteLimit() {
-		return errors.New("configured catalog capacity is below retained usage")
+		log.Warnf("catalog_object_limit below retained use=%d references, %d bytes; preserving durable capacity", s.publicationRecordCount, s.publicationReferenceCountBytes)
+		merged = append([]PublicationSource(nil), s.publicationSources...)
 	}
 	if err := os.MkdirAll(s.publicationDir(), 0700); err != nil {
 		return err
@@ -185,6 +189,9 @@ func (b format4Backend) putRetained(op, schema string, records [][]byte, peer st
 	if tags.BatchID == "" {
 		return nil, nil, errors.New("retained publication requires batch id")
 	}
+	if err := s.admitPublicationGeneration(schema, tags, len(records)); err != nil {
+		return nil, nil, err
+	}
 
 	if len(s.publicationEntries) >= maxPublicationEntries {
 		return nil, nil, errors.New("publication journal capacity reached; complete and retire retained history before ingestion")
@@ -196,12 +203,17 @@ func (b format4Backend) putRetained(op, schema string, records [][]byte, peer st
 		return nil, nil, errors.New("retained publication backlog exceeds 4096 batches; stop ingestion and complete publication")
 	}
 	if indexed+len(records) > s.publicationRecordLimit() {
-		return nil, nil, errors.New("publication index exceeds configured catalog capacity; drain and retire retained history")
+		return nil, nil, fmt.Errorf("catalog_object_limit reference capacity=%d, retained use=%d, requested=%d", s.publicationRecordLimit(), indexed, len(records))
 	}
 	for _, data := range records {
 		referenceBytes += 168 + int64(len(recordSupersedeKey(schema, data))) + 16
 		if referenceBytes > s.publicationByteLimit() {
-			return nil, nil, errors.New("publication reference index exceeds configured byte capacity; drain and retire retained history")
+			if x, ok := s.catalogSource(schema, tags.ProviderID, tags.SourceName); ok {
+				if err := s.abortPublicationGeneration(x); err != nil {
+					return nil, nil, err
+				}
+			}
+			return nil, nil, fmt.Errorf("catalog_object_limit byte capacity=%d, retained use=%d, requested total=%d", s.publicationByteLimit(), s.publicationReferenceCountBytes, referenceBytes)
 		}
 		if len(data) > maxPublicationRecordBytes {
 			return nil, nil, errors.New("publication record exceeds 16 MiB")
@@ -451,6 +463,9 @@ func (s *FlatSQLStore) recoverPublicationJournal() error {
 	if err := s.loadPublicationWatermarks(); err != nil {
 		return err
 	}
+	if err := s.recoverPublicationGenerationAbort(); err != nil {
+		return err
+	}
 	if err := s.recoverPublicationReclamation(); err != nil {
 		s.publicationGlobalFailure = err
 		log.Errorf("publication reclamation metadata requires repair: %v", err)
@@ -505,6 +520,11 @@ func (s *FlatSQLStore) recoverPublicationJournal() error {
 			continue
 		}
 		s.publicationEntries = append(s.publicationEntries, e)
+		if _, abortErr := os.Stat(filepath.Join(s.publicationEntryDir(e.Sequence), "aborted")); abortErr == nil {
+			e.Aborted, e.Discarded, e.Published = true, true, true
+			s.publicationEntries[len(s.publicationEntries)-1] = e
+			continue
+		}
 		if _, discardErr := os.Stat(filepath.Join(s.publicationEntryDir(e.Sequence), "discarded")); discardErr == nil {
 			e.Discarded, e.Published = true, true
 			s.publicationEntries[len(s.publicationEntries)-1] = e
@@ -780,7 +800,7 @@ func (s *FlatSQLStore) retainedSelectionLocked(schema, provider, source, batch s
 	byKey := map[string]publicationRecordRef{}
 	terminalComplete := false
 	for _, e := range s.publicationEntries {
-		if !e.Applied || (batch == "" && e.GenerationFailure.Attempts >= 3) || e.Sequence > cutoff || e.Schema != schema || e.Tags.ProviderID != provider || e.Tags.SourceName != source || (batch != "" && e.Tags.BatchID != batch) {
+		if e.Aborted || !e.Applied || (batch == "" && e.GenerationFailure.Attempts >= 3) || e.Sequence > cutoff || e.Schema != schema || e.Tags.ProviderID != provider || e.Tags.SourceName != source || (batch != "" && e.Tags.BatchID != batch) {
 			continue
 		}
 		p.Cutoff = e.Sequence

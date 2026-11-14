@@ -73,7 +73,7 @@ func (s *FlatSQLStore) captureCatalogLocked(x PublicationSource, cutoff uint64) 
 	}
 	selected := map[string]publicationRecordRef{}
 	for _, e := range s.publicationEntries {
-		if !e.Applied || e.Sequence > cutoff || e.Schema != "OCM.fbs" || e.Tags.ProviderID != x.Provider || e.Tags.SourceName != x.ProductSource {
+		if e.Aborted || !e.Applied || e.Sequence > cutoff || e.Schema != "OCM.fbs" || e.Tags.ProviderID != x.Provider || e.Tags.SourceName != x.ProductSource {
 			continue
 		}
 		products.SourceCutoff = max(products.SourceCutoff, e.SourceSequence)
@@ -154,6 +154,16 @@ func (s *FlatSQLStore) SelectPublication(schema, provider, source, batch string)
 		return nil, nil
 	}
 	cutoff := s.publicationCutoffLocked()
+	if batch != "" {
+		if x, paired := s.catalogSource(schema, provider, source); paired {
+			complete := s.latestCatalogGeneration(x)
+			for _, e := range s.publicationEntries {
+				if !e.Aborted && e.Sequence > complete && e.Schema == schema && e.Tags.ProviderID == provider && e.Tags.SourceName == source && e.Tags.BatchID == batch {
+					return nil, errors.New("catalog generation admission is incomplete")
+				}
+			}
+		}
+	}
 	if batch == "" {
 		if x, ok := s.catalogSource(schema, provider, source); ok {
 			cutoff = s.latestCatalogGeneration(x)
@@ -255,7 +265,7 @@ func (s *FlatSQLStore) CatalogProductSource(provider, source string) (string, bo
 func (s *FlatSQLStore) latestCatalogGeneration(x PublicationSource) uint64 {
 	var cutoff uint64
 	for _, e := range s.publicationEntries {
-		if e.Applied && e.Generation && e.Schema == "CAT.fbs" && e.Tags.ProviderID == x.Provider && e.Tags.SourceName == x.Source {
+		if !e.Aborted && e.Applied && e.Generation && e.Schema == "CAT.fbs" && e.Tags.ProviderID == x.Provider && e.Tags.SourceName == x.Source {
 			cutoff = e.Sequence
 		}
 	}
@@ -283,7 +293,7 @@ func (s *FlatSQLStore) completeCatalogGenerationAtLocked(provider, source string
 	}
 	var terminal publicationEntry
 	for _, e := range v.publicationEntries {
-		if e.Applied && e.Sequence <= cutoff && e.Schema == "CAT.fbs" && e.Tags.ProviderID == provider && e.Tags.SourceName == source {
+		if !e.Aborted && e.Applied && e.Sequence <= cutoff && e.Schema == "CAT.fbs" && e.Tags.ProviderID == provider && e.Tags.SourceName == source {
 			terminal = e
 		}
 	}

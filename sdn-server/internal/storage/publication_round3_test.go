@@ -216,8 +216,11 @@ func TestPublicationUnappliedRequeueAndCapacityReduction(t *testing.T) {
 	if len(s.PublicationRecoveryStatus()) != 0 || len(s.RetainedPublicationBatches()) != 1 {
 		t.Fatal("runtime requeue did not recover")
 	}
-	if err := s.ConfigurePublicationSources([]PublicationSource{{Schema: "CAT.fbs", Provider: "synthetic", Source: "index", CatalogObjectLimit: 1}}); err == nil {
-		t.Fatal("capacity reduced below retained use")
+	if err := s.ConfigurePublicationSources([]PublicationSource{{Schema: "CAT.fbs", Provider: "synthetic", Source: "index", CatalogObjectLimit: 1}}); err != nil {
+		t.Fatal("capacity decrease blocked configuration", err)
+	}
+	if s.publicationSources[0].CatalogObjectLimit != 0 {
+		t.Fatal("durable capacity decreased")
 	}
 }
 
