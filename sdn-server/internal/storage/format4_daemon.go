@@ -283,6 +283,11 @@ func format4CreateMode(basePath string) (format4.CreateMode, error) {
 
 // newFormat4Store is NewFlatSQLStore on store format 4.
 func newFormat4Store(basePath string, validator *sds.Validator, cfg storeConfig) (*FlatSQLStore, error) {
+	markers, err := marker.Read(basePath)
+	if err != nil { return nil, err }
+	if markers.RequiredLayout >= 2 && !cfg.unlimitedSQLVisibility {
+		return nil, fmt.Errorf("format 4: stream format %d layout %d requires storage.unlimited_sql_visibility=true; layout promotion cannot be undone", markers.Format, markers.RequiredLayout)
+	}
 	if err := os.MkdirAll(basePath, 0o700); err != nil {
 		return nil, fmt.Errorf("failed to create storage directory: %w", err)
 	}
@@ -300,18 +305,6 @@ func newFormat4Store(basePath string, validator *sds.Validator, cfg storeConfig)
 	if err != nil {
 		return nil, err
 	}
-
-	auxiliaryMetadata, err := openAuxiliaryMetadataStore(filepath.Join(basePath, auxiliaryMetadataFileName), false)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open auxiliary metadata: %w", err)
-	}
-	auxiliaryMetadata.chunkBytes = cfg.auxReplayChunkBytes
-	auxiliaryOpened := false
-	defer func() {
-		if !auxiliaryOpened {
-			auxiliaryMetadata.Close()
-		}
-	}()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	d := &format4Daemon{ctx: ctx, cancel: cancel, types: map[string]bool{}}
@@ -350,6 +343,14 @@ func newFormat4Store(basePath string, validator *sds.Validator, cfg storeConfig)
 		_ = d.api().Close(cctx)
 		ccancel()
 	}
+	auxiliaryMetadata, err := openAuxiliaryMetadataStore(filepath.Join(basePath, auxiliaryMetadataFileName), false)
+	if err != nil {
+		closeEngine()
+		return nil, fmt.Errorf("failed to open auxiliary metadata: %w", err)
+	}
+	auxiliaryMetadata.chunkBytes = cfg.auxReplayChunkBytes
+	auxiliaryOpened := false
+	defer func() { if !auxiliaryOpened { auxiliaryMetadata.Close() } }()
 
 	// The control instance lives beside the feed files.
 	controlDir := filepath.Join(basePath, marker.Dir)
@@ -435,6 +436,9 @@ func newFormat4Store(basePath string, validator *sds.Validator, cfg storeConfig)
 	}
 	if err := d.registerTypes(validator); err != nil {
 		return fail(err)
+	}
+	if m, err := marker.Read(basePath); err == nil {
+		log.Infof("storage: backend format 4, stream format %d, layout %d", m.Format, m.Layout)
 	}
 	if cfg.quotaBytes > 0 {
 		if err := d.api().SetQuota(cfg.quotaBytes); err != nil {
@@ -541,8 +545,18 @@ func (d *format4Daemon) ensureType(schema string) error {
 	if err != nil {
 		return err
 	}
+	before, err := marker.Read(d.opt.DataRoot)
+	if err != nil { return err }
+	if spec.UnlimitedVisibility && before.Layout < 2 {
+		log.Infof("format 4: promoting stream format %d from layout %d to layout 2 for unlimited SQL visibility", before.Format, before.Layout)
+	}
 	if err := d.api().RegisterType(spec); err != nil {
 		return fmt.Errorf("register %s: %w", schema, err)
+	}
+	if spec.UnlimitedVisibility && before.Layout < 2 {
+		after, err := marker.Read(d.opt.DataRoot)
+		if err != nil { return err }
+		log.Infof("format 4: SQL visibility registration complete; stream format %d layout %d", after.Format, after.Layout)
 	}
 	d.types[schema] = true
 	return nil

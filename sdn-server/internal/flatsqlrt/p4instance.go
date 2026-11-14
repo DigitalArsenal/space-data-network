@@ -24,6 +24,7 @@ package flatsqlrt
 // the boot and the control calls, nothing about records.
 
 import (
+	"errors"
 	"encoding/binary"
 	"fmt"
 	"sync"
@@ -31,6 +32,8 @@ import (
 
 	"github.com/spacedatanetwork/sdn-server/internal/wasmrt"
 )
+
+var ErrP4Capabilities = errors.New("format4: requires an engine with unlimited-relations capability (not available in release 3.12.1)")
 
 // The engine's layout block (flatsql_p4.h FlatsqlP4Layout).
 const (
@@ -41,6 +44,7 @@ const (
 
 // P4Config configures the instance.
 type P4Config struct {
+	RequiredCapabilities uint32
 	Wasm          []byte // the portable artifact; it runs only AOT-compiled
 	AOTCacheDir   string
 	CompileOnMiss bool         // compile a missing artifact (tests, prewarm)
@@ -145,6 +149,7 @@ func OpenP4Instance(cfg P4Config) (*P4Instance, error) {
 	}
 	p4 := &P4Instance{}
 	ps, err := OpenPSInstance(PSConfig{
+		RequiredP4Capabilities: cfg.RequiredCapabilities,
 		// One instance does everything; its I/O runs at the writer class.
 		Role: PSRoleWriter, ABI: PSABIP4,
 		Wasm: cfg.Wasm, AOTCacheDir: cfg.AOTCacheDir, AOTPrefix: P4ThreadsAOTPrefix, CompileOnMiss: cfg.CompileOnMiss,
@@ -166,6 +171,16 @@ func OpenP4Instance(cfg P4Config) (*P4Instance, error) {
 
 // initP4 brings up the format-4 engine (PSABIP4).
 func (p *PSInstance) initP4() error {
+	if p.cfg.RequiredP4Capabilities != 0 {
+		if !p.mod.HasFunction("flatsql_capabilities") {
+			return fmt.Errorf("%w: required capability bits %d, found no export (%s)", ErrP4Capabilities, p.cfg.RequiredP4Capabilities, P4ThreadsPackage)
+		}
+		values, err := p.control("flatsql_capabilities")
+		if err != nil { return fmt.Errorf("%w: %v", ErrP4Capabilities, err) }
+		if len(values) == 0 || uint32(wasmrt.ToInt32(values[0])) & p.cfg.RequiredP4Capabilities != p.cfg.RequiredP4Capabilities {
+			return fmt.Errorf("%w: required capability bits %d are absent", ErrP4Capabilities, p.cfg.RequiredP4Capabilities)
+		}
+	}
 	if _, err := p.control("_initialize"); err != nil {
 		return fmt.Errorf("flatsqlrt: p4 _initialize: %w", err)
 	}
@@ -241,6 +256,9 @@ func (p *PSInstance) initP4() error {
 	p.started = int(wasmrt.ToInt32(v[0]))
 	return nil
 }
+
+// HasFunction probes an export without calling a missing function.
+func (p *P4Instance) HasFunction(name string) bool { return p.ps.mod.HasFunction(name) }
 
 // growHeap grows the shared memory to its maximum before the engine's
 // threads start (flatsql docs/STORE-FORMAT-4.md, host: "grow the shared heap

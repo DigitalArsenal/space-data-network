@@ -89,7 +89,7 @@ type Engine struct {
 
 var _ API = (*Engine)(nil)
 
-var ErrUnlimitedRelationsUnsupported = errors.New("format4: engine lacks unlimited relation support")
+var ErrUnlimitedRelationsUnsupported = flatsqlrt.ErrP4Capabilities
 
 // Open initializes and starts the engine (init + start). *Engine implements
 // API.
@@ -112,18 +112,16 @@ func Open(ctx context.Context, opt Options) (*Engine, error) {
 		return nil, flatsqlrt.ErrNoP4Artifact
 	}
 	engineRoot := filepath.Join(root, marker.Dir)
-	if opt.Create != OpenExisting {
-		if err := os.MkdirAll(engineRoot, 0o700); err != nil {
-			return nil, fmt.Errorf("format4: %w", err)
-		}
-	}
 	fdBudget, basis := flatsqlrt.P4FDBudget(opt.FDBudget)
 	if opt.Tuning.ReaderConns == 0 {
 		opt.Tuning.ReaderConns = readerConnsFor(fdBudget, opt.Tuning.WriterConns)
 	}
 	log.Infof("format 4: host I/O fd budget %d (%s), %d reader connections", fdBudget, basis, opt.Tuning.ReaderConns)
 	e := &Engine{}
+	var required uint32
+	if opt.UnlimitedVisibility { required = 1 }
 	inst, err := flatsqlrt.OpenP4Instance(flatsqlrt.P4Config{
+		RequiredCapabilities: required,
 		Wasm: wasm, AOTCacheDir: opt.AOTCacheDir, CompileOnMiss: opt.CompileOnMiss,
 		Store: opt.Store, StoreRoot: root, FDBudget: fdBudget, InitConfig: encodeConfig(engineRoot, opt),
 		OnFailure: func(_ *flatsqlrt.P4Instance, cause error) {
@@ -283,10 +281,13 @@ func (e *Engine) RegisterType(spec TypeSpec) error {
 		return err
 	}
 	if spec.UnlimitedVisibility {
-		capabilities, err := e.ctl.ControlCall("flatsql_capabilities")
-		if err != nil || capabilities < 0 || capabilities&1 == 0 {
-			return fmt.Errorf("%w: %v", ErrUnlimitedRelationsUnsupported, err)
+		probe, ok := e.ctl.(interface{ HasFunction(string) bool })
+		if !ok || !probe.HasFunction("flatsql_capabilities") {
+			return fmt.Errorf("%w: required unlimited-relations engine; embedded release %s has no supporting export", ErrUnlimitedRelationsUnsupported, flatsqlrt.P4ThreadsPackage)
 		}
+		capabilities, err := e.ctl.ControlCall("flatsql_capabilities")
+		if err != nil { return fmt.Errorf("%w: %v", ErrUnlimitedRelationsUnsupported, err) }
+		if capabilities < 0 || capabilities&1 == 0 { return fmt.Errorf("%w: unlimited-relations capability is absent (bits %d)", ErrUnlimitedRelationsUnsupported, capabilities) }
 	}
 	e.memo.begin()
 	defer e.memo.end(false)
