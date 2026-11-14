@@ -27,7 +27,7 @@ const (
 	MigratedFile  = "MIGRATED"
 	LegacyControl = "control.flatsqldb"
 	PreFormat4Dir = "pre-format4"
-	StoreFormat   = 4
+	StoreFormat   = 5 // stream format; the node selects this backend as format 4
 )
 
 // Marker byte layouts (contract §2.2; little-endian, crc32c = Castagnoli).
@@ -46,6 +46,7 @@ type Markers struct {
 	StorePresent, StoreValid       bool // fsql4/STORE exists / has length, magic and crc right
 	MigratedPresent, MigratedValid bool
 	Format, Layout                 uint16
+	RequiredLayout                 uint16 // includes a valid pending promotion intent
 	UUID                           [16]byte
 	CreatedMs                      int64
 	GseqFloor                      uint64
@@ -95,6 +96,16 @@ func Read(dataRoot string) (Markers, error) {
 		m.CreatedMs = int64(binary.LittleEndian.Uint64(b[24:]))
 		m.GseqFloor = binary.LittleEndian.Uint64(b[32:])
 		m.MigratedFrom = binary.LittleEndian.Uint32(b[40:])
+	}
+	m.RequiredLayout = m.Layout
+	intent, _, err := readFile(filepath.Join(dir, "STORE.unlimited"))
+	if err != nil {
+		return m, err
+	}
+	if len(intent) == storeLen && binary.LittleEndian.Uint32(intent) == storeMagic &&
+		binary.LittleEndian.Uint16(intent[4:]) == StoreFormat && binary.LittleEndian.Uint16(intent[6:]) == 2 &&
+		binary.LittleEndian.Uint32(intent[56:]) == crc32.Checksum(intent[:56], castagnoli) {
+		m.RequiredLayout = max(m.RequiredLayout, 2)
 	}
 	switch info, err := os.Stat(filepath.Join(dataRoot, LegacyControl)); {
 	case err == nil:

@@ -987,17 +987,23 @@ func (m *migrator4) saveJournal() error {
 // commit point) reopens as a migration target and the activation runs again:
 // the engine rewrites STORE (C-22; only the engine writes markers).
 func (m *migrator4) openTarget(ctx context.Context, mode format4.CreateMode) error {
+	state, err := marker.Read(m.root)
+	if err != nil {
+		return err
+	}
 	opt := format4.Options{DataRoot: m.root, Create: mode, AOTCacheDir: m.opt.AOTCacheDir,
-		CompileOnMiss: m.opt.CompileOnMiss, Wasm: m.opt.Wasm, Tuning: m.opt.Tuning}
+		CompileOnMiss: m.opt.CompileOnMiss, Wasm: m.opt.Wasm, Tuning: m.opt.Tuning,
+		UnlimitedVisibility: state.RequiredLayout >= 2}
 	if m.j != nil {
 		opt.GseqFloor = m.j.GseqFloor
 	}
-	var err error
 	if m.api, err = openFormat4Engine(ctx, opt); err != nil {
 		return fmt.Errorf("open the format-4 engine (run prewarm-aot as this user first): %w", err)
 	}
 	for _, schema := range m.schemas {
-		if err := m.api.RegisterType(m.specs[schema]); err != nil {
+		spec := m.specs[schema]
+		spec.UnlimitedVisibility = opt.UnlimitedVisibility
+		if err := m.api.RegisterType(spec); err != nil {
 			return fmt.Errorf("register %s: %w", schema, err)
 		}
 	}

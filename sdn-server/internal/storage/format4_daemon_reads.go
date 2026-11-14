@@ -2520,6 +2520,8 @@ func f4SandboxError(err error) error {
 		code = flatsqlrt.SandboxCodeTimeout
 	case format4.StatusBudget:
 		code = flatsqlrt.SandboxCodeByteCap
+	case format4.StatusCacheBudget:
+		return fmt.Errorf("SQL row cache admission budget exhausted: %w", se)
 	}
 	if strings.Contains(se.Msg, "not authorized") {
 		code = flatsqlrt.SandboxCodeNotAuthorized

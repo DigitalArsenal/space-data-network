@@ -95,6 +95,7 @@ type StoreFormat struct {
 	// Format is 1 for a format-1 store (and for a directory holding no store
 	// yet), else the STORE.format of an activated format-2 store.
 	Format int
+	Layout int
 	// Evidence names the markers that decided Format, for the log line.
 	Evidence string
 }
@@ -103,7 +104,8 @@ type StoreFormat struct {
 //
 // Format 4 comes first: fsql4/MIGRATED or fsql4/STORE present (in any state:
 // a migration in progress, an activation a crash cut short, a finished store)
-// is format 4. The rules below do not run for it.
+// requires backend compatibility level 4. The stream marker's format 5 and
+// the binary's historical backend stamp 4 describe different contracts.
 //
 // A store is format 2 or above once it is ACTIVATED: fsql2/MIGRATED exists
 // (store-migrate's last step, and a fresh format-2 store is created with it),
@@ -122,7 +124,12 @@ func ReadStoreFormat(root string) (StoreFormat, error) {
 		return sf, err
 	} else if m.Format4() {
 		sf.Format = versioninfo.P4StoreFormat
+		if m.Format > marker.StoreFormat {
+			sf.Format = int(m.Format)
+		}
+		sf.Layout = max(1, int(m.RequiredLayout))
 		sf.Evidence = format4Evidence(m)
+		sf.Evidence += fmt.Sprintf(", stream format %d layout %d", m.Format, sf.Layout)
 		return sf, nil
 	}
 	migrated, err := pathExists(filepath.Join(root, storeEngineDir, storeMigratedFile))
@@ -236,6 +243,7 @@ func isDaemonBinaryPath(rel string) bool {
 // slotStamp is what a payload's daemon binaries say about the store formats
 // they open.
 type slotStamp struct {
+	Layout int
 	// Format is the lowest stamp among the payload's daemon executables; 1
 	// for an executable with no stamp, or for a payload with no executable.
 	Format int
@@ -296,9 +304,12 @@ func (s *slotStamp) scanExecutable(rel string, r io.Reader) error {
 	if !executableMagic(head) {
 		return nil
 	}
-	format, found, err := versioninfo.ReadStoreFormatStamp(br)
+	format, found, layout, _, err := versioninfo.ReadStoreCompatibilityStamp(br)
 	if err != nil {
 		return fmt.Errorf("scan %s: %w", rel, err)
+	}
+	if len(s.Binaries) == 0 || layout < s.Layout {
+		s.Layout = layout
 	}
 	s.add(rel, format, found)
 	return nil
@@ -435,6 +446,7 @@ type StoreFormatRefusal struct {
 	Version string
 	// SlotMaxStoreFormat is the highest store format the slot's binary opens.
 	SlotMaxStoreFormat int
+	SlotMaxStoreLayout int
 	Slot               string // what the slot's binaries say (slotStamp.describe)
 	Store              StoreFormat
 }
@@ -446,6 +458,9 @@ func (e *StoreFormatRefusal) Error() string {
 	}
 	if v := strings.TrimSpace(e.Version); v != "" && !strings.Contains(e.Target, v) {
 		what += " (version " + v + ")"
+	}
+	if e.SlotMaxStoreFormat >= e.Store.Format && max(1, e.SlotMaxStoreLayout) < max(1, e.Store.Layout) {
+		return fmt.Sprintf("store-format guard REFUSED to %s: store layout %d requires a supporting binary; candidate supports layout %d; nothing was swapped", what, e.Store.Layout, max(1, e.SlotMaxStoreLayout))
 	}
 	return fmt.Sprintf("store-format guard REFUSED to %s: the slot %s, but the record store at %s is format %d (%s). "+
 		"That build would refuse or damage the store, so nothing was swapped and the running build stays. "+
@@ -483,7 +498,7 @@ func guardStoreFormat(action, target, version string, store StoreFormat, stamp f
 		s = slotStamp{Format: versioninfo.Format1StoreFormat, Unstamped: []string{fmt.Sprintf("unreadable: %v", err)}, Binaries: []string{"?"}}
 		applies = true
 	}
-	if !applies || s.Format >= store.Format {
+	if !applies || (s.Format >= store.Format && max(1, s.Layout) >= max(1, store.Layout)) {
 		return nil
 	}
 	refusal := &StoreFormatRefusal{
@@ -491,6 +506,7 @@ func guardStoreFormat(action, target, version string, store StoreFormat, stamp f
 		Target:             target,
 		Version:            version,
 		SlotMaxStoreFormat: s.Format,
+		SlotMaxStoreLayout: max(1, s.Layout),
 		Slot:               s.describe(),
 		Store:              store,
 	}

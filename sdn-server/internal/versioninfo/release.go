@@ -72,8 +72,8 @@ const (
 	// with no pin, else bytes with exactly this sha256).
 	P4EngineSHA256 = "75f33a69d462a07a15e0c2aa2e2e601f8b49c3c8101f29302782aadf82a32e06"
 
-	// P4StoreFormat is format 4's fsql4/STORE format: the format a format-4
-	// store is at, and the one the format-4 engine opens.
+	// P4StoreFormat is the backend compatibility stamp used by released nodes.
+	// Its engine writes stream format 5; layout compatibility is stamped separately.
 	P4StoreFormat = 4
 
 	// p4Pinned is 1 when this build pins (and so embeds) a format-4 engine,
@@ -89,6 +89,9 @@ const (
 )
 
 const (
+	// MaxStoreLayout describes the embedded engine. A layout-2 artifact pin
+	// must raise this with the engine release; development overrides do not.
+	MaxStoreLayout            = 1
 	storeFormatStampVersion   = 1
 	storeFormatStampHeaderLen = 22
 )
@@ -108,7 +111,15 @@ var storeFormatStamp = [...]byte{
 	^byte(MaxStoreFormat),
 }
 
+var storeLayoutStamp = [...]byte{
+	0x00, 'S', 'D', 'N', '.', 'M', 'A', 'X', '_', 'S', 'T', 'O', 'R', 'E', '_', 'L', 'A', 'Y', 'O', 'U', 'T', 0x00,
+	storeFormatStampVersion, byte(MaxStoreLayout), ^byte(MaxStoreLayout),
+}
+
 func init() {
+	if int(storeLayoutStamp[storeFormatStampHeaderLen+1]) != MaxStoreLayout {
+		panic("versioninfo: store-layout stamp disagrees with embedded engine")
+	}
 	// Reading the stamp at run time is what keeps it in the binary; checking it
 	// catches an edit that lets the array and MaxStoreFormat disagree.
 	if got := storeFormatStamp[storeFormatStampHeaderLen+1]; int(got) != MaxStoreFormat {
@@ -131,36 +142,63 @@ func StoreFormatStamp(format int) []byte {
 // false for a binary built before the stamp existed. When the bytes carry more
 // than one valid stamp, the lowest format wins.
 func ReadStoreFormatStamp(r io.Reader) (format int, found bool, err error) {
-	header := storeFormatStamp[:storeFormatStampHeaderLen]
+	format, found, _, _, err = ReadStoreCompatibilityStamp(r)
+	return
+}
+
+// StoreLayoutStamp is the layout capability encoded in an executable.
+func StoreLayoutStamp(layout int) []byte {
+	if layout < 1 || layout > 255 {
+		panic("invalid store layout")
+	}
+	out := append([]byte(nil), storeLayoutStamp[:storeFormatStampHeaderLen]...)
+	return append(out, storeFormatStampVersion, byte(layout), ^byte(layout))
+}
+
+// ReadStoreCompatibilityStamp scans both capabilities in one pass, including
+// streamed update archives. Missing layout stamps mean layout 1.
+func ReadStoreCompatibilityStamp(r io.Reader) (format int, found bool, layout int, layoutFound bool, err error) {
 	need := len(storeFormatStamp)
 	buf := make([]byte, 1<<20+need)
 	keep := 0
 	for {
 		n, readErr := io.ReadFull(r, buf[keep:])
 		data := buf[:keep+n]
-		for i := 0; ; {
-			j := bytes.Index(data[i:], header)
-			if j < 0 {
-				break
-			}
-			at := i + j
-			if at+need > len(data) {
-				break // completed by the next read, which carries these bytes over
-			}
-			tail := data[at+storeFormatStampHeaderLen : at+need]
-			if tail[0] == storeFormatStampVersion && tail[1] >= 1 && tail[2] == ^tail[1] {
-				if !found || int(tail[1]) < format {
-					format = int(tail[1])
+		for kind, stamp := range [][]byte{storeFormatStamp[:], storeLayoutStamp[:]} {
+			for i := 0; ; {
+				j := bytes.Index(data[i:], stamp[:storeFormatStampHeaderLen])
+				if j < 0 {
+					break
 				}
-				found = true
+				at := i + j
+				if at+need > len(data) {
+					break // completed by the next read, which carries these bytes over
+				}
+				tail := data[at+storeFormatStampHeaderLen : at+need]
+				if tail[0] == storeFormatStampVersion && tail[1] >= 1 && tail[2] == ^tail[1] {
+					if kind == 0 {
+						if !found || int(tail[1]) < format {
+							format = int(tail[1])
+						}
+						found = true
+					} else {
+						if !layoutFound || int(tail[1]) < layout {
+							layout = int(tail[1])
+						}
+						layoutFound = true
+					}
+				}
+				i = at + 1
 			}
-			i = at + 1
 		}
 		if readErr == io.EOF || readErr == io.ErrUnexpectedEOF {
-			return format, found, nil
+			if !layoutFound {
+				layout = 1
+			}
+			return format, found, layout, layoutFound, nil
 		}
 		if readErr != nil {
-			return 0, false, readErr
+			return 0, false, 0, false, readErr
 		}
 		// A stamp cut by the read boundary has at most need-1 bytes on this
 		// side of it; carry those over. A complete stamp never fits in them, so

@@ -363,6 +363,8 @@ func (s *FlatSQLStore) BootState() BootStats {
 type StoreOption func(*storeConfig)
 
 type storeConfig struct {
+	unlimitedSQLVisibility bool
+	rowCacheBytes          uint64
 	engineHotWindow        int
 	engineGenericHotWindow int
 	deferBootRebuilds      bool
@@ -371,6 +373,16 @@ type storeConfig struct {
 	// format pins the store format (withStoreFormat); 0 decides it by
 	// storeFormatFor.
 	format int
+}
+
+// WithUnlimitedSQLVisibility opts into irreversible stream-layout promotion.
+func WithUnlimitedSQLVisibility(enabled bool) StoreOption {
+	return func(c *storeConfig) { c.unlimitedSQLVisibility = enabled }
+}
+
+// WithRowCacheBytes sets the stream engine's shared cache; zero uses its default.
+func WithRowCacheBytes(bytes uint64) StoreOption {
+	return func(c *storeConfig) { c.rowCacheBytes = bytes }
 }
 
 // withStoreFormat opens the store as format n whatever SDN_STORE_FORMAT

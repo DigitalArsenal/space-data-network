@@ -10,12 +10,13 @@ import (
 // Tags 1-7 are format 2's, encoded by format2.TypeSpec.Encode (RingCap is
 // ignored by format 4); the rest are format 4's.
 type TypeSpec struct {
-	format2.TypeSpec        // tags 1-7 exactly as format2.TypeSpec.Encode (RingCap ignored)
-	PageSize         uint32 // 8
-	Identity         bool   // 9
-	A18Bound         uint32 // 10
-	EpochProfile     uint8  // 11: 0 none, 1 OMM, 2 MPE
-	FullText         bool   // 12
+	format2.TypeSpec           // tags 1-7 exactly as format2.TypeSpec.Encode (RingCap ignored)
+	PageSize            uint32 // 8
+	Identity            bool   // 9
+	A18Bound            uint32 // 10
+	UnlimitedVisibility bool   // tag 13: explicit opt-in, after a capability check
+	EpochProfile        uint8  // 11: 0 none, 1 OMM, 2 MPE
+	FullText            bool   // 12
 }
 
 // Epoch profiles (type spec tag 11): how an EPOCH op keys an entity.
@@ -25,7 +26,7 @@ const (
 	epochProfileMPE  uint8 = 2 // entity = COL1 -> COL0 -> cid
 )
 
-// Encode serializes the spec: format 2's tags 1-7, then tags 8-12 in
+// Encode serializes the spec: format 2's tags 1-7, then tags 8-13 in
 // ascending order, each only when set (absent = the engine default).
 func (t TypeSpec) Encode() []byte {
 	out := t.TypeSpec.Encode()
@@ -44,19 +45,14 @@ func (t TypeSpec) Encode() []byte {
 	if t.FullText {
 		out = tlvU8(out, 12, 1)
 	}
+	if t.UnlimitedVisibility {
+		out = tlvU8(out, 13, 1)
+	}
 	return out
 }
 
-// A18 bounds (contract §3.3 tag 10; C-24): the newest-N window of a type's
-// SQL relations, as format 1's engine hot windows (engineWindowFor): 400000
-// for the decorated standards OMM and TBS, 10000 for every other type.
-const (
-	a18BoundDecorated = 400_000
-	a18BoundDefault   = 10_000
-)
-
 // CIDOnlyTypeSpec is format 2's CID-only registration (format2.CIDOnlyTypeSpec,
-// contract C-25) on format 4: 4 KiB pages and the default A18 bound, no
+// contract C-25) on format 4: 4 KiB pages and the default bounded visibility, no
 // epoch profile, no identity, no full text.
 func CIDOnlyTypeSpec(typ string, fid [4]byte) TypeSpec {
 	return TypeSpec{TypeSpec: format2.CIDOnlyTypeSpec(typ, fid), PageSize: 4096, A18Bound: a18BoundDefault}
@@ -64,13 +60,13 @@ func CIDOnlyTypeSpec(typ string, fid [4]byte) TypeSpec {
 
 // TypeSpecFor builds the registration of an embedded SDS standard: format
 // 2's (rules, BFBS, file identifier, flags; read-only reuse) plus IQC's
-// identity dedupe and 16 KiB pages, the A18 bound (OMM and TBS 400000, else
-// 10000), the epoch profile (OMM 1, MPE 2) and full text for every type
+// identity dedupe and 16 KiB pages, bounded visibility, the epoch profile
+// (OMM 1, MPE 2) and full text for every type
 // format 1 indexes, except numeric weather grids. Field-sealed types have no
 // full-text index either.
-// A field-sealed standard (a sealed record's stored bytes are neither its
-// text nor a FlatBuffer) is CID-only on format 2, and so here: no SQL
-// relation, nothing extracted (contract C-46 (7)). The rules are format 2's,
+// A field-sealed standard has a trusted metadata-only SQL relation with no
+// extracted plaintext fields; public SQL denies it. Stored bytes can retain
+// unsealed fields. The rules are format 2's,
 // unchanged (contract v15: one file per source feed x standard, no bucket
 // rule).
 func TypeSpecFor(schemaName string) (TypeSpec, error) {
@@ -92,6 +88,9 @@ func TypeSpecFor(schemaName string) (TypeSpec, error) {
 // schema, record verification, SQL relation, or provenance indexes.
 func typeStorageOptions(typ string) TypeSpec {
 	spec := TypeSpec{PageSize: 4096, A18Bound: a18BoundDefault, FullText: true}
+	if typ == "OMM" || typ == "TBS" {
+		spec.A18Bound = a18BoundDecorated
+	}
 	switch typ {
 	case "WXF":
 		// Grid samples are numeric payloads. Reflecting every float into text
@@ -99,10 +98,7 @@ func typeStorageOptions(typ string) TypeSpec {
 		// ordinary record/source indexes still serve metadata and SQL reads.
 		spec.FullText = false
 	case "OMM":
-		spec.A18Bound = a18BoundDecorated
 		spec.EpochProfile = epochProfileOMM
-	case "TBS":
-		spec.A18Bound = a18BoundDecorated
 	case "MPE":
 		spec.EpochProfile = epochProfileMPE
 	case "IQC":
@@ -111,6 +107,11 @@ func typeStorageOptions(typ string) TypeSpec {
 	}
 	return spec
 }
+
+const (
+	a18BoundDefault   uint32 = 10_000
+	a18BoundDecorated uint32 = 400_000
+)
 
 func tlvBytes(out []byte, tag uint16, v []byte) []byte {
 	out = binary.LittleEndian.AppendUint16(out, tag)

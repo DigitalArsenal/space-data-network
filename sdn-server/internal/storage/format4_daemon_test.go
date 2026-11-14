@@ -69,12 +69,9 @@ func format4TestWasm(t *testing.T) []byte {
 func onFormat4Engine(t *testing.T, body func(t *testing.T)) {
 	wasm := format4TestWasm(t)
 	prev := format4OpenEngine
+	cache := t.TempDir()
 	format4OpenEngine = func(ctx context.Context, opt format4.Options) (format4.API, error) {
-		base, err := os.UserCacheDir()
-		if err != nil {
-			base = os.TempDir()
-		}
-		opt.Wasm, opt.CompileOnMiss, opt.AOTCacheDir = wasm, true, filepath.Join(base, "sdn-format4-test-aot")
+		opt.Wasm, opt.CompileOnMiss, opt.AOTCacheDir = wasm, true, cache
 		return prev(ctx, opt)
 	}
 	t.Cleanup(func() { format4OpenEngine = prev })
@@ -100,6 +97,127 @@ func openFormat4ForTest(t testing.TB, dir string, opts ...StoreOption) *FlatSQLS
 	}
 	t.Setenv(format4.FormatEnv, prevFormat)
 	return s
+}
+
+func TestFormat4UnlimitedVisibilityOptIn(t *testing.T) {
+	onFormat4Engine(t, func(t *testing.T) {
+		root := t.TempDir()
+		store := openFormat4ForTest(t, root)
+		m, err := marker.Read(root)
+		if err != nil || m.Layout != 1 {
+			t.Fatalf("default layout: %+v %v", m, err)
+		}
+		if err := store.Close(); err != nil {
+			t.Fatal(err)
+		}
+		store = openFormat4ForTest(t, root, WithUnlimitedSQLVisibility(true))
+		m, err = marker.Read(root)
+		if err != nil || m.Layout != 2 {
+			t.Fatalf("opt-in layout: %+v %v", m, err)
+		}
+		if err := store.Close(); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv(format4.FormatEnv, "4")
+		if unexpected, err := NewFlatSQLStore(root, nil); err == nil || !strings.Contains(err.Error(), "unlimited_sql_visibility") {
+			if unexpected != nil {
+				unexpected.Close()
+			}
+			t.Fatalf("disabled promoted store: %v", err)
+		}
+		store = openFormat4ForTest(t, root, WithUnlimitedSQLVisibility(true))
+		if err := store.Close(); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+// Registration and SQL only: this test creates no identities or signing keys.
+func TestFormat4AllSchemasSQLIsolation(t *testing.T) {
+	ctx := context.Background()
+	v, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, err := format4.Open(ctx, format4.Options{DataRoot: t.TempDir(), Create: format4.CreateFresh,
+		Wasm: format4TestWasm(t), CompileOnMiss: true, AOTCacheDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e.Close(ctx)
+	var specs []format4.TypeSpec
+	for _, schema := range v.Schemas() {
+		if id, ok := v.FileIdentifier(schema); ok && (id == "$FMB" || id == "$FCK" || id == "$FSG") {
+			continue
+		}
+		if _, err := sds.SchemaNameToTable(schema); err != nil {
+			continue
+		}
+		spec, err := Format4TypeSpec(schema, v.FileIdentifier)
+		if err != nil {
+			t.Fatal(err)
+		}
+		spec.UnlimitedVisibility = true
+		if err := e.ValidateType(spec); err != nil {
+			t.Fatalf("preflight %s: %v", schema, err)
+		}
+		specs = append(specs, spec)
+	}
+	if _, err := e.SQL(ctx, format4.SQLRequest{SQL: "SELECT 1"}, func([]byte) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	for _, spec := range specs {
+		if err := e.RegisterType(spec); err != nil {
+			t.Fatal(err)
+		}
+	}
+	opaque := 0
+	for _, spec := range specs {
+		for _, sandbox := range []bool{false, true} {
+			for _, projection := range []string{"COUNT(*)", "COUNT(_cid)", "_cid", "_data", "*"} {
+				_, err := e.SQL(ctx, format4.SQLRequest{SQL: "SELECT " + projection + " FROM " + spec.TypeName(), Sandbox: sandbox}, func([]byte) error { return nil })
+				if len(spec.BFBS) == 0 && (err == nil || !strings.Contains(err.Error(), "no such table")) {
+					t.Fatalf("opaque %s exposed: %v", spec.TypeName(), err)
+				}
+				if err != nil && !strings.Contains(err.Error(), "no such table") {
+					t.Fatalf("schema %s prevented SQL: %v", spec.TypeName(), err)
+				}
+			}
+		}
+		if len(spec.BFBS) == 0 {
+			opaque++
+		}
+	}
+	if opaque == 0 {
+		t.Fatal("no sealed or opaque registration covered")
+	}
+	t.Logf("registered schemas=%d opaque=%d; trusted and sandbox SQL checked", len(specs), opaque)
+}
+
+func TestFormat4MissingCapabilityLeavesNoStore(t *testing.T) {
+	format4TestWasm(t) // require the native runtime, but probe the shipped bytes
+	prev := format4OpenEngine
+	defer func() { format4OpenEngine = prev }()
+	format4OpenEngine = func(ctx context.Context, opt format4.Options) (format4.API, error) {
+		opt.Wasm = flatsqlrt.P4ThreadsWasm()
+		opt.CompileOnMiss = true
+		opt.AOTCacheDir = t.TempDir()
+		return format4.Open(ctx, opt)
+	}
+	t.Setenv(format4.FormatEnv, "4")
+	root := t.TempDir()
+	unexpected, err := NewFlatSQLStore(root, nil, WithUnlimitedSQLVisibility(true))
+	if unexpected != nil {
+		unexpected.Close()
+	}
+	if !errors.Is(err, format4.ErrUnlimitedRelationsUnsupported) {
+		t.Fatalf("missing capability: %v", err)
+	}
+	for _, name := range []string{marker.Dir, auxiliaryMetadataFileName, marker.LegacyControl} {
+		if _, err := os.Stat(filepath.Join(root, name)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("failed capability left %s: %v", name, err)
+		}
+	}
 }
 
 // f4Rows is a record list keyed for comparison: CID, bytes and stored
@@ -687,7 +805,7 @@ func buildPNMForTest(i int, fileID, signature string) []byte {
 // with SIGNATURE sealed (no rule reads it), then PNM with FILE_ID sealed (its
 // COL 1 rule reads it), by name and mislabeled (the field id is what is
 // sealed).
-func TestFormat4SealedTypesStayOffSQLAndOutOfIndexes(t *testing.T) {
+func TestFormat4SealedTypesHaveNoSQLRelation(t *testing.T) {
 	onFormat4Engine(t, func(t *testing.T) {
 		t.Cleanup(func() { encfield.RegisterSchema("PNM", nil) })
 		open := func() [2]*FlatSQLStore {
@@ -703,7 +821,7 @@ func TestFormat4SealedTypesStayOffSQLAndOutOfIndexes(t *testing.T) {
 		tags := SourceTags{ProviderID: "proof", SourceName: "sealed-pnm", BatchID: "s-1"}
 
 		// L1: SIGNATURE sealed. The records store and read back on both
-		// formats; SQL reaches none of them on either.
+		// formats; neither store creates a SQL relation.
 		encfield.RegisterSchema("PNM", []encfield.FieldSpec{{Name: "SIGNATURE", FieldID: 5}})
 		stores := open()
 		for _, s := range stores {
@@ -730,8 +848,26 @@ func TestFormat4SealedTypesStayOffSQLAndOutOfIndexes(t *testing.T) {
 					t.Fatalf("format4=%v: PNM %s is stored unsealed", s.Format4(), r.CID)
 				}
 			}
-			if reach := sqlReaches(t, s, "PNM"); len(reach) > 0 {
-				t.Fatalf("format4=%v: a sealed standard is on the public SQL surface: %v", s.Format4(), reach)
+			if s.Format4() {
+				caps := flatsqlrt.SandboxCaps{Timeout: time.Minute}
+				for _, query := range []string{`SELECT COUNT(_cid) FROM PNM`, `SELECT _cid FROM PNM`, `SELECT _data FROM PNM`, `SELECT * FROM PNM`} {
+					payload, _, _, err := s.QuerySandboxedJSON(query, caps)
+					if err == nil || !strings.Contains(err.Error(), "no such table") {
+						t.Fatalf("sealed relation must be absent: %s: %v", query, err)
+					}
+					for _, plain := range append(fileIDs, sigs...) {
+						if bytes.Contains(payload, plain) || strings.Contains(err.Error(), string(plain)) {
+							t.Fatal("plaintext in sandbox response")
+						}
+					}
+				}
+				for _, query := range []string{`SELECT SIGNATURE FROM PNM`, `SELECT COUNT(*) FROM PNM`, `SELECT _cid FROM PNM`, `SELECT _data FROM PNM`, `SELECT * FROM PNM`} {
+					if _, err := s.QueryRawStream(query); err == nil || !strings.Contains(err.Error(), "no such table") {
+						t.Fatalf("trusted SQL must report no such table: %s: %v", query, err)
+					}
+				}
+			} else if reach := sqlReaches(t, s, "PNM"); len(reach) > 0 {
+				t.Fatalf("legacy sealed standard is on the public SQL surface: %v", reach)
 			}
 		}
 		for _, s := range stores {
@@ -820,6 +956,20 @@ func TestFormat4LogEntriesMatchFormat1(t *testing.T) {
 			if fmt.Sprintf("%x", a) != fmt.Sprintf("%x", b) || (q[0] == 0 && len(b) != 6) {
 				t.Fatalf("log entries after %d (limit %d): format 4 %d, format 1 %d", q[0], q[1], len(b), len(a))
 			}
+		}
+	})
+}
+
+func TestFormat4RowCacheSetting(t *testing.T) {
+	onFormat4Engine(t, func(t *testing.T) {
+		t.Setenv(format4.FormatEnv, "4")
+		if store, err := NewFlatSQLStore(t.TempDir(), nil, WithRowCacheBytes(16383)); err == nil {
+			store.Close()
+			t.Fatal("undersized cache setting was ignored")
+		}
+		store := openFormat4ForTest(t, t.TempDir(), WithRowCacheBytes(16384))
+		if err := store.Close(); err != nil {
+			t.Fatal(err)
 		}
 	})
 }

@@ -14,13 +14,14 @@ const (
 	StatusCorrupt     int32 = -4 // the file is quarantined; reads elsewhere continue
 	StatusFormat      int32 = -5 // store/file format above this engine; marker/state mismatch; C-5 rule change
 	StatusBusy        int32 = -6 // a queue or partition credit is full: nothing was done
-	StatusCanceled   int32 = -7
+	StatusCanceled    int32 = -7
 	StatusBudget      int32 = -8
 	StatusUnsupported int32 = -9
 	StatusNoType      int32 = -10
 	StatusStopped     int32 = -11
 	StatusNoSpace     int32 = -12 // quota or device full: writes refuse, reads continue
 	StatusSQL         int32 = -13
+	StatusCacheBudget int32 = -15 // pinned row-cache pages prevent admission
 	StatusInternal    int32 = -14
 )
 
@@ -32,15 +33,16 @@ var (
 
 // The status errors errors.Is matches a *StatusError against, by status.
 var (
-	ErrBusy      error = statusSentinel(StatusBusy)
-	ErrNoType    error = statusSentinel(StatusNoType)
-	ErrCorrupt   error = statusSentinel(StatusCorrupt)
-	ErrNoSpace   error = statusSentinel(StatusNoSpace)
-	ErrBudget    error = statusSentinel(StatusBudget)
-	ErrCanceled error = statusSentinel(StatusCanceled)
-	ErrStopped   error = statusSentinel(StatusStopped)
-	ErrFormat    error = statusSentinel(StatusFormat)
-	ErrSQL       error = statusSentinel(StatusSQL)
+	ErrBusy        error = statusSentinel(StatusBusy)
+	ErrNoType      error = statusSentinel(StatusNoType)
+	ErrCorrupt     error = statusSentinel(StatusCorrupt)
+	ErrNoSpace     error = statusSentinel(StatusNoSpace)
+	ErrBudget      error = statusSentinel(StatusBudget)
+	ErrCacheBudget error = statusSentinel(StatusCacheBudget)
+	ErrCanceled    error = statusSentinel(StatusCanceled)
+	ErrStopped     error = statusSentinel(StatusStopped)
+	ErrFormat      error = statusSentinel(StatusFormat)
+	ErrSQL         error = statusSentinel(StatusSQL)
 )
 
 func statusSentinel(status int32) *StatusError { return &StatusError{Status: status} }
@@ -92,6 +94,8 @@ func statusName(status int32) string {
 		return "canceled (P4_E_CANCELED)"
 	case StatusBudget:
 		return "over budget (P4_E_BUDGET)"
+	case StatusCacheBudget:
+		return "row cache admission budget exhausted (P4_E_CACHE_BUDGET)"
 	case StatusUnsupported:
 		return "unsupported (P4_E_UNSUPPORTED)"
 	case StatusNoType:

@@ -329,6 +329,9 @@ func runStatus(cmd *cobra.Command) error {
 	out := cmd.OutOrStdout()
 	baseURL := adminURL(cfg)
 	fmt.Fprintf(out, "admin_url=%s\n", baseURL)
+	if err := writeStoreStatus(out, cfg.Storage.Path); err != nil {
+		fmt.Fprintf(out, "store_status_error=%v\n", err)
+	}
 	return writeDaemonStatus(cmd.Context(), out, baseURL)
 }
 

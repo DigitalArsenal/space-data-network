@@ -283,6 +283,13 @@ func format4CreateMode(basePath string) (format4.CreateMode, error) {
 
 // newFormat4Store is NewFlatSQLStore on store format 4.
 func newFormat4Store(basePath string, validator *sds.Validator, cfg storeConfig) (*FlatSQLStore, error) {
+	markers, err := marker.Read(basePath)
+	if err != nil {
+		return nil, err
+	}
+	if markers.RequiredLayout >= 2 && !cfg.unlimitedSQLVisibility {
+		return nil, fmt.Errorf("format 4: stream format %d layout %d requires storage.unlimited_sql_visibility=true; layout promotion cannot be undone", markers.Format, markers.RequiredLayout)
+	}
 	if err := os.MkdirAll(basePath, 0o700); err != nil {
 		return nil, fmt.Errorf("failed to create storage directory: %w", err)
 	}
@@ -301,18 +308,6 @@ func newFormat4Store(basePath string, validator *sds.Validator, cfg storeConfig)
 		return nil, err
 	}
 
-	auxiliaryMetadata, err := openAuxiliaryMetadataStore(filepath.Join(basePath, auxiliaryMetadataFileName), false)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open auxiliary metadata: %w", err)
-	}
-	auxiliaryMetadata.chunkBytes = cfg.auxReplayChunkBytes
-	auxiliaryOpened := false
-	defer func() {
-		if !auxiliaryOpened {
-			auxiliaryMetadata.Close()
-		}
-	}()
-
 	ctx, cancel := context.WithCancel(context.Background())
 	d := &format4Daemon{ctx: ctx, cancel: cancel, types: map[string]bool{}}
 	if validator != nil {
@@ -324,12 +319,14 @@ func newFormat4Store(basePath string, validator *sds.Validator, cfg storeConfig)
 		return nil, fmt.Errorf("format 4: %w", err)
 	}
 	d.opt = format4.Options{
-		DataRoot:      dataRoot,
-		Create:        mode,
-		GseqFloor:     1,
-		Cores:         runtime.NumCPU(),
-		AOTCacheDir:   format4AOTCacheDir(),
-		CompileOnMiss: format4CompileOnMiss,
+		UnlimitedVisibility: cfg.unlimitedSQLVisibility,
+		Tuning:              format4.Tuning{RowCacheBytes: cfg.rowCacheBytes},
+		DataRoot:            dataRoot,
+		Create:              mode,
+		GseqFloor:           1,
+		Cores:               runtime.NumCPU(),
+		AOTCacheDir:         format4AOTCacheDir(),
+		CompileOnMiss:       format4CompileOnMiss,
 	}
 	d.opt.OnFailure = d.onFailure
 	engineStart := time.Now()
@@ -348,6 +345,18 @@ func newFormat4Store(basePath string, validator *sds.Validator, cfg storeConfig)
 		_ = d.api().Close(cctx)
 		ccancel()
 	}
+	auxiliaryMetadata, err := openAuxiliaryMetadataStore(filepath.Join(basePath, auxiliaryMetadataFileName), false)
+	if err != nil {
+		closeEngine()
+		return nil, fmt.Errorf("failed to open auxiliary metadata: %w", err)
+	}
+	auxiliaryMetadata.chunkBytes = cfg.auxReplayChunkBytes
+	auxiliaryOpened := false
+	defer func() {
+		if !auxiliaryOpened {
+			auxiliaryMetadata.Close()
+		}
+	}()
 
 	// The control instance lives beside the feed files.
 	controlDir := filepath.Join(basePath, marker.Dir)
@@ -434,6 +443,9 @@ func newFormat4Store(basePath string, validator *sds.Validator, cfg storeConfig)
 	if err := d.registerTypes(validator); err != nil {
 		return fail(err)
 	}
+	if m, err := marker.Read(basePath); err == nil {
+		log.Infof("storage: backend format 4, stream format %d, layout %d", m.Format, m.Layout)
+	}
 	if cfg.quotaBytes > 0 {
 		if err := d.api().SetQuota(cfg.quotaBytes); err != nil {
 			return fail(fmt.Errorf("format 4: set the quota: %w", err))
@@ -482,7 +494,7 @@ func createLegacyControlDir(basePath string) error {
 // or, for a routed standard with no embedded binary schema (an encrypted one,
 // C-25), the CID-only spec with its file identifier (ident, the validator's).
 // Such a type still stores and serves its frames by CID, arrival and tags;
-// the engine extracts nothing from it and it has no SQL relation.
+// the engine extracts nothing from it and creates no SQL relation.
 func Format4TypeSpec(schema string, ident func(schema string) (string, bool)) (format4.TypeSpec, error) {
 	spec, err := format4.TypeSpecFor(schema)
 	if err == nil || ident == nil || errors.Is(err, format2.ErrSealedRuleField) {
@@ -503,7 +515,9 @@ func Format4TypeSpec(schema string, ident func(schema string) (string, bool)) (f
 
 // format4TypeSpec is Format4TypeSpec with the daemon's validator.
 func (d *format4Daemon) format4TypeSpec(schema string) (format4.TypeSpec, error) {
-	return Format4TypeSpec(schema, d.ident)
+	spec, err := Format4TypeSpec(schema, d.ident)
+	spec.UnlimitedVisibility = d.opt.UnlimitedVisibility
+	return spec, err
 }
 
 // registerTypes registers every standard the validator embeds (§5.5 step 7).
@@ -512,11 +526,43 @@ func (d *format4Daemon) registerTypes(validator *sds.Validator) error {
 	if validator == nil {
 		return nil
 	}
+	var schemas []string
 	for _, schema := range validator.Schemas() {
+		// These schemas describe the engine's own journal/checkpoint frames;
+		// their identifiers cannot be registered as user record types.
+		if id, ok := d.ident(schema); ok && (id == "$FMB" || id == "$FCK" || id == "$FSG") {
+			log.Debugf("format 4: %s is an engine container schema, not a record type", schema)
+			continue
+		}
 		if _, err := sds.SchemaNameToTable(schema); err != nil {
 			continue
 		}
+		schemas = append(schemas, schema)
+	}
+	if d.opt.UnlimitedVisibility {
+		preflight, ok := d.api().(interface{ ValidateType(format4.TypeSpec) error })
+		if !ok {
+			return fmt.Errorf("unlimited SQL visibility requires registration validation")
+		}
+		for _, schema := range schemas {
+			spec, err := d.format4TypeSpec(schema)
+			if err == nil {
+				err = preflight.ValidateType(spec)
+			}
+			if err != nil {
+				return fmt.Errorf("format 4: registration preflight %s: %w", schema, err)
+			}
+		}
+	}
+	for _, schema := range schemas {
 		if err := d.ensureType(schema); err != nil {
+			if d.opt.UnlimitedVisibility || errors.Is(err, format4.ErrUnlimitedRelationsUnsupported) {
+				if m, readErr := marker.Read(d.opt.DataRoot); d.opt.UnlimitedVisibility && readErr == nil && m.RequiredLayout >= 2 {
+					log.Errorf("format 4: %s unavailable after layout promotion: %v", schema, err)
+					continue
+				}
+				return fmt.Errorf("format 4: %s is not registered: %w", schema, err)
+			}
 			log.Warnf("format 4: %s is not registered: %v", schema, err)
 		}
 	}
@@ -534,8 +580,25 @@ func (d *format4Daemon) ensureType(schema string) error {
 	if err != nil {
 		return err
 	}
+	var before marker.Markers
+	if spec.UnlimitedVisibility {
+		before, err = marker.Read(d.opt.DataRoot)
+		if err != nil {
+			return err
+		}
+	}
+	if spec.UnlimitedVisibility && before.Layout < 2 {
+		log.Infof("format 4: promoting stream format %d from layout %d to layout 2 for unlimited SQL visibility", before.Format, before.Layout)
+	}
 	if err := d.api().RegisterType(spec); err != nil {
 		return fmt.Errorf("register %s: %w", schema, err)
+	}
+	if spec.UnlimitedVisibility && before.Layout < 2 {
+		after, err := marker.Read(d.opt.DataRoot)
+		if err != nil {
+			return err
+		}
+		log.Infof("format 4: SQL visibility registration complete; stream format %d layout %d", after.Format, after.Layout)
 	}
 	d.types[schema] = true
 	return nil
