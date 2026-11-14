@@ -56,12 +56,14 @@ func (p *AutoPublisher) isPairedSource(schema, provider, source string) bool {
 }
 
 type pairedBatchPublication struct {
-	request  DatasetPublicationRequest
-	rule     config.AutoPublishLane
-	due      time.Time
-	queued   bool
-	attempts int
-	retrying bool
+	inFlight   bool
+	generation uint64
+	request    DatasetPublicationRequest
+	rule       config.AutoPublishLane
+	due        time.Time
+	queued     bool
+	attempts   int
+	retrying   bool
 }
 
 func (p *AutoPublisher) wakePublications() {
@@ -81,6 +83,9 @@ func (p *AutoPublisher) observePairedBatch(rule config.AutoPublishLane, schema, 
 		p.pairedPending[key] = state
 	} else if observed && rule.Settle > 0 {
 		state.due = p.now().Add(rule.Settle)
+	}
+	if observed {
+		state.generation++
 	}
 	p.mu.Unlock()
 	p.queueReadyPairedBatches()
@@ -132,7 +137,7 @@ func (p *AutoPublisher) queueReadyPairedBatches() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for _, state := range p.pairedPending {
-		if state.queued || state.due.After(p.now()) {
+		if state.inFlight || state.queued || state.due.After(p.now()) {
 			continue
 		}
 		select {
@@ -150,7 +155,7 @@ func (p *AutoPublisher) publicationDelay() (time.Duration, bool) {
 	defer p.mu.Unlock()
 	now := p.now()
 	for _, state := range p.pairedPending {
-		if state.queued {
+		if state.queued || state.inFlight {
 			continue
 		}
 		d := state.due.Sub(now)
@@ -170,7 +175,7 @@ func (p *AutoPublisher) publishPairedBatch(ctx context.Context, req DatasetPubli
 	state := p.pairedPending[key]
 	if state == nil {
 		p.mu.Unlock()
-		return false
+		return p.isPairedSource(req.Schema, req.ProviderID, req.SourceName)
 	}
 	state.queued = false
 	interval := state.rule.MinInterval
@@ -186,6 +191,8 @@ func (p *AutoPublisher) publishPairedBatch(ctx context.Context, req DatasetPubli
 		p.mu.Unlock()
 		return true
 	}
+	state.inFlight = true
+	generation := state.generation
 	p.mu.Unlock()
 	runCtx, cancel := context.WithTimeout(ctx, autoPublishTimeout)
 	defer cancel()
@@ -200,6 +207,7 @@ func (p *AutoPublisher) publishPairedBatch(ctx context.Context, req DatasetPubli
 		}
 	}
 	p.mu.Lock()
+	state.inFlight = false
 	if state.retrying {
 		p.retrying--
 		state.retrying = false
@@ -210,7 +218,9 @@ func (p *AutoPublisher) publishPairedBatch(ctx context.Context, req DatasetPubli
 		p.retrying++
 		state.due = p.now().Add(p.retryBackoff(state.attempts))
 	} else {
-		delete(p.pairedPending, key)
+		if generation == state.generation {
+			delete(p.pairedPending, key)
+		}
 		if unchanged {
 			p.unchanged++
 		} else {
