@@ -127,6 +127,7 @@ func (s *ConcreteDatasetPublicationService) DatasetPublicationUnchanged(ctx cont
 		return true, nil
 	}
 	selection, selectErr := s.store.SelectPublication(schema, req.ProviderID, req.SourceName, req.BatchID)
+ defer selection.Close()
 	if selectErr != nil {
 		return false, selectErr
 	}

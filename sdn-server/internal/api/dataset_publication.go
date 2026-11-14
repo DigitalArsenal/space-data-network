@@ -435,11 +435,13 @@ func (s *ConcreteDatasetPublicationService) publishSelectedDatasetUpdate(ctx con
 			if err != nil {
 				return nil, err
 			}
-			activeService.selection = catalogSnapshot.Index
+			defer catalogSnapshot.Close()
+ activeService.selection = catalogSnapshot.Index
 		}
 	}
 	if catalogSnapshot == nil {
 		activeService.selection, err = activeStore.SelectPublication(schema, activeReq.ProviderID, activeReq.SourceName, activeReq.BatchID)
+ defer activeService.selection.Close()
 		if err != nil {
 			return nil, err
 		}

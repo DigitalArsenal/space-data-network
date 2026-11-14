@@ -101,6 +101,7 @@ func (s *FlatSQLStore) publicationView() *FlatSQLStore {
 	for k, e := range s.publicationFailures {
 		v.publicationFailures[k] = e
 	}
+	v.publicationRelease = s.pinPublicationEntriesLocked(v.publicationEntries)
 	return v
 }
 

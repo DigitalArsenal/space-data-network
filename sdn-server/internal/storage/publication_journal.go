@@ -10,9 +10,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/spacedatanetwork/sdn-server/internal/encfield"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format4"
@@ -184,7 +186,7 @@ func (b format4Backend) putRetained(op, schema string, records [][]byte, peer st
 			return nil, nil, errors.New("publication record exceeds 16 MiB")
 		}
 	}
-	seq := uint64(1)
+	seq := s.publicationHighWater + 1
 	if n := len(s.publicationEntries); n > 0 {
 		seq = s.publicationEntries[n-1].Sequence + 1
 	}
@@ -253,6 +255,7 @@ func (b format4Backend) putRetained(op, schema string, records [][]byte, peer st
 	}
 	s.publicationMu.Lock()
 	s.publicationEntries = append(s.publicationEntries, e)
+	s.publicationHighWater = seq
 	s.publicationMu.Unlock()
 	err = s.publicationStep("directory-sync")
 	if err == nil {
@@ -392,6 +395,9 @@ func (s *FlatSQLStore) recoverPublicationJournal() error {
 	if err = json.Unmarshal(raw, &s.publicationSources); err != nil {
 		return err
 	}
+	if err := s.recoverPublicationReclamation(); err != nil {
+		return err
+	}
 	dirs, err := os.ReadDir(s.publicationDir())
 	if err != nil {
 		return err
@@ -410,6 +416,9 @@ func (s *FlatSQLStore) recoverPublicationJournal() error {
 			continue
 		}
 		var e publicationEntry
+		if seq, parseErr := strconv.ParseUint(dir.Name(), 10, 64); parseErr == nil && seq > s.publicationHighWater {
+			s.publicationHighWater = seq
+		}
 		raw, err = os.ReadFile(filepath.Join(s.publicationDir(), dir.Name(), "entry.json"))
 		if err == nil {
 			err = json.Unmarshal(raw, &e)
@@ -508,7 +517,7 @@ func (s *FlatSQLStore) recoverPublicationJournal() error {
 	s.publishSourceKeys()
 	s.publicationEnabled.Store(len(s.publicationSources) > 0)
 	s.retryCatalogGenerationsLocked()
-	return nil
+	return s.reclaimPublicationLocked()
 }
 func (s *FlatSQLStore) publicationRecords(e publicationEntry) ([]DatasetExportRecord, error) {
 	f, err := os.Open(filepath.Join(s.publicationEntryDir(e.Sequence), "records.sds"))
@@ -609,15 +618,35 @@ type PublicationBatch struct {
 
 // PublicationSelection owns immutable bytes at a durable cutoff. The journal
 // retains those bytes independently of live-record expiry and replacement.
-// Reclamation requires batch completion AND no retained selection or snapshot
-// reference; journal reclamation is deliberately absent.
+// Close releases its file pins after export; the current generation stays retained.
 type PublicationSelection struct {
 	store                           *FlatSQLStore
+	release                         func()
+	closeOnce                       sync.Once
+	cleanup                         runtime.Cleanup
 	Cutoff                          uint64
 	Schema, Provider, Source, Batch string
 	refs                            []publicationRecordRef
 }
 
+// Close releases the selection's retention pins. It is safe to call repeatedly.
+func (p *PublicationSelection) Close() {
+	if p != nil {
+		p.closeOnce.Do(func() {
+			p.cleanup.Stop()
+			if p.release != nil {
+				p.release()
+			}
+		})
+	}
+}
+func (p *PublicationSelection) pin(s *FlatSQLStore) {
+	p.store = s
+	s.publicationMu.Lock()
+	p.release = s.pinPublicationEntriesLocked([]publicationEntry{{Refs: p.refs}})
+	s.publicationMu.Unlock()
+	p.cleanup = runtime.AddCleanup(p, func(release func()) { release() }, p.release)
+}
 func (p *PublicationSelection) Fingerprint() (string, int) {
 	h := newPublicationSetHash(p.Schema, p.Provider, p.Source, p.Batch)
 	for _, r := range p.refs {
@@ -774,7 +803,7 @@ func (s *FlatSQLStore) CompletePublication(p *PublicationSelection) error {
 			s.publicationMu.Unlock()
 		}
 	}
-	return nil
+	return s.reclaimPublicationLocked()
 }
 
 // RetainsPublicationSource distinguishes retained recovery from live progress.
@@ -796,7 +825,7 @@ func (s *FlatSQLStore) PublicationBatchComplete(schema, provider, source, batch 
 			}
 		}
 	}
-	return found
+	return found || s.publicationReceiptExists(schema, provider, source, batch)
 }
 
 func (s *FlatSQLStore) publicationStep(name string) error {

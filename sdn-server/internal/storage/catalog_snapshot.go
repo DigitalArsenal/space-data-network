@@ -16,6 +16,13 @@ type CatalogSnapshot struct {
 	Index, Products *PublicationSelection
 }
 
+func (s *CatalogSnapshot) Close() {
+	if s != nil {
+		s.Index.Close()
+		s.Products.Close()
+	}
+}
+
 func (s *FlatSQLStore) catalogSource(schema, provider, source string) (PublicationSource, bool) {
 	for _, x := range s.publicationSources {
 		if x.Schema == "CAT.fbs" && x.Provider == provider && x.ProductSource != "" && ((schema == "CAT.fbs" && x.Source == source) || (schema == "OCM.fbs" && x.ProductSource == source)) {
@@ -96,6 +103,7 @@ func (s *FlatSQLStore) captureCatalogLocked(x PublicationSource, cutoff uint64) 
 func (s *FlatSQLStore) CaptureCatalogSnapshot(provider, indexSource string, cutoff uint64) (*CatalogSnapshot, error) {
 	original := s
 	s = s.publicationView()
+	defer s.publicationRelease()
 	x, ok := s.catalogSource("CAT.fbs", provider, indexSource)
 	if !ok {
 		return nil, errors.New("catalog snapshot source is not configured")
@@ -122,8 +130,8 @@ func (s *FlatSQLStore) CaptureCatalogSnapshot(provider, indexSource string, cuto
 	}
 	snap, err := s.captureCatalogLocked(x, cutoff)
 	if err == nil {
-		snap.Index.store = original
-		snap.Products.store = original
+		snap.Index.pin(original)
+		snap.Products.pin(original)
 	}
 	return snap, err
 }
@@ -140,6 +148,7 @@ func (s *FlatSQLStore) SelectPublication(schema, provider, source, batch string)
 	}
 	original := s
 	s = s.publicationView()
+	defer s.publicationRelease()
 	if !s.retainsPublication(schema, provider, source) {
 		return nil, nil
 	}
@@ -154,17 +163,19 @@ func (s *FlatSQLStore) SelectPublication(schema, provider, source, batch string)
 			if err != nil {
 				return nil, err
 			}
-			snap.Index.store = original
-			snap.Products.store = original
+			snap.Index.pin(original)
+			snap.Products.pin(original)
 			if schema == "CAT.fbs" {
+				snap.Products.Close()
 				return snap.Index, nil
 			}
+			snap.Index.Close()
 			return snap.Products, nil
 		}
 	}
 	p, err := s.retainedSelectionLocked(schema, provider, source, batch, cutoff)
 	if err == nil {
-		p.store = original
+		p.pin(original)
 	}
 	return p, err
 }
@@ -263,6 +274,7 @@ func (s *FlatSQLStore) completeCatalogGenerationLocked(provider, source string) 
 }
 func (s *FlatSQLStore) completeCatalogGenerationAtLocked(provider, source string, cutoff uint64) (uint64, error) {
 	v := s.publicationView()
+	defer v.publicationRelease()
 	x, ok := v.catalogSource("CAT.fbs", provider, source)
 	if !ok {
 		return 0, errors.New("catalog_product_source is not configured")

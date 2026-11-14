@@ -126,6 +126,7 @@ func (s *FlatSQLStore) ExportDatasetWindow(outputDir string, filter IndexedRecor
 	if selection == nil {
 		var err error
 		selection, err = s.SelectPublication(filter.SchemaName, filter.ProviderID, filter.SourceName, filter.BatchID)
+ defer selection.Close()
 		if err != nil {
 			return nil, err
 		}

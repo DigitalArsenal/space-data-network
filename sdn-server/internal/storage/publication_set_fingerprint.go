@@ -23,6 +23,7 @@ func (s *FlatSQLStore) PagedDatasetPublicationSetFingerprint(schemaName, provide
 	if p, err := s.SelectPublication(schemaName, providerID, sourceName, batchID); err != nil {
 		return "", 0, err
 	} else if p != nil {
+ defer p.Close()
 		h, n := p.Fingerprint()
 		return h, n, nil
 	}

@@ -165,6 +165,10 @@ type FlatSQLStore struct {
 	publicationMu         sync.Mutex
 	publicationSources    []PublicationSource
 	publicationEntries    []publicationEntry
+	publicationRelease    func()
+	publicationPins       map[string]int
+	publicationHighWater  uint64
+	publicationReclaimed  uint64
 	publicationFailures   map[publicationSourceKey]error
 	publicationFault      func(string) error // storage fault injection in tests
 	publicationHook       func(string)       // process-failure tests
