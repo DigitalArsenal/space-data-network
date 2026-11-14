@@ -458,3 +458,39 @@ func TestPublicationIndependentRecoveryCauses(t *testing.T) {
 		t.Fatal("complete repair did not clear pause")
 	}
 }
+
+func TestPublicationReclamationMetadataRepair(t *testing.T) {
+	t.Setenv("SDN_STORE_FORMAT", "4")
+	dir := t.TempDir()
+	s := reclamationStore(t, dir)
+	reclamationDay(t, s, 0, 2)
+	reclamationPublish(t, s, nil)
+	reclamationDay(t, s, 1, 2)
+	reclamationPublish(t, s, nil)
+	file := filepath.Join(s.publicationDir(), "reclamation.json")
+	saved, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	if err = os.WriteFile(file, []byte("corrupt"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s = journalTestStore(t, dir)
+	defer s.Close()
+	if len(s.PublicationRecoveryStatus()) == 0 {
+		t.Fatal("invalid checkpoint not isolated")
+	}
+	if err = os.WriteFile(file, saved, 0600); err != nil {
+		t.Fatal(err)
+	}
+	s.RetryPublicationRecovery()
+	if len(s.PublicationRecoveryStatus()) != 0 {
+		t.Fatal("checkpoint repair requires restart")
+	}
+	reclamationDay(t, s, 2, 2)
+	reclamationPublish(t, s, nil)
+	if s.PublicationJournalStats().Reclaimed != 4 {
+		t.Fatalf("reclaimed count=%d", s.PublicationJournalStats().Reclaimed)
+	}
+}
