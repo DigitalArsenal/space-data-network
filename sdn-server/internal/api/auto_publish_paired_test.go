@@ -309,3 +309,69 @@ func TestPairedPublicationSingleRuleCompatibility(t *testing.T) {
 		})
 	}
 }
+
+func TestPairedPublicationZeroInsertReplayAndNilResult(t *testing.T) {
+	service := &pairedNilPublication{}
+	p := NewAutoPublisher(service, pairedRules())
+	batch := pairedObservation("already-committed")
+	batch.Inserted = 0
+	p.ObserveIngest(batch)
+	if len(p.queue) != 1 {
+		t.Fatal("zero-insert replay was ignored")
+	}
+	p.publishPairedBatch(context.Background(), <-p.queue)
+	if len(p.pairedPending) != 1 || p.Stats().Published != 0 {
+		t.Fatal("nil result advanced progress")
+	}
+}
+
+type pairedNilPublication struct{}
+
+func (*pairedNilPublication) PublishDatasetUpdate(context.Context, DatasetPublicationRequest) (*DatasetPublicationResult, error) {
+	return nil, nil
+}
+
+func TestPairedPublicationIngestDuringAttemptIsRetained(t *testing.T) {
+	service := &blockingPublicationService{release: make(chan struct{}), entered: make(chan struct{}, 1)}
+	p := NewAutoPublisher(service, pairedRules())
+	p.ObserveIngest(pairedObservation("parts"))
+	request := <-p.queue
+	done := make(chan struct{})
+	go func() { p.publishPairedBatch(context.Background(), request); close(done) }()
+	<-service.entered
+	p.ObserveIngest(pairedObservation("parts"))
+	if len(p.queue) != 0 {
+		t.Fatal("in-flight batch queued twice")
+	}
+	close(service.release)
+	<-done
+	if len(p.pairedPending) != 1 {
+		t.Fatal("ingest during attempt was erased by completion")
+	}
+	p.queueReadyPairedBatches()
+	if len(p.queue) != 1 {
+		t.Fatal("later ingest has no queued continuation")
+	}
+}
+
+func TestPairedPublicationRecoveryFiltersConfiguredSource(t *testing.T) {
+	dir := t.TempDir()
+	store := pairedStore(t, filepath.Join(dir, "store"))
+	defer store.Close()
+	pairedCommit(t, store, "one", 900001)
+	service := inertPairedService(t, dir, store)
+	rules := pairedRules()
+	rules[0].ProviderID = ""
+	rules[0].SourceName = ""
+	p := NewAutoPublisher(service, rules)
+	p.recoverPairedBatches(context.Background())
+	if len(p.queue) != 1 {
+		t.Fatal("wildcard batch rule did not pair with exact source")
+	}
+	rules[1].ProviderID = "another-provider"
+	p = NewAutoPublisher(service, rules)
+	p.recoverPairedBatches(context.Background())
+	if len(p.queue) != 0 {
+		t.Fatal("recovery published an unconfigured source")
+	}
+}

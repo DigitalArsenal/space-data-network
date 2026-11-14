@@ -390,7 +390,7 @@ func (p *AutoPublisher) ObserveIngest(batch IngestedBatch) {
 
 	if p.isPairedSource(schema, provider, source) {
 		lane, _ := p.matchScope(schema, provider, source, false)
-		p.observePairedBatch(lane, schema, provider, source, batchID, true)
+		p.observePairedBatch(lane, schema, provider, source, batchID, batch.Inserted > 0)
 		return
 	}
 	lane, ok := p.matchLane(schema, provider, source)
