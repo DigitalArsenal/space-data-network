@@ -7,38 +7,38 @@ import (
 )
 
 type IndexGroupT struct {
-	Key string `json:"Key"`
-	Rows []int32 `json:"Rows"`
+	Key string `json:"key"`
+	Rows []int32 `json:"rows"`
 }
 
 func (t *IndexGroupT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	if t == nil {
 		return 0
 	}
-	KeyOffset := flatbuffers.UOffsetT(0)
+	keyOffset := flatbuffers.UOffsetT(0)
 	if t.Key != "" {
-		KeyOffset = builder.CreateString(t.Key)
+		keyOffset = builder.CreateString(t.Key)
 	}
-	RowsOffset := flatbuffers.UOffsetT(0)
+	rowsOffset := flatbuffers.UOffsetT(0)
 	if t.Rows != nil {
-		RowsLength := len(t.Rows)
-		IndexGroupStartRowsVector(builder, RowsLength)
-		for j := RowsLength - 1; j >= 0; j-- {
+		rowsLength := len(t.Rows)
+		IndexGroupStartrowsVector(builder, rowsLength)
+		for j := rowsLength - 1; j >= 0; j-- {
 			builder.PrependInt32(t.Rows[j])
 		}
-		RowsOffset = builder.EndVector(RowsLength)
+		rowsOffset = builder.EndVector(rowsLength)
 	}
 	IndexGroupStart(builder)
-	IndexGroupAddKey(builder, KeyOffset)
-	IndexGroupAddRows(builder, RowsOffset)
+	IndexGroupAddkey(builder, keyOffset)
+	IndexGroupAddrows(builder, rowsOffset)
 	return IndexGroupEnd(builder)
 }
 
 func (rcv *IndexGroup) UnPackTo(t *IndexGroupT) {
 	t.Key = string(rcv.Key())
-	RowsLength := rcv.RowsLength()
-	t.Rows = make([]int32, RowsLength)
-	for j := 0; j < RowsLength; j++ {
+	rowsLength := rcv.RowsLength()
+	t.Rows = make([]int32, rowsLength)
+	for j := 0; j < rowsLength; j++ {
 		t.Rows[j] = rcv.Rows(j)
 	}
 }
@@ -87,7 +87,7 @@ func (rcv *IndexGroup) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-func (rcv *IndexGroup) Key() []byte {
+func (rcv *IndexGroup) key() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -95,7 +95,11 @@ func (rcv *IndexGroup) Key() []byte {
 	return nil
 }
 
-func (rcv *IndexGroup) Rows(j int) int32 {
+func (rcv *IndexGroup) Key() []byte {
+	return rcv.key()
+}
+
+func (rcv *IndexGroup) rows(j int) int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
@@ -104,7 +108,11 @@ func (rcv *IndexGroup) Rows(j int) int32 {
 	return 0
 }
 
-func (rcv *IndexGroup) RowsLength() int {
+func (rcv *IndexGroup) Rows(j int) int32 {
+	return rcv.rows(j)
+}
+
+func (rcv *IndexGroup) rowsLength() int {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
@@ -112,7 +120,11 @@ func (rcv *IndexGroup) RowsLength() int {
 	return 0
 }
 
-func (rcv *IndexGroup) MutateRows(j int, n int32) bool {
+func (rcv *IndexGroup) RowsLength() int {
+	return rcv.rowsLength()
+}
+
+func (rcv *IndexGroup) Mutaterows(j int, n int32) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
@@ -121,17 +133,30 @@ func (rcv *IndexGroup) MutateRows(j int, n int32) bool {
 	return false
 }
 
+func (rcv *IndexGroup) MutateRows(j int, n int32) bool {
+	return rcv.Mutaterows(j, n)
+}
+
 func IndexGroupStart(builder *flatbuffers.Builder) {
 	builder.StartObject(2)
 }
-func IndexGroupAddKey(builder *flatbuffers.Builder, Key flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(Key), 0)
+func IndexGroupAddkey(builder *flatbuffers.Builder, key flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(key), 0)
 }
-func IndexGroupAddRows(builder *flatbuffers.Builder, Rows flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(Rows), 0)
+func IndexGroupAddKey(builder *flatbuffers.Builder, key flatbuffers.UOffsetT) {
+	IndexGroupAddkey(builder, key)
+}
+func IndexGroupAddrows(builder *flatbuffers.Builder, rows flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(rows), 0)
+}
+func IndexGroupAddRows(builder *flatbuffers.Builder, rows flatbuffers.UOffsetT) {
+	IndexGroupAddrows(builder, rows)
+}
+func IndexGroupStartrowsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(4, numElems, 4)
 }
 func IndexGroupStartRowsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
-	return builder.StartVector(4, numElems, 4)
+	return IndexGroupStartrowsVector(builder, numElems)
 }
 func IndexGroupEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

@@ -7,8 +7,8 @@ import (
 )
 
 type RefusalT struct {
-	Index int32 `json:"Index"`
-	Code int32 `json:"Code"`
+	Index int32 `json:"index"`
+	Code int32 `json:"code"`
 }
 
 func (t *RefusalT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -16,8 +16,8 @@ func (t *RefusalT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 		return 0
 	}
 	RefusalStart(builder)
-	RefusalAddIndex(builder, t.Index)
-	RefusalAddCode(builder, t.Code)
+	RefusalAddindex(builder, t.Index)
+	RefusalAddcode(builder, t.Code)
 	return RefusalEnd(builder)
 }
 
@@ -70,7 +70,7 @@ func (rcv *Refusal) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-func (rcv *Refusal) Index() int32 {
+func (rcv *Refusal) index() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
 		return rcv._tab.GetInt32(o + rcv._tab.Pos)
@@ -78,11 +78,19 @@ func (rcv *Refusal) Index() int32 {
 	return 0
 }
 
-func (rcv *Refusal) MutateIndex(n int32) bool {
+func (rcv *Refusal) Index() int32 {
+	return rcv.index()
+}
+
+func (rcv *Refusal) Mutateindex(n int32) bool {
 	return rcv._tab.MutateInt32Slot(4, n)
 }
 
-func (rcv *Refusal) Code() int32 {
+func (rcv *Refusal) MutateIndex(n int32) bool {
+	return rcv.Mutateindex(n)
+}
+
+func (rcv *Refusal) code() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
 		return rcv._tab.GetInt32(o + rcv._tab.Pos)
@@ -90,18 +98,32 @@ func (rcv *Refusal) Code() int32 {
 	return 0
 }
 
-func (rcv *Refusal) MutateCode(n int32) bool {
+func (rcv *Refusal) Code() int32 {
+	return rcv.code()
+}
+
+func (rcv *Refusal) Mutatecode(n int32) bool {
 	return rcv._tab.MutateInt32Slot(6, n)
+}
+
+func (rcv *Refusal) MutateCode(n int32) bool {
+	return rcv.Mutatecode(n)
 }
 
 func RefusalStart(builder *flatbuffers.Builder) {
 	builder.StartObject(2)
 }
-func RefusalAddIndex(builder *flatbuffers.Builder, Index int32) {
-	builder.PrependInt32Slot(0, Index, 0)
+func RefusalAddindex(builder *flatbuffers.Builder, index int32) {
+	builder.PrependInt32Slot(0, index, 0)
 }
-func RefusalAddCode(builder *flatbuffers.Builder, Code int32) {
-	builder.PrependInt32Slot(1, Code, 0)
+func RefusalAddIndex(builder *flatbuffers.Builder, index int32) {
+	RefusalAddindex(builder, index)
+}
+func RefusalAddcode(builder *flatbuffers.Builder, code int32) {
+	builder.PrependInt32Slot(1, code, 0)
+}
+func RefusalAddCode(builder *flatbuffers.Builder, code int32) {
+	RefusalAddcode(builder, code)
 }
 func RefusalEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

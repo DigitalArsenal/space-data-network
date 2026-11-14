@@ -7,39 +7,39 @@ import (
 )
 
 type RetainedSourceT struct {
-	Schema string `json:"Schema"`
-	Provider string `json:"Provider"`
-	Source string `json:"Source"`
-	Productsource string `json:"ProductSource"`
-	Catalogobjectlimit int32 `json:"CatalogObjectLimit"`
+	Schema string `json:"schema"`
+	Provider string `json:"provider"`
+	Source string `json:"source"`
+	ProductSource string `json:"product_source"`
+	CatalogObjectLimit int32 `json:"catalog_object_limit"`
 }
 
 func (t *RetainedSourceT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	if t == nil {
 		return 0
 	}
-	SchemaOffset := flatbuffers.UOffsetT(0)
+	schemaOffset := flatbuffers.UOffsetT(0)
 	if t.Schema != "" {
-		SchemaOffset = builder.CreateString(t.Schema)
+		schemaOffset = builder.CreateString(t.Schema)
 	}
-	ProviderOffset := flatbuffers.UOffsetT(0)
+	providerOffset := flatbuffers.UOffsetT(0)
 	if t.Provider != "" {
-		ProviderOffset = builder.CreateString(t.Provider)
+		providerOffset = builder.CreateString(t.Provider)
 	}
-	SourceOffset := flatbuffers.UOffsetT(0)
+	sourceOffset := flatbuffers.UOffsetT(0)
 	if t.Source != "" {
-		SourceOffset = builder.CreateString(t.Source)
+		sourceOffset = builder.CreateString(t.Source)
 	}
-	ProductSourceOffset := flatbuffers.UOffsetT(0)
-	if t.Productsource != "" {
-		ProductSourceOffset = builder.CreateString(t.Productsource)
+	product_sourceOffset := flatbuffers.UOffsetT(0)
+	if t.ProductSource != "" {
+		product_sourceOffset = builder.CreateString(t.ProductSource)
 	}
 	RetainedSourceStart(builder)
-	RetainedSourceAddSchema(builder, SchemaOffset)
-	RetainedSourceAddProvider(builder, ProviderOffset)
-	RetainedSourceAddSource(builder, SourceOffset)
-	RetainedSourceAddProductSource(builder, ProductSourceOffset)
-	RetainedSourceAddCatalogObjectLimit(builder, t.Catalogobjectlimit)
+	RetainedSourceAddschema(builder, schemaOffset)
+	RetainedSourceAddprovider(builder, providerOffset)
+	RetainedSourceAddsource(builder, sourceOffset)
+	RetainedSourceAddproduct_source(builder, product_sourceOffset)
+	RetainedSourceAddcatalog_object_limit(builder, t.CatalogObjectLimit)
 	return RetainedSourceEnd(builder)
 }
 
@@ -47,8 +47,8 @@ func (rcv *RetainedSource) UnPackTo(t *RetainedSourceT) {
 	t.Schema = string(rcv.Schema())
 	t.Provider = string(rcv.Provider())
 	t.Source = string(rcv.Source())
-	t.Productsource = string(rcv.Productsource())
-	t.Catalogobjectlimit = rcv.Catalogobjectlimit()
+	t.ProductSource = string(rcv.ProductSource())
+	t.CatalogObjectLimit = rcv.CatalogObjectLimit()
 }
 
 func (rcv *RetainedSource) UnPack() *RetainedSourceT {
@@ -95,7 +95,7 @@ func (rcv *RetainedSource) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-func (rcv *RetainedSource) Schema() []byte {
+func (rcv *RetainedSource) schema() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -103,7 +103,11 @@ func (rcv *RetainedSource) Schema() []byte {
 	return nil
 }
 
-func (rcv *RetainedSource) Provider() []byte {
+func (rcv *RetainedSource) Schema() []byte {
+	return rcv.schema()
+}
+
+func (rcv *RetainedSource) provider() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -111,7 +115,11 @@ func (rcv *RetainedSource) Provider() []byte {
 	return nil
 }
 
-func (rcv *RetainedSource) Source() []byte {
+func (rcv *RetainedSource) Provider() []byte {
+	return rcv.provider()
+}
+
+func (rcv *RetainedSource) source() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -119,7 +127,11 @@ func (rcv *RetainedSource) Source() []byte {
 	return nil
 }
 
-func (rcv *RetainedSource) ProductSource() []byte {
+func (rcv *RetainedSource) Source() []byte {
+	return rcv.source()
+}
+
+func (rcv *RetainedSource) product_source() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -127,11 +139,11 @@ func (rcv *RetainedSource) ProductSource() []byte {
 	return nil
 }
 
-func (rcv *RetainedSource) Productsource() []byte {
-	return rcv.ProductSource()
+func (rcv *RetainedSource) ProductSource() []byte {
+	return rcv.product_source()
 }
 
-func (rcv *RetainedSource) CatalogObjectLimit() int32 {
+func (rcv *RetainedSource) catalog_object_limit() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
 		return rcv._tab.GetInt32(o + rcv._tab.Pos)
@@ -139,41 +151,50 @@ func (rcv *RetainedSource) CatalogObjectLimit() int32 {
 	return 0
 }
 
-func (rcv *RetainedSource) Catalogobjectlimit() int32 {
-	return rcv.CatalogObjectLimit()
+func (rcv *RetainedSource) CatalogObjectLimit() int32 {
+	return rcv.catalog_object_limit()
 }
 
-func (rcv *RetainedSource) MutateCatalogObjectLimit(n int32) bool {
+func (rcv *RetainedSource) Mutatecatalog_object_limit(n int32) bool {
 	return rcv._tab.MutateInt32Slot(12, n)
 }
 
-func (rcv *RetainedSource) MutateCatalogobjectlimit(n int32) bool {
-	return rcv.MutateCatalogObjectLimit(n)
+func (rcv *RetainedSource) MutateCatalogObjectLimit(n int32) bool {
+	return rcv.Mutatecatalog_object_limit(n)
 }
 
 func RetainedSourceStart(builder *flatbuffers.Builder) {
 	builder.StartObject(5)
 }
-func RetainedSourceAddSchema(builder *flatbuffers.Builder, Schema flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(Schema), 0)
+func RetainedSourceAddschema(builder *flatbuffers.Builder, schema flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(schema), 0)
 }
-func RetainedSourceAddProvider(builder *flatbuffers.Builder, Provider flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(Provider), 0)
+func RetainedSourceAddSchema(builder *flatbuffers.Builder, schema flatbuffers.UOffsetT) {
+	RetainedSourceAddschema(builder, schema)
 }
-func RetainedSourceAddSource(builder *flatbuffers.Builder, Source flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(Source), 0)
+func RetainedSourceAddprovider(builder *flatbuffers.Builder, provider flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(provider), 0)
 }
-func RetainedSourceAddProductSource(builder *flatbuffers.Builder, ProductSource flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(3, flatbuffers.UOffsetT(ProductSource), 0)
+func RetainedSourceAddProvider(builder *flatbuffers.Builder, provider flatbuffers.UOffsetT) {
+	RetainedSourceAddprovider(builder, provider)
 }
-func RetainedSourceAddProductsource(builder *flatbuffers.Builder, ProductSource flatbuffers.UOffsetT) {
-	RetainedSourceAddProductSource(builder, ProductSource)
+func RetainedSourceAddsource(builder *flatbuffers.Builder, source flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(source), 0)
 }
-func RetainedSourceAddCatalogObjectLimit(builder *flatbuffers.Builder, CatalogObjectLimit int32) {
-	builder.PrependInt32Slot(4, CatalogObjectLimit, 0)
+func RetainedSourceAddSource(builder *flatbuffers.Builder, source flatbuffers.UOffsetT) {
+	RetainedSourceAddsource(builder, source)
 }
-func RetainedSourceAddCatalogobjectlimit(builder *flatbuffers.Builder, CatalogObjectLimit int32) {
-	RetainedSourceAddCatalogObjectLimit(builder, CatalogObjectLimit)
+func RetainedSourceAddproduct_source(builder *flatbuffers.Builder, product_source flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(3, flatbuffers.UOffsetT(product_source), 0)
+}
+func RetainedSourceAddProductSource(builder *flatbuffers.Builder, product_source flatbuffers.UOffsetT) {
+	RetainedSourceAddproduct_source(builder, product_source)
+}
+func RetainedSourceAddcatalog_object_limit(builder *flatbuffers.Builder, catalog_object_limit int32) {
+	builder.PrependInt32Slot(4, catalog_object_limit, 0)
+}
+func RetainedSourceAddCatalogObjectLimit(builder *flatbuffers.Builder, catalog_object_limit int32) {
+	RetainedSourceAddcatalog_object_limit(builder, catalog_object_limit)
 }
 func RetainedSourceEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

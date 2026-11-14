@@ -7,34 +7,34 @@ import (
 )
 
 type FailureT struct {
-	Attempts int32 `json:"Attempts"`
-	Reason string `json:"Reason"`
-	Retryat string `json:"RetryAt"`
+	Attempts int32 `json:"attempts"`
+	Reason string `json:"reason"`
+	RetryAt string `json:"retry_at"`
 }
 
 func (t *FailureT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	if t == nil {
 		return 0
 	}
-	ReasonOffset := flatbuffers.UOffsetT(0)
+	reasonOffset := flatbuffers.UOffsetT(0)
 	if t.Reason != "" {
-		ReasonOffset = builder.CreateString(t.Reason)
+		reasonOffset = builder.CreateString(t.Reason)
 	}
-	RetryAtOffset := flatbuffers.UOffsetT(0)
-	if t.Retryat != "" {
-		RetryAtOffset = builder.CreateString(t.Retryat)
+	retry_atOffset := flatbuffers.UOffsetT(0)
+	if t.RetryAt != "" {
+		retry_atOffset = builder.CreateString(t.RetryAt)
 	}
 	FailureStart(builder)
-	FailureAddAttempts(builder, t.Attempts)
-	FailureAddReason(builder, ReasonOffset)
-	FailureAddRetryAt(builder, RetryAtOffset)
+	FailureAddattempts(builder, t.Attempts)
+	FailureAddreason(builder, reasonOffset)
+	FailureAddretry_at(builder, retry_atOffset)
 	return FailureEnd(builder)
 }
 
 func (rcv *Failure) UnPackTo(t *FailureT) {
 	t.Attempts = rcv.Attempts()
 	t.Reason = string(rcv.Reason())
-	t.Retryat = string(rcv.Retryat())
+	t.RetryAt = string(rcv.RetryAt())
 }
 
 func (rcv *Failure) UnPack() *FailureT {
@@ -81,7 +81,7 @@ func (rcv *Failure) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-func (rcv *Failure) Attempts() int32 {
+func (rcv *Failure) attempts() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
 		return rcv._tab.GetInt32(o + rcv._tab.Pos)
@@ -89,11 +89,19 @@ func (rcv *Failure) Attempts() int32 {
 	return 0
 }
 
-func (rcv *Failure) MutateAttempts(n int32) bool {
+func (rcv *Failure) Attempts() int32 {
+	return rcv.attempts()
+}
+
+func (rcv *Failure) Mutateattempts(n int32) bool {
 	return rcv._tab.MutateInt32Slot(4, n)
 }
 
-func (rcv *Failure) Reason() []byte {
+func (rcv *Failure) MutateAttempts(n int32) bool {
+	return rcv.Mutateattempts(n)
+}
+
+func (rcv *Failure) reason() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -101,7 +109,11 @@ func (rcv *Failure) Reason() []byte {
 	return nil
 }
 
-func (rcv *Failure) RetryAt() []byte {
+func (rcv *Failure) Reason() []byte {
+	return rcv.reason()
+}
+
+func (rcv *Failure) retry_at() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -109,24 +121,30 @@ func (rcv *Failure) RetryAt() []byte {
 	return nil
 }
 
-func (rcv *Failure) Retryat() []byte {
-	return rcv.RetryAt()
+func (rcv *Failure) RetryAt() []byte {
+	return rcv.retry_at()
 }
 
 func FailureStart(builder *flatbuffers.Builder) {
 	builder.StartObject(3)
 }
-func FailureAddAttempts(builder *flatbuffers.Builder, Attempts int32) {
-	builder.PrependInt32Slot(0, Attempts, 0)
+func FailureAddattempts(builder *flatbuffers.Builder, attempts int32) {
+	builder.PrependInt32Slot(0, attempts, 0)
 }
-func FailureAddReason(builder *flatbuffers.Builder, Reason flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(Reason), 0)
+func FailureAddAttempts(builder *flatbuffers.Builder, attempts int32) {
+	FailureAddattempts(builder, attempts)
 }
-func FailureAddRetryAt(builder *flatbuffers.Builder, RetryAt flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(RetryAt), 0)
+func FailureAddreason(builder *flatbuffers.Builder, reason flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(reason), 0)
 }
-func FailureAddRetryat(builder *flatbuffers.Builder, RetryAt flatbuffers.UOffsetT) {
-	FailureAddRetryAt(builder, RetryAt)
+func FailureAddReason(builder *flatbuffers.Builder, reason flatbuffers.UOffsetT) {
+	FailureAddreason(builder, reason)
+}
+func FailureAddretry_at(builder *flatbuffers.Builder, retry_at flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(retry_at), 0)
+}
+func FailureAddRetryAt(builder *flatbuffers.Builder, retry_at flatbuffers.UOffsetT) {
+	FailureAddretry_at(builder, retry_at)
 }
 func FailureEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

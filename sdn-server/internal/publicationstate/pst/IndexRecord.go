@@ -7,58 +7,58 @@ import (
 )
 
 type IndexRecordT struct {
-	Cid string `json:"CID"`
-	Offset int64 `json:"Offset"`
-	Length int64 `json:"Length"`
-	Noradcatid *uint32 `json:"NoradCatID"`
-	Entityid string `json:"EntityID"`
-	Objecttype string `json:"ObjectType"`
-	Opsstatuscode string `json:"OpsStatusCode"`
-	Epochunix *int64 `json:"EpochUnix"`
-	Epochday string `json:"EpochDay"`
-	Tags *SourceTagsT `json:"Tags"`
+	Cid string `json:"cid"`
+	Offset int64 `json:"offset"`
+	Length int64 `json:"length"`
+	NoradCatId *uint32 `json:"norad_cat_id"`
+	EntityId string `json:"entity_id"`
+	ObjectType string `json:"object_type"`
+	OpsStatusCode string `json:"ops_status_code"`
+	EpochUnix *int64 `json:"epoch_unix"`
+	EpochDay string `json:"epoch_day"`
+	Tags *SourceTagsT `json:"tags"`
 }
 
 func (t *IndexRecordT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	if t == nil {
 		return 0
 	}
-	CIDOffset := flatbuffers.UOffsetT(0)
+	cidOffset := flatbuffers.UOffsetT(0)
 	if t.Cid != "" {
-		CIDOffset = builder.CreateString(t.Cid)
+		cidOffset = builder.CreateString(t.Cid)
 	}
-	EntityIDOffset := flatbuffers.UOffsetT(0)
-	if t.Entityid != "" {
-		EntityIDOffset = builder.CreateString(t.Entityid)
+	entity_idOffset := flatbuffers.UOffsetT(0)
+	if t.EntityId != "" {
+		entity_idOffset = builder.CreateString(t.EntityId)
 	}
-	ObjectTypeOffset := flatbuffers.UOffsetT(0)
-	if t.Objecttype != "" {
-		ObjectTypeOffset = builder.CreateString(t.Objecttype)
+	object_typeOffset := flatbuffers.UOffsetT(0)
+	if t.ObjectType != "" {
+		object_typeOffset = builder.CreateString(t.ObjectType)
 	}
-	OpsStatusCodeOffset := flatbuffers.UOffsetT(0)
-	if t.Opsstatuscode != "" {
-		OpsStatusCodeOffset = builder.CreateString(t.Opsstatuscode)
+	ops_status_codeOffset := flatbuffers.UOffsetT(0)
+	if t.OpsStatusCode != "" {
+		ops_status_codeOffset = builder.CreateString(t.OpsStatusCode)
 	}
-	EpochDayOffset := flatbuffers.UOffsetT(0)
-	if t.Epochday != "" {
-		EpochDayOffset = builder.CreateString(t.Epochday)
+	epoch_dayOffset := flatbuffers.UOffsetT(0)
+	if t.EpochDay != "" {
+		epoch_dayOffset = builder.CreateString(t.EpochDay)
 	}
-	TagsOffset := t.Tags.Pack(builder)
+	tagsOffset := t.Tags.Pack(builder)
 	IndexRecordStart(builder)
-	IndexRecordAddCID(builder, CIDOffset)
-	IndexRecordAddOffset(builder, t.Offset)
-	IndexRecordAddLength(builder, t.Length)
-	if t.Noradcatid != nil {
-		IndexRecordAddNoradCatID(builder, *t.Noradcatid)
+	IndexRecordAddcid(builder, cidOffset)
+	IndexRecordAddoffset(builder, t.Offset)
+	IndexRecordAddlength(builder, t.Length)
+	if t.NoradCatId != nil {
+		IndexRecordAddnorad_cat_id(builder, *t.NoradCatId)
 	}
-	IndexRecordAddEntityID(builder, EntityIDOffset)
-	IndexRecordAddObjectType(builder, ObjectTypeOffset)
-	IndexRecordAddOpsStatusCode(builder, OpsStatusCodeOffset)
-	if t.Epochunix != nil {
-		IndexRecordAddEpochUnix(builder, *t.Epochunix)
+	IndexRecordAddentity_id(builder, entity_idOffset)
+	IndexRecordAddobject_type(builder, object_typeOffset)
+	IndexRecordAddops_status_code(builder, ops_status_codeOffset)
+	if t.EpochUnix != nil {
+		IndexRecordAddepoch_unix(builder, *t.EpochUnix)
 	}
-	IndexRecordAddEpochDay(builder, EpochDayOffset)
-	IndexRecordAddTags(builder, TagsOffset)
+	IndexRecordAddepoch_day(builder, epoch_dayOffset)
+	IndexRecordAddtags(builder, tagsOffset)
 	return IndexRecordEnd(builder)
 }
 
@@ -66,12 +66,12 @@ func (rcv *IndexRecord) UnPackTo(t *IndexRecordT) {
 	t.Cid = string(rcv.Cid())
 	t.Offset = rcv.Offset()
 	t.Length = rcv.Length()
-	t.Noradcatid = rcv.Noradcatid()
-	t.Entityid = string(rcv.Entityid())
-	t.Objecttype = string(rcv.Objecttype())
-	t.Opsstatuscode = string(rcv.Opsstatuscode())
-	t.Epochunix = rcv.Epochunix()
-	t.Epochday = string(rcv.Epochday())
+	t.NoradCatId = rcv.NoradCatId()
+	t.EntityId = string(rcv.EntityId())
+	t.ObjectType = string(rcv.ObjectType())
+	t.OpsStatusCode = string(rcv.OpsStatusCode())
+	t.EpochUnix = rcv.EpochUnix()
+	t.EpochDay = string(rcv.EpochDay())
 	t.Tags = rcv.Tags(nil).UnPack()
 }
 
@@ -119,7 +119,7 @@ func (rcv *IndexRecord) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-func (rcv *IndexRecord) CID() []byte {
+func (rcv *IndexRecord) cid() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -128,10 +128,10 @@ func (rcv *IndexRecord) CID() []byte {
 }
 
 func (rcv *IndexRecord) Cid() []byte {
-	return rcv.CID()
+	return rcv.cid()
 }
 
-func (rcv *IndexRecord) Offset() int64 {
+func (rcv *IndexRecord) offset() int64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
 		return rcv._tab.GetInt64(o + rcv._tab.Pos)
@@ -139,11 +139,19 @@ func (rcv *IndexRecord) Offset() int64 {
 	return 0
 }
 
-func (rcv *IndexRecord) MutateOffset(n int64) bool {
+func (rcv *IndexRecord) Offset() int64 {
+	return rcv.offset()
+}
+
+func (rcv *IndexRecord) Mutateoffset(n int64) bool {
 	return rcv._tab.MutateInt64Slot(6, n)
 }
 
-func (rcv *IndexRecord) Length() int64 {
+func (rcv *IndexRecord) MutateOffset(n int64) bool {
+	return rcv.Mutateoffset(n)
+}
+
+func (rcv *IndexRecord) length() int64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
 		return rcv._tab.GetInt64(o + rcv._tab.Pos)
@@ -151,11 +159,19 @@ func (rcv *IndexRecord) Length() int64 {
 	return 0
 }
 
-func (rcv *IndexRecord) MutateLength(n int64) bool {
+func (rcv *IndexRecord) Length() int64 {
+	return rcv.length()
+}
+
+func (rcv *IndexRecord) Mutatelength(n int64) bool {
 	return rcv._tab.MutateInt64Slot(8, n)
 }
 
-func (rcv *IndexRecord) NoradCatID() *uint32 {
+func (rcv *IndexRecord) MutateLength(n int64) bool {
+	return rcv.Mutatelength(n)
+}
+
+func (rcv *IndexRecord) norad_cat_id() *uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
 		v := rcv._tab.GetUint32(o + rcv._tab.Pos)
@@ -164,19 +180,19 @@ func (rcv *IndexRecord) NoradCatID() *uint32 {
 	return nil
 }
 
-func (rcv *IndexRecord) Noradcatid() *uint32 {
-	return rcv.NoradCatID()
+func (rcv *IndexRecord) NoradCatId() *uint32 {
+	return rcv.norad_cat_id()
 }
 
-func (rcv *IndexRecord) MutateNoradCatID(n uint32) bool {
+func (rcv *IndexRecord) Mutatenorad_cat_id(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(10, n)
 }
 
-func (rcv *IndexRecord) MutateNoradcatid(n uint32) bool {
-	return rcv.MutateNoradCatID(n)
+func (rcv *IndexRecord) MutateNoradCatId(n uint32) bool {
+	return rcv.Mutatenorad_cat_id(n)
 }
 
-func (rcv *IndexRecord) EntityID() []byte {
+func (rcv *IndexRecord) entity_id() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -184,11 +200,11 @@ func (rcv *IndexRecord) EntityID() []byte {
 	return nil
 }
 
-func (rcv *IndexRecord) Entityid() []byte {
-	return rcv.EntityID()
+func (rcv *IndexRecord) EntityId() []byte {
+	return rcv.entity_id()
 }
 
-func (rcv *IndexRecord) ObjectType() []byte {
+func (rcv *IndexRecord) object_type() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -196,11 +212,11 @@ func (rcv *IndexRecord) ObjectType() []byte {
 	return nil
 }
 
-func (rcv *IndexRecord) Objecttype() []byte {
-	return rcv.ObjectType()
+func (rcv *IndexRecord) ObjectType() []byte {
+	return rcv.object_type()
 }
 
-func (rcv *IndexRecord) OpsStatusCode() []byte {
+func (rcv *IndexRecord) ops_status_code() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -208,11 +224,11 @@ func (rcv *IndexRecord) OpsStatusCode() []byte {
 	return nil
 }
 
-func (rcv *IndexRecord) Opsstatuscode() []byte {
-	return rcv.OpsStatusCode()
+func (rcv *IndexRecord) OpsStatusCode() []byte {
+	return rcv.ops_status_code()
 }
 
-func (rcv *IndexRecord) EpochUnix() *int64 {
+func (rcv *IndexRecord) epoch_unix() *int64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
 		v := rcv._tab.GetInt64(o + rcv._tab.Pos)
@@ -221,19 +237,19 @@ func (rcv *IndexRecord) EpochUnix() *int64 {
 	return nil
 }
 
-func (rcv *IndexRecord) Epochunix() *int64 {
-	return rcv.EpochUnix()
+func (rcv *IndexRecord) EpochUnix() *int64 {
+	return rcv.epoch_unix()
 }
 
-func (rcv *IndexRecord) MutateEpochUnix(n int64) bool {
+func (rcv *IndexRecord) Mutateepoch_unix(n int64) bool {
 	return rcv._tab.MutateInt64Slot(18, n)
 }
 
-func (rcv *IndexRecord) MutateEpochunix(n int64) bool {
-	return rcv.MutateEpochUnix(n)
+func (rcv *IndexRecord) MutateEpochUnix(n int64) bool {
+	return rcv.Mutateepoch_unix(n)
 }
 
-func (rcv *IndexRecord) EpochDay() []byte {
+func (rcv *IndexRecord) epoch_day() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -241,11 +257,11 @@ func (rcv *IndexRecord) EpochDay() []byte {
 	return nil
 }
 
-func (rcv *IndexRecord) Epochday() []byte {
-	return rcv.EpochDay()
+func (rcv *IndexRecord) EpochDay() []byte {
+	return rcv.epoch_day()
 }
 
-func (rcv *IndexRecord) Tags(obj *SourceTags) *SourceTags {
+func (rcv *IndexRecord) tags(obj *SourceTags) *SourceTags {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
 		x := rcv._tab.Indirect(o + rcv._tab.Pos)
@@ -258,61 +274,74 @@ func (rcv *IndexRecord) Tags(obj *SourceTags) *SourceTags {
 	return nil
 }
 
+func (rcv *IndexRecord) Tags(obj *SourceTags) *SourceTags {
+	return rcv.tags(obj)
+}
+
 func IndexRecordStart(builder *flatbuffers.Builder) {
 	builder.StartObject(10)
 }
-func IndexRecordAddCID(builder *flatbuffers.Builder, CID flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(CID), 0)
+func IndexRecordAddcid(builder *flatbuffers.Builder, cid flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(cid), 0)
 }
-func IndexRecordAddCid(builder *flatbuffers.Builder, CID flatbuffers.UOffsetT) {
-	IndexRecordAddCID(builder, CID)
+func IndexRecordAddCid(builder *flatbuffers.Builder, cid flatbuffers.UOffsetT) {
+	IndexRecordAddcid(builder, cid)
 }
-func IndexRecordAddOffset(builder *flatbuffers.Builder, Offset int64) {
-	builder.PrependInt64Slot(1, Offset, 0)
+func IndexRecordAddoffset(builder *flatbuffers.Builder, offset int64) {
+	builder.PrependInt64Slot(1, offset, 0)
 }
-func IndexRecordAddLength(builder *flatbuffers.Builder, Length int64) {
-	builder.PrependInt64Slot(2, Length, 0)
+func IndexRecordAddOffset(builder *flatbuffers.Builder, offset int64) {
+	IndexRecordAddoffset(builder, offset)
 }
-func IndexRecordAddNoradCatID(builder *flatbuffers.Builder, NoradCatID uint32) {
-	builder.PrependUint32(NoradCatID)
+func IndexRecordAddlength(builder *flatbuffers.Builder, length int64) {
+	builder.PrependInt64Slot(2, length, 0)
+}
+func IndexRecordAddLength(builder *flatbuffers.Builder, length int64) {
+	IndexRecordAddlength(builder, length)
+}
+func IndexRecordAddnorad_cat_id(builder *flatbuffers.Builder, norad_cat_id uint32) {
+	builder.PrependUint32(norad_cat_id)
 	builder.Slot(3)
 }
-func IndexRecordAddNoradcatid(builder *flatbuffers.Builder, NoradCatID uint32) {
-	IndexRecordAddNoradCatID(builder, NoradCatID)
+func IndexRecordAddNoradCatId(builder *flatbuffers.Builder, norad_cat_id uint32) {
+	IndexRecordAddnorad_cat_id(builder, norad_cat_id)
 }
-func IndexRecordAddEntityID(builder *flatbuffers.Builder, EntityID flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(4, flatbuffers.UOffsetT(EntityID), 0)
+func IndexRecordAddentity_id(builder *flatbuffers.Builder, entity_id flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(4, flatbuffers.UOffsetT(entity_id), 0)
 }
-func IndexRecordAddEntityid(builder *flatbuffers.Builder, EntityID flatbuffers.UOffsetT) {
-	IndexRecordAddEntityID(builder, EntityID)
+func IndexRecordAddEntityId(builder *flatbuffers.Builder, entity_id flatbuffers.UOffsetT) {
+	IndexRecordAddentity_id(builder, entity_id)
 }
-func IndexRecordAddObjectType(builder *flatbuffers.Builder, ObjectType flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(5, flatbuffers.UOffsetT(ObjectType), 0)
+func IndexRecordAddobject_type(builder *flatbuffers.Builder, object_type flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(5, flatbuffers.UOffsetT(object_type), 0)
 }
-func IndexRecordAddObjecttype(builder *flatbuffers.Builder, ObjectType flatbuffers.UOffsetT) {
-	IndexRecordAddObjectType(builder, ObjectType)
+func IndexRecordAddObjectType(builder *flatbuffers.Builder, object_type flatbuffers.UOffsetT) {
+	IndexRecordAddobject_type(builder, object_type)
 }
-func IndexRecordAddOpsStatusCode(builder *flatbuffers.Builder, OpsStatusCode flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(6, flatbuffers.UOffsetT(OpsStatusCode), 0)
+func IndexRecordAddops_status_code(builder *flatbuffers.Builder, ops_status_code flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(6, flatbuffers.UOffsetT(ops_status_code), 0)
 }
-func IndexRecordAddOpsstatuscode(builder *flatbuffers.Builder, OpsStatusCode flatbuffers.UOffsetT) {
-	IndexRecordAddOpsStatusCode(builder, OpsStatusCode)
+func IndexRecordAddOpsStatusCode(builder *flatbuffers.Builder, ops_status_code flatbuffers.UOffsetT) {
+	IndexRecordAddops_status_code(builder, ops_status_code)
 }
-func IndexRecordAddEpochUnix(builder *flatbuffers.Builder, EpochUnix int64) {
-	builder.PrependInt64(EpochUnix)
+func IndexRecordAddepoch_unix(builder *flatbuffers.Builder, epoch_unix int64) {
+	builder.PrependInt64(epoch_unix)
 	builder.Slot(7)
 }
-func IndexRecordAddEpochunix(builder *flatbuffers.Builder, EpochUnix int64) {
-	IndexRecordAddEpochUnix(builder, EpochUnix)
+func IndexRecordAddEpochUnix(builder *flatbuffers.Builder, epoch_unix int64) {
+	IndexRecordAddepoch_unix(builder, epoch_unix)
 }
-func IndexRecordAddEpochDay(builder *flatbuffers.Builder, EpochDay flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(8, flatbuffers.UOffsetT(EpochDay), 0)
+func IndexRecordAddepoch_day(builder *flatbuffers.Builder, epoch_day flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(8, flatbuffers.UOffsetT(epoch_day), 0)
 }
-func IndexRecordAddEpochday(builder *flatbuffers.Builder, EpochDay flatbuffers.UOffsetT) {
-	IndexRecordAddEpochDay(builder, EpochDay)
+func IndexRecordAddEpochDay(builder *flatbuffers.Builder, epoch_day flatbuffers.UOffsetT) {
+	IndexRecordAddepoch_day(builder, epoch_day)
 }
-func IndexRecordAddTags(builder *flatbuffers.Builder, Tags flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(9, flatbuffers.UOffsetT(Tags), 0)
+func IndexRecordAddtags(builder *flatbuffers.Builder, tags flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(9, flatbuffers.UOffsetT(tags), 0)
+}
+func IndexRecordAddTags(builder *flatbuffers.Builder, tags flatbuffers.UOffsetT) {
+	IndexRecordAddtags(builder, tags)
 }
 func IndexRecordEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

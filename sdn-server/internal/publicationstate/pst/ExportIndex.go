@@ -7,129 +7,129 @@ import (
 )
 
 type ExportIndexT struct {
-	Publicationcutoff uint64 `json:"PublicationCutoff"`
-	Publicationsourcecutoff uint64 `json:"PublicationSourceCutoff"`
-	Publicationsourcesequences []uint64 `json:"PublicationSourceSequences"`
-	Version int32 `json:"Version"`
-	Schemaname string `json:"SchemaName"`
-	Providerid string `json:"ProviderID"`
-	Sourcename string `json:"SourceName"`
-	Batchid string `json:"BatchID"`
-	Querysha256 string `json:"QuerySHA256"`
-	Resultsha256 string `json:"ResultSHA256"`
-	Shardsha256 string `json:"ShardSHA256"`
-	Shardcid string `json:"ShardCID"`
-	Shardfile string `json:"ShardFile"`
-	Recordcount int32 `json:"RecordCount"`
-	Records []*IndexRecordT `json:"Records"`
-	Indexes *MaterializedIndexesT `json:"Indexes"`
+	PublicationCutoff uint64 `json:"publication_cutoff"`
+	PublicationSourceCutoff uint64 `json:"publication_source_cutoff"`
+	PublicationSourceSequences []uint64 `json:"publication_source_sequences"`
+	Version int32 `json:"version"`
+	SchemaName string `json:"schema_name"`
+	ProviderId string `json:"provider_id"`
+	SourceName string `json:"source_name"`
+	BatchId string `json:"batch_id"`
+	QuerySha256 string `json:"query_sha256"`
+	ResultSha256 string `json:"result_sha256"`
+	ShardSha256 string `json:"shard_sha256"`
+	ShardCid string `json:"shard_cid"`
+	ShardFile string `json:"shard_file"`
+	RecordCount int32 `json:"record_count"`
+	Records []*IndexRecordT `json:"records"`
+	Indexes *MaterializedIndexesT `json:"indexes"`
 }
 
 func (t *ExportIndexT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	if t == nil {
 		return 0
 	}
-	PublicationSourceSequencesOffset := flatbuffers.UOffsetT(0)
-	if t.Publicationsourcesequences != nil {
-		PublicationSourceSequencesLength := len(t.Publicationsourcesequences)
-		ExportIndexStartPublicationSourceSequencesVector(builder, PublicationSourceSequencesLength)
-		for j := PublicationSourceSequencesLength - 1; j >= 0; j-- {
-			builder.PrependUint64(t.Publicationsourcesequences[j])
+	publication_source_sequencesOffset := flatbuffers.UOffsetT(0)
+	if t.PublicationSourceSequences != nil {
+		publication_source_sequencesLength := len(t.PublicationSourceSequences)
+		ExportIndexStartpublication_source_sequencesVector(builder, publication_source_sequencesLength)
+		for j := publication_source_sequencesLength - 1; j >= 0; j-- {
+			builder.PrependUint64(t.PublicationSourceSequences[j])
 		}
-		PublicationSourceSequencesOffset = builder.EndVector(PublicationSourceSequencesLength)
+		publication_source_sequencesOffset = builder.EndVector(publication_source_sequencesLength)
 	}
-	SchemaNameOffset := flatbuffers.UOffsetT(0)
-	if t.Schemaname != "" {
-		SchemaNameOffset = builder.CreateString(t.Schemaname)
+	schema_nameOffset := flatbuffers.UOffsetT(0)
+	if t.SchemaName != "" {
+		schema_nameOffset = builder.CreateString(t.SchemaName)
 	}
-	ProviderIDOffset := flatbuffers.UOffsetT(0)
-	if t.Providerid != "" {
-		ProviderIDOffset = builder.CreateString(t.Providerid)
+	provider_idOffset := flatbuffers.UOffsetT(0)
+	if t.ProviderId != "" {
+		provider_idOffset = builder.CreateString(t.ProviderId)
 	}
-	SourceNameOffset := flatbuffers.UOffsetT(0)
-	if t.Sourcename != "" {
-		SourceNameOffset = builder.CreateString(t.Sourcename)
+	source_nameOffset := flatbuffers.UOffsetT(0)
+	if t.SourceName != "" {
+		source_nameOffset = builder.CreateString(t.SourceName)
 	}
-	BatchIDOffset := flatbuffers.UOffsetT(0)
-	if t.Batchid != "" {
-		BatchIDOffset = builder.CreateString(t.Batchid)
+	batch_idOffset := flatbuffers.UOffsetT(0)
+	if t.BatchId != "" {
+		batch_idOffset = builder.CreateString(t.BatchId)
 	}
-	QuerySHA256Offset := flatbuffers.UOffsetT(0)
-	if t.Querysha256 != "" {
-		QuerySHA256Offset = builder.CreateString(t.Querysha256)
+	query_sha256Offset := flatbuffers.UOffsetT(0)
+	if t.QuerySha256 != "" {
+		query_sha256Offset = builder.CreateString(t.QuerySha256)
 	}
-	ResultSHA256Offset := flatbuffers.UOffsetT(0)
-	if t.Resultsha256 != "" {
-		ResultSHA256Offset = builder.CreateString(t.Resultsha256)
+	result_sha256Offset := flatbuffers.UOffsetT(0)
+	if t.ResultSha256 != "" {
+		result_sha256Offset = builder.CreateString(t.ResultSha256)
 	}
-	ShardSHA256Offset := flatbuffers.UOffsetT(0)
-	if t.Shardsha256 != "" {
-		ShardSHA256Offset = builder.CreateString(t.Shardsha256)
+	shard_sha256Offset := flatbuffers.UOffsetT(0)
+	if t.ShardSha256 != "" {
+		shard_sha256Offset = builder.CreateString(t.ShardSha256)
 	}
-	ShardCIDOffset := flatbuffers.UOffsetT(0)
-	if t.Shardcid != "" {
-		ShardCIDOffset = builder.CreateString(t.Shardcid)
+	shard_cidOffset := flatbuffers.UOffsetT(0)
+	if t.ShardCid != "" {
+		shard_cidOffset = builder.CreateString(t.ShardCid)
 	}
-	ShardFileOffset := flatbuffers.UOffsetT(0)
-	if t.Shardfile != "" {
-		ShardFileOffset = builder.CreateString(t.Shardfile)
+	shard_fileOffset := flatbuffers.UOffsetT(0)
+	if t.ShardFile != "" {
+		shard_fileOffset = builder.CreateString(t.ShardFile)
 	}
-	RecordsOffset := flatbuffers.UOffsetT(0)
+	recordsOffset := flatbuffers.UOffsetT(0)
 	if t.Records != nil {
-		RecordsLength := len(t.Records)
-		RecordsOffsets := make([]flatbuffers.UOffsetT, RecordsLength)
-		for j := 0; j < RecordsLength; j++ {
-			RecordsOffsets[j] = t.Records[j].Pack(builder)
+		recordsLength := len(t.Records)
+		recordsOffsets := make([]flatbuffers.UOffsetT, recordsLength)
+		for j := 0; j < recordsLength; j++ {
+			recordsOffsets[j] = t.Records[j].Pack(builder)
 		}
-		ExportIndexStartRecordsVector(builder, RecordsLength)
-		for j := RecordsLength - 1; j >= 0; j-- {
-			builder.PrependUOffsetT(RecordsOffsets[j])
+		ExportIndexStartrecordsVector(builder, recordsLength)
+		for j := recordsLength - 1; j >= 0; j-- {
+			builder.PrependUOffsetT(recordsOffsets[j])
 		}
-		RecordsOffset = builder.EndVector(RecordsLength)
+		recordsOffset = builder.EndVector(recordsLength)
 	}
-	IndexesOffset := t.Indexes.Pack(builder)
+	indexesOffset := t.Indexes.Pack(builder)
 	ExportIndexStart(builder)
-	ExportIndexAddPublicationCutoff(builder, t.Publicationcutoff)
-	ExportIndexAddPublicationSourceCutoff(builder, t.Publicationsourcecutoff)
-	ExportIndexAddPublicationSourceSequences(builder, PublicationSourceSequencesOffset)
-	ExportIndexAddVersion(builder, t.Version)
-	ExportIndexAddSchemaName(builder, SchemaNameOffset)
-	ExportIndexAddProviderID(builder, ProviderIDOffset)
-	ExportIndexAddSourceName(builder, SourceNameOffset)
-	ExportIndexAddBatchID(builder, BatchIDOffset)
-	ExportIndexAddQuerySHA256(builder, QuerySHA256Offset)
-	ExportIndexAddResultSHA256(builder, ResultSHA256Offset)
-	ExportIndexAddShardSHA256(builder, ShardSHA256Offset)
-	ExportIndexAddShardCID(builder, ShardCIDOffset)
-	ExportIndexAddShardFile(builder, ShardFileOffset)
-	ExportIndexAddRecordCount(builder, t.Recordcount)
-	ExportIndexAddRecords(builder, RecordsOffset)
-	ExportIndexAddIndexes(builder, IndexesOffset)
+	ExportIndexAddpublication_cutoff(builder, t.PublicationCutoff)
+	ExportIndexAddpublication_source_cutoff(builder, t.PublicationSourceCutoff)
+	ExportIndexAddpublication_source_sequences(builder, publication_source_sequencesOffset)
+	ExportIndexAddversion(builder, t.Version)
+	ExportIndexAddschema_name(builder, schema_nameOffset)
+	ExportIndexAddprovider_id(builder, provider_idOffset)
+	ExportIndexAddsource_name(builder, source_nameOffset)
+	ExportIndexAddbatch_id(builder, batch_idOffset)
+	ExportIndexAddquery_sha256(builder, query_sha256Offset)
+	ExportIndexAddresult_sha256(builder, result_sha256Offset)
+	ExportIndexAddshard_sha256(builder, shard_sha256Offset)
+	ExportIndexAddshard_cid(builder, shard_cidOffset)
+	ExportIndexAddshard_file(builder, shard_fileOffset)
+	ExportIndexAddrecord_count(builder, t.RecordCount)
+	ExportIndexAddrecords(builder, recordsOffset)
+	ExportIndexAddindexes(builder, indexesOffset)
 	return ExportIndexEnd(builder)
 }
 
 func (rcv *ExportIndex) UnPackTo(t *ExportIndexT) {
-	t.Publicationcutoff = rcv.Publicationcutoff()
-	t.Publicationsourcecutoff = rcv.Publicationsourcecutoff()
-	PublicationSourceSequencesLength := rcv.PublicationsourcesequencesLength()
-	t.Publicationsourcesequences = make([]uint64, PublicationSourceSequencesLength)
-	for j := 0; j < PublicationSourceSequencesLength; j++ {
-		t.Publicationsourcesequences[j] = rcv.Publicationsourcesequences(j)
+	t.PublicationCutoff = rcv.PublicationCutoff()
+	t.PublicationSourceCutoff = rcv.PublicationSourceCutoff()
+	publication_source_sequencesLength := rcv.PublicationSourceSequencesLength()
+	t.PublicationSourceSequences = make([]uint64, publication_source_sequencesLength)
+	for j := 0; j < publication_source_sequencesLength; j++ {
+		t.PublicationSourceSequences[j] = rcv.PublicationSourceSequences(j)
 	}
 	t.Version = rcv.Version()
-	t.Schemaname = string(rcv.Schemaname())
-	t.Providerid = string(rcv.Providerid())
-	t.Sourcename = string(rcv.Sourcename())
-	t.Batchid = string(rcv.Batchid())
-	t.Querysha256 = string(rcv.Querysha256())
-	t.Resultsha256 = string(rcv.Resultsha256())
-	t.Shardsha256 = string(rcv.Shardsha256())
-	t.Shardcid = string(rcv.Shardcid())
-	t.Shardfile = string(rcv.Shardfile())
-	t.Recordcount = rcv.Recordcount()
-	RecordsLength := rcv.RecordsLength()
-	t.Records = make([]*IndexRecordT, RecordsLength)
-	for j := 0; j < RecordsLength; j++ {
+	t.SchemaName = string(rcv.SchemaName())
+	t.ProviderId = string(rcv.ProviderId())
+	t.SourceName = string(rcv.SourceName())
+	t.BatchId = string(rcv.BatchId())
+	t.QuerySha256 = string(rcv.QuerySha256())
+	t.ResultSha256 = string(rcv.ResultSha256())
+	t.ShardSha256 = string(rcv.ShardSha256())
+	t.ShardCid = string(rcv.ShardCid())
+	t.ShardFile = string(rcv.ShardFile())
+	t.RecordCount = rcv.RecordCount()
+	recordsLength := rcv.RecordsLength()
+	t.Records = make([]*IndexRecordT, recordsLength)
+	for j := 0; j < recordsLength; j++ {
 		x := IndexRecord{}
 		rcv.Records(&x, j)
 		t.Records[j] = x.UnPack()
@@ -181,7 +181,7 @@ func (rcv *ExportIndex) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-func (rcv *ExportIndex) PublicationCutoff() uint64 {
+func (rcv *ExportIndex) publication_cutoff() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
 		return rcv._tab.GetUint64(o + rcv._tab.Pos)
@@ -189,19 +189,19 @@ func (rcv *ExportIndex) PublicationCutoff() uint64 {
 	return 0
 }
 
-func (rcv *ExportIndex) Publicationcutoff() uint64 {
-	return rcv.PublicationCutoff()
+func (rcv *ExportIndex) PublicationCutoff() uint64 {
+	return rcv.publication_cutoff()
 }
 
-func (rcv *ExportIndex) MutatePublicationCutoff(n uint64) bool {
+func (rcv *ExportIndex) Mutatepublication_cutoff(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(4, n)
 }
 
-func (rcv *ExportIndex) MutatePublicationcutoff(n uint64) bool {
-	return rcv.MutatePublicationCutoff(n)
+func (rcv *ExportIndex) MutatePublicationCutoff(n uint64) bool {
+	return rcv.Mutatepublication_cutoff(n)
 }
 
-func (rcv *ExportIndex) PublicationSourceCutoff() uint64 {
+func (rcv *ExportIndex) publication_source_cutoff() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
 		return rcv._tab.GetUint64(o + rcv._tab.Pos)
@@ -209,19 +209,19 @@ func (rcv *ExportIndex) PublicationSourceCutoff() uint64 {
 	return 0
 }
 
-func (rcv *ExportIndex) Publicationsourcecutoff() uint64 {
-	return rcv.PublicationSourceCutoff()
+func (rcv *ExportIndex) PublicationSourceCutoff() uint64 {
+	return rcv.publication_source_cutoff()
 }
 
-func (rcv *ExportIndex) MutatePublicationSourceCutoff(n uint64) bool {
+func (rcv *ExportIndex) Mutatepublication_source_cutoff(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(6, n)
 }
 
-func (rcv *ExportIndex) MutatePublicationsourcecutoff(n uint64) bool {
-	return rcv.MutatePublicationSourceCutoff(n)
+func (rcv *ExportIndex) MutatePublicationSourceCutoff(n uint64) bool {
+	return rcv.Mutatepublication_source_cutoff(n)
 }
 
-func (rcv *ExportIndex) PublicationSourceSequences(j int) uint64 {
+func (rcv *ExportIndex) publication_source_sequences(j int) uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
@@ -230,11 +230,11 @@ func (rcv *ExportIndex) PublicationSourceSequences(j int) uint64 {
 	return 0
 }
 
-func (rcv *ExportIndex) Publicationsourcesequences(j int) uint64 {
-	return rcv.PublicationSourceSequences(j)
+func (rcv *ExportIndex) PublicationSourceSequences(j int) uint64 {
+	return rcv.publication_source_sequences(j)
 }
 
-func (rcv *ExportIndex) PublicationSourceSequencesLength() int {
+func (rcv *ExportIndex) publication_source_sequencesLength() int {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
@@ -242,11 +242,11 @@ func (rcv *ExportIndex) PublicationSourceSequencesLength() int {
 	return 0
 }
 
-func (rcv *ExportIndex) PublicationsourcesequencesLength() int {
-	return rcv.PublicationSourceSequencesLength()
+func (rcv *ExportIndex) PublicationSourceSequencesLength() int {
+	return rcv.publication_source_sequencesLength()
 }
 
-func (rcv *ExportIndex) MutatePublicationSourceSequences(j int, n uint64) bool {
+func (rcv *ExportIndex) Mutatepublication_source_sequences(j int, n uint64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
@@ -255,11 +255,11 @@ func (rcv *ExportIndex) MutatePublicationSourceSequences(j int, n uint64) bool {
 	return false
 }
 
-func (rcv *ExportIndex) MutatePublicationsourcesequences(j int, n uint64) bool {
-	return rcv.MutatePublicationSourceSequences(j, n)
+func (rcv *ExportIndex) MutatePublicationSourceSequences(j int, n uint64) bool {
+	return rcv.Mutatepublication_source_sequences(j, n)
 }
 
-func (rcv *ExportIndex) Version() int32 {
+func (rcv *ExportIndex) version() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
 		return rcv._tab.GetInt32(o + rcv._tab.Pos)
@@ -267,11 +267,19 @@ func (rcv *ExportIndex) Version() int32 {
 	return 0
 }
 
-func (rcv *ExportIndex) MutateVersion(n int32) bool {
+func (rcv *ExportIndex) Version() int32 {
+	return rcv.version()
+}
+
+func (rcv *ExportIndex) Mutateversion(n int32) bool {
 	return rcv._tab.MutateInt32Slot(10, n)
 }
 
-func (rcv *ExportIndex) SchemaName() []byte {
+func (rcv *ExportIndex) MutateVersion(n int32) bool {
+	return rcv.Mutateversion(n)
+}
+
+func (rcv *ExportIndex) schema_name() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -279,11 +287,11 @@ func (rcv *ExportIndex) SchemaName() []byte {
 	return nil
 }
 
-func (rcv *ExportIndex) Schemaname() []byte {
-	return rcv.SchemaName()
+func (rcv *ExportIndex) SchemaName() []byte {
+	return rcv.schema_name()
 }
 
-func (rcv *ExportIndex) ProviderID() []byte {
+func (rcv *ExportIndex) provider_id() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -291,11 +299,11 @@ func (rcv *ExportIndex) ProviderID() []byte {
 	return nil
 }
 
-func (rcv *ExportIndex) Providerid() []byte {
-	return rcv.ProviderID()
+func (rcv *ExportIndex) ProviderId() []byte {
+	return rcv.provider_id()
 }
 
-func (rcv *ExportIndex) SourceName() []byte {
+func (rcv *ExportIndex) source_name() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -303,11 +311,11 @@ func (rcv *ExportIndex) SourceName() []byte {
 	return nil
 }
 
-func (rcv *ExportIndex) Sourcename() []byte {
-	return rcv.SourceName()
+func (rcv *ExportIndex) SourceName() []byte {
+	return rcv.source_name()
 }
 
-func (rcv *ExportIndex) BatchID() []byte {
+func (rcv *ExportIndex) batch_id() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -315,11 +323,11 @@ func (rcv *ExportIndex) BatchID() []byte {
 	return nil
 }
 
-func (rcv *ExportIndex) Batchid() []byte {
-	return rcv.BatchID()
+func (rcv *ExportIndex) BatchId() []byte {
+	return rcv.batch_id()
 }
 
-func (rcv *ExportIndex) QuerySHA256() []byte {
+func (rcv *ExportIndex) query_sha256() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -327,11 +335,11 @@ func (rcv *ExportIndex) QuerySHA256() []byte {
 	return nil
 }
 
-func (rcv *ExportIndex) Querysha256() []byte {
-	return rcv.QuerySHA256()
+func (rcv *ExportIndex) QuerySha256() []byte {
+	return rcv.query_sha256()
 }
 
-func (rcv *ExportIndex) ResultSHA256() []byte {
+func (rcv *ExportIndex) result_sha256() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -339,11 +347,11 @@ func (rcv *ExportIndex) ResultSHA256() []byte {
 	return nil
 }
 
-func (rcv *ExportIndex) Resultsha256() []byte {
-	return rcv.ResultSHA256()
+func (rcv *ExportIndex) ResultSha256() []byte {
+	return rcv.result_sha256()
 }
 
-func (rcv *ExportIndex) ShardSHA256() []byte {
+func (rcv *ExportIndex) shard_sha256() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -351,11 +359,11 @@ func (rcv *ExportIndex) ShardSHA256() []byte {
 	return nil
 }
 
-func (rcv *ExportIndex) Shardsha256() []byte {
-	return rcv.ShardSHA256()
+func (rcv *ExportIndex) ShardSha256() []byte {
+	return rcv.shard_sha256()
 }
 
-func (rcv *ExportIndex) ShardCID() []byte {
+func (rcv *ExportIndex) shard_cid() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -363,11 +371,11 @@ func (rcv *ExportIndex) ShardCID() []byte {
 	return nil
 }
 
-func (rcv *ExportIndex) Shardcid() []byte {
-	return rcv.ShardCID()
+func (rcv *ExportIndex) ShardCid() []byte {
+	return rcv.shard_cid()
 }
 
-func (rcv *ExportIndex) ShardFile() []byte {
+func (rcv *ExportIndex) shard_file() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -375,11 +383,11 @@ func (rcv *ExportIndex) ShardFile() []byte {
 	return nil
 }
 
-func (rcv *ExportIndex) Shardfile() []byte {
-	return rcv.ShardFile()
+func (rcv *ExportIndex) ShardFile() []byte {
+	return rcv.shard_file()
 }
 
-func (rcv *ExportIndex) RecordCount() int32 {
+func (rcv *ExportIndex) record_count() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
 		return rcv._tab.GetInt32(o + rcv._tab.Pos)
@@ -387,19 +395,19 @@ func (rcv *ExportIndex) RecordCount() int32 {
 	return 0
 }
 
-func (rcv *ExportIndex) Recordcount() int32 {
-	return rcv.RecordCount()
+func (rcv *ExportIndex) RecordCount() int32 {
+	return rcv.record_count()
 }
 
-func (rcv *ExportIndex) MutateRecordCount(n int32) bool {
+func (rcv *ExportIndex) Mutaterecord_count(n int32) bool {
 	return rcv._tab.MutateInt32Slot(30, n)
 }
 
-func (rcv *ExportIndex) MutateRecordcount(n int32) bool {
-	return rcv.MutateRecordCount(n)
+func (rcv *ExportIndex) MutateRecordCount(n int32) bool {
+	return rcv.Mutaterecord_count(n)
 }
 
-func (rcv *ExportIndex) Records(obj *IndexRecord, j int) bool {
+func (rcv *ExportIndex) records(obj *IndexRecord, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
 		x := rcv._tab.Vector(o)
@@ -414,7 +422,11 @@ func (rcv *ExportIndex) Records(obj *IndexRecord, j int) bool {
 	return false
 }
 
-func (rcv *ExportIndex) RecordsLength() int {
+func (rcv *ExportIndex) Records(obj *IndexRecord, j int) bool {
+	return rcv.records(obj, j)
+}
+
+func (rcv *ExportIndex) recordsLength() int {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
@@ -422,7 +434,11 @@ func (rcv *ExportIndex) RecordsLength() int {
 	return 0
 }
 
-func (rcv *ExportIndex) Indexes(obj *MaterializedIndexes) *MaterializedIndexes {
+func (rcv *ExportIndex) RecordsLength() int {
+	return rcv.recordsLength()
+}
+
+func (rcv *ExportIndex) indexes(obj *MaterializedIndexes) *MaterializedIndexes {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
 		x := rcv._tab.Indirect(o + rcv._tab.Pos)
@@ -435,104 +451,120 @@ func (rcv *ExportIndex) Indexes(obj *MaterializedIndexes) *MaterializedIndexes {
 	return nil
 }
 
+func (rcv *ExportIndex) Indexes(obj *MaterializedIndexes) *MaterializedIndexes {
+	return rcv.indexes(obj)
+}
+
 func ExportIndexStart(builder *flatbuffers.Builder) {
 	builder.StartObject(16)
 }
-func ExportIndexAddPublicationCutoff(builder *flatbuffers.Builder, PublicationCutoff uint64) {
-	builder.PrependUint64Slot(0, PublicationCutoff, 0)
+func ExportIndexAddpublication_cutoff(builder *flatbuffers.Builder, publication_cutoff uint64) {
+	builder.PrependUint64Slot(0, publication_cutoff, 0)
 }
-func ExportIndexAddPublicationcutoff(builder *flatbuffers.Builder, PublicationCutoff uint64) {
-	ExportIndexAddPublicationCutoff(builder, PublicationCutoff)
+func ExportIndexAddPublicationCutoff(builder *flatbuffers.Builder, publication_cutoff uint64) {
+	ExportIndexAddpublication_cutoff(builder, publication_cutoff)
 }
-func ExportIndexAddPublicationSourceCutoff(builder *flatbuffers.Builder, PublicationSourceCutoff uint64) {
-	builder.PrependUint64Slot(1, PublicationSourceCutoff, 0)
+func ExportIndexAddpublication_source_cutoff(builder *flatbuffers.Builder, publication_source_cutoff uint64) {
+	builder.PrependUint64Slot(1, publication_source_cutoff, 0)
 }
-func ExportIndexAddPublicationsourcecutoff(builder *flatbuffers.Builder, PublicationSourceCutoff uint64) {
-	ExportIndexAddPublicationSourceCutoff(builder, PublicationSourceCutoff)
+func ExportIndexAddPublicationSourceCutoff(builder *flatbuffers.Builder, publication_source_cutoff uint64) {
+	ExportIndexAddpublication_source_cutoff(builder, publication_source_cutoff)
 }
-func ExportIndexAddPublicationSourceSequences(builder *flatbuffers.Builder, PublicationSourceSequences flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(PublicationSourceSequences), 0)
+func ExportIndexAddpublication_source_sequences(builder *flatbuffers.Builder, publication_source_sequences flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(publication_source_sequences), 0)
 }
-func ExportIndexAddPublicationsourcesequences(builder *flatbuffers.Builder, PublicationSourceSequences flatbuffers.UOffsetT) {
-	ExportIndexAddPublicationSourceSequences(builder, PublicationSourceSequences)
+func ExportIndexAddPublicationSourceSequences(builder *flatbuffers.Builder, publication_source_sequences flatbuffers.UOffsetT) {
+	ExportIndexAddpublication_source_sequences(builder, publication_source_sequences)
 }
-func ExportIndexStartPublicationSourceSequencesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+func ExportIndexStartpublication_source_sequencesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(8, numElems, 8)
 }
-func ExportIndexStartPublicationsourcesequencesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
-	return ExportIndexStartPublicationSourceSequencesVector(builder, numElems)
+func ExportIndexStartPublicationSourceSequencesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return ExportIndexStartpublication_source_sequencesVector(builder, numElems)
 }
-func ExportIndexAddVersion(builder *flatbuffers.Builder, Version int32) {
-	builder.PrependInt32Slot(3, Version, 0)
+func ExportIndexAddversion(builder *flatbuffers.Builder, version int32) {
+	builder.PrependInt32Slot(3, version, 0)
 }
-func ExportIndexAddSchemaName(builder *flatbuffers.Builder, SchemaName flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(4, flatbuffers.UOffsetT(SchemaName), 0)
+func ExportIndexAddVersion(builder *flatbuffers.Builder, version int32) {
+	ExportIndexAddversion(builder, version)
 }
-func ExportIndexAddSchemaname(builder *flatbuffers.Builder, SchemaName flatbuffers.UOffsetT) {
-	ExportIndexAddSchemaName(builder, SchemaName)
+func ExportIndexAddschema_name(builder *flatbuffers.Builder, schema_name flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(4, flatbuffers.UOffsetT(schema_name), 0)
 }
-func ExportIndexAddProviderID(builder *flatbuffers.Builder, ProviderID flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(5, flatbuffers.UOffsetT(ProviderID), 0)
+func ExportIndexAddSchemaName(builder *flatbuffers.Builder, schema_name flatbuffers.UOffsetT) {
+	ExportIndexAddschema_name(builder, schema_name)
 }
-func ExportIndexAddProviderid(builder *flatbuffers.Builder, ProviderID flatbuffers.UOffsetT) {
-	ExportIndexAddProviderID(builder, ProviderID)
+func ExportIndexAddprovider_id(builder *flatbuffers.Builder, provider_id flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(5, flatbuffers.UOffsetT(provider_id), 0)
 }
-func ExportIndexAddSourceName(builder *flatbuffers.Builder, SourceName flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(6, flatbuffers.UOffsetT(SourceName), 0)
+func ExportIndexAddProviderId(builder *flatbuffers.Builder, provider_id flatbuffers.UOffsetT) {
+	ExportIndexAddprovider_id(builder, provider_id)
 }
-func ExportIndexAddSourcename(builder *flatbuffers.Builder, SourceName flatbuffers.UOffsetT) {
-	ExportIndexAddSourceName(builder, SourceName)
+func ExportIndexAddsource_name(builder *flatbuffers.Builder, source_name flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(6, flatbuffers.UOffsetT(source_name), 0)
 }
-func ExportIndexAddBatchID(builder *flatbuffers.Builder, BatchID flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(7, flatbuffers.UOffsetT(BatchID), 0)
+func ExportIndexAddSourceName(builder *flatbuffers.Builder, source_name flatbuffers.UOffsetT) {
+	ExportIndexAddsource_name(builder, source_name)
 }
-func ExportIndexAddBatchid(builder *flatbuffers.Builder, BatchID flatbuffers.UOffsetT) {
-	ExportIndexAddBatchID(builder, BatchID)
+func ExportIndexAddbatch_id(builder *flatbuffers.Builder, batch_id flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(7, flatbuffers.UOffsetT(batch_id), 0)
 }
-func ExportIndexAddQuerySHA256(builder *flatbuffers.Builder, QuerySHA256 flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(8, flatbuffers.UOffsetT(QuerySHA256), 0)
+func ExportIndexAddBatchId(builder *flatbuffers.Builder, batch_id flatbuffers.UOffsetT) {
+	ExportIndexAddbatch_id(builder, batch_id)
 }
-func ExportIndexAddQuerysha256(builder *flatbuffers.Builder, QuerySHA256 flatbuffers.UOffsetT) {
-	ExportIndexAddQuerySHA256(builder, QuerySHA256)
+func ExportIndexAddquery_sha256(builder *flatbuffers.Builder, query_sha256 flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(8, flatbuffers.UOffsetT(query_sha256), 0)
 }
-func ExportIndexAddResultSHA256(builder *flatbuffers.Builder, ResultSHA256 flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(9, flatbuffers.UOffsetT(ResultSHA256), 0)
+func ExportIndexAddQuerySha256(builder *flatbuffers.Builder, query_sha256 flatbuffers.UOffsetT) {
+	ExportIndexAddquery_sha256(builder, query_sha256)
 }
-func ExportIndexAddResultsha256(builder *flatbuffers.Builder, ResultSHA256 flatbuffers.UOffsetT) {
-	ExportIndexAddResultSHA256(builder, ResultSHA256)
+func ExportIndexAddresult_sha256(builder *flatbuffers.Builder, result_sha256 flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(9, flatbuffers.UOffsetT(result_sha256), 0)
 }
-func ExportIndexAddShardSHA256(builder *flatbuffers.Builder, ShardSHA256 flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(10, flatbuffers.UOffsetT(ShardSHA256), 0)
+func ExportIndexAddResultSha256(builder *flatbuffers.Builder, result_sha256 flatbuffers.UOffsetT) {
+	ExportIndexAddresult_sha256(builder, result_sha256)
 }
-func ExportIndexAddShardsha256(builder *flatbuffers.Builder, ShardSHA256 flatbuffers.UOffsetT) {
-	ExportIndexAddShardSHA256(builder, ShardSHA256)
+func ExportIndexAddshard_sha256(builder *flatbuffers.Builder, shard_sha256 flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(10, flatbuffers.UOffsetT(shard_sha256), 0)
 }
-func ExportIndexAddShardCID(builder *flatbuffers.Builder, ShardCID flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(11, flatbuffers.UOffsetT(ShardCID), 0)
+func ExportIndexAddShardSha256(builder *flatbuffers.Builder, shard_sha256 flatbuffers.UOffsetT) {
+	ExportIndexAddshard_sha256(builder, shard_sha256)
 }
-func ExportIndexAddShardcid(builder *flatbuffers.Builder, ShardCID flatbuffers.UOffsetT) {
-	ExportIndexAddShardCID(builder, ShardCID)
+func ExportIndexAddshard_cid(builder *flatbuffers.Builder, shard_cid flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(11, flatbuffers.UOffsetT(shard_cid), 0)
 }
-func ExportIndexAddShardFile(builder *flatbuffers.Builder, ShardFile flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(12, flatbuffers.UOffsetT(ShardFile), 0)
+func ExportIndexAddShardCid(builder *flatbuffers.Builder, shard_cid flatbuffers.UOffsetT) {
+	ExportIndexAddshard_cid(builder, shard_cid)
 }
-func ExportIndexAddShardfile(builder *flatbuffers.Builder, ShardFile flatbuffers.UOffsetT) {
-	ExportIndexAddShardFile(builder, ShardFile)
+func ExportIndexAddshard_file(builder *flatbuffers.Builder, shard_file flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(12, flatbuffers.UOffsetT(shard_file), 0)
 }
-func ExportIndexAddRecordCount(builder *flatbuffers.Builder, RecordCount int32) {
-	builder.PrependInt32Slot(13, RecordCount, 0)
+func ExportIndexAddShardFile(builder *flatbuffers.Builder, shard_file flatbuffers.UOffsetT) {
+	ExportIndexAddshard_file(builder, shard_file)
 }
-func ExportIndexAddRecordcount(builder *flatbuffers.Builder, RecordCount int32) {
-	ExportIndexAddRecordCount(builder, RecordCount)
+func ExportIndexAddrecord_count(builder *flatbuffers.Builder, record_count int32) {
+	builder.PrependInt32Slot(13, record_count, 0)
 }
-func ExportIndexAddRecords(builder *flatbuffers.Builder, Records flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(14, flatbuffers.UOffsetT(Records), 0)
+func ExportIndexAddRecordCount(builder *flatbuffers.Builder, record_count int32) {
+	ExportIndexAddrecord_count(builder, record_count)
 }
-func ExportIndexStartRecordsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+func ExportIndexAddrecords(builder *flatbuffers.Builder, records flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(14, flatbuffers.UOffsetT(records), 0)
+}
+func ExportIndexAddRecords(builder *flatbuffers.Builder, records flatbuffers.UOffsetT) {
+	ExportIndexAddrecords(builder, records)
+}
+func ExportIndexStartrecordsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
-func ExportIndexAddIndexes(builder *flatbuffers.Builder, Indexes flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(15, flatbuffers.UOffsetT(Indexes), 0)
+func ExportIndexStartRecordsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return ExportIndexStartrecordsVector(builder, numElems)
+}
+func ExportIndexAddindexes(builder *flatbuffers.Builder, indexes flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(15, flatbuffers.UOffsetT(indexes), 0)
+}
+func ExportIndexAddIndexes(builder *flatbuffers.Builder, indexes flatbuffers.UOffsetT) {
+	ExportIndexAddindexes(builder, indexes)
 }
 func ExportIndexEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

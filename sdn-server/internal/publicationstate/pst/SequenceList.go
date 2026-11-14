@@ -7,31 +7,31 @@ import (
 )
 
 type SequenceListT struct {
-	Sequences []uint64 `json:"Sequences"`
+	Sequences []uint64 `json:"sequences"`
 }
 
 func (t *SequenceListT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	if t == nil {
 		return 0
 	}
-	SequencesOffset := flatbuffers.UOffsetT(0)
+	sequencesOffset := flatbuffers.UOffsetT(0)
 	if t.Sequences != nil {
-		SequencesLength := len(t.Sequences)
-		SequenceListStartSequencesVector(builder, SequencesLength)
-		for j := SequencesLength - 1; j >= 0; j-- {
+		sequencesLength := len(t.Sequences)
+		SequenceListStartsequencesVector(builder, sequencesLength)
+		for j := sequencesLength - 1; j >= 0; j-- {
 			builder.PrependUint64(t.Sequences[j])
 		}
-		SequencesOffset = builder.EndVector(SequencesLength)
+		sequencesOffset = builder.EndVector(sequencesLength)
 	}
 	SequenceListStart(builder)
-	SequenceListAddSequences(builder, SequencesOffset)
+	SequenceListAddsequences(builder, sequencesOffset)
 	return SequenceListEnd(builder)
 }
 
 func (rcv *SequenceList) UnPackTo(t *SequenceListT) {
-	SequencesLength := rcv.SequencesLength()
-	t.Sequences = make([]uint64, SequencesLength)
-	for j := 0; j < SequencesLength; j++ {
+	sequencesLength := rcv.SequencesLength()
+	t.Sequences = make([]uint64, sequencesLength)
+	for j := 0; j < sequencesLength; j++ {
 		t.Sequences[j] = rcv.Sequences(j)
 	}
 }
@@ -80,7 +80,7 @@ func (rcv *SequenceList) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-func (rcv *SequenceList) Sequences(j int) uint64 {
+func (rcv *SequenceList) sequences(j int) uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
@@ -89,7 +89,11 @@ func (rcv *SequenceList) Sequences(j int) uint64 {
 	return 0
 }
 
-func (rcv *SequenceList) SequencesLength() int {
+func (rcv *SequenceList) Sequences(j int) uint64 {
+	return rcv.sequences(j)
+}
+
+func (rcv *SequenceList) sequencesLength() int {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
@@ -97,7 +101,11 @@ func (rcv *SequenceList) SequencesLength() int {
 	return 0
 }
 
-func (rcv *SequenceList) MutateSequences(j int, n uint64) bool {
+func (rcv *SequenceList) SequencesLength() int {
+	return rcv.sequencesLength()
+}
+
+func (rcv *SequenceList) Mutatesequences(j int, n uint64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
@@ -106,14 +114,24 @@ func (rcv *SequenceList) MutateSequences(j int, n uint64) bool {
 	return false
 }
 
+func (rcv *SequenceList) MutateSequences(j int, n uint64) bool {
+	return rcv.Mutatesequences(j, n)
+}
+
 func SequenceListStart(builder *flatbuffers.Builder) {
 	builder.StartObject(1)
 }
-func SequenceListAddSequences(builder *flatbuffers.Builder, Sequences flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(Sequences), 0)
+func SequenceListAddsequences(builder *flatbuffers.Builder, sequences flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(sequences), 0)
+}
+func SequenceListAddSequences(builder *flatbuffers.Builder, sequences flatbuffers.UOffsetT) {
+	SequenceListAddsequences(builder, sequences)
+}
+func SequenceListStartsequencesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(8, numElems, 8)
 }
 func SequenceListStartSequencesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
-	return builder.StartVector(8, numElems, 8)
+	return SequenceListStartsequencesVector(builder, numElems)
 }
 func SequenceListEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

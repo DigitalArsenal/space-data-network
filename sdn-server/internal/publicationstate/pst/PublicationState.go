@@ -7,36 +7,36 @@ import (
 )
 
 type PublicationStateT struct {
-	Version uint16 `json:"Version"`
-	Payload *BodyT `json:"Payload"`
-	Checksum []byte `json:"Checksum"`
+	Version uint16 `json:"version"`
+	Payload *BodyT `json:"payload"`
+	Checksum []byte `json:"checksum"`
 }
 
 func (t *PublicationStateT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	if t == nil {
 		return 0
 	}
-	PayloadOffset := t.Payload.Pack(builder)
+	payloadOffset := t.Payload.Pack(builder)
 
-	ChecksumOffset := flatbuffers.UOffsetT(0)
+	checksumOffset := flatbuffers.UOffsetT(0)
 	if t.Checksum != nil {
-		ChecksumOffset = builder.CreateByteString(t.Checksum)
+		checksumOffset = builder.CreateByteString(t.Checksum)
 	}
 	PublicationStateStart(builder)
-	PublicationStateAddVersion(builder, t.Version)
+	PublicationStateAddversion(builder, t.Version)
 	if t.Payload != nil {
 		PublicationStateAddPayloadType(builder, t.Payload.Type)
 	}
-	PublicationStateAddPayload(builder, PayloadOffset)
-	PublicationStateAddChecksum(builder, ChecksumOffset)
+	PublicationStateAddpayload(builder, payloadOffset)
+	PublicationStateAddchecksum(builder, checksumOffset)
 	return PublicationStateEnd(builder)
 }
 
 func (rcv *PublicationState) UnPackTo(t *PublicationStateT) {
 	t.Version = rcv.Version()
-	PayloadTable := flatbuffers.Table{}
-	if rcv.Payload(&PayloadTable) {
-		t.Payload = rcv.PayloadType().UnPack(PayloadTable)
+	payloadTable := flatbuffers.Table{}
+	if rcv.payload(&payloadTable) {
+		t.Payload = rcv.PayloadType().UnPack(payloadTable)
 	}
 	t.Checksum = rcv.ChecksumBytes()
 }
@@ -97,7 +97,7 @@ func (rcv *PublicationState) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-func (rcv *PublicationState) Version() uint16 {
+func (rcv *PublicationState) version() uint16 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
 		return rcv._tab.GetUint16(o + rcv._tab.Pos)
@@ -105,11 +105,19 @@ func (rcv *PublicationState) Version() uint16 {
 	return 1
 }
 
-func (rcv *PublicationState) MutateVersion(n uint16) bool {
+func (rcv *PublicationState) Version() uint16 {
+	return rcv.version()
+}
+
+func (rcv *PublicationState) Mutateversion(n uint16) bool {
 	return rcv._tab.MutateUint16Slot(4, n)
 }
 
-func (rcv *PublicationState) Payload_type() Body {
+func (rcv *PublicationState) MutateVersion(n uint16) bool {
+	return rcv.Mutateversion(n)
+}
+
+func (rcv *PublicationState) payload_type() Body {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
 		return Body(rcv._tab.GetByte(o + rcv._tab.Pos))
@@ -118,18 +126,18 @@ func (rcv *PublicationState) Payload_type() Body {
 }
 
 func (rcv *PublicationState) PayloadType() Body {
-	return rcv.Payload_type()
+	return rcv.payload_type()
 }
 
-func (rcv *PublicationState) MutatePayload_type(n Body) bool {
+func (rcv *PublicationState) Mutatepayload_type(n Body) bool {
 	return rcv._tab.MutateByteSlot(6, byte(n))
 }
 
 func (rcv *PublicationState) MutatePayloadType(n Body) bool {
-	return rcv.MutatePayload_type(n)
+	return rcv.Mutatepayload_type(n)
 }
 
-func (rcv *PublicationState) Payload(obj *flatbuffers.Table) bool {
+func (rcv *PublicationState) payload(obj *flatbuffers.Table) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
 		rcv._tab.Union(obj, o)
@@ -138,7 +146,11 @@ func (rcv *PublicationState) Payload(obj *flatbuffers.Table) bool {
 	return false
 }
 
-func (rcv *PublicationState) Checksum(j int) byte {
+func (rcv *PublicationState) Payload(obj *flatbuffers.Table) bool {
+	return rcv.payload(obj)
+}
+
+func (rcv *PublicationState) checksum(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
@@ -147,7 +159,11 @@ func (rcv *PublicationState) Checksum(j int) byte {
 	return 0
 }
 
-func (rcv *PublicationState) ChecksumLength() int {
+func (rcv *PublicationState) Checksum(j int) byte {
+	return rcv.checksum(j)
+}
+
+func (rcv *PublicationState) checksumLength() int {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
@@ -155,7 +171,11 @@ func (rcv *PublicationState) ChecksumLength() int {
 	return 0
 }
 
-func (rcv *PublicationState) ChecksumBytes() []byte {
+func (rcv *PublicationState) ChecksumLength() int {
+	return rcv.checksumLength()
+}
+
+func (rcv *PublicationState) checksumBytes() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -163,7 +183,11 @@ func (rcv *PublicationState) ChecksumBytes() []byte {
 	return nil
 }
 
-func (rcv *PublicationState) MutateChecksum(j int, n byte) bool {
+func (rcv *PublicationState) ChecksumBytes() []byte {
+	return rcv.checksumBytes()
+}
+
+func (rcv *PublicationState) Mutatechecksum(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
@@ -172,26 +196,42 @@ func (rcv *PublicationState) MutateChecksum(j int, n byte) bool {
 	return false
 }
 
+func (rcv *PublicationState) MutateChecksum(j int, n byte) bool {
+	return rcv.Mutatechecksum(j, n)
+}
+
 func PublicationStateStart(builder *flatbuffers.Builder) {
 	builder.StartObject(4)
 }
-func PublicationStateAddVersion(builder *flatbuffers.Builder, Version uint16) {
-	builder.PrependUint16Slot(0, Version, 1)
+func PublicationStateAddversion(builder *flatbuffers.Builder, version uint16) {
+	builder.PrependUint16Slot(0, version, 1)
 }
-func PublicationStateAddPayload_type(builder *flatbuffers.Builder, Payload_type Body) {
-	builder.PrependByteSlot(1, byte(Payload_type), 0)
+func PublicationStateAddVersion(builder *flatbuffers.Builder, version uint16) {
+	PublicationStateAddversion(builder, version)
 }
-func PublicationStateAddPayloadType(builder *flatbuffers.Builder, Payload_type Body) {
-	PublicationStateAddPayload_type(builder, Payload_type)
+func PublicationStateAddpayload_type(builder *flatbuffers.Builder, payload_type Body) {
+	builder.PrependByteSlot(1, byte(payload_type), 0)
 }
-func PublicationStateAddPayload(builder *flatbuffers.Builder, Payload flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(Payload), 0)
+func PublicationStateAddPayloadType(builder *flatbuffers.Builder, payload_type Body) {
+	PublicationStateAddpayload_type(builder, payload_type)
 }
-func PublicationStateAddChecksum(builder *flatbuffers.Builder, Checksum flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(3, flatbuffers.UOffsetT(Checksum), 0)
+func PublicationStateAddpayload(builder *flatbuffers.Builder, payload flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(payload), 0)
+}
+func PublicationStateAddPayload(builder *flatbuffers.Builder, payload flatbuffers.UOffsetT) {
+	PublicationStateAddpayload(builder, payload)
+}
+func PublicationStateAddchecksum(builder *flatbuffers.Builder, checksum flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(3, flatbuffers.UOffsetT(checksum), 0)
+}
+func PublicationStateAddChecksum(builder *flatbuffers.Builder, checksum flatbuffers.UOffsetT) {
+	PublicationStateAddchecksum(builder, checksum)
+}
+func PublicationStateStartchecksumVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(1, numElems, 1)
 }
 func PublicationStateStartChecksumVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
-	return builder.StartVector(1, numElems, 1)
+	return PublicationStateStartchecksumVector(builder, numElems)
 }
 func PublicationStateEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

@@ -7,25 +7,25 @@ import (
 )
 
 type NoticeT struct {
-	Key string `json:"Key"`
-	Reason string `json:"Reason"`
+	Key string `json:"key"`
+	Reason string `json:"reason"`
 }
 
 func (t *NoticeT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	if t == nil {
 		return 0
 	}
-	KeyOffset := flatbuffers.UOffsetT(0)
+	keyOffset := flatbuffers.UOffsetT(0)
 	if t.Key != "" {
-		KeyOffset = builder.CreateString(t.Key)
+		keyOffset = builder.CreateString(t.Key)
 	}
-	ReasonOffset := flatbuffers.UOffsetT(0)
+	reasonOffset := flatbuffers.UOffsetT(0)
 	if t.Reason != "" {
-		ReasonOffset = builder.CreateString(t.Reason)
+		reasonOffset = builder.CreateString(t.Reason)
 	}
 	NoticeStart(builder)
-	NoticeAddKey(builder, KeyOffset)
-	NoticeAddReason(builder, ReasonOffset)
+	NoticeAddkey(builder, keyOffset)
+	NoticeAddreason(builder, reasonOffset)
 	return NoticeEnd(builder)
 }
 
@@ -78,7 +78,7 @@ func (rcv *Notice) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-func (rcv *Notice) Key() []byte {
+func (rcv *Notice) key() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -86,7 +86,11 @@ func (rcv *Notice) Key() []byte {
 	return nil
 }
 
-func (rcv *Notice) Reason() []byte {
+func (rcv *Notice) Key() []byte {
+	return rcv.key()
+}
+
+func (rcv *Notice) reason() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -94,14 +98,24 @@ func (rcv *Notice) Reason() []byte {
 	return nil
 }
 
+func (rcv *Notice) Reason() []byte {
+	return rcv.reason()
+}
+
 func NoticeStart(builder *flatbuffers.Builder) {
 	builder.StartObject(2)
 }
-func NoticeAddKey(builder *flatbuffers.Builder, Key flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(Key), 0)
+func NoticeAddkey(builder *flatbuffers.Builder, key flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(key), 0)
 }
-func NoticeAddReason(builder *flatbuffers.Builder, Reason flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(Reason), 0)
+func NoticeAddKey(builder *flatbuffers.Builder, key flatbuffers.UOffsetT) {
+	NoticeAddkey(builder, key)
+}
+func NoticeAddreason(builder *flatbuffers.Builder, reason flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(reason), 0)
+}
+func NoticeAddReason(builder *flatbuffers.Builder, reason flatbuffers.UOffsetT) {
+	NoticeAddreason(builder, reason)
 }
 func NoticeEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

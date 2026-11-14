@@ -7,136 +7,136 @@ import (
 )
 
 type MaterializedIndexesT struct {
-	Bynorad []*IndexGroupT `json:"ByNORAD"`
-	Byentityid []*IndexGroupT `json:"ByEntityID"`
-	Byobjecttype []*IndexGroupT `json:"ByObjectType"`
-	Byopsstatuscode []*IndexGroupT `json:"ByOpsStatusCode"`
-	Careadyresident []int32 `json:"CAReadyResident"`
-	Activepayloads []int32 `json:"ActivePayloads"`
+	ByNorad []*IndexGroupT `json:"by_norad"`
+	ByEntityId []*IndexGroupT `json:"by_entity_id"`
+	ByObjectType []*IndexGroupT `json:"by_object_type"`
+	ByOpsStatusCode []*IndexGroupT `json:"by_ops_status_code"`
+	CaReadyResident []int32 `json:"ca_ready_resident"`
+	ActivePayloads []int32 `json:"active_payloads"`
 }
 
 func (t *MaterializedIndexesT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	if t == nil {
 		return 0
 	}
-	ByNORADOffset := flatbuffers.UOffsetT(0)
-	if t.Bynorad != nil {
-		ByNORADLength := len(t.Bynorad)
-		ByNORADOffsets := make([]flatbuffers.UOffsetT, ByNORADLength)
-		for j := 0; j < ByNORADLength; j++ {
-			ByNORADOffsets[j] = t.Bynorad[j].Pack(builder)
+	by_noradOffset := flatbuffers.UOffsetT(0)
+	if t.ByNorad != nil {
+		by_noradLength := len(t.ByNorad)
+		by_noradOffsets := make([]flatbuffers.UOffsetT, by_noradLength)
+		for j := 0; j < by_noradLength; j++ {
+			by_noradOffsets[j] = t.ByNorad[j].Pack(builder)
 		}
-		MaterializedIndexesStartByNORADVector(builder, ByNORADLength)
-		for j := ByNORADLength - 1; j >= 0; j-- {
-			builder.PrependUOffsetT(ByNORADOffsets[j])
+		MaterializedIndexesStartby_noradVector(builder, by_noradLength)
+		for j := by_noradLength - 1; j >= 0; j-- {
+			builder.PrependUOffsetT(by_noradOffsets[j])
 		}
-		ByNORADOffset = builder.EndVector(ByNORADLength)
+		by_noradOffset = builder.EndVector(by_noradLength)
 	}
-	ByEntityIDOffset := flatbuffers.UOffsetT(0)
-	if t.Byentityid != nil {
-		ByEntityIDLength := len(t.Byentityid)
-		ByEntityIDOffsets := make([]flatbuffers.UOffsetT, ByEntityIDLength)
-		for j := 0; j < ByEntityIDLength; j++ {
-			ByEntityIDOffsets[j] = t.Byentityid[j].Pack(builder)
+	by_entity_idOffset := flatbuffers.UOffsetT(0)
+	if t.ByEntityId != nil {
+		by_entity_idLength := len(t.ByEntityId)
+		by_entity_idOffsets := make([]flatbuffers.UOffsetT, by_entity_idLength)
+		for j := 0; j < by_entity_idLength; j++ {
+			by_entity_idOffsets[j] = t.ByEntityId[j].Pack(builder)
 		}
-		MaterializedIndexesStartByEntityIDVector(builder, ByEntityIDLength)
-		for j := ByEntityIDLength - 1; j >= 0; j-- {
-			builder.PrependUOffsetT(ByEntityIDOffsets[j])
+		MaterializedIndexesStartby_entity_idVector(builder, by_entity_idLength)
+		for j := by_entity_idLength - 1; j >= 0; j-- {
+			builder.PrependUOffsetT(by_entity_idOffsets[j])
 		}
-		ByEntityIDOffset = builder.EndVector(ByEntityIDLength)
+		by_entity_idOffset = builder.EndVector(by_entity_idLength)
 	}
-	ByObjectTypeOffset := flatbuffers.UOffsetT(0)
-	if t.Byobjecttype != nil {
-		ByObjectTypeLength := len(t.Byobjecttype)
-		ByObjectTypeOffsets := make([]flatbuffers.UOffsetT, ByObjectTypeLength)
-		for j := 0; j < ByObjectTypeLength; j++ {
-			ByObjectTypeOffsets[j] = t.Byobjecttype[j].Pack(builder)
+	by_object_typeOffset := flatbuffers.UOffsetT(0)
+	if t.ByObjectType != nil {
+		by_object_typeLength := len(t.ByObjectType)
+		by_object_typeOffsets := make([]flatbuffers.UOffsetT, by_object_typeLength)
+		for j := 0; j < by_object_typeLength; j++ {
+			by_object_typeOffsets[j] = t.ByObjectType[j].Pack(builder)
 		}
-		MaterializedIndexesStartByObjectTypeVector(builder, ByObjectTypeLength)
-		for j := ByObjectTypeLength - 1; j >= 0; j-- {
-			builder.PrependUOffsetT(ByObjectTypeOffsets[j])
+		MaterializedIndexesStartby_object_typeVector(builder, by_object_typeLength)
+		for j := by_object_typeLength - 1; j >= 0; j-- {
+			builder.PrependUOffsetT(by_object_typeOffsets[j])
 		}
-		ByObjectTypeOffset = builder.EndVector(ByObjectTypeLength)
+		by_object_typeOffset = builder.EndVector(by_object_typeLength)
 	}
-	ByOpsStatusCodeOffset := flatbuffers.UOffsetT(0)
-	if t.Byopsstatuscode != nil {
-		ByOpsStatusCodeLength := len(t.Byopsstatuscode)
-		ByOpsStatusCodeOffsets := make([]flatbuffers.UOffsetT, ByOpsStatusCodeLength)
-		for j := 0; j < ByOpsStatusCodeLength; j++ {
-			ByOpsStatusCodeOffsets[j] = t.Byopsstatuscode[j].Pack(builder)
+	by_ops_status_codeOffset := flatbuffers.UOffsetT(0)
+	if t.ByOpsStatusCode != nil {
+		by_ops_status_codeLength := len(t.ByOpsStatusCode)
+		by_ops_status_codeOffsets := make([]flatbuffers.UOffsetT, by_ops_status_codeLength)
+		for j := 0; j < by_ops_status_codeLength; j++ {
+			by_ops_status_codeOffsets[j] = t.ByOpsStatusCode[j].Pack(builder)
 		}
-		MaterializedIndexesStartByOpsStatusCodeVector(builder, ByOpsStatusCodeLength)
-		for j := ByOpsStatusCodeLength - 1; j >= 0; j-- {
-			builder.PrependUOffsetT(ByOpsStatusCodeOffsets[j])
+		MaterializedIndexesStartby_ops_status_codeVector(builder, by_ops_status_codeLength)
+		for j := by_ops_status_codeLength - 1; j >= 0; j-- {
+			builder.PrependUOffsetT(by_ops_status_codeOffsets[j])
 		}
-		ByOpsStatusCodeOffset = builder.EndVector(ByOpsStatusCodeLength)
+		by_ops_status_codeOffset = builder.EndVector(by_ops_status_codeLength)
 	}
-	CAReadyResidentOffset := flatbuffers.UOffsetT(0)
-	if t.Careadyresident != nil {
-		CAReadyResidentLength := len(t.Careadyresident)
-		MaterializedIndexesStartCAReadyResidentVector(builder, CAReadyResidentLength)
-		for j := CAReadyResidentLength - 1; j >= 0; j-- {
-			builder.PrependInt32(t.Careadyresident[j])
+	ca_ready_residentOffset := flatbuffers.UOffsetT(0)
+	if t.CaReadyResident != nil {
+		ca_ready_residentLength := len(t.CaReadyResident)
+		MaterializedIndexesStartca_ready_residentVector(builder, ca_ready_residentLength)
+		for j := ca_ready_residentLength - 1; j >= 0; j-- {
+			builder.PrependInt32(t.CaReadyResident[j])
 		}
-		CAReadyResidentOffset = builder.EndVector(CAReadyResidentLength)
+		ca_ready_residentOffset = builder.EndVector(ca_ready_residentLength)
 	}
-	ActivePayloadsOffset := flatbuffers.UOffsetT(0)
-	if t.Activepayloads != nil {
-		ActivePayloadsLength := len(t.Activepayloads)
-		MaterializedIndexesStartActivePayloadsVector(builder, ActivePayloadsLength)
-		for j := ActivePayloadsLength - 1; j >= 0; j-- {
-			builder.PrependInt32(t.Activepayloads[j])
+	active_payloadsOffset := flatbuffers.UOffsetT(0)
+	if t.ActivePayloads != nil {
+		active_payloadsLength := len(t.ActivePayloads)
+		MaterializedIndexesStartactive_payloadsVector(builder, active_payloadsLength)
+		for j := active_payloadsLength - 1; j >= 0; j-- {
+			builder.PrependInt32(t.ActivePayloads[j])
 		}
-		ActivePayloadsOffset = builder.EndVector(ActivePayloadsLength)
+		active_payloadsOffset = builder.EndVector(active_payloadsLength)
 	}
 	MaterializedIndexesStart(builder)
-	MaterializedIndexesAddByNORAD(builder, ByNORADOffset)
-	MaterializedIndexesAddByEntityID(builder, ByEntityIDOffset)
-	MaterializedIndexesAddByObjectType(builder, ByObjectTypeOffset)
-	MaterializedIndexesAddByOpsStatusCode(builder, ByOpsStatusCodeOffset)
-	MaterializedIndexesAddCAReadyResident(builder, CAReadyResidentOffset)
-	MaterializedIndexesAddActivePayloads(builder, ActivePayloadsOffset)
+	MaterializedIndexesAddby_norad(builder, by_noradOffset)
+	MaterializedIndexesAddby_entity_id(builder, by_entity_idOffset)
+	MaterializedIndexesAddby_object_type(builder, by_object_typeOffset)
+	MaterializedIndexesAddby_ops_status_code(builder, by_ops_status_codeOffset)
+	MaterializedIndexesAddca_ready_resident(builder, ca_ready_residentOffset)
+	MaterializedIndexesAddactive_payloads(builder, active_payloadsOffset)
 	return MaterializedIndexesEnd(builder)
 }
 
 func (rcv *MaterializedIndexes) UnPackTo(t *MaterializedIndexesT) {
-	ByNORADLength := rcv.BynoradLength()
-	t.Bynorad = make([]*IndexGroupT, ByNORADLength)
-	for j := 0; j < ByNORADLength; j++ {
+	by_noradLength := rcv.ByNoradLength()
+	t.ByNorad = make([]*IndexGroupT, by_noradLength)
+	for j := 0; j < by_noradLength; j++ {
 		x := IndexGroup{}
-		rcv.Bynorad(&x, j)
-		t.Bynorad[j] = x.UnPack()
+		rcv.ByNorad(&x, j)
+		t.ByNorad[j] = x.UnPack()
 	}
-	ByEntityIDLength := rcv.ByentityidLength()
-	t.Byentityid = make([]*IndexGroupT, ByEntityIDLength)
-	for j := 0; j < ByEntityIDLength; j++ {
+	by_entity_idLength := rcv.ByEntityIdLength()
+	t.ByEntityId = make([]*IndexGroupT, by_entity_idLength)
+	for j := 0; j < by_entity_idLength; j++ {
 		x := IndexGroup{}
-		rcv.Byentityid(&x, j)
-		t.Byentityid[j] = x.UnPack()
+		rcv.ByEntityId(&x, j)
+		t.ByEntityId[j] = x.UnPack()
 	}
-	ByObjectTypeLength := rcv.ByobjecttypeLength()
-	t.Byobjecttype = make([]*IndexGroupT, ByObjectTypeLength)
-	for j := 0; j < ByObjectTypeLength; j++ {
+	by_object_typeLength := rcv.ByObjectTypeLength()
+	t.ByObjectType = make([]*IndexGroupT, by_object_typeLength)
+	for j := 0; j < by_object_typeLength; j++ {
 		x := IndexGroup{}
-		rcv.Byobjecttype(&x, j)
-		t.Byobjecttype[j] = x.UnPack()
+		rcv.ByObjectType(&x, j)
+		t.ByObjectType[j] = x.UnPack()
 	}
-	ByOpsStatusCodeLength := rcv.ByopsstatuscodeLength()
-	t.Byopsstatuscode = make([]*IndexGroupT, ByOpsStatusCodeLength)
-	for j := 0; j < ByOpsStatusCodeLength; j++ {
+	by_ops_status_codeLength := rcv.ByOpsStatusCodeLength()
+	t.ByOpsStatusCode = make([]*IndexGroupT, by_ops_status_codeLength)
+	for j := 0; j < by_ops_status_codeLength; j++ {
 		x := IndexGroup{}
-		rcv.Byopsstatuscode(&x, j)
-		t.Byopsstatuscode[j] = x.UnPack()
+		rcv.ByOpsStatusCode(&x, j)
+		t.ByOpsStatusCode[j] = x.UnPack()
 	}
-	CAReadyResidentLength := rcv.CareadyresidentLength()
-	t.Careadyresident = make([]int32, CAReadyResidentLength)
-	for j := 0; j < CAReadyResidentLength; j++ {
-		t.Careadyresident[j] = rcv.Careadyresident(j)
+	ca_ready_residentLength := rcv.CaReadyResidentLength()
+	t.CaReadyResident = make([]int32, ca_ready_residentLength)
+	for j := 0; j < ca_ready_residentLength; j++ {
+		t.CaReadyResident[j] = rcv.CaReadyResident(j)
 	}
-	ActivePayloadsLength := rcv.ActivepayloadsLength()
-	t.Activepayloads = make([]int32, ActivePayloadsLength)
-	for j := 0; j < ActivePayloadsLength; j++ {
-		t.Activepayloads[j] = rcv.Activepayloads(j)
+	active_payloadsLength := rcv.ActivePayloadsLength()
+	t.ActivePayloads = make([]int32, active_payloadsLength)
+	for j := 0; j < active_payloadsLength; j++ {
+		t.ActivePayloads[j] = rcv.ActivePayloads(j)
 	}
 }
 
@@ -184,7 +184,7 @@ func (rcv *MaterializedIndexes) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-func (rcv *MaterializedIndexes) ByNORAD(obj *IndexGroup, j int) bool {
+func (rcv *MaterializedIndexes) by_norad(obj *IndexGroup, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
 		x := rcv._tab.Vector(o)
@@ -199,11 +199,11 @@ func (rcv *MaterializedIndexes) ByNORAD(obj *IndexGroup, j int) bool {
 	return false
 }
 
-func (rcv *MaterializedIndexes) Bynorad(obj *IndexGroup, j int) bool {
-	return rcv.ByNORAD(obj, j)
+func (rcv *MaterializedIndexes) ByNorad(obj *IndexGroup, j int) bool {
+	return rcv.by_norad(obj, j)
 }
 
-func (rcv *MaterializedIndexes) ByNORADLength() int {
+func (rcv *MaterializedIndexes) by_noradLength() int {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
@@ -211,11 +211,11 @@ func (rcv *MaterializedIndexes) ByNORADLength() int {
 	return 0
 }
 
-func (rcv *MaterializedIndexes) BynoradLength() int {
-	return rcv.ByNORADLength()
+func (rcv *MaterializedIndexes) ByNoradLength() int {
+	return rcv.by_noradLength()
 }
 
-func (rcv *MaterializedIndexes) ByEntityID(obj *IndexGroup, j int) bool {
+func (rcv *MaterializedIndexes) by_entity_id(obj *IndexGroup, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
 		x := rcv._tab.Vector(o)
@@ -230,11 +230,11 @@ func (rcv *MaterializedIndexes) ByEntityID(obj *IndexGroup, j int) bool {
 	return false
 }
 
-func (rcv *MaterializedIndexes) Byentityid(obj *IndexGroup, j int) bool {
-	return rcv.ByEntityID(obj, j)
+func (rcv *MaterializedIndexes) ByEntityId(obj *IndexGroup, j int) bool {
+	return rcv.by_entity_id(obj, j)
 }
 
-func (rcv *MaterializedIndexes) ByEntityIDLength() int {
+func (rcv *MaterializedIndexes) by_entity_idLength() int {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
@@ -242,42 +242,42 @@ func (rcv *MaterializedIndexes) ByEntityIDLength() int {
 	return 0
 }
 
-func (rcv *MaterializedIndexes) ByentityidLength() int {
-	return rcv.ByEntityIDLength()
+func (rcv *MaterializedIndexes) ByEntityIdLength() int {
+	return rcv.by_entity_idLength()
+}
+
+func (rcv *MaterializedIndexes) by_object_type(obj *IndexGroup, j int) bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
+	if o != 0 {
+		x := rcv._tab.Vector(o)
+		x += flatbuffers.UOffsetT(j) * 4
+		x = rcv._tab.Indirect(x)
+		if obj == nil {
+			obj = new(IndexGroup)
+		}
+		obj.Init(rcv._tab.Bytes, x)
+		return true
+	}
+	return false
 }
 
 func (rcv *MaterializedIndexes) ByObjectType(obj *IndexGroup, j int) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
-	if o != 0 {
-		x := rcv._tab.Vector(o)
-		x += flatbuffers.UOffsetT(j) * 4
-		x = rcv._tab.Indirect(x)
-		if obj == nil {
-			obj = new(IndexGroup)
-		}
-		obj.Init(rcv._tab.Bytes, x)
-		return true
-	}
-	return false
+	return rcv.by_object_type(obj, j)
 }
 
-func (rcv *MaterializedIndexes) Byobjecttype(obj *IndexGroup, j int) bool {
-	return rcv.ByObjectType(obj, j)
+func (rcv *MaterializedIndexes) by_object_typeLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
 }
 
 func (rcv *MaterializedIndexes) ByObjectTypeLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
-	if o != 0 {
-		return rcv._tab.VectorLen(o)
-	}
-	return 0
+	return rcv.by_object_typeLength()
 }
 
-func (rcv *MaterializedIndexes) ByobjecttypeLength() int {
-	return rcv.ByObjectTypeLength()
-}
-
-func (rcv *MaterializedIndexes) ByOpsStatusCode(obj *IndexGroup, j int) bool {
+func (rcv *MaterializedIndexes) by_ops_status_code(obj *IndexGroup, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
 		x := rcv._tab.Vector(o)
@@ -292,11 +292,11 @@ func (rcv *MaterializedIndexes) ByOpsStatusCode(obj *IndexGroup, j int) bool {
 	return false
 }
 
-func (rcv *MaterializedIndexes) Byopsstatuscode(obj *IndexGroup, j int) bool {
-	return rcv.ByOpsStatusCode(obj, j)
+func (rcv *MaterializedIndexes) ByOpsStatusCode(obj *IndexGroup, j int) bool {
+	return rcv.by_ops_status_code(obj, j)
 }
 
-func (rcv *MaterializedIndexes) ByOpsStatusCodeLength() int {
+func (rcv *MaterializedIndexes) by_ops_status_codeLength() int {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
@@ -304,11 +304,11 @@ func (rcv *MaterializedIndexes) ByOpsStatusCodeLength() int {
 	return 0
 }
 
-func (rcv *MaterializedIndexes) ByopsstatuscodeLength() int {
-	return rcv.ByOpsStatusCodeLength()
+func (rcv *MaterializedIndexes) ByOpsStatusCodeLength() int {
+	return rcv.by_ops_status_codeLength()
 }
 
-func (rcv *MaterializedIndexes) CAReadyResident(j int) int32 {
+func (rcv *MaterializedIndexes) ca_ready_resident(j int) int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
@@ -317,11 +317,11 @@ func (rcv *MaterializedIndexes) CAReadyResident(j int) int32 {
 	return 0
 }
 
-func (rcv *MaterializedIndexes) Careadyresident(j int) int32 {
-	return rcv.CAReadyResident(j)
+func (rcv *MaterializedIndexes) CaReadyResident(j int) int32 {
+	return rcv.ca_ready_resident(j)
 }
 
-func (rcv *MaterializedIndexes) CAReadyResidentLength() int {
+func (rcv *MaterializedIndexes) ca_ready_residentLength() int {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
@@ -329,11 +329,11 @@ func (rcv *MaterializedIndexes) CAReadyResidentLength() int {
 	return 0
 }
 
-func (rcv *MaterializedIndexes) CareadyresidentLength() int {
-	return rcv.CAReadyResidentLength()
+func (rcv *MaterializedIndexes) CaReadyResidentLength() int {
+	return rcv.ca_ready_residentLength()
 }
 
-func (rcv *MaterializedIndexes) MutateCAReadyResident(j int, n int32) bool {
+func (rcv *MaterializedIndexes) Mutateca_ready_resident(j int, n int32) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
@@ -342,24 +342,24 @@ func (rcv *MaterializedIndexes) MutateCAReadyResident(j int, n int32) bool {
 	return false
 }
 
-func (rcv *MaterializedIndexes) MutateCareadyresident(j int, n int32) bool {
-	return rcv.MutateCAReadyResident(j, n)
+func (rcv *MaterializedIndexes) MutateCaReadyResident(j int, n int32) bool {
+	return rcv.Mutateca_ready_resident(j, n)
+}
+
+func (rcv *MaterializedIndexes) active_payloads(j int) int32 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
+	if o != 0 {
+		a := rcv._tab.Vector(o)
+		return rcv._tab.GetInt32(a + flatbuffers.UOffsetT(j*4))
+	}
+	return 0
 }
 
 func (rcv *MaterializedIndexes) ActivePayloads(j int) int32 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
-	if o != 0 {
-		a := rcv._tab.Vector(o)
-		return rcv._tab.GetInt32(a + flatbuffers.UOffsetT(j*4))
-	}
-	return 0
+	return rcv.active_payloads(j)
 }
 
-func (rcv *MaterializedIndexes) Activepayloads(j int) int32 {
-	return rcv.ActivePayloads(j)
-}
-
-func (rcv *MaterializedIndexes) ActivePayloadsLength() int {
+func (rcv *MaterializedIndexes) active_payloadsLength() int {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
@@ -367,11 +367,11 @@ func (rcv *MaterializedIndexes) ActivePayloadsLength() int {
 	return 0
 }
 
-func (rcv *MaterializedIndexes) ActivepayloadsLength() int {
-	return rcv.ActivePayloadsLength()
+func (rcv *MaterializedIndexes) ActivePayloadsLength() int {
+	return rcv.active_payloadsLength()
 }
 
-func (rcv *MaterializedIndexes) MutateActivePayloads(j int, n int32) bool {
+func (rcv *MaterializedIndexes) Mutateactive_payloads(j int, n int32) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
@@ -380,84 +380,84 @@ func (rcv *MaterializedIndexes) MutateActivePayloads(j int, n int32) bool {
 	return false
 }
 
-func (rcv *MaterializedIndexes) MutateActivepayloads(j int, n int32) bool {
-	return rcv.MutateActivePayloads(j, n)
+func (rcv *MaterializedIndexes) MutateActivePayloads(j int, n int32) bool {
+	return rcv.Mutateactive_payloads(j, n)
 }
 
 func MaterializedIndexesStart(builder *flatbuffers.Builder) {
 	builder.StartObject(6)
 }
-func MaterializedIndexesAddByNORAD(builder *flatbuffers.Builder, ByNORAD flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(ByNORAD), 0)
+func MaterializedIndexesAddby_norad(builder *flatbuffers.Builder, by_norad flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(by_norad), 0)
 }
-func MaterializedIndexesAddBynorad(builder *flatbuffers.Builder, ByNORAD flatbuffers.UOffsetT) {
-	MaterializedIndexesAddByNORAD(builder, ByNORAD)
+func MaterializedIndexesAddByNorad(builder *flatbuffers.Builder, by_norad flatbuffers.UOffsetT) {
+	MaterializedIndexesAddby_norad(builder, by_norad)
 }
-func MaterializedIndexesStartByNORADVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+func MaterializedIndexesStartby_noradVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
-func MaterializedIndexesStartBynoradVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
-	return MaterializedIndexesStartByNORADVector(builder, numElems)
+func MaterializedIndexesStartByNoradVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return MaterializedIndexesStartby_noradVector(builder, numElems)
 }
-func MaterializedIndexesAddByEntityID(builder *flatbuffers.Builder, ByEntityID flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(ByEntityID), 0)
+func MaterializedIndexesAddby_entity_id(builder *flatbuffers.Builder, by_entity_id flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(by_entity_id), 0)
 }
-func MaterializedIndexesAddByentityid(builder *flatbuffers.Builder, ByEntityID flatbuffers.UOffsetT) {
-	MaterializedIndexesAddByEntityID(builder, ByEntityID)
+func MaterializedIndexesAddByEntityId(builder *flatbuffers.Builder, by_entity_id flatbuffers.UOffsetT) {
+	MaterializedIndexesAddby_entity_id(builder, by_entity_id)
 }
-func MaterializedIndexesStartByEntityIDVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+func MaterializedIndexesStartby_entity_idVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
-func MaterializedIndexesStartByentityidVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
-	return MaterializedIndexesStartByEntityIDVector(builder, numElems)
+func MaterializedIndexesStartByEntityIdVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return MaterializedIndexesStartby_entity_idVector(builder, numElems)
 }
-func MaterializedIndexesAddByObjectType(builder *flatbuffers.Builder, ByObjectType flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(ByObjectType), 0)
+func MaterializedIndexesAddby_object_type(builder *flatbuffers.Builder, by_object_type flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(by_object_type), 0)
 }
-func MaterializedIndexesAddByobjecttype(builder *flatbuffers.Builder, ByObjectType flatbuffers.UOffsetT) {
-	MaterializedIndexesAddByObjectType(builder, ByObjectType)
+func MaterializedIndexesAddByObjectType(builder *flatbuffers.Builder, by_object_type flatbuffers.UOffsetT) {
+	MaterializedIndexesAddby_object_type(builder, by_object_type)
+}
+func MaterializedIndexesStartby_object_typeVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(4, numElems, 4)
 }
 func MaterializedIndexesStartByObjectTypeVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return MaterializedIndexesStartby_object_typeVector(builder, numElems)
+}
+func MaterializedIndexesAddby_ops_status_code(builder *flatbuffers.Builder, by_ops_status_code flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(3, flatbuffers.UOffsetT(by_ops_status_code), 0)
+}
+func MaterializedIndexesAddByOpsStatusCode(builder *flatbuffers.Builder, by_ops_status_code flatbuffers.UOffsetT) {
+	MaterializedIndexesAddby_ops_status_code(builder, by_ops_status_code)
+}
+func MaterializedIndexesStartby_ops_status_codeVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
-}
-func MaterializedIndexesStartByobjecttypeVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
-	return MaterializedIndexesStartByObjectTypeVector(builder, numElems)
-}
-func MaterializedIndexesAddByOpsStatusCode(builder *flatbuffers.Builder, ByOpsStatusCode flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(3, flatbuffers.UOffsetT(ByOpsStatusCode), 0)
-}
-func MaterializedIndexesAddByopsstatuscode(builder *flatbuffers.Builder, ByOpsStatusCode flatbuffers.UOffsetT) {
-	MaterializedIndexesAddByOpsStatusCode(builder, ByOpsStatusCode)
 }
 func MaterializedIndexesStartByOpsStatusCodeVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return MaterializedIndexesStartby_ops_status_codeVector(builder, numElems)
+}
+func MaterializedIndexesAddca_ready_resident(builder *flatbuffers.Builder, ca_ready_resident flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(4, flatbuffers.UOffsetT(ca_ready_resident), 0)
+}
+func MaterializedIndexesAddCaReadyResident(builder *flatbuffers.Builder, ca_ready_resident flatbuffers.UOffsetT) {
+	MaterializedIndexesAddca_ready_resident(builder, ca_ready_resident)
+}
+func MaterializedIndexesStartca_ready_residentVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
-func MaterializedIndexesStartByopsstatuscodeVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
-	return MaterializedIndexesStartByOpsStatusCodeVector(builder, numElems)
+func MaterializedIndexesStartCaReadyResidentVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return MaterializedIndexesStartca_ready_residentVector(builder, numElems)
 }
-func MaterializedIndexesAddCAReadyResident(builder *flatbuffers.Builder, CAReadyResident flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(4, flatbuffers.UOffsetT(CAReadyResident), 0)
+func MaterializedIndexesAddactive_payloads(builder *flatbuffers.Builder, active_payloads flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(5, flatbuffers.UOffsetT(active_payloads), 0)
 }
-func MaterializedIndexesAddCareadyresident(builder *flatbuffers.Builder, CAReadyResident flatbuffers.UOffsetT) {
-	MaterializedIndexesAddCAReadyResident(builder, CAReadyResident)
+func MaterializedIndexesAddActivePayloads(builder *flatbuffers.Builder, active_payloads flatbuffers.UOffsetT) {
+	MaterializedIndexesAddactive_payloads(builder, active_payloads)
 }
-func MaterializedIndexesStartCAReadyResidentVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+func MaterializedIndexesStartactive_payloadsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
-}
-func MaterializedIndexesStartCareadyresidentVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
-	return MaterializedIndexesStartCAReadyResidentVector(builder, numElems)
-}
-func MaterializedIndexesAddActivePayloads(builder *flatbuffers.Builder, ActivePayloads flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(5, flatbuffers.UOffsetT(ActivePayloads), 0)
-}
-func MaterializedIndexesAddActivepayloads(builder *flatbuffers.Builder, ActivePayloads flatbuffers.UOffsetT) {
-	MaterializedIndexesAddActivePayloads(builder, ActivePayloads)
 }
 func MaterializedIndexesStartActivePayloadsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
-	return builder.StartVector(4, numElems, 4)
-}
-func MaterializedIndexesStartActivepayloadsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
-	return MaterializedIndexesStartActivePayloadsVector(builder, numElems)
+	return MaterializedIndexesStartactive_payloadsVector(builder, numElems)
 }
 func MaterializedIndexesEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

@@ -7,35 +7,35 @@ import (
 )
 
 type SourceListT struct {
-	Sources []*RetainedSourceT `json:"Sources"`
+	Sources []*RetainedSourceT `json:"sources"`
 }
 
 func (t *SourceListT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	if t == nil {
 		return 0
 	}
-	SourcesOffset := flatbuffers.UOffsetT(0)
+	sourcesOffset := flatbuffers.UOffsetT(0)
 	if t.Sources != nil {
-		SourcesLength := len(t.Sources)
-		SourcesOffsets := make([]flatbuffers.UOffsetT, SourcesLength)
-		for j := 0; j < SourcesLength; j++ {
-			SourcesOffsets[j] = t.Sources[j].Pack(builder)
+		sourcesLength := len(t.Sources)
+		sourcesOffsets := make([]flatbuffers.UOffsetT, sourcesLength)
+		for j := 0; j < sourcesLength; j++ {
+			sourcesOffsets[j] = t.Sources[j].Pack(builder)
 		}
-		SourceListStartSourcesVector(builder, SourcesLength)
-		for j := SourcesLength - 1; j >= 0; j-- {
-			builder.PrependUOffsetT(SourcesOffsets[j])
+		SourceListStartsourcesVector(builder, sourcesLength)
+		for j := sourcesLength - 1; j >= 0; j-- {
+			builder.PrependUOffsetT(sourcesOffsets[j])
 		}
-		SourcesOffset = builder.EndVector(SourcesLength)
+		sourcesOffset = builder.EndVector(sourcesLength)
 	}
 	SourceListStart(builder)
-	SourceListAddSources(builder, SourcesOffset)
+	SourceListAddsources(builder, sourcesOffset)
 	return SourceListEnd(builder)
 }
 
 func (rcv *SourceList) UnPackTo(t *SourceListT) {
-	SourcesLength := rcv.SourcesLength()
-	t.Sources = make([]*RetainedSourceT, SourcesLength)
-	for j := 0; j < SourcesLength; j++ {
+	sourcesLength := rcv.SourcesLength()
+	t.Sources = make([]*RetainedSourceT, sourcesLength)
+	for j := 0; j < sourcesLength; j++ {
 		x := RetainedSource{}
 		rcv.Sources(&x, j)
 		t.Sources[j] = x.UnPack()
@@ -86,7 +86,7 @@ func (rcv *SourceList) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-func (rcv *SourceList) Sources(obj *RetainedSource, j int) bool {
+func (rcv *SourceList) sources(obj *RetainedSource, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
 		x := rcv._tab.Vector(o)
@@ -101,7 +101,11 @@ func (rcv *SourceList) Sources(obj *RetainedSource, j int) bool {
 	return false
 }
 
-func (rcv *SourceList) SourcesLength() int {
+func (rcv *SourceList) Sources(obj *RetainedSource, j int) bool {
+	return rcv.sources(obj, j)
+}
+
+func (rcv *SourceList) sourcesLength() int {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
@@ -109,14 +113,24 @@ func (rcv *SourceList) SourcesLength() int {
 	return 0
 }
 
+func (rcv *SourceList) SourcesLength() int {
+	return rcv.sourcesLength()
+}
+
 func SourceListStart(builder *flatbuffers.Builder) {
 	builder.StartObject(1)
 }
-func SourceListAddSources(builder *flatbuffers.Builder, Sources flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(Sources), 0)
+func SourceListAddsources(builder *flatbuffers.Builder, sources flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(sources), 0)
+}
+func SourceListAddSources(builder *flatbuffers.Builder, sources flatbuffers.UOffsetT) {
+	SourceListAddsources(builder, sources)
+}
+func SourceListStartsourcesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(4, numElems, 4)
 }
 func SourceListStartSourcesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
-	return builder.StartVector(4, numElems, 4)
+	return SourceListStartsourcesVector(builder, numElems)
 }
 func SourceListEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

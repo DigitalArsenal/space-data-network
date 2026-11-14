@@ -30,12 +30,14 @@ func publicationRefusalsFromFB(v []*pst.RefusalT) (map[int]int32, error) {
 	}
 	return out, nil
 }
-func publicationTagsFB(v SourceTags) *pst.SourceTagsT { t := pst.SourceTagsT(v); return &t }
+func publicationTagsFB(v SourceTags) *pst.SourceTagsT {
+	return &pst.SourceTagsT{ProviderId: v.ProviderID, SourceName: v.SourceName, SourceUrl: v.SourceURL, BatchId: v.BatchID, ContentKeyId: v.ContentKeyID, ProducerPeerId: v.ProducerPeerID, ProducerPublicKey: v.ProducerPublicKey, License: v.License, LicenseUrl: v.LicenseURL, Citation: v.Citation, ShareAlike: v.ShareAlike}
+}
 func publicationTagsFromFB(v *pst.SourceTagsT) SourceTags {
 	if v == nil {
 		return SourceTags{}
 	}
-	return SourceTags(*v)
+	return SourceTags{ProviderID: v.ProviderId, SourceName: v.SourceName, SourceURL: v.SourceUrl, BatchID: v.BatchId, ContentKeyID: v.ContentKeyId, ProducerPeerID: v.ProducerPeerId, ProducerPublicKey: v.ProducerPublicKey, License: v.License, LicenseURL: v.LicenseUrl, Citation: v.Citation, ShareAlike: v.ShareAlike}
 }
 
 // Publication metadata has a closed set of typed FlatBuffers representations.
@@ -44,7 +46,7 @@ func marshalPublication(v any) ([]byte, error) {
 	var body pst.BodyT
 	switch x := v.(type) {
 	case publicationEntry:
-		body = pst.BodyT{Type: pst.BodyJournalEntry, Value: &pst.JournalEntryT{Digest: x.Digest, Sequence: x.Sequence, SourceSequence: x.SourceSequence, Schema: x.Schema, Tags: publicationTagsFB(x.Tags), Peer: x.Peer, Signature: x.Signature, Identity: x.Identity, OwnTS: x.OwnTS, Applied: x.Applied, Refused: publicationRefusalsFB(x.Refused)}}
+		body = pst.BodyT{Type: pst.BodyJournalEntry, Value: &pst.JournalEntryT{Digest: x.Digest, Sequence: x.Sequence, SourceSequence: x.SourceSequence, Schema: x.Schema, Tags: publicationTagsFB(x.Tags), Peer: x.Peer, Signature: x.Signature, Identity: x.Identity, OwnTs: x.OwnTS, Applied: x.Applied, Refused: publicationRefusalsFB(x.Refused)}}
 	case []PublicationSource:
 		list := &pst.SourceListT{}
 		for _, s := range x {
@@ -56,7 +58,7 @@ func marshalPublication(v any) ([]byte, error) {
 	case publicationWatermarks:
 		value := &pst.WatermarksT{Global: x.Global}
 		for _, k := range slices.Sorted(maps.Keys(x.Sources)) {
-			value.Sources = append(value.Sources, &pst.SourceSequenceT{ID: k, Sequence: x.Sources[k]})
+			value.Sources = append(value.Sources, &pst.SourceSequenceT{Id: k, Sequence: x.Sources[k]})
 		}
 		body = pst.BodyT{Type: pst.BodyWatermarks, Value: value}
 	case publicationFailure:
@@ -66,7 +68,7 @@ func marshalPublication(v any) ([]byte, error) {
 	case map[string]bool:
 		value := &pst.ExclusionsT{}
 		for _, k := range slices.Sorted(maps.Keys(x)) {
-			value.Entries = append(value.Entries, &pst.ExclusionT{CID: k, Excluded: x[k]})
+			value.Entries = append(value.Entries, &pst.ExclusionT{Cid: k, Excluded: x[k]})
 		}
 		body = pst.BodyT{Type: pst.BodyExclusions, Value: value}
 	case SourceTags:
@@ -126,7 +128,7 @@ func unmarshalPublication(data []byte, target any) error {
 		if err != nil {
 			return err
 		}
-		*out = publicationEntry{Digest: x.Digest, Sequence: x.Sequence, SourceSequence: x.SourceSequence, Schema: x.Schema, Tags: publicationTagsFromFB(x.Tags), Peer: x.Peer, Signature: x.Signature, Identity: x.Identity, OwnTS: x.OwnTS, Applied: x.Applied, Refused: refused}
+		*out = publicationEntry{Digest: x.Digest, Sequence: x.Sequence, SourceSequence: x.SourceSequence, Schema: x.Schema, Tags: publicationTagsFromFB(x.Tags), Peer: x.Peer, Signature: x.Signature, Identity: x.Identity, OwnTS: x.OwnTs, Applied: x.Applied, Refused: refused}
 	case *[]PublicationSource:
 		x := body.Value.(*pst.SourceListT)
 		sources := make([]PublicationSource, 0, len(x.Sources))
@@ -147,10 +149,10 @@ func unmarshalPublication(data []byte, target any) error {
 			if s == nil {
 				return fmt.Errorf("invalid publication watermark")
 			}
-			if _, ok := m[s.ID]; ok {
+			if _, ok := m[s.Id]; ok {
 				return fmt.Errorf("duplicate publication watermark")
 			}
-			m[s.ID] = s.Sequence
+			m[s.Id] = s.Sequence
 		}
 		*out = publicationWatermarks{Global: x.Global, Sources: m}
 	case *publicationFailure:
@@ -171,10 +173,10 @@ func unmarshalPublication(data []byte, target any) error {
 			if e == nil {
 				return fmt.Errorf("invalid publication exclusion")
 			}
-			if _, ok := m[e.CID]; ok {
+			if _, ok := m[e.Cid]; ok {
 				return fmt.Errorf("duplicate publication exclusion")
 			}
-			m[e.CID] = e.Excluded
+			m[e.Cid] = e.Excluded
 		}
 		*out = m
 	case *SourceTags:
@@ -229,21 +231,21 @@ func publicationGroupsFromFB(groups []*pst.IndexGroupT) map[string][]int {
 	return out
 }
 func publicationExportFB(x DatasetExportIndex) *pst.ExportIndexT {
-	out := &pst.ExportIndexT{PublicationCutoff: x.PublicationCutoff, PublicationSourceCutoff: x.PublicationSourceCutoff, PublicationSourceSequences: x.PublicationSourceSequences, Version: int32(x.Version), SchemaName: x.SchemaName, ProviderID: x.ProviderID, SourceName: x.SourceName, BatchID: x.BatchID, QuerySHA256: x.QuerySHA256, ResultSHA256: x.ResultSHA256, ShardSHA256: x.ShardSHA256, ShardCID: x.ShardCID, ShardFile: x.ShardFile, RecordCount: int32(x.RecordCount)}
+	out := &pst.ExportIndexT{PublicationCutoff: x.PublicationCutoff, PublicationSourceCutoff: x.PublicationSourceCutoff, PublicationSourceSequences: x.PublicationSourceSequences, Version: int32(x.Version), SchemaName: x.SchemaName, ProviderId: x.ProviderID, SourceName: x.SourceName, BatchId: x.BatchID, QuerySha256: x.QuerySHA256, ResultSha256: x.ResultSHA256, ShardSha256: x.ShardSHA256, ShardCid: x.ShardCID, ShardFile: x.ShardFile, RecordCount: int32(x.RecordCount)}
 	for _, r := range x.Records {
-		out.Records = append(out.Records, &pst.IndexRecordT{CID: r.CID, Offset: r.Offset, Length: r.Length, NoradCatID: r.NoradCatID, EntityID: r.EntityID, ObjectType: r.ObjectType, OpsStatusCode: r.OpsStatusCode, EpochUnix: r.EpochUnix, EpochDay: r.EpochDay, Tags: publicationTagsFB(r.SourceTags)})
+		out.Records = append(out.Records, &pst.IndexRecordT{Cid: r.CID, Offset: r.Offset, Length: r.Length, NoradCatId: r.NoradCatID, EntityId: r.EntityID, ObjectType: r.ObjectType, OpsStatusCode: r.OpsStatusCode, EpochUnix: r.EpochUnix, EpochDay: r.EpochDay, Tags: publicationTagsFB(r.SourceTags)})
 	}
 	m := x.Indexes
-	out.Indexes = &pst.MaterializedIndexesT{ByNORAD: publicationGroupsFB(m.ByNORAD), ByEntityID: publicationGroupsFB(m.ByEntityID), ByObjectType: publicationGroupsFB(m.ByObjectType), ByOpsStatusCode: publicationGroupsFB(m.ByOpsStatusCode), CAReadyResident: publicationRowsFB(m.CAReadyResident), ActivePayloads: publicationRowsFB(m.ActivePayloads)}
+	out.Indexes = &pst.MaterializedIndexesT{ByNorad: publicationGroupsFB(m.ByNORAD), ByEntityId: publicationGroupsFB(m.ByEntityID), ByObjectType: publicationGroupsFB(m.ByObjectType), ByOpsStatusCode: publicationGroupsFB(m.ByOpsStatusCode), CaReadyResident: publicationRowsFB(m.CAReadyResident), ActivePayloads: publicationRowsFB(m.ActivePayloads)}
 	return out
 }
 func publicationExportFromFB(x *pst.ExportIndexT) DatasetExportIndex {
-	out := DatasetExportIndex{PublicationCutoff: x.PublicationCutoff, PublicationSourceCutoff: x.PublicationSourceCutoff, PublicationSourceSequences: x.PublicationSourceSequences, Version: int(x.Version), SchemaName: x.SchemaName, ProviderID: x.ProviderID, SourceName: x.SourceName, BatchID: x.BatchID, QuerySHA256: x.QuerySHA256, ResultSHA256: x.ResultSHA256, ShardSHA256: x.ShardSHA256, ShardCID: x.ShardCID, ShardFile: x.ShardFile, RecordCount: int(x.RecordCount)}
+	out := DatasetExportIndex{PublicationCutoff: x.PublicationCutoff, PublicationSourceCutoff: x.PublicationSourceCutoff, PublicationSourceSequences: x.PublicationSourceSequences, Version: int(x.Version), SchemaName: x.SchemaName, ProviderID: x.ProviderId, SourceName: x.SourceName, BatchID: x.BatchId, QuerySHA256: x.QuerySha256, ResultSHA256: x.ResultSha256, ShardSHA256: x.ShardSha256, ShardCID: x.ShardCid, ShardFile: x.ShardFile, RecordCount: int(x.RecordCount)}
 	for _, r := range x.Records {
-		out.Records = append(out.Records, DatasetExportIndexRecord{CID: r.CID, Offset: r.Offset, Length: r.Length, NoradCatID: r.NoradCatID, EntityID: r.EntityID, ObjectType: r.ObjectType, OpsStatusCode: r.OpsStatusCode, EpochUnix: r.EpochUnix, EpochDay: r.EpochDay, SourceTags: publicationTagsFromFB(r.Tags)})
+		out.Records = append(out.Records, DatasetExportIndexRecord{CID: r.Cid, Offset: r.Offset, Length: r.Length, NoradCatID: r.NoradCatId, EntityID: r.EntityId, ObjectType: r.ObjectType, OpsStatusCode: r.OpsStatusCode, EpochUnix: r.EpochUnix, EpochDay: r.EpochDay, SourceTags: publicationTagsFromFB(r.Tags)})
 	}
 	if m := x.Indexes; m != nil {
-		out.Indexes = DatasetExportMaterializedMap{ByNORAD: publicationGroupsFromFB(m.ByNORAD), ByEntityID: publicationGroupsFromFB(m.ByEntityID), ByObjectType: publicationGroupsFromFB(m.ByObjectType), ByOpsStatusCode: publicationGroupsFromFB(m.ByOpsStatusCode), CAReadyResident: publicationRowsFromFB(m.CAReadyResident), ActivePayloads: publicationRowsFromFB(m.ActivePayloads)}
+		out.Indexes = DatasetExportMaterializedMap{ByNORAD: publicationGroupsFromFB(m.ByNorad), ByEntityID: publicationGroupsFromFB(m.ByEntityId), ByObjectType: publicationGroupsFromFB(m.ByObjectType), ByOpsStatusCode: publicationGroupsFromFB(m.ByOpsStatusCode), CAReadyResident: publicationRowsFromFB(m.CaReadyResident), ActivePayloads: publicationRowsFromFB(m.ActivePayloads)}
 	}
 	return out
 }

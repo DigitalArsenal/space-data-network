@@ -7,37 +7,37 @@ import (
 )
 
 type ReclamationT struct {
-	Highwater uint64 `json:"HighWater"`
-	Reclaimed uint64 `json:"Reclaimed"`
-	Pending []uint64 `json:"Pending"`
+	HighWater uint64 `json:"high_water"`
+	Reclaimed uint64 `json:"reclaimed"`
+	Pending []uint64 `json:"pending"`
 }
 
 func (t *ReclamationT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	if t == nil {
 		return 0
 	}
-	PendingOffset := flatbuffers.UOffsetT(0)
+	pendingOffset := flatbuffers.UOffsetT(0)
 	if t.Pending != nil {
-		PendingLength := len(t.Pending)
-		ReclamationStartPendingVector(builder, PendingLength)
-		for j := PendingLength - 1; j >= 0; j-- {
+		pendingLength := len(t.Pending)
+		ReclamationStartpendingVector(builder, pendingLength)
+		for j := pendingLength - 1; j >= 0; j-- {
 			builder.PrependUint64(t.Pending[j])
 		}
-		PendingOffset = builder.EndVector(PendingLength)
+		pendingOffset = builder.EndVector(pendingLength)
 	}
 	ReclamationStart(builder)
-	ReclamationAddHighWater(builder, t.Highwater)
-	ReclamationAddReclaimed(builder, t.Reclaimed)
-	ReclamationAddPending(builder, PendingOffset)
+	ReclamationAddhigh_water(builder, t.HighWater)
+	ReclamationAddreclaimed(builder, t.Reclaimed)
+	ReclamationAddpending(builder, pendingOffset)
 	return ReclamationEnd(builder)
 }
 
 func (rcv *Reclamation) UnPackTo(t *ReclamationT) {
-	t.Highwater = rcv.Highwater()
+	t.HighWater = rcv.HighWater()
 	t.Reclaimed = rcv.Reclaimed()
-	PendingLength := rcv.PendingLength()
-	t.Pending = make([]uint64, PendingLength)
-	for j := 0; j < PendingLength; j++ {
+	pendingLength := rcv.PendingLength()
+	t.Pending = make([]uint64, pendingLength)
+	for j := 0; j < pendingLength; j++ {
 		t.Pending[j] = rcv.Pending(j)
 	}
 }
@@ -86,7 +86,7 @@ func (rcv *Reclamation) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-func (rcv *Reclamation) HighWater() uint64 {
+func (rcv *Reclamation) high_water() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
 		return rcv._tab.GetUint64(o + rcv._tab.Pos)
@@ -94,19 +94,19 @@ func (rcv *Reclamation) HighWater() uint64 {
 	return 0
 }
 
-func (rcv *Reclamation) Highwater() uint64 {
-	return rcv.HighWater()
+func (rcv *Reclamation) HighWater() uint64 {
+	return rcv.high_water()
 }
 
-func (rcv *Reclamation) MutateHighWater(n uint64) bool {
+func (rcv *Reclamation) Mutatehigh_water(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(4, n)
 }
 
-func (rcv *Reclamation) MutateHighwater(n uint64) bool {
-	return rcv.MutateHighWater(n)
+func (rcv *Reclamation) MutateHighWater(n uint64) bool {
+	return rcv.Mutatehigh_water(n)
 }
 
-func (rcv *Reclamation) Reclaimed() uint64 {
+func (rcv *Reclamation) reclaimed() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
 		return rcv._tab.GetUint64(o + rcv._tab.Pos)
@@ -114,11 +114,19 @@ func (rcv *Reclamation) Reclaimed() uint64 {
 	return 0
 }
 
-func (rcv *Reclamation) MutateReclaimed(n uint64) bool {
+func (rcv *Reclamation) Reclaimed() uint64 {
+	return rcv.reclaimed()
+}
+
+func (rcv *Reclamation) Mutatereclaimed(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(6, n)
 }
 
-func (rcv *Reclamation) Pending(j int) uint64 {
+func (rcv *Reclamation) MutateReclaimed(n uint64) bool {
+	return rcv.Mutatereclaimed(n)
+}
+
+func (rcv *Reclamation) pending(j int) uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
@@ -127,7 +135,11 @@ func (rcv *Reclamation) Pending(j int) uint64 {
 	return 0
 }
 
-func (rcv *Reclamation) PendingLength() int {
+func (rcv *Reclamation) Pending(j int) uint64 {
+	return rcv.pending(j)
+}
+
+func (rcv *Reclamation) pendingLength() int {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
@@ -135,7 +147,11 @@ func (rcv *Reclamation) PendingLength() int {
 	return 0
 }
 
-func (rcv *Reclamation) MutatePending(j int, n uint64) bool {
+func (rcv *Reclamation) PendingLength() int {
+	return rcv.pendingLength()
+}
+
+func (rcv *Reclamation) Mutatepending(j int, n uint64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
@@ -144,23 +160,36 @@ func (rcv *Reclamation) MutatePending(j int, n uint64) bool {
 	return false
 }
 
+func (rcv *Reclamation) MutatePending(j int, n uint64) bool {
+	return rcv.Mutatepending(j, n)
+}
+
 func ReclamationStart(builder *flatbuffers.Builder) {
 	builder.StartObject(3)
 }
-func ReclamationAddHighWater(builder *flatbuffers.Builder, HighWater uint64) {
-	builder.PrependUint64Slot(0, HighWater, 0)
+func ReclamationAddhigh_water(builder *flatbuffers.Builder, high_water uint64) {
+	builder.PrependUint64Slot(0, high_water, 0)
 }
-func ReclamationAddHighwater(builder *flatbuffers.Builder, HighWater uint64) {
-	ReclamationAddHighWater(builder, HighWater)
+func ReclamationAddHighWater(builder *flatbuffers.Builder, high_water uint64) {
+	ReclamationAddhigh_water(builder, high_water)
 }
-func ReclamationAddReclaimed(builder *flatbuffers.Builder, Reclaimed uint64) {
-	builder.PrependUint64Slot(1, Reclaimed, 0)
+func ReclamationAddreclaimed(builder *flatbuffers.Builder, reclaimed uint64) {
+	builder.PrependUint64Slot(1, reclaimed, 0)
 }
-func ReclamationAddPending(builder *flatbuffers.Builder, Pending flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(Pending), 0)
+func ReclamationAddReclaimed(builder *flatbuffers.Builder, reclaimed uint64) {
+	ReclamationAddreclaimed(builder, reclaimed)
+}
+func ReclamationAddpending(builder *flatbuffers.Builder, pending flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(pending), 0)
+}
+func ReclamationAddPending(builder *flatbuffers.Builder, pending flatbuffers.UOffsetT) {
+	ReclamationAddpending(builder, pending)
+}
+func ReclamationStartpendingVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(8, numElems, 8)
 }
 func ReclamationStartPendingVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
-	return builder.StartVector(8, numElems, 8)
+	return ReclamationStartpendingVector(builder, numElems)
 }
 func ReclamationEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

@@ -7,35 +7,35 @@ import (
 )
 
 type ExclusionsT struct {
-	Entries []*ExclusionT `json:"Entries"`
+	Entries []*ExclusionT `json:"entries"`
 }
 
 func (t *ExclusionsT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	if t == nil {
 		return 0
 	}
-	EntriesOffset := flatbuffers.UOffsetT(0)
+	entriesOffset := flatbuffers.UOffsetT(0)
 	if t.Entries != nil {
-		EntriesLength := len(t.Entries)
-		EntriesOffsets := make([]flatbuffers.UOffsetT, EntriesLength)
-		for j := 0; j < EntriesLength; j++ {
-			EntriesOffsets[j] = t.Entries[j].Pack(builder)
+		entriesLength := len(t.Entries)
+		entriesOffsets := make([]flatbuffers.UOffsetT, entriesLength)
+		for j := 0; j < entriesLength; j++ {
+			entriesOffsets[j] = t.Entries[j].Pack(builder)
 		}
-		ExclusionsStartEntriesVector(builder, EntriesLength)
-		for j := EntriesLength - 1; j >= 0; j-- {
-			builder.PrependUOffsetT(EntriesOffsets[j])
+		ExclusionsStartentriesVector(builder, entriesLength)
+		for j := entriesLength - 1; j >= 0; j-- {
+			builder.PrependUOffsetT(entriesOffsets[j])
 		}
-		EntriesOffset = builder.EndVector(EntriesLength)
+		entriesOffset = builder.EndVector(entriesLength)
 	}
 	ExclusionsStart(builder)
-	ExclusionsAddEntries(builder, EntriesOffset)
+	ExclusionsAddentries(builder, entriesOffset)
 	return ExclusionsEnd(builder)
 }
 
 func (rcv *Exclusions) UnPackTo(t *ExclusionsT) {
-	EntriesLength := rcv.EntriesLength()
-	t.Entries = make([]*ExclusionT, EntriesLength)
-	for j := 0; j < EntriesLength; j++ {
+	entriesLength := rcv.EntriesLength()
+	t.Entries = make([]*ExclusionT, entriesLength)
+	for j := 0; j < entriesLength; j++ {
 		x := Exclusion{}
 		rcv.Entries(&x, j)
 		t.Entries[j] = x.UnPack()
@@ -86,7 +86,7 @@ func (rcv *Exclusions) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-func (rcv *Exclusions) Entries(obj *Exclusion, j int) bool {
+func (rcv *Exclusions) entries(obj *Exclusion, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
 		x := rcv._tab.Vector(o)
@@ -101,7 +101,11 @@ func (rcv *Exclusions) Entries(obj *Exclusion, j int) bool {
 	return false
 }
 
-func (rcv *Exclusions) EntriesLength() int {
+func (rcv *Exclusions) Entries(obj *Exclusion, j int) bool {
+	return rcv.entries(obj, j)
+}
+
+func (rcv *Exclusions) entriesLength() int {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
@@ -109,14 +113,24 @@ func (rcv *Exclusions) EntriesLength() int {
 	return 0
 }
 
+func (rcv *Exclusions) EntriesLength() int {
+	return rcv.entriesLength()
+}
+
 func ExclusionsStart(builder *flatbuffers.Builder) {
 	builder.StartObject(1)
 }
-func ExclusionsAddEntries(builder *flatbuffers.Builder, Entries flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(Entries), 0)
+func ExclusionsAddentries(builder *flatbuffers.Builder, entries flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(entries), 0)
+}
+func ExclusionsAddEntries(builder *flatbuffers.Builder, entries flatbuffers.UOffsetT) {
+	ExclusionsAddentries(builder, entries)
+}
+func ExclusionsStartentriesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(4, numElems, 4)
 }
 func ExclusionsStartEntriesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
-	return builder.StartVector(4, numElems, 4)
+	return ExclusionsStartentriesVector(builder, numElems)
 }
 func ExclusionsEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

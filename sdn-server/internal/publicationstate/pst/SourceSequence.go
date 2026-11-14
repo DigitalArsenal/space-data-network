@@ -7,21 +7,21 @@ import (
 )
 
 type SourceSequenceT struct {
-	Id string `json:"ID"`
-	Sequence uint64 `json:"Sequence"`
+	Id string `json:"id"`
+	Sequence uint64 `json:"sequence"`
 }
 
 func (t *SourceSequenceT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	if t == nil {
 		return 0
 	}
-	IDOffset := flatbuffers.UOffsetT(0)
+	idOffset := flatbuffers.UOffsetT(0)
 	if t.Id != "" {
-		IDOffset = builder.CreateString(t.Id)
+		idOffset = builder.CreateString(t.Id)
 	}
 	SourceSequenceStart(builder)
-	SourceSequenceAddID(builder, IDOffset)
-	SourceSequenceAddSequence(builder, t.Sequence)
+	SourceSequenceAddid(builder, idOffset)
+	SourceSequenceAddsequence(builder, t.Sequence)
 	return SourceSequenceEnd(builder)
 }
 
@@ -74,7 +74,7 @@ func (rcv *SourceSequence) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-func (rcv *SourceSequence) ID() []byte {
+func (rcv *SourceSequence) id() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -83,10 +83,10 @@ func (rcv *SourceSequence) ID() []byte {
 }
 
 func (rcv *SourceSequence) Id() []byte {
-	return rcv.ID()
+	return rcv.id()
 }
 
-func (rcv *SourceSequence) Sequence() uint64 {
+func (rcv *SourceSequence) sequence() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
 		return rcv._tab.GetUint64(o + rcv._tab.Pos)
@@ -94,21 +94,32 @@ func (rcv *SourceSequence) Sequence() uint64 {
 	return 0
 }
 
-func (rcv *SourceSequence) MutateSequence(n uint64) bool {
+func (rcv *SourceSequence) Sequence() uint64 {
+	return rcv.sequence()
+}
+
+func (rcv *SourceSequence) Mutatesequence(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(6, n)
+}
+
+func (rcv *SourceSequence) MutateSequence(n uint64) bool {
+	return rcv.Mutatesequence(n)
 }
 
 func SourceSequenceStart(builder *flatbuffers.Builder) {
 	builder.StartObject(2)
 }
-func SourceSequenceAddID(builder *flatbuffers.Builder, ID flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(ID), 0)
+func SourceSequenceAddid(builder *flatbuffers.Builder, id flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(id), 0)
 }
-func SourceSequenceAddId(builder *flatbuffers.Builder, ID flatbuffers.UOffsetT) {
-	SourceSequenceAddID(builder, ID)
+func SourceSequenceAddId(builder *flatbuffers.Builder, id flatbuffers.UOffsetT) {
+	SourceSequenceAddid(builder, id)
 }
-func SourceSequenceAddSequence(builder *flatbuffers.Builder, Sequence uint64) {
-	builder.PrependUint64Slot(1, Sequence, 0)
+func SourceSequenceAddsequence(builder *flatbuffers.Builder, sequence uint64) {
+	builder.PrependUint64Slot(1, sequence, 0)
+}
+func SourceSequenceAddSequence(builder *flatbuffers.Builder, sequence uint64) {
+	SourceSequenceAddsequence(builder, sequence)
 }
 func SourceSequenceEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

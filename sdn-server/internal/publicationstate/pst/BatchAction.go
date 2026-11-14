@@ -7,43 +7,43 @@ import (
 )
 
 type BatchActionT struct {
-	Schema string `json:"Schema"`
-	Provider string `json:"Provider"`
-	Source string `json:"Source"`
-	Batch string `json:"Batch"`
-	Action string `json:"Action"`
+	Schema string `json:"schema"`
+	Provider string `json:"provider"`
+	Source string `json:"source"`
+	Batch string `json:"batch"`
+	Action string `json:"action"`
 }
 
 func (t *BatchActionT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	if t == nil {
 		return 0
 	}
-	SchemaOffset := flatbuffers.UOffsetT(0)
+	schemaOffset := flatbuffers.UOffsetT(0)
 	if t.Schema != "" {
-		SchemaOffset = builder.CreateString(t.Schema)
+		schemaOffset = builder.CreateString(t.Schema)
 	}
-	ProviderOffset := flatbuffers.UOffsetT(0)
+	providerOffset := flatbuffers.UOffsetT(0)
 	if t.Provider != "" {
-		ProviderOffset = builder.CreateString(t.Provider)
+		providerOffset = builder.CreateString(t.Provider)
 	}
-	SourceOffset := flatbuffers.UOffsetT(0)
+	sourceOffset := flatbuffers.UOffsetT(0)
 	if t.Source != "" {
-		SourceOffset = builder.CreateString(t.Source)
+		sourceOffset = builder.CreateString(t.Source)
 	}
-	BatchOffset := flatbuffers.UOffsetT(0)
+	batchOffset := flatbuffers.UOffsetT(0)
 	if t.Batch != "" {
-		BatchOffset = builder.CreateString(t.Batch)
+		batchOffset = builder.CreateString(t.Batch)
 	}
-	ActionOffset := flatbuffers.UOffsetT(0)
+	actionOffset := flatbuffers.UOffsetT(0)
 	if t.Action != "" {
-		ActionOffset = builder.CreateString(t.Action)
+		actionOffset = builder.CreateString(t.Action)
 	}
 	BatchActionStart(builder)
-	BatchActionAddSchema(builder, SchemaOffset)
-	BatchActionAddProvider(builder, ProviderOffset)
-	BatchActionAddSource(builder, SourceOffset)
-	BatchActionAddBatch(builder, BatchOffset)
-	BatchActionAddAction(builder, ActionOffset)
+	BatchActionAddschema(builder, schemaOffset)
+	BatchActionAddprovider(builder, providerOffset)
+	BatchActionAddsource(builder, sourceOffset)
+	BatchActionAddbatch(builder, batchOffset)
+	BatchActionAddaction(builder, actionOffset)
 	return BatchActionEnd(builder)
 }
 
@@ -99,7 +99,7 @@ func (rcv *BatchAction) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-func (rcv *BatchAction) Schema() []byte {
+func (rcv *BatchAction) schema() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -107,7 +107,11 @@ func (rcv *BatchAction) Schema() []byte {
 	return nil
 }
 
-func (rcv *BatchAction) Provider() []byte {
+func (rcv *BatchAction) Schema() []byte {
+	return rcv.schema()
+}
+
+func (rcv *BatchAction) provider() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -115,7 +119,11 @@ func (rcv *BatchAction) Provider() []byte {
 	return nil
 }
 
-func (rcv *BatchAction) Source() []byte {
+func (rcv *BatchAction) Provider() []byte {
+	return rcv.provider()
+}
+
+func (rcv *BatchAction) source() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -123,7 +131,11 @@ func (rcv *BatchAction) Source() []byte {
 	return nil
 }
 
-func (rcv *BatchAction) Batch() []byte {
+func (rcv *BatchAction) Source() []byte {
+	return rcv.source()
+}
+
+func (rcv *BatchAction) batch() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -131,7 +143,11 @@ func (rcv *BatchAction) Batch() []byte {
 	return nil
 }
 
-func (rcv *BatchAction) Action() []byte {
+func (rcv *BatchAction) Batch() []byte {
+	return rcv.batch()
+}
+
+func (rcv *BatchAction) action() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -139,23 +155,42 @@ func (rcv *BatchAction) Action() []byte {
 	return nil
 }
 
+func (rcv *BatchAction) Action() []byte {
+	return rcv.action()
+}
+
 func BatchActionStart(builder *flatbuffers.Builder) {
 	builder.StartObject(5)
 }
-func BatchActionAddSchema(builder *flatbuffers.Builder, Schema flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(Schema), 0)
+func BatchActionAddschema(builder *flatbuffers.Builder, schema flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(schema), 0)
 }
-func BatchActionAddProvider(builder *flatbuffers.Builder, Provider flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(Provider), 0)
+func BatchActionAddSchema(builder *flatbuffers.Builder, schema flatbuffers.UOffsetT) {
+	BatchActionAddschema(builder, schema)
 }
-func BatchActionAddSource(builder *flatbuffers.Builder, Source flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(Source), 0)
+func BatchActionAddprovider(builder *flatbuffers.Builder, provider flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(provider), 0)
 }
-func BatchActionAddBatch(builder *flatbuffers.Builder, Batch flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(3, flatbuffers.UOffsetT(Batch), 0)
+func BatchActionAddProvider(builder *flatbuffers.Builder, provider flatbuffers.UOffsetT) {
+	BatchActionAddprovider(builder, provider)
 }
-func BatchActionAddAction(builder *flatbuffers.Builder, Action flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(4, flatbuffers.UOffsetT(Action), 0)
+func BatchActionAddsource(builder *flatbuffers.Builder, source flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(source), 0)
+}
+func BatchActionAddSource(builder *flatbuffers.Builder, source flatbuffers.UOffsetT) {
+	BatchActionAddsource(builder, source)
+}
+func BatchActionAddbatch(builder *flatbuffers.Builder, batch flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(3, flatbuffers.UOffsetT(batch), 0)
+}
+func BatchActionAddBatch(builder *flatbuffers.Builder, batch flatbuffers.UOffsetT) {
+	BatchActionAddbatch(builder, batch)
+}
+func BatchActionAddaction(builder *flatbuffers.Builder, action flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(4, flatbuffers.UOffsetT(action), 0)
+}
+func BatchActionAddAction(builder *flatbuffers.Builder, action flatbuffers.UOffsetT) {
+	BatchActionAddaction(builder, action)
 }
 func BatchActionEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

@@ -7,90 +7,90 @@ import (
 )
 
 type SourceTagsT struct {
-	Providerid string `json:"ProviderID"`
-	Sourcename string `json:"SourceName"`
-	Sourceurl string `json:"SourceURL"`
-	Batchid string `json:"BatchID"`
-	Contentkeyid string `json:"ContentKeyID"`
-	Producerpeerid string `json:"ProducerPeerID"`
-	Producerpublickey string `json:"ProducerPublicKey"`
-	License string `json:"License"`
-	Licenseurl string `json:"LicenseURL"`
-	Citation string `json:"Citation"`
-	Sharealike bool `json:"ShareAlike"`
+	ProviderId string `json:"provider_id"`
+	SourceName string `json:"source_name"`
+	SourceUrl string `json:"source_url"`
+	BatchId string `json:"batch_id"`
+	ContentKeyId string `json:"content_key_id"`
+	ProducerPeerId string `json:"producer_peer_id"`
+	ProducerPublicKey string `json:"producer_public_key"`
+	License string `json:"license"`
+	LicenseUrl string `json:"license_url"`
+	Citation string `json:"citation"`
+	ShareAlike bool `json:"share_alike"`
 }
 
 func (t *SourceTagsT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	if t == nil {
 		return 0
 	}
-	ProviderIDOffset := flatbuffers.UOffsetT(0)
-	if t.Providerid != "" {
-		ProviderIDOffset = builder.CreateString(t.Providerid)
+	provider_idOffset := flatbuffers.UOffsetT(0)
+	if t.ProviderId != "" {
+		provider_idOffset = builder.CreateString(t.ProviderId)
 	}
-	SourceNameOffset := flatbuffers.UOffsetT(0)
-	if t.Sourcename != "" {
-		SourceNameOffset = builder.CreateString(t.Sourcename)
+	source_nameOffset := flatbuffers.UOffsetT(0)
+	if t.SourceName != "" {
+		source_nameOffset = builder.CreateString(t.SourceName)
 	}
-	SourceURLOffset := flatbuffers.UOffsetT(0)
-	if t.Sourceurl != "" {
-		SourceURLOffset = builder.CreateString(t.Sourceurl)
+	source_urlOffset := flatbuffers.UOffsetT(0)
+	if t.SourceUrl != "" {
+		source_urlOffset = builder.CreateString(t.SourceUrl)
 	}
-	BatchIDOffset := flatbuffers.UOffsetT(0)
-	if t.Batchid != "" {
-		BatchIDOffset = builder.CreateString(t.Batchid)
+	batch_idOffset := flatbuffers.UOffsetT(0)
+	if t.BatchId != "" {
+		batch_idOffset = builder.CreateString(t.BatchId)
 	}
-	ContentKeyIDOffset := flatbuffers.UOffsetT(0)
-	if t.Contentkeyid != "" {
-		ContentKeyIDOffset = builder.CreateString(t.Contentkeyid)
+	content_key_idOffset := flatbuffers.UOffsetT(0)
+	if t.ContentKeyId != "" {
+		content_key_idOffset = builder.CreateString(t.ContentKeyId)
 	}
-	ProducerPeerIDOffset := flatbuffers.UOffsetT(0)
-	if t.Producerpeerid != "" {
-		ProducerPeerIDOffset = builder.CreateString(t.Producerpeerid)
+	producer_peer_idOffset := flatbuffers.UOffsetT(0)
+	if t.ProducerPeerId != "" {
+		producer_peer_idOffset = builder.CreateString(t.ProducerPeerId)
 	}
-	ProducerPublicKeyOffset := flatbuffers.UOffsetT(0)
-	if t.Producerpublickey != "" {
-		ProducerPublicKeyOffset = builder.CreateString(t.Producerpublickey)
+	producer_public_keyOffset := flatbuffers.UOffsetT(0)
+	if t.ProducerPublicKey != "" {
+		producer_public_keyOffset = builder.CreateString(t.ProducerPublicKey)
 	}
-	LicenseOffset := flatbuffers.UOffsetT(0)
+	licenseOffset := flatbuffers.UOffsetT(0)
 	if t.License != "" {
-		LicenseOffset = builder.CreateString(t.License)
+		licenseOffset = builder.CreateString(t.License)
 	}
-	LicenseURLOffset := flatbuffers.UOffsetT(0)
-	if t.Licenseurl != "" {
-		LicenseURLOffset = builder.CreateString(t.Licenseurl)
+	license_urlOffset := flatbuffers.UOffsetT(0)
+	if t.LicenseUrl != "" {
+		license_urlOffset = builder.CreateString(t.LicenseUrl)
 	}
-	CitationOffset := flatbuffers.UOffsetT(0)
+	citationOffset := flatbuffers.UOffsetT(0)
 	if t.Citation != "" {
-		CitationOffset = builder.CreateString(t.Citation)
+		citationOffset = builder.CreateString(t.Citation)
 	}
 	SourceTagsStart(builder)
-	SourceTagsAddProviderID(builder, ProviderIDOffset)
-	SourceTagsAddSourceName(builder, SourceNameOffset)
-	SourceTagsAddSourceURL(builder, SourceURLOffset)
-	SourceTagsAddBatchID(builder, BatchIDOffset)
-	SourceTagsAddContentKeyID(builder, ContentKeyIDOffset)
-	SourceTagsAddProducerPeerID(builder, ProducerPeerIDOffset)
-	SourceTagsAddProducerPublicKey(builder, ProducerPublicKeyOffset)
-	SourceTagsAddLicense(builder, LicenseOffset)
-	SourceTagsAddLicenseURL(builder, LicenseURLOffset)
-	SourceTagsAddCitation(builder, CitationOffset)
-	SourceTagsAddShareAlike(builder, t.Sharealike)
+	SourceTagsAddprovider_id(builder, provider_idOffset)
+	SourceTagsAddsource_name(builder, source_nameOffset)
+	SourceTagsAddsource_url(builder, source_urlOffset)
+	SourceTagsAddbatch_id(builder, batch_idOffset)
+	SourceTagsAddcontent_key_id(builder, content_key_idOffset)
+	SourceTagsAddproducer_peer_id(builder, producer_peer_idOffset)
+	SourceTagsAddproducer_public_key(builder, producer_public_keyOffset)
+	SourceTagsAddlicense(builder, licenseOffset)
+	SourceTagsAddlicense_url(builder, license_urlOffset)
+	SourceTagsAddcitation(builder, citationOffset)
+	SourceTagsAddshare_alike(builder, t.ShareAlike)
 	return SourceTagsEnd(builder)
 }
 
 func (rcv *SourceTags) UnPackTo(t *SourceTagsT) {
-	t.Providerid = string(rcv.Providerid())
-	t.Sourcename = string(rcv.Sourcename())
-	t.Sourceurl = string(rcv.Sourceurl())
-	t.Batchid = string(rcv.Batchid())
-	t.Contentkeyid = string(rcv.Contentkeyid())
-	t.Producerpeerid = string(rcv.Producerpeerid())
-	t.Producerpublickey = string(rcv.Producerpublickey())
+	t.ProviderId = string(rcv.ProviderId())
+	t.SourceName = string(rcv.SourceName())
+	t.SourceUrl = string(rcv.SourceUrl())
+	t.BatchId = string(rcv.BatchId())
+	t.ContentKeyId = string(rcv.ContentKeyId())
+	t.ProducerPeerId = string(rcv.ProducerPeerId())
+	t.ProducerPublicKey = string(rcv.ProducerPublicKey())
 	t.License = string(rcv.License())
-	t.Licenseurl = string(rcv.Licenseurl())
+	t.LicenseUrl = string(rcv.LicenseUrl())
 	t.Citation = string(rcv.Citation())
-	t.Sharealike = rcv.Sharealike()
+	t.ShareAlike = rcv.ShareAlike()
 }
 
 func (rcv *SourceTags) UnPack() *SourceTagsT {
@@ -137,7 +137,7 @@ func (rcv *SourceTags) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-func (rcv *SourceTags) ProviderID() []byte {
+func (rcv *SourceTags) provider_id() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -145,11 +145,11 @@ func (rcv *SourceTags) ProviderID() []byte {
 	return nil
 }
 
-func (rcv *SourceTags) Providerid() []byte {
-	return rcv.ProviderID()
+func (rcv *SourceTags) ProviderId() []byte {
+	return rcv.provider_id()
 }
 
-func (rcv *SourceTags) SourceName() []byte {
+func (rcv *SourceTags) source_name() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -157,11 +157,11 @@ func (rcv *SourceTags) SourceName() []byte {
 	return nil
 }
 
-func (rcv *SourceTags) Sourcename() []byte {
-	return rcv.SourceName()
+func (rcv *SourceTags) SourceName() []byte {
+	return rcv.source_name()
 }
 
-func (rcv *SourceTags) SourceURL() []byte {
+func (rcv *SourceTags) source_url() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -169,11 +169,11 @@ func (rcv *SourceTags) SourceURL() []byte {
 	return nil
 }
 
-func (rcv *SourceTags) Sourceurl() []byte {
-	return rcv.SourceURL()
+func (rcv *SourceTags) SourceUrl() []byte {
+	return rcv.source_url()
 }
 
-func (rcv *SourceTags) BatchID() []byte {
+func (rcv *SourceTags) batch_id() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -181,11 +181,11 @@ func (rcv *SourceTags) BatchID() []byte {
 	return nil
 }
 
-func (rcv *SourceTags) Batchid() []byte {
-	return rcv.BatchID()
+func (rcv *SourceTags) BatchId() []byte {
+	return rcv.batch_id()
 }
 
-func (rcv *SourceTags) ContentKeyID() []byte {
+func (rcv *SourceTags) content_key_id() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -193,11 +193,11 @@ func (rcv *SourceTags) ContentKeyID() []byte {
 	return nil
 }
 
-func (rcv *SourceTags) Contentkeyid() []byte {
-	return rcv.ContentKeyID()
+func (rcv *SourceTags) ContentKeyId() []byte {
+	return rcv.content_key_id()
 }
 
-func (rcv *SourceTags) ProducerPeerID() []byte {
+func (rcv *SourceTags) producer_peer_id() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -205,11 +205,11 @@ func (rcv *SourceTags) ProducerPeerID() []byte {
 	return nil
 }
 
-func (rcv *SourceTags) Producerpeerid() []byte {
-	return rcv.ProducerPeerID()
+func (rcv *SourceTags) ProducerPeerId() []byte {
+	return rcv.producer_peer_id()
 }
 
-func (rcv *SourceTags) ProducerPublicKey() []byte {
+func (rcv *SourceTags) producer_public_key() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -217,11 +217,11 @@ func (rcv *SourceTags) ProducerPublicKey() []byte {
 	return nil
 }
 
-func (rcv *SourceTags) Producerpublickey() []byte {
-	return rcv.ProducerPublicKey()
+func (rcv *SourceTags) ProducerPublicKey() []byte {
+	return rcv.producer_public_key()
 }
 
-func (rcv *SourceTags) License() []byte {
+func (rcv *SourceTags) license() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -229,7 +229,11 @@ func (rcv *SourceTags) License() []byte {
 	return nil
 }
 
-func (rcv *SourceTags) LicenseURL() []byte {
+func (rcv *SourceTags) License() []byte {
+	return rcv.license()
+}
+
+func (rcv *SourceTags) license_url() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -237,11 +241,11 @@ func (rcv *SourceTags) LicenseURL() []byte {
 	return nil
 }
 
-func (rcv *SourceTags) Licenseurl() []byte {
-	return rcv.LicenseURL()
+func (rcv *SourceTags) LicenseUrl() []byte {
+	return rcv.license_url()
 }
 
-func (rcv *SourceTags) Citation() []byte {
+func (rcv *SourceTags) citation() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -249,7 +253,11 @@ func (rcv *SourceTags) Citation() []byte {
 	return nil
 }
 
-func (rcv *SourceTags) ShareAlike() bool {
+func (rcv *SourceTags) Citation() []byte {
+	return rcv.citation()
+}
+
+func (rcv *SourceTags) share_alike() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
 		return rcv._tab.GetBool(o + rcv._tab.Pos)
@@ -257,80 +265,86 @@ func (rcv *SourceTags) ShareAlike() bool {
 	return false
 }
 
-func (rcv *SourceTags) Sharealike() bool {
-	return rcv.ShareAlike()
+func (rcv *SourceTags) ShareAlike() bool {
+	return rcv.share_alike()
 }
 
-func (rcv *SourceTags) MutateShareAlike(n bool) bool {
+func (rcv *SourceTags) Mutateshare_alike(n bool) bool {
 	return rcv._tab.MutateBoolSlot(24, n)
 }
 
-func (rcv *SourceTags) MutateSharealike(n bool) bool {
-	return rcv.MutateShareAlike(n)
+func (rcv *SourceTags) MutateShareAlike(n bool) bool {
+	return rcv.Mutateshare_alike(n)
 }
 
 func SourceTagsStart(builder *flatbuffers.Builder) {
 	builder.StartObject(11)
 }
-func SourceTagsAddProviderID(builder *flatbuffers.Builder, ProviderID flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(ProviderID), 0)
+func SourceTagsAddprovider_id(builder *flatbuffers.Builder, provider_id flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(provider_id), 0)
 }
-func SourceTagsAddProviderid(builder *flatbuffers.Builder, ProviderID flatbuffers.UOffsetT) {
-	SourceTagsAddProviderID(builder, ProviderID)
+func SourceTagsAddProviderId(builder *flatbuffers.Builder, provider_id flatbuffers.UOffsetT) {
+	SourceTagsAddprovider_id(builder, provider_id)
 }
-func SourceTagsAddSourceName(builder *flatbuffers.Builder, SourceName flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(SourceName), 0)
+func SourceTagsAddsource_name(builder *flatbuffers.Builder, source_name flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(source_name), 0)
 }
-func SourceTagsAddSourcename(builder *flatbuffers.Builder, SourceName flatbuffers.UOffsetT) {
-	SourceTagsAddSourceName(builder, SourceName)
+func SourceTagsAddSourceName(builder *flatbuffers.Builder, source_name flatbuffers.UOffsetT) {
+	SourceTagsAddsource_name(builder, source_name)
 }
-func SourceTagsAddSourceURL(builder *flatbuffers.Builder, SourceURL flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(SourceURL), 0)
+func SourceTagsAddsource_url(builder *flatbuffers.Builder, source_url flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(source_url), 0)
 }
-func SourceTagsAddSourceurl(builder *flatbuffers.Builder, SourceURL flatbuffers.UOffsetT) {
-	SourceTagsAddSourceURL(builder, SourceURL)
+func SourceTagsAddSourceUrl(builder *flatbuffers.Builder, source_url flatbuffers.UOffsetT) {
+	SourceTagsAddsource_url(builder, source_url)
 }
-func SourceTagsAddBatchID(builder *flatbuffers.Builder, BatchID flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(3, flatbuffers.UOffsetT(BatchID), 0)
+func SourceTagsAddbatch_id(builder *flatbuffers.Builder, batch_id flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(3, flatbuffers.UOffsetT(batch_id), 0)
 }
-func SourceTagsAddBatchid(builder *flatbuffers.Builder, BatchID flatbuffers.UOffsetT) {
-	SourceTagsAddBatchID(builder, BatchID)
+func SourceTagsAddBatchId(builder *flatbuffers.Builder, batch_id flatbuffers.UOffsetT) {
+	SourceTagsAddbatch_id(builder, batch_id)
 }
-func SourceTagsAddContentKeyID(builder *flatbuffers.Builder, ContentKeyID flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(4, flatbuffers.UOffsetT(ContentKeyID), 0)
+func SourceTagsAddcontent_key_id(builder *flatbuffers.Builder, content_key_id flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(4, flatbuffers.UOffsetT(content_key_id), 0)
 }
-func SourceTagsAddContentkeyid(builder *flatbuffers.Builder, ContentKeyID flatbuffers.UOffsetT) {
-	SourceTagsAddContentKeyID(builder, ContentKeyID)
+func SourceTagsAddContentKeyId(builder *flatbuffers.Builder, content_key_id flatbuffers.UOffsetT) {
+	SourceTagsAddcontent_key_id(builder, content_key_id)
 }
-func SourceTagsAddProducerPeerID(builder *flatbuffers.Builder, ProducerPeerID flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(5, flatbuffers.UOffsetT(ProducerPeerID), 0)
+func SourceTagsAddproducer_peer_id(builder *flatbuffers.Builder, producer_peer_id flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(5, flatbuffers.UOffsetT(producer_peer_id), 0)
 }
-func SourceTagsAddProducerpeerid(builder *flatbuffers.Builder, ProducerPeerID flatbuffers.UOffsetT) {
-	SourceTagsAddProducerPeerID(builder, ProducerPeerID)
+func SourceTagsAddProducerPeerId(builder *flatbuffers.Builder, producer_peer_id flatbuffers.UOffsetT) {
+	SourceTagsAddproducer_peer_id(builder, producer_peer_id)
 }
-func SourceTagsAddProducerPublicKey(builder *flatbuffers.Builder, ProducerPublicKey flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(6, flatbuffers.UOffsetT(ProducerPublicKey), 0)
+func SourceTagsAddproducer_public_key(builder *flatbuffers.Builder, producer_public_key flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(6, flatbuffers.UOffsetT(producer_public_key), 0)
 }
-func SourceTagsAddProducerpublickey(builder *flatbuffers.Builder, ProducerPublicKey flatbuffers.UOffsetT) {
-	SourceTagsAddProducerPublicKey(builder, ProducerPublicKey)
+func SourceTagsAddProducerPublicKey(builder *flatbuffers.Builder, producer_public_key flatbuffers.UOffsetT) {
+	SourceTagsAddproducer_public_key(builder, producer_public_key)
 }
-func SourceTagsAddLicense(builder *flatbuffers.Builder, License flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(7, flatbuffers.UOffsetT(License), 0)
+func SourceTagsAddlicense(builder *flatbuffers.Builder, license flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(7, flatbuffers.UOffsetT(license), 0)
 }
-func SourceTagsAddLicenseURL(builder *flatbuffers.Builder, LicenseURL flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(8, flatbuffers.UOffsetT(LicenseURL), 0)
+func SourceTagsAddLicense(builder *flatbuffers.Builder, license flatbuffers.UOffsetT) {
+	SourceTagsAddlicense(builder, license)
 }
-func SourceTagsAddLicenseurl(builder *flatbuffers.Builder, LicenseURL flatbuffers.UOffsetT) {
-	SourceTagsAddLicenseURL(builder, LicenseURL)
+func SourceTagsAddlicense_url(builder *flatbuffers.Builder, license_url flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(8, flatbuffers.UOffsetT(license_url), 0)
 }
-func SourceTagsAddCitation(builder *flatbuffers.Builder, Citation flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(9, flatbuffers.UOffsetT(Citation), 0)
+func SourceTagsAddLicenseUrl(builder *flatbuffers.Builder, license_url flatbuffers.UOffsetT) {
+	SourceTagsAddlicense_url(builder, license_url)
 }
-func SourceTagsAddShareAlike(builder *flatbuffers.Builder, ShareAlike bool) {
-	builder.PrependBoolSlot(10, ShareAlike, false)
+func SourceTagsAddcitation(builder *flatbuffers.Builder, citation flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(9, flatbuffers.UOffsetT(citation), 0)
 }
-func SourceTagsAddSharealike(builder *flatbuffers.Builder, ShareAlike bool) {
-	SourceTagsAddShareAlike(builder, ShareAlike)
+func SourceTagsAddCitation(builder *flatbuffers.Builder, citation flatbuffers.UOffsetT) {
+	SourceTagsAddcitation(builder, citation)
+}
+func SourceTagsAddshare_alike(builder *flatbuffers.Builder, share_alike bool) {
+	builder.PrependBoolSlot(10, share_alike, false)
+}
+func SourceTagsAddShareAlike(builder *flatbuffers.Builder, share_alike bool) {
+	SourceTagsAddshare_alike(builder, share_alike)
 }
 func SourceTagsEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

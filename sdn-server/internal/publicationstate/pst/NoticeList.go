@@ -7,35 +7,35 @@ import (
 )
 
 type NoticeListT struct {
-	Entries []*NoticeT `json:"Entries"`
+	Entries []*NoticeT `json:"entries"`
 }
 
 func (t *NoticeListT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	if t == nil {
 		return 0
 	}
-	EntriesOffset := flatbuffers.UOffsetT(0)
+	entriesOffset := flatbuffers.UOffsetT(0)
 	if t.Entries != nil {
-		EntriesLength := len(t.Entries)
-		EntriesOffsets := make([]flatbuffers.UOffsetT, EntriesLength)
-		for j := 0; j < EntriesLength; j++ {
-			EntriesOffsets[j] = t.Entries[j].Pack(builder)
+		entriesLength := len(t.Entries)
+		entriesOffsets := make([]flatbuffers.UOffsetT, entriesLength)
+		for j := 0; j < entriesLength; j++ {
+			entriesOffsets[j] = t.Entries[j].Pack(builder)
 		}
-		NoticeListStartEntriesVector(builder, EntriesLength)
-		for j := EntriesLength - 1; j >= 0; j-- {
-			builder.PrependUOffsetT(EntriesOffsets[j])
+		NoticeListStartentriesVector(builder, entriesLength)
+		for j := entriesLength - 1; j >= 0; j-- {
+			builder.PrependUOffsetT(entriesOffsets[j])
 		}
-		EntriesOffset = builder.EndVector(EntriesLength)
+		entriesOffset = builder.EndVector(entriesLength)
 	}
 	NoticeListStart(builder)
-	NoticeListAddEntries(builder, EntriesOffset)
+	NoticeListAddentries(builder, entriesOffset)
 	return NoticeListEnd(builder)
 }
 
 func (rcv *NoticeList) UnPackTo(t *NoticeListT) {
-	EntriesLength := rcv.EntriesLength()
-	t.Entries = make([]*NoticeT, EntriesLength)
-	for j := 0; j < EntriesLength; j++ {
+	entriesLength := rcv.EntriesLength()
+	t.Entries = make([]*NoticeT, entriesLength)
+	for j := 0; j < entriesLength; j++ {
 		x := Notice{}
 		rcv.Entries(&x, j)
 		t.Entries[j] = x.UnPack()
@@ -86,7 +86,7 @@ func (rcv *NoticeList) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-func (rcv *NoticeList) Entries(obj *Notice, j int) bool {
+func (rcv *NoticeList) entries(obj *Notice, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
 		x := rcv._tab.Vector(o)
@@ -101,7 +101,11 @@ func (rcv *NoticeList) Entries(obj *Notice, j int) bool {
 	return false
 }
 
-func (rcv *NoticeList) EntriesLength() int {
+func (rcv *NoticeList) Entries(obj *Notice, j int) bool {
+	return rcv.entries(obj, j)
+}
+
+func (rcv *NoticeList) entriesLength() int {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
@@ -109,14 +113,24 @@ func (rcv *NoticeList) EntriesLength() int {
 	return 0
 }
 
+func (rcv *NoticeList) EntriesLength() int {
+	return rcv.entriesLength()
+}
+
 func NoticeListStart(builder *flatbuffers.Builder) {
 	builder.StartObject(1)
 }
-func NoticeListAddEntries(builder *flatbuffers.Builder, Entries flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(Entries), 0)
+func NoticeListAddentries(builder *flatbuffers.Builder, entries flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(entries), 0)
+}
+func NoticeListAddEntries(builder *flatbuffers.Builder, entries flatbuffers.UOffsetT) {
+	NoticeListAddentries(builder, entries)
+}
+func NoticeListStartentriesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(4, numElems, 4)
 }
 func NoticeListStartEntriesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
-	return builder.StartVector(4, numElems, 4)
+	return NoticeListStartentriesVector(builder, numElems)
 }
 func NoticeListEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

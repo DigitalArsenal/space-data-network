@@ -7,21 +7,21 @@ import (
 )
 
 type ExclusionT struct {
-	Cid string `json:"CID"`
-	Excluded bool `json:"Excluded"`
+	Cid string `json:"cid"`
+	Excluded bool `json:"excluded"`
 }
 
 func (t *ExclusionT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	if t == nil {
 		return 0
 	}
-	CIDOffset := flatbuffers.UOffsetT(0)
+	cidOffset := flatbuffers.UOffsetT(0)
 	if t.Cid != "" {
-		CIDOffset = builder.CreateString(t.Cid)
+		cidOffset = builder.CreateString(t.Cid)
 	}
 	ExclusionStart(builder)
-	ExclusionAddCID(builder, CIDOffset)
-	ExclusionAddExcluded(builder, t.Excluded)
+	ExclusionAddcid(builder, cidOffset)
+	ExclusionAddexcluded(builder, t.Excluded)
 	return ExclusionEnd(builder)
 }
 
@@ -74,7 +74,7 @@ func (rcv *Exclusion) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-func (rcv *Exclusion) CID() []byte {
+func (rcv *Exclusion) cid() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -83,10 +83,10 @@ func (rcv *Exclusion) CID() []byte {
 }
 
 func (rcv *Exclusion) Cid() []byte {
-	return rcv.CID()
+	return rcv.cid()
 }
 
-func (rcv *Exclusion) Excluded() bool {
+func (rcv *Exclusion) excluded() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
 		return rcv._tab.GetBool(o + rcv._tab.Pos)
@@ -94,21 +94,32 @@ func (rcv *Exclusion) Excluded() bool {
 	return false
 }
 
-func (rcv *Exclusion) MutateExcluded(n bool) bool {
+func (rcv *Exclusion) Excluded() bool {
+	return rcv.excluded()
+}
+
+func (rcv *Exclusion) Mutateexcluded(n bool) bool {
 	return rcv._tab.MutateBoolSlot(6, n)
+}
+
+func (rcv *Exclusion) MutateExcluded(n bool) bool {
+	return rcv.Mutateexcluded(n)
 }
 
 func ExclusionStart(builder *flatbuffers.Builder) {
 	builder.StartObject(2)
 }
-func ExclusionAddCID(builder *flatbuffers.Builder, CID flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(CID), 0)
+func ExclusionAddcid(builder *flatbuffers.Builder, cid flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(cid), 0)
 }
-func ExclusionAddCid(builder *flatbuffers.Builder, CID flatbuffers.UOffsetT) {
-	ExclusionAddCID(builder, CID)
+func ExclusionAddCid(builder *flatbuffers.Builder, cid flatbuffers.UOffsetT) {
+	ExclusionAddcid(builder, cid)
 }
-func ExclusionAddExcluded(builder *flatbuffers.Builder, Excluded bool) {
-	builder.PrependBoolSlot(1, Excluded, false)
+func ExclusionAddexcluded(builder *flatbuffers.Builder, excluded bool) {
+	builder.PrependBoolSlot(1, excluded, false)
+}
+func ExclusionAddExcluded(builder *flatbuffers.Builder, excluded bool) {
+	ExclusionAddexcluded(builder, excluded)
 }
 func ExclusionEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

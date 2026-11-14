@@ -7,35 +7,35 @@ import (
 )
 
 type OutcomeT struct {
-	Refused []*RefusalT `json:"Refused"`
+	Refused []*RefusalT `json:"refused"`
 }
 
 func (t *OutcomeT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	if t == nil {
 		return 0
 	}
-	RefusedOffset := flatbuffers.UOffsetT(0)
+	refusedOffset := flatbuffers.UOffsetT(0)
 	if t.Refused != nil {
-		RefusedLength := len(t.Refused)
-		RefusedOffsets := make([]flatbuffers.UOffsetT, RefusedLength)
-		for j := 0; j < RefusedLength; j++ {
-			RefusedOffsets[j] = t.Refused[j].Pack(builder)
+		refusedLength := len(t.Refused)
+		refusedOffsets := make([]flatbuffers.UOffsetT, refusedLength)
+		for j := 0; j < refusedLength; j++ {
+			refusedOffsets[j] = t.Refused[j].Pack(builder)
 		}
-		OutcomeStartRefusedVector(builder, RefusedLength)
-		for j := RefusedLength - 1; j >= 0; j-- {
-			builder.PrependUOffsetT(RefusedOffsets[j])
+		OutcomeStartrefusedVector(builder, refusedLength)
+		for j := refusedLength - 1; j >= 0; j-- {
+			builder.PrependUOffsetT(refusedOffsets[j])
 		}
-		RefusedOffset = builder.EndVector(RefusedLength)
+		refusedOffset = builder.EndVector(refusedLength)
 	}
 	OutcomeStart(builder)
-	OutcomeAddRefused(builder, RefusedOffset)
+	OutcomeAddrefused(builder, refusedOffset)
 	return OutcomeEnd(builder)
 }
 
 func (rcv *Outcome) UnPackTo(t *OutcomeT) {
-	RefusedLength := rcv.RefusedLength()
-	t.Refused = make([]*RefusalT, RefusedLength)
-	for j := 0; j < RefusedLength; j++ {
+	refusedLength := rcv.RefusedLength()
+	t.Refused = make([]*RefusalT, refusedLength)
+	for j := 0; j < refusedLength; j++ {
 		x := Refusal{}
 		rcv.Refused(&x, j)
 		t.Refused[j] = x.UnPack()
@@ -86,7 +86,7 @@ func (rcv *Outcome) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-func (rcv *Outcome) Refused(obj *Refusal, j int) bool {
+func (rcv *Outcome) refused(obj *Refusal, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
 		x := rcv._tab.Vector(o)
@@ -101,7 +101,11 @@ func (rcv *Outcome) Refused(obj *Refusal, j int) bool {
 	return false
 }
 
-func (rcv *Outcome) RefusedLength() int {
+func (rcv *Outcome) Refused(obj *Refusal, j int) bool {
+	return rcv.refused(obj, j)
+}
+
+func (rcv *Outcome) refusedLength() int {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
@@ -109,14 +113,24 @@ func (rcv *Outcome) RefusedLength() int {
 	return 0
 }
 
+func (rcv *Outcome) RefusedLength() int {
+	return rcv.refusedLength()
+}
+
 func OutcomeStart(builder *flatbuffers.Builder) {
 	builder.StartObject(1)
 }
-func OutcomeAddRefused(builder *flatbuffers.Builder, Refused flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(Refused), 0)
+func OutcomeAddrefused(builder *flatbuffers.Builder, refused flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(refused), 0)
+}
+func OutcomeAddRefused(builder *flatbuffers.Builder, refused flatbuffers.UOffsetT) {
+	OutcomeAddrefused(builder, refused)
+}
+func OutcomeStartrefusedVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(4, numElems, 4)
 }
 func OutcomeStartRefusedVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
-	return builder.StartVector(4, numElems, 4)
+	return OutcomeStartrefusedVector(builder, numElems)
 }
 func OutcomeEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

@@ -7,82 +7,82 @@ import (
 )
 
 type JournalEntryT struct {
-	Digest string `json:"Digest"`
-	Sequence uint64 `json:"Sequence"`
-	Sourcesequence uint64 `json:"SourceSequence"`
-	Schema string `json:"Schema"`
-	Tags *SourceTagsT `json:"Tags"`
-	Peer string `json:"Peer"`
-	Signature []byte `json:"Signature"`
-	Identity bool `json:"Identity"`
-	Ownts bool `json:"OwnTS"`
-	Applied bool `json:"Applied"`
-	Refused []*RefusalT `json:"Refused"`
+	Digest string `json:"digest"`
+	Sequence uint64 `json:"sequence"`
+	SourceSequence uint64 `json:"source_sequence"`
+	Schema string `json:"schema"`
+	Tags *SourceTagsT `json:"tags"`
+	Peer string `json:"peer"`
+	Signature []byte `json:"signature"`
+	Identity bool `json:"identity"`
+	OwnTs bool `json:"own_ts"`
+	Applied bool `json:"applied"`
+	Refused []*RefusalT `json:"refused"`
 }
 
 func (t *JournalEntryT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	if t == nil {
 		return 0
 	}
-	DigestOffset := flatbuffers.UOffsetT(0)
+	digestOffset := flatbuffers.UOffsetT(0)
 	if t.Digest != "" {
-		DigestOffset = builder.CreateString(t.Digest)
+		digestOffset = builder.CreateString(t.Digest)
 	}
-	SchemaOffset := flatbuffers.UOffsetT(0)
+	schemaOffset := flatbuffers.UOffsetT(0)
 	if t.Schema != "" {
-		SchemaOffset = builder.CreateString(t.Schema)
+		schemaOffset = builder.CreateString(t.Schema)
 	}
-	TagsOffset := t.Tags.Pack(builder)
-	PeerOffset := flatbuffers.UOffsetT(0)
+	tagsOffset := t.Tags.Pack(builder)
+	peerOffset := flatbuffers.UOffsetT(0)
 	if t.Peer != "" {
-		PeerOffset = builder.CreateString(t.Peer)
+		peerOffset = builder.CreateString(t.Peer)
 	}
-	SignatureOffset := flatbuffers.UOffsetT(0)
+	signatureOffset := flatbuffers.UOffsetT(0)
 	if t.Signature != nil {
-		SignatureOffset = builder.CreateByteString(t.Signature)
+		signatureOffset = builder.CreateByteString(t.Signature)
 	}
-	RefusedOffset := flatbuffers.UOffsetT(0)
+	refusedOffset := flatbuffers.UOffsetT(0)
 	if t.Refused != nil {
-		RefusedLength := len(t.Refused)
-		RefusedOffsets := make([]flatbuffers.UOffsetT, RefusedLength)
-		for j := 0; j < RefusedLength; j++ {
-			RefusedOffsets[j] = t.Refused[j].Pack(builder)
+		refusedLength := len(t.Refused)
+		refusedOffsets := make([]flatbuffers.UOffsetT, refusedLength)
+		for j := 0; j < refusedLength; j++ {
+			refusedOffsets[j] = t.Refused[j].Pack(builder)
 		}
-		JournalEntryStartRefusedVector(builder, RefusedLength)
-		for j := RefusedLength - 1; j >= 0; j-- {
-			builder.PrependUOffsetT(RefusedOffsets[j])
+		JournalEntryStartrefusedVector(builder, refusedLength)
+		for j := refusedLength - 1; j >= 0; j-- {
+			builder.PrependUOffsetT(refusedOffsets[j])
 		}
-		RefusedOffset = builder.EndVector(RefusedLength)
+		refusedOffset = builder.EndVector(refusedLength)
 	}
 	JournalEntryStart(builder)
-	JournalEntryAddDigest(builder, DigestOffset)
-	JournalEntryAddSequence(builder, t.Sequence)
-	JournalEntryAddSourceSequence(builder, t.Sourcesequence)
-	JournalEntryAddSchema(builder, SchemaOffset)
-	JournalEntryAddTags(builder, TagsOffset)
-	JournalEntryAddPeer(builder, PeerOffset)
-	JournalEntryAddSignature(builder, SignatureOffset)
-	JournalEntryAddIdentity(builder, t.Identity)
-	JournalEntryAddOwnTS(builder, t.Ownts)
-	JournalEntryAddApplied(builder, t.Applied)
-	JournalEntryAddRefused(builder, RefusedOffset)
+	JournalEntryAdddigest(builder, digestOffset)
+	JournalEntryAddsequence(builder, t.Sequence)
+	JournalEntryAddsource_sequence(builder, t.SourceSequence)
+	JournalEntryAddschema(builder, schemaOffset)
+	JournalEntryAddtags(builder, tagsOffset)
+	JournalEntryAddpeer(builder, peerOffset)
+	JournalEntryAddsignature(builder, signatureOffset)
+	JournalEntryAddidentity(builder, t.Identity)
+	JournalEntryAddown_ts(builder, t.OwnTs)
+	JournalEntryAddapplied(builder, t.Applied)
+	JournalEntryAddrefused(builder, refusedOffset)
 	return JournalEntryEnd(builder)
 }
 
 func (rcv *JournalEntry) UnPackTo(t *JournalEntryT) {
 	t.Digest = string(rcv.Digest())
 	t.Sequence = rcv.Sequence()
-	t.Sourcesequence = rcv.Sourcesequence()
+	t.SourceSequence = rcv.SourceSequence()
 	t.Schema = string(rcv.Schema())
 	t.Tags = rcv.Tags(nil).UnPack()
 	t.Peer = string(rcv.Peer())
 	t.Signature = rcv.SignatureBytes()
 	t.Identity = rcv.Identity()
-	t.Ownts = rcv.Ownts()
+	t.OwnTs = rcv.OwnTs()
 	t.Applied = rcv.Applied()
-	RefusedLength := rcv.RefusedLength()
-	t.Refused = make([]*RefusalT, RefusedLength)
-	for j := 0; j < RefusedLength; j++ {
+	refusedLength := rcv.RefusedLength()
+	t.Refused = make([]*RefusalT, refusedLength)
+	for j := 0; j < refusedLength; j++ {
 		x := Refusal{}
 		rcv.Refused(&x, j)
 		t.Refused[j] = x.UnPack()
@@ -133,7 +133,7 @@ func (rcv *JournalEntry) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-func (rcv *JournalEntry) Digest() []byte {
+func (rcv *JournalEntry) digest() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -141,7 +141,11 @@ func (rcv *JournalEntry) Digest() []byte {
 	return nil
 }
 
-func (rcv *JournalEntry) Sequence() uint64 {
+func (rcv *JournalEntry) Digest() []byte {
+	return rcv.digest()
+}
+
+func (rcv *JournalEntry) sequence() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
 		return rcv._tab.GetUint64(o + rcv._tab.Pos)
@@ -149,11 +153,19 @@ func (rcv *JournalEntry) Sequence() uint64 {
 	return 0
 }
 
-func (rcv *JournalEntry) MutateSequence(n uint64) bool {
+func (rcv *JournalEntry) Sequence() uint64 {
+	return rcv.sequence()
+}
+
+func (rcv *JournalEntry) Mutatesequence(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(6, n)
 }
 
-func (rcv *JournalEntry) SourceSequence() uint64 {
+func (rcv *JournalEntry) MutateSequence(n uint64) bool {
+	return rcv.Mutatesequence(n)
+}
+
+func (rcv *JournalEntry) source_sequence() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
 		return rcv._tab.GetUint64(o + rcv._tab.Pos)
@@ -161,19 +173,19 @@ func (rcv *JournalEntry) SourceSequence() uint64 {
 	return 0
 }
 
-func (rcv *JournalEntry) Sourcesequence() uint64 {
-	return rcv.SourceSequence()
+func (rcv *JournalEntry) SourceSequence() uint64 {
+	return rcv.source_sequence()
 }
 
-func (rcv *JournalEntry) MutateSourceSequence(n uint64) bool {
+func (rcv *JournalEntry) Mutatesource_sequence(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(8, n)
 }
 
-func (rcv *JournalEntry) MutateSourcesequence(n uint64) bool {
-	return rcv.MutateSourceSequence(n)
+func (rcv *JournalEntry) MutateSourceSequence(n uint64) bool {
+	return rcv.Mutatesource_sequence(n)
 }
 
-func (rcv *JournalEntry) Schema() []byte {
+func (rcv *JournalEntry) schema() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -181,7 +193,11 @@ func (rcv *JournalEntry) Schema() []byte {
 	return nil
 }
 
-func (rcv *JournalEntry) Tags(obj *SourceTags) *SourceTags {
+func (rcv *JournalEntry) Schema() []byte {
+	return rcv.schema()
+}
+
+func (rcv *JournalEntry) tags(obj *SourceTags) *SourceTags {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
 		x := rcv._tab.Indirect(o + rcv._tab.Pos)
@@ -194,7 +210,11 @@ func (rcv *JournalEntry) Tags(obj *SourceTags) *SourceTags {
 	return nil
 }
 
-func (rcv *JournalEntry) Peer() []byte {
+func (rcv *JournalEntry) Tags(obj *SourceTags) *SourceTags {
+	return rcv.tags(obj)
+}
+
+func (rcv *JournalEntry) peer() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -202,7 +222,11 @@ func (rcv *JournalEntry) Peer() []byte {
 	return nil
 }
 
-func (rcv *JournalEntry) Signature(j int) byte {
+func (rcv *JournalEntry) Peer() []byte {
+	return rcv.peer()
+}
+
+func (rcv *JournalEntry) signature(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
@@ -211,7 +235,11 @@ func (rcv *JournalEntry) Signature(j int) byte {
 	return 0
 }
 
-func (rcv *JournalEntry) SignatureLength() int {
+func (rcv *JournalEntry) Signature(j int) byte {
+	return rcv.signature(j)
+}
+
+func (rcv *JournalEntry) signatureLength() int {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
@@ -219,7 +247,11 @@ func (rcv *JournalEntry) SignatureLength() int {
 	return 0
 }
 
-func (rcv *JournalEntry) SignatureBytes() []byte {
+func (rcv *JournalEntry) SignatureLength() int {
+	return rcv.signatureLength()
+}
+
+func (rcv *JournalEntry) signatureBytes() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -227,7 +259,11 @@ func (rcv *JournalEntry) SignatureBytes() []byte {
 	return nil
 }
 
-func (rcv *JournalEntry) MutateSignature(j int, n byte) bool {
+func (rcv *JournalEntry) SignatureBytes() []byte {
+	return rcv.signatureBytes()
+}
+
+func (rcv *JournalEntry) Mutatesignature(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
@@ -236,7 +272,11 @@ func (rcv *JournalEntry) MutateSignature(j int, n byte) bool {
 	return false
 }
 
-func (rcv *JournalEntry) Identity() bool {
+func (rcv *JournalEntry) MutateSignature(j int, n byte) bool {
+	return rcv.Mutatesignature(j, n)
+}
+
+func (rcv *JournalEntry) identity() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
 		return rcv._tab.GetBool(o + rcv._tab.Pos)
@@ -244,11 +284,19 @@ func (rcv *JournalEntry) Identity() bool {
 	return false
 }
 
-func (rcv *JournalEntry) MutateIdentity(n bool) bool {
+func (rcv *JournalEntry) Identity() bool {
+	return rcv.identity()
+}
+
+func (rcv *JournalEntry) Mutateidentity(n bool) bool {
 	return rcv._tab.MutateBoolSlot(18, n)
 }
 
-func (rcv *JournalEntry) OwnTS() bool {
+func (rcv *JournalEntry) MutateIdentity(n bool) bool {
+	return rcv.Mutateidentity(n)
+}
+
+func (rcv *JournalEntry) own_ts() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
 		return rcv._tab.GetBool(o + rcv._tab.Pos)
@@ -256,19 +304,19 @@ func (rcv *JournalEntry) OwnTS() bool {
 	return false
 }
 
-func (rcv *JournalEntry) Ownts() bool {
-	return rcv.OwnTS()
+func (rcv *JournalEntry) OwnTs() bool {
+	return rcv.own_ts()
 }
 
-func (rcv *JournalEntry) MutateOwnTS(n bool) bool {
+func (rcv *JournalEntry) Mutateown_ts(n bool) bool {
 	return rcv._tab.MutateBoolSlot(20, n)
 }
 
-func (rcv *JournalEntry) MutateOwnts(n bool) bool {
-	return rcv.MutateOwnTS(n)
+func (rcv *JournalEntry) MutateOwnTs(n bool) bool {
+	return rcv.Mutateown_ts(n)
 }
 
-func (rcv *JournalEntry) Applied() bool {
+func (rcv *JournalEntry) applied() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
 		return rcv._tab.GetBool(o + rcv._tab.Pos)
@@ -276,11 +324,19 @@ func (rcv *JournalEntry) Applied() bool {
 	return false
 }
 
-func (rcv *JournalEntry) MutateApplied(n bool) bool {
+func (rcv *JournalEntry) Applied() bool {
+	return rcv.applied()
+}
+
+func (rcv *JournalEntry) Mutateapplied(n bool) bool {
 	return rcv._tab.MutateBoolSlot(22, n)
 }
 
-func (rcv *JournalEntry) Refused(obj *Refusal, j int) bool {
+func (rcv *JournalEntry) MutateApplied(n bool) bool {
+	return rcv.Mutateapplied(n)
+}
+
+func (rcv *JournalEntry) refused(obj *Refusal, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
 		x := rcv._tab.Vector(o)
@@ -295,7 +351,11 @@ func (rcv *JournalEntry) Refused(obj *Refusal, j int) bool {
 	return false
 }
 
-func (rcv *JournalEntry) RefusedLength() int {
+func (rcv *JournalEntry) Refused(obj *Refusal, j int) bool {
+	return rcv.refused(obj, j)
+}
+
+func (rcv *JournalEntry) refusedLength() int {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
@@ -303,53 +363,90 @@ func (rcv *JournalEntry) RefusedLength() int {
 	return 0
 }
 
+func (rcv *JournalEntry) RefusedLength() int {
+	return rcv.refusedLength()
+}
+
 func JournalEntryStart(builder *flatbuffers.Builder) {
 	builder.StartObject(11)
 }
-func JournalEntryAddDigest(builder *flatbuffers.Builder, Digest flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(Digest), 0)
+func JournalEntryAdddigest(builder *flatbuffers.Builder, digest flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(digest), 0)
 }
-func JournalEntryAddSequence(builder *flatbuffers.Builder, Sequence uint64) {
-	builder.PrependUint64Slot(1, Sequence, 0)
+func JournalEntryAddDigest(builder *flatbuffers.Builder, digest flatbuffers.UOffsetT) {
+	JournalEntryAdddigest(builder, digest)
 }
-func JournalEntryAddSourceSequence(builder *flatbuffers.Builder, SourceSequence uint64) {
-	builder.PrependUint64Slot(2, SourceSequence, 0)
+func JournalEntryAddsequence(builder *flatbuffers.Builder, sequence uint64) {
+	builder.PrependUint64Slot(1, sequence, 0)
 }
-func JournalEntryAddSourcesequence(builder *flatbuffers.Builder, SourceSequence uint64) {
-	JournalEntryAddSourceSequence(builder, SourceSequence)
+func JournalEntryAddSequence(builder *flatbuffers.Builder, sequence uint64) {
+	JournalEntryAddsequence(builder, sequence)
 }
-func JournalEntryAddSchema(builder *flatbuffers.Builder, Schema flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(3, flatbuffers.UOffsetT(Schema), 0)
+func JournalEntryAddsource_sequence(builder *flatbuffers.Builder, source_sequence uint64) {
+	builder.PrependUint64Slot(2, source_sequence, 0)
 }
-func JournalEntryAddTags(builder *flatbuffers.Builder, Tags flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(4, flatbuffers.UOffsetT(Tags), 0)
+func JournalEntryAddSourceSequence(builder *flatbuffers.Builder, source_sequence uint64) {
+	JournalEntryAddsource_sequence(builder, source_sequence)
 }
-func JournalEntryAddPeer(builder *flatbuffers.Builder, Peer flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(5, flatbuffers.UOffsetT(Peer), 0)
+func JournalEntryAddschema(builder *flatbuffers.Builder, schema flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(3, flatbuffers.UOffsetT(schema), 0)
 }
-func JournalEntryAddSignature(builder *flatbuffers.Builder, Signature flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(6, flatbuffers.UOffsetT(Signature), 0)
+func JournalEntryAddSchema(builder *flatbuffers.Builder, schema flatbuffers.UOffsetT) {
+	JournalEntryAddschema(builder, schema)
 }
-func JournalEntryStartSignatureVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+func JournalEntryAddtags(builder *flatbuffers.Builder, tags flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(4, flatbuffers.UOffsetT(tags), 0)
+}
+func JournalEntryAddTags(builder *flatbuffers.Builder, tags flatbuffers.UOffsetT) {
+	JournalEntryAddtags(builder, tags)
+}
+func JournalEntryAddpeer(builder *flatbuffers.Builder, peer flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(5, flatbuffers.UOffsetT(peer), 0)
+}
+func JournalEntryAddPeer(builder *flatbuffers.Builder, peer flatbuffers.UOffsetT) {
+	JournalEntryAddpeer(builder, peer)
+}
+func JournalEntryAddsignature(builder *flatbuffers.Builder, signature flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(6, flatbuffers.UOffsetT(signature), 0)
+}
+func JournalEntryAddSignature(builder *flatbuffers.Builder, signature flatbuffers.UOffsetT) {
+	JournalEntryAddsignature(builder, signature)
+}
+func JournalEntryStartsignatureVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(1, numElems, 1)
 }
-func JournalEntryAddIdentity(builder *flatbuffers.Builder, Identity bool) {
-	builder.PrependBoolSlot(7, Identity, false)
+func JournalEntryStartSignatureVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return JournalEntryStartsignatureVector(builder, numElems)
 }
-func JournalEntryAddOwnTS(builder *flatbuffers.Builder, OwnTS bool) {
-	builder.PrependBoolSlot(8, OwnTS, false)
+func JournalEntryAddidentity(builder *flatbuffers.Builder, identity bool) {
+	builder.PrependBoolSlot(7, identity, false)
 }
-func JournalEntryAddOwnts(builder *flatbuffers.Builder, OwnTS bool) {
-	JournalEntryAddOwnTS(builder, OwnTS)
+func JournalEntryAddIdentity(builder *flatbuffers.Builder, identity bool) {
+	JournalEntryAddidentity(builder, identity)
 }
-func JournalEntryAddApplied(builder *flatbuffers.Builder, Applied bool) {
-	builder.PrependBoolSlot(9, Applied, false)
+func JournalEntryAddown_ts(builder *flatbuffers.Builder, own_ts bool) {
+	builder.PrependBoolSlot(8, own_ts, false)
 }
-func JournalEntryAddRefused(builder *flatbuffers.Builder, Refused flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(10, flatbuffers.UOffsetT(Refused), 0)
+func JournalEntryAddOwnTs(builder *flatbuffers.Builder, own_ts bool) {
+	JournalEntryAddown_ts(builder, own_ts)
+}
+func JournalEntryAddapplied(builder *flatbuffers.Builder, applied bool) {
+	builder.PrependBoolSlot(9, applied, false)
+}
+func JournalEntryAddApplied(builder *flatbuffers.Builder, applied bool) {
+	JournalEntryAddapplied(builder, applied)
+}
+func JournalEntryAddrefused(builder *flatbuffers.Builder, refused flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(10, flatbuffers.UOffsetT(refused), 0)
+}
+func JournalEntryAddRefused(builder *flatbuffers.Builder, refused flatbuffers.UOffsetT) {
+	JournalEntryAddrefused(builder, refused)
+}
+func JournalEntryStartrefusedVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(4, numElems, 4)
 }
 func JournalEntryStartRefusedVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
-	return builder.StartVector(4, numElems, 4)
+	return JournalEntryStartrefusedVector(builder, numElems)
 }
 func JournalEntryEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
