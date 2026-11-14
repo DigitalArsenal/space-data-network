@@ -41,6 +41,16 @@ and its directory is synchronized once after both metadata files.
 Enable retention on empty CAT and OCM sources in store format 4. Existing
 unretained history cannot be reconstructed. Sealed standards are refused; CAT
 and OCM have no sealed fields. Provider and source identities must be exact.
+Publication journal metadata uses size-prefixed, checksummed FlatBuffers defined
+in `internal/publicationstate/schema/PublicationState.fbs`. Recovery verifies the
+length, schema structure, type, version, and checksum before reading fields.
+Ordinary exports use the same schema's typed replay index; released JSON export
+indexes remain readable.
+
+The local batch administration endpoint accepts a `BatchAction` publication-state
+frame and returns an SDS QRP frame. An explicit `?format=json` selects the JSON
+request and response adapter for command-line clients.
+
 Configuration validation requires a matching batch rule, publication to be enabled, and completed series
 to be retained, including matching retention overrides.
 

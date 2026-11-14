@@ -8,6 +8,9 @@ import (
 )
 
 func TestPublicationCatalogScaleDaily(t *testing.T) {
+	if testing.Short() {
+		t.Skip("catalog scale and daily reclamation exercise requires a full test run")
+	}
 	t.Setenv("SDN_STORE_FORMAT", "4")
 	for _, n := range []int{33000, 100000} {
 		t.Run(fmt.Sprint(n), func(t *testing.T) {
