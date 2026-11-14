@@ -107,8 +107,8 @@ func (b format4Backend) f4Put(op, schemaName string, records [][]byte, peerID st
 	}
 	b.s.publicationMu.Lock()
 	defer b.s.publicationMu.Unlock()
-	if b.s.publicationFailure != nil {
-		return nil, nil, b.s.publicationFailure
+	if err := b.s.publicationFailures[publicationSourceKey{schemaName, tags.ProviderID, tags.SourceName}]; err != nil {
+		return nil, nil, err
 	}
 	return b.putRetained(op, schemaName, records, peerID, signature, *tags, opt)
 }

@@ -20,6 +20,7 @@ func (s *ConcreteDatasetPublicationService) AutoPublishBatches(ctx context.Conte
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	s.store.RetryPublicationRecovery()
 	rows, err := s.store.SourceBatchProgress()
 	if err != nil {
 		return nil, err

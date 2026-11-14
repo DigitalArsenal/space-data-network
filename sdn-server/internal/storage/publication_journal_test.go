@@ -181,7 +181,7 @@ func TestPublicationJournalFailureIsSourceScoped(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.publicationMu.Lock()
-	s.publicationFailure = errors.New("synthetic retained-write failure")
+	s.publicationFailures = map[publicationSourceKey]error{{"CAT.fbs", "synthetic", "retained"}: errors.New("synthetic retained-write failure")}
 	s.publicationMu.Unlock()
 	journalTestPut(t, s, "ordinary")
 	raw := sds.NewCATBuilder().WithNoradCatID(900004).WithObjectName("synthetic-blocked").Build()

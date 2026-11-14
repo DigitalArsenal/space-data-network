@@ -28,7 +28,9 @@ type publicationEntry struct {
 	Peer            string
 	Signature       []byte
 	Identity, OwnTS bool
+	OutcomeKnown    bool `json:"-"`
 	Applied         bool
+	Refused         map[int]int32 `json:",omitempty"`
 }
 
 func (s *FlatSQLStore) publicationDir() string {
@@ -194,35 +196,96 @@ func (b format4Backend) putRetained(op, schema string, records [][]byte, peer st
 	if err = publicationAtomicFile(filepath.Join(temp, "entry.json"), raw); err != nil {
 		return nil, nil, err
 	}
-	if err = os.Rename(temp, s.publicationEntryDir(seq)); err == nil {
-		err = publicationSyncDir(s.publicationDir())
-	}
-	if err != nil {
-		s.publicationFailure = err
+	if err = os.Rename(temp, s.publicationEntryDir(seq)); err != nil {
 		return nil, nil, err
 	}
 	s.publicationEntries = append(s.publicationEntries, e)
+	if err = publicationSyncDir(s.publicationDir()); err != nil {
+		s.pausePublication(e, err)
+		return nil, nil, err
+	}
 	if s.publicationHook != nil {
 		s.publicationHook("prepared")
 	}
-	cids, out, err := b.f4PutDirect(op, schema, records, peer, sig, &tags, opt)
-	if err == nil && s.publicationHook != nil {
+	cids, out, writeErr := b.f4PutDirect(op, schema, records, peer, sig, &tags, opt)
+	if writeErr == nil && s.publicationHook != nil {
 		s.publicationHook("stored")
 	}
-	if err == nil {
-		err = s.markPublicationApplied(seq)
+	var refused *RefusedRecordsError
+	if writeErr != nil && !errors.As(writeErr, &refused) {
+		s.pausePublication(e, writeErr)
+		return cids, out, writeErr
 	}
-	if err != nil {
-		s.publicationFailure = fmt.Errorf("publication recovery required: %w", err)
+	e.Refused = publicationRefusals(out)
+	// The engine's per-record outcome is final even when a record was refused.
+	// Retrying a failed completion write does not replay a successful PUT.
+	var markerErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		markerErr = s.markPublicationApplied(e)
+		if markerErr == nil {
+			break
+		}
 	}
-	return cids, out, err
+	if markerErr != nil {
+		s.pausePublication(e, markerErr)
+		return cids, out, fmt.Errorf("engine write completed; publication acknowledgement pending: %w", markerErr)
+	}
+	return cids, out, writeErr
 }
-func (s *FlatSQLStore) markPublicationApplied(seq uint64) error {
-	if err := publicationAtomicFile(filepath.Join(s.publicationEntryDir(seq), "applied"), []byte("1\n")); err != nil {
+func publicationRefusals(out []format4.Outcome) map[int]int32 {
+	refused := map[int]int32{}
+	for i, o := range out {
+		if o.Action == format4.ActRejected {
+			refused[i] = o.Reject
+		}
+	}
+	return refused
+}
+func (s *FlatSQLStore) markPublicationApplied(e publicationEntry) error {
+	for i := range s.publicationEntries {
+		if s.publicationEntries[i].Sequence == e.Sequence {
+			s.publicationEntries[i].Refused = e.Refused
+			s.publicationEntries[i].OutcomeKnown = true
+		}
+	}
+	raw, err := json.Marshal(e.Refused)
+	if err != nil {
 		return err
 	}
-	s.publicationEntries[len(s.publicationEntries)-1].Applied = true
+	if s.publicationFault != nil {
+		if err = s.publicationFault("applied"); err != nil {
+			return err
+		}
+	}
+	if err = publicationAtomicFile(filepath.Join(s.publicationEntryDir(e.Sequence), "applied"), raw); err != nil {
+		return err
+	}
+	for i := range s.publicationEntries {
+		if s.publicationEntries[i].Sequence == e.Sequence {
+			e.Applied = true
+			s.publicationEntries[i] = e
+			break
+		}
+	}
 	return nil
+}
+func (s *FlatSQLStore) pausePublication(e publicationEntry, err error) {
+	if s.publicationFailures == nil {
+		s.publicationFailures = map[publicationSourceKey]error{}
+	}
+	s.publicationFailures[publicationSourceKey{e.Schema, e.Tags.ProviderID, e.Tags.SourceName}] = err
+	log.Errorf("publication source requires operator recovery (%s): %v", e.Schema, err)
+}
+
+// PublicationRecoveryStatus reports isolated sources requiring operator recovery.
+func (s *FlatSQLStore) PublicationRecoveryStatus() map[string]string {
+	s.publicationMu.Lock()
+	defer s.publicationMu.Unlock()
+	out := map[string]string{}
+	for k, err := range s.publicationFailures {
+		out[k.schema+"/"+k.provider+"/"+k.source] = err.Error()
+	}
+	return out
 }
 func (s *FlatSQLStore) recoverPublicationJournal() error {
 	raw, err := os.ReadFile(filepath.Join(s.publicationDir(), "sources.json"))
@@ -240,45 +303,82 @@ func (s *FlatSQLStore) recoverPublicationJournal() error {
 		return err
 	}
 	for _, dir := range dirs {
-		if !dir.IsDir() || strings.HasPrefix(dir.Name(), ".") {
+		if !dir.IsDir() {
 			continue
 		}
-		raw, err = os.ReadFile(filepath.Join(s.publicationDir(), dir.Name(), "entry.json"))
-		if err != nil {
-			return err
+		if strings.HasPrefix(dir.Name(), ".prepare-") {
+			if err = os.RemoveAll(filepath.Join(s.publicationDir(), dir.Name())); err != nil {
+				log.Warnf("publication temporary cleanup: %v", err)
+			}
+			continue
+		}
+		if strings.HasPrefix(dir.Name(), ".") {
+			continue
 		}
 		var e publicationEntry
-		if err = json.Unmarshal(raw, &e); err != nil {
-			return err
+		raw, err = os.ReadFile(filepath.Join(s.publicationDir(), dir.Name(), "entry.json"))
+		if err == nil {
+			err = json.Unmarshal(raw, &e)
 		}
-		if filepath.Base(s.publicationEntryDir(e.Sequence)) != dir.Name() {
-			return errors.New("invalid publication journal sequence")
+		if err == nil && filepath.Base(s.publicationEntryDir(e.Sequence)) != dir.Name() {
+			err = errors.New("invalid publication journal sequence")
 		}
-		if len(s.publicationEntries) > 0 && e.Sequence <= s.publicationEntries[len(s.publicationEntries)-1].Sequence {
-			return errors.New("unordered publication journal")
-		}
-		_, err = os.Stat(filepath.Join(s.publicationEntryDir(e.Sequence), "applied"))
-		e.Applied = err == nil
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
+		if err != nil {
+			// Scope cannot be trusted; isolate configured publication sources while
+			// leaving ordinary storage and the node available for repair.
+			for _, x := range s.publicationSources {
+				s.pausePublication(publicationEntry{Schema: x.Schema, Tags: SourceTags{ProviderID: x.Provider, SourceName: x.Source}}, err)
+			}
+			continue
 		}
 		s.publicationEntries = append(s.publicationEntries, e)
-		if !e.Applied {
-			records, err := s.publicationRecords(e)
-			if err != nil {
-				return err
+		raw, err = os.ReadFile(filepath.Join(s.publicationEntryDir(e.Sequence), "applied"))
+		if err == nil {
+			if string(raw) != "1\n" {
+				err = json.Unmarshal(raw, &e.Refused)
 			}
-			data := make([][]byte, len(records))
-			for i, r := range records {
-				data[i] = r.Data
+			e.Applied = err == nil
+		} else if errors.Is(err, os.ErrNotExist) {
+			err = nil
+		}
+		if err == nil {
+			_, err = s.publicationRecords(e)
+		} // Applied streams are checked too.
+		if err != nil {
+			s.pausePublication(e, err)
+			continue
+		}
+		s.publicationEntries[len(s.publicationEntries)-1] = e
+		if e.Applied {
+			continue
+		}
+		if s.publicationFailures[publicationSourceKey{e.Schema, e.Tags.ProviderID, e.Tags.SourceName}] != nil {
+			continue
+		}
+		records, readErr := s.publicationRecords(e)
+		if readErr != nil {
+			s.pausePublication(e, readErr)
+			continue
+		}
+		data := make([][]byte, len(records))
+		for i, r := range records {
+			data[i] = r.Data
+		}
+		for attempt := 0; attempt < 3; attempt++ {
+			var out []format4.Outcome
+			_, out, err = s.rb.(format4Backend).f4PutDirect("recover publication", e.Schema, data, e.Peer, e.Signature, &e.Tags, f4PutOpt{identity: e.Identity, ownTS: e.OwnTS})
+			var refused *RefusedRecordsError
+			if err != nil && !errors.As(err, &refused) {
+				continue
 			}
-			_, _, err = s.rb.(format4Backend).f4PutDirect("recover publication", e.Schema, data, e.Peer, e.Signature, &e.Tags, f4PutOpt{identity: e.Identity, ownTS: e.OwnTS})
-			if err != nil {
-				return err
+			e.Refused = publicationRefusals(out)
+			err = s.markPublicationApplied(e)
+			if err == nil {
+				break
 			}
-			if err = s.markPublicationApplied(e.Sequence); err != nil {
-				return err
-			}
+		}
+		if err != nil {
+			s.pausePublication(e, err)
 		}
 	}
 	s.publishSourceKeys()
@@ -299,6 +399,7 @@ func (s *FlatSQLStore) publicationRecords(e publicationEntry) ([]DatasetExportRe
 	digest := sha256.New()
 	reader := io.TeeReader(f, digest)
 	var out []DatasetExportRecord
+	ordinal := 0
 	for remaining > 0 {
 		var n uint32
 		if err = binary.Read(reader, binary.LittleEndian, &n); err != nil {
@@ -313,7 +414,10 @@ func (s *FlatSQLStore) publicationRecords(e publicationEntry) ([]DatasetExportRe
 			return nil, err
 		}
 		remaining -= int64(n)
-		out = append(out, DatasetExportRecord{CID: computeCID(data), Data: data, SourceTags: e.Tags})
+		if _, refused := e.Refused[ordinal]; !refused {
+			out = append(out, DatasetExportRecord{CID: computeCID(data), Data: data, SourceTags: e.Tags})
+		}
+		ordinal++
 	}
 	if e.Digest != hex.EncodeToString(digest.Sum(nil)) {
 		return nil, errors.New("publication journal checksum mismatch")
@@ -359,7 +463,7 @@ func (s *FlatSQLStore) RetainedPublicationBatches() []PublicationBatch {
 	defer s.publicationMu.Unlock()
 	byKey := map[string]PublicationBatch{}
 	for _, e := range s.publicationEntries {
-		if !e.Applied {
+		if !e.Applied || s.publicationFailures[publicationSourceKey{e.Schema, e.Tags.ProviderID, e.Tags.SourceName}] != nil {
 			continue
 		}
 		key := e.Schema + "\x00" + e.Tags.ProviderID + "\x00" + e.Tags.SourceName + "\x00" + e.Tags.BatchID
@@ -405,6 +509,9 @@ func (p *PublicationSelection) Records() []DatasetExportRecord {
 	return out
 }
 func (s *FlatSQLStore) retainedSelectionLocked(schema, provider, source, batch string, cutoff uint64) (*PublicationSelection, error) {
+	if err := s.publicationFailures[publicationSourceKey{schema, provider, source}]; err != nil {
+		return nil, fmt.Errorf("publication source paused: %w", err)
+	}
 	p := &PublicationSelection{Cutoff: cutoff, Schema: schema, Provider: provider, Source: source, Batch: batch}
 	if batch != "" {
 		p.Cutoff = 0
@@ -450,4 +557,39 @@ func (s *FlatSQLStore) publishSourceKeys() {
 func (s *FlatSQLStore) publicationSourceEnabled(schema, provider, source string) bool {
 	keys := s.publicationSourceKeys.Load()
 	return keys != nil && (*keys)[publicationSourceKey{schema, provider, source}]
+}
+
+// RetryPublicationRecovery retries interrupted storage and acknowledgement writes
+// once per call. Reconciliation calls it between publication attempts.
+func (s *FlatSQLStore) RetryPublicationRecovery() {
+	s.publicationMu.Lock()
+	defer s.publicationMu.Unlock()
+	for _, e := range s.publicationEntries {
+		if e.Applied {
+			continue
+		}
+		key := publicationSourceKey{e.Schema, e.Tags.ProviderID, e.Tags.SourceName}
+		records, err := s.publicationRecords(e)
+		if err == nil && !e.OutcomeKnown {
+			data := make([][]byte, len(records))
+			for i, r := range records {
+				data[i] = r.Data
+			}
+			var out []format4.Outcome
+			_, out, err = s.rb.(format4Backend).f4PutDirect("retry publication", e.Schema, data, e.Peer, e.Signature, &e.Tags, f4PutOpt{identity: e.Identity, ownTS: e.OwnTS})
+			var refused *RefusedRecordsError
+			if err == nil || errors.As(err, &refused) {
+				e.Refused = publicationRefusals(out)
+				err = nil
+			}
+		}
+		if err == nil {
+			err = s.markPublicationApplied(e)
+		}
+		if err != nil {
+			s.pausePublication(e, err)
+		} else {
+			delete(s.publicationFailures, key)
+		}
+	}
 }

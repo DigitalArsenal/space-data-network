@@ -29,7 +29,7 @@ func (s *FlatSQLStore) publicationCutoffLocked() uint64 {
 	var seq uint64
 	for _, e := range s.publicationEntries {
 		if !e.Applied {
-			break
+			continue
 		}
 		seq = e.Sequence
 	}

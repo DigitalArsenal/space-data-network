@@ -162,8 +162,9 @@ type FlatSQLStore struct {
 	publicationMu         sync.Mutex
 	publicationSources    []PublicationSource
 	publicationEntries    []publicationEntry
-	publicationFailure    error
-	publicationHook       func(string) // process-failure tests
+	publicationFailures   map[publicationSourceKey]error
+	publicationFault      func(string) error // storage fault injection in tests
+	publicationHook       func(string)       // process-failure tests
 
 	scanGenerationMu       sync.Mutex // guards scanGeneration (scan_generation.go)
 	scanGeneration         []byte
