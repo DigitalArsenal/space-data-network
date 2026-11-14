@@ -1,0 +1,125 @@
+package storage
+
+import (
+	"errors"
+	"github.com/spacedatanetwork/sdn-server/internal/sds"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestPublicationDamagedBatchDoesNotBlockSource(t *testing.T) {
+	t.Setenv("SDN_STORE_FORMAT", "4")
+	for _, damage := range []string{"checksum", "truncated", "missing"} {
+		t.Run(damage, func(t *testing.T) {
+			dir := t.TempDir()
+			s := journalTestStore(t, dir)
+			if err := s.ConfigurePublicationSources([]PublicationSource{{Schema: "CAT.fbs", Provider: "synthetic", Source: "index"}}); err != nil {
+				t.Fatal(err)
+			}
+			journalTestPut(t, s, "bad")
+			p, err := s.SelectPublication("CAT.fbs", "synthetic", "index", "bad")
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := p.refs[0].Path()
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch damage {
+			case "checksum":
+				raw[len(raw)-1] ^= 1
+				err = os.WriteFile(path, raw, 0600)
+			case "truncated":
+				err = os.Truncate(path, 5)
+			case "missing":
+				err = os.Remove(path)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = p.Record(0)
+			p.Close()
+			if !IsPublicationContentError(err) {
+				t.Fatalf("unclassified immutable input: %v", err)
+			}
+			for i := 0; i < 3; i++ {
+				if _, saveErr := s.RecordPublicationFailure("CAT.fbs", "synthetic", "index", "bad", err); saveErr != nil {
+					t.Fatal(saveErr)
+				}
+			}
+			journalTestPut(t, s, "good")
+			if batches := s.RetainedPublicationBatches(); len(batches) != 1 || batches[0].Batch != "good" {
+				t.Fatalf("blocked source: %+v", batches)
+			}
+			s.Close()
+			s = journalTestStore(t, dir)
+			defer s.Close()
+			if batches := s.RetainedPublicationBatches(); len(batches) != 1 || batches[0].Batch != "good" {
+				t.Fatalf("restart blocked source: %+v", batches)
+			}
+			if err := s.ManagePublicationBatch("CAT.fbs", "synthetic", "index", "bad", "discard"); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestPublicationOperatorManagesAnyUnfinishedBatch(t *testing.T) {
+	t.Setenv("SDN_STORE_FORMAT", "4")
+	for _, attempts := range []int{0, 1, 2, 3} {
+		s := journalTestStore(t, t.TempDir())
+		if err := s.ConfigurePublicationSources([]PublicationSource{{Schema: "CAT.fbs", Provider: "synthetic", Source: "index"}}); err != nil {
+			t.Fatal(err)
+		}
+		journalTestPut(t, s, "batch")
+		for i := 0; i < attempts; i++ {
+			if _, err := s.RecordPublicationFailure("CAT.fbs", "synthetic", "index", "batch", publicationContentError(errors.New("bad bytes"))); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := s.ManagePublicationBatch("CAT.fbs", "synthetic", "index", "batch", "requeue"); err != nil {
+			t.Fatal(err)
+		}
+		if s.publicationEntries[0].BatchFailure.Attempts != 0 {
+			t.Fatal("requeue ignored")
+		}
+		if err := s.ManagePublicationBatch("CAT.fbs", "synthetic", "index", "batch", "discard"); err != nil {
+			t.Fatal(err)
+		}
+		if !s.PublicationBatchComplete("CAT.fbs", "synthetic", "index", "batch") {
+			t.Fatal("discard ignored")
+		}
+		s.Close()
+	}
+	dir := t.TempDir()
+	s := journalTestStore(t, dir)
+	if err := s.ConfigurePublicationSources([]PublicationSource{{Schema: "CAT.fbs", Provider: "synthetic", Source: "index"}}); err != nil {
+		t.Fatal(err)
+	}
+	s.publicationFault = func(step string) error {
+		if step == "engine" {
+			return errors.New("stopped before engine write")
+		}
+		return nil
+	}
+	_, err := s.StoreBatchWithSourceTags("CAT.fbs", [][]byte{sds.NewCATBuilder().WithNoradCatID(900001).WithObjectName("synthetic-test").Build()}, "synthetic", nil, SourceTags{ProviderID: "synthetic", SourceName: "index", BatchID: "unapplied"})
+	if err == nil {
+		t.Fatal("fault not reached")
+	}
+	s.publicationFault = nil
+	if err := s.ManagePublicationBatch("CAT.fbs", "synthetic", "index", "unapplied", "discard"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(s.publicationEntryDir(1), "discarded")); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	s = journalTestStore(t, dir)
+	defer s.Close()
+	s.RetryPublicationRecovery()
+	if len(s.RetainedPublicationBatches()) != 0 || len(s.PublicationRecoveryStatus()) != 0 {
+		t.Fatal("discard replayed or paused source")
+	}
+}

@@ -34,6 +34,7 @@ type publicationEntry struct {
 	Generation        bool                   `json:"-"`
 	Refs              []publicationRecordRef `json:"-"`
 	Published         bool                   `json:"-"`
+	Discarded         bool                   `json:"-"`
 	Digest            string
 	Sequence          uint64
 	SourceSequence    uint64
@@ -504,6 +505,13 @@ func (s *FlatSQLStore) recoverPublicationJournal() error {
 			continue
 		}
 		s.publicationEntries = append(s.publicationEntries, e)
+		if _, discardErr := os.Stat(filepath.Join(s.publicationEntryDir(e.Sequence), "discarded")); discardErr == nil {
+			e.Discarded, e.Published = true, true
+			s.publicationEntries[len(s.publicationEntries)-1] = e
+			if _, appliedErr := os.Stat(filepath.Join(s.publicationEntryDir(e.Sequence), "applied")); os.IsNotExist(appliedErr) {
+				continue
+			}
+		}
 		raw, err = os.ReadFile(filepath.Join(s.publicationEntryDir(e.Sequence), "applied"))
 		if err == nil {
 			if string(raw) != "1\n" {
@@ -533,6 +541,16 @@ func (s *FlatSQLStore) recoverPublicationJournal() error {
 		e.ReadReady = err == nil
 		s.publicationEntries[len(s.publicationEntries)-1] = e
 		if err != nil {
+			if IsPublicationContentError(err) {
+				if e.Discarded {
+					continue
+				}
+				if saveErr := s.quarantineUnreadablePublication(e, err); saveErr == nil {
+					continue
+				} else {
+					err = saveErr
+				}
+			}
 			s.pausePublication(e, err)
 			continue
 		}
@@ -777,7 +795,7 @@ func (s *FlatSQLStore) retainedSelectionLocked(schema, provider, source, batch s
 			byKey[key] = r
 		}
 		if len(byKey) > maxPublicationSelectionRecords {
-			return nil, errors.New("publication selection exceeds 100000 records; partition the source")
+			return nil, publicationContentError(errors.New("publication selection exceeds 100000 records; partition the source"))
 		}
 	}
 	_, paired := s.catalogSource(schema, provider, source)
@@ -833,7 +851,7 @@ func (s *FlatSQLStore) RetryPublicationRecovery() {
 	resolved := map[publicationSourceKey]bool{}
 	failed := map[publicationSourceKey]bool{}
 	for _, e := range s.publicationEntries {
-		if e.Applied && e.ReadReady {
+		if e.Discarded || e.BatchFailure.Attempts >= 3 || (e.Applied && e.ReadReady) {
 			continue
 		}
 		key := publicationSourceKey{e.Schema, e.Tags.ProviderID, e.Tags.SourceName}
@@ -895,6 +913,13 @@ func (s *FlatSQLStore) RetryPublicationRecovery() {
 			err = s.markPublicationApplied(e)
 		}
 		if err != nil {
+			if IsPublicationContentError(err) {
+				if saveErr := s.quarantineUnreadablePublication(e, err); saveErr == nil {
+					continue
+				} else {
+					err = saveErr
+				}
+			}
 			failed[key] = true
 			s.pausePublication(e, err)
 		} else {
@@ -907,7 +932,7 @@ func (s *FlatSQLStore) RetryPublicationRecovery() {
 	for key := range s.publicationFailures {
 		unresolved := false
 		for _, e := range s.publicationEntries {
-			if !e.Applied || !e.ReadReady {
+			if !e.Discarded && e.BatchFailure.Attempts < 3 && (!e.Applied || !e.ReadReady) {
 				if e.Schema == "" || key == (publicationSourceKey{e.Schema, e.Tags.ProviderID, e.Tags.SourceName}) {
 					unresolved = true
 					break

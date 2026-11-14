@@ -68,7 +68,7 @@ func (s *FlatSQLStore) captureCatalogLocked(x PublicationSource, cutoff uint64) 
 			wanted[string(product.RECORD_CID())] = true
 		}
 		if len(wanted) > maxPublicationSelectionRecords {
-			return nil, errors.New("catalog closure exceeds 100000 records; partition the source")
+			return nil, publicationContentError(errors.New("catalog closure exceeds 100000 records; partition the source"))
 		}
 	}
 	selected := map[string]publicationRecordRef{}

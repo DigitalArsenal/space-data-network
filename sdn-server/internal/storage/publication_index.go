@@ -70,15 +70,15 @@ func newPublicationReference(file *publicationRefFile, data []byte, offset int64
 func (r publicationRecordRef) read() ([]byte, error) {
 	f, err := os.Open(r.Path())
 	if err != nil {
-		return nil, err
+		return nil, publicationReadError(err)
 	}
 	defer f.Close()
 	data := make([]byte, r.Size)
 	if _, err = f.ReadAt(data, r.Offset); err != nil {
-		return nil, err
+		return nil, publicationReadError(err)
 	}
 	if sha256.Sum256(data) != r.Digest {
-		return nil, errors.New("publication record checksum mismatch")
+		return nil, publicationContentError(errors.New("publication record checksum mismatch"))
 	}
 	return data, nil
 }
@@ -86,7 +86,7 @@ func (s *FlatSQLStore) publicationReferences(e publicationEntry) ([]publicationR
 	path := filepath.Join(s.publicationEntryDir(e.Sequence), "records.sds")
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return nil, publicationReadError(err)
 	}
 	defer f.Close()
 	h := sha256.New()
@@ -103,20 +103,20 @@ func (s *FlatSQLStore) publicationReferences(e publicationEntry) ([]publicationR
 			break
 		}
 		if err != nil {
-			return nil, err
+			return nil, publicationReadError(err)
 		}
 		if size < 8 || size > maxPublicationRecordBytes {
-			return nil, errors.New("publication frame outside 8 byte to 16 MiB bounds")
+			return nil, publicationContentError(errors.New("publication frame outside 8 byte to 16 MiB bounds"))
 		}
 		data := make([]byte, 4+int(size))
 		binary.LittleEndian.PutUint32(data, size)
 		if _, err = io.ReadFull(reader, data[4:]); err != nil {
-			return nil, err
+			return nil, publicationReadError(err)
 		}
 		if _, refused := e.Refused[ordinal]; !refused {
 			identity, err := publicationIdentity(e.Schema, data[4:])
 			if err != nil {
-				return nil, err
+				return nil, publicationContentError(err)
 			}
 			refs = append(refs, newPublicationReference(metadata, data[4:], offset+4, identity))
 			if e.Schema == "CAT.fbs" {
@@ -153,7 +153,7 @@ func (s *FlatSQLStore) publicationReferences(e publicationEntry) ([]publicationR
 		ordinal++
 	}
 	if hex.EncodeToString(h.Sum(nil)) != e.Digest {
-		return nil, errors.New("publication journal checksum mismatch")
+		return nil, publicationContentError(errors.New("publication journal checksum mismatch"))
 	}
 	return refs, nil
 }

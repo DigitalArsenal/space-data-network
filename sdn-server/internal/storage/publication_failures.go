@@ -3,6 +3,7 @@ package storage
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -99,7 +100,7 @@ func (s *FlatSQLStore) RecordPublicationFailure(schema, provider, source, batch 
 }
 
 // ManagePublicationBatch applies an explicit operator requeue or discard to a
-// quarantined batch. Discard acknowledges lost publication without deleting live data.
+// unfinished batch. Discard acknowledges lost publication without deleting live data.
 func (s *FlatSQLStore) ManagePublicationBatch(schema, provider, source, batch, action string) error {
 	if action != "requeue" && action != "discard" {
 		return errors.New("publication action must be requeue or discard")
@@ -112,17 +113,18 @@ func (s *FlatSQLStore) ManagePublicationBatch(schema, provider, source, batch, a
 		if e.Schema != schema || e.Tags.ProviderID != provider || e.Tags.SourceName != source || e.Tags.BatchID != batch {
 			continue
 		}
-		if e.BatchFailure.Attempts < 3 && e.GenerationFailure.Attempts < 3 {
+		if e.Published {
 			continue
 		}
-		if !e.Applied && action == "discard" {
-			return errors.New("unapplied batch cannot be discarded")
-		}
 		if action == "discard" {
+			if err := publicationAtomicFile(filepath.Join(s.publicationEntryDir(e.Sequence), "discarded"), []byte("1\n")); err != nil {
+				return err
+			}
 			if err := publicationAtomicFile(filepath.Join(s.publicationEntryDir(e.Sequence), "published"), []byte("1\n")); err != nil {
 				return err
 			}
 			s.publicationEntries[i].Published = true
+			s.publicationEntries[i].Discarded = true
 		}
 		for _, name := range []string{"generation-failure.json", "batch-failure.json"} {
 			if err := os.Remove(filepath.Join(s.publicationEntryDir(e.Sequence), name)); err != nil && !os.IsNotExist(err) {
@@ -152,6 +154,43 @@ func (e *PublicationContentError) Unwrap() error { return e.Cause }
 func IsPublicationContentError(err error) bool {
 	var e *PublicationContentError
 	return errors.As(err, &e)
+}
+
+// Only immutable input defects receive this type. Resource, configuration,
+// output filesystem, transport, and cancellation errors remain service errors.
+func publicationContentError(err error) error {
+	if err == nil || IsPublicationContentError(err) {
+		return err
+	}
+	return &PublicationContentError{Cause: err}
+}
+
+func publicationReadError(err error) error {
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, os.ErrNotExist) {
+		return publicationContentError(err)
+	}
+	return err
+}
+
+// An integrity failure during recovery cannot provide a selection for a normal
+// publication attempt. Set that entry aside immediately, without pausing others.
+func (s *FlatSQLStore) quarantineUnreadablePublication(e publicationEntry, cause error) error {
+	f := publicationFailure{Attempts: 3, Reason: cause.Error(), RetryAt: time.Now().Add(6 * time.Hour)}
+	raw, _ := json.Marshal(f)
+	if err := publicationAtomicFile(filepath.Join(s.publicationEntryDir(e.Sequence), "batch-failure.json"), raw); err != nil {
+		return err
+	}
+	s.publicationMu.Lock()
+	defer s.publicationMu.Unlock()
+	for i, old := range s.publicationEntries {
+		if old.Sequence == e.Sequence {
+			s.accountPublicationPending(old, -1)
+			s.publicationEntries[i].BatchFailure = f
+			s.accountPublicationPending(s.publicationEntries[i], 1)
+			s.updatePublicationQuarantine(s.publicationEntries[i])
+		}
+	}
+	return nil
 }
 func (s *FlatSQLStore) retryQuarantinedPublication(now time.Time) {
 	s.publicationMu.Lock()

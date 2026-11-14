@@ -397,6 +397,9 @@ func ExportDatasetRecords(outputDir string, filter IndexedRecordQuery, records [
 
 		fields, err := extractIndexedFields(filter.SchemaName, record.Data)
 		if err != nil {
+			if filter.Selection != nil {
+				err = publicationContentError(err)
+			}
 			return nil, fmt.Errorf("extract index fields for %s: %w", record.CID, err)
 		}
 		indexMetadataBytes += int64(512+len(recordCID)+len(fields.entityID)+len(fields.objectType)+len(fields.opsStatusCode)+len(fields.epochDay)) + publicationSourceTagsBytes(record.SourceTags)
