@@ -31,7 +31,7 @@ table Reclamation { HighWater:ulong; Reclaimed:ulong; Pending:[ulong]; }
 table IndexRecord {
   CID:string; Offset:long; Length:long;
   NoradCatID:uint = null; EntityID:string; ObjectType:string;
-  OpsStatusCode:string; EpochUnix:long = null; EpochDay:string; SourceTags:SourceTags;
+  OpsStatusCode:string; EpochUnix:long = null; EpochDay:string; Tags:SourceTags;
 }
 table IndexGroup { Key:string; Rows:[int]; }
 table MaterializedIndexes {
@@ -51,6 +51,6 @@ union Body {
   Exclusions, SourceTags, NoticeList, Reclamation, ExportIndex, BatchAction
 }
 // Checksum is SHA-256 of the whole size-prefixed buffer with these 32 bytes zero.
-table PublicationState { Version:ushort = 1; Body:Body; Checksum:[ubyte]; }
+table PublicationState { Version:ushort = 1; Payload:Body; Checksum:[ubyte]; }
 root_type PublicationState;
 file_identifier "$PST";
