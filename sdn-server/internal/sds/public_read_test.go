@@ -1,6 +1,10 @@
 package sds
 
-import "testing"
+import (
+	"reflect"
+	"sort"
+	"testing"
+)
 
 // The anonymous data plane is an ALLOW list. These tests pin both halves of
 // that: what it admits, and — more importantly — that it stays closed by
@@ -8,7 +12,7 @@ import "testing"
 
 func TestPublicReadSchemaAdmitsThePublishedStandards(t *testing.T) {
 	for _, schema := range []string{
-		"OMM.fbs", "CAT.fbs", "MPE.fbs", "SPW.fbs",
+		"OMM.fbs", "CAT.fbs", "OCM.fbs", "MPE.fbs", "SPW.fbs", "WXF.fbs", "NCD.fbs", "EGP.fbs",
 		"RFB.fbs", "LKS.fbs",
 		"PNM.fbs", "DPM.fbs", "EPM.fbs", "APP.fbs",
 	} {
@@ -18,6 +22,19 @@ func TestPublicReadSchemaAdmitsThePublishedStandards(t *testing.T) {
 		if PublicReadSchemaReason(schema) == "" {
 			t.Errorf("%s is public but carries no recorded reason", schema)
 		}
+	}
+}
+
+func TestPublicReadSchemasExactContents(t *testing.T) {
+	want := []string{"APP.fbs", "CAT.fbs", "DPM.fbs", "EGP.fbs", "EPM.fbs", "LKS.fbs", "MPE.fbs", "NCD.fbs", "OCM.fbs", "OMM.fbs", "PNM.fbs", "RFB.fbs", "SPW.fbs", "WXF.fbs"}
+	got := PublicReadSchemas()
+	sort.Strings(got)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("public schemas = %v, want %v", got, want)
+	}
+	got[0] = "PRIVATE.fbs"
+	if IsPublicReadSchema("PRIVATE.fbs") || !IsPublicReadSchema("APP.fbs") {
+		t.Fatal("modifying the returned list changed public access")
 	}
 }
 
