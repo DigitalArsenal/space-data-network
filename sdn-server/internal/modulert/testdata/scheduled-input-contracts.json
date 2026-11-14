@@ -1,0 +1,168 @@
+[
+  {
+    "Name": "analysis/catalog-synthesis/dist/plugin-manifest.json:catalog-synthesis-pull",
+    "MethodID": "synthesize_catalog",
+    "Manifest": {
+      "Methods": [
+        {
+          "MethodID": "synthesize_catalog",
+          "InputPorts": [
+            {
+              "PortID": "tick",
+              "AcceptedTypeSets": [
+                {
+                  "AllowedTypes": [
+                    {
+                      "SchemaName": "TimerTick.fbs",
+                      "FileIdentifier": "TICK",
+                      "RootType": "TimerTick"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "Typed": true
+  },
+  {
+    "Name": "analysis/catalog-synthesis/plugin-manifest.json:catalog-synthesis-pull",
+    "MethodID": "synthesize_catalog",
+    "Manifest": {
+      "Methods": [
+        {
+          "MethodID": "synthesize_catalog",
+          "InputPorts": [
+            {
+              "PortID": "tick",
+              "AcceptedTypeSets": [
+                {
+                  "AllowedTypes": [
+                    {
+                      "SchemaName": "TimerTick.fbs",
+                      "FileIdentifier": "TICK",
+                      "RootType": "TimerTick"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "Typed": true
+  },
+  {
+    "Name": "analysis/od/fit-pipeline/dist/plugin-manifest.json:od-fit-pull",
+    "MethodID": "fit_pipeline",
+    "Manifest": {
+      "Methods": [
+        {
+          "MethodID": "fit_pipeline",
+          "InputPorts": [
+            {
+              "PortID": "tick",
+              "AcceptedTypeSets": [
+                {
+                  "AllowedTypes": [
+                    {
+                      "SchemaName": "TimerTick.fbs",
+                      "FileIdentifier": "TICK",
+                      "RootType": "TimerTick"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "Typed": true
+  },
+  {
+    "Name": "analysis/od/fit-pipeline/plugin-manifest.json:od-fit-pull",
+    "MethodID": "fit_pipeline",
+    "Manifest": {
+      "Methods": [
+        {
+          "MethodID": "fit_pipeline",
+          "InputPorts": [
+            {
+              "PortID": "tick",
+              "AcceptedTypeSets": [
+                {
+                  "AllowedTypes": [
+                    {
+                      "SchemaName": "TimerTick.fbs",
+                      "FileIdentifier": "TICK",
+                      "RootType": "TimerTick"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "Typed": true
+  },
+  {
+    "Name": "data-source/ephemeris-source/host-adapter/plugin-manifest.json:ephemeris-pull",
+    "MethodID": "pull",
+    "Manifest": {
+      "Methods": [
+        {
+          "MethodID": "pull",
+          "InputPorts": [
+            {
+              "PortID": "tick",
+              "AcceptedTypeSets": [
+                {
+                  "AllowedTypes": [
+                    {
+                      "SchemaName": "TimerTick.fbs",
+                      "FileIdentifier": "TICK",
+                      "RootType": "TimerTick"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "Typed": true
+  },
+  {
+    "Name": "data-source/gps-source/plugin-manifest.json:gps-pull",
+    "MethodID": "pull",
+    "Manifest": {
+      "Methods": [
+        {
+          "MethodID": "pull",
+          "InputPorts": []
+        }
+      ]
+    },
+    "Typed": false
+  },
+  {
+    "Name": "data-source/oneweb-source/plugin-manifest.json:oneweb-pull",
+    "MethodID": "pull",
+    "Manifest": {
+      "Methods": [
+        {
+          "MethodID": "pull",
+          "InputPorts": []
+        }
+      ]
+    },
+    "Typed": false
+  }
+]

@@ -2,6 +2,8 @@ package modulert
 
 import (
 	"bytes"
+	"encoding/json"
+	"os"
 	"testing"
 )
 
@@ -77,5 +79,55 @@ func TestScheduledInputLegacyCompatibility(t *testing.T) {
 	frames, err := scheduledInputFrames(nil, "run", nil)
 	if err != nil || len(frames) != 1 || frames[0].PortID != "request" {
 		t.Fatal("nil manifest lost legacy frame")
+	}
+}
+
+// Contracts are extracted from the module collection's scheduled manifests.
+// Fixture names identify every source manifest and timer, including flow bundles.
+func TestScheduledManifestInventory(t *testing.T) {
+	raw, err := os.ReadFile("testdata/scheduled-input-contracts.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cases []struct {
+		Name, MethodID string
+		Manifest       Manifest
+		Typed          bool
+	}
+	if err := json.Unmarshal(raw, &cases); err != nil {
+		t.Fatal(err)
+	}
+	if len(cases) == 0 {
+		t.Fatal("empty manifest inventory")
+	}
+	for _, tc := range cases {
+		t.Run(tc.Name, func(t *testing.T) {
+			payload := []byte{1, 2, 3}
+			frames, err := scheduledInputFrames(&tc.Manifest, tc.MethodID, payload)
+			if err != nil || len(frames) != 1 {
+				t.Fatalf("%+v %v", frames, err)
+			}
+			if tc.Typed {
+				port := tc.Manifest.Methods[0].InputPorts[0]
+				typ := port.AcceptedTypeSets[0].AllowedTypes[0]
+				if frames[0].PortID != port.PortID || frames[0].SchemaName != typ.SchemaName || frames[0].RootTypeName != typ.RootType || frames[0].FileIdentifier != typ.FileIdentifier {
+					t.Fatalf("wrong typed frame: %+v", frames)
+				}
+				t.Log("typed")
+			} else {
+				got, err := encodePluginInvokeRequestFrames(tc.MethodID, frames)
+				if err != nil {
+					t.Fatal(err)
+				}
+				want, err := encodePluginInvokeRequestFrames(tc.MethodID, []InvokeInputFrame{{PortID: "request", Payload: payload}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !bytes.Equal(got, want) {
+					t.Fatal("legacy bytes changed")
+				}
+				t.Log("legacy")
+			}
+		})
 	}
 }
