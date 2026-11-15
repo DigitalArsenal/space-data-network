@@ -2,6 +2,7 @@ package wasmrt
 
 import (
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -39,8 +40,41 @@ func TestSubstrateSelfTest(t *testing.T) {
 	}
 }
 
+// stopDeadline is how long the A21 test gives ONE stop to end every spinner:
+// 100 ms for each round of the host's CPUs that the spinners fill. A spinner
+// ends only when the scheduler runs it after the stop, so on a host with fewer
+// CPUs than spinners the last one waits for the others' time slices. On a
+// 4-CPU Intel Mac runner (i7-8700B) the last of 16 ended 19 to 140 ms after
+// the stop in five rounds, and none was still running at 10 s; a fixed 100 ms
+// failed there about one run in five without any thread failing to stop.
+func stopDeadline(spinners, cpus int) time.Duration {
+	if cpus < 1 {
+		cpus = 1
+	}
+	rounds := (spinners + cpus - 1) / cpus
+	return time.Duration(rounds) * 100 * time.Millisecond
+}
+
+func TestStopDeadlineScalesWithSpinnersPerCPU(t *testing.T) {
+	for _, c := range []struct {
+		spinners, cpus int
+		want           time.Duration
+	}{
+		{16, 16, 100 * time.Millisecond},
+		{16, 32, 100 * time.Millisecond},
+		{16, 4, 400 * time.Millisecond},
+		{16, 3, 600 * time.Millisecond},
+		{16, 0, 1600 * time.Millisecond},
+	} {
+		if got := stopDeadline(c.spinners, c.cpus); got != c.want {
+			t.Errorf("stopDeadline(%d, %d) = %s, want %s", c.spinners, c.cpus, got, c.want)
+		}
+	}
+}
+
 // A21: 16 AOT threads in compute loops (Interruptible, no stop-word check,
-// no calls out) all stop within 100 ms of ONE stop.
+// no calls out) all stop after ONE stop, within 100 ms for each round of the
+// host's CPUs that they fill (100 ms on a host with 16 or more CPUs).
 func TestOneStopEndsSixteenInterruptibleAOTThreads(t *testing.T) {
 	requirePatchedRuntime(t)
 	compiled, err := compileProbeAOT()
@@ -73,13 +107,14 @@ func TestOneStopEndsSixteenInterruptibleAOTThreads(t *testing.T) {
 	m.threads.mu.Lock()
 	m.threads.interrupting = true
 	m.threads.mu.Unlock()
+	limit := stopDeadline(16, runtime.NumCPU())
 	start := time.Now()
 	workers[0].async.Cancel()
-	left := waitAll(workers, start.Add(100*time.Millisecond))
+	left := waitAll(workers, start.Add(limit))
 	took := time.Since(start)
-	t.Logf("one stop ended %d of 16 AOT spinners in %s", 16-left, took)
+	t.Logf("one stop ended %d of 16 AOT spinners in %s (limit %s on %d CPUs)", 16-left, took, limit, runtime.NumCPU())
 	if left != 0 {
-		t.Fatalf("%d AOT threads still running 100 ms after the stop", left)
+		t.Fatalf("%d AOT threads still running %s after the stop", left, limit)
 	}
 	if m.Poisoned() {
 		t.Fatalf("a deliberate stop poisoned the module: %v", m.PoisonCause())
