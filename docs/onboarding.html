@@ -219,7 +219,7 @@ await node.publish('OMM', ommData);</code></pre></div>
       <div class="code"><span class="label">Windows PowerShell</span><button class="copy" type="button">Copy</button><pre><code>irm https://spacedatanetwork.org/install.ps1 | iex</code></pre></div>
       <ul>
         <li>If the installer says <code>~/.spacedatanetwork/bin</code> is not on your <code>PATH</code>, add it: <code>export PATH="$HOME/.spacedatanetwork/bin:$PATH"</code>.</li>
-        <li>To install a particular release instead of the newest, set <code>SDN_VERSION</code>, for example <code>SDN_VERSION=v1.1.0</code>. <code>SDN_INSTALL_DIR</code> and <code>SDN_BUNDLE_DIR</code> move the command links and the bundles.</li>
+        <li>To install a particular release instead of the newest, set <code>SDN_VERSION</code>, for example <code>SDN_VERSION=v1.1.4</code>. <code>SDN_INSTALL_DIR</code> and <code>SDN_BUNDLE_DIR</code> move the command links and the bundles.</li>
         <li>The installer runs the node once before it reports success. On a Linux system too old for the build (its C library, glibc, is older than the one the node was built against) it says so, leaves nothing running, and points you to the Docker image instead.</li>
         <li>The same bundles (<code>spacedatanetwork-&lt;version&gt;-&lt;system&gt;-&lt;cpu&gt;.tar.gz</code>, <code>.zip</code> for Windows) and <code>spacedatanetwork-checksums.txt</code> are on every <a href="https://github.com/DigitalArsenal/space-data-network/releases" target="_blank" rel="noopener">release page</a>; the <a href="index.html#download">download section</a> links the current ones.</li>
       </ul>
@@ -261,17 +261,17 @@ spacedatanetwork remove              # remove this install; keeps the identity a
       <p>No port has to be open for the node to work. Opening 4001, 8080 and 4003 to incoming connections is what makes it a full node; see <a href="#node-types">full nodes and NAT nodes</a> below.</p>
 
       <h3>Linux packages</h3>
-      <p>Each release also carries Debian and RPM packages for Linux x86-64 (<code>spacedatanetwork-full_&lt;version&gt;_amd64.deb</code> and <code>spacedatanetwork-full-&lt;version&gt;-1.x86_64.rpm</code>; the version, such as <code>1.1.0</code>, is written with dots for a beta, as in <code>X.Y.Z.beta.N</code>). They install the node under <code>/opt/spacedatanetwork</code>, a configuration at <code>/etc/spacedatanetwork/config.yaml</code> that keeps records under <code>/var/lib/spacedatanetwork</code>, and a system-wide service, <code>/etc/systemd/system/spacedatanetwork.service</code>, that runs as a user named <code>sdn</code>. The packages create neither that user nor <code>/var/lib/spacedatanetwork</code>, so create both before starting the service. For a single server, the installer above is simpler.</p>
+      <p>Each release also carries Debian and RPM packages for Linux x86-64 (<code>spacedatanetwork-full_&lt;version&gt;_amd64.deb</code> and <code>spacedatanetwork-full-&lt;version&gt;-1.x86_64.rpm</code>; the version, such as <code>1.1.4</code>, is written with dots for a beta, as in <code>X.Y.Z.beta.N</code>). They install the node under <code>/opt/spacedatanetwork</code>, a configuration at <code>/etc/spacedatanetwork/config.yaml</code> that keeps records under <code>/var/lib/spacedatanetwork</code>, and a system-wide service, <code>/etc/systemd/system/spacedatanetwork.service</code>, that runs as a user named <code>sdn</code>. The packages create neither that user nor <code>/var/lib/spacedatanetwork</code>, so create both before starting the service. For a single server, the installer above is simpler.</p>
 
       <h3 id="docker">Docker</h3>
-      <p>The image is <a href="https://hub.docker.com/r/dockerdigitalarsenal/space-data-network" target="_blank" rel="noopener"><code>dockerdigitalarsenal/space-data-network</code></a>, tagged by release (<code>v1.1.0</code>) and with a moving <code>beta</code> tag that follows the newest release. It carries the node, its storage engine, IPFS (Kubo) and the sign-in pages, and runs as an ordinary user inside the container.</p>
+      <p>The image is <a href="https://hub.docker.com/r/dockerdigitalarsenal/space-data-network" target="_blank" rel="noopener"><code>dockerdigitalarsenal/space-data-network</code></a>, tagged by release (<code>v1.1.4</code>) and with a moving <code>beta</code> tag that follows the newest release. It carries the node, its storage engine, IPFS (Kubo) and the sign-in pages, and runs as an ordinary user inside the container.</p>
       <div class="code"><span class="label">docker run</span><button class="copy" type="button">Copy</button><pre><code>docker run -d --name sdn --hostname sdn --restart unless-stopped \
   -v sdn-data:/app/data \
   -p 127.0.0.1:5001:5001 -p 4001:4001 -p 4001:4001/udp \
-  dockerdigitalarsenal/space-data-network:v1.1.0</code></pre></div>
+  dockerdigitalarsenal/space-data-network:v1.1.4</code></pre></div>
       <div class="code"><span class="label">compose.yaml (the same node)</span><button class="copy" type="button">Copy</button><pre><code>services:
   sdn:
-    image: dockerdigitalarsenal/space-data-network:v1.1.0
+    image: dockerdigitalarsenal/space-data-network:v1.1.4
     container_name: sdn
     hostname: sdn
     restart: unless-stopped
@@ -290,7 +290,7 @@ volumes:
         <li><b>First start is slower.</b> The node compiles its storage engine for this computer&rsquo;s processor and keeps the result in the volume.</li>
         <li><b>Dashboard:</b> <code>http://127.0.0.1:5001/</code>. The recovery phrase: <code>docker exec sdn /app/entrypoint.sh show-identity --config /app/config/full-docker.yaml --show-mnemonic</code> (run commands through <code>/app/entrypoint.sh</code>: it hands them the node&rsquo;s key password file when the container made one).</li>
         <li><b>Your own configuration.</b> The image starts with <code>daemon --config /app/config/full-docker.yaml</code>. Mount your own file and pass <code>daemon --config &lt;file&gt;</code> as the command to replace it.</li>
-        <li><b>No Docker Hub?</b> Every release carries the image as an archive for <code>docker load</code>, for example <code>spacedatanetwork-container-1.1.0-linux-amd64.tar.gz</code> (a beta's version is written with dots, as in <code>X.Y.Z.beta.N</code>).</li>
+        <li><b>No Docker Hub?</b> Every release carries the image as an archive for <code>docker load</code>, for example <code>spacedatanetwork-container-1.1.4-linux-amd64.tar.gz</code> (a beta's version is written with dots, as in <code>X.Y.Z.beta.N</code>).</li>
       </ul>
     </section>
 
