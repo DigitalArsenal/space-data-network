@@ -174,6 +174,49 @@ test('a stable release is worded as a release, not a beta', () => {
   assert.equal(manifest.channel, 'stable');
 });
 
+test('MACOS_DESKTOP=false ships without the macOS desktop app and says so', () => {
+  // Owner decision 2026-11-14, "Forget Apple desktop for now": v1.1.0 ships
+  // without it while Apple refuses notarization; the macOS CLI still ships.
+  const tempRoot = mkdtempSync(join(tmpdir(), 'sdn-no-mac-desktop-'));
+  const distDir = join(tempRoot, 'dist');
+  const releaseDir = join(distDir, 'release');
+  for (const artifact of [
+    'cli/spacedatanetwork-1.1.0-linux-amd64.tar.gz',
+    'cli/spacedatanetwork-1.1.0-linux-arm64.tar.gz',
+    'cli/spacedatanetwork-1.1.0-darwin-amd64.tar.gz',
+    'cli/spacedatanetwork-1.1.0-darwin-arm64.tar.gz',
+    'cli/spacedatanetwork-1.1.0-windows-amd64.zip',
+    'desktop/space-data-network-desktop-1.1.0-linux-x86_64.AppImage',
+    'desktop/space-data-network-desktop-1.1.0-linux-amd64.deb',
+    'desktop/space-data-network-desktop-1.1.0-linux-x64.tar.xz',
+    'desktop/space-data-network-desktop-1.1.0-win-x64.exe',
+    'desktop/space-data-network-desktop-portable-1.1.0-win-x64.exe'
+  ]) {
+    writeFixture(distDir, artifact, 'fixture');
+  }
+  const env = {
+    ...process.env,
+    DIST_DIR: distDir,
+    RELEASE_DIR: releaseDir,
+    VERSION: '1.1.0',
+    RELEASE_TAG: 'v1.1.0',
+    RELEASE_MATURITY: 'stable',
+    GITHUB_SHA: '0123456789abcdef0123456789abcdef01234567'
+  };
+
+  // Default: the macOS desktop app is still required.
+  assert.throws(
+    () => execFileSync('bash', [scriptPath], { cwd: repoRoot, env, stdio: 'pipe' }),
+    /missing required desktop release artifact matching: space-data-network-desktop-\*-mac-\*\.dmg/
+  );
+
+  execFileSync('bash', [scriptPath], { cwd: repoRoot, env: { ...env, MACOS_DESKTOP: 'false' }, stdio: 'pipe' });
+  const notes = readFileSync(join(releaseDir, 'SDN-BETA-RELEASE.md'), 'utf8');
+  assert.match(notes, /## Not in this release[\s\S]*space-data-network-desktop-\*-mac-\*\.dmg[\s\S]*space-data-network-desktop-\*-mac-\*\.zip/);
+  assert.match(notes, /spacedatanetwork-1\.1\.0-darwin-arm64\.tar\.gz/);
+  assert.match(notes, /spacedatanetwork-1\.1\.0-darwin-amd64\.tar\.gz/);
+});
+
 test('a release maturity other than beta or stable is refused', () => {
   const tempRoot = mkdtempSync(join(tmpdir(), 'sdn-stable-release-bad-maturity-'));
   const distDir = join(tempRoot, 'dist');
