@@ -621,6 +621,65 @@ async function waitForJson({ containerName, url, label, predicate, timeoutMs }) 
   throw new Error(`Timed out waiting for ${label} at ${containerName} (${url}) after ${(timeoutMs / 1000).toFixed(0)} s. Last response: ${last}`);
 }
 
+// /api/v1/data/health answers with a size-prefixed $QRP FlatBuffer (writeTablePage
+// in sdn-server/internal/api/qrp_rows.go): [u32 size][u32 root][file id "$QRP"]
+// [...]. Healthy means HTTP 200, that file identifier, and the root table's
+// STATUS (QRP field slot 1, int8, default 0 = Ok, omitted when Ok) reading Ok.
+// The rows are not decoded: no plain-JS $QRP reader exists in the repo, and the
+// harness runs with no dependencies installed.
+const QRP_STATUS_NAMES = ['Ok', 'Partial', 'Busy', 'Cold', 'Error'];
+
+export function qrpHealthStatus(buf) {
+  if (!Buffer.isBuffer(buf) || buf.length < 16) {
+    return { ok: false, reason: `body of ${buf?.length ?? 0} bytes is too short for a $QRP frame` };
+  }
+  const id = buf.toString('latin1', 8, 12);
+  if (id !== '$QRP') {
+    return { ok: false, reason: `file identifier ${JSON.stringify(id)}, not "$QRP"` };
+  }
+  try {
+    const root = 4 + buf.readUInt32LE(4);
+    const vtable = root - buf.readInt32LE(root);
+    const vtableSize = buf.readUInt16LE(vtable);
+    const slotAt = 4 + 2 * 1;
+    const fieldOffset = slotAt + 2 <= vtableSize ? buf.readUInt16LE(vtable + slotAt) : 0;
+    const status = fieldOffset ? buf.readInt8(root + fieldOffset) : 0;
+    const name = QRP_STATUS_NAMES[status] ?? `unknown(${status})`;
+    return status === 0 ? { ok: true, status: name } : { ok: false, status: name, reason: `$QRP STATUS is ${name}` };
+  } catch (error) {
+    return { ok: false, reason: `malformed $QRP frame: ${error instanceof Error ? error.message : String(error)}` };
+  }
+}
+
+export function qrpProbeArgs(containerName, url) {
+  return ['exec', containerName, 'sh', '-c',
+    `curl -fsS -o /tmp/sdn-health.bin -w '%{http_code}' '${url}' && printf ' ' && base64 -w0 /tmp/sdn-health.bin`];
+}
+
+async function waitForQrpHealth({ containerName, url, label, timeoutMs }) {
+  const startedAt = Date.now();
+  const deadline = startedAt + timeoutMs;
+  let last = '';
+
+  while (Date.now() < deadline) {
+    const response = runDocker(qrpProbeArgs(containerName, url), { allowFailure: true });
+    const [code, body = ''] = (response.stdout || '').trim().split(' ');
+    if (response.status === 0 && code === '200') {
+      const health = qrpHealthStatus(Buffer.from(body, 'base64'));
+      if (health.ok) {
+        log(`${formatAnswered(label, containerName, startedAt)}: $QRP STATUS ${health.status}`);
+        return;
+      }
+      last = `HTTP 200, ${health.reason}`;
+    } else {
+      last = `${response.stdout || ''}${response.stderr || ''}`.trim();
+    }
+    await sleep(2000);
+  }
+
+  throw new Error(`Timed out waiting for ${label} at ${containerName} (${url}) after ${(timeoutMs / 1000).toFixed(0)} s. Last response: ${last}`);
+}
+
 // Go prints the fatal line FIRST and then every goroutine, so a plain tail of a
 // crashed node shows the middle of a stack dump and nothing about the cause.
 // That is exactly what happened: a container node died and the logs contained
@@ -673,12 +732,16 @@ async function runNetworkTest({ images, workDir, platform, prefix, timeoutMs }) 
       platform
     });
 
-    await waitForJson({
+    // A $QRP frame, not JSON: /api/v1/data/health answers with a $QRP
+    // FlatBuffer table (sdn-server/internal/api/data.go handleHealth), so
+    // parsing it as JSON could never succeed and the wait ran out on every
+    // v1.1.0 attempt with "Last response: T `$QRPX ...". The relay-status
+    // waits below are still JSON endpoints and stay as they are.
+    await waitForQrpHealth({
       containerName: containers[0],
       url: 'http://127.0.0.1:5001/api/v1/data/health',
       label: 'full DEB health',
-      timeoutMs,
-      predicate: (body) => body.status === 'ok'
+      timeoutMs
     });
     // The first node's whole first start, on a pass too: what it compiled and
     // how long each stage took before health answered.

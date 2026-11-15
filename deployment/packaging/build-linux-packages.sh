@@ -87,6 +87,11 @@ contents:
     type: config
   - src: ${work_dir}/full/etc/systemd/system/spacedatanetwork.service
     dst: /etc/systemd/system/spacedatanetwork.service
+# The unit runs as User=sdn with /var/lib/spacedatanetwork writable: create
+# both on install (deb postinst, rpm %post). See scripts/postinstall.sh.
+scripts:
+  postinstall: ${script_dir}/scripts/postinstall.sh
+  postremove: ${script_dir}/scripts/postremove.sh
 YAML
 
 cat > "${edge_cfg}" <<YAML
@@ -103,6 +108,10 @@ contents:
     dst: /opt/spacedatanetwork
   - src: ${work_dir}/edge/etc/systemd/system/spacedatanetwork-edge.service
     dst: /etc/systemd/system/spacedatanetwork-edge.service
+# The edge unit is User=sdn as well.
+scripts:
+  postinstall: ${script_dir}/scripts/postinstall.sh
+  postremove: ${script_dir}/scripts/postremove.sh
 YAML
 
 nfpm pkg --packager rpm --config "${full_cfg}" --target "${out_dir}"
