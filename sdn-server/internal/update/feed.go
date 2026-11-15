@@ -236,7 +236,9 @@ func (b FeedBase) Contains(raw, name string) error {
 	if target.RawQuery != "" || target.ForceQuery || target.Fragment != "" {
 		return outside("it carries a query or a fragment")
 	}
-	if target.RawPath != "" {
+	// No percent-encoding at all, canonical or not: RawPath is set only for a
+	// non-canonical escape, and EscapedPath shows the rest ("%20", non-ASCII).
+	if target.RawPath != "" || strings.Contains(target.EscapedPath(), "%") {
 		return outside("its path is percent-encoded")
 	}
 	if target.Path == "" || target.Path != path.Clean(target.Path) {
@@ -257,15 +259,6 @@ func portOrDefault(u *url.URL) string {
 		return "443"
 	}
 	return "80"
-}
-
-// RequireUnderFeedBase is ParseFeedBase then Contains.
-func RequireUnderFeedBase(feedBaseURL, raw, name string) error {
-	base, err := ParseFeedBase(feedBaseURL)
-	if err != nil {
-		return err
-	}
-	return base.Contains(raw, name)
 }
 
 // AssertUnderFeed refuses an index entry whose manifest or carrier lies

@@ -308,14 +308,15 @@ jobs:
   # THE UPDATE CHANNEL ON REAL DAEMONS (stack issue 670). The helper tests in
   # update_cli_test.go run a fixture daemon, which is how a health gate that
   # reverted every real update passed them. This lane builds the node three
-  # times (v2, and v3 that is never ready) and runs `update install` against a
-  # real daemon from a real bundle and a signed HTTPS feed on loopback: v1 -> v2
-  # passes the /api/v1/ready gate, v2 -> v3 is reverted and quarantined, and a
-  # release signed by an untrusted key is refused. Linux only: the CLI trusts
-  # the test feed through SSL_CERT_FILE, which Go ignores on macOS. Keys are
-  # throwaways the test generates; the feed and the admin API are on loopback,
-  # and the daemons dial no peer (the test fails if one falls back to the
-  # built-in bootstrap peers).
+  # times (v1, v2, and v3 that is never ready) and runs `update install`
+  # against a real daemon from a real bundle and a signed HTTPS feed on
+  # loopback: v1 -> v2 passes the /api/v1/ready gate, v2 -> v3 is reverted and
+  # quarantined after the configured health budget, and a release signed by an
+  # untrusted key is refused. Linux only: the CLI trusts the test feed through
+  # SSL_CERT_FILE, which Go ignores on macOS. Keys are throwaways the test
+  # generates; the feed and the admin API are on loopback, and the daemons dial
+  # no peer (the test refuses, before any daemon starts, a config that would
+  # fall back to the built-in bootstrap peers, and checks every daemon's log).
   update-channel-e2e:
     name: Update channel E2E (real daemon)
     runs-on: ubuntu-latest

@@ -220,8 +220,13 @@ func (m *Manifest) IsUIPackage() bool {
 
 // ParseManifest decodes a signed update manifest, retaining the raw bytes so
 // the signature can be checked over the canonical form of the original
-// document (including fields this struct does not model).
+// document (including fields this struct does not model). A document that
+// repeats a key in any object is refused (strictjson.go): the struct would
+// merge the copies while the canonical bytes keep only the last.
 func ParseManifest(raw []byte) (*Manifest, error) {
+	if err := assertStrictJSONDocument(raw); err != nil {
+		return nil, fmt.Errorf("parse update manifest: %w", err)
+	}
 	var manifest Manifest
 	if err := json.Unmarshal(raw, &manifest); err != nil {
 		return nil, fmt.Errorf("parse update manifest: %w", err)
@@ -245,7 +250,15 @@ func (m *Manifest) VerifySignature(roots TrustedRoots) error {
 // separators, and no HTML escaping. Manifests are expected to be ASCII; the
 // only known divergence from JSON.stringify is Go's escaping of U+2028 and
 // U+2029, which must not appear in manifest values.
+//
+// Only a strict document has a canonical form (strictjson.go): one JSON value,
+// no object repeating a key. Decoding into a map would otherwise drop every
+// earlier copy of a repeated key from the bytes the signature covers, while
+// the struct the caller acts on still read them.
 func CanonicalManifestBytes(raw []byte) ([]byte, error) {
+	if err := assertStrictJSONDocument(raw); err != nil {
+		return nil, fmt.Errorf("parse update manifest: %w", err)
+	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.UseNumber()
 	var doc map[string]any

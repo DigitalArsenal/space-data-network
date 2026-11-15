@@ -2630,6 +2630,8 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			// Load-balancer and monitoring surface: /health, /ready (anonymous,
 			// a status word) and /metrics (operator session). OPS-08.
 			mountHealthRoutes(adminMux, healthDeps{
+				// internal/node opens no store in edge mode.
+				storeless: cfg.Mode == "edge",
 				dataReady: func() bool {
 					if len(cfg.Flows.Mounts) == 0 {
 						return true

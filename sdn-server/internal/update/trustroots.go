@@ -52,8 +52,13 @@ func DefaultTrustRoots() (TrustedRoots, error) {
 }
 
 // parseTrustRoots decodes a roots document and refuses an empty set or a
-// SEC-001 root.
+// SEC-001 root. The document must be exactly one JSON object with no key
+// listed twice (strictjson.go): a repeated id would keep only its last key,
+// and anything after the first value used to be ignored.
 func parseTrustRoots(data []byte, source string) (TrustedRoots, error) {
+	if err := assertStrictJSONDocument(data); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", source, err)
+	}
 	var roots TrustedRoots
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	if err := decoder.Decode(&roots); err != nil {

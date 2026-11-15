@@ -26,9 +26,16 @@ package main
 // scripts/go-with-wasmedge.sh, which needs WASMEDGE_DIR.
 //
 // Every key is a throwaway generated here. The feed and the admin API are on
-// loopback and the daemons dial no peer (writeRealDaemonConfig; the test
-// fails if one falls back to the built-in bootstrap peers). The daemon's own
-// bond attestation still queries the public chain services it always does.
+// loopback and the daemons dial no peer (writeRealDaemonConfig;
+// requireIsolatedConfig refuses, before any daemon starts, a config whose
+// bootstrap list would fall back to the built-in peers, and requireIsolated
+// checks every daemon's log, the helper-started ones included). The daemon's
+// own bond attestation still queries the public chain services it always does.
+//
+// Also asserted: `update install` hands the helper the node's
+// update.health_timeout_seconds (the helper's argv, and how long v3's gate
+// waited), and every helper and daemon the test caused is stopped at the end,
+// however it ends.
 
 import (
 	"context"
@@ -59,6 +66,8 @@ import (
 	libp2pcrypto "github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/peer"
 
+	"github.com/spacedatanetwork/sdn-server/internal/bootstrap"
+	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/sigdomain"
 	"github.com/spacedatanetwork/sdn-server/internal/update"
 	"github.com/spacedatanetwork/sdn-server/internal/updatesign"
@@ -168,9 +177,13 @@ func runRealDaemonUpdateChannel(t *testing.T, install realInstaller) {
 	tracker := &realDaemonTracker{root: root}
 	t.Cleanup(tracker.stopAll)
 	s := &realScenario{work: work, exe: exe, cfg: cfg, adminBase: adminBase, store: store, env: env, paths: paths, feed: feed, healthSeconds: healthSeconds}
+	healthBudget := time.Duration(healthSeconds) * time.Second
 	installed := func(b realBuild, label string) string {
 		t.Helper()
 		out, err := install(t, s, b, label)
+		// Tracked before anything can fail: the helper and every daemon it
+		// starts are stopped when the test ends (waitRealHelper keeps adding).
+		tracker.addFrom(out)
 		if err != nil {
 			t.Fatalf("update install (%s): %v\n%s", label, err, readFileString(out))
 		}
@@ -180,8 +193,14 @@ func runRealDaemonUpdateChannel(t *testing.T, install realInstaller) {
 		return out
 	}
 
+	// Isolation is checked BEFORE any daemon starts, on the config the daemon
+	// reads: a fallback to the built-in bootstrap peers would already have
+	// dialed production nodes by the time a log said so.
+	requireIsolatedConfig(t, cfg)
+
 	// v1, started by hand like an operator's first run.
-	v1Log, err := os.Create(filepath.Join(work, "daemon-v1.log"))
+	daemonLogs := []string{filepath.Join(work, "daemon-v1.log")}
+	v1Log, err := os.Create(daemonLogs[0])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,8 +219,12 @@ func runRealDaemonUpdateChannel(t *testing.T, install realInstaller) {
 	// PASS: v1 -> v2 through the helper.
 	feed.publish(t, v2, priv)
 	out := installed(v2, "v2")
-	waitRealHelper(t, out, time.Duration(2*healthSeconds)*time.Second+bootBudget)
-	tracker.addFrom(out)
+	daemonLogs = append(daemonLogs, out)
+	requireHelperHealthBudget(t, out, healthBudget)
+	waitRealHelper(t, tracker, out, time.Duration(2*healthSeconds)*time.Second+bootBudget)
+	// The daemons the helper starts write into its output: none may have
+	// reached a bootstrap peer either.
+	requireIsolated(t, out)
 	requireRealIdentity(t, adminBase, v2)
 	if state, err := update.LoadState(paths); err != nil || state.Sequence != v2.sequence || state.UpdateID != v2.updateID {
 		t.Fatalf("state after v2 = %+v (%v), want sequence %d update %s", state, err, v2.sequence, v2.updateID)
@@ -216,8 +239,13 @@ func runRealDaemonUpdateChannel(t *testing.T, install realInstaller) {
 	// UNHEALTHY: v2 -> v3, never ready. Reverted to v2 and quarantined.
 	feed.publish(t, v3, priv)
 	out = installed(v3, "v3")
-	waitRealHelper(t, out, time.Duration(3*healthSeconds)*time.Second+bootBudget)
-	tracker.addFrom(out)
+	daemonLogs = append(daemonLogs, out)
+	requireHelperHealthBudget(t, out, healthBudget)
+	waitRealHelper(t, tracker, out, time.Duration(3*healthSeconds)*time.Second+bootBudget)
+	requireIsolated(t, out)
+	// The gate gave v3 the configured budget: neither the helper's old bare
+	// 60 s nor the 600 s default.
+	requireGateWaited(t, root, v3, healthBudget)
 	if text := readFileString(out); !strings.Contains(text, "rolled back to "+v2.version) {
 		t.Fatalf("the helper did not report a rollback to %s:\n%s", v2.version, text)
 	}
@@ -245,6 +273,11 @@ func runRealDaemonUpdateChannel(t *testing.T, install realInstaller) {
 		t.Fatalf("the untrusted release was staged (%v)", err)
 	}
 	requireRealIdentity(t, adminBase, v2)
+
+	// Once more at the end: the daemons kept logging after their helper exited.
+	for _, log := range daemonLogs {
+		requireIsolated(t, log)
+	}
 }
 
 func envInt(t *testing.T, name string, fallback int) int {
@@ -370,7 +403,8 @@ func writeRealDaemonConfig(t *testing.T, path, store string, adminPort, kuboPort
 		fmt.Sprintf("  ipfs_api_url: \"http://127.0.0.1:%d\"", kuboPort), fmt.Sprintf("  ipfs_gateway_url: \"http://127.0.0.1:%d\"", gatewayPort),
 		"setup:", fmt.Sprintf("  data_path: %q", store),
 		// No --health-timeout is passed: `update install` must hand the helper
-		// this budget (installHealthTimeout).
+		// this budget (installHealthTimeout). requireHelperHealthBudget checks
+		// the helper's argv, requireGateWaited how long v3's gate waited.
 		"update:", "  enabled: true", fmt.Sprintf("  health_timeout_seconds: %d", healthSeconds),
 		"",
 	}
@@ -553,22 +587,81 @@ var (
 	restartPIDPattern = regexp.MustCompile(`restart=started pid=(\d+)`)
 )
 
-// waitRealHelper waits for the helper named in out to exit.
-func waitRealHelper(t *testing.T, out string, budget time.Duration) {
+// waitRealHelper waits for the helper named in out to exit. Every daemon the
+// helper starts is handed to tracker as soon as the helper names it, so a
+// failure anywhere still stops it.
+func waitRealHelper(t *testing.T, tracker *realDaemonTracker, out string, budget time.Duration) {
+	t.Helper()
+	pid := realHelperPID(t, out)
+	deadline := time.Now().Add(budget)
+	for processAlive(pid) {
+		tracker.addFrom(out)
+		if time.Now().After(deadline) {
+			t.Fatalf("the helper (pid %d) is still running after %s:\n%s", pid, budget, readFileString(out))
+		}
+		time.Sleep(time.Second)
+	}
+	tracker.addFrom(out)
+	t.Logf("helper %d finished:\n%s", pid, tailString(readFileString(out), 60))
+}
+
+func realHelperPID(t *testing.T, out string) int {
 	t.Helper()
 	match := helperPIDPattern.FindStringSubmatch(readFileString(out))
 	if match == nil {
 		t.Fatalf("no helper pid in:\n%s", readFileString(out))
 	}
 	pid, _ := strconv.Atoi(match[1])
-	deadline := time.Now().Add(budget)
-	for processAlive(pid) {
-		if time.Now().After(deadline) {
-			t.Fatalf("the helper (pid %d) is still running after %s:\n%s", pid, budget, readFileString(out))
-		}
-		time.Sleep(time.Second)
+	return pid
+}
+
+// requireHelperHealthBudget: the helper `update install` started was handed
+// the node's update.health_timeout_seconds (no --health-timeout was given to
+// install), read from the helper's own argv while it runs (Linux /proc).
+func requireHelperHealthBudget(t *testing.T, out string, want time.Duration) {
+	t.Helper()
+	pid := realHelperPID(t, out)
+	raw, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+	if err != nil {
+		t.Fatalf("read the helper's argv (pid %d): %v\n%s", pid, err, readFileString(out))
 	}
-	t.Logf("helper %d finished:\n%s", pid, tailString(readFileString(out), 60))
+	args := strings.Split(strings.TrimRight(string(raw), "\x00"), "\x00")
+	i := slices.Index(args, "--health-timeout")
+	if i < 0 || i+1 >= len(args) || args[i+1] != want.String() {
+		t.Fatalf("the helper was not handed update.health_timeout_seconds (--health-timeout %s): argv %q", want, args)
+	}
+}
+
+// requireGateWaited: v3 never becomes ready, so its gate runs out its whole
+// budget; the ledger's restart and health-failed times for v3 show how long
+// that was. Within [budget-2s, budget+90s]: not the helper's bare 60 s, not
+// the 600 s default.
+func requireGateWaited(t *testing.T, root string, b realBuild, budget time.Duration) {
+	t.Helper()
+	var restarted, failed time.Time
+	for _, e := range readLedger(t, root) {
+		if e.UpdateID != b.updateID {
+			continue
+		}
+		at, err := time.Parse(time.RFC3339, e.RecordedAt)
+		if err != nil {
+			t.Fatalf("ledger time %q: %v", e.RecordedAt, err)
+		}
+		if e.Action == "restart" && e.Version == b.version && restarted.IsZero() {
+			restarted = at
+		}
+		if e.Action == "health-failed" && failed.IsZero() {
+			failed = at
+		}
+	}
+	if restarted.IsZero() || failed.IsZero() {
+		t.Fatalf("the ledger has no restart and health-failed for %s: %v", b.updateID, ledgerActions(t, root))
+	}
+	waited := failed.Sub(restarted)
+	if waited < budget-2*time.Second || waited > budget+90*time.Second {
+		t.Fatalf("%s's gate waited %s after its restart, want the configured %s", b.name, waited, budget)
+	}
+	t.Logf("%s's gate waited %s (budget %s)", b.name, waited, budget)
 }
 
 // processAlive: the pid exists and is not a zombie.
@@ -606,8 +699,81 @@ func waitRealReady(t *testing.T, base string, budget time.Duration, logPath stri
 	t.Fatalf("the daemon was not ready within %s:\n%s", budget, tailString(readFileString(logPath), 40))
 }
 
-// requireIsolated fails the test, before any update runs, if the daemon fell
-// back to the built-in bootstrap peers (production nodes) or connected to one.
+// requireIsolatedConfig fails the test before any daemon starts unless the
+// config it will read keeps it on this machine: bootstrap peers that resolve
+// without the fallback to the built-in defaults (an empty or invalid list
+// falls back to the production nodes), every one of them on loopback, no DHT
+// or mDNS, and the admin API on loopback.
+func requireIsolatedConfig(t *testing.T, cfgPath string) {
+	t.Helper()
+	if err := isolatedConfigProblem(cfgPath); err != nil {
+		t.Fatalf("the test daemon would not be isolated: %v", err)
+	}
+}
+
+func isolatedConfigProblem(cfgPath string) error {
+	cfg, _, err := config.LoadResolved(cfgPath)
+	if err != nil {
+		return fmt.Errorf("load its config: %w", err)
+	}
+	peers, usedFallback, err := bootstrap.ResolveBootstrapPeers(cfg.Network.Bootstrap)
+	if err != nil || usedFallback || len(peers) == 0 {
+		return fmt.Errorf("its bootstrap list %q falls back to the built-in peers (fallback=%t, err=%v)", cfg.Network.Bootstrap, usedFallback, err)
+	}
+	for _, p := range peers {
+		for _, addr := range p.AddrInfo.Addrs {
+			if !strings.HasPrefix(addr.String(), "/ip4/127.") {
+				return fmt.Errorf("its bootstrap peer %s is not on loopback (%s)", p.AddrInfo.ID, addr)
+			}
+		}
+	}
+	if cfg.Peers.EnableDHT || cfg.Peers.EnableMDNS {
+		return fmt.Errorf("it would discover peers (dht=%t mdns=%t)", cfg.Peers.EnableDHT, cfg.Peers.EnableMDNS)
+	}
+	if !strings.HasPrefix(cfg.Admin.ListenAddr, "127.0.0.1:") {
+		return fmt.Errorf("its admin API is not on loopback: %q", cfg.Admin.ListenAddr)
+	}
+	return nil
+}
+
+// Not gated: the config the real-daemon E2E writes passes the isolation check,
+// and the check refuses the configs that would reach production peers (an
+// empty or unparsable bootstrap list falls back to the built-in defaults).
+func TestRealDaemonConfigIsIsolated(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "config.yaml")
+	writeRealDaemonConfig(t, cfg, filepath.Join(dir, "store"), freeLoopbackPort(t), freeLoopbackPort(t), freeLoopbackPort(t), 180)
+	if err := isolatedConfigProblem(cfg); err != nil {
+		t.Fatalf("the E2E's own config: %v", err)
+	}
+	written, err := os.ReadFile(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bootstrapLine := regexp.MustCompile(`(?m)^  bootstrap:\n    - "/ip4/127\.0\.0\.1/tcp/\d+/p2p/(\w+)"\n`)
+	match := bootstrapLine.FindSubmatch(written)
+	if match == nil {
+		t.Fatalf("no loopback bootstrap peer in the E2E config:\n%s", written)
+	}
+	for name, replacement := range map[string]string{
+		"empty bootstrap list": "  bootstrap: []\n",
+		"no peer id":           "  bootstrap:\n    - \"/ip4/127.0.0.1/tcp/4001\"\n",
+		// TEST-NET-1 (RFC 5737): only parsed here, never dialed.
+		"a peer off this machine": "  bootstrap:\n    - \"/ip4/192.0.2.10/tcp/4001/p2p/" + string(match[1]) + "\"\n",
+	} {
+		variant := filepath.Join(dir, strings.ReplaceAll(name, " ", "-")+".yaml")
+		if err := os.WriteFile(variant, bootstrapLine.ReplaceAll(written, []byte(replacement)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := isolatedConfigProblem(variant); err == nil {
+			t.Errorf("%s: accepted as isolated", name)
+		}
+	}
+}
+
+// requireIsolated fails the test if a daemon's log shows it fell back to the
+// built-in bootstrap peers (production nodes) or connected to one. It backs
+// up requireIsolatedConfig, which is what keeps the daemons from dialing.
 func requireIsolated(t *testing.T, logPath string) {
 	t.Helper()
 	text := readFileString(logPath)
@@ -691,8 +857,16 @@ func (r *realDaemonTracker) add(pid int) {
 	}
 }
 
+// addFrom tracks the helper an install output names and every daemon that
+// helper started.
 func (r *realDaemonTracker) addFrom(out string) {
-	for _, m := range restartPIDPattern.FindAllStringSubmatch(readFileString(out), -1) {
+	text := readFileString(out)
+	if m := helperPIDPattern.FindStringSubmatch(text); m != nil {
+		if pid, err := strconv.Atoi(m[1]); err == nil {
+			r.add(pid)
+		}
+	}
+	for _, m := range restartPIDPattern.FindAllStringSubmatch(text, -1) {
 		if pid, err := strconv.Atoi(m[1]); err == nil {
 			r.add(pid)
 		}

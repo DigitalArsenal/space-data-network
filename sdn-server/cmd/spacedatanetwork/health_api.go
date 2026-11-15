@@ -26,6 +26,12 @@ type healthDeps struct {
 	dataReady func() bool
 	// peerCount reports connected libp2p peers, or -1 when the host is down.
 	peerCount func() int
+	// storeless marks a node that opens no record store by design (mode:
+	// edge; internal/node skips the store). Its engine and data checks can
+	// never pass, so its readiness is the libp2p host alone. Without this an
+	// edge node answered 503 for its whole life, and the update helper, which
+	// gates on /ready, reverted every update it installed.
+	storeless bool
 	// requireAuth and authHandler gate /metrics exactly like every other
 	// operator surface: the numbers describe the HOST, not public data.
 	requireAuth bool
@@ -150,6 +156,12 @@ var readinessOverride string
 func notReadyReason(deps healthDeps) string {
 	if readinessOverride != "" {
 		return readinessOverride
+	}
+	if deps.storeless {
+		if deps.peerCount == nil || deps.peerCount() < 0 {
+			return "libp2p host down"
+		}
+		return ""
 	}
 	if deps.engineReady == nil {
 		return "store not linked"

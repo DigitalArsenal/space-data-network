@@ -322,15 +322,29 @@ Builds from this change on refuse it as an update root wherever it appears
 (the trust file, `SDN_UPDATE_TRUST_ROOTS`, or a release's `trust_roots`), and
 refuse to load a trust file that lists it.
 
+**Do this now on every install of v1.1.1 or earlier.** Such an install
+trusts `d4a971a7e534`, and its pushed-update lane (`update.enabled`, on by
+default) acts on a signal from any peer: anyone can sign an update it will
+fetch, install and start. No release can fix that over the channel, because
+releases are signed with the demo root, which those installs do not trust.
+Until you have done the step below, set `update.enabled: false` in the
+node's config and restart the daemon.
+
 **An existing install trusts the demo root after one manual step.** Re-run
 the installer for the new release and restart the daemon: the new bundle
 carries the demo root and the fixed update helper. Without reinstalling, a
 command-line install can instead replace (not add beside) the old root:
 write the demo root above into `<bundle>/trust/update-roots.json`, stop the
 daemon, run `<bundle>/bin/spacedatanetwork update install --direct`, then
-start it. `--direct` matters on v1.1.1 and earlier, whose helper reverts every
-update it gates (stack issue 670). Desktop, `.deb`/`.rpm`, VM-bundle and
-container installs cannot update themselves: install the new release.
+start it. `--direct` matters on builds from 2026-10-18 (47f043132) through
+v1.1.1, whose helper reverts every update it gates (stack issue 670).
+Desktop, `.deb`/`.rpm`, VM-bundle and container installs cannot update
+themselves: install the new release. A bundle on the internal `beta` lane
+(fleet hosts) reads `<feedBaseUrl>/cli-bundle/beta/...`, where every
+manifest published so far is signed by another key: after the trust file is
+replaced, `update install --direct` refuses them ("untrusted update signing
+key") until a fleet release signed with the demo root is published on that
+lane, so reinstall instead, or publish that release first.
 
 **The channel needs a release.** Nothing is installable from the release
 channel until a release is cut with the update signing key configured and
@@ -349,7 +363,14 @@ How an install takes an update:
 - A pushed update signal (on by default, `update.enabled`) is acted on only
   when it is signed by an update root and its manifest and carrier lie under
   the bundle's own `update.feedBaseUrl`. A signal naming any other host, port
-  or path is dropped before anything is fetched.
+  or path is dropped before anything is fetched. `update install` and
+  `update check` follow the same rule for the index, the manifest and the
+  carrier, and for every redirect while fetching them.
+- `spacedatanetwork status` prints `daemon_status=running` with
+  `data_health=healthy`, or with `data_health=degraded` and the
+  `alerts_error` / `alerts_warning` counts when operational alerts are active
+  on a daemon that is serving. It no longer prints `data_runtime`, and prints
+  `data_message` only when the health answer cannot be read.
 
 ## Known gaps on this date
 

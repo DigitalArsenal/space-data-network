@@ -56,6 +56,22 @@ jobs:
         env:
           INPUT_VERSION: ${{ inputs.version }}
         run: node deployment/release/prepare-beta-release.mjs
+      # IS THERE A KEY TO SIGN THE UPDATE FEED WITH? The same question, asked
+      # the same way, as the cli-update-feed job's "Check the update signing
+      # key", which stays the gate before anything is signed. Asked here too so
+      # that a stable release without a usable key (missing, a key id that is
+      # not the one derived from it, not a fleet root, or a SEC-001 key) fails
+      # in minutes, not after the five-platform cli matrix. A beta without the
+      # key passes here with a warning, as it does there.
+      - name: Check the update signing key before building
+        env:
+          RELEASE_MATURITY: ${{ steps.version.outputs.channel }}
+          SDN_UPDATE_SIGNING_KEY_PEM: ${{ secrets.SDN_UPDATE_SIGNING_KEY_PEM }}
+          SDN_UPDATE_KEY_ID: ${{ secrets.SDN_UPDATE_KEY_ID }}
+        run: |
+          node deployment/release/check-update-signing-key.mjs \
+            --maturity "${RELEASE_MATURITY}" \
+            --roots deployment/release/fleet-trust-roots.json
       # CAN THIS TOKEN ACTUALLY PUBLISH? Ask now, in the first job, not after
       # forty minutes of building every artifact for five platforms.
       #

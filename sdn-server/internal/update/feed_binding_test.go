@@ -33,6 +33,9 @@ func TestFeedBaseContainsOnlyPathsUnderTheBundleFeed(t *testing.T) {
 		{url: "https://sdn.spaceaware.io/updates//x/manifest.json", want: "clean"},
 		{url: "https://sdn.spaceaware.io/updates/%2e%2e/admin/x.json", want: "percent-encoded"},
 		{url: "https://sdn.spaceaware.io/updates/a%2Fb/manifest.json", want: "percent-encoded"},
+		// A canonical escape leaves url.URL.RawPath empty; it is refused too.
+		{url: "https://sdn.spaceaware.io/updates/a%20b/manifest.json", want: "percent-encoded"},
+		{url: "https://sdn.spaceaware.io/updates/%C3%A9/manifest.json", want: "percent-encoded"},
 		{url: "https://sdn.spaceaware.io/updates/x/manifest.json?redirect=https://attacker.example", want: "query"},
 		{url: "https://sdn.spaceaware.io/updates/x/manifest.json#frag", want: "fragment"},
 	} {

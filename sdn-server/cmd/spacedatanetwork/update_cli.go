@@ -210,11 +210,15 @@ var updateInstallCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		manifestBytes, err := readHTTPSURL(&http.Client{Timeout: 5 * time.Minute}, candidate.ManifestURL, 64<<20)
+		feed, err := update.ParseFeedBase(manifest.Update.FeedBaseURL)
+		if err != nil {
+			return err
+		}
+		manifestBytes, err := readFeedURL(&http.Client{Timeout: 5 * time.Minute}, feed, candidate.ManifestURL, 64<<20)
 		if err != nil {
 			return fmt.Errorf("read provider update manifest: %w", err)
 		}
-		wasmBytes, err := readHTTPSURL(&http.Client{Timeout: 5 * time.Minute}, candidate.CarrierURL, 2<<30)
+		wasmBytes, err := readFeedURL(&http.Client{Timeout: 5 * time.Minute}, feed, candidate.CarrierURL, 2<<30)
 		if err != nil {
 			return fmt.Errorf("read provider update carrier: %w", err)
 		}
@@ -306,6 +310,9 @@ var updateHelperApplyCmd = &cobra.Command{
 	Use:    "helper-apply",
 	Hidden: true,
 	Short:  "Apply a staged update from a copied helper executable",
+	// A reverted update is an error result, not a usage mistake: print the
+	// error and the helper's own report, not cobra's usage block.
+	SilenceUsage: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if strings.TrimSpace(helperApplyBundleRoot) == "" {
 			return errors.New("--bundle-root is required")
@@ -514,7 +521,14 @@ func fetchProviderUpdateCandidate(client *http.Client, manifest bundleManifest, 
 	if err != nil {
 		return nil, err
 	}
-	raw, err := readHTTPSURL(client, indexURL, 16<<20)
+	// The bytes come from this bundle's own feed and nowhere else: the index,
+	// and every redirect while fetching it, stay under the feed; an index
+	// entry is a pointer, and the index is unsigned (see FeedBase.Contains).
+	base, err := update.ParseFeedBase(manifest.Update.FeedBaseURL)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := readFeedURL(client, base, indexURL, 16<<20)
 	if err != nil {
 		return nil, fmt.Errorf("fetch update provider index: %w", err)
 	}
@@ -531,12 +545,6 @@ func fetchProviderUpdateCandidate(client *http.Client, manifest bundleManifest, 
 		Kind:            "cli-bundle",
 		CurrentSequence: currentSequence,
 	})
-	if err != nil {
-		return nil, err
-	}
-	// The bytes come from this bundle's own feed and nowhere else: an index
-	// entry is a pointer, and the index is unsigned (see FeedBase.Contains).
-	base, err := update.ParseFeedBase(manifest.Update.FeedBaseURL)
 	if err != nil {
 		return nil, err
 	}
@@ -1528,7 +1536,22 @@ func adminEndpointURL(rawAdminURL string, endpointPath string) (string, error) {
 	return parsed.String(), nil
 }
 
+// readHTTPSURL fetches an operator-named HTTPS URL; every redirect must stay
+// on HTTPS.
 func readHTTPSURL(client *http.Client, source string, maxBytes int64) ([]byte, error) {
+	return readUpdateURL(client, nil, source, maxBytes)
+}
+
+// readFeedURL fetches from this bundle's own update feed: the URL and every
+// redirect must stay on HTTPS and under feed (FeedBase.Contains), the rule the
+// node's signal lane applies to its own fetches. The index is unsigned and
+// only points, so no hop of an index, manifest or carrier download may leave
+// the feed.
+func readFeedURL(client *http.Client, feed update.FeedBase, source string, maxBytes int64) ([]byte, error) {
+	return readUpdateURL(client, &feed, source, maxBytes)
+}
+
+func readUpdateURL(client *http.Client, feed *update.FeedBase, source string, maxBytes int64) ([]byte, error) {
 	if maxBytes <= 0 {
 		return nil, errors.New("maximum update download size must be positive")
 	}
@@ -1536,10 +1559,36 @@ func readHTTPSURL(client *http.Client, source string, maxBytes int64) ([]byte, e
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
 		return nil, errors.New("update provider URL must use HTTPS")
 	}
+	if feed != nil {
+		if err := feed.Contains(source, "update download"); err != nil {
+			return nil, err
+		}
+	}
 	if client == nil {
 		client = &http.Client{Timeout: 5 * time.Minute}
 	}
-	resp, err := client.Get(source)
+	// A copy: the caller's transport and timeout stay, its redirect policy is
+	// wrapped, and the caller's client is not changed.
+	bounded := *client
+	callerRedirect := client.CheckRedirect
+	bounded.CheckRedirect = func(next *http.Request, via []*http.Request) error {
+		if next.URL.Scheme != "https" {
+			return errors.New("update download redirected away from HTTPS")
+		}
+		if feed != nil {
+			if err := feed.Contains(next.URL.String(), "update download redirect"); err != nil {
+				return err
+			}
+		}
+		if callerRedirect != nil {
+			return callerRedirect(next, via)
+		}
+		if len(via) >= 10 {
+			return errors.New("stopped after 10 redirects")
+		}
+		return nil
+	}
+	resp, err := bounded.Get(source)
 	if err != nil {
 		return nil, err
 	}

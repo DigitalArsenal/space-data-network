@@ -841,6 +841,15 @@ test('released bundles and their update feed are stamped with the public release
   // Same for the local/offline assembly lane, which publishes the same feed.
   const assemble = readRepoFile('deployment/release/assemble-beta-release-artifacts.sh');
   assert.doesNotMatch(assemble, /--channel beta/);
+  // The assembler builds no feed of its own: it ships the job's verified one.
+  assert.doesNotMatch(assemble, /build-cli-update-payload\.mjs|build-sdn-update-feed\.js|SDN_UPDATE_KEY_ID:-/);
+
+  // And the same check runs in the first job, before any build, so a stable
+  // release without a usable key fails in minutes instead of after the
+  // five-platform cli matrix.
+  const first = workflow.slice(workflow.indexOf('  beta-version:'), workflow.indexOf('  wasmedge-static:'));
+  assert.match(first, /name: Check the update signing key before building\n\s+env:\n\s+RELEASE_MATURITY: \$\{\{ steps\.version\.outputs\.channel \}\}\n\s+SDN_UPDATE_SIGNING_KEY_PEM: \$\{\{ secrets\.SDN_UPDATE_SIGNING_KEY_PEM \}\}\n\s+SDN_UPDATE_KEY_ID: \$\{\{ secrets\.SDN_UPDATE_KEY_ID \}\}\n\s+run: \|\n\s+node deployment\/release\/check-update-signing-key\.mjs \\\n\s+--maturity "\$\{RELEASE_MATURITY\}" \\\n\s+--roots deployment\/release\/fleet-trust-roots\.json\n/);
+  assert.ok(first.indexOf('check-update-signing-key.mjs') < first.indexOf('Check the token can publish a release'));
 });
 
 test('release maturity reaches only the release notes, never a --channel', () => {

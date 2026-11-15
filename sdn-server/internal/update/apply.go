@@ -384,10 +384,12 @@ func ApplyPrepared(paths Paths, prepared *Prepared, opts ApplyOptions) (*ApplyRe
 		return nil, swapErr
 	}
 
+	trustRootsFrom := state.TrustRootsFrom
 	if candidate.Manifest.TrustRoots != nil {
 		if err := installTrustRoots(paths, candidate.Manifest.TrustRoots); err != nil {
 			return nil, fmt.Errorf("update applied but its update roots were not installed: %w", err)
 		}
+		trustRootsFrom = candidate.UpdateID
 	}
 
 	appliedAt := nowOr(opts.Now).UTC().Format(time.RFC3339)
@@ -417,6 +419,8 @@ func ApplyPrepared(paths Paths, prepared *Prepared, opts ApplyOptions) (*ApplyRe
 		AppliedAt: appliedAt,
 		Previous:  previous,
 		Slots:     slots,
+
+		TrustRootsFrom: trustRootsFrom,
 	}
 	if err := SaveState(paths, newState); err != nil {
 		return nil, fmt.Errorf("update applied but state write failed: %w", err)
@@ -550,6 +554,10 @@ func Rollback(paths Paths, opts RollbackOptions) (*RollbackResult, error) {
 		Channel:   channel,
 		AppliedAt: nowOr(opts.Now).UTC().Format(time.RFC3339),
 		Slots:     remaining,
+
+		// The roots are signed policy, not payload: rolling the binary back
+		// leaves them, and the record that a release replaced them, in place.
+		TrustRootsFrom: state.TrustRootsFrom,
 	}
 	// Previous mirrors Slots[0] so a box rolled back onto a pre-retention
 	// binary still finds the reverse target in the shape it understands.

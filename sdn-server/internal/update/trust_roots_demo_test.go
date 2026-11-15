@@ -126,6 +126,93 @@ func TestLoadTrustRootsFallsBackToTheCompiledInRootsOnlyWhenTheFileIsAbsent(t *t
 	}
 }
 
+// The compiled-in roots are for a bundle that never had a trust file, and for
+// nothing else: not for a path where something exists but cannot be read (a
+// dangling symlink), and not, after a release replaced the roots, for a file
+// or directory that has gone missing. Otherwise losing the file would bring
+// back a compiled-in root the rotation dropped (for example a retired demo
+// key), with no signed release saying so.
+func TestCompiledInRootsDoNotComeBackForAPresentPathOrAfterARotation(t *testing.T) {
+	t.Setenv(TrustRootsEnv, "")
+
+	t.Run("dangling symlink", func(t *testing.T) {
+		paths := PathsFor(t.TempDir())
+		if err := os.MkdirAll(filepath.Dir(paths.Trust), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Join(t.TempDir(), "nowhere.json"), paths.Trust); err != nil {
+			t.Fatal(err)
+		}
+		if roots, err := LoadTrustRoots(paths); err == nil {
+			t.Fatalf("a dangling symlink at the trust file loaded %v, want an error", roots)
+		}
+	})
+
+	t.Run("after a rotation", func(t *testing.T) {
+		current := newTestSigner(t)
+		paths, _ := setupBundleRoot(t, current)
+		distribution := newTestSigner(t)
+		distribution.keyID = RootKeyID(distribution.publicKey)
+		bundleBytes := makeBundleTarGz(t, "3.0.0", map[string]string{"bin/spacedatanetwork": "binary-3.0.0"})
+		wasmBytes := BuildCarrier(bundleBytes)
+		manifestBytes := current.signedManifest(t, func(doc map[string]any) {
+			doc["update_id"], doc["version"], doc["sequence"] = "move-roots", "3.0.0", int64(100)
+			doc["trust_roots"] = map[string]any{distribution.keyID: distribution.publicKeyBase64SPKI(t)}
+		}, bundleBytes, wasmBytes)
+		if _, err := Stage(paths, manifestBytes, wasmBytes, HostVerifyOptions(current.roots(t), 0, time.Now()), nil); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Apply(paths, ApplyOptions{UpdateID: "move-roots"}); err != nil {
+			t.Fatal(err)
+		}
+		state, err := LoadState(paths)
+		if err != nil || state.TrustRootsFrom != "move-roots" {
+			t.Fatalf("state after the rotation: trust_roots_from = %q, %v; want move-roots", state.TrustRootsFrom, err)
+		}
+
+		if err := os.Remove(paths.Trust); err != nil {
+			t.Fatal(err)
+		}
+		if roots, err := LoadTrustRoots(paths); err == nil || !strings.Contains(err.Error(), "move-roots") {
+			t.Fatalf("a rotated bundle with its trust file deleted: %v, %v; want an error naming the rotation", roots, err)
+		}
+		if err := os.RemoveAll(filepath.Dir(paths.Trust)); err != nil {
+			t.Fatal(err)
+		}
+		if roots, err := LoadTrustRoots(paths); err == nil {
+			t.Fatalf("a rotated bundle with its trust directory deleted loaded %v, want an error", roots)
+		}
+
+		// Rolling the binary back keeps the record, as it keeps the roots.
+		writeRoots(t, paths.Trust, distribution.roots(t))
+		if _, err := RollbackLast(paths, RollbackOptions{Reason: "test"}); err != nil {
+			t.Fatal(err)
+		}
+		if state, err := LoadState(paths); err != nil || state.TrustRootsFrom != "move-roots" {
+			t.Fatalf("state after a rollback: trust_roots_from = %q, %v; want move-roots kept", state.TrustRootsFrom, err)
+		}
+		if err := os.Remove(paths.Trust); err != nil {
+			t.Fatal(err)
+		}
+		if roots, err := LoadTrustRoots(paths); err == nil {
+			t.Fatalf("after a rollback, a missing trust file loaded %v, want an error", roots)
+		}
+	})
+
+	t.Run("an unreadable state", func(t *testing.T) {
+		paths := PathsFor(t.TempDir())
+		if err := os.MkdirAll(paths.Updates, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(paths.State, []byte("{not json"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if roots, err := LoadTrustRoots(paths); err == nil {
+			t.Fatalf("no trust file and an unreadable state loaded %v, want an error", roots)
+		}
+	})
+}
+
 func requireSEC001Refusal(t *testing.T, what string, err error) {
 	t.Helper()
 	if err == nil || !strings.Contains(err.Error(), "SEC-001") {

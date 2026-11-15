@@ -157,6 +157,11 @@ func ParseSignal(raw []byte) (*Signal, error) {
 	if len(raw) > SignalMaxBytes {
 		return nil, fmt.Errorf("update signal exceeds %d bytes", SignalMaxBytes)
 	}
+	// One reading only: a repeated key would be merged by the struct and
+	// dropped from the canonical bytes (strictjson.go).
+	if err := assertStrictJSONDocument(raw); err != nil {
+		return nil, fmt.Errorf("parse update signal: %w", err)
+	}
 	var signal Signal
 	if err := json.Unmarshal(raw, &signal); err != nil {
 		return nil, fmt.Errorf("parse update signal: %w", err)

@@ -21,7 +21,6 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"slices"
 	"strconv"
@@ -644,9 +643,28 @@ func (b *e2eBundle) runHelper(t *testing.T, healthTimeout time.Duration, stop up
 	if supervisor != nil {
 		opts.Supervisor = func(context.Context, int) daemonSupervisor { return supervisor }
 	}
+	// Every daemon the helper started is stopped when the test ends, however
+	// the test ends. Registered before the caller can judge the result: a test
+	// that failed on the helper's error used to leave the build the helper
+	// had started running, with its temp dir gone and its port held.
+	t.Cleanup(func() { stopHelperStartedDaemons(b.paths.Root, out.String()) })
 	err = runHelperApply(context.Background(), opts)
 	t.Logf("helper stdout:\n%s\nhelper stderr:\n%s", out, errOut)
 	return out, errOut, err
+}
+
+// stopHelperStartedDaemons kills every `restart=started pid=N` in a helper's
+// output whose command line still names root (so a reused pid is left alone).
+func stopHelperStartedDaemons(root, helperOutput string) {
+	for _, match := range restartPIDPattern.FindAllStringSubmatch(helperOutput, -1) {
+		pid, err := strconv.Atoi(match[1])
+		if err != nil || !strings.Contains(processField(pid, "command"), root) {
+			continue
+		}
+		if process, err := os.FindProcess(pid); err == nil {
+			_ = process.Kill()
+		}
+	}
 }
 
 // e2eOutput is an io.Writer the helper and the daemons it spawns share.
@@ -1010,16 +1028,12 @@ func TestUpdateHelperWaitsForASlowDaemonAndRunsTheInstalledBuild(t *testing.T) {
 	}
 
 	// The process now running is the binary the applied manifest names.
-	match := regexp.MustCompile(`restart=started pid=(\d+)`).FindStringSubmatch(out.String())
+	// (runHelper already stops it when the test ends.)
+	match := restartPIDPattern.FindStringSubmatch(out.String())
 	if match == nil {
 		t.Fatalf("the helper started no daemon:\n%s", out)
 	}
 	pid, _ := strconv.Atoi(match[1])
-	t.Cleanup(func() {
-		if p, err := os.FindProcess(pid); err == nil {
-			_ = p.Kill()
-		}
-	})
 	var applied struct {
 		Version   string `json:"version"`
 		Artifacts []struct {
