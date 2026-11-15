@@ -203,13 +203,22 @@ func format4Expected() bool {
 	switch requested, err := format4.Requested(); {
 	case err != nil:
 		return false
-	case requested == 4:
+	case opensWithFormat5Engine(requested):
 		return true
 	case requested == 0:
 		ok, _ := format4.Runnable()
 		return ok
 	}
 	return false
+}
+
+// opensWithFormat5Engine reports whether a store of this format opens through
+// the threaded flatsql-p4 engine, which runs from its AOT artifact only: a
+// format-5 store, and a format-4 store, which converts to format 5 at its
+// first start. A new store under the default is format 5, so a fresh node
+// needs the artifact before its store opens.
+func opensWithFormat5Engine(format int) bool {
+	return format == 4 || format == 5
 }
 
 func reportPrewarm(out io.Writer, label, path string, alreadyPresent bool) {
@@ -242,7 +251,7 @@ func prewarmEngineAOTForDaemon(out io.Writer, cfg *config.Config) error {
 	if cfg.Mode == "edge" || strings.TrimSpace(cfg.Storage.Path) == "" {
 		return nil
 	}
-	if format, err := storage.StoreFormat(cfg.Storage.Path); err != nil || format != 4 {
+	if format, err := storage.StoreFormat(cfg.Storage.Path); err != nil || !opensWithFormat5Engine(format) {
 		return nil
 	}
 	start := time.Now()

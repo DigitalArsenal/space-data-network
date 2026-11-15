@@ -499,7 +499,9 @@ export function buildFullNodeRunArgs({
   platform,
   binaryPath = '/opt/spacedatanetwork/bin/spacedatanetwork',
   configTargetPath = '/etc/spacedatanetwork/config.yaml',
-  entrypoint
+  entrypoint,
+  env = {},
+  volumes = []
 }) {
   const args = [
     'run',
@@ -519,6 +521,12 @@ export function buildFullNodeRunArgs({
     '-v',
     `${configPath}:${configTargetPath}:ro`
   ];
+  for (const volume of volumes) {
+    args.push('-v', volume);
+  }
+  for (const [name, value] of Object.entries(env)) {
+    args.push('-e', `${name}=${value}`);
+  }
   if (entrypoint) {
     args.push('--entrypoint', entrypoint);
   }
@@ -535,6 +543,57 @@ export function buildFullNodeRunArgs({
 function startFullNode(options) {
   log(`starting ${options.containerName}`);
   runDocker(buildFullNodeRunArgs(options));
+}
+
+const productUuidPath = '/sys/class/dmi/id/product_uuid';
+export const containerKeyPasswordDir = '/run/sdn-key';
+export const containerKeyPasswordFile = `${containerKeyPasswordDir}/key_password`;
+
+// The kernel usually creates product_uuid readable by root only. A new node
+// that does not run as root then cannot derive its at-rest key password from
+// the machine fingerprint and refuses to start; the container image runs as
+// user sdn (uid 1000). Docker shares the host's sysfs, so the host's mode is
+// the container's. GitHub runner hosts differ: some make it world-readable.
+export function productUuidRootOnly(stat = () => statSync(productUuidPath)) {
+  try {
+    return (stat().mode & 0o004) === 0;
+  } catch {
+    return false;
+  }
+}
+
+// On such a host the container gets what the release notes tell an operator
+// to give it: a key password file owned by uid 1000, mode 0400, named by
+// SDN_KEY_PASSWORD_FILE. The node refuses a password file anyone else can
+// read, so the file is written inside a volume by the image itself, as root,
+// and then handed to uid 1000.
+export function containerKeyPasswordSetupArgs({ imageName, platform, volumeName }) {
+  return [
+    'run',
+    '--rm',
+    '--platform',
+    platform,
+    '--user',
+    '0',
+    '--entrypoint',
+    'sh',
+    '-v',
+    `${volumeName}:${containerKeyPasswordDir}`,
+    imageName,
+    '-c',
+    `umask 077 && head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \\n' > ${containerKeyPasswordFile} && ` +
+      `chown 1000:1000 ${containerKeyPasswordDir} ${containerKeyPasswordFile} && ` +
+      `chmod 0700 ${containerKeyPasswordDir} && chmod 0400 ${containerKeyPasswordFile}`
+  ];
+}
+
+function prepareContainerKeyPassword({ imageName, platform, volumeName }) {
+  runDocker(['volume', 'create', volumeName]);
+  runDocker(containerKeyPasswordSetupArgs({ imageName, platform, volumeName }));
+  return {
+    env: { SDN_KEY_PASSWORD_FILE: containerKeyPasswordFile },
+    volumes: [`${volumeName}:${containerKeyPasswordDir}:ro`]
+  };
 }
 
 export function buildEdgeNodeRunArgs({
@@ -719,6 +778,7 @@ async function runNetworkTest({ images, workDir, platform, prefix, timeoutMs }) 
     `${prefix}-container-full`,
     `${prefix}-container-edge`
   ];
+  const volumes = [`${prefix}-container-full-key-password`];
 
   runDocker(['network', 'create', networkName]);
 
@@ -789,6 +849,17 @@ async function runNetworkTest({ images, workDir, platform, prefix, timeoutMs }) 
       networkName,
       platform
     });
+    let containerKeyPassword = {};
+    if (productUuidRootOnly()) {
+      log(`${productUuidPath} is readable by root only on this host; ${containers[5]} gets a key password file (SDN_KEY_PASSWORD_FILE), as the release notes direct`);
+      containerKeyPassword = prepareContainerKeyPassword({
+        imageName: images.container.imageName,
+        platform,
+        volumeName: volumes[0]
+      });
+    } else {
+      log(`${productUuidPath} is readable on this host; ${containers[5]} starts with the default key password`);
+    }
     startFullNode({
       containerName: containers[5],
       imageName: images.container.imageName,
@@ -796,7 +867,8 @@ async function runNetworkTest({ images, workDir, platform, prefix, timeoutMs }) 
       networkName,
       platform,
       binaryPath: null,
-      configTargetPath: '/app/config/full-docker.yaml'
+      configTargetPath: '/app/config/full-docker.yaml',
+      ...containerKeyPassword
     });
     startEdgeNode({
       containerName: containers[6],
@@ -914,13 +986,17 @@ async function runNetworkTest({ images, workDir, platform, prefix, timeoutMs }) 
 
   return {
     networkName,
-    containers
+    containers,
+    volumes
   };
 }
 
-function cleanupDocker({ images, networkName, containers }) {
+function cleanupDocker({ images, networkName, containers, volumes }) {
   for (const containerName of containers ?? []) {
     runDocker(['rm', '-f', containerName], { allowFailure: true });
+  }
+  for (const volumeName of volumes ?? []) {
+    runDocker(['volume', 'rm', '-f', volumeName], { allowFailure: true });
   }
   if (networkName) {
     runDocker(['network', 'rm', networkName], { allowFailure: true });
@@ -972,7 +1048,8 @@ export async function runHarness(options) {
       cleanupDocker({
         images,
         networkName: networkResult?.networkName,
-        containers: networkResult?.containers
+        containers: networkResult?.containers,
+        volumes: networkResult?.volumes
       });
       if (!options.releaseDir && prepared.workDir) {
         rmSync(prepared.workDir, { recursive: true, force: true });
