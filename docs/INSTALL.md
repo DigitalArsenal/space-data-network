@@ -314,7 +314,8 @@ authentication are on.
   that data alone opens the identity and the credential store.
 - Making a key password file by hand: create it with a umask, so it is never
   readable by anyone else, then name it in `SDN_KEY_PASSWORD_FILE` for every
-  start (or `security.key_password_file` in the node's config):
+  start (or, with a build that carries this change, in
+  `security.key_password_file` in the node's config):
 
   ```sh
   (umask 077 && head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > ~/sdn-key-password) && chmod 0400 ~/sdn-key-password
