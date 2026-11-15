@@ -63,6 +63,13 @@ mkdir -p \
 copy_wasmedge_runtime "${work_dir}/full/opt/spacedatanetwork/.wasmedge"
 cp -R "${root}/sdn-js/ui/dist/." "${work_dir}/full/opt/spacedatanetwork/admin-ui/"
 cp -R "${root}/webui/build/." "${work_dir}/full/opt/spacedatanetwork/webui/"
+# The CLI's identity commands (show-identity, key export, key escrow, init)
+# load the HD-wallet module from a FILE; only the daemon falls back to its
+# built-in copy. Without one on disk every such command failed on a package
+# host ("hd-wallet-wasi.wasm not found"), the documented key backup included.
+# Ship the same pinned module the binary embeds, where the CLI looks.
+mkdir -p "${work_dir}/full/opt/spacedatanetwork/wasm"
+cp "${root}/sdn-server/internal/wasm/hd-wallet-wasi.wasm" "${work_dir}/full/opt/spacedatanetwork/wasm/hd-wallet-wasi.wasm"
 cp "${root}/config/full-vm.yaml" "${work_dir}/full/etc/spacedatanetwork/config.yaml"
 cp "${root}/sdn-server/deploy/spacedatanetwork.service" "${work_dir}/full/etc/systemd/system/spacedatanetwork.service"
 cp "${root}/sdn-server/deploy/spacedatanetwork-edge.service" "${work_dir}/edge/etc/systemd/system/spacedatanetwork-edge.service"

@@ -354,6 +354,7 @@ func TestDerivationRecordRoundTripAndHint(t *testing.T) {
 		t.Fatal("derivation record must never contain key material")
 	}
 
+	sealPlaceholderIdentity(t, keyDir) // the hint is about a secret that exists
 	hint := DerivationFailureHint(keyDir)
 	for _, want := range []string{"SDN_KEY_PASSWORD_FILE", "escrow", "will NOT mint"} {
 		if !strings.Contains(hint, want) {
@@ -378,6 +379,7 @@ func TestFailureHintNamesTheUserDiff(t *testing.T) {
 		t.Fatalf("write record: %v", err)
 	}
 
+	sealPlaceholderIdentity(t, keyDir) // the hint is about a secret that exists
 	hint := DerivationFailureHint(keyDir)
 	if !strings.Contains(hint, "USER DIFFERS") {
 		t.Fatalf("hint must flag the user difference: %s", hint)
@@ -414,6 +416,7 @@ func TestFailureHintNamesSourceStateDiff(t *testing.T) {
 		t.Fatalf("write record: %v", err)
 	}
 
+	sealPlaceholderIdentity(t, keyDir) // the hint is about a secret that exists
 	hint := DerivationFailureHint(keyDir)
 	if !strings.Contains(hint, `SOURCE "platuuid"`) {
 		t.Fatalf("hint must name the flipped source state: %s", hint)
@@ -427,6 +430,7 @@ func TestDerivationRecordAbsentIsNotFatal(t *testing.T) {
 	if _, ok := ReadDerivationRecord(keyDir); ok {
 		t.Fatal("no record should be reported when none was written")
 	}
+	sealPlaceholderIdentity(t, keyDir) // the hint is about a secret that exists
 	if hint := DerivationFailureHint(keyDir); !strings.Contains(hint, "no derivation record") {
 		t.Fatalf("hint must explain the missing record: %s", hint)
 	}

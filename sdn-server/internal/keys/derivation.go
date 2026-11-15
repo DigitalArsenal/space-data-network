@@ -118,7 +118,16 @@ func DecryptSecretAnyScheme(data []byte) ([]byte, FingerprintScheme, error) {
 //
 // It deliberately does NOT suggest regenerating the identity: a node that
 // silently mints a new identity is worse than a node that refuses to start.
+//
+// When keyDir holds no sealed identity at all, nothing failed to open: the
+// node refused to CREATE one. That is a different situation with a different
+// answer, and saying "did not open this secret" there sent operators looking
+// for a secret that does not exist — so it gets its own explanation
+// (noIdentityHint).
 func DerivationFailureHint(keyDir string) string {
+	if !hasSealedIdentity(keyDir) {
+		return noIdentityHint(keyDir)
+	}
 	var b strings.Builder
 	b.WriteString("machine-derived key did not open this secret — the derivation inputs changed.\n")
 
@@ -161,11 +170,134 @@ func DerivationFailureHint(keyDir string) string {
 		}
 	}
 
+	if generated := GeneratedKeyPasswordFile(keyDir); generated != "" {
+		b.WriteString(GeneratedKeyPasswordFileNote(generated))
+	}
 	b.WriteString("  RECOVERY, in order of preference:\n")
 	b.WriteString("    1. restore the sealing conditions above (same hostname, same user, same source readability), then restart (no data loss)\n")
 	b.WriteString("    2. set SDN_KEY_PASSWORD_FILE to the operator passphrase file for this node\n")
 	b.WriteString("    3. re-import the mnemonic / key material from escrow\n")
 	b.WriteString("  The node will NOT mint a replacement identity; doing so would change its PeerID.\n")
+	return b.String()
+}
+
+// identityFiles are the files whose presence means a node identity was
+// sealed in a key directory: the mnemonic (the identity's root) and the
+// libp2p node key.
+var identityFiles = []string{"mnemonic", "node.key"}
+
+// hasSealedIdentity reports whether keyDir holds identity material, or
+// SDN_MNEMONIC_FILE names a mnemonic that exists (the node reads its identity
+// from there instead). A file it cannot even stat (a permission error on the
+// directory) counts as present, and so does an unknown key directory (""):
+// this answer decides whether to tell an operator "there is nothing here", and
+// that must never be said about material that may exist.
+func hasSealedIdentity(keyDir string) bool {
+	if strings.TrimSpace(keyDir) == "" {
+		return true
+	}
+	if present(os.Getenv(envMnemonicFile)) {
+		return true
+	}
+	for _, name := range identityFiles {
+		if present(filepath.Join(keyDir, name)) {
+			return true
+		}
+	}
+	return false
+}
+
+// envMnemonicFile is the variable that points the node at a mnemonic outside
+// its key directory (config.EnvMnemonicFile; repeated here because config
+// imports this package).
+const envMnemonicFile = "SDN_MNEMONIC_FILE"
+
+// present: path is set and exists, or cannot even be stat'ed.
+func present(path string) bool {
+	if strings.TrimSpace(path) == "" {
+		return false
+	}
+	_, err := os.Lstat(strings.TrimSpace(path))
+	return err == nil || !os.IsNotExist(err)
+}
+
+// GeneratedKeyPasswordFileName is the name the container entrypoint and the
+// .deb/.rpm package give the key password file they generate for a fresh node
+// whose machine fingerprint is refused, in the directory that holds the key
+// directory (/app/data/key-password, /var/lib/spacedatanetwork/key-password).
+const GeneratedKeyPasswordFileName = "key-password"
+
+// GeneratedKeyPasswordFile returns that file for keyDir when it exists, else
+// "". It is only ever NAMED to the operator (a command run outside the
+// container entrypoint or the systemd unit does not have the variable those
+// export); nothing reads it implicitly.
+func GeneratedKeyPasswordFile(keyDir string) string {
+	if strings.TrimSpace(keyDir) == "" {
+		return ""
+	}
+	path := filepath.Join(filepath.Dir(filepath.Clean(keyDir)), GeneratedKeyPasswordFileName)
+	if info, err := os.Lstat(path); err == nil && info.Mode().IsRegular() {
+		return path
+	}
+	return ""
+}
+
+// GeneratedKeyPasswordFileNote tells the operator how to run a command
+// against a node sealed under a generated key password file.
+func GeneratedKeyPasswordFileNote(path string) string {
+	return fmt.Sprintf("  this node has a generated key password file: %s\n"+
+		"    (the container entrypoint and the .deb/.rpm package make it for a fresh node whose machine fingerprint is refused,\n"+
+		"    and give it only to the daemon). Run this command with SDN_KEY_PASSWORD_FILE=%s:\n"+
+		"      container: docker exec <container> /app/entrypoint.sh <command> ...   (or docker exec -e SDN_KEY_PASSWORD_FILE=%s ...)\n"+
+		"      package:   sudo -u sdn env SDN_KEY_PASSWORD_FILE=%s /opt/spacedatanetwork/bin/spacedatanetwork -c /etc/spacedatanetwork/config.yaml <command> ...\n",
+		path, path, path, path)
+}
+
+// HasSealedIdentity is hasSealedIdentity for callers outside the package
+// (installers' fresh-node test, the CLI). True means "do not treat this node
+// as fresh".
+func HasSealedIdentity(keyDir string) bool { return hasSealedIdentity(keyDir) }
+
+// noIdentityHint explains a refusal on a node that has no identity yet: what
+// was refused, why, and the two ways forward. It never says a secret failed
+// to open, because none exists.
+func noIdentityHint(keyDir string) string {
+	return noIdentityHintFor(keyDir, CheckMachineFingerprint())
+}
+
+// noIdentityHintFor renders noIdentityHint for a given fingerprint verdict,
+// so every branch is testable on any machine.
+func noIdentityHintFor(keyDir string, check FingerprintCheck) string {
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("no node identity exists in %s yet: this is a first start, and nothing failed to open.\n", keyDir))
+	if check.Status != FingerprintRefused {
+		// The machine key is available, so whatever refused came from
+		// somewhere else — in practice a configured key password source that
+		// cannot be read. The error this hint follows names it.
+		b.WriteString(fmt.Sprintf("  this account's machine fingerprint is available (%s), so the refusal above is not the machine's:\n", check.Reason))
+		b.WriteString("  fix the key password source it names, or unset it, and start again.\n")
+		return b.String()
+	}
+	who := check.User
+	if who == "" {
+		who = "the account the node runs as"
+	}
+	b.WriteString(fmt.Sprintf("  the node did not create one because this host's machine fingerprint is REFUSED for account %q:\n", who))
+	b.WriteString("    " + check.Reason + "\n")
+	if check.Why != "" {
+		b.WriteString("    why: " + check.Why + "\n")
+	}
+	b.WriteString("  A new identity is never sealed under a key that depends on the privilege of the process reading it.\n")
+	b.WriteString("  TO START THIS NODE, either:\n")
+	b.WriteString(fmt.Sprintf("    1. give it a key password file (preferred): 64 random hex characters, mode 0400, owned by %q,\n", who))
+	b.WriteString("       kept for the life of the node and backed up apart from the node's data:\n")
+	// The umask is set BEFORE the file exists: created under the default one
+	// (often 0022) and chmod-ed afterwards, it is readable by everyone for a
+	// moment, and a descriptor opened then still reads it after the chmod.
+	b.WriteString("         (umask 077 && head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \\n' > key-password) && chmod 0400 key-password\n")
+	b.WriteString("       then set SDN_KEY_PASSWORD_FILE to its absolute path (or security.key_password_file in the node's config)\n")
+	b.WriteString(fmt.Sprintf("    2. or let %q read the source named above; the identity is then bound to this machine and this account.\n", who))
+	b.WriteString("  The installers do (1) automatically for a fresh node; see `spacedatanetwork key fingerprint-check`.\n")
 	return b.String()
 }
 

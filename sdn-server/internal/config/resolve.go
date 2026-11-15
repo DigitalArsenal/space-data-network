@@ -176,7 +176,39 @@ func LoadResolved(explicit string) (*Config, Resolution, error) {
 	if err != nil {
 		return nil, res, fmt.Errorf("load config %s: %w", res.Describe(), err)
 	}
+	if err := ExportKeyPasswordFile(cfg); err != nil {
+		return nil, res, fmt.Errorf("config %s: %w", res.Describe(), err)
+	}
 	return cfg, res, nil
+}
+
+// ExportKeyPasswordFile makes security.key_password_file act exactly like an
+// exported SDN_KEY_PASSWORD_FILE for this process (and the processes it
+// starts), unless SDN_KEY_PASSWORD or SDN_KEY_PASSWORD_FILE is already in the
+// environment — an exported variable wins, as it does over every config
+// source.
+//
+// Why the environment and not only KeyPassword(cfg): some at-rest paths
+// resolve the password without a config in hand (the record store's local
+// EPM rows call KeyPassword(nil)). A config-recorded file that only the
+// config-aware paths honoured would seal those rows under the machine key —
+// which, on the very nodes the file exists for, is refused. Exporting it once,
+// where the node's config is loaded, gives every path the same source.
+func ExportKeyPasswordFile(cfg *Config) error {
+	if cfg == nil {
+		return nil
+	}
+	path := strings.TrimSpace(cfg.Security.KeyPasswordFile)
+	if path == "" {
+		return nil
+	}
+	if strings.TrimSpace(os.Getenv(EnvKeyPassword)) != "" || strings.TrimSpace(os.Getenv(EnvKeyPasswordFile)) != "" {
+		return nil
+	}
+	if err := cfg.Security.validateKeyPasswordSource(); err != nil {
+		return err
+	}
+	return os.Setenv(EnvKeyPasswordFile, path)
 }
 
 // KeyDir returns the node's key directory for a config.
@@ -302,8 +334,10 @@ func readSecretFile(path string) (string, error) {
 // KeyPassword resolves the at-rest key password.
 //
 // Order: SDN_KEY_PASSWORD (inline) > SDN_KEY_PASSWORD_FILE (mounted secret) >
-// config security.key_password > the machine-derived default. Inline wins so an
-// operator debugging by hand can override a mounted file without unmounting it.
+// config security.key_password > config security.key_password_file > the
+// machine-derived default. Inline wins so an operator debugging by hand can
+// override a mounted file without unmounting it; the environment wins over the
+// config for the same reason. The two config keys are mutually exclusive.
 //
 // A CONFIGURED-BUT-UNREADABLE file is an ERROR, never a silent fallback: falling
 // through to the machine default would decrypt nothing and report "wrong
@@ -314,19 +348,69 @@ func KeyPassword(cfg *Config) (string, error) {
 		return p, nil
 	}
 	if path := strings.TrimSpace(os.Getenv(EnvKeyPasswordFile)); path != "" {
-		secret, err := readSecretFile(path)
-		if err != nil {
-			return "", fmt.Errorf("%s=%s: %w", EnvKeyPasswordFile, path, err)
-		}
-		if secret == "" {
-			return "", fmt.Errorf("%s=%s is empty", EnvKeyPasswordFile, path)
-		}
-		return secret, nil
+		return readKeyPasswordFile(EnvKeyPasswordFile, path)
 	}
-	if cfg != nil && strings.TrimSpace(cfg.Security.KeyPassword) != "" {
+	if cfg == nil {
+		return "", nil
+	}
+	if err := cfg.Security.validateKeyPasswordSource(); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(cfg.Security.KeyPassword) != "" {
 		return cfg.Security.KeyPassword, nil
 	}
+	if path := strings.TrimSpace(cfg.Security.KeyPasswordFile); path != "" {
+		return readKeyPasswordFile("security.key_password_file", path)
+	}
 	return "", nil // caller applies the machine-derived default
+}
+
+// ReadKeyPasswordFile reads a key password file exactly as the node does for
+// security.key_password_file: owner-only permissions enforced, one trailing
+// newline trimmed, an empty file refused.
+func ReadKeyPasswordFile(path string) (string, error) {
+	return readKeyPasswordFile("security.key_password_file", strings.TrimSpace(path))
+}
+
+// readKeyPasswordFile reads a configured password file; source names where the
+// path came from, for the error.
+func readKeyPasswordFile(source, path string) (string, error) {
+	secret, err := readSecretFile(path)
+	if err != nil {
+		return "", fmt.Errorf("%s=%s: %w", source, path, err)
+	}
+	if secret == "" {
+		return "", fmt.Errorf("%s=%s is empty", source, path)
+	}
+	return secret, nil
+}
+
+// KeyPasswordConfigured reports whether an explicit key password source is
+// set for cfg — in the environment or in the config — without reading it.
+// Installers use it to leave a node that already has one alone.
+func KeyPasswordConfigured(cfg *Config) bool {
+	if strings.TrimSpace(os.Getenv(EnvKeyPassword)) != "" || strings.TrimSpace(os.Getenv(EnvKeyPasswordFile)) != "" {
+		return true
+	}
+	return cfg != nil && (strings.TrimSpace(cfg.Security.KeyPassword) != "" || strings.TrimSpace(cfg.Security.KeyPasswordFile) != "")
+}
+
+// validateKeyPasswordSource rejects a config that names both key password
+// sources (which one seals the identity would be a guess) or a relative
+// password file (relative to WHICH directory would be a guess too: the daemon,
+// the service and the CLI run from different ones).
+func (s SecurityConfig) validateKeyPasswordSource() error {
+	file := strings.TrimSpace(s.KeyPasswordFile)
+	if file == "" {
+		return nil
+	}
+	if strings.TrimSpace(s.KeyPassword) != "" {
+		return fmt.Errorf("security.key_password and security.key_password_file are both set; set one of them")
+	}
+	if !filepath.IsAbs(file) {
+		return fmt.Errorf("security.key_password_file must be an absolute path, got %q", file)
+	}
+	return nil
 }
 
 // MnemonicPathResolved returns the mnemonic file to read, honoring

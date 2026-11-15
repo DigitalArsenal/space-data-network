@@ -16,6 +16,7 @@ import (
 // upgrade, and must then be re-sealed under the new one.
 func TestCredentialsSurviveDerivationUpgrade(t *testing.T) {
 	t.Setenv("SDN_KEY_PASSWORD", "")
+	t.Setenv("SDN_KEY_PASSWORD_FILE", "")
 	dir := t.TempDir()
 
 	hostname, err := os.Hostname()
@@ -39,7 +40,7 @@ func TestCredentialsSurviveDerivationUpgrade(t *testing.T) {
 
 	// Upgrade: open the way the node does now (current derivation primary,
 	// older generations attached as fallbacks).
-	newStore, err := OpenStore(dir, cp(nodeKey))
+	newStore, err := OpenStore(dir, nil, cp(nodeKey))
 	if err != nil {
 		t.Fatalf("open upgraded store: %v", err)
 	}
@@ -53,7 +54,7 @@ func TestCredentialsSurviveDerivationUpgrade(t *testing.T) {
 
 	// The keystore must now be re-sealed under the CURRENT derivation, so a
 	// store with no fallbacks at all can open it.
-	currentRoot, err := ResolveRoot(cp(nodeKey))
+	currentRoot, err := ResolveRoot(nil, cp(nodeKey))
 	if err != nil {
 		t.Fatalf("resolve current root: %v", err)
 	}
@@ -70,6 +71,7 @@ func TestCredentialsSurviveDerivationUpgrade(t *testing.T) {
 // the credstore into something that opens under any key.
 func TestForeignKeystoreStillFailsClosed(t *testing.T) {
 	t.Setenv("SDN_KEY_PASSWORD", "")
+	t.Setenv("SDN_KEY_PASSWORD_FILE", "")
 	dir := t.TempDir()
 
 	foreign, err := NewStore(dir, "a-root-from-an-entirely-different-machine")
@@ -80,7 +82,7 @@ func TestForeignKeystoreStillFailsClosed(t *testing.T) {
 		t.Fatalf("put: %v", err)
 	}
 
-	store, err := OpenStore(dir, cp([]byte("node-identity-private-key-material-AAAAAAAA")))
+	store, err := OpenStore(dir, nil, cp([]byte("node-identity-private-key-material-AAAAAAAA")))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -96,7 +98,7 @@ func TestExplicitPassphraseAttachesNoFallbacks(t *testing.T) {
 	t.Setenv("SDN_KEY_PASSWORD", "explicit-operator-secret")
 	dir := t.TempDir()
 
-	store, err := OpenStore(dir, cp([]byte("node-identity-private-key-material-AAAAAAAA")))
+	store, err := OpenStore(dir, nil, cp([]byte("node-identity-private-key-material-AAAAAAAA")))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}

@@ -1799,6 +1799,20 @@ type SecurityConfig struct {
 	// Can also be set via SDN_KEY_PASSWORD environment variable.
 	KeyPassword string `yaml:"key_password,omitempty"`
 
+	// KeyPasswordFile is SDN_KEY_PASSWORD_FILE recorded in the node's own
+	// config: the absolute path of an owner-only file holding the at-rest key
+	// password. A process that loads this config behaves exactly as if the
+	// variable were exported (an exported SDN_KEY_PASSWORD or
+	// SDN_KEY_PASSWORD_FILE still wins), so the daemon, the background
+	// service and every CLI command find it with nothing exported.
+	//
+	// install.sh records here the file it generates for a fresh node whose
+	// machine fingerprint is refused (see `spacedatanetwork key
+	// fingerprint-check`). That file must be kept for the life of the node and
+	// backed up apart from the node's data: the identity cannot be opened
+	// without it. Mutually exclusive with key_password.
+	KeyPasswordFile string `yaml:"key_password_file,omitempty"`
+
 	// RequireSignedFeedHeads rejects dataset feed-head announcements that do
 	// not carry an Ed25519 payload signature. Invalid signatures are always
 	// rejected; this flag additionally rejects unsigned announcements, for
@@ -2374,6 +2388,9 @@ func Load(path string) (*Config, error) {
 // end of Load, on both the default config and a config file that was
 // successfully parsed.
 func (c *Config) validate() error {
+	if err := c.Security.validateKeyPasswordSource(); err != nil {
+		return err
+	}
 	switch c.Subscriptions.EffectiveDefaultRetention() {
 	case SubscriptionRetentionReplaceCurrent, SubscriptionRetentionKeepAll, SubscriptionRetentionArchiveAll:
 	default:

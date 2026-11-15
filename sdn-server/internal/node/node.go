@@ -1506,14 +1506,16 @@ func (n *Node) buildCapRegistry() *modulert.CapabilityRegistry {
 	// requested lane on every call — a module approved for secrets:spacetrack
 	// asking for secrets:acme is refused.
 	//
-	// The root key is derived from the UNLOCKED node identity private key (plus
-	// the machine fingerprint and hostname) via IdentityKeyMaterial(), which
-	// reads the in-memory key the node already unlocked at boot — buildCapRegistry
-	// runs well after the libp2p host is up, so the key is available here. If it
-	// is NOT (host not yet up, or SDN_KEY_PASSWORD-only node missing its
-	// override), OpenStore fails closed and the capability is simply not
-	// registered: modules get "operation not supported" — never a silent grant.
-	if credStore, cerr := credstore.OpenStore(n.config.Storage.Path, n.IdentityKeyMaterial()); cerr != nil {
+	// The root key is the node's key password when one is configured (same
+	// sources and precedence as the identity: n.config), else derived from the
+	// UNLOCKED node identity private key (plus the machine fingerprint and
+	// hostname) via IdentityKeyMaterial(), which reads the in-memory key the
+	// node already unlocked at boot — buildCapRegistry runs well after the
+	// libp2p host is up, so the key is available here. If it is NOT, or the
+	// configured password cannot be read, OpenStore fails closed and the
+	// capability is simply not registered: modules get "operation not
+	// supported" — never a silent grant.
+	if credStore, cerr := credstore.OpenStore(n.config.Storage.Path, n.config, n.IdentityKeyMaterial()); cerr != nil {
 		log.Warnf("credential store unavailable; secrets capabilities not registered: %v", cerr)
 	} else {
 		// The shared activity ring is passed so credential WRITES

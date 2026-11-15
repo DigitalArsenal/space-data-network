@@ -48,10 +48,20 @@ const daemonSubcommand = "daemon"
 var procRoot = "/proc"
 
 // psCommand runs the portable fallback used where procfs is absent (darwin).
-// A variable ONLY so tests can stub it.
+// The uid column is what lets the config tier ignore another account's
+// process (see trustedDaemonOwner). A variable ONLY so tests can stub it.
 var psCommand = func() ([]byte, error) {
-	return exec.Command("ps", "-axo", "pid=,args=").Output()
+	return exec.Command("ps", "-axo", "pid=,uid=,args=").Output()
 }
+
+// procOwner reports the uid that owns a procfs process directory (the
+// process's effective uid). A variable ONLY so tests can give a fixture
+// process a foreign owner.
+var procOwner = pathOwnerUID
+
+// currentEUID is the caller's effective uid. A variable ONLY so tests can
+// choose who is asking.
+var currentEUID = os.Geteuid
 
 // DaemonProcess is one live node daemon found in the process table.
 type DaemonProcess struct {
@@ -62,6 +72,36 @@ type DaemonProcess struct {
 	ConfigPath string
 	// Cmdline is the full argv, for error messages.
 	Cmdline []string
+	// UID is the account the process runs as; OwnerKnown is false when the
+	// process table did not say.
+	UID        int
+	OwnerKnown bool
+}
+
+// trustedDaemonOwner reports whether a daemon running as uid may answer the
+// config tier for the calling account: the caller's own account, root, or a
+// system account (below the first regular-user uid: the .deb/.rpm service
+// account `sdn`, for example).
+//
+// WHY: the process table is readable by every account, and an argv is
+// whatever its process says it is. Any local user can start a process whose
+// argv reads `spacedatanetwork daemon --config /tmp/theirs.yaml` (exec -a, a
+// copied binary). Without this check that process was "the running daemon"
+// for every other account on the machine, so a plain `spacedatanetwork init`
+// or `key fresh-password-file` run by someone else loaded the stranger's
+// config: its key directory (empty, so the node looked fresh), its storage,
+// its admin settings, saved into the caller's own config. A regular user
+// cannot run a process as root or as a system account, nor as the caller.
+// A daemon run by another regular user is not this caller's node; `-c` or
+// SDN_CONFIG still names it explicitly.
+func trustedDaemonOwner(d DaemonProcess) bool {
+	if !d.OwnerKnown {
+		return false
+	}
+	if d.UID == currentEUID() || d.UID == 0 {
+		return true
+	}
+	return d.UID < firstRegularUID()
 }
 
 // Describe renders one daemon for an ambiguity error.
@@ -120,7 +160,9 @@ func daemonsFromProc() (found []DaemonProcess, ok bool) {
 		}
 		args := strings.Split(strings.TrimRight(string(raw), "\x00"), "\x00")
 		if cfg, isDaemon := configFromArgs(args); isDaemon {
-			found = append(found, DaemonProcess{PID: pid, ConfigPath: cfg, Cmdline: args})
+			d := DaemonProcess{PID: pid, ConfigPath: cfg, Cmdline: args}
+			d.UID, d.OwnerKnown = procOwner(filepath.Join(procRoot, entry.Name()))
+			found = append(found, d)
 		}
 	}
 	return found, true
@@ -141,17 +183,19 @@ func daemonsFromPS() []DaemonProcess {
 		if line == "" {
 			continue
 		}
-		pidText, rest, ok := strings.Cut(line, " ")
-		if !ok {
+		// pid, uid, then the argv.
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
 			continue
 		}
-		pid, err := strconv.Atoi(strings.TrimSpace(pidText))
+		pid, err := strconv.Atoi(fields[0])
 		if err != nil || pid == self {
 			continue
 		}
-		args := strings.Fields(rest)
+		uid, uerr := strconv.Atoi(fields[1])
+		args := fields[2:]
 		if cfg, isDaemon := configFromArgs(args); isDaemon {
-			found = append(found, DaemonProcess{PID: pid, ConfigPath: cfg, Cmdline: args})
+			found = append(found, DaemonProcess{PID: pid, ConfigPath: cfg, Cmdline: args, UID: uid, OwnerKnown: uerr == nil})
 		}
 	}
 	return found
@@ -195,8 +239,18 @@ func (r Resolution) IsOwnDaemonConfig() bool {
 // directory looks like. Exactly one daemon that defaulted: fall through, so we
 // default through the SAME code path it did. Several daemons: a real ambiguity,
 // reported as the daemons themselves rather than as a list of files.
+//
+// Only daemons trustedDaemonOwner accepts count: another regular account's
+// process is not the caller's node, whatever its argv says. (The
+// one-node-per-box check in cmd/spacedatanetwork uses FindRunningDaemons
+// unfiltered: it counts every node on the machine.)
 func resolveFromRunningDaemon() (Resolution, bool, error) {
-	daemons := FindRunningDaemons()
+	var daemons []DaemonProcess
+	for _, d := range FindRunningDaemons() {
+		if trustedDaemonOwner(d) {
+			daemons = append(daemons, d)
+		}
+	}
 	switch len(daemons) {
 	case 0:
 		return Resolution{}, false, nil
