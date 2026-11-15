@@ -4,6 +4,7 @@ package peers
 import (
 	"html/template"
 	"net/http"
+	"strings"
 )
 
 // AdminUI provides the admin web interface for peer management.
@@ -47,9 +48,18 @@ func (ui *AdminUI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ui.mux.ServeHTTP(w, r)
 }
 
+// adminAPIPrefix is where the admin UI serves the peer API.
+const adminAPIPrefix = "/api/"
+
+// IsAPIPath reports whether urlPath, relative to where the admin UI is
+// mounted, is one of its peer API routes.
+func (ui *AdminUI) IsAPIPath(urlPath string) bool {
+	return strings.HasPrefix(urlPath, adminAPIPrefix)
+}
+
 func (ui *AdminUI) setupRoutes() {
 	// API routes
-	ui.mux.Handle("/api/", ui.apiHandler)
+	ui.mux.Handle(adminAPIPrefix, ui.apiHandler)
 
 	// Admin UI routes
 	ui.mux.HandleFunc("/admin", ui.handleAdmin)
