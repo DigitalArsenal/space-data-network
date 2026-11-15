@@ -15,7 +15,10 @@ import {
   buildEdgeNodeRunArgs,
   formatAnswered,
   qrpHealthStatus,
-  qrpProbeArgs
+  qrpProbeArgs,
+  productUuidRootOnly,
+  containerKeyPasswordSetupArgs,
+  containerKeyPasswordFile
 } from './test-release-artifacts-docker.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -212,6 +215,39 @@ test('container image run args respect the image entrypoint', () => {
   assert(containerEdgeArgs.includes('--entrypoint'));
   assert.equal(containerEdgeArgs[containerEdgeArgs.indexOf('--entrypoint') + 1], '/app/spacedatanetwork-edge');
   assert(!containerEdgeArgs.slice(containerEdgeArgs.indexOf('dockerdigitalarsenal/space-data-network:v1.0.3-beta.1') + 1).includes('/app/spacedatanetwork-edge'));
+});
+
+test('a root-only product_uuid gives the container node a key password file', () => {
+  assert.equal(productUuidRootOnly(() => ({ mode: 0o100400 })), true);
+  assert.equal(productUuidRootOnly(() => ({ mode: 0o100444 })), false);
+  assert.equal(productUuidRootOnly(() => { throw Object.assign(new Error('missing'), { code: 'ENOENT' }); }), false);
+
+  const setup = containerKeyPasswordSetupArgs({
+    imageName: 'dockerdigitalarsenal/space-data-network:v1.1.4-amd64',
+    platform: 'linux/amd64',
+    volumeName: 'sdn-container-full-key-password'
+  });
+  assert.equal(setup[setup.indexOf('--user') + 1], '0');
+  assert.equal(setup[setup.indexOf('--entrypoint') + 1], 'sh');
+  const script = setup.at(-1);
+  assert.match(script, /chown 1000:1000 /);
+  assert.match(script, new RegExp(`chmod 0400 ${containerKeyPasswordFile}$`));
+
+  const run = buildFullNodeRunArgs({
+    containerName: 'sdn-container-full',
+    imageName: 'dockerdigitalarsenal/space-data-network:v1.1.4-amd64',
+    configPath: '/tmp/container.yaml',
+    networkName: 'sdn-net',
+    platform: 'linux/amd64',
+    binaryPath: null,
+    configTargetPath: '/app/config/full-docker.yaml',
+    env: { SDN_KEY_PASSWORD_FILE: containerKeyPasswordFile },
+    volumes: ['sdn-container-full-key-password:/run/sdn-key:ro']
+  });
+  const image = run.indexOf('dockerdigitalarsenal/space-data-network:v1.1.4-amd64');
+  assert(run.indexOf(`SDN_KEY_PASSWORD_FILE=${containerKeyPasswordFile}`) < image);
+  assert(run.indexOf('sdn-container-full-key-password:/run/sdn-key:ro') < image);
+  assert.deepEqual(run.slice(-3), ['daemon', '--config', '/app/config/full-docker.yaml']);
 });
 
 test('full-node package and VM bundle scripts stage nothing for a static runtime', () => {
