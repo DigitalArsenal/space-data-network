@@ -333,6 +333,12 @@ jobs:
         env:
           SDN_E2E_REAL_DAEMON: '1'
         run: ../scripts/go-with-wasmedge.sh test ./cmd/spacedatanetwork/ -count=1 -timeout 50m -v -run '^TestUpdateChannelRealDaemonE2E$'
+      # A fresh node's first start: under the default (store format 5) the
+      # daemon's own prewarm must compile the format-5 engine before its store
+      # opens. It runs here because this job links the patched runtime.
+      - name: fresh-store daemon prewarm (format 5)
+        working-directory: sdn-server
+        run: ../scripts/go-with-wasmedge.sh test ./cmd/spacedatanetwork/ -count=1 -timeout 20m -v -run '^(TestOpensWithFormat5EngineCoversFormat4AndFormat5|TestDaemonPrewarmCompilesFormat5EngineForFreshStore)$'
 
   go-builds:
     name: Go builds (node + edge relay)
