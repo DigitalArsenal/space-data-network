@@ -7,6 +7,17 @@ on:
         description: Optional release version, a beta such as v1.0.3-beta.7 or a stable release such as v1.1.0. Leave blank to use v<package version>-beta.<run number>.
         required: false
         type: string
+      # Owner decision, 2026-11-14: "Forget Apple desktop for now". v1.1.0
+      # ships without the macOS desktop app while Apple refuses notarization
+      # ("HTTP status code: 403. A required agreement is missing or has
+      # expired."); the macOS command-line archives still ship. False builds
+      # no macOS desktop app and lists it under "Not in this release". The
+      # default keeps every release as it was.
+      macos_desktop:
+        description: Build and publish the macOS desktop app (false ships the release without it).
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -1053,7 +1064,9 @@ jobs:
     # assumed `unzip`, which Git for Windows does not ship); drop the flag once
     # a Windows installer has actually been produced. Until then it must not be
     # able to skip the release for the three platforms that DO build.
-    continue-on-error: ${{ matrix.experimental == true }}
+    # macOS legs with macos_desktop false build nothing (every step below is
+    # skipped for them) and cannot hold the release either.
+    continue-on-error: ${{ matrix.experimental == true || (matrix.target_os == 'macos' && inputs.macos_desktop == false) }}
     needs: [beta-version, cli]
     defaults:
       run:
@@ -1089,6 +1102,9 @@ jobs:
             builder_args: --linux AppImage deb tar.xz --x64
     env:
       PACKAGE_VERSION: ${{ needs.beta-version.outputs.package_version }}
+      # 'true' on a macOS leg of a run dispatched with macos_desktop false: the
+      # key staging, build, collect and upload steps below are skipped.
+      MACOS_DESKTOP_OFF: ${{ matrix.target_os == 'macos' && inputs.macos_desktop == false }}
     steps:
       - uses: actions/checkout@v4
       # The desktop app SHIPS the node: each app carries the self-contained
@@ -1149,7 +1165,7 @@ jobs:
       # `env:` — so the presence check happens in the shell, not the condition.
       # Written the other way this step would silently never run.
       - name: Stage the App Store Connect key
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && env.MACOS_DESKTOP_OFF != 'true'
         env:
           APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
         run: |
@@ -1164,6 +1180,7 @@ jobs:
           echo "APPLE_API_KEY=${key_path}" >> "$GITHUB_ENV"
           echo "Staged the App Store Connect key for notarytool."
       - name: Build Desktop artifacts
+        if: env.MACOS_DESKTOP_OFF != 'true'
         env:
           # macOS Developer ID signing + notarization. Every variable here is
           # empty until the matching secret exists, and the build degrades
@@ -1197,6 +1214,7 @@ jobs:
         working-directory: desktop
         run: npm exec -- electron-builder --publish never ${{ matrix.builder_args }}
       - name: Collect Desktop artifacts
+        if: env.MACOS_DESKTOP_OFF != 'true'
         run: |
           mkdir -p dist/desktop
           find desktop/dist -maxdepth 1 -type f -exec cp {} dist/desktop/ \;
@@ -1210,6 +1228,7 @@ jobs:
             mv dist/desktop/latest-mac.yml "dist/desktop/latest-mac-${{ matrix.target_arch }}.yml"
           fi
       - uses: actions/upload-artifact@v4
+        if: env.MACOS_DESKTOP_OFF != 'true'
         with:
           name: desktop-${{ matrix.target_os }}-${{ matrix.target_arch }}
           path: dist/desktop/*
@@ -1428,12 +1447,18 @@ jobs:
             .map((file) => JSON.parse(readFileSync(join(dir, file), 'utf8')));
           writeFileSync('dist/container-digests.json', `${JSON.stringify({ images }, null, 2)}\n`);
           NODE
+      # No macOS desktop app, no macOS update feed to merge (the merge refuses an
+      # empty set by design).
       - name: Merge the macOS update feeds into one latest-mac.yml
+        if: inputs.macos_desktop != false
         run: node scripts/merge-mac-update-feed.mjs dist/desktop
       - name: Assemble beta release artifacts
         env:
           VERSION: ${{ needs.beta-version.outputs.package_version }}
           RELEASE_TAG: ${{ needs.beta-version.outputs.release_tag }}
+          # false: the macOS desktop app is optional and listed under "Not in
+          # this release" (owner decision 2026-11-14, see the input above).
+          MACOS_DESKTOP: ${{ inputs.macos_desktop != false }}
           # beta or stable: words the notes and the manifest. The update
           # channel the payloads carry stays `--channel release` either way.
           RELEASE_MATURITY: ${{ needs.beta-version.outputs.channel }}

@@ -101,12 +101,23 @@ require_match() {
 # a Windows updater format, and an rpm the Linux leg is not asked to build).
 # Nobody noticed because the publish job had never run far enough to check.
 required_desktop_artifact_patterns=(
-  "space-data-network-desktop-*-mac-*.dmg"
-  "space-data-network-desktop-*-mac-*.zip"
   "space-data-network-desktop-*-linux-*.AppImage"
   "space-data-network-desktop-*-linux-*.deb"
   "space-data-network-desktop-*-linux-*.tar.xz"
 )
+macos_desktop_artifact_patterns=(
+  "space-data-network-desktop-*-mac-*.dmg"
+  "space-data-network-desktop-*-mac-*.zip"
+)
+# MACOS_DESKTOP=false (the release workflow's macos_desktop input; owner
+# decision 2026-11-14, "Forget Apple desktop for now") ships the release without
+# the macOS desktop app and lists it under "Not in this release". Anything else,
+# including unset, keeps it required.
+if [[ "${MACOS_DESKTOP:-true}" == false ]]; then
+  echo "NOTE: MACOS_DESKTOP=false; the macOS desktop app is not required" >&2
+else
+  required_desktop_artifact_patterns+=( "${macos_desktop_artifact_patterns[@]}" )
+fi
 
 # The Windows desktop app now BUILDS (run 35095153877 produced both installers),
 # but its job is still continue-on-error, so absence must stay tolerated rather
@@ -126,6 +137,9 @@ optional_desktop_artifact_patterns=(
   "space-data-network-desktop-[0-9]*-win-*.exe"
   "space-data-network-desktop-portable-*-win-*.exe"
 )
+if [[ "${MACOS_DESKTOP:-true}" == false ]]; then
+  optional_desktop_artifact_patterns+=( "${macos_desktop_artifact_patterns[@]}" )
+fi
 
 for required_desktop_artifact_pattern in "${required_desktop_artifact_patterns[@]}"; do
   require_match "${required_desktop_artifact_pattern}"

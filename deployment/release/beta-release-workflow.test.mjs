@@ -572,6 +572,28 @@ test('beta release workflow builds desktop app artifacts for every supported OS'
   assert.match(workflow, /pattern:\s*desktop-\*[\s\S]*path:\s*dist\/desktop[\s\S]*merge-multiple:\s*true/);
 });
 
+test('macos_desktop false ships a release without the macOS desktop app, and only then', () => {
+  // Owner decision 2026-11-14, "Forget Apple desktop for now".
+  const workflow = readRepoFile('.github/workflows/beta-release-artifacts.yml');
+  assert.match(workflow, /macos_desktop:\n\s+description: [^\n]+\n\s+required: false\n\s+type: boolean\n\s+default: true/);
+  assert.match(workflow, /Forget Apple desktop for now/);
+  const desktop = workflow.slice(workflow.indexOf('\n  desktop:\n'), workflow.indexOf('\n  packages:\n'));
+  assert.match(desktop, /continue-on-error: \$\{\{ matrix\.experimental == true \|\| \(matrix\.target_os == 'macos' && inputs\.macos_desktop == false\) \}\}/);
+  assert.match(desktop, /MACOS_DESKTOP_OFF: \$\{\{ matrix\.target_os == 'macos' && inputs\.macos_desktop == false \}\}/);
+  for (const step of ['Stage the App Store Connect key', 'Build Desktop artifacts', 'Collect Desktop artifacts']) {
+    const at = desktop.indexOf(`- name: ${step}\n`);
+    assert.ok(at > 0, step);
+    assert.match(desktop.slice(at, at + 200), /\n\s+if: [^\n]*env\.MACOS_DESKTOP_OFF != 'true'/, step);
+  }
+  assert.match(desktop, /- uses: actions\/upload-artifact@v4\n\s+if: env\.MACOS_DESKTOP_OFF != 'true'/);
+  const release = workflow.slice(workflow.indexOf('\n  release:\n'), workflow.indexOf('\n  published-installer-smoke:\n'));
+  assert.match(release, /- name: Merge the macOS update feeds into one latest-mac\.yml\n\s+if: inputs\.macos_desktop != false/);
+  assert.match(release, /MACOS_DESKTOP: \$\{\{ inputs\.macos_desktop != false \}\}/);
+  // The installer smoke installs the CLI (install.sh / install.ps1), never a
+  // desktop installer, so it needs no macOS desktop asset.
+  assert.doesNotMatch(readRepoFile('deployment/release/published-install-smoke.mjs'), /\.dmg|desktop/i);
+});
+
 test('beta release workflow smoke-tests published installers after release', () => {
   const workflow = readRepoFile('.github/workflows/beta-release-artifacts.yml');
 
