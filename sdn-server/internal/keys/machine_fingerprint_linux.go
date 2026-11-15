@@ -3,7 +3,9 @@
 package keys
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"strings"
 )
@@ -49,7 +51,22 @@ func platformStableIdentifiers() []hwAttr {
 // platuuidPath is the only rebuild- and resize-stable hardware source on
 // Linux. It is root-readable on most distros — which is exactly why v4 reads
 // it through platformStableIdentifierReadings and not best-effort.
-const platuuidPath = "/sys/class/dmi/id/product_uuid"
+//
+// A variable ONLY so tests can point the reading at a fixture they control;
+// nothing in the shipped binary reassigns it.
+var platuuidPath = "/sys/class/dmi/id/product_uuid"
+
+// refusalExplanation says WHY a permission refusal happens on Linux, because
+// the refusal itself ("permission denied") reads like a misconfigured host
+// when it is the kernel's default: drivers/firmware/dmi-id.c creates
+// product_uuid with mode 0400.
+func refusalExplanation(err error) string {
+	if !errors.Is(err, fs.ErrPermission) {
+		return ""
+	}
+	return "the Linux kernel creates /sys/class/dmi/id/product_uuid readable by root only (mode 0400), " +
+		"so on most hosts a node that does not run as root cannot read it"
+}
 
 // platformStableIdentifierReadings is the v4 counterpart of
 // platformStableIdentifiers: the same sources, but ABSENT and UNREADABLE are

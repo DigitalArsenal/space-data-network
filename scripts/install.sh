@@ -7,6 +7,8 @@
 #   SDN_INSTALL_DIR Command link directory (default: ~/.spacedatanetwork/bin)
 #   SDN_BUNDLE_DIR  Bundle parent directory (default: ~/.spacedatanetwork/bundles)
 #   SDN_SKIP_INIT   Set to 1 to skip first-run node identity initialization
+#   SDN_KEY_PASSWORD_FILE  Your own key password file; when set, the installer
+#                   does not generate one (see prepare_key_password_file)
 
 set -e
 
@@ -322,6 +324,61 @@ install_bundle() {
     fi
 }
 
+# THE KEY PASSWORD FILE OF A FRESH NODE.
+#
+# A node with no key password seals its identity under a key derived from the
+# machine and the account it runs as. On most Linux hosts that derivation is
+# REFUSED for every account but root, by design: the kernel creates
+# /sys/class/dmi/id/product_uuid readable by root only, and a key that depends
+# on the privilege of the reading process is the defect the derivation refuses
+# to repeat. A first start there used to fail until the operator made a
+# password file by hand. This does it for them — for a FRESH node only:
+#
+#   - nothing happens when SDN_KEY_PASSWORD or SDN_KEY_PASSWORD_FILE is set,
+#     or when the installed binary predates `key fingerprint-check` (it then
+#     never answers "refused");
+#   - the node itself decides the rest (`key fresh-password-file`): no file
+#     when a key password is already configured, when the node already has an
+#     identity (it stays sealed as it is), or when the fingerprint is not
+#     refused; an existing file is never overwritten;
+#   - the file is then recorded in the node's config by
+#     `init --key-password-file`, so every later start (`daemon`, `start`, any
+#     CLI command) finds it with nothing exported.
+KEY_PASSWORD_FILE="${HOME}/.spacedatanetwork/key-password"
+INIT_ARGS=()
+
+prepare_key_password_file() {
+    INIT_ARGS=()
+    if [ -n "${SDN_KEY_PASSWORD:-}" ] || [ -n "${SDN_KEY_PASSWORD_FILE:-}" ]; then
+        return
+    fi
+    local verdict outcome
+    verdict="$("$PRIMARY_COMMAND_PATH" key fingerprint-check 2>/dev/null || true)"
+    if [ "$verdict" != "refused" ]; then
+        return
+    fi
+    if ! outcome="$("$PRIMARY_COMMAND_PATH" key fresh-password-file "$KEY_PASSWORD_FILE")"; then
+        log_error "Could not prepare a key password file at $KEY_PASSWORD_FILE (see the error above)"
+        exit 1
+    fi
+    case "$outcome" in
+        "created "*)
+            log_info "This host's machine fingerprint is refused for account $(id -un) ('$PRIMARY_BINARY_NAME key fingerprint-check' says why),"
+            log_info "so the new node identity is sealed under a generated key password file: $KEY_PASSWORD_FILE"
+            log_warn "KEEP $KEY_PASSWORD_FILE and back it up apart from the node's data: the node identity cannot be opened without it."
+            INIT_ARGS=(--key-password-file "$KEY_PASSWORD_FILE")
+            ;;
+        "exists "*)
+            log_info "Sealing the new node identity under the existing key password file $KEY_PASSWORD_FILE"
+            log_warn "KEEP $KEY_PASSWORD_FILE and back it up apart from the node's data: the node identity cannot be opened without it."
+            INIT_ARGS=(--key-password-file "$KEY_PASSWORD_FILE")
+            ;;
+        *)
+            log_info "No key password file generated (${outcome})"
+            ;;
+    esac
+}
+
 initialize_unix_node() {
     if [ "$OS" = "windows" ]; then
         return
@@ -336,7 +393,8 @@ initialize_unix_node() {
     fi
 
     log_info "Initializing local node identity..."
-    "$PRIMARY_COMMAND_PATH" init
+    prepare_key_password_file
+    "$PRIMARY_COMMAND_PATH" init "${INIT_ARGS[@]}"
     log_info "Verifying local node identity..."
     "$PRIMARY_COMMAND_PATH" show-identity >/dev/null 2>&1
 }

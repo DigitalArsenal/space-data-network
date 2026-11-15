@@ -20,6 +20,93 @@ if [ ! -d /var/lib/spacedatanetwork ]; then
   install -d -o sdn -g sdn -m 0750 /var/lib/spacedatanetwork
 fi
 
+# THE KEY PASSWORD FILE OF A FRESH NODE.
+#
+# A node with no key password seals its identity under a key derived from the
+# machine and the account it runs as. On most Linux hosts that derivation is
+# REFUSED for the service account: the kernel creates
+# /sys/class/dmi/id/product_uuid readable by root only, and the node refuses a
+# key that would depend on the privilege of the reading process. Through
+# v1.1.2 the first `systemctl start` then failed until the operator made a
+# password file and a drop-in by hand. On a FRESH node this does that instead:
+#
+#   /var/lib/spacedatanetwork/key-password   32 random bytes as 64 hex, sdn:sdn 0400
+#   /etc/systemd/system/spacedatanetwork.service.d/key-password.conf
+#                                            Environment=SDN_KEY_PASSWORD_FILE=<that file>
+#
+# Fresh means: the full node is installed, nothing already gives the unit a
+# key password (SDN_KEY_PASSWORD / SDN_KEY_PASSWORD_FILE in the unit or a
+# drop-in other than ours), and the node itself says its fingerprint is
+# refused for user sdn and that it has no identity and no configured password
+# (`key fresh-password-file`, which reads the installed config, so a moved
+# storage path is honoured). An upgrade over a node that has an identity
+# changes nothing: the identity stays sealed as it is. An existing password
+# file is never overwritten. Nothing here can fail the install.
+SDN_BIN=/opt/spacedatanetwork/bin/spacedatanetwork
+SDN_UNIT=spacedatanetwork.service
+SDN_CONFIG_FILE=/etc/spacedatanetwork/config.yaml
+KEY_PASSWORD_FILE=/var/lib/spacedatanetwork/key-password
+KEY_PASSWORD_DROPIN_DIR=/etc/systemd/system/${SDN_UNIT}.d
+KEY_PASSWORD_DROPIN=${KEY_PASSWORD_DROPIN_DIR}/key-password.conf
+
+run_as_sdn() {
+  if command -v runuser >/dev/null 2>&1; then
+    runuser -u sdn -- env HOME=/var/lib/spacedatanetwork "$@"
+  else
+    su -s /bin/sh sdn -c 'HOME=/var/lib/spacedatanetwork exec "$0" "$@"' -- "$@"
+  fi
+}
+
+# unit_sets_key_password: the unit, or a drop-in other than ours, already sets
+# SDN_KEY_PASSWORD or SDN_KEY_PASSWORD_FILE.
+unit_sets_key_password() {
+  for f in /etc/systemd/system/${SDN_UNIT} \
+           /etc/systemd/system/${SDN_UNIT}.d/*.conf \
+           /run/systemd/system/${SDN_UNIT}.d/*.conf \
+           /usr/lib/systemd/system/${SDN_UNIT}.d/*.conf \
+           /lib/systemd/system/${SDN_UNIT}.d/*.conf; do
+    [ -f "$f" ] || continue
+    [ "$f" = "$KEY_PASSWORD_DROPIN" ] && continue
+    if grep -q 'SDN_KEY_PASSWORD' "$f"; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+setup_fresh_key_password() {
+  [ -x "$SDN_BIN" ] || return 0                        # edge-only install: nothing to seal
+  [ -f "/etc/systemd/system/${SDN_UNIT}" ] || return 0
+  unit_sets_key_password && return 0
+  verdict=$(run_as_sdn "$SDN_BIN" key fingerprint-check 2>/dev/null) || return 0
+  [ "$verdict" = "refused" ] || return 0
+  if ! outcome=$(run_as_sdn "$SDN_BIN" -c "$SDN_CONFIG_FILE" key fresh-password-file "$KEY_PASSWORD_FILE"); then
+    echo "spacedatanetwork: could not prepare $KEY_PASSWORD_FILE; see the error above, and the release notes for the manual steps" >&2
+    return 0
+  fi
+  case "$outcome" in
+    "created "*|"exists "*) ;;
+    *) return 0 ;;
+  esac
+  if [ ! -e "$KEY_PASSWORD_DROPIN" ]; then
+    mkdir -p "$KEY_PASSWORD_DROPIN_DIR"
+    cat > "$KEY_PASSWORD_DROPIN" <<EOF
+# Written by the spacedatanetwork package on a FRESH install: this host's
+# machine fingerprint is refused for user sdn (the Linux kernel makes
+# /sys/class/dmi/id/product_uuid root-only), so the node seals its identity
+# under the generated key password file below. Keep this drop-in and that
+# file, and back the file up apart from the node's data: the identity cannot
+# be opened without it. The package never removes either.
+[Service]
+Environment=SDN_KEY_PASSWORD_FILE=${KEY_PASSWORD_FILE}
+EOF
+    chmod 0644 "$KEY_PASSWORD_DROPIN"
+  fi
+  echo "spacedatanetwork: fresh node, machine fingerprint refused for user sdn: its identity will be sealed under ${KEY_PASSWORD_FILE} (${KEY_PASSWORD_DROPIN}). Keep that file and back it up apart from the node's data."
+}
+
+setup_fresh_key_password || true
+
 if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
   systemctl daemon-reload || true
 fi

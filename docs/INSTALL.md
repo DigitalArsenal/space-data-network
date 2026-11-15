@@ -19,7 +19,27 @@ v1.1.0: macOS Apple Silicon and Intel, Linux x86-64 and arm64, and
 Windows x86-64), verify the checksum,
 unpack the self-contained bundle under `~/.spacedatanetwork/bundles`, link
 `spacedatanetwork` and `sdn` under `~/.spacedatanetwork/bin`, and initialize
-the node identity. Other platforms build from source:
+the node identity.
+
+**Linux as a regular user: the key password file.** A node with no key
+password seals its identity under a key derived from the machine and the
+account it runs as. On most Linux machines the kernel makes
+`/sys/class/dmi/id/product_uuid` readable only by root, so for any other
+account that derivation is refused (`spacedatanetwork key fingerprint-check`
+answers `refused`; root, macOS and Windows answer `ok` or `absent`). For a
+fresh node on such a host, `install.sh` then generates
+`~/.spacedatanetwork/key-password` (32 random bytes as 64 hex characters,
+mode 0400), records it in the node's config as `security.key_password_file`,
+and seals the new identity under it, so `daemon`, `start` and every CLI
+command find it with nothing exported. It generates nothing when
+`SDN_KEY_PASSWORD` or `SDN_KEY_PASSWORD_FILE` is set, when the node already
+has an identity (an upgrade leaves it exactly as it is), or when the
+fingerprint is not refused, and it never overwrites an existing file. **Keep
+that file for the life of the node and back it up apart from the node's
+data**: without it the node cannot open its identity, and anyone holding both
+can.
+
+Other platforms build from source:
 
 ```sh
 git clone https://github.com/DigitalArsenal/space-data-network.git
@@ -103,6 +123,27 @@ throwaway. Any stable value works; it is not a secret. A node already sealed
 under an auto-generated hostname keeps running and warns on every start: re-seal
 it with `spacedatanetwork key reseal` before recreating the container.
 
+The container runs as uid 1000, so on most Linux hosts the machine-derived
+key is refused there too (see section 1). On a fresh volume with no
+`SDN_KEY_PASSWORD` / `SDN_KEY_PASSWORD_FILE` set, the entrypoint then
+generates `/app/data/keys/.key-password` (uid 1000, mode 0400), logs one line
+naming it, and uses it on every later start; the identity sealed under it
+does not depend on the hostname. It never overwrites that file and never
+touches a volume that already holds an identity. The file sits in the volume
+beside the identity, so back it up apart from the volume as well. A mounted
+secret keeps it out of the volume altogether, and the entrypoint then
+generates nothing:
+
+```sh
+head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' | sudo tee /etc/sdn-key-password >/dev/null
+sudo chown 1000:1000 /etc/sdn-key-password && sudo chmod 0400 /etc/sdn-key-password
+docker run -d --name sdn --hostname sdn --restart unless-stopped \
+  -v /etc/sdn-key-password:/run/secrets/sdn-key-password:ro \
+  -e SDN_KEY_PASSWORD_FILE=/run/secrets/sdn-key-password \
+  -v sdn-data:/app/data -p 127.0.0.1:5001:5001 -p 4001:4001 -p 4001:4001/udp \
+  dockerdigitalarsenal/space-data-network:v1.1.0
+```
+
 `docker exec sdn
 /app/spacedatanetwork show-identity --config /app/config/full-docker.yaml --show-mnemonic`
 prints the recovery phrase. A `docker load` archive of the same image ships
@@ -111,6 +152,28 @@ For a beta, that name spells the version with DOTS, not the tag's hyphen
 (`X.Y.Z.beta.N`, not `X.Y.Z-beta.N`, which 404s). Native Linux packages use
 the same dotted spelling, for the same reason: a release asset name cannot
 carry SemVer's hyphen.
+
+### Linux packages (.deb / .rpm)
+
+`spacedatanetwork-full` installs the node under `/opt/spacedatanetwork`, its
+config as `/etc/spacedatanetwork/config.yaml` and the unit
+`spacedatanetwork.service`, which runs as the system user `sdn` with its data
+in `/var/lib/spacedatanetwork`. The package creates the user and the
+directory; it does not enable or start the service.
+
+User `sdn` cannot read `/sys/class/dmi/id/product_uuid` on most hosts (see
+section 1), so on a FRESH install the package generates
+`/var/lib/spacedatanetwork/key-password` (`sdn:sdn`, mode 0400) and the drop-in
+`/etc/systemd/system/spacedatanetwork.service.d/key-password.conf`
+(`Environment=SDN_KEY_PASSWORD_FILE=/var/lib/spacedatanetwork/key-password`),
+and the first `systemctl start spacedatanetwork` seals the new identity under
+it. It does nothing when the unit already sets `SDN_KEY_PASSWORD` or
+`SDN_KEY_PASSWORD_FILE`, when the config sets a key password, when the node
+already has an identity (an upgrade over an existing node leaves it exactly
+as it is), or when user `sdn` can read the fingerprint, and it never
+overwrites an existing file. Removing or purging the package leaves the file
+and the drop-in, like the identity they open. **Keep the file and back it up
+apart from the node's data**: without it the node cannot open its identity.
 
 ### Relaying
 
@@ -187,10 +250,23 @@ authentication are on.
 
 ## 5. Keys
 
-- `init` seals the mnemonic to this machine. Export it once and keep the
-  export off the box: `spacedatanetwork key export --format backup`.
+- `init` seals the mnemonic to this machine, or to the node's key password
+  when it has one. Export it once and keep the export off the box:
+  `spacedatanetwork key export --format backup`.
 - Keep the Kubo peer identity recoverable: `spacedatanetwork key escrow create`.
-- If you use `SDN_KEY_PASSWORD_FILE`, keep that file out of the box's backups.
+- A node with a key password file — yours (`SDN_KEY_PASSWORD_FILE`, or
+  `security.key_password_file` in the config), or the one an installer
+  generated for a fresh node whose machine fingerprint is refused
+  (`~/.spacedatanetwork/key-password`, `/var/lib/spacedatanetwork/key-password`,
+  `/app/data/keys/.key-password`) — cannot open its identity without it. Keep
+  it for the life of the node and back it up apart from the node's data,
+  never in the same backup.
+- The credential store (stored provider credentials, the `secrets:`
+  capabilities) uses the same key password as the identity, in the same order
+  (`SDN_KEY_PASSWORD`, `SDN_KEY_PASSWORD_FILE`, `security.key_password`,
+  `security.key_password_file`), so it works on such a node too. Through
+  v1.1.2 it ignored the file and config sources and used the machine key; a
+  store sealed that way still opens and is re-sealed under the password.
 
 ## 6. Run
 
