@@ -361,3 +361,16 @@ test('docs: no claim about which v1.1.x is the last manual release', () => {
     assert.doesNotMatch(text, /v1\.1\.[3-9]|[Tt]hrough v1\.1|v1\.1\.0 to v1\.1/, name);
   }
 });
+
+// The documented .deb backup command (`sudo -u sdn env SDN_KEY_PASSWORD_FILE=...
+// spacedatanetwork -c ... key export`) failed on a package host for a second
+// reason: the CLI loads the HD-wallet module from a file and the package had
+// none ("hd-wallet-wasi.wasm not found"; only the daemon has a built-in copy).
+// The package ships the module the binary embeds, at a path the CLI searches.
+test('package: ships the HD-wallet module where the CLI looks for it', () => {
+  const build = read('deployment/packaging/build-linux-packages.sh');
+  assert.match(build, /cp "\$\{root\}\/sdn-server\/internal\/wasm\/hd-wallet-wasi\.wasm" "\$\{work_dir\}\/full\/opt\/spacedatanetwork\/wasm\/hd-wallet-wasi\.wasm"/);
+  assert.ok(existsSync(join(repoRoot, 'sdn-server/internal/wasm/hd-wallet-wasi.wasm')), 'the embedded module is in the tree');
+  const main = read('sdn-server/cmd/spacedatanetwork/main.go');
+  assert.match(main, /"\/opt\/spacedatanetwork\/wasm\/hd-wallet-wasi\.wasm"/, 'the CLI searches /opt/spacedatanetwork/wasm');
+});
