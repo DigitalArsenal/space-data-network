@@ -13,7 +13,9 @@ import {
   parseDockerLoadImage,
   buildFullNodeRunArgs,
   buildEdgeNodeRunArgs,
-  formatAnswered
+  formatAnswered,
+  qrpHealthStatus,
+  qrpProbeArgs
 } from './test-release-artifacts-docker.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -292,6 +294,64 @@ test('a service that answers reports how many seconds it took', () => {
     formatAnswered('full DEB health', 'sdn-artifact-1-full-deb', 1_000, 128_450),
     'full DEB health answered after 127.5 s (sdn-artifact-1-full-deb)',
   );
+});
+
+// A size-prefixed $QRP frame laid out as flatbuffers' builder lays out the
+// health page's root table: [u32 size][u32 root][$QRP][vtable][table]. With
+// status null the STATUS field is omitted, as the builder omits a default Ok.
+function qrpFrame(status) {
+  const fields = status === null ? 1 : 2; // KIND, and STATUS when present
+  const vtableSize = 4 + 2 * fields;
+  const vtablePos = 12;
+  const tablePos = vtablePos + vtableSize + (vtableSize % 4 ? 4 - (vtableSize % 4) : 0);
+  const buf = Buffer.alloc(tablePos + 8);
+  buf.writeUInt32LE(buf.length - 4, 0);
+  buf.writeUInt32LE(tablePos - 4, 4);
+  buf.write('$QRP', 8, 'latin1');
+  buf.writeUInt16LE(vtableSize, vtablePos);
+  buf.writeUInt16LE(8, vtablePos + 2);
+  buf.writeUInt16LE(4, vtablePos + 4); // KIND at table+4
+  if (status !== null) buf.writeUInt16LE(5, vtablePos + 6); // STATUS at table+5
+  buf.writeInt32LE(tablePos - vtablePos, tablePos);
+  buf.writeInt8(1, tablePos + 4);
+  if (status !== null) buf.writeInt8(status, tablePos + 5);
+  return buf;
+}
+
+test('data health accepts a $QRP frame whose STATUS is Ok, and nothing else', () => {
+  // /api/v1/data/health answers with a $QRP FlatBuffer table; the JSON wait
+  // timed out on every v1.1.0 attempt ("Last response: T `$QRPX ...").
+  assert.deepEqual(qrpHealthStatus(qrpFrame(null)), { ok: true, status: 'Ok' });
+  assert.deepEqual(qrpHealthStatus(qrpFrame(0)), { ok: true, status: 'Ok' });
+  const error = qrpHealthStatus(qrpFrame(4));
+  assert.equal(error.ok, false);
+  assert.match(error.reason, /\$QRP STATUS is Error/);
+  const json = qrpHealthStatus(Buffer.from('{"status":"ok","component":"spaceaware-data-api"}'));
+  assert.equal(json.ok, false);
+  assert.match(json.reason, /file identifier .*not "\$QRP"/);
+  assert.equal(qrpHealthStatus(Buffer.alloc(4)).ok, false);
+
+  assert.deepEqual(qrpProbeArgs('c1', 'http://127.0.0.1:5001/api/v1/data/health').slice(0, 4), ['exec', 'c1', 'sh', '-c']);
+  const harness = readFileSync(join(repoRoot, 'deployment/release/test-release-artifacts-docker.mjs'), 'utf8');
+  assert.match(harness, /await waitForQrpHealth\(\{\n\s+containerName: containers\[0\],\n\s+url: 'http:\/\/127\.0\.0\.1:5001\/api\/v1\/data\/health'/);
+  assert.doesNotMatch(harness, /waitForJson\(\{[^}]*\/api\/v1\/data\/health/);
+});
+
+test('the Linux packages create the sdn user and data directory their units need', () => {
+  // Fresh installs failed "Failed to determine credentials for user 'sdn':
+  // Unknown user" (status=217/USER): the units are User=sdn and no package
+  // created it (v1.1.0 diagnostic run 43656172134).
+  const build = readFileSync(join(repoRoot, 'deployment/packaging/build-linux-packages.sh'), 'utf8');
+  assert.equal([...build.matchAll(/scripts:\n\s+postinstall: \$\{script_dir\}\/scripts\/postinstall\.sh\n\s+postremove: \$\{script_dir\}\/scripts\/postremove\.sh/g)].length, 2);
+  const post = readFileSync(join(repoRoot, 'deployment/packaging/scripts/postinstall.sh'), 'utf8');
+  assert.match(post, /useradd --system --gid sdn --home-dir \/var\/lib\/spacedatanetwork --no-create-home\s*\\\n\s+--shell \/usr\/sbin\/nologin/);
+  assert.match(post, /install -d -o sdn -g sdn -m 0750 \/var\/lib\/spacedatanetwork/);
+  assert.match(post, /systemctl daemon-reload/);
+  const commands = post.split('\n').filter((line) => !line.trim().startsWith('#')).join('\n');
+  assert.doesNotMatch(commands, /systemctl (enable|start)/);
+  for (const unit of ['spacedatanetwork.service', 'spacedatanetwork-edge.service']) {
+    assert.match(readFileSync(join(repoRoot, 'sdn-server/deploy', unit), 'utf8'), /^User=sdn$/m, unit);
+  }
 });
 
 test('the network test prints the first node\'s whole first start and the time each wait took', () => {
