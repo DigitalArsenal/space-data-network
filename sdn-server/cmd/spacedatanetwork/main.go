@@ -2572,32 +2572,9 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			// ----------------------------------------------------------------
 			// Admin panel at /admin — admin/auth surface only
 			// ----------------------------------------------------------------
-			adminUISubtree := http.StripPrefix("/admin", adminUIHandler)
-			serveAdminUI := func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/admin" {
-					http.Redirect(w, r, "/admin/", http.StatusMovedPermanently)
-					return
-				}
-				if !strings.HasPrefix(r.URL.Path, "/admin/") {
-					http.NotFound(w, r)
-					return
-				}
-
-				serve := func(w http.ResponseWriter, r *http.Request) {
-					adminUISubtree.ServeHTTP(w, r)
-				}
-				if cfg.Admin.RequireAuth {
-					if authHandler == nil {
-						http.Error(w, "authentication unavailable", http.StatusServiceUnavailable)
-						return
-					}
-					authHandler.RequireAuth(peers.Admin, serve)(w, r)
-					return
-				}
-				serve(w, r)
-			}
-			adminMux.HandleFunc("/admin", serveAdminUI)
-			adminMux.HandleFunc("/admin/", serveAdminUI)
+			adminSurface := makeAdminSurfaceHandler(adminUIHandler, cfg.Admin.RequireAuth, authHandler)
+			adminMux.Handle("/admin", adminSurface)
+			adminMux.Handle("/admin/", adminSurface)
 
 			// ----------------------------------------------------------------
 			// Public root at / — the SDN Node Status $APP homepage (single
