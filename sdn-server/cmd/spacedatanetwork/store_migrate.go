@@ -78,6 +78,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format2"
+	"github.com/spacedatanetwork/sdn-server/internal/storage/format4/marker"
 )
 
 const (
@@ -103,57 +104,31 @@ var (
 	// schemas SDN has no standard for that the operator agrees to leave
 	// behind (C-39 U1).
 	storeMigrateDropUnregistered []string
-	// storeMigrateDropOversized (--to 4) names the records above format 4's
+	// storeMigrateDropOversized (--to 4) names the records above format 5's
 	// largest storable record the operator agrees to leave behind (C-6).
 	storeMigrateDropOversized []string
 )
 
 var storeMigrateCmd = &cobra.Command{
 	Use:   "store-migrate",
-	Short: "Migrate a legacy record store to the FlatSQL partition store (format 2, or format 4 with --to 4), offline",
-	Long: `Copy the record store named by --config (or --store) into the FlatSQL
-partition store (store format 2), verify it against the legacy store, and
-activate it. The daemon must be stopped: the command takes the store lock.
+	Short: "Convert a stopped store to format 5 beside the retained format-4 store, or migrate legacy format 1 to format 2",
+	Long: `With --to 5, convert an existing format-4 store into fsql5/ beside
+fsql4/, verify every record and metadata value through a stream-only rebuild,
+and switch only after verification. The daemon must be stopped; this command
+takes its exclusive store lock. First boot of the new binary runs the same
+conversion automatically before serving.
 
-  --inventory       print partitions, bytes per partition, the record-size
-                    distribution per type and the datasync index shape; change
-                    nothing
-  --out DIR         build the partition store under DIR instead of in place
-  --from-snapshot C migrate the consistent copy C while the daemon keeps
-                    running (the output goes to the live store's root; nothing
-                    is activated); then stop the daemon and run --delta
-  --delta           copy what changed on the stopped live store since the
-                    snapshot pass, verify, activate
-  --no-activate     verify but leave the legacy store active
+A legacy format-1 store can also use --to 5, with --inventory,
+--drop-unregistered and --drop-oversized for that legacy conversion.
 
-Progress is journalled; rerun the same command to resume after a failure.
-Format 2 runs only with SDN_STORE_FORMAT=2, and only on an activated store.
+The source fsql4/ remains for rollback after format-4 conversion. To roll back, stop the new daemon,
+move fsql5/ aside, restore auxiliary.flatsqlmeta from
+fsql4/rollback-auxiliary.flatsqlmeta when present, and start the old binary.
+Records accepted after the conversion are not carried back.
 
-  --to 4            migrate to store format 4 (alias: sqlite) instead, in
-                    place (store_migrate_format4.go); with --inventory,
-                    --page-rows and --verify-only
-  --verify-only     (--to 4) re-check an activated format-4 store against the
-                    format-1 store kept in pre-format4/; change nothing
-  --drop-unregistered T1,T2
-                    (--to 4) format 4 stores SDS standards only: a format-1
-                    table of a schema SDN has no standard for (--inventory
-                    lists them as unregistered_tables) is not carried, and the
-                    migration refuses to run while such a table holds records
-                    unless this flag names every one of them
-  --drop-oversized CID1,CID2
-                    (--to 4) a record above format 4's largest storable
-                    record (C-6; --inventory lists them as oversized_records)
-                    is not carried either, and the migration refuses likewise
-                    unless this flag names every one of them
-Format 4 is the default store format: a migrated store runs as format 4 with
-SDN_STORE_FORMAT unset (or 4), and needs no environment to migrate. With it
-unset, a daemon creates a fresh store as format 4 and keeps running a
-format-1 store as format 1 until this command migrates it.
-
-Rollback to format 1 (records taken on format 4 are not carried back): stop
-the daemon; in the data directory remove the empty control.flatsqldb
-directory, move fsql4/ and fsql4-migrate.json aside, and move
-pre-format4/control.flatsqldb* back; start with SDN_STORE_FORMAT=1.`,
+With --to 2 (the default), migrate a legacy format-1 store using --inventory,
+--out, --from-snapshot, --delta, and --no-activate. Format 2 requires
+SDN_STORE_FORMAT=2. This binary cannot create a format-4 store.`,
 	RunE: runStoreMigrate,
 }
 
@@ -165,12 +140,12 @@ func init() {
 	storeMigrateCmd.Flags().BoolVar(&storeMigrateDelta, "delta", false, "copy what changed since the snapshot pass (daemon stopped), verify, activate")
 	storeMigrateCmd.Flags().BoolVar(&storeMigrateNoActive, "no-activate", false, "verify, but do not activate format 2")
 	storeMigrateCmd.Flags().IntVar(&storeMigratePageRows, "page-rows", 2000, "records per read page")
-	storeMigrateCmd.Flags().StringVar(&storeMigrateTo, "to", "", "target store format: 2 (default) or 4 (alias sqlite)")
-	storeMigrateCmd.Flags().BoolVar(&storeMigrateVerifyOnly, "verify-only", false, "with --to 4: re-check an activated format-4 store, change nothing")
+	storeMigrateCmd.Flags().StringVar(&storeMigrateTo, "to", "", "target store format: 2 (default) or 5 (alias sqlite)")
+	storeMigrateCmd.Flags().BoolVar(&storeMigrateVerifyOnly, "verify-only", false, "with --to 5 from format 1: re-check an activated format-5 store, change nothing")
 	storeMigrateCmd.Flags().StringSliceVar(&storeMigrateDropUnregistered, "drop-unregistered", nil,
-		"with --to 4: migrate without these format-1 tables of schemas SDN has no standard for (the inventory's unregistered_tables); their records are not carried")
+		"with --to 5 from format 1: migrate without these format-1 tables of schemas SDN has no standard for (the inventory's unregistered_tables); their records are not carried")
 	storeMigrateCmd.Flags().StringSliceVar(&storeMigrateDropOversized, "drop-oversized", nil,
-		"with --to 4: migrate without these records above format 4's largest storable record (the inventory's oversized_records, by CID)")
+		"with --to 5 from format 1: migrate without these records above format 5's largest storable record (the inventory's oversized_records, by CID)")
 	rootCmd.AddCommand(storeMigrateCmd)
 }
 
@@ -193,14 +168,26 @@ func runStoreMigrate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if target == 4 {
-		return runStoreMigrate4(cmd, store)
+	if target == 5 {
+		m, err := marker.Read(store)
+		if err != nil {
+			return err
+		}
+		legacyMigration := m.LegacyControlFile && !(m.Directory == marker.LegacyDir && m.Format4())
+		if legacyMigration || (storeMigrateVerifyOnly && m.Activated() && m.MigratedFrom == 1) {
+			return runStoreMigrate4(cmd, store)
+		}
+		if storeMigrateOut != "" || storeMigrateSnapshot != "" || storeMigrateDelta || storeMigrateNoActive ||
+			storeMigrateInventory || storeMigrateVerifyOnly || len(storeMigrateDropUnregistered) > 0 || len(storeMigrateDropOversized) > 0 {
+			return errors.New("--to 5 converts and verifies the complete stopped store beside its retained source; use only --store or --config")
+		}
+		return storage.MigrateStore5(cmd.Context(), store)
 	}
 	if storeMigrateVerifyOnly {
-		return errors.New("--verify-only needs --to 4")
+		return errors.New("--verify-only needs --to 5 from format 1")
 	}
 	if len(storeMigrateDropUnregistered) > 0 || len(storeMigrateDropOversized) > 0 {
-		return errors.New("--drop-unregistered and --drop-oversized need --to 4")
+		return errors.New("--drop-unregistered and --drop-oversized need --to 5 from format 1")
 	}
 	opts := migrateOptions{
 		Store: store, Out: storeMigrateOut, Snapshot: storeMigrateSnapshot, Delta: storeMigrateDelta,

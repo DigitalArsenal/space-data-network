@@ -1,4 +1,4 @@
-// Package format4 is SDN's binding to store format 4, "p4": one SQLite table
+// Package format4 is SDN's binding to the p4 engine, now store format 5: one SQLite table
 // file per source feed x standard in the FlatSQL engine (P/<TYPE>/<feed>.db,
 // the feed being the record's (provider, source); untagged records in
 // local.db), each indexed by arrival, object + epoch, epoch and CID (stack
@@ -43,6 +43,7 @@ const (
 	OpenExisting       CreateMode = 0 // an activated store, else ErrFormat
 	CreateFresh        CreateMode = 1 // open, or create fresh (MIGRATED then STORE)
 	CreateForMigration CreateMode = 2 // a migration target: create or reopen an unactivated store
+	ConvertFormat4     CreateMode = 3 // offline conversion of a private format-4 copy, with stream-only verification
 )
 
 // Tuning is the engine's sizing. Zero is the engine default; fields map 1:1

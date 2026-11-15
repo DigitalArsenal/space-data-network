@@ -1,7 +1,7 @@
 package main
 
-// store_migrate_format4.go: `spacedatanetwork store-migrate --to 4` (alias
-// sqlite). A format-1 store becomes store format 4 (one SQLite file per
+// store_migrate_format4.go: `spacedatanetwork store-migrate --to 5` (alias
+// sqlite). A format-1 store becomes store format 5 (one SQLite file per
 // partition: per producer and record type, as format 1's producer tables),
 // offline and copy-based. Stack design
 // docs/architecture/flatsql-sqlite-partitions.md §11 (gate G7); the interfaces
@@ -10,7 +10,7 @@ package main
 // SOURCE. Format 1 is read through its own wasm engine
 // (storage.MigrationSource), never through native SQLite.
 //
-// TARGET. <data>/fsql4, opened by the format-4 engine as a migration target
+// TARGET. <data>/fsql5, opened by the format-5 engine as a migration target
 // (format4.CreateForMigration): nothing marks it a store until activation.
 // Every type's first new seq is at least the gseq floor (migrateGseqFloor).
 //
@@ -27,7 +27,7 @@ package main
 //
 // CHECK (store_migrate_format4_check.go), a hard fail before activation (0
 // mismatches):
-//   - every held index row's record is in format 4 under seq = the rowid, in
+//   - every held index row's record is in format 5 under seq = the rowid, in
 //     exactly the partitions of the format-1 tables holding it;
 //   - every unsealed copy re-hashes to its CID;
 //   - the fields the engine extracted equal format 1's index columns: epoch
@@ -57,11 +57,11 @@ package main
 // its copies or tags is sent, and the check expects exactly that.
 //
 // ACTIVATION (crash-safe, contract §2.3): the control tables are copied into
-// fsql4/control.db; the engine writes MIGRATED, then STORE (the commit
+// fsql5/control.db; the engine writes MIGRATED, then STORE (the commit
 // point); marker.FinishActivation moves control.flatsqldb* into pre-format4/
 // and makes control.flatsqldb a directory.
 //
-// RESUME. Progress is journalled in <data>/fsql4-migrate.json after the PUTs
+// RESUME. Progress is journalled in <data>/fsql5-migrate.json after the PUTs
 // it covers are durable. A rerun resends at most the pages after the last
 // journal write; the engine stores a resent copy or tag instance once. A rerun
 // after STORE finishes the activation. --verify-only re-reads the format-1
@@ -97,10 +97,10 @@ import (
 )
 
 const (
-	migrate4JournalName = "fsql4-migrate.json"
+	migrate4JournalName = "fsql5-migrate.json"
 	// CopyControlFormat4 writes into the source store's root under a plain
-	// name; the copy then moves to fsql4/control.db.
-	migrate4ControlTmp = "fsql4-control.tmp"
+	// name; the copy then moves to fsql5/control.db.
+	migrate4ControlTmp = "fsql5-control.tmp"
 	migrate4ControlDB  = "control.db"
 	// migrate4SampleEvery: the records whose index rowid is a multiple of it
 	// have every structured column checked through the engine (the rest
@@ -112,22 +112,22 @@ const (
 	migrate4RejTooLarge int32 = -112
 )
 
-// migrateTargetFormat parses --to: "" or "2" is format 2 (today's path), "4"
-// or "sqlite" (any case) is format 4.
+// migrateTargetFormat parses --to: "" or "2" is format 2 (today's path), "5"
+// or "sqlite" (any case) is format 5.
 func migrateTargetFormat(to string) (int, error) {
 	switch strings.ToLower(strings.TrimSpace(to)) {
 	case "", "2":
 		return 2, nil
-	case "4", "sqlite":
-		return 4, nil
+	case "5", "sqlite":
+		return 5, nil
 	}
-	return 0, fmt.Errorf("--to %q: the targets are 2 and 4 (sqlite)", to)
+	return 0, fmt.Errorf("--to %q: the targets are 2 and 5 (sqlite); this binary cannot create format 4", to)
 }
 
 func runStoreMigrate4(cmd *cobra.Command, store string) error {
 	switch {
 	case storeMigrateOut != "", storeMigrateSnapshot != "", storeMigrateDelta, storeMigrateNoActive:
-		return errors.New("--out, --from-snapshot, --delta and --no-activate are format-2 options; --to 4 migrates in place")
+		return errors.New("--out, --from-snapshot, --delta and --no-activate are format-2 options; --to 5 migrates in place")
 	case storeMigrateInventory && storeMigrateVerifyOnly:
 		return errors.New("--inventory and --verify-only are separate runs")
 	case (len(storeMigrateDropUnregistered) > 0 || len(storeMigrateDropOversized) > 0) && (storeMigrateInventory || storeMigrateVerifyOnly):
@@ -152,11 +152,11 @@ func runStoreMigrate4(cmd *cobra.Command, store string) error {
 	return err
 }
 
-// migrate4Inventory is the format-2 inventory with format 4's record limit:
+// migrate4Inventory is the format-2 inventory with format 5's record limit:
 // partitions holding a record above it are listed (their records would be
 // refused, C-6), with each such record (oversized_records). So are the
 // tables of a schema with no standard (unregistered_tables: table ->
-// records), which format 4 does not carry (C-39 U1).
+// records), which format 5 does not carry (C-39 U1).
 func migrate4Inventory(store string) (*inventoryReport, error) {
 	inv, err := migrateInventory(store)
 	if err != nil {
@@ -280,7 +280,7 @@ type migrate4Progress struct {
 }
 
 // migrate4Oversized is a format-1 record above the largest storable record:
-// its CID (the identity format 4 would key it by) and each table holding a
+// its CID (the identity format 5 would key it by) and each table holding a
 // copy above the limit.
 type migrate4Oversized struct {
 	CID   string `json:"cid"`
@@ -290,7 +290,7 @@ type migrate4Oversized struct {
 }
 
 // migrate4Tally counts one producer table's copies and their stored bytes
-// (the table's own, which format 4 keeps).
+// (the table's own, which format 5 keeps).
 type migrate4Tally struct {
 	Rows  int64 `json:"rows"`
 	Bytes int64 `json:"bytes"`
@@ -332,7 +332,7 @@ type migrate4Report struct {
 	// migrated (C-6).
 	SetAside []migrate4Oversized `json:"set_aside_oversized,omitempty"`
 	// HexIdentities counts records format 1 keeps under a legacy sha256-hex
-	// identity (an imported shard's index named them so): format 4 keys each
+	// identity (an imported shard's index named them so): format 5 keys each
 	// by the CIDv1 of the same digest (migrate4CID).
 	HexIdentities int64             `json:"hex_identities,omitempty"`
 	Check         *migrate4Check    `json:"check,omitempty"`
@@ -408,7 +408,7 @@ func (d *migrateDigest) UnmarshalText(text []byte) error {
 	return nil
 }
 
-// copyDigestOf is one stored copy: what format 4 must hold for it.
+// copyDigestOf is one stored copy: what format 5 must hold for it.
 func copyDigestOf(seq int64, producer, peer string, ts int64, sig, stored []byte) [32]byte {
 	h := sha256.New()
 	var n [8]byte
@@ -511,12 +511,12 @@ func migrateStore4(ctx context.Context, opt migrate4Options, out io.Writer) (rep
 	}
 	root := strings.TrimSpace(opt.Store)
 	if root == "" {
-		return nil, errors.New("store-migrate --to 4 needs the store directory")
+		return nil, errors.New("store-migrate --to 5 needs the store directory")
 	}
 	start := time.Now()
 	m := &migrator4{opt: opt, out: out, root: root, jpath: filepath.Join(root, migrate4JournalName),
 		times: map[string]time.Duration{}, began: start, lastProgress: start}
-	m.rep = &migrate4Report{Store: root, Format: 4, Mode: "migrate", Load: [2]float64{migrateLoadAverage(), 0},
+	m.rep = &migrate4Report{Store: root, Format: 5, Mode: "migrate", Load: [2]float64{migrateLoadAverage(), 0},
 		Machine: fmt.Sprintf("%s/%s, %d CPUs", runtime.GOOS, runtime.GOARCH, runtime.NumCPU())}
 	if opt.VerifyOnly {
 		m.rep.Mode = "verify-only"
@@ -572,7 +572,7 @@ func (m *migrator4) run(ctx context.Context) error {
 	switch {
 	case mk.Activated() && m.opt.VerifyOnly:
 		if mk.NeedsFinish() {
-			return errors.New("the format-4 activation is unfinished: run store-migrate --to 4 (without --verify-only) to finish it")
+			return errors.New("the format-5 activation is unfinished: run store-migrate --to 5 (without --verify-only) to finish it")
 		}
 		return m.verifyOnly(ctx)
 	case mk.Activated():
@@ -583,21 +583,21 @@ func (m *migrator4) run(ctx context.Context) error {
 			}
 			m.note("finished an interrupted activation")
 		}
-		m.note("the store is already activated as format 4")
+		m.note("the store is already activated as format 5")
 		m.rep.Activated = true
 		return nil
 	case m.opt.VerifyOnly:
-		return errors.New("--verify-only checks an activated format-4 store; this one is not")
+		return errors.New("--verify-only checks an activated format-5 store; this one is not")
 	case mk.Format4():
 		return m.resumeActivation(ctx)
 	default:
-		// Formats 2 and 3 are refused (format 4 opens formats 1 and 4).
+		// Formats 2 and 3 are refused (format 5 opens formats 1 and 4).
 		sf, err := update.ReadStoreFormat(m.root)
 		if err != nil {
 			return err
 		}
 		if sf.Format >= 2 {
-			return fmt.Errorf("%s is a store of format %d (%s): format 4 migrates only format-1 stores", m.root, sf.Format, sf.Evidence)
+			return fmt.Errorf("%s is a store of format %d (%s): format 5 migrates only format-1 stores", m.root, sf.Format, sf.Evidence)
 		}
 	}
 	// Format 1, before any activation.
@@ -678,17 +678,17 @@ func (m *migrator4) run(ctx context.Context) error {
 // resumeActivation finishes an activation a crash cut short before its
 // commit point (MIGRATED written, STORE torn or missing). The engine writes
 // MIGRATED only after the copy, the check and the control copy, so none of
-// them runs again, and format 1 is not opened (a store with format-4 markers
+// them runs again, and format 1 is not opened (a store with format-5 markers
 // never opens as format 1). The target reopens as a migration target and
 // Activate runs again: the engine rewrites STORE (C-22).
 func (m *migrator4) resumeActivation(ctx context.Context) error {
 	j, err := readMigrate4Journal(m.jpath)
 	if err != nil {
-		return fmt.Errorf("%s holds format-4 markers without a finished migration journal (%v): not a migration this command can resume",
+		return fmt.Errorf("%s holds format-5 markers without a finished migration journal (%v): not a migration this command can resume",
 			m.root, err)
 	}
 	if !j.Verified {
-		return fmt.Errorf("%s holds format-4 markers but its migration journal %s was never verified: not a migration this command can resume",
+		return fmt.Errorf("%s holds format-5 markers but its migration journal %s was never verified: not a migration this command can resume",
 			m.root, m.jpath)
 	}
 	m.j, m.rep.Resumed, m.rep.GseqFloor = j, true, j.GseqFloor
@@ -763,7 +763,7 @@ func (m *migrator4) openSourceAt(dir, identityDir string) error {
 				m.rep.Unregistered = map[string]int64{}
 			}
 			m.rep.Unregistered[t.Name] = c.Count
-			m.logf("table %s (%d records): %v: format 4 has no type for it", t.Name, c.Count, err)
+			m.logf("table %s (%d records): %v: format 5 has no type for it", t.Name, c.Count, err)
 			continue
 		}
 		m.tables = append(m.tables, t)
@@ -844,7 +844,7 @@ func (m *migrator4) logProgress(phase, schema string, done int64) {
 }
 
 // migrate4OversizedOf lists the records of tables above the largest storable
-// record, each keyed by the CID format 4 would store it under.
+// record, each keyed by the CID format 5 would store it under.
 func migrate4OversizedOf(src *storage.MigrationSource, tables []storage.LegacyTable) ([]migrate4Oversized, error) {
 	var out []migrate4Oversized
 	for _, t := range tables {
@@ -892,23 +892,23 @@ func (m *migrator4) refuseOversized(over []migrate4Oversized) error {
 	sort.Strings(unknown)
 	switch {
 	case len(unknown) > 0:
-		return fmt.Errorf("--drop-oversized names %s: not a record above format 4's largest storable record (%d B; store-migrate --to 4 --inventory lists those as oversized_records)",
+		return fmt.Errorf("--drop-oversized names %s: not a record above format 5's largest storable record (%d B; store-migrate --to 5 --inventory lists those as oversized_records)",
 			strings.Join(unknown, ", "), migrate4MaxRecord)
 	case len(missing) > 0:
-		return fmt.Errorf("format-1 records above format 4's largest storable record (%d B, C-6): %s. Format 4 cannot store them, so the migration would not carry them; nothing was changed. To migrate without them, rerun with --drop-oversized %s",
+		return fmt.Errorf("format-1 records above format 5's largest storable record (%d B, C-6): %s. Format 4 cannot store them, so the migration would not carry them; nothing was changed. To migrate without them, rerun with --drop-oversized %s",
 			migrate4MaxRecord, strings.Join(missing, ", "), strings.Join(cids, ","))
 	}
 	m.setAside = found
 	m.rep.SetAside = over
 	for _, o := range over {
-		m.note("record %s in %s (%d B): above format 4's largest storable record; not migrated, as --drop-oversized names it", o.CID, o.Table, o.Bytes)
+		m.note("record %s in %s (%d B): above format 5's largest storable record; not migrated, as --drop-oversized names it", o.CID, o.Table, o.Bytes)
 	}
 	return nil
 }
 
 // refuseUnregistered is C-39 U1: the migration never drops records
 // silently. The unregistered tables (m.rep.Unregistered: schemas with no
-// standard, which format 4 does not store) that hold records must all be
+// standard, which format 5 does not store) that hold records must all be
 // named by --drop-unregistered, and every name it gives must be one of them.
 func (m *migrator4) refuseUnregistered() error {
 	named := map[string]bool{}
@@ -932,7 +932,7 @@ func (m *migrator4) refuseUnregistered() error {
 	sort.Strings(held)
 	switch {
 	case len(unknown) > 0:
-		return fmt.Errorf("--drop-unregistered names %s: not a format-1 table of a schema SDN has no standard for (store-migrate --to 4 --inventory lists those as unregistered_tables)",
+		return fmt.Errorf("--drop-unregistered names %s: not a format-1 table of a schema SDN has no standard for (store-migrate --to 5 --inventory lists those as unregistered_tables)",
 			strings.Join(unknown, ", "))
 	case len(held) > 0:
 		tables := make([]string, 0, len(m.rep.Unregistered))
@@ -981,7 +981,7 @@ func (m *migrator4) saveJournal() error {
 	})
 }
 
-// openTarget opens the format-4 engine and registers every schema's type.
+// openTarget opens the format-5 engine and registers every schema's type.
 // A torn STORE beside a valid MIGRATED (an activation cut short before its
 // commit point) reopens as a migration target and the activation runs again:
 // the engine rewrites STORE (C-22; only the engine writes markers).
@@ -993,7 +993,7 @@ func (m *migrator4) openTarget(ctx context.Context, mode format4.CreateMode) err
 	}
 	var err error
 	if m.api, err = openFormat4Engine(ctx, opt); err != nil {
-		return fmt.Errorf("open the format-4 engine (run prewarm-aot as this user first): %w", err)
+		return fmt.Errorf("open the format-5 engine (run prewarm-aot as this user first): %w", err)
 	}
 	for _, schema := range m.schemas {
 		if err := m.api.RegisterType(m.specs[schema]); err != nil {
@@ -1057,7 +1057,7 @@ func (m *migrator4) checkJournalAgainstHeads(ctx context.Context) error {
 		held += p.Records
 	}
 	if held < want-int64(len(m.j.Rejected)) {
-		return fmt.Errorf("the journal counts %d copies but the format-4 partitions hold %d: remove %s and %s, then migrate again",
+		return fmt.Errorf("the journal counts %d copies but the format-5 partitions hold %d: remove %s and %s, then migrate again",
 			want, held, filepath.Join(m.root, marker.Dir), m.jpath)
 	}
 	return nil
@@ -1163,7 +1163,7 @@ type migrate4Side struct {
 // starts[schema], then its end. With records, a start carries the schema's
 // tags and identities and a page every copy's bytes (the copy); without,
 // which tables hold each record (the check). The format-1 engine serves one
-// query at a time, so its reads overlap the format-4 engine's work, not each
+// query at a time, so its reads overlap the format-5 engine's work, not each
 // other. stop ends the reader and waits for it, so no read is in flight when
 // the source closes.
 func (m *migrator4) readFormat1(ctx context.Context, schemas []string, starts map[string]int64, records bool) (items <-chan migrate4Item, stop func()) {
@@ -1502,7 +1502,7 @@ func (m *migrator4) tallyReport() {
 		m.rep.RecordTS += p.RecordTS
 	}
 	if m.rep.OwnBytes > 0 {
-		m.note("%d copies hold bytes that differ from their record's first copy; each was sent with its own, and the check fails if format 4 stored other bytes", m.rep.OwnBytes)
+		m.note("%d copies hold bytes that differ from their record's first copy; each was sent with its own, and the check fails if format 5 stored other bytes", m.rep.OwnBytes)
 	}
 	if m.rep.RecordTS > 0 {
 		m.note("%d copies hold a ts that differs from their record's first copy; each keeps its own (C-39 E6)", m.rep.RecordTS)
@@ -1558,7 +1558,7 @@ func (m *migrator4) verifyOnly(ctx context.Context) error {
 
 // ---- control copy and activation ----------------------------------------------------
 
-// copyControl writes the control tables into fsql4/control.db (the format-1
+// copyControl writes the control tables into fsql5/control.db (the format-1
 // engine's own copy). Format 4 keeps the ingest identities in the engine and
 // builds its full-text indexes after activation, so the copy has neither.
 func (m *migrator4) copyControl() error {
@@ -1601,7 +1601,7 @@ func (m *migrator4) copyControl() error {
 // commit point); then control.flatsqldb* move to pre-format4/ and
 // control.flatsqldb becomes a directory.
 func (m *migrator4) activate(ctx context.Context) error {
-	m.logf("activating format 4")
+	m.logf("activating format 5")
 	if err := m.timed("activate", func() error { return m.api.Activate(ctx) }); err != nil {
 		return fmt.Errorf("activate: %w", err)
 	}
@@ -1625,7 +1625,7 @@ func (m *migrator4) activate(ctx context.Context) error {
 		return err
 	}
 	m.rep.Activated = true
-	m.logf("activated format 4 in %s; format 1's control database is in %s", m.root, filepath.Join(m.root, marker.PreFormat4Dir))
+	m.logf("activated format 5 in %s; format 1's control database is in %s", m.root, filepath.Join(m.root, marker.PreFormat4Dir))
 	return nil
 }
 

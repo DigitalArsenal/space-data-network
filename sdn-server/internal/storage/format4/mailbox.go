@@ -118,11 +118,11 @@ type layout struct {
 func parseLayout(b []byte) (layout, error) {
 	var l layout
 	if len(b) < layoutBytes {
-		return l, fmt.Errorf("format4: layout is %d bytes, want %d", len(b), layoutBytes)
+		return l, fmt.Errorf("format5: layout is %d bytes, want %d", len(b), layoutBytes)
 	}
 	u := func(off int) uint32 { return binary.LittleEndian.Uint32(b[off:]) }
 	if u(0) != layoutVersion || u(4) != layoutBytes || u(8) != slotHeader {
-		return l, fmt.Errorf("format4: layout version %d size %d header %d, want %d/%d/%d (engine ABI changed)",
+		return l, fmt.Errorf("format5: layout version %d size %d header %d, want %d/%d/%d (engine ABI changed)",
 			u(0), u(4), u(8), layoutVersion, layoutBytes, slotHeader)
 	}
 	l.stopWord = u(12)
@@ -131,7 +131,7 @@ func parseLayout(b []byte) (layout, error) {
 		l.reqBytes[p], l.ringBytes[p] = u(40+4*p), u(48+4*p)
 		if l.nSlots[p] == 0 || l.ringBytes[p] == 0 || l.ringBytes[p]&(l.ringBytes[p]-1) != 0 ||
 			uint64(l.slotStride[p]) < uint64(slotHeader)+uint64(l.reqBytes[p])+uint64(l.ringBytes[p]) || l.slotStride[p]%64 != 0 {
-			return l, fmt.Errorf("format4: layout pool %d out of range (slots %d, stride %d, request %d, ring %d)",
+			return l, fmt.Errorf("format5: layout pool %d out of range (slots %d, stride %d, request %d, ring %d)",
 				p, l.nSlots[p], l.slotStride[p], l.reqBytes[p], l.ringBytes[p])
 		}
 	}
@@ -141,7 +141,7 @@ func parseLayout(b []byte) (layout, error) {
 	}
 	l.nThreads = u(120)
 	if l.nThreads < 1 || l.nThreads > maxThreads {
-		return l, fmt.Errorf("format4: layout reports %d service threads", l.nThreads)
+		return l, fmt.Errorf("format5: layout reports %d service threads", l.nThreads)
 	}
 	for i := 0; i < int(l.nThreads); i++ {
 		l.threadClass = append(l.threadClass, u(128+4*i))
@@ -171,7 +171,7 @@ func newMailbox(mem memory, h host, lay layout) (*mailbox, error) {
 	}
 	for c := ClassWrite; c <= ClassSandbox; c++ {
 		if len(m.byCls[c]) == 0 {
-			return nil, fmt.Errorf("format4: the engine runs no thread of class %d", c)
+			return nil, fmt.Errorf("format5: the engine runs no thread of class %d", c)
 		}
 	}
 	return m, nil
@@ -206,7 +206,7 @@ type slot struct {
 }
 
 // errNoSlot: every slot of the pool is in use, or the queue is full.
-var errNoSlot = errors.New("format4: no free slot")
+var errNoSlot = errors.New("format5: no free slot")
 
 // trySubmit claims a slot and queues the request once.
 func (m *mailbox) trySubmit(c call) (*slot, error) {

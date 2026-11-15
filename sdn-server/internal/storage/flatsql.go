@@ -495,7 +495,7 @@ func NewFlatSQLStore(basePath string, validator *sds.Validator, opts ...StoreOpt
 		}
 	}
 	switch format {
-	case 4:
+	case 4, 5:
 		return newFormat4Store(basePath, validator, cfg)
 	case 2:
 		return newFormat2Store(basePath, validator, cfg)
@@ -5112,7 +5112,7 @@ func (s *FlatSQLStore) RecordIndexSeqPage(q RecordIndexSeqQuery) (RecordIndexSeq
 	if s.rb != nil {
 		f4, ok := s.rb.(format4Backend)
 		if !ok {
-			return RecordIndexSeqPage{}, errors.New("record index pages need store format 4 or 1")
+			return RecordIndexSeqPage{}, errors.New("record index pages need store format 5 or 1")
 		}
 		return f4.recordIndexSeqPage(q)
 	}

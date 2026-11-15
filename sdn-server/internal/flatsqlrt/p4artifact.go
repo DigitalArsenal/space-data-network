@@ -1,6 +1,6 @@
 package flatsqlrt
 
-// p4artifact.go: the embedded format-4 engine (stack design
+// p4artifact.go: the embedded format-5 engine (stack design
 // docs/architecture/flatsql-sqlite-partitions.md §5.1, gates G4/G5;
 // build-out contract §1, §5.3). flatsql.wasm is the file of the
 // PUBLISHED flatsql npm release below, byte for byte (published-deps law): the
@@ -9,11 +9,11 @@ package flatsqlrt
 // sha256 is in the package's wasm/integrity.json. versioninfo.P4EngineSHA256
 // is that sha256, the one pin: it decides the build's store-format stamp, and
 // init refuses to start a binary whose embedded bytes are not the pinned
-// engine, so a build stamped format 4 always carries its engine.
+// engine, so a build stamped format 5 always carries its engine.
 //
-// Format 4 is the default store format (SDN_STORE_FORMAT unset; "1" opts
+// Format 5 is the default store format (SDN_STORE_FORMAT unset; "1" opts
 // out). A build with no pin embeds no bytes, Open refuses that empty
-// artifact, and its stamp stays below 4.
+// artifact, and its stamp stays below 5.
 
 import (
 	"crypto/sha256"
@@ -30,9 +30,9 @@ var p4ThreadsWasm []byte
 
 const (
 	// P4ThreadsPackage is the npm release the artifact comes from.
-	P4ThreadsPackage = "flatsql@3.12.2"
+	P4ThreadsPackage = "flatsql@3.12.3"
 	// P4ThreadsGitHead is that release's gitHead (flatsql main).
-	P4ThreadsGitHead = "a4b8a75a7c12ed15a87908b08113996dfb0f0a3f"
+	P4ThreadsGitHead = "1116b5f97695fe63f3261fcaf763c1979ab9af92"
 	// P4ThreadsSHA256 is the artifact's sha256 (the package's integrity.json):
 	// the release pin.
 	P4ThreadsSHA256 = versioninfo.P4EngineSHA256
@@ -42,8 +42,8 @@ const (
 	P4ThreadsAOTPrefix = "fsqlp4"
 )
 
-// ErrNoP4Artifact: this build embeds no format-4 engine.
-var ErrNoP4Artifact = errors.New("flatsqlrt: this build embeds no format-4 engine (flatsql.wasm)")
+// ErrNoP4Artifact: this build embeds no format-5 engine.
+var ErrNoP4Artifact = errors.New("flatsqlrt: this build embeds no format-5 engine (flatsql.wasm)")
 
 func init() {
 	if err := checkP4Pin(p4ThreadsWasm, P4ThreadsSHA256); err != nil {
@@ -56,18 +56,18 @@ func init() {
 func checkP4Pin(wasm []byte, pin string) error {
 	if pin == "" {
 		if len(wasm) != 0 {
-			return fmt.Errorf("flatsqlrt: flatsql.wasm is embedded (%d bytes) but versioninfo.P4EngineSHA256 pins no format-4 engine", len(wasm))
+			return fmt.Errorf("flatsqlrt: flatsql.wasm is embedded (%d bytes) but versioninfo.P4EngineSHA256 pins no format-5 engine", len(wasm))
 		}
 		return nil
 	}
 	sum := sha256.Sum256(wasm)
 	if got := hex.EncodeToString(sum[:]); len(wasm) == 0 || got != pin {
-		return fmt.Errorf("flatsqlrt: the embedded flatsql.wasm (%d bytes, sha256 %s) is not the pinned format-4 engine %s", len(wasm), got, pin)
+		return fmt.Errorf("flatsqlrt: the embedded flatsql.wasm (%d bytes, sha256 %s) is not the pinned format-5 engine %s", len(wasm), got, pin)
 	}
 	return nil
 }
 
-// P4ThreadsWasm returns the embedded format-4 engine (portable bytes); empty
+// P4ThreadsWasm returns the embedded format-5 engine (portable bytes); empty
 // in a build that pins none.
 func P4ThreadsWasm() []byte { return p4ThreadsWasm }
 

@@ -2,7 +2,7 @@
 
 export const SUITE_VERSION = "1.1.1";
 export const SPACEDATASTANDARDS_VERSION = "1.279.0";
-export const FLATSQL_VERSION = "3.12.2";
+export const FLATSQL_VERSION = "3.12.3";
 export const HD_WALLET_WASM_VERSION = "2.1.3";
 export const HD_WALLET_UI_VERSION = "2.1.3";
 export const IPFS_WEBUI_VERSION = "4.12.0";

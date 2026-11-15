@@ -27,10 +27,10 @@ func writeMarker(t *testing.T, root, name, hexBytes string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(root, marker.Dir), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, marker.LegacyDir), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, marker.Dir, name), b, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, marker.LegacyDir, name), b, 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -43,10 +43,22 @@ func writeFormat4Store(t *testing.T) string {
 	root := writeFormat1Store(t)
 	writeMarker(t, root, marker.MigratedFile, goldenMigrated4)
 	writeMarker(t, root, marker.StoreFile, goldenStore4)
-	if err := marker.FinishActivation(root); err != nil {
+	finishLegacyFormat4(t, root)
+	return root
+}
+
+// Reproduce the old binary's activation layout; the current engine activates 5.
+func finishLegacyFormat4(t *testing.T, root string) {
+	t.Helper()
+	if err := os.Mkdir(filepath.Join(root, marker.PreFormat4Dir), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	return root
+	if err := os.Rename(filepath.Join(root, marker.LegacyControl), filepath.Join(root, marker.PreFormat4Dir, marker.LegacyControl)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, marker.LegacyControl), 0o700); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestReadStoreFormatSeesFormat4First(t *testing.T) {
@@ -166,9 +178,7 @@ func TestRollbackOnAFormat4Store(t *testing.T) {
 	// The box migrates to format 4 on C4.
 	writeMarker(t, store, marker.MigratedFile, goldenMigrated4)
 	writeMarker(t, store, marker.StoreFile, goldenStore4)
-	if err := marker.FinishActivation(store); err != nil {
-		t.Fatal(err)
-	}
+	finishLegacyFormat4(t, store)
 	inv, err := Inventory(paths)
 	if err != nil || len(inv.Slots) != 2 {
 		t.Fatalf("inventory %+v, %v", inv, err)

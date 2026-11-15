@@ -63,27 +63,26 @@ const (
 	// engine refuses a store one level above it.
 	PSEngineStoreFormatMax = 3
 
-	// P4EngineSHA256 is the release pin of the format-4 engine (store format
-	// 4, the stream engine: per source feed a pure FlatBuffer stream plus a
+	// P4EngineSHA256 is the release pin of the threaded engine (store format
+	// 5, the stream engine: per source feed a pure FlatBuffer stream plus a
 	// SQLite index file): the sha256 of the published flatsql.wasm
-	// (flatsql@3.12.2, its package's wasm/integrity.json), which flatsqlrt
-	// embeds. Empty means no format-4 engine is embedded. flatsqlrt refuses to
+	// (flatsql@3.12.3, its package's wasm/integrity.json), which flatsqlrt
+	// embeds. Empty means no format-5 engine is embedded. flatsqlrt refuses to
 	// start a binary whose embedded bytes are not this engine (empty bytes
 	// with no pin, else bytes with exactly this sha256).
-	P4EngineSHA256 = "27797ae7ec9ff6d2b26aaefc63cfd3627677206a5ac1356e9f062e4b24118f01"
+	P4EngineSHA256 = "960fa9fb13b2918c2b85e3ec1b047a6d90ea1673f2f5c319598b3ec017f76452"
 
-	// P4StoreFormat is format 4's fsql4/STORE format: the format a format-4
-	// store is at, and the one the format-4 engine opens.
-	P4StoreFormat = 4
+	// P4StoreFormat is the embedded engine's fsql5/STORE format.
+	P4StoreFormat = 5
 
-	// p4Pinned is 1 when this build pins (and so embeds) a format-4 engine,
+	// p4Pinned is 1 when this build pins (and so embeds) a format-5 engine,
 	// else 0.
 	p4Pinned = min(len(P4EngineSHA256), 1)
 
 	// MaxStoreFormat is the highest on-disk store format this build opens: the
-	// highest of its embedded engines. Format 4 counts only when the build
-	// pins a format-4 engine; without one the stamp stays at the format-2
-	// engine's level, so the update guard refuses this build on a format-4
+	// highest of its embedded engines. Format 5 counts only when the build
+	// pins a format-5 engine; without one the stamp stays at the format-2
+	// engine's level, so the update guard refuses this build on a format-5
 	// store instead of letting it fail at open (rollback, review 2).
 	MaxStoreFormat = max(Format1StoreFormat, PSEngineStoreFormatMax, P4StoreFormat*p4Pinned)
 )

@@ -101,9 +101,9 @@ type StoreFormat struct {
 
 // ReadStoreFormat reads the format of the record store rooted at root.
 //
-// Format 4 comes first: fsql4/MIGRATED or fsql4/STORE present (in any state:
-// a migration in progress, an activation a crash cut short, a finished store)
-// is format 4. The rules below do not run for it.
+// Engine markers come first, preferring fsql5 to the retained fsql4 store.
+// Valid STORE bytes determine the format. Incomplete markers conservatively
+// require the current engine. The rules below do not run for those stores.
 //
 // A store is format 2 or above once it is ACTIVATED: fsql2/MIGRATED exists
 // (store-migrate's last step, and a fresh format-2 store is created with it),
@@ -121,7 +121,13 @@ func ReadStoreFormat(root string) (StoreFormat, error) {
 	if m, err := marker.Read(root); err != nil {
 		return sf, err
 	} else if m.Format4() {
-		sf.Format = versioninfo.P4StoreFormat
+		sf.Format = int(m.Format)
+		if !m.StoreValid && !m.MigratedValid {
+			sf.Format = versioninfo.P4StoreFormat
+			if m.Directory == marker.LegacyDir {
+				sf.Format = 4
+			}
+		}
 		sf.Evidence = format4Evidence(m)
 		return sf, nil
 	}
@@ -167,20 +173,20 @@ func ReadStoreFormat(root string) (StoreFormat, error) {
 	return sf, nil
 }
 
-// format4Evidence names the fsql4 markers that made a store format 4.
+// format4Evidence names the selected markers and their activation state.
 func format4Evidence(m marker.Markers) string {
 	var present []string
 	if m.MigratedPresent {
-		present = append(present, marker.Dir+"/"+marker.MigratedFile)
+		present = append(present, m.Directory+"/"+marker.MigratedFile)
 	}
 	if m.StorePresent {
-		present = append(present, marker.Dir+"/"+marker.StoreFile)
+		present = append(present, m.Directory+"/"+marker.StoreFile)
 	}
 	state := "migration or activation in progress"
 	switch {
-	case m.Activated() && m.LegacyControlDir:
+	case m.ActivatedAs(m.Format) && m.LegacyControlDir:
 		state = "activated"
-	case m.Activated():
+	case m.ActivatedAs(m.Format):
 		state = "activated, legacy control database not yet retired"
 	}
 	return strings.Join(present, " and ") + " present (" + state + ")"

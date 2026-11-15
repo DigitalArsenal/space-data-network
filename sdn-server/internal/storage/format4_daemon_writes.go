@@ -25,13 +25,13 @@ import (
 // format4PutChunk bounds the records one PUT holds in memory.
 const format4PutChunk = 4096
 
-// ErrFormat4Unsupported: a record API store format 4 does not serve (the
+// ErrFormat4Unsupported: a record API store format 5 does not serve (the
 // reason is in the wrapped message). Never a silent empty answer.
-var ErrFormat4Unsupported = errors.New("not available on store format 4")
+var ErrFormat4Unsupported = errors.New("not available on store format 5")
 
 func f4Unsupported(what string) error { return fmt.Errorf("%w: %s", ErrFormat4Unsupported, what) }
 
-// format4Backend is store format 4 as the record backend.
+// format4Backend is store format 5 as the record backend.
 type format4Backend struct {
 	s *FlatSQLStore
 	d *format4Daemon
@@ -468,7 +468,7 @@ func (b format4Backend) supersedeSourceBatches(result DatasetSupersedeResult, st
 	result.TagsDeleted, result.RecordsDeleted = r.Matched, r.Deleted
 	if r.Matched > 0 {
 		result.Chunks = 1
-		log.Infof("Dataset supersede %s %s/%s keep %s: retired %d tag instances and %d records in %s (format 4)",
+		log.Infof("Dataset supersede %s %s/%s keep %s: retired %d tag instances and %d records in %s (format 5)",
 			result.SchemaName, result.ProviderID, result.SourceName, result.KeepBatch, r.Matched, r.Deleted,
 			time.Since(started).Round(time.Millisecond))
 	}
@@ -495,7 +495,7 @@ func (b format4Backend) GarbageCollectToQuota(maxBytes int64) (int64, error) {
 		return 0, fmt.Errorf("garbage collect to quota: %w", err)
 	}
 	if r.RecordsDropped > 0 {
-		log.Infof("GarbageCollectToQuota (format 4) dropped the %d oldest record(s) by arrival, %d bytes, %d file(s) (cap %d)",
+		log.Infof("GarbageCollectToQuota (format 5) dropped the %d oldest record(s) by arrival, %d bytes, %d file(s) (cap %d)",
 			r.RecordsDropped, r.BytesFreed, r.FilesDropped, maxBytes)
 	}
 	return r.RecordsDropped, nil

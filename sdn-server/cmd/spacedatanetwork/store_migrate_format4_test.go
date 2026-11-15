@@ -535,12 +535,12 @@ func format4Dump(t *testing.T, api format4.API, root string) string {
 // ---- tests ------------------------------------------------------------------------------
 
 func TestStoreMigrateFormat4TargetFlag(t *testing.T) {
-	for in, want := range map[string]int{"": 2, "2": 2, " 4 ": 4, "sqlite": 4, "SQLite": 4} {
+	for in, want := range map[string]int{"": 2, "2": 2, " 5 ": 5, "sqlite": 5, "SQLite": 5} {
 		if got, err := migrateTargetFormat(in); err != nil || got != want {
 			t.Fatalf("--to %q: %d %v, want %d", in, got, err, want)
 		}
 	}
-	for _, in := range []string{"1", "3", "5", "sqlite3"} {
+	for _, in := range []string{"1", "3", "4", "sqlite3"} {
 		if _, err := migrateTargetFormat(in); err == nil {
 			t.Fatalf("--to %q accepted", in)
 		}
@@ -573,8 +573,8 @@ func TestStoreMigrateFormat4CommandLine(t *testing.T) {
 	}
 	reset()
 	storeMigrateVerifyOnly, storeMigrateStore = true, t.TempDir()
-	if err := runStoreMigrate(storeMigrateCmd, nil); err == nil || !strings.Contains(err.Error(), "--to 4") {
-		t.Fatalf("--verify-only without --to 4: %v", err)
+	if err := runStoreMigrate(storeMigrateCmd, nil); err == nil || !strings.Contains(err.Error(), "--to 5") {
+		t.Fatalf("--verify-only without --to 5: %v", err)
 	}
 }
 
@@ -952,10 +952,15 @@ func openEngineAt(t *testing.T, root string, schemas ...string) format4.API {
 	return api
 }
 
-// engineDump opens a migrated store on the engine and dumps it.
+// engineDump opens a migrated store on the engine, dumps it and closes it.
 func engineDump(t *testing.T, root string) string {
 	t.Helper()
 	api := openEngineAt(t, root, "OMM.fbs", "CAT.fbs", "IQC.fbs")
+	defer func() {
+		if err := api.Close(context.Background()); err != nil {
+			t.Errorf("close the engine after dumping %s: %v", root, err)
+		}
+	}()
 	return format4Dump(t, api, root)
 }
 
