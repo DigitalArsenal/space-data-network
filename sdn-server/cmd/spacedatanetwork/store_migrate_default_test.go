@@ -92,13 +92,13 @@ func TestStoreMigrateFormat4WithoutTheEnvAndRollBack(t *testing.T) {
 	if err := prewarmAOTArtifacts(io.Discard, storage.EngineAOTCacheDir()); err != nil {
 		t.Fatalf("prewarm-aot: %v", err)
 	}
-	storeMigrateTo, storeMigrateStore = "4", root
+	storeMigrateTo, storeMigrateStore = "5", root
 	defer func() { storeMigrateTo, storeMigrateStore = "", "" }()
 	var out bytes.Buffer
 	storeMigrateCmd.SetOut(&out)
 	defer storeMigrateCmd.SetOut(nil)
 	if err := runStoreMigrate(storeMigrateCmd, nil); err != nil {
-		t.Fatalf("store-migrate --to 4 --store %s: %v\n%s", root, err, out.String())
+		t.Fatalf("store-migrate --to 5 --store %s: %v\n%s", root, err, out.String())
 	}
 	if mk, err := marker.Read(root); err != nil || !mk.Activated() || mk.NeedsFinish() || mk.MigratedFrom != 1 {
 		t.Fatalf("markers after store-migrate: %+v %v", mk, err)
