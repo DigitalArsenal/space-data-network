@@ -582,6 +582,11 @@ func (m *Manifest) assertSignature(roots TrustedRoots) error {
 	if !ok || trusted == "" {
 		return errors.New("untrusted update signing key")
 	}
+	// Whatever handed these roots in (a trust file, the compiled-in set, a
+	// caller building them by hand): a SEC-001 key never verifies an update.
+	if err := refuseDeniedRoot(m.Signing.KeyID, trusted); err != nil {
+		return err
+	}
 	if m.Signing.PublicKey != "" && m.Signing.PublicKey != trusted {
 		return errors.New("update signing key mismatch")
 	}

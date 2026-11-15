@@ -214,23 +214,31 @@ func RecoverPendingApply(paths Paths) (recovered bool, err error) {
 // override). The store is a JSON object mapping signing key ids to encoded
 // Ed25519 public keys and ships with the original bundle install, outside
 // the swapped payload contents.
+//
+// When the bundle has no trust store at all (trust/update-roots.json absent,
+// or no bundle root to hold one) the compiled-in roots are used instead
+// (DefaultTrustRoots). Only absence falls back: a present file wins, even one
+// that does not parse or is empty (those are errors), so a rotation that
+// dropped a compiled-in root stays dropped. An explicit SDN_UPDATE_TRUST_ROOTS
+// path that does not exist is an error, not an absence: the operator named a
+// file. A SEC-001 root is refused wherever the roots come from.
 func LoadTrustRoots(paths Paths) (TrustedRoots, error) {
-	path := strings.TrimSpace(os.Getenv(TrustRootsEnv))
+	override := strings.TrimSpace(os.Getenv(TrustRootsEnv))
+	path := override
 	if path == "" {
+		if strings.TrimSpace(paths.Root) == "" {
+			return DefaultTrustRoots()
+		}
 		path = paths.Trust
 	}
 	data, err := os.ReadFile(path)
+	if override == "" && errors.Is(err, os.ErrNotExist) {
+		return DefaultTrustRoots()
+	}
 	if err != nil {
 		return nil, fmt.Errorf("read update trust roots (%s): %w", path, err)
 	}
-	var roots TrustedRoots
-	if err := json.Unmarshal(data, &roots); err != nil {
-		return nil, fmt.Errorf("parse update trust roots: %w", err)
-	}
-	if len(roots) == 0 {
-		return nil, errors.New("update trust roots are empty")
-	}
-	return roots, nil
+	return parseTrustRoots(data, "update trust roots ("+path+")")
 }
 
 // StagedUpdate is one verified or rejected candidate found under

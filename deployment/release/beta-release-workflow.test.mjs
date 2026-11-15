@@ -541,6 +541,30 @@ test('beta release workflow builds signed CLI update feed artifacts', () => {
   assert.match(workflow, /needs:\s*\[beta-version, ipfs, docker, docker-manifest, cli, cli-update-feed, desktop, packages, sdn-js-package, artifact-docker-test\]/);
 });
 
+test('the update feed job fails a stable release without its key, signs with the derived key id only, and verifies every manifest against the fleet roots', () => {
+  const workflow = readRepoFile('.github/workflows/beta-release-artifacts.yml');
+  const job = workflow.slice(workflow.indexOf('  cli-update-feed:'), workflow.indexOf('  desktop:'));
+
+  // A missing key is decided by check-update-signing-key.mjs, which fails a
+  // stable release; the old shell check only warned, for every release.
+  assert.match(job, /check-update-signing-key\.mjs[\s\S]*?--maturity "\$\{RELEASE_MATURITY\}"[\s\S]*?--roots deployment\/release\/fleet-trust-roots\.json[\s\S]*?--github-output "\$GITHUB_OUTPUT"/);
+  assert.doesNotMatch(job, /::warning title=Unsigned release::/);
+  assert.doesNotMatch(job, /\[\[ -n "\$\{SDN_UPDATE_SIGNING_KEY_PEM:-\}" \]\]/);
+
+  // No fallback key id: the id is the one derived from the PEM.
+  assert.doesNotMatch(job, /SDN_UPDATE_KEY_ID:-/);
+  assert.doesNotMatch(job, /sdn-beta-release/);
+  assert.match(job, /UPDATE_KEY_ID: \$\{\{ steps\.signing\.outputs\.key_id \}\}/);
+  assert.match(job, /update_key_id="\$\{UPDATE_KEY_ID:\?/);
+  assert.match(job, /--key-id "\$\{update_key_id\}"/);
+
+  // Every manifest is verified against the fleet roots before the feed is packed.
+  const verify = job.indexOf('verify-cli-update-feed.mjs');
+  assert.ok(verify > job.indexOf('build-sdn-update-feed.js'), 'the feed is verified after it is built');
+  assert.ok(verify < job.indexOf('tar -czf "dist/update-feed/'), 'the feed is verified before it is packed');
+  assert.match(job.slice(verify), /^verify-cli-update-feed\.mjs \\\n\s+--feed-dir "\$\{feed_dir\}" \\\n\s+--roots deployment\/release\/fleet-trust-roots\.json/);
+});
+
 test('beta release workflow builds desktop app artifacts for every supported OS', () => {
   const workflow = readRepoFile('.github/workflows/beta-release-artifacts.yml');
 
@@ -824,8 +848,14 @@ test('release maturity reaches only the release notes, never a --channel', () =>
   // or stable), not an update channel. It words the notes and the manifest;
   // a bundle or payload stamped with it would leave the public channel.
   const workflow = readRepoFile('.github/workflows/beta-release-artifacts.yml');
+  // It is read in two places, both as RELEASE_MATURITY: the release notes, and
+  // the update signing-key check (a stable release must ship its feed).
   const uses = [...workflow.matchAll(/^.*needs\.beta-version\.outputs\.channel.*$/gm)].map((m) => m[0].trim());
-  assert.deepEqual(uses, ['RELEASE_MATURITY: ${{ needs.beta-version.outputs.channel }}']);
+  assert.deepEqual(uses, [
+    'RELEASE_MATURITY: ${{ needs.beta-version.outputs.channel }}',
+    'RELEASE_MATURITY: ${{ needs.beta-version.outputs.channel }}',
+  ]);
+  assert.match(workflow, /name: Check the update signing key\n\s+id: signing\n\s+env:\n\s+RELEASE_MATURITY:[^\n]*\n\s+run: \|\n\s+node deployment\/release\/check-update-signing-key\.mjs \\\n\s+--maturity "\$\{RELEASE_MATURITY\}"/);
   assert.match(workflow, /name: Assemble beta release artifacts\n\s+env:[\s\S]*?RELEASE_MATURITY:[\s\S]*?run: deployment\/release\/assemble-beta-release-artifacts\.sh/);
   assert.doesNotMatch(workflow, /--channel \$\{\{/);
 

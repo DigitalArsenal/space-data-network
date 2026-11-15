@@ -16,6 +16,24 @@ function writeFixture(root, relativePath, contents) {
   writeFileSync(filePath, contents);
 }
 
+// writeCliArchiveFixture writes a tiny real CLI bundle archive (tar.gz or zip)
+// with a trust/ directory, the shape of a release archive.
+function writeCliArchiveFixture(root, relativePath) {
+  const archivePath = join(root, relativePath);
+  const name = relativePath.split('/').pop().replace(/\.(tar\.gz|zip)$/, '');
+  const tree = mkdtempSync(join(tmpdir(), 'sdn-cli-archive-fixture-'));
+  writeFixture(tree, `${name}/bin/spacedatanetwork`, `fixture ${relativePath}`);
+  writeFixture(tree, `${name}/manifest.json`, '{"schema":"org.spacedatanetwork.bundle.v1"}\n');
+  writeFixture(tree, `${name}/trust/update-roots.json`, '{}\n');
+  mkdirSync(dirname(archivePath), { recursive: true });
+  const env = { ...process.env, COPYFILE_DISABLE: '1' };
+  if (archivePath.endsWith('.zip')) {
+    execFileSync('zip', ['-qry', archivePath, name], { cwd: tree, env });
+  } else {
+    execFileSync('tar', ['-czf', archivePath, '-C', tree, name], { env });
+  }
+}
+
 test('assembles beta release files, manifest, body, and checksums', () => {
   const tempRoot = mkdtempSync(join(tmpdir(), 'sdn-beta-release-'));
   const distDir = join(tempRoot, 'dist');
@@ -435,7 +453,13 @@ test('assembles signed CLI update feed artifacts when signing key is configured'
     'desktop/space-data-network-desktop-0.47.0-linux-amd64.deb',
     'desktop/space-data-network-desktop-0.47.0-linux-x64.tar.xz',
   ]) {
-    writeFixture(distDir, artifact, `fixture ${artifact}`);
+    if (artifact.startsWith('cli/')) {
+      // A real (tiny) bundle archive: the payload builder lists it to keep
+      // trust/ out of the update.
+      writeCliArchiveFixture(distDir, artifact);
+    } else {
+      writeFixture(distDir, artifact, `fixture ${artifact}`);
+    }
   }
 
   execFileSync('bash', [scriptPath], {

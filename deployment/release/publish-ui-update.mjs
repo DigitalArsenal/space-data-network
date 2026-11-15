@@ -64,7 +64,9 @@ const publisherSSH = arg('publisher-ssh', 'space-data-network-01');
 const publisherBin = arg('publisher-bin', '/opt/spacedatanetwork/bin/spacedatanetwork');
 const feedDir = arg('feed-dir', '/opt/spacedatanetwork/update-feed');
 const feedBaseUrl = arg('feed-base-url', 'https://sdn.spaceaware.io/updates');
-const keyId = arg('key-id', 'd4a971a7e534');
+// The demo update root (deployment/release/fleet-trust-roots.json). The old
+// default was the SEC-001 leaked node key, which nodes now refuse.
+const keyId = arg('key-id', '12cb25de07c0');
 const nodesFile = resolve(arg('nodes', join(repoRoot, 'deployment/release/fleet-nodes.json')));
 const forVersions = arg('for-version', '');
 const ledgerPath = arg('ledger-path', '/opt/spacedatanetwork/publish-ledger.log');

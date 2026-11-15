@@ -323,6 +323,11 @@ var updateHelperApplyCmd = &cobra.Command{
 		// daemonLoopbackTransport for why this cannot be deferred to the health
 		// gate.
 		loopback := helperLoopbackTransport(helperApplyAdminCA, helperApplyAdminURL)
+		healthTimeout := helperApplyHealthTimeout
+		if healthTimeout <= 0 {
+			cfg, _ := mustLoadResolved(configPath)
+			healthTimeout = installHealthTimeout(0, cfg)
+		}
 		return runHelperApply(cmd.Context(), helperApplyOptions{
 			Paths:         update.PathsFor(helperApplyBundleRoot),
 			UpdateID:      strings.TrimSpace(helperApplyUpdateID),
@@ -334,7 +339,7 @@ var updateHelperApplyCmd = &cobra.Command{
 			AllowRollback: helperApplyAllowRollback,
 			Trigger:       helperApplyTrigger,
 			SignalKeyID:   helperApplySignalKeyID,
-			HealthTimeout: helperApplyHealthTimeout,
+			HealthTimeout: healthTimeout,
 			// The SAME anchored transport for the shutdown handshake and the
 			// health gate: a probe that cannot verify the daemon's own
 			// certificate reports "unhealthy" for a perfectly healthy daemon
@@ -415,8 +420,8 @@ func init() {
 	updateInstallCmd.Flags().BoolVar(&updateInstallDryRun, "dry-run", false, "verify and report without swapping files")
 	updateInstallCmd.Flags().BoolVar(&updateInstallDirect, "direct", false, "apply in the current process instead of using the helper")
 	updateInstallCmd.Flags().BoolVar(&updateInstallAllowRollback, "allow-rollback", false, "accept an update the publisher marked as a deliberate source-lineage rollback")
-	updateInstallCmd.Flags().DurationVar(&updateInstallHealthTimeout, "health-timeout", 0, "how long the helper waits for daemon health after restart (0 = 60s default; store-heavy nodes whose boot replays the catalog need minutes)")
-	updateHelperApplyCmd.Flags().DurationVar(&helperApplyHealthTimeout, "health-timeout", 0, "post-restart daemon health wait (0 = 60s default)")
+	updateInstallCmd.Flags().DurationVar(&updateInstallHealthTimeout, "health-timeout", 0, "how long the helper waits for the restarted daemon's /api/v1/ready (0 = update.health_timeout_seconds, default 600s; store-heavy nodes whose boot replays the catalog need minutes)")
+	updateHelperApplyCmd.Flags().DurationVar(&helperApplyHealthTimeout, "health-timeout", 0, "post-restart wait for the daemon's /api/v1/ready (0 = update.health_timeout_seconds, default 600s)")
 	updateHelperApplyCmd.Flags().StringVar(&helperApplyBundleRoot, "bundle-root", "", "bundle root to update")
 	updateHelperApplyCmd.Flags().StringVar(&helperApplyUpdateID, "update-id", "", "staged update id to apply")
 	updateHelperApplyCmd.Flags().StringVar(&helperApplyAdminURL, "admin-url", "", "local daemon admin URL")
@@ -517,7 +522,7 @@ func fetchProviderUpdateCandidate(client *http.Client, manifest bundleManifest, 
 	if err != nil {
 		return nil, err
 	}
-	return feed.Select(update.ProviderFeedSelection{
+	candidate, err := feed.Select(update.ProviderFeedSelection{
 		UpdateID:        strings.TrimSpace(filter.UpdateID),
 		Version:         strings.TrimSpace(filter.Version),
 		Channel:         manifest.Channel,
@@ -526,6 +531,19 @@ func fetchProviderUpdateCandidate(client *http.Client, manifest bundleManifest, 
 		Kind:            "cli-bundle",
 		CurrentSequence: currentSequence,
 	})
+	if err != nil {
+		return nil, err
+	}
+	// The bytes come from this bundle's own feed and nowhere else: an index
+	// entry is a pointer, and the index is unsigned (see FeedBase.Contains).
+	base, err := update.ParseFeedBase(manifest.Update.FeedBaseURL)
+	if err != nil {
+		return nil, err
+	}
+	if err := candidate.AssertUnderFeed(base); err != nil {
+		return nil, err
+	}
+	return candidate, nil
 }
 
 func shouldDelegateInstallToHelper() bool {
@@ -700,10 +718,26 @@ func prepareUpdateHelper(paths update.Paths, updateID string, token string, stor
 		AdminURL:         adminURL(cfg),
 		Token:            token,
 		RestartArgv:      nil,
-		HealthTimeout:    updateInstallHealthTimeout,
+		HealthTimeout:    installHealthTimeout(updateInstallHealthTimeout, cfg),
 		AllowRollback:    updateInstallAllowRollback,
 		StoreRoot:        storeRoot,
 	})
+}
+
+// installHealthTimeout is the health budget `update install` hands its helper:
+// --health-timeout when given, else the node's update.health_timeout_seconds
+// (default 600 s) — the budget the signal lane already uses for the same
+// helper. It used to fall through to the helper's bare 60 s, which a node
+// whose data services warm up for minutes cannot meet: the gate then reverts
+// a healthy update.
+func installHealthTimeout(flag time.Duration, cfg *config.Config) time.Duration {
+	if flag > 0 {
+		return flag
+	}
+	if cfg == nil {
+		cfg = config.Default()
+	}
+	return cfg.Update.HealthTimeout()
 }
 
 const storeRootFlagUsage = "the record store the daemon opens (default: storage.path of the resolved config); " +
@@ -1432,19 +1466,36 @@ func probeDaemonIdentity(ctx context.Context, client *http.Client, rawAdminURL s
 	return identity, nil
 }
 
+// daemonReadyPath is the readiness surface the health gate waits on.
+const daemonReadyPath = "/api/v1/ready"
+
+// probeDaemonHealth asks the restarted daemon whether it is READY: GET
+// /api/v1/ready, healthy on any 2xx, unhealthy on anything else with the body
+// as the reason. The status code is the whole answer; the body is never
+// decoded.
+//
+// STACK ISSUE 670. The gate used to JSON-decode /api/v1/data/health. Since
+// 47f043132 (2026-10-18) that route answers a size-prefixed $QRP FlatBuffer
+// whatever Accept says, so every decode failed, every helper-driven update
+// "failed" its gate and was reverted, and the gate on the restored build
+// failed the same way. /api/v1/ready (mountHealthRoutes) is the operator
+// readiness surface on the same admin mux as /api/v1/id: 200 once the store is
+// linked, data services are warm, the engine answers and the libp2p host is
+// up; 503 with the first failing component otherwise. It has existed since
+// 431782f8a (2026-09-04), so a revert onto an older build is gated by the same
+// question.
 func probeDaemonHealth(ctx context.Context, client *http.Client, rawAdminURL string) error {
 	if client == nil {
 		client = &http.Client{Timeout: 5 * time.Second}
 	}
-	healthURL, err := adminEndpointURL(rawAdminURL, "/api/v1/data/health")
+	readyURL, err := adminEndpointURL(rawAdminURL, daemonReadyPath)
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, healthURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, readyURL, nil)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Accept", "application/json")
 	resp, err := client.Do(req)
 	if err != nil {
 		return err
@@ -1452,15 +1503,9 @@ func probeDaemonHealth(ctx context.Context, client *http.Client, rawAdminURL str
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-		return fmt.Errorf("daemon health rejected: %s %s", resp.Status, strings.TrimSpace(string(data)))
+		return fmt.Errorf("daemon not ready: %s %s", resp.Status, strings.TrimSpace(string(data)))
 	}
-	var health daemonHealthPayload
-	if err := json.NewDecoder(resp.Body).Decode(&health); err != nil {
-		return fmt.Errorf("decode daemon health: %w", err)
-	}
-	if !health.ok() {
-		return errors.New("daemon reported unhealthy")
-	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
 	return nil
 }
 

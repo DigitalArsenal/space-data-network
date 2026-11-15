@@ -172,7 +172,9 @@ const publisherBin = arg('publisher-bin', '/opt/spacedatanetwork/bin/spacedatane
 const feedDir = arg('feed-dir', '/opt/spacedatanetwork/update-feed');
 const feedBaseUrl = arg('feed-base-url', 'https://sdn.spaceaware.io/updates');
 const versionPrefix = arg('version-prefix', '1.0.6-updatelane');
-const keyId = arg('key-id', 'd4a971a7e534');
+// The demo update root (deployment/release/fleet-trust-roots.json). The old
+// default was the SEC-001 leaked node key, which nodes now refuse.
+const keyId = arg('key-id', '12cb25de07c0');
 const minBinaryBytes = Number(arg('min-binary-bytes', DAEMON_BINARY_MIN_BYTES));
 const smokeImage = arg('smoke-image', 'debian:bookworm-slim');
 const ledgerPath = arg('ledger-path', '/opt/spacedatanetwork/publish-ledger.log');

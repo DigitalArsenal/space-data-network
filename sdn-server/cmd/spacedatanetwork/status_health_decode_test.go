@@ -3,61 +3,55 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/spacedatanetwork/sdn-server/internal/ops"
 )
 
-// The data-api liveness handler (internal/api/data.go handleHealth) emits
-// {"status":"ok"} and no "healthy" boolean. Both CLI consumers historically
-// decoded only "healthy", so every node printed unhealthy forever. These
-// tests lock the tolerant contract: explicit "healthy" wins; otherwise
-// status=="ok" is healthy.
-func TestDaemonHealthPayloadOK(t *testing.T) {
-	cases := []struct {
-		name string
-		body string
-		want bool
-	}{
-		{"live handler shape", `{"status":"ok","component":"spaceaware-data-api"}`, true},
-		{"explicit healthy true", `{"healthy":true}`, true},
-		{"explicit healthy false wins over ok status", `{"healthy":false,"status":"ok"}`, false},
-		{"empty object", `{}`, false},
-		{"status not ok", `{"status":"degraded"}`, false},
-		{"status case-insensitive", `{"status":"OK"}`, true},
+// `spacedatanetwork status` reads the daemon's own operator health surface,
+// served here by the real mountHealthRoutes — not a hand-written JSON route.
+// STACK ISSUE 670: status used to decode /api/v1/data/health, which answers a
+// $QRP FlatBuffer since 47f043132, so every node printed unhealthy forever. A
+// fixture that served fake JSON on that path is how the tests missed it.
+func TestWriteDaemonStatusReadsTheRealHealthSurface(t *testing.T) {
+	healthy := func() healthDeps {
+		return healthDeps{engineReady: func() bool { return true }, peerCount: func() int { return 1 }}
 	}
-	for _, tc := range cases {
+	degraded := healthy()
+	degraded.alerts = ops.NewRegistry()
+	degraded.alerts.Raise(ops.KindUpdateFailed, "e2e", ops.SeverityError, "an alert")
+
+	for _, tc := range []struct {
+		name string
+		deps healthDeps
+		want []string
+	}{
+		{name: "ok", deps: healthy(), want: []string{"daemon_status=running", "data_health=healthy"}},
+		{name: "degraded", deps: degraded, want: []string{"daemon_status=running", "data_health=degraded", "alerts_error=1", "alerts_warning=0"}},
+	} {
 		t.Run(tc.name, func(t *testing.T) {
-			var h daemonHealthPayload
-			if err := json.Unmarshal([]byte(tc.body), &h); err != nil {
-				t.Fatalf("unmarshal: %v", err)
+			mux := http.NewServeMux()
+			mountHealthRoutes(mux, tc.deps)
+			// The data route answers what it answers in production: not JSON.
+			mux.HandleFunc("/api/v1/data/health", func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/vnd.sdn.flatbuffers.stream")
+				_, _ = w.Write([]byte{0x10, 0, 0, 0, '$', 'Q', 'R', 'P'})
+			})
+			srv := httptest.NewServer(mux)
+			defer srv.Close()
+
+			var out bytes.Buffer
+			if err := writeDaemonStatus(context.Background(), &out, srv.URL); err != nil {
+				t.Fatalf("writeDaemonStatus: %v", err)
 			}
-			if got := h.ok(); got != tc.want {
-				t.Fatalf("ok() = %v, want %v for %s", got, tc.want, tc.body)
+			for _, want := range tc.want {
+				if !strings.Contains(out.String(), want+"\n") {
+					t.Fatalf("status output missing %q:\n%s", want, out.String())
+				}
 			}
 		})
-	}
-}
-
-func TestWriteDaemonStatusLiveHandlerShapeReportsRunning(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/data/health" {
-			http.NotFound(w, r)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"status":"ok","component":"spaceaware-data-api","time":"2026-07-30T00:00:00Z"}`))
-	}))
-	defer srv.Close()
-
-	var out bytes.Buffer
-	if err := writeDaemonStatus(context.Background(), &out, srv.URL); err != nil {
-		t.Fatalf("writeDaemonStatus: %v", err)
-	}
-	got := out.String()
-	if !strings.Contains(got, "daemon_status=running") || !strings.Contains(got, "data_health=healthy") {
-		t.Fatalf("expected running/healthy, got:\n%s", got)
 	}
 }

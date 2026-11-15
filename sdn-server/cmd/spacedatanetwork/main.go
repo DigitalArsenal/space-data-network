@@ -66,6 +66,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/modulert"
 	"github.com/spacedatanetwork/sdn-server/internal/modulert/caps"
 	"github.com/spacedatanetwork/sdn-server/internal/node"
+	"github.com/spacedatanetwork/sdn-server/internal/ops"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 	"github.com/spacedatanetwork/sdn-server/internal/pinpolicy"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
@@ -332,25 +333,24 @@ func runStatus(cmd *cobra.Command) error {
 	return writeDaemonStatus(cmd.Context(), out, baseURL)
 }
 
-// daemonHealthPayload tolerates both health shapes the daemon has shipped:
-// the data-api liveness handler emits {"status":"ok"} and has never emitted
-// the "healthy" boolean this CLI historically decoded — which made every node
-// report unhealthy forever. An explicit "healthy" field, when present, wins.
-type daemonHealthPayload struct {
-	Healthy *bool          `json:"healthy"`
-	Status  string         `json:"status"`
-	Details map[string]any `json:"details"`
-}
+// daemonHealthPath is the liveness surface `spacedatanetwork status` reads:
+// the operator /api/v1/health of mountHealthRoutes (api.HealthHandler), which
+// is JSON by contract.
+//
+// STACK ISSUE 670. `status` used to decode /api/v1/data/health as JSON. Since
+// 47f043132 (2026-10-18) that data route answers a size-prefixed $QRP
+// FlatBuffer whatever Accept says, so every daemon was reported unhealthy.
+const daemonHealthPath = "/api/v1/health"
 
-func (h daemonHealthPayload) ok() bool {
-	if h.Healthy != nil {
-		return *h.Healthy
-	}
-	return strings.EqualFold(h.Status, "ok")
+// daemonHealthBody is /api/v1/health: {"status":"ok|degraded","alerts":{…}}.
+// "degraded" means operational alerts are active; the daemon is serving.
+type daemonHealthBody struct {
+	Status string     `json:"status"`
+	Alerts ops.Counts `json:"alerts"`
 }
 
 func writeDaemonStatus(ctx context.Context, out io.Writer, baseURL string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(baseURL, "/")+"/api/v1/data/health", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(baseURL, "/")+daemonHealthPath, nil)
 	if err != nil {
 		return err
 	}
@@ -371,23 +371,28 @@ func writeDaemonStatus(ctx context.Context, out io.Writer, baseURL string) error
 		return nil
 	}
 
-	var health daemonHealthPayload
-	if err := json.NewDecoder(resp.Body).Decode(&health); err != nil {
+	var health daemonHealthBody
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&health); err != nil {
 		fmt.Fprintln(out, "daemon_status=unhealthy")
 		fmt.Fprintln(out, "data_health=unhealthy")
 		fmt.Fprintf(out, "data_message=%s\n", strings.ReplaceAll(err.Error(), "\n", " "))
 		return nil
 	}
 
-	if health.ok() {
+	switch strings.ToLower(strings.TrimSpace(health.Status)) {
+	case ops.StatusOK:
 		fmt.Fprintln(out, "daemon_status=running")
 		fmt.Fprintln(out, "data_health=healthy")
-	} else {
+	case ops.StatusDegraded:
+		fmt.Fprintln(out, "daemon_status=running")
+		fmt.Fprintln(out, "data_health=degraded")
+		fmt.Fprintf(out, "alerts_error=%d\n", health.Alerts.Error)
+		fmt.Fprintf(out, "alerts_warning=%d\n", health.Alerts.Warning)
+	default:
 		fmt.Fprintln(out, "daemon_status=unhealthy")
 		fmt.Fprintln(out, "data_health=unhealthy")
+		writeStatusDetail(out, "data_status", health.Status)
 	}
-	writeStatusDetail(out, "data_runtime", health.Details["runtime"])
-	writeStatusDetail(out, "data_message", health.Details["message"])
 	return nil
 }
 

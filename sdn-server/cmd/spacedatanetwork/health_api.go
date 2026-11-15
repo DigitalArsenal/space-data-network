@@ -139,9 +139,18 @@ func (p *boundedReadinessProbe) check(ctx context.Context, deps healthDeps) stri
 	}
 }
 
+// readinessOverride, when set, is the reason /ready always answers 503. It is
+// empty in every shipped build; only a build with the sdn_e2e_not_ready tag
+// sets it (health_not_ready_e2e.go), so the update lane's real-daemon E2E can
+// install a build that runs and is never ready, and watch the helper revert it.
+var readinessOverride string
+
 // notReadyReason names the first unavailable component. The shared caller
 // bounds every callback, including a blocked peer-count read.
 func notReadyReason(deps healthDeps) string {
+	if readinessOverride != "" {
+		return readinessOverride
+	}
 	if deps.engineReady == nil {
 		return "store not linked"
 	}

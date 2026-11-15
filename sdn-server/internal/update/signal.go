@@ -196,6 +196,12 @@ type SignalVerifyOptions struct {
 	// it is not news.
 	CurrentSequence int64
 	Now             time.Time
+	// FeedBaseURL is the receiving bundle's own update.feedBaseUrl (its
+	// manifest.json). When set, the signal's manifest_url and carrier_url must
+	// lie under it (FeedBase.Contains); the signal's own feed_base_url is never
+	// used for this. Every receiving install sets it; only the publisher's
+	// self-check of a signal it has just signed leaves it empty.
+	FeedBaseURL string
 }
 
 // Verify checks everything that can be judged from the signal alone. It is
@@ -208,6 +214,11 @@ func (s *Signal) Verify(opts SignalVerifyOptions) error {
 	}
 	if err := s.assertShape(); err != nil {
 		return err
+	}
+	if strings.TrimSpace(opts.FeedBaseURL) != "" {
+		if err := s.AssertUnderFeed(opts.FeedBaseURL); err != nil {
+			return err
+		}
 	}
 	if err := s.assertFreshness(nowOr(opts.Now)); err != nil {
 		return err
@@ -238,6 +249,21 @@ func (s *Signal) Verify(opts SignalVerifyOptions) error {
 		return fmt.Errorf("update signal sequence %d is not newer than the installed sequence %d", s.Sequence, opts.CurrentSequence)
 	}
 	return s.assertSignature(opts.TrustedRoots)
+}
+
+// AssertUnderFeed refuses a signal whose manifest_url or carrier_url lies
+// outside feedBaseURL, the receiving bundle's own update feed. The signal's
+// feed_base_url plays no part: a message does not get to say where the feed
+// is.
+func (s *Signal) AssertUnderFeed(feedBaseURL string) error {
+	base, err := ParseFeedBase(feedBaseURL)
+	if err != nil {
+		return err
+	}
+	if err := base.Contains(s.ManifestURL, "update signal manifest_url"); err != nil {
+		return err
+	}
+	return base.Contains(s.CarrierURL, "update signal carrier_url")
 }
 
 func (s *Signal) assertShape() error {
@@ -309,6 +335,9 @@ func (s *Signal) assertSignature(roots TrustedRoots) error {
 	trusted, ok := roots[s.Signing.KeyID]
 	if !ok || trusted == "" {
 		return errors.New("untrusted update signal signing key")
+	}
+	if err := refuseDeniedRoot(s.Signing.KeyID, trusted); err != nil {
+		return err
 	}
 	if s.Signing.PublicKey != "" && s.Signing.PublicKey != trusted {
 		return errors.New("update signal signing key mismatch")

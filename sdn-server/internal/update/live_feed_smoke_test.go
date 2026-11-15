@@ -21,8 +21,8 @@ import (
 //
 // Run it against the live publisher:
 //
-//	SDN_LIVE_FEED_URL=https://sdn.spaceaware.io/updates/cli-bundle/beta/linux/amd64 \
-//	SDN_LIVE_FEED_ROOT='d4a971a7e534=MCowBQYDK2VwAyEA…' \
+//	SDN_LIVE_FEED_URL=https://sdn.spaceaware.io/updates/cli-bundle/release/linux/amd64 \
+//	SDN_LIVE_FEED_ROOT='12cb25de07c0=MCowBQYDK2VwAyEAi0cVzY4ICSRzddR7HYHKgEPXmXXFh1uvFizfMb/V5ZM=' \
 //	go test ./internal/update/ -run TestLiveFeedVerifies -v
 //
 // Skipped when unset, so it never turns a normal `go test ./...` into a network

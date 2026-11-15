@@ -13,7 +13,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -146,15 +145,11 @@ func TestProviderFeedIndexURLRejectsHTTP(t *testing.T) {
 }
 
 func TestFetchProviderUpdateCandidateSelectsCompatibleUpdate(t *testing.T) {
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/cli-bundle/beta/"+runtime.GOOS+"/"+runtime.GOARCH+"/index.json" {
-			t.Fatalf("request path = %s", r.URL.Path)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{
+	server := newProviderIndexServer(t, func(base string) string {
+		return `{
 			"schema": "org.spacedatanetwork.update.index.v1",
 			"generated_at": "2026-06-22T00:00:00Z",
-			"feed_base_url": "` + serverURLPlaceholder + `",
+			"feed_base_url": "` + base + `",
 			"updates": [
 				{
 					"update_id": "cli-bundle-beta-older",
@@ -162,8 +157,8 @@ func TestFetchProviderUpdateCandidateSelectsCompatibleUpdate(t *testing.T) {
 					"sequence": 104,
 					"channel": "beta",
 					"target": {"platform": "` + runtime.GOOS + `", "arch": "` + runtime.GOARCH + `", "kind": "cli-bundle"},
-					"manifest_url": "` + serverURLPlaceholder + `/cli-bundle/beta/` + runtime.GOOS + `/` + runtime.GOARCH + `/1.0.4/manifest.json",
-					"carrier_url": "` + serverURLPlaceholder + `/cli-bundle/beta/` + runtime.GOOS + `/` + runtime.GOARCH + `/1.0.4/update.wasm"
+					"manifest_url": "` + base + `/cli-bundle/beta/` + runtime.GOOS + `/` + runtime.GOARCH + `/1.0.4/manifest.json",
+					"carrier_url": "` + base + `/cli-bundle/beta/` + runtime.GOOS + `/` + runtime.GOARCH + `/1.0.4/update.wasm"
 				},
 				{
 					"update_id": "cli-bundle-beta-newer",
@@ -171,13 +166,12 @@ func TestFetchProviderUpdateCandidateSelectsCompatibleUpdate(t *testing.T) {
 					"sequence": 105,
 					"channel": "beta",
 					"target": {"platform": "` + runtime.GOOS + `", "arch": "` + runtime.GOARCH + `", "kind": "cli-bundle"},
-					"manifest_url": "` + serverURLPlaceholder + `/cli-bundle/beta/` + runtime.GOOS + `/` + runtime.GOARCH + `/1.0.5/manifest.json",
-					"carrier_url": "` + serverURLPlaceholder + `/cli-bundle/beta/` + runtime.GOOS + `/` + runtime.GOARCH + `/1.0.5/update.wasm"
+					"manifest_url": "` + base + `/cli-bundle/beta/` + runtime.GOOS + `/` + runtime.GOARCH + `/1.0.5/manifest.json",
+					"carrier_url": "` + base + `/cli-bundle/beta/` + runtime.GOOS + `/` + runtime.GOARCH + `/1.0.5/update.wasm"
 				}
 			]
-		}`))
-	}))
-	defer server.Close()
+		}`
+	})
 
 	update, err := fetchProviderUpdateCandidate(server.Client(), bundleManifest{
 		Version: "1.0.4",
@@ -190,6 +184,24 @@ func TestFetchProviderUpdateCandidateSelectsCompatibleUpdate(t *testing.T) {
 	if update.UpdateID != "cli-bundle-beta-newer" {
 		t.Fatalf("selected update = %s, want cli-bundle-beta-newer", update.UpdateID)
 	}
+}
+
+// newProviderIndexServer serves one beta feed index for this host's target,
+// written by index(base) with the server's own URL as base.
+func newProviderIndexServer(t *testing.T, index func(base string) string) *httptest.Server {
+	t.Helper()
+	var server *httptest.Server
+	server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/cli-bundle/beta/"+runtime.GOOS+"/"+runtime.GOARCH+"/index.json" {
+			t.Errorf("request path = %s", r.URL.Path)
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(index(server.URL)))
+	}))
+	t.Cleanup(server.Close)
+	return server
 }
 
 func TestReadHTTPSURLRejectsOversizedResponse(t *testing.T) {
@@ -317,13 +329,13 @@ func runE2EDaemon(root string, raw []byte) int {
 	}))
 	// The daemon's own identity surface, /api/v1/id among the core routes.
 	api.NewCoreAPIHandler(peer.ID("e2e-fixture-daemon"), nil, nil, nil, nil, nil, nil, nil, nil).RegisterRoutes(mux)
-	mux.HandleFunc("/api/v1/data/health", func(w http.ResponseWriter, r *http.Request) {
-		status := "ok"
-		if build.Unhealthy {
-			status = "unhealthy"
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprintf(w, `{"status":%q}`, status)
+	// The daemon's real health surface (/api/v1/health, /api/v1/ready), with
+	// an engine that answers unless the build is unhealthy. STACK ISSUE 670:
+	// this fixture used to serve fake JSON on /api/v1/data/health, which is
+	// how the tests missed that the real route answers a $QRP FlatBuffer.
+	mountHealthRoutes(mux, healthDeps{
+		engineReady: func() bool { return !build.Unhealthy },
+		peerCount:   func() int { return 1 },
 	})
 	listener, err := net.Listen("tcp", cfg.Addr)
 	if err != nil {
@@ -659,7 +671,7 @@ func (b *e2eBundle) waitHealthy(t *testing.T) {
 	t.Helper()
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
-		if resp, err := http.Get(b.adminURL() + "/api/v1/data/health"); err == nil {
+		if resp, err := http.Get(b.adminURL() + "/api/v1/ready"); err == nil {
 			_ = resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
 				return

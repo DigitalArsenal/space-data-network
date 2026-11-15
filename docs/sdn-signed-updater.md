@@ -382,6 +382,79 @@ tooling, or a raw 32-byte key). `stageBundle` stages the file via its
 replaces it. `SDN_UPDATE_TRUST_ROOTS` overrides the path for tests and
 managed deployments.
 
+### The demo root (2026-11-15)
+
+The fleet roots (`deployment/release/fleet-trust-roots.json`, staged into
+every bundle) are exactly one demo key, key id `12cb25de07c0`:
+
+```json
+{"12cb25de07c0":"MCowBQYDK2VwAyEAi0cVzY4ICSRzddR7HYHKgEPXmXXFh1uvFizfMb/V5ZM="}
+```
+
+The key id is the first 12 hex characters of sha256 over the raw 32-byte
+public key (the last 32 bytes of the SPKI DER): `update.RootKeyID`. A demo key
+signs the release channel, fleet releases and update signals until a
+production key replaces it through a release that carries `trust_roots`.
+
+- **Compiled-in fallback.** The same set is embedded in the binary
+  (`sdn-server/internal/update/default_update_roots.json`, held byte-equal to
+  the fleet file by a test). `LoadTrustRoots` uses it ONLY when the bundle's
+  trust file is absent; a present file wins, so a rotation can drop the demo
+  root. An explicit `SDN_UPDATE_TRUST_ROOTS` path that does not exist is an
+  error, not an absence.
+- **The SEC-001 key is never a root.** The root shipped up to v1.1.1,
+  `d4a971a7e534`, is the raw key `0d80e1fd…fc8c`: the node identity leaked in
+  SEC-001, derived from a published seed. Every key of that identity
+  (`sdn-server/internal/sec001/denylist.json`) is refused wherever roots are
+  loaded — the trust file, the override, the compiled-in set, a release's
+  `trust_roots` — and as the signer of a manifest or a signal, whatever key id
+  it is listed under.
+- **Existing installs: the one manual step.** A command-line install re-runs
+  the installer for the new release and restarts the daemon. Without a
+  reinstall: replace `<bundle>/trust/update-roots.json` with the demo root
+  (replace, do not add beside: keeping `d4a971a7e534` keeps a root anyone can
+  sign for, and new builds refuse a file that lists it), stop the daemon, run
+  `<bundle>/bin/spacedatanetwork update install --direct`, and start it. A
+  v1.1.1-or-earlier helper reverts every update it gates (stack issue 670),
+  hence `--direct`. Fleet hosts take the same hand edit. Desktop, package, VM
+  and container installs install the new release.
+- **A release is required for the channel.** The release channel carries
+  nothing until a release is cut with `SDN_UPDATE_SIGNING_KEY_PEM` and
+  `SDN_UPDATE_KEY_ID` set and its `spacedatanetwork-update-feed-<v>.tar.gz` is
+  published to host-01's feed directory. The `cli-update-feed` job fails a
+  stable release without the key (a beta warns and ships no feed), derives the
+  key id from the PEM and fails if it differs from `SDN_UPDATE_KEY_ID` or is
+  not in `fleet-trust-roots.json` (`check-update-signing-key.mjs`; there is no
+  fallback key id), and verifies every manifest against
+  `fleet-trust-roots.json` before packing the feed
+  (`verify-cli-update-feed.mjs`).
+
+### What a payload, a signal and the health gate must satisfy
+
+- **No `trust/` in a payload.** Every node refuses a payload with `trust/` at
+  its bundle root. The downloadable archive keeps `trust/` for a fresh
+  install; `build-cli-update-payload.mjs` wraps that archive with `trust/`
+  removed (and the archive itself unchanged when it has none).
+- **A signal points only into the bundle's own feed.** A signal's
+  `manifest_url` and `carrier_url`, and every redirect while fetching them,
+  must lie under the receiving bundle's `update.feedBaseUrl`: same scheme,
+  same host and port, a clean path below the feed's path, no query,
+  fragment, credentials or percent-encoding. The signal's own
+  `feed_base_url` is never used for this. A validly signed signal pointing
+  elsewhere is dropped before anything is fetched. `update install` applies
+  the same rule to feed index entries.
+- **The helper gates on readiness.** After the restart the helper waits for
+  `GET /api/v1/ready` to answer 2xx (the status code is the whole answer) and
+  for `/api/v1/id` to report the installed build, for
+  `update.health_timeout_seconds` (default 600, also when `update install`
+  starts the helper; `--health-timeout` overrides). `spacedatanetwork status`
+  reads `/api/v1/health`. Both used to decode `/api/v1/data/health`, which
+  answers a `$QRP` FlatBuffer, so every helper-driven update was reverted
+  (stack issue 670). `TestUpdateChannelRealDaemonE2E`
+  (`SDN_E2E_REAL_DAEMON=1`, Linux; the ci.yml job "Update channel E2E (real
+  daemon)") runs the pass, revert-and-quarantine and wrong-key cases against
+  real daemons.
+
 End-to-end release flow:
 
 ```sh
@@ -394,7 +467,7 @@ node deployment/release/build-cli-update-payload.mjs \
   --channel release \
   --platform darwin \
   --arch arm64 \
-  --key-id sdn-release-2026 \
+  --key-id 12cb25de07c0 \
   --key key.pem \
   --created-at 2026-06-10T00:00:00Z \
   --upstream-kubo-version v0.35.0 \

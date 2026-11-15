@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"path"
 	"sort"
 	"strings"
 )
@@ -165,6 +166,115 @@ func requireHTTPSURL(raw string, name string) error {
 		return fmt.Errorf("%s must use HTTPS", name)
 	}
 	return nil
+}
+
+// THE FEED A BUNDLE TRUSTS FOR BYTES IS ITS OWN.
+//
+// A bundle's manifest.json names one update feed (update.feedBaseUrl), and
+// that is the only place this install fetches an update from. A signal, or a
+// feed index entry, only POINTS at a manifest and a carrier; before this
+// check a validly signed pointer could name any HTTPS host at all, and the
+// box went and fetched from it. The manifest is still verified against the
+// trust roots after the fetch, but "the worst a forged signal can do is make
+// a host fetch" is worth nothing when the signing key is public (SEC-001) —
+// it is an instruction to every install to contact a host of the signer's
+// choosing. So a pointer is followed only when it lies under the bundle's own
+// feed: same scheme, same host and port, and a path below the feed's path. A
+// signal's own feed_base_url is never consulted for this: the bundle decides
+// where its feed is, not the message.
+
+// FeedBase is a bundle's parsed update feed base URL.
+type FeedBase struct {
+	url *url.URL
+}
+
+// ParseFeedBase parses a bundle's update.feedBaseUrl: an HTTPS URL with a
+// host, and no credentials, query or fragment.
+func ParseFeedBase(raw string) (FeedBase, error) {
+	base, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || base.Scheme != "https" || base.Host == "" || base.Opaque != "" {
+		return FeedBase{}, fmt.Errorf("the bundle's update feed base URL %q must be an HTTPS URL", raw)
+	}
+	if base.User != nil || base.RawQuery != "" || base.Fragment != "" {
+		return FeedBase{}, fmt.Errorf("the bundle's update feed base URL %q must not carry credentials, a query or a fragment", raw)
+	}
+	return FeedBase{url: base}, nil
+}
+
+// String is the feed base URL.
+func (b FeedBase) String() string {
+	if b.url == nil {
+		return ""
+	}
+	return b.url.String()
+}
+
+// Contains reports, as an error, whether raw lies under the feed: same
+// scheme, same host and port, a clean path below the feed's path, and nothing
+// else (no credentials, query, fragment or percent-encoded path). name says
+// which URL is checked, for the error.
+func (b FeedBase) Contains(raw, name string) error {
+	if b.url == nil {
+		return fmt.Errorf("%s cannot be checked: this bundle names no update feed", name)
+	}
+	outside := func(why string) error {
+		return fmt.Errorf("%s %q is not under this bundle's update feed %s: %s", name, raw, b.url, why)
+	}
+	target, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return outside("it is not a URL")
+	}
+	if target.Scheme != b.url.Scheme {
+		return outside("another scheme")
+	}
+	if target.Opaque != "" || target.User != nil {
+		return outside("it carries credentials or an opaque part")
+	}
+	if !strings.EqualFold(target.Hostname(), b.url.Hostname()) || portOrDefault(target) != portOrDefault(b.url) {
+		return outside("another host")
+	}
+	if target.RawQuery != "" || target.ForceQuery || target.Fragment != "" {
+		return outside("it carries a query or a fragment")
+	}
+	if target.RawPath != "" {
+		return outside("its path is percent-encoded")
+	}
+	if target.Path == "" || target.Path != path.Clean(target.Path) {
+		return outside("its path is not a clean absolute path")
+	}
+	basePath := strings.TrimRight(b.url.Path, "/")
+	if !strings.HasPrefix(target.Path, basePath+"/") {
+		return outside("its path is not below " + basePath + "/")
+	}
+	return nil
+}
+
+func portOrDefault(u *url.URL) string {
+	if port := u.Port(); port != "" {
+		return port
+	}
+	if u.Scheme == "https" {
+		return "443"
+	}
+	return "80"
+}
+
+// RequireUnderFeedBase is ParseFeedBase then Contains.
+func RequireUnderFeedBase(feedBaseURL, raw, name string) error {
+	base, err := ParseFeedBase(feedBaseURL)
+	if err != nil {
+		return err
+	}
+	return base.Contains(raw, name)
+}
+
+// AssertUnderFeed refuses an index entry whose manifest or carrier lies
+// outside the bundle's feed.
+func (u ProviderFeedUpdate) AssertUnderFeed(base FeedBase) error {
+	if err := base.Contains(u.ManifestURL, "update provider feed entry "+u.UpdateID+" manifest_url"); err != nil {
+		return err
+	}
+	return base.Contains(u.CarrierURL, "update provider feed entry "+u.UpdateID+" carrier_url")
 }
 
 func (f *ProviderFeed) Select(selection ProviderFeedSelection) (*ProviderFeedUpdate, error) {
