@@ -27,8 +27,8 @@ account it runs as. On most Linux machines the kernel makes
 `/sys/class/dmi/id/product_uuid` readable only by root, so for any other
 account that derivation is refused (`spacedatanetwork key fingerprint-check`
 answers `refused`; root, macOS and Windows answer `ok` or `absent`). For a
-fresh node on such a host, an `install.sh` that carries this change (v1.1.0
-does not: there, make the file yourself as in section 5) generates
+fresh node on such a host, an `install.sh` that carries this change (v1.1.4
+and earlier do not: there, make the file yourself as in section 5) generates
 `~/sdn-key-password` (32 random bytes as 64 hex characters, mode 0400),
 records it in the node's config as `security.key_password_file`, and seals
 the new identity under it, so `daemon`, `start` and every CLI command find it
@@ -130,7 +130,7 @@ The container runs as uid 1000, so on most Linux hosts the machine-derived
 key is refused there too (see section 1). **The recommended setup is a
 password file mounted from outside the volume**, made with a umask so it is
 never readable by anyone else, not even for a moment; it is what every image
-needs on such a host, v1.1.0 included:
+needs on such a host up to v1.1.4, and still the better custody after:
 
 ```sh
 sudo install -m 0400 -o 1000 -g 1000 /dev/null /etc/sdn-key-password
@@ -139,7 +139,7 @@ docker run -d --name sdn --hostname sdn --restart unless-stopped \
   -v /etc/sdn-key-password:/run/secrets/sdn-key-password:ro \
   -e SDN_KEY_PASSWORD_FILE=/run/secrets/sdn-key-password \
   -v sdn-data:/app/data -p 127.0.0.1:5001:5001 -p 4001:4001 -p 4001:4001/udp \
-  dockerdigitalarsenal/space-data-network:v1.1.0
+  dockerdigitalarsenal/space-data-network:v1.1.4
 ```
 
 (`install` creates the file empty, already 0400 and owned by uid 1000; root
@@ -176,8 +176,8 @@ in `/var/lib/spacedatanetwork`. The package creates the user and the
 directory; it does not enable or start the service.
 
 User `sdn` cannot read `/sys/class/dmi/id/product_uuid` on most hosts (see
-section 1), so on a FRESH install a package that carries this change (v1.1.0
-does not: there, make the two files yourself as below) generates
+section 1), so on a FRESH install a package that carries this change (v1.1.4
+and earlier do not: there, make the two files yourself as below) generates
 `/var/lib/spacedatanetwork/key-password` (`sdn:sdn`, mode 0400) and the drop-in
 `/etc/systemd/system/spacedatanetwork.service.d/key-password.conf`
 (`Environment=SDN_KEY_PASSWORD_FILE=/var/lib/spacedatanetwork/key-password`),

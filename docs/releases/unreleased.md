@@ -1,7 +1,8 @@
 # Next node release: release-notes text
 
 Text for the notes of the first node release that carries this change. It
-replaces the v1.1.0 paragraph "Linux: give the node a key password file" and
+replaces the paragraph "Linux: give the node a key password file" that the
+v1.1.0 and v1.1.4 release notes carry, and
 its three manual recipes for a fresh install; the manual recipe stays for
 operators who prefer it (it keeps the file apart from the node's data), with a
 umask so the file is never readable by others.

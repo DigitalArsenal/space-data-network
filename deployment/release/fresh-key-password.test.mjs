@@ -354,12 +354,15 @@ test('docs: the generated paths match the installers, and a data copy opening th
   assert.match(docs['docs/releases/unreleased.md'], /a copy of the volume alone opens the node identity and its credential\s+store/);
 });
 
-// Releases are named by what they carry, not by a version that may be tagged
-// before or after this change lands.
+// Releases are named by what they carry ("a build that carries this change"),
+// not by a guess at which version will be tagged with it: "through v1.1.3"
+// was wrong the day v1.1.4 shipped without it. A release that is out and
+// lacks it may be named as such.
 test('docs: no claim about which v1.1.x is the last manual release', () => {
   for (const [name, text] of Object.entries(docs)) {
-    assert.doesNotMatch(text, /v1\.1\.[3-9]|[Tt]hrough v1\.1|v1\.1\.0 to v1\.1/, name);
+    assert.doesNotMatch(text, /[Tt]hrough v1\.1|v1\.1\.0 to v1\.1|v1\.1\.3/, name);
   }
+  assert.match(docs['docs/INSTALL.md'], /carries this change \(v1\.1\.4\s+and earlier do not/);
 });
 
 // The documented .deb backup command (`sudo -u sdn env SDN_KEY_PASSWORD_FILE=...
