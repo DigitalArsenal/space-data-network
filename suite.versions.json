@@ -1,5 +1,5 @@
 {
-  "suiteVersion": "1.1.1",
+  "suiteVersion": "1.1.2",
   "dependencies": {
     "spacedatastandards": "1.279.0",
     "flatsql": "3.12.3",
