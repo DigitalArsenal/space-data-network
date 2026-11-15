@@ -69,7 +69,7 @@ func TestFormat4IsTheDefault(t *testing.T) {
 	onFormat4Engine(t, func(t *testing.T) {
 		t.Setenv(checkpointIntervalEnv, "0")
 		v := bootTestValidator(t)
-		const notice = "holds a format-1 store: it opens as format 1. To migrate it, stop the daemon and run `spacedatanetwork store-migrate --to 4"
+		const notice = "holds a format-1 store: it opens as format 1. To migrate it, stop the daemon and run `spacedatanetwork store-migrate --to 5"
 
 		t.Setenv(format4.FormatEnv, "")
 		fresh := t.TempDir()

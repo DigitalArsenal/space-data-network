@@ -1,4 +1,4 @@
-// Package marker reads what a data directory says about store format 4
+// Package marker reads what a data directory says about store formats 4 and 5
 // (stack design docs/architecture/flatsql-sqlite-partitions.md §1, §11;
 // build-out contract §2, §5.1).
 //
@@ -22,12 +22,13 @@ import (
 )
 
 const (
-	Dir           = "fsql4"
+	Dir           = "fsql5"
+	LegacyDir     = "fsql4"
 	StoreFile     = "STORE"
 	MigratedFile  = "MIGRATED"
 	LegacyControl = "control.flatsqldb"
 	PreFormat4Dir = "pre-format4"
-	StoreFormat   = 4
+	StoreFormat   = 5
 )
 
 // Marker byte layouts (contract §2.2; little-endian, crc32c = Castagnoli).
@@ -41,9 +42,10 @@ const (
 
 var castagnoli = crc32.MakeTable(crc32.Castagnoli)
 
-// Markers is what <data> says about format 4 (§2).
+// Markers is what <data> says about the engine store (§2).
 type Markers struct {
-	StorePresent, StoreValid       bool // fsql4/STORE exists / has length, magic and crc right
+	Directory                      string // selected engine directory relative to data root
+	StorePresent, StoreValid       bool   // fsql5/STORE exists / has length, magic and crc right
 	MigratedPresent, MigratedValid bool
 	Format, Layout                 uint16
 	UUID                           [16]byte
@@ -58,17 +60,29 @@ type Markers struct {
 	migratedUUID   [16]byte
 }
 
-// Read reads the markers under dataRoot. It never writes; a missing fsql4 is
+// Read reads the markers under dataRoot. It never writes; missing marker directories is
 // not an error. Format, Layout, UUID, CreatedMs, GseqFloor and MigratedFrom
 // come from a valid STORE; without one, UUID and Format come from a valid
 // MIGRATED.
 func Read(dataRoot string) (Markers, error) {
-	var m Markers
+	m, err := readDir(dataRoot, Dir)
+	if err != nil || m.Format4() {
+		return m, err
+	}
+	return ReadLegacy(dataRoot)
+}
+
+// ReadLegacy inspects the retained format-4 store without selecting it over
+// an activated format-5 store.
+func ReadLegacy(dataRoot string) (Markers, error) { return readDir(dataRoot, LegacyDir) }
+
+func readDir(dataRoot, engineDir string) (Markers, error) {
+	m := Markers{Directory: engineDir}
 	dataRoot = strings.TrimSpace(dataRoot)
 	if dataRoot == "" {
 		return m, errors.New("marker: no data root")
 	}
-	dir := filepath.Join(dataRoot, Dir)
+	dir := filepath.Join(dataRoot, engineDir)
 	b, present, err := readFile(filepath.Join(dir, MigratedFile))
 	if err != nil {
 		return m, err
@@ -119,15 +133,19 @@ func readFile(name string) (b []byte, present bool, err error) {
 	}
 }
 
-// Format4 reports whether the directory holds a format-4 store, whatever its
-// state: the guard's rule (§2.4).
+// Format4 reports marker presence, including format 5. The historical name
+// remains for API compatibility; Format identifies the actual engine format.
 func (m Markers) Format4() bool { return m.StorePresent || m.MigratedPresent }
 
 // Activated reports a store whose activation's engine step is complete: a
-// valid MIGRATED and a valid STORE of one store, at format 4.
+// valid MIGRATED and a valid STORE of one store, at format 5.
 func (m Markers) Activated() bool {
+	return m.ActivatedAs(StoreFormat)
+}
+
+func (m Markers) ActivatedAs(format uint16) bool {
 	return m.StoreValid && m.MigratedValid && m.UUID == m.migratedUUID &&
-		m.Format == StoreFormat && m.migratedFormat == StoreFormat
+		m.Format == format && m.migratedFormat == format && m.Layout == storeLayout
 }
 
 // NeedsFinish reports an activated store whose Go steps (§2.3 steps 2-3) are
@@ -147,7 +165,7 @@ func FinishActivation(dataRoot string) error {
 		return err
 	}
 	if !m.Activated() {
-		return fmt.Errorf("marker: %s is not an activated format-4 store (STORE valid %v, MIGRATED valid %v, format %d)",
+		return fmt.Errorf("marker: %s is not an activated format-5 store (STORE valid %v, MIGRATED valid %v, format %d)",
 			dataRoot, m.StoreValid, m.MigratedValid, m.Format)
 	}
 	entries, err := os.ReadDir(dataRoot)
@@ -206,7 +224,7 @@ func syncDir(dir string) error {
 	return nil
 }
 
-// StoreBytes encodes a STORE marker (§2.2): format 4, layout 1. Only the
+// StoreBytes encodes a STORE marker (§2.2): format 5, layout 1. Only the
 // engine writes markers; this is the golden reference for tests and test
 // doubles.
 func StoreBytes(uuid [16]byte, createdMs int64, gseqFloor uint64, migratedFrom uint32) []byte {

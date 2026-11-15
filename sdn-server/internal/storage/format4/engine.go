@@ -22,7 +22,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format4/marker"
 )
 
-var log = logging.Logger("format4")
+var log = logging.Logger("format5")
 
 // Format-4 operations execute their SQL inside the engine. Report the actual
 // operation counters here; the control instance's statement logger cannot see
@@ -40,20 +40,22 @@ var slowOperationThreshold = func() time.Duration {
 	return 250 * time.Millisecond
 }()
 
-// Options opens a format-4 engine.
+// Options opens the format-5 engine. ConvertFormat4 accepts a private format-4 copy.
 type Options struct {
-	DataRoot      string // <data>; the engine root is <data>/fsql4
-	Create        CreateMode
-	GseqFloor     uint64 // CreateFresh / CreateForMigration
-	Cores         int    // 0 = runtime.NumCPU()
-	Tuning        Tuning
-	Wasm          []byte // nil = flatsqlrt.P4ThreadsWasm()
-	AOTCacheDir   string
-	CompileOnMiss bool                   // tests and prewarm only
-	Store         *flatsqlrt.NativeStore // the node's shared native I/O store, as format 2
-	FDBudget      int                    // open-fd budget of the instance's host I/O (0: flatsqlrt.P4FDBudget); sizes Tuning.ReaderConns when that is 0
-	OnFailure     func(error)            // instance trapped or hung; the Engine is fenced
-	Serialize     SerializeMode          // call gate (SerializeOff: none); a diagnostic control, see SerializeMode
+	DataRoot        string // <data>; the engine root is <data>/fsql5
+	Create          CreateMode
+	GseqFloor       uint64 // CreateFresh / CreateForMigration
+	Cores           int    // 0 = runtime.NumCPU()
+	Tuning          Tuning
+	Wasm            []byte // nil = flatsqlrt.P4ThreadsWasm()
+	AOTCacheDir     string
+	CompileOnMiss   bool                   // tests and prewarm only
+	ControlBudget   time.Duration          // offline conversion can exceed the normal recovery budget
+	ConversionFeeds uint64                 // host inventory of format-4 feed indexes, used only by ConvertFormat4
+	Store           *flatsqlrt.NativeStore // the node's shared native I/O store, as format 2
+	FDBudget        int                    // open-fd budget of the instance's host I/O (0: flatsqlrt.P4FDBudget); sizes Tuning.ReaderConns when that is 0
+	OnFailure       func(error)            // instance trapped or hung; the Engine is fenced
+	Serialize       SerializeMode          // call gate (SerializeOff: none); a diagnostic control, see SerializeMode
 
 	// RequestDeadline bounds every request whose caller set no earlier
 	// deadline (0: DefaultRequestDeadline; negative: none). QUOTA_GC and
@@ -80,11 +82,11 @@ const (
 
 // ErrUnanswered: the engine did not answer a request within its request
 // deadline (the request was canceled; a write may still commit).
-var ErrUnanswered = errors.New("format4: the engine did not answer within the request deadline")
+var ErrUnanswered = errors.New("format5: the engine did not answer within the request deadline")
 
 // ErrWriteHang is the cause the engine is fenced with when a write stays
 // unanswered past Options.WriteHang.
-var ErrWriteHang = errors.New("format4: write path hung")
+var ErrWriteHang = errors.New("format5: write path hung")
 
 // SerializeMode selects the Engine's call gate: one request of the gated kind
 // inside the engine at a time, the others wait on the Go side (bounded by
@@ -187,7 +189,7 @@ func (e *Engine) bound(ctx context.Context, op uint32) (context.Context, context
 // ErrUnanswered (and still context.DeadlineExceeded), the rest as stopped.
 func (e *Engine) failed(ctx context.Context, op string, err error) error {
 	if errors.Is(err, context.DeadlineExceeded) && errors.Is(context.Cause(ctx), ErrUnanswered) {
-		return fmt.Errorf("format4: %s: %w after %s: %w", op, ErrUnanswered, e.deadline, err)
+		return fmt.Errorf("format5: %s: %w after %s: %w", op, ErrUnanswered, e.deadline, err)
 	}
 	return e.stopped(op, err)
 }
@@ -246,7 +248,7 @@ func (e *Engine) hung(op string, waited time.Duration) {
 		return // fenced or closing already
 	}
 	cause := fmt.Errorf("%w: %s unanswered for %s", ErrWriteHang, op, waited.Round(time.Millisecond))
-	log.Errorf("format 4: write %s unanswered for %s; fencing the engine as hung (the store reopens it)", op, waited.Round(time.Second))
+	log.Errorf("format 5: write %s unanswered for %s; fencing the engine as hung (the store reopens it)", op, waited.Round(time.Second))
 	if f, ok := e.ctl.(fencer); ok {
 		f.Fence(cause)
 		return
@@ -299,7 +301,7 @@ func Open(ctx context.Context, opt Options) (*Engine, error) {
 	}
 	root := strings.TrimSpace(opt.DataRoot)
 	if root == "" || !filepath.IsAbs(root) {
-		return nil, fmt.Errorf("format4: the data root %q is not an absolute path", opt.DataRoot)
+		return nil, fmt.Errorf("format5: the data root %q is not an absolute path", opt.DataRoot)
 	}
 	if err := checkDataRoot(root, opt.Create); err != nil {
 		return nil, err
@@ -314,19 +316,20 @@ func Open(ctx context.Context, opt Options) (*Engine, error) {
 	engineRoot := filepath.Join(root, marker.Dir)
 	if opt.Create != OpenExisting {
 		if err := os.MkdirAll(engineRoot, 0o700); err != nil {
-			return nil, fmt.Errorf("format4: %w", err)
+			return nil, fmt.Errorf("format5: %w", err)
 		}
 	}
 	fdBudget, basis := flatsqlrt.P4FDBudget(opt.FDBudget)
 	if opt.Tuning.ReaderConns == 0 {
 		opt.Tuning.ReaderConns = readerConnsFor(fdBudget, opt.Tuning.WriterConns)
 	}
-	log.Infof("format 4: host I/O fd budget %d (%s), %d reader connections", fdBudget, basis, opt.Tuning.ReaderConns)
+	log.Infof("format 5: host I/O fd budget %d (%s), %d reader connections", fdBudget, basis, opt.Tuning.ReaderConns)
 	e := &Engine{}
 	e.configure(opt)
 	inst, err := flatsqlrt.OpenP4Instance(flatsqlrt.P4Config{
 		Wasm: wasm, AOTCacheDir: opt.AOTCacheDir, CompileOnMiss: opt.CompileOnMiss,
 		Store: opt.Store, StoreRoot: root, FDBudget: fdBudget, InitConfig: encodeConfig(engineRoot, opt),
+		ControlBudget: opt.ControlBudget,
 		OnFailure: func(_ *flatsqlrt.P4Instance, cause error) {
 			e.fence(cause)
 			if opt.OnFailure != nil {
@@ -382,10 +385,10 @@ func readerConnsFor(fdBudget int, writerConns uint32) uint32 {
 	return uint32(n)
 }
 
-// checkDataRoot refuses, before any file is touched, a data root format 4
+// checkDataRoot refuses, before any file is touched, a data root format 5
 // must not open (contract §2.4): an activated format-2 or format-3 store
 // (fsql2/MIGRATED, or control.flatsqldb turned into a directory without
-// fsql4), and, for a fresh create, an unmigrated format-1 store (a store
+// fsql5), and, for a fresh create, an unmigrated format-1 store (a store
 // created beside it would hide its records).
 func checkDataRoot(root string, mode CreateMode) error {
 	m, err := marker.Read(root)
@@ -393,12 +396,15 @@ func checkDataRoot(root string, mode CreateMode) error {
 		return err
 	}
 	if m.Format4() {
+		if m.Directory != marker.Dir || (mode != ConvertFormat4 && m.Format != marker.StoreFormat) {
+			return fmt.Errorf("store format %d in %s requires conversion: run spacedatanetwork store-migrate --to 5 --store %s", m.Format, m.Directory, root)
+		}
 		return nil
 	}
 	if _, err := os.Stat(filepath.Join(root, format2.Dir, "MIGRATED")); err == nil || m.LegacyControlDir {
 		return ErrWrongFormat
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("format4: %w", err)
+		return fmt.Errorf("format5: %w", err)
 	}
 	if m.LegacyControlFile && mode == CreateFresh {
 		return ErrNotMigrated
@@ -436,12 +442,15 @@ func encodeConfig(engineRoot string, opt Options) []byte {
 		u32(21, t.WriterConns).u32(22, t.WriterCacheKiB).u32(23, t.ReaderConns).u32(24, t.ReaderCacheKiB).
 		u64(25, t.PendingMapBytes).u64(26, t.SoftHeap).u64(27, t.HardHeap).u32(40, t.GroupCommitRecords).
 		u32(41, t.GroupCommitMs)
+	if opt.Create == ConvertFormat4 {
+		c = tlvU64(c, 51, opt.ConversionFeeds)
+	}
 	return append(c, t.Extra...)
 }
 
 // fence makes every later call return ErrStopped (§5.2: a trap or hang).
 func (e *Engine) fence(cause error) {
-	err := fmt.Errorf("format4: engine fenced: %w", cause)
+	err := fmt.Errorf("format5: engine fenced: %w", cause)
 	e.fenced.CompareAndSwap(nil, &err)
 }
 
@@ -469,7 +478,7 @@ func (e *Engine) stopped(op string, err error) error {
 
 func statusOf(op string, rc int32, err error) error {
 	if err != nil {
-		return fmt.Errorf("format4: %s: %w", op, err)
+		return fmt.Errorf("format5: %s: %w", op, err)
 	}
 	if rc < 0 {
 		return &StatusError{Op: op, Status: rc}
@@ -530,7 +539,7 @@ func (e *Engine) Stats() ([]uint64, error) {
 		return nil, err
 	}
 	if len(b)%8 != 0 || len(b) < 8*statsEntries {
-		return nil, fmt.Errorf("format4: stats wrote %d bytes, want at least %d", len(b), 8*statsEntries)
+		return nil, fmt.Errorf("format5: stats wrote %d bytes, want at least %d", len(b), 8*statsEntries)
 	}
 	out := make([]uint64, len(b)/8)
 	for i := range out {
@@ -682,12 +691,12 @@ func (e *Engine) Put(ctx context.Context, b Batch) ([]Outcome, error) {
 			return err
 		}
 		if len(rs.cells) != len(idx) {
-			return fmt.Errorf("format4: PUT returned %d rows for %d records", len(rs.cells), len(idx))
+			return fmt.Errorf("format5: PUT returned %d rows for %d records", len(rs.cells), len(idx))
 		}
 		for _, r := range rs.cells {
 			i := int(cellInt(r[0]))
 			if i < 0 || i >= len(idx) {
-				return fmt.Errorf("format4: PUT row index %d of %d", i, len(idx))
+				return fmt.Errorf("format5: PUT row index %d of %d", i, len(idx))
 			}
 			out[idx[i]] = Outcome{Action: Action(cellInt(r[1])), Seq: cellInt(r[2]), Reject: int32(cellInt(r[3]))}
 		}

@@ -45,16 +45,16 @@ type rows struct {
 func decodeRows(op string, body []byte, want []string) (*rows, error) {
 	var d QRPDecoder
 	if err := d.Feed(body); err != nil {
-		return nil, fmt.Errorf("format4: %s response: %w", op, err)
+		return nil, fmt.Errorf("format5: %s response: %w", op, err)
 	}
 	if !d.Done() {
-		return nil, fmt.Errorf("format4: %s response has no end record", op)
+		return nil, fmt.Errorf("format5: %s response has no end record", op)
 	}
 	if d.End.Status != 0 {
 		return nil, &StatusError{Op: op, Status: d.End.Status}
 	}
 	if d.Names != nil && !sameStrings(d.Names, want) {
-		return nil, fmt.Errorf("format4: %s response columns %v, want %v (engine ABI changed)", op, d.Names, want)
+		return nil, fmt.Errorf("format5: %s response columns %v, want %v (engine ABI changed)", op, d.Names, want)
 	}
 	return &rows{op: op, names: want, cells: d.Rows}, nil
 }
@@ -129,7 +129,7 @@ func (rs *rows) recs() []Rec {
 // one returns the single row of a one-row response.
 func (rs *rows) one() ([]format2.Cell, error) {
 	if len(rs.cells) != 1 {
-		return nil, fmt.Errorf("format4: %s returned %d rows, want 1", rs.op, len(rs.cells))
+		return nil, fmt.Errorf("format5: %s returned %d rows, want 1", rs.op, len(rs.cells))
 	}
 	return rs.cells[0], nil
 }

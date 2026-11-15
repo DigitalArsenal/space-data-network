@@ -120,7 +120,7 @@ func (m *migrator4) check(ctx context.Context, want map[string]*migrate4Progress
 		c.Took = time.Since(t0).Round(time.Millisecond).String()
 		m.addTime("check", time.Since(t0))
 	}()
-	m.logf("checking the format-4 store against format 1")
+	m.logf("checking the format-5 store against format 1")
 	lanes := map[laneKey5]laneCount{}
 	items, stop := m.readFormat1(ctx, m.schemas, nil, false)
 	defer stop()
@@ -148,7 +148,7 @@ func (m *migrator4) check(ctx context.Context, want map[string]*migrate4Progress
 	}
 	if n := m.hexIdentities.Load(); n > 0 {
 		m.rep.HexIdentities = n
-		m.note("%d records format 1 keeps under a legacy sha256-hex identity are keyed by the CIDv1 of the same digest (format 4 keys every record by its CIDv1, §3.8 (1))", n)
+		m.note("%d records format 1 keeps under a legacy sha256-hex identity are keyed by the CIDv1 of the same digest (format 5 keys every record by its CIDv1)", n)
 	}
 	// Index rows of a schema no producer table holds are orphans too.
 	for _, s := range m.index {
@@ -186,7 +186,7 @@ func (m *migrator4) check(ctx context.Context, want map[string]*migrate4Progress
 		}
 	}
 	if c.MismatchCount > 0 {
-		return c, fmt.Errorf("store-migrate --to 4: the check failed (%d mismatches); format 4 was not activated", c.MismatchCount)
+		return c, fmt.Errorf("store-migrate --to 5: the check failed (%d mismatches); format 5 was not activated", c.MismatchCount)
 	}
 	return c, nil
 }
@@ -267,14 +267,14 @@ func (m *migrator4) checkPage(ctx context.Context, sc *schemaCheck, entries []st
 	for _, e := range entries {
 		if e.Orphan() {
 			if len(copies[e.CID]) > 0 {
-				c.bad("%s %s (index rowid %d): an orphan in format 1, %d copies in format 4", schema, e.CID, e.RowID, len(copies[e.CID]))
+				c.bad("%s %s (index rowid %d): an orphan in format 1, %d copies in format 5", schema, e.CID, e.RowID, len(copies[e.CID]))
 			}
 			continue
 		}
 		if m.setAside[e.CID] {
 			sc.got.SetAside++
 			if len(copies[e.CID]) > 0 {
-				c.bad("%s %s (index rowid %d): set aside (--drop-oversized), %d copies in format 4", schema, e.CID, e.RowID, len(copies[e.CID]))
+				c.bad("%s %s (index rowid %d): set aside (--drop-oversized), %d copies in format 5", schema, e.CID, e.RowID, len(copies[e.CID]))
 			}
 			continue
 		}
@@ -321,7 +321,7 @@ func (m *migrator4) checkPage(ctx context.Context, sc *schemaCheck, entries []st
 		var first *format4.Rec
 		for ti, held := range e.Held {
 			if held && byTable[ti] == nil {
-				c.bad("%s %s: format 1's %s holds the record, format 4 has no copy in partition %q", schema, e.CID, tables[ti].Name, tables[ti].Token)
+				c.bad("%s %s: format 1's %s holds the record, format 5 has no copy in partition %q", schema, e.CID, tables[ti].Name, tables[ti].Token)
 			}
 			if first == nil && byTable[ti] != nil {
 				first = byTable[ti]
@@ -458,12 +458,12 @@ func (m *migrator4) checkFields(schema string, f typeFields, e storage.IndexEntr
 	c.FieldChecks++
 	switch {
 	case r.HasEpoch != e.EpochUnix.Valid:
-		c.bad("%s %s: epoch present %v in format 4, %v in format 1", schema, e.CID, r.HasEpoch, e.EpochUnix.Valid)
+		c.bad("%s %s: epoch present %v in format 5, %v in format 1", schema, e.CID, r.HasEpoch, e.EpochUnix.Valid)
 	case r.HasEpoch && r.Epoch != e.EpochUnix.Int64:
-		c.bad("%s %s: epoch %d in format 4, %d in format 1", schema, e.CID, r.Epoch, e.EpochUnix.Int64)
+		c.bad("%s %s: epoch %d in format 5, %d in format 1", schema, e.CID, r.Epoch, e.EpochUnix.Int64)
 	}
 	if want := f.expectedKey(e); r.Key != want {
-		c.bad("%s %s: object key %q in format 4, %q from format 1's columns", schema, e.CID, r.Key, want)
+		c.bad("%s %s: object key %q in format 5, %q from format 1's columns", schema, e.CID, r.Key, want)
 	}
 	// Format 4 derives the day from the epoch (EPOCH_DAY); format 1 stored it.
 	wantDay := ""
@@ -649,12 +649,12 @@ func (m *migrator4) checkCounters(ctx context.Context, c *migrate4Check, want ma
 	for k, w := range lanes {
 		c.Lanes++
 		if g := gotLanes[k]; g != w {
-			c.bad("lane %v: %d records, %d B in format 4; the tags recount %d, %d B", k, g.n, g.bytes, w.n, w.bytes)
+			c.bad("lane %v: %d records, %d B in format 5; the tags recount %d, %d B", k, g.n, g.bytes, w.n, w.bytes)
 		}
 	}
 	for k, g := range gotLanes {
 		if _, ok := lanes[k]; !ok && g.n > 0 {
-			c.bad("lane %v: %d records in format 4, none in the recount", k, g.n)
+			c.bad("lane %v: %d records in format 5, none in the recount", k, g.n)
 		}
 	}
 	// Format 1's lane counters are incremental and can drift: report it.

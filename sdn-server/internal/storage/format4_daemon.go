@@ -1,6 +1,6 @@
 package storage
 
-// format4_daemon.go — the daemon on store format 4, "p4": one SQLite table
+// format4_daemon.go — the daemon on store format 5, "p4": one SQLite table
 // file per source feed x standard (P/<TYPE>/<provider@source>.db, untagged
 // records in P/<TYPE>/local.db), in the FlatSQL engine (stack design
 // docs/architecture/flatsql-sqlite-partitions.md §10, G7; build-out contract
@@ -14,11 +14,11 @@ package storage
 //   - THE ENGINE (internal/storage/format4): one threaded instance holding
 //     every record in its feed files, the per-file batch counters, the type
 //     indexes and the
-//     full-text index under <data>/fsql4/. Every record read and write of the
+//     full-text index under <data>/fsql5/. Every record read and write of the
 //     node goes there through format4Backend (format4_daemon_writes.go,
 //     format4_daemon_reads.go). No record path takes s.mu or the control
 //     instance's lock, and no read waits on a writer.
-//   - THE CONTROL INSTANCE (control_instance.go) on <data>/fsql4/control.db:
+//   - THE CONTROL INSTANCE (control_instance.go) on <data>/fsql5/control.db:
 //     the control tables only, as format 2's.
 //
 // Format 4 opens an activated format-4 store, or creates a fresh one in an
@@ -54,7 +54,7 @@ const format4CloseDeadline = 30 * time.Second
 
 // ErrFormat4Store: a format-1 or format-2 open of a format-4 store. Neither
 // may recreate record tables beside it.
-var ErrFormat4Store = errors.New("the store is format 4; start the daemon without SDN_STORE_FORMAT (or with SDN_STORE_FORMAT=4)")
+var ErrFormat4Store = errors.New("the store requires the format-5 engine; start the daemon without SDN_STORE_FORMAT (or with SDN_STORE_FORMAT=5); existing format-4 stores convert automatically, or use store-migrate --to 5")
 
 // Test hooks: the daemon never compiles an artifact; tests do, and they name
 // the engine build they run on (SDN_P4_WASM).
@@ -179,11 +179,11 @@ func format2StorePresent(basePath string) (bool, error) {
 }
 
 // StoreFormat is the store format NewFlatSQLStore opens basePath as.
-// SDN_STORE_FORMAT names it when set. Unset, the default, is format 4, but a
+// SDN_STORE_FORMAT names it when set. Unset, the default, is format 5, but a
 // store an earlier format holds keeps that format: a format-1 store opens as
-// format 1 until store-migrate --to 4 migrates it (offline, the daemon
+// format 1 until store-migrate --to 5 migrates it (offline, the daemon
 // stopped), and an activated format-2 store is refused by name. A process
-// that cannot run format 4 (format4.Runnable) opens an empty data directory
+// that cannot run format 5 (format4.Runnable) opens an empty data directory
 // as format 1.
 func StoreFormat(basePath string) (int, error) {
 	format, _, err := storeFormat(basePath)
@@ -195,7 +195,7 @@ func StoreFormat(basePath string) (int, error) {
 func storeFormatFor(basePath string) (int, error) {
 	format, keptFormat1, err := storeFormat(basePath)
 	if keptFormat1 {
-		log.Warnf("store format 4 is the default, but %s holds a format-1 store: it opens as format 1. To migrate it, stop the daemon and run `spacedatanetwork store-migrate --to 4 --store %s`; SDN_STORE_FORMAT=1 keeps format 1 without this notice",
+		log.Warnf("store format 5 is the default, but %s holds a format-1 store: it opens as format 1. To migrate it, stop the daemon and run `spacedatanetwork store-migrate --to 5 --store %s`; SDN_STORE_FORMAT=1 keeps format 1 without this notice",
 			basePath, basePath)
 	}
 	return format, err
@@ -213,11 +213,11 @@ func storeFormat(basePath string) (format int, keptFormat1 bool, err error) {
 	}
 	if ok, why := format4.Runnable(); !ok {
 		format4NotRunnableOnce.Do(func() {
-			log.Warnf("store format 4 (the default) cannot run in this process: %s; a new store is format 1", why)
+			log.Warnf("store format 5 (the default) cannot run in this process: %s; a new store is format 1", why)
 		})
 		return 1, false, nil
 	}
-	return 4, false, nil
+	return 5, false, nil
 }
 
 var format4NotRunnableOnce sync.Once
@@ -239,14 +239,17 @@ func heldStoreFormat(basePath string) (int, error) {
 	}
 	switch {
 	case m.Format4() || m.LegacyControlDir:
-		return 4, nil
+		if m.StoreValid {
+			return int(m.Format), nil
+		}
+		return 5, nil
 	case m.LegacyControlFile:
 		return 1, nil
 	}
 	return 0, nil
 }
 
-// format4CreateMode decides how the engine opens <data>/fsql4 (§5.5): an
+// format4CreateMode decides how the engine opens <data>/fsql5 (§5.5): an
 // activated store opens; an activation store-migrate left half done is
 // finished first; a format-1 store it has not migrated is refused; an
 // empty data directory is created fresh. Caller holds the store lock.
@@ -262,9 +265,9 @@ func format4CreateMode(basePath string) (format4.CreateMode, error) {
 	}
 	if m.NeedsFinish() {
 		if err := marker.FinishActivation(basePath); err != nil {
-			return 0, fmt.Errorf("format 4: finish the activation: %w", err)
+			return 0, fmt.Errorf("format 5: finish the activation: %w", err)
 		}
-		log.Infof("format 4: finished the activation store-migrate began (%s moved to %s)", marker.LegacyControl, marker.PreFormat4Dir)
+		log.Infof("format 5: finished the activation store-migrate began (%s moved to %s)", marker.LegacyControl, marker.PreFormat4Dir)
 		if m, err = marker.Read(basePath); err != nil {
 			return 0, err
 		}
@@ -281,7 +284,7 @@ func format4CreateMode(basePath string) (format4.CreateMode, error) {
 	}
 }
 
-// newFormat4Store is NewFlatSQLStore on store format 4.
+// newFormat4Store is NewFlatSQLStore on store format 5.
 func newFormat4Store(basePath string, validator *sds.Validator, cfg storeConfig) (*FlatSQLStore, error) {
 	if err := os.MkdirAll(basePath, 0o700); err != nil {
 		return nil, fmt.Errorf("failed to create storage directory: %w", err)
@@ -296,6 +299,9 @@ func newFormat4Store(basePath string, validator *sds.Validator, cfg storeConfig)
 			_ = lock.release()
 		}
 	}()
+	if err := migrateStore5Locked(context.Background(), basePath); err != nil {
+		return nil, err
+	}
 	mode, err := format4CreateMode(basePath)
 	if err != nil {
 		return nil, err
@@ -321,7 +327,7 @@ func newFormat4Store(basePath string, validator *sds.Validator, cfg storeConfig)
 	dataRoot, err := filepath.Abs(basePath)
 	if err != nil {
 		cancel()
-		return nil, fmt.Errorf("format 4: %w", err)
+		return nil, fmt.Errorf("format 5: %w", err)
 	}
 	d.opt = format4.Options{
 		DataRoot:      dataRoot,
@@ -336,12 +342,12 @@ func newFormat4Store(basePath string, validator *sds.Validator, cfg storeConfig)
 	api, err := format4OpenEngine(ctx, d.opt)
 	if err != nil {
 		cancel()
-		return nil, fmt.Errorf("format 4: open the engine: %w", err)
+		return nil, fmt.Errorf("format 5: open the engine: %w", err)
 	}
 	d.engine.Store(&format4Engine{api})
 	// A reopen after a trap opens what is now an activated store.
 	d.opt.Create = format4.OpenExisting
-	log.Infof("format 4: engine open in %s (%s)", time.Since(engineStart).Round(time.Millisecond), describeFormat4Mode(mode))
+	log.Infof("format 5: engine open in %s (%s)", time.Since(engineStart).Round(time.Millisecond), describeFormat4Mode(mode))
 	closeEngine := func() {
 		cancel()
 		cctx, ccancel := context.WithTimeout(context.Background(), format4CloseDeadline)
@@ -353,7 +359,7 @@ func newFormat4Store(basePath string, validator *sds.Validator, cfg storeConfig)
 	controlDir := filepath.Join(basePath, marker.Dir)
 	if err := os.MkdirAll(controlDir, 0o700); err != nil {
 		closeEngine()
-		return nil, fmt.Errorf("format 4: %w", err)
+		return nil, fmt.Errorf("format 5: %w", err)
 	}
 	dbPath := filepath.Join(basePath, "sdn.db") // salts the local-EPM key, as in format 1
 	controlDBPath := filepath.Join(controlDir, format4ControlDBName)
@@ -363,12 +369,12 @@ func newFormat4Store(basePath string, validator *sds.Validator, cfg storeConfig)
 		closeEngine()
 		return nil, err
 	}
-	log.Infof("format 4: control instance on %s (%s) in %s", controlDBPath, controlDurabilityDescription(engineDB),
+	log.Infof("format 5: control instance on %s (%s) in %s", controlDBPath, controlDurabilityDescription(engineDB),
 		time.Since(start).Round(time.Millisecond))
 	db := flatsqldrv.Open(engineDB)
 	if mib := resolveEnginePageCacheMiB(); mib > 0 {
 		if _, err := db.Exec(fmt.Sprintf("PRAGMA cache_size = -%d", mib*1024)); err != nil {
-			log.Warnf("format 4: control page cache: %v", err)
+			log.Warnf("format 5: control page cache: %v", err)
 		}
 	}
 	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
@@ -436,13 +442,13 @@ func newFormat4Store(basePath string, validator *sds.Validator, cfg storeConfig)
 	}
 	if cfg.quotaBytes > 0 {
 		if err := d.api().SetQuota(cfg.quotaBytes); err != nil {
-			return fail(fmt.Errorf("format 4: set the quota: %w", err))
+			return fail(fmt.Errorf("format 5: set the quota: %w", err))
 		}
 	}
 	format4Backend{s: store, d: d}.warmCounters()
 
 	if err := store.Checkpoint(); err != nil {
-		log.Warnf("format 4: initial checkpoint failed (nothing is lost): %v", err)
+		log.Warnf("format 5: initial checkpoint failed (nothing is lost): %v", err)
 	}
 	if interval := resolveCheckpointInterval(); interval > 0 {
 		store.checkpointRunning.Store(true)
@@ -469,7 +475,7 @@ func describeFormat4Mode(mode format4.CreateMode) string {
 func createLegacyControlDir(basePath string) error {
 	p := filepath.Join(basePath, marker.LegacyControl)
 	if err := os.Mkdir(p, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
-		return fmt.Errorf("format 4: create %s: %w", p, err)
+		return fmt.Errorf("format 5: create %s: %w", p, err)
 	}
 	dir, err := os.Open(basePath)
 	if err != nil {
@@ -480,7 +486,7 @@ func createLegacyControlDir(basePath string) error {
 }
 
 // Format4TypeSpec is a schema's engine registration, the one rule the daemon
-// and store-migrate --to 4 both register by: format4.TypeSpecFor (a sealed
+// and store-migrate --to 5 both register by: format4.TypeSpecFor (a sealed
 // standard CID-only, one whose sealed field a rule reads refused: C-46 (7)),
 // or, for a routed standard with no embedded binary schema (an encrypted one,
 // C-25), the CID-only spec with its file identifier (ident, the validator's).
@@ -520,7 +526,7 @@ func (d *format4Daemon) registerTypes(validator *sds.Validator) error {
 			continue
 		}
 		if err := d.ensureType(schema); err != nil {
-			log.Warnf("format 4: %s is not registered: %v", schema, err)
+			log.Warnf("format 5: %s is not registered: %v", schema, err)
 		}
 	}
 	return nil
@@ -547,7 +553,7 @@ func (d *format4Daemon) ensureType(schema string) error {
 // onFailure is the engine's OnFailure: a trap or hang fenced it. The daemon
 // reopens it (init replays the journal); calls meanwhile answer ErrStopped.
 func (d *format4Daemon) onFailure(err error) {
-	log.Errorf("format 4: the engine failed and is fenced (%v); reopening", err)
+	log.Errorf("format 5: the engine failed and is fenced (%v); reopening", err)
 	if !d.reopening.CompareAndSwap(false, true) {
 		return
 	}
@@ -563,10 +569,10 @@ func (d *format4Daemon) onFailure(err error) {
 				d.typesMu.Lock()
 				d.types = map[string]bool{} // re-registered on use (a no-op for persisted specs)
 				d.typesMu.Unlock()
-				log.Infof("format 4: engine reopened after %d attempt(s)", attempt)
+				log.Infof("format 5: engine reopened after %d attempt(s)", attempt)
 				return
 			}
-			log.Errorf("format 4: reopen attempt %d failed: %v", attempt, err)
+			log.Errorf("format 5: reopen attempt %d failed: %v", attempt, err)
 			select {
 			case <-d.ctx.Done():
 				return
@@ -593,5 +599,5 @@ func (d *format4Daemon) close() error {
 	return d.api().Close(ctx)
 }
 
-// Format4 reports whether this store runs store format 4.
+// Format4 reports whether this store runs store format 5.
 func (s *FlatSQLStore) Format4() bool { return s != nil && s.f4 != nil }

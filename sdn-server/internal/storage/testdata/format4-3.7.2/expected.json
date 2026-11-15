@@ -1,0 +1,308 @@
+{
+  "records_OMM": [
+    {
+      "seq": 100,
+      "cid": "bafkreialhhafmmmmnslsmkny2bqfmcmoihs6pg3wtnfpm4sz662u5voj7i",
+      "producer": "source_fixture",
+      "peer": "source:fixture",
+      "ts": 1700000000,
+      "epoch": 1788220800,
+      "key": "100",
+      "sig": "3q0A",
+      "data": "SAAAACRPTU0AAAAAPAAkAAAABAAAAAwAEAAAAAAAAAAAAAAAAAAIAAAAFAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAPAAAACAAAAA4AAAAUAAAAGQAAAAAAAAAAADwPwAAAABkAAAAFAAAADIwMjYtMDktMDFUMDA6MDA6MDBaAAAAABQAAAAyMDI2LTA5LTAxVDAwOjAwOjAwWgAAAAARAAAAc3ludGhldGljIGZpeHR1cmUAAAAJAAAAZml4dHVyZS0wAAAA",
+      "len": 204,
+      "hasepoch": true,
+      "tag": null
+    },
+    {
+      "seq": 100,
+      "cid": "bafkreialhhafmmmmnslsmkny2bqfmcmoihs6pg3wtnfpm4sz662u5voj7i",
+      "producer": "source_second",
+      "peer": "source:second",
+      "ts": 1700000000,
+      "epoch": 1788220800,
+      "key": "100",
+      "sig": "3q0A",
+      "data": "SAAAACRPTU0AAAAAPAAkAAAABAAAAAwAEAAAAAAAAAAAAAAAAAAIAAAAFAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAPAAAACAAAAA4AAAAUAAAAGQAAAAAAAAAAADwPwAAAABkAAAAFAAAADIwMjYtMDktMDFUMDA6MDA6MDBaAAAAABQAAAAyMDI2LTA5LTAxVDAwOjAwOjAwWgAAAAARAAAAc3ludGhldGljIGZpeHR1cmUAAAAJAAAAZml4dHVyZS0wAAAA",
+      "len": 204,
+      "hasepoch": true,
+      "tag": null
+    },
+    {
+      "seq": 101,
+      "cid": "bafkreicbdv7endnqtim2s2domndfqqnpgbr2cjrrrgpahyqorq7g3tn2qy",
+      "producer": "source_fixture",
+      "peer": "source:fixture",
+      "ts": 1700000001,
+      "epoch": 1788220800,
+      "key": "101",
+      "sig": "3q0B",
+      "data": "SAAAACRPTU0AAAAAPAAkAAAABAAAAAwAEAAAAAAAAAAAAAAAAAAIAAAAFAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAPAAAACAAAAA4AAAAUAAAAGQAAAAAAAAAAADwPwAAAABlAAAAFAAAADIwMjYtMDktMDFUMDA6MDA6MDBaAAAAABQAAAAyMDI2LTA5LTAxVDAwOjAwOjAwWgAAAAARAAAAc3ludGhldGljIGZpeHR1cmUAAAAJAAAAZml4dHVyZS0xAAAA",
+      "len": 204,
+      "hasepoch": true,
+      "tag": null
+    },
+    {
+      "seq": 102,
+      "cid": "bafkreigg7aq4b5jybwtfr7afdmy6t3rh3mcbnpo3hx5dibanqzxqerot4a",
+      "producer": "source_fixture",
+      "peer": "source:fixture",
+      "ts": 1700000002,
+      "epoch": 1788220800,
+      "key": "102",
+      "sig": "3q0C",
+      "data": "U0RGMQERIjNE",
+      "len": 9,
+      "hasepoch": true,
+      "tag": null
+    }
+  ],
+  "head_OMM": {
+    "n": 3,
+    "bytes": 417,
+    "maxseq": 102,
+    "maxts": 1700000002,
+    "maxat": 1700000022,
+    "through": 102,
+    "more": false
+  },
+  "tags_OMM": [
+    {
+      "cid": "bafkreialhhafmmmmnslsmkny2bqfmcmoihs6pg3wtnfpm4sz662u5voj7i",
+      "seq": 100,
+      "producer": "source_fixture",
+      "provider": "fixture-provider",
+      "source": "fixture-source",
+      "sourceurl": "https://fixture.invalid/one",
+      "batch": "batch-a",
+      "contentkeyid": "public",
+      "producerpeer": "fixture-peer",
+      "producerpubkey": "fixture-public",
+      "at": 1700000010
+    },
+    {
+      "cid": "bafkreialhhafmmmmnslsmkny2bqfmcmoihs6pg3wtnfpm4sz662u5voj7i",
+      "seq": 100,
+      "producer": "source_fixture",
+      "provider": "fixture-provider",
+      "source": "fixture-source",
+      "sourceurl": "https://fixture.invalid/two",
+      "batch": "batch-b",
+      "contentkeyid": "public",
+      "producerpeer": "fixture-peer",
+      "producerpubkey": "fixture-public",
+      "at": 1700000020
+    },
+    {
+      "cid": "bafkreicbdv7endnqtim2s2domndfqqnpgbr2cjrrrgpahyqorq7g3tn2qy",
+      "seq": 101,
+      "producer": "source_fixture",
+      "provider": "fixture-provider",
+      "source": "fixture-source",
+      "sourceurl": "https://fixture.invalid/one",
+      "batch": "batch-a",
+      "contentkeyid": "public",
+      "producerpeer": "fixture-peer",
+      "producerpubkey": "fixture-public",
+      "at": 1700000011
+    },
+    {
+      "cid": "bafkreicbdv7endnqtim2s2domndfqqnpgbr2cjrrrgpahyqorq7g3tn2qy",
+      "seq": 101,
+      "producer": "source_fixture",
+      "provider": "fixture-provider",
+      "source": "fixture-source",
+      "sourceurl": "https://fixture.invalid/two",
+      "batch": "batch-b",
+      "contentkeyid": "public",
+      "producerpeer": "fixture-peer",
+      "producerpubkey": "fixture-public",
+      "at": 1700000021
+    },
+    {
+      "cid": "bafkreigg7aq4b5jybwtfr7afdmy6t3rh3mcbnpo3hx5dibanqzxqerot4a",
+      "seq": 102,
+      "producer": "source_fixture",
+      "provider": "fixture-provider",
+      "source": "fixture-source",
+      "sourceurl": "https://fixture.invalid/one",
+      "batch": "batch-a",
+      "contentkeyid": "public",
+      "producerpeer": "fixture-peer",
+      "producerpubkey": "fixture-public",
+      "at": 1700000012
+    },
+    {
+      "cid": "bafkreigg7aq4b5jybwtfr7afdmy6t3rh3mcbnpo3hx5dibanqzxqerot4a",
+      "seq": 102,
+      "producer": "source_fixture",
+      "provider": "fixture-provider",
+      "source": "fixture-source",
+      "sourceurl": "https://fixture.invalid/two",
+      "batch": "batch-b",
+      "contentkeyid": "public",
+      "producerpeer": "fixture-peer",
+      "producerpubkey": "fixture-public",
+      "at": 1700000022
+    }
+  ],
+  "records_IQC": [
+    {
+      "seq": 211,
+      "cid": "bafkreifihqq2lg32ewjc7dikjjdn46qrsmihbffmdswgmkuvoonnnj36fy",
+      "producer": "source_capture",
+      "peer": "source:capture",
+      "ts": 1700000030,
+      "epoch": 0,
+      "key": "",
+      "sig": null,
+      "data": "LAAAACRJUUMAACIAHAAMAAgAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAEAAiAAAAGAAAACwAAAA4AAAAAAAAAAAA8D8AAAAAEQAAAHN5bnRoZXRpYyBmaXh0dXJlAAAACQAAAGNhcHR1cmUtMQAAAA8AAABmaXh0dXJlLWNhcHR1cmUA",
+      "len": 132,
+      "hasepoch": false,
+      "tag": null
+    }
+  ],
+  "head_IQC": {
+    "n": 1,
+    "bytes": 132,
+    "maxseq": 211,
+    "maxts": 1700000030,
+    "maxat": 1700000031,
+    "through": 211,
+    "more": false
+  },
+  "tags_IQC": [
+    {
+      "cid": "bafkreifihqq2lg32ewjc7dikjjdn46qrsmihbffmdswgmkuvoonnnj36fy",
+      "seq": 211,
+      "producer": "source_capture",
+      "provider": "fixture-provider",
+      "source": "capture",
+      "sourceurl": "https://fixture.invalid/capture",
+      "batch": "capture-batch",
+      "contentkeyid": "public",
+      "producerpeer": "fixture-peer",
+      "producerpubkey": "fixture-public",
+      "at": 1700000031
+    }
+  ],
+  "types": [
+    {
+      "type": "OMM",
+      "records": 3,
+      "copies": 4,
+      "bytes": 417,
+      "copybytes": 621,
+      "minepoch": 1788220800,
+      "maxepoch": 1788220800,
+      "mints": 1700000000,
+      "maxts": 1700000002,
+      "maxseq": 102,
+      "through": 102
+    },
+    {
+      "type": "IQC",
+      "records": 1,
+      "copies": 1,
+      "bytes": 132,
+      "copybytes": 132,
+      "minepoch": null,
+      "maxepoch": null,
+      "mints": 1700000030,
+      "maxts": 1700000030,
+      "maxseq": 211,
+      "through": 211
+    }
+  ],
+  "partitions": [
+    {
+      "type": "OMM",
+      "producer": "source_fixture",
+      "peer": "source:fixture",
+      "records": 3,
+      "bytes": 417,
+      "mints": 1700000000,
+      "maxts": 1700000002,
+      "maxseq": 102,
+      "files": 1
+    },
+    {
+      "type": "OMM",
+      "producer": "source_second",
+      "peer": "source:second",
+      "records": 1,
+      "bytes": 204,
+      "mints": 1700000000,
+      "maxts": 1700000000,
+      "maxseq": 100,
+      "files": 1
+    },
+    {
+      "type": "IQC",
+      "producer": "source_capture",
+      "peer": "source:capture",
+      "records": 1,
+      "bytes": 132,
+      "mints": 1700000030,
+      "maxts": 1700000030,
+      "maxseq": 211,
+      "files": 1
+    }
+  ],
+  "lanes": [
+    {
+      "type": "OMM",
+      "producer": "",
+      "provider": "fixture-provider",
+      "source": "fixture-source",
+      "batch": "batch-a",
+      "contentkeyid": "public",
+      "producerpeer": "fixture-peer",
+      "producerpubkey": "fixture-public",
+      "sourceurl": "https://fixture.invalid/one",
+      "records": 3,
+      "bytes": 417,
+      "maxseq": 102,
+      "first": 1700000010,
+      "updated": 1700000012,
+      "minw": 1788220800,
+      "maxw": 1788220800
+    },
+    {
+      "type": "OMM",
+      "producer": "",
+      "provider": "fixture-provider",
+      "source": "fixture-source",
+      "batch": "batch-b",
+      "contentkeyid": "public",
+      "producerpeer": "fixture-peer",
+      "producerpubkey": "fixture-public",
+      "sourceurl": "https://fixture.invalid/two",
+      "records": 3,
+      "bytes": 417,
+      "maxseq": 102,
+      "first": 1700000020,
+      "updated": 1700000022,
+      "minw": 1788220800,
+      "maxw": 1788220800
+    },
+    {
+      "type": "IQC",
+      "producer": "",
+      "provider": "fixture-provider",
+      "source": "capture",
+      "batch": "capture-batch",
+      "contentkeyid": "public",
+      "producerpeer": "fixture-peer",
+      "producerpubkey": "fixture-public",
+      "sourceurl": "https://fixture.invalid/capture",
+      "records": 1,
+      "bytes": 132,
+      "maxseq": 211,
+      "first": 1700000031,
+      "updated": 1700000031,
+      "minw": 1700000030,
+      "maxw": 1700000030
+    }
+  ]
+}

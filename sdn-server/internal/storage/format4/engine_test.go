@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format4"
+	"github.com/spacedatanetwork/sdn-server/internal/storage/format4/marker"
 )
 
 func ctxT(t *testing.T) context.Context {
@@ -71,8 +72,8 @@ func TestOpenRefusesOtherFormats(t *testing.T) {
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("Open: %v, want %v", err, tc.want)
 			}
-			if _, err := os.Stat(filepath.Join(root, "fsql4")); !errors.Is(err, os.ErrNotExist) {
-				t.Fatalf("a refused Open created fsql4/: %v", err)
+			if _, err := os.Stat(filepath.Join(root, marker.Dir)); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("a refused Open created %s/: %v", marker.Dir, err)
 			}
 		})
 	}

@@ -14,7 +14,7 @@ const (
 	StatusCorrupt     int32 = -4 // the file is quarantined; reads elsewhere continue
 	StatusFormat      int32 = -5 // store/file format above this engine; marker/state mismatch; C-5 rule change
 	StatusBusy        int32 = -6 // a queue or partition credit is full: nothing was done
-	StatusCanceled   int32 = -7
+	StatusCanceled    int32 = -7
 	StatusBudget      int32 = -8
 	StatusUnsupported int32 = -9
 	StatusNoType      int32 = -10
@@ -25,22 +25,22 @@ const (
 )
 
 var (
-	ErrNotMigrated = errors.New("format4: this store is format 1 and has not been migrated (store-migrate --to 4)")
-	ErrWrongFormat = errors.New("format4: this store is format 2 or 3; format 4 does not open it")
-	ErrClosed      = errors.New("format4: engine closed")
+	ErrNotMigrated = errors.New("format5: this store is format 1 and has not been migrated (store-migrate --to 5)")
+	ErrWrongFormat = errors.New("format5: this store is format 2 or 3; format 5 does not open it")
+	ErrClosed      = errors.New("format5: engine closed")
 )
 
 // The status errors errors.Is matches a *StatusError against, by status.
 var (
-	ErrBusy      error = statusSentinel(StatusBusy)
-	ErrNoType    error = statusSentinel(StatusNoType)
-	ErrCorrupt   error = statusSentinel(StatusCorrupt)
-	ErrNoSpace   error = statusSentinel(StatusNoSpace)
-	ErrBudget    error = statusSentinel(StatusBudget)
+	ErrBusy     error = statusSentinel(StatusBusy)
+	ErrNoType   error = statusSentinel(StatusNoType)
+	ErrCorrupt  error = statusSentinel(StatusCorrupt)
+	ErrNoSpace  error = statusSentinel(StatusNoSpace)
+	ErrBudget   error = statusSentinel(StatusBudget)
 	ErrCanceled error = statusSentinel(StatusCanceled)
-	ErrStopped   error = statusSentinel(StatusStopped)
-	ErrFormat    error = statusSentinel(StatusFormat)
-	ErrSQL       error = statusSentinel(StatusSQL)
+	ErrStopped  error = statusSentinel(StatusStopped)
+	ErrFormat   error = statusSentinel(StatusFormat)
+	ErrSQL      error = statusSentinel(StatusSQL)
 )
 
 func statusSentinel(status int32) *StatusError { return &StatusError{Status: status} }
@@ -55,7 +55,7 @@ type StatusError struct {
 }
 
 func (e *StatusError) Error() string {
-	s := "format4: "
+	s := "format5: "
 	if e.Op != "" {
 		s += e.Op + ": "
 	}
