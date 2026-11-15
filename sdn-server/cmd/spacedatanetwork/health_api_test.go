@@ -149,6 +149,40 @@ func TestReadinessReportsDataWarmup(t *testing.T) {
 	}
 }
 
+// A storeless (mode: edge) node has no engine and no data services to wait
+// for: it is ready once its libp2p host is up. A store-backed node with the
+// same answers is not.
+func TestReadinessOfAStorelessEdgeNodeIsTheHost(t *testing.T) {
+	var hostUp atomic.Bool
+	ready := func(storeless bool) *httptest.ResponseRecorder {
+		mux := http.NewServeMux()
+		mountHealthRoutes(mux, healthDeps{
+			storeless:   storeless,
+			engineReady: func() bool { return false }, // n.Store() is nil on an edge node
+			dataReady:   func() bool { return false }, // flow mounts, no store to hydrate
+			peerCount: func() int {
+				if hostUp.Load() {
+					return 0
+				}
+				return -1
+			},
+		})
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/ready", nil))
+		return w
+	}
+	if w := ready(true); w.Code != http.StatusServiceUnavailable || !strings.Contains(w.Body.String(), "libp2p host down") {
+		t.Fatalf("edge node, host down: %d %s", w.Code, w.Body.String())
+	}
+	hostUp.Store(true)
+	if w := ready(true); w.Code != http.StatusOK {
+		t.Fatalf("edge node, host up: %d %s, want ready", w.Code, w.Body.String())
+	}
+	if w := ready(false); w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("store-backed node with no engine: %d %s, want 503", w.Code, w.Body.String())
+	}
+}
+
 func TestReadinessSharesBlockedProbeAndHonorsRequestCancellation(t *testing.T) {
 	var calls atomic.Int32
 	release := make(chan struct{})

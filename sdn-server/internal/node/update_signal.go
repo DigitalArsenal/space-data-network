@@ -15,9 +15,11 @@ package node
 //
 //  1. VERIFY THE POINTER (cheap, in-process). Signature against the same trust
 //     roots that gate manifests, under its own statement domain; target, channel,
-//     sequence, freshness, lineage, and the local quarantine. Nothing is fetched
+//     sequence, freshness, lineage, and the local quarantine; and its manifest
+//     and carrier URLs must lie under THIS bundle's own feed (manifest.json
+//     update.feedBaseUrl), never a host the signal names. Nothing is fetched
 //     until all of that passes, so a hostile topic cannot make this box spend
-//     bandwidth, let alone disk.
+//     bandwidth, let alone disk, or contact a host of the signer's choosing.
 //  2. FETCH AND STAGE, ONLINE. The daemon keeps serving while it downloads the
 //     manifest and carrier over HTTPS, re-verifies the signed manifest from
 //     scratch against the same roots, checks the index/manifest agreement, and
@@ -92,6 +94,13 @@ type UpdateSignalSubscriberDeps struct {
 	TrustedRoots update.TrustedRoots
 	// Channel is the channel this box accepts signals for.
 	Channel string
+	// FeedBaseURL is this bundle's own update feed (manifest.json
+	// update.feedBaseUrl). A signal is acted on only when its manifest and
+	// carrier lie under it, and every fetch (redirects included) stays under
+	// it. Required: a subscriber that would follow a pointer anywhere lets the
+	// holder of any trusted key — and SEC-001 showed a trusted key can be
+	// public — send every install to a host of its choosing.
+	FeedBaseURL string
 	// Kind is the artifact kind this bundle is (e.g. "cli-bundle").
 	Kind string
 	// AdminURL is this daemon's own admin base URL, used by the helper for the
@@ -137,6 +146,7 @@ type UpdateSignalSubscriberDeps struct {
 // UpdateSignalSubscriber listens for update signals and upgrades this install.
 type UpdateSignalSubscriber struct {
 	deps UpdateSignalSubscriberDeps
+	feed update.FeedBase
 
 	mu          sync.Mutex
 	lastUpgrade time.Time
@@ -159,6 +169,10 @@ func NewUpdateSignalSubscriber(deps UpdateSignalSubscriberDeps) (*UpdateSignalSu
 	if len(deps.TrustedRoots) == 0 {
 		return nil, errors.New("node: update signal subscriber requires trusted update roots")
 	}
+	feed, err := update.ParseFeedBase(deps.FeedBaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("node: update signal subscriber requires this bundle's update feed: %w", err)
+	}
 	if deps.Now == nil {
 		deps.Now = time.Now
 	}
@@ -168,7 +182,7 @@ func NewUpdateSignalSubscriber(deps UpdateSignalSubscriberDeps) (*UpdateSignalSu
 	if deps.Launch == nil {
 		deps.Launch = update.LaunchSelfUpgrade
 	}
-	return &UpdateSignalSubscriber{deps: deps, handled: make(map[string]bool), uiAttempts: make(map[string]time.Time)}, nil
+	return &UpdateSignalSubscriber{deps: deps, feed: feed, handled: make(map[string]bool), uiAttempts: make(map[string]time.Time)}, nil
 }
 
 // Run joins the topic and processes signals until ctx is done. A per-message
@@ -223,6 +237,7 @@ func (s *UpdateSignalSubscriber) handle(ctx context.Context, data []byte) {
 		Channel:         s.deps.Channel,
 		CurrentSequence: state.Sequence,
 		Now:             s.deps.Now(),
+		FeedBaseURL:     s.feed.String(),
 	}); err != nil {
 		log.Debugf("update signal %s not actionable here: %v", signal.UpdateID, err)
 		return
@@ -443,6 +458,7 @@ func (s *UpdateSignalSubscriber) handleUI(ctx context.Context, signal *update.Si
 		Channel:         s.deps.Channel,
 		CurrentSequence: installed,
 		Now:             s.deps.Now(),
+		FeedBaseURL:     s.feed.String(),
 	}); err != nil {
 		log.Debugf("UI package signal %s not actionable here: %v", signal.UpdateID, err)
 		return
@@ -559,13 +575,22 @@ func (s *UpdateSignalSubscriber) fetch(ctx context.Context, rawURL string, limit
 	if req.URL.Scheme != "https" {
 		return nil, errors.New("update fetch requires HTTPS")
 	}
+	// Only this bundle's own feed: checked again here, at the fetch, so no
+	// path into this function can contact another host.
+	if err := s.feed.Contains(rawURL, "update fetch"); err != nil {
+		return nil, err
+	}
 	// Preserve the caller's transport (including Tor) and redirect policy,
-	// while refusing a downgrade before contacting the redirected endpoint.
+	// while refusing a downgrade, or a hop off this bundle's feed, before
+	// contacting the redirected endpoint.
 	client := *s.deps.Client
 	originalRedirect := client.CheckRedirect
 	client.CheckRedirect = func(next *http.Request, via []*http.Request) error {
 		if next.URL.Scheme != "https" {
 			return errors.New("update fetch redirected away from HTTPS")
+		}
+		if err := s.feed.Contains(next.URL.String(), "update fetch redirect"); err != nil {
+			return err
 		}
 		if originalRedirect != nil {
 			return originalRedirect(next, via)
@@ -667,6 +692,7 @@ func (n *Node) startUpdateSignalSubscriber() {
 		Paths:         paths,
 		TrustedRoots:  roots,
 		Channel:       channel,
+		FeedBaseURL:   manifest.Update.FeedBaseURL,
 		Kind:          manifest.Kind(),
 		AdminURL:      n.localAdminURL(),
 		AdminCAFile:   adminaddr.DaemonCertPath(n.config.Admin.TLSCertFile, n.config.Admin.TLSCacheDir),

@@ -240,6 +240,7 @@ func uiSubscriber(t *testing.T, h *signalHarness, f *uiFeed, self uiNode, launch
 		Paths:         h.paths,
 		TrustedRoots:  h.roots,
 		Channel:       "beta",
+		FeedBaseURL:   f.srv.URL,
 		Kind:          "cli-bundle",
 		AdminURL:      "https://127.0.0.1:5001/",
 		HealthTimeout: time.Minute,

@@ -382,6 +382,124 @@ tooling, or a raw 32-byte key). `stageBundle` stages the file via its
 replaces it. `SDN_UPDATE_TRUST_ROOTS` overrides the path for tests and
 managed deployments.
 
+### The demo root (2026-11-15)
+
+The fleet roots (`deployment/release/fleet-trust-roots.json`, staged into
+every bundle) are exactly one demo key, key id `12cb25de07c0`:
+
+```json
+{"12cb25de07c0":"MCowBQYDK2VwAyEAi0cVzY4ICSRzddR7HYHKgEPXmXXFh1uvFizfMb/V5ZM="}
+```
+
+The key id is the first 12 hex characters of sha256 over the raw 32-byte
+public key (the last 32 bytes of the SPKI DER): `update.RootKeyID`. A demo key
+signs the release channel, fleet releases and update signals until a
+production key replaces it through a release that carries `trust_roots`.
+
+- **Compiled-in fallback.** The same set is embedded in the binary
+  (`sdn-server/internal/update/default_update_roots.json`, held byte-equal to
+  the fleet file by a test). `LoadTrustRoots` uses it ONLY when the bundle's
+  trust file is absent; a present file wins, so a rotation can drop the demo
+  root. Absent means nothing at all at the path (a dangling symlink is an
+  error), and once a release's `trust_roots` have been installed
+  (`state.json` `trust_roots_from`, kept by every later apply and rollback) a
+  missing trust file is an error too, so losing the file cannot bring back a
+  root the rotation dropped. An explicit `SDN_UPDATE_TRUST_ROOTS` path that
+  does not exist is an error, not an absence. The first binary after the
+  production rotation should also drop the demo key from the compiled-in set.
+- **One reading of every signed document.** A manifest, a signal and the
+  trust file are refused when any object, at any depth, names a key twice
+  (compared after unescaping, and case-folded as Go's decoder matches struct
+  fields), or when anything follows the one JSON value. The canonical bytes a
+  signature covers keep only the last copy of a repeated key, while the
+  decoded manifest merged the copies: a feed host could prepend its own
+  `"trust_roots"` to a signed rotation and have its root installed beside
+  the signed one (`sdn-server/internal/update/strictjson.go`).
+- **The SEC-001 key is never a root.** The root shipped up to v1.1.1,
+  `d4a971a7e534`, is the raw key `0d80e1fd…fc8c`: the node identity leaked in
+  SEC-001, derived from a published seed. Every key of that identity
+  (`sdn-server/internal/sec001/denylist.json`) is refused wherever roots are
+  loaded — the trust file, the override, the compiled-in set, a release's
+  `trust_roots` — and as the signer of a manifest or a signal, whatever key id
+  it is listed under.
+- **Existing installs: the one manual step.** A command-line install re-runs
+  the installer for the new release and restarts the daemon. Without a
+  reinstall: replace `<bundle>/trust/update-roots.json` with the demo root
+  (replace, do not add beside: keeping `d4a971a7e534` keeps a root anyone can
+  sign for, and new builds refuse a file that lists it), stop the daemon, run
+  `<bundle>/bin/spacedatanetwork update install --direct`, and start it. A
+  helper from 2026-10-18 (47f043132) through v1.1.1 reverts every update it
+  gates (stack issue 670), hence `--direct`. Until that step is done, a
+  v1.1.x install should run with `update.enabled: false`: it trusts the
+  SEC-001 root, and its signal lane acts on a signal from any peer, so
+  anyone can make it install and start a build. Fleet hosts take the same
+  hand edit, but they run the internal `beta` lane
+  (`<feedBaseUrl>/cli-bundle/beta/...`, the default of
+  `publish-fleet-update.mjs` and `publish-ui-update.mjs`), whose manifests are
+  signed by the coordinator's key or an uploaded one: after the edit,
+  `update install --direct` refuses them until a fleet release signed with
+  the demo root is published on that lane (the demo key uploaded to the
+  coordinator's Updater), so a fleet host either waits for that release or
+  reinstalls. Desktop, package, VM and container installs install the new
+  release.
+- **A release is required for the channel.** The release channel carries
+  nothing until a release is cut with `SDN_UPDATE_SIGNING_KEY_PEM` and
+  `SDN_UPDATE_KEY_ID` set and its `spacedatanetwork-update-feed-<v>.tar.gz` is
+  published to host-01's feed directory. The `cli-update-feed` job fails a
+  stable release without the key (a beta warns and ships no feed), derives the
+  key id from the PEM and fails if it differs from `SDN_UPDATE_KEY_ID` or is
+  not in `fleet-trust-roots.json` (`check-update-signing-key.mjs`; there is no
+  fallback key id), and verifies every manifest against
+  `fleet-trust-roots.json` before packing the feed
+  (`verify-cli-update-feed.mjs`).
+
+### What a payload, a signal and the health gate must satisfy
+
+- **No `trust/` in a payload.** Every node refuses a payload with `trust/` at
+  its bundle root. The downloadable archive keeps `trust/` for a fresh
+  install; `build-cli-update-payload.mjs` wraps that archive with `trust/`
+  removed (and the archive itself unchanged when it has none).
+- **A signal points only into the bundle's own feed.** A signal's
+  `manifest_url` and `carrier_url`, and every redirect while fetching them,
+  must lie under the receiving bundle's `update.feedBaseUrl`: same scheme,
+  same host and port, a clean path below the feed's path, no query,
+  fragment, credentials or percent-encoding. The signal's own
+  `feed_base_url` is never used for this. A validly signed signal pointing
+  elsewhere is dropped before anything is fetched. `update install` and
+  `update check` apply the same rule to feed index entries and to every hop
+  of the index, manifest and carrier downloads (HTTPS only, under the feed).
+- **The index is not signed.** It only points: every entry must lie under
+  the feed, its sequence must be above the installed one and equal the
+  signed manifest's, and every hash it names must match the signed
+  manifest, so it cannot lead to unsigned code or to a downgrade. What a
+  feed host (or whoever controls it) can still do is serve a stale index,
+  holding updates back, or choose which valid, unexpired, higher-sequence
+  signed manifest `update install` takes. That is a design limit of an
+  unsigned index; the signal lane, driven by signed signals, is not affected.
+- **The helper gates on readiness.** After the restart the helper waits for
+  `GET /api/v1/ready` to answer 2xx (the status code is the whole answer) and
+  for `/api/v1/id` to report the installed build, for
+  `update.health_timeout_seconds` (default 600, also when `update install`
+  starts the helper; `--health-timeout` overrides). `spacedatanetwork status`
+  reads `/api/v1/health`. Both used to decode `/api/v1/data/health`, which
+  answers a `$QRP` FlatBuffer, so every helper-driven update was reverted
+  (stack issue 670). `status` now prints `daemon_status=running` with
+  `data_health=healthy`, or `data_health=degraded` plus `alerts_error` and
+  `alerts_warning` while alerts are active (the daemon is serving; the lane's
+  `verify-update-entrypoint.sh` accepts both); `data_runtime` is gone and
+  `data_message` appears only when the answer cannot be read.
+- **What `/ready` waits for.** On a node with a store: the engine answering
+  and, with flow mounts, the hot-window hydration done (the same condition
+  the mounts answer 503 on). A `mode: edge` node opens no store, so its
+  readiness is the libp2p host alone. Two limits: a boot hydration that traps
+  leaves the hydrated flag unset after the engine is recovered, so `/ready`
+  reports "data services warming" until the next restart and the gate reverts
+  (the restored build most likely does the same); and flow mounts load their
+  artifact on first request, so the gate does not exercise them. `TestUpdateChannelRealDaemonE2E`
+  (`SDN_E2E_REAL_DAEMON=1`, Linux; the ci.yml job "Update channel E2E (real
+  daemon)") runs the pass, revert-and-quarantine and wrong-key cases against
+  real daemons.
+
 End-to-end release flow:
 
 ```sh
@@ -394,7 +512,7 @@ node deployment/release/build-cli-update-payload.mjs \
   --channel release \
   --platform darwin \
   --arch arm64 \
-  --key-id sdn-release-2026 \
+  --key-id 12cb25de07c0 \
   --key key.pem \
   --created-at 2026-06-10T00:00:00Z \
   --upstream-kubo-version v0.35.0 \

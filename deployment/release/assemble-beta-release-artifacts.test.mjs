@@ -414,12 +414,19 @@ test('fails when a required desktop release artifact class is missing', () => {
   }, /missing required desktop release artifact matching: space-data-network-desktop-\*-linux-\*\.tar\.xz/);
 });
 
-test('assembles signed CLI update feed artifacts when signing key is configured', () => {
+// The feed is the cli-update-feed job's, checked and verified there
+// (check-update-signing-key.mjs, verify-cli-update-feed.mjs). The assembler
+// ships that tarball as it is: even with a signing key in its environment it
+// builds no feed of its own (it used to, with a fallback key id and no
+// verification, under the same file name, replacing the verified one).
+test('ships the verified CLI update feed as it is and never builds its own', () => {
   const tempRoot = mkdtempSync(join(tmpdir(), 'sdn-beta-release-feed-'));
   const distDir = join(tempRoot, 'dist');
   const releaseDir = join(distDir, 'release');
   const { privateKey } = generateKeyPairSync('ed25519');
   const privateKeyPem = privateKey.export({ type: 'pkcs8', format: 'pem' });
+  const verifiedFeed = 'fixture: the verified feed from the cli-update-feed job';
+  writeFixture(distDir, 'update-feed/spacedatanetwork-update-feed-1.0.3-beta.42.tar.gz', verifiedFeed);
 
   for (const artifact of [
     'cli/spacedatanetwork-1.0.3-beta.42-linux-amd64.tar.gz',
@@ -455,28 +462,13 @@ test('assembles signed CLI update feed artifacts when signing key is configured'
     stdio: 'pipe'
   });
 
-  for (const target of [
-    ['linux', 'amd64'],
-    ['linux', 'arm64'],
-    ['darwin', 'amd64'],
-    ['darwin', 'arm64'],
-    ['windows', 'amd64'],
-  ]) {
-    const [platform, arch] = target;
-    // 'release', not 'beta': public bundles are stamped with the public
-    // release channel so they can never resolve the internal fleet dev lane's
-    // binary-only payloads (which carry no runtime/ and would amputate it).
-    const index = JSON.parse(readFileSync(join(releaseDir, 'update-feed', 'cli-bundle', 'release', platform, arch, 'index.json'), 'utf8'));
-    assert.equal(index.schema, 'org.spacedatanetwork.update.index.v1');
-    assert.equal(index.updates[0].target.kind, 'cli-bundle');
-    assert.equal(index.updates[0].target.platform, platform);
-    assert.equal(index.updates[0].target.arch, arch);
-    assert.equal(index.updates[0].sequence, 4242);
-    assert.match(index.updates[0].manifest_url, new RegExp(`/cli-bundle/release/${platform}/${arch}/1\\.0\\.3-beta\\.42/manifest\\.json$`));
-    assert.match(index.updates[0].carrier_url, new RegExp(`/cli-bundle/release/${platform}/${arch}/1\\.0\\.3-beta\\.42/update\\.wasm$`));
-  }
-
-  assert.doesNotThrow(() => readFileSync(join(releaseDir, 'spacedatanetwork-update-feed-1.0.3-beta.42.tar.gz')));
+  assert.equal(
+    readFileSync(join(releaseDir, 'spacedatanetwork-update-feed-1.0.3-beta.42.tar.gz'), 'utf8'),
+    verifiedFeed,
+    'the release must carry the cli-update-feed job\'s verified feed, byte for byte'
+  );
+  assert.equal(existsSync(join(releaseDir, 'update-feed')), false, 'the assembler built a feed of its own');
+  assert.equal(existsSync(join(distDir, 'update-payloads')), false, 'the assembler built update payloads of its own');
   const checksums = readFileSync(join(releaseDir, 'spacedatanetwork-checksums.txt'), 'utf8');
   assert.match(checksums, /spacedatanetwork-update-feed-1\.0\.3-beta\.42\.tar\.gz/);
 });

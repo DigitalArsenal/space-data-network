@@ -232,6 +232,7 @@ run_preflight() {
     deployment/release/build-cli-update-payload.test.mjs \
     deployment/release/build-self-contained-cli.test.mjs \
     deployment/release/build-update-carrier.test.mjs \
+    deployment/release/cli-update-payload-trust.test.mjs \
     deployment/release/extract-release-binary.test.mjs \
     deployment/release/install-script.test.mjs \
     deployment/release/live-dht-client-smoke.test.mjs \
@@ -242,7 +243,9 @@ run_preflight() {
     deployment/release/published-install-smoke.test.mjs \
     deployment/release/sign-update-manifest.test.mjs \
     deployment/release/test-release-artifacts-docker.test.mjs \
+    deployment/release/update-channel-docs.test.mjs \
     deployment/release/update-manifest-statement-domain.test.mjs \
+    deployment/release/update-trust-roots.test.mjs \
     deployment/release/verify-release-binary.test.mjs \
     deployment/spaceaware/install-public-host-route.test.mjs \
     deployment/spaceaware/install-spaceaware-public-host-route.test.mjs \

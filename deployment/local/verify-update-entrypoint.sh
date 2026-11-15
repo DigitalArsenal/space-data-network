@@ -86,9 +86,15 @@ fi
 echo "--- spacedatanetwork status (via the operator's PATH) ---"
 STATUS=$(ssh -o ConnectTimeout=15 "$TARGET" 'bash -lc "spacedatanetwork status"' 2>&1 || true)
 echo "$STATUS"
-if ! grep -q 'daemon_status=running' <<<"$STATUS" || ! grep -q 'data_health=healthy' <<<"$STATUS"; then
-  echo "FAIL: the operator's status command does not report running/healthy" >&2
+# `status` reads /api/v1/health: data_health=degraded means operational alerts
+# are active (a failing provider lane, say) on a daemon that is serving, so it
+# passes here; the alert counts are printed beside it.
+if ! grep -q 'daemon_status=running' <<<"$STATUS" || ! grep -Eq 'data_health=(healthy|degraded)' <<<"$STATUS"; then
+  echo "FAIL: the operator's status command does not report a running daemon (daemon_status=running, data_health=healthy or degraded)" >&2
   exit 1
 fi
+if grep -q 'data_health=degraded' <<<"$STATUS"; then
+  echo "NOTE: the daemon is serving with active alerts (data_health=degraded); see alerts_error / alerts_warning above."
+fi
 
-echo "PASS: the operator's command is the build the lane installed, and it reports running/healthy."
+echo "PASS: the operator's command is the build the lane installed, and it reports a running daemon."

@@ -137,7 +137,7 @@ func TestUpdateSignalFetchRefusesOversizedBodyBeforeReading(t *testing.T) {
 	h.sub.deps.Client = &http.Client{Transport: updateFixtureTransport(func(req *http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: 200, ContentLength: 100, Body: io.NopCloser(io.TeeReader(strings.NewReader("payload"), &read)), Header: make(http.Header), Request: req}, nil
 	})}
-	if _, err := h.sub.fetch(context.Background(), "https://feed.example/payload", 4); err == nil || !strings.Contains(err.Error(), "exceeds 4 bytes") {
+	if _, err := h.sub.fetch(context.Background(), "https://feed.example/updates/payload", 4); err == nil || !strings.Contains(err.Error(), "exceeds 4 bytes") {
 		t.Fatalf("expected size rejection, got %v", err)
 	}
 	if read.Len() != 0 {
@@ -155,7 +155,8 @@ func TestUpdateSignalFetchRefusesHTTPSDowngradeBeforeFollowing(t *testing.T) {
 	}))
 	defer secure.Close()
 	h.sub.deps.Client = secure.Client()
-	if _, err := h.sub.fetch(context.Background(), secure.URL, 100); err == nil || !strings.Contains(err.Error(), "HTTPS") {
+	h.useFeed(t, secure.URL)
+	if _, err := h.sub.fetch(context.Background(), secure.URL+"/payload", 100); err == nil || !strings.Contains(err.Error(), "HTTPS") {
 		t.Fatalf("expected HTTPS rejection, got %v", err)
 	}
 	if cleartextHits.Load() != 0 {
@@ -230,6 +231,7 @@ func newSignalHarness(t *testing.T) *signalHarness {
 		Paths:         paths,
 		TrustedRoots:  h.roots,
 		Channel:       "beta",
+		FeedBaseURL:   "https://feed.example/updates",
 		Kind:          "cli-bundle",
 		AdminURL:      "https://127.0.0.1:5001/",
 		HealthTimeout: time.Minute,
@@ -245,6 +247,17 @@ func newSignalHarness(t *testing.T) *signalHarness {
 	}
 	h.sub = sub
 	return h
+}
+
+// useFeed rebinds the harness subscriber to the bundle feed at base.
+func (h *signalHarness) useFeed(t *testing.T, base string) {
+	t.Helper()
+	feed, err := update.ParseFeedBase(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.sub.deps.FeedBaseURL = base
+	h.sub.feed = feed
 }
 
 func (h *signalHarness) sign(t *testing.T, mutate func(*update.Signal)) []byte {
@@ -392,6 +405,44 @@ func TestUntrustedAndIrrelevantSignalsNeverFetch(t *testing.T) {
 			t.Fatal("a message of another schema on the same topic must be ignored, not acted on")
 		}
 	})
+}
+
+// A redirect is followed only while it stays on the bundle's feed: the feed
+// host answering 302 to another host must not make this box contact it.
+func TestUpdateSignalFetchDoesNotFollowARedirectOffTheBundleFeed(t *testing.T) {
+	h := newSignalHarness(t)
+	var elsewhereHits atomic.Int64
+	elsewhere := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { elsewhereHits.Add(1) }))
+	defer elsewhere.Close()
+	feed := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, elsewhere.URL+"/updates/m.json", http.StatusFound)
+	}))
+	defer feed.Close()
+	h.sub.deps.Client = feed.Client()
+	h.useFeed(t, feed.URL+"/updates")
+	if _, err := h.sub.fetch(context.Background(), feed.URL+"/updates/m.json", 100); err == nil || !strings.Contains(err.Error(), "is not under this bundle's update feed") {
+		t.Fatalf("expected the off-feed redirect to be refused, got %v", err)
+	}
+	if elsewhereHits.Load() != 0 {
+		t.Fatal("the redirect target off the bundle's feed was contacted")
+	}
+}
+
+// A subscriber that does not know its own bundle's feed could not tell a
+// pointer into it from one out of it, so construction refuses.
+func TestSubscriberRefusesToStartWithoutTheBundleFeed(t *testing.T) {
+	for _, base := range []string{"", "http://feed.example/updates", "not a url"} {
+		_, err := NewUpdateSignalSubscriber(UpdateSignalSubscriberDeps{
+			Subscriber:   fakeSubscriber{sub: &fakeSubscription{}},
+			Topic:        "/sdn/updates/v1/beta",
+			Paths:        update.PathsFor(t.TempDir()),
+			TrustedRoots: update.TrustedRoots{"k": "x"},
+			FeedBaseURL:  base,
+		})
+		if err == nil {
+			t.Fatalf("a signal subscriber with feed base %q must refuse to exist", base)
+		}
+	}
 }
 
 // A subscriber with no trusted roots could verify nothing. Listening would be

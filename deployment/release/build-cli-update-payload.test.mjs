@@ -1,13 +1,12 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { generateKeyPairSync, verify } from 'node:crypto';
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { gzipSync } from 'node:zlib';
 import { buildCliUpdatePayload } from './build-cli-update-payload.mjs';
 import { extractBundleBytes } from './build-update-carrier.mjs';
 import { publicKeyBase64 } from './sign-update-manifest.mjs';
@@ -21,11 +20,40 @@ const {
 
 const cliPath = fileURLToPath(new URL('./build-cli-update-payload.mjs', import.meta.url));
 
+// A real (tiny) CLI bundle archive: the payload builder lists the archive to
+// keep trust/ out of the update, so a fixture must be an archive.
+async function fixtureTree(root, name) {
+  const tree = join(root, 'tree');
+  await mkdir(join(tree, name, 'bin'), { recursive: true });
+  await writeFile(join(tree, name, 'bin', 'spacedatanetwork'), 'tiny fixture cli bundle');
+  await writeFile(join(tree, name, 'manifest.json'), '{"schema":"org.spacedatanetwork.bundle.v1"}\n');
+  return tree;
+}
+
 async function fixtureArchive(root) {
-  const archivePath = join(root, 'spacedatanetwork-1.2.3-linux-amd64.tar.gz');
-  const archiveBytes = gzipSync(Buffer.from('tiny fixture cli bundle archive'));
-  await writeFile(archivePath, archiveBytes);
-  return { archivePath, archiveBytes };
+  const name = 'spacedatanetwork-1.2.3-linux-amd64';
+  const tree = await fixtureTree(root, name);
+  const archivePath = join(root, `${name}.tar.gz`);
+  await runTool('tar', ['-czf', archivePath, '-C', tree, name]);
+  return { archivePath, archiveBytes: await readFile(archivePath) };
+}
+
+async function fixtureZip(root) {
+  const name = 'spacedatanetwork-1.2.3-windows-amd64';
+  const tree = await fixtureTree(root, name);
+  const archivePath = join(root, `${name}.zip`);
+  await runTool('zip', ['-qry', archivePath, name], { cwd: tree });
+  return { archivePath, archiveBytes: await readFile(archivePath) };
+}
+
+function runTool(command, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { ...options, env: { ...process.env, COPYFILE_DISABLE: '1' }, stdio: ['ignore', 'ignore', 'pipe'] });
+    let stderr = '';
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.on('error', reject);
+    child.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`${command} exited ${code}: ${stderr.trim()}`))));
+  });
 }
 
 test('buildCliUpdatePayload writes a signed manifest and carrier for the bundle archive', async () => {
@@ -98,9 +126,7 @@ test('buildCliUpdatePayload writes a signed manifest and carrier for the bundle 
 test('buildCliUpdatePayload records Windows ZIP bundles as zip format', async () => {
   const root = await mkdtemp(join(tmpdir(), 'sdn-cli-update-payload-zip-'));
   const keys = generateKeyPairSync('ed25519');
-  const archivePath = join(root, 'spacedatanetwork-1.2.3-windows-amd64.zip');
-  const archiveBytes = Buffer.from('tiny fixture windows cli bundle zip');
-  await writeFile(archivePath, archiveBytes);
+  const { archivePath, archiveBytes } = await fixtureZip(root);
   const outDir = join(root, 'dist', 'update');
 
   const result = await buildCliUpdatePayload({

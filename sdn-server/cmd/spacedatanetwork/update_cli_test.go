@@ -13,7 +13,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -22,7 +21,6 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"slices"
 	"strconv"
@@ -146,15 +144,11 @@ func TestProviderFeedIndexURLRejectsHTTP(t *testing.T) {
 }
 
 func TestFetchProviderUpdateCandidateSelectsCompatibleUpdate(t *testing.T) {
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/cli-bundle/beta/"+runtime.GOOS+"/"+runtime.GOARCH+"/index.json" {
-			t.Fatalf("request path = %s", r.URL.Path)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{
+	server := newProviderIndexServer(t, func(base string) string {
+		return `{
 			"schema": "org.spacedatanetwork.update.index.v1",
 			"generated_at": "2026-06-22T00:00:00Z",
-			"feed_base_url": "` + serverURLPlaceholder + `",
+			"feed_base_url": "` + base + `",
 			"updates": [
 				{
 					"update_id": "cli-bundle-beta-older",
@@ -162,8 +156,8 @@ func TestFetchProviderUpdateCandidateSelectsCompatibleUpdate(t *testing.T) {
 					"sequence": 104,
 					"channel": "beta",
 					"target": {"platform": "` + runtime.GOOS + `", "arch": "` + runtime.GOARCH + `", "kind": "cli-bundle"},
-					"manifest_url": "` + serverURLPlaceholder + `/cli-bundle/beta/` + runtime.GOOS + `/` + runtime.GOARCH + `/1.0.4/manifest.json",
-					"carrier_url": "` + serverURLPlaceholder + `/cli-bundle/beta/` + runtime.GOOS + `/` + runtime.GOARCH + `/1.0.4/update.wasm"
+					"manifest_url": "` + base + `/cli-bundle/beta/` + runtime.GOOS + `/` + runtime.GOARCH + `/1.0.4/manifest.json",
+					"carrier_url": "` + base + `/cli-bundle/beta/` + runtime.GOOS + `/` + runtime.GOARCH + `/1.0.4/update.wasm"
 				},
 				{
 					"update_id": "cli-bundle-beta-newer",
@@ -171,13 +165,12 @@ func TestFetchProviderUpdateCandidateSelectsCompatibleUpdate(t *testing.T) {
 					"sequence": 105,
 					"channel": "beta",
 					"target": {"platform": "` + runtime.GOOS + `", "arch": "` + runtime.GOARCH + `", "kind": "cli-bundle"},
-					"manifest_url": "` + serverURLPlaceholder + `/cli-bundle/beta/` + runtime.GOOS + `/` + runtime.GOARCH + `/1.0.5/manifest.json",
-					"carrier_url": "` + serverURLPlaceholder + `/cli-bundle/beta/` + runtime.GOOS + `/` + runtime.GOARCH + `/1.0.5/update.wasm"
+					"manifest_url": "` + base + `/cli-bundle/beta/` + runtime.GOOS + `/` + runtime.GOARCH + `/1.0.5/manifest.json",
+					"carrier_url": "` + base + `/cli-bundle/beta/` + runtime.GOOS + `/` + runtime.GOARCH + `/1.0.5/update.wasm"
 				}
 			]
-		}`))
-	}))
-	defer server.Close()
+		}`
+	})
 
 	update, err := fetchProviderUpdateCandidate(server.Client(), bundleManifest{
 		Version: "1.0.4",
@@ -190,6 +183,24 @@ func TestFetchProviderUpdateCandidateSelectsCompatibleUpdate(t *testing.T) {
 	if update.UpdateID != "cli-bundle-beta-newer" {
 		t.Fatalf("selected update = %s, want cli-bundle-beta-newer", update.UpdateID)
 	}
+}
+
+// newProviderIndexServer serves one beta feed index for this host's target,
+// written by index(base) with the server's own URL as base.
+func newProviderIndexServer(t *testing.T, index func(base string) string) *httptest.Server {
+	t.Helper()
+	var server *httptest.Server
+	server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/cli-bundle/beta/"+runtime.GOOS+"/"+runtime.GOARCH+"/index.json" {
+			t.Errorf("request path = %s", r.URL.Path)
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(index(server.URL)))
+	}))
+	t.Cleanup(server.Close)
+	return server
 }
 
 func TestReadHTTPSURLRejectsOversizedResponse(t *testing.T) {
@@ -317,13 +328,13 @@ func runE2EDaemon(root string, raw []byte) int {
 	}))
 	// The daemon's own identity surface, /api/v1/id among the core routes.
 	api.NewCoreAPIHandler(peer.ID("e2e-fixture-daemon"), nil, nil, nil, nil, nil, nil, nil, nil).RegisterRoutes(mux)
-	mux.HandleFunc("/api/v1/data/health", func(w http.ResponseWriter, r *http.Request) {
-		status := "ok"
-		if build.Unhealthy {
-			status = "unhealthy"
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprintf(w, `{"status":%q}`, status)
+	// The daemon's real health surface (/api/v1/health, /api/v1/ready), with
+	// an engine that answers unless the build is unhealthy. STACK ISSUE 670:
+	// this fixture used to serve fake JSON on /api/v1/data/health, which is
+	// how the tests missed that the real route answers a $QRP FlatBuffer.
+	mountHealthRoutes(mux, healthDeps{
+		engineReady: func() bool { return !build.Unhealthy },
+		peerCount:   func() int { return 1 },
 	})
 	listener, err := net.Listen("tcp", cfg.Addr)
 	if err != nil {
@@ -632,9 +643,28 @@ func (b *e2eBundle) runHelper(t *testing.T, healthTimeout time.Duration, stop up
 	if supervisor != nil {
 		opts.Supervisor = func(context.Context, int) daemonSupervisor { return supervisor }
 	}
+	// Every daemon the helper started is stopped when the test ends, however
+	// the test ends. Registered before the caller can judge the result: a test
+	// that failed on the helper's error used to leave the build the helper
+	// had started running, with its temp dir gone and its port held.
+	t.Cleanup(func() { stopHelperStartedDaemons(b.paths.Root, out.String()) })
 	err = runHelperApply(context.Background(), opts)
 	t.Logf("helper stdout:\n%s\nhelper stderr:\n%s", out, errOut)
 	return out, errOut, err
+}
+
+// stopHelperStartedDaemons kills every `restart=started pid=N` in a helper's
+// output whose command line still names root (so a reused pid is left alone).
+func stopHelperStartedDaemons(root, helperOutput string) {
+	for _, match := range restartPIDPattern.FindAllStringSubmatch(helperOutput, -1) {
+		pid, err := strconv.Atoi(match[1])
+		if err != nil || !strings.Contains(processField(pid, "command"), root) {
+			continue
+		}
+		if process, err := os.FindProcess(pid); err == nil {
+			_ = process.Kill()
+		}
+	}
 }
 
 // e2eOutput is an io.Writer the helper and the daemons it spawns share.
@@ -659,7 +689,7 @@ func (b *e2eBundle) waitHealthy(t *testing.T) {
 	t.Helper()
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
-		if resp, err := http.Get(b.adminURL() + "/api/v1/data/health"); err == nil {
+		if resp, err := http.Get(b.adminURL() + "/api/v1/ready"); err == nil {
 			_ = resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
 				return
@@ -998,16 +1028,12 @@ func TestUpdateHelperWaitsForASlowDaemonAndRunsTheInstalledBuild(t *testing.T) {
 	}
 
 	// The process now running is the binary the applied manifest names.
-	match := regexp.MustCompile(`restart=started pid=(\d+)`).FindStringSubmatch(out.String())
+	// (runHelper already stops it when the test ends.)
+	match := restartPIDPattern.FindStringSubmatch(out.String())
 	if match == nil {
 		t.Fatalf("the helper started no daemon:\n%s", out)
 	}
 	pid, _ := strconv.Atoi(match[1])
-	t.Cleanup(func() {
-		if p, err := os.FindProcess(pid); err == nil {
-			_ = p.Kill()
-		}
-	})
 	var applied struct {
 		Version   string `json:"version"`
 		Artifacts []struct {

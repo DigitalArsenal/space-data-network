@@ -26,6 +26,12 @@ type healthDeps struct {
 	dataReady func() bool
 	// peerCount reports connected libp2p peers, or -1 when the host is down.
 	peerCount func() int
+	// storeless marks a node that opens no record store by design (mode:
+	// edge; internal/node skips the store). Its engine and data checks can
+	// never pass, so its readiness is the libp2p host alone. Without this an
+	// edge node answered 503 for its whole life, and the update helper, which
+	// gates on /ready, reverted every update it installed.
+	storeless bool
 	// requireAuth and authHandler gate /metrics exactly like every other
 	// operator surface: the numbers describe the HOST, not public data.
 	requireAuth bool
@@ -139,9 +145,24 @@ func (p *boundedReadinessProbe) check(ctx context.Context, deps healthDeps) stri
 	}
 }
 
+// readinessOverride, when set, is the reason /ready always answers 503. It is
+// empty in every shipped build; only a build with the sdn_e2e_not_ready tag
+// sets it (health_not_ready_e2e.go), so the update lane's real-daemon E2E can
+// install a build that runs and is never ready, and watch the helper revert it.
+var readinessOverride string
+
 // notReadyReason names the first unavailable component. The shared caller
 // bounds every callback, including a blocked peer-count read.
 func notReadyReason(deps healthDeps) string {
+	if readinessOverride != "" {
+		return readinessOverride
+	}
+	if deps.storeless {
+		if deps.peerCount == nil || deps.peerCount() < 0 {
+			return "libp2p host down"
+		}
+		return ""
+	}
 	if deps.engineReady == nil {
 		return "store not linked"
 	}

@@ -56,6 +56,22 @@ jobs:
         env:
           INPUT_VERSION: ${{ inputs.version }}
         run: node deployment/release/prepare-beta-release.mjs
+      # IS THERE A KEY TO SIGN THE UPDATE FEED WITH? The same question, asked
+      # the same way, as the cli-update-feed job's "Check the update signing
+      # key", which stays the gate before anything is signed. Asked here too so
+      # that a stable release without a usable key (missing, a key id that is
+      # not the one derived from it, not a fleet root, or a SEC-001 key) fails
+      # in minutes, not after the five-platform cli matrix. A beta without the
+      # key passes here with a warning, as it does there.
+      - name: Check the update signing key before building
+        env:
+          RELEASE_MATURITY: ${{ steps.version.outputs.channel }}
+          SDN_UPDATE_SIGNING_KEY_PEM: ${{ secrets.SDN_UPDATE_SIGNING_KEY_PEM }}
+          SDN_UPDATE_KEY_ID: ${{ secrets.SDN_UPDATE_KEY_ID }}
+        run: |
+          node deployment/release/check-update-signing-key.mjs \
+            --maturity "${RELEASE_MATURITY}" \
+            --roots deployment/release/fleet-trust-roots.json
       # CAN THIS TOKEN ACTUALLY PUBLISH? Ask now, in the first job, not after
       # forty minutes of building every artifact for five platforms.
       #
@@ -991,24 +1007,35 @@ jobs:
         with:
           node-version: '24'
       # The feed is what lets an installed node upgrade itself, and every payload
-      # in it is signed. Without the key there is nothing honest to publish — but
-      # refusing to publish a feed is not a reason to refuse to publish the
-      # binaries, which is what failing here did: the whole release job is
-      # downstream, so one absent secret meant zero downloadable artifacts.
-      - name: Check for the update signing key
+      # in it is signed. A STABLE release without the key stops here: shipping
+      # one with no self-upgrade feed is how v1.1.0 went out (run 43657758805
+      # logged a warning and skipped the feed). A BETA without the key still
+      # ships its binaries, with a warning and no feed: one absent secret must
+      # not mean zero downloadable artifacts.
+      #
+      # With the key, check-update-signing-key.mjs derives its key id from the
+      # PEM (sha256 of the raw public key, first 12 hex — update.RootKeyID),
+      # fails if SDN_UPDATE_KEY_ID is unset or differs (there is no fallback
+      # id), fails unless the id is in fleet-trust-roots.json with this key's
+      # public half, and refuses a SEC-001 key. The key itself is never printed.
+      - name: Check the update signing key
         id: signing
+        env:
+          RELEASE_MATURITY: ${{ needs.beta-version.outputs.channel }}
         run: |
-          if [[ -n "${SDN_UPDATE_SIGNING_KEY_PEM:-}" ]]; then
-            echo "available=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "::warning title=Unsigned release::SDN_UPDATE_SIGNING_KEY_PEM is not set, so this release ships no self-upgrade feed. Installed nodes will not see it as an update. Set the secret to restore the feed."
-          fi
+          node deployment/release/check-update-signing-key.mjs \
+            --maturity "${RELEASE_MATURITY}" \
+            --roots deployment/release/fleet-trust-roots.json \
+            --github-output "$GITHUB_OUTPUT"
       - name: Build signed CLI update feed
         if: steps.signing.outputs.available == 'true'
+        env:
+          UPDATE_KEY_ID: ${{ steps.signing.outputs.key_id }}
         run: |
           set -euo pipefail
-          update_key_id="${SDN_UPDATE_KEY_ID:-sdn-beta-release}"
+          # The id the key check derived from the PEM and matched against
+          # SDN_UPDATE_KEY_ID and the fleet roots. No fallback.
+          update_key_id="${UPDATE_KEY_ID:?the update signing key check named no key id}"
           created_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           payload_dir="dist/update-payloads"
           feed_tree_root="dist/update-feed-tree"
@@ -1047,6 +1074,15 @@ jobs:
             feed_args+=(--entry "${payload_out}/manifest.json:${payload_out}/update.wasm")
           done
           node deployment/release/build-sdn-update-feed.js "${feed_args[@]}"
+          # What an installed node will check, checked here first: every
+          # manifest against fleet-trust-roots.json (signature, target, expiry,
+          # payload hashes), no SEC-001 key, no trust/ in any payload, and the
+          # index agreeing with its manifests.
+          node deployment/release/verify-cli-update-feed.mjs \
+            --feed-dir "${feed_dir}" \
+            --roots deployment/release/fleet-trust-roots.json \
+            --expect-version "${VERSION}" \
+            --expect-count "${#targets[@]}"
           tar -czf "dist/update-feed/spacedatanetwork-update-feed-${VERSION}.tar.gz" -C "${feed_tree_root}" update-feed
       - uses: actions/upload-artifact@v4
         if: steps.signing.outputs.available == 'true'

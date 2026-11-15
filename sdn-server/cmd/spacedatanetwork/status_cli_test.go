@@ -12,16 +12,15 @@ import (
 
 func TestWriteDaemonStatusReportsHealthyDaemon(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/data/health" {
-			t.Fatalf("status probe path = %q, want /api/v1/data/health", r.URL.Path)
+		if r.URL.Path != "/api/v1/health" {
+			t.Errorf("status probe path = %q, want /api/v1/health", r.URL.Path)
+			http.NotFound(w, r)
+			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"healthy": true,
-			"details": map[string]any{
-				"runtime": "daemon",
-				"message": "ready",
-			},
+			"status": "ok",
+			"alerts": map[string]any{"error": 0, "warning": 0},
 		})
 	}))
 	defer server.Close()
@@ -34,8 +33,6 @@ func TestWriteDaemonStatusReportsHealthyDaemon(t *testing.T) {
 	for _, want := range []string{
 		"daemon_status=running",
 		"data_health=healthy",
-		"data_runtime=daemon",
-		"data_message=ready",
 	} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("status output missing %q:\n%s", want, out.String())

@@ -305,6 +305,35 @@ jobs:
           # (SDN_WASM_REQUIRE_PATCHED=1): about 8 minutes locally, so 60m.
           ../scripts/go-with-wasmedge.sh test ./cmd/spacedatanetwork/ -count=1 -timeout 60m -v -run 'TestFormat2|TestStoreMigrate'
 
+  # THE UPDATE CHANNEL ON REAL DAEMONS (stack issue 670). The helper tests in
+  # update_cli_test.go run a fixture daemon, which is how a health gate that
+  # reverted every real update passed them. This lane builds the node three
+  # times (v1, v2, and v3 that is never ready) and runs `update install`
+  # against a real daemon from a real bundle and a signed HTTPS feed on
+  # loopback: v1 -> v2 passes the /api/v1/ready gate, v2 -> v3 is reverted and
+  # quarantined after the configured health budget, and a release signed by an
+  # untrusted key is refused. Linux only: the CLI trusts the test feed through
+  # SSL_CERT_FILE, which Go ignores on macOS. Keys are throwaways the test
+  # generates; the feed and the admin API are on loopback, and the daemons dial
+  # no peer (the test refuses, before any daemon starts, a config that would
+  # fall back to the built-in bootstrap peers, and checks every daemon's log).
+  update-channel-e2e:
+    name: Update channel E2E (real daemon)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: ./.github/actions/sdn-go-env
+        with:
+          needs-flow-bundles: 'false'
+      - name: update install against real daemons
+        working-directory: sdn-server
+        env:
+          SDN_E2E_REAL_DAEMON: '1'
+        run: ../scripts/go-with-wasmedge.sh test ./cmd/spacedatanetwork/ -count=1 -timeout 50m -v -run '^TestUpdateChannelRealDaemonE2E$'
+
   go-builds:
     name: Go builds (node + edge relay)
     runs-on: ubuntu-latest
@@ -359,6 +388,7 @@ jobs:
       - go-quick
       - go-heavy
       - wasmedge-substrate
+      - update-channel-e2e
       - go-builds
       - js
     steps:
