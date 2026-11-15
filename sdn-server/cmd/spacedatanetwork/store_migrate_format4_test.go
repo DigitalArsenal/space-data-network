@@ -952,10 +952,15 @@ func openEngineAt(t *testing.T, root string, schemas ...string) format4.API {
 	return api
 }
 
-// engineDump opens a migrated store on the engine and dumps it.
+// engineDump opens a migrated store on the engine, dumps it and closes it.
 func engineDump(t *testing.T, root string) string {
 	t.Helper()
 	api := openEngineAt(t, root, "OMM.fbs", "CAT.fbs", "IQC.fbs")
+	defer func() {
+		if err := api.Close(context.Background()); err != nil {
+			t.Errorf("close the engine after dumping %s: %v", root, err)
+		}
+	}()
 	return format4Dump(t, api, root)
 }
 
