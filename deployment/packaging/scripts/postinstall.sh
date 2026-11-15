@@ -42,6 +42,23 @@ fi
 # storage path is honoured). An upgrade over a node that has an identity
 # changes nothing: the identity stays sealed as it is. An existing password
 # file is never overwritten. Nothing here can fail the install.
+#
+# WHAT THIS COSTS. The file is where the manual recipe put it, in the
+# service's data directory beside the identity: a copy of
+# /var/lib/spacedatanetwork alone (a backup, a snapshot) opens the node
+# identity and its credential store. To keep them apart, move the file
+# elsewhere (sdn:sdn 0400; /etc/spacedatanetwork/ is one place) and point the
+# drop-in at it. And because it is made HERE, at install time: a machine image
+# built with the package installed carries one password for every clone; on
+# each clone, remove the file and the drop-in before the first start and
+# reinstall the package (apt-get install --reinstall / dnf reinstall) so it
+# gets its own.
+#
+# The variable reaches the service only. A CLI command run beside it needs the
+# same variable:
+#   sudo -u sdn env SDN_KEY_PASSWORD_FILE=/var/lib/spacedatanetwork/key-password \
+#     /opt/spacedatanetwork/bin/spacedatanetwork -c /etc/spacedatanetwork/config.yaml <command>
+# (the node's own refusal names the file and this command when it is missing).
 SDN_BIN=/opt/spacedatanetwork/bin/spacedatanetwork
 SDN_UNIT=spacedatanetwork.service
 SDN_CONFIG_FILE=/etc/spacedatanetwork/config.yaml
@@ -95,14 +112,18 @@ setup_fresh_key_password() {
 # machine fingerprint is refused for user sdn (the Linux kernel makes
 # /sys/class/dmi/id/product_uuid root-only), so the node seals its identity
 # under the generated key password file below. Keep this drop-in and that
-# file, and back the file up apart from the node's data: the identity cannot
-# be opened without it. The package never removes either.
+# file: the identity cannot be opened without it. The file sits in the data
+# directory, so a copy of /var/lib/spacedatanetwork alone opens the identity
+# and the credential store; to keep them apart, move the file (sdn:sdn 0400)
+# and change the path below. The package never removes either.
+# CLI commands get the variable only when given it:
+#   sudo -u sdn env SDN_KEY_PASSWORD_FILE=${KEY_PASSWORD_FILE} /opt/spacedatanetwork/bin/spacedatanetwork -c ${SDN_CONFIG_FILE} <command>
 [Service]
 Environment=SDN_KEY_PASSWORD_FILE=${KEY_PASSWORD_FILE}
 EOF
     chmod 0644 "$KEY_PASSWORD_DROPIN"
   fi
-  echo "spacedatanetwork: fresh node, machine fingerprint refused for user sdn: its identity will be sealed under ${KEY_PASSWORD_FILE} (${KEY_PASSWORD_DROPIN}). Keep that file and back it up apart from the node's data."
+  echo "spacedatanetwork: fresh node, machine fingerprint refused for user sdn: its identity will be sealed under ${KEY_PASSWORD_FILE} (${KEY_PASSWORD_DROPIN}). Keep that file for the life of the node. It is in the data directory: a copy of /var/lib/spacedatanetwork alone opens the identity and the credential store, so back the file up apart from it, or move it and edit the drop-in. CLI commands need it too: sudo -u sdn env SDN_KEY_PASSWORD_FILE=${KEY_PASSWORD_FILE} ${SDN_BIN} -c ${SDN_CONFIG_FILE} <command>"
 }
 
 setup_fresh_key_password || true

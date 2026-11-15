@@ -23,12 +23,23 @@ set -e
 #   - an existing $KEY_PASSWORD_FILE is used, never overwritten;
 #   - otherwise it is created only when the node says its fingerprint is
 #     refused for this uid and it has no identity and no configured password
-#     (`key fresh-password-file`). A volume that already holds an identity is
-#     left exactly as it is.
+#     (`key fresh-password-file`), and only when the config keeps the key
+#     directory inside /app/data (--key-dir-within): the file must live and be
+#     lost with the identity it seals, never in a volume apart from it. A
+#     volume that already holds an identity is left exactly as it is.
 #
-# The file sits beside the identity in the volume; back it up apart from the
-# node's data, because the identity cannot be opened without it.
-KEY_PASSWORD_FILE=/app/data/keys/.key-password
+# WHAT THIS COSTS. The container has one volume, so the file sits in it, beside
+# the identity it seals: a copy of the volume (a backup, a snapshot, `docker
+# volume` export) opens the node identity AND its credential store. The at-rest
+# encryption then protects nothing that the file permissions do not. A
+# password file mounted from outside the volume (SDN_KEY_PASSWORD_FILE, see
+# docs/INSTALL.md) keeps them apart; the entrypoint then generates nothing.
+#
+# Commands run with `docker exec` do not pass through this script and do not
+# get the variable it exports. Run them through it instead:
+#   docker exec <container> /app/entrypoint.sh show-identity --config ... --show-mnemonic
+KEY_PASSWORD_FILE=/app/data/key-password
+KEY_PASSWORD_VOLUME=/app/data
 
 prepare_key_password() {
   if [ -n "${SDN_KEY_PASSWORD:-}" ] || [ -n "${SDN_KEY_PASSWORD_FILE:-}" ]; then
@@ -36,7 +47,7 @@ prepare_key_password() {
   fi
   if [ -f "$KEY_PASSWORD_FILE" ]; then
     export SDN_KEY_PASSWORD_FILE="$KEY_PASSWORD_FILE"
-    echo "spacedatanetwork: using the key password file $KEY_PASSWORD_FILE (in the data volume)" >&2
+    echo "spacedatanetwork: using the key password file $KEY_PASSWORD_FILE (in the data volume: a copy of the volume opens the identity)" >&2
     return 0
   fi
   case "$1" in
@@ -46,23 +57,29 @@ prepare_key_password() {
   verdict=$(/app/spacedatanetwork key fingerprint-check 2>/dev/null) || return 0
   [ "$verdict" = "refused" ] || return 0
   shift
+  # The config the node will run with, in every spelling the node accepts.
   config=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --config|-c) config="${2:-}"; [ $# -gt 1 ] && shift ;;
       --config=*) config="${1#--config=}" ;;
+      -c=*) config="${1#-c=}" ;;
+      -c?*) config="${1#-c}" ;;
     esac
     shift
   done
   if [ -n "$config" ]; then
-    outcome=$(/app/spacedatanetwork -c "$config" key fresh-password-file "$KEY_PASSWORD_FILE") || return 0
+    outcome=$(/app/spacedatanetwork -c "$config" key fresh-password-file --key-dir-within "$KEY_PASSWORD_VOLUME" "$KEY_PASSWORD_FILE") || return 0
   else
-    outcome=$(/app/spacedatanetwork key fresh-password-file "$KEY_PASSWORD_FILE") || return 0
+    outcome=$(/app/spacedatanetwork key fresh-password-file --key-dir-within "$KEY_PASSWORD_VOLUME" "$KEY_PASSWORD_FILE") || return 0
   fi
   case "$outcome" in
     "created "*|"exists "*)
       export SDN_KEY_PASSWORD_FILE="$KEY_PASSWORD_FILE"
-      echo "spacedatanetwork: fresh node, machine fingerprint refused for uid $(id -u): its identity is sealed under the generated key password file $KEY_PASSWORD_FILE (in the data volume); keep it and back it up apart from the node's data" >&2
+      echo "spacedatanetwork: fresh node, machine fingerprint refused for uid $(id -u): its identity is sealed under the generated key password file $KEY_PASSWORD_FILE, IN THE DATA VOLUME: a copy of the volume opens the identity and the credential store. Keep the file for the life of the node; to keep it apart from the data, mount one from outside the volume instead (SDN_KEY_PASSWORD_FILE). Run CLI commands as: docker exec <container> /app/entrypoint.sh <command>" >&2
+      ;;
+    "skipped: "*)
+      echo "spacedatanetwork: machine fingerprint refused for uid $(id -u); no key password file generated (${outcome#skipped: })" >&2
       ;;
   esac
   return 0

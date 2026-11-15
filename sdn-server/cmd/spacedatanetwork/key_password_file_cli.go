@@ -89,6 +89,10 @@ records PATH where the node will find it — install.sh with
 'init --key-password-file', the .deb/.rpm with a systemd drop-in, the container
 with SDN_KEY_PASSWORD_FILE.
 
+--key-dir-within DIR (the container: /app/data, its one data volume) skips
+when the node's key directory is not inside DIR: PATH would then be kept
+somewhere the identity is not, and lost apart from it.
+
 Keep the file for the life of the node and back it up apart from the node's
 data: the identity cannot be opened without it.`,
 	Args: cobra.ExactArgs(1),
@@ -104,6 +108,12 @@ data: the identity cannot be opened without it.`,
 		if err != nil {
 			return fmt.Errorf("load config %s: %w", res.Describe(), err)
 		}
+		if within := strings.TrimSpace(freshKeyDirWithin); within != "" {
+			if outcome, inside := keyDirWithin(cfg, within); !inside {
+				fmt.Fprintln(cmd.OutOrStdout(), outcome)
+				return nil
+			}
+		}
 		outcome, err := ensureFreshKeyPasswordFile(cfg, args[0], keys.CheckMachineFingerprint)
 		if err != nil {
 			return err
@@ -113,11 +123,38 @@ data: the identity cannot be opened without it.`,
 	},
 }
 
-var initKeyPasswordFile string
+var (
+	initKeyPasswordFile string
+	freshKeyDirWithin   string
+)
+
+// keyDirWithin reports whether the node's key directory is inside dir, and
+// the skip outcome when it is not.
+//
+// The container keeps its generated file in its data volume
+// (/app/data/key-password). A config whose storage lives outside /app/data
+// (an operator's own volume mounted elsewhere) would put the identity there
+// and the password in /app/data — an anonymous volume that the next `docker
+// run` does not reuse. The next container then finds an identity, no file,
+// and an identity it cannot open. So nothing is generated, and the node's
+// first start says how to give it a password file.
+func keyDirWithin(cfg *config.Config, dir string) (freshPasswordFileOutcome, bool) {
+	keyDir, kerr := filepath.Abs(config.KeyDir(cfg))
+	base, berr := filepath.Abs(dir)
+	if kerr == nil && berr == nil {
+		if rel, err := filepath.Rel(base, keyDir); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return freshPasswordFileOutcome{}, true
+		}
+	}
+	return skipped("this node's key directory %s is not inside %s, where the file would be kept; "+
+		"give the node a key password file of your own (SDN_KEY_PASSWORD_FILE)", config.KeyDir(cfg), dir), false
+}
 
 func init() {
 	keyCmd.AddCommand(keyFingerprintCheckCmd)
 	keyCmd.AddCommand(keyFreshPasswordFileCmd)
+	keyFreshPasswordFileCmd.Flags().StringVar(&freshKeyDirWithin, "key-dir-within", "",
+		"create nothing unless the node's key directory is inside this directory (the container: its data volume)")
 	initCmd.Flags().StringVar(&initKeyPasswordFile, "key-password-file", "",
 		"record this absolute path as security.key_password_file and seal a new identity under it "+
 			"(an existing identity must already be sealed under it)")

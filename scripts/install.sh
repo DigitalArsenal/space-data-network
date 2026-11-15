@@ -344,8 +344,22 @@ install_bundle() {
 #   - the file is then recorded in the node's config by
 #     `init --key-password-file`, so every later start (`daemon`, `start`, any
 #     CLI command) finds it with nothing exported.
-KEY_PASSWORD_FILE="${HOME}/.spacedatanetwork/key-password"
+#
+# The file is ~/sdn-key-password, OUTSIDE ~/.spacedatanetwork (the path the
+# manual recipe used): a copy of the node's data directory alone (a backup, a
+# snapshot, a synced folder) then does not open the identity or the credential
+# store. Anyone holding both can.
+KEY_PASSWORD_FILE="${HOME}/sdn-key-password"
 INIT_ARGS=()
+
+# NODE_CONFIG_PATH is the config every node command below is given with -c:
+# SDN_CONFIG when the operator set it, else the home default `init` writes.
+# Never left to the binary's own resolution: with no -c it asks the process
+# table for a running daemon, and the process table is whatever every account
+# on the machine puts there — a stranger's process named spacedatanetwork,
+# claiming `daemon --config /tmp/theirs.yaml`, would choose the key directory
+# the fresh-node check looks in and the config `init` saves.
+NODE_CONFIG_PATH="${SDN_CONFIG:-${HOME}/.spacedatanetwork/config.yaml}"
 
 prepare_key_password_file() {
     INIT_ARGS=()
@@ -357,7 +371,7 @@ prepare_key_password_file() {
     if [ "$verdict" != "refused" ]; then
         return
     fi
-    if ! outcome="$("$PRIMARY_COMMAND_PATH" key fresh-password-file "$KEY_PASSWORD_FILE")"; then
+    if ! outcome="$("$PRIMARY_COMMAND_PATH" -c "$NODE_CONFIG_PATH" key fresh-password-file "$KEY_PASSWORD_FILE")"; then
         log_error "Could not prepare a key password file at $KEY_PASSWORD_FILE (see the error above)"
         exit 1
     fi
@@ -365,12 +379,12 @@ prepare_key_password_file() {
         "created "*)
             log_info "This host's machine fingerprint is refused for account $(id -un) ('$PRIMARY_BINARY_NAME key fingerprint-check' says why),"
             log_info "so the new node identity is sealed under a generated key password file: $KEY_PASSWORD_FILE"
-            log_warn "KEEP $KEY_PASSWORD_FILE and back it up apart from the node's data: the node identity cannot be opened without it."
+            log_warn "KEEP $KEY_PASSWORD_FILE for the life of the node, and back it up apart from ~/.spacedatanetwork: the node identity cannot be opened without it, and anyone holding both can open it and the node's stored credentials."
             INIT_ARGS=(--key-password-file "$KEY_PASSWORD_FILE")
             ;;
         "exists "*)
             log_info "Sealing the new node identity under the existing key password file $KEY_PASSWORD_FILE"
-            log_warn "KEEP $KEY_PASSWORD_FILE and back it up apart from the node's data: the node identity cannot be opened without it."
+            log_warn "KEEP $KEY_PASSWORD_FILE for the life of the node, and back it up apart from ~/.spacedatanetwork: the node identity cannot be opened without it, and anyone holding both can open it and the node's stored credentials."
             INIT_ARGS=(--key-password-file "$KEY_PASSWORD_FILE")
             ;;
         *)
@@ -394,9 +408,9 @@ initialize_unix_node() {
 
     log_info "Initializing local node identity..."
     prepare_key_password_file
-    "$PRIMARY_COMMAND_PATH" init "${INIT_ARGS[@]}"
+    "$PRIMARY_COMMAND_PATH" -c "$NODE_CONFIG_PATH" init "${INIT_ARGS[@]}"
     log_info "Verifying local node identity..."
-    "$PRIMARY_COMMAND_PATH" show-identity >/dev/null 2>&1
+    "$PRIMARY_COMMAND_PATH" -c "$NODE_CONFIG_PATH" show-identity >/dev/null 2>&1
 }
 
 verify_installation() {

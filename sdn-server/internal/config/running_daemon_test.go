@@ -321,11 +321,12 @@ func TestPSFallbackFindsDaemon(t *testing.T) {
 
 	oldRoot, oldPS := procRoot, psCommand
 	procRoot = filepath.Join(t.TempDir(), "no-procfs")
+	me := fmt.Sprint(os.Geteuid())
 	psCommand = func() ([]byte, error) {
 		return []byte(
-			"  501 /usr/sbin/cupsd -l\n" +
-				" 8080 /usr/local/bin/spacedatanetwork daemon --config " + cfg + "\n" +
-				" 8081 /usr/local/bin/spacedatanetwork show-identity\n"), nil
+			"  501     0 /usr/sbin/cupsd -l\n" +
+				" 8080 " + me + " /usr/local/bin/spacedatanetwork daemon --config " + cfg + "\n" +
+				" 8081 " + me + " /usr/local/bin/spacedatanetwork show-identity\n"), nil
 	}
 	t.Cleanup(func() { procRoot, psCommand = oldRoot, oldPS })
 

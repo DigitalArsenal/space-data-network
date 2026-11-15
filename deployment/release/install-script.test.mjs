@@ -33,7 +33,7 @@ test('install script uses user-owned Unix command links without implicit sudo', 
 
 test('install script verifies both Unix commands are available after linking', () => {
   assert.match(script, /PRIMARY_COMMAND_PATH="\$\{INSTALL_DIR\}\/\$\{PRIMARY_BINARY_NAME\}"/);
-  assert.match(script, /"\$PRIMARY_COMMAND_PATH" init/);
+  assert.match(script, /"\$PRIMARY_COMMAND_PATH" -c "\$NODE_CONFIG_PATH" init/);
   assert.match(script, /command -v "\$PRIMARY_BINARY_NAME"/);
   assert.match(script, /command -v "\$ALIAS_BINARY_NAME"/);
   assert.match(script, /"\$ALIAS_COMMAND_PATH" status/);
@@ -41,8 +41,10 @@ test('install script verifies both Unix commands are available after linking', (
 
 test('install script initializes the local node identity after Unix install', () => {
   assert.match(script, /SDN_SKIP_INIT/);
-  assert.match(script, /"\$PRIMARY_COMMAND_PATH" init/);
-  assert.match(script, /"\$PRIMARY_COMMAND_PATH" show-identity >\/dev\/null/);
+  // Every node command names the node's own config (-c): see the spoof test in
+  // fresh-key-password.test.mjs.
+  assert.match(script, /"\$PRIMARY_COMMAND_PATH" -c "\$NODE_CONFIG_PATH" init/);
+  assert.match(script, /"\$PRIMARY_COMMAND_PATH" -c "\$NODE_CONFIG_PATH" show-identity >\/dev\/null/);
   assert.match(script, /Run '\$PRIMARY_BINARY_NAME start' to start the node as a persistent background service/);
   assert.match(script, /Run '\$PRIMARY_BINARY_NAME daemon' for foreground\/manual mode/);
 });

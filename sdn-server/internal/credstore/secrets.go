@@ -67,10 +67,11 @@
 // store honoured the FILE and config sources, a node whose identity was sealed
 // under a password file still sealed its credentials under the machine key,
 // and a node whose machine key is REFUSED (a Linux service account that cannot
-// read product_uuid) had no credential store at all. A keystore sealed under
-// the machine key keeps opening: with an operator password, every machine
-// generation is a read fallback, and the first read re-seals under the
-// operator password.
+// read product_uuid) had no credential store at all. A keystore that was
+// sealed under the machine key stays sealed as it is and keeps opening under
+// it (an earlier build, after a rollback, opens it too); only where the
+// machine key is now refused is it opened through the machine generations
+// and re-sealed under the operator password. See OpenStore.
 //
 // FAIL CLOSED: if the node identity key is unavailable at init, ResolveRoot
 // returns an error and the credential routes refuse to serve — a weaker key is
@@ -289,8 +290,9 @@ type Store struct {
 	path       string
 	passphrase []byte
 	// fallbacks are passphrases derived from machine-derivation generations
-	// other than the primary (older ones; and, under an operator password,
-	// the current one too), tried only when the primary fails to open an
+	// other than the primary (older ones; and, under an operator password on
+	// a host whose machine key is now refused, the current one too), tried
+	// only when the primary fails to open an
 	// existing keystore. On success the keystore is re-sealed under
 	// passphrase, so the fallbacks are used at most once per upgrade. See
 	// keys.CandidatePasswords and OpenStore.
@@ -351,6 +353,10 @@ func operatorRoot(cfg *config.Config) (root string, inline bool, err error) {
 	return password, false, nil
 }
 
+// deriveMachinePassword is keys.DeriveDefaultPassword; a variable ONLY so
+// tests can stand in a host whose machine key is refused.
+var deriveMachinePassword = keys.DeriveDefaultPassword
+
 // machineRoot is the default three-input derivation (see ResolveRoot). It
 // does NOT zeroize nodePrivKey; ResolveRoot does.
 func machineRoot(nodePrivKey []byte) (string, error) {
@@ -358,7 +364,7 @@ func machineRoot(nodePrivKey []byte) (string, error) {
 	if err != nil || strings.TrimSpace(hostname) == "" {
 		return "", errors.New("credstore: hostname unavailable; refusing to derive root key")
 	}
-	machineState, err := keys.DeriveDefaultPassword()
+	machineState, err := deriveMachinePassword()
 	if err != nil {
 		// Fail closed (never a weaker key): the machine derivation refused —
 		// e.g. unknown user, or a source that exists but cannot be read.
@@ -453,20 +459,61 @@ func OpenStore(storageDir string, cfg *config.Config, nodePrivKey []byte) (*Stor
 	// — no machine-derived fallback, exactly as before.
 	//
 	// SDN_KEY_PASSWORD_FILE or the config: until now this store ignored them
-	// and sealed under the machine key, so an existing keystore on such a
-	// node IS machine-sealed and must keep opening. Every machine generation,
-	// the current one included, is a read fallback, and the first read
-	// re-seals under the operator password (load): writes never use a machine
-	// key while an operator password is set, the rule the record store's
-	// local EPM rows already follow. A keystore that does not exist yet has
-	// nothing to recover, so no machine key is derived for it.
+	// and sealed under the machine key. A keystore that does not exist yet is
+	// sealed under the operator password, like the identity; one that the
+	// operator password opens is that keystore on a later start.
+	//
+	// An EXISTING keystore that the operator password does not open was
+	// sealed under the machine key, and it STAYS sealed as it is, the rule
+	// the identity follows: on such a node the store is opened exactly as
+	// before (the machine root, older generations migrating to it), so a
+	// rollback to an earlier build, or an update helper's automatic revert,
+	// still opens it. Re-sealing it under the password would be one-way.
+	//
+	// Only when the machine key itself is refused (no earlier build opens
+	// this keystore either) is it opened through every machine generation as
+	// a read fallback and re-sealed under the operator password on first
+	// read: that is the one way its credentials survive.
 	if inline {
 		return store, nil
 	}
-	if _, serr := os.Stat(store.path); serr == nil {
-		store.attachMachineRoots(keyCopy, true)
+	if _, serr := os.Stat(store.path); serr != nil || store.opens(false) {
+		return store, nil
 	}
+	if mroot, merr := machineRoot(keyCopy); merr == nil {
+		machine, nerr := NewStore(storageDir, mroot)
+		if nerr == nil {
+			machine.attachMachineRoots(keyCopy, false)
+			if machine.opens(true) {
+				return machine, nil
+			}
+		}
+	}
+	store.attachMachineRoots(keyCopy, true)
 	return store, nil
+}
+
+// opens reports whether the keystore file decrypts under the primary
+// passphrase (and, withFallbacks, under one of the fallbacks). It changes
+// nothing on disk.
+func (s *Store) opens(withFallbacks bool) bool {
+	raw, err := os.ReadFile(s.path)
+	if err != nil || !hasPrefix(raw, credFileMagic) {
+		return false
+	}
+	defer zero(raw)
+	body := raw[len(credFileMagic):]
+	candidates := [][]byte{s.passphrase}
+	if withFallbacks {
+		candidates = append(candidates, s.fallbacks...)
+	}
+	for _, pass := range candidates {
+		if plain, derr := keys.DecryptSecret(body, string(pass)); derr == nil {
+			zero(plain)
+			return true
+		}
+	}
+	return false
 }
 
 // attachMachineRoots derives the keystore passphrases for machine derivation

@@ -8,6 +8,7 @@ package credstore
 // under the machine key keeps opening.
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -125,69 +126,144 @@ func TestUnreadablePasswordFileFailsClosed(t *testing.T) {
 	}
 }
 
-// TestMachineSealedKeystoreKeepsOpeningUnderAPasswordFile: before this store
-// honoured SDN_KEY_PASSWORD_FILE and the config, a node with a password file
-// (and a usable machine key) sealed its credentials under the machine key.
-// Upgrading must not orphan them: they open, and are re-sealed under the
-// operator password, which writes always use.
-func TestMachineSealedKeystoreKeepsOpeningUnderAPasswordFile(t *testing.T) {
-	clearOperatorPasswordEnv(t)
+// sealUnderMachine writes a keystore holding one credential under the
+// machine root built from machine (a derivation generation's password) and
+// nodeKeyA — what an earlier build left on a node with a password file.
+func sealUnderMachine(t *testing.T, dir, machine string) string {
+	t.Helper()
 	hostname, err := os.Hostname()
 	if err != nil || hostname == "" {
 		t.Skip("hostname unavailable")
 	}
-
-	// Every machine generation a node can have sealed under: the current one
-	// when this host can derive it, and v3 (derivable everywhere).
-	type sealedUnder struct {
-		name    string
-		machine string
+	root, err := DeriveRootKey(machine, cp(nodeKeyA), hostname)
+	if err != nil {
+		t.Fatal(err)
 	}
-	cases := []sealedUnder{{"v3", keys.DeriveV3Password()}}
-	if v4, derr := keys.DeriveDefaultPassword(); derr == nil {
-		cases = append(cases, sealedUnder{"v4", v4})
-	} else {
-		t.Logf("v4 machine key refused on this host (%v); covering v3 only", derr)
+	old, err := NewStore(dir, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := old.Put(IDSpaceTrack, "operator@example.com", "machine-sealed"); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+func passwordFileConfig(t *testing.T) *config.Config {
+	t.Helper()
+	cfg := config.Default()
+	cfg.Security.KeyPasswordFile = ownerOnlyFile(t, t.TempDir(), "key-password", "operator-root")
+	return cfg
+}
+
+func opensUnder(t *testing.T, dir, root string) bool {
+	t.Helper()
+	st, err := NewStore(dir, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = st.Reveal(IDSpaceTrack)
+	return err == nil
+}
+
+// TestMachineSealedKeystoreStaysMachineSealedUnderAPasswordFile: before this
+// store honoured SDN_KEY_PASSWORD_FILE and the config, a node with a password
+// file and a usable machine key (a container from deployment/remote, say)
+// sealed its credentials under the machine key. Upgrading must not orphan
+// them, and must not re-seal them one way either: an earlier build — a
+// rollback, or the update helper's automatic revert after a failed health
+// gate — has to open the store after this build has read AND written it. An
+// existing store stays sealed as it is, like the identity.
+func TestMachineSealedKeystoreStaysMachineSealedUnderAPasswordFile(t *testing.T) {
+	clearOperatorPasswordEnv(t)
+	v4, derr := keys.DeriveDefaultPassword()
+	if derr != nil {
+		t.Skipf("v4 machine key refused on this host (%v); TestMachineSealedKeystoreMigratesWhereTheMachineKeyIsRefused covers it", derr)
+	}
+	dir := t.TempDir()
+	machine := sealUnderMachine(t, dir, v4)
+
+	upgraded, err := OpenStore(dir, passwordFileConfig(t), cp(nodeKeyA))
+	if err != nil {
+		t.Fatalf("open under the password file: %v", err)
+	}
+	got, err := upgraded.Reveal(IDSpaceTrack)
+	if err != nil || got.Secret.Reveal() != "machine-sealed" {
+		t.Fatalf("a machine-sealed keystore must keep opening: %+v, %v", got, err)
+	}
+	if err := upgraded.Put(IDSpaceTrack, "operator@example.com", "written-by-this-build"); err != nil {
+		t.Fatal(err)
+	}
+	if !opensUnder(t, dir, machine) {
+		t.Fatal("an earlier build (the machine root alone) no longer opens the store this build read and wrote: re-sealed one way")
+	}
+	if opensUnder(t, dir, "operator-root") {
+		t.Fatal("the existing machine-sealed store was moved under the password")
 	}
 
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			clearOperatorPasswordEnv(t)
-			dir := t.TempDir()
-			machineRoot, err := DeriveRootKey(tc.machine, cp(nodeKeyA), hostname)
-			if err != nil {
-				t.Fatal(err)
-			}
-			old, err := NewStore(dir, machineRoot)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := old.Put(IDSpaceTrack, "operator@example.com", "machine-sealed"); err != nil {
-				t.Fatal(err)
-			}
+	// A later start under the same file keeps opening it.
+	again, err := OpenStore(dir, passwordFileConfig(t), cp(nodeKeyA))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := again.Reveal(IDSpaceTrack); err != nil || got.Secret.Reveal() != "written-by-this-build" {
+		t.Fatalf("reopen: %+v, %v", got, err)
+	}
+}
 
-			file := ownerOnlyFile(t, t.TempDir(), "key-password", "operator-root")
-			cfg := config.Default()
-			cfg.Security.KeyPasswordFile = file
-			upgraded, err := OpenStore(dir, cfg, cp(nodeKeyA))
-			if err != nil {
-				t.Fatalf("open under the password file: %v", err)
-			}
-			got, err := upgraded.Reveal(IDSpaceTrack)
-			if err != nil || got.Secret.Reveal() != "machine-sealed" {
-				t.Fatalf("a machine-sealed keystore must keep opening: %+v, %v", got, err)
-			}
+// TestOlderMachineGenerationMigratesAsBefore: a store sealed under an older
+// machine generation (v3) on a node with a password file and a usable v4
+// key migrates to v4 exactly as it does with no password at all (the machine
+// path, unchanged), not to the password.
+func TestOlderMachineGenerationMigratesAsBefore(t *testing.T) {
+	clearOperatorPasswordEnv(t)
+	v4, derr := keys.DeriveDefaultPassword()
+	if derr != nil {
+		t.Skipf("v4 machine key refused on this host: %v", derr)
+	}
+	dir := t.TempDir()
+	sealUnderMachine(t, dir, keys.DeriveV3Password())
+	st, err := OpenStore(dir, passwordFileConfig(t), cp(nodeKeyA))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := st.Reveal(IDSpaceTrack); err != nil || got.Secret.Reveal() != "machine-sealed" {
+		t.Fatalf("a v3-sealed store must open: %+v, %v", got, err)
+	}
+	hostname, _ := os.Hostname()
+	v4root, err := DeriveRootKey(v4, cp(nodeKeyA), hostname)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !opensUnder(t, dir, v4root) || opensUnder(t, dir, "operator-root") {
+		t.Fatal("a v3-sealed store must migrate to v4 (the machine path), not to the password")
+	}
+}
 
-			// Re-sealed under the operator password: a store with that root
-			// and no fallback at all opens it.
-			plain, err := NewStore(dir, "operator-root")
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := plain.Reveal(IDSpaceTrack); err != nil {
-				t.Fatalf("the keystore must be re-sealed under the operator password: %v", err)
-			}
-		})
+// TestMachineSealedKeystoreMigratesWhereTheMachineKeyIsRefused: where the
+// machine key is now refused, no build opens the store under it any more;
+// the machine generations that still derive are read fallbacks, and the
+// first read re-seals under the operator password — the one way the
+// credentials survive.
+func TestMachineSealedKeystoreMigratesWhereTheMachineKeyIsRefused(t *testing.T) {
+	clearOperatorPasswordEnv(t)
+	dir := t.TempDir()
+	sealUnderMachine(t, dir, keys.DeriveV3Password())
+	old := deriveMachinePassword
+	deriveMachinePassword = func() (string, error) {
+		return "", errors.New("machine fingerprint (v4): /sys/class/dmi/id/product_uuid exists but cannot be read")
+	}
+	t.Cleanup(func() { deriveMachinePassword = old })
+
+	st, err := OpenStore(dir, passwordFileConfig(t), cp(nodeKeyA))
+	if err != nil {
+		t.Fatalf("open under the password file: %v", err)
+	}
+	if got, err := st.Reveal(IDSpaceTrack); err != nil || got.Secret.Reveal() != "machine-sealed" {
+		t.Fatalf("the credentials must survive: %+v, %v", got, err)
+	}
+	if !opensUnder(t, dir, "operator-root") {
+		t.Fatal("with the machine key refused, the store must be re-sealed under the password")
 	}
 }
 
