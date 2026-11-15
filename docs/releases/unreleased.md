@@ -1,6 +1,6 @@
 # Next node release: release-notes text
 
-Text for the next node release's notes. It replaces the v1.1.0 to v1.1.2
+Text for the next node release's notes. It replaces the v1.1.0 to v1.1.3
 paragraph "Linux: give the node a key password file" and its three manual
 recipes, which are no longer needed for a fresh install.
 
@@ -9,7 +9,7 @@ recipes, which are no longer needed for a fresh install.
 **Linux: a fresh node gets its key password file automatically.** The Linux
 kernel makes `/sys/class/dmi/id/product_uuid` readable only by root, so on
 most Linux machines a node that does not run as root cannot derive its
-key-at-rest password from the machine. Through v1.1.2 such a node refused its
+key-at-rest password from the machine. Through v1.1.3 such a node refused its
 first start until the operator made a password file by hand. Now the
 installers do it for a fresh node: no identity yet, no `SDN_KEY_PASSWORD` or
 `SDN_KEY_PASSWORD_FILE` and no key password in the config, and a machine

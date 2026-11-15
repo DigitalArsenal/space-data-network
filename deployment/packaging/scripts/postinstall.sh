@@ -26,8 +26,8 @@ fi
 # machine and the account it runs as. On most Linux hosts that derivation is
 # REFUSED for the service account: the kernel creates
 # /sys/class/dmi/id/product_uuid readable by root only, and the node refuses a
-# key that would depend on the privilege of the reading process. Through
-# v1.1.2 the first `systemctl start` then failed until the operator made a
+# key that would depend on the privilege of the reading process. Before this
+# step the first `systemctl start` then failed until the operator made a
 # password file and a drop-in by hand. On a FRESH node this does that instead:
 #
 #   /var/lib/spacedatanetwork/key-password   32 random bytes as 64 hex, sdn:sdn 0400

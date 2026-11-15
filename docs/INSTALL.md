@@ -265,7 +265,7 @@ authentication are on.
   capabilities) uses the same key password as the identity, in the same order
   (`SDN_KEY_PASSWORD`, `SDN_KEY_PASSWORD_FILE`, `security.key_password`,
   `security.key_password_file`), so it works on such a node too. Through
-  v1.1.2 it ignored the file and config sources and used the machine key; a
+  v1.1.3 it ignored the file and config sources and used the machine key; a
   store sealed that way still opens and is re-sealed under the password.
 
 ## 6. Run
