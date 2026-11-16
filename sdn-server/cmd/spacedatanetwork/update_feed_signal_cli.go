@@ -159,17 +159,18 @@ func sendFeedSignals(cmd *cobra.Command) error {
 }
 
 func newWithdrawCommand() *cobra.Command {
-	var channel, version string
+	var channel, version, kind string
 	cmd := &cobra.Command{Use: "withdraw", Short: "Withdraw a version from the served update feed", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			archive, err := update.WithdrawFeedVersion(os.Getenv("SDN_UPDATE_FEED_DIR"), channel, version)
+			archive, err := update.WithdrawFeedVersion(os.Getenv("SDN_UPDATE_FEED_DIR"), kind, channel, version)
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "withdrawn=%s channel=%s archive=%s\n", version, channel, archive)
+			fmt.Fprintf(cmd.OutOrStdout(), "withdrawn=%s kind=%s channel=%s archive=%s\n", version, kind, channel, archive)
 			return nil
 		}}
-	cmd.Flags().StringVar(&channel, "channel", "", "feed channel")
+	cmd.Flags().StringVar(&kind, "kind", "cli-bundle", "update kind")
+ cmd.Flags().StringVar(&channel, "channel", "", "feed channel")
 	cmd.Flags().StringVar(&version, "version", "", "release version")
 	_ = cmd.MarkFlagRequired("channel")
 	_ = cmd.MarkFlagRequired("version")
