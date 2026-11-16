@@ -201,11 +201,17 @@ func runRealFeedRecoveryCase(t *testing.T, mode string) {
 			cfg.Update.MinIntervalSeconds = 10
 		}
 	})
+	// One signed-in client for the whole case: the admin API limits sign-in
+	// challenges, and the hand-off case polls alerts for several minutes.
+	var admin *adminClient
 	alerts := func() []ops.Alert {
 		var status struct {
 			Alerts []ops.Alert `json:"alerts"`
 		}
-		if err := d.client(t).get(context.Background(), "/api/v1/status/alerts", &status); err != nil {
+		if admin == nil {
+			admin = d.client(t)
+		}
+		if err := admin.get(context.Background(), "/api/v1/status/alerts", &status); err != nil {
 			t.Fatalf("read active alerts: %v", err)
 		}
 		return status.Alerts
