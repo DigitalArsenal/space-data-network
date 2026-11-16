@@ -3,7 +3,7 @@
 This is the operator path for a fresh node: what to install, which ports to
 open, what to change in the generated config before the node is reachable,
 how to keep the keys, how to mirror a publisher, and how to publish and
-archive. It describes v1.1.4 (2026-11-14).
+archive. It describes v1.1.5 (2026-11-16).
 
 ## 1. Get a build
 
@@ -15,7 +15,7 @@ irm https://spacedatanetwork.org/install.ps1 | iex
 ```
 
 The installers resolve the newest node release on GitHub (today
-v1.1.4: macOS Apple Silicon and Intel, Linux x86-64 and arm64, and
+v1.1.5: macOS Apple Silicon and Intel, Linux x86-64 and arm64, and
 Windows x86-64), verify the checksum,
 unpack the self-contained bundle under `~/.spacedatanetwork/bundles`, link
 `spacedatanetwork` and `sdn` under `~/.spacedatanetwork/bin`, and initialize
@@ -27,7 +27,7 @@ account it runs as. On most Linux machines the kernel makes
 `/sys/class/dmi/id/product_uuid` readable only by root, so for any other
 account that derivation is refused (`spacedatanetwork key fingerprint-check`
 answers `refused`; root, macOS and Windows answer `ok` or `absent`). For a
-fresh node on such a host, an `install.sh` that carries this change (v1.1.4
+fresh node on such a host, an `install.sh` that carries this change (v1.1.5
 and earlier do not: there, make the file yourself as in section 5) generates
 `~/sdn-key-password` (32 random bytes as 64 hex characters, mode 0400),
 records it in the node's config as `security.key_password_file`, and seals
@@ -64,7 +64,7 @@ from `/usr/local/lib/hd-wallet-wasi.wasm`; a bundle carries it under
 The desktop app (`space-data-network-desktop-<version>-<os>-<arch>` on the
 release page) ships for Windows x64 as both an installer and a portable exe,
 and for Linux x64 as an AppImage, a .deb and a .tar.xz. The macOS desktop app
-is not in v1.1.4; on macOS use the command-line install above. It carries the
+is not in v1.1.5; on macOS use the command-line install above. It carries the
 same bundle, starts the node on launch, opens the
 node's own dashboard in its window, and keeps the store and keys under the
 app's user-data directory. Its menu shows the node's recovery phrase once, on
@@ -107,7 +107,7 @@ first output appears.
 ```sh
 docker run -d --name sdn --hostname sdn --restart unless-stopped \
   -v sdn-data:/app/data -p 127.0.0.1:5001:5001 -p 4001:4001 -p 4001:4001/udp \
-  dockerdigitalarsenal/space-data-network:v1.1.4
+  dockerdigitalarsenal/space-data-network:v1.1.5
 ```
 
 The image (`linux/amd64`) carries the node, WasmEdge with a prewarmed AOT
@@ -130,7 +130,7 @@ The container runs as uid 1000, so on most Linux hosts the machine-derived
 key is refused there too (see section 1). **The recommended setup is a
 password file mounted from outside the volume**, made with a umask so it is
 never readable by anyone else, not even for a moment; it is what every image
-needs on such a host up to v1.1.4, and still the better custody after:
+needs on such a host up to v1.1.5, and still the better custody after:
 
 ```sh
 sudo install -m 0400 -o 1000 -g 1000 /dev/null /etc/sdn-key-password
@@ -139,7 +139,7 @@ docker run -d --name sdn --hostname sdn --restart unless-stopped \
   -v /etc/sdn-key-password:/run/secrets/sdn-key-password:ro \
   -e SDN_KEY_PASSWORD_FILE=/run/secrets/sdn-key-password \
   -v sdn-data:/app/data -p 127.0.0.1:5001:5001 -p 4001:4001 -p 4001:4001/udp \
-  dockerdigitalarsenal/space-data-network:v1.1.4
+  dockerdigitalarsenal/space-data-network:v1.1.5
 ```
 
 (`install` creates the file empty, already 0400 and owned by uid 1000; root
@@ -161,7 +161,7 @@ for every node (generated file, mounted secret or machine key):
 `docker exec sdn
 /app/entrypoint.sh show-identity --config /app/config/full-docker.yaml --show-mnemonic`
 prints the recovery phrase. A `docker load` archive of the same image ships
-with each release: `spacedatanetwork-container-1.1.4-linux-amd64.tar.gz`.
+with each release: `spacedatanetwork-container-1.1.5-linux-amd64.tar.gz`.
 For a beta, that name spells the version with DOTS, not the tag's hyphen
 (`X.Y.Z.beta.N`, not `X.Y.Z-beta.N`, which 404s). Native Linux packages use
 the same dotted spelling, for the same reason: a release asset name cannot
@@ -176,7 +176,7 @@ in `/var/lib/spacedatanetwork`. The package creates the user and the
 directory; it does not enable or start the service.
 
 User `sdn` cannot read `/sys/class/dmi/id/product_uuid` on most hosts (see
-section 1), so on a FRESH install a package that carries this change (v1.1.4
+section 1), so on a FRESH install a package that carries this change (v1.1.5
 and earlier do not: there, make the two files yourself as below) generates
 `/var/lib/spacedatanetwork/key-password` (`sdn:sdn`, mode 0400) and the drop-in
 `/etc/systemd/system/spacedatanetwork.service.d/key-password.conf`
