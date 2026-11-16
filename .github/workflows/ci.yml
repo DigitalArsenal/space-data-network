@@ -419,6 +419,10 @@ jobs:
         shell: bash
     needs: wasmedge-runtime
     timeout-minutes: 30
+    # Playwright omits a focal download entry. The Ubuntu 22.04 key selects
+    # its Linux x64 Chromium bundle and apt dependency names available here.
+    env:
+      PLAYWRIGHT_HOST_PLATFORM_OVERRIDE: ubuntu22.04-x64
     steps:
       - name: Prepare the release container
         run: |
@@ -498,6 +502,10 @@ jobs:
         shell: bash
     needs: wasmedge-runtime
     timeout-minutes: 30
+    # Playwright omits a focal download entry. The Ubuntu 22.04 key selects
+    # its Linux x64 Chromium bundle and apt dependency names available here.
+    env:
+      PLAYWRIGHT_HOST_PLATFORM_OVERRIDE: ubuntu22.04-x64
     steps:
       - name: Prepare the release container
         run: |
