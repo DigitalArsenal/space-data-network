@@ -260,7 +260,7 @@ func SubstrateStatus() SubstrateReport {
 }
 
 func probeNotifyWithoutStore(wasm []byte) (bool, error) {
-	m, err := NewModule(wasm, WithMaxThreads(4), WithExecTimeout(3*time.Second))
+	m, err := NewModule(wasm, WithMaxThreads(4), WithExecTimeout(substrateObservationLimit))
 	if err != nil {
 		return false, err
 	}
@@ -286,7 +286,7 @@ func probeNotifyWithoutStore(wasm []byte) (bool, error) {
 // probe: a notify addressed through its offset wakes the waiter, and a wait
 // addressed that way compares the right word.
 func probeMemargOffset(compiled []byte) (bool, error) {
-	m, err := NewModule(compiled, WithMaxThreads(4), WithExecTimeout(3*time.Second))
+	m, err := NewModule(compiled, WithMaxThreads(4), WithExecTimeout(substrateObservationLimit))
 	if err != nil {
 		return false, err
 	}
@@ -324,7 +324,8 @@ type stopProbe struct {
 	observation StopObservation
 }
 
-const stopObservationLimit = 30 * time.Second
+// An observation deadline limits waiting; expiration does not prove a missing patch.
+const substrateObservationLimit = 30 * time.Second
 
 // probeStop issues one stop after every spinner has started. All completions
 // prove a shared token. Continued execution after synchronizing the counters
@@ -342,7 +343,7 @@ func probeStop(wasm []byte, n int, countInstructions bool) (out stopProbe, err e
 	defer func() {
 		// Cleanup is separate from the single-stop observation, including on
 		// readiness failures. Never free memory beneath an unfinished worker.
-		if left := m.InterruptThreads(time.Now().Add(stopObservationLimit)); left > 0 {
+		if left := m.InterruptThreads(time.Now().Add(substrateObservationLimit)); left > 0 {
 			cleanupErr := fmt.Errorf("cleanup: %d spinners remain; retained probe VM", left)
 			m.MarkPoisoned(cleanupErr)
 			err = errors.Join(err, cleanupErr)
@@ -372,7 +373,7 @@ func probeStop(wasm []byte, n int, countInstructions bool) (out stopProbe, err e
 		}
 		return total
 	}
-	deadline := time.Now().Add(stopObservationLimit)
+	deadline := time.Now().Add(substrateObservationLimit)
 	for out.observation.Started < n {
 		out.observation.Started = 0
 		for i := 0; i < n; i++ {
@@ -408,7 +409,7 @@ func probeStop(wasm []byte, n int, countInstructions bool) (out stopProbe, err e
 		mem.Store32(probeSpinnerBase+uint32(64*i), 0)
 	}
 	out.observation.PostStopProgress = make([]uint32, n)
-	deadline = time.Now().Add(stopObservationLimit)
+	deadline = time.Now().Add(substrateObservationLimit)
 	for {
 		continued := false
 		for i := 0; i < n; i++ {
@@ -517,7 +518,7 @@ func compileThreadedAOT(wasm []byte) ([]byte, error) {
 // probeAtomicStoreStack checks all seven store opcodes, including narrow stores.
 // The defective compiler returns -2 instead of 98 after leaving address 0 above 100.
 func probeAtomicStoreStack(wasm []byte) (bool, error) {
-	m, err := NewModule(wasm, WithMaxThreads(1), WithExecTimeout(3*time.Second))
+	m, err := NewModule(wasm, WithMaxThreads(1), WithExecTimeout(substrateObservationLimit))
 	if err != nil {
 		return false, err
 	}
