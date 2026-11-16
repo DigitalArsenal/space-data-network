@@ -432,26 +432,9 @@ func engineSchemaTextExcluding(excluded map[string]bool) string {
 	return strings.TrimSuffix(out.String(), "\n")
 }
 
-// EngineRelationSchemaText returns the engine's OWN table block for a routed
-// standard — the exact `table <T> { … }` text (indentation included) that
-// engineDatabaseSchema declares and every engine database is created from —
-// with the binding's table name and file identifier.
-//
-// It exists so a browser-hosted engine (sdn-js's local FlatSQL store, the
-// same engine core the Go host runs under WasmEdge) can be created from the
-// node's declaration and project the node's raw record frames IDENTICALLY:
-// same columns in the same order, same `_source`/`_rowid`/`_offset`/`_data`
-// meta columns, no per-standard projection code on either side. The node
-// never projects for the browser again; it hands over the DDL once and the
-// frames per window.
-//
-// The name is accepted as a code or a schema file name in any case ("CNP",
-// "cnp", "CNP.fbs") because every routed code is upper-case; resolution then
-// goes through engineRoutedSchemaFor so a sealed or unroutable standard is
-// refused exactly like everywhere else. The walk is the one
-// engineSchemaTextExcluding and parseEngineDeclaredColumns perform (`table X
-// {`, one field per line, `}`), so what this returns is by construction the
-// same block those readers see.
+// EngineRelationSchemaText returns a routed standard's complete embedded SDS
+// schema, including dependency declarations, root type, and file identifier.
+// The response registers the same binary record layout in browser engines.
 func EngineRelationSchemaText(schemaName string) (text, table, fileID string, ok bool) {
 	code := strings.TrimSpace(schemaName)
 	if strings.HasSuffix(strings.ToLower(code), ".fbs") {
@@ -465,7 +448,7 @@ func EngineRelationSchemaText(schemaName string) (text, table, fileID string, ok
 	if !routed {
 		return "", "", "", false
 	}
-	block, found := engineTableBlockText(engineDatabaseSchema, binding.Table)
+	block, found := sds.StandaloneSchemaText(code)
 	if !found {
 		return "", "", "", false
 	}

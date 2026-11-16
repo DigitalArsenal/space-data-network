@@ -22,7 +22,7 @@ func TestStandardSchemaTextServesTheEngineTableBlock(t *testing.T) {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "table CNP {") || !strings.Contains(body, "ID:string;") {
+	if !strings.Contains(body, "table CNP {") || !strings.Contains(body, "ID:") {
 		t.Fatalf("body is not the CNP engine block:\n%s", body)
 	}
 	if strings.Contains(body, "table OMM {") {

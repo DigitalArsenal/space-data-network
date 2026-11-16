@@ -85,7 +85,7 @@ const (
 )
 
 // handleStandardSchemaText serves GET/HEAD /api/v1/standards/{CODE}.fbs: the
-// engine DDL block for that standard as text/plain, with the engine table
+// self-contained schema for that standard as text/plain, with the engine table
 // name and FlatBuffer file identifier in headers so the caller can register
 // the file id against the table exactly like the node does at boot.
 // 400 for a malformed name, 404 for a standard the engine does not route.
