@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 // Run against the built node's embedded dashboard and engine.
 // Usage: node scripts/dashboard-engine.e2e.mjs <node-binary> [results-directory]
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
@@ -68,8 +69,14 @@ if (fs.existsSync(existingCache)) {
     fs.mkdirSync(path.join(home, cacheRelative), { recursive: true });
     fs.symlinkSync(existingCache, path.join(home, cacheRelative, 'flatsql-aot'));
 }
-const out = fs.openSync(path.join(folder, `dashboard-${label}-daemon.log`), 'w');
-const child = spawn(binary, ['daemon', '--allow-multi-daemon', '--config', config], { cwd: home, env: { ...process.env, HOME: home, XDG_CACHE_HOME: path.join(home, '.cache'), SDN_STORE_FORMAT: '5', SDM_MODULE_UNSIGNED_BUILD: '1', SDN_MODULE_SIGNING_AUDIT_LOG: path.join(home, 'module-signing.jsonl') }, stdio: ['ignore', out, out] });
+// A fresh node on a host whose account cannot read the machine fingerprint's
+// source refuses to start without a key password file (the installers make
+// one there). Hosted CI runners differ in this, so this node always has one.
+const keyPassword = path.join(home, 'key-password');
+fs.writeFileSync(keyPassword, crypto.randomBytes(32).toString('hex'), { mode: 0o400 });
+const daemonLog = path.join(folder, `dashboard-${label}-daemon.log`);
+const out = fs.openSync(daemonLog, 'w');
+const child = spawn(binary, ['daemon', '--allow-multi-daemon', '--config', config], { cwd: home, env: { ...process.env, HOME: home, XDG_CACHE_HOME: path.join(home, '.cache'), SDN_STORE_FORMAT: '5', SDN_KEY_PASSWORD_FILE: keyPassword, SDM_MODULE_UNSIGNED_BUILD: '1', SDN_MODULE_SIGNING_AUDIT_LOG: path.join(home, 'module-signing.jsonl') }, stdio: ['ignore', out, out] });
 let exited = false;
 const done = new Promise(r => child.once('exit', (code, signal) => { exited = true; r({ code, signal }); }));
 const base = `http://127.0.0.1:${port}`;
@@ -86,8 +93,10 @@ try {
         if (!up)
             await new Promise(r => setTimeout(r, 500));
     }
-    if (!up)
-        throw Error('node health timeout');
+    if (!up) {
+        result.daemonLogTail = fs.readFileSync(daemonLog, 'utf8').split('\n').slice(-25);
+        throw Error(exited ? 'the node exited before it answered health' : 'node health timeout');
+    }
     for (let i = 0; i < 3; i++) {
         const b = new Builder(256), name = b.createString(`Synthetic dashboard record ${i}`);
         CAT.startCAT(b);
