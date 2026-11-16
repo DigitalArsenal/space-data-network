@@ -1333,6 +1333,7 @@ func TestEnsureNodeMnemonicCreatesEncryptedMnemonic(t *testing.T) {
 	t.Parallel()
 
 	cfg := config.Default()
+	cfg.Security.KeyPasswordFile = writeIdentityWizardSecretFile(t, "mnemonic-test-password")
 	cfg.Storage.Path = filepath.Join(t.TempDir(), "data")
 
 	result, err := ensureNodeMnemonic(context.Background(), cfg, func(context.Context) (string, error) {

@@ -21,6 +21,8 @@ import (
 //  2. the local EPM — the only thing the wizard actually reads — is served
 //     from that store regardless.
 func TestIdentityWizardStoreOpenDoesNotHydrateTheEngine(t *testing.T) {
+	t.Setenv("SDN_KEY_PASSWORD", "")
+	t.Setenv("SDN_KEY_PASSWORD_FILE", writeIdentityWizardSecretFile(t, "store-open-test-password"))
 	dir := t.TempDir()
 	validator, err := sds.NewValidator(nil)
 	if err != nil {
