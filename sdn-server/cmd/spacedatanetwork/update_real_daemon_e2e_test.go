@@ -1432,6 +1432,19 @@ func runRealPushChannelReceiver(t *testing.T, installed bool) {
 		t.Fatal("CLI withdrawal removed a UI package")
 	}
 
+	a.command(t, false, "withdraw-complete", "update", "withdraw", "--channel", realE2EChannel, "--version", v5.version)
+	if !strings.Contains(readFileString(filepath.Join(a.work, "withdraw-complete.log")), "already withdrawn") {
+		t.Fatal("completed withdrawal was not recognized")
+	}
+	publish(v5)
+	a.command(t, true, "withdraw-republished", "update", "withdraw", "--channel", realE2EChannel, "--version", v5.version)
+	republishedArchive := regexp.MustCompile(`archive=([^\n]+)`).FindStringSubmatch(readFileString(filepath.Join(a.work, "withdraw-republished.log")))
+	if len(republishedArchive) != 2 || republishedArchive[1] == archiveLine[1] {
+		t.Fatal("republication reused the completed withdrawal archive")
+	}
+	a.command(t, false, "withdraw-republished-complete", "update", "withdraw", "--channel", realE2EChannel, "--version", v5.version)
+	t.Log("completed withdrawal ignored after republication; repeated withdrawal reports already withdrawn")
+
 	a.command(t, false, "send-withdrawn", "update", "signal", "--from-feed", "--channel", realE2EChannel, "--version", v5.version)
 	for _, name := range []string{"manifest.json", "update.wasm", "signal.json"} {
 		response, err := feed.srv.Client().Get(feed.base + feed.lane() + "/" + v5.version + "/" + name)

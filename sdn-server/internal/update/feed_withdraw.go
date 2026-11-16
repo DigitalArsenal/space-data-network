@@ -37,6 +37,7 @@ func WithdrawFeedVersion(dir, kind, channel, version string) (string, error) {
 	}
 	plan := withdrawalPlan{Kind: kind, Channel: channel, Version: version}
 	archive := ""
+	alreadyWithdrawn := false
 	// A durable plan survives interruption between moves or index replacements.
 	siblings, err := os.ReadDir(filepath.Dir(absolute))
 	if err != nil {
@@ -53,6 +54,10 @@ func WithdrawFeedVersion(dir, kind, channel, version string) (string, error) {
 		}
 		var previous withdrawalPlan
 		if json.Unmarshal(raw, &previous) == nil && previous.Kind == kind && previous.Channel == channel && previous.Version == version {
+			if withdrawalFinished(absolute, candidate, previous) {
+				alreadyWithdrawn = true
+				continue
+			}
 			plan, archive = previous, candidate
 			break
 		}
@@ -107,6 +112,9 @@ func WithdrawFeedVersion(dir, kind, channel, version string) (string, error) {
 		sort.Strings(plan.Folders)
 		sort.Strings(plan.Indexes)
 		if len(plan.Folders) == 0 && len(plan.Indexes) == 0 {
+			if alreadyWithdrawn {
+				return "", errors.New("version is already withdrawn")
+			}
 			return "", errors.New("version is absent or withdrawn")
 		}
 		archive = absolute + "-withdrawn-" + time.Now().UTC().Format("20060102T150405.000000000Z")
@@ -147,6 +155,13 @@ func WithdrawFeedVersion(dir, kind, channel, version string) (string, error) {
 	}
 	for _, folder := range plan.Folders {
 		if err := validate(folder, true); err != nil {
+			return "", err
+		}
+		if _, err := os.Lstat(filepath.Join(absolute, folder)); err == nil {
+			if _, targetErr := os.Lstat(filepath.Join(archive, folder)); !errors.Is(targetErr, os.ErrNotExist) {
+				return "", fmt.Errorf("withdrawal destination already exists or is unreadable: %s", folder)
+			}
+		} else if !errors.Is(err, os.ErrNotExist) {
 			return "", err
 		}
 	}
@@ -281,4 +296,45 @@ func WithdrawFeedVersion(dir, kind, channel, version string) (string, error) {
 		}
 	}
 	return archive, nil
+}
+
+// Archived folders with no remaining index entry describe a completed withdrawal.
+// A completed withdrawal with newly served folders describes a republication.
+func withdrawalFinished(root, archive string, plan withdrawalPlan) bool {
+	if len(plan.Folders) == 0 {
+		return false
+	}
+	allServed := true
+	for _, folder := range plan.Folders {
+		if filepath.IsAbs(folder) || strings.Contains(folder, "..") {
+			return false
+		}
+		info, err := os.Lstat(filepath.Join(archive, folder))
+		if err != nil || !info.IsDir() {
+			return false
+		}
+		if info, err := os.Lstat(filepath.Join(root, folder)); err != nil || !info.IsDir() {
+			allServed = false
+		}
+	}
+	listed := false
+	for _, index := range plan.Indexes {
+		if filepath.IsAbs(index) || strings.Contains(index, "..") {
+			return false
+		}
+		raw, err := os.ReadFile(filepath.Join(root, index))
+		if err != nil {
+			return false
+		}
+		feed, err := ParseProviderFeed(raw)
+		if err != nil {
+			return false
+		}
+		for _, entry := range feed.Updates {
+			if entry.Target.Kind == plan.Kind && entry.Channel == plan.Channel && entry.Version == plan.Version {
+				listed = true
+			}
+		}
+	}
+	return !listed || allServed
 }
