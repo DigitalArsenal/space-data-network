@@ -867,8 +867,8 @@ test('released bundles and their update feed are stamped with the public release
   // release without a usable key fails in minutes instead of after the
   // five-platform cli matrix.
   const first = workflow.slice(workflow.indexOf('  beta-version:'), workflow.indexOf('  wasmedge-static:'));
-  assert.match(first, /UPDATE_KEY_AVAILABLE: \$\{\{ secrets\.SDN_UPDATE_SIGNING_KEY_PEM != '' \}\}/);
-  assert.ok(first.indexOf('Check update signing configuration') < first.indexOf('Check the token can publish a release'));
+  assert.match(first, /name: Check the update signing key[\s\S]*check-update-signing-key\.mjs/);
+  assert.ok(first.indexOf('Check the update signing key') < first.indexOf('Check the token can publish a release'));
 });
 
 test('release maturity reaches only the release notes, never a --channel', () => {
@@ -976,3 +976,10 @@ for (const [name, mutate] of Object.entries(signingMutations)) {
     assert.throws(() => guardUpdateSigningWorkflow(changed));
   });
 }
+
+test('feed verification counts the declared targets', () => {
+  const workflow = readRepoFile('.github/workflows/beta-release-artifacts.yml');
+  assert.ok(workflow.includes('target_count=${#targets[@]}'));
+  assert.ok(workflow.includes('EXPECTED_TARGETS: ${{ steps.signing.outputs.target_count }}'));
+  assert.ok(workflow.includes('--expect-count "${EXPECTED_TARGETS}"'));
+});

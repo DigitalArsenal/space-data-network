@@ -56,16 +56,16 @@ jobs:
         env:
           INPUT_VERSION: ${{ inputs.version }}
         run: node deployment/release/prepare-beta-release.mjs
-      # Presence is checked without exposing the PEM. The signing step validates it.
-      - name: Check update signing configuration before building
+      - name: Check the update signing key
         env:
           RELEASE_MATURITY: ${{ steps.version.outputs.channel }}
-          UPDATE_KEY_AVAILABLE: ${{ secrets.SDN_UPDATE_SIGNING_KEY_PEM != '' }}
+          SDN_UPDATE_SIGNING_KEY_PEM: ${{ secrets.SDN_UPDATE_SIGNING_KEY_PEM }}
+          # SDN_UPDATE_KEY_ID is a public key identifier, not secret key material.
+          SDN_UPDATE_KEY_ID: ${{ secrets.SDN_UPDATE_KEY_ID }}
         run: |
-          if [[ "$RELEASE_MATURITY" == stable && "$UPDATE_KEY_AVAILABLE" != true ]]; then
-            echo "A stable release requires an update signing key" >&2
-            exit 1
-          fi
+          node deployment/release/check-update-signing-key.mjs \
+            --maturity "${RELEASE_MATURITY}" \
+            --roots deployment/release/fleet-trust-roots.json
       # CAN THIS TOKEN ACTUALLY PUBLISH? Ask now, in the first job, not after
       # forty minutes of building every artifact for five platforms.
       #
@@ -1035,6 +1035,7 @@ jobs:
             "linux arm64 tar.gz"
             "windows amd64 zip"
           )
+          echo "target_count=${#targets[@]}" >> "$GITHUB_OUTPUT"
           for target in "${targets[@]}"; do
             read -r target_os target_arch target_ext <<< "${target}"
             archive_path="dist/cli/spacedatanetwork-${VERSION}-${target_os}-${target_arch}.${target_ext}"
@@ -1063,6 +1064,8 @@ jobs:
             --roots deployment/release/fleet-trust-roots.json
       - name: Verify and pack the signed CLI update feed
         if: steps.signing.outputs.available == 'true'
+        env:
+          EXPECTED_TARGETS: ${{ steps.signing.outputs.target_count }}
         run: |
           set -euo pipefail
           feed_tree_root="dist/update-feed-tree"
@@ -1077,7 +1080,7 @@ jobs:
             --feed-dir "${feed_dir}" \
             --roots deployment/release/fleet-trust-roots.json \
             --expect-version "${VERSION}" \
-            --expect-count 5
+            --expect-count "${EXPECTED_TARGETS}"
           tar -czf "dist/update-feed/spacedatanetwork-update-feed-${VERSION}.tar.gz" -C "${feed_tree_root}" update-feed
       - uses: actions/upload-artifact@v4
         if: steps.signing.outputs.available == 'true'
