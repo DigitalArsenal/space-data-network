@@ -56,16 +56,6 @@ jobs:
         env:
           INPUT_VERSION: ${{ inputs.version }}
         run: node deployment/release/prepare-beta-release.mjs
-      - name: Check the update signing key
-        env:
-          RELEASE_MATURITY: ${{ steps.version.outputs.channel }}
-          SDN_UPDATE_SIGNING_KEY_PEM: ${{ secrets.SDN_UPDATE_SIGNING_KEY_PEM }}
-          # SDN_UPDATE_KEY_ID is a public key identifier, not secret key material.
-          SDN_UPDATE_KEY_ID: ${{ secrets.SDN_UPDATE_KEY_ID }}
-        run: |
-          node deployment/release/check-update-signing-key.mjs \
-            --maturity "${RELEASE_MATURITY}" \
-            --roots deployment/release/fleet-trust-roots.json
       # CAN THIS TOKEN ACTUALLY PUBLISH? Ask now, in the first job, not after
       # forty minutes of building every artifact for five platforms.
       #
@@ -120,7 +110,29 @@ jobs:
   # runners, and a Linux prefix cannot link a macOS or Windows binary, so the
   # prefix is a matrix over the same runners. Building LLVM is expensive, so
   # each is cached on the version + layout and rebuilt only when those change.
+  update-signing-check:
+    name: Check the update signing key
+    runs-on: ubuntu-latest
+    needs: beta-version
+    environment: update-signing
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - name: Check the update signing key
+        env:
+          RELEASE_MATURITY: ${{ needs.beta-version.outputs.channel }}
+          SDN_UPDATE_SIGNING_KEY_PEM: ${{ secrets.SDN_UPDATE_SIGNING_KEY_PEM }}
+          # SDN_UPDATE_KEY_ID is a public key identifier, not secret key material.
+          SDN_UPDATE_KEY_ID: ${{ secrets.SDN_UPDATE_KEY_ID }}
+        run: |
+          node deployment/release/check-update-signing-key.mjs \
+            --maturity "${RELEASE_MATURITY}" \
+            --roots deployment/release/fleet-trust-roots.json
+
   wasmedge-static:
+    needs: update-signing-check
     name: Build static WasmEdge (${{ matrix.label }})
     runs-on: ${{ matrix.runner }}
     # Empty for the macOS and Windows legs, which have no container key and so
@@ -631,7 +643,7 @@ jobs:
     # Empty for macOS and Windows, which run on the runner itself.
     container: ${{ matrix.container }}
     continue-on-error: ${{ matrix.experimental == true }}
-    needs: [beta-version, ipfs, updater-wasm, wasmedge-static]
+    needs: [beta-version, update-signing-check, ipfs, updater-wasm, wasmedge-static]
     defaults:
       run:
         shell: bash
@@ -982,21 +994,19 @@ jobs:
     name: Build signed CLI update feed
     runs-on: ubuntu-latest
     needs: [beta-version, cli]
-    defaults:
-      run:
-        shell: bash
+    environment: update-signing
     env:
       VERSION: ${{ needs.beta-version.outputs.package_version }}
       SDN_UPDATE_KEY_ID: ${{ secrets.SDN_UPDATE_KEY_ID }}
       SDN_UPDATE_SEQUENCE: ${{ github.run_number }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           pattern: cli-*
           path: dist/cli
           merge-multiple: true
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '24'
       - name: Unpack the release signal signer
@@ -1035,7 +1045,6 @@ jobs:
             "linux arm64 tar.gz"
             "windows amd64 zip"
           )
-          echo "target_count=${#targets[@]}" >> "$GITHUB_OUTPUT"
           for target in "${targets[@]}"; do
             read -r target_os target_arch target_ext <<< "${target}"
             archive_path="dist/cli/spacedatanetwork-${VERSION}-${target_os}-${target_arch}.${target_ext}"
@@ -1064,8 +1073,6 @@ jobs:
             --roots deployment/release/fleet-trust-roots.json
       - name: Verify and pack the signed CLI update feed
         if: steps.signing.outputs.available == 'true'
-        env:
-          EXPECTED_TARGETS: ${{ steps.signing.outputs.target_count }}
         run: |
           set -euo pipefail
           feed_tree_root="dist/update-feed-tree"
@@ -1080,9 +1087,9 @@ jobs:
             --feed-dir "${feed_dir}" \
             --roots deployment/release/fleet-trust-roots.json \
             --expect-version "${VERSION}" \
-            --expect-count "${EXPECTED_TARGETS}"
+            --expect-count 5
           tar -czf "dist/update-feed/spacedatanetwork-update-feed-${VERSION}.tar.gz" -C "${feed_tree_root}" update-feed
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: steps.signing.outputs.available == 'true'
         with:
           name: cli-update-feed

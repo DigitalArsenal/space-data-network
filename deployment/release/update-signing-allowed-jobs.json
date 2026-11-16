@@ -1,0 +1,97 @@
+{
+  "env": {
+    "FORCE_JAVASCRIPT_ACTIONS_TO_NODE24": true,
+    "REGISTRY": "docker.io",
+    "IMAGE_NAME": "dockerdigitalarsenal/space-data-network",
+    "KUBO_VERSION": "v0.43.1",
+    "WASMEDGE_VERSION": "0.16.4",
+    "NFPM_VERSION": "v2.42.0"
+  },
+  "jobs": {
+    "update-signing-check": {
+      "name": "Check the update signing key",
+      "runs-on": "ubuntu-latest",
+      "needs": "beta-version",
+      "environment": "update-signing",
+      "steps": [
+        {
+          "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683"
+        },
+        {
+          "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+          "with": {
+            "node-version": "24"
+          }
+        },
+        {
+          "name": "Check the update signing key",
+          "env": {
+            "RELEASE_MATURITY": "${{ needs.beta-version.outputs.channel }}",
+            "SDN_UPDATE_SIGNING_KEY_PEM": "${{ secrets.SDN_UPDATE_SIGNING_KEY_PEM }}",
+            "SDN_UPDATE_KEY_ID": "${{ secrets.SDN_UPDATE_KEY_ID }}"
+          },
+          "reviewedRun": "Check the update signing key"
+        }
+      ]
+    },
+    "cli-update-feed": {
+      "name": "Build signed CLI update feed",
+      "runs-on": "ubuntu-latest",
+      "needs": [
+        "beta-version",
+        "cli"
+      ],
+      "environment": "update-signing",
+      "env": {
+        "VERSION": "${{ needs.beta-version.outputs.package_version }}",
+        "SDN_UPDATE_KEY_ID": "${{ secrets.SDN_UPDATE_KEY_ID }}",
+        "SDN_UPDATE_SEQUENCE": "${{ github.run_number }}"
+      },
+      "steps": [
+        {
+          "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683"
+        },
+        {
+          "uses": "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093",
+          "with": {
+            "pattern": "cli-*",
+            "path": "dist/cli",
+            "merge-multiple": true
+          }
+        },
+        {
+          "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+          "with": {
+            "node-version": "24"
+          }
+        },
+        {
+          "name": "Unpack the release signal signer",
+          "reviewedRun": "Unpack the release signal signer"
+        },
+        {
+          "name": "Build signed CLI update feed",
+          "id": "signing",
+          "env": {
+            "RELEASE_MATURITY": "${{ needs.beta-version.outputs.channel }}",
+            "SDN_UPDATE_SIGNING_KEY_PEM": "${{ secrets.SDN_UPDATE_SIGNING_KEY_PEM }}"
+          },
+          "reviewedRun": "Build signed CLI update feed"
+        },
+        {
+          "name": "Verify and pack the signed CLI update feed",
+          "if": "steps.signing.outputs.available == 'true'",
+          "reviewedRun": "Verify and pack the signed CLI update feed"
+        },
+        {
+          "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+          "if": "steps.signing.outputs.available == 'true'",
+          "with": {
+            "name": "cli-update-feed",
+            "path": "dist/update-feed/spacedatanetwork-update-feed-${{ needs.beta-version.outputs.package_version }}.tar.gz"
+          }
+        }
+      ]
+    }
+  }
+}
