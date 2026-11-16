@@ -334,7 +334,7 @@ describe('catalog scale: the gate from the task, and byte identity', () => {
       expect(paths.length).toBeGreaterThan(0);
       const { keys } = persistedTotals(persistenceStore);
       expect(total).toBeGreaterThan(streamBytes.byteLength);
-      expect(total / streamBytes.byteLength).toBeLessThan(1.35);
+      expect(total / streamBytes.byteLength, JSON.stringify({ filesystemBytes: total, inputBytes: streamBytes.byteLength })).toBeLessThan(1.35);
       // And no whole-blob envelope snapshot was written for the shard.
       const envelopeKey = keys.find((key) => key.endsWith(':record-envelopes'));
       if (envelopeKey) {
