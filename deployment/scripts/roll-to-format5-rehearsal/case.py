@@ -260,6 +260,10 @@ ExecStartPre=/bin/sh -c 'test ! -d /case/store/fsql5'
         time.sleep(0.25)
     code = proc.wait()
     (ROOT / 'roll.exit').write_text(str(code) + '\n')
+    (ROOT / 'conversion-observation.json').write_text(json.dumps({
+        'conversion_seconds': round(migration_end-migration_start, 2) if migration_end else None,
+        'peak_conversion_rss_kib_sampled': peak_kib,
+        'switched_fsql5_bytes': switched_bytes}) + '\n')
     ledger = (ROOT / 'ledger.log').read_text()
     wait_ready(seconds)
     if peer() != expected:
