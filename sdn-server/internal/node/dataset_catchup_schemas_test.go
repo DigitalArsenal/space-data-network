@@ -4,6 +4,8 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/readbudget"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
+	"github.com/spacedatanetwork/sdn-server/internal/storage"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -61,5 +63,42 @@ func TestDatasetCatchupDiscoveryDoesNotStarveRateLimitedSchemas(t *testing.T) {
 	}
 	if len(seen) != len(validator.Schemas()) {
 		t.Fatalf("listed %d of %d schemas across 32 passes", len(seen), len(validator.Schemas()))
+	}
+}
+
+func TestDatasetCatchupSchemaReadErrorPolicy(t *testing.T) {
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := storage.NewFlatSQLStore(filepath.Join(t.TempDir(), "store"), validator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name      string
+		policy    config.TrustedImportConfig
+		wantError bool
+	}{
+		{name: "allow all", policy: config.TrustedImportConfig{NewLanes: "allow"}},
+		{name: "wildcard allow", policy: config.TrustedImportConfig{Allow: []config.LaneSelector{{Schema: "*"}}}},
+		{name: "scoped held discovery fails closed", wantError: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.Config{}
+			cfg.Peers.TrustedImport = tc.policy
+			n := &Node{validator: validator, store: store, config: cfg}
+			schemas, err := n.datasetCatchupSchemas("provider")
+			if tc.wantError {
+				if err == nil {
+					t.Fatal("unreadable held-schema state must be reported")
+				}
+			} else if err != nil || len(schemas) != len(validator.Schemas()) {
+				t.Fatalf("allow-all discovery: schemas=%d want=%d err=%v", len(schemas), len(validator.Schemas()), err)
+			}
+		})
 	}
 }

@@ -34,27 +34,39 @@ func (n *Node) datasetCatchupSchemas(from peer.ID) ([]string, error) {
 		return schemas, nil
 	}
 	held := map[string]bool{}
-	ledger := n.trustedImportLedger()
-	ledger.mu.Lock()
-	for _, entry := range ledger.lanes {
-		held[strings.ToLower(entry.Schema)] = true
-	}
-	ledger.mu.Unlock()
-	progress, err := n.store.SourceBatchProgress()
-	if err != nil {
-		return nil, err
-	}
-	for _, entry := range progress {
-		if entry.Count > 0 {
-			held[strings.ToLower(entry.SchemaName)] = true
+	policy := n.config.Peers.TrustedImport
+	needsHeld := false
+	for _, schema := range schemas {
+		if !mayDiscoverTrustedSchema(policy, from.String(), schema, false) && mayDiscoverTrustedSchema(policy, from.String(), schema, true) {
+			needsHeld = true
+			break
 		}
 	}
-	publications, err := n.store.ListDatasetShardPublicationsForProfile(storage.DatasetPublicationQueryProfile, "")
-	if err != nil {
-		return nil, err
-	}
-	for _, entry := range publications {
-		held[strings.ToLower(entry.SchemaName)] = true
+	// Read local state only when holding a schema can change discovery policy.
+	// Scoped discovery reports read errors rather than silently losing held data.
+	if needsHeld {
+		ledger := n.trustedImportLedger()
+		ledger.mu.Lock()
+		for _, entry := range ledger.lanes {
+			held[strings.ToLower(entry.Schema)] = true
+		}
+		ledger.mu.Unlock()
+		progress, err := n.store.SourceBatchProgress()
+		if err != nil {
+			return nil, err
+		}
+		for _, entry := range progress {
+			if entry.Count > 0 {
+				held[strings.ToLower(entry.SchemaName)] = true
+			}
+		}
+		publications, err := n.store.ListDatasetShardPublicationsForProfile(storage.DatasetPublicationQueryProfile, "")
+		if err != nil {
+			return nil, err
+		}
+		for _, entry := range publications {
+			held[strings.ToLower(entry.SchemaName)] = true
+		}
 	}
 	candidates := make([]string, 0, len(schemas))
 	for _, schema := range schemas {
