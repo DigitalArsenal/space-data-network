@@ -457,6 +457,25 @@ func migrate4IdentityText(text string) bool {
 func (m *migrator4) checkFields(schema string, f typeFields, e storage.IndexEntry, r format4.Rec, c *migrate4Check) {
 	c.FieldChecks++
 	switch {
+	case r.HasEpoch && !e.EpochUnix.Valid:
+		switch {
+		case len(r.Data) == 0:
+			c.bad("%s %s: epoch present in format 5, absent in format 1; copy bytes are missing", schema, e.CID)
+		case encfield.IsSealed(r.Data):
+			c.bad("%s %s: epoch present in format 5, absent in format 1; copy bytes are sealed", schema, e.CID)
+		default:
+			epoch, ok, err := storage.IndexEpoch(schema, r.Data)
+			switch {
+			case err != nil:
+				c.bad("%s %s: epoch present in format 5, absent in format 1; index rule: %v", schema, e.CID, err)
+			case !ok:
+				c.bad("%s %s: epoch present in format 5, absent in format 1; index rule extracts no epoch", schema, e.CID)
+			case epoch != r.Epoch:
+				c.bad("%s %s: epoch %d in format 5, absent in format 1; index rule extracts %d", schema, e.CID, r.Epoch, epoch)
+			default:
+				c.EpochsFormat1Lacked++
+			}
+		}
 	case r.HasEpoch != e.EpochUnix.Valid:
 		c.bad("%s %s: epoch present %v in format 5, %v in format 1", schema, e.CID, r.HasEpoch, e.EpochUnix.Valid)
 	case r.HasEpoch && r.Epoch != e.EpochUnix.Int64:

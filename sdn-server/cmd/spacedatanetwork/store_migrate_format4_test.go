@@ -23,8 +23,11 @@ package main
 import (
 	"bytes"
 	"context"
+	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -39,6 +42,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/IQC"
+	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/MPE"
 
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
@@ -533,6 +537,101 @@ func format4Dump(t *testing.T, api format4.API, root string) string {
 }
 
 // ---- tests ------------------------------------------------------------------------------
+
+func TestStoreMigrateFormat5LegacyIndexEpoch(t *testing.T) {
+	requireFormat4Engine(t)
+	if err := prewarmAOTArtifacts(io.Discard, storage.EngineAOTCacheDir()); err != nil {
+		t.Fatalf("prewarm-aot: %v", err)
+	}
+	b := flatbuffers.NewBuilder(128)
+	entity := b.CreateString("synthetic-migration-epoch")
+	MPE.MPEStart(b)
+	MPE.MPEAddENTITY_ID(b, entity)
+	MPE.MPEAddEPOCH(b, -0.5)
+	b.FinishSizePrefixedWithFileIdentifier(MPE.MPEEnd(b), []byte(MPE.MPEIdentifier))
+	data := b.FinishedBytes()
+	const wantEpoch int64 = -1 // The index rule floors fractional seconds.
+
+	for _, missing := range []bool{true, false} {
+		name := "present_but_wrong"
+		if missing {
+			name = "missing_legacy_epoch"
+		}
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			v, err := sds.NewValidator(nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			s := newFormat1Store(t, root, v)
+			cid, err := s.Store("MPE.fbs", data, "synthetic-source", nil)
+			closeErr := s.Close()
+			if err != nil || closeErr != nil {
+				t.Fatalf("store: %v; close: %v", err, closeErr)
+			}
+			db, err := sql.Open("sqlite", filepath.Join(root, marker.LegacyControl))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var epoch, day any
+			if !missing {
+				epoch, day = int64(1), "1970-01-01"
+			}
+			res, err := db.Exec(`UPDATE sdn_record_index SET epoch_unix = ?, epoch_day = ? WHERE schema_name = 'MPE.fbs' AND cid = ?`, epoch, day, cid)
+			closeErr = db.Close()
+			if err != nil || closeErr != nil {
+				t.Fatalf("update index: %v; close: %v", err, closeErr)
+			}
+			if n, err := res.RowsAffected(); err != nil || n != 1 {
+				t.Fatalf("updated %d index rows: %v", n, err)
+			}
+
+			previousTo, previousStore := storeMigrateTo, storeMigrateStore
+			storeMigrateTo, storeMigrateStore = "5", root
+			defer func() { storeMigrateTo, storeMigrateStore = previousTo, previousStore }()
+			var out bytes.Buffer
+			storeMigrateCmd.SetOut(&out)
+			defer storeMigrateCmd.SetOut(nil)
+			migrateErr := runStoreMigrate(storeMigrateCmd, nil)
+			start := bytes.Index(out.Bytes(), []byte("{\n"))
+			if start < 0 {
+				t.Fatalf("no JSON report: %v\n%s", migrateErr, out.String())
+			}
+			var rep migrate4Report
+			if err := json.Unmarshal(out.Bytes()[start:], &rep); err != nil || rep.Check == nil {
+				t.Fatalf("check report: %v\n%s", err, out.String())
+			}
+			mk, err := marker.Read(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !missing {
+				if migrateErr == nil || !strings.Contains(migrateErr.Error(), "the check failed") || rep.Activated || mk.Activated() || !mk.LegacyControlFile {
+					t.Fatalf("wrong epoch must prevent activation: %v, report %+v, markers %+v", migrateErr, rep, mk)
+				}
+				if rep.Check.MismatchCount != 1 || rep.Check.EpochsFormat1Lacked != 0 || len(rep.Check.Mismatches) != 1 || !strings.Contains(rep.Check.Mismatches[0], "epoch -1 in format 5, 1 in format 1") {
+					t.Fatalf("wrong epoch check: %+v", rep.Check)
+				}
+				return
+			}
+			if migrateErr != nil || !rep.Activated || !mk.Activated() || mk.MigratedFrom != 1 {
+				t.Fatalf("missing legacy epoch: %v, report %+v, markers %+v", migrateErr, rep, mk)
+			}
+			if rep.Check.Records != 1 || rep.Check.MismatchCount != 0 || rep.Check.EpochsFormat1Lacked != 1 {
+				t.Fatalf("missing legacy epoch check: %+v", rep.Check)
+			}
+			api := openEngineAt(t, root, "MPE.fbs")
+			defer api.Close(context.Background())
+			recs, err := api.Get(context.Background(), "MPE", []string{cid}, true, true)
+			if err != nil || len(recs) != 1 {
+				t.Fatalf("migrated record: %v, %d copies", err, len(recs))
+			}
+			if !recs[0].HasEpoch || recs[0].Epoch != wantEpoch || !bytes.Equal(recs[0].Data, data) {
+				t.Fatalf("migrated record has epoch %v, %d; want %d and identical bytes", recs[0].HasEpoch, recs[0].Epoch, wantEpoch)
+			}
+		})
+	}
+}
 
 func TestStoreMigrateFormat4TargetFlag(t *testing.T) {
 	for in, want := range map[string]int{"": 2, "2": 2, " 5 ": 5, "sqlite": 5, "SQLite": 5} {
