@@ -21,7 +21,9 @@ import (
 
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/DSS"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
+	"github.com/spacedatanetwork/sdn-server/internal/peers"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
+	"github.com/spacedatanetwork/sdn-server/internal/storage"
 	"github.com/spacedatanetwork/sdn-server/internal/syncwire"
 )
 
@@ -74,7 +76,7 @@ func TestPublicationRealDaemons(t *testing.T) {
 		b.awaitRecords(t, "OMM.fbs", "delivery", a.scan(t, "OMM.fbs", "delivery"), 6*time.Minute)
 		t.Log("delivery, replay, automatic catch-up, and restart assertions passed")
 	})
-	for _, policy := range []string{"untrusted", "deny", "unlisted"} {
+	for policyIndex, policy := range []string{"untrusted", "deny", "unlisted"} {
 		t.Run("refusal_"+policy, func(t *testing.T) {
 			trust := a.id
 			if policy == "untrusted" {
@@ -87,11 +89,25 @@ func TestPublicationRealDaemons(t *testing.T) {
 			b.start(t)
 			time.Sleep(3 * time.Second)
 			source := "refusal-" + policy
-			a.ingestOMM(t, source, "first", 5000, 16)
+			a.ingestOMM(t, source, "first", 5000+policyIndex*100, 16)
 			a.publish(t, "OMM.fbs", source, "first")
 			// Includes the startup catch-up as well as live announcements.
 			time.Sleep(20 * time.Second)
 			b.requireRecords(t, "OMM.fbs", source, map[string]int{})
+			if policy == "untrusted" {
+				raw := b.request(t, "GET", "/api/v1/admin/peers/"+a.id, "", nil, http.StatusOK)
+				var status struct {
+					Trust peers.TrustLevel `json:"trust_level"`
+				}
+				if err := json.Unmarshal(raw, &status); err != nil {
+					t.Fatal(err)
+				}
+				if status.Trust >= peers.Trusted {
+					t.Fatal("refusal receiver trusts the producer")
+				}
+				t.Logf("receiver peer status: trust=%s, below required trusted", status.Trust)
+				return
+			}
 			log := readFileString(b.logPath)
 			reason := "non-trusted"
 			if policy == "deny" {
@@ -114,15 +130,15 @@ func TestPublicationRetentionRealDaemons(t *testing.T) {
 	exe := publicationBinary(t)
 	a := newPublicationDaemon(t, exe, "retention-producer", "", "", "keep-all")
 	a.start(t)
-	for _, rule := range []string{"keep-all", "replace-current", "archive-all"} {
+	for ruleIndex, rule := range []string{"keep-all", "replace-current", "archive-all"} {
 		t.Run(rule, func(t *testing.T) {
 			b := newPublicationDaemon(t, exe, "retention-"+rule, a.address, a.id, rule)
 			b.start(t)
 			time.Sleep(3 * time.Second)
-			a.ingestOMM(t, rule, "first", 10000, 16)
+			a.ingestOMM(t, rule, "first", 10000+ruleIndex*30000, 16)
 			first := a.publish(t, "OMM.fbs", rule, "first")
 			b.awaitRecords(t, "OMM.fbs", rule, a.scan(t, "OMM.fbs", rule), 6*time.Minute)
-			a.ingestOMM(t, rule, "second", 20000, 16)
+			a.ingestOMM(t, rule, "second", 20000+ruleIndex*30000, 16)
 			second := a.publish(t, "OMM.fbs", rule, "second")
 			want := a.scan(t, "OMM.fbs", rule)
 			if rule == "replace-current" {
@@ -294,7 +310,7 @@ func newPublicationDaemon(t *testing.T, exe, name, bootstrap, trust, retention s
 	if err := os.WriteFile(passwordPath, []byte(hex.EncodeToString(password)), 0400); err != nil {
 		t.Fatal(err)
 	}
-	d.env = append(environWithout("HOME", "SDN_CONFIG", "INVOCATION_ID", config.EnvKeyPassword, config.EnvKeyPasswordFile), "HOME="+home, "GOLOG_LOG_LEVEL=sdn-node=debug", config.EnvKeyPasswordFile+"="+passwordPath)
+	d.env = append(environWithout("HOME", "SDN_CONFIG", "INVOCATION_ID", "SDN_STORE_FORMAT", config.EnvKeyPassword, config.EnvKeyPasswordFile), "HOME="+home, "SDN_STORE_FORMAT=5", config.EnvKeyPasswordFile+"="+passwordPath)
 	if os.Getenv("XDG_CACHE_HOME") == "" {
 		if cache, err := os.UserCacheDir(); err == nil {
 			d.env = append(d.env, "XDG_CACHE_HOME="+cache)
@@ -337,9 +353,6 @@ func (d *publicationDaemon) start(t *testing.T) {
 		t.Fatal(err)
 	}
 	args := []string{"daemon", "--allow-multi-daemon", "--config", d.cfg}
-	if strings.Contains(filepath.Base(d.root), "refusal-untrusted") {
-		args = append(args, "--debug")
-	}
 	d.cmd = exec.Command(d.exe, args...)
 	d.cmd.Dir = d.root
 	d.cmd.Env = d.env
@@ -369,6 +382,10 @@ func (d *publicationDaemon) start(t *testing.T) {
 			}
 		}
 		time.Sleep(time.Second)
+	}
+	format, err := storage.StoreFormat(d.store)
+	if err != nil || format != 5 {
+		t.Fatalf("test daemon store format=%d, want 5: %v", format, err)
 	}
 	body := d.request(t, "GET", "/api/v1/id", "", nil, http.StatusOK)
 	var id struct {

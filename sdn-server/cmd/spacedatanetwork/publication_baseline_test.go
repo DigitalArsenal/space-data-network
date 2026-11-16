@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -98,7 +99,7 @@ func TestPublicationBaseline(t *testing.T) {
 				})
 				row.Note = "One published shard via B's Kubo stream forwarder; already imported, so cache is warm; no import on this request"
 				record(row)
-				sizes := publicationStoreSizes(t, b.store)
+				sizes, logical := publicationStoreSizes(t, b.store)
 				b.stop(t)
 				start := time.Now()
 				b.start(t)
@@ -155,6 +156,8 @@ func TestPublicationBaseline(t *testing.T) {
 					return n, int64(data.count)
 				})
 				row.StoreBytesByKind = sizes
+				row.StoreLogicalBytesByKind = logical
+				row.StoreToRecordRatio = float64(sizes["total"]) / float64(row.Bytes)
 				row.ReadySeconds = readySeconds
 				row.PointReadSeconds = publicationPercentiles(point)
 				row.WindowSQLSeconds = publicationPercentiles(window)
@@ -169,26 +172,28 @@ func TestPublicationBaseline(t *testing.T) {
 }
 
 type publicationMeasurement struct {
-	Round                  int                `json:"round"`
-	Operation              string             `json:"operation"`
-	Dataset                string             `json:"dataset"`
-	Bytes                  int64              `json:"bytes"`
-	Records                int64              `json:"records"`
-	Seconds                float64            `json:"seconds"`
-	BytesPerSecond         float64            `json:"bytes_per_second"`
-	RecordsPerSecond       float64            `json:"records_per_second"`
-	Target                 int64              `json:"target_bytes_per_second"`
-	ProducerCPUSeconds     float64            `json:"producer_cpu_seconds"`
-	ReceiverCPUSeconds     float64            `json:"receiver_cpu_seconds"`
-	ProducerSampledPeakRSS int64              `json:"producer_sampled_peak_rss_bytes"`
-	ReceiverSampledPeakRSS int64              `json:"receiver_sampled_peak_rss_bytes"`
-	LoadStart              string             `json:"uptime_start"`
-	LoadEnd                string             `json:"uptime_end"`
-	StoreBytesByKind       map[string]int64   `json:"receiver_store_bytes_by_kind,omitempty"`
-	ReadySeconds           float64            `json:"receiver_ready_seconds,omitempty"`
-	PointReadSeconds       map[string]float64 `json:"point_read_seconds,omitempty"`
-	WindowSQLSeconds       map[string]float64 `json:"window_sql_seconds,omitempty"`
-	Note                   string             `json:"note,omitempty"`
+	Round                   int                `json:"round"`
+	Operation               string             `json:"operation"`
+	Dataset                 string             `json:"dataset"`
+	Bytes                   int64              `json:"bytes"`
+	Records                 int64              `json:"records"`
+	Seconds                 float64            `json:"seconds"`
+	BytesPerSecond          float64            `json:"bytes_per_second"`
+	RecordsPerSecond        float64            `json:"records_per_second"`
+	Target                  int64              `json:"target_bytes_per_second"`
+	ProducerCPUSeconds      float64            `json:"producer_cpu_seconds"`
+	ReceiverCPUSeconds      float64            `json:"receiver_cpu_seconds"`
+	ProducerSampledPeakRSS  int64              `json:"producer_sampled_peak_rss_bytes"`
+	ReceiverSampledPeakRSS  int64              `json:"receiver_sampled_peak_rss_bytes"`
+	LoadStart               string             `json:"uptime_start"`
+	LoadEnd                 string             `json:"uptime_end"`
+	StoreBytesByKind        map[string]int64   `json:"receiver_store_bytes_by_kind,omitempty"`
+	StoreLogicalBytesByKind map[string]int64   `json:"receiver_store_logical_bytes_by_kind,omitempty"`
+	StoreToRecordRatio      float64            `json:"receiver_disk_to_record_bytes_ratio,omitempty"`
+	ReadySeconds            float64            `json:"receiver_ready_seconds,omitempty"`
+	PointReadSeconds        map[string]float64 `json:"point_read_seconds,omitempty"`
+	WindowSQLSeconds        map[string]float64 `json:"window_sql_seconds,omitempty"`
+	Note                    string             `json:"note,omitempty"`
 }
 
 func measurePublication(t *testing.T, a, b *publicationDaemon, operation, dataset string, run func() (int64, int64)) publicationMeasurement {
@@ -328,7 +333,7 @@ func baselineOEM(i int) []byte {
 	reference := b.CreateString("GCRF")
 	// The generated Go table's builder is package-private. These slots are
 	// ephemerisDataBlock's declared fields in OEM, with no schema changes.
-	b.StartObject(24)
+	b.StartObject(22)
 	b.PrependUOffsetTSlot(2, center, 0)
 	b.PrependUOffsetTSlot(3, reference, 0)
 	b.PrependUOffsetTSlot(7, start, 0)
@@ -387,9 +392,10 @@ func baselineSQL(schema string) []byte {
 	QRP.FinishSizePrefixedQRPBuffer(b, QRP.QRPEnd(b))
 	return b.FinishedBytes()
 }
-func publicationStoreSizes(t *testing.T, root string) map[string]int64 {
+func publicationStoreSizes(t *testing.T, root string) (map[string]int64, map[string]int64) {
 	t.Helper()
 	sizes := map[string]int64{}
+	logical := map[string]int64{}
 	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -399,15 +405,21 @@ func publicationStoreSizes(t *testing.T, root string) map[string]int64 {
 			if kind == "" {
 				kind = "no-extension"
 			}
-			sizes[kind] += info.Size()
-			sizes["total"] += info.Size()
+			logical[kind] += info.Size()
+			logical["total"] += info.Size()
+			disk := info.Size()
+			if stat, ok := info.Sys().(*syscall.Stat_t); ok {
+				disk = stat.Blocks * 512
+			}
+			sizes[kind] += disk
+			sizes["total"] += disk
 		}
 		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return sizes
+	return sizes, logical
 }
 func publicationPercentiles(values []float64) map[string]float64 {
 	if len(values) == 0 {

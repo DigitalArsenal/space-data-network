@@ -39,7 +39,13 @@ func TestPublicationInvalidSignatureRealDaemons(t *testing.T) {
 	deadline := time.Now().Add(30 * time.Second)
 	for {
 		text := readFileString(b.logPath)
-		if strings.Contains(text, "signature verification failed") || strings.Contains(text, "invalid signature") {
+		rejected := false
+		for _, line := range strings.Split(text, "\n") {
+			if strings.Contains(line, "PNM") && strings.Contains(line, "signature") && (strings.Contains(line, "invalid") || strings.Contains(line, "failed")) {
+				rejected = true
+			}
+		}
+		if rejected {
 			break
 		}
 		if time.Now().After(deadline) {
