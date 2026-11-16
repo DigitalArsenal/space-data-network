@@ -23,6 +23,7 @@ import (
 
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
+	"github.com/spacedatanetwork/sdn-server/internal/pinpolicy"
 	sdnpubsub "github.com/spacedatanetwork/sdn-server/internal/pubsub"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
@@ -79,6 +80,14 @@ func TestBuildTipQueueWiresRealIPFSFetcherAndPinnerWhenConfigured(t *testing.T) 
 			Admin: config.AdminConfig{IPFSAPIURL: ipfs.URL},
 		},
 	}
+	policy, err := pinpolicy.New(ipfs.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := policy.Apply(context.Background(), pinpolicy.EncodeChanges(pinpolicy.RuleChange{Class: pinpolicy.Tip, Enabled: true})); err != nil {
+		t.Fatal(err)
+	}
+	n.pins = policy
 	tq := n.buildTipQueue()
 	if tq == nil {
 		t.Fatal("buildTipQueue returned nil")

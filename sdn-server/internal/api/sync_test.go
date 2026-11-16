@@ -149,10 +149,17 @@ func TestSyncWithoutASyncPrimitiveReportsErrorInPlainWords(t *testing.T) {
 		t.Fatalf("ERROR = %q, want a plain sentence", msg)
 	}
 
-	// Pin without Kubo and without a publication reads the same way.
+	// Pin actions belong to the node pin policy and return explicit guidance here.
 	rec, frames = syncFrames(t, mux, http.MethodPost, SyncPath, EncodeDSSAction("OMM.fbs", "space-data-network-02", "celestrak-gp", DSSActionPin))
-	if rec.Code != http.StatusAccepted || int8(decodeDSSFrame(t, frames[0]).STATUS()) != DSSStateError {
-		t.Fatalf("POST Pin status = %d STATUS = %d", rec.Code, decodeDSSFrame(t, frames[0]).STATUS())
+	if rec.Code != http.StatusBadRequest || len(frames) != 1 {
+		t.Fatalf("POST Pin status = %d, frames = %d; want 400 and one error", rec.Code, len(frames))
+	}
+	refusal, err := ParseQRP(frames[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if int8(refusal.KIND()) != QRPKindError || string(refusal.ERROR_CODE()) != "bad_request" || !strings.Contains(string(refusal.MESSAGE()), "/api/node/pins") {
+		t.Fatalf("pin refusal kind=%v code=%q message=%q", refusal.KIND(), refusal.ERROR_CODE(), refusal.MESSAGE())
 	}
 }
 
