@@ -129,6 +129,7 @@ def snapshot(directory, schemas):
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=False)
     results = {}
+    stats_comparison = {}
     for schema in sorted(schemas):
         if not schema.replace('_', '').replace('.fbs', '').isalnum() or not schema.endswith('.fbs'):
             raise ValueError('unexpected schema spelling')
@@ -151,8 +152,11 @@ def snapshot(directory, schemas):
                     db.commit()
         db.commit()
         db.close()
-        if count != schemas[schema]:
-            raise RuntimeError('baseline scan count differs from stats for ' + schema)
+        # Stats sums source associations; a raw scan enumerates content addresses.
+        # The scan validates its own advertised total against all frames read.
+        stats_comparison[schema] = {'stats_source_count': schemas[schema],
+                                    'scanned_records': count}
+        (directory / 'scan-versus-stats.json').write_text(json.dumps(stats_comparison, sort_keys=True) + '\n')
         results[schema] = count
     (directory / 'summary.json').write_text(json.dumps(results, sort_keys=True) + '\n')
     return results

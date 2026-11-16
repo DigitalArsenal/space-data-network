@@ -83,8 +83,10 @@ argument. The image and original copy are removed after the case.
 
 Record preservation uses the node's anonymous `/api/v1/data/scan` endpoint.
 The driver waits for startup connector persistence, then scans every standard
-through the snapshot cursor. It checks the advertised total against every
-record read. Before-state records stay in size-prefixed FlatBuffer streams in
+through the snapshot cursor. It checks the scan's advertised total against every
+record read. Stats counts sum source associations and can exceed unique record
+counts; both figures are retained in `scan-versus-stats.json`. Their equality
+is not a record-preservation condition. Before-state records stay in size-prefixed FlatBuffer streams in
 `--record-evidence-dir`; an index contains SHA-256 content-address digests and
 stream offsets. The after-state scan looks up every content address and
 compares the complete bytes against that stream. Missing records, different
