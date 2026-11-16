@@ -69,9 +69,10 @@ func TestFormat5LegacyFullTextIndexRepairsOnOpen(t *testing.T) {
 	}
 	// Fail repair commits while inspecting coverage. The test removes this
 	// trigger only with the engine closed; no two SQLite hosts write together.
-	if _, err := index.Exec("CREATE TRIGGER hold_repair BEFORE INSERT ON ftsmeta WHEN NEW.k='extractor_version' BEGIN SELECT RAISE(ABORT, 'test repair barrier'); END"); err != nil {
+	if _, err := index.Exec("CREATE TRIGGER hold_repair BEFORE INSERT ON ftsmeta WHEN NEW.k='extractor_version' AND NEW.v=1 BEGIN SELECT RAISE(ABORT, 'test repair barrier'); END"); err != nil {
 		t.Fatal(err)
 	}
+	t.Log("legacy fixture ready; reopening")
 	e = openReal(t, root, format4.OpenExisting, 0, nil)
 	states, err := e.FTS(ctx)
 	if err != nil {
@@ -89,6 +90,7 @@ func TestFormat5LegacyFullTextIndexRepairsOnOpen(t *testing.T) {
 	if _, err := e.Scan(ctx, query); !errors.Is(err, format4.ErrBusy) {
 		t.Fatalf("search during repair: %v, want BUSY", err)
 	}
+	t.Log("building and BUSY observed; releasing repair barrier")
 	if err := e.Close(ctx); err != nil {
 		t.Fatal(err)
 	}
