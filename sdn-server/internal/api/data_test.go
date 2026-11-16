@@ -300,6 +300,12 @@ func indexOfTestString(values []string, target string) int {
 }
 
 func TestDataRecordEndpointReturnsRawFlatBuffer(t *testing.T) {
+	passwordPath := filepath.Join(t.TempDir(), "key-password")
+	if err := os.WriteFile(passwordPath, []byte("record-endpoint-test-password"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SDN_KEY_PASSWORD", "")
+	t.Setenv("SDN_KEY_PASSWORD_FILE", passwordPath)
 	store := newDataAPITestStore(t)
 	payload := sds.NewEPMBuilder().
 		WithDN("Record Endpoint Node").

@@ -204,7 +204,7 @@ jobs:
     # Above the lane's own 25m go-test budget, so an overrun surfaces as go
     # test's timeout panic (which names the running test) instead of the job
     # being killed with no diagnostic.
-    timeout-minutes: 35
+    timeout-minutes: 100
     steps:
       - uses: actions/checkout@v4
         with:
@@ -296,6 +296,8 @@ jobs:
           # Store format 2 on the published partition-store engine (T6): the
           # writer and reader instances, rings, mailboxes, RB1, store-migrate.
           ../scripts/go-with-wasmedge.sh test ./internal/storage/format2/ -count=1 -timeout 30m -v
+          # The unified query E2E requires the patched runtime and fails if absent.
+          ../scripts/go-with-wasmedge.sh test ./internal/storage/format4/ -count=1 -timeout 20m -v -run '^TestUnifiedFlatBufferQueryReopen$'
           # The daemon on formats 2 and 4: the storage API against format 1
           # on the same writes (format 4 on its Fake and, once embedded, on
           # its engine), and the dashboard lane through the API under ingest.
@@ -377,6 +379,25 @@ jobs:
       - name: plugin demo
         run: ./scripts/ci-local.sh demo
 
+  dashboard:
+    name: Embedded dashboard E2E (real node)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: sdn-js/package-lock.json
+      - uses: ./.github/actions/sdn-go-env
+        with:
+          needs-flow-bundles: 'false'
+      - name: Embedded dashboard
+        run: ./scripts/ci-local.sh dashboard
+
   # ONE CHECK TO REQUIRE. Splitting the pipeline into parallel jobs changes
   # what "CI passed" means: seven jobs must pass, not one. Branch protection can
   # require this single job instead of enumerating them, and it fails if any
@@ -395,6 +416,7 @@ jobs:
       - update-channel-e2e
       - go-builds
       - js
+      - dashboard
     steps:
       - name: Report
         env:

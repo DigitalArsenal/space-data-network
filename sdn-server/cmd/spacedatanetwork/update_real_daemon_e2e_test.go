@@ -43,6 +43,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -68,6 +69,7 @@ import (
 
 	"github.com/spacedatanetwork/sdn-server/internal/bootstrap"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
+	"github.com/spacedatanetwork/sdn-server/internal/keys"
 	"github.com/spacedatanetwork/sdn-server/internal/sigdomain"
 	"github.com/spacedatanetwork/sdn-server/internal/update"
 	"github.com/spacedatanetwork/sdn-server/internal/updatesign"
@@ -163,8 +165,22 @@ func runRealDaemonUpdateChannel(t *testing.T, install realInstaller) {
 	cfg := filepath.Join(work, "config.yaml")
 	writeRealDaemonConfig(t, cfg, store, adminPort, freeLoopbackPort(t), freeLoopbackPort(t), healthSeconds)
 	adminBase := "http://127.0.0.1:" + strconv.Itoa(adminPort)
-	env := append(environWithout("INVOCATION_ID", "SDN_CONFIG", "SDN_UPDATE_TRUST_ROOTS", "HOME", "SSL_CERT_FILE", "SSL_CERT_DIR"),
-		"HOME="+home, "SSL_CERT_FILE="+feed.certFile)
+	// A Linux node whose account cannot read the machine fingerprint's DMI
+	// source refuses its first start without a key password file, and the
+	// installers give such a node one. Whether a hosted CI runner is such a
+	// host differs from run to run, so these daemons have the file on every
+	// host. It is named in their environment, as a service unit names it, and
+	// never in this test process's own.
+	secret := make([]byte, 32)
+	if _, err := rand.Read(secret); err != nil {
+		t.Fatal(err)
+	}
+	keyPassword := filepath.Join(work, "key-password")
+	if err := os.WriteFile(keyPassword, []byte(hex.EncodeToString(secret)), 0o400); err != nil {
+		t.Fatal(err)
+	}
+	env := append(environWithout("INVOCATION_ID", "SDN_CONFIG", "SDN_UPDATE_TRUST_ROOTS", "HOME", "SSL_CERT_FILE", "SSL_CERT_DIR", config.EnvKeyPassword, config.EnvKeyPasswordFile),
+		"HOME="+home, "SSL_CERT_FILE="+feed.certFile, config.EnvKeyPasswordFile+"="+keyPassword)
 	// The compiled FlatSQL engine is cached per host (graph/e2e/sdn-node.mjs
 	// shares it too): the daemons reuse the runner's cache instead of
 	// compiling it again under the throwaway HOME.
@@ -197,6 +213,10 @@ func runRealDaemonUpdateChannel(t *testing.T, install realInstaller) {
 	// reads: a fallback to the built-in bootstrap peers would already have
 	// dialed production nodes by the time a log said so.
 	requireIsolatedConfig(t, cfg)
+
+	// Says in the log whether this host would have refused a node without the
+	// key password file (ok, absent or refused).
+	t.Logf("machine fingerprint for this account on this host: %s", keys.CheckMachineFingerprint().Status)
 
 	// v1, started by hand like an operator's first run.
 	daemonLogs := []string{filepath.Join(work, "daemon-v1.log")}

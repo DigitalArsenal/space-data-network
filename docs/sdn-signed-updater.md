@@ -445,7 +445,8 @@ production key replaces it through a release that carries `trust_roots`.
 - **A release is required for the channel.** The release channel carries
   nothing until a release is cut with `SDN_UPDATE_SIGNING_KEY_PEM` and
   `SDN_UPDATE_KEY_ID` set and its `spacedatanetwork-update-feed-<v>.tar.gz` is
-  published to host-01's feed directory. The `cli-update-feed` job fails a
+  published to host-01's feed directory (v1.1.5's was, on 2026-11-16). The
+  `cli-update-feed` job fails a
   stable release without the key (a beta warns and ships no feed), derives the
   key id from the PEM and fails if it differs from `SDN_UPDATE_KEY_ID` or is
   not in `fleet-trust-roots.json` (`check-update-signing-key.mjs`; there is no

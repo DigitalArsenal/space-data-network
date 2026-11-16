@@ -197,7 +197,12 @@ func TestAdvertisedEncryptionKeyFollowsRotatedPath(t *testing.T) {
 }
 
 func TestServicePersistsProfileThroughEncryptedFlatSQLStore(t *testing.T) {
-	t.Parallel()
+	passwordPath := filepath.Join(t.TempDir(), "key-password")
+	if err := os.WriteFile(passwordPath, []byte("profile-store-test-password"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SDN_KEY_PASSWORD", "")
+	t.Setenv("SDN_KEY_PASSWORD_FILE", passwordPath)
 
 	validator, err := sds.NewValidator(nil)
 	if err != nil {

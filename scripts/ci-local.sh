@@ -15,6 +15,7 @@
 #   go-heavy                       heavy
 #   go-builds                      builds
 #   js                             js, delivery, demo
+#   dashboard                      dashboard
 #   kubo-bolt-on                   kubo
 #
 # WHERE THEY DIVERGE, AND WHY. `quick` is all of the above except `heavy` —
@@ -32,6 +33,7 @@
 #   ./scripts/ci-local.sh builds     # node + edge-relay builds only
 #   ./scripts/ci-local.sh race       # CI-only/full race suite
 #   ./scripts/ci-local.sh js         # sdn-js checks only
+#   ./scripts/ci-local.sh dashboard  # embedded dashboard against the built node
 #   ./scripts/ci-local.sh kubo-pin   # the linked Kubo: version and directives only
 #   ./scripts/ci-local.sh delivery   # focused module-delivery compatibility checks
 #   ./scripts/ci-local.sh plugin     # legacy alias for delivery
@@ -424,6 +426,9 @@ go_test_with_timings() {
 # anybody skips. Locally `quick` leaves it out and `full` includes it.
 HEAVY_GO_PACKAGES="github.com/spacedatanetwork/sdn-server/internal/storage"
 
+# This E2E requires the patched runtime and runs in the substrate job.
+SUBSTRATE_GO_TESTS="^TestUnifiedFlatBufferQueryReopen$"
+
 heavy_pkg_filter() {
   local filter=""
   for pkg in $HEAVY_GO_PACKAGES; do
@@ -460,6 +465,12 @@ heavy_pkg_filter() {
 # after an hour. The timings table says which package if it ever does.
 QUICK_GO_TEST_TIMEOUT="10m"
 HEAVY_GO_TEST_TIMEOUT="25m"
+# The 2026-11-16 Linux run spent 16m38s in this test before its group
+# reached 25m; the 100,000-object case was still running after 9m34s.
+# Alone on macOS with patched WasmEdge, both cases passed in 214.28s.
+# Give the complete scale exercise its own budget, before the four groups.
+HEAVY_GO_LONG_TESTS="TestPublicationCatalogScaleDaily"
+HEAVY_GO_LONG_TEST_TIMEOUT="60m"
 # Unchanged at 30m and NOT measured: -race is local/`full` only, no CI lane
 # runs it, and I have no timing for it. Do not treat this one as sized.
 RACE_GO_TEST_TIMEOUT="30m"
@@ -483,7 +494,7 @@ run_go() {
   local pkgs
   pkgs=$("$ROOT/scripts/go-with-wasmedge.sh" list ./... | grep -Ev "$(heavy_pkg_filter)")
   # shellcheck disable=SC2086
-  go_test_with_timings quick -p=1 -timeout="$QUICK_GO_TEST_TIMEOUT" -count=1 $pkgs \
+  go_test_with_timings quick -p=1 -timeout="$QUICK_GO_TEST_TIMEOUT" -count=1 -skip="$SUBSTRATE_GO_TESTS" $pkgs \
     || fail "go test (quick)"
   pass "go test (quick)"
 }
@@ -491,10 +502,11 @@ run_go() {
 run_go_heavy() {
   prepare_go_toolchain
 
-  step "Go tests (four parallel groups: $HEAVY_GO_PACKAGES)"
+  step "Go tests (isolated scale tests, then four parallel groups: $HEAVY_GO_PACKAGES)"
   local pkg group pattern pid failed listed
   local artifact_dir="$ROOT/.ci-artifacts"
   local pids=()
+  local logs=()
   mkdir -p "$artifact_dir"
   for pkg in $HEAVY_GO_PACKAGES; do
     local label="${pkg##*/}"
@@ -506,25 +518,32 @@ run_go_heavy() {
     fi
     LC_ALL=C grep -E '^(Test|Example|Fuzz)[A-Za-z0-9_]*$' "$listed" | LC_ALL=C sort > "$artifact_dir/heavy-${label}-all.txt"
     [[ -s "$artifact_dir/heavy-${label}-all.txt" ]] || fail "no tests discovered in $pkg"
-    # Sorted names use round-robin assignment. The discovered list is the
-    # authority, including examples and fuzz seed tests run by go test.
+    # Split named long tests before assigning the remaining sorted names.
+    # Discovery remains authoritative, including examples and fuzz seeds.
+    printf '%s\n' $HEAVY_GO_LONG_TESTS | LC_ALL=C sort > "$artifact_dir/heavy-${label}-long.txt"
+    grep -Fxv -f "$artifact_dir/heavy-${label}-long.txt" "$artifact_dir/heavy-${label}-all.txt" > "$artifact_dir/heavy-${label}-regular.txt" || [[ $? == 1 ]]
     for group in 0 1 2 3; do
-      awk -v group="$group" '(NR - 1) % 4 == group' "$artifact_dir/heavy-${label}-all.txt" > "$artifact_dir/heavy-${label}-${group}.txt"
+      awk -v group="$group" '(NR - 1) % 4 == group' "$artifact_dir/heavy-${label}-regular.txt" > "$artifact_dir/heavy-${label}-${group}.txt"
     done
-    cat "$artifact_dir/heavy-${label}-"[0-3].txt | LC_ALL=C sort > "$artifact_dir/heavy-${label}-covered.txt"
+    cat "$artifact_dir/heavy-${label}-long.txt" "$artifact_dir/heavy-${label}-"[0-3].txt | LC_ALL=C sort > "$artifact_dir/heavy-${label}-covered.txt"
     cmp -s "$artifact_dir/heavy-${label}-all.txt" "$artifact_dir/heavy-${label}-covered.txt" \
       || fail "test group coverage differs from go test -list"
     [[ -z "$(uniq -d "$artifact_dir/heavy-${label}-covered.txt")" ]] \
       || fail "a test appears more than once"
+    failed=0
+    logs=("$artifact_dir/gotest-heavy-${label}-long.log")
+    pattern="^($(paste -sd '|' "$artifact_dir/heavy-${label}-long.txt"))$"
+    echo "Group long: $(wc -l < "$artifact_dir/heavy-${label}-long.txt") tests"
+    go_test_with_timings "heavy-${label}-long" -v -p=1 -timeout="$HEAVY_GO_LONG_TEST_TIMEOUT" -count=1 -run "$pattern" "$pkg" || failed=1
     pids=()
     for group in 0 1 2 3; do
       [[ -s "$artifact_dir/heavy-${label}-${group}.txt" ]] || continue
       pattern="^($(paste -sd '|' "$artifact_dir/heavy-${label}-${group}.txt"))$"
       echo "Group $group: $(wc -l < "$artifact_dir/heavy-${label}-${group}.txt") tests"
+      logs+=("$artifact_dir/gotest-heavy-${label}-${group}.log")
       go_test_with_timings "heavy-${label}-${group}" -v -p=1 -timeout="$HEAVY_GO_TEST_TIMEOUT" -count=1 -run "$pattern" "$pkg" &
       pids+=("$!")
     done
-    failed=0
     for pid in "${pids[@]}"; do
       wait "$pid" || failed=1
     done
@@ -532,9 +551,9 @@ run_go_heavy() {
     local ran="$artifact_dir/heavy-${label}-ran.txt"
     local ended="$artifact_dir/heavy-${label}-ended.txt"
     awk '$1 == "===" && $2 == "RUN" && $3 !~ /\// { print $3 }' \
-      "$artifact_dir/gotest-heavy-${label}-"[0-3].log | LC_ALL=C sort > "$ran"
+      "${logs[@]}" | LC_ALL=C sort > "$ran"
     awk '$1 == "---" && ($2 == "PASS:" || $2 == "FAIL:" || $2 == "SKIP:") && $3 !~ /\// { print $3 }' \
-      "$artifact_dir/gotest-heavy-${label}-"[0-3].log | LC_ALL=C sort > "$ended"
+      "${logs[@]}" | LC_ALL=C sort > "$ended"
     cmp -s "$artifact_dir/heavy-${label}-all.txt" "$ran" \
       || fail "executed tests differ from go test -list (missing, extra, or duplicate execution)"
     cmp -s "$artifact_dir/heavy-${label}-all.txt" "$ended" \
@@ -566,10 +585,22 @@ run_go_builds() {
   pass "go build spacedatanetwork-edge"
 }
 
-run_sdn_js() {
+prepare_sdn_js_deps() {
   step "sdn-js install"
   ensure_npm_deps "$ROOT/sdn-js" eslint vitest tsup
   pass "sdn-js npm ci"
+}
+
+prepare_chromium() {
+  local playwright_install_args=(install chromium)
+  if [[ "${CI:-}" == "true" || "${CI:-}" == "1" ]]; then
+    playwright_install_args=(install --with-deps chromium)
+  fi
+  (cd "$ROOT/sdn-js" && npm_config_cache="$ROOT/.npm-cache" npx --yes playwright "${playwright_install_args[@]}" >/dev/null)
+}
+
+run_sdn_js() {
+  prepare_sdn_js_deps
 
   local eslint_config=""
   for cfg in \
@@ -638,16 +669,33 @@ run_sdn_js() {
   #
   # Headless chromium only — never a window on the owner's machine.
   step "sdn-js browser direct interop (webtransport + webrtc-direct)"
-  # --with-deps installs system libraries and needs sudo, which a runner has
-  # and the owner's machine must never be asked for.
-  local playwright_install_args=(install chromium)
-  if [[ "${CI:-}" == "true" || "${CI:-}" == "1" ]]; then
-    playwright_install_args=(install --with-deps chromium)
-  fi
-  (cd "$ROOT/sdn-js" \
-    && npm_config_cache="$ROOT/.npm-cache" npx --yes playwright "${playwright_install_args[@]}" >/dev/null \
-    && SDN_REQUIRE_BROWSER_INTEROP=1 npm_config_cache="$ROOT/.npm-cache" npm run test:browser-interop)
+  prepare_chromium
+  (cd "$ROOT/sdn-js" && SDN_REQUIRE_BROWSER_INTEROP=1 npm_config_cache="$ROOT/.npm-cache" npm run test:browser-interop)
   pass "sdn-js browser direct interop"
+}
+
+run_dashboard() {
+  prepare_sdn_js_deps
+  prepare_chromium
+  prepare_go_toolchain no-aot
+
+  local binary="$ROOT/.ci-artifacts/spacedatanetwork-dashboard"
+  local results="$ROOT/.ci-artifacts/dashboard"
+  mkdir -p "$results"
+
+  step "Embedded dashboard node build"
+  (cd "$ROOT/sdn-server" && "$ROOT/scripts/go-with-wasmedge.sh" build -o "$binary" ./cmd/spacedatanetwork)
+  pass "embedded dashboard node build"
+
+  step "Embedded dashboard E2E"
+  rm -f "$results/dashboard-embedded.json"
+  if ! node "$ROOT/sdn-js/scripts/dashboard-engine.e2e.mjs" "$binary" "$results"; then
+    if [[ -f "$results/dashboard-embedded.json" ]]; then
+      cat "$results/dashboard-embedded.json"
+    fi
+    fail "embedded dashboard E2E"
+  fi
+  pass "embedded dashboard E2E"
 }
 
 run_module_delivery_compat() {
@@ -726,6 +774,7 @@ case "$MODE" in
     run_go_heavy
     run_go_race
     run_go_builds
+    run_dashboard
     run_sdn_js
     run_module_delivery_compat
     run_plugin_demo
@@ -751,6 +800,9 @@ case "$MODE" in
   js)
     run_sdn_js
     ;;
+  dashboard)
+    run_dashboard
+    ;;
   kubo-pin|versions)
     run_kubo_pin
     ;;
@@ -764,7 +816,7 @@ case "$MODE" in
     run_encryption
     ;;
   *)
-    echo -e "${RED}Usage: $0 [quick|full|preflight|go|heavy|builds|race|js|kubo-pin|delivery|plugin|demo|encryption]${NC}"
+    echo -e "${RED}Usage: $0 [quick|full|preflight|go|heavy|builds|race|js|dashboard|kubo-pin|delivery|plugin|demo|encryption]${NC}"
     exit 1
     ;;
 esac

@@ -244,6 +244,9 @@ func seedSearch(ctx context.Context, root string, records []format4.In) (err err
 	if _, err := e.Rebuild(ctx, "CAT", format4.RebuildFTS); err != nil {
 		return err
 	}
+	if err := format4.WaitFTSReady(ctx, e, "CAT"); err != nil {
+		return err
+	}
 	_, err = fixtureBytes(root)
 	return err
 }

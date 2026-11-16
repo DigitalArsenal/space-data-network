@@ -29,7 +29,7 @@ func TestIdentityWizardProfileSourceRecoversFromUndecryptableLocalEPM(t *testing
 	// Seed a row under a password this box then "loses".
 	t.Setenv("SDN_EPM_STORE_PASSWORD", "password-this-box-lost")
 	t.Setenv("SDN_KEY_PASSWORD", "")
-	t.Setenv("SDN_KEY_PASSWORD_FILE", "")
+	t.Setenv("SDN_KEY_PASSWORD_FILE", writeIdentityWizardSecretFile(t, "orphaned-epm-test-password"))
 	seed, err := storage.NewFlatSQLStore(dir, validator)
 	if err != nil {
 		t.Fatalf("seed open: %v", err)

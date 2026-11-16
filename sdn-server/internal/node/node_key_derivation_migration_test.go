@@ -47,6 +47,7 @@ func writeSealedNodeKey(t *testing.T, keyPath string, keyData []byte, password s
 // the rebuild/resize-stable v3 derivation, and the resulting PeerID must be
 // byte-identical. A changed PeerID here means the fleet loses its identities.
 func TestPeerIDSurvivesDerivationMigration(t *testing.T) {
+	useReadableMachineSource(t)
 	n, keyPath := newDerivedKeyTestNode(t)
 
 	priv, _, err := crypto.GenerateSecp256k1Key(rand.Reader)
