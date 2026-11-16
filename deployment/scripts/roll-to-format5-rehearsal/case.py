@@ -57,7 +57,13 @@ def counts():
 
 
 def peer():
-    return command(str(BIN), 'show-identity', '-c', '/case/config.yaml')
+    invocation = command('systemctl', 'show', '-p', 'InvocationID', '--value', UNIT)
+    journal = command('journalctl', '--no-pager', '-o', 'cat',
+                      '_SYSTEMD_INVOCATION_ID=' + invocation, '--grep=Peer ID: ')
+    matches = re.findall(r'Peer ID: ([a-zA-Z0-9]+)', journal)
+    if not matches:
+        raise RuntimeError('running node has no journal identity')
+    return matches[-1]
 
 
 def tree_size(path):
