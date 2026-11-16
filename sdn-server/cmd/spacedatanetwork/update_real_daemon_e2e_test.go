@@ -165,8 +165,22 @@ func runRealDaemonUpdateChannel(t *testing.T, install realInstaller) {
 	cfg := filepath.Join(work, "config.yaml")
 	writeRealDaemonConfig(t, cfg, store, adminPort, freeLoopbackPort(t), freeLoopbackPort(t), healthSeconds)
 	adminBase := "http://127.0.0.1:" + strconv.Itoa(adminPort)
-	env := append(environWithout("INVOCATION_ID", "SDN_CONFIG", "SDN_UPDATE_TRUST_ROOTS", "HOME", "SSL_CERT_FILE", "SSL_CERT_DIR"),
-		"HOME="+home, "SSL_CERT_FILE="+feed.certFile)
+	// A Linux node whose account cannot read the machine fingerprint's DMI
+	// source refuses its first start without a key password file, and the
+	// installers give such a node one. Whether a hosted CI runner is such a
+	// host differs from run to run, so these daemons have the file on every
+	// host. It is named in their environment, as a service unit names it, and
+	// never in this test process's own.
+	secret := make([]byte, 32)
+	if _, err := rand.Read(secret); err != nil {
+		t.Fatal(err)
+	}
+	keyPassword := filepath.Join(work, "key-password")
+	if err := os.WriteFile(keyPassword, []byte(hex.EncodeToString(secret)), 0o400); err != nil {
+		t.Fatal(err)
+	}
+	env := append(environWithout("INVOCATION_ID", "SDN_CONFIG", "SDN_UPDATE_TRUST_ROOTS", "HOME", "SSL_CERT_FILE", "SSL_CERT_DIR", config.EnvKeyPassword, config.EnvKeyPasswordFile),
+		"HOME="+home, "SSL_CERT_FILE="+feed.certFile, config.EnvKeyPasswordFile+"="+keyPassword)
 	// The compiled FlatSQL engine is cached per host (graph/e2e/sdn-node.mjs
 	// shares it too): the daemons reuse the runner's cache instead of
 	// compiling it again under the throwaway HOME.
@@ -400,22 +414,8 @@ func writeRealDaemonConfig(t *testing.T, path, store string, adminPort, kuboPort
 		t.Fatal(err)
 	}
 	bootstrapAddr := fmt.Sprintf("/ip4/127.0.0.1/tcp/%d/p2p/%s", freeLoopbackPort(t), nowhereID)
-	// A fresh Linux node has a key password file, recorded in its config: the
-	// installers make one where the account cannot read the machine
-	// fingerprint's DMI source, and without it the daemon refuses its first
-	// start there. Whether a hosted CI runner is such a host differs from run
-	// to run, so this node has the file on every host.
-	secret := make([]byte, 32)
-	if _, err := rand.Read(secret); err != nil {
-		t.Fatal(err)
-	}
-	keyPassword := filepath.Join(filepath.Dir(path), "key-password")
-	if err := os.WriteFile(keyPassword, []byte(hex.EncodeToString(secret)), 0o400); err != nil {
-		t.Fatal(err)
-	}
 	lines := []string{
 		"mode: full",
-		"security:", fmt.Sprintf("  key_password_file: %q", keyPassword),
 		"network:", "  listen:", "    - /ip4/127.0.0.1/tcp/0", "  bootstrap:", fmt.Sprintf("    - %q", bootstrapAddr), "  edge_relays: []", "  enable_relay: false",
 		"storage:", fmt.Sprintf("  path: %q", store), "  max_size: 1GB",
 		"peers:", "  strict_mode: false", "  enable_dht: false", "  enable_mdns: false",
