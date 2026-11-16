@@ -811,6 +811,8 @@ func reserveClosedLoopbackAddr(t *testing.T) string {
 
 func newIdentityWizardTestStore(t *testing.T) (string, *storage.FlatSQLStore, peer.ID, string) {
 	t.Helper()
+	t.Setenv(config.EnvKeyPassword, "")
+	t.Setenv(config.EnvKeyPasswordFile, writeIdentityWizardSecretFile(t, "identity-wizard-test-password"))
 
 	tmpDir := t.TempDir()
 	cfg := config.Default()

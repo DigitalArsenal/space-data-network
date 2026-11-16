@@ -15,6 +15,7 @@ import (
 // A keystore sealed under the OLD generation must still open after the
 // upgrade, and must then be re-sealed under the new one.
 func TestCredentialsSurviveDerivationUpgrade(t *testing.T) {
+	useTestMachinePassword(t)
 	t.Setenv("SDN_KEY_PASSWORD", "")
 	t.Setenv("SDN_KEY_PASSWORD_FILE", "")
 	dir := t.TempDir()
@@ -70,6 +71,7 @@ func TestCredentialsSurviveDerivationUpgrade(t *testing.T) {
 // TestForeignKeystoreStillFailsClosed proves the fallback ladder did not turn
 // the credstore into something that opens under any key.
 func TestForeignKeystoreStillFailsClosed(t *testing.T) {
+	useTestMachinePassword(t)
 	t.Setenv("SDN_KEY_PASSWORD", "")
 	t.Setenv("SDN_KEY_PASSWORD_FILE", "")
 	dir := t.TempDir()

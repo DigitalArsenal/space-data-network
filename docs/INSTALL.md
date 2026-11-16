@@ -487,11 +487,13 @@ replaced, `update install --direct` refuses them ("untrusted update signing
 key") until a fleet release signed with the demo root is published on that
 lane, so reinstall instead, or publish that release first.
 
-**The channel needs a release.** Nothing is installable from the release
-channel until a release is cut with the update signing key configured and
-its feed is published to the server above. The release workflow now fails a
-stable release that has no signing key, signs only with the key id derived
-from that key, checks the key is the fleet root, and verifies every manifest
+**The channel needs a release's feed.** A release is installable from the
+release channel once it is cut with the update signing key and its feed is
+published to the server above. The current release's feed is published: a
+command-line install of v1.1.4 or later takes it with
+`spacedatanetwork update install`. The release workflow fails a stable
+release that has no signing key, signs only with the key id derived from
+that key, checks the key is the fleet root, and verifies every manifest
 against `deployment/release/fleet-trust-roots.json` before it ships the feed.
 
 How an install takes an update:

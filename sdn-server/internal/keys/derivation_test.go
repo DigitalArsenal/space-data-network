@@ -61,6 +61,7 @@ func TestV2FingerprintPreserved(t *testing.T) {
 }
 
 func TestDeriveDefaultPasswordIsV4AndDeterministic(t *testing.T) {
+	useTestMachineFingerprint(t)
 	a, inputsA, err := DeriveDefaultPasswordWithSources()
 	if err != nil {
 		t.Fatalf("v4 derivation must succeed on a normal host: %v", err)
@@ -99,6 +100,7 @@ func TestDeriveDefaultPasswordIsV4AndDeterministic(t *testing.T) {
 // is bound to (machine, user)) and design requirement 3 (absent is an
 // explicit, encoded input — never a silent skip).
 func TestV4FingerprintBindsUserAndEncodesAbsence(t *testing.T) {
+	useTestMachineFingerprint(t)
 	fp, inputs, err := machineFingerprintV4()
 	if err != nil {
 		t.Fatalf("v4 fingerprint on a normal host: %v", err)
@@ -151,6 +153,7 @@ func TestV4RefusesDegradedInputs(t *testing.T) {
 // TestRoundTripUnderV4 is the base case: seal and open under the default
 // machine+user-derived key.
 func TestRoundTripUnderV4(t *testing.T) {
+	useTestMachineFingerprint(t)
 	pw, err := DeriveDefaultPassword()
 	if err != nil {
 		t.Fatalf("derive: %v", err)
@@ -179,6 +182,7 @@ func TestRoundTripUnderV4(t *testing.T) {
 // v3 so the caller re-seals under v4). Without this, shipping v4 orphans the
 // fleet — the exact failure class this task exists to end.
 func TestMigrationFromV3(t *testing.T) {
+	useTestMachineFingerprint(t)
 	enc, err := EncryptMnemonic(testMnemonic, DeriveV3Password())
 	if err != nil {
 		t.Fatalf("seal under v3: %v", err)
@@ -221,6 +225,7 @@ func TestMigrationFromV3Degraded(t *testing.T) {
 // old hardware derivation must still open, and must report v2 so the caller
 // re-seals it. This is what keeps the identity alive across the upgrade.
 func TestMigrationFromV2(t *testing.T) {
+	useTestMachineFingerprint(t)
 	enc, err := EncryptMnemonic(testMnemonic, DeriveV2Password())
 	if err != nil {
 		t.Fatalf("seal under v2: %v", err)
@@ -315,6 +320,7 @@ func TestPassphraseOverrideBeatsMachineDerivation(t *testing.T) {
 // DIAGNOSABLE: the record names the sources that sealed the file (and never
 // their values or any key material), and the hint names the recovery routes.
 func TestDerivationRecordRoundTripAndHint(t *testing.T) {
+	useTestMachineFingerprint(t)
 	keyDir := t.TempDir()
 
 	pw, inputs, err := DeriveDefaultPasswordWithSources()
@@ -367,6 +373,7 @@ func TestDerivationRecordRoundTripAndHint(t *testing.T) {
 // matched, user differs (sealed root, running tjkoury)" would have cost
 // nothing — so the hint must say exactly that class of thing.
 func TestFailureHintNamesTheUserDiff(t *testing.T) {
+	useTestMachineFingerprint(t)
 	keyDir := t.TempDir()
 
 	_, inputs, err := DeriveDefaultPasswordWithSources()
@@ -395,6 +402,7 @@ func TestFailureHintNamesTheUserDiff(t *testing.T) {
 // TestFailureHintNamesSourceStateDiff: a source recorded present at seal time
 // but absent now (or vice versa) is named, not folded into "cannot decrypt".
 func TestFailureHintNamesSourceStateDiff(t *testing.T) {
+	useTestMachineFingerprint(t)
 	keyDir := t.TempDir()
 
 	_, inputs, err := DeriveDefaultPasswordWithSources()
