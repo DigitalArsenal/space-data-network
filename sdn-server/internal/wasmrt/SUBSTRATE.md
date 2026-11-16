@@ -166,6 +166,13 @@ thread did not run in time. Each observation is bounded at 30 s; a bound that
 runs out reports `"inconclusive": true` with what was seen, never "lacks the
 patches". `Patched()` is false whenever the report is inconclusive.
 
+An inconclusive run is run again, up to three runs (`"runs"` in the report).
+The process keeps only a conclusive report: while it has none, the next call
+runs the self-test again. An inconclusive report's AOT tag is `unverified`,
+so it loads no runtime's artifacts; a partition-store open is refused, and a
+new store is not created (its format would be permanent), until a run is
+conclusive.
+
 ## Building the static binary on macOS
 
 Needs Xcode (Apple clang) and `brew install cmake ninja llvm@18 zstd`. From

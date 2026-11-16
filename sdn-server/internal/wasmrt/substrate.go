@@ -83,6 +83,9 @@ type SubstrateReport struct {
 	AOTStop                  StopObservation `json:"aot_stop"`
 	NotifyAttempts           int             `json:"notify_attempts"`
 	MemargNotifyAttempts     int             `json:"memarg_notify_attempts"`
+	// Runs is how many self-test runs gave this report: an inconclusive run
+	// is run again, up to substrateRuns times (RunSubstrateSelfTestSettled).
+	Runs int `json:"runs"`
 }
 
 // Patched reports whether the runtime behaves like the patched build.
@@ -129,7 +132,14 @@ func (r SubstrateReport) FailureReason() string {
 // changes and every host recompiles them.
 // "sdn5" adds AOTAtomicStoreStack: artifacts made by a compiler that leaves
 // the address on its value stack after an atomic store are recompiled.
+//
+// "unverified" is an inconclusive report's tag: its false fields are missing
+// observations, not observed defects, so it names no runtime's artifacts and
+// never loads one compiled by another runtime.
 func (r SubstrateReport) Tag() string {
+	if r.Inconclusive {
+		return "unverified"
+	}
 	if r.AtomicNotifyWithoutStore && r.StopReachesEveryThread {
 		if r.AOTAtomicMemargOffset && r.AOTLoopStopChecks {
 			if r.AOTAtomicStoreStack {
@@ -245,26 +255,50 @@ func RunSubstrateSelfTest(opts SubstrateOptions) SubstrateReport {
 	return rep
 }
 
+// substrateRuns bounds the runs of one settled self-test.
+const substrateRuns = 3
+
+// RunSubstrateSelfTestSettled runs the self-test until a run is conclusive,
+// at most substrateRuns times, and returns the last run's report.
+func RunSubstrateSelfTestSettled(opts SubstrateOptions) SubstrateReport {
+	var rep SubstrateReport
+	for run := 1; run <= substrateRuns; run++ {
+		rep = RunSubstrateSelfTest(opts)
+		rep.Runs = run
+		if !rep.Inconclusive {
+			break
+		}
+	}
+	return rep
+}
+
 var (
-	substrateOnce   sync.Once
-	substrateReport SubstrateReport
+	substrateMu      sync.Mutex
+	substrateReport  SubstrateReport
+	substrateSettled bool
 )
 
-// SubstrateStatus runs the self-test once per process (with the AOT check)
-// and returns the cached report thereafter.
+// SubstrateStatus runs the settled self-test (with the AOT check) and keeps a
+// conclusive report for the life of the process. An inconclusive report is
+// returned but not kept: the next call runs the self-test again, so a busy
+// start never decides the process's runtime.
 func SubstrateStatus() SubstrateReport {
-	substrateOnce.Do(func() {
-		substrateReport = RunSubstrateSelfTest(SubstrateOptions{})
-		level := "INFO"
-		if !substrateReport.Patched() {
-			level = "WARN"
-		}
-		fmt.Fprintf(os.Stderr, "[wasmrt] %s substrate self-test: runtime %s notify-without-store=%t stop-reaches-every-thread=%t interruptible-aot=%t (%.1fx) aot-atomic-memarg-offset=%t aot-loop-stop-checks=%t aot-atomic-store-stack=%t in %s; %s\n",
-			level, substrateReport.RuntimeVersion, substrateReport.AtomicNotifyWithoutStore,
-			substrateReport.StopReachesEveryThread, substrateReport.InterruptibleAOT, substrateReport.AOTSpeedup,
-			substrateReport.AOTAtomicMemargOffset, substrateReport.AOTLoopStopChecks, substrateReport.AOTAtomicStoreStack,
-			substrateReport.Elapsed.Round(time.Millisecond), substrateReport.FailureReason())
-	})
+	substrateMu.Lock()
+	defer substrateMu.Unlock()
+	if substrateSettled {
+		return substrateReport
+	}
+	substrateReport = RunSubstrateSelfTestSettled(SubstrateOptions{})
+	substrateSettled = !substrateReport.Inconclusive
+	level := "INFO"
+	if !substrateReport.Patched() {
+		level = "WARN"
+	}
+	fmt.Fprintf(os.Stderr, "[wasmrt] %s substrate self-test: runtime %s notify-without-store=%t stop-reaches-every-thread=%t interruptible-aot=%t (%.1fx) aot-atomic-memarg-offset=%t aot-loop-stop-checks=%t aot-atomic-store-stack=%t in %s after %d run(s); %s\n",
+		level, substrateReport.RuntimeVersion, substrateReport.AtomicNotifyWithoutStore,
+		substrateReport.StopReachesEveryThread, substrateReport.InterruptibleAOT, substrateReport.AOTSpeedup,
+		substrateReport.AOTAtomicMemargOffset, substrateReport.AOTLoopStopChecks, substrateReport.AOTAtomicStoreStack,
+		substrateReport.Elapsed.Round(time.Millisecond), substrateReport.Runs, substrateReport.FailureReason())
 	return substrateReport
 }
 
@@ -395,6 +429,8 @@ func probeStop(wasm []byte, n int, countInstructions bool) (out stopProbe, err e
 		}
 		m.Release()
 	}()
+	// A threaded module's call without its own budget runs under the 30 s
+	// wall-clock bound executeDirect gives every threaded guest.
 	v, err := m.Execute("spawn_spinners", int32(n))
 	if err != nil {
 		return out, err

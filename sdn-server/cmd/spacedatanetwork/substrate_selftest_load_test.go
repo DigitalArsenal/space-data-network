@@ -123,7 +123,7 @@ func TestSubstrateSelftestUnderCPULoad(t *testing.T) {
 		if err != nil || !report.Patched || !report.NativeHostIO || len(report.Errors) != 0 {
 			t.Fatalf("self-test %d/%d with %d CPU hogs: %v\n%s", i, runs, hogs, err, output)
 		}
-		t.Logf("self-test %d/%d passed in %s", i, runs, time.Since(started))
+		t.Logf("self-test %d/%d passed in %s after %d run(s)", i, runs, time.Since(started), report.Runs)
 	}
 	t.Logf("all %d command runs passed with %d CPU hog processes", runs, hogs)
 }

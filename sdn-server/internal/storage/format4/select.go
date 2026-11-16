@@ -43,16 +43,24 @@ func Requested() (int, error) {
 // lose wake-ups on the upstream one; the release and the image link the
 // patched static prefix).
 func Runnable() (bool, string) {
+	ok, _, why := RunnableState()
+	return ok, why
+}
+
+// RunnableState is Runnable, and whether its "no" is only an inconclusive
+// runtime self-test (unconfirmed): a busy machine, not a missing patch. The
+// next call runs the self-test again.
+func RunnableState() (ok, unconfirmed bool, why string) {
 	if len(flatsqlrt.P4ThreadsWasm()) == 0 {
-		return false, "no format-5 engine is embedded in this build"
+		return false, false, "no format-5 engine is embedded in this build"
 	}
 	if !flatsqlrt.NativeHostIOSupported() {
-		return false, "the native host I/O module is not built for this platform"
+		return false, false, "the native host I/O module is not built for this platform"
 	}
 	if rep := wasmrt.SubstrateStatus(); !rep.Patched() {
-		return false, fmt.Sprintf("the linked WasmEdge %s: %s", rep.RuntimeVersion, rep.FailureReason())
+		return false, rep.Inconclusive, fmt.Sprintf("the linked WasmEdge %s: %s", rep.RuntimeVersion, rep.FailureReason())
 	}
-	return true, ""
+	return true, false, ""
 }
 
 // ReadMarkers reads what dataRoot says about format 5 (= marker.Read).

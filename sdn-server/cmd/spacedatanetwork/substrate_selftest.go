@@ -33,7 +33,9 @@ var substrateSelftestCmd = &cobra.Command{
   native_host_io               the C host I/O module installs and round-trips
 
 The first three are the SDN WasmEdge patches (scripts/build-static-wasmedge.sh).
-With --require-patched the command exits non-zero unless every check passes.`,
+With --require-patched the command exits non-zero unless every check passes.
+An inconclusive run (an observation bound ran out) is run again, up to three
+runs; "runs" in the report counts them.`,
 	Args: cobra.NoArgs,
 	RunE: runSubstrateSelftest,
 }
@@ -52,7 +54,7 @@ type substrateSelftestReport struct {
 }
 
 func runSubstrateSelftest(cmd *cobra.Command, _ []string) error {
-	rep := substrateSelftestReport{SubstrateReport: wasmrt.RunSubstrateSelfTest(wasmrt.SubstrateOptions{SkipAOT: substrateSkipAOT})}
+	rep := substrateSelftestReport{SubstrateReport: wasmrt.RunSubstrateSelfTestSettled(wasmrt.SubstrateOptions{SkipAOT: substrateSkipAOT})}
 	rep.Patched = rep.SubstrateReport.Patched()
 	if err := flatsqlrt.NativeHostIOSelfTest(); err != nil {
 		rep.NativeHostIOErr = err.Error()
