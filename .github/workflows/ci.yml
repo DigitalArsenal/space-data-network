@@ -334,11 +334,32 @@ jobs:
       - uses: ./.github/actions/sdn-go-env
         with:
           needs-flow-bundles: 'false'
-      - name: update install against real daemons
+      - name: Build real update fixtures
         working-directory: sdn-server
-        env:
-          SDN_E2E_REAL_DAEMON: '1'
-        run: ../scripts/go-with-wasmedge.sh test ./cmd/spacedatanetwork/ -count=1 -timeout 50m -v -run '^TestUpdateChannelRealDaemonE2E$'
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/update-channel-bin"
+          for build in v1 v2 v3; do
+            build_args=(-o "$RUNNER_TEMP/update-channel-bin/spacedatanetwork-$build")
+            if [[ "$build" == v3 ]]; then build_args+=(-tags sdn_e2e_not_ready); fi
+            SDN_GO_LDFLAGS="-X github.com/spacedatanetwork/sdn-server/internal/versioninfo.ReleaseTag=e2e-$build" \
+              ../scripts/go-with-wasmedge.sh build "${build_args[@]}" ./cmd/spacedatanetwork
+          done
+          ../scripts/go-with-wasmedge.sh test -c -o "$RUNNER_TEMP/update-channel-e2e.test" ./cmd/spacedatanetwork
+      - name: Exercise pull and push on loopback
+        working-directory: sdn-server/cmd/spacedatanetwork
+        run: |
+          sudo env SDN_E2E_REAL_DAEMON=1 \
+            SDN_E2E_REAL_DAEMON_BIN_DIR="$RUNNER_TEMP/update-channel-bin" \
+            SDN_E2E_LOG_DIR="$RUNNER_TEMP/update-channel-logs" \
+            LD_LIBRARY_PATH="$WASMEDGE_DIR/lib:$WASMEDGE_DIR/lib64" \
+            unshare --net -- bash -c 'ip link set lo up; exec "$1" -test.v -test.timeout=50m -test.run="^TestUpdateChannelRealDaemonE2E$"' \
+            -- "$RUNNER_TEMP/update-channel-e2e.test"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: update-channel-logs
+          path: ${{ runner.temp }}/update-channel-logs
 
   go-builds:
     name: Go builds (node + edge relay)

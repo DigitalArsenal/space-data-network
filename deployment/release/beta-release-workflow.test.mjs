@@ -890,3 +890,16 @@ test('release maturity reaches only the release notes, never a --channel', () =>
   const assemble = readRepoFile('deployment/release/assemble-beta-release-artifacts.sh');
   assert.doesNotMatch(assemble, /--channel "?\$\{?release_maturity/);
 });
+
+
+test('the real update channel runs prebuilt fixtures with only loopback networking', () => {
+  const workflow = readRepoFile('.github/workflows/ci.yml');
+  const job = workflow.slice(workflow.indexOf('  update-channel-e2e:'), workflow.indexOf('  go-builds:'));
+  assert.match(job, /for build in v1 v2 v3/);
+  assert.match(job, /sdn_e2e_not_ready/);
+  assert.match(job, /go-with-wasmedge\.sh test -c/);
+  assert.match(job, /SDN_E2E_REAL_DAEMON_BIN_DIR=/);
+  assert.match(job, /unshare --net -- bash -c 'ip link set lo up;/);
+  assert.match(job, /-test\.timeout=50m/);
+  assert.ok(job.indexOf('go-with-wasmedge.sh test -c') < job.indexOf('unshare --net'));
+});
