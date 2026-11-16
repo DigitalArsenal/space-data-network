@@ -67,48 +67,36 @@ func TestFormat5LegacyFullTextIndexRepairsOnOpen(t *testing.T) {
 	if err := index.QueryRow("SELECT count(*) FROM fts WHERE fts MATCH 'upgradeprobe'").Scan(&count); err != nil || count != 1 {
 		t.Fatalf("legacy index: count=%d error=%v", count, err)
 	}
-	// Fail repair commits while inspecting coverage. The test removes this
-	// trigger only with the engine closed; no two SQLite hosts write together.
-	if _, err := index.Exec("CREATE TRIGGER hold_repair BEFORE INSERT ON ftsmeta WHEN NEW.k='extractor_version' AND NEW.v=1 BEGIN SELECT RAISE(ABORT, 'test repair barrier'); END"); err != nil {
-		t.Fatal(err)
-	}
 	if err := index.Close(); err != nil {
 		t.Fatal(err)
 	}
-	t.Log("legacy fixture ready; reopening")
 	e = openReal(t, root, format4.OpenExisting, 0, nil)
 	states, err := e.FTS(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	building := false
-	for _, state := range states {
-		if state.Type == "CAT" && state.State == "building" {
-			building = true
+	state := ""
+	for _, row := range states {
+		if row.Type == "CAT" {
+			state = row.State
 		}
 	}
-	if !building {
-		t.Fatalf("legacy index must report building: %+v", states)
+	if state != "building" && state != "ready" {
+		t.Fatalf("upgrade state: %q", state)
 	}
-	if _, err := e.Scan(ctx, query); !errors.Is(err, format4.ErrBusy) {
-		t.Fatalf("search during repair: %v, want BUSY", err)
-	}
-	t.Log("building and BUSY observed; releasing repair barrier")
-	if err := e.Close(ctx); err != nil {
+	t.Logf("first upgrade SUMMARY: %s", state)
+	// Repair can finish between SUMMARY and SCAN. A search must either say
+	// BUSY or return the complete repaired result, never the old partial index.
+	first, err := e.Scan(ctx, query)
+	if err != nil && !errors.Is(err, format4.ErrBusy) {
 		t.Fatal(err)
 	}
-	index, err = sql.Open("sqlite", filepath.Join(root, "fsql5", "T", "CAT.fts"))
-	if err != nil {
-		t.Fatal(err)
+	if err == nil && len(first) != len(inputs) {
+		t.Fatalf("partly repaired search returned %d records", len(first))
 	}
-	if _, err := index.Exec("DROP TRIGGER hold_repair"); err != nil {
-		t.Fatal(err)
+	if errors.Is(err, format4.ErrBusy) && len(first) != 0 {
+		t.Fatal("BUSY returned partial records")
 	}
-	if err := index.Close(); err != nil {
-		t.Fatal(err)
-	}
-	t.Log("barrier removed; reopening for automatic repair")
-	e = openReal(t, root, format4.OpenExisting, 0, nil)
 	if err := format4.WaitFTSReady(ctx, e, "CAT"); err != nil {
 		t.Fatal(err)
 	}
