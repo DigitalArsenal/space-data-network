@@ -665,6 +665,7 @@ prepare_chromium() {
 }
 
 run_sdn_js() {
+  prepare_go_toolchain no-aot
   prepare_sdn_js_deps
 
   local eslint_config=""

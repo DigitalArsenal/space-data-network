@@ -16,6 +16,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"math/rand"
 	"os"
 	"os/exec"
@@ -362,11 +363,32 @@ func TestRouterKillChild(t *testing.T) {
 	if root == "" {
 		t.Skip("runs only as a child")
 	}
-	s := openAt(t, root, "", 1)
-	f, err := os.OpenFile(filepath.Join(root, "acked.log"), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
+	f, err := os.OpenFile(filepath.Join(root, "acked.log"), os.O_RDWR|os.O_CREATE|os.O_APPEND, 0o600)
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer f.Close()
+	// A killed append can leave a fragment. Terminate it before this child
+	// appends; otherwise a new CID becomes part of the old fragment.
+	st, err := f.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Size() > 0 {
+		var last [1]byte
+		if _, err := f.ReadAt(last[:], st.Size()-1); err != nil {
+			t.Fatal(err)
+		}
+		if last[0] != '\n' {
+			if _, err := f.WriteString("\n"); err != nil {
+				t.Fatal(err)
+			}
+			if err := f.Sync(); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	s := openAt(t, root, "", 1)
 	ctx := context.Background()
 	gen := time.Now().UnixNano()
 	for b := 0; ; b++ {
@@ -385,6 +407,23 @@ func TestRouterKillChild(t *testing.T) {
 				fmt.Fprintf(&lines, "%s %s %s\n", r.CID, peer, hex.EncodeToString(puts[i].Data))
 			}
 		}
+		if os.Getenv("SDN_FORMAT2_KILL_TORN") == "true" {
+			// The parent kills between the first and second bytes of a real
+			// acknowledgment. The readiness file makes this control deterministic.
+			if lines.Len() == 0 {
+				t.Fatal("controlled append has no acknowledged record")
+			}
+			if _, err := f.WriteString(lines.String()[:1]); err != nil {
+				t.Fatal(err)
+			}
+			if err := f.Sync(); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, "torn-ready"), []byte("ready"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			select {}
+		}
 		if _, err := f.WriteString(lines.String()); err != nil {
 			t.Fatal(err)
 		}
@@ -399,49 +438,87 @@ func TestRouterKillChild(t *testing.T) {
 func TestRouterKill9KeepsEveryAckedRecord(t *testing.T) {
 	requireEngine(t)
 	kills := envInt("SDN_FORMAT2_KILLS", 10)
-	root := t.TempDir()
-	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
-	for k := 0; k < kills; k++ {
-		cmd := exec.Command(os.Args[0], "-test.run", "^TestRouterKillChild$", "-test.count=1")
-		cmd.Env = append(os.Environ(), routerKillChildEnv+"="+root)
-		if err := cmd.Start(); err != nil {
-			t.Fatal(err)
-		}
-		time.Sleep(300*time.Millisecond + time.Duration(rng.Int63n(int64(1200*time.Millisecond))))
-		_ = cmd.Process.Signal(syscall.SIGKILL)
-		_ = cmd.Wait()
-	}
-	s := openAt(t, root, "", 1)
-	defer s.Close()
-	ctx := context.Background()
-	f, err := os.Open(filepath.Join(root, "acked.log"))
+	root, err := os.MkdirTemp("", "format2-kill-")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
-	byPeer := map[string][]Put{}
+	t.Logf("kill recovery directory: %s", root)
+	t.Cleanup(func() {
+		if !t.Failed() {
+			if err := os.RemoveAll(root); err != nil {
+				t.Error(err)
+			}
+		}
+	})
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+	fragments := map[int64]bool{}
+	var byPeer map[string][]Put
 	var n int
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 1<<20), 1<<20)
-	for sc.Scan() {
-		parts := strings.Fields(sc.Text())
-		if len(parts) != 3 {
-			continue // a torn last line (the kill landed inside the append)
-		}
-		data, err := hex.DecodeString(parts[2])
+	ctx := context.Background()
+	// Kill zero exercises the torn-line control. The remaining kills retain
+	// the random ingest windows of the crash-recovery test.
+	for k := 0; k <= kills; k++ {
+		cmd := exec.Command(os.Args[0], "-test.run", "^TestRouterKillChild$", "-test.count=1", "-test.v")
+		cmd.Env = append(os.Environ(), routerKillChildEnv+"="+root, fmt.Sprintf("SDN_FORMAT2_KILL_TORN=%t", k == 0))
+		childLog, err := os.Create(filepath.Join(root, fmt.Sprintf("child-%d.log", k)))
 		if err != nil {
-			continue
+			t.Fatal(err)
 		}
-		rec, err := s.GetRecord(ctx, "OMM.fbs", parts[0])
-		if err != nil {
-			t.Fatalf("acked record %s missing after %d kills: %v", parts[0], kills, err)
+		cmd.Stdout, cmd.Stderr = childLog, childLog
+		if err := cmd.Start(); err != nil {
+			childLog.Close()
+			t.Fatal(err)
 		}
-		if string(rec.Data) != string(data) {
-			t.Fatalf("acked record %s: bytes differ", parts[0])
+		done := make(chan error, 1)
+		go func() { done <- cmd.Wait() }()
+		if k == 0 {
+			deadline := time.Now().Add(2 * time.Minute)
+			for {
+				if _, err := os.Stat(filepath.Join(root, "torn-ready")); err == nil {
+					break
+				}
+				select {
+				case err := <-done:
+					childLog.Close()
+					t.Fatalf("controlled child exited before its partial append: %v (see %s)", err, childLog.Name())
+				default:
+				}
+				if time.Now().After(deadline) {
+					_ = cmd.Process.Kill()
+					<-done
+					childLog.Close()
+					t.Fatalf("controlled child did not reach its partial append (see %s)", childLog.Name())
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+		} else {
+			time.Sleep(300*time.Millisecond + time.Duration(rng.Int63n(int64(1200*time.Millisecond))))
 		}
-		byPeer[parts[1]] = append(byPeer[parts[1]], Put{Data: data})
-		n++
+		_ = cmd.Process.Signal(syscall.SIGKILL)
+		waitErr := <-done
+		childLog.Close()
+		if exit, ok := waitErr.(*exec.ExitError); !ok || exit.Sys().(syscall.WaitStatus).Signal() != syscall.SIGKILL {
+			t.Fatalf("child %d exited independently of SIGKILL: %v (see %s)", k, waitErr, childLog.Name())
+		}
+		previousFragments := len(fragments)
+		func() {
+			s := openAt(t, root, "", 1)
+			defer s.Close()
+			byPeer, n = checkKillAcknowledgments(t, s, root, fragments)
+		}()
+		if len(fragments)-previousFragments > 1 {
+			t.Fatalf("kill %d left more than one torn journal fragment", k)
+		}
+		if k == 0 && len(fragments) != 1 {
+			t.Fatalf("controlled kill must expose exactly one torn fragment, got %d", len(fragments))
+		}
+		t.Logf("kill %d: %d complete durable acknowledgments verified; %d distinct torn fragments", k, n, len(fragments))
 	}
+	if n == 0 {
+		t.Fatal("random kills produced no complete acknowledgments")
+	}
+	s := openAt(t, root, "", 1)
+	defer s.Close()
 	before, err := s.Partitions(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -471,5 +548,59 @@ func TestRouterKill9KeepsEveryAckedRecord(t *testing.T) {
 	if sum(after) != sum(before) {
 		t.Fatalf("resending %d acked records added %d rows", n, sum(after)-sum(before))
 	}
-	t.Logf("MEASURED %d kill -9 during router ingest: %d acked records all present with their bytes; resend added 0 rows (%s)", kills, n, machine())
+	t.Logf("%d random kills and one controlled kill: %d acked records verified after every kill; %d torn fragments; resend added 0 rows (%s)", kills, n, len(fragments), machine())
+}
+
+// checkKillAcknowledgments checks complete canonical record lines only. Syncing
+// before counting also makes complete writes durable when a child died between
+// WriteString and Sync; checking these additional records strengthens the test.
+func checkKillAcknowledgments(t *testing.T, s *Store, root string, fragments map[int64]bool) (map[string][]Put, int) {
+	t.Helper()
+	f, err := os.OpenFile(filepath.Join(root, "acked.log"), os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := f.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	byPeer := map[string][]Put{}
+	var n int
+	var offset int64
+	reader := bufio.NewReader(f)
+	for {
+		line, readErr := reader.ReadString('\n')
+		if readErr != nil && readErr != io.EOF {
+			t.Fatal(readErr)
+		}
+		if len(line) == 0 && readErr == io.EOF {
+			break
+		}
+		parts := strings.Split(strings.TrimSuffix(line, "\n"), " ")
+		complete := readErr == nil && len(parts) == 3
+		var data []byte
+		if complete {
+			data, err = hex.DecodeString(parts[2])
+			complete = err == nil && len(data) > 0 && hex.EncodeToString(data) == parts[2] && CIDText(CIDBytes(data)) == parts[0]
+			complete = complete && (parts[1] == "source:kill0" || parts[1] == "source:kill1" || parts[1] == "source:kill2" || parts[1] == "source:kill3")
+		}
+		if !complete {
+			fragments[offset] = true
+		} else {
+			rec, err := s.GetRecord(context.Background(), "OMM.fbs", parts[0])
+			if err != nil {
+				t.Fatalf("acked record %s missing: %v", parts[0], err)
+			}
+			if string(rec.Data) != string(data) {
+				t.Fatalf("acked record %s: bytes differ", parts[0])
+			}
+			byPeer[parts[1]] = append(byPeer[parts[1]], Put{Data: data})
+			n++
+		}
+		offset += int64(len(line))
+		if readErr == io.EOF {
+			break
+		}
+	}
+	return byPeer, n
 }
