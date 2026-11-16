@@ -114,6 +114,7 @@ func TestUpdateChannelRealDaemonE2E(t *testing.T) {
 	}
 	builds := realE2EBuilds(t, filepath.Join(t.TempDir(), "builds"))
 	t.Setenv(realE2EBinDirEnv, filepath.Dir(builds[0].path))
+	t.Run("feed-recovery", runRealFeedRecovery)
 	t.Run("installed-v1.1.5-push", func(t *testing.T) {
 		if os.Getenv("SDN_E2E_INSTALLED_BUNDLE") == "" {
 			t.Fatal("SDN_E2E_INSTALLED_BUNDLE must name the published 1.1.5 archive; installed receiver proof cannot run")
@@ -1317,6 +1318,15 @@ func runRealPushChannelReceiver(t *testing.T, installed bool) {
 		t.Fatalf("restored daemon has no failed-update alert: %s", alerts)
 	}
 	waitPush(t, boot, "completed rollback", func() bool { return strings.Contains(readFileString(b.helperLog()), "rolled back to "+v2.version) })
+	var lastGate update.DeployLedgerEntry
+	for _, entry := range readLedger(t, b.paths.Root) {
+		if entry.Action == "health-passed" {
+			lastGate = entry
+		}
+	}
+	if lastGate.UpdateID != v2.updateID || lastGate.Sequence != v2.sequence {
+		t.Errorf("restored gate identity: got %s/%d, want %s/%d", lastGate.UpdateID, lastGate.Sequence, v2.updateID, v2.sequence)
+	}
 	t.Log("bad pushed build reverted and restored its failure alert")
 	countV3 := len(readLedger(t, b.paths.Root))
 	refusal := "update signal " + v3.updateID + " refused: this box already tried"
@@ -1707,6 +1717,11 @@ func runRealPushChannelReceiver(t *testing.T, installed bool) {
 	a.command(t, false, "withdraw-complete", "update", "withdraw", "--channel", realE2EChannel, "--version", v5.version)
 	if !strings.Contains(readFileString(filepath.Join(a.work, "withdraw-complete.log")), "already withdrawn") {
 		t.Fatal("completed withdrawal was not recognized")
+	}
+	// A withdrawal that finished but stopped before writing its completion
+	// marker must not block withdrawing a later republication.
+	if err := os.Remove(filepath.Join(strings.TrimSpace(archiveLine[1]), "completed")); err != nil {
+		t.Fatal(err)
 	}
 	publish(v5)
 	a.command(t, true, "withdraw-republished", "update", "withdraw", "--channel", realE2EChannel, "--version", v5.version)

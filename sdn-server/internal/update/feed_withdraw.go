@@ -319,6 +319,13 @@ func withdrawalFinished(root, archive string, plan withdrawalPlan) bool {
 	if _, err := os.Stat(filepath.Join(archive, "completed")); err == nil {
 		return true
 	}
+	// A withdrawal moves each folder, so it never leaves one both archived and
+	// served. A served copy of an archived folder is a later republication.
+	for _, folder := range plan.Folders {
+		if _, err := os.Lstat(filepath.Join(root, folder)); err == nil {
+			return true
+		}
+	}
 	listed := false
 	for _, index := range plan.Indexes {
 		if filepath.IsAbs(index) || strings.Contains(index, "..") {
