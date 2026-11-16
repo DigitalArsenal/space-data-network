@@ -62,37 +62,28 @@ from `/usr/local/lib/hd-wallet-wasi.wasm`; a bundle carries it under
 ### Desktop app
 
 The desktop app (`space-data-network-desktop-<version>-<os>-<arch>` on the
-release page) ships for Windows x64 as both an installer and a portable exe,
-and for Linux x64 as an AppImage, a .deb and a .tar.xz. The macOS desktop app
-is not in v1.1.6; on macOS use the command-line install above. It carries the
+release page) ships for macOS on Apple silicon and Intel as a signed and
+notarized .dmg and .zip, for Windows x64 as both an installer and a portable
+exe, and for Linux x64 as an AppImage, a .deb and a .tar.xz. It carries the
 same bundle, starts the node on launch, opens the
 node's own dashboard in its window, and keeps the store and keys under the
 app's user-data directory. Its menu shows the node's recovery phrase once, on
 request. Nothing below applies to the app except sections 4 (ports, if you want
 to be reachable from the internet) and 5 (keys).
 
-#### First launch: the binaries are not signed
+#### First launch
 
-Beta builds carry no Apple Developer ID and no Authenticode certificate, so
-both operating systems refuse them on first launch. This is the signature's
-absence, not a finding about the software — but you have to get past it, and
-the two systems differ in how hard they make that.
+**macOS.** The desktop app is signed with an Apple Developer ID and notarized
+by Apple, so it opens like any other downloaded app. The command-line
+archive's binary is not notarized. Expanded with `tar` from a terminal it runs,
+because `tar` does not carry the browser's quarantine flag onto the extracted
+files. If macOS refuses it after some other way of unpacking, remove the flag:
 
-**macOS.** Gatekeeper shows "Apple could not verify … is free of malware",
-and its only buttons are *Move to Trash* and *Done* — there is no "open
-anyway" in that dialog. Two ways through:
+    xattr -dr com.apple.quarantine spacedatanetwork-<version>-darwin-arm64
 
-    # either: strip the quarantine flag the browser attached
-    xattr -dr com.apple.quarantine "/Applications/Space Data Network.app"
-
-    # or: launch once, get the dialog, then
-    #     System Settings -> Privacy & Security -> "Open Anyway"
-
-The right-click → Open shortcut no longer works on macOS 15. The CLI tarball
-is unaffected when expanded with `tar` from a terminal, which does not carry
-the flag onto the extracted files.
-
-**Windows.** SmartScreen shows "Windows protected your PC"; click *More info*
+**Windows.** The Windows builds carry no Authenticode certificate, so Windows
+refuses them on first launch. This is the signature's absence, not a finding
+about the software. SmartScreen shows "Windows protected your PC"; click *More info*
 → *Run anyway*. If you downloaded the zip with a browser, clear its
 mark-of-the-web before expanding, or the extracted exe may refuse to start:
 
@@ -130,7 +121,7 @@ The container runs as uid 1000, so on most Linux hosts the machine-derived
 key is refused there too (see section 1). **The recommended setup is a
 password file mounted from outside the volume**, made with a umask so it is
 never readable by anyone else, not even for a moment; it is what every image
-needs on such a host up to v1.1.6, and still the better custody after:
+needs on such a host up to v1.1.4, and still the better custody after:
 
 ```sh
 sudo install -m 0400 -o 1000 -g 1000 /dev/null /etc/sdn-key-password
