@@ -1,7 +1,6 @@
 package node
 
 import (
-	"sort"
 	"strings"
 
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -29,7 +28,8 @@ func mayDiscoverTrustedSchema(cfg config.TrustedImportConfig, from, schema strin
 
 func (n *Node) datasetCatchupSchemas(from peer.ID) ([]string, error) {
 	schemas := n.validator.Schemas()
-	sort.Strings(schemas)
+	// Preserve randomized validator traversal so rate-limited passes do not
+	// repeatedly omit the same alphabetical tail.
 	if n.config == nil {
 		return schemas, nil
 	}
