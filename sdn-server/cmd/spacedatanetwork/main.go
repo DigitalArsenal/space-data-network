@@ -2122,12 +2122,14 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			// gateway.anonymous.allow. Status only: no route returns a stored
 			// secret to any caller.
 			//
-			// The at-rest key is derived from the UNLOCKED node identity private
-			// key (n.IdentityKeyMaterial(), already unlocked at boot — it is used
-			// the same way at daemon startup above) plus the machine fingerprint
-			// and hostname. OpenStore fails closed if that key is unavailable, so
+			// The at-rest key is the node's key password when one is configured
+			// (the identity's sources and precedence, from cfg), else derived
+			// from the UNLOCKED node identity private key
+			// (n.IdentityKeyMaterial(), already unlocked at boot — it is used the
+			// same way at daemon startup above) plus the machine fingerprint and
+			// hostname. OpenStore fails closed if that key is unavailable, so
 			// the API is not mounted rather than opened under a weaker key.
-			if credStore, cerr := credstore.OpenStore(cfg.Storage.Path, n.IdentityKeyMaterial()); cerr != nil {
+			if credStore, cerr := credstore.OpenStore(cfg.Storage.Path, cfg, n.IdentityKeyMaterial()); cerr != nil {
 				log.Warnf("credential store unavailable; provider-credential API not mounted: %v", cerr)
 			} else {
 				credAPI := api.NewCredentialsHandler(credStore, authHandler, cfg.Admin.RequireAuth, map[string]api.Verifier{
@@ -6037,6 +6039,18 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
+	// `init --key-password-file PATH` (install.sh, for a fresh node whose
+	// machine fingerprint is refused): record PATH in the config saved below,
+	// so every later start finds it with nothing exported, and seal the new
+	// identity under it.
+	// (Only `init` has the flag; `start` reaches here through runServiceAction.)
+	if cmd != nil && cmd.Flags().Lookup("key-password-file") != nil && strings.TrimSpace(initKeyPasswordFile) != "" {
+		if err := adoptKeyPasswordFile(cfg, initKeyPasswordFile); err != nil {
+			return err
+		}
+		log.Infof("Recorded security.key_password_file=%s; keep that file and back it up apart from the node's data", strings.TrimSpace(initKeyPasswordFile))
+	}
+
 	if err := config.Save(configPath, cfg); err != nil {
 		return fmt.Errorf("failed to save config: %w", err)
 	}
@@ -6097,7 +6111,9 @@ func ensureNodeMnemonic(ctx context.Context, cfg *config.Config, generateMnemoni
 	// fallback.
 	keyPassword, err := resolveKeyCLIPassword(cfg)
 	if err != nil {
-		return nodeMnemonicInitResult{}, err
+		// No identity exists yet, so say THAT, and how to proceed — not that
+		// a secret failed to open.
+		return nodeMnemonicInitResult{}, fmt.Errorf("%w\n%s", err, keys.DerivationFailureHint(keyDir))
 	}
 
 	mnemonic, err := generateMnemonic(ctx)

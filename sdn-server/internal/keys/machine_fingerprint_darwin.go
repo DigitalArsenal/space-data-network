@@ -68,6 +68,10 @@ func platformStableIdentifierReadings() ([]sourceReading, error) {
 	return []sourceReading{{key: "platuuid", value: id}}, nil
 }
 
+// refusalExplanation has nothing to add on macOS: the IOPlatformUUID needs
+// no privilege, so a refusal is an ioreg failure, and its error says so.
+func refusalExplanation(error) string { return "" }
+
 // ioPlatformUUIDStrict is ioPlatformUUID with the failure modes separated:
 // an exec error is returned (unreadable), while a clean run without a UUID
 // line returns "" (absent). ioPlatformUUID itself is preserved unchanged for

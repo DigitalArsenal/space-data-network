@@ -240,6 +240,10 @@ func init() {
 	rootCmd.AddCommand(keyCmd)
 }
 
+// deriveDefaultKeyPassword is keys.DeriveDefaultPassword; a variable ONLY so
+// tests can stand in a refused machine on any host.
+var deriveDefaultKeyPassword = keys.DeriveDefaultPassword
+
 // resolveKeyCLIPassword mirrors the precedence show-identity uses: env, then
 // config, then the machine-derived default. It ERRORS instead of degrading —
 // both a configured-but-unreadable password file and a refused machine
@@ -257,7 +261,17 @@ func resolveKeyCLIPassword(cfg *config.Config) (string, error) {
 	if password != "" {
 		return password, nil
 	}
-	return keys.DeriveDefaultPassword()
+	derived, err := deriveDefaultKeyPassword()
+	if err != nil {
+		// The container entrypoint and the .deb/.rpm unit give a generated
+		// key password file to the daemon only; a command run beside them
+		// lands here. Name the file and how to pass it.
+		if generated := keys.GeneratedKeyPasswordFile(config.KeyDir(cfg)); generated != "" {
+			return "", fmt.Errorf("%w\n%s", err, keys.GeneratedKeyPasswordFileNote(generated))
+		}
+		return "", err
+	}
+	return derived, nil
 }
 
 // validateExportFormat resolves a format name and enforces the custody gate.

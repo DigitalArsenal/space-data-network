@@ -16,3 +16,7 @@ func platformStableIdentifiers() []hwAttr { return nil }
 func platformStableIdentifierReadings() ([]sourceReading, error) {
 	return []sourceReading{{key: "platuuid", absent: true}}, nil
 }
+
+// refusalExplanation: no platform source here, so nothing platform-specific
+// can be refused.
+func refusalExplanation(error) string { return "" }

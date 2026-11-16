@@ -234,6 +234,7 @@ run_preflight() {
     deployment/release/build-update-carrier.test.mjs \
     deployment/release/cli-update-payload-trust.test.mjs \
     deployment/release/extract-release-binary.test.mjs \
+    deployment/release/fresh-key-password.test.mjs \
     deployment/release/install-script.test.mjs \
     deployment/release/live-dht-client-smoke.test.mjs \
     deployment/release/live-dht-summary.test.mjs \

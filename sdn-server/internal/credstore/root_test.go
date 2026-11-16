@@ -68,12 +68,13 @@ func TestRootDerivationDeterministicAcrossRestart(t *testing.T) {
 // second. This exercises the actual os.Hostname()/DeriveDefaultPassword() path.
 func TestResolveRootDeterministicForSameNode(t *testing.T) {
 	t.Setenv("SDN_KEY_PASSWORD", "") // force the default derivation path
+	t.Setenv("SDN_KEY_PASSWORD_FILE", "")
 
-	r1, err := ResolveRoot(cp(nodeKeyA))
+	r1, err := ResolveRoot(nil, cp(nodeKeyA))
 	if err != nil {
 		t.Fatalf("resolve 1: %v", err)
 	}
-	r2, err := ResolveRoot(cp(nodeKeyA))
+	r2, err := ResolveRoot(nil, cp(nodeKeyA))
 	if err != nil {
 		t.Fatalf("resolve 2: %v", err)
 	}
@@ -185,14 +186,15 @@ func TestDeriveRootFailsClosedOnMissingInput(t *testing.T) {
 // FAIL CLOSED at the production entry: no node identity key => no root, no store.
 func TestResolveAndOpenFailClosedWithoutNodeKey(t *testing.T) {
 	t.Setenv("SDN_KEY_PASSWORD", "") // ensure the default (deriving) path
+	t.Setenv("SDN_KEY_PASSWORD_FILE", "")
 
-	if _, err := ResolveRoot(nil); err == nil {
+	if _, err := ResolveRoot(nil, nil); err == nil {
 		t.Fatal("SECURITY: ResolveRoot returned a root with no node identity key")
 	}
-	if _, err := ResolveRoot([]byte{}); err == nil {
+	if _, err := ResolveRoot(nil, []byte{}); err == nil {
 		t.Fatal("SECURITY: ResolveRoot returned a root with an empty node identity key")
 	}
-	if _, err := OpenStore(t.TempDir(), nil); err == nil {
+	if _, err := OpenStore(t.TempDir(), nil, nil); err == nil {
 		t.Fatal("SECURITY: OpenStore opened a keystore with no node identity key (weak-key fallback)")
 	}
 }
@@ -202,7 +204,7 @@ func TestSDNKeyPasswordOverridesDerivation(t *testing.T) {
 	t.Setenv("SDN_KEY_PASSWORD", "explicit-operator-chosen-secret")
 
 	// The override is used verbatim and short-circuits the node-key requirement.
-	root, err := ResolveRoot(nil)
+	root, err := ResolveRoot(nil, nil)
 	if err != nil {
 		t.Fatalf("override path should not require a node key: %v", err)
 	}
@@ -221,7 +223,7 @@ func TestSDNKeyPasswordOverridesDerivation(t *testing.T) {
 	}
 
 	// OpenStore works under the override with no node key.
-	st, err := OpenStore(t.TempDir(), nil)
+	st, err := OpenStore(t.TempDir(), nil, nil)
 	if err != nil {
 		t.Fatalf("OpenStore under override: %v", err)
 	}

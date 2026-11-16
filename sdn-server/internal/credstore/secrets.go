@@ -58,9 +58,20 @@
 // same user on the same host: a deterministic, no-external-secret key is
 // inherently re-derivable there. That is the accepted cost of unattended boot.
 //
-// OVERRIDE: SDN_KEY_PASSWORD, if set, replaces the derivation and is used
-// verbatim. Once used it must remain set on every subsequent boot, or the
-// keystore becomes undecryptable.
+// OVERRIDE: an operator key password replaces the derivation and is used
+// verbatim, resolved exactly as the node identity resolves it
+// (config.KeyPassword): SDN_KEY_PASSWORD > SDN_KEY_PASSWORD_FILE > config
+// security.key_password > config security.key_password_file. Once used it must
+// remain available on every subsequent boot, or the keystore becomes
+// undecryptable — the same rule the identity already lives under. Until this
+// store honoured the FILE and config sources, a node whose identity was sealed
+// under a password file still sealed its credentials under the machine key,
+// and a node whose machine key is REFUSED (a Linux service account that cannot
+// read product_uuid) had no credential store at all. A keystore that was
+// sealed under the machine key stays sealed as it is and keeps opening under
+// it (an earlier build, after a rollback, opens it too); only where the
+// machine key is now refused is it opened through the machine generations
+// and re-sealed under the operator password. See OpenStore.
 //
 // FAIL CLOSED: if the node identity key is unavailable at init, ResolveRoot
 // returns an error and the credential routes refuse to serve — a weaker key is
@@ -91,6 +102,7 @@ import (
 
 	"golang.org/x/crypto/hkdf"
 
+	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/keys"
 )
 
@@ -277,10 +289,13 @@ type Store struct {
 	mu         sync.Mutex
 	path       string
 	passphrase []byte
-	// fallbacks are passphrases derived from OLDER machine-derivation
-	// generations, tried only when the current one fails to open an existing
-	// keystore. On success the keystore is re-sealed under passphrase, so the
-	// fallbacks are used at most once per upgrade. See keys.CandidatePasswords.
+	// fallbacks are passphrases derived from machine-derivation generations
+	// other than the primary (older ones; and, under an operator password on
+	// a host whose machine key is now refused, the current one too), tried
+	// only when the primary fails to open an
+	// existing keystore. On success the keystore is re-sealed under
+	// passphrase, so the fallbacks are used at most once per upgrade. See
+	// keys.CandidatePasswords and OpenStore.
 	fallbacks [][]byte
 }
 
@@ -291,31 +306,69 @@ const rootHKDFInfo = "sdn/secrets/credstore/root/v2"
 
 // ResolveRoot resolves the credential-keystore root key.
 //
-// Override: if SDN_KEY_PASSWORD is set it is returned verbatim (and MUST stay
-// set on every subsequent boot, or the keystore becomes undecryptable).
+// Override: an operator key password (operatorRoot: the identity's own
+// precedence) is returned verbatim, and MUST stay available on every
+// subsequent boot, or the keystore becomes undecryptable. A configured source
+// that cannot be read is an error, never a fall-through to the machine key.
 //
 // Default: the deterministic three-input derivation binding the keystore to this
 // machine + this node identity + this hostname (see the package doc). It FAILS
 // CLOSED — never a weaker key — if the node identity key or the hostname is
 // unavailable.
 //
+// cfg is the node's config (nil: environment sources only).
+//
 // nodePrivKey MUST be the UNLOCKED identity private key's raw bytes
 // (node.IdentityKeyMaterial()); ResolveRoot zeroizes the slice before returning,
 // so callers must pass a fresh copy (IdentityKeyMaterial already returns one).
-func ResolveRoot(nodePrivKey []byte) (string, error) {
+func ResolveRoot(cfg *config.Config, nodePrivKey []byte) (string, error) {
 	defer zero(nodePrivKey)
-	if env := os.Getenv("SDN_KEY_PASSWORD"); env != "" {
-		return env, nil
+	operator, _, err := operatorRoot(cfg)
+	if err != nil {
+		return "", err
 	}
+	if operator != "" {
+		return operator, nil
+	}
+	return machineRoot(nodePrivKey)
+}
+
+// operatorRoot returns the operator's key password, resolved with the same
+// precedence as the node identity (config.KeyPassword), or "" when none is
+// configured. inline reports that it came from SDN_KEY_PASSWORD — the one
+// source this store has always honoured.
+//
+// SDN_KEY_PASSWORD is returned exactly as set, untrimmed: it has been this
+// store's root VERBATIM since the store first honoured it, and a keystore
+// sealed under it must keep opening. config.KeyPassword trims it, so it is
+// read here first rather than through that function.
+func operatorRoot(cfg *config.Config) (root string, inline bool, err error) {
+	if raw := os.Getenv(config.EnvKeyPassword); strings.TrimSpace(raw) != "" {
+		return raw, true, nil
+	}
+	password, err := config.KeyPassword(cfg)
+	if err != nil {
+		return "", false, fmt.Errorf("credstore: the key password is configured but cannot be used; refusing the machine-derived fallback: %w", err)
+	}
+	return password, false, nil
+}
+
+// deriveMachinePassword is keys.DeriveDefaultPassword; a variable ONLY so
+// tests can stand in a host whose machine key is refused.
+var deriveMachinePassword = keys.DeriveDefaultPassword
+
+// machineRoot is the default three-input derivation (see ResolveRoot). It
+// does NOT zeroize nodePrivKey; ResolveRoot does.
+func machineRoot(nodePrivKey []byte) (string, error) {
 	hostname, err := os.Hostname()
 	if err != nil || strings.TrimSpace(hostname) == "" {
 		return "", errors.New("credstore: hostname unavailable; refusing to derive root key")
 	}
-	machineState, err := keys.DeriveDefaultPassword()
+	machineState, err := deriveMachinePassword()
 	if err != nil {
 		// Fail closed (never a weaker key): the machine derivation refused —
 		// e.g. unknown user, or a source that exists but cannot be read.
-		return "", fmt.Errorf("credstore: machine derivation refused; refusing to derive root key: %w", err)
+		return "", fmt.Errorf("credstore: machine derivation refused; refusing to derive root key (set SDN_KEY_PASSWORD_FILE): %w", err)
 	}
 	return DeriveRootKey(machineState, nodePrivKey, hostname)
 }
@@ -363,48 +416,125 @@ func appendField(dst, b []byte) []byte {
 	return append(dst, b...)
 }
 
-// OpenStore resolves the machine-bound root key and opens the keystore in one
-// call. Fails closed (no weaker-key fallback) if the node identity key is
-// unavailable — the caller must then refuse to serve the credential routes.
+// OpenStore resolves the root key (ResolveRoot: the operator's key password
+// when one is configured, else the machine-bound derivation) and opens the
+// keystore in one call. Fails closed (no weaker-key fallback) if the root
+// cannot be resolved — the caller must then refuse to serve the credential
+// routes.
 //
-// nodePrivKey is the unlocked identity private key's raw bytes; it is zeroized
-// during resolution.
-func OpenStore(storageDir string, nodePrivKey []byte) (*Store, error) {
-	// Keep a copy: ResolveRoot zeroizes what it is given, and the older
+// cfg is the node's config (nil: environment sources only). nodePrivKey is the
+// unlocked identity private key's raw bytes; it is zeroized during resolution.
+func OpenStore(storageDir string, cfg *config.Config, nodePrivKey []byte) (*Store, error) {
+	// Keep a copy: ResolveRoot zeroizes what it is given, and the machine
 	// generations need the same input.
 	keyCopy := append([]byte(nil), nodePrivKey...)
-	root, err := ResolveRoot(nodePrivKey)
+	defer zero(keyCopy)
+	defer zero(nodePrivKey)
+	// ResolveRoot's two branches, taken here so the operator password is
+	// read once and its presence is known below.
+	operator, inline, err := operatorRoot(cfg)
 	if err != nil {
-		zero(keyCopy)
 		return nil, err
+	}
+	root := operator
+	if root == "" {
+		if root, err = machineRoot(nodePrivKey); err != nil {
+			return nil, err
+		}
 	}
 	store, err := NewStore(storageDir, root)
 	if err != nil {
-		zero(keyCopy)
 		return nil, err
 	}
-	// An explicit operator passphrase does not depend on machine state, so
-	// there is nothing to migrate from.
-	if os.Getenv("SDN_KEY_PASSWORD") == "" {
-		store.attachLegacyRoots(keyCopy)
+	if operator == "" {
+		// Machine-derived root: older generations are read fallbacks, and a
+		// keystore opened under one is re-sealed under the current one.
+		store.attachMachineRoots(keyCopy, false)
+		return store, nil
 	}
-	zero(keyCopy)
+	// Operator root.
+	//
+	// SDN_KEY_PASSWORD: this store has always sealed under it, so a keystore
+	// on such a node was never machine-sealed and there is nothing to recover
+	// — no machine-derived fallback, exactly as before.
+	//
+	// SDN_KEY_PASSWORD_FILE or the config: until now this store ignored them
+	// and sealed under the machine key. A keystore that does not exist yet is
+	// sealed under the operator password, like the identity; one that the
+	// operator password opens is that keystore on a later start.
+	//
+	// An EXISTING keystore that the operator password does not open was
+	// sealed under the machine key, and it STAYS sealed as it is, the rule
+	// the identity follows: on such a node the store is opened exactly as
+	// before (the machine root, older generations migrating to it), so a
+	// rollback to an earlier build, or an update helper's automatic revert,
+	// still opens it. Re-sealing it under the password would be one-way.
+	//
+	// Only when the machine key itself is refused (no earlier build opens
+	// this keystore either) is it opened through every machine generation as
+	// a read fallback and re-sealed under the operator password on first
+	// read: that is the one way its credentials survive.
+	if inline {
+		return store, nil
+	}
+	if _, serr := os.Stat(store.path); serr != nil || store.opens(false) {
+		return store, nil
+	}
+	if mroot, merr := machineRoot(keyCopy); merr == nil {
+		machine, nerr := NewStore(storageDir, mroot)
+		if nerr == nil {
+			machine.attachMachineRoots(keyCopy, false)
+			if machine.opens(true) {
+				return machine, nil
+			}
+		}
+	}
+	store.attachMachineRoots(keyCopy, true)
 	return store, nil
 }
 
-// attachLegacyRoots derives the keystore passphrases for OLDER machine
-// derivation generations, so credentials sealed before the derivation upgrade
-// still open (and are then re-sealed under the current generation).
+// opens reports whether the keystore file decrypts under the primary
+// passphrase (and, withFallbacks, under one of the fallbacks). It changes
+// nothing on disk.
+func (s *Store) opens(withFallbacks bool) bool {
+	raw, err := os.ReadFile(s.path)
+	if err != nil || !hasPrefix(raw, credFileMagic) {
+		return false
+	}
+	defer zero(raw)
+	body := raw[len(credFileMagic):]
+	candidates := [][]byte{s.passphrase}
+	if withFallbacks {
+		candidates = append(candidates, s.fallbacks...)
+	}
+	for _, pass := range candidates {
+		if plain, derr := keys.DecryptSecret(body, string(pass)); derr == nil {
+			zero(plain)
+			return true
+		}
+	}
+	return false
+}
+
+// attachMachineRoots derives the keystore passphrases for machine derivation
+// generations, so credentials sealed under one of them still open (and are
+// then re-sealed under the store's primary passphrase).
 //
-// Without this, changing keys.DeriveDefaultPassword silently orphans every
-// node's stored credentials.
-func (s *Store) attachLegacyRoots(nodePrivKey []byte) {
+// includeCurrent adds the CURRENT (v4) generation too: needed when the
+// primary is an operator password, redundant when the primary IS v4.
+//
+// Without this, changing keys.DeriveDefaultPassword — or giving a node an
+// operator password — silently orphans every node's stored credentials.
+func (s *Store) attachMachineRoots(nodePrivKey []byte, includeCurrent bool) {
+	if len(nodePrivKey) == 0 {
+		return
+	}
 	hostname, err := os.Hostname()
 	if err != nil || strings.TrimSpace(hostname) == "" {
 		return
 	}
 	for _, cand := range keys.CandidatePasswords() {
-		if cand.Scheme == keys.SchemeV4 {
+		if cand.Scheme == keys.SchemeV4 && !includeCurrent {
 			continue // already the primary
 		}
 		root, derr := DeriveRootKey(cand.Password, append([]byte(nil), nodePrivKey...), hostname)
