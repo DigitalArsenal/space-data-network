@@ -3093,8 +3093,12 @@ func (n *Node) catchUpDatasetShardPublicationsFromPeerCounting(ctx context.Conte
 	if !n.peerRegistry.IsTrusted(from) {
 		return 0, nil
 	}
+	schemas, err := n.datasetCatchupSchemas(from)
+	if err != nil {
+		return 0, err
+	}
 	var errs []error
-	for _, schema := range n.validator.Schemas() {
+	for _, schema := range schemas {
 		publications, err := n.listRemoteDatasetShardPublications(ctx, from, schema)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: list %s publications: %w", from.ShortString(), schema, err))
