@@ -31,6 +31,7 @@ old=$base/sdn-bundle.old-$stamp
 failed=$base/sdn-bundle.failed-$stamp
 backup=${root}.roll-backup-$stamp
 stage=PRECHECK stopped=0 conversion_pid= done_ok=0
+pause_dir=${SDN_ROLL_REHEARSAL_PAUSE_DIR:-}
 side_files=(dataset-catalogs dataset-feed-head-sync control.flatsqldb
     fsql4-migrate.json source-metrics.db storefront.db peers.db
     trusted-import-lanes.json homepage.json)
@@ -47,6 +48,19 @@ log() {
 }
 fail() { reason=$1; log FAILED "step=$stage reason=$reason"; exit 1; }
 exists() { [[ -e $1 || -L $1 ]]; }
+
+# Explicit rehearsal barriers let the driver hash a quiescent store.
+# A missing acknowledgment fails closed after five minutes.
+rehearsal_pause() {
+    [[ -n $pause_dir ]] || return 0
+    local point=$1 end=$((SECONDS + 300))
+    : > "$pause_dir/$point.waiting" || return 1
+    log REHEARSAL_PAUSED "point=$point" || return 1
+    while [[ ! -f $pause_dir/$point.continue ]]; do
+        (( SECONDS < end )) || return 1
+        sleep 1
+    done
+}
 
 # Parse systemctl's quoted words without evaluating shell code or printing values.
 # Unsupported escape spellings fail closed before the unit stops.
@@ -162,6 +176,8 @@ rollback() {
         if exists "$live"; then mv -T -- "$live" "$failed" || return 1; fi
         mv -T -- "$old" "$live" || return 1
     fi
+    stage=REHEARSAL_RESTORED
+    rehearsal_pause restored || return 1
     stage=START_OLD
     systemctl start --no-block "$unit" || return 1
     wait_ready || return 1
@@ -194,6 +210,12 @@ trap 'reason=SIGHUP; exit 129' HUP
 trap 'reason=SIGINT; exit 130' INT
 
 log PRECHECK 'begin'
+if [[ -n $pause_dir ]]; then
+    [[ $pause_dir == /* && -d $pause_dir && ! -L $pause_dir ]] || fail rehearsal_pause_directory
+    for point in stopped restored; do
+        ! exists "$pause_dir/$point.waiting" && ! exists "$pause_dir/$point.continue" || fail rehearsal_pause_stale
+    done
+fi
 [[ $(systemctl show -p LoadState --value "$unit") == loaded ]] || fail unit_missing
 systemctl is-active --quiet "$unit" || fail unit_inactive
 user=$(systemctl show -p User --value "$unit")
@@ -224,11 +246,19 @@ free=$(df -B1 --output=avail -- "$root" | tail -n 1); free=${free// /}
 need=$((3 * bytes + aux + 1073741824 + 5000000000))
 log DISK "required_bytes=$need available_bytes=$free"
 (( free >= need )) || fail disk_gate
+log RUNTIME_CHECK 'begin'
+if ! "${node_command[@]}" "$staged/bin/spacedatanetwork" substrate-selftest --require-patched; then
+    log RUNTIME_CHECK_FAILED
+    fail staged_runtime
+fi
+log RUNTIME_CHECK_OK
 log PRECHECK_OK
 stage=STOP
 stopped=1
 stop_unit || fail stop_timeout
 log STOPPED
+stage=REHEARSAL_STOPPED
+rehearsal_pause stopped || fail rehearsal_pause_timeout
 stage=SWAP
 mv -T -- "$live" "$old"
 mv -T -- "$staged" "$live"

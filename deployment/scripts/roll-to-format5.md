@@ -92,7 +92,11 @@ Every event is appended as one UTC line and also written to standard output:
 | --- | --- |
 | PRECHECK | Read-only checks started, apart from the ledger and the identity command's permission enforcement. |
 | DISK | Required and available byte counts. |
-| PRECHECK_OK | Environment, identity, path and space checks passed. |
+| RUNTIME_CHECK | The staged binary runs `substrate-selftest --require-patched` with the service environment. |
+| RUNTIME_CHECK_OK | The staged runtime passed all required checks. |
+| RUNTIME_CHECK_FAILED | The staged runtime refused; the service remains running. |
+| PRECHECK_OK | Environment, identity, path, space and runtime checks passed. |
+| REHEARSAL_PAUSED | An explicitly enabled rehearsal barrier awaits acknowledgment. |
 | STOPPED | MainPID is zero and the unit is inactive or failed. |
 | SWAPPED | The old bundle is retained and the staged bundle occupies the live name. |
 | BACKED_UP | Stopped-state side files are copied beside the store. |
@@ -151,3 +155,22 @@ real systemd as PID 1. It uses isolated copies, generated test identities and no
 external network. A passing report includes old/new per-standard counts, file
 hashes, exit codes and the ledger for each store and failure case. Docker
 measurements describe that environment and do not predict host outage times.
+
+## Rehearsal barriers
+
+`SDN_ROLL_REHEARSAL_PAUSE_DIR` enables two barriers in a dedicated, empty
+absolute directory: `stopped.waiting` appears after the old service stops,
+and `restored.waiting` appears after recovery restores the bundle, before the
+old service starts. The rehearsal driver hashes fsql4 at these boundaries
+and creates the corresponding `stopped.continue` or `restored.continue` file.
+Each barrier has a five-minute limit. A stopped-barrier timeout triggers
+recovery; a restored-barrier timeout records `ROLLBACK_FAILED`. Existing
+barrier files are refused before the outage. Leave this variable unset in
+production; the default has no pause. The directory belongs to the rehearsal
+and contains no store or identity files.
+
+The precheck measures the staged process. The migration process repeats its
+own runtime guard, so a later refusal still invokes recovery. The self-test's
+reported AOT speed ratio is diagnostic; the runtime's pass predicate checks
+thread interruption, atomic operations and native execution. No threshold or
+runtime check is weakened by this script.

@@ -12,6 +12,8 @@ import sys
 import time
 import urllib.request
 
+import records
+
 ROOT = Path('/case')
 UNIT = 'rehearsal-node.service'
 READY = 'http://127.0.0.1:5001/api/v1/ready'
@@ -64,6 +66,19 @@ def peer():
     if not matches:
         raise RuntimeError('running node has no journal identity')
     return matches[-1]
+
+
+def boot_observation():
+    invocation = command('systemctl', 'show', '-p', 'InvocationID', '--value', UNIT)
+    end = time.monotonic() + 180
+    while time.monotonic() < end:
+        journal = command('journalctl', '--no-pager', '-o', 'cat',
+                          '_SYSTEMD_INVOCATION_ID=' + invocation)
+        matches = re.findall(r'Connector lane: persisted (\d+) \$ICN row', journal)
+        if matches:
+            return invocation, sum(map(int, matches))
+        time.sleep(1)
+    raise RuntimeError('connector startup persistence did not finish')
 
 
 def tree_size(path):
@@ -148,10 +163,14 @@ TimeoutStopSec=75
     command('systemctl', 'is-active', '--quiet', UNIT)
     (ROOT / 'baseline.json').write_text(json.dumps({'ready': True, 'http_status': 200}) + '\n')
     expected = peer()
+    before_invocation, _ = boot_observation()
     before = counts()
     (ROOT / 'counts-before.json').write_text(json.dumps(before, sort_keys=True) + '\n')
-    before_hashes = hashes()
-    (ROOT / 'hashes-before.json').write_text(json.dumps(before_hashes, sort_keys=True) + '\n')
+    records.snapshot('/evidence/records-before', before)
+    before_hashes = None
+    stopped_hash_result = None
+    pause = ROOT / 'pause'
+    pause.mkdir()
     # Populate each release's engine cache before the outage.
     with open(ROOT / 'prewarm.log', 'w') as log:
         subprocess.run(['/case/base/staged/bin/spacedatanetwork', 'prewarm-aot', '--config',
@@ -178,7 +197,9 @@ ExecStartPre=/bin/sh -c 'test ! -d /case/store/fsql5'
             str(seconds), '/case/home']
     baseline_pid = command('systemctl', 'show', '-p', 'MainPID', '--value', UNIT)
     start = time.monotonic()
-    proc = subprocess.Popen(['systemd-run', '--unit=rehearsal-roll', '--collect', '--wait', '--pipe', *args],
+    boot_ms = int(time.time() * 1000)
+    proc = subprocess.Popen(['systemd-run', '--unit=rehearsal-roll', '--collect', '--wait', '--pipe',
+                             '--setenv=SDN_ROLL_REHEARSAL_PAUSE_DIR=/case/pause', *args],
                             stdout=open(ROOT / 'roll.log', 'w'), stderr=subprocess.STDOUT)
     injected = False
     peak_kib = 0
@@ -186,6 +207,25 @@ ExecStartPre=/bin/sh -c 'test ! -d /case/store/fsql5'
     migration_end = None
     switched_bytes = None
     while proc.poll() is None:
+        for point in ('stopped', 'restored'):
+            if (pause / (point + '.waiting')).exists() and not (pause / (point + '.continue')).exists():
+                if command('systemctl', 'show', '-p', 'MainPID', '--value', UNIT) != '0':
+                    raise RuntimeError('hash barrier has a running node')
+                current = hashes()
+                (ROOT / ('hashes-' + point + '.json')).write_text(json.dumps(current, sort_keys=True) + '\n')
+                if point == 'stopped':
+                    before_hashes = current
+                elif case != 'after-switch':
+                    added = set(current) - set(before_hashes)
+                    missing = set(before_hashes) - set(current)
+                    changed = [key for key in set(before_hashes) & set(current)
+                               if before_hashes[key] != current[key]]
+                    stopped_hash_result = {'passed': not missing and not changed and
+                                           added <= {'rollback-auxiliary.flatsqlmeta'},
+                                           'missing': len(missing), 'changed': len(changed),
+                                           'added': sorted(added)}
+                    (ROOT / 'stopped-hash-comparison.json').write_text(json.dumps(stopped_hash_result) + '\n')
+                (pause / (point + '.continue')).touch()
         ledger = (ROOT / 'ledger.log').read_text() if (ROOT / 'ledger.log').exists() else ''
         match = re.search(r' CONVERTING .*pid=(\d+)', ledger)
         if match:
@@ -222,18 +262,18 @@ ExecStartPre=/bin/sh -c 'test ! -d /case/store/fsql5'
     wait_ready(seconds)
     if peer() != expected:
         raise RuntimeError('identity changed')
+    after_invocation, boot_additions = boot_observation()
     after = counts()
     (ROOT / 'counts-after.json').write_text(json.dumps(after, sort_keys=True) + '\n')
-    after_hashes = None
-    if case in ('interrupted', 'budget', 'script-term', 'script-hup', 'wrong-peer', 'disk'):
-        after_hashes = hashes()
-        (ROOT / 'hashes-after.json').write_text(json.dumps(after_hashes, sort_keys=True) + '\n')
+    preservation = records.compare('/evidence/records-before', after, boot_ms,
+                                   boot_additions if after_invocation != before_invocation else 0)
+    (ROOT / 'record-preservation.json').write_text(json.dumps(preservation, indent=2) + '\n')
     (ROOT / 'observations.json').write_text(json.dumps({
         'ready': True, 'running_peer_unchanged': True, 'counts_equal': before == after,
         'roll_exit': code, 'injected': injected,
         'conversion_seconds': round(migration_end-migration_start, 2) if migration_end else None,
         'peak_conversion_rss_kib_sampled': peak_kib, 'switched_fsql5_bytes': switched_bytes,
-        'format4_hashes_equal': before_hashes == after_hashes if after_hashes is not None else None}) + '\n')
+        'stopped_format4_hashes': stopped_hash_result, 'records_preserved': preservation['passed']}) + '\n')
     if any(' ' + event + ' ' in ledger for event in
            ('SUCCESS', 'ROLLED_BACK_BEFORE_SWITCH', 'ROLLED_BACK_AFTER_SWITCH')):
         replay_pid = command('systemctl', 'show', '-p', 'MainPID', '--value', UNIT)
@@ -245,8 +285,8 @@ ExecStartPre=/bin/sh -c 'test ! -d /case/store/fsql5'
             'refused': second != 0, 'daemon_pid_unchanged': unchanged}) + '\n')
         if second == 0 or not unchanged:
             raise RuntimeError('second run was not refused without restarting the node')
-    if before != after:
-        raise RuntimeError('per-standard counts changed')
+    if not preservation['passed']:
+        raise RuntimeError('record preservation failed')
     if case == 'forward':
         if code != 0 or ' SUCCESS ' not in ledger:
             raise RuntimeError('forward conversion failed')
@@ -255,8 +295,6 @@ ExecStartPre=/bin/sh -c 'test ! -d /case/store/fsql5'
             raise RuntimeError('precheck did not refuse before stop')
         if command('systemctl', 'show', '-p', 'MainPID', '--value', UNIT) != baseline_pid:
             raise RuntimeError('precheck changed the running daemon')
-        if before_hashes != after_hashes:
-            raise RuntimeError('precheck changed format 4')
         if not (ROOT / 'base/staged').exists() or (ROOT / 'store/fsql5').exists():
             raise RuntimeError('precheck changed bundle or store selection')
     else:
@@ -267,8 +305,8 @@ ExecStartPre=/bin/sh -c 'test ! -d /case/store/fsql5'
             raise RuntimeError('failure was not injected during conversion')
         if case == 'budget' and 'reason=conversion_budget' not in ledger:
             raise RuntimeError('conversion did not reach its budget')
-        if case != 'after-switch' and before_hashes != after_hashes:
-            raise RuntimeError('format-4 file hashes changed')
+        if case != 'after-switch' and not (stopped_hash_result or {}).get('passed'):
+            raise RuntimeError('stopped format-4 file hashes changed or were not measured')
     return {'status': 'passed', 'roll_exit': code, 'seconds': round(time.monotonic()-start, 2),
             'conversion_seconds': round(migration_end-migration_start, 2) if migration_end else None,
             'peak_conversion_rss_kib_sampled': peak_kib,

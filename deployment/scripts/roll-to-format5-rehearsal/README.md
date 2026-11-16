@@ -2,7 +2,8 @@
 
 This harness is an end-to-end test of `../roll-to-format5.sh`. It requires
 Docker with privileged containers, a cgroup mount usable by systemd, Python 3.12
-or later on the driver, and enough disk for independent copies of every case.
+or later on the driver, and enough disk for a case store and record evidence. Completed case stores
+and bundles are removed before the following case starts.
 The image uses Ubuntu 24.04 for the selected node architecture, amd64 by default.
 Systemd and its support libraries run on the build platform's native architecture;
 node binaries and target runtime libraries retain the selected architecture.
@@ -24,23 +25,25 @@ python3 run.py \
   --arch amd64 \
   --store "$FIRST_STORE_COPY" --store "$SECOND_STORE_COPY" \
   --work-dir "$NEW_REHEARSAL_DIRECTORY" \
+  --record-evidence-dir "$PRIVATE_RECORD_EVIDENCE_DIRECTORY" \
   --conversion-minutes 90 --ready-seconds 300
 ```
 
 Use the binary matching each store's installed build as OLD and published
-v1.1.5 as NEW. Each old binary has its bundle's `manifest.json` beside it.
+the selected release archive as NEW. Each old binary has its bundle's `manifest.json` beside it.
 The old bundle contains `bin/spacedatanetwork` and that manifest; the new bundle
 retains the release archive's launcher and runtime layout. Old binary arguments
 and their digests follow the order of the store arguments.
 Changing `--new-archive` selects another release, with its corresponding checksum
 file supplied through `--new-checksums`. The output directory must not exist.
 A selective repeat uses `--case` with one or more case names.
-`--retry-before-roll --case forward` reuses a failed forward setup only when
-no rollout ledger or format-5 selection exists and the old binary still matches
-its verified digest. Previous results and logs move into an `attempt-*` directory.
-The test identity remains in place. Other cases always use fresh copies. Start Docker before
+Every repeat uses a fresh output directory, evidence directory and store copy.
+Failed runtime checks remain failures; a repeat does not alter their results.
+Start Docker before
 running and quit it after the run. The harness stops and removes only containers
-it creates. It retains case directories, logs, hashes, ledgers and results.
+it creates. It retains case logs, hashes, ledgers and results. Completed case
+stores, backup directories, bundles and disk images are removed; record evidence
+stays in the explicitly supplied private evidence directory.
 
 The source stores are read only. Copies omit `keys`, `secrets` and `auth.db`.
 Every case starts its old node from a fresh copy, with a generated test identity,
@@ -63,11 +66,11 @@ silently create an empty store.
 
 | Case | Required evidence |
 | --- | --- |
-| forward | Zero exit, SUCCESS, identical per-standard public stats, ready and unchanged identity. A second invocation is refused. |
+| forward | Zero exit, SUCCESS, record-by-record preservation, ready and unchanged identity. A second invocation is refused. |
 | interrupted | SIGTERM to the recorded migration PID after the pending directory appears, automatic recovery, ready, unchanged identity and identical fsql4 file hashes. |
 | budget | One-minute conversion deadline, automatic recovery and identical fsql4 file hashes. A fast conversion that completes inside the budget fails this injection case. |
 | after-switch | A unit pre-start condition rejects the new fsql5 selection. The original bundle restarts after recovery removes that selection. |
-| wrong-peer | Wrong expected identity is refused before stopping, with unchanged PID, fsql4 hashes and bundle/store selection. |
+| wrong-peer | Wrong expected identity is refused before stopping, with unchanged PID, preserved records and bundle/store selection. |
 | disk | Insufficient free bytes on the supplied filesystem are refused before stopping. A bounded ext4 loop filesystem supplies the space constraint. |
 | script-term / script-hup | Signal to the exact roll-script MainPID during conversion invokes automatic recovery. |
 
@@ -75,11 +78,34 @@ The disk case creates a sparse ext4 image with capacity equal to the copied
 store size plus 2 GiB, mounts it with a loop device, and copies the store into
 that filesystem before startup. It checks the real free-space result against
 the production formula. It does not fill a host disk or add a test-only script
-argument. The image and original copy remain as evidence.
-Copied-store hashes are taken after the old node first becomes ready. The node
-can perform background maintenance; a hash mismatch is reported as failure,
-not waived. The public `/api/v1/stats` response supplies schema/count aggregates;
-an empty response or a changed count fails rather than claiming preservation.
+argument. The image and original copy are removed after the case.
+
+Record preservation uses the node's anonymous `/api/v1/data/scan` endpoint.
+The driver waits for startup connector persistence, then scans every standard
+through the snapshot cursor. It checks the advertised total against every
+record read. Before-state records stay in size-prefixed FlatBuffer streams in
+`--record-evidence-dir`; an index contains SHA-256 content-address digests and
+stream offsets. The after-state scan looks up every content address and
+compares the complete bytes against that stream. Missing records, different
+bytes, duplicate results and unexplained additions fail. Counts remain
+observations rather than the preservation criterion.
+
+The only allowed additions are startup ICN records: each must name a connector
+present before, have an update timestamp after the rollout began, and occur
+once per connector. Their number must equal the current invocation's logged
+startup persistence count. No additions are allowed when the old invocation
+remains running. `ConnectorsHandler.persistLoop` calls `PersistConnectors`
+after a 15-second boot delay; `BuildConnectorFrames` builds one record per
+provider/source pair from stored summaries and the source ledger and assigns
+a fresh `UPDATED_AT` timestamp. This accounts for startup records without
+allowing arbitrary changes to existing records.
+
+Format-4 file hashes are taken at the script's explicit rehearsal barriers,
+after the original service stops and after the bundle is restored but before
+recovery starts that service. Only a newly added
+`rollback-auxiliary.flatsqlmeta` is allowed; removed or changed files fail.
+The conversion adds that snapshot immediately before activation. The barriers
+are disabled unless the rehearsal explicitly supplies its pause directory.
 
 `results.json` summarizes case outcomes. Each case contains `driver.exit`,
 `roll.exit`, `roll.log`, `ledger.log`, aggregate `counts-*.json`, file hash lists,
@@ -115,13 +141,14 @@ recovery to the old node, ready with the same running peer. A second invocation
 is refused without restarting that node. These measurements describe emulated
 Docker execution and are not a forecast for a deployment host.
 
-The strict aggregate and format-4 preservation checks fail. Aggregate and hash
-changes also occur in precheck cases that reject before stopping the old node
-or converting anything. The comparisons include active-daemon activity and do
-not isolate a converter cause. The failed assertions remain in the harness.
-Independent readiness, identity, hash, conversion and repeat-run observations
-are written to `observations.json` and `second-run.json` before the aggregate
-assertion, so a count failure does not erase those observations.
+The preceding rehearsal's aggregate comparisons differed only in ICN counts:
+33 additional records on the first input and 11 on the second. Startup journal
+lines report exactly those persistence counts, including the precheck controls
+that never stop or convert the store. Active-daemon file hashes cannot isolate
+conversion changes. The record comparison and stopped-state barriers replace
+those measurements; they require a completed rehearsal before they establish
+preservation. The earlier failing results remain evidence of those earlier
+measurements.
 
 The script is not cleared for deployment. Recovery ledger events alone do not
 establish the required preservation proof or a successful new-node forward run.

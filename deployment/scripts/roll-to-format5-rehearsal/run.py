@@ -47,10 +47,8 @@ def ignore_private(directory, names):
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     for name in ('new-archive', 'new-checksums',
-                 'work-dir',):
+                 'work-dir', 'record-evidence-dir'):
         ap.add_argument('--' + name, required=True, type=Path)
-    ap.add_argument('--retry-before-roll', action='store_true',
-                    help='retry a failed forward setup, retaining its original copied store')
     ap.add_argument('--cache-dir', type=Path, help='shared engine cache; contains no identities')
     ap.add_argument('--store', required=True, action='append', type=Path)
     ap.add_argument('--old-binary', required=True, action='append', type=Path)
@@ -62,11 +60,9 @@ def main():
     args = ap.parse_args()
     if len(args.old_binary) != len(args.store) or len(args.old_sha256) != len(args.store):
         ap.error('each store requires its matching old binary and SHA-256')
-    if args.retry_before_roll and args.case != ['forward']:
-        ap.error('before-roll retry requires --case forward')
     here = Path(__file__).resolve().parent
     work = args.work_dir.resolve()
-    work.mkdir(parents=True, exist_ok=args.retry_before_roll)
+    work.mkdir(parents=True, exist_ok=False)
     cache = (args.cache_dir or (work / 'cache')).resolve()
     cache.mkdir(parents=True, exist_ok=True)
     results = []
@@ -82,7 +78,7 @@ def main():
             verified.append({'old_binary': binary.name, 'sha256': digest})
         (work / 'archives.json').write_text(json.dumps(verified, indent=2) + '\n')
         context = work / 'image'
-        context.mkdir(exist_ok=args.retry_before_roll)
+        context.mkdir(exist_ok=False)
         shutil.copy2(here / 'Dockerfile', context / 'Dockerfile')
         with open(work / 'image.log', 'w') as log:
             subprocess.run(['docker', 'build', '--platform=linux/' + args.arch,
@@ -90,33 +86,19 @@ def main():
         for number, source in enumerate(args.store, 1):
             for case in args.case or CASES:
                 directory = work / ('store-' + str(number)) / case
-                if args.retry_before_roll:
-                    previous = json.loads((directory / 'result.json').read_text())
-                    if (previous['status'] != 'failed' or (directory / 'ledger.log').exists()
-                            or (directory / 'store/fsql5').exists()
-                            or not (directory / 'base/staged').is_dir()):
-                        raise ValueError('retry requires a failed setup before any rollout')
-                    with (directory / 'base/sdn-bundle/bin/spacedatanetwork').open('rb') as stream:
-                        if hashlib.file_digest(stream, 'sha256').hexdigest() != args.old_sha256[number - 1]:
-                            raise ValueError('retry old bundle differs from the verified input')
-                    attempt = directory / ('attempt-' + str(os.getpid()))
-                    attempt.mkdir()
-                    for name in ('result.json', 'baseline.json', 'counts-before.json',
-                                 'hashes-before.json', 'prewarm.log', 'driver.log',
-                                 'driver.exit', 'journal.log', 'container.log'):
-                        if (directory / name).exists():
-                            shutil.move(str(directory / name), attempt / name)
-                else:
-                    directory.mkdir(parents=True)
-                    shutil.copytree(source, directory / 'store', ignore=ignore_private)
-                    old_bundle = directory / 'base/sdn-bundle'
-                    (old_bundle / 'bin').mkdir(parents=True)
-                    old_binary = args.old_binary[number - 1]
-                    shutil.copy2(old_binary, old_bundle / 'bin/spacedatanetwork')
-                    shutil.copy2(old_binary.parent / 'manifest.json', old_bundle / 'manifest.json')
-                    unpack(args.new_archive, directory / 'base/staged')
+                directory.mkdir(parents=True)
+                shutil.copytree(source, directory / 'store', ignore=ignore_private)
+                old_bundle = directory / 'base/sdn-bundle'
+                (old_bundle / 'bin').mkdir(parents=True)
+                old_binary = args.old_binary[number - 1]
+                shutil.copy2(old_binary, old_bundle / 'bin/spacedatanetwork')
+                shutil.copy2(old_binary.parent / 'manifest.json', old_bundle / 'manifest.json')
+                unpack(args.new_archive, directory / 'base/staged')
                 shutil.copy2(here.parent / 'roll-to-format5.sh', directory / 'roll.sh')
                 shutil.copy2(here / 'case.py', directory / 'case.py')
+                shutil.copy2(here / 'records.py', directory / 'records.py')
+                evidence = args.record_evidence_dir.resolve() / ('store-' + str(number)) / case
+                evidence.mkdir(parents=True, exist_ok=False)
                 active = 'sdn-format5-' + str(os.getpid()) + '-' + str(number) + '-' + case
                 with open(directory / 'container.log', 'w') as log:
                     subprocess.run(['docker', 'run', '-d', '-t', '--name', active, '--hostname=sdn-rehearsal', '--privileged',
@@ -124,6 +106,7 @@ def main():
                                     '--cpus=2', '--memory=6g', '--tmpfs=/run', '--tmpfs=/run/lock',
                                     '--tmpfs=/tmp', '-v', '/sys/fs/cgroup:/sys/fs/cgroup:rw',
                                     '-v', str(cache) + ':/engine-cache',
+                                    '-v', str(evidence) + ':/evidence',
                                     '-v', str(directory) + ':/case', image],
                                    stdout=log, stderr=subprocess.STDOUT, check=True)
                 try:
@@ -144,12 +127,21 @@ def main():
                     subprocess.run(['docker', 'stop', active], check=True, stdout=subprocess.DEVNULL)
                     subprocess.run(['docker', 'rm', active], check=True, stdout=subprocess.DEVNULL)
                     active = None
+                    if not (directory / 'driver.exit').exists() or not (directory / 'result.json').exists():
+                        raise RuntimeError('incomplete case retained; inspect before creating another store')
+                    # Retain evidence, then reclaim this completed case before another copy.
+                    for name in ('store', 'store-source', 'base'):
+                        if (directory / name).exists():
+                            shutil.rmtree(directory / name)
+                    for backup in directory.glob('store.roll-backup-*'):
+                        shutil.rmtree(backup)
+                    (directory / 'disk.img').unlink(missing_ok=True)
                 (work / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
     except Exception as error:
         (work / 'blocked.txt').write_text(str(error) + '\n')
         raise
     finally:
-        # Retain every store and log, including failed cases.
+        # Logs and record evidence survive cleanup; interrupted cases remain inspectable.
         if active:
             subprocess.run(['docker', 'stop', active], stdout=subprocess.DEVNULL)
         (work / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
