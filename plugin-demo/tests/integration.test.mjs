@@ -18,6 +18,7 @@
 
 import { startTestServer, stopTestServer } from './helpers/test-server.mjs';
 import * as flatbuffers from 'flatbuffers';
+import { OMM } from 'spacedatastandards.org/lib/js/OMM/OMM.js';
 
 /* ─── Test Framework (minimal, no deps) ─── */
 
@@ -100,35 +101,19 @@ function buildPNM({ multiaddr, timestamp, cid, fileName, fileId, signature, sign
   return builder.asUint8Array();
 }
 
-/**
- * Build a minimal OMM-like FlatBuffer for testing publish.
- * Since validation is disabled in test mode, we just need valid FlatBuffer
- * structure with the right file_identifier.
- */
-function buildMinimalFlatBuffer(fileIdentifier, fields = {}) {
-  const builder = new flatbuffers.Builder(256);
-  const stringOffsets = [];
-
-  // Create string values first
-  for (const [, value] of Object.entries(fields)) {
-    stringOffsets.push(builder.createString(String(value)));
-  }
-
-  // Start table with N fields
-  const fieldCount = Object.keys(fields).length;
-  builder.startObject(fieldCount);
-
-  // Add each field as a string offset
-  stringOffsets.forEach((off, i) => {
-    builder.addFieldOffset(i, off, 0);
-  });
-
-  const root = builder.endObject();
-
-  // Pad file identifier to exactly 4 bytes
-  const fid = (fileIdentifier + '    ').slice(0, 4);
-  builder.finish(root, fid);
-
+/** Build a synthetic OMM using the schema's field slots and scalar types. */
+function buildOMM() {
+  const builder = new flatbuffers.Builder(512);
+  const name = builder.createString('Synthetic demo object');
+  const epoch = builder.createString('2026-01-01T00:00:00Z');
+  OMM.startOMM(builder);
+  OMM.addObjectName(builder, name);
+  OMM.addNoradCatId(builder, 900001);
+  OMM.addEpoch(builder, epoch);
+  OMM.addMeanMotion(builder, 15);
+  OMM.addEccentricity(builder, 0.001);
+  OMM.addInclination(builder, 45);
+  OMM.finishSizePrefixedOMMBuffer(builder, OMM.endOMM(builder));
   return builder.asUint8Array();
 }
 
@@ -137,7 +122,9 @@ function buildMinimalFlatBuffer(fileIdentifier, fields = {}) {
  */
 function readFileIdentifier(bytes) {
   if (bytes.length < 8) return null;
-  return String.fromCharCode(bytes[4], bytes[5], bytes[6], bytes[7]);
+  const size = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(0, true);
+  const offset = size === bytes.length - 4 ? 8 : 4;
+  return String.fromCharCode(...bytes.subarray(offset, offset + 4));
 }
 
 /* ─── HTTP Helpers ─── */
@@ -215,7 +202,7 @@ async function runTests() {
         multiaddr: '/ip4/127.0.0.1/tcp/4001/p2p/test-peer',
         timestamp: new Date().toISOString(),
         cid: 'bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi',
-        fileName: 'ISS-orbit-2026-03-09.omm',
+        fileName: 'synthetic-demo.omm',
         fileId: 'OMM',
         signature: 'test-signature-placeholder',
         signatureType: 'Ed25519',
@@ -240,14 +227,7 @@ async function runTests() {
     });
 
     await test('publish a second message with different schema', async () => {
-      const ommBytes = buildMinimalFlatBuffer('$OMM', {
-        OBJECT_NAME: 'ISS (ZARYA)',
-        NORAD_CAT_ID: '25544',
-        EPOCH: '2026-03-09T12:00:00.000Z',
-        MEAN_MOTION: '15.48919',
-        ECCENTRICITY: '0.0006703',
-        INCLINATION: '51.6416',
-      });
+      const ommBytes = buildOMM();
 
       const fid = readFileIdentifier(ommBytes);
       assertEqual(fid, '$OMM', 'file identifier');
