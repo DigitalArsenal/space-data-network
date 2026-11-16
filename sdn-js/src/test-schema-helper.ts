@@ -49,3 +49,32 @@ export async function recordTestBytes(value: number, standardId = 'TST'): Promis
   builder.finish(root, `$${standardId}`);
   return builder.asUint8Array().slice();
 }
+
+/** The self-contained text served from the node's embedded SDS sources. */
+export function nodeSchema(code: string): string {
+  const directory = new URL('../../sdn-server/internal/sds/schemas/', import.meta.url);
+  const seen = new Set<string>();
+  const attributes = new Set<string>();
+  let output = '';
+  function visit(current: string, root: boolean): void {
+    if (seen.has(current)) return;
+    seen.add(current);
+    const lines = readFileSync(new URL(`${current}.fbs`, directory), 'utf8').split('\n');
+    for (const line of lines) {
+      const match = /^include\s+"\.\.\/([A-Za-z0-9_]+)\/main\.fbs"\s*;/.exec(line.trim());
+      if (match) visit(match[1], false);
+    }
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith('include ')) continue;
+      if (!root && /^(root_type|file_identifier|file_extension) /.test(trimmed)) continue;
+      if (trimmed.startsWith('attribute ')) {
+        if (attributes.has(trimmed)) continue;
+        attributes.add(trimmed);
+      }
+      output += `${line}\n`;
+    }
+  }
+  visit(code, true);
+  return output;
+}
