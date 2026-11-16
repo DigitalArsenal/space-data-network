@@ -92,6 +92,7 @@ func TestFlatSQLStore_UpsertAndQueryDirectoryRecord(t *testing.T) {
 }
 
 func TestFlatSQLStore_LocalEPMRecordsAreEncryptedAtRest(t *testing.T) {
+	useReadableMachineSource(t)
 	store := mustNewFlatSQLStore(t)
 
 	peerID := "16Uiu2HAmLocalProfile"
