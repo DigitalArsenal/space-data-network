@@ -5,6 +5,7 @@ export default defineConfig({
   plugins: [svelte()],
   test: {
     globals: true,
+    globalSetup: ['./scripts/standards-interop-setup.ts'],
     environment: 'node',
     include: ['src/**/*.test.ts', 'ui/src/**/*.test.ts', 'spaceaware-ui/src/dashboard/src/**/*.test.js'],
     exclude: ['src/**/*.stress.test.ts'], // Stress tests run separately

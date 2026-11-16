@@ -1,4 +1,4 @@
-import { publishedSchema, nodeSchema } from '../../test-schema-helper';
+import { publishedSchema, serverStandardSchema } from '../../test-schema-helper';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import * as flatbuffers from 'flatbuffers';
@@ -20,7 +20,7 @@ import { FLATBUFFER_STREAM_TYPE } from './qrp-frames';
 import { decodeQrpRequest, encodeQrpErrorFrame, encodeQrpRunAnswer, qrpStatus, type QrpRequest } from './qrp-request';
 
 const require = createRequire(import.meta.url);
-const OMM_SCHEMA = nodeSchema('OMM');
+const OMM_SCHEMA = serverStandardSchema('OMM');
 
 interface CatalogRecord {
   index: number;

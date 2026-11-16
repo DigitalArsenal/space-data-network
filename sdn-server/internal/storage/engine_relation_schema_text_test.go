@@ -3,8 +3,6 @@ package storage
 import (
 	"strings"
 	"testing"
-
-	"github.com/spacedatanetwork/sdn-server/internal/sds"
 )
 
 func TestEngineRelationSchemaTextContainsRootAndDependencies(t *testing.T) {
@@ -60,24 +58,23 @@ func TestEngineRelationSchemaTextAcceptsCodeSpellings(t *testing.T) {
 }
 
 func TestEngineRelationSchemaTextCoversEveryRoutedStandard(t *testing.T) {
-	registry, err := sds.NewSchemaRegistry()
-	if err != nil {
-		t.Fatal(err)
-	}
 	for _, name := range engineRoutedSchemaNames() {
-		text, table, _, ok := EngineRelationSchemaText(name)
-		if !ok {
-			t.Fatalf("%s: routed but no schema", name)
-		}
-		source, found := registry.Get(name)
-		if !found {
-			t.Fatalf("%s: embedded source missing", name)
-		}
-		// Inlining preserves the complete root declaration, including field order.
-		want := parseEngineDeclaredColumns(string(source))[table]
-		got := parseEngineDeclaredColumns(text)[table]
-		if strings.Join(got, ",") != strings.Join(want, ",") {
-			t.Fatalf("%s: root fields changed", name)
-		}
+		t.Run(name, func(t *testing.T) {
+			text, table, _, ok := EngineRelationSchemaText(name)
+			if !ok {
+				t.Fatal("routed but no schema")
+			}
+			want, found := engineDeclaredColumns[table]
+			got, declared := parseEngineDeclaredColumns(text)[table]
+			if !found || !declared || len(want) == 0 || len(got) == 0 {
+				t.Fatalf("missing or empty engine table %s: engine=%v served=%v", table, want, got)
+			}
+			if strings.Join(got, ",") != strings.Join(want, ",") {
+				t.Fatalf("engine columns %v; served columns %v", want, got)
+			}
+			if !strings.Contains(text, "root_type "+table+";") {
+				t.Fatalf("root does not match engine table %s", table)
+			}
+		})
 	}
 }

@@ -432,29 +432,6 @@ func engineSchemaTextExcluding(excluded map[string]bool) string {
 	return strings.TrimSuffix(out.String(), "\n")
 }
 
-// EngineRelationSchemaText returns a routed standard's complete embedded SDS
-// schema, including dependency declarations, root type, and file identifier.
-// The response registers the same binary record layout in browser engines.
-func EngineRelationSchemaText(schemaName string) (text, table, fileID string, ok bool) {
-	code := strings.TrimSpace(schemaName)
-	if strings.HasSuffix(strings.ToLower(code), ".fbs") {
-		code = code[:len(code)-len(".fbs")]
-	}
-	code = strings.ToUpper(strings.TrimSpace(code))
-	if code == "" {
-		return "", "", "", false
-	}
-	binding, routed := engineRoutedSchemaFor(code)
-	if !routed {
-		return "", "", "", false
-	}
-	block, found := sds.StandaloneSchemaText(code)
-	if !found {
-		return "", "", "", false
-	}
-	return block, binding.Table, binding.FileID, true
-}
-
 // engineTableBlockText extracts one `table <name> {` … `}` block from an
 // engine schema text, lines kept verbatim (indentation included), terminated
 // by a single newline. It is the same line shape engineSchemaTextExcluding

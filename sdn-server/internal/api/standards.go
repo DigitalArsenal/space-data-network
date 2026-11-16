@@ -7,8 +7,8 @@ package api
 //
 // GET /api/v1/standards/{CODE}.fbs — the node's OWN engine table declaration
 // for one routed standard (storage.EngineRelationSchemaText), text/plain. A
-// browser-hosted engine is created from this exact text and projects the
-// node's raw record frames identically; the node never projects for it.
+// browser-hosted engine receives the same projected columns in the same
+// order, plus their type definitions. The raw records retain all SDS fields.
 
 import (
 	"net/http"
