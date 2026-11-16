@@ -106,6 +106,17 @@ provider/source pair from stored summaries and the source ledger and assigns
 a fresh `UPDATED_AT` timestamp. This accounts for startup records without
 allowing arbitrary changes to existing records.
 
+The data API also merges the local node EPM into record reads. `epm.Service.Init`
+rebuilds and persists that profile with a fresh signature timestamp. The
+comparison recognizes only a Node EPM whose `/ipns/` address names the generated
+test peer. After a service restart, one such profile may refresh its signature
+and signature timestamp: every other byte, including all profile fields and
+public keys, must match. The new timestamp must fall between rollout start and
+the comparison. Other EPM records require exact address and byte preservation.
+Before-state frames and every new or changed after-state frame remain in
+size-prefixed streams under the private evidence directory. A profile refresh
+has its own result counter and does not count as an exact record match.
+
 Format-4 file hashes are taken at the script's explicit rehearsal barriers,
 after the original service stops and after the bundle is restored but before
 recovery starts that service. Only a newly added

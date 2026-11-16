@@ -10,6 +10,7 @@ import sqlite3
 import shutil
 import tempfile
 import struct
+import time
 import urllib.request
 
 API = 'http://127.0.0.1:5001/api/v1/data/scan'
@@ -42,6 +43,40 @@ def string(data, slot):
     start = offset + scalar(data, offset, 'I')
     size = scalar(data, start, 'I')
     return data[start + 4:start + 4 + size]
+
+
+def local_profile(data, peer):
+    # EPM slots: MULTIFORMAT_ADDRESS=14, SIGNATURE=15,
+    # SIGNATURE_TIMESTAMP=16, ENTITY_TYPE=18 (Node=1).
+    prefix = b''
+    if data[4:8] != b'$EPM' and data[8:12] == b'$EPM':
+        prefix, data = data[:4], data[4:]
+    if not peer or data[4:8] != b'$EPM' or number(data, 18, 'b') != 1:
+        return None
+    address = field(data, 14)
+    signature = field(data, 15)
+    timestamp = field(data, 16)
+    if not address or not signature or not timestamp:
+        return None
+    vector = address + scalar(data, address, 'I')
+    addresses = []
+    for index in range(scalar(data, vector, 'I')):
+        offset = vector + 4 + index * 4
+        start = offset + scalar(data, offset, 'I')
+        size = scalar(data, start, 'I')
+        addresses.append(data[start + 4:start + 4 + size])
+    identity = peer.encode()
+    if b'/ipns/' + identity not in addresses:
+        return None
+    start = signature + scalar(data, signature, 'I')
+    size = scalar(data, start, 'I')
+    value = data[start + 4:start + 4 + size]
+    if not value or any(byte not in b'0123456789abcdefABCDEF' for byte in value):
+        return None
+    masked = bytearray(data)
+    masked[start + 4:start + 4 + size] = b'\0' * size
+    masked[timestamp:timestamp + 8] = b'\0' * 8
+    return prefix + bytes(masked), scalar(data, timestamp, 'q')
 
 
 def request_frame(schema, cursor):
@@ -175,10 +210,13 @@ def snapshot(directory, schemas):
     return results
 
 
-def compare(directory, schemas, boot_ms, expected_boot_additions):
+def compare(directory, schemas, boot_ms, expected_boot_additions,
+            local_peer=None, allow_profile_refresh=False):
     directory = Path(directory)
     before = json.loads((directory / 'summary.json').read_text())
     results = {}
+    additions = directory.parent / 'records-after-additions'
+    additions.mkdir(exist_ok=True)
     for schema in sorted(set(schemas) | set(before)):
         if schema not in before:
             results[schema] = {'unexpected_standard': True}
@@ -188,8 +226,17 @@ def compare(directory, schemas, boot_ms, expected_boot_additions):
         shutil.copy2(directory / (schema + '.sqlite'), index)
         db = sqlite3.connect(index)
         added = changed = unexplained = matched = 0
+        refreshed_profiles = 0
         added_connectors = set()
-        with (directory / (schema + '.sds')).open('rb') as stream:
+        with (directory / (schema + '.sds')).open('rb') as stream, \
+                (additions / (schema + '.sds')).open('wb') as after_stream:
+            profiles = []
+            if schema == 'EPM.fbs' and allow_profile_refresh:
+                for old_cid, offset, size, occurrences in db.execute('SELECT cid,offset,size,occurrences FROM records'):
+                    stream.seek(offset + 4)
+                    profile = local_profile(stream.read(size), local_peer)
+                    if profile and occurrences == 1:
+                        profiles.append((old_cid, profile))
             for data in scan(schema):
                 cid = hashlib.sha256(data).digest()
                 row = db.execute('SELECT offset,size,seen,occurrences FROM records WHERE cid=?', (cid,)).fetchone()
@@ -198,18 +245,30 @@ def compare(directory, schemas, boot_ms, expected_boot_additions):
                     stream.seek(offset + 4)
                     if size != len(data) or stream.read(size) != data:
                         changed += 1
+                        after_stream.write(struct.pack('<I', len(data)) + data)
                     if seen >= occurrences:
                         unexplained += 1
                     db.execute('UPDATE records SET seen=seen+1 WHERE cid=?', (cid,))
                     matched += 1
                 else:
                     added += 1
+                    after_stream.write(struct.pack('<I', len(data)) + data)
                     if schema == 'ICN.fbs':
                         connector, updated = icn_fields(data)
                         known = db.execute('SELECT 1 FROM connectors WHERE id=?', (connector,)).fetchone()
                         if not known or updated < boot_ms or connector in added_connectors:
                             unexplained += 1
                         added_connectors.add(connector)
+                    elif schema == 'EPM.fbs' and len(profiles) == 1 and not refreshed_profiles:
+                        profile = local_profile(data, local_peer)
+                        old_cid, old_profile = profiles[0]
+                        unseen = db.execute('SELECT seen FROM records WHERE cid=?', (old_cid,)).fetchone()[0] == 0
+                        if profile and unseen and profile[0] == old_profile[0] and \
+                                old_profile[1] <= boot_ms // 1000 <= profile[1] <= int(time.time()):
+                            db.execute('UPDATE records SET seen=seen+1 WHERE cid=?', (old_cid,))
+                            refreshed_profiles += 1
+                        else:
+                            unexplained += 1
                     else:
                         unexplained += 1
                 if (matched + added) % 20000 == 0:
@@ -224,9 +283,10 @@ def compare(directory, schemas, boot_ms, expected_boot_additions):
         results[schema] = dict(before=before[schema], distinct_before=distinct_before,
                                baseline_duplicate_occurrences=before[schema]-distinct_before,
                                matched=matched, added=added,
+                               refreshed_local_profiles=refreshed_profiles,
                                missing=missing, changed=changed, unexplained=unexplained)
     passed = all(not any(row.get(key, 0) for key in
                          ('missing', 'changed', 'unexplained', 'unexpected_standard'))
                  for row in results.values())
     return {'passed': passed, 'standards': results,
-            'method': 'SHA-256 content address lookup followed by exact byte comparison'}
+            'method': 'SHA-256 content address lookup and exact bytes; one generated local profile may refresh only its signature and signature timestamp'}

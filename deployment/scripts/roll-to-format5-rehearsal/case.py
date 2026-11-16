@@ -282,7 +282,8 @@ ExecStartPre=/bin/sh -c 'test ! -d /case/store/fsql5'
     after = counts()
     (ROOT / 'counts-after.json').write_text(json.dumps(after, sort_keys=True) + '\n')
     preservation = records.compare('/evidence/records-before', after, boot_ms,
-                                   boot_additions if after_invocation != before_invocation else 0)
+                                   boot_additions if after_invocation != before_invocation else 0,
+                                   expected, after_invocation != before_invocation)
     (ROOT / 'record-preservation.json').write_text(json.dumps(preservation, indent=2) + '\n')
     (ROOT / 'observations.json').write_text(json.dumps({
         'ready': True, 'running_peer_unchanged': True, 'counts_equal': before == after,
