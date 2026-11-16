@@ -240,7 +240,7 @@ func TestConcreteDatasetPublicationServiceExportsPinsSignsAndAnnounces(t *testin
 		t.Fatalf("GenerateKey failed: %v", err)
 	}
 	publisher := &fakeDatasetUpdatePublisher{}
-	service := NewConcreteDatasetPublicationService(
+	service := newPublicationServiceWithPinPolicy(t,
 		store,
 		publisher,
 		signingKey,
@@ -409,7 +409,7 @@ func TestConcreteDatasetPublicationServiceRecordsVerifiedChannelMonitor(t *testi
 	}
 	channelAPI := NewChannelHandler(store)
 	publisher := &fakeDatasetUpdatePublisher{}
-	service := NewConcreteDatasetPublicationService(
+	service := newPublicationServiceWithPinPolicy(t,
 		store,
 		publisher,
 		signingKey,
@@ -530,7 +530,7 @@ func TestConcreteDatasetPublicationServicePublishesRegisteredDatastoreNamespace(
 		t.Fatalf("GenerateKey failed: %v", err)
 	}
 	publisher := &fakeDatasetUpdatePublisher{}
-	service := NewConcreteDatasetPublicationService(
+	service := newPublicationServiceWithPinPolicy(t,
 		rootStore,
 		publisher,
 		signingKey,
@@ -634,7 +634,7 @@ func TestConcreteDatasetPublicationServicePublishesFullCatalogAsDPMSeries(t *tes
 		t.Fatalf("GenerateKey failed: %v", err)
 	}
 	publisher := &fakeDatasetUpdatePublisher{}
-	service := NewConcreteDatasetPublicationService(
+	service := newPublicationServiceWithPinPolicy(t,
 		store,
 		publisher,
 		signingKey,
@@ -729,7 +729,7 @@ func TestConcreteDatasetPublicationServiceSkipsUnchangedFullCatalogShards(t *tes
 	}
 	publisher := &fakeDatasetUpdatePublisher{}
 	firstChannelAPI := NewChannelHandler(store)
-	service := NewConcreteDatasetPublicationService(
+	service := newPublicationServiceWithPinPolicy(t,
 		store,
 		publisher,
 		signingKey,
@@ -855,7 +855,7 @@ func TestConcreteDatasetPublicationServiceAnnounceExistingRepublishesRepairedInd
 		t.Fatalf("GenerateKey failed: %v", err)
 	}
 	publisher := &fakeDatasetUpdatePublisher{}
-	service := NewConcreteDatasetPublicationService(
+	service := newPublicationServiceWithPinPolicy(t,
 		store,
 		publisher,
 		signingKey,
@@ -1016,7 +1016,7 @@ func TestConcreteDatasetPublicationServicePrunesStaleFullCatalogShards(t *testin
 		t.Fatalf("GenerateKey failed: %v", err)
 	}
 	publisher := &fakeDatasetUpdatePublisher{}
-	service := NewConcreteDatasetPublicationService(
+	service := newPublicationServiceWithPinPolicy(t,
 		store,
 		publisher,
 		signingKey,
@@ -1154,7 +1154,7 @@ func TestConcreteDatasetPublicationServiceDefaultsFullCatalogToLargeSyncChunks(t
 		t.Fatalf("GenerateKey failed: %v", err)
 	}
 	publisher := &fakeDatasetUpdatePublisher{}
-	service := NewConcreteDatasetPublicationService(
+	service := newPublicationServiceWithPinPolicy(t,
 		store,
 		publisher,
 		signingKey,

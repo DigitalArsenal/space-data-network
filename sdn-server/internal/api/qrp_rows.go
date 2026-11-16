@@ -44,12 +44,12 @@ type qrpVal struct {
 	Bytes []byte
 }
 
-func nullVal() qrpVal              { return qrpVal{Kind: qrpValueKindNull} }
-func textVal(s string) qrpVal      { return qrpVal{Kind: qrpValueKindText, Text: s} }
-func intVal(n int64) qrpVal        { return qrpVal{Kind: qrpValueKindInt, Int: n} }
-func floatVal(f float64) qrpVal    { return qrpVal{Kind: qrpValueKindFloat, Float: f} }
-func boolVal(v bool) qrpVal        { return qrpVal{Kind: qrpValueKindBool, Bool: v} }
-func bytesVal(b []byte) qrpVal     { return qrpVal{Kind: qrpValueKindBytes, Bytes: b} }
+func nullVal() qrpVal           { return qrpVal{Kind: qrpValueKindNull} }
+func textVal(s string) qrpVal   { return qrpVal{Kind: qrpValueKindText, Text: s} }
+func intVal(n int64) qrpVal     { return qrpVal{Kind: qrpValueKindInt, Int: n} }
+func floatVal(f float64) qrpVal { return qrpVal{Kind: qrpValueKindFloat, Float: f} }
+func boolVal(v bool) qrpVal     { return qrpVal{Kind: qrpValueKindBool, Bool: v} }
+func bytesVal(b []byte) qrpVal  { return qrpVal{Kind: qrpValueKindBytes, Bytes: b} }
 
 func timeMsOrNull(t time.Time) qrpVal {
 	if t.IsZero() {

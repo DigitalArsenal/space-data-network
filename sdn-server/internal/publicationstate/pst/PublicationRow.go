@@ -7,30 +7,30 @@ import (
 )
 
 type PublicationRowT struct {
-	SchemaName string `json:"schema_name"`
-	ProviderId string `json:"provider_id"`
-	SourceName string `json:"source_name"`
-	BatchId string `json:"batch_id"`
-	QueryProfile string `json:"query_profile"`
-	Offset int64 `json:"offset"`
-	Limit int64 `json:"limit"`
-	RecordCount int64 `json:"record_count"`
-	ByteCount int64 `json:"byte_count"`
-	ShardCid string `json:"shard_cid"`
-	IndexCid string `json:"index_cid"`
-	ManifestCid string `json:"manifest_cid"`
-	PnmCid string `json:"pnm_cid"`
-	ShardSha256 string `json:"shard_sha256"`
-	IndexSha256 string `json:"index_sha256"`
-	QuerySha256 string `json:"query_sha256"`
-	ResultSha256 string `json:"result_sha256"`
-	FeedSequence int64 `json:"feed_sequence"`
-	PreviousHead string `json:"previous_head"`
-	FeedHead string `json:"feed_head"`
-	PublishedAt string `json:"published_at"`
-	PublicationCutoff *int64 `json:"publication_cutoff"`
+	SchemaName              string `json:"schema_name"`
+	ProviderId              string `json:"provider_id"`
+	SourceName              string `json:"source_name"`
+	BatchId                 string `json:"batch_id"`
+	QueryProfile            string `json:"query_profile"`
+	Offset                  int64  `json:"offset"`
+	Limit                   int64  `json:"limit"`
+	RecordCount             int64  `json:"record_count"`
+	ByteCount               int64  `json:"byte_count"`
+	ShardCid                string `json:"shard_cid"`
+	IndexCid                string `json:"index_cid"`
+	ManifestCid             string `json:"manifest_cid"`
+	PnmCid                  string `json:"pnm_cid"`
+	ShardSha256             string `json:"shard_sha256"`
+	IndexSha256             string `json:"index_sha256"`
+	QuerySha256             string `json:"query_sha256"`
+	ResultSha256            string `json:"result_sha256"`
+	FeedSequence            int64  `json:"feed_sequence"`
+	PreviousHead            string `json:"previous_head"`
+	FeedHead                string `json:"feed_head"`
+	PublishedAt             string `json:"published_at"`
+	PublicationCutoff       *int64 `json:"publication_cutoff"`
 	PublicationSourceCutoff *int64 `json:"publication_source_cutoff"`
-	UnavailableSince int64 `json:"unavailable_since"`
+	UnavailableSince        int64  `json:"unavailable_since"`
 }
 
 func (t *PublicationRowT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

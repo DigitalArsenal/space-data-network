@@ -1,3 +1,4 @@
+import { publishedSchema } from '../../test-schema-helper';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import * as flatbuffers from 'flatbuffers';
@@ -147,7 +148,7 @@ function createFakeNode(catalog: CatalogRecord[], options: FakeNodeOptions = {})
 
 async function createOmmStore(): Promise<LocalFlatSqlStore> {
   return createLocalFlatSqlStore({
-    schemas: [{ standardId: 'OMM', tableName: 'OMM', fileId: '$OMM', schema: OMM_SCHEMA }],
+    schemas: [{ standardId: 'OMM', tableName: 'OMM', fileId: '$OMM', ...publishedSchema('OMM') }],
   });
 }
 

@@ -184,9 +184,13 @@ func TestBulkExportFormatsHeadersAndFilename(t *testing.T) {
 	if xlsx.Code != http.StatusBadRequest {
 		t.Fatalf("xlsx status = %d, want 400", xlsx.Code)
 	}
-	message := strings.TrimSpace(xlsx.Body.String())
-	if xlsx.Header().Get("Content-Type") != "text/plain; charset=utf-8" || strings.Count(message, ".") != 1 || !strings.HasSuffix(message, ".") {
-		t.Fatalf("xlsx response content-type=%q message=%q, want one plain sentence", xlsx.Header().Get("Content-Type"), message)
+	refusal, err := ParseQRP(xlsx.Body.Bytes())
+	if err != nil || xlsx.Header().Get("Content-Type") != StreamContentType {
+		t.Fatalf("xlsx response is not a QRP stream: %v", err)
+	}
+	message := strings.TrimSpace(string(refusal.MESSAGE()))
+	if int8(refusal.KIND()) != QRPKindError || strings.Count(message, ".") != 1 || !strings.HasSuffix(message, ".") {
+		t.Fatalf("xlsx error kind=%v message=%q", refusal.KIND(), message)
 	}
 
 	csvRec := serveDataAPIRequest(t, mux, base+"&format=csv&as_of=2026-05-05")

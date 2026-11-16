@@ -7,8 +7,8 @@ import (
 )
 
 type PublicationStateT struct {
-	Version uint16 `json:"version"`
-	Payload *BodyT `json:"payload"`
+	Version  uint16 `json:"version"`
+	Payload  *BodyT `json:"payload"`
 	Checksum []byte `json:"checksum"`
 }
 

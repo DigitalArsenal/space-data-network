@@ -10,6 +10,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/DSS"
+	flatbuffers "github.com/google/flatbuffers/go"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -2629,7 +2631,11 @@ func TestGateHandlerWithTrustAllowsAuthenticatedStandardSession(t *testing.T) {
 // trust) behind a real httptest.Server, for end-to-end WebSocket dial tests.
 func wsGateTestServer(t *testing.T, authHandler *auth.Handler) *httptest.Server {
 	t.Helper()
-	wsHandler := api.NewWSHandler(nil, nil)
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wsHandler := api.NewWSHandler(nil, validator)
 	serveWS := func(w http.ResponseWriter, r *http.Request) {
 		gateHandlerWithTrust(w, r, wsHandler, authHandler, true, peers.Standard)
 	}
@@ -2684,19 +2690,25 @@ func TestWSBridgeGateAllowsAuthenticatedSameOriginSubscribeRoundTrip(t *testing.
 	}
 
 	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-	if err := conn.WriteJSON(map[string]string{"type": "subscribe", "schema": "OMM.fbs"}); err != nil {
+	builder := flatbuffers.NewBuilder(64)
+	name := builder.CreateString("OMM.fbs")
+	DSS.DSSStart(builder)
+	DSS.DSSAddSCHEMA_NAME(builder, name)
+	DSS.DSSAddREQUESTED_ACTION(builder, DSS.EnumValuesdssAction["Subscribe"])
+	DSS.FinishSizePrefixedDSSBuffer(builder, DSS.DSSEnd(builder))
+	if err := conn.WriteMessage(websocket.BinaryMessage, builder.FinishedBytes()); err != nil {
 		t.Fatalf("write subscribe: %v", err)
 	}
-
-	var ack struct {
-		Type   string `json:"type"`
-		Schema string `json:"schema"`
-	}
-	if err := conn.ReadJSON(&ack); err != nil {
+	kind, frame, err := conn.ReadMessage()
+	if err != nil {
 		t.Fatalf("read subscribe ack: %v", err)
 	}
-	if ack.Type != "subscribed" || ack.Schema != "OMM.fbs" {
-		t.Fatalf("subscribe ack = %+v, want type=subscribed schema=OMM.fbs", ack)
+	if kind != websocket.BinaryMessage || len(frame) < 12 || !DSS.SizePrefixedDSSBufferHasIdentifier(frame) {
+		t.Fatal("subscribe acknowledgement is not a binary DSS frame")
+	}
+	ack := DSS.GetSizePrefixedRootAsDSS(frame, 0)
+	if !ack.SUBSCRIBED() || string(ack.SCHEMA_NAME()) != "OMM.fbs" {
+		t.Fatalf("subscribe ack: subscribed=%v schema=%q", ack.SUBSCRIBED(), ack.SCHEMA_NAME())
 	}
 }
 

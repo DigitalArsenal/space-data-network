@@ -7,16 +7,16 @@ import (
 )
 
 type IndexRecordT struct {
-	Cid string `json:"cid"`
-	Offset int64 `json:"offset"`
-	Length int64 `json:"length"`
-	NoradCatId *uint32 `json:"norad_cat_id"`
-	EntityId string `json:"entity_id"`
-	ObjectType string `json:"object_type"`
-	OpsStatusCode string `json:"ops_status_code"`
-	EpochUnix *int64 `json:"epoch_unix"`
-	EpochDay string `json:"epoch_day"`
-	Tags *SourceTagsT `json:"tags"`
+	Cid           string       `json:"cid"`
+	Offset        int64        `json:"offset"`
+	Length        int64        `json:"length"`
+	NoradCatId    *uint32      `json:"norad_cat_id"`
+	EntityId      string       `json:"entity_id"`
+	ObjectType    string       `json:"object_type"`
+	OpsStatusCode string       `json:"ops_status_code"`
+	EpochUnix     *int64       `json:"epoch_unix"`
+	EpochDay      string       `json:"epoch_day"`
+	Tags          *SourceTagsT `json:"tags"`
 }
 
 func (t *IndexRecordT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

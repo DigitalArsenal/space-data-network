@@ -7,7 +7,6 @@ package main
 // mnemonic guard forbids re-staging.
 
 import (
-	"encoding/json"
 	"github.com/spacedatanetwork/sdn-server/internal/accessgate"
 	"net/http"
 	"net/http/httptest"
@@ -19,6 +18,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/auth"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
+	"github.com/spacedatanetwork/sdn-server/internal/syncwire"
 )
 
 // TestNodeEPMPathPolicySplitsReadsFromWrites locks the top-level wall's half of
@@ -155,10 +155,10 @@ func TestGateNodeEPMWriteRequiresAdminSession(t *testing.T) {
 	})
 }
 
-// TestGateNodeEPMWriteReportsJSONNotARedirect locks that the gate answers API
+// TestGateNodeEPMWriteReportsQRPNotARedirect locks that the gate answers API
 // status codes. The dashboard calls this with fetch(); a login-page redirect
 // would surface as an opaque HTML body.
-func TestGateNodeEPMWriteReportsJSONNotARedirect(t *testing.T) {
+func TestGateNodeEPMWriteReportsQRPNotARedirect(t *testing.T) {
 	t.Parallel()
 
 	handler, _ := newAdminSession(t, peers.Admin)
@@ -172,14 +172,15 @@ func TestGateNodeEPMWriteReportsJSONNotARedirect(t *testing.T) {
 	if got := rec.Header().Get("Location"); got != "" {
 		t.Fatalf("gate redirected to %q", got)
 	}
-	var body struct {
-		Code string `json:"code"`
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("response is not JSON (%q): %v", rec.Body.String(), err)
+	body, err := syncwire.ParseQRP(rec.Body.Bytes())
+	if err != nil {
+		t.Fatalf("response is not a QRP frame: %v", err)
 	}
-	if body.Code != "unauthorized" {
-		t.Fatalf("error code = %q, want %q", body.Code, "unauthorized")
+	if int8(body.KIND()) != syncwire.QRPKindError || string(body.ERROR_CODE()) != "unauthorized" || body.HTTP_STATUS() != http.StatusUnauthorized {
+		t.Fatalf("refusal kind=%v code=%q status=%d", body.KIND(), body.ERROR_CODE(), body.HTTP_STATUS())
 	}
 }
 

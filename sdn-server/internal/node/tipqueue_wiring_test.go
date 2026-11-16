@@ -16,13 +16,16 @@ import (
 
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/PNM"
 	flatbuffers "github.com/google/flatbuffers/go"
+	cidlib "github.com/ipfs/go-cid"
 	ps "github.com/libp2p/go-libp2p-pubsub"
 	pb "github.com/libp2p/go-libp2p-pubsub/pb"
 	libp2pcrypto "github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/multiformats/go-multihash"
 
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
+	"github.com/spacedatanetwork/sdn-server/internal/pinpolicy"
 	sdnpubsub "github.com/spacedatanetwork/sdn-server/internal/pubsub"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
@@ -56,6 +59,11 @@ func TestBuildTipQueueConstructsNonNilEngineWithSaneDefaults(t *testing.T) {
 // test doubles) to prove "trusted peer's PNM arrives -> TipQueue drives
 // DPM fetch -> pin (real CID)" is really wired end to end.
 func TestBuildTipQueueWiresRealIPFSFetcherAndPinnerWhenConfigured(t *testing.T) {
+	digest, err := multihash.Sum([]byte("fake-content"), multihash.SHA2_256, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixtureCID := cidlib.NewCidV1(cidlib.Raw, digest).String()
 	var mu sync.Mutex
 	var sawCat, sawPinAdd bool
 	ipfs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -67,7 +75,7 @@ func TestBuildTipQueueWiresRealIPFSFetcherAndPinnerWhenConfigured(t *testing.T) 
 			_, _ = w.Write([]byte("fake-content"))
 		case "/api/v0/pin/add":
 			sawPinAdd = true
-			_, _ = w.Write([]byte(`{"Pins":["bafyipfswired"]}`))
+			_, _ = w.Write([]byte(fmt.Sprintf(`{"Pins":[%q]}`, fixtureCID)))
 		default:
 			http.NotFound(w, r)
 		}
@@ -79,12 +87,20 @@ func TestBuildTipQueueWiresRealIPFSFetcherAndPinnerWhenConfigured(t *testing.T) 
 			Admin: config.AdminConfig{IPFSAPIURL: ipfs.URL},
 		},
 	}
+	policy, err := pinpolicy.New(ipfs.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := policy.Apply(context.Background(), pinpolicy.EncodeChanges(pinpolicy.RuleChange{Class: pinpolicy.Tip, Enabled: true})); err != nil {
+		t.Fatal(err)
+	}
+	n.pins = policy
 	tq := n.buildTipQueue()
 	if tq == nil {
 		t.Fatal("buildTipQueue returned nil")
 	}
 
-	pnmBytes := buildWiringTestPNM(t, "bafyipfswired", "unknown-schema")
+	pnmBytes := buildWiringTestPNM(t, fixtureCID, "unknown-schema")
 	tq.HandleMessage(&ps.Message{
 		Message:      &pb.Message{Data: pnmBytes},
 		ReceivedFrom: mustTestPeerID(t, 0x70),

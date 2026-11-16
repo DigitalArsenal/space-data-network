@@ -56,7 +56,7 @@ func TestNCDValidatedDescriptorPublicationReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	publisher := &fakeDatasetUpdatePublisher{}
-	service := NewConcreteDatasetPublicationService(store, publisher, signingKey, tags.ProducerPeerID, "bafy-provider-epm", kubo.URL, filepath.Join(dir, "publications"))
+	service := newPublicationServiceWithPinPolicy(t, store, publisher, signingKey, tags.ProducerPeerID, "bafy-provider-epm", kubo.URL, filepath.Join(dir, "publications"))
 	result, err := service.PublishDatasetUpdate(context.Background(), DatasetPublicationRequest{Schema: "NCD.fbs", ProviderID: tags.ProviderID, SourceName: tags.SourceName, BatchID: tags.BatchID})
 	if err != nil {
 		t.Fatal(err)

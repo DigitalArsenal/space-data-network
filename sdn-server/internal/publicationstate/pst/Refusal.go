@@ -8,7 +8,7 @@ import (
 
 type RefusalT struct {
 	Index int32 `json:"index"`
-	Code int32 `json:"code"`
+	Code  int32 `json:"code"`
 }
 
 func (t *RefusalT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

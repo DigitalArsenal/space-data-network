@@ -2,7 +2,6 @@ package api
 
 import (
 	"bytes"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -16,8 +15,9 @@ func TestFullTextQueryServesOriginalBytesAndExplicitCoverage(t *testing.T) {
 	mux := http.NewServeMux()
 	NewDataQueryHandler(store).RegisterRoutes(mux)
 	request := func() *httptest.ResponseRecorder {
-		r := httptest.NewRequest(http.MethodPost, "/api/v1/data/query", bytes.NewBufferString(`{"schema":"CAT.fbs","search":"munchen optical","provider_id":"space-data-network-02","source_name":"catalogfixture-cat","limit":1}`))
-		r.Header.Set("Accept", "application/vnd.sdn.flatbuffers.stream")
+		r := httptest.NewRequest(http.MethodPost, "/api/v1/data/query", bytes.NewReader(BuildQRP(QRPFields{Kind: QRPKindRequest, SchemaName: "CAT.fbs", Search: "munchen optical", ProviderID: "space-data-network-02", SourceName: "catalogfixture-cat", Limit: 1})))
+		r.Header.Set("Accept", StreamContentType)
+		r.Header.Set("Content-Type", StreamContentType)
 		w := httptest.NewRecorder()
 		mux.ServeHTTP(w, r)
 		return w
@@ -26,13 +26,9 @@ func TestFullTextQueryServesOriginalBytesAndExplicitCoverage(t *testing.T) {
 	if w.Code != http.StatusServiceUnavailable || w.Header().Get("Retry-After") != "2" {
 		t.Fatalf("initial coverage response: %d %s", w.Code, w.Body.String())
 	}
-	var pending struct {
-		Error struct {
-			Code string `json:"code"`
-		} `json:"error"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &pending); err != nil || pending.Error.Code != "SEARCH_INDEX_BUILDING" {
-		t.Fatalf("missing explicit indexing status: %s", w.Body.String())
+	pending, err := ParseQRP(w.Body.Bytes())
+	if err != nil || int8(pending.KIND()) != QRPKindError || string(pending.ERROR_CODE()) != "search_index_building" {
+		t.Fatalf("missing explicit QRP indexing status: %v", err)
 	}
 	deadline := time.Now().Add(60 * time.Second)
 	for w.Code == http.StatusServiceUnavailable && time.Now().Before(deadline) {
@@ -42,11 +38,15 @@ func TestFullTextQueryServesOriginalBytesAndExplicitCoverage(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("search status: %d %s", w.Code, w.Body.String())
 	}
-	if w.Header().Get("X-SDN-Total-Count") != "1" || w.Header().Get("X-SDN-Search-Applied") != "fts5-v1" {
-		t.Fatalf("missing search/count coverage: %v", w.Header())
+	frames, err := SplitFrames(w.Body.Bytes())
+	if err != nil || len(frames) != 2 {
+		t.Fatalf("search frames: count=%d error=%v", len(frames), err)
 	}
-	frames := readLengthPrefixedRecords(t, w.Body.Bytes())
-	if len(frames) != 1 || !bytes.Equal(frames[0], want) {
+	page, err := ParseQRP(frames[0])
+	if err != nil || int8(page.KIND()) != QRPKindPage || page.TOTAL_COUNT() != 1 || page.RECORD_COUNT() != 1 || string(page.SEARCH()) != "munchen optical" {
+		t.Fatalf("missing search/count coverage in QRP page: %v", err)
+	}
+	if !bytes.Equal(frames[1][4:], want) {
 		t.Fatal("search did not return the original matching FlatBuffer")
 	}
 }

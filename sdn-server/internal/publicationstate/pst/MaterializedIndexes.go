@@ -7,12 +7,12 @@ import (
 )
 
 type MaterializedIndexesT struct {
-	ByNorad []*IndexGroupT `json:"by_norad"`
-	ByEntityId []*IndexGroupT `json:"by_entity_id"`
-	ByObjectType []*IndexGroupT `json:"by_object_type"`
+	ByNorad         []*IndexGroupT `json:"by_norad"`
+	ByEntityId      []*IndexGroupT `json:"by_entity_id"`
+	ByObjectType    []*IndexGroupT `json:"by_object_type"`
 	ByOpsStatusCode []*IndexGroupT `json:"by_ops_status_code"`
-	CaReadyResident []int32 `json:"ca_ready_resident"`
-	ActivePayloads []int32 `json:"active_payloads"`
+	CaReadyResident []int32        `json:"ca_ready_resident"`
+	ActivePayloads  []int32        `json:"active_payloads"`
 }
 
 func (t *MaterializedIndexesT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

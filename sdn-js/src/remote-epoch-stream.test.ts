@@ -1,3 +1,4 @@
+import { publishedSchema } from './test-schema-helper';
 /**
  * Loop D.3 — ONE conditional stream request into the REAL engine store.
  *
@@ -51,7 +52,7 @@ async function openEngineStore(): Promise<FlatSQLEngineRecordStore> {
     standardId: vectors.epochStoreCorpus.standardId,
     tableName: vectors.table,
     fileId: vectors.fileId,
-    schema: vectors.schema,
+    ...publishedSchema('OMM'),
   };
   return FlatSQLEngineRecordStore.open({ schemas: [schema] });
 }
@@ -72,7 +73,7 @@ async function recordedNearestCelestrakBody(): Promise<Uint8Array> {
         persist: false,
       });
     }
-    const body = corpusStore.queryEpochRawStream('OMM', {
+    const body = await corpusStore.queryEpochRawStream('OMM', {
       profile: 'nearest',
       source: 'celestrak-gp',
       epoch: EPOCH,

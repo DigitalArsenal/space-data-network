@@ -13,6 +13,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -250,10 +251,10 @@ type e2eBuild struct {
 	Tag         string `json:"tag"`
 	StopDelayMS int    `json:"stop_delay_ms"`
 	Unhealthy   bool   `json:"unhealthy,omitempty"`
-	// WriteFormat4 makes the build begin a migration to format 4 as it
+	// WriteMigrationMarker makes the build write the active migration marker as it
 	// starts: from its first marker the store refuses every build stamped
 	// below 4.
-	WriteFormat4 bool `json:"write_format4,omitempty"`
+	WriteMigrationMarker bool `json:"write_migration_marker,omitempty"`
 }
 
 // e2eFixture configures the fixture daemon. It is local data in the bundle
@@ -315,9 +316,9 @@ func runE2EDaemon(root string, raw []byte) int {
 		return 3
 	}
 	defer lock.Release()
-	if build.WriteFormat4 {
+	if build.WriteMigrationMarker {
 		_ = os.MkdirAll(filepath.Join(cfg.StoreRoot, marker.Dir), 0o700)
-		_ = os.WriteFile(filepath.Join(cfg.StoreRoot, marker.Dir, marker.MigratedFile), []byte("migration to format 4 in progress"), 0o600)
+		_ = os.WriteFile(filepath.Join(cfg.StoreRoot, marker.Dir, marker.MigratedFile), []byte(fmt.Sprintf("migration to format %d in progress", marker.StoreFormat)), 0o600)
 	}
 
 	shutdown := make(chan string, 2)
@@ -1121,7 +1122,7 @@ func TestUpdateHelperRevertsAnUnhealthyBuildThroughTheSupervisor(t *testing.T) {
 }
 
 // TestUpdateHelperLeavesTheBuildRunningWhenTheGuardRefusesTheRevert: the new
-// build is unhealthy, but it has begun a migration to format 4 and the
+// build is unhealthy, but it has begun a migration to the active format and the
 // previous build opens format 3 at most. The revert is refused before anything
 // is stopped, the alert is raised, and the current build keeps running.
 func TestUpdateHelperLeavesTheBuildRunningWhenTheGuardRefusesTheRevert(t *testing.T) {
@@ -1134,12 +1135,12 @@ func TestUpdateHelperLeavesTheBuildRunningWhenTheGuardRefusesTheRevert(t *testin
 		t.Fatal(err)
 	}
 	b.waitHealthy(t)
-	v2SHA := b.stage(t, e2eBuild{Tag: "v2", StopDelayMS: 300, Unhealthy: true, WriteFormat4: true})
+	v2SHA := b.stage(t, e2eBuild{Tag: "v2", StopDelayMS: 300, Unhealthy: true, WriteMigrationMarker: true})
 
 	_, errOut, err := b.runHelper(t, 8*time.Second, update.StopBounds{}, supervisor)
 	var refusal *update.StoreFormatRefusal
-	if !errors.As(err, &refusal) || refusal.Store.Format != 4 || refusal.SlotMaxStoreFormat != 3 {
-		t.Fatalf("helper error = %v, want the store-format guard refusing the revert (store 4, slot 3)", err)
+	if !errors.As(err, &refusal) || refusal.Store.Format != marker.StoreFormat || refusal.SlotMaxStoreFormat != 3 {
+		t.Fatalf("helper error = %v, want the store-format guard refusing the revert (store %d, slot 3)", err, marker.StoreFormat)
 	}
 	if !strings.Contains(errOut.String(), "ops_alert=raised kind=update_failed subject="+e2eV2UpdateID+" severity=error") {
 		t.Fatalf("no update_failed alert was raised:\n%s", errOut)

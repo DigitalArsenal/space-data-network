@@ -74,7 +74,7 @@ func TestP4InstanceBootsAOTOnly(t *testing.T) {
 	if n := int(binary.LittleEndian.Uint32(lay[120:])); p.Started() < 1 || n < 1 {
 		t.Fatalf("started %d, layout threads %d", p.Started(), n)
 	}
-	b, rc, err := p.ControlOut("flatsql_p4_stats", 8*256)
+	b, rc, err := p.ControlOut("flatsql_stats", 8*256)
 	if err != nil || rc < 8*40 || len(b) != int(rc) {
 		t.Fatalf("stats: %d bytes, rc %d, %v", len(b), rc, err)
 	}
@@ -121,7 +121,7 @@ func TestP4TrapFencesOnlyItsInstance(t *testing.T) {
 	if other.Failure() != nil || other.Stats().Poisoned {
 		t.Fatal("another instance was affected")
 	}
-	if _, rc, err := other.ControlOut("flatsql_p4_stats", 8*256); err != nil || rc <= 0 {
+	if _, rc, err := other.ControlOut("flatsql_stats", 8*256); err != nil || rc <= 0 {
 		t.Fatalf("the other instance after the trap: rc %d, %v", rc, err)
 	}
 	_, _ = victim.StopWithin(5 * time.Second)

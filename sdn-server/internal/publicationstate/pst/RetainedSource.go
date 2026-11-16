@@ -7,11 +7,11 @@ import (
 )
 
 type RetainedSourceT struct {
-	Schema string `json:"schema"`
-	Provider string `json:"provider"`
-	Source string `json:"source"`
-	ProductSource string `json:"product_source"`
-	CatalogObjectLimit int32 `json:"catalog_object_limit"`
+	Schema             string `json:"schema"`
+	Provider           string `json:"provider"`
+	Source             string `json:"source"`
+	ProductSource      string `json:"product_source"`
+	CatalogObjectLimit int32  `json:"catalog_object_limit"`
 }
 
 func (t *RetainedSourceT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

@@ -55,7 +55,7 @@ func TestPublishDatasetUpdatePublishesTheWholeNamedBatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateKey failed: %v", err)
 	}
-	service := NewConcreteDatasetPublicationService(
+	service := newPublicationServiceWithPinPolicy(t,
 		store,
 		&fakeDatasetUpdatePublisher{},
 		signingKey,
@@ -126,7 +126,7 @@ func TestPublishDatasetUpdateHonorsAnExplicitHeadLimit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateKey failed: %v", err)
 	}
-	service := NewConcreteDatasetPublicationService(
+	service := newPublicationServiceWithPinPolicy(t,
 		store,
 		&fakeDatasetUpdatePublisher{},
 		signingKey,

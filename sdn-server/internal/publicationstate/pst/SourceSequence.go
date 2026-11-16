@@ -7,7 +7,7 @@ import (
 )
 
 type SourceSequenceT struct {
-	Id string `json:"id"`
+	Id       string `json:"id"`
 	Sequence uint64 `json:"sequence"`
 }
 

@@ -1,3 +1,4 @@
+import { publishedSchema } from '../../test-schema-helper';
 /**
  * Loop D.5: the webUI FlatSQL worker protocol proxies the engine query
  * surface — `listSources`, `queryEpochRawStream` (the D.2 PRIMARY query
@@ -24,7 +25,7 @@ const OMM_SCHEMAS = [{
   standardId: 'OMM',
   tableName: 'OMM',
   fileId: '$OMM',
-  schema: OMM_SCHEMA,
+  ...publishedSchema('OMM'),
 }];
 
 const OMM_RECORD = {
@@ -103,7 +104,7 @@ describe('FlatSQL worker protocol — engine query surface (loop D.5)', () => {
     const direct = await createLocalFlatSqlStore({ schemas: OMM_SCHEMAS });
     await direct.ingestRecords('OMM', [OMM_RECORD], { source: 'celestrak-gp', persist: false });
     const queryEpochSeconds = Date.UTC(2026, 4, 12) / 1000;
-    const expected = direct.queryEpochRawStream?.('OMM', { epoch: queryEpochSeconds });
+    const expected = await direct.queryEpochRawStream?.('OMM', { epoch: queryEpochSeconds });
     const proxied = await store.queryEpochRawStream('OMM', { epoch: queryEpochSeconds });
     expect(proxied).toBeInstanceOf(Uint8Array);
     expect(proxied.byteLength).toBeGreaterThan(0);
@@ -114,13 +115,13 @@ describe('FlatSQL worker protocol — engine query surface (loop D.5)', () => {
       'OMM',
       'SELECT _data FROM "OMM@celestrak-gp" ORDER BY _rowid ASC',
     );
-    const expectedRaw = direct.queryRawFlatBufferStream?.(
+    const expectedRaw = await direct.queryRawFlatBufferStream?.(
       'OMM',
       'SELECT _data FROM "OMM@celestrak-gp" ORDER BY _rowid ASC',
     );
     expect(Buffer.from(rawStream).equals(Buffer.from(expectedRaw as Uint8Array))).toBe(true);
 
-    direct.destroy();
+    await direct.destroy();
   });
 
   it('surfaces engine errors for raw-stream queries instead of falling back', async () => {

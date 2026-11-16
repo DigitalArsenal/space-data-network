@@ -7,7 +7,7 @@ import (
 )
 
 type IndexGroupT struct {
-	Key string `json:"key"`
+	Key  string  `json:"key"`
 	Rows []int32 `json:"rows"`
 }
 

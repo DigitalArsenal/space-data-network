@@ -1,3 +1,4 @@
+import { publishedSchema } from '../../test-schema-helper';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import * as flatbuffers from 'flatbuffers';
@@ -44,7 +45,7 @@ describe('local FlatSQL datastore', () => {
         standardId: 'OMM',
         tableName: 'OMM',
         fileId: '$OMM',
-        schema: OMM_SCHEMA,
+        ...publishedSchema('OMM'),
       }],
     });
 
@@ -73,13 +74,13 @@ describe('local FlatSQL datastore', () => {
 
     expect(result.columns).toEqual(['OBJECT_NAME', 'NORAD_CAT_ID']);
     expect(result.records).toEqual([{ OBJECT_NAME: 'STARLINK-6292', NORAD_CAT_ID: 56775 }]);
-    expect(store.getStats()).toEqual([expect.objectContaining({
+    expect((await store.getStats())).toEqual([expect.objectContaining({
       standardId: 'OMM',
       tableName: 'OMM',
       recordCount: 1,
       ingestedRecordCount: 1,
     })]);
-    expect(store.getStats()[0]?.cachedBytes).toBeGreaterThan(0);
+    expect((await store.getStats())[0]?.cachedBytes).toBeGreaterThan(0);
   });
 
   it('runs generated OMM epoch profile SQL against the local FlatSQL store', async () => {
@@ -88,7 +89,7 @@ describe('local FlatSQL datastore', () => {
         standardId: 'OMM',
         tableName: 'OMM',
         fileId: '$OMM',
-        schema: OMM_SCHEMA,
+        ...publishedSchema('OMM'),
       }],
     });
 
@@ -117,8 +118,8 @@ describe('local FlatSQL datastore', () => {
       limit: 10,
     });
 
-    expect(store.query(daySql, 'OMM').records).toEqual([expect.objectContaining({ NORAD_CAT_ID: 56775 })]);
-    expect(store.query(nearestSql, 'OMM').records).toEqual([expect.objectContaining({ OBJECT_NAME: 'STARLINK-6292' })]);
+    expect((await store.query(daySql, 'OMM')).records).toEqual([expect.objectContaining({ NORAD_CAT_ID: 56775 })]);
+    expect((await store.query(nearestSql, 'OMM')).records).toEqual([expect.objectContaining({ OBJECT_NAME: 'STARLINK-6292' })]);
   });
 
   it('supports deferred persistence for bulk ingest batches', async () => {
@@ -127,7 +128,7 @@ describe('local FlatSQL datastore', () => {
         standardId: 'OMM',
         tableName: 'OMM',
         fileId: '$OMM',
-        schema: OMM_SCHEMA,
+        ...publishedSchema('OMM'),
       }],
     });
 
@@ -142,15 +143,15 @@ describe('local FlatSQL datastore', () => {
       dataBytes: STARLINK_6292_OMM_BYTES,
     }], { source: 'space-data-network-02', persist: false });
 
-    expect(store.query('SELECT NORAD_CAT_ID FROM OMM LIMIT 1', 'OMM').records).toEqual([{ NORAD_CAT_ID: 56775 }]);
-    expect(store.getStats({ includeCachedBytes: false })[0]).toEqual(expect.objectContaining({
+    expect((await store.query('SELECT NORAD_CAT_ID FROM OMM LIMIT 1', 'OMM')).records).toEqual([{ NORAD_CAT_ID: 56775 }]);
+    expect((await store.getStats({ includeCachedBytes: false }))[0]).toEqual(expect.objectContaining({
       recordCount: 1,
       cachedBytes: 0,
     }));
 
     await store.flush('OMM');
 
-    expect(store.getStats({ includeCachedBytes: false })[0]?.cachedBytes).toBeGreaterThan(0);
+    expect((await store.getStats({ includeCachedBytes: false }))[0]?.cachedBytes).toBeGreaterThan(0);
   });
 
   it('ingests native FlatSQL size-prefixed streams without using JSON row objects as the sync boundary', async () => {
@@ -159,7 +160,7 @@ describe('local FlatSQL datastore', () => {
         standardId: 'OMM',
         tableName: 'OMM',
         fileId: '$OMM',
-        schema: OMM_SCHEMA,
+        ...publishedSchema('OMM'),
       }],
     });
 
@@ -170,8 +171,8 @@ describe('local FlatSQL datastore', () => {
     });
 
     expect(ingested).toBe(1);
-    expect(store.query('SELECT NORAD_CAT_ID FROM OMM LIMIT 1', 'OMM').records).toEqual([{ NORAD_CAT_ID: 56775 }]);
-    expect(store.getStats({ includeCachedBytes: false })[0]).toEqual(expect.objectContaining({
+    expect((await store.query('SELECT NORAD_CAT_ID FROM OMM LIMIT 1', 'OMM')).records).toEqual([{ NORAD_CAT_ID: 56775 }]);
+    expect((await store.getStats({ includeCachedBytes: false }))[0]).toEqual(expect.objectContaining({
       recordCount: 1,
       ingestedRecordCount: 1,
     }));
@@ -183,7 +184,7 @@ describe('local FlatSQL datastore', () => {
         standardId: 'OMM',
         tableName: 'OMM',
         fileId: '$OMM',
-        schema: OMM_SCHEMA,
+        ...publishedSchema('OMM'),
       }],
     });
     const frameA = stripSdnFlatBufferSizePrefix(STARLINK_6292_OMM_BYTES);
@@ -211,7 +212,7 @@ describe('local FlatSQL datastore', () => {
       { OBJECT_NAME: 'STARLINK-6293' },
       { OBJECT_NAME: 'STARLINK-6294' },
     ]);
-    store.destroy();
+    (await store.destroy());
   });
 
   it('does not drop distinct records that collide on the legacy 32-bit content key (loop D.6)', async () => {
@@ -285,14 +286,14 @@ describe('local FlatSQL datastore', () => {
         standardId: 'OMM',
         tableName: 'OMM',
         fileId: '$OMM',
-        schema: OMM_SCHEMA,
+        ...publishedSchema('OMM'),
       }],
     });
     const ingested = await store.ingestFlatBufferStream('OMM', flatSqlSizePrefixedStream(pair), { persist: false });
     expect(ingested).toBe(2);
     const replay = await store.ingestFlatBufferStream('OMM', flatSqlSizePrefixedStream(pair), { persist: false });
     expect(replay).toBe(0);
-    store.destroy();
+    (await store.destroy());
   });
 
   it('honors legacy 32-bit content keys persisted by older builds (loop D.6 migration)', async () => {
@@ -309,7 +310,7 @@ describe('local FlatSQL datastore', () => {
         standardId: 'OMM',
         tableName: 'OMM',
         fileId: '$OMM',
-        schema: OMM_SCHEMA,
+        ...publishedSchema('OMM'),
       }],
     });
     const frame = stripSdnFlatBufferSizePrefix(STARLINK_6292_OMM_BYTES);
@@ -324,7 +325,7 @@ describe('local FlatSQL datastore', () => {
     // A content-keyed re-delivery of the same bytes must STILL dedupe.
     const replay = await store.ingestFlatBufferStream('OMM', flatSqlSizePrefixedStream([frame]), { persist: false });
     expect(replay).toBe(0);
-    store.destroy();
+    (await store.destroy());
   });
 
   it('preserves CAT replacement stream rows exactly as published', async () => {
@@ -333,7 +334,7 @@ describe('local FlatSQL datastore', () => {
         standardId: 'CAT',
         tableName: 'CAT',
         fileId: '$CAT',
-        schema: CAT_SCHEMA,
+        ...publishedSchema('CAT'),
       }],
     });
 
@@ -363,16 +364,16 @@ describe('local FlatSQL datastore', () => {
     });
 
     expect(ingested).toBe(3);
-    expect(store.query('SELECT OBJECT_NAME, NORAD_CAT_ID FROM CAT ORDER BY NORAD_CAT_ID DESC LIMIT 10', 'CAT').records).toEqual([
+    expect((await store.query('SELECT OBJECT_NAME, NORAD_CAT_ID FROM CAT ORDER BY NORAD_CAT_ID DESC LIMIT 10', 'CAT')).records).toEqual([
       { OBJECT_NAME: 'ISS (ZARYA)', NORAD_CAT_ID: 25544 },
       { OBJECT_NAME: 'ISS (ZARYA) DUPLICATE', NORAD_CAT_ID: 25544 },
       { OBJECT_NAME: 'HST', NORAD_CAT_ID: 20580 },
     ]);
-    expect(store.query(
+    expect((await store.query(
       'SELECT NORAD_CAT_ID, COUNT(*) AS c FROM CAT WHERE NORAD_CAT_ID = 25544 GROUP BY NORAD_CAT_ID',
       'CAT',
-    ).records).toEqual([{ NORAD_CAT_ID: 25544, c: 2 }]);
-    store.destroy();
+    )).records).toEqual([{ NORAD_CAT_ID: 25544, c: 2 }]);
+    (await store.destroy());
   });
 
   it('executes an individual-country draft against the numeric CAT OWNER enum', async () => {
@@ -383,6 +384,7 @@ describe('local FlatSQL datastore', () => {
         fileId: '$CAT',
         // The production engine catalog lowers enum storage to its wire
         // scalar; mirror that representation for this focused execution lane.
+        ...publishedSchema('CAT'),
         schema: CAT_SCHEMA_WITH_SCALAR_OWNER,
       }],
     });
@@ -421,10 +423,10 @@ describe('local FlatSQL datastore', () => {
     });
 
     expect(draft.sql).toBe('SELECT * FROM CAT WHERE OWNER = 3 LIMIT 100');
-    expect(store.query(draft.sql, 'CAT').records).toEqual([
+    expect((await store.query(draft.sql, 'CAT')).records).toEqual([
       expect.objectContaining({ OBJECT_NAME: 'ALGERIA-SAT', OWNER: legacyCountryCode.ALG }),
     ]);
-    store.destroy();
+    (await store.destroy());
   });
 
   it('resumes native FlatSQL stream ingest from a skipped frame with a zero-offset buffer', async () => {
@@ -433,7 +435,7 @@ describe('local FlatSQL datastore', () => {
         standardId: 'OMM',
         tableName: 'OMM',
         fileId: '$OMM',
-        schema: OMM_SCHEMA,
+        ...publishedSchema('OMM'),
       }],
     });
 
@@ -447,8 +449,8 @@ describe('local FlatSQL datastore', () => {
     });
 
     expect(ingested).toBe(1);
-    expect(store.query('SELECT NORAD_CAT_ID FROM OMM LIMIT 1', 'OMM').records).toEqual([{ NORAD_CAT_ID: 56775 }]);
-    expect(store.getStats({ includeCachedBytes: false })[0]).toEqual(expect.objectContaining({
+    expect((await store.query('SELECT NORAD_CAT_ID FROM OMM LIMIT 1', 'OMM')).records).toEqual([{ NORAD_CAT_ID: 56775 }]);
+    expect((await store.getStats({ includeCachedBytes: false }))[0]).toEqual(expect.objectContaining({
       recordCount: 1,
       ingestedRecordCount: 1,
     }));
@@ -468,7 +470,7 @@ describe('local FlatSQL datastore', () => {
           standardId: 'OMM',
           tableName: 'OMM',
           fileId: '$OMM',
-          schema: OMM_SCHEMA,
+          ...publishedSchema('OMM'),
         }],
       });
       const frame = stripSdnFlatBufferSizePrefix(STARLINK_6292_OMM_BYTES);
@@ -477,7 +479,7 @@ describe('local FlatSQL datastore', () => {
         recordKeyPrefix: 'published:already-materialized',
       });
       await first.flush('OMM');
-      first.destroy();
+      (await first.destroy());
 
       await putLocalFlatSqlTestValue('stale-published-keys:OMM:record-keys', [
         'OMM|published:stale-shard|1',
@@ -489,7 +491,7 @@ describe('local FlatSQL datastore', () => {
           standardId: 'OMM',
           tableName: 'OMM',
           fileId: '$OMM',
-          schema: OMM_SCHEMA,
+          ...publishedSchema('OMM'),
         }],
       });
       const ingested = await resumed.ingestFlatBufferStream('OMM', flatSqlSizePrefixedStream([frame, frame]), {
@@ -516,7 +518,7 @@ describe('local FlatSQL datastore', () => {
         standardId: 'OMM',
         tableName: 'OMM',
         fileId: '$OMM',
-        schema: OMM_SCHEMA,
+        ...publishedSchema('OMM'),
       }],
     });
 
@@ -592,7 +594,7 @@ describe('local FlatSQL datastore', () => {
           standardId: 'OMM',
           tableName: 'OMM',
           fileId: '$OMM',
-          schema: OMM_SCHEMA,
+          ...publishedSchema('OMM'),
         }],
       });
       const stream = flatSqlSizePrefixedStream([stripSdnFlatBufferSizePrefix(STARLINK_6292_OMM_BYTES)]);
@@ -624,8 +626,8 @@ describe('local FlatSQL datastore', () => {
 
       await first.clearStandard('OMM');
 
-      expect(first.query('SELECT NORAD_CAT_ID FROM OMM LIMIT 10', 'OMM').records).toEqual([]);
-      expect(first.getStats({ includeCachedBytes: false })[0]).toEqual(expect.objectContaining({
+      expect((await first.query('SELECT NORAD_CAT_ID FROM OMM LIMIT 10', 'OMM')).records).toEqual([]);
+      expect((await first.getStats({ includeCachedBytes: false }))[0]).toEqual(expect.objectContaining({
         recordCount: 0,
         ingestedRecordCount: 0,
         pinnedRows: 0,
@@ -638,7 +640,7 @@ describe('local FlatSQL datastore', () => {
         recordKeyPrefix: 'published:bafynew',
       });
       await first.flush('OMM');
-      first.destroy();
+      (await first.destroy());
 
       const loaded = await createLocalFlatSqlStore({
         persistenceKey: 'replace-active-store',
@@ -646,12 +648,12 @@ describe('local FlatSQL datastore', () => {
           standardId: 'OMM',
           tableName: 'OMM',
           fileId: '$OMM',
-          schema: OMM_SCHEMA,
+          ...publishedSchema('OMM'),
         }],
       });
-      expect(loaded.query('SELECT NORAD_CAT_ID FROM OMM LIMIT 10', 'OMM').records).toEqual([{ NORAD_CAT_ID: 56775 }]);
+      expect((await loaded.query('SELECT NORAD_CAT_ID FROM OMM LIMIT 10', 'OMM')).records).toEqual([{ NORAD_CAT_ID: 56775 }]);
       await expect(loaded.listPinLedgerEntries({ standardId: 'OMM' })).resolves.toEqual([]);
-      loaded.destroy();
+      (await loaded.destroy());
     } finally {
       restoreIndexedDb();
     }
@@ -671,7 +673,7 @@ describe('local FlatSQL datastore', () => {
           standardId: 'OMM',
           tableName: 'OMM',
           fileId: '$OMM',
-          schema: OMM_SCHEMA,
+          ...publishedSchema('OMM'),
         }],
       });
       const frame = stripSdnFlatBufferSizePrefix(STARLINK_6292_OMM_BYTES);
@@ -740,17 +742,17 @@ describe('local FlatSQL datastore', () => {
           standardId: 'OMM',
           tableName: 'OMM',
           fileId: '$OMM',
-          schema: OMM_SCHEMA,
+          ...publishedSchema('OMM'),
         }],
       });
-      expect(loaded.getStats({ includeCachedBytes: false })[0]).toEqual(expect.objectContaining({
+      expect((await loaded.getStats({ includeCachedBytes: false }))[0]).toEqual(expect.objectContaining({
         recordCount: 1,
         pinnedRows: 1,
       }));
       await expect(loaded.listPinLedgerEntries({ standardId: 'OMM' })).resolves.toEqual([
         expect.objectContaining({ cid: 'new', batchId: 'new-batch' }),
       ]);
-      loaded.destroy();
+      (await loaded.destroy());
     } finally {
       restoreIndexedDb();
     }
@@ -797,7 +799,7 @@ describe('local FlatSQL datastore', () => {
         standardId: 'OMM',
         tableName: 'OMM',
         fileId: '$OMM',
-        schema: OMM_SCHEMA,
+        ...publishedSchema('OMM'),
       }],
     });
 
@@ -824,7 +826,7 @@ describe('local FlatSQL datastore', () => {
       },
     ], { source: 'space-data-network-02', persist: false });
 
-    expect(store.getStats({ includeCachedBytes: false })[0]).toEqual(expect.objectContaining({
+    expect((await store.getStats({ includeCachedBytes: false }))[0]).toEqual(expect.objectContaining({
       recordCount: 2,
       ingestedRecordCount: 2,
     }));
@@ -848,11 +850,11 @@ describe('local FlatSQL datastore', () => {
           standardId: 'OMM',
           tableName: 'OMM',
           fileId: '$OMM',
-          schema: OMM_SCHEMA,
+          ...publishedSchema('OMM'),
         }],
       });
 
-      expect(first.query('SELECT NORAD_CAT_ID FROM OMM LIMIT 10', 'OMM').records).toEqual([]);
+      expect((await first.query('SELECT NORAD_CAT_ID FROM OMM LIMIT 10', 'OMM')).records).toEqual([]);
       await first.ingestRecords('OMM', [{
         cid: 'cache-omm-1',
         schemaName: 'OMM.fbs',
@@ -864,8 +866,8 @@ describe('local FlatSQL datastore', () => {
         dataBytes: STARLINK_6292_OMM_BYTES,
       }]);
 
-      expect(first.query('SELECT NORAD_CAT_ID FROM OMM LIMIT 10', 'OMM').records).toEqual([{ NORAD_CAT_ID: 56775 }]);
-      expect(first.query('SELECT OBJECT_NAME FROM OMM WHERE NORAD_CAT_ID = 56775 LIMIT 10', 'OMM').records).toEqual([{ OBJECT_NAME: 'STARLINK-6292' }]);
+      expect((await first.query('SELECT NORAD_CAT_ID FROM OMM LIMIT 10', 'OMM')).records).toEqual([{ NORAD_CAT_ID: 56775 }]);
+      expect((await first.query('SELECT OBJECT_NAME FROM OMM WHERE NORAD_CAT_ID = 56775 LIMIT 10', 'OMM')).records).toEqual([{ OBJECT_NAME: 'STARLINK-6292' }]);
 
       await first.ingestRecords('OMM', [{
         cid: 'cache-omm-2',
@@ -877,9 +879,9 @@ describe('local FlatSQL datastore', () => {
         timestamp: '2026-05-11T07:02:25Z',
         dataBytes: STARLINK_6292_OMM_BYTES,
       }]);
-      expect(first.query('SELECT NORAD_CAT_ID FROM OMM LIMIT 10', 'OMM').records).toEqual([{ NORAD_CAT_ID: 56775 }, { NORAD_CAT_ID: 56775 }]);
+      expect((await first.query('SELECT NORAD_CAT_ID FROM OMM LIMIT 10', 'OMM')).records).toEqual([{ NORAD_CAT_ID: 56775 }, { NORAD_CAT_ID: 56775 }]);
       await first.flush('OMM');
-      first.destroy();
+      (await first.destroy());
 
       const loaded = await createLocalFlatSqlStore({
         persistenceKey: 'cache-invalidation-a',
@@ -887,11 +889,11 @@ describe('local FlatSQL datastore', () => {
           standardId: 'OMM',
           tableName: 'OMM',
           fileId: '$OMM',
-          schema: OMM_SCHEMA,
+          ...publishedSchema('OMM'),
         }],
       });
-      expect(loaded.query('SELECT NORAD_CAT_ID FROM OMM LIMIT 10', 'OMM').records).toEqual([{ NORAD_CAT_ID: 56775 }, { NORAD_CAT_ID: 56775 }]);
-      expect(loaded.getStats({ includeCachedBytes: false })[0]).toEqual(expect.objectContaining({
+      expect((await loaded.query('SELECT NORAD_CAT_ID FROM OMM LIMIT 10', 'OMM')).records).toEqual([{ NORAD_CAT_ID: 56775 }, { NORAD_CAT_ID: 56775 }]);
+      expect((await loaded.getStats({ includeCachedBytes: false }))[0]).toEqual(expect.objectContaining({
         recordCount: 2,
         ingestedRecordCount: 2,
       }));
@@ -902,7 +904,7 @@ describe('local FlatSQL datastore', () => {
           standardId: 'OMM',
           tableName: 'OMM',
           fileId: '$OMM',
-          schema: OMM_SCHEMA,
+          ...publishedSchema('OMM'),
         }],
       });
       expect(otherNamespace.query('SELECT NORAD_CAT_ID FROM OMM LIMIT 10', 'OMM').records).toEqual([]);
@@ -913,7 +915,7 @@ describe('local FlatSQL datastore', () => {
           standardId: 'PNM',
           tableName: 'PNM',
           fileId: '$PNM',
-          schema: PNM_SCHEMA,
+          ...publishedSchema('PNM'),
         }],
       });
       expect(otherTemplate.query('SELECT * FROM PNM LIMIT 0', 'PNM').columns).not.toContain('NORAD_CAT_ID');
@@ -965,7 +967,7 @@ describe('local FlatSQL datastore', () => {
         standardId: 'OMM',
         tableName: 'OMM',
         fileId: '$OMM',
-        schema: OMM_SCHEMA,
+        ...publishedSchema('OMM'),
       }],
     });
     await first.ingestRecords('OMM', [{
@@ -979,7 +981,7 @@ describe('local FlatSQL datastore', () => {
       dataBytes: STARLINK_6292_OMM_BYTES,
     }]);
     await first.flush('OMM');
-    first.destroy();
+    (await first.destroy());
 
     const loaded = await createLocalFlatSqlStore({
       persistenceKey: 'desktop-flatbuffer-cache',
@@ -989,11 +991,11 @@ describe('local FlatSQL datastore', () => {
         standardId: 'OMM',
         tableName: 'OMM',
         fileId: '$OMM',
-        schema: OMM_SCHEMA,
+        ...publishedSchema('OMM'),
       }],
     });
 
-    expect(loaded.query('SELECT NORAD_CAT_ID FROM OMM LIMIT 10', 'OMM').records).toEqual([{ NORAD_CAT_ID: 56775 }]);
+    expect((await loaded.query('SELECT NORAD_CAT_ID FROM OMM LIMIT 10', 'OMM')).records).toEqual([{ NORAD_CAT_ID: 56775 }]);
 
     // DISK-BACKED layout: the engine's own index + arena, written through the
     // desktop persistence endpoint as fixed-size page groups. The retired
@@ -1018,7 +1020,7 @@ describe('local FlatSQL datastore', () => {
     // the chunked backend.)
     expect(calls.some((call) => call.method === 'PUT' && call.url === persistenceUrl(`${enginePrefix}.fsdata#0`))).toBe(true);
     expect(calls.some((call) => call.method === 'GET' && call.url === persistenceUrl(`${enginePrefix}.fsdata#meta`))).toBe(true);
-    loaded.destroy();
+    (await loaded.destroy());
   });
 
   it('can defer published-shard pin ledger persistence until the FlatSQL checkpoint flush', async () => {
@@ -1052,7 +1054,7 @@ describe('local FlatSQL datastore', () => {
         standardId: 'OMM',
         tableName: 'OMM',
         fileId: '$OMM',
-        schema: OMM_SCHEMA,
+        ...publishedSchema('OMM'),
       }],
     });
     await store.ingestFlatBufferStream('OMM', flatSqlSizePrefixedStream([stripSdnFlatBufferSizePrefix(STARLINK_6292_OMM_BYTES)]), {
@@ -1078,7 +1080,7 @@ describe('local FlatSQL datastore', () => {
     await store.flush('OMM');
 
     expect(calls.some((call) => call.method === 'PUT' && call.key === 'deferred-pin-ledger:pin-ledger')).toBe(true);
-    store.destroy();
+    (await store.destroy());
   });
 
   it('allows callers to clear persisted local FlatSQL data without IndexedDB support', async () => {
@@ -1102,7 +1104,7 @@ describe('local FlatSQL datastore', () => {
           standardId: 'OMM',
           tableName: 'OMM',
           fileId: '$OMM',
-          schema: OMM_SCHEMA,
+          ...publishedSchema('OMM'),
         }],
       });
       const stream = flatSqlSizePrefixedStream([stripSdnFlatBufferSizePrefix(STARLINK_6292_OMM_BYTES)]);
@@ -1111,7 +1113,7 @@ describe('local FlatSQL datastore', () => {
         recordKeyPrefix: 'published:bafkshard',
       });
       await first.flush('OMM');
-      first.destroy();
+      (await first.destroy());
 
       await putLocalFlatSqlTestValue('repair-record-keys:OMM:record-keys', [
         'OMM|published:bafkshard|0',
@@ -1124,15 +1126,15 @@ describe('local FlatSQL datastore', () => {
           standardId: 'OMM',
           tableName: 'OMM',
           fileId: '$OMM',
-          schema: OMM_SCHEMA,
+          ...publishedSchema('OMM'),
         }],
       });
 
-      expect(repaired.getStats({ includeCachedBytes: false })[0]).toEqual(expect.objectContaining({
+      expect((await repaired.getStats({ includeCachedBytes: false }))[0]).toEqual(expect.objectContaining({
         recordCount: 1,
         ingestedRecordCount: 0,
       }));
-      repaired.destroy();
+      (await repaired.destroy());
     } finally {
       restoreIndexedDb();
     }
@@ -1144,7 +1146,7 @@ describe('local FlatSQL datastore', () => {
         standardId: 'OMM',
         tableName: 'OMM',
         fileId: '$OMM',
-        schema: OMM_SCHEMA,
+        ...publishedSchema('OMM'),
       }],
     });
 
@@ -1154,7 +1156,7 @@ describe('local FlatSQL datastore', () => {
     expect(isReadOnlyFlatSqlQuery('SELECT * FROM OMM; DELETE FROM OMM')).toBe(false);
     expect(isReadOnlyFlatSqlQuery('PRAGMA table_info(OMM)')).toBe(false);
 
-    expect(() => store.query('DELETE FROM OMM')).toThrow(/read-only SELECT/);
+    await expect(store.query('DELETE FROM OMM')).rejects.toThrow(/queries must be read-only: Only SELECT or WITH SELECT/);
   });
 
   it('enforces local SQL byte limits after FlatSQL execution', async () => {
@@ -1163,7 +1165,7 @@ describe('local FlatSQL datastore', () => {
         standardId: 'OMM',
         tableName: 'OMM',
         fileId: '$OMM',
-        schema: OMM_SCHEMA,
+        ...publishedSchema('OMM'),
       }],
     });
 
@@ -1178,11 +1180,11 @@ describe('local FlatSQL datastore', () => {
       dataBytes: STARLINK_6292_OMM_BYTES,
     }], { persist: false });
 
-    expect(() => store.query('SELECT OBJECT_NAME FROM OMM LIMIT 10', 'OMM', {
+    await expect(store.query('SELECT OBJECT_NAME FROM OMM LIMIT 10', 'OMM', {
       maxBytes: 4,
       maxLimit: 10,
       timeoutMs: 5000,
-    })).toThrow(/byte limit/i);
+    })).rejects.toThrow(/byte limit/i);
   });
 
   it('registers SDS schemas whose comments contain URLs without exposing comment tokens as columns', async () => {
@@ -1191,16 +1193,16 @@ describe('local FlatSQL datastore', () => {
         standardId: 'PNM',
         tableName: 'PNM',
         fileId: '$PNM',
-        schema: PNM_SCHEMA,
+        ...publishedSchema('PNM'),
       }],
     });
 
-    expect(store.getStats()).toEqual([expect.objectContaining({
+    expect((await store.getStats())).toEqual([expect.objectContaining({
       standardId: 'PNM',
       tableName: 'PNM',
       recordCount: 0,
     })]);
-    expect(store.query('SELECT * FROM PNM LIMIT 0', 'PNM').columns).not.toContain('https');
+    expect((await store.query('SELECT * FROM PNM LIMIT 0', 'PNM')).columns).not.toContain('https');
   });
 });
 

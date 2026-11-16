@@ -8,6 +8,7 @@
     "node_modules",
     "dist",
     "src/**/*.test.ts",
+    "src/test-schema-helper.ts",
     "src/stress/**/*"
   ]
 }

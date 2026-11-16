@@ -7,7 +7,6 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -24,6 +23,8 @@ import (
 
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
+	"github.com/spacedatanetwork/sdn-server/internal/publicationstate"
+	"github.com/spacedatanetwork/sdn-server/internal/publicationstate/pst"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
@@ -256,10 +257,11 @@ func TestMaterializeStoredDatasetPublicationPNMsDoesNotRetryPermanentShardFrameE
 
 	shardBytes := mustReadTestFile(t, export.ShardPath)
 	indexBytes := mustReadTestFile(t, export.IndexPath)
-	var index storage.DatasetExportIndex
-	if err := json.Unmarshal(indexBytes, &index); err != nil {
-		t.Fatalf("unmarshal index: %v", err)
+	body, err := publicationstate.Decode(indexBytes, pst.BodyExportIndex)
+	if err != nil {
+		t.Fatalf("decode index: %v", err)
 	}
+	index := body.Value.(*pst.ExportIndexT)
 	for _, indexed := range index.Records {
 		if indexed.Offset < 0 || indexed.Offset+4 > int64(len(shardBytes)) {
 			t.Fatalf("bad test index offset: %+v", indexed)
@@ -273,15 +275,11 @@ func TestMaterializeStoredDatasetPublicationPNMsDoesNotRetryPermanentShardFrameE
 	}
 	badShardSHA := sha256HexForTest(shardBytes)
 	badShardCID := "bafybadframeshard"
-	index.ShardCID = badShardCID
-	index.ShardSHA256 = badShardSHA
-	index.ResultSHA256 = badShardSHA
-	badIndexBytes, err := json.MarshalIndent(index, "", "  ")
-	if err != nil {
-		t.Fatalf("marshal bad index: %v", err)
-	}
-	badIndexBytes = append(badIndexBytes, '\n')
-	badIndexPath := filepath.Join(tmpDir, "bad-frame.index.json")
+	index.ShardCid = badShardCID
+	index.ShardSha256 = badShardSHA
+	index.ResultSha256 = badShardSHA
+	badIndexBytes := publicationstate.Encode(body)
+	badIndexPath := filepath.Join(tmpDir, "bad-frame.index.fb")
 	if err := os.WriteFile(badIndexPath, badIndexBytes, 0600); err != nil {
 		t.Fatalf("write bad index: %v", err)
 	}
