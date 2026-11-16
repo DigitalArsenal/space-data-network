@@ -11,10 +11,32 @@ import (
 )
 
 func TestSearchSnapshotExcludesNewRecordsAndRejectsWithdrawals(t *testing.T) {
+	checkSearchSnapshot(t, false)
+}
+
+// Published records reach storage as bare buffers after the HTTP ingest path
+// removes the transport prefix. Exercise that contract on both live formats.
+func TestSearchCanonicalSnapshotOnBothFormats(t *testing.T) {
+	for _, format := range []string{"1", "5"} {
+		t.Run("format"+format, func(t *testing.T) {
+			t.Setenv("SDN_STORE_FORMAT", format)
+			checkSearchSnapshot(t, true)
+		})
+	}
+}
+
+func checkSearchSnapshot(t *testing.T, canonical bool) {
+	t.Helper()
+	payload := func(data []byte) []byte {
+		if canonical {
+			return data[4:]
+		}
+		return data
+	}
 	store := newDataSyncTestStore(t)
 	var firstCID string
 	for i := uint32(1); i <= 3; i++ {
-		data := sds.NewCATBuilder().WithNoradCatID(i).WithObjectName("Optical payload").Build()
+		data := payload(sds.NewCATBuilder().WithNoradCatID(i).WithObjectName("Optical payload").Build())
 		cid, err := store.StoreWithSourceTags("CAT.fbs", data, "source", nil, storage.SourceTags{ProviderID: "provider-a", SourceName: "satcat"})
 		if err != nil {
 			t.Fatal(err)
@@ -40,7 +62,7 @@ func TestSearchSnapshotExcludesNewRecordsAndRejectsWithdrawals(t *testing.T) {
 	if first.TotalCount != 3 || first.NextCursor == "" || first.Search != "optical" {
 		t.Fatalf("first search page: %+v", first)
 	}
-	newData := sds.NewCATBuilder().WithNoradCatID(4).WithObjectName("Optical newcomer").Build()
+	newData := payload(sds.NewCATBuilder().WithNoradCatID(4).WithObjectName("Optical newcomer").Build())
 	if _, err := store.StoreWithSourceTags("CAT.fbs", newData, "source", nil, storage.SourceTags{ProviderID: "provider-a", SourceName: "satcat"}); err != nil {
 		t.Fatal(err)
 	}
