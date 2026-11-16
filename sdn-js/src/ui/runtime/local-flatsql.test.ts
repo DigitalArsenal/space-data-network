@@ -1,5 +1,5 @@
 import { buildOmmFrame, BENCH_EPOCH_BASE } from '../../../scripts/lib/d6-bench-common.mjs';
-import { publishedSchema } from '../../test-schema-helper';
+import { publishedSchema, recordTestBytes, recordTestSchema } from '../../test-schema-helper';
 import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -780,6 +780,38 @@ describe('local FlatSQL datastore', () => {
   });
 
 
+
+  it('isolates and reopens stores using only their persistence keys', async () => {
+    const originalDirectory = process.cwd();
+    const keys = ['first store:/one', 'second store:/two'];
+    const schemas = [recordTestSchema()];
+    let stores: Awaited<ReturnType<typeof createLocalFlatSqlStore>>[] = [];
+    process.chdir(persistenceRoot);
+    try {
+      for (const [index, persistenceKey] of keys.entries()) {
+        const store = await createLocalFlatSqlStore({ persistenceKey, schemas });
+        stores.push(store);
+        await store.ingestRecords('TST', [{
+          dataBytes: await recordTestBytes(index + 1),
+          sourceName: 'test',
+        }]);
+        await store.flush('TST');
+      }
+      for (const [index, store] of stores.entries()) {
+        expect((await store.query('SELECT VALUE FROM TST', 'TST')).records).toEqual([{ VALUE: index + 1 }]);
+      }
+      for (const store of stores) await store.destroy();
+      stores = [];
+      for (const [index, persistenceKey] of keys.entries()) {
+        const store = await createLocalFlatSqlStore({ persistenceKey, schemas });
+        stores.push(store);
+        expect((await store.query('SELECT VALUE FROM TST', 'TST')).records).toEqual([{ VALUE: index + 1 }]);
+      }
+    } finally {
+      try { await Promise.all(stores.map(store => store.destroy())); }
+      finally { process.chdir(originalDirectory); }
+    }
+  });
 
   it('keeps query results fresh across ingest, persisted load, query template changes, and namespace changes', async () => {
     const restoreIndexedDb = installMemoryIndexedDb();
