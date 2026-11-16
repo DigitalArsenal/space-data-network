@@ -1241,12 +1241,13 @@ type NetworkConfig struct {
 	EdgeRelays []string `yaml:"edge_relays"`
 	MaxConns   int      `yaml:"max_connections"`
 
-	// AcceptPushFrom controls WHOSE RECORDS THIS NODE WILL STORE over the SDS
-	// exchange stream: "trusted" (default) or "any".
+	// AcceptPushFrom controls WHOSE RECORDS THIS NODE WILL STORE from gossip
+	// (records and PNM announcements on pubsub topics): "trusted" (default)
+	// or "any".
 	//
 	// It defaults to trusted because the alternative was the shipped
-	// behaviour and it was not safe: handleDataPush went from a rate-limit
-	// check straight to store.Store, so any peer that could dial this node
+	// behaviour and it was not safe: the per-record push message (since
+	// removed) went from a rate-limit check straight to store.Store, so any peer that could dial this node
 	// could inject OMM/CAT/EPM/PNM records, and the node then served them on
 	// its ANONYMOUS public data plane unioned across every producer table.
 	// The node advertises itself on the public Amino DHT, so reaching it is

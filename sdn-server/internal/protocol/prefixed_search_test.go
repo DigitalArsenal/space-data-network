@@ -2,7 +2,6 @@ package protocol_test
 
 import (
 	"bytes"
-	"context"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
@@ -10,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	libp2p "github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/spacedatanetwork/sdn-server/internal/modulert"
 	"github.com/spacedatanetwork/sdn-server/internal/modulert/caps"
@@ -23,7 +21,7 @@ import (
 // Search must index that envelope without changing the stored bytes or CID.
 func TestFormat5PrefixedIngressSearch(t *testing.T) {
 	t.Setenv("SDN_STORE_FORMAT", "5")
-	for _, path := range []string{"data-push", "pubsub", "module-write", "node-builder"} {
+	for _, path := range []string{"pubsub", "module-write", "node-builder"} {
 		t.Run(path, func(t *testing.T) {
 			validator, err := sds.NewValidator(nil)
 			if err != nil {
@@ -43,32 +41,6 @@ func TestFormat5PrefixedIngressSearch(t *testing.T) {
 			handler := protocol.NewSDSExchangeHandler(store, validator)
 			handler.SetPushAuthorizer(protocol.AllowAnyPush)
 			switch path {
-			case "data-push":
-				server, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"), libp2p.DisableRelay())
-				if err != nil {
-					t.Fatal(err)
-				}
-				defer server.Close()
-				client, err := libp2p.New(libp2p.NoListenAddrs, libp2p.DisableRelay())
-				if err != nil {
-					t.Fatal(err)
-				}
-				defer client.Close()
-				server.SetStreamHandler(protocol.SDSProtocolID, handler.HandleStream)
-				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-				defer cancel()
-				if err := client.Connect(ctx, peer.AddrInfo{ID: server.ID(), Addrs: server.Addrs()}); err != nil {
-					t.Fatal(err)
-				}
-				stream, err := client.NewStream(ctx, server.ID(), protocol.SDSProtocolID)
-				if err != nil {
-					t.Fatal(err)
-				}
-				defer stream.Close()
-				gotCID, err = protocol.PushData(ctx, stream, "CAT.fbs", raw)
-				if err != nil {
-					t.Fatal(err)
-				}
 			case "pubsub":
 				if err := handler.HandlePubSubMessage("CAT.fbs", raw, peer.ID("synthetic-peer")); err != nil {
 					t.Fatal(err)
