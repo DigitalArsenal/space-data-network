@@ -113,14 +113,14 @@ func TestUpdateChannelRealDaemonE2E(t *testing.T) {
 	}
 	builds := realE2EBuilds(t, filepath.Join(t.TempDir(), "builds"))
 	t.Setenv(realE2EBinDirEnv, filepath.Dir(builds[0].path))
-	t.Run("pull", func(t *testing.T) { runRealDaemonUpdateChannel(t, installThroughCLI) })
-	t.Run("push-catchup-withdrawal-validation", runRealPushChannel)
 	t.Run("installed-v1.1.5-push", func(t *testing.T) {
 		if os.Getenv("SDN_E2E_INSTALLED_BUNDLE") == "" {
 			t.Skip("set SDN_E2E_INSTALLED_BUNDLE to a checksum-verified published 1.1.5 bundle")
 		}
 		runRealPushChannelReceiver(t, true)
 	})
+	t.Run("pull", func(t *testing.T) { runRealDaemonUpdateChannel(t, installThroughCLI) })
+	t.Run("push-catchup-withdrawal-validation", runRealPushChannel)
 
 }
 
@@ -153,9 +153,6 @@ func runRealDaemonUpdateChannel(t *testing.T, install realInstaller) {
 	keepRealLogs(t, work)
 	builds := realE2EBuilds(t, filepath.Join(work, "builds"))
 	v1, v2, v3, v4 := builds[0], builds[1], builds[2], builds[1]
-	if installed {
-		v2.template = os.Getenv("SDN_E2E_INSTALLED_BUNDLE")
-	}
 	v4.name, v4.version, v4.updateID, v4.sequence = "v4", "1.1.2-e2e.4", "cli-bundle-release-e2e-4", 400
 
 	// The release key the bundle trusts, and one it does not.
@@ -644,6 +641,11 @@ func realBundleArchive(t *testing.T, b realBuild, feedBase string) []byte {
 			item := artifact.(map[string]any)
 			if item["path"] == "runtime/sdn/spacedatanetwork" {
 				item["sha256"] = b.sha
+				info, err := os.Stat(b.path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				item["size"] = info.Size()
 			}
 		}
 		writeE2EJSON(t, filepath.Join(stage, "manifest.json"), manifest)
@@ -1009,6 +1011,9 @@ func runRealPushChannelReceiver(t *testing.T, installed bool) {
 	keepRealLogs(t, work)
 	builds := realE2EBuilds(t, filepath.Join(work, "builds"))
 	v1, v2, v3, v4 := builds[0], builds[1], builds[2], builds[1]
+	if installed {
+		v2.template = os.Getenv("SDN_E2E_INSTALLED_BUNDLE")
+	}
 	v4.name, v4.version, v4.updateID, v4.sequence = "v4", "1.1.2-e2e.4", "cli-bundle-release-e2e-4", 400
 	health := envInt(t, "SDN_E2E_REAL_DAEMON_HEALTH_SECONDS", 180)
 	boot := time.Duration(envInt(t, "SDN_E2E_REAL_DAEMON_BOOT_SECONDS", 600)) * time.Second
