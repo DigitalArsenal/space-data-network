@@ -433,6 +433,25 @@ jobs:
       - name: plugin demo
         run: ./scripts/ci-local.sh demo
 
+  dashboard:
+    name: Embedded dashboard E2E (real node)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: sdn-js/package-lock.json
+      - uses: ./.github/actions/sdn-go-env
+        with:
+          needs-flow-bundles: 'false'
+      - name: Embedded dashboard
+        run: ./scripts/ci-local.sh dashboard
+
   # ONE CHECK TO REQUIRE. Splitting the pipeline into parallel jobs changes
   # what "CI passed" means: seven jobs must pass, not one. Branch protection can
   # require this single job instead of enumerating them, and it fails if any
@@ -451,6 +470,7 @@ jobs:
       - update-channel-e2e
       - go-builds
       - js
+      - dashboard
     steps:
       - name: Report
         env:

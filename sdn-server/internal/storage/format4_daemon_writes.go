@@ -536,6 +536,9 @@ func (b format4Backend) RebuildIndex() (map[string]int64, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reindex: %w", err)
 	}
+	if err := format4.WaitFTSReady(b.d.ctx, b.d.api(), ""); err != nil {
+		return nil, fmt.Errorf("reindex full-text completion: %w", err)
+	}
 	entries := make(map[string]int64, len(rows))
 	for _, r := range rows {
 		entries[r.Type+".fbs"] = r.Entries

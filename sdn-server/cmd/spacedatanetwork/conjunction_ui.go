@@ -96,6 +96,9 @@ var dashboardFonts embed.FS
 //go:embed embedded/sdn-js/flatsql.wasm
 var flatsqlBrowserWasm []byte
 
+//go:embed embedded/sdn-js/runtime/*
+var flatsqlBrowserRuntime embed.FS
+
 // dashboardCSP returns the trimmed, build-generated CSP for the "/" dashboard.
 func dashboardCSP() string { return strings.TrimSpace(dashboardCSPRaw) }
 
@@ -259,7 +262,8 @@ func (e *browserEngine) artifact() ([]byte, string) {
 
 // makeSdnJsAssetsHandler serves /sdn-js/flatsql.wasm, the signed engine
 // (GET/HEAD only, public, cacheable for a day, strong ETag with
-// If-None-Match). Every other name under /sdn-js/ is a 404. The path is what
+// If-None-Match), and the three browser runtime module scripts. Other names
+// under /sdn-js/ return 404. The engine path is what
 // sdn-js's engine loader fetches for wasmPath=`${origin}/sdn-js`.
 func makeSdnJsAssetsHandler(n *node.Node) http.Handler {
 	engine := &browserEngine{node: n}
@@ -268,7 +272,23 @@ func makeSdnJsAssetsHandler(n *node.Node) http.Handler {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		if strings.TrimPrefix(r.URL.Path, "/sdn-js/") != "flatsql.wasm" {
+		asset := strings.TrimPrefix(r.URL.Path, "/sdn-js/")
+		switch asset {
+		case "runtime/browser-guest.mjs", "runtime/wasiThreadBrowserWorker.mjs", "runtime/opfsIoWorker.mjs":
+			body, err := flatsqlBrowserRuntime.ReadFile("embedded/sdn-js/" + asset)
+			if err != nil {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+			w.Header().Set("Cross-Origin-Embedder-Policy", "require-corp")
+			w.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
+			w.Header().Set("Cache-Control", "no-cache")
+			w.Header().Set("X-Content-Type-Options", "nosniff")
+			http.ServeContent(w, r, path.Base(asset), time.Time{}, bytes.NewReader(body))
+			return
+		}
+		if asset != "flatsql.wasm" {
 			http.NotFound(w, r)
 			return
 		}

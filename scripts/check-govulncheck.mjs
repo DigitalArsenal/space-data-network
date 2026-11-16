@@ -44,7 +44,9 @@ const SCRIPTS_DIR = dirname(fileURLToPath(import.meta.url));
  * Module-level vulnerabilities govulncheck reports as reaching sdn-server code,
  * captured 2026-09-18 against go.mod's pins. Each needs a disposition. Linking
  * Kubo 0.43.1 (2026-10-05) moved pion/dtls, quic-go, webtransport-go, x/net and
- * x/text to fixed releases and cleared nine entries; what is left has no fix.
+ * x/text to fixed releases and cleared nine entries. Findings with fixes that
+ * change Kubo's compiled dependency versions retain explicit dispositions.
+ * Building with Go 1.26.11 (2026-11-16) cleared every standard library finding.
  *
  * Do not add an entry to silence a new finding without reading it.
  */
@@ -55,6 +57,46 @@ export const BASELINE = [
     found: 'v0.42.2',
     fixed: null,
     note: 'CVE-2023-26248. The advisory has introduced:0 and NO fixed event — unfixed in every version, a known property of the Amino DHT rather than an upgrade lever. Not actionable by bumping.',
+  },
+  {
+    id: 'GO-2026-6865',
+    module: 'github.com/klauspost/compress',
+    found: 'v1.19.1',
+    fixed: 'v1.20.2',
+    reviewed: '2026-11-16',
+    note: "Panic on two-block frames. govulncheck reports symbol reachability from update.extractBundleArchive through zstd.NewReader to fse.Decompress and huff0.ReadTable. Kubo v0.43.1 compiles github.com/klauspost/compress v1.19.1; selecting v1.20.2 fails check-kubo-pin.js --build-list. This baseline records reachable exposure constrained by Kubo dependency lockstep.",
+  },
+  {
+    id: 'GO-2026-6617',
+    module: 'golang.org/x/net',
+    found: 'v0.59.0',
+    fixed: 'v0.60.0',
+    reviewed: '2026-11-16',
+    note: "HTTP/2 server crash due to an HPACK encoder race. govulncheck reports symbol reachability through the node HTTP/2 code, including MountedFlow.ServeHTTP to http2.ConnectionError.Error. In this build golang.org/x/net/http2 is imported only by google.golang.org/grpc/internal/transport; the node's HTTP listeners use the standard library's HTTP/2, where the same advisory is fixed by the Go toolchain. Kubo v0.43.1 compiles golang.org/x/net v0.59.0; selecting v0.60.0 fails check-kubo-pin.js --build-list. This baseline records the exposure left through gRPC, constrained by Kubo dependency lockstep.",
+  },
+  {
+    id: 'GO-2026-6612',
+    module: 'golang.org/x/net',
+    found: 'v0.59.0',
+    fixed: 'v0.60.0',
+    reviewed: '2026-11-16',
+    note: "Double flow control refund on HTTP/2 server streams. govulncheck reports symbol reachability through the node HTTP/2 code, including MountedFlow.ServeHTTP to http2.ConnectionError.Error. In this build golang.org/x/net/http2 is imported only by google.golang.org/grpc/internal/transport; the node's HTTP listeners use the standard library's HTTP/2, where the same advisory is fixed by the Go toolchain. Kubo v0.43.1 compiles golang.org/x/net v0.59.0; selecting v0.60.0 fails check-kubo-pin.js --build-list. This baseline records the exposure left through gRPC, constrained by Kubo dependency lockstep.",
+  },
+  {
+    id: 'GO-2026-6611',
+    module: 'golang.org/x/net',
+    found: 'v0.59.0',
+    fixed: 'v0.60.0',
+    reviewed: '2026-11-16',
+    note: "Excessive CPU consumption from repeated HTTP/2 initial window changes. govulncheck reports symbol reachability through the node HTTP/2 code, including MountedFlow.ServeHTTP to http2.ConnectionError.Error. In this build golang.org/x/net/http2 is imported only by google.golang.org/grpc/internal/transport; the node's HTTP listeners use the standard library's HTTP/2, where the same advisory is fixed by the Go toolchain. Kubo v0.43.1 compiles golang.org/x/net v0.59.0; selecting v0.60.0 fails check-kubo-pin.js --build-list. This baseline records the exposure left through gRPC, constrained by Kubo dependency lockstep.",
+  },
+  {
+    id: 'GO-2026-6603',
+    module: 'golang.org/x/net',
+    found: 'v0.59.0',
+    fixed: 'v0.60.0',
+    reviewed: '2026-11-16',
+    note: "HTTP/2 server memory exhaustion due to Trailer headers. govulncheck reports symbol reachability through the node HTTP/2 code, including Node.StartBackgroundEngineHydration through sync.Once.Do to http2.Framer.ReadFrame. In this build golang.org/x/net/http2 is imported only by google.golang.org/grpc/internal/transport; the node's HTTP listeners use the standard library's HTTP/2, where the same advisory is fixed by the Go toolchain. Kubo v0.43.1 compiles golang.org/x/net v0.59.0; selecting v0.60.0 fails check-kubo-pin.js --build-list. This baseline records the exposure left through gRPC, constrained by Kubo dependency lockstep.",
   },
 ];
 
