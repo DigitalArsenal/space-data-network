@@ -419,7 +419,7 @@ func TestRouterKillChild(t *testing.T) {
 			if err := f.Sync(); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(filepath.Join(root, "torn-ready"), []byte("ready"), 0o600); err != nil {
+			if err := os.WriteFile(os.Getenv("SDN_FORMAT2_KILL_READY"), []byte("ready"), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			for {
@@ -431,6 +431,13 @@ func TestRouterKillChild(t *testing.T) {
 		}
 		if err := f.Sync(); err != nil {
 			t.Fatal(err)
+		}
+		if b == 0 {
+			// Start the random crash window during ingest, after startup and
+			// AOT compilation, with at least one durable acknowledgment.
+			if err := os.WriteFile(os.Getenv("SDN_FORMAT2_KILL_READY"), []byte("ready"), 0o600); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
 }
@@ -461,7 +468,8 @@ func TestRouterKill9KeepsEveryAckedRecord(t *testing.T) {
 	// the random ingest windows of the crash-recovery test.
 	for k := 0; k <= kills; k++ {
 		cmd := exec.Command(os.Args[0], "-test.run", "^TestRouterKillChild$", "-test.count=1", "-test.v")
-		cmd.Env = append(os.Environ(), routerKillChildEnv+"="+root, fmt.Sprintf("SDN_FORMAT2_KILL_TORN=%t", k == 0))
+		ready := filepath.Join(root, fmt.Sprintf("ready-%d", k))
+		cmd.Env = append(os.Environ(), routerKillChildEnv+"="+root, "SDN_FORMAT2_KILL_READY="+ready, fmt.Sprintf("SDN_FORMAT2_KILL_TORN=%t", k == 0))
 		childLog, err := os.Create(filepath.Join(root, fmt.Sprintf("child-%d.log", k)))
 		if err != nil {
 			t.Fatal(err)
@@ -473,27 +481,26 @@ func TestRouterKill9KeepsEveryAckedRecord(t *testing.T) {
 		}
 		done := make(chan error, 1)
 		go func() { done <- cmd.Wait() }()
-		if k == 0 {
-			deadline, hasDeadline := t.Deadline()
-			for {
-				if _, err := os.Stat(filepath.Join(root, "torn-ready")); err == nil {
-					break
-				}
-				select {
-				case err := <-done:
-					childLog.Close()
-					t.Fatalf("controlled child exited before its partial append: %v (see %s)", err, childLog.Name())
-				default:
-				}
-				if hasDeadline && time.Until(deadline) < time.Second {
-					_ = cmd.Process.Kill()
-					<-done
-					childLog.Close()
-					t.Fatalf("controlled child did not reach its partial append (see %s)", childLog.Name())
-				}
-				time.Sleep(10 * time.Millisecond)
+		deadline, hasDeadline := t.Deadline()
+		for {
+			if _, err := os.Stat(ready); err == nil {
+				break
 			}
-		} else {
+			select {
+			case err := <-done:
+				childLog.Close()
+				t.Fatalf("child %d exited before its acknowledgment: %v (see %s)", k, err, childLog.Name())
+			default:
+			}
+			if hasDeadline && time.Until(deadline) < time.Second {
+				_ = cmd.Process.Kill()
+				<-done
+				childLog.Close()
+				t.Fatalf("child %d did not reach its acknowledgment (see %s)", k, childLog.Name())
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		if k > 0 {
 			time.Sleep(300*time.Millisecond + time.Duration(rng.Int63n(int64(1200*time.Millisecond))))
 		}
 		_ = cmd.Process.Signal(syscall.SIGKILL)
@@ -577,6 +584,9 @@ func checkKillAcknowledgments(t *testing.T, s *Store, root string, fragments map
 		}
 		if len(line) == 0 && readErr == io.EOF {
 			break
+		}
+		if offset == 0 && readErr == nil && line != "b\n" {
+			t.Fatalf("the controlled fragment was joined to a later acknowledgment: %q", line)
 		}
 		parts := strings.Split(strings.TrimSuffix(line, "\n"), " ")
 		complete := readErr == nil && len(parts) == 3
