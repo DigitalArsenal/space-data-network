@@ -161,8 +161,11 @@ jobs:
         # `gh` on a runner is installed but unauthenticated without this.
         env:
           GH_TOKEN: ${{ github.token }}
+        # The update-signing guard (deployment/release/beta-release-workflow.test.mjs)
+        # parses the workflows with js-yaml, a root dev dependency.
         run: |
           chmod +x scripts/*.sh
+          npm ci --ignore-scripts --no-audit --no-fund
           ./scripts/ci-local.sh preflight
       - name: Encryption tests (Go)
         run: ./scripts/ci-local.sh encryption
