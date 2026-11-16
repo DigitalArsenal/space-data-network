@@ -184,6 +184,7 @@ ExecStartPre=/bin/sh -c 'test ! -d /case/store/fsql5'
     peak_kib = 0
     migration_start = None
     migration_end = None
+    switched_bytes = None
     while proc.poll() is None:
         ledger = (ROOT / 'ledger.log').read_text() if (ROOT / 'ledger.log').exists() else ''
         match = re.search(r' CONVERTING .*pid=(\d+)', ledger)
@@ -213,6 +214,7 @@ ExecStartPre=/bin/sh -c 'test ! -d /case/store/fsql5'
                     injected = True
         if ' SWITCHED ' in ledger and migration_end is None:
             migration_end = time.monotonic()
+            switched_bytes = tree_size(ROOT / 'store/fsql5')
         time.sleep(0.25)
     code = proc.wait()
     (ROOT / 'roll.exit').write_text(str(code) + '\n')
@@ -222,9 +224,16 @@ ExecStartPre=/bin/sh -c 'test ! -d /case/store/fsql5'
         raise RuntimeError('identity changed')
     after = counts()
     (ROOT / 'counts-after.json').write_text(json.dumps(after, sort_keys=True) + '\n')
+    after_hashes = None
+    if case in ('interrupted', 'budget', 'script-term', 'script-hup', 'wrong-peer', 'disk'):
+        after_hashes = hashes()
+        (ROOT / 'hashes-after.json').write_text(json.dumps(after_hashes, sort_keys=True) + '\n')
     (ROOT / 'observations.json').write_text(json.dumps({
         'ready': True, 'running_peer_unchanged': True, 'counts_equal': before == after,
-        'roll_exit': code, 'injected': injected}) + '\n')
+        'roll_exit': code, 'injected': injected,
+        'conversion_seconds': round(migration_end-migration_start, 2) if migration_end else None,
+        'peak_conversion_rss_kib_sampled': peak_kib, 'switched_fsql5_bytes': switched_bytes,
+        'format4_hashes_equal': before_hashes == after_hashes if after_hashes is not None else None}) + '\n')
     if any(' ' + event + ' ' in ledger for event in
            ('SUCCESS', 'ROLLED_BACK_BEFORE_SWITCH', 'ROLLED_BACK_AFTER_SWITCH')):
         replay_pid = command('systemctl', 'show', '-p', 'MainPID', '--value', UNIT)
@@ -246,7 +255,7 @@ ExecStartPre=/bin/sh -c 'test ! -d /case/store/fsql5'
             raise RuntimeError('precheck did not refuse before stop')
         if command('systemctl', 'show', '-p', 'MainPID', '--value', UNIT) != baseline_pid:
             raise RuntimeError('precheck changed the running daemon')
-        if before_hashes != hashes():
+        if before_hashes != after_hashes:
             raise RuntimeError('precheck changed format 4')
         if not (ROOT / 'base/staged').exists() or (ROOT / 'store/fsql5').exists():
             raise RuntimeError('precheck changed bundle or store selection')
@@ -258,8 +267,6 @@ ExecStartPre=/bin/sh -c 'test ! -d /case/store/fsql5'
             raise RuntimeError('failure was not injected during conversion')
         if case == 'budget' and 'reason=conversion_budget' not in ledger:
             raise RuntimeError('conversion did not reach its budget')
-        after_hashes = hashes()
-        (ROOT / 'hashes-after.json').write_text(json.dumps(after_hashes, sort_keys=True) + '\n')
         if case != 'after-switch' and before_hashes != after_hashes:
             raise RuntimeError('format-4 file hashes changed')
     return {'status': 'passed', 'roll_exit': code, 'seconds': round(time.monotonic()-start, 2),
