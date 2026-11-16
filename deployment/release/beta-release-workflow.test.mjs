@@ -899,7 +899,10 @@ test('the real update channel runs prebuilt fixtures with only loopback networki
   assert.match(job, /sdn_e2e_not_ready/);
   assert.match(job, /go-with-wasmedge\.sh test -c/);
   assert.match(job, /SDN_E2E_REAL_DAEMON_BIN_DIR=/);
-  assert.match(job, /unshare --net -- bash -c 'ip link set lo up;/);
+  assert.match(job, /unshare --net -- bash -c 'set -e; ip link set lo up;/);
+  assert.match(job, /setpriv --reuid="\$1" --regid="\$2" --init-groups/);
+  assert.match(job, /-- "\$\(id -u\)" "\$\(id -g\)"/);
+  assert.match(job, /if: always\(\)/);
   assert.match(job, /-test\.timeout=50m/);
   assert.ok(job.indexOf('go-with-wasmedge.sh test -c') < job.indexOf('unshare --net'));
 });

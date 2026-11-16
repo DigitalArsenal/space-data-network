@@ -107,6 +107,9 @@ func TestUpdateChannelRealDaemonE2E(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skipf("Linux only: the CLI trusts the test feed through SSL_CERT_FILE, which Go ignores on %s", runtime.GOOS)
 	}
+	if os.Geteuid() == 0 {
+		t.Fatal("real-daemon tests require a non-root user for permission checks and readable artifacts")
+	}
 	builds := realE2EBuilds(t, filepath.Join(t.TempDir(), "builds"))
 	t.Setenv(realE2EBinDirEnv, filepath.Dir(builds[0].path))
 	t.Run("pull", func(t *testing.T) { runRealDaemonUpdateChannel(t, installThroughCLI) })
