@@ -27,7 +27,7 @@ account it runs as. On most Linux machines the kernel makes
 `/sys/class/dmi/id/product_uuid` readable only by root, so for any other
 account that derivation is refused (`spacedatanetwork key fingerprint-check`
 answers `refused`; root, macOS and Windows answer `ok` or `absent`). For a
-fresh node on such a host, an `install.sh` that carries this change (v1.1.5
+fresh node on such a host, an `install.sh` that carries this change (v1.1.4
 and earlier do not: there, make the file yourself as in section 5) generates
 `~/sdn-key-password` (32 random bytes as 64 hex characters, mode 0400),
 records it in the node's config as `security.key_password_file`, and seals
@@ -176,7 +176,7 @@ in `/var/lib/spacedatanetwork`. The package creates the user and the
 directory; it does not enable or start the service.
 
 User `sdn` cannot read `/sys/class/dmi/id/product_uuid` on most hosts (see
-section 1), so on a FRESH install a package that carries this change (v1.1.5
+section 1), so on a FRESH install a package that carries this change (v1.1.4
 and earlier do not: there, make the two files yourself as below) generates
 `/var/lib/spacedatanetwork/key-password` (`sdn:sdn`, mode 0400) and the drop-in
 `/etc/systemd/system/spacedatanetwork.service.d/key-password.conf`
