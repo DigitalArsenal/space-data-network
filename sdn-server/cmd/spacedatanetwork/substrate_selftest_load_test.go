@@ -63,7 +63,8 @@ func TestSubstrateSelftestUnderCPULoad(t *testing.T) {
 		return report, err, stdout.String() + stderr.String()
 	}
 	baseline, err, output := run()
-	if !baseline.Patched && len(baseline.Errors) == 0 &&
+	if baseline.RuntimeVersion != "" && baseline.ThreadsSpawned == 4 && baseline.AOTChecked &&
+		!baseline.Patched && !baseline.Inconclusive && baseline.InterpretedStop.Outcome == "not_shared" && len(baseline.Errors) == 0 &&
 		!baseline.StopReachesEveryThread && !baseline.AOTLoopStopChecks && !baseline.AOTAtomicStoreStack &&
 		os.Getenv("SDN_WASM_REQUIRE_PATCHED") != "1" {
 		t.Skipf("stock runtime: shared stop, AOT loop checks, and atomic stores absent; generated 0 CPU hogs\n%s", output)

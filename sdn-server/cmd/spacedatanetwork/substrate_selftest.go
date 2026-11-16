@@ -65,7 +65,7 @@ func runSubstrateSelftest(cmd *cobra.Command, _ []string) error {
 	}
 	fmt.Fprintln(cmd.OutOrStdout(), string(out))
 	if substrateRequirePatched && (!rep.Patched || !rep.NativeHostIO || len(rep.Errors) > 0) {
-		return fmt.Errorf("substrate self-test failed: patched=%t native_host_io=%t errors=%v", rep.Patched, rep.NativeHostIO, rep.Errors)
+		return fmt.Errorf("substrate self-test failed: %s; native_host_io=%t error=%s", rep.SubstrateReport.FailureReason(), rep.NativeHostIO, rep.NativeHostIOErr)
 	}
 	return nil
 }

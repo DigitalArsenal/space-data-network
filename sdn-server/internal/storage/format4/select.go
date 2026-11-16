@@ -50,7 +50,7 @@ func Runnable() (bool, string) {
 		return false, "the native host I/O module is not built for this platform"
 	}
 	if rep := wasmrt.SubstrateStatus(); !rep.Patched() {
-		return false, fmt.Sprintf("the linked WasmEdge %s lacks the SDN runtime patches", rep.RuntimeVersion)
+		return false, fmt.Sprintf("the linked WasmEdge %s: %s", rep.RuntimeVersion, rep.FailureReason())
 	}
 	return true, ""
 }
