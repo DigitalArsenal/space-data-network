@@ -19,8 +19,14 @@ func TestSubstrateSelftestUnderCPULoad(t *testing.T) {
 	if os.Getenv("SDN_SUBSTRATE_CPU_HOG") == "1" {
 		fmt.Fprintln(os.Stdout, "cpu-load-ready")
 		until := time.Now().Add(2 * time.Minute)
+		state := uint64(1)
 		for time.Now().Before(until) {
+			// Spend the load budget on CPU work rather than clock calls.
+			for i := 0; i < 1<<18; i++ {
+				state = state*1664525 + 1013904223
+			}
 		}
+		fmt.Fprintln(os.Stdout, state)
 		return
 	}
 	if runtime.GOOS != "linux" {
@@ -80,12 +86,17 @@ func TestSubstrateSelftestUnderCPULoad(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	loadStart := time.Now()
 	var children []*exec.Cmd
 	t.Cleanup(func() {
 		for _, child := range children {
 			t.Logf("stopping CPU hog PID %d, command %q", child.Process.Pid, child.Args)
 			_ = child.Process.Kill()
 			_ = child.Wait()
+			if child.ProcessState != nil {
+				t.Logf("CPU hog PID %d used %s user and %s system CPU", child.Process.Pid,
+					child.ProcessState.UserTime(), child.ProcessState.SystemTime())
+			}
 		}
 	})
 	for i := 0; i < hogs; i++ {
@@ -104,11 +115,14 @@ func TestSubstrateSelftestUnderCPULoad(t *testing.T) {
 			t.Fatalf("CPU hog readiness: %q, %v", line, err)
 		}
 	}
+	t.Logf("all %d CPU hogs ready after %s", hogs, time.Since(loadStart))
 	for i := 1; i <= runs; i++ {
+		started := time.Now()
 		report, err, output := run()
 		if err != nil || !report.Patched || !report.NativeHostIO || len(report.Errors) != 0 {
 			t.Fatalf("self-test %d/%d with %d CPU hogs: %v\n%s", i, runs, hogs, err, output)
 		}
+		t.Logf("self-test %d/%d passed in %s", i, runs, time.Since(started))
 	}
 	t.Logf("all %d command runs passed with %d CPU hog processes", runs, hogs)
 }
