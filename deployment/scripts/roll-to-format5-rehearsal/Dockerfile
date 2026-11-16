@@ -1,9 +1,7 @@
 FROM ubuntu:22.04
-# Supply Ubuntu packages and their dependencies for the selected architecture.
-# Image assembly performs no package-repository requests.
-COPY packages/ /packages/
-RUN dpkg -i /packages/*.deb && \
-    test -x /lib/systemd/systemd && command -v curl && command -v python3
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    systemd systemd-sysv dbus curl ca-certificates procps python3 && \
+    rm -rf /var/lib/apt/lists/*
 ENV container=docker
 STOPSIGNAL SIGRTMIN+3
 CMD ["/lib/systemd/systemd", "--system", "--unit=multi-user.target"]

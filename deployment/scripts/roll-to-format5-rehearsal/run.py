@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline systemd rehearsal. Inputs and retained evidence are explicit paths."""
+"""Isolated systemd rehearsal. Inputs and retained evidence are explicit paths."""
 import argparse
 import hashlib
 import json
@@ -47,7 +47,7 @@ def ignore_private(directory, names):
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     for name in ('old-archive', 'new-archive', 'old-checksums', 'new-checksums',
-                 'packages', 'work-dir'):
+                 'work-dir',):
         ap.add_argument('--' + name, required=True, type=Path)
     ap.add_argument('--store', required=True, action='append', type=Path)
     ap.add_argument('--arch', choices=('arm64', 'amd64'), default='arm64')
@@ -65,14 +65,11 @@ def main():
         verified = [verify(args.old_archive, args.old_checksums),
                     verify(args.new_archive, args.new_checksums)]
         (work / 'archives.json').write_text(json.dumps(verified, indent=2) + '\n')
-        if not list(args.packages.glob('*.deb')):
-            raise RuntimeError('offline systemd, systemd-sysv, curl, python3 and dependency packages are required')
         context = work / 'image'
         context.mkdir()
         shutil.copy2(here / 'Dockerfile', context / 'Dockerfile')
-        shutil.copytree(args.packages, context / 'packages')
         with open(work / 'image.log', 'w') as log:
-            subprocess.run(['docker', 'build', '--network=none', '--platform=linux/' + args.arch,
+            subprocess.run(['docker', 'build', '--platform=linux/' + args.arch,
                             '-t', image, str(context)], stdout=log, stderr=subprocess.STDOUT, check=True)
         for number, source in enumerate(args.store, 1):
             for case in args.case or CASES:

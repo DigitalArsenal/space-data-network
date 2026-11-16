@@ -1,15 +1,13 @@
-# Offline systemd rehearsal
+# Isolated systemd rehearsal
 
 This harness is an end-to-end test of `../roll-to-format5.sh`. It requires
 Docker with privileged containers, a cgroup mount usable by systemd, Python 3.12
 or later on the driver, and enough disk for independent copies of every case.
 The image uses Ubuntu 22.04 for the selected architecture, arm64 by default.
 
-Provide complete Ubuntu `.deb` packages for `systemd`, `systemd-sysv`, `curl`,
-`python3`, and their dependencies through `--packages`. The Dockerfile installs
-only those files, with build networking disabled. It does not download packages.
-A plain Ubuntu container lacks these programs. Image-build failure is a blocked
-rehearsal, not a successful test. The node's old and new release archives and
+The Dockerfile installs systemd, D-Bus, curl, Python and supporting utilities
+from Ubuntu's official package archives. Package downloads occur only during
+the image build. Image-build failure is a blocked rehearsal. The node's old and new release archives and
 each release's own checksum file are explicit inputs; checksum mismatch aborts
 before store copies or containers are made.
 
@@ -17,7 +15,7 @@ before store copies or containers are made.
 python3 run.py \
   --old-archive "$OLD_ARCHIVE" --old-checksums "$OLD_CHECKSUMS" \
   --new-archive "$NEW_ARCHIVE" --new-checksums "$NEW_CHECKSUMS" \
-  --packages "$OFFLINE_PACKAGES" --arch arm64 \
+  --arch arm64 \
   --store "$FIRST_STORE_COPY" --store "$SECOND_STORE_COPY" \
   --work-dir "$NEW_REHEARSAL_DIRECTORY" \
   --conversion-minutes 90 --ready-seconds 300
@@ -64,5 +62,5 @@ All times describe Docker on the test machine. Archive digests are recorded in
 do not publish it or copy it into a deployment.
 
 The harness and recovery script require execution on both source copies before
-use on a production host. An unavailable package set or incomplete case matrix
+use on a production host. An image-build failure or incomplete case matrix
 means the deployment gate has not passed.

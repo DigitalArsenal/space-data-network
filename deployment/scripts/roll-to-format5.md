@@ -8,7 +8,7 @@ by the script. Conversion output comes from the node binary.
 
 The release-source recovery contract is verified against v1.1.5. End-to-end
 validation on production-store copies is required before deployment. The
-included rehearsal needs offline systemd packages; syntax checks alone do not
+included rehearsal installs systemd from official package archives; syntax checks do not
 establish recovery safety.
 
 ## Preparation
@@ -146,7 +146,7 @@ the script over partial recovery, or overwrite the preserved bundles.
 
 ## Rehearsal
 
-See [the offline harness](roll-to-format5-rehearsal/README.md). Its image runs
+See [the rehearsal harness](roll-to-format5-rehearsal/README.md). Its image runs
 real systemd as PID 1. It uses isolated copies, generated test identities and no
 external network. A passing report includes old/new per-standard counts, file
 hashes, exit codes and the ledger for each store and failure case. Docker
