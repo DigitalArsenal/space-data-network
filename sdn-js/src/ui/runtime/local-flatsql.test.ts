@@ -502,11 +502,11 @@ describe('local FlatSQL datastore', () => {
       });
 
       expect(ingested).toBe(1);
-      expect(resumed.getStats({ includeCachedBytes: false })[0]).toEqual(expect.objectContaining({
+      expect((await resumed.getStats({ includeCachedBytes: false }))[0]).toEqual(expect.objectContaining({
         recordCount: 2,
         ingestedRecordCount: 1,
       }));
-      resumed.destroy();
+      await resumed.destroy();
     } finally {
       restoreIndexedDb();
     }
@@ -696,7 +696,7 @@ describe('local FlatSQL datastore', () => {
         verifiedAt: '2026-05-12T00:00:00.000Z',
         updatedAt: '2026-05-12T00:00:00.000Z',
       }]);
-      expect(active.getStats({ includeCachedBytes: false })[0]).toEqual(expect.objectContaining({
+      expect((await active.getStats({ includeCachedBytes: false }))[0]).toEqual(expect.objectContaining({
         recordCount: 2,
         pinnedRows: 2,
       }));
@@ -706,7 +706,7 @@ describe('local FlatSQL datastore', () => {
         persist: false,
         recordKeyPrefix: 'published:new',
       });
-      expect(active.getStats({ includeCachedBytes: false })[0]).toEqual(expect.objectContaining({
+      expect((await active.getStats({ includeCachedBytes: false }))[0]).toEqual(expect.objectContaining({
         recordCount: 2,
         pinnedRows: 2,
       }));
@@ -726,7 +726,7 @@ describe('local FlatSQL datastore', () => {
         updatedAt: '2026-05-13T00:00:00.000Z',
       }]);
 
-      expect(active.getStats({ includeCachedBytes: false })[0]).toEqual(expect.objectContaining({
+      expect((await active.getStats({ includeCachedBytes: false }))[0]).toEqual(expect.objectContaining({
         recordCount: 1,
         ingestedRecordCount: 1,
         pinnedRows: 1,
@@ -734,7 +734,7 @@ describe('local FlatSQL datastore', () => {
       await expect(active.listPinLedgerEntries({ standardId: 'OMM' })).resolves.toEqual([
         expect.objectContaining({ cid: 'new', batchId: 'new-batch' }),
       ]);
-      active.destroy();
+      await active.destroy();
 
       const loaded = await createLocalFlatSqlStore({
         persistenceKey: 'staged-replacement-store',
@@ -907,7 +907,7 @@ describe('local FlatSQL datastore', () => {
           ...publishedSchema('OMM'),
         }],
       });
-      expect(otherNamespace.query('SELECT NORAD_CAT_ID FROM OMM LIMIT 10', 'OMM').records).toEqual([]);
+      expect((await otherNamespace.query('SELECT NORAD_CAT_ID FROM OMM LIMIT 10', 'OMM')).records).toEqual([]);
 
       const otherTemplate = await createLocalFlatSqlStore({
         persistenceKey: 'cache-invalidation-a',
@@ -918,8 +918,8 @@ describe('local FlatSQL datastore', () => {
           ...publishedSchema('PNM'),
         }],
       });
-      expect(otherTemplate.query('SELECT * FROM PNM LIMIT 0', 'PNM').columns).not.toContain('NORAD_CAT_ID');
-      expect(otherTemplate.getStats({ includeCachedBytes: false })[0]).toEqual(expect.objectContaining({
+      expect((await otherTemplate.query('SELECT * FROM PNM LIMIT 0', 'PNM')).columns).not.toContain('NORAD_CAT_ID');
+      expect((await otherTemplate.getStats({ includeCachedBytes: false }))[0]).toEqual(expect.objectContaining({
         standardId: 'PNM',
         recordCount: 0,
       }));
