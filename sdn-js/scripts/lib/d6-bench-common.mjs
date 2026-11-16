@@ -14,6 +14,10 @@ import { createRequire } from 'node:module';
 
 import * as flatbuffers from 'flatbuffers';
 import { OMM } from 'spacedatastandards.org/lib/js/OMM/OMM.js';
+import { RFM } from 'spacedatastandards.org/lib/js/RFM/RFM.js';
+import { RFMUnion } from 'spacedatastandards.org/lib/js/RFM/RFMUnion.js';
+import { CelestialFrame } from 'spacedatastandards.org/lib/js/RFM/CelestialFrame.js';
+import { CelestialFrameWrapper } from 'spacedatastandards.org/lib/js/RFM/CelestialFrameWrapper.js';
 import { QRP } from 'spacedatastandards.org/lib/js/QRP/QRP.js';
 import { qrpKind } from 'spacedatastandards.org/lib/js/QRP/qrpKind.js';
 
@@ -50,7 +54,9 @@ export function buildOmmFrame({ norad, epochUnix }) {
   const objectIdOff = b.createString(`2026-${norad}A`);
   const epochOff = b.createString(isoUtcSeconds(epochUnix));
   const centerOff = b.createString('EARTH');
-  const frameOff = b.createString('TEME');
+  const frameName = b.createString('TEME');
+  const celestialFrame = CelestialFrameWrapper.createCelestialFrameWrapper(b, CelestialFrame.TEMEOFDATE);
+  const frameOff = RFM.createRFM(b, RFMUnion.CelestialFrameWrapper, celestialFrame, 0, frameName);
   OMM.startOMM(b);
   OMM.addObjectName(b, nameOff);
   OMM.addObjectId(b, objectIdOff);

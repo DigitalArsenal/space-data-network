@@ -196,7 +196,7 @@ describe('catalog-scale engine queries (loop D.6 regression)', () => {
         source: 'celestrak-gp',
       }));
       let frames = 0;
-      for (const frame of store.queryEpochFrames('OMM', {
+      for (const frame of await store.queryEpochFrames('OMM', {
         profile: 'nearest',
         epoch: BENCH_EPOCH_BASE + 2 * 86400,
         limit: -1,
