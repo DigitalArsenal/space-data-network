@@ -340,6 +340,20 @@ jobs:
           SDN_E2E_REAL_DAEMON: '1'
         run: ../scripts/go-with-wasmedge.sh test ./cmd/spacedatanetwork/ -count=1 -timeout 50m -v -run '^TestUpdateChannelRealDaemonE2E$'
 
+  publication-e2e:
+    name: Publication E2E (real daemons)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: ./.github/actions/sdn-go-env
+        with:
+          needs-flow-bundles: 'false'
+      - name: Publication between real daemons
+        run: ./scripts/ci-local.sh publication
+
   go-builds:
     name: Go builds (node + edge relay)
     runs-on: ubuntu-latest
@@ -414,6 +428,7 @@ jobs:
       - go-heavy
       - wasmedge-substrate
       - update-channel-e2e
+      - publication-e2e
       - go-builds
       - js
       - dashboard

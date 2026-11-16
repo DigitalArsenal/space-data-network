@@ -13,6 +13,7 @@
 #   preflight                      preflight, encryption
 #   go-quick                       go
 #   go-heavy                       heavy
+#   publication-e2e                publication
 #   go-builds                      builds
 #   js                             js, delivery, demo
 #   dashboard                      dashboard
@@ -38,6 +39,7 @@
 #   ./scripts/ci-local.sh delivery   # focused module-delivery compatibility checks
 #   ./scripts/ci-local.sh plugin     # legacy alias for delivery
 #   ./scripts/ci-local.sh demo       # plugin-demo integration tests only
+#   ./scripts/ci-local.sh publication # publication between two real daemons
 #   ./scripts/ci-local.sh encryption # tests/encryption/go
 
 set -euo pipefail
@@ -780,6 +782,11 @@ case "$MODE" in
     run_plugin_demo
     run_encryption
     ;;
+  publication)
+    step "Publication between real daemons"
+    (cd "$ROOT/sdn-server" && SDN_E2E_PUBLICATION=1 ../scripts/go-with-wasmedge.sh test ./cmd/spacedatanetwork/ -count=1 -timeout 50m -v -run '^TestPublication.*RealDaemons$')
+    pass "publication real daemons"
+    ;;
   preflight)
     run_preflight
     run_gofmt
@@ -816,7 +823,7 @@ case "$MODE" in
     run_encryption
     ;;
   *)
-    echo -e "${RED}Usage: $0 [quick|full|preflight|go|heavy|builds|race|js|dashboard|kubo-pin|delivery|plugin|demo|encryption]${NC}"
+    echo -e "${RED}Usage: $0 [quick|full|preflight|go|heavy|builds|race|js|dashboard|kubo-pin|delivery|plugin|demo|encryption|publication]${NC}"
     exit 1
     ;;
 esac
