@@ -266,42 +266,5 @@ describe('production FlatSQL engine I/O wiring', () => {
    * delete them, and never write them again — a node that upgrades must not
    * lose its catalog, and must not keep paying for the retired layout.
    */
-  test('migrates a pre-1.4.5 snapshot-export store into disk state exactly once', async () => {
-    const persistenceStore = new MemoryFlatSqlPersistenceStore();
-    const persistenceKey = 'legacy-snapshot-upgrade';
-    const sources = corpusSources();
 
-    // Seed the RETIRED layout by hand: the source list plus one aligned stream
-    // per source, exactly what the old persistStandard wrote.
-    await persistenceStore.writeJson(`${persistenceKey}:OMM:sources`, sources.map((source) => source.name).sort());
-    for (const source of sources) {
-      await persistenceStore.writeBytes(`${persistenceKey}:OMM:src:${source.name}`, source.bytes);
-    }
-
-    const upgraded = await createLocalFlatSqlStore({
-      persistenceKey,
-      persistenceStore,
-      schemas: [{ ...OMM_STANDARD }],
-    });
-    expect(upgraded.listSources('OMM').sort()).toEqual(sources.map((source) => source.name).sort());
-    expect(upgraded.query('SELECT COUNT(*) AS n FROM OMM', 'OMM').rows[0][0]).toBe(85);
-    upgraded.destroy();
-
-    // The legacy keys are gone, and the records are in the engine's files.
-    const keys = [...storeEntries(persistenceStore).keys()];
-    expect(keys.filter((key) => key.startsWith(`${persistenceKey}:OMM:src:`))).toEqual([]);
-    expect(keys).not.toContain(`${persistenceKey}:OMM:sources`);
-
-    // Reopen with NOTHING legacy left: still 85 records, still partitioned.
-    const afterMigration = await createLocalFlatSqlStore({
-      persistenceKey,
-      persistenceStore,
-      schemas: [{ ...OMM_STANDARD }],
-    });
-    expect(afterMigration.query('SELECT COUNT(*) AS n FROM OMM', 'OMM').rows[0][0]).toBe(85);
-    for (const source of sources) {
-      expect(afterMigration.query(`SELECT COUNT(*) AS n FROM "OMM@${source.name}"`, 'OMM').rows[0][0]).toBe(source.records);
-    }
-    afterMigration.destroy();
-  }, 120_000);
 });

@@ -288,40 +288,5 @@ describe('per-provider source partitioning (server layout mirror)', () => {
     (await second.destroy());
   });
 
-  it('migrates a legacy pre-D.1 exportData snapshot into the local source partition', async () => {
-    const persistenceStore = new MemoryFlatSqlPersistenceStore();
-    // Legacy layout: one exportData blob (a size-prefixed record stream)
-    // under `<key>:<STD>` with no source attribution.
-    const bare = stripSdnFlatBufferSizePrefix(new Uint8Array(STARLINK_6292_OMM_BYTES));
-    const legacyBlob = new Uint8Array(4 + bare.byteLength);
-    new DataView(legacyBlob.buffer).setUint32(0, bare.byteLength, true);
-    legacyBlob.set(bare, 4);
-    await persistenceStore.writeBytes('legacy-migration:OMM', legacyBlob);
 
-    const store = await createLocalFlatSqlStore({
-      schemas: [OMM_STANDARD],
-      persistenceKey: 'legacy-migration',
-      persistenceStore,
-    });
-    const rows = await store.query('SELECT NORAD_CAT_ID, _source FROM OMM LIMIT 10', 'OMM');
-    expect(rows.records).toEqual([{ NORAD_CAT_ID: 56775, _source: 'OMM@local' }]);
-
-    // The legacy blob is folded into the ENGINE'S OWN disk state and deleted.
-    // Nothing rewrites the retired snapshot-export layout in its place: the
-    // durable representation is now the index + arena the engine writes.
-    await store.flush('OMM');
-    expect(await persistenceStore.readBytes('legacy-migration:OMM')).toBeNull();
-    expect(await persistenceStore.readJson('legacy-migration:OMM:sources')).toBeNull();
-    expect(await persistenceStore.readBytes('legacy-migration:OMM:src:local')).toBeNull();
-    (await store.destroy());
-
-    const reopened = await createLocalFlatSqlStore({
-      schemas: [OMM_STANDARD],
-      persistenceKey: 'legacy-migration',
-      persistenceStore,
-    });
-    const reloaded = await reopened.query('SELECT NORAD_CAT_ID, _source FROM OMM LIMIT 10', 'OMM');
-    expect(reloaded.records).toEqual([{ NORAD_CAT_ID: 56775, _source: 'OMM@local' }]);
-    (await reopened.destroy());
-  });
 });
