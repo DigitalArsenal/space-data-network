@@ -68,7 +68,7 @@ func (v Body) String() string {
 }
 
 type BodyT struct {
-	Type Body
+	Type  Body
 	Value interface{}
 }
 

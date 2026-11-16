@@ -7,9 +7,9 @@ import (
 )
 
 type ReclamationT struct {
-	HighWater uint64 `json:"high_water"`
-	Reclaimed uint64 `json:"reclaimed"`
-	Pending []uint64 `json:"pending"`
+	HighWater uint64   `json:"high_water"`
+	Reclaimed uint64   `json:"reclaimed"`
+	Pending   []uint64 `json:"pending"`
 }
 
 func (t *ReclamationT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

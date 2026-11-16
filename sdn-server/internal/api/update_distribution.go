@@ -60,7 +60,7 @@ const (
 	DistributionAwaitingManifest = "awaiting-manifest-signature"
 	DistributionManifestSigned   = "manifest-signed"
 	DistributionAwaitingSignal   = "awaiting-signal-signature"
-	DistributionSignaled        = "signalled"
+	DistributionSignaled         = "signalled"
 )
 
 type distribution struct {

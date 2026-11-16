@@ -7,11 +7,11 @@ import (
 )
 
 type BatchActionT struct {
-	Schema string `json:"schema"`
+	Schema   string `json:"schema"`
 	Provider string `json:"provider"`
-	Source string `json:"source"`
-	Batch string `json:"batch"`
-	Action string `json:"action"`
+	Source   string `json:"source"`
+	Batch    string `json:"batch"`
+	Action   string `json:"action"`
 }
 
 func (t *BatchActionT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

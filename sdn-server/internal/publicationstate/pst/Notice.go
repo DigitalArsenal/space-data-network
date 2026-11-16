@@ -7,7 +7,7 @@ import (
 )
 
 type NoticeT struct {
-	Key string `json:"key"`
+	Key    string `json:"key"`
 	Reason string `json:"reason"`
 }
 

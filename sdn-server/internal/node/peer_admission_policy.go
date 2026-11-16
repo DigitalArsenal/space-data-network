@@ -565,7 +565,7 @@ type peerAdmissionController struct {
 	identifiedPeers  atomic.Uint64
 	anonymousPeers   atomic.Uint64
 	topicMemberPeers atomic.Int64
-	tunneledPeers   atomic.Int64
+	tunneledPeers    atomic.Int64
 
 	taggedTopicMu sync.Mutex
 	taggedTopic   map[peer.ID]struct{}
@@ -853,6 +853,6 @@ func (c *peerAdmissionController) Stats() PeerAdmissionStats {
 		IdentifiedPeers:    c.identifiedPeers.Load(),
 		AnonymousPeers:     c.anonymousPeers.Load(),
 		TopicMemberPeers:   c.topicMemberPeers.Load(),
-		TunneledPeers:     c.tunneledPeers.Load(),
+		TunneledPeers:      c.tunneledPeers.Load(),
 	}
 }

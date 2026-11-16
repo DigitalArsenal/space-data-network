@@ -7,22 +7,22 @@ import (
 )
 
 type ExportIndexT struct {
-	PublicationCutoff uint64 `json:"publication_cutoff"`
-	PublicationSourceCutoff uint64 `json:"publication_source_cutoff"`
-	PublicationSourceSequences []uint64 `json:"publication_source_sequences"`
-	Version int32 `json:"version"`
-	SchemaName string `json:"schema_name"`
-	ProviderId string `json:"provider_id"`
-	SourceName string `json:"source_name"`
-	BatchId string `json:"batch_id"`
-	QuerySha256 string `json:"query_sha256"`
-	ResultSha256 string `json:"result_sha256"`
-	ShardSha256 string `json:"shard_sha256"`
-	ShardCid string `json:"shard_cid"`
-	ShardFile string `json:"shard_file"`
-	RecordCount int32 `json:"record_count"`
-	Records []*IndexRecordT `json:"records"`
-	Indexes *MaterializedIndexesT `json:"indexes"`
+	PublicationCutoff          uint64                `json:"publication_cutoff"`
+	PublicationSourceCutoff    uint64                `json:"publication_source_cutoff"`
+	PublicationSourceSequences []uint64              `json:"publication_source_sequences"`
+	Version                    int32                 `json:"version"`
+	SchemaName                 string                `json:"schema_name"`
+	ProviderId                 string                `json:"provider_id"`
+	SourceName                 string                `json:"source_name"`
+	BatchId                    string                `json:"batch_id"`
+	QuerySha256                string                `json:"query_sha256"`
+	ResultSha256               string                `json:"result_sha256"`
+	ShardSha256                string                `json:"shard_sha256"`
+	ShardCid                   string                `json:"shard_cid"`
+	ShardFile                  string                `json:"shard_file"`
+	RecordCount                int32                 `json:"record_count"`
+	Records                    []*IndexRecordT       `json:"records"`
+	Indexes                    *MaterializedIndexesT `json:"indexes"`
 }
 
 func (t *ExportIndexT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

@@ -7,17 +7,17 @@ import (
 )
 
 type SourceTagsT struct {
-	ProviderId string `json:"provider_id"`
-	SourceName string `json:"source_name"`
-	SourceUrl string `json:"source_url"`
-	BatchId string `json:"batch_id"`
-	ContentKeyId string `json:"content_key_id"`
-	ProducerPeerId string `json:"producer_peer_id"`
+	ProviderId        string `json:"provider_id"`
+	SourceName        string `json:"source_name"`
+	SourceUrl         string `json:"source_url"`
+	BatchId           string `json:"batch_id"`
+	ContentKeyId      string `json:"content_key_id"`
+	ProducerPeerId    string `json:"producer_peer_id"`
 	ProducerPublicKey string `json:"producer_public_key"`
-	License string `json:"license"`
-	LicenseUrl string `json:"license_url"`
-	Citation string `json:"citation"`
-	ShareAlike bool `json:"share_alike"`
+	License           string `json:"license"`
+	LicenseUrl        string `json:"license_url"`
+	Citation          string `json:"citation"`
+	ShareAlike        bool   `json:"share_alike"`
 }
 
 func (t *SourceTagsT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

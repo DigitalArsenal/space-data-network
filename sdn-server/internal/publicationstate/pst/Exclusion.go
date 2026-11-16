@@ -7,8 +7,8 @@ import (
 )
 
 type ExclusionT struct {
-	Cid string `json:"cid"`
-	Excluded bool `json:"excluded"`
+	Cid      string `json:"cid"`
+	Excluded bool   `json:"excluded"`
 }
 
 func (t *ExclusionT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

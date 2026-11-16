@@ -7,9 +7,9 @@ import (
 )
 
 type FailureT struct {
-	Attempts int32 `json:"attempts"`
-	Reason string `json:"reason"`
-	RetryAt string `json:"retry_at"`
+	Attempts int32  `json:"attempts"`
+	Reason   string `json:"reason"`
+	RetryAt  string `json:"retry_at"`
 }
 
 func (t *FailureT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

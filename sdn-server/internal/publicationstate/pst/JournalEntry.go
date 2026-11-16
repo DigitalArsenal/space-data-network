@@ -7,17 +7,17 @@ import (
 )
 
 type JournalEntryT struct {
-	Digest string `json:"digest"`
-	Sequence uint64 `json:"sequence"`
-	SourceSequence uint64 `json:"source_sequence"`
-	Schema string `json:"schema"`
-	Tags *SourceTagsT `json:"tags"`
-	Peer string `json:"peer"`
-	Signature []byte `json:"signature"`
-	Identity bool `json:"identity"`
-	OwnTs bool `json:"own_ts"`
-	Applied bool `json:"applied"`
-	Refused []*RefusalT `json:"refused"`
+	Digest         string       `json:"digest"`
+	Sequence       uint64       `json:"sequence"`
+	SourceSequence uint64       `json:"source_sequence"`
+	Schema         string       `json:"schema"`
+	Tags           *SourceTagsT `json:"tags"`
+	Peer           string       `json:"peer"`
+	Signature      []byte       `json:"signature"`
+	Identity       bool         `json:"identity"`
+	OwnTs          bool         `json:"own_ts"`
+	Applied        bool         `json:"applied"`
+	Refused        []*RefusalT  `json:"refused"`
 }
 
 func (t *JournalEntryT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

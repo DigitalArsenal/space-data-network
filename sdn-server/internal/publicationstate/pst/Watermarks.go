@@ -7,7 +7,7 @@ import (
 )
 
 type WatermarksT struct {
-	Global uint64 `json:"global"`
+	Global  uint64             `json:"global"`
 	Sources []*SourceSequenceT `json:"sources"`
 }
 

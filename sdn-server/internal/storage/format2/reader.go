@@ -46,7 +46,7 @@ const (
 	StatusNeedsBulk     int32 = -20
 	StatusSnapshotGone  int32 = -21
 	StatusTimeout       int32 = -22
-	StatusCanceled     int32 = -23
+	StatusCanceled      int32 = -23
 	StatusNoMem         int32 = -24
 	StatusSQLError      int32 = -25
 	StatusNotAuthorized int32 = -26
