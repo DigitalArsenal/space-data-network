@@ -3,13 +3,13 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUTPUT="${1:?usage: publication-baseline.sh RESULT_DIRECTORY}"
-mkdir -p "$OUTPUT/stores" "$OUTPUT/logs"
+mkdir -p "$OUTPUT/logs" "${SDN_E2E_PUBLICATION_STORES:-$OUTPUT/stores}"
 OUTPUT="$(cd "$OUTPUT" && pwd)"
 export SDN_E2E_PUBLICATION_BASELINE=1
 export SDN_E2E_PUBLICATION_RESULT="$OUTPUT/measurements.jsonl"
-export SDN_E2E_PUBLICATION_STORES="$OUTPUT/stores"
+export SDN_E2E_PUBLICATION_STORES="${SDN_E2E_PUBLICATION_STORES:-$OUTPUT/stores}"
 export SDN_E2E_PUBLICATION_LOGS="$OUTPUT/logs"
-export TMPDIR="$OUTPUT/stores"
+export TMPDIR="$SDN_E2E_PUBLICATION_STORES"
 status=0
 (cd "$ROOT/sdn-server" && ../scripts/go-with-wasmedge.sh test ./cmd/spacedatanetwork -run '^TestPublicationBaseline$' -count=1 -timeout 0 -v) > "$OUTPUT/test.log" 2>&1 || status=$?
 printf '%s\n' "$status" > "$OUTPUT/exit-code"

@@ -50,7 +50,9 @@ func TestPublicationRealDaemons(t *testing.T) {
 		if len(want) != 2048 {
 			t.Fatalf("producer holds %d records, want 2048", len(want))
 		}
+		t.Log("producer scan matches 2048 distinct records; exporting publication")
 		pub := a.publish(t, "OMM.fbs", "delivery", "first")
+		t.Logf("publication exported %d records; waiting for receiver", pub.RecordCount)
 		b.awaitRecords(t, "OMM.fbs", "delivery", want, 6*time.Minute)
 		b.requirePublication(t, "delivery", pub)
 		a.publishMode(t, "OMM.fbs", "delivery", "first", true)
@@ -95,19 +97,14 @@ func TestPublicationRealDaemons(t *testing.T) {
 			time.Sleep(20 * time.Second)
 			b.requireRecords(t, "OMM.fbs", source, map[string]int{})
 			if policy == "untrusted" {
-				raw := b.request(t, "GET", "/api/v1/admin/peers/"+a.id, "", nil, http.StatusOK)
-				var status struct {
-					Trust peers.TrustLevel `json:"trust_level"`
+				reason := "Bootstrap peer " + a.id + " is NOT in peers.trusted_peers"
+				if !strings.Contains(readFileString(b.logPath), reason) {
+					t.Fatalf("receiver has no non-trust refusal reason in %s", b.logPath)
 				}
-				if err := json.Unmarshal(raw, &status); err != nil {
-					t.Fatal(err)
-				}
-				if status.Trust >= peers.Trusted {
-					t.Fatal("refusal receiver trusts the producer")
-				}
-				t.Logf("receiver peer status: trust=%s, below required trusted", status.Trust)
+				t.Log("receiver log explicitly says publications from this bootstrap peer are discarded because it is not trusted")
 				return
 			}
+
 			log := readFileString(b.logPath)
 			reason := "non-trusted"
 			if policy == "deny" {
@@ -116,7 +113,13 @@ func TestPublicationRealDaemons(t *testing.T) {
 			if policy == "unlisted" {
 				reason = "not listed in peers.trusted_import.allow"
 			}
-			if !strings.Contains(log, reason) {
+			observed := false
+			for _, line := range strings.Split(log, "\n") {
+				if strings.Contains(line, reason) && strings.Contains(line, "/"+source) {
+					observed = true
+				}
+			}
+			if !observed {
 				t.Fatalf("refusal has no reason %q in %s", reason, b.logPath)
 			}
 		})
@@ -212,6 +215,7 @@ type publicationResult struct {
 
 type publicationDaemon struct {
 	exe, root, cfg, store, base, kubo, logPath, id, address string
+	trusted                                                 string
 	env                                                     []string
 	cmd                                                     *exec.Cmd
 	done                                                    chan error
@@ -221,6 +225,9 @@ type publicationDaemon struct {
 
 func publicationBinary(t *testing.T) string {
 	t.Helper()
+	// This package's TestMain selects format 1 for legacy tests.
+	t.Setenv("SDN_STORE_FORMAT", "5")
+	t.Setenv("SDN_E2E_PUBLICATION_AOT_CACHE", publicationTemp(t, "aot-cache"))
 	if binary := os.Getenv("SDN_E2E_PUBLICATION_BINARY"); binary != "" {
 		return binary
 	}
@@ -291,7 +298,11 @@ func newPublicationDaemon(t *testing.T, exe, name, bootstrap, trust, retention s
 	}
 	peers := "peers:\n  trusted_import:\n    new_lanes: deny\n    allow:\n      - provider_id: publication-e2e\n"
 	if trust != "" {
-		peers += fmt.Sprintf("  trusted_peers: [%q]\n", trust)
+		if !strings.HasSuffix(bootstrap, "/p2p/"+trust) {
+			t.Fatal("trusted test peer must be the loopback bootstrap peer")
+		}
+		peers += fmt.Sprintf("  trusted_peers: [%q]\n", bootstrap)
+		d.trusted = trust
 	}
 	cfg = strings.Replace(cfg, "peers:\n", peers, 1)
 	cfg = strings.Replace(cfg, "  max_size: 1GB", "  max_size: 32GB", 1)
@@ -310,12 +321,23 @@ func newPublicationDaemon(t *testing.T, exe, name, bootstrap, trust, retention s
 	if err := os.WriteFile(passwordPath, []byte(hex.EncodeToString(password)), 0400); err != nil {
 		t.Fatal(err)
 	}
-	d.env = append(environWithout("HOME", "SDN_CONFIG", "INVOCATION_ID", "SDN_STORE_FORMAT", config.EnvKeyPassword, config.EnvKeyPasswordFile), "HOME="+home, "SDN_STORE_FORMAT=5", config.EnvKeyPasswordFile+"="+passwordPath)
-	if os.Getenv("XDG_CACHE_HOME") == "" {
-		if cache, err := os.UserCacheDir(); err == nil {
-			d.env = append(d.env, "XDG_CACHE_HOME="+cache)
+	d.env = append(environWithout("HOME", "SDN_CONFIG", "INVOCATION_ID", "SDN_STORE_FORMAT", "XDG_CACHE_HOME", config.EnvKeyPassword, config.EnvKeyPasswordFile), "HOME="+home, "SDN_STORE_FORMAT=5", config.EnvKeyPasswordFile+"="+passwordPath)
+	cache := os.Getenv("SDN_E2E_PUBLICATION_AOT_CACHE")
+	if cache != "" {
+		target := filepath.Join(cache, "flatsql-aot")
+		if err := os.MkdirAll(target, 0700); err != nil {
+			t.Fatal(err)
 		}
+		macCache := filepath.Join(home, "Library", "Caches")
+		if err := os.MkdirAll(macCache, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, filepath.Join(macCache, "flatsql-aot")); err != nil {
+			t.Fatal(err)
+		}
+		d.env = append(d.env, "XDG_CACHE_HOME="+cache)
 	}
+
 	logRoot := os.Getenv("SDN_E2E_PUBLICATION_LOGS")
 	if logRoot == "" {
 		logRoot = root
@@ -408,6 +430,19 @@ func (d *publicationDaemon) start(t *testing.T) {
 	if d.address == "" {
 		t.Fatal("no loopback peer address")
 	}
+	if d.trusted != "" {
+		raw := d.request(t, "GET", "/api/v1/admin/peers/"+d.trusted, "", nil, http.StatusOK)
+		var status struct {
+			Trust peers.TrustLevel `json:"trust_level"`
+		}
+		if err := json.Unmarshal(raw, &status); err != nil {
+			t.Fatal(err)
+		}
+		if status.Trust < peers.Trusted {
+			t.Fatalf("receiver configured trust is ineffective: %s", status.Trust)
+		}
+	}
+
 }
 
 func (d *publicationDaemon) stop(t *testing.T) {
@@ -525,6 +560,7 @@ func (d *publicationDaemon) publish(t *testing.T, schema, source, batch string) 
 func (d *publicationDaemon) publishMode(t *testing.T, schema, source, batch string, existing bool) publicationResult {
 	t.Helper()
 	body, _ := json.Marshal(map[string]any{"schema": schema, "providerId": "publication-e2e", "sourceName": source, "batchId": batch, "limit": 50000, "chunkSize": 50000, "announceExisting": existing, "fullCatalog": true})
+	t.Logf("publication request: schema=%s source=%s batch=%s replay=%t", schema, source, batch, existing)
 	raw := d.request(t, "POST", "/api/v1/admin/dataset-updates/publish", "application/json", body, http.StatusAccepted)
 	var result publicationResult
 	if err := json.Unmarshal(raw, &result); err != nil {

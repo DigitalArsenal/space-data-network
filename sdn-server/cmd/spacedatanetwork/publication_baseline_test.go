@@ -45,6 +45,11 @@ func TestPublicationBaseline(t *testing.T) {
 	defer output.Close()
 	encoder := json.NewEncoder(output)
 	exe := publicationBinary(t)
+	smallCount, largeCount := 2_000_000, 1024
+	smoke := os.Getenv("SDN_E2E_PUBLICATION_BASELINE_SMOKE") == "1"
+	if smoke {
+		smallCount, largeCount = 2048, 4
+	}
 	var rows []publicationMeasurement
 	for round := 0; round < 3; round++ {
 		t.Run(fmt.Sprintf("round-%d", round+1), func(t *testing.T) {
@@ -57,6 +62,7 @@ func TestPublicationBaseline(t *testing.T) {
 			b.kuboRPC(t, "config", url.Values{"arg": {"Experimental.Libp2pStreamMounting", "true"}, "json": {"true"}})
 			record := func(row publicationMeasurement) {
 				row.Round = round + 1
+				row.Smoke = smoke
 				rows = append(rows, row)
 				if err := encoder.Encode(row); err != nil {
 					t.Fatal(err)
@@ -70,13 +76,16 @@ func TestPublicationBaseline(t *testing.T) {
 				return n, 0
 			})
 			record(row)
+			if os.Getenv("SDN_E2E_PUBLICATION_BASELINE_CASE") == "wire" {
+				return
+			}
 			for _, data := range []struct {
 				schema     string
 				count      int
 				makeRecord func(int) []byte
 			}{
-				{"OMM.fbs", 2_000_000, baselineOMM},
-				{"OEM.fbs", 1024, baselineOEM},
+				{"OMM.fbs", smallCount, baselineOMM},
+				{"OEM.fbs", largeCount, baselineOEM},
 			} {
 				source := strings.TrimSuffix(data.schema, ".fbs")
 				row = measurePublication(t, a, b, "direct-ingest", source, func() (int64, int64) {
@@ -172,6 +181,7 @@ func TestPublicationBaseline(t *testing.T) {
 }
 
 type publicationMeasurement struct {
+	Smoke                   bool               `json:"instrumentation_smoke"`
 	Round                   int                `json:"round"`
 	Operation               string             `json:"operation"`
 	Dataset                 string             `json:"dataset"`
@@ -303,6 +313,9 @@ func baselineIngest(t *testing.T, d *publicationDaemon, schema, source, batch st
 	t.Helper()
 	var total int64
 	for i := 0; i < count; {
+		if t.Failed() {
+			t.Fatal("measurement instrumentation failed; aborting remaining ingest")
+		}
 		var payload bytes.Buffer
 		n := 0
 		for i < count && payload.Len() < 4<<20 && n < 4096 {
