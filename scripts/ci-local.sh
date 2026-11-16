@@ -490,10 +490,42 @@ run_go() {
 run_go_heavy() {
   prepare_go_toolchain
 
-  step "Go tests (heavy: $HEAVY_GO_PACKAGES)"
-  # shellcheck disable=SC2086
-  go_test_with_timings heavy -p=1 -timeout="$HEAVY_GO_TEST_TIMEOUT" -count=1 $HEAVY_GO_PACKAGES \
-    || fail "go test (heavy)"
+  step "Go tests (four parallel groups: $HEAVY_GO_PACKAGES)"
+  local pkg group pattern pid failed listed
+  local artifact_dir="$ROOT/.ci-artifacts"
+  local pids=()
+  mkdir -p "$artifact_dir"
+  for pkg in $HEAVY_GO_PACKAGES; do
+    local label="${pkg##*/}"
+    listed="$artifact_dir/heavy-${label}-listed.txt"
+    "$ROOT/scripts/go-with-wasmedge.sh" test -list '^(Test|Example|Fuzz)' "$pkg" > "$listed" \
+      || fail "list tests in $pkg"
+    LC_ALL=C grep -E '^(Test|Example|Fuzz)[[:alnum:]_]+$' "$listed" | LC_ALL=C sort > "$artifact_dir/heavy-${label}-all.txt"
+    [[ -s "$artifact_dir/heavy-${label}-all.txt" ]] || fail "no tests discovered in $pkg"
+    # Sorted names use round-robin assignment. The discovered list is the
+    # authority, including examples and fuzz seed tests run by go test.
+    for group in 0 1 2 3; do
+      awk -v group="$group" '(NR - 1) % 4 == group' "$artifact_dir/heavy-${label}-all.txt" > "$artifact_dir/heavy-${label}-${group}.txt"
+    done
+    cat "$artifact_dir/heavy-${label}-"[0-3].txt | LC_ALL=C sort > "$artifact_dir/heavy-${label}-covered.txt"
+    cmp -s "$artifact_dir/heavy-${label}-all.txt" "$artifact_dir/heavy-${label}-covered.txt" \
+      || fail "test group coverage differs from go test -list"
+    [[ -z "$(uniq -d "$artifact_dir/heavy-${label}-covered.txt")" ]] \
+      || fail "a test appears more than once"
+    pids=()
+    for group in 0 1 2 3; do
+      [[ -s "$artifact_dir/heavy-${label}-${group}.txt" ]] || continue
+      pattern="^($(paste -sd '|' "$artifact_dir/heavy-${label}-${group}.txt"))$"
+      echo "Group $group: $(wc -l < "$artifact_dir/heavy-${label}-${group}.txt") tests"
+      go_test_with_timings "heavy-${label}-${group}" -p=1 -timeout="$HEAVY_GO_TEST_TIMEOUT" -count=1 -run "$pattern" "$pkg" &
+      pids+=("$!")
+    done
+    failed=0
+    for pid in "${pids[@]}"; do
+      wait "$pid" || failed=1
+    done
+    [[ "$failed" == 0 ]] || fail "go test (heavy)"
+  done
   pass "go test (heavy)"
 }
 
