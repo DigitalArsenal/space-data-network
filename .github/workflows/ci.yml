@@ -261,11 +261,7 @@ jobs:
           echo "/opt/cmake-${CMAKE_VERSION}-linux-x86_64/bin" >> "$GITHUB_PATH"
       - name: Build the static prefix
         if: steps.cache.outputs.cache-hit != 'true'
-        run: |
-          . scripts/wasmedge-static-env.sh
-          WASMEDGE_STATIC_WORK="${GITHUB_WORKSPACE}/.sdn-wasmedge-static" \
-          WASMEDGE_STATIC_PREFIX_ONLY=1 \
-          bash scripts/build-static-wasmedge.sh
+        run: ./scripts/ci-local.sh prefix-build
       - name: Package the prefix
         run: ./scripts/ci-local.sh prefix-pack
       - uses: actions/upload-artifact@v4

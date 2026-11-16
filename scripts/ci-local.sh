@@ -500,17 +500,18 @@ run_go() {
   export SDN_WASM_ATOMIC_REGRESSION=1
 
   step "Go tests (quick: every package but the heavy set)"
-  local pkgs
+  local pkgs failed=0
   pkgs=$("$ROOT/scripts/go-with-wasmedge.sh" list ./... | grep -Ev "$(heavy_pkg_filter)")
   # shellcheck disable=SC2086
   go_test_with_timings quick -v -p=1 -timeout="$QUICK_GO_TEST_TIMEOUT" -count=1 $pkgs \
-    || fail "go test (quick)"
-  run_go_extended
+    || failed=1
+  run_go_extended || failed=1
+  [[ "$failed" == 0 ]] || fail "go test (quick)"
   pass "go test (quick)"
 }
 
 run_go_extended() {
-  local pkg budget label
+  local pkg budget label failed=0
   local skip=()
   for pkg in $EXTENDED_GO_PACKAGES; do
     skip=()
@@ -520,9 +521,16 @@ run_go_extended() {
       */cmd/spacedatanetwork) skip=(-skip="${MIGRATION_GO_TESTS}|${UPDATE_GO_TESTS}") ;;
     esac
     label="quick-${pkg##*/}"
-    go_test_with_timings "$label" -v -p=1 -timeout="$budget" -count=1 "${skip[@]}" "$pkg" \
-      || fail "go test ($pkg)"
+    go_test_with_timings "$label" -v -p=1 -timeout="$budget" -count=1 ${skip[@]+"${skip[@]}"} "$pkg" \
+      || failed=1
   done
+  return "$failed"
+}
+
+run_prefix_build() {
+  . "$ROOT/scripts/wasmedge-static-env.sh"
+  WASMEDGE_STATIC_WORK="$ROOT/.sdn-wasmedge-static" WASMEDGE_STATIC_PREFIX_ONLY=1 \
+    bash "$ROOT/scripts/build-static-wasmedge.sh"
 }
 
 run_prefix_pack() {
@@ -839,6 +847,7 @@ case "$MODE" in
     run_plugin_demo
     run_encryption
     ;;
+  prefix-build) run_prefix_build ;;
   prefix-pack) run_prefix_pack ;;
   prefix-unpack) run_prefix_unpack ;;
   runtime) run_runtime ;;
@@ -880,7 +889,7 @@ case "$MODE" in
     run_encryption
     ;;
   *)
-    echo -e "${RED}Usage: $0 [quick|full|preflight|go|heavy|builds|race|js|dashboard|kubo-pin|delivery|plugin|demo|encryption]${NC}"
+    echo -e "${RED}Usage: $0 [quick|full|preflight|go|heavy|builds|race|js|dashboard|kubo-pin|delivery|plugin|demo|encryption|runtime|migrations|update-channel|prefix-build|prefix-pack|prefix-unpack]${NC}"
     exit 1
     ;;
 esac
