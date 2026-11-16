@@ -260,6 +260,21 @@ func ScanPage(store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (*Pag
 		}
 		id := FirstNonEmpty(cursor.SnapshotID, resumeSnapshotID(queryHash, filter.AfterRowID, filter.MaxRowID))
 		snapshot = Snapshot{SnapshotID: id, Head: id, MaxRowID: filter.MaxRowID}
+	} else if strings.TrimSpace(req.Search) != "" {
+		// Search continuations validate the entire bounded result, including
+		// records served on earlier pages. New arrivals lie past MaxRowID.
+		snapshotFilter := filter
+		snapshotFilter.AfterRowID = 0
+		count, head, err := store.RawRecordSnapshot(snapshotFilter)
+		if err != nil {
+			return nil, nil, err
+		}
+		totalCount = count
+		snapshot = snapshotFromHead(snapshotFilter, count, NormalizeQueryProfile(req.QueryProfile), head)
+		if cursor.SnapshotID != "" && cursor.SnapshotID != snapshot.SnapshotID {
+			return nil, nil, fmt.Errorf("search results changed; refresh to start from the first page")
+		}
+		filter.MaxRowID = snapshot.MaxRowID
 	} else if hasProvidedSnapshot {
 		totalCount = req.TotalCount
 		snapshot = Snapshot{

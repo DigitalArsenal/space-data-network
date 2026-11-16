@@ -49,11 +49,20 @@ func TestSearchSnapshotExcludesNewRecordsAndRejectsWithdrawals(t *testing.T) {
 	if err != nil || second.TotalCount != 3 || second.SnapshotID != first.SnapshotID {
 		t.Fatalf("new arrival changed bounded search: %+v %v", second, err)
 	}
+	cursorOnly := req
+	cursorOnly.SnapshotID, cursorOnly.Head, cursorOnly.TotalCount = "", "", 0
+	bounded, _, err := Scan(store, cursorOnly, 1000)
+	if err != nil || bounded.TotalCount != 3 || bounded.SnapshotID != first.SnapshotID {
+		t.Fatalf("cursor-only search changed bounded results: %+v %v", bounded, err)
+	}
 	if err := store.Delete("CAT.fbs", firstCID); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := Scan(store, req, 1000); err == nil || !strings.Contains(err.Error(), "search results changed") {
 		t.Fatalf("withdrawal reused stale search metadata: %v", err)
+	}
+	if _, _, err := Scan(store, cursorOnly, 1000); err == nil || !strings.Contains(err.Error(), "search results changed") {
+		t.Fatalf("cursor-only search accepted a withdrawal: %v", err)
 	}
 }
 
