@@ -1007,7 +1007,7 @@
       "delivery": "node",
       "covers": [],
       "learnMore": "https://spacedatanetwork.org/onboarding.html",
-      "evidence": "docs/onboarding.html (live); sdn-server/internal/subscription; /api/v1/data/publish",
+      "evidence": "docs/onboarding.html (live); /api/v1/data/publish",
       "plan": "free"
     },
     {
