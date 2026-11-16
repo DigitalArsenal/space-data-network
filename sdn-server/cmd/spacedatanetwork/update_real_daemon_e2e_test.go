@@ -1461,6 +1461,8 @@ func runRealPushChannelReceiver(t *testing.T, installed bool) {
 		cfg.Update.MinIntervalSeconds = 1
 	})
 	var indexRequests atomic.Int64
+	var inflightOutage atomic.Bool
+	inflightOutage.Store(true)
 	manifestEntered := make(chan struct{}, 1)
 	releaseManifest := make(chan struct{})
 	defer func() {
@@ -1478,6 +1480,10 @@ func runRealPushChannelReceiver(t *testing.T, installed bool) {
 	feed.requestHook = func(w http.ResponseWriter, r *http.Request) bool {
 		if strings.HasSuffix(r.URL.Path, "/index.json") {
 			indexRequests.Add(1)
+			if inflightOutage.Load() {
+				http.Error(w, "inflight outage control", http.StatusServiceUnavailable)
+				return true
+			}
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write(emptyIndex)
 			return true
@@ -1500,7 +1506,11 @@ func runRealPushChannelReceiver(t *testing.T, installed bool) {
 		t.Fatal(err)
 	}
 	waitPush(t, 30*time.Second, "inflight recipient subscription", func() bool { return slices.Contains(topic.ListPeers(), pushPeer(t, inflight.adminBase).ID) })
-	waitPush(t, 15*time.Second, "feed checks before signal", func() bool { return indexRequests.Load() >= 2 })
+	inflightAlert := func() bool {
+		var raw json.RawMessage
+		return inflight.client(t).get(ctx, "/api/v1/status/alerts", &raw) == nil && bytes.Contains(raw, []byte("update_feed_unavailable"))
+	}
+	waitPush(t, 20*time.Second, "feed outage before signal", inflightAlert)
 	runSignalPipeline(t, v1.path, work, "resign-inflight-v2", "update", "sign-signals", "--key-file", keyPath, "--roots", rootsPath, "--feed-dir", feed.dir)
 	send(v2, "signal-inflight-v2")
 	select {
@@ -1513,11 +1523,16 @@ func runRealPushChannelReceiver(t *testing.T, installed bool) {
 	if indexRequests.Load() != requestsAtSignal {
 		t.Fatal("feed fetched during signal install after interval floor elapsed")
 	}
+	if !inflightAlert() {
+		t.Fatal("deferred feed checks cleared an outage without recovery")
+	}
+	inflightOutage.Store(false)
 	close(releaseManifest)
 	inflight.waitUpgrade(t, v2, boot+2*time.Duration(health)*time.Second)
 	if !slices.ContainsFunc(readLedger(t, inflight.paths.Root), func(e update.DeployLedgerEntry) bool { return e.UpdateID == v2.updateID && e.Trigger == "signal" }) {
 		t.Fatal("inflight proof was not a signal install")
 	}
+	waitPush(t, 20*time.Second, "inflight feed recovery", func() bool { return !inflightAlert() })
 	inflight.stop(t)
 	feed.mu.Lock()
 	feed.requestHook = nil

@@ -44,7 +44,9 @@ func (s *UpdateSignalSubscriber) runFeedChecks(ctx context.Context) {
 		case <-timer.C:
 			err := s.checkFeed(ctx)
 			var unavailable *feedReadError
-			if errors.As(err, &unavailable) {
+			if errors.Is(err, errFeedCheckDeferred) {
+				// A deferred check provides no evidence of feed recovery.
+			} else if errors.As(err, &unavailable) {
 				s.reportFailure("feed-check", "", err)
 				consecutiveFailures++
 				if consecutiveFailures >= 3 {
@@ -71,9 +73,11 @@ func (s *UpdateSignalSubscriber) runFeedChecks(ctx context.Context) {
 	}
 }
 
+var errFeedCheckDeferred = errors.New("feed check deferred by an active update")
+
 func (s *UpdateSignalSubscriber) checkFeed(ctx context.Context) (resultErr error) {
 	if !s.claimFeed() {
-		return nil
+		return errFeedCheckDeferred
 	}
 	succeeded := false
 	hadInstallFailure := false
