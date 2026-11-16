@@ -424,6 +424,9 @@ go_test_with_timings() {
 # anybody skips. Locally `quick` leaves it out and `full` includes it.
 HEAVY_GO_PACKAGES="github.com/spacedatanetwork/sdn-server/internal/storage"
 
+# This E2E requires the patched runtime and runs in the substrate job.
+SUBSTRATE_GO_TESTS='^TestUnifiedFlatBufferQueryReopen$'
+
 heavy_pkg_filter() {
   local filter=""
   for pkg in $HEAVY_GO_PACKAGES; do
@@ -483,7 +486,7 @@ run_go() {
   local pkgs
   pkgs=$("$ROOT/scripts/go-with-wasmedge.sh" list ./... | grep -Ev "$(heavy_pkg_filter)")
   # shellcheck disable=SC2086
-  go_test_with_timings quick -p=1 -timeout="$QUICK_GO_TEST_TIMEOUT" -count=1 $pkgs \
+  go_test_with_timings quick -p=1 -timeout="$QUICK_GO_TEST_TIMEOUT" -count=1 -skip="$SUBSTRATE_GO_TESTS" $pkgs \
     || fail "go test (quick)"
   pass "go test (quick)"
 }
