@@ -49,7 +49,7 @@ func (n *Node) datasetCatchupSchemas(from peer.ID) ([]string, error) {
 			held[strings.ToLower(entry.SchemaName)] = true
 		}
 	}
-	publications, err := n.store.ListDatasetShardPublications(storage.DatasetShardPublicationQuery{})
+	publications, err := n.store.ListDatasetShardPublicationsForProfile(storage.DatasetPublicationQueryProfile, "")
 	if err != nil {
 		return nil, err
 	}
