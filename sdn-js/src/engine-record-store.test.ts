@@ -1,3 +1,5 @@
+import { CID } from 'multiformats/cid';
+import { sha256 } from 'multiformats/hashes/sha2';
 import { publishedSchema, recordTestSchema, recordTestBytes } from './test-schema-helper';
 /**
  * Loop D.1 — ONE store: the FlatSQL-WASM engine store is THE SDNNode store.
@@ -47,7 +49,7 @@ describe('FlatSQLEngineRecordStore (THE SDNNode store)', () => {
     const store = await FlatSQLEngineRecordStore.open({ schemas: [recordTestSchema(), recordTestSchema('ALT')] });
     const first = await recordTestBytes(1);
     const cid = await store.store('TST.fbs', first, 'peer-a', enc('sig'));
-    expect(cid).toMatch(/^[0-9a-f]{64}$/);
+    expect(cid).toBe(CID.createV1(0x55, await sha256.digest(first)).toString());
     expect(await store.store('TST.fbs', first, 'peer-a', enc('sig'))).toBe(cid);
     expect(await store.count()).toBe(1);
     await store.store('TST.fbs', await recordTestBytes(2), 'peer-b', enc('sig'));
@@ -102,7 +104,7 @@ describe('FlatSQLEngineRecordStore (THE SDNNode store)', () => {
       schema: 'TST',
       data: Buffer.from(await recordTestBytes(1)).toString('base64'),
     })) as { cid: string };
-    expect(writeResult.cid).toMatch(/^[0-9a-f]{64}$/);
+    expect(writeResult.cid).toBe(CID.createV1(0x55, await sha256.digest(await recordTestBytes(1))).toString());
 
     // storage.query {schema, limit} -> records
     const queried = (await adapters.storage!.query({ schema: 'TST', limit: 5 })) as Array<{
