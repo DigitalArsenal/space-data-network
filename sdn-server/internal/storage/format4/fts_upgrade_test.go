@@ -67,17 +67,11 @@ func TestFormat5LegacyFullTextIndexRepairsOnOpen(t *testing.T) {
 	if err := index.QueryRow("SELECT count(*) FROM fts WHERE fts MATCH 'upgradeprobe'").Scan(&count); err != nil || count != 1 {
 		t.Fatalf("legacy index: count=%d error=%v", count, err)
 	}
-	// Hold writes, but allow SUMMARY to read the legacy metadata. This makes the
-	// building-state assertion independent of background extraction speed.
-	conn, err := index.Conn(ctx)
-	if err != nil {
+	// Fail repair commits while inspecting coverage. The test removes this
+	// trigger only with the engine closed; no two SQLite hosts write together.
+	if _, err := index.Exec("CREATE TRIGGER hold_repair BEFORE INSERT ON ftsmeta WHEN NEW.k='extractor_version' BEGIN SELECT RAISE(ABORT, 'test repair barrier'); END"); err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
-	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
-		t.Fatal(err)
-	}
-	defer conn.ExecContext(context.Background(), "ROLLBACK")
 	e = openReal(t, root, format4.OpenExisting, 0, nil)
 	states, err := e.FTS(ctx)
 	if err != nil {
@@ -95,9 +89,13 @@ func TestFormat5LegacyFullTextIndexRepairsOnOpen(t *testing.T) {
 	if _, err := e.Scan(ctx, query); !errors.Is(err, format4.ErrBusy) {
 		t.Fatalf("search during repair: %v, want BUSY", err)
 	}
-	if _, err := conn.ExecContext(ctx, "ROLLBACK"); err != nil {
+	if err := e.Close(ctx); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := index.Exec("DROP TRIGGER hold_repair"); err != nil {
+		t.Fatal(err)
+	}
+	e = openReal(t, root, format4.OpenExisting, 0, nil)
 	if err := format4.WaitFTSReady(ctx, e, "CAT"); err != nil {
 		t.Fatal(err)
 	}
