@@ -7199,6 +7199,18 @@ func upsertRecordIndexExec(exec sqlExecer, schemaName, cid string, sourceTimesta
 	return upsertFullTextExec(exec, textIndex, schemaName, cid, data)
 }
 
+// IndexEpoch returns the epoch extracted by the record index rule, if present.
+func IndexEpoch(schemaName string, data []byte) (epoch int64, ok bool, err error) {
+	fields, err := extractIndexedFields(schemaName, data)
+	if err != nil {
+		return 0, false, err
+	}
+	if fields.epochUnix == nil {
+		return 0, false, nil
+	}
+	return *fields.epochUnix, true, nil
+}
+
 func extractIndexedFields(schemaName string, data []byte) (*indexedFields, error) {
 	out := &indexedFields{}
 
