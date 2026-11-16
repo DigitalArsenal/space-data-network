@@ -129,7 +129,7 @@ bundle is deleted. Records accepted after conversion are absent from the old
 store. Quiesce external ingestion during the deployment window.
 
 The v1.1.5 converter removes its unpublished candidate when returning an error;
-an abruptly terminated converter can leave `.store-format5-pending`. The next
+an abruptly terminated converter can leave `.store-format5-pending`. A subsequent
 conversion reclaims only a candidate whose ownership marker matches the source.
 The script leaves this candidate to the converter. A termination immediately
 before the atomic switch can leave the auxiliary rollback snapshot in fsql4.
