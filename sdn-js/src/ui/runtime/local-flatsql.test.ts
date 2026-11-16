@@ -1,9 +1,11 @@
 import { buildOmmFrame, BENCH_EPOCH_BASE } from '../../../scripts/lib/d6-bench-common.mjs';
 import { publishedSchema } from '../../test-schema-helper';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createRequire } from 'node:module';
 import * as flatbuffers from 'flatbuffers';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { CAT } from 'spacedatastandards.org/lib/js/CAT/CAT.js';
 import { legacyCountryCode } from 'spacedatastandards.org/lib/js/CAT/legacyCountryCode.js';
@@ -33,6 +35,10 @@ const PNM_SCHEMA = readSdsSchema('spacedatastandards.org/schema/PNM/main.fbs');
 const STARLINK_6292_OMM_BYTES = Buffer.from('HAEAAEgAAAAkT01NAAAAADwAVAAAAAwACABQAEwAEAAAAAAAAAAAAAAARAAAADwANAAsACQAHAAUAAAAAAAAAAAAAAAAAAAABABIADwAAABQAAAAVAAAAGAAAAB4AAAAxEKtad4BV0DByqFFtsBwQGZmZmZmnGJAXf5D+u1/UUCej3xvHS04P22KKnBw9y1AUAAAAMfdAABkAAAAcAAAAAEAAABVAAAACAAAAFNETi1URVNUAAAAABQAAAAyMDI2LTA1LTExVDEwOjI2OjQxWgAAAAAFAAAARUFSVEgAAAAUAAAAMjAyNi0wNS0xMFQxMDo0NTozMVoAAAAACQAAADIwMjMtMDc4SgAAAA0AAABTVEFSTElOSy02MjkyAAAA', 'base64');
 
 describe('local FlatSQL datastore', () => {
+  let persistenceRoot: string;
+  beforeEach(() => { persistenceRoot = mkdtempSync(join(tmpdir(), 'local-flatsql-test-')); });
+  afterEach(() => { rmSync(persistenceRoot, { recursive: true, force: true }); });
+
   it('strips the SDN size prefix before ingesting standard FlatBuffers', () => {
     const raw = stripSdnFlatBufferSizePrefix(STARLINK_6292_OMM_BYTES);
 
@@ -434,11 +440,13 @@ describe('local FlatSQL datastore', () => {
     try {
       await clearLocalFlatSqlStore({
         persistenceKey: 'stale-published-keys',
+        engine: { root: join(persistenceRoot, 'stale-published-keys') },
         standardIds: ['OMM'],
       });
 
       const first = await createLocalFlatSqlStore({
         persistenceKey: 'stale-published-keys',
+        engine: { root: join(persistenceRoot, 'stale-published-keys') },
         schemas: [{
           standardId: 'OMM',
           tableName: 'OMM',
@@ -456,6 +464,7 @@ describe('local FlatSQL datastore', () => {
 
       const resumed = await createLocalFlatSqlStore({
         persistenceKey: 'stale-published-keys',
+        engine: { root: join(persistenceRoot, 'stale-published-keys') },
         schemas: [{
           standardId: 'OMM',
           tableName: 'OMM',
@@ -556,11 +565,13 @@ describe('local FlatSQL datastore', () => {
     try {
       await clearLocalFlatSqlStore({
         persistenceKey: 'replace-active-store',
+        engine: { root: join(persistenceRoot, 'replace-active-store') },
         standardIds: ['OMM'],
       });
 
       const first = await createLocalFlatSqlStore({
         persistenceKey: 'replace-active-store',
+        engine: { root: join(persistenceRoot, 'replace-active-store') },
         schemas: [{
           standardId: 'OMM',
           tableName: 'OMM',
@@ -615,6 +626,7 @@ describe('local FlatSQL datastore', () => {
 
       const loaded = await createLocalFlatSqlStore({
         persistenceKey: 'replace-active-store',
+        engine: { root: join(persistenceRoot, 'replace-active-store') },
         schemas: [{
           standardId: 'OMM',
           tableName: 'OMM',
@@ -635,11 +647,13 @@ describe('local FlatSQL datastore', () => {
     try {
       await clearLocalFlatSqlStore({
         persistenceKey: 'staged-replacement-store',
+        engine: { root: join(persistenceRoot, 'staged-replacement-store') },
         standardIds: ['OMM'],
       });
 
       const active = await createLocalFlatSqlStore({
         persistenceKey: 'staged-replacement-store',
+        engine: { root: join(persistenceRoot, 'staged-replacement-store') },
         schemas: [{
           standardId: 'OMM',
           tableName: 'OMM',
@@ -709,6 +723,7 @@ describe('local FlatSQL datastore', () => {
 
       const loaded = await createLocalFlatSqlStore({
         persistenceKey: 'staged-replacement-store',
+        engine: { root: join(persistenceRoot, 'staged-replacement-store') },
         schemas: [{
           standardId: 'OMM',
           tableName: 'OMM',
@@ -771,15 +786,18 @@ describe('local FlatSQL datastore', () => {
     try {
       await clearLocalFlatSqlStore({
         persistenceKey: 'cache-invalidation-a',
+        engine: { root: join(persistenceRoot, 'cache-invalidation-a') },
         standardIds: ['OMM', 'PNM'],
       });
       await clearLocalFlatSqlStore({
         persistenceKey: 'cache-invalidation-b',
+        engine: { root: join(persistenceRoot, 'cache-invalidation-b') },
         standardIds: ['OMM'],
       });
 
       const first = await createLocalFlatSqlStore({
         persistenceKey: 'cache-invalidation-a',
+        engine: { root: join(persistenceRoot, 'cache-invalidation-a') },
         schemas: [{
           standardId: 'OMM',
           tableName: 'OMM',
@@ -819,6 +837,7 @@ describe('local FlatSQL datastore', () => {
 
       const loaded = await createLocalFlatSqlStore({
         persistenceKey: 'cache-invalidation-a',
+        engine: { root: join(persistenceRoot, 'cache-invalidation-a') },
         schemas: [{
           standardId: 'OMM',
           tableName: 'OMM',
@@ -834,6 +853,7 @@ describe('local FlatSQL datastore', () => {
 
       const otherNamespace = await createLocalFlatSqlStore({
         persistenceKey: 'cache-invalidation-b',
+        engine: { root: join(persistenceRoot, 'cache-invalidation-b') },
         schemas: [{
           standardId: 'OMM',
           tableName: 'OMM',
@@ -845,6 +865,7 @@ describe('local FlatSQL datastore', () => {
 
       const otherTemplate = await createLocalFlatSqlStore({
         persistenceKey: 'cache-invalidation-a',
+        engine: { root: join(persistenceRoot, 'cache-invalidation-a') },
         schemas: [{
           standardId: 'PNM',
           tableName: 'PNM',
@@ -892,6 +913,7 @@ describe('local FlatSQL datastore', () => {
 
     const store = await createLocalFlatSqlStore({
       persistenceKey: 'deferred-pin-ledger',
+      engine: { root: join(persistenceRoot, 'deferred-pin-ledger') },
       desktopPersistenceBaseUrl: 'http://desktop.local',
       fetch: fetchMock,
       schemas: [{
@@ -930,6 +952,7 @@ describe('local FlatSQL datastore', () => {
   it('allows callers to clear persisted local FlatSQL data without IndexedDB support', async () => {
     await expect(clearLocalFlatSqlStore({
       persistenceKey: 'sdn-data:configured:space-data-network-02',
+      engine: { root: join(persistenceRoot, 'sdn-data:configured:space-data-network-02') },
       standardIds: ['OMM', 'PNM'],
     })).resolves.toBeUndefined();
   });
