@@ -7,6 +7,8 @@ import hashlib
 import json
 from pathlib import Path
 import sqlite3
+import shutil
+import tempfile
 import struct
 import urllib.request
 
@@ -133,7 +135,9 @@ def snapshot(directory, schemas):
     for schema in sorted(schemas):
         if not schema.replace('_', '').replace('.fbs', '').isalnum() or not schema.endswith('.fbs'):
             raise ValueError('unexpected schema spelling')
-        db = sqlite3.connect(directory / (schema + '.sqlite'))
+        temporary = tempfile.TemporaryDirectory(prefix='record-snapshot-')
+        index = Path(temporary.name) / 'index.sqlite'
+        db = sqlite3.connect(index)
         db.execute('CREATE TABLE records (cid BLOB PRIMARY KEY, offset INTEGER, size INTEGER, seen INTEGER DEFAULT 0) WITHOUT ROWID')
         db.execute('CREATE TABLE connectors (id BLOB PRIMARY KEY) WITHOUT ROWID')
         count = 0
@@ -152,6 +156,8 @@ def snapshot(directory, schemas):
                     db.commit()
         db.commit()
         db.close()
+        shutil.copy2(index, directory / (schema + '.sqlite'))
+        temporary.cleanup()
         # Stats sums source associations; a raw scan enumerates content addresses.
         # The scan validates its own advertised total against all frames read.
         stats_comparison[schema] = {'stats_source_count': schemas[schema],
@@ -170,7 +176,10 @@ def compare(directory, schemas, boot_ms, expected_boot_additions):
         if schema not in before:
             results[schema] = {'unexpected_standard': True}
             continue
-        db = sqlite3.connect(directory / (schema + '.sqlite'))
+        temporary = tempfile.TemporaryDirectory(prefix='record-compare-')
+        index = Path(temporary.name) / 'index.sqlite'
+        shutil.copy2(directory / (schema + '.sqlite'), index)
+        db = sqlite3.connect(index)
         added = changed = unexplained = matched = 0
         added_connectors = set()
         with (directory / (schema + '.sds')).open('rb') as stream:
@@ -199,6 +208,7 @@ def compare(directory, schemas, boot_ms, expected_boot_additions):
         missing = db.execute('SELECT count(*) FROM records WHERE seen=0').fetchone()[0]
         db.commit()
         db.close()
+        temporary.cleanup()
         if schema == 'ICN.fbs' and added != expected_boot_additions:
             unexplained += abs(added - expected_boot_additions)
         results[schema] = dict(before=before[schema], matched=matched, added=added,
