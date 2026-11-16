@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import ts from 'typescript';
 import { execFile } from 'node:child_process';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -40,6 +41,34 @@ function collectBareSpecifiers(source: string): string[] {
   }
 
   return [...specifiers].sort();
+}
+
+// The binary SDK has optional Node branches. Exclude only dynamic imports
+// under the corresponding environment guard; static and unguarded imports
+// remain browser failures. A local Chromium control also exercises the built
+// entries and real schema compilation/engine queries (see CI repair report).
+function collectBrowserBareSpecifiers(source: string): string[] {
+  const ast = ts.createSourceFile('bundle.mjs', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  const removed: Array<[number, number]> = [];
+  const nodeEnvironment = /var ENVIRONMENT_IS_NODE = typeof process == "object" && typeof process\.versions == "object" && typeof process\.versions\.node == "string" && process\.type != "renderer";/.test(source);
+  function visit(node: ts.Node): void {
+    if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+        node.arguments.length === 1 && ts.isStringLiteral(node.arguments[0])) {
+      const specifier = node.arguments[0].text;
+      for (let child: ts.Node = node, parent = node.parent; parent; child = parent, parent = parent.parent) {
+        if (!ts.isIfStatement(parent) || child !== parent.thenStatement) continue;
+        const guard = parent.expression.getText(ast);
+        const allowed = (specifier === 'node:fs/promises' && guard === 'url.protocol === "file:"') ||
+          (specifier === 'node:crypto' && guard === 'globalThis.process?.versions?.node') ||
+          (specifier === 'module' && nodeEnvironment && guard === 'ENVIRONMENT_IS_NODE');
+        if (allowed) { removed.push([node.getStart(ast), node.end]); break; }
+      }
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(ast);
+  for (const [start, end] of removed.sort((a, b) => b[0] - a[0])) source = source.slice(0, start) + 'undefined' + source.slice(end);
+  return collectBareSpecifiers(source);
 }
 
 function collectRelativeModuleSpecifiers(source: string): string[] {
@@ -94,22 +123,29 @@ describe('sdn-js package build', () => {
     await fs.access(path.resolve(DIST_PATH, 'transport/http.d.ts'));
   });
 
+  it('rejects unguarded and static Node imports in browser modules', () => {
+    expect(collectBrowserBareSpecifiers('import x from "node:crypto";')).toEqual(['node:crypto']);
+    expect(collectBrowserBareSpecifiers('await import("node:crypto");')).toEqual(['node:crypto']);
+    expect(collectBrowserBareSpecifiers('if (globalThis.process?.versions?.node) {} else { await import("node:crypto"); }')).toEqual(['node:crypto']);
+    expect(collectBrowserBareSpecifiers('if (globalThis.process?.versions?.node) { await import("node:crypto"); }')).toEqual([]);
+  });
+
   it('ships a canonical root entry without unresolved package imports', async () => {
     const source = await fs.readFile(DIST_INDEX_PATH, 'utf8');
     expect(source.length).toBeGreaterThan(0);
-    expect(collectBareSpecifiers(source)).toEqual([]);
+    expect(collectBrowserBareSpecifiers(source)).toEqual([]);
   });
 
   it('ships a canonical UI subpath entry without unresolved package imports', async () => {
     const source = await fs.readFile(DIST_UI_INDEX_PATH, 'utf8');
     expect(source.length).toBeGreaterThan(0);
-    expect(collectBareSpecifiers(source)).toEqual([]);
+    expect(collectBrowserBareSpecifiers(source)).toEqual([]);
   });
 
   it('ships a canonical storefront subpath entry without unresolved package imports', async () => {
     const source = await fs.readFile(DIST_STOREFRONT_INDEX_PATH, 'utf8');
     expect(source.length).toBeGreaterThan(0);
-    expect(collectBareSpecifiers(source)).toEqual([]);
+    expect(collectBrowserBareSpecifiers(source)).toEqual([]);
   });
 
   it('inlines package imports across every published browser module', async () => {
@@ -118,7 +154,7 @@ describe('sdn-js package build', () => {
 
     for (const modulePath of modules) {
       const source = await fs.readFile(modulePath, 'utf8');
-      const bareSpecifiers = collectBareSpecifiers(source);
+      const bareSpecifiers = collectBrowserBareSpecifiers(source);
       if (bareSpecifiers.length > 0) {
         offenders[path.relative(DIST_PATH, modulePath)] = bareSpecifiers;
       }
@@ -128,7 +164,7 @@ describe('sdn-js package build', () => {
     expect(offenders).toEqual({});
   });
 
-  it('ships self-contained browser entry bundles without shared JS chunks', async () => {
+  it('ships browser entries with their explicit binary runtime assets and no shared JS chunks', async () => {
     const modules = await collectDistModulePaths();
     const relativeImports: Record<string, string[]> = {};
 
@@ -141,7 +177,7 @@ describe('sdn-js package build', () => {
     }
 
     await expect(fs.access(path.resolve(DIST_PATH, 'chunks'))).rejects.toThrow();
-    expect(modules.map((modulePath) => path.relative(DIST_PATH, modulePath))).toEqual([
+    const entries = [
       'external-wallet/index.mjs',
       'external-wallet/status/index.mjs',
       'external-wallet/storefront/index.mjs',
@@ -152,8 +188,18 @@ describe('sdn-js package build', () => {
       'storefront/index.mjs',
       'transport/http.mjs',
       'ui/index.mjs',
-    ]);
-    expect(relativeImports).toEqual({});
+    ];
+    const runtimeNames = ['browser-guest.mjs', 'browser-host.mjs', 'node-guest.mjs', 'node-host.mjs', 'opfsIoWorker.mjs', 'wasiThreadBrowserWorker.mjs'];
+    const runtimeModules = entries.flatMap(entry => runtimeNames.map(name => path.posix.join(path.posix.dirname(entry), 'runtime', name)));
+    expect(modules.map(modulePath => path.relative(DIST_PATH, modulePath))).toEqual([...entries, ...runtimeModules].sort());
+    for (const entry of entries) {
+      for (const asset of ['flatsql.wasm', 'integrity.json']) await fs.access(path.resolve(DIST_PATH, path.dirname(entry), asset));
+    }
+    const hosts = ['./runtime/browser-host.mjs', './runtime/node-host.mjs'];
+    expect(relativeImports).toEqual({
+      'index.mjs': hosts, 'ui/index.mjs': hosts,
+      'external-wallet/index.mjs': hosts, 'external-wallet/ui/index.mjs': hosts,
+    });
   });
 
   it('exports the canonical root, UI, and storefront subpath surfaces from package.json', async () => {
