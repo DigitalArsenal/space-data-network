@@ -157,6 +157,9 @@ type UpdateSignalSubscriber struct {
 	// uiAttempts is when each UI package was last tried (claimUI).
 	uiAttempts       map[string]time.Time
 	reportedFailures map[string]bool
+ failedAlerts map[string]bool
+ alertLedgerTime time.Time
+ alertLedgerSize int64
 }
 
 // NewUpdateSignalSubscriber validates deps and constructs the subscriber.

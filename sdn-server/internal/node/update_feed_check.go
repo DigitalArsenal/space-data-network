@@ -2,6 +2,10 @@ package node
 
 import (
 	"context"
+ "bufio"
+ "encoding/json"
+ "fmt"
+ "path/filepath"
 	"errors"
 	"math/rand"
 	"os"
@@ -26,10 +30,14 @@ func (s *UpdateSignalSubscriber) runFeedChecks(ctx context.Context) {
 	}
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
+ alerts := time.NewTicker(5 * time.Second)
+ defer alerts.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-alerts.C:
+ s.restoreFailedAlerts()
 		case <-timer.C:
 			if err := s.checkFeed(ctx); err != nil {
 				s.reportFailure("feed-check", "", err)
@@ -88,14 +96,41 @@ func (s *UpdateSignalSubscriber) reportFailure(trigger, id string, err error) {
 	}
 }
 
+// restoreFailedAlerts reconciles health-gate reversals with subsequent installations.
 func (s *UpdateSignalSubscriber) restoreFailedAlerts() {
-	entries, err := os.ReadDir(s.deps.Paths.Failed)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		log.Warnf("Read failed updates: %v", err)
-	}
-	for _, entry := range entries {
-		if entry.IsDir() {
-			s.deps.Alerts.Raise(ops.KindUpdateFailed, entry.Name(), ops.SeverityError, "Update failed its health gate and was rolled back; the release is quarantined")
-		}
-	}
+ path := filepath.Join(s.deps.Paths.Root, "deploy-ledger.jsonl")
+ info, err := os.Stat(path)
+ if errors.Is(err, os.ErrNotExist) { return }
+ if err != nil { log.Warnf("Read update ledger: %v", err); return }
+ if info.ModTime() == s.alertLedgerTime && info.Size() == s.alertLedgerSize { return }
+ file, err := os.Open(path)
+ if err != nil { log.Warnf("Read update ledger: %v", err); return }
+ defer file.Close()
+ failures := map[string]update.DeployLedgerEntry{}
+ scan := bufio.NewScanner(file)
+ scan.Buffer(make([]byte, 4096), 4<<20)
+ for scan.Scan() {
+  var entry update.DeployLedgerEntry
+  if json.Unmarshal(scan.Bytes(), &entry) != nil { continue }
+  switch entry.Action {
+  case "health-reverted": failures[entry.UpdateID] = entry
+  case "health-passed":
+   if failed, ok := failures[entry.UpdateID]; ok && failed.Version == entry.Version { delete(failures, entry.UpdateID) }
+  }
+ }
+ if err := scan.Err(); err != nil { log.Warnf("Read update ledger: %v", err); return }
+ state, err := update.LoadState(s.deps.Paths)
+ if err != nil { log.Warnf("Read update state: %v", err); return }
+ active := map[string]bool{}
+ for id, failed := range failures {
+  if state.Sequence > failed.Sequence { continue }
+  active[id] = true
+  if !s.failedAlerts[id] {
+   s.deps.Alerts.Raise(ops.KindUpdateFailed, id, ops.SeverityError,
+    fmt.Sprintf("Update %s (%s) failed its health gate and was rolled back at %s: %s", id, failed.Version, failed.RecordedAt, failed.Reason))
+  }
+ }
+ for id := range s.failedAlerts { if !active[id] { s.deps.Alerts.Clear(ops.KindUpdateFailed, id) } }
+ s.failedAlerts = active
+ s.alertLedgerTime, s.alertLedgerSize = info.ModTime(), info.Size()
 }

@@ -1212,6 +1212,12 @@ func (o helperApplyOptions) revert(ctx context.Context, daemon servingDaemon, ch
 		}
 		return o.revertRefused(result, gateErr, err)
 	}
+	if err := update.RecordDeployLedgerEntry(o.Paths, update.DeployLedgerEntry{
+		Action: "health-reverted", UpdateID: result.UpdateID, Version: result.Version,
+		Sequence: result.Sequence, Reason: gateErr.Error(), Trigger: o.Trigger,
+	}); err != nil {
+		fmt.Fprintf(o.Err, "deploy_ledger=unwritten action=health-reverted error=%q\n", err.Error())
+	}
 	fmt.Fprintf(o.Out, "rollback=applied restored_version=%s failed_path=%s\n", restored.RestoredVersion, restored.FailedPath)
 	if _, err := o.startBuildOnDisk(ctx, daemon, stoppedViaSupervisor, argv, restored.RestoredUpdateID, restored.RestoredVersion,
 		"starting the restored build"); err != nil {
