@@ -18,6 +18,13 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/update"
 )
 
+// A check tries at most three candidates to bound work on a broken index.
+// Candidates beyond this budget wait for a later check.
+const feedCandidateLimit = 3
+
+// Three unsuccessful checks raise a warning; a clean check clears it.
+const feedFailureAlertThreshold = 3
+
 func resolvedCheckInterval(seconds int) time.Duration {
 	if seconds <= 0 {
 		return 6 * time.Hour
@@ -35,6 +42,8 @@ func (s *UpdateSignalSubscriber) runFeedChecks(ctx context.Context) {
 	alerts := time.NewTicker(5 * time.Second)
 	defer alerts.Stop()
 	consecutiveFailures := 0
+	consecutiveInstallFailures := 0
+	installAlertID := "feed-check:" + s.deps.Channel
 	for {
 		select {
 		case <-ctx.Done():
@@ -48,16 +57,25 @@ func (s *UpdateSignalSubscriber) runFeedChecks(ctx context.Context) {
 				// A deferred check provides no evidence of feed recovery.
 			} else if errors.As(err, &unavailable) {
 				s.reportFailure("feed-check", "", err)
+				consecutiveInstallFailures = 0
 				consecutiveFailures++
-				if consecutiveFailures >= 3 {
+				if consecutiveFailures >= feedFailureAlertThreshold {
 					s.deps.Alerts.Raise(ops.KindUpdateFeedUnavailable, s.deps.Channel, ops.SeverityWarning, "Update feed cannot be read: "+err.Error())
 				}
-			} else {
-				consecutiveFailures = 0
-				s.deps.Alerts.Clear(ops.KindUpdateFeedUnavailable, s.deps.Channel)
-				if err != nil {
+			} else if err != nil {
+				consecutiveInstallFailures++
+				var entryFailure *feedInstallError
+				if !errors.As(err, &entryFailure) {
 					s.reportFailure("feed-install", "", err)
 				}
+				if consecutiveInstallFailures >= feedFailureAlertThreshold {
+					s.deps.Alerts.Raise(ops.KindUpdateFailed, installAlertID, ops.SeverityWarning, "Update feed installation failed: "+err.Error())
+				}
+			} else {
+				consecutiveInstallFailures = 0
+				s.deps.Alerts.Clear(ops.KindUpdateFailed, installAlertID)
+				consecutiveFailures = 0
+				s.deps.Alerts.Clear(ops.KindUpdateFeedUnavailable, s.deps.Channel)
 				s.mu.Lock()
 				for cause := range s.reportedFailures {
 					if strings.HasPrefix(cause, "feed-check:") {
@@ -80,6 +98,8 @@ func (s *UpdateSignalSubscriber) checkFeed(ctx context.Context) (resultErr error
 		return errFeedCheckDeferred
 	}
 	succeeded := false
+	updateID := ""
+	var lastInstallErr error
 	hadInstallFailure := false
 	defer func() {
 		if resultErr == nil && !hadInstallFailure {
@@ -93,7 +113,7 @@ func (s *UpdateSignalSubscriber) checkFeed(ctx context.Context) (resultErr error
 		}
 	}()
 	operationCtx := ctx
-	defer func() { s.finishUpgrade(operationCtx, succeeded) }()
+	defer func() { s.finishUpgrade(operationCtx, succeeded, updateID) }()
 	ctx, cancel := context.WithTimeout(ctx, signalFetchTimeout)
 	defer cancel()
 	state, err := update.LoadState(s.deps.Paths)
@@ -112,8 +132,12 @@ func (s *UpdateSignalSubscriber) checkFeed(ctx context.Context) (resultErr error
 	if err != nil {
 		return &feedReadError{operation: "parse update index", err: err}
 	}
-	excluded := map[string]bool{}
-	for {
+	excluded := s.feedDeferredCandidates
+	if excluded == nil {
+		excluded = map[string]bool{}
+	}
+	s.feedDeferredCandidates = excluded
+	for attempted := 0; attempted < feedCandidateLimit; attempted++ {
 		entry, err := feed.Select(update.ProviderFeedSelection{
 			Exclude: func(entry update.ProviderFeedUpdate) bool {
 				return excluded[entry.UpdateID] || update.HasFailedUpdate(s.deps.Paths, entry.UpdateID)
@@ -121,24 +145,38 @@ func (s *UpdateSignalSubscriber) checkFeed(ctx context.Context) (resultErr error
 			Channel: s.deps.Channel, Platform: runtime.GOOS, Arch: runtime.GOARCH, Kind: s.deps.Kind, CurrentSequence: state.Sequence,
 		})
 		if errors.Is(err, update.ErrNoCompatibleUpdate) {
-			return nil
+			if attempted == 0 && len(excluded) > 0 {
+				excluded = map[string]bool{}
+				s.feedDeferredCandidates = excluded
+				attempted--
+				continue
+			}
+			s.feedDeferredCandidates = nil
+			return lastInstallErr
 		}
 		if err != nil {
 			return err
 		}
 		excluded[entry.UpdateID] = true
+		updateID = entry.UpdateID
 		if err := entry.AssertUnderFeed(s.feed); err != nil {
 			hadInstallFailure = true
+			lastInstallErr = &feedInstallError{id: entry.UpdateID, err: err}
 			s.reportFailure("feed-install", entry.UpdateID, err)
 			continue
 		}
 		s.mu.Lock()
 		claimed := s.handled[entry.UpdateID]
+		previousRefusal := s.installRefusals[entry.UpdateID]
 		if !claimed {
 			s.handled[entry.UpdateID] = true
 		}
 		s.mu.Unlock()
 		if claimed {
+			if previousRefusal != nil {
+				hadInstallFailure = true
+				lastInstallErr = previousRefusal
+			}
 			log.Debugf("feed update %s dropped: already handled", entry.UpdateID)
 			continue
 		}
@@ -146,20 +184,36 @@ func (s *UpdateSignalSubscriber) checkFeed(ctx context.Context) (resultErr error
 		err = s.upgradeTriggered(ctx, signal, state, "feed-check")
 		if err == nil {
 			succeeded = true
+			s.feedDeferredCandidates = nil
 			return nil
 		}
 		var refusal *update.StoreFormatRefusal
 		if !errors.As(err, &refusal) {
 			s.release(entry.UpdateID)
 		}
-		var unavailable *feedReadError
-		if errors.As(err, &unavailable) {
-			return err
+		lastInstallErr = &feedInstallError{id: entry.UpdateID, err: err}
+		if refusal != nil {
+			s.mu.Lock()
+			if s.installRefusals == nil {
+				s.installRefusals = make(map[string]error)
+			}
+			s.installRefusals[entry.UpdateID] = lastInstallErr
+			s.mu.Unlock()
 		}
 		hadInstallFailure = true
 		s.reportFailure("feed-install", entry.UpdateID, err)
 	}
+	return lastInstallErr
 }
+
+// Entry refusals are logged by candidate identity, once per cause.
+type feedInstallError struct {
+	id  string
+	err error
+}
+
+func (e *feedInstallError) Error() string { return "update " + e.id + ": " + e.err.Error() }
+func (e *feedInstallError) Unwrap() error { return e.err }
 
 type feedReadError struct {
 	operation string
@@ -185,19 +239,69 @@ func (s *UpdateSignalSubscriber) claimFeed() bool {
 	return true
 }
 
-func (s *UpdateSignalSubscriber) finishUpgrade(ctx context.Context, succeeded bool) {
+// The helper has one health budget plus all three stop-ladder bounds to take over.
+// With the default 600-second health budget this is 730 seconds.
+func (s *UpdateSignalSubscriber) handoffTimeout() time.Duration {
+	health := s.deps.HealthTimeout
+	if health <= 0 {
+		health = 600 * time.Second
+	}
+	return health + update.DefaultStopGrace + update.DefaultStopEscalated + update.DefaultStopKilled
+}
+
+func (s *UpdateSignalSubscriber) finishUpgrade(ctx context.Context, succeeded bool, updateID string) {
 	s.mu.Lock()
-	queued := s.pendingSignal
-	s.pendingSignal, s.pendingSequence = nil, 0
 	if succeeded {
-		// The helper owns the swap; no concurrent work starts before this daemon exits.
 		s.lastUpgrade = s.deps.Now()
-		if queued != nil {
-			log.Debug("update signal deferred to catch-up after helper handoff")
-		}
 		s.mu.Unlock()
+		go func() {
+			timer := time.NewTimer(s.handoffTimeout())
+			defer timer.Stop()
+			select {
+			case <-ctx.Done():
+				return
+			case <-timer.C:
+			}
+			// The original daemon is still serving. Quarantine follows the same
+			// explicit-clear retry policy as a failed health gate, without pinning handled.
+			err := fmt.Errorf("update %s: helper did not take over within %s; this daemon is still serving", updateID, s.handoffTimeout())
+			if quarantineErr := os.MkdirAll(filepath.Join(s.deps.Paths.Failed, updateID), 0o700); quarantineErr != nil {
+				err = fmt.Errorf("%w; quarantine failed: %v", err, quarantineErr)
+			}
+			if ledgerErr := update.RecordDeployLedgerEntry(s.deps.Paths, update.DeployLedgerEntry{
+				Action: "handoff-failed", UpdateID: updateID, Reason: err.Error(),
+			}); ledgerErr != nil {
+				log.Warnf("Record failed update handoff: %v", ledgerErr)
+			}
+			s.reportFailure("signal", updateID, err)
+			s.deps.Alerts.Raise(ops.KindUpdateFailed, updateID, ops.SeverityError, err.Error())
+			s.release(updateID)
+			s.finishUpgrade(ctx, false, "")
+		}()
 		return
 	}
+	// Keep the newest announcement reserved across the rate limit. A replay
+	// that fails can receive another announcement without losing it to the floor.
+	if s.pendingSignal != nil && ctx.Err() == nil {
+		delay := s.deps.MinInterval - s.deps.Now().Sub(s.lastUpgrade)
+		if !s.lastUpgrade.IsZero() && delay > 0 {
+			log.Debugf("remembered update signal deferred for minimum upgrade interval: %s", delay)
+			s.mu.Unlock()
+			go func() {
+				timer := time.NewTimer(delay)
+				defer timer.Stop()
+				select {
+				case <-ctx.Done():
+					return
+				case <-timer.C:
+					s.finishUpgrade(ctx, false, "")
+				}
+			}()
+			return
+		}
+	}
+	queued := s.pendingSignal
+	s.pendingSignal, s.pendingSequence = nil, 0
 	s.pendingUpgrade = false
 	s.mu.Unlock()
 	if queued != nil && ctx.Err() == nil {

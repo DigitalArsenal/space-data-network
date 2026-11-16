@@ -151,12 +151,14 @@ type UpdateSignalSubscriber struct {
 	deps UpdateSignalSubscriberDeps
 	feed update.FeedBase
 
-	mu              sync.Mutex
-	lastUpgrade     time.Time
-	pendingUpgrade  bool
-	pendingSignal   []byte
-	pendingSequence int64
-	handled         map[string]bool
+	mu                     sync.Mutex
+	lastUpgrade            time.Time
+	pendingUpgrade         bool
+	pendingSignal          []byte
+	pendingSequence        int64
+	handled                map[string]bool
+	installRefusals        map[string]error
+	feedDeferredCandidates map[string]bool
 	// uiAttempts is when each UI package was last tried (claimUI).
 	uiAttempts       map[string]time.Time
 	reportedFailures map[string]bool
@@ -281,7 +283,7 @@ func (s *UpdateSignalSubscriber) handle(ctx context.Context, data []byte) {
 	// rollback lowers the installed sequence, the sequence gate alone would let
 	// a replay reinstall the exact build this box judged unhealthy, forever.
 	if update.HasFailedUpdate(s.deps.Paths, signal.UpdateID) {
-		log.Warnf("update signal %s refused: this box already tried that update and reversed it (updates/failed/%s). Clear that directory to try again deliberately.",
+		log.Warnf("update signal %s refused: this box already tried that update and marked it failed (updates/failed/%s). Clear that directory to try again deliberately.",
 			signal.UpdateID, signal.UpdateID)
 		return
 	}
@@ -291,7 +293,7 @@ func (s *UpdateSignalSubscriber) handle(ctx context.Context, data []byte) {
 	}
 
 	succeeded := false
-	defer func() { s.finishUpgrade(ctx, succeeded) }()
+	defer func() { s.finishUpgrade(ctx, succeeded, signal.UpdateID) }()
 	if delay := s.delay(); delay > 0 {
 		log.Infof("update signal %s accepted; staggering the swap by %s.", signal.UpdateID, delay.Round(time.Second))
 		select {
@@ -387,7 +389,7 @@ func (s *UpdateSignalSubscriber) upgradeTriggered(ctx context.Context, signal *u
 
 	manifestBytes, err := s.fetch(ctx, signal.ManifestURL, maxManifestFetchBytes)
 	if err != nil {
-		return &feedReadError{operation: "fetch update manifest", err: err}
+		return fmt.Errorf("fetch update manifest: %w", err)
 	}
 	// The SIGNAL and the SIGNED MANIFEST must describe the same artifact. The
 	// signal is unauthoritative by design, so this is not a trust check — it is
@@ -397,7 +399,7 @@ func (s *UpdateSignalSubscriber) upgradeTriggered(ctx context.Context, signal *u
 	// code happened to read first.
 	parsed, err := update.ParseManifest(manifestBytes)
 	if err != nil {
-		return &feedReadError{operation: "parse update manifest", err: err}
+		return fmt.Errorf("parse update manifest: %w", err)
 	}
 	if err := signalMatchesManifest(signal, parsed, 0); err != nil {
 		return err
@@ -434,7 +436,7 @@ func (s *UpdateSignalSubscriber) upgradeTriggered(ctx context.Context, signal *u
 	}
 	carrierBytes, err := s.fetch(ctx, signal.CarrierURL, carrierLimit)
 	if err != nil {
-		return &feedReadError{operation: "fetch update carrier", err: err}
+		return fmt.Errorf("fetch update carrier: %w", err)
 	}
 	if err := signalMatchesManifest(signal, parsed, len(carrierBytes)); err != nil {
 		return err
@@ -443,7 +445,7 @@ func (s *UpdateSignalSubscriber) upgradeTriggered(ctx context.Context, signal *u
 	if err != nil {
 		var parseErr *update.CarrierParseError
 		if errors.As(err, &parseErr) {
-			return &feedReadError{operation: "parse update carrier", err: err}
+			return fmt.Errorf("parse update carrier: %w", err)
 		}
 		return fmt.Errorf("stage update: %w", err)
 	}
