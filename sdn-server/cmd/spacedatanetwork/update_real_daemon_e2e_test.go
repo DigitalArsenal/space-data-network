@@ -1214,6 +1214,30 @@ func runRealPushChannelReceiver(t *testing.T, installed bool) {
 		}
 	}
 
+	if !installed {
+		older, err := update.ParseSignal(v2signal)
+		if err != nil {
+			t.Fatal(err)
+		}
+		older.Sequence = v2.sequence - 1
+		older.UpdateID = "pending-older-control"
+		raw, err := older.Marshal()
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw = resignPushSignal(t, raw, key, 0)
+		if err := topic.Publish(ctx, raw); err != nil {
+			t.Fatal(err)
+		}
+		messageCtx, messageCancel := context.WithTimeout(ctx, 30*time.Second)
+		_, err = subscription.Next(messageCtx)
+		messageCancel()
+		if err != nil {
+			t.Fatal(err)
+		}
+		waitPush(t, 30*time.Second, "older signal remembered", func() bool { return strings.Contains(b.logs(), "Update signal pending-older-control remembered") })
+	}
+
 	// The local publisher's identity is absent from its release trust roots.
 	a.command(t, true, "local-node-signed", "update", "signal", "--channel", realE2EChannel, "--version", v2.version)
 	localCtx, localCancel := context.WithTimeout(ctx, 30*time.Second)
@@ -1264,6 +1288,9 @@ func runRealPushChannelReceiver(t *testing.T, installed bool) {
 	}
 	b.waitUpgrade(t, v2, boot+2*time.Duration(health)*time.Second)
 	checkTrigger(v2, "signal")
+	if !installed && strings.Contains(b.logs(), "Update signal accepted: pending-older-control") {
+		t.Fatal("older pending signal displaced the newest signal")
+	}
 	t.Log("push installed v2 and preserved its signed wire bytes")
 	if pushPeer(t, b.adminBase).ID != originalPeer {
 		t.Fatal("push changed the peer identity")
