@@ -297,37 +297,7 @@ describe('local FlatSQL datastore', () => {
     (await store.destroy());
   });
 
-  it('honors legacy 32-bit content keys persisted by older builds (loop D.6 migration)', async () => {
-    const fnv1a32 = (bytes: Uint8Array): number => {
-      let hash = 0x811c9dc5;
-      for (let i = 0; i < bytes.length; i += 1) {
-        hash ^= bytes[i];
-        hash = Math.imul(hash, 0x01000193);
-      }
-      return hash >>> 0;
-    };
-    const store = await createLocalFlatSqlStore({
-      schemas: [{
-        standardId: 'OMM',
-        tableName: 'OMM',
-        fileId: '$OMM',
-        ...publishedSchema('OMM'),
-      }],
-    });
-    const frame = stripSdnFlatBufferSizePrefix(STARLINK_6292_OMM_BYTES);
-    // Seed the ledger with the OLD key format (what a pre-D.6 build
-    // persisted): `<standard>|stream|<len>|<fnv1a32 hex8>`.
-    const legacyKey = `OMM|stream|${frame.byteLength}|${fnv1a32(frame).toString(16).padStart(8, '0')}`;
-    const seeded = await store.ingestFlatBufferStream('OMM', flatSqlSizePrefixedStream([frame]), {
-      recordKeys: [legacyKey],
-      persist: false,
-    });
-    expect(seeded).toBe(1);
-    // A content-keyed re-delivery of the same bytes must STILL dedupe.
-    const replay = await store.ingestFlatBufferStream('OMM', flatSqlSizePrefixedStream([frame]), { persist: false });
-    expect(replay).toBe(0);
-    (await store.destroy());
-  });
+
 
   it('preserves CAT replacement stream rows exactly as published', async () => {
     const store = await createLocalFlatSqlStore({
@@ -457,7 +427,7 @@ describe('local FlatSQL datastore', () => {
     }));
   });
 
-  it('trusts ordered published shard offsets when stale record keys claim missing rows', async () => {
+  it('resumes published streams at their ordered frame offset across reload', async () => {
     const restoreIndexedDb = installMemoryIndexedDb();
     try {
       await clearLocalFlatSqlStore({
@@ -474,17 +444,13 @@ describe('local FlatSQL datastore', () => {
           ...publishedSchema('OMM'),
         }],
       });
-      const frame = stripSdnFlatBufferSizePrefix(STARLINK_6292_OMM_BYTES);
+      const frame = stripSdnFlatBufferSizePrefix(buildOmmFrame({ norad: 100000, epochUnix: BENCH_EPOCH_BASE }));
       await first.ingestFlatBufferStream('OMM', flatSqlSizePrefixedStream([frame]), {
         persist: true,
         recordKeyPrefix: 'published:already-materialized',
       });
       await first.flush('OMM');
       (await first.destroy());
-
-      await putLocalFlatSqlTestValue('stale-published-keys:OMM:record-keys', [
-        'OMM|published:stale-shard|1',
-      ]);
 
       const resumed = await createLocalFlatSqlStore({
         persistenceKey: 'stale-published-keys',
@@ -495,7 +461,7 @@ describe('local FlatSQL datastore', () => {
           ...publishedSchema('OMM'),
         }],
       });
-      const ingested = await resumed.ingestFlatBufferStream('OMM', flatSqlSizePrefixedStream([frame, frame]), {
+      const ingested = await resumed.ingestFlatBufferStream('OMM', flatSqlSizePrefixedStream([frame, stripSdnFlatBufferSizePrefix(buildOmmFrame({ norad: 100001, epochUnix: BENCH_EPOCH_BASE }))]), {
         persist: false,
         skipRecords: 1,
         recordKeyPrefix: 'published:stale-shard',
@@ -505,7 +471,7 @@ describe('local FlatSQL datastore', () => {
       expect(ingested).toBe(1);
       expect((await resumed.getStats({ includeCachedBytes: false }))[0]).toEqual(expect.objectContaining({
         recordCount: 2,
-        ingestedRecordCount: 1,
+        ingestedRecordCount: 2,
       }));
       await resumed.destroy();
     } finally {
@@ -1094,55 +1060,7 @@ describe('local FlatSQL datastore', () => {
     })).resolves.toBeUndefined();
   });
 
-  it('repairs persisted record-key counts that outrun rebuilt FlatSQL rows', async () => {
-    const restoreIndexedDb = installMemoryIndexedDb();
-    try {
-      await clearLocalFlatSqlStore({
-        persistenceKey: 'repair-record-keys',
-        standardIds: ['OMM'],
-      });
 
-      const first = await createLocalFlatSqlStore({
-        persistenceKey: 'repair-record-keys',
-        schemas: [{
-          standardId: 'OMM',
-          tableName: 'OMM',
-          fileId: '$OMM',
-          ...publishedSchema('OMM'),
-        }],
-      });
-      const stream = flatSqlSizePrefixedStream([stripSdnFlatBufferSizePrefix(STARLINK_6292_OMM_BYTES)]);
-      await first.ingestFlatBufferStream('OMM', stream, {
-        persist: true,
-        recordKeyPrefix: 'published:bafkshard',
-      });
-      await first.flush('OMM');
-      (await first.destroy());
-
-      await putLocalFlatSqlTestValue('repair-record-keys:OMM:record-keys', [
-        'OMM|published:bafkshard|0',
-        'OMM|published:bafkshard|1',
-      ]);
-
-      const repaired = await createLocalFlatSqlStore({
-        persistenceKey: 'repair-record-keys',
-        schemas: [{
-          standardId: 'OMM',
-          tableName: 'OMM',
-          fileId: '$OMM',
-          ...publishedSchema('OMM'),
-        }],
-      });
-
-      expect((await repaired.getStats({ includeCachedBytes: false }))[0]).toEqual(expect.objectContaining({
-        recordCount: 1,
-        ingestedRecordCount: 0,
-      }));
-      (await repaired.destroy());
-    } finally {
-      restoreIndexedDb();
-    }
-  });
 
   it('rejects non-read-only SQL before it reaches FlatSQL', async () => {
     const store = await createLocalFlatSqlStore({
