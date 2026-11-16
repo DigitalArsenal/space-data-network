@@ -81,6 +81,8 @@ type SubstrateReport struct {
 	Inconclusive             bool            `json:"inconclusive"`
 	InterpretedStop          StopObservation `json:"interpreted_stop"`
 	AOTStop                  StopObservation `json:"aot_stop"`
+	NotifyAttempts           int             `json:"notify_attempts"`
+	MemargNotifyAttempts     int             `json:"memarg_notify_attempts"`
 }
 
 // Patched reports whether the runtime behaves like the patched build.
@@ -167,12 +169,6 @@ func RunSubstrateSelfTest(opts SubstrateOptions) SubstrateReport {
 		rep.Errors = append(rep.Errors, fmt.Sprintf(format, args...))
 	}
 
-	if ok, err := probeNotifyWithoutStore(substrateProbeWasm); err != nil {
-		fail("atomic notify: %v", err)
-	} else {
-		rep.AtomicNotifyWithoutStore = ok
-	}
-
 	interp, err := probeStop(substrateProbeWasm, opts.Spinners, false)
 	rep.ThreadsSpawned = interp.spawned
 	rep.ThreadsStoppedBySingle = interp.observation.Stopped
@@ -181,6 +177,15 @@ func RunSubstrateSelfTest(opts SubstrateOptions) SubstrateReport {
 	conclusiveFailure = interp.observation.Outcome == "not_shared"
 	if err != nil {
 		fail("interpreted stop: %v", err)
+	}
+	failedConclusively := func() bool { return conclusiveFailure }
+
+	ok, attempts, err := probeNotifyWithoutStore(substrateProbeWasm, failedConclusively)
+	rep.NotifyAttempts = attempts
+	if err != nil {
+		fail("atomic notify: %v", err)
+	} else {
+		rep.AtomicNotifyWithoutStore = ok
 	}
 
 	if !opts.SkipAOT {
@@ -216,10 +221,13 @@ func RunSubstrateSelfTest(opts SubstrateOptions) SubstrateReport {
 				fail("AOT probe interpreted %d instructions while spinning; the AOT section was not used", aot.interpreted)
 			}
 			rep.InterruptibleAOT = rep.AOTNative && aot.observation.Outcome == "shared"
-			if ok, err := probeMemargOffset(compiled); err != nil {
+			memarg, err := probeMemargOffset(compiled, failedConclusively)
+			rep.MemargNotifyAttempts = memarg.notifyAttempts
+			conclusiveFailure = conclusiveFailure || memarg.waitMismatch
+			if err != nil {
 				fail("AOT atomic memarg offset: %v", err)
 			} else {
-				rep.AOTAtomicMemargOffset = ok
+				rep.AOTAtomicMemargOffset = memarg.ok
 			}
 		}
 		if ok, err := probeLoopStopChecks(); err != nil {
@@ -229,8 +237,9 @@ func RunSubstrateSelfTest(opts SubstrateOptions) SubstrateReport {
 			conclusiveFailure = conclusiveFailure || !ok
 		}
 	}
-	// Finite notification waits and missing observations cannot establish that
-	// a patch is absent. Only an observed behavioral mismatch can do that.
+	// A notify that timed out on every attempt, and a missing observation,
+	// cannot establish that a patch is absent. Only an observed behavioral
+	// mismatch can do that.
 	rep.Inconclusive = !conclusiveFailure && !rep.Patched()
 	rep.Elapsed = time.Since(start)
 	return rep
@@ -259,61 +268,96 @@ func SubstrateStatus() SubstrateReport {
 	return substrateReport
 }
 
-func probeNotifyWithoutStore(wasm []byte) (bool, error) {
-	m, err := NewModule(wasm, WithMaxThreads(4), WithExecTimeout(substrateObservationLimit))
-	if err != nil {
-		return false, err
-	}
-	defer m.Release()
-	v, err := m.Execute("notify_without_store")
-	if err != nil {
-		return false, err
-	}
-	if len(v) != 1 {
-		return false, errors.New("unexpected result arity")
-	}
-	switch ToInt32(v[0]) {
-	case 0:
-		return true, nil
-	case 2:
-		return false, nil
-	default:
-		return false, fmt.Errorf("notify_without_store returned %d", ToInt32(v[0]))
+// A notify probe's waiter gives up after 500 ms. Without the patch under test
+// it is never woken, so it times out on every attempt and can never report a
+// wake. With the patch, a timeout only means the notifier thread did not run
+// within those 500 ms. A timed-out attempt is therefore repeated, in a fresh
+// module so no notifier outlives its attempt, until a wake, the observation
+// limit, or another check's conclusive failure.
+
+// probeNotifyWithoutStore returns whether a notify woke a waiter whose word
+// never changed, and how many attempts it took.
+func probeNotifyWithoutStore(wasm []byte, failedConclusively func() bool) (bool, int, error) {
+	deadline := time.Now().Add(substrateObservationLimit)
+	for attempts := 1; ; attempts++ {
+		r, err := runProbeExport(wasm, 4, "notify_without_store")
+		if err != nil {
+			return false, attempts, err
+		}
+		switch r {
+		case 0:
+			return true, attempts, nil
+		case 2:
+			if failedConclusively() || !time.Now().Before(deadline) {
+				return false, attempts, nil
+			}
+		default:
+			return false, attempts, fmt.Errorf("notify_without_store returned %d", r)
+		}
 	}
 }
 
-// probeMemargOffset runs the two memarg-offset checks on the AOT-compiled
-// probe: a notify addressed through its offset wakes the waiter, and a wait
-// addressed that way compares the right word.
-func probeMemargOffset(compiled []byte) (bool, error) {
-	m, err := NewModule(compiled, WithMaxThreads(4), WithExecTimeout(substrateObservationLimit))
+// runProbeExport runs one export returning i32 in a fresh module.
+func runProbeExport(wasm []byte, threads int, name string) (int32, error) {
+	m, err := NewModule(wasm, WithMaxThreads(threads), WithExecTimeout(substrateObservationLimit))
 	if err != nil {
-		return false, err
+		return 0, err
 	}
 	defer m.Release()
-	v, err := m.Execute("memarg_offset_notify")
+	v, err := m.Execute(name)
 	if err != nil {
-		return false, err
+		return 0, err
 	}
 	if len(v) != 1 {
-		return false, errors.New("unexpected result arity")
+		return 0, fmt.Errorf("%s: unexpected result arity", name)
 	}
-	notify := ToInt32(v[0])
-	if notify != 0 && notify != 2 {
-		return false, fmt.Errorf("memarg_offset_notify returned %d", notify)
-	}
-	v, err = m.Execute("memarg_offset_wait")
+	return ToInt32(v[0]), nil
+}
+
+type memargProbe struct {
+	ok             bool
+	waitMismatch   bool // the wait compared the word without its offset
+	notifyAttempts int
+}
+
+// probeMemargOffset runs the two memarg-offset checks on the AOT-compiled
+// probe. A wait addressed through its offset must compare the word at 32 (7),
+// not the word at 0: the wrong address returns not-equal (1) at once, every
+// time, which is a conclusive mismatch. A notify addressed that way must wake
+// a waiter on address 32; it is repeated as described above.
+func probeMemargOffset(compiled []byte, failedConclusively func() bool) (memargProbe, error) {
+	var out memargProbe
+	wait, err := runProbeExport(compiled, 4, "memarg_offset_wait")
 	if err != nil {
-		return false, err
+		return out, err
 	}
-	if len(v) != 1 {
-		return false, errors.New("unexpected result arity")
+	switch wait {
+	case 1:
+		out.waitMismatch = true
+		return out, nil
+	case 2:
+	default:
+		return out, fmt.Errorf("memarg_offset_wait returned %d", wait)
 	}
-	wait := ToInt32(v[0])
-	if wait != 1 && wait != 2 {
-		return false, fmt.Errorf("memarg_offset_wait returned %d", wait)
+	deadline := time.Now().Add(substrateObservationLimit)
+	for {
+		out.notifyAttempts++
+		notify, err := runProbeExport(compiled, 4, "memarg_offset_notify")
+		if err != nil {
+			return out, err
+		}
+		switch notify {
+		case 0:
+			out.ok = true
+			return out, nil
+		case 2:
+			if failedConclusively() || !time.Now().Before(deadline) {
+				return out, nil
+			}
+		default:
+			return out, fmt.Errorf("memarg_offset_notify returned %d", notify)
+		}
 	}
-	return notify == 0 && wait == 2, nil
 }
 
 type stopProbe struct {
