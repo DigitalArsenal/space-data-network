@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process';
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { once } from 'node:events';
 import { createLibp2p } from 'libp2p';
@@ -15,7 +16,8 @@ import { requestPeerEpm } from './peer-epm';
 it('exchanges real node EPMs and rejects malformed, oversized and canceled streams', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'peer-epm-e2e-'));
   const bin = join(dir, 'epm-host');
-  const build = spawn('go', ['test', '-tags=noplugin', '-c', '-o', bin, './internal/epm'], { cwd: new URL('../../sdn-server', import.meta.url) });
+  const go = fileURLToPath(new URL('../../scripts/go-with-wasmedge.sh', import.meta.url));
+  const build = spawn(go, ['test', '-tags=noplugin', '-c', '-o', bin, './internal/epm'], { cwd: new URL('../../sdn-server', import.meta.url) });
   let output = '';
   build.stdout.on('data', data => { output += data; });
   build.stderr.on('data', data => { output += data; });

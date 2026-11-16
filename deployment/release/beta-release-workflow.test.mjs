@@ -38,18 +38,22 @@ function extractShellFunction(script, functionName) {
 // Go-suites test asserts that too). A quoted "$VAR" argument is resolved from
 // the script's top-level assignment, so a budget kept in a variable is
 // asserted by its value; an unquoted package list stays as written.
-function extractGoTestArguments(script, functionBody, functionName) {
+function extractGoTestArguments(script, functionBody, functionName, count = 1) {
   const invocations = [...functionBody.matchAll(
     /^[ \t]*go_test_with_timings[ \t]+(.+?)[ \t]*\\?$/gm,
   )];
 
-  assert.equal(invocations.length, 1, `${functionName} must contain exactly one active Go test invocation`);
-  const [, ...args] = invocations[0][1].split(/\s+/);
+  assert.equal(invocations.length, count, `${functionName} must contain exactly ${count} active Go test invocations`);
+  const parsed = invocations.map((invocation) => {
+  const [, ...args] = invocation[1].split(/\s+/);
   return args.map((arg) => arg.replace(/"\$([A-Z_][A-Z0-9_]*)"/g, (_, name) => {
-    const assignments = [...script.matchAll(new RegExp(`^${name}="([^"$]*)"[ \\t]*$`, 'gm'))];
+    const assignments = [...script.matchAll(new RegExp(`^${name}="([^"]*)"[ \\t]*$`, 'gm'))];
     assert.equal(assignments.length, 1, `${name} must be assigned a literal exactly once at the top level`);
+    assert.doesNotMatch(assignments[0][1], /\$(?:[A-Za-z_0-9{(]|[?@*#!-])|`/, `${name} must not contain shell expansion`);
     return assignments[0][1];
   }));
+  });
+  return count === 1 ? parsed[0] : parsed;
 }
 
 // One `- name: <name>` step of a workflow or composite action, up to the next
@@ -216,15 +220,15 @@ test('local Go suites serialize package builds while bypassing the test cache', 
   );
   assert.match(script, /pkgs=\$\([^)]*list \.\/\.\.\.[^)]*grep -Ev "\$\(heavy_pkg_filter\)"/);
   const heavyBody = extractShellFunction(script, 'run_go_heavy');
-  const heavyArgs = extractGoTestArguments(script, heavyBody, 'run_go_heavy');
+  const [longArgs, heavyArgs] = extractGoTestArguments(script, heavyBody, 'run_go_heavy', 2);
+  assert.ok(longArgs.includes('-p=1'), 'isolated scale tests must serialize package builds');
+  assert.ok(longArgs.includes('-count=1'), 'isolated scale tests must bypass cached results');
+  assert.deepEqual(longArgs.filter((arg) => arg.startsWith('-timeout=')), ['-timeout=60m']);
+  assert.deepEqual(longArgs.slice(-3), ['"$pkg"', '||', 'failed=1']);
   assert.ok(heavyArgs.includes('-p=1'), 'run_go_heavy must serialize package builds');
   assert.ok(heavyArgs.includes('-count=1'), 'run_go_heavy must bypass cached results');
-  // The budgets are measurements, recorded next to them in ci-local.sh
-  // (2026-09-18, with the FlatSQL AOT artifact prewarmed): internal/storage
-  // takes 296.6s warm, ~564s on a runner measured at 1.9x this box, so 25m;
-  // the slowest quick package (internal/api, 148.3s) projects to ~282s, so
-  // 10m. The old 90m/20m pair was sized around the engine running
-  // INTERPRETED, which is the bug the prewarm removed.
+  // The ordinary groups retain 25m. The complete scale exercise has its
+  // own measured budget and runs before the four parallel groups.
   assert.deepEqual(
     heavyArgs.filter((arg) => arg.startsWith('-timeout=')),
     ['-timeout=25m'],
@@ -236,11 +240,9 @@ test('local Go suites serialize package builds while bypassing the test cache', 
   assert.ok(heavyJob, 'CI must keep a go-heavy job for the record store');
   assert.match(heavyJob, /^ {8}run: \.\/scripts\/ci-local\.sh heavy[ \t]*$/m, 'the go-heavy job must run the heavy lane');
   const heavyJobMinutes = Number(/^ {4}timeout-minutes: (\d+)[ \t]*$/m.exec(heavyJob)?.[1]);
-  assert.ok(heavyJobMinutes > 25, 'the go-heavy job timeout must exceed the heavy lane\'s 25m go test budget');
-  // The record store runs as four parallel groups of each heavy package: the
-  // one invocation names the loop's package and runs in the background, and
-  // the loop is over exactly the set heavy_pkg_filter excludes. That the four
-  // groups together run every listed test once is ci-heavy-coverage.test.mjs.
+  assert.ok(heavyJobMinutes > 60 + 25, 'the job must exceed both sequential test budgets');
+  // The remaining record-store tests run as four parallel groups. The
+  // execution coverage suite also includes the isolated scale exercise.
   assert.deepEqual(
     heavyArgs.slice(-2),
     ['"$pkg"', '&'],

@@ -7,6 +7,7 @@ import (
 )
 
 func TestDeriveDefaultPasswordDeterministic(t *testing.T) {
+	useTestMachineFingerprint(t)
 	a, err := DeriveDefaultPassword()
 	if err != nil {
 		t.Fatalf("derive: %v", err)
@@ -35,6 +36,7 @@ func TestHardwareFingerprintExcludesHostname(t *testing.T) {
 }
 
 func TestDefaultAndLegacyDiffer(t *testing.T) {
+	useTestMachineFingerprint(t)
 	pw, err := DeriveDefaultPassword()
 	if err != nil {
 		t.Fatalf("derive: %v", err)
@@ -49,6 +51,7 @@ func TestDefaultAndLegacyDiffer(t *testing.T) {
 // and re-encrypted under the hardware-derived key, and cannot be decrypted with
 // the new key beforehand (which is exactly what triggers migration).
 func TestLegacyMigrationRoundTrip(t *testing.T) {
+	useTestMachineFingerprint(t)
 	// Not a BIP-39 wordlist run (the repo mnemonic guard rejects those in
 	// committed files); the test only needs an opaque string to seal.
 	const mnemonic = "seed-phrase-placeholder-for-legacy-migration-tests"

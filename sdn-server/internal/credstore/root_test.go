@@ -62,11 +62,10 @@ func TestRootDerivationDeterministicAcrossRestart(t *testing.T) {
 	}
 }
 
-// ResolveRoot (the production entry, using the REAL machine fingerprint and REAL
-// hostname of this test host) is deterministic for the same node key: two calls
-// yield the same root, and a keystore written under the first decrypts under the
-// second. This exercises the actual os.Hostname()/DeriveDefaultPassword() path.
+// ResolveRoot is deterministic for the same node key, fixture machine state,
+// and hostname: a keystore written under the first root decrypts under the second.
 func TestResolveRootDeterministicForSameNode(t *testing.T) {
+	useTestMachinePassword(t)
 	t.Setenv("SDN_KEY_PASSWORD", "") // force the default derivation path
 	t.Setenv("SDN_KEY_PASSWORD_FILE", "")
 

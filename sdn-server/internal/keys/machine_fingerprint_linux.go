@@ -56,6 +56,14 @@ func platformStableIdentifiers() []hwAttr {
 // nothing in the shipped binary reassigns it.
 var platuuidPath = "/sys/class/dmi/id/product_uuid"
 
+// SetPlatformUUIDPathForTesting supplies the DMI source for serial tests.
+// The caller restores the source with the returned function.
+func SetPlatformUUIDPathForTesting(path string) func() {
+	saved := platuuidPath
+	platuuidPath = path
+	return func() { platuuidPath = saved }
+}
+
 // refusalExplanation says WHY a permission refusal happens on Linux, because
 // the refusal itself ("permission denied") reads like a misconfigured host
 // when it is the kernel's default: drivers/firmware/dmi-id.c creates
