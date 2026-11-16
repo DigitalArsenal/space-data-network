@@ -580,6 +580,8 @@ func (f *realE2EFeed) publish(t *testing.T, b realBuild, signingKey ed25519.Priv
 	defer f.mu.Unlock()
 	f.files[versionPath+"/manifest.json"] = manifest
 	f.files[versionPath+"/update.wasm"] = carrier
+	// Republishing replaces the version's index entry along with its files.
+	f.entries = slices.DeleteFunc(f.entries, func(entry update.ProviderFeedUpdate) bool { return entry.Version == b.version })
 	f.entries = append(f.entries, update.ProviderFeedUpdate{
 		UpdateID:    b.updateID,
 		Version:     b.version,
