@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -10,6 +9,7 @@ import (
 
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqldrv"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
+	"github.com/spacedatanetwork/sdn-server/internal/syncwire"
 )
 
 // newRequireTrustHandler builds a Handler backed by a real session store, plus
@@ -42,11 +42,14 @@ func newRequireTrustHandler(t *testing.T) (*Handler, func(peers.TrustLevel) *htt
 
 func requireTrustErrorCode(t *testing.T, rec *httptest.ResponseRecorder) string {
 	t.Helper()
-	var body errorResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decode error body %q: %v", rec.Body.String(), err)
+	body, err := syncwire.ParseQRP(rec.Body.Bytes())
+	if err != nil {
+		t.Fatalf("decode QRP refusal: %v", err)
 	}
-	return body.Code
+	if int8(body.KIND()) != syncwire.QRPKindError || int(body.HTTP_STATUS()) != rec.Code {
+		t.Fatalf("refusal kind=%v status=%d, HTTP status=%d", body.KIND(), body.HTTP_STATUS(), rec.Code)
+	}
+	return string(body.ERROR_CODE())
 }
 
 // TestRequireTrustRejectsAnonymousAndUnderTrustedSessions locks the two failure
