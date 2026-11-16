@@ -222,16 +222,25 @@ ExecStartPre=/bin/sh -c 'test ! -d /case/store/fsql5'
         raise RuntimeError('identity changed')
     after = counts()
     (ROOT / 'counts-after.json').write_text(json.dumps(after, sort_keys=True) + '\n')
+    (ROOT / 'observations.json').write_text(json.dumps({
+        'ready': True, 'running_peer_unchanged': True, 'counts_equal': before == after,
+        'roll_exit': code, 'injected': injected}) + '\n')
+    if any(' ' + event + ' ' in ledger for event in
+           ('SUCCESS', 'ROLLED_BACK_BEFORE_SWITCH', 'ROLLED_BACK_AFTER_SWITCH')):
+        replay_pid = command('systemctl', 'show', '-p', 'MainPID', '--value', UNIT)
+        with open(ROOT / 'second-run.log', 'w') as log:
+            second = subprocess.run(args, stdout=log, stderr=subprocess.STDOUT).returncode
+        (ROOT / 'second-run.exit').write_text(str(second) + '\n')
+        unchanged = command('systemctl', 'show', '-p', 'MainPID', '--value', UNIT) == replay_pid
+        (ROOT / 'second-run.json').write_text(json.dumps({
+            'refused': second != 0, 'daemon_pid_unchanged': unchanged}) + '\n')
+        if second == 0 or not unchanged:
+            raise RuntimeError('second run was not refused without restarting the node')
     if before != after:
         raise RuntimeError('per-standard counts changed')
     if case == 'forward':
         if code != 0 or ' SUCCESS ' not in ledger:
             raise RuntimeError('forward conversion failed')
-        with open(ROOT / 'second-run.log', 'w') as log:
-            second = subprocess.run(args, stdout=log, stderr=subprocess.STDOUT).returncode
-        (ROOT / 'second-run.exit').write_text(str(second) + '\n')
-        if second == 0:
-            raise RuntimeError('second success run was not refused')
     elif case in ('wrong-peer', 'disk'):
         if code == 0 or ' STOPPED ' in ledger or ' PRECHECK_FAILED ' not in ledger:
             raise RuntimeError('precheck did not refuse before stop')
@@ -253,11 +262,6 @@ ExecStartPre=/bin/sh -c 'test ! -d /case/store/fsql5'
         (ROOT / 'hashes-after.json').write_text(json.dumps(after_hashes, sort_keys=True) + '\n')
         if case != 'after-switch' and before_hashes != after_hashes:
             raise RuntimeError('format-4 file hashes changed')
-        with open(ROOT / 'second-run.log', 'w') as log:
-            second = subprocess.run(args, stdout=log, stderr=subprocess.STDOUT).returncode
-        (ROOT / 'second-run.exit').write_text(str(second) + '\n')
-        if second == 0:
-            raise RuntimeError('second rollback run was not refused')
     return {'status': 'passed', 'roll_exit': code, 'seconds': round(time.monotonic()-start, 2),
             'conversion_seconds': round(migration_end-migration_start, 2) if migration_end else None,
             'peak_conversion_rss_kib_sampled': peak_kib,
