@@ -1352,6 +1352,41 @@ func runRealPushChannelReceiver(t *testing.T, installed bool) {
 	}
 	fallback.stop(t)
 	t.Log("feed selected v2 below quarantined v3; unrelated quarantine raised no health-gate alert")
+	v3ManifestPath := filepath.Join(filepath.Dir(signalPath(v3)), "manifest.json")
+	v3Manifest, err := os.ReadFile(v3ManifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var corruptManifest map[string]any
+	if err := json.Unmarshal(v3Manifest, &corruptManifest); err != nil {
+		t.Fatal(err)
+	}
+	corruptManifest["signing"].(map[string]any)["signature"] = base64.StdEncoding.EncodeToString(make([]byte, ed25519.SignatureSize))
+	writeE2EJSON(t, v3ManifestPath, corruptManifest)
+	verificationFallback := newPushDaemon(t, filepath.Join(work, "verification-fallback"), v1, feed, roots, health)
+	verificationFallback.configure(t, func(cfg *config.Config) { cfg.Update.CheckDelaySeconds = 2; cfg.Update.CheckIntervalSeconds = 3 })
+	verificationFallback.start(t, boot)
+	verificationFallback.waitUpgrade(t, v2, boot+2*time.Duration(health)*time.Second)
+	waitPush(t, 30*time.Second, "manifest verification failure", func() bool {
+		return strings.Contains(verificationFallback.logs(), "Update feed-install "+v3.updateID+" failed: verify update manifest:")
+	})
+	time.Sleep(12 * time.Second)
+	var verificationAlerts json.RawMessage
+	if err := verificationFallback.client(t).get(ctx, "/api/v1/status/alerts", &verificationAlerts); err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(verificationAlerts, []byte("update_feed_unavailable")) {
+		t.Fatal("manifest verification failure counted as a feed outage")
+	}
+	if strings.Count(readFileString(filepath.Join(verificationFallback.work, "daemon-1.log")), "Update feed-install "+v3.updateID+" failed:") > 1 {
+		t.Fatal("verification failure repeats without recovery")
+	}
+	verificationFallback.stop(t)
+	if err := os.WriteFile(v3ManifestPath, v3Manifest, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Log("invalid newest manifest fell back to v2 in the same feed check and did not raise a feed outage")
+
 	publish(v4)
 	send(v4, "push-v4-offline")
 	b.configure(t, func(cfg *config.Config) { cfg.Update.CheckDelaySeconds = 2; cfg.Update.CheckIntervalSeconds = 3 })

@@ -16,7 +16,17 @@ var wasmMagic = []byte{0x00, 0x61, 0x73, 0x6d}
 
 // ExtractBundleFromCarrier walks the WASM module's sections without
 // instantiating it and returns the payload of the SDN bundle custom section.
-func ExtractBundleFromCarrier(wasmBytes []byte) ([]byte, error) {
+type CarrierParseError struct{ Err error }
+
+func (e *CarrierParseError) Error() string { return e.Err.Error() }
+func (e *CarrierParseError) Unwrap() error { return e.Err }
+
+func ExtractBundleFromCarrier(wasmBytes []byte) (bundle []byte, err error) {
+	defer func() {
+		if err != nil {
+			err = &CarrierParseError{Err: err}
+		}
+	}()
 	if len(wasmBytes) < 8 || !bytes.Equal(wasmBytes[:4], wasmMagic) {
 		return nil, errors.New("update carrier is not a wasm module")
 	}

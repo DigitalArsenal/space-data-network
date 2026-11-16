@@ -42,7 +42,9 @@ func (s *UpdateSignalSubscriber) runFeedChecks(ctx context.Context) {
 		case <-alerts.C:
 			s.restoreFailedAlerts()
 		case <-timer.C:
-			if err := s.checkFeed(ctx); err != nil {
+			err := s.checkFeed(ctx)
+			var unavailable *feedReadError
+			if errors.As(err, &unavailable) {
 				s.reportFailure("feed-check", "", err)
 				consecutiveFailures++
 				if consecutiveFailures >= 3 {
@@ -51,6 +53,9 @@ func (s *UpdateSignalSubscriber) runFeedChecks(ctx context.Context) {
 			} else {
 				consecutiveFailures = 0
 				s.deps.Alerts.Clear(ops.KindUpdateFeedUnavailable, s.deps.Channel)
+				if err != nil {
+					s.reportFailure("feed-install", "", err)
+				}
 				s.mu.Lock()
 				for cause := range s.reportedFailures {
 					if strings.HasPrefix(cause, "feed-check:") {
@@ -79,37 +84,59 @@ func (s *UpdateSignalSubscriber) checkFeed(ctx context.Context) error {
 	}
 	raw, err := s.fetch(ctx, indexURL, 16<<20)
 	if err != nil {
-		return err
+		return &feedReadError{operation: "fetch update index", err: err}
 	}
-	entry, err := update.SelectProviderCandidate(raw, s.feed, update.ProviderFeedSelection{
-		Exclude: func(entry update.ProviderFeedUpdate) bool {
-			return update.HasFailedUpdate(s.deps.Paths, entry.UpdateID)
-		},
-		Channel: s.deps.Channel, Platform: runtime.GOOS, Arch: runtime.GOARCH, Kind: s.deps.Kind, CurrentSequence: state.Sequence,
-	})
-	if errors.Is(err, update.ErrNoCompatibleUpdate) {
-		return nil
-	}
+	feed, err := update.ParseProviderFeed(raw)
 	if err != nil {
-		return err
+		return &feedReadError{operation: "parse update index", err: err}
 	}
-	if !s.claimFeed(entry.UpdateID) {
-		return nil
-	}
-	succeeded := false
-	defer func() { s.finishFeed(succeeded) }()
-	// The index grants no authority. upgradeTriggered verifies the signed manifest and payload.
-	signal := update.SignalFromFeedEntry(*entry, s.feed.String(), s.deps.Now(), false)
-	if err := s.upgradeTriggered(ctx, signal, state, "feed-check"); err != nil {
+	excluded := map[string]bool{}
+	for {
+		entry, err := feed.Select(update.ProviderFeedSelection{
+			Exclude: func(entry update.ProviderFeedUpdate) bool {
+				return excluded[entry.UpdateID] || update.HasFailedUpdate(s.deps.Paths, entry.UpdateID)
+			},
+			Channel: s.deps.Channel, Platform: runtime.GOOS, Arch: runtime.GOARCH, Kind: s.deps.Kind, CurrentSequence: state.Sequence,
+		})
+		if errors.Is(err, update.ErrNoCompatibleUpdate) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		excluded[entry.UpdateID] = true
+		if err := entry.AssertUnderFeed(s.feed); err != nil {
+			s.reportFailure("feed-install", entry.UpdateID, err)
+			continue
+		}
+		if !s.claimFeed(entry.UpdateID) {
+			return nil
+		}
+		signal := update.SignalFromFeedEntry(*entry, s.feed.String(), s.deps.Now(), false)
+		err = s.upgradeTriggered(ctx, signal, state, "feed-check")
+		s.finishFeed(err == nil)
+		if err == nil {
+			return nil
+		}
 		var refusal *update.StoreFormatRefusal
 		if !errors.As(err, &refusal) {
 			s.release(entry.UpdateID)
 		}
-		return err
+		var unavailable *feedReadError
+		if errors.As(err, &unavailable) {
+			return err
+		}
+		s.reportFailure("feed-install", entry.UpdateID, err)
 	}
-	succeeded = true
-	return nil
 }
+
+type feedReadError struct {
+	operation string
+	err       error
+}
+
+func (e *feedReadError) Error() string { return e.operation + ": " + e.err.Error() }
+func (e *feedReadError) Unwrap() error { return e.err }
 
 // claimFeed reserves the install without charging the swap interval for a download.
 func (s *UpdateSignalSubscriber) claimFeed(id string) bool {

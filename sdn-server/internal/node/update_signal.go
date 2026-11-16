@@ -373,7 +373,7 @@ func (s *UpdateSignalSubscriber) upgradeTriggered(ctx context.Context, signal *u
 
 	manifestBytes, err := s.fetch(ctx, signal.ManifestURL, maxManifestFetchBytes)
 	if err != nil {
-		return fmt.Errorf("fetch update manifest: %w", err)
+		return &feedReadError{operation: "fetch update manifest", err: err}
 	}
 	// The SIGNAL and the SIGNED MANIFEST must describe the same artifact. The
 	// signal is unauthoritative by design, so this is not a trust check — it is
@@ -383,7 +383,7 @@ func (s *UpdateSignalSubscriber) upgradeTriggered(ctx context.Context, signal *u
 	// code happened to read first.
 	parsed, err := update.ParseManifest(manifestBytes)
 	if err != nil {
-		return err
+		return &feedReadError{operation: "parse update manifest", err: err}
 	}
 	if err := signalMatchesManifest(signal, parsed, 0); err != nil {
 		return err
@@ -420,13 +420,17 @@ func (s *UpdateSignalSubscriber) upgradeTriggered(ctx context.Context, signal *u
 	}
 	carrierBytes, err := s.fetch(ctx, signal.CarrierURL, carrierLimit)
 	if err != nil {
-		return fmt.Errorf("fetch update carrier: %w", err)
+		return &feedReadError{operation: "fetch update carrier", err: err}
 	}
 	if err := signalMatchesManifest(signal, parsed, len(carrierBytes)); err != nil {
 		return err
 	}
 	staged, err := update.Stage(s.deps.Paths, manifestBytes, carrierBytes, verifyOpts, key)
 	if err != nil {
+		var parseErr *update.CarrierParseError
+		if errors.As(err, &parseErr) {
+			return &feedReadError{operation: "parse update carrier", err: err}
+		}
 		return fmt.Errorf("stage update: %w", err)
 	}
 	// The store-format guard, here and not only in the helper's Apply: the
