@@ -2,6 +2,7 @@ package node
 
 import (
 	"context"
+ "errors"
 	"strings"
 
 	ps "github.com/libp2p/go-libp2p-pubsub"
@@ -27,7 +28,9 @@ func (n *Node) registerUpdateTopicValidator(topic string) error {
 		if err != nil {
 			return ps.ValidationReject
 		}
-		if signal.Verify(update.SignalVerifyOptions{TrustedRoots: roots, Channel: strings.TrimPrefix(topic, prefix)}) != nil {
+		if err := signal.Verify(update.SignalVerifyOptions{TrustedRoots: roots, Channel: strings.TrimPrefix(topic, prefix)}); err != nil {
+ var clockError *update.SignalTimeError
+ if errors.As(err, &clockError) { return ps.ValidationIgnore }
 			return ps.ValidationReject
 		}
 		return ps.ValidationAccept

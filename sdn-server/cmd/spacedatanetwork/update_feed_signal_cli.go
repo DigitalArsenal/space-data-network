@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+ "time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/bundle"
 	"github.com/spacedatanetwork/sdn-server/internal/update"
@@ -131,6 +132,15 @@ func sendFeedSignals(cmd *cobra.Command) error {
 	var failures []error
 	for _, file := range files {
 		raw, err := root.ReadFile(file.Path)
+        if err == nil {
+         signal, parseErr := update.ParseSignal(raw)
+         if parseErr != nil { err = parseErr } else {
+          published, _ := time.Parse(time.RFC3339, signal.PublishedAt)
+          expires := published.Add(update.SignalDefaultTTL)
+          if signal.ExpiresAt != "" { expires, err = time.Parse(time.RFC3339, signal.ExpiresAt) }
+          if err == nil && !time.Now().Before(expires) { err = errors.New("release signals were signed at build time and are valid for seven days; the pipeline must sign them again") }
+         }
+        }
 		if err == nil {
 			request, requestErr := client.newRequest(cmd.Context(), http.MethodPost, "/api/v1/admin/updates/signal/signed", bytes.NewReader(raw))
 			err = requestErr
