@@ -496,24 +496,8 @@ func currentUpdateSequence() int64 {
 	return state.Sequence
 }
 
-func providerFeedIndexURL(baseURL string, channel string, platform string, arch string) (string, error) {
-	parsed, err := url.Parse(strings.TrimSpace(baseURL))
-	if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
-		return "", errors.New("SDN update feed base URL must use HTTPS")
-	}
-	for name, value := range map[string]string{
-		"channel":  channel,
-		"platform": platform,
-		"arch":     arch,
-	} {
-		if strings.TrimSpace(value) == "" || strings.ContainsAny(value, `/\`) {
-			return "", fmt.Errorf("invalid update feed %s", name)
-		}
-	}
-	parsed.Path = strings.TrimRight(parsed.Path, "/") + "/cli-bundle/" + channel + "/" + platform + "/" + arch + "/index.json"
-	parsed.RawQuery = ""
-	parsed.Fragment = ""
-	return parsed.String(), nil
+func providerFeedIndexURL(baseURL, channel, platform, arch string) (string, error) {
+	return update.ProviderFeedIndexURL(baseURL, channel, platform, arch)
 }
 
 func fetchProviderUpdateCandidate(client *http.Client, manifest bundleManifest, currentSequence int64, filter providerUpdateFilter) (*update.ProviderFeedUpdate, error) {
@@ -532,26 +516,10 @@ func fetchProviderUpdateCandidate(client *http.Client, manifest bundleManifest, 
 	if err != nil {
 		return nil, fmt.Errorf("fetch update provider index: %w", err)
 	}
-	feed, err := update.ParseProviderFeed(raw)
-	if err != nil {
-		return nil, err
-	}
-	candidate, err := feed.Select(update.ProviderFeedSelection{
-		UpdateID:        strings.TrimSpace(filter.UpdateID),
-		Version:         strings.TrimSpace(filter.Version),
-		Channel:         manifest.Channel,
-		Platform:        runtime.GOOS,
-		Arch:            runtime.GOARCH,
-		Kind:            "cli-bundle",
-		CurrentSequence: currentSequence,
+	return update.SelectProviderCandidate(raw, base, update.ProviderFeedSelection{
+		UpdateID: strings.TrimSpace(filter.UpdateID), Version: strings.TrimSpace(filter.Version),
+		Channel: manifest.Channel, Platform: runtime.GOOS, Arch: runtime.GOARCH, Kind: "cli-bundle", CurrentSequence: currentSequence,
 	})
-	if err != nil {
-		return nil, err
-	}
-	if err := candidate.AssertUnderFeed(base); err != nil {
-		return nil, err
-	}
-	return candidate, nil
 }
 
 func shouldDelegateInstallToHelper() bool {

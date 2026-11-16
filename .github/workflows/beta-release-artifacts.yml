@@ -1027,6 +1027,13 @@ jobs:
             --maturity "${RELEASE_MATURITY}" \
             --roots deployment/release/fleet-trust-roots.json \
             --github-output "$GITHUB_OUTPUT"
+      - uses: ./.github/actions/sdn-go-env
+        if: steps.signing.outputs.available == 'true'
+        with:
+          needs-flow-bundles: 'false'
+      - name: Build the signal signer
+        if: steps.signing.outputs.available == 'true'
+        run: ./scripts/go-with-wasmedge.sh build -o "$RUNNER_TEMP/sdn-signal-signer" ./cmd/spacedatanetwork
       - name: Build signed CLI update feed
         if: steps.signing.outputs.available == 'true'
         env:
@@ -1074,6 +1081,11 @@ jobs:
             feed_args+=(--entry "${payload_out}/manifest.json:${payload_out}/update.wasm")
           done
           node deployment/release/build-sdn-update-feed.js "${feed_args[@]}"
+          "$RUNNER_TEMP/sdn-signal-signer" update sign-signals \
+            --key-env SDN_UPDATE_SIGNING_KEY_PEM --feed-dir "${feed_dir}" \
+            --roots deployment/release/fleet-trust-roots.json
+          "$RUNNER_TEMP/sdn-signal-signer" update sign-signals --verify-only \
+            --feed-dir "${feed_dir}" --roots deployment/release/fleet-trust-roots.json
           # What an installed node will check, checked here first: every
           # manifest against fleet-trust-roots.json (signature, target, expiry,
           # payload hashes), no SEC-001 key, no trust/ in any payload, and the

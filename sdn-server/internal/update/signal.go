@@ -71,6 +71,8 @@ const (
 	// the failed-update quarantine are the load-bearing checks.
 	SignalDefaultTTL = 24 * time.Hour
 
+	SignalMaxTTL = 7 * 24 * time.Hour
+
 	// SignalClockSkew tolerates modest clock disagreement across the fleet
 	// before a signal is judged to come from the future.
 	SignalClockSkew = 5 * time.Minute
@@ -327,7 +329,10 @@ func (s *Signal) assertFreshness(now time.Time) error {
 		}
 		expires = parsed
 	}
-	if now.After(expires) {
+	if expires.After(published.Add(SignalMaxTTL)) || !expires.After(published) {
+		return errors.New("update signal expiry must be after publication and within seven days")
+	}
+	if !now.Before(expires) {
 		return fmt.Errorf("update signal expired at %s", expires.UTC().Format(time.RFC3339))
 	}
 	return nil

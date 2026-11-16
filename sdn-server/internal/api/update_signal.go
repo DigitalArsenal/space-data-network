@@ -108,6 +108,9 @@ type updateSignalResponse struct {
 // indistinguishable from a publisher that simply never signaled — a confusion
 // this fleet has already paid for once.
 func (h *CoreAPIHandler) registerUpdateSignalRoutes(mux *http.ServeMux) {
+	if _, ok := h.publisher.(topicPublisher); ok && strings.TrimSpace(os.Getenv(updateFeedDirEnv)) != "" {
+		mux.HandleFunc(UpdateSignalRoute+"/signed", h.withRL(h.requireAdminStrict(h.handleSignedUpdateSignal)))
+	}
 	if h.updateSigner == nil && h.distributions == nil {
 		log.Warnf("Update signal endpoint NOT registered at %s: this node has no update signing key, so it cannot be a publisher of record.", UpdateSignalRoute)
 		return

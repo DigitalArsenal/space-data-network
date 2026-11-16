@@ -571,6 +571,12 @@ test('the update feed job fails a stable release without its key, signs with the
   assert.match(job, /update_key_id="\$\{UPDATE_KEY_ID:\?/);
   assert.match(job, /--key-id "\$\{update_key_id\}"/);
 
+  // The receiver's binary signs and verifies every indexed signal before packing.
+  assert.match(job, /go-with-wasmedge\.sh build -o "\$RUNNER_TEMP\/sdn-signal-signer"/);
+  assert.match(job, /update sign-signals[\s\S]*--key-env SDN_UPDATE_SIGNING_KEY_PEM/);
+  assert.match(job, /update sign-signals --verify-only[\s\S]*--roots deployment\/release\/fleet-trust-roots\.json/);
+  assert.ok(job.indexOf('update sign-signals --verify-only') < job.indexOf('tar -czf "dist/update-feed/'));
+
   // Every manifest is verified against the fleet roots before the feed is packed.
   const verify = job.indexOf('verify-cli-update-feed.mjs');
   assert.ok(verify > job.indexOf('build-sdn-update-feed.js'), 'the feed is verified after it is built');

@@ -77,6 +77,9 @@ var updateSignalCmd = &cobra.Command{
 		if strings.TrimSpace(updateSignalChannel) == "" {
 			return errors.New("--channel is required: a signal names one feed lane")
 		}
+		if updateSignalFromFeed {
+			return sendFeedSignals(cmd)
+		}
 		payload := map[string]any{"channel": strings.TrimSpace(updateSignalChannel)}
 		for key, value := range map[string]string{
 			"update_id": updateSignalUpdateID,

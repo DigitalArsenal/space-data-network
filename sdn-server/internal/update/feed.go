@@ -124,9 +124,6 @@ func ParseProviderFeed(raw []byte) (*ProviderFeed, error) {
 	if err := requireHTTPSURL(feed.FeedBaseURL, "feed_base_url"); err != nil {
 		return nil, err
 	}
-	if len(feed.Updates) == 0 {
-		return nil, errors.New("update provider feed has no updates")
-	}
 	for i := range feed.Updates {
 		if err := feed.Updates[i].validate(); err != nil {
 			return nil, err
