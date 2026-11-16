@@ -1,3 +1,4 @@
+import { publishedSchema } from '../../test-schema-helper';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import * as flatbuffers from 'flatbuffers';
@@ -305,7 +306,7 @@ describe('dashboard window runtime', () => {
     const runtime = createDashboardWindow({ store, fetch: node.fetch, baseUrl: 'http://node.test' });
 
     const standard = await runtime.ensureStandard('OMM');
-    expect(store.added).toEqual([{ standardId: 'OMM', tableName: 'OMM', fileId: '$OMM', ...publishedSchema('OMM') }]);
+    expect(store.added).toEqual([{ standardId: 'OMM', tableName: 'OMM', fileId: '$OMM', schema: OMM_SCHEMA }]);
     expect(standard.columns).toContain('_source');
 
     const load = await runtime.loadPage({ schema: 'OMM' }, { page: 1, limit: 4 });

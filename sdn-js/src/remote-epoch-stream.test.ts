@@ -73,7 +73,7 @@ async function recordedNearestCelestrakBody(): Promise<Uint8Array> {
         persist: false,
       });
     }
-    const body = corpusStore.queryEpochRawStream('OMM', {
+    const body = await corpusStore.queryEpochRawStream('OMM', {
       profile: 'nearest',
       source: 'celestrak-gp',
       epoch: EPOCH,
