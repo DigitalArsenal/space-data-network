@@ -243,7 +243,7 @@ describe('stream records and optional envelope metadata', () => {
     }
   });
 
-  it('leaves store()\'s record contract byte-for-byte unchanged', async () => {
+  it('preserves store() record payload bytes after removing the size prefix', async () => {
     // The binary engine persists the record payload and its provenance.
     const persistenceStore = new MemoryFlatSqlPersistenceStore();
     const first = await FlatSQLEngineRecordStore.open({
