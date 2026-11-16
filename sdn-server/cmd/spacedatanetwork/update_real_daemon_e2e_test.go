@@ -92,6 +92,7 @@ const (
 
 // realBuild is one build of the node and the update that ships it.
 type realBuild struct {
+	template string
 	name     string
 	version  string
 	updateID string
@@ -152,6 +153,9 @@ func runRealDaemonUpdateChannel(t *testing.T, install realInstaller) {
 	keepRealLogs(t, work)
 	builds := realE2EBuilds(t, filepath.Join(work, "builds"))
 	v1, v2, v3, v4 := builds[0], builds[1], builds[2], builds[1]
+	if installed {
+		v2.template = os.Getenv("SDN_E2E_INSTALLED_BUNDLE")
+	}
 	v4.name, v4.version, v4.updateID, v4.sequence = "v4", "1.1.2-e2e.4", "cli-bundle-release-e2e-4", 400
 
 	// The release key the bundle trusts, and one it does not.
@@ -617,9 +621,37 @@ func (f *realE2EFeed) publish(t *testing.T, b realBuild, signingKey ed25519.Priv
 func realBundleArchive(t *testing.T, b realBuild, feedBase string) []byte {
 	t.Helper()
 	stage := filepath.Join(t.TempDir(), "spacedatanetwork-"+b.version+"-"+runtime.GOOS+"-"+runtime.GOARCH)
-	copyExecutable(t, b.path, filepath.Join(stage, "bin", "spacedatanetwork"))
-	includeWalletRuntime(t, stage)
-	writeE2EJSON(t, filepath.Join(stage, "manifest.json"), realBundleManifest(b, feedBase))
+	if b.template != "" {
+		command := exec.Command("cp", "-a", b.template, stage)
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("copy full release payload: %v %s", err, output)
+		}
+		if err := os.RemoveAll(filepath.Join(stage, "trust")); err != nil {
+			t.Fatal(err)
+		}
+		copyExecutable(t, b.path, filepath.Join(stage, "runtime", "sdn", "spacedatanetwork"))
+		raw, err := os.ReadFile(filepath.Join(stage, "manifest.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var manifest map[string]any
+		if err := json.Unmarshal(raw, &manifest); err != nil {
+			t.Fatal(err)
+		}
+		manifest["version"], manifest["channel"] = b.version, realE2EChannel
+		manifest["update"].(map[string]any)["feedBaseUrl"] = feedBase
+		for _, artifact := range manifest["artifacts"].([]any) {
+			item := artifact.(map[string]any)
+			if item["path"] == "runtime/sdn/spacedatanetwork" {
+				item["sha256"] = b.sha
+			}
+		}
+		writeE2EJSON(t, filepath.Join(stage, "manifest.json"), manifest)
+	} else {
+		copyExecutable(t, b.path, filepath.Join(stage, "bin", "spacedatanetwork"))
+		includeWalletRuntime(t, stage)
+		writeE2EJSON(t, filepath.Join(stage, "manifest.json"), realBundleManifest(b, feedBase))
+	}
 	archive := stage + ".tar.gz"
 	tarCmd := exec.Command("tar", "-czf", archive, "-C", filepath.Dir(stage), filepath.Base(stage))
 	tarCmd.Env = append(os.Environ(), "COPYFILE_DISABLE=1")
