@@ -2,7 +2,7 @@ module github.com/spacedatanetwork/sdn-server
 
 go 1.26.5
 
-toolchain go1.26.8
+toolchain go1.26.11
 
 require (
 	github.com/DigitalArsenal/spacedatastandards.org/lib/go v1.279.0
