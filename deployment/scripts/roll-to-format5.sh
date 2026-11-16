@@ -45,7 +45,7 @@ log() {
     printf '%s\n' "$line" >> "$ledger"
     printf '%s\n' "$line" || true
 }
-fail() { log FAILED "step=$stage reason=$1"; exit 1; }
+fail() { reason=$1; log FAILED "step=$stage reason=$reason"; exit 1; }
 exists() { [[ -e $1 || -L $1 ]]; }
 
 # Parse systemctl's quoted words without evaluating shell code or printing values.
@@ -117,12 +117,16 @@ stop_conversion() {
     [[ -n $conversion_pid ]] || return 0
     if kill -0 "$conversion_pid" 2>/dev/null; then
         # Inspect only this child's command line before signaling its exact PID.
-        local arg matched=0
+        local arg matched=0 has_args=0
         while IFS= read -r -d '' arg; do
+            has_args=1
             [[ $arg != store-migrate ]] || matched=1
         done < "/proc/$conversion_pid/cmdline"
-        (( matched )) || return 1
-        kill -KILL "$conversion_pid" || return 1
+        if (( matched )); then
+            kill -KILL "$conversion_pid" 2>/dev/null || ! kill -0 "$conversion_pid" 2>/dev/null || return 1
+        elif (( has_args )); then
+            return 1
+        fi
     fi
     wait "$conversion_pid" 2>/dev/null || true
     conversion_pid=
@@ -133,8 +137,10 @@ rollback() {
     stop_conversion || return 1
     exists "$root/fsql5" && after=1
     log ROLLBACK "after_switch=$after" || return 1
-    stage=STOP_FOR_ROLLBACK
-    stop_unit || return 1
+    if exists "$old" || (( after )); then
+        stage=STOP_FOR_ROLLBACK
+        stop_unit || return 1
+    fi
     if (( after )); then
         stage=RESTORE_STORE
         [[ -d $backup && -f $root/fsql4/rollback-auxiliary.flatsqlmeta ]] || return 1
@@ -200,6 +206,7 @@ node_command=(env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME="$node_home" "${uni
 [[ -d $live && ! -L $live && -d $staged && -f $config ]] || fail bundle_or_config_missing
 [[ $staged != "$live" && $staged != "$live/"* && $live != "$staged/"* ]] || fail overlapping_bundles
 [[ $root != "$base" && $root != "$base/"* && $base != "$root/"* ]] || fail overlapping_store
+[[ $root != "$staged" && $root != "$staged/"* && $staged != "$root/"* ]] || fail overlapping_staging
 [[ $(stat -c %d "$staged") == "$(stat -c %d "$base")" ]] || fail different_filesystems
 for path in "$old" "$failed" "$backup" "$root/fsql5.failed-$stamp"; do
     ! exists "$path" || fail recovery_path_exists
