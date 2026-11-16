@@ -79,6 +79,12 @@ const engineDir = path.join(embedDir, 'sdn-js');
 const engineWasm = fs.readFileSync(engineWasmSrc);
 fs.mkdirSync(engineDir, { recursive: true });
 fs.writeFileSync(path.join(engineDir, 'flatsql.wasm'), engineWasm);
+// The unified browser host starts these module scripts from the same origin.
+const runtimeDir = path.join(engineDir, 'runtime');
+fs.mkdirSync(runtimeDir, { recursive: true });
+for (const file of ['browser-guest.mjs', 'wasiThreadBrowserWorker.mjs', 'opfsIoWorker.mjs', 'LICENSE.sdk.txt', 'NOTICE.txt']) {
+  fs.copyFileSync(path.resolve(__dirname, '../node_modules/flatsql/wasm/runtime', file), path.join(runtimeDir, file));
+}
 fs.rmSync(path.join(engineDir, 'integrity.json'), { force: true });
 console.log(
   `[build-dashboard] staged ${path.relative(process.cwd(), path.join(engineDir, 'flatsql.wasm'))} ` +

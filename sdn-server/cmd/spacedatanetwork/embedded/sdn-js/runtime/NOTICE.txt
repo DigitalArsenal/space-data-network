@@ -1,0 +1,2 @@
+Generic host adapters bundled from space-data-module-sdk 0.8.24 (Apache-2.0).
+https://github.com/DigitalArsenal/space-data-module-sdk

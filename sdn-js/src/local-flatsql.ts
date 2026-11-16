@@ -249,10 +249,11 @@ async function engineOptions(options: LocalFlatSqlStoreOptions): Promise<FlatSQL
   if (wasmPath) {
     if (!publisherKey) throw new Error('The node reported no publisher key for its engine.');
     const base = wasmPath.replace(/\/+$/, '');
-    const response = await (options.fetch ?? fetch)(`${base}/flatsql.wasm`, { credentials: 'same-origin' });
+    const response = await (options.fetch ?? fetch)(`${base}/flatsql.wasm`, { credentials: 'same-origin', cache: 'no-cache' });
     if (!response.ok) throw new Error(`Engine download failed (${response.status})`);
     const verified = verifyNodeSignedModule(new Uint8Array(await response.arrayBuffer()), [publisherKey]).module;
     const digest = sha384Digest(verified);
+    engine.wasmUrl = `${base}/flatsql.wasm`;
     engine.wasmBytes = verified;
     engine.verify = bytes => { const actual = sha384Digest(bytes); if (!actual.every((b, i) => b === digest[i])) throw new Error('Engine bytes changed after signature verification'); };
     engine.workerUrl = `${base}/runtime/browser-guest.mjs`;

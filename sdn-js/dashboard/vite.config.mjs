@@ -5,6 +5,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
+import { spawnSync } from 'node:child_process';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -99,6 +100,7 @@ const FLATSQL_BUILTIN_SHIMS = new Map([
   ['url', 'flatsql-node-builtins']
 ]);
 const FLATSQL_INERT_SHIM_SOURCE = {
+  'flatsql-node-host': 'export function createNodeInstance() { throw new Error("The dashboard uses the browser FlatSQL host"); }\n',
   'flatsql-node-module': 'export const createRequire = undefined;\nexport default null;\n',
   'flatsql-node-crypto': 'export const createHash = undefined;\nexport default null;\n',
   'flatsql-node-builtins': [
@@ -106,6 +108,40 @@ const FLATSQL_INERT_SHIM_SOURCE = {
   ].map((name) => `export const ${name} = undefined;`).join('\n') +
     '\nexport const fs = null;\nexport const path = null;\nexport const url = null;\n'
 };
+// Embind's fixed factories are generated during the build, so compiling a
+// schema in the dashboard requires no JavaScript evaluation permission.
+const flatcBindingSources = new Map();
+function flatcCspBindings() {
+  return {
+    name: 'sdn-dashboard-flatc-csp-bindings',
+    enforce: 'pre',
+    transform(source, id) {
+      if (!id.replaceAll('\\', '/').endsWith('/flatc-wasm/dist/flatc-wasm.js')) return null;
+      if (!flatcBindingSources.has(id)) {
+        const capture = spawnSync(process.execPath, [path.join(__dirname, 'precompile-flatc-bindings.mjs'), id], {
+          encoding: 'utf8', timeout: 60_000,
+        });
+        if (capture.status !== 0) throw new Error(`Cannot precompile Flatc bindings: ${capture.stderr || capture.error}`);
+        const factories = JSON.parse(capture.stdout);
+        const entries = factories.map(parts => {
+          const factory = `function(${parts.slice(0, -1).join(',')}) {${parts.at(-1)}}`;
+          return `[${JSON.stringify(JSON.stringify(parts))}, ${factory}]`;
+        });
+        flatcBindingSources.set(id, `const sdnFlatcFactories = new Map([${entries.join(',')}]);
+function sdnFlatcFactory(args) {
+  const factory = sdnFlatcFactories.get(JSON.stringify(args));
+  if (!factory) throw new Error('Flatc binding was not precompiled by the dashboard build');
+  return factory;
+}
+`);
+      }
+      const call = 'newFunc(Function,args)';
+      if (source.split(call).length !== 2) throw new Error('The pinned Flatc factory call changed');
+      return { code: flatcBindingSources.get(id) + source.replace(call, 'sdnFlatcFactory(args)'), map: null };
+    },
+  };
+}
+
 function flatsqlNodeBuiltinShims({ inert = false } = {}) {
   const flatsqlDir = `node_modules${path.sep}flatsql${path.sep}`;
   const VIRTUAL = '\0sdn-dashboard:flatsql-node-shim:';
@@ -114,6 +150,8 @@ function flatsqlNodeBuiltinShims({ inert = false } = {}) {
     enforce: 'pre',
     resolveId(id, importer) {
       if (!importer || !importer.includes(flatsqlDir)) return null;
+      // FlatSQL selects its host at runtime; the browser has no Node threads.
+      if (id === './runtime/node-host.mjs') return `${VIRTUAL}flatsql-node-host`;
       const shim = FLATSQL_BUILTIN_SHIMS.get(id);
       if (!shim) return null;
       return inert ? `${VIRTUAL}${shim}` : path.resolve(__dirname, `../src/shims/${shim}.ts`);
@@ -336,6 +374,7 @@ export default defineConfig({
     tailwindcss(),
     stubHeliaOnlyDeps(),
     flatsqlNodeBuiltinShims(),
+    flatcCspBindings(),
     // cssHash PINNED to the component's CSS, not its path. IRIS ruling
     // 2026-07-30 (ui-design-lib-two-way-sync), option 2.
     //
@@ -425,7 +464,7 @@ export default defineConfig({
   // chunk instead.
   worker: {
     format: 'iife',
-    plugins: () => [dashboardDependencyBoundary(), stubSyncWorkerFallback(), flatsqlNodeBuiltinShims({ inert: true })],
+    plugins: () => [dashboardDependencyBoundary(), stubSyncWorkerFallback(), flatsqlNodeBuiltinShims({ inert: true }), flatcCspBindings()],
     rollupOptions: { output: { inlineDynamicImports: true } }
   },
   build: {

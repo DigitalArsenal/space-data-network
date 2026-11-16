@@ -15,6 +15,7 @@
 #   go-heavy                       heavy
 #   go-builds                      builds
 #   js                             js, delivery, demo
+#   dashboard                      dashboard
 #   kubo-bolt-on                   kubo
 #
 # WHERE THEY DIVERGE, AND WHY. `quick` is all of the above except `heavy` —
@@ -32,6 +33,7 @@
 #   ./scripts/ci-local.sh builds     # node + edge-relay builds only
 #   ./scripts/ci-local.sh race       # CI-only/full race suite
 #   ./scripts/ci-local.sh js         # sdn-js checks only
+#   ./scripts/ci-local.sh dashboard  # embedded dashboard against the built node
 #   ./scripts/ci-local.sh kubo-pin   # the linked Kubo: version and directives only
 #   ./scripts/ci-local.sh delivery   # focused module-delivery compatibility checks
 #   ./scripts/ci-local.sh plugin     # legacy alias for delivery
@@ -583,10 +585,22 @@ run_go_builds() {
   pass "go build spacedatanetwork-edge"
 }
 
-run_sdn_js() {
+prepare_sdn_js_deps() {
   step "sdn-js install"
   ensure_npm_deps "$ROOT/sdn-js" eslint vitest tsup
   pass "sdn-js npm ci"
+}
+
+prepare_chromium() {
+  local playwright_install_args=(install chromium)
+  if [[ "${CI:-}" == "true" || "${CI:-}" == "1" ]]; then
+    playwright_install_args=(install --with-deps chromium)
+  fi
+  (cd "$ROOT/sdn-js" && npm_config_cache="$ROOT/.npm-cache" npx --yes playwright "${playwright_install_args[@]}" >/dev/null)
+}
+
+run_sdn_js() {
+  prepare_sdn_js_deps
 
   local eslint_config=""
   for cfg in \
@@ -655,16 +669,33 @@ run_sdn_js() {
   #
   # Headless chromium only — never a window on the owner's machine.
   step "sdn-js browser direct interop (webtransport + webrtc-direct)"
-  # --with-deps installs system libraries and needs sudo, which a runner has
-  # and the owner's machine must never be asked for.
-  local playwright_install_args=(install chromium)
-  if [[ "${CI:-}" == "true" || "${CI:-}" == "1" ]]; then
-    playwright_install_args=(install --with-deps chromium)
-  fi
-  (cd "$ROOT/sdn-js" \
-    && npm_config_cache="$ROOT/.npm-cache" npx --yes playwright "${playwright_install_args[@]}" >/dev/null \
-    && SDN_REQUIRE_BROWSER_INTEROP=1 npm_config_cache="$ROOT/.npm-cache" npm run test:browser-interop)
+  prepare_chromium
+  (cd "$ROOT/sdn-js" && SDN_REQUIRE_BROWSER_INTEROP=1 npm_config_cache="$ROOT/.npm-cache" npm run test:browser-interop)
   pass "sdn-js browser direct interop"
+}
+
+run_dashboard() {
+  prepare_sdn_js_deps
+  prepare_chromium
+  prepare_go_toolchain no-aot
+
+  local binary="$ROOT/.ci-artifacts/spacedatanetwork-dashboard"
+  local results="$ROOT/.ci-artifacts/dashboard"
+  mkdir -p "$results"
+
+  step "Embedded dashboard node build"
+  (cd "$ROOT/sdn-server" && "$ROOT/scripts/go-with-wasmedge.sh" build -o "$binary" ./cmd/spacedatanetwork)
+  pass "embedded dashboard node build"
+
+  step "Embedded dashboard E2E"
+  rm -f "$results/dashboard-embedded.json"
+  if ! node "$ROOT/sdn-js/scripts/dashboard-engine.e2e.mjs" "$binary" "$results"; then
+    if [[ -f "$results/dashboard-embedded.json" ]]; then
+      cat "$results/dashboard-embedded.json"
+    fi
+    fail "embedded dashboard E2E"
+  fi
+  pass "embedded dashboard E2E"
 }
 
 run_module_delivery_compat() {
@@ -743,6 +774,7 @@ case "$MODE" in
     run_go_heavy
     run_go_race
     run_go_builds
+    run_dashboard
     run_sdn_js
     run_module_delivery_compat
     run_plugin_demo
@@ -768,6 +800,9 @@ case "$MODE" in
   js)
     run_sdn_js
     ;;
+  dashboard)
+    run_dashboard
+    ;;
   kubo-pin|versions)
     run_kubo_pin
     ;;
@@ -781,7 +816,7 @@ case "$MODE" in
     run_encryption
     ;;
   *)
-    echo -e "${RED}Usage: $0 [quick|full|preflight|go|heavy|builds|race|js|kubo-pin|delivery|plugin|demo|encryption]${NC}"
+    echo -e "${RED}Usage: $0 [quick|full|preflight|go|heavy|builds|race|js|dashboard|kubo-pin|delivery|plugin|demo|encryption]${NC}"
     exit 1
     ;;
 esac

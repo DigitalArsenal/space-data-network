@@ -803,6 +803,8 @@ func (e *Engine) QuotaGC(ctx context.Context, maxBytes int64) (QuotaResult, erro
 	return QuotaResult{FilesDropped: cellInt(r[0]), RecordsDropped: cellInt(r[1]), BytesFreed: cellInt(r[2])}, nil
 }
 
+// Rebuild resets full-text indexes asynchronously when RebuildFTS is selected.
+// Callers requiring completion must use WaitFTSReady before using or closing them.
 func (e *Engine) Rebuild(ctx context.Context, typ string, what RebuildWhat) ([]RebuildRow, error) {
 	if what == 0 {
 		return nil, &StatusError{Op: "REBUILD", Status: StatusArg, Msg: "nothing to rebuild"}
