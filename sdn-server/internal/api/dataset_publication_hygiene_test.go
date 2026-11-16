@@ -211,7 +211,7 @@ func newHygieneFixture(t *testing.T) *hygieneFixture {
 	kubo := newHygieneKubo(t)
 	announcer := &fakeDatasetUpdatePublisher{}
 	outputDir := filepath.Join(dir, "dataset-publications")
-	service := NewConcreteDatasetPublicationService(store, announcer, signingKey, hygienePeerID, "bafy-provider-epm", kubo.server.URL, outputDir)
+	service := newPublicationServiceWithPinPolicy(t, store, announcer, signingKey, hygienePeerID, "bafy-provider-epm", kubo.server.URL, outputDir)
 	return &hygieneFixture{store: store, kubo: kubo, service: service, announcer: announcer, outputDir: outputDir}
 }
 

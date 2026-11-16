@@ -97,7 +97,7 @@ func TestWXFValidatedBatchAutoPublishesWithAttribution(t *testing.T) {
 		t.Fatal(err)
 	}
 	publisher := &fakeDatasetUpdatePublisher{}
-	service := NewConcreteDatasetPublicationService(store, publisher, signingKey, tags.ProducerPeerID, "bafy-provider-epm", kubo.URL, filepath.Join(dir, "publications"))
+	service := newPublicationServiceWithPinPolicy(t, store, publisher, signingKey, tags.ProducerPeerID, "bafy-provider-epm", kubo.URL, filepath.Join(dir, "publications"))
 	auto := NewAutoPublisher(service, []config.AutoPublishLane{{Schema: "WXF.fbs", ProviderID: tags.ProviderID, SourceName: tags.SourceName, MinInterval: time.Hour}})
 	type outcome struct {
 		result *DatasetPublicationResult

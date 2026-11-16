@@ -49,7 +49,7 @@ func newByteBudgetPublicationFixture(t *testing.T, batchID string, records int) 
 	if err != nil {
 		t.Fatalf("GenerateKey failed: %v", err)
 	}
-	service := NewConcreteDatasetPublicationService(
+	service := newPublicationServiceWithPinPolicy(t,
 		store,
 		&fakeDatasetUpdatePublisher{},
 		signingKey,
