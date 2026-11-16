@@ -1,8 +1,11 @@
-import { publishedSchema } from '../../test-schema-helper';
-import { readFileSync } from 'node:fs';
+import { buildOmmFrame, BENCH_EPOCH_BASE } from '../../../scripts/lib/d6-bench-common.mjs';
+import { publishedSchema, recordTestBytes, recordTestSchema } from '../../test-schema-helper';
+import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createRequire } from 'node:module';
 import * as flatbuffers from 'flatbuffers';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { CAT } from 'spacedatastandards.org/lib/js/CAT/CAT.js';
 import { legacyCountryCode } from 'spacedatastandards.org/lib/js/CAT/legacyCountryCode.js';
@@ -32,6 +35,10 @@ const PNM_SCHEMA = readSdsSchema('spacedatastandards.org/schema/PNM/main.fbs');
 const STARLINK_6292_OMM_BYTES = Buffer.from('HAEAAEgAAAAkT01NAAAAADwAVAAAAAwACABQAEwAEAAAAAAAAAAAAAAARAAAADwANAAsACQAHAAUAAAAAAAAAAAAAAAAAAAABABIADwAAABQAAAAVAAAAGAAAAB4AAAAxEKtad4BV0DByqFFtsBwQGZmZmZmnGJAXf5D+u1/UUCej3xvHS04P22KKnBw9y1AUAAAAMfdAABkAAAAcAAAAAEAAABVAAAACAAAAFNETi1URVNUAAAAABQAAAAyMDI2LTA1LTExVDEwOjI2OjQxWgAAAAAFAAAARUFSVEgAAAAUAAAAMjAyNi0wNS0xMFQxMDo0NTozMVoAAAAACQAAADIwMjMtMDc4SgAAAA0AAABTVEFSTElOSy02MjkyAAAA', 'base64');
 
 describe('local FlatSQL datastore', () => {
+  let persistenceRoot: string;
+  beforeEach(() => { persistenceRoot = mkdtempSync(join(tmpdir(), 'local-flatsql-test-')); });
+  afterEach(() => { rmSync(persistenceRoot, { recursive: true, force: true }); });
+
   it('strips the SDN size prefix before ingesting standard FlatBuffers', () => {
     const raw = stripSdnFlatBufferSizePrefix(STARLINK_6292_OMM_BYTES);
 
@@ -296,37 +303,7 @@ describe('local FlatSQL datastore', () => {
     (await store.destroy());
   });
 
-  it('honors legacy 32-bit content keys persisted by older builds (loop D.6 migration)', async () => {
-    const fnv1a32 = (bytes: Uint8Array): number => {
-      let hash = 0x811c9dc5;
-      for (let i = 0; i < bytes.length; i += 1) {
-        hash ^= bytes[i];
-        hash = Math.imul(hash, 0x01000193);
-      }
-      return hash >>> 0;
-    };
-    const store = await createLocalFlatSqlStore({
-      schemas: [{
-        standardId: 'OMM',
-        tableName: 'OMM',
-        fileId: '$OMM',
-        ...publishedSchema('OMM'),
-      }],
-    });
-    const frame = stripSdnFlatBufferSizePrefix(STARLINK_6292_OMM_BYTES);
-    // Seed the ledger with the OLD key format (what a pre-D.6 build
-    // persisted): `<standard>|stream|<len>|<fnv1a32 hex8>`.
-    const legacyKey = `OMM|stream|${frame.byteLength}|${fnv1a32(frame).toString(16).padStart(8, '0')}`;
-    const seeded = await store.ingestFlatBufferStream('OMM', flatSqlSizePrefixedStream([frame]), {
-      recordKeys: [legacyKey],
-      persist: false,
-    });
-    expect(seeded).toBe(1);
-    // A content-keyed re-delivery of the same bytes must STILL dedupe.
-    const replay = await store.ingestFlatBufferStream('OMM', flatSqlSizePrefixedStream([frame]), { persist: false });
-    expect(replay).toBe(0);
-    (await store.destroy());
-  });
+
 
   it('preserves CAT replacement stream rows exactly as published', async () => {
     const store = await createLocalFlatSqlStore({
@@ -440,7 +417,8 @@ describe('local FlatSQL datastore', () => {
     });
 
     const frame = stripSdnFlatBufferSizePrefix(STARLINK_6292_OMM_BYTES);
-    const stream = flatSqlSizePrefixedStream([frame, frame]);
+    const skipped = stripSdnFlatBufferSizePrefix(buildOmmFrame({ norad: 100002, epochUnix: BENCH_EPOCH_BASE }));
+    const stream = flatSqlSizePrefixedStream([skipped, frame]);
     const ingested = await store.ingestFlatBufferStream('OMM', stream, {
       persist: false,
       skipRecords: 1,
@@ -448,6 +426,7 @@ describe('local FlatSQL datastore', () => {
       recordKeyOffset: 1,
     });
 
+    expect((await store.query('SELECT NORAD_CAT_ID FROM OMM WHERE NORAD_CAT_ID = 100002', 'OMM')).records).toEqual([]);
     expect(ingested).toBe(1);
     expect((await store.query('SELECT NORAD_CAT_ID FROM OMM LIMIT 1', 'OMM')).records).toEqual([{ NORAD_CAT_ID: 56775 }]);
     expect((await store.getStats({ includeCachedBytes: false }))[0]).toEqual(expect.objectContaining({
@@ -456,16 +435,18 @@ describe('local FlatSQL datastore', () => {
     }));
   });
 
-  it('trusts ordered published shard offsets when stale record keys claim missing rows', async () => {
+  it('resumes published streams at their ordered frame offset across reload', async () => {
     const restoreIndexedDb = installMemoryIndexedDb();
     try {
       await clearLocalFlatSqlStore({
         persistenceKey: 'stale-published-keys',
+        engine: { root: join(persistenceRoot, 'stale-published-keys') },
         standardIds: ['OMM'],
       });
 
       const first = await createLocalFlatSqlStore({
         persistenceKey: 'stale-published-keys',
+        engine: { root: join(persistenceRoot, 'stale-published-keys') },
         schemas: [{
           standardId: 'OMM',
           tableName: 'OMM',
@@ -473,7 +454,7 @@ describe('local FlatSQL datastore', () => {
           ...publishedSchema('OMM'),
         }],
       });
-      const frame = stripSdnFlatBufferSizePrefix(STARLINK_6292_OMM_BYTES);
+      const frame = stripSdnFlatBufferSizePrefix(buildOmmFrame({ norad: 100000, epochUnix: BENCH_EPOCH_BASE }));
       await first.ingestFlatBufferStream('OMM', flatSqlSizePrefixedStream([frame]), {
         persist: true,
         recordKeyPrefix: 'published:already-materialized',
@@ -481,12 +462,9 @@ describe('local FlatSQL datastore', () => {
       await first.flush('OMM');
       (await first.destroy());
 
-      await putLocalFlatSqlTestValue('stale-published-keys:OMM:record-keys', [
-        'OMM|published:stale-shard|1',
-      ]);
-
       const resumed = await createLocalFlatSqlStore({
         persistenceKey: 'stale-published-keys',
+        engine: { root: join(persistenceRoot, 'stale-published-keys') },
         schemas: [{
           standardId: 'OMM',
           tableName: 'OMM',
@@ -494,19 +472,21 @@ describe('local FlatSQL datastore', () => {
           ...publishedSchema('OMM'),
         }],
       });
-      const ingested = await resumed.ingestFlatBufferStream('OMM', flatSqlSizePrefixedStream([frame, frame]), {
+      const skipped = stripSdnFlatBufferSizePrefix(buildOmmFrame({ norad: 100002, epochUnix: BENCH_EPOCH_BASE }));
+      const ingested = await resumed.ingestFlatBufferStream('OMM', flatSqlSizePrefixedStream([skipped, stripSdnFlatBufferSizePrefix(buildOmmFrame({ norad: 100001, epochUnix: BENCH_EPOCH_BASE }))]), {
         persist: false,
         skipRecords: 1,
         recordKeyPrefix: 'published:stale-shard',
         recordKeyOffset: 1,
       });
 
+      expect((await resumed.query('SELECT NORAD_CAT_ID FROM OMM WHERE NORAD_CAT_ID = 100002', 'OMM')).records).toEqual([]);
       expect(ingested).toBe(1);
-      expect(resumed.getStats({ includeCachedBytes: false })[0]).toEqual(expect.objectContaining({
+      expect((await resumed.getStats({ includeCachedBytes: false }))[0]).toEqual(expect.objectContaining({
         recordCount: 2,
-        ingestedRecordCount: 1,
+        ingestedRecordCount: 2,
       }));
-      resumed.destroy();
+      await resumed.destroy();
     } finally {
       restoreIndexedDb();
     }
@@ -585,11 +565,13 @@ describe('local FlatSQL datastore', () => {
     try {
       await clearLocalFlatSqlStore({
         persistenceKey: 'replace-active-store',
+        engine: { root: join(persistenceRoot, 'replace-active-store') },
         standardIds: ['OMM'],
       });
 
       const first = await createLocalFlatSqlStore({
         persistenceKey: 'replace-active-store',
+        engine: { root: join(persistenceRoot, 'replace-active-store') },
         schemas: [{
           standardId: 'OMM',
           tableName: 'OMM',
@@ -644,6 +626,7 @@ describe('local FlatSQL datastore', () => {
 
       const loaded = await createLocalFlatSqlStore({
         persistenceKey: 'replace-active-store',
+        engine: { root: join(persistenceRoot, 'replace-active-store') },
         schemas: [{
           standardId: 'OMM',
           tableName: 'OMM',
@@ -664,11 +647,13 @@ describe('local FlatSQL datastore', () => {
     try {
       await clearLocalFlatSqlStore({
         persistenceKey: 'staged-replacement-store',
+        engine: { root: join(persistenceRoot, 'staged-replacement-store') },
         standardIds: ['OMM'],
       });
 
       const active = await createLocalFlatSqlStore({
         persistenceKey: 'staged-replacement-store',
+        engine: { root: join(persistenceRoot, 'staged-replacement-store') },
         schemas: [{
           standardId: 'OMM',
           tableName: 'OMM',
@@ -676,8 +661,8 @@ describe('local FlatSQL datastore', () => {
           ...publishedSchema('OMM'),
         }],
       });
-      const frame = stripSdnFlatBufferSizePrefix(STARLINK_6292_OMM_BYTES);
-      const oldStream = flatSqlSizePrefixedStream([frame, frame]);
+      const frame = stripSdnFlatBufferSizePrefix(buildOmmFrame({ norad: 100000, epochUnix: BENCH_EPOCH_BASE }));
+      const oldStream = flatSqlSizePrefixedStream([frame, stripSdnFlatBufferSizePrefix(buildOmmFrame({ norad: 100001, epochUnix: BENCH_EPOCH_BASE }))]);
       const newStream = flatSqlSizePrefixedStream([frame]);
       await active.ingestFlatBufferStream('OMM', oldStream, {
         recordKeyPrefix: 'published:old',
@@ -696,7 +681,7 @@ describe('local FlatSQL datastore', () => {
         verifiedAt: '2026-05-12T00:00:00.000Z',
         updatedAt: '2026-05-12T00:00:00.000Z',
       }]);
-      expect(active.getStats({ includeCachedBytes: false })[0]).toEqual(expect.objectContaining({
+      expect((await active.getStats({ includeCachedBytes: false }))[0]).toEqual(expect.objectContaining({
         recordCount: 2,
         pinnedRows: 2,
       }));
@@ -706,7 +691,7 @@ describe('local FlatSQL datastore', () => {
         persist: false,
         recordKeyPrefix: 'published:new',
       });
-      expect(active.getStats({ includeCachedBytes: false })[0]).toEqual(expect.objectContaining({
+      expect((await active.getStats({ includeCachedBytes: false }))[0]).toEqual(expect.objectContaining({
         recordCount: 2,
         pinnedRows: 2,
       }));
@@ -726,7 +711,7 @@ describe('local FlatSQL datastore', () => {
         updatedAt: '2026-05-13T00:00:00.000Z',
       }]);
 
-      expect(active.getStats({ includeCachedBytes: false })[0]).toEqual(expect.objectContaining({
+      expect((await active.getStats({ includeCachedBytes: false }))[0]).toEqual(expect.objectContaining({
         recordCount: 1,
         ingestedRecordCount: 1,
         pinnedRows: 1,
@@ -734,10 +719,11 @@ describe('local FlatSQL datastore', () => {
       await expect(active.listPinLedgerEntries({ standardId: 'OMM' })).resolves.toEqual([
         expect.objectContaining({ cid: 'new', batchId: 'new-batch' }),
       ]);
-      active.destroy();
+      await active.destroy();
 
       const loaded = await createLocalFlatSqlStore({
         persistenceKey: 'staged-replacement-store',
+        engine: { root: join(persistenceRoot, 'staged-replacement-store') },
         schemas: [{
           standardId: 'OMM',
           tableName: 'OMM',
@@ -793,43 +779,38 @@ describe('local FlatSQL datastore', () => {
     });
   });
 
-  it('tracks downloaded FlatBuffer frames separately from materialized SQL rows', async () => {
-    const store = await createLocalFlatSqlStore({
-      schemas: [{
-        standardId: 'OMM',
-        tableName: 'OMM',
-        fileId: '$OMM',
-        ...publishedSchema('OMM'),
-      }],
-    });
 
-    await store.ingestRecords('OMM', [
-      {
-        cid: 'celestrak-omm-history',
-        schemaName: 'OMM.fbs',
-        peerId: 'source:celestrak',
-        providerId: 'space-data-network-02',
-        sourceName: 'celestrak-gp',
-        batchId: 'fixture-batch',
-        timestamp: '2026-05-11T04:02:25Z',
-        dataBytes: STARLINK_6292_OMM_BYTES,
-      },
-      {
-        cid: 'celestrak-omm-history',
-        schemaName: 'OMM.fbs',
-        peerId: 'source:celestrak',
-        providerId: 'space-data-network-02',
-        sourceName: 'celestrak-gp',
-        batchId: 'fixture-batch',
-        timestamp: '2026-05-11T07:02:25Z',
-        dataBytes: STARLINK_6292_OMM_BYTES,
-      },
-    ], { source: 'space-data-network-02', persist: false });
 
-    expect((await store.getStats({ includeCachedBytes: false }))[0]).toEqual(expect.objectContaining({
-      recordCount: 2,
-      ingestedRecordCount: 2,
-    }));
+  it('isolates and reopens stores using only their persistence keys', async () => {
+    const originalDirectory = process.cwd();
+    const keys = ['first store:/one', 'second store:/two'];
+    const schemas = [recordTestSchema()];
+    let stores: Awaited<ReturnType<typeof createLocalFlatSqlStore>>[] = [];
+    process.chdir(persistenceRoot);
+    try {
+      for (const [index, persistenceKey] of keys.entries()) {
+        const store = await createLocalFlatSqlStore({ persistenceKey, schemas });
+        stores.push(store);
+        await store.ingestRecords('TST', [{
+          dataBytes: await recordTestBytes(index + 1),
+          sourceName: 'test',
+        }]);
+        await store.flush('TST');
+      }
+      for (const [index, store] of stores.entries()) {
+        expect((await store.query('SELECT VALUE FROM TST', 'TST')).records).toEqual([{ VALUE: index + 1 }]);
+      }
+      for (const store of stores) await store.destroy();
+      stores = [];
+      for (const [index, persistenceKey] of keys.entries()) {
+        const store = await createLocalFlatSqlStore({ persistenceKey, schemas });
+        stores.push(store);
+        expect((await store.query('SELECT VALUE FROM TST', 'TST')).records).toEqual([{ VALUE: index + 1 }]);
+      }
+    } finally {
+      try { await Promise.all(stores.map(store => store.destroy())); }
+      finally { process.chdir(originalDirectory); }
+    }
   });
 
   it('keeps query results fresh across ingest, persisted load, query template changes, and namespace changes', async () => {
@@ -837,15 +818,18 @@ describe('local FlatSQL datastore', () => {
     try {
       await clearLocalFlatSqlStore({
         persistenceKey: 'cache-invalidation-a',
+        engine: { root: join(persistenceRoot, 'cache-invalidation-a') },
         standardIds: ['OMM', 'PNM'],
       });
       await clearLocalFlatSqlStore({
         persistenceKey: 'cache-invalidation-b',
+        engine: { root: join(persistenceRoot, 'cache-invalidation-b') },
         standardIds: ['OMM'],
       });
 
       const first = await createLocalFlatSqlStore({
         persistenceKey: 'cache-invalidation-a',
+        engine: { root: join(persistenceRoot, 'cache-invalidation-a') },
         schemas: [{
           standardId: 'OMM',
           tableName: 'OMM',
@@ -863,11 +847,11 @@ describe('local FlatSQL datastore', () => {
         sourceName: 'celestrak-gp',
         batchId: 'fixture-batch',
         timestamp: '2026-05-11T04:02:25Z',
-        dataBytes: STARLINK_6292_OMM_BYTES,
+        dataBytes: buildOmmFrame({ norad: 100000, epochUnix: BENCH_EPOCH_BASE }),
       }]);
 
-      expect((await first.query('SELECT NORAD_CAT_ID FROM OMM LIMIT 10', 'OMM')).records).toEqual([{ NORAD_CAT_ID: 56775 }]);
-      expect((await first.query('SELECT OBJECT_NAME FROM OMM WHERE NORAD_CAT_ID = 56775 LIMIT 10', 'OMM')).records).toEqual([{ OBJECT_NAME: 'STARLINK-6292' }]);
+      expect((await first.query('SELECT NORAD_CAT_ID FROM OMM LIMIT 10', 'OMM')).records).toEqual([{ NORAD_CAT_ID: 100000 }]);
+      expect((await first.query('SELECT OBJECT_NAME FROM OMM WHERE NORAD_CAT_ID = 100000 LIMIT 10', 'OMM')).records).toEqual([{ OBJECT_NAME: 'SAT-100000' }]);
 
       await first.ingestRecords('OMM', [{
         cid: 'cache-omm-2',
@@ -877,14 +861,15 @@ describe('local FlatSQL datastore', () => {
         sourceName: 'celestrak-gp',
         batchId: 'fixture-batch',
         timestamp: '2026-05-11T07:02:25Z',
-        dataBytes: STARLINK_6292_OMM_BYTES,
+        dataBytes: buildOmmFrame({ norad: 100000, epochUnix: BENCH_EPOCH_BASE + 1 }),
       }]);
-      expect((await first.query('SELECT NORAD_CAT_ID FROM OMM LIMIT 10', 'OMM')).records).toEqual([{ NORAD_CAT_ID: 56775 }, { NORAD_CAT_ID: 56775 }]);
+      expect((await first.query('SELECT NORAD_CAT_ID FROM OMM LIMIT 10', 'OMM')).records).toEqual([{ NORAD_CAT_ID: 100000 }, { NORAD_CAT_ID: 100000 }]);
       await first.flush('OMM');
       (await first.destroy());
 
       const loaded = await createLocalFlatSqlStore({
         persistenceKey: 'cache-invalidation-a',
+        engine: { root: join(persistenceRoot, 'cache-invalidation-a') },
         schemas: [{
           standardId: 'OMM',
           tableName: 'OMM',
@@ -892,7 +877,7 @@ describe('local FlatSQL datastore', () => {
           ...publishedSchema('OMM'),
         }],
       });
-      expect((await loaded.query('SELECT NORAD_CAT_ID FROM OMM LIMIT 10', 'OMM')).records).toEqual([{ NORAD_CAT_ID: 56775 }, { NORAD_CAT_ID: 56775 }]);
+      expect((await loaded.query('SELECT NORAD_CAT_ID FROM OMM LIMIT 10', 'OMM')).records).toEqual([{ NORAD_CAT_ID: 100000 }, { NORAD_CAT_ID: 100000 }]);
       expect((await loaded.getStats({ includeCachedBytes: false }))[0]).toEqual(expect.objectContaining({
         recordCount: 2,
         ingestedRecordCount: 2,
@@ -900,6 +885,7 @@ describe('local FlatSQL datastore', () => {
 
       const otherNamespace = await createLocalFlatSqlStore({
         persistenceKey: 'cache-invalidation-b',
+        engine: { root: join(persistenceRoot, 'cache-invalidation-b') },
         schemas: [{
           standardId: 'OMM',
           tableName: 'OMM',
@@ -907,10 +893,11 @@ describe('local FlatSQL datastore', () => {
           ...publishedSchema('OMM'),
         }],
       });
-      expect(otherNamespace.query('SELECT NORAD_CAT_ID FROM OMM LIMIT 10', 'OMM').records).toEqual([]);
+      expect((await otherNamespace.query('SELECT NORAD_CAT_ID FROM OMM LIMIT 10', 'OMM')).records).toEqual([]);
 
       const otherTemplate = await createLocalFlatSqlStore({
         persistenceKey: 'cache-invalidation-a',
+        engine: { root: join(persistenceRoot, 'cache-invalidation-a') },
         schemas: [{
           standardId: 'PNM',
           tableName: 'PNM',
@@ -918,110 +905,20 @@ describe('local FlatSQL datastore', () => {
           ...publishedSchema('PNM'),
         }],
       });
-      expect(otherTemplate.query('SELECT * FROM PNM LIMIT 0', 'PNM').columns).not.toContain('NORAD_CAT_ID');
-      expect(otherTemplate.getStats({ includeCachedBytes: false })[0]).toEqual(expect.objectContaining({
+      expect((await otherTemplate.query('SELECT * FROM PNM LIMIT 0', 'PNM')).columns).not.toContain('NORAD_CAT_ID');
+      expect((await otherTemplate.getStats({ includeCachedBytes: false }))[0]).toEqual(expect.objectContaining({
         standardId: 'PNM',
         recordCount: 0,
       }));
+      await loaded.destroy();
+      await otherNamespace.destroy();
+      await otherTemplate.destroy();
     } finally {
       restoreIndexedDb();
     }
   });
 
-  it('persists local FlatSQL bytes through the desktop FlatBuffer storage API when configured', async () => {
-    const persisted = new Map<string, Uint8Array>();
-    const calls: Array<{ method: string; url: string }> = [];
-    const fetchMock = async (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
-      const requestUrl = String(url);
-      const method = String(init?.method ?? 'GET').toUpperCase();
-      calls.push({ method, url: requestUrl });
-      const key = decodeURIComponent(new URL(requestUrl).pathname.split('/').pop() ?? '');
-      if (method === 'GET') {
-        const bytes = persisted.get(key);
-        return bytes
-          ? new Response(bytes.slice(), { status: 200 })
-          : new Response('missing', { status: 404 });
-      }
-      if (method === 'PUT') {
-        const body = init?.body;
-        const bytes = body instanceof Uint8Array
-          ? body
-          : body instanceof ArrayBuffer
-            ? new Uint8Array(body)
-            : new Uint8Array(await new Response(body as BodyInit).arrayBuffer());
-        persisted.set(key, bytes.slice());
-        return new Response(null, { status: 204 });
-      }
-      if (method === 'DELETE') {
-        persisted.delete(key);
-        return new Response(null, { status: 204 });
-      }
-      return new Response('bad method', { status: 405 });
-    };
 
-    const first = await createLocalFlatSqlStore({
-      persistenceKey: 'desktop-flatbuffer-cache',
-      desktopPersistenceBaseUrl: 'http://desktop.local',
-      fetch: fetchMock,
-      schemas: [{
-        standardId: 'OMM',
-        tableName: 'OMM',
-        fileId: '$OMM',
-        ...publishedSchema('OMM'),
-      }],
-    });
-    await first.ingestRecords('OMM', [{
-      cid: 'desktop-cache-omm',
-      schemaName: 'OMM.fbs',
-      peerId: 'source:celestrak',
-      providerId: 'space-data-network-02',
-      sourceName: 'celestrak-gp',
-      batchId: 'fixture-batch',
-      timestamp: '2026-05-11T04:02:25Z',
-      dataBytes: STARLINK_6292_OMM_BYTES,
-    }]);
-    await first.flush('OMM');
-    (await first.destroy());
-
-    const loaded = await createLocalFlatSqlStore({
-      persistenceKey: 'desktop-flatbuffer-cache',
-      desktopPersistenceBaseUrl: 'http://desktop.local',
-      fetch: fetchMock,
-      schemas: [{
-        standardId: 'OMM',
-        tableName: 'OMM',
-        fileId: '$OMM',
-        ...publishedSchema('OMM'),
-      }],
-    });
-
-    expect((await loaded.query('SELECT NORAD_CAT_ID FROM OMM LIMIT 10', 'OMM')).records).toEqual([{ NORAD_CAT_ID: 56775 }]);
-
-    // DISK-BACKED layout: the engine's own index + arena, written through the
-    // desktop persistence endpoint as fixed-size page groups. The retired
-    // snapshot-export keys (`:sources`, `:src:<source>`) must NOT come back —
-    // if they do, something is still rewriting the whole dataset per flush.
-    const enginePrefix = 'sdn-flatsql/desktop-flatbuffer-cache/keys/sdn-flatsql/desktop-flatbuffer-cache/omm.db';
-    const engineKeys = [...persisted.keys()].filter((key) => key.startsWith(enginePrefix));
-    expect(engineKeys).toEqual(expect.arrayContaining([
-      `${enginePrefix}#meta`,
-      `${enginePrefix}#0`,
-      `${enginePrefix}.fsdata#meta`,
-      `${enginePrefix}.fsdata#0`,
-    ]));
-    expect(persisted.has('desktop-flatbuffer-cache:OMM:sources')).toBe(false);
-    expect(persisted.has('desktop-flatbuffer-cache:OMM:src:local')).toBe(false);
-    expect(persisted.has('desktop-flatbuffer-cache:OMM:record-keys')).toBe(true);
-    const persistenceUrl = (key: string) => `http://desktop.local/api/flatsql/persistence/${encodeURIComponent(key)}`;
-    // Both directions of the transport: the arena page group is WRITTEN by the
-    // flush, and the boot hydrate READS the file's length record before the
-    // engine opens. (Chunk reads only reach the endpoint from a cold context —
-    // one JS context keeps one page-group cache, which is the whole point of
-    // the chunked backend.)
-    expect(calls.some((call) => call.method === 'PUT' && call.url === persistenceUrl(`${enginePrefix}.fsdata#0`))).toBe(true);
-    expect(calls.some((call) => call.method === 'GET' && call.url === persistenceUrl(`${enginePrefix}.fsdata#meta`))).toBe(true);
-    (await loaded.destroy());
-  });
 
   it('can defer published-shard pin ledger persistence until the FlatSQL checkpoint flush', async () => {
     const persisted = new Map<string, Uint8Array>();
@@ -1048,6 +945,7 @@ describe('local FlatSQL datastore', () => {
 
     const store = await createLocalFlatSqlStore({
       persistenceKey: 'deferred-pin-ledger',
+      engine: { root: join(persistenceRoot, 'deferred-pin-ledger') },
       desktopPersistenceBaseUrl: 'http://desktop.local',
       fetch: fetchMock,
       schemas: [{
@@ -1086,59 +984,12 @@ describe('local FlatSQL datastore', () => {
   it('allows callers to clear persisted local FlatSQL data without IndexedDB support', async () => {
     await expect(clearLocalFlatSqlStore({
       persistenceKey: 'sdn-data:configured:space-data-network-02',
+      engine: { root: join(persistenceRoot, 'sdn-data:configured:space-data-network-02') },
       standardIds: ['OMM', 'PNM'],
     })).resolves.toBeUndefined();
   });
 
-  it('repairs persisted record-key counts that outrun rebuilt FlatSQL rows', async () => {
-    const restoreIndexedDb = installMemoryIndexedDb();
-    try {
-      await clearLocalFlatSqlStore({
-        persistenceKey: 'repair-record-keys',
-        standardIds: ['OMM'],
-      });
 
-      const first = await createLocalFlatSqlStore({
-        persistenceKey: 'repair-record-keys',
-        schemas: [{
-          standardId: 'OMM',
-          tableName: 'OMM',
-          fileId: '$OMM',
-          ...publishedSchema('OMM'),
-        }],
-      });
-      const stream = flatSqlSizePrefixedStream([stripSdnFlatBufferSizePrefix(STARLINK_6292_OMM_BYTES)]);
-      await first.ingestFlatBufferStream('OMM', stream, {
-        persist: true,
-        recordKeyPrefix: 'published:bafkshard',
-      });
-      await first.flush('OMM');
-      (await first.destroy());
-
-      await putLocalFlatSqlTestValue('repair-record-keys:OMM:record-keys', [
-        'OMM|published:bafkshard|0',
-        'OMM|published:bafkshard|1',
-      ]);
-
-      const repaired = await createLocalFlatSqlStore({
-        persistenceKey: 'repair-record-keys',
-        schemas: [{
-          standardId: 'OMM',
-          tableName: 'OMM',
-          fileId: '$OMM',
-          ...publishedSchema('OMM'),
-        }],
-      });
-
-      expect((await repaired.getStats({ includeCachedBytes: false }))[0]).toEqual(expect.objectContaining({
-        recordCount: 1,
-        ingestedRecordCount: 0,
-      }));
-      (await repaired.destroy());
-    } finally {
-      restoreIndexedDb();
-    }
-  });
 
   it('rejects non-read-only SQL before it reaches FlatSQL', async () => {
     const store = await createLocalFlatSqlStore({

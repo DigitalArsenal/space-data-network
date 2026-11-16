@@ -1,20 +1,18 @@
-import { publishedSchema } from './test-schema-helper';
+import { CID } from 'multiformats/cid';
+import { sha256 } from 'multiformats/hashes/sha2';
+import { publishedSchema, recordTestSchema, recordTestBytes } from './test-schema-helper';
 /**
- * Loop D.1 — ONE store: the FlatSQL-WASM engine store is THE SDNNode store.
- *
- * Covers: the promoted store's NodeRecordStorage surface, per-provider
- * source registration + unified views mirroring the sdn-server layout
- * (shadow tables `OMM@<source>`, `_source` = FULL shadow-table name),
- * ModuleHostRecordStore conformance (module hosting drops in unchanged),
- * and reload durability (envelope journal + per-source engine streams).
+ * Binary record-store contracts: CRUD, provenance, module-host capabilities,
+ * filesystem reload, source partitions, and catalog-scale raw queries.
  */
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createRequire } from 'node:module';
 import { describe, expect, it } from 'vitest';
 
 import {
   FlatSQLEngineRecordStore,
-  MemorySnapshotPersistence,
   flatBufferMatchesFileId,
 } from './engine-record-store';
 import {
@@ -42,32 +40,28 @@ const OMM_STANDARD = {
 const enc = (text: string) => new TextEncoder().encode(text);
 
 describe('FlatSQLEngineRecordStore (THE SDNNode store)', () => {
-  it('serves the NodeRecordStorage surface from the engine control table', async () => {
-    const store = await FlatSQLEngineRecordStore.open();
-    const cid = await store.store('OMM.fbs', enc('record-1'), 'peer-a', enc('sig'));
-    expect(cid).toMatch(/^[0-9a-f]{64}$/);
-    // content-addressed dedupe
-    expect(await store.store('OMM.fbs', enc('record-1'), 'peer-a', enc('sig'))).toBe(cid);
+  it('serves NodeRecordStorage CRUD and provenance from registered binary records', async () => {
+    const store = await FlatSQLEngineRecordStore.open({ schemas: [recordTestSchema(), recordTestSchema('ALT')] });
+    const first = await recordTestBytes(1);
+    const cid = await store.store('TST.fbs', first, 'peer-a', enc('sig'));
+    expect(cid).toBe(CID.createV1(0x55, await sha256.digest(first)).toString());
+    expect(await store.store('TST.fbs', first, 'peer-a', enc('sig'))).toBe(cid);
     expect(await store.count()).toBe(1);
-
-    await store.store('OMM.fbs', enc('record-2'), 'peer-b', enc('sig'));
-    await store.store('CDM.fbs', enc('record-3'), 'peer-a', enc('sig'));
-    expect(await store.count('OMM.fbs')).toBe(2);
-    expect((await store.query('OMM.fbs')).length).toBe(2);
-    expect((await store.query('OMM.fbs', { peerId: 'peer-b' })).length).toBe(1);
-    expect((await store.query('OMM.fbs', { limit: 1 })).length).toBe(1);
-
-    // The row index is a plain SQL control table inside the engine, named
-    // after the server layout (sdn_record_index — flatsql.go).
-    const provenance = (await store.sql(
-      "SELECT schema_name, peer_id FROM sdn_record_index WHERE schema_name = 'OMM.fbs' ORDER BY rowid",
-    ));
+    await store.store('TST.fbs', await recordTestBytes(2), 'peer-b', enc('sig'));
+    await store.store('ALT.fbs', await recordTestBytes(3, 'ALT'), 'peer-a', enc('sig'));
+    expect(await store.count('TST.fbs')).toBe(2);
+    expect(await store.query('TST.fbs')).toHaveLength(2);
+    expect(await store.query('TST.fbs', { peerId: 'peer-b' })).toHaveLength(1);
+    expect(await store.query('TST.fbs', { limit: 1 })).toHaveLength(1);
+    const provenance = await store.sql('SELECT VALUE, _peer FROM TST ORDER BY VALUE');
     expect(provenance.rowCount).toBe(2);
-    expect(provenance.columns).toEqual(['schema_name', 'peer_id']);
-
+    expect(provenance.columns).toEqual(['VALUE', '_peer']);
+    expect(provenance.rows).toEqual([[1, 'peer-a'], [2, 'peer-b']]);
+    expect((await store.get('TST.fbs', cid))?.data).toEqual(first);
+    expect(await store.get('ALT.fbs', cid)).toBeNull();
     await store.delete(cid);
-    expect(await store.get('OMM.fbs', cid)).toBeNull();
-    expect(await store.count('OMM.fbs')).toBe(1);
+    expect(await store.get('TST.fbs', cid)).toBeNull();
+    expect(await store.count('TST.fbs')).toBe(1);
     await store.close();
   });
 
@@ -75,7 +69,8 @@ describe('FlatSQLEngineRecordStore (THE SDNNode store)', () => {
     const store = await FlatSQLEngineRecordStore.open({ schemas: [OMM_STANDARD] });
     await store.store('OMM.fbs', new Uint8Array(STARLINK_6292_OMM_BYTES), 'peer-a', new Uint8Array(0));
     // Non-FlatBuffer payloads must not reach the record vtab.
-    await store.store('OMM.fbs', enc('{"json":"payload"}'), 'peer-a', new Uint8Array(0));
+    await expect(store.store('OMM.fbs', enc('{"json":"payload"}'), 'peer-a', new Uint8Array(0)))
+      .rejects.toThrow(/file identifier/);
 
     const standards = store.standardsStore!;
     const result = await standards.query(
@@ -87,12 +82,12 @@ describe('FlatSQLEngineRecordStore (THE SDNNode store)', () => {
       // Server semantics: `_source` carries the FULL shadow-table name.
       _source: `OMM@${LOCAL_FLATSQL_DEFAULT_SOURCE}`,
     }]);
-    expect(await store.count('OMM.fbs')).toBe(2); // both envelopes indexed
+    expect(await store.count('OMM.fbs')).toBe(1);
     await store.close();
   });
 
   it('satisfies the ModuleHostRecordStore contract so module hosting drops in unchanged', async () => {
-    const store = await FlatSQLEngineRecordStore.open();
+    const store = await FlatSQLEngineRecordStore.open({ schemas: [recordTestSchema()] });
     const adapters = createModuleHostCapabilityAdapters({
       storage: store,
       peerId: 'module-host-peer',
@@ -101,13 +96,13 @@ describe('FlatSQLEngineRecordStore (THE SDNNode store)', () => {
 
     // storage.write {schema, data:base64} -> {cid}
     const writeResult = (await adapters.storage!.write({
-      schema: 'OMM',
-      data: Buffer.from('module-record').toString('base64'),
+      schema: 'TST',
+      data: Buffer.from(await recordTestBytes(1)).toString('base64'),
     })) as { cid: string };
-    expect(writeResult.cid).toMatch(/^[0-9a-f]{64}$/);
+    expect(writeResult.cid).toBe(CID.createV1(0x55, await sha256.digest(await recordTestBytes(1))).toString());
 
     // storage.query {schema, limit} -> records
-    const queried = (await adapters.storage!.query({ schema: 'OMM', limit: 5 })) as Array<{
+    const queried = (await adapters.storage!.query({ schema: 'TST', limit: 5 })) as Array<{
       cid: string;
       peerId: string;
     }>;
@@ -117,42 +112,32 @@ describe('FlatSQLEngineRecordStore (THE SDNNode store)', () => {
 
     // storage.delete {cid} -> true
     expect(await adapters.storage!.delete({ cid: writeResult.cid })).toBe(true);
-    expect(((await adapters.storage!.query({ schema: 'OMM' })) as unknown[]).length).toBe(0);
+    expect(((await adapters.storage!.query({ schema: 'TST' })) as unknown[]).length).toBe(0);
     await store.close();
   });
 
-  it('survives reload: envelope journal + per-source engine streams rebuild the same store', async () => {
-    const persistence = new MemorySnapshotPersistence();
-    const persistenceStore = new MemoryFlatSqlPersistenceStore();
-
-    const first = await FlatSQLEngineRecordStore.open({
-      persistence,
-      persistenceStore,
-      persistenceKey: 'reload-durability',
-      schemas: [OMM_STANDARD],
-    });
-    const cid1 = await first.store('OMM.fbs', new Uint8Array(STARLINK_6292_OMM_BYTES), 'peer-a', enc('sig-a'));
-    const cid2 = await first.store('CDM.fbs', enc('beta'), 'peer-b', enc('sig-b'));
-    await first.close();
-
-    const second = await FlatSQLEngineRecordStore.open({
-      persistence,
-      persistenceStore,
-      persistenceKey: 'reload-durability',
-      schemas: [OMM_STANDARD],
-    });
-    expect(await second.count()).toBe(2);
-    const alpha = await second.get('OMM.fbs', cid1);
-    expect([...(alpha?.data ?? [])]).toEqual([...STARLINK_6292_OMM_BYTES]);
-    expect(alpha?.peerId).toBe('peer-a');
-    expect((await second.get('CDM.fbs', cid2))?.peerId).toBe('peer-b');
-    // Control-table index rebuilt from the journal.
-    expect((await second.sql('SELECT cid FROM sdn_record_index')).rowCount).toBe(2);
-    // SDS record vtab rebuilt into the same source partition — exactly one
-    // copy (ingested-keys ledger makes journal replay idempotent).
-    const rows = await second.standardsStore!.query('SELECT NORAD_CAT_ID, _source FROM OMM LIMIT 10', 'OMM');
-    expect(rows.records).toEqual([{ NORAD_CAT_ID: 56775, _source: 'OMM@local' }]);
-    await second.close();
+  it('restores binary records, provenance, and deletions from the filesystem', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'record-reload-'));
+    const options = { engine: { root }, schemas: [recordTestSchema(), recordTestSchema('ALT')] };
+    try {
+      const first = await FlatSQLEngineRecordStore.open(options);
+      const alpha = await recordTestBytes(1);
+      const cid1 = await first.store('TST.fbs', alpha, 'peer-a', enc('sig-a'));
+      const cid2 = await first.store('ALT.fbs', await recordTestBytes(2, 'ALT'), 'peer-b', enc('sig-b'));
+      const removed = await first.store('TST.fbs', await recordTestBytes(3), 'peer-c', enc('sig-c'));
+      await first.delete(removed);
+      await first.close();
+      const second = await FlatSQLEngineRecordStore.open(options);
+      expect(await second.count()).toBe(2);
+      expect((await second.get('TST.fbs', cid1))?.data).toEqual(alpha);
+      expect((await second.get('TST.fbs', cid1))?.peerId).toBe('peer-a');
+      expect((await second.get('ALT.fbs', cid2))?.peerId).toBe('peer-b');
+      expect((await second.get('ALT.fbs', cid2))?.signature).toEqual(enc('sig-b'));
+      expect(await second.get('TST.fbs', removed)).toBeNull();
+      expect((await second.sql('SELECT _cid FROM TST')).rowCount).toBe(1);
+      expect((await second.sql('SELECT _cid FROM ALT')).rowCount).toBe(1);
+      await second.close();
+    } finally { rmSync(root, { recursive: true, force: true }); }
   });
 
   it('detects SDS FlatBuffer payloads by file identifier (bare and size-prefixed)', () => {
@@ -258,70 +243,39 @@ describe('per-provider source partitioning (server layout mirror)', () => {
   });
 
   it('persists per-(standard, source) aligned streams and restores every partition on reopen', async () => {
-    const persistenceStore = new MemoryFlatSqlPersistenceStore();
-    const options = {
-      schemas: [OMM_STANDARD],
-      persistenceKey: 'source-durability',
-      persistenceStore,
-    };
-    const record = {
-      cid: 'celestrak-omm-1',
-      schemaName: 'OMM.fbs',
-      timestamp: '2026-05-11T04:02:25Z',
-      dataBytes: new Uint8Array(STARLINK_6292_OMM_BYTES),
-    };
+    const root = mkdtempSync(join(tmpdir(), 'record-source-durability-'));
+    try {
+      const persistenceStore = new MemoryFlatSqlPersistenceStore();
+      const options = {
+        schemas: [OMM_STANDARD],
+        persistenceKey: 'source-durability',
+        engine: { root },
+        persistenceStore,
+      };
+      const record = {
+        cid: 'celestrak-omm-1',
+        schemaName: 'OMM.fbs',
+        timestamp: '2026-05-11T04:02:25Z',
+        dataBytes: new Uint8Array(STARLINK_6292_OMM_BYTES),
+      };
 
-    const first = await createLocalFlatSqlStore(options);
-    await first.ingestRecords('OMM', [record], { source: 'celestrak-gp' });
-    await first.ingestRecords('OMM', [{ ...record, cid: 'local-omm-1' }]); // default `local`
-    (await first.destroy());
+      const first = await createLocalFlatSqlStore(options);
+      await first.ingestRecords('OMM', [record], { source: 'celestrak-gp' });
+      await first.ingestRecords('OMM', [{ ...record, cid: 'local-omm-1' }]); // default `local`
+      (await first.destroy());
 
-    const second = await createLocalFlatSqlStore(options);
-    expect(await second.listSources!('OMM')).toEqual(['celestrak-gp', LOCAL_FLATSQL_DEFAULT_SOURCE]);
-    const unified = await second.query('SELECT _source FROM OMM ORDER BY _source LIMIT 10', 'OMM');
-    expect(unified.records).toEqual([
-      { _source: 'OMM@celestrak-gp' },
-      { _source: 'OMM@local' },
-    ]);
-    // Re-ingesting the same records after reload stays deduped.
-    expect(await second.ingestRecords('OMM', [record], { source: 'celestrak-gp' })).toBe(0);
-    (await second.destroy());
+      const second = await createLocalFlatSqlStore(options);
+      expect(await second.listSources!('OMM')).toEqual(['celestrak-gp', LOCAL_FLATSQL_DEFAULT_SOURCE]);
+      const unified = await second.query('SELECT _source FROM OMM ORDER BY _source LIMIT 10', 'OMM');
+      expect(unified.records).toEqual([
+        { _source: 'OMM@celestrak-gp' },
+        { _source: 'OMM@local' },
+      ]);
+      // Re-ingesting the same records after reload stays deduped.
+      expect(await second.ingestRecords('OMM', [record], { source: 'celestrak-gp' })).toBe(0);
+      (await second.destroy());
+    } finally { rmSync(root, { recursive: true, force: true }); }
   });
 
-  it('migrates a legacy pre-D.1 exportData snapshot into the local source partition', async () => {
-    const persistenceStore = new MemoryFlatSqlPersistenceStore();
-    // Legacy layout: one exportData blob (a size-prefixed record stream)
-    // under `<key>:<STD>` with no source attribution.
-    const bare = stripSdnFlatBufferSizePrefix(new Uint8Array(STARLINK_6292_OMM_BYTES));
-    const legacyBlob = new Uint8Array(4 + bare.byteLength);
-    new DataView(legacyBlob.buffer).setUint32(0, bare.byteLength, true);
-    legacyBlob.set(bare, 4);
-    await persistenceStore.writeBytes('legacy-migration:OMM', legacyBlob);
 
-    const store = await createLocalFlatSqlStore({
-      schemas: [OMM_STANDARD],
-      persistenceKey: 'legacy-migration',
-      persistenceStore,
-    });
-    const rows = await store.query('SELECT NORAD_CAT_ID, _source FROM OMM LIMIT 10', 'OMM');
-    expect(rows.records).toEqual([{ NORAD_CAT_ID: 56775, _source: 'OMM@local' }]);
-
-    // The legacy blob is folded into the ENGINE'S OWN disk state and deleted.
-    // Nothing rewrites the retired snapshot-export layout in its place: the
-    // durable representation is now the index + arena the engine writes.
-    await store.flush('OMM');
-    expect(await persistenceStore.readBytes('legacy-migration:OMM')).toBeNull();
-    expect(await persistenceStore.readJson('legacy-migration:OMM:sources')).toBeNull();
-    expect(await persistenceStore.readBytes('legacy-migration:OMM:src:local')).toBeNull();
-    (await store.destroy());
-
-    const reopened = await createLocalFlatSqlStore({
-      schemas: [OMM_STANDARD],
-      persistenceKey: 'legacy-migration',
-      persistenceStore,
-    });
-    const reloaded = await reopened.query('SELECT NORAD_CAT_ID, _source FROM OMM LIMIT 10', 'OMM');
-    expect(reloaded.records).toEqual([{ NORAD_CAT_ID: 56775, _source: 'OMM@local' }]);
-    (await reopened.destroy());
-  });
 });

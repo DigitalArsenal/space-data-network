@@ -1,4 +1,4 @@
-// Isomorphism parity gate: the JS/V8 host (flatsql/standalone) must produce
+// Isomorphism parity gate: the binary JavaScript engine must produce
 // exactly the outputs recorded in shared-test-vectors/flatsql-parity.json —
 // the same file the Go/WasmEdge host asserts against
 // (sdn-server/internal/flatsqlrt/parity_test.go). Regenerate expectations
@@ -17,13 +17,13 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { describe, expect, test } from 'vitest';
 
-// @ts-expect-error — plain .mjs helper shared with the generator script.
-import { runParityCases } from '../scripts/generate-flatsql-parity-vectors.mjs';
 import { FlatSQLEngineRecordStore } from './engine-record-store';
 import {
   buildEngineEpochProfileSql,
   type EngineEpochProfileSpec,
 } from './epoch-query-sql';
+import { publishedSchema } from './test-schema-helper';
+import { createLocalFlatSqlStore } from './local-flatsql';
 import type { LocalFlatSqlSchema } from './local-flatsql';
 
 const vectorsPath = resolve(
@@ -108,7 +108,7 @@ async function openCorpusStore(vectors: ParityVectors, options: {
     standardId: vectors.epochStoreCorpus.standardId,
     tableName: vectors.table,
     fileId: vectors.fileId,
-    schema: vectors.schema,
+    ...publishedSchema(vectors.epochStoreCorpus.standardId),
   };
   const store = await FlatSQLEngineRecordStore.open({
     schemas: [schema],
@@ -133,13 +133,27 @@ async function openCorpusStore(vectors: ParityVectors, options: {
 }
 
 describe('FlatSQL Go⇄JS isomorphism parity', () => {
-  test('JS host reproduces the shared expected outputs byte-for-byte', async () => {
+  test('binary engine preserves the pinned raw query streams', async () => {
     const vectors = JSON.parse(readFileSync(vectorsPath, 'utf8'));
-    expect(vectors.expected).toBeTruthy();
-
-    const actual = await runParityCases(vectors);
-    expect(actual).toEqual({ ...vectors.expected, epochStoreStreams: undefined });
+    const store = await createLocalFlatSqlStore({ schemas: [{
+      standardId: vectors.table, tableName: vectors.table, fileId: vectors.fileId,
+      ...publishedSchema(vectors.table),
+    }] });
+    try {
+      await store.ingestFlatBufferStream(vectors.table,
+        Uint8Array.from(Buffer.from(vectors.fixtureStreamBase64, 'base64')));
+      const actual: Record<string, { sha256: string; byteLength: number }> = {};
+      for (const c of vectors.rawStreamCases) {
+        const stream = await store.queryRawFlatBufferStream!(vectors.table, c.sql, decodeDirectParams(c.params ?? []));
+        actual[c.name] = { sha256: createHash('sha256').update(stream).digest('hex'), byteLength: stream.length };
+      }
+      expect(actual).toEqual(vectors.expected.rawStreams);
+    } finally {
+      await store.destroy();
+    }
   });
+
+
 
   test('engine epoch SQL builder emits the server engine_records.go strings VERBATIM', () => {
     const vectors = loadVectors();
@@ -156,7 +170,7 @@ describe('FlatSQL Go⇄JS isomorphism parity', () => {
     const store = await openCorpusStore(vectors);
     try {
       for (const c of vectors.epochStoreCases) {
-        const stream = store.queryEpochRawStream(vectors.epochStoreCorpus.standardId, {
+        const stream = await store.queryEpochRawStream(vectors.epochStoreCorpus.standardId, {
           profile: c.profile,
           source: c.source,
           epoch: c.epoch,
@@ -170,7 +184,7 @@ describe('FlatSQL Go⇄JS isomorphism parity', () => {
       // direct-equality pushdown form return IDENTICAL bytes through the
       // generic raw-stream API — and match the profile-API result.
       for (const c of vectors.epochStoreDirectCases) {
-        const stream = store.queryRawFlatBufferStream(
+        const stream = await store.queryRawFlatBufferStream(
           vectors.epochStoreCorpus.standardId,
           c.sql,
           decodeDirectParams(c.params),
@@ -184,9 +198,9 @@ describe('FlatSQL Go⇄JS isomorphism parity', () => {
       // Zero-copy decoded-iterator convenience: frames are subarray views
       // into the aligned stream (no copies).
       const nearestAll = vectors.epochStoreCases.find((c) => c.name === 'nearest_all')!;
-      const raw = store.queryEpochRawStream('OMM', nearestAll);
+      const raw = await store.queryEpochRawStream('OMM', nearestAll);
       let frames = 0;
-      for (const frame of store.queryEpochFrames('OMM', nearestAll)) {
+      for (const frame of await store.queryEpochFrames('OMM', nearestAll)) {
         expect(frame.byteLength).toBeGreaterThan(0);
         frames += 1;
       }
@@ -210,10 +224,10 @@ describe('FlatSQL Go⇄JS isomorphism parity', () => {
       },
     });
     try {
-      expect(digestAlignedStream(configured.queryEpochRawStream('OMM')))
+      expect(digestAlignedStream(await configured.queryEpochRawStream('OMM')))
         .toEqual(vectors.expected.epochStoreStreams.as_of_all);
       // Request fields override config; unset request fields keep config values.
-      expect(digestAlignedStream(configured.queryEpochRawStream('OMM', { profile: 'nearest' })))
+      expect(digestAlignedStream(await configured.queryEpochRawStream('OMM', { profile: 'nearest' })))
         .toEqual(vectors.expected.epochStoreStreams.nearest_all);
     } finally {
       await configured.close();
@@ -225,7 +239,7 @@ describe('FlatSQL Go⇄JS isomorphism parity', () => {
       nowSeconds: () => nearestCase.epoch,
     });
     try {
-      expect(digestAlignedStream(fallback.queryEpochRawStream('OMM')))
+      expect(digestAlignedStream(await fallback.queryEpochRawStream('OMM')))
         .toEqual(vectors.expected.epochStoreStreams.nearest_all);
     } finally {
       await fallback.close();

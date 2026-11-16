@@ -1,4 +1,4 @@
-import { publishedSchema } from '../../test-schema-helper';
+import { publishedSchema, serverStandardSchema } from '../../test-schema-helper';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import * as flatbuffers from 'flatbuffers';
@@ -20,7 +20,7 @@ import { FLATBUFFER_STREAM_TYPE } from './qrp-frames';
 import { decodeQrpRequest, encodeQrpErrorFrame, encodeQrpRunAnswer, qrpStatus, type QrpRequest } from './qrp-request';
 
 const require = createRequire(import.meta.url);
-const OMM_SCHEMA = readFileSync(require.resolve('spacedatastandards.org/schema/OMM/main.fbs'), 'utf8');
+const OMM_SCHEMA = serverStandardSchema('OMM');
 
 interface CatalogRecord {
   index: number;
@@ -550,4 +550,14 @@ describe('startDashboardDataRuntime', () => {
     handle.destroy();
     expect(globalThis.SDN_DATA_WINDOW).toBeUndefined();
   });
+});
+
+
+it('refuses an include-bearing response that omits its dependencies', async () => {
+  const store = await createLocalFlatSqlStore({ schemas: [] });
+  const node = createFakeNode([], { schemas: { OMM: publishedSchema('OMM').schema } });
+  const window = createDashboardWindow({ store, fetch: node.fetch });
+  try {
+    await expect(window.ensureStandard('OMM')).rejects.toThrow(/Schema compilation failed:.*|unable to load include/);
+  } finally { window.destroy(); await store.destroy(); }
 });

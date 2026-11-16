@@ -2089,6 +2089,78 @@ func (s *FlatSQLStore) f2RecordIndexPage(q RecordIndexPageQuery) ([]RecordIndexR
 	return out, total, nil
 }
 
+// f2RecordIndexSeqPage uses the maintained sequence head and metadata-only
+// windows. The count covers the whole snapshot; AfterSeq affects only rows.
+func (s *FlatSQLStore) f2RecordIndexSeqPage(q RecordIndexSeqQuery) (RecordIndexSeqPage, error) {
+	if err := s.f2Closed(); err != nil {
+		return RecordIndexSeqPage{}, err
+	}
+	ctx := s.f2ctx()
+	head, err := s.ps.TypeCounterOf(q.SchemaName)
+	if err != nil {
+		return RecordIndexSeqPage{}, err
+	}
+	through := q.ThroughSeq
+	if through <= 0 {
+		through = head.GseqHi
+	}
+	out := RecordIndexSeqPage{Through: through, Rows: []RecordIndexRow{}}
+	if through <= 0 {
+		return out, nil
+	}
+	wq := format2.WindowQuery{Schema: q.SchemaName, Provider: strings.TrimSpace(q.ProviderID),
+		Source: strings.TrimSpace(q.SourceName), Batch: strings.TrimSpace(q.BatchID), Order: "gseq",
+		Limit: q.Limit, Offset: q.Offset,
+		Conds: []format2.Cond{{SQL: "_gseq <= ?", Params: []format2.Cell{format2.Int(through)}}}}
+	hasNorad, hasEpoch := f2HasNorad(q.SchemaName), format2.TypeHasEpoch(q.SchemaName)
+	if q.NoradLike != "" {
+		if !hasNorad {
+			wq.Conds = append(wq.Conds, f2Never)
+		} else {
+			wq.Conds = append(wq.Conds, format2.Cond{SQL: "CAST(NORAD_CAT_ID AS TEXT) LIKE ? AND NORAD_CAT_ID > 0",
+				Params: []format2.Cell{format2.Text("%" + q.NoradLike + "%")}})
+		}
+	}
+	if q.ArrivedBefore != nil {
+		wq.Conds = append(wq.Conds, format2.Cond{SQL: "_arrival < ?", Params: []format2.Cell{format2.Int(*q.ArrivedBefore * 1000)}})
+	}
+	// A current unfiltered snapshot uses the maintained type count. Older
+	// snapshots and filtered pages count the bounded window instead.
+	if through >= head.GseqHi && wq.Provider == "" && wq.Source == "" && wq.Batch == "" && q.NoradLike == "" && q.ArrivedBefore == nil {
+		out.Total = head.FirstLive
+	} else {
+		total, err := s.f2WindowCount(ctx, wq)
+		if err != nil {
+			return RecordIndexSeqPage{}, err
+		}
+		out.Total = total
+	}
+	wq.Conds = append(wq.Conds, format2.Cond{SQL: "_gseq > ?", Params: []format2.Cell{format2.Int(q.AfterSeq)}})
+	extra := "NULL"
+	if hasNorad {
+		extra = "NORAD_CAT_ID"
+	}
+	rows, err := s.f2WindowMerged(ctx, wq, func(query format2.WindowQuery) ([]format2.WindowRow, error) {
+		return s.ps.WindowColumns(ctx, query, extra)
+	})
+	if err != nil {
+		return RecordIndexSeqPage{}, err
+	}
+	for _, r := range rows {
+		row := RecordIndexRow{Seq: r.Rec.Gseq, CID: r.Rec.CID}
+		if hasNorad && r.Extra.Type == format2.CellInt && r.Extra.I > 0 {
+			value := r.Extra.I
+			row.NoradCatID = &value
+		}
+		if hasEpoch {
+			value := format2.EpochSeconds(r.Rec.EpochMs)
+			row.EpochUnix = &value
+		}
+		out.Rows = append(out.Rows, row)
+	}
+	return out, nil
+}
+
 // f2EpochSecSQL floors _epoch to whole seconds (the legacy epoch_unix).
 const f2EpochSecSQL = "(CASE WHEN _epoch >= 0 THEN _epoch / 1000 ELSE -((999 - _epoch) / 1000) END)"
 

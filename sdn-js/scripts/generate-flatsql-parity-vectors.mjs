@@ -10,8 +10,6 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
 import * as flatbuffers from 'flatbuffers';
-import { loadFlatSQLStandalone } from 'flatsql/standalone';
-import { initFlatSQL } from 'flatsql/wasm';
 import { OMM } from 'spacedatastandards.org/lib/js/OMM/OMM.js';
 
 const vectorsPath = resolve(
@@ -43,6 +41,7 @@ export function decodeParams(params) {
 }
 
 export async function runParityCases(vectors) {
+  const { loadFlatSQLStandalone } = await import(/* @vite-ignore */ ['flatsql', 'standalone'].join('/'));
   const flatsql = await loadFlatSQLStandalone();
   const db = flatsql.createDatabase(vectors.schema, 'parity');
   db.registerFileId(vectors.fileId, vectors.table);
@@ -218,6 +217,7 @@ function digestAlignedStream(stream) {
  * profile/direct case, digest the aligned streams.
  */
 export async function runEpochStoreCases(vectors) {
+  const { initFlatSQL } = await import(/* @vite-ignore */ ['flatsql', 'wasm'].join('/'));
   const flatsql = await initFlatSQL({ skipIntegrityCheck: true });
   const db = flatsql.createDatabase(vectors.schema, 'epoch-parity');
   db.registerFileId(vectors.fileId, vectors.table);

@@ -1,8 +1,12 @@
 package api
 
 import (
+	"encoding/json"
+	"github.com/spacedatanetwork/sdn-server/internal/storage"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -22,7 +26,7 @@ func TestStandardSchemaTextServesTheEngineTableBlock(t *testing.T) {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "table CNP {") || !strings.Contains(body, "ID:string;") {
+	if !strings.Contains(body, "table CNP {") || !regexp.MustCompile(`\bID\s*:\s*string\s*;`).MatchString(body) {
 		t.Fatalf("body is not the CNP engine block:\n%s", body)
 	}
 	if strings.Contains(body, "table OMM {") {
@@ -77,5 +81,40 @@ func TestStandardSchemaTextServesTheEngineTableBlock(t *testing.T) {
 	mux.ServeHTTP(post, httptest.NewRequest(http.MethodPost, "/api/v1/standards/CNP.fbs", nil))
 	if post.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("POST: status=%d, want 405", post.Code)
+	}
+}
+
+// TestStandardSchemaTextBrowserInterop supplies the browser tests with real
+// handler responses from this build. No separate schema fixture is maintained.
+func TestStandardSchemaTextBrowserInterop(t *testing.T) {
+	h, _ := newTestCoreAPIHandler(t)
+	type response struct {
+		Code   string `json:"code"`
+		Text   string `json:"text"`
+		Table  string `json:"table"`
+		FileID string `json:"fileId"`
+	}
+	responses := []response{}
+	for _, row := range standardsList() {
+		_, table, fileID, routed := storage.EngineRelationSchemaText(row.Code)
+		if !routed {
+			continue
+		}
+		rec := httptest.NewRecorder()
+		h.handleStandardSchemaText(rec, httptest.NewRequest(http.MethodGet, "/api/v1/standards/"+row.Code+".fbs", nil))
+		if rec.Code != http.StatusOK || rec.Header().Get(standardSchemaEngineTableHdr) != table || rec.Header().Get(standardSchemaEngineFileIDHdr) != fileID || rec.Header().Get("Content-Type") != "text/plain; charset=utf-8" {
+			t.Fatalf("%s: response status=%d headers=%v", row.Code, rec.Code, rec.Header())
+		}
+		responses = append(responses, response{row.Code, rec.Body.String(), table, fileID})
+	}
+	if len(responses) < 200 {
+		t.Fatalf("only %d routed responses", len(responses))
+	}
+	if os.Getenv("SDN_EXPORT_STANDARD_SCHEMAS") == "1" {
+		data, err := json.Marshal(responses)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Log("SDN_STANDARD_RESPONSES=" + string(data))
 	}
 }

@@ -202,7 +202,8 @@ run_preflight() {
     scripts/check-govulncheck.test.mjs \
     scripts/run-govulncheck.test.mjs \
     scripts/check-no-orphan-test-suites.test.mjs \
-    scripts/prepush-hook.test.mjs)
+    scripts/prepush-hook.test.mjs \
+    scripts/ci-heavy-coverage.test.mjs)
   pass "dependency-drift check suites"
 
   # Release-assembly logic, which decides what a published release CONTAINS.
@@ -490,10 +491,56 @@ run_go() {
 run_go_heavy() {
   prepare_go_toolchain
 
-  step "Go tests (heavy: $HEAVY_GO_PACKAGES)"
-  # shellcheck disable=SC2086
-  go_test_with_timings heavy -p=1 -timeout="$HEAVY_GO_TEST_TIMEOUT" -count=1 $HEAVY_GO_PACKAGES \
-    || fail "go test (heavy)"
+  step "Go tests (four parallel groups: $HEAVY_GO_PACKAGES)"
+  local pkg group pattern pid failed listed
+  local artifact_dir="$ROOT/.ci-artifacts"
+  local pids=()
+  mkdir -p "$artifact_dir"
+  for pkg in $HEAVY_GO_PACKAGES; do
+    local label="${pkg##*/}"
+    listed="$artifact_dir/heavy-${label}-listed.txt"
+    "$ROOT/scripts/go-with-wasmedge.sh" test -list '^(Test|Example|Fuzz)' "$pkg" > "$listed" \
+      || fail "list tests in $pkg"
+    if LC_ALL=C grep -E '^(Test|Example|Fuzz)' "$listed" | LC_ALL=C grep -Ev '^(Test|Example|Fuzz)[A-Za-z0-9_]*$'; then
+      fail "a discovered test name cannot be represented by the group filter"
+    fi
+    LC_ALL=C grep -E '^(Test|Example|Fuzz)[A-Za-z0-9_]*$' "$listed" | LC_ALL=C sort > "$artifact_dir/heavy-${label}-all.txt"
+    [[ -s "$artifact_dir/heavy-${label}-all.txt" ]] || fail "no tests discovered in $pkg"
+    # Sorted names use round-robin assignment. The discovered list is the
+    # authority, including examples and fuzz seed tests run by go test.
+    for group in 0 1 2 3; do
+      awk -v group="$group" '(NR - 1) % 4 == group' "$artifact_dir/heavy-${label}-all.txt" > "$artifact_dir/heavy-${label}-${group}.txt"
+    done
+    cat "$artifact_dir/heavy-${label}-"[0-3].txt | LC_ALL=C sort > "$artifact_dir/heavy-${label}-covered.txt"
+    cmp -s "$artifact_dir/heavy-${label}-all.txt" "$artifact_dir/heavy-${label}-covered.txt" \
+      || fail "test group coverage differs from go test -list"
+    [[ -z "$(uniq -d "$artifact_dir/heavy-${label}-covered.txt")" ]] \
+      || fail "a test appears more than once"
+    pids=()
+    for group in 0 1 2 3; do
+      [[ -s "$artifact_dir/heavy-${label}-${group}.txt" ]] || continue
+      pattern="^($(paste -sd '|' "$artifact_dir/heavy-${label}-${group}.txt"))$"
+      echo "Group $group: $(wc -l < "$artifact_dir/heavy-${label}-${group}.txt") tests"
+      go_test_with_timings "heavy-${label}-${group}" -v -p=1 -timeout="$HEAVY_GO_TEST_TIMEOUT" -count=1 -run "$pattern" "$pkg" &
+      pids+=("$!")
+    done
+    failed=0
+    for pid in "${pids[@]}"; do
+      wait "$pid" || failed=1
+    done
+    # Validate execution, independently of the planned group manifests.
+    local ran="$artifact_dir/heavy-${label}-ran.txt"
+    local ended="$artifact_dir/heavy-${label}-ended.txt"
+    awk '$1 == "===" && $2 == "RUN" && $3 !~ /\// { print $3 }' \
+      "$artifact_dir/gotest-heavy-${label}-"[0-3].log | LC_ALL=C sort > "$ran"
+    awk '$1 == "---" && ($2 == "PASS:" || $2 == "FAIL:" || $2 == "SKIP:") && $3 !~ /\// { print $3 }' \
+      "$artifact_dir/gotest-heavy-${label}-"[0-3].log | LC_ALL=C sort > "$ended"
+    cmp -s "$artifact_dir/heavy-${label}-all.txt" "$ran" \
+      || fail "executed tests differ from go test -list (missing, extra, or duplicate execution)"
+    cmp -s "$artifact_dir/heavy-${label}-all.txt" "$ended" \
+      || fail "completed tests differ from go test -list"
+    [[ "$failed" == 0 ]] || fail "go test (heavy)"
+  done
   pass "go test (heavy)"
 }
 
@@ -569,7 +616,10 @@ run_sdn_js() {
   #
   # This lane already requires Go (every other mode compiles sdn-server), so
   # demanding it here costs nothing and closes that hole.
-  (cd "$ROOT/sdn-js" && SDN_REQUIRE_GO_INTEROP=1 npm_config_cache="$ROOT/.npm-cache" npm test -- --run)
+  # Build exactly as npm test does, then share real handler responses with Vitest.
+  # Focused npm test invocations do not require the Go schema exporter.
+  (cd "$ROOT/sdn-js" && npm_config_cache="$ROOT/.npm-cache" npm run build:core \
+    && SDN_REQUIRE_GO_INTEROP=1 node scripts/test-with-standards.mjs)
   pass "sdn-js test (go-libp2p interop required)"
 
   step "sdn-js build"
