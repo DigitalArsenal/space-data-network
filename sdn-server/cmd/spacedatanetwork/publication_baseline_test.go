@@ -192,7 +192,14 @@ func TestPublicationBaseline(t *testing.T) {
 					}
 					observed := make(chan observation, 1)
 					go func() {
-						at, err := baselineAwaitCount(ctx, b, data.schema, source, int64(data.count), &polls)
+						// Readable when the receiver's log has imported every
+						// record; one count afterwards confirms it. Polling a
+						// count of a large lane during import loads the receiver
+						// with a full scan per poll.
+						at, err := baselineAwaitImportLog(ctx, b, data.schema, int64(data.count))
+						if err == nil {
+							_, err = baselineAwaitCount(ctx, b, data.schema, source, int64(data.count), &polls)
+						}
 						observed <- observation{at, err}
 					}()
 					publishStarted = time.Now()
@@ -639,6 +646,70 @@ func baselineOEM(i int) []byte {
 	OEM.OEMAddEPHEMERIS_DATA_BLOCK(b, blocks)
 	OEM.FinishSizePrefixedOEMBuffer(b, OEM.OEMEnd(b))
 	return append([]byte(nil), b.FinishedBytes()...)
+}
+
+// baselineAwaitImportLog returns the time of the receiver log line at which
+// the records it reports imported on schema reach want (each "Materialized"
+// line's imported count; the feed-head and $PNM paths import distinct
+// records).
+func baselineAwaitImportLog(ctx context.Context, d *publicationDaemon, schema string, want int64) (time.Time, error) {
+	marker := "on " + schema + ":"
+	var offset int64
+	var total int64
+	var partial []byte
+	for {
+		file, err := os.Open(d.logPath)
+		if err != nil {
+			return time.Time{}, err
+		}
+		if _, err := file.Seek(offset, io.SeekStart); err != nil {
+			file.Close()
+			return time.Time{}, err
+		}
+		chunk, err := io.ReadAll(file)
+		file.Close()
+		if err != nil {
+			return time.Time{}, err
+		}
+		offset += int64(len(chunk))
+		data := append(partial, chunk...)
+		cut := bytes.LastIndexByte(data, '\n')
+		if cut < 0 {
+			partial = data
+		} else {
+			partial = append([]byte(nil), data[cut+1:]...)
+			for _, line := range strings.Split(string(data[:cut]), "\n") {
+				if !strings.Contains(line, "Materialized") || !strings.Contains(line, marker) {
+					continue
+				}
+				i := strings.Index(line, "imported=")
+				if i < 0 {
+					continue
+				}
+				digits := line[i+len("imported="):]
+				if j := strings.IndexFunc(digits, func(r rune) bool { return r < '0' || r > '9' }); j >= 0 {
+					digits = digits[:j]
+				}
+				n, err := strconv.ParseInt(digits, 10, 64)
+				if err != nil {
+					continue
+				}
+				total += n
+				if total >= want {
+					fields := strings.Fields(line)
+					if len(fields) == 0 {
+						return time.Time{}, fmt.Errorf("import line has no timestamp")
+					}
+					return time.Parse("2006-01-02T15:04:05.000Z0700", fields[0])
+				}
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return time.Time{}, ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
 }
 
 // baselinePolls records how long the receiver's count reads took while the

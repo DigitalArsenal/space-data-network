@@ -47,10 +47,11 @@ forwarder adds a loopback TCP copy to the measurement. Download-only reads
 every published shard after import and therefore measures warm caches. The
 primary publication duration and CPU/RSS counters include export and API
 completion. Separate announcement rates use the first successful PNM publication
-call and concurrent receiver count polling every 100 milliseconds after each
-count returns. A count over a large lane during import can take minutes; each
-row reports the number of polls and the longest and last poll, and the
-readable time is known to within the last poll. The opt-in
+call and the receiver log line at which the records it reports imported
+reach the published count (read every 100 milliseconds); one count afterwards
+confirms the total. A count over a large lane during import is a full scan
+that can take minutes, so it is not used as the poll; each row reports how
+long the confirming count took. The opt-in
 `SDN_E2E_PUBLICATION_OBSERVATIONS` file records only timestamps, schemas, and
 manifest CIDs; it is unset during ordinary operation. Raw observations accompany
 the daemon logs. Per-operation RSS is sampled every 200 milliseconds. CPU
