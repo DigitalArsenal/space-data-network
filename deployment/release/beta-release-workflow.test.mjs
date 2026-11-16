@@ -215,7 +215,8 @@ test('local Go suites serialize package builds while bypassing the test cache', 
     'run_go must run the filtered package list, not ./...',
   );
   assert.match(script, /pkgs=\$\([^)]*list \.\/\.\.\.[^)]*grep -Ev "\$\(heavy_pkg_filter\)"/);
-  const heavyArgs = extractGoTestArguments(script, extractShellFunction(script, 'run_go_heavy'), 'run_go_heavy');
+  const heavyBody = extractShellFunction(script, 'run_go_heavy');
+  const heavyArgs = extractGoTestArguments(script, heavyBody, 'run_go_heavy');
   assert.ok(heavyArgs.includes('-p=1'), 'run_go_heavy must serialize package builds');
   assert.ok(heavyArgs.includes('-count=1'), 'run_go_heavy must bypass cached results');
   // The budgets are measurements, recorded next to them in ci-local.sh
@@ -236,8 +237,18 @@ test('local Go suites serialize package builds while bypassing the test cache', 
   assert.match(heavyJob, /^ {8}run: \.\/scripts\/ci-local\.sh heavy[ \t]*$/m, 'the go-heavy job must run the heavy lane');
   const heavyJobMinutes = Number(/^ {4}timeout-minutes: (\d+)[ \t]*$/m.exec(heavyJob)?.[1]);
   assert.ok(heavyJobMinutes > 25, 'the go-heavy job timeout must exceed the heavy lane\'s 25m go test budget');
-  assert.ok(
-    heavyArgs.at(-1) === '$HEAVY_GO_PACKAGES',
+  // The record store runs as four parallel groups of each heavy package: the
+  // one invocation names the loop's package and runs in the background, and
+  // the loop is over exactly the set heavy_pkg_filter excludes. That the four
+  // groups together run every listed test once is ci-heavy-coverage.test.mjs.
+  assert.deepEqual(
+    heavyArgs.slice(-2),
+    ['"$pkg"', '&'],
+    'run_go_heavy must run one heavy package per invocation, as a background group',
+  );
+  assert.equal(
+    [...heavyBody.matchAll(/^[ \t]*for pkg in \$HEAVY_GO_PACKAGES; do[ \t]*$/gm)].length,
+    1,
     'run_go_heavy must run exactly the set heavy_pkg_filter excludes',
   );
   assert.deepEqual(raceArgs.at(-1), './...', 'run_go_race still covers the whole module');
