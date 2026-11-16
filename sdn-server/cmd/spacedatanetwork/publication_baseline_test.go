@@ -66,6 +66,13 @@ func TestPublicationBaseline(t *testing.T) {
 	if caseSelection != "all" && caseSelection != "wire" && caseSelection != "direct" {
 		t.Fatal("baseline case must be all, wire, or direct")
 	}
+	if value := os.Getenv("SDN_E2E_PUBLICATION_BASELINE_OMM_COUNT"); value != "" {
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 1 || n > smallCount {
+			t.Fatalf("baseline OMM count must be 1 through %d", smallCount)
+		}
+		smallCount = n
+	}
 	if value := os.Getenv("SDN_E2E_PUBLICATION_BASELINE_REPETITIONS"); value != "" {
 		n, err := strconv.Atoi(value)
 		if err != nil || n < 1 || n > 3 {
@@ -337,7 +344,7 @@ func TestPublicationBaseline(t *testing.T) {
 			t.Fatal("baseline instrumentation failed; remaining repetitions and summary are omitted")
 		}
 	}
-	summary := map[string]any{"kind": "summary", "requested_repetitions": repetitions, "case": caseSelection, "dataset_selection": datasetSelection, "target_bytes_per_second": 250000000, "groups": publicationSummaries(rows)}
+	summary := map[string]any{"kind": "summary", "omm_count": smallCount, "requested_repetitions": repetitions, "case": caseSelection, "dataset_selection": datasetSelection, "target_bytes_per_second": 250000000, "groups": publicationSummaries(rows)}
 	if err := encoder.Encode(summary); err != nil {
 		t.Fatal(err)
 	}

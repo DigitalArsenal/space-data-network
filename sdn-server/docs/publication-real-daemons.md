@@ -78,6 +78,8 @@ independent measurements when a failure in one dataset blocks the combined run.
 
 `SDN_E2E_PUBLICATION_BASELINE_CASE=direct` measures direct ingest independently
 of publication, including the producer's allocated and logical storage sizes.
+`SDN_E2E_PUBLICATION_BASELINE_OMM_COUNT` sets the OMM record count (1 through
+2,000,000; unset is 2,000,000) so two builds can be compared at a smaller size.
 `SDN_E2E_PUBLICATION_BASELINE_REPETITIONS` accepts 1 through 3; unset retains
 three full repetitions (one in smoke mode). Each summary records the selected
 case, dataset, and repetition count so partial reruns remain distinguishable.
