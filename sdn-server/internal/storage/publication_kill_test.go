@@ -27,7 +27,12 @@ func TestPublicationReclamationKillChild(t *testing.T) {
 			ids = append(ids, r.CID)
 		}
 		raw, _ := json.Marshal(ids)
-		if err = os.WriteFile(filepath.Join(dir, "ready"), raw, 0600); err != nil {
+		// Publish readiness only after the complete expected result is closed.
+		temporary := filepath.Join(dir, "ready.tmp")
+		if err = os.WriteFile(temporary, raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err = os.Rename(temporary, filepath.Join(dir, "ready")); err != nil {
 			t.Fatal(err)
 		}
 		select {}
