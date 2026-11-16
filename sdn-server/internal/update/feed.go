@@ -106,7 +106,7 @@ func (u ProviderFeedUpdate) AssertMatchesPayload(m *Manifest, carrierLen int) er
 var ErrNoCompatibleUpdate = errors.New("no compatible update is available from provider feed")
 
 type ProviderFeedSelection struct {
- Exclude func(ProviderFeedUpdate) bool
+	Exclude         func(ProviderFeedUpdate) bool
 	UpdateID        string
 	Version         string
 	Channel         string

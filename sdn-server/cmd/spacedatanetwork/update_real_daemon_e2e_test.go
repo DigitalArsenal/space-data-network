@@ -114,6 +114,12 @@ func TestUpdateChannelRealDaemonE2E(t *testing.T) {
 	t.Setenv(realE2EBinDirEnv, filepath.Dir(builds[0].path))
 	t.Run("pull", func(t *testing.T) { runRealDaemonUpdateChannel(t, installThroughCLI) })
 	t.Run("push-catchup-withdrawal-validation", runRealPushChannel)
+	t.Run("installed-v1.1.5-push", func(t *testing.T) {
+		if os.Getenv("SDN_E2E_INSTALLED_BUNDLE") == "" {
+			t.Skip("set SDN_E2E_INSTALLED_BUNDLE to a checksum-verified published 1.1.5 bundle")
+		}
+		runRealPushChannelReceiver(t, true)
+	})
 
 }
 
@@ -466,11 +472,12 @@ type realE2EFeed struct {
 	certFile string
 	dir      string
 
-	forward string
-	disk    bool
-	mu      sync.Mutex
-	files   map[string][]byte
-	entries []update.ProviderFeedUpdate
+	failIndex bool
+	forward   string
+	disk      bool
+	mu        sync.Mutex
+	files     map[string][]byte
+	entries   []update.ProviderFeedUpdate
 }
 
 func newRealE2EFeed(t *testing.T, work string) *realE2EFeed {
@@ -478,8 +485,12 @@ func newRealE2EFeed(t *testing.T, work string) *realE2EFeed {
 	f := &realE2EFeed{files: map[string][]byte{}, dir: filepath.Join(work, "feed")}
 	f.srv = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
-		forward := f.forward
+		forward, failIndex := f.forward, f.failIndex
 		f.mu.Unlock()
+		if failIndex && strings.HasSuffix(r.URL.Path, "/index.json") {
+			http.Error(w, "test feed outage", http.StatusServiceUnavailable)
+			return
+		}
 		if forward != "" {
 			target, _ := url.Parse(forward)
 			httputil.NewSingleHostReverseProxy(target).ServeHTTP(w, r)
@@ -956,7 +967,9 @@ func (r *realDaemonTracker) stopAll() {
 }
 
 // runRealPushChannel drives the sender while the receiving daemon acts autonomously.
-func runRealPushChannel(t *testing.T) {
+func runRealPushChannel(t *testing.T) { runRealPushChannelReceiver(t, false) }
+
+func runRealPushChannelReceiver(t *testing.T, installed bool) {
 	start := time.Now()
 	defer func() { t.Logf("push channel duration: %s", time.Since(start).Round(time.Second)) }()
 	work := t.TempDir()
@@ -1009,6 +1022,35 @@ func runRealPushChannel(t *testing.T) {
 	feed.forward = a.adminBase
 	feed.mu.Unlock()
 	b := newPushDaemon(t, filepath.Join(work, "b"), v1, feed, roots, health)
+	if installed {
+		source := os.Getenv("SDN_E2E_INSTALLED_BUNDLE")
+		if err := os.RemoveAll(b.paths.Root); err != nil {
+			t.Fatal(err)
+		}
+		command := exec.Command("cp", "-a", source, b.paths.Root)
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("copy published bundle: %v %s", err, output)
+		}
+		raw, err := os.ReadFile(filepath.Join(b.paths.Root, "manifest.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var manifest map[string]any
+		if err := json.Unmarshal(raw, &manifest); err != nil {
+			t.Fatal(err)
+		}
+		if manifest["version"] != "1.1.5" {
+			t.Fatal("receiver bundle is not published 1.1.5")
+		}
+		manifest["update"].(map[string]any)["feedBaseUrl"] = feed.base
+		writeE2EJSON(t, filepath.Join(b.paths.Root, "manifest.json"), manifest)
+		writeE2EJSON(t, b.paths.Trust, roots)
+		original := filepath.Join(source, "runtime", "sdn", "spacedatanetwork")
+		if e2eFileSHA256(original) != e2eFileSHA256(filepath.Join(b.paths.Root, "runtime", "sdn", "spacedatanetwork")) {
+			t.Fatal("published executable changed")
+		}
+		t.Logf("receiver is unmodified published 1.1.5 executable sha256=%s", e2eFileSHA256(original))
+	}
 	aInfo := pushPeer(t, a.adminBase)
 	b.configure(t, func(cfg *config.Config) {
 		cfg.Network.Bootstrap = []string{aInfo.Addrs[0].String() + "/p2p/" + aInfo.ID.String()}
@@ -1068,6 +1110,46 @@ func runRealPushChannel(t *testing.T) {
 		}
 	}
 	v2signal := publish(v2)
+	if !installed {
+		b.stop(t)
+		b.configure(t, func(cfg *config.Config) {
+			cfg.Update.CheckDelaySeconds = 2
+			cfg.Update.CheckIntervalSeconds = 3600
+			cfg.Update.MinIntervalSeconds = 300
+		})
+		manifestPath := filepath.Join(filepath.Dir(signalPath(v2)), "manifest.json")
+		manifest, err := os.ReadFile(manifestPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Remove(manifestPath); err != nil {
+			t.Fatal(err)
+		}
+		b.start(t, boot)
+		waitPush(t, 30*time.Second, "pre-swap feed failure", func() bool { return strings.Contains(b.logs(), "Update feed-check  failed: fetch update manifest:") })
+		if err := os.WriteFile(manifestPath, manifest, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The local publisher's identity is absent from its release trust roots.
+	a.command(t, true, "local-node-signed", "update", "signal", "--channel", realE2EChannel, "--version", v2.version)
+	localCtx, localCancel := context.WithTimeout(ctx, 30*time.Second)
+	localMessage, localErr := subscription.Next(localCtx)
+	localCancel()
+	if localErr != nil {
+		t.Fatalf("node-signed publish was not delivered: %v", localErr)
+	}
+	localSignal, err := update.ParseSignal(localMessage.Data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, trusted := roots[localSignal.Signing.KeyID]; trusted {
+		t.Fatal("local-publish control uses a trusted identity")
+	}
+	if err := localSignal.Verify(update.SignalVerifyOptions{TrustedRoots: roots}); err == nil {
+		t.Fatal("local signal unexpectedly trusted")
+	}
+	t.Log("publisher sent its own untrusted identity's signal through real GossipSub")
 	// Noncanonical whitespace must survive the authenticated route byte for byte.
 	var formatted bytes.Buffer
 	if err := json.Indent(&formatted, v2signal, "", "  "); err != nil {
@@ -1090,6 +1172,10 @@ func runRealPushChannel(t *testing.T) {
 	if pushPeer(t, b.adminBase).ID != originalPeer {
 		t.Fatal("push changed the peer identity")
 	}
+	if installed {
+		t.Log("published 1.1.5 receiver installed branch payload from pipeline-style push")
+		return
+	}
 
 	publish(v3)
 	send(v3, "push-v3")
@@ -1110,15 +1196,37 @@ func runRealPushChannel(t *testing.T) {
 	waitPush(t, boot, "completed rollback", func() bool { return strings.Contains(readFileString(b.helperLog()), "rolled back to "+v2.version) })
 	t.Log("bad pushed build reverted and restored its failure alert")
 	countV3 := len(readLedger(t, b.paths.Root))
+	refusal := "update signal " + v3.updateID + " refused: this box already tried"
+	refusalCount := strings.Count(b.logs(), refusal)
 	runSignalPipeline(t, v1.path, work, "resign-v3", "update", "sign-signals", "--key-file", keyPath, "--roots", rootsPath, "--feed-dir", feed.dir)
 	send(v3, "push-v3-again")
-	time.Sleep(4 * time.Second)
+	waitPush(t, 30*time.Second, "quarantined signal refusal", func() bool { return strings.Count(b.logs(), refusal) > refusalCount })
 	if len(readLedger(t, b.paths.Root)) != countV3 {
 		t.Fatal("quarantined update was attempted again")
 	}
 	requireRealIdentity(t, b.adminBase, v2)
 
 	b.stop(t)
+	// With v3 quarantined and v2 listed, a fresh recipient selects v2.
+	fallback := newPushDaemon(t, filepath.Join(work, "fallback"), v1, feed, roots, health)
+	if err := os.MkdirAll(filepath.Join(fallback.paths.Failed, v3.updateID), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	fallback.configure(t, func(cfg *config.Config) { cfg.Update.CheckDelaySeconds = 2; cfg.Update.CheckIntervalSeconds = 3 })
+	fallback.start(t, boot)
+	fallback.waitUpgrade(t, v2, boot+2*time.Duration(health)*time.Second)
+	if !slices.ContainsFunc(readLedger(t, fallback.paths.Root), func(e update.DeployLedgerEntry) bool { return e.UpdateID == v2.updateID && e.Trigger == "feed-check" }) {
+		t.Fatal("fallback was not installed by feed check")
+	}
+	var fallbackAlerts json.RawMessage
+	if err := fallback.client(t).get(ctx, "/api/v1/status/alerts", &fallbackAlerts); err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(fallbackAlerts, []byte("update_failed")) {
+		t.Fatal("unrelated quarantine raised a health-gate alert")
+	}
+	fallback.stop(t)
+	t.Log("feed selected v2 below quarantined v3; unrelated quarantine raised no health-gate alert")
 	publish(v4)
 	send(v4, "push-v4-offline")
 	b.configure(t, func(cfg *config.Config) { cfg.Update.CheckDelaySeconds = 2; cfg.Update.CheckIntervalSeconds = 3 })
@@ -1126,9 +1234,38 @@ func runRealPushChannel(t *testing.T) {
 	b.waitUpgrade(t, v4, boot+2*time.Duration(health)*time.Second)
 	checkTrigger(v4, "feed-check")
 	t.Log("offline recipient caught up through its own feed check")
+	waitPush(t, 30*time.Second, "cleared failed-update alert", func() bool {
+		var alerts json.RawMessage
+		return b.client(t).get(ctx, "/api/v1/status/alerts", &alerts) == nil && !bytes.Contains(alerts, []byte("update_failed"))
+	})
+
 	if pushPeer(t, b.adminBase).ID != originalPeer {
 		t.Fatal("catch-up changed the peer identity")
 	}
+
+	// A successful up-to-date check resets deduplication and clears an outage alert.
+	setOutage := func(value bool) { feed.mu.Lock(); feed.failIndex = value; feed.mu.Unlock() }
+	alertActive := func() bool {
+		var alerts json.RawMessage
+		if err := b.client(t).get(ctx, "/api/v1/status/alerts", &alerts); err != nil {
+			t.Fatal(err)
+		}
+		return bytes.Contains(alerts, []byte("update_feed_unavailable")) && bytes.Contains(alerts, []byte("warning"))
+	}
+	previousFeedFailures := strings.Count(b.logs(), "Update feed-check  failed:")
+	for episode := 1; episode <= 2; episode++ {
+		setOutage(true)
+		waitPush(t, 40*time.Second, "feed outage alert", alertActive)
+		if count := strings.Count(b.logs(), "Update feed-check  failed:"); count != previousFeedFailures+episode {
+			t.Fatalf("outage episode %d logged %d causes", episode, count)
+		}
+		setOutage(false)
+		waitPush(t, 20*time.Second, "feed recovery", func() bool { return !alertActive() })
+	}
+	if strings.Contains(b.logs(), "failed: no compatible update") {
+		t.Fatal("up-to-date feed logged a failure")
+	}
+	t.Log("two feed outages reported once each, warning raised after failures and cleared on success")
 
 	// A later candidate is withheld, then withdrawn while B is offline.
 	b.stop(t)
@@ -1158,7 +1295,88 @@ func runRealPushChannel(t *testing.T) {
 	if err := os.WriteFile(signalPath(v5), signed, 0o644); err != nil {
 		t.Fatal(err)
 	}
+	indexPath := filepath.Join(feed.dir, strings.TrimPrefix(feed.lane(), "/"), "index.json")
+	originalIndex, err := os.ReadFile(indexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	versionDir := filepath.Dir(signalPath(v5))
+	movedDir := filepath.Join(work, "symlink-control-v5")
+	if err := os.Rename(versionDir, movedDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(movedDir, versionDir); err != nil {
+		t.Fatal(err)
+	}
+	a.command(t, false, "withdraw-symlink", "update", "withdraw", "--channel", realE2EChannel, "--version", v5.version)
+	afterIndex, err := os.ReadFile(indexPath)
+	if err != nil || !bytes.Equal(afterIndex, originalIndex) {
+		t.Fatal("refused withdrawal changed the index")
+	}
+	if err := os.Remove(versionDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(movedDir, versionDir); err != nil {
+		t.Fatal(err)
+	}
+	uiPath := filepath.Join(feed.dir, "ui-bundle", realE2EChannel, "any", "any", v5.version, "signal.json")
+	if err := os.MkdirAll(filepath.Dir(uiPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(uiPath, []byte("ui package control"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	expiredSignal, err := update.ParseSignal(signed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiredSignal.PublishedAt = time.Now().Add(-8 * 24 * time.Hour).UTC().Format(time.RFC3339)
+	expiredSignal.ExpiresAt = time.Now().Add(-24 * time.Hour).UTC().Format(time.RFC3339)
+	expiredRaw, err := expiredSignal.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	expired := resignPushSignal(t, expiredRaw, key, 0)
+	if err := os.WriteFile(signalPath(v5), expired, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a.command(t, false, "expired-stored-signal", "update", "signal", "--from-feed", "--channel", realE2EChannel, "--version", v5.version)
+	expirationMessage := readFileString(filepath.Join(a.work, "expired-stored-signal.log"))
+	if !strings.Contains(expirationMessage, "signed at build time") || !strings.Contains(expirationMessage, "seven days") || !strings.Contains(expirationMessage, "pipeline must sign them again") {
+		t.Fatal("expired send does not explain pipeline resigning")
+	}
+	if err := os.WriteFile(signalPath(v5), signed, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	futureSignal, err := update.ParseSignal(signed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	futureSignal.PublishedAt = time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+	futureSignal.ExpiresAt = time.Now().Add(2 * time.Hour).UTC().Format(time.RFC3339)
+	futureRaw, err := futureSignal.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	future := resignPushSignal(t, futureRaw, key, 0)
 	a.command(t, true, "withdraw-v5", "update", "withdraw", "--channel", realE2EChannel, "--version", v5.version)
+	// Recreate interruption after some moves but before index replacement, then resume the plan.
+	archiveLine := regexp.MustCompile(`archive=([^\n]+)`).FindStringSubmatch(readFileString(filepath.Join(a.work, "withdraw-v5.log")))
+	if len(archiveLine) != 2 {
+		t.Fatal("withdrawal did not report its archive")
+	}
+	archivedVersion := filepath.Join(strings.TrimSpace(archiveLine[1]), strings.TrimPrefix(feed.lane(), "/"), v5.version)
+	if err := os.Rename(archivedVersion, versionDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(indexPath, originalIndex, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a.command(t, true, "withdraw-v5-retry", "update", "withdraw", "--channel", realE2EChannel, "--version", v5.version)
+	if _, err := os.Stat(uiPath); err != nil {
+		t.Fatal("CLI withdrawal removed a UI package")
+	}
+
 	a.command(t, false, "send-withdrawn", "update", "signal", "--from-feed", "--channel", realE2EChannel, "--version", v5.version)
 	for _, name := range []string{"manifest.json", "update.wasm", "signal.json"} {
 		response, err := feed.srv.Client().Get(feed.base + feed.lane() + "/" + v5.version + "/" + name)
@@ -1176,13 +1394,45 @@ func runRealPushChannel(t *testing.T) {
 	}
 	waitPush(t, 30*time.Second, "rejoined update subscription", func() bool { return slices.Contains(topic.ListPeers(), originalPeer) })
 	time.Sleep(4 * time.Second)
+	observer, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"), libp2p.DisableRelay())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer observer.Close()
+	observerGossip, err := ps.NewGossipSub(ctx, observer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observerTopic, err := observerGossip.Join(update.SignalTopic(realE2EChannel))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer observerTopic.Close()
+	observerSub, err := observerTopic.Subscribe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer observerSub.Cancel()
+	if err := observer.Connect(ctx, pushPeer(t, b.adminBase)); err != nil {
+		t.Fatal(err)
+	}
+	waitPush(t, 30*time.Second, "downstream observer", func() bool { return len(observerTopic.ListPeers()) == 1 })
+	time.Sleep(3 * time.Second)
 	before := strings.Count(b.logs(), "Update signal handler received")
-	for _, raw := range [][]byte{[]byte("junk"), stranger, excessive, bytes.Repeat([]byte("x"), update.SignalMaxBytes+1)} {
+	for _, raw := range [][]byte{[]byte("junk"), stranger, excessive, expired, future, bytes.Repeat([]byte("x"), update.SignalMaxBytes+1)} {
 		if err := topic.Publish(ctx, raw); err != nil {
 			t.Fatal(err)
 		}
 	}
-	time.Sleep(5 * time.Second)
+	noRelayCtx, noRelayCancel := context.WithTimeout(ctx, 5*time.Second)
+	relayed, relayErr := observerSub.Next(noRelayCtx)
+	noRelayCancel()
+	if relayErr == nil {
+		t.Fatalf("rejected gossip relayed downstream: %d bytes", len(relayed.Data))
+	}
+	if !errors.Is(relayErr, context.DeadlineExceeded) {
+		t.Fatalf("relay observation failed: %v", relayErr)
+	}
 	if got := strings.Count(b.logs(), "Update signal handler received"); got != before {
 		t.Fatalf("invalid gossip reached handler: before %d after %d", before, got)
 	}
@@ -1194,8 +1444,14 @@ func runRealPushChannel(t *testing.T) {
 	if err := topic.Publish(ctx, signed); err != nil {
 		t.Fatal(err)
 	}
+	relayCtx, relayCancel := context.WithTimeout(ctx, 30*time.Second)
+	relayed, relayErr = observerSub.Next(relayCtx)
+	relayCancel()
+	if relayErr != nil || !bytes.Equal(relayed.Data, signed) {
+		t.Fatalf("valid relay control failed: %v", relayErr)
+	}
 	waitPush(t, 30*time.Second, "withdrawn manifest refusal", func() bool {
-		return strings.Contains(b.logs(), "fetch update manifest:") && strings.Contains(b.logs(), "HTTP 404")
+		return strings.Contains(b.logs(), "Update signal "+v5.updateID+" failed: fetch update manifest:")
 	})
 	time.Sleep(5 * time.Second)
 	requireRealIdentity(t, b.adminBase, v4)

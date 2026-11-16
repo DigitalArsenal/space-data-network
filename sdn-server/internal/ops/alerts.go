@@ -54,8 +54,8 @@ const (
 	KindEngineRebuilding = "engine_rebuilding"
 	// KindUpdateFailed: a pushed update did not install on this box.
 	KindUpdateFailed = "update_failed"
- // KindUpdateFeedUnavailable reports consecutive automatic feed-check failures.
- KindUpdateFeedUnavailable = "update_feed_unavailable"
+	// KindUpdateFeedUnavailable reports consecutive automatic feed-check failures.
+	KindUpdateFeedUnavailable = "update_feed_unavailable"
 	// KindBitswapSendStalled: connected demand for held blocks has no send progress.
 	KindBitswapSendStalled = "bitswap_send_stalled"
 )

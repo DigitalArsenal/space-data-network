@@ -1,16 +1,16 @@
 package node
 
 import (
+	"bufio"
 	"context"
- "bufio"
- "encoding/json"
- "fmt"
- "path/filepath"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"math/rand"
 	"os"
+	"path/filepath"
 	"runtime"
- "strings"
+	"strings"
 	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/ops"
@@ -31,27 +31,33 @@ func (s *UpdateSignalSubscriber) runFeedChecks(ctx context.Context) {
 	}
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
- alerts := time.NewTicker(5 * time.Second)
- defer alerts.Stop()
+	alerts := time.NewTicker(5 * time.Second)
+	defer alerts.Stop()
 	consecutiveFailures := 0
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-alerts.C:
- s.restoreFailedAlerts()
+			s.restoreFailedAlerts()
 		case <-timer.C:
 			if err := s.checkFeed(ctx); err != nil {
 				s.reportFailure("feed-check", "", err)
-                consecutiveFailures++
-                if consecutiveFailures >= 3 { s.deps.Alerts.Raise(ops.KindUpdateFeedUnavailable, s.deps.Channel, ops.SeverityWarning, "Update feed cannot be read: " + err.Error()) }
+				consecutiveFailures++
+				if consecutiveFailures >= 3 {
+					s.deps.Alerts.Raise(ops.KindUpdateFeedUnavailable, s.deps.Channel, ops.SeverityWarning, "Update feed cannot be read: "+err.Error())
+				}
 			} else {
-                consecutiveFailures = 0
-                s.deps.Alerts.Clear(ops.KindUpdateFeedUnavailable, s.deps.Channel)
-                s.mu.Lock()
-                for cause := range s.reportedFailures { if strings.HasPrefix(cause, "feed-check:") { delete(s.reportedFailures, cause) } }
-                s.mu.Unlock()
-            }
+				consecutiveFailures = 0
+				s.deps.Alerts.Clear(ops.KindUpdateFeedUnavailable, s.deps.Channel)
+				s.mu.Lock()
+				for cause := range s.reportedFailures {
+					if strings.HasPrefix(cause, "feed-check:") {
+						delete(s.reportedFailures, cause)
+					}
+				}
+				s.mu.Unlock()
+			}
 			interval := s.deps.CheckInterval
 			offset := time.Duration(rand.Int63n(int64(interval/5) + 1))
 			timer.Reset(interval + offset)
@@ -75,10 +81,14 @@ func (s *UpdateSignalSubscriber) checkFeed(ctx context.Context) error {
 		return err
 	}
 	entry, err := update.SelectProviderCandidate(raw, s.feed, update.ProviderFeedSelection{
-		Exclude: func(entry update.ProviderFeedUpdate) bool { return update.HasFailedUpdate(s.deps.Paths, entry.UpdateID) },
- Channel: s.deps.Channel, Platform: runtime.GOOS, Arch: runtime.GOARCH, Kind: s.deps.Kind, CurrentSequence: state.Sequence,
+		Exclude: func(entry update.ProviderFeedUpdate) bool {
+			return update.HasFailedUpdate(s.deps.Paths, entry.UpdateID)
+		},
+		Channel: s.deps.Channel, Platform: runtime.GOOS, Arch: runtime.GOARCH, Kind: s.deps.Kind, CurrentSequence: state.Sequence,
 	})
-	if errors.Is(err, update.ErrNoCompatibleUpdate) { return nil }
+	if errors.Is(err, update.ErrNoCompatibleUpdate) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -86,8 +96,8 @@ func (s *UpdateSignalSubscriber) checkFeed(ctx context.Context) error {
 		return nil
 	}
 	succeeded := false
- defer func() { s.finishFeed(succeeded) }()
- // The index grants no authority. upgradeTriggered verifies the signed manifest and payload.
+	defer func() { s.finishFeed(succeeded) }()
+	// The index grants no authority. upgradeTriggered verifies the signed manifest and payload.
 	signal := update.SignalFromFeedEntry(*entry, s.feed.String(), s.deps.Now(), false)
 	if err := s.upgradeTriggered(ctx, signal, state, "feed-check"); err != nil {
 		var refusal *update.StoreFormatRefusal
@@ -97,24 +107,28 @@ func (s *UpdateSignalSubscriber) checkFeed(ctx context.Context) error {
 		return err
 	}
 	succeeded = true
- return nil
+	return nil
 }
 
 // claimFeed reserves the install without charging the swap interval for a download.
 func (s *UpdateSignalSubscriber) claimFeed(id string) bool {
- s.mu.Lock()
- defer s.mu.Unlock()
- if s.pendingFeed || s.handled[id] || !s.lastUpgrade.IsZero() && s.deps.Now().Sub(s.lastUpgrade) < s.deps.MinInterval { return false }
- s.pendingFeed = true
- s.handled[id] = true
- return true
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.pendingFeed || s.handled[id] || !s.lastUpgrade.IsZero() && s.deps.Now().Sub(s.lastUpgrade) < s.deps.MinInterval {
+		return false
+	}
+	s.pendingFeed = true
+	s.handled[id] = true
+	return true
 }
 
 func (s *UpdateSignalSubscriber) finishFeed(succeeded bool) {
- s.mu.Lock()
- defer s.mu.Unlock()
- s.pendingFeed = false
- if succeeded { s.lastUpgrade = s.deps.Now() }
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pendingFeed = false
+	if succeeded {
+		s.lastUpgrade = s.deps.Now()
+	}
 }
 
 func (s *UpdateSignalSubscriber) reportFailure(trigger, id string, err error) {
@@ -130,39 +144,66 @@ func (s *UpdateSignalSubscriber) reportFailure(trigger, id string, err error) {
 
 // restoreFailedAlerts reconciles health-gate reversals with subsequent installations.
 func (s *UpdateSignalSubscriber) restoreFailedAlerts() {
- path := filepath.Join(s.deps.Paths.Root, "deploy-ledger.jsonl")
- info, err := os.Stat(path)
- if errors.Is(err, os.ErrNotExist) { return }
- if err != nil { log.Warnf("Read update ledger: %v", err); return }
- if info.ModTime() == s.alertLedgerTime && info.Size() == s.alertLedgerSize { return }
- file, err := os.Open(path)
- if err != nil { log.Warnf("Read update ledger: %v", err); return }
- defer file.Close()
- failures := map[string]update.DeployLedgerEntry{}
- scan := bufio.NewScanner(file)
- scan.Buffer(make([]byte, 4096), 4<<20)
- for scan.Scan() {
-  var entry update.DeployLedgerEntry
-  if json.Unmarshal(scan.Bytes(), &entry) != nil { continue }
-  switch entry.Action {
-  case "health-reverted": failures[entry.UpdateID] = entry
-  case "health-passed":
-   if failed, ok := failures[entry.UpdateID]; ok && failed.Version == entry.Version { delete(failures, entry.UpdateID) }
-  }
- }
- if err := scan.Err(); err != nil { log.Warnf("Read update ledger: %v", err); return }
- state, err := update.LoadState(s.deps.Paths)
- if err != nil { log.Warnf("Read update state: %v", err); return }
- active := map[string]bool{}
- for id, failed := range failures {
-  if state.Sequence > failed.Sequence { continue }
-  active[id] = true
-  if !s.failedAlerts[id] {
-   s.deps.Alerts.Raise(ops.KindUpdateFailed, id, ops.SeverityError,
-    fmt.Sprintf("Update %s (%s) failed its health gate and was rolled back at %s: %s", id, failed.Version, failed.RecordedAt, failed.Reason))
-  }
- }
- for id := range s.failedAlerts { if !active[id] { s.deps.Alerts.Clear(ops.KindUpdateFailed, id) } }
- s.failedAlerts = active
- s.alertLedgerTime, s.alertLedgerSize = info.ModTime(), info.Size()
+	path := filepath.Join(s.deps.Paths.Root, "deploy-ledger.jsonl")
+	info, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return
+	}
+	if err != nil {
+		log.Warnf("Read update ledger: %v", err)
+		return
+	}
+	if info.ModTime() == s.alertLedgerTime && info.Size() == s.alertLedgerSize {
+		return
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		log.Warnf("Read update ledger: %v", err)
+		return
+	}
+	defer file.Close()
+	failures := map[string]update.DeployLedgerEntry{}
+	scan := bufio.NewScanner(file)
+	scan.Buffer(make([]byte, 4096), 4<<20)
+	for scan.Scan() {
+		var entry update.DeployLedgerEntry
+		if json.Unmarshal(scan.Bytes(), &entry) != nil {
+			continue
+		}
+		switch entry.Action {
+		case "health-reverted":
+			failures[entry.UpdateID] = entry
+		case "health-passed":
+			if failed, ok := failures[entry.UpdateID]; ok && failed.Version == entry.Version {
+				delete(failures, entry.UpdateID)
+			}
+		}
+	}
+	if err := scan.Err(); err != nil {
+		log.Warnf("Read update ledger: %v", err)
+		return
+	}
+	state, err := update.LoadState(s.deps.Paths)
+	if err != nil {
+		log.Warnf("Read update state: %v", err)
+		return
+	}
+	active := map[string]bool{}
+	for id, failed := range failures {
+		if state.Sequence > failed.Sequence {
+			continue
+		}
+		active[id] = true
+		if !s.failedAlerts[id] {
+			s.deps.Alerts.Raise(ops.KindUpdateFailed, id, ops.SeverityError,
+				fmt.Sprintf("Update %s (%s) failed its health gate and was rolled back at %s: %s", id, failed.Version, failed.RecordedAt, failed.Reason))
+		}
+	}
+	for id := range s.failedAlerts {
+		if !active[id] {
+			s.deps.Alerts.Clear(ops.KindUpdateFailed, id)
+		}
+	}
+	s.failedAlerts = active
+	s.alertLedgerTime, s.alertLedgerSize = info.ModTime(), info.Size()
 }

@@ -252,8 +252,10 @@ func (s *Signal) Verify(opts SignalVerifyOptions) error {
 	if s.Sequence <= opts.CurrentSequence {
 		return fmt.Errorf("update signal sequence %d is not newer than the installed sequence %d", s.Sequence, opts.CurrentSequence)
 	}
-	if err := s.assertSignature(opts.TrustedRoots); err != nil { return err }
- return s.assertFreshness(nowOr(opts.Now))
+	if err := s.assertSignature(opts.TrustedRoots); err != nil {
+		return err
+	}
+	return s.assertFreshness(nowOr(opts.Now))
 }
 
 // AssertUnderFeed refuses a signal whose manifest_url or carrier_url lies
@@ -312,10 +314,16 @@ func (s *Signal) assertShape() error {
 }
 
 // SignalTimeError depends on the receiving clock, rather than message authenticity.
-type SignalTimeError struct { Expired bool; At string }
+type SignalTimeError struct {
+	Expired bool
+	At      string
+}
+
 func (e *SignalTimeError) Error() string {
- if e.Expired { return "update signal expired at " + e.At }
- return "update signal is dated " + e.At + ", which is in the future"
+	if e.Expired {
+		return "update signal expired at " + e.At
+	}
+	return "update signal is dated " + e.At + ", which is in the future"
 }
 
 func (s *Signal) assertFreshness(now time.Time) error {
@@ -334,9 +342,11 @@ func (s *Signal) assertFreshness(now time.Time) error {
 	if expires.After(published.Add(SignalMaxTTL)) || !expires.After(published) {
 		return errors.New("update signal expiry must be after publication and within seven days")
 	}
-	if published.After(now.Add(SignalClockSkew)) { return &SignalTimeError{At:s.PublishedAt} }
+	if published.After(now.Add(SignalClockSkew)) {
+		return &SignalTimeError{At: s.PublishedAt}
+	}
 	if !now.Before(expires) {
-		return &SignalTimeError{Expired:true, At:expires.UTC().Format(time.RFC3339)}
+		return &SignalTimeError{Expired: true, At: expires.UTC().Format(time.RFC3339)}
 	}
 	return nil
 }

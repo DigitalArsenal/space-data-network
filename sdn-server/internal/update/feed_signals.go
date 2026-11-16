@@ -174,4 +174,3 @@ func SignFeedSignals(dir string, key ed25519.PrivateKey, roots TrustedRoots) err
 	}
 	return nil
 }
-
