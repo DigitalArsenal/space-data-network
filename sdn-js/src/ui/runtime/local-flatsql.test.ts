@@ -1,3 +1,4 @@
+import { buildOmmFrame, BENCH_EPOCH_BASE } from '../../../scripts/lib/d6-bench-common.mjs';
 import { publishedSchema } from '../../test-schema-helper';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -676,8 +677,8 @@ describe('local FlatSQL datastore', () => {
           ...publishedSchema('OMM'),
         }],
       });
-      const frame = stripSdnFlatBufferSizePrefix(STARLINK_6292_OMM_BYTES);
-      const oldStream = flatSqlSizePrefixedStream([frame, frame]);
+      const frame = stripSdnFlatBufferSizePrefix(buildOmmFrame({ norad: 100000, epochUnix: BENCH_EPOCH_BASE }));
+      const oldStream = flatSqlSizePrefixedStream([frame, stripSdnFlatBufferSizePrefix(buildOmmFrame({ norad: 100001, epochUnix: BENCH_EPOCH_BASE }))]);
       const newStream = flatSqlSizePrefixedStream([frame]);
       await active.ingestFlatBufferStream('OMM', oldStream, {
         recordKeyPrefix: 'published:old',
@@ -863,11 +864,11 @@ describe('local FlatSQL datastore', () => {
         sourceName: 'celestrak-gp',
         batchId: 'fixture-batch',
         timestamp: '2026-05-11T04:02:25Z',
-        dataBytes: STARLINK_6292_OMM_BYTES,
+        dataBytes: buildOmmFrame({ norad: 100000, epochUnix: BENCH_EPOCH_BASE }),
       }]);
 
-      expect((await first.query('SELECT NORAD_CAT_ID FROM OMM LIMIT 10', 'OMM')).records).toEqual([{ NORAD_CAT_ID: 56775 }]);
-      expect((await first.query('SELECT OBJECT_NAME FROM OMM WHERE NORAD_CAT_ID = 56775 LIMIT 10', 'OMM')).records).toEqual([{ OBJECT_NAME: 'STARLINK-6292' }]);
+      expect((await first.query('SELECT NORAD_CAT_ID FROM OMM LIMIT 10', 'OMM')).records).toEqual([{ NORAD_CAT_ID: 100000 }]);
+      expect((await first.query('SELECT OBJECT_NAME FROM OMM WHERE NORAD_CAT_ID = 100000 LIMIT 10', 'OMM')).records).toEqual([{ OBJECT_NAME: 'SAT-100000' }]);
 
       await first.ingestRecords('OMM', [{
         cid: 'cache-omm-2',
@@ -877,9 +878,9 @@ describe('local FlatSQL datastore', () => {
         sourceName: 'celestrak-gp',
         batchId: 'fixture-batch',
         timestamp: '2026-05-11T07:02:25Z',
-        dataBytes: STARLINK_6292_OMM_BYTES,
+        dataBytes: buildOmmFrame({ norad: 100000, epochUnix: BENCH_EPOCH_BASE + 1 }),
       }]);
-      expect((await first.query('SELECT NORAD_CAT_ID FROM OMM LIMIT 10', 'OMM')).records).toEqual([{ NORAD_CAT_ID: 56775 }, { NORAD_CAT_ID: 56775 }]);
+      expect((await first.query('SELECT NORAD_CAT_ID FROM OMM LIMIT 10', 'OMM')).records).toEqual([{ NORAD_CAT_ID: 100000 }, { NORAD_CAT_ID: 100000 }]);
       await first.flush('OMM');
       (await first.destroy());
 
@@ -892,7 +893,7 @@ describe('local FlatSQL datastore', () => {
           ...publishedSchema('OMM'),
         }],
       });
-      expect((await loaded.query('SELECT NORAD_CAT_ID FROM OMM LIMIT 10', 'OMM')).records).toEqual([{ NORAD_CAT_ID: 56775 }, { NORAD_CAT_ID: 56775 }]);
+      expect((await loaded.query('SELECT NORAD_CAT_ID FROM OMM LIMIT 10', 'OMM')).records).toEqual([{ NORAD_CAT_ID: 100000 }, { NORAD_CAT_ID: 100000 }]);
       expect((await loaded.getStats({ includeCachedBytes: false }))[0]).toEqual(expect.objectContaining({
         recordCount: 2,
         ingestedRecordCount: 2,
@@ -923,6 +924,9 @@ describe('local FlatSQL datastore', () => {
         standardId: 'PNM',
         recordCount: 0,
       }));
+      await loaded.destroy();
+      await otherNamespace.destroy();
+      await otherTemplate.destroy();
     } finally {
       restoreIndexedDb();
     }

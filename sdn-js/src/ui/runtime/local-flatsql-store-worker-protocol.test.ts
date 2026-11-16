@@ -1,3 +1,4 @@
+import { buildBenchCorpus } from '../../../scripts/lib/d6-bench-common.mjs';
 import { publishedSchema } from '../../test-schema-helper';
 /**
  * The store-only FlatSQL worker (`local-flatsql-store.worker.ts`) speaks the
@@ -79,10 +80,7 @@ async function openWorkerStore(): Promise<WorkerLocalFlatSqlStore> {
 }
 
 function twoFrameStream(): Uint8Array {
-  const stream = new Uint8Array(STARLINK_6292_OMM_FRAME.byteLength * 2);
-  stream.set(STARLINK_6292_OMM_FRAME, 0);
-  stream.set(STARLINK_6292_OMM_FRAME, STARLINK_6292_OMM_FRAME.byteLength);
-  return stream;
+  return buildBenchCorpus(2).streamBytes;
 }
 
 describe('store-only FlatSQL worker protocol (dashboard window model)', () => {
@@ -110,8 +108,8 @@ describe('store-only FlatSQL worker protocol (dashboard window model)', () => {
     const projected = await store.query('SELECT OBJECT_NAME, _source FROM OMM ORDER BY _rowid ASC', 'OMM');
     expect(projected.columns).toEqual(['OBJECT_NAME', '_source']);
     expect(projected.records).toEqual([
-      { OBJECT_NAME: 'STARLINK-6292', _source: 'OMM@celestrak-gp' },
-      { OBJECT_NAME: 'STARLINK-6292', _source: 'OMM@celestrak-gp' },
+      { OBJECT_NAME: 'SAT-100000', _source: 'OMM@celestrak-gp' },
+      { OBJECT_NAME: 'SAT-100001', _source: 'OMM@celestrak-gp' },
     ]);
 
     await store.clearStandard('OMM', { persist: false });
