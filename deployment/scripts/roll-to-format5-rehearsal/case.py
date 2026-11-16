@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Run inside an isolated container whose PID 1 is systemd."""
+import calendar
 import hashlib
 import json
 import os
@@ -48,14 +49,64 @@ def hashes():
     return result
 
 
-def counts():
+def stats_read():
     with urllib.request.urlopen('http://127.0.0.1:5001/api/v1/stats', timeout=60) as r:
-        data = json.load(r)
+        return json.load(r)
+
+
+def feeds(data):
+    # One row per feed: (standard, provider, source, batch) with its count.
+    return {'|'.join((f['schema'], f.get('provider_id', ''), f.get('source_name', ''),
+                      f.get('batch_id', ''))): f['count'] for f in data.get('sources', [])}
+
+
+def counts(name, after_unix):
+    # The stats lane rebuilds every few seconds; take two equal readings of a
+    # build that is not stale and was made after the node's startup writes.
+    end = time.monotonic() + 600
+    previous = None
+    while time.monotonic() < end:
+        data = stats_read()
+        as_of = data.get('as_of')
+        fresh = not data.get('stale') and (as_of is None or
+                                           calendar.timegm(time.strptime(as_of, '%Y-%m-%dT%H:%M:%SZ')) > after_unix)
+        reading = ({s['schema']: s['count'] for s in data['schemas']}, feeds(data))
+        if fresh and reading == previous:
+            break
+        previous = reading if fresh else None
+        time.sleep(6)
+    else:
+        raise RuntimeError('stats did not settle on a fresh build')
+    result, per_feed = reading
+    if not result or not sum(result.values()) or not per_feed:
+        raise RuntimeError('public stats has no populated per-standard or per-feed counts')
     # Persist only aggregates, never source rows or records.
-    result = {s['schema']: s['count'] for s in data['schemas']}
-    if not result or not sum(result.values()):
-        raise RuntimeError('public stats has no populated per-standard counts')
-    return result
+    (ROOT / ('feeds-' + name + '.json')).write_text(json.dumps(per_feed, indent=1, sort_keys=True) + '\n')
+    return result, per_feed
+
+
+def compare_feeds(before, after, boot_additions, profile_refreshes):
+    # Every feed keeps its count. The node's own startup writes are the only
+    # differences allowed: connector records ($ICN) equal to the persisted
+    # count and a refreshed local profile ($EPM), which replaces itself.
+    rows = {}
+    icn_delta = 0
+    for key in sorted(set(before) | set(after)):
+        b, a = before.get(key), after.get(key)
+        if a == b:
+            continue
+        rows[key] = {'before': b, 'after': a}
+        if key.startswith('ICN.fbs|'):
+            icn_delta += (a or 0) - (b or 0)
+    unexplained = [k for k in rows if not k.startswith('ICN.fbs|')]
+    epm = [k for k in unexplained if k.startswith('EPM.fbs|')]
+    if profile_refreshes and epm and sum((rows[k]['after'] or 0) - (rows[k]['before'] or 0) for k in epm) == 0:
+        unexplained = [k for k in unexplained if k not in epm]
+    passed = not unexplained and icn_delta == boot_additions
+    return {'passed': passed, 'feeds_before': len(before), 'feeds_after': len(after),
+            'feeds_equal': len(set(before) & set(after)) - len(rows), 'differences': rows,
+            'icn_delta': icn_delta, 'startup_icn_persisted': boot_additions,
+            'unexplained': unexplained}
 
 
 def peer():
@@ -167,7 +218,7 @@ TimeoutStopSec=75
     (ROOT / 'baseline.json').write_text(json.dumps({'ready': True, 'http_status': 200}) + '\n')
     expected = peer()
     before_invocation, _ = boot_observation()
-    before = counts()
+    before, feeds_before = counts('before', time.time())
     (ROOT / 'counts-before.json').write_text(json.dumps(before, sort_keys=True) + '\n')
     records.snapshot('/evidence/records-before', before)
     before_hashes = None
@@ -279,18 +330,23 @@ ExecStartPre=/bin/sh -c 'test ! -d /case/store/fsql5'
         if selected_sha256 != old_binary_sha256:
             raise RuntimeError('the selected bundle is not the original binary')
     after_invocation, boot_additions = boot_observation()
-    after = counts()
+    after, feeds_after = counts('after', time.time())
     (ROOT / 'counts-after.json').write_text(json.dumps(after, sort_keys=True) + '\n')
     preservation = records.compare('/evidence/records-before', after, boot_ms,
                                    boot_additions if after_invocation != before_invocation else 0,
                                    expected, after_invocation != before_invocation)
     (ROOT / 'record-preservation.json').write_text(json.dumps(preservation, indent=2) + '\n')
+    refreshes = sum(row.get('refreshed_local_profiles', 0) for row in preservation['standards'].values())
+    feed_result = compare_feeds(feeds_before, feeds_after,
+                                boot_additions if after_invocation != before_invocation else 0, refreshes)
+    (ROOT / 'feed-counts-comparison.json').write_text(json.dumps(feed_result, indent=2) + '\n')
     (ROOT / 'observations.json').write_text(json.dumps({
         'ready': True, 'running_peer_unchanged': True, 'counts_equal': before == after,
         'roll_exit': code, 'injected': injected,
         'conversion_seconds': round(migration_end-migration_start, 2) if migration_end else None,
         'peak_conversion_rss_kib_sampled': peak_kib, 'switched_fsql5_bytes': switched_bytes,
-        'stopped_format4_hashes': stopped_hash_result, 'records_preserved': preservation['passed']}) + '\n')
+        'stopped_format4_hashes': stopped_hash_result, 'records_preserved': preservation['passed'],
+        'feed_counts_preserved': feed_result['passed']}) + '\n')
     if any(' ' + event + ' ' in ledger for event in
            ('SUCCESS', 'ROLLED_BACK_BEFORE_SWITCH', 'ROLLED_BACK_AFTER_SWITCH')):
         replay_pid = command('systemctl', 'show', '-p', 'MainPID', '--value', UNIT)
@@ -304,6 +360,8 @@ ExecStartPre=/bin/sh -c 'test ! -d /case/store/fsql5'
             raise RuntimeError('second run was not refused without restarting the node')
     if not preservation['passed']:
         raise RuntimeError('record preservation failed')
+    if not feed_result['passed']:
+        raise RuntimeError('per-feed counts changed')
     if case == 'forward':
         if code != 0 or ' SUCCESS ' not in ledger:
             raise RuntimeError('forward conversion failed')

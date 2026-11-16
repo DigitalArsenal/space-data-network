@@ -1,9 +1,11 @@
 # Isolated systemd rehearsal
 
 This harness is an end-to-end test of `../roll-to-format5.sh`. It requires
-Docker with privileged containers, a cgroup mount usable by systemd, Python 3.12
-or later on the driver, and enough disk for a case store and record evidence. Completed case stores
-and bundles are removed before the following case starts.
+Docker with privileged containers, a cgroup mount usable by systemd, Python 3.9
+or later on the driver, and enough disk for a case store and record evidence. Each case store is a
+copy-on-write clone of the source copy where the filesystem supports it (`cp -c` on APFS,
+`--reflink=auto` elsewhere). Completed case stores and bundles are removed before the following
+case starts. `--cpus` and `--memory` set each case container's limits (2 CPUs and 6 GB by default).
 The image uses Ubuntu 24.04 for the selected node architecture, amd64 by default.
 Systemd, the Python driver and their support libraries run on the build platform's native architecture;
 node binaries and target runtime libraries retain the selected architecture.
@@ -95,6 +97,14 @@ uses a temporary copy so the baseline evidence stays unchanged. The after-state 
 compares the complete bytes against that stream. Missing occurrences, different
 bytes, extra occurrences of an existing address and unexplained additions fail. Counts remain
 observations rather than the preservation criterion.
+
+Per-feed counts come from the node's own `/api/v1/stats` (`sources[]`, one row
+per standard, provider, source and batch), read before and after from a stats
+build that is not stale, was made after the node's startup writes and gives the
+same counts twice. `feeds-before.json`, `feeds-after.json` and
+`feed-counts-comparison.json` hold them. Every feed must keep its count; the only
+differences allowed are `$ICN` feeds whose total rise equals the startup
+persistence count, and an unchanged `$EPM` total when the local profile refreshed.
 
 The only allowed additions are startup ICN records: each must name a connector
 present before, have an update timestamp after the rollout began, and occur

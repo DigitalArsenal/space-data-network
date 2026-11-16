@@ -14,8 +14,16 @@ CASES = ('forward', 'interrupted', 'budget', 'after-switch', 'wrong-peer',
          'disk', 'script-term', 'script-hup')
 
 
+def sha256(path):
+    digest = hashlib.sha256()
+    with open(path, 'rb') as stream:
+        for block in iter(lambda: stream.read(1 << 20), b''):
+            digest.update(block)
+    return digest.hexdigest()
+
+
 def verify(archive, checksums):
-    digest = hashlib.file_digest(open(archive, 'rb'), 'sha256').hexdigest()
+    digest = sha256(archive)
     expected = [line.split()[0] for line in checksums.read_text().splitlines()
                 if len(line.split()) == 2 and line.split()[1].lstrip('*') == archive.name]
     if expected != [digest]:
@@ -30,7 +38,13 @@ def unpack(archive, destination):
         tops = {m.name.split('/')[0] for m in members if m.name}
         if len(tops) != 1:
             raise ValueError('archive needs one top-level bundle directory')
-        bundle.extractall(destination.parent / (destination.name + '.unpack'), filter='data')
+        for member in members:
+            if member.name.startswith('/') or '..' in member.name.split('/') or \
+                    not (member.isfile() or member.isdir() or member.issym()):
+                raise ValueError('archive member outside the bundle: ' + member.name)
+    unpacked = destination.parent / (destination.name + '.unpack')
+    unpacked.mkdir()
+    subprocess.run(['tar', '-xzf', str(archive), '--no-same-owner', '-C', str(unpacked)], check=True)
     source = destination.parent / (destination.name + '.unpack') / tops.pop()
     for child in source.iterdir():
         shutil.move(str(child), destination / child.name)
@@ -40,8 +54,23 @@ def unpack(archive, destination):
         raise ValueError('archive has no bundle launcher')
 
 
-def ignore_private(directory, names):
-    return [n for n in names if n in ('keys', 'secrets', 'auth.db') or 'udl' in n.lower()]
+def private(name):
+    return name in ('keys', 'secrets', 'auth.db') or 'udl' in name.lower()
+
+
+def copy_store(source, destination):
+    # A copy-on-write clone where the filesystem supports one, then remove
+    # private material, which never takes part in a rehearsal.
+    clone = ['cp', '-c', '-p', '-R', str(source), str(destination)] if sys.platform == 'darwin' \
+        else ['cp', '-a', '--reflink=auto', str(source), str(destination)]
+    subprocess.run(clone, check=True)
+    for directory, names, files in os.walk(destination, topdown=True):
+        for name in [n for n in names if private(n)]:
+            shutil.rmtree(os.path.join(directory, name))
+            names.remove(name)
+        for name in files:
+            if private(name):
+                os.unlink(os.path.join(directory, name))
 
 
 def main():
@@ -57,6 +86,8 @@ def main():
     ap.add_argument('--case', choices=CASES, action='append')
     ap.add_argument('--conversion-minutes', type=int, default=90)
     ap.add_argument('--ready-seconds', type=int, default=300)
+    ap.add_argument('--cpus', default='2')
+    ap.add_argument('--memory', default='6g')
     args = ap.parse_args()
     if len(args.old_binary) != len(args.store) or len(args.old_sha256) != len(args.store):
         ap.error('each store requires its matching old binary and SHA-256')
@@ -71,8 +102,7 @@ def main():
     try:
         verified = [verify(args.new_archive, args.new_checksums)]
         for binary, expected in zip(args.old_binary, args.old_sha256):
-            with binary.open('rb') as stream:
-                digest = hashlib.file_digest(stream, 'sha256').hexdigest()
+            digest = sha256(binary)
             if digest != expected:
                 raise ValueError('old binary checksum mismatch')
             verified.append({'old_binary': binary.name, 'sha256': digest})
@@ -87,7 +117,7 @@ def main():
             for case in args.case or CASES:
                 directory = work / ('store-' + str(number)) / case
                 directory.mkdir(parents=True)
-                shutil.copytree(source, directory / 'store', ignore=ignore_private)
+                copy_store(source, directory / 'store')
                 old_bundle = directory / 'base/sdn-bundle'
                 (old_bundle / 'bin').mkdir(parents=True)
                 old_binary = args.old_binary[number - 1]
@@ -103,7 +133,7 @@ def main():
                 with open(directory / 'container.log', 'w') as log:
                     subprocess.run(['docker', 'run', '-d', '-t', '--name', active, '--hostname=sdn-rehearsal', '--privileged',
                                     '--cgroupns=host', '--network=none', '--platform=linux/' + args.arch,
-                                    '--cpus=2', '--memory=6g', '--tmpfs=/run', '--tmpfs=/run/lock',
+                                    '--cpus=' + args.cpus, '--memory=' + args.memory, '--tmpfs=/run', '--tmpfs=/run/lock',
                                     '--tmpfs=/tmp', '-v', '/sys/fs/cgroup:/sys/fs/cgroup:rw',
                                     '-v', str(cache) + ':/engine-cache',
                                     '-v', str(evidence) + ':/evidence',
