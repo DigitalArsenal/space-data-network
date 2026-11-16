@@ -67,17 +67,36 @@ def run(case, minutes, seconds):
     if Path('/proc/1/comm').read_text().strip() != 'systemd':
         raise RuntimeError('PID 1 is not systemd')
     (ROOT / 'home').mkdir()
+    (ROOT / 'cache').mkdir()
+    password = ROOT / 'test-password'
+    password.write_text(os.urandom(32).hex())
+    password.chmod(0o600)
+    os.environ['SDN_KEY_PASSWORD_FILE'] = str(password)
+    os.environ['XDG_CACHE_HOME'] = '/case/cache'
     os.environ['HOME'] = '/case/home'
+    # Empty bootstrap lists trigger built-in public defaults in these releases.
+    # A synthetic identity at an unused loopback port prevents that fallback.
+    alphabet = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
+    value = int.from_bytes(bytes.fromhex('002408011220') + bytes([1]) * 32, 'big')
+    encoded = ''
+    while value:
+        value, digit = divmod(value, 58)
+        encoded = alphabet[digit] + encoded
+    isolated_peer = '1' + encoded
     # All keys belong to this isolated test. The container has no external network.
     (ROOT / 'config.yaml').write_text('''mode: full
 network:
   listen: [/ip4/127.0.0.1/tcp/4001]
-  enable_relay: false
+  bootstrap: [/ip4/127.0.0.1/tcp/9/p2p/ISOLATED_PEER]
+  edge_relays: []
+  enable_relay: never
 storage:
   path: /case/store
   max_size: 200GB
   gc_interval: 24h
 peers:
+  trusted_peers: []
+  registry_path: /case/empty-peer-registry.json
   enable_dht: false
   enable_mdns: false
 tor:
@@ -88,14 +107,14 @@ admin:
   tls_mode: disabled
 setup:
   data_path: /case/store
-''')
+'''.replace('ISOLATED_PEER', isolated_peer))
     unit = Path('/etc/systemd/system') / UNIT
     unit.write_text('''[Unit]
 Description=Isolated store rehearsal
 [Service]
 Type=simple
 User=root
-Environment=HOME=/case/home
+Environment=HOME=/case/home XDG_CACHE_HOME=/case/cache SDN_KEY_PASSWORD_FILE=/case/test-password
 ExecStart=/case/base/sdn-bundle/bin/spacedatanetwork daemon --config /case/config.yaml
 Restart=no
 TimeoutStopSec=75
@@ -103,6 +122,8 @@ TimeoutStopSec=75
     command('systemctl', 'daemon-reload')
     command('systemctl', 'start', '--no-block', UNIT)
     wait_ready(seconds)
+    command('systemctl', 'is-active', '--quiet', UNIT)
+    (ROOT / 'baseline.json').write_text(json.dumps({'ready': True, 'http_status': 200}) + '\n')
     expected = peer()
     before = counts()
     (ROOT / 'counts-before.json').write_text(json.dumps(before, sort_keys=True) + '\n')

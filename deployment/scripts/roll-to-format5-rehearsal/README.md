@@ -3,25 +3,35 @@
 This harness is an end-to-end test of `../roll-to-format5.sh`. It requires
 Docker with privileged containers, a cgroup mount usable by systemd, Python 3.12
 or later on the driver, and enough disk for independent copies of every case.
-The image uses Ubuntu 22.04 for the selected architecture, arm64 by default.
+The image uses Ubuntu 24.04 for the selected node architecture, amd64 by default.
+Systemd and its support libraries run on the build platform's native architecture;
+node binaries and target runtime libraries retain the selected architecture.
+This supports systemd service execution when the emulator rejects the amd64
+systemd executor. Container binary-format management is masked so it cannot
+replace the Docker kernel's emulator registrations.
 
 The Dockerfile installs systemd, D-Bus, curl, Python and supporting utilities
 from Ubuntu's official package archives. Package downloads occur only during
-the image build. Image-build failure is a blocked rehearsal. The node's old and new release archives and
-each release's own checksum file are explicit inputs; checksum mismatch aborts
+the image build. Image-build failure is a blocked rehearsal. Each source store's old binary and SHA-256, plus the new release archive and
+its release checksum file, are explicit inputs; checksum mismatch aborts
 before store copies or containers are made.
 
 ```bash
 python3 run.py \
-  --old-archive "$OLD_ARCHIVE" --old-checksums "$OLD_CHECKSUMS" \
+  --old-binary "$FIRST_OLD_BINARY" --old-sha256 "$FIRST_OLD_SHA256" \
+  --old-binary "$SECOND_OLD_BINARY" --old-sha256 "$SECOND_OLD_SHA256" \
   --new-archive "$NEW_ARCHIVE" --new-checksums "$NEW_CHECKSUMS" \
-  --arch arm64 \
+  --arch amd64 \
   --store "$FIRST_STORE_COPY" --store "$SECOND_STORE_COPY" \
   --work-dir "$NEW_REHEARSAL_DIRECTORY" \
   --conversion-minutes 90 --ready-seconds 300
 ```
 
-Use published v1.1.0 as OLD and v1.1.5 as NEW for the initial deployment test.
+Use the binary matching each store's installed build as OLD and published
+v1.1.5 as NEW. Each old binary has its bundle's `manifest.json` beside it.
+The old bundle contains `bin/spacedatanetwork` and that manifest; the new bundle
+retains the release archive's launcher and runtime layout. Old binary arguments
+and their digests follow the order of the store arguments.
 Changing `--new-archive` selects another release, with its corresponding checksum
 file supplied through `--new-checksums`. The output directory must not exist.
 A selective repeat uses `--case` with one or more case names. Start Docker before
@@ -30,9 +40,13 @@ it creates. It retains case directories, logs, hashes, ledgers and results.
 
 The source stores are read only. Copies omit `keys`, `secrets` and `auth.db`.
 Every case starts its old node from a fresh copy, with a generated test identity,
-a stable container hostname, loopback listeners, no host ports and
+a generated test password, a separate engine cache, a stable container hostname,
+loopback listeners, disabled DHT and mDNS, no trusted peers, no host ports and
 `--network=none`. The stable hostname allows the release to create a durable
-test identity without Docker's ephemeral-hostname refusal. The new release's engine
+test identity without Docker's ephemeral-hostname refusal. These releases
+replace an empty bootstrap list with public defaults. A synthetic peer identity
+at unused loopback port 9 suppresses that fallback without naming a real peer.
+Docker's network namespace has no external interface. The new release's engine
 is prewarmed before stopping the old node. No runtime permission patch or fake
 systemctl is used. A failure to start the old release is recorded as a failed
 case and requires inspection; the harness does not replace the release or
