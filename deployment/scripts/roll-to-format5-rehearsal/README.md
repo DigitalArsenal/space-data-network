@@ -59,11 +59,14 @@ silently create an empty store.
 | budget | One-minute conversion deadline, automatic recovery and identical fsql4 file hashes. A fast conversion that completes inside the budget fails this injection case. |
 | after-switch | A unit pre-start condition rejects the new fsql5 selection. The original bundle restarts after recovery removes that selection. |
 | wrong-peer | Wrong expected identity is refused before stopping, with unchanged PID, fsql4 hashes and bundle/store selection. |
-| disk | Insufficient free bytes on the supplied filesystem are refused before stopping. This case is explicitly not run when space is sufficient. |
+| disk | Insufficient free bytes on the supplied filesystem are refused before stopping. A bounded ext4 loop filesystem supplies the space constraint. |
 | script-term / script-hup | Signal to the exact roll-script MainPID during conversion invokes automatic recovery. |
 
-The disk case does not fill a host disk or add a test-only script argument.
-Supply a work directory on a genuinely constrained filesystem for that case.
+The disk case creates a sparse ext4 image with capacity equal to the copied
+store size plus 2 GiB, mounts it with a loop device, and copies the store into
+that filesystem before startup. It checks the real free-space result against
+the production formula. It does not fill a host disk or add a test-only script
+argument. The image and original copy remain as evidence.
 Copied-store hashes are taken after the old node first becomes ready. The node
 can perform background maintenance; a hash mismatch is reported as failure,
 not waived. The public `/api/v1/stats` response supplies schema/count aggregates;

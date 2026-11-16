@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 import signal
+import shutil
 import subprocess
 import sys
 import time
@@ -66,6 +67,19 @@ def tree_size(path):
 def run(case, minutes, seconds):
     if Path('/proc/1/comm').read_text().strip() != 'systemd':
         raise RuntimeError('PID 1 is not systemd')
+    if case == 'disk':
+        # A real sparse loop filesystem bounds free space without filling a host disk.
+        source = ROOT / 'store-source'
+        (ROOT / 'store').rename(source)
+        (ROOT / 'store').mkdir()
+        image = ROOT / 'disk.img'
+        size = tree_size(source) + 2 * 1024**3
+        command('truncate', '-s', str(size), str(image))
+        command('mkfs.ext4', '-q', '-F', '-m', '0', str(image))
+        command('mount', '-o', 'loop', str(image), str(ROOT / 'store'))
+        shutil.copytree(source, ROOT / 'store', dirs_exist_ok=True)
+        (ROOT / 'disk-filesystem.json').write_text(json.dumps({
+            'filesystem': 'ext4', 'capacity_bytes': size}) + '\n')
     (ROOT / 'home').mkdir()
     (ROOT / 'cache').mkdir()
     password = ROOT / 'test-password'
@@ -141,8 +155,7 @@ ExecStartPre=/bin/sh -c 'test ! -d /case/store/fsql5'
 ''')
         command('systemctl', 'daemon-reload')
     if case == 'disk':
-        # Use a genuinely constrained filesystem supplied as the work directory.
-        # Never fill the host's disk to manufacture a failure.
+        # Verify that the actual filesystem fails the production space formula.
         vfs = os.statvfs(ROOT / 'store')
         available = vfs.f_bavail * vfs.f_frsize
         required = 3 * tree_size(ROOT / 'store/fsql4') + (ROOT / 'store/auxiliary.flatsqlmeta').stat().st_size + 1073741824 + 5000000000
