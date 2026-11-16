@@ -2,13 +2,8 @@ import { CID } from 'multiformats/cid';
 import { sha256 } from 'multiformats/hashes/sha2';
 import { publishedSchema, recordTestSchema, recordTestBytes } from './test-schema-helper';
 /**
- * Loop D.1 — ONE store: the FlatSQL-WASM engine store is THE SDNNode store.
- *
- * Covers: the promoted store's NodeRecordStorage surface, per-provider
- * source registration + unified views mirroring the sdn-server layout
- * (shadow tables `OMM@<source>`, `_source` = FULL shadow-table name),
- * ModuleHostRecordStore conformance (module hosting drops in unchanged),
- * and reload durability (envelope journal + per-source engine streams).
+ * Binary record-store contracts: CRUD, provenance, module-host capabilities,
+ * filesystem reload, source partitions, and catalog-scale raw queries.
  */
 import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';

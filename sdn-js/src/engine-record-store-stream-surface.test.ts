@@ -244,9 +244,7 @@ describe('stream records and optional envelope metadata', () => {
   });
 
   it('leaves store()\'s record contract byte-for-byte unchanged', async () => {
-    // The envelope is the durable substrate for a RECORD and its provenance;
-    // that is the design (`engine vtab is a query cache over the durable
-    // envelope`), not a legacy fallback, and it is not being retired.
+    // The binary engine persists the record payload and its provenance.
     const persistenceStore = new MemoryFlatSqlPersistenceStore();
     const first = await FlatSQLEngineRecordStore.open({
       persistenceKey: 'record-contract',
@@ -268,7 +266,7 @@ describe('stream records and optional envelope metadata', () => {
       const restored = await second.get('OMM.fbs', cid);
       expect(restored?.data).toEqual(stripSdnFlatBufferSizePrefix(STARLINK_6292_OMM_BYTES));
       expect(restored?.peerId).toBe('peer-a');
-      // ...and it still mirrors into the lane as a query cache.
+      // The restored record is queryable in its original source partition.
       const rows = await second.standardsStore!.query('SELECT NORAD_CAT_ID, _source FROM OMM', 'OMM');
       expect(rows.records).toEqual([{ NORAD_CAT_ID: 56775, _source: 'OMM@local' }]);
     } finally {
