@@ -411,7 +411,8 @@ describe('local FlatSQL datastore', () => {
     });
 
     const frame = stripSdnFlatBufferSizePrefix(STARLINK_6292_OMM_BYTES);
-    const stream = flatSqlSizePrefixedStream([frame, frame]);
+    const skipped = stripSdnFlatBufferSizePrefix(buildOmmFrame({ norad: 100002, epochUnix: BENCH_EPOCH_BASE }));
+    const stream = flatSqlSizePrefixedStream([skipped, frame]);
     const ingested = await store.ingestFlatBufferStream('OMM', stream, {
       persist: false,
       skipRecords: 1,
@@ -419,6 +420,7 @@ describe('local FlatSQL datastore', () => {
       recordKeyOffset: 1,
     });
 
+    expect((await store.query('SELECT NORAD_CAT_ID FROM OMM WHERE NORAD_CAT_ID = 100002', 'OMM')).records).toEqual([]);
     expect(ingested).toBe(1);
     expect((await store.query('SELECT NORAD_CAT_ID FROM OMM LIMIT 1', 'OMM')).records).toEqual([{ NORAD_CAT_ID: 56775 }]);
     expect((await store.getStats({ includeCachedBytes: false }))[0]).toEqual(expect.objectContaining({
@@ -461,13 +463,15 @@ describe('local FlatSQL datastore', () => {
           ...publishedSchema('OMM'),
         }],
       });
-      const ingested = await resumed.ingestFlatBufferStream('OMM', flatSqlSizePrefixedStream([frame, stripSdnFlatBufferSizePrefix(buildOmmFrame({ norad: 100001, epochUnix: BENCH_EPOCH_BASE }))]), {
+      const skipped = stripSdnFlatBufferSizePrefix(buildOmmFrame({ norad: 100002, epochUnix: BENCH_EPOCH_BASE }));
+      const ingested = await resumed.ingestFlatBufferStream('OMM', flatSqlSizePrefixedStream([skipped, stripSdnFlatBufferSizePrefix(buildOmmFrame({ norad: 100001, epochUnix: BENCH_EPOCH_BASE }))]), {
         persist: false,
         skipRecords: 1,
         recordKeyPrefix: 'published:stale-shard',
         recordKeyOffset: 1,
       });
 
+      expect((await resumed.query('SELECT NORAD_CAT_ID FROM OMM WHERE NORAD_CAT_ID = 100002', 'OMM')).records).toEqual([]);
       expect(ingested).toBe(1);
       expect((await resumed.getStats({ includeCachedBytes: false }))[0]).toEqual(expect.objectContaining({
         recordCount: 2,
