@@ -58,55 +58,10 @@ export const GATED_SEVERITIES = new Set(['high', 'critical']);
  * Do not add an entry to make a lane green. Add one when you have read the
  * advisory and can say where it stops.
  */
-// Two advisories published after the libp2p 3 upgrade (which had emptied this
-// list) have NO patched release; npm's only "fix" is a major downgrade
-// (@helia/bitswap 3.x, @helia/unixfs 3.x) back below libp2p 3. Every package
-// below is one of their carriers. Reviewed 2026-10-03.
-const NODE_FORGE_STOPS =
-  'node-forge <=1.4.0 GHSA-86w9-cpqp-85rv (RSA PKCS#1 v1.5 signature verification accepts extra ' +
-  'nested DigestAlgorithm elements), no patched release. Reached only through acme-client inside ' +
-  '@ipshipyard/libp2p-auto-tls, which @helia/libp2p wires into its own default libp2p to fetch ' +
-  "Let's Encrypt certificates for a Node node. sdn-js builds Helia with createHeliaLight on its own " +
-  'libp2p (src/helia.ts) and never constructs @helia/libp2p defaults or AutoTLS; @helia/bitswap ' +
-  'imports @helia/libp2p for types only; none of the chain is in dist/.';
-const BRACES_STOPS =
-  'braces <=3.0.3 GHSA-vfj7-8cjw-p6xm (stack exhaustion from deeply nested patterns), no patched ' +
-  'release. Reached through micromatch/fast-glob/it-glob in @helia/unixfs globSource (filesystem ' +
-  'import, Node only; sdn-js never calls it or passes a pattern) and through metro in react-native, ' +
-  'which @libp2p/webrtc pulls in via react-native-webrtc and which never runs in a browser, in Node ' +
-  'or in dist/.';
-const REVIEWED = { reviewed: '2026-10-03', until: '2026-12-31' };
-
-export const ALLOWLIST = [
-  {
-    package: 'node-forge',
-    advisories: ['https://github.com/advisories/GHSA-86w9-cpqp-85rv'],
-    reason: NODE_FORGE_STOPS,
-    ...REVIEWED,
-  },
-  ...['acme-client', '@ipshipyard/libp2p-auto-tls', '@helia/libp2p', '@helia/bitswap', 'helia'].map(
-    (pkg) => ({ package: pkg, advisories: [], reason: NODE_FORGE_STOPS, ...REVIEWED }),
-  ),
-  {
-    package: 'braces',
-    advisories: ['https://github.com/advisories/GHSA-vfj7-8cjw-p6xm'],
-    reason: BRACES_STOPS,
-    ...REVIEWED,
-  },
-  ...[
-    'micromatch',
-    'fast-glob',
-    'it-glob',
-    '@helia/unixfs',
-    'metro-file-map',
-    'metro',
-    'metro-config',
-    'metro-transform-worker',
-    'react-native',
-    '@react-native/community-cli-plugin',
-    '@react-native/virtualized-lists',
-  ].map((pkg) => ({ package: pkg, advisories: [], reason: BRACES_STOPS, ...REVIEWED })),
-];
+// Reviewed 2026-11-16: the production audit reports no advisories. The local
+// AutoTLS stub removes node-forge and acme-client; the React Native stub
+// removes Metro. GHSA-vfj7-8cjw-p6xm for braces was withdrawn on 2026-10-23.
+export const ALLOWLIST = [];
 
 export function runAudit({ cwd = resolve(REPO_ROOT, 'sdn-js') } = {}) {
   const result = spawnSync('npm', ['audit', '--omit=dev', '--json'], {
