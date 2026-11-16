@@ -5110,6 +5110,9 @@ func (s *FlatSQLStore) RecordIndexSeqPage(q RecordIndexSeqQuery) (RecordIndexSeq
 	}
 	q.Offset = max(q.Offset, 0)
 	if s.rb != nil {
+		if _, ok := s.rb.(format2Backend); ok {
+			return s.f2RecordIndexSeqPage(q)
+		}
 		f4, ok := s.rb.(format4Backend)
 		if !ok {
 			return RecordIndexSeqPage{}, errors.New("record index pages need store format 5 or 1")
