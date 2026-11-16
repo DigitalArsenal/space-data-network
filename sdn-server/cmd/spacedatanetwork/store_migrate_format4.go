@@ -355,6 +355,9 @@ type migrate4Check struct {
 	Lanes         int                  `json:"lanes"`
 	Orphans       map[string]int64     `json:"orphan_index_rows,omitempty"`
 	Rebuild       []format4.RebuildRow `json:"rebuild_verify,omitempty"`
+	// EpochsFormat1Lacked counts records whose format-1 index row has no epoch
+	// although the record carries one (rows written under an older index rule).
+	EpochsFormat1Lacked int64 `json:"epochs_format1_lacked,omitempty"`
 	// MultiFeed counts records held by more than one feed file (tags of
 	// several sources): each is a row set in every one of them (C-38 (3)).
 	MultiFeed     int64    `json:"multi_feed_records,omitempty"`
