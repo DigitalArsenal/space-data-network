@@ -108,7 +108,7 @@ func TestFormat5LegacyFullTextIndexRepairsOnOpen(t *testing.T) {
 	for _, in := range inputs {
 		found := false
 		for _, row := range rows {
-			if row.CID == in.CID && bytes.Equal(row.Plain, in.Plain) {
+			if row.CID == in.CID && bytes.Equal(row.Data, in.Plain) {
 				found = true
 			}
 		}
