@@ -28,6 +28,8 @@ export interface LocalFlatSqlSchema {
   fileId: string;
   bfbs?: Uint8Array;
   schema?: string;
+  /** Included schema sources, with paths relative to the main schema. */
+  includes?: Record<string, string>;
   epochSpec?: {
     partitionColumn?: string;
     epochColumn?: string;
@@ -259,13 +261,30 @@ async function engineOptions(options: LocalFlatSqlStoreOptions): Promise<FlatSQL
   }
   return engine;
 }
-let compilerPromise: Promise<FlatcRunner> | undefined;
 async function binarySchema(schema: LocalFlatSqlSchema): Promise<Uint8Array> {
   if (schema.bfbs) return schema.bfbs;
   if (!schema.schema) throw new Error(`Binary schema required for ${schema.standardId}`);
-  const compiler = await (compilerPromise ??= FlatcRunner.init());
-  compiler.mountFile('/schema/main.fbs', schema.schema); compiler.mountFile('/out/.keep', '');
-  const result = compiler.runCommand(['--binary', '--schema', '-o', '/out', '/schema/main.fbs']);
+  // Each compilation has its own virtual filesystem: includes from another
+  // standard cannot satisfy a missing dependency by accident.
+  const compiler = await FlatcRunner.init();
+  const main = '/schema/main.fbs';
+  for (const [name, source] of Object.entries(schema.includes ?? {})) {
+    const path = new URL(name, 'file:///schema/').pathname;
+    let depth = 1;
+    const escapesRoot = name.split('/').some(part => {
+      if (part === '..') return --depth < 0;
+      if (part && part !== '.') depth += 1;
+      return false;
+    });
+    if (!/^[A-Za-z0-9_./-]+$/.test(name) || name.startsWith('/') ||
+        escapesRoot || path === main) {
+      throw new Error(`Invalid schema include path: ${name}`);
+    }
+    compiler.mountFile(path, source);
+  }
+  compiler.mountFile(main, schema.schema);
+  compiler.mountFile('/out/.keep', '');
+  const result = compiler.runCommand(['--binary', '--schema', '-o', '/out', main]);
   if (result.code) throw new Error(`Schema compilation failed: ${result.stderr}`);
   const bytes = compiler.readFile('/out/main.bfbs');
   if (!(bytes instanceof Uint8Array)) throw new Error('Compiler did not produce a binary schema');
