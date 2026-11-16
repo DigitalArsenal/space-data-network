@@ -181,6 +181,7 @@ func TestPublicationBaseline(t *testing.T) {
 				var pub publicationResult
 				var publishErr error
 				var publishStarted time.Time
+				var polls baselinePolls
 				var readableAt time.Time
 				row = measurePublication(t, a, b, "export-announce-import", source, func() (int64, int64) {
 					ctx, cancel := context.WithTimeout(context.Background(), 12*time.Hour)
@@ -191,7 +192,7 @@ func TestPublicationBaseline(t *testing.T) {
 					}
 					observed := make(chan observation, 1)
 					go func() {
-						at, err := baselineAwaitCount(ctx, b, data.schema, source, int64(data.count))
+						at, err := baselineAwaitCount(ctx, b, data.schema, source, int64(data.count), &polls)
 						observed <- observation{at, err}
 					}()
 					publishStarted = time.Now()
@@ -223,6 +224,7 @@ func TestPublicationBaseline(t *testing.T) {
 				row.AnnouncementBytesPerSecond = float64(firstBytes) / row.AnnouncementToReadableSeconds
 				row.AnnouncementRecordsPerSecond = float64(data.count) / row.AnnouncementToReadableSeconds
 				row.Note = "CPU/RSS and primary duration cover export/API completion too; announcement rate uses the first successful PNM publication call and concurrent 100 ms readability polling"
+				row.ReadabilityPolls, row.ReadabilityPollMaxSeconds, row.ReadabilityLastPollSeconds = polls.count, polls.maxSeconds, polls.lastSec
 				if publishErr != nil {
 					row.PublishResponseError = fmt.Sprintf("after %.1f s: %v", readableAt.Sub(publishStarted).Seconds(), publishErr)
 				}
@@ -360,6 +362,9 @@ type publicationMeasurement struct {
 	ProducerStoreLogicalBytesByKind map[string]int64   `json:"producer_store_logical_bytes_by_kind,omitempty"`
 	WindowSQLRefusal                string             `json:"window_sql_refusal,omitempty"`
 	PublishResponseError            string             `json:"publish_response_error,omitempty"`
+	ReadabilityPolls                int                `json:"readability_polls,omitempty"`
+	ReadabilityPollMaxSeconds       float64            `json:"readability_poll_max_seconds,omitempty"`
+	ReadabilityLastPollSeconds      float64            `json:"readability_last_poll_seconds,omitempty"`
 	WindowSQLRefusalSeconds         map[string]float64 `json:"window_sql_refusal_seconds,omitempty"`
 	WindowSQLRefusalCodes           map[string]int     `json:"window_sql_refusal_codes,omitempty"`
 	Smoke                           bool               `json:"instrumentation_smoke"`
@@ -602,15 +607,25 @@ func baselineOEM(i int) []byte {
 	return append([]byte(nil), b.FinishedBytes()...)
 }
 
-func baselineAwaitCount(ctx context.Context, d *publicationDaemon, schema, source string, want int64) (time.Time, error) {
+// baselinePolls records how long the receiver's count reads took while the
+// readability poll ran: the readable time is known to within the last one.
+type baselinePolls struct {
+	count               int
+	maxSeconds, lastSec float64
+}
+
+func baselineAwaitCount(ctx context.Context, d *publicationDaemon, schema, source string, want int64, polls *baselinePolls) (time.Time, error) {
 	body := syncwire.BuildQRP(syncwire.QRPFields{Kind: syncwire.QRPKindRequest, SchemaName: schema, ProviderID: "publication-e2e", SourceName: source, Limit: 1})
-	client := http.Client{Timeout: time.Minute}
+	// No client deadline: a count over a large lane during import can take
+	// minutes, and that duration is reported, not treated as a failure.
+	client := http.Client{}
 	for {
 		request, err := http.NewRequestWithContext(ctx, "POST", d.base+"/api/v1/data/scan", bytes.NewReader(body))
 		if err != nil {
 			return time.Time{}, err
 		}
 		request.Header.Set("Content-Type", publicationStreamType)
+		polled := time.Now()
 		response, err := client.Do(request)
 		if err != nil {
 			return time.Time{}, err
@@ -619,6 +634,11 @@ func baselineAwaitCount(ctx context.Context, d *publicationDaemon, schema, sourc
 		response.Body.Close()
 		if err != nil {
 			return time.Time{}, err
+		}
+		if polls != nil {
+			polls.count++
+			polls.lastSec = time.Since(polled).Seconds()
+			polls.maxSeconds = max(polls.maxSeconds, polls.lastSec)
 		}
 		if response.StatusCode != http.StatusOK {
 			return time.Time{}, fmt.Errorf("readability scan HTTP %d", response.StatusCode)
