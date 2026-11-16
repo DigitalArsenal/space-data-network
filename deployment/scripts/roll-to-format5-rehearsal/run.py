@@ -49,6 +49,7 @@ def main():
     for name in ('new-archive', 'new-checksums',
                  'work-dir',):
         ap.add_argument('--' + name, required=True, type=Path)
+    ap.add_argument('--cache-dir', type=Path, help='shared engine cache; contains no identities')
     ap.add_argument('--store', required=True, action='append', type=Path)
     ap.add_argument('--old-binary', required=True, action='append', type=Path)
     ap.add_argument('--old-sha256', required=True, action='append')
@@ -62,6 +63,8 @@ def main():
     here = Path(__file__).resolve().parent
     work = args.work_dir.resolve()
     work.mkdir(parents=True, exist_ok=False)
+    cache = (args.cache_dir or (work / 'cache')).resolve()
+    cache.mkdir(parents=True, exist_ok=True)
     results = []
     active = None
     image = 'sdn-format5-rehearsal:' + str(os.getpid())
@@ -99,6 +102,7 @@ def main():
                                     '--cgroupns=host', '--network=none', '--platform=linux/' + args.arch,
                                     '--cpus=2', '--memory=6g', '--tmpfs=/run', '--tmpfs=/run/lock',
                                     '--tmpfs=/tmp', '-v', '/sys/fs/cgroup:/sys/fs/cgroup:rw',
+                                    '-v', str(cache) + ':/engine-cache',
                                     '-v', str(directory) + ':/case', image],
                                    stdout=log, stderr=subprocess.STDOUT, check=True)
                 try:

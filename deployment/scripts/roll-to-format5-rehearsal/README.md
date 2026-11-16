@@ -40,13 +40,17 @@ it creates. It retains case directories, logs, hashes, ledgers and results.
 
 The source stores are read only. Copies omit `keys`, `secrets` and `auth.db`.
 Every case starts its old node from a fresh copy, with a generated test identity,
-a generated test password, a separate engine cache, a stable container hostname,
+a generated test password, an engine cache separate from identity material, a stable container hostname,
 loopback listeners, disabled DHT and mDNS, no trusted peers, no host ports and
 `--network=none`. The stable hostname allows the release to create a durable
 test identity without Docker's ephemeral-hostname refusal. These releases
 replace an empty bootstrap list with public defaults. A synthetic peer identity
 at unused loopback port 9 suppresses that fallback without naming a real peer.
-Docker's network namespace has no external interface. The new release's engine
+Docker's network namespace has no external interface. The loopback admin
+listener has `require_auth: false` to expose aggregate stats without credentials.
+The running peer identity comes from the current systemd invocation journal.
+`--cache-dir` reuses compiled engine artifacts across cases; identity material
+is never placed in that directory. The new release's engine
 is prewarmed before stopping the old node. No runtime permission patch or fake
 systemctl is used. A failure to start the old release is recorded as a failed
 case and requires inspection; the harness does not replace the release or

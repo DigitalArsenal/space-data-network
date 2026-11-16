@@ -87,12 +87,11 @@ def run(case, minutes, seconds):
         (ROOT / 'disk-filesystem.json').write_text(json.dumps({
             'filesystem': 'ext4', 'capacity_bytes': size}) + '\n')
     (ROOT / 'home').mkdir()
-    (ROOT / 'cache').mkdir()
     password = ROOT / 'test-password'
     password.write_text(os.urandom(32).hex())
     password.chmod(0o600)
     os.environ['SDN_KEY_PASSWORD_FILE'] = str(password)
-    os.environ['XDG_CACHE_HOME'] = '/case/cache'
+    os.environ['XDG_CACHE_HOME'] = '/engine-cache'
     os.environ['HOME'] = '/case/home'
     # Empty bootstrap lists trigger built-in public defaults in these releases.
     # A synthetic identity at an unused loopback port prevents that fallback.
@@ -125,6 +124,7 @@ admin:
   enabled: true
   listen_addr: 127.0.0.1:5001
   tls_mode: disabled
+  require_auth: false
 setup:
   data_path: /case/store
 '''.replace('ISOLATED_PEER', isolated_peer))
@@ -134,7 +134,7 @@ Description=Isolated store rehearsal
 [Service]
 Type=simple
 User=root
-Environment=HOME=/case/home XDG_CACHE_HOME=/case/cache SDN_KEY_PASSWORD_FILE=/case/test-password
+Environment=HOME=/case/home XDG_CACHE_HOME=/engine-cache SDN_KEY_PASSWORD_FILE=/case/test-password
 ExecStart=/case/base/sdn-bundle/bin/spacedatanetwork daemon --config /case/config.yaml
 Restart=no
 TimeoutStopSec=75
