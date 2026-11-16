@@ -14,7 +14,13 @@
 #   go-quick                       go
 #   go-heavy                       heavy
 #   go-builds                      builds
-#   js                             js, delivery, demo
+#   js                             js
+#   delivery                       delivery
+#   demo                           demo
+#   wasmedge-static                prefix-pack
+#   wasmedge-runtime               runtime
+#   wasmedge-substrate             migrations
+#   update-channel-e2e             update-channel
 #   dashboard                      dashboard
 #   kubo-bolt-on                   kubo
 #
@@ -426,12 +432,14 @@ go_test_with_timings() {
 # anybody skips. Locally `quick` leaves it out and `full` includes it.
 HEAVY_GO_PACKAGES="github.com/spacedatanetwork/sdn-server/internal/storage"
 
-# This E2E requires the patched runtime and runs in the substrate job.
-SUBSTRATE_GO_TESTS="^TestUnifiedFlatBufferQueryReopen$"
+# These packages retain the budgets used by their patched-runtime suites.
+EXTENDED_GO_PACKAGES="github.com/spacedatanetwork/sdn-server/internal/flatsqlrt github.com/spacedatanetwork/sdn-server/internal/storage/format2 github.com/spacedatanetwork/sdn-server/internal/storage/format4 github.com/spacedatanetwork/sdn-server/internal/wasmrt github.com/spacedatanetwork/sdn-server/cmd/spacedatanetwork"
+MIGRATION_GO_TESTS="^(TestFormat2|TestStoreMigrate)"
+UPDATE_GO_TESTS="^TestUpdateChannelRealDaemonE2E$"
 
 heavy_pkg_filter() {
   local filter=""
-  for pkg in $HEAVY_GO_PACKAGES; do
+  for pkg in $HEAVY_GO_PACKAGES $EXTENDED_GO_PACKAGES; do
     filter="${filter}${filter:+|}^${pkg}\$"
   done
   echo "$filter"
@@ -489,14 +497,63 @@ run_gofmt() {
 run_go() {
   prepare_go_toolchain
   run_gofmt
+  export SDN_WASM_ATOMIC_REGRESSION=1
 
   step "Go tests (quick: every package but the heavy set)"
   local pkgs
   pkgs=$("$ROOT/scripts/go-with-wasmedge.sh" list ./... | grep -Ev "$(heavy_pkg_filter)")
   # shellcheck disable=SC2086
-  go_test_with_timings quick -p=1 -timeout="$QUICK_GO_TEST_TIMEOUT" -count=1 -skip="$SUBSTRATE_GO_TESTS" $pkgs \
+  go_test_with_timings quick -v -p=1 -timeout="$QUICK_GO_TEST_TIMEOUT" -count=1 $pkgs \
     || fail "go test (quick)"
+  run_go_extended
   pass "go test (quick)"
+}
+
+run_go_extended() {
+  local pkg budget label
+  local skip=()
+  for pkg in $EXTENDED_GO_PACKAGES; do
+    skip=()
+    budget=20m
+    case "$pkg" in
+      */flatsqlrt|*/format2) budget=30m ;;
+      */cmd/spacedatanetwork) skip=(-skip="${MIGRATION_GO_TESTS}|${UPDATE_GO_TESTS}") ;;
+    esac
+    label="quick-${pkg##*/}"
+    go_test_with_timings "$label" -v -p=1 -timeout="$budget" -count=1 "${skip[@]}" "$pkg" \
+      || fail "go test ($pkg)"
+  done
+}
+
+run_prefix_pack() {
+  mkdir -p "$ROOT/.ci-artifacts"
+  test -s "$ROOT/.sdn-wasmedge-static/prefix/link.flags"
+  tar -czf "$ROOT/.ci-artifacts/wasmedge-static-prefix.tar.gz" -C "$ROOT/.sdn-wasmedge-static" prefix
+}
+
+run_prefix_unpack() {
+  mkdir -p "$ROOT/.sdn-wasmedge-static"
+  tar -xzf "$ROOT/.ci-artifacts/wasmedge-static-prefix.tar.gz" -C "$ROOT/.sdn-wasmedge-static"
+  test -s "$ROOT/.sdn-wasmedge-static/prefix/link.flags"
+  test -s "$ROOT/.sdn-wasmedge-static/prefix/sdn-runtime-patches.txt"
+}
+
+run_runtime() {
+  prepare_go_toolchain
+  "$ROOT/.ci-artifacts/spacedatanetwork-prewarm" substrate-selftest --require-patched
+}
+
+run_migrations() {
+  prepare_go_toolchain
+  go_test_with_timings migrations -v -p=1 -timeout=60m -count=1 -run "$MIGRATION_GO_TESTS" ./cmd/spacedatanetwork/ \
+    || fail "store migrations"
+}
+
+run_update_channel() {
+  prepare_go_toolchain no-aot
+  export SDN_E2E_REAL_DAEMON=1
+  go_test_with_timings update-channel -v -p=1 -timeout=50m -count=1 -run "$UPDATE_GO_TESTS" ./cmd/spacedatanetwork/ \
+    || fail "update channel"
 }
 
 run_go_heavy() {
@@ -762,6 +819,7 @@ case "$MODE" in
     run_kubo_pin
     run_encryption
     run_go # runs gofmt too, which is why `quick` does not repeat it
+    run_migrations
     run_go_builds
     run_sdn_js
     run_module_delivery_compat
@@ -771,6 +829,7 @@ case "$MODE" in
     run_preflight
     run_kubo_pin
     run_go
+    run_migrations
     run_go_heavy
     run_go_race
     run_go_builds
@@ -780,6 +839,11 @@ case "$MODE" in
     run_plugin_demo
     run_encryption
     ;;
+  prefix-pack) run_prefix_pack ;;
+  prefix-unpack) run_prefix_unpack ;;
+  runtime) run_runtime ;;
+  migrations) run_migrations ;;
+  update-channel) run_update_channel ;;
   preflight)
     run_preflight
     run_gofmt

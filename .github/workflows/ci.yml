@@ -179,6 +179,7 @@ jobs:
   go-quick:
     name: Go tests (quick)
     runs-on: ubuntu-latest
+    needs: wasmedge-runtime
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
@@ -201,6 +202,7 @@ jobs:
   go-heavy:
     name: Go tests (record store)
     runs-on: ubuntu-latest
+    needs: wasmedge-runtime
     # Above the lane's own 25m go-test budget, so an overrun surfaces as go
     # test's timeout panic (which names the running test) instead of the job
     # being killed with no diagnostic.
@@ -215,16 +217,10 @@ jobs:
       - name: go test (record store)
         run: ./scripts/ci-local.sh heavy
 
-  # THE PATCHED WASMEDGE SUBSTRATE (design A21, A30, A31). Every Go lane above
-  # links the upstream 0.16.4 library, where the partition-store substrate
-  # tests skip: upstream loses atomic wake-ups and one stop reaches one thread.
-  # This lane links the patched static prefix the release ships and runs them.
-  # The prefix is cached under the release workflow's own linux-amd64 key and
-  # built by the same steps, so whichever workflow builds it first, the other
-  # reuses it. A miss (a change to the build script or its patches) costs one
-  # LLVM-free WasmEdge build, about half an hour.
-  wasmedge-substrate:
-    name: WasmEdge substrate (patched static prefix)
+  # The release cache supplies one prefix per run. The Ubuntu host gate
+  # links that prefix and checks its behavior before the Go jobs start.
+  wasmedge-static:
+    name: Shared patched WasmEdge prefix
     runs-on: ubuntu-latest
     container: ubuntu:20.04
     timeout-minutes: 120
@@ -270,46 +266,44 @@ jobs:
           WASMEDGE_STATIC_WORK="${GITHUB_WORKSPACE}/.sdn-wasmedge-static" \
           WASMEDGE_STATIC_PREFIX_ONLY=1 \
           bash scripts/build-static-wasmedge.sh
-      - uses: actions/setup-go@v5
+      - name: Package the prefix
+        run: ./scripts/ci-local.sh prefix-pack
+      - uses: actions/upload-artifact@v4
         with:
-          go-version-file: sdn-server/go.mod
-          cache-dependency-path: sdn-server/go.sum
-      # Latency and scaling thresholds are acceptance numbers for named
-      # machines (SDN_PS_ACCEPTANCE=1 there); on a shared runner they are
-      # reported. Every functional outcome is asserted here.
-      - name: Substrate tests
-        working-directory: sdn-server
-        env:
-          WASMEDGE_DIR: ${{ github.workspace }}/.sdn-wasmedge-static/prefix
-          SDN_WASM_ATOMIC_REGRESSION: '1'
-          SDN_WASM_REQUIRE_PATCHED: '1'
-        run: |
-          # The legacy (format 1) engine loads its AOT artifact from the user
-          # cache and never compiles on a miss, so without this prewarm every
-          # legacy store these suites build runs INTERPRETED (the format-4
-          # migration tests' legacy stores took 6-10 minutes each).
-          ../scripts/go-with-wasmedge.sh build -o "$RUNNER_TEMP/spacedatanetwork-prewarm" ./cmd/spacedatanetwork
-          "$RUNNER_TEMP/spacedatanetwork-prewarm" prewarm-aot
-          ../scripts/go-with-wasmedge.sh test ./internal/wasmrt/ -count=1 -timeout 20m
-          ../scripts/go-with-wasmedge.sh test ./internal/flatsqlrt/ -count=1 -timeout 30m -v \
-            -run 'TestPS|TestParallelAOT|TestSharedMemoryBase|TestConcurrentControl|TestNativeHostIO|TestEmbeddedPSThreads'
-          # Store format 2 on the published partition-store engine (T6): the
-          # writer and reader instances, rings, mailboxes, RB1, store-migrate.
-          ../scripts/go-with-wasmedge.sh test ./internal/storage/format2/ -count=1 -timeout 30m -v
-          # The unified query E2E requires the patched runtime and fails if absent.
-          ../scripts/go-with-wasmedge.sh test ./internal/storage/format4/ -count=1 -timeout 20m -v -run '^TestUnifiedFlatBufferQueryReopen$'
-          # The daemon on formats 2 and 4: the storage API against format 1
-          # on the same writes (format 4 on its Fake and, once embedded, on
-          # its engine), and the dashboard lane through the API under ingest.
-          ../scripts/go-with-wasmedge.sh test ./internal/storage/ -count=1 -timeout 30m -v -run 'TestFormat2|TestFormat4'
-          # A fresh node's first start under the default (format 5): the
-          # daemon's own prewarm compiles the format-5 engine before its store
-          # opens. Needs the patched runtime, so it runs in this job.
-          ../scripts/go-with-wasmedge.sh test ./cmd/spacedatanetwork/ -count=1 -timeout 20m -v -run '^(TestOpensWithFormat5EngineCoversFormat4AndFormat5|TestDaemonPrewarmCompilesFormat5EngineForFreshStore)$'
-          ../scripts/go-with-wasmedge.sh test ./internal/api/ -count=1 -timeout 20m -v -run 'TestFormat2'
-          # store-migrate --to 4 stops at every step of a migration here
-          # (SDN_WASM_REQUIRE_PATCHED=1): about 8 minutes locally, so 60m.
-          ../scripts/go-with-wasmedge.sh test ./cmd/spacedatanetwork/ -count=1 -timeout 60m -v -run 'TestFormat2|TestStoreMigrate'
+          name: wasmedge-static-prefix
+          path: .ci-artifacts/wasmedge-static-prefix.tar.gz
+          compression-level: 0
+          retention-days: 1
+
+  wasmedge-runtime:
+    name: Patched runtime on Ubuntu host
+    runs-on: ubuntu-latest
+    needs: wasmedge-static
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: ./.github/actions/sdn-go-env
+        with:
+          needs-flow-bundles: 'false'
+      - name: Build and verify the runtime
+        run: ./scripts/ci-local.sh runtime
+
+  wasmedge-substrate:
+    name: Store migration E2E (patched runtime)
+    runs-on: ubuntu-latest
+    needs: wasmedge-runtime
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: ./.github/actions/sdn-go-env
+        with:
+          needs-flow-bundles: 'false'
+      - name: Store migrations
+        run: ./scripts/ci-local.sh migrations
 
   # THE UPDATE CHANNEL ON REAL DAEMONS (stack issue 670). The helper tests in
   # update_cli_test.go run a fixture daemon, which is how a health gate that
@@ -326,6 +320,7 @@ jobs:
   update-channel-e2e:
     name: Update channel E2E (real daemon)
     runs-on: ubuntu-latest
+    needs: wasmedge-runtime
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -335,14 +330,12 @@ jobs:
         with:
           needs-flow-bundles: 'false'
       - name: update install against real daemons
-        working-directory: sdn-server
-        env:
-          SDN_E2E_REAL_DAEMON: '1'
-        run: ../scripts/go-with-wasmedge.sh test ./cmd/spacedatanetwork/ -count=1 -timeout 50m -v -run '^TestUpdateChannelRealDaemonE2E$'
+        run: ./scripts/ci-local.sh update-channel
 
   go-builds:
     name: Go builds (node + edge relay)
     runs-on: ubuntu-latest
+    needs: wasmedge-runtime
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
@@ -355,8 +348,9 @@ jobs:
         run: ./scripts/ci-local.sh builds
 
   js:
-    name: sdn-js + module delivery + plugin demo
+    name: sdn-js
     runs-on: ubuntu-latest
+    needs: wasmedge-runtime
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -367,21 +361,53 @@ jobs:
           node-version: '24'
           cache: 'npm'
           cache-dependency-path: sdn-js/package-lock.json
-      # plugin-demo runs a REAL node, so this lane needs the Go toolchain and
-      # WasmEdge too.
+      # The interop tests build a Go peer with the shared runtime.
       - uses: ./.github/actions/sdn-go-env
         with:
           needs-flow-bundles: 'false'
       - name: sdn-js
         run: ./scripts/ci-local.sh js
-      - name: module delivery compatibility
+
+  delivery:
+    name: Module delivery compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: sdn-js/package-lock.json
+      - name: Module delivery compatibility
         run: ./scripts/ci-local.sh delivery
-      - name: plugin demo
+
+  demo:
+    name: Plugin demo
+    runs-on: ubuntu-latest
+    needs: wasmedge-runtime
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: sdn-js/package-lock.json
+      - uses: ./.github/actions/sdn-go-env
+        with:
+          needs-flow-bundles: 'false'
+      - name: Plugin demo
         run: ./scripts/ci-local.sh demo
 
   dashboard:
     name: Embedded dashboard E2E (real node)
     runs-on: ubuntu-latest
+    needs: wasmedge-runtime
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -412,10 +438,14 @@ jobs:
       - preflight
       - go-quick
       - go-heavy
+      - wasmedge-static
+      - wasmedge-runtime
       - wasmedge-substrate
       - update-channel-e2e
       - go-builds
       - js
+      - delivery
+      - demo
       - dashboard
     steps:
       - name: Report

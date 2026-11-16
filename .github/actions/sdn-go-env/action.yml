@@ -1,11 +1,11 @@
 name: SDN Go environment
 description: >
-  Go toolchain, a pinned + cached WasmEdge, the private flow bundles when a
-  token is available, and a restored FlatSQL AOT cache. Every Go lane uses it.
+  Go toolchain, the shared patched static WasmEdge prefix, optional flow
+  bundles, and a restored FlatSQL AOT cache.
 
 inputs:
   wasmedge-version:
-    description: WasmEdge runtime to install (must match scripts/install-wasmedge.sh's default)
+    description: WasmEdge runtime version in the shared static prefix
     required: false
     default: '0.16.4'
   modules-token:
@@ -35,35 +35,25 @@ runs:
       shell: bash
       run: chmod +x scripts/*.sh
 
-    # WasmEdge, PINNED AND CACHED.
-    #
-    # scripts/install-wasmedge.sh's default installer URL is WasmEdge's MASTER
-    # branch: every CI run piped whatever was on master that minute into bash,
-    # so an upstream commit could change or break this build with no commit
-    # here. The version tag's copy of the same script is what we install
-    # against, so that is what we fetch.
-    - name: Restore WasmEdge
-      id: wasmedge-cache
-      uses: actions/cache@v4
+    - name: Download the shared patched prefix
+      uses: actions/download-artifact@v4
       with:
-        path: ${{ runner.temp }}/.wasmedge
-        key: wasmedge-${{ inputs.wasmedge-version }}-${{ runner.os }}-${{ runner.arch }}
+        name: wasmedge-static-prefix
+        path: .ci-artifacts
 
-    - name: Install WasmEdge
-      if: steps.wasmedge-cache.outputs.cache-hit != 'true'
+    - name: Install static link dependencies
       shell: bash
-      env:
-        WASMEDGE_DIR: ${{ runner.temp }}/.wasmedge
-        WASMEDGE_VERSION: ${{ inputs.wasmedge-version }}
-        WASMEDGE_INSTALL_SCRIPT_URL: https://raw.githubusercontent.com/WasmEdge/WasmEdge/${{ inputs.wasmedge-version }}/utils/install.sh
-      # The upstream installer draws a progress bar as thousands of
-      # "|===   5.01 %" lines. grep -v keeps the log readable; pipefail (on by
-      # default in an Actions bash step) keeps a failed install fatal.
-      run: ./scripts/install-wasmedge.sh 2>&1 | grep -vE '^\|=* +[0-9.]+ *%'
+      run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends build-essential zlib1g-dev libtinfo-dev
+
+    - name: Restore WasmEdge
+      shell: bash
+      run: ./scripts/ci-local.sh prefix-unpack
 
     - name: Export WASMEDGE_DIR
       shell: bash
-      run: echo "WASMEDGE_DIR=${{ runner.temp }}/.wasmedge" >> "$GITHUB_ENV"
+      run: |
+        echo "WASMEDGE_DIR=$GITHUB_WORKSPACE/.sdn-wasmedge-static/prefix" >> "$GITHUB_ENV"
+        echo "SDN_WASM_REQUIRE_PATCHED=1" >> "$GITHUB_ENV"
 
     # THE FLOW BUNDLES.
     #
@@ -171,4 +161,4 @@ runs:
       with:
         path: ~/.cache/flatsql-aot
         key: >-
-          flatsql-aot-${{ runner.os }}-${{ steps.cpu.outputs.profile }}-we${{ inputs.wasmedge-version }}-${{ hashFiles('sdn-server/internal/flatsqlrt/flatsql-wasi-noeh.wasm', 'sdn-server/internal/flowrt/flatsql-link-shim.wasm') }}
+          flatsql-aot-${{ runner.os }}-${{ steps.cpu.outputs.profile }}-we${{ inputs.wasmedge-version }}-patched-${{ hashFiles('scripts/build-static-wasmedge.sh', 'scripts/wasmedge-static-env.sh', 'sdn-server/internal/flatsqlrt/flatsql-wasi-noeh.wasm', 'sdn-server/internal/flowrt/flatsql-link-shim.wasm') }}
