@@ -53,8 +53,8 @@ func (s *UpdateSignalSubscriber) runFeedChecks(ctx context.Context) {
 		case <-timer.C:
 			err := s.checkFeed(ctx)
 			var unavailable *feedReadError
-			if errors.Is(err, errFeedCheckDeferred) {
-				// A deferred check provides no evidence of feed recovery.
+			if errors.Is(err, errFeedCheckDeferred) || errors.Is(err, errFeedCheckHandedOff) {
+				// Deferral or helper launch provides no evidence of a completed installation.
 			} else if errors.As(err, &unavailable) {
 				s.reportFailure("feed-check", "", err)
 				consecutiveInstallFailures = 0
@@ -92,6 +92,7 @@ func (s *UpdateSignalSubscriber) runFeedChecks(ctx context.Context) {
 }
 
 var errFeedCheckDeferred = errors.New("feed check deferred by an active update")
+var errFeedCheckHandedOff = errors.New("feed check handed installation to the helper")
 
 func (s *UpdateSignalSubscriber) checkFeed(ctx context.Context) (resultErr error) {
 	if !s.claimFeed() {
@@ -185,7 +186,7 @@ func (s *UpdateSignalSubscriber) checkFeed(ctx context.Context) (resultErr error
 		if err == nil {
 			succeeded = true
 			s.feedDeferredCandidates = nil
-			return nil
+			return errFeedCheckHandedOff
 		}
 		var refusal *update.StoreFormatRefusal
 		if !errors.As(err, &refusal) {
