@@ -20,7 +20,8 @@ func (n *Node) registerUpdateTopicValidator(topic string) error {
 	if err != nil {
 		return err
 	}
-	return n.pubsub.RegisterTopicValidator(topic, func(_ context.Context, _ peer.ID, message *ps.Message) ps.ValidationResult {
+	return n.pubsub.RegisterTopicValidator(topic, func(_ context.Context, from peer.ID, message *ps.Message) ps.ValidationResult {
+		if n.host != nil && from == n.host.ID() { return ps.ValidationAccept }
 		if message == nil {
 			return ps.ValidationReject
 		}
