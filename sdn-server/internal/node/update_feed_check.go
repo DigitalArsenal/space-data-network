@@ -10,6 +10,7 @@ import (
 	"math/rand"
 	"os"
 	"runtime"
+ "strings"
 	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/ops"
@@ -32,6 +33,7 @@ func (s *UpdateSignalSubscriber) runFeedChecks(ctx context.Context) {
 	defer timer.Stop()
  alerts := time.NewTicker(5 * time.Second)
  defer alerts.Stop()
+	consecutiveFailures := 0
 	for {
 		select {
 		case <-ctx.Done():
@@ -41,7 +43,15 @@ func (s *UpdateSignalSubscriber) runFeedChecks(ctx context.Context) {
 		case <-timer.C:
 			if err := s.checkFeed(ctx); err != nil {
 				s.reportFailure("feed-check", "", err)
-			}
+                consecutiveFailures++
+                if consecutiveFailures >= 3 { s.deps.Alerts.Raise(ops.KindUpdateFeedUnavailable, s.deps.Channel, ops.SeverityWarning, "Update feed cannot be read: " + err.Error()) }
+			} else {
+                consecutiveFailures = 0
+                s.deps.Alerts.Clear(ops.KindUpdateFeedUnavailable, s.deps.Channel)
+                s.mu.Lock()
+                for cause := range s.reportedFailures { if strings.HasPrefix(cause, "feed-check:") { delete(s.reportedFailures, cause) } }
+                s.mu.Unlock()
+            }
 			interval := s.deps.CheckInterval
 			offset := time.Duration(rand.Int63n(int64(interval/5) + 1))
 			timer.Reset(interval + offset)
@@ -67,6 +77,7 @@ func (s *UpdateSignalSubscriber) checkFeed(ctx context.Context) error {
 	entry, err := update.SelectProviderCandidate(raw, s.feed, update.ProviderFeedSelection{
 		Channel: s.deps.Channel, Platform: runtime.GOOS, Arch: runtime.GOARCH, Kind: s.deps.Kind, CurrentSequence: state.Sequence,
 	})
+	if errors.Is(err, update.ErrNoCompatibleUpdate) { return nil }
 	if err != nil {
 		return err
 	}

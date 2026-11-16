@@ -103,6 +103,8 @@ func (u ProviderFeedUpdate) AssertMatchesPayload(m *Manifest, carrierLen int) er
 	return nil
 }
 
+var ErrNoCompatibleUpdate = errors.New("no compatible update is available from provider feed")
+
 type ProviderFeedSelection struct {
 	UpdateID        string
 	Version         string
@@ -279,7 +281,7 @@ func (f *ProviderFeed) Select(selection ProviderFeedSelection) (*ProviderFeedUpd
 		candidates = append(candidates, update)
 	}
 	if len(candidates) == 0 {
-		return nil, errors.New("no compatible update is available from provider feed")
+		return nil, ErrNoCompatibleUpdate
 	}
 	sort.Slice(candidates, func(i, j int) bool {
 		if candidates[i].Sequence != candidates[j].Sequence {
