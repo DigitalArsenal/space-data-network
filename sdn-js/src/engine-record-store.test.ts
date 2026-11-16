@@ -1,3 +1,4 @@
+import { publishedSchema } from './test-schema-helper';
 /**
  * Loop D.1 — ONE store: the FlatSQL-WASM engine store is THE SDNNode store.
  *
@@ -35,7 +36,7 @@ const OMM_STANDARD = {
   standardId: 'OMM',
   tableName: 'OMM',
   fileId: '$OMM',
-  schema: OMM_SCHEMA,
+  ...publishedSchema('OMM'),
 };
 
 const enc = (text: string) => new TextEncoder().encode(text);

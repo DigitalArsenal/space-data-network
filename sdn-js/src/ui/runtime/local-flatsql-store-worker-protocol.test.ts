@@ -1,3 +1,4 @@
+import { publishedSchema } from '../../test-schema-helper';
 /**
  * The store-only FlatSQL worker (`local-flatsql-store.worker.ts`) speaks the
  * SAME protocol as the sync worker, minus the sync lanes — it is the engine
@@ -23,7 +24,7 @@ const OMM_SCHEMA_ENTRY = {
   standardId: 'OMM',
   tableName: 'OMM',
   fileId: '$OMM',
-  schema: OMM_SCHEMA,
+  ...publishedSchema('OMM'),
 };
 
 type WorkerScope = {
@@ -124,7 +125,7 @@ describe('store-only FlatSQL worker protocol (dashboard window model)', () => {
     await expect(
       store.syncSchema({
         standardId: 'OMM',
-        schema: OMM_SCHEMA,
+        ...publishedSchema('OMM'),
         backendConfig: { targetPeerId: 'peer', candidateAddrs: [] },
         initialProgress: {} as never,
         totalRows: 0,

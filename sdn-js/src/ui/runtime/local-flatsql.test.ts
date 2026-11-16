@@ -1,3 +1,4 @@
+import { publishedSchema } from '../../test-schema-helper';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import * as flatbuffers from 'flatbuffers';
@@ -44,7 +45,7 @@ describe('local FlatSQL datastore', () => {
         standardId: 'OMM',
         tableName: 'OMM',
         fileId: '$OMM',
-        schema: OMM_SCHEMA,
+        ...publishedSchema('OMM'),
       }],
     });
 
@@ -88,7 +89,7 @@ describe('local FlatSQL datastore', () => {
         standardId: 'OMM',
         tableName: 'OMM',
         fileId: '$OMM',
-        schema: OMM_SCHEMA,
+        ...publishedSchema('OMM'),
       }],
     });
 
@@ -127,7 +128,7 @@ describe('local FlatSQL datastore', () => {
         standardId: 'OMM',
         tableName: 'OMM',
         fileId: '$OMM',
-        schema: OMM_SCHEMA,
+        ...publishedSchema('OMM'),
       }],
     });
 
@@ -159,7 +160,7 @@ describe('local FlatSQL datastore', () => {
         standardId: 'OMM',
         tableName: 'OMM',
         fileId: '$OMM',
-        schema: OMM_SCHEMA,
+        ...publishedSchema('OMM'),
       }],
     });
 
@@ -183,7 +184,7 @@ describe('local FlatSQL datastore', () => {
         standardId: 'OMM',
         tableName: 'OMM',
         fileId: '$OMM',
-        schema: OMM_SCHEMA,
+        ...publishedSchema('OMM'),
       }],
     });
     const frameA = stripSdnFlatBufferSizePrefix(STARLINK_6292_OMM_BYTES);
@@ -285,7 +286,7 @@ describe('local FlatSQL datastore', () => {
         standardId: 'OMM',
         tableName: 'OMM',
         fileId: '$OMM',
-        schema: OMM_SCHEMA,
+        ...publishedSchema('OMM'),
       }],
     });
     const ingested = await store.ingestFlatBufferStream('OMM', flatSqlSizePrefixedStream(pair), { persist: false });
@@ -309,7 +310,7 @@ describe('local FlatSQL datastore', () => {
         standardId: 'OMM',
         tableName: 'OMM',
         fileId: '$OMM',
-        schema: OMM_SCHEMA,
+        ...publishedSchema('OMM'),
       }],
     });
     const frame = stripSdnFlatBufferSizePrefix(STARLINK_6292_OMM_BYTES);
@@ -333,7 +334,7 @@ describe('local FlatSQL datastore', () => {
         standardId: 'CAT',
         tableName: 'CAT',
         fileId: '$CAT',
-        schema: CAT_SCHEMA,
+        ...publishedSchema('CAT'),
       }],
     });
 
@@ -383,6 +384,7 @@ describe('local FlatSQL datastore', () => {
         fileId: '$CAT',
         // The production engine catalog lowers enum storage to its wire
         // scalar; mirror that representation for this focused execution lane.
+        ...publishedSchema('CAT'),
         schema: CAT_SCHEMA_WITH_SCALAR_OWNER,
       }],
     });
@@ -433,7 +435,7 @@ describe('local FlatSQL datastore', () => {
         standardId: 'OMM',
         tableName: 'OMM',
         fileId: '$OMM',
-        schema: OMM_SCHEMA,
+        ...publishedSchema('OMM'),
       }],
     });
 
@@ -468,7 +470,7 @@ describe('local FlatSQL datastore', () => {
           standardId: 'OMM',
           tableName: 'OMM',
           fileId: '$OMM',
-          schema: OMM_SCHEMA,
+          ...publishedSchema('OMM'),
         }],
       });
       const frame = stripSdnFlatBufferSizePrefix(STARLINK_6292_OMM_BYTES);
@@ -489,7 +491,7 @@ describe('local FlatSQL datastore', () => {
           standardId: 'OMM',
           tableName: 'OMM',
           fileId: '$OMM',
-          schema: OMM_SCHEMA,
+          ...publishedSchema('OMM'),
         }],
       });
       const ingested = await resumed.ingestFlatBufferStream('OMM', flatSqlSizePrefixedStream([frame, frame]), {
@@ -516,7 +518,7 @@ describe('local FlatSQL datastore', () => {
         standardId: 'OMM',
         tableName: 'OMM',
         fileId: '$OMM',
-        schema: OMM_SCHEMA,
+        ...publishedSchema('OMM'),
       }],
     });
 
@@ -592,7 +594,7 @@ describe('local FlatSQL datastore', () => {
           standardId: 'OMM',
           tableName: 'OMM',
           fileId: '$OMM',
-          schema: OMM_SCHEMA,
+          ...publishedSchema('OMM'),
         }],
       });
       const stream = flatSqlSizePrefixedStream([stripSdnFlatBufferSizePrefix(STARLINK_6292_OMM_BYTES)]);
@@ -646,7 +648,7 @@ describe('local FlatSQL datastore', () => {
           standardId: 'OMM',
           tableName: 'OMM',
           fileId: '$OMM',
-          schema: OMM_SCHEMA,
+          ...publishedSchema('OMM'),
         }],
       });
       expect(loaded.query('SELECT NORAD_CAT_ID FROM OMM LIMIT 10', 'OMM').records).toEqual([{ NORAD_CAT_ID: 56775 }]);
@@ -671,7 +673,7 @@ describe('local FlatSQL datastore', () => {
           standardId: 'OMM',
           tableName: 'OMM',
           fileId: '$OMM',
-          schema: OMM_SCHEMA,
+          ...publishedSchema('OMM'),
         }],
       });
       const frame = stripSdnFlatBufferSizePrefix(STARLINK_6292_OMM_BYTES);
@@ -740,7 +742,7 @@ describe('local FlatSQL datastore', () => {
           standardId: 'OMM',
           tableName: 'OMM',
           fileId: '$OMM',
-          schema: OMM_SCHEMA,
+          ...publishedSchema('OMM'),
         }],
       });
       expect(loaded.getStats({ includeCachedBytes: false })[0]).toEqual(expect.objectContaining({
@@ -797,7 +799,7 @@ describe('local FlatSQL datastore', () => {
         standardId: 'OMM',
         tableName: 'OMM',
         fileId: '$OMM',
-        schema: OMM_SCHEMA,
+        ...publishedSchema('OMM'),
       }],
     });
 
@@ -848,7 +850,7 @@ describe('local FlatSQL datastore', () => {
           standardId: 'OMM',
           tableName: 'OMM',
           fileId: '$OMM',
-          schema: OMM_SCHEMA,
+          ...publishedSchema('OMM'),
         }],
       });
 
@@ -887,7 +889,7 @@ describe('local FlatSQL datastore', () => {
           standardId: 'OMM',
           tableName: 'OMM',
           fileId: '$OMM',
-          schema: OMM_SCHEMA,
+          ...publishedSchema('OMM'),
         }],
       });
       expect(loaded.query('SELECT NORAD_CAT_ID FROM OMM LIMIT 10', 'OMM').records).toEqual([{ NORAD_CAT_ID: 56775 }, { NORAD_CAT_ID: 56775 }]);
@@ -902,7 +904,7 @@ describe('local FlatSQL datastore', () => {
           standardId: 'OMM',
           tableName: 'OMM',
           fileId: '$OMM',
-          schema: OMM_SCHEMA,
+          ...publishedSchema('OMM'),
         }],
       });
       expect(otherNamespace.query('SELECT NORAD_CAT_ID FROM OMM LIMIT 10', 'OMM').records).toEqual([]);
@@ -913,7 +915,7 @@ describe('local FlatSQL datastore', () => {
           standardId: 'PNM',
           tableName: 'PNM',
           fileId: '$PNM',
-          schema: PNM_SCHEMA,
+          ...publishedSchema('PNM'),
         }],
       });
       expect(otherTemplate.query('SELECT * FROM PNM LIMIT 0', 'PNM').columns).not.toContain('NORAD_CAT_ID');
@@ -965,7 +967,7 @@ describe('local FlatSQL datastore', () => {
         standardId: 'OMM',
         tableName: 'OMM',
         fileId: '$OMM',
-        schema: OMM_SCHEMA,
+        ...publishedSchema('OMM'),
       }],
     });
     await first.ingestRecords('OMM', [{
@@ -989,7 +991,7 @@ describe('local FlatSQL datastore', () => {
         standardId: 'OMM',
         tableName: 'OMM',
         fileId: '$OMM',
-        schema: OMM_SCHEMA,
+        ...publishedSchema('OMM'),
       }],
     });
 
@@ -1052,7 +1054,7 @@ describe('local FlatSQL datastore', () => {
         standardId: 'OMM',
         tableName: 'OMM',
         fileId: '$OMM',
-        schema: OMM_SCHEMA,
+        ...publishedSchema('OMM'),
       }],
     });
     await store.ingestFlatBufferStream('OMM', flatSqlSizePrefixedStream([stripSdnFlatBufferSizePrefix(STARLINK_6292_OMM_BYTES)]), {
@@ -1102,7 +1104,7 @@ describe('local FlatSQL datastore', () => {
           standardId: 'OMM',
           tableName: 'OMM',
           fileId: '$OMM',
-          schema: OMM_SCHEMA,
+          ...publishedSchema('OMM'),
         }],
       });
       const stream = flatSqlSizePrefixedStream([stripSdnFlatBufferSizePrefix(STARLINK_6292_OMM_BYTES)]);
@@ -1124,7 +1126,7 @@ describe('local FlatSQL datastore', () => {
           standardId: 'OMM',
           tableName: 'OMM',
           fileId: '$OMM',
-          schema: OMM_SCHEMA,
+          ...publishedSchema('OMM'),
         }],
       });
 
@@ -1144,7 +1146,7 @@ describe('local FlatSQL datastore', () => {
         standardId: 'OMM',
         tableName: 'OMM',
         fileId: '$OMM',
-        schema: OMM_SCHEMA,
+        ...publishedSchema('OMM'),
       }],
     });
 
@@ -1163,7 +1165,7 @@ describe('local FlatSQL datastore', () => {
         standardId: 'OMM',
         tableName: 'OMM',
         fileId: '$OMM',
-        schema: OMM_SCHEMA,
+        ...publishedSchema('OMM'),
       }],
     });
 
@@ -1191,7 +1193,7 @@ describe('local FlatSQL datastore', () => {
         standardId: 'PNM',
         tableName: 'PNM',
         fileId: '$PNM',
-        schema: PNM_SCHEMA,
+        ...publishedSchema('PNM'),
       }],
     });
 

@@ -1,3 +1,4 @@
+import { publishedSchema } from '../../test-schema-helper';
 /**
  * Loop D.5: the webUI FlatSQL worker protocol proxies the engine query
  * surface — `listSources`, `queryEpochRawStream` (the D.2 PRIMARY query
@@ -24,7 +25,7 @@ const OMM_SCHEMAS = [{
   standardId: 'OMM',
   tableName: 'OMM',
   fileId: '$OMM',
-  schema: OMM_SCHEMA,
+  ...publishedSchema('OMM'),
 }];
 
 const OMM_RECORD = {
