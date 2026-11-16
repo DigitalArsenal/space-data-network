@@ -88,6 +88,8 @@ def tree_size(path):
 def run(case, minutes, seconds):
     if Path('/proc/1/comm').read_text().strip() != 'systemd':
         raise RuntimeError('PID 1 is not systemd')
+    with BIN.open('rb') as binary:
+        old_binary_sha256 = hashlib.file_digest(binary, 'sha256').hexdigest()
     if case == 'disk':
         # A real sparse loop filesystem bounds free space without filling a host disk.
         source = ROOT / 'store-source'
@@ -268,6 +270,14 @@ ExecStartPre=/bin/sh -c 'test ! -d /case/store/fsql5'
     wait_ready(seconds)
     if peer() != expected:
         raise RuntimeError('identity changed')
+    if case != 'forward':
+        with BIN.open('rb') as binary:
+            selected_sha256 = hashlib.file_digest(binary, 'sha256').hexdigest()
+        (ROOT / 'bundle-selection.json').write_text(json.dumps({
+            'old_binary_selected': selected_sha256 == old_binary_sha256,
+            'expected_sha256': old_binary_sha256, 'selected_sha256': selected_sha256}) + '\n')
+        if selected_sha256 != old_binary_sha256:
+            raise RuntimeError('the selected bundle is not the original binary')
     after_invocation, boot_additions = boot_observation()
     after = counts()
     (ROOT / 'counts-after.json').write_text(json.dumps(after, sort_keys=True) + '\n')
