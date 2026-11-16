@@ -445,13 +445,17 @@ production key replaces it through a release that carries `trust_roots`.
 - **A release is required for the channel.** The release channel carries
   nothing until a release is cut with `SDN_UPDATE_SIGNING_KEY_PEM` and
   `SDN_UPDATE_KEY_ID` set and its `spacedatanetwork-update-feed-<v>.tar.gz` is
-  published to host-01's feed directory (v1.1.5's was, on 2026-11-16). The
-  `cli-update-feed` job fails a
-  stable release without the key (a beta warns and ships no feed), derives the
-  key id from the PEM and fails if it differs from `SDN_UPDATE_KEY_ID` or is
-  not in `fleet-trust-roots.json` (`check-update-signing-key.mjs`; there is no
-  fallback key id), and verifies every manifest against
-  `fleet-trust-roots.json` before packing the feed
+  published to host-01's feed directory (v1.1.5's was, on 2026-11-16). The key
+  is a secret of the `update-signing` GitHub Environment, which admits only
+  `main`; only the release workflow's `update-signing-check` and
+  `cli-update-feed` jobs name it, and the workflow guard
+  (`beta-release-workflow.test.mjs`) refuses the secret anywhere else in any
+  workflow. `update-signing-check` runs before any build: it fails a stable
+  release without the key (a beta warns and ships no feed), derives the key id
+  from the PEM and fails if it differs from `SDN_UPDATE_KEY_ID` or is not in
+  `fleet-trust-roots.json` (`check-update-signing-key.mjs`; there is no
+  fallback key id). `cli-update-feed` repeats that check, signs, and verifies
+  every manifest against `fleet-trust-roots.json` before packing the feed
   (`verify-cli-update-feed.mjs`).
 
 ### What a payload, a signal and the health gate must satisfy
