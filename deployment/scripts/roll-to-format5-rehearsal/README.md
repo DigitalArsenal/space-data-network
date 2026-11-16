@@ -93,18 +93,37 @@ The harness and recovery script require execution on both source copies before
 use on a production host. An image-build failure or incomplete case matrix
 means the deployment gate has not passed.
 
-## Release baseline result
+## Rehearsal findings
 
-The published v1.1.0 linux/arm64 archive, verified against its release checksum
-file, fails to open both supplied format-4 store copies. Startup reports
-`P4_E_FORMAT` and `flatsql_init returned status -5` before readiness. The same
-archive reaches readiness with an empty store in the same systemd image.
-That control creates `fsql4/STORE` with bytes 4 and 5 equal to `05 00`, while
-both supplied stores contain `04 00`. The binary reports version 1.1.0.
-No store marker is relabeled and no node code is changed.
+The published v1.1.0 linux/arm64 archive fails to open the supplied format-4
+copies and creates format-5 marker bytes under `fsql4` with an empty store.
+The two installed old binaries, verified against their supplied digests, each
+reach readiness on their matching copied store in the amd64 rehearsal.
 
-The old-node baseline gate has failed. Forward conversion, failure recovery,
-repeat invocation and precheck cases have no end-to-end result on these copies.
-The v1.1.5 archive checksum passes, but its conversion and recovery behavior
-remain unverified. The script requires a passing baseline and complete case
-matrix before deployment.
+Both forward attempts fail before conversion because the verified v1.1.5
+linux/amd64 binary's runtime self-test reports
+`stop-reaches-every-thread=false`. The command refuses with
+`lacks the SDN runtime patches`. Other invocations report that flag true and
+enter conversion, so the cause of the invocation-dependent refusal is not
+established. The guard is not bypassed and node code is unchanged.
+
+The first input's post-switch case verifies 45 partitions and reaches SWITCHED
+1,414 seconds after CONVERTING. At that point the retained format-4 tree,
+including rollback material, contains 7,409,106,490 bytes and format 5 contains
+11,421,381,390 bytes. The new unit's deliberate pre-start failure triggers
+recovery to the old node, ready with the same running peer. A second invocation
+is refused without restarting that node. These measurements describe emulated
+Docker execution and are not a forecast for a deployment host.
+
+The strict aggregate and format-4 preservation checks fail. Aggregate and hash
+changes also occur in precheck cases that reject before stopping the old node
+or converting anything. The comparisons include active-daemon activity and do
+not isolate a converter cause. The failed assertions remain in the harness.
+Independent readiness, identity, hash, conversion and repeat-run observations
+are written to `observations.json` and `second-run.json` before the aggregate
+assertion, so a count failure does not erase those observations.
+
+The script is not cleared for deployment. Recovery ledger events alone do not
+establish the required preservation proof or a successful new-node forward run.
+Each retained case result and exit file determines whether the complete case
+passed; an intended fault that was never injected is not a tested recovery leg.
