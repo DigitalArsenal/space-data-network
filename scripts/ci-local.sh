@@ -202,7 +202,8 @@ run_preflight() {
     scripts/check-govulncheck.test.mjs \
     scripts/run-govulncheck.test.mjs \
     scripts/check-no-orphan-test-suites.test.mjs \
-    scripts/prepush-hook.test.mjs)
+    scripts/prepush-hook.test.mjs \
+    scripts/ci-heavy-coverage.test.mjs)
   pass "dependency-drift check suites"
 
   # Release-assembly logic, which decides what a published release CONTAINS.
@@ -500,7 +501,10 @@ run_go_heavy() {
     listed="$artifact_dir/heavy-${label}-listed.txt"
     "$ROOT/scripts/go-with-wasmedge.sh" test -list '^(Test|Example|Fuzz)' "$pkg" > "$listed" \
       || fail "list tests in $pkg"
-    LC_ALL=C grep -E '^(Test|Example|Fuzz)[[:alnum:]_]+$' "$listed" | LC_ALL=C sort > "$artifact_dir/heavy-${label}-all.txt"
+    if LC_ALL=C grep -E '^(Test|Example|Fuzz)' "$listed" | LC_ALL=C grep -Ev '^(Test|Example|Fuzz)[A-Za-z0-9_]*$'; then
+      fail "a discovered test name cannot be represented by the group filter"
+    fi
+    LC_ALL=C grep -E '^(Test|Example|Fuzz)[A-Za-z0-9_]*$' "$listed" | LC_ALL=C sort > "$artifact_dir/heavy-${label}-all.txt"
     [[ -s "$artifact_dir/heavy-${label}-all.txt" ]] || fail "no tests discovered in $pkg"
     # Sorted names use round-robin assignment. The discovered list is the
     # authority, including examples and fuzz seed tests run by go test.
@@ -517,13 +521,24 @@ run_go_heavy() {
       [[ -s "$artifact_dir/heavy-${label}-${group}.txt" ]] || continue
       pattern="^($(paste -sd '|' "$artifact_dir/heavy-${label}-${group}.txt"))$"
       echo "Group $group: $(wc -l < "$artifact_dir/heavy-${label}-${group}.txt") tests"
-      go_test_with_timings "heavy-${label}-${group}" -p=1 -timeout="$HEAVY_GO_TEST_TIMEOUT" -count=1 -run "$pattern" "$pkg" &
+      go_test_with_timings "heavy-${label}-${group}" -v -p=1 -timeout="$HEAVY_GO_TEST_TIMEOUT" -count=1 -run "$pattern" "$pkg" &
       pids+=("$!")
     done
     failed=0
     for pid in "${pids[@]}"; do
       wait "$pid" || failed=1
     done
+    # Validate execution, independently of the planned group manifests.
+    local ran="$artifact_dir/heavy-${label}-ran.txt"
+    local ended="$artifact_dir/heavy-${label}-ended.txt"
+    awk '$1 == "===" && $2 == "RUN" && $3 !~ /\// { print $3 }' \
+      "$artifact_dir/gotest-heavy-${label}-"[0-3].log | LC_ALL=C sort > "$ran"
+    awk '$1 == "---" && ($2 == "PASS:" || $2 == "FAIL:" || $2 == "SKIP:") && $3 !~ /\// { print $3 }' \
+      "$artifact_dir/gotest-heavy-${label}-"[0-3].log | LC_ALL=C sort > "$ended"
+    cmp -s "$artifact_dir/heavy-${label}-all.txt" "$ran" \
+      || fail "executed tests differ from go test -list (missing, extra, or duplicate execution)"
+    cmp -s "$artifact_dir/heavy-${label}-all.txt" "$ended" \
+      || fail "completed tests differ from go test -list"
     [[ "$failed" == 0 ]] || fail "go test (heavy)"
   done
   pass "go test (heavy)"
