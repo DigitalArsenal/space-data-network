@@ -5,6 +5,7 @@ only digests and stream offsets. Public results contain per-standard totals.
 """
 import hashlib
 import json
+import re
 from pathlib import Path
 import sqlite3
 import shutil
@@ -21,8 +22,9 @@ def scalar(data, offset, fmt):
     return struct.unpack_from('<' + fmt, data, offset)[0]
 
 
-def field(data, slot):
-    table = scalar(data, 0, 'I')
+def field(data, slot, table=None):
+    if table is None:
+        table = scalar(data, 0, 'I')
     vtable = table - scalar(data, table, 'i')
     entry = 4 + slot * 2
     if entry >= scalar(data, vtable, 'H'):
@@ -76,7 +78,37 @@ def local_profile(data, peer):
     masked = bytearray(data)
     masked[start + 4:start + 4 + size] = b'\0' * size
     masked[timestamp:timestamp + 8] = b'\0' * 8
-    return prefix + bytes(masked), scalar(data, timestamp, 'q')
+    issued_times = []
+    proofs = field(data, 17)
+    if proofs:
+        vector = proofs + scalar(data, proofs, 'I')
+        for index in range(scalar(data, vector, 'I')):
+            entry = vector + 4 + index * 4
+            table = entry + scalar(data, entry, 'I')
+            # ChainProof slots: SIGNATURE=4, SIGNED_PAYLOAD=5.
+            signature = field(data, 4, table)
+            payload = field(data, 5, table)
+            if not signature or not payload:
+                return None
+            start = signature + scalar(data, signature, 'I')
+            size = scalar(data, start, 'I')
+            if not size:
+                return None
+            masked[start + 4:start + 4 + size] = b'\0' * size
+            start = payload + scalar(data, payload, 'I')
+            size = scalar(data, start, 'I')
+            try:
+                decoded = bytes.fromhex(data[start + 4:start + 4 + size].decode('ascii'))
+                document = json.loads(decoded)
+            except (ValueError, UnicodeError):
+                return None
+            matches = list(re.finditer(rb'"issued_at":([0-9]+)', decoded))
+            if len(matches) != 1 or document.get('issued_at') != int(matches[0][1]):
+                return None
+            issued_times.append(document['issued_at'])
+            first, last = matches[0].span(1)
+            masked[start + 4 + first * 2:start + 4 + last * 2] = b'0' * ((last - first) * 2)
+    return prefix + bytes(masked), scalar(data, timestamp, 'q'), tuple(issued_times)
 
 
 def request_frame(schema, cursor):
@@ -264,7 +296,8 @@ def compare(directory, schemas, boot_ms, expected_boot_additions,
                         old_cid, old_profile = profiles[0]
                         unseen = db.execute('SELECT seen FROM records WHERE cid=?', (old_cid,)).fetchone()[0] == 0
                         if profile and unseen and profile[0] == old_profile[0] and \
-                                old_profile[1] <= boot_ms // 1000 <= profile[1] <= int(time.time()):
+                                all(stamp <= boot_ms // 1000 for stamp in (old_profile[1], *old_profile[2])) and \
+                                all(boot_ms // 1000 <= stamp <= int(time.time()) for stamp in (profile[1], *profile[2])):
                             db.execute('UPDATE records SET seen=seen+1 WHERE cid=?', (old_cid,))
                             refreshed_profiles += 1
                         else:
@@ -289,4 +322,4 @@ def compare(directory, schemas, boot_ms, expected_boot_additions,
                          ('missing', 'changed', 'unexplained', 'unexpected_standard'))
                  for row in results.values())
     return {'passed': passed, 'standards': results,
-            'method': 'SHA-256 content address lookup and exact bytes; one generated local profile may refresh only its signature and signature timestamp'}
+            'method': 'SHA-256 content address lookup and exact bytes; one generated local profile may refresh only signatures and their timestamps'}

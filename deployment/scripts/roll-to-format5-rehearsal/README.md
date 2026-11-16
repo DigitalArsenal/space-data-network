@@ -109,10 +109,12 @@ allowing arbitrary changes to existing records.
 The data API also merges the local node EPM into record reads. `epm.Service.Init`
 rebuilds and persists that profile with a fresh signature timestamp. The
 comparison recognizes only a Node EPM whose `/ipns/` address names the generated
-test peer. After a service restart, one such profile may refresh its signature
-and signature timestamp: every other byte, including all profile fields and
-public keys, must match. The new timestamp must fall between rollout start and
-the comparison. Other EPM records require exact address and byte preservation.
+test peer. After a service restart, one such profile may refresh its signature,
+signature timestamp, and identity-attestation signatures and `issued_at` times.
+`rebuildIdentityAttestationLocked` generates those attestations during startup.
+Every other byte, including all profile fields, addresses, and public keys, must
+match. Every new timestamp must fall between rollout start and the comparison.
+Other EPM records require exact address and byte preservation.
 Before-state frames and every new or changed after-state frame remain in
 size-prefixed streams under the private evidence directory. A profile refresh
 has its own result counter and does not count as an exact record match.
