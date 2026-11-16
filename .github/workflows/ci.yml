@@ -334,6 +334,19 @@ jobs:
       - uses: ./.github/actions/sdn-go-env
         with:
           needs-flow-bundles: 'false'
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/installed-update-receiver
+          key: installed-v1.1.5-linux-amd64-f0d18ef21455bc7dfcd9f1da791420bf838d4a3ae1522c22143143993d48cd8c
+      - name: Fetch the published update receiver
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/installed-update-receiver"
+          archive="$RUNNER_TEMP/installed-update-receiver/spacedatanetwork-1.1.5-linux-amd64.tar.gz"
+          if [[ ! -f "$archive" ]]; then
+            curl --fail --location --retry 3 https://github.com/DigitalArsenal/space-data-network/releases/download/v1.1.5/spacedatanetwork-1.1.5-linux-amd64.tar.gz -o "$archive"
+          fi
+          echo "f0d18ef21455bc7dfcd9f1da791420bf838d4a3ae1522c22143143993d48cd8c  $archive" | sha256sum --check
       - name: Build real update fixtures
         working-directory: sdn-server
         run: |
@@ -354,10 +367,20 @@ jobs:
           sudo env SDN_E2E_REAL_DAEMON=1 \
             SDN_E2E_REAL_DAEMON_BIN_DIR="$RUNNER_TEMP/update-channel-bin" \
             SDN_E2E_LOG_DIR="$RUNNER_TEMP/update-channel-logs" \
+            SDN_E2E_INSTALLED_BUNDLE="$RUNNER_TEMP/installed-update-receiver/spacedatanetwork-1.1.5-linux-amd64.tar.gz" \
             LD_LIBRARY_PATH="$WASMEDGE_DIR/lib:$WASMEDGE_DIR/lib64" \
             unshare --net -- bash -c 'set -e; ip link set lo up; exec setpriv --reuid="$1" --regid="$2" --init-groups "$3" -test.v -test.timeout=50m -test.run="^TestUpdateChannelRealDaemonE2E$"' \
             -- "$(id -u)" "$(id -g)" "$RUNNER_TEMP/update-channel-e2e.test" \
             | tee "$RUNNER_TEMP/update-channel-logs/test.log"
+      - name: Report installed receiver proof
+        if: always()
+        run: |
+          if grep -q -- '--- PASS: TestUpdateChannelRealDaemonE2E/installed-v1.1.5-push' "$RUNNER_TEMP/update-channel-logs/test.log"; then
+            echo 'Published 1.1.5 receiver: checksum verified and autonomous push install passed.' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Published 1.1.5 receiver proof did not pass. Check the archive download/build steps and test log for the failure; no installed-receiver pass is claimed.' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:

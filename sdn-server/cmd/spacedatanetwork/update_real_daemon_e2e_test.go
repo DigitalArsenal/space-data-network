@@ -115,7 +115,7 @@ func TestUpdateChannelRealDaemonE2E(t *testing.T) {
 	t.Setenv(realE2EBinDirEnv, filepath.Dir(builds[0].path))
 	t.Run("installed-v1.1.5-push", func(t *testing.T) {
 		if os.Getenv("SDN_E2E_INSTALLED_BUNDLE") == "" {
-			t.Skip("set SDN_E2E_INSTALLED_BUNDLE to a checksum-verified published 1.1.5 bundle")
+			t.Fatal("SDN_E2E_INSTALLED_BUNDLE must name the published 1.1.5 archive; installed receiver proof cannot run")
 		}
 		runRealPushChannelReceiver(t, true)
 	})
@@ -1011,8 +1011,25 @@ func runRealPushChannelReceiver(t *testing.T, installed bool) {
 	keepRealLogs(t, work)
 	builds := realE2EBuilds(t, filepath.Join(work, "builds"))
 	v1, v2, v3, v4 := builds[0], builds[1], builds[2], builds[1]
+	installedBundle := ""
 	if installed {
-		v2.template = os.Getenv("SDN_E2E_INSTALLED_BUNDLE")
+		archive := os.Getenv("SDN_E2E_INSTALLED_BUNDLE")
+		expected := map[string]string{
+			"amd64": "f0d18ef21455bc7dfcd9f1da791420bf838d4a3ae1522c22143143993d48cd8c",
+			"arm64": "f0e4623d496f540536fe43c881b203f474b4b72e622a7613f8ac765a9cc24925",
+		}[runtime.GOARCH]
+		if expected == "" || e2eFileSHA256(archive) != expected {
+			t.Fatal("published 1.1.5 archive does not match its pinned release checksum")
+		}
+		installedBundle = filepath.Join(work, "published")
+		if err := os.MkdirAll(installedBundle, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if output, err := exec.Command("tar", "-xzf", archive, "-C", installedBundle, "--strip-components=1").CombinedOutput(); err != nil {
+			t.Fatalf("extract verified published archive: %v %s", err, output)
+		}
+		t.Logf("published 1.1.5 linux-%s archive verified sha256=%s", runtime.GOARCH, expected)
+		v2.template = installedBundle
 	}
 	v4.name, v4.version, v4.updateID, v4.sequence = "v4", "1.1.2-e2e.4", "cli-bundle-release-e2e-4", 400
 	health := envInt(t, "SDN_E2E_REAL_DAEMON_HEALTH_SECONDS", 180)
@@ -1061,7 +1078,7 @@ func runRealPushChannelReceiver(t *testing.T, installed bool) {
 	feed.mu.Unlock()
 	b := newPushDaemon(t, filepath.Join(work, "b"), v1, feed, roots, health)
 	if installed {
-		source := os.Getenv("SDN_E2E_INSTALLED_BUNDLE")
+		source := installedBundle
 		if err := os.RemoveAll(b.paths.Root); err != nil {
 			t.Fatal(err)
 		}
