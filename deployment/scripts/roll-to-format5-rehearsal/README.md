@@ -5,7 +5,7 @@ Docker with privileged containers, a cgroup mount usable by systemd, Python 3.12
 or later on the driver, and enough disk for a case store and record evidence. Completed case stores
 and bundles are removed before the following case starts.
 The image uses Ubuntu 24.04 for the selected node architecture, amd64 by default.
-Systemd and its support libraries run on the build platform's native architecture;
+Systemd, the Python driver and their support libraries run on the build platform's native architecture;
 node binaries and target runtime libraries retain the selected architecture.
 This supports systemd service execution when the emulator rejects the amd64
 systemd executor. Container binary-format management is masked so it cannot
