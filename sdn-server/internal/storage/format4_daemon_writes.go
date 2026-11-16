@@ -95,20 +95,33 @@ type f4PutOpt struct {
 // the write's tag in the same transaction (C-26; format 1's
 // tagIdentityRepeats).
 func (b format4Backend) f4Put(op, schemaName string, records [][]byte, peerID string, signature []byte, tags *SourceTags, opt f4PutOpt) ([]string, []format4.Outcome, error) {
+	return b.f4PutKnown(op, schemaName, records, nil, peerID, signature, tags, opt)
+}
+
+// f4PutKnown is f4Put with each record's content address already computed
+// (cids[i] is computeCID(records[i])); nil computes them.
+func (b format4Backend) f4PutKnown(op, schemaName string, records [][]byte, known []string, peerID string, signature []byte, tags *SourceTags, opt f4PutOpt) ([]string, []format4.Outcome, error) {
 	if !b.s.publicationEnabled.Load() || tags == nil {
-		return b.f4PutDirect(op, schemaName, records, peerID, signature, tags, opt)
+		return b.f4PutDirectKnown(op, schemaName, records, known, peerID, signature, tags, opt)
 	}
 	if tags != nil {
 		normalized := normalizeSourceTags(*tags)
 		tags = &normalized
 	}
 	if !b.s.publicationSourceEnabled(schemaName, tags.ProviderID, tags.SourceName) || len(records) == 0 {
-		return b.f4PutDirect(op, schemaName, records, peerID, signature, tags, opt)
+		return b.f4PutDirectKnown(op, schemaName, records, known, peerID, signature, tags, opt)
 	}
 	return b.groupPublicationPut(op, schemaName, records, peerID, signature, *tags, opt)
 }
 
 func (b format4Backend) f4PutDirect(op, schemaName string, records [][]byte, peerID string, signature []byte, tags *SourceTags, opt f4PutOpt) ([]string, []format4.Outcome, error) {
+	return b.f4PutDirectKnown(op, schemaName, records, nil, peerID, signature, tags, opt)
+}
+
+func (b format4Backend) f4PutDirectKnown(op, schemaName string, records [][]byte, known []string, peerID string, signature []byte, tags *SourceTags, opt f4PutOpt) ([]string, []format4.Outcome, error) {
+	if known != nil && len(known) != len(records) {
+		return nil, nil, fmt.Errorf("store %s records: %d content addresses for %d records", schemaName, len(known), len(records))
+	}
 	if err := b.s.requireWritable(op); err != nil {
 		return nil, nil, err
 	}
@@ -140,7 +153,12 @@ func (b format4Backend) f4PutDirect(op, schemaName string, records [][]byte, pee
 		batch := format4.Batch{Type: typ, Peer: peerID, Tags: batchTags, Mode: format4.ModeIngest, Records: make([]format4.In, len(chunk)),
 			OwnTS: opt.ownTS}
 		for i, data := range chunk {
-			cid := computeCID(data)
+			var cid string
+			if known != nil {
+				cid = known[start+i]
+			} else {
+				cid = computeCID(data)
+			}
 			cids[start+i] = cid
 			in := format4.In{CID: cid, Plain: data, TS: now, Sig: signature}
 			if sealed {
@@ -294,6 +312,7 @@ func (b format4Backend) importDatasetShardChunk(index *DatasetExportIndex, provi
 	type group struct {
 		tags *SourceTags
 		data [][]byte
+		cids []string
 	}
 	var order []string
 	groups := map[string]*group{}
@@ -302,7 +321,8 @@ func (b format4Backend) importDatasetShardChunk(index *DatasetExportIndex, provi
 		if err != nil {
 			return 0, err
 		}
-		if computeCID(data) != record.CID && sha256Hex(data) != record.CID {
+		cid := computeCID(data)
+		if cid != record.CID && sha256Hex(data) != record.CID {
 			return 0, fmt.Errorf("record CID mismatch for indexed record %s", record.CID)
 		}
 		tags := record.SourceTags
@@ -326,11 +346,12 @@ func (b format4Backend) importDatasetShardChunk(index *DatasetExportIndex, provi
 			order = append(order, key)
 		}
 		g.data = append(g.data, data)
+		g.cids = append(g.cids, cid)
 	}
 	imported := 0
 	for _, key := range order {
 		g := groups[key]
-		_, outcomes, err := b.f4Put("import dataset shard", index.SchemaName, g.data, provider, nil, g.tags, f4PutOpt{})
+		_, outcomes, err := b.f4PutKnown("import dataset shard", index.SchemaName, g.data, g.cids, provider, nil, g.tags, f4PutOpt{})
 		imported += f4Inserted(outcomes)
 		if err != nil {
 			return imported, fmt.Errorf("store imported %s records: %w", index.SchemaName, err)
