@@ -68,6 +68,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -1412,7 +1413,7 @@ func runRealPushChannelReceiver(t *testing.T, installed bool) {
 	if bytes.Contains(verificationAlerts, []byte("update_feed_unavailable")) {
 		t.Fatal("manifest verification failure counted as a feed outage")
 	}
-	if strings.Count(readFileString(filepath.Join(verificationFallback.work, "daemon-1.log")), "Update feed-install "+v3.updateID+" failed:") > 1 {
+	if strings.Count(readFileString(verificationFallback.helperLog()), "Update feed-install "+v3.updateID+" failed:") != 1 {
 		t.Fatal("verification failure repeats without recovery")
 	}
 	verificationFallback.stop(t)
@@ -1420,6 +1421,79 @@ func runRealPushChannelReceiver(t *testing.T, installed bool) {
 		t.Fatal(err)
 	}
 	t.Log("invalid newest manifest fell back to v2 in the same feed check and did not raise a feed outage")
+
+	// Hold a signal's manifest fetch beyond its one-second interval floor.
+	// Scheduled checks continue ticking but cannot fetch an index during it.
+	inflight := newPushDaemon(t, filepath.Join(work, "signal-inflight"), v1, feed, roots, health)
+	inflight.configure(t, func(cfg *config.Config) {
+		cfg.Network.Bootstrap = []string{aInfo.Addrs[0].String() + "/p2p/" + aInfo.ID.String()}
+		cfg.Update.CheckDelaySeconds = 1
+		cfg.Update.CheckIntervalSeconds = 1
+		cfg.Update.MinIntervalSeconds = 1
+	})
+	var indexRequests atomic.Int64
+	manifestEntered := make(chan struct{}, 1)
+	releaseManifest := make(chan struct{})
+	defer func() {
+		select {
+		case <-releaseManifest:
+		default:
+			close(releaseManifest)
+		}
+	}()
+	emptyIndex, err := json.Marshal(update.ProviderFeed{Schema: update.ProviderFeedSchema, GeneratedAt: time.Now().UTC().Format(time.RFC3339), FeedBaseURL: feed.base, Updates: []update.ProviderFeedUpdate{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	feed.mu.Lock()
+	feed.requestHook = func(w http.ResponseWriter, r *http.Request) bool {
+		if strings.HasSuffix(r.URL.Path, "/index.json") {
+			indexRequests.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(emptyIndex)
+			return true
+		}
+		if strings.HasSuffix(r.URL.Path, "/"+v2.version+"/manifest.json") {
+			select {
+			case manifestEntered <- struct{}{}:
+			default:
+			}
+			select {
+			case <-releaseManifest:
+			case <-r.Context().Done():
+			}
+		}
+		return false
+	}
+	feed.mu.Unlock()
+	inflight.start(t, boot)
+	if err := third.Connect(ctx, pushPeer(t, inflight.adminBase)); err != nil {
+		t.Fatal(err)
+	}
+	waitPush(t, 30*time.Second, "inflight recipient subscription", func() bool { return slices.Contains(topic.ListPeers(), pushPeer(t, inflight.adminBase).ID) })
+	waitPush(t, 15*time.Second, "feed checks before signal", func() bool { return indexRequests.Load() >= 2 })
+	runSignalPipeline(t, v1.path, work, "resign-inflight-v2", "update", "sign-signals", "--key-file", keyPath, "--roots", rootsPath, "--feed-dir", feed.dir)
+	send(v2, "signal-inflight-v2")
+	select {
+	case <-manifestEntered:
+	case <-time.After(30 * time.Second):
+		t.Fatal("signal did not enter controlled manifest fetch")
+	}
+	requestsAtSignal := indexRequests.Load()
+	time.Sleep(8 * time.Second)
+	if indexRequests.Load() != requestsAtSignal {
+		t.Fatal("feed fetched during signal install after interval floor elapsed")
+	}
+	close(releaseManifest)
+	inflight.waitUpgrade(t, v2, boot+2*time.Duration(health)*time.Second)
+	if !slices.ContainsFunc(readLedger(t, inflight.paths.Root), func(e update.DeployLedgerEntry) bool { return e.UpdateID == v2.updateID && e.Trigger == "signal" }) {
+		t.Fatal("inflight proof was not a signal install")
+	}
+	inflight.stop(t)
+	feed.mu.Lock()
+	feed.requestHook = nil
+	feed.mu.Unlock()
+	t.Log("signal install excluded scheduled feed reads beyond the minimum interval")
 
 	publish(v4)
 	send(v4, "push-v4-offline")

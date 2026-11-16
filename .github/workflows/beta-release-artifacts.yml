@@ -1072,7 +1072,7 @@ jobs:
           feed_dir="${feed_tree_root}/update-feed"
           "$RUNNER_TEMP/sdn-signal-signer/bin/spacedatanetwork" update sign-signals --verify-only \
             --feed-dir "${feed_dir}" --roots deployment/release/fleet-trust-roots.json
-          # What an installed node will check, checked here first: every
+          # Verify the same metadata as an installed node: every
           # manifest against fleet-trust-roots.json (signature, target, expiry,
           # payload hashes), no SEC-001 key, no trust/ in any payload, and the
           # index agreeing with its manifests.

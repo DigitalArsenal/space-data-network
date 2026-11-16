@@ -295,6 +295,9 @@ func WithdrawFeedVersion(dir, kind, channel, version string) (string, error) {
 			return archive, err
 		}
 	}
+	if err := os.WriteFile(filepath.Join(archive, "completed"), []byte("withdrawn\n"), 0o600); err != nil {
+		return archive, err
+	}
 	return archive, nil
 }
 
@@ -304,7 +307,6 @@ func withdrawalFinished(root, archive string, plan withdrawalPlan) bool {
 	if len(plan.Folders) == 0 {
 		return false
 	}
-	allServed := true
 	for _, folder := range plan.Folders {
 		if filepath.IsAbs(folder) || strings.Contains(folder, "..") {
 			return false
@@ -313,9 +315,9 @@ func withdrawalFinished(root, archive string, plan withdrawalPlan) bool {
 		if err != nil || !info.IsDir() {
 			return false
 		}
-		if info, err := os.Lstat(filepath.Join(root, folder)); err != nil || !info.IsDir() {
-			allServed = false
-		}
+	}
+	if _, err := os.Stat(filepath.Join(archive, "completed")); err == nil {
+		return true
 	}
 	listed := false
 	for _, index := range plan.Indexes {
@@ -336,5 +338,5 @@ func withdrawalFinished(root, archive string, plan withdrawalPlan) bool {
 			}
 		}
 	}
-	return !listed || allServed
+	return !listed
 }

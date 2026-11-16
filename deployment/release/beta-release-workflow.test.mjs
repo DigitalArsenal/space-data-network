@@ -923,10 +923,10 @@ function guardUpdateSigningWorkflow(workflow) {
       const name = /^      - name: (.+)$/m.exec(step)?.[1];
       const holdsKey = [...step.matchAll(secret)].some(m => !/^\s*!=\s*''/.test(step.slice(m.index + m[0].length)));
       if (jobName === 'cli-update-feed' || holdsKey) {
-        const run = /\n        run: \|\n([\s\S]*)$/.exec(step);
+        const run = /\n        run: \|\n((?:          .*\n?|\n)*)/.exec(step);
         if (run) {
           assert.ok(Object.hasOwn(allowedRuns, name), `unreviewed shell step: ${name}`);
-          assert.equal(run[1], allowedRuns[name], `unreviewed shell program: ${name}`);
+          assert.equal(run[1].trimEnd(), allowedRuns[name], `unreviewed shell program: ${name}`);
           assert.doesNotMatch(step.slice(0, run.index), /\buses:|\bshell:/);
         } else {
           assert.ok(!holdsKey, 'key-bearing steps must run a reviewed local program');
