@@ -243,34 +243,38 @@ describe('per-provider source partitioning (server layout mirror)', () => {
   });
 
   it('persists per-(standard, source) aligned streams and restores every partition on reopen', async () => {
-    const persistenceStore = new MemoryFlatSqlPersistenceStore();
-    const options = {
-      schemas: [OMM_STANDARD],
-      persistenceKey: 'source-durability',
-      persistenceStore,
-    };
-    const record = {
-      cid: 'celestrak-omm-1',
-      schemaName: 'OMM.fbs',
-      timestamp: '2026-05-11T04:02:25Z',
-      dataBytes: new Uint8Array(STARLINK_6292_OMM_BYTES),
-    };
+    const root = mkdtempSync(join(tmpdir(), 'record-source-durability-'));
+    try {
+      const persistenceStore = new MemoryFlatSqlPersistenceStore();
+      const options = {
+        schemas: [OMM_STANDARD],
+        persistenceKey: 'source-durability',
+        engine: { root },
+        persistenceStore,
+      };
+      const record = {
+        cid: 'celestrak-omm-1',
+        schemaName: 'OMM.fbs',
+        timestamp: '2026-05-11T04:02:25Z',
+        dataBytes: new Uint8Array(STARLINK_6292_OMM_BYTES),
+      };
 
-    const first = await createLocalFlatSqlStore(options);
-    await first.ingestRecords('OMM', [record], { source: 'celestrak-gp' });
-    await first.ingestRecords('OMM', [{ ...record, cid: 'local-omm-1' }]); // default `local`
-    (await first.destroy());
+      const first = await createLocalFlatSqlStore(options);
+      await first.ingestRecords('OMM', [record], { source: 'celestrak-gp' });
+      await first.ingestRecords('OMM', [{ ...record, cid: 'local-omm-1' }]); // default `local`
+      (await first.destroy());
 
-    const second = await createLocalFlatSqlStore(options);
-    expect(await second.listSources!('OMM')).toEqual(['celestrak-gp', LOCAL_FLATSQL_DEFAULT_SOURCE]);
-    const unified = await second.query('SELECT _source FROM OMM ORDER BY _source LIMIT 10', 'OMM');
-    expect(unified.records).toEqual([
-      { _source: 'OMM@celestrak-gp' },
-      { _source: 'OMM@local' },
-    ]);
-    // Re-ingesting the same records after reload stays deduped.
-    expect(await second.ingestRecords('OMM', [record], { source: 'celestrak-gp' })).toBe(0);
-    (await second.destroy());
+      const second = await createLocalFlatSqlStore(options);
+      expect(await second.listSources!('OMM')).toEqual(['celestrak-gp', LOCAL_FLATSQL_DEFAULT_SOURCE]);
+      const unified = await second.query('SELECT _source FROM OMM ORDER BY _source LIMIT 10', 'OMM');
+      expect(unified.records).toEqual([
+        { _source: 'OMM@celestrak-gp' },
+        { _source: 'OMM@local' },
+      ]);
+      // Re-ingesting the same records after reload stays deduped.
+      expect(await second.ingestRecords('OMM', [record], { source: 'celestrak-gp' })).toBe(0);
+      (await second.destroy());
+    } finally { rmSync(root, { recursive: true, force: true }); }
   });
 
 
