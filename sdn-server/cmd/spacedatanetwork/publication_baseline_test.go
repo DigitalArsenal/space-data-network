@@ -253,6 +253,8 @@ func TestPublicationBaseline(t *testing.T) {
 				b.start(t)
 				readySeconds := time.Since(start).Seconds()
 				var point, window, windowRefusals []float64
+				var pointNotFound int
+				var pointFirstOK float64
 				var windowRefusalMessage string
 				windowRefusalCodes := map[string]int{}
 				row = measurePublication(t, a, b, "second-direct-ingest-with-reads", source, func() (int64, int64) {
@@ -275,12 +277,24 @@ func TestPublicationBaseline(t *testing.T) {
 								return
 							}
 							if err := baselineConsumeResponse(response); err != nil {
+								// A held record answered 404 is counted and reported,
+								// with the time the first read succeeded.
+								if response.StatusCode == http.StatusNotFound {
+									mu.Lock()
+									pointNotFound++
+									mu.Unlock()
+									time.Sleep(100 * time.Millisecond)
+									continue
+								}
 								t.Errorf("point read: %v", err)
 								return
 							}
 							p := time.Since(p0).Seconds()
 							mu.Lock()
 							point = append(point, p)
+							if pointFirstOK == 0 {
+								pointFirstOK = time.Since(start).Seconds()
+							}
 							mu.Unlock()
 							w0 := time.Now()
 							request, _ := http.NewRequest("POST", b.base+"/api/v1/query", bytes.NewReader(windowQuery))
@@ -321,6 +335,10 @@ func TestPublicationBaseline(t *testing.T) {
 				row.StoreAllocatedBeforeDataset = beforeSizes
 				row.ReadySeconds = readySeconds
 				row.PointReadSeconds = publicationPercentiles(point)
+				row.PointReadNotFound, row.PointReadFirstOKAfterRestartSeconds = pointNotFound, pointFirstOK
+				if pointNotFound > 0 {
+					t.Logf("point read of a held %s record answered 404 %d times after the restart; first success %.2f s after the restart began (0 = never)", source, pointNotFound, pointFirstOK)
+				}
 				row.WindowSQLSeconds = publicationPercentiles(window)
 				row.WindowSQLRefusalSeconds = publicationPercentiles(windowRefusals)
 				row.WindowSQLRefusal = windowRefusalMessage
@@ -353,44 +371,46 @@ func TestPublicationBaseline(t *testing.T) {
 }
 
 type publicationMeasurement struct {
-	FirstAnnouncementUnixNano       int64              `json:"first_announcement_unix_nano,omitempty"`
-	ReadableUnixNano                int64              `json:"readable_unix_nano,omitempty"`
-	AnnouncementToReadableSeconds   float64            `json:"announcement_to_readable_seconds,omitempty"`
-	AnnouncementBytesPerSecond      float64            `json:"announcement_bytes_per_second,omitempty"`
-	AnnouncementRecordsPerSecond    float64            `json:"announcement_records_per_second,omitempty"`
-	ProducerStoreBytesByKind        map[string]int64   `json:"producer_store_bytes_by_kind,omitempty"`
-	ProducerStoreLogicalBytesByKind map[string]int64   `json:"producer_store_logical_bytes_by_kind,omitempty"`
-	WindowSQLRefusal                string             `json:"window_sql_refusal,omitempty"`
-	PublishResponseError            string             `json:"publish_response_error,omitempty"`
-	ReadabilityPolls                int                `json:"readability_polls,omitempty"`
-	ReadabilityPollMaxSeconds       float64            `json:"readability_poll_max_seconds,omitempty"`
-	ReadabilityLastPollSeconds      float64            `json:"readability_last_poll_seconds,omitempty"`
-	WindowSQLRefusalSeconds         map[string]float64 `json:"window_sql_refusal_seconds,omitempty"`
-	WindowSQLRefusalCodes           map[string]int     `json:"window_sql_refusal_codes,omitempty"`
-	Smoke                           bool               `json:"instrumentation_smoke"`
-	Round                           int                `json:"round"`
-	Operation                       string             `json:"operation"`
-	Dataset                         string             `json:"dataset"`
-	Bytes                           int64              `json:"bytes"`
-	Records                         int64              `json:"records"`
-	Seconds                         float64            `json:"seconds"`
-	BytesPerSecond                  float64            `json:"bytes_per_second"`
-	RecordsPerSecond                float64            `json:"records_per_second"`
-	Target                          int64              `json:"target_bytes_per_second"`
-	ProducerCPUSeconds              float64            `json:"producer_cpu_seconds"`
-	ReceiverCPUSeconds              float64            `json:"receiver_cpu_seconds"`
-	ProducerSampledPeakRSS          int64              `json:"producer_sampled_peak_rss_bytes"`
-	ReceiverSampledPeakRSS          int64              `json:"receiver_sampled_peak_rss_bytes"`
-	LoadStart                       string             `json:"uptime_start"`
-	LoadEnd                         string             `json:"uptime_end"`
-	StoreBytesByKind                map[string]int64   `json:"receiver_store_bytes_by_kind,omitempty"`
-	StoreLogicalBytesByKind         map[string]int64   `json:"receiver_store_logical_bytes_by_kind,omitempty"`
-	StoreAllocatedBeforeDataset     map[string]int64   `json:"receiver_store_allocated_before_dataset,omitempty"`
-	StoreToRecordRatio              float64            `json:"receiver_dataset_allocated_increase_to_record_bytes_ratio,omitempty"`
-	ReadySeconds                    float64            `json:"receiver_ready_seconds,omitempty"`
-	PointReadSeconds                map[string]float64 `json:"point_read_seconds,omitempty"`
-	WindowSQLSeconds                map[string]float64 `json:"window_sql_seconds,omitempty"`
-	Note                            string             `json:"note,omitempty"`
+	FirstAnnouncementUnixNano           int64              `json:"first_announcement_unix_nano,omitempty"`
+	ReadableUnixNano                    int64              `json:"readable_unix_nano,omitempty"`
+	AnnouncementToReadableSeconds       float64            `json:"announcement_to_readable_seconds,omitempty"`
+	AnnouncementBytesPerSecond          float64            `json:"announcement_bytes_per_second,omitempty"`
+	AnnouncementRecordsPerSecond        float64            `json:"announcement_records_per_second,omitempty"`
+	ProducerStoreBytesByKind            map[string]int64   `json:"producer_store_bytes_by_kind,omitempty"`
+	ProducerStoreLogicalBytesByKind     map[string]int64   `json:"producer_store_logical_bytes_by_kind,omitempty"`
+	WindowSQLRefusal                    string             `json:"window_sql_refusal,omitempty"`
+	PublishResponseError                string             `json:"publish_response_error,omitempty"`
+	ReadabilityPolls                    int                `json:"readability_polls,omitempty"`
+	PointReadNotFound                   int                `json:"point_read_not_found,omitempty"`
+	PointReadFirstOKAfterRestartSeconds float64            `json:"point_read_first_ok_after_restart_seconds,omitempty"`
+	ReadabilityPollMaxSeconds           float64            `json:"readability_poll_max_seconds,omitempty"`
+	ReadabilityLastPollSeconds          float64            `json:"readability_last_poll_seconds,omitempty"`
+	WindowSQLRefusalSeconds             map[string]float64 `json:"window_sql_refusal_seconds,omitempty"`
+	WindowSQLRefusalCodes               map[string]int     `json:"window_sql_refusal_codes,omitempty"`
+	Smoke                               bool               `json:"instrumentation_smoke"`
+	Round                               int                `json:"round"`
+	Operation                           string             `json:"operation"`
+	Dataset                             string             `json:"dataset"`
+	Bytes                               int64              `json:"bytes"`
+	Records                             int64              `json:"records"`
+	Seconds                             float64            `json:"seconds"`
+	BytesPerSecond                      float64            `json:"bytes_per_second"`
+	RecordsPerSecond                    float64            `json:"records_per_second"`
+	Target                              int64              `json:"target_bytes_per_second"`
+	ProducerCPUSeconds                  float64            `json:"producer_cpu_seconds"`
+	ReceiverCPUSeconds                  float64            `json:"receiver_cpu_seconds"`
+	ProducerSampledPeakRSS              int64              `json:"producer_sampled_peak_rss_bytes"`
+	ReceiverSampledPeakRSS              int64              `json:"receiver_sampled_peak_rss_bytes"`
+	LoadStart                           string             `json:"uptime_start"`
+	LoadEnd                             string             `json:"uptime_end"`
+	StoreBytesByKind                    map[string]int64   `json:"receiver_store_bytes_by_kind,omitempty"`
+	StoreLogicalBytesByKind             map[string]int64   `json:"receiver_store_logical_bytes_by_kind,omitempty"`
+	StoreAllocatedBeforeDataset         map[string]int64   `json:"receiver_store_allocated_before_dataset,omitempty"`
+	StoreToRecordRatio                  float64            `json:"receiver_dataset_allocated_increase_to_record_bytes_ratio,omitempty"`
+	ReadySeconds                        float64            `json:"receiver_ready_seconds,omitempty"`
+	PointReadSeconds                    map[string]float64 `json:"point_read_seconds,omitempty"`
+	WindowSQLSeconds                    map[string]float64 `json:"window_sql_seconds,omitempty"`
+	Note                                string             `json:"note,omitempty"`
 }
 
 func measurePublication(t *testing.T, a, b *publicationDaemon, operation, dataset string, run func() (int64, int64)) publicationMeasurement {
