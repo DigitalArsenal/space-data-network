@@ -132,12 +132,20 @@ copies and creates format-5 marker bytes under `fsql4` with an empty store.
 The two installed old binaries, verified against their supplied digests, each
 reach readiness on their matching copied store in the amd64 rehearsal.
 
-Both forward attempts fail before conversion because the verified v1.1.5
-linux/amd64 binary's runtime self-test reports
-`stop-reaches-every-thread=false`. The command refuses with
-`lacks the SDN runtime patches`. Other invocations report that flag true and
-enter conversion, so the cause of the invocation-dependent refusal is not
-established. The guard is not bypassed and node code is unchanged.
+The preceding v1.1.5 forward attempts stopped at the runtime check. A subsequent
+study of that same verified linux/amd64 archive ran 60 self-tests while idle and
+60 during a real conversion. All idle invocations passed. Two concurrent
+invocations reported `interruptible_aot=false` and `patched=false`, with no
+reported errors; the other 58 passed. Every concurrent invocation was bracketed
+by a running converter. The source checks whether cancellation stops every
+spawned executor within a short observation window. These observations establish
+intermittent failures in this environment, without isolating their cause. The
+reported AOT speed ratio does not decide the check's result.
+
+The verified v1.1.6 archive also exercised the early conversion retry: its first
+attempt refused the runtime patches after three seconds, and its second entered
+conversion. The guard is not bypassed and node code is unchanged. Each retry
+requires an empty format-5 destination and shares the original hard deadline.
 
 The first input's post-switch case verifies 45 partitions and reaches SWITCHED
 1,414 seconds after CONVERTING. At that point the retained format-4 tree,
