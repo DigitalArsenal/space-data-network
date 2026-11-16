@@ -61,7 +61,8 @@
     "lint": "eslint src --ext .ts",
     "check:versions": "node ../scripts/generate-suite-version-info.js --check && node ../scripts/check-version-consistency.js",
     "prepublishOnly": "npm run check:versions && npm run build:package",
-    "test:browser-interop": "playwright test --config playwright.browser-interop.config.ts"
+    "test:browser-interop": "playwright test --config playwright.browser-interop.config.ts",
+    "test:dashboard-engine": "node scripts/dashboard-engine.e2e.mjs"
   },
   "keywords": [
     "space",
