@@ -83,7 +83,8 @@ argument. The image and original copy are removed after the case.
 
 Record preservation uses the node's anonymous `/api/v1/data/scan` endpoint.
 The driver waits for startup connector persistence, then scans every standard
-through the snapshot cursor. It checks the scan's advertised total against every
+through the snapshot cursor, requesting the supported maximum of 50,000 records
+per page. Page size does not change the completeness or byte checks. It checks the scan's advertised total against every
 record read. Stats counts sum source associations and can exceed unique record
 counts; both figures are retained in `scan-versus-stats.json`. Their equality
 is not a record-preservation condition. Before-state records stay in size-prefixed FlatBuffer streams in

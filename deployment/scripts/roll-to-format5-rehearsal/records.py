@@ -55,7 +55,7 @@ def request_frame(schema, cursor):
     struct.pack_into('<i', data, table, table - vtable)
     for slot, position in ((5, 4), (20, 8), (21, 12)):
         struct.pack_into('<H', data, vtable + 4 + slot * 2, position)
-    struct.pack_into('<I', data, table + 8, 20000)
+    struct.pack_into('<I', data, table + 8, 50000)
     for position, value in ((4, schema), (12, cursor)):
         encoded = value.encode()
         data.extend(b'\0' * (-len(data) % 4))
