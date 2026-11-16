@@ -46,7 +46,7 @@ func TestFullTextQueryServesOriginalBytesAndExplicitCoverage(t *testing.T) {
 	if err != nil || int8(page.KIND()) != QRPKindPage || page.TOTAL_COUNT() != 1 || page.RECORD_COUNT() != 1 || string(page.SEARCH()) != "munchen optical" {
 		t.Fatalf("missing search/count coverage in QRP page: %v", err)
 	}
-	if !bytes.Equal(frames[1], want) {
+	if !bytes.Equal(frames[1][4:], want) {
 		t.Fatal("search did not return the original matching FlatBuffer")
 	}
 }
