@@ -1,3 +1,5 @@
+import * as flatbuffers from 'flatbuffers';
+import { compileTestSchema } from '../../test-schema-helper';
 import { describe, expect, it } from 'vitest';
 import { createAvailableResult, createDegradedResult, type ChannelBackend } from './sdn-backend';
 import { ingestChannelStreamToFlatSql } from './channel-sync';
@@ -10,20 +12,21 @@ describe('channel stream sync adapters', () => {
     const stream = concatBytes(sizePrefixedFrame(first), sizePrefixedFrame(second));
     const channels = channelBackendWithStream(stream);
 
-    const result = await ingestChannelStreamToFlatSql(channels, 'spaceaware-OMM');
+    const result = await ingestChannelStreamToFlatSql(channels, 'spaceaware-OMM', { store: { engine: { backend: 'memory' }, schemas: await channelSchemas('OMM ') } });
 
     expect(result).toEqual(expect.objectContaining({ ok: true }));
     expect(result.data?.channelId).toBe('spaceaware-OMM');
-    expect(result.data?.rows.listRows().map((row) => row.handle)).toEqual([
-      { schemaFileId: 'OMM', rowId: 1 },
-      { schemaFileId: 'OMM', rowId: 2 },
+    expect((await result.data!.rows.listRows()).map((row) => row.handle)).toEqual([
+      { schemaFileId: 'OMM ', rowId: 1 },
+      { schemaFileId: 'OMM ', rowId: 2 },
     ]);
-    expect(result.data?.rows.listRows()[0].payload).toEqual(first);
+    expect((await result.data!.rows.listRows())[0].payload).toEqual(first);
     expect(result.data?.stats).toEqual(expect.objectContaining({
       framesDecoded: 2,
       framesAppended: 2,
       framesRouted: 0,
     }));
+    await result.data!.rows.close();
   });
 
   it('rejects channel FlatSQL ingest when a frame file identifier does not match the channel standardCode', async () => {
@@ -42,7 +45,7 @@ describe('channel stream sync adapters', () => {
       openStream: async () => createDegradedResult<Uint8Array>('channels.openStream', 'HTTP 403 verified channel grant required'),
     } as Pick<ChannelBackend, 'openStream'>;
 
-    const result = await ingestChannelStreamToFlatSql(channels, 'spaceaware-OMM');
+    const result = await ingestChannelStreamToFlatSql(channels, 'spaceaware-OMM', { store: { engine: { backend: 'memory' }, schemas: await channelSchemas('OMM ') } });
 
     expect(result).toEqual(expect.objectContaining({
       ok: false,
@@ -66,11 +69,13 @@ describe('channel stream sync adapters', () => {
     } as Pick<ChannelBackend, 'openStream'>;
 
     const result = await ingestChannelStreamToFlatSql(channels, 'spaceaware-OMM', {
+      store: { engine: { backend: 'memory' }, schemas: await channelSchemas('OMM ') },
       access: { subject: 'peer-alpha', grantId: 'grant-1', visibility: 'private-listed' },
     });
 
     expect(result).toEqual(expect.objectContaining({ ok: true }));
     expect(access).toEqual({ subject: 'peer-alpha', grantId: 'grant-1', visibility: 'private-listed' });
+    await result.data!.rows.close();
   });
 
   it('opens a channel stream and feeds it through the SDK module stream pump', async () => {
@@ -155,18 +160,19 @@ function channelBackendWithStream(stream: Uint8Array): Pick<ChannelBackend, 'ope
   };
 }
 
-function flatBufferPayload(fileIdentifier: string, byteLength: number): Uint8Array {
-  const encoded = new TextEncoder().encode(fileIdentifier);
-  if (encoded.byteLength !== 4) {
-    throw new Error('fileIdentifier must be four bytes');
-  }
-  const payload = new Uint8Array(Math.max(8, byteLength));
-  payload[0] = 4;
-  payload.set(encoded, 4);
-  for (let i = 8; i < payload.byteLength; i += 1) {
-    payload[i] = i % 251;
-  }
-  return payload;
+function flatBufferPayload(fileIdentifier: string, value: number): Uint8Array {
+  const builder = new flatbuffers.Builder(64);
+  builder.startObject(1);
+  builder.addFieldInt32(0, value, 0);
+  builder.finish(builder.endObject(), fileIdentifier);
+  return builder.asUint8Array().slice();
+}
+
+async function channelSchemas(...ids: string[]) {
+  return Promise.all(ids.map(async fileIdentifier => ({
+    name: fileIdentifier.trim(), fileIdentifier,
+    bfbs: await compileTestSchema(`table Record { value:uint; } root_type Record; file_identifier "${fileIdentifier}";`),
+  })));
 }
 
 function sizePrefixedFrame(payload: Uint8Array): Uint8Array {
