@@ -10,8 +10,17 @@ import (
 	"strings"
 )
 
+// Host is an SPA file host for the built SDN admin client: a request naming a
+// file of the build gets that file, and any other GET or HEAD without a file
+// extension gets index.html with the runtime config injected.
+type Host struct {
+	buildDir  string
+	indexPath string
+	files     http.Handler
+}
+
 // NewHost returns an SPA file host for the built SDN admin client.
-func NewHost(buildDir string) (http.Handler, error) {
+func NewHost(buildDir string) (*Host, error) {
 	buildDir = strings.TrimSpace(buildDir)
 	if buildDir == "" {
 		return nil, fmt.Errorf("admin ui path is empty")
@@ -24,43 +33,55 @@ func NewHost(buildDir string) (http.Handler, error) {
 		return nil, fmt.Errorf("admin ui path %q: index.html is a directory", buildDir)
 	}
 
-	fs := http.FileServer(http.Dir(buildDir))
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet && r.Method != http.MethodHead {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
+	return &Host{
+		buildDir:  buildDir,
+		indexPath: indexPath,
+		files:     http.FileServer(http.Dir(buildDir)),
+	}, nil
+}
 
-		clean := path.Clean("/" + r.URL.Path)
-		clean = strings.TrimPrefix(clean, "/")
-		if clean != "" {
-			full := filepath.Join(buildDir, filepath.FromSlash(clean))
-			if st, err := os.Stat(full); err == nil && !st.IsDir() {
-				w.Header().Set("Cache-Control", "public, max-age=1800")
-				fs.ServeHTTP(w, r)
-				return
-			}
-		}
+// IsFile reports whether urlPath, relative to where the host is mounted, names
+// a file of the build (not a directory).
+func (h *Host) IsFile(urlPath string) bool {
+	clean := strings.TrimPrefix(path.Clean("/"+urlPath), "/")
+	if clean == "" {
+		return false
+	}
+	st, err := os.Stat(filepath.Join(h.buildDir, filepath.FromSlash(clean)))
+	return err == nil && !st.IsDir()
+}
 
-		if ext := path.Ext(r.URL.Path); ext != "" && r.URL.Path != "/" {
-			http.NotFound(w, r)
-			return
-		}
+// ServeHTTP implements http.Handler.
+func (h *Host) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 
-		indexHTML, err := os.ReadFile(indexPath)
-		if err != nil {
-			http.Error(w, "admin ui unavailable", http.StatusServiceUnavailable)
-			return
-		}
-		indexHTML = injectRuntimeConfig(indexHTML)
+	if h.IsFile(r.URL.Path) {
+		w.Header().Set("Cache-Control", "public, max-age=1800")
+		h.files.ServeHTTP(w, r)
+		return
+	}
 
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-store")
-		w.WriteHeader(http.StatusOK)
-		if r.Method != http.MethodHead {
-			_, _ = w.Write(indexHTML)
-		}
-	}), nil
+	if ext := path.Ext(r.URL.Path); ext != "" && r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
+
+	indexHTML, err := os.ReadFile(h.indexPath)
+	if err != nil {
+		http.Error(w, "admin ui unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	indexHTML = injectRuntimeConfig(indexHTML)
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	if r.Method != http.MethodHead {
+		_, _ = w.Write(indexHTML)
+	}
 }
 
 func injectRuntimeConfig(html []byte) []byte {

@@ -1074,7 +1074,10 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	if cfg.Admin.Enabled {
 		var (
 			adminUIHandler http.Handler
-			legacyAdminUI  *peers.AdminUI
+			// adminUIResource says which /admin paths reach adminUIHandler
+			// (makeAdminSurfaceHandler).
+			adminUIResource func(urlPath string) bool
+			legacyAdminUI   *peers.AdminUI
 		)
 		if adminUIPath := resolveAdminUIPath(cfg.Admin.AdminUIPath); adminUIPath != "" {
 			host, hostErr := adminui.NewHost(adminUIPath)
@@ -1082,6 +1085,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				log.Warnf("Failed to create hosted admin UI from %q: %v", adminUIPath, hostErr)
 			} else {
 				adminUIHandler = host
+				adminUIResource = hostedAdminResource(host)
 				log.Infof("Hosted admin UI available at /admin from %s", adminUIPath)
 			}
 		}
@@ -1091,6 +1095,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				log.Warnf("Failed to create legacy admin UI: %v", err)
 			} else {
 				adminUIHandler = legacyAdminUI
+				adminUIResource = legacyAdminUI.IsAPIPath
 				log.Warn("Falling back to legacy inline admin UI because no hosted admin build was found")
 			}
 		}
@@ -2574,32 +2579,9 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			// ----------------------------------------------------------------
 			// Admin panel at /admin — admin/auth surface only
 			// ----------------------------------------------------------------
-			adminUISubtree := http.StripPrefix("/admin", adminUIHandler)
-			serveAdminUI := func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/admin" {
-					http.Redirect(w, r, "/admin/", http.StatusMovedPermanently)
-					return
-				}
-				if !strings.HasPrefix(r.URL.Path, "/admin/") {
-					http.NotFound(w, r)
-					return
-				}
-
-				serve := func(w http.ResponseWriter, r *http.Request) {
-					adminUISubtree.ServeHTTP(w, r)
-				}
-				if cfg.Admin.RequireAuth {
-					if authHandler == nil {
-						http.Error(w, "authentication unavailable", http.StatusServiceUnavailable)
-						return
-					}
-					authHandler.RequireAuth(peers.Admin, serve)(w, r)
-					return
-				}
-				serve(w, r)
-			}
-			adminMux.HandleFunc("/admin", serveAdminUI)
-			adminMux.HandleFunc("/admin/", serveAdminUI)
+			adminSurface := makeAdminSurfaceHandler(adminUIHandler, adminUIResource, cfg.Admin.RequireAuth, authHandler)
+			adminMux.Handle("/admin", adminSurface)
+			adminMux.Handle("/admin/", adminSurface)
 
 			// ----------------------------------------------------------------
 			// Public root at / — the SDN Node Status $APP homepage (single
