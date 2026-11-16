@@ -167,23 +167,33 @@ jobs:
       - name: Encryption tests (Go)
         run: ./scripts/ci-local.sh encryption
 
-  # Every package but internal/storage.
-  #
-  # Budget: 427.6s and 492.5s of test time on two warm local runs (2026-09-18,
-  # -p=1), against a runner factor of 1.9x measured the same day — same
-  # package, interpreted on both sides: internal/directory 170.4s on CI
-  # against 90.1s here. That is ~15 minutes of `go test`, plus the build and
-  # the prewarm; 40 minutes is roughly 1.6x the whole job, and it replaces one
-  # that took 109.5. The per-package -timeout lives in ci-local.sh, next to
-  # the numbers it came from.
+  # Four exhaustive package groups retain the individual test deadlines.
+  # Run 43938905898 measured 574s general, 1220s format2, 575s command,
+  # and 374s engine tests. The 35m outer limit leaves the 30m package
+  # deadline time to name an overrun after setup and linking.
   go-quick:
-    name: Go tests (quick)
+    name: Go tests (quick / ${{ matrix.group }})
     runs-on: ubuntu-latest
+    container: ubuntu:20.04
+    defaults:
+      run:
+        shell: bash
     needs: wasmedge-runtime
-    # Run 43929335080 reached the command package after 39m50s. Its existing
-    # 20m test budget and five minutes of headroom require 65m for this job.
-    timeout-minutes: 65
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [general, format2, command, engine]
+    env:
+      SDN_CI_GO_GROUP: ${{ matrix.group }}
     steps:
+      - name: Prepare the release container
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends \
+            ca-certificates curl git xz-utils build-essential zlib1g-dev libtinfo-dev
+          git config --global --add safe.directory '*'
       - uses: actions/checkout@v4
         with:
           submodules: recursive
@@ -204,12 +214,23 @@ jobs:
   go-heavy:
     name: Go tests (record store)
     runs-on: ubuntu-latest
+    container: ubuntu:20.04
+    defaults:
+      run:
+        shell: bash
     needs: wasmedge-runtime
     # Above the lane's own 25m go-test budget, so an overrun surfaces as go
     # test's timeout panic (which names the running test) instead of the job
     # being killed with no diagnostic.
     timeout-minutes: 100
     steps:
+      - name: Prepare the release container
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends \
+            ca-certificates curl git xz-utils build-essential zlib1g-dev libtinfo-dev
+          git config --global --add safe.directory '*'
       - uses: actions/checkout@v4
         with:
           submodules: recursive
@@ -219,8 +240,8 @@ jobs:
       - name: go test (record store)
         run: ./scripts/ci-local.sh heavy
 
-  # The release cache supplies one prefix per run. The Ubuntu host gate
-  # links that prefix and checks its behavior before the Go jobs start.
+  # The release cache supplies one prefix per run. Consumers link and test
+  # in the release container, including its C library and linker.
   wasmedge-static:
     name: Shared patched WasmEdge prefix
     runs-on: ubuntu-latest
@@ -274,11 +295,22 @@ jobs:
           retention-days: 1
 
   wasmedge-runtime:
-    name: Patched runtime on Ubuntu host
+    name: Patched runtime in release container
     runs-on: ubuntu-latest
+    container: ubuntu:20.04
+    defaults:
+      run:
+        shell: bash
     needs: wasmedge-static
     timeout-minutes: 25
     steps:
+      - name: Prepare the release container
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends \
+            ca-certificates curl git xz-utils build-essential zlib1g-dev libtinfo-dev
+          git config --global --add safe.directory '*'
       - uses: actions/checkout@v4
         with:
           submodules: recursive
@@ -291,9 +323,20 @@ jobs:
   wasmedge-substrate:
     name: Store migration E2E (patched runtime)
     runs-on: ubuntu-latest
+    container: ubuntu:20.04
+    defaults:
+      run:
+        shell: bash
     needs: wasmedge-runtime
     timeout-minutes: 120
     steps:
+      - name: Prepare the release container
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends \
+            ca-certificates curl git xz-utils build-essential zlib1g-dev libtinfo-dev
+          git config --global --add safe.directory '*'
       - uses: actions/checkout@v4
         with:
           submodules: recursive
@@ -318,9 +361,20 @@ jobs:
   update-channel-e2e:
     name: Update channel E2E (real daemon)
     runs-on: ubuntu-latest
+    container: ubuntu:20.04
+    defaults:
+      run:
+        shell: bash
     needs: wasmedge-runtime
     timeout-minutes: 60
     steps:
+      - name: Prepare the release container
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends \
+            ca-certificates curl git xz-utils build-essential zlib1g-dev libtinfo-dev
+          git config --global --add safe.directory '*'
       - uses: actions/checkout@v4
         with:
           submodules: recursive
@@ -333,9 +387,20 @@ jobs:
   go-builds:
     name: Go builds (node + edge relay)
     runs-on: ubuntu-latest
+    container: ubuntu:20.04
+    defaults:
+      run:
+        shell: bash
     needs: wasmedge-runtime
     timeout-minutes: 25
     steps:
+      - name: Prepare the release container
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends \
+            ca-certificates curl git xz-utils build-essential zlib1g-dev libtinfo-dev
+          git config --global --add safe.directory '*'
       - uses: actions/checkout@v4
         with:
           submodules: recursive
@@ -348,9 +413,20 @@ jobs:
   js:
     name: sdn-js
     runs-on: ubuntu-latest
+    container: ubuntu:20.04
+    defaults:
+      run:
+        shell: bash
     needs: wasmedge-runtime
     timeout-minutes: 30
     steps:
+      - name: Prepare the release container
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends \
+            ca-certificates curl git xz-utils build-essential zlib1g-dev libtinfo-dev
+          git config --global --add safe.directory '*'
       - uses: actions/checkout@v4
         with:
           submodules: recursive
@@ -385,9 +461,20 @@ jobs:
   demo:
     name: Plugin demo
     runs-on: ubuntu-latest
+    container: ubuntu:20.04
+    defaults:
+      run:
+        shell: bash
     needs: wasmedge-runtime
     timeout-minutes: 30
     steps:
+      - name: Prepare the release container
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends \
+            ca-certificates curl git xz-utils build-essential zlib1g-dev libtinfo-dev
+          git config --global --add safe.directory '*'
       - uses: actions/checkout@v4
         with:
           submodules: recursive
@@ -405,9 +492,20 @@ jobs:
   dashboard:
     name: Embedded dashboard E2E (real node)
     runs-on: ubuntu-latest
+    container: ubuntu:20.04
+    defaults:
+      run:
+        shell: bash
     needs: wasmedge-runtime
     timeout-minutes: 30
     steps:
+      - name: Prepare the release container
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends \
+            ca-certificates curl git xz-utils build-essential zlib1g-dev libtinfo-dev
+          git config --global --add safe.directory '*'
       - uses: actions/checkout@v4
         with:
           submodules: recursive

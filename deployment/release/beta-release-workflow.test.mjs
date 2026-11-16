@@ -169,10 +169,11 @@ test('CI Go jobs consume one release-compatible patched prefix', () => {
     for (const run of body.matchAll(/^[ \t]+(?:run: )?\.\/scripts\/ci-local\.sh ([a-z-]+)[ \t]*$/gm)) {
       if (!needsWasmEdge.has(run[1])) continue;
       consumers++;
+      assert.match(body, /^    container: ubuntu:20\.04$/m, `${job} must test the release C library and linker`);
       const setup = /^ {6}- uses: \.\/\.github\/actions\/sdn-go-env[ \t]*$/m.exec(body);
       assert.ok(setup && setup.index < run.index, `${job} must restore the prefix before ${run[1]}`);
       assert.ok(dependsOn(job, producer), `${job} must wait for the prefix producer`);
-      if (run[1] !== 'runtime') assert.ok(dependsOn(job, 'wasmedge-runtime'), `${job} must wait for the host self-test`);
+      if (run[1] !== 'runtime') assert.ok(dependsOn(job, 'wasmedge-runtime'), `${job} must wait for the release-container self-test`);
       assert.doesNotMatch(body, /^[ \t]+(?:WASMEDGE_DIR|SDN_WASM_REQUIRE_PATCHED):/m, `${job} must preserve the shared runtime environment`);
     }
   }

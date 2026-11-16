@@ -43,7 +43,14 @@ runs:
 
     - name: Install static link dependencies
       shell: bash
-      run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends build-essential zlib1g-dev libtinfo-dev
+      run: |
+        if [ "$(id -u)" = 0 ]; then
+          apt-get update -qq
+          apt-get install -y --no-install-recommends build-essential zlib1g-dev libtinfo-dev
+        else
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends build-essential zlib1g-dev libtinfo-dev
+        fi
 
     - name: Restore WasmEdge
       shell: bash

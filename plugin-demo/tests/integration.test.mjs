@@ -253,7 +253,7 @@ async function runTests() {
       assertEqual(fid, '$OMM', 'file identifier');
 
       const resp = await httpPost(`${baseUrl}/api/v1/data/publish/OMM.fbs`, ommBytes);
-      assertEqual(resp.status, 201, `publish OMM status`);
+      assertEqual(resp.status, 201, `publish OMM status (body: ${await resp.clone().text()})`);
     });
 
     /* ── Section 3: Query Data ── */

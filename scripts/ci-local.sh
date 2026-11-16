@@ -11,7 +11,7 @@
 #   .github/workflows/ci.yml job   modes it runs
 #   ----------------------------   ---------------------------
 #   preflight                      preflight, encryption
-#   go-quick                       go
+#   go-quick (four package groups) go
 #   go-heavy                       heavy
 #   go-builds                      builds
 #   js                             js
@@ -412,11 +412,31 @@ go_test_with_timings() {
   local log="$ROOT/.ci-artifacts/gotest-${label}.log"
   local rc=0
   mkdir -p "$ROOT/.ci-artifacts"
+  if [[ "${SDN_CI_GO_COVERAGE:-0}" == 1 ]]; then
+    local arg skip='a^'
+    for arg in "$@"; do
+      case "$arg" in -skip=*) skip="${arg#-skip=}" ;; esac
+    done
+    "$ROOT/scripts/go-with-wasmedge.sh" test -list . "$@" > "$log.list" 2>&1 || { cat "$log.list"; return 1; }
+    awk '/^(Test|Example|Fuzz)[[:alnum:]_]+$/ {print}' "$log.list" | grep -Ev "$skip" | LC_ALL=C sort > "$log.expected" || true
+  fi
   set +e
   "$ROOT/scripts/go-with-wasmedge.sh" test "$@" 2>&1 | tee "$log"
   rc=${PIPESTATUS[0]}
   set -e
   report_pkg_timings "$label" "$log"
+  if [[ "${SDN_CI_GO_COVERAGE:-0}" == 1 ]]; then
+    awk '$1 == "===" && $2 == "RUN" && $3 !~ /\// && $0 !~ /^[[:space:]]/ {print $3}' "$log" | LC_ALL=C sort > "$log.ran"
+    awk '$1 == "---" && ($2 == "PASS:" || $2 == "FAIL:" || $2 == "SKIP:") && $3 !~ /\// && $0 !~ /^[[:space:]]/ {print $3}' "$log" | LC_ALL=C sort > "$log.ended"
+    for arg in ran ended; do
+      if ! cmp -s "$log.expected" "$log.$arg"; then
+        echo "Go test coverage mismatch ($label, $arg):"
+        diff -u "$log.expected" "$log.$arg" || true
+        rc=1
+      fi
+    done
+    [[ "$rc" != 0 ]] || echo "Go test coverage: $label ran and completed every listed test exactly once"
+  fi
   return "$rc"
 }
 
@@ -494,26 +514,54 @@ run_gofmt() {
   pass "gofmt"
 }
 
+# Package ownership is exhaustive: new packages enter the general group.
+# The other groups isolate the measured 1220s format2, 575s command, and
+# 374s engine packages. Every group retains each package's test budget.
+quick_go_group() {
+  case "$1" in
+    */internal/storage/format2) echo format2 ;;
+    */cmd/spacedatanetwork) echo command ;;
+    */internal/flatsqlrt|*/internal/storage/format4|*/internal/wasmrt) echo engine ;;
+    *) echo general ;;
+  esac
+}
+
 run_go() {
   prepare_go_toolchain
   run_gofmt
   export SDN_WASM_ATOMIC_REGRESSION=1
+  export SDN_CI_GO_COVERAGE=1
+  local group="${SDN_CI_GO_GROUP:-all}"
+  case "$group" in all|general|format2|command|engine) ;; *) fail "unknown Go group: $group" ;; esac
 
-  step "Go tests (quick: every package but the heavy set)"
-  local pkgs failed=0
+  step "Go tests (quick: $group)"
+  local pkgs failed=0 pkg
   pkgs=$("$ROOT/scripts/go-with-wasmedge.sh" list ./... | grep -Ev "$(heavy_pkg_filter)")
-  # shellcheck disable=SC2086
-  go_test_with_timings quick -v -p=1 -timeout="$QUICK_GO_TEST_TIMEOUT" -count=1 $pkgs \
-    || failed=1
+  local manifest="$ROOT/.ci-artifacts/quick-packages.txt"
+  mkdir -p "$ROOT/.ci-artifacts"
+  for pkg in $pkgs $EXTENDED_GO_PACKAGES; do
+    printf '%s %s\n' "$pkg" "$(quick_go_group "$pkg")"
+  done | LC_ALL=C sort > "$manifest"
+  "$ROOT/scripts/go-with-wasmedge.sh" list ./... | grep -Fxv -e "$HEAVY_GO_PACKAGES" | LC_ALL=C sort > "$manifest.expected"
+  cut -d ' ' -f 1 "$manifest" > "$manifest.actual"
+  cmp -s "$manifest.expected" "$manifest.actual" || fail "quick package ownership differs from go list"
+  [[ -z "$(uniq -d "$manifest.actual")" ]] || fail "duplicate quick package ownership"
+  if [[ "$group" == all || "$group" == general ]]; then
+    # shellcheck disable=SC2086
+    go_test_with_timings quick -v -p=1 -timeout="$QUICK_GO_TEST_TIMEOUT" -count=1 $pkgs \
+      || failed=1
+  fi
   run_go_extended || failed=1
-  [[ "$failed" == 0 ]] || fail "go test (quick)"
-  pass "go test (quick)"
+  unset SDN_CI_GO_COVERAGE
+  [[ "$failed" == 0 ]] || fail "go test (quick: $group)"
+  pass "go test (quick: $group)"
 }
 
 run_go_extended() {
   local pkg budget label failed=0
   local skip=()
   for pkg in $EXTENDED_GO_PACKAGES; do
+    [[ "${SDN_CI_GO_GROUP:-all}" == all || "$(quick_go_group "$pkg")" == "$SDN_CI_GO_GROUP" ]] || continue
     skip=()
     budget=20m
     case "$pkg" in
