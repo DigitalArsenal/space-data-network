@@ -86,9 +86,10 @@ def run(case, minutes, seconds):
         shutil.copytree(source, ROOT / 'store', dirs_exist_ok=True)
         (ROOT / 'disk-filesystem.json').write_text(json.dumps({
             'filesystem': 'ext4', 'capacity_bytes': size}) + '\n')
-    (ROOT / 'home').mkdir()
+    (ROOT / 'home').mkdir(exist_ok=True)
     password = ROOT / 'test-password'
-    password.write_text(os.urandom(32).hex())
+    if not password.exists():
+        password.write_text(os.urandom(32).hex())
     password.chmod(0o600)
     os.environ['SDN_KEY_PASSWORD_FILE'] = str(password)
     os.environ['XDG_CACHE_HOME'] = '/engine-cache'
@@ -104,6 +105,8 @@ def run(case, minutes, seconds):
     isolated_peer = '1' + encoded
     # All keys belong to this isolated test. The container has no external network.
     (ROOT / 'config.yaml').write_text('''mode: full
+flows:
+  services: []
 network:
   listen: [/ip4/127.0.0.1/tcp/4001]
   bootstrap: [/ip4/127.0.0.1/tcp/9/p2p/ISOLATED_PEER]

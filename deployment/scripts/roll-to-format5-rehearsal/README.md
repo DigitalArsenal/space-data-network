@@ -34,7 +34,11 @@ retains the release archive's launcher and runtime layout. Old binary arguments
 and their digests follow the order of the store arguments.
 Changing `--new-archive` selects another release, with its corresponding checksum
 file supplied through `--new-checksums`. The output directory must not exist.
-A selective repeat uses `--case` with one or more case names. Start Docker before
+A selective repeat uses `--case` with one or more case names.
+`--retry-before-roll --case forward` reuses a failed forward setup only when
+no rollout ledger or format-5 selection exists and the old binary still matches
+its verified digest. Previous results and logs move into an `attempt-*` directory.
+The test identity remains in place. Other cases always use fresh copies. Start Docker before
 running and quit it after the run. The harness stops and removes only containers
 it creates. It retains case directories, logs, hashes, ledgers and results.
 
@@ -48,7 +52,8 @@ replace an empty bootstrap list with public defaults. A synthetic peer identity
 at unused loopback port 9 suppresses that fallback without naming a real peer.
 Docker's network namespace has no external interface. The loopback admin
 listener has `require_auth: false` to expose aggregate stats without credentials.
-The running peer identity comes from the current systemd invocation journal.
+Provider flow services are explicitly empty, so prewarm checks only the
+engine artifacts required by the isolated node. The running peer identity comes from the current systemd invocation journal.
 `--cache-dir` reuses compiled engine artifacts across cases; identity material
 is never placed in that directory. The new release's engine
 is prewarmed before stopping the old node. No runtime permission patch or fake
