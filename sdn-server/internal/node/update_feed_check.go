@@ -75,16 +75,19 @@ func (s *UpdateSignalSubscriber) checkFeed(ctx context.Context) error {
 		return err
 	}
 	entry, err := update.SelectProviderCandidate(raw, s.feed, update.ProviderFeedSelection{
-		Channel: s.deps.Channel, Platform: runtime.GOOS, Arch: runtime.GOARCH, Kind: s.deps.Kind, CurrentSequence: state.Sequence,
+		Exclude: func(entry update.ProviderFeedUpdate) bool { return update.HasFailedUpdate(s.deps.Paths, entry.UpdateID) },
+ Channel: s.deps.Channel, Platform: runtime.GOOS, Arch: runtime.GOARCH, Kind: s.deps.Kind, CurrentSequence: state.Sequence,
 	})
 	if errors.Is(err, update.ErrNoCompatibleUpdate) { return nil }
 	if err != nil {
 		return err
 	}
-	if update.HasFailedUpdate(s.deps.Paths, entry.UpdateID) || !s.claim(entry.UpdateID) {
+	if !s.claimFeed(entry.UpdateID) {
 		return nil
 	}
-	// The index grants no authority. upgradeTriggered verifies the signed manifest and payload.
+	succeeded := false
+ defer func() { s.finishFeed(succeeded) }()
+ // The index grants no authority. upgradeTriggered verifies the signed manifest and payload.
 	signal := update.SignalFromFeedEntry(*entry, s.feed.String(), s.deps.Now(), false)
 	if err := s.upgradeTriggered(ctx, signal, state, "feed-check"); err != nil {
 		var refusal *update.StoreFormatRefusal
@@ -93,7 +96,25 @@ func (s *UpdateSignalSubscriber) checkFeed(ctx context.Context) error {
 		}
 		return err
 	}
-	return nil
+	succeeded = true
+ return nil
+}
+
+// claimFeed reserves the install without charging the swap interval for a download.
+func (s *UpdateSignalSubscriber) claimFeed(id string) bool {
+ s.mu.Lock()
+ defer s.mu.Unlock()
+ if s.pendingFeed || s.handled[id] || !s.lastUpgrade.IsZero() && s.deps.Now().Sub(s.lastUpgrade) < s.deps.MinInterval { return false }
+ s.pendingFeed = true
+ s.handled[id] = true
+ return true
+}
+
+func (s *UpdateSignalSubscriber) finishFeed(succeeded bool) {
+ s.mu.Lock()
+ defer s.mu.Unlock()
+ s.pendingFeed = false
+ if succeeded { s.lastUpgrade = s.deps.Now() }
 }
 
 func (s *UpdateSignalSubscriber) reportFailure(trigger, id string, err error) {

@@ -106,6 +106,7 @@ func (u ProviderFeedUpdate) AssertMatchesPayload(m *Manifest, carrierLen int) er
 var ErrNoCompatibleUpdate = errors.New("no compatible update is available from provider feed")
 
 type ProviderFeedSelection struct {
+ Exclude func(ProviderFeedUpdate) bool
 	UpdateID        string
 	Version         string
 	Channel         string
@@ -275,7 +276,7 @@ func (f *ProviderFeed) Select(selection ProviderFeedSelection) (*ProviderFeedUpd
 	}
 	var candidates []ProviderFeedUpdate
 	for _, update := range f.Updates {
-		if !providerUpdateMatches(update, selection) {
+		if !providerUpdateMatches(update, selection) || selection.Exclude != nil && selection.Exclude(update) {
 			continue
 		}
 		candidates = append(candidates, update)

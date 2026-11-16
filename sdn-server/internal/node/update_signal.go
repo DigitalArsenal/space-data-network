@@ -153,6 +153,7 @@ type UpdateSignalSubscriber struct {
 
 	mu          sync.Mutex
 	lastUpgrade time.Time
+ pendingFeed bool
 	handled     map[string]bool
 	// uiAttempts is when each UI package was last tried (claimUI).
 	uiAttempts       map[string]time.Time
@@ -316,6 +317,7 @@ func (s *UpdateSignalSubscriber) handle(ctx context.Context, data []byte) {
 func (s *UpdateSignalSubscriber) claim(updateID string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+ if s.pendingFeed { return false }
 	if s.handled[updateID] {
 		return false
 	}
