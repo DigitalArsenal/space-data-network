@@ -27,6 +27,7 @@ import (
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/OEM"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/QRP"
 	flatbuffers "github.com/google/flatbuffers/go"
+	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 	"github.com/spacedatanetwork/sdn-server/internal/syncwire"
@@ -58,9 +59,11 @@ func TestPublicationBaseline(t *testing.T) {
 	for round := 0; round < repetitions; round++ {
 		t.Run(fmt.Sprintf("round-%d", round+1), func(t *testing.T) {
 			a := newPublicationDaemon(t, exe, "baseline-producer", "", "", "keep-all")
+			baselineWriterQuota(t, a)
 			a.env = append(a.env, "SDN_E2E_PUBLICATION_OBSERVATIONS="+a.logPath+".announcements.jsonl")
 			a.start(t)
 			b := newPublicationDaemon(t, exe, "baseline-receiver", a.address, a.id, "keep-all")
+			baselineWriterQuota(t, b)
 			b.start(t)
 			// The probe is an admin-only operation, independent of import trust.
 			a.request(t, "PUT", "/api/v1/admin/peers/"+b.id+"/trust", "application/json", []byte(`{"trust_level":"admin"}`), http.StatusOK)
@@ -675,4 +678,28 @@ func baselineStopRSS(t *testing.T, daemon *publicationDaemon) int64 {
 		peak *= 1024
 	}
 	return peak
+}
+
+// Admit the requested multi-gigabyte workload without changing storage or
+// publication algorithms. The ordinary 100 MiB writer quota is too small.
+func baselineWriterQuota(t *testing.T, daemon *publicationDaemon) {
+	t.Helper()
+	raw, err := os.ReadFile(daemon.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement := strings.Replace(string(raw), "publishing:\n", "publishing:\n  default_quota_bytes: 34359738368\n", 1)
+	if replacement == string(raw) {
+		t.Fatal("publishing configuration missing")
+	}
+	if err := os.WriteFile(daemon.cfg, []byte(replacement), 0600); err != nil {
+		t.Fatal(err)
+	}
+	resolved, _, err := config.LoadResolved(daemon.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Publishing.DefaultQuotaBytes != 32<<30 {
+		t.Fatal("baseline writer quota did not resolve to 32 GiB")
+	}
 }

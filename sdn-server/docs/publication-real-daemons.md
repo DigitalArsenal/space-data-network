@@ -65,3 +65,7 @@ Archive record retention and shard/index/manifest pins remain mandatory. The
 advertised PNM CIDs remain unpinned after six minutes. Set
 `SDN_E2E_PUBLICATION_REPRO_ARCHIVE_PNM=1` to execute that assertion. Its cause
 has not been established.
+
+The full benchmark raises only the test writers' storage quota to 32 GiB so
+the requested input fits; the ordinary per-writer default is 100 MiB. The store
+cap remains 32 GB. No storage or publication algorithm is tuned.
