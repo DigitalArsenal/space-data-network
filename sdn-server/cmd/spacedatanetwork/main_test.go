@@ -2631,7 +2631,11 @@ func TestGateHandlerWithTrustAllowsAuthenticatedStandardSession(t *testing.T) {
 // trust) behind a real httptest.Server, for end-to-end WebSocket dial tests.
 func wsGateTestServer(t *testing.T, authHandler *auth.Handler) *httptest.Server {
 	t.Helper()
-	wsHandler := api.NewWSHandler(nil, nil)
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wsHandler := api.NewWSHandler(nil, validator)
 	serveWS := func(w http.ResponseWriter, r *http.Request) {
 		gateHandlerWithTrust(w, r, wsHandler, authHandler, true, peers.Standard)
 	}
