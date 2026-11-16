@@ -53,6 +53,8 @@ manifest CIDs; it is unset during ordinary operation. Raw observations accompany
 the daemon logs. Per-operation RSS is sampled every 200 milliseconds. CPU
 counters are `ps` process CPU time.
 The SQL reads use an EPOCH window for OMM and a CREATION_DATE window for OEM.
+The OEM query projects MESSAGE_ID and CREATION_DATE, so its result does not
+include up to 100 MiB of ephemeris payloads under the ordinary result byte cap.
 Synthetic input files are generated before timed ingest; reported byte counts
 are the exact framed input sizes. These distinctions are recorded alongside results and limit their
 interpretation.
@@ -69,3 +71,23 @@ has not been established.
 The full benchmark raises only the test writers' storage quota to 32 GiB so
 the requested input fits; the ordinary per-writer default is 100 MiB. The store
 cap remains 32 GB. No storage or publication algorithm is tuned.
+
+Set `SDN_E2E_PUBLICATION_BASELINE_DATASET=OMM` or `OEM` to run the three full
+repetitions for one dataset independently; unset selects both. This permits
+independent measurements when a failure in one dataset blocks the combined run.
+
+`SDN_E2E_PUBLICATION_BASELINE_CASE=direct` measures direct ingest independently
+of publication, including the producer's allocated and logical storage sizes.
+`SDN_E2E_PUBLICATION_BASELINE_REPETITIONS` accepts 1 through 3; unset retains
+three full repetitions (one in smoke mode). Each summary records the selected
+case, dataset, and repetition count so partial reruns remain distinguishable.
+
+The full OEM metadata query currently returns HTTP 400 `byte-cap` or `timeout` under its
+normal sandbox limits even with a narrow projection. These refusals are recorded with
+separate durations and are never counted as successful SQL-read latencies.
+Other measurements continue. `known_oem_metadata_query_limits` retains the
+failing assertion; set `SDN_E2E_PUBLICATION_REPRO_OEM_SQL=1` to execute it.
+The normal sandbox caps remain unchanged.
+
+File-size measurements are live filesystem snapshots. Transient journal files
+removed during enumeration are omitted; other filesystem errors fail the run.

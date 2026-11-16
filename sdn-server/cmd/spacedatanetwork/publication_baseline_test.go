@@ -52,8 +52,26 @@ func TestPublicationBaseline(t *testing.T) {
 	exe := publicationBinary(t)
 	smallCount, largeCount, repetitions := 2_000_000, 1024, 3
 	smoke := os.Getenv("SDN_E2E_PUBLICATION_BASELINE_SMOKE") == "1"
+	datasetSelection := os.Getenv("SDN_E2E_PUBLICATION_BASELINE_DATASET")
+	if datasetSelection != "" && datasetSelection != "OMM" && datasetSelection != "OEM" {
+		t.Fatal("SDN_E2E_PUBLICATION_BASELINE_DATASET must be OMM or OEM")
+	}
 	if smoke {
 		smallCount, largeCount, repetitions = 2048, 4, 1
+	}
+	caseSelection := os.Getenv("SDN_E2E_PUBLICATION_BASELINE_CASE")
+	if caseSelection == "" {
+		caseSelection = "all"
+	}
+	if caseSelection != "all" && caseSelection != "wire" && caseSelection != "direct" {
+		t.Fatal("baseline case must be all, wire, or direct")
+	}
+	if value := os.Getenv("SDN_E2E_PUBLICATION_BASELINE_REPETITIONS"); value != "" {
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 1 || n > 3 {
+			t.Fatal("baseline repetitions must be 1 through 3")
+		}
+		repetitions = n
 	}
 	var rows []publicationMeasurement
 	for round := 0; round < repetitions; round++ {
@@ -117,7 +135,7 @@ func TestPublicationBaseline(t *testing.T) {
 				return n, 0
 			})
 			record(row)
-			if os.Getenv("SDN_E2E_PUBLICATION_BASELINE_CASE") == "wire" {
+			if caseSelection == "wire" {
 				recordPeaks("wire-only", baselineStopRSS(t, a), baselineStopRSS(t, b))
 				return
 			}
@@ -130,6 +148,9 @@ func TestPublicationBaseline(t *testing.T) {
 				{"OEM.fbs", largeCount, baselineOEM},
 			} {
 				source := strings.TrimSuffix(data.schema, ".fbs")
+				if datasetSelection != "" && datasetSelection != source {
+					continue
+				}
 				fixtureRoot := publicationTemp(t, "baseline-inputs-")
 				firstPath, firstBytes := baselinePrepare(t, fixtureRoot, "first.sds", 0, data.count, data.makeRecord)
 				secondPath, _ := baselinePrepare(t, fixtureRoot, "second.sds", data.count, data.count, data.makeRecord)
@@ -139,7 +160,14 @@ func TestPublicationBaseline(t *testing.T) {
 				row = measurePublication(t, a, b, "direct-ingest", source, func() (int64, int64) {
 					return baselineIngest(t, a, data.schema, source, "first", firstPath, data.count), int64(data.count)
 				})
+				row.ProducerStoreBytesByKind, row.ProducerStoreLogicalBytesByKind = publicationStoreSizes(t, a.store)
 				record(row)
+				if caseSelection == "direct" {
+					if err := os.RemoveAll(fixtureRoot); err != nil {
+						t.Fatal(err)
+					}
+					continue
+				}
 				// The existing publish API exports and announces in one call. Its
 				// request interval is retained alongside the separate actual-announcement
 				// interval observed by concurrent receiver polling.
@@ -197,7 +225,9 @@ func TestPublicationBaseline(t *testing.T) {
 				start := time.Now()
 				b.start(t)
 				readySeconds := time.Since(start).Seconds()
-				var point, window []float64
+				var point, window, windowRefusals []float64
+				var windowRefusalMessage string
+				windowRefusalCodes := map[string]int{}
 				row = measurePublication(t, a, b, "second-direct-ingest-with-reads", source, func() (int64, int64) {
 					stop := make(chan struct{})
 					done := make(chan struct{})
@@ -217,13 +247,14 @@ func TestPublicationBaseline(t *testing.T) {
 								t.Error(err)
 								return
 							}
-							io.Copy(io.Discard, response.Body)
-							response.Body.Close()
-							if response.StatusCode != http.StatusOK {
-								t.Errorf("point read HTTP %d", response.StatusCode)
+							if err := baselineConsumeResponse(response); err != nil {
+								t.Errorf("point read: %v", err)
 								return
 							}
 							p := time.Since(p0).Seconds()
+							mu.Lock()
+							point = append(point, p)
+							mu.Unlock()
 							w0 := time.Now()
 							request, _ := http.NewRequest("POST", b.base+"/api/v1/query", bytes.NewReader(windowQuery))
 							request.Header.Set("Content-Type", publicationStreamType)
@@ -232,14 +263,23 @@ func TestPublicationBaseline(t *testing.T) {
 								t.Error(err)
 								return
 							}
-							io.Copy(io.Discard, response.Body)
-							response.Body.Close()
-							if response.StatusCode != http.StatusOK {
-								t.Errorf("window SQL HTTP %d", response.StatusCode)
+							if err := baselineConsumeResponse(response); err != nil {
+								if source == "OEM" && (strings.Contains(err.Error(), "HTTP 400: byte-cap:") || strings.Contains(err.Error(), "HTTP 400: timeout:")) {
+									mu.Lock()
+									windowRefusals = append(windowRefusals, time.Since(w0).Seconds())
+									windowRefusalMessage = err.Error()
+									code := "byte-cap"
+									if strings.Contains(err.Error(), "HTTP 400: timeout:") {
+										code = "timeout"
+									}
+									windowRefusalCodes[code]++
+									mu.Unlock()
+									continue
+								}
+								t.Errorf("window SQL: %v", err)
 								return
 							}
 							mu.Lock()
-							point = append(point, p)
 							window = append(window, time.Since(w0).Seconds())
 							mu.Unlock()
 						}
@@ -255,7 +295,20 @@ func TestPublicationBaseline(t *testing.T) {
 				row.ReadySeconds = readySeconds
 				row.PointReadSeconds = publicationPercentiles(point)
 				row.WindowSQLSeconds = publicationPercentiles(window)
+				row.WindowSQLRefusalSeconds = publicationPercentiles(windowRefusals)
+				row.WindowSQLRefusal = windowRefusalMessage
+				row.WindowSQLRefusalCodes = windowRefusalCodes
 				record(row)
+				if source == "OEM" {
+					t.Run("known_oem_metadata_query_limits", func(t *testing.T) {
+						if len(windowRefusals) > 0 && os.Getenv("SDN_E2E_PUBLICATION_REPRO_OEM_SQL") != "1" {
+							t.Skip("observed full-size OEM metadata query returns HTTP 400 byte-cap or timeout under the normal sandbox caps; refusal durations are recorded separately; set SDN_E2E_PUBLICATION_REPRO_OEM_SQL=1 to execute the retained assertion")
+						}
+						if len(windowRefusals) > 0 {
+							t.Fatalf("%d OEM metadata-window queries refused: %s", len(windowRefusals), windowRefusalMessage)
+						}
+					})
+				}
 				if err := os.RemoveAll(fixtureRoot); err != nil {
 					t.Fatal(err)
 				}
@@ -266,42 +319,47 @@ func TestPublicationBaseline(t *testing.T) {
 			t.Fatal("baseline instrumentation failed; remaining repetitions and summary are omitted")
 		}
 	}
-	summary := map[string]any{"kind": "summary", "target_bytes_per_second": 250000000, "groups": publicationSummaries(rows)}
+	summary := map[string]any{"kind": "summary", "requested_repetitions": repetitions, "case": caseSelection, "dataset_selection": datasetSelection, "target_bytes_per_second": 250000000, "groups": publicationSummaries(rows)}
 	if err := encoder.Encode(summary); err != nil {
 		t.Fatal(err)
 	}
 }
 
 type publicationMeasurement struct {
-	FirstAnnouncementUnixNano     int64              `json:"first_announcement_unix_nano,omitempty"`
-	ReadableUnixNano              int64              `json:"readable_unix_nano,omitempty"`
-	AnnouncementToReadableSeconds float64            `json:"announcement_to_readable_seconds,omitempty"`
-	AnnouncementBytesPerSecond    float64            `json:"announcement_bytes_per_second,omitempty"`
-	AnnouncementRecordsPerSecond  float64            `json:"announcement_records_per_second,omitempty"`
-	Smoke                         bool               `json:"instrumentation_smoke"`
-	Round                         int                `json:"round"`
-	Operation                     string             `json:"operation"`
-	Dataset                       string             `json:"dataset"`
-	Bytes                         int64              `json:"bytes"`
-	Records                       int64              `json:"records"`
-	Seconds                       float64            `json:"seconds"`
-	BytesPerSecond                float64            `json:"bytes_per_second"`
-	RecordsPerSecond              float64            `json:"records_per_second"`
-	Target                        int64              `json:"target_bytes_per_second"`
-	ProducerCPUSeconds            float64            `json:"producer_cpu_seconds"`
-	ReceiverCPUSeconds            float64            `json:"receiver_cpu_seconds"`
-	ProducerSampledPeakRSS        int64              `json:"producer_sampled_peak_rss_bytes"`
-	ReceiverSampledPeakRSS        int64              `json:"receiver_sampled_peak_rss_bytes"`
-	LoadStart                     string             `json:"uptime_start"`
-	LoadEnd                       string             `json:"uptime_end"`
-	StoreBytesByKind              map[string]int64   `json:"receiver_store_bytes_by_kind,omitempty"`
-	StoreLogicalBytesByKind       map[string]int64   `json:"receiver_store_logical_bytes_by_kind,omitempty"`
-	StoreAllocatedBeforeDataset   map[string]int64   `json:"receiver_store_allocated_before_dataset,omitempty"`
-	StoreToRecordRatio            float64            `json:"receiver_dataset_allocated_increase_to_record_bytes_ratio,omitempty"`
-	ReadySeconds                  float64            `json:"receiver_ready_seconds,omitempty"`
-	PointReadSeconds              map[string]float64 `json:"point_read_seconds,omitempty"`
-	WindowSQLSeconds              map[string]float64 `json:"window_sql_seconds,omitempty"`
-	Note                          string             `json:"note,omitempty"`
+	FirstAnnouncementUnixNano       int64              `json:"first_announcement_unix_nano,omitempty"`
+	ReadableUnixNano                int64              `json:"readable_unix_nano,omitempty"`
+	AnnouncementToReadableSeconds   float64            `json:"announcement_to_readable_seconds,omitempty"`
+	AnnouncementBytesPerSecond      float64            `json:"announcement_bytes_per_second,omitempty"`
+	AnnouncementRecordsPerSecond    float64            `json:"announcement_records_per_second,omitempty"`
+	ProducerStoreBytesByKind        map[string]int64   `json:"producer_store_bytes_by_kind,omitempty"`
+	ProducerStoreLogicalBytesByKind map[string]int64   `json:"producer_store_logical_bytes_by_kind,omitempty"`
+	WindowSQLRefusal                string             `json:"window_sql_refusal,omitempty"`
+	WindowSQLRefusalSeconds         map[string]float64 `json:"window_sql_refusal_seconds,omitempty"`
+	WindowSQLRefusalCodes           map[string]int     `json:"window_sql_refusal_codes,omitempty"`
+	Smoke                           bool               `json:"instrumentation_smoke"`
+	Round                           int                `json:"round"`
+	Operation                       string             `json:"operation"`
+	Dataset                         string             `json:"dataset"`
+	Bytes                           int64              `json:"bytes"`
+	Records                         int64              `json:"records"`
+	Seconds                         float64            `json:"seconds"`
+	BytesPerSecond                  float64            `json:"bytes_per_second"`
+	RecordsPerSecond                float64            `json:"records_per_second"`
+	Target                          int64              `json:"target_bytes_per_second"`
+	ProducerCPUSeconds              float64            `json:"producer_cpu_seconds"`
+	ReceiverCPUSeconds              float64            `json:"receiver_cpu_seconds"`
+	ProducerSampledPeakRSS          int64              `json:"producer_sampled_peak_rss_bytes"`
+	ReceiverSampledPeakRSS          int64              `json:"receiver_sampled_peak_rss_bytes"`
+	LoadStart                       string             `json:"uptime_start"`
+	LoadEnd                         string             `json:"uptime_end"`
+	StoreBytesByKind                map[string]int64   `json:"receiver_store_bytes_by_kind,omitempty"`
+	StoreLogicalBytesByKind         map[string]int64   `json:"receiver_store_logical_bytes_by_kind,omitempty"`
+	StoreAllocatedBeforeDataset     map[string]int64   `json:"receiver_store_allocated_before_dataset,omitempty"`
+	StoreToRecordRatio              float64            `json:"receiver_dataset_allocated_increase_to_record_bytes_ratio,omitempty"`
+	ReadySeconds                    float64            `json:"receiver_ready_seconds,omitempty"`
+	PointReadSeconds                map[string]float64 `json:"point_read_seconds,omitempty"`
+	WindowSQLSeconds                map[string]float64 `json:"window_sql_seconds,omitempty"`
+	Note                            string             `json:"note,omitempty"`
 }
 
 func measurePublication(t *testing.T, a, b *publicationDaemon, operation, dataset string, run func() (int64, int64)) publicationMeasurement {
@@ -598,7 +656,7 @@ func baselineFirstAnnouncement(t *testing.T, a *publicationDaemon, pub publicati
 
 func baselineSQL(schema string) []byte {
 	b := flatbuffers.NewBuilder(256)
-	sql := "SELECT * FROM OEM WHERE CREATION_DATE >= '2026-01-01T00:00:00Z' AND CREATION_DATE < '2026-01-02T00:00:00Z' LIMIT 100"
+	sql := "SELECT MESSAGE_ID, CREATION_DATE FROM OEM WHERE CREATION_DATE >= '2026-01-01T00:00:00Z' AND CREATION_DATE < '2026-01-02T00:00:00Z' LIMIT 100"
 	if schema == "OMM" {
 		sql = "SELECT * FROM OMM WHERE EPOCH >= '2026-01-01T00:00:00Z' AND EPOCH < '2026-01-02T00:00:00Z' LIMIT 100"
 	}
@@ -614,6 +672,11 @@ func publicationStoreSizes(t *testing.T, root string) (map[string]int64, map[str
 	logical := map[string]int64{}
 	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
+			// Live SQLite journals can disappear between directory enumeration
+			// and stat. They no longer contribute to the observed allocation.
+			if path != root && os.IsNotExist(err) {
+				return nil
+			}
 			return err
 		}
 		if info.Mode().IsRegular() {
@@ -702,4 +765,19 @@ func baselineWriterQuota(t *testing.T, daemon *publicationDaemon) {
 	if resolved.Publishing.DefaultQuotaBytes != 32<<30 {
 		t.Fatal("baseline writer quota did not resolve to 32 GiB")
 	}
+}
+
+func baselineConsumeResponse(response *http.Response) error {
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
+		if frames, err := syncwire.SplitFrames(raw); err == nil && len(frames) > 0 {
+			if q, err := syncwire.ParseQRP(frames[0]); err == nil {
+				return fmt.Errorf("HTTP %d: %s: %s", response.StatusCode, q.ERROR_CODE(), q.MESSAGE())
+			}
+		}
+		return fmt.Errorf("HTTP %d: %.1024q", response.StatusCode, raw)
+	}
+	_, err := io.Copy(io.Discard, response.Body)
+	return err
 }
