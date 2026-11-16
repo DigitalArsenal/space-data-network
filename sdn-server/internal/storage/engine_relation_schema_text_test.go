@@ -34,7 +34,7 @@ func TestEngineRelationSchemaTextContainsRootAndDependencies(t *testing.T) {
 		}
 	}
 	text, _, _, _ := EngineRelationSchemaText("OMM")
-	for _, declaration := range []string{"table RFM {", "enum timeSystem", "table OMM {"} {
+	for _, declaration := range []string{"table RFM {", "enum timingStandard", "table OMM {"} {
 		if !strings.Contains(text, declaration) {
 			t.Fatalf("missing dependency declaration %s", declaration)
 		}
