@@ -142,6 +142,13 @@ runs:
     # interpreted again, which is the exact bug this pipeline was rebuilt to
     # kill. So the key carries the level, computed the same way aot_cpu.go
     # computes it.
+    #
+    # The level alone is not enough for the cache. WasmEdge compiles for the
+    # host's full feature set, and CPUs of one level differ: in run
+    # 43979527185 a v4 artifact from this cache died on another v4 runner with
+    # SIGILL on `62 f5 7d 08 6e`, an AVX512-FP16 instruction (EVEX map 5).
+    # The key therefore also carries a hash of the runner's CPU flags, so an
+    # artifact is restored only onto a CPU with the same features.
     - name: Runner CPU profile (mirrors internal/flatsqlrt/aot_cpu.go)
       id: cpu
       shell: bash
@@ -160,12 +167,19 @@ runs:
             profile=x86-64-v1
           fi
         fi
+        features="$(uname -m)"
+        cpu_flags="$(grep -m1 '^flags' /proc/cpuinfo 2>/dev/null || true)"
+        if [ -n "$cpu_flags" ]; then
+          features="$(printf '%s\n' ${cpu_flags#*:} | LC_ALL=C sort | sha256sum | cut -c1-16)"
+          echo "CPU model:$(grep -m1 '^model name' /proc/cpuinfo | cut -d: -f2- || true)"
+        fi
         echo "profile=$profile" >> "$GITHUB_OUTPUT"
-        echo "AOT CPU profile: $profile"
+        echo "features=$features" >> "$GITHUB_OUTPUT"
+        echo "AOT CPU profile: $profile (flags $features)"
 
     - name: Restore the FlatSQL AOT cache
       uses: actions/cache@v4
       with:
         path: ~/.cache/flatsql-aot
         key: >-
-          flatsql-aot-${{ runner.os }}-${{ steps.cpu.outputs.profile }}-we${{ inputs.wasmedge-version }}-patched-${{ hashFiles('scripts/build-static-wasmedge.sh', 'scripts/wasmedge-static-env.sh', 'sdn-server/internal/flatsqlrt/flatsql-wasi-noeh.wasm', 'sdn-server/internal/flowrt/flatsql-link-shim.wasm') }}
+          flatsql-aot-${{ runner.os }}-${{ steps.cpu.outputs.profile }}-${{ steps.cpu.outputs.features }}-we${{ inputs.wasmedge-version }}-patched-${{ hashFiles('scripts/build-static-wasmedge.sh', 'scripts/wasmedge-static-env.sh', 'sdn-server/internal/flatsqlrt/flatsql-wasi-noeh.wasm', 'sdn-server/internal/flowrt/flatsql-link-shim.wasm') }}
