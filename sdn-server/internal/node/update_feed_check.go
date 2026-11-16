@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -153,9 +154,13 @@ func (s *UpdateSignalSubscriber) restoreFailedAlerts() {
 		log.Warnf("Read update ledger: %v", err)
 		return
 	}
-	if info.ModTime() == s.alertLedgerTime && info.Size() == s.alertLedgerSize {
+	stateInfo, stateErr := os.Stat(s.deps.Paths.State)
+	stamp := fmt.Sprintf("%v/%v/%v/%v/%v", info.ModTime(), info.Size(), info.Mode(), stateInfo, stateErr)
+	if stamp == s.alertFilesStamp {
 		return
 	}
+	// Cache failures too; a file change permits a fresh attempt.
+	s.alertFilesStamp = stamp
 	file, err := os.Open(path)
 	if err != nil {
 		log.Warnf("Read update ledger: %v", err)
@@ -163,25 +168,43 @@ func (s *UpdateSignalSubscriber) restoreFailedAlerts() {
 	}
 	defer file.Close()
 	failures := map[string]update.DeployLedgerEntry{}
-	scan := bufio.NewScanner(file)
-	scan.Buffer(make([]byte, 4096), 4<<20)
-	for scan.Scan() {
-		var entry update.DeployLedgerEntry
-		if json.Unmarshal(scan.Bytes(), &entry) != nil {
-			continue
-		}
-		switch entry.Action {
-		case "health-reverted":
-			failures[entry.UpdateID] = entry
-		case "health-passed":
-			if failed, ok := failures[entry.UpdateID]; ok && failed.Version == entry.Version {
-				delete(failures, entry.UpdateID)
+	reader := bufio.NewReaderSize(file, 64<<10)
+	for {
+		var line []byte
+		oversized := false
+		var readErr error
+		for {
+			fragment, more, err := reader.ReadLine()
+			readErr = err
+			if len(line)+len(fragment) > 4<<20 {
+				oversized = true
+				line = nil
+			}
+			if !oversized {
+				line = append(line, fragment...)
+			}
+			if !more || err != nil {
+				break
 			}
 		}
-	}
-	if err := scan.Err(); err != nil {
-		log.Warnf("Read update ledger: %v", err)
-		return
+		if readErr != nil && !errors.Is(readErr, io.EOF) {
+			log.Warnf("Read update ledger: %v", readErr)
+			return
+		}
+		var entry update.DeployLedgerEntry
+		if !oversized && json.Unmarshal(line, &entry) == nil {
+			switch entry.Action {
+			case "health-reverted":
+				failures[entry.UpdateID] = entry
+			case "health-passed":
+				if failed, ok := failures[entry.UpdateID]; ok && failed.Version == entry.Version && entry.Sequence >= failed.Sequence {
+					delete(failures, entry.UpdateID)
+				}
+			}
+		}
+		if errors.Is(readErr, io.EOF) {
+			break
+		}
 	}
 	state, err := update.LoadState(s.deps.Paths)
 	if err != nil {
@@ -190,7 +213,7 @@ func (s *UpdateSignalSubscriber) restoreFailedAlerts() {
 	}
 	active := map[string]bool{}
 	for id, failed := range failures {
-		if state.Sequence > failed.Sequence {
+		if state.Sequence >= failed.Sequence {
 			continue
 		}
 		active[id] = true

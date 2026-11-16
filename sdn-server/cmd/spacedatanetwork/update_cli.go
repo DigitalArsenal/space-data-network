@@ -1161,6 +1161,7 @@ func (o helperApplyOptions) startBuildOnDisk(ctx context.Context, daemon serving
 // gate waits for the restarted daemon to be healthy AND to be the build on
 // disk (update.BundleIdentity).
 func (o helperApplyOptions) gate(ctx context.Context, updateID, version string, requireIdentity bool) error {
+	o.UpdateID = updateID
 	expected, err := update.BundleIdentity(o.Paths.Root)
 	if err == nil {
 		var identity update.Identity
@@ -1315,8 +1316,17 @@ func (o helperApplyOptions) revertRefused(result *update.ApplyResult, gateErr, c
 // record writes one step of the swap to the deploy ledger. Before the swap a
 // step that cannot be recorded does not happen; the caller returns the error.
 func (o helperApplyOptions) record(action string, pid int, version, reason string) error {
+	var sequence int64
+	if action == "health-passed" {
+		state, err := update.LoadState(o.Paths)
+		if err != nil {
+			return err
+		}
+		sequence = state.Sequence
+	}
 	return update.RecordDeployLedgerEntry(o.Paths, update.DeployLedgerEntry{
 		Action:      action,
+		Sequence:    sequence,
 		UpdateID:    o.UpdateID,
 		Version:     version,
 		DaemonPID:   pid,

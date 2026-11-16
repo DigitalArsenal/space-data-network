@@ -161,6 +161,7 @@ type UpdateSignalSubscriber struct {
 	failedAlerts     map[string]bool
 	alertLedgerTime  time.Time
 	alertLedgerSize  int64
+	alertFilesStamp  string
 }
 
 // NewUpdateSignalSubscriber validates deps and constructs the subscriber.

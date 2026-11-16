@@ -1261,6 +1261,72 @@ func runRealPushChannelReceiver(t *testing.T, installed bool) {
 	}
 	requireRealIdentity(t, b.adminBase, v2)
 
+	// Exercise recovery records on the real restored daemon, including a
+	// same-version failure and an operator state advance without a gate record.
+	stateBefore, err := update.LoadState(b.paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledgerPath := filepath.Join(b.paths.Root, "deploy-ledger.jsonl")
+	ledgerBefore, err := os.ReadFile(ledgerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	appendRaw := func(raw []byte) {
+		f, err := os.OpenFile(ledgerPath, os.O_APPEND|os.O_WRONLY, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		if _, err := f.Write(raw); err != nil {
+			t.Fatal(err)
+		}
+	}
+	appendRaw(append(bytes.Repeat([]byte("x"), 5<<20), '\n'))
+	appendRaw([]byte(`{"action":"torn`))
+	failureID := "same-version-recovery-proof"
+	if err := update.RecordDeployLedgerEntry(b.paths, update.DeployLedgerEntry{Action: "health-reverted", UpdateID: failureID, Version: v2.version, Sequence: v3.sequence, Reason: "health gate proof"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := update.RecordDeployLedgerEntry(b.paths, update.DeployLedgerEntry{Action: "health-passed", UpdateID: v2.updateID, Version: v2.version, Sequence: v2.sequence}); err != nil {
+		t.Fatal(err)
+	}
+	hasRecoveryAlert := func() bool {
+		var raw json.RawMessage
+		return b.client(t).get(ctx, "/api/v1/status/alerts", &raw) == nil && bytes.Contains(raw, []byte(failureID))
+	}
+	waitPush(t, 20*time.Second, "same-version revert alert after oversized and torn lines", hasRecoveryAlert)
+	if err := os.Chmod(b.paths.State, 0); err != nil {
+		t.Fatal(err)
+	}
+	waitPush(t, 15*time.Second, "unreadable state warning", func() bool { return strings.Contains(b.logs(), "Read update state:") })
+	warningCount := strings.Count(b.logs(), "Read update state:")
+	time.Sleep(11 * time.Second)
+	if strings.Count(b.logs(), "Read update state:") != warningCount {
+		t.Fatal("unchanged unreadable state warns repeatedly")
+	}
+	if err := os.Chmod(b.paths.State, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	advanced := *stateBefore
+	advanced.Sequence = v3.sequence
+	if err := update.SaveState(b.paths, &advanced); err != nil {
+		t.Fatal(err)
+	}
+	waitPush(t, 20*time.Second, "same sequence clears revert without new ledger record", func() bool { return !hasRecoveryAlert() })
+	if err := update.SaveState(b.paths, stateBefore); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ledgerPath, ledgerBefore, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(readLedger(t, b.paths.Root), func(e update.DeployLedgerEntry) bool {
+		return e.Action == "health-passed" && e.UpdateID == v2.updateID && e.Sequence == v2.sequence
+	}) {
+		t.Fatal("restored gate did not record the restored update identity")
+	}
+	t.Log("same-version alert survives restored gate; equal sequence clears; oversized/torn ledger records recover; state error is cached")
+
 	b.stop(t)
 	// With v3 quarantined and v2 listed, a fresh recipient selects v2.
 	fallback := newPushDaemon(t, filepath.Join(work, "fallback"), v1, feed, roots, health)
