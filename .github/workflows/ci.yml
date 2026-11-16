@@ -349,13 +349,15 @@ jobs:
       - name: Exercise pull and push on loopback
         working-directory: sdn-server/cmd/spacedatanetwork
         run: |
+          set -euo pipefail
           mkdir -p "$RUNNER_TEMP/update-channel-logs"
           sudo env SDN_E2E_REAL_DAEMON=1 \
             SDN_E2E_REAL_DAEMON_BIN_DIR="$RUNNER_TEMP/update-channel-bin" \
             SDN_E2E_LOG_DIR="$RUNNER_TEMP/update-channel-logs" \
             LD_LIBRARY_PATH="$WASMEDGE_DIR/lib:$WASMEDGE_DIR/lib64" \
             unshare --net -- bash -c 'set -e; ip link set lo up; exec setpriv --reuid="$1" --regid="$2" --init-groups "$3" -test.v -test.timeout=50m -test.run="^TestUpdateChannelRealDaemonE2E$"' \
-            -- "$(id -u)" "$(id -g)" "$RUNNER_TEMP/update-channel-e2e.test"
+            -- "$(id -u)" "$(id -g)" "$RUNNER_TEMP/update-channel-e2e.test" \
+            | tee "$RUNNER_TEMP/update-channel-logs/test.log"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

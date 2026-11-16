@@ -903,6 +903,7 @@ test('the real update channel runs prebuilt fixtures with only loopback networki
   assert.match(job, /setpriv --reuid="\$1" --regid="\$2" --init-groups/);
   assert.match(job, /-- "\$\(id -u\)" "\$\(id -g\)"/);
   assert.match(job, /if: always\(\)/);
+  assert.match(job, /tee "\$RUNNER_TEMP\/update-channel-logs\/test\.log"/);
   assert.match(job, /-test\.timeout=50m/);
   assert.ok(job.indexOf('go-with-wasmedge.sh test -c') < job.indexOf('unshare --net'));
 });

@@ -149,6 +149,7 @@ func runRealDaemonUpdateChannel(t *testing.T, install realInstaller) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	keepRealLogs(t, work)
 	builds := realE2EBuilds(t, filepath.Join(work, "builds"))
 	v1, v2, v3, v4 := builds[0], builds[1], builds[2], builds[1]
 	v4.name, v4.version, v4.updateID, v4.sequence = "v4", "1.1.2-e2e.4", "cli-bundle-release-e2e-4", 400
@@ -1697,8 +1698,11 @@ func keepRealLogs(t *testing.T, work string) {
 		return
 	}
 	t.Cleanup(func() {
-		_ = filepath.WalkDir(work, func(path string, entry os.DirEntry, err error) error {
-			if err != nil || entry.IsDir() || (!strings.HasSuffix(entry.Name(), ".log") && entry.Name() != "deploy-ledger.jsonl") {
+		err := filepath.WalkDir(work, func(path string, entry os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if entry.IsDir() || (!strings.HasSuffix(entry.Name(), ".log") && entry.Name() != "deploy-ledger.jsonl") {
 				return nil
 			}
 			relative, err := filepath.Rel(work, path)
@@ -1709,12 +1713,15 @@ func keepRealLogs(t *testing.T, work string) {
 			if err != nil {
 				return err
 			}
-			target := filepath.Join(destination, relative)
+			target := filepath.Join(destination, strings.ReplaceAll(t.Name(), "/", "-"), relative)
 			if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
 				return err
 			}
 			return os.WriteFile(target, raw, 0o600)
 		})
+		if err != nil {
+			t.Errorf("preserve daemon diagnostics: %v", err)
+		}
 	})
 }
 
