@@ -103,13 +103,10 @@ jobs:
           fi
           echo "publish permission OK (probe release ${probe_id}, deleted)"
 
-  # One static WasmEdge, built once and reused. Building LLVM is expensive, so
-  # it is cached on the version alone; nothing here is installed into a job, it
-  # is linked INTO the binaries that ship.
-  # One static WasmEdge PER PLATFORM. The cli job builds natively on five
-  # runners, and a Linux prefix cannot link a macOS or Windows binary, so the
-  # prefix is a matrix over the same runners. Building LLVM is expensive, so
-  # each is cached on the version + layout and rebuilt only when those change.
+  # The update signing key lives only in the update-signing Environment, and
+  # only this job and cli-update-feed name that Environment. This job runs
+  # before any build so a missing or untrusted key stops the release at once;
+  # it builds nothing and runs only the reviewed key check.
   update-signing-check:
     name: Check the update signing key
     runs-on: ubuntu-latest
@@ -131,6 +128,13 @@ jobs:
             --maturity "${RELEASE_MATURITY}" \
             --roots deployment/release/fleet-trust-roots.json
 
+  # One static WasmEdge, built once and reused. Building LLVM is expensive, so
+  # it is cached on the version alone; nothing here is installed into a job, it
+  # is linked INTO the binaries that ship.
+  # One static WasmEdge PER PLATFORM. The cli job builds natively on five
+  # runners, and a Linux prefix cannot link a macOS or Windows binary, so the
+  # prefix is a matrix over the same runners. Building LLVM is expensive, so
+  # each is cached on the version + layout and rebuilt only when those change.
   wasmedge-static:
     needs: update-signing-check
     name: Build static WasmEdge (${{ matrix.label }})
