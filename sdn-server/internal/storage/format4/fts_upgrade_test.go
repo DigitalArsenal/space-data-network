@@ -72,6 +72,9 @@ func TestFormat5LegacyFullTextIndexRepairsOnOpen(t *testing.T) {
 	if _, err := index.Exec("CREATE TRIGGER hold_repair BEFORE INSERT ON ftsmeta WHEN NEW.k='extractor_version' AND NEW.v=1 BEGIN SELECT RAISE(ABORT, 'test repair barrier'); END"); err != nil {
 		t.Fatal(err)
 	}
+	if err := index.Close(); err != nil {
+		t.Fatal(err)
+	}
 	t.Log("legacy fixture ready; reopening")
 	e = openReal(t, root, format4.OpenExisting, 0, nil)
 	states, err := e.FTS(ctx)
@@ -94,9 +97,17 @@ func TestFormat5LegacyFullTextIndexRepairsOnOpen(t *testing.T) {
 	if err := e.Close(ctx); err != nil {
 		t.Fatal(err)
 	}
+	index, err = sql.Open("sqlite", filepath.Join(root, "fsql5", "T", "CAT.fts"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := index.Exec("DROP TRIGGER hold_repair"); err != nil {
 		t.Fatal(err)
 	}
+	if err := index.Close(); err != nil {
+		t.Fatal(err)
+	}
+	t.Log("barrier removed; reopening for automatic repair")
 	e = openReal(t, root, format4.OpenExisting, 0, nil)
 	if err := format4.WaitFTSReady(ctx, e, "CAT"); err != nil {
 		t.Fatal(err)
