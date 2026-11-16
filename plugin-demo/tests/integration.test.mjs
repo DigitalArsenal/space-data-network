@@ -117,13 +117,21 @@ function buildOMM() {
   return builder.asUint8Array();
 }
 
+/** Build an empty table finished with a file identifier. */
+function buildIdentifiedTable(fileIdentifier) {
+  const builder = new flatbuffers.Builder(64);
+  builder.startObject(0);
+  builder.finish(builder.endObject(), fileIdentifier);
+  return builder.asUint8Array();
+}
+
 /**
- * Read the 4-byte file identifier from a FlatBuffer.
+ * Read the 4-byte file identifier from a FlatBuffer. A size-prefixed buffer
+ * carries it four bytes later.
  */
-function readFileIdentifier(bytes) {
-  if (bytes.length < 8) return null;
-  const size = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(0, true);
-  const offset = size === bytes.length - 4 ? 8 : 4;
+function readFileIdentifier(bytes, sizePrefixed = false) {
+  const offset = sizePrefixed ? 8 : 4;
+  if (bytes.length < offset + 4) return null;
   return String.fromCharCode(...bytes.subarray(offset, offset + 4));
 }
 
@@ -229,7 +237,7 @@ async function runTests() {
     await test('publish a second message with different schema', async () => {
       const ommBytes = buildOMM();
 
-      const fid = readFileIdentifier(ommBytes);
+      const fid = readFileIdentifier(ommBytes, true);
       assertEqual(fid, '$OMM', 'file identifier');
 
       const resp = await httpPost(`${baseUrl}/api/v1/data/publish/OMM.fbs`, ommBytes);
@@ -310,12 +318,12 @@ async function runTests() {
     });
 
     await test('different schemas produce different file identifiers', async () => {
-      const pnm = buildMinimalFlatBuffer('$PNM', { test: 'value' });
-      const omm = buildMinimalFlatBuffer('$OMM', { test: 'value' });
-      const cdm = buildMinimalFlatBuffer('$CDM', { test: 'value' });
+      const pnm = buildIdentifiedTable('$PNM');
+      const omm = buildOMM();
+      const cdm = buildIdentifiedTable('$CDM');
 
       assertEqual(readFileIdentifier(pnm), '$PNM', 'PNM identifier');
-      assertEqual(readFileIdentifier(omm), '$OMM', 'OMM identifier');
+      assertEqual(readFileIdentifier(omm, true), '$OMM', 'OMM identifier');
       assertEqual(readFileIdentifier(cdm), '$CDM', 'CDM identifier');
     });
 

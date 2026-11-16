@@ -420,9 +420,11 @@ jobs:
     needs: wasmedge-runtime
     timeout-minutes: 30
     # Playwright omits a focal download entry. The Ubuntu 22.04 key selects
-    # its Linux x64 Chromium bundle and apt dependency names available here.
+    # its Linux x64 Chromium bundle; ci-local.sh installs the bundle's
+    # libraries under their 20.04 names.
     env:
       PLAYWRIGHT_HOST_PLATFORM_OVERRIDE: ubuntu22.04-x64
+      SDN_CI_BROWSER_DEPS: release-container
     steps:
       - name: Prepare the release container
         run: |
@@ -503,9 +505,11 @@ jobs:
     needs: wasmedge-runtime
     timeout-minutes: 30
     # Playwright omits a focal download entry. The Ubuntu 22.04 key selects
-    # its Linux x64 Chromium bundle and apt dependency names available here.
+    # its Linux x64 Chromium bundle; ci-local.sh installs the bundle's
+    # libraries under their 20.04 names.
     env:
       PLAYWRIGHT_HOST_PLATFORM_OVERRIDE: ubuntu22.04-x64
+      SDN_CI_BROWSER_DEPS: release-container
     steps:
       - name: Prepare the release container
         run: |

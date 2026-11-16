@@ -704,9 +704,25 @@ prepare_sdn_js_deps() {
   pass "sdn-js npm ci"
 }
 
+# Chromium's runtime libraries under their Ubuntu 20.04 names. Playwright's
+# --with-deps list for its ubuntu22.04 build names fonts-unifont, which 20.04
+# does not have, so the release container installs this list instead.
+install_release_container_browser_deps() {
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -qq
+  apt-get install -y -qq --no-install-recommends \
+    libasound2 libatk-bridge2.0-0 libatk1.0-0 libatspi2.0-0 libcairo2 libcups2 \
+    libdbus-1-3 libdrm2 libgbm1 libglib2.0-0 libnspr4 libnss3 libpango-1.0-0 \
+    libwayland-client0 libx11-6 libxcb1 libxcomposite1 libxdamage1 libxext6 \
+    libxfixes3 libxkbcommon0 libxrandr2 libfontconfig1 libfreetype6 \
+    fonts-liberation fonts-noto-color-emoji fonts-freefont-ttf xvfb >/dev/null
+}
+
 prepare_chromium() {
   local playwright_install_args=(install chromium)
-  if [[ "${CI:-}" == "true" || "${CI:-}" == "1" ]]; then
+  if [[ "${SDN_CI_BROWSER_DEPS:-}" == release-container ]]; then
+    install_release_container_browser_deps
+  elif [[ "${CI:-}" == "true" || "${CI:-}" == "1" ]]; then
     playwright_install_args=(install --with-deps chromium)
   fi
   (cd "$ROOT/sdn-js" && npm_config_cache="$ROOT/.npm-cache" npx --yes playwright "${playwright_install_args[@]}" >/dev/null)
