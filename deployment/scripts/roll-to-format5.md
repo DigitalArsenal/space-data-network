@@ -68,7 +68,8 @@ journalctl -u "$ROLL_UNIT" -f
 The first budget is a positive whole number of minutes; the second is a positive
 whole number of seconds. The readiness budget applies separately to the new
 node and to recovery. Stop waits are bounded at 90 seconds. Conversion is
-supervised as a child of the script; its output remains attached to the script.
+supervised as a child of the script. Each attempt writes a log in the side-file
+backup directory; CONVERTING names it. Completed attempt output is also printed.
 At the conversion deadline the script kills and waits for that exact child
 before inspecting the switch. It does not leave an independent migration job.
 The conversion command includes `--store STORE_ROOT` as well as `--config` to
@@ -92,15 +93,17 @@ Every event is appended as one UTC line and also written to standard output:
 | --- | --- |
 | PRECHECK | Read-only checks started, apart from the ledger and the identity command's permission enforcement. |
 | DISK | Required and available byte counts. |
-| RUNTIME_CHECK | The staged binary runs `substrate-selftest --require-patched` with the service environment. |
+| RUNTIME_CHECK | `attempt=N`: the staged binary runs `substrate-selftest --require-patched` with the service environment. |
 | RUNTIME_CHECK_OK | The staged runtime passed all required checks. |
-| RUNTIME_CHECK_FAILED | The staged runtime refused; the service remains running. |
+| RUNTIME_CHECK_REFUSED | This precheck attempt failed. |
+| RUNTIME_CHECK_FAILED | All five precheck attempts failed; the service remains running. |
 | PRECHECK_OK | Environment, identity, path, space and runtime checks passed. |
 | REHEARSAL_PAUSED | An explicitly enabled rehearsal barrier awaits acknowledgment. |
 | STOPPED | MainPID is zero and the unit is inactive or failed. |
 | SWAPPED | The old bundle is retained and the staged bundle occupies the live name. |
 | BACKED_UP | Stopped-state side files are copied beside the store. |
 | CONVERTING | Exact conversion PID and time budget. |
+| CONVERSION_RETRY | An early runtime-patches refusal left no format-5 content; another attempt follows. |
 | SWITCHED | Format bytes are `05 00`; fsql4 and its auxiliary snapshot exist. |
 | SUCCESS | The new service answers ready and its invocation journal has the expected peer ID. |
 | FAILED | A checked step failed; recovery follows if stopping began. |
@@ -169,8 +172,24 @@ barrier files are refused before the outage. Leave this variable unset in
 production; the default has no pause. The directory belongs to the rehearsal
 and contains no store or identity files.
 
-The precheck measures the staged process. The migration process repeats its
-own runtime guard, so a later refusal still invokes recovery. The self-test's
-reported AOT speed ratio is diagnostic; the runtime's pass predicate checks
-thread interruption, atomic operations and native execution. No threshold or
-runtime check is weakened by this script.
+The staged runtime precheck makes at most five attempts, ten seconds apart,
+passing on the first success. Every attempt appears in the ledger. All five
+failures refuse the rollout before stopping the service.
+
+The migration repeats its own runtime guard. An exit within the first 30 seconds
+with the runtime-patches refusal is retried only when no format-5 candidate
+content existed before or after that attempt and no fsql5 selection exists.
+There are at most five conversion attempts, ten seconds apart, within one
+conversion budget. Every other failure invokes recovery. No runtime check or
+threshold is weakened.
+
+The deployment service uses `Restart=always` and `RestartSec=15`. A daemon
+runtime refusal therefore schedules another start after 15 seconds, subject to
+systemd's start limits. The readiness loop keeps polling across failed starts
+and restarts for the entire ready budget; it does not stop at the first failed
+invocation. Check the installed service's restart policy and start limits before
+use. The isolated rehearsal uses the same restart settings.
+
+The self-test gives interpreter spinners two seconds to start and one executor
+stop 300 milliseconds to reach every spinner. Its reported AOT speed ratio is
+diagnostic and is not the runtime patch pass predicate.

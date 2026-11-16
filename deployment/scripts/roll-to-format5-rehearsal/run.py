@@ -134,6 +134,8 @@ def main():
                         if (directory / name).exists():
                             shutil.rmtree(directory / name)
                     for backup in directory.glob('store.roll-backup-*'):
+                        for log in backup.glob('conversion-attempt-*.log'):
+                            shutil.copy2(log, directory / log.name)
                         shutil.rmtree(backup)
                     (directory / 'disk.img').unlink(missing_ok=True)
                 (work / 'results.json').write_text(json.dumps(results, indent=2) + '\n')

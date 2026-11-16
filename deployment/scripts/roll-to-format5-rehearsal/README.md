@@ -29,8 +29,8 @@ python3 run.py \
   --conversion-minutes 90 --ready-seconds 300
 ```
 
-Use the binary matching each store's installed build as OLD and published
-the selected release archive as NEW. Each old binary has its bundle's `manifest.json` beside it.
+Use the binary matching each store's installed build as OLD and the published
+selected release archive as NEW. Each old binary has its bundle's `manifest.json` beside it.
 The old bundle contains `bin/spacedatanetwork` and that manifest; the new bundle
 retains the release archive's launcher and runtime layout. Old binary arguments
 and their digests follow the order of the store arguments.
@@ -38,7 +38,8 @@ Changing `--new-archive` selects another release, with its corresponding checksu
 file supplied through `--new-checksums`. The output directory must not exist.
 A selective repeat uses `--case` with one or more case names.
 Every repeat uses a fresh output directory, evidence directory and store copy.
-Failed runtime checks remain failures; a repeat does not alter their results.
+Runtime prechecks and early migration runtime refusals use the script's bounded
+retry policy. Exhausted retries remain failures; a repeat does not alter results.
 Start Docker before
 running and quit it after the run. The harness stops and removes only containers
 it creates. It retains case logs, hashes, ledgers and results. Completed case
@@ -48,7 +49,7 @@ stays in the explicitly supplied private evidence directory.
 The source stores are read only. Copies omit `keys`, `secrets` and `auth.db`.
 Every case starts its old node from a fresh copy, with a generated test identity,
 a generated test password, an engine cache separate from identity material, a stable container hostname,
-loopback listeners, disabled DHT and mDNS, no trusted peers, no host ports and
+`Restart=always` with `RestartSec=15`, loopback listeners, disabled DHT and mDNS, no trusted peers, no host ports and
 `--network=none`. The stable hostname allows the release to create a durable
 test identity without Docker's ephemeral-hostname refusal. These releases
 replace an empty bootstrap list with public defaults. A synthetic peer identity
@@ -108,7 +109,7 @@ The conversion adds that snapshot immediately before activation. The barriers
 are disabled unless the rehearsal explicitly supplies its pause directory.
 
 `results.json` summarizes case outcomes. Each case contains `driver.exit`,
-`roll.exit`, `roll.log`, `ledger.log`, aggregate `counts-*.json`, file hash lists,
+`roll.exit`, `roll.log`, conversion attempt logs, `ledger.log`, aggregate `counts-*.json`, file hash lists,
 `journal.log` and `result.json`. Peak migration RSS is sampled from `/proc`;
 conversion duration is sampled between CONVERTING and SWITCHED ledger events.
 All times describe Docker on the test machine. Archive digests are recorded in

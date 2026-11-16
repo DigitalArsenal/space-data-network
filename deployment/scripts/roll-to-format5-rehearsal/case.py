@@ -154,7 +154,8 @@ Type=simple
 User=root
 Environment=HOME=/case/home XDG_CACHE_HOME=/engine-cache SDN_KEY_PASSWORD_FILE=/case/test-password
 ExecStart=/case/base/sdn-bundle/bin/spacedatanetwork daemon --config /case/config.yaml
-Restart=no
+Restart=always
+RestartSec=15
 TimeoutStopSec=75
 ''')
     command('systemctl', 'daemon-reload')
@@ -227,9 +228,10 @@ ExecStartPre=/bin/sh -c 'test ! -d /case/store/fsql5'
                     (ROOT / 'stopped-hash-comparison.json').write_text(json.dumps(stopped_hash_result) + '\n')
                 (pause / (point + '.continue')).touch()
         ledger = (ROOT / 'ledger.log').read_text() if (ROOT / 'ledger.log').exists() else ''
-        match = re.search(r' CONVERTING .*pid=(\d+)', ledger)
+        matches = re.findall(r' CONVERTING .*pid=(\d+)', ledger)
+        match = matches[-1] if matches else None
         if match:
-            pid = int(match[1])
+            pid = int(match)
             migration_start = migration_start or time.monotonic()
             stat = Path('/proc') / str(pid) / 'status'
             if stat.exists():

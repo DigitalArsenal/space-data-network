@@ -246,12 +246,21 @@ free=$(df -B1 --output=avail -- "$root" | tail -n 1); free=${free// /}
 need=$((3 * bytes + aux + 1073741824 + 5000000000))
 log DISK "required_bytes=$need available_bytes=$free"
 (( free >= need )) || fail disk_gate
-log RUNTIME_CHECK 'begin'
-if ! "${node_command[@]}" "$staged/bin/spacedatanetwork" substrate-selftest --require-patched; then
-    log RUNTIME_CHECK_FAILED
+runtime_ok=0
+for ((attempt=1; attempt<=5; attempt++)); do
+    log RUNTIME_CHECK "attempt=$attempt"
+    if "${node_command[@]}" "$staged/bin/spacedatanetwork" substrate-selftest --require-patched; then
+        runtime_ok=1
+        log RUNTIME_CHECK_OK "attempt=$attempt"
+        break
+    fi
+    log RUNTIME_CHECK_REFUSED "attempt=$attempt"
+    (( attempt == 5 )) || sleep 10
+done
+if (( ! runtime_ok )); then
+    log RUNTIME_CHECK_FAILED 'attempts=5'
     fail staged_runtime
 fi
-log RUNTIME_CHECK_OK
 log PRECHECK_OK
 stage=STOP
 stopped=1
@@ -270,25 +279,55 @@ for name in "${side_files[@]}"; do
 done
 log BACKED_UP
 stage=CONVERT
-# A child lets the shell handle signals while it supervises the foreground task.
-signal_pending=
-trap 'signal_pending=SIGTERM' TERM
-trap 'signal_pending=SIGHUP' HUP
-trap 'signal_pending=SIGINT' INT
-"${node_command[@]}" "$live/bin/spacedatanetwork" store-migrate --to 5 --config "$config" --store "$root" &
-conversion_pid=$!
-trap 'reason=SIGTERM; exit 143' TERM
-trap 'reason=SIGHUP; exit 129' HUP
-trap 'reason=SIGINT; exit 130' INT
-if [[ -n $signal_pending ]]; then reason=$signal_pending; exit 1; fi
-log CONVERTING "pid=$conversion_pid budget_minutes=$minutes"
+# Retry only an early runtime refusal with no candidate content.
+format5_empty() (
+    shopt -s nullglob dotglob
+    ! exists "$root/fsql5" || exit 1
+    entries=("$root/.store-format5-pending"/*)
+    (( ${#entries[@]} == 0 ))
+)
 deadline=$((SECONDS + minutes * 60))
-while kill -0 "$conversion_pid" 2>/dev/null; do
+for ((attempt=1; attempt<=5; attempt++)); do
     (( SECONDS < deadline )) || fail conversion_budget
-    sleep 1
+    empty_before=0
+    format5_empty && empty_before=1
+    attempt_log=$backup/conversion-attempt-$attempt.log
+    attempt_start=$SECONDS
+    # A child lets the shell handle signals while it supervises the task.
+    signal_pending=
+    trap 'signal_pending=SIGTERM' TERM
+    trap 'signal_pending=SIGHUP' HUP
+    trap 'signal_pending=SIGINT' INT
+    "${node_command[@]}" "$live/bin/spacedatanetwork" store-migrate --to 5 --config "$config" --store "$root" >"$attempt_log" 2>&1 &
+    conversion_pid=$!
+    trap 'reason=SIGTERM; exit 143' TERM
+    trap 'reason=SIGHUP; exit 129' HUP
+    trap 'reason=SIGINT; exit 130' INT
+    if [[ -n $signal_pending ]]; then reason=$signal_pending; exit 1; fi
+    log CONVERTING "pid=$conversion_pid budget_minutes=$minutes attempt=$attempt output=$attempt_log"
+    while kill -0 "$conversion_pid" 2>/dev/null; do
+        (( SECONDS < deadline )) || fail conversion_budget
+        sleep 1
+    done
+    status=0
+    wait "$conversion_pid" || status=$?
+    conversion_pid=
+    elapsed=$((SECONDS - attempt_start))
+    cat -- "$attempt_log"
+    (( status != 0 )) || break
+    refused=0
+    while IFS= read -r line; do
+        [[ $line != *'store-migrate --to 5 cannot run: the linked WasmEdge '*'lacks the SDN runtime patches'* ]] || refused=1
+    done < "$attempt_log"
+    if (( attempt == 5 || ! refused || ! empty_before || elapsed >= 30 )) || ! format5_empty; then
+        fail conversion_exit
+    fi
+    log CONVERSION_RETRY "attempt=$attempt exit=$status elapsed_seconds=$elapsed reason=runtime_refused"
+    for ((delay=0; delay<10; delay++)); do
+        (( SECONDS < deadline )) || fail conversion_budget
+        sleep 1
+    done
 done
-wait "$conversion_pid" || fail conversion_exit
-conversion_pid=
 stage=CHECK_SWITCH
 marker=$(od -An -tx1 -j4 -N2 -- "$root/fsql5/STORE"); marker=${marker// /}
 [[ $marker == 0500 && -d $root/fsql4 && -f $root/fsql4/rollback-auxiliary.flatsqlmeta ]] || fail invalid_switch
