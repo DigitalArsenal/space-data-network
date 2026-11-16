@@ -1,7 +1,7 @@
 {
   "suiteVersion": "1.1.6",
   "dependencies": {
-    "spacedatastandards": "1.279.0",
+    "spacedatastandards": "1.283.0",
     "flatsql": "3.12.6",
     "hdWalletWasm": "2.1.3",
     "hdWalletUI": "2.1.3",
