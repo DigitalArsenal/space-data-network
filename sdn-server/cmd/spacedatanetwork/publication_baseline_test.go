@@ -172,6 +172,8 @@ func TestPublicationBaseline(t *testing.T) {
 				// request interval is retained alongside the separate actual-announcement
 				// interval observed by concurrent receiver polling.
 				var pub publicationResult
+				var publishErr error
+				var publishStarted time.Time
 				var readableAt time.Time
 				row = measurePublication(t, a, b, "export-announce-import", source, func() (int64, int64) {
 					ctx, cancel := context.WithTimeout(context.Background(), 12*time.Hour)
@@ -185,8 +187,9 @@ func TestPublicationBaseline(t *testing.T) {
 						at, err := baselineAwaitCount(ctx, b, data.schema, source, int64(data.count))
 						observed <- observation{at, err}
 					}()
-					pub = a.publish(t, data.schema, source, "first")
-					if pub.RecordCount != data.count {
+					publishStarted = time.Now()
+					pub, publishErr = baselinePublish(a, data.schema, source, "first")
+					if publishErr == nil && pub.RecordCount != data.count {
 						t.Fatalf("published %d records, want %d", pub.RecordCount, data.count)
 					}
 					result := <-observed
@@ -196,7 +199,14 @@ func TestPublicationBaseline(t *testing.T) {
 					readableAt = result.at
 					return firstBytes, int64(data.count)
 				})
-				announced := baselineFirstAnnouncement(t, a, pub)
+				var announced time.Time
+				if publishErr != nil {
+					// The admin server's WriteTimeout (10 minutes) can end the
+					// response while the export and announcement complete.
+					announced = baselineFirstAnnouncementSince(t, a, publishStarted)
+				} else {
+					announced = baselineFirstAnnouncement(t, a, pub)
+				}
 				row.FirstAnnouncementUnixNano = announced.UnixNano()
 				row.ReadableUnixNano = readableAt.UnixNano()
 				row.AnnouncementToReadableSeconds = readableAt.Sub(announced).Seconds()
@@ -206,20 +216,28 @@ func TestPublicationBaseline(t *testing.T) {
 				row.AnnouncementBytesPerSecond = float64(firstBytes) / row.AnnouncementToReadableSeconds
 				row.AnnouncementRecordsPerSecond = float64(data.count) / row.AnnouncementToReadableSeconds
 				row.Note = "CPU/RSS and primary duration cover export/API completion too; announcement rate uses the first successful PNM publication call and concurrent 100 ms readability polling"
+				if publishErr != nil {
+					row.PublishResponseError = fmt.Sprintf("after %.1f s: %v", readableAt.Sub(publishStarted).Seconds(), publishErr)
+				}
 				record(row)
-				row = measurePublication(t, a, b, "download-only", source, func() (int64, int64) {
-					parts := pub.Publications
-					if len(parts) == 0 {
-						parts = []publicationResult{pub}
-					}
-					var total int64
-					for _, part := range parts {
-						total += publicationTransfer(t, b, a.id, syncwire.OpReadShard, syncwire.QRPFields{SchemaName: data.schema, ProviderID: "publication-e2e", SourceName: source, BatchID: "first", CID: part.ShardCID}, io.Discard)
-					}
-					return total, int64(data.count)
-				})
-				row.Note = "Every published shard via B's Kubo stream forwarder; already imported, so cache is warm; no import on this request"
-				record(row)
+				if publishErr != nil {
+					t.Logf("publish response lost (%v); download-only needs the shard addresses the response carries and is not measured for %s", publishErr, source)
+				}
+				if publishErr == nil {
+					row = measurePublication(t, a, b, "download-only", source, func() (int64, int64) {
+						parts := pub.Publications
+						if len(parts) == 0 {
+							parts = []publicationResult{pub}
+						}
+						var total int64
+						for _, part := range parts {
+							total += publicationTransfer(t, b, a.id, syncwire.OpReadShard, syncwire.QRPFields{SchemaName: data.schema, ProviderID: "publication-e2e", SourceName: source, BatchID: "first", CID: part.ShardCID}, io.Discard)
+						}
+						return total, int64(data.count)
+					})
+					row.Note = "Every published shard via B's Kubo stream forwarder; already imported, so cache is warm; no import on this request"
+					record(row)
+				}
 				sizes, logical := publicationStoreSizes(t, b.store)
 				recordPeaks(source+"-before-restart", 0, baselineStopRSS(t, b))
 				start := time.Now()
@@ -334,6 +352,7 @@ type publicationMeasurement struct {
 	ProducerStoreBytesByKind        map[string]int64   `json:"producer_store_bytes_by_kind,omitempty"`
 	ProducerStoreLogicalBytesByKind map[string]int64   `json:"producer_store_logical_bytes_by_kind,omitempty"`
 	WindowSQLRefusal                string             `json:"window_sql_refusal,omitempty"`
+	PublishResponseError            string             `json:"publish_response_error,omitempty"`
 	WindowSQLRefusalSeconds         map[string]float64 `json:"window_sql_refusal_seconds,omitempty"`
 	WindowSQLRefusalCodes           map[string]int     `json:"window_sql_refusal_codes,omitempty"`
 	Smoke                           bool               `json:"instrumentation_smoke"`
@@ -650,6 +669,68 @@ func baselineFirstAnnouncement(t *testing.T, a *publicationDaemon, pub publicati
 	}
 	if earliest == 0 {
 		t.Fatal("no successful announcement observation; rebuild the test daemon")
+	}
+	return time.Unix(0, earliest)
+}
+
+// baselinePublish sends the publish request without a client deadline and
+// returns the error instead of failing, so a response the server ends at its
+// write deadline leaves the receiver's readability as the measurement.
+func baselinePublish(d *publicationDaemon, schema, source, batch string) (publicationResult, error) {
+	body, _ := json.Marshal(map[string]any{"schema": schema, "providerId": "publication-e2e", "sourceName": source, "batchId": batch, "chunkSize": 50000, "announceExisting": false, "fullCatalog": true})
+	request, err := http.NewRequest("POST", d.base+"/api/v1/admin/dataset-updates/publish", bytes.NewReader(body))
+	if err != nil {
+		return publicationResult{}, err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return publicationResult{}, err
+	}
+	defer response.Body.Close()
+	raw, err := io.ReadAll(response.Body)
+	if err != nil {
+		return publicationResult{}, err
+	}
+	if response.StatusCode != http.StatusAccepted {
+		return publicationResult{}, fmt.Errorf("publish HTTP %d: %.1024q", response.StatusCode, raw)
+	}
+	var result publicationResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return publicationResult{}, err
+	}
+	if result.ManifestCID == "" {
+		return publicationResult{}, fmt.Errorf("publication names no manifest")
+	}
+	return result, nil
+}
+
+func baselineFirstAnnouncementSince(t *testing.T, a *publicationDaemon, since time.Time) time.Time {
+	t.Helper()
+	file, err := os.Open(a.logPath + ".announcements.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	decoder := json.NewDecoder(file)
+	var earliest int64
+	for {
+		var event struct {
+			Started int64 `json:"started_unix_nano"`
+		}
+		err := decoder.Decode(&event)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if event.Started >= since.UnixNano() && (earliest == 0 || event.Started < earliest) {
+			earliest = event.Started
+		}
+	}
+	if earliest == 0 {
+		t.Fatal("no announcement observation after the publish request")
 	}
 	return time.Unix(0, earliest)
 }
