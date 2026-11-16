@@ -25,11 +25,18 @@ describe('sdn-js production dependency audit floor', () => {
   it('keeps audit-sensitive transitive packages above known vulnerable ranges', async () => {
     const packageLock = JSON.parse(await fs.readFile(PACKAGE_LOCK_PATH, 'utf8')) as PackageLock;
     const requiredVersions = new Map([
-      ['node_modules/axios', '1.16.1'],
       ['node_modules/dompurify', '3.4.3'],
-      ['node_modules/follow-redirects', '1.16.0'],
       ['node_modules/picomatch', '4.0.4'],
     ]);
+
+    // The auto-TLS stub removes the ACME dependency chain entirely.
+    const retiredPackages = ['acme-client', 'node-forge', 'axios', 'follow-redirects'];
+    for (const packageName of retiredPackages) {
+      const installed = Object.keys(packageLock.packages ?? {}).filter((packagePath) =>
+        packagePath.endsWith(`node_modules/${packageName}`),
+      );
+      expect(installed, `${packageName} is excluded by the auto-TLS stub`).toEqual([]);
+    }
 
     for (const [packagePath, minimumVersion] of requiredVersions) {
       const actualVersion = packageLock.packages?.[packagePath]?.version;
