@@ -204,7 +204,7 @@ jobs:
     # Above the lane's own 25m go-test budget, so an overrun surfaces as go
     # test's timeout panic (which names the running test) instead of the job
     # being killed with no diagnostic.
-    timeout-minutes: 35
+    timeout-minutes: 100
     steps:
       - uses: actions/checkout@v4
         with:
