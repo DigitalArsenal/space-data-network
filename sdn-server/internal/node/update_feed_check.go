@@ -71,11 +71,23 @@ func (s *UpdateSignalSubscriber) runFeedChecks(ctx context.Context) {
 	}
 }
 
-func (s *UpdateSignalSubscriber) checkFeed(ctx context.Context) error {
+func (s *UpdateSignalSubscriber) checkFeed(ctx context.Context) (resultErr error) {
 	if !s.claimFeed() {
 		return nil
 	}
 	succeeded := false
+	hadInstallFailure := false
+	defer func() {
+		if resultErr == nil && !hadInstallFailure {
+			s.mu.Lock()
+			for cause := range s.reportedFailures {
+				if strings.HasPrefix(cause, "feed-install:") {
+					delete(s.reportedFailures, cause)
+				}
+			}
+			s.mu.Unlock()
+		}
+	}()
 	operationCtx := ctx
 	defer func() { s.finishUpgrade(operationCtx, succeeded) }()
 	ctx, cancel := context.WithTimeout(ctx, signalFetchTimeout)
@@ -112,6 +124,7 @@ func (s *UpdateSignalSubscriber) checkFeed(ctx context.Context) error {
 		}
 		excluded[entry.UpdateID] = true
 		if err := entry.AssertUnderFeed(s.feed); err != nil {
+			hadInstallFailure = true
 			s.reportFailure("feed-install", entry.UpdateID, err)
 			continue
 		}
@@ -139,6 +152,7 @@ func (s *UpdateSignalSubscriber) checkFeed(ctx context.Context) error {
 		if errors.As(err, &unavailable) {
 			return err
 		}
+		hadInstallFailure = true
 		s.reportFailure("feed-install", entry.UpdateID, err)
 	}
 }
