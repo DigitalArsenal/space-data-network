@@ -266,7 +266,7 @@ describe('stream records and optional envelope metadata', () => {
     try {
       expect(await second.count()).toBe(1);
       const restored = await second.get('OMM.fbs', cid);
-      expect([...(restored?.data ?? [])]).toEqual([...STARLINK_6292_OMM_BYTES]);
+      expect(restored?.data).toEqual(stripSdnFlatBufferSizePrefix(STARLINK_6292_OMM_BYTES));
       expect(restored?.peerId).toBe('peer-a');
       // ...and it still mirrors into the lane as a query cache.
       const rows = await second.standardsStore!.query('SELECT NORAD_CAT_ID, _source FROM OMM', 'OMM');
