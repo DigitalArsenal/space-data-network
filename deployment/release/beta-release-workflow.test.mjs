@@ -910,6 +910,7 @@ test('the real update channel runs prebuilt fixtures with only loopback networki
 test('only the signing step receives the update PEM and uses the release binary', () => {
   const workflow = readRepoFile('.github/workflows/beta-release-artifacts.yml');
   const jobs = splitWorkflowJobs(workflow);
+  assert.equal([...workflow.matchAll(/^\s+SDN_UPDATE_SIGNING_KEY_PEM:/gm)].length, 1);
   for (const job of Object.values(jobs)) {
     const [settings, ...steps] = job.split(/^      - /m);
     assert.doesNotMatch(settings, /SDN_UPDATE_SIGNING_KEY_PEM/);

@@ -200,6 +200,19 @@ func WithdrawFeedVersion(dir, kind, channel, version string) (string, error) {
 		if err := os.MkdirAll(targetDir, 0o700); err != nil {
 			return "", err
 		}
+		resolved, err := filepath.EvalSymlinks(targetDir)
+		if err != nil {
+			return "", err
+		}
+		if resolved != targetDir {
+			return "", errors.New("refusing a symlinked withdrawal destination")
+		}
+		source := filepath.Join(absolute, folder)
+		if _, err := os.Stat(source); err == nil {
+			if err := probe(source, targetDir); err != nil {
+				return "", err
+			}
+		}
 		if err := probe(filepath.Dir(filepath.Join(absolute, folder)), targetDir); err != nil {
 			return "", err
 		}
@@ -214,7 +227,23 @@ func WithdrawFeedVersion(dir, kind, channel, version string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(filepath.Join(archive, "withdrawal.json"), raw, 0o600); err != nil {
+	journal, err := os.CreateTemp(archive, ".withdraw-plan-")
+	if err != nil {
+		return "", err
+	}
+	journalPath := journal.Name()
+	defer os.Remove(journalPath)
+	if _, err = journal.Write(raw); err == nil {
+		err = journal.Sync()
+	}
+	closeErr := journal.Close()
+	if err != nil {
+		return "", err
+	}
+	if closeErr != nil {
+		return "", closeErr
+	}
+	if err := os.Rename(journalPath, filepath.Join(archive, "withdrawal.json")); err != nil {
 		return "", err
 	}
 	for _, folder := range plan.Folders {
