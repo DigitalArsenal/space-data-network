@@ -560,19 +560,19 @@ test('the update feed job fails a stable release without its key, signs with the
 
   // A missing key is decided by check-update-signing-key.mjs, which fails a
   // stable release; the old shell check only warned, for every release.
-  assert.match(job, /check-update-signing-key\.mjs[\s\S]*?--maturity "\$\{RELEASE_MATURITY\}"[\s\S]*?--roots deployment\/release\/fleet-trust-roots\.json[\s\S]*?--github-output "\$GITHUB_OUTPUT"/);
+  assert.match(job, /check-update-signing-key\.mjs[\s\S]*?--maturity "\$\{RELEASE_MATURITY\}"[\s\S]*?--roots deployment\/release\/fleet-trust-roots\.json[\s\S]*?--github-output "\$key_check"/);
   assert.doesNotMatch(job, /::warning title=Unsigned release::/);
   assert.doesNotMatch(job, /\[\[ -n "\$\{SDN_UPDATE_SIGNING_KEY_PEM:-\}" \]\]/);
 
   // No fallback key id: the id is the one derived from the PEM.
   assert.doesNotMatch(job, /SDN_UPDATE_KEY_ID:-/);
   assert.doesNotMatch(job, /sdn-beta-release/);
-  assert.match(job, /UPDATE_KEY_ID: \$\{\{ steps\.signing\.outputs\.key_id \}\}/);
-  assert.match(job, /update_key_id="\$\{UPDATE_KEY_ID:\?/);
+  assert.match(job, /update_key_id="\$\(sed/);
+  assert.match(job, /test -n "\$update_key_id"/);
   assert.match(job, /--key-id "\$\{update_key_id\}"/);
 
   // The receiver's binary signs and verifies every indexed signal before packing.
-  assert.match(job, /go-with-wasmedge\.sh build -o "\$RUNNER_TEMP\/sdn-signal-signer"/);
+  assert.match(job, /tar -xzf "dist\/cli\/spacedatanetwork-\$\{VERSION\}-linux-amd64\.tar\.gz"/);
   assert.match(job, /update sign-signals[\s\S]*--key-env SDN_UPDATE_SIGNING_KEY_PEM/);
   assert.match(job, /update sign-signals --verify-only[\s\S]*--roots deployment\/release\/fleet-trust-roots\.json/);
   assert.ok(job.indexOf('update sign-signals --verify-only') < job.indexOf('tar -czf "dist/update-feed/'));
@@ -867,8 +867,8 @@ test('released bundles and their update feed are stamped with the public release
   // release without a usable key fails in minutes instead of after the
   // five-platform cli matrix.
   const first = workflow.slice(workflow.indexOf('  beta-version:'), workflow.indexOf('  wasmedge-static:'));
-  assert.match(first, /name: Check the update signing key before building\n\s+env:\n\s+RELEASE_MATURITY: \$\{\{ steps\.version\.outputs\.channel \}\}\n\s+SDN_UPDATE_SIGNING_KEY_PEM: \$\{\{ secrets\.SDN_UPDATE_SIGNING_KEY_PEM \}\}\n\s+SDN_UPDATE_KEY_ID: \$\{\{ secrets\.SDN_UPDATE_KEY_ID \}\}\n\s+run: \|\n\s+node deployment\/release\/check-update-signing-key\.mjs \\\n\s+--maturity "\$\{RELEASE_MATURITY\}" \\\n\s+--roots deployment\/release\/fleet-trust-roots\.json\n/);
-  assert.ok(first.indexOf('check-update-signing-key.mjs') < first.indexOf('Check the token can publish a release'));
+  assert.match(first, /UPDATE_KEY_AVAILABLE: \$\{\{ secrets\.SDN_UPDATE_SIGNING_KEY_PEM != '' \}\}/);
+  assert.ok(first.indexOf('Check update signing configuration') < first.indexOf('Check the token can publish a release'));
 });
 
 test('release maturity reaches only the release notes, never a --channel', () => {
@@ -883,7 +883,7 @@ test('release maturity reaches only the release notes, never a --channel', () =>
     'RELEASE_MATURITY: ${{ needs.beta-version.outputs.channel }}',
     'RELEASE_MATURITY: ${{ needs.beta-version.outputs.channel }}',
   ]);
-  assert.match(workflow, /name: Check the update signing key\n\s+id: signing\n\s+env:\n\s+RELEASE_MATURITY:[^\n]*\n\s+run: \|\n\s+node deployment\/release\/check-update-signing-key\.mjs \\\n\s+--maturity "\$\{RELEASE_MATURITY\}"/);
+  assert.match(workflow, /name: Build signed CLI update feed\n\s+id: signing/);
   assert.match(workflow, /name: Assemble beta release artifacts\n\s+env:[\s\S]*?RELEASE_MATURITY:[\s\S]*?run: deployment\/release\/assemble-beta-release-artifacts\.sh/);
   assert.doesNotMatch(workflow, /--channel \$\{\{/);
 
@@ -902,4 +902,26 @@ test('the real update channel runs prebuilt fixtures with only loopback networki
   assert.match(job, /unshare --net -- bash -c 'ip link set lo up;/);
   assert.match(job, /-test\.timeout=50m/);
   assert.ok(job.indexOf('go-with-wasmedge.sh test -c') < job.indexOf('unshare --net'));
+});
+
+test('only the signing step receives the update PEM and uses the release binary', () => {
+  const workflow = readRepoFile('.github/workflows/beta-release-artifacts.yml');
+  const jobs = splitWorkflowJobs(workflow);
+  for (const job of Object.values(jobs)) {
+    const [settings, ...steps] = job.split(/^      - /m);
+    assert.doesNotMatch(settings, /SDN_UPDATE_SIGNING_KEY_PEM/);
+    for (const step of steps) {
+      if (/SDN_UPDATE_SIGNING_KEY_PEM:/.test(step)) {
+        assert.match(step, /^name: Build signed CLI update feed\n/);
+        assert.match(step, /build-cli-update-payload\.mjs/);
+        assert.match(step, /update sign-signals/);
+        assert.doesNotMatch(step, /--verify-only/);
+      }
+    }
+  }
+  const feed = jobs['cli-update-feed'];
+  assert.doesNotMatch(feed, /sdn-go-env|go(?:-with-wasmedge\.sh)? build|install-wasmedge/);
+  const verify = extractYamlStep(feed, 'Verify and pack the signed CLI update feed', '      ');
+  assert.doesNotMatch(verify, /secrets\.|SDN_UPDATE_SIGNING_KEY_PEM/);
+  assert.match(verify, /sdn-signal-signer\/bin\/spacedatanetwork" update sign-signals --verify-only/);
 });
