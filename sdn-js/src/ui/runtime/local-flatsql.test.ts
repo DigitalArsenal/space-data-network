@@ -760,44 +760,7 @@ describe('local FlatSQL datastore', () => {
     });
   });
 
-  it('tracks downloaded FlatBuffer frames separately from materialized SQL rows', async () => {
-    const store = await createLocalFlatSqlStore({
-      schemas: [{
-        standardId: 'OMM',
-        tableName: 'OMM',
-        fileId: '$OMM',
-        ...publishedSchema('OMM'),
-      }],
-    });
 
-    await store.ingestRecords('OMM', [
-      {
-        cid: 'celestrak-omm-history',
-        schemaName: 'OMM.fbs',
-        peerId: 'source:celestrak',
-        providerId: 'space-data-network-02',
-        sourceName: 'celestrak-gp',
-        batchId: 'fixture-batch',
-        timestamp: '2026-05-11T04:02:25Z',
-        dataBytes: STARLINK_6292_OMM_BYTES,
-      },
-      {
-        cid: 'celestrak-omm-history',
-        schemaName: 'OMM.fbs',
-        peerId: 'source:celestrak',
-        providerId: 'space-data-network-02',
-        sourceName: 'celestrak-gp',
-        batchId: 'fixture-batch',
-        timestamp: '2026-05-11T07:02:25Z',
-        dataBytes: STARLINK_6292_OMM_BYTES,
-      },
-    ], { source: 'space-data-network-02', persist: false });
-
-    expect((await store.getStats({ includeCachedBytes: false }))[0]).toEqual(expect.objectContaining({
-      recordCount: 2,
-      ingestedRecordCount: 2,
-    }));
-  });
 
   it('keeps query results fresh across ingest, persisted load, query template changes, and namespace changes', async () => {
     const restoreIndexedDb = installMemoryIndexedDb();

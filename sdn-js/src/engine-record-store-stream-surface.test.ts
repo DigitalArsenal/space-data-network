@@ -395,3 +395,23 @@ describe('catalog scale: the gate from the task, and byte identity', () => {
     }
   });
 });
+
+it('reports received frames separately from newly materialized records', async () => {
+  const store = await FlatSQLEngineRecordStore.open({ schemas: [OMM_STANDARD] });
+  try {
+    const { streamBytes: frame } = buildBenchCorpus(1);
+    const stream = new Uint8Array(frame.length * 2);
+    stream.set(frame);
+    stream.set(frame, frame.length);
+    const first = await store.storeStream(stream);
+    expect(first.frames).toBe(2);
+    expect(first.ingested).toBe(1);
+    expect(first.bytes).toBe(stream.length);
+    expect(await store.count()).toBe(1);
+    const replay = await store.storeStream(stream);
+    expect(replay.frames).toBe(2);
+    expect(replay.ingested).toBe(0);
+    expect(replay.replayed).toBe(true);
+    expect(await store.count()).toBe(1);
+  } finally { await store.close(); }
+});
