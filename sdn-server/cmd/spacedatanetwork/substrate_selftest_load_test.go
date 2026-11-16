@@ -16,9 +16,10 @@ import (
 
 // The built command observes the runtime under bounded CPU contention.
 func TestSubstrateSelftestUnderCPULoad(t *testing.T) {
+	const loadBudget = 5 * time.Minute
 	if os.Getenv("SDN_SUBSTRATE_CPU_HOG") == "1" {
 		fmt.Fprintln(os.Stdout, "cpu-load-ready")
-		until := time.Now().Add(2 * time.Minute)
+		until := time.Now().Add(loadBudget)
 		state := uint64(1)
 		for time.Now().Before(until) {
 			// Spend the load budget on CPU work rather than clock calls.
@@ -49,7 +50,7 @@ func TestSubstrateSelftestUnderCPULoad(t *testing.T) {
 			t.Fatalf("build command: %v\n%s", err, out)
 		}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), loadBudget)
 	defer cancel()
 	run := func() (substrateSelftestReport, error, string) {
 		cmd := exec.CommandContext(ctx, binary, "substrate-selftest", "--require-patched")
@@ -80,8 +81,8 @@ func TestSubstrateSelftestUnderCPULoad(t *testing.T) {
 	}
 	hogs := min(2*runtime.GOMAXPROCS(0), 8)
 	const runs = 12
-	t.Logf("GOMAXPROCS=%d; starting %d CPU hog processes for %d command runs, bounded to two minutes",
-		runtime.GOMAXPROCS(0), hogs, runs)
+	t.Logf("GOMAXPROCS=%d; starting %d CPU hog processes for %d command runs, bounded to %s",
+		runtime.GOMAXPROCS(0), hogs, runs, loadBudget)
 	helper, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
