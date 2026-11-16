@@ -180,7 +180,9 @@ jobs:
     name: Go tests (quick)
     runs-on: ubuntu-latest
     needs: wasmedge-runtime
-    timeout-minutes: 40
+    # Run 43929335080 reached the command package after 39m50s. Its existing
+    # 20m test budget and five minutes of headroom require 65m for this job.
+    timeout-minutes: 65
     steps:
       - uses: actions/checkout@v4
         with:
