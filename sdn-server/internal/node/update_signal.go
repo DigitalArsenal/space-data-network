@@ -151,10 +151,12 @@ type UpdateSignalSubscriber struct {
 	deps UpdateSignalSubscriberDeps
 	feed update.FeedBase
 
-	mu          sync.Mutex
-	lastUpgrade time.Time
-	pendingFeed bool
-	handled     map[string]bool
+	mu              sync.Mutex
+	lastUpgrade     time.Time
+	pendingUpgrade  bool
+	pendingSignal   []byte
+	pendingSequence int64
+	handled         map[string]bool
 	// uiAttempts is when each UI package was last tried (claimUI).
 	uiAttempts       map[string]time.Time
 	reportedFailures map[string]bool
@@ -284,10 +286,12 @@ func (s *UpdateSignalSubscriber) handle(ctx context.Context, data []byte) {
 		return
 	}
 
-	if !s.claim(signal.UpdateID) {
+	if !s.claimSignal(signal, data) {
 		return
 	}
 
+	succeeded := false
+	defer func() { s.finishUpgrade(ctx, succeeded) }()
 	if delay := s.delay(); delay > 0 {
 		log.Infof("update signal %s accepted; staggering the swap by %s.", signal.UpdateID, delay.Round(time.Second))
 		select {
@@ -311,27 +315,37 @@ func (s *UpdateSignalSubscriber) handle(ctx context.Context, data []byte) {
 	}
 	// The helper has the swap. Whatever failed on an earlier attempt at this
 	// update is no longer the state of this box.
+	succeeded = true
 	s.deps.Alerts.Clear(ops.KindUpdateFailed, signal.UpdateID)
 }
 
 // claim enforces once-per-update and the minimum interval between swaps.
-func (s *UpdateSignalSubscriber) claim(updateID string) bool {
+func (s *UpdateSignalSubscriber) claimSignal(signal *update.Signal, raw []byte) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.pendingFeed {
-		return false
-	}
-	if s.handled[updateID] {
-		return false
-	}
-	if !s.lastUpgrade.IsZero() {
-		if since := s.deps.Now().Sub(s.lastUpgrade); since < s.deps.MinInterval {
-			log.Warnf("update signal %s deferred: this box self-upgraded %s ago and the floor is %s.",
-				updateID, since.Round(time.Second), s.deps.MinInterval)
-			return false
+	id := signal.UpdateID
+	if s.pendingUpgrade {
+		if signal.Sequence > s.pendingSequence {
+			if s.pendingSignal != nil {
+				log.Debugf("update signal: dropping remembered sequence %d for newer sequence %d", s.pendingSequence, signal.Sequence)
+			}
+			s.pendingSignal, s.pendingSequence = append([]byte(nil), raw...), signal.Sequence
+			log.Infof("Update signal %s remembered while an update is in flight", id)
+		} else {
+			log.Debugf("update signal %s dropped: a newer or equal signal is already remembered", id)
 		}
+		return false
 	}
-	s.handled[updateID] = true
+	if s.handled[id] {
+		log.Debugf("update signal %s dropped: already handled", id)
+		return false
+	}
+	if !s.lastUpgrade.IsZero() && s.deps.Now().Sub(s.lastUpgrade) < s.deps.MinInterval {
+		log.Debugf("update signal %s dropped: minimum upgrade interval", id)
+		return false
+	}
+	s.pendingUpgrade = true
+	s.handled[id] = true
 	s.lastUpgrade = s.deps.Now()
 	return true
 }

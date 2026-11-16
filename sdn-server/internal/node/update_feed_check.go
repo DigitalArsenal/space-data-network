@@ -72,6 +72,11 @@ func (s *UpdateSignalSubscriber) runFeedChecks(ctx context.Context) {
 }
 
 func (s *UpdateSignalSubscriber) checkFeed(ctx context.Context) error {
+	if !s.claimFeed() {
+		return nil
+	}
+	succeeded := false
+	defer func() { s.finishUpgrade(ctx, succeeded) }()
 	ctx, cancel := context.WithTimeout(ctx, signalFetchTimeout)
 	defer cancel()
 	state, err := update.LoadState(s.deps.Paths)
@@ -109,13 +114,20 @@ func (s *UpdateSignalSubscriber) checkFeed(ctx context.Context) error {
 			s.reportFailure("feed-install", entry.UpdateID, err)
 			continue
 		}
-		if !s.claimFeed(entry.UpdateID) {
-			return nil
+		s.mu.Lock()
+		claimed := s.handled[entry.UpdateID]
+		if !claimed {
+			s.handled[entry.UpdateID] = true
+		}
+		s.mu.Unlock()
+		if claimed {
+			log.Debugf("feed update %s dropped: already handled", entry.UpdateID)
+			continue
 		}
 		signal := update.SignalFromFeedEntry(*entry, s.feed.String(), s.deps.Now(), false)
 		err = s.upgradeTriggered(ctx, signal, state, "feed-check")
-		s.finishFeed(err == nil)
 		if err == nil {
+			succeeded = true
 			return nil
 		}
 		var refusal *update.StoreFormatRefusal
@@ -139,23 +151,38 @@ func (e *feedReadError) Error() string { return e.operation + ": " + e.err.Error
 func (e *feedReadError) Unwrap() error { return e.err }
 
 // claimFeed reserves the install without charging the swap interval for a download.
-func (s *UpdateSignalSubscriber) claimFeed(id string) bool {
+func (s *UpdateSignalSubscriber) claimFeed() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.pendingFeed || s.handled[id] || !s.lastUpgrade.IsZero() && s.deps.Now().Sub(s.lastUpgrade) < s.deps.MinInterval {
+	if s.pendingUpgrade {
+		log.Debug("feed check deferred: update in flight")
 		return false
 	}
-	s.pendingFeed = true
-	s.handled[id] = true
+	if !s.lastUpgrade.IsZero() && s.deps.Now().Sub(s.lastUpgrade) < s.deps.MinInterval {
+		log.Debug("feed check deferred: minimum upgrade interval")
+		return false
+	}
+	s.pendingUpgrade = true
 	return true
 }
 
-func (s *UpdateSignalSubscriber) finishFeed(succeeded bool) {
+func (s *UpdateSignalSubscriber) finishUpgrade(ctx context.Context, succeeded bool) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.pendingFeed = false
+	queued := s.pendingSignal
+	s.pendingSignal, s.pendingSequence = nil, 0
 	if succeeded {
+		// The helper owns the swap; no concurrent work starts before this daemon exits.
 		s.lastUpgrade = s.deps.Now()
+		if queued != nil {
+			log.Debug("update signal deferred to catch-up after helper handoff")
+		}
+		s.mu.Unlock()
+		return
+	}
+	s.pendingUpgrade = false
+	s.mu.Unlock()
+	if queued != nil && ctx.Err() == nil {
+		s.handle(ctx, queued)
 	}
 }
 

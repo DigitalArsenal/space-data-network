@@ -474,12 +474,13 @@ type realE2EFeed struct {
 	certFile string
 	dir      string
 
-	failIndex bool
-	forward   string
-	disk      bool
-	mu        sync.Mutex
-	files     map[string][]byte
-	entries   []update.ProviderFeedUpdate
+	requestHook func(http.ResponseWriter, *http.Request) bool
+	failIndex   bool
+	forward     string
+	disk        bool
+	mu          sync.Mutex
+	files       map[string][]byte
+	entries     []update.ProviderFeedUpdate
 }
 
 func newRealE2EFeed(t *testing.T, work string) *realE2EFeed {
@@ -487,8 +488,11 @@ func newRealE2EFeed(t *testing.T, work string) *realE2EFeed {
 	f := &realE2EFeed{files: map[string][]byte{}, dir: filepath.Join(work, "feed")}
 	f.srv = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
-		forward, failIndex := f.forward, f.failIndex
+		forward, failIndex, hook := f.forward, f.failIndex, f.requestHook
 		f.mu.Unlock()
+		if hook != nil && hook(w, r) {
+			return
+		}
 		if failIndex && strings.HasSuffix(r.URL.Path, "/index.json") {
 			http.Error(w, "test feed outage", http.StatusServiceUnavailable)
 			return
@@ -1165,6 +1169,7 @@ func runRealPushChannelReceiver(t *testing.T, installed bool) {
 		}
 	}
 	v2signal := publish(v2)
+	var releaseFeedCheck chan struct{}
 	if !installed {
 		b.stop(t)
 		b.configure(t, func(cfg *config.Config) {
@@ -1172,20 +1177,40 @@ func runRealPushChannelReceiver(t *testing.T, installed bool) {
 			cfg.Update.CheckIntervalSeconds = 3600
 			cfg.Update.MinIntervalSeconds = 300
 		})
-		manifestPath := filepath.Join(filepath.Dir(signalPath(v2)), "manifest.json")
-		manifest, err := os.ReadFile(manifestPath)
-		if err != nil {
-			t.Fatal(err)
+		releaseFeedCheck = make(chan struct{})
+		feedRequest := make(chan struct{}, 1)
+		feed.mu.Lock()
+		feed.requestHook = func(w http.ResponseWriter, r *http.Request) bool {
+			if !strings.HasSuffix(r.URL.Path, "/index.json") {
+				return false
+			}
+			select {
+			case feedRequest <- struct{}{}:
+			default:
+			}
+			select {
+			case <-releaseFeedCheck:
+			case <-r.Context().Done():
+			}
+			http.Error(w, "held feed check failed", http.StatusServiceUnavailable)
+			return true
 		}
-		if err := os.Remove(manifestPath); err != nil {
-			t.Fatal(err)
-		}
+		feed.mu.Unlock()
+		defer func() {
+			select {
+			case <-releaseFeedCheck:
+			default:
+				close(releaseFeedCheck)
+			}
+		}()
 		b.start(t, boot)
-		waitPush(t, 30*time.Second, "pre-swap feed failure", func() bool { return strings.Contains(b.logs(), "Update feed-check  failed: fetch update manifest:") })
-		if err := os.WriteFile(manifestPath, manifest, 0o644); err != nil {
-			t.Fatal(err)
+		select {
+		case <-feedRequest:
+		case <-time.After(30 * time.Second):
+			t.Fatal("feed check did not enter the controlled index fetch")
 		}
 	}
+
 	// The local publisher's identity is absent from its release trust roots.
 	a.command(t, true, "local-node-signed", "update", "signal", "--channel", realE2EChannel, "--version", v2.version)
 	localCtx, localCancel := context.WithTimeout(ctx, 30*time.Second)
@@ -1219,6 +1244,15 @@ func runRealPushChannelReceiver(t *testing.T, installed bool) {
 		t.Fatal(err)
 	}
 	send(v2, "push-v2")
+	if !installed {
+		waitPush(t, 30*time.Second, "signal remembered during feed check", func() bool {
+			return strings.Contains(b.logs(), "Update signal "+v2.updateID+" remembered while an update is in flight")
+		})
+		feed.mu.Lock()
+		feed.requestHook = nil
+		feed.mu.Unlock()
+		close(releaseFeedCheck)
+	}
 	messageCtx, messageCancel := context.WithTimeout(ctx, 30*time.Second)
 	message, err := subscription.Next(messageCtx)
 	messageCancel()
