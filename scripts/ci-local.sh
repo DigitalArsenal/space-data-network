@@ -616,7 +616,10 @@ run_sdn_js() {
   #
   # This lane already requires Go (every other mode compiles sdn-server), so
   # demanding it here costs nothing and closes that hole.
-  (cd "$ROOT/sdn-js" && SDN_REQUIRE_GO_INTEROP=1 npm_config_cache="$ROOT/.npm-cache" npm test -- --run)
+  # Build exactly as npm test does, then share real handler responses with Vitest.
+  # Focused npm test invocations do not require the Go schema exporter.
+  (cd "$ROOT/sdn-js" && npm_config_cache="$ROOT/.npm-cache" npm run build:core \
+    && SDN_REQUIRE_GO_INTEROP=1 node scripts/test-with-standards.mjs)
   pass "sdn-js test (go-libp2p interop required)"
 
   step "sdn-js build"

@@ -65,7 +65,7 @@ declare module 'vitest' {
 /** Responses produced by the Go HTTP handler during this test run. */
 export function serverStandardSchemas(): ServerStandardSchema[] {
   const responses = inject('serverStandardSchemas');
-  if (!responses?.length) throw new Error('Go standard schema interoperability setup did not run');
+  if (!responses?.length) throw new Error('Server-produced standard schemas are absent; run scripts/ci-local.sh js with Go and WASMEDGE_DIR configured');
   return responses;
 }
 
