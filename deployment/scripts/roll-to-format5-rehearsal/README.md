@@ -50,7 +50,7 @@ silently create an empty store.
 
 The disk case does not fill a host disk or add a test-only script argument.
 Supply a work directory on a genuinely constrained filesystem for that case.
-Source-store hashes are taken after the old node first becomes ready. The node
+Copied-store hashes are taken after the old node first becomes ready. The node
 can perform background maintenance; a hash mismatch is reported as failure,
 not waived. The public `/api/v1/stats` response supplies schema/count aggregates;
 an empty response or a changed count fails rather than claiming preservation.
@@ -66,3 +66,19 @@ do not publish it or copy it into a deployment.
 The harness and recovery script require execution on both source copies before
 use on a production host. An image-build failure or incomplete case matrix
 means the deployment gate has not passed.
+
+## Release baseline result
+
+The published v1.1.0 linux/arm64 archive, verified against its release checksum
+file, fails to open both supplied format-4 store copies. Startup reports
+`P4_E_FORMAT` and `flatsql_init returned status -5` before readiness. The same
+archive reaches readiness with an empty store in the same systemd image.
+That control creates `fsql4/STORE` with bytes 4 and 5 equal to `05 00`, while
+both supplied stores contain `04 00`. The binary reports version 1.1.0.
+No store marker is relabeled and no node code is changed.
+
+The old-node baseline gate has failed. Forward conversion, failure recovery,
+repeat invocation and precheck cases have no end-to-end result on these copies.
+The v1.1.5 archive checksum passes, but its conversion and recovery behavior
+remain unverified. The script requires a passing baseline and complete case
+matrix before deployment.
