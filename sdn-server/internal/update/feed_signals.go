@@ -57,6 +57,10 @@ func FeedSignalFiles(dir, channel, version string) ([]FeedSignalFile, error) {
 		if err != nil {
 			return fmt.Errorf("%s: %w", path, err)
 		}
+		base, err := ParseFeedBase(feed.FeedBaseURL)
+		if err != nil {
+			return err
+		}
 		for _, entry := range feed.Updates {
 			if channel != "" && entry.Channel != channel || version != "" && entry.Version != version {
 				continue
@@ -70,7 +74,7 @@ func FeedSignalFiles(dir, channel, version string) ([]FeedSignalFile, error) {
 			if filepath.ToSlash(expected) != filepath.ToSlash(filepath.Dir(path)) {
 				return fmt.Errorf("index target disagrees with path %s", path)
 			}
-			if err := entry.AssertUnderFeed(mustFeedBase(feed.FeedBaseURL)); err != nil {
+			if err := entry.AssertUnderFeed(base); err != nil {
 				return err
 			}
 			files = append(files, FeedSignalFile{Path: filepath.Join(expected, entry.Version, "signal.json"), Entry: entry, FeedBaseURL: feed.FeedBaseURL})
@@ -79,8 +83,6 @@ func FeedSignalFiles(dir, channel, version string) ([]FeedSignalFile, error) {
 	})
 	return files, err
 }
-
-func mustFeedBase(raw string) FeedBase { base, _ := ParseFeedBase(raw); return base }
 
 // MatchFeedSignal compares every modeled field except the signature and timestamps.
 func MatchFeedSignal(signal *Signal, file FeedSignalFile) error {

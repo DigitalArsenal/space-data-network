@@ -81,6 +81,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/sigdomain"
 	"github.com/spacedatanetwork/sdn-server/internal/update"
 	"github.com/spacedatanetwork/sdn-server/internal/updatesign"
+	walletwasm "github.com/spacedatanetwork/sdn-server/internal/wasm"
 )
 
 const (
@@ -602,6 +603,7 @@ func realBundleArchive(t *testing.T, b realBuild, feedBase string) []byte {
 	t.Helper()
 	stage := filepath.Join(t.TempDir(), "spacedatanetwork-"+b.version+"-"+runtime.GOOS+"-"+runtime.GOARCH)
 	copyExecutable(t, b.path, filepath.Join(stage, "bin", "spacedatanetwork"))
+	includeWalletRuntime(t, stage)
 	writeE2EJSON(t, filepath.Join(stage, "manifest.json"), realBundleManifest(b, feedBase))
 	archive := stage + ".tar.gz"
 	tarCmd := exec.Command("tar", "-czf", archive, "-C", filepath.Dir(stage), filepath.Base(stage))
@@ -989,6 +991,10 @@ func runRealPushChannel(t *testing.T) {
 	}
 	rootsPath := filepath.Join(work, "pipeline-roots.json")
 	writeE2EJSON(t, rootsPath, roots)
+	writeE2EJSON(t, filepath.Join(work, "pipeline-repo", "deployment", "release", "fleet-trust-roots.json"), roots)
+	if err := os.MkdirAll(filepath.Join(work, "pipeline-repo", "sdn-server"), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	a := newPushDaemon(t, filepath.Join(work, "a"), v1, feed, roots, health)
 	// The publisher follows the topic but has no newer installable sequence.
 	if err := update.SaveState(a.paths, &update.State{Sequence: 10000}); err != nil {
@@ -1042,8 +1048,8 @@ func runRealPushChannel(t *testing.T) {
 	}
 	publish := func(v realBuild) []byte {
 		feed.publish(t, v, key)
-		a.command(t, true, "sign-"+v.name, "update", "sign-signals", "--key-file", keyPath, "--roots", rootsPath, "--feed-dir", feed.dir)
-		a.command(t, true, "verify-"+v.name, "update", "sign-signals", "--verify-only", "--roots", rootsPath, "--feed-dir", feed.dir)
+		runSignalPipeline(t, v1.path, work, "sign-"+v.name, "update", "sign-signals", "--key-file", keyPath, "--roots", rootsPath, "--feed-dir", feed.dir)
+		runSignalPipeline(t, v1.path, work, "verify-"+v.name, "update", "sign-signals", "--verify-only", "--feed-dir", feed.dir)
 		raw, err := os.ReadFile(signalPath(v))
 		if err != nil {
 			t.Fatal(err)
@@ -1077,6 +1083,7 @@ func runRealPushChannel(t *testing.T) {
 	}
 	b.waitUpgrade(t, v2, boot+2*time.Duration(health)*time.Second)
 	checkTrigger(v2, "signal")
+	t.Log("push installed v2 and preserved its signed wire bytes")
 	if pushPeer(t, b.adminBase).ID != originalPeer {
 		t.Fatal("push changed the peer identity")
 	}
@@ -1097,8 +1104,10 @@ func runRealPushChannel(t *testing.T) {
 	if !bytes.Contains(alerts, []byte("update_failed")) || !bytes.Contains(alerts, []byte(v3.updateID)) {
 		t.Fatalf("restored daemon has no failed-update alert: %s", alerts)
 	}
+	waitPush(t, boot, "completed rollback", func() bool { return strings.Contains(readFileString(b.helperLog()), "rolled back to "+v2.version) })
+	t.Log("bad pushed build reverted and restored its failure alert")
 	countV3 := len(readLedger(t, b.paths.Root))
-	a.command(t, true, "resign-v3", "update", "sign-signals", "--key-file", keyPath, "--roots", rootsPath, "--feed-dir", feed.dir)
+	runSignalPipeline(t, v1.path, work, "resign-v3", "update", "sign-signals", "--key-file", keyPath, "--roots", rootsPath, "--feed-dir", feed.dir)
 	send(v3, "push-v3-again")
 	time.Sleep(4 * time.Second)
 	if len(readLedger(t, b.paths.Root)) != countV3 {
@@ -1113,6 +1122,7 @@ func runRealPushChannel(t *testing.T) {
 	b.start(t, boot)
 	b.waitUpgrade(t, v4, boot+2*time.Duration(health)*time.Second)
 	checkTrigger(v4, "feed-check")
+	t.Log("offline recipient caught up through its own feed check")
 	if pushPeer(t, b.adminBase).ID != originalPeer {
 		t.Fatal("catch-up changed the peer identity")
 	}
@@ -1127,6 +1137,9 @@ func runRealPushChannel(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.command(t, false, "wrong-key", "update", "signal", "--from-feed", "--channel", realE2EChannel, "--version", v5.version)
+	if !strings.Contains(readFileString(filepath.Join(a.work, "wrong-key.log")), "untrusted update signal signing key") {
+		t.Fatal("sender did not identify the untrusted signal key")
+	}
 	if err := os.WriteFile(signalPath(v5), signed, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -1136,6 +1149,9 @@ func runRealPushChannel(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.command(t, false, "excessive-expiry", "update", "signal", "--from-feed", "--channel", realE2EChannel, "--version", v5.version)
+	if !strings.Contains(readFileString(filepath.Join(a.work, "excessive-expiry.log")), "within seven days") {
+		t.Fatal("sender did not identify the excessive signal lifetime")
+	}
 	if err := os.WriteFile(signalPath(v5), signed, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -1202,6 +1218,7 @@ func newPushDaemon(t *testing.T, work string, build realBuild, feed *realE2EFeed
 	root := filepath.Join(work, "bundle")
 	d := &pushDaemon{realScenario: &realScenario{work: work, exe: filepath.Join(root, "bin", "spacedatanetwork"), cfg: filepath.Join(work, "config.yaml"), store: filepath.Join(work, "store"), paths: update.PathsFor(root), feed: feed, healthSeconds: health}, tracker: &realDaemonTracker{root: root}}
 	copyExecutable(t, build.path, d.exe)
+	includeWalletRuntime(t, root)
 	writeE2EJSON(t, filepath.Join(root, "manifest.json"), realBundleManifest(build, feed.base))
 	writeE2EJSON(t, d.paths.Trust, roots)
 	port := freeLoopbackPort(t)
@@ -1216,7 +1233,7 @@ func newPushDaemon(t *testing.T, work string, build realBuild, feed *realE2EFeed
 	if err := os.WriteFile(password, []byte(hex.EncodeToString(secret)), 0o400); err != nil {
 		t.Fatal(err)
 	}
-	d.env = append(environWithout("INVOCATION_ID", "SDN_CONFIG", "SDN_UPDATE_TRUST_ROOTS", "SDN_UPDATE_FEED_DIR", "HOME", "SSL_CERT_FILE", "SSL_CERT_DIR", config.EnvKeyPassword, config.EnvKeyPasswordFile), "HOME="+filepath.Join(work, "home"), "SSL_CERT_FILE="+feed.certFile, config.EnvKeyPasswordFile+"="+password, "SDN_ALLOW_MULTI_DAEMON=1")
+	d.env = append(environWithout("INVOCATION_ID", "SDN_CONFIG", "SDN_UPDATE_TRUST_ROOTS", "SDN_UPDATE_FEED_DIR", "HOME", "SSL_CERT_FILE", "SSL_CERT_DIR", config.EnvKeyPassword, config.EnvKeyPasswordFile), "HOME="+filepath.Join(work, "home"), "SSL_CERT_FILE="+feed.certFile, config.EnvKeyPasswordFile+"="+password, "SDN_ALLOW_MULTI_DAEMON=1", "HD_WALLET_WASM_PATH="+filepath.Join(root, "runtime", "modules", "hd-wallet-wasi.wasm"))
 	t.Cleanup(func() { d.trackHelper(); d.tracker.stopAll() })
 	return d
 }
@@ -1366,7 +1383,7 @@ func (d *pushDaemon) client(t *testing.T) *adminClient {
 	defer func() { configPath = old }()
 	for _, kv := range d.env {
 		key, value, ok := strings.Cut(kv, "=")
-		if ok && (key == "HOME" || key == config.EnvKeyPasswordFile) {
+		if ok && (key == "HOME" || key == config.EnvKeyPasswordFile || key == "HD_WALLET_WASM_PATH") {
 			t.Setenv(key, value)
 		}
 	}
@@ -1440,4 +1457,38 @@ func keepRealLogs(t *testing.T, work string) {
 			return os.WriteFile(target, raw, 0o600)
 		})
 	})
+}
+
+func runSignalPipeline(t *testing.T, exe, work, label string, args ...string) {
+	t.Helper()
+	home := filepath.Join(work, "pipeline-home")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	out, err := os.Create(filepath.Join(work, "pipeline-"+label+".log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer out.Close()
+	cmd := exec.Command(exe, args...)
+	cmd.Dir, cmd.Stdout, cmd.Stderr = filepath.Join(work, "pipeline-repo", "sdn-server"), out, out
+	cmd.Env = append(environWithout("HOME", "SDN_CONFIG", "SDN_UPDATE_TRUST_ROOTS", config.EnvKeyPassword, config.EnvKeyPasswordFile), "HOME="+home)
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("pipeline %s: %v\n%s", label, err, readFileString(out.Name()))
+	}
+}
+
+func includeWalletRuntime(t *testing.T, root string) {
+	t.Helper()
+	raw := walletwasm.EmbeddedHDWalletWasm()
+	if len(raw) == 0 {
+		t.Fatal("embedded wallet runtime failed its hash check")
+	}
+	dir := filepath.Join(root, "runtime", "modules")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "hd-wallet-wasi.wasm"), raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
 }

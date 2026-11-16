@@ -22,9 +22,14 @@ func signalCommandRoots(path string) (update.TrustedRoots, error) {
 	if path != "" {
 		return update.ReadTrustRootsFile(path)
 	}
-	repository := filepath.Join("deployment", "release", "fleet-trust-roots.json")
-	if _, err := os.Stat(repository); err == nil {
-		return update.ReadTrustRootsFile(repository)
+	for directory, err := os.Getwd(); err == nil; directory = filepath.Dir(directory) {
+		repository := filepath.Join(directory, "deployment", "release", "fleet-trust-roots.json")
+		if _, err := os.Stat(repository); err == nil {
+			return update.ReadTrustRootsFile(repository)
+		}
+		if filepath.Dir(directory) == directory {
+			break
+		}
 	}
 	return update.LoadTrustRoots(update.PathsFor(bundle.ResolveCurrent().Root))
 }
