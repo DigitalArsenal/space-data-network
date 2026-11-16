@@ -247,6 +247,18 @@ func TestPublicationBaseline(t *testing.T) {
 					row.Note = "Every published shard via B's Kubo stream forwarder; already imported, so cache is warm; no import on this request"
 					record(row)
 				}
+				// The record the post-restart point reads ask for, read on
+				// both nodes before the restart.
+				pointBefore := map[string]int{}
+				for name, d := range map[string]*publicationDaemon{"producer": a, "receiver": b} {
+					response, err := http.Get(d.base + strings.TrimPrefix(pointURL, b.base))
+					if err != nil {
+						t.Fatal(err)
+					}
+					pointBefore[name] = response.StatusCode
+					response.Body.Close()
+				}
+				t.Logf("point read of the first %s record before the restart: %v", source, pointBefore)
 				sizes, logical := publicationStoreSizes(t, b.store)
 				recordPeaks(source+"-before-restart", 0, baselineStopRSS(t, b))
 				start := time.Now()
@@ -336,6 +348,7 @@ func TestPublicationBaseline(t *testing.T) {
 				row.ReadySeconds = readySeconds
 				row.PointReadSeconds = publicationPercentiles(point)
 				row.PointReadNotFound, row.PointReadFirstOKAfterRestartSeconds = pointNotFound, pointFirstOK
+				row.PointReadStatusBeforeRestart = pointBefore
 				if pointNotFound > 0 {
 					t.Logf("point read of a held %s record answered 404 %d times after the restart; first success %.2f s after the restart began (0 = never)", source, pointNotFound, pointFirstOK)
 				}
@@ -382,6 +395,7 @@ type publicationMeasurement struct {
 	PublishResponseError                string             `json:"publish_response_error,omitempty"`
 	ReadabilityPolls                    int                `json:"readability_polls,omitempty"`
 	PointReadNotFound                   int                `json:"point_read_not_found,omitempty"`
+	PointReadStatusBeforeRestart        map[string]int     `json:"point_read_status_before_restart,omitempty"`
 	PointReadFirstOKAfterRestartSeconds float64            `json:"point_read_first_ok_after_restart_seconds,omitempty"`
 	ReadabilityPollMaxSeconds           float64            `json:"readability_poll_max_seconds,omitempty"`
 	ReadabilityLastPollSeconds          float64            `json:"readability_last_poll_seconds,omitempty"`
