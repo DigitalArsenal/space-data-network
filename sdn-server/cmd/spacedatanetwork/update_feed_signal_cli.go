@@ -137,9 +137,12 @@ func sendFeedSignals(cmd *cobra.Command) error {
 			if parseErr != nil {
 				err = parseErr
 			} else {
-				published, _ := time.Parse(time.RFC3339, signal.PublishedAt)
+				published, publishedErr := time.Parse(time.RFC3339, signal.PublishedAt)
+				if publishedErr != nil {
+					err = fmt.Errorf("parse signal published_at: %w", publishedErr)
+				}
 				expires := published.Add(update.SignalDefaultTTL)
-				if signal.ExpiresAt != "" {
+				if err == nil && signal.ExpiresAt != "" {
 					expires, err = time.Parse(time.RFC3339, signal.ExpiresAt)
 				}
 				if err == nil && !time.Now().Before(expires) {

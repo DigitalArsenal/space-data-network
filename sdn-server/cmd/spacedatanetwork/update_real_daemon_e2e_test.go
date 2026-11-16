@@ -1542,6 +1542,21 @@ func runRealPushChannelReceiver(t *testing.T, installed bool) {
 	if err := os.WriteFile(signalPath(v5), signed, 0o644); err != nil {
 		t.Fatal(err)
 	}
+	var malformedTime map[string]any
+	if err := json.Unmarshal(signed, &malformedTime); err != nil {
+		t.Fatal(err)
+	}
+	malformedTime["published_at"] = "not-a-timestamp"
+	writeE2EJSON(t, signalPath(v5), malformedTime)
+	a.command(t, false, "malformed-published-time", "update", "signal", "--from-feed", "--channel", realE2EChannel, "--version", v5.version)
+	parseMessage := readFileString(filepath.Join(a.work, "malformed-published-time.log"))
+	if !strings.Contains(parseMessage, "parse signal published_at") || strings.Contains(parseMessage, "signed at build time") {
+		t.Fatal("malformed publication time did not produce a parse error")
+	}
+	if err := os.WriteFile(signalPath(v5), signed, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
 	futureSignal, err := update.ParseSignal(signed)
 	if err != nil {
 		t.Fatal(err)

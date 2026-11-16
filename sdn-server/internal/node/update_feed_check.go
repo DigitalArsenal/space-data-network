@@ -76,7 +76,8 @@ func (s *UpdateSignalSubscriber) checkFeed(ctx context.Context) error {
 		return nil
 	}
 	succeeded := false
-	defer func() { s.finishUpgrade(ctx, succeeded) }()
+	operationCtx := ctx
+	defer func() { s.finishUpgrade(operationCtx, succeeded) }()
 	ctx, cancel := context.WithTimeout(ctx, signalFetchTimeout)
 	defer cancel()
 	state, err := update.LoadState(s.deps.Paths)
