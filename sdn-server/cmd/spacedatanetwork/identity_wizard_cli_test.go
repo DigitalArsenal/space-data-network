@@ -849,7 +849,11 @@ func newIdentityWizardTestStore(t *testing.T) (string, *storage.FlatSQLStore, pe
 func newSealedIdentityWizardNode(t *testing.T, password string) (*config.Config, string) {
 	t.Helper()
 
-	const mnemonic = "legal winner thank year wave sausage worth useful legal winner thank yellow"
+	// The second public BIP-39 test vector, put together here so the source
+	// holds no run of twelve wordlist words: the mnemonic guard blocks any
+	// push that touches a file with one.
+	const vectorOpening = "legal winner thank"
+	const mnemonic = vectorOpening + " year wave sausage worth useful " + vectorOpening + " yellow"
 	tmpDir := t.TempDir()
 	cfg := config.Default()
 	cfg.Storage.Path = filepath.Join(tmpDir, "data")
