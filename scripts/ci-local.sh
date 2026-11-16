@@ -413,12 +413,15 @@ go_test_with_timings() {
   local rc=0
   mkdir -p "$ROOT/.ci-artifacts"
   if [[ "${SDN_CI_GO_COVERAGE:-0}" == 1 ]]; then
-    local arg skip='a^'
+    local arg skip='a^' run='.'
     for arg in "$@"; do
-      case "$arg" in -skip=*) skip="${arg#-skip=}" ;; esac
+      case "$arg" in
+        -skip=*) skip="${arg#-skip=}" ;;
+        -run=*) run="${arg#-run=}" ;;
+      esac
     done
     "$ROOT/scripts/go-with-wasmedge.sh" test -list . "$@" > "$log.list" 2>&1 || { cat "$log.list"; return 1; }
-    awk '/^(Test|Example|Fuzz)[[:alnum:]_]+$/ {print}' "$log.list" | grep -Ev "$skip" | LC_ALL=C sort > "$log.expected" || true
+    awk '/^(Test|Example|Fuzz)[[:alnum:]_]+$/ {print}' "$log.list" | grep -E "$run" | grep -Ev "$skip" | LC_ALL=C sort > "$log.expected" || true
   fi
   set +e
   "$ROOT/scripts/go-with-wasmedge.sh" test "$@" 2>&1 | tee "$log"
@@ -517,6 +520,11 @@ run_gofmt() {
 # Package ownership is exhaustive: new packages enter the general group.
 # The other groups isolate the measured 1220s format2, 575s command, and
 # 374s engine packages. Every group retains each package's test budget.
+# The format2-kill group runs format2's kill-recovery test alone (1097s and
+# 1579s in runs 43938905898 and 43971615013, of the package's 1676s); the
+# format2 group runs the rest of that package.
+FORMAT2_KILL_GO_TEST="^TestRouterKill9KeepsEveryAckedRecord$"
+
 quick_go_group() {
   case "$1" in
     */internal/storage/format2) echo format2 ;;
@@ -532,7 +540,7 @@ run_go() {
   export SDN_WASM_ATOMIC_REGRESSION=1
   export SDN_CI_GO_COVERAGE=1
   local group="${SDN_CI_GO_GROUP:-all}"
-  case "$group" in all|general|format2|command|engine) ;; *) fail "unknown Go group: $group" ;; esac
+  case "$group" in all|general|format2|format2-kill|command|engine) ;; *) fail "unknown Go group: $group" ;; esac
 
   step "Go tests (quick: $group)"
   local pkgs failed=0 pkg
@@ -559,16 +567,29 @@ run_go() {
 
 run_go_extended() {
   local pkg budget label failed=0
+  local group="${SDN_CI_GO_GROUP:-all}"
   local skip=()
   for pkg in $EXTENDED_GO_PACKAGES; do
-    [[ "${SDN_CI_GO_GROUP:-all}" == all || "$(quick_go_group "$pkg")" == "$SDN_CI_GO_GROUP" ]] || continue
     skip=()
+    label="quick-${pkg##*/}"
+    case "$group" in
+      all) ;;
+      format2-kill)
+        [[ "$(quick_go_group "$pkg")" == format2 ]] || continue
+        skip=(-run="$FORMAT2_KILL_GO_TEST")
+        label="quick-format2-kill"
+        ;;
+      format2)
+        [[ "$(quick_go_group "$pkg")" == format2 ]] || continue
+        skip=(-skip="$FORMAT2_KILL_GO_TEST")
+        ;;
+      *) [[ "$(quick_go_group "$pkg")" == "$group" ]] || continue ;;
+    esac
     budget=20m
     case "$pkg" in
       */flatsqlrt|*/format2) budget=30m ;;
       */cmd/spacedatanetwork) skip=(-skip="${MIGRATION_GO_TESTS}|${UPDATE_GO_TESTS}") ;;
     esac
-    label="quick-${pkg##*/}"
     go_test_with_timings "$label" -v -p=1 -timeout="$budget" -count=1 ${skip[@]+"${skip[@]}"} "$pkg" \
       || failed=1
   done

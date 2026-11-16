@@ -167,10 +167,12 @@ jobs:
       - name: Encryption tests (Go)
         run: ./scripts/ci-local.sh encryption
 
-  # Four exhaustive package groups retain the individual test deadlines.
-  # Run 43938905898 measured 574s general, 1220s format2, 575s command,
-  # and 374s engine tests. The 35m outer limit leaves the 30m package
-  # deadline time to name an overrun after setup and linking.
+  # Five exhaustive groups retain the individual test deadlines. In the
+  # release container, run 43971615013 took 21m general, 35m format2 (its
+  # kill-recovery test alone 1579s), 16m command and 13m engine; setup and
+  # linking took 6.5m before the first test. format2-kill runs that one test,
+  # format2 the rest of its package. The 40m outer limit leaves the 30m
+  # package deadline time to name an overrun after setup and linking.
   go-quick:
     name: Go tests (quick / ${{ matrix.group }})
     runs-on: ubuntu-latest
@@ -179,11 +181,11 @@ jobs:
       run:
         shell: bash
     needs: wasmedge-runtime
-    timeout-minutes: 35
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
-        group: [general, format2, command, engine]
+        group: [general, format2, format2-kill, command, engine]
     env:
       SDN_CI_GO_GROUP: ${{ matrix.group }}
     steps:
