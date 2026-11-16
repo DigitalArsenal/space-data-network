@@ -82,7 +82,7 @@ def main():
                 shutil.copy2(here / 'case.py', directory / 'case.py')
                 active = 'sdn-format5-' + str(os.getpid()) + '-' + str(number) + '-' + case
                 with open(directory / 'container.log', 'w') as log:
-                    subprocess.run(['docker', 'run', '-d', '--name', active, '--privileged',
+                    subprocess.run(['docker', 'run', '-d', '--name', active, '--hostname=sdn-rehearsal', '--privileged',
                                     '--cgroupns=host', '--network=none', '--platform=linux/' + args.arch,
                                     '--cpus=2', '--memory=6g', '--tmpfs=/run', '--tmpfs=/run/lock',
                                     '--tmpfs=/tmp', '-v', '/sys/fs/cgroup:/sys/fs/cgroup:rw',

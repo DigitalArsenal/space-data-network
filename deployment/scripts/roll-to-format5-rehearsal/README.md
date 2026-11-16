@@ -30,7 +30,9 @@ it creates. It retains case directories, logs, hashes, ledgers and results.
 
 The source stores are read only. Copies omit `keys`, `secrets` and `auth.db`.
 Every case starts its old node from a fresh copy, with a generated test identity,
-loopback listeners, no host ports and `--network=none`. The new release's engine
+a stable container hostname, loopback listeners, no host ports and
+`--network=none`. The stable hostname allows the release to create a durable
+test identity without Docker's ephemeral-hostname refusal. The new release's engine
 is prewarmed before stopping the old node. No runtime permission patch or fake
 systemctl is used. A failure to start the old release is recorded as a failed
 case and requires inspection; the harness does not replace the release or
