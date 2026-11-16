@@ -59,9 +59,9 @@ describe('FlatSQLEngineRecordStore (THE SDNNode store)', () => {
 
     // The row index is a plain SQL control table inside the engine, named
     // after the server layout (sdn_record_index — flatsql.go).
-    const provenance = store.sql(
+    const provenance = (await store.sql(
       "SELECT schema_name, peer_id FROM sdn_record_index WHERE schema_name = 'OMM.fbs' ORDER BY rowid",
-    );
+    ));
     expect(provenance.rowCount).toBe(2);
     expect(provenance.columns).toEqual(['schema_name', 'peer_id']);
 
@@ -147,7 +147,7 @@ describe('FlatSQLEngineRecordStore (THE SDNNode store)', () => {
     expect(alpha?.peerId).toBe('peer-a');
     expect((await second.get('CDM.fbs', cid2))?.peerId).toBe('peer-b');
     // Control-table index rebuilt from the journal.
-    expect(second.sql('SELECT cid FROM sdn_record_index').rowCount).toBe(2);
+    expect((await second.sql('SELECT cid FROM sdn_record_index')).rowCount).toBe(2);
     // SDS record vtab rebuilt into the same source partition — exactly one
     // copy (ingested-keys ledger makes journal replay idempotent).
     const rows = await second.standardsStore!.query('SELECT NORAD_CAT_ID, _source FROM OMM LIMIT 10', 'OMM');
@@ -189,12 +189,12 @@ describe('catalog-scale engine queries (loop D.6 regression)', () => {
         persist: false,
       });
       expect(ingested).toBe(29000);
-      const stream = store.queryEpochRawStream('OMM', {
+      const stream = (await store.queryEpochRawStream('OMM', {
         profile: 'nearest',
         epoch: BENCH_EPOCH_BASE + 2 * 86400,
         limit: -1,
         source: 'celestrak-gp',
-      });
+      }));
       let frames = 0;
       for (const frame of store.queryEpochFrames('OMM', {
         profile: 'nearest',
@@ -228,7 +228,7 @@ describe('per-provider source partitioning (server layout mirror)', () => {
     await store.ingestRecords('OMM', [record], { source: 'celestrak-gp' });
     await store.ingestRecords('OMM', [{ ...record, cid: 'other-provider-omm-1', batchId: 'batch-2' }], { source: 'spacetrack-gp' });
 
-    expect(store.listSources!('OMM')).toEqual(['celestrak-gp', 'spacetrack-gp']);
+    expect(await store.listSources!('OMM')).toEqual(['celestrak-gp', 'spacetrack-gp']);
 
     // Unified view unions the per-source shadow tables; `_source` carries
     // the FULL shadow-table name (`OMM@celestrak-gp`), matching the server.
@@ -250,11 +250,11 @@ describe('per-provider source partitioning (server layout mirror)', () => {
     );
     expect(filtered.records).toEqual([{ NORAD_CAT_ID: 56775 }]);
 
-    expect(store.getStats()[0]).toEqual(expect.objectContaining({
+    expect((await store.getStats())[0]).toEqual(expect.objectContaining({
       standardId: 'OMM',
       recordCount: 2,
     }));
-    store.destroy();
+    (await store.destroy());
   });
 
   it('persists per-(standard, source) aligned streams and restores every partition on reopen', async () => {
@@ -274,10 +274,10 @@ describe('per-provider source partitioning (server layout mirror)', () => {
     const first = await createLocalFlatSqlStore(options);
     await first.ingestRecords('OMM', [record], { source: 'celestrak-gp' });
     await first.ingestRecords('OMM', [{ ...record, cid: 'local-omm-1' }]); // default `local`
-    first.destroy();
+    (await first.destroy());
 
     const second = await createLocalFlatSqlStore(options);
-    expect(second.listSources!('OMM')).toEqual(['celestrak-gp', LOCAL_FLATSQL_DEFAULT_SOURCE]);
+    expect(await second.listSources!('OMM')).toEqual(['celestrak-gp', LOCAL_FLATSQL_DEFAULT_SOURCE]);
     const unified = await second.query('SELECT _source FROM OMM ORDER BY _source LIMIT 10', 'OMM');
     expect(unified.records).toEqual([
       { _source: 'OMM@celestrak-gp' },
@@ -285,7 +285,7 @@ describe('per-provider source partitioning (server layout mirror)', () => {
     ]);
     // Re-ingesting the same records after reload stays deduped.
     expect(await second.ingestRecords('OMM', [record], { source: 'celestrak-gp' })).toBe(0);
-    second.destroy();
+    (await second.destroy());
   });
 
   it('migrates a legacy pre-D.1 exportData snapshot into the local source partition', async () => {
@@ -313,7 +313,7 @@ describe('per-provider source partitioning (server layout mirror)', () => {
     expect(await persistenceStore.readBytes('legacy-migration:OMM')).toBeNull();
     expect(await persistenceStore.readJson('legacy-migration:OMM:sources')).toBeNull();
     expect(await persistenceStore.readBytes('legacy-migration:OMM:src:local')).toBeNull();
-    store.destroy();
+    (await store.destroy());
 
     const reopened = await createLocalFlatSqlStore({
       schemas: [OMM_STANDARD],
@@ -322,6 +322,6 @@ describe('per-provider source partitioning (server layout mirror)', () => {
     });
     const reloaded = await reopened.query('SELECT NORAD_CAT_ID, _source FROM OMM LIMIT 10', 'OMM');
     expect(reloaded.records).toEqual([{ NORAD_CAT_ID: 56775, _source: 'OMM@local' }]);
-    reopened.destroy();
+    (await reopened.destroy());
   });
 });
