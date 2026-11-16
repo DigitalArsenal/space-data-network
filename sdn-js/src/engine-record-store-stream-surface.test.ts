@@ -1,3 +1,6 @@
+import { publishedSchema } from './test-schema-helper';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 /**
  * THE STREAM SURFACE (2.0.18) — a size-prefixed SDS shard is not a record.
  *
@@ -23,8 +26,8 @@
 
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
-import { readFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
+import { readFileSync, mkdtempSync, readdirSync, statSync, rmSync } from 'node:fs';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   FlatSQLEngineRecordStore,
@@ -32,10 +35,8 @@ import {
   flatBufferMatchesFileId,
   flatBufferStreamMatchesFileId,
 } from './engine-record-store';
-import { FlatSQLStorage } from './flatsql-storage';
 import {
   MemoryFlatSqlPersistenceStore,
-  getSharedFlatSqlIoRouter,
   stripSdnFlatBufferSizePrefix,
 } from './local-flatsql';
 // @ts-expect-error — plain .mjs helper shared with the D.6 benchmark scripts.
@@ -48,7 +49,7 @@ const OMM_STANDARD = {
   standardId: 'OMM',
   tableName: 'OMM',
   fileId: '$OMM',
-  schema: OMM_SCHEMA,
+  ...publishedSchema('OMM'),
 };
 
 /** One real $OMM record, size-prefixed: prefix 284, buffer 288 → ONE frame. */
@@ -56,6 +57,15 @@ const STARLINK_6292_OMM_BYTES = new Uint8Array(Buffer.from('HAEAAEgAAAAkT01NAAAA
 
 const digest = (bytes: Uint8Array) => createHash('sha256').update(Buffer.from(bytes)).digest('hex');
 const enc = (text: string) => new TextEncoder().encode(text);
+const roots = new Map<string, string>();
+function engineFor(key: string) {
+  if (!roots.has(key)) roots.set(key, mkdtempSync(join(tmpdir(), 'stream-records-')));
+  return { root: roots.get(key)! };
+}
+afterEach(() => {
+  for (const root of roots.values()) rmSync(root, { recursive: true, force: true });
+  roots.clear();
+});
 
 /**
  * The live catalog's shape: 32,141 aligned size-prefixed $OMM frames in ONE
@@ -127,14 +137,15 @@ describe('a size-prefixed stream is not a record (the 2.0.17 false positive)', (
   });
 });
 
-describe('the option that decides durability is no longer silent', () => {
+describe('registered binary persistence', () => {
 
 
 
 
   it('opens the disk-backed lane when schemas are given — the gate that failed', async () => {
-    const store = await FlatSQLStorage.open({
+    const store = await FlatSQLEngineRecordStore.open({
       persistenceKey: 'lane-gate',
+      engine: engineFor('lane-gate'),
       persistenceStore: new MemoryFlatSqlPersistenceStore(),
       schemas: [OMM_STANDARD],
     });
@@ -174,7 +185,7 @@ describe('storeStream — the shard-shaped admit point', () => {
       const { streamBytes } = buildBenchCorpus(16);
       await expect(store.storeStream(streamBytes, { sha256: '0'.repeat(64) }))
         .rejects.toThrow(/sha256 mismatch/);
-      expect(store.readStream('OMM').byteLength).toBe(0);
+      expect((await store.readStream('OMM')).byteLength).toBe(0);
 
       const result = await store.storeStream(streamBytes, { sha256: digest(streamBytes) });
       expect(result.ingested).toBe(16);
@@ -203,16 +214,16 @@ describe('storeStream — the shard-shaped admit point', () => {
   });
 });
 
-describe('THE ENVELOPE RULING — a shard lives in the lane, not in both', () => {
-  it('writes no envelope row for a shard, so one shard costs ONE copy', async () => {
+describe('stream records and optional envelope metadata', () => {
+  it('indexes stream records without optional envelope metadata', async () => {
     const store = await FlatSQLEngineRecordStore.open({ schemas: [OMM_STANDARD] });
     try {
       const { streamBytes } = buildBenchCorpus(64);
       const result = await store.storeStream(streamBytes, { source: 'celestrak-gp' });
       expect(result.indexedEnvelopes).toBe(0);
-      // The record-envelope surface is untouched: no rows, nothing to journal.
-      expect(await store.count()).toBe(0);
-      expect(store.sql('SELECT cid FROM sdn_record_index').rowCount).toBe(0);
+      // Binary records are queryable without an additional envelope journal.
+      expect(await store.count()).toBe(64);
+      expect((await store.sql('SELECT _cid FROM OMM')).rowCount).toBe(64);
       // The lane holds every frame.
       const rows = await store.standardsStore!.query('SELECT COUNT(*) AS n FROM OMM', 'OMM');
       expect(Number((rows.records[0] as Record<string, unknown>).n)).toBe(64);
@@ -239,6 +250,7 @@ describe('THE ENVELOPE RULING — a shard lives in the lane, not in both', () =>
     const persistenceStore = new MemoryFlatSqlPersistenceStore();
     const first = await FlatSQLEngineRecordStore.open({
       persistenceKey: 'record-contract',
+      engine: engineFor('record-contract'),
       persistenceStore,
       schemas: [OMM_STANDARD],
     });
@@ -247,6 +259,7 @@ describe('THE ENVELOPE RULING — a shard lives in the lane, not in both', () =>
 
     const second = await FlatSQLEngineRecordStore.open({
       persistenceKey: 'record-contract',
+      engine: engineFor('record-contract'),
       persistenceStore,
       schemas: [OMM_STANDARD],
     });
@@ -273,7 +286,7 @@ describe('THE ENVELOPE RULING — a shard lives in the lane, not in both', () =>
         .rejects.toThrow(/storeStream/);
       // Nothing was admitted anywhere.
       expect(await store.count()).toBe(0);
-      expect(store.readStream('OMM').byteLength).toBe(0);
+      expect((await store.readStream('OMM')).byteLength).toBe(0);
     } finally {
       await store.close();
     }
@@ -287,8 +300,9 @@ describe('catalog scale: the gate from the task, and byte identity', () => {
 
     // Opened the way the Orbital Console opens it — plus the schemas that
     // 2.0.18 makes both declared and mandatory.
-    const store = await FlatSQLStorage.open({
+    const store = await FlatSQLEngineRecordStore.open({
       persistenceKey: 'spaceaware-catalog',
+      engine: engineFor('spaceaware-catalog'),
       persistenceStore,
       schemas: [OMM_STANDARD],
     });
@@ -307,25 +321,20 @@ describe('catalog scale: the gate from the task, and byte identity', () => {
       const rows = await store.standardsStore!.query('SELECT COUNT(*) AS n FROM OMM', 'OMM');
       expect(Number((rows.records[0] as Record<string, unknown>).n)).toBe(CATALOG_FRAME_COUNT);
 
-      await getSharedFlatSqlIoRouter().flush();
+      await store.flush();
 
-      // GATE 3 — the persisted total is about ONE shard, not two. On 2.0.17
-      // the same work left 21,104,976 B for a 10,544,168 B shard (2.00x).
-      //
-      // Measured here: 12,698,914 B for a 10,025,832 B shard = 1.267x. The
-      // arena holds the shard verbatim ONCE (10,025,832 B); the remainder is
-      // the lane's per-frame ingested-keys ledger
-      // (`<key>:OMM:record-keys` = 2,656,594 B — `OMM|shard:<cid>|<index>`
-      // per frame), which is what makes shard replay a no-op. That ledger is
-      // a pre-existing lane cost shared with the published-shard path, not
-      // something this surface introduces; `sdn-js-flatsql-shard-level-ledger`
-      // tracks collapsing it to one entry per shard.
-      const { total, keys } = persistedTotals(persistenceStore);
+      // Keep the original storage-amplification bound on actual filesystem bytes.
+      await store.close();
+      const files = (directory: string): string[] => readdirSync(directory).flatMap(name => {
+        const entry = join(directory, name);
+        return statSync(entry).isDirectory() ? files(entry) : [entry];
+      });
+      const paths = files(engineFor('spaceaware-catalog').root);
+      const total = paths.reduce((sum, file) => sum + statSync(file).size, 0);
+      expect(paths.length).toBeGreaterThan(0);
+      const { keys } = persistedTotals(persistenceStore);
       expect(total).toBeGreaterThan(streamBytes.byteLength);
       expect(total / streamBytes.byteLength).toBeLessThan(1.35);
-      // The arena is the shard, ONCE — no second durable copy anywhere.
-      const arenaKeys = keys.filter((key) => key.includes('.fsdata#') && !key.endsWith('#meta'));
-      expect(arenaKeys.length).toBeGreaterThan(0);
       // And no whole-blob envelope snapshot was written for the shard.
       const envelopeKey = keys.find((key) => key.endsWith(':record-envelopes'));
       if (envelopeKey) {
@@ -341,8 +350,9 @@ describe('catalog scale: the gate from the task, and byte identity', () => {
     const { streamBytes } = catalogShard();
     const shardDigest = digest(streamBytes);
     const persistenceStore = new MemoryFlatSqlPersistenceStore();
-    const open = () => FlatSQLStorage.open({
+    const open = () => FlatSQLEngineRecordStore.open({
       persistenceKey: 'catalog-round-trip',
+      engine: engineFor('catalog-round-trip'),
       persistenceStore,
       schemas: [OMM_STANDARD],
     });
@@ -354,17 +364,16 @@ describe('catalog scale: the gate from the task, and byte identity', () => {
     // what makes the surface safe for a content-addressed consumer — the
     // console labels these bytes with the publication's shardCid, so
     // reassembled-but-different bytes would break content addressing.
-    const live = first.readStream('OMM', { source: 'celestrak-gp' });
+    const live = await first.readStream('OMM', { source: 'celestrak-gp' });
     expect(live.byteLength).toBe(streamBytes.byteLength);
     expect(digest(live)).toBe(shardDigest);
 
     await first.close();
-    await getSharedFlatSqlIoRouter().flush();
 
     // ...and from DISK ALONE, after the engine was torn down.
     const second = await open();
     try {
-      const restored = second.readStream('OMM', { source: 'celestrak-gp' });
+      const restored = await second.readStream('OMM', { source: 'celestrak-gp' });
       expect(restored.byteLength).toBe(streamBytes.byteLength);
       expect(digest(restored)).toBe(shardDigest);
     } finally {
@@ -378,9 +387,9 @@ describe('catalog scale: the gate from the task, and byte identity', () => {
     const store = await FlatSQLEngineRecordStore.open({ schemas: [OMM_STANDARD] });
     try {
       await store.storeStream(buildBenchCorpus(4).streamBytes, { source: 'celestrak-gp' });
-      expect(store.readStream('OMM', { source: 'no-such-provider' }).byteLength).toBe(0);
-      expect(store.readStream('OMM.fbs', { source: 'celestrak-gp' }).byteLength).toBeGreaterThan(0);
-      expect(() => store.readStream('CDM')).toThrow(/not registered/);
+      expect((await store.readStream('OMM', { source: 'no-such-provider' })).byteLength).toBe(0);
+      expect((await store.readStream('OMM.fbs', { source: 'celestrak-gp' })).byteLength).toBeGreaterThan(0);
+      await expect(store.readStream('CDM')).rejects.toThrow(/not registered/);
     } finally {
       await store.close();
     }
