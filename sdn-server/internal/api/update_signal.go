@@ -40,6 +40,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/spacedatanetwork/sdn-server/internal/bundle"
 	"github.com/spacedatanetwork/sdn-server/internal/sigdomain"
 	"github.com/spacedatanetwork/sdn-server/internal/update"
 	"github.com/spacedatanetwork/sdn-server/internal/updatesign"
@@ -83,6 +84,7 @@ type updateSignalRequest struct {
 }
 
 type updateSignalResponse struct {
+	Warning     string `json:"warning,omitempty"`
 	Published   bool   `json:"published"`
 	DryRun      bool   `json:"dry_run,omitempty"`
 	Topic       string `json:"topic"`
@@ -258,6 +260,12 @@ func (h *CoreAPIHandler) handleUpdateSignal(w http.ResponseWriter, r *http.Reque
 		topic, entry.UpdateID, entry.Version, entry.Sequence, len(signed), h.updateSigner.KeyID())
 
 	resp := buildSignalResponse(true, false, req, entry, signed, h.updateSigner.KeyID(), h.updateSigner.PublicKeyB64(), topic)
+	roots, rootsErr := update.LoadTrustRoots(update.PathsFor(bundle.ResolveCurrent().Root))
+	verified, parseErr := update.ParseSignal(signed)
+	if rootsErr != nil || parseErr != nil || verified.Verify(update.SignalVerifyOptions{TrustedRoots: roots}) != nil {
+		resp.Warning = fmt.Sprintf("Signing key %s is not one of this node's update roots; receivers must trust that key to accept this signal.", h.updateSigner.KeyID())
+		log.Warn(resp.Warning)
+	}
 	writeJSON(w, http.StatusOK, resp)
 }
 

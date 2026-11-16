@@ -47,6 +47,7 @@ var (
 )
 
 type updateSignalCLIResponse struct {
+	Warning     string          `json:"warning,omitempty"`
 	Published   bool            `json:"published"`
 	DryRun      bool            `json:"dry_run"`
 	Topic       string          `json:"topic"`
@@ -131,6 +132,9 @@ var updateSignalCmd = &cobra.Command{
 		}
 		if result.DryRun {
 			fmt.Fprintln(out, "dry_run=yes nothing_signed=yes nothing_published=yes")
+		}
+		if result.Warning != "" {
+			fmt.Fprintf(out, "warning=%s\n", result.Warning)
 		}
 		fmt.Fprintf(out, "published=%t\n", result.Published)
 		fmt.Fprintf(out, "topic=%s\n", result.Topic)

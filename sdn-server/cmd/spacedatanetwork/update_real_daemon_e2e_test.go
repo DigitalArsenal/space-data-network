@@ -1204,7 +1204,11 @@ func runRealPushChannelReceiver(t *testing.T, installed bool) {
 	if err := localSignal.Verify(update.SignalVerifyOptions{TrustedRoots: roots}); err == nil {
 		t.Fatal("local signal unexpectedly trusted")
 	}
-	t.Log("publisher sent its own untrusted identity's signal through real GossipSub")
+	localOutput := readFileString(filepath.Join(a.work, "local-node-signed.log"))
+	if !strings.Contains(localOutput, "warning=Signing key "+localSignal.Signing.KeyID) || !strings.Contains(localOutput, "not one of this node's update roots") || !strings.Contains(localOutput, "published=true") {
+		t.Fatal("node-signed command did not report its untrusted signing key")
+	}
+	t.Log("publisher sent its own untrusted identity's signal through real GossipSub with a key-specific warning")
 	// Noncanonical whitespace must survive the authenticated route byte for byte.
 	var formatted bytes.Buffer
 	if err := json.Indent(&formatted, v2signal, "", "  "); err != nil {
