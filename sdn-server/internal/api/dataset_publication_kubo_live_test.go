@@ -194,7 +194,7 @@ func TestLiveKuboRetentionHoldsStorageMaxAndIPNSPointerTracksLatestDPM(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := NewConcreteDatasetPublicationService(store, &fakeDatasetUpdatePublisher{}, signingKey, hygienePeerID, "bafy-provider-epm", kubo.api, filepath.Join(dir, "dataset-publications"))
+	service := newPublicationServiceWithPinPolicy(t, store, &fakeDatasetUpdatePublisher{}, signingKey, hygienePeerID, "bafy-provider-epm", kubo.api, filepath.Join(dir, "dataset-publications"))
 	service.SetPublicationPolicy(config.PublicationRetentionConfig{KeepSeries: 2},
 		[]config.IPNSPointerConfig{{Schema: "IQC.fbs", SourceName: hygieneSource, Key: "self", Lifetime: time.Hour}})
 
