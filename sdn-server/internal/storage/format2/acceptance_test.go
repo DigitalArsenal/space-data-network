@@ -422,7 +422,9 @@ func TestRouterKillChild(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(root, "torn-ready"), []byte("ready"), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			select {}
+			for {
+				time.Sleep(time.Hour)
+			}
 		}
 		if _, err := f.WriteString(lines.String()); err != nil {
 			t.Fatal(err)
@@ -472,7 +474,7 @@ func TestRouterKill9KeepsEveryAckedRecord(t *testing.T) {
 		done := make(chan error, 1)
 		go func() { done <- cmd.Wait() }()
 		if k == 0 {
-			deadline := time.Now().Add(2 * time.Minute)
+			deadline, hasDeadline := t.Deadline()
 			for {
 				if _, err := os.Stat(filepath.Join(root, "torn-ready")); err == nil {
 					break
@@ -483,7 +485,7 @@ func TestRouterKill9KeepsEveryAckedRecord(t *testing.T) {
 					t.Fatalf("controlled child exited before its partial append: %v (see %s)", err, childLog.Name())
 				default:
 				}
-				if time.Now().After(deadline) {
+				if hasDeadline && time.Until(deadline) < time.Second {
 					_ = cmd.Process.Kill()
 					<-done
 					childLog.Close()
