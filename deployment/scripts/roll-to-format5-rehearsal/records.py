@@ -138,15 +138,22 @@ def snapshot(directory, schemas):
         temporary = tempfile.TemporaryDirectory(prefix='record-snapshot-')
         index = Path(temporary.name) / 'index.sqlite'
         db = sqlite3.connect(index)
-        db.execute('CREATE TABLE records (cid BLOB PRIMARY KEY, offset INTEGER, size INTEGER, seen INTEGER DEFAULT 0) WITHOUT ROWID')
+        db.execute('CREATE TABLE records (cid BLOB PRIMARY KEY, offset INTEGER, size INTEGER, occurrences INTEGER DEFAULT 1, seen INTEGER DEFAULT 0) WITHOUT ROWID')
         db.execute('CREATE TABLE connectors (id BLOB PRIMARY KEY) WITHOUT ROWID')
         count = 0
-        with (directory / (schema + '.sds')).open('wb') as stream:
+        with (directory / (schema + '.sds')).open('w+b') as stream:
             for data in scan(schema):
                 cid = hashlib.sha256(data).digest()
                 offset = stream.tell()
-                db.execute('INSERT INTO records(cid,offset,size) VALUES(?,?,?)',
-                           (cid, offset, len(data)))
+                prior = db.execute('INSERT INTO records(cid,offset,size) VALUES(?,?,?) '
+                                   'ON CONFLICT(cid) DO UPDATE SET occurrences=occurrences+1 '
+                                   'RETURNING offset,size,occurrences',
+                                   (cid, offset, len(data))).fetchone()
+                if prior[2] > 1:
+                    stream.seek(prior[0] + 4)
+                    if prior[1] != len(data) or stream.read(prior[1]) != data:
+                        raise RuntimeError('one content address has different baseline bytes')
+                    stream.seek(offset)
                 stream.write(struct.pack('<I', len(data)) + data)
                 if schema == 'ICN.fbs':
                     connector, _ = icn_fields(data)
@@ -185,13 +192,15 @@ def compare(directory, schemas, boot_ms, expected_boot_additions):
         with (directory / (schema + '.sds')).open('rb') as stream:
             for data in scan(schema):
                 cid = hashlib.sha256(data).digest()
-                row = db.execute('SELECT offset,size,seen FROM records WHERE cid=?', (cid,)).fetchone()
+                row = db.execute('SELECT offset,size,seen,occurrences FROM records WHERE cid=?', (cid,)).fetchone()
                 if row:
-                    offset, size, seen = row
+                    offset, size, seen, occurrences = row
                     stream.seek(offset + 4)
-                    if size != len(data) or stream.read(size) != data or seen:
+                    if size != len(data) or stream.read(size) != data:
                         changed += 1
-                    db.execute('UPDATE records SET seen=1 WHERE cid=?', (cid,))
+                    if seen >= occurrences:
+                        unexplained += 1
+                    db.execute('UPDATE records SET seen=seen+1 WHERE cid=?', (cid,))
                     matched += 1
                 else:
                     added += 1
@@ -205,13 +214,16 @@ def compare(directory, schemas, boot_ms, expected_boot_additions):
                         unexplained += 1
                 if (matched + added) % 20000 == 0:
                     db.commit()
-        missing = db.execute('SELECT count(*) FROM records WHERE seen=0').fetchone()[0]
+        missing = db.execute('SELECT coalesce(sum(max(occurrences-seen,0)),0) FROM records').fetchone()[0]
+        distinct_before = db.execute('SELECT count(*) FROM records').fetchone()[0]
         db.commit()
         db.close()
         temporary.cleanup()
         if schema == 'ICN.fbs' and added != expected_boot_additions:
             unexplained += abs(added - expected_boot_additions)
-        results[schema] = dict(before=before[schema], matched=matched, added=added,
+        results[schema] = dict(before=before[schema], distinct_before=distinct_before,
+                               baseline_duplicate_occurrences=before[schema]-distinct_before,
+                               matched=matched, added=added,
                                missing=missing, changed=changed, unexplained=unexplained)
     passed = all(not any(row.get(key, 0) for key in
                          ('missing', 'changed', 'unexplained', 'unexpected_standard'))

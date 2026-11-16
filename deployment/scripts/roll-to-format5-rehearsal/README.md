@@ -92,8 +92,8 @@ is not a record-preservation condition. Before-state records stay in size-prefix
 stream offsets. Working indexes live in the container temporary filesystem;
 completed baseline indexes are copied into the evidence directory. Comparison
 uses a temporary copy so the baseline evidence stays unchanged. The after-state scan looks up every content address and
-compares the complete bytes against that stream. Missing records, different
-bytes, duplicate results and unexplained additions fail. Counts remain
+compares the complete bytes against that stream. Missing occurrences, different
+bytes, extra occurrences of an existing address and unexplained additions fail. Counts remain
 observations rather than the preservation criterion.
 
 The only allowed additions are startup ICN records: each must name a connector
