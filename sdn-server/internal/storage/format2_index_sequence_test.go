@@ -68,3 +68,38 @@ func TestFormat2RecordIndexSequenceSnapshot(t *testing.T) {
 		t.Fatalf("absent source: total=%d rows=%d err=%v", absent.Total, len(absent.Rows), err)
 	}
 }
+
+func TestFormat2RecordIndexSequenceCountPaths(t *testing.T) {
+	requireFormat2Engine(t)
+	store := openFormat2ForTest(t, t.TempDir())
+	defer store.Close()
+	for i := 0; i < 5; i++ {
+		tags := SourceTags{ProviderID: fmt.Sprintf("provider-%d", i), SourceName: "synthetic"}
+		if _, err := store.StoreWithSourceTags("CAT.fbs", f2TestCAT(uint32(900000+i), fmt.Sprintf("SYNTHETIC-%d", i), "PAYLOAD", "OPERATIONAL"), "peer", nil, tags); err != nil {
+			t.Fatal(err)
+		}
+	}
+	q := RecordIndexSeqQuery{RecordIndexPageQuery: RecordIndexPageQuery{SchemaName: "CAT.fbs", Limit: 1}}
+	page, err := store.RecordIndexSeqPage(q)
+	if err != nil || page.Total != 5 || len(page.Rows) != 1 {
+		t.Fatalf("unfiltered page: total=%d rows=%d err=%v", page.Total, len(page.Rows), err)
+	}
+	store.f2.counts.mu.Lock()
+	counts := len(store.f2.counts.entries)
+	store.f2.counts.mu.Unlock()
+	if counts != 0 {
+		t.Fatalf("unfiltered page ran %d window counts; want the type-head count", counts)
+	}
+	q.NoradLike = "900002"
+	page, err = store.RecordIndexSeqPage(q)
+	if err != nil || page.Total != 1 || len(page.Rows) != 1 {
+		t.Fatalf("filtered page: total=%d rows=%d err=%v", page.Total, len(page.Rows), err)
+	}
+	store.f2.counts.mu.Lock()
+	counts = len(store.f2.counts.entries)
+	store.f2.counts.mu.Unlock()
+	if counts != 1 {
+		t.Fatalf("filtered page ran %d window counts, want one", counts)
+	}
+
+}

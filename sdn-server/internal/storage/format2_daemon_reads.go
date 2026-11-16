@@ -2096,12 +2096,12 @@ func (s *FlatSQLStore) f2RecordIndexSeqPage(q RecordIndexSeqQuery) (RecordIndexS
 		return RecordIndexSeqPage{}, err
 	}
 	ctx := s.f2ctx()
+	head, err := s.ps.TypeCounterOf(q.SchemaName)
+	if err != nil {
+		return RecordIndexSeqPage{}, err
+	}
 	through := q.ThroughSeq
 	if through <= 0 {
-		head, err := s.ps.TypeCounterOf(q.SchemaName)
-		if err != nil {
-			return RecordIndexSeqPage{}, err
-		}
 		through = head.GseqHi
 	}
 	out := RecordIndexSeqPage{Through: through, Rows: []RecordIndexRow{}}
@@ -2124,11 +2124,17 @@ func (s *FlatSQLStore) f2RecordIndexSeqPage(q RecordIndexSeqQuery) (RecordIndexS
 	if q.ArrivedBefore != nil {
 		wq.Conds = append(wq.Conds, format2.Cond{SQL: "_arrival < ?", Params: []format2.Cell{format2.Int(*q.ArrivedBefore * 1000)}})
 	}
-	total, err := s.f2WindowCount(ctx, wq)
-	if err != nil {
-		return RecordIndexSeqPage{}, err
+	// A current unfiltered snapshot uses the maintained type count. Older
+	// snapshots and filtered pages count the bounded window instead.
+	if through >= head.GseqHi && wq.Provider == "" && wq.Source == "" && wq.Batch == "" && q.NoradLike == "" && q.ArrivedBefore == nil {
+		out.Total = head.FirstLive
+	} else {
+		total, err := s.f2WindowCount(ctx, wq)
+		if err != nil {
+			return RecordIndexSeqPage{}, err
+		}
+		out.Total = total
 	}
-	out.Total = total
 	wq.Conds = append(wq.Conds, format2.Cond{SQL: "_gseq > ?", Params: []format2.Cell{format2.Int(q.AfterSeq)}})
 	extra := "NULL"
 	if hasNorad {
