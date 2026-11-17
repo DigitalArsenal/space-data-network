@@ -135,6 +135,7 @@
               <tr><td>SGP4 / SDP4</td><td>An analytic general-perturbations theory: mean elements, zonal gravity terms, a simple drag term, and Sun, Moon and resonance terms for deep space.</td><td>The public element sets (two-line element sets and OMMs). Must be run with the same theory the elements were fit with. Good to about a kilometer near epoch, with errors growing by kilometers a day in low orbit.</td></tr>
               <tr><td>Vinti</td><td>An analytic solution in oblate spheroidal coordinates that carries Earth&rsquo;s oblateness exactly, and much of the next zonal terms, instead of as a series approximation.</td><td>Fast, accurate zonal-gravity propagation where drag is small or handled separately.</td></tr>
               <tr><td>Semi-analytic (for example DSST)</td><td>Averages out the fast, short-period motion, integrates the slowly changing mean elements with large steps, then adds the short-period terms back.</td><td>Long spans at modest cost: geostationary and high orbits, lifetime and reentry studies.</td></tr>
+              <tr><td>SDN-AP</td><td>The network&rsquo;s semi-analytic propagator, in the line of Brouwer, SGP4 and SGP4-XP: gravity to degree 70, the Sun and Moon, the solid Earth tide, drag from a density model driven by space weather, and solar radiation pressure.</td><td>Carrying a numerical orbit to every node and browser. Its record is fit to the numerical forecast and stays within 100&nbsp;m of it for five days, at the speed of an analytic theory.</td></tr>
               <tr><td>Numerical (FFM, Full Force Model)</td><td>Direct integration of the equations of motion with a high-degree gravity field, atmospheric drag from a density model corrected by observations, the Sun and Moon, solar radiation pressure, tides and relativity.</td><td>The high-accuracy catalog, precise ephemerides and conjunction screening, when the inputs support it.</td></tr>
             </tbody>
           </table>
@@ -194,6 +195,24 @@
           <li><b>Publish a version</b><span>Each catalog version names its inputs, its recipe and the exact modules that ran. Anyone can rerun it.</span></li>
           <li><b>Screen</b><span>Conjunction screening runs as open WebAssembly modules. Operators can screen a maneuver encrypted, without handing it to a competitor.</span></li>
         </ol>
+
+        <div class="chapter">
+          <h3>SDN-AP carries the numerical orbit</h3>
+          <p>A numerical orbit is the most faithful product a catalog can hold, but it travels as a long table of positions and takes a full force model to extend. SDN-AP is the network&rsquo;s propagator for carrying that orbit everywhere. Its record is fit to the numerical forecast, names its model like every other record, and runs as an open WebAssembly module on a node or in a web page, fast enough to move a whole catalog on screen.</p>
+          <p>Across low, medium, geosynchronous and highly elliptical orbits, an SDN-AP record stays within 100&nbsp;m of the numerical forecast it was fit to for five days. When a record carries covariance, the module returns the uncertainty with the position.</p>
+        </div>
+        <div class="table-wrap narrow">
+          <table class="models figures">
+            <thead><tr><th>Orbit</th><th>SGP4</th><th>SDN&#8209;AP</th><th>Numerical</th></tr></thead>
+            <tbody>
+              <tr><td>Low orbit, little drag</td><td>571&nbsp;m</td><td>13&nbsp;m</td><td>2&nbsp;m</td></tr>
+              <tr><td>Low orbit, strong drag</td><td>945&nbsp;m</td><td>318&nbsp;m</td><td>313&nbsp;m</td></tr>
+              <tr><td>Medium orbit</td><td>416&nbsp;m</td><td>6&nbsp;m</td><td>0.2&nbsp;m</td></tr>
+              <tr><td>Geostationary</td><td>2.4&nbsp;km</td><td>4&nbsp;m</td><td>2&nbsp;m</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="note">Median error one day ahead, measured against precise orbits, with each model fit to the same three days of tracking. Where drag is strong, next week&rsquo;s air density decides the answer and no model escapes it: at seven days SDN-AP and the full force model are both about 15&nbsp;km off, and SGP4 21&nbsp;km.</p>
 
         <div class="chapter">
           <h3>Uncertainty travels with the orbit</h3>

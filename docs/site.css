@@ -252,6 +252,7 @@ body.centered .figure figcaption { text-align: center; }
 .compare td:last-child { color: var(--text); }
 .compare thead th:last-child { color: var(--accent); }
 @media (max-width: 620px) { .compare tbody th { white-space: normal; } }
+@media (max-width: 620px) { .table-wrap.narrow table.figures th, .table-wrap.narrow table.figures td { padding: 12px 8px; } }
 
 /* Whitepapers index (cards written by build-whitepapers.mjs; the paper pages
    are styled by whitepapers-app/paper.css) */
