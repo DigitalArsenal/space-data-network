@@ -97,8 +97,8 @@ function ciLocalModesNeedingWasmEdge(script) {
   const dispatch = /^case "\$MODE" in\n([\s\S]*?)^esac$/m.exec(script);
   assert.ok(dispatch, 'ci-local.sh must dispatch on $MODE');
   const modes = new Set();
-  for (const arm of dispatch[1].matchAll(/^ {2}([a-z|-]+)\)\n([\s\S]*?)^ {4};;$/gm)) {
-    const calls = [...arm[2].matchAll(/^[ \t]+([_a-zA-Z][_a-zA-Z0-9]*)\b/gm)].map((call) => call[1]);
+  for (const arm of dispatch[1].matchAll(/^ {2}([a-z|-]+)\)([\s\S]*?);;$/gm)) {
+    const calls = [...arm[2].matchAll(/(?:^|\n)[ \t]*([_a-zA-Z][_a-zA-Z0-9]*)\b/g)].map((call) => call[1]);
     if (calls.some((call) => needing.has(call))) {
       for (const mode of arm[1].split('|')) modes.add(mode);
     }
@@ -123,71 +123,64 @@ test('workflows opt into Node 24 for GitHub actions and project scripts', () => 
   }
 });
 
-// CI used to run every check in one `Run CI checks (same as pre-push)` step
-// that installed WasmEdge and ran `ci-local.sh quick` in the same shell. Since
-// f80a4128d each lane is its own job, and every Go job gets WasmEdge from the
-// sdn-go-env composite action. The property is unchanged: the installer is
-// told the directory explicitly (its own default is $HOME/.wasmedge, and what
-// it exports dies with its shell), and the ci-local.sh steps that need it only
-// run after it is installed and exported.
-test('CI Go lanes share one explicit runner.temp WasmEdge directory', () => {
+// The release and CI share one patched prefix cache. Every runtime consumer
+// downloads that run's artifact and requires the patches before executing.
+test('CI Go jobs consume one release-compatible patched prefix', () => {
   const action = readRepoFile('.github/actions/sdn-go-env/action.yml');
   const workflow = readRepoFile('.github/workflows/ci.yml');
+  const release = readRepoFile('.github/workflows/beta-release-artifacts.yml');
   const script = readRepoFile('scripts/ci-local.sh');
+  const jobs = splitWorkflowJobs(workflow);
+  const producers = Object.entries(jobs).filter(([, body]) => /run: \.\/scripts\/ci-local\.sh prefix-build\s*$/m.test(body));
+  assert.equal(producers.length, 1, 'exactly one job builds the prefix');
+  const [producer, body] = producers[0];
+  assert.match(body, /^    container: ubuntu:20\.04$/m);
+  const key = /^          key: (wasmedge-static-.*)$/m.exec(body)?.[1];
+  assert.ok(key, 'producer must cache the prefix');
+  const releaseKeys = [...release.matchAll(/^          key: (wasmedge-static-.*)$/gm)].map((m) => m[1]);
+  assert.ok(releaseKeys.includes(key), 'CI and release prefix keys must match exactly');
+  assert.match(key, /linux-amd64-focal-llvm16/);
+  const build = extractYamlStep(body, 'Build the static prefix', '      ');
+  assert.match(build, /if: steps\.cache\.outputs\.cache-hit != 'true'/);
+  assert.match(body, /uses: actions\/upload-artifact@v4\n        with:\n          name: wasmedge-static-prefix/);
+  assert.equal((workflow.match(/name: wasmedge-static-prefix/g) || []).length, 1);
 
+  const download = extractYamlStep(action, 'Download the shared patched prefix', '    ');
   const restore = extractYamlStep(action, 'Restore WasmEdge', '    ');
-  const install = extractYamlStep(action, 'Install WasmEdge', '    ');
   const exported = extractYamlStep(action, 'Export WASMEDGE_DIR', '    ');
-
-  assert.match(
-    restore,
-    /^ {8}path: \$\{\{ runner\.temp \}\}\/\.wasmedge[ \t]*$/m,
-    'the WasmEdge cache must restore runner.temp/.wasmedge, the directory the installer fills',
-  );
-  assert.match(
-    install,
-    /^ {6}env:\n(?: {8}\S.*\n)*? {8}WASMEDGE_DIR: \$\{\{ runner\.temp \}\}\/\.wasmedge[ \t]*$/m,
-    'the install step must explicitly pass runner.temp/.wasmedge; installer defaults are shell-local',
-  );
-  assert.match(
-    install,
-    /^ {6}run: \.\/scripts\/install-wasmedge\.sh\b/m,
-    'the install step must install WasmEdge with an active shell command',
-  );
-  assert.match(
-    exported,
-    /^ {6}run: echo "WASMEDGE_DIR=\$\{\{ runner\.temp \}\}\/\.wasmedge" >> "\$GITHUB_ENV"[ \t]*$/m,
-    'WASMEDGE_DIR must reach the later steps through GITHUB_ENV',
-  );
-  assert.doesNotMatch(
-    exported,
-    /^ {6}if:/m,
-    'WASMEDGE_DIR must be exported on a cache hit as well as after an install',
-  );
-  assert.ok(
-    action.indexOf(restore) < action.indexOf(install) && action.indexOf(install) < action.indexOf(exported),
-    'sdn-go-env must restore, then install, then export WasmEdge',
-  );
+  assert.match(download, /uses: actions\/download-artifact@v4/);
+  assert.match(download, /name: wasmedge-static-prefix/);
+  assert.match(restore, /run: \.\/scripts\/ci-local\.sh prefix-unpack/);
+  assert.match(exported, /echo "WASMEDGE_DIR=\$GITHUB_WORKSPACE\/\.sdn-wasmedge-static\/prefix" >> "\$GITHUB_ENV"/);
+  assert.match(exported, /echo "SDN_WASM_REQUIRE_PATCHED=1" >> "\$GITHUB_ENV"/);
+  for (const step of [download, restore, exported]) assert.doesNotMatch(step, /^ {6}if:/m);
+  assert.ok(action.indexOf(download) < action.indexOf(restore) && action.indexOf(restore) < action.indexOf(exported));
+  assert.doesNotMatch(workflow + action, /(?:run:|^)[^\n#]*install-wasmedge\.sh/m, 'CI must not install the stock library');
 
   const needsWasmEdge = ciLocalModesNeedingWasmEdge(script);
-  let lanes = 0;
-  for (const [job, body] of Object.entries(splitWorkflowJobs(workflow))) {
+  for (const mode of ['go', 'heavy', 'builds', 'js', 'demo', 'dashboard', 'runtime', 'migrations', 'update-channel']) {
+    assert.ok(needsWasmEdge.has(mode), `must discover the runtime dependency of ${mode}`);
+  }
+  function dependsOn(job, target, visited = new Set()) {
+    if (visited.has(job)) return false;
+    visited.add(job);
+    const dependencies = /^    needs: ([a-z-]+)$/m.exec(jobs[job])?.[1];
+    return dependencies === target || (dependencies && dependsOn(dependencies, target, visited));
+  }
+  let consumers = 0;
+  for (const [job, body] of Object.entries(jobs)) {
     for (const run of body.matchAll(/^[ \t]+(?:run: )?\.\/scripts\/ci-local\.sh ([a-z-]+)[ \t]*$/gm)) {
       if (!needsWasmEdge.has(run[1])) continue;
-      lanes += 1;
+      consumers++;
+      assert.match(body, /^    container: ubuntu:20\.04$|^    container:\n      image: ubuntu:20\.04$/m, `${job} must test the release C library and linker`);
       const setup = /^ {6}- uses: \.\/\.github\/actions\/sdn-go-env[ \t]*$/m.exec(body);
-      assert.ok(
-        setup && setup.index < run.index,
-        `CI job "${job}" runs ci-local.sh ${run[1]}, which needs WasmEdge, before sdn-go-env installs it`,
-      );
-      assert.doesNotMatch(
-        body,
-        /^[ \t]+WASMEDGE_DIR:/m,
-        `CI job "${job}" must not point WASMEDGE_DIR away from the directory sdn-go-env installed`,
-      );
+      assert.ok(setup && setup.index < run.index, `${job} must restore the prefix before ${run[1]}`);
+      assert.ok(dependsOn(job, producer), `${job} must wait for the prefix producer`);
+      if (run[1] !== 'runtime') assert.ok(dependsOn(job, 'wasmedge-runtime'), `${job} must wait for the release-container self-test`);
+      assert.doesNotMatch(body, /^[ \t]+(?:WASMEDGE_DIR|SDN_WASM_REQUIRE_PATCHED):/m, `${job} must preserve the shared runtime environment`);
     }
   }
-  assert.ok(lanes > 0, 'no CI job runs a ci-local.sh mode that needs WasmEdge any more');
+  assert.ok(consumers >= 9, 'all runtime consumers must be checked');
 });
 
 test('local Go suites serialize package builds while bypassing the test cache', () => {
@@ -380,9 +373,9 @@ test('every workflow installs the WasmEdge the release cutter and Docker image u
     'the release cutter must use the canonical WasmEdge pin',
   );
 
-  for (const workflow of ['beta-release-artifacts.yml', 'live-dht-cross-platform.yml']) {
+  for (const workflow of ['beta-release-artifacts.yml', 'live-dht-cross-platform.yml', 'ci.yml']) {
     const text = readRepoFile(`.github/workflows/${workflow}`);
-    const declared = [...text.matchAll(/^\s*WASMEDGE_VERSION:\s*([0-9.]+)\s*$/gm)].map((m) => m[1]);
+    const declared = [...text.matchAll(/^\s*WASMEDGE_VERSION:\s*[\x27\x22]?([0-9.]+)[\x27\x22]?\s*$/gm)].map((m) => m[1]);
     assert.deepEqual(
       [...new Set(declared)],
       [pin],
@@ -902,17 +895,25 @@ test('release maturity reaches only the release notes, never a --channel', () =>
 test('the real update channel runs prebuilt fixtures with only loopback networking', () => {
   const workflow = readRepoFile('.github/workflows/ci.yml');
   const job = workflow.slice(workflow.indexOf('  update-channel-e2e:'), workflow.indexOf('  go-builds:'));
-  assert.match(job, /for build in v1 v2 v3/);
-  assert.match(job, /sdn_e2e_not_ready/);
-  assert.match(job, /go-with-wasmedge\.sh test -c/);
-  assert.match(job, /SDN_E2E_REAL_DAEMON_BIN_DIR=/);
-  assert.match(job, /unshare --net -- bash -c 'set -e; ip link set lo up;/);
-  assert.match(job, /setpriv --reuid="\$1" --regid="\$2" --init-groups/);
-  assert.match(job, /-- "\$\(id -u\)" "\$\(id -g\)"/);
+  // The job names an ordinary user and runs the update-channel lane, which
+  // then builds the fixtures and runs the test as that user, loopback only.
+  assert.match(job, /options: --cap-add SYS_ADMIN --cap-add NET_ADMIN/);
+  assert.match(job, /useradd --create-home update-e2e/);
+  assert.match(job, /SDN_E2E_UPDATE_USER: update-e2e/);
+  assert.match(job, /^\s+\.\/scripts\/ci-local\.sh update-channel$/m);
+  assert.doesNotMatch(job, /\bsudo\b/);
   assert.match(job, /if: always\(\)/);
-  assert.match(job, /tee "\$RUNNER_TEMP\/update-channel-logs\/test\.log"/);
-  assert.match(job, /-test\.timeout=50m/);
-  assert.ok(job.indexOf('go-with-wasmedge.sh test -c') < job.indexOf('unshare --net'));
+  const lane = extractShellFunction(readRepoFile('scripts/ci-local.sh'), 'run_update_channel_isolated');
+  assert.match(lane, /for build in v1 v2 v3/);
+  assert.match(lane, /sdn_e2e_not_ready/);
+  assert.match(lane, /go-with-wasmedge\.sh test -c/);
+  assert.match(lane, /SDN_E2E_REAL_DAEMON_BIN_DIR=/);
+  assert.match(lane, /unshare --net -- bash -c 'set -e; ip link set lo up;/);
+  assert.match(lane, /setpriv --reuid="\$1" --regid="\$2" --init-groups/);
+  assert.match(lane, /-- "\$\(id -u "\$user"\)" "\$\(id -g "\$user"\)"/);
+  assert.match(lane, /tee "\$logs\/test\.log"/);
+  assert.match(lane, /-test\.timeout=50m/);
+  assert.ok(lane.indexOf('go-with-wasmedge.sh test -c') < lane.indexOf('unshare --net'));
 });
 
 // Exact reviewed shell programs form an allow-list, including their arguments,
