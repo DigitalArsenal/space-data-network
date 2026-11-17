@@ -17,7 +17,7 @@ import {
   MemoryModuleBytesStore,
 } from './module-lifecycle';
 import { createModuleHostCapabilityAdapters } from './module-host-adapters';
-import { FlatSQLStorage, MemorySnapshotPersistence } from './flatsql-storage';
+import { FlatSQLEngineRecordStore } from './engine-record-store';
 import { signAndPublishPnm, verifySignedPnm, PNM_TOPIC } from './pnm-publisher';
 import { initHDWallet, ed25519PublicKey, sign } from './crypto/hd-wallet';
 
@@ -81,9 +81,7 @@ describe.skipIf(!artifactsPresent)('Helia module install/run E2E (WS6.7)', () =>
       const signingKey = Uint8Array.from({ length: 32 }, (_, i) => i + 33);
       const publicKey = await ed25519PublicKey(signingKey);
 
-      const storage = await FlatSQLStorage.open({
-        persistence: new MemorySnapshotPersistence(),
-      });
+      const storage = await FlatSQLEngineRecordStore.open();
       const adapters = createModuleHostCapabilityAdapters({
         storage,
         peerId: 'ws67-test',

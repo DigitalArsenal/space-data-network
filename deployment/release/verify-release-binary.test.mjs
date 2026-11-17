@@ -153,34 +153,51 @@ test('an ELF for the wrong architecture is refused', () => {
   });
 });
 
-test('a file that changes while it is read is refused as an in-flight write', () => {
-  withTempDir((dir) => {
-    const path = join(dir, 'daemon');
-    writeFileSync(path, makeElf({ size: 21 * 1024 * 1024 }));
+test('a file that changes while it is read is refused as an in-flight write', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'verify-release-binary-'));
+  const path = join(dir, 'daemon');
+  writeFileSync(path, makeElf({ size: 21 * 1024 * 1024 }));
 
-    // The writer must be a SEPARATE PROCESS. readStableFile's settle is a
-    // blocking wait — that is deliberate, it is a CLI holding still and looking
-    // again — so an in-process timer could never fire inside the window. A
-    // separate process is also the honest reproduction: on 2026-08-09 the
-    // competing writer was a superseded `docker cp`, not a callback.
-    const writer = spawn(
-      process.execPath,
-      [
-        '-e',
-        `setTimeout(() => require('fs').writeFileSync(${JSON.stringify(path)}, Buffer.alloc(22 * 1024 * 1024, 1)), 60)`,
-      ],
-      { stdio: 'ignore' },
-    );
+  // The writer must be a SEPARATE PROCESS. readStableFile's settle is a
+  // blocking wait — that is deliberate, it is a CLI holding still and looking
+  // again — so an in-process timer could never fire inside the window. A
+  // separate process is also the honest reproduction: on 2026-08-09 the
+  // competing writer was a superseded `docker cp`, not a callback.
+  //
+  // The read starts only once the writer is running and has written, and the
+  // writer keeps writing until it is stopped. A writer started on a timer
+  // raced its own process start: with the release suites running beside it,
+  // the child first ran about 900 ms after the spawn, after the 600 ms
+  // window had closed, and the file never changed while it was read.
+  const writer = spawn(
+    process.execPath,
+    [
+      '-e',
+      `const fs = require('fs'); const p = ${JSON.stringify(path)};
+       fs.appendFileSync(p, 'x'); process.stdout.write('writing\\n');
+       for (;;) { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5); fs.appendFileSync(p, 'x'); }`,
+    ],
+    { stdio: ['ignore', 'pipe', 'ignore'] },
+  );
+  const exited = new Promise((resolve) => writer.once('exit', resolve));
 
-    try {
-      const error = refusalFrom(() => readStableFile(path, { settleMs: 600 }));
-      assert.match(error.message, /CHANGED while it was being read/);
-      assert.ok(error.drift.length > 0, 'the refusal must name what drifted');
-      assert.match(error.drift.join(' '), /size|sha256|mtime/);
-    } finally {
+  try {
+    await new Promise((resolve, reject) => {
+      writer.stdout.once('data', resolve);
+      writer.once('error', reject);
+      exited.then((code) => reject(new Error(`the writer exited (${code}) before it wrote`)));
+    });
+    const error = refusalFrom(() => readStableFile(path, { settleMs: 600 }));
+    assert.match(error.message, /CHANGED while it was being read/);
+    assert.ok(error.drift.length > 0, 'the refusal must name what drifted');
+    assert.match(error.drift.join(' '), /size|sha256|mtime/);
+  } finally {
+    if (writer.pid) {
       writer.kill();
+      await exited;
     }
-  });
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('the smoke test refuses an artifact that cannot run, and one that says nothing', () => {
