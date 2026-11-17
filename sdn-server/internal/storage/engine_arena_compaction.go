@@ -199,6 +199,63 @@ func (s *FlatSQLStore) persistPendingArenaCompaction(reason string) {
 	}
 }
 
+// engineArenaMirrorWait bounds how long a write waits for a running
+// background compaction before it takes the store lock.
+const engineArenaMirrorWait = 2 * time.Minute
+
+// lockWriteForMirror takes the store write lock for a write that mirrors about
+// n arena bytes into the engine, inside its control transaction.
+//
+// Inside a transaction the engine compacts only in memory, and not at all while
+// a compaction copies its committed layout over the record stream (flatsql
+// keeps those bytes in place until the copy is done, and answers "deferred"
+// with nothing freed). A mirror that would pass the budget at that moment was
+// refused although the background pass under way was about to free the room.
+// So when the mirror would pass the budget and a background pass is running,
+// the write waits for that pass without the lock (each of its steps takes the
+// lock on its own) and takes the lock once the pass has finished.
+func (s *FlatSQLStore) lockWriteForMirror(site string, n int64) func() {
+	if !engineArenaRuntimeCompaction {
+		return s.lockWrite(site)
+	}
+	c := s.arenaCompactor()
+	deadline := time.Now().Add(engineArenaMirrorWait)
+	for {
+		for c.running.Load() && s.engineArenaBytes.Load()+n > engineArenaBudgetBytes && time.Now().Before(deadline) {
+			time.Sleep(5 * time.Millisecond)
+		}
+		release := s.lockWrite(site)
+		// Another write may have started a pass that reached its copy
+		// between the wait and the lock.
+		if !time.Now().Before(deadline) || !s.arenaCopyPinsMirrorLocked(n) {
+			return release
+		}
+		release()
+	}
+}
+
+// datasetShardFrameBytes is the arena bytes a dataset shard chunk can mirror:
+// its records' lengths plus each frame's size prefix.
+func datasetShardFrameBytes(records []DatasetExportIndexRecord) int64 {
+	var n int64
+	for _, r := range records {
+		n += r.Length + 4
+	}
+	return n
+}
+
+// arenaCopyPinsMirrorLocked: a background pass is between steps and the
+// mirror would pass the budget, so a compaction inside the mirror's
+// transaction may free nothing. Caller holds s.mu.
+func (s *FlatSQLStore) arenaCopyPinsMirrorLocked(n int64) bool {
+	if s.engineArenaBytes.Load()+n <= engineArenaBudgetBytes || !s.arenaCompactor().running.Load() ||
+		s.engineDB == nil || s.engine == nil || !s.engine.HasArenaCompaction() {
+		return false
+	}
+	stats, err := s.engineDB.ArenaStats()
+	return err == nil && stats.Compacting
+}
+
 // errArenaCompactionStopped: the store closed or the engine was replaced
 // between steps. Not a failure: the new engine starts clean, and a swap
 // already committed is finished by the next open.
