@@ -5876,6 +5876,9 @@ func (n *Node) joinAndStoreTopic(key, topicName string) (*pubsub.Topic, error) {
 	if topic, ok := n.topics[key]; ok {
 		return topic, nil
 	}
+	if err := n.registerUpdateTopicValidator(topicName); err != nil {
+		return nil, err
+	}
 	if err := sdnpubsub.RegisterTopicStructureValidator(n.pubsub, topicName); err != nil {
 		return nil, err
 	}

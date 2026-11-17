@@ -47,8 +47,8 @@ jobs:
       channel: ${{ steps.version.outputs.channel }}
       npm_tag: ${{ steps.version.outputs.npm_tag }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24'
       - id: version
@@ -56,22 +56,6 @@ jobs:
         env:
           INPUT_VERSION: ${{ inputs.version }}
         run: node deployment/release/prepare-beta-release.mjs
-      # IS THERE A KEY TO SIGN THE UPDATE FEED WITH? The same question, asked
-      # the same way, as the cli-update-feed job's "Check the update signing
-      # key", which stays the gate before anything is signed. Asked here too so
-      # that a stable release without a usable key (missing, a key id that is
-      # not the one derived from it, not a fleet root, or a SEC-001 key) fails
-      # in minutes, not after the five-platform cli matrix. A beta without the
-      # key passes here with a warning, as it does there.
-      - name: Check the update signing key before building
-        env:
-          RELEASE_MATURITY: ${{ steps.version.outputs.channel }}
-          SDN_UPDATE_SIGNING_KEY_PEM: ${{ secrets.SDN_UPDATE_SIGNING_KEY_PEM }}
-          SDN_UPDATE_KEY_ID: ${{ secrets.SDN_UPDATE_KEY_ID }}
-        run: |
-          node deployment/release/check-update-signing-key.mjs \
-            --maturity "${RELEASE_MATURITY}" \
-            --roots deployment/release/fleet-trust-roots.json
       # CAN THIS TOKEN ACTUALLY PUBLISH? Ask now, in the first job, not after
       # forty minutes of building every artifact for five platforms.
       #
@@ -119,6 +103,31 @@ jobs:
           fi
           echo "publish permission OK (probe release ${probe_id}, deleted)"
 
+  # The update signing key lives only in the update-signing Environment, and
+  # only this job and cli-update-feed name that Environment. This job runs
+  # before any build so a missing or untrusted key stops the release at once;
+  # it builds nothing and runs only the reviewed key check.
+  update-signing-check:
+    name: Check the update signing key
+    runs-on: ubuntu-latest
+    needs: beta-version
+    environment: update-signing
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - name: Check the update signing key
+        env:
+          RELEASE_MATURITY: ${{ needs.beta-version.outputs.channel }}
+          SDN_UPDATE_SIGNING_KEY_PEM: ${{ secrets.SDN_UPDATE_SIGNING_KEY_PEM }}
+          # SDN_UPDATE_KEY_ID is a public key identifier, not secret key material.
+          SDN_UPDATE_KEY_ID: ${{ secrets.SDN_UPDATE_KEY_ID }}
+        run: |
+          node deployment/release/check-update-signing-key.mjs \
+            --maturity "${RELEASE_MATURITY}" \
+            --roots deployment/release/fleet-trust-roots.json
+
   # One static WasmEdge, built once and reused. Building LLVM is expensive, so
   # it is cached on the version alone; nothing here is installed into a job, it
   # is linked INTO the binaries that ship.
@@ -127,6 +136,7 @@ jobs:
   # prefix is a matrix over the same runners. Building LLVM is expensive, so
   # each is cached on the version + layout and rebuilt only when those change.
   wasmedge-static:
+    needs: update-signing-check
     name: Build static WasmEdge (${{ matrix.label }})
     runs-on: ${{ matrix.runner }}
     # Empty for the macOS and Windows legs, which have no container key and so
@@ -193,9 +203,9 @@ jobs:
           apt-get update -qq
           apt-get install -y -qq --no-install-recommends ca-certificates curl gnupg git xz-utils
           git config --global --add safe.directory '*' 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - id: cache
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ github.workspace }}/.sdn-wasmedge-static/prefix
           # The key covers EVERYTHING THAT DECIDES HOW THE PREFIX IS BUILT: the
@@ -248,7 +258,7 @@ jobs:
       # on every non-Apple platform.
       - name: Install build toolchain (Windows)
         if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'Windows'
-        uses: msys2/setup-msys2@v2
+        uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2.33.0
         with:
           msystem: MINGW64
           update: false
@@ -309,18 +319,18 @@ jobs:
           apt-get install -y -qq --no-install-recommends \
             ca-certificates curl git xz-utils build-essential zlib1g-dev libtinfo-dev
           git config --global --add safe.directory '*'
-      - uses: actions/checkout@v4
-      - uses: actions/cache/restore@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ github.workspace }}/.sdn-wasmedge-static/prefix
           key: wasmedge-static-${{ env.WASMEDGE_VERSION }}-linux-amd64-focal-llvm16-${{ hashFiles('scripts/build-static-wasmedge.sh', 'scripts/wasmedge-static-env.sh') }}
           fail-on-cache-miss: true
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24'
           cache: npm
           cache-dependency-path: sdn-js/package-lock.json
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: '1.24.x'
           cache-dependency-path: sdn-server/go.sum
@@ -344,8 +354,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: preflight
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24'
           cache: npm
@@ -368,7 +378,7 @@ jobs:
           until ipfs id >/dev/null 2>&1; do sleep 1; done
       - name: Build and pin UI assets
         run: deployment/ipfs/ipfs-deploy.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ipfs-assets
           path: |
@@ -384,8 +394,8 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24'
           cache: npm
@@ -430,7 +440,7 @@ jobs:
           "${sdk}/bin/clang++" --version | head -1
       - name: Build updater module wasm
         run: npm --prefix packages/sdn-updater-module run build
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: updater-module-wasm
           path: packages/sdn-updater-module/dist/isomorphic/module.wasm
@@ -637,7 +647,7 @@ jobs:
     # Empty for macOS and Windows, which run on the runner itself.
     container: ${{ matrix.container }}
     continue-on-error: ${{ matrix.experimental == true }}
-    needs: [beta-version, ipfs, updater-wasm, wasmedge-static]
+    needs: [beta-version, update-signing-check, ipfs, updater-wasm, wasmedge-static]
     defaults:
       run:
         shell: bash
@@ -702,17 +712,17 @@ jobs:
           apt-get install -y -qq --no-install-recommends \
             ca-certificates curl git xz-utils build-essential zlib1g-dev libtinfo-dev
           git config --global --add safe.directory '*'
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: ipfs-assets
           path: dist/ipfs
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24'
           cache: npm
           cache-dependency-path: package-lock.json
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: '1.24.x'
           cache-dependency-path: sdn-server/go.sum
@@ -724,7 +734,7 @@ jobs:
       - name: Install sdn-js dependencies
         working-directory: sdn-js
         run: npm ci
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: updater-module-wasm
           path: packages/sdn-updater-module/dist/isomorphic
@@ -739,7 +749,7 @@ jobs:
       - name: Install the MSYS2 toolchain (Windows)
         if: matrix.target_os == 'windows'
         id: msys2
-        uses: msys2/setup-msys2@v2
+        uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2.33.0
         with:
           msystem: MINGW64
           update: false
@@ -782,7 +792,7 @@ jobs:
       # asserted by beta-release-workflow.test.mjs, which is why no comment in
       # this file may name that flag.
       - name: Restore the static WasmEdge prefix
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ github.workspace }}/.sdn-wasmedge-static/prefix
           key: wasmedge-static-${{ env.WASMEDGE_VERSION }}-${{ matrix.target_os }}-${{ matrix.target_arch }}-${{ matrix.toolchain }}-${{ hashFiles('scripts/build-static-wasmedge.sh', 'scripts/wasmedge-static-env.sh') }}
@@ -979,71 +989,37 @@ jobs:
             --license-path "${PWD}/LICENSE" \
             --readme-path "${PWD}/README.md" \
             --manifest-signature "github-actions:${RELEASE_TAG}:${GITHUB_SHA}"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: cli-${{ matrix.target_os }}-${{ matrix.target_arch }}
           path: dist/cli/spacedatanetwork-${{ needs.beta-version.outputs.package_version }}-${{ matrix.target_os }}-${{ matrix.target_arch }}.${{ matrix.archive_extension }}
 
-  cli-update-feed:
-    name: Build signed CLI update feed
+  # The CLI archives are unpacked here, in a job without the key: each update
+  # payload is the carrier around its archive without trust/, plus the
+  # wrapped bundle's sha256, size and format (bundle.json). Each archive is
+  # read only from the directory of its exact artifact name (no merge, so
+  # another artifact matching the pattern stays in its own directory).
+  cli-update-payloads:
+    name: Build CLI update payloads
     runs-on: ubuntu-latest
     needs: [beta-version, cli]
-    defaults:
-      run:
-        shell: bash
     env:
       VERSION: ${{ needs.beta-version.outputs.package_version }}
-      SDN_UPDATE_SIGNING_KEY_PEM: ${{ secrets.SDN_UPDATE_SIGNING_KEY_PEM }}
-      SDN_UPDATE_KEY_ID: ${{ secrets.SDN_UPDATE_KEY_ID }}
-      SDN_UPDATE_SEQUENCE: ${{ github.run_number }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           pattern: cli-*
           path: dist/cli
-          merge-multiple: true
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '24'
-      # The feed is what lets an installed node upgrade itself, and every payload
-      # in it is signed. A STABLE release without the key stops here: shipping
-      # one with no self-upgrade feed is how v1.1.0 went out (run 43657758805
-      # logged a warning and skipped the feed). A BETA without the key still
-      # ships its binaries, with a warning and no feed: one absent secret must
-      # not mean zero downloadable artifacts.
-      #
-      # With the key, check-update-signing-key.mjs derives its key id from the
-      # PEM (sha256 of the raw public key, first 12 hex — update.RootKeyID),
-      # fails if SDN_UPDATE_KEY_ID is unset or differs (there is no fallback
-      # id), fails unless the id is in fleet-trust-roots.json with this key's
-      # public half, and refuses a SEC-001 key. The key itself is never printed.
-      - name: Check the update signing key
-        id: signing
-        env:
-          RELEASE_MATURITY: ${{ needs.beta-version.outputs.channel }}
-        run: |
-          node deployment/release/check-update-signing-key.mjs \
-            --maturity "${RELEASE_MATURITY}" \
-            --roots deployment/release/fleet-trust-roots.json \
-            --github-output "$GITHUB_OUTPUT"
-      - name: Build signed CLI update feed
-        if: steps.signing.outputs.available == 'true'
-        env:
-          UPDATE_KEY_ID: ${{ steps.signing.outputs.key_id }}
+      - name: Build CLI update payloads
         run: |
           set -euo pipefail
-          # The id the key check derived from the PEM and matched against
-          # SDN_UPDATE_KEY_ID and the fleet roots. No fallback.
-          update_key_id="${UPDATE_KEY_ID:?the update signing key check named no key id}"
-          created_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           payload_dir="dist/update-payloads"
-          feed_tree_root="dist/update-feed-tree"
-          feed_dir="${feed_tree_root}/update-feed"
-          out_dir="dist/update-feed"
-          rm -rf "${payload_dir}" "${feed_tree_root}" "${out_dir}"
-          mkdir -p "${payload_dir}" "${out_dir}"
-          feed_args=(--out-dir "${feed_dir}" --generated-at "${created_at}")
+          rm -rf "${payload_dir}"
+          mkdir -p "${payload_dir}"
           targets=(
             "darwin amd64 tar.gz"
             "darwin arm64 tar.gz"
@@ -1053,42 +1029,166 @@ jobs:
           )
           for target in "${targets[@]}"; do
             read -r target_os target_arch target_ext <<< "${target}"
-            archive_path="dist/cli/spacedatanetwork-${VERSION}-${target_os}-${target_arch}.${target_ext}"
-            payload_out="${payload_dir}/${target_os}-${target_arch}"
+            archive_path="dist/cli/cli-${target_os}-${target_arch}/spacedatanetwork-${VERSION}-${target_os}-${target_arch}.${target_ext}"
             if [[ ! -f "${archive_path}" ]]; then
               echo "missing CLI archive for update feed: ${archive_path}" >&2
               exit 1
             fi
-            # Must match the channel the bundles above were stamped with,
-            # or the shipped updater reads a feed index nobody publishes.
             node deployment/release/build-cli-update-payload.mjs \
               --bundle-archive "${archive_path}" \
+              --carrier-out-dir "${payload_dir}/${target_os}-${target_arch}"
+          done
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cli-update-payloads
+          path: dist/update-payloads
+          if-no-files-found: error
+
+  # The update signing key is used here. No program another job produced runs
+  # here, and nothing another job produced is unpacked or parsed while the key
+  # is in this job: the payloads arrive as carriers and digests, the manifests
+  # are signed over digests and the carriers' own hashes, and the signal
+  # signer is built in this job from the checked-out commit. The feed is
+  # verified in full, payloads unpacked, by cli-update-feed-verify.
+  cli-update-feed:
+    name: Build signed CLI update feed
+    runs-on: ubuntu-latest
+    needs: [beta-version, cli-update-payloads]
+    environment: update-signing
+    env:
+      VERSION: ${{ needs.beta-version.outputs.package_version }}
+      SDN_UPDATE_KEY_ID: ${{ secrets.SDN_UPDATE_KEY_ID }}
+      SDN_UPDATE_SEQUENCE: ${{ github.run_number }}
+    outputs:
+      available: ${{ steps.signing.outputs.available }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: cli-update-payloads
+          path: dist/update-payloads
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - name: Build the release signal signer
+        run: |
+          set -euo pipefail
+          go_bin="$(command -v go || ls -1d "${RUNNER_TOOL_CACHE}"/go/*/x64/bin/go | sort -V | tail -n 1)"
+          test -x "${go_bin}"
+          cd sdn-server
+          CGO_ENABLED=0 "${go_bin}" build -trimpath \
+            -o "$RUNNER_TEMP/sdn-signal-signer/sdn-update-signal-signer" ./cmd/sdn-update-signal-signer
+      - name: Sign the CLI update manifests
+        id: signing
+        env:
+          RELEASE_MATURITY: ${{ needs.beta-version.outputs.channel }}
+          SDN_UPDATE_SIGNING_KEY_PEM: ${{ secrets.SDN_UPDATE_SIGNING_KEY_PEM }}
+        run: |
+          set -euo pipefail
+          key_check="$RUNNER_TEMP/update-key-check"
+          node deployment/release/check-update-signing-key.mjs \
+            --maturity "${RELEASE_MATURITY}" \
+            --roots deployment/release/fleet-trust-roots.json \
+            --github-output "$key_check"
+          cat "$key_check" >> "$GITHUB_OUTPUT"
+          if ! grep -qx 'available=true' "$key_check"; then exit 0; fi
+          update_key_id="$(sed -n 's/^key_id=//p' "$key_check")"
+          test -n "$update_key_id"
+          created_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "created_at=${created_at}" >> "$GITHUB_OUTPUT"
+          targets=(
+            "darwin amd64 tar.gz"
+            "darwin arm64 tar.gz"
+            "linux amd64 tar.gz"
+            "linux arm64 tar.gz"
+            "windows amd64 zip"
+          )
+          for target in "${targets[@]}"; do
+            read -r target_os target_arch target_ext <<< "${target}"
+            # Must match the channel the bundles above were stamped with,
+            # or the shipped updater reads a feed index nobody publishes.
+            node deployment/release/sign-cli-update-payload.mjs \
+              --payload-dir "dist/update-payloads/${target_os}-${target_arch}" \
               --version "${VERSION}" \
               --sequence "${SDN_UPDATE_SEQUENCE}" \
               --channel release \
               --platform "${target_os}" \
               --arch "${target_arch}" \
+              --format "${target_ext}" \
               --key-id "${update_key_id}" \
-              --created-at "${created_at}" \
-              --out-dir "${payload_out}"
-            feed_args+=(--entry "${payload_out}/manifest.json:${payload_out}/update.wasm")
+              --created-at "${created_at}"
+          done
+      - name: Build the CLI update feed index
+        if: steps.signing.outputs.available == 'true'
+        env:
+          CREATED_AT: ${{ steps.signing.outputs.created_at }}
+        run: |
+          set -euo pipefail
+          feed_tree_root="dist/update-feed-tree"
+          rm -rf "${feed_tree_root}"
+          feed_args=(--out-dir "${feed_tree_root}/update-feed" --generated-at "${CREATED_AT}")
+          for pair in darwin-amd64 darwin-arm64 linux-amd64 linux-arm64 windows-amd64; do
+            feed_args+=(--entry "dist/update-payloads/${pair}/manifest.json:dist/update-payloads/${pair}/update.wasm")
           done
           node deployment/release/build-sdn-update-feed.js "${feed_args[@]}"
-          # What an installed node will check, checked here first: every
-          # manifest against fleet-trust-roots.json (signature, target, expiry,
-          # payload hashes), no SEC-001 key, no trust/ in any payload, and the
-          # index agreeing with its manifests.
-          node deployment/release/verify-cli-update-feed.mjs \
-            --feed-dir "${feed_dir}" \
-            --roots deployment/release/fleet-trust-roots.json \
-            --expect-version "${VERSION}" \
-            --expect-count "${#targets[@]}"
-          tar -czf "dist/update-feed/spacedatanetwork-update-feed-${VERSION}.tar.gz" -C "${feed_tree_root}" update-feed
-      - uses: actions/upload-artifact@v4
+      - name: Sign the update signals
+        if: steps.signing.outputs.available == 'true'
+        env:
+          SDN_UPDATE_SIGNING_KEY_PEM: ${{ secrets.SDN_UPDATE_SIGNING_KEY_PEM }}
+        run: |
+          "$RUNNER_TEMP/sdn-signal-signer/sdn-update-signal-signer" \
+            --key-env SDN_UPDATE_SIGNING_KEY_PEM --feed-dir dist/update-feed-tree/update-feed \
+            --roots deployment/release/fleet-trust-roots.json
+      - name: Pack the signed CLI update feed
+        if: steps.signing.outputs.available == 'true'
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/sdn-signal-signer/sdn-update-signal-signer" --verify-only \
+            --feed-dir dist/update-feed-tree/update-feed --roots deployment/release/fleet-trust-roots.json
+          mkdir -p dist/update-feed
+          tar -czf "dist/update-feed/spacedatanetwork-update-feed-${VERSION}.tar.gz" -C dist/update-feed-tree update-feed
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: steps.signing.outputs.available == 'true'
         with:
           name: cli-update-feed
           path: dist/update-feed/spacedatanetwork-update-feed-${{ needs.beta-version.outputs.package_version }}.tar.gz
+
+  # The full check of the signed feed, payloads unpacked, in a job without
+  # the key: the same metadata an installed node checks (every manifest
+  # against fleet-trust-roots.json: signature, target, expiry, payload hashes),
+  # no SEC-001 key, no trust/ in any payload, and the index agreeing with its
+  # manifests. The release publishes only after this passes.
+  cli-update-feed-verify:
+    name: Verify the signed CLI update feed
+    runs-on: ubuntu-latest
+    needs: [beta-version, cli-update-feed]
+    env:
+      VERSION: ${{ needs.beta-version.outputs.package_version }}
+      FEED_AVAILABLE: ${{ needs.cli-update-feed.outputs.available }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        if: needs.cli-update-feed.outputs.available == 'true'
+        with:
+          name: cli-update-feed
+          path: dist/update-feed
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - name: Verify the signed CLI update feed
+        run: |
+          set -euo pipefail
+          if [[ "${FEED_AVAILABLE}" != "true" ]]; then
+            echo "no update feed in this release (no signing key for a beta)"
+            exit 0
+          fi
+          mkdir -p dist/feed-check
+          tar -xzf "dist/update-feed/spacedatanetwork-update-feed-${VERSION}.tar.gz" -C dist/feed-check
+          node deployment/release/verify-cli-update-feed.mjs \
+            --feed-dir dist/feed-check/update-feed \
+            --roots deployment/release/fleet-trust-roots.json \
+            --expect-version "${VERSION}" \
+            --expect-count 5
 
   desktop:
     name: Build desktop app artifacts (${{ matrix.target_os }}-${{ matrix.target_arch }})
@@ -1428,7 +1528,7 @@ jobs:
   release:
     name: Publish beta GitHub release
     runs-on: ubuntu-latest
-    needs: [beta-version, ipfs, docker, docker-manifest, cli, cli-update-feed, desktop, packages, sdn-js-package, artifact-docker-test]
+    needs: [beta-version, ipfs, docker, docker-manifest, cli, cli-update-feed, cli-update-feed-verify, desktop, packages, sdn-js-package, artifact-docker-test]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4

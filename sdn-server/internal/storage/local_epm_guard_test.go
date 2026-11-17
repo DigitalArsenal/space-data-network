@@ -26,6 +26,7 @@ func localEPMRowExists(t *testing.T, store *FlatSQLStore, peerID string) bool {
 // that is well formed but will not authenticate is skipped and KEPT, because
 // a changed machine key source is not corruption.
 func TestCorruptLocalEPMRowsAreDroppedAndNeverFailTheLane(t *testing.T) {
+	useReadableMachineSource(t)
 	t.Setenv("SDN_EPM_STORE_PASSWORD", "")
 	t.Setenv("SDN_KEY_PASSWORD", "")
 	t.Setenv("SDN_KEY_PASSWORD_FILE", "")

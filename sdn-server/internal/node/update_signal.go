@@ -81,6 +81,9 @@ const (
 // *Node, so the subscriber is unit-testable without a libp2p host, a pubsub
 // swarm, a bundle on disk, or a live feed.
 type UpdateSignalSubscriberDeps struct {
+	CheckInterval time.Duration
+	CheckDelay    time.Duration
+
 	// Subscriber joins the signal topic. Production passes the same
 	// pubSubTopicSubscriber adapter the G1 spine defines.
 	Subscriber updateTopicSubscriber
@@ -148,11 +151,25 @@ type UpdateSignalSubscriber struct {
 	deps UpdateSignalSubscriberDeps
 	feed update.FeedBase
 
-	mu          sync.Mutex
-	lastUpgrade time.Time
-	handled     map[string]bool
+	mu              sync.Mutex
+	lastUpgrade     time.Time
+	pendingUpgrade  bool
+	pendingSignal   []byte
+	pendingSequence int64
+	handled         map[string]bool
+	installRefusals map[string]error
+	// handoffFailures counts helper hand-offs that timed out with nothing
+	// swapped; handoffRetryAt holds every swap until its backoff ends.
+	handoffFailures        int
+	handoffRetryAt         time.Time
+	feedDeferredCandidates map[string]bool
 	// uiAttempts is when each UI package was last tried (claimUI).
-	uiAttempts map[string]time.Time
+	uiAttempts       map[string]time.Time
+	reportedFailures map[string]bool
+	failedAlerts     map[string]bool
+	alertLedgerTime  time.Time
+	alertLedgerSize  int64
+	alertFilesStamp  string
 }
 
 // NewUpdateSignalSubscriber validates deps and constructs the subscriber.
@@ -182,13 +199,23 @@ func NewUpdateSignalSubscriber(deps UpdateSignalSubscriberDeps) (*UpdateSignalSu
 	if deps.Launch == nil {
 		deps.Launch = update.LaunchSelfUpgrade
 	}
-	return &UpdateSignalSubscriber{deps: deps, feed: feed, handled: make(map[string]bool), uiAttempts: make(map[string]time.Time)}, nil
+	return &UpdateSignalSubscriber{deps: deps, feed: feed, handled: make(map[string]bool), uiAttempts: make(map[string]time.Time), reportedFailures: make(map[string]bool)}, nil
 }
 
 // Run joins the topic and processes signals until ctx is done. A per-message
 // failure is logged and the loop continues: one malformed or hostile signal
 // must never stop a box from hearing the next legitimate one.
 func (s *UpdateSignalSubscriber) Run(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	s.restoreFailedAlerts()
+	s.restoreHandoffFailure()
+	if s.deps.CheckInterval > 0 {
+		done := make(chan struct{})
+		go func() { defer close(done); s.runFeedChecks(ctx) }()
+		defer func() { cancel(); <-done }()
+	}
+
 	sub, err := s.deps.Subscriber.Subscribe(s.deps.Topic)
 	if err != nil {
 		return fmt.Errorf("node: subscribe update signal topic %s: %w", s.deps.Topic, err)
@@ -210,6 +237,7 @@ func (s *UpdateSignalSubscriber) Run(ctx context.Context) error {
 
 // handle verifies one signal and, if it survives every gate, self-upgrades.
 func (s *UpdateSignalSubscriber) handle(ctx context.Context, data []byte) {
+	log.Infof("Update signal handler received a validated message")
 	signal, err := update.ParseSignal(data)
 	if err != nil {
 		// Debug, not warn: this topic legitimately carries the older G1
@@ -260,15 +288,17 @@ func (s *UpdateSignalSubscriber) handle(ctx context.Context, data []byte) {
 	// rollback lowers the installed sequence, the sequence gate alone would let
 	// a replay reinstall the exact build this box judged unhealthy, forever.
 	if update.HasFailedUpdate(s.deps.Paths, signal.UpdateID) {
-		log.Warnf("update signal %s refused: this box already tried that update and reversed it (updates/failed/%s). Clear that directory to try again deliberately.",
+		log.Warnf("update signal %s refused: this box already tried that update and marked it failed (updates/failed/%s). Clear that directory to try again deliberately.",
 			signal.UpdateID, signal.UpdateID)
 		return
 	}
 
-	if !s.claim(signal.UpdateID) {
+	if !s.claimSignal(signal, data) {
 		return
 	}
 
+	succeeded := false
+	defer func() { s.finishUpgrade(ctx, succeeded, signal.UpdateID) }()
 	if delay := s.delay(); delay > 0 {
 		log.Infof("update signal %s accepted; staggering the swap by %s.", signal.UpdateID, delay.Round(time.Second))
 		select {
@@ -279,7 +309,7 @@ func (s *UpdateSignalSubscriber) handle(ctx context.Context, data []byte) {
 	}
 
 	if err := s.upgrade(ctx, signal, state); err != nil {
-		log.Errorf("update signal %s: self-upgrade did not start: %v", signal.UpdateID, err)
+		s.reportFailure("signal", signal.UpdateID, err)
 		s.deps.Alerts.Raise(ops.KindUpdateFailed, signal.UpdateID, ops.SeverityError, err.Error())
 		// A store-format refusal is not transient: the store will not step
 		// back down on its own, so the update stays claimed rather than being
@@ -292,24 +322,37 @@ func (s *UpdateSignalSubscriber) handle(ctx context.Context, data []byte) {
 	}
 	// The helper has the swap. Whatever failed on an earlier attempt at this
 	// update is no longer the state of this box.
+	succeeded = true
 	s.deps.Alerts.Clear(ops.KindUpdateFailed, signal.UpdateID)
 }
 
 // claim enforces once-per-update and the minimum interval between swaps.
-func (s *UpdateSignalSubscriber) claim(updateID string) bool {
+func (s *UpdateSignalSubscriber) claimSignal(signal *update.Signal, raw []byte) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.handled[updateID] {
+	id := signal.UpdateID
+	if s.pendingUpgrade {
+		if signal.Sequence > s.pendingSequence {
+			if s.pendingSignal != nil {
+				log.Debugf("update signal: dropping remembered sequence %d for newer sequence %d", s.pendingSequence, signal.Sequence)
+			}
+			s.pendingSignal, s.pendingSequence = append([]byte(nil), raw...), signal.Sequence
+			log.Infof("Update signal %s remembered while an update is in flight", id)
+		} else {
+			log.Debugf("update signal %s dropped: a newer or equal signal is already remembered", id)
+		}
 		return false
 	}
-	if !s.lastUpgrade.IsZero() {
-		if since := s.deps.Now().Sub(s.lastUpgrade); since < s.deps.MinInterval {
-			log.Warnf("update signal %s deferred: this box self-upgraded %s ago and the floor is %s.",
-				updateID, since.Round(time.Second), s.deps.MinInterval)
-			return false
-		}
+	if s.handled[id] {
+		log.Debugf("update signal %s dropped: already handled", id)
+		return false
 	}
-	s.handled[updateID] = true
+	if s.deps.Now().Before(s.swapAllowedAtLocked()) {
+		log.Debugf("update signal %s dropped: minimum upgrade interval or hand-off retry backoff", id)
+		return false
+	}
+	s.pendingUpgrade = true
+	s.handled[id] = true
 	s.lastUpgrade = s.deps.Now()
 	return true
 }
@@ -340,6 +383,10 @@ func (s *UpdateSignalSubscriber) delay() time.Duration {
 // upgrade fetches, verifies, stages (all while the daemon keeps serving), then
 // hands the swap to a process that can outlive this one.
 func (s *UpdateSignalSubscriber) upgrade(ctx context.Context, signal *update.Signal, state *update.State) error {
+	return s.upgradeTriggered(ctx, signal, state, "signal")
+}
+
+func (s *UpdateSignalSubscriber) upgradeTriggered(ctx context.Context, signal *update.Signal, state *update.State, trigger string) error {
 	ctx, cancel := context.WithTimeout(ctx, signalFetchTimeout)
 	defer cancel()
 	log.Infof("Update signal accepted: %s version %s sequence %d (installed sequence %d). Fetching and verifying while this daemon keeps serving.",
@@ -357,7 +404,7 @@ func (s *UpdateSignalSubscriber) upgrade(ctx context.Context, signal *update.Sig
 	// code happened to read first.
 	parsed, err := update.ParseManifest(manifestBytes)
 	if err != nil {
-		return err
+		return fmt.Errorf("parse update manifest: %w", err)
 	}
 	if err := signalMatchesManifest(signal, parsed, 0); err != nil {
 		return err
@@ -401,6 +448,10 @@ func (s *UpdateSignalSubscriber) upgrade(ctx context.Context, signal *update.Sig
 	}
 	staged, err := update.Stage(s.deps.Paths, manifestBytes, carrierBytes, verifyOpts, key)
 	if err != nil {
+		var parseErr *update.CarrierParseError
+		if errors.As(err, &parseErr) {
+			return fmt.Errorf("parse update carrier: %w", err)
+		}
 		return fmt.Errorf("stage update: %w", err)
 	}
 	// The store-format guard, here and not only in the helper's Apply: the
@@ -416,7 +467,7 @@ func (s *UpdateSignalSubscriber) upgrade(ctx context.Context, signal *update.Sig
 		UpdateID:      staged.UpdateID,
 		AdminURL:      s.deps.AdminURL,
 		HealthTimeout: s.deps.HealthTimeout,
-		Trigger:       "signal",
+		Trigger:       trigger,
 		AdminCAFile:   s.deps.AdminCAFile,
 		StoreRoot:     s.deps.StoreRoot,
 		SignalKeyID:   signal.Signing.KeyID,
@@ -687,6 +738,8 @@ func (n *Node) startUpdateSignalSubscriber() {
 	}
 
 	subscriber, err := NewUpdateSignalSubscriber(UpdateSignalSubscriberDeps{
+		CheckInterval: resolvedCheckInterval(cfg.CheckIntervalSeconds),
+		CheckDelay:    time.Duration(cfg.CheckDelaySeconds) * time.Second,
 		Subscriber:    nodeTopicSubscriber{node: n},
 		Topic:         topic,
 		Paths:         paths,

@@ -71,6 +71,8 @@ const (
 	// the failed-update quarantine are the load-bearing checks.
 	SignalDefaultTTL = 24 * time.Hour
 
+	SignalMaxTTL = 7 * 24 * time.Hour
+
 	// SignalClockSkew tolerates modest clock disagreement across the fleet
 	// before a signal is judged to come from the future.
 	SignalClockSkew = 5 * time.Minute
@@ -225,9 +227,6 @@ func (s *Signal) Verify(opts SignalVerifyOptions) error {
 			return err
 		}
 	}
-	if err := s.assertFreshness(nowOr(opts.Now)); err != nil {
-		return err
-	}
 	if opts.Channel != "" && !strings.EqualFold(s.Channel, opts.Channel) {
 		return fmt.Errorf("update signal is for channel %q, this bundle is on %q", s.Channel, opts.Channel)
 	}
@@ -253,7 +252,10 @@ func (s *Signal) Verify(opts SignalVerifyOptions) error {
 	if s.Sequence <= opts.CurrentSequence {
 		return fmt.Errorf("update signal sequence %d is not newer than the installed sequence %d", s.Sequence, opts.CurrentSequence)
 	}
-	return s.assertSignature(opts.TrustedRoots)
+	if err := s.assertSignature(opts.TrustedRoots); err != nil {
+		return err
+	}
+	return s.assertFreshness(nowOr(opts.Now))
 }
 
 // AssertUnderFeed refuses a signal whose manifest_url or carrier_url lies
@@ -311,13 +313,23 @@ func (s *Signal) assertShape() error {
 	return nil
 }
 
+// SignalTimeError depends on the receiving clock, rather than message authenticity.
+type SignalTimeError struct {
+	Expired bool
+	At      string
+}
+
+func (e *SignalTimeError) Error() string {
+	if e.Expired {
+		return "update signal expired at " + e.At
+	}
+	return "update signal is dated " + e.At + ", which is in the future"
+}
+
 func (s *Signal) assertFreshness(now time.Time) error {
 	published, err := time.Parse(time.RFC3339, strings.TrimSpace(s.PublishedAt))
 	if err != nil {
 		return fmt.Errorf("update signal published_at is not RFC3339: %w", err)
-	}
-	if published.After(now.Add(SignalClockSkew)) {
-		return fmt.Errorf("update signal is dated %s, which is in the future", s.PublishedAt)
 	}
 	expires := published.Add(SignalDefaultTTL)
 	if raw := strings.TrimSpace(s.ExpiresAt); raw != "" {
@@ -327,8 +339,14 @@ func (s *Signal) assertFreshness(now time.Time) error {
 		}
 		expires = parsed
 	}
-	if now.After(expires) {
-		return fmt.Errorf("update signal expired at %s", expires.UTC().Format(time.RFC3339))
+	if expires.After(published.Add(SignalMaxTTL)) || !expires.After(published) {
+		return errors.New("update signal expiry must be after publication and within seven days")
+	}
+	if published.After(now.Add(SignalClockSkew)) {
+		return &SignalTimeError{At: s.PublishedAt}
+	}
+	if !now.Before(expires) {
+		return &SignalTimeError{Expired: true, At: expires.UTC().Format(time.RFC3339)}
 	}
 	return nil
 }

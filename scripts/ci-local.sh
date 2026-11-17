@@ -638,8 +638,55 @@ run_migrations() {
 run_update_channel() {
   prepare_go_toolchain no-aot
   export SDN_E2E_REAL_DAEMON=1
+  if [[ -n "${SDN_E2E_UPDATE_USER:-}" ]]; then
+    run_update_channel_isolated
+    return
+  fi
   go_test_with_timings update-channel -v -p=1 -timeout=50m -count=1 -run "$UPDATE_GO_TESTS" ./cmd/spacedatanetwork/ \
     || fail "update channel"
+}
+
+# With SDN_E2E_UPDATE_USER (CI, as root on Linux): the fixtures and the test
+# binary are built first, then the test runs as that ordinary user in a network
+# namespace whose only interface is loopback.
+run_update_channel_isolated() {
+  local user="$SDN_E2E_UPDATE_USER"
+  local bin="${RUNNER_TEMP:-$ROOT/.ci-artifacts}/update-channel-bin"
+  local logs="${SDN_E2E_LOG_DIR:?SDN_E2E_LOG_DIR names the log directory}"
+  local build
+  step "Update channel fixtures (v1, v2, v3 never ready, the release signal signer)"
+  mkdir -p "$bin" "$logs"
+  for build in v1 v2 v3; do
+    local build_args=(-o "$bin/spacedatanetwork-$build")
+    if [[ "$build" == v3 ]]; then build_args+=(-tags sdn_e2e_not_ready); fi
+    (cd "$ROOT/sdn-server" && SDN_GO_LDFLAGS="-X github.com/spacedatanetwork/sdn-server/internal/versioninfo.ReleaseTag=e2e-$build" \
+      ../scripts/go-with-wasmedge.sh build "${build_args[@]}" ./cmd/spacedatanetwork) || fail "build update fixture $build"
+  done
+  # The release workflow's signal signer, built the way that workflow builds it.
+  (cd "$ROOT/sdn-server" && CGO_ENABLED=0 go build -trimpath -o "$bin/sdn-update-signal-signer" ./cmd/sdn-update-signal-signer) \
+    || fail "build the release signal signer"
+  (cd "$ROOT/sdn-server" && ../scripts/go-with-wasmedge.sh test -c -o "$bin/update-channel-e2e.test" ./cmd/spacedatanetwork) \
+    || fail "build the update channel test"
+  pass "update channel fixtures"
+
+  step "Update channel E2E as $user, loopback only"
+  chmod 0777 "$logs"
+  chmod a+x "$(dirname "$logs")"
+  chmod -R a+rX "$bin" "$WASMEDGE_DIR"
+  if [[ -n "${RUNNER_TEMP:-}" ]]; then chmod a+x "$RUNNER_TEMP"; fi
+  if [[ -n "${SDN_E2E_INSTALLED_BUNDLE:-}" && -f "$SDN_E2E_INSTALLED_BUNDLE" ]]; then
+    chmod a+r "$SDN_E2E_INSTALLED_BUNDLE"
+    chmod a+x "$(dirname "$SDN_E2E_INSTALLED_BUNDLE")"
+  fi
+  (cd "$ROOT/sdn-server/cmd/spacedatanetwork" && env SDN_E2E_REAL_DAEMON=1 HOME="$(getent passwd "$user" | cut -d: -f6)" \
+    SDN_E2E_REAL_DAEMON_BIN_DIR="$bin" \
+    SDN_E2E_LOG_DIR="$logs" \
+    SDN_E2E_INSTALLED_BUNDLE="${SDN_E2E_INSTALLED_BUNDLE:-}" \
+    LD_LIBRARY_PATH="$WASMEDGE_DIR/lib:$WASMEDGE_DIR/lib64" \
+    unshare --net -- bash -c 'set -e; ip link set lo up; exec setpriv --reuid="$1" --regid="$2" --init-groups "$3" -test.v -test.timeout=50m -test.run="^TestUpdateChannelRealDaemonE2E$"' \
+    -- "$(id -u "$user")" "$(id -g "$user")" "$bin/update-channel-e2e.test" \
+    | tee "$logs/test.log") || fail "update channel"
+  pass "update channel"
 }
 
 run_go_heavy() {

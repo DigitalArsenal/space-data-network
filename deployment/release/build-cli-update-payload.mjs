@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { createPublicKey } from 'node:crypto';
+import { createHash, createPublicKey } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -11,13 +11,13 @@ import {
   resolveSigningKeyPem,
   signUpdateManifest,
 } from './sign-update-manifest.mjs';
+import { CLI_BUNDLE_KIND, EXPIRES_AFTER_DAYS } from './sign-cli-update-payload.mjs';
 
 // Assembles the signed update payload for the self-contained CLI bundle lane:
 // the inert WASM carrier wrapping the bundle archive, plus the signed
 // manifest the Go updater (sdn-server/internal/update) verifies before any
 // staged swap.
-export const CLI_BUNDLE_KIND = 'cli-bundle';
-export const EXPIRES_AFTER_DAYS = 90;
+export { CLI_BUNDLE_KIND, EXPIRES_AFTER_DAYS };
 
 export async function buildCliUpdatePayload(options) {
   const bundleArchive = required(options.bundleArchive, 'bundleArchive');
@@ -86,6 +86,26 @@ export async function buildCliUpdatePayload(options) {
   await writeFile(carrierPath, wasmBytes);
 
   return { manifest, manifestPath, carrierPath };
+}
+
+// buildCliUpdateCarrier is the part of the payload that reads the archive,
+// for a job that holds no key: it writes update.wasm (the carrier around the
+// archive without trust/) and bundle.json (the wrapped bundle's sha256, size
+// and format). sign-cli-update-payload.mjs signs a manifest over those
+// digests and the carrier's own hash without opening either.
+export async function buildCliUpdateCarrier(options) {
+  const bundleArchive = required(options.bundleArchive, 'bundleArchive');
+  const outDir = resolve(required(options.carrierOutDir, 'carrierOutDir'));
+  const format = bundleFormatForArchive(bundleArchive);
+  const bundleBytes = await payloadArchiveBytes(resolve(bundleArchive), format);
+  const wasmBytes = buildCarrier(bundleBytes);
+  const bundle = { format, hash: createHash('sha256').update(bundleBytes).digest('hex'), size: bundleBytes.length };
+  await mkdir(outDir, { recursive: true });
+  const carrierPath = join(outDir, 'update.wasm');
+  const bundlePath = join(outDir, 'bundle.json');
+  await writeFile(carrierPath, wasmBytes);
+  await writeFile(bundlePath, `${JSON.stringify(bundle, null, 2)}\n`);
+  return { bundle, bundlePath, carrierPath };
 }
 
 // THE PAYLOAD CARRIES NO trust/.
@@ -223,7 +243,13 @@ function parseArgs(argv) {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const result = await buildCliUpdatePayload(parseArgs(process.argv.slice(2)));
+  const options = parseArgs(process.argv.slice(2));
+  if (options.carrierOutDir) {
+    const carrier = await buildCliUpdateCarrier(options);
+    console.log(JSON.stringify({ bundle: carrier.bundle, carrier: carrier.carrierPath }, null, 2));
+    process.exit(0);
+  }
+  const result = await buildCliUpdatePayload(options);
   console.log(JSON.stringify({
     update_id: result.manifest.update_id,
     manifest: result.manifestPath,
