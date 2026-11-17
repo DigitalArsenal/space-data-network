@@ -11,10 +11,16 @@
 #   .github/workflows/ci.yml job   modes it runs
 #   ----------------------------   ---------------------------
 #   preflight                      preflight, encryption
-#   go-quick                       go
+#   go-quick (four package groups) go
 #   go-heavy                       heavy
 #   go-builds                      builds
-#   js                             js, delivery, demo
+#   js                             js
+#   delivery                       delivery
+#   demo                           demo
+#   wasmedge-static                prefix-pack
+#   wasmedge-runtime               runtime
+#   wasmedge-substrate             migrations
+#   update-channel-e2e             update-channel
 #   dashboard                      dashboard
 #   kubo-bolt-on                   kubo
 #
@@ -406,11 +412,34 @@ go_test_with_timings() {
   local log="$ROOT/.ci-artifacts/gotest-${label}.log"
   local rc=0
   mkdir -p "$ROOT/.ci-artifacts"
+  if [[ "${SDN_CI_GO_COVERAGE:-0}" == 1 ]]; then
+    local arg skip='a^' run='.'
+    for arg in "$@"; do
+      case "$arg" in
+        -skip=*) skip="${arg#-skip=}" ;;
+        -run=*) run="${arg#-run=}" ;;
+      esac
+    done
+    "$ROOT/scripts/go-with-wasmedge.sh" test -list . "$@" > "$log.list" 2>&1 || { cat "$log.list"; return 1; }
+    awk '/^(Test|Example|Fuzz)[[:alnum:]_]+$/ {print}' "$log.list" | grep -E "$run" | grep -Ev "$skip" | LC_ALL=C sort > "$log.expected" || true
+  fi
   set +e
   "$ROOT/scripts/go-with-wasmedge.sh" test "$@" 2>&1 | tee "$log"
   rc=${PIPESTATUS[0]}
   set -e
   report_pkg_timings "$label" "$log"
+  if [[ "${SDN_CI_GO_COVERAGE:-0}" == 1 ]]; then
+    awk '$1 == "===" && $2 == "RUN" && $3 !~ /\// && $0 !~ /^[[:space:]]/ {print $3}' "$log" | LC_ALL=C sort > "$log.ran"
+    awk '$1 == "---" && ($2 == "PASS:" || $2 == "FAIL:" || $2 == "SKIP:") && $3 !~ /\// && $0 !~ /^[[:space:]]/ {print $3}' "$log" | LC_ALL=C sort > "$log.ended"
+    for arg in ran ended; do
+      if ! cmp -s "$log.expected" "$log.$arg"; then
+        echo "Go test coverage mismatch ($label, $arg):"
+        diff -u "$log.expected" "$log.$arg" || true
+        rc=1
+      fi
+    done
+    [[ "$rc" != 0 ]] || echo "Go test coverage: $label ran and completed every listed test exactly once"
+  fi
   return "$rc"
 }
 
@@ -426,12 +455,14 @@ go_test_with_timings() {
 # anybody skips. Locally `quick` leaves it out and `full` includes it.
 HEAVY_GO_PACKAGES="github.com/spacedatanetwork/sdn-server/internal/storage"
 
-# This E2E requires the patched runtime and runs in the substrate job.
-SUBSTRATE_GO_TESTS="^TestUnifiedFlatBufferQueryReopen$"
+# These packages retain the budgets used by their patched-runtime suites.
+EXTENDED_GO_PACKAGES="github.com/spacedatanetwork/sdn-server/internal/flatsqlrt github.com/spacedatanetwork/sdn-server/internal/storage/format2 github.com/spacedatanetwork/sdn-server/internal/storage/format4 github.com/spacedatanetwork/sdn-server/internal/wasmrt github.com/spacedatanetwork/sdn-server/cmd/spacedatanetwork"
+MIGRATION_GO_TESTS="^(TestFormat2|TestStoreMigrate)"
+UPDATE_GO_TESTS="^TestUpdateChannelRealDaemonE2E$"
 
 heavy_pkg_filter() {
   local filter=""
-  for pkg in $HEAVY_GO_PACKAGES; do
+  for pkg in $HEAVY_GO_PACKAGES $EXTENDED_GO_PACKAGES; do
     filter="${filter}${filter:+|}^${pkg}\$"
   done
   echo "$filter"
@@ -486,17 +517,127 @@ run_gofmt() {
   pass "gofmt"
 }
 
+# Package ownership is exhaustive: new packages enter the general group,
+# whose sorted packages alternate between general-1 and general-2 (run
+# 43979527185: 568s of tests but 23m in the step, most of it linking 84
+# test binaries one at a time).
+# The other groups isolate the measured 1220s format2, 575s command, and
+# 374s engine packages. Every group retains each package's test budget.
+# The format2-kill group runs format2's kill-recovery test alone (1097s and
+# 1579s in runs 43938905898 and 43971615013, of the package's 1676s); the
+# format2 group runs the rest of that package.
+FORMAT2_KILL_GO_TEST="^TestRouterKill9KeepsEveryAckedRecord$"
+
+quick_go_group() {
+  case "$1" in
+    */internal/storage/format2) echo format2 ;;
+    */cmd/spacedatanetwork) echo command ;;
+    */internal/flatsqlrt|*/internal/storage/format4|*/internal/wasmrt) echo engine ;;
+    *) echo general ;;
+  esac
+}
+
 run_go() {
   prepare_go_toolchain
   run_gofmt
+  export SDN_WASM_ATOMIC_REGRESSION=1
+  export SDN_CI_GO_COVERAGE=1
+  local group="${SDN_CI_GO_GROUP:-all}"
+  case "$group" in all|general|general-1|general-2|format2|format2-kill|command|engine) ;; *) fail "unknown Go group: $group" ;; esac
 
-  step "Go tests (quick: every package but the heavy set)"
-  local pkgs
+  step "Go tests (quick: $group)"
+  local pkgs failed=0 pkg
   pkgs=$("$ROOT/scripts/go-with-wasmedge.sh" list ./... | grep -Ev "$(heavy_pkg_filter)")
-  # shellcheck disable=SC2086
-  go_test_with_timings quick -p=1 -timeout="$QUICK_GO_TEST_TIMEOUT" -count=1 -skip="$SUBSTRATE_GO_TESTS" $pkgs \
-    || fail "go test (quick)"
-  pass "go test (quick)"
+  local manifest="$ROOT/.ci-artifacts/quick-packages.txt"
+  mkdir -p "$ROOT/.ci-artifacts"
+  for pkg in $pkgs $EXTENDED_GO_PACKAGES; do
+    printf '%s %s\n' "$pkg" "$(quick_go_group "$pkg")"
+  done | LC_ALL=C sort > "$manifest"
+  "$ROOT/scripts/go-with-wasmedge.sh" list ./... | grep -Fxv -e "$HEAVY_GO_PACKAGES" | LC_ALL=C sort > "$manifest.expected"
+  cut -d ' ' -f 1 "$manifest" > "$manifest.actual"
+  cmp -s "$manifest.expected" "$manifest.actual" || fail "quick package ownership differs from go list"
+  [[ -z "$(uniq -d "$manifest.actual")" ]] || fail "duplicate quick package ownership"
+  case "$group" in
+    general-1) pkgs=$(printf '%s\n' $pkgs | LC_ALL=C sort | awk 'NR % 2 == 1') ;;
+    general-2) pkgs=$(printf '%s\n' $pkgs | LC_ALL=C sort | awk 'NR % 2 == 0') ;;
+  esac
+  if [[ "$group" == all || "$group" == general* ]]; then
+    # shellcheck disable=SC2086
+    go_test_with_timings "quick-$group" -v -p=1 -timeout="$QUICK_GO_TEST_TIMEOUT" -count=1 $pkgs \
+      || failed=1
+  fi
+  run_go_extended || failed=1
+  unset SDN_CI_GO_COVERAGE
+  [[ "$failed" == 0 ]] || fail "go test (quick: $group)"
+  pass "go test (quick: $group)"
+}
+
+run_go_extended() {
+  local pkg budget label failed=0
+  local group="${SDN_CI_GO_GROUP:-all}"
+  local skip=()
+  for pkg in $EXTENDED_GO_PACKAGES; do
+    skip=()
+    label="quick-${pkg##*/}"
+    case "$group" in
+      all) ;;
+      format2-kill)
+        [[ "$(quick_go_group "$pkg")" == format2 ]] || continue
+        skip=(-run="$FORMAT2_KILL_GO_TEST")
+        label="quick-format2-kill"
+        ;;
+      format2)
+        [[ "$(quick_go_group "$pkg")" == format2 ]] || continue
+        skip=(-skip="$FORMAT2_KILL_GO_TEST")
+        ;;
+      *) [[ "$(quick_go_group "$pkg")" == "$group" ]] || continue ;;
+    esac
+    budget=20m
+    case "$pkg" in
+      */flatsqlrt|*/format2) budget=30m ;;
+      */cmd/spacedatanetwork) skip=(-skip="${MIGRATION_GO_TESTS}|${UPDATE_GO_TESTS}") ;;
+    esac
+    go_test_with_timings "$label" -v -p=1 -timeout="$budget" -count=1 ${skip[@]+"${skip[@]}"} "$pkg" \
+      || failed=1
+  done
+  return "$failed"
+}
+
+run_prefix_build() {
+  . "$ROOT/scripts/wasmedge-static-env.sh"
+  WASMEDGE_STATIC_WORK="$ROOT/.sdn-wasmedge-static" WASMEDGE_STATIC_PREFIX_ONLY=1 \
+    bash "$ROOT/scripts/build-static-wasmedge.sh"
+}
+
+run_prefix_pack() {
+  mkdir -p "$ROOT/.ci-artifacts"
+  test -s "$ROOT/.sdn-wasmedge-static/prefix/link.flags"
+  tar -czf "$ROOT/.ci-artifacts/wasmedge-static-prefix.tar.gz" -C "$ROOT/.sdn-wasmedge-static" prefix
+}
+
+run_prefix_unpack() {
+  mkdir -p "$ROOT/.sdn-wasmedge-static"
+  tar -xzf "$ROOT/.ci-artifacts/wasmedge-static-prefix.tar.gz" -C "$ROOT/.sdn-wasmedge-static"
+  test -s "$ROOT/.sdn-wasmedge-static/prefix/link.flags"
+  test -s "$ROOT/.sdn-wasmedge-static/prefix/sdn-runtime-patches.txt"
+}
+
+run_runtime() {
+  prepare_go_toolchain
+  "$ROOT/.ci-artifacts/spacedatanetwork-prewarm" substrate-selftest --require-patched
+}
+
+run_migrations() {
+  prepare_go_toolchain
+  go_test_with_timings migrations -v -p=1 -timeout=60m -count=1 -run "$MIGRATION_GO_TESTS" ./cmd/spacedatanetwork/ \
+    || fail "store migrations"
+}
+
+run_update_channel() {
+  prepare_go_toolchain no-aot
+  export SDN_E2E_REAL_DAEMON=1
+  go_test_with_timings update-channel -v -p=1 -timeout=50m -count=1 -run "$UPDATE_GO_TESTS" ./cmd/spacedatanetwork/ \
+    || fail "update channel"
 }
 
 run_go_heavy() {
@@ -591,15 +732,32 @@ prepare_sdn_js_deps() {
   pass "sdn-js npm ci"
 }
 
+# Chromium's runtime libraries under their Ubuntu 20.04 names. Playwright's
+# --with-deps list for its ubuntu22.04 build names fonts-unifont, which 20.04
+# does not have, so the release container installs this list instead.
+install_release_container_browser_deps() {
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -qq
+  apt-get install -y -qq --no-install-recommends \
+    libasound2 libatk-bridge2.0-0 libatk1.0-0 libatspi2.0-0 libcairo2 libcups2 \
+    libdbus-1-3 libdrm2 libgbm1 libglib2.0-0 libnspr4 libnss3 libpango-1.0-0 \
+    libwayland-client0 libx11-6 libxcb1 libxcomposite1 libxdamage1 libxext6 \
+    libxfixes3 libxkbcommon0 libxrandr2 libfontconfig1 libfreetype6 \
+    fonts-liberation fonts-noto-color-emoji fonts-freefont-ttf xvfb >/dev/null
+}
+
 prepare_chromium() {
   local playwright_install_args=(install chromium)
-  if [[ "${CI:-}" == "true" || "${CI:-}" == "1" ]]; then
+  if [[ "${SDN_CI_BROWSER_DEPS:-}" == release-container ]]; then
+    install_release_container_browser_deps
+  elif [[ "${CI:-}" == "true" || "${CI:-}" == "1" ]]; then
     playwright_install_args=(install --with-deps chromium)
   fi
   (cd "$ROOT/sdn-js" && npm_config_cache="$ROOT/.npm-cache" npx --yes playwright "${playwright_install_args[@]}" >/dev/null)
 }
 
 run_sdn_js() {
+  prepare_go_toolchain no-aot
   prepare_sdn_js_deps
 
   local eslint_config=""
@@ -762,6 +920,7 @@ case "$MODE" in
     run_kubo_pin
     run_encryption
     run_go # runs gofmt too, which is why `quick` does not repeat it
+    run_migrations
     run_go_builds
     run_sdn_js
     run_module_delivery_compat
@@ -771,6 +930,7 @@ case "$MODE" in
     run_preflight
     run_kubo_pin
     run_go
+    run_migrations
     run_go_heavy
     run_go_race
     run_go_builds
@@ -780,6 +940,12 @@ case "$MODE" in
     run_plugin_demo
     run_encryption
     ;;
+  prefix-build) run_prefix_build ;;
+  prefix-pack) run_prefix_pack ;;
+  prefix-unpack) run_prefix_unpack ;;
+  runtime) run_runtime ;;
+  migrations) run_migrations ;;
+  update-channel) run_update_channel ;;
   preflight)
     run_preflight
     run_gofmt
@@ -816,7 +982,7 @@ case "$MODE" in
     run_encryption
     ;;
   *)
-    echo -e "${RED}Usage: $0 [quick|full|preflight|go|heavy|builds|race|js|dashboard|kubo-pin|delivery|plugin|demo|encryption]${NC}"
+    echo -e "${RED}Usage: $0 [quick|full|preflight|go|heavy|builds|race|js|dashboard|kubo-pin|delivery|plugin|demo|encryption|runtime|migrations|update-channel|prefix-build|prefix-pack|prefix-unpack]${NC}"
     exit 1
     ;;
 esac
