@@ -2,9 +2,6 @@ package main
 
 import (
 	"bytes"
-	"crypto/ed25519"
-	"crypto/x509"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -57,43 +54,20 @@ func newSignSignalsCommand() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				block, _ := pem.Decode(raw)
-				if block == nil {
-					return errors.New("signing key must be a PKCS8 PEM private key")
-				}
-				parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+				key, err := update.ParseSigningKeyPEM(raw)
 				if err != nil {
-					return errors.New("invalid PKCS8 signing key")
-				}
-				key, ok := parsed.(ed25519.PrivateKey)
-				if !ok {
-					return errors.New("signal signing requires Ed25519")
+					return err
 				}
 				if err := update.SignFeedSignals(dir, key, roots); err != nil {
 					return err
 				}
 			}
-			files, err := update.FeedSignalFiles(dir, "", "")
+			paths, err := update.VerifyFeedSignalDir(dir, roots)
 			if err != nil {
 				return err
 			}
-			if len(files) == 0 {
-				return errors.New("feed contains no entries")
-			}
-			root, err := os.OpenRoot(dir)
-			if err != nil {
-				return err
-			}
-			defer root.Close()
-			for _, file := range files {
-				raw, err := root.ReadFile(file.Path)
-				if err != nil {
-					return err
-				}
-				if _, err := update.VerifyFeedSignal(raw, roots, file); err != nil {
-					return fmt.Errorf("%s: %w", file.Path, err)
-				}
-				fmt.Fprintf(cmd.OutOrStdout(), "verified=%s\n", file.Path)
+			for _, path := range paths {
+				fmt.Fprintf(cmd.OutOrStdout(), "verified=%s\n", path)
 			}
 			return nil
 		}}

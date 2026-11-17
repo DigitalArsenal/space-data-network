@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -110,6 +111,52 @@ func VerifyFeedSignal(raw []byte, roots TrustedRoots, file FeedSignalFile) (*Sig
 		return nil, err
 	}
 	return signal, nil
+}
+
+// ParseSigningKeyPEM reads a PKCS8 PEM Ed25519 private key.
+func ParseSigningKeyPEM(raw []byte) (ed25519.PrivateKey, error) {
+	block, _ := pem.Decode(raw)
+	if block == nil {
+		return nil, errors.New("signing key must be a PKCS8 PEM private key")
+	}
+	parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		return nil, errors.New("invalid PKCS8 signing key")
+	}
+	key, ok := parsed.(ed25519.PrivateKey)
+	if !ok {
+		return nil, errors.New("signal signing requires Ed25519")
+	}
+	return key, nil
+}
+
+// VerifyFeedSignalDir verifies the signal of every entry of a feed against the
+// update roots and returns the signal paths.
+func VerifyFeedSignalDir(dir string, roots TrustedRoots) ([]string, error) {
+	files, err := FeedSignalFiles(dir, "", "")
+	if err != nil {
+		return nil, err
+	}
+	if len(files) == 0 {
+		return nil, errors.New("feed contains no entries")
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	paths := make([]string, 0, len(files))
+	for _, file := range files {
+		raw, err := root.ReadFile(file.Path)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := VerifyFeedSignal(raw, roots, file); err != nil {
+			return nil, fmt.Errorf("%s: %w", file.Path, err)
+		}
+		paths = append(paths, file.Path)
+	}
+	return paths, nil
 }
 
 // SignFeedSignals uses the receiver's statement and verifier for each index entry.

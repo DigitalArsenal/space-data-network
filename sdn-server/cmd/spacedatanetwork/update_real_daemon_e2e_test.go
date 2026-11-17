@@ -1065,9 +1065,11 @@ func runRealPushChannelReceiver(t *testing.T, installed bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: pkcs8}), 0o600); err != nil {
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: pkcs8})
+	if err := os.WriteFile(keyPath, keyPEM, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	signer := realE2ESigner(t, filepath.Join(work, "builds"))
 	rootsPath := filepath.Join(work, "pipeline-roots.json")
 	writeE2EJSON(t, rootsPath, roots)
 	writeE2EJSON(t, filepath.Join(work, "pipeline-repo", "deployment", "release", "fleet-trust-roots.json"), roots)
@@ -1156,8 +1158,10 @@ func runRealPushChannelReceiver(t *testing.T, installed bool) {
 	}
 	publish := func(v realBuild) []byte {
 		feed.publish(t, v, key)
-		runSignalPipeline(t, v1.path, work, "sign-"+v.name, "update", "sign-signals", "--key-file", keyPath, "--roots", rootsPath, "--feed-dir", feed.dir)
-		runSignalPipeline(t, v1.path, work, "verify-"+v.name, "update", "sign-signals", "--verify-only", "--feed-dir", feed.dir)
+		// The release workflow's signer, with the key in its environment.
+		runSignalPipelineEnv(t, signer, work, "sign-"+v.name, []string{"SDN_UPDATE_SIGNING_KEY_PEM=" + string(keyPEM)},
+			"--key-env", "SDN_UPDATE_SIGNING_KEY_PEM", "--roots", rootsPath, "--feed-dir", feed.dir)
+		runSignalPipelineEnv(t, signer, work, "verify-"+v.name, nil, "--verify-only", "--roots", rootsPath, "--feed-dir", feed.dir)
 		raw, err := os.ReadFile(signalPath(v))
 		if err != nil {
 			t.Fatal(err)
@@ -2081,6 +2085,32 @@ func keepRealLogs(t *testing.T, work string) {
 
 func runSignalPipeline(t *testing.T, exe, work, label string, args ...string) {
 	t.Helper()
+	runSignalPipelineEnv(t, exe, work, label, nil, args...)
+}
+
+// realE2ESigner is the release workflow's signal signer: prebuilt beside the
+// fixtures, or built here the way the workflow builds it (no cgo).
+func realE2ESigner(t *testing.T, dir string) string {
+	t.Helper()
+	if prebuilt := strings.TrimSpace(os.Getenv(realE2EBinDirEnv)); prebuilt != "" {
+		return filepath.Join(prebuilt, "sdn-update-signal-signer")
+	}
+	path := filepath.Join(dir, "sdn-update-signal-signer")
+	moduleRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	build := exec.Command("go", "build", "-trimpath", "-o", path, "./cmd/sdn-update-signal-signer")
+	build.Dir = moduleRoot
+	build.Env = append(environWithout("CGO_ENABLED"), "CGO_ENABLED=0")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build signal signer: %v\n%s", err, output)
+	}
+	return path
+}
+
+func runSignalPipelineEnv(t *testing.T, exe, work, label string, env []string, args ...string) {
+	t.Helper()
 	home := filepath.Join(work, "pipeline-home")
 	if err := os.MkdirAll(home, 0o700); err != nil {
 		t.Fatal(err)
@@ -2093,6 +2123,7 @@ func runSignalPipeline(t *testing.T, exe, work, label string, args ...string) {
 	cmd := exec.Command(exe, args...)
 	cmd.Dir, cmd.Stdout, cmd.Stderr = filepath.Join(work, "pipeline-repo", "sdn-server"), out, out
 	cmd.Env = append(environWithout("HOME", "SDN_CONFIG", "SDN_UPDATE_TRUST_ROOTS", config.EnvKeyPassword, config.EnvKeyPasswordFile), "HOME="+home)
+	cmd.Env = append(cmd.Env, env...)
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("pipeline %s: %v\n%s", label, err, readFileString(out.Name()))
 	}

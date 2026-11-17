@@ -450,11 +450,14 @@ production key replaces it through a release that carries `trust_roots`.
   `main`; only the release workflow's `update-signing-check` and
   `cli-update-feed` jobs name it, and the workflow guard
   (`beta-release-workflow.test.mjs`) refuses the secret anywhere else in any
-  workflow. `update-signing-check` runs before any build: it fails a stable
+  workflow, any `secrets` expression other than one named secret, and any
+  other job naming the Environment. `update-signing-check` runs before any build: it fails a stable
   release without the key (a beta warns and ships no feed), derives the key id
   from the PEM and fails if it differs from `SDN_UPDATE_KEY_ID` or is not in
   `fleet-trust-roots.json` (`check-update-signing-key.mjs`; there is no
-  fallback key id). `cli-update-feed` repeats that check, signs, and verifies
+  fallback key id). `cli-update-feed` runs no program another job built: it
+  builds its signal signer (`cmd/sdn-update-signal-signer`, no cgo) from the
+  checked-out commit, repeats that check, signs, and verifies
   every manifest against `fleet-trust-roots.json` before packing the feed
   (`verify-cli-update-feed.mjs`).
 

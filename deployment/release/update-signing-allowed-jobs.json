@@ -55,8 +55,7 @@
           "uses": "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093",
           "with": {
             "pattern": "cli-*",
-            "path": "dist/cli",
-            "merge-multiple": true
+            "path": "dist/cli"
           }
         },
         {
@@ -66,8 +65,8 @@
           }
         },
         {
-          "name": "Unpack the release signal signer",
-          "reviewedRun": "Unpack the release signal signer"
+          "name": "Build the release signal signer",
+          "reviewedRun": "Build the release signal signer"
         },
         {
           "name": "Build signed CLI update feed",

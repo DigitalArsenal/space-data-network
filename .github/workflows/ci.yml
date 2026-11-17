@@ -363,6 +363,8 @@ jobs:
             SDN_GO_LDFLAGS="-X github.com/spacedatanetwork/sdn-server/internal/versioninfo.ReleaseTag=e2e-$build" \
               ../scripts/go-with-wasmedge.sh build "${build_args[@]}" ./cmd/spacedatanetwork
           done
+          # The release workflow's signal signer, built the way that workflow builds it.
+          CGO_ENABLED=0 go build -trimpath -o "$RUNNER_TEMP/update-channel-bin/sdn-update-signal-signer" ./cmd/sdn-update-signal-signer
           ../scripts/go-with-wasmedge.sh test -c -o "$RUNNER_TEMP/update-channel-e2e.test" ./cmd/spacedatanetwork
       - name: Exercise pull and push on loopback
         id: update_daemons

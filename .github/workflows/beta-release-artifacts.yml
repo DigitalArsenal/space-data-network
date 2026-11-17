@@ -1003,21 +1003,27 @@ jobs:
       VERSION: ${{ needs.beta-version.outputs.package_version }}
       SDN_UPDATE_KEY_ID: ${{ secrets.SDN_UPDATE_KEY_ID }}
       SDN_UPDATE_SEQUENCE: ${{ github.run_number }}
+    # No program produced by another job runs here. Each archive is read only
+    # from the directory of its exact artifact name (no merge, so another
+    # artifact matching the pattern stays in its own directory), and the signal
+    # signer is built in this job from the checked-out commit.
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           pattern: cli-*
           path: dist/cli
-          merge-multiple: true
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '24'
-      - name: Unpack the release signal signer
+      - name: Build the release signal signer
         run: |
-          mkdir -p "$RUNNER_TEMP/sdn-signal-signer"
-          tar -xzf "dist/cli/spacedatanetwork-${VERSION}-linux-amd64.tar.gz" \
-            -C "$RUNNER_TEMP/sdn-signal-signer" --strip-components=1
+          set -euo pipefail
+          go_bin="$(command -v go || ls -1d "${RUNNER_TOOL_CACHE}"/go/*/x64/bin/go | sort -V | tail -n 1)"
+          test -x "${go_bin}"
+          cd sdn-server
+          CGO_ENABLED=0 "${go_bin}" build -trimpath \
+            -o "$RUNNER_TEMP/sdn-signal-signer/sdn-update-signal-signer" ./cmd/sdn-update-signal-signer
       - name: Build signed CLI update feed
         id: signing
         env:
@@ -1051,7 +1057,7 @@ jobs:
           )
           for target in "${targets[@]}"; do
             read -r target_os target_arch target_ext <<< "${target}"
-            archive_path="dist/cli/spacedatanetwork-${VERSION}-${target_os}-${target_arch}.${target_ext}"
+            archive_path="dist/cli/cli-${target_os}-${target_arch}/spacedatanetwork-${VERSION}-${target_os}-${target_arch}.${target_ext}"
             payload_out="${payload_dir}/${target_os}-${target_arch}"
             if [[ ! -f "${archive_path}" ]]; then
               echo "missing CLI archive for update feed: ${archive_path}" >&2
@@ -1072,7 +1078,7 @@ jobs:
             feed_args+=(--entry "${payload_out}/manifest.json:${payload_out}/update.wasm")
           done
           node deployment/release/build-sdn-update-feed.js "${feed_args[@]}"
-          "$RUNNER_TEMP/sdn-signal-signer/bin/spacedatanetwork" update sign-signals \
+          "$RUNNER_TEMP/sdn-signal-signer/sdn-update-signal-signer" \
             --key-env SDN_UPDATE_SIGNING_KEY_PEM --feed-dir "${feed_dir}" \
             --roots deployment/release/fleet-trust-roots.json
       - name: Verify and pack the signed CLI update feed
@@ -1081,7 +1087,7 @@ jobs:
           set -euo pipefail
           feed_tree_root="dist/update-feed-tree"
           feed_dir="${feed_tree_root}/update-feed"
-          "$RUNNER_TEMP/sdn-signal-signer/bin/spacedatanetwork" update sign-signals --verify-only \
+          "$RUNNER_TEMP/sdn-signal-signer/sdn-update-signal-signer" --verify-only \
             --feed-dir "${feed_dir}" --roots deployment/release/fleet-trust-roots.json
           # Verify the same metadata as an installed node: every
           # manifest against fleet-trust-roots.json (signature, target, expiry,
