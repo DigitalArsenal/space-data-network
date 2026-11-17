@@ -87,6 +87,14 @@ of publication, including the producer's allocated and logical storage sizes.
 `SDN_E2E_PUBLICATION_BASELINE_REPETITIONS` accepts 1 through 3; unset retains
 three full repetitions (one in smoke mode). Each summary records the selected
 case, dataset, and repetition count so partial reruns remain distinguishable.
+`SDN_E2E_PUBLICATION_BASELINE_NO_RESTART=1` ends each dataset after the
+publication and download measurements: no receiver restart and no second
+ingest with reads.
+
+`TestPublicationFingerprintRealDaemons` publishes 150,000 element sets and
+compares the set fingerprint the producer logs ("publication fingerprint")
+with the SHA-256 of the lane header and the sorted CIDs of the records the
+test sent.
 
 The full OEM metadata query currently returns HTTP 400 `byte-cap` or `timeout` under its
 normal sandbox limits even with a narrow projection. These refusals are recorded with

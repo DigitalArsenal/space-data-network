@@ -73,6 +73,9 @@ func TestPublicationBaseline(t *testing.T) {
 		}
 		smallCount = n
 	}
+	// SDN_E2E_PUBLICATION_BASELINE_NO_RESTART=1 measures the publication
+	// without the receiver's restart and the second ingest after it.
+	noRestart := os.Getenv("SDN_E2E_PUBLICATION_BASELINE_NO_RESTART") == "1"
 	if value := os.Getenv("SDN_E2E_PUBLICATION_BASELINE_REPETITIONS"); value != "" {
 		n, err := strconv.Atoi(value)
 		if err != nil || n < 1 || n > 3 {
@@ -280,6 +283,14 @@ func TestPublicationBaseline(t *testing.T) {
 					})
 					row.Note = "Every published shard via B's Kubo stream forwarder; already imported, so cache is warm; no import on this request"
 					record(row)
+				}
+				if noRestart {
+					// The publication phase alone: no receiver restart, no
+					// second ingest with reads.
+					if err := os.RemoveAll(fixtureRoot); err != nil {
+						t.Fatal(err)
+					}
+					continue
 				}
 				// The record the post-restart point reads ask for, read on
 				// both nodes before the restart.
