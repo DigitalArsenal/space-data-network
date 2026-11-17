@@ -256,6 +256,11 @@ type Node struct {
 	pendingDatasetCatalogAt int
 	datasetMaterializedPNMs map[string]time.Time
 	datasetSupersedeMu      sync.Mutex
+	// datasetCatchupResume is, per trusted peer, the schema its last
+	// publication catch-up pass was refused at (rate_limited); the next pass
+	// starts there (dataset_catchup_schemas.go).
+	datasetCatchupResumeMu sync.Mutex
+	datasetCatchupResume   map[peer.ID]string
 
 	// laneRetention resolves the subscription retention rule for one lane
 	// (schema, provider, source): the subscriber's choice, else the node
@@ -3109,10 +3114,18 @@ func (n *Node) catchUpDatasetShardPublicationsFromPeerCounting(ctx context.Conte
 		return 0, err
 	}
 	var errs []error
+	n.noteDatasetCatchupRefused(from, "")
 	for _, schema := range schemas {
 		publications, err := n.listRemoteDatasetShardPublications(ctx, from, schema)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: list %s publications: %w", from.ShortString(), schema, err))
+			var remoteErr *syncwire.RemoteError
+			if errors.As(err, &remoteErr) && remoteErr.Code == "rate_limited" {
+				// The peer's listing budget is spent: every later schema
+				// would be refused too. The next pass starts here.
+				n.noteDatasetCatchupRefused(from, schema)
+				break
+			}
 			continue
 		}
 		for _, publication := range publications {

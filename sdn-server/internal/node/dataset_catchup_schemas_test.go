@@ -42,18 +42,24 @@ func TestDatasetCatchupDiscoveryDoesNotStarveRateLimitedSchemas(t *testing.T) {
 	n := &Node{validator: validator}
 	seen := map[string]bool{}
 	refused := 0
-	// Each pass models a refilled provider burst. Use the public listing budget
-	// and all registered schemas, including those beyond its 256-read burst.
-	for pass := 0; pass < 32; pass++ {
+	// Each pass models a refilled provider burst, as the catch-up pass runs
+	// it: the first refusal ends the pass and the next starts there. Use the
+	// public listing budget and all registered schemas, including those
+	// beyond its 256-read burst: every schema is listed within the passes the
+	// burst needs.
+	passes := (len(validator.Schemas()) + 255) / 256
+	for pass := 0; pass < passes; pass++ {
 		budget := readbudget.New(time.Hour, 256)
 		schemas, err := n.datasetCatchupSchemas("provider")
 		if err != nil {
 			t.Fatal(err)
 		}
+		n.noteDatasetCatchupRefused("provider", "")
 		for _, schema := range schemas {
 			if budget.Allow("requester") != 0 {
 				refused++
-				continue
+				n.noteDatasetCatchupRefused("provider", schema)
+				break
 			}
 			seen[schema] = true
 		}
@@ -62,7 +68,7 @@ func TestDatasetCatchupDiscoveryDoesNotStarveRateLimitedSchemas(t *testing.T) {
 		t.Fatal("fixture did not exhaust the provider budget")
 	}
 	if len(seen) != len(validator.Schemas()) {
-		t.Fatalf("listed %d of %d schemas across 32 passes", len(seen), len(validator.Schemas()))
+		t.Fatalf("listed %d of %d schemas across %d passes", len(seen), len(validator.Schemas()), passes)
 	}
 }
 
