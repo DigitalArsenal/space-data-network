@@ -218,7 +218,10 @@ func (b format4Backend) planBatchNewestFirst(q format4.Query, add func([]format4
 		// A page asks for no more than the batch has left: a page the
 		// engine cannot fill is read to the start of the lane.
 		remaining := met.Records - read
-		q.Limit = min(pageLimit, remaining)
+		q.Limit = pageLimit
+		if remaining < q.Limit {
+			q.Limit = remaining
+		}
 		page, err := b.d.api().Scan(b.d.ctx, q)
 		if errors.Is(err, format4.ErrNoType) {
 			break
