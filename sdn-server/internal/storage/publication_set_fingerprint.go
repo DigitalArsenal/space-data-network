@@ -117,7 +117,11 @@ func (b format4Backend) planPublication(schemaName, providerID, sourceName, batc
 	} else if err != nil {
 		return nil, fmt.Errorf("fingerprint %s publication set: %w", schemaName, err)
 	}
-	runs := &cidRuns{}
+	tempDir, err := b.s.sortTempDir()
+	if err != nil {
+		return nil, fmt.Errorf("fingerprint %s publication set: %w", schemaName, err)
+	}
+	runs := &cidRuns{dir: tempDir}
 	defer runs.close()
 	buf := make([]planEntry, 0, publicationSetFingerprintRun)
 	count := 0
@@ -162,7 +166,7 @@ func (b format4Backend) planPublication(schemaName, providerID, sourceName, batc
 	plan := &PublicationPlan{Schema: schemaName, Provider: providerID, Source: sourceName, Batch: batchID, count: count}
 	var out *bufio.Writer
 	if keep {
-		if plan.file, err = os.CreateTemp("", "sdn-publication-plan-*"); err != nil {
+		if plan.file, err = os.CreateTemp(tempDir, "sdn-publication-plan-*"); err != nil {
 			return nil, fmt.Errorf("plan %s publication: %w", schemaName, err)
 		}
 		out = bufio.NewWriterSize(plan.file, 1<<20)
@@ -277,12 +281,16 @@ func sortPlanEntries(es []planEntry) {
 }
 
 // cidRuns is the sorted runs of CIDs a fingerprint has spilled, one
-// temporary file each, one CID and its stored length a line.
-type cidRuns struct{ files []*os.File }
+// temporary file each (in dir, the store's sort directory), one CID and its
+// stored length a line.
+type cidRuns struct {
+	dir   string
+	files []*os.File
+}
 
 func (r *cidRuns) spill(es []planEntry) error {
 	sortPlanEntries(es)
-	f, err := os.CreateTemp("", "sdn-publication-fingerprint-*")
+	f, err := os.CreateTemp(r.dir, "sdn-publication-fingerprint-*")
 	if err != nil {
 		return err
 	}

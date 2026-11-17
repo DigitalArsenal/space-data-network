@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -72,6 +73,27 @@ func TestPublicationFingerprintRealDaemons(t *testing.T) {
 		}
 	}
 	b.awaitRecords(t, "OMM.fbs", "fingerprint", records, 6*time.Minute)
+
+	// The sort's runs and plan are written under the store's directory and
+	// removed when the publication's read ends; what a stopped process left
+	// there is removed when the store opens.
+	sortDir := filepath.Join(a.store, "publication-sort")
+	left, err := os.ReadDir(sortDir)
+	if err != nil {
+		t.Fatalf("the sort did not write under the store directory: %v", err)
+	}
+	if len(left) != 0 {
+		t.Fatalf("%d sort files left under %s after the publication", len(left), sortDir)
+	}
+	a.stop(t)
+	stale := filepath.Join(sortDir, "sdn-publication-fingerprint-stale")
+	if err := os.WriteFile(stale, []byte("bafy 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a.start(t)
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Fatalf("a sort file a stopped process left is still there after the store opened (%v)", err)
+	}
 }
 
 // ingestOMMCIDs ingests n element sets and returns their CIDs, computed from

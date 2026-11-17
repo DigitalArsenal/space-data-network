@@ -940,9 +940,11 @@ func (h *SyncHandler) handleAction(w http.ResponseWriter, r *http.Request) {
 				WriteErrorFrame(w, http.StatusBadRequest, "bad_request", "That lane cannot be followed: "+err.Error(), 0)
 				return
 			}
-		case action == DSSActionUnsubscribe && h.deps.Follow != nil && key.providerID != "" && key.sourceName != "":
+		case action == DSSActionUnsubscribe && h.deps.Follow != nil:
 			// Unsubscribe stops following the lane (from the named
-			// producer, or from every producer when none is named).
+			// producer, or from every producer when none is named); an
+			// Unsubscribe of the standard alone stops every followed lane
+			// of the standard.
 			if err := h.deps.Follow(key.schema, key.providerID, key.sourceName, producer, false); err != nil {
 				WriteErrorFrame(w, http.StatusBadRequest, "bad_request", "That lane cannot be unfollowed: "+err.Error(), 0)
 				return

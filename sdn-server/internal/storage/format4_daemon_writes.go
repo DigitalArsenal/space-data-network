@@ -187,6 +187,9 @@ func (b format4Backend) f4PutDirectKnown(op, schemaName string, records [][]byte
 		}
 		outcomes = append(outcomes, got...)
 	}
+	if len(records) > 0 {
+		b.s.signalWrite(schemaName)
+	}
 	if len(refused.Order) > 0 {
 		return cids, outcomes, refused
 	}

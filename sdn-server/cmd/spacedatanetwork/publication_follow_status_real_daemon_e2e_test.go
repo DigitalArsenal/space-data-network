@@ -24,7 +24,7 @@ func TestPublicationFollowStatusRealDaemons(t *testing.T) {
 	exe := publicationBinary(t)
 	a := newPublicationDaemon(t, exe, "status-producer", "", "", "keep-all")
 	a.start(t)
-	b := newPublicationDaemon(t, exe, "status-receiver", a.address, "", "keep-all")
+	b := newPublicationDaemon(t, exe, "status-receiver", a.address, a.id, "keep-all")
 	b.start(t)
 	time.Sleep(3 * time.Second)
 

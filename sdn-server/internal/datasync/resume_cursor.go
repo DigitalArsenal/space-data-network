@@ -60,6 +60,16 @@ func resumeQueryHash(queryHash string) []byte {
 	return raw[:resumeHashBytes]
 }
 
+// ResumeCursorAt is a resume cursor for req after rowID: a scan that sends
+// it back reads the records stored after rowID. A followed read ends every
+// page with one, so the subscriber's saved position is always a token this
+// store's scan generation verifies: after a rebuild it has expired and the
+// subscriber rescans from the first page instead of skipping.
+func ResumeCursorAt(store interface{ ScanGeneration() []byte }, req QueryRequest, rowID int64) string {
+	queryHash := rawRecordQueryHash(FilterFromRequest(req, 0, 0), NormalizeQueryProfile(req.QueryProfile))
+	return issueResumeCursor(store.ScanGeneration(), rowID, queryHash)
+}
+
 // issueResumeCursor is the token that resumes queryHash after boundary.
 func issueResumeCursor(generation []byte, boundary int64, queryHash string) string {
 	token := make([]byte, resumeBodyBytes, resumeCursorBytes)

@@ -96,14 +96,25 @@ compares the set fingerprint the producer logs ("publication fingerprint")
 with the SHA-256 of the lane header and the sorted CIDs of the records the
 test sent, and checks that the series' three 50,000-record windows are read
 by CID from the plan that fingerprint read made ("Dataset publication
-window").
+window"). The read's sort files are written under the producer's store
+directory (`publication-sort`), none is left after the publication, and one
+left there before a restart is gone once the store opens.
 
 `TestPublicationFollowRealDaemons` follows a lane with nothing published: the
-receiver subscribes with a `$DSS` Subscribe that names the producer
+receiver, which trusts the producer and keeps the lane under
+`replace-current`, subscribes with a `$DSS` Subscribe that names the producer
 (`PROVIDER_PEER_ID`), receives the stored records and then live ones over the
 followed read-chunk stream, keeps the subscription as a `$DSS` record in
-`follows.dss`, and after a restart resumes at its saved cursor with every
-record held once.
+`follows.dss`, replaces the older batch with the newer one while the producer
+keeps both, resumes after its own restart and after the producer's with every
+record held once, and drops the records the producer removed. A producer the
+receiver does not trust is refused with no stream opened. A test host
+speaking the protocol, trusted by the receiver, checks the refusals: a run
+whose header names another peer as its origin, a `RECORD_COUNT` of
+0xFFFFFFFF and an endless run of maximum-size frames are refused with the
+receiver still answering, and a stream cut in the middle of a page is read
+again with nothing lost or doubled. Unsubscribing the standard stops every
+followed lane of it.
 
 `TestPublicationFollowStatusRealDaemons` reads a followed lane's `$DSS` on
 both daemons: the receiver's counts the records and bytes received and the

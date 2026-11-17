@@ -157,6 +157,9 @@ func EngineAOTCacheDir() string { return engineAOTCacheDir() }
 // bounded hot-window CACHE of the routed standards over the same records,
 // tracked by a durable residency ledger (engine_residency.go).
 type FlatSQLStore struct {
+	// writes wakes followed reads when a type's records are stored
+	// (write_signal.go).
+	writes                         writeSignals
 	publicationSourceKeys          atomic.Pointer[map[publicationSourceKey]bool]
 	publicationEnabled             atomic.Bool
 	publicationGroupMu             sync.Mutex

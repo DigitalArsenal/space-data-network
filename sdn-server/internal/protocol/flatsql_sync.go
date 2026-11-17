@@ -17,6 +17,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/QRP"
@@ -50,6 +51,8 @@ type FlatSQLSyncHandler struct {
 	publicationReads *readbudget.Budget
 	// follows counts followed read-chunk streams per lane (FollowStats).
 	follows *followStats
+	// followSlots limits the followed streams served at once.
+	followSlots *followSlots
 }
 
 // syncRequest is one decoded $QRP request.
@@ -75,7 +78,7 @@ type syncRequest struct {
 // sds.IsPublicReadSchema names, from the node's own datastore. Everything
 // else needs SetPrivateReadAuthorizer.
 func NewFlatSQLSyncHandler(store *storage.FlatSQLStore) *FlatSQLSyncHandler {
-	return &FlatSQLSyncHandler{store: store, probes: newWireSpeedProbeBudget(), publicationReads: newPublicationListBudget(), follows: newFollowStats()}
+	return &FlatSQLSyncHandler{store: store, probes: newWireSpeedProbeBudget(), publicationReads: newPublicationListBudget(), follows: newFollowStats(), followSlots: newFollowSlots()}
 }
 
 // SetPrivateReadAuthorizer installs the check that admits a peer to private
@@ -186,7 +189,7 @@ func (h *FlatSQLSyncHandler) HandleStream(op string, s network.Stream) {
 	var requestErr error
 	switch op {
 	case syncwire.OpReadChunk:
-		requestErr = h.handleReadChunk(s, req)
+		requestErr = h.handleReadChunk(s, peerID, req)
 	case syncwire.OpOpenManifest:
 		requestErr = h.handleOpenManifest(s, req)
 	case syncwire.OpListPublished:
@@ -267,7 +270,7 @@ func (req syncRequest) publicationQuery() storage.DatasetShardPublicationQuery {
 	}
 }
 
-func (h *FlatSQLSyncHandler) handleReadChunk(w io.Writer, req syncRequest) error {
+func (h *FlatSQLSyncHandler) handleReadChunk(w io.Writer, peerID peer.ID, req syncRequest) error {
 	activeStore, cleanup, err := h.storeForRequest(req)
 	if err != nil {
 		return err
@@ -284,7 +287,7 @@ func (h *FlatSQLSyncHandler) handleReadChunk(w io.Writer, req syncRequest) error
 		if !ok {
 			return errors.New("a followed read needs a two-way stream")
 		}
-		return h.followReadChunk(rw, activeStore, query)
+		return h.followReadChunk(rw, activeStore, query, peerID, req)
 	}
 	page, records, err := datasync.ScanPage(activeStore, query, datasync.MaxSyncChunkLimit)
 	if err != nil {
@@ -294,12 +297,20 @@ func (h *FlatSQLSyncHandler) handleReadChunk(w io.Writer, req syncRequest) error
 }
 
 // followQuiet is how long a followed read waits for new records before it
-// answers a grant with an empty page; followPoll is how often it looks.
+// answers a grant with an empty page. It waits on the store's write signal
+// for the standard, not by reading again; a store that does not signal is
+// read again once a quiet interval.
 var (
 	followQuiet = 10 * time.Second
-	followPoll  = 100 * time.Millisecond
 	// followGrantWait bounds the wait for the subscriber's next grant.
 	followGrantWait = 30 * time.Minute
+)
+
+// Followed streams this node serves at once: per peer and in total. A
+// stream past either is refused busy.
+const (
+	followStreamsPerPeer = 16
+	followStreamsTotal   = 256
 )
 
 type deadlineSetter interface {
@@ -308,11 +319,22 @@ type deadlineSetter interface {
 }
 
 // followReadChunk serves a followed read-chunk (syncwire/follow.go): one
-// page for the opening request and one for each grant, the scan's own
-// cursors carried from page to page, and once everything stored has been
-// sent, the records stored after it (the scan's resume cursor).
-func (h *FlatSQLSyncHandler) followReadChunk(s io.ReadWriter, store *storage.FlatSQLStore, query datasync.QueryRequest) error {
+// page for the opening request and one for each grant. Every page ends with
+// a resume cursor at its last record (or, once everything stored has been
+// sent, at the scan's boundary), and the next page reads from it: positions
+// are tokens of the store's scan generation, so after a rebuild the
+// subscriber's saved position expires and it reads the lane again instead of
+// skipping. The peer's read permission is checked again before each page:
+// once it is gone the stream ends.
+func (h *FlatSQLSyncHandler) followReadChunk(s io.ReadWriter, store *storage.FlatSQLStore, query datasync.QueryRequest, peerID peer.ID, req syncRequest) error {
+	if !h.followSlots.acquire(peerID) {
+		return errFollowBusy
+	}
+	defer h.followSlots.release(peerID)
 	deadlines, _ := s.(deadlineSetter)
+	if query.Limit <= 0 || query.Limit > syncwire.FollowMaxRecords {
+		query.Limit = syncwire.FollowMaxRecords
+	}
 	lane := followLaneKey(query)
 	h.follows.open(lane)
 	defer h.follows.close(lane)
@@ -328,22 +350,43 @@ func (h *FlatSQLSyncHandler) followReadChunk(s io.ReadWriter, store *storage.Fla
 				}
 				return fmt.Errorf("%w: %v", syncwire.ErrFollowClosed, err)
 			}
+			again := req
+			if err := h.authorize(peerID, &again); err != nil {
+				return err
+			}
 		}
 		var page *datasync.Page
 		var records []*storage.Record
-		waited := time.Duration(0)
+		quiet := time.NewTimer(followQuiet)
 		for {
+			written := store.WriteSignal(query.Schema)
 			var err error
-			page, records, err = datasync.ScanPage(store, query, datasync.MaxSyncChunkLimit)
+			page, records, err = datasync.ScanPage(store, query, syncwire.FollowMaxRecords)
 			if err != nil {
+				quiet.Stop()
 				return err
 			}
-			if !caughtUp || len(records) > 0 || page.NextCursor != "" || waited >= followQuiet {
+			if !caughtUp || len(records) > 0 || page.NextCursor != "" {
 				break
 			}
-			time.Sleep(followPoll)
-			waited += followPoll
+			done := false
+			select {
+			case <-written:
+			case <-quiet.C:
+				done = true
+			}
+			if done {
+				break
+			}
 		}
+		quiet.Stop()
+		cut := syncwire.FollowPageCut(records, query.Limit)
+		more := page.NextCursor != "" || cut < len(records)
+		records = records[:cut]
+		if more {
+			page.ResumeCursor = datasync.ResumeCursorAt(store, query, records[len(records)-1].RowID)
+		}
+		page.Cursor, page.NextCursor = "", ""
 		if deadlines != nil {
 			_ = deadlines.SetWriteDeadline(time.Now().Add(DefaultReadTimeout))
 		}
@@ -356,15 +399,41 @@ func (h *FlatSQLSyncHandler) followReadChunk(s io.ReadWriter, store *storage.Fla
 		}
 		h.follows.served(lane, recordBytes, len(records))
 		query.TotalCount, query.SnapshotID, query.Head = 0, "", ""
-		if page.NextCursor != "" {
-			query.Cursor, query.ResumeCursor = page.NextCursor, ""
-			if snapshotID, total, ok := datasync.CursorSnapshot(query.Cursor); ok {
-				query.SnapshotID, query.Head, query.TotalCount = snapshotID, snapshotID, total
-			}
-		} else {
-			query.Cursor, query.ResumeCursor = "", page.ResumeCursor
-			caughtUp = true
-		}
+		query.Cursor, query.ResumeCursor = "", page.ResumeCursor
+		caughtUp = !more
+	}
+}
+
+// errFollowBusy refuses a followed read past the stream limits.
+var errFollowBusy = fmt.Errorf("%w: followed stream limit reached", syncwire.ErrBusy)
+
+// followSlots counts the followed streams being served, per peer and in
+// total.
+type followSlots struct {
+	mu     sync.Mutex
+	total  int
+	byPeer map[peer.ID]int
+}
+
+func newFollowSlots() *followSlots { return &followSlots{byPeer: map[peer.ID]int{}} }
+
+func (f *followSlots) acquire(p peer.ID) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.total >= followStreamsTotal || f.byPeer[p] >= followStreamsPerPeer {
+		return false
+	}
+	f.total++
+	f.byPeer[p]++
+	return true
+}
+
+func (f *followSlots) release(p peer.ID) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.total--
+	if f.byPeer[p]--; f.byPeer[p] <= 0 {
+		delete(f.byPeer, p)
 	}
 }
 

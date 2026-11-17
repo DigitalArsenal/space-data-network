@@ -407,6 +407,7 @@ func newFormat4Store(basePath string, validator *sds.Validator, cfg storeConfig)
 		f4:                   d,
 	}
 	store.rb = format4Backend{s: store, d: d}
+	store.clearSortTemp()
 	// Record reads never consult a hot window: none exists here.
 	store.engineHotHydrated.Store(true)
 	auxiliaryOpened = true

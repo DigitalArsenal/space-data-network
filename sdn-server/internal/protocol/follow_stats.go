@@ -67,10 +67,18 @@ func (f *followStats) open(l FollowLane) {
 	f.lane(l).Subscribers++
 }
 
+// close ends one follower of l. A lane no follower reads and to which no
+// record was ever served is dropped, so the map holds the lanes being read
+// (bounded by the stream limits) and the lanes records were served from
+// (lanes this node stores), not every lane name a peer asks for.
 func (f *followStats) close(l FollowLane) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.lane(l).Subscribers--
+	s := f.lane(l)
+	s.Subscribers--
+	if s.Subscribers <= 0 && s.ServedRecords == 0 {
+		delete(f.lanes, l)
+	}
 }
 
 func (f *followStats) served(l FollowLane, bytes int64, records int) {

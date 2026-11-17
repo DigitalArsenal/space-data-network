@@ -1402,18 +1402,26 @@ func (b format4Backend) indexedRecordsByCID(filter IndexedRecordQuery) ([]*Recor
 		return nil, fmt.Errorf("failed reading indexed record data: %w", err)
 	}
 	// As QueryIndexedRecords: the (provider, source, batch) of the record's
-	// newest tag in the lane's feed file.
+	// newest tag in the lane's feed file (of the window's batch when it names
+	// one). A planned record with no such tag left the lane after the plan
+	// was read; the same bytes may still be stored under another lane, which
+	// GET also finds, so the tag decides, and the plan is stale.
+	batch := strings.TrimSpace(filter.BatchID)
 	tags, err := b.f4TagRows(filter.SchemaName, filter.CIDs)
 	if err != nil {
 		return nil, fmt.Errorf("indexed query tags: %w", err)
 	}
 	for _, r := range out {
 		var t SourceTags
+		found := false
 		for _, row := range tags[r.CID] { // newest first
-			if row.Provider == provider && row.Source == source {
-				t = f4SourceTags(row.Tag)
+			if row.Provider == provider && row.Source == source && (batch == "" || row.Batch == batch) {
+				t, found = f4SourceTags(row.Tag), true
 				break
 			}
+		}
+		if !found {
+			return nil, fmt.Errorf("%w: %s left the lane", ErrPublicationPlanStale, r.CID)
 		}
 		r.SourceTags = SourceTags{ProviderID: t.ProviderID, SourceName: t.SourceName, BatchID: t.BatchID}
 		r.RowID, r.MaterializedAt = 0, time.Time{}
