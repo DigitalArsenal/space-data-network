@@ -64,26 +64,59 @@ func SubstrateProbeWasm() []byte { return append([]byte(nil), substrateProbeWasm
 
 // SubstrateReport is the self-test's result.
 type SubstrateReport struct {
-	RuntimeVersion           string        `json:"runtime_version"`
-	AtomicNotifyWithoutStore bool          `json:"atomic_notify_without_store"`
-	StopReachesEveryThread   bool          `json:"stop_reaches_every_thread"`
-	InterruptibleAOT         bool          `json:"interruptible_aot"`
-	AOTAtomicMemargOffset    bool          `json:"aot_atomic_memarg_offset"`
-	AOTLoopStopChecks        bool          `json:"aot_loop_stop_checks"`
-	AOTAtomicStoreStack      bool          `json:"aot_atomic_store_stack"`
-	AOTChecked               bool          `json:"aot_checked"`
-	ThreadsStoppedBySingle   int           `json:"threads_stopped_by_one_stop"`
-	ThreadsSpawned           int           `json:"threads_spawned"`
-	AOTNative                bool          `json:"aot_native"`
-	AOTSpeedup               float64       `json:"aot_speedup"`
-	Elapsed                  time.Duration `json:"elapsed_ns"`
-	Errors                   []string      `json:"errors,omitempty"`
+	RuntimeVersion           string          `json:"runtime_version"`
+	AtomicNotifyWithoutStore bool            `json:"atomic_notify_without_store"`
+	StopReachesEveryThread   bool            `json:"stop_reaches_every_thread"`
+	InterruptibleAOT         bool            `json:"interruptible_aot"`
+	AOTAtomicMemargOffset    bool            `json:"aot_atomic_memarg_offset"`
+	AOTLoopStopChecks        bool            `json:"aot_loop_stop_checks"`
+	AOTAtomicStoreStack      bool            `json:"aot_atomic_store_stack"`
+	AOTChecked               bool            `json:"aot_checked"`
+	ThreadsStoppedBySingle   int             `json:"threads_stopped_by_one_stop"`
+	ThreadsSpawned           int             `json:"threads_spawned"`
+	AOTNative                bool            `json:"aot_native"`
+	AOTSpeedup               float64         `json:"aot_speedup"`
+	Elapsed                  time.Duration   `json:"elapsed_ns"`
+	Errors                   []string        `json:"errors,omitempty"`
+	Inconclusive             bool            `json:"inconclusive"`
+	InterpretedStop          StopObservation `json:"interpreted_stop"`
+	AOTStop                  StopObservation `json:"aot_stop"`
+	NotifyAttempts           int             `json:"notify_attempts"`
+	MemargNotifyAttempts     int             `json:"memarg_notify_attempts"`
+	// Runs is how many self-test runs gave this report: an inconclusive run
+	// is run again, up to substrateRuns times (RunSubstrateSelfTestSettled).
+	Runs int `json:"runs"`
 }
 
 // Patched reports whether the runtime behaves like the patched build.
 func (r SubstrateReport) Patched() bool {
-	return r.AtomicNotifyWithoutStore && r.StopReachesEveryThread &&
+	return !r.Inconclusive && len(r.Errors) == 0 && r.AtomicNotifyWithoutStore && r.StopReachesEveryThread &&
 		(!r.AOTChecked || (r.InterruptibleAOT && r.AOTAtomicMemargOffset && r.AOTLoopStopChecks && r.AOTAtomicStoreStack))
+}
+
+// StopObservation records evidence from one stop request, before cleanup.
+// Outcomes are shared, not_shared, inconclusive, or not_checked.
+type StopObservation struct {
+	Outcome          string   `json:"outcome"`
+	Started          int      `json:"started"`
+	Stopped          int      `json:"stopped"`
+	PostStopProgress []uint32 `json:"post_stop_progress,omitempty"`
+	Detail           string   `json:"detail,omitempty"`
+}
+
+// FailureReason distinguishes an observed mismatch from missing evidence.
+func (r SubstrateReport) FailureReason() string {
+	if r.Patched() {
+		return "SDN runtime patches confirmed"
+	}
+	verdict := "runtime failed SDN patch checks"
+	if r.Inconclusive {
+		verdict = "runtime self-test inconclusive"
+	}
+	return fmt.Sprintf("%s: interpreted stop=%s (%d started, %d stopped), AOT stop=%s (%d started, %d stopped), notify=%t memarg=%t loop=%t store=%t native=%t; errors=%v",
+		verdict, r.InterpretedStop.Outcome, r.InterpretedStop.Started, r.InterpretedStop.Stopped,
+		r.AOTStop.Outcome, r.AOTStop.Started, r.AOTStop.Stopped, r.AtomicNotifyWithoutStore,
+		r.AOTAtomicMemargOffset, r.AOTLoopStopChecks, r.AOTAtomicStoreStack, r.AOTNative, r.Errors)
 }
 
 // Tag names the runtime behavior for AOT cache keys of Interruptible
@@ -99,7 +132,14 @@ func (r SubstrateReport) Patched() bool {
 // changes and every host recompiles them.
 // "sdn5" adds AOTAtomicStoreStack: artifacts made by a compiler that leaves
 // the address on its value stack after an atomic store are recompiled.
+//
+// "unverified" is an inconclusive report's tag: its false fields are missing
+// observations, not observed defects, so it names no runtime's artifacts and
+// never loads one compiled by another runtime.
 func (r SubstrateReport) Tag() string {
+	if r.Inconclusive {
+		return "unverified"
+	}
 	if r.AtomicNotifyWithoutStore && r.StopReachesEveryThread {
 		if r.AOTAtomicMemargOffset && r.AOTLoopStopChecks {
 			if r.AOTAtomicStoreStack {
@@ -130,31 +170,37 @@ const probeSpinnerBase = 64
 // RunSubstrateSelfTest runs the substrate checks in fresh, short-lived VMs.
 func RunSubstrateSelfTest(opts SubstrateOptions) SubstrateReport {
 	start := time.Now()
-	rep := SubstrateReport{RuntimeVersion: wasmedge.GetVersion()}
+	rep := SubstrateReport{RuntimeVersion: wasmedge.GetVersion(), AOTStop: StopObservation{Outcome: "not_checked"}}
 	if opts.Spinners <= 0 {
 		opts.Spinners = 4
 	}
+	conclusiveFailure := false
 	fail := func(format string, args ...interface{}) {
 		rep.Errors = append(rep.Errors, fmt.Sprintf(format, args...))
 	}
 
-	if ok, err := probeNotifyWithoutStore(substrateProbeWasm); err != nil {
+	interp, err := probeStop(substrateProbeWasm, opts.Spinners, false)
+	rep.ThreadsSpawned = interp.spawned
+	rep.ThreadsStoppedBySingle = interp.observation.Stopped
+	rep.InterpretedStop = interp.observation
+	rep.StopReachesEveryThread = interp.observation.Outcome == "shared"
+	conclusiveFailure = interp.observation.Outcome == "not_shared"
+	if err != nil {
+		fail("interpreted stop: %v", err)
+	}
+	failedConclusively := func() bool { return conclusiveFailure }
+
+	ok, attempts, err := probeNotifyWithoutStore(substrateProbeWasm, failedConclusively)
+	rep.NotifyAttempts = attempts
+	if err != nil {
 		fail("atomic notify: %v", err)
 	} else {
 		rep.AtomicNotifyWithoutStore = ok
 	}
 
-	interp, err := probeStop(substrateProbeWasm, opts.Spinners, false)
-	if err != nil {
-		fail("interpreted stop: %v", err)
-	} else {
-		rep.ThreadsSpawned = interp.spawned
-		rep.ThreadsStoppedBySingle = interp.stoppedBySingle
-		rep.StopReachesEveryThread = interp.spawned > 0 && interp.stoppedBySingle == interp.spawned
-	}
-
 	if !opts.SkipAOT {
 		rep.AOTChecked = true
+		rep.AOTStop = StopObservation{Outcome: "inconclusive", Detail: "AOT probe did not run"}
 		if interpreted, err := probeAtomicStoreStack(atomicStoreProbeWasm); err != nil {
 			fail("interpreted atomic store stack: %v", err)
 		} else if compiled, err := compileThreadedAOT(atomicStoreProbeWasm); err != nil {
@@ -163,133 +209,208 @@ func RunSubstrateSelfTest(opts SubstrateOptions) SubstrateReport {
 			fail("AOT atomic store stack: %v", err)
 		} else {
 			rep.AOTAtomicStoreStack = interpreted && ok
+			conclusiveFailure = conclusiveFailure || !rep.AOTAtomicStoreStack
 		}
 		compiled, cerr := compileProbeAOT()
 		if cerr != nil {
 			fail("interruptible AOT compile: %v", cerr)
-		} else if aot, aerr := probeStop(compiled, opts.Spinners, true); aerr != nil {
-			fail("interruptible AOT stop: %v", aerr)
 		} else {
+			aot, aerr := probeStop(compiled, opts.Spinners, true)
+			rep.AOTStop = aot.observation
+			conclusiveFailure = conclusiveFailure || aot.observation.Outcome == "not_shared"
+			if aerr != nil {
+				fail("interruptible AOT stop: %v", aerr)
+			}
 			if interp.rate > 0 {
 				rep.AOTSpeedup = aot.rate / interp.rate
 			}
-			// A probe that silently fell back to interpreting cannot prove the
-			// AOT path: the interpreter's counter must not move while it spins.
-			rep.AOTNative = aot.interpreted == 0
-			if !rep.AOTNative {
+			// Preserve the measured execution mode even if completion is delayed.
+			rep.AOTNative = aot.measured && aot.interpreted == 0
+			if aot.measured && !rep.AOTNative {
+				conclusiveFailure = true
 				fail("AOT probe interpreted %d instructions while spinning; the AOT section was not used", aot.interpreted)
 			}
-			rep.InterruptibleAOT = rep.AOTNative && aot.spawned > 0 && aot.stoppedBySingle == aot.spawned
-		}
-		if cerr == nil {
-			if ok, err := probeMemargOffset(compiled); err != nil {
+			rep.InterruptibleAOT = rep.AOTNative && aot.observation.Outcome == "shared"
+			memarg, err := probeMemargOffset(compiled, failedConclusively)
+			rep.MemargNotifyAttempts = memarg.notifyAttempts
+			conclusiveFailure = conclusiveFailure || memarg.waitMismatch
+			if err != nil {
 				fail("AOT atomic memarg offset: %v", err)
 			} else {
-				rep.AOTAtomicMemargOffset = ok
+				rep.AOTAtomicMemargOffset = memarg.ok
 			}
 		}
 		if ok, err := probeLoopStopChecks(); err != nil {
 			fail("AOT loop stop checks: %v", err)
 		} else {
 			rep.AOTLoopStopChecks = ok
+			conclusiveFailure = conclusiveFailure || !ok
 		}
 	}
+	// A notify that timed out on every attempt, and a missing observation,
+	// cannot establish that a patch is absent. Only an observed behavioral
+	// mismatch can do that.
+	rep.Inconclusive = !conclusiveFailure && !rep.Patched()
 	rep.Elapsed = time.Since(start)
 	return rep
 }
 
+// substrateRuns bounds the runs of one settled self-test.
+const substrateRuns = 3
+
+// RunSubstrateSelfTestSettled runs the self-test until a run is conclusive,
+// at most substrateRuns times, and returns the last run's report.
+func RunSubstrateSelfTestSettled(opts SubstrateOptions) SubstrateReport {
+	var rep SubstrateReport
+	for run := 1; run <= substrateRuns; run++ {
+		rep = RunSubstrateSelfTest(opts)
+		rep.Runs = run
+		if !rep.Inconclusive {
+			break
+		}
+	}
+	return rep
+}
+
 var (
-	substrateOnce   sync.Once
-	substrateReport SubstrateReport
+	substrateMu      sync.Mutex
+	substrateReport  SubstrateReport
+	substrateSettled bool
 )
 
-// SubstrateStatus runs the self-test once per process (with the AOT check)
-// and returns the cached report thereafter.
+// SubstrateStatus runs the settled self-test (with the AOT check) and keeps a
+// conclusive report for the life of the process. An inconclusive report is
+// returned but not kept: the next call runs the self-test again, so a busy
+// start never decides the process's runtime.
 func SubstrateStatus() SubstrateReport {
-	substrateOnce.Do(func() {
-		substrateReport = RunSubstrateSelfTest(SubstrateOptions{})
-		level := "INFO"
-		if !substrateReport.Patched() {
-			level = "WARN"
-		}
-		fmt.Fprintf(os.Stderr, "[wasmrt] %s substrate self-test: runtime %s notify-without-store=%t stop-reaches-every-thread=%t interruptible-aot=%t (%.1fx) aot-atomic-memarg-offset=%t aot-loop-stop-checks=%t aot-atomic-store-stack=%t in %s %v\n",
-			level, substrateReport.RuntimeVersion, substrateReport.AtomicNotifyWithoutStore,
-			substrateReport.StopReachesEveryThread, substrateReport.InterruptibleAOT, substrateReport.AOTSpeedup,
-			substrateReport.AOTAtomicMemargOffset, substrateReport.AOTLoopStopChecks, substrateReport.AOTAtomicStoreStack,
-			substrateReport.Elapsed.Round(time.Millisecond), substrateReport.Errors)
-	})
+	substrateMu.Lock()
+	defer substrateMu.Unlock()
+	if substrateSettled {
+		return substrateReport
+	}
+	substrateReport = RunSubstrateSelfTestSettled(SubstrateOptions{})
+	substrateSettled = !substrateReport.Inconclusive
+	level := "INFO"
+	if !substrateReport.Patched() {
+		level = "WARN"
+	}
+	fmt.Fprintf(os.Stderr, "[wasmrt] %s substrate self-test: runtime %s notify-without-store=%t stop-reaches-every-thread=%t interruptible-aot=%t (%.1fx) aot-atomic-memarg-offset=%t aot-loop-stop-checks=%t aot-atomic-store-stack=%t in %s after %d run(s); %s\n",
+		level, substrateReport.RuntimeVersion, substrateReport.AtomicNotifyWithoutStore,
+		substrateReport.StopReachesEveryThread, substrateReport.InterruptibleAOT, substrateReport.AOTSpeedup,
+		substrateReport.AOTAtomicMemargOffset, substrateReport.AOTLoopStopChecks, substrateReport.AOTAtomicStoreStack,
+		substrateReport.Elapsed.Round(time.Millisecond), substrateReport.Runs, substrateReport.FailureReason())
 	return substrateReport
 }
 
-func probeNotifyWithoutStore(wasm []byte) (bool, error) {
-	m, err := NewModule(wasm, WithMaxThreads(4), WithExecTimeout(3*time.Second))
+// A notify probe's waiter gives up after 500 ms. Without the patch under test
+// it is never woken, so it times out on every attempt and can never report a
+// wake. With the patch, a timeout only means the notifier thread did not run
+// within those 500 ms. A timed-out attempt is therefore repeated, in a fresh
+// module so no notifier outlives its attempt, until a wake, the observation
+// limit, or another check's conclusive failure.
+
+// probeNotifyWithoutStore returns whether a notify woke a waiter whose word
+// never changed, and how many attempts it took.
+func probeNotifyWithoutStore(wasm []byte, failedConclusively func() bool) (bool, int, error) {
+	deadline := time.Now().Add(substrateObservationLimit)
+	for attempts := 1; ; attempts++ {
+		r, err := runProbeExport(wasm, 4, "notify_without_store")
+		if err != nil {
+			return false, attempts, err
+		}
+		switch r {
+		case 0:
+			return true, attempts, nil
+		case 2:
+			if failedConclusively() || !time.Now().Before(deadline) {
+				return false, attempts, nil
+			}
+		default:
+			return false, attempts, fmt.Errorf("notify_without_store returned %d", r)
+		}
+	}
+}
+
+// runProbeExport runs one export returning i32 in a fresh module.
+func runProbeExport(wasm []byte, threads int, name string) (int32, error) {
+	m, err := NewModule(wasm, WithMaxThreads(threads), WithExecTimeout(substrateObservationLimit))
 	if err != nil {
-		return false, err
+		return 0, err
 	}
 	defer m.Release()
-	v, err := m.Execute("notify_without_store")
+	v, err := m.Execute(name)
 	if err != nil {
-		return false, err
+		return 0, err
 	}
 	if len(v) != 1 {
-		return false, errors.New("unexpected result arity")
+		return 0, fmt.Errorf("%s: unexpected result arity", name)
 	}
-	switch ToInt32(v[0]) {
-	case 0:
-		return true, nil
-	case 2:
-		return false, nil
-	default:
-		return false, fmt.Errorf("notify_without_store returned %d", ToInt32(v[0]))
-	}
+	return ToInt32(v[0]), nil
+}
+
+type memargProbe struct {
+	ok             bool
+	waitMismatch   bool // the wait compared the word without its offset
+	notifyAttempts int
 }
 
 // probeMemargOffset runs the two memarg-offset checks on the AOT-compiled
-// probe: a notify addressed through its offset wakes the waiter, and a wait
-// addressed that way compares the right word.
-func probeMemargOffset(compiled []byte) (bool, error) {
-	m, err := NewModule(compiled, WithMaxThreads(4), WithExecTimeout(3*time.Second))
+// probe. A wait addressed through its offset must compare the word at 32 (7),
+// not the word at 0: the wrong address returns not-equal (1) at once, every
+// time, which is a conclusive mismatch. A notify addressed that way must wake
+// a waiter on address 32; it is repeated as described above.
+func probeMemargOffset(compiled []byte, failedConclusively func() bool) (memargProbe, error) {
+	var out memargProbe
+	wait, err := runProbeExport(compiled, 4, "memarg_offset_wait")
 	if err != nil {
-		return false, err
+		return out, err
 	}
-	defer m.Release()
-	v, err := m.Execute("memarg_offset_notify")
-	if err != nil {
-		return false, err
+	switch wait {
+	case 1:
+		out.waitMismatch = true
+		return out, nil
+	case 2:
+	default:
+		return out, fmt.Errorf("memarg_offset_wait returned %d", wait)
 	}
-	if len(v) != 1 {
-		return false, errors.New("unexpected result arity")
+	deadline := time.Now().Add(substrateObservationLimit)
+	for {
+		out.notifyAttempts++
+		notify, err := runProbeExport(compiled, 4, "memarg_offset_notify")
+		if err != nil {
+			return out, err
+		}
+		switch notify {
+		case 0:
+			out.ok = true
+			return out, nil
+		case 2:
+			if failedConclusively() || !time.Now().Before(deadline) {
+				return out, nil
+			}
+		default:
+			return out, fmt.Errorf("memarg_offset_notify returned %d", notify)
+		}
 	}
-	notify := ToInt32(v[0])
-	if notify != 0 && notify != 2 {
-		return false, fmt.Errorf("memarg_offset_notify returned %d", notify)
-	}
-	v, err = m.Execute("memarg_offset_wait")
-	if err != nil {
-		return false, err
-	}
-	if len(v) != 1 {
-		return false, errors.New("unexpected result arity")
-	}
-	wait := ToInt32(v[0])
-	if wait != 1 && wait != 2 {
-		return false, fmt.Errorf("memarg_offset_wait returned %d", wait)
-	}
-	return notify == 0 && wait == 2, nil
 }
 
 type stopProbe struct {
-	spawned, stoppedBySingle int
-	rate                     float64 // increments per second across spinners
-	interpreted              uint64  // interpreter instructions during the rate window
+	spawned     int
+	rate        float64 // increments per second across spinners
+	interpreted uint64  // interpreter instructions during the rate window
+	measured    bool
+	observation StopObservation
 }
 
-// probeStop starts n spinners, measures their rate, issues exactly ONE stop
-// and counts the threads it ended, then stops the rest however many rounds it
-// takes (an unpatched runtime needs one per thread).
-func probeStop(wasm []byte, n int, countInstructions bool) (stopProbe, error) {
-	var out stopProbe
-	opts := []Option{WithMaxThreads(n + 1), WithExecTimeout(3 * time.Second)}
+// An observation deadline limits waiting; expiration does not prove a missing patch.
+const substrateObservationLimit = 30 * time.Second
+
+// probeStop issues one stop after every spinner has started. All completions
+// prove a shared token. Continued execution after synchronizing the counters
+// proves a consumed token. A deadline is only an inconclusive observation.
+func probeStop(wasm []byte, n int, countInstructions bool) (out stopProbe, err error) {
+	out.observation.Outcome = "inconclusive"
+	opts := []Option{WithMaxThreads(n + 1)}
 	if countInstructions {
 		opts = append(opts, WithInstructionCounting())
 	}
@@ -297,15 +418,25 @@ func probeStop(wasm []byte, n int, countInstructions bool) (stopProbe, error) {
 	if err != nil {
 		return out, err
 	}
-	released := false
 	defer func() {
-		if !released {
-			m.Release()
+		// Cleanup is separate from the single-stop observation, including on
+		// readiness failures. Never free memory beneath an unfinished worker.
+		if left := m.InterruptThreads(time.Now().Add(substrateObservationLimit)); left > 0 {
+			cleanupErr := fmt.Errorf("cleanup: %d spinners remain; retained probe VM", left)
+			m.MarkPoisoned(cleanupErr)
+			err = errors.Join(err, cleanupErr)
+			return
 		}
+		m.Release()
 	}()
+	// A threaded module's call without its own budget runs under the 30 s
+	// wall-clock bound executeDirect gives every threaded guest.
 	v, err := m.Execute("spawn_spinners", int32(n))
 	if err != nil {
 		return out, err
+	}
+	if len(v) != 1 {
+		return out, errors.New("unexpected spinner result arity")
 	}
 	out.spawned = int(ToInt32(v[0]))
 	if out.spawned != n {
@@ -316,43 +447,72 @@ func probeStop(wasm []byte, n int, countInstructions bool) (stopProbe, error) {
 		return out, err
 	}
 	sum := func() uint64 {
-		var s uint64
+		var total uint64
 		for i := 0; i < n; i++ {
-			s += uint64(mem.Load32(probeSpinnerBase + uint32(64*i)))
+			total += uint64(mem.Load32(probeSpinnerBase + uint32(64*i)))
 		}
-		return s
+		return total
 	}
-	deadline := time.Now().Add(2 * time.Second)
-	for i := 0; i < n; i++ {
-		for mem.Load32(probeSpinnerBase+uint32(64*i)) == 0 {
-			if time.Now().After(deadline) {
-				return out, errors.New("spinners did not start")
+	deadline := time.Now().Add(substrateObservationLimit)
+	for out.observation.Started < n {
+		out.observation.Started = 0
+		for i := 0; i < n; i++ {
+			if mem.Load32(probeSpinnerBase+uint32(64*i)) != 0 {
+				out.observation.Started++
 			}
-			time.Sleep(time.Millisecond)
 		}
+		if out.observation.Started == n {
+			break
+		}
+		if !time.Now().Before(deadline) {
+			out.observation.Detail = fmt.Sprintf("readiness deadline: %d of %d spinners observed running", out.observation.Started, n)
+			return out, errors.New(out.observation.Detail)
+		}
+		time.Sleep(time.Millisecond)
 	}
 	t0, s0, i0 := time.Now(), sum(), m.InstructionCount()
 	time.Sleep(100 * time.Millisecond)
 	out.rate = float64(sum()-s0) / time.Since(t0).Seconds()
 	out.interpreted = m.InstructionCount() - i0
+	out.measured = true
 
-	workers := m.threads.live()
-	if len(workers) == 0 {
-		return out, errors.New("no live spinners")
+	workers := m.threads.cancelOne()
+	if len(workers) != n {
+		return out, fmt.Errorf("found %d live spinners, expected %d", len(workers), n)
 	}
-	m.threads.mu.Lock()
-	m.threads.interrupting = true
-	m.threads.mu.Unlock()
-	workers[0].async.Cancel()
-	still := waitAll(workers, time.Now().Add(300*time.Millisecond))
-	out.stoppedBySingle = len(workers) - still
-	if left := m.InterruptThreads(time.Now().Add(3 * time.Second)); left > 0 {
-		// Never free memory beneath running threads: retain the VM.
-		released = true
-		m.MarkPoisoned(fmt.Errorf("substrate probe: %d spinners did not stop", left))
-		return out, fmt.Errorf("%d spinners did not stop", left)
+	// Cancel synchronously stores the stop token. A guest atomic RMW that
+	// reads this reset synchronizes with that store. It may finish its current
+	// iteration, but a second increment requires another loop-header stop
+	// check. A sticky token therefore permits at most one post-reset increment.
+	// The guest drops the counter value; this cannot terminate its loop.
+	for i := 0; i < n; i++ {
+		mem.Store32(probeSpinnerBase+uint32(64*i), 0)
 	}
-	return out, nil
+	out.observation.PostStopProgress = make([]uint32, n)
+	deadline = time.Now().Add(substrateObservationLimit)
+	for {
+		continued := false
+		for i := 0; i < n; i++ {
+			progress := mem.Load32(probeSpinnerBase + uint32(64*i))
+			out.observation.PostStopProgress[i] = progress
+			continued = continued || progress > 1
+		}
+		out.observation.Stopped = n - unfinishedWorkers(workers)
+		if continued {
+			out.observation.Outcome = "not_shared"
+			out.observation.Detail = "spinner continued through a loop-header stop check after the synchronized reset"
+			return out, nil
+		}
+		if out.observation.Stopped == n {
+			out.observation.Outcome = "shared"
+			return out, nil
+		}
+		if !time.Now().Before(deadline) {
+			out.observation.Detail = fmt.Sprintf("completion deadline: %d of %d spinners completed after one stop; no continued execution observed", out.observation.Stopped, n)
+			return out, errors.New(out.observation.Detail)
+		}
+		time.Sleep(time.Millisecond)
+	}
 }
 
 func compileProbeAOT() ([]byte, error) {
@@ -438,7 +598,7 @@ func compileThreadedAOT(wasm []byte) ([]byte, error) {
 // probeAtomicStoreStack checks all seven store opcodes, including narrow stores.
 // The defective compiler returns -2 instead of 98 after leaving address 0 above 100.
 func probeAtomicStoreStack(wasm []byte) (bool, error) {
-	m, err := NewModule(wasm, WithMaxThreads(1), WithExecTimeout(3*time.Second))
+	m, err := NewModule(wasm, WithMaxThreads(1), WithExecTimeout(substrateObservationLimit))
 	if err != nil {
 		return false, err
 	}
