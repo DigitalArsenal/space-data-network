@@ -1320,6 +1320,10 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				// config-gated IPNS pointer to each lane's current DPM
 				// (graph: sdn-publication-hygiene-20260928).
 				publicationService.SetPublicationPolicy(cfg.Publishing.Retention, cfg.Publishing.IPNSPointers)
+				publicationService.SetAlerts(n.Alerts())
+				// What publications that did not complete before the last
+				// stop left in the publication directory.
+				go publicationService.SweepPublicationFiles()
 				if keep := cfg.Publishing.Retention.KeepSeries; keep > 0 {
 					log.Infof("Dataset publication retention: newest %d series per lane are kept (%d lane override(s))", keep, len(cfg.Publishing.Retention.Lanes))
 				} else {

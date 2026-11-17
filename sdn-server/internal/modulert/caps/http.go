@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -102,6 +103,19 @@ const (
 	httpCapRangeResumes = 4
 )
 
+// datasetPublicationPath is the node's own dataset publication route
+// (internal/api DatasetPublicationHandler).
+const datasetPublicationPath = "/api/v1/admin/dataset-updates/publish"
+
+// isDatasetPublicationRequest reports a POST to the dataset publication route.
+func isDatasetPublicationRequest(method, rawURL string) bool {
+	if !strings.EqualFold(strings.TrimSpace(method), http.MethodPost) {
+		return false
+	}
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	return err == nil && strings.TrimRight(parsed.Path, "/") == datasetPublicationPath
+}
+
 func httpCapHandle(operation string, payload []byte) ([]byte, error) {
 	return httpCapHandleContext(context.Background(), operation, payload)
 }
@@ -129,6 +143,14 @@ func httpCapHandleContext(parent context.Context, operation string, payload []by
 	if req.URL == "" {
 		return errCapJSON("missing url"), nil
 	}
+	// The node's own dataset publication is the run's work, not an upstream
+	// that may be down: anything but a success fails the run.
+	publication := isDatasetPublicationRequest(req.Method, req.URL)
+	fault := func(what string) {
+		if publication {
+			modulert.RecordRunFault(parent, fmt.Sprintf("dataset publication request to %s %s", req.URL, what))
+		}
+	}
 	if req.Method == "" {
 		req.Method = "GET"
 	}
@@ -155,6 +177,7 @@ func httpCapHandleContext(parent context.Context, operation string, payload []by
 	if paceErr != nil {
 		msg := fmt.Sprintf("egress pacing for %s stopped after %s waiting for the request slot: %v", destHost, paceWait.Round(time.Millisecond), paceErr)
 		observeFetch(req.URL, 0, 0, paceWait.Milliseconds(), msg)
+		fault("failed: " + msg)
 		return errCapJSON(msg), nil
 	}
 	defer release()
@@ -172,6 +195,7 @@ func httpCapHandleContext(parent context.Context, operation string, payload []by
 
 	httpReq, err := http.NewRequestWithContext(ctx, strings.ToUpper(req.Method), req.URL, bodyReader)
 	if err != nil {
+		fault("failed: " + err.Error())
 		return errCapJSON("invalid request: " + err.Error()), nil
 	}
 
@@ -194,6 +218,7 @@ func httpCapHandleContext(parent context.Context, operation string, payload []by
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		observeFetch(req.URL, 0, 0, time.Since(started).Milliseconds(), err.Error())
+		fault("failed: " + err.Error())
 		return errCapJSON("request failed: " + err.Error()), nil
 	}
 	defer resp.Body.Close()
@@ -226,14 +251,19 @@ func httpCapHandleContext(parent context.Context, operation string, payload []by
 	}
 	if err != nil {
 		observeFetch(req.URL, resp.StatusCode, int64(len(respBody)), time.Since(started).Milliseconds(), err.Error())
+		fault("failed while reading its answer: " + err.Error())
 		return errCapJSON("failed to read response body: " + err.Error()), nil
 	}
 	if int64(len(respBody)) > limit {
 		msg := fmt.Sprintf("response body exceeds the %d-byte limit — refusing to deliver a truncated payload", limit)
 		observeFetch(req.URL, resp.StatusCode, int64(len(respBody)), time.Since(started).Milliseconds(), msg)
+		fault("failed: " + msg)
 		return errCapJSON(msg), nil
 	}
 	observeFetch(req.URL, resp.StatusCode, int64(len(respBody)), time.Since(started).Milliseconds(), "")
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		fault(fmt.Sprintf("answered HTTP %d: %.512s", resp.StatusCode, respBody))
+	}
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		observeFetchValidators(req.URL, resp.Header.Get("ETag"), resp.Header.Get("Last-Modified"))
 	}

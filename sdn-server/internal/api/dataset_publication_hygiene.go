@@ -20,6 +20,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -29,9 +30,64 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
 
-// publicationFileSweepMinAge guards the publication-directory sweep: a file
-// younger than this may belong to an export whose row is not written yet.
+// publicationFileSweepMinAge is the hygiene policy's sweep age, kept for
+// callers outside this node's own publication runs. The node's sweeps
+// (sweepPublicationFiles) keep instead every file written since the oldest
+// running publication of the schema started.
 const publicationFileSweepMinAge = time.Hour
+
+// publicationFileSweepMargin covers file-system timestamp granularity: a file
+// is kept when written up to this long before the sweep's cutoff.
+const publicationFileSweepMargin = 2 * time.Second
+
+// sweepPublicationFiles removes the schema's shard, index and staged CAR
+// files that no publication row names: the files of publications that never
+// completed (cut, failed, or stopped with the process) and of retired ones.
+// Files written since the oldest other running publication of the schema
+// started, or since the sweep began, are kept: they may belong to a
+// publication whose row is not written yet.
+func (s *ConcreteDatasetPublicationService) sweepPublicationFiles(schema string, self *publicationRun) {
+	if s == nil || s.store == nil || s.outputDir == "" {
+		return
+	}
+	now := s.now()
+	cutoff := now
+	if oldest := s.runs.oldestStart(schema, self); !oldest.IsZero() && oldest.Before(cutoff) {
+		cutoff = oldest
+	}
+	sweep, err := s.store.SweepDatasetPublicationFiles(s.outputDir, schema, now.Sub(cutoff)+publicationFileSweepMargin, now)
+	if err != nil {
+		log.Warnf("sweep %s publication files: %v", schema, err)
+	} else if sweep.FilesRemoved > 0 {
+		log.Infof("publication files %s: removed %d unreferenced file(s), %d bytes", schema, sweep.FilesRemoved, sweep.BytesRemoved)
+	}
+}
+
+// SweepPublicationFiles runs sweepPublicationFiles over every schema
+// directory under the publication output directory: at start, it removes
+// what publications that did not complete before the process stopped left.
+func (s *ConcreteDatasetPublicationService) SweepPublicationFiles() {
+	if s == nil || s.outputDir == "" {
+		return
+	}
+	entries, err := os.ReadDir(s.outputDir)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			log.Warnf("sweep publication files: %v", err)
+		}
+		return
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		schema := entry.Name() + ".fbs"
+		if sds.ValidateSchemaName(schema) != nil || safeDatasetPathComponent(schema) != entry.Name() {
+			continue
+		}
+		s.sweepPublicationFiles(schema, nil)
+	}
+}
 
 // ipnsPointerPublishTimeout bounds one name/publish call. An online Kubo puts
 // the record into the DHT before it answers.
@@ -190,7 +246,7 @@ func (s *ConcreteDatasetPublicationService) afterPublication(ctx context.Context
 	if s == nil || s.store == nil || result == nil {
 		return fmt.Errorf("cannot record publication completion without a store and result")
 	}
-	retention, pointers, sweepAge := s.hygiene.policy()
+	retention, pointers, _ := s.hygiene.policy()
 	lane := storage.DatasetPublicationLane{SchemaName: schema, ProviderID: req.ProviderID, SourceName: req.SourceName}
 
 	parts := result.Publications
@@ -232,14 +288,7 @@ func (s *ConcreteDatasetPublicationService) afterPublication(ctx context.Context
 		return fmt.Errorf("retain publication completion: %w", err)
 	}
 	s.releaseRedundantShardGroupCARs(ctx, lane)
-	if s.outputDir != "" {
-		sweep, err := s.store.SweepDatasetPublicationFiles(s.outputDir, schema, sweepAge, s.now())
-		if err != nil {
-			log.Warnf("sweep %s publication files: %v", schema, err)
-		} else if sweep.FilesRemoved > 0 {
-			log.Infof("publication files %s: removed %d unreferenced file(s), %d bytes", schema, sweep.FilesRemoved, sweep.BytesRemoved)
-		}
-	}
+	s.sweepPublicationFiles(schema, runOf(ctx))
 
 	for _, pointer := range pointers {
 		if !config.PublishingLaneMatches(pointer.Schema, pointer.ProviderID, pointer.SourceName, schema, req.ProviderID, req.SourceName) {
