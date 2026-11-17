@@ -132,6 +132,44 @@ def boot_observation():
     raise RuntimeError('connector startup persistence did not finish')
 
 
+def restart_check(seconds, expected, feeds_before, boot_ms, before_invocation,
+                  first_invocation, first_additions):
+    # One clean stop and start of the new node on the converted store, then
+    # the same record and feed comparisons against the format-4 baseline.
+    stop_unix = time.time()
+    command('systemctl', 'stop', UNIT)
+    if command('systemctl', 'show', '-p', 'MainPID', '--value', UNIT) != '0':
+        raise RuntimeError('the new node did not stop')
+    command('systemctl', 'start', '--no-block', UNIT)
+    wait_ready(seconds)
+    if peer() != expected:
+        raise RuntimeError('identity changed over the restart')
+    invocation, additions = boot_observation()
+    if invocation == first_invocation:
+        raise RuntimeError('the node did not restart')
+    since = time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(stop_unix - 1))
+    journal = subprocess.run(['journalctl', '--no-pager', '-o', 'cat', '--utc', '--since', since,
+                              '-u', UNIT], capture_output=True, text=True, check=True).stdout
+    corrupt = [line[:300] for line in journal.splitlines()
+               if 'quarantined' in line or 'P4_E_CORRUPT' in line]
+    (ROOT / 'restart-journal-corrupt-lines.json').write_text(json.dumps(corrupt, indent=1) + '\n')
+    after, feeds_after = counts('after-restart', time.time())
+    (ROOT / 'counts-after-restart.json').write_text(json.dumps(after, sort_keys=True) + '\n')
+    preservation = records.compare('/evidence/records-before', after, boot_ms,
+                                   first_additions + additions, expected, True, starts=2,
+                                   additions_name='records-after-restart-additions')
+    (ROOT / 'record-preservation-after-restart.json').write_text(json.dumps(preservation, indent=2) + '\n')
+    refreshes = sum(row.get('refreshed_local_profiles', 0) for row in preservation['standards'].values())
+    feed_result = compare_feeds(feeds_before, feeds_after, first_additions + additions, refreshes)
+    (ROOT / 'feed-counts-comparison-after-restart.json').write_text(json.dumps(feed_result, indent=2) + '\n')
+    result = {'passed': not corrupt and preservation['passed'] and feed_result['passed'],
+              'corrupt_journal_lines': len(corrupt), 'records_preserved': preservation['passed'],
+              'feed_counts_preserved': feed_result['passed'],
+              'startup_icn_persisted': [first_additions, additions]}
+    (ROOT / 'restart-check.json').write_text(json.dumps(result, indent=2) + '\n')
+    return result
+
+
 def tree_size(path):
     return sum(p.stat().st_size for p in path.rglob('*') if p.is_file()) if path.exists() else 0
 
@@ -358,10 +396,16 @@ ExecStartPre=/bin/sh -c 'test ! -d /case/store/fsql5'
             'refused': second != 0, 'daemon_pid_unchanged': unchanged}) + '\n')
         if second == 0 or not unchanged:
             raise RuntimeError('second run was not refused without restarting the node')
+    restart_result = None
+    if case == 'forward' and code == 0 and ' SUCCESS ' in ledger:
+        restart_result = restart_check(seconds, expected, feeds_before, boot_ms,
+                                       before_invocation, after_invocation, boot_additions)
     if not preservation['passed']:
         raise RuntimeError('record preservation failed')
     if not feed_result['passed']:
         raise RuntimeError('per-feed counts changed')
+    if restart_result is not None and not restart_result['passed']:
+        raise RuntimeError('the converted store changed over a clean stop and start')
     if case == 'forward':
         if code != 0 or ' SUCCESS ' not in ledger:
             raise RuntimeError('forward conversion failed')

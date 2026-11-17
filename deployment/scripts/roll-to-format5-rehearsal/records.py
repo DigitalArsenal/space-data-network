@@ -243,11 +243,12 @@ def snapshot(directory, schemas):
 
 
 def compare(directory, schemas, boot_ms, expected_boot_additions,
-            local_peer=None, allow_profile_refresh=False):
+            local_peer=None, allow_profile_refresh=False, starts=1,
+            additions_name='records-after-additions'):
     directory = Path(directory)
     before = json.loads((directory / 'summary.json').read_text())
     results = {}
-    additions = directory.parent / 'records-after-additions'
+    additions = directory.parent / additions_name
     additions.mkdir(exist_ok=True)
     for schema in sorted(set(schemas) | set(before)):
         if schema not in before:
@@ -259,7 +260,7 @@ def compare(directory, schemas, boot_ms, expected_boot_additions,
         db = sqlite3.connect(index)
         added = changed = unexplained = matched = 0
         refreshed_profiles = 0
-        added_connectors = set()
+        added_connectors = {}
         with (directory / (schema + '.sds')).open('rb') as stream, \
                 (additions / (schema + '.sds')).open('wb') as after_stream:
             profiles = []
@@ -288,9 +289,10 @@ def compare(directory, schemas, boot_ms, expected_boot_additions,
                     if schema == 'ICN.fbs':
                         connector, updated = icn_fields(data)
                         known = db.execute('SELECT 1 FROM connectors WHERE id=?', (connector,)).fetchone()
-                        if not known or updated < boot_ms or connector in added_connectors:
+                        # Each node start since the roll writes one record per connector.
+                        if not known or updated < boot_ms or added_connectors.get(connector, 0) >= starts:
                             unexplained += 1
-                        added_connectors.add(connector)
+                        added_connectors[connector] = added_connectors.get(connector, 0) + 1
                     elif schema == 'EPM.fbs' and len(profiles) == 1 and not refreshed_profiles:
                         profile = local_profile(data, local_peer)
                         old_cid, old_profile = profiles[0]

@@ -69,7 +69,7 @@ silently create an empty store.
 
 | Case | Required evidence |
 | --- | --- |
-| forward | Zero exit, SUCCESS, record-by-record preservation, ready and unchanged identity. A second invocation is refused. |
+| forward | Zero exit, SUCCESS, record-by-record preservation, ready and unchanged identity. A second invocation is refused. Then one clean stop and start of the new node: no `quarantined` or `P4_E_CORRUPT` line in its journal from the stop on, and record-by-record and per-feed preservation again against the format-4 baseline (`restart-check.json`, `record-preservation-after-restart.json`, `feed-counts-comparison-after-restart.json`). Each start since the roll may add one `$ICN` record per connector. |
 | interrupted | SIGTERM to the recorded migration PID after the pending directory appears, automatic recovery, ready, unchanged identity and identical fsql4 file hashes. |
 | budget | One-minute conversion deadline, automatic recovery and identical fsql4 file hashes. A fast conversion that completes inside the budget fails this injection case. |
 | after-switch | A unit pre-start condition rejects the new fsql5 selection. The original bundle restarts after recovery removes that selection. |
