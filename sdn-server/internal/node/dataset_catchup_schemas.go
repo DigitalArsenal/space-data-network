@@ -1,6 +1,7 @@
 package node
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -28,10 +29,8 @@ func mayDiscoverTrustedSchema(cfg config.TrustedImportConfig, from, schema strin
 
 func (n *Node) datasetCatchupSchemas(from peer.ID) ([]string, error) {
 	schemas := n.validator.Schemas()
-	// Preserve randomized validator traversal so rate-limited passes do not
-	// repeatedly omit the same alphabetical tail.
 	if n.config == nil {
-		return schemas, nil
+		return n.datasetCatchupOrder(from, schemas), nil
 	}
 	held := map[string]bool{}
 	policy := n.config.Peers.TrustedImport
@@ -74,5 +73,37 @@ func (n *Node) datasetCatchupSchemas(from peer.ID) ([]string, error) {
 			candidates = append(candidates, schema)
 		}
 	}
-	return candidates, nil
+	return n.datasetCatchupOrder(from, candidates), nil
+}
+
+// datasetCatchupOrder is the order one catch-up pass lists a peer's schemas
+// in: by name, starting at the schema the peer's last pass was refused at
+// (rate_limited) and wrapping round. A peer's listing budget then covers
+// every schema in consecutive passes; the map order the validator answers in
+// is not random enough for that (a pass could miss the same schema again).
+func (n *Node) datasetCatchupOrder(from peer.ID, schemas []string) []string {
+	sort.Strings(schemas)
+	n.datasetCatchupResumeMu.Lock()
+	resume := n.datasetCatchupResume[from]
+	n.datasetCatchupResumeMu.Unlock()
+	if resume == "" {
+		return schemas
+	}
+	at := sort.SearchStrings(schemas, resume)
+	return append(append(make([]string, 0, len(schemas)), schemas[at:]...), schemas[:at]...)
+}
+
+// noteDatasetCatchupRefused records the schema a peer's catch-up pass was
+// refused at; "" clears it.
+func (n *Node) noteDatasetCatchupRefused(from peer.ID, schema string) {
+	n.datasetCatchupResumeMu.Lock()
+	defer n.datasetCatchupResumeMu.Unlock()
+	if schema == "" {
+		delete(n.datasetCatchupResume, from)
+		return
+	}
+	if n.datasetCatchupResume == nil {
+		n.datasetCatchupResume = map[peer.ID]string{}
+	}
+	n.datasetCatchupResume[from] = schema
 }

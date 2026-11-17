@@ -434,6 +434,43 @@ jobs:
           name: update-channel-logs
           path: .ci-artifacts/update-channel-logs
 
+  # Three groups by test name (scripts/ci-local.sh publication_group_tests):
+  # run 44031044072 ran all ten tests in one binary and hit go test's 50m
+  # panic in the tenth. Each group is about 1,000s of runner time against a
+  # 45m go test budget; the 60m job limit leaves setup and linking time for
+  # that budget to name an overrun.
+  publication-e2e:
+    name: Publication E2E (real daemons / ${{ matrix.group }})
+    runs-on: ubuntu-latest
+    container: ubuntu:20.04
+    defaults:
+      run:
+        shell: bash
+    needs: wasmedge-runtime
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [publication-1, publication-2, publication-3]
+    env:
+      SDN_CI_PUBLICATION_GROUP: ${{ matrix.group }}
+    steps:
+      - name: Prepare the release container
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends \
+            ca-certificates curl git xz-utils build-essential zlib1g-dev libtinfo-dev
+          git config --global --add safe.directory '*'
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: ./.github/actions/sdn-go-env
+        with:
+          needs-flow-bundles: 'false'
+      - name: Publication between real daemons
+        run: ./scripts/ci-local.sh publication
+
   go-builds:
     name: Go builds (node + edge relay)
     runs-on: ubuntu-latest
@@ -600,6 +637,7 @@ jobs:
       - wasmedge-runtime
       - wasmedge-substrate
       - update-channel-e2e
+      - publication-e2e
       - go-builds
       - js
       - delivery

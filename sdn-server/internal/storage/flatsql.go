@@ -157,6 +157,14 @@ func EngineAOTCacheDir() string { return engineAOTCacheDir() }
 // bounded hot-window CACHE of the routed standards over the same records,
 // tracked by a durable residency ledger (engine_residency.go).
 type FlatSQLStore struct {
+	// writes wakes followed reads when a type's records are stored
+	// (write_signal.go).
+	writes writeSignals
+	// tagMu orders a followed lane's removals against tagging: every engine
+	// write holds it shared, and a removal that checks a record's tags and
+	// then deletes it holds it alone, so no record gains a tag between the
+	// check and the delete (follow_lane.go).
+	tagMu                          sync.RWMutex
 	publicationSourceKeys          atomic.Pointer[map[publicationSourceKey]bool]
 	publicationEnabled             atomic.Bool
 	publicationGroupMu             sync.Mutex
@@ -2308,7 +2316,7 @@ func (s *FlatSQLStore) storeOne(schemaName string, data []byte, peerID string, s
 	if err := s.requireWritable("store record"); err != nil {
 		return "", err
 	}
-	defer s.lockWrite("storeOne")()
+	defer s.lockWriteForMirror("storeOne", engineArenaFrameBytes([][]byte{data}))()
 
 	if _, err := sds.SchemaNameToTable(schemaName); err != nil {
 		return "", fmt.Errorf("invalid schema name: %w", err)
@@ -2563,6 +2571,10 @@ type RawRecordRef struct {
 // IndexedRecordQuery filters materialized FlatSQL record indexes.
 type IndexedRecordQuery struct {
 	Selection *PublicationSelection `json:"-"`
+	// CIDs, when set, is the window's records in order (a PublicationPlan
+	// window): the export reads them by CID instead of by the window's
+	// offset. The other fields still describe the window.
+	CIDs []string `json:"-"`
 
 	SchemaName          string
 	Day                 string
@@ -2741,7 +2753,7 @@ func (s *FlatSQLStore) storeBatch(schemaName string, records [][]byte, peerID st
 // storeBatchChunk stores one chunk under one store lock and one control
 // transaction (the pre-chunking storeBatch body).
 func (s *FlatSQLStore) storeBatchChunk(schemaName string, records [][]byte, peerID string, signature []byte, tags *SourceTags) (int, error) {
-	defer s.lockWrite("storeBatchChunk")()
+	defer s.lockWriteForMirror("storeBatchChunk", engineArenaFrameBytes(records))()
 
 	// WS7.3d routed-only writes: pre-create the (producer, standard) table
 	// outside the batch transaction (no DDL inside the tx). This is the ONLY

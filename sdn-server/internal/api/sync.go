@@ -220,6 +220,17 @@ type SyncLane struct {
 
 	RequestedAction int8
 
+	// What this node has received from the lane's followed producers
+	// (LaneFollow) and served to its followers (LaneServed).
+	DownloadedBytes uint64
+	DownloadSpeed   uint64
+	TransferMs      uint64
+	VerifyMs        uint64
+	StoreMs         uint64
+	SubscriberCount uint32
+	ServedBytes     uint64
+	ServeSpeed      uint64
+
 	// Frame is the size-prefixed $DSS buffer.
 	Frame []byte
 }
@@ -602,6 +613,7 @@ func (h *SyncHandler) build(filter SyncFilter) ([]SyncLane, error) {
 				lane.Status = DSSStateSynced
 			}
 		}
+		h.laneFollowStatus(&lane)
 
 		lane.Frame = encodeDSS(&lane)
 		out = append(out, lane)
@@ -756,6 +768,14 @@ func encodeDSS(l *SyncLane) []byte {
 	if originID != 0 {
 		DSS.DSSAddORIGIN_ID(b, originID)
 	}
+	DSS.DSSAddDOWNLOADED_BYTES(b, l.DownloadedBytes)
+	DSS.DSSAddDOWNLOAD_SPEED_BYTES_PER_SECOND(b, l.DownloadSpeed)
+	DSS.DSSAddNETWORK_TRANSFER_MS(b, l.TransferMs)
+	DSS.DSSAddVERIFICATION_MS(b, l.VerifyMs)
+	DSS.DSSAddFLATSQL_MATERIALIZATION_MS(b, l.StoreMs)
+	DSS.DSSAddSUBSCRIBER_COUNT(b, l.SubscriberCount)
+	DSS.DSSAddSERVED_BYTES(b, l.ServedBytes)
+	DSS.DSSAddSERVE_SPEED_BYTES_PER_SECOND(b, l.ServeSpeed)
 	root := DSS.DSSEnd(b)
 	DSS.FinishSizePrefixedDSSBuffer(b, root)
 	return b.FinishedBytes()
@@ -778,6 +798,13 @@ func EncodeDSSAction(schema, providerID, sourceName string, action int8) []byte 
 // EncodeDSSSubscribe builds a Subscribe request that sets the lane's rule.
 func EncodeDSSSubscribe(schema, providerID, sourceName string, retention int8) []byte {
 	lane := SyncLane{Key: newLaneKey(schema, providerID, sourceName), RequestedAction: DSSActionSubscribe, Retention: retention, ForceRetention: true}
+	return encodeDSS(&lane)
+}
+
+// EncodeDSSFollow builds a Subscribe request that follows the lane from a
+// producer peer.
+func EncodeDSSFollow(schema, providerID, sourceName, producerPeerID string) []byte {
+	lane := SyncLane{Key: newLaneKey(schema, providerID, sourceName), RequestedAction: DSSActionSubscribe, ProviderPeerID: producerPeerID}
 	return encodeDSS(&lane)
 }
 
@@ -900,6 +927,29 @@ func (h *SyncHandler) handleAction(w http.ResponseWriter, r *http.Request) {
 	}
 	switch action {
 	case DSSActionSubscribe, DSSActionUnsubscribe:
+		producer := strings.TrimSpace(string(req.PROVIDER_PEER_ID()))
+		switch {
+		case action == DSSActionSubscribe && producer != "":
+			// A subscription that names the producer follows the lane from
+			// it: a live stream of the records it stores.
+			if h.deps.Follow == nil {
+				WriteErrorFrame(w, http.StatusBadRequest, "bad_request", "This node cannot follow a lane.", 0)
+				return
+			}
+			if err := h.deps.Follow(key.schema, key.providerID, key.sourceName, producer, true); err != nil {
+				WriteErrorFrame(w, http.StatusBadRequest, "bad_request", "That lane cannot be followed: "+err.Error(), 0)
+				return
+			}
+		case action == DSSActionUnsubscribe && h.deps.Follow != nil:
+			// Unsubscribe stops following the lane (from the named
+			// producer, or from every producer when none is named); an
+			// Unsubscribe of the standard alone stops every followed lane
+			// of the standard.
+			if err := h.deps.Follow(key.schema, key.providerID, key.sourceName, producer, false); err != nil {
+				WriteErrorFrame(w, http.StatusBadRequest, "bad_request", "That lane cannot be unfollowed: "+err.Error(), 0)
+				return
+			}
+		}
 		h.toggleSubscription(key, action == DSSActionSubscribe, retentionWord)
 	case DSSActionSync:
 		h.startSync(key)

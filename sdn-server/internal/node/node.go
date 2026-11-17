@@ -132,14 +132,18 @@ type Node struct {
 	// its public DHT IS dht: one peer, one identity (owner 2026-10-05).
 	kubo *kubo.Node
 	// pins is the node pin policy: every Kubo pin goes through it.
-	pins           *pinpolicy.Policy
-	pubsub         *pubsub.PubSub
-	topicsMu       sync.RWMutex
-	topics         map[string]*pubsub.Topic
-	flatc          *wasm.FlatcModule
-	hdwallet       *wasm.HDWalletModule
-	identity       *wasm.DerivedIdentity // nil if using random key (no HD wallet)
-	validator      *sds.Validator
+	pins      *pinpolicy.Policy
+	pubsub    *pubsub.PubSub
+	topicsMu  sync.RWMutex
+	topics    map[string]*pubsub.Topic
+	flatc     *wasm.FlatcModule
+	hdwallet  *wasm.HDWalletModule
+	identity  *wasm.DerivedIdentity // nil if using random key (no HD wallet)
+	validator *sds.Validator
+	// flatsqlSync serves flatsql-sync, followed reads included; follows
+	// are the lanes this node follows (follow.go).
+	flatsqlSync    *protocol.FlatSQLSyncHandler
+	follows        *followManager
 	store          *storage.FlatSQLStore
 	protocol       *protocol.SDSExchangeHandler
 	plugins        *plugins.Manager
@@ -252,6 +256,11 @@ type Node struct {
 	pendingDatasetCatalogAt int
 	datasetMaterializedPNMs map[string]time.Time
 	datasetSupersedeMu      sync.Mutex
+	// datasetCatchupResume is, per trusted peer, the schema its last
+	// publication catch-up pass was refused at (rate_limited); the next pass
+	// starts there (dataset_catchup_schemas.go).
+	datasetCatchupResumeMu sync.Mutex
+	datasetCatchupResume   map[peer.ID]string
 
 	// laneRetention resolves the subscription retention rule for one lane
 	// (schema, provider, source): the subscriber's choice, else the node
@@ -968,7 +977,9 @@ func (n *Node) init() error {
 	n.host.SetStreamHandler(protocol.SDSProtocolID, n.protocol.HandleStream)
 	epm.RegisterPeerDirectory(n.host, n.peerRegistry)
 	if n.store != nil {
-		protocol.NewFlatSQLSyncHandler(n.store).SetPrivateReadAuthorizer(n.mayReadPrivate).Register(n.host)
+		n.flatsqlSync = protocol.NewFlatSQLSyncHandler(n.store).SetPrivateReadAuthorizer(n.mayReadPrivate).SetFollowTrust(n.followTrusted)
+		n.flatsqlSync.Register(n.host)
+		n.follows = newFollowManager(n, filepath.Dir(n.store.ArchiveOutputDir()))
 	}
 	n.host.SetStreamHandler(protocol.IDExchangeProtoID, protocol.HandleLegacyIDExchange)
 	n.host.SetStreamHandler(protocol.ChatProtoID, protocol.HandleLegacyChat)
@@ -2252,6 +2263,11 @@ func (n *Node) Start(ctx context.Context) error {
 	// Before anything can fetch a shard: clear what earlier processes left
 	// in the shard work roots.
 	n.pruneStaleDatasetPublicationWork(time.Now())
+	if n.follows != nil {
+		if err := n.follows.load(); err != nil {
+			log.Errorf("Followed lanes not loaded: %v", err)
+		}
+	}
 
 	// Bootstrap DHT — unless the operator turned it off. Bootstrapping is what
 	// makes a node join the public Amino DHT at all; skipping it is how
@@ -3098,10 +3114,18 @@ func (n *Node) catchUpDatasetShardPublicationsFromPeerCounting(ctx context.Conte
 		return 0, err
 	}
 	var errs []error
+	n.noteDatasetCatchupRefused(from, "")
 	for _, schema := range schemas {
 		publications, err := n.listRemoteDatasetShardPublications(ctx, from, schema)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: list %s publications: %w", from.ShortString(), schema, err))
+			var remoteErr *syncwire.RemoteError
+			if errors.As(err, &remoteErr) && remoteErr.Code == "rate_limited" {
+				// The peer's listing budget is spent: every later schema
+				// would be refused too. The next pass starts here.
+				n.noteDatasetCatchupRefused(from, schema)
+				break
+			}
 			continue
 		}
 		for _, publication := range publications {

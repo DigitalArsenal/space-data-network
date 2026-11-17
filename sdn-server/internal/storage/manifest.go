@@ -994,8 +994,9 @@ func (s *FlatSQLStore) importDatasetShardRecords(ctx context.Context, index *Dat
 		return 0, nil, fmt.Errorf("invalid schema name: %w", err)
 	}
 
-	// Chunked lock windows (storeWriteChunkSize records per store write-lock
-	// hold + transaction). The pre-chunking shape — ONE lock hold + ONE tx
+	// Chunked lock windows (importChunkEnd: storeWriteChunkSize records per
+	// store write-lock hold + transaction; one engine PUT of up to
+	// format4PutChunk records on format 5). The pre-chunking shape — ONE lock hold + ONE tx
 	// spanning the entire shard — blacked out the whole data API for the
 	// import duration when a peer announced a full-catalog dataset
 	// (2026-07-06: readers waited >11 min on s.mu.RLock behind a 31.8K-record
@@ -1005,11 +1006,8 @@ func (s *FlatSQLStore) importDatasetShardRecords(ctx context.Context, index *Dat
 	// readers already observe from the record-by-record datasync path.
 	imported := 0
 	records := index.Records
-	for start := 0; start < len(records); start += storeWriteChunkSize {
-		end := start + storeWriteChunkSize
-		if end > len(records) {
-			end = len(records)
-		}
+	for start, end := 0, 0; start < len(records); start = end {
+		end = s.importChunkEnd(records, start)
 		if err := ctx.Err(); err != nil {
 			return imported, nil, fmt.Errorf("dataset shard import of %s stopped before record %d of %d: %w", index.SchemaName, start, len(records), err)
 		}
@@ -1020,6 +1018,31 @@ func (s *FlatSQLStore) importDatasetShardRecords(ctx context.Context, index *Dat
 		}
 	}
 	return imported, index, nil
+}
+
+// format5ImportChunkBytes bounds the record bytes one format-5 import chunk
+// reads into memory; format4PutChunk bounds its record count. The engine
+// takes a PUT of that size in one call and splits it to its write slot.
+const format5ImportChunkBytes = 8 << 20
+
+// importChunkEnd is the end of the import chunk that starts at start. A
+// format-5 store takes up to format4PutChunk records or
+// format5ImportChunkBytes of record bytes per chunk (at least one record);
+// the store-lock window of the other formats stays storeWriteChunkSize.
+func (s *FlatSQLStore) importChunkEnd(records []DatasetExportIndexRecord, start int) int {
+	if _, format5 := s.rb.(format4Backend); !format5 {
+		return min(start+storeWriteChunkSize, len(records))
+	}
+	end := start
+	var size int64
+	for end < len(records) && end-start < format4PutChunk {
+		if end > start && size+records[end].Length > format5ImportChunkBytes {
+			break
+		}
+		size += records[end].Length
+		end++
+	}
+	return end
 }
 
 // importDatasetShardChunkHook runs inside each chunk's lock hold (tests: a
@@ -1063,7 +1086,7 @@ func (s *FlatSQLStore) importDatasetShardChunk(index *DatasetExportIndex, provid
 	if s.rb != nil {
 		return s.rb.importDatasetShardChunk(index, providerPeerID, records, readRecord)
 	}
-	defer s.lockWrite("importDatasetShardChunk")()
+	defer s.lockWriteForMirror("importDatasetShardChunk", datasetShardFrameBytes(records))()
 	if hook := importDatasetShardChunkHook.Load(); hook != nil {
 		(*hook)()
 	}

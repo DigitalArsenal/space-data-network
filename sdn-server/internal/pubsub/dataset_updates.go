@@ -139,7 +139,7 @@ func PublishDatasetUpdatePNM(ctx context.Context, publisher SchemaPublisher, ann
 			return ctx.Err()
 		default:
 		}
-		if err := publisher.Publish(schema, ann.PNM); err != nil {
+		if err := publishObservedDatasetAnnouncement(publisher, schema, ann.PNM); err != nil {
 			publishErrs = append(publishErrs, fmt.Errorf("%s: %w", schema, err))
 		}
 	}

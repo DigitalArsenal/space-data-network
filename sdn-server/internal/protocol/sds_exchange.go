@@ -54,13 +54,15 @@ const (
 // Message types
 const (
 	MsgRequestData byte = 0x01
-	MsgPushData    byte = 0x02
-	MsgQuery       byte = 0x03
-	MsgResponse    byte = 0x04
-	MsgAck         byte = 0x05
-	MsgNack        byte = 0x06
-	MsgSyncLog     byte = 0x07 // Request PLG entries since a sequence number
-	MsgSyncReply   byte = 0x08 // Response with PLG entries (length-prefixed stream)
+	// 0x02 was a per-record push that nothing sent; it is refused as an
+	// unknown message type. Records move between nodes through
+	// publications and the sync protocol.
+	MsgQuery     byte = 0x03
+	MsgResponse  byte = 0x04
+	MsgAck       byte = 0x05
+	MsgNack      byte = 0x06
+	MsgSyncLog   byte = 0x07 // Request PLG entries since a sequence number
+	MsgSyncReply byte = 0x08 // Response with PLG entries (length-prefixed stream)
 )
 
 // Response codes
@@ -138,11 +140,12 @@ func (h *SDSExchangeHandler) DroppedNoStore() uint64 {
 var ErrRateLimited = errors.New("rate limit exceeded")
 
 // PushAuthorizer decides whether a peer may write records into this node's
-// store.
+// store from gossip (records and PNM announcements on pubsub topics).
 //
-// THE DEFAULT IS DENY, DELIBERATELY. Before this existed, handleDataPush went
-// straight from a rate-limit check to store.Store with a literal nil signature:
-// any peer that could dial the node could inject records, and the node then
+// THE DEFAULT IS DENY, DELIBERATELY. Before this existed, the per-record push
+// message (since removed) went straight from a rate-limit check to store.Store
+// with a literal nil signature: any peer that could dial the node could inject
+// records, and the node then
 // served them back on the ANONYMOUS public data plane, unioned across every
 // producer table (recordReadSourceFiltered). Discovery makes that free — the
 // node advertises itself on the public Amino DHT.
@@ -328,8 +331,6 @@ func (h *SDSExchangeHandler) HandleStream(s network.Stream) {
 	switch msgType[0] {
 	case MsgRequestData:
 		h.handleDataRequest(ctx, s)
-	case MsgPushData:
-		h.handleDataPush(ctx, s)
 	case MsgQuery:
 		h.handleQuery(ctx, s)
 	case MsgSyncLog:
@@ -435,140 +436,6 @@ func (h *SDSExchangeHandler) handleDataRequest(ctx context.Context, s network.St
 	s.Write(data)
 
 	log.Debugf("Sent %d bytes for %s/%s", len(data), schemaName, cid)
-}
-
-func (h *SDSExchangeHandler) handleDataPush(ctx context.Context, s network.Stream) {
-	// Read schema name length (2 bytes)
-	schemaNameLen := make([]byte, 2)
-	if _, err := io.ReadFull(s, schemaNameLen); err != nil {
-		warnStreamRefusal(s, "data-push schema length: %v", err)
-		s.Write([]byte{RespReject})
-		return
-	}
-
-	// Validate schema name length
-	schemaLen := binary.BigEndian.Uint16(schemaNameLen)
-	if int(schemaLen) > h.limits.MaxSchemaName {
-		warnStreamRefusal(s, "data-push schema length %d > %d", schemaLen, h.limits.MaxSchemaName)
-		s.Write([]byte{RespReject})
-		return
-	}
-
-	// Read schema name
-	schemaName := make([]byte, schemaLen)
-	if _, err := io.ReadFull(s, schemaName); err != nil {
-		warnStreamRefusal(s, "data-push schema name: %v", err)
-		s.Write([]byte{RespReject})
-		return
-	}
-
-	// Validate schema name to prevent path traversal and injection attacks.
-	//
-	// An EMPTY declaration is legal on this lane: the record's own
-	// file_identifier routes it (RouteBuffer, below). A transport with no
-	// schema channel could previously not deliver a record at all, even
-	// though every SDN record carries its type in its first bytes.
-	if len(schemaName) > 0 {
-		if err := sds.ValidateSchemaName(string(schemaName)); err != nil {
-			warnStreamRefusal(s, "data-push schema: %v", err)
-			s.Write([]byte{RespReject})
-			return
-		}
-	}
-
-	// Read data length (4 bytes)
-	dataLenBuf := make([]byte, 4)
-	if _, err := io.ReadFull(s, dataLenBuf); err != nil {
-		warnStreamRefusal(s, "data-push data length: %v", err)
-		s.Write([]byte{RespReject})
-		return
-	}
-
-	// Validate data length before allocation
-	dataLen := binary.BigEndian.Uint32(dataLenBuf)
-	if int(dataLen) > h.limits.MaxMessageSize {
-		warnStreamRefusal(s, "data-push length %d > %d bytes", dataLen, h.limits.MaxMessageSize)
-		s.Write([]byte{RespReject})
-		return
-	}
-
-	// Read data
-	data := make([]byte, dataLen)
-	if _, err := io.ReadFull(s, data); err != nil {
-		warnStreamRefusal(s, "data-push bytes: %v", err)
-		s.Write([]byte{RespReject})
-		return
-	}
-
-	// Get peer ID
-	peerID := s.Conn().RemotePeer()
-
-	// ROUTE ON THE HEADER. The record's own size prefix + file_identifier is
-	// the in-band truth; the pushed schema name is a COMMITMENT this lane
-	// makes about those bytes, so a disagreement is an error, never something
-	// the declaration wins. (Before: the name alone selected the table and the
-	// identifier was only ever used to validate it.)
-	decision, err := h.validator.RouteBuffer(string(schemaName), data)
-	if err != nil {
-		warnStreamRefusal(s, "data-push routing: %v", err)
-		s.Write([]byte{RespReject})
-		return
-	}
-	if err := decision.MismatchError(); err != nil {
-		warnStreamRefusal(s, "data-push routing: %v", err)
-		s.Write([]byte{RespReject})
-		return
-	}
-	routedSchema := decision.Schema
-
-	// Validate data against schema with timeout
-	validationCtx, validationCancel := context.WithTimeout(ctx, DefaultValidationTimeout)
-	defer validationCancel()
-
-	if err := h.validator.Validate(validationCtx, routedSchema, data); err != nil {
-		warnStreamRefusal(s, "data-push validation for %s: %v", routedSchema, err)
-		s.Write([]byte{RespReject})
-		return
-	}
-
-	// Edge-mode fail-safe: no local store means we cannot accept a push.
-	// Reject without dereferencing the nil store (would SIGSEGV).
-	if h.store == nil {
-		n := h.droppedNoStore.Add(1)
-		log.Debugf("edge mode (no store): rejecting data push for %s from %s (dropped=%d)", routedSchema, peerID.ShortString(), n)
-		s.Write([]byte{RespReject})
-		return
-	}
-
-	// WHOSE DATA WE ACCEPT. Bootstrap says who we dial; trust says whose
-	// records we take. The dataset-PNM path has always enforced this
-	// (Node.materializeDatasetPublicationPNM refuses a non-trusted sender);
-	// this lane did not, so the strictest check in the system sat next to the
-	// most open one, writing into the same store.
-	//
-	// IsTrusted (>= Trusted) is the deliberate threshold, NOT >= Standard:
-	// cacheFetchedDiscoveredNodeEPM assigns Standard to every peer found
-	// through the SDN rendezvous tag, so a Standard gate would be satisfied by
-	// discovery itself and would gate nothing.
-	if !h.mayPush(peerID) {
-		warnStreamRefusal(s, "data-push for %s: records are accepted only from trusted peers", routedSchema)
-		s.Write([]byte{RespReject})
-		return
-	}
-
-	// Store data
-	cid, err := h.store.Store(routedSchema, data, peerID.String(), nil)
-	if err != nil {
-		warnStreamRefusal(s, "data-push store: %v", err)
-		s.Write([]byte{RespReject})
-		return
-	}
-
-	// Send ACK with CID
-	s.Write([]byte{RespAccept})
-	s.Write([]byte(cid))
-
-	log.Infof("Stored %s record from %s: %s", schemaName, peerID.ShortString(), cid[:16]+"...")
 }
 
 func (h *SDSExchangeHandler) handleQuery(ctx context.Context, s network.Stream) {
@@ -795,7 +662,7 @@ func (h *SDSExchangeHandler) HandlePubSubMessageStored(schema string, data []byt
 		// TWO EFFECTS, TWO THREAT MODELS — gate them separately.
 		//
 		// The STORE WRITE is the one 74c82735c closed, and it stays closed.
-		// Same gate as the stream push lane: PNMs arrive on an OPEN pubsub
+		// Same gate as gossip records: PNMs arrive on an OPEN pubsub
 		// topic, so this is the most reachable write path of the three, not
 		// the least — anyone who can subscribe can publish. A row written here
 		// is served back on the ANONYMOUS public data plane, which
@@ -876,10 +743,9 @@ func (h *SDSExchangeHandler) HandlePubSubMessageStored(schema string, data []byt
 		return false, nil
 	}
 
-	// Same gate as the stream push lane above. A record arriving over pubsub
-	// is written to the same tables and served from the same anonymous read
-	// union as one arriving over a stream, so gating only the stream would
-	// have left the wider door open.
+	// A record arriving over pubsub is written to the same tables and served
+	// from the same anonymous read union as every other record, so it takes
+	// the same trust gate as a PNM announcement.
 	if !h.mayPush(from) {
 		log.Warnf("REFUSING pubsub record from untrusted peer %s on %s: records are accepted only from trusted peers.",
 			from.ShortString(), routedSchema)
@@ -911,49 +777,6 @@ func hasSizePrefixedPNMIdentifier(data []byte) (ok bool) {
 		}
 	}()
 	return PNM.SizePrefixedPNMBufferHasIdentifier(data)
-}
-
-// PushData sends data to a remote peer.
-func PushData(ctx context.Context, s network.Stream, schemaName string, data []byte) (cid string, err error) {
-	defer recoverReply("sds-push-reply", s, &err)
-	if err := setRequestDeadline(ctx, s); err != nil {
-		return "", fmt.Errorf("set push deadline: %w", err)
-	}
-	// Write message type
-	if _, err := s.Write([]byte{MsgPushData}); err != nil {
-		return "", fmt.Errorf("failed to write message type: %w", err)
-	}
-
-	// Write schema name length and name
-	schemaNameLen := make([]byte, 2)
-	binary.BigEndian.PutUint16(schemaNameLen, uint16(len(schemaName)))
-	s.Write(schemaNameLen)
-	s.Write([]byte(schemaName))
-
-	// Write data length and data
-	dataLen := make([]byte, 4)
-	binary.BigEndian.PutUint32(dataLen, uint32(len(data)))
-	s.Write(dataLen)
-	s.Write(data)
-
-	// Read response
-	resp := make([]byte, 1)
-	if _, err := io.ReadFull(s, resp); err != nil {
-		return "", fmt.Errorf("failed to read response: %w", err)
-	}
-
-	if resp[0] != RespAccept {
-		return "", errors.New("push rejected")
-	}
-
-	// Read CID
-	cidBuf := make([]byte, 64) // SHA256 hex = 64 bytes
-	n, err := s.Read(cidBuf)
-	if err != nil && err != io.EOF {
-		return "", fmt.Errorf("failed to read CID: %w", err)
-	}
-
-	return string(cidBuf[:n]), nil
 }
 
 // RequestData requests data from a remote peer.

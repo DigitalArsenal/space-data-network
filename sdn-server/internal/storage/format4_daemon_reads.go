@@ -763,6 +763,9 @@ func (b format4Backend) RawRecordSnapshot(filter RawRecordQuery) (int64, RawReco
 
 // f4Snapshot is RawRecordSnapshot's engine part.
 func (b format4Backend) f4Snapshot(filter RawRecordQuery) (f4Snapshot, error) {
+	if snap, ok, err := b.f4LaneSnapshot(filter); err != nil || ok {
+		return snap, err
+	}
 	h, q, _, err := b.f4Head(filter)
 	if err != nil {
 		return f4Snapshot{}, fmt.Errorf("raw record head failed: %w", err)
@@ -793,6 +796,70 @@ func (b format4Backend) f4Snapshot(filter RawRecordQuery) (f4Snapshot, error) {
 		}
 	}
 	return f4Snapshot{n: h.N, head: head, q: q}, nil
+}
+
+// f4LaneSnapshot answers a tag filter and nothing else (no cursor, CID,
+// peer, sync filter or search) from the lane counters (SUMMARY kind 3) when
+// exactly one live tag instance of the type meets it: every record the
+// filter selects holds that one instance once, so the instance's records,
+// bytes and newest sequence are the filter's count, bytes and newest
+// sequence. A HEAD over the lane reads every record of it (42 s at 1.13
+// million records during an import). With several instances meeting the
+// filter a record can hold more than one, and the HEAD answers.
+//
+// A cursor's first page (no cursor position, no boundary) is answered too:
+// its boundary is the type's newest sequence read before the counters, or
+// the instance's newest sequence when a write landed between the two reads,
+// so the count is exactly the records at or before the boundary. Its
+// snapshot times are the lane's update time, as the source summary's are
+// (the HEAD's record timestamp and tag time need every record read).
+func (b format4Backend) f4LaneSnapshot(filter RawRecordQuery) (f4Snapshot, bool, error) {
+	if filter.UseRowIDCursor && (filter.AfterRowID > 0 || filter.MaxRowID > 0) {
+		return f4Snapshot{}, false, nil
+	}
+	schemaName := strings.TrimSpace(filter.SchemaName)
+	if schemaName == "" {
+		return f4Snapshot{}, false, nil
+	}
+	typ, err := f4Type(schemaName)
+	if err != nil {
+		return f4Snapshot{}, false, nil
+	}
+	q, nothing, err := f4RawQuery(typ, filter, false)
+	if err != nil || nothing || !f4SourceSummaryHead(q) {
+		return f4Snapshot{}, false, nil
+	}
+	var typeHead format4.Head
+	if filter.UseRowIDCursor {
+		if typeHead, err = b.f4TypeHead(typ); err != nil {
+			return f4Snapshot{}, false, fmt.Errorf("raw record head failed: %w", err)
+		}
+	}
+	lanes, err := b.f4Lanes(typ)
+	if err != nil {
+		return f4Snapshot{}, false, fmt.Errorf("raw record head failed: %w", err)
+	}
+	var met *format4.Lane
+	for i := range lanes {
+		if lanes[i].Records > 0 && f4LaneMeets(lanes[i], q.Lane) {
+			if met != nil {
+				return f4Snapshot{}, false, nil
+			}
+			met = &lanes[i]
+		}
+	}
+	if met == nil {
+		return f4Snapshot{}, false, nil
+	}
+	// As f4Snapshot: a source summary's times are its lanes' update times
+	// and it has no record timestamp.
+	head := RawRecordHead{TotalBytes: met.Bytes, MaxRowID: met.MaxSeq, MaxCreatedAtUnix: met.Updated, MaxSourceUpdatedAtUnix: met.Updated}
+	if filter.UseRowIDCursor {
+		// The cursor carries the pinned boundary, as f4Head's does.
+		head.MaxRowID = max(typeHead.MaxSeq, met.MaxSeq)
+		q.SeqThrough = head.MaxRowID
+	}
+	return f4Snapshot{n: met.Records, head: head, q: q}, true, nil
 }
 
 // QuerySourceTaggedRecords is the newest tagged records meeting the tag
@@ -1283,6 +1350,78 @@ func (b format4Backend) QueryIndexedRecords(filter IndexedRecordQuery) ([]*Recor
 					break
 				}
 			}
+		}
+		r.SourceTags = SourceTags{ProviderID: t.ProviderID, SourceName: t.SourceName, BatchID: t.BatchID}
+		r.RowID, r.MaterializedAt = 0, time.Time{}
+	}
+	return out, nil
+}
+
+// ErrPublicationPlanStale is an export by CID that found a planned record
+// gone: the lane changed after the plan was taken.
+var ErrPublicationPlanStale = errors.New("a planned record is no longer held")
+
+// indexedRecordsByCID is QueryIndexedRecords for a window whose records are
+// already known (filter.CIDs, a PublicationPlan window of a provider and
+// source lane): the same records, bytes and source tags, read by CID.
+func (b format4Backend) indexedRecordsByCID(filter IndexedRecordQuery) ([]*Record, error) {
+	if err := b.closed(); err != nil {
+		return nil, err
+	}
+	typ, err := f4Type(filter.SchemaName)
+	if err != nil {
+		return nil, err
+	}
+	provider, source := strings.TrimSpace(filter.ProviderID), strings.TrimSpace(filter.SourceName)
+	if provider == "" || source == "" {
+		return nil, errors.New("an export by CID needs a provider and a source")
+	}
+	recs, err := b.d.api().Get(b.d.ctx, typ, filter.CIDs, false, true)
+	if errors.Is(err, format4.ErrNoType) {
+		return nil, ErrPublicationPlanStale
+	}
+	if err != nil {
+		return nil, fmt.Errorf("indexed query failed: %w", err)
+	}
+	byCID := make(map[string]format4.Rec, len(recs))
+	for _, r := range recs {
+		if _, seen := byCID[r.CID]; !seen {
+			byCID[r.CID] = r
+		}
+	}
+	ordered := make([]format4.Rec, 0, len(filter.CIDs))
+	for _, c := range filter.CIDs {
+		r, ok := byCID[c]
+		if !ok {
+			return nil, fmt.Errorf("%w: %s", ErrPublicationPlanStale, c)
+		}
+		ordered = append(ordered, r)
+	}
+	out, err := b.f4Records(filter.SchemaName, ordered, true)
+	if err != nil {
+		return nil, fmt.Errorf("failed reading indexed record data: %w", err)
+	}
+	// As QueryIndexedRecords: the (provider, source, batch) of the record's
+	// newest tag in the lane's feed file (of the window's batch when it names
+	// one). A planned record with no such tag left the lane after the plan
+	// was read; the same bytes may still be stored under another lane, which
+	// GET also finds, so the tag decides, and the plan is stale.
+	batch := strings.TrimSpace(filter.BatchID)
+	tags, err := b.f4TagRows(filter.SchemaName, filter.CIDs)
+	if err != nil {
+		return nil, fmt.Errorf("indexed query tags: %w", err)
+	}
+	for _, r := range out {
+		var t SourceTags
+		found := false
+		for _, row := range tags[r.CID] { // newest first
+			if row.Provider == provider && row.Source == source && (batch == "" || row.Batch == batch) {
+				t, found = f4SourceTags(row.Tag), true
+				break
+			}
+		}
+		if !found {
+			return nil, fmt.Errorf("%w: %s left the lane", ErrPublicationPlanStale, r.CID)
 		}
 		r.SourceTags = SourceTags{ProviderID: t.ProviderID, SourceName: t.SourceName, BatchID: t.BatchID}
 		r.RowID, r.MaterializedAt = 0, time.Time{}

@@ -58,6 +58,10 @@ const (
 	KindUpdateFeedUnavailable = "update_feed_unavailable"
 	// KindBitswapSendStalled: connected demand for held blocks has no send progress.
 	KindBitswapSendStalled = "bitswap_send_stalled"
+	// KindFollowRefused: a followed lane's producer peer sent a stream this
+	// node refused (malformed, past its limits, or naming another peer), or
+	// its current batch could not be held.
+	KindFollowRefused = "follow_refused"
 )
 
 // Severities. Two levels only: something an operator should look at, and

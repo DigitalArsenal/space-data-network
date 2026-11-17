@@ -24,6 +24,10 @@ const MaxFrameBytes = 32 << 20
 // 403 not_authorized.
 var ErrNotAuthorized = errors.New("not authorized")
 
+// ErrBusy marks a request refused for a serving limit; Classify answers it
+// 429 busy.
+var ErrBusy = errors.New("busy")
+
 // SplitFrames splits an aligned size-prefixed stream into frames that KEEP
 // their length prefix, so each one is a complete size-prefixed buffer.
 func SplitFrames(stream []byte) ([][]byte, error) {
@@ -101,7 +105,11 @@ func (e *RemoteError) Error() string {
 // ReadPage reads one reply frame: a $QRP Page is returned with its bytes; a
 // $QRP Error frame is returned as a *RemoteError; anything else is an error.
 func ReadPage(r io.Reader) (*QRP.QRP, []byte, error) {
-	frame, err := ReadFrame(r, MaxFrameBytes)
+	return readPageMax(r, MaxFrameBytes)
+}
+
+func readPageMax(r io.Reader, max int) (*QRP.QRP, []byte, error) {
+	frame, err := ReadFrame(r, max)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -150,6 +158,8 @@ func Classify(err error) Failure {
 		return Failure{QRPStatusError, "invalid_resume_cursor", http.StatusBadRequest, 0}
 	case errors.Is(err, ErrNotAuthorized):
 		return Failure{QRPStatusError, "not_authorized", http.StatusForbidden, 0}
+	case errors.Is(err, ErrBusy):
+		return Failure{QRPStatusBusy, "busy", http.StatusTooManyRequests, 30 * time.Second}
 	}
 	return Failure{QRPStatusError, "bad_request", http.StatusBadRequest, 0}
 }

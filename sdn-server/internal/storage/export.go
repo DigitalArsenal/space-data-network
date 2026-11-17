@@ -148,7 +148,17 @@ func (s *FlatSQLStore) ExportDatasetWindow(outputDir string, filter IndexedRecor
 		}
 		return ex, nil
 	}
-	records, err := s.QueryIndexedRecords(filter)
+	var records []*Record
+	var err error
+	if filter.CIDs != nil {
+		b, ok := s.rb.(format4Backend)
+		if !ok {
+			return nil, fmt.Errorf("an export by CID needs a format-4 store")
+		}
+		records, err = b.indexedRecordsByCID(filter)
+	} else {
+		records, err = s.QueryIndexedRecords(filter)
+	}
 	if err != nil {
 		return nil, err
 	}
