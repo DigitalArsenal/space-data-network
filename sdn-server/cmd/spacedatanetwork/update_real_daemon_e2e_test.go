@@ -1824,6 +1824,8 @@ type pushDaemon struct {
 	*realScenario
 	tracker  *realDaemonTracker
 	logPaths []string
+	// exited is closed when the daemon this test started last has exited.
+	exited chan struct{}
 }
 
 func newPushDaemon(t *testing.T, work string, build realBuild, feed *realE2EFeed, roots update.TrustedRoots, health int) *pushDaemon {
@@ -1888,7 +1890,9 @@ func (d *pushDaemon) start(t *testing.T, budget time.Duration) {
 		t.Fatal(err)
 	}
 	d.tracker.add(cmd.Process.Pid)
-	go func() { _ = cmd.Wait() }()
+	exited := make(chan struct{})
+	d.exited = exited
+	go func() { _ = cmd.Wait(); close(exited) }()
 	waitRealReady(t, d.adminBase, budget, name)
 }
 

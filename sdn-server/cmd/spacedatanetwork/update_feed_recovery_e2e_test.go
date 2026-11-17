@@ -21,12 +21,17 @@ import (
 	ps "github.com/libp2p/go-libp2p-pubsub"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/ops"
+	"github.com/spacedatanetwork/sdn-server/internal/storage"
 	"github.com/spacedatanetwork/sdn-server/internal/update"
 )
 
+// handoffAfterStopMinInterval is the minimum upgrade interval of the
+// handoff-after-stop case, in seconds: the first retry backoff.
+const handoffAfterStopMinInterval = 60
+
 // These cases drive installed daemons through their HTTPS feed and alert API.
 func runRealFeedRecovery(t *testing.T) {
-	for _, mode := range []string{"handoff", "replay", "missing-manifest", "install-alert", "candidate-bound"} {
+	for _, mode := range []string{"handoff", "handoff-after-stop", "replay", "missing-manifest", "install-alert", "candidate-bound"} {
 		t.Run(mode, func(t *testing.T) { runRealFeedRecoveryCase(t, mode) })
 	}
 }
@@ -72,7 +77,7 @@ func runRealFeedRecoveryCase(t *testing.T, mode string) {
 	var requested sync.Map
 	var indexMu sync.Mutex
 	var brokenIndex, cleanIndex atomic.Bool
-	if mode != "handoff" && mode != "replay" {
+	if mode != "handoff" && mode != "handoff-after-stop" && mode != "replay" {
 		count := 1
 		if mode == "candidate-bound" {
 			count = 12
@@ -213,6 +218,9 @@ func runRealFeedRecoveryCase(t *testing.T, mode string) {
 		if mode == "handoff" {
 			// The first retry after a failed hand-off waits one minimum interval.
 			cfg.Update.MinIntervalSeconds = 20
+		}
+		if mode == "handoff-after-stop" {
+			cfg.Update.MinIntervalSeconds = handoffAfterStopMinInterval
 		}
 	})
 	// One signed-in client for the whole case: the admin API limits sign-in
@@ -362,6 +370,108 @@ func runRealFeedRecoveryCase(t *testing.T, mode string) {
 			t.Fatalf("the ledger shows no failed hand-off followed by a retry: %v", ledgerActions(t, d.paths.Root))
 		}
 		t.Logf("helper preparation failed; hold released after %s; the same release installed after the backoff without an operator", bound)
+	case "handoff-after-stop":
+		// The helper stops the daemon; then a process holds the store lock, so
+		// the helper swaps nothing and restarts the build that was running.
+		select {
+		case <-d.exited:
+		case <-time.After(boot + 2*time.Duration(health)*time.Second):
+			t.Fatal("the daemon was not stopped for the hand-off")
+		}
+		var lock *storage.StoreMaintenanceLock
+		for deadline := time.Now().Add(5 * time.Second); lock == nil; {
+			held, err := storage.LockStoreForMaintenance(d.store)
+			if err == nil {
+				lock = held
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("take the store lock after the daemon stopped: %v", err)
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		var lockFailedAt time.Time
+		for deadline := time.Now().Add(storeLockWait + 30*time.Second); lockFailedAt.IsZero(); {
+			for _, entry := range readLedger(t, d.paths.Root) {
+				if entry.Action == "store-lock-failed" && entry.UpdateID == v2.updateID {
+					recorded, err := time.Parse(time.RFC3339, entry.RecordedAt)
+					if err != nil {
+						t.Fatalf("ledger time %q: %v", entry.RecordedAt, err)
+					}
+					lockFailedAt = recorded
+				}
+			}
+			if lockFailedAt.IsZero() && time.Now().After(deadline) {
+				_ = lock.Release()
+				t.Fatalf("the helper did not report the held store lock: %v", ledgerActions(t, d.paths.Root))
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		if err := lock.Release(); err != nil {
+			t.Fatal(err)
+		}
+		waitPush(t, boot, "the build that was running, restarted by the helper", func() bool {
+			d.trackHelper()
+			return pushIdentityMatches(d.adminBase, v1)
+		})
+		// The restarted daemon must wait out the backoff, never hand the same
+		// update off again at its first feed check.
+		admin = nil
+		sawAlert := false
+		watched := time.Now()
+		for time.Since(watched) < (handoffAfterStopMinInterval-10)*time.Second {
+			for _, entry := range readLedger(t, d.paths.Root) {
+				recorded, err := time.Parse(time.RFC3339, entry.RecordedAt)
+				if err == nil && entry.Action == "stop-requested" && recorded.After(lockFailedAt) {
+					t.Fatalf("the restarted daemon handed %s off again %s after the failed hand-off, before the %ds backoff",
+						entry.UpdateID, recorded.Sub(lockFailedAt), handoffAfterStopMinInterval)
+				}
+			}
+			if !sawAlert {
+				var status struct {
+					Alerts []ops.Alert `json:"alerts"`
+				}
+				if admin == nil {
+					admin = d.client(t)
+				}
+				if admin.get(context.Background(), "/api/v1/status/alerts", &status) == nil {
+					for _, alert := range status.Alerts {
+						if alert.Kind == ops.KindUpdateFailed && alert.Subject == v2.updateID && strings.Contains(alert.LastError, "nothing was swapped") {
+							sawAlert = true
+						}
+					}
+				}
+			}
+			time.Sleep(time.Second)
+		}
+		if !sawAlert {
+			t.Fatal("the restarted daemon raised no alert for the failed hand-off")
+		}
+		record, err := update.LoadHandoffFailure(d.paths)
+		if err != nil || record == nil || record.UpdateID != v2.updateID || record.Failures != 1 {
+			t.Fatalf("hand-off failure record: %+v, %v", record, err)
+		}
+		d.waitUpgrade(t, v2, boot+2*time.Duration(health)*time.Second+handoffAfterStopMinInterval*time.Second)
+		retried := false
+		for _, entry := range readLedger(t, d.paths.Root) {
+			recorded, err := time.Parse(time.RFC3339, entry.RecordedAt)
+			if err != nil || entry.Action != "stop-requested" || !recorded.After(lockFailedAt) {
+				continue
+			}
+			// Ledger times are whole seconds.
+			if wait := recorded.Sub(lockFailedAt); wait < (handoffAfterStopMinInterval-1)*time.Second {
+				t.Fatalf("retry started %s after the failed hand-off, before the %ds backoff", wait, handoffAfterStopMinInterval)
+			}
+			retried = true
+			break
+		}
+		if !retried {
+			t.Fatalf("the ledger shows no retry after the failed hand-off: %v", ledgerActions(t, d.paths.Root))
+		}
+		if record, err := update.LoadHandoffFailure(d.paths); err != nil || record != nil {
+			t.Fatalf("the completed swap left the hand-off failure record: %+v, %v", record, err)
+		}
+		t.Logf("the helper stopped the daemon and failed on the held store lock; the restarted build waited out the %ds backoff, then installed the same release", handoffAfterStopMinInterval)
 	case "missing-manifest":
 		waitPush(t, 45*time.Second, "fallback after missing manifest", func() bool { return strings.Contains(d.logs(), "Update signal accepted: "+v2.updateID) })
 		d.waitUpgrade(t, v2, boot+2*time.Duration(health)*time.Second)

@@ -209,6 +209,7 @@ func (s *UpdateSignalSubscriber) Run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	s.restoreFailedAlerts()
+	s.restoreHandoffFailure()
 	if s.deps.CheckInterval > 0 {
 		done := make(chan struct{})
 		go func() { defer close(done); s.runFeedChecks(ctx) }()

@@ -923,7 +923,17 @@ func runHelperApply(ctx context.Context, o helperApplyOptions) error {
 	if err != nil {
 		// Nothing was swapped (or the swap restored itself): the build on disk
 		// is the build that was running. Bring it back the way it ran rather
-		// than leave the box dark.
+		// than leave the box dark. The daemon that comes back reads the
+		// recorded failure and waits out the retry backoff before it hands
+		// this, or any, update off again.
+		if daemon.PID > 0 && !update.HasFailedUpdate(o.Paths, o.UpdateID) {
+			reason := fmt.Sprintf("update %s: the helper stopped the daemon and failed before the swap: %v", o.UpdateID, err)
+			if record, recordErr := update.RecordHandoffFailure(o.Paths, o.UpdateID, reason, time.Now()); recordErr != nil {
+				fmt.Fprintf(o.Err, "handoff_failure=unrecorded error=%q\n", recordErr.Error())
+			} else {
+				fmt.Fprintf(o.Err, "handoff_failure=recorded update_id=%s failures=%d\n", o.UpdateID, record.Failures)
+			}
+		}
 		if daemon.PID > 0 && !o.NoRestart && len(restartArgv) > 0 {
 			if _, restartErr := o.startBuildOnDisk(ctx, daemon, daemon.StoppedBySupervisor, restartArgv, o.UpdateID, version,
 				"the swap did not happen; restarting the build that was running"); restartErr != nil {
@@ -931,6 +941,9 @@ func runHelperApply(ctx context.Context, o helperApplyOptions) error {
 			}
 		}
 		return err
+	}
+	if clearErr := update.ClearHandoffFailure(o.Paths); clearErr != nil {
+		fmt.Fprintf(o.Err, "handoff_failure=uncleared error=%q\n", clearErr.Error())
 	}
 	fmt.Fprintf(o.Out, "applied_update=%s\n", result.UpdateID)
 	fmt.Fprintf(o.Out, "version=%s\n", result.Version)

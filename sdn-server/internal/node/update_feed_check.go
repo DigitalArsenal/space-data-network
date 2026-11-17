@@ -344,11 +344,21 @@ func (s *UpdateSignalSubscriber) handoffTimedOut(ctx context.Context, updateID s
 			err = fmt.Errorf("%w; quarantine failed: %v", err, quarantineErr)
 		}
 	} else {
+		now := s.deps.Now()
 		s.mu.Lock()
 		s.handoffFailures++
-		backoff := handoffBackoff(s.deps.MinInterval, s.handoffFailures)
-		s.handoffRetryAt = s.deps.Now().Add(backoff)
 		failures := s.handoffFailures
+		s.mu.Unlock()
+		// The record keeps the count and the backoff across a restart.
+		if record, recordErr := update.RecordHandoffFailure(s.deps.Paths, updateID, err.Error(), now); recordErr != nil {
+			log.Warnf("Record failed update hand-off: %v", recordErr)
+		} else if record.Failures > failures {
+			failures = record.Failures
+		}
+		backoff := handoffBackoff(s.deps.MinInterval, failures)
+		s.mu.Lock()
+		s.handoffFailures = failures
+		s.handoffRetryAt = now.Add(backoff)
 		s.mu.Unlock()
 		err = fmt.Errorf("%w; nothing was swapped; hand-off failure %d, next attempt after %s", err, failures, backoff)
 	}
@@ -361,6 +371,36 @@ func (s *UpdateSignalSubscriber) handoffTimedOut(ctx context.Context, updateID s
 	s.deps.Alerts.Raise(ops.KindUpdateFailed, updateID, ops.SeverityError, err.Error())
 	s.release(updateID)
 	s.finishUpgrade(ctx, false, "")
+}
+
+// restoreHandoffFailure reads the hand-off failure recorded before this
+// daemon started (by the helper that stopped the previous daemon and then
+// failed before the swap, or by the previous daemon's hand-off bound). Every
+// swap waits for the same backoff a failure in this process would set, and the
+// failure stays visible as an alert.
+func (s *UpdateSignalSubscriber) restoreHandoffFailure() {
+	record, err := update.LoadHandoffFailure(s.deps.Paths)
+	if err != nil {
+		log.Warnf("Read update hand-off failure: %v", err)
+		return
+	}
+	if record == nil {
+		return
+	}
+	backoff := handoffBackoff(s.deps.MinInterval, record.Failures)
+	retryAt := record.FailedAt.Add(backoff)
+	s.mu.Lock()
+	if record.Failures > s.handoffFailures {
+		s.handoffFailures = record.Failures
+	}
+	if retryAt.After(s.handoffRetryAt) {
+		s.handoffRetryAt = retryAt
+	}
+	s.mu.Unlock()
+	reason := fmt.Sprintf("%s; nothing was swapped; hand-off failure %d, next attempt after %s (at %s)",
+		record.Reason, record.Failures, backoff, retryAt.UTC().Format(time.RFC3339))
+	log.Warnf("Update hand-off %s failed before this start: %s", record.UpdateID, reason)
+	s.deps.Alerts.Raise(ops.KindUpdateFailed, record.UpdateID, ops.SeverityError, reason)
 }
 
 func (s *UpdateSignalSubscriber) reportFailure(trigger, id string, err error) {
