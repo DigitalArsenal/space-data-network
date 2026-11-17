@@ -73,6 +73,9 @@ type AdminMountDeps struct {
 	// SyncLane runs one bounded trusted-peer catch-up pass for a lane and
 	// returns how many shards were materialized.
 	SyncLane func(ctx context.Context, schema, providerID, sourceName string) (int, error)
+	// Follow starts (on) or stops following a lane from a producer peer
+	// (a $DSS Subscribe or Unsubscribe that names PROVIDER_PEER_ID).
+	Follow func(schema, providerID, sourceName, producerPeerID string, on bool) error
 	// Pins is the node pin policy.
 	Pins *pinpolicy.Policy
 

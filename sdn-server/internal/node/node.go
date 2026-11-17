@@ -132,14 +132,18 @@ type Node struct {
 	// its public DHT IS dht: one peer, one identity (owner 2026-10-05).
 	kubo *kubo.Node
 	// pins is the node pin policy: every Kubo pin goes through it.
-	pins           *pinpolicy.Policy
-	pubsub         *pubsub.PubSub
-	topicsMu       sync.RWMutex
-	topics         map[string]*pubsub.Topic
-	flatc          *wasm.FlatcModule
-	hdwallet       *wasm.HDWalletModule
-	identity       *wasm.DerivedIdentity // nil if using random key (no HD wallet)
-	validator      *sds.Validator
+	pins      *pinpolicy.Policy
+	pubsub    *pubsub.PubSub
+	topicsMu  sync.RWMutex
+	topics    map[string]*pubsub.Topic
+	flatc     *wasm.FlatcModule
+	hdwallet  *wasm.HDWalletModule
+	identity  *wasm.DerivedIdentity // nil if using random key (no HD wallet)
+	validator *sds.Validator
+	// flatsqlSync serves flatsql-sync, followed reads included; follows
+	// are the lanes this node follows (follow.go).
+	flatsqlSync    *protocol.FlatSQLSyncHandler
+	follows        *followManager
 	store          *storage.FlatSQLStore
 	protocol       *protocol.SDSExchangeHandler
 	plugins        *plugins.Manager
@@ -968,7 +972,9 @@ func (n *Node) init() error {
 	n.host.SetStreamHandler(protocol.SDSProtocolID, n.protocol.HandleStream)
 	epm.RegisterPeerDirectory(n.host, n.peerRegistry)
 	if n.store != nil {
-		protocol.NewFlatSQLSyncHandler(n.store).SetPrivateReadAuthorizer(n.mayReadPrivate).Register(n.host)
+		n.flatsqlSync = protocol.NewFlatSQLSyncHandler(n.store).SetPrivateReadAuthorizer(n.mayReadPrivate)
+		n.flatsqlSync.Register(n.host)
+		n.follows = newFollowManager(n, filepath.Dir(n.store.ArchiveOutputDir()))
 	}
 	n.host.SetStreamHandler(protocol.IDExchangeProtoID, protocol.HandleLegacyIDExchange)
 	n.host.SetStreamHandler(protocol.ChatProtoID, protocol.HandleLegacyChat)
@@ -2252,6 +2258,11 @@ func (n *Node) Start(ctx context.Context) error {
 	// Before anything can fetch a shard: clear what earlier processes left
 	// in the shard work roots.
 	n.pruneStaleDatasetPublicationWork(time.Now())
+	if n.follows != nil {
+		if err := n.follows.load(); err != nil {
+			log.Errorf("Followed lanes not loaded: %v", err)
+		}
+	}
 
 	// Bootstrap DHT — unless the operator turned it off. Bootstrapping is what
 	// makes a node join the public Amino DHT at all; skipping it is how

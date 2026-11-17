@@ -48,6 +48,8 @@ type FlatSQLSyncHandler struct {
 	readAuthorizer   PeerAuthorizer
 	probes           *wireSpeedProbeBudget
 	publicationReads *readbudget.Budget
+	// follows counts followed read-chunk streams per lane (FollowStats).
+	follows *followStats
 }
 
 // syncRequest is one decoded $QRP request.
@@ -73,7 +75,7 @@ type syncRequest struct {
 // sds.IsPublicReadSchema names, from the node's own datastore. Everything
 // else needs SetPrivateReadAuthorizer.
 func NewFlatSQLSyncHandler(store *storage.FlatSQLStore) *FlatSQLSyncHandler {
-	return &FlatSQLSyncHandler{store: store, probes: newWireSpeedProbeBudget(), publicationReads: newPublicationListBudget()}
+	return &FlatSQLSyncHandler{store: store, probes: newWireSpeedProbeBudget(), publicationReads: newPublicationListBudget(), follows: newFollowStats()}
 }
 
 // SetPrivateReadAuthorizer installs the check that admits a peer to private
@@ -277,11 +279,98 @@ func (h *FlatSQLSyncHandler) handleReadChunk(w io.Writer, req syncRequest) error
 	}
 	query.Schema = req.schema // the name authorize checked
 	query.QueryProfile = req.queryProfile
+	if req.q.FOLLOW() {
+		rw, ok := w.(io.ReadWriter)
+		if !ok {
+			return errors.New("a followed read needs a two-way stream")
+		}
+		return h.followReadChunk(rw, activeStore, query)
+	}
 	page, records, err := datasync.ScanPage(activeStore, query, datasync.MaxSyncChunkLimit)
 	if err != nil {
 		return err
 	}
 	return syncwire.WriteScanPage(w, activeStore, page, records)
+}
+
+// followQuiet is how long a followed read waits for new records before it
+// answers a grant with an empty page; followPoll is how often it looks.
+var (
+	followQuiet = 10 * time.Second
+	followPoll  = 100 * time.Millisecond
+	// followGrantWait bounds the wait for the subscriber's next grant.
+	followGrantWait = 30 * time.Minute
+)
+
+type deadlineSetter interface {
+	SetReadDeadline(time.Time) error
+	SetWriteDeadline(time.Time) error
+}
+
+// followReadChunk serves a followed read-chunk (syncwire/follow.go): one
+// page for the opening request and one for each grant, the scan's own
+// cursors carried from page to page, and once everything stored has been
+// sent, the records stored after it (the scan's resume cursor).
+func (h *FlatSQLSyncHandler) followReadChunk(s io.ReadWriter, store *storage.FlatSQLStore, query datasync.QueryRequest) error {
+	deadlines, _ := s.(deadlineSetter)
+	lane := followLaneKey(query)
+	h.follows.open(lane)
+	defer h.follows.close(lane)
+	caughtUp := false
+	for first := true; ; first = false {
+		if !first {
+			if deadlines != nil {
+				_ = deadlines.SetReadDeadline(time.Now().Add(followGrantWait))
+			}
+			if _, err := syncwire.ReadRequest(s); err != nil {
+				if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+					return nil
+				}
+				return fmt.Errorf("%w: %v", syncwire.ErrFollowClosed, err)
+			}
+		}
+		var page *datasync.Page
+		var records []*storage.Record
+		waited := time.Duration(0)
+		for {
+			var err error
+			page, records, err = datasync.ScanPage(store, query, datasync.MaxSyncChunkLimit)
+			if err != nil {
+				return err
+			}
+			if !caughtUp || len(records) > 0 || page.NextCursor != "" || waited >= followQuiet {
+				break
+			}
+			time.Sleep(followPoll)
+			waited += followPoll
+		}
+		if deadlines != nil {
+			_ = deadlines.SetWriteDeadline(time.Now().Add(DefaultReadTimeout))
+		}
+		if err := syncwire.WriteFollowPage(s, store, page, records); err != nil {
+			return err
+		}
+		var recordBytes int64
+		for _, r := range records {
+			recordBytes += int64(syncwire.FramePrefixLength + len(r.Data))
+		}
+		h.follows.served(lane, recordBytes, len(records))
+		query.TotalCount, query.SnapshotID, query.Head = 0, "", ""
+		if page.NextCursor != "" {
+			query.Cursor, query.ResumeCursor = page.NextCursor, ""
+			if snapshotID, total, ok := datasync.CursorSnapshot(query.Cursor); ok {
+				query.SnapshotID, query.Head, query.TotalCount = snapshotID, snapshotID, total
+			}
+		} else {
+			query.Cursor, query.ResumeCursor = "", page.ResumeCursor
+			caughtUp = true
+		}
+	}
+}
+
+// FollowStats is what this node has served to followers, per lane.
+func (h *FlatSQLSyncHandler) FollowStats() map[FollowLane]FollowStat {
+	return h.follows.Snapshot()
 }
 
 func (h *FlatSQLSyncHandler) handleOpenManifest(w io.Writer, req syncRequest) error {

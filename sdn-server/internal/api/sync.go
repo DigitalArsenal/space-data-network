@@ -781,6 +781,13 @@ func EncodeDSSSubscribe(schema, providerID, sourceName string, retention int8) [
 	return encodeDSS(&lane)
 }
 
+// EncodeDSSFollow builds a Subscribe request that follows the lane from a
+// producer peer.
+func EncodeDSSFollow(schema, providerID, sourceName, producerPeerID string) []byte {
+	lane := SyncLane{Key: newLaneKey(schema, providerID, sourceName), RequestedAction: DSSActionSubscribe, ProviderPeerID: producerPeerID}
+	return encodeDSS(&lane)
+}
+
 // EncodeDSSSetRetention builds a SetRetention request: one lane's rule, or,
 // with providerID and sourceName empty, the default of the standard. A nil
 // retention clears the choice, so the default applies again.
@@ -900,6 +907,27 @@ func (h *SyncHandler) handleAction(w http.ResponseWriter, r *http.Request) {
 	}
 	switch action {
 	case DSSActionSubscribe, DSSActionUnsubscribe:
+		producer := strings.TrimSpace(string(req.PROVIDER_PEER_ID()))
+		switch {
+		case action == DSSActionSubscribe && producer != "":
+			// A subscription that names the producer follows the lane from
+			// it: a live stream of the records it stores.
+			if h.deps.Follow == nil {
+				WriteErrorFrame(w, http.StatusBadRequest, "bad_request", "This node cannot follow a lane.", 0)
+				return
+			}
+			if err := h.deps.Follow(key.schema, key.providerID, key.sourceName, producer, true); err != nil {
+				WriteErrorFrame(w, http.StatusBadRequest, "bad_request", "That lane cannot be followed: "+err.Error(), 0)
+				return
+			}
+		case action == DSSActionUnsubscribe && h.deps.Follow != nil && key.providerID != "" && key.sourceName != "":
+			// Unsubscribe stops following the lane (from the named
+			// producer, or from every producer when none is named).
+			if err := h.deps.Follow(key.schema, key.providerID, key.sourceName, producer, false); err != nil {
+				WriteErrorFrame(w, http.StatusBadRequest, "bad_request", "That lane cannot be unfollowed: "+err.Error(), 0)
+				return
+			}
+		}
 		h.toggleSubscription(key, action == DSSActionSubscribe, retentionWord)
 	case DSSActionSync:
 		h.startSync(key)

@@ -112,6 +112,9 @@ type QRPFields struct {
 	// Tables answers a request for the query surface (one entry per topic,
 	// datastore or table).
 	Tables []QRPTableField
+	// Follow asks read-chunk to keep the stream open and send records as
+	// they are stored (FollowReadChunk).
+	Follow bool
 }
 
 // QRPColumnField is one $QRP COLUMNS descriptor.
@@ -382,6 +385,9 @@ func BuildQRP(f QRPFields) []byte {
 	QRP.QRPAddHTTP_STATUS(b, f.HTTPStatus)
 	if resumeCursor != 0 {
 		QRP.QRPAddRESUME_CURSOR(b, resumeCursor)
+	}
+	if f.Follow {
+		QRP.QRPAddFOLLOW(b, true)
 	}
 	root := QRP.QRPEnd(b)
 	QRP.FinishSizePrefixedQRPBuffer(b, root)

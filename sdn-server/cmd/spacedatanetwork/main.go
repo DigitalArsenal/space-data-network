@@ -1356,6 +1356,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					RunFlowNow:   runFlowServiceNow(n),
 					FlowServices: flowServiceInfos(n, cfg),
 					SyncLane:     n.SyncLane,
+					Follow:       n.Follow,
 					Pins:         pins,
 				}
 				api.MountRegisteredAdmin(adminMux, adminMountDeps)

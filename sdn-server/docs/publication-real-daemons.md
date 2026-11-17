@@ -98,6 +98,13 @@ test sent, and checks that the series' three 50,000-record windows are read
 by CID from the plan that fingerprint read made ("Dataset publication
 window").
 
+`TestPublicationFollowRealDaemons` follows a lane with nothing published: the
+receiver subscribes with a `$DSS` Subscribe that names the producer
+(`PROVIDER_PEER_ID`), receives the stored records and then live ones over the
+followed read-chunk stream, keeps the subscription as a `$DSS` record in
+`follows.dss`, and after a restart resumes at its saved cursor with every
+record held once.
+
 `TestPublicationLaneCountRealDaemons` compares a scan's `TOTAL_COUNT` on one
 daemon with the distinct records sent: lanes with one tag instance (counted
 from the lane counters) and a source whose records sit in two batches

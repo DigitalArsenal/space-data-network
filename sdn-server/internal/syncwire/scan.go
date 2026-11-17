@@ -69,6 +69,10 @@ func laneOf(rec *storage.Record) scanLane {
 // (CURSOR, NEXT_CURSOR, RESUME_CURSOR on the last page, TOTAL_COUNT, LIMIT,
 // ETAG = page chunk hash). An empty page is one header with RECORD_COUNT 0.
 func WriteScanPage(w io.Writer, store *storage.FlatSQLStore, page *datasync.Page, records []*storage.Record) error {
+	return writeScanPage(w, store, page, records, false)
+}
+
+func writeScanPage(w io.Writer, store *storage.FlatSQLStore, page *datasync.Page, records []*storage.Record, closePage bool) error {
 	fileIdentifier := ""
 	if len(records) > 0 && len(records[0].Data) >= FrameIdentifierOffset {
 		fileIdentifier = string(records[0].Data[FramePrefixLength:FrameIdentifierOffset])
@@ -115,6 +119,11 @@ func WriteScanPage(w io.Writer, store *storage.FlatSQLStore, page *datasync.Page
 			return err
 		}
 		start = end
+	}
+	if closePage {
+		if _, err := out.Write(header(scanLane{}, 0)); err != nil {
+			return err
+		}
 	}
 	return out.Flush()
 }
