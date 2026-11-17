@@ -94,11 +94,18 @@ func exportOrdinaryDatasetRecords(outputDir string, filter IndexedRecordQuery, r
 
 	shardPath := filepath.Join(outputDir, "shards", index.ShardFile)
 	indexPath := filepath.Join(outputDir, "indexes", fmt.Sprintf("%s-%s.index.fb", querySHA[:16], indexSHA[:16]))
-	if err := writeImmutableExportFile(shardPath, shardBytes); err != nil {
-		return nil, err
-	}
-	if err := writeImmutableExportFile(indexPath, indexBytes); err != nil {
-		return nil, err
+	var stale []string
+	for _, file := range []struct {
+		path string
+		data []byte
+	}{{shardPath, shardBytes}, {indexPath, indexBytes}} {
+		reusedStale, err := writeImmutableExportFileReused(file.path, file.data)
+		if err != nil {
+			return nil, err
+		}
+		if reusedStale {
+			stale = append(stale, file.path)
+		}
 	}
 
 	return &DatasetExport{
@@ -116,5 +123,6 @@ func exportOrdinaryDatasetRecords(outputDir string, filter IndexedRecordQuery, r
 		IndexCID:       indexCID,
 		IndexBytes:     int64(len(indexBytes)),
 		SourceBatches:  summarizeExportSourceBatches(indexRecords),
+		StaleFiles:     stale,
 	}, nil
 }

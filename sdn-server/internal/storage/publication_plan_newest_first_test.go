@@ -3,6 +3,8 @@ package storage
 import (
 	"context"
 	"testing"
+
+	"github.com/spacedatanetwork/sdn-server/internal/storage/format4"
 )
 
 // A batch's publication plan read from its newest record down is the plan
@@ -58,18 +60,34 @@ func TestPublicationPlanNewestFirstIsTheLaneRead(t *testing.T) {
 	store(sc.omm[150:170], "peer-a", "during", "w1")
 	now := head()
 
+	// taken: whether the plan is read from the batch's newest record down. A
+	// superseded batch has no live tag instance, and a batch with records past
+	// the read's snapshot point is read with the lane.
 	cases := []struct {
 		source, batch string
 		through       int64
+		taken         bool
 	}{
-		{"shared", "b1", now}, {"shared", "b2", now}, {"shared", "b3", now},
-		{"copies", "c1", now},
-		{"superseded", "s1", now}, {"superseded", "s2", now},
-		{"deletes", "d1", now},
-		{"during", "w1", snapshot},
+		{"shared", "b1", now, true}, {"shared", "b2", now, true}, {"shared", "b3", now, true},
+		{"copies", "c1", now, true},
+		{"superseded", "s1", now, false}, {"superseded", "s2", now, true},
+		{"deletes", "d1", now, true},
+		{"during", "w1", snapshot, false}, {"during", "w1", now, true},
 	}
 	saved := publicationSetFingerprintPage
 	defer func() { publicationSetFingerprintPage = saved }()
+	for _, c := range cases {
+		for _, page := range []int64{4, 7, 13, 1000} {
+			q := format4.Query{Type: "OMM", Lane: f4Lane("p", c.source, c.batch, "", ""), Order: format4.OrderSeqAsc, Bulk: true, Limit: page, SeqThrough: c.through}
+			read, err := b.planBatchNewestFirst(context.Background(), q, func([]format4.Rec) error { return nil })
+			if err != nil {
+				t.Fatalf("%s/%s through %d page %d: %v", c.source, c.batch, c.through, page, err)
+			}
+			if read != c.taken {
+				t.Fatalf("%s/%s through %d page %d: read from the newest record down %v, want %v", c.source, c.batch, c.through, page, read, c.taken)
+			}
+		}
+	}
 	for _, c := range cases {
 		for _, page := range []int64{4, 7, 13, 1000} {
 			publicationSetFingerprintPage = page

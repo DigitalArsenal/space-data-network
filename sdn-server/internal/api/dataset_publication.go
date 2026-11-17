@@ -226,6 +226,11 @@ func (h *DatasetPublicationHandler) handlePublish(w http.ResponseWriter, r *http
 		}
 	}
 
+	// The answer is the completed publication, which can take longer than the
+	// server's write timeout: this response has no write deadline.
+	if err := http.NewResponseController(w).SetWriteDeadline(time.Time{}); err != nil {
+		log.Warnf("dataset publication: the answer keeps the server's write timeout (%v)", err)
+	}
 	result, err := h.service.PublishDatasetUpdate(r.Context(), req)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -644,6 +649,9 @@ func (s *ConcreteDatasetPublicationService) ensureDatasetPublicationAssets(ctx c
 	if shardErr == nil {
 		done := s.runs.writingFiles()
 		export, err := s.store.RepairDatasetPublicationIndexFromShard(filepath.Join(s.outputDir, safeDatasetPathComponent(publication.SchemaName)), publication)
+		if err == nil {
+			s.runs.keepFiles(runOf(ctx), export.StaleFiles)
+		}
 		done()
 		if err != nil {
 			return publication, fmt.Errorf("repair dataset publication %s index from shard: %w", publication.ShardCID, err)
@@ -1020,6 +1028,9 @@ func (s *ConcreteDatasetPublicationService) publishDatasetUpdatePart(ctx context
 		AllowLargeResultSet: filter.AllowLargeResultSet,
 		OrderByCID:          true,
 	})
+	if err == nil {
+		s.runs.keepFiles(runOf(ctx), export.StaleFiles)
+	}
 	done()
 	if err != nil {
 		return nil, atPublicationStep("export", fmt.Errorf("export dataset window: %w", err))

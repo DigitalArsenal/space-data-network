@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -186,7 +187,7 @@ func TestPublicationSweepKeepsFilesOfRunningPublications(t *testing.T) {
 		}
 	})
 
-	t.Run("retry reusing identical files", func(t *testing.T) {
+	retry := func(t *testing.T, refreshFails bool) {
 		root := t.TempDir()
 		store := pairedStore(t, filepath.Join(root, "producer"))
 		defer store.Close()
@@ -219,6 +220,11 @@ func TestPublicationSweepKeepsFilesOfRunningPublications(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
+		if refreshFails {
+			// The reused files' times cannot be refreshed (a file the node
+			// may write but does not own, on a system that refuses it).
+			defer storage.SetReusedExportFileRefresh(func(string) error { return syscall.EPERM })()
+		}
 		files, err := publishWhileSwept(t, service, kubo, clock, "CAT.fbs", func() error {
 			_, err := service.PublishDatasetUpdate(context.Background(), req)
 			return err
@@ -231,7 +237,9 @@ func TestPublicationSweepKeepsFilesOfRunningPublications(t *testing.T) {
 		if err != nil {
 			t.Fatalf("the retry failed: %v", err)
 		}
-	})
+	}
+	t.Run("retry reusing identical files", func(t *testing.T) { retry(t, false) })
+	t.Run("retry reusing identical files whose time cannot be refreshed", func(t *testing.T) { retry(t, true) })
 
 	t.Run("datastore publication", func(t *testing.T) {
 		validator, err := sds.NewValidator(nil)

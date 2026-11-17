@@ -77,6 +77,14 @@ func TestPublicationRunsStopWithTheNodeAndTheirCaller(t *testing.T) {
 	if _, err := s.runDatasetPublication(bound, req, blocked); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("a publication of a bound caller past its deadline answered %v", err)
 	}
+	// The caller answers at its deadline; the run it was the only caller of
+	// is cancelled and ends.
+	for ended := time.Now().Add(5 * time.Second); !s.runs.oldestStart(nil).IsZero(); time.Sleep(time.Millisecond) {
+		if time.Now().After(ended) {
+			t.Fatal("the run of a bound caller that left did not end")
+		}
+	}
+	s.runs.active.Wait()
 	s.alerts.Clear(ops.KindPublicationFailed, datasetPublicationLaneName(req))
 	s.runs = newPublicationRuns()
 
@@ -103,5 +111,152 @@ func TestPublicationRunsStopWithTheNodeAndTheirCaller(t *testing.T) {
 	}
 	if _, err := s.runDatasetPublication(context.Background(), req, blocked); !errors.Is(err, errPublicationsStopped) {
 		t.Fatalf("a publication requested after the stop answered %v", err)
+	}
+}
+
+// A bound caller (the auto-publisher) that joins a run another caller
+// started stops waiting at its own deadline, and the run continues for the
+// caller that started it. When the starter is the bound one and its deadline
+// passes while an unbound caller waits, the run continues for that caller.
+// When the last caller waiting is bound and leaves, the run is cancelled.
+func TestPublicationJoinedRunsHonorEachCallersBound(t *testing.T) {
+	s := &ConcreteDatasetPublicationService{runs: newPublicationRuns(), now: time.Now, alerts: ops.NewRegistry()}
+	req := DatasetPublicationRequest{Schema: "OMM.fbs", ProviderID: "p", SourceName: "s", BatchID: "b"}
+	type answer struct {
+		result *DatasetPublicationResult
+		err    error
+	}
+	release := make(chan struct{})
+	cancelled := make(chan error, 1)
+	slow := func(ctx context.Context) (*DatasetPublicationResult, error) {
+		select {
+		case <-release:
+			return &DatasetPublicationResult{RecordCount: 7}, nil
+		case <-ctx.Done():
+			cancelled <- context.Cause(ctx)
+			return nil, context.Cause(ctx)
+		}
+	}
+	// finish lets the running publication complete; it fails the test when
+	// the run already ended (a caller cancelled it).
+	finish := func() {
+		t.Helper()
+		select {
+		case release <- struct{}{}:
+		case err := <-cancelled:
+			t.Fatalf("the run was cancelled while another caller waited for it: %v", err)
+		case <-time.After(5 * time.Second):
+			t.Fatal("the running publication did not take its release")
+		}
+	}
+	waitRunning := func() {
+		for s.runs.oldestStart(nil).IsZero() {
+			time.Sleep(time.Millisecond)
+		}
+	}
+	start := func(ctx context.Context) chan answer {
+		out := make(chan answer, 1)
+		go func() {
+			result, err := s.runDatasetPublication(ctx, req, slow)
+			out <- answer{result, err}
+		}()
+		return out
+	}
+	bound := func(d time.Duration) (context.Context, context.CancelFunc) {
+		return context.WithTimeout(withPublicationBoundToCaller(context.Background()), d)
+	}
+
+	// An unbound starter; a bound joiner leaves at its deadline.
+	starter := start(context.Background())
+	waitRunning()
+	joinerCtx, cancelJoiner := bound(100 * time.Millisecond)
+	defer cancelJoiner()
+	began := time.Now()
+	if _, err := s.runDatasetPublication(joinerCtx, req, slow); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("a bound joiner past its deadline answered %v", err)
+	}
+	if waited := time.Since(began); waited > 5*time.Second {
+		t.Fatalf("a bound joiner waited %s past its 100 ms deadline", waited)
+	}
+	select {
+	case err := <-cancelled:
+		t.Fatalf("the joiner's deadline cancelled the starter's run: %v", err)
+	default:
+	}
+	finish()
+	if got := <-starter; got.err != nil || got.result == nil || got.result.RecordCount != 7 {
+		t.Fatalf("the starter answered %+v, %v", got.result, got.err)
+	}
+
+	// A bound starter's deadline passes while an unbound joiner waits.
+	starterCtx, cancelStarter := bound(100 * time.Millisecond)
+	defer cancelStarter()
+	boundStarter := start(starterCtx)
+	waitRunning()
+	joiner := start(context.Background())
+	if got := <-boundStarter; !errors.Is(got.err, context.DeadlineExceeded) {
+		t.Fatalf("a bound starter past its deadline answered %+v, %v", got.result, got.err)
+	}
+	select {
+	case err := <-cancelled:
+		t.Fatalf("the starter's deadline cancelled a run another caller waits for: %v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	finish()
+	if got := <-joiner; got.err != nil || got.result == nil || got.result.RecordCount != 7 {
+		t.Fatalf("the joiner answered %+v, %v", got.result, got.err)
+	}
+
+	// Only bound callers: the run is cancelled when the last one leaves.
+	firstCtx, cancelFirst := bound(100 * time.Millisecond)
+	defer cancelFirst()
+	first := start(firstCtx)
+	waitRunning()
+	lastCtx, cancelLast := bound(400 * time.Millisecond)
+	defer cancelLast()
+	last := start(lastCtx)
+	<-first
+	select {
+	case err := <-cancelled:
+		t.Fatalf("the run was cancelled while a bound caller still waited: %v", err)
+	case <-time.After(150 * time.Millisecond):
+	}
+	<-last
+	select {
+	case err := <-cancelled:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("the run was cancelled by %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the run went on after every caller waiting for it left")
+	}
+}
+
+// A publication that completed is reported as completed, also when its
+// context ended after it finished its work (here: the node's stop).
+func TestPublicationCompletedAfterItsContextEndedIsASuccess(t *testing.T) {
+	s := &ConcreteDatasetPublicationService{runs: newPublicationRuns(), now: time.Now, alerts: ops.NewRegistry()}
+	req := DatasetPublicationRequest{Schema: "OMM.fbs", ProviderID: "p", SourceName: "s", BatchID: "b"}
+	out := make(chan error, 1)
+	var result *DatasetPublicationResult
+	go func() {
+		var err error
+		result, err = s.runDatasetPublication(context.Background(), req, func(ctx context.Context) (*DatasetPublicationResult, error) {
+			<-ctx.Done()
+			return &DatasetPublicationResult{RecordCount: 3, ManifestCID: "bafy-done"}, nil
+		})
+		out <- err
+	}()
+	for s.runs.oldestStart(nil).IsZero() {
+		time.Sleep(time.Millisecond)
+	}
+	stop, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	s.StopPublications(stop)
+	if err := <-out; err != nil || result == nil || result.ManifestCID != "bafy-done" {
+		t.Fatalf("a completed publication answered %+v, %v", result, err)
+	}
+	if active := s.alerts.Active(); len(active) != 0 {
+		t.Fatalf("a completed publication raised %+v", active)
 	}
 }

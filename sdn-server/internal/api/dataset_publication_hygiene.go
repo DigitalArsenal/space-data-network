@@ -73,7 +73,7 @@ func (s *ConcreteDatasetPublicationService) sweepPublicationFiles(schema string,
 	if oldest := s.runs.oldestStart(self); !oldest.IsZero() && oldest.Before(cutoff) {
 		cutoff = oldest
 	}
-	sweep, err := s.store.SweepDatasetPublicationFiles(s.outputDir, schema, now.Sub(cutoff)+publicationFileSweepMargin, now)
+	sweep, err := s.store.SweepDatasetPublicationFiles(s.outputDir, schema, now.Sub(cutoff)+publicationFileSweepMargin, now, s.runs.keptFiles())
 	if err != nil {
 		log.Warnf("sweep %s publication files: %v", schema, err)
 		return

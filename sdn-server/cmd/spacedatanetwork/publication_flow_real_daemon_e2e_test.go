@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -24,9 +23,9 @@ const gpFlowLane = "OMM.fbs publication-e2e/celestrak-gp"
 
 // gpFlowDaemon is a producer daemon running the real CelesTrak GP ingest flow
 // against a local copy of the parser's fixture. The flow stores a batch and
-// POSTs it to publishURL(d), the node's own publish route or a stand-in for
-// it. It is not started.
-func gpFlowDaemon(t *testing.T, name string, publishURL func(d *publicationDaemon) string) *publicationDaemon {
+// POSTs it to the node's own publish route. flows is more of the config's
+// flows section ("" for none). It is not started.
+func gpFlowDaemon(t *testing.T, name, flows string) *publicationDaemon {
 	t.Helper()
 	modules := os.Getenv("SDN_E2E_MODULES")
 	required := modules != ""
@@ -70,8 +69,8 @@ func gpFlowDaemon(t *testing.T, name string, publishURL func(d *publicationDaemo
 		t.Fatal(err)
 	}
 	d.env = append(d.env, "SDN_MODULE_CAPABILITY_POLICY_PATH="+policyPath)
-	cfg := readFileString(d.cfg) + fmt.Sprintf("flows:\n  services:\n    - flow: %q\n      config:\n        celestrak_gp_url: %q\n        celestrak_provider_id: publication-e2e\n        celestrak_http_timeout_ms: 30000\n        celestrak_publish_url: %q\n",
-		dist, origin.URL+"/NORAD/elements/gp.php", publishURL(d))
+	cfg := readFileString(d.cfg) + "flows:\n" + flows + fmt.Sprintf("  services:\n    - flow: %q\n      config:\n        celestrak_gp_url: %q\n        celestrak_provider_id: publication-e2e\n        celestrak_http_timeout_ms: 30000\n        celestrak_publish_url: %q\n",
+		dist, origin.URL+"/NORAD/elements/gp.php", ownPublishURL(d))
 	if err := os.WriteFile(d.cfg, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +94,7 @@ func TestPublicationFailureRealDaemons(t *testing.T) {
 	if os.Getenv("SDN_E2E_PUBLICATION") != "1" {
 		t.Skip("set SDN_E2E_PUBLICATION=1 for two isolated real daemons")
 	}
-	d := gpFlowDaemon(t, "failure-producer", ownPublishURL)
+	d := gpFlowDaemon(t, "failure-producer", "")
 	// The injected failure: a file where the export's shard directory must
 	// be, which stops its creation for any user, root included.
 	omm := filepath.Join(d.root, "dataset-publications", "OMM")
@@ -163,93 +162,88 @@ func TestPublicationFailureRealDaemons(t *testing.T) {
 	}
 }
 
-// slowPublicationAnswer is longer than the http-request capability's cap on
-// any other request (five minutes).
-const slowPublicationAnswer = 5*time.Minute + 20*time.Second
+// slowFlowWriteTimeout and slowFlowRequestLimit are the admin server's write
+// timeout and the http-request capability's limit on the slow-flow node, far
+// shorter than the publication its flow waits for (SDN_ADMIN_WRITE_TIMEOUT,
+// SDN_HTTP_REQUEST_MAX_TIMEOUT; 10 and 5 minutes otherwise).
+const (
+	slowFlowWriteTimeout = 3 * time.Second
+	slowFlowRequestLimit = 2 * time.Second
+)
 
-// TestPublicationSlowFlowRealDaemons runs the CelesTrak GP ingest flow on a
-// node whose publication answers its first request after
-// slowPublicationAnswer: the flow's publish URL is a loopback stand-in for the
-// node's publish route that forwards the request and holds the node's answer
-// that long. The flow waits for the real answer: its run ends without error,
-// and the publication of the batch is complete.
+// TestPublicationSlowFlowRealDaemons runs the CelesTrak GP ingest flow while
+// a 300,000-record publication of the same lane runs, so the node answers
+// the flow's publication request only after that publication: later than the
+// admin server's write timeout and the capability's limit on any other
+// request. The flow waits for the node's answer: its run ends without error,
+// and its batch's publication is complete.
 func TestPublicationSlowFlowRealDaemons(t *testing.T) {
 	if os.Getenv("SDN_E2E_PUBLICATION") != "1" {
 		t.Skip("set SDN_E2E_PUBLICATION=1 for two isolated real daemons")
 	}
-	var node atomic.Pointer[publicationDaemon]
-	var first atomic.Bool
-	var answered atomic.Value
-	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		arrived := time.Now()
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadGateway)
-			return
-		}
-		forward, err := http.NewRequest(r.Method, ownPublishURL(node.Load()), bytes.NewReader(body))
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadGateway)
-			return
-		}
-		forward.Header = r.Header.Clone()
-		response, err := http.DefaultClient.Do(forward)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadGateway)
-			return
-		}
-		answer, _ := io.ReadAll(response.Body)
-		response.Body.Close()
-		if first.CompareAndSwap(false, true) {
-			answered.Store(fmt.Sprintf("HTTP %d after %s: %s", response.StatusCode, time.Since(arrived).Round(time.Millisecond), answer))
-			time.Sleep(time.Until(arrived.Add(slowPublicationAnswer)))
-		}
-		for k, v := range response.Header {
-			w.Header()[k] = v
-		}
-		w.WriteHeader(response.StatusCode)
-		w.Write(answer)
-	}))
-	defer slow.Close()
-	d := gpFlowDaemon(t, "slow-producer", func(*publicationDaemon) string {
-		return slow.URL + "/api/v1/admin/dataset-updates/publish"
-	})
-	node.Store(d)
+	// The flow runs when the test asks (manual run), not at start.
+	d := gpFlowDaemon(t, "slow-producer", "  first_fire_when_due: false\n")
+	d.env = append(d.env, "SDN_ADMIN_WRITE_TIMEOUT="+slowFlowWriteTimeout.String(), "SDN_HTTP_REQUEST_MAX_TIMEOUT="+slowFlowRequestLimit.String())
 	d.start(t)
 
-	ended := time.Now()
-	completed := `Flow service "com.digitalarsenal.flows.celestrak-gp-ingest" first-fire trigger "timer-gp" completed`
-	failedRun := `Flow service "com.digitalarsenal.flows.celestrak-gp-ingest" first-fire trigger "timer-gp" failed: `
-	deadline := time.Now().Add(slowPublicationAnswer + 5*time.Minute)
-	for {
-		text := readFileString(d.logPath)
-		if strings.Contains(text, failedRun) {
-			t.Fatalf("the flow run failed: %s", publicationLogAfter(t, d, failedRun))
-		}
-		if strings.Contains(text, completed) {
-			ended = time.Now()
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("the flow run did not end within %s", slowPublicationAnswer+5*time.Minute)
-		}
-		time.Sleep(time.Second)
+	const n, per = 300_000, 5_000
+	for offset := 0; offset < n; offset += per {
+		d.ingestOMMCIDs(t, "celestrak-gp", "big", 2_000_000+offset, per)
 	}
-	held, _ := answered.Load().(string)
-	if held == "" {
-		t.Fatal("the flow made no publication request")
-	}
-	t.Logf("the node answered the first publication request: %s; the flow received it after %s; the run ended ok at %s",
-		held, slowPublicationAnswer, ended.Format(time.RFC3339))
-	if !strings.HasPrefix(held, "HTTP 202 ") {
-		t.Fatalf("the node's answer was not a completed publication: %s", held)
+	// The big publication holds the lane; its own answer also comes after the
+	// write timeout, and is read in the background.
+	bigDone := make(chan string, 1)
+	go func() {
+		client := http.Client{}
+		response, err := client.Post(ownPublishURL(d), "application/json", bytes.NewReader(batchPublicationRequest("celestrak-gp", "big")))
+		if err != nil {
+			bigDone <- err.Error()
+			return
+		}
+		body, _ := io.ReadAll(response.Body)
+		response.Body.Close()
+		bigDone <- fmt.Sprintf("HTTP %d: %.200s", response.StatusCode, body)
+	}()
+	publicationAwaitLog(t, d, "publication fingerprint OMM.fbs publication-e2e/celestrak-gp/big: ", 2*time.Minute)
+
+	runDone := make(chan string, 1)
+	go func() {
+		client := http.Client{}
+		response, err := client.Post(d.base+"/api/v1/modules/runtime/com.digitalarsenal.flows.celestrak-gp-ingest/schedules/timer-gp/run", "application/json", nil)
+		if err != nil {
+			runDone <- err.Error()
+			return
+		}
+		response.Body.Close()
+		runDone <- fmt.Sprintf("HTTP %d", response.StatusCode)
+	}()
+	end := `Plugin "com.digitalarsenal.flows.celestrak-gp-ingest" manual run "timer-gp" end status=`
+	run := publicationAwaitLog(t, d, end, 5*time.Minute)
+	t.Logf("flow run: status=%s", run)
+	if !strings.HasPrefix(run, "ok ") {
+		t.Fatalf("the flow run did not end ok: status=%s", run)
 	}
 	done := publicationLogAfter(t, d, `Dataset publication `+gpFlowLane+` batch "`)
-	if !strings.Contains(done, `" completed in `) {
-		t.Fatalf("the lane's publication did not complete: %s", done)
+	match := regexp.MustCompile(`^([0-9a-f]+)" completed in ([0-9.]+[a-zµ]+):`).FindStringSubmatch(done)
+	if match == nil || match[1] == "big" {
+		t.Fatalf("the flow's batch publication did not complete last: %s", done)
 	}
-	t.Logf("producer: %s", done)
+	took, err := time.ParseDuration(match[2])
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("producer: the flow's batch %s completed in %s (write timeout %s, request limit %s)", match[1], took, slowFlowWriteTimeout, slowFlowRequestLimit)
+	if took <= slowFlowWriteTimeout || took <= slowFlowRequestLimit {
+		t.Fatalf("the node answered the flow after %s, within the write timeout %s or the request limit %s: the test proves nothing", took, slowFlowWriteTimeout, slowFlowRequestLimit)
+	}
 	if alert := publicationAlert(t, d, gpFlowLane); alert != "" {
 		t.Fatalf("a publication_failed alert after the run: %s", alert)
 	}
+	select {
+	case big := <-bigDone:
+		t.Logf("the big publication's own answer: %s", big)
+	case <-time.After(2 * time.Minute):
+		t.Fatal("the big publication did not answer")
+	}
+	<-runDone
 }

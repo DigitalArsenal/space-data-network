@@ -10,9 +10,11 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/modulert"
@@ -105,6 +107,18 @@ const (
 	httpCapRangeResumes = 4
 )
 
+// httpCapTimeoutLimit is the longest an http.request waits:
+// SDN_HTTP_REQUEST_MAX_TIMEOUT (a Go duration) when set, positive and below
+// httpCapMaxTimeout, else httpCapMaxTimeout.
+func httpCapTimeoutLimit() time.Duration {
+	if raw := strings.TrimSpace(os.Getenv("SDN_HTTP_REQUEST_MAX_TIMEOUT")); raw != "" {
+		if d, err := time.ParseDuration(raw); err == nil && d > 0 && d < httpCapMaxTimeout {
+			return d
+		}
+	}
+	return httpCapMaxTimeout
+}
+
 // datasetPublicationPath is the node's own dataset publication route
 // (internal/api DatasetPublicationHandler).
 const datasetPublicationPath = "/api/v1/admin/dataset-updates/publish"
@@ -124,22 +138,49 @@ func isDatasetPublicationRequest(method, rawURL string) bool {
 // the lane and its deadline), so the flow reads the real result.
 const ownDatasetPublicationTimeout = storage.DatasetPublicationLaneWait + storage.DatasetPublicationDeadline + time.Minute
 
-// isOwnDatasetPublicationRequest reports a dataset publication request to a
-// loopback address: the node's own publish route, as the flows call it.
+// ownAdminListen is the node's admin listen address (host:port), the
+// listener its publish route is served on; "" until SetOwnAdminListenAddr.
+var ownAdminListen atomic.Value
+
+// SetOwnAdminListenAddr names the node's admin listen address (host:port),
+// where its dataset publish route is served.
+func SetOwnAdminListenAddr(addr string) {
+	ownAdminListen.Store(strings.TrimSpace(addr))
+}
+
+// isOwnDatasetPublicationRequest reports a dataset publication request to
+// this node's own admin listener: the URL's port is the admin listen port,
+// and its host is the listen host, or a loopback name or address when the
+// node listens on loopback or on every address.
 func isOwnDatasetPublicationRequest(method, rawURL string) bool {
 	if !isDatasetPublicationRequest(method, rawURL) {
 		return false
 	}
+	listen, _ := ownAdminListen.Load().(string)
+	listenHost, listenPort, err := net.SplitHostPort(listen)
+	if err != nil || listenPort == "" || listenPort == "0" {
+		return false
+	}
 	parsed, err := url.Parse(strings.TrimSpace(rawURL))
-	if err != nil {
+	if err != nil || parsed.Port() != listenPort {
 		return false
 	}
 	host := parsed.Hostname()
-	if strings.EqualFold(host, "localhost") {
+	if strings.EqualFold(host, listenHost) {
 		return true
 	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
+	loopback := func(h string) bool {
+		if strings.EqualFold(h, "localhost") {
+			return true
+		}
+		ip := net.ParseIP(h)
+		return ip != nil && ip.IsLoopback()
+	}
+	unspecified := listenHost == ""
+	if ip := net.ParseIP(listenHost); ip != nil && ip.IsUnspecified() {
+		unspecified = true
+	}
+	return loopback(host) && (unspecified || loopback(listenHost))
 }
 
 func httpCapHandle(operation string, payload []byte) ([]byte, error) {
@@ -184,8 +225,8 @@ func httpCapHandleContext(parent context.Context, operation string, payload []by
 		req.TimeoutMs = 30000
 	}
 	// Clamp before duration conversion so a large guest integer cannot overflow.
-	if req.TimeoutMs > int(httpCapMaxTimeout/time.Millisecond) {
-		req.TimeoutMs = int(httpCapMaxTimeout / time.Millisecond)
+	if limit := httpCapTimeoutLimit(); req.TimeoutMs > int(limit/time.Millisecond) {
+		req.TimeoutMs = int(limit / time.Millisecond)
 	}
 	// The node's own publish route is the one request that waits longer:
 	// it answers when the publication completes.
@@ -245,7 +286,9 @@ func httpCapHandleContext(parent context.Context, operation string, payload []by
 	applyFetchValidators(httpReq)
 
 	client := &http.Client{}
-	if req.FollowRedirects != nil && !*req.FollowRedirects {
+	// The node's own publish route answers itself: a redirect is not followed
+	// past it (its long wait is for that route only).
+	if ownPublication || (req.FollowRedirects != nil && !*req.FollowRedirects) {
 		// Return the original response, including its body and every header.
 		// In particular, do not replay a POST body on a 307 or 308 redirect.
 		client.CheckRedirect = func(*http.Request, []*http.Request) error {

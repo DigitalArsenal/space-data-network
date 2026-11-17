@@ -19,8 +19,9 @@ package api
 // publication is complete). A second request for the same publication while
 // one runs waits for that one's result instead of starting another.
 // Publications of one lane run one at a time (publicationHygiene.lockLane).
-// A caller that bounds its own publications (the auto-publisher) keeps its
-// deadline and cancellation (withPublicationBoundToCaller).
+// A caller bound to its publications (the auto-publisher) stops waiting at
+// its own deadline, and a run no caller waits for any more is cancelled
+// (runDatasetPublication).
 //
 // Every publication that fails is logged as an error naming its lane, batch
 // and step, and raises the publication_failed alert of its lane. The alert
@@ -88,6 +89,48 @@ type publicationRun struct {
 	done    chan struct{}
 	result  *DatasetPublicationResult
 	err     error
+	// Under publicationRuns.mu: the callers waiting for the result, how to
+	// cancel the run when the last of them leaves, and the files the run
+	// reused whose time could not be refreshed (the sweep keeps them).
+	waiters int
+	cancel  context.CancelCauseFunc
+	kept    map[string]bool
+}
+
+// keepFiles keeps paths of run from the publication-file sweep until the
+// run ends.
+func (r *publicationRuns) keepFiles(run *publicationRun, paths []string) {
+	if r == nil || len(paths) == 0 {
+		return
+	}
+	if run == nil {
+		log.Warnf("publication files %v were reused without a refreshed time outside a publication run: a sweep may remove them", paths)
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if run.kept == nil {
+		run.kept = make(map[string]bool)
+	}
+	for _, path := range paths {
+		run.kept[path] = true
+	}
+}
+
+// keptFiles is every running publication's kept files.
+func (r *publicationRuns) keptFiles() map[string]bool {
+	kept := map[string]bool{}
+	if r == nil {
+		return kept
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, run := range r.byKey {
+		for path := range run.kept {
+			kept[path] = true
+		}
+	}
+	return kept
 }
 
 // publicationRuns is the service's running publications and what they share:
@@ -222,10 +265,21 @@ func datasetPublicationLaneName(req DatasetPublicationRequest) string {
 
 // runDatasetPublication runs publish for req on a context of its own and
 // waits for its result.
+//
+// The run lives while any caller waits for it. A caller that is not bound to
+// its publication (an HTTP client) waits for the result even after it leaves,
+// so a run with such a caller is never cancelled by a caller. A bound caller
+// (withPublicationBoundToCaller: the auto-publisher) stops waiting when its
+// own context ends and answers its context's error; when it was the last
+// caller waiting, the run is cancelled. So when the caller that started the
+// run is bound and its deadline passes while another caller still waits, the
+// run continues for that caller, within the run's own bounds (lane wait and
+// deadline) and the node's stop.
 func (s *ConcreteDatasetPublicationService) runDatasetPublication(ctx context.Context, req DatasetPublicationRequest, publish func(context.Context) (*DatasetPublicationResult, error)) (*DatasetPublicationResult, error) {
 	lane := datasetPublicationLaneName(req)
 	batch := strings.TrimSpace(req.BatchID)
 	key := datasetPublicationRunKey(req)
+	bound, _ := ctx.Value(publicationBoundToCallerKey{}).(bool)
 	runs := s.runs
 	if runs == nil {
 		runs = newPublicationRuns()
@@ -242,26 +296,26 @@ func (s *ConcreteDatasetPublicationService) runDatasetPublication(ctx context.Co
 		runs.byKey[key] = run
 		runs.active.Add(1)
 	}
+	run.waiters++
+	var workCtx context.Context
+	if !joined {
+		workCtx, run.cancel = context.WithCancelCause(context.WithValue(context.WithoutCancel(ctx), publicationRunKey{}, run))
+	}
 	runs.mu.Unlock()
 
 	if joined {
 		log.Infof("Dataset publication %s batch %q is already running (started %s ago): this request waits for its result",
 			lane, batch, s.now().Sub(run.started).Round(time.Millisecond))
 	} else {
-		base := context.WithoutCancel(ctx)
-		if bound, _ := ctx.Value(publicationBoundToCallerKey{}).(bool); bound {
-			base = ctx
-		}
-		workCtx, cancel := context.WithCancelCause(context.WithValue(base, publicationRunKey{}, run))
+		cancel := run.cancel
 		stopWithNode := context.AfterFunc(runs.life, func() { cancel(context.Cause(runs.life)) })
 		go func() {
 			defer runs.active.Done()
 			defer cancel(nil)
 			defer stopWithNode()
+			// A publication that returned success is reported as one, also
+			// when its context ended after it completed.
 			result, err := publish(workCtx)
-			if err == nil && workCtx.Err() != nil {
-				err = context.Cause(workCtx)
-			}
 			run.result, run.err = result, err
 			s.reportDatasetPublication(req, s.now().Sub(run.started), result, err, errors.Is(context.Cause(workCtx), errPublicationsStopped))
 			runs.mu.Lock()
@@ -271,14 +325,35 @@ func (s *ConcreteDatasetPublicationService) runDatasetPublication(ctx context.Co
 		}()
 	}
 
+	leave := func() (last bool) {
+		runs.mu.Lock()
+		defer runs.mu.Unlock()
+		run.waiters--
+		return run.waiters == 0
+	}
 	select {
 	case <-run.done:
+		leave()
+		return run.result, run.err
 	case <-ctx.Done():
+	}
+	if !bound {
 		log.Warnf("Dataset publication %s batch %q: the requesting client left after %s; the publication continues",
 			lane, batch, s.now().Sub(run.started).Round(time.Millisecond))
 		<-run.done
+		leave()
+		return run.result, run.err
 	}
-	return run.result, run.err
+	cause := context.Cause(ctx)
+	if leave() {
+		run.cancel(fmt.Errorf("every caller waiting for it stopped waiting: %w", cause))
+		log.Warnf("Dataset publication %s batch %q: its caller stopped waiting after %s (%v); no caller waits, so it is cancelled",
+			lane, batch, s.now().Sub(run.started).Round(time.Millisecond), cause)
+	} else {
+		log.Warnf("Dataset publication %s batch %q: a caller stopped waiting after %s (%v); the publication continues for the others",
+			lane, batch, s.now().Sub(run.started).Round(time.Millisecond), cause)
+	}
+	return nil, fmt.Errorf("dataset publication %s batch %q: %w", lane, batch, cause)
 }
 
 // reportDatasetPublication logs a finished publication and raises or clears

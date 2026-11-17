@@ -998,7 +998,10 @@ type DatasetPublicationFileSweep struct {
 //     row keeps them all (NoRows).
 //   - the temporary files of a write that never renamed its file into place
 //     (isPublicationTempFile).
-func (s *FlatSQLStore) SweepDatasetPublicationFiles(outputDir, schemaName string, minAge time.Duration, now time.Time) (DatasetPublicationFileSweep, error) {
+//
+// A path in keep is never removed (a running publication's reused file whose
+// time could not be refreshed).
+func (s *FlatSQLStore) SweepDatasetPublicationFiles(outputDir, schemaName string, minAge time.Duration, now time.Time, keep map[string]bool) (DatasetPublicationFileSweep, error) {
 	sweep := DatasetPublicationFileSweep{SchemaName: strings.TrimSpace(schemaName)}
 	outputDir = strings.TrimSpace(outputDir)
 	if outputDir == "" || sweep.SchemaName == "" {
@@ -1027,6 +1030,9 @@ func (s *FlatSQLStore) SweepDatasetPublicationFiles(outputDir, schemaName string
 			}
 			name := entry.Name()
 			path := filepath.Join(schemaDir, sub, name)
+			if keep[path] {
+				continue
+			}
 			switch {
 			case isPublicationTempFile(sub, name):
 			case sub != "car" && live.rows == 0:

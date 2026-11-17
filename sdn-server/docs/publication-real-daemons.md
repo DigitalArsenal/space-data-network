@@ -120,12 +120,14 @@ and the flow's run ends with an error. A publication of another batch of the
 lane and an announcement of its existing publications complete and leave the
 alert raised; a publication of the failed batch clears it.
 
-`TestPublicationSlowFlowRealDaemons` runs the same flow with its publish URL
-on a loopback stand-in for the node's publish route that forwards the
-request and holds the node's answer for 5 min 20 s, longer than the
-http-request capability's five-minute cap on any other request. The flow
-waits for the node's answer: its run ends without error, and the lane's
-publication is complete.
+`TestPublicationSlowFlowRealDaemons` runs the same flow by hand while a
+300,000-record publication of the same lane runs, on a node whose admin
+write timeout is 3 s (`SDN_ADMIN_WRITE_TIMEOUT`) and whose http-request
+capability waits at most 2 s for any other request
+(`SDN_HTTP_REQUEST_MAX_TIMEOUT`). The node answers the flow's publication
+request only after the big publication, later than both. The flow waits for
+the node's answer: its run ends without error, and its batch's publication
+is complete.
 
 `TestPublicationFollowRealDaemons` follows a lane with nothing published: the
 receiver, which trusts the producer and keeps the lane under

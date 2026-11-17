@@ -1112,6 +1112,9 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			if adminAddr == "" {
 				adminAddr = "127.0.0.1:5001"
 			}
+			// The flows' http-request capability waits for this listener's
+			// dataset publish route to answer (caps http.go).
+			caps.SetOwnAdminListenAddr(adminAddr)
 			tlsManager, err := tlsmgr.New(cfg.Admin)
 			if err != nil {
 				return fmt.Errorf("configure admin tls: %w", err)
@@ -2849,7 +2852,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				Addr:              adminAddr,
 				ReadHeaderTimeout: 10 * time.Second,
 				ReadTimeout:       30 * time.Second,
-				WriteTimeout:      10 * time.Minute,
+				WriteTimeout:      adminWriteTimeout(),
 				IdleTimeout:       120 * time.Second,
 				Handler:           gateway.wrap(newAdminUpgradeRouter(wsUpgradeProxy, secured)),
 			}
@@ -3229,6 +3232,23 @@ const (
 	nodeDrainTimeout        = 30 * time.Second
 	shutdownWatchdogTimeout = 75 * time.Second
 )
+
+// defaultAdminWriteTimeout bounds writing one admin response.
+const defaultAdminWriteTimeout = 10 * time.Minute
+
+// adminWriteTimeout is the admin server's write timeout:
+// SDN_ADMIN_WRITE_TIMEOUT (a Go duration) when set and positive, else
+// defaultAdminWriteTimeout. A route that answers when its work completes
+// (the dataset publish route) clears it for its own response.
+func adminWriteTimeout() time.Duration {
+	if raw := strings.TrimSpace(os.Getenv("SDN_ADMIN_WRITE_TIMEOUT")); raw != "" {
+		if d, err := time.ParseDuration(raw); err == nil && d > 0 {
+			return d
+		}
+		log.Warnf("SDN_ADMIN_WRITE_TIMEOUT %q is not a positive duration; the admin write timeout is %s", raw, defaultAdminWriteTimeout)
+	}
+	return defaultAdminWriteTimeout
+}
 
 type assetPinCapabilityStore interface {
 	api.AssetPinStore
