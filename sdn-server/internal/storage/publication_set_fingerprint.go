@@ -212,14 +212,26 @@ func (b format4Backend) planBatchNewestFirst(q format4.Query, add func([]format4
 	// The set is the batch's records counted with its newest sequence.
 	q.Order = format4.OrderSeqDesc
 	q.SeqAfter, q.SeqThrough = 0, met.MaxSeq
+	pageLimit := q.Limit
 	var read int64
 	for read < met.Records {
+		// A page asks for no more than the batch has left: a page the
+		// engine cannot fill is read to the start of the lane.
+		remaining := met.Records - read
+		q.Limit = min(pageLimit, remaining)
 		page, err := b.d.api().Scan(b.d.ctx, q)
 		if errors.Is(err, format4.ErrNoType) {
 			break
 		}
 		if err != nil {
 			return false, err
+		}
+		if q.Limit == remaining {
+			if err := add(page); err != nil {
+				return false, err
+			}
+			read += int64(len(page))
+			break
 		}
 		full := int64(len(page)) == q.Limit
 		if full {
