@@ -161,7 +161,9 @@ func TestPublicationBaseline(t *testing.T) {
 				fixtureRoot := publicationTemp(t, "baseline-inputs-")
 				firstPath, firstBytes := baselinePrepare(t, fixtureRoot, "first.sds", 0, data.count, data.makeRecord)
 				secondPath, _ := baselinePrepare(t, fixtureRoot, "second.sds", data.count, data.count, data.makeRecord)
-				pointURL := b.base + "/api/v1/data/records/" + data.schema + "/" + storage.ComputeCID(data.makeRecord(0)[4:])
+				// The first record as stored: generating it again would give a
+				// different CREATION_DATE (the builder stamps the current second).
+				pointURL := b.base + "/api/v1/data/records/" + data.schema + "/" + storage.ComputeCID(baselineFirstRecord(t, firstPath))
 				windowQuery := baselineSQL(source)
 				beforeSizes, _ := publicationStoreSizes(t, b.store)
 				row = measurePublication(t, a, b, "direct-ingest", source, func() (int64, int64) {
@@ -602,6 +604,27 @@ func baselineIngest(t *testing.T, d *publicationDaemon, schema, source, batch, p
 	}
 	return total
 }
+
+// baselineFirstRecord is the first record of a prepared input file, without
+// its size prefix.
+func baselineFirstRecord(t *testing.T, path string) []byte {
+	t.Helper()
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	var prefix [4]byte
+	if _, err := io.ReadFull(f, prefix[:]); err != nil {
+		t.Fatal(err)
+	}
+	record := make([]byte, binary.LittleEndian.Uint32(prefix[:]))
+	if _, err := io.ReadFull(f, record); err != nil {
+		t.Fatal(err)
+	}
+	return record
+}
+
 func baselineOMM(i int) []byte {
 	return sds.NewOMMBuilder().WithNoradCatID(uint32(1000000 + i)).WithObjectName(fmt.Sprintf("SYNTHETIC-%08d", i)).WithEpoch("2026-01-01T00:00:00Z").WithEpochTimestamp(1767225600).WithMeanMotion(15.5).Build()
 }
