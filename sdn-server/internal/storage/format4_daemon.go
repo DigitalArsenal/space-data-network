@@ -184,7 +184,7 @@ func format2StorePresent(basePath string) (bool, error) {
 // format 1 until store-migrate --to 5 migrates it (offline, the daemon
 // stopped), and an activated format-2 store is refused by name. A process
 // that cannot run format 5 (format4.Runnable) opens an empty data directory
-// as format 1.
+// as format 1; one whose runtime self-test is inconclusive refuses to open it.
 func StoreFormat(basePath string) (int, error) {
 	format, _, err := storeFormat(basePath)
 	return format, err
@@ -211,7 +211,12 @@ func storeFormat(basePath string) (format int, keptFormat1 bool, err error) {
 	if err != nil || held != 0 {
 		return held, held == 1, err
 	}
-	if ok, why := format4.Runnable(); !ok {
+	ok, unconfirmed, why := format4.RunnableState()
+	if unconfirmed {
+		// A new store's format is permanent; a busy start must not make it 1.
+		return 0, false, fmt.Errorf("store format 5 (the default) is not confirmed for the new store in %s: %s; start again, or set SDN_STORE_FORMAT", basePath, why)
+	}
+	if !ok {
 		format4NotRunnableOnce.Do(func() {
 			log.Warnf("store format 5 (the default) cannot run in this process: %s; a new store is format 1", why)
 		})

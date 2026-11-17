@@ -185,24 +185,49 @@ func (g *wasiThreadGroup) live() []*wasiWorker {
 	return out
 }
 
+// unfinishedWorkers samples completion directly, without racing a closed
+// channel against an expired timer.
+func unfinishedWorkers(workers []*wasiWorker) int {
+	remaining := 0
+	for _, w := range workers {
+		select {
+		case <-w.done:
+		default:
+			remaining++
+		}
+	}
+	return remaining
+}
+
 // waitAll waits until every listed worker has left, or the deadline passes.
 // Returns how many are still running.
 func waitAll(workers []*wasiWorker, deadline time.Time) int {
-	remaining := 0
+	t := time.NewTimer(max(time.Until(deadline), 0))
+	defer t.Stop()
 	for _, w := range workers {
-		wait := time.Until(deadline)
-		if wait <= 0 {
-			wait = 0
-		}
-		t := time.NewTimer(wait)
 		select {
 		case <-w.done:
 		case <-t.C:
-			remaining++
+			return unfinishedWorkers(workers)
 		}
-		t.Stop()
 	}
-	return remaining
+	return 0
+}
+
+// cancelOne keeps the async alive until Cancel returns. The same mutex guards
+// its destruction in the completion goroutine.
+func (g *wasiThreadGroup) cancelOne() []*wasiWorker {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.interrupting = true
+	workers := make([]*wasiWorker, 0, len(g.workers))
+	for _, w := range g.workers {
+		workers = append(workers, w)
+	}
+	if len(workers) > 0 {
+		workers[0].async.Cancel()
+	}
+	return workers
 }
 
 // interrupt stops every invocation on the module's executor. The patched
@@ -211,15 +236,11 @@ func waitAll(workers []*wasiWorker, deadline time.Time) int {
 // keeps canceling, one worker at a time, until they are all gone or the
 // deadline passes. Returns the workers still running.
 func (g *wasiThreadGroup) interrupt(deadline time.Time) int {
-	g.mu.Lock()
-	g.interrupting = true
-	g.mu.Unlock()
 	for {
-		workers := g.live()
+		workers := g.cancelOne()
 		if len(workers) == 0 {
 			return 0
 		}
-		workers[0].async.Cancel()
 		slice := time.Now().Add(20 * time.Millisecond)
 		if slice.After(deadline) {
 			slice = deadline
