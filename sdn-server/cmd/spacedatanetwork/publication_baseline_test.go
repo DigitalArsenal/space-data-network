@@ -176,6 +176,10 @@ func TestPublicationBaseline(t *testing.T) {
 					// first record and the lane count before and after.
 					producerPoint := a.base + strings.TrimPrefix(pointURL, b.base)
 					before := baselineStatus(t, producerPoint)
+					countBefore, err := baselineCount(a, data.schema, source)
+					if err != nil {
+						t.Fatal(err)
+					}
 					stopLog := len(readFileString(a.logPath))
 					a.stop(t)
 					stopLines := readFileString(a.logPath)[stopLog:]
@@ -189,8 +193,8 @@ func TestPublicationBaseline(t *testing.T) {
 						t.Fatal(err)
 					}
 					corrupt := strings.Contains(stopLines, "P4_E_CORRUPT")
-					t.Logf("%s direct-ingest restart: first record %d before, %d after; lane count after restart %d of %d (%.1f s); stop reported P4_E_CORRUPT: %t; ready %.1f s", source, before, after, count, data.count, time.Since(countStart).Seconds(), corrupt, ready)
-					if err := encoder.Encode(map[string]any{"kind": "direct_ingest_restart", "round": round + 1, "dataset": source, "first_record_status_before": before, "first_record_status_after": after, "count_after_restart": count, "count_ingested": data.count, "stop_reported_corrupt": corrupt, "ready_seconds": ready}); err != nil {
+					t.Logf("%s direct-ingest restart: first record %d before, %d after; lane count %d before the stop, %d after the restart, of %d ingested (%.1f s); stop reported P4_E_CORRUPT: %t; ready %.1f s", source, before, after, countBefore, count, data.count, time.Since(countStart).Seconds(), corrupt, ready)
+					if err := encoder.Encode(map[string]any{"kind": "direct_ingest_restart", "round": round + 1, "dataset": source, "first_record_status_before": before, "first_record_status_after": after, "count_before_stop": countBefore, "count_after_restart": count, "count_ingested": data.count, "stop_reported_corrupt": corrupt, "ready_seconds": ready}); err != nil {
 						t.Fatal(err)
 					}
 					if err := os.RemoveAll(fixtureRoot); err != nil {
