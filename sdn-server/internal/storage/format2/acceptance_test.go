@@ -462,7 +462,8 @@ func TestRouterKill9KeepsEveryAckedRecord(t *testing.T) {
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 	fragments := map[int64]bool{}
 	var byPeer map[string][]Put
-	var n int
+	var n, checked int
+	var verifiedTo int64
 	ctx := context.Background()
 	// Kill zero exercises the torn-line control. The remaining kills retain
 	// the random ingest windows of the crash-recovery test.
@@ -513,7 +514,7 @@ func TestRouterKill9KeepsEveryAckedRecord(t *testing.T) {
 		func() {
 			s := openAt(t, root, "", 1)
 			defer s.Close()
-			byPeer, n = checkKillAcknowledgments(t, s, root, fragments)
+			byPeer, n, checked, verifiedTo = checkKillAcknowledgments(t, s, root, fragments, verifiedTo)
 		}()
 		if len(fragments)-previousFragments > 1 {
 			t.Fatalf("kill %d left more than one torn journal fragment", k)
@@ -521,13 +522,23 @@ func TestRouterKill9KeepsEveryAckedRecord(t *testing.T) {
 		if k == 0 && len(fragments) != 1 {
 			t.Fatalf("controlled kill must expose exactly one torn fragment, got %d", len(fragments))
 		}
-		t.Logf("kill %d: %d complete durable acknowledgments verified; %d distinct torn fragments", k, n, len(fragments))
+		t.Logf("kill %d: %d complete durable acknowledgments, %d of them new and verified; %d distinct torn fragments", k, n, checked, len(fragments))
 	}
 	if n == 0 {
 		t.Fatal("random kills produced no complete acknowledgments")
 	}
 	s := openAt(t, root, "", 1)
 	defer s.Close()
+	// Every acknowledgment of every child, against the store after the last
+	// kill. A record that any kill lost is not in the store after a later
+	// one, so this check sees it even when the kill that lost it was not the
+	// one after which it was first verified.
+	previousFragments := len(fragments)
+	var all int
+	byPeer, all, checked, _ = checkKillAcknowledgments(t, s, root, fragments, 0)
+	if all != n || checked != n || len(fragments) != previousFragments {
+		t.Fatalf("final check read %d acknowledgments (%d verified, %d fragments), the last kill's check %d (%d fragments)", all, checked, len(fragments), n, previousFragments)
+	}
 	before, err := s.Partitions(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -557,13 +568,17 @@ func TestRouterKill9KeepsEveryAckedRecord(t *testing.T) {
 	if sum(after) != sum(before) {
 		t.Fatalf("resending %d acked records added %d rows", n, sum(after)-sum(before))
 	}
-	t.Logf("%d random kills and one controlled kill: %d acked records verified after every kill; %d torn fragments; resend added 0 rows (%s)", kills, n, len(fragments), machine())
+	t.Logf("%d random kills and one controlled kill: new acked records verified after each kill, all %d verified after the last; %d torn fragments; resend added 0 rows (%s)", kills, n, len(fragments), machine())
 }
 
-// checkKillAcknowledgments checks complete canonical record lines only. Syncing
-// before counting also makes complete writes durable when a child died between
-// WriteString and Sync; checking these additional records strengthens the test.
-func checkKillAcknowledgments(t *testing.T, s *Store, root string, fragments map[int64]bool) (map[string][]Put, int) {
+// checkKillAcknowledgments reads every journal line and checks complete
+// canonical record lines only. Syncing before counting also makes complete
+// writes durable when a child died between WriteString and Sync; checking
+// these additional records strengthens the test. Records whose lines start
+// before `from` are counted but not looked up again; it returns the offset
+// after the last newline-terminated line, so a trailing fragment, which the
+// next child terminates, is read again by the next check.
+func checkKillAcknowledgments(t *testing.T, s *Store, root string, fragments map[int64]bool, from int64) (map[string][]Put, int, int, int64) {
 	t.Helper()
 	f, err := os.OpenFile(filepath.Join(root, "acked.log"), os.O_RDWR, 0o600)
 	if err != nil {
@@ -574,8 +589,8 @@ func checkKillAcknowledgments(t *testing.T, s *Store, root string, fragments map
 		t.Fatal(err)
 	}
 	byPeer := map[string][]Put{}
-	var n int
-	var offset int64
+	var n, checked int
+	var offset, terminated int64
 	reader := bufio.NewReader(f)
 	for {
 		line, readErr := reader.ReadString('\n')
@@ -599,12 +614,15 @@ func checkKillAcknowledgments(t *testing.T, s *Store, root string, fragments map
 		if !complete {
 			fragments[offset] = true
 		} else {
-			rec, err := s.GetRecord(context.Background(), "OMM.fbs", parts[0])
-			if err != nil {
-				t.Fatalf("acked record %s missing: %v", parts[0], err)
-			}
-			if string(rec.Data) != string(data) {
-				t.Fatalf("acked record %s: bytes differ", parts[0])
+			if offset >= from {
+				rec, err := s.GetRecord(context.Background(), "OMM.fbs", parts[0])
+				if err != nil {
+					t.Fatalf("acked record %s missing: %v", parts[0], err)
+				}
+				if string(rec.Data) != string(data) {
+					t.Fatalf("acked record %s: bytes differ", parts[0])
+				}
+				checked++
 			}
 			byPeer[parts[1]] = append(byPeer[parts[1]], Put{Data: data})
 			n++
@@ -613,6 +631,7 @@ func checkKillAcknowledgments(t *testing.T, s *Store, root string, fragments map
 		if readErr == io.EOF {
 			break
 		}
+		terminated = offset
 	}
-	return byPeer, n
+	return byPeer, n, checked, terminated
 }
