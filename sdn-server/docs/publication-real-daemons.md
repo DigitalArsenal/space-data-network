@@ -111,12 +111,21 @@ publication completes; the published ones stay.
 
 `TestPublicationFailureRealDaemons` runs the CelesTrak GP ingest flow of
 `space-data-network-modules` (`SDN_E2E_MODULES`, the modules checkout; the
-test skips without it) against a local copy of the parser's GP fixture, on a
-node whose publication export directory is not writable. The failure is
-logged as an error naming the lane, the batch and the step, raises the lane's
-`publication_failed` alert, and the flow's run ends with an error. Once the
-directory is writable, a publication of the batch completes and clears the
-alert.
+test fails when it is set and the flow is missing, and skips when it is not
+set) against a local copy of the parser's GP fixture, on a node whose
+publication export cannot create its shard directory (a file stands at its
+path, which stops root too). The failure is logged as an error naming the
+lane, the batch and the step, raises the lane's `publication_failed` alert,
+and the flow's run ends with an error. A publication of another batch of the
+lane and an announcement of its existing publications complete and leave the
+alert raised; a publication of the failed batch clears it.
+
+`TestPublicationSlowFlowRealDaemons` runs the same flow with its publish URL
+on a loopback stand-in for the node's publish route that forwards the
+request and holds the node's answer for 5 min 20 s, longer than the
+http-request capability's five-minute cap on any other request. The flow
+waits for the node's answer: its run ends without error, and the lane's
+publication is complete.
 
 `TestPublicationFollowRealDaemons` follows a lane with nothing published: the
 receiver, which trusts the producer and keeps the lane under

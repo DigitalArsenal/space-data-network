@@ -3,17 +3,12 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/spacedatanetwork/sdn-server/internal/modulert"
 )
 
 // publicationClientDeadline is far shorter than the publication of the
@@ -102,101 +97,6 @@ func TestPublicationOutlivesClientRealDaemons(t *testing.T) {
 		t.Fatal("the second request did not wait for the running publication")
 	}
 	b.awaitRecords(t, "OMM.fbs", "outlives", a.scan(t, "OMM.fbs", "outlives"), 6*time.Minute)
-}
-
-// TestPublicationFailureRealDaemons runs the CelesTrak GP ingest flow, which
-// stores a batch and asks the node to publish it, on a node whose
-// publication export cannot write. The failure is logged as an error naming
-// the lane, the batch and the step, raises the lane's publication_failed
-// alert, and the flow's run ends with an error. Once the export can write, a
-// publication of the batch completes and clears the alert.
-func TestPublicationFailureRealDaemons(t *testing.T) {
-	if os.Getenv("SDN_E2E_PUBLICATION") != "1" {
-		t.Skip("set SDN_E2E_PUBLICATION=1 for two isolated real daemons")
-	}
-	modules := os.Getenv("SDN_E2E_MODULES")
-	if modules == "" {
-		modules = filepath.Join("..", "..", "..", "..", "space-data-network-modules")
-	}
-	dist, err := filepath.Abs(filepath.Join(modules, "flows", "celestrak-ingest", "dist", "gp"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	wasm, err := os.ReadFile(filepath.Join(dist, "runtime.wasm"))
-	if err != nil {
-		t.Skipf("CelesTrak GP ingest flow not found under %s (set SDN_E2E_MODULES): %v", modules, err)
-	}
-	fixture, err := os.ReadFile(filepath.Join(modules, "data-source", "celestrak-parser", "tests", "fixtures", "celestrak-gp-omm.csv"))
-	if err != nil {
-		t.Skipf("CelesTrak parser fixture unavailable: %v", err)
-	}
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/csv")
-		w.Write(fixture)
-	}))
-	defer origin.Close()
-
-	exe := publicationBinary(t)
-	d := newPublicationDaemon(t, exe, "failure-producer", "", "", "keep-all")
-	// The operator's approval of the flow's capabilities.
-	hash := modulert.ContentHashHex(modulert.StripPublicationTrailer(wasm))
-	policy, _ := json.Marshal(map[string]any{"version": 1, "approvals": []map[string]string{
-		{"module_hash": hash, "capability": "http"},
-		{"module_hash": hash, "capability": "storage_ingest"},
-	}})
-	policyPath := filepath.Join(d.root, "capability_policy.json")
-	if err := os.WriteFile(policyPath, policy, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	d.env = append(d.env, "SDN_MODULE_CAPABILITY_POLICY_PATH="+policyPath)
-	cfg := readFileString(d.cfg) + fmt.Sprintf("flows:\n  services:\n    - flow: %q\n      config:\n        celestrak_gp_url: %q\n        celestrak_provider_id: publication-e2e\n        celestrak_http_timeout_ms: 30000\n        celestrak_publish_url: %q\n",
-		dist, origin.URL+"/NORAD/elements/gp.php", d.base+"/api/v1/admin/dataset-updates/publish")
-	if err := os.WriteFile(d.cfg, []byte(cfg), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	// The injected failure: the publication export cannot create its files.
-	omm := filepath.Join(d.root, "dataset-publications", "OMM")
-	if err := os.MkdirAll(omm, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(omm, 0o500); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.Chmod(omm, 0o700) })
-	d.start(t)
-
-	run := publicationAwaitLog(t, d, `Flow service "com.digitalarsenal.flows.celestrak-gp-ingest" first-fire trigger "timer-gp" failed: `, 4*time.Minute)
-	if !strings.Contains(run, "dataset publication request to "+d.base+"/api/v1/admin/dataset-updates/publish answered HTTP 400") {
-		t.Fatalf("the flow run failed, but not for its publication: %s", run)
-	}
-	t.Logf("flow run: %s", run)
-	failed := publicationLogAfter(t, d, `Dataset publication FAILED: OMM.fbs publication-e2e/celestrak-gp batch "`)
-	match := regexp.MustCompile(`^([^"]+)", step "export", after `).FindStringSubmatch(failed)
-	if match == nil {
-		t.Fatalf("the failure names no batch and export step: %s", failed)
-	}
-	batch := match[1]
-	t.Logf("producer: FAILED: batch %s", failed)
-	alert := publicationAlert(t, d, "OMM.fbs publication-e2e/celestrak-gp")
-	if alert == "" {
-		t.Fatal("no publication_failed alert for OMM.fbs publication-e2e/celestrak-gp")
-	}
-	t.Logf("alert: %s", alert)
-
-	if err := os.Chmod(omm, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	raw := d.request(t, "POST", "/api/v1/admin/dataset-updates/publish", "application/json", batchPublicationRequest("celestrak-gp", batch), http.StatusAccepted)
-	var pub publicationResult
-	if err := json.Unmarshal(raw, &pub); err != nil {
-		t.Fatal(err)
-	}
-	if pub.ManifestCID == "" || pub.RecordCount == 0 {
-		t.Fatalf("the publication after the fix answered %d records, manifest %q", pub.RecordCount, pub.ManifestCID)
-	}
-	if alert := publicationAlert(t, d, "OMM.fbs publication-e2e/celestrak-gp"); alert != "" {
-		t.Fatalf("the alert is still active after the lane's publication completed: %s", alert)
-	}
 }
 
 // batchPublicationRequest is the request a flow's IngestResult makes: one

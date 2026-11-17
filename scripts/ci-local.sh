@@ -621,7 +621,7 @@ PUBLICATION_GO_TEST_TIMEOUT="45m"
 publication_group_tests() {
   case "$1" in
     publication-1) echo "TestPublicationRetentionRealDaemons TestPublicationFollowRealDaemons TestPublicationOutlivesClientRealDaemons" ;;
-    publication-2) echo "TestPublicationRealDaemons TestPublicationFingerprintRealDaemons TestPublicationContentAddressRealDaemons TestPublicationKeyRealDaemons" ;;
+    publication-2) echo "TestPublicationRealDaemons TestPublicationFingerprintRealDaemons TestPublicationContentAddressRealDaemons TestPublicationKeyRealDaemons TestPublicationSlowFlowRealDaemons" ;;
     publication-3) echo "TestPublicationLaneCountRealDaemons TestPublicationFollowStatusRealDaemons TestPublicationImportChunksRealDaemons TestPublicationInvalidSignatureRealDaemons TestPublicationFailureRealDaemons" ;;
   esac
 }
