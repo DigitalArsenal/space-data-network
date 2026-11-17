@@ -156,6 +156,23 @@ addressed through the memarg offset) and round-trips the C host I/O module.
 A31: it is a start-up metric (logged when the first instance opens) and a
 release gate, not a format-2 refusal.
 
+No verdict waits out a deadline. One stop is issued once every spinner runs;
+then the spinners' counters are reset to 0. If every spinner returns, the stop
+reached every thread. A spinner whose counter passes 1 went through a loop
+header after the stop, which a sticky stop token never allows: the token was
+consumed. A notify probe that timed out is run again, because an unpatched
+runtime never wakes its waiter and a patched one misses only when the notifier
+thread did not run in time. Each observation is bounded at 30 s; a bound that
+runs out reports `"inconclusive": true` with what was seen, never "lacks the
+patches". `Patched()` is false whenever the report is inconclusive.
+
+An inconclusive run is run again, up to three runs (`"runs"` in the report).
+The process keeps only a conclusive report: while it has none, the next call
+runs the self-test again. An inconclusive report's AOT tag is `unverified`,
+so it loads no runtime's artifacts; a partition-store open is refused, and a
+new store is not created (its format would be permanent), until a run is
+conclusive.
+
 ## Building the static binary on macOS
 
 Needs Xcode (Apple clang) and `brew install cmake ninja llvm@18 zstd`. From

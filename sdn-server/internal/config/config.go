@@ -222,6 +222,11 @@ type ConnectorOriginConfig struct {
 // hold a box back — not silence on the publisher side, which would hold back
 // the whole fleet.
 type UpdateConfig struct {
+	// CheckIntervalSeconds is the feed-check period; zero uses six hours.
+	CheckIntervalSeconds int `yaml:"check_interval_seconds,omitempty"`
+	// CheckDelaySeconds overrides the randomized one-to-five-minute initial delay.
+	CheckDelaySeconds int `yaml:"check_delay_seconds,omitempty"`
+
 	// Enabled acts on update signals. Default true.
 	Enabled bool `yaml:"enabled"`
 

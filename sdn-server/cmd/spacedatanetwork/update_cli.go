@@ -496,24 +496,8 @@ func currentUpdateSequence() int64 {
 	return state.Sequence
 }
 
-func providerFeedIndexURL(baseURL string, channel string, platform string, arch string) (string, error) {
-	parsed, err := url.Parse(strings.TrimSpace(baseURL))
-	if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
-		return "", errors.New("SDN update feed base URL must use HTTPS")
-	}
-	for name, value := range map[string]string{
-		"channel":  channel,
-		"platform": platform,
-		"arch":     arch,
-	} {
-		if strings.TrimSpace(value) == "" || strings.ContainsAny(value, `/\`) {
-			return "", fmt.Errorf("invalid update feed %s", name)
-		}
-	}
-	parsed.Path = strings.TrimRight(parsed.Path, "/") + "/cli-bundle/" + channel + "/" + platform + "/" + arch + "/index.json"
-	parsed.RawQuery = ""
-	parsed.Fragment = ""
-	return parsed.String(), nil
+func providerFeedIndexURL(baseURL, channel, platform, arch string) (string, error) {
+	return update.ProviderFeedIndexURL(baseURL, channel, platform, arch)
 }
 
 func fetchProviderUpdateCandidate(client *http.Client, manifest bundleManifest, currentSequence int64, filter providerUpdateFilter) (*update.ProviderFeedUpdate, error) {
@@ -532,26 +516,10 @@ func fetchProviderUpdateCandidate(client *http.Client, manifest bundleManifest, 
 	if err != nil {
 		return nil, fmt.Errorf("fetch update provider index: %w", err)
 	}
-	feed, err := update.ParseProviderFeed(raw)
-	if err != nil {
-		return nil, err
-	}
-	candidate, err := feed.Select(update.ProviderFeedSelection{
-		UpdateID:        strings.TrimSpace(filter.UpdateID),
-		Version:         strings.TrimSpace(filter.Version),
-		Channel:         manifest.Channel,
-		Platform:        runtime.GOOS,
-		Arch:            runtime.GOARCH,
-		Kind:            "cli-bundle",
-		CurrentSequence: currentSequence,
+	return update.SelectProviderCandidate(raw, base, update.ProviderFeedSelection{
+		UpdateID: strings.TrimSpace(filter.UpdateID), Version: strings.TrimSpace(filter.Version),
+		Channel: manifest.Channel, Platform: runtime.GOOS, Arch: runtime.GOARCH, Kind: "cli-bundle", CurrentSequence: currentSequence,
 	})
-	if err != nil {
-		return nil, err
-	}
-	if err := candidate.AssertUnderFeed(base); err != nil {
-		return nil, err
-	}
-	return candidate, nil
 }
 
 func shouldDelegateInstallToHelper() bool {
@@ -955,7 +923,17 @@ func runHelperApply(ctx context.Context, o helperApplyOptions) error {
 	if err != nil {
 		// Nothing was swapped (or the swap restored itself): the build on disk
 		// is the build that was running. Bring it back the way it ran rather
-		// than leave the box dark.
+		// than leave the box dark. The daemon that comes back reads the
+		// recorded failure and waits out the retry backoff before it hands
+		// this, or any, update off again.
+		if daemon.PID > 0 && !update.HasFailedUpdate(o.Paths, o.UpdateID) {
+			reason := fmt.Sprintf("update %s: the helper stopped the daemon and failed before the swap: %v", o.UpdateID, err)
+			if record, recordErr := update.RecordHandoffFailure(o.Paths, o.UpdateID, reason, time.Now()); recordErr != nil {
+				fmt.Fprintf(o.Err, "handoff_failure=unrecorded error=%q\n", recordErr.Error())
+			} else {
+				fmt.Fprintf(o.Err, "handoff_failure=recorded update_id=%s failures=%d\n", o.UpdateID, record.Failures)
+			}
+		}
 		if daemon.PID > 0 && !o.NoRestart && len(restartArgv) > 0 {
 			if _, restartErr := o.startBuildOnDisk(ctx, daemon, daemon.StoppedBySupervisor, restartArgv, o.UpdateID, version,
 				"the swap did not happen; restarting the build that was running"); restartErr != nil {
@@ -963,6 +941,9 @@ func runHelperApply(ctx context.Context, o helperApplyOptions) error {
 			}
 		}
 		return err
+	}
+	if clearErr := update.ClearHandoffFailure(o.Paths); clearErr != nil {
+		fmt.Fprintf(o.Err, "handoff_failure=uncleared error=%q\n", clearErr.Error())
 	}
 	fmt.Fprintf(o.Out, "applied_update=%s\n", result.UpdateID)
 	fmt.Fprintf(o.Out, "version=%s\n", result.Version)
@@ -1193,6 +1174,7 @@ func (o helperApplyOptions) startBuildOnDisk(ctx context.Context, daemon serving
 // gate waits for the restarted daemon to be healthy AND to be the build on
 // disk (update.BundleIdentity).
 func (o helperApplyOptions) gate(ctx context.Context, updateID, version string, requireIdentity bool) error {
+	o.UpdateID = updateID
 	expected, err := update.BundleIdentity(o.Paths.Root)
 	if err == nil {
 		var identity update.Identity
@@ -1243,6 +1225,12 @@ func (o helperApplyOptions) revert(ctx context.Context, daemon servingDaemon, ch
 			fmt.Fprintf(o.Err, "restart=failed error=%q\n", restartErr.Error())
 		}
 		return o.revertRefused(result, gateErr, err)
+	}
+	if err := update.RecordDeployLedgerEntry(o.Paths, update.DeployLedgerEntry{
+		Action: "health-reverted", UpdateID: result.UpdateID, Version: result.Version,
+		Sequence: result.Sequence, Reason: gateErr.Error(), Trigger: o.Trigger,
+	}); err != nil {
+		fmt.Fprintf(o.Err, "deploy_ledger=unwritten action=health-reverted error=%q\n", err.Error())
 	}
 	fmt.Fprintf(o.Out, "rollback=applied restored_version=%s failed_path=%s\n", restored.RestoredVersion, restored.FailedPath)
 	if _, err := o.startBuildOnDisk(ctx, daemon, stoppedViaSupervisor, argv, restored.RestoredUpdateID, restored.RestoredVersion,
@@ -1341,8 +1329,17 @@ func (o helperApplyOptions) revertRefused(result *update.ApplyResult, gateErr, c
 // record writes one step of the swap to the deploy ledger. Before the swap a
 // step that cannot be recorded does not happen; the caller returns the error.
 func (o helperApplyOptions) record(action string, pid int, version, reason string) error {
+	var sequence int64
+	if action == "health-passed" {
+		state, err := update.LoadState(o.Paths)
+		if err != nil {
+			return err
+		}
+		sequence = state.Sequence
+	}
 	return update.RecordDeployLedgerEntry(o.Paths, update.DeployLedgerEntry{
 		Action:      action,
+		Sequence:    sequence,
 		UpdateID:    o.UpdateID,
 		Version:     version,
 		DaemonPID:   pid,

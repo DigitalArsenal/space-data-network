@@ -161,26 +161,45 @@ jobs:
         # `gh` on a runner is installed but unauthenticated without this.
         env:
           GH_TOKEN: ${{ github.token }}
+        # The update-signing guard (deployment/release/beta-release-workflow.test.mjs)
+        # parses the workflows with js-yaml, a root dev dependency.
         run: |
           chmod +x scripts/*.sh
+          npm ci --ignore-scripts --no-audit --no-fund
           ./scripts/ci-local.sh preflight
       - name: Encryption tests (Go)
         run: ./scripts/ci-local.sh encryption
 
-  # Every package but internal/storage.
-  #
-  # Budget: 427.6s and 492.5s of test time on two warm local runs (2026-09-18,
-  # -p=1), against a runner factor of 1.9x measured the same day — same
-  # package, interpreted on both sides: internal/directory 170.4s on CI
-  # against 90.1s here. That is ~15 minutes of `go test`, plus the build and
-  # the prewarm; 40 minutes is roughly 1.6x the whole job, and it replaces one
-  # that took 109.5. The per-package -timeout lives in ci-local.sh, next to
-  # the numbers it came from.
+  # Six exhaustive groups retain the individual test deadlines. In the
+  # release container, run 43971615013 took 21m general, 35m format2 (its
+  # kill-recovery test alone 1579s), 16m command and 13m engine; setup and
+  # linking took 6.5m before the first test; run 43979527185 took 27m
+  # general. general-1 and general-2 split its packages; format2-kill runs
+  # that one test, format2 the rest of its package. The 40m outer limit leaves the 30m
+  # package deadline time to name an overrun after setup and linking.
   go-quick:
-    name: Go tests (quick)
+    name: Go tests (quick / ${{ matrix.group }})
     runs-on: ubuntu-latest
+    container: ubuntu:20.04
+    defaults:
+      run:
+        shell: bash
+    needs: wasmedge-runtime
     timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [general-1, general-2, format2, format2-kill, command, engine]
+    env:
+      SDN_CI_GO_GROUP: ${{ matrix.group }}
     steps:
+      - name: Prepare the release container
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends \
+            ca-certificates curl git xz-utils build-essential zlib1g-dev libtinfo-dev
+          git config --global --add safe.directory '*'
       - uses: actions/checkout@v4
         with:
           submodules: recursive
@@ -201,11 +220,23 @@ jobs:
   go-heavy:
     name: Go tests (record store)
     runs-on: ubuntu-latest
+    container: ubuntu:20.04
+    defaults:
+      run:
+        shell: bash
+    needs: wasmedge-runtime
     # Above the lane's own 25m go-test budget, so an overrun surfaces as go
     # test's timeout panic (which names the running test) instead of the job
     # being killed with no diagnostic.
     timeout-minutes: 100
     steps:
+      - name: Prepare the release container
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends \
+            ca-certificates curl git xz-utils build-essential zlib1g-dev libtinfo-dev
+          git config --global --add safe.directory '*'
       - uses: actions/checkout@v4
         with:
           submodules: recursive
@@ -215,16 +246,10 @@ jobs:
       - name: go test (record store)
         run: ./scripts/ci-local.sh heavy
 
-  # THE PATCHED WASMEDGE SUBSTRATE (design A21, A30, A31). Every Go lane above
-  # links the upstream 0.16.4 library, where the partition-store substrate
-  # tests skip: upstream loses atomic wake-ups and one stop reaches one thread.
-  # This lane links the patched static prefix the release ships and runs them.
-  # The prefix is cached under the release workflow's own linux-amd64 key and
-  # built by the same steps, so whichever workflow builds it first, the other
-  # reuses it. A miss (a change to the build script or its patches) costs one
-  # LLVM-free WasmEdge build, about half an hour.
-  wasmedge-substrate:
-    name: WasmEdge substrate (patched static prefix)
+  # The release cache supplies one prefix per run. Consumers link and test
+  # in the release container, including its C library and linker.
+  wasmedge-static:
+    name: Shared patched WasmEdge prefix
     runs-on: ubuntu-latest
     container: ubuntu:20.04
     timeout-minutes: 120
@@ -265,51 +290,67 @@ jobs:
           echo "/opt/cmake-${CMAKE_VERSION}-linux-x86_64/bin" >> "$GITHUB_PATH"
       - name: Build the static prefix
         if: steps.cache.outputs.cache-hit != 'true'
-        run: |
-          . scripts/wasmedge-static-env.sh
-          WASMEDGE_STATIC_WORK="${GITHUB_WORKSPACE}/.sdn-wasmedge-static" \
-          WASMEDGE_STATIC_PREFIX_ONLY=1 \
-          bash scripts/build-static-wasmedge.sh
-      - uses: actions/setup-go@v5
+        run: ./scripts/ci-local.sh prefix-build
+      - name: Package the prefix
+        run: ./scripts/ci-local.sh prefix-pack
+      - uses: actions/upload-artifact@v4
         with:
-          go-version-file: sdn-server/go.mod
-          cache-dependency-path: sdn-server/go.sum
-      # Latency and scaling thresholds are acceptance numbers for named
-      # machines (SDN_PS_ACCEPTANCE=1 there); on a shared runner they are
-      # reported. Every functional outcome is asserted here.
-      - name: Substrate tests
-        working-directory: sdn-server
-        env:
-          WASMEDGE_DIR: ${{ github.workspace }}/.sdn-wasmedge-static/prefix
-          SDN_WASM_ATOMIC_REGRESSION: '1'
-          SDN_WASM_REQUIRE_PATCHED: '1'
+          name: wasmedge-static-prefix
+          path: .ci-artifacts/wasmedge-static-prefix.tar.gz
+          compression-level: 0
+          retention-days: 1
+
+  wasmedge-runtime:
+    name: Patched runtime in release container
+    runs-on: ubuntu-latest
+    container: ubuntu:20.04
+    defaults:
+      run:
+        shell: bash
+    needs: wasmedge-static
+    timeout-minutes: 25
+    steps:
+      - name: Prepare the release container
         run: |
-          # The legacy (format 1) engine loads its AOT artifact from the user
-          # cache and never compiles on a miss, so without this prewarm every
-          # legacy store these suites build runs INTERPRETED (the format-4
-          # migration tests' legacy stores took 6-10 minutes each).
-          ../scripts/go-with-wasmedge.sh build -o "$RUNNER_TEMP/spacedatanetwork-prewarm" ./cmd/spacedatanetwork
-          "$RUNNER_TEMP/spacedatanetwork-prewarm" prewarm-aot
-          ../scripts/go-with-wasmedge.sh test ./internal/wasmrt/ -count=1 -timeout 20m
-          ../scripts/go-with-wasmedge.sh test ./internal/flatsqlrt/ -count=1 -timeout 30m -v \
-            -run 'TestPS|TestParallelAOT|TestSharedMemoryBase|TestConcurrentControl|TestNativeHostIO|TestEmbeddedPSThreads'
-          # Store format 2 on the published partition-store engine (T6): the
-          # writer and reader instances, rings, mailboxes, RB1, store-migrate.
-          ../scripts/go-with-wasmedge.sh test ./internal/storage/format2/ -count=1 -timeout 30m -v
-          # The unified query E2E requires the patched runtime and fails if absent.
-          ../scripts/go-with-wasmedge.sh test ./internal/storage/format4/ -count=1 -timeout 20m -v -run '^TestUnifiedFlatBufferQueryReopen$'
-          # The daemon on formats 2 and 4: the storage API against format 1
-          # on the same writes (format 4 on its Fake and, once embedded, on
-          # its engine), and the dashboard lane through the API under ingest.
-          ../scripts/go-with-wasmedge.sh test ./internal/storage/ -count=1 -timeout 30m -v -run 'TestFormat2|TestFormat4'
-          # A fresh node's first start under the default (format 5): the
-          # daemon's own prewarm compiles the format-5 engine before its store
-          # opens. Needs the patched runtime, so it runs in this job.
-          ../scripts/go-with-wasmedge.sh test ./cmd/spacedatanetwork/ -count=1 -timeout 20m -v -run '^(TestOpensWithFormat5EngineCoversFormat4AndFormat5|TestDaemonPrewarmCompilesFormat5EngineForFreshStore)$'
-          ../scripts/go-with-wasmedge.sh test ./internal/api/ -count=1 -timeout 20m -v -run 'TestFormat2'
-          # store-migrate --to 4 stops at every step of a migration here
-          # (SDN_WASM_REQUIRE_PATCHED=1): about 8 minutes locally, so 60m.
-          ../scripts/go-with-wasmedge.sh test ./cmd/spacedatanetwork/ -count=1 -timeout 60m -v -run 'TestFormat2|TestStoreMigrate'
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends \
+            ca-certificates curl git xz-utils build-essential zlib1g-dev libtinfo-dev
+          git config --global --add safe.directory '*'
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: ./.github/actions/sdn-go-env
+        with:
+          needs-flow-bundles: 'false'
+      - name: Build and verify the runtime
+        run: ./scripts/ci-local.sh runtime
+
+  wasmedge-substrate:
+    name: Store migration E2E (patched runtime)
+    runs-on: ubuntu-latest
+    container: ubuntu:20.04
+    defaults:
+      run:
+        shell: bash
+    needs: wasmedge-runtime
+    timeout-minutes: 120
+    steps:
+      - name: Prepare the release container
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends \
+            ca-certificates curl git xz-utils build-essential zlib1g-dev libtinfo-dev
+          git config --global --add safe.directory '*'
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: ./.github/actions/sdn-go-env
+        with:
+          needs-flow-bundles: 'false'
+      - name: Store migrations
+        run: ./scripts/ci-local.sh migrations
 
   # THE UPDATE CHANNEL ON REAL DAEMONS (stack issue 670). The helper tests in
   # update_cli_test.go run a fixture daemon, which is how a health gate that
@@ -326,25 +367,90 @@ jobs:
   update-channel-e2e:
     name: Update channel E2E (real daemon)
     runs-on: ubuntu-latest
+    # The daemons run in a network namespace of their own (loopback only) as
+    # an ordinary user, which needs these two capabilities in the container.
+    container:
+      image: ubuntu:20.04
+      options: --cap-add SYS_ADMIN --cap-add NET_ADMIN
+    defaults:
+      run:
+        shell: bash
+    needs: wasmedge-runtime
     timeout-minutes: 60
     steps:
+      - name: Prepare the release container
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends \
+            ca-certificates curl git xz-utils build-essential zlib1g-dev libtinfo-dev iproute2
+          git config --global --add safe.directory '*'
+          useradd --create-home update-e2e
       - uses: actions/checkout@v4
         with:
           submodules: recursive
       - uses: ./.github/actions/sdn-go-env
         with:
           needs-flow-bundles: 'false'
-      - name: update install against real daemons
-        working-directory: sdn-server
+      - uses: actions/cache@v4
+        with:
+          path: .ci-artifacts/installed-update-receiver
+          key: installed-v1.1.5-linux-amd64-f0d18ef21455bc7dfcd9f1da791420bf838d4a3ae1522c22143143993d48cd8c
+      - name: Fetch the published update receiver
+        id: installed_receiver_archive
+        run: |
+          set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/.ci-artifacts/installed-update-receiver"
+          archive="$GITHUB_WORKSPACE/.ci-artifacts/installed-update-receiver/spacedatanetwork-1.1.5-linux-amd64.tar.gz"
+          if [[ ! -f "$archive" ]]; then
+            curl --fail --location --retry 3 https://github.com/DigitalArsenal/space-data-network/releases/download/v1.1.5/spacedatanetwork-1.1.5-linux-amd64.tar.gz -o "$archive"
+          fi
+          echo "f0d18ef21455bc7dfcd9f1da791420bf838d4a3ae1522c22143143993d48cd8c  $archive" | sha256sum --check
+      # Builds the fixtures, then runs the test as the ordinary user
+      # update-e2e in a network namespace with loopback only.
+      - name: Exercise pull and push on loopback
+        id: update_daemons
         env:
-          SDN_E2E_REAL_DAEMON: '1'
-        run: ../scripts/go-with-wasmedge.sh test ./cmd/spacedatanetwork/ -count=1 -timeout 50m -v -run '^TestUpdateChannelRealDaemonE2E$'
+          SDN_E2E_UPDATE_USER: update-e2e
+        run: |
+          export SDN_E2E_LOG_DIR="$GITHUB_WORKSPACE/.ci-artifacts/update-channel-logs"
+          export SDN_E2E_INSTALLED_BUNDLE="$GITHUB_WORKSPACE/.ci-artifacts/installed-update-receiver/spacedatanetwork-1.1.5-linux-amd64.tar.gz"
+          ./scripts/ci-local.sh update-channel
+      - name: Report installed receiver proof
+        if: always()
+        env:
+          ARCHIVE_OUTCOME: ${{ steps.installed_receiver_archive.outcome }}
+          TEST_OUTCOME: ${{ steps.update_daemons.outcome }}
+        run: |
+          if grep -q -- '--- PASS: TestUpdateChannelRealDaemonE2E/installed-v1.1.5-push' "$GITHUB_WORKSPACE/.ci-artifacts/update-channel-logs/test.log"; then
+            echo 'Published 1.1.5 receiver: checksum verified and autonomous push install passed.' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Published 1.1.5 receiver proof did not pass: archive download/checksum=$ARCHIVE_OUTCOME; fixture build and daemon test=$TEST_OUTCOME. A skipped stage did not run because an earlier stage failed. See those step logs and the test artifact for the diagnostic." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: update-channel-logs
+          path: .ci-artifacts/update-channel-logs
 
   go-builds:
     name: Go builds (node + edge relay)
     runs-on: ubuntu-latest
+    container: ubuntu:20.04
+    defaults:
+      run:
+        shell: bash
+    needs: wasmedge-runtime
     timeout-minutes: 25
     steps:
+      - name: Prepare the release container
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends \
+            ca-certificates curl git xz-utils build-essential zlib1g-dev libtinfo-dev
+          git config --global --add safe.directory '*'
       - uses: actions/checkout@v4
         with:
           submodules: recursive
@@ -355,7 +461,45 @@ jobs:
         run: ./scripts/ci-local.sh builds
 
   js:
-    name: sdn-js + module delivery + plugin demo
+    name: sdn-js
+    runs-on: ubuntu-latest
+    container: ubuntu:20.04
+    defaults:
+      run:
+        shell: bash
+    needs: wasmedge-runtime
+    timeout-minutes: 30
+    # Playwright omits a focal download entry. The Ubuntu 22.04 key selects
+    # its Linux x64 Chromium bundle; ci-local.sh installs the bundle's
+    # libraries under their 20.04 names.
+    env:
+      PLAYWRIGHT_HOST_PLATFORM_OVERRIDE: ubuntu22.04-x64
+      SDN_CI_BROWSER_DEPS: release-container
+    steps:
+      - name: Prepare the release container
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends \
+            ca-certificates curl git xz-utils build-essential zlib1g-dev libtinfo-dev
+          git config --global --add safe.directory '*'
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: sdn-js/package-lock.json
+      # The interop tests build a Go peer with the shared runtime.
+      - uses: ./.github/actions/sdn-go-env
+        with:
+          needs-flow-bundles: 'false'
+      - name: sdn-js
+        run: ./scripts/ci-local.sh js
+
+  delivery:
+    name: Module delivery compatibility
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -365,25 +509,65 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-          cache: 'npm'
+          cache: npm
           cache-dependency-path: sdn-js/package-lock.json
-      # plugin-demo runs a REAL node, so this lane needs the Go toolchain and
-      # WasmEdge too.
+      - name: Module delivery compatibility
+        run: ./scripts/ci-local.sh delivery
+
+  demo:
+    name: Plugin demo
+    runs-on: ubuntu-latest
+    container: ubuntu:20.04
+    defaults:
+      run:
+        shell: bash
+    needs: wasmedge-runtime
+    timeout-minutes: 30
+    steps:
+      - name: Prepare the release container
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends \
+            ca-certificates curl git xz-utils build-essential zlib1g-dev libtinfo-dev
+          git config --global --add safe.directory '*'
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: sdn-js/package-lock.json
       - uses: ./.github/actions/sdn-go-env
         with:
           needs-flow-bundles: 'false'
-      - name: sdn-js
-        run: ./scripts/ci-local.sh js
-      - name: module delivery compatibility
-        run: ./scripts/ci-local.sh delivery
-      - name: plugin demo
+      - name: Plugin demo
         run: ./scripts/ci-local.sh demo
 
   dashboard:
     name: Embedded dashboard E2E (real node)
     runs-on: ubuntu-latest
+    container: ubuntu:20.04
+    defaults:
+      run:
+        shell: bash
+    needs: wasmedge-runtime
     timeout-minutes: 30
+    # Playwright omits a focal download entry. The Ubuntu 22.04 key selects
+    # its Linux x64 Chromium bundle; ci-local.sh installs the bundle's
+    # libraries under their 20.04 names.
+    env:
+      PLAYWRIGHT_HOST_PLATFORM_OVERRIDE: ubuntu22.04-x64
+      SDN_CI_BROWSER_DEPS: release-container
     steps:
+      - name: Prepare the release container
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends \
+            ca-certificates curl git xz-utils build-essential zlib1g-dev libtinfo-dev
+          git config --global --add safe.directory '*'
       - uses: actions/checkout@v4
         with:
           submodules: recursive
@@ -412,10 +596,14 @@ jobs:
       - preflight
       - go-quick
       - go-heavy
+      - wasmedge-static
+      - wasmedge-runtime
       - wasmedge-substrate
       - update-channel-e2e
       - go-builds
       - js
+      - delivery
+      - demo
       - dashboard
     steps:
       - name: Report
