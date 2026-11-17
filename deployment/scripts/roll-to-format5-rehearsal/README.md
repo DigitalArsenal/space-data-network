@@ -190,7 +190,12 @@ those measurements; they require a completed rehearsal before they establish
 preservation. The earlier failing results remain evidence of those earlier
 measurements.
 
-The script is not cleared for deployment. Recovery ledger events alone do not
-establish the required preservation proof or a successful new-node forward run.
-Each retained case result and exit file determines whether the complete case
-passed; an intended fault that was never injected is not a tested recovery leg.
+The v1.1.6 rehearsal on both 2026-11-15 production store copies passed the
+forward case with the restart check (host-01 copy with the linux/amd64 release:
+4,419,593 records and 8,959 feeds preserved over the roll and over a clean stop
+and start, no quarantine line; host-02 copy with the linux/arm64 build of the
+same release as the new node, because its emulated amd64 conversion exceeded
+180 minutes: every record of 13 standards and 670 feeds preserved, no quarantine
+line) and the failed-conversion case (format-4 file hashes unchanged, every
+record present after the return) on both copies. Earlier failing results
+remain evidence of the measurements they made.

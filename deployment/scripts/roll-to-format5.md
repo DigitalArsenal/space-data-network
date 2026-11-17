@@ -6,7 +6,7 @@ recovery. The script requires Linux, Bash, GNU coreutils, systemd and curl, and
 runs as root. The service also runs as root. No schema or record data is printed
 by the script. Conversion output comes from the node binary.
 
-The release-source recovery contract is verified against v1.1.5. End-to-end
+The release-source recovery contract is verified against v1.1.5 and v1.1.6. End-to-end
 validation on production-store copies is required before deployment. The
 included rehearsal installs systemd from official package archives; syntax checks do not
 establish recovery safety.
