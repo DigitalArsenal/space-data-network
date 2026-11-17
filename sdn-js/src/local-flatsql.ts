@@ -326,6 +326,8 @@ export async function clearLocalFlatSqlStore(options: ClearLocalFlatSqlStoreOpti
 class WasmLocalFlatSqlStore implements LocalFlatSqlStore {
   private readonly schemas = new Map<string, LocalFlatSqlSchema>();
   private readonly opening = new Map<string, Promise<void>>();
+  private readonly measuredBytes = new Map<string, number>();
+  private readonly changed = new Set<string>();
   constructor(private readonly db: FlatSQL, private readonly options: LocalFlatSqlStoreOptions,
     private readonly persistenceStore: LocalFlatSqlPersistenceStore,
     private readonly pinLedger: Map<string, LocalFlatSqlPinLedgerEntry>) {}
@@ -350,6 +352,7 @@ class WasmLocalFlatSqlStore implements LocalFlatSqlStore {
   }
   async ingestRecords(id: string, records: LocalFlatSqlIngestRecord[], sourceOrOptions?: string | LocalFlatSqlIngestOptions | null): Promise<number> {
     const schema = this.schema(id), options = normalizeIngestOptions(sourceOrOptions); let count = 0;
+    this.changed.add(schema.standardId);
     for (const record of records) {
       if (!record.dataBytes) continue;
       const payload = stripSdnFlatBufferSizePrefix(record.dataBytes);
@@ -367,6 +370,7 @@ class WasmLocalFlatSqlStore implements LocalFlatSqlStore {
   }
   async ingestFlatBufferStream(id: string, stream: Uint8Array, options: LocalFlatSqlStreamIngestOptions | null = null): Promise<number> {
     const schema = this.schema(id), info = flatSqlSizePrefixedStreamInfo(stream, options?.skipRecords ?? 0);
+    this.changed.add(schema.standardId);
     if (!info.allFramesHaveDirectFileIdentifier) throw new Error('FlatBuffer file identifier missing');
     let batch: Uint8Array[] = [], size = 0, count = 0;
     const flush = async () => {
@@ -387,6 +391,7 @@ class WasmLocalFlatSqlStore implements LocalFlatSqlStore {
   }
   async removeRecords(id: string, records: Uint8Array[]): Promise<void> {
     const schema = this.schema(id);
+    this.changed.add(schema.standardId);
     for (const payload of records) await this.db.remove(schema.tableName, frame(stripSdnFlatBufferSizePrefix(payload)));
   }
   async clearStandard(id: string, options: LocalFlatSqlClearOptions = {}): Promise<void> {
@@ -397,7 +402,8 @@ class WasmLocalFlatSqlStore implements LocalFlatSqlStore {
       await this.removeRecords(id, rows.map(row => row[0] as Uint8Array));
     }
     for (const [key, entry] of this.pinLedger) if (entry.standardId === schema.standardId) this.pinLedger.delete(key);
-    if (options.persist !== false) await this.flush();
+    this.measuredBytes.set(schema.standardId, 0);
+    if (options.persist !== false) await this.persistPinLedger();
   }
   async createStandardReplacementStore(id: string): Promise<LocalFlatSqlStore> {
     const engine = { ...this.options.engine, root: undefined, path: undefined, backend: 'memory' as const };
@@ -431,7 +437,7 @@ class WasmLocalFlatSqlStore implements LocalFlatSqlStore {
   }
   async recordPinLedgerEntries(entries: LocalFlatSqlPinLedgerEntry[], options: LocalFlatSqlPinLedgerWriteOptions = {}): Promise<void> {
     for (const candidate of entries) { const entry = normalizePinLedgerEntry(candidate); this.pinLedger.set(pinLedgerEntryKey(entry), entry); }
-    if (options.persist !== false) await this.flush();
+    if (options.persist !== false) await this.persistPinLedger();
   }
   async listPinLedgerEntries(query: LocalFlatSqlPinLedgerQuery = {}): Promise<LocalFlatSqlPinLedgerEntry[]> {
     const normalized = normalizePinLedgerQuery(query);
@@ -467,19 +473,33 @@ class WasmLocalFlatSqlStore implements LocalFlatSqlStore {
     if (!validation.ok) throw new Error(`FlatSQL queries must be read-only: ${validation.diagnostics.join(' ')}`);
     return this.db.execute(encodeFlatSqlQuery(sql, parameters), { records: true, sandbox: true });
   }
+  // includeCachedBytes: false skips the byte scan and reports the figure the
+  // last flush (or full stats call) measured, not zero. A flush measures the
+  // standards changed since they were last measured.
   async getStats(options: LocalFlatSqlStatsOptions = {}): Promise<LocalFlatSqlStandardStats[]> {
     const stats: LocalFlatSqlStandardStats[] = [];
     for (const schema of this.schemas.values()) {
-      const { rows } = await this.rows(`SELECT count(*), ${options.includeCachedBytes === false ? '0' : 'coalesce(sum(length(_data)),0)'} FROM ${quoteIdentifier(schema.tableName)}`);
+      const measure = options.includeCachedBytes !== false;
+      const { rows } = await this.rows(`SELECT count(*), ${measure ? 'coalesce(sum(length(_data)),0)' : '0'} FROM ${quoteIdentifier(schema.tableName)}`);
+      if (measure) { this.measuredBytes.set(schema.standardId, Number(rows[0][1])); this.changed.delete(schema.standardId); }
       stats.push({ standardId: schema.standardId, tableName: schema.tableName, recordCount: Number(rows[0][0]),
-        cachedBytes: Number(rows[0][1]), ingestedRecordCount: Number(rows[0][0]), ...this.pinStatsForStandard(schema.standardId) });
+        cachedBytes: this.measuredBytes.get(schema.standardId) ?? 0, ingestedRecordCount: Number(rows[0][0]), ...this.pinStatsForStandard(schema.standardId) });
     }
     return stats;
   }
-  async flush(_id?: string): Promise<void> {
+  async flush(id?: string): Promise<void> {
+    await this.persistPinLedger();
+    for (const schema of id ? [this.schema(id)] : this.schemas.values()) {
+      if (!this.changed.has(schema.standardId)) continue;
+      const { rows } = await this.rows(`SELECT coalesce(sum(length(_data)),0) FROM ${quoteIdentifier(schema.tableName)}`);
+      this.measuredBytes.set(schema.standardId, Number(rows[0][0]));
+      this.changed.delete(schema.standardId);
+    }
+  }
+  private async persistPinLedger(): Promise<void> {
     if (this.options.persistenceKey) await writePersistedPinLedgerEntries(this.persistenceStore, persistedPinLedgerKey(this.options.persistenceKey), [...this.pinLedger.values()]);
   }
-  async destroy(): Promise<void> { await this.flush(); await this.db.close(); }
+  async destroy(): Promise<void> { await this.persistPinLedger(); await this.db.close(); }
   private pinStatsForStandard(standardId: string): Pick<LocalFlatSqlStandardStats, 'pinnedRows' | 'pinnedBytes' | 'snapshotId' | 'head' | 'highWaterMark' | 'lastSyncedAt'> {
     const normalizedStandardId = normalizeStandardId(standardId);
     let pinnedRows = 0;
