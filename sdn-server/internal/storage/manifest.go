@@ -1086,7 +1086,7 @@ func (s *FlatSQLStore) importDatasetShardChunk(index *DatasetExportIndex, provid
 	if s.rb != nil {
 		return s.rb.importDatasetShardChunk(index, providerPeerID, records, readRecord)
 	}
-	defer s.lockWrite("importDatasetShardChunk")()
+	defer s.lockWriteForMirror("importDatasetShardChunk", datasetShardFrameBytes(records))()
 	if hook := importDatasetShardChunkHook.Load(); hook != nil {
 		(*hook)()
 	}

@@ -2316,7 +2316,7 @@ func (s *FlatSQLStore) storeOne(schemaName string, data []byte, peerID string, s
 	if err := s.requireWritable("store record"); err != nil {
 		return "", err
 	}
-	defer s.lockWrite("storeOne")()
+	defer s.lockWriteForMirror("storeOne", engineArenaFrameBytes([][]byte{data}))()
 
 	if _, err := sds.SchemaNameToTable(schemaName); err != nil {
 		return "", fmt.Errorf("invalid schema name: %w", err)
@@ -2753,7 +2753,7 @@ func (s *FlatSQLStore) storeBatch(schemaName string, records [][]byte, peerID st
 // storeBatchChunk stores one chunk under one store lock and one control
 // transaction (the pre-chunking storeBatch body).
 func (s *FlatSQLStore) storeBatchChunk(schemaName string, records [][]byte, peerID string, signature []byte, tags *SourceTags) (int, error) {
-	defer s.lockWrite("storeBatchChunk")()
+	defer s.lockWriteForMirror("storeBatchChunk", engineArenaFrameBytes(records))()
 
 	// WS7.3d routed-only writes: pre-create the (producer, standard) table
 	// outside the batch transaction (no DDL inside the tx). This is the ONLY
