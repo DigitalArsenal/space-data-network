@@ -172,6 +172,27 @@ func TestPublicationBaseline(t *testing.T) {
 				row.ProducerStoreBytesByKind, row.ProducerStoreLogicalBytesByKind = publicationStoreSizes(t, a.store)
 				record(row)
 				if caseSelection == "direct" {
+					// The ingesting node restarted on its own store: the
+					// first record and the lane count before and after.
+					producerPoint := a.base + strings.TrimPrefix(pointURL, b.base)
+					before := baselineStatus(t, producerPoint)
+					stopLog := len(readFileString(a.logPath))
+					a.stop(t)
+					stopLines := readFileString(a.logPath)[stopLog:]
+					restart := time.Now()
+					a.start(t)
+					ready := time.Since(restart).Seconds()
+					after := baselineStatus(t, producerPoint)
+					countStart := time.Now()
+					count, err := baselineCount(a, data.schema, source)
+					if err != nil {
+						t.Fatal(err)
+					}
+					corrupt := strings.Contains(stopLines, "P4_E_CORRUPT")
+					t.Logf("%s direct-ingest restart: first record %d before, %d after; lane count after restart %d of %d (%.1f s); stop reported P4_E_CORRUPT: %t; ready %.1f s", source, before, after, count, data.count, time.Since(countStart).Seconds(), corrupt, ready)
+					if err := encoder.Encode(map[string]any{"kind": "direct_ingest_restart", "round": round + 1, "dataset": source, "first_record_status_before": before, "first_record_status_after": after, "count_after_restart": count, "count_ingested": data.count, "stop_reported_corrupt": corrupt, "ready_seconds": ready}); err != nil {
+						t.Fatal(err)
+					}
 					if err := os.RemoveAll(fixtureRoot); err != nil {
 						t.Fatal(err)
 					}
@@ -733,6 +754,42 @@ func baselineAwaitImportLog(ctx context.Context, d *publicationDaemon, schema st
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
+}
+
+func baselineStatus(t *testing.T, url string) int {
+	t.Helper()
+	response, err := http.Get(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	return response.StatusCode
+}
+
+// baselineCount is the lane's record count (one scan, no client deadline).
+func baselineCount(d *publicationDaemon, schema, source string) (int64, error) {
+	body := syncwire.BuildQRP(syncwire.QRPFields{Kind: syncwire.QRPKindRequest, SchemaName: schema, ProviderID: "publication-e2e", SourceName: source, Limit: 1})
+	response, err := http.Post(d.base+"/api/v1/data/scan", publicationStreamType, bytes.NewReader(body))
+	if err != nil {
+		return 0, err
+	}
+	defer response.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(response.Body, 32<<20))
+	if err != nil {
+		return 0, err
+	}
+	if response.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("count HTTP %d", response.StatusCode)
+	}
+	frames, err := syncwire.SplitFrames(raw)
+	if err != nil || len(frames) == 0 {
+		return 0, fmt.Errorf("invalid count reply")
+	}
+	q, err := syncwire.ParseQRP(frames[0])
+	if err != nil {
+		return 0, err
+	}
+	return int64(q.TOTAL_COUNT()), nil
 }
 
 // baselinePolls records how long the receiver's count reads took while the
