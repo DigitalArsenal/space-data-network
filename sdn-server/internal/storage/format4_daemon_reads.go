@@ -763,6 +763,9 @@ func (b format4Backend) RawRecordSnapshot(filter RawRecordQuery) (int64, RawReco
 
 // f4Snapshot is RawRecordSnapshot's engine part.
 func (b format4Backend) f4Snapshot(filter RawRecordQuery) (f4Snapshot, error) {
+	if snap, ok, err := b.f4LaneSnapshot(filter); err != nil || ok {
+		return snap, err
+	}
 	h, q, _, err := b.f4Head(filter)
 	if err != nil {
 		return f4Snapshot{}, fmt.Errorf("raw record head failed: %w", err)
@@ -793,6 +796,70 @@ func (b format4Backend) f4Snapshot(filter RawRecordQuery) (f4Snapshot, error) {
 		}
 	}
 	return f4Snapshot{n: h.N, head: head, q: q}, nil
+}
+
+// f4LaneSnapshot answers a tag filter and nothing else (no cursor, CID,
+// peer, sync filter or search) from the lane counters (SUMMARY kind 3) when
+// exactly one live tag instance of the type meets it: every record the
+// filter selects holds that one instance once, so the instance's records,
+// bytes and newest sequence are the filter's count, bytes and newest
+// sequence. A HEAD over the lane reads every record of it (42 s at 1.13
+// million records during an import). With several instances meeting the
+// filter a record can hold more than one, and the HEAD answers.
+//
+// A cursor's first page (no cursor position, no boundary) is answered too:
+// its boundary is the type's newest sequence read before the counters, or
+// the instance's newest sequence when a write landed between the two reads,
+// so the count is exactly the records at or before the boundary. Its
+// snapshot times are the lane's update time, as the source summary's are
+// (the HEAD's record timestamp and tag time need every record read).
+func (b format4Backend) f4LaneSnapshot(filter RawRecordQuery) (f4Snapshot, bool, error) {
+	if filter.UseRowIDCursor && (filter.AfterRowID > 0 || filter.MaxRowID > 0) {
+		return f4Snapshot{}, false, nil
+	}
+	schemaName := strings.TrimSpace(filter.SchemaName)
+	if schemaName == "" {
+		return f4Snapshot{}, false, nil
+	}
+	typ, err := f4Type(schemaName)
+	if err != nil {
+		return f4Snapshot{}, false, nil
+	}
+	q, nothing, err := f4RawQuery(typ, filter, false)
+	if err != nil || nothing || !f4SourceSummaryHead(q) {
+		return f4Snapshot{}, false, nil
+	}
+	var typeHead format4.Head
+	if filter.UseRowIDCursor {
+		if typeHead, err = b.f4TypeHead(typ); err != nil {
+			return f4Snapshot{}, false, fmt.Errorf("raw record head failed: %w", err)
+		}
+	}
+	lanes, err := b.f4Lanes(typ)
+	if err != nil {
+		return f4Snapshot{}, false, fmt.Errorf("raw record head failed: %w", err)
+	}
+	var met *format4.Lane
+	for i := range lanes {
+		if lanes[i].Records > 0 && f4LaneMeets(lanes[i], q.Lane) {
+			if met != nil {
+				return f4Snapshot{}, false, nil
+			}
+			met = &lanes[i]
+		}
+	}
+	if met == nil {
+		return f4Snapshot{}, false, nil
+	}
+	// As f4Snapshot: a source summary's times are its lanes' update times
+	// and it has no record timestamp.
+	head := RawRecordHead{TotalBytes: met.Bytes, MaxRowID: met.MaxSeq, MaxCreatedAtUnix: met.Updated, MaxSourceUpdatedAtUnix: met.Updated}
+	if filter.UseRowIDCursor {
+		// The cursor carries the pinned boundary, as f4Head's does.
+		head.MaxRowID = max(typeHead.MaxSeq, met.MaxSeq)
+		q.SeqThrough = head.MaxRowID
+	}
+	return f4Snapshot{n: met.Records, head: head, q: q}, true, nil
 }
 
 // QuerySourceTaggedRecords is the newest tagged records meeting the tag

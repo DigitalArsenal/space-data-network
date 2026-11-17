@@ -94,7 +94,14 @@ ingest with reads.
 `TestPublicationFingerprintRealDaemons` publishes 150,000 element sets and
 compares the set fingerprint the producer logs ("publication fingerprint")
 with the SHA-256 of the lane header and the sorted CIDs of the records the
-test sent.
+test sent, and checks that the series' three 50,000-record windows are read
+by CID from the plan that fingerprint read made ("Dataset publication
+window").
+
+`TestPublicationLaneCountRealDaemons` compares a scan's `TOTAL_COUNT` on one
+daemon with the distinct records sent: lanes with one tag instance (counted
+from the lane counters) and a source whose records sit in two batches
+(counted by reading the lane).
 
 The full OEM metadata query currently returns HTTP 400 `byte-cap` or `timeout` under its
 normal sandbox limits even with a narrow projection. These refusals are recorded with
