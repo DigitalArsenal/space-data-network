@@ -308,8 +308,12 @@ func OpenPSInstance(cfg PSConfig) (*PSInstance, error) {
 	}
 	applyPSDefaults(&cfg)
 	processNoFile()
-	// A31: the start-up self-test is a metric, logged once per process.
-	_ = wasmrt.SubstrateStatus()
+	// A31: the start-up self-test is a metric, logged once per process. An
+	// inconclusive one names no AOT artifact key, so the open is refused and
+	// the next open runs the self-test again.
+	if rep := wasmrt.SubstrateStatus(); rep.Inconclusive {
+		return nil, fmt.Errorf("%w: %s", ErrPSSubstrate, rep.FailureReason())
+	}
 
 	aot, aotPath, err := EnsureThreadedAOTArtifact(cfg.AOTCacheDir, cfg.AOTPrefix, cfg.Wasm, cfg.CompileOnMiss)
 	if err != nil {
