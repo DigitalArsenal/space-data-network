@@ -517,7 +517,10 @@ run_gofmt() {
   pass "gofmt"
 }
 
-# Package ownership is exhaustive: new packages enter the general group.
+# Package ownership is exhaustive: new packages enter the general group,
+# whose sorted packages alternate between general-1 and general-2 (run
+# 43979527185: 568s of tests but 23m in the step, most of it linking 84
+# test binaries one at a time).
 # The other groups isolate the measured 1220s format2, 575s command, and
 # 374s engine packages. Every group retains each package's test budget.
 # The format2-kill group runs format2's kill-recovery test alone (1097s and
@@ -540,7 +543,7 @@ run_go() {
   export SDN_WASM_ATOMIC_REGRESSION=1
   export SDN_CI_GO_COVERAGE=1
   local group="${SDN_CI_GO_GROUP:-all}"
-  case "$group" in all|general|format2|format2-kill|command|engine) ;; *) fail "unknown Go group: $group" ;; esac
+  case "$group" in all|general|general-1|general-2|format2|format2-kill|command|engine) ;; *) fail "unknown Go group: $group" ;; esac
 
   step "Go tests (quick: $group)"
   local pkgs failed=0 pkg
@@ -554,9 +557,13 @@ run_go() {
   cut -d ' ' -f 1 "$manifest" > "$manifest.actual"
   cmp -s "$manifest.expected" "$manifest.actual" || fail "quick package ownership differs from go list"
   [[ -z "$(uniq -d "$manifest.actual")" ]] || fail "duplicate quick package ownership"
-  if [[ "$group" == all || "$group" == general ]]; then
+  case "$group" in
+    general-1) pkgs=$(printf '%s\n' $pkgs | LC_ALL=C sort | awk 'NR % 2 == 1') ;;
+    general-2) pkgs=$(printf '%s\n' $pkgs | LC_ALL=C sort | awk 'NR % 2 == 0') ;;
+  esac
+  if [[ "$group" == all || "$group" == general* ]]; then
     # shellcheck disable=SC2086
-    go_test_with_timings quick -v -p=1 -timeout="$QUICK_GO_TEST_TIMEOUT" -count=1 $pkgs \
+    go_test_with_timings "quick-$group" -v -p=1 -timeout="$QUICK_GO_TEST_TIMEOUT" -count=1 $pkgs \
       || failed=1
   fi
   run_go_extended || failed=1

@@ -167,11 +167,12 @@ jobs:
       - name: Encryption tests (Go)
         run: ./scripts/ci-local.sh encryption
 
-  # Five exhaustive groups retain the individual test deadlines. In the
+  # Six exhaustive groups retain the individual test deadlines. In the
   # release container, run 43971615013 took 21m general, 35m format2 (its
   # kill-recovery test alone 1579s), 16m command and 13m engine; setup and
-  # linking took 6.5m before the first test. format2-kill runs that one test,
-  # format2 the rest of its package. The 40m outer limit leaves the 30m
+  # linking took 6.5m before the first test; run 43979527185 took 27m
+  # general. general-1 and general-2 split its packages; format2-kill runs
+  # that one test, format2 the rest of its package. The 40m outer limit leaves the 30m
   # package deadline time to name an overrun after setup and linking.
   go-quick:
     name: Go tests (quick / ${{ matrix.group }})
@@ -185,7 +186,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        group: [general, format2, format2-kill, command, engine]
+        group: [general-1, general-2, format2, format2-kill, command, engine]
     env:
       SDN_CI_GO_GROUP: ${{ matrix.group }}
     steps:
