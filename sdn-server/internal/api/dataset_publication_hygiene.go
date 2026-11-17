@@ -106,11 +106,38 @@ func (s *ConcreteDatasetPublicationService) publicationFingerprint(req DatasetPu
 		h, _ := s.selection.Fingerprint()
 		return h
 	}
-	fingerprint, _, err := s.store.PagedDatasetPublicationSetFingerprint(schema, req.ProviderID, req.SourceName, req.BatchID)
+	started := time.Now()
+	fingerprint, count, err := s.store.PagedDatasetPublicationSetFingerprint(schema, req.ProviderID, req.SourceName, req.BatchID)
 	if err != nil {
 		log.Warnf("publication fingerprint %s %s/%s: %v", schema, req.ProviderID, req.SourceName, err)
 		return ""
 	}
+	log.Infof("publication fingerprint %s %s/%s/%s: %s over %d records in %s", schema, req.ProviderID, req.SourceName, req.BatchID,
+		fingerprint, count, time.Since(started).Round(time.Millisecond))
+	return fingerprint
+}
+
+// planAndFingerprintPublication is publicationFingerprint that, on a
+// format-4 store, also keeps the lane's publication plan (s.plan) for the
+// series to read its windows from; one read of the lane gives both.
+func (s *ConcreteDatasetPublicationService) planAndFingerprintPublication(req DatasetPublicationRequest, schema string) string {
+	if s == nil || s.store == nil || s.selection != nil || strings.TrimSpace(req.DatastoreKey) != "" || req.Limit > 0 ||
+		strings.TrimSpace(req.ProviderID) == "" || strings.TrimSpace(req.SourceName) == "" {
+		return s.publicationFingerprint(req, schema)
+	}
+	started := time.Now()
+	plan, err := s.store.PlanDatasetPublication(schema, req.ProviderID, req.SourceName, req.BatchID)
+	if err != nil {
+		log.Warnf("publication fingerprint %s %s/%s: %v", schema, req.ProviderID, req.SourceName, err)
+		return ""
+	}
+	if plan == nil {
+		return s.publicationFingerprint(req, schema)
+	}
+	s.plan = plan
+	fingerprint, count := plan.Fingerprint()
+	log.Infof("publication fingerprint %s %s/%s/%s: %s over %d records in %s", schema, req.ProviderID, req.SourceName, req.BatchID,
+		fingerprint, count, time.Since(started).Round(time.Millisecond))
 	return fingerprint
 }
 

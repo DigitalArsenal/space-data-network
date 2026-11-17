@@ -18,7 +18,15 @@ import (
 
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/QRP"
 	flatbuffers "github.com/google/flatbuffers/go"
+
+	"github.com/spacedatanetwork/sdn-server/internal/sds"
 )
+
+// qrpSchemaFile is the standard every $QRP frame is verified against.
+const qrpSchemaFile = "QRP.fbs"
+
+// ErrMalformedQRP is a $QRP frame the structural verifier refused.
+var ErrMalformedQRP = errors.New("malformed $QRP frame")
 
 const (
 	// FramePrefixLength is the u32le length prefix of every frame.
@@ -112,6 +120,9 @@ type QRPFields struct {
 	// Tables answers a request for the query surface (one entry per topic,
 	// datastore or table).
 	Tables []QRPTableField
+	// Follow asks read-chunk to keep the stream open and send records as
+	// they are stored (FollowReadChunk).
+	Follow bool
 }
 
 // QRPColumnField is one $QRP COLUMNS descriptor.
@@ -383,6 +394,9 @@ func BuildQRP(f QRPFields) []byte {
 	if resumeCursor != 0 {
 		QRP.QRPAddRESUME_CURSOR(b, resumeCursor)
 	}
+	if f.Follow {
+		QRP.QRPAddFOLLOW(b, true)
+	}
 	root := QRP.QRPEnd(b)
 	QRP.FinishSizePrefixedQRPBuffer(b, root)
 	return b.FinishedBytes()
@@ -390,14 +404,24 @@ func BuildQRP(f QRPFields) []byte {
 
 // ParseQRP decodes a $QRP frame. A size-prefixed frame is the wire form; a
 // bare finished buffer is tolerated for producers that call Finish directly.
+// Every frame is walked by the structural verifier (sds.VerifyStructure's
+// fbverify, bounded by the frame's own size) before an accessor reads it, so
+// a table, vtable, string or vector offset outside the frame is an error,
+// never a panic.
 func ParseQRP(frame []byte) (*QRP.QRP, error) {
 	switch {
 	case len(frame) >= FrameIdentifierOffset+FrameIdentifierLength && QRP.SizePrefixedQRPBufferHasIdentifier(frame):
 		if int64(binary.LittleEndian.Uint32(frame[:FramePrefixLength]))+FramePrefixLength > int64(len(frame)) {
 			return nil, errors.New("$QRP frame is shorter than its length prefix")
 		}
+		if err := sds.VerifySizePrefixedStructure(qrpSchemaFile, frame); err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrMalformedQRP, err)
+		}
 		return QRP.GetSizePrefixedRootAsQRP(frame, 0), nil
 	case len(frame) >= FramePrefixLength+FrameIdentifierLength && QRP.QRPBufferHasIdentifier(frame):
+		if err := sds.VerifyBareStructure(qrpSchemaFile, frame); err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrMalformedQRP, err)
+		}
 		return QRP.GetRootAsQRP(frame, 0), nil
 	}
 	return nil, fmt.Errorf("frame is not a $QRP buffer (identifier %q)", FrameIdentifier(frame))

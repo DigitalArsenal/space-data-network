@@ -319,6 +319,9 @@ func requireDatasetUpdatesLocalClient(w http.ResponseWriter, r *http.Request, ro
 type ConcreteDatasetPublicationService struct {
 	selection      *storage.PublicationSelection
 	pairedSnapshot bool
+	// plan is the request lane's records in CID order on a format-4 store,
+	// taken with the fingerprint: a series reads its windows from it.
+	plan *storage.PublicationPlan
 
 	store           *storage.FlatSQLStore
 	publisher       DatasetUpdatePublisher
@@ -487,7 +490,8 @@ func (s *ConcreteDatasetPublicationService) publishSelectedDatasetUpdate(ctx con
 		}
 	}
 	startedAt := activeService.now()
-	fingerprint := activeService.publicationFingerprint(activeReq, schema)
+	fingerprint := activeService.planAndFingerprintPublication(activeReq, schema)
+	defer activeService.plan.Close()
 
 	result, carCIDs, err := publish(&activeService, ctx, activeReq, schema)
 	if err != nil {
@@ -779,6 +783,35 @@ func (s *ConcreteDatasetPublicationService) byteBoundedExportFilter(
 	return datasetPublicationExportFilter(req, schema, bounded, offset), bounded, nil
 }
 
+// seriesExportFilter is byteBoundedExportFilter for a window of a series.
+// With a publication plan the window's records come from the plan (its CIDs
+// in the filter) and the byte cut from the plan's stored lengths: the same
+// window, read by CID instead of re-reading every record before its offset.
+func (s *ConcreteDatasetPublicationService) seriesExportFilter(
+	req DatasetPublicationRequest,
+	schema string,
+	limit, offset int,
+) (storage.IndexedRecordQuery, int, error) {
+	if s.plan == nil {
+		return s.byteBoundedExportFilter(req, schema, limit, offset)
+	}
+	cids, cut, err := s.plan.Next(offset, limit, datasetPublicationShardByteBudget(req))
+	if err != nil {
+		return storage.IndexedRecordQuery{}, limit, fmt.Errorf("publication plan: %w", err)
+	}
+	if cut && len(cids) > 0 && len(cids) < limit {
+		limit = len(cids)
+	}
+	filter := datasetPublicationExportFilter(req, schema, limit, offset)
+	filter.CIDs = cids
+	if filter.CIDs == nil {
+		filter.CIDs = []string{}
+	}
+	log.Infof("Dataset publication window %s %s/%s/%s offset=%d limit=%d: %d records read by CID from the plan",
+		schema, filter.ProviderID, filter.SourceName, filter.BatchID, offset, limit, len(cids))
+	return filter, limit, nil
+}
+
 // datasetPublicationScopedToWholeBatch reports a request whose scope is already
 // stated by an explicit batch id and which asked for no head. Its export is
 // bounded by the batch filter, so the head limit has nothing left to protect
@@ -851,12 +884,23 @@ func (s *ConcreteDatasetPublicationService) publishDatasetUpdateSeries(ctx conte
 		}
 		partReq := req
 		partReq.DatasetID = datasetID
-		filter, effectiveLimit, err := s.byteBoundedExportFilter(partReq, schema, limit, offset)
+		filter, effectiveLimit, err := s.seriesExportFilter(partReq, schema, limit, offset)
 		if err != nil {
 			return nil, nil, err
 		}
-		limit = effectiveLimit
 		publication, err := s.publishDatasetUpdatePart(ctx, partReq, schema, filter, datasetPublicationSourceIdentityFromRequest(partReq), datasetUpdateID(partReq, s.now(), part))
+		if errors.Is(err, storage.ErrPublicationPlanStale) {
+			// The lane changed under the plan: this window and the rest of
+			// the series read the CID window by offset.
+			log.Warnf("Dataset publication %s %s/%s offset=%d: %v; reading the rest of the series by offset", schema, partReq.ProviderID, partReq.SourceName, offset, err)
+			s.plan.Close()
+			s.plan = nil
+			if filter, effectiveLimit, err = s.seriesExportFilter(partReq, schema, limit, offset); err != nil {
+				return nil, nil, err
+			}
+			publication, err = s.publishDatasetUpdatePart(ctx, partReq, schema, filter, datasetPublicationSourceIdentityFromRequest(partReq), datasetUpdateID(partReq, s.now(), part))
+		}
+		limit = effectiveLimit
 		if err != nil {
 			if offset > 0 && strings.Contains(err.Error(), "no records match export query") {
 				if pruneStale {
@@ -936,6 +980,7 @@ func unlimitedDatasetPublicationLimit() int {
 func (s *ConcreteDatasetPublicationService) publishDatasetUpdatePart(ctx context.Context, req DatasetPublicationRequest, schema string, filter storage.IndexedRecordQuery, sourceIdentity datasetPublicationSourceIdentity, updateID string) (*DatasetPublicationResult, error) {
 	export, err := s.store.ExportDatasetWindow(filepath.Join(s.outputDir, safeDatasetPathComponent(schema)), storage.IndexedRecordQuery{
 		Selection:           filter.Selection,
+		CIDs:                filter.CIDs,
 		SchemaName:          filter.SchemaName,
 		ProviderID:          filter.ProviderID,
 		SourceName:          filter.SourceName,

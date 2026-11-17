@@ -369,7 +369,7 @@ communication beyond the standard SDS exchange protocol.
 
 | Protocol ID | Purpose |
 |-------------|---------|
-| `/spacedatanetwork/sds-exchange/1.0.0` | Standard SDS data push/pull/query |
+| `/spacedatanetwork/sds-exchange/1.0.0` | Standard SDS data request, query and sync log |
 | `/space-data-network/id-exchange/1.0.0` | Legacy identity exchange |
 | `/spacedatanetwork/epm-exchange/1.0.0` | Entity Profile Manifest exchange |
 | `/space-data-network/module-delivery/1.0.0` | SDN module delivery |
@@ -379,7 +379,7 @@ communication beyond the standard SDS exchange protocol.
 | Byte | Type | Purpose |
 |------|------|---------|
 | `0x01` | MsgRequestData | Request data by CID |
-| `0x02` | MsgPushData | Push data to peer |
+| `0x02` | (refused) | Unknown message type |
 | `0x03` | MsgQuery | Query for data |
 | `0x04` | MsgResponse | Response to query |
 | `0x05` | MsgAck | Acknowledgment |
