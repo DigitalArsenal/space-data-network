@@ -21,8 +21,9 @@ import (
 // sets: more than one 20,000-row read of the lane and more than two 65,536-CID
 // sorted runs of its fingerprint. The fingerprint the producer records is the
 // definition's (the SHA-256 of the lane's header and its sorted text CIDs, one
-// a line), computed here from the records as sent, and the receiver holds the
-// published records byte for byte.
+// a line), computed here from the records as sent; the series is three
+// 50,000-record windows read by CID from the plan that read made; and the
+// receiver holds the published records byte for byte.
 func TestPublicationFingerprintRealDaemons(t *testing.T) {
 	if os.Getenv("SDN_E2E_PUBLICATION") != "1" {
 		t.Skip("set SDN_E2E_PUBLICATION=1 for two isolated real daemons")
@@ -61,6 +62,15 @@ func TestPublicationFingerprintRealDaemons(t *testing.T) {
 		t.Fatalf("producer fingerprint %q, want %q", got, want)
 	}
 	t.Logf("producer fingerprint %s", got)
+	// The series' windows are the CID window's by offset (50,000 records
+	// each), read by CID from the plan the fingerprint read made.
+	log := readFileString(a.logPath)
+	for offset := 0; offset < n; offset += 50_000 {
+		window := fmt.Sprintf("Dataset publication window OMM.fbs publication-e2e/fingerprint/first offset=%d limit=50000: 50000 records read by CID from the plan", offset)
+		if !strings.Contains(log, window) {
+			t.Fatalf("no %q line in %s", window, a.logPath)
+		}
+	}
 	b.awaitRecords(t, "OMM.fbs", "fingerprint", records, 6*time.Minute)
 }
 
@@ -68,10 +78,21 @@ func TestPublicationFingerprintRealDaemons(t *testing.T) {
 // the records as sent and checked against the node's answer.
 func (d *publicationDaemon) ingestOMMCIDs(t *testing.T, source, batch string, offset, n int) []string {
 	t.Helper()
+	frames := make([][]byte, n)
+	for i := range frames {
+		frames[i] = baselineOMM(offset + i)
+	}
+	return d.ingestOMMFrames(t, source, batch, offset, frames)
+}
+
+// ingestOMMFrames ingests size-prefixed element sets and returns their CIDs,
+// computed from the records as sent and checked against the node's answer.
+func (d *publicationDaemon) ingestOMMFrames(t *testing.T, source, batch string, offset int, frames [][]byte) []string {
+	t.Helper()
 	var body bytes.Buffer
+	n := len(frames)
 	cids := make([]string, 0, n)
-	for i := 0; i < n; i++ {
-		frame := baselineOMM(offset + i)
+	for i, frame := range frames {
 		if len(frame) < 4 || int(binary.LittleEndian.Uint32(frame)) != len(frame)-4 {
 			t.Fatalf("record %d is not one size-prefixed frame", offset+i)
 		}

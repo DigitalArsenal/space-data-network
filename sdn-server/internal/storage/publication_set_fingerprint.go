@@ -10,13 +10,14 @@ import (
 	"io"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format4"
 )
 
 // publicationSetFingerprintPage is the rows read per engine scan by
-// PagedDatasetPublicationSetFingerprint.
+// PagedDatasetPublicationSetFingerprint and PlanDatasetPublication.
 var publicationSetFingerprintPage int64 = 20000
 
 // publicationSetFingerprintRun is the CIDs held in memory at once by
@@ -48,17 +49,64 @@ func (s *FlatSQLStore) PagedDatasetPublicationSetFingerprint(schemaName, provide
 	if !ok {
 		return s.DatasetPublicationSetFingerprint(schemaName, providerID, sourceName, batchID)
 	}
+	plan, err := b.planPublication(schemaName, providerID, sourceName, batchID, false)
+	if err != nil {
+		return "", 0, err
+	}
+	defer plan.Close()
+	h, n := plan.Fingerprint()
+	return h, n, nil
+}
+
+// PublicationPlan is a format-4 lane's records in CID text order (the order
+// of the engine's CID window, which a publication series cuts into shards
+// by offset and limit), read once by sequence keyset as of the plan's start,
+// with the lane's set fingerprint. A series takes its shard windows from it
+// in order (Next) and reads each window's records by CID, so each window
+// costs its own records instead of re-reading every record before its
+// offset. The windows, and so what a series records, are the ones the CID
+// window by offset gives over the same set.
+type PublicationPlan struct {
+	Schema, Provider, Source, Batch string
+
+	fingerprint string
+	count       int
+	file        *os.File
+	r           *bufio.Reader
+	pos         int
+	pending     *planEntry
+}
+
+// PlanDatasetPublication plans a publication series of a lane of a format-4
+// store. It answers nil for any other store, and for a lane whose
+// publication is a retained selection (SelectPublication), which exports
+// from its own references. Close removes the plan's temporary file.
+func (s *FlatSQLStore) PlanDatasetPublication(schemaName, providerID, sourceName, batchID string) (*PublicationPlan, error) {
+	b, ok := s.rb.(format4Backend)
+	if !ok {
+		return nil, nil
+	}
+	if p, err := s.SelectPublication(schemaName, providerID, sourceName, batchID); err != nil {
+		return nil, err
+	} else if p != nil {
+		p.Close()
+		return nil, nil
+	}
+	return b.planPublication(schemaName, providerID, sourceName, batchID, true)
+}
+
+func (b format4Backend) planPublication(schemaName, providerID, sourceName, batchID string, keep bool) (*PublicationPlan, error) {
 	schemaName, providerID = strings.TrimSpace(schemaName), strings.TrimSpace(providerID)
 	sourceName, batchID = strings.TrimSpace(sourceName), strings.TrimSpace(batchID)
 	if schemaName == "" || providerID == "" || sourceName == "" {
-		return "", 0, errors.New("schema, provider and source are required for a publication fingerprint")
+		return nil, errors.New("schema, provider and source are required for a publication fingerprint")
 	}
 	if err := b.closed(); err != nil {
-		return "", 0, err
+		return nil, err
 	}
 	typ, err := f4Type(schemaName)
 	if err != nil {
-		return "", 0, err
+		return nil, err
 	}
 	q := format4.Query{Type: typ, Lane: f4Lane(providerID, sourceName, batchID, "", ""), Order: format4.OrderSeqAsc, Bulk: true,
 		Limit: publicationSetFingerprintPage}
@@ -67,11 +115,11 @@ func (s *FlatSQLStore) PagedDatasetPublicationSetFingerprint(schemaName, provide
 	if head, err := b.f4TypeHead(typ); err == nil && head.Through > 0 {
 		q.SeqThrough = head.Through
 	} else if err != nil {
-		return "", 0, fmt.Errorf("fingerprint %s publication set: %w", schemaName, err)
+		return nil, fmt.Errorf("fingerprint %s publication set: %w", schemaName, err)
 	}
 	runs := &cidRuns{}
 	defer runs.close()
-	buf := make([]string, 0, publicationSetFingerprintRun)
+	buf := make([]planEntry, 0, publicationSetFingerprintRun)
 	count := 0
 	for {
 		recs, err := b.d.api().Scan(b.d.ctx, q)
@@ -79,7 +127,7 @@ func (s *FlatSQLStore) PagedDatasetPublicationSetFingerprint(schemaName, provide
 			break
 		}
 		if err != nil {
-			return "", 0, fmt.Errorf("fingerprint %s publication set: %w", schemaName, err)
+			return nil, fmt.Errorf("fingerprint %s publication set: %w", schemaName, err)
 		}
 		full := int64(len(recs)) == q.Limit
 		if full {
@@ -92,15 +140,15 @@ func (s *FlatSQLStore) PagedDatasetPublicationSetFingerprint(schemaName, provide
 				keep--
 			}
 			if keep == 0 {
-				return "", 0, fmt.Errorf("fingerprint %s publication set: sequence %d has %d or more rows", schemaName, last, q.Limit)
+				return nil, fmt.Errorf("fingerprint %s publication set: sequence %d has %d or more rows", schemaName, last, q.Limit)
 			}
 			recs = recs[:keep]
 		}
 		for _, r := range recs {
-			buf = append(buf, r.CID)
+			buf = append(buf, planEntry{cid: r.CID, n: r.Len})
 			if len(buf) == publicationSetFingerprintRun {
 				if err := runs.spill(buf); err != nil {
-					return "", 0, fmt.Errorf("fingerprint %s publication set: %w", schemaName, err)
+					return nil, fmt.Errorf("fingerprint %s publication set: %w", schemaName, err)
 				}
 				buf = buf[:0]
 			}
@@ -111,28 +159,137 @@ func (s *FlatSQLStore) PagedDatasetPublicationSetFingerprint(schemaName, provide
 		}
 		q.SeqAfter = recs[len(recs)-1].Seq
 	}
-	h := newPublicationSetHash(schemaName, providerID, sourceName, batchID)
-	if err := runs.merge(buf, h); err != nil {
-		return "", 0, fmt.Errorf("fingerprint %s publication set: %w", schemaName, err)
+	plan := &PublicationPlan{Schema: schemaName, Provider: providerID, Source: sourceName, Batch: batchID, count: count}
+	var out *bufio.Writer
+	if keep {
+		if plan.file, err = os.CreateTemp("", "sdn-publication-plan-*"); err != nil {
+			return nil, fmt.Errorf("plan %s publication: %w", schemaName, err)
+		}
+		out = bufio.NewWriterSize(plan.file, 1<<20)
 	}
-	return hex.EncodeToString(h.Sum(nil)), count, nil
+	h := newPublicationSetHash(schemaName, providerID, sourceName, batchID)
+	if err := runs.merge(buf, h, out); err != nil {
+		plan.Close()
+		return nil, fmt.Errorf("fingerprint %s publication set: %w", schemaName, err)
+	}
+	plan.fingerprint = hex.EncodeToString(h.Sum(nil))
+	if keep {
+		if err := out.Flush(); err != nil {
+			plan.Close()
+			return nil, fmt.Errorf("plan %s publication: %w", schemaName, err)
+		}
+		if _, err := plan.file.Seek(0, io.SeekStart); err != nil {
+			plan.Close()
+			return nil, fmt.Errorf("plan %s publication: %w", schemaName, err)
+		}
+		plan.r = bufio.NewReaderSize(plan.file, 1<<16)
+	}
+	return plan, nil
+}
+
+// Fingerprint is the planned set's fingerprint and count, the values
+// PagedDatasetPublicationSetFingerprint gives for the lane.
+func (p *PublicationPlan) Fingerprint() (string, int) { return p.fingerprint, p.count }
+
+// Next is the CIDs of the series window that starts at offset: at most limit
+// records, and of those the longest prefix whose shard frames (stored length
+// plus the size prefix) fit maxBytes (0 = no byte budget), at least one
+// record, as IndexedRecordWindowLimitForBytes cuts the CID window; cut
+// reports that the budget stopped it. Windows are taken in order: offset is
+// where the previous window ended. An empty answer is the end of the set.
+func (p *PublicationPlan) Next(offset, limit int, maxBytes int64) (cids []string, cut bool, err error) {
+	if p == nil || p.r == nil {
+		return nil, false, errors.New("publication plan is closed")
+	}
+	if offset != p.pos {
+		return nil, false, fmt.Errorf("publication plan is at offset %d, not %d", p.pos, offset)
+	}
+	var used int64
+	for len(cids) < limit {
+		e := p.pending
+		if e == nil {
+			if e, err = p.read(); err != nil {
+				return nil, false, err
+			}
+			if e == nil {
+				break
+			}
+		}
+		frame := e.n + DatasetShardFrameOverheadBytes
+		if maxBytes > 0 && len(cids) > 0 && used+frame > maxBytes {
+			p.pending = e
+			cut = true
+			break
+		}
+		p.pending = nil
+		used += frame
+		cids = append(cids, e.cid)
+	}
+	p.pos += len(cids)
+	return cids, cut, nil
+}
+
+func (p *PublicationPlan) read() (*planEntry, error) {
+	line, err := p.r.ReadString('\n')
+	if err == io.EOF && line == "" {
+		return nil, nil
+	}
+	if err != nil && err != io.EOF {
+		return nil, err
+	}
+	e, err := parsePlanEntry(strings.TrimSuffix(line, "\n"))
+	return &e, err
+}
+
+// Close removes the plan's temporary file. It is safe to call repeatedly.
+func (p *PublicationPlan) Close() {
+	if p != nil && p.file != nil {
+		p.file.Close()
+		os.Remove(p.file.Name())
+		p.file, p.r = nil, nil
+	}
+}
+
+// planEntry is one planned record: its CID and stored length.
+type planEntry struct {
+	cid string
+	n   int64
+}
+
+func parsePlanEntry(line string) (planEntry, error) {
+	c, n, ok := strings.Cut(line, " ")
+	if !ok {
+		return planEntry{}, fmt.Errorf("publication plan line %q has no length", line)
+	}
+	v, err := strconv.ParseInt(n, 10, 64)
+	return planEntry{cid: c, n: v}, err
+}
+
+func writePlanEntry(w *bufio.Writer, e planEntry) {
+	w.WriteString(e.cid)
+	w.WriteByte(' ')
+	w.WriteString(strconv.FormatInt(e.n, 10))
+	w.WriteByte('\n')
+}
+
+func sortPlanEntries(es []planEntry) {
+	slices.SortFunc(es, func(a, b planEntry) int { return strings.Compare(a.cid, b.cid) })
 }
 
 // cidRuns is the sorted runs of CIDs a fingerprint has spilled, one
-// temporary file each, one CID a line.
+// temporary file each, one CID and its stored length a line.
 type cidRuns struct{ files []*os.File }
 
-func (r *cidRuns) spill(cids []string) error {
-	slices.Sort(cids)
+func (r *cidRuns) spill(es []planEntry) error {
+	sortPlanEntries(es)
 	f, err := os.CreateTemp("", "sdn-publication-fingerprint-*")
 	if err != nil {
 		return err
 	}
 	r.files = append(r.files, f)
 	w := bufio.NewWriterSize(f, 1<<20)
-	for _, c := range cids {
-		w.WriteString(c)
-		w.WriteByte('\n')
+	for _, e := range es {
+		writePlanEntry(w, e)
 	}
 	if err := w.Flush(); err != nil {
 		return err
@@ -150,13 +307,19 @@ func (r *cidRuns) close() {
 }
 
 // merge hashes every spilled CID and those in last in CID text order, each
-// followed by a newline.
-func (r *cidRuns) merge(last []string, h hash.Hash) error {
-	slices.Sort(last)
+// followed by a newline, and writes each entry to out when out is not nil.
+func (r *cidRuns) merge(last []planEntry, h hash.Hash, out *bufio.Writer) error {
+	sortPlanEntries(last)
+	emit := func(e planEntry) {
+		h.Write([]byte(e.cid))
+		h.Write([]byte{'\n'})
+		if out != nil {
+			writePlanEntry(out, e)
+		}
+	}
 	if len(r.files) == 0 {
-		for _, c := range last {
-			h.Write([]byte(c))
-			h.Write([]byte{'\n'})
+		for _, e := range last {
+			emit(e)
 		}
 		return nil
 	}
@@ -175,8 +338,7 @@ func (r *cidRuns) merge(last []string, h hash.Hash) error {
 	heap.Init(m)
 	for m.Len() > 0 {
 		src := m.srcs[0]
-		h.Write([]byte(src.cur))
-		h.Write([]byte{'\n'})
+		emit(src.cur)
 		ok, err := src.next()
 		if err != nil {
 			return err
@@ -193,8 +355,8 @@ func (r *cidRuns) merge(last []string, h hash.Hash) error {
 // cidSource is one sorted run: a spilled file or the in-memory remainder.
 type cidSource struct {
 	r   *bufio.Reader
-	mem []string
-	cur string
+	mem []planEntry
+	cur planEntry
 }
 
 func (s *cidSource) next() (bool, error) {
@@ -212,14 +374,14 @@ func (s *cidSource) next() (bool, error) {
 	if err != nil && err != io.EOF {
 		return false, err
 	}
-	s.cur = strings.TrimSuffix(line, "\n")
-	return true, nil
+	s.cur, err = parsePlanEntry(strings.TrimSuffix(line, "\n"))
+	return err == nil, err
 }
 
 type cidMerge struct{ srcs []*cidSource }
 
 func (m *cidMerge) Len() int           { return len(m.srcs) }
-func (m *cidMerge) Less(i, j int) bool { return m.srcs[i].cur < m.srcs[j].cur }
+func (m *cidMerge) Less(i, j int) bool { return m.srcs[i].cur.cid < m.srcs[j].cur.cid }
 func (m *cidMerge) Swap(i, j int)      { m.srcs[i], m.srcs[j] = m.srcs[j], m.srcs[i] }
 func (m *cidMerge) Push(x any)         { m.srcs = append(m.srcs, x.(*cidSource)) }
 func (m *cidMerge) Pop() any {

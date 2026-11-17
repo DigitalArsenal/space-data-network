@@ -2563,6 +2563,10 @@ type RawRecordRef struct {
 // IndexedRecordQuery filters materialized FlatSQL record indexes.
 type IndexedRecordQuery struct {
 	Selection *PublicationSelection `json:"-"`
+	// CIDs, when set, is the window's records in order (a PublicationPlan
+	// window): the export reads them by CID instead of by the window's
+	// offset. The other fields still describe the window.
+	CIDs []string `json:"-"`
 
 	SchemaName          string
 	Day                 string

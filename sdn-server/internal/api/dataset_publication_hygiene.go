@@ -117,6 +117,30 @@ func (s *ConcreteDatasetPublicationService) publicationFingerprint(req DatasetPu
 	return fingerprint
 }
 
+// planAndFingerprintPublication is publicationFingerprint that, on a
+// format-4 store, also keeps the lane's publication plan (s.plan) for the
+// series to read its windows from; one read of the lane gives both.
+func (s *ConcreteDatasetPublicationService) planAndFingerprintPublication(req DatasetPublicationRequest, schema string) string {
+	if s == nil || s.store == nil || s.selection != nil || strings.TrimSpace(req.DatastoreKey) != "" || req.Limit > 0 ||
+		strings.TrimSpace(req.ProviderID) == "" || strings.TrimSpace(req.SourceName) == "" {
+		return s.publicationFingerprint(req, schema)
+	}
+	started := time.Now()
+	plan, err := s.store.PlanDatasetPublication(schema, req.ProviderID, req.SourceName, req.BatchID)
+	if err != nil {
+		log.Warnf("publication fingerprint %s %s/%s: %v", schema, req.ProviderID, req.SourceName, err)
+		return ""
+	}
+	if plan == nil {
+		return s.publicationFingerprint(req, schema)
+	}
+	s.plan = plan
+	fingerprint, count := plan.Fingerprint()
+	log.Infof("publication fingerprint %s %s/%s/%s: %s over %d records in %s", schema, req.ProviderID, req.SourceName, req.BatchID,
+		fingerprint, count, time.Since(started).Round(time.Millisecond))
+	return fingerprint
+}
+
 // DatasetPublicationUnchanged reports whether the set a request would export
 // is exactly the set its lane's newest publication of the same scope already
 // exported. Auto-publish skips such a request: republishing it would export,

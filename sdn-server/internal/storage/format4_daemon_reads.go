@@ -1290,6 +1290,70 @@ func (b format4Backend) QueryIndexedRecords(filter IndexedRecordQuery) ([]*Recor
 	return out, nil
 }
 
+// ErrPublicationPlanStale is an export by CID that found a planned record
+// gone: the lane changed after the plan was taken.
+var ErrPublicationPlanStale = errors.New("a planned record is no longer held")
+
+// indexedRecordsByCID is QueryIndexedRecords for a window whose records are
+// already known (filter.CIDs, a PublicationPlan window of a provider and
+// source lane): the same records, bytes and source tags, read by CID.
+func (b format4Backend) indexedRecordsByCID(filter IndexedRecordQuery) ([]*Record, error) {
+	if err := b.closed(); err != nil {
+		return nil, err
+	}
+	typ, err := f4Type(filter.SchemaName)
+	if err != nil {
+		return nil, err
+	}
+	provider, source := strings.TrimSpace(filter.ProviderID), strings.TrimSpace(filter.SourceName)
+	if provider == "" || source == "" {
+		return nil, errors.New("an export by CID needs a provider and a source")
+	}
+	recs, err := b.d.api().Get(b.d.ctx, typ, filter.CIDs, false, true)
+	if errors.Is(err, format4.ErrNoType) {
+		return nil, ErrPublicationPlanStale
+	}
+	if err != nil {
+		return nil, fmt.Errorf("indexed query failed: %w", err)
+	}
+	byCID := make(map[string]format4.Rec, len(recs))
+	for _, r := range recs {
+		if _, seen := byCID[r.CID]; !seen {
+			byCID[r.CID] = r
+		}
+	}
+	ordered := make([]format4.Rec, 0, len(filter.CIDs))
+	for _, c := range filter.CIDs {
+		r, ok := byCID[c]
+		if !ok {
+			return nil, fmt.Errorf("%w: %s", ErrPublicationPlanStale, c)
+		}
+		ordered = append(ordered, r)
+	}
+	out, err := b.f4Records(filter.SchemaName, ordered, true)
+	if err != nil {
+		return nil, fmt.Errorf("failed reading indexed record data: %w", err)
+	}
+	// As QueryIndexedRecords: the (provider, source, batch) of the record's
+	// newest tag in the lane's feed file.
+	tags, err := b.f4TagRows(filter.SchemaName, filter.CIDs)
+	if err != nil {
+		return nil, fmt.Errorf("indexed query tags: %w", err)
+	}
+	for _, r := range out {
+		var t SourceTags
+		for _, row := range tags[r.CID] { // newest first
+			if row.Provider == provider && row.Source == source {
+				t = f4SourceTags(row.Tag)
+				break
+			}
+		}
+		r.SourceTags = SourceTags{ProviderID: t.ProviderID, SourceName: t.SourceName, BatchID: t.BatchID}
+		r.RowID, r.MaterializedAt = 0, time.Time{}
+	}
+	return out, nil
+}
+
 // IndexedRecordWindowLimitForBytes is the shard byte probe: the longest
 // prefix of the window whose frames (stored length plus the size prefix)
 // fit maxBytes, always at least one record, and whether the budget cut it.
