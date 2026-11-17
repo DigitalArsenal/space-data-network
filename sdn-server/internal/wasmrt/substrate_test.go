@@ -13,22 +13,23 @@ import (
 // artifacts "sdn3" (a runtime without the patch never loads them).
 func TestAOTAtomicMemargOffset(t *testing.T) {
 	requirePatchedRuntime(t)
-	interp, err := probeMemargOffset(substrateProbeWasm)
+	never := func() bool { return false }
+	interp, err := probeMemargOffset(substrateProbeWasm, never)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !interp {
-		t.Fatal("interpreted: memarg-offset notify/wait failed (the probe itself is wrong)")
+	if !interp.ok || interp.waitMismatch {
+		t.Fatalf("interpreted: memarg-offset notify/wait failed (the probe itself is wrong): %+v", interp)
 	}
 	compiled, err := compileProbeAOT()
 	if err != nil {
 		t.Fatal(err)
 	}
-	aot, err := probeMemargOffset(compiled)
+	aot, err := probeMemargOffset(compiled, never)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !aot {
+	if !aot.ok {
 		if os.Getenv("SDN_WASM_REQUIRE_PATCHED") == "1" {
 			t.Fatal("AOT: memarg-offset notify/wait failed: the runtime lacks 04-atomic-memarg-offset")
 		}

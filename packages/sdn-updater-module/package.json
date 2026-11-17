@@ -8,7 +8,7 @@
     "check": "npx --no-install space-data-module check --manifest ./manifest.json --wasm ./dist/isomorphic/module.wasm"
   },
   "dependencies": {
-    "space-data-module-sdk": "0.8.27"
+    "space-data-module-sdk": "0.10.4"
   },
   "devDependencies": {
     "esbuild": "0.25.12"

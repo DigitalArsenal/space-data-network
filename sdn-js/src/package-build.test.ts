@@ -47,15 +47,43 @@ function collectBareSpecifiers(source: string): string[] {
 // under the corresponding environment guard; static and unguarded imports
 // remain browser failures. A local Chromium control also exercises the built
 // entries and real schema compilation/engine queries (see CI repair report).
+//
+// The full TypeScript parse is the whole cost of this check (the four large
+// bundles are 12 to 25 MB, about two million syntax nodes each). The parse
+// skips JSDoc (no JSDoc node holds a call expression) and parent links (the
+// walk keeps its own ancestor list), and each distinct module text is parsed
+// once per file run: the entry tests and the every-module test share results,
+// and the ten byte-identical runtime copies cost one parse.
+const browserBareSpecifierResults = new Map<string, string[]>();
 function collectBrowserBareSpecifiers(source: string): string[] {
-  const ast = ts.createSourceFile('bundle.mjs', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  let result = browserBareSpecifierResults.get(source);
+  if (!result) {
+    result = scanBrowserBareSpecifiers(source);
+    browserBareSpecifierResults.set(source, result);
+  }
+  return [...result];
+}
+
+const BROWSER_IMPORT_GUARDS = ['url.protocol === "file:"', 'globalThis.process?.versions?.node', 'ENVIRONMENT_IS_NODE'];
+
+function scanBrowserBareSpecifiers(source: string): string[] {
+  // A guard is a slice of the source, so a module holding none of the guard
+  // texts has nothing to exclude and needs no parse.
+  if (!BROWSER_IMPORT_GUARDS.some(guard => source.includes(guard))) return collectBareSpecifiers(source);
+  const ast = ts.createSourceFile('bundle.mjs', source, {
+    languageVersion: ts.ScriptTarget.Latest,
+    jsDocParsingMode: ts.JSDocParsingMode.ParseNone,
+  }, false, ts.ScriptKind.JS);
   const removed: Array<[number, number]> = [];
   const nodeEnvironment = /var ENVIRONMENT_IS_NODE = typeof process == "object" && typeof process\.versions == "object" && typeof process\.versions\.node == "string" && process\.type != "renderer";/.test(source);
+  const ancestors: ts.Node[] = [];
   function visit(node: ts.Node): void {
     if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword &&
         node.arguments.length === 1 && ts.isStringLiteral(node.arguments[0])) {
       const specifier = node.arguments[0].text;
-      for (let child: ts.Node = node, parent = node.parent; parent; child = parent, parent = parent.parent) {
+      let child: ts.Node = node;
+      for (let index = ancestors.length - 1; index >= 0; child = ancestors[index], index--) {
+        const parent = ancestors[index];
         if (!ts.isIfStatement(parent) || child !== parent.thenStatement) continue;
         const guard = parent.expression.getText(ast);
         const allowed = (specifier === 'node:fs/promises' && guard === 'url.protocol === "file:"') ||
@@ -64,7 +92,9 @@ function collectBrowserBareSpecifiers(source: string): string[] {
         if (allowed) { removed.push([node.getStart(ast), node.end]); break; }
       }
     }
+    ancestors.push(node);
     ts.forEachChild(node, visit);
+    ancestors.pop();
   }
   visit(ast);
   for (const [start, end] of removed.sort((a, b) => b[0] - a[0])) source = source.slice(0, start) + 'undefined' + source.slice(end);
