@@ -2786,6 +2786,8 @@ func (n *Node) firstFireFlowServiceIfDue(sf *flowrt.ServiceFlow) {
 			log.Infof("Flow service %q: first-fire trigger %q (%s)", sf.ID(), triggerID, reasons[triggerID])
 			if _, err := sf.InvokeCron(n.ctx, triggerID, nil); err != nil {
 				log.Warnf("Flow service %q first-fire trigger %q failed: %v", sf.ID(), triggerID, err)
+			} else {
+				log.Infof("Flow service %q first-fire trigger %q completed", sf.ID(), triggerID)
 			}
 		}
 	}()

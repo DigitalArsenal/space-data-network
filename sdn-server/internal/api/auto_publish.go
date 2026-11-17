@@ -338,7 +338,9 @@ func (p *AutoPublisher) run(ctx context.Context) {
 }
 
 func (p *AutoPublisher) publish(ctx context.Context, req DatasetPublicationRequest) {
-	runCtx, cancel := context.WithTimeout(ctx, autoPublishTimeout)
+	// The publication keeps this deadline and the publisher's stop: one
+	// worker publishes every lane, so a stuck publication must not hold it.
+	runCtx, cancel := context.WithTimeout(withPublicationBoundToCaller(ctx), autoPublishTimeout)
 	defer cancel()
 
 	batchKey := autoPublishBatchKey(req)

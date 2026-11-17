@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/modulert"
+	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
 
 // FetchObserver books one completed outbound retrieval in the node's
@@ -116,6 +118,30 @@ func isDatasetPublicationRequest(method, rawURL string) bool {
 	return err == nil && strings.TrimRight(parsed.Path, "/") == datasetPublicationPath
 }
 
+// ownDatasetPublicationTimeout is how long a request to the node's own
+// publish route waits for its answer: the route answers once the
+// publication completes, within the publication's own bounds (its wait for
+// the lane and its deadline), so the flow reads the real result.
+const ownDatasetPublicationTimeout = storage.DatasetPublicationLaneWait + storage.DatasetPublicationDeadline + time.Minute
+
+// isOwnDatasetPublicationRequest reports a dataset publication request to a
+// loopback address: the node's own publish route, as the flows call it.
+func isOwnDatasetPublicationRequest(method, rawURL string) bool {
+	if !isDatasetPublicationRequest(method, rawURL) {
+		return false
+	}
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return false
+	}
+	host := parsed.Hostname()
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
 func httpCapHandle(operation string, payload []byte) ([]byte, error) {
 	return httpCapHandleContext(context.Background(), operation, payload)
 }
@@ -161,6 +187,12 @@ func httpCapHandleContext(parent context.Context, operation string, payload []by
 	if req.TimeoutMs > int(httpCapMaxTimeout/time.Millisecond) {
 		req.TimeoutMs = int(httpCapMaxTimeout / time.Millisecond)
 	}
+	// The node's own publish route is the one request that waits longer:
+	// it answers when the publication completes.
+	ownPublication := isOwnDatasetPublicationRequest(req.Method, req.URL)
+	if ownPublication {
+		req.TimeoutMs = int(ownDatasetPublicationTimeout / time.Millisecond)
+	}
 	deadlineCtx, cancelDeadline := context.WithTimeout(parent, time.Duration(req.TimeoutMs)*time.Millisecond)
 	defer cancelDeadline()
 	ctx, cancelRead := context.WithCancelCause(deadlineCtx)
@@ -172,8 +204,13 @@ func httpCapHandleContext(parent context.Context, operation string, payload []by
 	// the calling module neither sees nor controls it. Waiting for the slot is
 	// bounded by the caller's own timeout budget so a jammed destination can
 	// never hold a flow instance open indefinitely.
+	// The node's own publish route is not an egress: it is not paced, so a
+	// publication's long answer holds no other request to the loopback host.
 	destHost := egressHostKey(req.URL)
-	release, paceWait, paceErr := sharedEgressPacer.acquire(ctx, destHost)
+	release, paceWait, paceErr := func() {}, time.Duration(0), error(nil)
+	if !ownPublication {
+		release, paceWait, paceErr = sharedEgressPacer.acquire(ctx, destHost)
+	}
 	if paceErr != nil {
 		msg := fmt.Sprintf("egress pacing for %s stopped after %s waiting for the request slot: %v", destHost, paceWait.Round(time.Millisecond), paceErr)
 		observeFetch(req.URL, 0, 0, paceWait.Milliseconds(), msg)

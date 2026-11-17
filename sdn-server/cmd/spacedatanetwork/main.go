@@ -1065,6 +1065,9 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 
 	// Start admin server if enabled
 	var adminServer *http.Server
+	// The node's dataset publication service, stopped before the store
+	// closes.
+	var publications *api.ConcreteDatasetPublicationService
 	var httpChallengeServer *http.Server
 	var localPublishServer *http.Server
 	var authHandler *auth.Handler
@@ -1321,6 +1324,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				// (graph: sdn-publication-hygiene-20260928).
 				publicationService.SetPublicationPolicy(cfg.Publishing.Retention, cfg.Publishing.IPNSPointers)
 				publicationService.SetAlerts(n.Alerts())
+				publications = publicationService
 				// What publications that did not complete before the last
 				// stop left in the publication directory.
 				go publicationService.SweepPublicationFiles()
@@ -3044,6 +3048,14 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	// forever for in-flight handlers. On a box where a single store read can
 	// queue for tens of seconds behind the engine lock, one slow request held
 	// the whole shutdown. Bound it, then force the sockets closed.
+	// Running dataset publications are cancelled and waited for first: they
+	// write to the store, and the requests waiting on them then answer.
+	if publications != nil {
+		publicationsCtx, cancelPublications := context.WithTimeout(context.Background(), publicationStopTimeout)
+		publications.StopPublications(publicationsCtx)
+		cancelPublications()
+	}
+
 	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), httpShutdownTimeout)
 	defer cancelShutdown()
 	for _, srv := range []struct {
@@ -3206,11 +3218,13 @@ const (
 // TimeoutStopSec (90s on this fleet) so the daemon decides how it dies and
 // leaves evidence, rather than being SIGKILLed with an empty journal.
 //
+//	publicationStopTimeout  — running dataset publications, once cancelled.
 //	httpShutdownTimeout     — graceful drain of the three HTTP listeners.
 //	nodeDrainTimeout        — background goroutines (n.wg) after n.cancel().
-//	shutdownWatchdogTimeout — total budget; must exceed the two above plus
+//	shutdownWatchdogTimeout — total budget; must exceed the three above plus
 //	                          store/engine teardown, and stay under 90s.
 const (
+	publicationStopTimeout  = 10 * time.Second
 	httpShutdownTimeout     = 15 * time.Second
 	nodeDrainTimeout        = 30 * time.Second
 	shutdownWatchdogTimeout = 75 * time.Second

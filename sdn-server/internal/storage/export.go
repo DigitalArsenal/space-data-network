@@ -497,6 +497,9 @@ func ExportDatasetRecords(outputDir string, filter IndexedRecordQuery, records [
 		if size != shardSize || hex.EncodeToString(hash.Sum(nil)) != shardSHA {
 			return nil, fmt.Errorf("refusing to overwrite immutable export file %s with different bytes", shardPath)
 		}
+		if err := touchReusedExportFile(shardPath); err != nil {
+			return nil, err
+		}
 	}
 	if err := writeImmutableExportFile(indexPath, indexBytes); err != nil {
 		return nil, err
@@ -666,7 +669,7 @@ func writeImmutableExportFile(path string, data []byte) error {
 	}
 	if existing, err := os.ReadFile(path); err == nil {
 		if bytes.Equal(existing, data) {
-			return nil
+			return touchReusedExportFile(path)
 		}
 		return fmt.Errorf("refusing to overwrite immutable export file %s with different bytes", path)
 	} else if !os.IsNotExist(err) {
@@ -688,6 +691,18 @@ func writeImmutableExportFile(path string, data []byte) error {
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
 		return fmt.Errorf("commit export file: %w", err)
+	}
+	return nil
+}
+
+// touchReusedExportFile sets the modification time of an existing file an
+// export reuses to now: the publication-file sweep keeps the files written
+// since the oldest running publication started, and a reused file is one of
+// the running publication's files.
+func touchReusedExportFile(path string) error {
+	now := time.Now()
+	if err := os.Chtimes(path, now, now); err != nil {
+		return fmt.Errorf("refresh reused export file %s: %w", path, err)
 	}
 	return nil
 }

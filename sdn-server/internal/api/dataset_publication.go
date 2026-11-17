@@ -421,12 +421,19 @@ func (s *ConcreteDatasetPublicationService) publishDatasetUpdateRun(ctx context.
 	defer closeStore()
 	activeService := *s
 	activeService.store = activeStore
+	if key := strings.TrimSpace(req.DatastoreKey); key != "" {
+		// A datastore's publications, whose rows live in the datastore, have
+		// a directory of their own (datastorePublicationsDir).
+		activeService.outputDir = filepath.Join(s.outputDir, datastorePublicationsDir, safeDatasetPathComponent(key))
+	}
 
 	schema := normalizeDatasetPublicationSchema(activeReq.Schema)
 	if err := sds.ValidateSchemaName(schema); err != nil {
 		return nil, fmt.Errorf("invalid schema: %w", err)
 	}
 	if activeReq.AnnounceExisting {
+		ctx, cancel := context.WithTimeout(ctx, storage.DatasetPublicationDeadline)
+		defer cancel()
 		result, err := activeService.announceExistingDatasetPublications(ctx, activeReq, schema)
 		return result, atPublicationStep("announce existing", err)
 	}
@@ -445,8 +452,12 @@ func (s *ConcreteDatasetPublicationService) publishSelectedDatasetUpdate(ctx con
 	// One publication per lane at a time: retention decides what is current
 	// from what a lane has published, so two publications of one lane must
 	// not interleave their windows.
-	unlock := activeService.hygiene.lockLane(schema, activeReq.ProviderID, activeReq.SourceName)
-	defer unlock()
+	// The publication's deadline starts once it holds its lane.
+	ctx, release, err := activeService.hygiene.holdLane(ctx, storage.DatasetPublicationDeadline, schema, activeReq.ProviderID, activeReq.SourceName)
+	if err != nil {
+		return nil, atPublicationStep("wait for the lane", err)
+	}
+	defer release()
 	var catalogSnapshot *storage.CatalogSnapshot
 	if activeReq.FullCatalog && strings.TrimSpace(activeReq.BatchID) == "" && schema == "CAT.fbs" {
 		if _, ok := activeStore.CatalogProductSource(activeReq.ProviderID, activeReq.SourceName); ok {
@@ -487,7 +498,10 @@ func (s *ConcreteDatasetPublicationService) publishSelectedDatasetUpdate(ctx con
 			productReq.SourceName = productSource
 			productReq.BatchID = ""
 			productReq.DatasetID = ""
-			productUnlock := activeService.hygiene.lockLane("OCM.fbs", productReq.ProviderID, productReq.SourceName)
+			productUnlock, lockErr := activeService.hygiene.lockLane(ctx, "OCM.fbs", productReq.ProviderID, productReq.SourceName)
+			if lockErr != nil {
+				return nil, atPublicationStep("wait for the lane", lockErr)
+			}
 			if _, count := snap.Products.Fingerprint(); count > 0 {
 				result, cars, publishErr := publish(&productService, ctx, productReq, "OCM.fbs")
 				if publishErr == nil {
@@ -503,7 +517,7 @@ func (s *ConcreteDatasetPublicationService) publishSelectedDatasetUpdate(ctx con
 		}
 	}
 	startedAt := activeService.now()
-	fingerprint := activeService.planAndFingerprintPublication(activeReq, schema)
+	fingerprint := activeService.planAndFingerprintPublication(ctx, activeReq, schema)
 	defer activeService.plan.Close()
 
 	result, carCIDs, err := publish(&activeService, ctx, activeReq, schema)
@@ -628,7 +642,9 @@ func (s *ConcreteDatasetPublicationService) ensureDatasetPublicationAssets(ctx c
 		return publication, nil
 	}
 	if shardErr == nil {
+		done := s.runs.writingFiles()
 		export, err := s.store.RepairDatasetPublicationIndexFromShard(filepath.Join(s.outputDir, safeDatasetPathComponent(publication.SchemaName)), publication)
+		done()
 		if err != nil {
 			return publication, fmt.Errorf("repair dataset publication %s index from shard: %w", publication.ShardCID, err)
 		}
@@ -991,6 +1007,7 @@ func unlimitedDatasetPublicationLimit() int {
 }
 
 func (s *ConcreteDatasetPublicationService) publishDatasetUpdatePart(ctx context.Context, req DatasetPublicationRequest, schema string, filter storage.IndexedRecordQuery, sourceIdentity datasetPublicationSourceIdentity, updateID string) (*DatasetPublicationResult, error) {
+	done := s.runs.writingFiles()
 	export, err := s.store.ExportDatasetWindow(filepath.Join(s.outputDir, safeDatasetPathComponent(schema)), storage.IndexedRecordQuery{
 		Selection:           filter.Selection,
 		CIDs:                filter.CIDs,
@@ -1003,6 +1020,7 @@ func (s *ConcreteDatasetPublicationService) publishDatasetUpdatePart(ctx context
 		AllowLargeResultSet: filter.AllowLargeResultSet,
 		OrderByCID:          true,
 	})
+	done()
 	if err != nil {
 		return nil, atPublicationStep("export", fmt.Errorf("export dataset window: %w", err))
 	}
