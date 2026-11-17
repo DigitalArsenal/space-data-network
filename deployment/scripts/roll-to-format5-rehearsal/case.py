@@ -87,8 +87,11 @@ def counts(name, after_unix):
 
 def compare_feeds(before, after, boot_additions, profile_refreshes):
     # Every feed keeps its count. The node's own startup writes are the only
-    # differences allowed: connector records ($ICN) equal to the persisted
-    # count and a refreshed local profile ($EPM), which replaces itself.
+    # differences allowed: connector records ($ICN), whose feed rows rise by at
+    # most the persisted count (startup records can land in the local lane,
+    # which stats does not list per feed), and a refreshed local profile ($EPM),
+    # which replaces itself. The per-standard $ICN count must rise by exactly
+    # the persisted count; compare_standards checks that.
     rows = {}
     icn_delta = 0
     for key in sorted(set(before) | set(after)):
@@ -102,7 +105,7 @@ def compare_feeds(before, after, boot_additions, profile_refreshes):
     epm = [k for k in unexplained if k.startswith('EPM.fbs|')]
     if profile_refreshes and epm and sum((rows[k]['after'] or 0) - (rows[k]['before'] or 0) for k in epm) == 0:
         unexplained = [k for k in unexplained if k not in epm]
-    passed = not unexplained and icn_delta == boot_additions
+    passed = not unexplained and 0 <= icn_delta <= boot_additions
     return {'passed': passed, 'feeds_before': len(before), 'feeds_after': len(after),
             'feeds_equal': len(set(before) & set(after)) - len(rows), 'differences': rows,
             'icn_delta': icn_delta, 'startup_icn_persisted': boot_additions,
@@ -130,6 +133,16 @@ def boot_observation():
             return invocation, sum(map(int, matches))
         time.sleep(1)
     raise RuntimeError('connector startup persistence did not finish')
+
+
+def compare_standards(before, after, boot_additions, profile_refreshes):
+    rows = {k: {'before': before.get(k), 'after': after.get(k)}
+            for k in sorted(set(before) | set(after)) if before.get(k) != after.get(k)}
+    icn = (after.get('ICN.fbs') or 0) - (before.get('ICN.fbs') or 0)
+    unexplained = [k for k in rows if k != 'ICN.fbs' and not (k == 'EPM.fbs' and profile_refreshes
+                   and before.get(k) == after.get(k))]
+    return {'passed': not unexplained and icn == boot_additions, 'differences': rows,
+            'icn_delta': icn, 'startup_icn_persisted': boot_additions, 'unexplained': unexplained}
 
 
 def restart_check(seconds, expected, feeds_before, boot_ms, before_invocation,
@@ -161,6 +174,10 @@ def restart_check(seconds, expected, feeds_before, boot_ms, before_invocation,
     (ROOT / 'record-preservation-after-restart.json').write_text(json.dumps(preservation, indent=2) + '\n')
     refreshes = sum(row.get('refreshed_local_profiles', 0) for row in preservation['standards'].values())
     feed_result = compare_feeds(feeds_before, feeds_after, first_additions + additions, refreshes)
+    standard_result = compare_standards(json.loads((ROOT / 'counts-before.json').read_text()), after,
+                                        first_additions + additions, refreshes)
+    feed_result['standards'] = standard_result
+    feed_result['passed'] = feed_result['passed'] and standard_result['passed']
     (ROOT / 'feed-counts-comparison-after-restart.json').write_text(json.dumps(feed_result, indent=2) + '\n')
     result = {'passed': not corrupt and preservation['passed'] and feed_result['passed'],
               'corrupt_journal_lines': len(corrupt), 'records_preserved': preservation['passed'],
@@ -377,6 +394,10 @@ ExecStartPre=/bin/sh -c 'test ! -d /case/store/fsql5'
     refreshes = sum(row.get('refreshed_local_profiles', 0) for row in preservation['standards'].values())
     feed_result = compare_feeds(feeds_before, feeds_after,
                                 boot_additions if after_invocation != before_invocation else 0, refreshes)
+    standard_result = compare_standards(before, after,
+                                        boot_additions if after_invocation != before_invocation else 0, refreshes)
+    feed_result['standards'] = standard_result
+    feed_result['passed'] = feed_result['passed'] and standard_result['passed']
     (ROOT / 'feed-counts-comparison.json').write_text(json.dumps(feed_result, indent=2) + '\n')
     (ROOT / 'observations.json').write_text(json.dumps({
         'ready': True, 'running_peer_unchanged': True, 'counts_equal': before == after,

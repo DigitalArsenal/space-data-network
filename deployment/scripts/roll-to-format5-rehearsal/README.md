@@ -103,8 +103,11 @@ per standard, provider, source and batch), read before and after from a stats
 build that is not stale, was made after the node's startup writes and gives the
 same counts twice. `feeds-before.json`, `feeds-after.json` and
 `feed-counts-comparison.json` hold them. Every feed must keep its count; the only
-differences allowed are `$ICN` feeds whose total rise equals the startup
-persistence count, and an unchanged `$EPM` total when the local profile refreshed.
+differences allowed are `$ICN` feeds, whose total rise is at most the startup
+persistence count (startup connector records can land in the local lane, which
+stats does not list per feed), and an unchanged `$EPM` total when the local
+profile refreshed. The per-standard counts must be equal apart from `$ICN`, which
+must rise by exactly the startup persistence count.
 
 The only allowed additions are startup ICN records: each must name a connector
 present before, have an update timestamp after the rollout began, and occur
