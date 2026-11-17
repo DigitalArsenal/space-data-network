@@ -322,11 +322,11 @@ func runRealFeedRecoveryCase(t *testing.T, mode string) {
 				t.Fatal("handoff alert does not identify the failed update")
 			}
 		}
-		if !hasAlert("update_failed", "nothing was swapped") {
-			t.Fatal("handoff alert does not say that nothing was swapped")
-		}
 		if update.HasFailedUpdate(d.paths, v2.updateID) || update.HasFailedUpdate(d.paths, middle.updateID) {
 			t.Fatal("a hand-off that swapped nothing quarantined a release")
+		}
+		if !hasAlert("update_failed", "nothing was swapped") {
+			t.Fatal("handoff alert does not say that nothing was swapped")
 		}
 		if err := os.Chmod(d.paths.Incoming, 0o700); err != nil {
 			t.Fatal(err)
