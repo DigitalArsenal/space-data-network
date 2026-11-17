@@ -125,6 +125,28 @@ func (b format4Backend) planPublication(schemaName, providerID, sourceName, batc
 	defer runs.close()
 	buf := make([]planEntry, 0, publicationSetFingerprintRun)
 	count := 0
+	add := func(recs []format4.Rec) error {
+		for _, r := range recs {
+			buf = append(buf, planEntry{cid: r.CID, n: r.Len})
+			if len(buf) == publicationSetFingerprintRun {
+				if err := runs.spill(buf); err != nil {
+					return err
+				}
+				buf = buf[:0]
+			}
+		}
+		count += len(recs)
+		return nil
+	}
+	if read, err := b.planBatchNewestFirst(q, add); err != nil {
+		return nil, fmt.Errorf("fingerprint %s publication set: %w", schemaName, err)
+	} else if read {
+		return b.finishPublicationPlan(schemaName, providerID, sourceName, batchID, keep, tempDir, runs, buf, count)
+	}
+	// The batch was not read from its newest record down: read the lane from
+	// its start.
+	runs.close()
+	buf, count = buf[:0], 0
 	for {
 		recs, err := b.d.api().Scan(b.d.ctx, q)
 		if errors.Is(err, format4.ErrNoType) {
@@ -148,21 +170,92 @@ func (b format4Backend) planPublication(schemaName, providerID, sourceName, batc
 			}
 			recs = recs[:keep]
 		}
-		for _, r := range recs {
-			buf = append(buf, planEntry{cid: r.CID, n: r.Len})
-			if len(buf) == publicationSetFingerprintRun {
-				if err := runs.spill(buf); err != nil {
-					return nil, fmt.Errorf("fingerprint %s publication set: %w", schemaName, err)
-				}
-				buf = buf[:0]
-			}
+		if err := add(recs); err != nil {
+			return nil, fmt.Errorf("fingerprint %s publication set: %w", schemaName, err)
 		}
-		count += len(recs)
 		if !full {
 			break
 		}
 		q.SeqAfter = recs[len(recs)-1].Seq
 	}
+	return b.finishPublicationPlan(schemaName, providerID, sourceName, batchID, keep, tempDir, runs, buf, count)
+}
+
+// planBatchNewestFirst reads a batch's records for a plan from the batch's
+// newest record down, stopping once it holds every record of the batch, so
+// the newest batch of a lane costs its own records instead of every record
+// of the lane before it. It applies when exactly one live tag instance of
+// the type meets the lane filter and the filter names a batch: that
+// instance's counters (SUMMARY kind 3) are then the batch's record count and
+// newest sequence. It reports false otherwise, or when what it read does not
+// match the counters; the caller then discards what add was given.
+func (b format4Backend) planBatchNewestFirst(q format4.Query, add func([]format4.Rec) error) (bool, error) {
+	if q.Lane.Batch == "" {
+		return false, nil
+	}
+	lanes, err := b.f4Lanes(q.Type)
+	if err != nil {
+		return false, err
+	}
+	var met *format4.Lane
+	for i := range lanes {
+		if lanes[i].Records > 0 && f4LaneMeets(lanes[i], q.Lane) {
+			if met != nil {
+				return false, nil
+			}
+			met = &lanes[i]
+		}
+	}
+	if met == nil {
+		return false, nil
+	}
+	// The set is the batch's records counted with its newest sequence.
+	q.Order = format4.OrderSeqDesc
+	q.SeqAfter, q.SeqThrough = 0, met.MaxSeq
+	var read int64
+	for read < met.Records {
+		page, err := b.d.api().Scan(b.d.ctx, q)
+		if errors.Is(err, format4.ErrNoType) {
+			break
+		}
+		if err != nil {
+			return false, err
+		}
+		full := int64(len(page)) == q.Limit
+		if full {
+			// The rows of one sequence are read in one page: the next page
+			// starts at the oldest sequence this one drops.
+			last := page[len(page)-1].Seq
+			keep := len(page)
+			for keep > 0 && page[keep-1].Seq == last {
+				keep--
+			}
+			if keep == 0 {
+				return false, fmt.Errorf("sequence %d has %d or more rows", last, q.Limit)
+			}
+			page = page[:keep]
+			q.SeqThrough = last
+		}
+		if err := add(page); err != nil {
+			return false, err
+		}
+		read += int64(len(page))
+		if !full {
+			break
+		}
+	}
+	if read != met.Records {
+		log.Infof("publication plan %s %s/%s/%s: %d records read from the newest down, the batch counters hold %d; reading the lane",
+			q.Type, q.Lane.Provider, q.Lane.Source, q.Lane.Batch, read, met.Records)
+		return false, nil
+	}
+	return true, nil
+}
+
+// finishPublicationPlan hashes the read CIDs in CID order and, with keep,
+// writes them as the plan.
+func (b format4Backend) finishPublicationPlan(schemaName, providerID, sourceName, batchID string, keep bool, tempDir string, runs *cidRuns, buf []planEntry, count int) (*PublicationPlan, error) {
+	var err error
 	plan := &PublicationPlan{Schema: schemaName, Provider: providerID, Source: sourceName, Batch: batchID, count: count}
 	var out *bufio.Writer
 	if keep {
