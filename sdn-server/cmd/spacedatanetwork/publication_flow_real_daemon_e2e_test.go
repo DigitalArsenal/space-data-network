@@ -183,13 +183,18 @@ func TestPublicationSlowFlowRealDaemons(t *testing.T) {
 	}
 	// The flow runs when the test asks (manual run), not at start.
 	d := gpFlowDaemon(t, "slow-producer", "  first_fire_when_due: false\n")
-	d.env = append(d.env, "SDN_ADMIN_WRITE_TIMEOUT="+slowFlowWriteTimeout.String(), "SDN_HTTP_REQUEST_MAX_TIMEOUT="+slowFlowRequestLimit.String())
 	d.start(t)
 
+	// The big batch is stored with the default bounds (an ingest request can
+	// take longer than the short write timeout); the node then restarts with
+	// the short ones.
 	const n, per = 300_000, 5_000
 	for offset := 0; offset < n; offset += per {
 		d.ingestOMMCIDs(t, "celestrak-gp", "big", 2_000_000+offset, per)
 	}
+	d.stop(t)
+	d.env = append(d.env, "SDN_ADMIN_WRITE_TIMEOUT="+slowFlowWriteTimeout.String(), "SDN_HTTP_REQUEST_MAX_TIMEOUT="+slowFlowRequestLimit.String())
+	d.start(t)
 	// The big publication holds the lane; its own answer also comes after the
 	// write timeout, and is read in the background.
 	bigDone := make(chan string, 1)
