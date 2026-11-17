@@ -103,7 +103,10 @@ func (u ProviderFeedUpdate) AssertMatchesPayload(m *Manifest, carrierLen int) er
 	return nil
 }
 
+var ErrNoCompatibleUpdate = errors.New("no compatible update is available from provider feed")
+
 type ProviderFeedSelection struct {
+	Exclude         func(ProviderFeedUpdate) bool
 	UpdateID        string
 	Version         string
 	Channel         string
@@ -123,9 +126,6 @@ func ParseProviderFeed(raw []byte) (*ProviderFeed, error) {
 	}
 	if err := requireHTTPSURL(feed.FeedBaseURL, "feed_base_url"); err != nil {
 		return nil, err
-	}
-	if len(feed.Updates) == 0 {
-		return nil, errors.New("update provider feed has no updates")
 	}
 	for i := range feed.Updates {
 		if err := feed.Updates[i].validate(); err != nil {
@@ -276,13 +276,13 @@ func (f *ProviderFeed) Select(selection ProviderFeedSelection) (*ProviderFeedUpd
 	}
 	var candidates []ProviderFeedUpdate
 	for _, update := range f.Updates {
-		if !providerUpdateMatches(update, selection) {
+		if !providerUpdateMatches(update, selection) || selection.Exclude != nil && selection.Exclude(update) {
 			continue
 		}
 		candidates = append(candidates, update)
 	}
 	if len(candidates) == 0 {
-		return nil, errors.New("no compatible update is available from provider feed")
+		return nil, ErrNoCompatibleUpdate
 	}
 	sort.Slice(candidates, func(i, j int) bool {
 		if candidates[i].Sequence != candidates[j].Sequence {

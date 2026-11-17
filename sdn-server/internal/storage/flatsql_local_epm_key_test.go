@@ -33,6 +33,7 @@ func newLocalEPMKeyTestStore(t *testing.T, dir string) *FlatSQLStore {
 // what every password-file unit unintentionally used before the fix) must
 // still decrypt after SDN_KEY_PASSWORD_FILE starts being honored.
 func TestLocalEPMRowSealedUnderFallbackReadableWithPasswordFile(t *testing.T) {
+	useReadableMachineSource(t)
 	dir := t.TempDir()
 	epmBytes := sds.NewEPMBuilder().WithLegalName("Fallback era node").Build()
 
@@ -103,6 +104,7 @@ func TestLocalEPMRowSealedUnderPasswordFileReadableWithPasswordEnv(t *testing.T)
 // A row sealed under inputs this box no longer has must fail with the decrypt
 // error the wizard's rebuild fallback keys on — not silently succeed.
 func TestLocalEPMRowOrphanedEnvelopeStillFailsClosed(t *testing.T) {
+	useReadableMachineSource(t)
 	dir := t.TempDir()
 
 	t.Setenv("SDN_EPM_STORE_PASSWORD", "password-this-box-lost")

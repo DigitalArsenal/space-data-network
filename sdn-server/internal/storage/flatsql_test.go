@@ -437,6 +437,7 @@ func TestFlatSQLStoreQueryRecentRecordsPrefersLatestSourceTagMaterialization(t *
 }
 
 func TestFlatSQLStoreDataSummaryGroupsBySchemaAndSource(t *testing.T) {
+	useReadableMachineSource(t)
 	tmpDir, err := os.MkdirTemp("", "flatsql-data-summary-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)

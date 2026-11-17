@@ -38,6 +38,7 @@ package main
 // however it ends.
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -48,9 +49,16 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	libp2p "github.com/libp2p/go-libp2p"
+	ps "github.com/libp2p/go-libp2p-pubsub"
+	ma "github.com/multiformats/go-multiaddr"
+	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -60,6 +68,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -73,6 +82,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/sigdomain"
 	"github.com/spacedatanetwork/sdn-server/internal/update"
 	"github.com/spacedatanetwork/sdn-server/internal/updatesign"
+	walletwasm "github.com/spacedatanetwork/sdn-server/internal/wasm"
 )
 
 const (
@@ -83,6 +93,7 @@ const (
 
 // realBuild is one build of the node and the update that ships it.
 type realBuild struct {
+	template string
 	name     string
 	version  string
 	updateID string
@@ -98,7 +109,21 @@ func TestUpdateChannelRealDaemonE2E(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skipf("Linux only: the CLI trusts the test feed through SSL_CERT_FILE, which Go ignores on %s", runtime.GOOS)
 	}
-	runRealDaemonUpdateChannel(t, installThroughCLI)
+	if os.Geteuid() == 0 {
+		t.Fatal("real-daemon tests require a non-root user for permission checks and readable artifacts")
+	}
+	builds := realE2EBuilds(t, filepath.Join(t.TempDir(), "builds"))
+	t.Setenv(realE2EBinDirEnv, filepath.Dir(builds[0].path))
+	t.Run("feed-recovery", runRealFeedRecovery)
+	t.Run("installed-v1.1.5-push", func(t *testing.T) {
+		if os.Getenv("SDN_E2E_INSTALLED_BUNDLE") == "" {
+			t.Fatal("SDN_E2E_INSTALLED_BUNDLE must name the published 1.1.5 archive; installed receiver proof cannot run")
+		}
+		runRealPushChannelReceiver(t, true)
+	})
+	t.Run("pull", func(t *testing.T) { runRealDaemonUpdateChannel(t, installThroughCLI) })
+	t.Run("push-catchup-withdrawal-validation", runRealPushChannel)
+
 }
 
 // realScenario is one installed bundle, its daemon's config and its feed.
@@ -127,6 +152,7 @@ func runRealDaemonUpdateChannel(t *testing.T, install realInstaller) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	keepRealLogs(t, work)
 	builds := realE2EBuilds(t, filepath.Join(work, "builds"))
 	v1, v2, v3, v4 := builds[0], builds[1], builds[2], builds[1]
 	v4.name, v4.version, v4.updateID, v4.sequence = "v4", "1.1.2-e2e.4", "cli-bundle-release-e2e-4", 400
@@ -450,15 +476,34 @@ type realE2EFeed struct {
 	certFile string
 	dir      string
 
-	mu      sync.Mutex
-	files   map[string][]byte
-	entries []update.ProviderFeedUpdate
+	requestHook func(http.ResponseWriter, *http.Request) bool
+	failIndex   bool
+	forward     string
+	disk        bool
+	mu          sync.Mutex
+	files       map[string][]byte
+	entries     []update.ProviderFeedUpdate
 }
 
 func newRealE2EFeed(t *testing.T, work string) *realE2EFeed {
 	t.Helper()
 	f := &realE2EFeed{files: map[string][]byte{}, dir: filepath.Join(work, "feed")}
 	f.srv = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		forward, failIndex, hook := f.forward, f.failIndex, f.requestHook
+		f.mu.Unlock()
+		if hook != nil && hook(w, r) {
+			return
+		}
+		if failIndex && strings.HasSuffix(r.URL.Path, "/index.json") {
+			http.Error(w, "test feed outage", http.StatusServiceUnavailable)
+			return
+		}
+		if forward != "" {
+			target, _ := url.Parse(forward)
+			httputil.NewSingleHostReverseProxy(target).ServeHTTP(w, r)
+			return
+		}
 		f.mu.Lock()
 		body, ok := f.files[r.URL.Path]
 		f.mu.Unlock()
@@ -536,6 +581,8 @@ func (f *realE2EFeed) publish(t *testing.T, b realBuild, signingKey ed25519.Priv
 	defer f.mu.Unlock()
 	f.files[versionPath+"/manifest.json"] = manifest
 	f.files[versionPath+"/update.wasm"] = carrier
+	// Republishing replaces the version's index entry along with its files.
+	f.entries = slices.DeleteFunc(f.entries, func(entry update.ProviderFeedUpdate) bool { return entry.Version == b.version })
 	f.entries = append(f.entries, update.ProviderFeedUpdate{
 		UpdateID:    b.updateID,
 		Version:     b.version,
@@ -560,6 +607,17 @@ func (f *realE2EFeed) publish(t *testing.T, b realBuild, signingKey ed25519.Priv
 		t.Fatal(err)
 	}
 	f.files["/updates"+f.lane()+"/index.json"] = index
+	if f.disk {
+		dir := filepath.Join(f.dir, strings.TrimPrefix(f.lane(), "/"), b.version)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for name, raw := range map[string][]byte{"manifest.json": manifest, "update.wasm": carrier, "../index.json": index} {
+			if err := os.WriteFile(filepath.Join(dir, name), raw, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 }
 
 // realBundleArchive is the bundle payload for b: a wrapper directory holding
@@ -568,8 +626,42 @@ func (f *realE2EFeed) publish(t *testing.T, b realBuild, signingKey ed25519.Priv
 func realBundleArchive(t *testing.T, b realBuild, feedBase string) []byte {
 	t.Helper()
 	stage := filepath.Join(t.TempDir(), "spacedatanetwork-"+b.version+"-"+runtime.GOOS+"-"+runtime.GOARCH)
-	copyExecutable(t, b.path, filepath.Join(stage, "bin", "spacedatanetwork"))
-	writeE2EJSON(t, filepath.Join(stage, "manifest.json"), realBundleManifest(b, feedBase))
+	if b.template != "" {
+		command := exec.Command("cp", "-a", b.template, stage)
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("copy full release payload: %v %s", err, output)
+		}
+		if err := os.RemoveAll(filepath.Join(stage, "trust")); err != nil {
+			t.Fatal(err)
+		}
+		copyExecutable(t, b.path, filepath.Join(stage, "runtime", "sdn", "spacedatanetwork"))
+		raw, err := os.ReadFile(filepath.Join(stage, "manifest.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var manifest map[string]any
+		if err := json.Unmarshal(raw, &manifest); err != nil {
+			t.Fatal(err)
+		}
+		manifest["version"], manifest["channel"] = b.version, realE2EChannel
+		manifest["update"].(map[string]any)["feedBaseUrl"] = feedBase
+		for _, artifact := range manifest["artifacts"].([]any) {
+			item := artifact.(map[string]any)
+			if item["path"] == "runtime/sdn/spacedatanetwork" {
+				item["sha256"] = b.sha
+				info, err := os.Stat(b.path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				item["size"] = info.Size()
+			}
+		}
+		writeE2EJSON(t, filepath.Join(stage, "manifest.json"), manifest)
+	} else {
+		copyExecutable(t, b.path, filepath.Join(stage, "bin", "spacedatanetwork"))
+		includeWalletRuntime(t, stage)
+		writeE2EJSON(t, filepath.Join(stage, "manifest.json"), realBundleManifest(b, feedBase))
+	}
 	archive := stage + ".tar.gz"
 	tarCmd := exec.Command("tar", "-czf", archive, "-C", filepath.Dir(stage), filepath.Base(stage))
 	tarCmd.Env = append(os.Environ(), "COPYFILE_DISABLE=1")
@@ -914,5 +1006,1144 @@ func (r *realDaemonTracker) stopAll() {
 		if processAlive(pid) && r.ours(pid) {
 			_ = syscall.Kill(pid, syscall.SIGKILL)
 		}
+	}
+}
+
+// runRealPushChannel drives the sender while the receiving daemon acts autonomously.
+func runRealPushChannel(t *testing.T) { runRealPushChannelReceiver(t, false) }
+
+func runRealPushChannelReceiver(t *testing.T, installed bool) {
+	start := time.Now()
+	defer func() { t.Logf("push channel duration: %s", time.Since(start).Round(time.Second)) }()
+	work := t.TempDir()
+	keepRealLogs(t, work)
+	builds := realE2EBuilds(t, filepath.Join(work, "builds"))
+	v1, v2, v3, v4 := builds[0], builds[1], builds[2], builds[1]
+	installedBundle := ""
+	if installed {
+		archive := os.Getenv("SDN_E2E_INSTALLED_BUNDLE")
+		expected := map[string]string{
+			"amd64": "f0d18ef21455bc7dfcd9f1da791420bf838d4a3ae1522c22143143993d48cd8c",
+			"arm64": "f0e4623d496f540536fe43c881b203f474b4b72e622a7613f8ac765a9cc24925",
+		}[runtime.GOARCH]
+		if expected == "" || e2eFileSHA256(archive) != expected {
+			t.Fatal("published 1.1.5 archive does not match its pinned release checksum")
+		}
+		installedBundle = filepath.Join(work, "published")
+		if err := os.MkdirAll(installedBundle, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if output, err := exec.Command("tar", "-xzf", archive, "-C", installedBundle, "--strip-components=1").CombinedOutput(); err != nil {
+			t.Fatalf("extract verified published archive: %v %s", err, output)
+		}
+		t.Logf("published 1.1.5 linux-%s archive verified sha256=%s", runtime.GOARCH, expected)
+		v2.template = installedBundle
+	}
+	v4.name, v4.version, v4.updateID, v4.sequence = "v4", "1.1.2-e2e.4", "cli-bundle-release-e2e-4", 400
+	health := envInt(t, "SDN_E2E_REAL_DAEMON_HEALTH_SECONDS", 180)
+	boot := time.Duration(envInt(t, "SDN_E2E_REAL_DAEMON_BOOT_SECONDS", 600)) * time.Second
+	pub, key, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, wrong, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spki, err := x509.MarshalPKIXPublicKey(pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roots := update.TrustedRoots{update.RootKeyID(pub): base64.StdEncoding.EncodeToString(spki)}
+	feed := newRealE2EFeed(t, work)
+	feed.disk = true
+	if err := os.MkdirAll(feed.dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	keyPath := filepath.Join(work, "pipeline-test-key.pem")
+	pkcs8, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: pkcs8})
+	if err := os.WriteFile(keyPath, keyPEM, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	signer := realE2ESigner(t, filepath.Join(work, "builds"))
+	rootsPath := filepath.Join(work, "pipeline-roots.json")
+	writeE2EJSON(t, rootsPath, roots)
+	writeE2EJSON(t, filepath.Join(work, "pipeline-repo", "deployment", "release", "fleet-trust-roots.json"), roots)
+	if err := os.MkdirAll(filepath.Join(work, "pipeline-repo", "sdn-server"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	a := newPushDaemon(t, filepath.Join(work, "a"), v1, feed, roots, health)
+	// The publisher follows the topic but has no newer installable sequence.
+	if err := update.SaveState(a.paths, &update.State{Sequence: 10000}); err != nil {
+		t.Fatal(err)
+	}
+	a.env = append(a.env, "SDN_UPDATE_FEED_DIR="+feed.dir)
+	a.start(t, boot)
+	feed.mu.Lock()
+	feed.forward = a.adminBase
+	feed.mu.Unlock()
+	b := newPushDaemon(t, filepath.Join(work, "b"), v1, feed, roots, health)
+	if installed {
+		source := installedBundle
+		if err := os.RemoveAll(b.paths.Root); err != nil {
+			t.Fatal(err)
+		}
+		command := exec.Command("cp", "-a", source, b.paths.Root)
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("copy published bundle: %v %s", err, output)
+		}
+		raw, err := os.ReadFile(filepath.Join(b.paths.Root, "manifest.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var manifest map[string]any
+		if err := json.Unmarshal(raw, &manifest); err != nil {
+			t.Fatal(err)
+		}
+		if manifest["version"] != "1.1.5" {
+			t.Fatal("receiver bundle is not published 1.1.5")
+		}
+		manifest["update"].(map[string]any)["feedBaseUrl"] = feed.base
+		writeE2EJSON(t, filepath.Join(b.paths.Root, "manifest.json"), manifest)
+		writeE2EJSON(t, b.paths.Trust, roots)
+		original := filepath.Join(source, "runtime", "sdn", "spacedatanetwork")
+		if e2eFileSHA256(original) != e2eFileSHA256(filepath.Join(b.paths.Root, "runtime", "sdn", "spacedatanetwork")) {
+			t.Fatal("published executable changed")
+		}
+		t.Logf("receiver is unmodified published 1.1.5 executable sha256=%s", e2eFileSHA256(original))
+	}
+	aInfo := pushPeer(t, a.adminBase)
+	b.configure(t, func(cfg *config.Config) {
+		cfg.Network.Bootstrap = []string{aInfo.Addrs[0].String() + "/p2p/" + aInfo.ID.String()}
+	})
+	b.start(t, boot)
+	originalPeer := pushPeer(t, b.adminBase).ID
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	third, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"), libp2p.DisableRelay())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer third.Close()
+	gossip, err := ps.NewGossipSub(ctx, third)
+	if err != nil {
+		t.Fatal(err)
+	}
+	topic, err := gossip.Join(update.SignalTopic(realE2EChannel))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer topic.Close()
+	subscription, err := topic.Subscribe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer subscription.Cancel()
+	if err := third.Connect(ctx, aInfo); err != nil {
+		t.Fatal(err)
+	}
+	if err := third.Connect(ctx, pushPeer(t, b.adminBase)); err != nil {
+		t.Fatal(err)
+	}
+	waitPush(t, 30*time.Second, "update topic subscriptions", func() bool { return len(topic.ListPeers()) >= 2 })
+	time.Sleep(3 * time.Second)
+
+	signalPath := func(v realBuild) string {
+		return filepath.Join(feed.dir, strings.TrimPrefix(feed.lane(), "/"), v.version, "signal.json")
+	}
+	publish := func(v realBuild) []byte {
+		feed.publish(t, v, key)
+		// The release workflow's signer, with the key in its environment.
+		runSignalPipelineEnv(t, signer, work, "sign-"+v.name, []string{"SDN_UPDATE_SIGNING_KEY_PEM=" + string(keyPEM)},
+			"--key-env", "SDN_UPDATE_SIGNING_KEY_PEM", "--roots", rootsPath, "--feed-dir", feed.dir)
+		runSignalPipelineEnv(t, signer, work, "verify-"+v.name, nil, "--verify-only", "--roots", rootsPath, "--feed-dir", feed.dir)
+		raw, err := os.ReadFile(signalPath(v))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}
+	send := func(v realBuild, label string) {
+		a.command(t, true, label, "update", "signal", "--from-feed", "--channel", realE2EChannel, "--version", v.version)
+	}
+	checkTrigger := func(v realBuild, trigger string) {
+		if !slices.ContainsFunc(readLedger(t, b.paths.Root), func(e update.DeployLedgerEntry) bool { return e.UpdateID == v.updateID && e.Trigger == trigger }) {
+			t.Fatalf("no %s trigger for %s", trigger, v.name)
+		}
+	}
+	v2signal := publish(v2)
+	var releaseFeedCheck chan struct{}
+	if !installed {
+		b.stop(t)
+		b.configure(t, func(cfg *config.Config) {
+			cfg.Update.CheckDelaySeconds = 2
+			cfg.Update.CheckIntervalSeconds = 3600
+			cfg.Update.MinIntervalSeconds = 300
+		})
+		releaseFeedCheck = make(chan struct{})
+		feedRequest := make(chan struct{}, 1)
+		feed.mu.Lock()
+		feed.requestHook = func(w http.ResponseWriter, r *http.Request) bool {
+			if !strings.HasSuffix(r.URL.Path, "/index.json") {
+				return false
+			}
+			select {
+			case feedRequest <- struct{}{}:
+			default:
+			}
+			select {
+			case <-releaseFeedCheck:
+			case <-r.Context().Done():
+			}
+			http.Error(w, "held feed check failed", http.StatusServiceUnavailable)
+			return true
+		}
+		feed.mu.Unlock()
+		defer func() {
+			select {
+			case <-releaseFeedCheck:
+			default:
+				close(releaseFeedCheck)
+			}
+		}()
+		b.start(t, boot)
+		select {
+		case <-feedRequest:
+		case <-time.After(30 * time.Second):
+			t.Fatal("feed check did not enter the controlled index fetch")
+		}
+	}
+
+	if !installed {
+		older, err := update.ParseSignal(v2signal)
+		if err != nil {
+			t.Fatal(err)
+		}
+		older.Sequence = v2.sequence - 1
+		older.UpdateID = "pending-older-control"
+		raw, err := older.Marshal()
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw = resignPushSignal(t, raw, key, 0)
+		if err := topic.Publish(ctx, raw); err != nil {
+			t.Fatal(err)
+		}
+		messageCtx, messageCancel := context.WithTimeout(ctx, 30*time.Second)
+		_, err = subscription.Next(messageCtx)
+		messageCancel()
+		if err != nil {
+			t.Fatal(err)
+		}
+		waitPush(t, 30*time.Second, "older signal remembered", func() bool { return strings.Contains(b.logs(), "Update signal pending-older-control remembered") })
+	}
+
+	// The local publisher's identity is absent from its release trust roots.
+	a.command(t, true, "local-node-signed", "update", "signal", "--channel", realE2EChannel, "--version", v2.version)
+	localCtx, localCancel := context.WithTimeout(ctx, 30*time.Second)
+	localMessage, localErr := subscription.Next(localCtx)
+	localCancel()
+	if localErr != nil {
+		t.Fatalf("node-signed publish was not delivered: %v", localErr)
+	}
+	localSignal, err := update.ParseSignal(localMessage.Data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, trusted := roots[localSignal.Signing.KeyID]; trusted {
+		t.Fatal("local-publish control uses a trusted identity")
+	}
+	if err := localSignal.Verify(update.SignalVerifyOptions{TrustedRoots: roots}); err == nil {
+		t.Fatal("local signal unexpectedly trusted")
+	}
+	localOutput := readFileString(filepath.Join(a.work, "local-node-signed.log"))
+	if !strings.Contains(localOutput, "warning=Signing key "+localSignal.Signing.KeyID) || !strings.Contains(localOutput, "not one of this node's update roots") || !strings.Contains(localOutput, "published=true") {
+		t.Fatal("node-signed command did not report its untrusted signing key")
+	}
+	t.Log("publisher sent its own untrusted identity's signal through real GossipSub with a key-specific warning")
+	// Noncanonical whitespace must survive the authenticated route byte for byte.
+	var formatted bytes.Buffer
+	if err := json.Indent(&formatted, v2signal, "", "  "); err != nil {
+		t.Fatal(err)
+	}
+	v2signal = formatted.Bytes()
+	if err := os.WriteFile(signalPath(v2), v2signal, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	send(v2, "push-v2")
+	if !installed {
+		waitPush(t, 30*time.Second, "signal remembered during feed check", func() bool {
+			return strings.Contains(b.logs(), "Update signal "+v2.updateID+" remembered while an update is in flight")
+		})
+		feed.mu.Lock()
+		feed.requestHook = nil
+		feed.mu.Unlock()
+		close(releaseFeedCheck)
+	}
+	messageCtx, messageCancel := context.WithTimeout(ctx, 30*time.Second)
+	message, err := subscription.Next(messageCtx)
+	messageCancel()
+	if err != nil || !bytes.Equal(message.Data, v2signal) {
+		t.Fatalf("published signal bytes changed: %v", err)
+	}
+	b.waitUpgrade(t, v2, boot+2*time.Duration(health)*time.Second)
+	checkTrigger(v2, "signal")
+	if !installed && strings.Contains(b.logs(), "Update signal accepted: pending-older-control") {
+		t.Fatal("older pending signal displaced the newest signal")
+	}
+	t.Log("push installed v2 and preserved its signed wire bytes")
+	if pushPeer(t, b.adminBase).ID != originalPeer {
+		t.Fatal("push changed the peer identity")
+	}
+	if installed {
+		t.Log("published 1.1.5 receiver installed branch payload from pipeline-style push")
+		return
+	}
+
+	publish(v3)
+	send(v3, "push-v3")
+	waitPush(t, boot+3*time.Duration(health)*time.Second, "v3 quarantine and restored v2", func() bool {
+		b.trackHelper()
+		return update.HasFailedUpdate(b.paths, v3.updateID) && pushIdentityMatches(b.adminBase, v2)
+	})
+	waitRealReady(t, b.adminBase, boot, b.helperLog())
+	requireGateWaited(t, b.paths.Root, v3, time.Duration(health)*time.Second)
+	checkTrigger(v3, "signal")
+	var alerts json.RawMessage
+	if err := b.client(t).get(ctx, "/api/v1/status/alerts", &alerts); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(alerts, []byte("update_failed")) || !bytes.Contains(alerts, []byte(v3.updateID)) {
+		t.Fatalf("restored daemon has no failed-update alert: %s", alerts)
+	}
+	waitPush(t, boot, "completed rollback", func() bool { return strings.Contains(readFileString(b.helperLog()), "rolled back to "+v2.version) })
+	var lastGate update.DeployLedgerEntry
+	for _, entry := range readLedger(t, b.paths.Root) {
+		if entry.Action == "health-passed" {
+			lastGate = entry
+		}
+	}
+	if lastGate.UpdateID != v2.updateID || lastGate.Sequence != v2.sequence {
+		t.Errorf("restored gate identity: got %s/%d, want %s/%d", lastGate.UpdateID, lastGate.Sequence, v2.updateID, v2.sequence)
+	}
+	t.Log("bad pushed build reverted and restored its failure alert")
+	countV3 := len(readLedger(t, b.paths.Root))
+	refusal := "update signal " + v3.updateID + " refused: this box already tried"
+	refusalCount := strings.Count(b.logs(), refusal)
+	runSignalPipeline(t, v1.path, work, "resign-v3", "update", "sign-signals", "--key-file", keyPath, "--roots", rootsPath, "--feed-dir", feed.dir)
+	send(v3, "push-v3-again")
+	waitPush(t, 30*time.Second, "quarantined signal refusal", func() bool { return strings.Count(b.logs(), refusal) > refusalCount })
+	if len(readLedger(t, b.paths.Root)) != countV3 {
+		t.Fatal("quarantined update was attempted again")
+	}
+	requireRealIdentity(t, b.adminBase, v2)
+
+	// Exercise recovery records on the real restored daemon, including a
+	// same-version failure and an operator state advance without a gate record.
+	stateBefore, err := update.LoadState(b.paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledgerPath := filepath.Join(b.paths.Root, "deploy-ledger.jsonl")
+	ledgerBefore, err := os.ReadFile(ledgerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	appendRaw := func(raw []byte) {
+		f, err := os.OpenFile(ledgerPath, os.O_APPEND|os.O_WRONLY, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		if _, err := f.Write(raw); err != nil {
+			t.Fatal(err)
+		}
+	}
+	appendRaw(append(bytes.Repeat([]byte("x"), 5<<20), '\n'))
+	appendRaw([]byte(`{"action":"torn`))
+	failureID := "same-version-recovery-proof"
+	if err := update.RecordDeployLedgerEntry(b.paths, update.DeployLedgerEntry{Action: "health-reverted", UpdateID: failureID, Version: v2.version, Sequence: v3.sequence, Reason: "health gate proof"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := update.RecordDeployLedgerEntry(b.paths, update.DeployLedgerEntry{Action: "health-passed", UpdateID: v2.updateID, Version: v2.version, Sequence: v2.sequence}); err != nil {
+		t.Fatal(err)
+	}
+	hasRecoveryAlert := func() bool {
+		var raw json.RawMessage
+		return b.client(t).get(ctx, "/api/v1/status/alerts", &raw) == nil && bytes.Contains(raw, []byte(failureID))
+	}
+	waitPush(t, 20*time.Second, "same-version revert alert after oversized and torn lines", hasRecoveryAlert)
+	if err := os.Chmod(b.paths.State, 0); err != nil {
+		t.Fatal(err)
+	}
+	waitPush(t, 15*time.Second, "unreadable state warning", func() bool { return strings.Contains(b.logs(), "Read update state:") })
+	warningCount := strings.Count(b.logs(), "Read update state:")
+	time.Sleep(11 * time.Second)
+	if strings.Count(b.logs(), "Read update state:") != warningCount {
+		t.Fatal("unchanged unreadable state warns repeatedly")
+	}
+	if err := os.Chmod(b.paths.State, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	advanced := *stateBefore
+	advanced.Sequence = v3.sequence
+	if err := update.SaveState(b.paths, &advanced); err != nil {
+		t.Fatal(err)
+	}
+	waitPush(t, 20*time.Second, "same sequence clears revert without new ledger record", func() bool { return !hasRecoveryAlert() })
+	if err := update.SaveState(b.paths, stateBefore); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ledgerPath, ledgerBefore, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(readLedger(t, b.paths.Root), func(e update.DeployLedgerEntry) bool {
+		return e.Action == "health-passed" && e.UpdateID == v2.updateID && e.Sequence == v2.sequence
+	}) {
+		t.Fatal("restored gate did not record the restored update identity")
+	}
+	t.Log("same-version alert survives restored gate; equal sequence clears; oversized/torn ledger records recover; state error is cached")
+
+	b.stop(t)
+	// With v3 quarantined and v2 listed, a fresh recipient selects v2.
+	fallback := newPushDaemon(t, filepath.Join(work, "fallback"), v1, feed, roots, health)
+	if err := os.MkdirAll(filepath.Join(fallback.paths.Failed, v3.updateID), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	fallback.configure(t, func(cfg *config.Config) { cfg.Update.CheckDelaySeconds = 2; cfg.Update.CheckIntervalSeconds = 3 })
+	fallback.start(t, boot)
+	fallback.waitUpgrade(t, v2, boot+2*time.Duration(health)*time.Second)
+	if !slices.ContainsFunc(readLedger(t, fallback.paths.Root), func(e update.DeployLedgerEntry) bool { return e.UpdateID == v2.updateID && e.Trigger == "feed-check" }) {
+		t.Fatal("fallback was not installed by feed check")
+	}
+	var fallbackAlerts json.RawMessage
+	if err := fallback.client(t).get(ctx, "/api/v1/status/alerts", &fallbackAlerts); err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(fallbackAlerts, []byte("update_failed")) {
+		t.Fatal("unrelated quarantine raised a health-gate alert")
+	}
+	fallback.stop(t)
+	t.Log("feed selected v2 below quarantined v3; unrelated quarantine raised no health-gate alert")
+	v3ManifestPath := filepath.Join(filepath.Dir(signalPath(v3)), "manifest.json")
+	v3Manifest, err := os.ReadFile(v3ManifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var corruptManifest map[string]any
+	if err := json.Unmarshal(v3Manifest, &corruptManifest); err != nil {
+		t.Fatal(err)
+	}
+	corruptManifest["signing"].(map[string]any)["signature"] = base64.StdEncoding.EncodeToString(make([]byte, ed25519.SignatureSize))
+	writeE2EJSON(t, v3ManifestPath, corruptManifest)
+	verificationFallback := newPushDaemon(t, filepath.Join(work, "verification-fallback"), v1, feed, roots, health)
+	verificationFallback.configure(t, func(cfg *config.Config) { cfg.Update.CheckDelaySeconds = 2; cfg.Update.CheckIntervalSeconds = 3 })
+	verificationFallback.start(t, boot)
+	verificationFallback.waitUpgrade(t, v2, boot+2*time.Duration(health)*time.Second)
+	waitPush(t, 30*time.Second, "manifest verification failure", func() bool {
+		return strings.Contains(verificationFallback.logs(), "Update feed-install "+v3.updateID+" failed: verify update manifest:")
+	})
+	time.Sleep(12 * time.Second)
+	var verificationAlerts json.RawMessage
+	if err := verificationFallback.client(t).get(ctx, "/api/v1/status/alerts", &verificationAlerts); err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(verificationAlerts, []byte("update_feed_unavailable")) {
+		t.Fatal("manifest verification failure counted as a feed outage")
+	}
+	if strings.Count(readFileString(verificationFallback.helperLog()), "Update feed-install "+v3.updateID+" failed:") != 1 {
+		t.Fatal("verification failure repeats without recovery")
+	}
+	verificationFallback.stop(t)
+	if err := os.WriteFile(v3ManifestPath, v3Manifest, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Log("invalid newest manifest fell back to v2 in the same feed check and did not raise a feed outage")
+
+	// Hold a signal's manifest fetch beyond its one-second interval floor.
+	// Scheduled checks continue ticking but cannot fetch an index during it.
+	inflight := newPushDaemon(t, filepath.Join(work, "signal-inflight"), v1, feed, roots, health)
+	inflight.configure(t, func(cfg *config.Config) {
+		cfg.Network.Bootstrap = []string{aInfo.Addrs[0].String() + "/p2p/" + aInfo.ID.String()}
+		cfg.Update.CheckDelaySeconds = 1
+		cfg.Update.CheckIntervalSeconds = 1
+		cfg.Update.MinIntervalSeconds = 1
+	})
+	var indexRequests atomic.Int64
+	var inflightOutage atomic.Bool
+	inflightOutage.Store(true)
+	manifestEntered := make(chan struct{}, 1)
+	releaseManifest := make(chan struct{})
+	defer func() {
+		select {
+		case <-releaseManifest:
+		default:
+			close(releaseManifest)
+		}
+	}()
+	emptyIndex, err := json.Marshal(update.ProviderFeed{Schema: update.ProviderFeedSchema, GeneratedAt: time.Now().UTC().Format(time.RFC3339), FeedBaseURL: feed.base, Updates: []update.ProviderFeedUpdate{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	feed.mu.Lock()
+	feed.requestHook = func(w http.ResponseWriter, r *http.Request) bool {
+		if strings.HasSuffix(r.URL.Path, "/index.json") {
+			indexRequests.Add(1)
+			if inflightOutage.Load() {
+				http.Error(w, "inflight outage control", http.StatusServiceUnavailable)
+				return true
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(emptyIndex)
+			return true
+		}
+		if strings.HasSuffix(r.URL.Path, "/"+v2.version+"/manifest.json") {
+			select {
+			case manifestEntered <- struct{}{}:
+			default:
+			}
+			select {
+			case <-releaseManifest:
+			case <-r.Context().Done():
+			}
+		}
+		return false
+	}
+	feed.mu.Unlock()
+	inflight.start(t, boot)
+	if err := third.Connect(ctx, pushPeer(t, inflight.adminBase)); err != nil {
+		t.Fatal(err)
+	}
+	waitPush(t, 30*time.Second, "inflight recipient subscription", func() bool { return slices.Contains(topic.ListPeers(), pushPeer(t, inflight.adminBase).ID) })
+	inflightAlert := func() bool {
+		var raw json.RawMessage
+		return inflight.client(t).get(ctx, "/api/v1/status/alerts", &raw) == nil && bytes.Contains(raw, []byte("update_feed_unavailable"))
+	}
+	waitPush(t, 20*time.Second, "feed outage before signal", inflightAlert)
+	runSignalPipeline(t, v1.path, work, "resign-inflight-v2", "update", "sign-signals", "--key-file", keyPath, "--roots", rootsPath, "--feed-dir", feed.dir)
+	send(v2, "signal-inflight-v2")
+	select {
+	case <-manifestEntered:
+	case <-time.After(30 * time.Second):
+		t.Fatal("signal did not enter controlled manifest fetch")
+	}
+	requestsAtSignal := indexRequests.Load()
+	time.Sleep(8 * time.Second)
+	if indexRequests.Load() != requestsAtSignal {
+		t.Fatal("feed fetched during signal install after interval floor elapsed")
+	}
+	if !inflightAlert() {
+		t.Fatal("deferred feed checks cleared an outage without recovery")
+	}
+	inflightOutage.Store(false)
+	close(releaseManifest)
+	inflight.waitUpgrade(t, v2, boot+2*time.Duration(health)*time.Second)
+	if !slices.ContainsFunc(readLedger(t, inflight.paths.Root), func(e update.DeployLedgerEntry) bool { return e.UpdateID == v2.updateID && e.Trigger == "signal" }) {
+		t.Fatal("inflight proof was not a signal install")
+	}
+	waitPush(t, 20*time.Second, "inflight feed recovery", func() bool { return !inflightAlert() })
+	inflight.stop(t)
+	feed.mu.Lock()
+	feed.requestHook = nil
+	feed.mu.Unlock()
+	t.Log("signal install excluded scheduled feed reads beyond the minimum interval")
+
+	publish(v4)
+	send(v4, "push-v4-offline")
+	b.configure(t, func(cfg *config.Config) { cfg.Update.CheckDelaySeconds = 2; cfg.Update.CheckIntervalSeconds = 3 })
+	b.start(t, boot)
+	b.waitUpgrade(t, v4, boot+2*time.Duration(health)*time.Second)
+	checkTrigger(v4, "feed-check")
+	t.Log("offline recipient caught up through its own feed check")
+	waitPush(t, 30*time.Second, "cleared failed-update alert", func() bool {
+		var alerts json.RawMessage
+		return b.client(t).get(ctx, "/api/v1/status/alerts", &alerts) == nil && !bytes.Contains(alerts, []byte("update_failed"))
+	})
+
+	if pushPeer(t, b.adminBase).ID != originalPeer {
+		t.Fatal("catch-up changed the peer identity")
+	}
+
+	// A successful up-to-date check resets deduplication and clears an outage alert.
+	setOutage := func(value bool) { feed.mu.Lock(); feed.failIndex = value; feed.mu.Unlock() }
+	alertActive := func() bool {
+		var alerts json.RawMessage
+		if err := b.client(t).get(ctx, "/api/v1/status/alerts", &alerts); err != nil {
+			t.Fatal(err)
+		}
+		return bytes.Contains(alerts, []byte("update_feed_unavailable")) && bytes.Contains(alerts, []byte("warning"))
+	}
+	previousFeedFailures := strings.Count(b.logs(), "Update feed-check  failed:")
+	for episode := 1; episode <= 2; episode++ {
+		setOutage(true)
+		waitPush(t, 40*time.Second, "feed outage alert", alertActive)
+		if count := strings.Count(b.logs(), "Update feed-check  failed:"); count != previousFeedFailures+episode {
+			t.Fatalf("outage episode %d logged %d causes", episode, count)
+		}
+		setOutage(false)
+		waitPush(t, 20*time.Second, "feed recovery", func() bool { return !alertActive() })
+	}
+	if strings.Contains(b.logs(), "failed: no compatible update") {
+		t.Fatal("up-to-date feed logged a failure")
+	}
+	t.Log("two feed outages reported once each, warning raised after failures and cleared on success")
+
+	// A later candidate is withheld, then withdrawn while B is offline.
+	b.stop(t)
+	v5 := v4
+	v5.name, v5.version, v5.updateID, v5.sequence = "v5", "1.1.2-e2e.5", "cli-bundle-release-e2e-5", 500
+	signed := publish(v5)
+	stranger := resignPushSignal(t, signed, wrong, 0)
+	if err := os.WriteFile(signalPath(v5), stranger, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a.command(t, false, "wrong-key", "update", "signal", "--from-feed", "--channel", realE2EChannel, "--version", v5.version)
+	if !strings.Contains(readFileString(filepath.Join(a.work, "wrong-key.log")), "untrusted update signal signing key") {
+		t.Fatal("sender did not identify the untrusted signal key")
+	}
+	if err := os.WriteFile(signalPath(v5), signed, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// An otherwise valid signature with an excessive lifetime is refused too.
+	excessive := resignPushSignal(t, signed, key, 8*24*time.Hour)
+	if err := os.WriteFile(signalPath(v5), excessive, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a.command(t, false, "excessive-expiry", "update", "signal", "--from-feed", "--channel", realE2EChannel, "--version", v5.version)
+	if !strings.Contains(readFileString(filepath.Join(a.work, "excessive-expiry.log")), "within seven days") {
+		t.Fatal("sender did not identify the excessive signal lifetime")
+	}
+	if err := os.WriteFile(signalPath(v5), signed, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	indexPath := filepath.Join(feed.dir, strings.TrimPrefix(feed.lane(), "/"), "index.json")
+	originalIndex, err := os.ReadFile(indexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	versionDir := filepath.Dir(signalPath(v5))
+	movedDir := filepath.Join(work, "symlink-control-v5")
+	if err := os.Rename(versionDir, movedDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(movedDir, versionDir); err != nil {
+		t.Fatal(err)
+	}
+	a.command(t, false, "withdraw-symlink", "update", "withdraw", "--channel", realE2EChannel, "--version", v5.version)
+	afterIndex, err := os.ReadFile(indexPath)
+	if err != nil || !bytes.Equal(afterIndex, originalIndex) {
+		t.Fatal("refused withdrawal changed the index")
+	}
+	if err := os.Remove(versionDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(movedDir, versionDir); err != nil {
+		t.Fatal(err)
+	}
+	uiPath := filepath.Join(feed.dir, "ui-bundle", realE2EChannel, "any", "any", v5.version, "signal.json")
+	if err := os.MkdirAll(filepath.Dir(uiPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(uiPath, []byte("ui package control"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	expiredSignal, err := update.ParseSignal(signed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiredSignal.PublishedAt = time.Now().Add(-8 * 24 * time.Hour).UTC().Format(time.RFC3339)
+	expiredSignal.ExpiresAt = time.Now().Add(-24 * time.Hour).UTC().Format(time.RFC3339)
+	expiredRaw, err := expiredSignal.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	expired := resignPushSignal(t, expiredRaw, key, 0)
+	if err := os.WriteFile(signalPath(v5), expired, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a.command(t, false, "expired-stored-signal", "update", "signal", "--from-feed", "--channel", realE2EChannel, "--version", v5.version)
+	expirationMessage := readFileString(filepath.Join(a.work, "expired-stored-signal.log"))
+	if !strings.Contains(expirationMessage, "signed at build time") || !strings.Contains(expirationMessage, "seven days") || !strings.Contains(expirationMessage, "pipeline must sign them again") {
+		t.Fatal("expired send does not explain pipeline resigning")
+	}
+	if err := os.WriteFile(signalPath(v5), signed, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var malformedTime map[string]any
+	if err := json.Unmarshal(signed, &malformedTime); err != nil {
+		t.Fatal(err)
+	}
+	malformedTime["published_at"] = "not-a-timestamp"
+	writeE2EJSON(t, signalPath(v5), malformedTime)
+	a.command(t, false, "malformed-published-time", "update", "signal", "--from-feed", "--channel", realE2EChannel, "--version", v5.version)
+	parseMessage := readFileString(filepath.Join(a.work, "malformed-published-time.log"))
+	if !strings.Contains(parseMessage, "parse signal published_at") || strings.Contains(parseMessage, "signed at build time") {
+		t.Fatal("malformed publication time did not produce a parse error")
+	}
+	if err := os.WriteFile(signalPath(v5), signed, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	futureSignal, err := update.ParseSignal(signed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	futureSignal.PublishedAt = time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+	futureSignal.ExpiresAt = time.Now().Add(2 * time.Hour).UTC().Format(time.RFC3339)
+	futureRaw, err := futureSignal.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	future := resignPushSignal(t, futureRaw, key, 0)
+	a.command(t, true, "withdraw-v5", "update", "withdraw", "--channel", realE2EChannel, "--version", v5.version)
+	// Recreate interruption after some moves but before index replacement, then resume the plan.
+	archiveLine := regexp.MustCompile(`archive=([^\n]+)`).FindStringSubmatch(readFileString(filepath.Join(a.work, "withdraw-v5.log")))
+	if len(archiveLine) != 2 {
+		t.Fatal("withdrawal did not report its archive")
+	}
+	archivedVersion := filepath.Join(strings.TrimSpace(archiveLine[1]), strings.TrimPrefix(feed.lane(), "/"), v5.version)
+	if err := os.Rename(archivedVersion, versionDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(indexPath, originalIndex, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a.command(t, true, "withdraw-v5-retry", "update", "withdraw", "--channel", realE2EChannel, "--version", v5.version)
+	if _, err := os.Stat(uiPath); err != nil {
+		t.Fatal("CLI withdrawal removed a UI package")
+	}
+
+	a.command(t, false, "withdraw-complete", "update", "withdraw", "--channel", realE2EChannel, "--version", v5.version)
+	if !strings.Contains(readFileString(filepath.Join(a.work, "withdraw-complete.log")), "already withdrawn") {
+		t.Fatal("completed withdrawal was not recognized")
+	}
+	// A withdrawal that finished but stopped before writing its completion
+	// marker must not block withdrawing a later republication.
+	if err := os.Remove(filepath.Join(strings.TrimSpace(archiveLine[1]), "completed")); err != nil {
+		t.Fatal(err)
+	}
+	publish(v5)
+	a.command(t, true, "withdraw-republished", "update", "withdraw", "--channel", realE2EChannel, "--version", v5.version)
+	republishedArchive := regexp.MustCompile(`archive=([^\n]+)`).FindStringSubmatch(readFileString(filepath.Join(a.work, "withdraw-republished.log")))
+	if len(republishedArchive) != 2 || republishedArchive[1] == archiveLine[1] {
+		t.Fatal("republication reused the completed withdrawal archive")
+	}
+	a.command(t, false, "withdraw-republished-complete", "update", "withdraw", "--channel", realE2EChannel, "--version", v5.version)
+	t.Log("completed withdrawal ignored after republication; repeated withdrawal reports already withdrawn")
+
+	a.command(t, false, "send-withdrawn", "update", "signal", "--from-feed", "--channel", realE2EChannel, "--version", v5.version)
+	for _, name := range []string{"manifest.json", "update.wasm", "signal.json"} {
+		response, err := feed.srv.Client().Get(feed.base + feed.lane() + "/" + v5.version + "/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		if response.StatusCode != http.StatusNotFound {
+			t.Fatalf("withdrawn %s served: %d", name, response.StatusCode)
+		}
+	}
+	b.start(t, boot)
+	if err := third.Connect(ctx, pushPeer(t, b.adminBase)); err != nil {
+		t.Fatal(err)
+	}
+	waitPush(t, 30*time.Second, "rejoined update subscription", func() bool { return slices.Contains(topic.ListPeers(), originalPeer) })
+	time.Sleep(4 * time.Second)
+	observer, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"), libp2p.DisableRelay())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer observer.Close()
+	observerGossip, err := ps.NewGossipSub(ctx, observer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observerTopic, err := observerGossip.Join(update.SignalTopic(realE2EChannel))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer observerTopic.Close()
+	observerSub, err := observerTopic.Subscribe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer observerSub.Cancel()
+	if err := observer.Connect(ctx, pushPeer(t, b.adminBase)); err != nil {
+		t.Fatal(err)
+	}
+	waitPush(t, 30*time.Second, "downstream observer", func() bool { return len(observerTopic.ListPeers()) == 1 })
+	time.Sleep(3 * time.Second)
+	before := strings.Count(b.logs(), "Update signal handler received")
+	for _, raw := range [][]byte{[]byte("junk"), stranger, excessive, expired, future, bytes.Repeat([]byte("x"), update.SignalMaxBytes+1)} {
+		if err := topic.Publish(ctx, raw); err != nil {
+			t.Fatal(err)
+		}
+	}
+	noRelayCtx, noRelayCancel := context.WithTimeout(ctx, 5*time.Second)
+	relayed, relayErr := observerSub.Next(noRelayCtx)
+	noRelayCancel()
+	if relayErr == nil {
+		t.Fatalf("rejected gossip relayed downstream: %d bytes", len(relayed.Data))
+	}
+	if !errors.Is(relayErr, context.DeadlineExceeded) {
+		t.Fatalf("relay observation failed: %v", relayErr)
+	}
+	if got := strings.Count(b.logs(), "Update signal handler received"); got != before {
+		t.Fatalf("invalid gossip reached handler: before %d after %d", before, got)
+	}
+	if _, err := os.Stat(filepath.Join(b.paths.Staged, v5.updateID)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("untrusted or withdrawn update staged: %v", err)
+	}
+	requireRealIdentity(t, b.adminBase, v4)
+	// Valid old gossip is delivered, but the withdrawn manifest cannot be fetched.
+	if err := topic.Publish(ctx, signed); err != nil {
+		t.Fatal(err)
+	}
+	relayCtx, relayCancel := context.WithTimeout(ctx, 30*time.Second)
+	relayed, relayErr = observerSub.Next(relayCtx)
+	relayCancel()
+	if relayErr != nil || !bytes.Equal(relayed.Data, signed) {
+		t.Fatalf("valid relay control failed: %v", relayErr)
+	}
+	waitPush(t, 30*time.Second, "withdrawn manifest refusal", func() bool {
+		return strings.Contains(b.logs(), "Update signal "+v5.updateID+" failed: fetch update manifest:")
+	})
+	time.Sleep(5 * time.Second)
+	requireRealIdentity(t, b.adminBase, v4)
+	if got := strings.Count(b.logs(), "Update signal "+v5.updateID+" failed:"); got != 1 {
+		t.Fatalf("withdrawn fetch reported %d times", got)
+	}
+	t.Log("push, rollback, restored alert, catch-up, withdrawal, and gossip rejection verified")
+}
+
+type pushDaemon struct {
+	*realScenario
+	tracker  *realDaemonTracker
+	logPaths []string
+	// exited is closed when the daemon this test started last has exited.
+	exited chan struct{}
+}
+
+func newPushDaemon(t *testing.T, work string, build realBuild, feed *realE2EFeed, roots update.TrustedRoots, health int) *pushDaemon {
+	t.Helper()
+	for _, name := range []string{"home", "store", "bundle/bin"} {
+		if err := os.MkdirAll(filepath.Join(work, name), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	root := filepath.Join(work, "bundle")
+	d := &pushDaemon{realScenario: &realScenario{work: work, exe: filepath.Join(root, "bin", "spacedatanetwork"), cfg: filepath.Join(work, "config.yaml"), store: filepath.Join(work, "store"), paths: update.PathsFor(root), feed: feed, healthSeconds: health}, tracker: &realDaemonTracker{root: root}}
+	copyExecutable(t, build.path, d.exe)
+	includeWalletRuntime(t, root)
+	writeE2EJSON(t, filepath.Join(root, "manifest.json"), realBundleManifest(build, feed.base))
+	writeE2EJSON(t, d.paths.Trust, roots)
+	port := freeLoopbackPort(t)
+	d.adminBase = "http://127.0.0.1:" + strconv.Itoa(port)
+	writeRealDaemonConfig(t, d.cfg, d.store, port, freeLoopbackPort(t), freeLoopbackPort(t), health)
+	d.configure(t, func(cfg *config.Config) { cfg.Update.MinIntervalSeconds = 1; cfg.Update.CheckDelaySeconds = 3600 })
+	password := filepath.Join(work, "test-key-password")
+	secret := make([]byte, 32)
+	if _, err := rand.Read(secret); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(password, []byte(hex.EncodeToString(secret)), 0o400); err != nil {
+		t.Fatal(err)
+	}
+	d.env = append(environWithout("INVOCATION_ID", "SDN_CONFIG", "SDN_UPDATE_TRUST_ROOTS", "SDN_UPDATE_FEED_DIR", "HOME", "SSL_CERT_FILE", "SSL_CERT_DIR", config.EnvKeyPassword, config.EnvKeyPasswordFile), "HOME="+filepath.Join(work, "home"), "SSL_CERT_FILE="+feed.certFile, config.EnvKeyPasswordFile+"="+password, "SDN_ALLOW_MULTI_DAEMON=1", "HD_WALLET_WASM_PATH="+filepath.Join(root, "runtime", "modules", "hd-wallet-wasi.wasm"))
+	t.Cleanup(func() { d.trackHelper(); d.tracker.stopAll() })
+	return d
+}
+
+func (d *pushDaemon) configure(t *testing.T, change func(*config.Config)) {
+	t.Helper()
+	cfg, _, err := config.LoadResolved(d.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	change(cfg)
+	raw, err := yaml.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(d.cfg, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	requireIsolatedConfig(t, d.cfg)
+}
+
+func (d *pushDaemon) start(t *testing.T, budget time.Duration) {
+	t.Helper()
+	name := filepath.Join(d.work, fmt.Sprintf("daemon-%d.log", len(d.logPaths)))
+	d.logPaths = append(d.logPaths, name)
+	out, err := os.Create(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer out.Close()
+	cmd := exec.Command(d.exe, "daemon", "--allow-multi-daemon", "--config", d.cfg)
+	cmd.Dir, cmd.Env, cmd.Stdout, cmd.Stderr = d.work, d.env, out, out
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	d.tracker.add(cmd.Process.Pid)
+	exited := make(chan struct{})
+	d.exited = exited
+	go func() { _ = cmd.Wait(); close(exited) }()
+	waitRealReady(t, d.adminBase, budget, name)
+}
+
+func (d *pushDaemon) stop(t *testing.T) { t.Helper(); d.trackHelper(); d.tracker.stopAll() }
+func (d *pushDaemon) helperLog() string {
+	return filepath.Join(d.paths.Updates, "helper", "self-upgrade.log")
+}
+func (d *pushDaemon) logs() string {
+	var out strings.Builder
+	for _, p := range append(append([]string{}, d.logPaths...), d.helperLog()) {
+		out.WriteString(readFileString(p))
+	}
+	return out.String()
+}
+func (d *pushDaemon) trackHelper() {
+	d.tracker.addFrom(d.helperLog())
+	for _, match := range regexp.MustCompile(`Self-upgrade to .* pid (\d+)\)`).FindAllStringSubmatch(d.logs(), -1) {
+		pid, _ := strconv.Atoi(match[1])
+		d.tracker.add(pid)
+	}
+}
+func (d *pushDaemon) waitUpgrade(t *testing.T, build realBuild, budget time.Duration) {
+	t.Helper()
+	waitPush(t, budget, "healthy "+build.name, func() bool {
+		d.trackHelper()
+		return pushIdentityMatches(d.adminBase, build) && ledgerHasIfPresent(d.paths.Root, build.updateID, "health-passed")
+	})
+	requireRealIdentity(t, d.adminBase, build)
+}
+func ledgerHasIfPresent(root, id, action string) bool {
+	raw := readFileString(filepath.Join(root, "deploy-ledger.jsonl"))
+	for _, line := range strings.Split(raw, "\n") {
+		var e update.DeployLedgerEntry
+		if json.Unmarshal([]byte(line), &e) == nil && e.UpdateID == id && e.Action == action {
+			return true
+		}
+	}
+	return false
+}
+func pushIdentityMatches(base string, b realBuild) bool {
+	id, err := probeDaemonIdentity(context.Background(), &http.Client{Timeout: time.Second}, base)
+	return err == nil && id.BundleVersion == b.version && id.BuildSHA256 == b.sha
+}
+func waitPush(t *testing.T, budget time.Duration, what string, ready func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(budget)
+	for time.Now().Before(deadline) {
+		if ready() {
+			return
+		}
+		time.Sleep(time.Second)
+	}
+	t.Fatalf("timed out waiting for %s after %s", what, budget)
+}
+
+func pushPeer(t *testing.T, base string) peer.AddrInfo {
+	t.Helper()
+	response, err := http.Get(base + "/api/v1/id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var body struct {
+		PeerID    string   `json:"peer_id"`
+		Addresses []string `json:"listen_addresses"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	id, err := peer.Decode(body.PeerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info := peer.AddrInfo{ID: id}
+	for _, s := range body.Addresses {
+		if strings.HasPrefix(s, "/ip4/127.") {
+			addr, err := ma.NewMultiaddr(s)
+			if err != nil {
+				t.Fatal(err)
+			}
+			info.Addrs = append(info.Addrs, addr)
+		}
+	}
+	if len(info.Addrs) == 0 {
+		t.Fatal("daemon has no loopback peer address")
+	}
+	return info
+}
+
+func (d *pushDaemon) command(t *testing.T, success bool, label string, args ...string) {
+	t.Helper()
+	out, err := os.Create(filepath.Join(d.work, label+".log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer out.Close()
+	args = append(args, "--config", d.cfg)
+	cmd := exec.Command(d.exe, args...)
+	cmd.Dir, cmd.Env, cmd.Stdout, cmd.Stderr = d.work, d.env, out, out
+	err = cmd.Run()
+	if (err == nil) != success {
+		t.Fatalf("%s: %v\n%s", label, err, readFileString(out.Name()))
+	}
+}
+
+func (d *pushDaemon) client(t *testing.T) *adminClient {
+	t.Helper()
+	old := configPath
+	configPath = d.cfg
+	defer func() { configPath = old }()
+	for _, kv := range d.env {
+		key, value, ok := strings.Cut(kv, "=")
+		if ok && (key == "HOME" || key == config.EnvKeyPasswordFile || key == "HD_WALLET_WASM_PATH") {
+			t.Setenv(key, value)
+		}
+	}
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	client, err := newAdminClient(cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return client
+}
+
+func resignPushSignal(t *testing.T, raw []byte, key ed25519.PrivateKey, ttl time.Duration) []byte {
+	t.Helper()
+	signal, err := update.ParseSignal(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub := key.Public().(ed25519.PublicKey)
+	spki, err := x509.MarshalPKIXPublicKey(pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signal.Signing.KeyID, signal.Signing.PublicKey = update.RootKeyID(pub), base64.StdEncoding.EncodeToString(spki)
+	if ttl > 0 {
+		published, err := time.Parse(time.RFC3339, signal.PublishedAt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		signal.ExpiresAt = published.Add(ttl).Format(time.RFC3339)
+	}
+	unsigned, err := signal.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	statement, err := update.SignalStatement(unsigned)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signal.Signing.Signature = base64.StdEncoding.EncodeToString(ed25519.Sign(key, statement))
+	signed, err := json.Marshal(signal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return signed
+}
+
+// keepRealLogs preserves diagnostics without retaining test keys or payloads.
+func keepRealLogs(t *testing.T, work string) {
+	destination := os.Getenv("SDN_E2E_LOG_DIR")
+	if destination == "" {
+		return
+	}
+	t.Cleanup(func() {
+		err := filepath.WalkDir(work, func(path string, entry os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if entry.IsDir() || (!strings.HasSuffix(entry.Name(), ".log") && entry.Name() != "deploy-ledger.jsonl") {
+				return nil
+			}
+			relative, err := filepath.Rel(work, path)
+			if err != nil {
+				return err
+			}
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			target := filepath.Join(destination, strings.ReplaceAll(t.Name(), "/", "-"), relative)
+			if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+				return err
+			}
+			return os.WriteFile(target, raw, 0o600)
+		})
+		if err != nil {
+			t.Errorf("preserve daemon diagnostics: %v", err)
+		}
+	})
+}
+
+func runSignalPipeline(t *testing.T, exe, work, label string, args ...string) {
+	t.Helper()
+	runSignalPipelineEnv(t, exe, work, label, nil, args...)
+}
+
+// realE2ESigner is the release workflow's signal signer: prebuilt beside the
+// fixtures, or built here the way the workflow builds it (no cgo).
+func realE2ESigner(t *testing.T, dir string) string {
+	t.Helper()
+	if prebuilt := strings.TrimSpace(os.Getenv(realE2EBinDirEnv)); prebuilt != "" {
+		return filepath.Join(prebuilt, "sdn-update-signal-signer")
+	}
+	path := filepath.Join(dir, "sdn-update-signal-signer")
+	moduleRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	build := exec.Command("go", "build", "-trimpath", "-o", path, "./cmd/sdn-update-signal-signer")
+	build.Dir = moduleRoot
+	build.Env = append(environWithout("CGO_ENABLED"), "CGO_ENABLED=0")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build signal signer: %v\n%s", err, output)
+	}
+	return path
+}
+
+func runSignalPipelineEnv(t *testing.T, exe, work, label string, env []string, args ...string) {
+	t.Helper()
+	home := filepath.Join(work, "pipeline-home")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	out, err := os.Create(filepath.Join(work, "pipeline-"+label+".log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer out.Close()
+	cmd := exec.Command(exe, args...)
+	cmd.Dir, cmd.Stdout, cmd.Stderr = filepath.Join(work, "pipeline-repo", "sdn-server"), out, out
+	cmd.Env = append(environWithout("HOME", "SDN_CONFIG", "SDN_UPDATE_TRUST_ROOTS", config.EnvKeyPassword, config.EnvKeyPasswordFile), "HOME="+home)
+	cmd.Env = append(cmd.Env, env...)
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("pipeline %s: %v\n%s", label, err, readFileString(out.Name()))
+	}
+}
+
+func includeWalletRuntime(t *testing.T, root string) {
+	t.Helper()
+	raw := walletwasm.EmbeddedHDWalletWasm()
+	if len(raw) == 0 {
+		t.Fatal("embedded wallet runtime failed its hash check")
+	}
+	dir := filepath.Join(root, "runtime", "modules")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "hd-wallet-wasi.wasm"), raw, 0o644); err != nil {
+		t.Fatal(err)
 	}
 }

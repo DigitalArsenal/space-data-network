@@ -362,6 +362,7 @@ func copyDir(t *testing.T, src, dst string) {
 // batching half: the same journal, replayed one-transaction-per-event and
 // replayed in chunk transactions, must leave identical auxiliary state.
 func TestAuxiliaryReplayBatchedMatchesPerEventState(t *testing.T) {
+	useReadableMachineSource(t)
 	root := t.TempDir()
 	basePath := filepath.Join(root, "store")
 	store := newFixtureStore(t, basePath)
@@ -420,6 +421,7 @@ func TestAuxiliaryReplayBatchedMatchesPerEventState(t *testing.T) {
 // mark, so the assertion is on FRAMES, not on wall clock — a fixture this small
 // would be fast either way.
 func TestAuxiliaryReplayWarmBootAppliesNothing(t *testing.T) {
+	useReadableMachineSource(t)
 	basePath := filepath.Join(t.TempDir(), "store")
 	store := newFixtureStore(t, basePath)
 	writeAuxiliaryFixture(t, store, 1)
@@ -471,6 +473,7 @@ func TestAuxiliaryReplayWarmBootAppliesNothing(t *testing.T) {
 // cannot be crossed: a mark whose digest was computed over the OTHER journal's
 // domain must fall back to a full replay rather than skipping real frames.
 func TestAuxiliaryResumeMarkRefusesForeignJournalDigest(t *testing.T) {
+	useReadableMachineSource(t)
 	basePath := filepath.Join(t.TempDir(), "store")
 	store := newFixtureStore(t, basePath)
 	writeAuxiliaryFixture(t, store, 1)
@@ -510,6 +513,7 @@ func TestAuxiliaryResumeMarkRefusesForeignJournalDigest(t *testing.T) {
 // may be a frame on disk whose rows never landed, so the mark must stop moving
 // entirely — under-marking costs replay, over-marking loses the mutation.
 func TestAuxiliaryMarkFreezesWhileAssetPinLedgerNeedsRecovery(t *testing.T) {
+	useReadableMachineSource(t)
 	basePath := filepath.Join(t.TempDir(), "store")
 	store := newFixtureStore(t, basePath)
 	defer store.Close()

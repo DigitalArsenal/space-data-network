@@ -48,7 +48,11 @@ export function buildUpdateManifest(options) {
   const keyId = requiredString(options.keyId, 'keyId');
   const createdAt = requiredTimestamp(options.createdAt, 'createdAt');
   const expiresAt = requiredTimestamp(options.expiresAt, 'expiresAt');
-  const bundleBytes = requiredBytes(options.bundleBytes, 'bundleBytes');
+  // The bundle is given as bytes, or as the digest a job without the key
+  // computed: { hash, size }.
+  const bundle = options.bundleDigest === undefined
+    ? digestOf(requiredBytes(options.bundleBytes, 'bundleBytes'))
+    : requiredDigest(options.bundleDigest, 'bundleDigest');
   const wasmBytes = requiredBytes(options.wasmBytes, 'wasmBytes');
   if (!Number.isInteger(options.sequence)) {
     throw new Error('sequence must be an integer');
@@ -64,8 +68,8 @@ export function buildUpdateManifest(options) {
     expires_at: expiresAt,
     target: { platform, arch, kind },
     bundle: {
-      hash: sha256Hex(bundleBytes),
-      size: bundleBytes.length,
+      hash: bundle.hash,
+      size: bundle.size,
       format: options.format || 'tar.gz',
     },
     wasm: { hash: sha256Hex(wasmBytes) },
@@ -255,6 +259,23 @@ function requiredTimestamp(value, name) {
     throw new Error(`${name} must be an RFC 3339 timestamp`);
   }
   return value;
+}
+
+function digestOf(bytes) {
+  return { hash: sha256Hex(bytes), size: bytes.length };
+}
+
+function requiredDigest(value, name) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`${name} must be { hash, size }`);
+  }
+  if (typeof value.hash !== 'string' || !/^[0-9a-f]{64}$/.test(value.hash)) {
+    throw new Error(`${name}.hash must be a lowercase sha256 hex digest`);
+  }
+  if (!Number.isSafeInteger(value.size) || value.size <= 0) {
+    throw new Error(`${name}.size must be a positive integer`);
+  }
+  return { hash: value.hash, size: value.size };
 }
 
 function requiredBytes(value, name) {

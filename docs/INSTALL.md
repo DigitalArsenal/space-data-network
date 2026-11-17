@@ -494,6 +494,15 @@ How an install takes an update:
   swaps, restarts it and waits for `GET /api/v1/ready` to answer 2xx, for
   `update.health_timeout_seconds` (default 600); otherwise it reverts to the
   previous build and quarantines the update under `updates/failed/`.
+  A self-update whose helper never takes over leaves the daemon serving with
+  nothing swapped: the daemon raises an `update_failed` alert and retries the
+  same update after one `update.min_interval_seconds`, doubling for each
+  further such failure up to 24 hours, without quarantining it. The same
+  holds when the helper stopped the daemon and then failed before the swap
+  (for example, the store lock still held): it records the failure in
+  `updates/handoff-failure.json` and restarts the build that was running,
+  which raises the alert and waits out the same backoff. The count survives
+  restarts; a completed swap clears it.
 - A pushed update signal (on by default, `update.enabled`) is acted on only
   when it is signed by an update root and its manifest and carrier lie under
   the bundle's own `update.feedBaseUrl`. A signal naming any other host, port
