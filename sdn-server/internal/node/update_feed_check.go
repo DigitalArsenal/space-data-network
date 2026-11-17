@@ -232,8 +232,8 @@ func (s *UpdateSignalSubscriber) claimFeed() bool {
 		log.Debug("feed check deferred: update in flight")
 		return false
 	}
-	if !s.lastUpgrade.IsZero() && s.deps.Now().Sub(s.lastUpgrade) < s.deps.MinInterval {
-		log.Debug("feed check deferred: minimum upgrade interval")
+	if s.deps.Now().Before(s.swapAllowedAtLocked()) {
+		log.Debug("feed check deferred: minimum upgrade interval or hand-off retry backoff")
 		return false
 	}
 	s.pendingUpgrade = true
@@ -263,29 +263,15 @@ func (s *UpdateSignalSubscriber) finishUpgrade(ctx context.Context, succeeded bo
 				return
 			case <-timer.C:
 			}
-			// The original daemon is still serving. Quarantine follows the same
-			// explicit-clear retry policy as a failed health gate, without pinning handled.
-			err := fmt.Errorf("update %s: helper did not take over within %s; this daemon is still serving", updateID, s.handoffTimeout())
-			if quarantineErr := os.MkdirAll(filepath.Join(s.deps.Paths.Failed, updateID), 0o700); quarantineErr != nil {
-				err = fmt.Errorf("%w; quarantine failed: %v", err, quarantineErr)
-			}
-			if ledgerErr := update.RecordDeployLedgerEntry(s.deps.Paths, update.DeployLedgerEntry{
-				Action: "handoff-failed", UpdateID: updateID, Reason: err.Error(),
-			}); ledgerErr != nil {
-				log.Warnf("Record failed update handoff: %v", ledgerErr)
-			}
-			s.reportFailure("signal", updateID, err)
-			s.deps.Alerts.Raise(ops.KindUpdateFailed, updateID, ops.SeverityError, err.Error())
-			s.release(updateID)
-			s.finishUpgrade(ctx, false, "")
+			s.handoffTimedOut(ctx, updateID)
 		}()
 		return
 	}
 	// Keep the newest announcement reserved across the rate limit. A replay
 	// that fails can receive another announcement without losing it to the floor.
 	if s.pendingSignal != nil && ctx.Err() == nil {
-		delay := s.deps.MinInterval - s.deps.Now().Sub(s.lastUpgrade)
-		if !s.lastUpgrade.IsZero() && delay > 0 {
+		delay := s.swapAllowedAtLocked().Sub(s.deps.Now())
+		if delay > 0 {
 			log.Debugf("remembered update signal deferred for minimum upgrade interval: %s", delay)
 			s.mu.Unlock()
 			go func() {
@@ -308,6 +294,73 @@ func (s *UpdateSignalSubscriber) finishUpgrade(ctx context.Context, succeeded bo
 	if queued != nil && ctx.Err() == nil {
 		s.handle(ctx, queued)
 	}
+}
+
+// The first retry after a failed hand-off waits one minimum interval; each
+// further consecutive failure doubles the wait, up to this bound.
+const maxHandoffBackoff = 24 * time.Hour
+
+func handoffBackoff(base time.Duration, failures int) time.Duration {
+	if base <= 0 {
+		base = time.Second
+	}
+	backoff := base
+	for i := 1; i < failures && backoff < maxHandoffBackoff; i++ {
+		backoff *= 2
+	}
+	return min(backoff, maxHandoffBackoff)
+}
+
+// swapAllowedAtLocked is the earliest time another swap may start: the minimum
+// interval after the last swap, or the end of a hand-off retry backoff. The
+// caller holds s.mu.
+func (s *UpdateSignalSubscriber) swapAllowedAtLocked() time.Time {
+	var at time.Time
+	if !s.lastUpgrade.IsZero() {
+		at = s.lastUpgrade.Add(s.deps.MinInterval)
+	}
+	if s.handoffRetryAt.After(at) {
+		at = s.handoffRetryAt
+	}
+	return at
+}
+
+// handoffTimedOut runs when this daemon is still serving after the hand-off
+// bound. A daemon that accepted the update shutdown has stopped by then, so
+// the helper never took over. Unless the helper applied the update or
+// quarantined it itself, nothing was swapped: the same update is retried after
+// a backoff that applies to every update, so a cause that repeats neither
+// locks this release out nor moves the feed check on to older releases.
+func (s *UpdateSignalSubscriber) handoffTimedOut(ctx context.Context, updateID string) {
+	err := fmt.Errorf("update %s: helper did not take over within %s; this daemon is still serving", updateID, s.handoffTimeout())
+	installed := update.HasFailedUpdate(s.deps.Paths, updateID)
+	if state, stateErr := update.LoadState(s.deps.Paths); stateErr == nil && state.UpdateID == updateID {
+		installed = true
+	}
+	if installed {
+		// The helper applied or gated this update: keep the quarantine, which
+		// only an operator clears.
+		if quarantineErr := os.MkdirAll(filepath.Join(s.deps.Paths.Failed, updateID), 0o700); quarantineErr != nil {
+			err = fmt.Errorf("%w; quarantine failed: %v", err, quarantineErr)
+		}
+	} else {
+		s.mu.Lock()
+		s.handoffFailures++
+		backoff := handoffBackoff(s.deps.MinInterval, s.handoffFailures)
+		s.handoffRetryAt = s.deps.Now().Add(backoff)
+		failures := s.handoffFailures
+		s.mu.Unlock()
+		err = fmt.Errorf("%w; nothing was swapped; hand-off failure %d, next attempt after %s", err, failures, backoff)
+	}
+	if ledgerErr := update.RecordDeployLedgerEntry(s.deps.Paths, update.DeployLedgerEntry{
+		Action: "handoff-failed", UpdateID: updateID, Reason: err.Error(),
+	}); ledgerErr != nil {
+		log.Warnf("Record failed update handoff: %v", ledgerErr)
+	}
+	s.reportFailure("handoff", updateID, err)
+	s.deps.Alerts.Raise(ops.KindUpdateFailed, updateID, ops.SeverityError, err.Error())
+	s.release(updateID)
+	s.finishUpgrade(ctx, false, "")
 }
 
 func (s *UpdateSignalSubscriber) reportFailure(trigger, id string, err error) {

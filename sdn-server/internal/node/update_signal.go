@@ -151,13 +151,17 @@ type UpdateSignalSubscriber struct {
 	deps UpdateSignalSubscriberDeps
 	feed update.FeedBase
 
-	mu                     sync.Mutex
-	lastUpgrade            time.Time
-	pendingUpgrade         bool
-	pendingSignal          []byte
-	pendingSequence        int64
-	handled                map[string]bool
-	installRefusals        map[string]error
+	mu              sync.Mutex
+	lastUpgrade     time.Time
+	pendingUpgrade  bool
+	pendingSignal   []byte
+	pendingSequence int64
+	handled         map[string]bool
+	installRefusals map[string]error
+	// handoffFailures counts helper hand-offs that timed out with nothing
+	// swapped; handoffRetryAt holds every swap until its backoff ends.
+	handoffFailures        int
+	handoffRetryAt         time.Time
 	feedDeferredCandidates map[string]bool
 	// uiAttempts is when each UI package was last tried (claimUI).
 	uiAttempts       map[string]time.Time
@@ -342,8 +346,8 @@ func (s *UpdateSignalSubscriber) claimSignal(signal *update.Signal, raw []byte) 
 		log.Debugf("update signal %s dropped: already handled", id)
 		return false
 	}
-	if !s.lastUpgrade.IsZero() && s.deps.Now().Sub(s.lastUpgrade) < s.deps.MinInterval {
-		log.Debugf("update signal %s dropped: minimum upgrade interval", id)
+	if s.deps.Now().Before(s.swapAllowedAtLocked()) {
+		log.Debugf("update signal %s dropped: minimum upgrade interval or hand-off retry backoff", id)
 		return false
 	}
 	s.pendingUpgrade = true

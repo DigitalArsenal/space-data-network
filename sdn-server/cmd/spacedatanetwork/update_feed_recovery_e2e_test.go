@@ -92,6 +92,16 @@ func runRealFeedRecoveryCase(t *testing.T, mode string) {
 			t.Fatal(err)
 		}
 	}
+	// A release between the installed build and v2. A failed hand-off of v2
+	// must not move the feed check on to it.
+	middle := v2
+	middle.name, middle.version, middle.updateID, middle.sequence = "middle", "1.1.2-e2e.1.5", "handoff-middle", 150
+	if mode == "handoff" {
+		feed.publish(t, middle, key)
+		feed.mu.Lock()
+		rawIndex = append([]byte(nil), feed.files[indexPath]...)
+		feed.mu.Unlock()
+	}
 	releaseIndex, releaseReplay := make(chan struct{}), make(chan struct{})
 	releaseSecond := make(chan struct{})
 	releaseInstallCheck := make(chan struct{})
@@ -199,6 +209,10 @@ func runRealFeedRecoveryCase(t *testing.T, mode string) {
 		}
 		if mode == "replay" {
 			cfg.Update.MinIntervalSeconds = 10
+		}
+		if mode == "handoff" {
+			// The first retry after a failed hand-off waits one minimum interval.
+			cfg.Update.MinIntervalSeconds = 20
 		}
 	})
 	// One signed-in client for the whole case: the admin API limits sign-in
@@ -308,23 +322,46 @@ func runRealFeedRecoveryCase(t *testing.T, mode string) {
 				t.Fatal("handoff alert does not identify the failed update")
 			}
 		}
-		if !update.HasFailedUpdate(d.paths, v2.updateID) {
-			t.Fatal("failed handoff was not quarantined")
+		if !hasAlert("update_failed", "nothing was swapped") {
+			t.Fatal("handoff alert does not say that nothing was swapped")
+		}
+		if update.HasFailedUpdate(d.paths, v2.updateID) || update.HasFailedUpdate(d.paths, middle.updateID) {
+			t.Fatal("a hand-off that swapped nothing quarantined a release")
 		}
 		if err := os.Chmod(d.paths.Incoming, 0o700); err != nil {
 			t.Fatal(err)
 		}
-		later := v2
-		later.name, later.version, later.updateID, later.sequence = "later", "1.1.2-e2e.8", "handoff-recovery", 800
-		feed.publish(t, later, key)
-		// Read the new index under the same lock as its HTTP handler.
-		feed.mu.Lock()
-		indexMu.Lock()
-		rawIndex = append([]byte(nil), feed.files[indexPath]...)
-		indexMu.Unlock()
-		feed.mu.Unlock()
-		d.waitUpgrade(t, later, boot+2*time.Duration(health)*time.Second)
-		t.Logf("helper preparation failed; hold released after %s; later release installed without manual restart", bound)
+		// The same release installs after the backoff, with no operator step,
+		// and the release below it is never attempted.
+		d.waitUpgrade(t, v2, boot+2*time.Duration(health)*time.Second)
+		var failedAt time.Time
+		retried := false
+		for _, entry := range readLedger(t, d.paths.Root) {
+			if entry.UpdateID == middle.updateID {
+				t.Fatalf("the feed check moved on to the older release: %+v", entry)
+			}
+			recorded, err := time.Parse(time.RFC3339, entry.RecordedAt)
+			if err != nil {
+				t.Fatalf("ledger time %q: %v", entry.RecordedAt, err)
+			}
+			switch {
+			case entry.Action == "handoff-failed":
+				if entry.UpdateID != v2.updateID || !failedAt.IsZero() {
+					t.Fatalf("unexpected hand-off failure record: %+v", entry)
+				}
+				failedAt = recorded
+			case !failedAt.IsZero() && !retried && entry.UpdateID == v2.updateID:
+				retried = true
+				// Ledger times are whole seconds.
+				if wait := recorded.Sub(failedAt); wait < 19*time.Second {
+					t.Fatalf("retry started %s after the failed hand-off, before the 20s backoff", wait)
+				}
+			}
+		}
+		if failedAt.IsZero() || !retried {
+			t.Fatalf("the ledger shows no failed hand-off followed by a retry: %v", ledgerActions(t, d.paths.Root))
+		}
+		t.Logf("helper preparation failed; hold released after %s; the same release installed after the backoff without an operator", bound)
 	case "missing-manifest":
 		waitPush(t, 45*time.Second, "fallback after missing manifest", func() bool { return strings.Contains(d.logs(), "Update signal accepted: "+v2.updateID) })
 		d.waitUpgrade(t, v2, boot+2*time.Duration(health)*time.Second)

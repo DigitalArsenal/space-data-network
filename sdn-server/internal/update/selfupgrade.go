@@ -361,15 +361,15 @@ func newControlToken() (string, error) {
 	return hex.EncodeToString(buf), nil
 }
 
-// HasFailedUpdate reports whether an apply, health gate or helper handoff
-// failed for this update (updates/failed/<update-id>/ exists).
+// HasFailedUpdate reports whether this box already tried this update and
+// reversed it (updates/failed/<update-id>/ exists).
 //
 // This is the durable quarantine that makes a replayed signal harmless. Without
 // it, the sequence gate alone is not enough: a box that self-rolled-back from
 // sequence N to N-1 has a CURRENT sequence below N again, so a replayed signal
 // for N looks like news, and the box would reinstall the very build it just
 // judged unhealthy — forever, on a loop, one replay at a time. The failed
-// directory records apply, rollback and helper-handoff failures, survives restarts, and is
+// directory is written by Apply and by Rollback, survives restarts, and is
 // removed only by an operator, which is the right authority for "try it again".
 func HasFailedUpdate(paths Paths, updateID string) bool {
 	updateID = strings.TrimSpace(updateID)
