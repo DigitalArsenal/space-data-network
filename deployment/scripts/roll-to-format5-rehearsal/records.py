@@ -152,7 +152,7 @@ def scan(schema):
         request = urllib.request.Request(API, request_frame(schema, cursor),
                                          {'Content-Type': MEDIA})
         next_cursor = None
-        with urllib.request.urlopen(request, timeout=120) as response:
+        with urllib.request.urlopen(request, timeout=900) as response:
             while True:
                 header = read_frame(response)
                 if header is None:
