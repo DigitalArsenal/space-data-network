@@ -332,7 +332,8 @@ describe('catalog scale: the gate from the task, and byte identity', () => {
       // once), P/OMM/local@celestrak-gp.db 4,296,704 B (0.380x),
       // T/OMM.fts 1,069,056 B (0.095x), 36,611 B of metadata; 20,059,271 B
       // in all (1.773x). The data file keeps the 1.35 bound; the whole store
-      // stays under the 2.00x of a second copy.
+      // is bounded at 1.85x, close above that measurement, so a second copy
+      // (2.00x) or a larger index fails.
       await store.close();
       const files = (directory: string): string[] => readdirSync(directory).flatMap(name => {
         const entry = join(directory, name);
@@ -347,7 +348,7 @@ describe('catalog scale: the gate from the task, and byte identity', () => {
       expect(dataFiles).toHaveLength(1);
       const dataBytes = statSync(dataFiles[0]).size;
       expect(dataBytes / streamBytes.byteLength, JSON.stringify({ dataFileBytes: dataBytes, inputBytes: streamBytes.byteLength })).toBeLessThan(1.35);
-      expect(total / streamBytes.byteLength, JSON.stringify({ filesystemBytes: total, inputBytes: streamBytes.byteLength })).toBeLessThan(2);
+      expect(total / streamBytes.byteLength, JSON.stringify({ filesystemBytes: total, inputBytes: streamBytes.byteLength })).toBeLessThan(1.85);
       // And no whole-blob envelope snapshot was written for the shard.
       const envelopeKey = keys.find((key) => key.endsWith(':record-envelopes'));
       if (envelopeKey) {
