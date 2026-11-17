@@ -173,7 +173,9 @@ func (b format4Backend) f4PutDirectKnown(op, schemaName string, records [][]byte
 			}
 			batch.Records[i] = in
 		}
+		b.s.tagMu.RLock()
 		got, err := b.d.api().Put(b.d.ctx, batch)
+		b.s.tagMu.RUnlock()
 		if err != nil {
 			return cids, outcomes, fmt.Errorf("store %s records: %w", schemaName, err)
 		}
@@ -231,8 +233,10 @@ func (b format4Backend) f4Retag(schemaName, typ, cid string, tag format4.Tag) er
 	if encfield.IsSealed(rec.Data) {
 		in.Sealed = rec.Data
 	}
+	b.s.tagMu.RLock()
 	got, err := b.d.api().Put(b.d.ctx, format4.Batch{Type: typ, Peer: rec.Peer, Tags: []format4.Tag{tag}, Mode: format4.ModeIngest,
 		Records: []format4.In{in}})
+	b.s.tagMu.RUnlock()
 	if err != nil {
 		return fmt.Errorf("retag %s: %w", cid, err)
 	}

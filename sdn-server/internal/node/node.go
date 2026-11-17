@@ -972,7 +972,7 @@ func (n *Node) init() error {
 	n.host.SetStreamHandler(protocol.SDSProtocolID, n.protocol.HandleStream)
 	epm.RegisterPeerDirectory(n.host, n.peerRegistry)
 	if n.store != nil {
-		n.flatsqlSync = protocol.NewFlatSQLSyncHandler(n.store).SetPrivateReadAuthorizer(n.mayReadPrivate)
+		n.flatsqlSync = protocol.NewFlatSQLSyncHandler(n.store).SetPrivateReadAuthorizer(n.mayReadPrivate).SetFollowTrust(n.followTrusted)
 		n.flatsqlSync.Register(n.host)
 		n.follows = newFollowManager(n, filepath.Dir(n.store.ArchiveOutputDir()))
 	}

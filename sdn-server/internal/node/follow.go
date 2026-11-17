@@ -9,28 +9,31 @@ package node
 //
 // Trust: a lane is followed only from a peer this node trusts, for a lane
 // its import policy admits (the decision trusted catch-up takes), checked
-// when the subscription is made, at every connection and, for the peer's
-// trust, at every page. Records are stored under the identity this node can
-// verify: the authenticated peer of the stream is their origin and their
-// producer. Record frames carry no signature, so a run whose header names
-// another peer as its origin or producer is refused, and so is the page.
+// when the subscription is made, at every connection and at every page.
+// Records are stored under the identity this node can verify: the
+// authenticated peer of the stream is their origin and their producer.
+// Record frames carry no signature, so a run whose header names another peer
+// as its origin or producer is refused, and so is the page. Every $QRP frame
+// is structurally verified before it is read (syncwire.ParseQRP), and a
+// panic in a followed stream ends that stream with an error and an alert
+// (follow_refused), never the process.
 //
-// Retention: the lane's rule (keep-all, replace-current, archive-all) is
-// applied as an imported publication applies it, with the newest batch
-// received as the imported one, once the producer has sent everything it
-// stores and has been quiet for an interval (an empty page): a batch arriving
-// is never superseded by a half-received one.
-//
-// Removals at the producer: at such a quiet page (at most once per
-// followReconcileEvery, and at the first one of each connection) the node
-// compares, for each batch of the lane it stored from the producer, its count
-// with the producer's (one read-chunk asking for the batch's TOTAL_COUNT).
-// When the producer holds fewer, the node reads the CIDs of the producer's
-// batch (a read-chunk of the batch, hashed as it arrives, nothing stored) and
-// removes the records of its batch that the producer no longer holds (a
-// record also held under any other tag stays). After a removal it reads the
-// lane again from its start, so it holds what the producer holds, and the
-// lane's rule applies again at the next quiet page.
+// The current batch: every followed page's end header carries the producer's
+// statement of the lane, its current batch and that batch's records. Records
+// a new batch carries over unchanged from the last one keep their content
+// address, so the producer tags them to the new batch in place and never
+// sends them again by sequence. So at a quiet page (an empty page: the
+// producer has sent everything it stores) whose statement differs from the
+// batch this node holds as current, the node reads the producer's list of
+// the batch's CIDs (paged, bounded by the stated count), tags the records it
+// already holds to the batch, fetches the others by CID, and only once it
+// holds every record of the list makes the batch current: a half-received
+// batch never is. It then removes the records of the batch it holds from
+// that producer that the list no longer names, and applies the lane's rule
+// with the producer's batch as the kept one (replace-current removes what
+// only the producer's other batches hold; another producer's records of the
+// lane stay). A list read and its fetches run at most once per
+// followSyncEvery per lane.
 //
 // Subscriptions are kept on disk as size-prefixed $DSS records, one per
 // followed lane (followFileName): the lane, the producer (PROVIDER_PEER_ID),
@@ -42,9 +45,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
+	"runtime/debug"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -56,6 +60,8 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	libp2pprotocol "github.com/libp2p/go-libp2p/core/protocol"
 
+	"github.com/spacedatanetwork/sdn-server/internal/channels"
+	"github.com/spacedatanetwork/sdn-server/internal/ops"
 	"github.com/spacedatanetwork/sdn-server/internal/protocol"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 	"github.com/spacedatanetwork/sdn-server/internal/syncwire"
@@ -64,20 +70,23 @@ import (
 // followFileName is the followed lanes' file in the storage directory.
 const followFileName = "follows.dss"
 
-// followPageLimit is the records a followed page holds at most.
+// followPageLimit is the records a followed page holds.
 const followPageLimit = syncwire.FollowMaxRecords
 
 // followReadWait bounds the wait for one followed page; the producer sends
 // an empty page after a quiet interval, so a longer silence is a dead stream.
 const followReadWait = 2 * time.Minute
 
-// followReconcileEvery is the shortest interval between two comparisons of
-// a lane's batches with the producer's.
-const followReconcileEvery = 30 * time.Second
+// followSyncEvery is the shortest interval between two reads of a producer's
+// list of its current batch, per lane.
+const followSyncEvery = 30 * time.Second
 
-// errFollowReread ends a followed stream so the lane is read again from its
-// start.
-var errFollowReread = errors.New("records were removed at the producer; reading the lane again from its start")
+// followMaxBatchRecords bounds the producer's current batch this node reads
+// a list of and holds.
+const followMaxBatchRecords = 1 << 20
+
+// errFollowRefused marks what the producer sent that this node refuses.
+var errFollowRefused = errors.New("refused")
 
 // FollowKey names one followed lane.
 type FollowKey struct {
@@ -107,10 +116,12 @@ type followEntry struct {
 	samples []followRate
 	cancel  context.CancelFunc
 	done    chan struct{}
-	// newestBatch is the batch of the newest record stored since the lane's
-	// rule was last applied ("" when none).
-	newestBatch   string
-	lastReconcile time.Time
+	// current is the producer's statement this node holds as its current
+	// batch, held the records of it this node held then; lastSync is when
+	// the producer's list was last read.
+	current  syncwire.FollowStatement
+	held     int64
+	lastSync time.Time
 }
 
 type followRate struct {
@@ -237,6 +248,12 @@ func (n *Node) followAdmitted(pid peer.ID, key FollowKey) error {
 	return nil
 }
 
+// followTrusted reports a peer this node has a trust relation with: its
+// followed streams get the trusted limits (protocol.FlatSQLSyncHandler).
+func (n *Node) followTrusted(id peer.ID) bool {
+	return n != nil && n.peerRegistry != nil && n.peerRegistry.IsTrusted(id)
+}
+
 // startLocked starts one lane; the caller holds m.mu.
 func (m *followManager) startLocked(st FollowStatus) {
 	ctx, cancel := context.WithCancel(m.n.ctx)
@@ -256,7 +273,7 @@ func (m *followManager) startLocked(st FollowStatus) {
 func (m *followManager) run(ctx context.Context, e *followEntry) {
 	backoff := time.Second
 	for ctx.Err() == nil {
-		pages, err := m.followOnce(ctx, e)
+		pages, err := m.followGuarded(ctx, e)
 		if ctx.Err() != nil {
 			return
 		}
@@ -270,7 +287,10 @@ func (m *followManager) run(ctx context.Context, e *followEntry) {
 		}
 		key := e.status.FollowKey
 		m.mu.Unlock()
-		log.Warnf("Followed lane %s %s/%s from %s: %v; reconnecting in %s", key.Schema, key.ProviderID, key.SourceName, key.Producer, err, backoff)
+		if followRefusal(err) {
+			m.n.alerts.Raise(ops.KindFollowRefused, followAlertSubject(key), ops.SeverityError, err.Error())
+		}
+		log.Warnf("Followed lane %s %s/%s from %s: %.1024q; reconnecting in %s", key.Schema, key.ProviderID, key.SourceName, key.Producer, fmt.Sprint(err), backoff)
 		select {
 		case <-ctx.Done():
 			return
@@ -278,6 +298,32 @@ func (m *followManager) run(ctx context.Context, e *followEntry) {
 		}
 		backoff = min(backoff*2, 30*time.Second)
 	}
+}
+
+// followGuarded is one followed stream: a panic in it (bytes from the
+// producer reaching code that should have refused them first) ends that
+// stream with an error, logged with its stack.
+func (m *followManager) followGuarded(ctx context.Context, e *followEntry) (pages int, err error) {
+	m.mu.Lock()
+	key := e.status.FollowKey
+	m.mu.Unlock()
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("%w: the followed stream panicked: %v", errFollowRefused, r)
+			log.Errorf("Followed lane %s %s/%s from %s: %v\n%s", key.Schema, key.ProviderID, key.SourceName, key.Producer, err, debug.Stack())
+		}
+	}()
+	return m.followOnce(ctx, e)
+}
+
+// followRefusal reports an error that is the producer's fault: a malformed
+// frame, a page past its limits, a run naming another peer, a panic.
+func followRefusal(err error) bool {
+	return errors.Is(err, errFollowRefused) || errors.Is(err, syncwire.ErrMalformedQRP) || errors.Is(err, syncwire.ErrFollowPageLimit)
+}
+
+func followAlertSubject(key FollowKey) string {
+	return key.Schema + " " + key.ProviderID + "/" + key.SourceName + " from " + shortPeerID(key.Producer)
 }
 
 // followOnce runs one followed stream until it fails or ctx ends; it
@@ -309,7 +355,6 @@ func (m *followManager) followOnce(ctx context.Context, e *followEntry) (int, er
 	}
 	log.Infof("Followed lane %s %s/%s from %s: stream open", st.Schema, st.ProviderID, st.SourceName, st.Producer)
 	pages := 0
-	reconciled := false
 	for {
 		_ = stream.SetReadDeadline(time.Now().Add(followReadWait))
 		began := time.Now()
@@ -325,22 +370,19 @@ func (m *followManager) followOnce(ctx context.Context, e *followEntry) (int, er
 			_ = stream.Reset()
 			return pages, err
 		}
-		if !m.n.peerRegistry.IsTrusted(remote) {
+		if err := m.n.followAdmitted(remote, st.FollowKey); err != nil {
 			_ = stream.Reset()
-			return pages, fmt.Errorf("producer %s is no longer a trusted peer of this node", remote)
+			return pages, fmt.Errorf("%v; the stream ends", err)
 		}
 		transfer := time.Since(began)
-		verify, store, records, stored, newest, storeErr := m.storePage(ctx, st, remote, runs)
+		res, storeErr := m.storeRuns(ctx, st, remote, runs, "", nil)
 		m.mu.Lock()
 		e.status.ReceivedBytes += received
-		e.status.ReceivedRecords += int64(records)
-		e.status.StoredRecords += int64(stored)
+		e.status.ReceivedRecords += int64(res.records)
+		e.status.StoredRecords += int64(res.stored)
 		e.status.TransferMs += transfer.Milliseconds()
-		e.status.VerifyMs += verify.Milliseconds()
-		e.status.StoreMs += store.Milliseconds()
-		if newest != "" {
-			e.newestBatch = newest
-		}
+		e.status.VerifyMs += res.verify.Milliseconds()
+		e.status.StoreMs += res.store.Milliseconds()
 		m.mu.Unlock()
 		if storeErr != nil {
 			_ = stream.Reset()
@@ -353,37 +395,33 @@ func (m *followManager) followOnce(ctx context.Context, e *followEntry) (int, er
 		e.status.Cursor = string(end.RESUME_CURSOR())
 		e.status.Pages++
 		now := time.Now()
-		if records > 0 {
+		if res.records > 0 {
 			e.status.LastReceivedAt = now
 		}
 		e.samples = append(e.samples, followRate{at: now, bytes: received})
 		m.mu.Unlock()
-		if records == 0 {
-			// The producer has sent everything it stores and has been
-			// quiet: the lane's rule, then its removals.
-			m.applyRetention(st, e)
-			if !reconciled || m.reconcileDue(e) {
-				reconciled = true
-				removed, err := m.reconcile(ctx, st, remote)
-				m.mu.Lock()
-				e.lastReconcile = time.Now()
-				e.status.RemovedRecords += removed
-				m.mu.Unlock()
-				if err != nil {
-					_ = stream.Reset()
-					return pages, fmt.Errorf("compare the lane with the producer's: %w", err)
-				}
-				if removed > 0 {
-					m.resetCursor(e)
-					_ = stream.Reset()
-					return pages, errFollowReread
-				}
-			}
-		}
-		if records > 0 || moved {
+		if res.records > 0 || moved {
 			if err := m.save(); err != nil {
 				_ = stream.Reset()
 				return pages, fmt.Errorf("save cursor: %w", err)
+			}
+		}
+		if res.records == 0 {
+			// The producer has sent everything it stores and has been
+			// quiet: hold its current batch as it states it. A failure is
+			// the lane's error until a later quiet page succeeds; the
+			// stream goes on.
+			if err := m.holdCurrent(ctx, st, e, remote, syncwire.StatementOf(end)); err != nil {
+				if ctx.Err() != nil {
+					return pages, ctx.Err()
+				}
+				m.mu.Lock()
+				e.status.LastError = err.Error()
+				m.mu.Unlock()
+				if followRefusal(err) {
+					m.n.alerts.Raise(ops.KindFollowRefused, followAlertSubject(st.FollowKey), ops.SeverityError, err.Error())
+				}
+				log.Warnf("Followed lane %s %s/%s from %s: %.1024q", st.Schema, st.ProviderID, st.SourceName, remote, err.Error())
 			}
 		}
 		if err := syncwire.Grant(stream, st.Schema); err != nil {
@@ -393,203 +431,307 @@ func (m *followManager) followOnce(ctx context.Context, e *followEntry) (int, er
 	}
 }
 
-// storePage verifies each record of a page against its standard and stores
-// each run's records under the run's lane tags, with the stream's peer as
-// their origin and producer. It returns when the store has returned, with
-// what it stored before any failure, and the batch of the newest record.
-func (m *followManager) storePage(ctx context.Context, st FollowStatus, remote peer.ID, runs []syncwire.FollowRun) (verify, store time.Duration, records, stored int, newest string, err error) {
+// storedRuns is what storeRuns stored.
+type storedRuns struct {
+	verify, store   time.Duration
+	records, stored int
+	cids            []string
+}
+
+// storeRuns verifies each record of a page's runs against its standard and
+// stores each run's records under the lane's tags and the run's batch (or
+// batch, when set), with the stream's peer as their origin and producer.
+// With want set, every record must be one of want's CIDs. It returns when the
+// store has returned, with what it stored before any failure.
+func (m *followManager) storeRuns(ctx context.Context, st FollowStatus, remote peer.ID, runs []syncwire.FollowRun, batch string, want map[string]bool) (storedRuns, error) {
+	var res storedRuns
 	for _, run := range runs {
 		h := run.Header
 		schema := syncwire.NormalizeSchema(string(h.SCHEMA_NAME()))
 		if schema != st.Schema || string(h.PROVIDER_ID()) != st.ProviderID || string(h.SOURCE_NAME()) != st.SourceName {
-			return verify, store, records, stored, newest, fmt.Errorf("the producer sent a run of %s %s/%s on a stream of %s %s/%s",
+			return res, fmt.Errorf("%w: the producer sent a run of %s %s/%s on a stream of %s %s/%s", errFollowRefused,
 				schema, h.PROVIDER_ID(), h.SOURCE_NAME(), st.Schema, st.ProviderID, st.SourceName)
 		}
 		for _, claim := range []struct{ field, value string }{{"ORIGIN_ID", string(h.ORIGIN_ID())}, {"PRODUCER_PEER_ID", string(h.PRODUCER_PEER_ID())}} {
 			if claimed, err := peer.Decode(strings.TrimSpace(claim.value)); err == nil && claimed != remote {
-				return verify, store, records, stored, newest, fmt.Errorf("the producer %s sent %d records whose %s names another peer, %s; unsigned records are taken only as the stream peer's own: refused",
-					remote, len(run.Records), claim.field, claimed)
+				return res, fmt.Errorf("%w: the producer %s sent %d records whose %s names another peer, %s; unsigned records are taken only as the stream peer's own",
+					errFollowRefused, remote, len(run.Records), claim.field, claimed)
 			}
 		}
 		began := time.Now()
 		data := make([][]byte, 0, len(run.Records))
 		for _, frame := range run.Records {
 			body := frame[syncwire.FramePrefixLength:]
+			if want != nil {
+				cid := storage.ComputeCID(body)
+				if !want[cid] {
+					return res, fmt.Errorf("%w: the producer sent a record (%s) it was not asked for", errFollowRefused, cid)
+				}
+				res.cids = append(res.cids, cid)
+			}
 			if m.n.validator != nil {
 				if err := m.n.validator.Validate(ctx, schema, body); err != nil {
-					return verify, store, records, stored, newest, fmt.Errorf("record of %s fails its standard: %w", schema, err)
+					return res, fmt.Errorf("%w: a record of %s fails its standard: %v", errFollowRefused, schema, err)
 				}
 			}
 			data = append(data, body)
 		}
-		verify += time.Since(began)
+		res.verify += time.Since(began)
 		tags := storage.SourceTags{ProviderID: st.ProviderID, SourceName: st.SourceName, BatchID: string(h.BATCH_ID()), ProducerPeerID: remote.String()}
+		if batch != "" {
+			tags.BatchID = batch
+		}
 		began = time.Now()
 		n, err := m.n.store.StoreBatchWithSourceTags(schema, data, remote.String(), nil, tags)
-		store += time.Since(began)
-		records += len(data)
-		stored += n
+		res.store += time.Since(began)
+		res.records += len(data)
+		res.stored += n
 		if err != nil {
-			return verify, store, records, stored, newest, fmt.Errorf("store %d records of %s: %w", len(data), schema, err)
+			return res, fmt.Errorf("store %d records of %s: %w", len(data), schema, err)
 		}
-		newest = tags.BatchID
 	}
-	return verify, store, records, stored, newest, nil
+	return res, nil
 }
 
-// applyRetention applies the lane's rule with the newest batch received
-// since it was last applied as the imported one.
-func (m *followManager) applyRetention(st FollowStatus, e *followEntry) {
-	m.mu.Lock()
-	batch := e.newestBatch
-	e.newestBatch = ""
-	m.mu.Unlock()
-	if batch == "" {
-		return
+// holdCurrent brings the producer's current batch, as stmt states it, into
+// this node (see the package comment). It returns nil when there is nothing
+// to do, or when the last list read was less than followSyncEvery ago.
+func (m *followManager) holdCurrent(ctx context.Context, st FollowStatus, e *followEntry, remote peer.ID, stmt syncwire.FollowStatement) error {
+	if stmt.BatchID == "" {
+		return nil
 	}
-	m.n.applyLaneRetention(st.Schema, st.ProviderID, st.SourceName, storage.RetainCandidate{BatchID: batch, PublishedAt: time.Now().UTC()}, nil)
-}
-
-func (m *followManager) reconcileDue(e *followEntry) bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return time.Since(e.lastReconcile) >= followReconcileEvery
-}
-
-// reconcile removes the records of the lane this node stored from remote
-// that remote no longer holds; it returns the records removed.
-func (m *followManager) reconcile(ctx context.Context, st FollowStatus, remote peer.ID) (int64, error) {
-	held, err := m.n.store.FollowLaneBatchCounts(st.Schema, st.ProviderID, st.SourceName, remote.String())
+	counts, err := m.n.store.FollowLaneBatchCounts(st.Schema, st.ProviderID, st.SourceName, remote.String())
 	if errors.Is(err, storage.ErrFollowLaneUnsupported) {
-		return 0, nil
+		return nil
 	}
 	if err != nil {
-		return 0, err
+		return err
 	}
-	batches := make([]string, 0, len(held))
-	for b := range held {
-		if b != "" {
-			batches = append(batches, b)
-		}
+	own := counts[stmt.BatchID]
+	m.mu.Lock()
+	switch {
+	case e.current.BatchID == stmt.BatchID && own == stmt.Records:
+		// The current batch grew by records that arrived in sequence.
+		e.current, e.held = stmt, own
+		m.mu.Unlock()
+		return nil
+	case e.current == stmt && own == e.held:
+		m.mu.Unlock()
+		return nil
+	case time.Since(e.lastSync) < followSyncEvery:
+		m.mu.Unlock()
+		return nil
 	}
-	sort.Strings(batches)
-	var removed int64
-	for _, batch := range batches {
-		own := held[batch]
-		theirs, err := m.producerBatchCount(ctx, remote, st, batch)
+	e.lastSync = time.Now()
+	m.mu.Unlock()
+
+	began := time.Now()
+	if stmt.Records > followMaxBatchRecords {
+		return fmt.Errorf("%w: the producer states %d records in batch %s, more than the %d this node holds of a followed batch", errFollowRefused,
+			stmt.Records, stmt.BatchID, followMaxBatchRecords)
+	}
+	list, err := m.producerBatchList(ctx, remote, st, stmt)
+	if err != nil {
+		return fmt.Errorf("read the producer's list of batch %s: %w", stmt.BatchID, err)
+	}
+	held, err := m.n.store.FollowLaneBatchCIDs(st.Schema, st.ProviderID, st.SourceName, stmt.BatchID, remote.String())
+	if err != nil {
+		return err
+	}
+	slices.Sort(held)
+	held = slices.Compact(held)
+	missing, extra := sortedDifference(list, held), sortedDifference(held, list)
+	got, fetched, err := m.holdRecords(ctx, st, remote, stmt.BatchID, missing)
+	if err != nil {
+		return fmt.Errorf("hold the records of batch %s: %w", stmt.BatchID, err)
+	}
+	if got < len(missing) {
+		return fmt.Errorf("this node holds %d of the %d records the producer lists in batch %s; the batch is not current",
+			len(list)-len(missing)+got, len(list), stmt.BatchID)
+	}
+	rule := m.n.laneRetentionRule(st.Schema, st.ProviderID, st.SourceName)
+	gone := func(batch string) bool { return batch == stmt.BatchID }
+	if rule == channels.RetentionReplaceCurrent {
+		gone = func(string) bool { return true }
+	}
+	removed, err := m.n.store.RemoveFollowLaneRecords(st.Schema, st.ProviderID, st.SourceName, remote.String(), gone, extra)
+	if err != nil {
+		return fmt.Errorf("remove the records batch %s no longer holds: %w", stmt.BatchID, err)
+	}
+	var superseded int64
+	if rule == channels.RetentionReplaceCurrent && !m.n.laneProducedHere(st.Schema, st.ProviderID, st.SourceName) {
+		m.n.datasetSupersedeMu.Lock()
+		superseded, err = m.n.store.SupersedeFollowLane(st.Schema, st.ProviderID, st.SourceName, remote.String(), stmt.BatchID)
+		m.n.datasetSupersedeMu.Unlock()
 		if err != nil {
-			return removed, err
+			return fmt.Errorf("keep batch %s as the current set: %w", stmt.BatchID, err)
 		}
-		if theirs >= own {
+	}
+	counts, err = m.n.store.FollowLaneBatchCounts(st.Schema, st.ProviderID, st.SourceName, remote.String())
+	if err != nil {
+		return err
+	}
+	m.mu.Lock()
+	e.current, e.held = stmt, counts[stmt.BatchID]
+	e.status.RemovedRecords += removed + superseded
+	m.mu.Unlock()
+	m.n.alerts.Clear(ops.KindFollowRefused, followAlertSubject(st.FollowKey))
+	log.Infof("Followed lane %s %s/%s from %s: batch %s is current (%d records listed, %d tagged from held records, %d fetched by CID, %d removed that the batch no longer holds, %d removed with the superseded batches; rule %s) in %s",
+		st.Schema, st.ProviderID, st.SourceName, remote, stmt.BatchID, len(list), got-fetched, fetched, removed, superseded, rule,
+		time.Since(began).Round(time.Millisecond))
+	return nil
+}
+
+// sortedDifference is the strings of a (sorted, distinct) that b (sorted,
+// distinct) lacks.
+func sortedDifference(a, b []string) []string {
+	var out []string
+	j := 0
+	for _, s := range a {
+		for j < len(b) && b[j] < s {
+			j++
+		}
+		if j >= len(b) || b[j] != s {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// producerBatchList is the producer's list of the CIDs of its batch (sorted,
+// distinct), read in pages; a list longer than the statement allows (its
+// count and one page more, at most followMaxBatchRecords) is refused.
+func (m *followManager) producerBatchList(ctx context.Context, remote peer.ID, st FollowStatus, stmt syncwire.FollowStatement) ([]string, error) {
+	bound := min(stmt.Records+syncwire.FollowCIDPageLimit, followMaxBatchRecords)
+	var list []string
+	cursor := ""
+	for {
+		stream, err := m.producerRead(ctx, remote, st, stmt.BatchID, cursor, syncwire.FollowCIDPageLimit,
+			syncwire.QRPFilterField{Field: syncwire.FilterProjection, Op: syncwire.QRPFilterEq, Value: syncwire.ProjectionCID})
+		if err != nil {
+			return nil, err
+		}
+		cids, next, err := syncwire.ReadCIDPage(stream)
+		_ = stream.Close()
+		if err != nil {
+			return nil, err
+		}
+		list = append(list, cids...)
+		if int64(len(list)) > bound {
+			return nil, fmt.Errorf("%w: the producer lists more than %d records in batch %s, which it states holds %d", errFollowRefused,
+				bound, stmt.BatchID, stmt.Records)
+		}
+		if next == "" {
+			break
+		}
+		if next == cursor {
+			return nil, fmt.Errorf("%w: the producer's list of batch %s does not advance", errFollowRefused, stmt.BatchID)
+		}
+		cursor = next
+	}
+	slices.Sort(list)
+	return slices.Compact(list), nil
+}
+
+// holdRecords gives the records of cids batch's tag from remote: those this
+// node holds from their stored bytes, the others fetched from remote by CID.
+// It returns how many it holds so and how many of those it fetched.
+func (m *followManager) holdRecords(ctx context.Context, st FollowStatus, remote peer.ID, batch string, cids []string) (int, int, error) {
+	tags := storage.SourceTags{ProviderID: st.ProviderID, SourceName: st.SourceName, BatchID: batch, ProducerPeerID: remote.String()}
+	got := 0
+	var absent []string
+	for start := 0; start < len(cids); start += 1024 {
+		part := cids[start:min(start+1024, len(cids))]
+		bytesOf, err := m.n.store.HeldRecordBytes(st.Schema, part)
+		if err != nil {
+			return got, 0, err
+		}
+		data := make([][]byte, 0, len(bytesOf))
+		for _, c := range part {
+			if b, ok := bytesOf[c]; ok {
+				data = append(data, b)
+			} else {
+				absent = append(absent, c)
+			}
+		}
+		if len(data) == 0 {
 			continue
 		}
-		keep := map[string]bool{}
-		if theirs > 0 {
-			if keep, err = m.producerBatchCIDs(ctx, remote, st, batch); err != nil {
-				return removed, err
+		if _, err := m.n.store.StoreBatchWithSourceTags(st.Schema, data, remote.String(), nil, tags); err != nil {
+			return got, 0, fmt.Errorf("tag %d held records to batch %s: %w", len(data), batch, err)
+		}
+		got += len(data)
+	}
+	fetched := 0
+	for start := 0; start < len(absent); start += syncwire.FollowFetchMaxCIDs {
+		pending := absent[start:min(start+syncwire.FollowFetchMaxCIDs, len(absent))]
+		for len(pending) > 0 {
+			stored, err := m.fetchByCID(ctx, remote, st, batch, pending)
+			if err != nil {
+				return got, fetched, err
 			}
-		}
-		cids, err := m.n.store.FollowLaneBatchCIDs(st.Schema, st.ProviderID, st.SourceName, batch, remote.String())
-		if err != nil {
-			return removed, err
-		}
-		var gone []string
-		for _, c := range cids {
-			if !keep[c] {
-				gone = append(gone, c)
+			if len(stored) == 0 {
+				return got, fetched, nil
 			}
-		}
-		n, err := m.n.store.RemoveFollowLaneRecords(st.Schema, st.ProviderID, st.SourceName, batch, remote.String(), gone)
-		removed += n
-		log.Infof("Followed lane %s %s/%s from %s: the producer holds %d records of batch %s, this node %d; removed %d it no longer holds",
-			st.Schema, st.ProviderID, st.SourceName, remote, theirs, batch, own, n)
-		if err != nil {
-			return removed, err
+			got += len(stored)
+			fetched += len(stored)
+			done := make(map[string]bool, len(stored))
+			for _, c := range stored {
+				done[c] = true
+			}
+			rest := pending[:0:0]
+			for _, c := range pending {
+				if !done[c] {
+					rest = append(rest, c)
+				}
+			}
+			pending = rest
 		}
 	}
-	return removed, nil
+	return got, fetched, nil
+}
+
+// fetchByCID reads records of batch named by CID from remote (one followed
+// page, under the page's limits) and stores them with the batch's tag. It
+// returns the CIDs stored.
+func (m *followManager) fetchByCID(ctx context.Context, remote peer.ID, st FollowStatus, batch string, cids []string) ([]string, error) {
+	stream, err := m.producerRead(ctx, remote, st, batch, "", len(cids),
+		syncwire.QRPFilterField{Field: syncwire.FilterCID, Op: syncwire.QRPFilterIn, Value: strings.Join(cids, ",")})
+	if err != nil {
+		return nil, err
+	}
+	defer stream.Close()
+	runs, _, _, err := syncwire.ReadFollowPage(stream, len(cids))
+	if err != nil {
+		return nil, err
+	}
+	want := make(map[string]bool, len(cids))
+	for _, c := range cids {
+		want[c] = true
+	}
+	res, err := m.storeRuns(ctx, st, remote, runs, batch, want)
+	m.mu.Lock()
+	if e := m.subs[st.FollowKey]; e != nil {
+		e.status.ReceivedRecords += int64(res.records)
+		e.status.StoredRecords += int64(res.stored)
+	}
+	m.mu.Unlock()
+	return res.cids, err
 }
 
 // producerRead opens one (unfollowed) read-chunk of a batch of the lane.
-func (m *followManager) producerRead(ctx context.Context, remote peer.ID, st FollowStatus, batch, cursor string, limit int) (network.Stream, error) {
+func (m *followManager) producerRead(ctx context.Context, remote peer.ID, st FollowStatus, batch, cursor string, limit int, filters ...syncwire.QRPFilterField) (network.Stream, error) {
 	stream, err := m.n.host.NewStream(ctx, remote, libp2pprotocol.ID(syncwire.ProtocolID(syncwire.OpReadChunk)))
 	if err != nil {
 		return nil, fmt.Errorf("open stream: %w", err)
 	}
 	_ = stream.SetDeadline(time.Now().Add(followReadWait))
 	if err := syncwire.Request(stream, syncwire.QRPFields{SchemaName: st.Schema, ProviderID: st.ProviderID, SourceName: st.SourceName,
-		BatchID: batch, Cursor: cursor, Limit: uint32(limit)}); err != nil {
+		BatchID: batch, Cursor: cursor, Limit: uint32(limit), Filters: filters}); err != nil {
 		_ = stream.Reset()
 		return nil, fmt.Errorf("write request: %w", err)
 	}
 	return stream, nil
-}
-
-// producerBatchCount is the producer's TOTAL_COUNT of one batch of the lane.
-func (m *followManager) producerBatchCount(ctx context.Context, remote peer.ID, st FollowStatus, batch string) (int64, error) {
-	stream, err := m.producerRead(ctx, remote, st, batch, "", 1)
-	if err != nil {
-		return 0, err
-	}
-	defer stream.Reset()
-	header, _, err := syncwire.ReadPage(stream)
-	if err != nil {
-		return 0, fmt.Errorf("count batch %s at the producer: %w", batch, err)
-	}
-	return int64(header.TOTAL_COUNT()), nil
-}
-
-// producerBatchCIDs is the CIDs of one batch of the lane at the producer,
-// hashed from its records as they arrive (nothing is stored or kept).
-func (m *followManager) producerBatchCIDs(ctx context.Context, remote peer.ID, st FollowStatus, batch string) (map[string]bool, error) {
-	cids := map[string]bool{}
-	cursor := ""
-	for {
-		stream, err := m.producerRead(ctx, remote, st, batch, cursor, followPageLimit)
-		if err != nil {
-			return nil, err
-		}
-		next, err := readScanCIDs(stream, cids)
-		stream.Close()
-		if err != nil {
-			return nil, fmt.Errorf("read batch %s at the producer: %w", batch, err)
-		}
-		if next == "" {
-			return cids, nil
-		}
-		cursor = next
-	}
-}
-
-// readScanCIDs reads one scan page to its end, adding each record's CID to
-// cids, and returns the page's NEXT_CURSOR.
-func readScanCIDs(r io.Reader, cids map[string]bool) (string, error) {
-	next := ""
-	read := 0
-	for {
-		header, _, err := syncwire.ReadPage(r)
-		if errors.Is(err, io.EOF) {
-			return next, nil
-		}
-		if err != nil {
-			return "", err
-		}
-		next = string(header.NEXT_CURSOR())
-		count := int(header.RECORD_COUNT())
-		if count == 0 {
-			continue
-		}
-		if read += count; read > followPageLimit {
-			return "", fmt.Errorf("%w: more than %d records in a page", syncwire.ErrFollowPageLimit, followPageLimit)
-		}
-		for i := 0; i < count; i++ {
-			frame, err := syncwire.ReadFrame(r, syncwire.MaxFrameBytes)
-			if err != nil {
-				return "", err
-			}
-			cids[storage.ComputeCID(frame[syncwire.FramePrefixLength:])] = true
-		}
-	}
 }
 
 func (m *followManager) resetCursor(e *followEntry) {

@@ -159,7 +159,12 @@ func EngineAOTCacheDir() string { return engineAOTCacheDir() }
 type FlatSQLStore struct {
 	// writes wakes followed reads when a type's records are stored
 	// (write_signal.go).
-	writes                         writeSignals
+	writes writeSignals
+	// tagMu orders a followed lane's removals against tagging: every engine
+	// write holds it shared, and a removal that checks a record's tags and
+	// then deletes it holds it alone, so no record gains a tag between the
+	// check and the delete (follow_lane.go).
+	tagMu                          sync.RWMutex
 	publicationSourceKeys          atomic.Pointer[map[publicationSourceKey]bool]
 	publicationEnabled             atomic.Bool
 	publicationGroupMu             sync.Mutex

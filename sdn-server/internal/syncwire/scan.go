@@ -69,15 +69,17 @@ func laneOf(rec *storage.Record) scanLane {
 // (CURSOR, NEXT_CURSOR, RESUME_CURSOR on the last page, TOTAL_COUNT, LIMIT,
 // ETAG = page chunk hash). An empty page is one header with RECORD_COUNT 0.
 func WriteScanPage(w io.Writer, store *storage.FlatSQLStore, page *datasync.Page, records []*storage.Record) error {
-	return writeScanPage(w, store, page, records, false)
+	return writeScanPage(w, store, page, records, nil)
 }
 
-func writeScanPage(w io.Writer, store *storage.FlatSQLStore, page *datasync.Page, records []*storage.Record, closePage bool) error {
+// writeScanPage writes a scan page; stmt, when set, closes it as a followed
+// page whose end header carries the producer's statement of the lane.
+func writeScanPage(w io.Writer, store *storage.FlatSQLStore, page *datasync.Page, records []*storage.Record, stmt *FollowStatement) error {
 	fileIdentifier := ""
 	if len(records) > 0 && len(records[0].Data) >= FrameIdentifierOffset {
 		fileIdentifier = string(records[0].Data[FramePrefixLength:FrameIdentifierOffset])
 	}
-	header := func(lane scanLane, count int) []byte {
+	header := func(lane scanLane, count int, total int64) []byte {
 		return BuildQRP(QRPFields{
 			Kind:           QRPKindPage,
 			Status:         QRPStatusOk,
@@ -93,15 +95,21 @@ func writeScanPage(w io.Writer, store *storage.FlatSQLStore, page *datasync.Page
 			NextCursor:     page.NextCursor,
 			ResumeCursor:   page.ResumeCursor,
 			RecordCount:    uint32(count),
-			TotalCount:     uint64(page.TotalCount),
+			TotalCount:     uint64(max(total, 0)),
 			Etag:           page.ChunkHash,
 			GeneratedAtMs:  time.Now().UnixMilli(),
 		})
 	}
+	endHeader := func() []byte {
+		if stmt == nil || stmt.BatchID == "" {
+			return header(scanLane{}, 0, page.TotalCount)
+		}
+		return header(scanLane{batchID: stmt.BatchID}, 0, stmt.Records)
+	}
 
 	out := bufio.NewWriterSize(w, scanWriteBuffer)
 	if len(records) == 0 {
-		if _, err := out.Write(header(scanLane{}, 0)); err != nil {
+		if _, err := out.Write(endHeader()); err != nil {
 			return err
 		}
 		return out.Flush()
@@ -112,7 +120,7 @@ func writeScanPage(w io.Writer, store *storage.FlatSQLStore, page *datasync.Page
 		for end < len(records) && laneOf(records[end]) == lane {
 			end++
 		}
-		if _, err := out.Write(header(lane, end-start)); err != nil {
+		if _, err := out.Write(header(lane, end-start, page.TotalCount)); err != nil {
 			return err
 		}
 		if err := store.WriteRawRecordFrames(out, records[start:end]); err != nil {
@@ -120,8 +128,8 @@ func writeScanPage(w io.Writer, store *storage.FlatSQLStore, page *datasync.Page
 		}
 		start = end
 	}
-	if closePage {
-		if _, err := out.Write(header(scanLane{}, 0)); err != nil {
+	if stmt != nil {
+		if _, err := out.Write(endHeader()); err != nil {
 			return err
 		}
 	}

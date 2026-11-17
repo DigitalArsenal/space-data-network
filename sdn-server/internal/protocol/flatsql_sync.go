@@ -53,6 +53,10 @@ type FlatSQLSyncHandler struct {
 	follows *followStats
 	// followSlots limits the followed streams served at once.
 	followSlots *followSlots
+	// followTrust names the peers this node has a trust relation with; a
+	// followed stream of any other peer gets the anonymous limits. Unset:
+	// every peer is anonymous.
+	followTrust PeerAuthorizer
 }
 
 // syncRequest is one decoded $QRP request.
@@ -86,6 +90,14 @@ func NewFlatSQLSyncHandler(store *storage.FlatSQLStore) *FlatSQLSyncHandler {
 // h so registration can chain it.
 func (h *FlatSQLSyncHandler) SetPrivateReadAuthorizer(fn PeerAuthorizer) *FlatSQLSyncHandler {
 	h.readAuthorizer = fn
+	return h
+}
+
+// SetFollowTrust installs the check naming the peers this node has a trust
+// relation with (followed streams: the trusted limits). It returns h so
+// registration can chain it.
+func (h *FlatSQLSyncHandler) SetFollowTrust(fn PeerAuthorizer) *FlatSQLSyncHandler {
+	h.followTrust = fn
 	return h
 }
 
@@ -237,6 +249,10 @@ func decodeSyncRequest(op string, r io.Reader) (syncRequest, error) {
 			if op != syncwire.OpReadShardBatch {
 				return syncRequest{}, fmt.Errorf("%s takes no %s filter", op, field)
 			}
+		case syncwire.FilterProjection, syncwire.FilterCID:
+			if op != syncwire.OpReadChunk {
+				return syncRequest{}, fmt.Errorf("%s takes no %s filter", op, field)
+			}
 		default:
 			return syncRequest{}, fmt.Errorf("unsupported filter %q", truncateName(field))
 		}
@@ -282,6 +298,20 @@ func (h *FlatSQLSyncHandler) handleReadChunk(w io.Writer, peerID peer.ID, req sy
 	}
 	query.Schema = req.schema // the name authorize checked
 	query.QueryProfile = req.queryProfile
+	projection, listed := syncwire.Filter(req.q, syncwire.FilterProjection, syncwire.QRPFilterEq)
+	named, fetched := syncwire.Filter(req.q, syncwire.FilterCID, syncwire.QRPFilterIn)
+	if listed || fetched {
+		if req.q.FOLLOW() || listed == fetched || req.batchID == "" || req.providerID == "" || req.sourceName == "" {
+			return errors.New("a batch's list or its records by CID is one unfollowed read-chunk naming the lane and the batch, with one of PROJECTION and CID")
+		}
+		if listed {
+			if projection != syncwire.ProjectionCID {
+				return fmt.Errorf("unsupported PROJECTION %q", truncateName(projection))
+			}
+			return writeBatchCIDPage(w, activeStore, req)
+		}
+		return writeBatchRecords(w, activeStore, req, named)
+	}
 	if req.q.FOLLOW() {
 		rw, ok := w.(io.ReadWriter)
 		if !ok {
@@ -302,16 +332,72 @@ func (h *FlatSQLSyncHandler) handleReadChunk(w io.Writer, peerID peer.ID, req sy
 // read again once a quiet interval.
 var (
 	followQuiet = 10 * time.Second
-	// followGrantWait bounds the wait for the subscriber's next grant.
-	followGrantWait = 30 * time.Minute
+	// followGrantWait bounds the wait for a trusted subscriber's next
+	// grant; followAnonGrantWait an anonymous one's.
+	followGrantWait     = 30 * time.Minute
+	followAnonGrantWait = 2 * time.Minute
+	// followAnonLifetime ends an anonymous subscriber's stream; it opens
+	// another at its resume cursor.
+	followAnonLifetime = 15 * time.Minute
 )
 
-// Followed streams this node serves at once: per peer and in total. A
-// stream past either is refused busy.
+// Followed streams this node serves at once: per trusted peer, per peer
+// without a trust relation (anonymous), for all anonymous peers together and
+// in total. A stream past any is refused busy, so throwaway peer IDs hold at
+// most followAnonStreamsTotal of the followStreamsTotal slots.
 const (
-	followStreamsPerPeer = 16
-	followStreamsTotal   = 256
+	followStreamsPerPeer     = 16
+	followAnonStreamsPerPeer = 4
+	followAnonStreamsTotal   = 64
+	followStreamsTotal       = 256
 )
+
+// errFollowLifetime ends an anonymous followed stream at its lifetime.
+var errFollowLifetime = fmt.Errorf("%w: an anonymous followed stream's lifetime is over; open another at the resume cursor", syncwire.ErrBusy)
+
+// writeBatchCIDPage answers one page of a batch's list of CIDs. CURSOR and
+// NEXT_CURSOR are the sequence after which the page reads.
+func writeBatchCIDPage(w io.Writer, store *storage.FlatSQLStore, req syncRequest) error {
+	var after int64
+	if req.cursor != "" {
+		var err error
+		if after, err = strconv.ParseInt(req.cursor, 10, 64); err != nil || after < 0 {
+			return fmt.Errorf("a batch list CURSOR %q is not a node-issued position", truncateName(req.cursor))
+		}
+	}
+	cids, last, more, err := store.LaneBatchCIDPage(req.schema, req.providerID, req.sourceName, req.batchID, after, syncwire.FollowCIDPageLimit)
+	if err != nil {
+		return err
+	}
+	next := ""
+	if more {
+		next = strconv.FormatInt(last, 10)
+	}
+	_, err = w.Write(syncwire.CIDPage(syncwire.QRPFields{SchemaName: req.schema, ProviderID: req.providerID, SourceName: req.sourceName,
+		BatchID: req.batchID, Cursor: req.cursor, NextCursor: next, Limit: syncwire.FollowCIDPageLimit, GeneratedAtMs: time.Now().UnixMilli()}, cids))
+	return err
+}
+
+// writeBatchRecords answers the records of a batch named by CID as one
+// followed page (no statement); records past the page's limits, and CIDs the
+// batch does not hold, are left out.
+func writeBatchRecords(w io.Writer, store *storage.FlatSQLStore, req syncRequest, named string) error {
+	var cids []string
+	for _, c := range strings.Split(named, ",") {
+		if c = strings.TrimSpace(c); c != "" {
+			cids = append(cids, c)
+		}
+	}
+	if len(cids) == 0 || len(cids) > syncwire.FollowFetchMaxCIDs {
+		return fmt.Errorf("a fetch by CID names 1 to %d CIDs, not %d", syncwire.FollowFetchMaxCIDs, len(cids))
+	}
+	records, err := store.LaneRecordsByCID(req.schema, req.providerID, req.sourceName, req.batchID, cids)
+	if err != nil {
+		return err
+	}
+	records = records[:syncwire.FollowPageCut(records, syncwire.FollowMaxRecords)]
+	return syncwire.WriteFollowPage(w, store, &datasync.Page{Schema: req.schema, Limit: len(cids)}, records, syncwire.FollowStatement{})
+}
 
 type deadlineSetter interface {
 	SetReadDeadline(time.Time) error
@@ -327,10 +413,15 @@ type deadlineSetter interface {
 // skipping. The peer's read permission is checked again before each page:
 // once it is gone the stream ends.
 func (h *FlatSQLSyncHandler) followReadChunk(s io.ReadWriter, store *storage.FlatSQLStore, query datasync.QueryRequest, peerID peer.ID, req syncRequest) error {
-	if !h.followSlots.acquire(peerID) {
+	trusted := authorizedPeer(h.followTrust, peerID) || authorizedPeer(h.readAuthorizer, peerID)
+	if !h.followSlots.acquire(peerID, trusted) {
 		return errFollowBusy
 	}
-	defer h.followSlots.release(peerID)
+	defer h.followSlots.release(peerID, trusted)
+	grantWait, ends := followGrantWait, time.Time{}
+	if !trusted {
+		grantWait, ends = followAnonGrantWait, time.Now().Add(followAnonLifetime)
+	}
 	deadlines, _ := s.(deadlineSetter)
 	if query.Limit <= 0 || query.Limit > syncwire.FollowMaxRecords {
 		query.Limit = syncwire.FollowMaxRecords
@@ -341,8 +432,11 @@ func (h *FlatSQLSyncHandler) followReadChunk(s io.ReadWriter, store *storage.Fla
 	caughtUp := false
 	for first := true; ; first = false {
 		if !first {
+			if !ends.IsZero() && time.Now().After(ends) {
+				return errFollowLifetime
+			}
 			if deadlines != nil {
-				_ = deadlines.SetReadDeadline(time.Now().Add(followGrantWait))
+				_ = deadlines.SetReadDeadline(time.Now().Add(grantWait))
 			}
 			if _, err := syncwire.ReadRequest(s); err != nil {
 				if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
@@ -390,7 +484,7 @@ func (h *FlatSQLSyncHandler) followReadChunk(s io.ReadWriter, store *storage.Fla
 		if deadlines != nil {
 			_ = deadlines.SetWriteDeadline(time.Now().Add(DefaultReadTimeout))
 		}
-		if err := syncwire.WriteFollowPage(s, store, page, records); err != nil {
+		if err := syncwire.WriteFollowPage(s, store, page, records, laneStatement(store, query)); err != nil {
 			return err
 		}
 		var recordBytes int64
@@ -404,34 +498,61 @@ func (h *FlatSQLSyncHandler) followReadChunk(s io.ReadWriter, store *storage.Fla
 	}
 }
 
+// laneStatement is this node's statement of a followed lane: its current
+// batch and that batch's records (none for a lane not named in full, or a
+// store that does not state batches).
+func laneStatement(store *storage.FlatSQLStore, query datasync.QueryRequest) syncwire.FollowStatement {
+	if query.ProviderID == "" || query.SourceName == "" {
+		return syncwire.FollowStatement{}
+	}
+	batch, records, err := store.LaneCurrentBatch(query.Schema, query.ProviderID, query.SourceName)
+	if err != nil {
+		if !errors.Is(err, storage.ErrFollowLaneUnsupported) {
+			log.Debugf("flatsql-sync: no statement of %s %s/%s: %v", query.Schema, query.ProviderID, query.SourceName, err)
+		}
+		return syncwire.FollowStatement{}
+	}
+	return syncwire.FollowStatement{BatchID: batch, Records: records}
+}
+
 // errFollowBusy refuses a followed read past the stream limits.
 var errFollowBusy = fmt.Errorf("%w: followed stream limit reached", syncwire.ErrBusy)
 
-// followSlots counts the followed streams being served, per peer and in
-// total.
+// followSlots counts the followed streams being served, per peer, for
+// anonymous peers and in total.
 type followSlots struct {
 	mu     sync.Mutex
 	total  int
+	anon   int
 	byPeer map[peer.ID]int
 }
 
 func newFollowSlots() *followSlots { return &followSlots{byPeer: map[peer.ID]int{}} }
 
-func (f *followSlots) acquire(p peer.ID) bool {
+func (f *followSlots) acquire(p peer.ID, trusted bool) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.total >= followStreamsTotal || f.byPeer[p] >= followStreamsPerPeer {
 		return false
 	}
+	if !trusted && (f.anon >= followAnonStreamsTotal || f.byPeer[p] >= followAnonStreamsPerPeer) {
+		return false
+	}
 	f.total++
 	f.byPeer[p]++
+	if !trusted {
+		f.anon++
+	}
 	return true
 }
 
-func (f *followSlots) release(p peer.ID) {
+func (f *followSlots) release(p peer.ID, trusted bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.total--
+	if !trusted {
+		f.anon--
+	}
 	if f.byPeer[p]--; f.byPeer[p] <= 0 {
 		delete(f.byPeer, p)
 	}
