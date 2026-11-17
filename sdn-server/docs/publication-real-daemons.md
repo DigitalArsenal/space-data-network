@@ -105,6 +105,12 @@ followed read-chunk stream, keeps the subscription as a `$DSS` record in
 `follows.dss`, and after a restart resumes at its saved cursor with every
 record held once.
 
+`TestPublicationFollowStatusRealDaemons` reads a followed lane's `$DSS` on
+both daemons: the receiver's counts the records and bytes received and the
+time spent receiving, verifying and storing them; the producer's counts its
+follower (`SUBSCRIBER_COUNT`) and exactly the record bytes it served
+(`SERVED_BYTES`), and no follower once the receiver has stopped.
+
 `TestPublicationLaneCountRealDaemons` compares a scan's `TOTAL_COUNT` on one
 daemon with the distinct records sent: lanes with one tag instance (counted
 from the lane counters) and a source whose records sit in two batches

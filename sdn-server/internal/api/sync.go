@@ -220,6 +220,17 @@ type SyncLane struct {
 
 	RequestedAction int8
 
+	// What this node has received from the lane's followed producers
+	// (LaneFollow) and served to its followers (LaneServed).
+	DownloadedBytes uint64
+	DownloadSpeed   uint64
+	TransferMs      uint64
+	VerifyMs        uint64
+	StoreMs         uint64
+	SubscriberCount uint32
+	ServedBytes     uint64
+	ServeSpeed      uint64
+
 	// Frame is the size-prefixed $DSS buffer.
 	Frame []byte
 }
@@ -602,6 +613,7 @@ func (h *SyncHandler) build(filter SyncFilter) ([]SyncLane, error) {
 				lane.Status = DSSStateSynced
 			}
 		}
+		h.laneFollowStatus(&lane)
 
 		lane.Frame = encodeDSS(&lane)
 		out = append(out, lane)
@@ -756,6 +768,14 @@ func encodeDSS(l *SyncLane) []byte {
 	if originID != 0 {
 		DSS.DSSAddORIGIN_ID(b, originID)
 	}
+	DSS.DSSAddDOWNLOADED_BYTES(b, l.DownloadedBytes)
+	DSS.DSSAddDOWNLOAD_SPEED_BYTES_PER_SECOND(b, l.DownloadSpeed)
+	DSS.DSSAddNETWORK_TRANSFER_MS(b, l.TransferMs)
+	DSS.DSSAddVERIFICATION_MS(b, l.VerifyMs)
+	DSS.DSSAddFLATSQL_MATERIALIZATION_MS(b, l.StoreMs)
+	DSS.DSSAddSUBSCRIBER_COUNT(b, l.SubscriberCount)
+	DSS.DSSAddSERVED_BYTES(b, l.ServedBytes)
+	DSS.DSSAddSERVE_SPEED_BYTES_PER_SECOND(b, l.ServeSpeed)
 	root := DSS.DSSEnd(b)
 	DSS.FinishSizePrefixedDSSBuffer(b, root)
 	return b.FinishedBytes()
