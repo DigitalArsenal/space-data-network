@@ -107,6 +107,46 @@ const (
 	wxfVariableCloudEmissivity                       wxfVariable = 37
 	/// Probability of visible aurora, percent 0 to 100 (e.g. OVATION Prime).
 	wxfVariableAuroraProbability                     wxfVariable = 38
+	/// Cloud liquid water mixing ratio: mass of cloud liquid water per mass of
+	/// moist air, kg/kg (units "kg kg-1"). GRIB2 CLMR (discipline 0, category
+	/// 1, number 22), as GFS and HRRR publish on pressure levels.
+	wxfVariableCloudWaterMixingRatio                 wxfVariable = 39
+	/// Cloud ice mixing ratio: mass of cloud ice per mass of moist air, kg/kg
+	/// (units "kg kg-1"). GRIB2 ICMR (discipline 0, category 1, number 23), as
+	/// GFS and HRRR publish on pressure levels.
+	wxfVariableCloudIceMixingRatio                   wxfVariable = 40
+	/// Rain mixing ratio: mass of rain per mass of moist air, kg/kg (units
+	/// "kg kg-1"). GRIB2 RWMR (discipline 0, category 1, number 24).
+	wxfVariableRainMixingRatio                       wxfVariable = 41
+	/// Snow mixing ratio: mass of snow per mass of moist air, kg/kg (units
+	/// "kg kg-1"). GRIB2 SNMR (discipline 0, category 1, number 25).
+	wxfVariableSnowMixingRatio                       wxfVariable = 42
+	/// Graupel mixing ratio: mass of graupel per mass of moist air, kg/kg
+	/// (units "kg kg-1"). GRIB2 GRLE (discipline 0, category 1, number 32).
+	wxfVariableGraupelMixingRatio                    wxfVariable = 43
+	/// Equivalent radar reflectivity factor, dBZ (units "dBZ"), observed by a
+	/// radar or simulated by a model from its hydrometeors (NCEP GRIB2 REFD
+	/// 0/16/195 on a level; REFC 0/16/196 is the column maximum, at LEVEL_KIND
+	/// EntireAtmosphere). VARIABLE_NAME says which.
+	wxfVariableRadarReflectivity                     wxfVariable = 44
+	/// Lightning flashes per unit area per unit time, counted at each flash's
+	/// centroid over ACCUMULATION_HOURS ending at VALID_TIME_MS (units
+	/// "km-2 min-1"; e.g. GOES GLM L2 LCFA flashes gridded), at LEVEL_KIND
+	/// EntireAtmosphere.
+	wxfVariableLightningFlashDensity                 wxfVariable = 45
+	/// Updraft helicity: vertical velocity times vertical vorticity integrated
+	/// over a layer above ground, m2/s2 (units "m2 s-2"); the layer is 2-5 km
+	/// unless VARIABLE_NAME says otherwise. HRRR MXUPHL (NCEP local 0/7/199) is
+	/// its maximum over ACCUMULATION_HOURS.
+	wxfVariableUpdraftHelicity                       wxfVariable = 46
+	/// Largest hail diameter in the column, metres (units "m"): a model's
+	/// diagnosis (HRRR HAIL, GRIB2 0/1/31) or a radar estimate (MESH), at
+	/// LEVEL_KIND EntireAtmosphere unless the producer says otherwise.
+	wxfVariableMaximumHailDiameter                   wxfVariable = 47
+	/// Storm-relative helicity over a layer above ground, m2/s2 (units
+	/// "m2 s-2"; GRIB2 HLCY 0/7/8); the layer is in VARIABLE_NAME (e.g.
+	/// "HLCY 0-3000 m").
+	wxfVariableStormRelativeHelicity                 wxfVariable = 48
 )
 
 var EnumNameswxfVariable = map[wxfVariable]string{
@@ -149,6 +189,16 @@ var EnumNameswxfVariable = map[wxfVariable]string{
 	wxfVariableCloudEffectiveRadius:                  "CloudEffectiveRadius",
 	wxfVariableCloudEmissivity:                       "CloudEmissivity",
 	wxfVariableAuroraProbability:                     "AuroraProbability",
+	wxfVariableCloudWaterMixingRatio:                 "CloudWaterMixingRatio",
+	wxfVariableCloudIceMixingRatio:                   "CloudIceMixingRatio",
+	wxfVariableRainMixingRatio:                       "RainMixingRatio",
+	wxfVariableSnowMixingRatio:                       "SnowMixingRatio",
+	wxfVariableGraupelMixingRatio:                    "GraupelMixingRatio",
+	wxfVariableRadarReflectivity:                     "RadarReflectivity",
+	wxfVariableLightningFlashDensity:                 "LightningFlashDensity",
+	wxfVariableUpdraftHelicity:                       "UpdraftHelicity",
+	wxfVariableMaximumHailDiameter:                   "MaximumHailDiameter",
+	wxfVariableStormRelativeHelicity:                 "StormRelativeHelicity",
 }
 
 var EnumValueswxfVariable = map[string]wxfVariable{
@@ -191,6 +241,16 @@ var EnumValueswxfVariable = map[string]wxfVariable{
 	"CloudEffectiveRadius":                  wxfVariableCloudEffectiveRadius,
 	"CloudEmissivity":                       wxfVariableCloudEmissivity,
 	"AuroraProbability":                     wxfVariableAuroraProbability,
+	"CloudWaterMixingRatio":                 wxfVariableCloudWaterMixingRatio,
+	"CloudIceMixingRatio":                   wxfVariableCloudIceMixingRatio,
+	"RainMixingRatio":                       wxfVariableRainMixingRatio,
+	"SnowMixingRatio":                       wxfVariableSnowMixingRatio,
+	"GraupelMixingRatio":                    wxfVariableGraupelMixingRatio,
+	"RadarReflectivity":                     wxfVariableRadarReflectivity,
+	"LightningFlashDensity":                 wxfVariableLightningFlashDensity,
+	"UpdraftHelicity":                       wxfVariableUpdraftHelicity,
+	"MaximumHailDiameter":                   wxfVariableMaximumHailDiameter,
+	"StormRelativeHelicity":                 wxfVariableStormRelativeHelicity,
 }
 
 func (v wxfVariable) String() string {
