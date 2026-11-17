@@ -13,7 +13,7 @@
 #   preflight                      preflight, encryption
 #   go-quick (four package groups) go
 #   go-heavy                       heavy
-#   publication-e2e                publication
+#   publication-e2e (three groups) publication
 #   go-builds                      builds
 #   js                             js
 #   delivery                       delivery
@@ -605,6 +605,57 @@ run_go_extended() {
   return "$failed"
 }
 
+# Publication between real daemons, in three groups by test name. Run
+# 44031044072 ran the whole suite in one binary and reached go test's 50m
+# panic during its tenth test; its nine finished tests took 543s (Retention),
+# 473s (Follow), 356s (the two-daemon delivery test), 297s (Fingerprint),
+# 260s (LaneCount), 225s (FollowStatus), 223s (ImportChunks), 220s
+# (InvalidSignature) and 213s (Key); ContentAddress takes about as long as
+# Key (72.7s against 67.9s on macOS). Each group is about 1,000s of runner
+# time against a 45m budget. Every group checks that the three lists together
+# are exactly the package's ^TestPublication.*RealDaemons$ tests, each listed
+# once, and that each test of its own list ran and ended exactly once.
+PUBLICATION_GO_TESTS="^TestPublication.*RealDaemons$"
+PUBLICATION_GO_TEST_TIMEOUT="45m"
+
+publication_group_tests() {
+  case "$1" in
+    publication-1) echo "TestPublicationRetentionRealDaemons TestPublicationFollowRealDaemons" ;;
+    publication-2) echo "TestPublicationRealDaemons TestPublicationFingerprintRealDaemons TestPublicationContentAddressRealDaemons TestPublicationKeyRealDaemons" ;;
+    publication-3) echo "TestPublicationLaneCountRealDaemons TestPublicationFollowStatusRealDaemons TestPublicationImportChunksRealDaemons TestPublicationInvalidSignatureRealDaemons" ;;
+  esac
+}
+
+run_publication() {
+  local group="${SDN_CI_PUBLICATION_GROUP:-all}" run g
+  case "$group" in all|publication-1|publication-2|publication-3) ;; *) fail "unknown publication group: $group" ;; esac
+  step "Publication between real daemons ($group)"
+  local list="$ROOT/.ci-artifacts/publication-tests"
+  mkdir -p "$ROOT/.ci-artifacts"
+  "$ROOT/scripts/go-with-wasmedge.sh" test -list "$PUBLICATION_GO_TESTS" ./cmd/spacedatanetwork/ > "$list.go" 2>&1 \
+    || { cat "$list.go"; fail "listing publication tests"; }
+  grep -E "$PUBLICATION_GO_TESTS" "$list.go" | LC_ALL=C sort > "$list.expected" || true
+  for g in publication-1 publication-2 publication-3; do
+    printf '%s\n' $(publication_group_tests "$g")
+  done | LC_ALL=C sort > "$list.grouped"
+  [[ -s "$list.expected" ]] || fail "no publication tests listed"
+  [[ -z "$(uniq -d "$list.grouped")" ]] || fail "a publication test is in more than one group"
+  cmp -s "$list.expected" "$list.grouped" || { diff -u "$list.expected" "$list.grouped" || true; fail "publication groups differ from the package's tests"; }
+  local budget="$PUBLICATION_GO_TEST_TIMEOUT"
+  if [[ "$group" == all ]]; then
+    run="$PUBLICATION_GO_TESTS"
+    budget=60m
+  else
+    run="^($(publication_group_tests "$group" | tr ' ' '|'))\$"
+  fi
+  export SDN_E2E_PUBLICATION=1
+  export SDN_CI_GO_COVERAGE=1
+  go_test_with_timings "publication-${group#publication-}" -v -p=1 -timeout="$budget" -count=1 -run="$run" ./cmd/spacedatanetwork/ \
+    || fail "publication real daemons ($group)"
+  unset SDN_CI_GO_COVERAGE
+  pass "publication real daemons ($group)"
+}
+
 run_prefix_build() {
   . "$ROOT/scripts/wasmedge-static-env.sh"
   WASMEDGE_STATIC_WORK="$ROOT/.sdn-wasmedge-static" WASMEDGE_STATIC_PREFIX_ONLY=1 \
@@ -989,11 +1040,7 @@ case "$MODE" in
     run_plugin_demo
     run_encryption
     ;;
-  publication)
-    step "Publication between real daemons"
-    (cd "$ROOT/sdn-server" && SDN_E2E_PUBLICATION=1 ../scripts/go-with-wasmedge.sh test ./cmd/spacedatanetwork/ -count=1 -timeout 50m -v -run '^TestPublication.*RealDaemons$')
-    pass "publication real daemons"
-    ;;
+  publication) run_publication ;;
   prefix-build) run_prefix_build ;;
   prefix-pack) run_prefix_pack ;;
   prefix-unpack) run_prefix_unpack ;;
