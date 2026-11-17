@@ -536,8 +536,10 @@ test('the static WasmEdge cache key covers everything that shapes a prefix', () 
 test('beta release workflow builds signed CLI update feed artifacts', () => {
   const workflow = readRepoFile('.github/workflows/beta-release-artifacts.yml');
 
-  assert.match(workflow, /cli-update-feed:\s*\n\s*name:\s*Build signed CLI update feed/);
-  assert.match(workflow, /needs:\s*\[beta-version, cli\]/);
+  assert.match(workflow, /cli-update-payloads:\s*\n\s*name:\s*Build CLI update payloads\n\s*runs-on: ubuntu-latest\n\s*needs:\s*\[beta-version, cli\]/);
+  assert.match(workflow, /cli-update-feed:\s*\n\s*name:\s*Build signed CLI update feed\n\s*runs-on: ubuntu-latest\n\s*needs:\s*\[beta-version, cli-update-payloads\]/);
+  assert.match(workflow, /cli-update-feed-verify:\s*\n\s*name:\s*Verify the signed CLI update feed\n\s*runs-on: ubuntu-latest\n\s*needs:\s*\[beta-version, cli-update-feed\]/);
+  assert.match(workflow, /sign-cli-update-payload\.mjs/);
   assert.match(workflow, /SDN_UPDATE_SIGNING_KEY_PEM:\s*\$\{\{ secrets\.SDN_UPDATE_SIGNING_KEY_PEM \}\}/);
   assert.match(workflow, /SDN_UPDATE_KEY_ID:\s*\$\{\{ secrets\.SDN_UPDATE_KEY_ID \}\}/);
   assert.match(workflow, /SDN_UPDATE_SEQUENCE:\s*\$\{\{ github\.run_number \}\}/);
@@ -547,12 +549,13 @@ test('beta release workflow builds signed CLI update feed artifacts', () => {
   assert.match(workflow, /name:\s*cli-update-feed[\s\S]*path:\s*dist\/update-feed\/spacedatanetwork-update-feed-\$\{\{ needs\.beta-version\.outputs\.package_version \}\}\.tar\.gz/);
   assert.match(workflow, /name:\s*cli-update-feed[\s\S]*path:\s*dist\/update-feed/);
   assert.match(workflow, /needs:\s*\[beta-version, ipfs, docker, cli, cli-update-feed, packages, sdn-js-package\]/);
-  assert.match(workflow, /needs:\s*\[beta-version, ipfs, docker, docker-manifest, cli, cli-update-feed, desktop, packages, sdn-js-package, artifact-docker-test\]/);
+  assert.match(workflow, /needs:\s*\[beta-version, ipfs, docker, docker-manifest, cli, cli-update-feed, cli-update-feed-verify, desktop, packages, sdn-js-package, artifact-docker-test\]/);
 });
 
 test('the update feed job fails a stable release without its key, signs with the derived key id only, and verifies every manifest against the fleet roots', () => {
   const workflow = readRepoFile('.github/workflows/beta-release-artifacts.yml');
-  const job = workflow.slice(workflow.indexOf('  cli-update-feed:'), workflow.indexOf('  desktop:'));
+  const jobs = splitWorkflowJobs(workflow);
+  const job = jobs['cli-update-feed'];
 
   // A missing key is decided by check-update-signing-key.mjs, which fails a
   // stable release; the old shell check only warned, for every release.
@@ -570,16 +573,24 @@ test('the update feed job fails a stable release without its key, signs with the
   // A signer built in this job from the checked-out commit signs and verifies
   // every indexed signal before packing; no downloaded program runs here.
   assert.match(job, /CGO_ENABLED=0 "\$\{go_bin\}" build -trimpath \\\n\s+-o "\$RUNNER_TEMP\/sdn-signal-signer\/sdn-update-signal-signer" \.\/cmd\/sdn-update-signal-signer\n/);
-  assert.doesNotMatch(job, /tar -x|merge-multiple/);
   assert.match(job, /sdn-update-signal-signer" \\\n\s+--key-env SDN_UPDATE_SIGNING_KEY_PEM/);
   assert.match(job, /sdn-update-signal-signer" --verify-only[\s\S]*--roots deployment\/release\/fleet-trust-roots\.json/);
   assert.ok(job.indexOf('sdn-update-signal-signer" --verify-only') < job.indexOf('tar -czf "dist/update-feed/'));
 
-  // Every manifest is verified against the fleet roots before the feed is packed.
-  const verify = job.indexOf('verify-cli-update-feed.mjs');
-  assert.ok(verify > job.indexOf('build-sdn-update-feed.js'), 'the feed is verified after it is built');
-  assert.ok(verify < job.indexOf('tar -czf "dist/update-feed/'), 'the feed is verified before it is packed');
-  assert.match(job.slice(verify), /^verify-cli-update-feed\.mjs \\\n\s+--feed-dir "\$\{feed_dir\}" \\\n\s+--roots deployment\/release\/fleet-trust-roots\.json/);
+  // Nothing another job produced is unpacked where the key is: the CLI
+  // archives are unpacked in cli-update-payloads, the feed in
+  // cli-update-feed-verify, and this job downloads only the payloads.
+  assert.doesNotMatch(job, /tar -x|unzip|merge-multiple|pattern:|build-cli-update-payload\.mjs|verify-cli-update-feed\.mjs/);
+  assert.match(job, /name: cli-update-payloads\n\s+path: dist\/update-payloads\n/);
+  assert.match(jobs['cli-update-payloads'], /build-cli-update-payload\.mjs \\\n\s+--bundle-archive "\$\{archive_path\}" \\\n\s+--carrier-out-dir /);
+  assert.doesNotMatch(jobs['cli-update-payloads'], /secrets\.|environment:/);
+
+  // Every manifest is verified against the fleet roots, payloads unpacked, in
+  // a job without the key, and the release waits for it.
+  const verifyJob = jobs['cli-update-feed-verify'];
+  assert.doesNotMatch(verifyJob, /secrets\.|environment:/);
+  assert.match(verifyJob, /verify-cli-update-feed\.mjs \\\n\s+--feed-dir dist\/feed-check\/update-feed \\\n\s+--roots deployment\/release\/fleet-trust-roots\.json/);
+  assert.match(jobs.release, /needs: \[[^\]]*cli-update-feed-verify/);
 });
 
 test('beta release workflow builds desktop app artifacts for every supported OS', () => {
@@ -609,7 +620,7 @@ test('beta release workflow builds desktop app artifacts for every supported OS'
   assert.match(workflow, /builder_args:\s*--linux AppImage deb tar\.xz --x64/);
   assert.match(workflow, /name:\s*desktop-\$\{\{ matrix\.target_os \}\}/);
   assert.match(workflow, /path:\s*dist\/desktop\/\*/);
-  assert.match(workflow, /needs:\s*\[beta-version, ipfs, docker, docker-manifest, cli, cli-update-feed, desktop, packages, sdn-js-package, artifact-docker-test\]/);
+  assert.match(workflow, /needs:\s*\[beta-version, ipfs, docker, docker-manifest, cli, cli-update-feed, cli-update-feed-verify, desktop, packages, sdn-js-package, artifact-docker-test\]/);
   assert.match(workflow, /pattern:\s*desktop-\*[\s\S]*path:\s*dist\/desktop[\s\S]*merge-multiple:\s*true/);
 });
 
@@ -850,8 +861,8 @@ test('released bundles and their update feed are stamped with the public release
   assert.match(bundleBuild[0], /--channel release/);
   assert.doesNotMatch(bundleBuild[0], /--channel beta/);
 
-  const feedBuild = /build-cli-update-payload\.mjs[\s\S]*?--out-dir/.exec(workflow);
-  assert.ok(feedBuild, 'the workflow must still build update payloads with build-cli-update-payload.mjs');
+  const feedBuild = /sign-cli-update-payload\.mjs[\s\S]*?--created-at/.exec(workflow);
+  assert.ok(feedBuild, 'the workflow must still sign update payloads with sign-cli-update-payload.mjs');
   assert.match(feedBuild[0], /--channel release/);
   assert.doesNotMatch(feedBuild[0], /--channel beta/);
 
@@ -883,7 +894,7 @@ test('release maturity reaches only the release notes, never a --channel', () =>
     'RELEASE_MATURITY: ${{ needs.beta-version.outputs.channel }}',
     'RELEASE_MATURITY: ${{ needs.beta-version.outputs.channel }}',
   ]);
-  assert.match(workflow, /name: Build signed CLI update feed\n\s+id: signing/);
+  assert.match(workflow, /name: Sign the CLI update manifests\n\s+id: signing/);
   assert.match(workflow, /name: Assemble beta release artifacts\n\s+env:[\s\S]*?RELEASE_MATURITY:[\s\S]*?run: deployment\/release\/assemble-beta-release-artifacts\.sh/);
   assert.doesNotMatch(workflow, /--channel \$\{\{/);
 
@@ -916,6 +927,45 @@ test('the real update channel runs prebuilt fixtures with only loopback networki
   assert.ok(lane.indexOf('go-with-wasmedge.sh test -c') < lane.indexOf('unshare --net'));
 });
 
+// The expressions in a workflow value, as the runner finds them: each starts
+// at ${{ and ends at the first }} outside a string literal. A string literal
+// is single-quoted, with '' for a quote, so toggling on every ' tracks it.
+function workflowExpressions(value) {
+  const expressions = [];
+  for (let at = value.indexOf('${{'); at >= 0; at = value.indexOf('${{', at)) {
+    let inString = false;
+    let end = -1;
+    for (let i = at + 3; i < value.length; i++) {
+      if (value[i] === "'") inString = !inString;
+      else if (!inString && value.startsWith('}}', i)) {
+        end = i;
+        break;
+      }
+    }
+    assert.ok(end >= 0, 'unterminated expression');
+    expressions.push(value.slice(at + 3, end));
+    at = end + 2;
+  }
+  return expressions;
+}
+
+// The tokens of one expression, with their offsets; string literals are one
+// token each. Text that is not an expression token fails.
+function expressionTokens(text) {
+  const pattern = /(\s+)|('(?:[^']|'')*')|([A-Za-z_][A-Za-z0-9_-]*)|(0x[0-9A-Fa-f]+|\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)|(==|!=|<=|>=|&&|\|\||[()[\].,*!<>-])/y;
+  const tokens = [];
+  pattern.lastIndex = 0;
+  while (pattern.lastIndex < text.length) {
+    const start = pattern.lastIndex;
+    const match = pattern.exec(text);
+    assert.ok(match, `unreadable expression text at ${start}: ${JSON.stringify(text.slice(start, start + 20))}`);
+    if (match[1]) continue;
+    const kind = match[2] ? 'string' : match[3] ? 'name' : match[4] ? 'number' : 'operator';
+    tokens.push({ kind, text: match[0], start, end: pattern.lastIndex });
+  }
+  return tokens;
+}
+
 // Exact reviewed shell programs form an allow-list, including their arguments,
 // substitutions and control flow. A new command requires an explicit review here.
 function guardUpdateSigningWorkflow(workflow, path = '.github/workflows/beta-release-artifacts.yml') {
@@ -931,28 +981,58 @@ function guardUpdateSigningWorkflow(workflow, path = '.github/workflows/beta-rel
     assert.equal(typeof environment, 'string', `unreviewed environment in ${path} job ${jobName}`);
     assert.doesNotMatch(environment, /\$\{\{|update[\s_-]*signing/i, `unreviewed signing environment in ${path} job ${jobName}`);
   }
-  // Scan every expression, including alternate case, bracket indexing and whole-context exports.
-  // Each use of the secrets context must name one secret: secrets.NAME.
+  // A called workflow is outside this scan, and its jobs could name the
+  // signing Environment: no job calls one.
+  for (const [jobName, job] of Object.entries(parsed?.jobs ?? {})) {
+    assert.ok(!job || typeof job !== 'object' || !Object.hasOwn(job, 'uses'), `reusable workflow call in ${path} job ${jobName} is not reviewed`);
+  }
+  // Every expression is read the way the runner reads it (workflowExpressions,
+  // expressionTokens). Each use of the secrets context must name one secret,
+  // secrets.NAME; the key only as the whole value of the reviewed step's env.
+  function checkExpression(text, value, trail) {
+    const tokens = expressionTokens(text);
+    for (let i = 0; i < tokens.length; i++) {
+      const token = tokens[i];
+      if (token.kind !== 'name' || token.text.toLowerCase() !== 'secrets' || tokens[i - 1]?.text === '.') continue;
+      const [dot, name, after] = [tokens[i + 1], tokens[i + 2], tokens[i + 3]];
+      assert.ok(dot?.text === '.' && dot.start === token.end && name?.kind === 'name' && name.start === dot.end &&
+        /^[A-Za-z_][A-Za-z0-9_]*$/.test(name.text) && !['.', '['].includes(after?.text), 'indirect secret access is not reviewed');
+      if (name.text.toLowerCase() !== 'sdn_update_signing_key_pem') continue;
+      assert.equal(value, '${{ secrets.SDN_UPDATE_SIGNING_KEY_PEM }}', 'noncanonical key reference');
+      assert.ok(isRelease && trail.length === 6 && trail[0] === 'jobs' && keyJobs.has(trail[1]) &&
+        trail[2] === 'steps' && trail[4] === 'env' && trail[5] === 'SDN_UPDATE_SIGNING_KEY_PEM', 'PEM outside reviewed step');
+    }
+  }
   function walk(value, trail = []) {
     if (typeof value === 'string') {
       if (trail.at(-1) === 'secrets') assert.notEqual(value.toLowerCase(), 'inherit', 'inherited secrets are not reviewed');
-      for (const expression of value.matchAll(/\$\{\{([\s\S]*?)\}\}/g)) {
-        const text = expression[1];
-        for (const use of text.matchAll(/(?<![\w.-])secrets(?![\w-])/gi)) {
-          const rest = text.slice(use.index + use[0].length);
-          assert.match(rest, /^\.[A-Za-z_][A-Za-z0-9_]*(?![\w.[*-])/, 'indirect secret access is not reviewed');
-        }
-        if (!/secrets\s*\.\s*sdn_update_signing_key_pem\b/i.test(text)) continue;
-        if (/^\s*secrets\.SDN_UPDATE_SIGNING_KEY_PEM\s*!=\s*''\s*$/.test(text)) continue;
-        assert.equal(value, '${{ secrets.SDN_UPDATE_SIGNING_KEY_PEM }}', 'noncanonical key reference');
-        assert.ok(isRelease && trail.length === 6 && trail[0] === 'jobs' && keyJobs.has(trail[1]) &&
-          trail[2] === 'steps' && trail[4] === 'env' && trail[5] === 'SDN_UPDATE_SIGNING_KEY_PEM', 'PEM outside reviewed step');
-      }
+      // An if: is an expression with or without ${{ }}.
+      const expressions = trail.at(-1) === 'if' && !value.includes('${{') ? [value] : workflowExpressions(value);
+      for (const text of expressions) checkExpression(text, value, trail);
     } else if (value && typeof value === 'object') {
       for (const [key, child] of Object.entries(value)) walk(child, [...trail, key]);
     }
   }
   walk(parsed);
+  // Everything the key signs comes from the key jobs and the jobs they need,
+  // directly or through other jobs: there every action is pinned to a commit.
+  if (isRelease) {
+    const upstream = new Set();
+    const visit = (name) => {
+      if (upstream.has(name)) return;
+      upstream.add(name);
+      const needs = parsed.jobs[name]?.needs ?? [];
+      for (const need of Array.isArray(needs) ? needs : [needs]) visit(need);
+    };
+    for (const name of keyJobs) visit(name);
+    for (const name of upstream) {
+      for (const step of parsed.jobs[name]?.steps ?? []) {
+        if (step.uses) assert.match(step.uses, /^(?:\.\/[^@]+|[\w.-]+\/[\w.\/-]+@[0-9a-f]{40})$/, `action not pinned to a commit in ${name}, whose output is signed: ${step.uses}`);
+        // A merged download lets any artifact matching the pattern replace another's files.
+        assert.ok(!(String(step.uses).startsWith('actions/download-artifact@') && step.with?.['merge-multiple']), `merged artifacts in ${name}, whose output is signed`);
+      }
+    }
+  }
   if (!isRelease) return;
   assert.ok(!Object.hasOwn(parsed, 'defaults'), 'workflow defaults affect signing jobs');
   const allowedRuns = JSON.parse(readRepoFile('deployment/release/update-signing-allowed-runs.json'));
@@ -967,7 +1047,12 @@ function guardUpdateSigningWorkflow(workflow, path = '.github/workflows/beta-rel
       if (step.uses) assert.match(step.uses, /^actions\/[a-z-]+@[a-f0-9]{40}$/);
       if (step.env?.SDN_UPDATE_SIGNING_KEY_PEM) {
         assert.ok(!Object.hasOwn(step, 'shell') && !Object.hasOwn(step, 'working-directory'));
-        const names = name === 'update-signing-check' ? ['RELEASE_MATURITY', 'SDN_UPDATE_SIGNING_KEY_PEM', 'SDN_UPDATE_KEY_ID'] : ['RELEASE_MATURITY', 'SDN_UPDATE_SIGNING_KEY_PEM'];
+        const names = {
+          'Check the update signing key': ['RELEASE_MATURITY', 'SDN_UPDATE_SIGNING_KEY_PEM', 'SDN_UPDATE_KEY_ID'],
+          'Sign the CLI update manifests': ['RELEASE_MATURITY', 'SDN_UPDATE_SIGNING_KEY_PEM'],
+          'Sign the update signals': ['SDN_UPDATE_SIGNING_KEY_PEM'],
+        }[step.name];
+        assert.ok(names, `unreviewed signing step: ${step.name}`);
         assert.deepEqual(Object.keys(step.env).sort(), names.sort(), 'unreviewed signing environment');
       }
     }
@@ -995,7 +1080,7 @@ test('update signing uses only reviewed programs and scopes every PEM reference'
 const signerStep = '      - name: Build the release signal signer';
 const reviewedMutations = {
   'job default shell runs a hook': w => w.replace('  cli-update-feed:\n', '  cli-update-feed:\n    defaults:\n      run:\n        shell: env BASH_ENV=./evil.sh bash -e {0}\n'),
-  'step shell after run block': w => w.replace("            --key-env SDN_UPDATE_SIGNING_KEY_PEM --feed-dir \"${feed_dir}\" \\\n            --roots deployment/release/fleet-trust-roots.json\n", "            --key-env SDN_UPDATE_SIGNING_KEY_PEM --feed-dir \"${feed_dir}\" \\\n            --roots deployment/release/fleet-trust-roots.json\n        shell: env BASH_ENV=./evil.sh bash -e {0}\n"),
+  'step shell after run block': w => w.replace("            --key-env SDN_UPDATE_SIGNING_KEY_PEM --feed-dir dist/update-feed-tree/update-feed \\\n            --roots deployment/release/fleet-trust-roots.json\n", "            --key-env SDN_UPDATE_SIGNING_KEY_PEM --feed-dir dist/update-feed-tree/update-feed \\\n            --roots deployment/release/fleet-trust-roots.json\n        shell: env BASH_ENV=./evil.sh bash -e {0}\n"),
   'lowercase context in beta-version step': w => w.replace("          INPUT_VERSION: ${{ inputs.version }}\n", "          INPUT_VERSION: ${{ inputs.version }}\n          K: ${{ secrets.sdn_update_signing_key_pem }}\n"),
   'spaced-dot in another job': w => w.replace("          INPUT_VERSION: ${{ inputs.version }}\n", "          INPUT_VERSION: ${{ inputs.version }}\n          K: ${{ SECRETS.SDN_UPDATE_SIGNING_KEY_PEM }}\n"),
   'bracket index syntax': w => w.replace(signerStep, signerStep + "\n        env:\n          RENAMED: ${{ secrets['SDN_UPDATE_SIGNING_KEY_PEM'] }}"),
@@ -1007,8 +1092,8 @@ const reviewedMutations = {
     "          RELEASE_MATURITY: ${{ needs.beta-version.outputs.channel }}\n          NODE_OPTIONS: --import=./evil.mjs\n"),
   'GITHUB_ENV injection in an earlier beta-version step': w => w.replace("      - name: Check the update signing key\n",
     "      - name: Prep\n        run: echo \"BASH_ENV=$PWD/evil.sh\" >> \"$GITHUB_ENV\"\n      - name: Check the update signing key\n"),
-  'working-directory on key step': w => w.replace("      - name: Build signed CLI update feed\n        id: signing\n",
-    "      - name: Build signed CLI update feed\n        id: signing\n        working-directory: evil\n"),
+  'working-directory on key step': w => w.replace("      - name: Sign the CLI update manifests\n        id: signing\n",
+    "      - name: Sign the CLI update manifests\n        id: signing\n        working-directory: evil\n"),
   'third-party action with uses at job level? (container)': w => w.replace("  cli-update-feed:\n    name: Build signed CLI update feed\n    runs-on: ubuntu-latest\n",
     "  cli-update-feed:\n    name: Build signed CLI update feed\n    runs-on: ubuntu-latest\n    container: attacker/image:latest\n"),
   'reusable workflow with secrets: inherit': w => w.replace("  desktop:\n", "  leak:\n    uses: ./.github/workflows/leak.yml\n    secrets: inherit\n  desktop:\n"),
@@ -1016,6 +1101,16 @@ const reviewedMutations = {
     "          RELEASE_MATURITY: ${{ needs.beta-version.outputs.channel }}\n          X: ${{ secrets.SDN_UPDATE_SIGNING_KEY_PEM != '' && secrets.SDN_UPDATE_SIGNING_KEY_PEM }}\n"),
   'setup-node registry-url / cache in cli-update-feed': w => w.replace("      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020\n        with:\n          node-version: '24'\n      - name: Build the release signal signer",
     "      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020\n        with:\n          node-version: '24'\n          cache: npm\n      - name: Build the release signal signer"),
+};
+// REVIEW5 R3-a: the runner ends an expression at the first }} outside a
+// string literal, and format() turns '}}' into '}', so these hand the key, or
+// every secret, to a job outside the reviewed ones.
+const betaVersionEnv = (line) => (w) => w.replace("          INPUT_VERSION: ${{ inputs.version }}\n", `          INPUT_VERSION: \${{ inputs.version }}\n          K: ${line}\n`);
+const expressionMutations = {
+  "format('}}{0}', key) in beta-version": betaVersionEnv("${{ format('}}{0}', secrets.SDN_UPDATE_SIGNING_KEY_PEM) }}"),
+  "format('}}{0}', toJSON(secrets)) in beta-version": betaVersionEnv("${{ format('}}{0}', toJSON(secrets)) }}"),
+  "escaped quote before a quoted }} in beta-version": betaVersionEnv("${{ format('it''s }}{0}', secrets.SDN_UPDATE_SIGNING_KEY_PEM) }}"),
+  'format() of the key in beta-version': betaVersionEnv("${{ format('{0}', secrets.SDN_UPDATE_SIGNING_KEY_PEM) }}"),
 };
 const signingMutations = {
   ...reviewedMutations,
@@ -1040,7 +1135,23 @@ const signingMutations = {
   'extra job in the signing Environment': w => w.replace('  desktop:\n', '  extra:\n    runs-on: ubuntu-latest\n    environment: update-signing\n    steps:\n      - run: echo hi\n  desktop:\n'),
   'extra job naming the signing Environment as an object': w => w.replace('  desktop:\n', '  extra:\n    runs-on: ubuntu-latest\n    environment:\n      name: Update-Signing\n    steps:\n      - run: echo hi\n  desktop:\n'),
   'extra job with a computed environment': w => w.replace('  desktop:\n', "  extra:\n    runs-on: ubuntu-latest\n    environment: ${{ format('update-{0}', 'signing') }}\n    steps:\n      - run: echo hi\n  desktop:\n"),
-  'merged CLI artifacts in the key job': w => w.replace('          pattern: cli-*\n          path: dist/cli\n', '          pattern: cli-*\n          path: dist/cli\n          merge-multiple: true\n'),
+  'merged CLI artifacts where the payloads are built': w => w.replace('          pattern: cli-*\n          path: dist/cli\n', '          pattern: cli-*\n          path: dist/cli\n          merge-multiple: true\n'),
+  'CLI archives downloaded into the key job': w => w.replace('          name: cli-update-payloads\n          path: dist/update-payloads\n      - uses: actions/setup-node',
+    '          pattern: cli-*\n          path: dist/update-payloads\n      - uses: actions/setup-node'),
+  'payloads built in the key job': w => w.replace('          for target in "${targets[@]}"; do\n            read -r target_os target_arch target_ext <<< "${target}"\n            # Must match',
+    '          for target in "${targets[@]}"; do\n            read -r target_os target_arch target_ext <<< "${target}"\n            node deployment/release/build-cli-update-payload.mjs --bundle-archive "dist/cli/cli-${target_os}-${target_arch}/x" --carrier-out-dir "dist/update-payloads/${target_os}-${target_arch}"\n            # Must match'),
+  'feed verified, payloads unpacked, in the key job': w => w.replace('          mkdir -p dist/update-feed\n          tar -czf',
+    '          node deployment/release/verify-cli-update-feed.mjs --feed-dir dist/update-feed-tree/update-feed --roots deployment/release/fleet-trust-roots.json --expect-version "${VERSION}" --expect-count 5\n          mkdir -p dist/update-feed\n          tar -czf'),
+  // REVIEW5 R2-a: an action by tag in a job whose output the key signs.
+  'third-party action by tag in the CLI build': w => w.replace("        id: msys2\n        uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2.33.0", "        id: msys2\n        uses: msys2/setup-msys2@v2"),
+  'action by tag in the payload job': w => w.replace("      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683\n      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093\n        with:\n          pattern: cli-*",
+    "      - uses: actions/checkout@v4\n      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093\n        with:\n          pattern: cli-*"),
+  'action by tag two jobs upstream (WasmEdge prefix cache)': w => w.replace('        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0', '        uses: actions/cache@v4'),
+  'third-party action by branch in the WasmEdge prefix build': w => w.replace('msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2.33.0', 'msys2/setup-msys2@main'),
+  // REVIEW5 R3-b: a job that calls a reusable workflow.
+  'reusable workflow from another repository': w => w.replace('  desktop:\n', '  extra:\n    needs: beta-version\n    uses: someorg/somerepo/.github/workflows/x.yml@0123456789abcdef0123456789abcdef01234567\n  desktop:\n'),
+  'reusable workflow from this repository': w => w.replace('  desktop:\n', '  extra:\n    needs: beta-version\n    uses: ./.github/workflows/x.yml\n  desktop:\n'),
+  ...expressionMutations,
   'signer unpacked from a downloaded archive': w => w.replace('          test -x "${go_bin}"', '          tar -xzf "dist/cli/cli-linux-amd64/spacedatanetwork-${VERSION}-linux-amd64.tar.gz" -C "$RUNNER_TEMP/sdn-signal-signer"'),
   'signing with a downloaded binary': w => w.replace('          "$RUNNER_TEMP/sdn-signal-signer/sdn-update-signal-signer" \\\n            --key-env', '          dist/cli/cli-linux-amd64/bin/spacedatanetwork update sign-signals \\\n            --key-env'),
 };
@@ -1054,18 +1165,23 @@ for (const [name, mutate] of Object.entries(signingMutations)) {
 }
 
 function guardFeedTargets(workflow) {
-  const job = yaml.load(workflow).jobs['cli-update-feed'];
-  const signing = job.steps.find(s => s.name === 'Build signed CLI update feed').run;
-  const pairs = /targets=\(\n([\s\S]*?)\n\)/.exec(signing)?.[1].trim().split('\n').map(s => s.trim());
-  assert.deepEqual(pairs, ['"darwin amd64 tar.gz"', '"darwin arm64 tar.gz"', '"linux amd64 tar.gz"', '"linux arm64 tar.gz"', '"windows amd64 zip"']);
-  const verifier = job.steps.find(s => s.name === 'Verify and pack the signed CLI update feed').run;
-  assert.match(verifier, /--expect-count 5(?:\s|$)/);
+  const jobs = yaml.load(workflow).jobs;
+  const run = (job, step) => jobs[job].steps.find(s => s.name === step).run;
+  for (const [job, step] of [['cli-update-payloads', 'Build CLI update payloads'], ['cli-update-feed', 'Sign the CLI update manifests']]) {
+    const pairs = /targets=\(\n([\s\S]*?)\n\)/.exec(run(job, step))?.[1].trim().split('\n').map(s => s.trim());
+    assert.deepEqual(pairs, ['"darwin amd64 tar.gz"', '"darwin arm64 tar.gz"', '"linux amd64 tar.gz"', '"linux arm64 tar.gz"', '"windows amd64 zip"']);
+  }
+  assert.match(run('cli-update-feed', 'Build the CLI update feed index'), /for pair in darwin-amd64 darwin-arm64 linux-amd64 linux-arm64 windows-amd64; do/);
+  assert.match(run('cli-update-feed-verify', 'Verify the signed CLI update feed'), /--expect-count 5(?:\s|$)/);
 }
 
 test('feed verification independently requires all five platform pairs', () => {
   const workflow = readRepoFile('.github/workflows/beta-release-artifacts.yml');
   guardFeedTargets(workflow);
   assert.throws(() => guardFeedTargets(workflow.replace('            "windows amd64 zip"\n', '')));
+  const signing = workflow.indexOf('      - name: Sign the CLI update manifests');
+  assert.throws(() => guardFeedTargets(workflow.slice(0, signing) + workflow.slice(signing).replace('            "windows amd64 zip"\n', '')));
+  assert.throws(() => guardFeedTargets(workflow.replace(' linux-arm64 windows-amd64; do', ' linux-arm64; do')));
   assert.throws(() => guardFeedTargets(workflow.replace('--expect-count 5', '--expect-count 4')));
 });
 
@@ -1078,8 +1194,21 @@ test('signing guard refuses the signing Environment in a new workflow', () => {
   assert.throws(() => guardUpdateSigningWorkflow('jobs:\n  leak:\n    runs-on: ubuntu-latest\n    environment: update-signing\n    steps:\n      - run: echo hi\n', '.github/workflows/new.yml'));
   assert.throws(() => guardUpdateSigningWorkflow("jobs:\n  leak:\n    runs-on: ubuntu-latest\n    environment:\n      name: ${{ inputs.environment }}\n    steps:\n      - run: echo hi\n", '.github/workflows/new.yml'));
 });
+// REVIEW5 R3-a in a new workflow: its third edit, and the toJSON form.
+for (const expression of ["format('}}{0}', secrets.SDN_UPDATE_SIGNING_KEY_PEM)", "format('}}{0}', toJSON(secrets))"]) {
+  test(`signing guard reads a quoted }} inside ${expression} in a new workflow`, () => {
+    assert.throws(() => guardUpdateSigningWorkflow(`on: push\njobs:\n  leak:\n    runs-on: ubuntu-latest\n    steps:\n      - env:\n          K: \${{ ${expression} }}\n        run: echo "$K" | base64\n`, '.github/workflows/new.yml'));
+  });
+}
+test('signing guard refuses an unterminated expression or string literal', () => {
+  assert.throws(() => guardUpdateSigningWorkflow("jobs:\n  leak:\n    steps:\n      - run: echo ${{ format('}}', 1) \n", '.github/workflows/new.yml'));
+  assert.throws(() => guardUpdateSigningWorkflow("jobs:\n  leak:\n    steps:\n      - run: echo ${{ format('a }} \n", '.github/workflows/new.yml'));
+});
+test('signing guard refuses a job in another workflow that calls a reusable workflow', () => {
+  assert.throws(() => guardUpdateSigningWorkflow('on: push\njobs:\n  extra:\n    uses: someorg/somerepo/.github/workflows/x.yml@0123456789abcdef0123456789abcdef01234567\n', '.github/workflows/new.yml'));
+});
 test('signing guard accepts a named non-key secret and another literal environment', () => {
-  guardUpdateSigningWorkflow("jobs:\n  deploy:\n    runs-on: ubuntu-latest\n    environment: production\n    steps:\n      - run: echo hi\n        env:\n          T: ${{ secrets.DOCKERHUB_TOKEN }}\n          S: ${{ secrets.MACOS_CSC_LINK != '' }}\n", '.github/workflows/new.yml');
+  guardUpdateSigningWorkflow("jobs:\n  deploy:\n    runs-on: ubuntu-latest\n    environment: production\n    if: github.ref == 'refs/heads/main'\n    steps:\n      - run: echo hi\n        env:\n          T: ${{ secrets.DOCKERHUB_TOKEN }}\n          S: ${{ secrets.MACOS_CSC_LINK != '' }}\n          F: ${{ format('}}{0}', secrets.DOCKERHUB_TOKEN) }}\n", '.github/workflows/new.yml');
 });
 test('signing guard refuses inherited secrets in other workflows', () => {
   assert.throws(() => guardUpdateSigningWorkflow('jobs:\n  leak:\n    uses: ./other.yml\n    secrets: inherit\n', '.github/workflows/ci.yml'));
