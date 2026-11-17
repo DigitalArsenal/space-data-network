@@ -100,6 +100,24 @@ window"). The read's sort files are written under the producer's store
 directory (`publication-sort`), none is left after the publication, and one
 left there before a restart is gone once the store opens.
 
+`TestPublicationOutlivesClientRealDaemons` publishes a 150,000-record batch
+for a client that gives up after 300 ms, as a flow's HTTP request gives up at
+its deadline: the publication completes on its own context and the receiver
+holds the batch byte for byte. A second request for a batch whose
+publication is running waits for that publication's result, and the batch
+is read for publication once. Shard and index files that no publication row
+names (what a publication that never completed leaves) are removed once a
+publication completes; the published ones stay.
+
+`TestPublicationFailureRealDaemons` runs the CelesTrak GP ingest flow of
+`space-data-network-modules` (`SDN_E2E_MODULES`, the modules checkout; the
+test skips without it) against a local copy of the parser's GP fixture, on a
+node whose publication export directory is not writable. The failure is
+logged as an error naming the lane, the batch and the step, raises the lane's
+`publication_failed` alert, and the flow's run ends with an error. Once the
+directory is writable, a publication of the batch completes and clears the
+alert.
+
 `TestPublicationFollowRealDaemons` follows a lane with nothing published: the
 receiver, which trusts the producer and keeps the lane under
 `replace-current`, subscribes with a `$DSS` Subscribe that names the producer

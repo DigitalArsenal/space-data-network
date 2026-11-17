@@ -97,6 +97,7 @@ runs:
         if [ -d "$modules" ]; then
           echo "SDN_PUBLIC_QUERY_FLOW_DIST=$modules/flows/public-query/dist" >> "$GITHUB_ENV"
           echo "ORBPRO_LICENSING_WASM_PATH=$modules/licensing/core/dist/isomorphic/module.wasm" >> "$GITHUB_ENV"
+          echo "SDN_E2E_MODULES=$modules" >> "$GITHUB_ENV"
           echo "flow bundles: $modules/flows/public-query/dist"
           exit 0
         fi

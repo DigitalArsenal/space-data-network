@@ -13,9 +13,10 @@ package api
 //
 // So a publication runs on its own context, which keeps the caller's values
 // and drops its cancellation, bounded by datasetPublicationDeadline. The
-// caller waits for the result; a caller that leaves gets its context's error
-// and the publication goes on. A second request for the same publication
-// while one runs waits for that one's result instead of starting another.
+// caller waits for the result, also after its client has left (the answer
+// then reaches no one, and the publication is complete). A second request
+// for the same publication while one runs waits for that one's result
+// instead of starting another.
 // Publications of one lane run one at a time (publicationHygiene.lockLane).
 //
 // Every publication that fails is logged as an error naming its lane, batch
@@ -148,7 +149,7 @@ func datasetPublicationLaneName(req DatasetPublicationRequest) string {
 }
 
 // runDatasetPublication runs publish for req on a context of its own and
-// waits for it, or for the caller to leave.
+// waits for its result.
 func (s *ConcreteDatasetPublicationService) runDatasetPublication(ctx context.Context, req DatasetPublicationRequest, publish func(context.Context) (*DatasetPublicationResult, error)) (*DatasetPublicationResult, error) {
 	lane := datasetPublicationLaneName(req)
 	batch := strings.TrimSpace(req.BatchID)
@@ -188,12 +189,12 @@ func (s *ConcreteDatasetPublicationService) runDatasetPublication(ctx context.Co
 
 	select {
 	case <-run.done:
-		return run.result, run.err
 	case <-ctx.Done():
 		log.Warnf("Dataset publication %s batch %q: the requesting client left after %s; the publication continues",
 			lane, batch, time.Since(run.started).Round(time.Millisecond))
-		return nil, fmt.Errorf("the client left before dataset publication %s batch %q completed; it continues: %w", lane, batch, ctx.Err())
+		<-run.done
 	}
+	return run.result, run.err
 }
 
 // reportDatasetPublication logs a finished publication and sets or clears
