@@ -62,6 +62,9 @@ const (
 	// node refused (malformed, past its limits, or naming another peer), or
 	// its current batch could not be held.
 	KindFollowRefused = "follow_refused"
+	// KindPublicationFailed: one of this node's own dataset publications
+	// (subject: its lane) failed or was cut before it completed.
+	KindPublicationFailed = "publication_failed"
 )
 
 // Severities. Two levels only: something an operator should look at, and

@@ -100,6 +100,35 @@ window"). The read's sort files are written under the producer's store
 directory (`publication-sort`), none is left after the publication, and one
 left there before a restart is gone once the store opens.
 
+`TestPublicationOutlivesClientRealDaemons` publishes a 150,000-record batch
+for a client that gives up after 300 ms, as a flow's HTTP request gives up at
+its deadline: the publication completes on its own context and the receiver
+holds the batch byte for byte. A second request for a batch whose
+publication is running waits for that publication's result, and the batch
+is read for publication once. Shard and index files that no publication row
+names (what a publication that never completed leaves) are removed once a
+publication completes; the published ones stay.
+
+`TestPublicationFailureRealDaemons` runs the CelesTrak GP ingest flow of
+`space-data-network-modules` (`SDN_E2E_MODULES`, the modules checkout; the
+test fails when it is set and the flow is missing, and skips when it is not
+set) against a local copy of the parser's GP fixture, on a node whose
+publication export cannot create its shard directory (a file stands at its
+path, which stops root too). The failure is logged as an error naming the
+lane, the batch and the step, raises the lane's `publication_failed` alert,
+and the flow's run ends with an error. A publication of another batch of the
+lane and an announcement of its existing publications complete and leave the
+alert raised; a publication of the failed batch clears it.
+
+`TestPublicationSlowFlowRealDaemons` runs the same flow by hand while a
+300,000-record publication of the same lane runs, on a node whose admin
+write timeout is 3 s (`SDN_ADMIN_WRITE_TIMEOUT`) and whose http-request
+capability waits at most 2 s for any other request
+(`SDN_HTTP_REQUEST_MAX_TIMEOUT`). The node answers the flow's publication
+request only after the big publication, later than both. The flow waits for
+the node's answer: its run ends without error, and its batch's publication
+is complete.
+
 `TestPublicationFollowRealDaemons` follows a lane with nothing published: the
 receiver, which trusts the producer and keeps the lane under
 `replace-current`, subscribes with a `$DSS` Subscribe that names the producer

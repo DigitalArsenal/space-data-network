@@ -20,6 +20,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -29,9 +30,87 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
 
-// publicationFileSweepMinAge guards the publication-directory sweep: a file
-// younger than this may belong to an export whose row is not written yet.
-const publicationFileSweepMinAge = time.Hour
+// publicationFileSweepMargin covers file-system timestamp granularity: a file
+// is kept when written up to this long before the sweep's cutoff.
+const publicationFileSweepMargin = 2 * time.Second
+
+// datastorePublicationsDir is the directory under the publication output
+// directory that holds each registered datastore's publications, one
+// subdirectory per datastore key: their rows live in that datastore, so a
+// sweep of the node's own schema directories, which reads the node store's
+// rows, never sees them.
+const datastorePublicationsDir = "datastores"
+
+// sweepPublicationFiles removes the schema's shard, index and staged CAR
+// files that no publication row names (the files of publications that never
+// completed, cut, failed or stopped with the process, and of retired ones),
+// and the temporary files of writes that never completed. It keeps every
+// file written since the oldest other running publication started, whatever
+// its schema (a full-catalog CAT publication writes OCM files; a datastore
+// publication's schema is known only once it runs), and since the sweep
+// began: they may belong to a publication whose row is not written yet. An
+// export reusing an existing file refreshes its time (storage
+// touchReusedExportFile), and a sweep never runs while an export writes
+// (publicationRuns.files), so a reused file is never taken for an old one.
+//
+// wait false skips the sweep when an export is writing (the next completed
+// publication sweeps); the sweep at start waits.
+func (s *ConcreteDatasetPublicationService) sweepPublicationFiles(schema string, self *publicationRun, wait bool) {
+	if s == nil || s.store == nil || s.outputDir == "" {
+		return
+	}
+	if s.runs != nil {
+		if wait {
+			s.runs.files.Lock()
+		} else if !s.runs.files.TryLock() {
+			log.Infof("publication files %s: not swept, an export is writing", schema)
+			return
+		}
+		defer s.runs.files.Unlock()
+	}
+	now := s.now()
+	cutoff := now
+	if oldest := s.runs.oldestStart(self); !oldest.IsZero() && oldest.Before(cutoff) {
+		cutoff = oldest
+	}
+	sweep, err := s.store.SweepDatasetPublicationFiles(s.outputDir, schema, now.Sub(cutoff)+publicationFileSweepMargin, now, s.runs.keptFiles())
+	if err != nil {
+		log.Warnf("sweep %s publication files: %v", schema, err)
+		return
+	}
+	if sweep.NoRows {
+		log.Warnf("publication files %s: the store has no publication row of the schema; its shard and index files are kept", schema)
+	}
+	if sweep.FilesRemoved > 0 {
+		log.Infof("publication files %s: removed %d unreferenced file(s), %d bytes", schema, sweep.FilesRemoved, sweep.BytesRemoved)
+	}
+}
+
+// SweepPublicationFiles runs sweepPublicationFiles over every schema
+// directory under the publication output directory: at start, it removes
+// what publications that did not complete before the process stopped left.
+func (s *ConcreteDatasetPublicationService) SweepPublicationFiles() {
+	if s == nil || s.outputDir == "" {
+		return
+	}
+	entries, err := os.ReadDir(s.outputDir)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			log.Warnf("sweep publication files: %v", err)
+		}
+		return
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() || entry.Name() == datastorePublicationsDir {
+			continue
+		}
+		schema := entry.Name() + ".fbs"
+		if sds.ValidateSchemaName(schema) != nil || safeDatasetPathComponent(schema) != entry.Name() {
+			continue
+		}
+		s.sweepPublicationFiles(schema, nil, true)
+	}
+}
 
 // ipnsPointerPublishTimeout bounds one name/publish call. An online Kubo puts
 // the record into the DHT before it answers.
@@ -39,18 +118,16 @@ const ipnsPointerPublishTimeout = 3 * time.Minute
 
 type publicationHygiene struct {
 	mu        sync.Mutex
-	lanes     map[string]*sync.Mutex
+	lanes     map[string]chan struct{}
 	retention config.PublicationRetentionConfig
 	pointers  []config.IPNSPointerConfig
-	sweepAge  time.Duration
 	ipns      *ipnsPointerWorker
 }
 
 func newPublicationHygiene() *publicationHygiene {
 	return &publicationHygiene{
-		lanes:     make(map[string]*sync.Mutex),
+		lanes:     make(map[string]chan struct{}),
 		retention: config.PublicationRetentionConfig{KeepSeries: config.DefaultPublicationRetentionKeepSeries},
-		sweepAge:  publicationFileSweepMinAge,
 		ipns:      newIPNSPointerWorker(),
 	}
 }
@@ -68,29 +145,60 @@ func (s *ConcreteDatasetPublicationService) SetPublicationPolicy(retention confi
 	s.hygiene.pointers = append([]config.IPNSPointerConfig(nil), pointers...)
 }
 
-func (h *publicationHygiene) lockLane(schema, providerID, sourceName string) func() {
+// lockLane waits until no other publication of the lane holds it, then holds
+// it until the returned func is called. It gives up when ctx ends or after
+// storage.DatasetPublicationLaneWait.
+func (h *publicationHygiene) lockLane(ctx context.Context, schema, providerID, sourceName string) (func(), error) {
 	if h == nil {
-		return func() {}
+		return func() {}, nil
 	}
 	key := strings.Join([]string{normalizeDatasetPublicationSchema(schema), strings.TrimSpace(providerID), strings.TrimSpace(sourceName)}, "\x00")
 	h.mu.Lock()
 	lane := h.lanes[key]
 	if lane == nil {
-		lane = &sync.Mutex{}
+		lane = make(chan struct{}, 1)
 		h.lanes[key] = lane
 	}
 	h.mu.Unlock()
-	lane.Lock()
-	return lane.Unlock
+	release := func() { <-lane }
+	select {
+	case lane <- struct{}{}:
+		return release, nil
+	default:
+	}
+	wait := time.NewTimer(storage.DatasetPublicationLaneWait)
+	defer wait.Stop()
+	select {
+	case lane <- struct{}{}:
+		return release, nil
+	case <-ctx.Done():
+		return nil, fmt.Errorf("waiting for the running publication of lane %s %s/%s: %w", schema, providerID, sourceName, context.Cause(ctx))
+	case <-wait.C:
+		return nil, fmt.Errorf("the running publication of lane %s %s/%s held it for more than %s", schema, providerID, sourceName, storage.DatasetPublicationLaneWait)
+	}
 }
 
-func (h *publicationHygiene) policy() (config.PublicationRetentionConfig, []config.IPNSPointerConfig, time.Duration) {
+// holdLane is lockLane for a publication: once it holds the lane, the
+// returned context ends after deadline. The returned func releases both.
+func (h *publicationHygiene) holdLane(ctx context.Context, deadline time.Duration, schema, providerID, sourceName string) (context.Context, func(), error) {
+	unlock, err := h.lockLane(ctx, schema, providerID, sourceName)
+	if err != nil {
+		return ctx, nil, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, deadline)
+	return ctx, func() {
+		cancel()
+		unlock()
+	}, nil
+}
+
+func (h *publicationHygiene) policy() (config.PublicationRetentionConfig, []config.IPNSPointerConfig) {
 	if h == nil {
-		return config.PublicationRetentionConfig{}, nil, publicationFileSweepMinAge
+		return config.PublicationRetentionConfig{}, nil
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return h.retention, h.pointers, h.sweepAge
+	return h.retention, h.pointers
 }
 
 // publicationFingerprint is the set the request would export, taken before
@@ -120,13 +228,13 @@ func (s *ConcreteDatasetPublicationService) publicationFingerprint(req DatasetPu
 // planAndFingerprintPublication is publicationFingerprint that, on a
 // format-4 store, also keeps the lane's publication plan (s.plan) for the
 // series to read its windows from; one read of the lane gives both.
-func (s *ConcreteDatasetPublicationService) planAndFingerprintPublication(req DatasetPublicationRequest, schema string) string {
+func (s *ConcreteDatasetPublicationService) planAndFingerprintPublication(ctx context.Context, req DatasetPublicationRequest, schema string) string {
 	if s == nil || s.store == nil || s.selection != nil || strings.TrimSpace(req.DatastoreKey) != "" || req.Limit > 0 ||
 		strings.TrimSpace(req.ProviderID) == "" || strings.TrimSpace(req.SourceName) == "" {
 		return s.publicationFingerprint(req, schema)
 	}
 	started := time.Now()
-	plan, err := s.store.PlanDatasetPublication(schema, req.ProviderID, req.SourceName, req.BatchID)
+	plan, err := s.store.PlanDatasetPublication(ctx, schema, req.ProviderID, req.SourceName, req.BatchID)
 	if err != nil {
 		log.Warnf("publication fingerprint %s %s/%s: %v", schema, req.ProviderID, req.SourceName, err)
 		return ""
@@ -190,7 +298,7 @@ func (s *ConcreteDatasetPublicationService) afterPublication(ctx context.Context
 	if s == nil || s.store == nil || result == nil {
 		return fmt.Errorf("cannot record publication completion without a store and result")
 	}
-	retention, pointers, sweepAge := s.hygiene.policy()
+	retention, pointers := s.hygiene.policy()
 	lane := storage.DatasetPublicationLane{SchemaName: schema, ProviderID: req.ProviderID, SourceName: req.SourceName}
 
 	parts := result.Publications
@@ -232,14 +340,7 @@ func (s *ConcreteDatasetPublicationService) afterPublication(ctx context.Context
 		return fmt.Errorf("retain publication completion: %w", err)
 	}
 	s.releaseRedundantShardGroupCARs(ctx, lane)
-	if s.outputDir != "" {
-		sweep, err := s.store.SweepDatasetPublicationFiles(s.outputDir, schema, sweepAge, s.now())
-		if err != nil {
-			log.Warnf("sweep %s publication files: %v", schema, err)
-		} else if sweep.FilesRemoved > 0 {
-			log.Infof("publication files %s: removed %d unreferenced file(s), %d bytes", schema, sweep.FilesRemoved, sweep.BytesRemoved)
-		}
-	}
+	s.sweepPublicationFiles(schema, runOf(ctx), false)
 
 	for _, pointer := range pointers {
 		if !config.PublishingLaneMatches(pointer.Schema, pointer.ProviderID, pointer.SourceName, schema, req.ProviderID, req.SourceName) {
@@ -454,7 +555,7 @@ func (s *ConcreteDatasetPublicationService) RunPublicationRetention(ctx context.
 		return nil, fmt.Errorf("invalid schema: %w", err)
 	}
 	lane := storage.DatasetPublicationLane{SchemaName: schema, ProviderID: strings.TrimSpace(req.ProviderID), SourceName: strings.TrimSpace(req.SourceName)}
-	retention, _, _ := s.hygiene.policy()
+	retention, _ := s.hygiene.policy()
 	keep, snapshots := retention.PolicyFor(schema, lane.ProviderID, lane.SourceName)
 	if req.KeepSeries != nil {
 		keep = *req.KeepSeries
@@ -467,7 +568,10 @@ func (s *ConcreteDatasetPublicationService) RunPublicationRetention(ctx context.
 	}
 	policy := storage.DatasetPublicationRetentionPolicy{KeepSeries: keep, SnapshotBatches: snapshots}
 
-	unlock := s.hygiene.lockLane(schema, lane.ProviderID, lane.SourceName)
+	unlock, err := s.hygiene.lockLane(ctx, schema, lane.ProviderID, lane.SourceName)
+	if err != nil {
+		return nil, err
+	}
 	defer unlock()
 	report := &DatasetPublicationRetentionReport{Schema: schema, ProviderID: lane.ProviderID, SourceName: lane.SourceName, KeepSeries: keep, SnapshotBatches: snapshots}
 	if req.Apply {

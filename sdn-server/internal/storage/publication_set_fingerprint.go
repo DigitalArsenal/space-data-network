@@ -3,6 +3,7 @@ package storage
 import (
 	"bufio"
 	"container/heap"
+	"context"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -49,7 +50,7 @@ func (s *FlatSQLStore) PagedDatasetPublicationSetFingerprint(schemaName, provide
 	if !ok {
 		return s.DatasetPublicationSetFingerprint(schemaName, providerID, sourceName, batchID)
 	}
-	plan, err := b.planPublication(schemaName, providerID, sourceName, batchID, false)
+	plan, err := b.planPublication(context.Background(), schemaName, providerID, sourceName, batchID, false)
 	if err != nil {
 		return "", 0, err
 	}
@@ -81,7 +82,7 @@ type PublicationPlan struct {
 // store. It answers nil for any other store, and for a lane whose
 // publication is a retained selection (SelectPublication), which exports
 // from its own references. Close removes the plan's temporary file.
-func (s *FlatSQLStore) PlanDatasetPublication(schemaName, providerID, sourceName, batchID string) (*PublicationPlan, error) {
+func (s *FlatSQLStore) PlanDatasetPublication(ctx context.Context, schemaName, providerID, sourceName, batchID string) (*PublicationPlan, error) {
 	b, ok := s.rb.(format4Backend)
 	if !ok {
 		return nil, nil
@@ -92,10 +93,10 @@ func (s *FlatSQLStore) PlanDatasetPublication(schemaName, providerID, sourceName
 		p.Close()
 		return nil, nil
 	}
-	return b.planPublication(schemaName, providerID, sourceName, batchID, true)
+	return b.planPublication(ctx, schemaName, providerID, sourceName, batchID, true)
 }
 
-func (b format4Backend) planPublication(schemaName, providerID, sourceName, batchID string, keep bool) (*PublicationPlan, error) {
+func (b format4Backend) planPublication(ctx context.Context, schemaName, providerID, sourceName, batchID string, keep bool) (*PublicationPlan, error) {
 	schemaName, providerID = strings.TrimSpace(schemaName), strings.TrimSpace(providerID)
 	sourceName, batchID = strings.TrimSpace(sourceName), strings.TrimSpace(batchID)
 	if schemaName == "" || providerID == "" || sourceName == "" {
@@ -108,14 +109,28 @@ func (b format4Backend) planPublication(schemaName, providerID, sourceName, batc
 	if err != nil {
 		return nil, err
 	}
-	q := format4.Query{Type: typ, Lane: f4Lane(providerID, sourceName, batchID, "", ""), Order: format4.OrderSeqAsc, Bulk: true,
-		Limit: publicationSetFingerprintPage}
 	// The set is the lane as of the read's start: records stored during the
 	// read lie past this sequence and are left out.
-	if head, err := b.f4TypeHead(typ); err == nil && head.Through > 0 {
-		q.SeqThrough = head.Through
-	} else if err != nil {
+	head, err := b.f4TypeHead(typ)
+	if err != nil {
 		return nil, fmt.Errorf("fingerprint %s publication set: %w", schemaName, err)
+	}
+	return b.planPublicationThrough(ctx, schemaName, providerID, sourceName, batchID, keep, head.Through, true)
+}
+
+// planPublicationThrough is planPublication of the lane as of sequence
+// through (0: no bound). newestFirst lets a batch's plan be read from its
+// newest record down (planBatchNewestFirst); otherwise, or when that read
+// does not apply, the lane is read from its start.
+func (b format4Backend) planPublicationThrough(ctx context.Context, schemaName, providerID, sourceName, batchID string, keep bool, through int64, newestFirst bool) (*PublicationPlan, error) {
+	typ, err := f4Type(schemaName)
+	if err != nil {
+		return nil, err
+	}
+	q := format4.Query{Type: typ, Lane: f4Lane(providerID, sourceName, batchID, "", ""), Order: format4.OrderSeqAsc, Bulk: true,
+		Limit: publicationSetFingerprintPage}
+	if through > 0 {
+		q.SeqThrough = through
 	}
 	tempDir, err := b.s.sortTempDir()
 	if err != nil {
@@ -125,7 +140,34 @@ func (b format4Backend) planPublication(schemaName, providerID, sourceName, batc
 	defer runs.close()
 	buf := make([]planEntry, 0, publicationSetFingerprintRun)
 	count := 0
+	add := func(recs []format4.Rec) error {
+		for _, r := range recs {
+			buf = append(buf, planEntry{cid: r.CID, n: r.Len})
+			if len(buf) == publicationSetFingerprintRun {
+				if err := runs.spill(buf); err != nil {
+					return err
+				}
+				buf = buf[:0]
+			}
+		}
+		count += len(recs)
+		return nil
+	}
+	if newestFirst {
+		if read, err := b.planBatchNewestFirst(ctx, q, add); err != nil {
+			return nil, fmt.Errorf("fingerprint %s publication set: %w", schemaName, err)
+		} else if read {
+			return b.finishPublicationPlan(schemaName, providerID, sourceName, batchID, keep, tempDir, runs, buf, count)
+		}
+	}
+	// The batch was not read from its newest record down: read the lane from
+	// its start.
+	runs.close()
+	buf, count = buf[:0], 0
 	for {
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("fingerprint %s publication set: %w", schemaName, err)
+		}
 		recs, err := b.d.api().Scan(b.d.ctx, q)
 		if errors.Is(err, format4.ErrNoType) {
 			break
@@ -148,21 +190,116 @@ func (b format4Backend) planPublication(schemaName, providerID, sourceName, batc
 			}
 			recs = recs[:keep]
 		}
-		for _, r := range recs {
-			buf = append(buf, planEntry{cid: r.CID, n: r.Len})
-			if len(buf) == publicationSetFingerprintRun {
-				if err := runs.spill(buf); err != nil {
-					return nil, fmt.Errorf("fingerprint %s publication set: %w", schemaName, err)
-				}
-				buf = buf[:0]
-			}
+		if err := add(recs); err != nil {
+			return nil, fmt.Errorf("fingerprint %s publication set: %w", schemaName, err)
 		}
-		count += len(recs)
 		if !full {
 			break
 		}
 		q.SeqAfter = recs[len(recs)-1].Seq
 	}
+	return b.finishPublicationPlan(schemaName, providerID, sourceName, batchID, keep, tempDir, runs, buf, count)
+}
+
+// planBatchNewestFirst reads a batch's records for a plan from the batch's
+// newest record down, stopping once it holds every record of the batch, so
+// the newest batch of a lane costs its own records instead of every record
+// of the lane before it. It applies when exactly one live tag instance of
+// the type meets the lane filter and the filter names a batch: that
+// instance's counters (SUMMARY kind 3) are then the batch's record count and
+// newest sequence. It reports false otherwise, or when what it read does not
+// match the counters; the caller then discards what add was given.
+func (b format4Backend) planBatchNewestFirst(ctx context.Context, q format4.Query, add func([]format4.Rec) error) (bool, error) {
+	if q.Lane.Batch == "" {
+		return false, nil
+	}
+	lanes, err := b.f4Lanes(q.Type)
+	if err != nil {
+		return false, err
+	}
+	var met *format4.Lane
+	for i := range lanes {
+		if lanes[i].Records > 0 && f4LaneMeets(lanes[i], q.Lane) {
+			if met != nil {
+				return false, nil
+			}
+			met = &lanes[i]
+		}
+	}
+	if met == nil {
+		return false, nil
+	}
+	// The counters are read after the lane read's snapshot point (q's
+	// SeqThrough): a batch stored since has records past that point, which
+	// the lane read leaves out, so the counters do not describe its set.
+	if q.SeqThrough > 0 && met.MaxSeq > q.SeqThrough {
+		return false, nil
+	}
+	// The set is the batch's records counted with its newest sequence.
+	q.Order = format4.OrderSeqDesc
+	q.SeqAfter, q.SeqThrough = 0, met.MaxSeq
+	pageLimit := q.Limit
+	var read int64
+	for read < met.Records {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		// A page asks for no more than the batch has left: a page the
+		// engine cannot fill is read to the start of the lane.
+		remaining := met.Records - read
+		q.Limit = pageLimit
+		if remaining < q.Limit {
+			q.Limit = remaining
+		}
+		page, err := b.d.api().Scan(b.d.ctx, q)
+		if errors.Is(err, format4.ErrNoType) {
+			break
+		}
+		if err != nil {
+			return false, err
+		}
+		if q.Limit == remaining {
+			if err := add(page); err != nil {
+				return false, err
+			}
+			read += int64(len(page))
+			break
+		}
+		full := int64(len(page)) == q.Limit
+		if full {
+			// The rows of one sequence are read in one page: the next page
+			// starts at the oldest sequence this one drops.
+			last := page[len(page)-1].Seq
+			keep := len(page)
+			for keep > 0 && page[keep-1].Seq == last {
+				keep--
+			}
+			if keep == 0 {
+				return false, fmt.Errorf("sequence %d has %d or more rows", last, q.Limit)
+			}
+			page = page[:keep]
+			q.SeqThrough = last
+		}
+		if err := add(page); err != nil {
+			return false, err
+		}
+		read += int64(len(page))
+		if !full {
+			break
+		}
+	}
+	if read != met.Records {
+		log.Infof("publication plan %s %s/%s/%s: %d records read from the newest down, the batch counters hold %d; reading the lane",
+			q.Type, q.Lane.Provider, q.Lane.Source, q.Lane.Batch, read, met.Records)
+		return false, nil
+	}
+	return true, nil
+}
+
+// finishPublicationPlan hashes the read CIDs in CID order and, with keep,
+// writes them as the plan.
+func (b format4Backend) finishPublicationPlan(schemaName, providerID, sourceName, batchID string, keep bool, tempDir string, runs *cidRuns, buf []planEntry, count int) (*PublicationPlan, error) {
+	var err error
 	plan := &PublicationPlan{Schema: schemaName, Provider: providerID, Source: sourceName, Batch: batchID, count: count}
 	var out *bufio.Writer
 	if keep {

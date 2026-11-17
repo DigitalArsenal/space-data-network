@@ -14,6 +14,14 @@ inputs:
       carries the COMPILED flow bundles the wire-contract suites mount.
     required: false
     default: ''
+  needs-modules:
+    description: >
+      'true' for a lane that runs a test on the modules checkout (the
+      publication lane's CelesTrak GP ingest flow): it is checked out with
+      the job's token when no modules-token is supplied, and its absence
+      fails the lane.
+    required: false
+    default: 'false'
   needs-flow-bundles:
     description: >
       'false' for a lane that never mounts a flow bundle (builds, sdn-js). Such
@@ -73,35 +81,34 @@ runs:
     # licensing/core/dist/isomorphic/module.wasm, which CI has been logging as
     # "not found; artifact-dependent Go tests will skip" since forever.
     #
-    # The repo is PRIVATE and this one is PUBLIC, so it takes a secret:
-    # MODULES_REPO_TOKEN, a fine-grained read-only PAT on
-    # DigitalArsenal/space-data-network-modules. Until it exists, the Go lane
-    # fails in internal/flowrt with the test's own instructions — loudly, and
-    # not by pretending the contract is proved.
+    # The modules repository is public, so the job's own token checks it
+    # out; modules-token (MODULES_REPO_TOKEN) is used when supplied. A lane
+    # checks it out when it passes modules-token or needs-modules: 'true'.
     - name: Check out space-data-network-modules
-      if: inputs.modules-token != ''
+      if: inputs.modules-token != '' || inputs.needs-modules == 'true'
       uses: actions/checkout@v4
       with:
         repository: DigitalArsenal/space-data-network-modules
-        token: ${{ inputs.modules-token }}
+        token: ${{ inputs.modules-token || github.token }}
         path: .ci-artifacts/space-data-network-modules
         persist-credentials: false
 
     - name: Export flow bundle paths
       shell: bash
       env:
-        HAVE_TOKEN: ${{ inputs.modules-token != '' }}
+        HAVE_TOKEN: ${{ inputs.modules-token != '' || inputs.needs-modules == 'true' }}
         NEEDS_BUNDLES: ${{ inputs.needs-flow-bundles }}
       run: |
         modules="$PWD/.ci-artifacts/space-data-network-modules"
         if [ -d "$modules" ]; then
           echo "SDN_PUBLIC_QUERY_FLOW_DIST=$modules/flows/public-query/dist" >> "$GITHUB_ENV"
           echo "ORBPRO_LICENSING_WASM_PATH=$modules/licensing/core/dist/isomorphic/module.wasm" >> "$GITHUB_ENV"
+          echo "SDN_E2E_MODULES=$modules" >> "$GITHUB_ENV"
           echo "flow bundles: $modules/flows/public-query/dist"
           exit 0
         fi
         if [ "$HAVE_TOKEN" = "true" ]; then
-          echo "::error::modules-token was supplied but .ci-artifacts/space-data-network-modules is not there — see the checkout step above."
+          echo "::error::this lane checks out space-data-network-modules (modules-token or needs-modules), but .ci-artifacts/space-data-network-modules is not there — see the checkout step above."
           exit 1
         fi
         if [ "$NEEDS_BUNDLES" != "true" ]; then

@@ -649,6 +649,9 @@ func (sf *ServiceFlow) FireTrigger(ctx context.Context, triggerID string) ([]byt
 		}()
 	}
 	rt := sf.inst.rt
+	// A host capability records here what failed that the flow cannot
+	// report itself (the node's own dataset publication refused or cut).
+	ctx, faults := modulert.WithRunFaults(ctx)
 	sf.inst.bridge.SetInvocationContext(ctx)
 	defer sf.inst.bridge.SetInvocationContext(nil)
 	defer sf.inst.bridge.ResetBodyRefs()
@@ -721,6 +724,9 @@ func (sf *ServiceFlow) FireTrigger(ctx context.Context, triggerID string) ([]byt
 	sf.statsMu.Unlock()
 	if drainErr != nil {
 		return nil, fmt.Errorf("flow service %q trigger %q: %w", sf.programID, triggerID, drainErr)
+	}
+	if err := faults.Err(); err != nil {
+		return nil, fmt.Errorf("flow service %q trigger %q: %w", sf.programID, triggerID, err)
 	}
 
 	summary, _ := json.Marshal(map[string]interface{}{

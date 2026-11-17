@@ -915,6 +915,8 @@ func (s *FlatSQLStore) RemoveDatasetPublicationRowFiles(outputDir, schemaName st
 type livePublicationFiles struct {
 	shards  map[string]bool
 	indexes map[string]bool
+	// rows is how many publication rows of the schema the set was built from.
+	rows int
 }
 
 func (l livePublicationFiles) referenced(path string) bool {
@@ -951,7 +953,25 @@ func (s *FlatSQLStore) liveDatasetPublicationFiles(schemaName string) (livePubli
 			live.indexes[row.IndexSHA256[:16]] = true
 		}
 	}
+	live.rows = len(rows)
 	return live, nil
+}
+
+// isPublicationTempFile reports a temporary file an export, an index write or
+// a CAR bundle makes in a schema's publication directory before it renames
+// it into place (ExportDatasetWindow, writeImmutableExportFile,
+// PublishShardGroupCARToIPFS). One still there after its writer finished is
+// what a process stopped mid-write left.
+func isPublicationTempFile(sub, name string) bool {
+	switch sub {
+	case "shards":
+		return strings.HasPrefix(name, ".export-") || (strings.HasPrefix(name, ".") && strings.Contains(name, ".tmp-"))
+	case "indexes":
+		return strings.HasPrefix(name, ".") && strings.Contains(name, ".tmp-")
+	case "car":
+		return strings.HasPrefix(name, "shard-group-") && strings.HasSuffix(name, ".car.tmp")
+	}
+	return false
 }
 
 // DatasetPublicationFileSweep reports a sweep of one schema's publication
@@ -960,6 +980,10 @@ type DatasetPublicationFileSweep struct {
 	SchemaName   string
 	FilesRemoved int
 	BytesRemoved int64
+	// NoRows: the schema has no publication row, so its shard and index
+	// files were kept (a store moved, restored or recreated has lost its
+	// rows; its files are not shown to be orphans by that).
+	NoRows bool
 }
 
 // SweepDatasetPublicationFiles removes files in outputDir/<schema> that no
@@ -970,8 +994,14 @@ type DatasetPublicationFileSweep struct {
 //     the local file is a staging copy.
 //   - shards/*.fbshard, indexes/*.index.json or *.index.fb: files whose content hash no
 //     remaining publication row of the schema names (windows overwritten by a
-//     later series and rows retention retired).
-func (s *FlatSQLStore) SweepDatasetPublicationFiles(outputDir, schemaName string, minAge time.Duration, now time.Time) (DatasetPublicationFileSweep, error) {
+//     later series and rows retention retired). A schema with no publication
+//     row keeps them all (NoRows).
+//   - the temporary files of a write that never renamed its file into place
+//     (isPublicationTempFile).
+//
+// A path in keep is never removed (a running publication's reused file whose
+// time could not be refreshed).
+func (s *FlatSQLStore) SweepDatasetPublicationFiles(outputDir, schemaName string, minAge time.Duration, now time.Time, keep map[string]bool) (DatasetPublicationFileSweep, error) {
 	sweep := DatasetPublicationFileSweep{SchemaName: strings.TrimSpace(schemaName)}
 	outputDir = strings.TrimSpace(outputDir)
 	if outputDir == "" || sweep.SchemaName == "" {
@@ -1000,16 +1030,23 @@ func (s *FlatSQLStore) SweepDatasetPublicationFiles(outputDir, schemaName string
 			}
 			name := entry.Name()
 			path := filepath.Join(schemaDir, sub, name)
-			switch sub {
-			case "car":
+			if keep[path] {
+				continue
+			}
+			switch {
+			case isPublicationTempFile(sub, name):
+			case sub != "car" && live.rows == 0:
+				sweep.NoRows = true
+				continue
+			case sub == "car":
 				if !strings.HasPrefix(name, "shard-group-") || filepath.Ext(name) != ".car" {
 					continue
 				}
-			case "shards":
+			case sub == "shards":
 				if !strings.HasSuffix(name, ".fbshard") || live.referenced(path) {
 					continue
 				}
-			case "indexes":
+			case sub == "indexes":
 				if (!strings.HasSuffix(name, ".index.json") && !strings.HasSuffix(name, ".index.fb")) || live.referenced(path) {
 					continue
 				}

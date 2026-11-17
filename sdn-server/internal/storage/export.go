@@ -36,6 +36,9 @@ type DatasetExport struct {
 	SourceBatches    []DatasetExportSourceBatch
 	ContentKeyID     string
 	EncryptionPolicy string
+	// StaleFiles are existing identical files the export reused whose time it
+	// could not refresh (refreshReusedExportFile).
+	StaleFiles []string
 }
 
 // DatasetExportRecord is one already-materialized FlatBuffer record to include
@@ -477,6 +480,7 @@ func ExportDatasetRecords(outputDir string, filter IndexedRecordQuery, records [
 	if err := shardFile.Close(); err != nil {
 		return nil, err
 	}
+	var stale []string
 	if err := installPublicationShard(shardFile.Name(), shardPath); err != nil {
 		if !os.IsExist(err) {
 			return nil, err
@@ -497,9 +501,14 @@ func ExportDatasetRecords(outputDir string, filter IndexedRecordQuery, records [
 		if size != shardSize || hex.EncodeToString(hash.Sum(nil)) != shardSHA {
 			return nil, fmt.Errorf("refusing to overwrite immutable export file %s with different bytes", shardPath)
 		}
+		if !refreshReusedExportFile(shardPath) {
+			stale = append(stale, shardPath)
+		}
 	}
-	if err := writeImmutableExportFile(indexPath, indexBytes); err != nil {
+	if indexStale, err := writeImmutableExportFileReused(indexPath, indexBytes); err != nil {
 		return nil, err
+	} else if indexStale {
+		stale = append(stale, indexPath)
 	}
 
 	return &DatasetExport{
@@ -517,6 +526,7 @@ func ExportDatasetRecords(outputDir string, filter IndexedRecordQuery, records [
 		IndexCID:       indexCID,
 		IndexBytes:     int64(len(indexBytes)),
 		SourceBatches:  summarizeExportSourceBatches(indexRecords),
+		StaleFiles:     stale,
 	}, nil
 }
 
@@ -661,35 +671,71 @@ func hashCanonicalQuery(filter IndexedRecordQuery) (string, error) {
 }
 
 func writeImmutableExportFile(path string, data []byte) error {
+	_, err := writeImmutableExportFileReused(path, data)
+	return err
+}
+
+// writeImmutableExportFileReused is writeImmutableExportFile that reports
+// an existing identical file whose time could not be refreshed
+// (refreshReusedExportFile): the caller keeps it from the sweep by name.
+func writeImmutableExportFileReused(path string, data []byte) (stale bool, err error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return fmt.Errorf("create export directory: %w", err)
+		return false, fmt.Errorf("create export directory: %w", err)
 	}
 	if existing, err := os.ReadFile(path); err == nil {
 		if bytes.Equal(existing, data) {
-			return nil
+			return !refreshReusedExportFile(path), nil
 		}
-		return fmt.Errorf("refusing to overwrite immutable export file %s with different bytes", path)
+		return false, fmt.Errorf("refusing to overwrite immutable export file %s with different bytes", path)
 	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("read existing export file %s: %w", path, err)
+		return false, fmt.Errorf("read existing export file %s: %w", path, err)
 	}
 	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
 	if err != nil {
-		return fmt.Errorf("create export temp file: %w", err)
+		return false, fmt.Errorf("create export temp file: %w", err)
 	}
 	tmpPath := tmp.Name()
 	defer os.Remove(tmpPath)
 
 	if _, err := tmp.Write(data); err != nil {
 		_ = tmp.Close()
-		return fmt.Errorf("write export temp file: %w", err)
+		return false, fmt.Errorf("write export temp file: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close export temp file: %w", err)
+		return false, fmt.Errorf("close export temp file: %w", err)
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
-		return fmt.Errorf("commit export file: %w", err)
+		return false, fmt.Errorf("commit export file: %w", err)
 	}
-	return nil
+	return false, nil
+}
+
+// reusedExportFileRefresh refreshes the time of an existing file an export
+// reuses (refreshFileTimeNow; SetReusedExportFileRefresh replaces it).
+var reusedExportFileRefresh = refreshFileTimeNow
+
+// SetReusedExportFileRefresh replaces how an export refreshes the time of a
+// file it reuses and returns what restores the default. Tests use it to make
+// the refresh fail.
+func SetReusedExportFileRefresh(refresh func(path string) error) (restore func()) {
+	saved := reusedExportFileRefresh
+	reusedExportFileRefresh = refresh
+	return func() { reusedExportFileRefresh = saved }
+}
+
+// refreshReusedExportFile sets the time of an existing file an export reuses
+// to now, and reports whether it did: the publication-file sweep keeps the
+// files written since the oldest running publication started, and a reused
+// file is one of the running publication's files. A file whose time cannot
+// be refreshed is still reused (the export does not fail); the export names
+// it in DatasetExport.StaleFiles and the publication keeps it from the sweep
+// by name.
+func refreshReusedExportFile(path string) bool {
+	if err := reusedExportFileRefresh(path); err != nil {
+		log.Warnf("export reuses %s but cannot refresh its time (%v): the running publication keeps it from the publication-file sweep by name", path, err)
+		return false
+	}
+	return true
 }
 
 func sha256Hex(data []byte) string {

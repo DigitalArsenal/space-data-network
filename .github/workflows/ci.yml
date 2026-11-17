@@ -465,8 +465,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+      # The CelesTrak GP ingest flow of TestPublicationFailureRealDaemons and
+      # TestPublicationSlowFlowRealDaemons, from the public modules repository.
       - uses: ./.github/actions/sdn-go-env
         with:
+          needs-modules: 'true'
           needs-flow-bundles: 'false'
       - name: Publication between real daemons
         run: ./scripts/ci-local.sh publication

@@ -19,6 +19,7 @@ import (
 
 	channelmodel "github.com/spacedatanetwork/sdn-server/internal/channels"
 	"github.com/spacedatanetwork/sdn-server/internal/datasync"
+	"github.com/spacedatanetwork/sdn-server/internal/ops"
 	"github.com/spacedatanetwork/sdn-server/internal/pinpolicy"
 	sdnpubsub "github.com/spacedatanetwork/sdn-server/internal/pubsub"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
@@ -225,6 +226,11 @@ func (h *DatasetPublicationHandler) handlePublish(w http.ResponseWriter, r *http
 		}
 	}
 
+	// The answer is the completed publication, which can take longer than the
+	// server's write timeout: this response has no write deadline.
+	if err := http.NewResponseController(w).SetWriteDeadline(time.Time{}); err != nil {
+		log.Warnf("dataset publication: the answer keeps the server's write timeout (%v)", err)
+	}
 	result, err := h.service.PublishDatasetUpdate(r.Context(), req)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -337,6 +343,10 @@ type ConcreteDatasetPublicationService struct {
 	// (dataset_publication_hygiene.go). A pointer so the per-request copy
 	// PublishDatasetUpdate makes shares it.
 	hygiene *publicationHygiene
+	// runs is the running publications (dataset_publication_runs.go), shared
+	// by the per-request copies.
+	runs   *publicationRuns
+	alerts *ops.Registry
 }
 
 // NewConcreteDatasetPublicationService creates the production publication service.
@@ -359,6 +369,7 @@ func NewConcreteDatasetPublicationService(
 		outputDir:      strings.TrimSpace(outputDir),
 		now:            func() time.Time { return time.Now().UTC() },
 		hygiene:        newPublicationHygiene(),
+		runs:           newPublicationRuns(),
 	}
 }
 
@@ -401,21 +412,35 @@ func (s *ConcreteDatasetPublicationService) PublishDatasetUpdate(ctx context.Con
 	if s.outputDir == "" {
 		return nil, fmt.Errorf("dataset publication output dir is required")
 	}
+	return s.runDatasetPublication(ctx, req, func(ctx context.Context) (*DatasetPublicationResult, error) {
+		return s.publishDatasetUpdateRun(ctx, req)
+	})
+}
 
+// publishDatasetUpdateRun is one publication, on the run's own context.
+func (s *ConcreteDatasetPublicationService) publishDatasetUpdateRun(ctx context.Context, req DatasetPublicationRequest) (*DatasetPublicationResult, error) {
 	activeStore, activeReq, closeStore, err := s.publicationStoreForRequest(req)
 	if err != nil {
-		return nil, err
+		return nil, atPublicationStep("open datastore", err)
 	}
 	defer closeStore()
 	activeService := *s
 	activeService.store = activeStore
+	if key := strings.TrimSpace(req.DatastoreKey); key != "" {
+		// A datastore's publications, whose rows live in the datastore, have
+		// a directory of their own (datastorePublicationsDir).
+		activeService.outputDir = filepath.Join(s.outputDir, datastorePublicationsDir, safeDatasetPathComponent(key))
+	}
 
 	schema := normalizeDatasetPublicationSchema(activeReq.Schema)
 	if err := sds.ValidateSchemaName(schema); err != nil {
 		return nil, fmt.Errorf("invalid schema: %w", err)
 	}
 	if activeReq.AnnounceExisting {
-		return activeService.announceExistingDatasetPublications(ctx, activeReq, schema)
+		ctx, cancel := context.WithTimeout(ctx, storage.DatasetPublicationDeadline)
+		defer cancel()
+		result, err := activeService.announceExistingDatasetPublications(ctx, activeReq, schema)
+		return result, atPublicationStep("announce existing", err)
 	}
 	return activeService.publishSelectedDatasetUpdate(ctx, activeReq, schema, func(service *ConcreteDatasetPublicationService, ctx context.Context, req DatasetPublicationRequest, schema string) (*DatasetPublicationResult, []string, error) {
 		return service.publishDatasetUpdateScope(ctx, req, schema)
@@ -432,14 +457,18 @@ func (s *ConcreteDatasetPublicationService) publishSelectedDatasetUpdate(ctx con
 	// One publication per lane at a time: retention decides what is current
 	// from what a lane has published, so two publications of one lane must
 	// not interleave their windows.
-	unlock := activeService.hygiene.lockLane(schema, activeReq.ProviderID, activeReq.SourceName)
-	defer unlock()
+	// The publication's deadline starts once it holds its lane.
+	ctx, release, err := activeService.hygiene.holdLane(ctx, storage.DatasetPublicationDeadline, schema, activeReq.ProviderID, activeReq.SourceName)
+	if err != nil {
+		return nil, atPublicationStep("wait for the lane", err)
+	}
+	defer release()
 	var catalogSnapshot *storage.CatalogSnapshot
 	if activeReq.FullCatalog && strings.TrimSpace(activeReq.BatchID) == "" && schema == "CAT.fbs" {
 		if _, ok := activeStore.CatalogProductSource(activeReq.ProviderID, activeReq.SourceName); ok {
 			catalogSnapshot, err = activeStore.CaptureCatalogSnapshot(activeReq.ProviderID, activeReq.SourceName, 0)
 			if err != nil {
-				return nil, err
+				return nil, atPublicationStep("select", err)
 			}
 			defer catalogSnapshot.Close()
 			activeService.selection = catalogSnapshot.Index
@@ -450,13 +479,13 @@ func (s *ConcreteDatasetPublicationService) publishSelectedDatasetUpdate(ctx con
 		activeService.selection, err = activeStore.SelectPublication(schema, activeReq.ProviderID, activeReq.SourceName, activeReq.BatchID)
 		defer activeService.selection.Close()
 		if err != nil {
-			return nil, err
+			return nil, atPublicationStep("select", err)
 		}
 	}
 	if activeService.selection != nil && activeReq.BatchID != "" {
 		if _, count := activeService.selection.Fingerprint(); count == 0 {
 			if err := activeStore.CompletePublication(activeService.selection); err != nil {
-				return nil, err
+				return nil, atPublicationStep("record completion", err)
 			}
 			return &DatasetPublicationResult{RecordCount: 0}, nil
 		}
@@ -474,11 +503,14 @@ func (s *ConcreteDatasetPublicationService) publishSelectedDatasetUpdate(ctx con
 			productReq.SourceName = productSource
 			productReq.BatchID = ""
 			productReq.DatasetID = ""
-			productUnlock := activeService.hygiene.lockLane("OCM.fbs", productReq.ProviderID, productReq.SourceName)
+			productUnlock, lockErr := activeService.hygiene.lockLane(ctx, "OCM.fbs", productReq.ProviderID, productReq.SourceName)
+			if lockErr != nil {
+				return nil, atPublicationStep("wait for the lane", lockErr)
+			}
 			if _, count := snap.Products.Fingerprint(); count > 0 {
 				result, cars, publishErr := publish(&productService, ctx, productReq, "OCM.fbs")
 				if publishErr == nil {
-					publishErr = productService.afterPublication(ctx, productReq, "OCM.fbs", result, cars, productService.publicationFingerprint(productReq, "OCM.fbs"), activeService.now())
+					publishErr = atPublicationStep("record completion", productService.afterPublication(ctx, productReq, "OCM.fbs", result, cars, productService.publicationFingerprint(productReq, "OCM.fbs"), activeService.now()))
 				}
 				productUnlock()
 				if publishErr != nil {
@@ -490,7 +522,7 @@ func (s *ConcreteDatasetPublicationService) publishSelectedDatasetUpdate(ctx con
 		}
 	}
 	startedAt := activeService.now()
-	fingerprint := activeService.planAndFingerprintPublication(activeReq, schema)
+	fingerprint := activeService.planAndFingerprintPublication(ctx, activeReq, schema)
 	defer activeService.plan.Close()
 
 	result, carCIDs, err := publish(&activeService, ctx, activeReq, schema)
@@ -498,7 +530,7 @@ func (s *ConcreteDatasetPublicationService) publishSelectedDatasetUpdate(ctx con
 		return nil, err
 	}
 	if err := activeService.afterPublication(ctx, activeReq, schema, result, carCIDs, fingerprint, startedAt); err != nil {
-		return nil, err
+		return nil, atPublicationStep("record completion", err)
 	}
 	return result, nil
 }
@@ -525,7 +557,7 @@ func (s *ConcreteDatasetPublicationService) publishDatasetUpdateScope(ctx contex
 
 	filter, _, err := s.byteBoundedExportFilter(req, schema, limit, 0)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, atPublicationStep("plan window", err)
 	}
 	sourceIdentity := datasetPublicationSourceIdentityFromRequest(req)
 	result, err := s.publishDatasetUpdatePart(ctx, req, schema, filter, sourceIdentity, datasetUpdateID(req, s.now(), 0))
@@ -534,11 +566,11 @@ func (s *ConcreteDatasetPublicationService) publishDatasetUpdateScope(ctx contex
 	}
 	published, err := s.publishedShardFromResult(schema, filter, sourceIdentity, result)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, atPublicationStep("record publication", err)
 	}
 	carCIDs, err := s.recordShardGroupCARBundle(ctx, []storage.DatasetShardPublication{published}, schema)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, atPublicationStep("CAR bundle", err)
 	}
 	return result, carCIDs, nil
 }
@@ -615,7 +647,12 @@ func (s *ConcreteDatasetPublicationService) ensureDatasetPublicationAssets(ctx c
 		return publication, nil
 	}
 	if shardErr == nil {
+		done := s.runs.writingFiles()
 		export, err := s.store.RepairDatasetPublicationIndexFromShard(filepath.Join(s.outputDir, safeDatasetPathComponent(publication.SchemaName)), publication)
+		if err == nil {
+			s.runs.keepFiles(runOf(ctx), export.StaleFiles)
+		}
+		done()
 		if err != nil {
 			return publication, fmt.Errorf("repair dataset publication %s index from shard: %w", publication.ShardCID, err)
 		}
@@ -870,7 +907,7 @@ func (s *ConcreteDatasetPublicationService) publishDatasetUpdateSeries(ctx conte
 			QueryProfile: storage.DatasetPublicationQueryProfile,
 		})
 		if err != nil {
-			return nil, nil, fmt.Errorf("list dataset shard publications before the series: %w", err)
+			return nil, nil, atPublicationStep("list publications", fmt.Errorf("list dataset shard publications before the series: %w", err))
 		}
 		before = listed
 	}
@@ -886,7 +923,7 @@ func (s *ConcreteDatasetPublicationService) publishDatasetUpdateSeries(ctx conte
 		partReq.DatasetID = datasetID
 		filter, effectiveLimit, err := s.seriesExportFilter(partReq, schema, limit, offset)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, atPublicationStep("plan window", err)
 		}
 		publication, err := s.publishDatasetUpdatePart(ctx, partReq, schema, filter, datasetPublicationSourceIdentityFromRequest(partReq), datasetUpdateID(partReq, s.now(), part))
 		if errors.Is(err, storage.ErrPublicationPlanStale) {
@@ -896,7 +933,7 @@ func (s *ConcreteDatasetPublicationService) publishDatasetUpdateSeries(ctx conte
 			s.plan.Close()
 			s.plan = nil
 			if filter, effectiveLimit, err = s.seriesExportFilter(partReq, schema, limit, offset); err != nil {
-				return nil, nil, err
+				return nil, nil, atPublicationStep("plan window", err)
 			}
 			publication, err = s.publishDatasetUpdatePart(ctx, partReq, schema, filter, datasetPublicationSourceIdentityFromRequest(partReq), datasetUpdateID(partReq, s.now(), part))
 		}
@@ -922,16 +959,16 @@ func (s *ConcreteDatasetPublicationService) publishDatasetUpdateSeries(ctx conte
 		offset += limit
 	}
 	if len(series.Publications) == 0 {
-		return nil, nil, fmt.Errorf("export dataset window: no records match export query")
+		return nil, nil, atPublicationStep("export", fmt.Errorf("export dataset window: no records match export query"))
 	}
 	if pruneStale {
 		if err := s.pruneStaleDatasetShardPublications(req, schema, pruneOffset); err != nil {
-			return nil, nil, err
+			return nil, nil, atPublicationStep("prune", err)
 		}
 	}
 	if req.Limit <= 0 {
 		if err := s.pruneDatasetShardPublicationsOutsideSeries(req, schema, windows, before); err != nil {
-			return nil, nil, err
+			return nil, nil, atPublicationStep("prune", err)
 		}
 	}
 	publications, err := s.store.ListDatasetShardPublications(storage.DatasetShardPublicationQuery{
@@ -942,11 +979,11 @@ func (s *ConcreteDatasetPublicationService) publishDatasetUpdateSeries(ctx conte
 		QueryProfile: storage.DatasetPublicationQueryProfile,
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("load dataset shard publications for CAR bundle: %w", err)
+		return nil, nil, atPublicationStep("CAR bundle", fmt.Errorf("load dataset shard publications for CAR bundle: %w", err))
 	}
 	carCIDs, err := s.recordShardGroupCARBundle(ctx, publications, schema)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, atPublicationStep("CAR bundle", err)
 	}
 	first := series.Publications[0]
 	series.ShardCID = first.ShardCID
@@ -978,6 +1015,7 @@ func unlimitedDatasetPublicationLimit() int {
 }
 
 func (s *ConcreteDatasetPublicationService) publishDatasetUpdatePart(ctx context.Context, req DatasetPublicationRequest, schema string, filter storage.IndexedRecordQuery, sourceIdentity datasetPublicationSourceIdentity, updateID string) (*DatasetPublicationResult, error) {
+	done := s.runs.writingFiles()
 	export, err := s.store.ExportDatasetWindow(filepath.Join(s.outputDir, safeDatasetPathComponent(schema)), storage.IndexedRecordQuery{
 		Selection:           filter.Selection,
 		CIDs:                filter.CIDs,
@@ -990,11 +1028,15 @@ func (s *ConcreteDatasetPublicationService) publishDatasetUpdatePart(ctx context
 		AllowLargeResultSet: filter.AllowLargeResultSet,
 		OrderByCID:          true,
 	})
+	if err == nil {
+		s.runs.keepFiles(runOf(ctx), export.StaleFiles)
+	}
+	done()
 	if err != nil {
-		return nil, fmt.Errorf("export dataset window: %w", err)
+		return nil, atPublicationStep("export", fmt.Errorf("export dataset window: %w", err))
 	}
 	if reusable, ok, err := s.reusableDatasetPublicationResult(ctx, req, schema, filter, sourceIdentity, export); err != nil {
-		return nil, err
+		return nil, atPublicationStep("reuse earlier publication", err)
 	} else if ok {
 		return reusable, nil
 	}
@@ -1027,7 +1069,7 @@ func (s *ConcreteDatasetPublicationService) publishDatasetExport(
 	pins := s.lanePins(schema, sourceIdentity.ProviderID, sourceIdentity.SourceName)
 	published, err := storage.PublishDatasetExportToIPFS(ctx, pins, export)
 	if err != nil {
-		return nil, storage.DatasetShardPublication{}, err
+		return nil, storage.DatasetShardPublication{}, atPublicationStep("pin shard and index", err)
 	}
 	export.ShardCID = published.ShardCID
 	export.IndexCID = published.IndexCID
@@ -1048,11 +1090,11 @@ func (s *ConcreteDatasetPublicationService) publishDatasetExport(
 		SchemaHash:     datasetPublicationSchemaHash(schema),
 	})
 	if err != nil {
-		return nil, storage.DatasetShardPublication{}, err
+		return nil, storage.DatasetShardPublication{}, atPublicationStep("sign manifest", err)
 	}
 	manifestCID, err := storage.PublishDatasetPublicationManifestToIPFS(ctx, pins, manifest)
 	if err != nil {
-		return nil, storage.DatasetShardPublication{}, err
+		return nil, storage.DatasetShardPublication{}, atPublicationStep("pin manifest", err)
 	}
 	manifest.CID = manifestCID
 	pnmBytes, err := storage.BuildDatasetPublicationPNM(manifest, storage.DatasetPublicationPNMOptions{
@@ -1060,14 +1102,14 @@ func (s *ConcreteDatasetPublicationService) publishDatasetExport(
 		SigningKey:  s.signingKey,
 	})
 	if err != nil {
-		return nil, storage.DatasetShardPublication{}, err
+		return nil, storage.DatasetShardPublication{}, atPublicationStep("sign PNM", err)
 	}
 	var pnmCID string
 	if s.store != nil {
 		var err error
 		pnmCID, err = s.store.Store("PNM.fbs", pnmBytes, s.providerPeerID, nil)
 		if err != nil {
-			return nil, storage.DatasetShardPublication{}, fmt.Errorf("store dataset publication PNM: %w", err)
+			return nil, storage.DatasetShardPublication{}, atPublicationStep("store PNM", fmt.Errorf("store dataset publication PNM: %w", err))
 		}
 	}
 	shardPublication := storage.DatasetShardPublication{
@@ -1093,7 +1135,7 @@ func (s *ConcreteDatasetPublicationService) publishDatasetExport(
 		PublicationSourceCutoff: publicationSourceCutoff,
 	}
 	if err := s.store.UpsertDatasetShardPublication(shardPublication); err != nil {
-		return nil, storage.DatasetShardPublication{}, fmt.Errorf("record dataset shard publication: %w", err)
+		return nil, storage.DatasetShardPublication{}, atPublicationStep("record publication", fmt.Errorf("record dataset shard publication: %w", err))
 	}
 	publishedShard, found, err := s.store.FindDatasetShardPublication(storage.DatasetShardPublicationQuery{
 		SchemaName:   schema,
@@ -1106,20 +1148,20 @@ func (s *ConcreteDatasetPublicationService) publishDatasetExport(
 		RecordCount:  export.RecordCount,
 	})
 	if err != nil {
-		return nil, storage.DatasetShardPublication{}, fmt.Errorf("load dataset feed head: %w", err)
+		return nil, storage.DatasetShardPublication{}, atPublicationStep("record publication", fmt.Errorf("load dataset feed head: %w", err))
 	}
 	if !found {
-		return nil, storage.DatasetShardPublication{}, fmt.Errorf("load dataset feed head: published shard was not found")
+		return nil, storage.DatasetShardPublication{}, atPublicationStep("record publication", fmt.Errorf("load dataset feed head: published shard was not found"))
 	}
 	if err := s.recordDatasetPublicationPins(publishedShard, export, manifest, pnmCID, pnmBytes); err != nil {
-		return nil, storage.DatasetShardPublication{}, err
+		return nil, storage.DatasetShardPublication{}, atPublicationStep("record pins", err)
 	}
 	if err := s.recordDatasetPublicationChannel(req, sourceIdentity, publishedShard, manifest.Bytes, pnmBytes); err != nil {
-		return nil, storage.DatasetShardPublication{}, err
+		return nil, storage.DatasetShardPublication{}, atPublicationStep("record channel", err)
 	}
 	if announce {
 		if err := s.announceDatasetPublication(ctx, req, publishedShard, pnmBytes); err != nil {
-			return nil, storage.DatasetShardPublication{}, err
+			return nil, storage.DatasetShardPublication{}, atPublicationStep("announce", err)
 		}
 	}
 	return &DatasetPublicationResult{
