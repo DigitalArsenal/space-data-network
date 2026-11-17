@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -373,22 +375,30 @@ func runRealFeedRecoveryCase(t *testing.T, mode string) {
 	case "handoff-after-stop":
 		// The helper stops the daemon; then a process holds the store lock, so
 		// the helper swaps nothing and restarts the build that was running.
+		// The request for the lock is queued while the daemon still holds
+		// it: the kernel hands it over as the daemon exits, before the
+		// helper (which polls the daemon's pid) can see the exit and ask.
+		// Asking only after the exit raced the helper, which sometimes took
+		// the lock first and swapped.
+		if probe, err := storage.LockStoreForMaintenance(d.store); err == nil {
+			_ = probe.Release()
+			t.Fatal("the daemon released the store lock before the request for it was queued")
+		} else if !errors.Is(err, storage.ErrStoreLocked) {
+			t.Fatalf("probe the daemon's store lock: %v", err)
+		}
+		lockAcquired, lockErr, releaseLock := queueForStoreLock(d.store)
 		select {
 		case <-d.exited:
 		case <-time.After(boot + 2*time.Duration(health)*time.Second):
 			t.Fatal("the daemon was not stopped for the hand-off")
 		}
-		var lock *storage.StoreMaintenanceLock
-		for deadline := time.Now().Add(5 * time.Second); lock == nil; {
-			held, err := storage.LockStoreForMaintenance(d.store)
-			if err == nil {
-				lock = held
-				break
+		select {
+		case <-lockAcquired:
+			if err := lockErr(); err != nil {
+				t.Fatalf("take the store lock as the daemon stopped: %v", err)
 			}
-			if time.Now().After(deadline) {
-				t.Fatalf("take the store lock after the daemon stopped: %v", err)
-			}
-			time.Sleep(5 * time.Millisecond)
+		case <-time.After(5 * time.Second):
+			t.Fatal("the store lock was not handed over when the daemon stopped")
 		}
 		var lockFailedAt time.Time
 		for deadline := time.Now().Add(storeLockWait + 30*time.Second); lockFailedAt.IsZero(); {
@@ -402,12 +412,12 @@ func runRealFeedRecoveryCase(t *testing.T, mode string) {
 				}
 			}
 			if lockFailedAt.IsZero() && time.Now().After(deadline) {
-				_ = lock.Release()
+				_ = releaseLock()
 				t.Fatalf("the helper did not report the held store lock: %v", ledgerActions(t, d.paths.Root))
 			}
 			time.Sleep(10 * time.Millisecond)
 		}
-		if err := lock.Release(); err != nil {
+		if err := releaseLock(); err != nil {
 			t.Fatal(err)
 		}
 		waitPush(t, boot, "the build that was running, restarted by the helper", func() bool {
@@ -519,4 +529,34 @@ func runRealFeedRecoveryCase(t *testing.T, mode string) {
 		t.Log("each check attempted three of twelve failing candidates; the following check tried the deferred candidates")
 	}
 	d.stop(t)
+}
+
+// queueForStoreLock makes a blocking request for the store's single-writer
+// lock (the flock the daemon holds while it runs). The kernel grants it when
+// the holder releases the lock. acquired is closed once the request returns,
+// and err reports how it ended; release drops the lock (call it only after
+// acquired is closed).
+func queueForStoreLock(store string) (acquired <-chan struct{}, err func() error, release func() error) {
+	done := make(chan struct{})
+	var f *os.File
+	var lockErr error
+	go func() {
+		defer close(done)
+		f, lockErr = os.OpenFile(filepath.Join(store, storage.StoreLockFileName), os.O_CREATE|os.O_RDWR, 0o644)
+		if lockErr != nil {
+			return
+		}
+		for {
+			if lockErr = syscall.Flock(int(f.Fd()), syscall.LOCK_EX); !errors.Is(lockErr, syscall.EINTR) {
+				return
+			}
+		}
+	}()
+	return done, func() error { <-done; return lockErr }, func() error {
+		<-done
+		if f == nil {
+			return lockErr
+		}
+		return f.Close()
+	}
 }
