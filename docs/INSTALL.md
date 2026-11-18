@@ -455,29 +455,60 @@ of a release only from a signal; 1.1.7 and later also check the feed.
 write access to the install folder, and no rights beyond its own data and
 home: a bundle unpacked under `/opt` by root and run by a system service as an
 ordinary account updates itself. Updates are then fetched, verified and
-installed under that account's home, in `~/.spacedatanetwork/bundle`, and the
-install folder, the service unit and the installed files are never changed.
-When `HOME` is unset or cannot be written, the folder is
-`<storage.path>/update-bundle`, and the node says so in its log. An update
-then goes like this, by signal, by feed check or by `update install`:
+installed under that account's home folder, the one its passwd entry names
+(`$HOME` counts only when it is that folder), in
+`~/.spacedatanetwork/bundle/<key>`, where `<key>` names the install (the first
+16 hex characters of sha256 over the install folder's resolved path), so two
+installs on one account never share one. The install folder, the service unit
+and the installed files are never changed. When the account has no usable home
+folder, the folder is `<storage.path>/update-bundle/<key>`, and the node says
+so in its log. Every folder from that bundle up to the home folder (or the
+storage folder) must belong to the account and not be writable by its group
+or by others; otherwise the build there is refused with the reason and the
+installed build runs. A node running as root never runs a build from a home
+folder: root with a read-only install folder is told to make the folder
+writable or to install the new release by hand. One install serves one node
+per account: a second daemon started from the same install by the same
+account is refused at start.
+
+An update then goes like this, by signal, by feed check or by `update install`:
 
 1. The daemon installs the new build into that folder while it keeps serving,
-   then stops its services as it does for any shutdown and starts again through
-   the installed path in the same process. No helper runs, and the service
-   manager sees no stop: this is the same with systemd (`Restart=always`,
-   `Restart=on-failure` or none), launchd and a node started by hand.
+   then stops its services as it does for any shutdown and starts again
+   through the installed path in the same process. No helper runs. Under
+   systemd (`Restart=always`, `Restart=on-failure` or none), launchd and a
+   node started by hand alike, the process keeps its pid. If that shutdown
+   fails part-way and the 75-second shutdown watchdog ends the process, the
+   restart does not happen in place: a service manager that restarts the node
+   starts it again, and a node started by hand stays stopped until it is
+   started. Either way the next start runs the new build as a trial: it never
+   ran, so nothing is rolled back.
 2. The installed build verifies the new build against the INSTALLED build's
    update roots (its signed manifest, its signed archive, every one of its
-   files) and starts it as a trial: it must answer ready within
-   `update.health_timeout_seconds`. The log says `runs as a trial`, then
-   `passed its trial`.
-3. A trial that does not answer ready in time logs `failed its trial`, stops,
-   and starts the installed path again, which rolls the build back to the
-   previous one, keeps it aside under `updates/failed/` and runs the previous
-   build. A trial build that crashes is rolled back the same way at the next
-   start: right away under a service that restarts it (`Restart=always` or
-   `Restart=on-failure`, launchd `KeepAlive`), otherwise when the node is next
-   started.
+   files) and starts it as a trial with a deadline: the time of that start
+   plus `update.health_timeout_seconds` (default 600 seconds, which covers a
+   store that takes four to five minutes to open after an update; raise it for
+   a slower one). The log says `runs as a trial`, then `passed its trial`.
+3. A trial that is not ready by its deadline is stopped and the installed path
+   starts again, which rolls the build back to the previous one, keeps it
+   aside under `updates/failed/` and runs the previous build. A timer started
+   before anything else in the trial build enforces the deadline even when
+   the build is stuck before it can check its own readiness (opening its store,
+   for example). A trial build that crashes, or that hangs so that even its
+   timer cannot act, is rolled back at the next start through the installed
+   path: right away under a service that restarts it (`Restart=always` or
+   `Restart=on-failure`, launchd `KeepAlive`); otherwise when the node is next
+   started, and any `spacedatanetwork` command typed after the deadline rolls
+   it back too (the hung process itself has to be stopped by the service
+   manager or by hand). A trial runs without a health check when the admin
+   listener is off (`admin.enabled: false`): it passes at once, and the log
+   says so as an error.
+4. When the store-format guard refuses the rollback (the trial build moved the
+   store to a format the previous build cannot open), the build that failed its
+   trial keeps running: the log says `was NOT rolled back`, the node raises the
+   `update_failed` alert, and the ledger records `revert-refused`. An operator
+   then installs a newer release, or restores the store from a snapshot taken
+   before the update and runs `spacedatanetwork update rollback`.
 
 From then on:
 
@@ -485,22 +516,27 @@ From then on:
   names the installed path, verifies the build in that folder in full and runs
   it only when it verifies. Other `spacedatanetwork` commands reuse the result
   of the last full verification while no file of the build has changed (same
-  size, times and inode), and verify in full otherwise. A build that does not
-  verify (changed files, a missing or altered signature, older than the
+  size, mode, times and inode), and verify in full otherwise. A build that does
+  not verify (changed files, a missing or altered signature, older than the
   installed build) is refused with
   `update: the build under <folder> is refused: <why>; running the installed build`,
   and the installed build runs; at a daemon start, a build still on trial is
   rolled back instead;
+- `service install` and `remove`, typed while a home build runs, name the
+  installed program, never the home build;
 - another build installed in the install folder by an administrator wins: the
   home builds are set aside and the next update starts from the new installed
-  build;
-- the rollback slots and `update rollback` work on that folder. Its oldest slot
-  is the installed build: `update rollback --slot <installed version>`, or
-  removing `~/.spacedatanetwork/bundle`, returns to it.
+  build (a home bundle a process still runs from is kept until it stops);
+- the rollback slots and `update rollback` work on that folder. The installed
+  build is the oldest slot while it is one of the last five builds; `update
+  slots` lists them. Removing the folder `~/.spacedatanetwork/bundle/<key>`
+  with the node stopped always returns to the installed build.
 
-When the account can write the install folder, a helper process stops the
-daemon, replaces the bundle in place, restarts it and reverts a build that
-fails the health gate. Windows needs a writable install folder.
+A read-only install of a release older than the one that brings these home
+updates cannot update itself: install the new release by hand once. When the
+account can write the install folder, a helper process stops the daemon,
+replaces the bundle in place, restarts it and reverts a build that fails the
+health gate. Windows needs a writable install folder.
 
 **The update root is a demo key.** Every bundle trusts exactly one root, key
 id `12cb25de07c0`:

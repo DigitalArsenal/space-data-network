@@ -86,24 +86,30 @@ command it runs.
 whose account cannot write its install folder (a bundle unpacked under `/opt`
 by root and run by a system service as an ordinary account) could not update
 itself: every update was staged in, and swapped into, that folder, and failed
-there. Such a node now fetches, verifies and installs updates under its
-account's home, `~/.spacedatanetwork/bundle` (`<storage.path>/update-bundle`
-when `HOME` is unset or not writable, which the log says), and never changes
-the install folder, the service unit or the installed files. It does this by
-signal, by feed check and with `update install`, and needs no update helper:
-the daemon installs the build while it serves, stops its services and starts
-again through the installed path in the same process, so the service manager
-sees no stop. The installed build verifies the new build against its own
-update roots (its signed manifest, its signed archive and every one of its
-files) and starts it as a trial; a trial that does not answer ready within
-`update.health_timeout_seconds`, or crashes, is rolled back to the previous
-build and kept aside under `updates/failed/`, as the helper does for an
-in-place update. Every daemon start verifies the build in full; other commands
-reuse that result while none of the build's files has changed. A build that
-was changed, is not signed, or is older than the installed build is refused
-with `update: the build under <folder> is refused: <why>; running the
-installed build`, and the installed build runs. Another build installed in the
-install folder by an administrator wins over the home builds. The five
-rollback slots and `update rollback` work the same way there; the oldest slot
-is the installed build. A node that can write its install folder updates it in
-place through the helper, as before. Windows needs a writable install folder.
+there. Such a node now fetches, verifies and installs updates under the home
+folder of its account's passwd entry, in `~/.spacedatanetwork/bundle/<key>`,
+one folder per install (`<storage.path>/update-bundle/<key>` when there is no
+usable home folder, which the log says), and never changes the install
+folder, the service unit or the installed files. It does this by signal, by
+feed check and with `update install`, and needs no update helper: the daemon
+installs the build while it serves, stops its services and starts again
+through the installed path in the same process. The installed build verifies
+the new build against its own update roots (its signed manifest, its signed
+archive and every one of its files) and starts it as a trial with a deadline
+of `update.health_timeout_seconds` from that start; a trial that is not ready
+by then, wherever it is stuck, or that crashes, is rolled back to the
+previous build and kept aside under `updates/failed/`. Every daemon start
+verifies the build in full; other commands reuse that result while none of
+the build's files has changed. A build that was changed, is not signed, or is
+older than the installed build, or a home folder another account or its group
+can write, is refused with `update: the build under <folder> is refused: <why>;
+running the installed build`, and the installed build runs. Root never runs a
+build from a home folder, and one install serves one node per account. Another
+build installed in the install folder by an administrator wins over the home
+builds. A node that can write its install folder updates it in place through
+the helper, as before. Windows needs a writable install folder. A read-only
+install of an earlier release cannot update itself into this one: install this
+release by hand once.
+
+`service install --dry-run` prints the service file and commands without
+writing or running them.

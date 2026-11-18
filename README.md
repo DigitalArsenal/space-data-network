@@ -224,18 +224,21 @@ spacedatanetwork update rollback --reason "<why>"   # with the daemon stopped
 - **No root and no service account.** When the account running the node
   cannot write the install folder (a bundle under `/opt` owned by root, run by
   a system service as an ordinary account, say), updates go to that account's
-  home, `~/.spacedatanetwork/bundle` (or `<storage.path>/update-bundle` when
-  `HOME` is unset or not writable), and the install folder and the service unit
-  are never changed. The daemon installs the new build there while it serves,
-  stops its services and starts again through the installed path in the same
-  process, with no helper and no restart by the service manager. The installed
-  build checks the new build against its own update roots and starts it as a
-  trial; a trial that does not answer ready in time stops, and the installed
-  build rolls it back and runs the previous one. Every daemon start verifies
-  the build in full (signature, archive, every file); other commands reuse that
-  result while no file of the build has changed. A build that does not verify
-  is refused with the reason and the installed build runs. Windows needs a
-  writable install folder.
+  home folder from its passwd entry, `~/.spacedatanetwork/bundle/<key>` (one
+  per install; `<storage.path>/update-bundle/<key>` when there is no usable
+  home), and the install folder and the service unit are never changed. The
+  daemon installs the new build there while it serves, stops its services and
+  starts again through the installed path in the same process, with no helper.
+  The installed build checks the new build against its own update roots and
+  starts it as a trial with a deadline (`update.health_timeout_seconds` from
+  that start); a trial that is not ready by then is stopped, rolled back and
+  kept aside, and the previous build runs. Every daemon start verifies the
+  build in full (signature, archive, every file); other commands reuse that
+  result while no file of the build has changed. A build that does not verify,
+  or a home folder another account or group can write, is refused with the
+  reason and the installed build runs. Root never runs a home build. A
+  read-only install of a release older than the one with this behavior needs
+  one manual upgrade. Windows needs a writable install folder.
 - **Writable install folder.** A helper process stops the daemon, replaces
   the bundle in place, starts it, applies the same health gate and reverts an
   unhealthy build.
