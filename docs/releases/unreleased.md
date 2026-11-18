@@ -79,3 +79,27 @@ whoever ran it, so another local account could choose the config that
 a system account (such as the package's `sdn`) counts now; for another
 account's node, pass `-c`. `install.sh` passes the node's own config to every
 command it runs.
+
+---
+
+**A node updates itself without root and without a service account.** A node
+whose account cannot write its install folder (a bundle unpacked under `/opt`
+by root and run by an ordinary account) could not update itself: every update
+was staged in, and swapped into, that folder, and failed there. Such a node now
+fetches, verifies and installs updates under its account's home,
+`~/.spacedatanetwork/bundle` (`<storage.path>/update-bundle` when `HOME` is
+unset or not writable, which the log says), and never changes the install
+folder, the service unit or the installed files. Every `spacedatanetwork`
+command, and every start of the installed path by hand or by a service, runs
+the build there only after checking it against the installed build's update
+roots: its signed manifest, its signed archive and every one of its files. A
+build that was changed, is not signed, or is older than the installed build is
+refused with `update: the build under <folder> is refused: <why>; running the
+installed build`, and the installed build runs. Another build installed in the
+install folder by an administrator wins over the home builds. The health gate,
+the five rollback slots and `update rollback` work the same way there; the
+oldest slot is the installed build. A node that can write its install folder
+updates it in place, as before. Windows needs a writable install folder. A
+daemon that runs under a system service unit as an account other than root
+cannot start the update helper outside the unit and now says so; such a node
+is updated with `spacedatanetwork update install` from a shell.

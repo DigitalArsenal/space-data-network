@@ -20,14 +20,68 @@ tightens the payload limit. Staging verifies the actual carrier and bundle
 hashes again. The copied helper then performs the shutdown, swap, restart and
 health/rollback sequence outside the replaceable bundle and service cgroup.
 
-This path is implemented in Go's generic artifact/update machinery. The
-`packages/sdn-updater-module` WASM package still contains stub methods and is
-not the executing update coordinator. Shipping that file does not establish
-module-driven updating. Its scheduling, upstream checks and orchestration
-still need an implemented SDK module and an approved host lifecycle capability.
-The current receiver listens for live signals; it does not reconcile updates
-missed while offline. A daemon launched from a scratch binary outside a portable
-bundle cannot use this in-place update path.
+This path is implemented in Go (`sdn-server/internal/update/`,
+`sdn-server/internal/node/update_signal.go`). The `packages/sdn-updater-module`
+WASM package contains stub methods and does not drive updates. Besides acting
+on signals, a node of 1.1.7 or later checks its feed every six hours
+(`update.check_interval_seconds`, first check one to five minutes after the
+start), so a node that was off when a signal went out still takes the
+release; a signed withdrawal stops a release from being installed. A daemon
+launched from a binary outside a portable bundle has no update path.
+
+### The update root: the install folder, or the account's home
+
+All of the above works on one folder, the update root (`update.PathsFor`):
+
+- the install folder, when the account running the node can write it;
+- otherwise the account's home bundle, `$HOME/.spacedatanetwork/bundle`, or
+  `<storage.path>/update-bundle` when `HOME` is unset or cannot be written
+  (logged). No root, service account, unit change or write to the install
+  folder is needed.
+
+An account that can write the install folder can rewrite the installed
+binary, which is the trust anchor, so a copy under its home would protect
+nothing; that case replaces the bundle in place.
+
+A home bundle is a bundle root like the installed one. It holds a payload
+only once an update has been applied; its first rollback slot is empty, and
+an empty slot stands for the installed build (the store-format guard and the
+health gate judge it by the installed folder). `updates/home.json` records the
+installed folder, its version, the sha256 of its `manifest.json` and its
+sequence. For each build it holds, `updates/proofs/<update id>/` keeps the
+signed update manifest and the bundle archive it signs. A release that
+replaces the update roots is kept as its signed manifest in
+`trust/rotations/`; the roots a home bundle uses are always the installed
+build's roots, advanced through each kept rotation that verifies against the
+roots before it.
+
+At the start of every command (`main`), a process started from an installed
+bundle whose update root is a home bundle holding a payload runs that build
+(`exec`, same process id) only when all of these hold, and otherwise prints
+`update: the build under <folder> is refused: <why>; running the installed build`
+and continues as the installed build:
+
+1. the installed folder and its `manifest.json` are the ones recorded (an
+   administrator who installed another build wins; the next update starts the
+   home bundle again from it);
+2. the signed manifest of the build `state.json` names verifies against the
+   roots above, targets this platform, and is newer than the installed build
+   (higher sequence, version not lower);
+3. the kept archive has the manifest's sha256 and size;
+4. the payload on disk is exactly that archive's bundle: the same files (none
+   added, none missing), bytes, executable bits and symlink targets.
+
+The home build is started with `WASMEDGE_DIR` and library-path entries that
+point into the installed folder removed, so its launcher uses its own runtime
+files. Its restart argv names the installed launcher, so the update helper and
+any supervisor restart it through the same check. Limits: below the installed
+build nothing can run, but between signed builds newer than the installed one
+an account that can write its home can choose any (as `update rollback`
+does); a home bundle takes full-bundle updates only, not module-targeted ones;
+Windows has no `exec`, so it needs a writable install folder; a daemon that
+runs under a system service unit as an account other than root cannot start
+the helper outside the unit (`systemd-run` refuses it), so such a node is
+updated with `spacedatanetwork update install` from a shell.
 
 ## Payload Envelope
 
@@ -539,11 +593,14 @@ node deployment/release/build-sdn-update-feed.js \
   --out-dir dist/release/update-feed \
   --entry dist/update/darwin-arm64/manifest.json:dist/update/darwin-arm64/update.wasm
 
-# 3. Publish the feed tree, then on the target host stage and apply.
-spacedatanetwork update stage \
-  --manifest https://sdn.spaceaware.io/updates/cli-bundle/release/darwin/arm64/1.2.3/manifest.json \
-  --carrier https://sdn.spaceaware.io/updates/cli-bundle/release/darwin/arm64/1.2.3/update.wasm
-spacedatanetwork update apply
+# 3. Publish the feed tree, then announce the release with the signals the
+#    release workflow signed into it. Without this step nothing is pushed:
+#    nodes of 1.1.7 and later find the release at their next feed check.
+SDN_UPDATE_FEED_DIR=<published feed folder> \
+  spacedatanetwork update signal --from-feed --channel release --version 1.2.3
+
+# On one node by hand instead: fetch, verify, install, restart, health-check.
+spacedatanetwork update install
 ```
 
 The carrier and manifest helpers are also usable standalone:

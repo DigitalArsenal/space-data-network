@@ -436,6 +436,50 @@ the installers unpack). A bundle reads its updates from
 `update.feedBaseUrl` is `https://sdn.spaceaware.io/updates` in the bundle's
 `manifest.json`, and installs only what is signed by one of its update roots.
 
+```bash
+spacedatanetwork update check      # this build, the newest release on the feed, the rollback slots
+spacedatanetwork update install    # fetch, verify, install, restart, health-check
+spacedatanetwork update slots      # the builds this node can return to (the last five)
+spacedatanetwork update rollback --reason "<why>"   # with the node stopped; --slot <version> for an older one
+```
+
+**A running node updates itself.** With `update.enabled: true` (the default)
+it installs a release when a signal signed by an update root announces it, and
+it checks the feed every six hours (`update.check_interval_seconds`; the first
+check comes one to five minutes after the start), so a node that was off when
+a release was announced still takes it. Set `update.enabled: false` in a
+node's config to turn both off for that node. Nodes from 1.1.4 to 1.1.6 learn
+of a release only from a signal; 1.1.7 and later also check the feed.
+
+**No root and no service account.** The account that runs the node needs no
+write access to the install folder. When it cannot write it (a bundle unpacked
+under `/opt` by root, for example), updates are fetched, verified and
+installed under that account's home, in `~/.spacedatanetwork/bundle`, and the
+install folder, the service unit and the installed files are never changed.
+When `HOME` is unset or cannot be written, the folder is
+`<storage.path>/update-bundle`, and the node says so in its log. From then on:
+
+- every `spacedatanetwork` command, and every start of the installed path (by
+  hand or by a systemd or launchd service whose command names it), checks the
+  build in that folder and runs it only when it verifies against the INSTALLED
+  build's update roots: its signed manifest, its signed archive, and every one
+  of its files. A build that does not verify (changed files, a missing or
+  altered signature, older than the installed build) is refused with
+  `update: the build under <folder> is refused: <why>; running the installed build`,
+  and the installed build runs;
+- another build installed in the install folder by an administrator wins: the
+  home builds are set aside and the next update starts from the new installed
+  build;
+- the health gate, the rollback slots and `update rollback` work on that
+  folder. Its oldest slot is the installed build: `update rollback --slot
+  <installed version>`, or removing `~/.spacedatanetwork/bundle`, returns to it.
+
+When the account can write the install folder, updates replace the bundle in
+place. A node that runs under a system service unit as an account other than
+root installs an update when `spacedatanetwork update install` is run as that
+account from a shell; its daemon cannot start the update helper outside the
+unit, and its log says so. Windows needs a writable install folder.
+
 **The update root is a demo key.** Every bundle trusts exactly one root, key
 id `12cb25de07c0`:
 
@@ -446,8 +490,8 @@ id `12cb25de07c0`:
 It is the bundle's `trust/update-roots.json`, and the same set is compiled
 into the binary for a bundle whose trust file is missing (a trust file that
 is present always wins). It is a demo key: whoever holds its private half can
-sign an update every install accepts, so it will be replaced by a production
-key through a signed rotation release.
+sign an update every install accepts. A release signed by a current root can
+replace the roots (its `trust_roots`).
 
 Bundles up to v1.1.1 trusted `d4a971a7e534` instead. That root is the node
 key leaked in SEC-001, derived from a published seed: anyone can sign for it.
@@ -479,14 +523,18 @@ replaced, `update install --direct` refuses them ("untrusted update signing
 key") until a fleet release signed with the demo root is published on that
 lane, so reinstall instead, or publish that release first.
 
-**The channel needs a release's feed.** A release is installable from the
-release channel once it is cut with the update signing key and its feed is
-published to the server above. The current release's feed is published: a
-command-line install of v1.1.4 or later takes it with
-`spacedatanetwork update install`. The release workflow fails a stable
-release that has no signing key, signs only with the key id derived from
-that key, checks the key is the fleet root, and verifies every manifest
+**The channel needs a release's feed. Publishing one, in order:** a release
+is installable once its signed
+feed is published to the server above; the release workflow signs it with the
+update key, checks the key is the fleet root and verifies every manifest
 against `deployment/release/fleet-trust-roots.json` before it ships the feed.
+Then announce it from the publishing node, with the signals the workflow
+signed: `SDN_UPDATE_FEED_DIR=<feed folder> spacedatanetwork update signal
+--from-feed --channel release --version <X>`. Publishing without the signal is
+not a push: nodes of 1.1.7 and later find the release at their next feed
+check, older ones not at all. Nodes older than 1.1.6 cannot exchange
+publications with newer ones: update nodes that exchange publications
+together.
 
 How an install takes an update:
 
@@ -515,6 +563,13 @@ How an install takes an update:
   `alerts_error` / `alerts_warning` counts when operational alerts are active
   on a daemon that is serving. It no longer prints `data_runtime`, and prints
   `data_message` only when the health answer cannot be read.
+- A node of 1.1.0 or earlier is updated by hand, because its updater reverts
+  the updates it drives itself: stop it, install the new release in place of
+  the old one (keep `keys/` and the config), and start it.
+
+The [agent guide](AGENT-API-GUIDE.md#9-administering-a-nodes-updates) lists
+the output lines of each update command, how to tell that an update was
+received but not installed, and the checks after an update.
 
 ## Known gaps on this date
 
