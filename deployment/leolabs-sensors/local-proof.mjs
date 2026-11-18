@@ -13,12 +13,10 @@ import net from "node:net";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { frame, sitRecords, snrRecords } from "./build-records.mjs";
+import { NETWORKS, frame, lanesOf } from "./build-records.mjs";
 
-export const LANES = [
-  { schema: "SIT.fbs", providerId: "leolabs", sourceName: "radar-sites", file: "sit.sdn", build: sitRecords, count: 8 },
-  { schema: "SNR.fbs", providerId: "leolabs", sourceName: "radars", file: "snr.sdn", build: snrRecords, count: 12 },
-];
+// One lane pair per network: provider `sdn-ssa-<network>`, so a network stands alone on the node.
+export const LANES = NETWORKS.flatMap((network) => lanesOf(network).map((lane) => ({ ...lane, network: network.slug })));
 
 const work = process.argv[2];
 const keep = process.argv.includes("--keep");
@@ -96,8 +94,8 @@ try {
   mkdirSync(readback, { recursive: true });
   for (const lane of LANES) {
     // 1. the records, as a batch on the lane's provider/source (the publisher's own loopback lane)
-    const body = frame(lane.build());
-    const q = new URLSearchParams({ provider_id: lane.providerId, source_name: lane.sourceName, batch_id: `${lane.sourceName}-1`, source_url: "https://platform.leolabs.space/visualizations/leo" });
+    const body = frame(lane.records);
+    const q = new URLSearchParams({ provider_id: lane.providerId, source_name: lane.sourceName, batch_id: `${lane.sourceName}-1`, source_url: lane.sourceUrl });
     const put = await fetch(`http://127.0.0.1:${port.lane}/api/v1/data/publish/batch/${lane.schema}?${q}`, { method: "POST", headers: { "Content-Type": "application/vnd.sdn.flatbuffers.stream" }, body });
     const putText = await put.text();
     console.log(`publish.batch ${lane.schema} -> ${put.status} ${putText.slice(0, 200)}`);
@@ -109,8 +107,9 @@ try {
     if (!sign.ok || signed.recordCount !== lane.count) throw new Error(`sign ${lane.schema}: ${JSON.stringify(signed).slice(0, 300)}`);
     // 3. read back over the query API: one $QRP Request frame in; runs of [$QRP Page][RECORD_COUNT record frames] out
     const bytes = await readLane(lane);
-    console.log(`query ${lane.schema} -> ${bytes.length} bytes`);
-    writeFileSync(path.join(readback, lane.file), bytes);
+    console.log(`query ${lane.schema} ${lane.providerId} -> ${bytes.length} bytes`);
+    mkdirSync(path.join(readback, lane.network), { recursive: true });
+    writeFileSync(path.join(readback, lane.network, lane.file), bytes);
   }
   // 4. the checker reads the node's bytes, not the builder's
   const here = path.dirname(fileURLToPath(import.meta.url));
