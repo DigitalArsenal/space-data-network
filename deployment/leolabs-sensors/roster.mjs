@@ -14,8 +14,19 @@ export const PAGE_EPOCH = "2026-11-18T19:01:02.000Z";
 export const LEOLABS_URL = "https://leolabs.space";
 export const PAPER_URL = "https://amostech.com/TechnicalPapers/2021/Poster/Rowland.pdf";
 export const PAPER = "Rowland, McKnight, Prado Pino, Reihs, Stevenson, \"A Worldwide Network of Radars for Space Domain Awareness in Low Earth Orbit\", AMOS 2021";
-export const FCC_UHF = { url: "https://apps.fcc.gov/els/GetAtt.html?id=341418", text: "FCC experimental license WO2XME, LeoLabs, Inc., Pearce, Arizona, 430-449 MHz, effective 2024-01-30 (expired 2026-02-01)" };
-export const VIDEO = { url: "https://www.youtube.com/watch?v=Loz-rp4kdpw", text: "LeoLabs, \"Introducing LeoLabs Next-Generation UHF Radar: Seeker\" (video description: UHF planar direct radiating array, unveiled 10 December 2024, Arizona)" };
+export const FCC_UHF = { url: "https://apps.fcc.gov/els/GetAtt.html?id=341418", text: "FCC experimental license WO2XME, LeoLabs, Inc., Pearce, Arizona, 430-449 MHz, effective 2024-01-30 (expired 2026-02-01)",
+  recordId: "WO2XME", source: "United States Federal Communications Commission, experimental license WO2XME (LeoLabs, Inc.)", license: "United States public record",
+  notes: "The license covers the Pearce, Arizona station; it is matched to this radar by band and state." };
+// The FCC experimental licenses whose station place matches a radar on the page (SSA-NETWORKS.md third pass, ELS read 2026-11-18).
+// A license is a test-station license: it proves the licensed place and band, not the radar's name.
+const ELS = "https://apps.fcc.gov/oetcf/els/reports/GenericSearch.cfm";
+export const FCC_WI2XJZ = { url: ELS, recordId: "WI2XJZ", source: "United States Federal Communications Commission, experimental license WI2XJZ (LeoLabs, Inc.)", license: "United States public record",
+  text: "FCC experimental license WI2XJZ, file 0468-EX-CR-2026, LeoLabs, Inc., Kermit (Winkler), Texas, 31 57 52 N, 103 14 01 W, 430-449 MHz, effective 2026-07-17, expires 2031-08-01 (look up the call sign in the OET Experimental Licensing System)",
+  notes: "A fixed UHF test station at Kermit, Texas, within about 20 m of the position the page gives this radar; matched by position, the license does not name the radar." };
+export const FCC_WP2XJW = { url: ELS, recordId: "WP2XJW", source: "United States Federal Communications Commission, experimental license WP2XJW (LeoLabs, Inc.)", license: "United States public record",
+  text: "FCC experimental license WP2XJW, file 0021-EX-CN-2025, LeoLabs, Inc., Kihei (Maui), Hawaii, 20 44 31 N, 156 26 15 W, 2930-2980 MHz, effective 2025-02-26, expires 2027-03-01 (look up the call sign in the OET Experimental Licensing System)",
+  notes: "An S-band test station at Kihei, Maui, within about 50 m of the position the page gives this radar; matched by position, the license does not name the radar. The license says the devices are retrieved after the experiment." };
+export const VIDEO ={ url: "https://www.youtube.com/watch?v=Loz-rp4kdpw", text: "LeoLabs, \"Introducing LeoLabs Next-Generation UHF Radar: Seeker\" (video description: UHF planar direct radiating array, unveiled 10 December 2024, Arizona)" };
 
 // Sites. `where` is the place words the sources give; `position` is the page's value for the FIRST radar of the site.
 export const SITES = [
@@ -69,7 +80,8 @@ export const SITES = [
 // bandLowMHz / bandHighMHz only where a source PUBLISHES limits (Seeker: FCC WO2XME). az / el: the page's boresight.
 export const RADARS = [
   { id: "pfisr", site: "pfisr", name: "Poker Flat Incoherent Scatter Radar", band: "UHF", freqMHz: 450, powerW: 2000000, az: 15, el: 74, kind: "fan" },
-  { id: "msr", site: "msr", name: "Midland Space Radar", band: "UHF", freqMHz: 435, powerW: 65000, az: -18, el: 90, kind: "fan" },
+  { id: "msr", site: "msr", name: "Midland Space Radar", band: "UHF", freqMHz: 435, powerW: 65000, az: -18, el: 90, kind: "fan",
+    bandLowMHz: 430, bandHighMHz: 449, bandCite: FCC_WI2XJZ },
   { id: "ksr1", site: "ksr", name: "Kiwi Space Radar - North", band: "S", freqMHz: 2950, powerW: 51200, az: -13, el: 70, kind: "fan" },
   { id: "ksr2", site: "ksr", name: "Kiwi Space Radar - South", band: "S", freqMHz: 2960, powerW: 51200, az: 167, el: 70, kind: "fan" },
   { id: "crsr1", site: "crsr", name: "Costa Rica Space Radar - West", band: "S", freqMHz: 2940, powerW: 52000, az: -63, el: 75, kind: "fan" },
@@ -80,5 +92,6 @@ export const RADARS = [
   { id: "wasr2", site: "wasr", name: "West Australian Space Radar - South", band: "S", freqMHz: 2962, powerW: 52000, az: -145, el: 75, kind: "fan" },
   { id: "rasr1", site: "rasr", name: "Arizona Space Radar (Seeker)", band: "UHF", freqMHz: 435, powerW: 128000, az: 0, el: 90, kind: "planar",
     bandLowMHz: 430, bandHighMHz: 449, bandCite: FCC_UHF },
-  { id: "hisr1", site: "hisr", name: "SCOUT Hawaii Space Radar", band: "S", freqMHz: 2950, powerW: 102000, az: 0, el: 90, kind: "planar" },
+  { id: "hisr1", site: "hisr", name: "SCOUT Hawaii Space Radar", band: "S", freqMHz: 2950, powerW: 102000, az: 0, el: 90, kind: "planar",
+    bandLowMHz: 2930, bandHighMHz: 2980, bandCite: FCC_WP2XJW },
 ];

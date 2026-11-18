@@ -1,6 +1,6 @@
 // The LeoLabs network, in the same row shape as every other network (networks.mjs). The values are roster.mjs' (the page's, the AMOS
 // paper's and the FCC license's); this file only gives each row its network, operator, kind, status and its own citation.
-import { FCC_UHF, LEOLABS_URL, PAGE_EPOCH, PAGE_URL, PAPER, PAPER_URL, RADARS, SITES, VIDEO } from "./roster.mjs";
+import { LEOLABS_URL, PAGE_EPOCH, PAGE_URL, PAPER, PAPER_URL, RADARS, SITES, VIDEO } from "./roster.mjs";
 
 const CREDIT = `LeoLabs, ${LEOLABS_URL}`;
 const PAGE_CITE = { url: PAGE_URL, text: `LeoLabs public visualization, data epoch ${PAGE_EPOCH}` };
@@ -37,15 +37,15 @@ export const LEOLABS_NETWORK = {
       id: radar.id, site: radar.site, name: radar.name, type: "UNSPECIFIED", emission: "ACTIVE",
       band: {
         name: limits
-          ? `${radar.band} band ${radar.bandLowMHz} to ${radar.bandHighMHz} MHz (${FCC_UHF.text}); the page's transmit frequency is ${mhz(radar.freqMHz)}`
+          ? `${radar.band} band ${radar.bandLowMHz} to ${radar.bandHighMHz} MHz (${radar.bandCite.text}); the page's transmit frequency is ${mhz(radar.freqMHz)}`
           : `${radar.band} band; the page's single transmit frequency is ${mhz(radar.freqMHz)}; band limits not published`,
         designation: radar.band, lowMHz: radar.bandLowMHz, highMHz: radar.bandHighMHz,
-        cite: limits ? { url: radar.bandCite.url, text: radar.bandCite.text, source: "United States Federal Communications Commission, experimental license WO2XME (LeoLabs, Inc.)", recordId: "WO2XME", license: "United States public record", notes: "The license covers the Pearce, Arizona station; it is matched to this radar by band and state." } : undefined,
+        cite: limits ? { url: radar.bandCite.url, text: radar.bandCite.text, source: radar.bandCite.source, recordId: radar.bandCite.recordId, license: radar.bandCite.license, notes: radar.bandCite.notes } : undefined,
       },
       powerW: radar.powerW, az: radar.az, el: radar.el, cite: PAGE_CITE,
       note:
         `Transmit frequency ${mhz(radar.freqMHz)} and transmit power ${radar.powerW} W are the page's single values (the power is taken as the peak transmit power). ` +
-        `${limits ? `Band limits ${radar.bandLowMHz} to ${radar.bandHighMHz} MHz are from ${FCC_UHF.text}. ` : "Band limits are not published. "}` +
+        `${limits ? `Band limits ${radar.bandLowMHz} to ${radar.bandHighMHz} MHz are from ${radar.bandCite.text}. ` : "Band limits are not published. "}` +
         `Boresight azimuth ${radar.az}, elevation ${radar.el} degrees (local east-north-up). ` +
         "Radar type: a phased-array radar per LeoLabs; the page does not say which feed. " +
         "Field of view and range are not set: the page publishes an outline cut at a 2000 km altitude ceiling (2100 km for PFISR), not a maximum range, beam width or minimum elevation. " +
@@ -59,6 +59,7 @@ export const LEOLABS_NETWORK = {
   leftOut: [
     ["Radar ids of the page's table with no position (hqsr, agsr, risr, dusr, rwsr, sksr, sasr, irsr, dgsr and others), the Saudi Arabia entries and the three DSR GEO entries", "no coordinates, no frequency, no field of view on the page: planned or placeholders"],
     ["Argentina (Tolhuin) radar", "the page gives \"Southern Argentina\" only; the coordinates are in an Argentine Ministry of Defense report, and its installation was suspended in 2023 (SSA-SITES, not part of this publication)"],
+    ["LeoLabs FCC experimental test stations at Colorado Springs (mobile, WP2XKD), Menlo Park (laboratory, WP2XJJ, WJ2XLT, WN2XAM) and the Magdalena NM and Graham Pass Road CA points of WO2XXL", "licensed test places, not sensor sites; the licenses name no radar there"],
     ["Seeker-ROK (South Korea)", "listed in the page's script but not in the data it loads"],
   ],
 };
