@@ -422,7 +422,7 @@ test('beta release workflow builds updater wasm once before platform CLI archive
   assert.match(updaterJob, /sha256sum -c -/);
   assert.match(updaterJob, /SDN_WASI_CLANGXX=[\s\S]*SDN_WASI_SYSROOT=[\s\S]*npm --prefix packages\/sdn-updater-module run build/);
   assert.match(workflow, /name:\s*updater-module-wasm[\s\S]*path:\s*packages\/sdn-updater-module\/dist\/isomorphic\/module\.wasm/);
-  assert.match(workflow, /needs:\s*\[beta-version, update-signing-check, ipfs, updater-wasm, wasmedge-static\]/);
+  assert.match(workflow, /needs:\s*\[beta-version, update-signing-check, ipfs, updater-wasm, wasmedge-static, cli-js-inputs\]/);
   assert.match(workflow, /name:\s*updater-module-wasm[\s\S]*path:\s*packages\/sdn-updater-module\/dist\/isomorphic/);
   assert.match(workflow, /name:\s*Verify updater module wasm[\s\S]*test -f packages\/sdn-updater-module\/dist\/isomorphic\/module\.wasm/);
 
@@ -471,6 +471,23 @@ test('beta release workflow downloads only the ipfs build tool, with retries and
   assert.match(downloader, /https:\/\/github\.com\/ipfs\/kubo\/releases\/download/);
   assert.match(downloader, /\$\{mirror_url\}\.sha512/);
   assert.match(downloader, /"\$\{expected\}" == "\$\{actual\}"/);
+
+  // The archive's sha512 is pinned in the workflow and checked on every run,
+  // whether the archive came from the cache or was just downloaded; the ipfs
+  // CLI that runs is unpacked from that archive in the same step.
+  const ipfs = yaml.load(workflow).jobs.ipfs;
+  assert.match(ipfs.env.KUBO_LINUX_AMD64_SHA512, /^[0-9a-f]{128}$/);
+  const cache = ipfs.steps.find((step) => step.id === 'kubo-cache');
+  assert.equal(cache.with.path, 'dist/kubo-archive');
+  assert.match(cache.with.key, /\$\{\{ env\.KUBO_LINUX_AMD64_SHA512 \}\}/);
+  const install = ipfs.steps.find((step) => step.name === 'Install Kubo').run;
+  const check = install.indexOf('echo "${KUBO_LINUX_AMD64_SHA512}  ${archive}" | sha512sum -c -');
+  const fi = install.indexOf('\nfi\n');
+  assert.ok(fi > 0 && check > fi, 'the sha512 check must run outside the download branch, on every run');
+  assert.match(install, /--sha512 "\$\{KUBO_LINUX_AMD64_SHA512\}"/);
+  assert.ok(install.indexOf('tar -xzf "${archive}" -C dist/bootstrap-kubo') > check);
+  assert.ok(install.indexOf('sudo install dist/bootstrap-kubo/kubo/ipfs') > check);
+  assert.match(downloader, /validate_archive && matches_pin; then\n\s+extract_archive/);
 });
 
 test('no web UI install runs the kubo devDependency download', () => {
@@ -557,8 +574,205 @@ test('beta release workflow builds signed CLI update feed artifacts', () => {
   assert.match(workflow, /spacedatanetwork-update-feed-\$\{VERSION\}\.tar\.gz/);
   assert.match(workflow, /name:\s*cli-update-feed[\s\S]*path:\s*dist\/update-feed\/spacedatanetwork-update-feed-\$\{\{ needs\.beta-version\.outputs\.package_version \}\}\.tar\.gz/);
   assert.match(workflow, /name:\s*cli-update-feed[\s\S]*path:\s*dist\/update-feed/);
-  assert.match(workflow, /needs:\s*\[beta-version, ipfs, docker, cli, cli-update-feed, packages, sdn-js-package\]/);
-  assert.match(workflow, /needs:\s*\[beta-version, ipfs, docker, docker-manifest, cli, cli-update-feed, cli-update-feed-verify, desktop, packages, sdn-js-package, artifact-docker-test\]/);
+  assert.match(workflow, /artifact-docker-test:[\s\S]*?needs:\s*\[beta-version, ipfs, packages\]/);
+  assert.match(workflow, /artifact-docker-test-container:[\s\S]*?needs:\s*\[beta-version, packages, docker\]/);
+  assert.match(workflow, /artifact-docker-test-cli:[\s\S]*?needs:\s*\[beta-version, cli, sdn-js-package\]/);
+  // The release names every check itself: the builds start beside Preflight
+  // and the key check instead of after them, so nothing reaches the release
+  // through a build any more. A dry run (publish false) skips everything that
+  // writes outside the run, and only a dry run runs cli-update-feed-dry-run,
+  // which the release therefore cannot need.
+  const jobs = yaml.load(workflow).jobs;
+  const needs = (name) => [jobs[name]?.needs ?? []].flat();
+  for (const name of Object.keys(jobs)) {
+    if (['release', 'published-installer-smoke', 'cli-update-feed-dry-run'].includes(name)) continue;
+    assert.ok(needs('release').includes(name), `the release must need ${name}`);
+  }
+  assert.ok(!needs('release').includes('cli-update-feed-dry-run'), 'the release must not need the dry-run feed');
+  assert.match(workflow, /- name: Check the token can publish a release\n\s+if: inputs\.publish != false\n/);
+  for (const name of ['docker-manifest', 'release', 'published-installer-smoke', 'cli-update-payloads']) {
+    assert.equal(jobs[name].if, 'inputs.publish != false', `${name} must be skipped by a dry run`);
+  }
+});
+
+// Everything that pushes or publishes waits for Preflight AND the update
+// signing key check. A run whose key is missing or untrusted, and a run from
+// a branch (the update-signing Environment refuses the key check there), must
+// not move `:beta`, push an image, sign one, or publish a release.
+function publishingJobs(jobs) {
+  const writes = [
+    /docker\/login-action/,
+    /docker push\b/,
+    /push=true/,
+    /imagetools create/,
+    /cosign sign/,
+    /\bgh release\b/,
+    /softprops\/action-gh-release/,
+    /gh api -X (?:POST|PATCH|PUT|DELETE)/,
+  ];
+  return Object.entries(jobs)
+    .filter(([, job]) => writes.some((pattern) => pattern.test(JSON.stringify(job))))
+    .map(([name]) => name);
+}
+
+// True when `name` runs only after `target` succeeded: it needs it, directly
+// or through jobs that each need their next one, and every `if:` on the way
+// keeps the implicit success() of its needs or names that need's success.
+function waitsForSuccess(jobs, name, target, seen = new Set()) {
+  if (seen.has(name)) return false;
+  seen.add(name);
+  const job = jobs[name];
+  const condition = String(job.if ?? '');
+  const statusOverride = /\b(?:always|cancelled|failure)\(\)/.test(condition);
+  const requires = (need) => !statusOverride || condition.includes(`needs.${need}.result == 'success'`);
+  return [job.needs ?? []].flat().some((need) => requires(need)
+    && (need === target || waitsForSuccess(jobs, need, target, seen)));
+}
+
+function guardPublishing(workflow) {
+  const jobs = yaml.load(workflow).jobs;
+  const publishing = publishingJobs(jobs);
+
+  // The publish probe in beta-version creates a draft release (no tag, not
+  // public) and deletes it at once; it is the first job, before every check,
+  // by design (a token that cannot publish stops the run in its first minute).
+  const probe = jobs['beta-version'].steps.find((step) => step.name === 'Check the token can publish a release');
+  assert.equal(probe.if, 'inputs.publish != false');
+  assert.match(probe.run, /-F draft=true/);
+  assert.match(probe.run, /trap cleanup EXIT/);
+  assert.match(probe.run, /gh api -X DELETE "repos\/\$\{GITHUB_REPOSITORY\}\/releases\/\$\{probe_id\}"/);
+
+  for (const name of ['docker-push', 'docker-manifest', 'release', 'published-installer-smoke']) {
+    if (name !== 'published-installer-smoke') assert.ok(publishing.includes(name), `${name} must be found as a publishing job`);
+  }
+  // The jobs that push, tag or publish name both checks themselves, so no
+  // change to a job between them can drop one.
+  for (const name of ['docker-push', 'docker-manifest', 'release']) {
+    for (const check of ['preflight', 'update-signing-check']) {
+      assert.ok(needs(jobs, name).includes(check), `${name} must need ${check} directly`);
+    }
+  }
+  for (const name of [...new Set([...publishing, 'published-installer-smoke'])]) {
+    if (name === 'beta-version') continue;
+    for (const check of ['preflight', 'update-signing-check']) {
+      assert.ok(waitsForSuccess(jobs, name, check), `${name} must run only after ${check} succeeded`);
+    }
+  }
+  // No job before the checks holds a registry credential: the container
+  // build pulls anonymously.
+  assert.doesNotMatch(JSON.stringify(jobs.docker), /login-action|DOCKERHUB_TOKEN/);
+
+  // cli and docker-push may run without the key check only in a dry run, and
+  // docker-push then logs in nowhere and pushes only to the registry on its
+  // own runner.
+  const keyOrDryRun = "(needs.update-signing-check.result == 'success' || inputs.publish == false)";
+  for (const name of ['cli', 'docker-push']) {
+    assert.ok(jobs[name].if.includes(keyOrDryRun), `${name} must require the key check unless publish is false`);
+    for (const need of needs(jobs, name).filter((n) => n !== 'update-signing-check')) {
+      assert.ok(jobs[name].if.includes(`needs.${need}.result == 'success'`), `${name} must require ${need}`);
+    }
+  }
+  const pushSteps = jobs['docker-push'].steps;
+  const login = pushSteps.find((step) => String(step.uses).startsWith('docker/login-action'));
+  assert.equal(login.if, 'inputs.publish != false');
+  const target = pushSteps.find((step) => step.id === 'target');
+  assert.equal(target.env.PUSH_IMAGE, "${{ inputs.publish != false && env.IMAGE_NAME || 'localhost:5000/space-data-network' }}");
+  assert.equal(jobs['docker-push'].services.registry.ports[0], '5000:5000');
+  for (const [name, job] of Object.entries(jobs)) {
+    if (name !== 'docker-push') assert.doesNotMatch(JSON.stringify(job), /push=true/, `${name} must push only through docker-push`);
+  }
+
+  // Nothing is pushed before the comparison with the tested image, and the
+  // pushed digest is compared again before docker-manifest can tag it.
+  const at = (predicate) => pushSteps.findIndex(predicate);
+  const build = at((step) => step.name === 'Build the image to push');
+  const before = at((step) => step.name === 'Compare the image to push with the tested image');
+  const push = at((step) => step.id === 'build');
+  const after = at((step) => step.name === 'Compare the pushed image with the tested image');
+  assert.ok(build >= 0 && build < before && before < push && push < after, 'build, compare, push, compare again');
+  assert.equal(pushSteps[build].with.load, true);
+  assert.equal(pushSteps[push].with.outputs, 'type=image,name=${{ steps.target.outputs.image }},push-by-digest=true,name-canonical=true,push=true');
+  for (const field of ['context', 'file', 'platforms', 'labels', 'build-args', 'cache-from']) {
+    assert.equal(pushSteps[build].with[field], pushSteps[push].with[field], `the compared build and the push must share ${field}`);
+  }
+  for (const index of [before, after]) {
+    assert.match(pushSteps[index].run, /node deployment\/release\/compare-container-images\.mjs \\\n\s+--tested "\$\{TESTED_IMAGE\}"|--tested "\$\{tested\}"/);
+  }
+  assert.match(pushSteps[after].run, /GITHUB_STEP_SUMMARY/);
+
+  // `:beta` moves only after the container install and network test.
+  assert.ok(needs(jobs, 'docker-manifest').includes('artifact-docker-test-container'), 'the manifest must need the container network test');
+}
+
+test('every job that pushes or publishes waits for Preflight and the update signing key check', () => {
+  guardPublishing(readRepoFile('.github/workflows/beta-release-artifacts.yml'));
+});
+
+const publishingMutations = {
+  // The defect this guard was written for: the push and the manifest needed
+  // Preflight but not the key check.
+  'image push without the key check': (w) => w.replace('    needs: [beta-version, ipfs, preflight, update-signing-check, docker]\n', '    needs: [beta-version, ipfs, preflight, docker]\n'),
+  'manifest without the key check': (w) => w.replace('    needs: [beta-version, preflight, update-signing-check, docker-push, artifact-docker-test-container]\n', '    needs: [beta-version, preflight, docker-push, artifact-docker-test-container]\n'),
+  'manifest without Preflight or the key check': (w) => w.replace('    needs: [beta-version, preflight, update-signing-check, docker-push, artifact-docker-test-container]\n', '    needs: [beta-version, docker-push, artifact-docker-test-container]\n'),
+  'manifest before the container network test': (w) => w.replace('    needs: [beta-version, preflight, update-signing-check, docker-push, artifact-docker-test-container]\n', '    needs: [beta-version, preflight, update-signing-check, docker-push]\n'),
+  'image push that ignores a refused key check': (w) => w.replace(" && (needs.update-signing-check.result == 'success' || inputs.publish == false) }}\n    strategy:\n      fail-fast: false\n      matrix:\n        include:\n          - arch: amd64", " }}\n    strategy:\n      fail-fast: false\n      matrix:\n        include:\n          - arch: amd64"),
+  'manifest that runs whatever its needs did': (w) => w.replace('    needs: [beta-version, preflight, update-signing-check, docker-push, artifact-docker-test-container]\n    if: inputs.publish != false\n', '    needs: [beta-version, preflight, update-signing-check, docker-push, artifact-docker-test-container]\n    if: ${{ always() && inputs.publish != false }}\n'),
+  'registry login in the container build': (w) => w.replace('      # The downloadable tarball', '      - uses: docker/login-action@v3\n        with:\n          registry: docker.io\n          username: dockerdigitalarsenal\n          password: ${{ secrets.DOCKERHUB_TOKEN }}\n      # The downloadable tarball'),
+  'push before the comparison': (w) => w.replace('          load: true\n          tags: sdn-push-candidate:${{ matrix.arch }}\n', '          push: true\n          tags: sdn-push-candidate:${{ matrix.arch }}\n'),
+  'image push login in a dry run': (w) => w.replace('      - uses: docker/login-action@v3\n        if: inputs.publish != false\n        with:\n          registry: ${{ env.REGISTRY }}', '      - uses: docker/login-action@v3\n        with:\n          registry: ${{ env.REGISTRY }}'),
+  'release without the key check reaching it': (w) => w.replace('    needs: [beta-version, update-signing-check, preflight, ipfs,', '    needs: [beta-version, preflight, ipfs,').replace('    needs: [beta-version, preflight, update-signing-check, docker-push, artifact-docker-test-container]\n', '    needs: [beta-version, preflight, docker-push, artifact-docker-test-container]\n').replace('    needs: [beta-version, update-signing-check, ipfs, updater-wasm, wasmedge-static, cli-js-inputs]\n', '    needs: [beta-version, ipfs, updater-wasm, wasmedge-static, cli-js-inputs]\n').replace('    needs: [beta-version, ipfs, preflight, update-signing-check, docker]\n', '    needs: [beta-version, ipfs, preflight, docker]\n'),
+  'CLI build that ignores a refused key check in a release': (w) => w.replace(" && (needs.update-signing-check.result == 'success' || inputs.publish == false) }}\n    defaults:", " }}\n    defaults:"),
+};
+for (const [name, mutate] of Object.entries(publishingMutations)) {
+  test(`publishing guard rejects ${name}`, () => {
+    const workflow = readRepoFile('.github/workflows/beta-release-artifacts.yml');
+    const changed = mutate(workflow);
+    assert.notEqual(changed, workflow);
+    assert.throws(() => guardPublishing(changed));
+  });
+}
+
+function needs(jobs, name) {
+  return [jobs[name]?.needs ?? []].flat();
+}
+
+// The dry run's feed runs the reviewed signing programs, word for word, with a
+// throwaway key and its own roots file; the production key signs nothing in a
+// dry run.
+test('a dry run signs its update feed with a throwaway key, through the reviewed steps', () => {
+  const workflow = readRepoFile('.github/workflows/beta-release-artifacts.yml');
+  const jobs = yaml.load(workflow).jobs;
+  const job = jobs['cli-update-feed-dry-run'];
+  assert.ok(job, 'the dry-run feed job must exist');
+  assert.match(job.if, /inputs\.publish == false/);
+  assert.ok(!Object.hasOwn(job, 'environment'));
+  assert.doesNotMatch(JSON.stringify(job), /secrets/);
+  assert.equal(job.env.DRY_RUN_ROOTS, 'dist/dry-run-update-roots.json');
+
+  const allowedRuns = JSON.parse(readRepoFile('deployment/release/update-signing-allowed-runs.json'));
+  const reviewed = (run) => run.replaceAll('deployment/release/fleet-trust-roots.json', '"${DRY_RUN_ROOTS}"');
+  const step = (name) => job.steps.find((s) => s.name === name);
+  for (const name of ['Build the release signal signer', 'Sign the CLI update manifests', 'Build the CLI update feed index', 'Sign the update signals', 'Pack the signed CLI update feed']) {
+    const expected = reviewed(allowedRuns[name].replace(/^          /gm, '')) + '\n';
+    assert.equal(step(name).run, expected, `${name} must be the reviewed step with the throwaway roots`);
+  }
+  const verify = jobs['cli-update-feed-verify'].steps.find((s) => s.name === 'Verify the signed CLI update feed');
+  assert.equal(step('Verify the signed CLI update feed').run, reviewed(verify.run));
+  const payloads = jobs['cli-update-payloads'].steps.find((s) => s.name === 'Build CLI update payloads');
+  assert.equal(step('Build CLI update payloads').run, payloads.run);
+
+  const order = ['Build CLI update payloads', 'Make a throwaway update signing key', 'Sign the CLI update manifests', 'The throwaway key signed the feed',
+    'Sign the update signals', 'Verify the signed CLI update feed', 'The fleet roots refuse the throwaway-signed feed']
+    .map((name) => job.steps.indexOf(step(name)));
+  assert.deepEqual([...order].sort((a, b) => a - b), order);
+  assert.ok(order.every((i) => i >= 0));
+  assert.match(step('Make a throwaway update signing key').run, /openssl genpkey -algorithm ed25519/);
+  assert.match(step('Make a throwaway update signing key').run, /is a fleet root/);
+  const refuse = step('The fleet roots refuse the throwaway-signed feed').run;
+  assert.match(refuse, /verify-cli-update-feed\.mjs[\s\S]*--roots deployment\/release\/fleet-trust-roots\.json[\s\S]*exit 1/);
+  assert.match(refuse, /--verify-only[\s\S]*--roots deployment\/release\/fleet-trust-roots\.json[\s\S]*exit 1/);
+  const upload = job.steps.find((s) => String(s.uses).startsWith('actions/upload-artifact'));
+  assert.equal(upload.with['retention-days'], 1);
 });
 
 test('the update feed job fails a stable release without its key, signs with the derived key id only, and verifies every manifest against the fleet roots', () => {
@@ -629,7 +843,7 @@ test('beta release workflow builds desktop app artifacts for every supported OS'
   assert.match(workflow, /builder_args:\s*--linux AppImage deb tar\.xz --x64/);
   assert.match(workflow, /name:\s*desktop-\$\{\{ matrix\.target_os \}\}/);
   assert.match(workflow, /path:\s*dist\/desktop\/\*/);
-  assert.match(workflow, /needs:\s*\[beta-version, ipfs, docker, docker-manifest, cli, cli-update-feed, cli-update-feed-verify, desktop, packages, sdn-js-package, artifact-docker-test\]/);
+  assert.match(workflow, /needs:\s*\[[^\]]*\bdesktop\b[^\]]*\bartifact-docker-test\b[^\]]*\]\n\s+if: inputs\.publish != false/);
   assert.match(workflow, /pattern:\s*desktop-\*[\s\S]*path:\s*dist\/desktop[\s\S]*merge-multiple:\s*true/);
 });
 
@@ -895,10 +1109,12 @@ test('release maturity reaches only the release notes, never a --channel', () =>
   // or stable), not an update channel. It words the notes and the manifest;
   // a bundle or payload stamped with it would leave the public channel.
   const workflow = readRepoFile('.github/workflows/beta-release-artifacts.yml');
-  // It is read in two places, both as RELEASE_MATURITY: the release notes, and
-  // the update signing-key check (a stable release must ship its feed).
+  // It is read only as RELEASE_MATURITY: by the release notes, and by the
+  // update signing-key checks (a stable release must ship its feed), the dry
+  // run's included.
   const uses = [...workflow.matchAll(/^.*needs\.beta-version\.outputs\.channel.*$/gm)].map((m) => m[0].trim());
   assert.deepEqual(uses, [
+    'RELEASE_MATURITY: ${{ needs.beta-version.outputs.channel }}',
     'RELEASE_MATURITY: ${{ needs.beta-version.outputs.channel }}',
     'RELEASE_MATURITY: ${{ needs.beta-version.outputs.channel }}',
     'RELEASE_MATURITY: ${{ needs.beta-version.outputs.channel }}',
