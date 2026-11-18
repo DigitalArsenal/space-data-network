@@ -1088,15 +1088,9 @@ func (b format4Backend) Query(schemaName, whereClause string, args ...interface{
 	return b.f4QueryData(schemaName, whereClause, args, 0, 0)
 }
 
-// QueryAll is the newest records, at most 10,000 (format 1's cap).
-func (b format4Backend) QueryAll(schemaName string, limit int) ([][]byte, error) {
-	if limit <= 0 {
-		limit = 1000
-	}
-	if limit > 10000 {
-		limit = 10000
-	}
-	return b.f4QueryData(schemaName, "", nil, limit, 0)
+// queryNewest is the newest n records (FlatSQLStore.QueryAll caps n).
+func (b format4Backend) queryNewest(schemaName string, n int) ([][]byte, error) {
+	return b.f4QueryData(schemaName, "", nil, max(n, 1), 0)
 }
 
 func (b format4Backend) QueryAllBounded(schemaName string, limit int, maxTotalBytes int) ([][]byte, error) {
@@ -2659,6 +2653,8 @@ func f4SandboxError(err error) error {
 		code = flatsqlrt.SandboxCodeTimeout
 	case format4.StatusBudget:
 		code = flatsqlrt.SandboxCodeByteCap
+	case format4.StatusCacheBudget:
+		return fmt.Errorf("SQL row cache admission budget exhausted: %w", se)
 	}
 	if strings.Contains(se.Msg, "not authorized") {
 		code = flatsqlrt.SandboxCodeNotAuthorized
@@ -2748,14 +2744,26 @@ func (b format4Backend) QueryRawStream(sql string, params ...interface{}) (*flat
 	}
 	st, err := b.f4Stream(b.d.ctx, format4.SQLRequest{SQL: sql, Params: cells, Class: format4.ClassInteractive})
 	if err != nil {
+		// Every standard registered with a schema has its relation from the
+		// start, records or none (an empty type answers an empty stream).
+		// "No such table" is an unknown standard, or one stored CID-only or
+		// field-sealed: an error, never an empty answer a caller would take
+		// for "no records" (stack #651 review; #848).
 		var se *format4.StatusError
-		if errors.As(err, &se) && strings.Contains(se.Msg, "no such table") {
-			return &flatsqlrt.RawStream{Bytes: []byte{}}, nil // a type nothing was stored under yet
+		if errors.As(err, &se) {
+			if name, ok := f4NoSuchTable(se.Msg); ok {
+				return nil, fmt.Errorf("%w: %s (not a standard this node registers, or one stored CID-only or field-sealed, read by CID): %v",
+					ErrNoSQLRelation, name, err)
+			}
 		}
 		return nil, err
 	}
 	return st, nil
 }
+
+// ErrNoSQLRelation is a SQL statement naming a relation the stream store
+// does not have.
+var ErrNoSQLRelation = errors.New("no SQL relation")
 
 // f4SandboxRequest is untrusted SQL's request: the sandbox flag, the caps
 // (one row past the row cap detects it: reject, never truncate) and the

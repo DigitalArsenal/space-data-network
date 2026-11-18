@@ -50,6 +50,7 @@ const (
 // onto config tags (contract §3.3). Quota has one mode, the oldest records by
 // arrival (v11: config tag 47 is ignored), so there is no field for it.
 type Tuning struct {
+	RowCacheBytes                                                              uint64 // shared row-order/verified-metadata cache; zero selects 32 MiB
 	WriterThreads, ReaderLanes, BulkLanes, SandboxLanes, WriteSlots, ReadSlots uint32
 	WriteRequestBytes, ReadRequestBytes, RingBytes                             uint32
 	EngineBytes, PendingMapBytes, SoftHeap, HardHeap                           uint64
@@ -385,6 +386,10 @@ type Relation struct {
 type API interface {
 	// control (exec thread; not per request)
 	RegisterType(spec TypeSpec) error
+	// ValidateType checks that RegisterType would accept spec without
+	// changing the store: the preflight of an unlimited registration, run for
+	// every type before the first one promotes the store (one way) to layout 2.
+	ValidateType(spec TypeSpec) error
 	SetQuota(bytes int64) error
 	Activate(ctx context.Context) error // CreateForMigration only: engine step 1 of §2.3 (Go then calls marker.FinishActivation)
 	Stats() ([]uint64, error)           // §3.10 order

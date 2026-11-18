@@ -113,7 +113,8 @@ func TestStoreEncryptsKMFKeyBytesAtRest(t *testing.T) {
 	if !bytes.Equal(record.Data, original) {
 		t.Fatalf("GetRecord did not transparently decrypt:\n got  %x\n want %x", record.Data, original)
 	}
-	all, err := store.QueryAll("KMF.fbs", 10)
+	allPage, err := store.QueryAll("KMF.fbs", 10)
+	all := allPage.Records
 	if err != nil {
 		t.Fatalf("QueryAll: %v", err)
 	}

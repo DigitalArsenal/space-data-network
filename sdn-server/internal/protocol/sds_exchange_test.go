@@ -40,7 +40,8 @@ func TestHandlePubSubMessageStoresPNMAnnouncementsFromDatasetSchemaTopic(t *test
 		t.Fatalf("HandlePubSubMessage failed: %v", err)
 	}
 
-	pnmRecords, err := store.QueryAll("PNM.fbs", 10)
+	pnmRecordsPage, err := store.QueryAll("PNM.fbs", 10)
+	pnmRecords := pnmRecordsPage.Records
 	if err != nil {
 		t.Fatalf("QueryAll PNM failed: %v", err)
 	}
@@ -48,7 +49,8 @@ func TestHandlePubSubMessageStoresPNMAnnouncementsFromDatasetSchemaTopic(t *test
 		t.Fatalf("PNM records = %d, first matches original: %v", len(pnmRecords), len(pnmRecords) == 1 && reflect.DeepEqual(pnmRecords[0], pnmBytes))
 	}
 
-	ommRecords, err := store.QueryAll("OMM.fbs", 10)
+	ommRecordsPage, err := store.QueryAll("OMM.fbs", 10)
+	ommRecords := ommRecordsPage.Records
 	if err != nil {
 		t.Fatalf("QueryAll OMM failed: %v", err)
 	}
@@ -182,7 +184,8 @@ func TestHandlePubSubMessageStoresSDSRecordWhenStorePresent(t *testing.T) {
 		t.Fatalf("store-present path must not drop, DroppedNoStore = %d", got)
 	}
 
-	records, err := store.QueryAll("OMM.fbs", 10)
+	recordsPage, err := store.QueryAll("OMM.fbs", 10)
+	records := recordsPage.Records
 	if err != nil {
 		t.Fatalf("QueryAll OMM failed: %v", err)
 	}
@@ -289,7 +292,8 @@ func TestPushAuthorizerIsConsultedPerPeer(t *testing.T) {
 
 func countStored(t *testing.T, store *storage.FlatSQLStore, schema string) int {
 	t.Helper()
-	recs, err := store.QueryAll(schema, 10)
+	recsPage, err := store.QueryAll(schema, 10)
+	recs := recsPage.Records
 	if err != nil {
 		t.Fatalf("QueryAll %s failed: %v", schema, err)
 	}

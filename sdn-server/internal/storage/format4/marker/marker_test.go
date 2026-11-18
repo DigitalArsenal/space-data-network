@@ -12,8 +12,10 @@ import (
 // The contract's golden vectors (§2.2): uuid 00..0f, created 1790000000000,
 // floor 1060922, migrated_from 1; MIGRATED written 1790000000123.
 const (
-	goldenStore    = "4653513405000100000102030405060708090a0b0c0d0e0f006c50c4a00100003a30100000000000010000000000000000000000000000007792ea7700000000"
-	goldenMigrated = "4653514d05000000000102030405060708090a0b0c0d0e0f7b6c50c4a0010000b230fe0200000000"
+	goldenStoreV4    = "4653513404000100000102030405060708090a0b0c0d0e0f006c50c4a00100003a3010000000000001000000000000000000000000000000dd6684d300000000"
+	goldenMigratedV4 = "4653514d04000000000102030405060708090a0b0c0d0e0f7b6c50c4a001000086bbeba000000000"
+	goldenStore      = "4653513405000100000102030405060708090a0b0c0d0e0f006c50c4a00100003a30100000000000010000000000000000000000000000007792ea7700000000"
+	goldenMigrated   = "4653514d05000000000102030405060708090a0b0c0d0e0f7b6c50c4a0010000b230fe0200000000"
 )
 
 func goldenUUID() (u [16]byte) {
@@ -78,7 +80,7 @@ func TestReadStates(t *testing.T) {
 	torn[60-1] ^= 1 // inside the crc
 	// A valid STORE of a later format: valid, but not activated here.
 	future := StoreBytes(goldenUUID(), 1, 1, 0)
-	future[4] = 6
+	future[4] = StoreFormat + 1
 	fixCRC(future, 56)
 	for _, tc := range []struct {
 		name                  string
@@ -202,5 +204,42 @@ func TestFinishActivation(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(filepath.Join(root3, PreFormat4Dir, "control.flatsqldb")); string(b) != "kept" {
 		t.Fatalf("kept copy is %q", b)
+	}
+}
+
+func TestReadLegacyFormat4Markers(t *testing.T) {
+	root := t.TempDir()
+	writeHex(t, filepath.Join(root, Dir, MigratedFile), goldenMigratedV4)
+	writeHex(t, filepath.Join(root, Dir, StoreFile), goldenStoreV4)
+	state, err := Read(root)
+	if err != nil || !state.StoreValid || !state.MigratedValid || state.Format != 4 {
+		t.Fatalf("legacy marker parsing: %+v %v", state, err)
+	}
+	if state.Activated() || state.NeedsFinish() {
+		t.Fatal("stream-format-4 markers must not activate as stream format 5")
+	}
+}
+
+func TestReadPromotedAndRecoverableStore(t *testing.T) {
+	root := t.TempDir()
+	promoted := StoreBytes(goldenUUID(), 1, 1, 0)
+	binary.LittleEndian.PutUint16(promoted[6:], 2)
+	fixCRC(promoted, 56)
+	writeBytes(t, filepath.Join(root, Dir, MigratedFile), MigratedBytes(goldenUUID(), 1))
+	writeBytes(t, filepath.Join(root, Dir, StoreFile), promoted)
+	state, err := Read(root)
+	if err != nil || !state.Activated() || state.Layout != 2 || state.RequiredLayout != 2 {
+		t.Fatalf("promoted layout-2 store must count as activated: %+v %v", state, err)
+	}
+	if state.ActivatedAs(4) {
+		t.Fatal("layout 2 must not activate as legacy format 4")
+	}
+
+	writeBytes(t, filepath.Join(root, Dir, "STORE.unlimited"), promoted)
+	torn := append([]byte(nil), promoted[:12]...)
+	writeBytes(t, filepath.Join(root, Dir, StoreFile), torn)
+	state, err = Read(root)
+	if err != nil || state.Activated() || !state.RecoverablePromotion || state.RequiredLayout != 2 || state.Format != StoreFormat {
+		t.Fatalf("interrupted promotion must report recoverable layout 2: %+v %v", state, err)
 	}
 }

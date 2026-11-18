@@ -43,6 +43,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format2"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format4"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format4/marker"
+	"github.com/spacedatanetwork/sdn-server/internal/versioninfo"
 )
 
 // format4ControlDBName is the control instance's database under fsql4/.
@@ -278,7 +279,7 @@ func format4CreateMode(basePath string) (format4.CreateMode, error) {
 		}
 	}
 	switch {
-	case m.Activated() || m.LegacyControlDir:
+	case m.Activated() || m.RecoverablePromotion || m.LegacyControlDir:
 		// The engine checks the markers (P4_E_FORMAT when they are not an
 		// activated store's).
 		return format4.OpenExisting, nil
@@ -287,6 +288,43 @@ func format4CreateMode(basePath string) (format4.CreateMode, error) {
 	default:
 		return format4.CreateFresh, nil
 	}
+}
+
+// format4StampedLayout is the store layout this binary's embedded engine
+// supports (versioninfo.MaxStoreLayout, which a test holds equal to the
+// engine's capability). Tests set it to exercise a layout-2 build.
+var format4StampedLayout = versioninfo.MaxStoreLayout
+
+// format4UnlimitedVisibility decides the stream store's SQL visibility from
+// storage.unlimited_sql_visibility, the store's markers and whether the store
+// is created now (fresh: an empty data directory). Set, the setting decides:
+// true promotes a layout-1 store; false refuses a store already at layout 2
+// (or with a pending promotion), which cannot be bounded again. Unset, the
+// store decides: a fresh store is created unlimited when the embedded engine
+// supports layout 2 (it holds no records a rollback to an older build would
+// need); a store at layout 2 opens with unlimited visibility (a build whose
+// default is bounded, started on a store a later build or an explicit setting
+// promoted, e.g. after a rollback); any other store stays bounded.
+func format4UnlimitedVisibility(cfg storeConfig, markers marker.Markers, fresh bool) (bool, error) {
+	if markers.RequiredLayout < 2 {
+		if cfg.unlimitedSQLVisibilitySet {
+			return cfg.unlimitedSQLVisibility, nil
+		}
+		if fresh && format4StampedLayout >= 2 {
+			log.Infof("format 5: new store: unlimited SQL visibility (storage.unlimited_sql_visibility unset; a new store is created at layout 2)")
+			return true, nil
+		}
+		return false, nil
+	}
+	if cfg.unlimitedSQLVisibilitySet && !cfg.unlimitedSQLVisibility {
+		return false, fmt.Errorf("format 5: stream format %d layout %d has unlimited SQL visibility and cannot be bounded again; "+
+			"storage.unlimited_sql_visibility is false: remove the setting or set it true", markers.Format, markers.RequiredLayout)
+	}
+	if !cfg.unlimitedSQLVisibilitySet {
+		log.Infof("format 5: stream format %d layout %d: unlimited SQL visibility (storage.unlimited_sql_visibility unset; the store's layout decides)",
+			markers.Format, markers.RequiredLayout)
+	}
+	return true, nil
 }
 
 // newFormat4Store is NewFlatSQLStore on store format 5.
@@ -311,18 +349,17 @@ func newFormat4Store(basePath string, validator *sds.Validator, cfg storeConfig)
 	if err != nil {
 		return nil, err
 	}
-
-	auxiliaryMetadata, err := openAuxiliaryMetadataStore(filepath.Join(basePath, auxiliaryMetadataFileName), false)
+	// The markers are read under the store lock, after a migration or a
+	// finished activation, and before the engine opens: no other process is
+	// promoting the store while its layout decides the setting.
+	markers, err := marker.Read(basePath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open auxiliary metadata: %w", err)
+		return nil, err
 	}
-	auxiliaryMetadata.chunkBytes = cfg.auxReplayChunkBytes
-	auxiliaryOpened := false
-	defer func() {
-		if !auxiliaryOpened {
-			auxiliaryMetadata.Close()
-		}
-	}()
+	unlimited, err := format4UnlimitedVisibility(cfg, markers, mode == format4.CreateFresh)
+	if err != nil {
+		return nil, err
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	d := &format4Daemon{ctx: ctx, cancel: cancel, types: map[string]bool{}}
@@ -335,12 +372,14 @@ func newFormat4Store(basePath string, validator *sds.Validator, cfg storeConfig)
 		return nil, fmt.Errorf("format 5: %w", err)
 	}
 	d.opt = format4.Options{
-		DataRoot:      dataRoot,
-		Create:        mode,
-		GseqFloor:     1,
-		Cores:         runtime.NumCPU(),
-		AOTCacheDir:   format4AOTCacheDir(),
-		CompileOnMiss: format4CompileOnMiss,
+		UnlimitedVisibility: unlimited,
+		Tuning:              format4.Tuning{RowCacheBytes: cfg.rowCacheBytes},
+		DataRoot:            dataRoot,
+		Create:              mode,
+		GseqFloor:           1,
+		Cores:               runtime.NumCPU(),
+		AOTCacheDir:         format4AOTCacheDir(),
+		CompileOnMiss:       format4CompileOnMiss,
 	}
 	d.opt.OnFailure = d.onFailure
 	engineStart := time.Now()
@@ -359,6 +398,18 @@ func newFormat4Store(basePath string, validator *sds.Validator, cfg storeConfig)
 		_ = d.api().Close(cctx)
 		ccancel()
 	}
+	auxiliaryMetadata, err := openAuxiliaryMetadataStore(filepath.Join(basePath, auxiliaryMetadataFileName), false)
+	if err != nil {
+		closeEngine()
+		return nil, fmt.Errorf("failed to open auxiliary metadata: %w", err)
+	}
+	auxiliaryMetadata.chunkBytes = cfg.auxReplayChunkBytes
+	auxiliaryOpened := false
+	defer func() {
+		if !auxiliaryOpened {
+			auxiliaryMetadata.Close()
+		}
+	}()
 
 	// The control instance lives beside the feed files.
 	controlDir := filepath.Join(basePath, marker.Dir)
@@ -446,6 +497,9 @@ func newFormat4Store(basePath string, validator *sds.Validator, cfg storeConfig)
 	if err := d.registerTypes(validator); err != nil {
 		return fail(err)
 	}
+	if m, err := marker.Read(basePath); err == nil {
+		log.Infof("storage: backend format 5, stream format %d, layout %d", m.Format, m.Layout)
+	}
 	if cfg.quotaBytes > 0 {
 		if err := d.api().SetQuota(cfg.quotaBytes); err != nil {
 			return fail(fmt.Errorf("format 5: set the quota: %w", err))
@@ -497,7 +551,7 @@ func createLegacyControlDir(basePath string) error {
 // or, for a routed standard with no embedded binary schema (an encrypted one,
 // C-25), the CID-only spec with its file identifier (ident, the validator's).
 // Such a type still stores and serves its frames by CID, arrival and tags;
-// the engine extracts nothing from it and it has no SQL relation.
+// the engine extracts nothing from it and creates no SQL relation.
 func Format4TypeSpec(schema string, ident func(schema string) (string, bool)) (format4.TypeSpec, error) {
 	spec, err := format4.TypeSpecFor(schema)
 	if err == nil || ident == nil || errors.Is(err, format2.ErrSealedRuleField) {
@@ -518,20 +572,98 @@ func Format4TypeSpec(schema string, ident func(schema string) (string, bool)) (f
 
 // format4TypeSpec is Format4TypeSpec with the daemon's validator.
 func (d *format4Daemon) format4TypeSpec(schema string) (format4.TypeSpec, error) {
-	return Format4TypeSpec(schema, d.ident)
+	spec, err := Format4TypeSpec(schema, d.ident)
+	spec.UnlimitedVisibility = d.opt.UnlimitedVisibility
+	return spec, err
+}
+
+// format4RecordSchemas are the standards the validator embeds that the
+// stream store registers as record types: every schema with a table name,
+// except the engine's own journal and checkpoint frames.
+func format4RecordSchemas(validator *sds.Validator) []string {
+	var schemas []string
+	for _, schema := range validator.Schemas() {
+		// These schemas describe the engine's own journal/checkpoint frames;
+		// their identifiers cannot be registered as user record types.
+		if id, ok := validator.FileIdentifier(schema); ok && (id == "$FMB" || id == "$FCK" || id == "$FSG") {
+			continue
+		}
+		if _, err := sds.SchemaNameToTable(schema); err != nil {
+			continue
+		}
+		schemas = append(schemas, schema)
+	}
+	return schemas
+}
+
+// UnregisteredStandard is a standard the stream store does not register.
+type UnregisteredStandard struct {
+	Schema string
+	Err    error
+}
+
+// SealedRuleRefusals are the embedded standards the stream store leaves
+// unregistered because a field SDN seals at rest is one an extraction rule
+// reads (format2.ErrSealedRuleField: its plaintext would land in an index).
+// Bounded and unlimited stores treat them alike: the node starts, the
+// standard has no SQL relation (a statement naming it is an error) and every
+// write to it is refused with that error. It reads only the binary's
+// registries, never a store, so `spacedatanetwork status` and
+// `store-migrate --status` report the same list the daemon logs at start.
+func SealedRuleRefusals(validator *sds.Validator) []UnregisteredStandard {
+	if validator == nil {
+		return nil
+	}
+	var out []UnregisteredStandard
+	for _, schema := range format4RecordSchemas(validator) {
+		if _, err := Format4TypeSpec(schema, validator.FileIdentifier); errors.Is(err, format2.ErrSealedRuleField) {
+			out = append(out, UnregisteredStandard{Schema: schema, Err: err})
+		}
+	}
+	return out
 }
 
 // registerTypes registers every standard the validator embeds (§5.5 step 7).
-// Re-registering identical bytes is a no-op in the engine.
+// Re-registering identical bytes is a no-op in the engine. A standard
+// SealedRuleRefusals names is left unregistered, with a warning, on a bounded
+// and an unlimited store alike; any other refusal of an unlimited
+// registration aborts before the first registration (and so before the
+// store's one-way promotion).
 func (d *format4Daemon) registerTypes(validator *sds.Validator) error {
 	if validator == nil {
 		return nil
 	}
-	for _, schema := range validator.Schemas() {
-		if _, err := sds.SchemaNameToTable(schema); err != nil {
-			continue
+	refused := map[string]bool{}
+	for _, r := range SealedRuleRefusals(validator) {
+		refused[r.Schema] = true
+		log.Warnf("format 5: %s is not registered; its writes are refused and it has no SQL relation: %v", r.Schema, r.Err)
+	}
+	var schemas []string
+	for _, schema := range format4RecordSchemas(validator) {
+		if !refused[schema] {
+			schemas = append(schemas, schema)
 		}
+	}
+	if d.opt.UnlimitedVisibility {
+		for _, schema := range schemas {
+			spec, err := d.format4TypeSpec(schema)
+			if err == nil {
+				err = d.api().ValidateType(spec)
+			}
+			if err != nil {
+				return fmt.Errorf("format 5: registration preflight %s: %w", schema, err)
+			}
+		}
+	}
+	for _, schema := range schemas {
 		if err := d.ensureType(schema); err != nil {
+			if d.opt.UnlimitedVisibility || errors.Is(err, format4.ErrUnlimitedRelationsUnsupported) {
+				if m, readErr := marker.Read(d.opt.DataRoot); d.opt.UnlimitedVisibility && readErr == nil && m.RequiredLayout >= 2 {
+					log.Errorf("format 5: %s unavailable after layout promotion: %v", schema, err)
+					continue
+				}
+				return fmt.Errorf("format 5: %s is not registered: %w", schema, err)
+			}
 			log.Warnf("format 5: %s is not registered: %v", schema, err)
 		}
 	}
@@ -549,8 +681,25 @@ func (d *format4Daemon) ensureType(schema string) error {
 	if err != nil {
 		return err
 	}
+	var before marker.Markers
+	if spec.UnlimitedVisibility {
+		before, err = marker.Read(d.opt.DataRoot)
+		if err != nil {
+			return err
+		}
+	}
+	if spec.UnlimitedVisibility && before.Layout < 2 {
+		log.Infof("format 5: promoting stream format %d from layout %d to layout 2 for unlimited SQL visibility", before.Format, before.Layout)
+	}
 	if err := d.api().RegisterType(spec); err != nil {
 		return fmt.Errorf("register %s: %w", schema, err)
+	}
+	if spec.UnlimitedVisibility && before.Layout < 2 {
+		after, err := marker.Read(d.opt.DataRoot)
+		if err != nil {
+			return err
+		}
+		log.Infof("format 5: SQL visibility registration complete; stream format %d layout %d", after.Format, after.Layout)
 	}
 	d.types[schema] = true
 	return nil

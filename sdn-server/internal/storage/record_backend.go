@@ -64,7 +64,10 @@ type recordBackend interface {
 	// FullTablePageWithCursor takes the normalized query.
 	FullTablePageWithCursor(query FullTablePageQuery) (FullTablePageResult, error)
 	Query(schemaName, whereClause string, args ...interface{}) ([][]byte, error)
-	QueryAll(schemaName string, limit int) ([][]byte, error)
+	// queryNewest is a schema's newest n records, newest first, exactly n
+	// when the schema holds n or more (no cap: FlatSQLStore.QueryAll caps n
+	// and asks for one more to report truncation).
+	queryNewest(schemaName string, n int) ([][]byte, error)
 	// QueryAllBounded takes the clamped limit and byte budget.
 	QueryAllBounded(schemaName string, limit int, maxTotalBytes int) ([][]byte, error)
 	QueryRoutedByStandard(schemaName string, limit int) ([]RoutedRecord, error)

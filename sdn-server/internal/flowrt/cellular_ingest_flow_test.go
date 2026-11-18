@@ -239,7 +239,8 @@ func TestCellularIngestFlowWritesTheDurableResumeMark(t *testing.T) {
 	}
 	// And the chunk it says to resume from must be the NEXT one, never the one
 	// just read: a mark that does not advance is a run that never progresses.
-	records, err := harness.store.QueryAll("IRM", 4)
+	recordsPage, err := harness.store.QueryAll("IRM", 4)
+	records := recordsPage.Records
 	if err != nil || len(records) != 1 {
 		t.Fatalf("read back the mark: %v (%d records)", err, len(records))
 	}

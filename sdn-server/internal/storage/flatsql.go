@@ -398,14 +398,41 @@ func (s *FlatSQLStore) BootState() BootStats {
 type StoreOption func(*storeConfig)
 
 type storeConfig struct {
-	engineHotWindow        int
-	engineGenericHotWindow int
-	deferBootRebuilds      bool
-	auxReplayChunkBytes    int64
-	quotaBytes             int64
+	// unlimitedSQLVisibility is the operator's setting when
+	// unlimitedSQLVisibilitySet; unset, the store's layout decides (format 5).
+	unlimitedSQLVisibility    bool
+	unlimitedSQLVisibilitySet bool
+	rowCacheBytes             uint64
+	engineHotWindow           int
+	engineGenericHotWindow    int
+	deferBootRebuilds         bool
+	auxReplayChunkBytes       int64
+	quotaBytes                int64
 	// format pins the store format (withStoreFormat); 0 decides it by
 	// storeFormatFor.
 	format int
+}
+
+// WithUnlimitedSQLVisibility sets storage.unlimited_sql_visibility
+// explicitly: true opts into irreversible stream-layout promotion; false
+// keeps bounded visibility and refuses a store already at layout 2.
+func WithUnlimitedSQLVisibility(enabled bool) StoreOption {
+	return func(c *storeConfig) { c.unlimitedSQLVisibility, c.unlimitedSQLVisibilitySet = enabled, true }
+}
+
+// WithUnlimitedSQLVisibilitySetting is the configuration's setting: nil
+// (unset) lets the store's layout decide, so a build whose default is bounded
+// still opens a store a later build (or an explicit setting) promoted.
+func WithUnlimitedSQLVisibilitySetting(setting *bool) StoreOption {
+	if setting == nil {
+		return func(*storeConfig) {}
+	}
+	return WithUnlimitedSQLVisibility(*setting)
+}
+
+// WithRowCacheBytes sets the stream engine's shared cache; zero uses its default.
+func WithRowCacheBytes(bytes uint64) StoreOption {
+	return func(c *storeConfig) { c.rowCacheBytes = bytes }
 }
 
 // withStoreFormat opens the store as format n whatever SDN_STORE_FORMAT
@@ -3399,18 +3426,46 @@ func (s *FlatSQLStore) Query(schemaName, whereClause string, args ...interface{}
 	return results, nil
 }
 
-// QueryAll returns all records for a schema (no filtering). Safe for protocol use.
-func (s *FlatSQLStore) QueryAll(schemaName string, limit int) ([][]byte, error) {
-	if s.rb != nil {
-		return s.rb.QueryAll(schemaName, limit)
-	}
+// QueryAllMaxRecords is the most records one QueryAll page holds: they are
+// hydrated in memory together (format 1's cap).
+const QueryAllMaxRecords = 10_000
+
+// QueryAllPage is a schema's newest records, newest first.
+type QueryAllPage struct {
+	Records [][]byte
+	// Limit is how many records the page was allowed: the caller's limit,
+	// 1,000 when that was not positive, QueryAllMaxRecords at most.
+	Limit int
+	// Truncated reports that the schema holds more records than Records
+	// carries: the page is the newest Limit records, not all of them. A
+	// caller that needs every record pages with FullTablePageWithCursor or
+	// keyset SQL (stack #848: never a silent truncation).
+	Truncated bool
+}
+
+// QueryAll returns a schema's newest records (no filtering), at most
+// QueryAllMaxRecords, and says when more exist. Safe for protocol use.
+func (s *FlatSQLStore) QueryAll(schemaName string, limit int) (QueryAllPage, error) {
 	if limit <= 0 {
 		limit = 1000
 	}
-	if limit > 10000 {
-		limit = 10000
+	limit = min(limit, QueryAllMaxRecords)
+	// One record past the limit tells a complete page from a truncated one.
+	var recs [][]byte
+	var err error
+	if s.rb != nil {
+		recs, err = s.rb.queryNewest(schemaName, limit+1)
+	} else {
+		recs, err = s.Query(schemaName, "1=1 ORDER BY timestamp DESC LIMIT ?", limit+1)
 	}
-	return s.Query(schemaName, "1=1 ORDER BY timestamp DESC LIMIT ?", limit)
+	if err != nil {
+		return QueryAllPage{}, err
+	}
+	page := QueryAllPage{Records: recs, Limit: limit}
+	if len(recs) > limit {
+		page.Records, page.Truncated = recs[:limit], true
+	}
+	return page, nil
 }
 
 // QueryAllBounded returns recent records while enforcing both row and total-byte limits.

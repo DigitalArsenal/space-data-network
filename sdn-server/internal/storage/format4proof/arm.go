@@ -11,6 +11,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format2"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format4"
+	"github.com/spacedatanetwork/sdn-server/internal/storage/format4/marker"
 )
 
 // host02QuotaBytes is host-02's storage.max_size (25 GB), the quota format 2
@@ -57,6 +58,13 @@ func OpenArm(arm, dir string, opts ...storage.StoreOption) (*storage.FlatSQLStor
 		return nil, 0, err
 	}
 	all := []storage.StoreOption{storage.WithDeferredBootRebuilds()}
+	if arm == ArmS {
+		state, err := marker.Read(dir)
+		if err != nil {
+			return nil, 0, err
+		}
+		all = append(all, storage.WithUnlimitedSQLVisibility(state.RequiredLayout >= 2))
+	}
 	if arm == ArmF2 {
 		all = append(all, storage.WithQuotaBytes(host02QuotaBytes))
 	}

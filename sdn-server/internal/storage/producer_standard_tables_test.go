@@ -399,7 +399,8 @@ func TestHydratingReadersSpanProducerTables(t *testing.T) {
 	}
 
 	// QueryAll sees both, each exactly once.
-	all, err := store.QueryAll("OMM.fbs", 100)
+	allPage, err := store.QueryAll("OMM.fbs", 100)
+	all := allPage.Records
 	if err != nil {
 		t.Fatalf("QueryAll() error = %v", err)
 	}

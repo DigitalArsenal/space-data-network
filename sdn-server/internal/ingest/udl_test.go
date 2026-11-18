@@ -140,7 +140,8 @@ func TestSyncUDLElsetsIngestsOMMWithAuthPagingAndCheckpoint(t *testing.T) {
 		t.Fatalf("UDL elset page requests = %d, want 2 (paging via firstResult)", gotRequests)
 	}
 
-	stored, err := runner.store.QueryAll("OMM.fbs", 10)
+	storedPage, err := runner.store.QueryAll("OMM.fbs", 10)
+	stored := storedPage.Records
 	if err != nil {
 		t.Fatalf("QueryAll OMM failed: %v", err)
 	}
@@ -302,7 +303,8 @@ func TestSyncUDLElsetsSkipsMalformedRecords(t *testing.T) {
 		t.Fatalf("syncUDLFeed elset failed: %v", err)
 	}
 
-	stored, err := runner.store.QueryAll("OMM.fbs", 10)
+	storedPage, err := runner.store.QueryAll("OMM.fbs", 10)
+	stored := storedPage.Records
 	if err != nil {
 		t.Fatalf("QueryAll OMM failed: %v", err)
 	}
@@ -374,7 +376,8 @@ func TestSyncUDLSGIIngestsSPWWithCheckpoint(t *testing.T) {
 		t.Fatalf("syncUDLFeed sgi failed: %v", err)
 	}
 
-	stored, err := runner.store.QueryAll("SPW.fbs", 10)
+	storedPage, err := runner.store.QueryAll("SPW.fbs", 10)
+	stored := storedPage.Records
 	if err != nil {
 		t.Fatalf("QueryAll SPW failed: %v", err)
 	}
