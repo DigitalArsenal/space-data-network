@@ -46,6 +46,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/channels"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/ops"
+	"github.com/spacedatanetwork/sdn-server/internal/storage"
 	"github.com/spacedatanetwork/sdn-server/internal/syncwire"
 )
 
@@ -55,6 +56,13 @@ const (
 	// importConversionFile records the one conversion under storage.path.
 	importConversionFile = "trusted-import-converted"
 )
+
+// conversionOriginSample is how many of a lane's records the conversion
+// reads for their origin.
+const conversionOriginSample = 16
+
+// laneProducedHereReason is why a lane of this node's own is not converted.
+const laneProducedHereReason = "this node produces the lane"
 
 // errRemovedTrustedImport is a new node configured with the removed key.
 var errRemovedTrustedImport = errors.New("peers.trusted_import is removed in 1.2.0: a node imports only the lanes it subscribes to. Remove the key from the config and subscribe to each lane with `spacedatanetwork sync subscribe --schema <standard> --provider-id <provider> --source-name <source> --from <producer peer id>`")
@@ -115,7 +123,13 @@ func (n *Node) removedImportLanes() ([]ConvertedLane, error) {
 		return l
 	}
 	var ledgerErr error
-	if raw, err := os.ReadFile(filepath.Join(n.storagePath(), removedImportLedgerFile)); err == nil {
+	// The ledger, or, once converted, the renamed ledger (sync subscribe
+	// --from-ledger reads it after the conversion too).
+	ledgerPath := filepath.Join(n.storagePath(), removedImportLedgerFile)
+	if _, err := os.Stat(ledgerPath); errors.Is(err, os.ErrNotExist) {
+		ledgerPath += ".converted"
+	}
+	if raw, err := os.ReadFile(ledgerPath); err == nil {
 		var rows []struct {
 			Schema     string `json:"schema"`
 			ProviderID string `json:"provider_id"`
@@ -158,17 +172,40 @@ func (n *Node) removedImportLanes() ([]ConvertedLane, error) {
 		l := lanes[k]
 		producers := map[string]bool{}
 		producedHere := false
+		// Who sent the lane's records: the producer tag of its lane rows,
+		// and the origin of its newest records (an import stores the
+		// serving peer as a record's origin, while the producer tag keeps
+		// what the publisher wrote, often its own key token).
+		var senders []string
 		for _, row := range progress {
 			if row.Count <= 0 || channels.RetentionStandardCode(row.SchemaName) != k.code || !strings.EqualFold(row.ProviderID, l.ProviderID) || !strings.EqualFold(row.SourceName, l.SourceName) {
 				continue
 			}
-			id := strings.TrimSpace(row.ProducerPeerID)
-			if id == self || id == "local-node" {
-				producedHere = true
+			senders = append(senders, row.ProducerPeerID)
+		}
+		if records, err := n.store.QueryIndexedRecords(storage.IndexedRecordQuery{SchemaName: l.Schema, ProviderID: l.ProviderID, SourceName: l.SourceName, Limit: conversionOriginSample}); err == nil {
+			for _, r := range records {
+				senders = append(senders, r.PeerID)
+			}
+		} else {
+			log.Debugf("Origins of %s %s/%s unread: %v", l.Schema, l.ProviderID, l.SourceName, err)
+		}
+		untrusted := false
+		for _, id := range senders {
+			id = strings.TrimSpace(id)
+			if id == "" {
 				continue
 			}
-			if pid, err := peer.Decode(id); err == nil && n.peerRegistry != nil && n.peerRegistry.IsTrusted(pid) {
+			pid, err := peer.Decode(id)
+			switch {
+			case id == self || id == "local-node":
+				producedHere = true
+			case err != nil:
+				// A key token, not a peer: says nothing of who sent it.
+			case n.peerRegistry != nil && n.peerRegistry.IsTrusted(pid):
 				producers[pid.String()] = true
+			default:
+				untrusted = true
 			}
 		}
 		for _, s := range allow {
@@ -185,7 +222,9 @@ func (n *Node) removedImportLanes() ([]ConvertedLane, error) {
 		switch {
 		case len(l.Producers) > 0:
 		case producedHere:
-			l.Reason = "this node produces the lane"
+			l.Reason = laneProducedHereReason
+		case untrusted:
+			l.Reason = "its records came from a peer this node does not trust: subscribe with `spacedatanetwork sync subscribe --from <producer peer id>` once it is trusted"
 		default:
 			l.Reason = "no trusted peer is known as its producer: subscribe with `spacedatanetwork sync subscribe --from <producer peer id>`"
 		}
@@ -243,7 +282,7 @@ func (n *Node) convertRemovedTrustedImport() {
 	for _, l := range lanes {
 		if len(l.Producers) == 0 {
 			fmt.Fprintf(&report, "%s %s/%s: not converted: %s\n", l.Schema, l.ProviderID, l.SourceName, l.Reason)
-			if l.Reason != "this node produces the lane" {
+			if l.Reason != laneProducedHereReason {
 				log.Warnf("Import ledger lane %s %s/%s not converted to a subscription: %s", l.Schema, l.ProviderID, l.SourceName, l.Reason)
 				n.alerts.Raise(ops.KindSubscriptionConversion, l.Schema+" "+l.ProviderID+"/"+l.SourceName, ops.SeverityWarning, "not converted to a subscription: "+l.Reason)
 			}

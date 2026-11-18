@@ -374,6 +374,34 @@ size-prefixed `$QRP{KIND=Request}` frame with content type
 sdn-js: `encodeQrpScanRequest`, `decodeQrpScanStream`, `decodeQrpIndexPage` and
 `decodeQrpError` (`sdn-js/src/ui/runtime/qrp-frames.ts`).
 
+### Subscribing to a lane (importing from another node)
+
+A node imports only the lanes it subscribes to (1.2.0). As an operator agent,
+use the commands (they sign in with the node's root key and take `--json`):
+
+```bash
+spacedatanetwork sync subscribe --schema OMM --provider-id <provider> \
+  --source-name <source> --from <producer peer id> --json
+# -> {"plan":{"start":"current","rule":"replace-current","producer_batch":"...",
+#     "first_read_records":2000,"first_read_bytes":640000,"free_disk_bytes":...,
+#     "record_ceiling":32000000,"refusal":""},"subscribed":true}
+spacedatanetwork sync subscriptions --json
+# -> {"subscriptions":[{"schema":"OMM.fbs","provider_id":"...","source_name":"...",
+#     "producer":"16Uiu2...","subscribed_since":"...","connected":true,
+#     "received_records":2500,"received_bytes":...,"current_batch":"b6",
+#     "producer_batch":"b6","producer_batch_records":2500,"lag_records":0}]}
+spacedatanetwork sync unsubscribe --schema OMM --provider-id <provider> \
+  --source-name <source> --from <producer peer id>
+```
+
+A refused first read exits non-zero with `refusal` set (free disk or record
+ceiling; `--force` subscribes anyway). Over HTTP (admin): `GET
+/api/v1/sync/plan`, `POST /api/v1/sync` with a `$DSS` Subscribe naming
+`PROVIDER_PEER_ID` (`?start=current|beginning`, `?force=1`; 202, or 409
+`first_read_refused`), `GET /api/v1/sync/subscriptions`. The anonymous `GET
+/api/v1/sync` `$DSS` of a followed lane reads `SUBSCRIBED` and `SYNC_PROTOCOL`
+`flatsql-sync read-chunk follow`. Details: `docs/SUBSCRIPTIONS.md`.
+
 
 ### Querying records
 
