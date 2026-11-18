@@ -32,10 +32,14 @@ func resolvedCheckInterval(seconds int) time.Duration {
 	return time.Duration(seconds) * time.Second
 }
 
-func (s *UpdateSignalSubscriber) runFeedChecks(ctx context.Context, pendingFind *update.Pending) {
+func (s *UpdateSignalSubscriber) runFeedChecks(ctx context.Context, pendingFind *update.Pending, checkNow bool) {
 	delay := s.deps.CheckDelay
 	if delay <= 0 {
 		delay = time.Minute + time.Duration(rand.Int63n(int64(4*time.Minute)))
+	}
+	if checkNow {
+		// A pending signal was cleared at start: check the feed at once.
+		delay = time.Second
 	}
 	if pendingFind != nil {
 		// A feed-check find was waiting for its rollout due time when this
@@ -189,7 +193,12 @@ func (s *UpdateSignalSubscriber) checkFeed(ctx context.Context) (resultErr error
 		}
 		signal := update.SignalFromFeedEntry(*entry, s.feed.String(), s.deps.Now(), false)
 		if !s.waitForRollout(operationCtx, signal, nil, "feed-check") {
-			return operationCtx.Err()
+			if err := operationCtx.Err(); err != nil {
+				return err
+			}
+			// Replaced by a newer signal, or withdrawn at its due time.
+			s.feedDeferredCandidates = nil
+			return errFeedCheckDeferred
 		}
 		if current, err := update.LoadState(s.deps.Paths); err == nil && current.Sequence >= entry.Sequence {
 			_ = update.ClearPending(s.deps.Paths, entry.UpdateID)

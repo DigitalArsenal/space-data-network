@@ -152,6 +152,23 @@ func SchedulePending(paths Paths, p Pending, peerID string, window time.Duration
 	return &p, nil
 }
 
+// CapPendingDue bounds the remaining wait of p at its window: a due time more
+// than WindowSeconds after now (a clock that was ahead when the update was
+// accepted, corrected before a restart) becomes now plus the window, written
+// back to disk. It reports whether the due time changed.
+func CapPendingDue(paths Paths, p *Pending, now time.Time) (bool, error) {
+	if p == nil {
+		return false, nil
+	}
+	window := time.Duration(max(p.WindowSeconds, 0)) * time.Second
+	limit := now.UTC().Truncate(time.Second).Add(window)
+	if !p.Due().After(limit) {
+		return false, nil
+	}
+	p.DueAt = limit.Format(time.RFC3339)
+	return true, writeJSONAtomic(pendingPath(paths), p)
+}
+
 // ClearPending removes the pending record when it names updateID (any record
 // when updateID is empty).
 func ClearPending(paths Paths, updateID string) error {

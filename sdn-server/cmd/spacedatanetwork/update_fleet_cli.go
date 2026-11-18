@@ -8,6 +8,8 @@ import (
 	"strings"
 	"text/tabwriter"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 
@@ -40,10 +42,12 @@ var updateFleetCmd = &cobra.Command{
 	Use:   "fleet",
 	Short: "Show the version and update state of this node and every SDN node it knows",
 	Long: "Reads /api/peers/versions from the running daemon. Each node states its own " +
-		"version and update state in a signed status message on its update topic; a node " +
-		"that has not (an older build, or one whose status has not reached this node) shows " +
-		"its identify version and the state unknown. SIGNAL says whether the node accepted " +
-		"the newest update signal any node reports, or already runs its sequence or a later one.",
+		"version and update state in a signed status message on its update topic (SOURCE status: " +
+		"self-reported, not checked by this node); a node whose status has not reached this one " +
+		"(a build before 1.2.0, update.publish_status off, a node reached only through others, or " +
+		"a status not renewed for 30 minutes) shows its identify version and the state \"not reporting\". " +
+		"SIGNAL says whether the node accepted the newest update signal this node verified, or " +
+		"already runs its sequence or a later one.",
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		client, err := newAdminClient(cmd)
@@ -66,22 +70,55 @@ var updateFleetCmd = &cobra.Command{
 
 func writeFleetTable(out io.Writer, report *node.FleetReport, now time.Time) {
 	tw := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(tw, "NAME\tPEER\tVERSION\tLAST SEEN\tUPDATE\tSIGNAL")
+	fmt.Fprintln(tw, "NAME\tPEER\tVERSION\tSOURCE\tLAST SEEN\tUPDATE\tSIGNAL")
 	for _, row := range report.Rows {
-		name := row.Name
+		name := printable(row.Name, 48)
 		if row.Self {
 			name = strings.TrimSpace(name + " (this node)")
 		}
 		if name == "" {
 			name = "-"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", name, peerTail(row.PeerID), orDash(row.Version),
-			fleetLastSeen(row, now), fleetState(row), fleetSignal(row))
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", name, printable(peerTail(row.PeerID), 11), orDash(printable(row.Version, 64)),
+			fleetSource(row), fleetLastSeen(row, now), printable(fleetState(row), 160), fleetSignal(row))
 	}
 	_ = tw.Flush()
 	if report.LatestSignal != nil {
-		fmt.Fprintf(out, "latest_signal=%s sequence=%d\n", report.LatestSignal.UpdateID, report.LatestSignal.Sequence)
+		fmt.Fprintf(out, "latest_signal=%s sequence=%d (the newest signal this node verified)\n", printable(report.LatestSignal.UpdateID, 128), report.LatestSignal.Sequence)
 	}
+	fmt.Fprintln(out, "SOURCE status: the node's own signed statement, not checked by this node; identify: its identify version only.")
+}
+
+// printable is s as one line of plain text for a terminal: every control and
+// format character (newline, tab, escape, bidirectional marks) and invalid
+// UTF-8 removed, cut at limit runes. Every string another node or the peer
+// directory supplies goes through it before it is printed.
+func printable(s string, limit int) string {
+	var b strings.Builder
+	n := 0
+	for _, r := range strings.ToValidUTF8(s, "") {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || r == utf8.RuneError {
+			continue
+		}
+		if n >= limit {
+			break
+		}
+		b.WriteRune(r)
+		n++
+	}
+	return b.String()
+}
+
+func fleetSource(row node.FleetRow) string {
+	switch row.Source {
+	case "local":
+		return "this node"
+	case "status":
+		return "status"
+	case "identify":
+		return "identify"
+	}
+	return "-"
 }
 
 func peerTail(id string) string {
@@ -119,13 +156,13 @@ func fleetState(row node.FleetRow) string {
 	case "failed":
 		if row.Failed != nil {
 			if row.Failed.RolledBack {
-				return fmt.Sprintf("failed %s, rolled back", row.Failed.Version)
+				return fmt.Sprintf("failed %s, rolled back (%s)", row.Failed.Version, row.Failed.ReasonCode)
 			}
-			return fmt.Sprintf("failed %s, not rolled back", row.Failed.Version)
+			return fmt.Sprintf("failed %s, not rolled back (%s)", row.Failed.Version, row.Failed.ReasonCode)
 		}
 		return "failed"
 	case "":
-		return "unknown"
+		return node.FleetStateNotReporting
 	}
 	return row.State
 }

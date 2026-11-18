@@ -618,7 +618,7 @@ func (n *Node) init() error {
 		}
 	}
 	n.peerRegistry = peers.NewRegistry(n.config.Peers.StrictMode, persistence)
-	n.updateFleet = newUpdateFleet(n.peerRegistry.RecordSeen)
+	n.updateFleet = newUpdateFleet(n.peerRegistry.RecordSeen, n.config.Update.PublishStatus)
 
 	// PIN STORE (owner ruling 2026-07-30: a peer that has never been seen may
 	// only appear if it was "added manually and 'pinned'"). This is DURABLE and
@@ -5857,7 +5857,15 @@ func (n *Node) PublishToTopic(ctx context.Context, topicName string, data []byte
 	if err != nil {
 		return fmt.Errorf("join topic %s: %w", topicName, err)
 	}
-	return topic.Publish(ctx, data)
+	if err := topic.Publish(ctx, data); err != nil {
+		return err
+	}
+	// An update signal this node published is sent again to peers that join
+	// its update topic for a bounded time (update_fleet.go).
+	if n.updateFleet != nil && topicName == n.updateFleetTopic() {
+		n.updateFleet.noteAnnounced(data, time.Now())
+	}
+	return nil
 }
 
 // sdnTopicMembers is the peer set currently subscribed to one of THIS node's

@@ -181,6 +181,13 @@ type UpdateSignalSubscriber struct {
 	// acknowledged is the newest signal this node accepted (verified, for
 	// this node, not a refused rollback or a quarantined update).
 	acknowledged *update.StatusAck
+	// latestVerified is the newest signal of this node's channel and kind
+	// that verified against its trust roots (the fleet view's baseline).
+	latestVerified *update.StatusAck
+	// waitCancel ends the rollout wait in progress, for an update of
+	// sequence waitSequence: a newer verified signal replaces it.
+	waitCancel   context.CancelFunc
+	waitSequence int64
 }
 
 // Acknowledged is the newest update signal this node accepted, or nil.
@@ -214,6 +221,38 @@ func (s *UpdateSignalSubscriber) acknowledge(signal *update.Signal) {
 	}
 }
 
+// LatestVerified is the newest update signal of this node's channel and kind
+// that this node verified against its trust roots, or nil.
+func (s *UpdateSignalSubscriber) LatestVerified() *update.StatusAck {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.latestVerified == nil {
+		return nil
+	}
+	ack := *s.latestVerified
+	return &ack
+}
+
+// noteVerified records signal as the newest one this node verified, when it
+// is newer than the one held.
+func (s *UpdateSignalSubscriber) noteVerified(signal *update.Signal) {
+	ack := update.StatusAck{UpdateID: signal.UpdateID, Sequence: signal.Sequence}
+	s.mu.Lock()
+	newer := s.latestVerified == nil || ack.Sequence > s.latestVerified.Sequence
+	if newer {
+		s.latestVerified = &ack
+	}
+	s.mu.Unlock()
+	if newer {
+		if err := update.WriteLatestSignal(s.deps.Paths, ack); err != nil {
+			log.Warnf("Record the newest verified update signal %s: %v", signal.UpdateID, err)
+		}
+	}
+}
+
 // rolloutWindow is the window for signal: its signed rollout_window_seconds
 // when it carries one, else this node's update.rollout_window_seconds.
 func (s *UpdateSignalSubscriber) rolloutWindow(signal *update.Signal) (time.Duration, string) {
@@ -224,12 +263,19 @@ func (s *UpdateSignalSubscriber) rolloutWindow(signal *update.Signal) (time.Dura
 }
 
 // waitForRollout records the update as pending (updates/pending.json, kept
-// across a restart) and waits for this node's due time. It reports false when
-// ctx ended first.
+// across a restart, replacing a record of another update) and waits for this
+// node's due time. It reports false when the wait ended without acting: ctx
+// ended, a newer verified signal replaced this update (the newer one is then
+// handled under its own window), or, at the due time, the feed index no
+// longer lists the update (withdrawn).
 func (s *UpdateSignalSubscriber) waitForRollout(ctx context.Context, signal *update.Signal, raw []byte, trigger string) bool {
 	window, from := s.rolloutWindow(signal)
 	if window <= 0 {
-		_ = update.ClearPending(s.deps.Paths, signal.UpdateID)
+		// Acts at once; a record of an older update it replaces goes.
+		if err := update.ClearPending(s.deps.Paths, ""); err != nil {
+			log.Warnf("Update %s: cannot clear the pending record: %v", signal.UpdateID, err)
+		}
+		s.deps.Fleet.localChanged()
 		return true
 	}
 	record := update.Pending{UpdateID: signal.UpdateID, Version: signal.Version, Sequence: signal.Sequence, Trigger: trigger, WindowFrom: from}
@@ -251,37 +297,122 @@ func (s *UpdateSignalSubscriber) waitForRollout(ctx context.Context, signal *upd
 	log.Infof("Update %s (version %s) accepted at %s; this node acts on it at %s (rollout window %ds from %s, this node's delay %ds). `spacedatanetwork update install` installs it at once.",
 		signal.UpdateID, signal.Version, pending.AcceptedAt, pending.DueAt, pending.WindowSeconds, pending.WindowFrom, pending.DelaySeconds)
 	s.deps.Fleet.localChanged()
+	waitCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	s.mu.Lock()
+	s.waitCancel, s.waitSequence = cancel, signal.Sequence
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		s.waitCancel, s.waitSequence = nil, 0
+		s.mu.Unlock()
+	}()
 	timer := time.NewTimer(wait)
 	defer timer.Stop()
 	select {
-	case <-ctx.Done():
+	case <-waitCtx.Done():
+		if ctx.Err() == nil {
+			log.Infof("Update %s: a newer verified update signal replaces it; its rollout wait ends.", signal.UpdateID)
+		}
 		return false
 	case <-timer.C:
+	}
+	if s.withdrawnFromFeed(ctx, signal.UpdateID) {
+		log.Warnf("Update %s (version %s): rollout due time %s reached, and the feed index no longer lists it (withdrawn); not installing it.",
+			signal.UpdateID, signal.Version, pending.DueAt)
+		_ = update.ClearPending(s.deps.Paths, signal.UpdateID)
+		s.deps.Fleet.localChanged()
+		return false
 	}
 	log.Infof("Update %s: rollout due time %s reached; installing.", signal.UpdateID, pending.DueAt)
 	return true
 }
 
-// resumePending picks up the wait a restart interrupted: a pending signal is
-// handled again from its kept bytes (verified again, due time kept); a
-// pending feed-check find is returned so the first feed check runs at its due
-// time.
-func (s *UpdateSignalSubscriber) resumePending(ctx context.Context) *update.Pending {
+// withdrawnFromFeed reads the feed index of this node's channel and target
+// and reports true only when it was read and does not list updateID. An
+// index that cannot be read withdraws nothing: the install verifies the
+// signed manifest either way.
+func (s *UpdateSignalSubscriber) withdrawnFromFeed(ctx context.Context, updateID string) bool {
+	ctx, cancel := context.WithTimeout(ctx, signalFetchTimeout)
+	defer cancel()
+	indexURL, err := update.ProviderFeedIndexURL(s.feed.String(), s.deps.Channel, runtime.GOOS, runtime.GOARCH)
+	if err != nil {
+		return false
+	}
+	raw, err := s.fetch(ctx, indexURL, 16<<20)
+	if err != nil {
+		log.Infof("Update %s: the feed index could not be read at the due time (%v); the install checks the signed manifest.", updateID, err)
+		return false
+	}
+	feed, err := update.ParseProviderFeed(raw)
+	if err != nil {
+		return false
+	}
+	for _, entry := range feed.Updates {
+		if entry.UpdateID == updateID {
+			return false
+		}
+	}
+	return true
+}
+
+// verifyForThisNode is the full check a signal passes before this node acts
+// on it: signed by a trust root, for this node's platform, kind and channel,
+// newer than the installed sequence, not expired.
+func (s *UpdateSignalSubscriber) verifyForThisNode(signal *update.Signal, state *update.State) error {
+	return signal.Verify(update.SignalVerifyOptions{
+		TrustedRoots:    s.deps.TrustedRoots,
+		Platform:        runtime.GOOS,
+		Arch:            runtime.GOARCH,
+		Kind:            s.deps.Kind,
+		Channel:         s.deps.Channel,
+		CurrentSequence: state.Sequence,
+		Now:             s.deps.Now(),
+		FeedBaseURL:     s.feed.String(),
+	})
+}
+
+// resumePending picks up the wait a restart interrupted. Its remaining wait is
+// capped at its window. A pending signal is handled again from its kept bytes
+// (verified again, due time kept); one that no longer verifies (it expired
+// while the node was down) is cleared with a warning, and checkNow asks for a
+// feed check at once. A pending feed-check find is returned so a feed check
+// runs at its due time.
+func (s *UpdateSignalSubscriber) resumePending(ctx context.Context) (pendingFind *update.Pending, checkNow bool) {
 	pending, err := update.CurrentPending(s.deps.Paths)
 	if err != nil {
 		log.Warnf("Read pending update: %v", err)
-		return nil
+		return nil, false
 	}
 	if pending == nil {
-		return nil
+		return nil, false
+	}
+	if capped, err := update.CapPendingDue(s.deps.Paths, pending, s.deps.Now()); err != nil {
+		log.Warnf("Update %s: cannot cap its due time: %v", pending.UpdateID, err)
+	} else if capped {
+		log.Warnf("Update %s: its due time was more than its rollout window (%ds) away (the clock moved back since it was accepted); it is due at %s.",
+			pending.UpdateID, pending.WindowSeconds, pending.DueAt)
 	}
 	log.Infof("Update %s (version %s) is pending from before this start; due at %s.", pending.UpdateID, pending.Version, pending.DueAt)
 	if pending.Trigger == "signal" && len(pending.Signal) > 0 {
 		raw := append([]byte(nil), pending.Signal...)
+		signal, err := update.ParseSignal(raw)
+		if err == nil {
+			var state *update.State
+			if state, err = update.LoadState(s.deps.Paths); err == nil {
+				err = s.verifyForThisNode(signal, state)
+			}
+		}
+		if err != nil {
+			log.Warnf("Update %s (version %s) was pending, and its signal no longer verifies (%v): the pending record is cleared, and this node checks the feed for the newest release now.",
+				pending.UpdateID, pending.Version, err)
+			_ = update.ClearPending(s.deps.Paths, pending.UpdateID)
+			return nil, true
+		}
 		go runUpdateGossip("update-signal-resume", func() { s.handle(ctx, raw) })
-		return nil
+		return nil, false
 	}
-	return pending
+	return pending, false
 }
 
 // NewUpdateSignalSubscriber validates deps and constructs the subscriber.
@@ -312,7 +443,7 @@ func NewUpdateSignalSubscriber(deps UpdateSignalSubscriberDeps) (*UpdateSignalSu
 		deps.Launch = update.LaunchSelfUpgrade
 	}
 	return &UpdateSignalSubscriber{deps: deps, feed: feed, handled: make(map[string]bool), uiAttempts: make(map[string]time.Time), reportedFailures: make(map[string]bool),
-		acknowledged: update.ReadAcknowledged(deps.Paths)}, nil
+		acknowledged: update.ReadAcknowledged(deps.Paths), latestVerified: update.ReadLatestSignal(deps.Paths)}, nil
 }
 
 // Run joins the topic and processes signals until ctx is done. A per-message
@@ -328,10 +459,30 @@ func (s *UpdateSignalSubscriber) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("node: subscribe update signal topic %s: %w", s.deps.Topic, err)
 	}
-	pendingFind := s.resumePending(ctx)
+	pendingFind, checkNow := s.resumePending(ctx)
 	if s.deps.CheckInterval > 0 {
 		done := make(chan struct{})
-		go func() { defer close(done); s.runFeedChecks(ctx, pendingFind) }()
+		go func() { defer close(done); s.runFeedChecks(ctx, pendingFind, checkNow) }()
+		defer func() { cancel(); <-done }()
+	} else if checkNow || pendingFind != nil {
+		// No periodic feed checks: one check, at once or at the pending
+		// find's due time.
+		wait := time.Duration(0)
+		if pendingFind != nil {
+			wait = max(time.Until(pendingFind.Due()), 0)
+		}
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(wait):
+			}
+			if err := s.checkFeed(ctx); err != nil && ctx.Err() == nil {
+				log.Warnf("Feed check: %v", err)
+			}
+		}()
 		defer func() { cancel(); <-done }()
 	}
 	log.Infof("Update signal lane LIVE on %s (channel %s, kind %s, bundle %s). This install upgrades itself when the publisher signals.",
@@ -376,16 +527,19 @@ func (s *UpdateSignalSubscriber) handle(ctx context.Context, data []byte) {
 		return
 	}
 
-	if err := signal.Verify(update.SignalVerifyOptions{
-		TrustedRoots:    s.deps.TrustedRoots,
-		Platform:        runtime.GOOS,
-		Arch:            runtime.GOARCH,
-		Kind:            s.deps.Kind,
-		Channel:         s.deps.Channel,
-		CurrentSequence: state.Sequence,
-		Now:             s.deps.Now(),
-		FeedBaseURL:     s.feed.String(),
-	}); err != nil {
+	// The fleet view's baseline: the newest signal of this channel and kind
+	// that verifies against this node's trust roots, whatever this node runs.
+	if signal.Verify(update.SignalVerifyOptions{
+		TrustedRoots: s.deps.TrustedRoots,
+		Kind:         s.deps.Kind,
+		Channel:      s.deps.Channel,
+		Now:          s.deps.Now(),
+		FeedBaseURL:  s.feed.String(),
+	}) == nil {
+		s.noteVerified(signal)
+	}
+
+	if err := s.verifyForThisNode(signal, state); err != nil {
 		log.Debugf("update signal %s not actionable here: %v", signal.UpdateID, err)
 		return
 	}
@@ -422,6 +576,11 @@ func (s *UpdateSignalSubscriber) handle(ctx context.Context, data []byte) {
 	if !s.waitForRollout(ctx, signal, data, "signal") {
 		return
 	}
+	// The minimum interval between swaps counts from here, not from the
+	// start of the wait.
+	s.mu.Lock()
+	s.lastUpgrade = s.deps.Now()
+	s.mu.Unlock()
 	// Installed meanwhile (a typed `update install`): nothing to do.
 	if state, err = update.LoadState(s.deps.Paths); err != nil {
 		log.Warnf("update signal: cannot read update state, ignoring %s: %v", signal.UpdateID, err)
@@ -462,7 +621,14 @@ func (s *UpdateSignalSubscriber) claimSignal(signal *update.Signal, raw []byte) 
 				log.Debugf("update signal: dropping remembered sequence %d for newer sequence %d", s.pendingSequence, signal.Sequence)
 			}
 			s.pendingSignal, s.pendingSequence = append([]byte(nil), raw...), signal.Sequence
-			log.Infof("Update signal %s remembered while an update is in flight", id)
+			if s.waitCancel != nil && signal.Sequence > s.waitSequence {
+				// The update in flight is still waiting for its due time:
+				// this newer one replaces it, under its own window.
+				log.Infof("Update signal %s (sequence %d) replaces the update waiting for its due time (sequence %d)", id, signal.Sequence, s.waitSequence)
+				s.waitCancel()
+			} else {
+				log.Infof("Update signal %s remembered while an update is in flight", id)
+			}
 		} else {
 			log.Debugf("update signal %s dropped: a newer or equal signal is already remembered", id)
 		}
@@ -478,7 +644,6 @@ func (s *UpdateSignalSubscriber) claimSignal(signal *update.Signal, raw []byte) 
 	}
 	s.pendingUpgrade = true
 	s.handled[id] = true
-	s.lastUpgrade = s.deps.Now()
 	return true
 }
 
@@ -906,6 +1071,8 @@ func (n *Node) startUpdateSignalSubscriber() {
 		n.updateFleet.local = func() *update.Status {
 			return update.LocalStatus(paths, peerID, version, subscriber.Acknowledged(), time.Now())
 		}
+		n.updateFleet.latest = subscriber.LatestVerified
+		n.updateFleet.topic = topic
 		n.updateFleet.mu.Unlock()
 	}
 

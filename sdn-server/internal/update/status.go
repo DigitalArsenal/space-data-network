@@ -24,6 +24,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -31,16 +32,48 @@ import (
 const (
 	// StatusSchema identifies the status message.
 	StatusSchema = "org.spacedatanetwork.update.status.v1"
-	// StatusMaxBytes bounds a status message.
-	StatusMaxBytes = 4 << 10
+	// StatusMaxBytes bounds a status message. A status with every field at
+	// its limit is under 1 KiB.
+	StatusMaxBytes = 2 << 10
 
 	// Status states.
 	StatusCurrent = "current"
 	StatusPending = "pending"
 	StatusFailed  = "failed"
-
-	statusReasonLimit = 200
 )
+
+// Failure reason codes: what a node publishes about why an update failed.
+// The ledger's own text (gate errors, rollback errors, paths) stays on the
+// node; only one of these codes leaves it.
+const (
+	// ReasonNotReady: the build did not answer ready by its deadline.
+	ReasonNotReady = "not-ready-by-deadline"
+	// ReasonStoppedDuringTrial: the build was stopped too often during its
+	// trial.
+	ReasonStoppedDuringTrial = "stopped-during-trial"
+	// ReasonTrialUnreadable: the trial record could not be read.
+	ReasonTrialUnreadable = "trial-record-unreadable"
+	// ReasonHealthFailed: the build failed its health check for any other
+	// reason.
+	ReasonHealthFailed = "health-failed"
+	// ReasonRevertRefused: the build failed and the rollback was refused, so
+	// it keeps running.
+	ReasonRevertRefused = "revert-refused"
+)
+
+// StatusReasonCodes is every reason code a status may carry.
+var StatusReasonCodes = []string{ReasonNotReady, ReasonStoppedDuringTrial, ReasonTrialUnreadable, ReasonHealthFailed, ReasonRevertRefused}
+
+// Field limits of a status message. Every string a status carries is
+// printed by other nodes, so each is checked against a character set as well
+// as a length: none can hold a control character, a space or markup.
+var (
+	statusPeerIDPattern   = regexp.MustCompile(`^[0-9A-Za-z]{16,128}$`)
+	statusVersionPattern  = regexp.MustCompile(`^[0-9A-Za-z][0-9A-Za-z.+_-]{0,63}$`)
+	statusUpdateIDPattern = regexp.MustCompile(`^[0-9A-Za-z][0-9A-Za-z.+_:-]{0,127}$`)
+)
+
+const statusTimeMaxLen = 40
 
 // StatusPendingUpdate is the update a node has accepted and not yet acted on.
 type StatusPendingUpdate struct {
@@ -57,7 +90,9 @@ type StatusFailure struct {
 	Version  string `json:"version"`
 	Sequence int64  `json:"sequence"`
 	At       string `json:"at"`
-	Reason   string `json:"reason,omitempty"`
+	// ReasonCode is one of StatusReasonCodes. The ledger's text stays on the
+	// node.
+	ReasonCode string `json:"reason_code"`
 	// RolledBack is false when the revert was refused and the failed build
 	// keeps running (ledger revert-refused).
 	RolledBack bool `json:"rolled_back"`
@@ -83,8 +118,13 @@ type Status struct {
 	At           string               `json:"at"`
 }
 
-// ParseStatus decodes a status message. It does not authenticate it: the
-// receiver checks peer_id against the message's author.
+// ParseStatus decodes a status message and checks every field: the schema,
+// the peer id, version and update id character sets and lengths, RFC 3339
+// times, the state and the reason code from their fixed lists, and a pending
+// or failed block where the state names one. Fields this build does not know
+// are ignored by rule: they are never stored or shown. It does not
+// authenticate the message: the receiver checks peer_id against the
+// message's author.
 func ParseStatus(raw []byte) (*Status, error) {
 	if len(raw) == 0 || len(raw) > StatusMaxBytes {
 		return nil, errors.New("update status message is empty or too large")
@@ -99,26 +139,141 @@ func ParseStatus(raw []byte) (*Status, error) {
 	if status.Schema != StatusSchema {
 		return nil, fmt.Errorf("not an update status message: %q", status.Schema)
 	}
-	if strings.TrimSpace(status.PeerID) == "" || strings.TrimSpace(status.Version) == "" {
-		return nil, errors.New("update status message names no peer or version")
-	}
-	switch status.State {
-	case StatusCurrent, StatusPending, StatusFailed:
-	default:
-		return nil, fmt.Errorf("update status state %q is not current, pending or failed", status.State)
-	}
-	if _, err := time.Parse(time.RFC3339, status.At); err != nil {
-		return nil, fmt.Errorf("update status at: %w", err)
+	if err := status.validate(); err != nil {
+		return nil, fmt.Errorf("update status: %w", err)
 	}
 	return &status, nil
 }
 
-const acknowledgedFileName = "acknowledged.json"
+// IsStatusMessage reports whether raw names the status schema, valid or not.
+func IsStatusMessage(raw []byte) bool {
+	if len(raw) == 0 || len(raw) > 64<<10 {
+		return false
+	}
+	var probe struct {
+		Schema string `json:"schema"`
+	}
+	return json.Unmarshal(raw, &probe) == nil && probe.Schema == StatusSchema
+}
+
+func (s *Status) validate() error {
+	if !statusPeerIDPattern.MatchString(s.PeerID) {
+		return errors.New("peer_id is not a peer id")
+	}
+	if !statusVersionPattern.MatchString(s.Version) {
+		return errors.New("version is not a version")
+	}
+	if s.UpdateID != "" && !statusUpdateIDPattern.MatchString(s.UpdateID) {
+		return errors.New("update_id is not an update id")
+	}
+	if s.Sequence < 0 {
+		return errors.New("sequence is negative")
+	}
+	if err := statusTime(s.At, "at"); err != nil {
+		return err
+	}
+	switch s.State {
+	case StatusCurrent, StatusPending, StatusFailed:
+	default:
+		return errors.New("state is not current, pending or failed")
+	}
+	if s.State == StatusPending && s.Pending == nil {
+		return errors.New("state pending names no pending update")
+	}
+	if s.State == StatusFailed && s.Failed == nil {
+		return errors.New("state failed names no failed update")
+	}
+	if p := s.Pending; p != nil {
+		if !statusUpdateIDPattern.MatchString(p.UpdateID) || !statusVersionPattern.MatchString(p.Version) || p.Sequence < 0 {
+			return errors.New("pending names no valid update")
+		}
+		if err := statusTime(p.DueAt, "pending.due_at"); err != nil {
+			return err
+		}
+	}
+	if f := s.Failed; f != nil {
+		if !statusUpdateIDPattern.MatchString(f.UpdateID) || !statusVersionPattern.MatchString(f.Version) || f.Sequence < 0 {
+			return errors.New("failed names no valid update")
+		}
+		if err := statusTime(f.At, "failed.at"); err != nil {
+			return err
+		}
+		if !slicesContains(StatusReasonCodes, f.ReasonCode) {
+			return errors.New("failed.reason_code is not a known reason code")
+		}
+	}
+	if a := s.Acknowledged; a != nil {
+		if !statusUpdateIDPattern.MatchString(a.UpdateID) || a.Sequence < 0 {
+			return errors.New("acknowledged names no valid update")
+		}
+	}
+	return nil
+}
+
+func statusTime(value, field string) error {
+	if len(value) > statusTimeMaxLen {
+		return fmt.Errorf("%s is too long", field)
+	}
+	if _, err := time.Parse(time.RFC3339, value); err != nil {
+		return fmt.Errorf("%s is not an RFC 3339 time", field)
+	}
+	return nil
+}
+
+func slicesContains(list []string, value string) bool {
+	for _, v := range list {
+		if v == value {
+			return true
+		}
+	}
+	return false
+}
+
+// failureReasonCode maps a ledger failure line to its published code.
+func failureReasonCode(entry DeployLedgerEntry) string {
+	reason := entry.Reason
+	switch {
+	case entry.Action == "revert-refused":
+		return ReasonRevertRefused
+	case strings.Contains(reason, "did not answer ready by its deadline"):
+		return ReasonNotReady
+	case strings.Contains(reason, "during its trial before it answered ready"):
+		return ReasonStoppedDuringTrial
+	case strings.Contains(reason, "trial record cannot be read"):
+		return ReasonTrialUnreadable
+	}
+	return ReasonHealthFailed
+}
+
+const (
+	acknowledgedFileName = "acknowledged.json"
+	latestSignalFileName = "latest-signal.json"
+)
 
 // ReadAcknowledged is the newest update signal this node accepted
 // (updates/acknowledged.json), or nil.
-func ReadAcknowledged(paths Paths) *StatusAck {
-	data, err := os.ReadFile(filepath.Join(paths.Updates, acknowledgedFileName))
+func ReadAcknowledged(paths Paths) *StatusAck { return readAck(paths, acknowledgedFileName) }
+
+// WriteAcknowledged records ack as the newest update signal this node
+// accepted, when it is newer than the one recorded.
+func WriteAcknowledged(paths Paths, ack StatusAck) error {
+	return writeAck(paths, acknowledgedFileName, ack)
+}
+
+// ReadLatestSignal is the newest update signal of this node's channel and
+// kind that this node verified against its trust roots, whether or not it
+// was newer than the build it runs (updates/latest-signal.json), or nil. The
+// fleet view measures every node against it.
+func ReadLatestSignal(paths Paths) *StatusAck { return readAck(paths, latestSignalFileName) }
+
+// WriteLatestSignal records ack as the newest verified signal, when it is
+// newer than the one recorded.
+func WriteLatestSignal(paths Paths, ack StatusAck) error {
+	return writeAck(paths, latestSignalFileName, ack)
+}
+
+func readAck(paths Paths, name string) *StatusAck {
+	data, err := os.ReadFile(filepath.Join(paths.Updates, name))
 	if err != nil {
 		return nil
 	}
@@ -129,16 +284,14 @@ func ReadAcknowledged(paths Paths) *StatusAck {
 	return &ack
 }
 
-// WriteAcknowledged records ack as the newest update signal this node
-// accepted, when it is newer than the one recorded.
-func WriteAcknowledged(paths Paths, ack StatusAck) error {
-	if held := ReadAcknowledged(paths); held != nil && held.Sequence >= ack.Sequence {
+func writeAck(paths Paths, name string, ack StatusAck) error {
+	if held := readAck(paths, name); held != nil && held.Sequence >= ack.Sequence {
 		return nil
 	}
 	if err := os.MkdirAll(paths.Updates, 0o700); err != nil {
 		return err
 	}
-	return writeJSONAtomic(filepath.Join(paths.Updates, acknowledgedFileName), &ack)
+	return writeJSONAtomic(filepath.Join(paths.Updates, name), &ack)
 }
 
 // AtTime is At parsed.
@@ -217,12 +370,8 @@ func ActiveUpdateFailure(paths Paths) *StatusFailure {
 		if refused && state.Sequence > failed.Sequence || !refused && state.Sequence >= failed.Sequence {
 			continue
 		}
-		reason := failed.Reason
-		if len(reason) > statusReasonLimit {
-			reason = strings.ToValidUTF8(reason[:statusReasonLimit], "")
-		}
 		return &StatusFailure{UpdateID: failed.UpdateID, Version: failed.Version, Sequence: failed.Sequence,
-			At: failed.RecordedAt, Reason: reason, RolledBack: !refused}
+			At: failed.RecordedAt, ReasonCode: failureReasonCode(failed), RolledBack: !refused}
 	}
 	return nil
 }

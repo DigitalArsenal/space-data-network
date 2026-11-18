@@ -33,8 +33,16 @@ const (
 	statusAnnounceInterval = 10 * time.Minute
 	statusJoinDebounce     = 10 * time.Second
 	statusJoinSettle       = 2 * time.Second
-	statusFutureLimit      = 10 * time.Minute
 	lastSeenRefresh        = time.Minute
+	// statusExpiry: a status not renewed for this long is dropped (a node
+	// renews its status every statusAnnounceInterval).
+	statusExpiry = 30 * time.Minute
+	// statusCapacity bounds the statuses held; the least recently renewed
+	// goes first.
+	statusCapacity = 512
+	// signalReannounceFor bounds how long the node that published a signal
+	// sends it again to peers that join its update topic.
+	signalReannounceFor = time.Hour
 )
 
 // updateFleet holds the statuses other nodes published and announces this
@@ -43,8 +51,28 @@ type updateFleet struct {
 	mu       sync.Mutex
 	statuses map[string]fleetStatus
 	local    func() *update.Status
-	changed  chan struct{}
-	seen     func(peer.ID)
+	// latest is the newest update signal this node verified itself.
+	latest  func() *update.StatusAck
+	changed chan struct{}
+	seen    func(peer.ID)
+	// publish is update.publish_status: false publishes no status.
+	publish bool
+	// announced is the newest signal this node published, sent again to
+	// peers that join the topic until announcedUntil.
+	announced      []byte
+	announcedUntil time.Time
+	// topic is the update topic this node follows.
+	topic string
+}
+
+// updateFleetTopic is the update topic this node follows, or "".
+func (n *Node) updateFleetTopic() string {
+	if n == nil || n.updateFleet == nil {
+		return ""
+	}
+	n.updateFleet.mu.Lock()
+	defer n.updateFleet.mu.Unlock()
+	return n.updateFleet.topic
 }
 
 type fleetStatus struct {
@@ -52,19 +80,21 @@ type fleetStatus struct {
 	received time.Time
 }
 
-func newUpdateFleet(seen func(peer.ID)) *updateFleet {
-	return &updateFleet{statuses: map[string]fleetStatus{}, changed: make(chan struct{}, 1), seen: seen}
+func newUpdateFleet(seen func(peer.ID), publish bool) *updateFleet {
+	return &updateFleet{statuses: map[string]fleetStatus{}, changed: make(chan struct{}, 1), seen: seen, publish: publish}
 }
 
-// record keeps status when it is newer than the one held for its peer. The
-// caller has checked that its peer_id is the message's author.
+// record keeps status when it is newer than the one held for its peer and its
+// own time is within statusClockSkew of this node's clock; only then is the
+// peer recorded as seen. A replayed older status changes nothing. The caller
+// has checked that its peer_id is the message's author.
 func (f *updateFleet) record(status *update.Status) {
 	if f == nil || status == nil {
 		return
 	}
 	now := time.Now()
 	at := status.AtTime()
-	if at.After(now.Add(statusFutureLimit)) {
+	if at.Before(now.Add(-statusClockSkew)) || at.After(now.Add(statusClockSkew)) {
 		return
 	}
 	id, err := peer.Decode(status.PeerID)
@@ -73,13 +103,66 @@ func (f *updateFleet) record(status *update.Status) {
 	}
 	f.mu.Lock()
 	held, ok := f.statuses[status.PeerID]
-	if !ok || !at.Before(held.status.AtTime()) {
+	newer := !ok || at.After(held.status.AtTime())
+	if newer {
 		f.statuses[status.PeerID] = fleetStatus{status: status, received: now}
+		f.pruneLocked(now)
 	}
 	f.mu.Unlock()
-	if f.seen != nil {
+	if newer && f.seen != nil {
 		f.seen(id)
 	}
+}
+
+// pruneLocked drops expired statuses, then the least recently renewed ones
+// beyond statusCapacity. The caller holds f.mu.
+func (f *updateFleet) pruneLocked(now time.Time) {
+	for id, held := range f.statuses {
+		if now.Sub(held.received) > statusExpiry {
+			delete(f.statuses, id)
+		}
+	}
+	for len(f.statuses) > statusCapacity {
+		oldest, oldestAt := "", time.Time{}
+		for id, held := range f.statuses {
+			if oldest == "" || held.received.Before(oldestAt) {
+				oldest, oldestAt = id, held.received
+			}
+		}
+		delete(f.statuses, oldest)
+	}
+}
+
+// noteAnnounced records a signal this node published on its update topic, to
+// send again to peers that join it: a peer that was not on the topic when the
+// signal went out (restarting, or briefly disconnected) gets it when it
+// joins. The feed check remains the catch-up for a node that joins later or
+// only through other nodes.
+func (f *updateFleet) noteAnnounced(raw []byte, now time.Time) {
+	if f == nil {
+		return
+	}
+	signal, err := update.ParseSignal(raw)
+	if err != nil {
+		return
+	}
+	until := now.Add(signalReannounceFor)
+	if expires, err := time.Parse(time.RFC3339, signal.ExpiresAt); err == nil && expires.Before(until) {
+		until = expires
+	}
+	f.mu.Lock()
+	f.announced, f.announcedUntil = append([]byte(nil), raw...), until
+	f.mu.Unlock()
+}
+
+func (f *updateFleet) reannouncement(now time.Time) []byte {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.announced == nil || now.After(f.announcedUntil) {
+		f.announced = nil
+		return nil
+	}
+	return f.announced
 }
 
 // localStatus is this node's own status, or nil before its update lane runs.
@@ -114,10 +197,24 @@ func (f *updateFleet) snapshot() map[string]fleetStatus {
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.pruneLocked(time.Now())
 	for k, v := range f.statuses {
 		out[k] = v
 	}
 	return out
+}
+
+func (f *updateFleet) latestSignal() *update.StatusAck {
+	if f == nil {
+		return nil
+	}
+	f.mu.Lock()
+	latest := f.latest
+	f.mu.Unlock()
+	if latest == nil {
+		return nil
+	}
+	return latest()
 }
 
 // announce publishes this node's status on topic until ctx ends.
@@ -147,6 +244,16 @@ func (f *updateFleet) announce(ctx context.Context, topic *pubsub.Topic) {
 		}
 	}()
 	publish := func(why string) {
+		if why == "peer joined" {
+			if raw := f.reannouncement(time.Now()); raw != nil {
+				if err := topic.Publish(ctx, raw); err == nil {
+					log.Infof("Update signal sent again to the peers of %s (a peer joined)", topic.String())
+				}
+			}
+		}
+		if !f.publish {
+			return
+		}
 		status := f.localStatus()
 		if status == nil {
 			return
@@ -224,16 +331,25 @@ type FleetRow struct {
 	Self bool `json:"self,omitempty"`
 	// Name is the name the node publishes in the peer directory, if any.
 	Name string `json:"name,omitempty"`
+	// Source says where Version and State come from: "local" (this node's
+	// own update root), "status" (the node's own signed status message:
+	// self-reported, never checked by this node), or "identify" (no status
+	// from the node; Version is its identify agent version).
+	Source string `json:"source"`
 	// Version is the bundle version from the node's own status, else the
 	// version in its identify agent string.
 	Version      string `json:"version,omitempty"`
 	AgentVersion string `json:"agent_version,omitempty"`
 	Online       bool   `json:"online"`
 	// LastSeen is now for a connected peer, else the newest of the peer
-	// registry's last-seen time and this node's receipt of its status.
+	// registry's last-seen time and this node's receipt of a fresh status
+	// from it.
 	LastSeen string `json:"last_seen,omitempty"`
-	// State is current, pending, failed (from the node's own status) or
-	// unknown (no status from it).
+	// State is current, pending or failed (from the node's own status), or
+	// "not reporting" (no status from the node reached this one: a build
+	// before 1.2.0, a node with update.publish_status off, a node reached
+	// only through nodes that do not relay statuses, or a status that
+	// expired).
 	State   string                      `json:"state"`
 	Pending *update.StatusPendingUpdate `json:"pending,omitempty"`
 	Failed  *update.StatusFailure       `json:"failed,omitempty"`
@@ -241,16 +357,21 @@ type FleetRow struct {
 	Sequence int64 `json:"sequence,omitempty"`
 	// Acknowledged is the newest signal the node says it accepted;
 	// AcknowledgedLatest is true when that signal, or the sequence the node
-	// runs, is at or past FleetReport.LatestSignal.
+	// says it runs, is at or past FleetReport.LatestSignal.
 	Acknowledged       *update.StatusAck `json:"acknowledged,omitempty"`
 	AcknowledgedLatest *bool             `json:"acknowledged_latest,omitempty"`
 	StatusAt           string            `json:"status_at,omitempty"`
 }
 
+// FleetStateNotReporting is the state of a row with no status.
+const FleetStateNotReporting = "not reporting"
+
 // FleetReport is GET /api/peers/versions and `update fleet`.
 type FleetReport struct {
 	GeneratedAt string `json:"generated_at"`
-	// LatestSignal is the newest update signal any row acknowledged.
+	// LatestSignal is the newest update signal this node verified itself
+	// (signed by a trusted root, for its channel and kind). What other nodes
+	// report never moves it.
 	LatestSignal *update.StatusAck `json:"latest_signal,omitempty"`
 	Rows         []FleetRow        `json:"rows"`
 }
@@ -265,9 +386,10 @@ func (n *Node) UpdateFleet() *FleetReport {
 	}
 	statuses := n.updateFleet.snapshot()
 	self := n.host.ID().String()
-	selfRow := FleetRow{PeerID: self, Self: true, Online: true, LastSeen: report.GeneratedAt, AgentVersion: versioninfo.AgentVersion, State: "unknown"}
+	selfRow := FleetRow{PeerID: self, Self: true, Source: "local", Online: true, LastSeen: report.GeneratedAt, AgentVersion: versioninfo.AgentVersion, State: FleetStateNotReporting}
 	if status := n.updateFleet.localStatus(); status != nil {
 		applyFleetStatus(&selfRow, status)
+		selfRow.Source = "local"
 	}
 	if selfRow.Version == "" {
 		selfRow.Version = versioninfo.Version()
@@ -292,7 +414,7 @@ func (n *Node) UpdateFleet() *FleetReport {
 			continue
 		}
 		listed[id] = true
-		row := FleetRow{PeerID: id, Name: strings.TrimSpace(entry.Name), Online: online[id], State: "unknown",
+		row := FleetRow{PeerID: id, Name: strings.TrimSpace(entry.Name), Online: online[id], Source: "identify", State: FleetStateNotReporting,
 			AgentVersion: strings.TrimSpace(entry.Metadata["agent_version"])}
 		seen := entry.LastSeen
 		if held, ok := statuses[id]; ok {
@@ -312,29 +434,24 @@ func (n *Node) UpdateFleet() *FleetReport {
 		}
 		report.Rows = append(report.Rows, row)
 	}
-	// A node whose status reached this one through the topic but that is not
-	// one of its own SDN peers (relayed by another node).
+	// A node whose status this node accepted (it identified the node as an
+	// SDN node itself) and that the peer directory does not list.
 	for id, held := range statuses {
 		if listed[id] {
 			continue
 		}
 		listed[id] = true
-		row := FleetRow{PeerID: id, State: "unknown", LastSeen: held.received.UTC().Format(time.RFC3339)}
+		row := FleetRow{PeerID: id, State: FleetStateNotReporting, LastSeen: held.received.UTC().Format(time.RFC3339)}
 		if pid, err := peer.Decode(id); err == nil && online[pid.String()] {
 			row.Online = true
 		}
 		applyFleetStatus(&row, held.status)
 		report.Rows = append(report.Rows, row)
 	}
-	for _, row := range report.Rows {
-		if row.Acknowledged != nil && (report.LatestSignal == nil || row.Acknowledged.Sequence > report.LatestSignal.Sequence) {
-			ack := *row.Acknowledged
-			report.LatestSignal = &ack
-		}
-	}
+	report.LatestSignal = n.updateFleet.latestSignal()
 	if report.LatestSignal != nil {
 		for i := range report.Rows {
-			if report.Rows[i].State == "unknown" {
+			if report.Rows[i].State == FleetStateNotReporting {
 				continue
 			}
 			row := report.Rows[i]
@@ -353,6 +470,7 @@ func (n *Node) UpdateFleet() *FleetReport {
 }
 
 func applyFleetStatus(row *FleetRow, status *update.Status) {
+	row.Source = "status"
 	row.Version = status.Version
 	row.State = status.State
 	row.Pending = status.Pending

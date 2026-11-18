@@ -205,13 +205,34 @@ func PassTrial(paths Paths, updateID string) error {
 	if err != nil {
 		return err
 	}
-	// The trial ends first: a stop between the two steps must never leave a
-	// passed build to be rolled back at the next start.
+	// One durable state write means "passed": the trial mark is cleared and
+	// the pass recorded together. A stop after it leaves trial.json behind,
+	// which every start reads as passed (finishPassedTrial); a stop before it
+	// leaves the trial running, as it was.
+	if state.UpdateID == trial.UpdateID {
+		state.TrialUpdateID = ""
+		state.TrialPassed = trial.UpdateID
+		if err := SaveState(paths, state); err != nil {
+			return err
+		}
+	}
+	if crashAfterPassStateWrite != nil {
+		crashAfterPassStateWrite()
+	}
+	return finishPass(paths, trial, state.Sequence)
+}
+
+// finishPass removes the trial record of a passed trial and writes
+// health-passed to the ledger (once). The caller holds the trial lock.
+func finishPass(paths Paths, trial *Trial, sequence int64) error {
 	if err := clearTrial(paths); err != nil {
 		return err
 	}
+	if ledgerHas(paths, trial.UpdateID, "health-passed") {
+		return nil
+	}
 	return RecordDeployLedgerEntry(paths, DeployLedgerEntry{
-		Action: "health-passed", UpdateID: trial.UpdateID, Version: trial.Version, Sequence: state.Sequence,
+		Action: "health-passed", UpdateID: trial.UpdateID, Version: trial.Version, Sequence: sequence,
 		Reason:  "the trial build answered ready, and it is the build in the home bundle",
 		Trigger: trial.Trigger, SignalKeyID: trial.SignalKeyID,
 	})
@@ -425,10 +446,21 @@ func finishInterruptedRevert(paths Paths, trial *Trial) {
 // restoreMissingTrial writes the trial record of the build state.json marks
 // as on trial (State.TrialUpdateID) when the record is missing and the ledger
 // has not ended that trial: what a crash between the state write and the trial
-// write of a home install leaves. It returns the record and a note, or nil.
+// write of a home install leaves. It runs on the daemon start path only, and
+// holds the trial lock from its first read to its write, so it cannot race a
+// PassTrial (which clears the mark before it removes the record). It returns
+// the record and a note, or nil.
 func restoreMissingTrial(paths Paths) (*Trial, string) {
+	lock, err := lockTrial(paths)
+	if err != nil {
+		return nil, ""
+	}
+	defer lock.Release()
+	if existing, err := ReadTrial(paths); err != nil || existing != nil {
+		return nil, ""
+	}
 	state, err := LoadState(paths)
-	if err != nil || state.TrialUpdateID == "" || state.TrialUpdateID != state.UpdateID {
+	if err != nil || state.TrialUpdateID == "" || state.TrialUpdateID != state.UpdateID || state.TrialPassed == state.UpdateID {
 		return nil, ""
 	}
 	for _, ended := range []string{"health-passed", "health-reverted", "revert-refused"} {
@@ -437,13 +469,46 @@ func restoreMissingTrial(paths Paths) (*Trial, string) {
 		}
 	}
 	trial := &Trial{UpdateID: state.UpdateID, Version: state.Version, Sequence: state.Sequence, InstalledAt: state.AppliedAt}
-	if err := writeTrialLocked(paths, trial); err != nil {
+	if err := writeTrial(paths, trial); err != nil {
 		return nil, ""
 	}
 	if again, err := ReadTrial(paths); err != nil || again == nil || again.UpdateID != state.UpdateID {
 		return nil, ""
 	}
 	return trial, fmt.Sprintf("update %s was installed and its trial record was not written (the install stopped after its state write); it runs as a trial", state.UpdateID)
+}
+
+// finishPassedTrial completes a pass that stopped after its state write
+// (State.TrialPassed names the build it runs): the trial record is removed and
+// health-passed written, so the passed build is never judged as a trial
+// again. It returns a note when it did anything.
+func finishPassedTrial(paths Paths) string {
+	lock, err := lockTrial(paths)
+	if err != nil {
+		return ""
+	}
+	defer lock.Release()
+	state, err := LoadState(paths)
+	if err != nil || state.TrialPassed == "" || state.TrialPassed != state.UpdateID {
+		return ""
+	}
+	trial, err := ReadTrial(paths)
+	if err != nil {
+		return ""
+	}
+	if trial != nil && trial.UpdateID != state.UpdateID {
+		return ""
+	}
+	if trial == nil {
+		if ledgerHas(paths, state.UpdateID, "health-passed") {
+			return ""
+		}
+		trial = &Trial{UpdateID: state.UpdateID, Version: state.Version, Sequence: state.Sequence}
+	}
+	if err := finishPass(paths, trial, state.Sequence); err != nil {
+		return fmt.Sprintf("update %s passed its trial, and finishing the pass failed: %v", state.UpdateID, err)
+	}
+	return fmt.Sprintf("update %s passed its trial (the pass stopped after its state write); the pass is finished, and it does not run as a trial again", state.UpdateID)
 }
 
 // ledgerHas reports whether the home bundle's deploy ledger has a line with
@@ -568,12 +633,17 @@ func ChooseHomeBuild(executable string, opts StartCheckOptions) StartCheck {
 		}
 	}
 	for range 4 {
+		// A pass that stopped after its state write is finished first: the
+		// build it passed is never judged as a trial again.
+		if note := finishPassedTrial(paths); note != "" {
+			check.Notes = append(check.Notes, note)
+		}
 		trial, err := ReadTrial(paths)
 		if err != nil {
 			// A trial whose record cannot be read is a failed trial.
 			trial = &Trial{Starts: 1, FailReason: "its trial record cannot be read: " + err.Error()}
 		}
-		if trial == nil {
+		if trial == nil && opts.Daemon {
 			if restored, note := restoreMissingTrial(paths); restored != nil {
 				trial = restored
 				check.Notes = append(check.Notes, note)
