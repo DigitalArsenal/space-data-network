@@ -15,5 +15,9 @@ func TestMain(m *testing.M) {
 	if _, set := os.LookupEnv(format4.FormatEnv); !set {
 		os.Setenv(format4.FormatEnv, "1")
 	}
-	os.Exit(m.Run())
+	code := m.Run()
+	if visibilityAOT.dir != "" {
+		os.RemoveAll(visibilityAOT.dir)
+	}
+	os.Exit(code)
 }
