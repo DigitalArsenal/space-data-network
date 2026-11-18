@@ -12,7 +12,7 @@
 #   ----------------------------   ---------------------------
 #   preflight                      preflight, encryption
 #   go-quick (four package groups) go
-#   go-heavy                       heavy
+#   go-heavy (eleven test groups)  heavy
 #   publication-e2e (three groups) publication
 #   go-builds                      builds
 #   js                             js
@@ -33,7 +33,7 @@
 #
 # Usage:
 #   ./scripts/ci-local.sh quick      # default: everything CI runs except the heavy lane
-#   ./scripts/ci-local.sh heavy      # the heavy Go packages (internal/storage) with the budget they need
+#   ./scripts/ci-local.sh heavy      # the heavy Go packages (internal/storage) with the budget they need; SDN_CI_STORAGE_GROUP=<group> runs one group
 #   ./scripts/ci-local.sh full       # quick + heavy + race
 #   ./scripts/ci-local.sh preflight  # OSS preflight + gofmt only (no toolchain needed)
 #   ./scripts/ci-local.sh go         # fast go checks only
@@ -501,9 +501,25 @@ HEAVY_GO_TEST_TIMEOUT="25m"
 # The 2026-11-16 Linux run spent 16m38s in this test before its group
 # reached 25m; the 100,000-object case was still running after 9m34s.
 # Alone on macOS with patched WasmEdge, both cases passed in 214.28s.
-# Give the complete scale exercise its own budget, before the four groups.
+# Give the complete scale exercise its own budget, in a group of its own.
 HEAVY_GO_LONG_TESTS="TestPublicationCatalogScaleDaily"
 HEAVY_GO_LONG_TEST_TIMEOUT="60m"
+# The record store's other tests, in groups by test name: name:pattern, the
+# pattern an extended regular expression over the test name. A test belongs
+# to the one group whose pattern matches it; group `rest` holds every test no
+# pattern matches, so a new test always lands in a group. A test that two
+# patterns match fails the lane. SDN_CI_STORAGE_GROUP selects one group (one
+# CI job each: long, each name below, rest); unset runs all of them, at most
+# HEAVY_GO_PARALLEL at a time.
+#
+# Sized from the record store runs of 2026-11-18: 44340523082 passed with
+# 3,397s of test time; 44379302576 and 44379081909 reached the 25m panic with
+# the same tests about 1.6 times slower (four groups shared one runner). The
+# 20 tests that call onFormat4Engine take 100 to 120s each in the passing run
+# and 165 to 191s in the slow ones. On the slow figures every group below is
+# 480 to 575s, and `long` 101s.
+HEAVY_GO_GROUPS="format4a:^TestFormat4[A-L] format4b:^TestFormat4([M-Q]|Ra) format4c:^TestFormat4R[b-z] format4d:^TestFormat4S format4e:^TestFormat4U format4f:^Test(Format4[V-Z]|Asset) format5:^Test(Format5|Unified) format2:^Test(Format2|Unlimited) publication:^Test(Publication|Sealed)"
+HEAVY_GO_PARALLEL=4
 # Unchanged at 30m and NOT measured: -race is local/`full` only, no CI lane
 # runs it, and I have no timing for it. Do not treat this one as sized.
 RACE_GO_TEST_TIMEOUT="30m"
@@ -774,14 +790,31 @@ run_update_channel_isolated() {
   pass "update channel"
 }
 
+# heavy_group_names prints every record store group: long, the named groups
+# of HEAVY_GO_GROUPS in order, then rest.
+heavy_group_names() {
+  local defs=() def names="long"
+  read -r -a defs <<< "$HEAVY_GO_GROUPS"
+  for def in "${defs[@]}"; do
+    names="$names ${def%%:*}"
+  done
+  echo "$names rest"
+}
+
 run_go_heavy() {
+  local selected="${SDN_CI_STORAGE_GROUP:-all}" names
+  names="$(heavy_group_names)"
+  [[ "$selected" == all || " $names " == *" $selected "* ]] \
+    || fail "unknown SDN_CI_STORAGE_GROUP=$selected ($names, or unset)"
   prepare_go_toolchain
 
-  step "Go tests (isolated scale tests, then four parallel groups: $HEAVY_GO_PACKAGES)"
-  local pkg group pattern pid failed listed
+  step "Go tests (record store, group ${selected}: $HEAVY_GO_PACKAGES)"
+  local pkg group pattern pid failed listed def
   local artifact_dir="$ROOT/.ci-artifacts"
   local pids=()
   local logs=()
+  local defs=()
+  read -r -a defs <<< "$HEAVY_GO_GROUPS"
   mkdir -p "$artifact_dir"
   for pkg in $HEAVY_GO_PACKAGES; do
     local label="${pkg##*/}"
@@ -793,49 +826,74 @@ run_go_heavy() {
     fi
     LC_ALL=C grep -E '^(Test|Example|Fuzz)[A-Za-z0-9_]*$' "$listed" | LC_ALL=C sort > "$artifact_dir/heavy-${label}-all.txt"
     [[ -s "$artifact_dir/heavy-${label}-all.txt" ]] || fail "no tests discovered in $pkg"
-    # Split named long tests before assigning the remaining sorted names.
+    # Split named long tests before assigning the remaining names. Every job
+    # assigns every discovered test, so each checks the whole partition.
     # Discovery remains authoritative, including examples and fuzz seeds.
     printf '%s\n' $HEAVY_GO_LONG_TESTS | LC_ALL=C sort > "$artifact_dir/heavy-${label}-long.txt"
     grep -Fxv -f "$artifact_dir/heavy-${label}-long.txt" "$artifact_dir/heavy-${label}-all.txt" > "$artifact_dir/heavy-${label}-regular.txt" || [[ $? == 1 ]]
-    for group in 0 1 2 3; do
-      awk -v group="$group" '(NR - 1) % 4 == group' "$artifact_dir/heavy-${label}-regular.txt" > "$artifact_dir/heavy-${label}-${group}.txt"
+    : > "$artifact_dir/heavy-${label}-claimed.txt"
+    for def in "${defs[@]}"; do
+      group="${def%%:*}"
+      LC_ALL=C grep -E "${def#*:}" "$artifact_dir/heavy-${label}-regular.txt" > "$artifact_dir/heavy-${label}-${group}.txt" || [[ $? == 1 ]]
+      cat "$artifact_dir/heavy-${label}-${group}.txt" >> "$artifact_dir/heavy-${label}-claimed.txt"
     done
-    cat "$artifact_dir/heavy-${label}-long.txt" "$artifact_dir/heavy-${label}-"[0-3].txt | LC_ALL=C sort > "$artifact_dir/heavy-${label}-covered.txt"
+    [[ -z "$(LC_ALL=C sort "$artifact_dir/heavy-${label}-claimed.txt" | uniq -d)" ]] \
+      || fail "a test matches more than one group pattern in HEAVY_GO_GROUPS"
+    grep -Fxv -f "$artifact_dir/heavy-${label}-claimed.txt" "$artifact_dir/heavy-${label}-regular.txt" > "$artifact_dir/heavy-${label}-rest.txt" || [[ $? == 1 ]]
+    for group in $names; do
+      cat "$artifact_dir/heavy-${label}-${group}.txt"
+    done | LC_ALL=C sort > "$artifact_dir/heavy-${label}-covered.txt"
     cmp -s "$artifact_dir/heavy-${label}-all.txt" "$artifact_dir/heavy-${label}-covered.txt" \
       || fail "test group coverage differs from go test -list"
     [[ -z "$(uniq -d "$artifact_dir/heavy-${label}-covered.txt")" ]] \
       || fail "a test appears more than once"
+    for group in $names; do
+      echo "Group $group: $(wc -l < "$artifact_dir/heavy-${label}-${group}.txt" | tr -d ' ') tests"
+    done
     failed=0
-    logs=("$artifact_dir/gotest-heavy-${label}-long.log")
-    pattern="^($(paste -sd '|' "$artifact_dir/heavy-${label}-long.txt"))$"
-    echo "Group long: $(wc -l < "$artifact_dir/heavy-${label}-long.txt") tests"
-    go_test_with_timings "heavy-${label}-long" -v -p=1 -timeout="$HEAVY_GO_LONG_TEST_TIMEOUT" -count=1 -run "$pattern" "$pkg" || failed=1
+    logs=()
+    : > "$artifact_dir/heavy-${label}-selected.txt"
+    if [[ "$selected" == all || "$selected" == long ]]; then
+      cat "$artifact_dir/heavy-${label}-long.txt" >> "$artifact_dir/heavy-${label}-selected.txt"
+      logs+=("$artifact_dir/gotest-heavy-${label}-long.log")
+      pattern="^($(paste -sd '|' "$artifact_dir/heavy-${label}-long.txt"))$"
+      go_test_with_timings "heavy-${label}-long" -v -p=1 -timeout="$HEAVY_GO_LONG_TEST_TIMEOUT" -count=1 -run "$pattern" "$pkg" || failed=1
+    fi
     pids=()
-    for group in 0 1 2 3; do
+    for group in $names; do
+      [[ "$group" != long ]] || continue
+      [[ "$selected" == all || "$selected" == "$group" ]] || continue
+      cat "$artifact_dir/heavy-${label}-${group}.txt" >> "$artifact_dir/heavy-${label}-selected.txt"
       [[ -s "$artifact_dir/heavy-${label}-${group}.txt" ]] || continue
       pattern="^($(paste -sd '|' "$artifact_dir/heavy-${label}-${group}.txt"))$"
-      echo "Group $group: $(wc -l < "$artifact_dir/heavy-${label}-${group}.txt") tests"
       logs+=("$artifact_dir/gotest-heavy-${label}-${group}.log")
       go_test_with_timings "heavy-${label}-${group}" -v -p=1 -timeout="$HEAVY_GO_TEST_TIMEOUT" -count=1 -run "$pattern" "$pkg" &
       pids+=("$!")
+      if (( ${#pids[@]} >= HEAVY_GO_PARALLEL )); then
+        for pid in "${pids[@]}"; do
+          wait "$pid" || failed=1
+        done
+        pids=()
+      fi
     done
-    for pid in "${pids[@]}"; do
+    for pid in ${pids[@]+"${pids[@]}"}; do
       wait "$pid" || failed=1
     done
     # Validate execution, independently of the planned group manifests.
     local ran="$artifact_dir/heavy-${label}-ran.txt"
     local ended="$artifact_dir/heavy-${label}-ended.txt"
+    LC_ALL=C sort -o "$artifact_dir/heavy-${label}-selected.txt" "$artifact_dir/heavy-${label}-selected.txt"
     awk '$1 == "===" && $2 == "RUN" && $3 !~ /\// { print $3 }' \
-      "${logs[@]}" | LC_ALL=C sort > "$ran"
+      ${logs[@]+"${logs[@]}"} /dev/null | LC_ALL=C sort > "$ran"
     awk '$1 == "---" && ($2 == "PASS:" || $2 == "FAIL:" || $2 == "SKIP:") && $3 !~ /\// { print $3 }' \
-      "${logs[@]}" | LC_ALL=C sort > "$ended"
-    cmp -s "$artifact_dir/heavy-${label}-all.txt" "$ran" \
-      || fail "executed tests differ from go test -list (missing, extra, or duplicate execution)"
-    cmp -s "$artifact_dir/heavy-${label}-all.txt" "$ended" \
-      || fail "completed tests differ from go test -list"
-    [[ "$failed" == 0 ]] || fail "go test (heavy)"
+      ${logs[@]+"${logs[@]}"} /dev/null | LC_ALL=C sort > "$ended"
+    cmp -s "$artifact_dir/heavy-${label}-selected.txt" "$ran" \
+      || fail "executed tests differ from the group's tests (missing, extra, or duplicate execution)"
+    cmp -s "$artifact_dir/heavy-${label}-selected.txt" "$ended" \
+      || fail "completed tests differ from the group's tests"
+    [[ "$failed" == 0 ]] || fail "go test (heavy: $selected)"
   done
-  pass "go test (heavy)"
+  pass "go test (heavy: $selected)"
 }
 
 run_go_race() {
