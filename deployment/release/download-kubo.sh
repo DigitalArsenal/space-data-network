@@ -5,6 +5,12 @@ version=""
 platform=""
 archive=""
 output_dir=""
+# --sha512: the archive's expected sha512. Given, an archive from either host
+# is accepted only when it has exactly this hash.
+# --keep-archive: where to copy the accepted archive (for a cache that the
+# caller checks against the same hash on every run).
+pinned_sha512=""
+keep_archive=""
 attempts="${KUBO_DOWNLOAD_ATTEMPTS:-5}"
 
 while [[ $# -gt 0 ]]; do
@@ -25,6 +31,14 @@ while [[ $# -gt 0 ]]; do
       output_dir="${2:-}"
       shift 2
       ;;
+    --sha512)
+      pinned_sha512="$(printf '%s' "${2:-}" | tr '[:upper:]' '[:lower:]')"
+      shift 2
+      ;;
+    --keep-archive)
+      keep_archive="${2:-}"
+      shift 2
+      ;;
     *)
       echo "unknown argument: $1" >&2
       exit 2
@@ -33,7 +47,11 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "${version}" || -z "${platform}" || -z "${archive}" || -z "${output_dir}" ]]; then
-  echo "usage: $0 --version VERSION --platform PLATFORM --archive tar.gz|zip --output-dir DIR" >&2
+  echo "usage: $0 --version VERSION --platform PLATFORM --archive tar.gz|zip --output-dir DIR [--sha512 HEX] [--keep-archive PATH]" >&2
+  exit 2
+fi
+if [[ -n "${pinned_sha512}" && ! "${pinned_sha512}" =~ ^[0-9a-f]{128}$ ]]; then
+  echo "--sha512 must be 128 hex characters" >&2
   exit 2
 fi
 
@@ -72,7 +90,35 @@ validate_archive() {
   esac
 }
 
+sha512_of() {
+  if command -v sha512sum >/dev/null 2>&1; then
+    sha512sum "$1" | cut -d' ' -f1
+  else
+    shasum -a 512 "$1" | cut -d' ' -f1
+  fi
+}
+
+# With --sha512, the archive's hash must be the pinned one (from whichever host
+# it came); the actual hash is printed either way.
+matches_pin() {
+  local actual
+  actual="$(sha512_of "${archive_path}")"
+  echo "archive sha512: ${actual}"
+  if [[ -n "${pinned_sha512}" && "${actual}" != "${pinned_sha512}" ]]; then
+    echo "the archive's sha512 is not the pinned ${pinned_sha512}" >&2
+    # For whoever sets the pin: the hashes both hosts publish beside the asset.
+    for published in "${url}.sha512" "${mirror_url}.sha512"; do
+      echo "published at ${published}: $(curl -fsSL --connect-timeout 30 --max-time 60 "${published}" 2>/dev/null | tr -s '[:space:]' ' ' | cut -d' ' -f1)" >&2
+    done
+    return 1
+  fi
+}
+
 extract_archive() {
+  if [[ -n "${keep_archive}" ]]; then
+    mkdir -p "$(dirname "${keep_archive}")"
+    cp "${archive_path}" "${keep_archive}"
+  fi
   rm -rf "${output_dir}/kubo"
   mkdir -p "${output_dir}"
   case "${archive}" in
@@ -103,13 +149,13 @@ for attempt in $(seq 1 "${attempts}"); do
     byte_count="$(wc -c < "${archive_path}" | tr -d '[:space:]')"
     echo "Downloaded ${byte_count} bytes from ${url}"
 
-    if validate_archive; then
+    if validate_archive && matches_pin; then
       extract_archive
       echo "Extracted Kubo ${version} for ${platform} to ${output_dir}"
       exit 0
     fi
 
-    echo "Downloaded file is not a valid ${archive} archive" >&2
+    echo "Downloaded file is not a valid ${archive} archive with the pinned sha512" >&2
   fi
 
   if [[ "${attempt}" -lt "${attempts}" ]]; then
@@ -121,20 +167,12 @@ done
 
 echo "failed to download a valid Kubo archive from ${url}; trying ${mirror_url}" >&2
 
-sha512_of() {
-  if command -v sha512sum >/dev/null 2>&1; then
-    sha512sum "$1" | cut -d' ' -f1
-  else
-    shasum -a 512 "$1" | cut -d' ' -f1
-  fi
-}
-
 rm -f "${archive_path}"
 if curl -fL --retry 3 --retry-delay 5 ${retry_all_errors} --connect-timeout 30 --max-time 300 -o "${archive_path}" "${mirror_url}" \
   && curl -fL --retry 3 --retry-delay 5 ${retry_all_errors} --connect-timeout 30 --max-time 60 -o "${archive_path}.sha512" "${mirror_url}.sha512"; then
   expected="$(tr -s '[:space:]' ' ' < "${archive_path}.sha512" | cut -d' ' -f1 | tr '[:upper:]' '[:lower:]')"
   actual="$(sha512_of "${archive_path}")"
-  if [[ -n "${expected}" && "${expected}" == "${actual}" ]] && validate_archive; then
+  if [[ -n "${expected}" && "${expected}" == "${actual}" ]] && validate_archive && matches_pin; then
     echo "Downloaded $(wc -c < "${archive_path}" | tr -d '[:space:]') bytes from ${mirror_url} (sha512 matches ${mirror_url}.sha512)"
     extract_archive
     echo "Extracted Kubo ${version} for ${platform} to ${output_dir}"
