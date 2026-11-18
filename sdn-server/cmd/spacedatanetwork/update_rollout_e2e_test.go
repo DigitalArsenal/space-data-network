@@ -183,10 +183,10 @@ func runRealFleetStatusGuard(t *testing.T) {
 	if got := listener.from(bID); len(got) > 0 {
 		t.Errorf("b (update.publish_status false) published %d messages; the first: %s", len(got), got[0])
 	}
-	waitFleet(t, a, 2*time.Minute, "b listed and not reporting", func(r *node.FleetReport) bool {
-		row := fleetRow(r, bID)
-		return row != nil && row.State == node.FleetStateNotReporting && row.Source == "identify"
-	})
+	waitFleet(t, a, 2*time.Minute, "b listed", func(r *node.FleetReport) bool { return fleetRow(r, bID) != nil })
+	if row := fleetRow(fleetOf(t, a), bID); row.State != node.FleetStateNotReporting || row.Source != "identify" {
+		t.Errorf("a's row for b (update.publish_status false): %+v, want not reporting from identify", row)
+	}
 	t.Log("b, with update.publish_status false, published nothing, and a shows it not reporting")
 
 	// Fresh keys: one host that is not an SDN node publishes statuses signed
@@ -331,7 +331,8 @@ func runRealFleetStatusGuard(t *testing.T) {
 		t.Errorf("a replay of the offline SDN host's last status changed its row: before %+v, after %+v", before, after)
 	}
 	t.Logf("a replay of an offline node's last status: last seen stays %s", before.LastSeen)
-	for _, log := range append(append([]string{}, a.logPaths...), b.logPaths...) {
+	// a dials no peer; b dials only a (its config passed requireIsolatedConfig).
+	for _, log := range a.logPaths {
 		requireIsolated(t, log)
 	}
 }
