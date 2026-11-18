@@ -105,16 +105,6 @@ func PathsFor(bundleRoot string) Paths {
 		p.Installed = filepath.Clean(record.InstalledRoot)
 		return p
 	}
-	// One spelling of the installed folder, however it was reached (the
-	// record compares it).
-	if resolved, err := filepath.EvalSymlinks(bundleRoot); err == nil {
-		bundleRoot = resolved
-	}
-	if record, err := readHomeRecord(bundleRoot); err == nil && record != nil {
-		p := pathsIn(bundleRoot)
-		p.Installed = filepath.Clean(record.InstalledRoot)
-		return p
-	}
 	if _, err := os.Stat(filepath.Join(bundleRoot, manifestFileName)); err != nil || dirWritable(bundleRoot) {
 		return pathsIn(bundleRoot)
 	}
@@ -125,7 +115,12 @@ func PathsFor(bundleRoot string) Paths {
 		return p
 	}
 	p := pathsIn(home)
+	// One spelling of the installed folder, however it was reached: the home
+	// record compares it.
 	p.Installed = filepath.Clean(bundleRoot)
+	if resolved, err := filepath.EvalSymlinks(bundleRoot); err == nil {
+		p.Installed = resolved
+	}
 	return p
 }
 
