@@ -217,6 +217,72 @@ func (f *updateFleet) latestSignal() *update.StatusAck {
 	return latest()
 }
 
+// reannounceStatusWait is how long after a peer joins the topic this node
+// waits for that peer's own status before it decides whether the peer needs
+// the signal sent again (a joining node publishes its status about two
+// seconds after it sees a peer on the topic).
+const reannounceStatusWait = 6 * time.Second
+
+// reannounce sends the newest signal this node published again when a peer
+// joins the topic and the peer's own status, if it sends one, does not show it
+// already has that signal or a later sequence: a node that was restarting or
+// disconnected when the signal went out gets it when it comes back. At most
+// once per statusJoinDebounce, and only while the signal is within
+// signalReannounceFor of its publication and not expired.
+func (f *updateFleet) reannounce(ctx context.Context, topic *pubsub.Topic, joins <-chan peer.ID) {
+	var last time.Time
+	for {
+		var id peer.ID
+		select {
+		case <-ctx.Done():
+			return
+		case id = <-joins:
+		}
+		joinedAt := time.Now()
+		if f.reannouncement(joinedAt) == nil {
+			continue
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(reannounceStatusWait):
+		}
+		raw := f.reannouncement(time.Now())
+		if raw == nil || f.peerHasSignal(id, raw, joinedAt) {
+			continue
+		}
+		if wait := statusJoinDebounce - time.Since(last); wait > 0 {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(wait):
+			}
+		}
+		last = time.Now()
+		if err := topic.Publish(ctx, raw); err == nil {
+			log.Infof("Update signal sent again on %s: peer %s joined the topic and has not reported it", topic.String(), id)
+		}
+	}
+}
+
+// peerHasSignal reports whether id's own status, received since joinedAt,
+// shows the signal in raw or a later sequence (it runs it or accepted it).
+func (f *updateFleet) peerHasSignal(id peer.ID, raw []byte, joinedAt time.Time) bool {
+	signal, err := update.ParseSignal(raw)
+	if err != nil {
+		return true
+	}
+	f.mu.Lock()
+	held, ok := f.statuses[id.String()]
+	f.mu.Unlock()
+	if !ok || held.received.Before(joinedAt) {
+		return false
+	}
+	status := held.status
+	return status.Sequence >= signal.Sequence || status.Acknowledged != nil && status.Acknowledged.Sequence >= signal.Sequence ||
+		status.Pending != nil && status.Pending.Sequence >= signal.Sequence
+}
+
 // announce publishes this node's status on topic until ctx ends.
 func (f *updateFleet) announce(ctx context.Context, topic *pubsub.Topic) {
 	if f == nil || topic == nil {
@@ -229,6 +295,7 @@ func (f *updateFleet) announce(ctx context.Context, topic *pubsub.Topic) {
 	}
 	defer events.Cancel()
 	joined := make(chan struct{}, 1)
+	joins := make(chan peer.ID, 64)
 	go func() {
 		for {
 			event, err := events.NextPeerEvent(ctx)
@@ -240,17 +307,15 @@ func (f *updateFleet) announce(ctx context.Context, topic *pubsub.Topic) {
 				case joined <- struct{}{}:
 				default:
 				}
-			}
-		}
-	}()
-	publish := func(why string) {
-		if why == "peer joined" {
-			if raw := f.reannouncement(time.Now()); raw != nil {
-				if err := topic.Publish(ctx, raw); err == nil {
-					log.Infof("Update signal sent again to the peers of %s (a peer joined)", topic.String())
+				select {
+				case joins <- event.Peer:
+				default:
 				}
 			}
 		}
+	}()
+	go f.reannounce(ctx, topic, joins)
+	publish := func(why string) {
 		if !f.publish {
 			return
 		}
@@ -483,6 +548,13 @@ func applyFleetStatus(row *FleetRow, status *update.Status) {
 // agentVersionNumber is the version in an identify agent string
 // ("spacedatanetwork/1.1.9" -> "1.1.9").
 func agentVersionNumber(agent string) string {
+	// A node's agent is Kubo's with the SDN agent as its suffix
+	// ("kubo/0.43.1/spacedatanetwork/1.1.9"): the version after the last
+	// "spacedatanetwork/".
+	if i := strings.LastIndex(agent, "spacedatanetwork/"); i >= 0 {
+		version, _, _ := strings.Cut(agent[i+len("spacedatanetwork/"):], "/")
+		return strings.TrimSpace(version)
+	}
 	if _, version, ok := strings.Cut(agent, "/"); ok {
 		return strings.TrimSpace(version)
 	}

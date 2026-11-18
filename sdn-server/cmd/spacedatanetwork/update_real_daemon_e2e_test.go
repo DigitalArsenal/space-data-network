@@ -123,6 +123,8 @@ func TestUpdateChannelRealDaemonE2E(t *testing.T) {
 	})
 	t.Run("rollout-fleet", runRealRolloutFleet)
 	t.Run("config-flag-tls", runRealConfigFlagTLS)
+	t.Run("fleet-status-guard", runRealFleetStatusGuard)
+	t.Run("rollout-signals", runRealRolloutSignals)
 	t.Run("pull", func(t *testing.T) { runRealDaemonUpdateChannel(t, installThroughCLI) })
 	t.Run("push-catchup-withdrawal-validation", runRealPushChannel)
 	t.Run("home-read-only-install", runRealHomeUpdate)
@@ -1903,7 +1905,16 @@ func (d *pushDaemon) start(t *testing.T, budget time.Duration) {
 	d.tracker.add(cmd.Process.Pid)
 	exited := make(chan struct{})
 	d.exited = exited
-	go func() { _ = cmd.Wait(); close(exited) }()
+	go func() {
+		err := cmd.Wait()
+		// Said in the daemon's own log, so a daemon that died (killed by
+		// the kernel, a crash) is told apart from one that hung.
+		if f, ferr := os.OpenFile(name, os.O_APPEND|os.O_WRONLY, 0); ferr == nil {
+			fmt.Fprintf(f, "e2e: daemon pid %d exited: %v (%s)\n", cmd.Process.Pid, err, cmd.ProcessState)
+			f.Close()
+		}
+		close(exited)
+	}()
 	waitRealReady(t, d.adminBase, budget, name)
 }
 

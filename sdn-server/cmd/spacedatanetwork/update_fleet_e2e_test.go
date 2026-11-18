@@ -13,10 +13,11 @@ package main
 //	                  nodes' configured window); the publisher's fleet view
 //	                  shows each one pending until that time; the receiver
 //	                  with the latest due time is restarted during its wait
-//	                  and keeps its due time; each one installs at or after
-//	                  its due time, in the order of their delays, and no two
-//	                  are down at the same time (helper stop to health-passed,
-//	                  from their ledgers). After: every row shows v2, current,
+//	                  and keeps its due time; each one starts its install at
+//	                  its due time, in the order of their due times, and
+//	                  none stops before it (the design does not keep two
+//	                  receivers from being down together, and the test does
+//	                  not claim it). After: every row shows v2, current,
 //	                  and that it accepted the newest signal. Then v3 (never
 //	                  ready) is signed with window 0 and reaches one receiver
 //	                  only: it installs at once, fails, is rolled back, and
@@ -29,6 +30,7 @@ package main
 //	                  installs v2 (stack issue 839).
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -46,6 +48,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -185,7 +188,6 @@ func runRealRolloutFleet(t *testing.T) {
 	health := envInt(t, "SDN_E2E_REAL_DAEMON_HEALTH_SECONDS", 180)
 	boot := time.Duration(envInt(t, "SDN_E2E_REAL_DAEMON_BOOT_SECONDS", 600)) * time.Second
 	window := time.Duration(envInt(t, "SDN_E2E_ROLLOUT_WINDOW_SECONDS", 480)) * time.Second
-	gap := time.Duration(envInt(t, "SDN_E2E_ROLLOUT_GAP_SECONDS", 120)) * time.Second
 
 	pub, key, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -277,10 +279,11 @@ func runRealRolloutFleet(t *testing.T) {
 	}
 	t.Logf("fleet before:\n%s", table)
 
-	// One update id whose delays keep the receivers apart by gap, with the
-	// latest late enough in the window to restart that receiver while it
-	// waits. The delays are a function of the peer ids and the update id
-	// only; the test picks the update id.
+	// The delays are a function of the peer ids and the update id only, and
+	// spread the receivers over the window; they do not keep their downtimes
+	// apart (the design does not promise that). The test picks an update id
+	// only so that the receiver due last is due late enough in the window to
+	// restart it during its wait.
 	type slot struct {
 		name  string
 		delay time.Duration
@@ -294,12 +297,12 @@ func runRealRolloutFleet(t *testing.T) {
 			order = append(order, slot{name, update.RolloutDelay(ids[name].String(), candidate, window)})
 		}
 		sort.Slice(order, func(i, j int) bool { return order[i].delay < order[j].delay })
-		if order[1].delay-order[0].delay >= gap && order[2].delay-order[1].delay >= gap && order[2].delay >= window*3/4 {
+		if order[2].delay >= window*3/4 && order[0].delay != order[1].delay && order[1].delay != order[2].delay {
 			updateID = candidate
 		}
 	}
 	if updateID == "" {
-		t.Fatal("no update id spreads the three receivers")
+		t.Fatal("no update id puts a receiver late in the window")
 	}
 	t.Logf("update %s: delays %s %s, %s %s, %s %s", updateID, order[0].name, order[0].delay, order[1].name, order[1].delay, order[2].name, order[2].delay)
 	v2r := v2
@@ -314,32 +317,23 @@ func runRealRolloutFleet(t *testing.T) {
 	a.command(t, true, "push-v2", "update", "signal", "--from-feed", "--channel", realE2EChannel, "--version", v2r.version)
 
 	// Each receiver: pending, due at its accepted time plus its own delay.
-	// Gossip gives no delivery guarantee (a node that misses a signal takes
-	// the release at its next feed check): the publisher sends the same
-	// signal once more when a receiver has not taken it within 20 seconds.
+	// One publish reaches every receiver on the topic; the test never sends
+	// it again.
 	pendingOn := func(r *pushDaemon) bool {
 		p, err := update.ReadPending(r.paths)
 		return err == nil && p != nil && p.UpdateID == updateID
 	}
-	resendBy := time.Now().Add(20 * time.Second)
-	for time.Now().Before(resendBy) && !(pendingOn(receivers["b"]) && pendingOn(receivers["c"]) && pendingOn(receivers["d"])) {
-		time.Sleep(time.Second)
-	}
-	for _, name := range names {
-		if !pendingOn(receivers[name]) {
-			t.Logf("%s has not taken the signal after 20 s; sending it again", name)
-			a.command(t, true, "push-v2-again", "update", "signal", "--from-feed", "--channel", realE2EChannel, "--version", v2r.version)
-			break
-		}
-	}
 	due := map[string]time.Time{}
 	for _, s := range order {
 		r := receivers[s.name]
-		waitPush(t, time.Minute, s.name+" pending", func() bool { return pendingOn(r) })
+		waitPush(t, time.Minute, s.name+" pending after the one publish", func() bool { return pendingOn(r) })
 		p, _ := update.ReadPending(r.paths)
 		accepted, err := time.Parse(time.RFC3339, p.AcceptedAt)
 		if err != nil {
 			t.Fatal(err)
+		}
+		if s.delay >= window {
+			t.Fatalf("%s's delay %s is not inside the window %s", s.name, s.delay, window)
 		}
 		if p.WindowFrom != "signal" || p.WindowSeconds != int64(window/time.Second) || time.Duration(p.DelaySeconds)*time.Second != s.delay || !p.Due().Equal(accepted.Add(s.delay)) || p.Trigger != "signal" {
 			t.Fatalf("%s's pending record: %+v; want the signed window %s, delay %s, due accepted+delay", s.name, p, window, s.delay)
@@ -387,8 +381,7 @@ func runRealRolloutFleet(t *testing.T) {
 		}
 	}
 
-	// From here on, in the order of their due times (a receiver that took
-	// the signal on its second sending accepted it later).
+	// From here on, in the order of their due times.
 	sort.Slice(order, func(i, j int) bool { return due[order[i].name].Before(due[order[j].name]) })
 
 	// The latest receiver restarts during its wait and keeps its due time.
@@ -408,23 +401,27 @@ func runRealRolloutFleet(t *testing.T) {
 	for _, s := range order {
 		receivers[s.name].waitUpgrade(t, v2r, time.Until(due[s.name])+boot+2*time.Duration(health)*time.Second)
 	}
-	type interval struct {
-		name       string
-		down, back time.Time
-	}
-	var intervals []interval
+	// What the design promises: each receiver starts its install at its own
+	// due time (accepted time plus its delay, inside the window), so they
+	// start in the order of their due times, and none stops before its due
+	// time. It does not promise that two receivers are never down together.
+	var started []time.Time
 	for _, s := range order {
-		down, back := downtime(t, receivers[s.name].paths.Root, updateID)
+		r := receivers[s.name]
+		at := installStartedAt(t, r.logs(), updateID, due[s.name])
+		if at.Before(due[s.name]) || at.After(due[s.name].Add(30*time.Second)) {
+			t.Fatalf("%s started its install at %s, want at its due time %s", s.name, at, due[s.name])
+		}
+		down, back := downtime(t, r.paths.Root, updateID)
 		if down.Before(due[s.name]) {
 			t.Fatalf("%s stopped for the update at %s, before its due time %s", s.name, down, due[s.name])
 		}
-		intervals = append(intervals, interval{s.name, down, back})
-		t.Logf("%s down %s to %s (due %s)", s.name, down.Format(time.RFC3339), back.Format(time.RFC3339), due[s.name].Format(time.RFC3339))
-	}
-	for i := 1; i < len(intervals); i++ {
-		if !intervals[i].down.After(intervals[i-1].back) {
-			t.Fatalf("%s was down from %s while %s was down until %s", intervals[i].name, intervals[i].down, intervals[i-1].name, intervals[i-1].back)
+		if len(started) > 0 && !at.After(started[len(started)-1]) {
+			t.Fatalf("%s started its install at %s, not after the receiver due before it (%s)", s.name, at, started[len(started)-1])
 		}
+		started = append(started, at)
+		t.Logf("%s due %s, install started %s, down %s to %s", s.name, due[s.name].Format(time.RFC3339), at.Format(time.RFC3339Nano),
+			down.Format(time.RFC3339), back.Format(time.RFC3339))
 	}
 
 	// After: every receiver on v2, current, and it accepted the newest signal.
@@ -468,6 +465,17 @@ func runRealRolloutFleet(t *testing.T) {
 	if !strings.Contains(failed, "failed "+v3.version+", rolled back") {
 		t.Fatalf("`update fleet` does not show b failed and rolled back:\n%s", failed)
 	}
+	// The failure leaves the node as a reason code from the fixed list; the
+	// ledger's text stays on b.
+	var rawFleet json.RawMessage
+	if err := a.client(t).get(context.Background(), "/api/peers/versions", &rawFleet); err != nil {
+		t.Fatal(err)
+	}
+	failedRow := fleetRow(fleetOf(t, a), ids["b"])
+	if failedRow == nil || failedRow.Failed == nil || !slices.Contains(update.StatusReasonCodes, failedRow.Failed.ReasonCode) || bytes.Contains(rawFleet, []byte(`"reason":`)) {
+		t.Fatalf("b's failure on a's fleet view carries no reason code from the fixed list, or carries ledger text:\n%s", rawFleet)
+	}
+	t.Logf("b's failure reason code: %s", failedRow.Failed.ReasonCode)
 	t.Logf("fleet after the failure:\n%s", failed)
 	b.command(t, true, "check-failed", "update", "check")
 	if check := readFileString(filepath.Join(b.work, "check-failed.log")); !strings.Contains(check, "update_failed="+v3.updateID+" ") || !strings.Contains(check, "rolled_back=true") {
@@ -478,6 +486,26 @@ func runRealRolloutFleet(t *testing.T) {
 	for _, log := range a.logPaths {
 		requireIsolated(t, log)
 	}
+}
+
+// installStartedAt is the time of the log line in which a receiver starts
+// its install of updateID at its due time.
+func installStartedAt(t *testing.T, logs, updateID string, due time.Time) time.Time {
+	t.Helper()
+	want := "Update " + updateID + ": rollout due time " + due.UTC().Format(time.RFC3339) + " reached; installing."
+	for _, line := range strings.Split(logs, "\n") {
+		if !strings.Contains(line, want) {
+			continue
+		}
+		stamp, _, _ := strings.Cut(line, "\t")
+		at, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(stamp))
+		if err != nil {
+			t.Fatalf("log line without a time: %q", line)
+		}
+		return at
+	}
+	t.Fatalf("no %q in the receiver's logs:\n%s", want, tailString(logs, 30))
+	return time.Time{}
 }
 
 // selfSignedAdminCert writes a certificate and key for name only (no IP

@@ -372,12 +372,13 @@ jobs:
   # generates; the feed and the admin API are on loopback, and the daemons dial
   # no peer (the test refuses, before any daemon starts, a config that would
   # fall back to the built-in bootstrap peers, and checks every daemon's log).
-  # Three groups (scripts/ci-local.sh update_group_args): run 44245748601 ran
+  # Four groups (scripts/ci-local.sh update_group_args): run 44245748601 ran
   # every subtest in one binary and hit go test's 50m panic; the
   # home-read-only-install subtests take about 15m of runner time on their own,
   # and the channel group took 42.5m of its 50m in run 44379302576. `fleet` runs
   # the published 1.1.9 receiver, the staggered rollout and fleet view, and
-  # `update install --config` under TLS.
+  # `update install --config` under TLS; `rollout` the update status guard and
+  # the rollout's signal paths.
   update-channel-e2e:
     name: Update channel E2E (real daemon / ${{ matrix.group }})
     runs-on: ubuntu-latest
@@ -394,7 +395,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        group: [channel, home, fleet]
+        group: [channel, home, fleet, rollout]
     env:
       SDN_CI_UPDATE_GROUP: ${{ matrix.group }}
     steps:

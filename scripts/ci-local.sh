@@ -716,12 +716,14 @@ run_update_channel() {
     || fail "update channel"
 }
 
-# SDN_CI_UPDATE_GROUP splits TestUpdateChannelRealDaemonE2E into three CI
+# SDN_CI_UPDATE_GROUP splits TestUpdateChannelRealDaemonE2E into four CI
 # jobs: `home` runs its home-read-only-install subtests, `fleet` the published
-# receiver, rollout, fleet view and --config subtests, `channel` all the
-# others; unset runs all of them. Run 44245748601 ran everything in one binary
-# and hit go test's 50m panic (the home subtests alone take about 15m on a
-# runner); run 44379302576's channel group took 42.5m of its 50m.
+# receiver, rollout, fleet view and --config subtests, `rollout` the update
+# status guard and the rollout's signal paths, `channel` all the others; unset
+# runs all of them. Run 44245748601 ran everything in one binary and hit go
+# test's 50m panic (the home subtests alone take about 15m on a runner); run
+# 44379302576's channel group took 42.5m of its 50m, and run 44408129190's
+# fleet group 24.5m of its job.
 # update_group_args go|test prints the selection as `go test` or test-binary
 # flags.
 update_group_args() {
@@ -729,10 +731,12 @@ update_group_args() {
   [[ "$1" == test ]] && p="-test."
   local home="${UPDATE_GO_TESTS}/^home-read-only-install\$"
   local fleet="${UPDATE_GO_TESTS}/^(installed-v1.1.9-push|rollout-fleet|config-flag-tls)\$"
-  local others="${UPDATE_GO_TESTS}/^(home-read-only-install|installed-v1.1.9-push|rollout-fleet|config-flag-tls)\$"
+  local rollout="${UPDATE_GO_TESTS}/^(fleet-status-guard|rollout-signals)\$"
+  local others="${UPDATE_GO_TESTS}/^(home-read-only-install|installed-v1.1.9-push|rollout-fleet|config-flag-tls|fleet-status-guard|rollout-signals)\$"
   case "${SDN_CI_UPDATE_GROUP:-all}" in
     home) printf '%s\n' "${p}run=${home}" ;;
     fleet) printf '%s\n' "${p}run=${fleet}" ;;
+    rollout) printf '%s\n' "${p}run=${rollout}" ;;
     channel) printf '%s\n' "${p}run=${UPDATE_GO_TESTS} ${p}skip=${others}" ;;
     *) printf '%s\n' "${p}run=${UPDATE_GO_TESTS}" ;;
   esac
@@ -740,8 +744,8 @@ update_group_args() {
 
 check_update_group() {
   case "${SDN_CI_UPDATE_GROUP:-all}" in
-    home|fleet|channel|all) ;;
-    *) fail "unknown SDN_CI_UPDATE_GROUP=${SDN_CI_UPDATE_GROUP} (home, fleet, channel or unset)" ;;
+    home|fleet|rollout|channel|all) ;;
+    *) fail "unknown SDN_CI_UPDATE_GROUP=${SDN_CI_UPDATE_GROUP} (home, fleet, rollout, channel or unset)" ;;
   esac
 }
 
@@ -755,9 +759,9 @@ run_update_channel_isolated() {
   local build select
   check_update_group
   read -r -a select <<< "$(update_group_args test)"
-  step "Update channel fixtures (v1, v2, v3 never ready, v6 and v7 never open their store, v8 killed mid-install, v11 exits at start, the release signal signer)"
+  step "Update channel fixtures (v1, v2, v3 never ready, v6 and v7 never open their store, v8 killed mid-install, v11 exits at start, v15 killed mid-pass, the release signal signer)"
   mkdir -p "$bin" "$logs"
-  for build in v1 v2 v3 v6 v7 v8 v11; do
+  for build in v1 v2 v3 v6 v7 v8 v11 v15; do
     local build_args=(-o "$bin/spacedatanetwork-$build")
     case "$build" in
       v3) build_args+=(-tags sdn_e2e_not_ready) ;;
@@ -765,6 +769,7 @@ run_update_channel_isolated() {
       v7) build_args+=(-tags sdn_e2e_hang_before_store,sdn_e2e_no_trial_timer) ;;
       v8) build_args+=(-tags sdn_e2e_crash_mid_apply) ;;
       v11) build_args+=(-tags sdn_e2e_crash_at_start) ;;
+      v15) build_args+=(-tags sdn_e2e_crash_mid_pass) ;;
     esac
     (cd "$ROOT/sdn-server" && SDN_GO_LDFLAGS="-X github.com/spacedatanetwork/sdn-server/internal/versioninfo.ReleaseTag=e2e-$build" \
       ../scripts/go-with-wasmedge.sh build "${build_args[@]}" ./cmd/spacedatanetwork) || fail "build update fixture $build"
