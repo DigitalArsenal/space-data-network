@@ -67,6 +67,14 @@ field-sealed one, an unknown source) fails on every path ("no such table";
 empty answer. A
 registered standard with no records answers an empty result.
 
+A standard whose field SDN seals at rest is one an extraction rule reads is
+not registered, on a bounded and an unlimited store alike: the node starts,
+logs a warning naming the standard, the field and the rule, refuses every
+write to it, and a statement naming it fails. `spacedatanetwork status` and
+`store-migrate --status` list such standards (`store_unregistered_standards`,
+`none` for the embedded standards). Any other failed registration of an
+unlimited store aborts startup before the store is promoted.
+
 `QueryAll` (the newest records of a standard, `GET /api/v1/pubsub/messages`)
 answers at most 10,000 records and says when more are stored: the page is
 marked truncated (QRP `TRUNCATED`, status partial). Complete reads page with

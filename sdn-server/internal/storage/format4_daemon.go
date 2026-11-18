@@ -577,24 +577,72 @@ func (d *format4Daemon) format4TypeSpec(schema string) (format4.TypeSpec, error)
 	return spec, err
 }
 
-// registerTypes registers every standard the validator embeds (§5.5 step 7).
-// Re-registering identical bytes is a no-op in the engine.
-func (d *format4Daemon) registerTypes(validator *sds.Validator) error {
-	if validator == nil {
-		return nil
-	}
+// format4RecordSchemas are the standards the validator embeds that the
+// stream store registers as record types: every schema with a table name,
+// except the engine's own journal and checkpoint frames.
+func format4RecordSchemas(validator *sds.Validator) []string {
 	var schemas []string
 	for _, schema := range validator.Schemas() {
 		// These schemas describe the engine's own journal/checkpoint frames;
 		// their identifiers cannot be registered as user record types.
-		if id, ok := d.ident(schema); ok && (id == "$FMB" || id == "$FCK" || id == "$FSG") {
-			log.Debugf("format 5: %s is an engine container schema, not a record type", schema)
+		if id, ok := validator.FileIdentifier(schema); ok && (id == "$FMB" || id == "$FCK" || id == "$FSG") {
 			continue
 		}
 		if _, err := sds.SchemaNameToTable(schema); err != nil {
 			continue
 		}
 		schemas = append(schemas, schema)
+	}
+	return schemas
+}
+
+// UnregisteredStandard is a standard the stream store does not register.
+type UnregisteredStandard struct {
+	Schema string
+	Err    error
+}
+
+// SealedRuleRefusals are the embedded standards the stream store leaves
+// unregistered because a field SDN seals at rest is one an extraction rule
+// reads (format2.ErrSealedRuleField: its plaintext would land in an index).
+// Bounded and unlimited stores treat them alike: the node starts, the
+// standard has no SQL relation (a statement naming it is an error) and every
+// write to it is refused with that error. It reads only the binary's
+// registries, never a store, so `spacedatanetwork status` and
+// `store-migrate --status` report the same list the daemon logs at start.
+func SealedRuleRefusals(validator *sds.Validator) []UnregisteredStandard {
+	if validator == nil {
+		return nil
+	}
+	var out []UnregisteredStandard
+	for _, schema := range format4RecordSchemas(validator) {
+		if _, err := Format4TypeSpec(schema, validator.FileIdentifier); errors.Is(err, format2.ErrSealedRuleField) {
+			out = append(out, UnregisteredStandard{Schema: schema, Err: err})
+		}
+	}
+	return out
+}
+
+// registerTypes registers every standard the validator embeds (§5.5 step 7).
+// Re-registering identical bytes is a no-op in the engine. A standard
+// SealedRuleRefusals names is left unregistered, with a warning, on a bounded
+// and an unlimited store alike; any other refusal of an unlimited
+// registration aborts before the first registration (and so before the
+// store's one-way promotion).
+func (d *format4Daemon) registerTypes(validator *sds.Validator) error {
+	if validator == nil {
+		return nil
+	}
+	refused := map[string]bool{}
+	for _, r := range SealedRuleRefusals(validator) {
+		refused[r.Schema] = true
+		log.Warnf("format 5: %s is not registered; its writes are refused and it has no SQL relation: %v", r.Schema, r.Err)
+	}
+	var schemas []string
+	for _, schema := range format4RecordSchemas(validator) {
+		if !refused[schema] {
+			schemas = append(schemas, schema)
+		}
 	}
 	if d.opt.UnlimitedVisibility {
 		preflight, ok := d.api().(interface{ ValidateType(format4.TypeSpec) error })
