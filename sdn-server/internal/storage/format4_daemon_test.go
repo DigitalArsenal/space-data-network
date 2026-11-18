@@ -15,6 +15,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -23,6 +24,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -65,11 +67,61 @@ func format4TestWasm(t *testing.T) []byte {
 	return wasm
 }
 
+// format4TestAOT is the compiled-engine cache of this test process: one
+// folder per engine (named by the engine's full sha256) under one temporary
+// root that TestMain removes when the tests end. Each engine is compiled once
+// per process, and nothing is read from or left in the user's cache. The
+// artifact's file name inside a folder also carries the runtime version, the
+// CPU profile, the Interruptible flag and the runtime's patch tag
+// (flatsqlrt.ThreadedAOTPath), so two engines or two runtime builds never
+// share an entry.
+var format4TestAOT struct {
+	mu   sync.Mutex
+	root string
+	dirs map[[sha256.Size]byte]string
+}
+
+// format4SharedAOTDir returns the process's cache folder for wasm with the
+// engine's threaded artifact compiled in it. A test that needs a cache of
+// its own (an empty one, or one it plants a file in) uses t.TempDir instead.
+func format4SharedAOTDir(t testing.TB, wasm []byte) string {
+	t.Helper()
+	sum := sha256.Sum256(wasm)
+	format4TestAOT.mu.Lock()
+	defer format4TestAOT.mu.Unlock()
+	if dir, ok := format4TestAOT.dirs[sum]; ok {
+		return dir
+	}
+	if format4TestAOT.root == "" {
+		root, err := os.MkdirTemp("", "sdn-storage-test-aot-")
+		if err != nil {
+			t.Fatal(err)
+		}
+		format4TestAOT.root = root
+		format4TestAOT.dirs = map[[sha256.Size]byte]string{}
+	}
+	dir := filepath.Join(format4TestAOT.root, hex.EncodeToString(sum[:]))
+	if _, _, err := flatsqlrt.EnsureThreadedAOTArtifact(dir, flatsqlrt.P4ThreadsAOTPrefix, wasm, true); err != nil {
+		t.Fatalf("compile the format-4 engine: %v", err)
+	}
+	format4TestAOT.dirs[sum] = dir
+	return dir
+}
+
+// removeFormat4TestAOT removes the process's compiled-engine cache.
+func removeFormat4TestAOT() {
+	format4TestAOT.mu.Lock()
+	defer format4TestAOT.mu.Unlock()
+	if format4TestAOT.root != "" {
+		os.RemoveAll(format4TestAOT.root)
+	}
+}
+
 // onFormat4Engine runs body with every format-4 open on the real engine.
 func onFormat4Engine(t *testing.T, body func(t *testing.T)) {
 	wasm := format4TestWasm(t)
 	prev := format4OpenEngine
-	cache := t.TempDir()
+	cache := format4SharedAOTDir(t, wasm)
 	format4OpenEngine = func(ctx context.Context, opt format4.Options) (format4.API, error) {
 		opt.Wasm, opt.CompileOnMiss, opt.AOTCacheDir = wasm, true, cache
 		return prev(ctx, opt)
@@ -183,8 +235,9 @@ func TestFormat4AllSchemasSQLIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	wasm := format4TestWasm(t)
 	e, err := format4.Open(ctx, format4.Options{DataRoot: t.TempDir(), Create: format4.CreateFresh,
-		Wasm: format4TestWasm(t), CompileOnMiss: true, AOTCacheDir: t.TempDir()})
+		Wasm: wasm, CompileOnMiss: true, AOTCacheDir: format4SharedAOTDir(t, wasm)})
 	if err != nil {
 		t.Fatal(err)
 	}
