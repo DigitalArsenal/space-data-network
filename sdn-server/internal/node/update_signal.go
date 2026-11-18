@@ -713,6 +713,13 @@ func (n *Node) startUpdateSignalSubscriber() {
 		return
 	}
 	paths := update.PathsFor(layout.Root)
+	if paths.HomeErr != nil {
+		log.Warnf("Update signal lane NOT started: %v. This install will not upgrade itself.", paths.HomeErr)
+		return
+	}
+	if paths.IsHome() {
+		log.Infof("Updates install into the home bundle %s: this account cannot write the install folder %s. This process runs the build in %s.", paths.Root, paths.Installed, layout.Root)
+	}
 
 	manifest, err := readBundleUpdateMetadata(layout.ManifestPath)
 	if err != nil {

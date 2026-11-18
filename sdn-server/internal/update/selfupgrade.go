@@ -240,6 +240,9 @@ func LaunchSelfUpgrade(paths Paths, opts SelfUpgradeOptions) (*SelfUpgradeLaunch
 			// A supervised box where systemd-run exists but REFUSED is not a
 			// box to fall back on: the fallback would put the helper in the
 			// daemon's cgroup, which is the exact failure this avoids.
+			if os.Geteuid() > 0 && !supervisedByUserManager() {
+				return nil, fmt.Errorf("this node runs as an account other than root under a system service unit, and such an account cannot start the update helper outside the unit; run `spacedatanetwork update install` as this account from a shell, or run the node as a user service (`spacedatanetwork service install`): %w", err)
+			}
 			return nil, err
 		}
 	}

@@ -310,6 +310,9 @@ func init() {
 }
 
 func main() {
+	// Before anything else: the build an update installed under this
+	// account's home, when this install folder is one it cannot write.
+	runHomeBuildIfVerified()
 	// --version prints exactly what `sdn version` prints, not cobra's default
 	// "spacedatanetwork version X" one-liner, so scripts can parse either.
 	rootCmd.SetVersionTemplate(versionReport())

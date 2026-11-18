@@ -386,7 +386,7 @@ func ApplyPrepared(paths Paths, prepared *Prepared, opts ApplyOptions) (*ApplyRe
 
 	trustRootsFrom := state.TrustRootsFrom
 	if candidate.Manifest.TrustRoots != nil {
-		if err := installTrustRoots(paths, candidate.Manifest.TrustRoots); err != nil {
+		if err := installTrustRoots(paths, candidate.Manifest); err != nil {
 			return nil, fmt.Errorf("update applied but its update roots were not installed: %w", err)
 		}
 		trustRootsFrom = candidate.UpdateID
@@ -425,6 +425,13 @@ func ApplyPrepared(paths Paths, prepared *Prepared, opts ApplyOptions) (*ApplyRe
 	if err := SaveState(paths, newState); err != nil {
 		return nil, fmt.Errorf("update applied but state write failed: %w", err)
 	}
+	if paths.IsHome() {
+		// A home build runs only once it verifies against its signed manifest
+		// and archive, at every start: keep them.
+		if err := keepProof(paths, candidate); err != nil {
+			return nil, fmt.Errorf("update applied but its signed manifest and archive were not kept, so it will not run: %w", err)
+		}
+	}
 	if err := os.RemoveAll(candidate.Dir); err != nil {
 		return nil, fmt.Errorf("update applied but staged cleanup failed: %w", err)
 	}
@@ -451,6 +458,7 @@ func ApplyPrepared(paths Paths, prepared *Prepared, opts ApplyOptions) (*ApplyRe
 		}
 	}
 	pruned, pruneErrs := pruneToRetention(paths, slots, appliedAt)
+	pruneProofs(paths, newState)
 	result.PrunedSlots = pruned
 	for _, err := range pruneErrs {
 		result.PruneErrors = append(result.PruneErrors, err.Error())
@@ -497,7 +505,7 @@ func Rollback(paths Paths, opts RollbackOptions) (*RollbackResult, error) {
 	}
 	// A rollback is refused exactly as an apply is: the slot's binary must
 	// open the store on disk (store_format_guard.go).
-	if err := guardSlotStoreFormat(opts.StoreRoot, *slot); err != nil {
+	if err := guardSlotStoreFormat(paths, opts.StoreRoot, *slot); err != nil {
 		return nil, err
 	}
 
@@ -534,7 +542,7 @@ func Rollback(paths Paths, opts RollbackOptions) (*RollbackResult, error) {
 	version := strings.TrimSpace(slot.Version)
 	channel := strings.TrimSpace(slot.Channel)
 	if version == "" || channel == "" {
-		manifestVersion, manifestChannel, err := readBundleVersionAndChannel(paths.Root)
+		manifestVersion, manifestChannel, err := readBundleVersionAndChannel(paths.BuildRoot())
 		if err != nil {
 			return nil, err
 		}
@@ -573,6 +581,7 @@ func Rollback(paths Paths, opts RollbackOptions) (*RollbackResult, error) {
 	if err := SaveState(paths, newState); err != nil {
 		return nil, fmt.Errorf("rollback restored bundle but state write failed: %w", err)
 	}
+	pruneProofs(paths, newState)
 	return &RollbackResult{
 		RestoredSequence: newState.Sequence,
 		RestoredUpdateID: newState.UpdateID,

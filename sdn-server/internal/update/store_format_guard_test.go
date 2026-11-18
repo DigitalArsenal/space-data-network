@@ -360,7 +360,7 @@ func TestRollbackToALowerSlotOnAFormat2StoreIsRefused(t *testing.T) {
 	if err != nil || len(inv.Slots) != 1 {
 		t.Fatalf("inventory %+v, %v", inv, err)
 	}
-	if err := guardSlotStoreFormat(store, inv.Slots[0]); err != nil {
+	if err := guardSlotStoreFormat(paths, store, inv.Slots[0]); err != nil {
 		t.Fatalf("rollback to the unstamped build on a format-1 store: %v", err)
 	}
 
