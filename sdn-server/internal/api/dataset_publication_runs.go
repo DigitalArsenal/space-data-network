@@ -24,15 +24,21 @@ package api
 // (runDatasetPublication).
 //
 // Every publication that fails is logged as an error naming its lane, batch
-// and step, and raises the publication_failed alert of its lane. The alert
-// clears once every scope that failed in the lane is published: the same
-// batch, or the whole lane (a publication with no batch), with at least one
-// record. A publication of another batch does not clear it: a batch
-// publication carries only its own batch's records, so it does not contain
-// what the failed batch carried. Neither does a request that publishes no
-// record (an empty batch) or announces existing publications. A failed
-// announcement of existing publications raises the alert and leaves no
-// scope unpublished.
+// and step, and raises the publication_failed alert of its lane, which names
+// each failed batch, how many of its records no completed publication of the
+// lane carries, and the request that publishes it. The alert clears once no
+// scope that failed in the lane is unpublished: the same batch, or the whole
+// lane (a publication with no batch), is published with at least one
+// record, or every record of the failed batch is in a completed publication
+// of the lane. That last case is how a later run clears it: a later pull of
+// the same source that returns a record again tags it to the later batch,
+// whose publication carries it (storage.UnpublishedBatchRecords). A record
+// of the failed batch that no later pull returned is in no publication, so
+// the alert stays and its text, restated after each publication of the
+// lane, says how many records are still unpublished. A request that
+// publishes no record (an empty batch) or announces existing publications
+// clears nothing. A failed announcement of existing publications raises the
+// alert and leaves no scope unpublished.
 
 import (
 	"context"
@@ -45,6 +51,7 @@ import (
 	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/ops"
+	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
 
 // errPublicationsStopped is the cause of a publication cancelled by the
@@ -373,7 +380,8 @@ func (s *ConcreteDatasetPublicationService) reportDatasetPublication(req Dataset
 		// An announcement of existing publications leaves nothing
 		// unpublished: the lane's next publication clears its alert.
 		if !req.AnnounceExisting {
-			text += " (unpublished: " + strings.Join(s.runs.failScope(lane, batch), ", ") + ")"
+			s.runs.failScope(lane, batch)
+			text += " (" + s.unpublishedScopesText(req, lane, s.runs.failedScopes(lane)) + ")"
 		}
 		s.alerts.Raise(ops.KindPublicationFailed, lane, ops.SeverityError, text)
 		return
@@ -386,18 +394,94 @@ func (s *ConcreteDatasetPublicationService) reportDatasetPublication(req Dataset
 	if req.AnnounceExisting || records == 0 {
 		return
 	}
-	if left := s.runs.coverScope(lane, batch); left == 0 {
-		s.alerts.Clear(ops.KindPublicationFailed, lane)
-	} else {
-		log.Warnf("Dataset publication %s: %d failed scope(s) are still unpublished", lane, left)
+	left := s.runs.coverScope(lane, batch)
+	if len(left) > 0 && batch != "" && wholeBatchPublication(req) {
+		left = s.coverByPublishedRecords(req, lane, left)
 	}
+	if len(left) == 0 {
+		s.alerts.Clear(ops.KindPublicationFailed, lane)
+		return
+	}
+	text := fmt.Sprintf("dataset publication %s: after the publication of batch %q, %s", lane, batch, s.unpublishedScopesText(req, lane, left))
+	log.Warnf("Dataset publication %s: %d failed scope(s) are still unpublished: %s", lane, len(left), text)
+	s.alerts.Restate(ops.KindPublicationFailed, lane, text)
 }
 
-// failScope records a failed scope of a lane and returns the lane's failed
-// scopes, each a batch name or "the whole lane".
-func (r *publicationRuns) failScope(lane, batch string) []string {
+// wholeBatchPublication reports a publication of every record of one batch
+// of the node's own store: what its completion publishes is the batch's
+// records, which the store's tags name.
+func wholeBatchPublication(req DatasetPublicationRequest) bool {
+	return strings.TrimSpace(req.DatastoreKey) == "" && datasetPublicationScopedToWholeBatch(req)
+}
+
+// coverByPublishedRecords removes from failed (batches of the request's
+// lane whose publication failed) each batch whose every record a completed
+// publication of the lane carries: a later pull that returned a record again
+// tagged it to its own batch, and that batch's publication carried it. A
+// batch with records no completed publication carries stays, as does every
+// batch when the store cannot say (an error, or a store format that does not
+// report it). It returns the batches left.
+func (s *ConcreteDatasetPublicationService) coverByPublishedRecords(req DatasetPublicationRequest, lane string, failed []string) []string {
+	var left []string
+	for _, batch := range failed {
+		if batch == "" {
+			left = append(left, batch)
+			continue
+		}
+		unpublished, total, err := s.unpublishedBatchRecords(req, batch)
+		if err != nil {
+			log.Warnf("Dataset publication %s: whether batch %q is published is unknown, so its alert stays: %v", lane, batch, err)
+			left = append(left, batch)
+			continue
+		}
+		if unpublished > 0 {
+			left = append(left, batch)
+			continue
+		}
+		log.Infof("Dataset publication %s: every record of failed batch %q (%d) is in a completed publication of the lane", lane, batch, total)
+		s.runs.coverScope(lane, batch)
+	}
+	return left
+}
+
+// unpublishedBatchRecords counts the records of batch in the request's lane
+// that no completed publication of the lane carries.
+func (s *ConcreteDatasetPublicationService) unpublishedBatchRecords(req DatasetPublicationRequest, batch string) (int64, int64, error) {
+	if s.store == nil || strings.TrimSpace(req.DatastoreKey) != "" {
+		return 0, 0, storage.ErrBatchCoverageUnsupported
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	return s.store.UnpublishedBatchRecords(ctx, normalizeDatasetPublicationSchema(req.Schema), req.ProviderID, req.SourceName, batch)
+}
+
+// unpublishedScopesText names a lane's failed scopes for its alert: each
+// batch with how many of its records no completed publication carries, and
+// the request that publishes it.
+func (s *ConcreteDatasetPublicationService) unpublishedScopesText(req DatasetPublicationRequest, lane string, scopes []string) string {
+	parts := make([]string, 0, len(scopes))
+	for _, batch := range scopes {
+		if batch == "" {
+			parts = append(parts, "the whole lane is unpublished")
+			continue
+		}
+		part := fmt.Sprintf("batch %q is unpublished", batch)
+		if unpublished, total, err := s.unpublishedBatchRecords(req, batch); err == nil {
+			part = fmt.Sprintf("batch %q is unpublished: %d of its %d records are in no completed publication of the lane", batch, unpublished, total)
+		}
+		if strings.TrimSpace(req.DatastoreKey) == "" {
+			body, _ := json.Marshal(DatasetPublicationRequest{Schema: normalizeDatasetPublicationSchema(req.Schema), ProviderID: strings.TrimSpace(req.ProviderID), SourceName: strings.TrimSpace(req.SourceName), BatchID: batch})
+			part += fmt.Sprintf("; publish it with POST /api/v1/admin/dataset-updates/publish %s", body)
+		}
+		parts = append(parts, part)
+	}
+	return strings.Join(parts, "; ")
+}
+
+// failScope records a failed scope of a lane.
+func (r *publicationRuns) failScope(lane, batch string) {
 	if r == nil {
-		return []string{scopeName(batch)}
+		return
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -405,37 +489,40 @@ func (r *publicationRuns) failScope(lane, batch string) []string {
 		r.failed[lane] = make(map[string]bool)
 	}
 	r.failed[lane][batch] = true
+}
+
+// failedScopes is a lane's failed scopes, each a batch or "" for the whole
+// lane, in order.
+func (r *publicationRuns) failedScopes(lane string) []string {
+	if r == nil {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	scopes := make([]string, 0, len(r.failed[lane]))
 	for scope := range r.failed[lane] {
-		scopes = append(scopes, scopeName(scope))
+		scopes = append(scopes, scope)
 	}
 	sort.Strings(scopes)
 	return scopes
 }
 
 // coverScope removes the failed scopes a completed publication of batch
-// ("" for the whole lane) covers and returns how many are left.
-func (r *publicationRuns) coverScope(lane, batch string) int {
+// ("" for the whole lane) covers and returns the scopes left.
+func (r *publicationRuns) coverScope(lane, batch string) []string {
 	if r == nil {
-		return 0
+		return nil
 	}
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if batch == "" {
 		delete(r.failed, lane)
-		return 0
+		r.mu.Unlock()
+		return nil
 	}
 	delete(r.failed[lane], batch)
-	left := len(r.failed[lane])
-	if left == 0 {
+	if len(r.failed[lane]) == 0 {
 		delete(r.failed, lane)
 	}
-	return left
-}
-
-func scopeName(batch string) string {
-	if batch == "" {
-		return "the whole lane"
-	}
-	return fmt.Sprintf("batch %q", batch)
+	r.mu.Unlock()
+	return r.failedScopes(lane)
 }

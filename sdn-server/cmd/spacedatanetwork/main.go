@@ -5300,24 +5300,7 @@ func handleModuleRuntimeMutation(mgr *plugins.Manager) http.HandlerFunc {
 				return
 			}
 			if strings.HasSuffix(key, "/run") {
-				if r.Method != http.MethodPost {
-					http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-					return
-				}
-				methodID := strings.TrimSuffix(key, "/run")
-				input, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
-				if err != nil {
-					http.Error(w, "invalid schedule input: "+err.Error(), http.StatusBadRequest)
-					return
-				}
-				run, err := mgr.RunRuntimeModuleScheduleNowWithInput(r.Context(), moduleID, methodID, input)
-				if err != nil {
-					http.Error(w, err.Error(), http.StatusBadRequest)
-					return
-				}
-				w.Header().Set("Content-Type", "application/json")
-				w.Header().Set("Cache-Control", "no-cache")
-				_ = json.NewEncoder(w).Encode(run)
+				handleModuleScheduleRun(w, r, mgr, moduleID, strings.TrimSuffix(key, "/run"))
 				return
 			}
 			if r.Method != http.MethodPatch && r.Method != http.MethodPost {

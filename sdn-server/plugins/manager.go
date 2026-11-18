@@ -304,6 +304,9 @@ type RuntimeModuleScheduleRun struct {
 	Status     string `json:"status"`
 	Message    string `json:"message,omitempty"`
 	OutputSize int    `json:"outputSize,omitempty"`
+	// Joined marks the answer to a request that found the run already
+	// running and joined it instead of starting another.
+	Joined bool `json:"joined,omitempty"`
 }
 
 // RuntimeModuleSchedule is the dashboard read model for one provider schedule.
@@ -489,6 +492,16 @@ type Manager struct {
 
 	inputState   map[string]RuntimeModuleInputState
 	inputStateMu sync.RWMutex
+
+	// Operators' manual runs (manual_runs.go): the running ones by schedule,
+	// the last ended one of each, and the node's stop.
+	manualMu     sync.Mutex
+	manualRuns   map[string]*manualRun
+	manualLast   map[string]RuntimeModuleScheduleRun
+	manualLife   context.Context
+	manualStop   context.CancelCauseFunc
+	manualClosed bool
+	manualWg     sync.WaitGroup
 }
 
 // New creates an empty plugin manager.
@@ -1190,54 +1203,34 @@ func (m *Manager) RunRuntimeModuleScheduleNow(ctx context.Context, moduleID, met
 	return m.RunRuntimeModuleScheduleNowWithInput(ctx, moduleID, methodID, nil)
 }
 
-// RunRuntimeModuleScheduleNowWithInput passes the operator's payload to the schedule.
+// RunRuntimeModuleScheduleNowWithInput runs a schedule now with the
+// operator's payload and waits for it (StartRuntimeModuleScheduleRun). When
+// ctx ends first, the caller stops waiting and the run continues on the
+// node; the answer is the run's state ("running") and ctx's error.
 func (m *Manager) RunRuntimeModuleScheduleNowWithInput(ctx context.Context, moduleID, methodID string, input []byte) (RuntimeModuleScheduleRun, error) {
 	if m == nil {
 		return RuntimeModuleScheduleRun{}, errors.New("plugin manager is nil")
 	}
 	moduleID = strings.TrimSpace(moduleID)
 	methodID = strings.TrimSpace(methodID)
-	plugin := m.Get(moduleID)
-	if plugin == nil {
-		return RuntimeModuleScheduleRun{}, fmt.Errorf("module %q not found", moduleID)
-	}
-	cp, ok := plugin.(CronProvider)
-	if !ok {
-		return RuntimeModuleScheduleRun{}, fmt.Errorf("module %q does not expose provider schedules", moduleID)
-	}
-	if _, ok := findCronMethodSpec(cp.CronMethods(), methodID); !ok {
-		return RuntimeModuleScheduleRun{}, fmt.Errorf("module %q schedule %q not found", moduleID, methodID)
-	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	now := time.Now().UTC()
-	run := RuntimeModuleScheduleRun{
-		ID:        runtimeModuleCommandID(now, 1),
-		MethodID:  methodID,
-		Trigger:   "manual",
-		StartedAt: now.Format(time.RFC3339),
-		Status:    "running",
+	active, started, err := m.startManualRun(ctx, moduleID, methodID, input)
+	if err != nil {
+		return RuntimeModuleScheduleRun{}, err
 	}
-	log.Infof("Plugin %q manual run %q start", moduleID, methodID)
-	output, err := cp.InvokeCron(WithManualRun(ctx), methodID, input)
-	run.FinishedAt = time.Now().UTC().Format(time.RFC3339)
-	var deferred *DeferredError
-	if errors.As(err, &deferred) {
-		run.Status = "deferred"
-		run.Message = err.Error()
-		err = nil
-	} else if err != nil {
-		run.Status = "error"
-		run.Message = err.Error()
-	} else {
-		run.Status = "ok"
-		run.OutputSize = len(output)
+	select {
+	case <-active.done:
+	case <-ctx.Done():
+		log.Warnf("Plugin %q manual run %q: the requester stopped waiting (%v); the run continues on the node", moduleID, methodID, context.Cause(ctx))
+		return started, ctx.Err()
 	}
-	log.Infof("Plugin %q manual run %q end status=%s output_bytes=%d duration=%s error=%q",
-		moduleID, methodID, run.Status, run.OutputSize, time.Since(now), run.Message)
-	m.recordRuntimeModuleScheduleRun(moduleID, methodID, run)
-	return run, err
+	m.manualMu.Lock()
+	defer m.manualMu.Unlock()
+	run := active.run
+	run.Joined = started.Joined
+	return run, active.err
 }
 
 // UpdateRuntimeModuleOption mutates a dashboard-exposed runtime option. Timer
@@ -1486,6 +1479,9 @@ func (m *Manager) Close() error {
 	if m == nil {
 		return nil
 	}
+	// Manual runs first: they are runs of the plugins closed below.
+	m.stopManualRuns()
+
 	m.cronLifecycleMu.Lock()
 	defer m.cronLifecycleMu.Unlock()
 	m.cronClosed = true
