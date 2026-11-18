@@ -57,10 +57,12 @@ type ControlShutdown struct {
 }
 
 func NewControlHandler(opts ControlHandlerOptions) http.Handler {
-	root := filepath.Clean(strings.TrimSpace(opts.BundleRoot))
+	// The handshake names the UPDATE root, which is a home bundle when this
+	// account cannot write the bundle it runs from (home.go).
+	paths := PathsFor(filepath.Clean(strings.TrimSpace(opts.BundleRoot)))
 	return &controlHandler{
-		bundleRoot: root,
-		paths:      PathsFor(root),
+		bundleRoot: filepath.Clean(paths.Root),
+		paths:      paths,
 		shutdown:   opts.Shutdown,
 	}
 }
@@ -118,7 +120,7 @@ func (h *controlHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Status:      "shutdown_requested",
 		PID:         os.Getpid(),
 		BundleRoot:  h.bundleRoot,
-		RestartArgv: os.Args,
+		RestartArgv: h.paths.RestartArgv(os.Args),
 		Supervised:  SupervisedBySystemd(),
 	})
 	if h.shutdown != nil {

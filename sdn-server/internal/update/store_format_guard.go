@@ -595,5 +595,5 @@ func CheckRollbackStoreFormat(paths Paths, storeRoot string) error {
 	if err != nil {
 		return err
 	}
-	return guardSlotStoreFormat(storeRoot, *slot)
+	return guardSlotStoreFormat(paths, storeRoot, *slot)
 }

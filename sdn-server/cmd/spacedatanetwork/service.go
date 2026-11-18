@@ -19,6 +19,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/spacedatanetwork/sdn-server/internal/config"
+	sdnupdate "github.com/spacedatanetwork/sdn-server/internal/update"
 )
 
 const (
@@ -86,6 +87,9 @@ type removePlan struct {
 var (
 	removeDryRun    bool
 	removePurgeData bool
+	// serviceInstallDryRun prints the service file and commands `service
+	// install` would write and run, and does neither.
+	serviceInstallDryRun bool
 
 	serviceCommandRunner = runNativeCommand
 )
@@ -155,11 +159,31 @@ var removeCmd = &cobra.Command{
 func init() {
 	serviceCmd.AddCommand(serviceStatusCmd, serviceInstallCmd, serviceUninstallCmd)
 	removeCmd.Flags().BoolVar(&removeDryRun, "dry-run", false, "print the remove plan without deleting files")
+	serviceInstallCmd.Flags().BoolVar(&serviceInstallDryRun, "dry-run", false, "print the service file and commands without writing or running them")
 	removeCmd.Flags().BoolVar(&removePurgeData, "purge-data", false, "also remove the current user's SDN config, identity, and data")
 	rootCmd.AddCommand(startCmd, stopCmd, restartCmd, removeCmd, serviceCmd)
 }
 
 func runServiceAction(cmd *cobra.Command, action serviceAction) error {
+	if action == serviceActionInstall && serviceInstallDryRun {
+		spec, err := currentServiceSpec()
+		if err != nil {
+			return err
+		}
+		plan, err := planServiceAction(runtime.GOOS, action, spec)
+		if err != nil {
+			return err
+		}
+		out := cmd.OutOrStdout()
+		fmt.Fprintf(out, "service_executable=%s\n", spec.Executable)
+		for _, f := range plan.Files {
+			fmt.Fprintf(out, "service_file=%s\n%s\n", f.Path, f.Body)
+		}
+		for _, c := range plan.Commands {
+			fmt.Fprintf(out, "service_command=%s %s\n", c.Name, strings.Join(c.Args, " "))
+		}
+		return nil
+	}
 	if action == serviceActionStart || action == serviceActionInstall || action == serviceActionRestart {
 		if err := runInit(cmd, nil); err != nil {
 			return err
@@ -186,6 +210,10 @@ func currentServiceSpec() (serviceSpec, error) {
 	if err != nil {
 		return serviceSpec{}, fmt.Errorf("resolve current executable: %w", err)
 	}
+	// A service names the INSTALLED launcher, never a build an update put in
+	// the account's home: every start must go through the installed build's
+	// check of it (internal/update/home.go).
+	actualExecutable = sdnupdate.InstalledLauncher(actualExecutable)
 	actualExecutable, _ = filepath.Abs(actualExecutable)
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
@@ -231,6 +259,11 @@ func resolveInvokedExecutable() string {
 		return ""
 	}
 	invoked := os.Args[0]
+	if sdnupdate.HomeBuildRoot(currentActualExecutableRaw()) != "" {
+		// A home build was started by the installed launcher: that is what
+		// was invoked.
+		return sdnupdate.InstalledLauncher(currentActualExecutableRaw())
+	}
 	if filepath.IsAbs(invoked) {
 		if abs, err := filepath.Abs(invoked); err == nil {
 			return abs
@@ -589,11 +622,22 @@ func runRemove(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func currentActualExecutableRaw() string {
+	executable, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	return executable
+}
+
 func currentActualExecutable() string {
 	executable, err := os.Executable()
 	if err != nil {
 		return ""
 	}
+	// `remove` removes the INSTALL, not a build an update put in the
+	// account's home.
+	executable = sdnupdate.InstalledLauncher(executable)
 	if resolved, err := filepath.EvalSymlinks(executable); err == nil {
 		executable = resolved
 	}

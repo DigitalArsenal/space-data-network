@@ -198,32 +198,71 @@ running with admin auth enabled, pass `--session-token` or set
 `SDN_SESSION_TOKEN` so the wizard can update the live EPM without dropping
 runtime-owned fields.
 
-Update the CLI bundle through the SDN-owned signed update provider:
+### Updating a node
+
+A node installed from the command-line archive (or by `install.sh` /
+`install.ps1`) updates itself from the signed feed at
+`https://sdn.spaceaware.io/updates`, and installs only what is signed by one of
+its update roots (`trust/update-roots.json` in the bundle).
 
 ```bash
-spacedatanetwork update check
-spacedatanetwork update stage
-spacedatanetwork update apply
+spacedatanetwork update check      # this build, the feed's newest release, the rollback slots
+spacedatanetwork update install    # fetch, verify, install, restart, health-check
+spacedatanetwork update slots      # the builds this node can return to
+spacedatanetwork update rollback --reason "<why>"   # with the daemon stopped
 ```
 
-The update feed is rooted at `sdn.spaceaware.io/updates`, and a released bundle
-reads one channel of it:
-`sdn.spaceaware.io/updates/cli-bundle/release/<os>/<arch>/index.json`. That
-channel is new and not populated yet, so `update check` reports no update
-available until the first release is published to it. Releases previously shared
-a channel with an internal fleet lane whose payloads carry only the daemon
-binary; applying one of those to a released install retired the bundle's
-`runtime/` tree (Kubo, the daemon, the wallet and updater modules, the UI) and
-reinstalled nothing. The updater now also refuses, outright, any update that
-would retire a `runtime/` tree it does not replace.
+- **It also happens on its own.** With `update.enabled: true` (the default) a
+  running node acts on a release signal signed by an update root, and checks
+  the feed every six hours (`update.check_interval_seconds`), so a node that
+  was off when a release was announced still takes it. `update.enabled: false`
+  in a node's config turns both off for that node.
+- **Health gate and rollback.** The new build must answer `/api/v1/ready`
+  within `update.health_timeout_seconds` (default 600); an update of a
+  writable install folder also checks that it reports itself on `/api/v1/id`.
+  A build that does not is replaced by the previous one and kept aside, and is
+  not installed again. The last five builds are kept.
+- **No root and no service account.** When the account running the node
+  cannot write the install folder (a bundle under `/opt` owned by root, run by
+  a system service as an ordinary account, say), updates go to that account's
+  home folder from its passwd entry, `~/.spacedatanetwork/bundle/<key>` (one
+  per install), and the install folder and the service unit are never changed.
+  With no usable home folder (none, missing, or one the account cannot enter,
+  as under the shipped systemd unit's `ProtectHome=true`) they go to
+  `<storage.path>/update-bundle/<key>`: a service account under the shipped
+  unit updates itself into its storage folder. The
+  daemon installs the new build there while it serves, stops its services and
+  starts again through the installed path in the same process, with no helper.
+  The installed build checks the new build against its own update roots and
+  starts it as a trial with a deadline (`update.health_timeout_seconds` from
+  that start); a trial that is not ready by then, or that crashes, is rolled
+  back and kept aside, and the previous build runs. A service restart or a
+  reboot during a trial runs the trial again (at most three times). Every
+  daemon start verifies the
+  build in full (signature, archive, every file); other commands reuse that
+  result while no file of the build has changed. A build that does not verify,
+  or whose folders another account can change (another owner, or writable by
+  the group or others, on the resolved path up to `/` or inside the build),
+  is refused with the reason and the installed build runs. Root never runs a home build. A
+  read-only install of a release older than the one with this behavior needs
+  one manual upgrade. Windows needs a writable install folder.
+- **Writable install folder.** A helper process stops the daemon, replaces
+  the bundle in place, starts it, applies the same health gate and reverts an
+  unhealthy build.
+- **By version.** 1.1.4 to 1.1.6 learn of a release only from a signal; 1.1.7
+  and later also check the feed. Nodes older than 1.1.6 cannot exchange
+  publications with newer ones, so update them together. Update 1.1.0 or
+  earlier by hand: stop the node, install the new release in place of the old
+  one (keep `keys/` and the config), start it. Desktop, `.deb`/`.rpm`, VM and
+  container installs do not update themselves: install the new release.
 
-The installed bundle's Go updater verifies the signed manifest and carrier,
-stages the replacement, then hands activation to an external helper. That
-helper swaps the bundle, restarts the daemon, checks health, and rolls back an
-unhealthy installation.
-A standalone source-built binary has no managed bundle to replace. See the
-[signed updater guide](docs/sdn-signed-updater.md) for the active path and the
-unfinished WASM updater boundary.
+Publishing a release to a fleet is two steps, in this order: publish the feed,
+then announce it with
+`spacedatanetwork update signal --from-feed --channel release --version <X>`.
+A release published without the signal is not pushed; nodes find it at their
+next feed check. The [signed updater guide](docs/sdn-signed-updater.md) has the
+details, and the [agent guide](docs/AGENT-API-GUIDE.md#9-administering-a-nodes-updates)
+the commands and output lines to act on.
 
 ### Browser Usage
 

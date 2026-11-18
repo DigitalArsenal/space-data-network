@@ -236,6 +236,9 @@ var updateInstallCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		if paths.IsHome() && !updateInstallDryRun {
+			return installIntoHome(cmd.OutOrStdout(), cmd.ErrOrStderr(), paths, staged, resolveUpdateStoreRoot(updateInstallStoreRoot, cmd.ErrOrStderr()))
+		}
 		if !updateInstallDryRun && !updateInstallDirect && shouldDelegateInstallToHelper() {
 			token, err := generateUpdateControlToken()
 			if err != nil {
@@ -1175,7 +1178,7 @@ func (o helperApplyOptions) startBuildOnDisk(ctx context.Context, daemon serving
 // disk (update.BundleIdentity).
 func (o helperApplyOptions) gate(ctx context.Context, updateID, version string, requireIdentity bool) error {
 	o.UpdateID = updateID
-	expected, err := update.BundleIdentity(o.Paths.Root)
+	expected, err := update.BundleIdentity(o.Paths.BuildRoot())
 	if err == nil {
 		var identity update.Identity
 		identity, err = waitForDaemonGate(ctx, o.Client, o.AdminURL, expected, requireIdentity, o.HealthTimeout)

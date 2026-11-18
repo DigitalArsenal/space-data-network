@@ -17,180 +17,211 @@ pointer, fetches and verifies its manifest, and checks their channel, target,
 version, sequence and hashes agree before downloading the carrier. Downloads
 remain HTTPS across redirects and use bounded sizes; a signed carrier size
 tightens the payload limit. Staging verifies the actual carrier and bundle
-hashes again. The copied helper then performs the shutdown, swap, restart and
-health/rollback sequence outside the replaceable bundle and service cgroup.
+hashes again. For an install folder the node's account can write, the copied
+helper then performs the shutdown, swap, restart and health/rollback sequence
+outside the replaceable bundle and service cgroup; for one it cannot write,
+the daemon installs into its account's home and restarts itself through the
+installed path, with no helper (below).
 
-This path is implemented in Go's generic artifact/update machinery. The
-`packages/sdn-updater-module` WASM package still contains stub methods and is
-not the executing update coordinator. Shipping that file does not establish
-module-driven updating. Its scheduling, upstream checks and orchestration
-still need an implemented SDK module and an approved host lifecycle capability.
-The current receiver listens for live signals; it does not reconcile updates
-missed while offline. A daemon launched from a scratch binary outside a portable
-bundle cannot use this in-place update path.
+This path is implemented in Go (`sdn-server/internal/update/`,
+`sdn-server/internal/node/update_signal.go`). The `packages/sdn-updater-module`
+WASM package contains stub methods and does not drive updates. Besides acting
+on signals, a node of 1.1.7 or later checks its feed every six hours
+(`update.check_interval_seconds`, first check one to five minutes after the
+start), so a node that was off when a signal went out still takes the
+release; a signed withdrawal stops a release from being installed. A daemon
+launched from a binary outside a portable bundle has no update path.
 
-## Payload Envelope
+### The update root: the install folder, or the account's home
 
-Every update is distributed as an SDN update payload with a signed manifest and
-an inert WASM carrier. The manifest is canonical JSON until a canonical SDS
-record exists.
+All of the above works on one folder, the update root (`update.PathsFor`):
 
-Required manifest fields:
+- the install folder, when the account running the node can write it: the
+  helper path above, unchanged;
+- otherwise the install's home bundle, `<home>/.spacedatanetwork/bundle/<key>`:
+  `<home>` is the home folder of the effective user's passwd entry (`$HOME`
+  only when it resolves to that folder), `<key>` the first 16 hex characters
+  of sha256 over the resolved install folder, so each install has its own.
+  With no usable home folder (none in the passwd entry, one that does not
+  exist, or one the account cannot enter: `EACCES` anywhere on the way, as
+  under the shipped systemd unit's `ProtectHome=true`) it is
+  `<storage.path>/update-bundle/<key>` (logged), so a service account under
+  the shipped unit updates itself into its storage folder. A home folder that
+  exists and fails the ownership checks below is refused, never replaced by
+  the storage folder; the storage folder gets the same checks. No root,
+  service account, unit change or write to the install folder is needed.
 
-- `schema`: fixed value `org.spacedatanetwork.update.v1`.
-- `update_id`: globally unique update identifier.
-- `version`: SemVer update version.
-- `sequence`: monotonic integer used for rollback rejection.
-- `channel`: release channel, such as `stable`, `beta`, or `dev`.
-- `created_at` and `expires_at`: RFC 3339 timestamps.
-- `target.platform`: `darwin`, `linux`, or `win32`.
-- `target.arch`: `arm64`, `x64`, or another supported Electron/Kubo arch.
-- `target.kind`: `desktop-app`, `kubo-runtime`, `module-delivery`, or `suite`.
-- `compatibility.min_app_version` and `compatibility.max_app_version`.
-- `compatibility.min_kubo_version` when the update touches runtime behavior.
-- `bundle.hash`: SHA-256 digest of the compressed update bundle.
-- `bundle.size`: byte length of the compressed bundle.
-- `bundle.format`: `tar.zst` for app/runtime bundles, `zip` only where the
-  platform installer requires it.
-- `wasm.hash`: SHA-256 digest of the inert WASM carrier bytes.
-- `signing.key_id`: trusted root or delegated key identifier.
-- `signing.algorithm`: `Ed25519`.
-- `signing.signature`: Ed25519 signature over the canonical manifest bytes with
-  `signing.signature` omitted.
-- `rollback.previous_sequence`: last sequence allowed as a rollback target.
-- `rollback.reason`: required for rollback payloads.
+The home bundle of an install is moved only with it. A bundle whose mount
+path changes at every start would get a new home bundle each time; no bundle
+the node ships runs that way (the desktop app, AppImage included, does not
+update itself).
 
-The manifest must bind the exact target platform, bundle hash, WASM hash,
-signer identity, expiration, and rollback policy. Clients must reject manifests
-with missing, duplicated, or unknown critical fields.
+**Who may use a home bundle.** A process whose effective user is root never
+does: root with a read-only install folder is refused with a message to make
+the folder writable or install by hand, and a home build started as root
+exits. Every folder from the home bundle's `updates/` up to the home folder
+(or the storage folder) must belong to the effective user and not be
+writable by its group or by others. The path is also walked from `/` the way
+the system resolves it, following every symlink: each folder and symlink on
+it must belong to the effective user or to root, and a folder its group or
+others can write must carry the sticky bit (`/tmp`), where only an entry's
+owner can rename it. Inside the build, every folder and file must belong to
+the effective user and not be writable by its group or by others, and every
+symlink must belong to it; an update is unpacked with group and other write
+bits removed, whatever the archive or the umask say. Otherwise the build is
+refused with the reason, and the installed build runs.
 
-## WASM Carrier And Bundle Extraction
+**One daemon per home bundle.** The daemon holds `<key>.daemon.lock` beside
+the bundle for its life; a second daemon from the same install and account is
+refused at its start check (give each node its own install). The lock is an
+`flock` on an open file that the start check takes and passes across each
+`exec` (`SDN_UPDATE_DAEMON_LOCK_FD`, read and removed at start), so there is
+no moment between the start check and the daemon it starts when another
+daemon could take it. Every change of `trial.json` (pass, fail, signal stop,
+start, revert) is made under `<key>.trial.lock`. An update is
+installed under `<key>.install.lock`, so a typed `update install` and the
+daemon's own install never run at once. Every process that runs a home build
+holds `<key>.inuse.lock` shared, and a stale bundle (the installed build
+changed, or its record cannot be read) is removed only when nothing holds it.
 
-The WASM carrier is a storage envelope, not executable authority. The updater
-never instantiates or executes the carrier, including after verification; it
-extracts its embedded bundle as data.
+**Why the helper stays for a writable install folder.** The swap there
+replaces the binary at the installed path, which is the code that would judge
+and revert the new build: a build that fails before it can run any check of
+its own would be restarted at that path with no older code left to revert it.
+The helper is a copy of the old binary outside the swapped tree.
 
-Bundle layout:
+A home bundle is a bundle root like the installed one. It holds a payload
+only once an update has been applied; its first rollback slot is empty, and
+an empty slot stands for the installed build. Retention keeps five slots, so
+after five home updates the empty slot is pruned; removing the home bundle
+(node stopped) always returns to the installed build. `updates/home.json`
+records the installed folder, its version, the sha256 of its `manifest.json`
+and its sequence; an unreadable one is rebuilt at the next update. For each
+build it holds, `updates/proofs/<update id>/` keeps the signed update manifest
+and the bundle archive it signs. A release that replaces the update roots is
+kept as its signed manifest in `trust/rotations/`; the roots a home build is
+checked against are always the installed build's roots, advanced through each
+kept rotation that verifies against the roots before it. `SDN_UPDATE_TRUST_ROOTS`
+does not apply to that check. State files are written to a temporary file,
+synced, renamed and the folder synced.
 
-```text
-update.wasm
-manifest.json
-bundle.tar.zst
-```
+**No helper in a home bundle** (`sdn-server/internal/update/trial.go`). A
+daemon run by a system unit as an ordinary account cannot create a transient
+unit, and a helper started as its child is stopped with the unit's processes.
+So:
 
-The release index advertises the manifest hash and the carrier hash. The client
-downloads the manifest first, verifies the manifest signature against trusted
-roots, then downloads the carrier and verifies `wasm.hash`. The updater extracts
-the embedded bundle bytes as data, computes `bundle.hash`, and only then stages
-the bundle for install. Any decompression, installer metadata parsing, or file
-replacement happens after signature, expiration, target, sequence, and hash
-validation.
+1. **Install while serving.** The verified staged update is extracted and
+   renamed into the home bundle (the installed bundle is never touched; a
+   running home build keeps its open files after they move into its rollback
+   slot), `updates/trial.json` marks it as a trial, and its files are verified
+   against the signed archive. One that does not verify is rolled back at once.
+2. **Restart through the installed path.** The daemon stops its services as
+   for any shutdown (tor, its one child process, included; Kubo and the
+   modules run in the daemon's process) and replaces its process (`exec`, the
+   same pid) with the installed launcher and its own arguments, in the
+   environment the installed launcher had: entries the start check removed are
+   given back and those pointing into the home bundle removed. This holds under
+   systemd with any restart policy and a daemon started by hand (launchd
+   watches the same pid; not run end to end under launchd),
+   except when the shutdown itself fails: if the 75-second shutdown watchdog
+   ends the process, a service manager that restarts the node starts it again,
+   and a node started by hand stays stopped until it is started. The update
+   then runs as a trial at that start (it never ran, so nothing is rolled
+   back). A drain that ends with an error still restarts in place.
+3. **Trial start.** The installed build verifies the home build in full,
+   counts the trial start in `trial.json`, writes its deadline there (now plus
+   `update.health_timeout_seconds`, default 600 s, which covers stores that
+   took four to five minutes to open after an update) and runs it with
+   `SDN_UPDATE_TRIAL` set. Before anything else, the trial build starts a timer
+   for that deadline. Its health gate reads its own readiness (the
+   `/api/v1/ready` check, in process): ready records `health-passed` and ends
+   the trial. At the deadline the gate, or the timer if the build is stuck
+   anywhere else, writes the reason into `trial.json` and restarts through
+   the installed path: through the ordinary shutdown once the daemon serves,
+   and if that has not completed within the shutdown watchdog's bound, or the
+   daemon never got that far, the timer stops tor and replaces the process
+   itself. With the admin listener off there is no readiness to read: the
+   trial passes at once and the log says so as an error.
+4. **Revert.** A daemon start through the installed path that finds a trial
+   started and not passed (after step 3, or after a crash the service manager
+   restarted), and any start at all after a trial's deadline, records
+   `health-failed`, rolls back to the previous slot (the build moves to
+   `updates/failed/<update id>`, the quarantine; the ledger records
+   `rollback`), records `health-reverted` and runs the previous build. A
+   pending trial whose files fail verification, or whose `trial.json` cannot
+   be read, is reverted the same way. A command other than `daemon` reverts
+   only when no daemon holds the daemon lock: while the trial daemon is alive
+   (stuck, or late after a suspend) it runs the installed build and leaves the
+   revert to the next daemon start, so no running build has its files moved
+   away. A revert works only on the build `state.json` names: a `trial.json`
+   naming another update is what a revert stopped after its rollback leaves,
+   and the next daemon start only clears it (writing `health-reverted` when
+   the ledger lacks it), so the build that ran before the trial is never
+   quarantined; `FailTrial` writes only while `trial.json` still names its
+   update. Not covered: a trial build that hangs so that its timer cannot act
+   keeps running until the service manager or an operator stops it; the next
+   daemon start through the installed path rolls it back.
+4a. **Stopped during a trial.** `SIGTERM` or `SIGINT` reaching the trial
+   build before it passes (`systemctl restart`, a reboot) is not a failure:
+   the trial build watches for it from its first instruction, records it in
+   `trial.json` (`interruptions`, `starts` back to 0, no deadline) and ends
+   as it would have; the next start runs the trial again with a new deadline.
+   The bound is `update.MaxTrialInterruptions` = 3: after three such stops
+   the trial runs a fourth time, and a stop during that one fails it, so a
+   build that is always restarted before it is ready cannot stay on trial.
+   A `SIGKILL`, a power loss or a crash counts as a failed trial start.
+5. **Revert refused.** When the store-format guard refuses the rollback (the
+   trial build moved the store to a format the previous build cannot open),
+   nothing is swapped and the build that failed keeps running. The log says
+   `was NOT rolled back`, the ledger records `revert-refused`, and the node
+   raises the `update_failed` alert until a newer build runs. The operator
+   installs a newer release, or restores the store from a snapshot taken
+   before the update and runs `update rollback`.
 
-## Compatibility Rules
+The ledger, the slots and the quarantine are those of the helper path, so
+`update slots`, `update rollback`, the `update_failed` alert and the refusal
+of a quarantined update read them unchanged.
 
-Desktop application updates may replace Electron application assets and desktop
-helper code. They must not replace Kubo through an inherited IPFS Desktop app
-release feed.
+**The start check.** At every `daemon` start, and when a build is installed,
+the home build is verified in full:
 
-Kubo runtime updates are separate payloads with `target.kind:
-kubo-runtime`. They may update the bundled `kubo` binary/package path only after
-the app confirms the target Kubo version is compatible with the existing repo
-version and migration path.
+1. the installed folder and its `manifest.json` are the ones recorded (an
+   administrator who installed another build wins; the next update starts the
+   home bundle again from it);
+2. the signed manifest of the build `state.json` names verifies against the
+   roots above, targets this platform, and is newer than the installed build
+   (higher sequence, version not lower);
+3. the kept archive has the manifest's sha256 and size;
+4. the payload on disk is exactly that archive's bundle: the same files (none
+   added, none missing), bytes, executable bits and symlink targets.
 
-Module-delivery updates are separate payloads with `target.kind:
-module-delivery`. They may update licensing or delivery module artifacts, but
-they must not modify the Electron app bundle or Kubo binary.
+The result is recorded in `updates/verdict.json` with the size, mode,
+modification and change times, inode and device of every file under the home
+bundle outside `updates/`, of `state.json`, `home.json` and the proof, and of
+the installed `manifest.json` and update roots. Every other command runs the
+home build when all of these are unchanged, and verifies in full otherwise.
+This guards against a damaged or replaced file; it is not a defense against
+the account that owns the home folder, which can run any program. On a v1.1.8
+darwin-arm64 bundle (337 files) a full verification takes about 1.4 s and the
+recorded check about 3 ms. The config is read only when it is needed: for a
+daemon start that starts a trial, a revert's store-format guard, or the
+storage fallback.
 
-Suite updates use `target.kind: suite` and are an ordered set of
-desktop-app/runtime/module-delivery manifests. Each child manifest is verified
-independently before any staged swap begins.
-
-Rollback is allowed only to a manifest whose sequence is lower than the current
-sequence and equal to or newer than the current `rollback.previous_sequence`.
-Rollback payloads must be signed and unexpired. The updater stores the last
-known-good manifest and staged bundle hash outside mutable payload contents.
-
-## Signature And Key Rotation
-
-The signing scheme is Ed25519 over canonical manifest bytes. SDN already uses
-Ed25519 for portable identity records and node attestations, so this keeps the
-update trust primitive consistent with the rest of the stack.
-
-### Who signs, and what the signature actually covers (2026-07-31)
-
-OWNER RULING 2026-07-30: **the publisher key IS the node key.** There is no
-separate update root and no delegation ceremony. Trust is priced by the
-Adversarial-Security bond on the chain addresses derived from that key, not by
-where the private half is stored. The delegated-release-key design described
-below this section is the ORIGINAL design and is not what ships; it is retained
-because delegation is still the right shape if the fleet ever outgrows one
-publisher.
-
-The node key cannot leave host-01 (machine-bound key-at-rest, 2026-07-28) and
-release artifacts are never built on a host (build-locally-ship-binaries). The
-resolution is a content-bound signing endpoint, the sibling of the module one:
-
-```text
-POST /api/v1/admin/updates/sign-manifest      (Admin session required)
-```
-
-The build box POSTs the manifest DOCUMENT with `signing.statement_domain` set
-and `signing.signature` absent. The node canonicalizes and hashes the document
-ITSELF and signs a domain-separated statement:
-
-```text
-statement = "SDN-UPDATE-MANIFEST-V1" || 0x00 || sha256(canonicalManifestBytes)
-signature = ed25519(nodeSigningKey, statement)
-```
-
-Three properties are non-optional and enforced in code: the domain separation
-above (so an update signature can never be replayed as a module publication or
-a dataset-publication signature and vice versa), the node never signing a
-caller-supplied digest (a digest is not a well-formed manifest, so it is
-structurally unsignable), and an append-only audit line per signature that is a
-GATE — an unauditable signature is discarded, not logged and returned.
-Audit: `~/.spacedatanetwork/logs/update-signing.audit.jsonl`, override
-`SDN_UPDATE_SIGNING_AUDIT_LOG`.
-
-**Two accepted verification forms.** `signing.statement_domain` lives inside the
-canonical bytes (canonicalization removes only `signing.signature`), so it is
-covered by the signature it describes. Absent means the legacy raw-canonical
-form, which verifies exactly as before; present means it must be EXACTLY
-`SDN-UPDATE-MANIFEST-V1` — matched by equality, never by domain-registry
-membership, because a registry lookup would admit a module signature here.
-There is no downgrade in either direction: adding or stripping the field changes
-the canonical bytes and invalidates the signature outright.
-
-Because old verifiers do not know the second form, they FAIL CLOSED on a
-domain-signed manifest rather than accepting it unverified. A box therefore
-needs a binary carrying this verifier before it can consume domain-signed
-releases — which is why the lane's first delivery to any given box is a
-bootstrap, not an update.
-
-The trust store must hold the node's key in **SPKI DER base64**. The fleet
-verifier also accepts raw hex, but the desktop verifier accepts SPKI only, so a
-hex root produces a trust store that works on one side and fails on the other.
-The endpoint logs the exact `{key_id: public_key}` pair to install at startup.
-
-Trusted update roots are stored outside mutable update payloads:
-
-- packaged desktop root trust store under app resources;
-- OS-protected user-data trust store for emergency revocation lists;
-- optional enterprise policy store when managed deployments need pinned roots.
-
-Root keys do not sign routine payloads directly. A root key signs delegated
-release keys with:
-
-- delegated `key_id`;
-- allowed channels;
-- allowed target kinds;
-- `not_before` and `not_after`;
-- minimum accepted sequence.
-
-Clients accept a payload only when its signing key chains to a trusted root and
-the delegation permits the payload channel, target kind, platform, and sequence.
-Key rotation is shipped as a signed trust-store update and takes effect only
-after both the old and new root policies validate the transition.
+A build that fails the check is refused with
+`update: the build under <folder> is refused: <why>; running the installed build`,
+and the installed build runs (at a daemon start, a build still on trial is
+rolled back instead). Everything that records this program's path for a later
+start (`service install`, `remove`, the restart after an update) names the
+installed launcher, never a home build. The home build is started with
+`WASMEDGE_DIR` and library-path entries that point into the installed folder,
+by either spelling of its path, removed, so its launcher uses its own runtime
+files. Limits: below the installed build nothing can run, but between signed
+builds newer than the installed one an account that can write its home can
+choose any (as `update rollback` does); a home bundle takes full-bundle updates
+only, not module-targeted ones; Windows has no `exec`, so it needs a writable
+install folder, and nothing probes the install folder there. A read-only
+install of a release older than the one that brings home updates cannot
+update itself: install the new release by hand once.
 
 ## Updater Process Boundary
 
@@ -539,11 +570,14 @@ node deployment/release/build-sdn-update-feed.js \
   --out-dir dist/release/update-feed \
   --entry dist/update/darwin-arm64/manifest.json:dist/update/darwin-arm64/update.wasm
 
-# 3. Publish the feed tree, then on the target host stage and apply.
-spacedatanetwork update stage \
-  --manifest https://sdn.spaceaware.io/updates/cli-bundle/release/darwin/arm64/1.2.3/manifest.json \
-  --carrier https://sdn.spaceaware.io/updates/cli-bundle/release/darwin/arm64/1.2.3/update.wasm
-spacedatanetwork update apply
+# 3. Publish the feed tree, then announce the release with the signals the
+#    release workflow signed into it. Without this step nothing is pushed:
+#    nodes of 1.1.7 and later find the release at their next feed check.
+SDN_UPDATE_FEED_DIR=<published feed folder> \
+  spacedatanetwork update signal --from-feed --channel release --version 1.2.3
+
+# On one node by hand instead: fetch, verify, install, restart, health-check.
+spacedatanetwork update install
 ```
 
 The carrier and manifest helpers are also usable standalone:

@@ -386,7 +386,7 @@ func ApplyPrepared(paths Paths, prepared *Prepared, opts ApplyOptions) (*ApplyRe
 
 	trustRootsFrom := state.TrustRootsFrom
 	if candidate.Manifest.TrustRoots != nil {
-		if err := installTrustRoots(paths, candidate.Manifest.TrustRoots); err != nil {
+		if err := installTrustRoots(paths, candidate.Manifest); err != nil {
 			return nil, fmt.Errorf("update applied but its update roots were not installed: %w", err)
 		}
 		trustRootsFrom = candidate.UpdateID
@@ -425,6 +425,20 @@ func ApplyPrepared(paths Paths, prepared *Prepared, opts ApplyOptions) (*ApplyRe
 	if err := SaveState(paths, newState); err != nil {
 		return nil, fmt.Errorf("update applied but state write failed: %w", err)
 	}
+	if paths.IsHome() {
+		// A home build runs only once it verifies against its signed manifest
+		// and archive, at every start: keep them.
+		if err := keepProof(paths, candidate); err != nil {
+			return nil, fmt.Errorf("update applied but its signed manifest and archive were not kept, so it will not run: %w", err)
+		}
+		// Not proven until a daemon start of it answers ready (trial.go).
+		if err := writeTrial(paths, &Trial{
+			UpdateID: candidate.UpdateID, Version: candidate.Result.Version, Sequence: candidate.Result.Sequence,
+			Trigger: strings.TrimSpace(opts.Trigger), SignalKeyID: strings.TrimSpace(opts.SignalKeyID), InstalledAt: appliedAt,
+		}); err != nil {
+			return nil, fmt.Errorf("update applied but its trial was not recorded: %w", err)
+		}
+	}
 	if err := os.RemoveAll(candidate.Dir); err != nil {
 		return nil, fmt.Errorf("update applied but staged cleanup failed: %w", err)
 	}
@@ -451,6 +465,7 @@ func ApplyPrepared(paths Paths, prepared *Prepared, opts ApplyOptions) (*ApplyRe
 		}
 	}
 	pruned, pruneErrs := pruneToRetention(paths, slots, appliedAt)
+	pruneProofs(paths, newState)
 	result.PrunedSlots = pruned
 	for _, err := range pruneErrs {
 		result.PruneErrors = append(result.PruneErrors, err.Error())
@@ -497,7 +512,7 @@ func Rollback(paths Paths, opts RollbackOptions) (*RollbackResult, error) {
 	}
 	// A rollback is refused exactly as an apply is: the slot's binary must
 	// open the store on disk (store_format_guard.go).
-	if err := guardSlotStoreFormat(opts.StoreRoot, *slot); err != nil {
+	if err := guardSlotStoreFormat(paths, opts.StoreRoot, *slot); err != nil {
 		return nil, err
 	}
 
@@ -534,7 +549,7 @@ func Rollback(paths Paths, opts RollbackOptions) (*RollbackResult, error) {
 	version := strings.TrimSpace(slot.Version)
 	channel := strings.TrimSpace(slot.Channel)
 	if version == "" || channel == "" {
-		manifestVersion, manifestChannel, err := readBundleVersionAndChannel(paths.Root)
+		manifestVersion, manifestChannel, err := readBundleVersionAndChannel(paths.BuildRoot())
 		if err != nil {
 			return nil, err
 		}
@@ -573,6 +588,7 @@ func Rollback(paths Paths, opts RollbackOptions) (*RollbackResult, error) {
 	if err := SaveState(paths, newState); err != nil {
 		return nil, fmt.Errorf("rollback restored bundle but state write failed: %w", err)
 	}
+	pruneProofs(paths, newState)
 	return &RollbackResult{
 		RestoredSequence: newState.Sequence,
 		RestoredUpdateID: newState.UpdateID,
@@ -699,6 +715,12 @@ func extractBundleArchive(archivePath, format, destDir string) error {
 	return extractTar(tar.NewReader(reader), destDir)
 }
 
+// extractedMode is the mode a file or folder of an update bundle is created
+// with: the archive's, without write access for the group or for others,
+// whatever the archive or the umask say. A build another account can change
+// is never run (home.go).
+func extractedMode(mode os.FileMode) os.FileMode { return mode &^ 0o022 }
+
 func extractTar(tr *tar.Reader, destDir string) error {
 	if err := os.MkdirAll(destDir, 0o755); err != nil {
 		return err
@@ -717,14 +739,14 @@ func extractTar(tr *tar.Reader, destDir string) error {
 		}
 		switch header.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(target, os.FileMode(header.Mode).Perm()|0o700); err != nil {
+			if err := os.MkdirAll(target, extractedMode(os.FileMode(header.Mode).Perm()|0o700)); err != nil {
 				return err
 			}
 		case tar.TypeReg:
 			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 				return err
 			}
-			out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.FileMode(header.Mode).Perm())
+			out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, extractedMode(os.FileMode(header.Mode).Perm()))
 			if err != nil {
 				return err
 			}
@@ -772,7 +794,7 @@ func extractZipArchive(archivePath, destDir string) error {
 		}
 		info := file.FileInfo()
 		if info.IsDir() {
-			if err := os.MkdirAll(target, info.Mode().Perm()|0o700); err != nil {
+			if err := os.MkdirAll(target, extractedMode(info.Mode().Perm()|0o700)); err != nil {
 				return err
 			}
 			continue
@@ -807,7 +829,7 @@ func extractZipArchive(archivePath, destDir string) error {
 		if err != nil {
 			return err
 		}
-		out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, info.Mode().Perm())
+		out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, extractedMode(info.Mode().Perm()))
 		if err != nil {
 			source.Close()
 			return err

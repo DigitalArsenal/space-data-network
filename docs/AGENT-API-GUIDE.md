@@ -576,3 +576,197 @@ Everything under `/api/**` not listed in section 2 requires a session.
 
 The same classification logic — a single predicate — drives the auth wall,
 CORS, and the OpenAPI generator's anonymity stamps.
+
+---
+
+## 9. Administering a node's updates
+
+This section is enough to keep a node current. Run the commands on the node's
+machine, as the account that runs the node, with the node's config
+(`-c <config>` when it is not the default). Every line of output is
+`key=value`; read the keys, not the wording.
+
+### What the node runs, and whether an update is waiting
+
+```bash
+curl -s http://127.0.0.1:7173/api/v1/id
+# -> {..., "bundle_version":"1.1.8", "build_sha256":"<sha256 of the running executable>"}
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:7173/api/v1/ready
+# -> 200 when the node serves; 503 while it starts or warms its data services
+spacedatanetwork update check
+# version=<this build>  channel=release  update_feed_base_url=https://sdn.spaceaware.io/updates
+# update_signal_enabled=true  update_health_timeout=10m0s  rollback_slots=<n>/5
+# provider_update=<update id> status=available version=<newer> ...   (a newer release exists)
+# provider_update_check=error error="..."                             (none newer, or the feed is unreachable)
+# updates_available=true|false
+spacedatanetwork update slots
+# current update_id=... version=...;  slot[0] ... (default rollback target)
+```
+
+`bundle_version` is the version the node runs. `update_signal_enabled=true` (the
+config's `update.enabled`, on by default) means the node installs a release on
+its own: when a signal signed by an update root announces it, and at a feed
+check every six hours (`update.check_interval_seconds`). Nodes from 1.1.4 to
+1.1.6 learn of a release only from a signal; 1.1.7 and later also check the
+feed.
+
+### Install an update
+
+Where the update goes decides the output (see "Where updates go" below).
+
+Into the account's home (the install folder is not writable by the node's
+account):
+
+```bash
+spacedatanetwork update install
+# installed_update=<update id>  version=<new>  sequence=<n>  update_root=<home bundle>
+# daemon_restart=requested pid=<pid>      (a daemon is running: it restarts itself for the update)
+# daemon_health=healthy
+# daemon_identity=verified bundle_version=<new> build_sha256=<sha256>
+```
+
+With no daemon running it ends with
+`next=start the node: it runs this build as a trial and keeps it once it answers ready`.
+No helper runs: the daemon restarts in its own process (its pid does not
+change), and the node's log shows `runs as a trial` and then
+`passed its trial`.
+
+In place (the install folder is writable):
+
+```bash
+spacedatanetwork update install
+# staged_update=<update id>
+# helper_started=<path>  helper_pid=<pid>
+# next=the helper will apply the update after this command exits
+```
+
+The helper keeps writing to the same output after the command returns. Success
+is, in order: `prepared_update=`, `daemon_shutdown=requested`,
+`applied_update=<update id>`, `version=`, `restart=...`,
+`daemon_health=healthy`, `daemon_identity=verified bundle_version=<new> ...`.
+With no daemon running, `update install` installs directly and prints
+`installed_update=` and `next=restart the SDN daemon to run the new version`.
+A refusal before anything is installed is an error naming the reason
+(`untrusted update signing key`, `update sequence rejected`, a store-format
+refusal, ...): the node keeps running what it ran.
+
+A failed health gate (either way) prints `daemon_health=unhealthy ...`, then
+`rollback=applied restored_version=<previous>` and ends with the error
+`daemon health failed after update; rolled back to <previous>`. The node then
+runs the previous build, and the failed update is kept aside under the update
+root's `updates/failed/<update id>/` and never installed again by itself.
+
+### An update was received but not installed
+
+- `curl -s http://127.0.0.1:7173/api/v1/health` reports
+  `"status":"degraded"` with an `update_failed` alert naming the update and the
+  reason; `spacedatanetwork status` shows `data_health=degraded` and the alert
+  counts. When the helper never took over, or stopped the node and failed
+  before the swap, the node keeps (or goes back to) the build it ran and
+  retries the same update after `update.min_interval_seconds`, doubling up to
+  24 hours.
+- The node's log has `Update signal accepted: ...` for a signal it acted on,
+  and the reason for anything it refused or could not install.
+- The deploy ledger, `deploy-ledger.jsonl` at the update root, has one line
+  per step (`apply`, `restart`, `health-passed`, `health-failed`,
+  `health-reverted`, `rollback`).
+- In a home bundle, `updates/trial.json` exists while a build is installed and
+  not yet proven: its `starts` counts trial starts, `interruptions` the
+  signal stops during the trial, and `fail_reason` says why a trial gave up. It disappears when the trial passes or is rolled back.
+
+### Where updates go
+
+The update root is the install folder when the node's account can write it.
+When it cannot (a bundle under `/opt` owned by root, run by a system service as
+an ordinary account), updates go to `~/.spacedatanetwork/bundle/<key>` under
+the home folder of the account's passwd entry (one folder per install), and
+the install folder and the service unit are never changed. With no usable
+home folder (none in the passwd entry, a missing one, or one the account
+cannot enter, as under the shipped systemd unit's `ProtectHome=true`) they go
+to `<storage.path>/update-bundle/<key>`, and the log says so: a service
+account under the shipped unit updates itself into its storage folder. A home
+folder that exists and another account can change is refused, never replaced
+by the storage folder. No root and no
+service account are needed, and updates by signal and by feed check work under
+a system service. Every daemon start through the installed path verifies the
+build there in full against the installed build's update roots; other commands
+reuse that verification while no file of the build has changed. A build that
+does not verify, or one another account can change (a folder from the bundle
+up to the home folder not owned by the account or writable by its group or
+others; a folder or symlink on the resolved path from `/` owned by another
+account, or a folder others can write without the sticky bit; a folder or
+file inside the build writable by its group or others), is refused, with a
+line on stderr:
+`update: the build under <folder> is refused: <why>; running the installed build`.
+A new build runs as a trial first, with a deadline of
+`update.health_timeout_seconds` from its start (default 600 s); one that is not
+ready by then, or crashes, is rolled back and kept aside, and the stderr line
+reads `update: update <id> failed its trial (<why>); rolled back to <version> and quarantined`.
+A trial process stuck so badly that it cannot stop itself keeps running until
+it is stopped; the next daemon start rolls it back (a command typed after the
+deadline rolls it back only when no daemon runs, and otherwise runs the
+installed build with
+`update: update <id> did not pass its trial, and the daemon running it is still alive: ...`).
+A stop by signal during a trial (a service restart, a reboot) runs the trial
+again at the next start with a new deadline, up to three times; the fourth
+such stop fails it. `... could NOT be rolled back ...` means the store-format guard refused
+the rollback: the failed build keeps running, `update_failed` is raised, and an
+operator decides. Root never runs a home build, and a second daemon from the
+same install and account is refused. Another build installed in the install
+folder by an administrator wins over the home one. To return to the installed
+build, stop the node and remove `~/.spacedatanetwork/bundle/<key>` (the folder
+`update install` prints as `update_root=` and the log names), or run `spacedatanetwork update rollback
+--slot <installed version> --reason "<why>"` while the installed build is still
+one of the five slots. Windows needs a writable install folder. A read-only
+install of a release older than the one with home updates needs one manual
+upgrade.
+
+### Return to an earlier build by hand
+
+```bash
+spacedatanetwork stop        # or stop the service
+spacedatanetwork update rollback --reason "<why>"            # the previous build
+spacedatanetwork update rollback --slot <update id> --reason "<why>"
+# restored_update=...  version=...  next=restart the SDN daemon to run the restored version
+spacedatanetwork start
+```
+
+### Never
+
+- Never edit, copy over or delete files of an installed bundle or of a home
+  bundle to change a build: a changed home build is refused (a build on trial
+  is rolled back), and a changed installed bundle makes the node set its home
+  builds aside. Never edit `updates/trial.json`, `updates/verdict.json` or
+  `updates/state.json`.
+- Never turn verification off or point `SDN_UPDATE_TRUST_ROOTS` at a key you
+  hold for a node you do not administer, and never add a root beside the ones
+  a release shipped.
+- Never install a build onto nodes that exchange publications unless they all
+  run 1.1.6 or later: older nodes refuse publications of newer ones.
+- Update 1.1.0 or earlier by hand (stop, install the new release in place,
+  keeping `keys/` and the config, start): their updater reverts the updates it
+  drives. Desktop, `.deb`/`.rpm`, VM and container installs do not update
+  themselves: install the new release.
+
+### Checks after an update
+
+1. `GET /api/v1/ready` answers 200.
+2. `GET /api/v1/id` reports the new `bundle_version`.
+3. `GET /api/v1/health` reports `"status":"ok"` and no `update_failed` alert.
+4. `GET /api/v1/catalog`: every schema's `record_count` is at least what it
+   was before the update.
+
+### Publishing a release to a fleet
+
+Two steps, in this order: publish the signed feed (the release pipeline
+builds it), then announce the release from the publishing node with the
+signals the pipeline signed:
+
+```bash
+SDN_UPDATE_FEED_DIR=<published feed folder> \
+  spacedatanetwork update signal --from-feed --channel release --version <X>
+```
+
+Publishing the feed without the signal is not a push: nodes find the release
+only at their next feed check (1.1.7 and later), and nodes from 1.1.4 to 1.1.6
+not at all.

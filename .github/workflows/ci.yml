@@ -364,8 +364,11 @@ jobs:
   # generates; the feed and the admin API are on loopback, and the daemons dial
   # no peer (the test refuses, before any daemon starts, a config that would
   # fall back to the built-in bootstrap peers, and checks every daemon's log).
+  # Two groups (scripts/ci-local.sh update_group_args): run 44245748601 ran
+  # every subtest in one binary and hit go test's 50m panic; the
+  # home-read-only-install subtests take about 15m of runner time on their own.
   update-channel-e2e:
-    name: Update channel E2E (real daemon)
+    name: Update channel E2E (real daemon / ${{ matrix.group }})
     runs-on: ubuntu-latest
     # The daemons run in a network namespace of their own (loopback only) as
     # an ordinary user, which needs these two capabilities in the container.
@@ -377,6 +380,12 @@ jobs:
         shell: bash
     needs: wasmedge-runtime
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [channel, home]
+    env:
+      SDN_CI_UPDATE_GROUP: ${{ matrix.group }}
     steps:
       - name: Prepare the release container
         run: |
@@ -417,7 +426,7 @@ jobs:
           export SDN_E2E_INSTALLED_BUNDLE="$GITHUB_WORKSPACE/.ci-artifacts/installed-update-receiver/spacedatanetwork-1.1.5-linux-amd64.tar.gz"
           ./scripts/ci-local.sh update-channel
       - name: Report installed receiver proof
-        if: always()
+        if: always() && matrix.group == 'channel'
         env:
           ARCHIVE_OUTCOME: ${{ steps.installed_receiver_archive.outcome }}
           TEST_OUTCOME: ${{ steps.update_daemons.outcome }}
@@ -431,7 +440,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: update-channel-logs
+          name: update-channel-logs-${{ matrix.group }}
           path: .ci-artifacts/update-channel-logs
 
   # Three groups by test name (scripts/ci-local.sh publication_group_tests):

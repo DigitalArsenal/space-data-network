@@ -50,21 +50,12 @@ type Paths struct {
 	// (updates/apply-phase.json). It lives under Updates, which the bundle
 	// swap never touches, so it survives a crash mid-apply.
 	Phase string
-}
-
-func PathsFor(bundleRoot string) Paths {
-	updates := filepath.Join(bundleRoot, updatesDirName)
-	return Paths{
-		Root:     bundleRoot,
-		Updates:  updates,
-		Staged:   filepath.Join(updates, stagedDirName),
-		Rollback: filepath.Join(updates, rollbackDirName),
-		Failed:   filepath.Join(updates, failedDirName),
-		Incoming: filepath.Join(updates, incomingDirName),
-		State:    filepath.Join(updates, stateFileName),
-		Trust:    filepath.Join(bundleRoot, trustDirName, trustRootsName),
-		Phase:    filepath.Join(updates, phaseFileName),
-	}
+	// Installed is the installed bundle when Root is its home bundle
+	// (home.go); empty when the update root is the installed bundle itself.
+	Installed string
+	// HomeErr says why this account has no folder to update into: the
+	// installed bundle is not writable and no home bundle is available.
+	HomeErr error
 }
 
 // State records the last applied update so sequence policy and rollback
@@ -104,6 +95,16 @@ type StatePrevious struct {
 }
 
 func LoadState(paths Paths) (*State, error) {
+	if paths.IsHome() {
+		// A home bundle with no state of its own, or one made for another
+		// installed build, stands for the installed build.
+		if _, stale, err := homeCurrent(paths); err != nil || stale != "" {
+			return installedState(paths)
+		}
+		if _, err := os.Stat(paths.State); errors.Is(err, os.ErrNotExist) {
+			return installedState(paths)
+		}
+	}
 	data, err := os.ReadFile(paths.State)
 	if errors.Is(err, os.ErrNotExist) {
 		return &State{Schema: StateSchema}, nil
@@ -235,6 +236,9 @@ func RecoverPendingApply(paths Paths) (recovered bool, err error) {
 // root is refused wherever the roots come from.
 func LoadTrustRoots(paths Paths) (TrustedRoots, error) {
 	override := strings.TrimSpace(os.Getenv(TrustRootsEnv))
+	if override == "" && paths.IsHome() {
+		return homeTrustRoots(paths)
+	}
 	path := override
 	if path == "" {
 		if strings.TrimSpace(paths.Root) == "" {
@@ -387,6 +391,9 @@ func Stage(paths Paths, manifestBytes, wasmBytes []byte, opts VerifyOptions, key
 	if err != nil {
 		return nil, err
 	}
+	if paths.IsHome() && manifest.IsModuleUpdate() {
+		return nil, fmt.Errorf("update %s replaces single modules, which a home bundle does not take: install a full release", manifest.UpdateID)
+	}
 	bundleBytes, err := OpenPayload(manifest, wasmBytes, key)
 	if err != nil {
 		return nil, err
@@ -397,6 +404,16 @@ func Stage(paths Paths, manifestBytes, wasmBytes []byte, opts VerifyOptions, key
 	}
 	bundleName, err := bundleFileName(manifest.Bundle.Format)
 	if err != nil {
+		return nil, err
+	}
+	if paths.IsHome() {
+		lock, err := LockHomeInstall(paths)
+		if err != nil {
+			return nil, err
+		}
+		defer lock.Release()
+	}
+	if err := EnsureHome(paths); err != nil {
 		return nil, err
 	}
 	dir := filepath.Join(paths.Staged, manifest.UpdateID)

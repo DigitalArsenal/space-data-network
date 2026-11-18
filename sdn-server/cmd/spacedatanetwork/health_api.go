@@ -64,7 +64,7 @@ const readyProbeTimeout = 2 * time.Second
 // HTTP status of /health is unchanged by degradation: a failing CelesTrak lane
 // is not a reason for a load balancer to pull the node out of rotation, it is
 // a reason for an operator to look.
-func mountHealthRoutes(mux *http.ServeMux, deps healthDeps) {
+func mountHealthRoutes(mux *http.ServeMux, deps healthDeps) func(context.Context) string {
 	probe := &boundedReadinessProbe{}
 	health := api.HealthHandler(deps.alerts)
 	ready := func(w http.ResponseWriter, r *http.Request) {
@@ -97,6 +97,7 @@ func mountHealthRoutes(mux *http.ServeMux, deps healthDeps) {
 	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
 		gateAdminOnlyHandler(w, r, promHandler, deps.authHandler, deps.requireAuth)
 	})
+	return func(ctx context.Context) string { return probe.check(ctx, deps) }
 }
 
 // One outstanding probe is shared by all requests. A stuck store cannot create
@@ -150,6 +151,14 @@ func (p *boundedReadinessProbe) check(ctx context.Context, deps healthDeps) stri
 // sets it (health_not_ready_e2e.go), so the update lane's real-daemon E2E can
 // install a build that runs and is never ready, and watch the helper revert it.
 var readinessOverride string
+
+// hangBeforeStoreOpen, when set, stops the daemon for good before it opens its
+// store. Only the sdn_e2e_hang_before_store test build sets it.
+var hangBeforeStoreOpen bool
+
+// crashAtStart, when set, makes the daemon exit with an error before it opens
+// its store. Only the sdn_e2e_crash_at_start test build sets it.
+var crashAtStart bool
 
 // notReadyReason names the first unavailable component. The shared caller
 // bounds every callback, including a blocked peer-count read.

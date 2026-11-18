@@ -158,10 +158,16 @@ func trustRootsPath(paths Paths) string {
 	return paths.Trust
 }
 
-// installTrustRoots replaces the node's update roots atomically.
-func installTrustRoots(paths Paths, roots TrustedRoots) error {
+// installTrustRoots replaces the node's update roots atomically with those of
+// m. A home bundle keeps m itself instead (recordRotation): its roots are
+// computed from the installed roots through the signed rotations.
+func installTrustRoots(paths Paths, m *Manifest) error {
+	roots := m.TrustRoots
 	if err := refuseDeniedRoots(roots); err != nil {
 		return err
+	}
+	if paths.IsHome() {
+		return recordRotation(paths, m)
 	}
 	data, err := json.MarshalIndent(roots, "", "  ")
 	if err != nil {
