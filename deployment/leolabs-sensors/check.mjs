@@ -80,8 +80,9 @@ for (const network of NETWORKS) {
     assert.equal(rec.CTR_ID, row.country);
     assert.equal(rec.LIFECYCLE_STATUS, siteLifecycleStatus[row.status], `${row.slug}: the lifecycle status is the row's (retired sensors are marked retired)`);
     if (["DECOMMISSIONED", "PERMANENT_SHUTDOWN"].includes(row.status)) assert(/RETIRED/.test(row.note), `${row.slug}: a retired site says RETIRED`);
-    assert(rec.DESCRIPTION.includes(row.cite.url), "the description cites the row's own source");
+    assert(rec.SOURCE.includes(row.cite.text.slice(0, 40)), "the source line names the row's own source");
     assert(rec.DESCRIPTION.includes(network.credit), "the description carries the credit");
+    assert(rec.DESCRIPTION.length < 700, `${row.slug}: the description is short enough to leave room for the sensors under it`);
     assert.equal(rec.PROVENANCE.PROVIDER_ID, providerOf(network));
     assert.equal(rec.PROVENANCE.LICENSE_CLASS, pvnLicenseClass[network.terms.class]);
     assert.equal(rec.PROVENANCE.ORIGINATOR, network.operator);

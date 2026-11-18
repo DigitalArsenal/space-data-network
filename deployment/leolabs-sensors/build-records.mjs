@@ -15,8 +15,9 @@ import { NETWORKS as OTHER_NETWORKS } from "./networks.mjs";
 
 export const NETWORKS = [LEOLABS_NETWORK, ...OTHER_NETWORKS];
 export const providerOf = (network) => `sdn-ssa-${network.slug}`;
-export const SITE_SOURCE = "sites";
-export const SENSOR_SOURCE = "sensors";
+// The source name carries the network, so the console's SOURCES list reads "ussf-ssn-sites · 12" and not nine lanes called "sites".
+export const SITE_SOURCE = (network) => `${network.slug}-sites`;
+export const SENSOR_SOURCE = (network) => `${network.slug}-sensors`;
 
 const PIN = process.env.SDS_PIN;
 if (!PIN) throw new Error("Set SDS_PIN to the spacedatastandards.org checkout at the pin (it holds lib/js and node_modules/flatbuffers).");
@@ -122,9 +123,8 @@ export function sitRecords(network) {
     record.LIFECYCLE_STATUS = siteStatus(site.status);
     if (site.statusDate) record.LIFECYCLE_STATUS_DATE = site.statusDate;
     record.SOURCE = site.cite.text;
-    record.DESCRIPTION =
-      `${site.name}: ${site.where}. ${sensors.length === 0 ? "No sensor record here." : sensors.length === 1 ? "One sensor here." : `${sensors.length} sensors here.`} ` +
-      `Position (${site.precision}) from ${site.cite.text} (${site.cite.url}). Credit: ${network.credit}. ${site.note ?? ""}`.trim();
+    // Short on purpose: the console shows this text above the site's sensors, and the source line (SOURCE) and the record's citations carry the rest.
+    record.DESCRIPTION = `${site.where}. ${site.note ?? ""} Position: ${site.precision}. Credit: ${network.credit}.`.replace(/\s+/g, " ").trim();
     record.DESCRIPTION_LANGUAGE = "en";
     record.POSITION_CITATION = citation(network, site.cite, rid);
     record.PARTIES = (site.parties ?? []).map((party) =>
@@ -217,8 +217,8 @@ export function lanesOf(network) {
   const lanes = [];
   const sites = sitRecords(network);
   const sensors = snrRecords(network);
-  if (sites.length) lanes.push({ schema: "SIT.fbs", providerId: providerOf(network), sourceName: SITE_SOURCE, file: "sit.sdn", records: sites, count: sites.length, sourceUrl: network.sites[0].cite.url });
-  if (sensors.length) lanes.push({ schema: "SNR.fbs", providerId: providerOf(network), sourceName: SENSOR_SOURCE, file: "snr.sdn", records: sensors, count: sensors.length, sourceUrl: (network.sensors[0] ?? network.inorbit[0]).cite.url });
+  if (sites.length) lanes.push({ schema: "SIT.fbs", providerId: providerOf(network), sourceName: SITE_SOURCE(network), file: "sit.sdn", records: sites, count: sites.length, sourceUrl: network.sites[0].cite.url });
+  if (sensors.length) lanes.push({ schema: "SNR.fbs", providerId: providerOf(network), sourceName: SENSOR_SOURCE(network), file: "snr.sdn", records: sensors, count: sensors.length, sourceUrl: (network.sensors[0] ?? network.inorbit[0]).cite.url });
   return lanes;
 }
 
