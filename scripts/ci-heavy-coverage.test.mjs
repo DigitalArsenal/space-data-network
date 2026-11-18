@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 const definitions = readFileSync(new URL('./ci-local.sh', import.meta.url), 'utf8').split('case "$MODE" in')[0];
-function run(mode) {
+function run(mode, group) {
   const dir = mkdtempSync(join(tmpdir(), 'ci-heavy-coverage-'));
   try {
     mkdirSync(join(dir, 'scripts'));
@@ -38,12 +38,24 @@ go_test_with_timings() {
 }
 run_go_heavy
 `;
-    return spawnSync('bash', ['-c', script, 'coverage-test', dir], { env: { ...process.env, TEST_MODE: mode }, encoding: 'utf8' });
+    const env = { ...process.env, TEST_MODE: mode };
+    delete env.SDN_CI_STORAGE_GROUP;
+    if (group) env.SDN_CI_STORAGE_GROUP = group;
+    return spawnSync('bash', ['-c', script, 'coverage-test', dir], { env, encoding: 'utf8' });
   } finally { rmSync(dir, { recursive: true, force: true }); }
 }
 test('accepts exactly one execution per listed test and ignores subtests', () => {
   const result = run('valid');
   assert.equal(result.status, 0, result.stderr + result.stdout);
+});
+test('one selected group runs only its own tests, and an unknown group is refused', () => {
+  for (const group of ['long', 'rest']) {
+    const result = run('valid', group);
+    assert.equal(result.status, 0, result.stderr + result.stdout);
+    assert.match(result.stdout, /Group rest: 4 tests/);
+  }
+  assert.notEqual(run('valid', 'missing-group').status, 0);
+  assert.notEqual(run('missing', 'rest').status, 0);
 });
 for (const mode of ['missing', 'duplicate', 'unsupported', 'unknown-long', 'missing-long', 'incomplete-long', 'duplicate-long', 'failed-long']) {
   test(`rejects ${mode} tests`, () => {

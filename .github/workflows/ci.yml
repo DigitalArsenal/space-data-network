@@ -214,21 +214,29 @@ jobs:
   # lane because one package should not starve fast feedback. Separate job so
   # the two run in parallel instead of end to end.
   #
-  # Budget: 296.6s warm locally, ~9.4 minutes projected on a runner at 1.9x.
-  # Was 110 minutes, against a lane that could not finish because it ran
-  # interpreted.
+  # One job per test group (HEAVY_GO_GROUPS in scripts/ci-local.sh; `rest`
+  # holds every test no group pattern matches). Runs 44379302576 and
+  # 44379081909 ran the package as four groups on one runner and reached go
+  # test's 25m panic; on their figures each group here is under 10 minutes of
+  # test time.
   go-heavy:
-    name: Go tests (record store)
+    name: Go tests (record store / ${{ matrix.group }})
     runs-on: ubuntu-latest
     container: ubuntu:20.04
     defaults:
       run:
         shell: bash
     needs: wasmedge-runtime
-    # Above the lane's own 25m go-test budget, so an overrun surfaces as go
-    # test's timeout panic (which names the running test) instead of the job
-    # being killed with no diagnostic.
+    # Above the lane's own go-test budgets (60m for long, 25m for the
+    # others), so an overrun surfaces as go test's timeout panic (which names
+    # the running test) instead of the job being killed with no diagnostic.
     timeout-minutes: 100
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [long, format4a, format4b, format4c, format4d, format4e, format4f, format5, format2, publication, rest]
+    env:
+      SDN_CI_STORAGE_GROUP: ${{ matrix.group }}
     steps:
       - name: Prepare the release container
         run: |
