@@ -159,4 +159,3 @@ func TestSyncWithoutASyncPrimitiveReportsErrorInPlainWords(t *testing.T) {
 		t.Fatalf("pin refusal kind=%v code=%q message=%q", refusal.KIND(), refusal.ERROR_CODE(), refusal.MESSAGE())
 	}
 }
-

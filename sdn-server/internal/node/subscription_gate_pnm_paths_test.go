@@ -140,4 +140,3 @@ func TestTrustedPNMReplayImportsAListedLane(t *testing.T) {
 		t.Fatalf("records = %d, want 1", n)
 	}
 }
-

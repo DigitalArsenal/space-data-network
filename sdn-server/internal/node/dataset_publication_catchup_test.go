@@ -552,4 +552,3 @@ func buildCatchupTestPNM(t *testing.T, cid, fileID string) []byte {
 	PNM.FinishSizePrefixedPNMBuffer(builder, pnm)
 	return append([]byte(nil), builder.FinishedBytes()...)
 }
-

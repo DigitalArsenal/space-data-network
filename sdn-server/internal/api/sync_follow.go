@@ -8,11 +8,11 @@ import (
 
 // LaneFollow is one lane this node follows from a producer, as received.
 type LaneFollow struct {
-	Schema         string    `json:"schema"`
-	ProviderID     string    `json:"provider_id"`
-	SourceName     string    `json:"source_name"`
-	Producer       string    `json:"producer"`
-	Since          time.Time `json:"subscribed_since,omitempty"`
+	Schema     string    `json:"schema"`
+	ProviderID string    `json:"provider_id"`
+	SourceName string    `json:"source_name"`
+	Producer   string    `json:"producer"`
+	Since      time.Time `json:"subscribed_since,omitempty"`
 	// Start is "current" while the subscription waits for the producer's
 	// statement to start at its current batch.
 	Start                 string    `json:"pending_start,omitempty"`
