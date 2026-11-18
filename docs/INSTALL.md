@@ -3,7 +3,7 @@
 This is the operator path for a fresh node: what to install, which ports to
 open, what to change in the generated config before the node is reachable,
 how to keep the keys, how to mirror a publisher, and how to publish and
-archive. It describes v1.1.8 (2026-11-17).
+archive. It describes v1.1.9 (2026-11-18).
 
 ## 1. Get a build
 
@@ -15,7 +15,7 @@ irm https://spacedatanetwork.org/install.ps1 | iex
 ```
 
 The installers resolve the newest node release on GitHub (today
-v1.1.8: macOS Apple Silicon and Intel, Linux x86-64 and arm64, and
+v1.1.9: macOS Apple Silicon and Intel, Linux x86-64 and arm64, and
 Windows x86-64), verify the checksum,
 unpack the self-contained bundle under `~/.spacedatanetwork/bundles`, link
 `spacedatanetwork` and `sdn` under `~/.spacedatanetwork/bin`, and initialize
@@ -99,7 +99,7 @@ first output appears.
 ```sh
 docker run -d --name sdn --hostname sdn --restart unless-stopped \
   -v sdn-data:/app/data -p 127.0.0.1:5001:5001 -p 4001:4001 -p 4001:4001/udp \
-  dockerdigitalarsenal/space-data-network:v1.1.8
+  dockerdigitalarsenal/space-data-network:v1.1.9
 ```
 
 The image (`linux/amd64`) carries the node, WasmEdge with a prewarmed AOT
@@ -131,7 +131,7 @@ docker run -d --name sdn --hostname sdn --restart unless-stopped \
   -v /etc/sdn-key-password:/run/secrets/sdn-key-password:ro \
   -e SDN_KEY_PASSWORD_FILE=/run/secrets/sdn-key-password \
   -v sdn-data:/app/data -p 127.0.0.1:5001:5001 -p 4001:4001 -p 4001:4001/udp \
-  dockerdigitalarsenal/space-data-network:v1.1.8
+  dockerdigitalarsenal/space-data-network:v1.1.9
 ```
 
 (`install` creates the file empty, already 0400 and owned by uid 1000; root
@@ -153,7 +153,7 @@ for every node (generated file, mounted secret or machine key):
 `docker exec sdn
 /app/entrypoint.sh show-identity --config /app/config/full-docker.yaml --show-mnemonic`
 prints the recovery phrase. A `docker load` archive of the same image ships
-with each release: `spacedatanetwork-container-1.1.8-linux-amd64.tar.gz`.
+with each release: `spacedatanetwork-container-1.1.9-linux-amd64.tar.gz`.
 For a beta, that name spells the version with DOTS, not the tag's hyphen
 (`X.Y.Z.beta.N`, not `X.Y.Z-beta.N`, which 404s). Native Linux packages use
 the same dotted spelling, for the same reason: a release asset name cannot
