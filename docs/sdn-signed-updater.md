@@ -17,8 +17,11 @@ pointer, fetches and verifies its manifest, and checks their channel, target,
 version, sequence and hashes agree before downloading the carrier. Downloads
 remain HTTPS across redirects and use bounded sizes; a signed carrier size
 tightens the payload limit. Staging verifies the actual carrier and bundle
-hashes again. The copied helper then performs the shutdown, swap, restart and
-health/rollback sequence outside the replaceable bundle and service cgroup.
+hashes again. For an install folder the node's account can write, the copied
+helper then performs the shutdown, swap, restart and health/rollback sequence
+outside the replaceable bundle and service cgroup; for one it cannot write,
+the daemon installs into its account's home and restarts itself through the
+installed path, with no helper (below).
 
 This path is implemented in Go (`sdn-server/internal/update/`,
 `sdn-server/internal/node/update_signal.go`). The `packages/sdn-updater-module`
@@ -33,20 +36,22 @@ launched from a binary outside a portable bundle has no update path.
 
 All of the above works on one folder, the update root (`update.PathsFor`):
 
-- the install folder, when the account running the node can write it;
+- the install folder, when the account running the node can write it: the
+  helper path above, unchanged;
 - otherwise the account's home bundle, `$HOME/.spacedatanetwork/bundle`, or
   `<storage.path>/update-bundle` when `HOME` is unset or cannot be written
   (logged). No root, service account, unit change or write to the install
   folder is needed.
 
-An account that can write the install folder can rewrite the installed
-binary, which is the trust anchor, so a copy under its home would protect
-nothing; that case replaces the bundle in place.
+The helper stays for a writable install folder because the swap there
+replaces the binary at the installed path, which is the code that would judge
+and revert the new build: a build that fails before it can run any check of
+its own would be restarted at that path with no older code left to revert it.
+The helper is a copy of the old binary outside the swapped tree.
 
 A home bundle is a bundle root like the installed one. It holds a payload
 only once an update has been applied; its first rollback slot is empty, and
-an empty slot stands for the installed build (the store-format guard and the
-health gate judge it by the installed folder). `updates/home.json` records the
+an empty slot stands for the installed build. `updates/home.json` records the
 installed folder, its version, the sha256 of its `manifest.json` and its
 sequence. For each build it holds, `updates/proofs/<update id>/` keeps the
 signed update manifest and the bundle archive it signs. A release that
@@ -55,11 +60,44 @@ replaces the update roots is kept as its signed manifest in
 build's roots, advanced through each kept rotation that verifies against the
 roots before it.
 
-At the start of every command (`main`), a process started from an installed
-bundle whose update root is a home bundle holding a payload runs that build
-(`exec`, same process id) only when all of these hold, and otherwise prints
-`update: the build under <folder> is refused: <why>; running the installed build`
-and continues as the installed build:
+**No helper in a home bundle** (`sdn-server/internal/update/trial.go`). A
+daemon run by a system unit as an ordinary account cannot create a transient
+unit, and a helper started as its child is stopped with the unit's processes.
+So:
+
+1. **Install while serving.** The verified staged update is extracted and
+   renamed into the home bundle (the installed bundle is never touched; a
+   running home build keeps its open files after they move into its rollback
+   slot), `updates/trial.json` marks it as a trial, and its files are verified
+   against the signed archive. One that does not verify is rolled back at once.
+2. **Restart through the installed path.** The daemon stops its services as
+   for any shutdown and replaces its process (`exec`, the same pid) with the
+   installed launcher and its own arguments. The service manager sees no exit,
+   so this is the same under systemd (`Restart=always`, `Restart=on-failure`
+   or none), launchd (`KeepAlive`) and a daemon started by hand.
+3. **Trial start.** The installed build verifies the home build in full,
+   counts the trial start in `trial.json` and runs it with `SDN_UPDATE_TRIAL`
+   set. The trial daemon reads its own readiness (the `/api/v1/ready` check)
+   until `update.health_timeout_seconds`: ready records `health-passed` and
+   ends the trial; otherwise it writes the reason into `trial.json`, stops, and
+   replaces itself with the installed launcher again.
+4. **Revert.** A start of the installed path that finds a trial started and
+   not passed (after step 3, or after a crash the service manager restarted)
+   records `health-failed`, rolls back to the previous slot (the build moves to
+   `updates/failed/<update id>`, the quarantine; the ledger records
+   `rollback`), records `health-reverted` and runs the previous build. A
+   pending trial whose files fail verification is reverted the same way. With
+   no restart policy, a trial build that crashes leaves the node stopped, and
+   the revert happens at its next start.
+
+The ledger, the slots and the quarantine are those of the helper path, so
+`update slots`, `update rollback`, the `update_failed` alert and the refusal
+of a quarantined update read them unchanged. The store-format guard runs when
+the build is installed and again for the revert; a trial build that cannot
+open the store does not answer ready and is reverted.
+
+**The start check.** At every `daemon` start, and when a build is installed,
+the home build is verified in full:
 
 1. the installed folder and its `manifest.json` are the ones recorded (an
    administrator who installed another build wins; the next update starts the
@@ -71,17 +109,27 @@ and continues as the installed build:
 4. the payload on disk is exactly that archive's bundle: the same files (none
    added, none missing), bytes, executable bits and symlink targets.
 
-The home build is started with `WASMEDGE_DIR` and library-path entries that
-point into the installed folder removed, so its launcher uses its own runtime
-files. Its restart argv names the installed launcher, so the update helper and
-any supervisor restart it through the same check. Limits: below the installed
-build nothing can run, but between signed builds newer than the installed one
-an account that can write its home can choose any (as `update rollback`
-does); a home bundle takes full-bundle updates only, not module-targeted ones;
-Windows has no `exec`, so it needs a writable install folder; a daemon that
-runs under a system service unit as an account other than root cannot start
-the helper outside the unit (`systemd-run` refuses it), so such a node is
-updated with `spacedatanetwork update install` from a shell.
+The result is recorded in `updates/verdict.json` with the size, mode,
+modification and change times, inode and device of every file under the home
+bundle outside `updates/`, of `state.json`, `home.json` and the proof, and of
+the installed `manifest.json` and update roots. Every other command runs the
+home build when all of these are unchanged (the same set of files, each with
+the same identity), and verifies in full otherwise. This guards against a
+damaged or replaced file; it is not a defense against the account that owns
+the home folder, which can run any program. On a v1.1.8 darwin-arm64 bundle
+(337 files) a full verification takes about 1.45 s and the recorded check
+about 3 ms. With `SDN_UPDATE_TRUST_ROOTS` set, every start verifies in full.
+
+A build that fails the check is refused with
+`update: the build under <folder> is refused: <why>; running the installed build`,
+and the installed build runs (at a daemon start, a build still on trial is
+rolled back instead). The home build is started with `WASMEDGE_DIR` and
+library-path entries that point into the installed folder removed, so its
+launcher uses its own runtime files. Limits: below the installed build nothing
+can run, but between signed builds newer than the installed one an account
+that can write its home can choose any (as `update rollback` does); a home
+bundle takes full-bundle updates only, not module-targeted ones; Windows has no
+`exec`, so it needs a writable install folder.
 
 ## Payload Envelope
 

@@ -217,19 +217,28 @@ spacedatanetwork update rollback --reason "<why>"   # with the daemon stopped
   the feed every six hours (`update.check_interval_seconds`), so a node that
   was off when a release was announced still takes it. `update.enabled: false`
   in a node's config turns both off for that node.
-- **Health gate and rollback.** After installing, a helper process stops the
-  daemon, swaps the build, starts it and waits for `/api/v1/ready` and for
-  `/api/v1/id` to report the new build, for `update.health_timeout_seconds`
-  (default 600). A build that does not pass is replaced by the previous one
-  and kept aside, and is not installed again. The last five builds are kept.
+- **Health gate and rollback.** The new build must answer `/api/v1/ready` and
+  report itself on `/api/v1/id` within `update.health_timeout_seconds`
+  (default 600). A build that does not is replaced by the previous one and kept
+  aside, and is not installed again. The last five builds are kept.
 - **No root and no service account.** When the account running the node
-  cannot write the install folder (a bundle under `/opt` owned by root, say),
-  updates go to that account's home, `~/.spacedatanetwork/bundle` (or
-  `<storage.path>/update-bundle` when `HOME` is unset or not writable), and the
-  install folder is never changed. Every `spacedatanetwork` command and every
-  restart of the installed path checks the build there against the installed
-  build's update roots and runs it only if it verifies; otherwise it prints why
-  and runs the installed build. Windows needs a writable install folder.
+  cannot write the install folder (a bundle under `/opt` owned by root, run by
+  a system service as an ordinary account, say), updates go to that account's
+  home, `~/.spacedatanetwork/bundle` (or `<storage.path>/update-bundle` when
+  `HOME` is unset or not writable), and the install folder and the service unit
+  are never changed. The daemon installs the new build there while it serves,
+  stops its services and starts again through the installed path in the same
+  process, with no helper and no restart by the service manager. The installed
+  build checks the new build against its own update roots and starts it as a
+  trial; a trial that does not answer ready in time stops, and the installed
+  build rolls it back and runs the previous one. Every daemon start verifies
+  the build in full (signature, archive, every file); other commands reuse that
+  result while no file of the build has changed. A build that does not verify
+  is refused with the reason and the installed build runs. Windows needs a
+  writable install folder.
+- **Writable install folder.** A helper process stops the daemon, replaces
+  the bundle in place, starts it, applies the same health gate and reverts an
+  unhealthy build.
 - **By version.** 1.1.4 to 1.1.6 learn of a release only from a signal; 1.1.7
   and later also check the feed. Nodes older than 1.1.6 cannot exchange
   publications with newer ones, so update them together. Update 1.1.0 or

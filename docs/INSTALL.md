@@ -452,33 +452,55 @@ node's config to turn both off for that node. Nodes from 1.1.4 to 1.1.6 learn
 of a release only from a signal; 1.1.7 and later also check the feed.
 
 **No root and no service account.** The account that runs the node needs no
-write access to the install folder. When it cannot write it (a bundle unpacked
-under `/opt` by root, for example), updates are fetched, verified and
+write access to the install folder, and no rights beyond its own data and
+home: a bundle unpacked under `/opt` by root and run by a system service as an
+ordinary account updates itself. Updates are then fetched, verified and
 installed under that account's home, in `~/.spacedatanetwork/bundle`, and the
 install folder, the service unit and the installed files are never changed.
 When `HOME` is unset or cannot be written, the folder is
-`<storage.path>/update-bundle`, and the node says so in its log. From then on:
+`<storage.path>/update-bundle`, and the node says so in its log. An update
+then goes like this, by signal, by feed check or by `update install`:
 
-- every `spacedatanetwork` command, and every start of the installed path (by
-  hand or by a systemd or launchd service whose command names it), checks the
-  build in that folder and runs it only when it verifies against the INSTALLED
-  build's update roots: its signed manifest, its signed archive, and every one
-  of its files. A build that does not verify (changed files, a missing or
-  altered signature, older than the installed build) is refused with
+1. The daemon installs the new build into that folder while it keeps serving,
+   then stops its services as it does for any shutdown and starts again through
+   the installed path in the same process. No helper runs, and the service
+   manager sees no stop: this is the same with systemd (`Restart=always`,
+   `Restart=on-failure` or none), launchd and a node started by hand.
+2. The installed build verifies the new build against the INSTALLED build's
+   update roots (its signed manifest, its signed archive, every one of its
+   files) and starts it as a trial: it must answer ready within
+   `update.health_timeout_seconds`. The log says `runs as a trial`, then
+   `passed its trial`.
+3. A trial that does not answer ready in time logs `failed its trial`, stops,
+   and starts the installed path again, which rolls the build back to the
+   previous one, keeps it aside under `updates/failed/` and runs the previous
+   build. A trial build that crashes is rolled back the same way at the next
+   start: right away under a service that restarts it (`Restart=always` or
+   `Restart=on-failure`, launchd `KeepAlive`), otherwise when the node is next
+   started.
+
+From then on:
+
+- every daemon start, by hand or by a systemd or launchd service whose command
+  names the installed path, verifies the build in that folder in full and runs
+  it only when it verifies. Other `spacedatanetwork` commands reuse the result
+  of the last full verification while no file of the build has changed (same
+  size, times and inode), and verify in full otherwise. A build that does not
+  verify (changed files, a missing or altered signature, older than the
+  installed build) is refused with
   `update: the build under <folder> is refused: <why>; running the installed build`,
-  and the installed build runs;
+  and the installed build runs; at a daemon start, a build still on trial is
+  rolled back instead;
 - another build installed in the install folder by an administrator wins: the
   home builds are set aside and the next update starts from the new installed
   build;
-- the health gate, the rollback slots and `update rollback` work on that
-  folder. Its oldest slot is the installed build: `update rollback --slot
-  <installed version>`, or removing `~/.spacedatanetwork/bundle`, returns to it.
+- the rollback slots and `update rollback` work on that folder. Its oldest slot
+  is the installed build: `update rollback --slot <installed version>`, or
+  removing `~/.spacedatanetwork/bundle`, returns to it.
 
-When the account can write the install folder, updates replace the bundle in
-place. A node that runs under a system service unit as an account other than
-root installs an update when `spacedatanetwork update install` is run as that
-account from a shell; its daemon cannot start the update helper outside the
-unit, and its log says so. Windows needs a writable install folder.
+When the account can write the install folder, a helper process stops the
+daemon, replaces the bundle in place, restarts it and reverts a build that
+fails the health gate. Windows needs a writable install folder.
 
 **The update root is a demo key.** Every bundle trusts exactly one root, key
 id `12cb25de07c0`:
@@ -538,8 +560,9 @@ together.
 
 How an install takes an update:
 
-- `spacedatanetwork update install` fetches, verifies and stages, then hands
-  the swap to a helper when a daemon is running. The helper stops the daemon,
+- `spacedatanetwork update install` fetches, verifies and stages. Into a
+  home bundle it installs as described above. Otherwise it hands the swap to a
+  helper when a daemon is running. The helper stops the daemon,
   swaps, restarts it and waits for `GET /api/v1/ready` to answer 2xx, for
   `update.health_timeout_seconds` (default 600); otherwise it reverts to the
   previous build and quarantines the update under `updates/failed/`.

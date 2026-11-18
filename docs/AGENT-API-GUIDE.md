@@ -612,6 +612,27 @@ feed.
 
 ### Install an update
 
+Where the update goes decides the output (see "Where updates go" below).
+
+Into the account's home (the install folder is not writable by the node's
+account):
+
+```bash
+spacedatanetwork update install
+# installed_update=<update id>  version=<new>  sequence=<n>  update_root=<home bundle>
+# daemon_restart=requested pid=<pid>      (a daemon is running: it restarts itself for the update)
+# daemon_health=healthy
+# daemon_identity=verified bundle_version=<new> build_sha256=<sha256>
+```
+
+With no daemon running it ends with
+`next=start the node: it runs this build as a trial and keeps it once it answers ready`.
+No helper runs: the daemon restarts in its own process (its pid does not
+change), and the node's log shows `runs as a trial` and then
+`passed its trial`.
+
+In place (the install folder is writable):
+
 ```bash
 spacedatanetwork update install
 # staged_update=<update id>
@@ -629,7 +650,7 @@ A refusal before anything is installed is an error naming the reason
 (`untrusted update signing key`, `update sequence rejected`, a store-format
 refusal, ...): the node keeps running what it ran.
 
-A failed health gate prints `daemon_health=unhealthy error="..."`, then
+A failed health gate (either way) prints `daemon_health=unhealthy ...`, then
 `rollback=applied restored_version=<previous>` and ends with the error
 `daemon health failed after update; rolled back to <previous>`. The node then
 runs the previous build, and the failed update is kept aside under the update
@@ -649,22 +670,31 @@ root's `updates/failed/<update id>/` and never installed again by itself.
 - The deploy ledger, `deploy-ledger.jsonl` at the update root, has one line
   per step (`apply`, `restart`, `health-passed`, `health-failed`,
   `health-reverted`, `rollback`).
+- In a home bundle, `updates/trial.json` exists while a build is installed and
+  not yet proven: its `starts` counts trial starts and `fail_reason` says why a
+  trial gave up. It disappears when the trial passes or is rolled back.
 
 ### Where updates go
 
 The update root is the install folder when the node's account can write it.
-When it cannot (a bundle under `/opt` owned by root), updates go to the
-account's home, `~/.spacedatanetwork/bundle` (or `<storage.path>/update-bundle`
-when `HOME` is unset or not writable), and the install folder is never
-changed. No root and no service account are needed. Every `spacedatanetwork`
-command and every restart of the installed path checks the build there against
-the installed build's update roots and runs it only when it verifies. A build
-that does not verify is refused, with a line on stderr:
+When it cannot (a bundle under `/opt` owned by root, run by a system service as
+an ordinary account), updates go to the account's home,
+`~/.spacedatanetwork/bundle` (or `<storage.path>/update-bundle` when `HOME` is
+unset or not writable), and the install folder and the service unit are never
+changed. No root and no service account are needed, and updates by signal and
+by feed check work under a system service. Every daemon start through the
+installed path verifies the build there in full against the installed build's
+update roots; other commands reuse that verification while no file of the build
+has changed. A build that does not verify is refused, with a line on stderr:
 `update: the build under <folder> is refused: <why>; running the installed build`.
+A new build runs as a trial first; one that does not answer ready within
+`update.health_timeout_seconds` (or crashes) is rolled back and kept aside, and
+the stderr line reads `update: update <id> failed its trial (<why>); rolled back to <version> and quarantined`.
 Another build installed in the install folder by an administrator wins over
 the home one. To return to the installed build, stop the node and run
 `spacedatanetwork update rollback --slot <installed version> --reason "<why>"`
-(the oldest slot), or remove `~/.spacedatanetwork/bundle`. Windows needs a writable install folder.
+(the oldest slot), or remove `~/.spacedatanetwork/bundle`. Windows needs a
+writable install folder.
 
 ### Return to an earlier build by hand
 
@@ -679,8 +709,10 @@ spacedatanetwork start
 ### Never
 
 - Never edit, copy over or delete files of an installed bundle or of a home
-  bundle to change a build: a changed home build is refused, and a changed
-  installed bundle makes the node set its home builds aside.
+  bundle to change a build: a changed home build is refused (a build on trial
+  is rolled back), and a changed installed bundle makes the node set its home
+  builds aside. Never edit `updates/trial.json`, `updates/verdict.json` or
+  `updates/state.json`.
 - Never turn verification off or point `SDN_UPDATE_TRUST_ROOTS` at a key you
   hold for a node you do not administer, and never add a root beside the ones
   a release shipped.
