@@ -25,20 +25,40 @@ package main
 //	  service-path     `service install --dry-run` from the node names the
 //	                   installed launcher, not the home build.
 //	  group-writable   a home bundle writable by its group is refused.
+//	  bundle-folder-writable  a home build whose bin/ others can write is
+//	                   refused.
+//	  shared-symlink   ~/.spacedatanetwork as a symlink into a folder others
+//	                   can write (no sticky bit) is refused.
 //	  tampered-pending a pending v4 with one byte appended is refused by a
 //	                   typed command and quarantined at the next start.
-//	  typed-install    `update install` of v5 with the daemon running.
+//	  typed-install    `update install` of v5 with the daemon running, umask
+//	                   0, and an archive whose folders and files others may
+//	                   write: installed writable by its owner only, and runs.
+//	  second-daemon, unreadable-trial, unreadable-home-record
+//	  crash-at-start   v11 exits with an error at start: rolled back after
+//	                   the supervisor's restart.
+//	  restart-during-trial  a SIGTERM while v12 is on trial and not yet
+//	                   ready: the trial runs again, and v12 passes.
+//	  restart-bound    v13 (never ready) stopped by SIGTERM at each trial
+//	                   start: after update.MaxTrialInterruptions re-runs the
+//	                   next stop fails it, and it is rolled back.
+//	  interrupted-revert  the trial record a revert stopped after its
+//	                   rollback leaves: the next start clears it and keeps the
+//	                   build that ran before the trial.
 //	hang-timer         v6 blocks for good before it opens its store: its
 //	                   deadline timer rolls it back to the installed build.
 //	hang-no-timer      v7 blocks the same way and has no timer: after its
-//	                   deadline a typed command through the installed path
-//	                   rolls it back; once the hung process is killed, the
-//	                   supervisor's restart runs the installed build.
+//	                   deadline a typed command leaves it alone while its
+//	                   daemon is alive; once the hung process is killed, the
+//	                   supervisor's restart rolls it back.
+//	unreachable-home   the account cannot enter its home folder (as under
+//	                   ProtectHome=): the node updates into
+//	                   <storage.path>/update-bundle.
 //
 // Throughout: every restart for an update keeps the daemon's process (the
-// supervisor started it once), no helper is prepared, and nothing is written
-// in the install folder. Gated and run like TestUpdateChannelRealDaemonE2E,
-// of which these are subtests.
+// supervisor started it once, plus the restarts a subtest causes), no helper
+// is prepared, and nothing is written in the install folder. Gated and run
+// like TestUpdateChannelRealDaemonE2E, of which these are subtests.
 
 import (
 	"context"
@@ -46,11 +66,13 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -193,6 +215,9 @@ type homeNode struct {
 	health   int
 	boot     time.Duration
 	pid      int
+	// wantStarts is how many times the supervisor has started the daemon
+	// since its loop started: 1, plus each restart a subtest caused.
+	wantStarts int
 	// homeTemplate is the release layout every update archive of this node
 	// ships.
 	homeTemplate string
@@ -200,6 +225,14 @@ type homeNode struct {
 }
 
 func newHomeNode(t *testing.T, label string, installed realBuild) *homeNode {
+	t.Helper()
+	return newHomeNodeWith(t, label, installed, false)
+}
+
+// newHomeNodeWith is newHomeNode; with unreachableHome the account's home
+// folder (its passwd entry's) is made one it cannot enter, as ProtectHome= in a
+// system unit does, so the node updates into <storage.path>/update-bundle.
+func newHomeNodeWith(t *testing.T, label string, installed realBuild, unreachableHome bool) *homeNode {
 	t.Helper()
 	health := envInt(t, "SDN_E2E_REAL_DAEMON_HEALTH_SECONDS", 180)
 	boot := time.Duration(envInt(t, "SDN_E2E_REAL_DAEMON_BOOT_SECONDS", 600)) * time.Second
@@ -260,11 +293,31 @@ func newHomeNode(t *testing.T, label string, installed realBuild) *homeNode {
 		f.Close()
 		t.Fatal("the install folder is writable by this account; the test needs one it cannot write")
 	}
+	if unreachableHome {
+		account, err := user.Current()
+		if err != nil {
+			t.Fatal(err)
+		}
+		info, err := os.Stat(account.HomeDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(account.HomeDir, 0); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(account.HomeDir, info.Mode().Perm()) })
+		update.HomeStorageFallback = func() string { return d.store }
+		t.Cleanup(func() { update.HomeStorageFallback = nil })
+	}
 	n.homeRoot, err = update.HomeUpdateRoot(n.real)
 	if err != nil {
 		t.Fatalf("this account has no home bundle: %v", err)
 	}
-	if strings.HasPrefix(n.homeRoot, work) {
+	if unreachableHome {
+		if !strings.HasPrefix(n.homeRoot, filepath.Join(d.store, "update-bundle")+"/") {
+			t.Fatalf("with its home folder unreachable the node updates into %s, want <storage.path>/update-bundle under %s", n.homeRoot, d.store)
+		}
+	} else if strings.HasPrefix(n.homeRoot, work) {
 		t.Fatalf("the home bundle %s follows the daemons' $HOME, not the account's passwd entry", n.homeRoot)
 	}
 	t.Cleanup(func() {
@@ -310,6 +363,7 @@ func newHomeNode(t *testing.T, label string, installed realBuild) *homeNode {
 	}
 
 	n.loop = startRestartLoop(t, d)
+	n.wantStarts = 1
 	t.Cleanup(func() {
 		if !n.stopped {
 			n.loop.stop(t)
@@ -399,9 +453,63 @@ func (n *homeNode) typed(t *testing.T, label string, args ...string) (string, er
 	return readFileString(path), err
 }
 
+// typedUmask0 is typed, run with umask 0.
+func (n *homeNode) typedUmask0(t *testing.T, label string, args ...string) (string, error) {
+	t.Helper()
+	path := filepath.Join(n.d.work, label+".log")
+	out, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer out.Close()
+	cmd := exec.Command("/bin/sh", append([]string{"-c", `umask 000; exec "$0" "$@"`, n.d.exe}, append(args, "--config", n.d.cfg)...)...)
+	cmd.Dir, cmd.Env, cmd.Stdout, cmd.Stderr = n.d.work, n.d.env, out, out
+	err = cmd.Run()
+	return readFileString(path), err
+}
+
+// countLogs counts s in every log of the node's daemons.
+func (n *homeNode) countLogs(s string) int { return strings.Count(n.d.logs(), s) }
+
+// signalDaemon sends sig to the supervised daemon, as `systemctl restart` or
+// a reboot does, and counts the supervisor's restart it causes.
+func (n *homeNode) signalDaemon(t *testing.T, sig syscall.Signal) {
+	t.Helper()
+	_, pid := n.loop.state()
+	if err := syscall.Kill(pid, sig); err != nil {
+		t.Fatal(err)
+	}
+	n.wantStarts++
+	deadline := time.Now().Add(3 * time.Minute)
+	for {
+		if starts, newPID := n.loop.state(); starts == n.wantStarts && newPID != pid {
+			n.pid = newPID
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the supervisor did not start the daemon again after %v", sig)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// waitTrialRunning waits until the count-th process to run update id as a
+// trial has started (its line in the logs).
+func (n *homeNode) waitTrialRunning(t *testing.T, id string, count int) {
+	t.Helper()
+	line := "update: this process runs update " + id + " as a trial"
+	deadline := time.Now().Add(n.boot)
+	for n.countLogs(line) < count {
+		if time.Now().After(deadline) {
+			t.Fatalf("trial start %d of %s did not happen\n%s", count, id, tailString(n.d.logs(), 40))
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
 func (n *homeNode) sameProcess(t *testing.T) {
 	t.Helper()
-	if starts, pid := n.loop.state(); starts != 1 || pid != n.pid || !processAlive(n.pid) {
+	if starts, pid := n.loop.state(); starts != n.wantStarts || pid != n.pid || !processAlive(n.pid) {
 		t.Fatalf("the supervisor started the daemon %d times (pid %d, first %d): an update restart must be the same process", starts, pid, n.pid)
 	}
 }
@@ -446,7 +554,7 @@ func versionOf(b realBuild, name, version, id string, seq int64) realBuild {
 func runRealHomeUpdate(t *testing.T) {
 	builds := realE2EBuilds(t, filepath.Join(t.TempDir(), "builds"))
 	v1, v2, v3 := builds[0], builds[1], builds[2]
-	hang, hangNoTimer := realE2EHangBuilds(t, filepath.Join(t.TempDir(), "hang-builds"))
+	hang, hangNoTimer, crash := realE2EHangBuilds(t, filepath.Join(t.TempDir(), "hang-builds"))
 
 	t.Run("signals", func(t *testing.T) {
 		n := newHomeNode(t, "node", v1)
@@ -516,6 +624,54 @@ func runRealHomeUpdate(t *testing.T) {
 			}
 		})
 
+		t.Run("bundle-folder-writable", func(t *testing.T) {
+			bin := filepath.Join(n.homeRoot, "bin")
+			info, err := os.Stat(bin)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(bin, 0o777); err != nil {
+				t.Fatal(err)
+			}
+			text, err := n.typed(t, "version-bin-writable", "version")
+			if cerr := os.Chmod(bin, info.Mode().Perm()); cerr != nil {
+				t.Fatal(cerr)
+			}
+			if err != nil || !strings.Contains(text, bin+" is writable by its group or by others") || !strings.Contains(text, "running the installed build") || !strings.Contains(text, "e2e-v1") {
+				t.Errorf("a home build whose bin/ folder others can write was not refused (%v):\n%s", err, text)
+			}
+		})
+
+		t.Run("shared-symlink", func(t *testing.T) {
+			// ~/.spacedatanetwork as a symlink into a folder every account can
+			// write (no sticky bit): another account could swap the build.
+			dot := filepath.Dir(filepath.Dir(n.homeRoot))
+			shared := filepath.Join(n.d.work, "shared")
+			if err := os.Mkdir(shared, 0o777); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(shared, 0o777); err != nil {
+				t.Fatal(err)
+			}
+			moved := filepath.Join(shared, "sdn")
+			if err := os.Rename(dot, moved); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(moved, dot); err != nil {
+				t.Fatal(err)
+			}
+			text, err := n.typed(t, "version-shared-symlink", "version")
+			if rerr := os.Remove(dot); rerr != nil {
+				t.Fatal(rerr)
+			}
+			if rerr := os.Rename(moved, dot); rerr != nil {
+				t.Fatal(rerr)
+			}
+			if err != nil || !strings.Contains(text, shared+" is writable by its group or by others") || !strings.Contains(text, "without the sticky bit") || !strings.Contains(text, "e2e-v1") {
+				t.Errorf("a home bundle reached through a symlink into a folder others can write was not refused (%v):\n%s", err, text)
+			}
+		})
+
 		v4 := versionOf(v2, "v4", "1.1.2-e2e.4", "cli-bundle-release-e2e-4", 400)
 		if !t.Run("tampered-pending", func(t *testing.T) {
 			n.loop.stop(t)
@@ -540,6 +696,7 @@ func runRealHomeUpdate(t *testing.T) {
 				t.Fatalf("a command typed against the installed path did not refuse the changed v4 (%v):\n%s", err, text)
 			}
 			n.loop = startRestartLoop(t, n.d)
+			n.wantStarts = 1
 			n.stopped = false
 			waitRealReady(t, n.d.adminBase, n.boot, n.loop.lastLog())
 			requireRealIdentity(t, n.d.adminBase, v2)
@@ -558,8 +715,21 @@ func runRealHomeUpdate(t *testing.T) {
 
 		v5 := versionOf(v2, "v5", "1.1.2-e2e.5", "cli-bundle-release-e2e-5", 500)
 		t.Run("typed-install", func(t *testing.T) {
-			n.publish(t, v5)
-			text, err := n.typed(t, "install-v5", "update", "install")
+			// v5's archive has folders and files every account may write, and
+			// the install runs with umask 0: the build on disk must still be
+			// writable only by its owner.
+			loose := filepath.Join(n.d.work, "release-template-loose")
+			if out, err := exec.Command("cp", "-a", n.homeTemplate, loose).CombinedOutput(); err != nil {
+				t.Fatalf("%v %s", err, out)
+			}
+			for name, mode := range map[string]os.FileMode{"bin": 0o777, "runtime/wasmedge": 0o777, "runtime/wasmedge/lib": 0o777, "runtime/wasmedge/lib/README": 0o666} {
+				if err := os.Chmod(filepath.Join(loose, name), mode); err != nil {
+					t.Fatal(err)
+				}
+			}
+			v5.template = loose
+			n.feed.publish(t, v5, n.key)
+			text, err := n.typedUmask0(t, "install-v5", "update", "install")
 			if err != nil || !strings.Contains(text, "daemon_restart=requested") || !strings.Contains(text, "daemon_health=healthy") ||
 				!strings.Contains(text, "daemon_identity=verified bundle_version="+v5.version) || strings.Contains(text, "helper_") {
 				t.Fatalf("update install of v5 with the daemon running (%v):\n%s", err, text)
@@ -567,6 +737,18 @@ func runRealHomeUpdate(t *testing.T) {
 			requireRealIdentity(t, n.d.adminBase, v5)
 			n.sameProcess(t)
 			n.noHelperNoWrite(t, v1)
+			_ = filepath.WalkDir(n.homeRoot, func(p string, e fs.DirEntry, err error) error {
+				if err != nil {
+					return err
+				}
+				if p == filepath.Join(n.homeRoot, "updates") {
+					return filepath.SkipDir
+				}
+				if info, lerr := os.Lstat(p); lerr == nil && info.Mode()&os.ModeSymlink == 0 && info.Mode().Perm()&0o022 != 0 {
+					t.Errorf("%s is writable by its group or by others (mode %04o) after the install", p, info.Mode().Perm())
+				}
+				return nil
+			})
 		})
 
 		t.Run("second-daemon", func(t *testing.T) {
@@ -589,6 +771,7 @@ func runRealHomeUpdate(t *testing.T) {
 				t.Fatal(err)
 			}
 			n.loop = startRestartLoop(t, n.d)
+			n.wantStarts = 1
 			n.stopped = false
 			waitRealReady(t, n.d.adminBase, n.boot, n.loop.lastLog())
 			requireRealIdentity(t, n.d.adminBase, v5)
@@ -609,10 +792,126 @@ func runRealHomeUpdate(t *testing.T) {
 				t.Fatalf("update install of v10 over an unreadable home record (%v):\n%s", err, text)
 			}
 			n.loop = startRestartLoop(t, n.d)
+			n.wantStarts = 1
 			n.stopped = false
 			n.waitFor(t, "v10 to pass its trial", n.boot+time.Duration(n.health)*time.Second, func() bool {
 				return pushIdentityMatches(n.d.adminBase, v10) && ledgerHasIfPresent(n.homeRoot, v10.updateID, "health-passed")
 			})
+			_, n.pid = n.loop.state()
+		})
+
+		t.Run("crash-at-start", func(t *testing.T) {
+			// v11 exits with an error at start, before it is ready: the
+			// supervisor starts the installed path again, which rolls it back.
+			n.announce(t, crash)
+			n.waitFor(t, "the crashing v11 to be rolled back to v10", n.boot+time.Duration(n.health)*time.Second, func() bool {
+				return update.HasFailedUpdate(n.paths(), crash.updateID) && ledgerHasIfPresent(n.homeRoot, crash.updateID, "health-reverted") && pushIdentityMatches(n.d.adminBase, v10)
+			})
+			requireRealIdentity(t, n.d.adminBase, v10)
+			if !strings.Contains(n.d.logs(), "this build exits at start") {
+				t.Fatalf("v11 did not run as the crashing build:\n%s", tailString(n.d.logs(), 40))
+			}
+			if !ledgerReasonHas(n.homeRoot, crash.updateID, "health-failed", "ended before it answered ready") {
+				t.Fatalf("no health-failed for v11 saying its start ended before it was ready: %v", ledgerActionsIfPresent(n.homeRoot))
+			}
+			n.wantStarts = 2
+			_, n.pid = n.loop.state()
+			n.sameProcess(t)
+		})
+
+		v12 := versionOf(v2, "v12", "1.1.2-e2e.12", "cli-bundle-release-e2e-12", 1200)
+		t.Run("restart-during-trial", func(t *testing.T) {
+			// A service restart while v12 is on trial and not yet ready: the
+			// trial runs again with a new deadline, and v12 passes it.
+			n.announce(t, v12)
+			n.waitTrialRunning(t, v12.updateID, 1)
+			n.signalDaemon(t, syscall.SIGTERM)
+			n.waitFor(t, "v12 to pass its trial after the restart", n.boot+time.Duration(n.health)*time.Second, func() bool {
+				return pushIdentityMatches(n.d.adminBase, v12) && ledgerHasIfPresent(n.homeRoot, v12.updateID, "health-passed")
+			})
+			if !strings.Contains(n.d.logs(), "during the trial of "+v12.updateID+": the next start runs its trial again") {
+				t.Fatalf("the stop during v12's trial was not recorded as one (it may have passed before the signal):\n%s", tailString(n.d.logs(), 40))
+			}
+			if got := n.countLogs("update: this process runs update " + v12.updateID + " as a trial"); got != 2 {
+				t.Fatalf("v12 ran its trial %d times, want 2 (once, then again after the restart)", got)
+			}
+			if update.HasFailedUpdate(n.paths(), v12.updateID) || ledgerHasIfPresent(n.homeRoot, v12.updateID, "health-failed") {
+				t.Fatalf("v12 was failed for a restart during its trial: %v", ledgerActionsIfPresent(n.homeRoot))
+			}
+			n.sameProcess(t)
+		})
+
+		v13 := versionOf(v3, "v13", "1.1.2-e2e.13", "cli-bundle-release-e2e-13", 1300)
+		t.Run("restart-bound", func(t *testing.T) {
+			// v13 never answers ready and is stopped by a signal at every
+			// trial start: after update.MaxTrialInterruptions re-runs the next
+			// stop fails it, and it is rolled back to v12.
+			n.announce(t, v13)
+			for i := 1; i <= update.MaxTrialInterruptions+1; i++ {
+				n.waitTrialRunning(t, v13.updateID, i)
+				n.signalDaemon(t, syscall.SIGTERM)
+			}
+			n.waitFor(t, "v13 to be rolled back to v12", n.boot+time.Duration(n.health)*time.Second, func() bool {
+				return update.HasFailedUpdate(n.paths(), v13.updateID) && pushIdentityMatches(n.d.adminBase, v12)
+			})
+			requireRealIdentity(t, n.d.adminBase, v12)
+			if want := fmt.Sprintf("stopped %d times during its trial", update.MaxTrialInterruptions+1); !ledgerReasonHas(n.homeRoot, v13.updateID, "health-failed", want) {
+				t.Fatalf("no health-failed for v13 saying %q: %v", want, ledgerActionsIfPresent(n.homeRoot))
+			}
+			if got := n.countLogs("update: this process runs update " + v13.updateID + " as a trial"); got != update.MaxTrialInterruptions+1 {
+				t.Fatalf("v13 ran its trial %d times, want %d", got, update.MaxTrialInterruptions+1)
+			}
+			n.sameProcess(t)
+		})
+
+		v14 := versionOf(v2, "v14", "1.1.2-e2e.14", "cli-bundle-release-e2e-14", 1400)
+		t.Run("interrupted-revert", func(t *testing.T) {
+			// The record a revert leaves when it stops after its rollback and
+			// before it clears the trial (or when a late fail rewrites the
+			// trial after a revert): the trial names v14, which is already in
+			// quarantine, and v12 is the build. The next start must keep v12.
+			n.loop.stop(t)
+			n.stopped = true
+			n.publish(t, v14)
+			if text, err := n.typed(t, "install-v14", "update", "install"); err != nil || !strings.Contains(text, "installed_update="+v14.updateID) {
+				t.Fatalf("update install of v14 with no daemon (%v):\n%s", err, text)
+			}
+			trial, err := update.ReadTrial(n.paths())
+			if err != nil || trial == nil || trial.UpdateID != v14.updateID {
+				t.Fatalf("v14 is not a pending trial: %+v (%v)", trial, err)
+			}
+			trial.Starts, trial.FailReason = 1, "it did not answer ready by its deadline (e2e)"
+			raw, err := json.Marshal(trial)
+			if err != nil {
+				t.Fatal(err)
+			}
+			trialPath := filepath.Join(n.homeRoot, "updates", "trial.json")
+			if err := os.WriteFile(trialPath, raw, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if text, err := n.typed(t, "version-revert-v14", "version"); err != nil || !strings.Contains(text, "failed its trial") || !strings.Contains(text, "e2e-v2") {
+				t.Fatalf("a typed command with no daemon did not roll the failed v14 back to v12 (%v):\n%s", err, text)
+			}
+			if !update.HasFailedUpdate(n.paths(), v14.updateID) {
+				t.Fatalf("v14 was not quarantined")
+			}
+			if err := os.WriteFile(trialPath, raw, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			n.loop = startRestartLoop(t, n.d)
+			n.wantStarts = 1
+			n.stopped = false
+			waitRealReady(t, n.d.adminBase, n.boot, n.loop.lastLog())
+			requireRealIdentity(t, n.d.adminBase, v12)
+			if update.HasFailedUpdate(n.paths(), v12.updateID) {
+				t.Fatalf("the start after an interrupted revert quarantined v12, the build that was running before the trial: %v", ledgerActionsIfPresent(n.homeRoot))
+			}
+			if trial, _ := update.ReadTrial(n.paths()); trial != nil {
+				t.Fatalf("the trial record of v14 is still there: %+v", trial)
+			}
+			if !strings.Contains(readFileString(n.loop.lastLog()), "was already rolled back") {
+				t.Fatalf("the start did not say it cleared v14's trial record:\n%s", tailString(readFileString(n.loop.lastLog()), 30))
+			}
 		})
 		for _, log := range n.d.logPaths {
 			requireIsolated(t, log)
@@ -652,32 +951,60 @@ func runRealHomeUpdate(t *testing.T) {
 		if !strings.Contains(n.d.logs(), "never opens its store") || pushIdentityMatches(n.d.adminBase, v1) {
 			t.Fatalf("v7 is not the hung build still running past its deadline:\n%s", tailString(n.d.logs(), 40))
 		}
+		// A command typed after the deadline, while the hung trial daemon is
+		// still alive, does not move the build away under it: it runs the
+		// installed build and leaves the rollback to the next daemon start.
 		text, err := n.typed(t, "version-after-deadline", "version")
-		if err != nil || !strings.Contains(text, "failed its trial") || !strings.Contains(text, "deadline") || !strings.Contains(text, "e2e-v1") {
-			t.Fatalf("a command typed after the deadline did not roll v7 back (%v):\n%s", err, text)
+		if err != nil || !strings.Contains(text, "did not pass its trial, and the daemon running it is still alive") || !strings.Contains(text, "e2e-v1") {
+			t.Fatalf("a command typed after the deadline under the live trial daemon (%v):\n%s", err, text)
 		}
-		if !update.HasFailedUpdate(n.paths(), hangNoTimer.updateID) {
-			t.Fatalf("v7 was not quarantined")
+		if update.HasFailedUpdate(n.paths(), hangNoTimer.updateID) || ledgerHasIfPresent(n.homeRoot, hangNoTimer.updateID, "rollback") {
+			t.Fatalf("a typed command rolled v7 back while its daemon was alive: %v", ledgerActionsIfPresent(n.homeRoot))
+		}
+		if _, err := os.Stat(filepath.Join(n.homeRoot, "runtime", "sdn", "spacedatanetwork")); err != nil {
+			t.Fatalf("the files of the running trial build were moved: %v", err)
 		}
 		// The hung process has to be ended (here as an operator would); the
-		// supervisor's restart then runs the installed build.
+		// supervisor's restart rolls it back and runs the installed build.
 		_, pid := n.loop.state()
 		_ = syscall.Kill(pid, syscall.SIGKILL)
-		n.waitFor(t, "the installed build after the restart", n.boot, func() bool { return pushIdentityMatches(n.d.adminBase, v1) })
+		n.waitFor(t, "v7 rolled back and the installed build after the restart", n.boot, func() bool {
+			return update.HasFailedUpdate(n.paths(), hangNoTimer.updateID) && pushIdentityMatches(n.d.adminBase, v1)
+		})
+		if !ledgerReasonHas(n.homeRoot, hangNoTimer.updateID, "health-failed", "deadline") {
+			t.Fatalf("no health-failed for v7 from the daemon start: %v", ledgerActionsIfPresent(n.homeRoot))
+		}
+		n.noHelperNoWrite(t, v1)
+	})
+
+	t.Run("unreachable-home", func(t *testing.T) {
+		// The account's home folder cannot be entered (what ProtectHome= does
+		// to a system unit's account): the node updates itself into
+		// <storage.path>/update-bundle.
+		n := newHomeNodeWith(t, "node", v1, true)
+		n.announce(t, v2)
+		n.waitFor(t, "v2 to pass its trial from the storage folder", n.boot+time.Duration(n.health)*time.Second, func() bool {
+			return pushIdentityMatches(n.d.adminBase, v2) && ledgerHasIfPresent(n.homeRoot, v2.updateID, "health-passed")
+		})
+		if target, err := os.Readlink("/proc/" + strconv.Itoa(n.pid) + "/exe"); err != nil || !strings.HasPrefix(target, n.homeRoot+"/") {
+			t.Fatalf("the daemon runs %s (%v), want the build under %s", target, err, n.homeRoot)
+		}
+		n.sameProcess(t)
 		n.noHelperNoWrite(t, v1)
 	})
 }
 
-// realE2EHangBuilds are v6 (blocks before its store opens) and v7 (the same,
-// with no trial deadline timer), prebuilt beside the other fixtures or built
-// here.
-func realE2EHangBuilds(t *testing.T, dir string) (realBuild, realBuild) {
+// realE2EHangBuilds are v6 (blocks before its store opens), v7 (the same,
+// with no trial deadline timer) and v11 (exits with an error at start),
+// prebuilt beside the other fixtures or built here.
+func realE2EHangBuilds(t *testing.T, dir string) (realBuild, realBuild, realBuild) {
 	t.Helper()
 	builds := []realBuild{
 		{name: "v6", version: "1.1.2-e2e.6", updateID: "cli-bundle-release-e2e-6", sequence: 600},
 		{name: "v7", version: "1.1.2-e2e.7", updateID: "cli-bundle-release-e2e-7", sequence: 700},
+		{name: "v11", version: "1.1.2-e2e.11", updateID: "cli-bundle-release-e2e-11", sequence: 1100},
 	}
-	tags := map[string]string{"v6": "sdn_e2e_hang_before_store", "v7": "sdn_e2e_hang_before_store,sdn_e2e_no_trial_timer"}
+	tags := map[string]string{"v6": "sdn_e2e_hang_before_store", "v7": "sdn_e2e_hang_before_store,sdn_e2e_no_trial_timer", "v11": "sdn_e2e_crash_at_start"}
 	prebuilt := strings.TrimSpace(os.Getenv(realE2EBinDirEnv))
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
@@ -705,7 +1032,7 @@ func realE2EHangBuilds(t *testing.T, dir string) (realBuild, realBuild) {
 			t.Fatalf("no %s build at %s", b.name, b.path)
 		}
 	}
-	return builds[0], builds[1]
+	return builds[0], builds[1], builds[2]
 }
 
 func ledgerHasAction(root, action string) bool {
