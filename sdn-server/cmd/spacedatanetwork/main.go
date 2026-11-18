@@ -4393,6 +4393,7 @@ func isStateChangingMethod(method string) bool {
 //
 //	/api/v1/admin/dataset-updates/publish    api/dataset_publication.go
 //	/api/v1/admin/dataset-updates/retention  api/dataset_publication.go
+//	/api/v1/admin/dataset-updates/retract    api/dataset_publication_retract.go
 //	/api/v1/admin/update/shutdown            update/control.go:68
 //
 // The two dataset-updates routes share ONE local-client rule
@@ -4411,6 +4412,7 @@ func isLoopbackSelfGatedAdminPath(path string) bool {
 	switch path {
 	case "/api/v1/admin/dataset-updates/publish",
 		"/api/v1/admin/dataset-updates/retention",
+		"/api/v1/admin/dataset-updates/retract",
 		"/api/v1/admin/dataset-updates/batch",
 		"/api/v1/admin/update/shutdown":
 		return true

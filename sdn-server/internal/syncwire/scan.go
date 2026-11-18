@@ -79,8 +79,14 @@ func writeScanPage(w io.Writer, store *storage.FlatSQLStore, page *datasync.Page
 	if len(records) > 0 && len(records[0].Data) >= FrameIdentifierOffset {
 		fileIdentifier = string(records[0].Data[FramePrefixLength:FrameIdentifierOffset])
 	}
+	retracted := stmt != nil && stmt.Retracted
 	header := func(lane scanLane, count int, total int64) []byte {
+		code := ""
+		if retracted && count == 0 {
+			code = LaneRetractedCode
+		}
 		return BuildQRP(QRPFields{
+			ErrorCode:      code,
 			Kind:           QRPKindPage,
 			Status:         QRPStatusOk,
 			SchemaName:     page.Schema,

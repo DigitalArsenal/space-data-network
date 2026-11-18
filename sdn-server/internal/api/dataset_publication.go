@@ -156,6 +156,7 @@ func NewDatasetPublicationHandler(service DatasetPublicationService) *DatasetPub
 func (h *DatasetPublicationHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/admin/dataset-updates/publish", h.handlePublish)
 	mux.HandleFunc("/api/v1/admin/dataset-updates/retention", h.handleRetention)
+	mux.HandleFunc("/api/v1/admin/dataset-updates/retract", h.handleRetract)
 	mux.HandleFunc("/api/v1/admin/dataset-updates/batch", h.handlePublicationBatch)
 }
 
@@ -463,6 +464,11 @@ func (s *ConcreteDatasetPublicationService) publishSelectedDatasetUpdate(ctx con
 		return nil, atPublicationStep("wait for the lane", err)
 	}
 	defer release()
+	if at, retracted, err := activeStore.DatasetPublicationLaneRetractedAt(storage.DatasetPublicationLane{SchemaName: schema, ProviderID: activeReq.ProviderID, SourceName: activeReq.SourceName}); err != nil {
+		return nil, atPublicationStep("check retraction", err)
+	} else if retracted {
+		return nil, atPublicationStep("check retraction", fmt.Errorf("lane %s %s/%s was retracted at %s and is not published again", schema, activeReq.ProviderID, activeReq.SourceName, at.Format(time.RFC3339)))
+	}
 	var catalogSnapshot *storage.CatalogSnapshot
 	if activeReq.FullCatalog && strings.TrimSpace(activeReq.BatchID) == "" && schema == "CAT.fbs" {
 		if _, ok := activeStore.CatalogProductSource(activeReq.ProviderID, activeReq.SourceName); ok {
