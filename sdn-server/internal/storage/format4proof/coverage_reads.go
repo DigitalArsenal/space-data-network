@@ -607,6 +607,19 @@ func (c *cov) v04() []Shape {
 			return unorderedDigest(bytesRows(list)), nil
 		})
 	}
+	// QueryAll answers a page: its records (newest first), the limit it was
+	// allowed and whether more are stored (stack #848: never the newest N
+	// presented as all of them). Both formats must agree on all three.
+	page := func(name, schema string, limit int) Call {
+		return c.rowsCall(name, schema, func(s *storage.FlatSQLStore) ([]Row, error) {
+			p, err := s.QueryAll(schema, limit)
+			if err != nil {
+				return nil, err
+			}
+			head := ValueRow("limit", strconv.Itoa(p.Limit), "truncated", strconv.FormatBool(p.Truncated), "n", strconv.Itoa(len(p.Records)))
+			return append([]Row{head}, orderedDigest(bytesRows(p.Records))...), nil
+		})
+	}
 	routed := func(name string, fn func(s *storage.FlatSQLStore) ([]storage.RoutedRecord, error)) Call {
 		return c.rowsCall(name, "", func(s *storage.FlatSQLStore) ([]Row, error) {
 			list, err := fn(s)
@@ -662,18 +675,9 @@ func (c *cov) v04() []Shape {
 	tables = rule(tables, "table OMM before rowid", c39U4, recordFields()...)
 	queries := covShape(class, "Query, QueryAll, QueryAllBounded", "CAT.fbs",
 		data("Query CAT (empty where)", "CAT.fbs", false, func(s *storage.FlatSQLStore) ([][]byte, error) { return s.Query("CAT.fbs", "") }),
-		data("QueryAll MPE 500", "MPE.fbs", true, func(s *storage.FlatSQLStore) ([][]byte, error) {
-			p, err := s.QueryAll("MPE.fbs", 500)
-			return p.Records, err
-		}),
-		data("QueryAll OMM 0", "OMM.fbs", true, func(s *storage.FlatSQLStore) ([][]byte, error) {
-			p, err := s.QueryAll("OMM.fbs", 0)
-			return p.Records, err
-		}),
-		data("QueryAll IQC 20000", "IQC.fbs", true, func(s *storage.FlatSQLStore) ([][]byte, error) {
-			p, err := s.QueryAll("IQC.fbs", 20000)
-			return p.Records, err
-		}),
+		page("QueryAll MPE 500", "MPE.fbs", 500),
+		page("QueryAll OMM 0", "OMM.fbs", 0),
+		page("QueryAll IQC 20000", "IQC.fbs", 20000),
 		data("QueryAllBounded OMM 100 64KiB", "OMM.fbs", true, func(s *storage.FlatSQLStore) ([][]byte, error) { return s.QueryAllBounded("OMM.fbs", 100, 64<<10) }),
 		data("QueryAllBounded CAT 0 0", "CAT.fbs", true, func(s *storage.FlatSQLStore) ([][]byte, error) { return s.QueryAllBounded("CAT.fbs", 0, 0) }),
 		data("QueryAllBounded IQC 5000 1MiB", "IQC.fbs", true, func(s *storage.FlatSQLStore) ([][]byte, error) { return s.QueryAllBounded("IQC.fbs", 5000, 1<<20) }),
@@ -681,10 +685,7 @@ func (c *cov) v04() []Shape {
 		data("QuerySince CAT", "CAT.fbs", false, func(s *storage.FlatSQLStore) ([][]byte, error) {
 			return s.QuerySince("CAT.fbs", time.Unix(1790651000, 0))
 		}),
-		data("QueryAll unknown type", "XYZ.fbs", true, func(s *storage.FlatSQLStore) ([][]byte, error) {
-			p, err := s.QueryAll("XYZ.fbs", 10)
-			return p.Records, err
-		}))
+		page("QueryAll unknown type", "XYZ.fbs", 10))
 	// C-39 E7: every fixture IQC record carries the same source timestamp,
 	// so format 1's newest N by it is an arbitrary N of them; the row count
 	// is compared.
@@ -1156,6 +1157,12 @@ func (c *cov) v07() []Shape {
 		jsonRows("SELECT COUNT(*) FROM \"OMM@no-such-source\"", caps, false),
 		streamCall("SELECT _data FROM \"MPE@local\"", caps),
 		raw("SELECT _data FROM \"CAT@celestrak-gp\""),
+		// A relation the store does not have is an error on the trusted raw
+		// stream, never an empty answer (stack #651 review, R2): a standard
+		// the node does not register, a typo, a source no type has.
+		raw("SELECT _data FROM MOR"),
+		raw("SELECT COUNT(*) FROM OMMM"),
+		raw("SELECT _data FROM \"OMM@no-such-source\""),
 		streamCall("SELECT _data FROM MPE WHERE NORAD_CAT_ID = ?1", caps, int64(22528)),
 		streamCall("SELECT _data FROM IQC LIMIT 10", caps),
 		streamCall("SELECT _data FROM \"CAT@celestrak-satcat-csv\" WHERE NORAD_CAT_ID = 40463", caps),
