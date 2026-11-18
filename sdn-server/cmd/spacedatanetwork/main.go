@@ -1413,8 +1413,8 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 							gateAdminOnlyHandler(w, r, inner, authHandler, cfg.Admin.RequireAuth)
 						}
 					},
-					RunFlowNow:   runFlowServiceNow(n),
-					FlowServices: flowServiceInfos(n, cfg),
+					RunFlowNow:           runFlowServiceNow(n),
+					FlowServices:         flowServiceInfos(n, cfg),
 					SubscribeLane:        subscribeLane(n),
 					PlanLaneSubscription: planLaneSubscription(n),
 					Unfollow:             n.Unfollow,

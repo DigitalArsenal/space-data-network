@@ -21,6 +21,8 @@ func TestPublicationImportChunksRealDaemons(t *testing.T) {
 	a.start(t)
 	b := newPublicationDaemon(t, exe, "chunks-receiver", a.address, a.id, "keep-all")
 	b.start(t)
+	b.follow(t, a, "OMM", "chunks", "")
+	b.follow(t, a, "OEM", "chunks", "")
 	time.Sleep(3 * time.Second)
 
 	const elementSets = 10_000

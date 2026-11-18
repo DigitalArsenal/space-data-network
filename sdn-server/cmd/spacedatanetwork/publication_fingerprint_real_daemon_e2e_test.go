@@ -34,6 +34,7 @@ func TestPublicationFingerprintRealDaemons(t *testing.T) {
 	a.start(t)
 	b := newPublicationDaemon(t, exe, "fingerprint-receiver", a.address, a.id, "keep-all")
 	b.start(t)
+	b.follow(t, a, "OMM", "fingerprint", "")
 	time.Sleep(3 * time.Second)
 
 	const n, per = 150_000, 5_000

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/DSS"
+	"github.com/spacedatanetwork/sdn-server/internal/api"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
@@ -44,6 +45,8 @@ func TestPublicationRealDaemons(t *testing.T) {
 		// Both protocols share Kubo's host. Waiting for the connected peer and
 		// its gossip mesh avoids confusing a first-message loss with import.
 		time.Sleep(3 * time.Second)
+		// A node imports only the lanes it subscribes to.
+		b.follow(t, a, "OMM", "delivery", "")
 		a.ingestOMM(t, "delivery", "first", 0, 2048)
 		t.Log("producer batch ingest accepted 2048 synthetic records")
 		want := a.scan(t, "OMM.fbs", "delivery")
@@ -66,7 +69,7 @@ func TestPublicationRealDaemons(t *testing.T) {
 		}
 		want = a.scan(t, "OMM.fbs", "delivery")
 		b.start(t)
-		t.Log("automatic catch-up: 15-second initial delay, five-minute cadence; no sync command")
+		t.Log("automatic catch-up: the subscription resumes at its saved cursor; no sync command")
 		b.awaitRecords(t, "OMM.fbs", "delivery", want, 6*time.Minute)
 		a.stop(t)
 		b.stop(t)
@@ -78,22 +81,25 @@ func TestPublicationRealDaemons(t *testing.T) {
 		b.awaitRecords(t, "OMM.fbs", "delivery", a.scan(t, "OMM.fbs", "delivery"), 6*time.Minute)
 		t.Log("delivery, replay, automatic catch-up, and restart assertions passed")
 	})
-	for policyIndex, policy := range []string{"untrusted", "deny", "unlisted"} {
+	for policyIndex, policy := range []string{"untrusted", "unsubscribed"} {
 		t.Run("refusal_"+policy, func(t *testing.T) {
 			trust := a.id
 			if policy == "untrusted" {
 				trust = ""
 			}
 			b := newPublicationDaemon(t, exe, "refusal-"+policy, a.address, trust, "keep-all")
-			if policy != "untrusted" {
-				b.importPolicy(t, policy)
-			}
 			b.start(t)
 			time.Sleep(3 * time.Second)
 			source := "refusal-" + policy
+			if policy == "untrusted" {
+				raw := b.request(t, "POST", "/api/v1/sync", publicationStreamType, api.EncodeDSSFollow("OMM", "publication-e2e", source, a.id), http.StatusBadRequest)
+				if !strings.Contains(string(raw), "not a trusted peer") {
+					t.Fatalf("subscription to an untrusted producer: %q", raw)
+				}
+			}
 			a.ingestOMM(t, source, "first", 5000+policyIndex*100, 16)
 			a.publish(t, "OMM.fbs", source, "first")
-			// Includes the startup catch-up as well as live announcements.
+			// Live announcements and the stored-$PNM catch-up's first pass.
 			time.Sleep(20 * time.Second)
 			b.requireRecords(t, "OMM.fbs", source, map[string]int{})
 			if policy == "untrusted" {
@@ -104,23 +110,16 @@ func TestPublicationRealDaemons(t *testing.T) {
 				t.Log("receiver log explicitly says publications from this bootstrap peer are discarded because it is not trusted")
 				return
 			}
-
-			log := readFileString(b.logPath)
-			reason := "non-trusted"
-			if policy == "deny" {
-				reason = "denied by peers.trusted_import.deny"
-			}
-			if policy == "unlisted" {
-				reason = "not listed in peers.trusted_import.allow"
-			}
+			// A trusted producer's lane this node does not subscribe to: its
+			// signed $PNM arrives and is not imported.
 			observed := false
-			for _, line := range strings.Split(log, "\n") {
-				if strings.Contains(line, reason) && strings.Contains(line, "/"+source) {
+			for _, line := range strings.Split(readFileString(b.logPath), "\n") {
+				if strings.Contains(line, "does not subscribe to that lane") && strings.Contains(line, "/"+source) {
 					observed = true
 				}
 			}
 			if !observed {
-				t.Fatalf("refusal has no reason %q in %s", reason, b.logPath)
+				t.Fatalf("no refusal of the unsubscribed lane in %s", b.logPath)
 			}
 		})
 	}
@@ -136,9 +135,9 @@ func TestPublicationRetentionRealDaemons(t *testing.T) {
 	for ruleIndex, rule := range []string{"keep-all", "replace-current", "archive-all"} {
 		t.Run(rule, func(t *testing.T) {
 			b := newPublicationDaemon(t, exe, "retention-"+rule, a.address, a.id, rule)
-			b.onlySource(t, rule)
 			b.start(t)
 			time.Sleep(3 * time.Second)
+			b.follow(t, a, "OMM", rule, "")
 			a.ingestOMM(t, rule, "first", 10000+ruleIndex*30000, 16)
 			first := a.publish(t, "OMM.fbs", rule, "first")
 			b.awaitRecords(t, "OMM.fbs", rule, a.scan(t, "OMM.fbs", rule), 6*time.Minute)
@@ -334,7 +333,7 @@ func newPublicationDaemon(t *testing.T, exe, name, bootstrap, trust, retention s
 		end := strings.Index(cfg[begin:], "\n") + begin
 		cfg = cfg[:begin] + fmt.Sprintf("    - %q", bootstrap) + cfg[end:]
 	}
-	peers := "peers:\n  trusted_import:\n    new_lanes: deny\n    allow:\n      - provider_id: publication-e2e\n"
+	peers := "peers:\n"
 	if trust != "" {
 		if !strings.HasSuffix(bootstrap, "/p2p/"+trust) {
 			t.Fatal("trusted test peer must be the loopback bootstrap peer")
@@ -388,32 +387,16 @@ func newPublicationDaemon(t *testing.T, exe, name, bootstrap, trust, retention s
 	return d
 }
 
-func (d *publicationDaemon) onlySource(t *testing.T, source string) {
+// follow subscribes d to the lane (schema, publication-e2e, source) from the
+// producer p (POST /api/v1/sync, $DSS Subscribe naming PROVIDER_PEER_ID);
+// query is the request's query string ("" for the defaults).
+func (d *publicationDaemon) follow(t *testing.T, p *publicationDaemon, schema, source, query string) {
 	t.Helper()
-	raw, err := os.ReadFile(d.cfg)
-	if err != nil {
-		t.Fatal(err)
+	path := "/api/v1/sync"
+	if query != "" {
+		path += "?" + query
 	}
-	text := strings.Replace(string(raw), "      - provider_id: publication-e2e", "      - provider_id: publication-e2e\n        source_name: "+source, 1)
-	if err := os.WriteFile(d.cfg, []byte(text), 0600); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func (d *publicationDaemon) importPolicy(t *testing.T, policy string) {
-	raw, err := os.ReadFile(d.cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := string(raw)
-	if policy == "deny" {
-		text = strings.Replace(text, "    allow:", "    deny:", 1)
-	} else {
-		text = strings.Replace(text, "      - provider_id: publication-e2e", "      - provider_id: another-test-provider", 1)
-	}
-	if err := os.WriteFile(d.cfg, []byte(text), 0600); err != nil {
-		t.Fatal(err)
-	}
+	d.request(t, "POST", path, publicationStreamType, api.EncodeDSSFollow(schema, "publication-e2e", source, p.id), http.StatusAccepted)
 }
 
 func (d *publicationDaemon) start(t *testing.T) {

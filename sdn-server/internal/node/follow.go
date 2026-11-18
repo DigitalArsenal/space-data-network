@@ -1007,7 +1007,7 @@ func (m *followManager) fetchByCID(ctx context.Context, remote peer.ID, st Follo
 		return nil, err
 	}
 	defer stream.Close()
-	runs, _, _, err := syncwire.ReadFollowPage(stream, len(cids))
+	runs, _, received, err := syncwire.ReadFollowPage(stream, len(cids))
 	if err != nil {
 		return nil, err
 	}
@@ -1019,6 +1019,7 @@ func (m *followManager) fetchByCID(ctx context.Context, remote peer.ID, st Follo
 	m.mu.Lock()
 	if e := m.subs[st.FollowKey]; e != nil {
 		e.status.ReceivedRecords += int64(res.records)
+		e.status.ReceivedBytes += received
 		e.status.StoredRecords += int64(res.stored)
 	}
 	m.mu.Unlock()

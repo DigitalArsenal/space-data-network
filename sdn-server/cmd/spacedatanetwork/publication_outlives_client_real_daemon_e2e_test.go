@@ -31,6 +31,7 @@ func TestPublicationOutlivesClientRealDaemons(t *testing.T) {
 	a.start(t)
 	b := newPublicationDaemon(t, exe, "outlives-receiver", a.address, a.id, "keep-all")
 	b.start(t)
+	b.follow(t, a, "OMM", "outlives", "")
 	time.Sleep(3 * time.Second)
 
 	const n, per = 150_000, 5_000

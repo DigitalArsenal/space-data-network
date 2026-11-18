@@ -33,6 +33,7 @@ func TestPublicationKeyRealDaemons(t *testing.T) {
 	b := newPublicationDaemon(t, exe, "key-receiver", a.address, a.id, "keep-all")
 	bKey := publicationFieldKey(t, b.store)
 	b.start(t)
+	b.follow(t, a, "KMF", "keys", "")
 	plain := make([]byte, 32)
 	if _, err := rand.Read(plain); err != nil {
 		t.Fatal(err)
