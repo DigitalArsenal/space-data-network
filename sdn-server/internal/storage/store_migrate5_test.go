@@ -22,8 +22,8 @@ import (
 // FlatSQL 3.7.2 engine. Its provenance and generator are beside the fixture.
 func TestFormat5FirstBootPreservesFormat4(t *testing.T) {
 	wasm := format4TestWasm(t)
-	cache := t.TempDir()
-	t.Setenv("XDG_CACHE_HOME", cache)
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	cache := format4SharedAOTDir(t, wasm)
 	previous := format4OpenEngine
 	format4OpenEngine = func(ctx context.Context, opt format4.Options) (format4.API, error) {
 		opt.Wasm, opt.CompileOnMiss, opt.AOTCacheDir, opt.Cores = wasm, true, cache, 2

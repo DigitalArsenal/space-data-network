@@ -498,7 +498,12 @@ production key replaces it through a release that carries `trust_roots`.
   (`sign-cli-update-payload.mjs`), builds the index and signs the signals.
   `cli-update-feed-verify`, without the key, unpacks the feed and verifies
   every manifest against `fleet-trust-roots.json`
-  (`verify-cli-update-feed.mjs`); the release waits for it.
+  (`verify-cli-update-feed.mjs`); the release waits for it. A dry run
+  (`publish` false) skips those three jobs, so the key signs nothing:
+  `cli-update-feed-dry-run` runs their reviewed steps with a key made in the
+  run and a roots file holding only its root, verifies the feed against that
+  root, and checks that `fleet-trust-roots.json` refuses it.
+  `update-signing-check` still runs in a dry run.
 
 ### What a payload, a signal and the health gate must satisfy
 

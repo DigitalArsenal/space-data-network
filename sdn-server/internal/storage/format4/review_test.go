@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
@@ -12,9 +13,37 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/versioninfo"
 )
 
+// reviewAOT is one compiled-engine cache folder for this test process,
+// removed by TestMain: the engine compiles once for the tests here, and
+// nothing is read from or left in the user's cache. The artifact's file name
+// carries the engine's sha256 and the runtime's compile settings
+// (flatsqlrt.ThreadedAOTPath), so two engines never share an entry.
+var reviewAOT struct {
+	once sync.Once
+	dir  string
+	err  error
+}
+
+func reviewAOTDir(t testing.TB) string {
+	t.Helper()
+	reviewAOT.once.Do(func() { reviewAOT.dir, reviewAOT.err = os.MkdirTemp("", "sdn-format4-review-aot-") })
+	if reviewAOT.err != nil {
+		t.Fatal(reviewAOT.err)
+	}
+	return reviewAOT.dir
+}
+
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if reviewAOT.dir != "" {
+		os.RemoveAll(reviewAOT.dir)
+	}
+	os.Exit(code)
+}
+
 func TestEmbeddedLayoutStampMatchesCapability(t *testing.T) {
 	ctx := context.Background()
-	e, err := Open(ctx, Options{DataRoot: t.TempDir(), Create: CreateFresh, Wasm: flatsqlrt.P4ThreadsWasm(), CompileOnMiss: true, AOTCacheDir: t.TempDir()})
+	e, err := Open(ctx, Options{DataRoot: t.TempDir(), Create: CreateFresh, Wasm: flatsqlrt.P4ThreadsWasm(), CompileOnMiss: true, AOTCacheDir: reviewAOTDir(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +87,7 @@ func TestMigrationCreatesEngineRoot(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	e, err := Open(ctx, Options{DataRoot: root, Create: CreateForMigration, Wasm: wasm, CompileOnMiss: true, AOTCacheDir: t.TempDir()})
+	e, err := Open(ctx, Options{DataRoot: root, Create: CreateForMigration, Wasm: wasm, CompileOnMiss: true, AOTCacheDir: reviewAOTDir(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
