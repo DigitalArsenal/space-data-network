@@ -47,7 +47,10 @@ package storage
 // that has no series for a lane yet (every store written before this change)
 // ADOPTS its existing rows as one series per batch when the lane's first new
 // series is recorded, so the first retention pass after an upgrade releases
-// the history accumulated before it.
+// the history accumulated before it. A window a publication wrote without
+// completing (it failed or was cut after the window's row was written) is
+// marked unfinished and never adopted: it is not a completed publication,
+// and retention releases it like any row no series names.
 
 import (
 	"context"
@@ -156,7 +159,67 @@ func (s *FlatSQLStore) initDatasetPublicationSeriesTables() error {
 	`); err != nil {
 		return fmt.Errorf("failed to create dataset publication series members table: %w", err)
 	}
+	if _, err := s.db.Exec(`
+		CREATE TABLE IF NOT EXISTS sdn_dataset_publication_unfinished_windows (
+			schema_name TEXT NOT NULL,
+			provider_id TEXT NOT NULL DEFAULT '',
+			source_name TEXT NOT NULL DEFAULT '',
+			shard_cid TEXT NOT NULL,
+			PRIMARY KEY (schema_name, provider_id, source_name, shard_cid)
+		)
+	`); err != nil {
+		return fmt.Errorf("failed to create dataset publication unfinished windows table: %w", err)
+	}
 	return nil
+}
+
+// MarkDatasetPublicationWindowUnfinished records that a publication of the
+// lane is writing the window with shardCID and has not completed. The mark
+// is written before the window's publication row and removed when a series
+// that names the window is recorded (RecordDatasetPublicationSeries). A
+// window still marked belongs to a publication that failed or was cut
+// (an error, a crash, a kill) after writing it: such a row is never adopted
+// as a legacy series, so it never counts as a completed publication, and
+// retention releases it like any row no series names.
+func (s *FlatSQLStore) MarkDatasetPublicationWindowUnfinished(lane DatasetPublicationLane, shardCID string) error {
+	if err := s.requireWritable("mark dataset publication window unfinished"); err != nil {
+		return err
+	}
+	lane = lane.normalized()
+	shardCID = strings.TrimSpace(shardCID)
+	if lane.SchemaName == "" || shardCID == "" {
+		return errors.New("schema and shard CID are required")
+	}
+	defer s.lockWrite("MarkDatasetPublicationWindowUnfinished")()
+	if _, err := s.db.Exec(`
+		INSERT OR IGNORE INTO sdn_dataset_publication_unfinished_windows (schema_name, provider_id, source_name, shard_cid)
+		VALUES (?, ?, ?, ?)`, lane.SchemaName, lane.ProviderID, lane.SourceName, shardCID); err != nil {
+		return fmt.Errorf("mark dataset publication window %s unfinished: %w", shardCID, err)
+	}
+	return nil
+}
+
+// unfinishedDatasetPublicationWindows is the lane's shard CIDs still marked
+// unfinished.
+func (s *FlatSQLStore) unfinishedDatasetPublicationWindows(lane DatasetPublicationLane) (map[string]bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	rows, err := s.db.Query(`
+		SELECT shard_cid FROM sdn_dataset_publication_unfinished_windows
+		WHERE schema_name = ? AND provider_id = ? AND source_name = ?`, lane.SchemaName, lane.ProviderID, lane.SourceName)
+	if err != nil {
+		return nil, fmt.Errorf("list %s unfinished publication windows: %w", lane.SchemaName, err)
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var cid string
+		if err := rows.Scan(&cid); err != nil {
+			return nil, err
+		}
+		out[cid] = true
+	}
+	return out, rows.Err()
 }
 
 // DatasetPublicationSeriesID is a deterministic id over a series' windows and
@@ -324,7 +387,9 @@ func (s *FlatSQLStore) listDatasetPublicationSeriesLocked(lane DatasetPublicatio
 // rows of the lane that no recorded series names yet (every row written before
 // series existed, or by a path that records none) are first adopted as one
 // legacy series per batch, so retention always knows what each advertised row
-// belongs to. The windows this series published are never adopted.
+// belongs to. The windows this series published are never adopted, nor are
+// windows a publication wrote without completing
+// (MarkDatasetPublicationWindowUnfinished).
 func (s *FlatSQLStore) RecordDatasetPublicationSeries(series DatasetPublicationSeries, providerPeerID string) error {
 	if err := s.requireWritable("record dataset publication series"); err != nil {
 		return err
@@ -412,6 +477,15 @@ func (s *FlatSQLStore) writeDatasetPublicationSeries(lane DatasetPublicationLane
 				lane.SchemaName, lane.ProviderID, lane.SourceName, each.SeriesID, cid, strings.TrimSpace(member.Role)); err != nil {
 				return fmt.Errorf("record publication series member %s: %w", cid, err)
 			}
+			if strings.TrimSpace(member.Role) == PinLedgerRoleShard {
+				// The window is part of a completed series now.
+				if _, err := tx.Exec(`
+					DELETE FROM sdn_dataset_publication_unfinished_windows
+					WHERE schema_name = ? AND provider_id = ? AND source_name = ? AND shard_cid = ?`,
+					lane.SchemaName, lane.ProviderID, lane.SourceName, cid); err != nil {
+					return fmt.Errorf("clear unfinished publication window %s: %w", cid, err)
+				}
+			}
 		}
 	}
 	if err := tx.Commit(); err != nil {
@@ -439,6 +513,13 @@ func (s *FlatSQLStore) unrecordedDatasetPublicationSeries(lane DatasetPublicatio
 	if err != nil {
 		return nil, err
 	}
+	// A window a publication wrote and never completed is not legacy: it is
+	// what a failed or cut publication left, and adopting it would record it
+	// as a completed series.
+	unfinished, err := s.unfinishedDatasetPublicationWindows(lane)
+	if err != nil {
+		return nil, err
+	}
 	recorded := make(map[string]bool)
 	legacyAt := make(map[string]time.Time)
 	for _, each := range existing {
@@ -455,7 +536,7 @@ func (s *FlatSQLStore) unrecordedDatasetPublicationSeries(lane DatasetPublicatio
 	byBatch := map[string]*DatasetPublicationSeries{}
 	var order []string
 	for _, row := range rows {
-		if recorded[row.ShardCID] || row.ProviderID != lane.ProviderID || row.SourceName != lane.SourceName {
+		if recorded[row.ShardCID] || unfinished[row.ShardCID] || row.ProviderID != lane.ProviderID || row.SourceName != lane.SourceName {
 			continue
 		}
 		legacy := byBatch[row.BatchID]

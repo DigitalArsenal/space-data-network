@@ -35,6 +35,14 @@ dataset publication OMM.fbs celestrak/celestrak-gp batch "9f2c…" failed at ste
 (batch "9f2c…" is unpublished: 2104 of its 30871 records are in no completed publication of the lane)
 ```
 
+A completed publication is one whose every window was announced and whose
+completion was recorded as a series of the lane. A publication that failed
+partway (at a later window's announcement, at recording its completion, or
+cut by a crash) completed nothing, whatever rows and announced windows it
+left: its windows are marked unfinished when written, never count as a
+publication of the batch, and the lane's retention releases them like any
+row no series names.
+
 It clears when nothing that failed is still unpublished:
 
 - the failed batch itself, or the whole lane (a publication with no batch),
@@ -42,20 +50,32 @@ It clears when nothing that failed is still unpublished:
 - every record of the failed batch is in a completed publication of the lane.
   This is how a later scheduled run clears it: a pull that returns a record
   again tags it to the later batch, and that batch's publication carries it.
-  The check runs after each completed publication of a whole batch of the
-  lane.
+
+Which records are published is worked out after the publication was reported
+done, off the publication's path, one job at a time, on work the node's stop
+cancels. When a batch fails, its records are counted once: one read of the
+batch's record list and of their tags, a page of 2,048 at a time. A record
+counts as published when it is tagged to a batch with a completed
+publication of its whole batch. The records found unpublished (at most
+200,000 per batch; a batch with more keeps its alert until the batch or the
+lane is published) are kept in memory, and after each completed publication
+of a whole batch of the lane the published batch's record list (no tags) is
+read once and its records are taken off them. The alert says
+`(its records are being counted)` until the first count ends.
 
 A record of the failed batch that no later pull returned (an element set its
 publisher has since replaced) is in no publication, so the alert stays; after
 each publication of the lane its text says how many records are still
 unpublished. A publication of the failed batch
 (`POST /api/v1/admin/dataset-updates/publish` with its `batchId`) clears it;
-that publication is then the lane's newest. A publication of an empty batch, or an announcement of existing
-publications, clears nothing. A lane whose batches are declared snapshots
-(`publishing.retention.lanes[].snapshot_batches`) counts the records of a
-series its retention released as unpublished, so its alert may stay where a
-lane of parts would clear. The failed scopes are kept in memory: a restart
-drops the alert, and the failed batch's records stay as they were.
+that publication is then the lane's newest. A publication of an empty batch,
+or an announcement of existing publications, clears nothing. A lane whose
+batches are declared snapshots (`publishing.retention.lanes[].snapshot_batches`)
+counts a record whose only completed publication is a series its retention
+released as unpublished when the batch fails, so its alert may stay where a
+lane of parts would clear. The failed scopes and the records followed are
+kept in memory: a restart drops the alert, and the failed batch's records
+stay as they were.
 
 Alerts are rebuilt at boot: the node seeds `lane_failing` from `app_attempts`
 rows with `consecutive_failures >= 2` (`sourcemetrics.SeedLaneAlerts`), so a

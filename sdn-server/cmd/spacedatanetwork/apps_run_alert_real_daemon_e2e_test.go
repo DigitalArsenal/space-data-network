@@ -130,6 +130,27 @@ func TestPublicationManualRunOutlivesClientRealDaemons(t *testing.T) {
 		!strings.Contains(out, "spacedatanetwork apps status "+gpFlowAppID+" "+gpFlowTrigger) {
 		t.Fatalf("apps run --timeout did not say the run continues and how to see it:\n%s", out)
 	}
+	// A forced request that joins this run, which was not forced, is told
+	// the force does not apply: in the answer, and by the CLI.
+	joined, err := http.Post(d.base+appRunPath(gpFlowAppID, gpFlowTrigger)+"?detach=1", "application/json", strings.NewReader(`{"force":true}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var joinedRun struct {
+		Joined          bool `json:"joined"`
+		ForceNotApplied bool `json:"forceNotApplied"`
+	}
+	_ = json.NewDecoder(joined.Body).Decode(&joinedRun)
+	joined.Body.Close()
+	t.Logf("a forced request joining the run: HTTP %d %+v", joined.StatusCode, joinedRun)
+	if joined.StatusCode != http.StatusAccepted || !joinedRun.Joined || !joinedRun.ForceNotApplied {
+		t.Fatalf("a forced request joining a run that was not forced is not told the force does not apply: HTTP %d %+v", joined.StatusCode, joinedRun)
+	}
+	out, err, _ = appsCLI(t, d, "apps", "run", gpFlowAppID, gpFlowTrigger, "--force", "--detach")
+	t.Logf("apps run --force --detach joining the run (%v):\n%s", err, out)
+	if err != nil || !strings.Contains(out, "--force does not apply") {
+		t.Fatalf("apps run --force joining a run that was not forced does not say the force does not apply (%v):\n%s", err, out)
+	}
 	if end := awaitManualRunEnd(t, d, 1, 3*time.Minute); !strings.HasPrefix(end, "ok ") {
 		t.Fatalf("the run its client stopped waiting for did not end ok: status=%s", end)
 	}
@@ -212,6 +233,47 @@ func TestPublicationManualRunOutlivesClientRealDaemons(t *testing.T) {
 	if end := awaitManualRunEnd(t, d, 4, time.Minute); !strings.HasPrefix(end, "error ") || !strings.Contains(end, "cancelled by the operator") {
 		t.Fatalf("the cancelled run's end: status=%s", end)
 	}
+
+	// 5. `apps run` follows its own run: that run is cancelled and another
+	// starts at once; the command reports the cancelled run, not the other.
+	forceStart()
+	output = lockedBuffer{}
+	follow := exec.Command(d.exe, "--config", d.cfg, "apps", "run", gpFlowAppID, gpFlowTrigger)
+	follow.Env = appsCLIEnv(t, d)
+	follow.Stdout, follow.Stderr = &output, &output
+	if err := follow.Start(); err != nil {
+		t.Fatal(err)
+	}
+	followed := make(chan error, 1)
+	go func() { followed <- follow.Wait() }()
+	deadline = time.Now().Add(time.Minute)
+	for !strings.Contains(output.String(), ": already running since ") && time.Now().Before(deadline) {
+		time.Sleep(200 * time.Millisecond)
+	}
+	if !strings.Contains(output.String(), ": already running since ") {
+		_ = follow.Process.Kill()
+		t.Fatalf("apps run did not join the running run:\n%s", output.String())
+	}
+	cancelRequest, _ := http.NewRequest(http.MethodDelete, d.base+appRunPath(gpFlowAppID, gpFlowTrigger), nil)
+	cancelled, err := http.DefaultClient.Do(cancelRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancelled.Body.Close()
+	forceStart()
+	select {
+	case err = <-followed:
+	case <-time.After(2 * time.Minute):
+		_ = follow.Process.Kill()
+		t.Fatalf("apps run did not end within 2 minutes:\n%s", output.String())
+	}
+	t.Logf("apps run whose run was cancelled while another started (%v):\n%s", err, output.String())
+	if err == nil || !strings.Contains(output.String(), "cancelled by the operator") || strings.Contains(output.String(), gpFlowTrigger+": ok ") {
+		t.Fatalf("apps run did not report its own cancelled run (exit %v):\n%s", err, output.String())
+	}
+	if end := awaitManualRunEnd(t, d, 6, 3*time.Minute); !strings.HasPrefix(end, "ok ") {
+		t.Fatalf("the run started after the cancel did not end ok: status=%s", end)
+	}
 }
 
 // TestPublicationAlertClearsWhenLaterRunsPublishItRealDaemons runs the
@@ -264,11 +326,8 @@ func TestPublicationAlertClearsWhenLaterRunsPublishItRealDaemons(t *testing.T) {
 		t.Fatalf("the failure names no batch and export step: %s", failed)
 	}
 	batch := match[1]
-	alert := publicationAlert(t, d, gpFlowLane)
+	alert := awaitPublicationAlert(t, d, gpFlowLane, `batch \"`+batch+`\" is unpublished: 2 of its 2 records are in no completed publication of the lane`, time.Minute)
 	t.Logf("alert after the failed run: %s", alert)
-	if !strings.Contains(alert, `batch \"`+batch+`\" is unpublished: 2 of its 2 records are in no completed publication of the lane`) {
-		t.Fatalf("the alert does not say the failed batch's two records are unpublished: %s", alert)
-	}
 	if err := os.Remove(blocker); err != nil {
 		t.Fatal(err)
 	}
@@ -300,18 +359,13 @@ func TestPublicationAlertClearsWhenLaterRunsPublishItRealDaemons(t *testing.T) {
 	// The second pull returns one of the failed batch's records.
 	phase.Store(1)
 	manualRun(2)
-	alert = publicationAlert(t, d, gpFlowLane)
+	alert = awaitPublicationAlert(t, d, gpFlowLane, `after the publication of batch \"`+strings.SplitN(publicationLogAfter(t, d, `Dataset publication `+gpFlowLane+` batch "`), `"`, 2)[0]+`\", batch \"`+batch+`\" is unpublished: 1 of its 2 records are in no completed publication of the lane`, time.Minute)
 	t.Logf("alert after the second run: %s", alert)
-	if !strings.Contains(alert, `batch \"`+batch+`\" is unpublished: 1 of its 2 records are in no completed publication of the lane`) {
-		t.Fatalf("after a publication that carries one of the failed batch's two records, the alert is not the one record still unpublished: %s", alert)
-	}
 
 	// The third pull returns both.
 	phase.Store(2)
 	manualRun(3)
-	if alert := publicationAlert(t, d, gpFlowLane); alert != "" {
-		t.Fatalf("every record of the failed batch is published, and the alert is still active: %s", alert)
-	}
+	awaitPublicationAlertCleared(t, d, gpFlowLane, time.Minute)
 	cleared := publicationLogAfter(t, d, `every record of failed batch "`+batch+`"`)
 	t.Logf("cleared: every record of failed batch %q%s", batch, cleared)
 }

@@ -25,11 +25,16 @@ const moduleScheduleCancelWait = 30 * time.Second
 //	POST            start the run (the body is its input, such as
 //	                {"force":true}) and answer when it ends; a client that
 //	                leaves does not end the run. A run of the schedule that
-//	                is already running is joined ("joined": true).
+//	                is already running is joined ("joined": true), and a
+//	                force the joining request asked for does not apply to
+//	                it ("forceNotApplied": true). When the node stops first,
+//	                503 with the run's state and the reason.
 //	POST ?detach=1  start (or join) the run and answer at once, 202, with
-//	                its state ("running").
+//	                its state ("running") and its id.
 //	GET             the running manual run, or the last one; 404 when the
 //	                schedule has none.
+//	GET ?id=ID      that run only: running, ended, or in the schedule's
+//	                history; 404 when the node does not know it.
 //	DELETE          cancel the running manual run and answer its state once
 //	                it ended (at most 30 s later); 409 when none runs.
 func handleModuleScheduleRun(w http.ResponseWriter, r *http.Request, mgr *plugins.Manager, moduleID, methodID string) {
@@ -41,7 +46,7 @@ func handleModuleScheduleRun(w http.ResponseWriter, r *http.Request, mgr *plugin
 	}
 	switch r.Method {
 	case http.MethodGet:
-		run, err := mgr.RuntimeModuleScheduleRunState(moduleID, methodID)
+		run, err := mgr.RuntimeModuleScheduleRunState(moduleID, methodID, strings.TrimSpace(r.URL.Query().Get("id")))
 		if errors.Is(err, plugins.ErrNoManualRun) {
 			http.Error(w, err.Error(), http.StatusNotFound)
 			return
@@ -87,6 +92,18 @@ func handleModuleScheduleRun(w http.ResponseWriter, r *http.Request, mgr *plugin
 		run, err := mgr.RunRuntimeModuleScheduleNowWithInput(r.Context(), moduleID, methodID, input)
 		if r.Context().Err() != nil {
 			// The client left; the run continues and no one reads an answer.
+			return
+		}
+		if errors.Is(err, plugins.ErrManualRunsStopped) {
+			// The node is stopping: this request stops waiting so the admin
+			// server can shut down; the run is cancelled with the node.
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Cache-Control", "no-cache")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_ = json.NewEncoder(w).Encode(struct {
+				plugins.RuntimeModuleScheduleRun
+				Error string `json:"error"`
+			}{run, err.Error()})
 			return
 		}
 		if err != nil {

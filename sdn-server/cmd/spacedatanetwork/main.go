@@ -3107,7 +3107,16 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	// forever for in-flight handlers. On a box where a single store read can
 	// queue for tens of seconds behind the engine lock, one slow request held
 	// the whole shutdown. Bound it, then force the sockets closed.
-	// Running dataset publications are cancelled and waited for first: they
+	// Manual runs of schedules are cancelled first, and every request
+	// waiting on one is released (plugins.StopManualRuns): a run-now request
+	// would otherwise hold the admin server for its whole shutdown bound. A
+	// run that has not ended by then is waited for in the node's drain.
+	if mgr := n.PluginManager(); mgr != nil {
+		manualCtx, cancelManual := context.WithTimeout(context.Background(), manualRunStopTimeout)
+		mgr.StopManualRuns(manualCtx)
+		cancelManual()
+	}
+	// Running dataset publications are cancelled and waited for next: they
 	// write to the store, and the requests waiting on them then answer.
 	if publications != nil {
 		publicationsCtx, cancelPublications := context.WithTimeout(context.Background(), publicationStopTimeout)
@@ -3277,12 +3286,15 @@ const (
 // TimeoutStopSec (90s on this fleet) so the daemon decides how it dies and
 // leaves evidence, rather than being SIGKILLed with an empty journal.
 //
+//	manualRunStopTimeout    — manual runs of schedules, once cancelled; their
+//	                          waiting requests are released after it.
 //	publicationStopTimeout  — running dataset publications, once cancelled.
 //	httpShutdownTimeout     — graceful drain of the three HTTP listeners.
 //	nodeDrainTimeout        — background goroutines (n.wg) after n.cancel().
-//	shutdownWatchdogTimeout — total budget; must exceed the three above plus
+//	shutdownWatchdogTimeout — total budget; must exceed the four above plus
 //	                          store/engine teardown, and stay under 90s.
 const (
+	manualRunStopTimeout    = 5 * time.Second
 	publicationStopTimeout  = 10 * time.Second
 	httpShutdownTimeout     = 15 * time.Second
 	nodeDrainTimeout        = 30 * time.Second

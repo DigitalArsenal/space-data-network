@@ -307,6 +307,10 @@ type RuntimeModuleScheduleRun struct {
 	// Joined marks the answer to a request that found the run already
 	// running and joined it instead of starting another.
 	Joined bool `json:"joined,omitempty"`
+	// ForceNotApplied marks the answer to a forced request ({"force":true})
+	// that joined a running run started without force: the run keeps its
+	// own input, so the force does not apply to it.
+	ForceNotApplied bool `json:"forceNotApplied,omitempty"`
 }
 
 // RuntimeModuleSchedule is the dashboard read model for one provider schedule.
@@ -494,14 +498,17 @@ type Manager struct {
 	inputStateMu sync.RWMutex
 
 	// Operators' manual runs (manual_runs.go): the running ones by schedule,
-	// the last ended one of each, and the node's stop.
-	manualMu     sync.Mutex
-	manualRuns   map[string]*manualRun
-	manualLast   map[string]RuntimeModuleScheduleRun
-	manualLife   context.Context
-	manualStop   context.CancelCauseFunc
-	manualClosed bool
-	manualWg     sync.WaitGroup
+	// the last ended one of each, the node's stop, and the release of the
+	// callers waiting for a run when the node stops.
+	manualMu          sync.Mutex
+	manualRuns        map[string]*manualRun
+	manualLast        map[string]RuntimeModuleScheduleRun
+	manualLife        context.Context
+	manualStop        context.CancelCauseFunc
+	manualClosed      bool
+	manualWg          sync.WaitGroup
+	manualReleased    chan struct{}
+	manualReleaseOnce sync.Once
 }
 
 // New creates an empty plugin manager.
@@ -1206,7 +1213,9 @@ func (m *Manager) RunRuntimeModuleScheduleNow(ctx context.Context, moduleID, met
 // RunRuntimeModuleScheduleNowWithInput runs a schedule now with the
 // operator's payload and waits for it (StartRuntimeModuleScheduleRun). When
 // ctx ends first, the caller stops waiting and the run continues on the
-// node; the answer is the run's state ("running") and ctx's error.
+// node; the answer is the run's state ("running") and ctx's error. When the
+// node stops waiting for its runs (StopManualRuns) first, the answer is the
+// run's state and ErrManualRunsStopped.
 func (m *Manager) RunRuntimeModuleScheduleNowWithInput(ctx context.Context, moduleID, methodID string, input []byte) (RuntimeModuleScheduleRun, error) {
 	if m == nil {
 		return RuntimeModuleScheduleRun{}, errors.New("plugin manager is nil")
@@ -1220,17 +1229,11 @@ func (m *Manager) RunRuntimeModuleScheduleNowWithInput(ctx context.Context, modu
 	if err != nil {
 		return RuntimeModuleScheduleRun{}, err
 	}
-	select {
-	case <-active.done:
-	case <-ctx.Done():
-		log.Warnf("Plugin %q manual run %q: the requester stopped waiting (%v); the run continues on the node", moduleID, methodID, context.Cause(ctx))
-		return started, ctx.Err()
+	run, err := m.waitManualRun(ctx, active, started)
+	if ctx.Err() != nil && run.Status == "running" {
+		log.Warnf("Plugin %q manual run %q (id %s): the requester stopped waiting (%v); the run continues on the node", moduleID, methodID, run.ID, context.Cause(ctx))
 	}
-	m.manualMu.Lock()
-	defer m.manualMu.Unlock()
-	run := active.run
-	run.Joined = started.Joined
-	return run, active.err
+	return run, err
 }
 
 // UpdateRuntimeModuleOption mutates a dashboard-exposed runtime option. Timer

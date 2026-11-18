@@ -1,7 +1,7 @@
 package storage
 
-// publication_batch_coverage.go — which of a batch's records no publication
-// of its lane carries.
+// publication_batch_coverage.go — which of a batch's records no completed
+// publication of its lane carries.
 //
 // A batch whose publication failed is not published, but its records may be:
 // a later pull of the same source that returns a record again tags that
@@ -9,16 +9,20 @@ package storage
 // and the later batch's publication carries it. A record the later pulls did
 // not return (an element set its publisher has since replaced) stays tagged
 // to the failed batch alone, and no publication carries it. The publication
-// alert of the failed batch (internal/api dataset_publication_runs.go) clears
-// only when this count is zero.
+// alert of the failed batch (internal/api dataset_publication_coverage.go)
+// clears only when no record of the batch is left unpublished.
 //
-// A batch of the lane counts as published when it has a completed
-// publication series with records (sdn_dataset_publication_series): a series
-// is recorded only once its publication completes, and retention keeps the
-// series of every batch the store still holds unless the lane declares its
-// batches snapshots, so a series released by a snapshot lane's retention
-// makes its records count as unpublished here (the count errs on the side of
-// keeping an alert).
+// A record counts as published when it is tagged to a batch of the lane that
+// has a COMPLETED publication series of its whole batch: a series recorded
+// by the publication's completion (never a "legacy:" series adopted from
+// rows, which a publication that failed partway can leave), with the
+// fingerprint of the batch's record set (a series limited to a head of the
+// batch has none). Such a series exported every record tagged to its batch,
+// and a batch's tags are written by that batch's ingest only, so a record
+// tagged to it is in the series. Retention keeps the series of every batch
+// the store still holds unless the lane declares its batches snapshots, so
+// a series released by a snapshot lane's retention makes its records count
+// as unpublished here (the count errs on the side of keeping an alert).
 
 import (
 	"context"
@@ -34,37 +38,100 @@ import (
 // file does not read (format 2).
 var ErrBatchCoverageUnsupported = errors.New("this store format does not report which records of a batch are published")
 
+// ErrTooManyUnpublished is the answer of UnpublishedBatchRecords when more
+// records of the batch are unpublished than the caller follows.
+var ErrTooManyUnpublished = errors.New("more records of the batch are unpublished than are followed")
+
 // batchCoveragePage bounds the CIDs one step of the count reads.
 const batchCoveragePage = 2048
 
-// UnpublishedBatchRecords counts the records tagged to batchID in the lane
-// (schema, provider, source) that carry no tag of a batch of the lane with a
-// completed publication. total is how many records the batch holds.
-func (s *FlatSQLStore) UnpublishedBatchRecords(ctx context.Context, schemaName, providerID, sourceName, batchID string) (unpublished, total int64, err error) {
+// UnpublishedBatchRecords answers the CIDs of the records tagged to batchID
+// in the lane (schema, provider, source) that carry no tag of a batch of the
+// lane with a completed publication of its whole batch, and how many records
+// the batch holds. More than max unpublished records is ErrTooManyUnpublished.
+//
+// Cost: one read of the batch's CIDs and of their tags, a page of 2,048 at a
+// time, and one read of the lane's series.
+func (s *FlatSQLStore) UnpublishedBatchRecords(ctx context.Context, schemaName, providerID, sourceName, batchID string, max int) (unpublished []string, total int64, err error) {
 	schemaName, providerID = strings.TrimSpace(schemaName), strings.TrimSpace(providerID)
 	sourceName, batchID = strings.TrimSpace(sourceName), strings.TrimSpace(batchID)
 	if schemaName == "" || providerID == "" || sourceName == "" || batchID == "" {
-		return 0, 0, errors.New("schema, provider, source and batch are required")
+		return nil, 0, errors.New("schema, provider, source and batch are required")
 	}
 	published, err := s.publishedLaneBatches(ctx, schemaName, providerID, sourceName)
 	if err != nil {
-		return 0, 0, err
+		return nil, 0, err
 	}
 	covered := func(provider, source, batch string) bool {
 		return provider == providerID && source == sourceName && published[batch]
 	}
 	switch b := s.rb.(type) {
 	case format4Backend:
-		return b.unpublishedBatchRecords(ctx, schemaName, providerID, sourceName, batchID, covered)
+		return b.unpublishedBatchRecords(ctx, schemaName, providerID, sourceName, batchID, covered, max)
 	case nil:
-		return s.unpublishedBatchRecordsFormat1(ctx, schemaName, providerID, sourceName, batchID, published)
+		return s.unpublishedBatchRecordsFormat1(ctx, schemaName, providerID, sourceName, batchID, published, max)
 	default:
-		return 0, 0, ErrBatchCoverageUnsupported
+		return nil, 0, ErrBatchCoverageUnsupported
+	}
+}
+
+// EachLaneBatchCIDPage calls fn with the CIDs of the lane's records tagged to
+// batchID, a page of at most 2,048 at a time, until fn errs or none are left.
+func (s *FlatSQLStore) EachLaneBatchCIDPage(ctx context.Context, schemaName, providerID, sourceName, batchID string, fn func([]string) error) error {
+	schemaName, providerID = strings.TrimSpace(schemaName), strings.TrimSpace(providerID)
+	sourceName, batchID = strings.TrimSpace(sourceName), strings.TrimSpace(batchID)
+	if schemaName == "" || providerID == "" || sourceName == "" || batchID == "" {
+		return errors.New("schema, provider, source and batch are required")
+	}
+	switch s.rb.(type) {
+	case format4Backend:
+		after := int64(0)
+		for {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			cids, last, more, err := s.LaneBatchCIDPage(schemaName, providerID, sourceName, batchID, after, batchCoveragePage)
+			if err != nil {
+				return err
+			}
+			if len(cids) > 0 {
+				if err := fn(cids); err != nil {
+					return err
+				}
+			}
+			if !more || last <= after {
+				return nil
+			}
+			after = last
+		}
+	case nil:
+		after := ""
+		for {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			page, err := s.format1BatchCIDPage(ctx, schemaName, providerID, sourceName, batchID, after)
+			if err != nil {
+				return fmt.Errorf("read batch %q records: %w", batchID, err)
+			}
+			if len(page) > 0 {
+				if err := fn(page); err != nil {
+					return err
+				}
+			}
+			if len(page) < batchCoveragePage {
+				return nil
+			}
+			after = page[len(page)-1]
+		}
+	default:
+		return ErrBatchCoverageUnsupported
 	}
 }
 
 // publishedLaneBatches is the lane's batches with a completed publication
-// series that carries records.
+// series of the whole batch that carries records: recorded at a
+// publication's completion (not adopted as "legacy:"), with a fingerprint.
 func (s *FlatSQLStore) publishedLaneBatches(ctx context.Context, schemaName, providerID, sourceName string) (map[string]bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -72,7 +139,8 @@ func (s *FlatSQLStore) publishedLaneBatches(ctx context.Context, schemaName, pro
 	defer s.mu.RUnlock()
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT DISTINCT batch_id FROM sdn_dataset_publication_series
-		WHERE schema_name = ? AND provider_id = ? AND source_name = ? AND record_count > 0`,
+		WHERE schema_name = ? AND provider_id = ? AND source_name = ? AND record_count > 0
+		  AND batch_id != '' AND series_id NOT LIKE 'legacy:%' AND fingerprint != ''`,
 		schemaName, providerID, sourceName)
 	if err != nil {
 		return nil, fmt.Errorf("read the lane's published batches: %w", err)
@@ -89,26 +157,30 @@ func (s *FlatSQLStore) publishedLaneBatches(ctx context.Context, schemaName, pro
 	return out, rows.Err()
 }
 
-func (b format4Backend) unpublishedBatchRecords(ctx context.Context, schemaName, providerID, sourceName, batchID string, covered func(provider, source, batch string) bool) (int64, int64, error) {
-	var unpublished, total int64
+func (b format4Backend) unpublishedBatchRecords(ctx context.Context, schemaName, providerID, sourceName, batchID string, covered func(provider, source, batch string) bool, max int) ([]string, int64, error) {
+	var unpublished []string
+	var total int64
 	after := int64(0)
 	for {
 		if err := ctx.Err(); err != nil {
-			return 0, 0, err
+			return nil, 0, err
 		}
 		cids, last, more, err := b.s.LaneBatchCIDPage(schemaName, providerID, sourceName, batchID, after, batchCoveragePage)
 		if err != nil {
-			return 0, 0, err
+			return nil, 0, err
 		}
 		if len(cids) > 0 {
 			tags, err := b.f4TagRows(schemaName, cids)
 			if err != nil {
-				return 0, 0, err
+				return nil, 0, err
 			}
 			for _, c := range cids {
 				total++
 				if !anyTagCovered(tags[c], covered) {
-					unpublished++
+					if len(unpublished) >= max {
+						return nil, 0, ErrTooManyUnpublished
+					}
+					unpublished = append(unpublished, c)
 				}
 			}
 		}
@@ -128,38 +200,42 @@ func anyTagCovered(rows []format4.TagRow, covered func(provider, source, batch s
 	return false
 }
 
-// unpublishedBatchRecordsFormat1 is the count on a format-1 store, whose tags
-// are rows of sdn_record_source_tags.
-func (s *FlatSQLStore) unpublishedBatchRecordsFormat1(ctx context.Context, schemaName, providerID, sourceName, batchID string, published map[string]bool) (int64, int64, error) {
-	var unpublished, total int64
+// format1BatchCIDPage is one page of a batch's CIDs on a format-1 store,
+// whose tags are rows of sdn_record_source_tags.
+func (s *FlatSQLStore) format1BatchCIDPage(ctx context.Context, schemaName, providerID, sourceName, batchID, after string) ([]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT DISTINCT cid FROM sdn_record_source_tags
+		WHERE schema_name = ? AND provider_id = ? AND source_name = ? AND batch_id = ? AND cid > ?
+		ORDER BY cid LIMIT ?`, schemaName, providerID, sourceName, batchID, after, batchCoveragePage)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var c string
+		if err := rows.Scan(&c); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// unpublishedBatchRecordsFormat1 is the count on a format-1 store.
+func (s *FlatSQLStore) unpublishedBatchRecordsFormat1(ctx context.Context, schemaName, providerID, sourceName, batchID string, published map[string]bool, max int) ([]string, int64, error) {
+	var unpublished []string
+	var total int64
 	after := ""
 	for {
 		if err := ctx.Err(); err != nil {
-			return 0, 0, err
+			return nil, 0, err
 		}
-		page, err := func() ([]string, error) {
-			s.mu.RLock()
-			defer s.mu.RUnlock()
-			rows, err := s.db.QueryContext(ctx, `
-				SELECT DISTINCT cid FROM sdn_record_source_tags
-				WHERE schema_name = ? AND provider_id = ? AND source_name = ? AND batch_id = ? AND cid > ?
-				ORDER BY cid LIMIT ?`, schemaName, providerID, sourceName, batchID, after, batchCoveragePage)
-			if err != nil {
-				return nil, err
-			}
-			defer rows.Close()
-			var out []string
-			for rows.Next() {
-				var c string
-				if err := rows.Scan(&c); err != nil {
-					return nil, err
-				}
-				out = append(out, c)
-			}
-			return out, rows.Err()
-		}()
+		page, err := s.format1BatchCIDPage(ctx, schemaName, providerID, sourceName, batchID, after)
 		if err != nil {
-			return 0, 0, fmt.Errorf("read batch %q records: %w", batchID, err)
+			return nil, 0, fmt.Errorf("read batch %q records: %w", batchID, err)
 		}
 		if len(page) == 0 {
 			return unpublished, total, nil
@@ -189,7 +265,7 @@ func (s *FlatSQLStore) unpublishedBatchRecordsFormat1(ctx context.Context, schem
 			return out, rows.Err()
 		}()
 		if err != nil {
-			return 0, 0, fmt.Errorf("read the tags of batch %q records: %w", batchID, err)
+			return nil, 0, fmt.Errorf("read the tags of batch %q records: %w", batchID, err)
 		}
 		for _, c := range page {
 			total++
@@ -201,7 +277,10 @@ func (s *FlatSQLStore) unpublishedBatchRecordsFormat1(ctx context.Context, schem
 				}
 			}
 			if !done {
-				unpublished++
+				if len(unpublished) >= max {
+					return nil, 0, ErrTooManyUnpublished
+				}
+				unpublished = append(unpublished, c)
 			}
 		}
 		after = page[len(page)-1]

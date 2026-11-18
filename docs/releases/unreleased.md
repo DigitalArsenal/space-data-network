@@ -83,17 +83,24 @@ command it runs.
 **A manual run is no longer cut off when its command stops waiting.**
 `spacedatanetwork apps run` gave up after about 65 seconds ("daemon
 unavailable") and the node then cancelled the run ("context canceled"), so a
-flow that needed longer never finished by hand, and the cut-off attempt
-still used the provider's minimum interval. A manual run now belongs to the
-node: it runs to its end whatever the command does. The command waits and
+flow that needed longer never finished by hand. A manual run now belongs to
+the node: it runs to its end whatever the command does, within a bound (the
+flow service's `execution_timeout`, or 2 hours, including any wait for its
+`exclusive_group`). The node's stop cancels it and answers a request waiting
+for it at once. The command waits and
 says every 30 s that the run is still going; `--timeout <duration>` bounds
 the wait (the command then prints how to see the result and exits non-zero,
 and the run continues), `--detach` returns at once, Ctrl-C stops waiting
 (the run continues; `--cancel-on-interrupt` cancels it instead). The new
 `apps status <app-id> [trigger-id]` shows a run's state and result, and
-`apps cancel <app-id> [trigger-id]` cancels a running one. A second
-`apps run` of a schedule that is running joins that run. Scripts use the
-same route: `POST .../schedules/<trigger-id>/run?detach=1`, then `GET` it;
+`apps cancel <app-id> [trigger-id]` cancels a running one; a cancelled run
+gives back its attempt in the provider's minimum interval, so the next
+manual run starts at once. A second `apps run` of a schedule that is running
+joins that run; `--force` does not apply to a run started without it, and
+the command says so. `apps run` follows its own run by id: when the node no
+longer knows it (a restart), the command says so and exits non-zero instead
+of reporting another run. Scripts use the same route:
+`POST .../schedules/<trigger-id>/run?detach=1`, then `GET ...?id=<id>`;
 `DELETE` cancels. The dashboard's Run now waits for the run as before; a
 page closed meanwhile no longer cancels it.
 
@@ -105,4 +112,7 @@ the node restarted. It now also clears when every record of the failed batch
 is in a completed publication of the lane, which is what a later run's
 publication carries when its pull returns those records again. While any
 record of the failed batch is in no publication, the alert stays and says
-how many.
+how many. Only completed publications count: the windows a publication
+wrote before it failed partway are never taken for a publication of the
+batch, and the lane's retention releases them. The records are counted
+after the publication is reported, off its path, once per failed batch.

@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -33,12 +34,16 @@ type appRun struct {
 	FinishedAt string `json:"finishedAt"`
 	OutputSize int    `json:"outputSize"`
 	Joined     bool   `json:"joined"`
+	// ForceNotApplied: this command asked for a forced run and joined a
+	// running one that was not forced; the force did not apply.
+	ForceNotApplied bool `json:"forceNotApplied"`
 }
 
 var (
 	appsRunTimeout           time.Duration
 	appsRunDetach            bool
 	appsRunCancelOnInterrupt bool
+	appsRunForce             bool
 )
 
 // appsRunPoll is how often the command asks the node for the run's state;
@@ -67,6 +72,13 @@ failed, or that the command stopped waiting before a run ended.
   --detach                start the runs and return at once.
   Ctrl-C                  stop waiting; the run continues on the node.
   --cancel-on-interrupt   Ctrl-C cancels the run instead.
+  --force                 run even inside the provider's minimum interval.
+                          A run already running is joined and keeps its own
+                          input: the command then says --force did not apply.
+
+The command follows the run it started or joined by its id. When the node no
+longer knows that run (a restart before the run was recorded), the command
+says so and exits non-zero; it never reports another run's result.
 
 'apps status' shows a run's state and result; 'apps cancel' cancels a run.
 A run of a schedule that is already running is joined, not started again.`,
@@ -99,9 +111,17 @@ A run of a schedule that is already running is joined, not started again.`,
 				continue
 			}
 			if run.Joined {
-				fmt.Fprintf(out, "%s %s: already running since %s; this command follows that run\n", appID, trigger, run.StartedAt)
+				fmt.Fprintf(out, "%s %s: already running since %s (run %s); this command follows that run\n", appID, trigger, run.StartedAt, run.ID)
 			} else {
-				fmt.Fprintf(out, "%s %s: started %s\n", appID, trigger, run.StartedAt)
+				fmt.Fprintf(out, "%s %s: started %s (run %s)\n", appID, trigger, run.StartedAt, run.ID)
+			}
+			if run.ForceNotApplied {
+				fmt.Fprintf(out, "%s %s: --force does not apply: the running run was started without it and keeps its own input\n", appID, trigger)
+			}
+			if run.ID == "" {
+				failures = append(failures, fmt.Sprintf("%s: the node's answer names no run id", trigger))
+				fmt.Fprintf(out, "%s %s: the node's answer names no run id, so this command cannot follow the run\n", appID, trigger)
+				continue
 			}
 			if appsRunDetach {
 				fmt.Fprintf(out, "%s %s: runs on the node; see it with: spacedatanetwork apps status %s %s\n", appID, trigger, appID, trigger)
@@ -110,7 +130,7 @@ A run of a schedule that is already running is joined, not started again.`,
 			// A node may answer with the run already ended.
 			final, stopped := run, ""
 			if run.Status == "running" {
-				final, stopped = waitAppRun(ctx, cmd, client, out, appID, trigger, deadline)
+				final, stopped = waitAppRun(ctx, cmd, client, out, appID, trigger, run.ID, deadline)
 			}
 			if stopped != "" {
 				left := triggers[i+1:]
@@ -226,7 +246,11 @@ func appRunTriggers(cmd *cobra.Command, client *adminClient, appID string, args 
 
 func startAppRun(ctx context.Context, client *adminClient, appID, trigger string) (appRun, error) {
 	var run appRun
-	err := client.postJSON(ctx, appRunPath(appID, trigger)+"?detach=1", nil, &run, "")
+	var input any
+	if appsRunForce {
+		input = map[string]bool{"force": true}
+	}
+	err := client.postJSON(ctx, appRunPath(appID, trigger)+"?detach=1", input, &run, "")
 	return run, err
 }
 
@@ -248,11 +272,13 @@ func printAppRun(out io.Writer, appID, trigger string, run appRun) {
 	}
 }
 
-// waitAppRun asks the node for the run's state until it ends. It answers the
-// ended run, or, when the command stopped waiting first (its deadline,
-// Ctrl-C, the node out of reach), why, with the run left running on the node
-// (or cancelled, with --cancel-on-interrupt).
-func waitAppRun(ctx context.Context, cmd *cobra.Command, client *adminClient, out io.Writer, appID, trigger string, deadline time.Time) (appRun, string) {
+// waitAppRun asks the node for the state of run runID until it ends. It
+// answers the ended run, or, when the command stopped waiting first (its
+// deadline, Ctrl-C, the node out of reach, the node no longer knowing the
+// run), why, with the run left running on the node (or cancelled, with
+// --cancel-on-interrupt). It follows runID only: another run of the
+// schedule, running or ended, is never taken for it.
+func waitAppRun(ctx context.Context, cmd *cobra.Command, client *adminClient, out io.Writer, appID, trigger, runID string, deadline time.Time) (appRun, string) {
 	started := time.Now()
 	lastProgress := started
 	see := fmt.Sprintf("see its result with: spacedatanetwork apps status %s %s", appID, trigger)
@@ -285,9 +311,13 @@ func waitAppRun(ctx context.Context, cmd *cobra.Command, client *adminClient, ou
 		case <-timer.C:
 		}
 		var run appRun
-		if err := client.get(ctx, appRunPath(appID, trigger), &run); err != nil {
+		if err := client.get(ctx, appRunPath(appID, trigger)+"?id="+url.QueryEscape(runID), &run); err != nil {
 			if ctx.Err() != nil {
 				continue
+			}
+			if strings.Contains(err.Error(), " 404 ") {
+				return appRun{}, fmt.Sprintf("the node no longer knows run %s (it may have restarted before the run ended and was recorded); its result is unknown; see the schedule's runs with: spacedatanetwork apps status %s %s",
+					runID, appID, trigger)
 			}
 			// A session can expire during a long run: sign in again once
 			// per failure before giving up.
@@ -301,6 +331,10 @@ func waitAppRun(ctx context.Context, cmd *cobra.Command, client *adminClient, ou
 			continue
 		}
 		failedPolls = 0
+		if run.ID != runID {
+			return appRun{}, fmt.Sprintf("the node answered run %q for run %s; its result is unknown; see the schedule's runs with: spacedatanetwork apps status %s %s",
+				run.ID, runID, appID, trigger)
+		}
 		if run.Status != "running" {
 			return run, ""
 		}
@@ -315,6 +349,7 @@ func init() {
 	appsRunCmd.Flags().DurationVar(&appsRunTimeout, "timeout", 0, "how long this command waits for the runs in all (0: until they end); the runs continue after it")
 	appsRunCmd.Flags().BoolVar(&appsRunDetach, "detach", false, "start the runs and return at once")
 	appsRunCmd.Flags().BoolVar(&appsRunCancelOnInterrupt, "cancel-on-interrupt", false, "Ctrl-C cancels the run instead of only stopping the wait")
+	appsRunCmd.Flags().BoolVar(&appsRunForce, "force", false, "run even inside the provider's minimum interval (input {\"force\":true}); a run already running is joined and keeps its own input")
 	appsCmd.AddCommand(appsStatusCmd)
 	appsCmd.AddCommand(appsCancelCmd)
 }

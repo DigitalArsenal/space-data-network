@@ -137,7 +137,34 @@ the node and `apps status` shows it. `apps run` of a running run joins it,
 and SIGINT stops it waiting with the run continuing to an ok end. A raw
 run-now request whose client gives up after 4 s (the shape of the 2026-11-17
 cut-off) leaves the run to end ok. `apps run --detach` returns at once, and
-`apps cancel` ends the run as cancelled by the operator.
+`apps cancel` ends the run as cancelled by the operator. A forced request
+(and `apps run --force`) that joins a run started without force is told the
+force does not apply. `apps run` follows its own run by id: when that run is
+cancelled and another starts at once, the command reports the cancelled run
+and exits non-zero.
+
+`TestPublicationManualRunStopsWithNodeRealDaemons` runs the flow by hand on
+a node whose GP origin answers after two minutes. A non-forced run cancelled
+by the operator gives back its attempt in the provider's minimum interval:
+the next non-forced run starts. A run-now request waits for that run, and
+the node is stopped (SIGTERM): the request is answered within 10 s, saying
+the node is stopping, and the admin server's shutdown is not held to its
+bound.
+
+`TestPublicationManualRunBoundRealDaemons` runs the flow by hand on a node
+whose service has `execution_timeout: 6s` and whose origin answers after
+30 s: the run ends at its bound, saying so.
+
+`TestPublicationAlertPartialFailureRealDaemons` fails a three-record batch's
+publication, one record per window, after it wrote publication rows:
+`SDN_E2E_PUBLICATION_FAULT=announce@2` fails the second window's
+announcement, `SDN_E2E_PUBLICATION_FAULT="record completion"` fails the
+recording of the completion after every window was announced (the fault
+fires once per process). The alert says all three records are unpublished.
+A publication of a batch carrying one of them leaves the alert saying two
+are, and retention lists no series made of the failed publication's rows; a
+publication of a batch carrying all three clears the alert, and the failed
+batch's records were counted once.
 
 `TestPublicationSlowFlowRealDaemons` runs the same flow by hand while a
 300,000-record publication of the same lane runs, on a node whose admin
