@@ -220,6 +220,18 @@ func newHomeNode(t *testing.T, label string, installed realBuild) *homeNode {
 	feed := newRealE2EFeed(t, work)
 	d := newPushDaemon(t, filepath.Join(work, label), installed, feed, roots, health)
 	d.tracker.root = work
+	// The node starts with no runtime environment of its own, as a service
+	// unit starts it, so the launchers decide WASMEDGE_DIR and the library
+	// path (the checks below read them). A WASMEDGE_DIR the operator sets
+	// outside both bundles is kept as it is.
+	var env []string
+	for _, kv := range d.env {
+		name, _, _ := strings.Cut(kv, "=")
+		if name != "WASMEDGE_DIR" && name != "LD_LIBRARY_PATH" && name != "DYLD_LIBRARY_PATH" {
+			env = append(env, kv)
+		}
+	}
+	d.env = env
 	n := &homeNode{d: d, feed: feed, key: key, health: health, boot: boot}
 
 	// The release layout, then the install moved behind a symlink.
