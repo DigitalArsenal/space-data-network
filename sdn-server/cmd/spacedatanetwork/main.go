@@ -310,14 +310,26 @@ func init() {
 }
 
 func main() {
+	// Before anything else: the build an update installed under this
+	// account's home, when this install folder is one it cannot write.
+	runHomeBuildIfVerified()
 	// --version prints exactly what `sdn version` prints, not cobra's default
 	// "spacedatanetwork version X" one-liner, so scripts can parse either.
 	rootCmd.SetVersionTemplate(versionReport())
 	// Log level is set in rootCmd's PersistentPreRun, NOT here: at this point
 	// cobra has not parsed flags yet, so `debug` is always false and --debug
 	// never took effect. See configureCLILogging.
-	if err := rootCmd.Execute(); err != nil {
+	err := rootCmd.Execute()
+	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
+	}
+	// A daemon that stopped for an update of its home bundle starts again
+	// through the installed path even when its drain reported an error: the
+	// update is installed and waits for that start.
+	if execAfterDaemon != nil {
+		restartThroughInstalledPath(execAfterDaemon)
+	}
+	if err != nil {
 		os.Exit(1)
 	}
 }
@@ -844,6 +856,23 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	updateShutdown := make(chan struct{}, 1)
+	// A home bundle's update stops this daemon and starts the installed path
+	// again in this same process (internal/update/trial.go).
+	homePaths := sdnupdate.PathsFor(bundle.ResolveCurrent().Root)
+	if homePaths.IsHome() {
+		lock, err := sdnupdate.LockHomeDaemon(homePaths)
+		if err != nil {
+			return err
+		}
+		heldDaemonLock = lock
+	}
+	sdnupdate.OnRestartForUpdate(func() {
+		select {
+		case updateShutdown <- struct{}{}:
+		default:
+		}
+	})
+	var readiness func(context.Context) string
 
 	// Load configuration
 	cfg, cfgResolution, err := config.LoadResolved(configPath)
@@ -954,6 +983,15 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create and start the node
+	if crashAtStart {
+		return errors.New("this build exits at start (built with the sdn_e2e_crash_at_start tag)")
+	}
+	if hangBeforeStoreOpen {
+		log.Warnf("This build never opens its store (built with the sdn_e2e_hang_before_store tag)")
+		for {
+			time.Sleep(time.Hour)
+		}
+	}
 	n, err := node.New(ctx, cfg)
 	if err != nil {
 		return fmt.Errorf("failed to create node: %w", err)
@@ -1031,6 +1069,14 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to start tor runtime: %w", err)
 	}
 	if torRuntime != nil {
+		// Stopped by the deferred Stop below on every return, before a restart
+		// through the installed path; a forced restart (startTrialTimer)
+		// stops it here.
+		registerBeforeExec(func() {
+			stopCtx, cancelStop := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancelStop()
+			_ = torRuntime.Stop(stopCtx)
+		})
 		defer func() {
 			stopCtx, cancelStop := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancelStop()
@@ -2627,7 +2673,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			// unavailable rather than reaching a CDN.
 			// Load-balancer and monitoring surface: /health, /ready (anonymous,
 			// a status word) and /metrics (operator session). OPS-08.
-			mountHealthRoutes(adminMux, healthDeps{
+			readiness = mountHealthRoutes(adminMux, healthDeps{
 				// internal/node opens no store in edge mode.
 				storeless: cfg.Mode == "edge",
 				dataReady: func() bool {
@@ -3009,14 +3055,21 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 
 	n.StartBackgroundEngineHydration(ctx)
 	n.StartConfiguredFlowServices(ctx)
+	if trialUpdateID != "" && homePaths.IsHome() {
+		go watchTrial(ctx, homePaths, trialUpdateID, readiness)
+	}
 
 	// Wait for shutdown signal
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	daemonServing.Store(true)
 	select {
 	case <-sigChan:
 	case <-updateShutdown:
 		log.Info("Update shutdown requested")
+		if homePaths.IsHome() {
+			execAfterDaemon = &homeRestart{argv: homePaths.RestartArgv(os.Args), homeRoot: homePaths.Root}
+		}
 	}
 
 	log.Info("Shutting down...")

@@ -38,6 +38,7 @@ package update
 // get back, Path is where it physically lives.
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -312,13 +313,22 @@ func selectSlot(slots []StateSlot, selector string) (*StateSlot, error) {
 // (store_format_guard.go): it reads the stamp of the binary the slot holds on
 // disk, so a slot recorded before the guard existed is judged by what it
 // actually contains.
-func guardSlotStoreFormat(storeRoot string, slot StateSlot) error {
+//
+// In a home bundle an empty slot stands for the installed build (home.go), so
+// the installed build's binary is the one judged.
+func guardSlotStoreFormat(paths Paths, storeRoot string, slot StateSlot) error {
 	store, check := storeToGuard("rollback", slot.Describe(), storeRoot)
 	if !check {
 		return nil
 	}
+	dir := slot.Path
+	if paths.IsHome() {
+		if _, err := os.Stat(filepath.Join(dir, manifestFileName)); errors.Is(err, os.ErrNotExist) {
+			dir = paths.Installed
+		}
+	}
 	return guardStoreFormat("rollback", slot.Describe(), slot.Version, store, func() (slotStamp, bool, error) {
-		s, err := stampOfDir(slot.Path)
+		s, err := stampOfDir(dir)
 		return s, true, err
 	})
 }

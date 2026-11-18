@@ -465,7 +465,7 @@ func (s *UpdateSignalSubscriber) restoreFailedAlerts() {
 		var entry update.DeployLedgerEntry
 		if !oversized && json.Unmarshal(line, &entry) == nil {
 			switch entry.Action {
-			case "health-reverted":
+			case "health-reverted", "revert-refused":
 				failures[entry.UpdateID] = entry
 			case "health-passed":
 				if failed, ok := failures[entry.UpdateID]; ok && failed.Version == entry.Version && entry.Sequence >= failed.Sequence {
@@ -484,13 +484,22 @@ func (s *UpdateSignalSubscriber) restoreFailedAlerts() {
 	}
 	active := map[string]bool{}
 	for id, failed := range failures {
-		if state.Sequence >= failed.Sequence {
+		// A reverted update is history once the node runs at or past it; one
+		// whose revert was refused is still running, until a newer build is.
+		if failed.Action == "revert-refused" {
+			if state.Sequence > failed.Sequence {
+				continue
+			}
+		} else if state.Sequence >= failed.Sequence {
 			continue
 		}
 		active[id] = true
 		if !s.failedAlerts[id] {
-			s.deps.Alerts.Raise(ops.KindUpdateFailed, id, ops.SeverityError,
-				fmt.Sprintf("Update %s (%s) failed its health gate and was rolled back at %s: %s", id, failed.Version, failed.RecordedAt, failed.Reason))
+			message := fmt.Sprintf("Update %s (%s) failed its health gate and was rolled back at %s: %s", id, failed.Version, failed.RecordedAt, failed.Reason)
+			if failed.Action == "revert-refused" {
+				message = fmt.Sprintf("Update %s (%s) failed its trial at %s and was NOT rolled back, so it keeps running: %s", id, failed.Version, failed.RecordedAt, failed.Reason)
+			}
+			s.deps.Alerts.Raise(ops.KindUpdateFailed, id, ops.SeverityError, message)
 		}
 	}
 	for id := range s.failedAlerts {

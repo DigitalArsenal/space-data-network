@@ -21,7 +21,7 @@
 #   wasmedge-static                prefix-pack
 #   wasmedge-runtime               runtime
 #   wasmedge-substrate             migrations
-#   update-channel-e2e             update-channel
+#   update-channel-e2e (two groups) update-channel
 #   dashboard                      dashboard
 #   kubo-bolt-on                   kubo
 #
@@ -693,8 +693,35 @@ run_update_channel() {
     run_update_channel_isolated
     return
   fi
-  go_test_with_timings update-channel -v -p=1 -timeout=50m -count=1 -run "$UPDATE_GO_TESTS" ./cmd/spacedatanetwork/ \
+  local select
+  check_update_group
+  read -r -a select <<< "$(update_group_args go)"
+  go_test_with_timings update-channel -v -p=1 -timeout=50m -count=1 "${select[@]}" ./cmd/spacedatanetwork/ \
     || fail "update channel"
+}
+
+# SDN_CI_UPDATE_GROUP splits TestUpdateChannelRealDaemonE2E into two CI jobs:
+# `home` runs its home-read-only-install subtests, `channel` all the others;
+# unset runs all of them. Run 44245748601 ran both in one binary and hit go
+# test's 50m panic (the home subtests alone take about 15m on a runner).
+# update_group_args go|test prints the selection as `go test` or test-binary
+# flags.
+update_group_args() {
+  local p="-"
+  [[ "$1" == test ]] && p="-test."
+  local home="${UPDATE_GO_TESTS}/^home-read-only-install\$"
+  case "${SDN_CI_UPDATE_GROUP:-all}" in
+    home) printf '%s\n' "${p}run=${home}" ;;
+    channel) printf '%s\n' "${p}run=${UPDATE_GO_TESTS} ${p}skip=${home}" ;;
+    *) printf '%s\n' "${p}run=${UPDATE_GO_TESTS}" ;;
+  esac
+}
+
+check_update_group() {
+  case "${SDN_CI_UPDATE_GROUP:-all}" in
+    home|channel|all) ;;
+    *) fail "unknown SDN_CI_UPDATE_GROUP=${SDN_CI_UPDATE_GROUP} (home, channel or unset)" ;;
+  esac
 }
 
 # With SDN_E2E_UPDATE_USER (CI, as root on Linux): the fixtures and the test
@@ -704,12 +731,19 @@ run_update_channel_isolated() {
   local user="$SDN_E2E_UPDATE_USER"
   local bin="${RUNNER_TEMP:-$ROOT/.ci-artifacts}/update-channel-bin"
   local logs="${SDN_E2E_LOG_DIR:?SDN_E2E_LOG_DIR names the log directory}"
-  local build
-  step "Update channel fixtures (v1, v2, v3 never ready, the release signal signer)"
+  local build select
+  check_update_group
+  read -r -a select <<< "$(update_group_args test)"
+  step "Update channel fixtures (v1, v2, v3 never ready, v6 and v7 never open their store, v11 exits at start, the release signal signer)"
   mkdir -p "$bin" "$logs"
-  for build in v1 v2 v3; do
+  for build in v1 v2 v3 v6 v7 v11; do
     local build_args=(-o "$bin/spacedatanetwork-$build")
-    if [[ "$build" == v3 ]]; then build_args+=(-tags sdn_e2e_not_ready); fi
+    case "$build" in
+      v3) build_args+=(-tags sdn_e2e_not_ready) ;;
+      v6) build_args+=(-tags sdn_e2e_hang_before_store) ;;
+      v7) build_args+=(-tags sdn_e2e_hang_before_store,sdn_e2e_no_trial_timer) ;;
+      v11) build_args+=(-tags sdn_e2e_crash_at_start) ;;
+    esac
     (cd "$ROOT/sdn-server" && SDN_GO_LDFLAGS="-X github.com/spacedatanetwork/sdn-server/internal/versioninfo.ReleaseTag=e2e-$build" \
       ../scripts/go-with-wasmedge.sh build "${build_args[@]}" ./cmd/spacedatanetwork) || fail "build update fixture $build"
   done
@@ -720,7 +754,7 @@ run_update_channel_isolated() {
     || fail "build the update channel test"
   pass "update channel fixtures"
 
-  step "Update channel E2E as $user, loopback only"
+  step "Update channel E2E (${SDN_CI_UPDATE_GROUP:-all}) as $user, loopback only"
   chmod 0777 "$logs"
   chmod a+x "$(dirname "$logs")"
   chmod -R a+rX "$bin" "$WASMEDGE_DIR"
@@ -734,8 +768,8 @@ run_update_channel_isolated() {
     SDN_E2E_LOG_DIR="$logs" \
     SDN_E2E_INSTALLED_BUNDLE="${SDN_E2E_INSTALLED_BUNDLE:-}" \
     LD_LIBRARY_PATH="$WASMEDGE_DIR/lib:$WASMEDGE_DIR/lib64" \
-    unshare --net -- bash -c 'set -e; ip link set lo up; exec setpriv --reuid="$1" --regid="$2" --init-groups "$3" -test.v -test.timeout=50m -test.run="^TestUpdateChannelRealDaemonE2E$"' \
-    -- "$(id -u "$user")" "$(id -g "$user")" "$bin/update-channel-e2e.test" \
+    unshare --net -- bash -c 'set -e; ip link set lo up; exec setpriv --reuid="$1" --regid="$2" --init-groups "$3" -test.v -test.timeout=50m "${@:4}"' \
+    -- "$(id -u "$user")" "$(id -g "$user")" "$bin/update-channel-e2e.test" "${select[@]}" \
     | tee "$logs/test.log") || fail "update channel"
   pass "update channel"
 }

@@ -436,6 +436,127 @@ the installers unpack). A bundle reads its updates from
 `update.feedBaseUrl` is `https://sdn.spaceaware.io/updates` in the bundle's
 `manifest.json`, and installs only what is signed by one of its update roots.
 
+```bash
+spacedatanetwork update check      # this build, the newest release on the feed, the rollback slots
+spacedatanetwork update install    # fetch, verify, install, restart, health-check
+spacedatanetwork update slots      # the builds this node can return to (the last five)
+spacedatanetwork update rollback --reason "<why>"   # with the node stopped; --slot <version> for an older one
+```
+
+**A running node updates itself.** With `update.enabled: true` (the default)
+it installs a release when a signal signed by an update root announces it, and
+it checks the feed every six hours (`update.check_interval_seconds`; the first
+check comes one to five minutes after the start), so a node that was off when
+a release was announced still takes it. Set `update.enabled: false` in a
+node's config to turn both off for that node. Nodes from 1.1.4 to 1.1.6 learn
+of a release only from a signal; 1.1.7 and later also check the feed.
+
+**No root and no service account.** The account that runs the node needs no
+write access to the install folder, and no rights beyond its own data and
+home: a bundle unpacked under `/opt` by root and run by a system service as an
+ordinary account updates itself. Updates are then fetched, verified and
+installed under that account's home folder, the one its passwd entry names
+(`$HOME` counts only when it is that folder), in
+`~/.spacedatanetwork/bundle/<key>`, where `<key>` names the install (the first
+16 hex characters of sha256 over the install folder's resolved path), so two
+installs on one account never share one. The install folder, the service unit
+and the installed files are never changed. When the account has no usable home
+folder (its passwd entry names none, or one that does not exist, or one it
+cannot enter, as under the shipped systemd unit's `ProtectHome=true`), the
+folder is `<storage.path>/update-bundle/<key>`, and the node says so in its
+log: a service account run by the shipped unit (`useradd -r`, storage under
+`/var/lib/spacedatanetwork`) updates itself into its storage folder. Every
+folder from that bundle up to the home folder (or the storage folder) must
+belong to the account and not be writable by its group or by others; every
+folder and symlink on the path the system resolves from `/` to the bundle must
+belong to the account or to root, and a folder others can write must carry
+the sticky bit (`/tmp`); the folders and files of the build itself must
+belong to the account and not be writable by its group or by others (updates
+are unpacked that way, whatever the archive or the umask say). Otherwise the
+build there is refused with the reason and the installed build runs; a home
+folder that exists and fails these checks is refused, never replaced by the
+storage folder. A node running as root never runs a build from a home
+folder: root with a read-only install folder is told to make the folder
+writable or to install the new release by hand. One install serves one node
+per account: a second daemon started from the same install by the same
+account is refused at start.
+
+An update then goes like this, by signal, by feed check or by `update install`:
+
+1. The daemon installs the new build into that folder while it keeps serving,
+   then stops its services as it does for any shutdown and starts again
+   through the installed path in the same process. No helper runs. Under
+   systemd (`Restart=always`, `Restart=on-failure` or none) and a node
+   started by hand alike, the process keeps its pid. The same `exec` keeps the
+   pid launchd watches; this has not been run end to end under launchd. If
+   that shutdown
+   fails part-way and the 75-second shutdown watchdog ends the process, the
+   restart does not happen in place: a service manager that restarts the node
+   starts it again, and a node started by hand stays stopped until it is
+   started. Either way the next start runs the new build as a trial: it never
+   ran, so nothing is rolled back.
+2. The installed build verifies the new build against the INSTALLED build's
+   update roots (its signed manifest, its signed archive, every one of its
+   files) and starts it as a trial with a deadline: the time of that start
+   plus `update.health_timeout_seconds` (default 600 seconds, which covers a
+   store that takes four to five minutes to open after an update; raise it for
+   a slower one). The log says `runs as a trial`, then `passed its trial`.
+3. A trial that is not ready by its deadline is stopped and the installed path
+   starts again, which rolls the build back to the previous one, keeps it
+   aside under `updates/failed/` and runs the previous build. A timer started
+   before anything else in the trial build enforces the deadline even when
+   the build is stuck before it can check its own readiness (opening its store,
+   for example). A trial build that crashes, or that hangs so that even its
+   timer cannot act, is rolled back at the next daemon start through the
+   installed path: right away under a service that restarts it
+   (`Restart=always` or `Restart=on-failure`; launchd `KeepAlive` should do
+   the same, not run end to end); otherwise when the node is next started. A
+   `spacedatanetwork` command typed after the deadline rolls it back only when
+   no daemon runs; while the trial daemon is still alive it runs the installed
+   build and leaves the rollback to the next daemon start (the hung process
+   has to be stopped by the service manager or by hand). A stop by
+   `SIGTERM` or `SIGINT` during a trial (`systemctl restart`, a reboot) is
+   not a failure: the next start runs the trial again with a new deadline, up
+   to three times; a fourth such stop fails the trial, and the next start
+   rolls it back. A power loss or a `SIGKILL` during a trial counts as a
+   crash. A trial runs without a health check when the admin
+   listener is off (`admin.enabled: false`): it passes at once, and the log
+   says so as an error.
+4. When the store-format guard refuses the rollback (the trial build moved the
+   store to a format the previous build cannot open), the build that failed its
+   trial keeps running: the log says `was NOT rolled back`, the node raises the
+   `update_failed` alert, and the ledger records `revert-refused`. An operator
+   then installs a newer release, or restores the store from a snapshot taken
+   before the update and runs `spacedatanetwork update rollback`.
+
+From then on:
+
+- every daemon start, by hand or by a service whose command
+  names the installed path, verifies the build in that folder in full and runs
+  it only when it verifies. Other `spacedatanetwork` commands reuse the result
+  of the last full verification while no file of the build has changed (same
+  size, mode, times and inode), and verify in full otherwise. A build that does
+  not verify (changed files, a missing or altered signature, older than the
+  installed build) is refused with
+  `update: the build under <folder> is refused: <why>; running the installed build`,
+  and the installed build runs; at a daemon start, a build still on trial is
+  rolled back instead;
+- `service install` and `remove`, typed while a home build runs, name the
+  installed program, never the home build;
+- another build installed in the install folder by an administrator wins: the
+  home builds are set aside and the next update starts from the new installed
+  build (a home bundle a process still runs from is kept until it stops);
+- the rollback slots and `update rollback` work on that folder. The installed
+  build is the oldest slot while it is one of the last five builds; `update
+  slots` lists them. Removing the folder `~/.spacedatanetwork/bundle/<key>`
+  with the node stopped always returns to the installed build.
+
+A read-only install of a release older than the one that brings these home
+updates cannot update itself: install the new release by hand once. When the
+account can write the install folder, a helper process stops the daemon,
+replaces the bundle in place, restarts it and reverts a build that fails the
+health gate. Windows needs a writable install folder.
+
 **The update root is a demo key.** Every bundle trusts exactly one root, key
 id `12cb25de07c0`:
 
@@ -446,8 +567,8 @@ id `12cb25de07c0`:
 It is the bundle's `trust/update-roots.json`, and the same set is compiled
 into the binary for a bundle whose trust file is missing (a trust file that
 is present always wins). It is a demo key: whoever holds its private half can
-sign an update every install accepts, so it will be replaced by a production
-key through a signed rotation release.
+sign an update every install accepts. A release signed by a current root can
+replace the roots (its `trust_roots`).
 
 Bundles up to v1.1.1 trusted `d4a971a7e534` instead. That root is the node
 key leaked in SEC-001, derived from a published seed: anyone can sign for it.
@@ -479,19 +600,24 @@ replaced, `update install --direct` refuses them ("untrusted update signing
 key") until a fleet release signed with the demo root is published on that
 lane, so reinstall instead, or publish that release first.
 
-**The channel needs a release's feed.** A release is installable from the
-release channel once it is cut with the update signing key and its feed is
-published to the server above. The current release's feed is published: a
-command-line install of v1.1.4 or later takes it with
-`spacedatanetwork update install`. The release workflow fails a stable
-release that has no signing key, signs only with the key id derived from
-that key, checks the key is the fleet root, and verifies every manifest
+**The channel needs a release's feed. Publishing one, in order:** a release
+is installable once its signed
+feed is published to the server above; the release workflow signs it with the
+update key, checks the key is the fleet root and verifies every manifest
 against `deployment/release/fleet-trust-roots.json` before it ships the feed.
+Then announce it from the publishing node, with the signals the workflow
+signed: `SDN_UPDATE_FEED_DIR=<feed folder> spacedatanetwork update signal
+--from-feed --channel release --version <X>`. Publishing without the signal is
+not a push: nodes of 1.1.7 and later find the release at their next feed
+check, older ones not at all. Nodes older than 1.1.6 cannot exchange
+publications with newer ones: update nodes that exchange publications
+together.
 
 How an install takes an update:
 
-- `spacedatanetwork update install` fetches, verifies and stages, then hands
-  the swap to a helper when a daemon is running. The helper stops the daemon,
+- `spacedatanetwork update install` fetches, verifies and stages. Into a
+  home bundle it installs as described above. Otherwise it hands the swap to a
+  helper when a daemon is running. The helper stops the daemon,
   swaps, restarts it and waits for `GET /api/v1/ready` to answer 2xx, for
   `update.health_timeout_seconds` (default 600); otherwise it reverts to the
   previous build and quarantines the update under `updates/failed/`.
@@ -515,6 +641,13 @@ How an install takes an update:
   `alerts_error` / `alerts_warning` counts when operational alerts are active
   on a daemon that is serving. It no longer prints `data_runtime`, and prints
   `data_message` only when the health answer cannot be read.
+- A node of 1.1.0 or earlier is updated by hand, because its updater reverts
+  the updates it drives itself: stop it, install the new release in place of
+  the old one (keep `keys/` and the config), and start it.
+
+The [agent guide](AGENT-API-GUIDE.md#9-administering-a-nodes-updates) lists
+the output lines of each update command, how to tell that an update was
+received but not installed, and the checks after an update.
 
 ## Known gaps on this date
 

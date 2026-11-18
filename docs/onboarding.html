@@ -210,7 +210,7 @@ await node.publish('OMM', ommData);</code></pre></div>
         <tr><td>Platforms</td><td>macOS (Apple Silicon and Intel), Linux (x86-64 and ARM64), Windows (x86-64)</td><td>Linux x86-64 image on Docker Hub; an ARM64 image archive for <code>docker load</code> on the release page</td></tr>
         <tr><td>How it keeps running</td><td>A background service for your user account, installed by <code>spacedatanetwork start</code></td><td>The container, with <code>--restart unless-stopped</code></td></tr>
         <tr><td>Where its files live</td><td><code>~/.spacedatanetwork/</code>: <code>config.yaml</code>, the data and the keys</td><td>One volume mounted at <code>/app/data</code>: the data, the keys and the sign-in records</td></tr>
-        <tr><td>Updates</td><td>Digitally signed updates (<code>spacedatanetwork update check</code>) on Linux x86-64; elsewhere, run the installer again</td><td>Run a newer image tag with the same volume and the same hostname</td></tr>
+        <tr><td>Updates</td><td>Digitally signed updates, installed by the node on its own or with <code>spacedatanetwork update install</code>, with a health check and an automatic return to the previous build; no root or service account needed. Exceptions: on Windows the install folder must be writable by the node's account; the <code>.deb</code>/<code>.rpm</code> packages and the desktop app do not update themselves (install the new release); a read-only install of an earlier release needs one manual upgrade (<a href="INSTALL.md#10-updates">how updates work</a>)</td><td>Run a newer image tag with the same volume and the same hostname</td></tr>
       </table></div>
 
       <h3 id="bare-metal">Bare metal: download and install</h3>
@@ -358,8 +358,9 @@ spacedatanetwork identity export --format qrcode
 spacedatanetwork search standards OMM --format json
 spacedatanetwork search providers celestrak --schema OMM
 spacedatanetwork search data --schema OMM --format csv
-# digitally signed software updates
-spacedatanetwork update check</code></pre></div>
+# digitally signed software updates: what is available, then install it
+spacedatanetwork update check
+spacedatanetwork update install</code></pre></div>
         </div>
       </details>
       <details class="more">
@@ -444,7 +445,8 @@ npx space-data-module sign    --wasm ./dist/isomorphic/module.wasm --key ./keypa
 
         <h3>Where each of these facts comes from</h3>
             <ul>
-              <li><a href="INSTALL.md">INSTALL.md</a> &mdash; installation, configuration keys, and the ports table.</li>
+              <li><a href="INSTALL.md">INSTALL.md</a> &mdash; installation, configuration keys, the ports table, and <a href="INSTALL.md#10-updates">updates</a>.</li>
+              <li><a href="AGENT-API-GUIDE.md#9-administering-a-nodes-updates">AGENT-API-GUIDE.md, section 9</a> &mdash; updating a node, written for agents: commands, output lines, checks.</li>
               <li><a href="SERVER-OVERVIEW.md">SERVER-OVERVIEW.md</a> &mdash; the node's architecture: storage, identity, networking, modules.</li>
               <li><a href="OPERATOR-ENROLLMENT.md">OPERATOR-ENROLLMENT.md</a> and <a href="AGENT-API-GUIDE.md">AGENT-API-GUIDE.md</a> &mdash; operator trust levels and the full API surface.</li>
               <li><a href="https://github.com/DigitalArsenal/space-data-network" target="_blank">Source code</a> &mdash; the node is open source; the defaults quoted above are in <code>sdn-server/internal/config</code>.</li>
