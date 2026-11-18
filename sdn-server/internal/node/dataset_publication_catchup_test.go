@@ -162,11 +162,11 @@ func TestMaterializeStoredDatasetPublicationPNMsReplaysTrustedProviderPNM(t *tes
 		config: &config.Config{
 			Storage: config.StorageConfig{Path: filepath.Join(tmpDir, "subscriber-storage")},
 			Admin:   config.AdminConfig{IPFSAPIURL: ipfs.URL},
-			Peers:   catchUpTestTrustedImport,
 		},
 		ctx:                     ctx,
 		datasetMaterializedPNMs: make(map[string]time.Time),
 	}
+	subscribeForTest(t, n, "CAT.fbs", "celestrak.eth", "celestrak-satcat-csv", providerID)
 
 	materialized, err := n.materializeStoredDatasetPublicationPNMs(ctx, 10)
 	if err != nil {
@@ -355,11 +355,11 @@ func TestMaterializeStoredDatasetPublicationPNMsDoesNotRetryPermanentShardFrameE
 		config: &config.Config{
 			Storage: config.StorageConfig{Path: filepath.Join(tmpDir, "subscriber-storage")},
 			Admin:   config.AdminConfig{IPFSAPIURL: ipfs.URL},
-			Peers:   catchUpTestTrustedImport,
 		},
 		ctx:                     ctx,
 		datasetMaterializedPNMs: make(map[string]time.Time),
 	}
+	subscribeForTest(t, n, "OMM.fbs", "space-data-network-02", "celestrak-gp", providerID)
 
 	materialized, err := n.materializeStoredDatasetPublicationPNMs(ctx, 10)
 	if err == nil {
@@ -382,11 +382,11 @@ func TestMaterializeStoredDatasetPublicationPNMsDoesNotRetryPermanentShardFrameE
 		config: &config.Config{
 			Storage: config.StorageConfig{Path: filepath.Join(tmpDir, "subscriber-storage-restarted")},
 			Admin:   config.AdminConfig{IPFSAPIURL: ipfs.URL},
-			Peers:   catchUpTestTrustedImport,
 		},
 		ctx:                     ctx,
 		datasetMaterializedPNMs: make(map[string]time.Time),
 	}
+	subscribeForTest(t, restarted, "OMM.fbs", "space-data-network-02", "celestrak-gp", providerID)
 	materialized, err = restarted.materializeStoredDatasetPublicationPNMs(ctx, 10)
 	if err != nil {
 		t.Fatalf("restarted node should skip the permanently failed PNM, got %v", err)
@@ -553,8 +553,3 @@ func buildCatchupTestPNM(t *testing.T, cid, fileID string) []byte {
 	return append([]byte(nil), builder.FinishedBytes()...)
 }
 
-// The subscribers list the lanes they import (a new lane from a trusted peer
-// is imported only when listed: trusted_import.go).
-var catchUpTestTrustedImport = config.PeersConfig{TrustedImport: config.TrustedImportConfig{
-	Allow: []config.LaneSelector{{ProviderID: "celestrak.eth"}, {ProviderID: "space-data-network-02"}},
-}}

@@ -70,7 +70,79 @@ const (
 	// for those records of the batch, as one followed page; a CID the batch
 	// does not hold is left out.
 	FilterCID = "CID"
+	// ProjectionStatement (FilterProjection Eq, on an unfollowed read-chunk
+	// naming the lane and no batch) asks for the lane's statement: one page
+	// (StatementPage) with the current batch, the batch's and the lane's
+	// size, and the lane's present position as a resume cursor. A producer
+	// of 1.1.9 or earlier answers it with an error frame (it takes
+	// PROJECTION only with a BATCH_ID).
+	ProjectionStatement = "STATEMENT"
 )
+
+// LaneStatement is a producer's statement of a lane before a subscription
+// starts: its current batch and size, and the position after everything it
+// stores (ResumeCursor, a resume cursor of the followed read of the lane).
+type LaneStatement struct {
+	FollowStatement
+	BatchBytes, LaneRecords, LaneBytes int64
+	ResumeCursor                       string
+}
+
+// Columns of a statement page's one row.
+const (
+	statementBatchRecords = "BATCH_RECORDS"
+	statementBatchBytes   = "BATCH_BYTES"
+	statementLaneRecords  = "LANE_RECORDS"
+	statementLaneBytes    = "LANE_BYTES"
+)
+
+var statementColumns = []QRPColumnField{{Name: statementBatchRecords, Type: "INTEGER"}, {Name: statementBatchBytes, Type: "INTEGER"},
+	{Name: statementLaneRecords, Type: "INTEGER"}, {Name: statementLaneBytes, Type: "INTEGER"}}
+
+// StatementPage is a lane's statement: f carries the lane; BATCH_ID,
+// TOTAL_COUNT and RESUME_CURSOR carry the batch, its records and the
+// present position, and one row the sizes.
+func StatementPage(f QRPFields, st LaneStatement) []byte {
+	f.Kind, f.Status = QRPKindPage, QRPStatusOk
+	f.BatchID, f.TotalCount, f.ResumeCursor = st.BatchID, uint64(max(st.Records, 0)), st.ResumeCursor
+	f.Columns = statementColumns
+	f.Rows = [][]QRPCell{{IntCell(st.Records), IntCell(st.BatchBytes), IntCell(st.LaneRecords), IntCell(st.LaneBytes)}}
+	f.RecordCount = 0
+	return BuildQRP(f)
+}
+
+// ReadStatementPage reads a lane's statement. An Error frame is returned as
+// a *RemoteError.
+func ReadStatementPage(r io.Reader) (LaneStatement, error) {
+	q, _, err := readPageMax(r, followMaxHeaderFrame)
+	if err != nil {
+		return LaneStatement{}, err
+	}
+	columns, rows := Rows(q)
+	if len(rows) != 1 {
+		return LaneStatement{}, fmt.Errorf("a lane statement has one row, not %d", len(rows))
+	}
+	cell := func(name string) (int64, error) {
+		i, ok := columns[name]
+		if !ok || i >= len(rows[0]) || !rows[0][i].IsInt || rows[0][i].Int < 0 {
+			return 0, fmt.Errorf("a lane statement without %s", name)
+		}
+		return rows[0][i].Int, nil
+	}
+	st := LaneStatement{FollowStatement: StatementOf(q), ResumeCursor: strings.TrimSpace(string(q.RESUME_CURSOR()))}
+	for _, f := range []struct {
+		name string
+		into *int64
+	}{{statementBatchRecords, &st.Records}, {statementBatchBytes, &st.BatchBytes}, {statementLaneRecords, &st.LaneRecords}, {statementLaneBytes, &st.LaneBytes}} {
+		if *f.into, err = cell(f.name); err != nil {
+			return LaneStatement{}, err
+		}
+	}
+	if st.ResumeCursor == "" {
+		return LaneStatement{}, errors.New("a lane statement without a present position")
+	}
+	return st, nil
+}
 
 // ErrFollowPageLimit is a followed page past its limits.
 var ErrFollowPageLimit = errors.New("followed page past its limits")

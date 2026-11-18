@@ -62,6 +62,10 @@ const (
 	// node refused (malformed, past its limits, or naming another peer), or
 	// its current batch could not be held.
 	KindFollowRefused = "follow_refused"
+	// KindSubscriptionConversion: the removed peers.trusted_import is still
+	// in the config, or a lane of it could not become a subscription
+	// (subject: the lane, or "" for the key).
+	KindSubscriptionConversion = "subscription_conversion"
 	// KindPublicationFailed: one of this node's own dataset publications
 	// (subject: its lane) failed or was cut before it completed.
 	KindPublicationFailed = "publication_failed"

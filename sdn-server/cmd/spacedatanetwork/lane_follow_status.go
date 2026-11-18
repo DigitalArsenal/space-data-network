@@ -1,21 +1,26 @@
 package main
 
 import (
+	"context"
+
 	"github.com/spacedatanetwork/sdn-server/internal/api"
 	"github.com/spacedatanetwork/sdn-server/internal/node"
 )
 
 // laneFollows is what the node has received from the producers it follows,
-// for the lanes' $DSS.
+// for the lanes' $DSS and the subscription list.
 func laneFollows(n *node.Node) func() []api.LaneFollow {
 	return func() []api.LaneFollow {
 		statuses := n.FollowStatuses()
 		out := make([]api.LaneFollow, 0, len(statuses))
 		for _, s := range statuses {
 			out = append(out, api.LaneFollow{Schema: s.Schema, ProviderID: s.ProviderID, SourceName: s.SourceName, Producer: s.Producer,
-				ReceivedBytes: s.ReceivedBytes, ReceivedRecords: s.ReceivedRecords, ReceiveBytesPerSecond: s.ReceiveBytesPerSecond,
-				TransferMs: s.TransferMs, VerifyMs: s.VerifyMs, StoreMs: s.StoreMs, LastReceivedAt: s.LastReceivedAt,
-				Connected: s.Connected, Error: s.LastError})
+				Since: s.Since, Start: s.Start,
+				ReceivedBytes: s.ReceivedBytes, ReceivedRecords: s.ReceivedRecords, StoredRecords: s.StoredRecords, RemovedRecords: s.RemovedRecords,
+				ReceiveBytesPerSecond: s.ReceiveBytesPerSecond,
+				TransferMs:            s.TransferMs, VerifyMs: s.VerifyMs, StoreMs: s.StoreMs, LastReceivedAt: s.LastReceivedAt,
+				Connected: s.Connected, Error: s.LastError,
+				CurrentBatch: s.CurrentBatch, StatedBatch: s.Stated.BatchID, StatedRecords: s.Stated.Records, Lag: s.Lag})
 		}
 		return out
 	}
@@ -32,5 +37,50 @@ func laneServed(n *node.Node) func() []api.LaneServed {
 				Subscribers: s.Subscribers, ServedBytes: s.ServedBytes, ServeBytesPerSecond: s.ServeBytesPerSecond})
 		}
 		return out
+	}
+}
+
+func lanePlan(p node.FollowPlan) api.LanePlan {
+	return api.LanePlan{Schema: p.Schema, ProviderID: p.ProviderID, SourceName: p.SourceName, Producer: p.Producer, Start: p.Start, Rule: p.Rule,
+		BatchID: p.Statement.BatchID, BatchRecords: p.Statement.Records, BatchBytes: p.Statement.BatchBytes,
+		LaneRecords: p.Statement.LaneRecords, LaneBytes: p.Statement.LaneBytes, StatementError: p.StatementError,
+		FirstReadRecords: p.FirstReadRecords, FirstReadBytes: p.FirstReadBytes, FreeBytes: p.FreeBytes, NeedBytes: p.NeedBytes,
+		HeldRecords: p.HeldRecords, RecordCeiling: p.RecordCeiling, Refusal: p.Refusal}
+}
+
+func followRequest(req api.LaneSubscription) (node.FollowKey, node.FollowOptions) {
+	return node.FollowKey{Schema: req.Schema, ProviderID: req.ProviderID, SourceName: req.SourceName, Producer: req.Producer},
+		node.FollowOptions{Start: req.Start, Force: req.Force}
+}
+
+// subscribeLane follows a lane once its first read fits (sync subscribe).
+func subscribeLane(n *node.Node) func(context.Context, api.LaneSubscription) (api.LanePlan, error) {
+	return func(ctx context.Context, req api.LaneSubscription) (api.LanePlan, error) {
+		key, opts := followRequest(req)
+		plan, err := n.Subscribe(ctx, key, opts)
+		return lanePlan(plan), err
+	}
+}
+
+// planLaneSubscription answers a subscription's first read.
+func planLaneSubscription(n *node.Node) func(context.Context, api.LaneSubscription) (api.LanePlan, error) {
+	return func(ctx context.Context, req api.LaneSubscription) (api.LanePlan, error) {
+		key, opts := followRequest(req)
+		plan, err := n.PlanSubscription(ctx, key, opts)
+		return lanePlan(plan), err
+	}
+}
+
+// ledgerLanes is the removed import gate's lanes (sync subscribe
+// --from-ledger).
+func ledgerLanes(n *node.Node) func() ([]api.LedgerLane, error) {
+	return func() ([]api.LedgerLane, error) {
+		lanes, err := n.RemovedImportPlan()
+		out := make([]api.LedgerLane, 0, len(lanes))
+		for _, l := range lanes {
+			out = append(out, api.LedgerLane{Schema: l.Schema, ProviderID: l.ProviderID, SourceName: l.SourceName, Producers: l.Producers,
+				Reason: l.Reason, FromLedger: l.FromLedger, FromAllow: l.FromAllow})
+		}
+		return out, err
 	}
 }

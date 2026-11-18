@@ -236,15 +236,12 @@ func buildTipMaterializationFixture(t *testing.T) (n *Node, pnmBytes []byte, pro
 		config: &config.Config{
 			Storage: config.StorageConfig{Path: filepath.Join(tmpDir, "subscriber-storage")},
 			Admin:   config.AdminConfig{IPFSAPIURL: ipfs.URL},
-			// The subscriber lists the lane it imports (a new lane from a
-			// trusted peer is imported only when listed: trusted_import.go).
-			Peers: config.PeersConfig{TrustedImport: config.TrustedImportConfig{
-				Allow: []config.LaneSelector{{ProviderID: tags.ProviderID}},
-			}},
 		},
 		ctx:                     ctx,
 		datasetMaterializedPNMs: make(map[string]time.Time),
 	}
+	// The subscriber subscribes to the lane it imports from the provider.
+	subscribeForTest(t, n, "CAT.fbs", tags.ProviderID, tags.SourceName, providerID)
 	n.tipQueue = n.buildTipQueue()
 	return n, pnmBytes, providerID
 }
@@ -383,53 +380,6 @@ func TestHandleTrustLevelChangeOnlyActsOnFullBoundaryCrossing(t *testing.T) {
 			t.Fatal("a below-Full transition must not call subscribeFullyTrustedPeer")
 		}
 	})
-}
-
-// TestRegistryPromotionToFullTriggersNodeCatchupBackfill exercises the
-// full D2 wiring: n.peerRegistry.OnTrustChange(n.handleTrustLevelChange)
-// (as registered in init()), then a real SetTrustLevel promotion, ending
-// in the SAME catch-up machinery (materializeStoredDatasetPublicationPNMs)
-// the periodic loop uses actually materializing a previously-stored PNM
-// for the newly-trusted provider. Demotion is then checked to unsubscribe.
-func TestRegistryPromotionToFullTriggersNodeCatchupBackfill(t *testing.T) {
-	n, pnmBytes, providerID := buildTipMaterializationFixture(t)
-	if err := n.peerRegistry.AddPeer(&peers.TrustedPeer{ID: providerID, TrustLevel: peers.Standard}); err != nil {
-		t.Fatalf("add standard-trust provider: %v", err)
-	}
-	n.peerRegistry.OnTrustChange(n.handleTrustLevelChange)
-
-	relayID := mustTestPeerID(t, 0x72)
-	if _, err := n.store.Store("PNM.fbs", pnmBytes, relayID.String(), nil); err != nil {
-		t.Fatalf("store relay PNM: %v", err)
-	}
-
-	if err := n.peerRegistry.SetTrustLevel(providerID, peers.Trusted); err != nil {
-		t.Fatalf("SetTrustLevel(Trusted) failed: %v", err)
-	}
-
-	promoted := waitForCondition(t, 3*time.Second, func() bool {
-		records, err := n.store.QueryIndexedRecords(storage.IndexedRecordQuery{
-			SchemaName: "CAT.fbs",
-			ProviderID: "tipqueue-wiring.eth",
-			SourceName: "tipqueue-wiring-source",
-			BatchID:    "batch-tipqueue-001",
-			Limit:      10,
-		})
-		return err == nil && len(records) == 1 && n.tipQueue.Config().IsTrusted(providerID.String())
-	})
-	if !promoted {
-		t.Fatal("promotion to Full did not trigger catch-up backfill + TipQueue trust bookkeeping in time")
-	}
-
-	if err := n.peerRegistry.SetTrustLevel(providerID, peers.Standard); err != nil {
-		t.Fatalf("SetTrustLevel(Standard) (demotion) failed: %v", err)
-	}
-	demoted := waitForCondition(t, 2*time.Second, func() bool {
-		return !n.tipQueue.Config().IsTrusted(providerID.String())
-	})
-	if !demoted {
-		t.Fatal("demotion below Full did not unsubscribe (TipQueue config still reports trusted)")
-	}
 }
 
 // --- D4: resource caps on auto-ingest fetches --------------------------

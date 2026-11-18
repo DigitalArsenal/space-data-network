@@ -74,7 +74,6 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/sourcemetrics"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
-	"github.com/spacedatanetwork/sdn-server/internal/syncwire"
 	"github.com/spacedatanetwork/sdn-server/internal/versioninfo"
 	"github.com/spacedatanetwork/sdn-server/internal/wasm"
 	"github.com/spacedatanetwork/sdn-server/plugins"
@@ -256,11 +255,6 @@ type Node struct {
 	pendingDatasetCatalogAt int
 	datasetMaterializedPNMs map[string]time.Time
 	datasetSupersedeMu      sync.Mutex
-	// datasetCatchupResume is, per trusted peer, the schema its last
-	// publication catch-up pass was refused at (rate_limited); the next pass
-	// starts there (dataset_catchup_schemas.go).
-	datasetCatchupResumeMu sync.Mutex
-	datasetCatchupResume   map[peer.ID]string
 
 	// laneRetention resolves the subscription retention rule for one lane
 	// (schema, provider, source): the subscriber's choice, else the node
@@ -502,6 +496,12 @@ func (n *Node) init() error {
 	}
 
 	n.flatc = n.loadFlatcConverter(wasm.NewEmbeddedFlatcModule)
+
+	// peers.trusted_import is gone: a new node refuses it; a node updated
+	// with its data converts it once it starts (subscription_conversion.go).
+	if err := n.checkRemovedTrustedImport(); err != nil {
+		return err
+	}
 
 	// Initialize validator (uses WASM if available)
 	n.validator, err = sds.NewValidator(n.flatc)
@@ -2268,6 +2268,8 @@ func (n *Node) Start(ctx context.Context) error {
 	if n.follows != nil {
 		if err := n.follows.load(); err != nil {
 			log.Errorf("Followed lanes not loaded: %v", err)
+		} else {
+			n.convertRemovedTrustedImport()
 		}
 	}
 
@@ -2396,8 +2398,6 @@ func (n *Node) Start(ctx context.Context) error {
 	if n.store != nil {
 		n.wg.Add(1)
 		go n.runDatasetPublicationPNMCatchup()
-		n.wg.Add(1)
-		go n.runDatasetShardPublicationCatchup()
 		n.wg.Add(1)
 		go n.runDatasetPublicationAvailability()
 	}
@@ -2573,7 +2573,6 @@ func (n *Node) setupSchemaPubSubTopics(ctx context.Context) {
 	schemas := n.validator.Schemas()
 	log.Infof("Schema PubSub setup starting for %d schema(s)", len(schemas))
 	joined := 0
-	feedJoined := 0
 	for _, schema := range schemas {
 		select {
 		case <-ctx.Done():
@@ -2598,25 +2597,8 @@ func (n *Node) setupSchemaPubSubTopics(ctx context.Context) {
 		}
 		n.wg.Add(1)
 		go n.handleSubscription(sub, schema)
-
-		if n.store != nil {
-			feedTopicName := sdnpubsub.DatasetFeedHeadTopic(schema)
-			feedTopic, err := n.joinAndStoreTopic(feedTopicName, feedTopicName)
-			if err != nil {
-				log.Warnf("Failed to join dataset feed-head topic %s: %v", feedTopicName, err)
-				continue
-			}
-			feedJoined++
-			feedSub, err := feedTopic.Subscribe()
-			if err != nil {
-				log.Warnf("Failed to subscribe to dataset feed-head topic %s: %v", feedTopicName, err)
-				continue
-			}
-			n.wg.Add(1)
-			go n.handleDatasetFeedHeadSubscription(feedSub, schema)
-		}
 	}
-	log.Infof("Schema PubSub setup complete: schema_topics=%d dataset_feed_topics=%d", joined, feedJoined)
+	log.Infof("Schema PubSub setup complete: schema_topics=%d", joined)
 }
 
 // flowServiceFirstFireDelay lets the node finish coming up before a due
@@ -3053,203 +3035,12 @@ func (n *Node) maintainBootstrapConnections(pinnedPeers []bootstrap.PeerInfo) {
 	}
 }
 
-func (n *Node) runDatasetShardPublicationCatchup() {
-	defer n.wg.Done()
-
-	timer := time.NewTimer(datasetPublicationCatchupInitialDelay)
-	defer timer.Stop()
-	for {
-		select {
-		case <-n.ctx.Done():
-			return
-		case <-timer.C:
-			runPeerIngress("dataset-shard-catchup", "", func() {
-				if materialized, err := n.catchUpDatasetShardPublicationsFromTrustedPeers(n.ctx); err != nil {
-					log.Warnf("Dataset shard publication catch-up completed with errors after materializing %d shard(s): %v", materialized, err)
-				} else if materialized > 0 {
-					log.Infof("Dataset shard publication catch-up materialized %d shard(s)", materialized)
-				}
-			})
-			timer.Reset(datasetPublicationCatchupInterval)
-		}
-	}
-}
-
-func (n *Node) catchUpDatasetShardPublicationsFromTrustedPeers(ctx context.Context) (int, error) {
-	return n.catchUpDatasetShardPublicationsFromTrustedPeersCounting(ctx, nil)
-}
-
-// catchUpDatasetShardPublicationsFromTrustedPeersCounting is the trusted-peer
-// catch-up pass with an optional COUNT filter: every due publication is still
-// materialized, but only those the filter admits are counted (nil counts all).
-func (n *Node) catchUpDatasetShardPublicationsFromTrustedPeersCounting(ctx context.Context, count func(storage.DatasetShardPublication) bool) (int, error) {
-	if n == nil || n.host == nil || n.store == nil || n.peerRegistry == nil {
-		return 0, nil
-	}
-	var total int
-	var errs []error
-	for _, id := range n.host.Network().Peers() {
-		if !n.peerRegistry.IsTrusted(id) {
-			continue
-		}
-		materialized, err := n.catchUpDatasetShardPublicationsFromPeerCounting(ctx, id, count)
-		total += materialized
-		if err != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", id.ShortString(), err))
-		}
-	}
-	return total, errors.Join(errs...)
-}
-
-func (n *Node) catchUpDatasetShardPublicationsFromPeer(ctx context.Context, from peer.ID) (int, error) {
-	return n.catchUpDatasetShardPublicationsFromPeerCounting(ctx, from, nil)
-}
-
-func (n *Node) catchUpDatasetShardPublicationsFromPeerCounting(ctx context.Context, from peer.ID, count func(storage.DatasetShardPublication) bool) (total int, err error) {
-	defer recoverPeerIngress("dataset-shard-catchup", from, false, &err)
-	if n == nil || n.host == nil || n.store == nil || n.validator == nil || n.peerRegistry == nil {
-		return 0, nil
-	}
-	if !n.peerRegistry.IsTrusted(from) {
-		return 0, nil
-	}
-	schemas, err := n.datasetCatchupSchemas(from)
-	if err != nil {
-		return 0, err
-	}
-	var errs []error
-	n.noteDatasetCatchupRefused(from, "")
-	for _, schema := range schemas {
-		publications, err := n.listRemoteDatasetShardPublications(ctx, from, schema)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("%s: list %s publications: %w", from.ShortString(), schema, err))
-			var remoteErr *syncwire.RemoteError
-			if errors.As(err, &remoteErr) && remoteErr.Code == "rate_limited" {
-				// The peer's listing budget is spent: every later schema
-				// would be refused too. The next pass starts here.
-				n.noteDatasetCatchupRefused(from, schema)
-				break
-			}
-			continue
-		}
-		for _, publication := range publications {
-			if !n.trustedPeerLaneImportAllowed(from, publication.SchemaName, publication.ProviderID, publication.SourceName, publication.QueryProfile) {
-				continue
-			}
-			cached, err := n.datasetShardPublicationAlreadyCached(publication)
-			if err != nil {
-				return total, err
-			}
-			if cached {
-				continue
-			}
-			imported, err := n.materializeDatasetFeedHeadAnnouncement(ctx, datasetShardPublicationAnnouncement(publication), from)
-			if err != nil {
-				errs = append(errs, fmt.Errorf("%s: materialize %s %s: %w", from.ShortString(), schema, publication.ShardCID, err))
-				continue
-			}
-			if imported > 0 && (count == nil || count(publication)) {
-				total++
-			}
-		}
-	}
-	return total, errors.Join(errs...)
-}
-
-func (n *Node) datasetShardPublicationAlreadyCached(publication storage.DatasetShardPublication) (bool, error) {
-	if n == nil || n.store == nil {
-		return false, nil
-	}
-	existing, found, err := n.store.FindDatasetShardPublication(storage.DatasetShardPublicationQuery{
-		SchemaName:   publication.SchemaName,
-		ProviderID:   publication.ProviderID,
-		SourceName:   publication.SourceName,
-		BatchID:      publication.BatchID,
-		QueryProfile: publication.QueryProfile,
-		Offset:       publication.Offset,
-		Limit:        publication.Limit,
-	})
-	if err != nil {
-		return false, err
-	}
-	if found && existing.ShardCID == publication.ShardCID && existing.IndexCID == publication.IndexCID {
-		return true, nil
-	}
-	state, retired, err := n.store.DatasetPublicationReplayState(storage.DatasetPublicationRetirementKey(publication))
-	return retired && state.State == "retired", err
-}
-
 // datasetShardPublicationListPage is one decoded list-published reply.
 type datasetShardPublicationListPage struct {
 	Total        int
 	Rows         int
 	NextCursor   string
 	Publications []storage.DatasetShardPublication
-}
-
-func (n *Node) listRemoteDatasetShardPublications(ctx context.Context, from peer.ID, schema string) ([]storage.DatasetShardPublication, error) {
-	var publications []storage.DatasetShardPublication
-	seen := 0
-	for cursor := ""; ; {
-		page, err := n.listRemoteDatasetShardPublicationPage(ctx, from, schema, cursor, datasetShardPublicationCatchupLimit)
-		if err != nil {
-			return publications, err
-		}
-		seen += page.Rows
-		if seen > 100000 {
-			return publications, fmt.Errorf("dataset-shard-list: publication count exceeds 100000")
-		}
-		publications = append(publications, page.Publications...)
-		if page.NextCursor == "" {
-			return publications, nil
-		}
-		if page.Rows == 0 || page.NextCursor == cursor {
-			return publications, fmt.Errorf("dataset-shard-list: cursor did not advance")
-		}
-		cursor = page.NextCursor
-	}
-}
-
-func (n *Node) listRemoteDatasetShardPublicationPage(ctx context.Context, from peer.ID, schema string, cursor string, limit int) (page datasetShardPublicationListPage, err error) {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	stream, reply, err := syncwire.Call(ctx, n.host, from, syncwire.OpListPublished, syncwire.QRPFields{
-		SchemaName: schema,
-		Filters:    []syncwire.QRPFilterField{{Field: syncwire.FilterQueryProfile, Op: syncwire.QRPFilterEq, Value: storage.DatasetPublicationQueryProfile}},
-		Cursor:     cursor,
-		Limit:      uint32(limit),
-	})
-	if err != nil {
-		return page, fmt.Errorf("dataset-shard-list: %w", err)
-	}
-	defer stream.Close()
-	defer recoverPeerReply("dataset-shard-list", stream, &err)
-	segs, err := syncwire.Segments(reply)
-	if err != nil {
-		return page, fmt.Errorf("dataset-shard-list: %w", err)
-	}
-	if len(segs) > limit || reply.TOTAL_COUNT() > 100000 {
-		return page, fmt.Errorf("dataset-shard-list: inconsistent page counts")
-	}
-	page.Total, page.NextCursor = int(reply.TOTAL_COUNT()), string(reply.NEXT_CURSOR())
-	page.Rows = len(segs)
-	for _, seg := range segs {
-		// A listing is discovery, not possession. Do not try to mirror history
-		// whose provider explicitly reports that it cannot serve its files.
-		if seg.Availability == "unavailable" {
-			continue
-		}
-		pub := seg.Publication()
-		if strings.TrimSpace(pub.SchemaName) == "" {
-			pub.SchemaName = schema
-		}
-		page.Publications = append(page.Publications, pub)
-	}
-	return page, nil
-}
-
-func datasetShardPublicationAnnouncement(publication storage.DatasetShardPublication) sdnpubsub.DatasetFeedHeadAnnouncement {
-	return syncwire.SegmentFromPublication(publication)
 }
 
 func (n *Node) materializeStoredDatasetPublicationPNMs(ctx context.Context, limit int) (int, error) {
@@ -3487,56 +3278,6 @@ func (n *Node) handleSchemaMessage(msg *pubsub.Message, schema string) {
 	// catchUpDatasetShardPublicationsFromPeer) so an untrusted peer's
 	// PNM never reaches the queue's fetch/pin/materialize path.
 	// (Forwarded above, before the row is stored.)
-}
-
-func (n *Node) handleDatasetFeedHeadSubscription(sub *pubsub.Subscription, schema string) {
-	defer n.wg.Done()
-
-	for {
-		msg, err := sub.Next(n.ctx)
-		if err != nil {
-			if n.ctx.Err() != nil {
-				return
-			}
-			log.Warnf("Error reading dataset feed-head subscription %s: %v", schema, err)
-			continue
-		}
-		n.handleDatasetFeedHeadMessage(msg, schema)
-	}
-}
-
-func (n *Node) handleDatasetFeedHeadMessage(msg *pubsub.Message, schema string) {
-	defer recoverPeerIngress("feed-head-gossip/"+schema, msg.ReceivedFrom, true, nil)
-	if msg.ReceivedFrom == n.host.ID() {
-		return
-	}
-	ann, err := sdnpubsub.ParseDatasetFeedHeadAnnouncement(msg.Data)
-	if err != nil {
-		log.Warnf("Invalid dataset feed-head announcement on %s from %s: %v", schema, msg.ReceivedFrom.ShortString(), err)
-		return
-	}
-	if len(ann.Signature) > 0 {
-		// Tampered or malformed signatures are always rejected.
-		if err := sdnpubsub.VerifyDatasetFeedHead(ann, nil); err != nil {
-			log.Warnf("Rejecting dataset feed head on %s from %s: %v", schema, msg.ReceivedFrom.ShortString(), err)
-			return
-		}
-	} else if n.config != nil && n.config.Security.RequireSignedFeedHeads {
-		log.Warnf("Rejecting unsigned dataset feed head on %s from %s (security.require_signed_feed_heads)", schema, msg.ReceivedFrom.ShortString())
-		return
-	}
-	if ann.SchemaName != schema {
-		log.Debugf("Skipping dataset feed-head announcement on %s for schema %s", schema, ann.SchemaName)
-		return
-	}
-	imported, err := n.materializeDatasetFeedHeadAnnouncement(n.ctx, ann, msg.ReceivedFrom)
-	if err != nil {
-		log.Warnf("Failed to materialize dataset feed head %s from %s on %s: %v", ann.FeedHead, msg.ReceivedFrom.ShortString(), schema, err)
-		return
-	}
-	if imported > 0 {
-		log.Infof("Materialized dataset feed head %s from %s on %s: imported=%d", ann.FeedHead, msg.ReceivedFrom.ShortString(), schema, imported)
-	}
 }
 
 func (n *Node) handleDatasetPublicationPNM(ctx context.Context, schema string, pnmBytes []byte, from peer.ID) error {
@@ -4206,37 +3947,14 @@ func (n *Node) handleTrustLevelChange(id peer.ID, old, newLevel peers.TrustLevel
 // there is no separate per-peer topic to join here. What promotion to Full
 // actually changes is (1) the TipQueue's own trusted-source bookkeeping,
 // which the admin pinning API surfaces, and (2) whether this peer's
-// already-stored/available publications get materialized — which the
-// existing catch-up loop (runDatasetPublicationPNMCatchup /
-// runDatasetShardPublicationCatchup, node.go ~1530-1607) already does for
-// every trusted peer every five minutes. This hook triggers that SAME
-// catch-up machinery immediately for this peer instead of waiting for the
-// next tick; it does not clone it.
+// already-stored/available publications get materialized. Since 1.2.0 a
+// lane is imported only by subscription, so promotion starts no import of
+// its own: the subscriptions naming this peer, and the $PNM catch-up, which
+// admits only subscribed lanes, carry on as they are.
 func (n *Node) subscribeFullyTrustedPeer(id peer.ID) {
 	if n.tipQueue != nil {
 		n.tipQueue.Config().TrustSource(id.String())
 	}
-	if n.store == nil || n.ctx == nil {
-		return
-	}
-	n.wg.Add(1)
-	go func() {
-		defer n.wg.Done()
-		runPeerIngress("trust-promotion-pnm-backfill", id, func() {
-			if materialized, err := n.materializeStoredDatasetPublicationPNMs(n.ctx, datasetPublicationCatchupLimit); err != nil {
-				log.Warnf("Trust-promotion PNM catch-up for %s completed with errors after materializing %d update(s): %v", id.ShortString(), materialized, err)
-			} else if materialized > 0 {
-				log.Infof("Trust-promotion PNM catch-up materialized %d update(s) triggered by %s", materialized, id.ShortString())
-			}
-		})
-		runPeerIngress("trust-promotion-shard-backfill", id, func() {
-			if materialized, err := n.catchUpDatasetShardPublicationsFromPeer(n.ctx, id); err != nil {
-				log.Warnf("Trust-promotion shard catch-up from %s completed with errors after materializing %d shard(s): %v", id.ShortString(), materialized, err)
-			} else if materialized > 0 {
-				log.Infof("Trust-promotion shard catch-up materialized %d shard(s) from %s", materialized, id.ShortString())
-			}
-		})
-	}()
 }
 
 // unsubscribeFullyTrustedPeer reacts to a peer's demotion below Full trust,
@@ -4250,125 +3968,6 @@ func (n *Node) unsubscribeFullyTrustedPeer(id peer.ID) {
 	if n.tipQueue != nil {
 		n.tipQueue.Config().UntrustSource(id.String())
 	}
-}
-
-func (n *Node) materializeDatasetFeedHeadAnnouncement(ctx context.Context, ann sdnpubsub.DatasetFeedHeadAnnouncement, from peer.ID) (imported int, err error) {
-	defer recoverPeerIngress("dataset-feed-head-import", from, false, &err)
-	if n == nil || n.store == nil || n.host == nil || n.peerRegistry == nil {
-		return 0, nil
-	}
-	if !n.peerRegistry.IsTrusted(from) {
-		log.Debugf("Skipping dataset feed head from non-trusted peer %s on %s", from.ShortString(), ann.SchemaName)
-		return 0, nil
-	}
-	// A node's own lane never comes back to it from a peer. Its records are
-	// here already, and its publication hygiene retires old series on
-	// purpose: re-importing them made host-02 replace its own OMM lane over
-	// and over (2026-10-06).
-	if n.laneProducedHere(ann.SchemaName, ann.ProviderID, ann.SourceName) {
-		log.Debugf("Skipping dataset feed head %s from %s: this node produces %s %s/%s", ann.FeedHead, from.ShortString(), ann.SchemaName, ann.ProviderID, ann.SourceName)
-		return 0, nil
-	}
-	// Trusted is not "everything": a lane is imported only when this node
-	// holds it already or its configuration lists it (trusted_import.go).
-	if !n.trustedPeerLaneImportAllowed(from, ann.SchemaName, ann.ProviderID, ann.SourceName, ann.QueryProfile) {
-		return 0, nil
-	}
-	retirement, retired, err := n.store.DatasetPublicationReplayState(storage.DatasetPublicationRetirementKey(ann.Publication()))
-	if err != nil {
-		return 0, fmt.Errorf("read publication retirement: %w", err)
-	}
-	if retired && retirement.State == "retired" {
-		return 0, nil
-	}
-	if strings.TrimSpace(ann.ShardCID) == "" || strings.TrimSpace(ann.IndexCID) == "" {
-		return 0, fmt.Errorf("dataset feed head %s is missing shard or index CID", ann.FeedHead)
-	}
-	if ann.Limit <= 0 {
-		return 0, fmt.Errorf("dataset feed head %s is missing positive window limit", ann.FeedHead)
-	}
-	baseDir := strings.TrimSpace(n.config.Storage.Path)
-	if baseDir == "" {
-		baseDir = os.TempDir()
-	}
-	workRoot := filepath.Join(baseDir, datasetFeedHeadSyncWorkRoot)
-	if err := os.MkdirAll(workRoot, 0o700); err != nil {
-		return 0, fmt.Errorf("create feed-head work root: %w", err)
-	}
-	workDir, err := os.MkdirTemp(workRoot, "feed-head-*")
-	if err != nil {
-		return 0, fmt.Errorf("create feed-head work dir: %w", err)
-	}
-	defer os.RemoveAll(workDir)
-
-	shardPath := filepath.Join(workDir, "shard.fbshard")
-	indexPath := filepath.Join(workDir, "index.json")
-	shardHeader, err := n.fetchDatasetFeedHeadAssetToFile(ctx, ann, from, ann.ShardCID, "shard", shardPath)
-	if err != nil {
-		return 0, err
-	}
-	indexHeader, err := n.fetchDatasetFeedHeadAssetToFile(ctx, ann, from, ann.IndexCID, "index", indexPath)
-	if err != nil {
-		return 0, err
-	}
-	imported, index, err := n.store.ImportDatasetShardFromFilesContext(ctx, shardPath, indexPath, from.String())
-	if err != nil {
-		return 0, fmt.Errorf("import dataset feed head %s: %w", ann.FeedHead, err)
-	}
-	if index == nil {
-		return imported, fmt.Errorf("import dataset feed head %s returned no index", ann.FeedHead)
-	}
-	pub := datasetShardPublicationFromFeedHead(ann, shardHeader, indexHeader, index)
-	if err := n.cacheDatasetFeedHeadPublicationFiles(pub, shardPath, indexPath); err != nil {
-		return imported, err
-	}
-	if err := n.store.UpsertDatasetShardPublication(pub); err != nil {
-		return imported, fmt.Errorf("record replicated dataset shard publication %s: %w", ann.FeedHead, err)
-	}
-	// Pinned-dataset supersede (gateway loop G.4): a newly materialized
-	// publication may complete a newer batch for a pinned provider — evict
-	// the superseded batch so pins do not accumulate.
-	n.scheduleDatasetSupersede(ann.SchemaName)
-	// Subscription retention: the lane's rule decides whether this batch
-	// replaces the previous one or joins the archive.
-	if n.host == nil || from != n.host.ID() {
-		n.applyLaneRetention(ann.SchemaName, pub.ProviderID, pub.SourceName,
-			storage.RetainCandidate{BatchID: pub.BatchID, PublishedAt: pub.PublishedAt},
-			datasetPublicationPins(pub.ShardCID, pub.IndexCID, pub.ManifestCID, pub.PNMCID))
-	}
-	return imported, nil
-}
-
-func datasetShardPublicationFromFeedHead(ann sdnpubsub.DatasetFeedHeadAnnouncement, shardHeader, indexHeader datasetFeedHeadAssetHeader, index *storage.DatasetExportIndex) storage.DatasetShardPublication {
-	pub := ann.Publication()
-	pub.ShardSHA256 = shardHeader.SHA256
-	pub.IndexSHA256 = indexHeader.SHA256
-	if index != nil {
-		if pub.ProviderID == "" {
-			pub.ProviderID = index.ProviderID
-		}
-		if pub.SourceName == "" {
-			pub.SourceName = index.SourceName
-		}
-		if pub.BatchID == "" {
-			pub.BatchID = index.BatchID
-		}
-		if pub.RecordCount <= 0 {
-			pub.RecordCount = index.RecordCount
-		}
-		if pub.ShardSHA256 == "" {
-			pub.ShardSHA256 = index.ShardSHA256
-		}
-		pub.QuerySHA256 = index.QuerySHA256
-		pub.ResultSHA256 = index.ResultSHA256
-	}
-	if pub.ByteCount <= 0 {
-		pub.ByteCount = shardHeader.ByteCount
-	}
-	if pub.PublishedAt.IsZero() {
-		pub.PublishedAt = time.Now().UTC()
-	}
-	return pub
 }
 
 // scheduleDatasetSupersede runs the pinned-dataset supersede evaluation for
@@ -4446,146 +4045,6 @@ func (n *Node) supersedePinnedDatasetBatches(schema string, peers []string) {
 			break // newest servable batch found and kept; older candidates are the evictees
 		}
 	}
-}
-
-func (n *Node) cacheDatasetFeedHeadPublicationFiles(pub storage.DatasetShardPublication, shardPath, indexPath string) error {
-	shardOut, err := n.store.DatasetPublicationShardPath(pub)
-	if err != nil {
-		return fmt.Errorf("resolve replicated dataset shard path: %w", err)
-	}
-	indexOut, err := n.store.DatasetPublicationIndexPath(pub)
-	if err != nil {
-		return fmt.Errorf("resolve replicated dataset index path: %w", err)
-	}
-	if err := copyDatasetFeedHeadAssetFile(shardPath, shardOut); err != nil {
-		return fmt.Errorf("cache replicated dataset shard: %w", err)
-	}
-	if err := copyDatasetFeedHeadAssetFile(indexPath, indexOut); err != nil {
-		return fmt.Errorf("cache replicated dataset index: %w", err)
-	}
-	return nil
-}
-
-func copyDatasetFeedHeadAssetFile(src, dest string) error {
-	if err := os.MkdirAll(filepath.Dir(dest), 0o700); err != nil {
-		return err
-	}
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	tmp, err := os.CreateTemp(filepath.Dir(dest), "."+filepath.Base(dest)+".tmp-*")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmp.Name()
-	cleanup := true
-	defer func() {
-		if cleanup {
-			_ = os.Remove(tmpPath)
-		}
-	}()
-	if _, err := io.Copy(tmp, in); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(tmpPath, dest); err != nil {
-		return err
-	}
-	cleanup = false
-	return nil
-}
-
-// datasetFeedHeadAssetHeader is what a read-shard / read-index reply
-// header promises about the bytes that follow it.
-type datasetFeedHeadAssetHeader struct {
-	SHA256    string
-	ByteCount int64
-}
-
-// fetchDatasetFeedHeadAssetToFile reads one published shard (role "shard",
-// op read-shard) or index (role "index", op read-index) whole into
-// outputPath and checks its length and SHA-256 against the reply header.
-func (n *Node) fetchDatasetFeedHeadAssetToFile(ctx context.Context, ann sdnpubsub.DatasetFeedHeadAnnouncement, from peer.ID, cidValue string, role string, outputPath string) (header datasetFeedHeadAssetHeader, err error) {
-	op := syncwire.OpReadShard
-	if role == syncwire.RoleIndex {
-		op = syncwire.OpReadIndex
-	}
-	ctx, cancel := context.WithTimeout(ctx, datasetPublicationFetchBudget)
-	defer cancel()
-	stream, reply, err := syncwire.Call(ctx, n.host, from, op, syncwire.QRPFields{
-		SchemaName: ann.SchemaName,
-		ProviderID: ann.ProviderID,
-		SourceName: ann.SourceName,
-		BatchID:    ann.BatchID,
-		Filters:    []syncwire.QRPFilterField{{Field: syncwire.FilterQueryProfile, Op: syncwire.QRPFilterEq, Value: ann.QueryProfile}},
-		CID:        cidValue,
-	})
-	if err != nil {
-		return header, fmt.Errorf("published %s asset %s: %w", role, cidValue, err)
-	}
-	defer stream.Close()
-	defer recoverPeerReply("dataset-asset-reply", stream, &err)
-	stopReset := context.AfterFunc(ctx, func() { _ = stream.Reset() })
-	defer stopReset()
-	segs, err := syncwire.Segments(reply)
-	if err != nil {
-		return header, fmt.Errorf("published %s asset header: %w", role, err)
-	}
-	if len(segs) != 1 {
-		return header, fmt.Errorf("published %s asset header carries %d rows, want 1", role, len(segs))
-	}
-	seg := segs[0]
-	assetCID, assetSHA := seg.ShardCID, seg.ShardSHA256
-	if role == syncwire.RoleIndex {
-		assetCID, assetSHA = seg.IndexCID, seg.IndexSHA256
-	}
-	if seg.Role != role || assetCID != cidValue || seg.ByteOffset != 0 || seg.ByteLength != seg.ByteCount {
-		return header, fmt.Errorf("published %s asset header mismatch", role)
-	}
-	if seg.SchemaName != ann.SchemaName {
-		return header, fmt.Errorf("published %s asset schema = %q, want %q", role, seg.SchemaName, ann.SchemaName)
-	}
-	header = datasetFeedHeadAssetHeader{SHA256: assetSHA, ByteCount: seg.ByteLength}
-	if header.ByteCount <= 0 {
-		return header, fmt.Errorf("published %s asset %s has invalid byte count %d", role, cidValue, header.ByteCount)
-	}
-	if err := os.MkdirAll(filepath.Dir(outputPath), 0o700); err != nil {
-		return header, fmt.Errorf("create published %s asset dir: %w", role, err)
-	}
-	file, err := os.Create(outputPath)
-	if err != nil {
-		return header, fmt.Errorf("create published %s asset file: %w", role, err)
-	}
-	complete := false
-	defer func() {
-		_ = file.Close()
-		if !complete {
-			_ = os.Remove(outputPath)
-		}
-	}()
-	hash := sha256.New()
-	written, copyErr := io.CopyN(io.MultiWriter(file, hash), stream, header.ByteCount)
-	closeErr := file.Close()
-	if copyErr != nil {
-		return header, fmt.Errorf("read published %s asset %s bytes: %w", role, cidValue, copyErr)
-	}
-	if closeErr != nil {
-		return header, fmt.Errorf("close published %s asset file: %w", role, closeErr)
-	}
-	if written != header.ByteCount {
-		return header, fmt.Errorf("published %s asset %s bytes = %d, want %d", role, cidValue, written, header.ByteCount)
-	}
-	actualSHA := hex.EncodeToString(hash.Sum(nil))
-	if strings.TrimSpace(header.SHA256) != "" && actualSHA != header.SHA256 {
-		return header, fmt.Errorf("published %s asset %s SHA-256 = %s, want %s", role, cidValue, actualSHA, header.SHA256)
-	}
-	complete = true
-	return header, nil
 }
 
 func (n *Node) materializeDatasetPublicationPNM(ctx context.Context, schema string, pnmBytes []byte, from peer.ID) (bool, error) {
@@ -4686,12 +4145,19 @@ func (n *Node) materializeDatasetPublicationPNMInner(ctx context.Context, schema
 		FetchRetryDelays: []time.Duration{2 * time.Second, 5 * time.Second, 10 * time.Second, 20 * time.Second},
 		FetchBudget:      datasetPublicationFetchBudget,
 		WorkDir:          workDir,
-		// Trusted is not "everything" here either: the gossiped PNM, the
-		// TipQueue tip and the stored-PNM catch-up all land in this function,
-		// so the lane policy (trusted_import.go) is asked once the signed DPM
-		// names the lane, before the shard or index is fetched.
+		// The gossiped PNM, the TipQueue tip and the stored-PNM catch-up all
+		// land in this function: a lane is imported only when this node
+		// subscribes to it from the peer that sent it, asked once the signed
+		// DPM names the lane, before the shard or index is fetched.
 		LaneAllowed: func(laneSchema, providerID, sourceName string) bool {
-			return n.trustedPeerLaneImportAllowed(from, laneSchema, providerID, sourceName, storage.DatasetPublicationQueryProfile)
+			if n.subscribedFrom(from, laneSchema, providerID, sourceName) {
+				return true
+			}
+			key := from.String() + "|" + laneSchema + "|" + providerID + "|" + sourceName
+			if _, seen := unsubscribedLaneLog.LoadOrStore(key, true); !seen {
+				log.Infof("Not importing %s %s/%s from %s: this node does not subscribe to that lane from that peer", laneSchema, providerID, sourceName, from.ShortString())
+			}
+			return false
 		},
 	})
 	if errors.Is(err, storage.ErrDatasetPublicationLaneNotImported) {
@@ -5677,39 +5143,6 @@ func (n *Node) PinPolicy() *pinpolicy.Policy {
 	return n.pins
 }
 
-// SyncLane runs ONE bounded catch-up pass over every connected trusted peer
-// (the same pass the periodic catch-up timer runs) and returns how many shards
-// it materialized for the requested (schema, provider, source) lane.
-//
-// The pass itself is not narrowed: trusted-peer catch-up lists every schema's
-// publications on every trusted peer and materializes whatever this node does
-// not hold yet, so a lane sync also lands whatever else was due. The lane
-// filter applies to the COUNT this call reports, which is what the $DSS
-// SYNCED_ROWS/status reflects.
-func (n *Node) SyncLane(ctx context.Context, schema, providerID, sourceName string) (int, error) {
-	if n == nil {
-		return 0, errors.New("node is not running")
-	}
-	if ctx == nil {
-		ctx = n.ctx
-	}
-	schema = strings.TrimSpace(schema)
-	providerID = strings.TrimSpace(providerID)
-	sourceName = strings.TrimSpace(sourceName)
-	return n.catchUpDatasetShardPublicationsFromTrustedPeersCounting(ctx, func(p storage.DatasetShardPublication) bool {
-		if schema != "" && !strings.EqualFold(p.SchemaName, schema) {
-			return false
-		}
-		if providerID != "" && p.ProviderID != providerID {
-			return false
-		}
-		if sourceName != "" && p.SourceName != sourceName {
-			return false
-		}
-		return true
-	})
-}
-
 // Alerts returns the node's operational alert registry — what is currently
 // wrong with this node. The health, status and metrics surfaces read it.
 func (n *Node) Alerts() *ops.Registry {
@@ -5912,13 +5345,6 @@ func (n *Node) joinAndStoreTopic(key, topicName string) (*pubsub.Topic, error) {
 // PNM topic and every affected dataset schema topic.
 func (n *Node) PublishDatasetUpdatePNM(ctx context.Context, ann sdnpubsub.DatasetUpdateAnnouncement) error {
 	return sdnpubsub.PublishDatasetUpdatePNM(ctx, n, ann)
-}
-
-func (n *Node) PublishDatasetFeedHead(ctx context.Context, ann sdnpubsub.DatasetFeedHeadAnnouncement) error {
-	if key := n.SigningKey(); len(key) == ed25519.PrivateKeySize {
-		return sdnpubsub.PublishSignedDatasetFeedHead(ctx, n, ann, ed25519.PrivateKey(key))
-	}
-	return sdnpubsub.PublishDatasetFeedHead(ctx, n, ann)
 }
 
 // PeerRegistry returns the trusted peer registry.
@@ -6701,5 +6127,12 @@ func (n *Node) retentionSweep() {
 		n.applyLaneRetentionNow(resolver, lane.schema, lane.providerID, lane.sourceName, storage.RetainCandidate{}, nil)
 		checked++
 	}
-	log.Infof("Retention sweep: %d lanes held from remote peers checked against their rule", checked)
+	// Followed lanes: the rule applies to the batch held as the producer's
+	// current one (a lane whose current batch is not known yet gets it when
+	// the batch is held).
+	followed := 0
+	if n.follows != nil {
+		followed = n.follows.applyRules(true)
+	}
+	log.Infof("Retention sweep: %d lanes held from remote peers checked against their rule, %d followed lanes", checked, followed)
 }

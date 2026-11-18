@@ -38,7 +38,24 @@ package node
 // Subscriptions are kept on disk as size-prefixed $DSS records, one per
 // followed lane (followFileName): the lane, the producer (PROVIDER_PEER_ID),
 // the cursor to resume at (CURSOR, a resume cursor the producer's scan
-// generation verifies) and what has been received.
+// generation verifies), when it was subscribed (LAST_SYNC_STARTED_AT, Unix
+// ms) and what has been received.
+//
+// The first read is bounded by the lane's rule. A subscription starts at the
+// producer's current batch (FollowStartCurrent) or at the lane's beginning
+// (FollowStartBeginning); by default a replace-current lane starts at the
+// current batch and a keep-all or archive-all lane at the beginning. To start
+// at the current batch the node first reads the producer's statement of the
+// lane (syncwire.LaneStatement: the current batch, the batch's and the
+// lane's size, and the lane's present position as a resume cursor), saves
+// that position as its cursor, and opens the followed stream there: the
+// stream's first page is empty, and the current batch is then held as above
+// (its list read, its records fetched by CID). Nothing older is sent. Until
+// the cursor is saved the record carries SYNC_FILTER "start=current", so a
+// restart still starts at the current batch. Before a subscription starts
+// the node checks the first read (the batch, or the lane) against its free
+// disk and its record ceiling (FollowPlan); a refusal names both sizes and
+// can be overridden (FollowOptions.Force).
 
 import (
 	"bytes"
@@ -61,6 +78,7 @@ import (
 	libp2pprotocol "github.com/libp2p/go-libp2p/core/protocol"
 
 	"github.com/spacedatanetwork/sdn-server/internal/channels"
+	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/ops"
 	"github.com/spacedatanetwork/sdn-server/internal/protocol"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
@@ -88,14 +106,65 @@ const followMaxBatchRecords = 1 << 20
 // errFollowRefused marks what the producer sent that this node refuses.
 var errFollowRefused = errors.New("refused")
 
+// Start modes of a subscription (FollowOptions.Start).
+const (
+	FollowStartCurrent   = "current"
+	FollowStartBeginning = "beginning"
+	// followStartPending is the $DSS SYNC_FILTER of a subscription that
+	// starts at the current batch and has no cursor yet.
+	followStartPending = "start=current"
+)
+
+// followStoreExpansion is the store bytes a record byte takes (5.0 to 5.3
+// measured, stream-790 Part A); followDiskReserve the free disk a first
+// read leaves.
+const (
+	followStoreExpansion = 5
+	followDiskReserve    = 1 << 30
+)
+
+// followStatementWait bounds one read of a producer's statement.
+const followStatementWait = 60 * time.Second
+
 // FollowKey names one followed lane.
 type FollowKey struct {
 	Schema, ProviderID, SourceName, Producer string
 }
 
+// FollowOptions are how a subscription starts.
+type FollowOptions struct {
+	// Start is FollowStartCurrent, FollowStartBeginning, or "" (by the
+	// lane's rule: replace-current starts at the current batch).
+	Start string
+	// Force subscribes although the first read does not fit or the
+	// producer does not state the lane.
+	Force bool
+}
+
+// FollowPlan is a subscription's first read and whether this node takes it.
+type FollowPlan struct {
+	FollowKey
+	Start, Rule string
+	// Statement is the producer's; StatementError why there is none.
+	Statement      syncwire.LaneStatement
+	StatementError string
+	// FirstReadRecords and FirstReadBytes are the current batch (start
+	// current) or the lane (start beginning).
+	FirstReadRecords, FirstReadBytes int64
+	FreeBytes, NeedBytes             int64
+	HeldRecords, RecordCeiling       int64
+	// Refusal is why the first read does not fit ("" when it does).
+	Refusal string
+}
+
 // FollowStatus is one followed lane as this node has received it.
 type FollowStatus struct {
 	FollowKey
+	// Start is FollowStartCurrent while the subscription waits to start at
+	// the producer's current batch (no cursor yet).
+	Start string
+	// Since is when the lane was subscribed.
+	Since                 time.Time
 	Cursor                string
 	ReceivedBytes         int64
 	ReceivedRecords       int64
@@ -109,6 +178,12 @@ type FollowStatus struct {
 	LastReceivedAt        time.Time
 	Connected             bool
 	LastError             string
+	// CurrentBatch is the batch this node holds as the producer's current
+	// one; Stated the producer's latest statement on a followed page; Lag
+	// the records of the stated batch this node does not hold as current.
+	CurrentBatch string
+	Stated       syncwire.FollowStatement
+	Lag          int64
 }
 
 type followEntry struct {
@@ -122,6 +197,10 @@ type followEntry struct {
 	current  syncwire.FollowStatement
 	held     int64
 	lastSync time.Time
+	// stated is the statement of the latest followed page.
+	stated syncwire.FollowStatement
+	// rule is the lane's rule as last applied to the current batch.
+	rule string
 }
 
 type followRate struct {
@@ -172,6 +251,12 @@ func (m *followManager) load() error {
 		if st.Schema == "" || st.Producer == "" || !d.SUBSCRIBED() {
 			continue
 		}
+		if st.Cursor == "" && string(d.SYNC_FILTER()) == followStartPending {
+			st.Start = FollowStartCurrent
+		}
+		if ms := d.LAST_SYNC_STARTED_AT(); ms > 0 {
+			st.Since = time.UnixMilli(int64(min(ms, uint64(1<<62))))
+		}
 		if _, held := m.subs[st.FollowKey]; !held {
 			m.startLocked(st)
 		}
@@ -179,32 +264,163 @@ func (m *followManager) load() error {
 	return nil
 }
 
-// Follow starts following a lane from a producer (on) or stops it (off).
-// Stopping with an empty producer stops every producer of the lane; with an
-// empty provider and source, every followed lane of the standard.
-func (m *followManager) Follow(key FollowKey, on bool) error {
+func normalizeFollowKey(key FollowKey) FollowKey {
 	key.Schema = syncwire.NormalizeSchema(key.Schema)
 	key.ProviderID, key.SourceName, key.Producer = strings.TrimSpace(key.ProviderID), strings.TrimSpace(key.SourceName), strings.TrimSpace(key.Producer)
+	return key
+}
+
+// checkSubscription is the lane and producer of a new subscription.
+func (m *followManager) checkSubscription(key FollowKey) (peer.ID, error) {
+	if key.Schema == "" || key.ProviderID == "" || key.SourceName == "" {
+		return "", errors.New("a followed lane names a standard, a provider and a source")
+	}
+	pid, err := peer.Decode(key.Producer)
+	if err != nil {
+		return "", fmt.Errorf("producer peer id: %w", err)
+	}
+	return pid, m.n.followAdmitted(pid, key)
+}
+
+// Plan is a subscription's first read: the producer's statement, read now,
+// and this node's free disk and record ceiling.
+func (m *followManager) Plan(ctx context.Context, key FollowKey, opts FollowOptions) (FollowPlan, error) {
+	key = normalizeFollowKey(key)
+	pid, err := m.checkSubscription(key)
+	if err != nil {
+		return FollowPlan{}, err
+	}
+	plan := FollowPlan{FollowKey: key, Start: opts.Start, Rule: m.n.laneRetentionRule(key.Schema, key.ProviderID, key.SourceName)}
+	switch plan.Start {
+	case "":
+		plan.Start = FollowStartBeginning
+		if plan.Rule == channels.RetentionReplaceCurrent {
+			plan.Start = FollowStartCurrent
+		}
+	case FollowStartCurrent, FollowStartBeginning:
+	default:
+		return FollowPlan{}, fmt.Errorf("a subscription starts at %q or %q, not %q", FollowStartCurrent, FollowStartBeginning, opts.Start)
+	}
+	plan.Statement, err = m.readStatement(ctx, pid, key)
+	if err != nil {
+		plan.StatementError = err.Error()
+		plan.Refusal = fmt.Sprintf("the producer did not state the lane (%v); a producer before 1.2.0 does not, so its first read cannot be bounded or sized", err)
+		return plan, nil
+	}
+	plan.FirstReadRecords, plan.FirstReadBytes = plan.Statement.Records, plan.Statement.BatchBytes
+	if plan.Start == FollowStartBeginning {
+		plan.FirstReadRecords, plan.FirstReadBytes = plan.Statement.LaneRecords, plan.Statement.LaneBytes
+	}
+	plan.NeedBytes = plan.FirstReadBytes*followStoreExpansion + followDiskReserve
+	plan.RecordCeiling = config.DefaultSubscriptionRecordCeiling
+	if m.n.config != nil {
+		plan.RecordCeiling = m.n.config.Subscriptions.EffectiveRecordCeiling()
+	}
+	if free, err := storage.FreeDiskBytes(filepath.Dir(m.path)); err == nil {
+		plan.FreeBytes = int64(min(free, uint64(1<<62)))
+	} else {
+		return plan, fmt.Errorf("free disk under %s: %w", filepath.Dir(m.path), err)
+	}
+	if summary, err := m.n.store.DataSummary(); err == nil {
+		for _, s := range summary.Schemas {
+			plan.HeldRecords += s.Count
+		}
+	} else {
+		return plan, fmt.Errorf("records held here: %w", err)
+	}
+	switch {
+	case plan.FreeBytes < plan.NeedBytes:
+		plan.Refusal = fmt.Sprintf("the first read is %d records, %d bytes; it needs about %d bytes of free disk (%d per record byte and 1 GiB to spare), and %d are free",
+			plan.FirstReadRecords, plan.FirstReadBytes, plan.NeedBytes, followStoreExpansion, plan.FreeBytes)
+	case plan.HeldRecords+plan.FirstReadRecords > plan.RecordCeiling:
+		plan.Refusal = fmt.Sprintf("the first read is %d records, %d bytes; this node holds %d records and its ceiling is %d (subscriptions.record_ceiling)",
+			plan.FirstReadRecords, plan.FirstReadBytes, plan.HeldRecords, plan.RecordCeiling)
+	}
+	return plan, nil
+}
+
+// Subscribe starts following a lane: the plan first, refused unless it fits
+// or opts.Force; a lane already followed from the producer is left as it is.
+func (m *followManager) Subscribe(ctx context.Context, key FollowKey, opts FollowOptions) (FollowPlan, error) {
+	key = normalizeFollowKey(key)
+	m.mu.Lock()
+	e, held := m.subs[key]
+	var st FollowStatus
+	if held {
+		st = e.status
+	}
+	m.mu.Unlock()
+	if held {
+		return FollowPlan{FollowKey: key, Start: st.Start}, nil
+	}
+	plan, err := m.Plan(ctx, key, opts)
+	if err != nil {
+		return plan, err
+	}
+	if plan.Refusal != "" && !opts.Force {
+		return plan, errors.New(plan.Refusal)
+	}
+	if plan.StatementError != "" && plan.Start == FollowStartCurrent {
+		// Forced: the follow reads the statement when the producer gives it.
+		log.Warnf("Subscribed to %s %s/%s from %s without its statement (%s); it starts at the producer's current batch once the producer states it",
+			key.Schema, key.ProviderID, key.SourceName, key.Producer, plan.StatementError)
+	}
+	st = FollowStatus{FollowKey: key, Since: time.Now().UTC()}
+	if plan.Start == FollowStartCurrent {
+		st.Start = FollowStartCurrent
+		if plan.StatementError == "" {
+			st.Start, st.Cursor = "", plan.Statement.ResumeCursor
+		}
+	}
+	log.Infof("Subscribed to %s %s/%s from %s: starts at the %s; first read %d records, %d bytes (rule %s)%s", key.Schema, key.ProviderID, key.SourceName,
+		key.Producer, map[string]string{FollowStartCurrent: "producer's current batch " + plan.Statement.BatchID, FollowStartBeginning: "lane's beginning"}[plan.Start],
+		plan.FirstReadRecords, plan.FirstReadBytes, plan.Rule, map[bool]string{true: "; forced past: " + plan.Refusal}[plan.Refusal != ""])
+	m.mu.Lock()
+	if _, held := m.subs[key]; !held {
+		m.startLocked(st)
+	}
+	m.mu.Unlock()
+	return plan, m.save()
+}
+
+// adopt starts a subscription without a plan (a lane converted from the
+// removed import ledger): it starts at the producer's current batch.
+func (m *followManager) adopt(key FollowKey) bool {
+	key = normalizeFollowKey(key)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, held := m.subs[key]; held {
+		return false
+	}
+	m.startLocked(FollowStatus{FollowKey: key, Start: FollowStartCurrent, Since: time.Now().UTC()})
+	return true
+}
+
+// readStatement reads the producer's statement of the lane.
+func (m *followManager) readStatement(ctx context.Context, remote peer.ID, key FollowKey) (syncwire.LaneStatement, error) {
+	ctx, cancel := context.WithTimeout(ctx, followStatementWait)
+	defer cancel()
+	stream, err := m.producerRead(ctx, remote, FollowStatus{FollowKey: key}, "", "", 1,
+		syncwire.QRPFilterField{Field: syncwire.FilterProjection, Op: syncwire.QRPFilterEq, Value: syncwire.ProjectionStatement})
+	if err != nil {
+		return syncwire.LaneStatement{}, err
+	}
+	defer stream.Close()
+	stop := context.AfterFunc(ctx, func() { _ = stream.Reset() })
+	defer stop()
+	return syncwire.ReadStatementPage(stream)
+}
+
+// Follow stops following a lane (on false; Subscribe starts one). Stopping
+// with an empty producer stops every producer of the lane; with an empty
+// provider and source, every followed lane of the standard.
+func (m *followManager) Follow(key FollowKey, on bool) error {
+	key = normalizeFollowKey(key)
 	if key.Schema == "" {
 		return errors.New("a followed lane names a standard")
 	}
 	if on {
-		if key.ProviderID == "" || key.SourceName == "" {
-			return errors.New("a followed lane names a standard, a provider and a source")
-		}
-		pid, err := peer.Decode(key.Producer)
-		if err != nil {
-			return fmt.Errorf("producer peer id: %w", err)
-		}
-		if err := m.n.followAdmitted(pid, key); err != nil {
-			return err
-		}
-		m.mu.Lock()
-		if _, held := m.subs[key]; !held {
-			m.startLocked(FollowStatus{FollowKey: key})
-		}
-		m.mu.Unlock()
-		return m.save()
+		return errors.New("a lane is followed by Subscribe")
 	}
 	if (key.ProviderID == "") != (key.SourceName == "") {
 		return errors.New("stopping a followed lane names both a provider and a source, or neither (every lane of the standard)")
@@ -233,8 +449,8 @@ func (m *followManager) Follow(key FollowKey, on bool) error {
 }
 
 // followAdmitted is the trust decision for following key from pid: a peer
-// this node trusts, not itself, for a lane its import policy admits (the
-// check trusted catch-up applies to a publication).
+// this node trusts, not itself. The subscription itself is what admits the
+// lane.
 func (n *Node) followAdmitted(pid peer.ID, key FollowKey) error {
 	if n.host != nil && pid == n.host.ID() {
 		return errors.New("a node does not follow its own lanes")
@@ -242,10 +458,24 @@ func (n *Node) followAdmitted(pid peer.ID, key FollowKey) error {
 	if n.peerRegistry == nil || !n.peerRegistry.IsTrusted(pid) {
 		return fmt.Errorf("producer %s is not a trusted peer of this node", pid)
 	}
-	if !n.trustedPeerLaneImportAllowed(pid, key.Schema, key.ProviderID, key.SourceName, "") {
-		return fmt.Errorf("this node's import policy does not admit %s %s/%s from %s", key.Schema, key.ProviderID, key.SourceName, pid)
-	}
 	return nil
+}
+
+// unsubscribedLaneLog remembers the lanes already reported as not imported.
+var unsubscribedLaneLog sync.Map
+
+// subscribedFrom reports whether this node subscribes to the lane from the
+// peer: the one gate of every import (the followed stream and the $PNM
+// path).
+func (n *Node) subscribedFrom(from peer.ID, schema, providerID, sourceName string) bool {
+	if n == nil || n.follows == nil {
+		return false
+	}
+	key := normalizeFollowKey(FollowKey{Schema: schema, ProviderID: providerID, SourceName: sourceName, Producer: from.String()})
+	n.follows.mu.Lock()
+	defer n.follows.mu.Unlock()
+	_, ok := n.follows.subs[key]
+	return ok
 }
 
 // followTrusted reports a peer this node has a trust relation with: its
@@ -339,6 +569,23 @@ func (m *followManager) followOnce(ctx context.Context, e *followEntry) (int, er
 	if err := m.n.followAdmitted(pid, st.FollowKey); err != nil {
 		return 0, err
 	}
+	if st.Start == FollowStartCurrent && st.Cursor == "" {
+		// The subscription starts at the producer's current batch: its
+		// statement gives the present position to follow from.
+		stmt, err := m.readStatement(ctx, pid, st.FollowKey)
+		if err != nil {
+			return 0, fmt.Errorf("read the producer's statement of the lane, to start at its current batch (a producer before 1.2.0 gives none; this lane starts once it does): %w", err)
+		}
+		m.mu.Lock()
+		e.status.Start, e.status.Cursor = "", stmt.ResumeCursor
+		st = e.status
+		m.mu.Unlock()
+		if err := m.save(); err != nil {
+			return 0, fmt.Errorf("save cursor: %w", err)
+		}
+		log.Infof("Followed lane %s %s/%s from %s: starts at the producer's current batch %s; first read bounded to %d records, %d bytes (the lane holds %d records, %d bytes)",
+			st.Schema, st.ProviderID, st.SourceName, st.Producer, stmt.BatchID, stmt.Records, stmt.BatchBytes, stmt.LaneRecords, stmt.LaneBytes)
+	}
 	stream, err := m.n.host.NewStream(ctx, pid, libp2pprotocol.ID(syncwire.ProtocolID(syncwire.OpReadChunk)))
 	if err != nil {
 		return 0, fmt.Errorf("open stream: %w", err)
@@ -394,6 +641,9 @@ func (m *followManager) followOnce(ctx context.Context, e *followEntry) (int, er
 		moved := e.status.Cursor != string(end.RESUME_CURSOR())
 		e.status.Cursor = string(end.RESUME_CURSOR())
 		e.status.Pages++
+		if stated := syncwire.StatementOf(end); stated.BatchID != "" {
+			e.stated = stated
+		}
 		now := time.Now()
 		if res.records > 0 {
 			e.status.LastReceivedAt = now
@@ -423,6 +673,10 @@ func (m *followManager) followOnce(ctx context.Context, e *followEntry) (int, er
 				}
 				log.Warnf("Followed lane %s %s/%s from %s: %.1024q", st.Schema, st.ProviderID, st.SourceName, remote, err.Error())
 			}
+			// A rule changed since the current batch was held applies now.
+			m.n.datasetSupersedeMu.Lock()
+			m.applyRules(false)
+			m.n.datasetSupersedeMu.Unlock()
 		}
 		if err := syncwire.Grant(stream, st.Schema); err != nil {
 			_ = stream.Reset()
@@ -572,7 +826,7 @@ func (m *followManager) holdCurrent(ctx context.Context, st FollowStatus, e *fol
 		return err
 	}
 	m.mu.Lock()
-	e.current, e.held = stmt, counts[stmt.BatchID]
+	e.current, e.held, e.rule = stmt, counts[stmt.BatchID], rule
 	e.status.RemovedRecords += removed + superseded
 	m.mu.Unlock()
 	m.n.alerts.Clear(ops.KindFollowRefused, followAlertSubject(st.FollowKey))
@@ -580,6 +834,58 @@ func (m *followManager) holdCurrent(ctx context.Context, st FollowStatus, e *fol
 		st.Schema, st.ProviderID, st.SourceName, remote, stmt.BatchID, len(list), got-fetched, fetched, removed, superseded, rule,
 		time.Since(began).Round(time.Millisecond))
 	return nil
+}
+
+// applyRules applies each followed lane's rule to the batch it holds as the
+// producer's current one, for the lanes whose rule changed since it was
+// last applied (all of them when every is set): replace-current removes
+// what only the producer's other batches hold. A lane whose current batch is
+// not known yet (before its first quiet page) gets its rule when the batch
+// is held. The caller holds n.datasetSupersedeMu. It returns the lanes it
+// checked.
+func (m *followManager) applyRules(every bool) int {
+	m.mu.Lock()
+	type due struct {
+		e     *followEntry
+		key   FollowKey
+		batch string
+	}
+	var lanes []due
+	for k, e := range m.subs {
+		if e.current.BatchID != "" {
+			lanes = append(lanes, due{e, k, e.current.BatchID})
+		}
+	}
+	m.mu.Unlock()
+	checked := 0
+	for _, l := range lanes {
+		rule := m.n.laneRetentionRule(l.key.Schema, l.key.ProviderID, l.key.SourceName)
+		m.mu.Lock()
+		changed := l.e.rule != rule
+		m.mu.Unlock()
+		if !every && !changed {
+			continue
+		}
+		checked++
+		var removed int64
+		if rule == channels.RetentionReplaceCurrent && !m.n.laneProducedHere(l.key.Schema, l.key.ProviderID, l.key.SourceName) {
+			var err error
+			removed, err = m.n.store.SupersedeFollowLane(l.key.Schema, l.key.ProviderID, l.key.SourceName, l.key.Producer, l.batch)
+			if err != nil {
+				log.Warnf("Followed lane %s %s/%s from %s: rule %s not applied: %v", l.key.Schema, l.key.ProviderID, l.key.SourceName, l.key.Producer, rule, err)
+				continue
+			}
+		}
+		m.mu.Lock()
+		l.e.rule = rule
+		l.e.status.RemovedRecords += removed
+		m.mu.Unlock()
+		if removed > 0 || changed {
+			log.Infof("Followed lane %s %s/%s from %s: rule %s applied to current batch %s; %d records removed", l.key.Schema, l.key.ProviderID,
+				l.key.SourceName, l.key.Producer, rule, l.batch, removed)
+		}
+	}
+	return checked
 }
 
 // sortedDifference is the strings of a (sorted, distinct) that b (sorted,
@@ -759,6 +1065,14 @@ func (m *followManager) Statuses() []FollowStatus {
 		}
 		st := e.status
 		st.ReceiveBytesPerSecond = int64(float64(b) / followRateWindow.Seconds())
+		st.CurrentBatch, st.Stated = e.current.BatchID, e.stated
+		switch {
+		case e.stated.BatchID == "":
+		case e.stated.BatchID == e.current.BatchID:
+			st.Lag = max(e.stated.Records-e.held, 0)
+		default:
+			st.Lag = e.stated.Records
+		}
 		out = append(out, st)
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -811,6 +1125,10 @@ func encodeFollowDSS(st FollowStatus) []byte {
 	cursor := str(st.Cursor)
 	protocolID := str(syncwire.ProtocolID(syncwire.OpReadChunk) + " follow")
 	errText := str(st.LastError)
+	pending := flatbuffers.UOffsetT(0)
+	if st.Start == FollowStartCurrent && st.Cursor == "" {
+		pending = b.CreateString(followStartPending)
+	}
 	lastAt := ""
 	if !st.LastReceivedAt.IsZero() {
 		lastAt = st.LastReceivedAt.UTC().Format(time.RFC3339Nano)
@@ -834,6 +1152,12 @@ func encodeFollowDSS(st FollowStatus) []byte {
 		DSS.DSSAddCURSOR(b, cursor)
 	}
 	DSS.DSSAddSYNC_PROTOCOL(b, protocolID)
+	if pending != 0 {
+		DSS.DSSAddSYNC_FILTER(b, pending)
+	}
+	if !st.Since.IsZero() {
+		DSS.DSSAddLAST_SYNC_STARTED_AT(b, uint64(max(st.Since.UnixMilli(), 0)))
+	}
 	if last != 0 {
 		DSS.DSSAddLAST_SYNCED_AT(b, last)
 	}
@@ -854,12 +1178,32 @@ func encodeFollowDSS(st FollowStatus) []byte {
 	return b.FinishedBytes()
 }
 
-// Follow starts (on) or stops following a lane from a producer peer.
-func (n *Node) Follow(schema, providerID, sourceName, producer string, on bool) error {
+// errNoFollows is a node without a store to follow lanes into.
+var errNoFollows = errors.New("this node has no store to follow lanes into")
+
+// Unfollow stops following a lane (see followManager.Follow for the empty
+// fields).
+func (n *Node) Unfollow(schema, providerID, sourceName, producer string) error {
 	if n.follows == nil {
-		return errors.New("this node has no store to follow lanes into")
+		return errNoFollows
 	}
-	return n.follows.Follow(FollowKey{Schema: schema, ProviderID: providerID, SourceName: sourceName, Producer: producer}, on)
+	return n.follows.Follow(FollowKey{Schema: schema, ProviderID: providerID, SourceName: sourceName, Producer: producer}, false)
+}
+
+// Subscribe follows a lane from a producer after checking its first read.
+func (n *Node) Subscribe(ctx context.Context, key FollowKey, opts FollowOptions) (FollowPlan, error) {
+	if n.follows == nil {
+		return FollowPlan{}, errNoFollows
+	}
+	return n.follows.Subscribe(ctx, key, opts)
+}
+
+// PlanSubscription is a subscription's first read, without subscribing.
+func (n *Node) PlanSubscription(ctx context.Context, key FollowKey, opts FollowOptions) (FollowPlan, error) {
+	if n.follows == nil {
+		return FollowPlan{}, errNoFollows
+	}
+	return n.follows.Plan(ctx, key, opts)
 }
 
 // FollowStatuses is the lanes this node follows, as received.

@@ -10,8 +10,8 @@
 //	    byte-identical (sha256) to the bytes the provider stored, in order;
 //	(b) a published segment lists over list-published and reads over
 //	    read-shard / read-index byte-identical to the provider's files;
-//	(c) a signed feed head crosses gossipsub on the 2.0.0 topic and
-//	    verifies; a tampered copy is refused;
+//	(c) removed in 1.2.0 with the feed-head announcement;
+//	    a subscriber follows a lane instead (read-chunk FOLLOW);
 //	(d) POST /api/v1/pubsub/publish with a size-prefixed OMM frame arrives
 //	    at the subscriber over gossipsub byte-identical, and /ws delivers a
 //	    published frame verbatim;
@@ -24,8 +24,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/ed25519"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
@@ -233,7 +231,6 @@ func run(work string, n int, jsClient string) (err error) {
 		return err
 	}
 	providerGossip, subscriberGossip := newGossip(providerPS, providerHost.ID()), newGossip(subscriberPS, subscriberHost.ID())
-	checkFeedHead(ctx, providerGossip, subscriberGossip, pub, validator, audit)
 	if err := checkHTTPPubSubAndWS(ctx, providerHost, providerPS, providerGossip, subscriberGossip, providerStore, validator, audit); err != nil {
 		return err
 	}
@@ -466,47 +463,6 @@ func next(ctx context.Context, sub *pubsub.Subscription) ([]byte, error) {
 		return nil, err
 	}
 	return msg.Data, nil
-}
-
-// (c) signed feed head over gossipsub; a tampered copy is refused.
-func checkFeedHead(ctx context.Context, providerGossip, subscriberGossip *gossip, pub storage.DatasetShardPublication, validator *sds.Validator, audit *frameAudit) {
-	topic := sdnpubsub.DatasetFeedHeadTopic(schema)
-	sub, err := subscriberGossip.subscribe(topic)
-	if err == nil {
-		defer sub.Cancel()
-		err = waitMesh(ctx, providerGossip, topic, subscriberGossip.id)
-	}
-	if err != nil {
-		check("c/feed-head-signed-verifies", false, "%v", err)
-		return
-	}
-	_, key, _ := ed25519.GenerateKey(rand.Reader)
-	if err := sdnpubsub.PublishSignedDatasetFeedHead(ctx, providerGossip, syncwire.SegmentFromPublication(pub), key); err != nil {
-		check("c/feed-head-signed-verifies", false, "publish: %v", err)
-		return
-	}
-	data, err := next(ctx, sub)
-	if err != nil {
-		check("c/feed-head-signed-verifies", false, "receive: %v", err)
-		return
-	}
-	audit.observe("feed-head gossip", data, validator)
-	ann, err := sdnpubsub.ParseDatasetFeedHeadAnnouncement(data)
-	if err == nil {
-		err = sdnpubsub.VerifyDatasetFeedHead(ann, key.Public().(ed25519.PublicKey))
-	}
-	check("c/feed-head-signed-verifies", err == nil && ann.ShardCID == pub.ShardCID && len(ann.Signature) == ed25519.SignatureSize,
-		"%d-byte $QRP Page on %s, shard %s, Ed25519 over the canonical frame verifies against the provider key (err=%v)", len(data), topic, ann.ShardCID, err)
-
-	// Tamper: change one byte inside the FEED_HEAD text cell.
-	tampered := bytes.Replace(append([]byte(nil), data...), []byte(pub.FeedHead), []byte(strings.Replace(pub.FeedHead, "head-1", "head-9", 1)), 1)
-	bad, perr := sdnpubsub.ParseDatasetFeedHeadAnnouncement(tampered)
-	verr := errors.New("not parsed")
-	if perr == nil {
-		verr = sdnpubsub.VerifyDatasetFeedHead(bad, nil)
-	}
-	check("c/feed-head-tampered-refused", !bytes.Equal(tampered, data) && perr == nil && verr != nil,
-		"FEED_HEAD %q -> %q: %v", pub.FeedHead, bad.FeedHead, verr)
 }
 
 // (d) HTTP pubsub publish -> gossipsub, /messages, /topics, and /ws.

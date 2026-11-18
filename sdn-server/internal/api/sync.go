@@ -317,6 +317,9 @@ func mountSync(mux *http.ServeMux, deps *AdminMountDeps) {
 func (h *SyncHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc(SyncPath, h.handleCollection)
 	mux.HandleFunc(SyncPath+"/", h.handleLane)
+	mux.HandleFunc(SyncPlanPath, h.deps.adminGate(h.handlePlan))
+	mux.HandleFunc(SyncSubscriptionsPath, h.deps.adminGate(h.handleSubscriptions))
+	mux.HandleFunc(SyncLedgerPath, h.deps.adminGate(h.handleLedger))
 }
 
 // SubscriptionFilePath is where the durable subscription list lives.
@@ -808,6 +811,13 @@ func EncodeDSSFollow(schema, providerID, sourceName, producerPeerID string) []by
 	return encodeDSS(&lane)
 }
 
+// EncodeDSSUnfollow builds an Unsubscribe request: the lane from one
+// producer, or from every producer when producerPeerID is empty.
+func EncodeDSSUnfollow(schema, providerID, sourceName, producerPeerID string) []byte {
+	lane := SyncLane{Key: newLaneKey(schema, providerID, sourceName), RequestedAction: DSSActionUnsubscribe, ProviderPeerID: producerPeerID}
+	return encodeDSS(&lane)
+}
+
 // EncodeDSSSetRetention builds a SetRetention request: one lane's rule, or,
 // with providerID and sourceName empty, the default of the standard. A nil
 // retention clears the choice, so the default applies again.
@@ -931,28 +941,39 @@ func (h *SyncHandler) handleAction(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case action == DSSActionSubscribe && producer != "":
 			// A subscription that names the producer follows the lane from
-			// it: a live stream of the records it stores.
-			if h.deps.Follow == nil {
+			// it: a live stream of the records it stores, once its first
+			// read (the producer's current batch, or the lane, by the
+			// lane's rule or ?start=) fits this node, or ?force=1.
+			if h.deps.SubscribeLane == nil {
 				WriteErrorFrame(w, http.StatusBadRequest, "bad_request", "This node cannot follow a lane.", 0)
 				return
 			}
-			if err := h.deps.Follow(key.schema, key.providerID, key.sourceName, producer, true); err != nil {
-				WriteErrorFrame(w, http.StatusBadRequest, "bad_request", "That lane cannot be followed: "+err.Error(), 0)
+			q := r.URL.Query()
+			if retentionWord != "" {
+				// The rule decides where the first read starts: set it first.
+				h.toggleSubscription(key, true, retentionWord)
+			}
+			plan, err := h.deps.SubscribeLane(r.Context(), LaneSubscription{Schema: key.schema, ProviderID: key.providerID, SourceName: key.sourceName,
+				Producer: producer, Start: q.Get("start"), Force: q.Get("force") == "1" || q.Get("force") == "true"})
+			if err != nil {
+				status, code := subscribeErrorStatus(plan)
+				WriteErrorFrame(w, status, code, "That lane cannot be followed: "+err.Error(), 0)
 				return
 			}
-		case action == DSSActionUnsubscribe && h.deps.Follow != nil:
+		case action == DSSActionUnsubscribe && h.deps.Unfollow != nil:
 			// Unsubscribe stops following the lane (from the named
 			// producer, or from every producer when none is named); an
 			// Unsubscribe of the standard alone stops every followed lane
 			// of the standard.
-			if err := h.deps.Follow(key.schema, key.providerID, key.sourceName, producer, false); err != nil {
+			if err := h.deps.Unfollow(key.schema, key.providerID, key.sourceName, producer); err != nil {
 				WriteErrorFrame(w, http.StatusBadRequest, "bad_request", "That lane cannot be unfollowed: "+err.Error(), 0)
 				return
 			}
 		}
 		h.toggleSubscription(key, action == DSSActionSubscribe, retentionWord)
 	case DSSActionSync:
-		h.startSync(key)
+		WriteErrorFrame(w, http.StatusBadRequest, "bad_request", "A lane is no longer synced on request: a node imports a lane by following it (spacedatanetwork sync subscribe), and a followed lane is always current.", 0)
+		return
 	case DSSActionPin, DSSActionUnpin:
 		WriteErrorFrame(w, http.StatusBadRequest, "bad_request", "Pinning is set by the node pin policy (/api/node/pins).", 0)
 		return
@@ -1133,23 +1154,6 @@ func (h *SyncHandler) writeRetentionDefaults(w http.ResponseWriter) {
 		frames = append(frames, encodeDSS(&lane))
 	}
 	WriteFrameStream(w, http.StatusOK, frames, map[string]string{StreamSchemaHeader: SyncSchemaName})
-}
-
-func (h *SyncHandler) startSync(key laneKey) {
-	if h.deps.SyncLane == nil {
-		h.failLane(key, "sync", "This node cannot sync that source.")
-		return
-	}
-	finish, ok := h.beginAction(key, "sync")
-	if !ok {
-		return
-	}
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), syncActionTimeout)
-		defer cancel()
-		n, err := h.deps.SyncLane(ctx, key.schema, key.providerID, key.sourceName)
-		finish(n, err)
-	}()
 }
 
 func (h *SyncHandler) startHydrate(key laneKey) {
