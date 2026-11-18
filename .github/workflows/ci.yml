@@ -364,9 +364,12 @@ jobs:
   # generates; the feed and the admin API are on loopback, and the daemons dial
   # no peer (the test refuses, before any daemon starts, a config that would
   # fall back to the built-in bootstrap peers, and checks every daemon's log).
-  # Two groups (scripts/ci-local.sh update_group_args): run 44245748601 ran
+  # Three groups (scripts/ci-local.sh update_group_args): run 44245748601 ran
   # every subtest in one binary and hit go test's 50m panic; the
-  # home-read-only-install subtests take about 15m of runner time on their own.
+  # home-read-only-install subtests take about 15m of runner time on their own,
+  # and the channel group took 42.5m of its 50m in run 44379302576. `fleet` runs
+  # the published 1.1.9 receiver, the staggered rollout and fleet view, and
+  # `update install --config` under TLS.
   update-channel-e2e:
     name: Update channel E2E (real daemon / ${{ matrix.group }})
     runs-on: ubuntu-latest
@@ -383,7 +386,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        group: [channel, home]
+        group: [channel, home, fleet]
     env:
       SDN_CI_UPDATE_GROUP: ${{ matrix.group }}
     steps:
@@ -404,17 +407,17 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: .ci-artifacts/installed-update-receiver
-          key: installed-v1.1.5-linux-amd64-f0d18ef21455bc7dfcd9f1da791420bf838d4a3ae1522c22143143993d48cd8c
+          key: installed-v1.1.9-linux-amd64-45127438512c09be90a26991c8463401e596af89eae98a66da96c95c1f253e07
       - name: Fetch the published update receiver
         id: installed_receiver_archive
         run: |
           set -euo pipefail
           mkdir -p "$GITHUB_WORKSPACE/.ci-artifacts/installed-update-receiver"
-          archive="$GITHUB_WORKSPACE/.ci-artifacts/installed-update-receiver/spacedatanetwork-1.1.5-linux-amd64.tar.gz"
+          archive="$GITHUB_WORKSPACE/.ci-artifacts/installed-update-receiver/spacedatanetwork-1.1.9-linux-amd64.tar.gz"
           if [[ ! -f "$archive" ]]; then
-            curl --fail --location --retry 3 https://github.com/DigitalArsenal/space-data-network/releases/download/v1.1.5/spacedatanetwork-1.1.5-linux-amd64.tar.gz -o "$archive"
+            curl --fail --location --retry 3 https://github.com/DigitalArsenal/space-data-network/releases/download/v1.1.9/spacedatanetwork-1.1.9-linux-amd64.tar.gz -o "$archive"
           fi
-          echo "f0d18ef21455bc7dfcd9f1da791420bf838d4a3ae1522c22143143993d48cd8c  $archive" | sha256sum --check
+          echo "45127438512c09be90a26991c8463401e596af89eae98a66da96c95c1f253e07  $archive" | sha256sum --check
       # Builds the fixtures, then runs the test as the ordinary user
       # update-e2e in a network namespace with loopback only.
       - name: Exercise pull and push on loopback
@@ -423,18 +426,18 @@ jobs:
           SDN_E2E_UPDATE_USER: update-e2e
         run: |
           export SDN_E2E_LOG_DIR="$GITHUB_WORKSPACE/.ci-artifacts/update-channel-logs"
-          export SDN_E2E_INSTALLED_BUNDLE="$GITHUB_WORKSPACE/.ci-artifacts/installed-update-receiver/spacedatanetwork-1.1.5-linux-amd64.tar.gz"
+          export SDN_E2E_INSTALLED_BUNDLE="$GITHUB_WORKSPACE/.ci-artifacts/installed-update-receiver/spacedatanetwork-1.1.9-linux-amd64.tar.gz"
           ./scripts/ci-local.sh update-channel
       - name: Report installed receiver proof
-        if: always() && matrix.group == 'channel'
+        if: always() && matrix.group == 'fleet'
         env:
           ARCHIVE_OUTCOME: ${{ steps.installed_receiver_archive.outcome }}
           TEST_OUTCOME: ${{ steps.update_daemons.outcome }}
         run: |
-          if grep -q -- '--- PASS: TestUpdateChannelRealDaemonE2E/installed-v1.1.5-push' "$GITHUB_WORKSPACE/.ci-artifacts/update-channel-logs/test.log"; then
-            echo 'Published 1.1.5 receiver: checksum verified and autonomous push install passed.' >> "$GITHUB_STEP_SUMMARY"
+          if grep -q -- '--- PASS: TestUpdateChannelRealDaemonE2E/installed-v1.1.9-push' "$GITHUB_WORKSPACE/.ci-artifacts/update-channel-logs/test.log"; then
+            echo 'Published 1.1.9 receiver: checksum verified and autonomous push install passed.' >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "Published 1.1.5 receiver proof did not pass: archive download/checksum=$ARCHIVE_OUTCOME; fixture build and daemon test=$TEST_OUTCOME. A skipped stage did not run because an earlier stage failed. See those step logs and the test artifact for the diagnostic." >> "$GITHUB_STEP_SUMMARY"
+            echo "Published 1.1.9 receiver proof did not pass: archive download/checksum=$ARCHIVE_OUTCOME; fixture build and daemon test=$TEST_OUTCOME. A skipped stage did not run because an earlier stage failed. See those step logs and the test artifact for the diagnostic." >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
       - uses: actions/upload-artifact@v4

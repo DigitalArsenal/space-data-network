@@ -440,6 +440,7 @@ the installers unpack). A bundle reads its updates from
 spacedatanetwork update check      # this build, the newest release on the feed, the rollback slots
 spacedatanetwork update install    # fetch, verify, install, restart, health-check
 spacedatanetwork update slots      # the builds this node can return to (the last five)
+spacedatanetwork update fleet      # the version and update state of this node and every SDN node it knows
 spacedatanetwork update rollback --reason "<why>"   # with the node stopped; --slot <version> for an older one
 ```
 
@@ -450,6 +451,26 @@ check comes one to five minutes after the start), so a node that was off when
 a release was announced still takes it. Set `update.enabled: false` in a
 node's config to turn both off for that node. Nodes from 1.1.4 to 1.1.6 learn
 of a release only from a signal; 1.1.7 and later also check the feed.
+
+**Not all at once.** A node acts on an update it accepted at its own time
+within `update.rollout_window_seconds` (default 3600, one hour; `0` acts at
+once; at most 86400), fixed by its peer id and the update id, so the nodes
+of a fleet do not all restart together. A restart during the wait keeps the
+due time (`updates/pending.json`). `update check` and `status` print
+`update_pending=<update id> ... due_at=<time>` while a node waits, and
+`update install` typed on the node installs at once. A release signal can
+carry its own signed window, which replaces the setting for that update.
+Nodes of 1.1.9 and earlier ignore both and act at once, unless their
+`update.max_delay_seconds` (a random delay those releases have) is set.
+
+**Which version every node runs.** `spacedatanetwork update fleet` prints a
+row for this node and for every SDN node it knows: name, the end of its peer
+id, version, last seen, update state (`current`, `pending <version> until
+<time>`, `failed <version>, rolled back`, or `unknown`), and whether it
+accepted the newest signal or already runs its sequence. Each node of this release states its own version
+and update state in a signed message on its update topic; a node of 1.1.9 or
+earlier does not, and shows its identify version with the state `unknown`.
+`--json` and the admin route `GET /api/peers/versions` give the same data.
 
 **No root and no service account.** The account that runs the node needs no
 write access to the install folder, and no rights beyond its own data and
@@ -630,6 +651,13 @@ How an install takes an update:
   `updates/handoff-failure.json` and restarts the build that was running,
   which raises the alert and waits out the same backoff. The count survives
   restarts; a completed swap clears it.
+- `update install --config <config>` with the node running: when the file
+  is the one the running daemon was started with (an absolute path on its
+  command line), the command trusts the certificate that config names for
+  the admin listener and hands the install to the helper, as without
+  `--config`. Before this release, `--config` with an admin certificate the
+  system does not trust (an origin certificate) ended in "store at ... is
+  already open for writing"; run it without `--config` on those releases.
 - A pushed update signal (on by default, `update.enabled`) is acted on only
   when it is signed by an update root and its manifest and carrier lie under
   the bundle's own `update.feedBaseUrl`. A signal naming any other host, port

@@ -44,7 +44,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math/rand"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -122,8 +121,17 @@ type UpdateSignalSubscriberDeps struct {
 	StoreRoot string
 	// MinInterval is the floor between two self-upgrades on this box.
 	MinInterval time.Duration
-	// MaxDelay spreads a fleet-wide roll. Zero acts immediately.
-	MaxDelay time.Duration
+	// RolloutWindow is update.rollout_window_seconds: this node acts on an
+	// accepted update at its own delay within the window (update.RolloutDelay).
+	// Zero acts at once. A signal's signed rollout_window_seconds replaces it.
+	RolloutWindow time.Duration
+	// PeerID is this node's peer id, which (with the update id) fixes its
+	// delay within the window.
+	PeerID string
+	// Fleet receives the update status messages other nodes publish on the
+	// topic, and is told when this node's own update state changes. Nil
+	// ignores them.
+	Fleet *updateFleet
 	// Client fetches the manifest and carrier. Nil builds a default.
 	Client *http.Client
 	// Now replaces time.Now. Test seam.
@@ -170,6 +178,110 @@ type UpdateSignalSubscriber struct {
 	alertLedgerTime  time.Time
 	alertLedgerSize  int64
 	alertFilesStamp  string
+	// acknowledged is the newest signal this node accepted (verified, for
+	// this node, not a refused rollback or a quarantined update).
+	acknowledged *update.StatusAck
+}
+
+// Acknowledged is the newest update signal this node accepted, or nil.
+func (s *UpdateSignalSubscriber) Acknowledged() *update.StatusAck {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.acknowledged == nil {
+		return nil
+	}
+	ack := *s.acknowledged
+	return &ack
+}
+
+// acknowledge records signal as the newest one this node accepted, in memory
+// and in updates/acknowledged.json, so the node still states it after the
+// restart the update causes.
+func (s *UpdateSignalSubscriber) acknowledge(signal *update.Signal) {
+	s.mu.Lock()
+	newer := s.acknowledged == nil || signal.Sequence > s.acknowledged.Sequence
+	if newer {
+		s.acknowledged = &update.StatusAck{UpdateID: signal.UpdateID, Sequence: signal.Sequence}
+	}
+	s.mu.Unlock()
+	if newer {
+		if err := update.WriteAcknowledged(s.deps.Paths, update.StatusAck{UpdateID: signal.UpdateID, Sequence: signal.Sequence}); err != nil {
+			log.Warnf("Record the accepted update signal %s: %v", signal.UpdateID, err)
+		}
+	}
+}
+
+// rolloutWindow is the window for signal: its signed rollout_window_seconds
+// when it carries one, else this node's update.rollout_window_seconds.
+func (s *UpdateSignalSubscriber) rolloutWindow(signal *update.Signal) (time.Duration, string) {
+	if signal != nil && signal.RolloutWindowSeconds != nil {
+		return time.Duration(*signal.RolloutWindowSeconds) * time.Second, "signal"
+	}
+	return s.deps.RolloutWindow, "config"
+}
+
+// waitForRollout records the update as pending (updates/pending.json, kept
+// across a restart) and waits for this node's due time. It reports false when
+// ctx ended first.
+func (s *UpdateSignalSubscriber) waitForRollout(ctx context.Context, signal *update.Signal, raw []byte, trigger string) bool {
+	window, from := s.rolloutWindow(signal)
+	if window <= 0 {
+		_ = update.ClearPending(s.deps.Paths, signal.UpdateID)
+		return true
+	}
+	record := update.Pending{UpdateID: signal.UpdateID, Version: signal.Version, Sequence: signal.Sequence, Trigger: trigger, WindowFrom: from}
+	if len(raw) > 0 {
+		record.Signal = append([]byte(nil), raw...)
+	}
+	pending, err := update.SchedulePending(s.deps.Paths, record, s.deps.PeerID, window, s.deps.Now())
+	if err != nil {
+		log.Warnf("Update %s: cannot record its rollout wait (%v); acting at once", signal.UpdateID, err)
+		return true
+	}
+	due := pending.Due()
+	wait := due.Sub(s.deps.Now())
+	if wait <= 0 {
+		log.Infof("Update %s (version %s) was due at %s (rollout window %ds from %s, this node's delay %ds); acting now.",
+			signal.UpdateID, signal.Version, pending.DueAt, pending.WindowSeconds, pending.WindowFrom, pending.DelaySeconds)
+		return true
+	}
+	log.Infof("Update %s (version %s) accepted at %s; this node acts on it at %s (rollout window %ds from %s, this node's delay %ds). `spacedatanetwork update install` installs it at once.",
+		signal.UpdateID, signal.Version, pending.AcceptedAt, pending.DueAt, pending.WindowSeconds, pending.WindowFrom, pending.DelaySeconds)
+	s.deps.Fleet.localChanged()
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+	}
+	log.Infof("Update %s: rollout due time %s reached; installing.", signal.UpdateID, pending.DueAt)
+	return true
+}
+
+// resumePending picks up the wait a restart interrupted: a pending signal is
+// handled again from its kept bytes (verified again, due time kept); a
+// pending feed-check find is returned so the first feed check runs at its due
+// time.
+func (s *UpdateSignalSubscriber) resumePending(ctx context.Context) *update.Pending {
+	pending, err := update.CurrentPending(s.deps.Paths)
+	if err != nil {
+		log.Warnf("Read pending update: %v", err)
+		return nil
+	}
+	if pending == nil {
+		return nil
+	}
+	log.Infof("Update %s (version %s) is pending from before this start; due at %s.", pending.UpdateID, pending.Version, pending.DueAt)
+	if pending.Trigger == "signal" && len(pending.Signal) > 0 {
+		raw := append([]byte(nil), pending.Signal...)
+		go runUpdateGossip("update-signal-resume", func() { s.handle(ctx, raw) })
+		return nil
+	}
+	return pending
 }
 
 // NewUpdateSignalSubscriber validates deps and constructs the subscriber.
@@ -199,7 +311,8 @@ func NewUpdateSignalSubscriber(deps UpdateSignalSubscriberDeps) (*UpdateSignalSu
 	if deps.Launch == nil {
 		deps.Launch = update.LaunchSelfUpgrade
 	}
-	return &UpdateSignalSubscriber{deps: deps, feed: feed, handled: make(map[string]bool), uiAttempts: make(map[string]time.Time), reportedFailures: make(map[string]bool)}, nil
+	return &UpdateSignalSubscriber{deps: deps, feed: feed, handled: make(map[string]bool), uiAttempts: make(map[string]time.Time), reportedFailures: make(map[string]bool),
+		acknowledged: update.ReadAcknowledged(deps.Paths)}, nil
 }
 
 // Run joins the topic and processes signals until ctx is done. A per-message
@@ -210,15 +323,16 @@ func (s *UpdateSignalSubscriber) Run(ctx context.Context) error {
 	defer cancel()
 	s.restoreFailedAlerts()
 	s.restoreHandoffFailure()
-	if s.deps.CheckInterval > 0 {
-		done := make(chan struct{})
-		go func() { defer close(done); s.runFeedChecks(ctx) }()
-		defer func() { cancel(); <-done }()
-	}
 
 	sub, err := s.deps.Subscriber.Subscribe(s.deps.Topic)
 	if err != nil {
 		return fmt.Errorf("node: subscribe update signal topic %s: %w", s.deps.Topic, err)
+	}
+	pendingFind := s.resumePending(ctx)
+	if s.deps.CheckInterval > 0 {
+		done := make(chan struct{})
+		go func() { defer close(done); s.runFeedChecks(ctx, pendingFind) }()
+		defer func() { cancel(); <-done }()
 	}
 	log.Infof("Update signal lane LIVE on %s (channel %s, kind %s, bundle %s). This install upgrades itself when the publisher signals.",
 		s.deps.Topic, s.deps.Channel, s.deps.Kind, s.deps.Paths.Root)
@@ -237,6 +351,11 @@ func (s *UpdateSignalSubscriber) Run(ctx context.Context) error {
 
 // handle verifies one signal and, if it survives every gate, self-upgrades.
 func (s *UpdateSignalSubscriber) handle(ctx context.Context, data []byte) {
+	if status, err := update.ParseStatus(data); err == nil {
+		// Authenticated by the topic validator: its peer_id is the author.
+		s.deps.Fleet.record(status)
+		return
+	}
 	log.Infof("Update signal handler received a validated message")
 	signal, err := update.ParseSignal(data)
 	if err != nil {
@@ -293,19 +412,24 @@ func (s *UpdateSignalSubscriber) handle(ctx context.Context, data []byte) {
 		return
 	}
 
+	s.acknowledge(signal)
 	if !s.claimSignal(signal, data) {
 		return
 	}
 
 	succeeded := false
 	defer func() { s.finishUpgrade(ctx, succeeded, signal.UpdateID) }()
-	if delay := s.delay(); delay > 0 {
-		log.Infof("update signal %s accepted; staggering the swap by %s.", signal.UpdateID, delay.Round(time.Second))
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(delay):
-		}
+	if !s.waitForRollout(ctx, signal, data, "signal") {
+		return
+	}
+	// Installed meanwhile (a typed `update install`): nothing to do.
+	if state, err = update.LoadState(s.deps.Paths); err != nil {
+		log.Warnf("update signal: cannot read update state, ignoring %s: %v", signal.UpdateID, err)
+		return
+	}
+	if state.Sequence >= signal.Sequence {
+		_ = update.ClearPending(s.deps.Paths, signal.UpdateID)
+		return
 	}
 
 	if err := s.upgrade(ctx, signal, state); err != nil {
@@ -323,6 +447,7 @@ func (s *UpdateSignalSubscriber) handle(ctx context.Context, data []byte) {
 	// The helper has the swap. Whatever failed on an earlier attempt at this
 	// update is no longer the state of this box.
 	succeeded = true
+	_ = update.ClearPending(s.deps.Paths, signal.UpdateID)
 	s.deps.Alerts.Clear(ops.KindUpdateFailed, signal.UpdateID)
 }
 
@@ -371,13 +496,6 @@ func (s *UpdateSignalSubscriber) release(updateID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.handled, updateID)
-}
-
-func (s *UpdateSignalSubscriber) delay() time.Duration {
-	if s.deps.MaxDelay <= 0 {
-		return 0
-	}
-	return time.Duration(rand.Int63n(int64(s.deps.MaxDelay)))
 }
 
 // upgrade fetches, verifies, stages (all while the daemon keeps serving), then
@@ -764,7 +882,9 @@ func (n *Node) startUpdateSignalSubscriber() {
 		HealthTimeout: cfg.HealthTimeout(),
 		StoreRoot:     absPathOr(n.config.Storage.Path),
 		MinInterval:   cfg.MinInterval(),
-		MaxDelay:      time.Duration(cfg.MaxDelaySeconds) * time.Second,
+		RolloutWindow: cfg.RolloutWindow(),
+		PeerID:        n.host.ID().String(),
+		Fleet:         n.updateFleet,
 		Client:        n.updateFetchClient(),
 		Alerts:        n.alerts,
 		BundleVersion: update.RunningIdentity().BundleVersion,
@@ -775,6 +895,20 @@ func (n *Node) startUpdateSignalSubscriber() {
 		return
 	}
 
+	// This node's own update status, on the same topic (update_fleet.go).
+	if n.updateFleet != nil {
+		peerID := n.host.ID().String()
+		version := update.RunningIdentity().BundleVersion
+		if strings.TrimSpace(version) == "" {
+			version = strings.TrimSpace(manifest.Version)
+		}
+		n.updateFleet.mu.Lock()
+		n.updateFleet.local = func() *update.Status {
+			return update.LocalStatus(paths, peerID, version, subscriber.Acknowledged(), time.Now())
+		}
+		n.updateFleet.mu.Unlock()
+	}
+
 	n.wg.Add(1)
 	go func() {
 		defer n.wg.Done()
@@ -782,6 +916,18 @@ func (n *Node) startUpdateSignalSubscriber() {
 			log.Warnf("Update signal lane stopped: %v", err)
 		}
 	}()
+
+	if n.updateFleet != nil {
+		if joined, err := n.joinAndStoreTopic(topic, topic); err != nil {
+			log.Warnf("Update status not announced: join %s: %v", topic, err)
+		} else {
+			n.wg.Add(1)
+			go func() {
+				defer n.wg.Done()
+				n.updateFleet.announce(n.ctx, joined)
+			}()
+		}
+	}
 }
 
 // absPathOr returns p made absolute (the helper runs from another working

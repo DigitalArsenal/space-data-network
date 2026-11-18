@@ -35,6 +35,7 @@ func signalCommandRoots(path string) (update.TrustedRoots, error) {
 func newSignSignalsCommand() *cobra.Command {
 	var keyFile, keyEnv, dir, rootsPath string
 	var verifyOnly bool
+	var rolloutWindow int64
 	cmd := &cobra.Command{Use: "sign-signals", Short: "Sign or verify every feed signal with the update roots", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			roots, err := signalCommandRoots(rootsPath)
@@ -58,7 +59,11 @@ func newSignSignalsCommand() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				if err := update.SignFeedSignals(dir, key, roots); err != nil {
+				var window *int64
+				if rolloutWindow >= 0 {
+					window = &rolloutWindow
+				}
+				if err := update.SignFeedSignals(dir, key, roots, window); err != nil {
 					return err
 				}
 			}
@@ -76,6 +81,7 @@ func newSignSignalsCommand() *cobra.Command {
 	cmd.Flags().StringVar(&dir, "feed-dir", "", "update feed directory")
 	cmd.Flags().StringVar(&rootsPath, "roots", "", "trusted update roots file")
 	cmd.Flags().BoolVar(&verifyOnly, "verify-only", false, "verify existing signals without signing")
+	cmd.Flags().Int64Var(&rolloutWindow, "rollout-window-seconds", -1, "sign this rollout window into every signal (0 acts at once; unset leaves each node's update.rollout_window_seconds)")
 	_ = cmd.MarkFlagRequired("feed-dir")
 	return cmd
 }

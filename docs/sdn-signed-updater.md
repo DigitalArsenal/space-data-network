@@ -547,6 +547,86 @@ production key replaces it through a release that carries `trust_roots`.
   daemon)") runs the pass, revert-and-quarantine and wrong-key cases against
   real daemons.
 
+### When a node acts on an update, and what it tells the other nodes
+
+- **Rollout window.** A node acts on an update it accepted (a signal that
+  passed every check above, or a feed-check find) at its own time within
+  `update.rollout_window_seconds` (default 3600; `0` acts at once; at most
+  86400): the time it accepted the update plus `window x (first 8 bytes of
+  sha256("SDN-UPDATE-ROLLOUT-V1" 0x00 peer-id 0x00 update-id)) / 2^64`,
+  in whole seconds (`update.RolloutDelay`). It writes the accepted time, the
+  delay and the due time to `updates/pending.json` before it waits (with the
+  signal's bytes for a signal), so a restart keeps the due time: a pending
+  signal is verified again from those bytes and waited out, and a pending
+  feed-check find makes the first feed check run at its due time. After the
+  wait the node reads its state again and does nothing if the update is
+  already installed. `update install` typed by an operator never waits. A
+  UI package is not delayed (nothing restarts). The log line is `Update <id>
+  (version <v>) accepted at <t>; this node acts on it at <due> (rollout window
+  <w>s from config|signal, this node's delay <d>s)`; `update check` and
+  `status` print `update_pending=<id> version=... trigger=... accepted_at=...
+  due_at=... window_seconds=... window_from=... delay_seconds=...` or
+  `update_pending=none`.
+- **A window in the signal.** A signal may carry `rollout_window_seconds`
+  (0 to 86400), signed with the rest of it; it replaces the node's setting
+  for that update. `sdn-update-signal-signer --rollout-window-seconds N` and
+  `spacedatanetwork update sign-signals --rollout-window-seconds N` sign it
+  into every signal of a feed; without the flag no window is signed. The
+  signature covers the canonical form of the signal as published, unknown
+  fields included, and older nodes decode a signal into a structure that
+  ignores fields it does not name, so a node of 1.1.9 or earlier verifies
+  such a signal and acts on it at once (or after its own
+  `update.max_delay_seconds`, a random delay those releases have). The
+  signed-signal check of the publisher's feed (`MatchFeedSignal`) does not
+  compare the window, which the index does not carry.
+- **Not coordinated.** Each node's delay is its own. Two nodes of one
+  operator can still be down at the same time (for two nodes, a 60-minute
+  window and five minutes of downtime each, about one push in six), and
+  nodes do not agree a schedule among themselves.
+- **Update status.** Each node publishes an
+  `org.spacedatanetwork.update.status.v1` message (JSON, at most 4 KiB) on
+  its channel's update topic: `peer_id`, `version` (its bundle version),
+  `sequence`, `update_id`, `state` (`current`, `pending` or `failed`),
+  `pending` (`update_id`, `version`, `sequence`, `due_at`), `failed`
+  (`update_id`, `version`, `sequence`, `at`, `reason`, `rolled_back`, from its
+  own deploy ledger: a `health-reverted` until the node runs that sequence or
+  a later one, a `revert-refused` until it runs a later one, by the same rule
+  as the `update_failed` alert), `acknowledged` (the newest signal it
+  accepted) and `at`. It publishes when its update lane starts and the topic
+  has a peer, when a peer joins the topic (at most once every ten seconds),
+  when it starts to wait for an update, and every ten minutes. The pub/sub
+  message is signed by the node's peer key (the router's strict signing
+  policy), and the topic validator accepts a status only when its `peer_id`
+  is the message's author. A node keeps the newest status per peer in
+  memory; a status dated more than ten minutes ahead is dropped. Nodes of
+  1.1.9 and earlier accept only signals on this topic: their validator
+  rejects a status, so it is neither delivered to them nor relayed by them,
+  and with no peer scoring in their pub/sub router the rejection costs the
+  sender nothing.
+- **The fleet view.** `spacedatanetwork update fleet` (`--json`) reads
+  `GET /api/peers/versions` (admin only, as every `/api/peers` route): one
+  row for this node, one for every SDN peer of `/api/peers/sdn`, and one for
+  every node whose status reached this one through the topic. Each row has
+  the peer id, the name the node publishes in the peer directory, the version
+  (from its status, else from its identify agent version), whether it is
+  connected, when it was last seen (now when connected), the update state
+  from its own status (`unknown` without one), and whether it accepted the
+  newest signal any row reports or already runs that sequence or a later one. Nothing in it is inferred by the viewing
+  node: "failed and rolled back" is the failing node's own statement. The
+  registry records a peer as seen when a connection to it is made; the node
+  now also records every connected peer as seen once a minute, and every peer
+  whose status it receives, so `last_seen` on `/api/peers/sdn` no longer
+  stops at the time the connection was made.
+- **Trial written with the state.** A home install writes the signed proof,
+  then `state.json` naming the new build with `trial_update_id` set to it,
+  then `updates/trial.json`. A start that finds `trial_update_id` equal to the
+  build `state.json` names, no `trial.json`, and no `health-passed`,
+  `health-reverted` or `revert-refused` for it in the ledger writes the trial
+  record and runs the build as a trial, so no crash leaves a new build running
+  without a trial once the state names it. The swap of the files comes
+  before the state write, and a stop between those two is not covered by
+  this record.
+
 End-to-end release flow:
 
 ```sh

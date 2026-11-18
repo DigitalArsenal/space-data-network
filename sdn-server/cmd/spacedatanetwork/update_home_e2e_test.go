@@ -554,7 +554,7 @@ func versionOf(b realBuild, name, version, id string, seq int64) realBuild {
 func runRealHomeUpdate(t *testing.T) {
 	builds := realE2EBuilds(t, filepath.Join(t.TempDir(), "builds"))
 	v1, v2, v3 := builds[0], builds[1], builds[2]
-	hang, hangNoTimer, crash := realE2EHangBuilds(t, filepath.Join(t.TempDir(), "hang-builds"))
+	hang, hangNoTimer, crash, crashMidApply := realE2EHangBuilds(t, filepath.Join(t.TempDir(), "hang-builds"))
 
 	t.Run("signals", func(t *testing.T) {
 		n := newHomeNode(t, "node", v1)
@@ -992,19 +992,54 @@ func runRealHomeUpdate(t *testing.T) {
 		n.sameProcess(t)
 		n.noHelperNoWrite(t, v1)
 	})
+
+	t.Run("crash-mid-apply", func(t *testing.T) {
+		// The installed build v8 is killed in the middle of a home install of
+		// v2, after the state write and before trial.json: the next start
+		// still runs v2 as a trial, and v2 passes it.
+		n := newHomeNode(t, "node", crashMidApply)
+		n.loop.stop(t)
+		n.stopped = true
+		n.publish(t, v2)
+		text, err := n.typed(t, "install-crash-mid-apply", "update", "install")
+		if err == nil {
+			t.Fatalf("the v8 install was not killed mid-apply:\n%s", text)
+		}
+		state, serr := update.LoadState(n.paths())
+		if serr != nil || state.UpdateID != v2.updateID || state.TrialUpdateID != v2.updateID {
+			t.Fatalf("after the kill the state is %+v (%v), want v2 marked on trial:\n%s", state, serr, text)
+		}
+		if trial, terr := update.ReadTrial(n.paths()); trial != nil || terr != nil {
+			t.Fatalf("trial.json exists after a kill before it was written: %+v (%v)", trial, terr)
+		}
+		n.loop = startRestartLoop(t, n.d)
+		n.wantStarts = 1
+		n.stopped = false
+		n.waitFor(t, "v2 to pass its trial after the interrupted install", n.boot+time.Duration(n.health)*time.Second, func() bool {
+			return pushIdentityMatches(n.d.adminBase, v2) && ledgerHasIfPresent(n.homeRoot, v2.updateID, "health-passed")
+		})
+		if !strings.Contains(n.d.logs(), "its trial record was not written") {
+			t.Fatalf("the start did not say it restored v2's trial:\n%s", tailString(n.d.logs(), 40))
+		}
+		if got := n.countLogs("update: this process runs update " + v2.updateID + " as a trial"); got != 1 {
+			t.Fatalf("v2 ran as a trial %d times, want 1", got)
+		}
+		n.noHelperNoWrite(t, crashMidApply)
+	})
 }
 
 // realE2EHangBuilds are v6 (blocks before its store opens), v7 (the same,
 // with no trial deadline timer) and v11 (exits with an error at start),
 // prebuilt beside the other fixtures or built here.
-func realE2EHangBuilds(t *testing.T, dir string) (realBuild, realBuild, realBuild) {
+func realE2EHangBuilds(t *testing.T, dir string) (realBuild, realBuild, realBuild, realBuild) {
 	t.Helper()
 	builds := []realBuild{
 		{name: "v6", version: "1.1.2-e2e.6", updateID: "cli-bundle-release-e2e-6", sequence: 600},
 		{name: "v7", version: "1.1.2-e2e.7", updateID: "cli-bundle-release-e2e-7", sequence: 700},
 		{name: "v11", version: "1.1.2-e2e.11", updateID: "cli-bundle-release-e2e-11", sequence: 1100},
+		{name: "v8", version: "1.1.2-e2e.8", updateID: "cli-bundle-release-e2e-8", sequence: 80},
 	}
-	tags := map[string]string{"v6": "sdn_e2e_hang_before_store", "v7": "sdn_e2e_hang_before_store,sdn_e2e_no_trial_timer", "v11": "sdn_e2e_crash_at_start"}
+	tags := map[string]string{"v6": "sdn_e2e_hang_before_store", "v7": "sdn_e2e_hang_before_store,sdn_e2e_no_trial_timer", "v11": "sdn_e2e_crash_at_start", "v8": "sdn_e2e_crash_mid_apply"}
 	prebuilt := strings.TrimSpace(os.Getenv(realE2EBinDirEnv))
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
@@ -1032,7 +1067,7 @@ func realE2EHangBuilds(t *testing.T, dir string) (realBuild, realBuild, realBuil
 			t.Fatalf("no %s build at %s", b.name, b.path)
 		}
 	}
-	return builds[0], builds[1], builds[2]
+	return builds[0], builds[1], builds[2], builds[3]
 }
 
 func ledgerHasAction(root, action string) bool {

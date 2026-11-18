@@ -422,6 +422,30 @@ func finishInterruptedRevert(paths Paths, trial *Trial) {
 	_ = os.Remove(filepath.Join(paths.Updates, verdictFileName))
 }
 
+// restoreMissingTrial writes the trial record of the build state.json marks
+// as on trial (State.TrialUpdateID) when the record is missing and the ledger
+// has not ended that trial: what a crash between the state write and the trial
+// write of a home install leaves. It returns the record and a note, or nil.
+func restoreMissingTrial(paths Paths) (*Trial, string) {
+	state, err := LoadState(paths)
+	if err != nil || state.TrialUpdateID == "" || state.TrialUpdateID != state.UpdateID {
+		return nil, ""
+	}
+	for _, ended := range []string{"health-passed", "health-reverted", "revert-refused"} {
+		if ledgerHas(paths, state.UpdateID, ended) {
+			return nil, ""
+		}
+	}
+	trial := &Trial{UpdateID: state.UpdateID, Version: state.Version, Sequence: state.Sequence, InstalledAt: state.AppliedAt}
+	if err := writeTrialLocked(paths, trial); err != nil {
+		return nil, ""
+	}
+	if again, err := ReadTrial(paths); err != nil || again == nil || again.UpdateID != state.UpdateID {
+		return nil, ""
+	}
+	return trial, fmt.Sprintf("update %s was installed and its trial record was not written (the install stopped after its state write); it runs as a trial", state.UpdateID)
+}
+
 // ledgerHas reports whether the home bundle's deploy ledger has a line with
 // action for updateID.
 func ledgerHas(paths Paths, updateID, action string) bool {
@@ -548,6 +572,12 @@ func ChooseHomeBuild(executable string, opts StartCheckOptions) StartCheck {
 		if err != nil {
 			// A trial whose record cannot be read is a failed trial.
 			trial = &Trial{Starts: 1, FailReason: "its trial record cannot be read: " + err.Error()}
+		}
+		if trial == nil {
+			if restored, note := restoreMissingTrial(paths); restored != nil {
+				trial = restored
+				check.Notes = append(check.Notes, note)
+			}
 		}
 		if trial != nil && trial.UpdateID != "" {
 			if state, serr := LoadState(paths); serr == nil && state.UpdateID != trial.UpdateID {

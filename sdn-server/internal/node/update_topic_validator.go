@@ -27,6 +27,15 @@ func (n *Node) registerUpdateTopicValidator(topic string) error {
 		if message == nil {
 			return ps.ValidationReject
 		}
+		// A node's update status (update_fleet.go) is accepted only from the
+		// node it names: the message author, whose signature the pub/sub
+		// router has checked.
+		if status, err := update.ParseStatus(message.Data); err == nil {
+			if author := message.GetFrom(); author != "" && status.PeerID == author.String() {
+				return ps.ValidationAccept
+			}
+			return ps.ValidationReject
+		}
 		signal, err := update.ParseSignal(message.Data)
 		if err != nil {
 			return ps.ValidationReject

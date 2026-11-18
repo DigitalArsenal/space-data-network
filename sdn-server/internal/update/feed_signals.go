@@ -85,11 +85,14 @@ func FeedSignalFiles(dir, channel, version string) ([]FeedSignalFile, error) {
 	return files, err
 }
 
-// MatchFeedSignal compares every modeled field except the signature and timestamps.
+// MatchFeedSignal compares every modeled field except the signature, the
+// timestamps and the rollout window, which the signer sets and the index does
+// not carry.
 func MatchFeedSignal(signal *Signal, file FeedSignalFile) error {
 	expected := SignalFromFeedEntry(file.Entry, file.FeedBaseURL, time.Now(), false)
 	actual := *signal
 	actual.raw = nil
+	actual.RolloutWindowSeconds = nil
 	actual.Signing, expected.Signing = SignalSigning{}, SignalSigning{}
 	actual.PublishedAt, expected.PublishedAt = "", ""
 	actual.ExpiresAt, expected.ExpiresAt = "", ""
@@ -159,8 +162,13 @@ func VerifyFeedSignalDir(dir string, roots TrustedRoots) ([]string, error) {
 	return paths, nil
 }
 
-// SignFeedSignals uses the receiver's statement and verifier for each index entry.
-func SignFeedSignals(dir string, key ed25519.PrivateKey, roots TrustedRoots) error {
+// SignFeedSignals uses the receiver's statement and verifier for each index
+// entry. A non-nil rolloutWindow is signed into every signal as
+// rollout_window_seconds.
+func SignFeedSignals(dir string, key ed25519.PrivateKey, roots TrustedRoots, rolloutWindow *int64) error {
+	if rolloutWindow != nil && (*rolloutWindow < 0 || *rolloutWindow > MaxRolloutWindowSeconds) {
+		return fmt.Errorf("rollout window %d is outside 0..%d seconds", *rolloutWindow, MaxRolloutWindowSeconds)
+	}
 	pub := key.Public().(ed25519.PublicKey)
 	id := RootKeyID(pub)
 	trusted, ok := roots[id]
@@ -191,6 +199,7 @@ func SignFeedSignals(dir string, key ed25519.PrivateKey, roots TrustedRoots) err
 	for _, file := range files {
 		signal := SignalFromFeedEntry(file.Entry, file.FeedBaseURL, now, false)
 		signal.ExpiresAt = now.Add(SignalMaxTTL).Format(time.RFC3339)
+		signal.RolloutWindowSeconds = rolloutWindow
 		signal.Signing.KeyID, signal.Signing.PublicKey = id, base64.StdEncoding.EncodeToString(spki)
 		unsigned, err := signal.Marshal()
 		if err != nil {

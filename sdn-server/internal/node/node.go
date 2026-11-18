@@ -203,6 +203,9 @@ type Node struct {
 	peerRegistry *peers.Registry
 	peerGater    *peers.TrustedConnectionGater
 
+	// updateFleet holds the update statuses of other nodes (update_fleet.go).
+	updateFleet *updateFleet
+
 	// peerAdmission is the connection-manager side of trust: which peers this
 	// node KEEPS when the public swarm floods it (peer_admission_policy.go).
 	// The gater decides who may connect; this decides who survives a trim.
@@ -615,6 +618,7 @@ func (n *Node) init() error {
 		}
 	}
 	n.peerRegistry = peers.NewRegistry(n.config.Peers.StrictMode, persistence)
+	n.updateFleet = newUpdateFleet(n.peerRegistry.RecordSeen)
 
 	// PIN STORE (owner ruling 2026-07-30: a peer that has never been seen may
 	// only appear if it was "added manually and 'pinned'"). This is DURABLE and
@@ -2467,6 +2471,9 @@ func (n *Node) Start(ctx context.Context) error {
 	// boot and serve — and deliberately loud about why, either way. See
 	// update_signal.go.
 	n.startUpdateSignalSubscriber()
+
+	n.wg.Add(1)
+	go n.refreshLastSeen()
 
 	return nil
 }

@@ -79,3 +79,57 @@ whoever ran it, so another local account could choose the config that
 a system account (such as the package's `sdn`) counts now; for another
 account's node, pass `-c`. `install.sh` passes the node's own config to every
 command it runs.
+
+**Nodes no longer all restart for an update at the same moment.** A node
+acts on an update it accepted (from a signal or from its feed check) at its
+own time within `update.rollout_window_seconds` (default 3600, one hour; `0`
+acts at once, at most 86400). The delay is fixed by the node's peer id and the
+update id, so two nodes almost never share one, and the node keeps the time it
+accepted the update and its due time in `updates/pending.json`: a restart
+during the wait keeps the due time. The node's log says when it acts and why
+(`acts on it at <time> (rollout window ..., this node's delay ...)`), and
+`spacedatanetwork update check` and `spacedatanetwork status` print
+`update_pending=<update id> ... due_at=<time>`. `spacedatanetwork update
+install` typed on the node still installs at once. The release signer can sign
+a window into the signal (`sdn-update-signal-signer --rollout-window-seconds
+N`, or `update sign-signals --rollout-window-seconds N`); it replaces the
+node's setting for that update. Nodes of 1.1.9 and earlier verify such a
+signal and ignore the window: they act at once unless their own
+`update.max_delay_seconds` spreads them. `update.max_delay_seconds` is
+replaced by `update.rollout_window_seconds`; a config that still sets it has
+that line ignored. A deterministic delay spreads the restarts of several
+nodes; it does not promise that two of them are never down at the same time.
+
+**Which version every node runs: `spacedatanetwork update fleet`.** Each
+node now publishes its own update status on the update topic of its channel,
+signed by its peer key: its version, an update it waits to act on and when,
+an update that failed on it and whether it was rolled back (from its own
+deploy ledger), and the newest signal it accepted. `spacedatanetwork update
+fleet` prints one row for this node and for every SDN node it knows: name (as
+the node publishes it in the peer directory), the end of its peer id,
+version, when it was last seen, its update state (`current`, `pending <version>
+until <time>`, `failed <version>, rolled back`, or `unknown` for a node whose
+status has not reached this one, such as a node of 1.1.9 or earlier, which
+shows its identify version), and whether it accepted the newest signal or
+already runs its sequence.
+`--json`, and `GET /api/peers/versions` on the admin API (administrators
+only, like the other `/api/peers` routes), give the same data. Nodes of 1.1.9
+and earlier drop these status messages unread and do not relay them. The last-seen
+time of a connected peer on `/api/peers/sdn` is now kept current: it stopped
+at the time the connection was made.
+
+**An interrupted home install still leaves the new build on trial.** A node
+that updates into its home folder wrote the new build's state and then its
+trial record; stopped between the two, it ran the new build at the next start
+as if it had passed its trial. The state write now marks the build as on
+trial, and the next start writes the missing trial record from it.
+
+**`update install --config <the node's config>` works while the node runs.**
+With `--config`, a node whose admin listener serves a certificate that the
+system does not trust (an origin certificate, as on a node behind a proxy)
+was not recognized as running, so the command tried to install in place and
+was refused with "store at ... is already open for writing". A config given
+with `--config` or `SDN_CONFIG` that is the same file the running daemon was
+started with (an absolute path on its command line, run by the same account,
+root or a system account) is now treated as that daemon's config, so the
+command trusts the daemon's certificate and hands the install to the helper.

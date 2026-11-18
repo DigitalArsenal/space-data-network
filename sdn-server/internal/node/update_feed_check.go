@@ -32,10 +32,16 @@ func resolvedCheckInterval(seconds int) time.Duration {
 	return time.Duration(seconds) * time.Second
 }
 
-func (s *UpdateSignalSubscriber) runFeedChecks(ctx context.Context) {
+func (s *UpdateSignalSubscriber) runFeedChecks(ctx context.Context, pendingFind *update.Pending) {
 	delay := s.deps.CheckDelay
 	if delay <= 0 {
 		delay = time.Minute + time.Duration(rand.Int63n(int64(4*time.Minute)))
+	}
+	if pendingFind != nil {
+		// A feed-check find was waiting for its rollout due time when this
+		// node stopped: check again at that time (the due time is kept).
+		delay = max(time.Until(pendingFind.Due()), time.Second)
+		log.Infof("Feed-check find %s resumes at its due time %s.", pendingFind.UpdateID, pendingFind.DueAt)
 	}
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
@@ -182,10 +188,21 @@ func (s *UpdateSignalSubscriber) checkFeed(ctx context.Context) (resultErr error
 			continue
 		}
 		signal := update.SignalFromFeedEntry(*entry, s.feed.String(), s.deps.Now(), false)
-		err = s.upgradeTriggered(ctx, signal, state, "feed-check")
+		if !s.waitForRollout(operationCtx, signal, nil, "feed-check") {
+			return operationCtx.Err()
+		}
+		if current, err := update.LoadState(s.deps.Paths); err == nil && current.Sequence >= entry.Sequence {
+			_ = update.ClearPending(s.deps.Paths, entry.UpdateID)
+			s.feedDeferredCandidates = nil
+			return nil
+		} else if err == nil {
+			state = current
+		}
+		err = s.upgradeTriggered(operationCtx, signal, state, "feed-check")
 		if err == nil {
 			succeeded = true
 			s.feedDeferredCandidates = nil
+			_ = update.ClearPending(s.deps.Paths, entry.UpdateID)
 			return errFeedCheckHandedOff
 		}
 		var refusal *update.StoreFormatRefusal
