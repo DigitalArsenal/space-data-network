@@ -645,14 +645,10 @@ func (d *format4Daemon) registerTypes(validator *sds.Validator) error {
 		}
 	}
 	if d.opt.UnlimitedVisibility {
-		preflight, ok := d.api().(interface{ ValidateType(format4.TypeSpec) error })
-		if !ok {
-			return fmt.Errorf("unlimited SQL visibility requires registration validation")
-		}
 		for _, schema := range schemas {
 			spec, err := d.format4TypeSpec(schema)
 			if err == nil {
-				err = preflight.ValidateType(spec)
+				err = d.api().ValidateType(spec)
 			}
 			if err != nil {
 				return fmt.Errorf("format 5: registration preflight %s: %w", schema, err)

@@ -108,7 +108,7 @@ func (r refusingAPI) ValidateType(spec format4.TypeSpec) error {
 	if spec.TypeName() == r.refuse {
 		return errors.New("injected: an invalid type spec")
 	}
-	return r.API.(interface{ ValidateType(format4.TypeSpec) error }).ValidateType(spec)
+	return r.API.ValidateType(spec)
 }
 
 // Only the sealed-rule refusal is skipped: any other refusal of an unlimited
