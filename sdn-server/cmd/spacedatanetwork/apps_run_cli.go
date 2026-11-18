@@ -118,7 +118,7 @@ A run of a schedule that is already running is joined, not started again.`,
 			if run.ForceNotApplied {
 				fmt.Fprintf(out, "%s %s: --force does not apply: the running run was started without it and keeps its own input\n", appID, trigger)
 			}
-			if run.ID == "" {
+			if run.Status == "running" && run.ID == "" && !appsRunDetach {
 				failures = append(failures, fmt.Sprintf("%s: the node's answer names no run id", trigger))
 				fmt.Fprintf(out, "%s %s: the node's answer names no run id, so this command cannot follow the run\n", appID, trigger)
 				continue
