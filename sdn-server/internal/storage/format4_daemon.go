@@ -289,15 +289,31 @@ func format4CreateMode(basePath string) (format4.CreateMode, error) {
 	}
 }
 
+// format4UnlimitedVisibility decides the stream store's SQL visibility from
+// storage.unlimited_sql_visibility and the store's markers. Set, the setting
+// decides: true promotes a layout-1 store; false refuses a store already at
+// layout 2 (or with a pending promotion), which cannot be bounded again.
+// Unset, the store decides: a store at layout 2 opens with unlimited
+// visibility (a build whose default is bounded, started on a store a later
+// build or an explicit setting promoted, e.g. after a rollback), and any
+// other store stays bounded.
+func format4UnlimitedVisibility(cfg storeConfig, markers marker.Markers) (bool, error) {
+	if markers.RequiredLayout < 2 {
+		return cfg.unlimitedSQLVisibilitySet && cfg.unlimitedSQLVisibility, nil
+	}
+	if cfg.unlimitedSQLVisibilitySet && !cfg.unlimitedSQLVisibility {
+		return false, fmt.Errorf("format 5: stream format %d layout %d has unlimited SQL visibility and cannot be bounded again; "+
+			"storage.unlimited_sql_visibility is false: remove the setting or set it true", markers.Format, markers.RequiredLayout)
+	}
+	if !cfg.unlimitedSQLVisibilitySet {
+		log.Infof("format 5: stream format %d layout %d: unlimited SQL visibility (storage.unlimited_sql_visibility unset; the store's layout decides)",
+			markers.Format, markers.RequiredLayout)
+	}
+	return true, nil
+}
+
 // newFormat4Store is NewFlatSQLStore on store format 5.
 func newFormat4Store(basePath string, validator *sds.Validator, cfg storeConfig) (*FlatSQLStore, error) {
-	markers, err := marker.Read(basePath)
-	if err != nil {
-		return nil, err
-	}
-	if markers.RequiredLayout >= 2 && !cfg.unlimitedSQLVisibility {
-		return nil, fmt.Errorf("format 5: stream format %d layout %d requires storage.unlimited_sql_visibility=true; layout promotion cannot be undone", markers.Format, markers.RequiredLayout)
-	}
 	if err := os.MkdirAll(basePath, 0o700); err != nil {
 		return nil, fmt.Errorf("failed to create storage directory: %w", err)
 	}
@@ -311,6 +327,16 @@ func newFormat4Store(basePath string, validator *sds.Validator, cfg storeConfig)
 			_ = lock.release()
 		}
 	}()
+	// The markers are read under the store lock: no other process is
+	// promoting the store while its layout decides the setting.
+	markers, err := marker.Read(basePath)
+	if err != nil {
+		return nil, err
+	}
+	unlimited, err := format4UnlimitedVisibility(cfg, markers)
+	if err != nil {
+		return nil, err
+	}
 	if err := migrateStore5Locked(context.Background(), basePath); err != nil {
 		return nil, err
 	}
@@ -330,7 +356,7 @@ func newFormat4Store(basePath string, validator *sds.Validator, cfg storeConfig)
 		return nil, fmt.Errorf("format 5: %w", err)
 	}
 	d.opt = format4.Options{
-		UnlimitedVisibility: cfg.unlimitedSQLVisibility,
+		UnlimitedVisibility: unlimited,
 		Tuning:              format4.Tuning{RowCacheBytes: cfg.rowCacheBytes},
 		DataRoot:            dataRoot,
 		Create:              mode,

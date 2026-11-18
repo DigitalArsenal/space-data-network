@@ -172,20 +172,30 @@ func (h *CoreAPIHandler) handlePubSubMessages(w http.ResponseWriter, r *http.Req
 		return
 	}
 	var raw [][]byte
+	truncated := false
 	if h.store != nil {
-		var err error
-		if raw, err = h.store.QueryAll(schema, limit); err != nil {
+		page, err := h.store.QueryAll(schema, limit)
+		if err != nil {
 			WriteErrorFrame(w, http.StatusInternalServerError, "query_failed", "query failed: "+err.Error(), 0)
 			return
 		}
+		raw, truncated = page.Records, page.Truncated
+	}
+	// The newest `limit` messages: TRUNCATED (status partial) says more are
+	// stored, never a silent short history (stack #848).
+	status := QRPStatusOk
+	if truncated {
+		status = QRPStatusPartial
 	}
 	frames := make([][]byte, 0, 1+len(raw))
 	frames = append(frames, BuildQRP(QRPFields{
 		Kind:          QRPKindPage,
-		Status:        QRPStatusOk,
+		Status:        status,
 		SchemaName:    schema,
 		RecordCount:   uint32(len(raw)),
 		Limit:         uint32(limit),
+		Truncated:     truncated,
+		Partial:       truncated,
 		GeneratedAtMs: time.Now().UnixMilli(),
 	}))
 	for _, data := range raw {

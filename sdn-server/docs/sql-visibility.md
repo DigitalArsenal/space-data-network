@@ -6,11 +6,16 @@ it does not turn an incomplete query into a successful result.
 
 ## Enable complete visibility explicitly
 
-`storage.unlimited_sql_visibility` defaults to `false`. Bounded registrations
-retain the existing 10,000-row default and 400,000-row OMM/TBS windows. With a
-supporting engine, setting it to `true` registers explicit unlimited visibility
-for every standard (type-spec tag 13, uint8 one). Missing tag 13, including the
-historical tag 10 value zero, keeps bounded behavior.
+`storage.unlimited_sql_visibility` is unset by default. Unset, a store that is
+not yet promoted keeps bounded registrations (the existing 10,000-row default
+and 400,000-row OMM/TBS windows), and a store already at layout 2 (or with a
+pending promotion) opens with unlimited visibility: a build started on a store
+that a later build or an explicit setting promoted, for example after the update
+channel rolled back to it, keeps it running. With a supporting engine, `true`
+registers explicit unlimited visibility for every standard (type-spec tag 13,
+uint8 one) and promotes the store. `false` keeps bounded visibility and refuses
+a promoted store. Missing tag 13, including the historical tag 10 value zero,
+keeps bounded behavior.
 
 The embedded FlatSQL 3.12.10 artifact does not support this option. Enabling it
 requires a published artifact exporting `flatsql_capabilities` with bit 0 set.
@@ -19,8 +24,9 @@ engine or auxiliary database files. A failed standard registration aborts
 startup. Registration updates SQL schema state without a second engine open.
 
 Back up the store before enabling the option. Registration permanently promotes
-the STORE marker to layout 2. Turning the setting off afterward refuses startup;
-it does not restore a bounded store. The update guard checks store format and
+the STORE marker to layout 2. Setting it to `false` afterward refuses startup;
+it does not restore a bounded store. Removing the setting keeps the store
+unlimited. The update guard checks store format and
 layout when considering a rollback slot. A binary declaring only layout 1
 cannot reopen layout 2. Layout-1 stores remain compatible with binaries stamped
 for store format 5. Recovery from an interrupted promotion honors the persisted
@@ -44,7 +50,17 @@ recovery, not creation of an empty replacement store.
 Complete visibility does not grant access to additional private data. Opaque
 and field-sealed types have no SQL relation, including through trusted module
 queries, metadata counts and raw-record shortcuts. Durable CID access remains
-subject to the existing storage authorization.
+subject to the existing storage authorization. A statement naming a relation
+the store does not have (a standard the node does not register, a CID-only or
+field-sealed one, an unknown source) fails on every path ("no such table";
+"no SQL relation" on the trusted raw stream modules read); it is never an
+empty answer. A
+registered standard with no records answers an empty result.
+
+`QueryAll` (the newest records of a standard, `GET /api/v1/pubsub/messages`)
+answers at most 10,000 records and says when more are stored: the page is
+marked truncated (QRP `TRUNCATED`, status partial). Complete reads page with
+the data scan or keyset SQL.
 
 The direct SQL HTTP route requires administrator trust. Public sandboxed SQL
 uses defaults of 200,000 output rows, five seconds and

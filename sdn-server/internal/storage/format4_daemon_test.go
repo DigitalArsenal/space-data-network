@@ -119,20 +119,25 @@ func TestFormat4UnlimitedVisibilityOptIn(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Setenv(format4.FormatEnv, "4")
-		if unexpected, err := NewFlatSQLStore(root, nil); err == nil || !strings.Contains(err.Error(), "unlimited_sql_visibility") {
+		if unexpected, err := NewFlatSQLStore(root, nil, WithUnlimitedSQLVisibility(false)); err == nil || !strings.Contains(err.Error(), "unlimited_sql_visibility") {
 			if unexpected != nil {
 				unexpected.Close()
 			}
 			t.Fatalf("disabled promoted store: %v", err)
 		}
-		store = openFormat4ForTest(t, root, WithUnlimitedSQLVisibility(true))
+		// Unset, the promoted store decides (a bounded-default build after a
+		// rollback opens it with unlimited visibility, never refuses it).
+		store = openFormat4ForTest(t, root)
+		if !store.f4.opt.UnlimitedVisibility {
+			t.Fatal("unset setting on a promoted store registered bounded visibility")
+		}
 		if err := store.Close(); err != nil {
 			t.Fatal(err)
 		}
 
 		// Simulate an interrupted layout-2 promotion: valid STORE.unlimited + valid
-		// MIGRATED beside a torn STORE. Reopening without opt-in must refuse;
-		// reopening with opt-in must let the engine recover STORE to layout 2.
+		// MIGRATED beside a torn STORE. Reopening with the setting false must
+		// refuse; reopening with opt-in must let the engine recover STORE to layout 2.
 		storePath := filepath.Join(root, marker.Dir, marker.StoreFile)
 		intentPath := filepath.Join(root, marker.Dir, "STORE.unlimited")
 		validStore, err := os.ReadFile(storePath)
@@ -145,7 +150,7 @@ func TestFormat4UnlimitedVisibilityOptIn(t *testing.T) {
 		if err := os.WriteFile(storePath, validStore[:12], 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if unexpected, err := NewFlatSQLStore(root, nil); err == nil || !strings.Contains(err.Error(), "unlimited_sql_visibility") {
+		if unexpected, err := NewFlatSQLStore(root, nil, WithUnlimitedSQLVisibility(false)); err == nil || !strings.Contains(err.Error(), "unlimited_sql_visibility") {
 			if unexpected != nil {
 				unexpected.Close()
 			}
@@ -898,8 +903,16 @@ func TestFormat4SealedTypesHaveNoSQLRelation(t *testing.T) {
 					if _, err := s.f4.api().SQL(context.Background(), format4.SQLRequest{SQL: query, Class: format4.ClassInteractive}, func([]byte) error { return nil }); err == nil || !strings.Contains(err.Error(), "no such table") {
 						t.Fatalf("trusted engine SQL must report no such table: %s: %v", query, err)
 					}
-					if st, err := s.QueryRawStream(query); err != nil || st.Rows != 0 || len(st.Bytes) != 0 {
-						t.Fatalf("QueryRawStream on absent sealed relation must return empty stream: %s: rows=%d bytes=%d err=%v", query, st.Rows, len(st.Bytes), err)
+					// The records exist: an empty answer would read as "no
+					// PNM records". The absent relation is an error.
+					if st, err := s.QueryRawStream(query); !errors.Is(err, ErrNoSQLRelation) {
+						t.Fatalf("QueryRawStream on an absent sealed relation must fail with ErrNoSQLRelation: %s: stream=%v err=%v", query, st, err)
+					} else {
+						for _, plain := range append(fileIDs, sigs...) {
+							if strings.Contains(err.Error(), string(plain)) {
+								t.Fatal("plaintext in the QueryRawStream error")
+							}
+						}
 					}
 				}
 				if reach := sqlReaches(t, s, "PNM"); len(reach) > 0 {

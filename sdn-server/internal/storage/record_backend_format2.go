@@ -152,8 +152,8 @@ func (b format2Backend) Query(schemaName, whereClause string, _ ...interface{}) 
 	return b.s.f2QueryData(schemaName, whereClause, 0, 0)
 }
 
-func (b format2Backend) QueryAll(schemaName string, limit int) ([][]byte, error) {
-	return b.s.f2QueryData(schemaName, "", min(max(limit, 1), 10000), 0)
+func (b format2Backend) queryNewest(schemaName string, n int) ([][]byte, error) {
+	return b.s.f2QueryData(schemaName, "", max(n, 1), 0)
 }
 
 func (b format2Backend) QueryAllBounded(schemaName string, limit int, maxTotalBytes int) ([][]byte, error) {

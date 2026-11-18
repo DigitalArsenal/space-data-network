@@ -662,9 +662,18 @@ func (c *cov) v04() []Shape {
 	tables = rule(tables, "table OMM before rowid", c39U4, recordFields()...)
 	queries := covShape(class, "Query, QueryAll, QueryAllBounded", "CAT.fbs",
 		data("Query CAT (empty where)", "CAT.fbs", false, func(s *storage.FlatSQLStore) ([][]byte, error) { return s.Query("CAT.fbs", "") }),
-		data("QueryAll MPE 500", "MPE.fbs", true, func(s *storage.FlatSQLStore) ([][]byte, error) { return s.QueryAll("MPE.fbs", 500) }),
-		data("QueryAll OMM 0", "OMM.fbs", true, func(s *storage.FlatSQLStore) ([][]byte, error) { return s.QueryAll("OMM.fbs", 0) }),
-		data("QueryAll IQC 20000", "IQC.fbs", true, func(s *storage.FlatSQLStore) ([][]byte, error) { return s.QueryAll("IQC.fbs", 20000) }),
+		data("QueryAll MPE 500", "MPE.fbs", true, func(s *storage.FlatSQLStore) ([][]byte, error) {
+			p, err := s.QueryAll("MPE.fbs", 500)
+			return p.Records, err
+		}),
+		data("QueryAll OMM 0", "OMM.fbs", true, func(s *storage.FlatSQLStore) ([][]byte, error) {
+			p, err := s.QueryAll("OMM.fbs", 0)
+			return p.Records, err
+		}),
+		data("QueryAll IQC 20000", "IQC.fbs", true, func(s *storage.FlatSQLStore) ([][]byte, error) {
+			p, err := s.QueryAll("IQC.fbs", 20000)
+			return p.Records, err
+		}),
 		data("QueryAllBounded OMM 100 64KiB", "OMM.fbs", true, func(s *storage.FlatSQLStore) ([][]byte, error) { return s.QueryAllBounded("OMM.fbs", 100, 64<<10) }),
 		data("QueryAllBounded CAT 0 0", "CAT.fbs", true, func(s *storage.FlatSQLStore) ([][]byte, error) { return s.QueryAllBounded("CAT.fbs", 0, 0) }),
 		data("QueryAllBounded IQC 5000 1MiB", "IQC.fbs", true, func(s *storage.FlatSQLStore) ([][]byte, error) { return s.QueryAllBounded("IQC.fbs", 5000, 1<<20) }),
@@ -672,7 +681,10 @@ func (c *cov) v04() []Shape {
 		data("QuerySince CAT", "CAT.fbs", false, func(s *storage.FlatSQLStore) ([][]byte, error) {
 			return s.QuerySince("CAT.fbs", time.Unix(1790651000, 0))
 		}),
-		data("QueryAll unknown type", "XYZ.fbs", true, func(s *storage.FlatSQLStore) ([][]byte, error) { return s.QueryAll("XYZ.fbs", 10) }))
+		data("QueryAll unknown type", "XYZ.fbs", true, func(s *storage.FlatSQLStore) ([][]byte, error) {
+			p, err := s.QueryAll("XYZ.fbs", 10)
+			return p.Records, err
+		}))
 	// C-39 E7: every fixture IQC record carries the same source timestamp,
 	// so format 1's newest N by it is an arbitrary N of them; the row count
 	// is compared.
