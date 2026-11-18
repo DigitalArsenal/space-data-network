@@ -549,8 +549,8 @@ test('beta release workflow builds signed CLI update feed artifacts', () => {
   assert.match(workflow, /name:\s*cli-update-feed[\s\S]*path:\s*dist\/update-feed\/spacedatanetwork-update-feed-\$\{\{ needs\.beta-version\.outputs\.package_version \}\}\.tar\.gz/);
   assert.match(workflow, /name:\s*cli-update-feed[\s\S]*path:\s*dist\/update-feed/);
   assert.match(workflow, /artifact-docker-test:[\s\S]*?needs:\s*\[beta-version, ipfs, packages\]/);
-  assert.match(workflow, /artifact-docker-test-container:[\s\S]*?needs:\s*\[beta-version, packages, docker, sdn-js-package\]/);
-  assert.match(workflow, /artifact-docker-test-cli:[\s\S]*?needs:\s*\[beta-version, cli\]/);
+  assert.match(workflow, /artifact-docker-test-container:[\s\S]*?needs:\s*\[beta-version, packages, docker\]/);
+  assert.match(workflow, /artifact-docker-test-cli:[\s\S]*?needs:\s*\[beta-version, cli, sdn-js-package\]/);
   // The release names every check itself: the builds start beside Preflight
   // and the key check instead of after them, so nothing reaches the release
   // through a build any more. The image push needs Preflight too, and a dry

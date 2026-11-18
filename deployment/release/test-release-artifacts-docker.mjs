@@ -134,16 +134,16 @@ export const scenarios = {
     seedInbound: 3
   },
   container: {
-    artifacts: ['fullDeb', 'container', 'sdnJs'],
-    images: ['fullDeb', 'sdnJs'],
+    artifacts: ['fullDeb', 'container'],
+    images: ['fullDeb'],
     loadContainer: true,
     metadata: false,
     joiners: ['containerFull', 'containerEdge'],
     seedInbound: null
   },
   cli: {
-    artifacts: ['linuxCli'],
-    images: ['linuxCli'],
+    artifacts: ['linuxCli', 'sdnJs'],
+    images: ['linuxCli', 'sdnJs'],
     loadContainer: false,
     metadata: false,
     joiners: [],

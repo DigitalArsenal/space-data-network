@@ -1706,19 +1706,15 @@ jobs:
         run: npm run test:release-artifacts:docker -- --release-dir dist --timeout-ms 600000 --scenario packages
 
   artifact-docker-test-container:
-    name: Install and network-test release artifacts (container and sdn-js)
+    name: Install and network-test release artifacts (container)
     runs-on: ubuntu-latest
-    needs: [beta-version, packages, docker, sdn-js-package]
+    needs: [beta-version, packages, docker]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           name: package-artifacts
           path: dist
-      - uses: actions/download-artifact@v4
-        with:
-          name: sdn-js-package
-          path: dist/sdn-js
       # This runner is amd64.
       - uses: actions/download-artifact@v4
         with:
@@ -1727,25 +1723,32 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-      - name: Install the container image and sdn-js package and verify the container's SDN network
+      - name: Install the container image and verify its SDN network
         run: npm run test:release-artifacts:docker -- --release-dir dist --timeout-ms 600000 --scenario container
 
+  # The sdn-js install (about two minutes of npm install) is here, beside the
+  # CLI archive, and not on the container job, where it slowed the seed's
+  # first start (dry run 44391918187).
   artifact-docker-test-cli:
-    name: Install and network-test release artifacts (CLI archive)
+    name: Install and network-test release artifacts (CLI archive and sdn-js)
     runs-on: ubuntu-latest
-    needs: [beta-version, cli]
-    # As in cli-update-payloads: both needs must succeed.
-    if: ${{ !cancelled() && needs.beta-version.result == 'success' && needs.cli.result == 'success' }}
+    needs: [beta-version, cli, sdn-js-package]
+    # Every need must succeed (written out as in cli-update-payloads).
+    if: ${{ !cancelled() && needs.beta-version.result == 'success' && needs.cli.result == 'success' && needs.sdn-js-package.result == 'success' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           name: cli-linux-amd64
           path: dist/cli
+      - uses: actions/download-artifact@v4
+        with:
+          name: sdn-js-package
+          path: dist/sdn-js
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-      - name: Install the Linux CLI archive
+      - name: Install the Linux CLI archive and the sdn-js package
         run: npm run test:release-artifacts:docker -- --release-dir dist --timeout-ms 600000 --scenario cli
 
   release:
