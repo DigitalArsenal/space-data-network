@@ -117,7 +117,7 @@ func DefaultNamedOnlyLanes() []LaneSelector {
 // RemovedTrustedImport is peers.trusted_import, removed in 1.2.0: a node
 // imports only the lanes it subscribes to (spacedatanetwork sync
 // subscribe). It is read only so a node updated from 1.1.9 converts its
-// allow list into subscriptions once (node.convertTrustedImport); a later
+// allow list into subscriptions once (node.convertRemovedTrustedImport); a later
 // start reports it as ignored, and a new node refuses to start with it.
 type RemovedTrustedImport struct {
 	NewLanes string         `yaml:"new_lanes,omitempty"`

@@ -151,6 +151,32 @@ time spent receiving, verifying and storing them; the producer's counts its
 follower (`SUBSCRIBER_COUNT`) and exactly the record bytes it served
 (`SERVED_BYTES`), and no follower once the receiver has stopped.
 
+A node imports only the lanes it subscribes to (1.2.0), so every receiving
+daemon of these tests subscribes to the lanes it is meant to import; one that
+does not imports nothing (`TestPublicationRealDaemons/refusal_unsubscribed`,
+`TestPublicationContentAddressRealDaemons`).
+
+`TestPublicationSubscribeRealDaemons` drives the operator commands (`sync
+subscribe`, `sync subscriptions`, `sync status`, `sync unsubscribe`), each
+signed in to its daemon with the node's root key. A new subscription to a
+`replace-current` lane whose producer holds six batches receives only the
+current batch (2,000 of 12,000 records, counted on both sides and in the
+receiver's received records and bytes), then live records within seconds; a
+`keep-all` lane past the receiver's `subscriptions.record_ceiling` is refused
+naming both figures, and `--force` takes the whole lane.
+
+`TestPublicationUpgradeRealDaemons` needs `SDN_E2E_V119_BINARY` (a build of
+tag v1.1.9; `./scripts/ci-local.sh publication` downloads the published
+archive for groups `all` and `publication-4`). On 1.1.9 a receiver imports
+two lanes through `peers.trusted_import` and its ledger; updated alone, it
+converts them to subscriptions, renames the ledger, loses no record, and
+waits for the 1.1.9 producer's statement; a new subscription to that producer
+is refused and `--force --start beginning` follows it; a lane the old allow
+list admitted (a 1.1.9 control receiver imports it) is not imported. With the
+producer updated too, the converted subscriptions start at its current batch
+(only the live records are sent) and each lane equals the producer's, byte
+for byte, while a 1.1.9 follower keeps following the updated producer.
+
 `TestPublicationLaneCountRealDaemons` compares a scan's `TOTAL_COUNT` on one
 daemon with the distinct records sent: lanes with one tag instance (counted
 from the lane counters) and a source whose records sit in two batches
