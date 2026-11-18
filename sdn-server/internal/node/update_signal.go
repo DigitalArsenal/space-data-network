@@ -166,8 +166,8 @@ type UpdateSignalSubscriber struct {
 	pendingSequence int64
 	// inflightSequence is the sequence of the signal that holds the claim.
 	inflightSequence int64
-	handled         map[string]bool
-	installRefusals map[string]error
+	handled          map[string]bool
+	installRefusals  map[string]error
 	// handoffFailures counts helper hand-offs that timed out with nothing
 	// swapped; handoffRetryAt holds every swap until its backoff ends.
 	handoffFailures        int
