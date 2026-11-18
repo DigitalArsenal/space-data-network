@@ -195,6 +195,10 @@ func LaunchSelfUpgrade(paths Paths, opts SelfUpgradeOptions) (*SelfUpgradeLaunch
 	if strings.TrimSpace(opts.UpdateID) == "" {
 		return nil, fmt.Errorf("self-upgrade requires a staged update id")
 	}
+	if paths.IsHome() {
+		// No helper in a home bundle (trial.go).
+		return launchHomeRestart(paths, opts)
+	}
 	source := strings.TrimSpace(opts.SourceExecutable)
 	if source == "" {
 		exe, err := os.Executable()

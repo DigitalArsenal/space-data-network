@@ -460,7 +460,7 @@ func (s *UpdateSignalSubscriber) upgradeTriggered(ctx context.Context, signal *u
 	if err := update.CheckStagedStoreFormat(s.deps.Paths, staged.UpdateID, s.deps.StoreRoot); err != nil {
 		return err
 	}
-	log.Infof("Update %s staged and verified (version %s, sequence %d). Handing the swap to the helper; this daemon stays up until the helper stops it.",
+	log.Infof("Update %s staged and verified (version %s, sequence %d). Installing it; this daemon keeps serving until it restarts for it.",
 		staged.UpdateID, staged.Result.Version, staged.Result.Sequence)
 
 	launch, err := s.deps.Launch(s.deps.Paths, update.SelfUpgradeOptions{
@@ -476,6 +476,11 @@ func (s *UpdateSignalSubscriber) upgradeTriggered(ctx context.Context, signal *u
 	})
 	if err != nil {
 		return err
+	}
+	if s.deps.Paths.IsHome() {
+		log.Infof("Update %s installed in %s as a trial (%s). This daemon stops and starts again through the installed path, which runs it; it is rolled back if it does not answer ready within %s.",
+			staged.UpdateID, s.deps.Paths.Root, launch.Mode, s.deps.HealthTimeout)
+		return nil
 	}
 	log.Infof("Self-upgrade to %s launched (%s%s, pid %d). The helper will stop this daemon, apply, and roll back to the previous slot if it does not come back healthy within %s.",
 		staged.UpdateID, launch.Mode, unitSuffix(launch.Unit), launch.PID, s.deps.HealthTimeout)

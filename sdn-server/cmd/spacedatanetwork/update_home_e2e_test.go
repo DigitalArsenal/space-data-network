@@ -1,50 +1,148 @@
 package main
 
-// UPDATES FROM A READ-ONLY INSTALL, ON REAL DAEMONS (stack issue 846).
+// UPDATES OF A NODE THAT CANNOT WRITE ITS INSTALL FOLDER, UNDER A SUPERVISOR,
+// WITH NO HELPER, ON REAL DAEMONS (stack issue 846).
 //
 // The node is installed in a folder its account cannot write (every folder of
-// the bundle is mode 0555, and the test runs as an ordinary user), the way a
-// bundle under /opt owned by root is run by an ordinary account. Three
-// behaviors, in order, on one install:
+// the bundle is mode 0555; the test runs as an ordinary user), and it runs
+// under a supervisor that does what a system unit with Restart=always does
+// and nothing more: it starts the INSTALLED command and starts it again when
+// it exits. Updates arrive as signed signals on the update topic. Steps, in
+// order, on one install:
 //
-//	updates   `update install` of v2 goes through the helper into the home
-//	          bundle ($HOME/.spacedatanetwork/bundle) and passes the health
-//	          gate; the install folder is unchanged; a restart of the
-//	          INSTALLED path, as a supervisor does it, runs v2, and so does a
-//	          command typed against the installed path.
-//	rollback  `update install` of v3 (never ready) fails its health gate, is
-//	          quarantined in the home bundle, and v2 runs again; a restart of
-//	          the installed path runs v2.
-//	tampered  a byte appended to the home build's binary: a restart of the
-//	          installed path refuses the home build, says so, and runs the
-//	          installed v1.
+//	signal-good      v2 is announced: the daemon installs it into
+//	                 $HOME/.spacedatanetwork/bundle, restarts through the
+//	                 installed path in its own process, and v2 passes its
+//	                 trial (health-passed). The install folder is unchanged; a
+//	                 command typed against the installed path runs v2.
+//	signal-bad       v3 (never ready) is announced: it is installed and
+//	                 started as a trial, does not answer ready within the
+//	                 health timeout, and is rolled back to v2 and quarantined
+//	                 (health-failed, health-reverted, updates/failed/<v3>).
+//	tampered-pending with the node stopped, `update install` puts v4 in the
+//	                 home bundle as a pending trial; one byte is appended to
+//	                 its binary; the next start refuses it, quarantines it and
+//	                 runs v2.
+//	typed-install    with the node running, `update install` of v5 restarts
+//	                 the daemon for it and reports daemon_health=healthy.
 //
-// Gated and run like TestUpdateChannelRealDaemonE2E, of which it is a subtest.
+// Throughout: the supervisor started the daemon once (every restart for an
+// update is the same process), no helper ran (no updates/helper/ and no
+// stop-requested in the ledger), and nothing was written in the install
+// folder. Gated and run like TestUpdateChannelRealDaemonE2E, of which it is a
+// subtest.
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/base64"
-	"encoding/hex"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
 
-	"github.com/spacedatanetwork/sdn-server/internal/config"
+	libp2p "github.com/libp2p/go-libp2p"
+	ps "github.com/libp2p/go-libp2p-pubsub"
+
 	"github.com/spacedatanetwork/sdn-server/internal/update"
 )
 
+// restartLoop stands in for a system unit with Restart=always: it starts the
+// installed command and starts it again whenever it exits.
+type restartLoop struct {
+	d        *pushDaemon
+	mu       sync.Mutex
+	starts   int
+	pid      int
+	stopping bool
+	log      string
+	done     chan struct{}
+}
+
+func startRestartLoop(t *testing.T, d *pushDaemon) *restartLoop {
+	t.Helper()
+	l := &restartLoop{d: d, done: make(chan struct{})}
+	go func() {
+		defer close(l.done)
+		for {
+			l.mu.Lock()
+			if l.stopping {
+				l.mu.Unlock()
+				return
+			}
+			l.starts++
+			name := filepath.Join(d.work, fmt.Sprintf("supervised-%d.log", len(d.logPaths)))
+			d.logPaths = append(d.logPaths, name)
+			l.log = name
+			l.mu.Unlock()
+			out, err := os.Create(name)
+			if err != nil {
+				return
+			}
+			cmd := exec.Command(d.exe, "daemon", "--allow-multi-daemon", "--config", d.cfg)
+			cmd.Dir, cmd.Env, cmd.Stdout, cmd.Stderr = d.work, d.env, out, out
+			if err := cmd.Start(); err != nil {
+				out.Close()
+				return
+			}
+			l.mu.Lock()
+			l.pid = cmd.Process.Pid
+			l.mu.Unlock()
+			d.tracker.add(cmd.Process.Pid)
+			_ = cmd.Wait()
+			out.Close()
+			time.Sleep(time.Second)
+		}
+	}()
+	for {
+		if starts, pid := l.state(); starts > 0 && pid > 0 {
+			return l
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// lastLog is the log of the daemon the loop started last.
+func (l *restartLoop) lastLog() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.log
+}
+
+func (l *restartLoop) state() (starts, pid int) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.starts, l.pid
+}
+
+func (l *restartLoop) stop(t *testing.T) {
+	t.Helper()
+	l.mu.Lock()
+	l.stopping = true
+	pid := l.pid
+	l.mu.Unlock()
+	if pid > 0 {
+		_ = syscall.Kill(pid, syscall.SIGTERM)
+	}
+	select {
+	case <-l.done:
+	case <-time.After(3 * time.Minute):
+		t.Fatalf("the supervised daemon (pid %d) did not stop within 3m", pid)
+	}
+}
+
 func runRealHomeUpdate(t *testing.T) {
-	healthSeconds := envInt(t, "SDN_E2E_REAL_DAEMON_HEALTH_SECONDS", 180)
-	bootBudget := time.Duration(envInt(t, "SDN_E2E_REAL_DAEMON_BOOT_SECONDS", 600)) * time.Second
+	health := envInt(t, "SDN_E2E_REAL_DAEMON_HEALTH_SECONDS", 180)
+	boot := time.Duration(envInt(t, "SDN_E2E_REAL_DAEMON_BOOT_SECONDS", 600)) * time.Second
 
 	work, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
@@ -53,190 +151,188 @@ func runRealHomeUpdate(t *testing.T) {
 	keepRealLogs(t, work)
 	builds := realE2EBuilds(t, filepath.Join(work, "builds"))
 	v1, v2, v3 := builds[0], builds[1], builds[2]
+	v4, v5 := builds[1], builds[1]
+	v4.name, v4.version, v4.updateID, v4.sequence = "v4", "1.1.2-e2e.4", "cli-bundle-release-e2e-4", 400
+	v5.name, v5.version, v5.updateID, v5.sequence = "v5", "1.1.2-e2e.5", "cli-bundle-release-e2e-5", 500
 
-	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	pub, key, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
-	feed := newRealE2EFeed(t, work)
-
-	// The installed bundle: v1, its roots, then made read-only.
-	root := filepath.Join(work, "install")
-	exe := filepath.Join(root, "bin", "spacedatanetwork")
-	copyExecutable(t, v1.path, exe)
-	writeE2EJSON(t, filepath.Join(root, "manifest.json"), realBundleManifest(v1, feed.base))
 	spki, err := x509.MarshalPKIXPublicKey(pub)
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeE2EJSON(t, filepath.Join(root, "trust", "update-roots.json"), update.TrustedRoots{update.RootKeyID(pub): base64.StdEncoding.EncodeToString(spki)})
+	roots := update.TrustedRoots{update.RootKeyID(pub): base64.StdEncoding.EncodeToString(spki)}
+	feed := newRealE2EFeed(t, work)
+
+	// The installed bundle (v1), then made read-only for this account.
+	d := newPushDaemon(t, filepath.Join(work, "node"), v1, feed, roots, health)
+	d.tracker.root = work
+	root := d.paths.Root
 	setTreeWritable(t, root, false)
 	t.Cleanup(func() { setTreeWritable(t, root, true) })
 	if f, err := os.Create(filepath.Join(root, "probe")); err == nil {
 		f.Close()
 		t.Fatal("the install folder is writable by this account; the test needs one it cannot write")
 	}
-
-	home := filepath.Join(work, "home")
-	store := filepath.Join(work, "store")
-	for _, dir := range []string{home, store} {
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			t.Fatal(err)
-		}
-	}
-	homeRoot := filepath.Join(home, ".spacedatanetwork", "bundle")
-	homePaths := update.PathsFor(homeRoot)
-	adminPort := freeLoopbackPort(t)
-	cfg := filepath.Join(work, "config.yaml")
-	writeRealDaemonConfig(t, cfg, store, adminPort, freeLoopbackPort(t), freeLoopbackPort(t), healthSeconds)
-	requireIsolatedConfig(t, cfg)
-	adminBase := "http://127.0.0.1:" + strconv.Itoa(adminPort)
-	secret := make([]byte, 32)
-	if _, err := rand.Read(secret); err != nil {
-		t.Fatal(err)
-	}
-	keyPassword := filepath.Join(work, "key-password")
-	if err := os.WriteFile(keyPassword, []byte(hex.EncodeToString(secret)), 0o400); err != nil {
-		t.Fatal(err)
-	}
-	env := append(environWithout("INVOCATION_ID", "SDN_CONFIG", "SDN_UPDATE_TRUST_ROOTS", "HOME", "SSL_CERT_FILE", "SSL_CERT_DIR", config.EnvKeyPassword, config.EnvKeyPasswordFile),
-		"HOME="+home, "SSL_CERT_FILE="+feed.certFile, config.EnvKeyPasswordFile+"="+keyPassword)
-	if os.Getenv("XDG_CACHE_HOME") == "" {
-		if cache, err := os.UserCacheDir(); err == nil {
-			env = append(env, "XDG_CACHE_HOME="+cache)
-		}
-	}
-
-	// The test's processes run from the install folder or from the home
-	// bundle, both under work.
-	tracker := &realDaemonTracker{root: work}
-	t.Cleanup(tracker.stopAll)
-	s := &realScenario{work: work, exe: exe, cfg: cfg, adminBase: adminBase, store: store, env: env, feed: feed, healthSeconds: healthSeconds}
-	daemonPID := 0
-	daemonLogs := []string{}
-	start := func(label string) string {
+	homeRoot := filepath.Join(d.work, "home", ".spacedatanetwork", "bundle")
+	homePaths := func() update.Paths { return update.PathsFor(homeRoot) }
+	installedUntouched := func(t *testing.T) {
 		t.Helper()
-		logPath := filepath.Join(work, "daemon-"+label+".log")
-		file, err := os.Create(logPath)
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { file.Close() })
-		// The installed path, as a service unit names it.
-		daemon := exec.Command(exe, "daemon", "--allow-multi-daemon", "--config", cfg)
-		daemon.Dir, daemon.Env, daemon.Stdout, daemon.Stderr = work, env, file, file
-		if err := daemon.Start(); err != nil {
-			t.Fatal(err)
-		}
-		daemonPID = daemon.Process.Pid
-		tracker.add(daemonPID)
-		go func() { _ = daemon.Wait() }()
-		waitRealReady(t, adminBase, bootBudget, logPath)
-		requireIsolated(t, logPath)
-		daemonLogs = append(daemonLogs, logPath)
-		return logPath
-	}
-	stop := func() {
-		t.Helper()
-		if daemonPID == 0 || !processAlive(daemonPID) {
-			t.Fatalf("no running daemon to stop (pid %d)", daemonPID)
-		}
-		_ = syscall.Kill(daemonPID, syscall.SIGTERM)
-		deadline := time.Now().Add(2 * time.Minute)
-		for processAlive(daemonPID) {
-			if time.Now().After(deadline) {
-				t.Fatalf("the daemon (pid %d) did not stop within 2m", daemonPID)
-			}
-			time.Sleep(250 * time.Millisecond)
-		}
-	}
-	install := func(b realBuild, label string) string {
-		t.Helper()
-		feed.publish(t, b, priv)
-		out, err := installThroughCLI(t, s, b, label)
-		tracker.addFrom(out)
-		if err != nil {
-			t.Fatalf("update install (%s): %v\n%s", label, err, readFileString(out))
-		}
-		if !strings.Contains(readFileString(out), "helper_started=") {
-			t.Fatalf("update install (%s) did not go through the helper:\n%s", label, readFileString(out))
-		}
-		waitRealHelper(t, tracker, out, time.Duration(3*healthSeconds)*time.Second+bootBudget)
-		requireIsolated(t, out)
-		daemonLogs = append(daemonLogs, out)
-		// The helper restarted the daemon through the installed path: the
-		// last pid it names is the daemon now serving.
-		if matches := restartPIDPattern.FindAllStringSubmatch(readFileString(out), -1); len(matches) > 0 {
-			daemonPID, _ = strconv.Atoi(matches[len(matches)-1][1])
-		}
-		return out
-	}
-	typedVersion := func(label string) string {
-		t.Helper()
-		cmd := exec.Command(exe, "version")
-		cmd.Dir, cmd.Env = work, env
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("version (%s): %v\n%s", label, err, out)
-		}
-		return string(out)
-	}
-	installedUntouched := func() {
-		t.Helper()
-		if got := e2eFileSHA256(exe); got != v1.sha {
+		if got := e2eFileSHA256(d.exe); got != v1.sha {
 			t.Fatalf("the installed binary changed: sha256 %s, want v1 %s", got, v1.sha)
 		}
 		if _, err := os.Stat(filepath.Join(root, "updates")); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("something was written into the install folder (updates/: %v)", err)
 		}
 	}
-
-	start("v1")
-	requireRealIdentity(t, adminBase, v1)
-
-	if !t.Run("updates", func(t *testing.T) {
-		out := install(v2, "v2")
-		requireRealIdentity(t, adminBase, v2)
-		if !ledgerHas(t, homeRoot, v2.updateID, "health-passed") {
-			t.Fatalf("the home ledger shows no health-passed for %s: %v\n%s", v2.updateID, ledgerActions(t, homeRoot), readFileString(out))
+	noHelper := func(t *testing.T) {
+		t.Helper()
+		if _, err := os.Stat(filepath.Join(homeRoot, "updates", "helper")); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("an update helper was prepared (updates/helper: %v)", err)
 		}
-		if state, err := update.LoadState(homePaths); err != nil || state.UpdateID != v2.updateID {
-			t.Fatalf("home state after v2 = %+v (%v)", state, err)
+		if ledgerHasAction(homeRoot, "stop-requested") {
+			t.Fatalf("the ledger shows a helper's stop request: %v", ledgerActions(t, homeRoot))
 		}
-		installedUntouched()
-		// A supervisor's restart: the installed path again.
-		stop()
-		start("v2-restarted")
-		requireRealIdentity(t, adminBase, v2)
-		if text := typedVersion("after v2"); !strings.Contains(text, "e2e-v2") {
-			t.Fatalf("a command typed against the installed path did not run v2:\n%s", text)
+	}
+	waitFor := func(t *testing.T, what string, budget time.Duration, ok func() bool) {
+		t.Helper()
+		deadline := time.Now().Add(budget)
+		for !ok() {
+			if time.Now().After(deadline) {
+				t.Fatalf("timed out after %s waiting for %s\nledger: %v\n%s", budget, what, ledgerActionsIfPresent(homeRoot), tailString(d.logs(), 60))
+			}
+			time.Sleep(time.Second)
+		}
+	}
+	typed := func(t *testing.T, label string, args ...string) (string, error) {
+		t.Helper()
+		path := filepath.Join(d.work, label+".log")
+		out, err := os.Create(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer out.Close()
+		cmd := exec.Command(d.exe, append(args, "--config", d.cfg)...)
+		cmd.Dir, cmd.Env, cmd.Stdout, cmd.Stderr = d.work, d.env, out, out
+		err = cmd.Run()
+		return readFileString(path), err
+	}
+
+	// The signal sender: a peer on the update topic, as the publishing node is.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sender, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"), libp2p.DisableRelay())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sender.Close()
+	gossip, err := ps.NewGossipSub(ctx, sender)
+	if err != nil {
+		t.Fatal(err)
+	}
+	topic, err := gossip.Join(update.SignalTopic(realE2EChannel))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer topic.Close()
+	announce := func(t *testing.T, b realBuild) {
+		t.Helper()
+		feed.publish(t, b, key)
+		feed.mu.Lock()
+		var entry update.ProviderFeedUpdate
+		for _, e := range feed.entries {
+			if e.UpdateID == b.updateID {
+				entry = e
+			}
+		}
+		feed.mu.Unlock()
+		raw, err := update.SignalFromFeedEntry(entry, feed.base, time.Now(), false).Marshal()
+		if err != nil {
+			t.Fatal(err)
+		}
+		signed := resignPushSignal(t, raw, key, 0)
+		// The daemon restarted for the last update has a new listen address.
+		if err := sender.Connect(ctx, pushPeer(t, d.adminBase)); err != nil {
+			t.Fatal(err)
+		}
+		waitPush(t, 30*time.Second, "the daemon on the update topic", func() bool { return len(topic.ListPeers()) >= 1 })
+		time.Sleep(3 * time.Second)
+		if err := topic.Publish(ctx, signed); err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("announced %s", b.updateID)
+	}
+
+	loop := startRestartLoop(t, d)
+	stopped := false
+	t.Cleanup(func() {
+		if !stopped {
+			loop.stop(t)
+		}
+	})
+	waitRealReady(t, d.adminBase, boot, loop.lastLog())
+	requireRealIdentity(t, d.adminBase, v1)
+	_, servingPID := loop.state()
+	sameProcess := func(t *testing.T) {
+		t.Helper()
+		if starts, pid := loop.state(); starts != 1 || pid != servingPID || !processAlive(servingPID) {
+			t.Fatalf("the supervisor started the daemon %d times (pid %d, first %d): an update restart must be the same process", starts, pid, servingPID)
+		}
+	}
+
+	if !t.Run("signal-good", func(t *testing.T) {
+		announce(t, v2)
+		waitFor(t, "v2 to pass its trial", boot+time.Duration(health)*time.Second, func() bool {
+			return pushIdentityMatches(d.adminBase, v2) && ledgerHasIfPresent(homeRoot, v2.updateID, "health-passed")
+		})
+		requireRealIdentity(t, d.adminBase, v2)
+		if trial, _ := update.ReadTrial(homePaths()); trial != nil {
+			t.Fatalf("v2 passed but its trial is still pending: %+v", trial)
+		}
+		sameProcess(t)
+		noHelper(t)
+		installedUntouched(t)
+		if text, err := typed(t, "version-v2", "version"); err != nil || !strings.Contains(text, "e2e-v2") {
+			t.Fatalf("a command typed against the installed path did not run v2 (%v):\n%s", err, text)
 		}
 	}) {
 		return
 	}
 
-	if !t.Run("rollback", func(t *testing.T) {
-		out := install(v3, "v3")
-		if text := readFileString(out); !strings.Contains(text, "rolled back to "+v2.version) {
-			t.Fatalf("the helper did not report a rollback to %s:\n%s", v2.version, text)
+	if !t.Run("signal-bad", func(t *testing.T) {
+		announce(t, v3)
+		waitFor(t, "v3 to be reverted", boot+3*time.Duration(health)*time.Second, func() bool {
+			return update.HasFailedUpdate(homePaths(), v3.updateID) && ledgerHasIfPresent(homeRoot, v3.updateID, "health-reverted") && pushIdentityMatches(d.adminBase, v2)
+		})
+		requireRealIdentity(t, d.adminBase, v2)
+		for _, action := range []string{"apply", "health-failed", "health-reverted"} {
+			if !ledgerHas(t, homeRoot, v3.updateID, action) {
+				t.Fatalf("no %s for v3 in the ledger: %v", action, ledgerActions(t, homeRoot))
+			}
 		}
-		requireRealIdentity(t, adminBase, v2)
-		if !update.HasFailedUpdate(homePaths, v3.updateID) {
-			t.Fatalf("v3 was reverted but not quarantined in the home bundle")
+		if !strings.Contains(d.logs(), "failed its trial") {
+			t.Fatalf("the daemon did not log the failed trial:\n%s", tailString(d.logs(), 60))
 		}
-		if !ledgerHas(t, homeRoot, v3.updateID, "health-failed") {
-			t.Fatalf("the home ledger shows no health-failed for %s: %v", v3.updateID, ledgerActions(t, homeRoot))
-		}
-		installedUntouched()
-		stop()
-		start("v2-after-rollback")
-		requireRealIdentity(t, adminBase, v2)
+		sameProcess(t)
+		noHelper(t)
+		installedUntouched(t)
 	}) {
 		return
 	}
 
-	t.Run("tampered", func(t *testing.T) {
-		stop()
+	if !t.Run("tampered-pending", func(t *testing.T) {
+		loop.stop(t)
+		stopped = true
+		feed.publish(t, v4, key)
+		text, err := typed(t, "install-v4", "update", "install")
+		if err != nil || !strings.Contains(text, "installed_update="+v4.updateID) || !strings.Contains(text, "next=start the node") {
+			t.Fatalf("update install of v4 with no daemon (%v):\n%s", err, text)
+		}
+		if trial, _ := update.ReadTrial(homePaths()); trial == nil || trial.UpdateID != v4.updateID {
+			t.Fatalf("v4 is not a pending trial: %+v", trial)
+		}
 		binary := filepath.Join(homeRoot, "bin", "spacedatanetwork")
 		f, err := os.OpenFile(binary, os.O_APPEND|os.O_WRONLY, 0)
 		if err != nil {
@@ -246,21 +342,62 @@ func runRealHomeUpdate(t *testing.T) {
 			t.Fatal(err)
 		}
 		f.Close()
-		logPath := start("tampered")
-		requireRealIdentity(t, adminBase, v1)
-		text := readFileString(logPath)
-		if !strings.Contains(text, "is refused") || !strings.Contains(text, "bin/spacedatanetwork differs") || !strings.Contains(text, "running the installed build") {
-			t.Fatalf("the daemon did not say why it refused the home build:\n%s", tailString(text, 40))
+		// A typed command trusts v4's recorded verification only while its
+		// files are unchanged: this one verifies again and refuses it.
+		if text, err := typed(t, "version-tampered", "version"); err != nil || !strings.Contains(text, "is refused") || !strings.Contains(text, "e2e-v1") {
+			t.Fatalf("a command typed against the installed path did not refuse the changed v4 (%v):\n%s", err, text)
 		}
-		if text := typedVersion("tampered"); !strings.Contains(text, "e2e-v1") || !strings.Contains(text, "is refused") {
-			t.Fatalf("a command typed against the installed path did not refuse the tampered build:\n%s", text)
+		loop = startRestartLoop(t, d)
+		stopped = false
+		waitRealReady(t, d.adminBase, boot, loop.lastLog())
+		requireRealIdentity(t, d.adminBase, v2)
+		if !update.HasFailedUpdate(homePaths(), v4.updateID) {
+			t.Fatalf("the tampered v4 was not quarantined")
 		}
-		installedUntouched()
+		log := readFileString(loop.lastLog())
+		if !strings.Contains(log, "bin/spacedatanetwork differs") || !strings.Contains(log, "quarantined") {
+			t.Fatalf("the start did not say why it refused v4:\n%s", tailString(log, 40))
+		}
+		_, servingPID = loop.state()
+		noHelper(t)
+		installedUntouched(t)
+	}) {
+		return
+	}
+
+	t.Run("typed-install", func(t *testing.T) {
+		feed.publish(t, v5, key)
+		text, err := typed(t, "install-v5", "update", "install")
+		if err != nil || !strings.Contains(text, "daemon_restart=requested") || !strings.Contains(text, "daemon_health=healthy") ||
+			!strings.Contains(text, "daemon_identity=verified bundle_version="+v5.version) || strings.Contains(text, "helper_") {
+			t.Fatalf("update install of v5 with the daemon running (%v):\n%s", err, text)
+		}
+		requireRealIdentity(t, d.adminBase, v5)
+		sameProcess(t)
+		noHelper(t)
+		installedUntouched(t)
 	})
 
-	for _, log := range daemonLogs {
+	for _, log := range d.logPaths {
 		requireIsolated(t, log)
 	}
+}
+
+func ledgerHasAction(root, action string) bool {
+	return strings.Contains(readFileString(filepath.Join(root, "deploy-ledger.jsonl")), `"action":"`+action+`"`)
+}
+
+func ledgerActionsIfPresent(root string) []string {
+	var out []string
+	for _, line := range strings.Split(readFileString(filepath.Join(root, "deploy-ledger.jsonl")), "\n") {
+		if i := strings.Index(line, `"action":"`); i >= 0 {
+			rest := line[i+len(`"action":"`):]
+			if j := strings.Index(rest, `"`); j >= 0 {
+				out = append(out, rest[:j])
+			}
+		}
+	}
+	return out
 }
 
 // setTreeWritable makes every folder of root writable by its owner, or no

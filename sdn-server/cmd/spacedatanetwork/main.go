@@ -323,6 +323,9 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+	if len(execAfterDaemon) > 0 {
+		restartThroughInstalledPath(execAfterDaemon)
+	}
 }
 
 func runStatus(cmd *cobra.Command) error {
@@ -847,6 +850,16 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	updateShutdown := make(chan struct{}, 1)
+	// A home bundle's update stops this daemon and starts the installed path
+	// again in this same process (internal/update/trial.go).
+	homePaths := sdnupdate.PathsFor(bundle.ResolveCurrent().Root)
+	sdnupdate.OnRestartForUpdate(func() {
+		select {
+		case updateShutdown <- struct{}{}:
+		default:
+		}
+	})
+	var readiness func(context.Context) string
 
 	// Load configuration
 	cfg, cfgResolution, err := config.LoadResolved(configPath)
@@ -2630,7 +2643,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			// unavailable rather than reaching a CDN.
 			// Load-balancer and monitoring surface: /health, /ready (anonymous,
 			// a status word) and /metrics (operator session). OPS-08.
-			mountHealthRoutes(adminMux, healthDeps{
+			readiness = mountHealthRoutes(adminMux, healthDeps{
 				// internal/node opens no store in edge mode.
 				storeless: cfg.Mode == "edge",
 				dataReady: func() bool {
@@ -3012,6 +3025,9 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 
 	n.StartBackgroundEngineHydration(ctx)
 	n.StartConfiguredFlowServices(ctx)
+	if trialUpdateID != "" && homePaths.IsHome() {
+		go watchTrial(ctx, homePaths, trialUpdateID, cfg.Update.HealthTimeout(), readiness)
+	}
 
 	// Wait for shutdown signal
 	sigChan := make(chan os.Signal, 1)
@@ -3020,6 +3036,9 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	case <-sigChan:
 	case <-updateShutdown:
 		log.Info("Update shutdown requested")
+		if homePaths.IsHome() {
+			execAfterDaemon = homePaths.RestartArgv(os.Args)
+		}
 	}
 
 	log.Info("Shutting down...")

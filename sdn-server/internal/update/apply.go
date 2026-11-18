@@ -431,6 +431,13 @@ func ApplyPrepared(paths Paths, prepared *Prepared, opts ApplyOptions) (*ApplyRe
 		if err := keepProof(paths, candidate); err != nil {
 			return nil, fmt.Errorf("update applied but its signed manifest and archive were not kept, so it will not run: %w", err)
 		}
+		// Not proven until a daemon start of it answers ready (trial.go).
+		if err := writeTrial(paths, &Trial{
+			UpdateID: candidate.UpdateID, Version: candidate.Result.Version, Sequence: candidate.Result.Sequence,
+			Trigger: strings.TrimSpace(opts.Trigger), SignalKeyID: strings.TrimSpace(opts.SignalKeyID), InstalledAt: appliedAt,
+		}); err != nil {
+			return nil, fmt.Errorf("update applied but its trial was not recorded: %w", err)
+		}
 	}
 	if err := os.RemoveAll(candidate.Dir); err != nil {
 		return nil, fmt.Errorf("update applied but staged cleanup failed: %w", err)

@@ -64,7 +64,7 @@ const readyProbeTimeout = 2 * time.Second
 // HTTP status of /health is unchanged by degradation: a failing CelesTrak lane
 // is not a reason for a load balancer to pull the node out of rotation, it is
 // a reason for an operator to look.
-func mountHealthRoutes(mux *http.ServeMux, deps healthDeps) {
+func mountHealthRoutes(mux *http.ServeMux, deps healthDeps) func(context.Context) string {
 	probe := &boundedReadinessProbe{}
 	health := api.HealthHandler(deps.alerts)
 	ready := func(w http.ResponseWriter, r *http.Request) {
@@ -97,6 +97,7 @@ func mountHealthRoutes(mux *http.ServeMux, deps healthDeps) {
 	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
 		gateAdminOnlyHandler(w, r, promHandler, deps.authHandler, deps.requireAuth)
 	})
+	return func(ctx context.Context) string { return probe.check(ctx, deps) }
 }
 
 // One outstanding probe is shared by all requests. A stuck store cannot create

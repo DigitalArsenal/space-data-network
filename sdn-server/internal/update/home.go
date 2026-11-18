@@ -48,8 +48,6 @@ import (
 	"sync"
 
 	"github.com/klauspost/compress/zstd"
-
-	"github.com/spacedatanetwork/sdn-server/internal/bundle"
 )
 
 const (
@@ -101,6 +99,16 @@ func pathsIn(bundleRoot string) Paths {
 func PathsFor(bundleRoot string) Paths {
 	if strings.TrimSpace(bundleRoot) == "" {
 		return pathsIn(bundleRoot)
+	}
+	if record, err := readHomeRecord(bundleRoot); err == nil && record != nil {
+		p := pathsIn(bundleRoot)
+		p.Installed = filepath.Clean(record.InstalledRoot)
+		return p
+	}
+	// One spelling of the installed folder, however it was reached (the
+	// record compares it).
+	if resolved, err := filepath.EvalSymlinks(bundleRoot); err == nil {
+		bundleRoot = resolved
 	}
 	if record, err := readHomeRecord(bundleRoot); err == nil && record != nil {
 		p := pathsIn(bundleRoot)
@@ -444,46 +452,6 @@ func homeTrustRoots(paths Paths) (TrustedRoots, error) {
 		roots = m.TrustRoots
 	}
 	return roots, nil
-}
-
-// HomeBuild is a verified home build, ready to run in place of the installed
-// build.
-type HomeBuild struct {
-	Root       string
-	Installed  string
-	Version    string
-	UpdateID   string
-	Executable string
-}
-
-// ChooseHomeBuild decides which build a process started from executable runs.
-// nil, nil: run this build (it is not an installed bundle with a home bundle,
-// or the home bundle holds no build). nil, err: the home bundle holds a build
-// that is refused, err says why; run this build. Otherwise the returned home
-// build verified against the installed build's update roots.
-func ChooseHomeBuild(executable string) (*HomeBuild, error) {
-	if resolved, err := filepath.EvalSymlinks(executable); err == nil {
-		executable = resolved
-	}
-	layout := bundle.ResolveFromExecutable(executable)
-	if layout.Root == "" {
-		return nil, nil
-	}
-	if record, _ := readHomeRecord(layout.Root); record != nil {
-		return nil, nil // this process IS a home build
-	}
-	paths := PathsFor(layout.Root)
-	if !paths.IsHome() {
-		return nil, nil
-	}
-	if _, err := os.Stat(filepath.Join(paths.Root, manifestFileName)); err != nil {
-		return nil, nil
-	}
-	build, err := VerifyHomeBuild(paths)
-	if err != nil {
-		return nil, fmt.Errorf("the build under %s is refused: %w", paths.Root, err)
-	}
-	return build, nil
 }
 
 // VerifyHomeBuild checks the build in a home bundle against the installed

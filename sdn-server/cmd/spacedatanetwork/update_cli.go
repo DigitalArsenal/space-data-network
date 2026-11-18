@@ -236,6 +236,9 @@ var updateInstallCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		if paths.IsHome() && !updateInstallDryRun {
+			return installIntoHome(cmd.OutOrStdout(), cmd.ErrOrStderr(), paths, staged, resolveUpdateStoreRoot(updateInstallStoreRoot, cmd.ErrOrStderr()))
+		}
 		if !updateInstallDryRun && !updateInstallDirect && shouldDelegateInstallToHelper() {
 			token, err := generateUpdateControlToken()
 			if err != nil {
