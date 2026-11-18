@@ -350,10 +350,13 @@ var (
 // Followed streams this node serves at once: per trusted peer, per peer
 // without a trust relation (anonymous), for all anonymous peers together and
 // in total. A stream past any is refused busy, so throwaway peer IDs hold at
-// most followAnonStreamsTotal of the followStreamsTotal slots.
+// most followAnonStreamsTotal of the followStreamsTotal slots. A subscriber
+// follows one stream per lane, and from 1.2.0 a subscription is the only way
+// a node imports, so a peer without a trust relation (a node following nine
+// lanes of one producer) gets as many streams as a trusted one.
 const (
 	followStreamsPerPeer     = 16
-	followAnonStreamsPerPeer = 4
+	followAnonStreamsPerPeer = 16
 	followAnonStreamsTotal   = 64
 	followStreamsTotal       = 256
 )

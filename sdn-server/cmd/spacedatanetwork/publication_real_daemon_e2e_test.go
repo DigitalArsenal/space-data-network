@@ -669,18 +669,28 @@ func (d *publicationDaemon) awaitRecords(t *testing.T, schema, source string, wa
 	d.requireRecords(t, schema, source, want)
 }
 
+// requirePublication waits until the receiver's $DSS of the lane names the
+// producer's publication. A subscribed receiver can hold the records (from
+// the followed stream) before the publication's signed $PNM is
+// materialized, so it is awaited within the budget the records had.
 func (d *publicationDaemon) requirePublication(t *testing.T, source string, pub publicationResult) {
 	t.Helper()
-	raw := d.request(t, "GET", "/api/v1/sync/OMM.fbs/publication-e2e/"+source, "", nil, http.StatusOK)
-	frames, err := syncwire.SplitFrames(raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, frame := range frames {
-		status := DSS.GetSizePrefixedRootAsDSS(frame, 0)
-		if string(status.LAST_PUBLICATION_CID()) == pub.ManifestCID || string(status.LAST_PNM_CID()) == pub.PNMCID {
-			return
+	deadline := time.Now().Add(6 * time.Minute)
+	for {
+		raw := d.request(t, "GET", "/api/v1/sync/OMM.fbs/publication-e2e/"+source, "", nil, http.StatusOK)
+		frames, err := syncwire.SplitFrames(raw)
+		if err != nil {
+			t.Fatal(err)
 		}
+		for _, frame := range frames {
+			status := DSS.GetSizePrefixedRootAsDSS(frame, 0)
+			if string(status.LAST_PUBLICATION_CID()) == pub.ManifestCID || string(status.LAST_PNM_CID()) == pub.PNMCID {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("receiver status does not name the producer publication")
+		}
+		time.Sleep(2 * time.Second)
 	}
-	t.Fatal("receiver status does not name the producer publication")
 }

@@ -215,6 +215,17 @@ func (n *Node) removedImportLanes() ([]ConvertedLane, error) {
 				}
 			}
 		}
+		// An allow entry for a lane this node holds nothing of named no
+		// peer: 1.1.9 imported it from any trusted peer that published it,
+		// so it is followed from each peer of peers.trusted_peers (a peer
+		// that does not hold the lane serves an empty stream).
+		if len(producers) == 0 && len(senders) == 0 && l.FromAllow {
+			for _, p := range n.configuredTrustedPeers() {
+				if p.String() != self {
+					producers[p.String()] = true
+				}
+			}
+		}
 		for p := range producers {
 			l.Producers = append(l.Producers, p)
 		}
@@ -237,6 +248,22 @@ func (n *Node) removedImportLanes() ([]ConvertedLane, error) {
 		out = append(out, ConvertedLane{Schema: w, FromAllow: true, Reason: "an allow selector that does not name one lane (standard, provider and source)"})
 	}
 	return out, ledgerErr
+}
+
+// configuredTrustedPeers is the peers of peers.trusted_peers that this node
+// trusts.
+func (n *Node) configuredTrustedPeers() []peer.ID {
+	var out []peer.ID
+	for _, addr := range n.config.Peers.TrustedPeers {
+		info, err := peer.AddrInfoFromString(addr)
+		if err != nil {
+			continue
+		}
+		if n.peerRegistry != nil && n.peerRegistry.IsTrusted(info.ID) {
+			out = append(out, info.ID)
+		}
+	}
+	return out
 }
 
 // RemovedImportPlan is what converting the removed import gate subscribes

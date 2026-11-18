@@ -216,7 +216,7 @@ func TestPublicationBaseline(t *testing.T) {
 				// A node imports only the lanes it subscribes to (1.2.0): the
 				// receiver subscribes here, so from 1.2.0 this phase measures
 				// the followed stream and the subscribed $PNM path together.
-				b.follow(t, a, source, source, "start=beginning")
+				b.follow(t, a, source, source, "start=beginning&force=1")
 				row = measurePublication(t, a, b, "export-announce-import", source, func() (int64, int64) {
 					ctx, cancel := context.WithTimeout(context.Background(), 12*time.Hour)
 					defer cancel()

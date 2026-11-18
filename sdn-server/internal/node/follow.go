@@ -305,6 +305,9 @@ func (m *followManager) Plan(ctx context.Context, key FollowKey, opts FollowOpti
 	if err != nil {
 		plan.StatementError = err.Error()
 		plan.Refusal = fmt.Sprintf("the producer did not state the lane (%v); a producer before 1.2.0 does not, so its first read cannot be bounded or sized", err)
+		if followNotAuthorized(err) {
+			plan.Refusal = fmt.Sprintf("the producer did not state the lane (%v): it serves this standard's stream only to peers it grants private reads; with --force the subscription admits the lane's signed publications ($PNM)", err)
+		}
 		return plan, nil
 	}
 	plan.FirstReadRecords, plan.FirstReadBytes = plan.Statement.Records, plan.Statement.BatchBytes
@@ -510,6 +513,14 @@ func (m *followManager) run(ctx context.Context, e *followEntry) {
 		if pages > 0 {
 			backoff = time.Second
 		}
+		wait := backoff
+		if followNotAuthorized(err) {
+			// The producer serves this standard's stream only to peers it
+			// grants private reads. The subscription still admits the lane's
+			// signed $PNM publications; the stream is asked again later.
+			wait = followNotAuthorizedWait
+			err = fmt.Errorf("%w; the producer serves this lane's stream only to peers it grants private reads, so the lane imports through its publications ($PNM) until it does", err)
+		}
 		m.mu.Lock()
 		e.status.Connected = false
 		if err != nil {
@@ -520,11 +531,11 @@ func (m *followManager) run(ctx context.Context, e *followEntry) {
 		if followRefusal(err) {
 			m.n.alerts.Raise(ops.KindFollowRefused, followAlertSubject(key), ops.SeverityError, err.Error())
 		}
-		log.Warnf("Followed lane %s %s/%s from %s: %.1024q; reconnecting in %s", key.Schema, key.ProviderID, key.SourceName, key.Producer, fmt.Sprint(err), backoff)
+		log.Warnf("Followed lane %s %s/%s from %s: %.1024q; reconnecting in %s", key.Schema, key.ProviderID, key.SourceName, key.Producer, fmt.Sprint(err), wait)
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(backoff):
+		case <-time.After(wait):
 		}
 		backoff = min(backoff*2, 30*time.Second)
 	}
@@ -544,6 +555,18 @@ func (m *followManager) followGuarded(ctx context.Context, e *followEntry) (page
 		}
 	}()
 	return m.followOnce(ctx, e)
+}
+
+// followNotAuthorizedWait is the wait before a followed stream the producer
+// refused as not authorized is asked again.
+const followNotAuthorizedWait = 10 * time.Minute
+
+// followNotAuthorized reports a producer that does not serve the stream to
+// this node (a standard off its public read surface, and no private-read
+// grant).
+func followNotAuthorized(err error) bool {
+	var remote *syncwire.RemoteError
+	return errors.As(err, &remote) && remote.Code == "not_authorized"
 }
 
 // followRefusal reports an error that is the producer's fault: a malformed
