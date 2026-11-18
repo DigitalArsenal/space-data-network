@@ -4,14 +4,9 @@ package update
 
 import "os"
 
-// dirWritable reports whether this process can create a file in dir.
-func dirWritable(dir string) bool {
-	f, err := os.CreateTemp(dir, ".sdn-write-check-*")
-	if err != nil {
-		return false
-	}
-	name := f.Name()
-	f.Close()
-	_ = os.Remove(name)
-	return true
-}
+// dirWritable is not consulted on Windows: the install folder is always the
+// update root there (PathsFor), and nothing probes it.
+func dirWritable(string) bool { return true }
+
+// ownedNotShared is not consulted on Windows, which has no home bundle.
+func ownedNotShared(string, os.FileInfo) error { return nil }

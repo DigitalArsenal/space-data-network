@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/config"
@@ -15,9 +17,51 @@ import (
 // trialUpdateID is the update this daemon runs as a trial, if any.
 var trialUpdateID string
 
-// execAfterDaemon is the argv this process replaces itself with once the
-// daemon has stopped for an update of its home bundle (trial.go).
-var execAfterDaemon []string
+// homeRestart is the restart through the installed path that replaces this
+// process once the daemon has stopped for an update of its home bundle.
+type homeRestart struct {
+	argv     []string
+	homeRoot string
+}
+
+var execAfterDaemon *homeRestart
+
+// daemonServing is set once the daemon waits for its stop signal: from then
+// on a stop for an update goes through the ordinary shutdown.
+var daemonServing atomic.Bool
+
+// beforeExec stops the child processes this daemon owns before a forced exec
+// through the installed path (the ordinary shutdown stops them itself). The
+// daemon's one child process is tor (internal/tor); Kubo and the modules run
+// inside the daemon.
+var (
+	beforeExecMu sync.Mutex
+	beforeExec   []func()
+)
+
+func registerBeforeExec(f func()) {
+	beforeExecMu.Lock()
+	beforeExec = append(beforeExec, f)
+	beforeExecMu.Unlock()
+}
+
+func runBeforeExec() {
+	beforeExecMu.Lock()
+	fns := append([]func(){}, beforeExec...)
+	beforeExecMu.Unlock()
+	for _, f := range fns {
+		func() {
+			defer func() { _ = recover() }()
+			f()
+		}()
+	}
+}
+
+// trialTimerDisabled is set only by the sdn_e2e_no_trial_timer test build.
+var trialTimerDisabled bool
+
+// heldDaemonLock keeps this daemon's lock on its home bundle for its life.
+var heldDaemonLock any
 
 // runHomeBuildIfVerified runs, in place of this process, the build an update
 // put in this account's home bundle (internal/update/home.go), when this
@@ -36,9 +80,28 @@ func runHomeBuildIfVerified() {
 	if err != nil {
 		return
 	}
-	check := update.ChooseHomeBuild(exe, isDaemonCommand(os.Args[1:]), storagePathFromArgs())
+	if root := update.HomeBuildRoot(exe); root != "" {
+		if os.Geteuid() == 0 {
+			fmt.Fprintf(os.Stderr, "update: refusing to run as root from the home bundle %s: root never runs a build from a home folder; run the installed program instead\n", root)
+			os.Exit(1)
+		}
+		update.HoldHomeInUse(root)
+		if trialUpdateID != "" && !trialTimerDisabled {
+			startTrialTimer(update.PathsFor(root), trialUpdateID)
+		}
+		return
+	}
+	check := update.ChooseHomeBuild(exe, update.StartCheckOptions{
+		Daemon:        isDaemonCommand(os.Args[1:]),
+		StoreRoot:     storagePathFromArgs,
+		HealthTimeout: healthTimeoutFromArgs,
+	})
 	for _, note := range check.Notes {
 		fmt.Fprintf(os.Stderr, "update: %s\n", note)
+	}
+	if check.Refuse != nil {
+		fmt.Fprintf(os.Stderr, "update: %v\n", check.Refuse)
+		os.Exit(1)
 	}
 	build := check.Build
 	if build == nil {
@@ -47,11 +110,53 @@ func runHomeBuildIfVerified() {
 	env := update.HomeBuildEnv(os.Environ(), build.Installed)
 	if build.Trial != "" {
 		env = append(env, update.TrialEnv+"="+build.Trial)
-		fmt.Fprintf(os.Stderr, "update: starting %s (update %s) as a trial: it must answer ready within the health timeout\n", build.Version, build.Trial)
+		fmt.Fprintf(os.Stderr, "update: starting %s (update %s) as a trial: it must answer ready by %s\n", build.Version, build.Trial, build.Deadline)
 	}
 	if err := execHomeBuild(build.Executable, os.Args, env); err != nil {
 		fmt.Fprintf(os.Stderr, "update: cannot start the build under %s: %v; running the installed build\n", build.Root, err)
 	}
+}
+
+// startTrialTimer enforces a trial's deadline from the first instruction of
+// the trial build: a build that never answers ready, wherever it is stuck,
+// is stopped at the deadline and replaced by the installed path, which rolls
+// it back. Once the daemon serves, the stop is the ordinary shutdown; if that
+// has not replaced the process within the shutdown watchdog's bound, or the
+// daemon never got that far, the timer stops the daemon's child processes and
+// replaces the process itself.
+func startTrialTimer(paths update.Paths, id string) {
+	deadline, err := update.TrialDeadline(paths, id)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "update: the trial of %s has no deadline (%v); the installed path rolls it back at its next start\n", id, err)
+		return
+	}
+	go func() {
+		time.Sleep(time.Until(deadline))
+		trial, err := update.ReadTrial(paths)
+		if err == nil && (trial == nil || trial.UpdateID != id) {
+			return // passed, or already rolled back
+		}
+		reason := "it did not answer ready by its deadline " + deadline.UTC().Format(time.RFC3339)
+		if err == nil && trial.FailReason == "" {
+			_ = update.FailTrial(paths, id, reason)
+		}
+		fmt.Fprintf(os.Stderr, "update: update %s failed its trial (%s); stopping, and the installed path rolls it back\n", id, reason)
+		if daemonServing.Load() && update.RequestRestartForUpdate() {
+			time.Sleep(shutdownWatchdogTimeout + 15*time.Second)
+		}
+		runBeforeExec()
+		restartThroughInstalledPath(&homeRestart{argv: paths.RestartArgv(os.Args), homeRoot: paths.Root})
+	}()
+}
+
+// healthTimeoutFromArgs is update.health_timeout_seconds of the config this
+// command names. Only a daemon start that starts a trial reads it.
+func healthTimeoutFromArgs() time.Duration {
+	cfg, _, err := config.LoadResolved(configPathFromArgs())
+	if err != nil || cfg == nil {
+		return config.Default().Update.HealthTimeout()
+	}
+	return cfg.Update.HealthTimeout()
 }
 
 // isDaemonCommand reports whether args run the daemon: its first word that is
@@ -72,10 +177,9 @@ func isDaemonCommand(args []string) bool {
 	return false
 }
 
-// storagePathFromArgs is storage.path of the config this command names (-c /
-// --config, else the usual resolution), read before cobra parses flags. The
-// home bundle falls back to it when HOME is unset or cannot be written.
-func storagePathFromArgs() string {
+// configPathFromArgs is the -c / --config this command names, read before
+// cobra parses flags.
+func configPathFromArgs() string {
 	path := ""
 	args := os.Args[1:]
 	for i := 0; i < len(args); i++ {
@@ -94,7 +198,14 @@ func storagePathFromArgs() string {
 			path = strings.TrimPrefix(arg, "-c=")
 		}
 	}
-	cfg, _, err := config.LoadResolved(path)
+	return path
+}
+
+// storagePathFromArgs is storage.path of the config this command names. It is
+// read only when it is needed: the home bundle's fallback when the account has
+// no usable home folder, and the store-format guard of a revert.
+func storagePathFromArgs() string {
+	cfg, _, err := config.LoadResolved(configPathFromArgs())
 	if err != nil || cfg == nil || strings.TrimSpace(cfg.Storage.Path) == "" {
 		return ""
 	}
@@ -105,19 +216,24 @@ func storagePathFromArgs() string {
 }
 
 // watchTrial is the trial build's health gate (internal/update/trial.go): it
-// must answer ready within timeout. If it does, the trial passes; if not, it
-// records why and stops, and the installed path it restarts through rolls it
-// back.
-func watchTrial(ctx context.Context, paths update.Paths, id string, timeout time.Duration, readiness func(context.Context) string) {
+// must answer ready by the trial's deadline, set by the start check before
+// this build started. If it does, the trial passes; if not, it records why and
+// stops, and the installed path it restarts through rolls it back.
+// startTrialTimer enforces the same deadline when this never runs.
+func watchTrial(ctx context.Context, paths update.Paths, id string, readiness func(context.Context) string) {
+	deadline, err := update.TrialDeadline(paths, id)
+	if err != nil {
+		log.Errorf("Update %s: the trial has no deadline (%v); the installed path rolls it back at its next start", id, err)
+		return
+	}
 	if readiness == nil {
-		log.Warnf("Update %s: the admin listener is off, so readiness cannot be read; the trial passes without a health gate", id)
+		log.Errorf("UPDATE %s PASSES ITS TRIAL WITHOUT A HEALTH CHECK: the admin listener is off, so readiness cannot be read. Turn admin.enabled on for a node that updates itself.", id)
 		if err := update.PassTrial(paths, id); err != nil {
 			log.Errorf("Update %s: record the trial: %v", id, err)
 		}
 		return
 	}
-	log.Infof("Update %s runs as a trial: it must answer ready within %s", id, timeout)
-	deadline := time.Now().Add(timeout)
+	log.Infof("Update %s runs as a trial: it must answer ready by %s", id, deadline.UTC().Format(time.RFC3339))
 	last := ""
 	for {
 		probeCtx, cancel := context.WithTimeout(ctx, readyProbeTimeout+time.Second)
@@ -140,7 +256,7 @@ func watchTrial(ctx context.Context, paths update.Paths, id string, timeout time
 		case <-time.After(time.Second):
 		}
 	}
-	reason := fmt.Sprintf("not ready within %s: %s", timeout, last)
+	reason := fmt.Sprintf("not ready by its deadline %s: %s", deadline.UTC().Format(time.RFC3339), last)
 	log.Errorf("Update %s failed its trial (%s); stopping, and the installed path rolls it back", id, reason)
 	if err := update.FailTrial(paths, id, reason); err != nil {
 		log.Errorf("Update %s: record the failed trial: %v", id, err)
@@ -148,13 +264,15 @@ func watchTrial(ctx context.Context, paths update.Paths, id string, timeout time
 	update.RequestRestartForUpdate()
 }
 
-// restartThroughInstalledPath replaces this process, its daemon stopped, with
-// the installed launcher and the daemon's own arguments: the start check
-// there runs the build just installed, as a trial.
-func restartThroughInstalledPath(argv []string) {
-	fmt.Fprintf(os.Stderr, "update: the daemon stopped for an update; starting it again through %s\n", argv[0])
-	if err := execHomeBuild(argv[0], argv, os.Environ()); err != nil {
-		fmt.Fprintf(os.Stderr, "update: cannot start %s: %v\n", argv[0], err)
+// restartThroughInstalledPath replaces this process with the installed
+// launcher and the daemon's own arguments, in the environment the installed
+// launcher had: entries pointing into the home bundle are removed and those
+// the installed start check set aside are given back. The start check there
+// runs the build just installed as a trial, or rolls back a failed one.
+func restartThroughInstalledPath(r *homeRestart) {
+	fmt.Fprintf(os.Stderr, "update: the daemon stopped for an update; starting it again through %s\n", r.argv[0])
+	if err := execHomeBuild(r.argv[0], r.argv, update.InstalledEnv(os.Environ(), r.homeRoot)); err != nil {
+		fmt.Fprintf(os.Stderr, "update: cannot start %s: %v\n", r.argv[0], err)
 		os.Exit(1)
 	}
 }

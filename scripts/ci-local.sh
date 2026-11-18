@@ -705,11 +705,15 @@ run_update_channel_isolated() {
   local bin="${RUNNER_TEMP:-$ROOT/.ci-artifacts}/update-channel-bin"
   local logs="${SDN_E2E_LOG_DIR:?SDN_E2E_LOG_DIR names the log directory}"
   local build
-  step "Update channel fixtures (v1, v2, v3 never ready, the release signal signer)"
+  step "Update channel fixtures (v1, v2, v3 never ready, v6 and v7 never open their store, the release signal signer)"
   mkdir -p "$bin" "$logs"
-  for build in v1 v2 v3; do
+  for build in v1 v2 v3 v6 v7; do
     local build_args=(-o "$bin/spacedatanetwork-$build")
-    if [[ "$build" == v3 ]]; then build_args+=(-tags sdn_e2e_not_ready); fi
+    case "$build" in
+      v3) build_args+=(-tags sdn_e2e_not_ready) ;;
+      v6) build_args+=(-tags sdn_e2e_hang_before_store) ;;
+      v7) build_args+=(-tags sdn_e2e_hang_before_store,sdn_e2e_no_trial_timer) ;;
+    esac
     (cd "$ROOT/sdn-server" && SDN_GO_LDFLAGS="-X github.com/spacedatanetwork/sdn-server/internal/versioninfo.ReleaseTag=e2e-$build" \
       ../scripts/go-with-wasmedge.sh build "${build_args[@]}" ./cmd/spacedatanetwork) || fail "build update fixture $build"
   done

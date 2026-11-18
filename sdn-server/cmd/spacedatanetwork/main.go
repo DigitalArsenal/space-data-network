@@ -319,12 +319,18 @@ func main() {
 	// Log level is set in rootCmd's PersistentPreRun, NOT here: at this point
 	// cobra has not parsed flags yet, so `debug` is always false and --debug
 	// never took effect. See configureCLILogging.
-	if err := rootCmd.Execute(); err != nil {
+	err := rootCmd.Execute()
+	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
 	}
-	if len(execAfterDaemon) > 0 {
+	// A daemon that stopped for an update of its home bundle starts again
+	// through the installed path even when its drain reported an error: the
+	// update is installed and waits for that start.
+	if execAfterDaemon != nil {
 		restartThroughInstalledPath(execAfterDaemon)
+	}
+	if err != nil {
+		os.Exit(1)
 	}
 }
 
@@ -853,6 +859,13 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	// A home bundle's update stops this daemon and starts the installed path
 	// again in this same process (internal/update/trial.go).
 	homePaths := sdnupdate.PathsFor(bundle.ResolveCurrent().Root)
+	if homePaths.IsHome() {
+		lock, err := sdnupdate.LockHomeDaemon(homePaths)
+		if err != nil {
+			return err
+		}
+		heldDaemonLock = lock
+	}
 	sdnupdate.OnRestartForUpdate(func() {
 		select {
 		case updateShutdown <- struct{}{}:
@@ -970,6 +983,12 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create and start the node
+	if hangBeforeStoreOpen {
+		log.Warnf("This build never opens its store (built with the sdn_e2e_hang_before_store tag)")
+		for {
+			time.Sleep(time.Hour)
+		}
+	}
 	n, err := node.New(ctx, cfg)
 	if err != nil {
 		return fmt.Errorf("failed to create node: %w", err)
@@ -1047,6 +1066,14 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to start tor runtime: %w", err)
 	}
 	if torRuntime != nil {
+		// Stopped by the deferred Stop below on every return, before a restart
+		// through the installed path; a forced restart (startTrialTimer)
+		// stops it here.
+		registerBeforeExec(func() {
+			stopCtx, cancelStop := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancelStop()
+			_ = torRuntime.Stop(stopCtx)
+		})
 		defer func() {
 			stopCtx, cancelStop := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancelStop()
@@ -3026,18 +3053,19 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	n.StartBackgroundEngineHydration(ctx)
 	n.StartConfiguredFlowServices(ctx)
 	if trialUpdateID != "" && homePaths.IsHome() {
-		go watchTrial(ctx, homePaths, trialUpdateID, cfg.Update.HealthTimeout(), readiness)
+		go watchTrial(ctx, homePaths, trialUpdateID, readiness)
 	}
 
 	// Wait for shutdown signal
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	daemonServing.Store(true)
 	select {
 	case <-sigChan:
 	case <-updateShutdown:
 		log.Info("Update shutdown requested")
 		if homePaths.IsHome() {
-			execAfterDaemon = homePaths.RestartArgv(os.Args)
+			execAfterDaemon = &homeRestart{argv: homePaths.RestartArgv(os.Args), homeRoot: homePaths.Root}
 		}
 	}
 

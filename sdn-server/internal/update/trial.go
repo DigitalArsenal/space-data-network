@@ -47,6 +47,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/bundle"
 )
@@ -79,6 +80,28 @@ type Trial struct {
 	Starts int `json:"starts"`
 	// FailReason is why the trial build gave up, when it did.
 	FailReason string `json:"fail_reason,omitempty"`
+	// Deadline is when the trial must have answered ready: the start check
+	// sets it, before it starts the trial build, to the start time plus
+	// update.health_timeout_seconds.
+	Deadline string `json:"deadline,omitempty"`
+}
+
+// TrialDeadline is the deadline of the pending trial of updateID.
+func TrialDeadline(paths Paths, updateID string) (time.Time, error) {
+	trial, err := ReadTrial(paths)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if trial == nil || trial.UpdateID != updateID || trial.Deadline == "" {
+		return time.Time{}, fmt.Errorf("no started trial of %s", updateID)
+	}
+	return time.Parse(time.RFC3339Nano, trial.Deadline)
+}
+
+// TrialPending reports whether the trial of updateID is still undecided.
+func TrialPending(paths Paths, updateID string) bool {
+	trial, err := ReadTrial(paths)
+	return err == nil && trial != nil && trial.UpdateID == updateID && trial.FailReason == ""
 }
 
 func trialPath(paths Paths) string { return filepath.Join(paths.Updates, trialFileName) }
@@ -105,10 +128,30 @@ func writeJSONAtomic(path string, v any) error {
 		return err
 	}
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, append(data, '\n'), 0o600); err != nil {
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	if _, err := f.Write(append(data, '\n')); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+	// The rename is durable only once the folder is.
+	if dir, err := os.Open(filepath.Dir(path)); err == nil {
+		_ = dir.Sync()
+		dir.Close()
+	}
+	return nil
 }
 
 func writeTrial(paths Paths, trial *Trial) error {
@@ -137,14 +180,16 @@ func PassTrial(paths Paths, updateID string) error {
 	if err != nil {
 		return err
 	}
-	if err := RecordDeployLedgerEntry(paths, DeployLedgerEntry{
+	// The trial ends first: a stop between the two steps must never leave a
+	// passed build to be rolled back at the next start.
+	if err := clearTrial(paths); err != nil {
+		return err
+	}
+	return RecordDeployLedgerEntry(paths, DeployLedgerEntry{
 		Action: "health-passed", UpdateID: trial.UpdateID, Version: trial.Version, Sequence: state.Sequence,
 		Reason:  "the trial build answered ready, and it is the build in the home bundle",
 		Trigger: trial.Trigger, SignalKeyID: trial.SignalKeyID,
-	}); err != nil {
-		return err
-	}
-	return clearTrial(paths)
+	})
 }
 
 // FailTrial records why the trial build gives up. The installed build's next
@@ -205,6 +250,11 @@ func InstallHomeUpdate(paths Paths, opts InstallHomeOptions) (*ApplyResult, erro
 	if !paths.IsHome() {
 		return nil, errors.New("not a home bundle")
 	}
+	lock, err := LockHomeInstall(paths)
+	if err != nil {
+		return nil, err
+	}
+	defer lock.Release()
 	applyOpts := ApplyOptions{UpdateID: opts.UpdateID, StoreRoot: opts.StoreRoot, Trigger: opts.Trigger, SignalKeyID: opts.SignalKeyID, AllowRollback: opts.AllowRollback}
 	prepared, err := Prepare(paths, applyOpts)
 	if err != nil {
@@ -244,10 +294,8 @@ func launchHomeRestart(paths Paths, opts SelfUpgradeOptions) (*SelfUpgradeLaunch
 // previous slot (which quarantines the build), health-reverted. It reports
 // the version restored.
 func revertTrial(paths Paths, reason, storeRoot string) (string, error) {
-	trial, err := ReadTrial(paths)
-	if err != nil {
-		return "", err
-	}
+	// An unreadable trial record is reverted by what state.json names.
+	trial, _ := ReadTrial(paths)
 	state, err := LoadState(paths)
 	if err != nil {
 		return "", err
@@ -261,9 +309,13 @@ func revertTrial(paths Paths, reason, storeRoot string) (string, error) {
 	}
 	restored, err := Rollback(paths, RollbackOptions{Reason: "trial failed: " + reason, StoreRoot: storeRoot})
 	if err != nil {
+		// Nothing was swapped. The build that failed its trial is the only
+		// one the store-format guard lets open the store, so it keeps
+		// running; the ledger line raises the update_failed alert on the
+		// node, and an operator decides (sdn-signed-updater.md).
 		_ = RecordDeployLedgerEntry(paths, DeployLedgerEntry{Action: "revert-refused", UpdateID: id, Version: version, Sequence: sequence,
-			Reason: "the trial failed (" + reason + ") and the rollback was refused: " + err.Error()})
-		// Nothing was swapped: the build stays, and so does nobody's trial.
+			Reason: "the trial failed (" + reason + ") and the rollback was refused: " + err.Error() + "; the build that failed keeps running until an operator acts"})
+		log.Errorf("update: %s failed its trial (%s) and was NOT rolled back: %v. It keeps running; see the update_failed alert", id, reason, err)
 		_ = clearTrial(paths)
 		return "", err
 	}
@@ -285,6 +337,8 @@ type HomeBuild struct {
 	Executable string
 	// Trial is the update id this start runs as a trial; empty otherwise.
 	Trial string
+	// Deadline is when the trial must have answered ready.
+	Deadline string
 }
 
 // StartCheck says what a process started from executable runs.
@@ -293,15 +347,42 @@ type StartCheck struct {
 	Build *HomeBuild
 	// Notes are lines for the operator: refusals, reverts.
 	Notes []string
+	// Refuse is set when this process must not run at all: a second daemon
+	// for one home bundle.
+	Refuse error
+}
+
+// StartCheckOptions are what the start check reads lazily: only a daemon start
+// with a trial to start reads the config.
+type StartCheckOptions struct {
+	// Daemon is true for `daemon`.
+	Daemon bool
+	// StoreRoot is the node's storage.path, for the store-format guard of a
+	// revert.
+	StoreRoot func() string
+	// HealthTimeout is update.health_timeout_seconds.
+	HealthTimeout func() time.Duration
+	// Now replaces time.Now.
+	Now func() time.Time
 }
 
 // ChooseHomeBuild decides which build a process started from executable runs.
-// daemon is true for `daemon`: the home build is then verified in full, and a
-// pending trial is started, or reverted when its earlier start did not pass.
-// Other commands accept a build whose files are unchanged since its last full
-// verification (the recorded verdict) and verify in full otherwise.
-func ChooseHomeBuild(executable string, daemon bool, storeRoot string) StartCheck {
+// A daemon start verifies the home build in full, starts a pending trial with
+// its deadline, and reverts a trial that was started and did not pass. Any
+// start reverts a trial whose deadline has passed. Other commands accept a
+// build whose files are unchanged since its last full verification (the
+// recorded verdict) and verify in full otherwise.
+func ChooseHomeBuild(executable string, opts StartCheckOptions) StartCheck {
 	var check StartCheck
+	if opts.Now == nil {
+		opts.Now = time.Now
+	}
+	storeRoot := func() string {
+		if opts.StoreRoot == nil {
+			return ""
+		}
+		return opts.StoreRoot()
+	}
 	if resolved, err := filepath.EvalSymlinks(executable); err == nil {
 		executable = resolved
 	}
@@ -312,45 +393,85 @@ func ChooseHomeBuild(executable string, daemon bool, storeRoot string) StartChec
 	if record, _ := readHomeRecord(layout.Root); record != nil {
 		return check // this process IS a home build
 	}
+	if os.Geteuid() == 0 {
+		return check // root never runs a home build (HomeUpdateRoot)
+	}
 	paths := PathsFor(layout.Root)
+	if paths.HomeErr != nil {
+		// A home bundle this account may not use (owned by another account,
+		// writable by others): say so when one is there.
+		if candidate := homeBundleCandidate(layout.Root); candidate != "" {
+			if _, err := os.Stat(candidate); err == nil {
+				check.Notes = append(check.Notes, fmt.Sprintf("the build under %s is refused: %v; running the installed build", candidate, paths.HomeErr))
+			}
+		}
+		return check
+	}
 	if !paths.IsHome() {
 		return check
 	}
+	if _, err := os.Stat(paths.Root); errors.Is(err, os.ErrNotExist) {
+		return check
+	}
+	if err := checkOwnedChain(paths.Updates, homeAnchor(paths.Root)); err != nil {
+		check.Notes = append(check.Notes, fmt.Sprintf("the build under %s is refused: %v; running the installed build", paths.Root, err))
+		return check
+	}
 	if _, stale, err := homeCurrent(paths); err != nil || stale != "" {
+		if err != nil {
+			check.Notes = append(check.Notes, fmt.Sprintf("the home bundle %s is set aside: %v; running the installed build", paths.Root, err))
+		}
 		return check // nothing installed for this installed build
 	}
-	for range 3 {
-		trial, err := ReadTrial(paths)
+	if opts.Daemon {
+		lock, err := LockHomeDaemon(paths)
 		if err != nil {
-			check.Notes = append(check.Notes, err.Error())
+			check.Refuse = err
 			return check
 		}
-		if daemon && trial != nil && trial.Starts > 0 {
-			reason := trial.FailReason
-			if reason == "" {
-				reason = "its trial start ended before it answered ready"
+		// Released here; the daemon that runs takes it again for its life.
+		defer lock.Release()
+	}
+	for range 4 {
+		trial, err := ReadTrial(paths)
+		if err != nil {
+			// A trial whose record cannot be read is a failed trial.
+			trial = &Trial{Starts: 1, FailReason: "its trial record cannot be read: " + err.Error()}
+		}
+		if trial != nil && trial.Starts > 0 {
+			deadline, _ := time.Parse(time.RFC3339Nano, trial.Deadline)
+			passed := trial.FailReason == "" && (trial.Deadline == "" || opts.Now().Before(deadline))
+			if opts.Daemon || !passed {
+				reason := trial.FailReason
+				switch {
+				case reason != "":
+				case !passed:
+					reason = "it did not answer ready by its deadline " + trial.Deadline
+				default:
+					reason = "its trial start ended before it answered ready"
+				}
+				restored, err := revertTrial(paths, reason, storeRoot())
+				if err != nil {
+					check.Notes = append(check.Notes, fmt.Sprintf("update %s failed its trial (%s) and could NOT be rolled back: %v; it keeps running until an operator acts (the node raises update_failed)", trial.UpdateID, reason, err))
+				} else {
+					check.Notes = append(check.Notes, fmt.Sprintf("update %s failed its trial (%s); rolled back to %s and quarantined", trial.UpdateID, reason, restored))
+				}
+				continue
 			}
-			restored, err := revertTrial(paths, reason, storeRoot)
-			if err != nil {
-				check.Notes = append(check.Notes, fmt.Sprintf("update %s failed its trial (%s) and could not be reverted: %v", trial.UpdateID, reason, err))
-			} else {
-				check.Notes = append(check.Notes, fmt.Sprintf("update %s failed its trial (%s); rolled back to %s and quarantined", trial.UpdateID, reason, restored))
-			}
-			continue
 		}
 		if _, err := os.Stat(filepath.Join(paths.Root, manifestFileName)); err != nil {
 			return check // the home bundle holds no build: the installed one runs
 		}
 		var build *HomeBuild
-		if daemon || !verdictHolds(paths) {
+		if opts.Daemon || !verdictHolds(paths) {
 			build, err = verifyAndRecord(paths)
 		} else {
 			build, err = homeBuildFromState(paths)
 		}
 		if err != nil {
-			if daemon && trial != nil {
+			if opts.Daemon && trial != nil {
 				reason := "the installed build refused it: " + err.Error()
-				restored, rbErr := revertTrial(paths, reason, storeRoot)
+				restored, rbErr := revertTrial(paths, reason, storeRoot())
 				if rbErr != nil {
 					check.Notes = append(check.Notes, fmt.Sprintf("the build under %s is refused: %v; and it could not be reverted: %v; running the installed build", paths.Root, err, rbErr))
 					return check
@@ -361,18 +482,46 @@ func ChooseHomeBuild(executable string, daemon bool, storeRoot string) StartChec
 			check.Notes = append(check.Notes, fmt.Sprintf("the build under %s is refused: %v; running the installed build", paths.Root, err))
 			return check
 		}
-		if daemon && trial != nil {
+		if opts.Daemon && trial != nil {
+			timeout := 600 * time.Second
+			if opts.HealthTimeout != nil {
+				if d := opts.HealthTimeout(); d > 0 {
+					timeout = d
+				}
+			}
 			trial.Starts++
+			trial.Deadline = opts.Now().Add(timeout).UTC().Format(time.RFC3339Nano)
 			if err := writeTrial(paths, trial); err != nil {
-				check.Notes = append(check.Notes, fmt.Sprintf("cannot count the trial start of %s (%v); running the installed build", trial.UpdateID, err))
+				check.Notes = append(check.Notes, fmt.Sprintf("cannot record the trial start of %s (%v); running the installed build", trial.UpdateID, err))
 				return check
 			}
 			build.Trial = trial.UpdateID
+			build.Deadline = trial.Deadline
 		}
 		check.Build = build
 		return check
 	}
 	return check
+}
+
+// homeAnchor is the top of a home bundle's ownership chain: the account's home
+// folder when the bundle is under it, else the storage folder the bundle
+// falls back to (<storage.path>/update-bundle/<key>).
+func homeAnchor(root string) string {
+	if home, err := accountHome(); err == nil {
+		resolvedHome := home
+		if r, err := filepath.EvalSymlinks(home); err == nil {
+			resolvedHome = r
+		}
+		resolvedRoot := root
+		if r, err := filepath.EvalSymlinks(root); err == nil {
+			resolvedRoot = r
+		}
+		if strings.HasPrefix(resolvedRoot, resolvedHome+string(filepath.Separator)) {
+			return resolvedHome
+		}
+	}
+	return filepath.Dir(filepath.Dir(root))
 }
 
 // homeBuildFromState names the build state.json records, without verifying it.
@@ -478,9 +627,6 @@ func writeVerdict(paths Paths, updateID string) error {
 // verdictHolds reports whether the recorded verdict covers the build on disk
 // exactly as it is now.
 func verdictHolds(paths Paths) bool {
-	if strings.TrimSpace(os.Getenv(TrustRootsEnv)) != "" {
-		return false
-	}
 	data, err := os.ReadFile(filepath.Join(paths.Updates, verdictFileName))
 	if err != nil {
 		return false

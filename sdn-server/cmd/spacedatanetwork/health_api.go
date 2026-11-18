@@ -152,6 +152,10 @@ func (p *boundedReadinessProbe) check(ctx context.Context, deps healthDeps) stri
 // install a build that runs and is never ready, and watch the helper revert it.
 var readinessOverride string
 
+// hangBeforeStoreOpen, when set, stops the daemon for good before it opens its
+// store. Only the sdn_e2e_hang_before_store test build sets it.
+var hangBeforeStoreOpen bool
+
 // notReadyReason names the first unavailable component. The shared caller
 // bounds every callback, including a blocked peer-count read.
 func notReadyReason(deps healthDeps) string {

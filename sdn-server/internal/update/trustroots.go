@@ -166,7 +166,7 @@ func installTrustRoots(paths Paths, m *Manifest) error {
 	if err := refuseDeniedRoots(roots); err != nil {
 		return err
 	}
-	if paths.IsHome() && strings.TrimSpace(os.Getenv(TrustRootsEnv)) == "" {
+	if paths.IsHome() {
 		return recordRotation(paths, m)
 	}
 	data, err := json.MarshalIndent(roots, "", "  ")

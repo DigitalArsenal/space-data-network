@@ -406,6 +406,13 @@ func Stage(paths Paths, manifestBytes, wasmBytes []byte, opts VerifyOptions, key
 	if err != nil {
 		return nil, err
 	}
+	if paths.IsHome() {
+		lock, err := LockHomeInstall(paths)
+		if err != nil {
+			return nil, err
+		}
+		defer lock.Release()
+	}
 	if err := EnsureHome(paths); err != nil {
 		return nil, err
 	}

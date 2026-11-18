@@ -40,14 +40,18 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"os/user"
 	"path"
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
 	"github.com/klauspost/compress/zstd"
+
+	"github.com/spacedatanetwork/sdn-server/internal/bundle"
 )
 
 const (
@@ -100,27 +104,40 @@ func PathsFor(bundleRoot string) Paths {
 	if strings.TrimSpace(bundleRoot) == "" {
 		return pathsIn(bundleRoot)
 	}
-	if record, err := readHomeRecord(bundleRoot); err == nil && record != nil {
+	if record, err := readHomeRecord(bundleRoot); err != nil {
+		// A home build whose record cannot be read is not treated as an
+		// install: start the node through the installed path, which rebuilds
+		// the record at the next update.
+		p := pathsIn(bundleRoot)
+		p.HomeErr = fmt.Errorf("the home bundle record in %s cannot be read (%w); start the node through its installed path", bundleRoot, err)
+		return p
+	} else if record != nil {
 		p := pathsIn(bundleRoot)
 		p.Installed = filepath.Clean(record.InstalledRoot)
 		return p
 	}
+	// Windows has no home bundle (no exec), so the install folder is the
+	// update root whether or not it is writable, and nothing probes it.
+	if runtime.GOOS == "windows" {
+		return pathsIn(bundleRoot)
+	}
 	if _, err := os.Stat(filepath.Join(bundleRoot, manifestFileName)); err != nil || dirWritable(bundleRoot) {
 		return pathsIn(bundleRoot)
 	}
-	home, err := HomeUpdateRoot()
+	// One spelling of the installed folder, however it was reached: the home
+	// bundle is named after it and its record compares it.
+	installed := filepath.Clean(bundleRoot)
+	if resolved, err := filepath.EvalSymlinks(bundleRoot); err == nil {
+		installed = resolved
+	}
+	home, err := HomeUpdateRoot(installed)
 	if err != nil {
 		p := pathsIn(bundleRoot)
 		p.HomeErr = err
 		return p
 	}
 	p := pathsIn(home)
-	// One spelling of the installed folder, however it was reached: the home
-	// record compares it.
-	p.Installed = filepath.Clean(bundleRoot)
-	if resolved, err := filepath.EvalSymlinks(bundleRoot); err == nil {
-		p.Installed = resolved
-	}
+	p.Installed = installed
 	return p
 }
 
@@ -155,6 +172,27 @@ func (p Paths) RestartArgv(argv []string) []string {
 	return out
 }
 
+// InstalledLauncher is the program a later start must name for a process
+// started from executable: the installed launcher when executable belongs to
+// a home build, executable itself otherwise. A service unit, a launchd agent
+// or a restart command that named a home build's own path would start it with
+// no check, and the path is gone after a rollback empties the home bundle.
+func InstalledLauncher(executable string) string {
+	resolved := executable
+	if r, err := filepath.EvalSymlinks(executable); err == nil {
+		resolved = r
+	}
+	layout := bundle.ResolveFromExecutable(resolved)
+	if layout.Root == "" {
+		return executable
+	}
+	record, err := readHomeRecord(layout.Root)
+	if err != nil || record == nil {
+		return executable
+	}
+	return filepath.Join(record.InstalledRoot, "bin", executableFileName())
+}
+
 func executableFileName() string {
 	if runtime.GOOS == "windows" {
 		return "spacedatanetwork.exe"
@@ -164,35 +202,129 @@ func executableFileName() string {
 
 var homeFallbackLogged sync.Once
 
-// HomeUpdateRoot is this account's home bundle: $HOME/.spacedatanetwork/bundle,
-// or <storage.path>/update-bundle when HOME is unset or cannot be written.
-func HomeUpdateRoot() (string, error) {
+// homeBundleKey names the home bundle of one install: the first 16 hex
+// characters of sha256 over the resolved installed folder. Two installs, or an
+// install moved to another folder, get their own home bundles; an install
+// whose files are replaced in place keeps its key and its record says the
+// installed build changed. (A bundle whose mount path changes at every start
+// would get a new home bundle each time; no bundle the node ships is run that
+// way: the desktop app and its AppImage do not update themselves.)
+func homeBundleKey(installed string) string {
+	sum := sha256.Sum256([]byte(filepath.Clean(installed)))
+	return hex.EncodeToString(sum[:])[:16]
+}
+
+// homeBundleCandidate is where the home bundle of the install at installed
+// would be under the account's home folder, or "".
+func homeBundleCandidate(installed string) string {
+	if resolved, err := filepath.EvalSymlinks(installed); err == nil {
+		installed = resolved
+	}
+	home, err := accountHome()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".spacedatanetwork", homeBundleDirName, homeBundleKey(installed))
+}
+
+// accountHome is the effective user's home folder from its passwd entry.
+// $HOME is used only when it is the same folder.
+func accountHome() (string, error) {
+	u, err := user.LookupId(strconv.Itoa(os.Geteuid()))
+	if err != nil || strings.TrimSpace(u.HomeDir) == "" {
+		return "", fmt.Errorf("the account (uid %d) has no home folder in its passwd entry", os.Geteuid())
+	}
+	home := filepath.Clean(u.HomeDir)
+	if resolved, err := filepath.EvalSymlinks(home); err == nil {
+		home = resolved
+	}
+	if env := strings.TrimSpace(os.Getenv("HOME")); env != "" {
+		if resolved, err := filepath.EvalSymlinks(env); err == nil && resolved == home {
+			return env, nil
+		}
+	}
+	return home, nil
+}
+
+// HomeUpdateRoot is the home bundle of the install at installed:
+// <home>/.spacedatanetwork/bundle/<key>, <home> from the account's passwd
+// entry, or <storage.path>/update-bundle/<key> when there is no usable home.
+// Root never gets one: a root process would run a build another account may
+// have written.
+func HomeUpdateRoot(installed string) (string, error) {
 	if runtime.GOOS == "windows" {
 		return "", errors.New("on Windows a node updates only an install folder its account can write; this account cannot write it, so install the new release by hand or give the account write access to the install folder")
 	}
+	if os.Geteuid() == 0 {
+		return "", fmt.Errorf("running as root, and root cannot write the install folder %s (a read-only mount?): root never runs a build from a home folder; make the install folder writable or install the new release by hand", installed)
+	}
+	key := homeBundleKey(installed)
 	var reason string
-	if home, err := os.UserHomeDir(); err == nil && strings.TrimSpace(home) != "" {
-		dir := filepath.Join(home, ".spacedatanetwork", homeBundleDirName)
-		if canCreateUnder(dir) {
+	if home, err := accountHome(); err == nil {
+		dir := filepath.Join(home, ".spacedatanetwork", homeBundleDirName, key)
+		if err := checkOwnedChain(dir, home); err != nil {
+			// Never a fallback: a bundle someone else can change is refused,
+			// not replaced by another folder.
+			return "", err
+		} else if canCreateUnder(dir) {
 			return dir, nil
+		} else {
+			reason = dir + " cannot be written"
 		}
-		reason = dir + " cannot be written"
 	} else {
-		reason = "HOME is not set"
+		reason = err.Error()
 	}
 	if HomeStorageFallback != nil {
 		if storage := strings.TrimSpace(HomeStorageFallback()); storage != "" {
-			dir := filepath.Join(storage, storageHomeDirName)
-			if canCreateUnder(dir) {
+			dir := filepath.Join(storage, storageHomeDirName, key)
+			if err := checkOwnedChain(dir, storage); err != nil {
+				reason += "; " + err.Error()
+			} else if canCreateUnder(dir) {
 				homeFallbackLogged.Do(func() {
 					log.Warnf("update: %s; updates go to %s, under the node's storage.path", reason, dir)
 				})
 				return dir, nil
+			} else {
+				reason += "; " + dir + " cannot be written either"
 			}
-			reason += "; " + dir + " cannot be written either"
 		}
 	}
 	return "", fmt.Errorf("this account cannot write the install folder, and it has no folder to update into: %s", reason)
+}
+
+// checkOwnedChain requires every existing folder from dir up to and including
+// top to be owned by this account and not writable by its group or by others:
+// a build another account can change is never run.
+func checkOwnedChain(dir, top string) error {
+	top = filepath.Clean(top)
+	if resolved, err := filepath.EvalSymlinks(top); err == nil {
+		top = resolved
+	}
+	current := filepath.Clean(dir)
+	for {
+		info, err := os.Stat(current)
+		if err == nil {
+			if !info.IsDir() {
+				return fmt.Errorf("%s is not a folder", current)
+			}
+			if err := ownedNotShared(current, info); err != nil {
+				return err
+			}
+			if resolved, rerr := filepath.EvalSymlinks(current); rerr == nil && resolved == top {
+				return nil
+			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		if current == top {
+			return nil
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return fmt.Errorf("%s is not under %s", dir, top)
+		}
+		current = parent
+	}
 }
 
 // canCreateUnder reports whether dir exists and is writable, or its nearest
@@ -301,9 +433,65 @@ func installedState(paths Paths) (*State, error) {
 	return state, nil
 }
 
+// Locks of a home bundle live beside it, so removing a stale bundle does not
+// remove them: <key>.install.lock is held while an update is staged or
+// installed into it (a typed `update install` and the daemon's own install
+// never run at once), <key>.inuse.lock is held shared by every process that
+// runs a build from it (a bundle a live process runs from is never removed),
+// and <key>.daemon.lock is held by the one daemon it serves.
+func homeLock(paths Paths, kind string, exclusive bool) (*fileLock, bool, error) {
+	return lockFile(filepath.Dir(paths.Root), filepath.Base(paths.Root)+"."+kind+".lock", exclusive)
+}
+
+// LockHomeInstall takes the install lock of a home bundle, or says who holds it.
+func LockHomeInstall(paths Paths) (*fileLock, error) {
+	if !paths.IsHome() {
+		return nil, nil
+	}
+	lock, ok, err := homeLock(paths, "install", true)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, fmt.Errorf("another update is being installed in %s right now; try again when it is done", paths.Root)
+	}
+	return lock, nil
+}
+
+// HoldHomeInUse marks this process as running a build from the home bundle at
+// root, for its whole life. A failure is not fatal: the bundle is then only
+// unprotected against removal.
+func HoldHomeInUse(root string) {
+	lock, ok, err := lockFile(filepath.Dir(root), filepath.Base(root)+".inuse.lock", false)
+	if err == nil && ok {
+		heldInUse = lock
+	}
+}
+
+var heldInUse *fileLock
+
+// LockHomeDaemon takes the daemon lock of a home bundle for this daemon's life.
+// One home bundle serves one daemon: a second node run from the same install
+// by the same account is refused (give each node its own install), because a
+// trial and its rollback restart one daemon and would judge the other's build.
+func LockHomeDaemon(paths Paths) (*fileLock, error) {
+	if !paths.IsHome() {
+		return nil, nil
+	}
+	lock, ok, err := homeLock(paths, "daemon", true)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, fmt.Errorf("another daemon already runs from the install %s and updates through %s; one install serves one node per account, so give this node its own install", paths.Installed, paths.Root)
+	}
+	return lock, nil
+}
+
 // EnsureHome makes the home bundle ready to stage into: its record names the
-// installed build as it is now. A home bundle made for another installed build
-// is removed first.
+// installed build as it is now. A home bundle made for another installed
+// build, or whose record cannot be read, is removed first, unless a process
+// still runs a build from it.
 func EnsureHome(paths Paths) error {
 	if paths.HomeErr != nil {
 		return paths.HomeErr
@@ -313,14 +501,31 @@ func EnsureHome(paths Paths) error {
 	}
 	record, stale, err := homeCurrent(paths)
 	if err != nil {
-		return err
+		if _, statErr := os.Stat(filepath.Join(paths.Updates, homeRecordName)); statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+			return err
+		}
+		if _, ierr := installedRecord(paths.Installed); ierr != nil {
+			return ierr
+		}
+		// The record itself is unreadable: start the bundle again.
+		stale = "its record cannot be read (" + err.Error() + ")"
+		record = &HomeRecord{}
 	}
 	if record != nil && stale == "" {
 		return nil
 	}
 	if record != nil {
+		inUse, ok, lerr := homeLock(paths, "inuse", true)
+		if lerr != nil {
+			return lerr
+		}
+		if !ok {
+			return fmt.Errorf("the home bundle %s is stale (%s), and a process still runs a build from it: it is replaced once that process stops (restart the node)", paths.Root, stale)
+		}
 		log.Warnf("update: %s; removing the home bundle %s and updating from the installed build", stale, paths.Root)
-		if err := os.RemoveAll(paths.Root); err != nil {
+		err := os.RemoveAll(paths.Root)
+		inUse.Release()
+		if err != nil {
 			return fmt.Errorf("remove the stale home bundle %s: %w", paths.Root, err)
 		}
 	}
@@ -331,15 +536,7 @@ func EnsureHome(paths Paths) error {
 	if err := os.MkdirAll(paths.Updates, 0o700); err != nil {
 		return fmt.Errorf("create the home bundle %s: %w", paths.Root, err)
 	}
-	data, err := json.MarshalIndent(now, "", "  ")
-	if err != nil {
-		return err
-	}
-	tmp := filepath.Join(paths.Updates, homeRecordName+".tmp")
-	if err := os.WriteFile(tmp, append(data, '\n'), 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, filepath.Join(paths.Updates, homeRecordName))
+	return writeJSONAtomic(filepath.Join(paths.Updates, homeRecordName), now)
 }
 
 // proofDir holds the signed update manifest and the bundle archive of one home
@@ -485,9 +682,9 @@ func VerifyHomeBuild(paths Paths) (*HomeBuild, error) {
 	if err != nil {
 		return nil, err
 	}
-	// The roots every other update step uses: the installed roots through
-	// the kept rotations (or SDN_UPDATE_TRUST_ROOTS, as everywhere).
-	roots, err := LoadTrustRoots(paths)
+	// The anchor is the installed build alone: its roots through the kept
+	// rotations. SDN_UPDATE_TRUST_ROOTS does not apply here.
+	roots, err := homeTrustRoots(paths)
 	if err != nil {
 		return nil, err
 	}
@@ -770,40 +967,130 @@ func compareTree(root string, want map[string]treeEntry) error {
 	return nil
 }
 
-// HomeBuildEnv is environ for a home build started by the installed build:
-// WASMEDGE_DIR and library-path entries that point into the installed bundle
-// are dropped, so the home build's launcher sets up its own runtime files.
-func HomeBuildEnv(environ []string, installedRoot string) []string {
-	installedRoot = filepath.Clean(installedRoot)
-	inside := func(p string) bool {
-		p = filepath.Clean(p)
-		return p == installedRoot || strings.HasPrefix(p, installedRoot+string(filepath.Separator))
+// InstalledEnvVar carries, from the installed build's start check to the home
+// build, the environment entries the check removed, so a restart through the
+// installed path gives the installed launcher back the environment it had.
+const InstalledEnvVar = "SDN_UPDATE_INSTALLED_ENV"
+
+// pathInside reports whether p is root or under it, comparing p as written
+// and resolved through symlinks against root as written and resolved.
+func pathInside(p, root string) bool {
+	roots := []string{filepath.Clean(root)}
+	if r, err := filepath.EvalSymlinks(root); err == nil {
+		roots = append(roots, r)
 	}
-	out := make([]string, 0, len(environ))
+	values := []string{filepath.Clean(p)}
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		values = append(values, r)
+	}
+	for _, v := range values {
+		for _, r := range roots {
+			if v == r || strings.HasPrefix(v, r+string(filepath.Separator)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// scrubRuntimeEnv removes from environ the WASMEDGE_DIR and library-path
+// entries that point into root, and returns what it removed.
+func scrubRuntimeEnv(environ []string, root string) (kept, removed []string) {
 	for _, kv := range environ {
 		name, value, ok := strings.Cut(kv, "=")
 		if !ok {
-			out = append(out, kv)
+			kept = append(kept, kv)
 			continue
 		}
 		switch name {
 		case "WASMEDGE_DIR":
-			if inside(value) {
+			if pathInside(value, root) {
+				removed = append(removed, kv)
 				continue
 			}
 		case "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH":
-			var kept []string
+			var stay []string
 			for _, part := range filepath.SplitList(value) {
-				if part != "" && !inside(part) {
-					kept = append(kept, part)
+				if part != "" && !pathInside(part, root) {
+					stay = append(stay, part)
 				}
 			}
-			if len(kept) == 0 {
-				continue
+			if strings.Join(stay, string(filepath.ListSeparator)) != value {
+				removed = append(removed, kv)
+				if len(stay) == 0 {
+					continue
+				}
+				kv = name + "=" + strings.Join(stay, string(filepath.ListSeparator))
 			}
-			kv = name + "=" + strings.Join(kept, string(filepath.ListSeparator))
 		}
-		out = append(out, kv)
+		kept = append(kept, kv)
 	}
-	return out
+	return kept, removed
+}
+
+// HomeBuildEnv is environ for a home build started by the installed build:
+// WASMEDGE_DIR and library-path entries that point into the installed bundle
+// (by either spelling of its folder) are removed, so the home build's
+// launcher sets up its own runtime files, and the removed entries travel in
+// InstalledEnvVar.
+func HomeBuildEnv(environ []string, installedRoot string) []string {
+	var base []string
+	for _, kv := range environ {
+		if !strings.HasPrefix(kv, InstalledEnvVar+"=") {
+			base = append(base, kv)
+		}
+	}
+	kept, removed := scrubRuntimeEnv(base, installedRoot)
+	if len(removed) > 0 {
+		if data, err := json.Marshal(removed); err == nil {
+			kept = append(kept, InstalledEnvVar+"="+string(data))
+		}
+	}
+	return kept
+}
+
+// InstalledEnv is environ for a restart through the installed path from a
+// home build at homeRoot: entries that point into the home bundle are
+// removed, and the ones the installed build's start check removed are given
+// back, so the installed build runs on its own runtime files.
+func InstalledEnv(environ []string, homeRoot string) []string {
+	var restore []string
+	var base []string
+	for _, kv := range environ {
+		if value, ok := strings.CutPrefix(kv, InstalledEnvVar+"="); ok {
+			_ = json.Unmarshal([]byte(value), &restore)
+			continue
+		}
+		base = append(base, kv)
+	}
+	kept, _ := scrubRuntimeEnv(base, homeRoot)
+	names := map[string]bool{}
+	for _, kv := range restore {
+		name, _, _ := strings.Cut(kv, "=")
+		names[name] = true
+	}
+	out := kept[:0:0]
+	for _, kv := range kept {
+		name, _, _ := strings.Cut(kv, "=")
+		if !names[name] {
+			out = append(out, kv)
+		}
+	}
+	return append(out, restore...)
+}
+
+// HomeBuildRoot is the home bundle executable runs from, or "" when it is not
+// a home build.
+func HomeBuildRoot(executable string) string {
+	if r, err := filepath.EvalSymlinks(executable); err == nil {
+		executable = r
+	}
+	layout := bundle.ResolveFromExecutable(executable)
+	if layout.Root == "" {
+		return ""
+	}
+	if record, err := readHomeRecord(layout.Root); err == nil && record != nil {
+		return layout.Root
+	}
+	return ""
 }
