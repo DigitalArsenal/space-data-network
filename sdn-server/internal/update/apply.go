@@ -715,6 +715,12 @@ func extractBundleArchive(archivePath, format, destDir string) error {
 	return extractTar(tar.NewReader(reader), destDir)
 }
 
+// extractedMode is the mode a file or folder of an update bundle is created
+// with: the archive's, without write access for the group or for others,
+// whatever the archive or the umask say. A build another account can change
+// is never run (home.go).
+func extractedMode(mode os.FileMode) os.FileMode { return mode &^ 0o022 }
+
 func extractTar(tr *tar.Reader, destDir string) error {
 	if err := os.MkdirAll(destDir, 0o755); err != nil {
 		return err
@@ -733,14 +739,14 @@ func extractTar(tr *tar.Reader, destDir string) error {
 		}
 		switch header.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(target, os.FileMode(header.Mode).Perm()|0o700); err != nil {
+			if err := os.MkdirAll(target, extractedMode(os.FileMode(header.Mode).Perm()|0o700)); err != nil {
 				return err
 			}
 		case tar.TypeReg:
 			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 				return err
 			}
-			out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.FileMode(header.Mode).Perm())
+			out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, extractedMode(os.FileMode(header.Mode).Perm()))
 			if err != nil {
 				return err
 			}
@@ -788,7 +794,7 @@ func extractZipArchive(archivePath, destDir string) error {
 		}
 		info := file.FileInfo()
 		if info.IsDir() {
-			if err := os.MkdirAll(target, info.Mode().Perm()|0o700); err != nil {
+			if err := os.MkdirAll(target, extractedMode(info.Mode().Perm()|0o700)); err != nil {
 				return err
 			}
 			continue
@@ -823,7 +829,7 @@ func extractZipArchive(archivePath, destDir string) error {
 		if err != nil {
 			return err
 		}
-		out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, info.Mode().Perm())
+		out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, extractedMode(info.Mode().Perm()))
 		if err != nil {
 			source.Close()
 			return err

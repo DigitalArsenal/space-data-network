@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/config"
@@ -72,6 +74,9 @@ var heldDaemonLock any
 // updated build. A refused build is named on stderr and this build runs.
 func runHomeBuildIfVerified() {
 	update.HomeStorageFallback = storagePathFromArgs
+	daemon := isDaemonCommand(os.Args[1:])
+	// The daemon lock the process this one replaced held, if any.
+	update.AdoptDaemonLock(daemon)
 	// A trial is named only by the start check below, for one process: the
 	// trial build reads it here and no child inherits it.
 	trialUpdateID = strings.TrimSpace(os.Getenv(update.TrialEnv))
@@ -86,13 +91,18 @@ func runHomeBuildIfVerified() {
 			os.Exit(1)
 		}
 		update.HoldHomeInUse(root)
-		if trialUpdateID != "" && !trialTimerDisabled {
-			startTrialTimer(update.PathsFor(root), trialUpdateID)
+		if trialUpdateID != "" {
+			paths := update.PathsFor(root)
+			watchTrialSignals(paths, trialUpdateID)
+			if !trialTimerDisabled {
+				startTrialTimer(paths, trialUpdateID)
+			}
+			fmt.Fprintf(os.Stderr, "update: this process runs update %s as a trial\n", trialUpdateID)
 		}
 		return
 	}
 	check := update.ChooseHomeBuild(exe, update.StartCheckOptions{
-		Daemon:        isDaemonCommand(os.Args[1:]),
+		Daemon:        daemon,
 		StoreRoot:     storagePathFromArgs,
 		HealthTimeout: healthTimeoutFromArgs,
 	})
@@ -107,7 +117,7 @@ func runHomeBuildIfVerified() {
 	if build == nil {
 		return
 	}
-	env := update.HomeBuildEnv(os.Environ(), build.Installed)
+	env := update.DaemonLockForExec(update.HomeBuildEnv(os.Environ(), build.Installed))
 	if build.Trial != "" {
 		env = append(env, update.TrialEnv+"="+build.Trial)
 		fmt.Fprintf(os.Stderr, "update: starting %s (update %s) as a trial: it must answer ready by %s\n", build.Version, build.Trial, build.Deadline)
@@ -132,6 +142,9 @@ func startTrialTimer(paths update.Paths, id string) {
 	}
 	go func() {
 		time.Sleep(time.Until(deadline))
+		if trialInterrupted.Load() {
+			return // stopped by a signal: the next start runs the trial again
+		}
 		trial, err := update.ReadTrial(paths)
 		if err == nil && (trial == nil || trial.UpdateID != id) {
 			return // passed, or already rolled back
@@ -146,6 +159,43 @@ func startTrialTimer(paths update.Paths, id string) {
 		}
 		runBeforeExec()
 		restartThroughInstalledPath(&homeRestart{argv: paths.RestartArgv(os.Args), homeRoot: paths.Root})
+	}()
+}
+
+// trialInterrupted is set once a stop signal reached the trial build.
+var trialInterrupted atomic.Bool
+
+// watchTrialSignals makes a stop signal (a service restart, a reboot) during
+// a trial run the trial again at the next start, with a new deadline, rather
+// than count as a failed trial (update.InterruptTrial; after
+// update.MaxTrialInterruptions such stops the next one fails the trial). It
+// watches from the first instruction of the trial build: before the daemon
+// handles signals itself, the process then ends as the signal would have
+// ended it; after, the daemon's ordinary shutdown runs.
+func watchTrialSignals(paths update.Paths, id string) {
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, syscall.SIGTERM, syscall.SIGINT)
+	go func() {
+		sig := <-ch
+		trialInterrupted.Store(true)
+		rerun, err := update.InterruptTrial(paths, id)
+		switch {
+		case err != nil:
+			fmt.Fprintf(os.Stderr, "update: stopped by %v during the trial of %s, and the stop could not be recorded (%v): the next start rolls it back\n", sig, id, err)
+		case rerun:
+			fmt.Fprintf(os.Stderr, "update: stopped by %v during the trial of %s: the next start runs its trial again\n", sig, id)
+		default:
+			fmt.Fprintf(os.Stderr, "update: stopped by %v during the trial of %s, which is over or was stopped %d times already: the next start rolls it back unless it passed\n", sig, id, update.MaxTrialInterruptions)
+		}
+		if daemonServing.Load() {
+			signal.Stop(ch)
+			return
+		}
+		runBeforeExec()
+		signal.Reset(sig)
+		reraise(sig)
+		time.Sleep(5 * time.Second)
+		os.Exit(1)
 	}()
 }
 
@@ -271,7 +321,7 @@ func watchTrial(ctx context.Context, paths update.Paths, id string, readiness fu
 // runs the build just installed as a trial, or rolls back a failed one.
 func restartThroughInstalledPath(r *homeRestart) {
 	fmt.Fprintf(os.Stderr, "update: the daemon stopped for an update; starting it again through %s\n", r.argv[0])
-	if err := execHomeBuild(r.argv[0], r.argv, update.InstalledEnv(os.Environ(), r.homeRoot)); err != nil {
+	if err := execHomeBuild(r.argv[0], r.argv, update.DaemonLockForExec(update.InstalledEnv(os.Environ(), r.homeRoot))); err != nil {
 		fmt.Fprintf(os.Stderr, "update: cannot start %s: %v\n", r.argv[0], err)
 		os.Exit(1)
 	}

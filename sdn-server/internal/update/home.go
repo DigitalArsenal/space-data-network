@@ -262,10 +262,15 @@ func HomeUpdateRoot(installed string) (string, error) {
 	var reason string
 	if home, err := accountHome(); err == nil {
 		dir := filepath.Join(home, ".spacedatanetwork", homeBundleDirName, key)
-		if err := checkOwnedChain(dir, home); err != nil {
+		if err := checkOwnedChain(dir, home); isChainRefusal(err) {
 			// Never a fallback: a bundle someone else can change is refused,
 			// not replaced by another folder.
 			return "", err
+		} else if err != nil {
+			// A home folder that is missing or cannot be reached (a service
+			// with ProtectHome=, a passwd entry naming a folder that is not
+			// there) is no usable home.
+			reason = "the home folder " + home + " cannot be reached (" + err.Error() + ")"
 		} else if canCreateUnder(dir) {
 			return dir, nil
 		} else {
@@ -277,7 +282,9 @@ func HomeUpdateRoot(installed string) (string, error) {
 	if HomeStorageFallback != nil {
 		if storage := strings.TrimSpace(HomeStorageFallback()); storage != "" {
 			dir := filepath.Join(storage, storageHomeDirName, key)
-			if err := checkOwnedChain(dir, storage); err != nil {
+			if err := checkOwnedChain(dir, storage); isChainRefusal(err) {
+				return "", err
+			} else if err != nil {
 				reason += "; " + err.Error()
 			} else if canCreateUnder(dir) {
 				homeFallbackLogged.Do(func() {
@@ -292,39 +299,160 @@ func HomeUpdateRoot(installed string) (string, error) {
 	return "", fmt.Errorf("this account cannot write the install folder, and it has no folder to update into: %s", reason)
 }
 
+// chainRefusal is a folder another account can change: the build under it is
+// refused, and no other folder is used in its place.
+type chainRefusal struct{ err error }
+
+func (r *chainRefusal) Error() string { return r.err.Error() }
+func (r *chainRefusal) Unwrap() error { return r.err }
+
+func isChainRefusal(err error) bool {
+	var r *chainRefusal
+	return errors.As(err, &r)
+}
+
 // checkOwnedChain requires every existing folder from dir up to and including
-// top to be owned by this account and not writable by its group or by others:
-// a build another account can change is never run.
+// top to be owned by this account and not writable by its group or by others,
+// and every folder and symlink on the way from / to dir, as the system
+// resolves it, to be one only this account or root can change (resolvedSafe):
+// a build another account can change is never run. Such a folder is a
+// chainRefusal; any other error (a folder that cannot be reached) is not.
 func checkOwnedChain(dir, top string) error {
 	top = filepath.Clean(top)
 	if resolved, err := filepath.EvalSymlinks(top); err == nil {
 		top = resolved
 	}
 	current := filepath.Clean(dir)
+	// A folder that cannot be reached is remembered and the walk goes on up:
+	// an existing folder above it that another account owns is a refusal.
+	var unreachable error
 	for {
 		info, err := os.Stat(current)
 		if err == nil {
 			if !info.IsDir() {
-				return fmt.Errorf("%s is not a folder", current)
+				return &chainRefusal{fmt.Errorf("%s is not a folder", current)}
 			}
 			if err := ownedNotShared(current, info); err != nil {
-				return err
+				return &chainRefusal{err}
 			}
 			if resolved, rerr := filepath.EvalSymlinks(current); rerr == nil && resolved == top {
-				return nil
+				break
 			}
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return err
+		} else if !errors.Is(err, os.ErrNotExist) && unreachable == nil {
+			unreachable = err
 		}
 		if current == top {
-			return nil
+			break
 		}
 		parent := filepath.Dir(current)
 		if parent == current {
-			return fmt.Errorf("%s is not under %s", dir, top)
+			return &chainRefusal{fmt.Errorf("%s is not under %s", dir, top)}
 		}
 		current = parent
 	}
+	if err := resolvedSafe(dir); isChainRefusal(err) || unreachable == nil {
+		return err
+	}
+	return unreachable
+}
+
+// resolvedSafe walks name from / the way the system resolves it, following
+// each symlink, and requires every folder and symlink it passes through to be
+// owned by this account or by root, and every folder writable by its group or
+// by others to carry the sticky bit (/tmp), where only an entry's owner can
+// rename or remove it. Folders of name that do not exist are not checked: the
+// node creates them, under a folder this checked.
+func resolvedSafe(name string) error {
+	if !filepath.IsAbs(name) {
+		abs, err := filepath.Abs(name)
+		if err != nil {
+			return err
+		}
+		name = abs
+	}
+	pending := strings.Split(strings.TrimPrefix(filepath.Clean(name), "/"), "/")
+	current := "/"
+	if err := safeEntry(current); err != nil {
+		return err
+	}
+	links := 0
+	for len(pending) > 0 {
+		part := pending[0]
+		pending = pending[1:]
+		switch part {
+		case "", ".":
+			continue
+		case "..":
+			current = filepath.Dir(current)
+			continue
+		}
+		next := filepath.Join(current, part)
+		info, err := os.Lstat(next)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if err := safeEntry(next); err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			current = next
+			continue
+		}
+		links++
+		if links > 40 {
+			return fmt.Errorf("%s: too many symlinks", name)
+		}
+		target, err := os.Readlink(next)
+		if err != nil {
+			return err
+		}
+		if filepath.IsAbs(target) {
+			current = "/"
+		}
+		pending = append(strings.Split(target, "/"), pending...)
+	}
+	return nil
+}
+
+// safeEntry applies resolvedSafe's rule to one folder or symlink.
+func safeEntry(name string) error {
+	info, err := os.Lstat(name)
+	if err != nil {
+		return err
+	}
+	if err := ownedByUserOrRoot(name, info); err != nil {
+		return &chainRefusal{err}
+	}
+	if info.IsDir() && info.Mode().Perm()&0o022 != 0 && info.Mode()&os.ModeSticky == 0 {
+		return &chainRefusal{fmt.Errorf("%s is writable by its group or by others (mode %04o) without the sticky bit", name, info.Mode().Perm())}
+	}
+	return nil
+}
+
+// checkBundleTree requires every folder and file of the build in a home
+// bundle (outside updates/) to be owned by this account and not writable by
+// its group or by others, and every symlink to be owned by this account: the
+// launcher, the daemon and the runtime it loads all live there.
+func checkBundleTree(paths Paths) error {
+	return filepath.WalkDir(paths.Root, func(name string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if name == paths.Updates {
+			return filepath.SkipDir
+		}
+		info, err := os.Lstat(name)
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return ownedByUser(name, info)
+		}
+		return ownedNotShared(name, info)
+	})
 }
 
 // canCreateUnder reports whether dir exists and is writable, or its nearest
@@ -474,18 +602,52 @@ var heldInUse *fileLock
 // One home bundle serves one daemon: a second node run from the same install
 // by the same account is refused (give each node its own install), because a
 // trial and its rollback restart one daemon and would judge the other's build.
+//
+// The lock is held for the life of the process and passed across each exec
+// between the installed build and the home build (DaemonLockEnv), so no
+// second daemon can take it between the start check and the daemon it starts.
 func LockHomeDaemon(paths Paths) (*fileLock, error) {
 	if !paths.IsHome() {
 		return nil, nil
+	}
+	name := filepath.Join(filepath.Dir(paths.Root), filepath.Base(paths.Root)+".daemon.lock")
+	if heldDaemon != nil {
+		if heldDaemon.sameFile(name) {
+			return heldDaemon, nil
+		}
+		heldDaemon.Release()
+		heldDaemon = nil
 	}
 	lock, ok, err := homeLock(paths, "daemon", true)
 	if err != nil {
 		return nil, err
 	}
 	if !ok {
-		return nil, fmt.Errorf("another daemon already runs from the install %s and updates through %s; one install serves one node per account, so give this node its own install", paths.Installed, paths.Root)
+		return nil, errSecondDaemon(paths)
 	}
+	heldDaemon = lock
 	return lock, nil
+}
+
+func errSecondDaemon(paths Paths) error {
+	return fmt.Errorf("another daemon already runs from the install %s and updates through %s; one install serves one node per account, so give this node its own install", paths.Installed, paths.Root)
+}
+
+// daemonAlive reports whether a daemon holds the daemon lock of a home bundle.
+// When none does, release takes the lock away again; the caller holds it
+// until then.
+func daemonAlive(paths Paths) (alive bool, release func()) {
+	lock, ok, err := homeLock(paths, "daemon", true)
+	if err != nil || !ok {
+		return true, func() {}
+	}
+	return false, lock.Release
+}
+
+// lockTrial serializes every change of a home bundle's trial record: the
+// trial build's pass and fail, a signal stop, the start check, a revert.
+func lockTrial(paths Paths) (*fileLock, error) {
+	return lockFileWait(filepath.Dir(paths.Root), filepath.Base(paths.Root)+".trial.lock")
 }
 
 // EnsureHome makes the home bundle ready to stage into: its record names the
@@ -724,6 +886,9 @@ func VerifyHomeBuild(paths Paths) (*HomeBuild, error) {
 	}
 	if err := compareTree(paths.Root, want); err != nil {
 		return nil, fmt.Errorf("its files differ from signed update %s: %w", m.UpdateID, err)
+	}
+	if err := checkBundleTree(paths); err != nil {
+		return nil, err
 	}
 	if version, _, err := readBundleVersionAndChannel(paths.Root); err != nil || version != m.Version {
 		return nil, fmt.Errorf("its bundle manifest does not name version %s", m.Version)

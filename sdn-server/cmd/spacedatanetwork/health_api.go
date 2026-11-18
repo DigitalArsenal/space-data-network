@@ -156,6 +156,10 @@ var readinessOverride string
 // store. Only the sdn_e2e_hang_before_store test build sets it.
 var hangBeforeStoreOpen bool
 
+// crashAtStart, when set, makes the daemon exit with an error before it opens
+// its store. Only the sdn_e2e_crash_at_start test build sets it.
+var crashAtStart bool
+
 // notReadyReason names the first unavailable component. The shared caller
 // bounds every callback, including a blocked peer-count read.
 func notReadyReason(deps healthDeps) string {

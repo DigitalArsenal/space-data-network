@@ -84,7 +84,18 @@ type Trial struct {
 	// sets it, before it starts the trial build, to the start time plus
 	// update.health_timeout_seconds.
 	Deadline string `json:"deadline,omitempty"`
+	// Interruptions counts the times the trial build was stopped by a signal
+	// (a service restart, a reboot) before it answered ready. Each one runs
+	// the trial again from the start with a new deadline, up to
+	// MaxTrialInterruptions; the next one fails the trial.
+	Interruptions int `json:"interruptions,omitempty"`
 }
+
+// MaxTrialInterruptions is how many signal stops a trial survives: a build
+// stopped this many times during its trial runs it again each time, and the
+// next stop fails it, so a build that is always restarted before it is ready
+// cannot stay on trial for ever.
+const MaxTrialInterruptions = 3
 
 // TrialDeadline is the deadline of the pending trial of updateID.
 func TrialDeadline(paths Paths, updateID string) (time.Time, error) {
@@ -159,6 +170,15 @@ func writeTrial(paths Paths, trial *Trial) error {
 	return writeJSONAtomic(trialPath(paths), trial)
 }
 
+func writeTrialLocked(paths Paths, trial *Trial) error {
+	lock, err := lockTrial(paths)
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
+	return writeTrial(paths, trial)
+}
+
 func clearTrial(paths Paths) error {
 	if err := os.Remove(trialPath(paths)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
@@ -169,6 +189,11 @@ func clearTrial(paths Paths) error {
 // PassTrial records that the trial build answered ready: health-passed in the
 // ledger, and the trial is over.
 func PassTrial(paths Paths, updateID string) error {
+	lock, err := lockTrial(paths)
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
 	trial, err := ReadTrial(paths)
 	if err != nil {
 		return err
@@ -193,8 +218,14 @@ func PassTrial(paths Paths, updateID string) error {
 }
 
 // FailTrial records why the trial build gives up. The installed build's next
-// start reverts it.
+// start reverts it. It writes only while the trial record still names
+// updateID: a trial another process already passed or reverted stays over.
 func FailTrial(paths Paths, updateID, reason string) error {
+	lock, err := lockTrial(paths)
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
 	trial, err := ReadTrial(paths)
 	if err != nil {
 		return err
@@ -204,6 +235,32 @@ func FailTrial(paths Paths, updateID, reason string) error {
 	}
 	trial.FailReason = reason
 	return writeTrial(paths, trial)
+}
+
+// InterruptTrial records that the trial build of updateID was stopped by a
+// signal before it answered ready: the trial runs again from the start at
+// the next start, with a new deadline, unless it has been stopped
+// MaxTrialInterruptions times already, in which case the trial fails. It
+// reports whether the trial runs again; false with no error when there is no
+// pending trial of updateID (it passed, failed or was reverted).
+func InterruptTrial(paths Paths, updateID string) (rerun bool, err error) {
+	lock, err := lockTrial(paths)
+	if err != nil {
+		return false, err
+	}
+	defer lock.Release()
+	trial, err := ReadTrial(paths)
+	if err != nil || trial == nil || trial.UpdateID != updateID || trial.FailReason != "" {
+		return false, err
+	}
+	if trial.Interruptions >= MaxTrialInterruptions {
+		trial.FailReason = fmt.Sprintf("it was stopped %d times during its trial before it answered ready", trial.Interruptions+1)
+		return false, writeTrial(paths, trial)
+	}
+	trial.Interruptions++
+	trial.Starts = 0
+	trial.Deadline = ""
+	return true, writeTrial(paths, trial)
 }
 
 // The restart hook: the daemon registers how it stops for an update and
@@ -293,12 +350,30 @@ func launchHomeRestart(paths Paths, opts SelfUpgradeOptions) (*SelfUpgradeLaunch
 // revertTrial ends a trial that did not pass: health-failed, a rollback to the
 // previous slot (which quarantines the build), health-reverted. It reports
 // the version restored.
+//
+// It works under the trial lock, on the trial record as it is then, and only
+// on the build state.json names: a trial record that names another update is
+// what a revert stopped after its rollback leaves (the build is already
+// quarantined), and is only cleared, so a second revert never takes away the
+// build that was running before the trial.
 func revertTrial(paths Paths, reason, storeRoot string) (string, error) {
+	lock, err := lockTrial(paths)
+	if err != nil {
+		return "", err
+	}
+	defer lock.Release()
 	// An unreadable trial record is reverted by what state.json names.
-	trial, _ := ReadTrial(paths)
+	trial, readErr := ReadTrial(paths)
 	state, err := LoadState(paths)
 	if err != nil {
 		return "", err
+	}
+	if trial == nil && readErr == nil {
+		return state.Version, nil // another process ended the trial first
+	}
+	if trial != nil && trial.UpdateID != state.UpdateID {
+		finishInterruptedRevert(paths, trial)
+		return state.Version, nil
 	}
 	id, version, sequence, trigger := state.UpdateID, state.Version, state.Sequence, ""
 	if trial != nil {
@@ -325,6 +400,42 @@ func revertTrial(paths Paths, reason, storeRoot string) (string, error) {
 	_ = clearTrial(paths)
 	_ = os.Remove(filepath.Join(paths.Updates, verdictFileName))
 	return restored.RestoredVersion, nil
+}
+
+// finishInterruptedRevert ends a trial record that names an update other than
+// the one state.json names: a revert stopped after its rollback, or a fail
+// recorded after the trial was already reverted. When the update is in
+// quarantine and the ledger has no health-reverted for it, that line is
+// written (the update_failed alert reads it). Nothing is rolled back.
+func finishInterruptedRevert(paths Paths, trial *Trial) {
+	if HasFailedUpdate(paths, trial.UpdateID) && !ledgerHas(paths, trial.UpdateID, "health-reverted") {
+		reason := trial.FailReason
+		if reason == "" {
+			reason = "its trial ended before it answered ready"
+		}
+		if err := RecordDeployLedgerEntry(paths, DeployLedgerEntry{Action: "health-reverted", UpdateID: trial.UpdateID, Version: trial.Version, Sequence: trial.Sequence,
+			Reason: reason + "; the revert was interrupted after its rollback and is completed here", Trigger: trial.Trigger}); err != nil {
+			log.Warnf("update: deploy ledger: %v", err)
+		}
+	}
+	_ = clearTrial(paths)
+	_ = os.Remove(filepath.Join(paths.Updates, verdictFileName))
+}
+
+// ledgerHas reports whether the home bundle's deploy ledger has a line with
+// action for updateID.
+func ledgerHas(paths Paths, updateID, action string) bool {
+	data, err := os.ReadFile(filepath.Join(paths.Root, deployLedgerName))
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		var entry DeployLedgerEntry
+		if json.Unmarshal([]byte(line), &entry) == nil && entry.UpdateID == updateID && entry.Action == action {
+			return true
+		}
+	}
+	return false
 }
 
 // HomeBuild is a verified home build, ready to run in place of the installed
@@ -401,7 +512,7 @@ func ChooseHomeBuild(executable string, opts StartCheckOptions) StartCheck {
 		// A home bundle this account may not use (owned by another account,
 		// writable by others): say so when one is there.
 		if candidate := homeBundleCandidate(layout.Root); candidate != "" {
-			if _, err := os.Stat(candidate); err == nil {
+			if _, err := os.Stat(candidate); !errors.Is(err, os.ErrNotExist) {
 				check.Notes = append(check.Notes, fmt.Sprintf("the build under %s is refused: %v; running the installed build", candidate, paths.HomeErr))
 			}
 		}
@@ -424,13 +535,13 @@ func ChooseHomeBuild(executable string, opts StartCheckOptions) StartCheck {
 		return check // nothing installed for this installed build
 	}
 	if opts.Daemon {
-		lock, err := LockHomeDaemon(paths)
-		if err != nil {
+		// Held for this process's life, and passed across the exec that
+		// starts the home build (DaemonLockForExec): no other daemon can
+		// start in between and judge this one's trial.
+		if _, err := LockHomeDaemon(paths); err != nil {
 			check.Refuse = err
 			return check
 		}
-		// Released here; the daemon that runs takes it again for its life.
-		defer lock.Release()
 	}
 	for range 4 {
 		trial, err := ReadTrial(paths)
@@ -438,10 +549,38 @@ func ChooseHomeBuild(executable string, opts StartCheckOptions) StartCheck {
 			// A trial whose record cannot be read is a failed trial.
 			trial = &Trial{Starts: 1, FailReason: "its trial record cannot be read: " + err.Error()}
 		}
+		if trial != nil && trial.UpdateID != "" {
+			if state, serr := LoadState(paths); serr == nil && state.UpdateID != trial.UpdateID {
+				// A trial of an update this bundle no longer runs: a revert
+				// stopped after its rollback. The daemon start clears it; a
+				// typed command leaves it alone.
+				if !opts.Daemon {
+					trial = nil
+				} else {
+					if _, err := revertTrial(paths, "", storeRoot()); err != nil {
+						check.Notes = append(check.Notes, fmt.Sprintf("the trial record of update %s cannot be cleared: %v; running the installed build", trial.UpdateID, err))
+						return check
+					}
+					check.Notes = append(check.Notes, fmt.Sprintf("update %s was already rolled back (its revert stopped after the rollback); its trial record is cleared", trial.UpdateID))
+					continue
+				}
+			}
+		}
 		if trial != nil && trial.Starts > 0 {
 			deadline, _ := time.Parse(time.RFC3339Nano, trial.Deadline)
 			passed := trial.FailReason == "" && (trial.Deadline == "" || opts.Now().Before(deadline))
 			if opts.Daemon || !passed {
+				if !opts.Daemon {
+					// Never under a live daemon: the trial build may be the
+					// process running (stuck, or late after a suspend), and a
+					// revert would move its files away under it.
+					alive, release := daemonAlive(paths)
+					if alive {
+						check.Notes = append(check.Notes, fmt.Sprintf("update %s did not pass its trial, and the daemon running it is still alive: the next daemon start rolls it back; running the installed build", trial.UpdateID))
+						return check
+					}
+					defer release()
+				}
 				reason := trial.FailReason
 				switch {
 				case reason != "":
@@ -491,7 +630,7 @@ func ChooseHomeBuild(executable string, opts StartCheckOptions) StartCheck {
 			}
 			trial.Starts++
 			trial.Deadline = opts.Now().Add(timeout).UTC().Format(time.RFC3339Nano)
-			if err := writeTrial(paths, trial); err != nil {
+			if err := writeTrialLocked(paths, trial); err != nil {
 				check.Notes = append(check.Notes, fmt.Sprintf("cannot record the trial start of %s (%v); running the installed build", trial.UpdateID, err))
 				return check
 			}

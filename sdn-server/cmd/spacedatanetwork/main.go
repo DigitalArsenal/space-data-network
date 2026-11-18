@@ -983,6 +983,9 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create and start the node
+	if crashAtStart {
+		return errors.New("this build exits at start (built with the sdn_e2e_crash_at_start tag)")
+	}
 	if hangBeforeStoreOpen {
 		log.Warnf("This build never opens its store (built with the sdn_e2e_hang_before_store tag)")
 		for {

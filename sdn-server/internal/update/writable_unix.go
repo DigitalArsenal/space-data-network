@@ -31,3 +31,28 @@ func ownedNotShared(path string, info os.FileInfo) error {
 	}
 	return nil
 }
+
+// ownedByUser requires path to be owned by this process's effective user.
+func ownedByUser(path string, info os.FileInfo) error {
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return fmt.Errorf("cannot read the owner of %s", path)
+	}
+	if int(st.Uid) != os.Geteuid() {
+		return fmt.Errorf("%s is owned by uid %d, not by this account (uid %d)", path, st.Uid, os.Geteuid())
+	}
+	return nil
+}
+
+// ownedByUserOrRoot requires path to be owned by this process's effective
+// user or by root.
+func ownedByUserOrRoot(path string, info os.FileInfo) error {
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return fmt.Errorf("cannot read the owner of %s", path)
+	}
+	if st.Uid != 0 && int(st.Uid) != os.Geteuid() {
+		return fmt.Errorf("%s is owned by uid %d, neither this account (uid %d) nor root", path, st.Uid, os.Geteuid())
+	}
+	return nil
+}
