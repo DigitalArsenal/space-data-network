@@ -224,7 +224,7 @@ test('local Go suites serialize package builds while bypassing the test cache', 
   assert.ok(heavyArgs.includes('-p=1'), 'run_go_heavy must serialize package builds');
   assert.ok(heavyArgs.includes('-count=1'), 'run_go_heavy must bypass cached results');
   // The ordinary groups retain 25m. The complete scale exercise has its
-  // own measured budget and runs before the four parallel groups.
+  // own measured budget in a group of its own.
   assert.deepEqual(
     heavyArgs.filter((arg) => arg.startsWith('-timeout=')),
     ['-timeout=25m'],
@@ -237,7 +237,16 @@ test('local Go suites serialize package builds while bypassing the test cache', 
   assert.match(heavyJob, /^ {8}run: \.\/scripts\/ci-local\.sh heavy[ \t]*$/m, 'the go-heavy job must run the heavy lane');
   const heavyJobMinutes = Number(/^ {4}timeout-minutes: (\d+)[ \t]*$/m.exec(heavyJob)?.[1]);
   assert.ok(heavyJobMinutes > 60 + 25, 'the job must exceed both sequential test budgets');
-  // The remaining record-store tests run as four parallel groups. The
+  // The CI matrix runs exactly the groups run_go_heavy defines (long, each
+  // HEAVY_GO_GROUPS name, rest), each once: a group missing from the matrix
+  // would be tests no CI job runs.
+  const heavyGroups = /^HEAVY_GO_GROUPS="([^"]*)"[ \t]*$/m.exec(script)?.[1];
+  assert.ok(heavyGroups, 'HEAVY_GO_GROUPS must be assigned a literal');
+  const groupNames = ['long', ...heavyGroups.split(/\s+/).map((def) => def.split(':')[0]), 'rest'];
+  const matrixGroups = /^ {8}group: \[([^\]]*)\][ \t]*$/m.exec(heavyJob)?.[1]?.split(',').map((name) => name.trim());
+  assert.deepEqual(matrixGroups, groupNames, 'the go-heavy matrix must list every record store group once');
+  assert.match(heavyJob, /^ {6}SDN_CI_STORAGE_GROUP: \$\{\{ matrix\.group \}\}[ \t]*$/m, 'each go-heavy job must select its group');
+  // Unset, the remaining record-store tests run as background groups. The
   // execution coverage suite also includes the isolated scale exercise.
   assert.deepEqual(
     heavyArgs.slice(-2),
