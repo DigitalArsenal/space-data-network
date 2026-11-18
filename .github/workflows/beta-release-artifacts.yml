@@ -18,6 +18,18 @@ on:
         required: false
         type: boolean
         default: true
+      # False builds and tests everything a release would, and publishes
+      # nothing: no publish probe (a draft release), no image or manifest push,
+      # no GitHub release, and so no published-installer smoke. The jobs that
+      # use the update signing key run only from main (the update-signing
+      # Environment admits only main), so a dry run from a branch reports them
+      # refused and builds the rest anyway; a real release (true, the default)
+      # still requires every one of them.
+      publish:
+        description: Publish the release (false builds and tests every artifact and publishes nothing).
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -73,6 +85,7 @@ jobs:
       # draft creates no tag and is not publicly visible. It is deleted
       # immediately, including when the step fails.
       - name: Check the token can publish a release
+        if: inputs.publish != false
         env:
           GH_TOKEN: ${{ github.token }}
           PROBE_TAG: zz-publish-probe-${{ github.run_id }}
@@ -105,8 +118,10 @@ jobs:
 
   # The update signing key lives only in the update-signing Environment, and
   # only this job and cli-update-feed name that Environment. This job runs
-  # before any build so a missing or untrusted key stops the release at once;
-  # it builds nothing and runs only the reviewed key check.
+  # at the start, beside the first builds, and the CLI archives and the
+  # release need it, so a missing or untrusted key stops the release before
+  # any archive is built; it builds nothing and runs only the reviewed key
+  # check.
   update-signing-check:
     name: Check the update signing key
     runs-on: ubuntu-latest
@@ -135,8 +150,9 @@ jobs:
   # runners, and a Linux prefix cannot link a macOS or Windows binary, so the
   # prefix is a matrix over the same runners. Building LLVM is expensive, so
   # each is cached on the version + layout and rebuilt only when those change.
+  # It needs nothing: it builds (or restores) a prefix and publishes nothing,
+  # so it starts at once, beside the version and key checks.
   wasmedge-static:
-    needs: update-signing-check
     name: Build static WasmEdge (${{ matrix.label }})
     runs-on: ${{ matrix.runner }}
     # Empty for the macOS and Windows legs, which have no container key and so
@@ -349,10 +365,18 @@ jobs:
           WASMEDGE_DIR: ${{ github.workspace }}/.sdn-wasmedge-static/prefix
         run: ../scripts/go-with-wasmedge.sh test ./cmd/spacedatanetwork -run 'TestVerifyReleaseDirectory'
 
+  # Builds and publishes nothing outside this run (the Kubo daemon is the
+  # runner's own), so it does not wait for Preflight: every archive needs its
+  # output, and the release still needs Preflight directly.
   ipfs:
     name: Build and pin static assets
     runs-on: ubuntu-latest
-    needs: preflight
+    env:
+      # The sha512 of kubo_${KUBO_VERSION}_linux-amd64.tar.gz, the one Kubo
+      # publishes beside the asset on its GitHub release. Changes with
+      # KUBO_VERSION; download-kubo.sh prints the hashes both hosts publish
+      # when the archive does not match.
+      KUBO_LINUX_AMD64_SHA512: 'ff53b2428794fc8cca39505d28c15b4cceaef4b90a09284f291f611fcdc8c06399690575fc89cbd4d85ef71f3652581296c6f2e710386f887c8edf36b6e89d71'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -360,6 +384,14 @@ jobs:
           node-version: '24'
           cache: npm
           cache-dependency-path: sdn-js/package-lock.json
+      # The ipfs CLI is a build tool. Its release archive is cached by version
+      # and pinned sha512. v1.1.8 run 44184616352 spent 4.6 of its 6.3 minutes
+      # here, timing out on dist.ipfs.tech before the GitHub fallback answered.
+      - id: kubo-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: dist/kubo-archive
+          key: kubo-archive-${{ env.KUBO_VERSION }}-linux-amd64-${{ env.KUBO_LINUX_AMD64_SHA512 }}
       - name: Install Kubo
         # Two tries at dist.ipfs.tech, not five: five cost about twelve minutes
         # on the release's critical path before the GitHub-release fallback
@@ -367,11 +399,24 @@ jobs:
         env:
           KUBO_DOWNLOAD_ATTEMPTS: '2'
         run: |
-          deployment/release/download-kubo.sh \
-            --version "${KUBO_VERSION}" \
-            --platform linux-amd64 \
-            --archive tar.gz \
-            --output-dir dist/bootstrap-kubo
+          set -euo pipefail
+          archive="dist/kubo-archive/kubo_${KUBO_VERSION}_linux-amd64.tar.gz"
+          if [ ! -f "${archive}" ]; then
+            deployment/release/download-kubo.sh \
+              --version "${KUBO_VERSION}" \
+              --platform linux-amd64 \
+              --archive tar.gz \
+              --sha512 "${KUBO_LINUX_AMD64_SHA512}" \
+              --keep-archive "${archive}" \
+              --output-dir "${RUNNER_TEMP}/kubo-download"
+          fi
+          # Every run, cached or downloaded: the archive is the pinned one, and
+          # the ipfs CLI used is the one unpacked from it here.
+          echo "${KUBO_LINUX_AMD64_SHA512}  ${archive}" | sha512sum -c -
+          rm -rf dist/bootstrap-kubo
+          mkdir -p dist/bootstrap-kubo
+          tar -xzf "${archive}" -C dist/bootstrap-kubo
+          dist/bootstrap-kubo/kubo/ipfs version | grep -qx "ipfs version ${KUBO_VERSION#v}"
           sudo install dist/bootstrap-kubo/kubo/ipfs /usr/local/bin/ipfs
           ipfs init --profile=server
           ipfs daemon > /tmp/ipfs.log 2>&1 &
@@ -389,7 +434,6 @@ jobs:
   updater-wasm:
     name: Build updater module wasm
     runs-on: ubuntu-latest
-    needs: preflight
     defaults:
       run:
         shell: bash
@@ -459,6 +503,12 @@ jobs:
     # Each leg pushes BY DIGEST and tags nothing. Tags belong to the manifest,
     # and a per-arch push that claimed them would leave whichever leg finished
     # last owning `:beta` as a single-architecture image.
+    #
+    # Building and pushing are two jobs. This one builds each architecture's
+    # image into the local store, checks its version stamp, saves the
+    # downloadable tarball the install tests run, and keeps the build's layer
+    # cache for docker-push. It publishes nothing, so it does not wait for
+    # Preflight; docker-push, which pushes, does.
     name: Build beta container image (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
     needs: [beta-version, ipfs]
@@ -497,48 +547,14 @@ jobs:
           mkdir -p sdn-js/ui/dist webui/build
           cp -R dist/ipfs/sdn-admin/. sdn-js/ui/dist/
           cp -R dist/ipfs/ipfs-webui/. webui/build/
+      # No registry login: this job runs before Preflight and the key check,
+      # so it holds no credential that could push. The base images are pulled
+      # anonymously, as the install-test jobs pull theirs.
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: dockerdigitalarsenal
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-      # For the LABELS only. The tags this also computes are deliberately NOT
-      # passed to the build below: a push-by-digest leg must not claim them.
-      # Without this step the per-architecture images lose their OCI source,
-      # revision and created annotations, which the single-arch job did emit.
-      - id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.IMAGE_NAME }}
-      - id: build
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: deployment/docker/Dockerfile
-          platforms: ${{ matrix.platform }}
-          labels: ${{ steps.meta.outputs.labels }}
-          # WITHOUT THIS the image's node advertises "spacedatanetwork/1.0.5"
-          # — the unstamped suite version — on libp2p identify, which is the
-          # exact defect versioninfo.ReleaseTag exists to fix: every 1.0.5
-          # build, release and dev alike, looked byte-identical to peers. The
-          # tarball build passed the stamp from the day it was added; this one
-          # never did, so v1.0.5-beta.69's published image reported 1.0.5.
-          build-args: |
-            SDN_RELEASE_TAG=${{ env.RELEASE_TAG }}
-          outputs: type=image,name=${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
-          provenance: true
-          sbom: true
-      - name: Record this architecture's digest
-        run: |
-          mkdir -p dist/container-arch-digests
-          printf '%s' "${{ steps.build.outputs.digest }}" > "dist/container-arch-digests/${{ matrix.arch }}"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: container-arch-digest-${{ matrix.arch }}
-          path: dist/container-arch-digests/${{ matrix.arch }}
-      # The downloadable tarball is a SEPARATE --load build: `docker save` reads
-      # the local image store, and a push-by-digest build never lands there.
+      # The downloadable tarball is a --load build: `docker save` reads the
+      # local image store, and a push-by-digest build never lands there. Its
+      # layer cache (mode=min: the layers of this image) is what docker-push
+      # builds from, so the pushed layers are these layers.
       - name: Export downloadable Docker image
         env:
           IMAGE_NAME: ${{ env.IMAGE_NAME }}
@@ -548,6 +564,7 @@ jobs:
           docker buildx build \
             --platform ${{ matrix.platform }} \
             --load \
+            --cache-to "type=local,dest=${RUNNER_TEMP}/container-build-cache,mode=min" \
             -t "${image_ref}" \
             --build-arg "SDN_RELEASE_TAG=${RELEASE_TAG}" \
             -f deployment/docker/Dockerfile \
@@ -566,15 +583,203 @@ jobs:
         with:
           name: container-image-${{ matrix.arch }}
           path: dist/container-images/spacedatanetwork-container-${{ needs.beta-version.outputs.native_package_version }}-linux-${{ matrix.arch }}.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: container-build-cache-${{ matrix.arch }}
+          path: ${{ runner.temp }}/container-build-cache
+          if-no-files-found: error
+          retention-days: 1
+
+  docker-push:
+    # Preflight AND the update signing key check gate every push: a run whose
+    # key is missing or untrusted, and a run from a branch (the update-signing
+    # Environment refuses its key check), push nothing to Docker Hub.
+    #
+    # Nothing is pushed until it is shown to be the tested image. This job
+    # builds the image to push into the local store from docker's layer cache,
+    # compares it with the tested tarball's image (compare-container-images.mjs:
+    # the layers and every config field that decides how the container runs)
+    # and its version stamp, and only then pushes, from the same builder, by
+    # digest. The pushed digest is then pulled back and compared the same way,
+    # and docker-manifest tags nothing until both comparisons have passed.
+    #
+    # With publish false the same steps run against a registry on this runner
+    # (the registry service, localhost:5000) instead of Docker Hub: the build,
+    # both comparisons and the push are exercised, and nothing leaves the run.
+    name: Push beta container image (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    needs: [beta-version, ipfs, preflight, update-signing-check, docker]
+    # Every need must succeed. The one exception is a dry run (publish false),
+    # which pushes only to the registry on its own runner, as the cli job
+    # builds without the key check.
+    if: ${{ !cancelled() && needs.beta-version.result == 'success' && needs.ipfs.result == 'success' && needs.preflight.result == 'success' && needs.docker.result == 'success' && (needs.update-signing-check.result == 'success' || inputs.publish == false) }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+            platform: linux/amd64
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
+    services:
+      registry:
+        image: registry:2.8.3
+        ports:
+          - 5000:5000
+    env:
+      RELEASE_TAG: ${{ needs.beta-version.outputs.release_tag }}
+      NATIVE_PACKAGE_VERSION: ${{ needs.beta-version.outputs.native_package_version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ipfs-assets
+          path: dist/ipfs
+      # The same build context as the docker job, file for file: the layer
+      # cache matches on content.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: sdn-js/package-lock.json
+      - name: Install sdn-js dependencies
+        working-directory: sdn-js
+        run: npm ci
+      - name: Restore exact IPFS-published assets
+        run: |
+          mkdir -p sdn-js/ui/dist webui/build
+          cp -R dist/ipfs/sdn-admin/. sdn-js/ui/dist/
+          cp -R dist/ipfs/ipfs-webui/. webui/build/
+      - uses: actions/download-artifact@v4
+        with:
+          name: container-build-cache-${{ matrix.arch }}
+          path: ${{ runner.temp }}/container-build-cache
+      - uses: actions/download-artifact@v4
+        with:
+          name: container-image-${{ matrix.arch }}
+          path: dist/container-images
+      # The builder shares the runner's network so that a dry run can push to
+      # the registry service at localhost:5000.
+      - uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: network=host
+      - uses: docker/login-action@v3
+        if: inputs.publish != false
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: dockerdigitalarsenal
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - id: target
+        name: Choose the registry
+        env:
+          PUSH_IMAGE: ${{ inputs.publish != false && env.IMAGE_NAME || 'localhost:5000/space-data-network' }}
+        run: echo "image=${PUSH_IMAGE}" >> "$GITHUB_OUTPUT"
+      # For the LABELS only. The tags this also computes are deliberately NOT
+      # passed to the builds below: a push-by-digest leg must not claim them.
+      # Without this step the per-architecture images lose their OCI source,
+      # revision and created annotations, which the single-arch job did emit.
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+      # The image to push, into the local store: the docker job's build
+      # inputs, its layer cache, and the labels the push carries. A layer the
+      # cache did not supply is rebuilt here, differs from the tested one, and
+      # stops the job at the comparison below, before anything is pushed.
+      - name: Build the image to push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: deployment/docker/Dockerfile
+          platforms: ${{ matrix.platform }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            SDN_RELEASE_TAG=${{ env.RELEASE_TAG }}
+          cache-from: type=local,src=${{ runner.temp }}/container-build-cache
+          load: true
+          tags: sdn-push-candidate:${{ matrix.arch }}
+          provenance: false
+          sbom: false
+      - name: Compare the image to push with the tested image
+        run: |
+          set -euo pipefail
+          tarball="dist/container-images/spacedatanetwork-container-${NATIVE_PACKAGE_VERSION}-linux-${{ matrix.arch }}.tar.gz"
+          tested="$(docker load --input "${tarball}" | sed -n 's/^Loaded image: //p' | tail -n 1)"
+          test -n "${tested}"
+          echo "TESTED_IMAGE=${tested}" >> "$GITHUB_ENV"
+          node deployment/release/compare-container-images.mjs \
+            --tested "${tested}" --candidate "sdn-push-candidate:${{ matrix.arch }}" \
+            --version "${RELEASE_TAG#v}"
+      # WITHOUT SDN_RELEASE_TAG the image's node advertises
+      # "spacedatanetwork/1.0.5" — the unstamped suite version — on libp2p
+      # identify, which is the exact defect versioninfo.ReleaseTag exists to
+      # fix: v1.0.5-beta.69's published image reported 1.0.5. The comparison
+      # above checks the stamp; the push is the same build in the same
+      # builder, so every layer comes from the image compared above.
+      - id: build
+        name: Push the image by digest
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: deployment/docker/Dockerfile
+          platforms: ${{ matrix.platform }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            SDN_RELEASE_TAG=${{ env.RELEASE_TAG }}
+          cache-from: type=local,src=${{ runner.temp }}/container-build-cache
+          outputs: type=image,name=${{ steps.target.outputs.image }},push-by-digest=true,name-canonical=true,push=true
+          provenance: true
+          sbom: true
+      # The pushed digest, pulled back from the registry and compared with the
+      # tested image the same way. docker-manifest tags nothing unless this
+      # passed for both architectures.
+      - name: Compare the pushed image with the tested image
+        env:
+          PUSHED: ${{ steps.target.outputs.image }}@${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          docker pull --platform ${{ matrix.platform }} "${PUSHED}"
+          node deployment/release/compare-container-images.mjs \
+            --tested "${TESTED_IMAGE}" --candidate "${PUSHED}" \
+            --version "${RELEASE_TAG#v}"
+          {
+            echo "### Container image (${{ matrix.arch }})"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Tested image id (tarball) | \`$(docker image inspect --format '{{.Id}}' "${TESTED_IMAGE}")\` |"
+            echo "| Image id built for the push | \`$(docker image inspect --format '{{.Id}}' "sdn-push-candidate:${{ matrix.arch }}")\` |"
+            echo "| Pushed digest | \`${PUSHED}\` |"
+            echo "| Image id pulled back | \`$(docker image inspect --format '{{.Id}}' "${PUSHED}")\` |"
+            echo ""
+            echo "The image ids differ from the tested one only in the fields compare-container-images.mjs allows to differ (labels, created time)."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Record this architecture's digest
+        if: inputs.publish != false
+        run: |
+          mkdir -p dist/container-arch-digests
+          printf '%s' "${{ steps.build.outputs.digest }}" > "dist/container-arch-digests/${{ matrix.arch }}"
+      - uses: actions/upload-artifact@v4
+        if: inputs.publish != false
+        with:
+          name: container-arch-digest-${{ matrix.arch }}
+          path: dist/container-arch-digests/${{ matrix.arch }}
 
   docker-manifest:
     # The tags point HERE, at a manifest listing both architectures, so that
     # `docker pull` resolves to the puller's own platform. Signing also happens
     # here and only here: cosign signs the manifest digest, which is what a
     # consumer verifies after pulling.
+    #
+    # `:beta` and the version tag move only after Preflight, the update
+    # signing key check, both pushed images' comparisons and the container
+    # install and network test have all passed.
     name: Publish beta container manifest
     runs-on: ubuntu-latest
-    needs: [beta-version, docker]
+    needs: [beta-version, preflight, update-signing-check, docker-push, artifact-docker-test-container]
+    if: inputs.publish != false
     env:
       RELEASE_TAG: ${{ needs.beta-version.outputs.release_tag }}
     steps:
@@ -641,13 +846,60 @@ jobs:
           name: container-digest
           path: dist/container-digests/image.json
 
+  # The wallet sign-in assets and the hd-wallet WASI module every CLI archive
+  # carries, staged once from the pinned npm packages. They are the same
+  # bytes for every platform, and installing both npm trees on each CLI
+  # runner cost up to 3.4 minutes (darwin-amd64, v1.1.8 run 44184616352).
+  cli-js-inputs:
+    name: Stage CLI wallet assets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            sdn-js/package-lock.json
+      - name: Install root JS dependencies
+        run: npm ci
+      # hd-wallet-ui and hd-wallet-wasm are SDN-JS dependencies, not root ones,
+      # so staging the wallet out of the root node_modules could never find them
+      # ("hd-wallet-ui/dist missing — run 'npm ci' in sdn-js first").
+      - name: Install sdn-js dependencies
+        working-directory: sdn-js
+        run: npm ci
+      - name: Stage wallet sign-in assets
+        run: |
+          SDN_WALLET_NODE_MODULES="${PWD}/sdn-js/node_modules" deployment/wallet-wasm/stage-wallet-wasm.sh \
+            "${PWD}/dist/wallet-wasm" "${PWD}/dist/wallet-ui"
+          test -f dist/wallet-wasm/runtime/index.mjs
+          test -f dist/wallet-ui/compat/index.js
+          test -f node_modules/hd-wallet-wasm/dist/hd-wallet-wasi.wasm
+      # Paths relative to the workspace, so a download into the workspace puts
+      # each file where the archive build reads it.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: cli-js-inputs
+          path: |
+            dist/wallet-wasm
+            dist/wallet-ui
+            node_modules/hd-wallet-wasm/dist/hd-wallet-wasi.wasm
+          if-no-files-found: error
+          include-hidden-files: true
+
   cli:
     name: Build self-contained CLI archives (${{ matrix.target_os }}-${{ matrix.target_arch }})
     runs-on: ${{ matrix.runner }}
     # Empty for macOS and Windows, which run on the runner itself.
     container: ${{ matrix.container }}
     continue-on-error: ${{ matrix.experimental == true }}
-    needs: [beta-version, update-signing-check, ipfs, updater-wasm, wasmedge-static]
+    needs: [beta-version, update-signing-check, ipfs, updater-wasm, wasmedge-static, cli-js-inputs]
+    # Every need must succeed, as before. The one exception is a dry run
+    # (publish false), which builds the archives even where the signing key
+    # check cannot run (a branch; the key's Environment admits only main).
+    if: ${{ !cancelled() && needs.beta-version.result == 'success' && needs.ipfs.result == 'success' && needs.updater-wasm.result == 'success' && needs.wasmedge-static.result == 'success' && needs.cli-js-inputs.result == 'success' && (needs.update-signing-check.result == 'success' || inputs.publish == false) }}
     defaults:
       run:
         shell: bash
@@ -717,23 +969,19 @@ jobs:
         with:
           name: ipfs-assets
           path: dist/ipfs
+      # Node runs the archive bundler, which imports only Node's own modules;
+      # no npm tree is installed here (see cli-js-inputs).
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24'
-          cache: npm
-          cache-dependency-path: package-lock.json
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: '1.24.x'
           cache-dependency-path: sdn-server/go.sum
-      - name: Install root JS dependencies
-        run: npm ci
-      # hd-wallet-ui and hd-wallet-wasm are SDN-JS dependencies, not root ones,
-      # so staging the wallet out of the root node_modules could never find them
-      # ("hd-wallet-ui/dist missing — run 'npm ci' in sdn-js first").
-      - name: Install sdn-js dependencies
-        working-directory: sdn-js
-        run: npm ci
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: cli-js-inputs
+          path: .
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: updater-module-wasm
@@ -958,12 +1206,11 @@ jobs:
           SDN_WASM_ATOMIC_REGRESSION: '1'
           SDN_WASM_REQUIRE_PATCHED: '1'
         run: ../scripts/go-with-wasmedge.sh test ./internal/wasmrt/ -count=1 -run 'TestWasiAtomicNotifyWithoutStore|TestSubstrateSelfTest|TestOneStopEndsSixteenInterruptibleAOTThreads|TestStaticBuildCarriesTheRuntimePatches' -v
-      - name: Stage wallet sign-in assets
+      - name: Verify the staged wallet sign-in assets
         run: |
-          SDN_WALLET_NODE_MODULES="${PWD}/sdn-js/node_modules" deployment/wallet-wasm/stage-wallet-wasm.sh \
-            "${PWD}/dist/wallet-wasm" "${PWD}/dist/wallet-ui"
           test -f dist/wallet-wasm/runtime/index.mjs
           test -f dist/wallet-ui/compat/index.js
+          test -f node_modules/hd-wallet-wasm/dist/hd-wallet-wasi.wasm
       - name: Build self-contained CLI archive
         run: |
           # Every target links the runtime in, so no bundle stages one.
@@ -1003,6 +1250,11 @@ jobs:
     name: Build CLI update payloads
     runs-on: ubuntu-latest
     needs: [beta-version, cli]
+    # A dry run (publish false) skips this job, and with it cli-update-feed
+    # and cli-update-feed-verify: the update signing key signs nothing in a
+    # dry run. cli-update-feed-dry-run builds, signs and verifies the same
+    # feed with a key made in that run instead.
+    if: inputs.publish != false
     env:
       VERSION: ${{ needs.beta-version.outputs.package_version }}
     steps:
@@ -1027,6 +1279,9 @@ jobs:
             "linux arm64 tar.gz"
             "windows amd64 zip"
           )
+          # The five payloads build side by side (each in its own temporary
+          # directory and output directory); every one must succeed.
+          pids=()
           for target in "${targets[@]}"; do
             read -r target_os target_arch target_ext <<< "${target}"
             archive_path="dist/cli/cli-${target_os}-${target_arch}/spacedatanetwork-${VERSION}-${target_os}-${target_arch}.${target_ext}"
@@ -1036,8 +1291,17 @@ jobs:
             fi
             node deployment/release/build-cli-update-payload.mjs \
               --bundle-archive "${archive_path}" \
-              --carrier-out-dir "${payload_dir}/${target_os}-${target_arch}"
+              --carrier-out-dir "${payload_dir}/${target_os}-${target_arch}" &
+            pids+=("$!")
           done
+          failed=0
+          for pid in "${pids[@]}"; do
+            wait "${pid}" || failed=1
+          done
+          if [[ "${failed}" != 0 ]]; then
+            echo "a CLI update payload failed to build" >&2
+            exit 1
+          fi
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: cli-update-payloads
@@ -1190,6 +1454,210 @@ jobs:
             --expect-version "${VERSION}" \
             --expect-count 5
 
+  # A DRY RUN'S FEED, signed with a key made in the run, never with the update
+  # signing key. With publish false, cli-update-payloads, cli-update-feed and
+  # cli-update-feed-verify are skipped; this job runs their programs, their
+  # reviewed steps word for word (beta-release-workflow.test.mjs holds them
+  # equal), with one change: the trust roots are a file holding only the
+  # throwaway key's root. It then checks that the fleet roots refuse the feed,
+  # so the artifact is no update any install accepts. The production key's
+  # signing path runs only in a real release (publish true, from main).
+  cli-update-feed-dry-run:
+    name: Build and verify a throwaway-signed CLI update feed (dry run)
+    runs-on: ubuntu-latest
+    needs: [beta-version, cli]
+    if: ${{ !cancelled() && inputs.publish == false && needs.beta-version.result == 'success' && needs.cli.result == 'success' }}
+    env:
+      VERSION: ${{ needs.beta-version.outputs.package_version }}
+      SDN_UPDATE_SEQUENCE: ${{ github.run_number }}
+      DRY_RUN_ROOTS: dist/dry-run-update-roots.json
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: cli-*
+          path: dist/cli
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - name: Build CLI update payloads
+        run: |
+          set -euo pipefail
+          payload_dir="dist/update-payloads"
+          rm -rf "${payload_dir}"
+          mkdir -p "${payload_dir}"
+          targets=(
+            "darwin amd64 tar.gz"
+            "darwin arm64 tar.gz"
+            "linux amd64 tar.gz"
+            "linux arm64 tar.gz"
+            "windows amd64 zip"
+          )
+          # The five payloads build side by side (each in its own temporary
+          # directory and output directory); every one must succeed.
+          pids=()
+          for target in "${targets[@]}"; do
+            read -r target_os target_arch target_ext <<< "${target}"
+            archive_path="dist/cli/cli-${target_os}-${target_arch}/spacedatanetwork-${VERSION}-${target_os}-${target_arch}.${target_ext}"
+            if [[ ! -f "${archive_path}" ]]; then
+              echo "missing CLI archive for update feed: ${archive_path}" >&2
+              exit 1
+            fi
+            node deployment/release/build-cli-update-payload.mjs \
+              --bundle-archive "${archive_path}" \
+              --carrier-out-dir "${payload_dir}/${target_os}-${target_arch}" &
+            pids+=("$!")
+          done
+          failed=0
+          for pid in "${pids[@]}"; do
+            wait "${pid}" || failed=1
+          done
+          if [[ "${failed}" != 0 ]]; then
+            echo "a CLI update payload failed to build" >&2
+            exit 1
+          fi
+      # An Ed25519 key that exists only in this job, and a roots file that
+      # holds only its root (the key id derived as update.RootKeyID derives
+      # it). The key id must not be a fleet root.
+      - name: Make a throwaway update signing key
+        run: |
+          set -euo pipefail
+          key="${RUNNER_TEMP}/dry-run-update-key.pem"
+          openssl genpkey -algorithm ed25519 -out "${key}"
+          mkdir -p "$(dirname "${DRY_RUN_ROOTS}")"
+          key_id="$(node -e '
+            const { createHash, createPrivateKey, createPublicKey } = require("node:crypto");
+            const fs = require("node:fs");
+            const [keyPath, rootsPath, fleetPath] = process.argv.slice(1);
+            const spki = createPublicKey(createPrivateKey(fs.readFileSync(keyPath))).export({ type: "spki", format: "der" });
+            const id = createHash("sha256").update(spki.subarray(-32)).digest("hex").slice(0, 12);
+            if (Object.hasOwn(JSON.parse(fs.readFileSync(fleetPath, "utf8")), id)) throw new Error(id + " is a fleet root");
+            fs.writeFileSync(rootsPath, JSON.stringify({ [id]: spki.toString("base64") }) + "\n");
+            console.log(id);
+          ' "${key}" "${DRY_RUN_ROOTS}" deployment/release/fleet-trust-roots.json)"
+          while IFS= read -r line; do echo "::add-mask::${line}"; done < "${key}"
+          {
+            echo "SDN_UPDATE_KEY_ID=${key_id}"
+            echo "SDN_UPDATE_SIGNING_KEY_PEM<<SDN_DRY_RUN_KEY_END"
+            cat "${key}"
+            echo "SDN_DRY_RUN_KEY_END"
+          } >> "$GITHUB_ENV"
+          rm -f "${key}"
+          echo "throwaway update key ${key_id}; roots: $(cat "${DRY_RUN_ROOTS}")"
+      - name: Build the release signal signer
+        run: |
+          set -euo pipefail
+          go_bin="$(command -v go || ls -1d "${RUNNER_TOOL_CACHE}"/go/*/x64/bin/go | sort -V | tail -n 1)"
+          test -x "${go_bin}"
+          cd sdn-server
+          CGO_ENABLED=0 "${go_bin}" build -trimpath \
+            -o "$RUNNER_TEMP/sdn-signal-signer/sdn-update-signal-signer" ./cmd/sdn-update-signal-signer
+      - name: Sign the CLI update manifests
+        id: signing
+        env:
+          RELEASE_MATURITY: ${{ needs.beta-version.outputs.channel }}
+        run: |
+          set -euo pipefail
+          key_check="$RUNNER_TEMP/update-key-check"
+          node deployment/release/check-update-signing-key.mjs \
+            --maturity "${RELEASE_MATURITY}" \
+            --roots "${DRY_RUN_ROOTS}" \
+            --github-output "$key_check"
+          cat "$key_check" >> "$GITHUB_OUTPUT"
+          if ! grep -qx 'available=true' "$key_check"; then exit 0; fi
+          update_key_id="$(sed -n 's/^key_id=//p' "$key_check")"
+          test -n "$update_key_id"
+          created_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "created_at=${created_at}" >> "$GITHUB_OUTPUT"
+          targets=(
+            "darwin amd64 tar.gz"
+            "darwin arm64 tar.gz"
+            "linux amd64 tar.gz"
+            "linux arm64 tar.gz"
+            "windows amd64 zip"
+          )
+          for target in "${targets[@]}"; do
+            read -r target_os target_arch target_ext <<< "${target}"
+            # Must match the channel the bundles above were stamped with,
+            # or the shipped updater reads a feed index nobody publishes.
+            node deployment/release/sign-cli-update-payload.mjs \
+              --payload-dir "dist/update-payloads/${target_os}-${target_arch}" \
+              --version "${VERSION}" \
+              --sequence "${SDN_UPDATE_SEQUENCE}" \
+              --channel release \
+              --platform "${target_os}" \
+              --arch "${target_arch}" \
+              --format "${target_ext}" \
+              --key-id "${update_key_id}" \
+              --created-at "${created_at}"
+          done
+      - name: The throwaway key signed the feed
+        env:
+          AVAILABLE: ${{ steps.signing.outputs.available }}
+        run: test "${AVAILABLE}" = true
+      - name: Build the CLI update feed index
+        env:
+          CREATED_AT: ${{ steps.signing.outputs.created_at }}
+        run: |
+          set -euo pipefail
+          feed_tree_root="dist/update-feed-tree"
+          rm -rf "${feed_tree_root}"
+          feed_args=(--out-dir "${feed_tree_root}/update-feed" --generated-at "${CREATED_AT}")
+          for pair in darwin-amd64 darwin-arm64 linux-amd64 linux-arm64 windows-amd64; do
+            feed_args+=(--entry "dist/update-payloads/${pair}/manifest.json:dist/update-payloads/${pair}/update.wasm")
+          done
+          node deployment/release/build-sdn-update-feed.js "${feed_args[@]}"
+      - name: Sign the update signals
+        run: |
+          "$RUNNER_TEMP/sdn-signal-signer/sdn-update-signal-signer" \
+            --key-env SDN_UPDATE_SIGNING_KEY_PEM --feed-dir dist/update-feed-tree/update-feed \
+            --roots "${DRY_RUN_ROOTS}"
+      - name: Pack the signed CLI update feed
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/sdn-signal-signer/sdn-update-signal-signer" --verify-only \
+            --feed-dir dist/update-feed-tree/update-feed --roots "${DRY_RUN_ROOTS}"
+          mkdir -p dist/update-feed
+          tar -czf "dist/update-feed/spacedatanetwork-update-feed-${VERSION}.tar.gz" -C dist/update-feed-tree update-feed
+      - name: Verify the signed CLI update feed
+        env:
+          FEED_AVAILABLE: ${{ steps.signing.outputs.available }}
+        run: |
+          set -euo pipefail
+          if [[ "${FEED_AVAILABLE}" != "true" ]]; then
+            echo "no update feed in this release (no signing key for a beta)"
+            exit 0
+          fi
+          mkdir -p dist/feed-check
+          tar -xzf "dist/update-feed/spacedatanetwork-update-feed-${VERSION}.tar.gz" -C dist/feed-check
+          node deployment/release/verify-cli-update-feed.mjs \
+            --feed-dir dist/feed-check/update-feed \
+            --roots "${DRY_RUN_ROOTS}" \
+            --expect-version "${VERSION}" \
+            --expect-count 5
+      - name: The fleet roots refuse the throwaway-signed feed
+        run: |
+          set -uo pipefail
+          if node deployment/release/verify-cli-update-feed.mjs \
+            --feed-dir dist/feed-check/update-feed \
+            --roots deployment/release/fleet-trust-roots.json \
+            --expect-version "${VERSION}" \
+            --expect-count 5; then
+            echo "::error::the fleet roots accept a manifest signed with the throwaway key"
+            exit 1
+          fi
+          if "$RUNNER_TEMP/sdn-signal-signer/sdn-update-signal-signer" --verify-only \
+            --feed-dir dist/update-feed-tree/update-feed --roots deployment/release/fleet-trust-roots.json; then
+            echo "::error::the fleet roots accept a signal signed with the throwaway key"
+            exit 1
+          fi
+          echo "the fleet roots refuse this feed's manifests and signals"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cli-update-feed-dry-run
+          path: dist/update-feed/spacedatanetwork-update-feed-${{ needs.beta-version.outputs.package_version }}.tar.gz
+          retention-days: 1
+
   desktop:
     name: Build desktop app artifacts (${{ matrix.target_os }}-${{ matrix.target_arch }})
     runs-on: ${{ matrix.runner }}
@@ -1204,6 +1672,8 @@ jobs:
     # skipped for them) and cannot hold the release either.
     continue-on-error: ${{ matrix.experimental == true || (matrix.target_os == 'macos' && inputs.macos_desktop == false) }}
     needs: [beta-version, cli]
+    # As in cli-update-payloads: both needs must succeed.
+    if: ${{ !cancelled() && needs.beta-version.result == 'success' && needs.cli.result == 'success' }}
     defaults:
       run:
         shell: bash
@@ -1477,10 +1947,21 @@ jobs:
           name: sdn-js-package
           path: dist/sdn-js/*.tgz
 
+  # The install and network test, as three jobs that run side by side, each
+  # starting as soon as its own artifacts exist (scenarios in
+  # test-release-artifacts-docker.mjs; together they are its `all`, the single
+  # job this was). Each runs its own first-start seed node from the full DEB.
+  #
+  # 600 s per service, not 180: a node's FIRST start compiles its FlatSQL and
+  # module AOT artifacts, and v1.1.0 run 43650420385's full-deb container was
+  # still starting when 180 s ran out (its log: AOT compile and substrate
+  # self-test done ~85 s in, health never answered). The same artifacts on
+  # bare runners took 76-173 s just to reach the bootstrap nodes (diagnostic
+  # run 43652965924).
   artifact-docker-test:
-    name: Install and network-test release artifacts
+    name: Install and network-test release artifacts (packages)
     runs-on: ubuntu-latest
-    needs: [beta-version, ipfs, docker, cli, cli-update-feed, packages, sdn-js-package]
+    needs: [beta-version, ipfs, packages]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -1491,44 +1972,65 @@ jobs:
         with:
           name: package-artifacts
           path: dist
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install the DEB, RPM and VM artifacts and verify their SDN network
+        run: npm run test:release-artifacts:docker -- --release-dir dist --timeout-ms 600000 --scenario packages
+
+  artifact-docker-test-container:
+    name: Install and network-test release artifacts (container)
+    runs-on: ubuntu-latest
+    needs: [beta-version, packages, docker]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: package-artifacts
+          path: dist
+      # This runner is amd64.
+      - uses: actions/download-artifact@v4
+        with:
+          name: container-image-amd64
+          path: dist
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install the container image and verify its SDN network
+        run: npm run test:release-artifacts:docker -- --release-dir dist --timeout-ms 600000 --scenario container
+
+  # The sdn-js install (about two minutes of npm install) is here, beside the
+  # CLI archive, and not on the container job, where it slowed the seed's
+  # first start (dry run 44391918187).
+  artifact-docker-test-cli:
+    name: Install and network-test release artifacts (CLI archive and sdn-js)
+    runs-on: ubuntu-latest
+    needs: [beta-version, cli, sdn-js-package]
+    # Every need must succeed (written out as in cli-update-payloads).
+    if: ${{ !cancelled() && needs.beta-version.result == 'success' && needs.cli.result == 'success' && needs.sdn-js-package.result == 'success' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: cli-linux-amd64
+          path: dist/cli
       - uses: actions/download-artifact@v4
         with:
           name: sdn-js-package
           path: dist/sdn-js
-      # Both architectures land here; the test picks the amd64 tarball by name
-      # (see test-release-artifacts-docker.mjs), since this runner is amd64.
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: container-image-*
-          path: dist
-          merge-multiple: true
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: cli-*
-          path: dist/cli
-          merge-multiple: true
-      # Absent when the signing key is not configured; see cli-update-feed.
-      - uses: actions/download-artifact@v4
-        continue-on-error: true
-        with:
-          name: cli-update-feed
-          path: dist/update-feed
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-      - name: Install artifacts and verify SDN network
-        # 600 s per service, not 180: a node's FIRST start compiles its FlatSQL
-        # and module AOT artifacts, and v1.1.0 run 43650420385's full-deb
-        # container was still starting when 180 s ran out (its log: AOT
-        # compile and substrate self-test done ~85 s in, health never
-        # answered). The same artifacts on bare runners took 76-173 s just to
-        # reach the bootstrap nodes (diagnostic run 43652965924).
-        run: npm run test:release-artifacts:docker -- --release-dir dist --timeout-ms 600000
+      - name: Install the Linux CLI archive and the sdn-js package
+        run: npm run test:release-artifacts:docker -- --release-dir dist --timeout-ms 600000 --scenario cli
 
   release:
     name: Publish beta GitHub release
     runs-on: ubuntu-latest
-    needs: [beta-version, ipfs, docker, docker-manifest, cli, cli-update-feed, cli-update-feed-verify, desktop, packages, sdn-js-package, artifact-docker-test]
+    # Every check, named here directly: the builds no longer wait for
+    # Preflight or the key check, so nothing reaches this job through them.
+    needs: [beta-version, update-signing-check, preflight, ipfs, updater-wasm, wasmedge-static, docker, docker-push, docker-manifest, cli-js-inputs, cli, cli-update-payloads, cli-update-feed, cli-update-feed-verify, desktop, packages, sdn-js-package, artifact-docker-test, artifact-docker-test-container, artifact-docker-test-cli]
+    if: inputs.publish != false
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -1624,6 +2126,7 @@ jobs:
     # successful release red — which trains everyone to ignore the status.
     continue-on-error: ${{ matrix.experimental == true }}
     needs: [beta-version, release]
+    if: inputs.publish != false
     env:
       SDN_VERSION: ${{ needs.beta-version.outputs.release_tag }}
     strategy:
