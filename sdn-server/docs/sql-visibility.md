@@ -27,9 +27,9 @@ uint8 one) and promotes the store. `false` keeps bounded visibility and refuses
 a promoted store. Missing tag 13, including the historical tag 10 value zero,
 keeps bounded behavior.
 
-The embedded FlatSQL 3.12.10 artifact does not support this option. Enabling it
-requires a published artifact exporting `flatsql_capabilities` with bit 0 set.
-The host checks that export before engine initialization and before creating
+The embedded FlatSQL 3.12.12 artifact supports this option (it exports
+`flatsql_capabilities` with bit 0 set; the binary is stamped `MaxStoreLayout`
+2). The host checks that export before engine initialization and before creating
 engine or auxiliary database files. A failed standard registration aborts
 startup. Registration updates SQL schema state without a second engine open.
 

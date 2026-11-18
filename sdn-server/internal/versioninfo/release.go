@@ -66,11 +66,11 @@ const (
 	// P4EngineSHA256 is the release pin of the threaded engine (store format
 	// 5, the stream engine: per source feed a pure FlatBuffer stream plus a
 	// SQLite index file): the sha256 of the published flatsql.wasm
-	// (flatsql@3.12.10, its package's wasm/integrity.json), which flatsqlrt
+	// (flatsql@3.12.12, its package's wasm/integrity.json), which flatsqlrt
 	// embeds. Empty means no format-5 engine is embedded. flatsqlrt refuses to
 	// start a binary whose embedded bytes are not this engine (empty bytes
 	// with no pin, else bytes with exactly this sha256).
-	P4EngineSHA256 = "00c92effd74897870b45345193dfa118c43cd79e72e559d9277e8e8ae3051b63"
+	P4EngineSHA256 = "2c7f67782c19a94d4beea6e49e900f3edffff534ffbbdcf300cddc35c62be585"
 
 	// P4StoreFormat is the embedded engine's fsql5/STORE format. Layout
 	// compatibility is stamped separately via MaxStoreLayout.
@@ -91,7 +91,7 @@ const (
 const (
 	// MaxStoreLayout describes the embedded engine. A layout-2 artifact pin
 	// must raise this with the engine release; development overrides do not.
-	MaxStoreLayout            = 1
+	MaxStoreLayout            = 2
 	storeFormatStampVersion   = 1
 	storeFormatStampHeaderLen = 22
 )

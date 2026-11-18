@@ -238,12 +238,17 @@ func TestFormat4AllSchemasSQLIsolation(t *testing.T) {
 	t.Logf("registered schemas=%d opaque=%d; trusted and sandbox SQL checked", len(specs), opaque)
 }
 
+// An engine without the unlimited-relations capability (flatsql 3.12.11, the
+// last published engine without it: incapableEngineWasm) refuses an unlimited
+// registration before any store file exists. The shipped engine has the
+// capability since 3.12.12, so it cannot drive this path.
 func TestFormat4MissingCapabilityLeavesNoStore(t *testing.T) {
-	format4TestWasm(t) // require the native runtime, but probe the shipped bytes
+	format4TestWasm(t) // require the native runtime
+	incapable := incapableEngineWasm(t)
 	prev := format4OpenEngine
 	defer func() { format4OpenEngine = prev }()
 	format4OpenEngine = func(ctx context.Context, opt format4.Options) (format4.API, error) {
-		opt.Wasm = flatsqlrt.P4ThreadsWasm()
+		opt.Wasm = incapable
 		opt.CompileOnMiss = true
 		opt.AOTCacheDir = t.TempDir()
 		return format4.Open(ctx, opt)
