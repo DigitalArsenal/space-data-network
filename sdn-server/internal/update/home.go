@@ -522,7 +522,9 @@ func VerifyHomeBuild(paths Paths) (*HomeBuild, error) {
 	if err != nil {
 		return nil, err
 	}
-	roots, err := homeTrustRoots(paths)
+	// The roots every other update step uses: the installed roots through
+	// the kept rotations (or SDN_UPDATE_TRUST_ROOTS, as everywhere).
+	roots, err := LoadTrustRoots(paths)
 	if err != nil {
 		return nil, err
 	}
