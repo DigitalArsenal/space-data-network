@@ -454,7 +454,7 @@ func s4OnlyRows(ra, rb []Row, x *OnlyRecord) ([]Row, bool) {
 // count must be equal. The intended differences (C-39 S1 listing and S2;
 // C-38 (5)) are a type relation's kind (format 1 lists every routed
 // standard as a view once the node knows a source), the "<TYPE>@<source>"
-// relations format 4 has no feed table for, CLM (no relation: no embedded
+// relations format 4 has no feed table for, CLM (no public relation: no embedded
 // binary schema) and a "<TYPE>@<source>" relation's record count (format 4
 // counts the feed's records; format 1 its resident rows, one per record in
 // its first source's partition).
@@ -518,7 +518,7 @@ const (
 	c39E7 = "C-39 E7: format 1 orders QueryAll/QueryAllBounded by the source timestamp alone; its choice among records tied on it is arbitrary"
 	// c39S1Listing and c39S2: surfaceDiff.
 	c39S1Listing = "C-39 S1 listing: the SQL surface lists only a type's real feed tables; format 1 lists every routed standard as a view and a relation for every source the node knows"
-	c39S2        = "C-39 S2: CLM, a published-binding standard with no embedded binary schema, has no SQL relation"
+	c39S2        = "C-39 S2: CLM has no public SQL relation without an embedded binary schema; trusted metadata access is separate"
 	c39U1        = "C-39 U1: format 4 stores SDS standards only; a record of a schema with no standard is refused (format 1 stored it)"
 	c39U2        = "C-39 U2: UpsertSourceTags of a CID not held answers not found; format 1 wrote a dangling tag and counted it in its summaries"
 	c39U3        = "C-39 U3: the summary-maintenance verbs are no-ops on format 4; format 1 restamped the lane times with its clock"

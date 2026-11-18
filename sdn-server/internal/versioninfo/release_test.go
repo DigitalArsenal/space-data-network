@@ -55,6 +55,15 @@ func TestStoreFormatStampSurvivesReleaseLinking(t *testing.T) {
 	if !found || format != MaxStoreFormat {
 		t.Fatalf("probe binary stamp: format %d found %v, want %d", format, found, MaxStoreFormat)
 	}
+	probe, err := os.Open(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, layout, layoutFound, readErr := ReadStoreCompatibilityStamp(probe)
+	probe.Close()
+	if readErr != nil || !layoutFound || layout != MaxStoreLayout {
+		t.Fatalf("linked layout stamp: %d found %v err %v", layout, layoutFound, readErr)
+	}
 	// And this test binary, linked by go test, carries it too.
 	self, err := os.Executable()
 	if err != nil {

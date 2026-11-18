@@ -43,7 +43,7 @@ func migrateStore5Locked(ctx context.Context, root string) error {
 		if err != nil {
 			return err
 		}
-		if m.Directory != marker.Dir || !m.Activated() {
+		if m.Directory != marker.Dir || (!m.Activated() && !m.RecoverablePromotion) {
 			return fmt.Errorf("%s is not a complete format-5 store; refusing to overwrite it", destination)
 		}
 		return nil

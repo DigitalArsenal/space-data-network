@@ -47,7 +47,7 @@ func writeFormat4Store(t *testing.T) string {
 	return root
 }
 
-// Reproduce the old binary's activation layout; the current engine activates 5.
+// Reproduce the old binary's activation layout; the format-5 engine activates 5.
 func finishLegacyFormat4(t *testing.T, root string) {
 	t.Helper()
 	if err := os.Mkdir(filepath.Join(root, marker.PreFormat4Dir), 0o700); err != nil {
@@ -129,6 +129,7 @@ func TestApplyOnAFormat4Store(t *testing.T) {
 		{"format-3 build", "tar.gz", fleetLayout(3, "three"), true, 3},
 		{"payload without a daemon binary", "tar.gz", map[string]string{"bin/spacedatanetwork": launcherScript}, true, 1},
 		{"format-4 build", "tar.gz", releaseLayout(4, "four"), false, 0},
+		{"format-5 build", "tar.gz", releaseLayout(5, "five"), false, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store := writeFormat4Store(t)

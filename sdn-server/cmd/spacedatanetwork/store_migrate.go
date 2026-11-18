@@ -100,6 +100,7 @@ var (
 	storeMigratePageRows   int
 	storeMigrateTo         string
 	storeMigrateVerifyOnly bool
+	storeMigrateStatus     bool
 	// storeMigrateDropUnregistered (--to 4) names the format-1 tables of
 	// schemas SDN has no standard for that the operator agrees to leave
 	// behind (C-39 U1).
@@ -142,6 +143,7 @@ func init() {
 	storeMigrateCmd.Flags().IntVar(&storeMigratePageRows, "page-rows", 2000, "records per read page")
 	storeMigrateCmd.Flags().StringVar(&storeMigrateTo, "to", "", "target store format: 2 (default) or 5 (alias sqlite)")
 	storeMigrateCmd.Flags().BoolVar(&storeMigrateVerifyOnly, "verify-only", false, "with --to 5 from format 1: re-check an activated format-5 store, change nothing")
+	storeMigrateCmd.Flags().BoolVar(&storeMigrateStatus, "status", false, "print store format and layout without opening an engine or changing files")
 	storeMigrateCmd.Flags().StringSliceVar(&storeMigrateDropUnregistered, "drop-unregistered", nil,
 		"with --to 5 from format 1: migrate without these format-1 tables of schemas SDN has no standard for (the inventory's unregistered_tables); their records are not carried")
 	storeMigrateCmd.Flags().StringSliceVar(&storeMigrateDropOversized, "drop-oversized", nil,
@@ -163,6 +165,9 @@ func runStoreMigrate(cmd *cobra.Command, args []string) error {
 		if store == "" {
 			return errors.New("config has no storage.path")
 		}
+	}
+	if storeMigrateStatus {
+		return writeStoreStatus(cmd.OutOrStdout(), store)
 	}
 	target, err := migrateTargetFormat(storeMigrateTo)
 	if err != nil {

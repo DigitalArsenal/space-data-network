@@ -188,7 +188,8 @@ func (l PSLayout) check(mem *wasmrt.SharedMemory) error {
 
 // PSConfig configures one instance.
 type PSConfig struct {
-	Role PSRole
+	RequiredP4Capabilities uint32
+	Role                   PSRole
 	// ABI selects the guest contract (default PSABIProbe).
 	ABI PSABI
 	// Wasm is the portable ps artifact; it runs only AOT-compiled.

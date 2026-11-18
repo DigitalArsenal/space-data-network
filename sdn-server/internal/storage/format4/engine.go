@@ -42,20 +42,21 @@ var slowOperationThreshold = func() time.Duration {
 
 // Options opens the format-5 engine. ConvertFormat4 accepts a private format-4 copy.
 type Options struct {
-	DataRoot        string // <data>; the engine root is <data>/fsql5
-	Create          CreateMode
-	GseqFloor       uint64 // CreateFresh / CreateForMigration
-	Cores           int    // 0 = runtime.NumCPU()
-	Tuning          Tuning
-	Wasm            []byte // nil = flatsqlrt.P4ThreadsWasm()
-	AOTCacheDir     string
-	CompileOnMiss   bool                   // tests and prewarm only
-	ControlBudget   time.Duration          // offline conversion can exceed the normal recovery budget
-	ConversionFeeds uint64                 // host inventory of format-4 feed indexes, used only by ConvertFormat4
-	Store           *flatsqlrt.NativeStore // the node's shared native I/O store, as format 2
-	FDBudget        int                    // open-fd budget of the instance's host I/O (0: flatsqlrt.P4FDBudget); sizes Tuning.ReaderConns when that is 0
-	OnFailure       func(error)            // instance trapped or hung; the Engine is fenced
-	Serialize       SerializeMode          // call gate (SerializeOff: none); a diagnostic control, see SerializeMode
+	UnlimitedVisibility bool
+	DataRoot            string // <data>; the engine root is <data>/fsql5
+	Create              CreateMode
+	GseqFloor           uint64 // CreateFresh / CreateForMigration
+	Cores               int    // 0 = runtime.NumCPU()
+	Tuning              Tuning
+	Wasm                []byte // nil = flatsqlrt.P4ThreadsWasm()
+	AOTCacheDir         string
+	CompileOnMiss       bool                   // tests and prewarm only
+	ControlBudget       time.Duration          // offline conversion can exceed the normal recovery budget
+	ConversionFeeds     uint64                 // host inventory of format-4 feed indexes, used only by ConvertFormat4
+	Store               *flatsqlrt.NativeStore // the node's shared native I/O store, as format 2
+	FDBudget            int                    // open-fd budget of the instance's host I/O (0: flatsqlrt.P4FDBudget); sizes Tuning.ReaderConns when that is 0
+	OnFailure           func(error)            // instance trapped or hung; the Engine is fenced
+	Serialize           SerializeMode          // call gate (SerializeOff: none); a diagnostic control, see SerializeMode
 
 	// RequestDeadline bounds every request whose caller set no earlier
 	// deadline (0: DefaultRequestDeadline; negative: none). QUOTA_GC and
@@ -293,6 +294,8 @@ func (e *Engine) control(fn func() (int32, error)) (int32, error) {
 
 var _ API = (*Engine)(nil)
 
+var ErrUnlimitedRelationsUnsupported = flatsqlrt.ErrP4Capabilities
+
 // Open initializes and starts the engine (init + start). *Engine implements
 // API.
 func Open(ctx context.Context, opt Options) (*Engine, error) {
@@ -313,12 +316,14 @@ func Open(ctx context.Context, opt Options) (*Engine, error) {
 	if len(wasm) == 0 {
 		return nil, flatsqlrt.ErrNoP4Artifact
 	}
-	engineRoot := filepath.Join(root, marker.Dir)
-	if opt.Create != OpenExisting {
-		if err := os.MkdirAll(engineRoot, 0o700); err != nil {
+	if opt.Create != OpenExisting && opt.Store == nil {
+		// The host opens the data root before the capability probe. Engine
+		// files remain absent until that probe succeeds and initialization runs.
+		if err := os.MkdirAll(root, 0o700); err != nil {
 			return nil, fmt.Errorf("format5: %w", err)
 		}
 	}
+	engineRoot := filepath.Join(root, marker.Dir)
 	fdBudget, basis := flatsqlrt.P4FDBudget(opt.FDBudget)
 	if opt.Tuning.ReaderConns == 0 {
 		opt.Tuning.ReaderConns = readerConnsFor(fdBudget, opt.Tuning.WriterConns)
@@ -326,8 +331,13 @@ func Open(ctx context.Context, opt Options) (*Engine, error) {
 	log.Infof("format 5: host I/O fd budget %d (%s), %d reader connections", fdBudget, basis, opt.Tuning.ReaderConns)
 	e := &Engine{}
 	e.configure(opt)
+	var required uint32
+	if opt.UnlimitedVisibility {
+		required = 1
+	}
 	inst, err := flatsqlrt.OpenP4Instance(flatsqlrt.P4Config{
-		Wasm: wasm, AOTCacheDir: opt.AOTCacheDir, CompileOnMiss: opt.CompileOnMiss,
+		RequiredCapabilities: required,
+		Wasm:                 wasm, AOTCacheDir: opt.AOTCacheDir, CompileOnMiss: opt.CompileOnMiss,
 		Store: opt.Store, StoreRoot: root, FDBudget: fdBudget, InitConfig: encodeConfig(engineRoot, opt),
 		ControlBudget: opt.ControlBudget,
 		OnFailure: func(_ *flatsqlrt.P4Instance, cause error) {
@@ -441,7 +451,7 @@ func encodeConfig(engineRoot string, opt Options) []byte {
 		u32(11, t.RingBytes).u64(12, opt.GseqFloor).u32(13, uint32(cores)).u64(20, t.EngineBytes).
 		u32(21, t.WriterConns).u32(22, t.WriterCacheKiB).u32(23, t.ReaderConns).u32(24, t.ReaderCacheKiB).
 		u64(25, t.PendingMapBytes).u64(26, t.SoftHeap).u64(27, t.HardHeap).u32(40, t.GroupCommitRecords).
-		u32(41, t.GroupCommitMs)
+		u32(41, t.GroupCommitMs).u64(52, t.RowCacheBytes)
 	if opt.Create == ConvertFormat4 {
 		c = tlvU64(c, 51, opt.ConversionFeeds)
 	}
@@ -488,9 +498,35 @@ func statusOf(op string, rc int32, err error) error {
 
 // ---- control ----------------------------------------------------------------
 
+// ValidateType checks registration compatibility without changing the store.
+func (e *Engine) ValidateType(spec TypeSpec) error {
+	if err := e.live("validate_type"); err != nil {
+		return err
+	}
+	probe, ok := e.ctl.(interface{ HasFunction(string) bool })
+	if !ok || !probe.HasFunction("flatsql_validate_type") {
+		return fmt.Errorf("%w: registration validation export is absent", ErrUnlimitedRelationsUnsupported)
+	}
+	rc, err := e.control(func() (int32, error) { return e.ctl.ControlBytes("flatsql_validate_type", spec.Encode()) })
+	return statusOf("validate_type "+spec.TypeName(), rc, err)
+}
+
 func (e *Engine) RegisterType(spec TypeSpec) error {
 	if err := e.live("register_type"); err != nil {
 		return err
+	}
+	if spec.UnlimitedVisibility {
+		probe, ok := e.ctl.(interface{ HasFunction(string) bool })
+		if !ok || !probe.HasFunction("flatsql_capabilities") {
+			return fmt.Errorf("%w: required unlimited-relations engine; embedded release %s has no supporting export", ErrUnlimitedRelationsUnsupported, flatsqlrt.P4ThreadsPackage)
+		}
+		capabilities, err := e.control(func() (int32, error) { return e.ctl.ControlCall("flatsql_capabilities") })
+		if err != nil {
+			return fmt.Errorf("%w: %v", ErrUnlimitedRelationsUnsupported, err)
+		}
+		if capabilities < 0 || capabilities&1 == 0 {
+			return fmt.Errorf("%w: unlimited-relations capability is absent (bits %d)", ErrUnlimitedRelationsUnsupported, capabilities)
+		}
 	}
 	e.memo.begin()
 	defer e.memo.end(false)

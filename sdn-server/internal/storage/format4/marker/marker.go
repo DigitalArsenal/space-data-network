@@ -48,6 +48,8 @@ type Markers struct {
 	StorePresent, StoreValid       bool   // fsql5/STORE exists / has length, magic and crc right
 	MigratedPresent, MigratedValid bool
 	Format, Layout                 uint16
+	RequiredLayout                 uint16 // includes a valid pending promotion intent
+	RecoverablePromotion           bool   // valid STORE.unlimited paired with valid MIGRATED can recover STORE on open
 	UUID                           [16]byte
 	CreatedMs                      int64
 	GseqFloor                      uint64
@@ -110,6 +112,26 @@ func readDir(dataRoot, engineDir string) (Markers, error) {
 		m.GseqFloor = binary.LittleEndian.Uint64(b[32:])
 		m.MigratedFrom = binary.LittleEndian.Uint32(b[40:])
 	}
+	m.RequiredLayout = m.Layout
+	intent, _, err := readFile(filepath.Join(dir, "STORE.unlimited"))
+	if err != nil {
+		return m, err
+	}
+	if len(intent) == storeLen && binary.LittleEndian.Uint32(intent) == storeMagic &&
+		binary.LittleEndian.Uint16(intent[4:]) == StoreFormat && binary.LittleEndian.Uint16(intent[6:]) == 2 &&
+		binary.LittleEndian.Uint32(intent[56:]) == crc32.Checksum(intent[:56], castagnoli) {
+		m.RequiredLayout = max(m.RequiredLayout, 2)
+		var intentUUID [16]byte
+		copy(intentUUID[:], intent[8:24])
+		if engineDir == Dir && m.MigratedValid && m.migratedFormat == StoreFormat && intentUUID == m.migratedUUID &&
+			(!m.StoreValid || (m.Format == StoreFormat && m.Layout <= 2 && m.UUID == intentUUID &&
+				m.GseqFloor == binary.LittleEndian.Uint64(intent[32:]))) {
+			m.RecoverablePromotion = true
+			if !m.StoreValid {
+				m.Format = StoreFormat
+			}
+		}
+	}
 	switch info, err := os.Stat(filepath.Join(dataRoot, LegacyControl)); {
 	case err == nil:
 		m.LegacyControlDir = info.IsDir()
@@ -144,8 +166,13 @@ func (m Markers) Activated() bool {
 }
 
 func (m Markers) ActivatedAs(format uint16) bool {
+	maxLayout := uint16(storeLayout)
+	if format >= StoreFormat {
+		maxLayout = 2
+	}
 	return m.StoreValid && m.MigratedValid && m.UUID == m.migratedUUID &&
-		m.Format == format && m.migratedFormat == format && m.Layout == storeLayout
+		m.Format == format && m.migratedFormat == format &&
+		m.Layout >= storeLayout && m.Layout <= maxLayout
 }
 
 // NeedsFinish reports an activated store whose Go steps (§2.3 steps 2-3) are
