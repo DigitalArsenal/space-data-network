@@ -413,7 +413,7 @@ test('beta release workflow builds updater wasm once before platform CLI archive
   assert.match(updaterJob, /sha256sum -c -/);
   assert.match(updaterJob, /SDN_WASI_CLANGXX=[\s\S]*SDN_WASI_SYSROOT=[\s\S]*npm --prefix packages\/sdn-updater-module run build/);
   assert.match(workflow, /name:\s*updater-module-wasm[\s\S]*path:\s*packages\/sdn-updater-module\/dist\/isomorphic\/module\.wasm/);
-  assert.match(workflow, /needs:\s*\[beta-version, update-signing-check, ipfs, updater-wasm, wasmedge-static\]/);
+  assert.match(workflow, /needs:\s*\[beta-version, update-signing-check, ipfs, updater-wasm, wasmedge-static, cli-js-inputs\]/);
   assert.match(workflow, /name:\s*updater-module-wasm[\s\S]*path:\s*packages\/sdn-updater-module\/dist\/isomorphic/);
   assert.match(workflow, /name:\s*Verify updater module wasm[\s\S]*test -f packages\/sdn-updater-module\/dist\/isomorphic\/module\.wasm/);
 
@@ -548,8 +548,30 @@ test('beta release workflow builds signed CLI update feed artifacts', () => {
   assert.match(workflow, /spacedatanetwork-update-feed-\$\{VERSION\}\.tar\.gz/);
   assert.match(workflow, /name:\s*cli-update-feed[\s\S]*path:\s*dist\/update-feed\/spacedatanetwork-update-feed-\$\{\{ needs\.beta-version\.outputs\.package_version \}\}\.tar\.gz/);
   assert.match(workflow, /name:\s*cli-update-feed[\s\S]*path:\s*dist\/update-feed/);
-  assert.match(workflow, /needs:\s*\[beta-version, ipfs, docker, cli, cli-update-feed, packages, sdn-js-package\]/);
-  assert.match(workflow, /needs:\s*\[beta-version, ipfs, docker, docker-manifest, cli, cli-update-feed, cli-update-feed-verify, desktop, packages, sdn-js-package, artifact-docker-test\]/);
+  assert.match(workflow, /artifact-docker-test:[\s\S]*?needs:\s*\[beta-version, ipfs, packages\]/);
+  assert.match(workflow, /artifact-docker-test-container:[\s\S]*?needs:\s*\[beta-version, packages, docker, sdn-js-package\]/);
+  assert.match(workflow, /artifact-docker-test-cli:[\s\S]*?needs:\s*\[beta-version, cli\]/);
+  // The release names every check itself: the builds start beside Preflight
+  // and the key check instead of after them, so nothing reaches the release
+  // through a build any more. The image push needs Preflight too, and a dry
+  // run (publish false) skips everything that writes outside the run.
+  const jobs = yaml.load(workflow).jobs;
+  const needs = (name) => [jobs[name]?.needs ?? []].flat();
+  for (const name of Object.keys(jobs)) {
+    if (name === 'release' || name === 'published-installer-smoke') continue;
+    assert.ok(needs('release').includes(name), `the release must need ${name}`);
+  }
+  assert.ok(needs('docker-push').includes('preflight'), 'the image push must need Preflight');
+  assert.ok(needs('docker-manifest').includes('docker-push'), 'the manifest must need the pushed images');
+  assert.match(workflow, /- name: Check the token can publish a release\n\s+if: inputs\.publish != false\n/);
+  for (const name of ['docker-manifest', 'release', 'published-installer-smoke']) {
+    assert.equal(jobs[name].if, 'inputs.publish != false', `${name} must be skipped by a dry run`);
+  }
+  const push = jobs['docker-push'].steps.find((step) => step.id === 'build');
+  assert.match(push.with.outputs, /push=\$\{\{ inputs\.publish != false \}\}$/);
+  for (const [name, job] of Object.entries(jobs)) {
+    assert.doesNotMatch(JSON.stringify(job), /push=true/, `${name} must push only through docker-push`);
+  }
 });
 
 test('the update feed job fails a stable release without its key, signs with the derived key id only, and verifies every manifest against the fleet roots', () => {
@@ -620,7 +642,7 @@ test('beta release workflow builds desktop app artifacts for every supported OS'
   assert.match(workflow, /builder_args:\s*--linux AppImage deb tar\.xz --x64/);
   assert.match(workflow, /name:\s*desktop-\$\{\{ matrix\.target_os \}\}/);
   assert.match(workflow, /path:\s*dist\/desktop\/\*/);
-  assert.match(workflow, /needs:\s*\[beta-version, ipfs, docker, docker-manifest, cli, cli-update-feed, cli-update-feed-verify, desktop, packages, sdn-js-package, artifact-docker-test\]/);
+  assert.match(workflow, /needs:\s*\[[^\]]*\bdesktop\b[^\]]*\bartifact-docker-test\b[^\]]*\]\n\s+if: inputs\.publish != false/);
   assert.match(workflow, /pattern:\s*desktop-\*[\s\S]*path:\s*dist\/desktop[\s\S]*merge-multiple:\s*true/);
 });
 

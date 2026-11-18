@@ -89,20 +89,71 @@ function pickArtifact(files, key, pattern) {
   };
 }
 
-export function discoverArtifacts(releaseRoot) {
+const artifactPatterns = {
+  fullDeb: /^spacedatanetwork-full_.*_amd64\.deb$/,
+  edgeDeb: /^spacedatanetwork-edge_.*_amd64\.deb$/,
+  fullRpm: /^spacedatanetwork-full-.*\.x86_64\.rpm$/,
+  edgeRpm: /^spacedatanetwork-edge-.*\.x86_64\.rpm$/,
+  linuxVm: /^spacedatanetwork-linux-vm-.*\.tar\.gz$/,
+  linuxCli: /^spacedatanetwork-(?!container-).*-linux-amd64\.tar\.gz$/,
+  container: /^spacedatanetwork-container-.*-linux-amd64\.tar\.gz$/,
+  sdnJs: /^spacedatanetwork-sdn-js-.*\.tgz$/,
+  sbom: /^spacedatanetwork-sbom\.cdx\.json$/,
+  ipfsDeployment: /^ipfs-deployment\.json$/
+};
+
+// The network nodes that join the seed (a first-start full node from the full
+// DEB), in the order they are started, waited for and probed.
+const joinerSpecs = {
+  fullRpm: { suffix: 'full-rpm', kind: 'full', image: 'fullRpm', label: 'full RPM peer connection', probe: 'http://{name}:5001/api/v1/data/health' },
+  linuxVm: { suffix: 'linux-vm', kind: 'full', image: 'linuxVm', label: 'VM bundle peer connection' },
+  edgeDeb: { suffix: 'edge-deb', kind: 'edge', image: 'edgeDeb', label: 'edge DEB peer connection', probe: 'http://{name}:8081/health' },
+  edgeRpm: { suffix: 'edge-rpm', kind: 'edge', image: 'edgeRpm', label: 'edge RPM peer connection' },
+  containerFull: { suffix: 'container-full', kind: 'container-full', image: 'container', label: 'container full-node peer connection', probe: 'http://{name}:5001/api/v1/data/health' },
+  containerEdge: { suffix: 'container-edge', kind: 'container-edge', image: 'container', label: 'container edge-mode peer connection', probe: 'http://{name}:8081/health' }
+};
+
+// The release workflow runs the scenarios as parallel jobs; `all` is every
+// one of them in a single run. Each install check and each network check is
+// in exactly one of packages, container and cli, and `all` holds them all.
+export const scenarios = {
+  all: {
+    artifacts: Object.keys(artifactPatterns),
+    images: ['fullDeb', 'edgeDeb', 'fullRpm', 'edgeRpm', 'linuxVm', 'linuxCli', 'sdnJs'],
+    loadContainer: true,
+    metadata: true,
+    joiners: ['fullRpm', 'linuxVm', 'edgeDeb', 'edgeRpm', 'containerFull', 'containerEdge'],
+    seedInbound: 3
+  },
+  packages: {
+    artifacts: ['fullDeb', 'edgeDeb', 'fullRpm', 'edgeRpm', 'linuxVm', 'sbom', 'ipfsDeployment'],
+    images: ['fullDeb', 'edgeDeb', 'fullRpm', 'edgeRpm', 'linuxVm'],
+    loadContainer: false,
+    metadata: true,
+    joiners: ['fullRpm', 'linuxVm', 'edgeDeb', 'edgeRpm'],
+    seedInbound: 3
+  },
+  container: {
+    artifacts: ['fullDeb', 'container', 'sdnJs'],
+    images: ['fullDeb', 'sdnJs'],
+    loadContainer: true,
+    metadata: false,
+    joiners: ['containerFull', 'containerEdge'],
+    seedInbound: null
+  },
+  cli: {
+    artifacts: ['linuxCli'],
+    images: ['linuxCli'],
+    loadContainer: false,
+    metadata: false,
+    joiners: [],
+    seedInbound: null
+  }
+};
+
+export function discoverArtifacts(releaseRoot, keys = Object.keys(artifactPatterns)) {
   const files = walkFiles(releaseRoot);
-  return {
-    fullDeb: pickArtifact(files, 'fullDeb', /^spacedatanetwork-full_.*_amd64\.deb$/),
-    edgeDeb: pickArtifact(files, 'edgeDeb', /^spacedatanetwork-edge_.*_amd64\.deb$/),
-    fullRpm: pickArtifact(files, 'fullRpm', /^spacedatanetwork-full-.*\.x86_64\.rpm$/),
-    edgeRpm: pickArtifact(files, 'edgeRpm', /^spacedatanetwork-edge-.*\.x86_64\.rpm$/),
-    linuxVm: pickArtifact(files, 'linuxVm', /^spacedatanetwork-linux-vm-.*\.tar\.gz$/),
-    linuxCli: pickArtifact(files, 'linuxCli', /^spacedatanetwork-(?!container-).*-linux-amd64\.tar\.gz$/),
-    container: pickArtifact(files, 'container', /^spacedatanetwork-container-.*-linux-amd64\.tar\.gz$/),
-    sdnJs: pickArtifact(files, 'sdnJs', /^spacedatanetwork-sdn-js-.*\.tgz$/),
-    sbom: pickArtifact(files, 'sbom', /^spacedatanetwork-sbom\.cdx\.json$/),
-    ipfsDeployment: pickArtifact(files, 'ipfsDeployment', /^ipfs-deployment\.json$/)
-  };
+  return Object.fromEntries(keys.map((key) => [key, pickArtifact(files, key, artifactPatterns[key])]));
 }
 
 export function parseDockerLoadImage(output) {
@@ -305,7 +356,8 @@ function parseArgs(argv) {
     platform: defaultPlatform,
     keep: false,
     skipNetwork: false,
-    timeoutMs: 120_000
+    timeoutMs: 120_000,
+    scenario: 'all'
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -326,6 +378,9 @@ function parseArgs(argv) {
       case '--timeout-ms':
         options.timeoutMs = Number(argv[++index] ?? options.timeoutMs);
         break;
+      case '--scenario':
+        options.scenario = argv[++index] ?? '';
+        break;
       case '--keep':
         options.keep = true;
         break;
@@ -344,6 +399,9 @@ function parseArgs(argv) {
   if (!Number.isFinite(options.timeoutMs) || options.timeoutMs <= 0) {
     throw new Error('--timeout-ms must be a positive number');
   }
+  if (!Object.hasOwn(scenarios, options.scenario)) {
+    throw new Error(`--scenario must be one of ${Object.keys(scenarios).join(', ')}`);
+  }
 
   return options;
 }
@@ -357,7 +415,9 @@ Options:
   --work-dir DIR         Temporary work directory. Defaults to an OS temp directory.
   --platform PLATFORM    Docker platform for native artifacts. Defaults to ${defaultPlatform}.
   --timeout-ms MS        Per-service startup timeout. Defaults to 120000.
-  --skip-network         Only install/import artifacts; do not launch the SDN network.
+  --scenario NAME        ${Object.keys(scenarios).join(', ')}. Defaults to all; the release
+                         workflow runs packages, container and cli as parallel jobs.
+  --skip-network        Only install/import artifacts; do not launch the SDN network.
   --keep                 Keep Docker images, containers, networks, and work files for debugging.
 `;
 }
@@ -420,40 +480,35 @@ function buildInstallImage({ artifact, artifactType, imageName, buildRoot, platf
   runDocker(['build', '--progress', 'plain', '--platform', platform, '-t', imageName, contextDir], { stdio: 'inherit' });
 }
 
-function buildImages({ artifacts, workDir, platform, prefix, keep }) {
+const installImageTypes = {
+  fullDeb: 'full-deb',
+  edgeDeb: 'edge-deb',
+  fullRpm: 'full-rpm',
+  edgeRpm: 'edge-rpm',
+  linuxVm: 'linux-vm',
+  linuxCli: 'linux-cli',
+  sdnJs: 'sdn-js'
+};
+
+// Builds the install image of each key in order. Every image built is recorded
+// in `images` as soon as it exists, so the caller's cleanup removes it even
+// when a later build fails.
+function buildImages({ keys, artifacts, workDir, platform, prefix, images }) {
   const buildRoot = join(workDir, 'docker-build');
   mkdirSync(buildRoot, { recursive: true });
 
-  const imageSpecs = {
-    fullDeb: { artifact: artifacts.fullDeb, artifactType: 'full-deb', imageName: `${prefix}-full-deb:latest` },
-    edgeDeb: { artifact: artifacts.edgeDeb, artifactType: 'edge-deb', imageName: `${prefix}-edge-deb:latest` },
-    fullRpm: { artifact: artifacts.fullRpm, artifactType: 'full-rpm', imageName: `${prefix}-full-rpm:latest` },
-    edgeRpm: { artifact: artifacts.edgeRpm, artifactType: 'edge-rpm', imageName: `${prefix}-edge-rpm:latest` },
-    linuxVm: { artifact: artifacts.linuxVm, artifactType: 'linux-vm', imageName: `${prefix}-linux-vm:latest` },
-    linuxCli: { artifact: artifacts.linuxCli, artifactType: 'linux-cli', imageName: `${prefix}-linux-cli:latest` },
-    sdnJs: { artifact: artifacts.sdnJs, artifactType: 'sdn-js', imageName: `${prefix}-sdn-js:latest` }
-  };
-
-  const builtImageSpecs = {};
-  try {
-    for (const [key, spec] of Object.entries(imageSpecs)) {
-      buildInstallImage({
-        artifact: spec.artifact,
-        artifactType: spec.artifactType,
-        imageName: spec.imageName,
-        buildRoot,
-        platform
-      });
-      builtImageSpecs[key] = spec;
-    }
-  } catch (error) {
-    if (!keep) {
-      cleanupDocker({ images: builtImageSpecs });
-    }
-    throw error;
+  for (const key of keys) {
+    const artifactType = installImageTypes[key];
+    const spec = { artifact: artifacts[key], artifactType, imageName: `${prefix}-${artifactType}:latest` };
+    buildInstallImage({
+      artifact: spec.artifact,
+      artifactType: spec.artifactType,
+      imageName: spec.imageName,
+      buildRoot,
+      platform
+    });
+    images[key] = spec;
   }
-
-  return imageSpecs;
 }
 
 function loadContainerImage({ artifact, label, platform }) {
@@ -467,14 +522,12 @@ function loadContainerImage({ artifact, label, platform }) {
   };
 }
 
-function loadContainerImages({ artifacts, platform }) {
-  return {
-    container: loadContainerImage({
-      artifact: artifacts.container,
-      label: 'node',
-      platform
-    })
-  };
+function loadContainerImages({ artifacts, platform, images }) {
+  images.container = loadContainerImage({
+    artifact: artifacts.container,
+    label: 'node',
+    platform
+  });
 }
 
 function writeFullConfig(workDir, name, bootstrapPeers) {
@@ -767,20 +820,20 @@ function dumpContainerLogs(containerNames) {
   }
 }
 
-async function runNetworkTest({ images, workDir, platform, prefix, timeoutMs }) {
+// The seed is started as soon as its own image exists; `whileSeedStarts` then
+// builds the images the joiners use while the seed's first start compiles its
+// AOT artifacts. Nothing a joiner needs from the seed exists before the seed
+// answers, so the joiners start after that, as they always have.
+async function runNetworkTest({ images, workDir, platform, prefix, timeoutMs, scenario, state, whileSeedStarts }) {
   const networkName = `${prefix}-net`;
-  const containers = [
-    `${prefix}-full-deb`,
-    `${prefix}-full-rpm`,
-    `${prefix}-linux-vm`,
-    `${prefix}-edge-deb`,
-    `${prefix}-edge-rpm`,
-    `${prefix}-container-full`,
-    `${prefix}-container-edge`
-  ];
+  const joiners = scenario.joiners.map((key) => ({ key, ...joinerSpecs[key], name: `${prefix}-${joinerSpecs[key].suffix}` }));
+  const containers = [`${prefix}-full-deb`, ...joiners.map((joiner) => joiner.name)];
   const volumes = [`${prefix}-container-full-key-password`];
 
   runDocker(['network', 'create', networkName]);
+  state.networkName = networkName;
+  state.containers = containers;
+  state.volumes = volumes;
 
   try {
     const seedConfig = writeFullConfig(workDir, containers[0], [dummyPinnedBootstrapPeer]);
@@ -791,6 +844,8 @@ async function runNetworkTest({ images, workDir, platform, prefix, timeoutMs }) 
       networkName,
       platform
     });
+
+    whileSeedStarts();
 
     // A $QRP frame, not JSON: /api/v1/data/health answers with a $QRP
     // FlatBuffer table (sdn-server/internal/api/data.go handleHealth), so
@@ -817,178 +872,109 @@ async function runNetworkTest({ images, workDir, platform, prefix, timeoutMs }) 
     });
 
     const seedBootstrap = `/dns4/${containers[0]}/tcp/4001/p2p/${seedStatus.peer_id}`;
-    const joinedConfig = writeFullConfig(workDir, containers[1], [seedBootstrap]);
-    const vmConfig = writeFullConfig(workDir, containers[2], [seedBootstrap]);
-    const containerConfig = writeContainerConfig(workDir, containers[5], [seedBootstrap]);
 
-    startFullNode({
-      containerName: containers[1],
-      imageName: images.fullRpm.imageName,
-      configPath: joinedConfig,
-      networkName,
-      platform
-    });
-    startFullNode({
-      containerName: containers[2],
-      imageName: images.linuxVm.imageName,
-      configPath: vmConfig,
-      networkName,
-      platform
-    });
-    startEdgeNode({
-      containerName: containers[3],
-      imageName: images.edgeDeb.imageName,
-      bootstrapPeer: seedBootstrap,
-      networkName,
-      platform
-    });
-    startEdgeNode({
-      containerName: containers[4],
-      imageName: images.edgeRpm.imageName,
-      bootstrapPeer: seedBootstrap,
-      networkName,
-      platform
-    });
-    let containerKeyPassword = {};
-    if (productUuidRootOnly()) {
-      log(`${productUuidPath} is readable by root only on this host; ${containers[5]} gets a key password file (SDN_KEY_PASSWORD_FILE), as the release notes direct`);
-      containerKeyPassword = prepareContainerKeyPassword({
-        imageName: images.container.imageName,
-        platform,
-        volumeName: volumes[0]
-      });
-    } else {
-      log(`${productUuidPath} is readable on this host; ${containers[5]} starts with the default key password`);
+    for (const joiner of joiners) {
+      switch (joiner.kind) {
+        case 'full':
+          startFullNode({
+            containerName: joiner.name,
+            imageName: images[joiner.image].imageName,
+            configPath: writeFullConfig(workDir, joiner.name, [seedBootstrap]),
+            networkName,
+            platform
+          });
+          break;
+        case 'edge':
+          startEdgeNode({
+            containerName: joiner.name,
+            imageName: images[joiner.image].imageName,
+            bootstrapPeer: seedBootstrap,
+            networkName,
+            platform
+          });
+          break;
+        case 'container-full': {
+          const containerConfig = writeContainerConfig(workDir, joiner.name, [seedBootstrap]);
+          let containerKeyPassword = {};
+          if (productUuidRootOnly()) {
+            log(`${productUuidPath} is readable by root only on this host; ${joiner.name} gets a key password file (SDN_KEY_PASSWORD_FILE), as the release notes direct`);
+            containerKeyPassword = prepareContainerKeyPassword({
+              imageName: images.container.imageName,
+              platform,
+              volumeName: volumes[0]
+            });
+          } else {
+            log(`${productUuidPath} is readable on this host; ${joiner.name} starts with the default key password`);
+          }
+          startFullNode({
+            containerName: joiner.name,
+            imageName: images.container.imageName,
+            configPath: containerConfig,
+            networkName,
+            platform,
+            binaryPath: null,
+            configTargetPath: '/app/config/full-docker.yaml',
+            ...containerKeyPassword
+          });
+          break;
+        }
+        case 'container-edge':
+          startEdgeNode({
+            containerName: joiner.name,
+            imageName: images.container.imageName,
+            bootstrapPeer: seedBootstrap,
+            networkName,
+            platform,
+            entrypoint: '/app/spacedatanetwork-edge'
+          });
+          break;
+        default:
+          throw new Error(`Unsupported joiner kind: ${joiner.kind}`);
+      }
     }
-    startFullNode({
-      containerName: containers[5],
-      imageName: images.container.imageName,
-      configPath: containerConfig,
-      networkName,
-      platform,
-      binaryPath: null,
-      configTargetPath: '/app/config/full-docker.yaml',
-      ...containerKeyPassword
-    });
-    startEdgeNode({
-      containerName: containers[6],
-      imageName: images.container.imageName,
-      bootstrapPeer: seedBootstrap,
-      networkName,
-      platform,
-      entrypoint: '/app/spacedatanetwork-edge'
-    });
 
-    await waitForJson({
-      containerName: containers[1],
-      url: 'http://127.0.0.1:5001/api/relay/status',
-      label: 'full RPM peer connection',
-      timeoutMs,
-      predicate: (body) => Number(body.connections) >= 1
-    });
-    await waitForJson({
-      containerName: containers[2],
-      url: 'http://127.0.0.1:5001/api/relay/status',
-      label: 'VM bundle peer connection',
-      timeoutMs,
-      predicate: (body) => Number(body.connections) >= 1
-    });
-    await waitForJson({
-      containerName: containers[3],
-      url: 'http://127.0.0.1:8081/health',
-      label: 'edge DEB peer connection',
-      timeoutMs,
-      predicate: (body) => Number(body.peers) >= 1
-    });
-    await waitForJson({
-      containerName: containers[4],
-      url: 'http://127.0.0.1:8081/health',
-      label: 'edge RPM peer connection',
-      timeoutMs,
-      predicate: (body) => Number(body.peers) >= 1
-    });
-    await waitForJson({
-      containerName: containers[5],
-      url: 'http://127.0.0.1:5001/api/relay/status',
-      label: 'container full-node peer connection',
-      timeoutMs,
-      predicate: (body) => Number(body.connections) >= 1
-    });
-    await waitForJson({
-      containerName: containers[6],
-      url: 'http://127.0.0.1:8081/health',
-      label: 'container edge-mode peer connection',
-      timeoutMs,
-      predicate: (body) => Number(body.peers) >= 1
-    });
-    await waitForJson({
-      containerName: containers[0],
-      url: 'http://127.0.0.1:5001/api/relay/status',
-      label: 'seed node inbound peer connections',
-      timeoutMs,
-      predicate: (body) => Number(body.connections) >= 3
-    });
+    for (const joiner of joiners) {
+      const edge = joiner.kind === 'edge' || joiner.kind === 'container-edge';
+      await waitForJson({
+        containerName: joiner.name,
+        url: edge ? 'http://127.0.0.1:8081/health' : 'http://127.0.0.1:5001/api/relay/status',
+        label: joiner.label,
+        timeoutMs,
+        predicate: edge
+          ? (body) => Number(body.peers) >= 1
+          : (body) => Number(body.connections) >= 1
+      });
+    }
+    if (scenario.seedInbound !== null) {
+      await waitForJson({
+        containerName: containers[0],
+        url: 'http://127.0.0.1:5001/api/relay/status',
+        label: 'seed node inbound peer connections',
+        timeoutMs,
+        predicate: (body) => Number(body.connections) >= scenario.seedInbound
+      });
+    }
 
-    runDocker([
-      'run',
-      '--rm',
-      '--platform',
-      platform,
-      '--network',
-      networkName,
-      images.fullDeb.imageName,
-      'curl',
-      '-fsS',
-      `http://${containers[1]}:5001/api/v1/data/health`
-    ], { stdio: 'inherit' });
-    runDocker([
-      'run',
-      '--rm',
-      '--platform',
-      platform,
-      '--network',
-      networkName,
-      images.fullDeb.imageName,
-      'curl',
-      '-fsS',
-      `http://${containers[3]}:8081/health`
-    ], { stdio: 'inherit' });
-    runDocker([
-      'run',
-      '--rm',
-      '--platform',
-      platform,
-      '--network',
-      networkName,
-      images.fullDeb.imageName,
-      'curl',
-      '-fsS',
-      `http://${containers[5]}:5001/api/v1/data/health`
-    ], { stdio: 'inherit' });
-    runDocker([
-      'run',
-      '--rm',
-      '--platform',
-      platform,
-      '--network',
-      networkName,
-      images.fullDeb.imageName,
-      'curl',
-      '-fsS',
-      `http://${containers[6]}:8081/health`
-    ], { stdio: 'inherit' });
+    for (const joiner of joiners.filter((candidate) => candidate.probe)) {
+      runDocker([
+        'run',
+        '--rm',
+        '--platform',
+        platform,
+        '--network',
+        networkName,
+        images.fullDeb.imageName,
+        'curl',
+        '-fsS',
+        joiner.probe.replace('{name}', joiner.name)
+      ], { stdio: 'inherit' });
+    }
 
     log('Docker SDN network check passed');
   } catch (error) {
     dumpContainerLogs(containers);
     throw error;
   }
-
-  return {
-    networkName,
-    containers,
-    volumes
-  };
 }
 
 function cleanupDocker({ images, networkName, containers, volumes }) {
@@ -1009,47 +995,56 @@ function cleanupDocker({ images, networkName, containers, volumes }) {
 export async function runHarness(options) {
   const prefix = `sdn-artifact-${process.pid}-${Date.now()}`.toLowerCase();
   const prepared = prepareArtifactRoot(options);
-  let images;
-  let networkResult;
+  const scenarioName = options.scenario ?? 'all';
+  const scenario = scenarios[scenarioName];
+  if (!scenario) {
+    throw new Error(`Unknown scenario: ${scenarioName}`);
+  }
+  const platform = options.platform ?? defaultPlatform;
+  const images = {};
+  const state = {};
 
   try {
-    log(`using artifact root ${prepared.artifactRoot}`);
-    const artifacts = discoverArtifacts(prepared.artifactRoot);
-    validateMetadataArtifacts(artifacts);
-
-    images = buildImages({
-      artifacts,
-      workDir: prepared.workDir,
-      platform: options.platform ?? defaultPlatform,
-      prefix,
-      keep: options.keep
-    });
-    images = {
-      ...images,
-      ...loadContainerImages({
-        artifacts,
-        platform: options.platform ?? defaultPlatform
-      })
-    };
-
-    if (!options.skipNetwork) {
-      networkResult = await runNetworkTest({
-        images,
-        workDir: prepared.workDir,
-        platform: options.platform ?? defaultPlatform,
-        prefix,
-        timeoutMs: options.timeoutMs ?? 120_000
-      });
+    log(`using artifact root ${prepared.artifactRoot} (scenario ${scenarioName})`);
+    const artifacts = discoverArtifacts(prepared.artifactRoot, scenario.artifacts);
+    if (scenario.metadata) {
+      validateMetadataArtifacts(artifacts);
     }
 
-    log('release artifacts installed and verified in Docker');
+    const network = !options.skipNetwork && scenario.joiners.length > 0;
+    const firstImages = network ? ['fullDeb'] : scenario.images;
+    const restImages = scenario.images.filter((key) => !firstImages.includes(key));
+    const buildRest = () => {
+      buildImages({ keys: restImages, artifacts, workDir: prepared.workDir, platform, prefix, images });
+      if (scenario.loadContainer) {
+        loadContainerImages({ artifacts, platform, images });
+      }
+    };
+
+    buildImages({ keys: firstImages, artifacts, workDir: prepared.workDir, platform, prefix, images });
+    if (network) {
+      await runNetworkTest({
+        images,
+        workDir: prepared.workDir,
+        platform,
+        prefix,
+        timeoutMs: options.timeoutMs ?? 120_000,
+        scenario,
+        state,
+        whileSeedStarts: buildRest
+      });
+    } else {
+      buildRest();
+    }
+
+    log(`release artifacts installed and verified in Docker (scenario ${scenarioName})`);
   } finally {
     if (!options.keep) {
       cleanupDocker({
         images,
-        networkName: networkResult?.networkName,
-        containers: networkResult?.containers,
-        volumes: networkResult?.volumes
+        networkName: state.networkName,
+        containers: state.containers,
+        volumes: state.volumes
       });
       if (!options.releaseDir && prepared.workDir) {
         rmSync(prepared.workDir, { recursive: true, force: true });
