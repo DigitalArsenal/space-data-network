@@ -30,6 +30,17 @@ on:
         required: false
         type: boolean
         default: true
+      # The pace of the push: signed into every update signal of the release,
+      # it replaces each receiving node's update.rollout_window_seconds, and
+      # each node installs at its own time within this many seconds of
+      # accepting the signal. 0 installs at once everywhere; at most 86400.
+      # A node that finds the release by its feed check instead uses its own
+      # setting (the feed index carries no window).
+      rollout_window_seconds:
+        description: Rollout window in seconds signed into the update signals (0 installs at once on every node, at most 86400).
+        required: false
+        type: number
+        default: 300
 
 permissions:
   contents: write
@@ -1399,10 +1410,12 @@ jobs:
         if: steps.signing.outputs.available == 'true'
         env:
           SDN_UPDATE_SIGNING_KEY_PEM: ${{ secrets.SDN_UPDATE_SIGNING_KEY_PEM }}
+          ROLLOUT_WINDOW_SECONDS: ${{ inputs.rollout_window_seconds }}
         run: |
           "$RUNNER_TEMP/sdn-signal-signer/sdn-update-signal-signer" \
             --key-env SDN_UPDATE_SIGNING_KEY_PEM --feed-dir dist/update-feed-tree/update-feed \
-            --roots deployment/release/fleet-trust-roots.json
+            --roots deployment/release/fleet-trust-roots.json \
+            --rollout-window-seconds "${ROLLOUT_WINDOW_SECONDS}"
       - name: Pack the signed CLI update feed
         if: steps.signing.outputs.available == 'true'
         run: |
@@ -1608,10 +1621,13 @@ jobs:
           done
           node deployment/release/build-sdn-update-feed.js "${feed_args[@]}"
       - name: Sign the update signals
+        env:
+          ROLLOUT_WINDOW_SECONDS: ${{ inputs.rollout_window_seconds }}
         run: |
           "$RUNNER_TEMP/sdn-signal-signer/sdn-update-signal-signer" \
             --key-env SDN_UPDATE_SIGNING_KEY_PEM --feed-dir dist/update-feed-tree/update-feed \
-            --roots "${DRY_RUN_ROOTS}"
+            --roots "${DRY_RUN_ROOTS}" \
+            --rollout-window-seconds "${ROLLOUT_WINDOW_SECONDS}"
       - name: Pack the signed CLI update feed
         run: |
           set -euo pipefail

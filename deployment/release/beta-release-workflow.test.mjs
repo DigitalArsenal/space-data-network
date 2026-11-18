@@ -756,6 +756,11 @@ test('a dry run signs its update feed with a throwaway key, through the reviewed
     const expected = reviewed(allowedRuns[name].replace(/^          /gm, '')) + '\n';
     assert.equal(step(name).run, expected, `${name} must be the reviewed step with the throwaway roots`);
   }
+  // The pace of the push: the dry run signs with the window the release
+  // would sign with, from the same workflow input.
+  const signing = jobs['cli-update-feed'].steps.find((s) => s.name === 'Sign the update signals');
+  assert.deepEqual(step('Sign the update signals').env, {ROLLOUT_WINDOW_SECONDS: signing.env.ROLLOUT_WINDOW_SECONDS});
+  assert.equal(signing.env.ROLLOUT_WINDOW_SECONDS, '${{ inputs.rollout_window_seconds }}');
   const verify = jobs['cli-update-feed-verify'].steps.find((s) => s.name === 'Verify the signed CLI update feed');
   assert.equal(step('Verify the signed CLI update feed').run, reviewed(verify.run));
   const payloads = jobs['cli-update-payloads'].steps.find((s) => s.name === 'Build CLI update payloads');
@@ -1275,7 +1280,7 @@ function guardUpdateSigningWorkflow(workflow, path = '.github/workflows/beta-rel
         const names = {
           'Check the update signing key': ['RELEASE_MATURITY', 'SDN_UPDATE_SIGNING_KEY_PEM', 'SDN_UPDATE_KEY_ID'],
           'Sign the CLI update manifests': ['RELEASE_MATURITY', 'SDN_UPDATE_SIGNING_KEY_PEM'],
-          'Sign the update signals': ['SDN_UPDATE_SIGNING_KEY_PEM'],
+          'Sign the update signals': ['SDN_UPDATE_SIGNING_KEY_PEM', 'ROLLOUT_WINDOW_SECONDS'],
         }[step.name];
         assert.ok(names, `unreviewed signing step: ${step.name}`);
         assert.deepEqual(Object.keys(step.env).sort(), names.sort(), 'unreviewed signing environment');
@@ -1305,7 +1310,9 @@ test('update signing uses only reviewed programs and scopes every PEM reference'
 const signerStep = '      - name: Build the release signal signer';
 const reviewedMutations = {
   'job default shell runs a hook': w => w.replace('  cli-update-feed:\n', '  cli-update-feed:\n    defaults:\n      run:\n        shell: env BASH_ENV=./evil.sh bash -e {0}\n'),
-  'step shell after run block': w => w.replace("            --key-env SDN_UPDATE_SIGNING_KEY_PEM --feed-dir dist/update-feed-tree/update-feed \\\n            --roots deployment/release/fleet-trust-roots.json\n", "            --key-env SDN_UPDATE_SIGNING_KEY_PEM --feed-dir dist/update-feed-tree/update-feed \\\n            --roots deployment/release/fleet-trust-roots.json\n        shell: env BASH_ENV=./evil.sh bash -e {0}\n"),
+  'step shell after run block': w => w.replace("            --roots deployment/release/fleet-trust-roots.json \\\n            --rollout-window-seconds \"${ROLLOUT_WINDOW_SECONDS}\"\n", "            --roots deployment/release/fleet-trust-roots.json \\\n            --rollout-window-seconds \"${ROLLOUT_WINDOW_SECONDS}\"\n        shell: env BASH_ENV=./evil.sh bash -e {0}\n"),
+  'rollout window from an expression in the run': w => w.replace("            --roots deployment/release/fleet-trust-roots.json \\\n            --rollout-window-seconds \"${ROLLOUT_WINDOW_SECONDS}\"\n", "            --roots deployment/release/fleet-trust-roots.json \\\n            --rollout-window-seconds ${{ inputs.rollout_window_seconds }}\n"),
+  'rollout window from another environment name': w => w.replace("          ROLLOUT_WINDOW_SECONDS: ${{ inputs.rollout_window_seconds }}\n        run: |\n          \"$RUNNER_TEMP/sdn-signal-signer/sdn-update-signal-signer\" \\\n            --key-env SDN_UPDATE_SIGNING_KEY_PEM --feed-dir dist/update-feed-tree/update-feed \\\n            --roots deployment/release/fleet-trust-roots.json", "          WINDOW: ${{ inputs.rollout_window_seconds }}\n        run: |\n          \"$RUNNER_TEMP/sdn-signal-signer/sdn-update-signal-signer\" \\\n            --key-env SDN_UPDATE_SIGNING_KEY_PEM --feed-dir dist/update-feed-tree/update-feed \\\n            --roots deployment/release/fleet-trust-roots.json"),
   'lowercase context in beta-version step': w => w.replace("          INPUT_VERSION: ${{ inputs.version }}\n", "          INPUT_VERSION: ${{ inputs.version }}\n          K: ${{ secrets.sdn_update_signing_key_pem }}\n"),
   'spaced-dot in another job': w => w.replace("          INPUT_VERSION: ${{ inputs.version }}\n", "          INPUT_VERSION: ${{ inputs.version }}\n          K: ${{ SECRETS.SDN_UPDATE_SIGNING_KEY_PEM }}\n"),
   'bracket index syntax': w => w.replace(signerStep, signerStep + "\n        env:\n          RENAMED: ${{ secrets['SDN_UPDATE_SIGNING_KEY_PEM'] }}"),
