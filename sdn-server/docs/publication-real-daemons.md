@@ -120,6 +120,25 @@ and the flow's run ends with an error. A publication of another batch of the
 lane and an announcement of its existing publications complete and leave the
 alert raised; a publication of the failed batch clears it.
 
+`TestPublicationAlertClearsWhenLaterRunsPublishItRealDaemons` runs the same
+flow three times, as its schedule does. The first run's publication fails
+(the same blocked shard directory) and the alert says the failed batch's two
+records are in no completed publication. The second run's pull returns one
+of the two records: its own batch is published, and the alert stays, saying
+one record is still unpublished. The third run's pull returns both records
+again (in another order, so another batch): every record of the failed batch
+is in a completed publication, and the alert clears.
+
+`TestPublicationManualRunOutlivesClientRealDaemons` runs the same flow by
+hand on a node whose GP origin answers after 20 s, so every run lasts longer
+than its client waits. `apps run --timeout 4s` stops waiting, says the run
+continues and how to see its result, and exits non-zero; the run ends ok on
+the node and `apps status` shows it. `apps run` of a running run joins it,
+and SIGINT stops it waiting with the run continuing to an ok end. A raw
+run-now request whose client gives up after 4 s (the shape of the 2026-11-17
+cut-off) leaves the run to end ok. `apps run --detach` returns at once, and
+`apps cancel` ends the run as cancelled by the operator.
+
 `TestPublicationSlowFlowRealDaemons` runs the same flow by hand while a
 300,000-record publication of the same lane runs, on a node whose admin
 write timeout is 3 s (`SDN_ADMIN_WRITE_TIMEOUT`) and whose http-request

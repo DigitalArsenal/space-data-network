@@ -72,6 +72,7 @@ failed, or that the command stopped waiting before a run ended.
 A run of a schedule that is already running is joined, not started again.`,
 	Args: cobra.RangeArgs(1, 2),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		cmd.SilenceUsage = true
 		client, err := newAdminClient(cmd)
 		if err != nil {
 			return err
@@ -106,7 +107,11 @@ A run of a schedule that is already running is joined, not started again.`,
 				fmt.Fprintf(out, "%s %s: runs on the node; see it with: spacedatanetwork apps status %s %s\n", appID, trigger, appID, trigger)
 				continue
 			}
-			final, stopped := waitAppRun(ctx, cmd, client, out, appID, trigger, deadline)
+			// A node may answer with the run already ended.
+			final, stopped := run, ""
+			if run.Status == "running" {
+				final, stopped = waitAppRun(ctx, cmd, client, out, appID, trigger, deadline)
+			}
 			if stopped != "" {
 				left := triggers[i+1:]
 				msg := fmt.Sprintf("%s %s: %s", appID, trigger, stopped)
@@ -139,6 +144,7 @@ message. A run that ended since the node started is shown with its result; an
 earlier one from the schedule's run history.`,
 	Args: cobra.RangeArgs(1, 2),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		cmd.SilenceUsage = true
 		client, err := newAdminClient(cmd)
 		if err != nil {
 			return err
@@ -172,6 +178,7 @@ show how it ended. A schedule with no running manual run is reported and left
 alone.`,
 	Args: cobra.RangeArgs(1, 2),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		cmd.SilenceUsage = true
 		client, err := newAdminClient(cmd)
 		if err != nil {
 			return err

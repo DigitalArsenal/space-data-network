@@ -281,6 +281,41 @@ Operator life cycle:
 - Config-managed operators cannot have trust changed or be removed through the
   API.
 
+### Running an app's schedule by hand
+
+A manual run belongs to the node: no request's end ends it. Admin-gated, at
+`/api/v1/modules/runtime/<app-id>/schedules/<trigger-id>/run` (path segments
+escaped):
+
+- `POST ?detach=1` starts the run and answers `202` at once with its state
+  (`{"id","methodId","trigger":"manual","startedAt","status":"running"}`). The
+  body, if any, is the run's input. A run of the same schedule that is already
+  running is joined (`"joined":true`), not started again.
+- `GET` answers the running manual run, or the last one (`status` `ok`,
+  `error`, `deferred`; `finishedAt`, `message`, `outputSize`); `404` when the
+  schedule has none.
+- `DELETE` cancels the running manual run and answers its state once it ended
+  (`status` `error`, `message` ending `cancelled by the operator`), at most
+  30 s later; `409` when none runs.
+- `POST` without `detach` answers when the run ends. A client that leaves
+  stops waiting; the run continues, and `GET` then reports it.
+
+A script starts with `POST ?detach=1` and polls `GET` every few seconds. The
+CLI does the same: `spacedatanetwork apps run <app-id> [trigger-id]` waits
+(`--timeout <duration>` bounds the wait and exits non-zero with the run still
+going; `--detach` returns at once; Ctrl-C stops waiting, or cancels with
+`--cancel-on-interrupt`), `apps status` reports, `apps cancel` cancels. A
+manual run inside the provider's minimum interval ends `deferred`, naming when
+it is allowed.
+
+A failed publication of the node's own data raises a `publication_failed`
+alert (`GET /api/v1/status/alerts`, `/api/v1/health` `degraded`) whose subject
+is the lane (`<schema> <provider>/<source>`) and whose `last_error` names each
+failed batch and how many of its records no completed publication carries. It
+clears when that count reaches zero (a later run's publication carries the
+records again) or the batch itself is published; see
+`sdn-server/docs/operations-alerts.md`.
+
 ---
 
 ## 4. Writing data to a node (vendor ingest)

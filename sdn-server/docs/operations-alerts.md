@@ -21,8 +21,41 @@ the number an operator acts on. A success clears it.
 | `engine_poisoned` | — | `internal/node`, around `store.RecoverPoisonedEngine()` after a trapped hot-window hydration | recovery returns without error |
 | `engine_rebuilding` | — | the same window, in which the read gate answers `storage.ErrEngineRebuilding` | `RecoverPoisonedEngine` returns |
 | `update_failed` | update id | `internal/node` update-signal lane, when the self-upgrade does not start | the swap is handed to the helper |
+| `publication_failed` | lane: `<schema> <provider>/<source>` (or `<schema> datastore <key>`) | `internal/api` `reportDatasetPublication`, when one of the node's own dataset publications fails or is cut | no failed scope of the lane is unpublished (below) |
 
 Severity is `warning` or `error`. Nothing else.
+
+### When `publication_failed` clears
+
+The alert names each failed batch of the lane and how many of its records no
+completed publication of the lane carries:
+
+```
+dataset publication OMM.fbs celestrak/celestrak-gp batch "9f2c…" failed at step "export" after 1.2s: …
+(batch "9f2c…" is unpublished: 2104 of its 30871 records are in no completed publication of the lane)
+```
+
+It clears when nothing that failed is still unpublished:
+
+- the failed batch itself, or the whole lane (a publication with no batch),
+  is published with at least one record; or
+- every record of the failed batch is in a completed publication of the lane.
+  This is how a later scheduled run clears it: a pull that returns a record
+  again tags it to the later batch, and that batch's publication carries it.
+  The check runs after each completed publication of a whole batch of the
+  lane.
+
+A record of the failed batch that no later pull returned (an element set its
+publisher has since replaced) is in no publication, so the alert stays; after
+each publication of the lane its text says how many records are still
+unpublished. A publication of the failed batch
+(`POST /api/v1/admin/dataset-updates/publish` with its `batchId`) clears it;
+that publication is then the lane's newest. A publication of an empty batch, or an announcement of existing
+publications, clears nothing. A lane whose batches are declared snapshots
+(`publishing.retention.lanes[].snapshot_batches`) counts the records of a
+series its retention released as unpublished, so its alert may stay where a
+lane of parts would clear. The failed scopes are kept in memory: a restart
+drops the alert, and the failed batch's records stay as they were.
 
 Alerts are rebuilt at boot: the node seeds `lane_failing` from `app_attempts`
 rows with `consecutive_failures >= 2` (`sourcemetrics.SeedLaneAlerts`), so a

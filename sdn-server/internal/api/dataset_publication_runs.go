@@ -25,8 +25,8 @@ package api
 //
 // Every publication that fails is logged as an error naming its lane, batch
 // and step, and raises the publication_failed alert of its lane, which names
-// each failed batch, how many of its records no completed publication of the
-// lane carries, and the request that publishes it. The alert clears once no
+// each failed batch and how many of its records no completed publication of
+// the lane carries. The alert clears once no
 // scope that failed in the lane is unpublished: the same batch, or the whole
 // lane (a publication with no batch), is published with at least one
 // record, or every record of the failed batch is in a completed publication
@@ -456,8 +456,7 @@ func (s *ConcreteDatasetPublicationService) unpublishedBatchRecords(req DatasetP
 }
 
 // unpublishedScopesText names a lane's failed scopes for its alert: each
-// batch with how many of its records no completed publication carries, and
-// the request that publishes it.
+// batch with how many of its records no completed publication carries.
 func (s *ConcreteDatasetPublicationService) unpublishedScopesText(req DatasetPublicationRequest, lane string, scopes []string) string {
 	parts := make([]string, 0, len(scopes))
 	for _, batch := range scopes {
@@ -468,10 +467,6 @@ func (s *ConcreteDatasetPublicationService) unpublishedScopesText(req DatasetPub
 		part := fmt.Sprintf("batch %q is unpublished", batch)
 		if unpublished, total, err := s.unpublishedBatchRecords(req, batch); err == nil {
 			part = fmt.Sprintf("batch %q is unpublished: %d of its %d records are in no completed publication of the lane", batch, unpublished, total)
-		}
-		if strings.TrimSpace(req.DatastoreKey) == "" {
-			body, _ := json.Marshal(DatasetPublicationRequest{Schema: normalizeDatasetPublicationSchema(req.Schema), ProviderID: strings.TrimSpace(req.ProviderID), SourceName: strings.TrimSpace(req.SourceName), BatchID: batch})
-			part += fmt.Sprintf("; publish it with POST /api/v1/admin/dataset-updates/publish %s", body)
 		}
 		parts = append(parts, part)
 	}
