@@ -142,6 +142,12 @@ type DatasetPublicationChannelRecorder interface {
 	RecordDatasetPublicationChannelUpdate(DatasetPublicationChannelUpdate) error
 }
 
+// DatasetPublicationChannelForgetter is a channel recorder that can also drop
+// a retracted lane's channel.
+type DatasetPublicationChannelForgetter interface {
+	ForgetDatasetPublicationChannel(schema, sourceID string) error
+}
+
 // DatasetPublicationHandler exposes local-only dataset publication operations.
 type DatasetPublicationHandler struct {
 	service DatasetPublicationService

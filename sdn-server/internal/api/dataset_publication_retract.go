@@ -196,6 +196,19 @@ func (s *ConcreteDatasetPublicationService) RunPublicationRetract(ctx context.Co
 			}
 		}
 	}
+	// The channel of the lane (one per provider and standard) goes when no
+	// other source of the provider still advertises that standard.
+	if forgetter, ok := s.channelRecorder.(DatasetPublicationChannelForgetter); ok {
+		others, err := s.store.ListDatasetShardPublications(storage.DatasetShardPublicationQuery{SchemaName: schema, ProviderID: lane.ProviderID, QueryProfile: storage.DatasetPublicationQueryProfile})
+		if err != nil {
+			return report, err
+		}
+		if len(others) == 0 {
+			if err := forgetter.ForgetDatasetPublicationChannel(schema, lane.ProviderID); err != nil {
+				return report, err
+			}
+		}
+	}
 	report.Applied = true
 	log.Infof("publication retract %s %s/%s: %d series retired, %d CIDs unpinned (%d failed), %d records removed of %d", schema, lane.ProviderID, lane.SourceName,
 		result.RetiredSeries, result.Unpinned, result.UnpinFailed, report.RecordsRemoved, report.Records)
