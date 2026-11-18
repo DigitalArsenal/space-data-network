@@ -556,81 +556,157 @@ production key replaces it through a release that carries `trust_roots`.
 
 - **Rollout window.** A node acts on an update it accepted (a signal that
   passed every check above, or a feed-check find) at its own time within
-  `update.rollout_window_seconds` (default 3600; `0` acts at once; at most
+  `update.rollout_window_seconds` (default 600; `0` acts at once; at most
   86400): the time it accepted the update plus `window x (first 8 bytes of
   sha256("SDN-UPDATE-ROLLOUT-V1" 0x00 peer-id 0x00 update-id)) / 2^64`,
   in whole seconds (`update.RolloutDelay`). It writes the accepted time, the
   delay and the due time to `updates/pending.json` before it waits (with the
   signal's bytes for a signal), so a restart keeps the due time: a pending
   signal is verified again from those bytes and waited out, and a pending
-  feed-check find makes the first feed check run at its due time. After the
-  wait the node reads its state again and does nothing if the update is
-  already installed. `update install` typed by an operator never waits. A
-  UI package is not delayed (nothing restarts). The log line is `Update <id>
-  (version <v>) accepted at <t>; this node acts on it at <due> (rollout window
-  <w>s from config|signal, this node's delay <d>s)`; `update check` and
-  `status` print `update_pending=<id> version=... trigger=... accepted_at=...
-  due_at=... window_seconds=... window_from=... delay_seconds=...` or
-  `update_pending=none`.
+  feed-check find makes the first feed check run at its due time. On a
+  restart the remaining wait is capped at the window, so a clock that was
+  ahead when the update was accepted and was corrected since cannot stretch
+  the wait to days. A pending signal that no longer verifies at the start
+  (it expired while the node was down) is cleared with a warning, and the
+  node checks its feed at once. After the wait the node reads its state again
+  and does nothing if the update is already installed. `update install` typed
+  by an operator never waits. A UI package is not delayed (nothing restarts).
+  The log line is `Update <id> (version <v>) accepted at <t>; this node acts
+  on it at <due> (rollout window <w>s from config|signal, this node's delay
+  <d>s)`; `update check` and `status` print `update_pending=<id> version=...
+  trigger=... accepted_at=... due_at=... window_seconds=... window_from=...
+  delay_seconds=...` or `update_pending=none`.
+- **A newer signal replaces a wait.** A verified signal with a higher
+  sequence that arrives while the node waits for an older update ends that
+  wait: the newer update is handled under its own window (a window of 0 acts
+  at once) and replaces `updates/pending.json`; the older update is not
+  installed. This holds for a wait on a feed-check find too.
+- **Withdrawn during the wait.** At the due time the node reads its feed
+  index again. An update the index no longer lists (withdrawn, even with its
+  manifest left in place) is not installed, and its pending record is
+  cleared. An index the node cannot read withdraws nothing: the install still
+  verifies the signed manifest.
 - **A window in the signal.** A signal may carry `rollout_window_seconds`
   (0 to 86400), signed with the rest of it; it replaces the node's setting
   for that update. `sdn-update-signal-signer --rollout-window-seconds N` and
   `spacedatanetwork update sign-signals --rollout-window-seconds N` sign it
   into every signal of a feed; without the flag no window is signed. The
-  signature covers the canonical form of the signal as published, unknown
-  fields included, and older nodes decode a signal into a structure that
-  ignores fields it does not name, so a node of 1.1.9 or earlier verifies
-  such a signal and acts on it at once (or after its own
-  `update.max_delay_seconds`, a random delay those releases have). The
-  signed-signal check of the publisher's feed (`MatchFeedSignal`) does not
-  compare the window, which the index does not carry.
-- **Not coordinated.** Each node's delay is its own. Two nodes of one
-  operator can still be down at the same time (for two nodes, a 60-minute
-  window and five minutes of downtime each, about one push in six), and
-  nodes do not agree a schedule among themselves.
+  release workflow signs every release's signals with its
+  `rollout_window_seconds` input (default 300). The signature covers the
+  canonical form of the signal as published, unknown fields included, and
+  older nodes decode a signal into a structure that ignores fields it does
+  not name, so a node of 1.1.9 or earlier verifies such a signal and acts on
+  it at once (or after its own `update.max_delay_seconds`, a random delay
+  those releases have). The signed-signal check of the publisher's feed
+  (`MatchFeedSignal`) does not compare the window, which the index does not
+  carry. The feed index and the manifests carry no window, so a node that
+  finds a release by its feed check (it missed the signal) waits by its own
+  `update.rollout_window_seconds`.
+- **The signal again for a node that missed it.** A signal reaches the
+  nodes on the update topic when it is published; a node that is restarting
+  or disconnected at that moment does not get it from that publish. The node
+  that published the signal through its admin API sends it again, for an
+  hour after publishing it (or until the signal expires, if sooner), when a
+  peer joins its update topic and that peer's own status, received in the six
+  seconds after it joined, does not show it already has the signal or a later
+  sequence (at most once every ten seconds). A node that comes back later
+  than that, or reaches the publisher only through other nodes, gets the
+  release from its own feed check.
+- **Not coordinated.** Each node's delay is its own, and the delays of two
+  nodes are independent: they can be down at the same time. For two nodes
+  that are each down for five minutes, the chance that they overlap is about
+  one push in six with a 60-minute window, three in four with the 10-minute
+  default, and every push with a window of five minutes or less. Nodes do not
+  agree a schedule among themselves.
+- **Pacing a push.** The publisher sets the pace of each release: the
+  workflow's `rollout_window_seconds` input (or the signer's flag) is signed
+  into the release's signals and replaces every receiving node's setting. A
+  wider window keeps nodes apart more often (see above). To take one node
+  first, run `spacedatanetwork update install` on it, check it with
+  `spacedatanetwork update fleet`, then push the signal. Nodes of 1.1.9 and
+  earlier ignore the window and act at once unless their own
+  `update.max_delay_seconds` is set before the push.
 - **Update status.** Each node publishes an
-  `org.spacedatanetwork.update.status.v1` message (JSON, at most 4 KiB) on
+  `org.spacedatanetwork.update.status.v1` message (JSON, at most 2 KiB) on
   its channel's update topic: `peer_id`, `version` (its bundle version),
   `sequence`, `update_id`, `state` (`current`, `pending` or `failed`),
   `pending` (`update_id`, `version`, `sequence`, `due_at`), `failed`
-  (`update_id`, `version`, `sequence`, `at`, `reason`, `rolled_back`, from its
-  own deploy ledger: a `health-reverted` until the node runs that sequence or
-  a later one, a `revert-refused` until it runs a later one, by the same rule
-  as the `update_failed` alert), `acknowledged` (the newest signal it
-  accepted) and `at`. It publishes when its update lane starts and the topic
-  has a peer, when a peer joins the topic (at most once every ten seconds),
-  when it starts to wait for an update, and every ten minutes. The pub/sub
-  message is signed by the node's peer key (the router's strict signing
-  policy), and the topic validator accepts a status only when its `peer_id`
-  is the message's author. A node keeps the newest status per peer in
-  memory; a status dated more than ten minutes ahead is dropped. Nodes of
-  1.1.9 and earlier accept only signals on this topic: their validator
+  (`update_id`, `version`, `sequence`, `at`, `reason_code`, `rolled_back`,
+  from its own deploy ledger: a `health-reverted` until the node runs that
+  sequence or a later one, a `revert-refused` until it runs a later one, by
+  the same rule as the `update_failed` alert), `acknowledged` (the newest
+  signal it accepted) and `at`. `reason_code` is one of
+  `not-ready-by-deadline`, `stopped-during-trial`, `trial-record-unreadable`,
+  `health-failed` and `revert-refused`; the ledger's own text (gate errors,
+  rollback errors, paths) stays on the node. It publishes when its update lane
+  starts and the topic has a peer, when a peer joins the topic (at most once
+  every ten seconds), when it starts to wait for an update, and every ten
+  minutes. Every peer on the topic reads it, the time a node will restart for
+  a pending update (`pending.due_at`) included; `update.publish_status: false`
+  (default true) publishes no status at all, and other nodes then show the
+  node "not reporting".
+- **What a node accepts and relays.** The pub/sub message is signed by the
+  publishing node's peer key (the router's strict signing policy). The topic
+  validator accepts a status, and so relays it, only when its `peer_id` is
+  the message's author; the author is a node this node identified itself as
+  an SDN node (its identify agent version names `spacedatanetwork`, the test
+  the peer directory admits a node by, or it is pinned; a DHT advertisement
+  does not count); the status's own time is within five minutes of this
+  node's clock; the author is within its rate (six at once, then one every
+  ten seconds); and every field passes its check: `peer_id`, `version` and
+  update ids from a fixed character set (letters, digits and `.+_-`, with
+  `:` in update ids) and length, times in RFC 3339, `state` and
+  `reason_code` from their lists, and the message at most 2 KiB. Fields this
+  release does not know are ignored: never stored, never shown. A node keeps
+  at most 512 statuses, the newest per peer; a status no newer than the one
+  it holds changes nothing (a replayed status does not make a node look
+  recently seen), and a status not renewed for 30 minutes is dropped. Nodes
+  of 1.1.9 and earlier accept only signals on this topic: their validator
   rejects a status, so it is neither delivered to them nor relayed by them,
   and with no peer scoring in their pub/sub router the rejection costs the
   sender nothing.
 - **The fleet view.** `spacedatanetwork update fleet` (`--json`) reads
   `GET /api/peers/versions` (admin only, as every `/api/peers` route): one
   row for this node, one for every SDN peer of `/api/peers/sdn`, and one for
-  every node whose status reached this one through the topic. Each row has
-  the peer id, the name the node publishes in the peer directory, the version
-  (from its status, else from its identify agent version), whether it is
-  connected, when it was last seen (now when connected), the update state
-  from its own status (`unknown` without one), and whether it accepted the
-  newest signal any row reports or already runs that sequence or a later one. Nothing in it is inferred by the viewing
-  node: "failed and rolled back" is the failing node's own statement. The
-  registry records a peer as seen when a connection to it is made; the node
-  now also records every connected peer as seen once a minute, and every peer
-  whose status it receives, so `last_seen` on `/api/peers/sdn` no longer
-  stops at the time the connection was made.
-- **Trial written with the state.** A home install writes the signed proof,
-  then `state.json` naming the new build with `trial_update_id` set to it,
-  then `updates/trial.json`. A start that finds `trial_update_id` equal to the
-  build `state.json` names, no `trial.json`, and no `health-passed`,
-  `health-reverted` or `revert-refused` for it in the ledger writes the trial
-  record and runs the build as a trial, so no crash leaves a new build running
-  without a trial once the state names it. The swap of the files comes
-  before the state write, and a stop between those two is not covered by
-  this record.
+  every node whose status this node accepted. Each row has the peer id, the
+  name the node publishes in the peer directory, the source of its version
+  and state (`local` for this node, `status` for a node's own statement,
+  `identify` when only its identify version is known), the version, whether
+  it is connected, when it was last seen (now when connected), the update
+  state (`not reporting` without a status), and whether it accepted the
+  newest signal this node verified itself (signed by a trusted root, for its
+  channel and kind) or already runs that sequence or a later one; what other
+  nodes claim never moves that baseline. The command prints every string
+  another node or the peer directory supplied without control or format
+  characters. The registry records a peer as seen when a connection to it is
+  made; the node now also records every connected peer as seen once a minute,
+  and every peer whose newer status it accepts, so `last_seen` on
+  `/api/peers/sdn` no longer stops at the time the connection was made.
+- **The fleet view's limits.** A row's version and update state are the
+  node's own statement (`status`), signed by its peer key and not checked by
+  the viewing node: a node that misreports is shown as it reports. A node of
+  1.1.9 or earlier publishes no status and shows its identify version, `not
+  reporting`. A node shows the status only of nodes it has identified itself,
+  so a node reached only through other nodes (1.1.9 nodes relay no status at
+  all; nodes of this release relay only statuses of nodes they identified)
+  shows `not reporting`, and two nodes joined only through 1.1.9 nodes do
+  not see each other's status.
+- **Trial written with the state, and the pass written first.** A home
+  install writes the signed proof, then `state.json` naming the new build
+  with `trial_update_id` set to it, then `updates/trial.json`. A daemon start
+  that finds `trial_update_id` equal to the build `state.json` names, no
+  `trial.json`, and no `health-passed`, `health-reverted` or `revert-refused`
+  for it in the ledger writes the trial record (holding the trial lock from
+  its first read to its write) and runs the build as a trial, so no crash
+  leaves a new build running without a trial once the state names it. The
+  swap of the files comes before the state write, and a stop between those
+  two is not covered by this record. The opposite risk is a build that passed
+  its trial and is tried again: a second trial of a good build that is slow
+  to start rolls it back. So when the trial build answers ready it first
+  clears `trial_update_id` and sets `trial_passed` in one state write (that
+  write is the pass), then removes `trial.json`, then writes `health-passed`;
+  every start (a typed command too) finishes a pass that stopped after the
+  state write, and the build is not run as a trial again.
 
 End-to-end release flow:
 

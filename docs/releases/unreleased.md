@@ -82,8 +82,8 @@ command it runs.
 
 **Nodes no longer all restart for an update at the same moment.** A node
 acts on an update it accepted (from a signal or from its feed check) at its
-own time within `update.rollout_window_seconds` (default 3600, one hour; `0`
-acts at once, at most 86400). The delay is fixed by the node's peer id and the
+own time within `update.rollout_window_seconds` (default 600, ten minutes;
+`0` acts at once, at most 86400). The delay is fixed by the node's peer id and the
 update id, so two nodes almost never share one, and the node keeps the time it
 accepted the update and its due time in `updates/pending.json`: a restart
 during the wait keeps the due time. The node's log says when it acts and why
@@ -93,12 +93,32 @@ during the wait keeps the due time. The node's log says when it acts and why
 install` typed on the node still installs at once. The release signer can sign
 a window into the signal (`sdn-update-signal-signer --rollout-window-seconds
 N`, or `update sign-signals --rollout-window-seconds N`); it replaces the
-node's setting for that update. Nodes of 1.1.9 and earlier verify such a
-signal and ignore the window: they act at once unless their own
-`update.max_delay_seconds` spreads them. `update.max_delay_seconds` is
-replaced by `update.rollout_window_seconds`; a config that still sets it has
-that line ignored. A deterministic delay spreads the restarts of several
-nodes; it does not promise that two of them are never down at the same time.
+node's setting for that update. The release workflow has an input,
+`rollout_window_seconds` (default 300), that it signs into every signal of
+the release, so the publisher sets the pace of each push; a node that finds
+the release by its feed check (the feed carries no window) uses its own
+setting. Nodes of 1.1.9 and earlier verify such a signal and ignore the
+window: they act at once unless their own `update.max_delay_seconds` spreads
+them. `update.max_delay_seconds` is replaced by
+`update.rollout_window_seconds`; a config that still sets it has that line
+ignored. The delays of two nodes are independent, so they can be down at the
+same time: for two nodes that are each down for five minutes, about one push
+in six with a 60-minute window, three in four with a 10-minute window, and
+every push with five minutes or less. A wider window makes overlap rarer; to
+take one node first, run `update install` on it and check `update fleet`
+before the push.
+
+A newer signal that arrives while a node waits for an older update ends the
+wait and is handled under its own window (a window of 0 acts at once); the
+older update is not installed. At the due time the node reads its feed index
+again and does not install an update the index no longer lists. A pending
+signal that expired while the node was down is cleared with a warning at the
+next start, and the node checks its feed at once; the remaining wait after a
+restart is never longer than the window. The node that published a signal
+sends it again, for an hour, to a peer that joins its update topic and does
+not report having it, so a node that was restarting when the signal went out
+still gets it; a node that comes back later gets the release from its feed
+check.
 
 **Which version every node runs: `spacedatanetwork update fleet`.** Each
 node now publishes its own update status on the update topic of its channel,
@@ -107,22 +127,37 @@ an update that failed on it and whether it was rolled back (from its own
 deploy ledger), and the newest signal it accepted. `spacedatanetwork update
 fleet` prints one row for this node and for every SDN node it knows: name (as
 the node publishes it in the peer directory), the end of its peer id,
-version, when it was last seen, its update state (`current`, `pending <version>
-until <time>`, `failed <version>, rolled back`, or `unknown` for a node whose
-status has not reached this one, such as a node of 1.1.9 or earlier, which
-shows its identify version), and whether it accepted the newest signal or
-already runs its sequence.
-`--json`, and `GET /api/peers/versions` on the admin API (administrators
-only, like the other `/api/peers` routes), give the same data. Nodes of 1.1.9
-and earlier drop these status messages unread and do not relay them. The last-seen
-time of a connected peer on `/api/peers/sdn` is now kept current: it stopped
-at the time the connection was made.
+version, where it comes from (`status`, the node's own statement, which this
+node does not check, or `identify`), when it was last seen, its update state
+(`current`, `pending <version> until <time>`, `failed <version>, rolled back
+(<reason code>)`, or `not reporting`), and whether it accepted the newest
+signal this node verified itself or already runs its sequence. `--json`, and
+`GET /api/peers/versions` on the admin API (administrators only, like the
+other `/api/peers` routes), give the same data. A failure is published as a
+reason code from a fixed list; its text stays in the node's ledger. Every
+peer on the topic reads a node's status, including when it will restart for
+a pending update; `update.publish_status: false` (default true) publishes
+none. A node accepts and relays a status only from a node it has identified
+itself as an SDN node, dated within five minutes of its clock, at most six at
+once and then one every ten seconds per node, with every field from a fixed
+character set and length (at most 2 KiB in all); it keeps at most 512
+statuses, drops one not renewed for 30 minutes, and ignores a status no newer
+than the one it holds. `not reporting` is a node of 1.1.9 or earlier, a node
+that does not publish, a node reached only through other nodes, or a status
+that expired; nodes of 1.1.9 and earlier drop these status messages unread
+and do not relay them, so two nodes joined only through them do not see each
+other's status. The last-seen time of a connected peer on `/api/peers/sdn`
+is now kept current: it stopped at the time the connection was made.
 
 **An interrupted home install still leaves the new build on trial.** A node
 that updates into its home folder wrote the new build's state and then its
 trial record; stopped between the two, it ran the new build at the next start
 as if it had passed its trial. The state write now marks the build as on
-trial, and the next start writes the missing trial record from it.
+trial, and the next daemon start writes the missing trial record from it.
+The opposite case is covered too: a build that answers ready records its
+pass in one state write before it removes its trial record, and a start after
+a stop between those steps finishes the pass, so a build that passed is never
+tried again (a second trial could roll a good build back on a slow start).
 
 **`update install --config <the node's config>` works while the node runs.**
 With `--config`, a node whose admin listener serves a certificate that the

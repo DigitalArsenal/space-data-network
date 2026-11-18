@@ -453,24 +453,37 @@ node's config to turn both off for that node. Nodes from 1.1.4 to 1.1.6 learn
 of a release only from a signal; 1.1.7 and later also check the feed.
 
 **Not all at once.** A node acts on an update it accepted at its own time
-within `update.rollout_window_seconds` (default 3600, one hour; `0` acts at
+within `update.rollout_window_seconds` (default 600, ten minutes; `0` acts at
 once; at most 86400), fixed by its peer id and the update id, so the nodes
-of a fleet do not all restart together. A restart during the wait keeps the
-due time (`updates/pending.json`). `update check` and `status` print
-`update_pending=<update id> ... due_at=<time>` while a node waits, and
-`update install` typed on the node installs at once. A release signal can
-carry its own signed window, which replaces the setting for that update.
-Nodes of 1.1.9 and earlier ignore both and act at once, unless their
-`update.max_delay_seconds` (a random delay those releases have) is set.
+of a fleet do not all restart at the same moment. A restart during the wait
+keeps the due time (`updates/pending.json`). `update check` and `status`
+print `update_pending=<update id> ... due_at=<time>` while a node waits, and
+`update install` typed on the node installs at once. A release signal
+carries the window its publisher chose (the release workflow's
+`rollout_window_seconds` input, default 300), which replaces the setting for
+that update; a node that finds the release by its feed check uses its own
+setting. The delays of two nodes are independent: two nodes that are each
+down for five minutes overlap in about one push in six with a 60-minute
+window, three in four with a 10-minute window, and always with five minutes
+or less. To take one node first, run `update install` on it and check
+`update fleet` before the push. Nodes of 1.1.9 and earlier ignore the window
+and act at once, unless their `update.max_delay_seconds` (a random delay
+those releases have) is set.
 
 **Which version every node runs.** `spacedatanetwork update fleet` prints a
 row for this node and for every SDN node it knows: name, the end of its peer
-id, version, last seen, update state (`current`, `pending <version> until
-<time>`, `failed <version>, rolled back`, or `unknown`), and whether it
-accepted the newest signal or already runs its sequence. Each node of this release states its own version
-and update state in a signed message on its update topic; a node of 1.1.9 or
-earlier does not, and shows its identify version with the state `unknown`.
-`--json` and the admin route `GET /api/peers/versions` give the same data.
+id, version, where the version and state come from (`status`: the node's own
+signed statement, not checked by this node; `identify`: only its identify
+version), last seen, update state (`current`, `pending <version> until
+<time>`, `failed <version>, rolled back (<reason code>)`, or `not
+reporting`), and whether it accepted the newest signal this node verified or
+already runs its sequence. A node that publishes no status shows `not
+reporting`: a node of 1.1.9 or earlier, a node with `update.publish_status:
+false`, a node this node has not identified itself (reached only through
+other nodes), or one whose status was not renewed for 30 minutes. Every peer
+on the update topic reads a node's status, including when it will restart for
+a pending update; `update.publish_status: false` publishes none. `--json` and
+the admin route `GET /api/peers/versions` give the same data.
 
 **No root and no service account.** The account that runs the node needs no
 write access to the install folder, and no rights beyond its own data and
