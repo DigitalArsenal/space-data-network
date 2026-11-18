@@ -461,11 +461,21 @@ installed under that account's home folder, the one its passwd entry names
 16 hex characters of sha256 over the install folder's resolved path), so two
 installs on one account never share one. The install folder, the service unit
 and the installed files are never changed. When the account has no usable home
-folder, the folder is `<storage.path>/update-bundle/<key>`, and the node says
-so in its log. Every folder from that bundle up to the home folder (or the
-storage folder) must belong to the account and not be writable by its group
-or by others; otherwise the build there is refused with the reason and the
-installed build runs. A node running as root never runs a build from a home
+folder (its passwd entry names none, or one that does not exist, or one it
+cannot enter, as under the shipped systemd unit's `ProtectHome=true`), the
+folder is `<storage.path>/update-bundle/<key>`, and the node says so in its
+log: a service account run by the shipped unit (`useradd -r`, storage under
+`/var/lib/spacedatanetwork`) updates itself into its storage folder. Every
+folder from that bundle up to the home folder (or the storage folder) must
+belong to the account and not be writable by its group or by others; every
+folder and symlink on the path the system resolves from `/` to the bundle must
+belong to the account or to root, and a folder others can write must carry
+the sticky bit (`/tmp`); the folders and files of the build itself must
+belong to the account and not be writable by its group or by others (updates
+are unpacked that way, whatever the archive or the umask say). Otherwise the
+build there is refused with the reason and the installed build runs; a home
+folder that exists and fails these checks is refused, never replaced by the
+storage folder. A node running as root never runs a build from a home
 folder: root with a read-only install folder is told to make the folder
 writable or to install the new release by hand. One install serves one node
 per account: a second daemon started from the same install by the same
@@ -476,8 +486,10 @@ An update then goes like this, by signal, by feed check or by `update install`:
 1. The daemon installs the new build into that folder while it keeps serving,
    then stops its services as it does for any shutdown and starts again
    through the installed path in the same process. No helper runs. Under
-   systemd (`Restart=always`, `Restart=on-failure` or none), launchd and a
-   node started by hand alike, the process keeps its pid. If that shutdown
+   systemd (`Restart=always`, `Restart=on-failure` or none) and a node
+   started by hand alike, the process keeps its pid. The same `exec` keeps the
+   pid launchd watches; this has not been run end to end under launchd. If
+   that shutdown
    fails part-way and the 75-second shutdown watchdog ends the process, the
    restart does not happen in place: a service manager that restarts the node
    starts it again, and a node started by hand stays stopped until it is
@@ -495,12 +507,19 @@ An update then goes like this, by signal, by feed check or by `update install`:
    before anything else in the trial build enforces the deadline even when
    the build is stuck before it can check its own readiness (opening its store,
    for example). A trial build that crashes, or that hangs so that even its
-   timer cannot act, is rolled back at the next start through the installed
-   path: right away under a service that restarts it (`Restart=always` or
-   `Restart=on-failure`, launchd `KeepAlive`); otherwise when the node is next
-   started, and any `spacedatanetwork` command typed after the deadline rolls
-   it back too (the hung process itself has to be stopped by the service
-   manager or by hand). A trial runs without a health check when the admin
+   timer cannot act, is rolled back at the next daemon start through the
+   installed path: right away under a service that restarts it
+   (`Restart=always` or `Restart=on-failure`; launchd `KeepAlive` should do
+   the same, not run end to end); otherwise when the node is next started. A
+   `spacedatanetwork` command typed after the deadline rolls it back only when
+   no daemon runs; while the trial daemon is still alive it runs the installed
+   build and leaves the rollback to the next daemon start (the hung process
+   has to be stopped by the service manager or by hand). A stop by
+   `SIGTERM` or `SIGINT` during a trial (`systemctl restart`, a reboot) is
+   not a failure: the next start runs the trial again with a new deadline, up
+   to three times; a fourth such stop fails the trial, and the next start
+   rolls it back. A power loss or a `SIGKILL` during a trial counts as a
+   crash. A trial runs without a health check when the admin
    listener is off (`admin.enabled: false`): it passes at once, and the log
    says so as an error.
 4. When the store-format guard refuses the rollback (the trial build moved the
@@ -512,7 +531,7 @@ An update then goes like this, by signal, by feed check or by `update install`:
 
 From then on:
 
-- every daemon start, by hand or by a systemd or launchd service whose command
+- every daemon start, by hand or by a service whose command
   names the installed path, verifies the build in that folder in full and runs
   it only when it verifies. Other `spacedatanetwork` commands reuse the result
   of the last full verification while no file of the build has changed (same

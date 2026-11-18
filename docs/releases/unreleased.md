@@ -89,7 +89,10 @@ itself: every update was staged in, and swapped into, that folder, and failed
 there. Such a node now fetches, verifies and installs updates under the home
 folder of its account's passwd entry, in `~/.spacedatanetwork/bundle/<key>`,
 one folder per install (`<storage.path>/update-bundle/<key>` when there is no
-usable home folder, which the log says), and never changes the install
+usable home folder: none, a missing one, or one the account cannot enter, as
+under the shipped systemd unit's `ProtectHome=true`; the log says so, and a
+service account under the shipped unit updates itself into its storage
+folder), and never changes the install
 folder, the service unit or the installed files. It does this by signal, by
 feed check and with `update install`, and needs no update helper: the daemon
 installs the build while it serves, stops its services and starts again
@@ -97,12 +100,17 @@ through the installed path in the same process. The installed build verifies
 the new build against its own update roots (its signed manifest, its signed
 archive and every one of its files) and starts it as a trial with a deadline
 of `update.health_timeout_seconds` from that start; a trial that is not ready
-by then, wherever it is stuck, or that crashes, is rolled back to the
-previous build and kept aside under `updates/failed/`. Every daemon start
+by then, or that crashes, is rolled back to the previous build and kept aside
+under `updates/failed/`: by its own timer when it is stuck where the timer
+still runs, and otherwise at the next daemon start through the installed
+path (a service that restarts it, or an operator, has to stop a process hung
+that badly first). A service restart or a reboot during a trial runs the trial
+again, at most three times. Every daemon start
 verifies the build in full; other commands reuse that result while none of
 the build's files has changed. A build that was changed, is not signed, or is
-older than the installed build, or a home folder another account or its group
-can write, is refused with `update: the build under <folder> is refused: <why>;
+older than the installed build, or one another account can change (through
+its folders, a symlink on its path, or the build's own folders and files), is
+refused with `update: the build under <folder> is refused: <why>;
 running the installed build`, and the installed build runs. Root never runs a
 build from a home folder, and one install serves one node per account. Another
 build installed in the install folder by an administrator wins over the home

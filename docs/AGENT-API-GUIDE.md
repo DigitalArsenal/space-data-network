@@ -671,37 +671,51 @@ root's `updates/failed/<update id>/` and never installed again by itself.
   per step (`apply`, `restart`, `health-passed`, `health-failed`,
   `health-reverted`, `rollback`).
 - In a home bundle, `updates/trial.json` exists while a build is installed and
-  not yet proven: its `starts` counts trial starts and `fail_reason` says why a
-  trial gave up. It disappears when the trial passes or is rolled back.
+  not yet proven: its `starts` counts trial starts, `interruptions` the
+  signal stops during the trial, and `fail_reason` says why a trial gave up. It disappears when the trial passes or is rolled back.
 
 ### Where updates go
 
 The update root is the install folder when the node's account can write it.
 When it cannot (a bundle under `/opt` owned by root, run by a system service as
 an ordinary account), updates go to `~/.spacedatanetwork/bundle/<key>` under
-the home folder of the account's passwd entry (one folder per install; or
-`<storage.path>/update-bundle/<key>` when there is no usable home folder), and
-the install folder and the service unit are never changed. No root and no
+the home folder of the account's passwd entry (one folder per install), and
+the install folder and the service unit are never changed. With no usable
+home folder (none in the passwd entry, a missing one, or one the account
+cannot enter, as under the shipped systemd unit's `ProtectHome=true`) they go
+to `<storage.path>/update-bundle/<key>`, and the log says so: a service
+account under the shipped unit updates itself into its storage folder. A home
+folder that exists and another account can change is refused, never replaced
+by the storage folder. No root and no
 service account are needed, and updates by signal and by feed check work under
 a system service. Every daemon start through the installed path verifies the
 build there in full against the installed build's update roots; other commands
 reuse that verification while no file of the build has changed. A build that
-does not verify, or a home folder chain another account or group can write,
-is refused, with a line on stderr:
+does not verify, or one another account can change (a folder from the bundle
+up to the home folder not owned by the account or writable by its group or
+others; a folder or symlink on the resolved path from `/` owned by another
+account, or a folder others can write without the sticky bit; a folder or
+file inside the build writable by its group or others), is refused, with a
+line on stderr:
 `update: the build under <folder> is refused: <why>; running the installed build`.
 A new build runs as a trial first, with a deadline of
 `update.health_timeout_seconds` from its start (default 600 s); one that is not
 ready by then, or crashes, is rolled back and kept aside, and the stderr line
 reads `update: update <id> failed its trial (<why>); rolled back to <version> and quarantined`.
 A trial process stuck so badly that it cannot stop itself keeps running until
-it is stopped; the next start (or any command after the deadline) rolls it
-back. `... could NOT be rolled back ...` means the store-format guard refused
+it is stopped; the next daemon start rolls it back (a command typed after the
+deadline rolls it back only when no daemon runs, and otherwise runs the
+installed build with
+`update: update <id> did not pass its trial, and the daemon running it is still alive: ...`).
+A stop by signal during a trial (a service restart, a reboot) runs the trial
+again at the next start with a new deadline, up to three times; the fourth
+such stop fails it. `... could NOT be rolled back ...` means the store-format guard refused
 the rollback: the failed build keeps running, `update_failed` is raised, and an
 operator decides. Root never runs a home build, and a second daemon from the
 same install and account is refused. Another build installed in the install
 folder by an administrator wins over the home one. To return to the installed
 build, stop the node and remove `~/.spacedatanetwork/bundle/<key>` (the folder
-`update check` and the log name), or run `spacedatanetwork update rollback
+`update install` prints as `update_root=` and the log names), or run `spacedatanetwork update rollback
 --slot <installed version> --reason "<why>"` while the installed build is still
 one of the five slots. Windows needs a writable install folder. A read-only
 install of a release older than the one with home updates needs one manual

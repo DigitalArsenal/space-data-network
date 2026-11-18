@@ -217,26 +217,33 @@ spacedatanetwork update rollback --reason "<why>"   # with the daemon stopped
   the feed every six hours (`update.check_interval_seconds`), so a node that
   was off when a release was announced still takes it. `update.enabled: false`
   in a node's config turns both off for that node.
-- **Health gate and rollback.** The new build must answer `/api/v1/ready` and
-  report itself on `/api/v1/id` within `update.health_timeout_seconds`
-  (default 600). A build that does not is replaced by the previous one and kept
-  aside, and is not installed again. The last five builds are kept.
+- **Health gate and rollback.** The new build must answer `/api/v1/ready`
+  within `update.health_timeout_seconds` (default 600); an update of a
+  writable install folder also checks that it reports itself on `/api/v1/id`.
+  A build that does not is replaced by the previous one and kept aside, and is
+  not installed again. The last five builds are kept.
 - **No root and no service account.** When the account running the node
   cannot write the install folder (a bundle under `/opt` owned by root, run by
   a system service as an ordinary account, say), updates go to that account's
   home folder from its passwd entry, `~/.spacedatanetwork/bundle/<key>` (one
-  per install; `<storage.path>/update-bundle/<key>` when there is no usable
-  home), and the install folder and the service unit are never changed. The
+  per install), and the install folder and the service unit are never changed.
+  With no usable home folder (none, missing, or one the account cannot enter,
+  as under the shipped systemd unit's `ProtectHome=true`) they go to
+  `<storage.path>/update-bundle/<key>`: a service account under the shipped
+  unit updates itself into its storage folder. The
   daemon installs the new build there while it serves, stops its services and
   starts again through the installed path in the same process, with no helper.
   The installed build checks the new build against its own update roots and
   starts it as a trial with a deadline (`update.health_timeout_seconds` from
-  that start); a trial that is not ready by then is stopped, rolled back and
-  kept aside, and the previous build runs. Every daemon start verifies the
+  that start); a trial that is not ready by then, or that crashes, is rolled
+  back and kept aside, and the previous build runs. A service restart or a
+  reboot during a trial runs the trial again (at most three times). Every
+  daemon start verifies the
   build in full (signature, archive, every file); other commands reuse that
   result while no file of the build has changed. A build that does not verify,
-  or a home folder another account or group can write, is refused with the
-  reason and the installed build runs. Root never runs a home build. A
+  or whose folders another account can change (another owner, or writable by
+  the group or others, on the resolved path up to `/` or inside the build),
+  is refused with the reason and the installed build runs. Root never runs a home build. A
   read-only install of a release older than the one with this behavior needs
   one manual upgrade. Windows needs a writable install folder.
 - **Writable install folder.** A helper process stops the daemon, replaces

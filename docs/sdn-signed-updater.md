@@ -42,9 +42,14 @@ All of the above works on one folder, the update root (`update.PathsFor`):
   `<home>` is the home folder of the effective user's passwd entry (`$HOME`
   only when it resolves to that folder), `<key>` the first 16 hex characters
   of sha256 over the resolved install folder, so each install has its own.
-  With no usable home folder it is `<storage.path>/update-bundle/<key>`
-  (logged). No root, service account, unit change or write to the install
-  folder is needed.
+  With no usable home folder (none in the passwd entry, one that does not
+  exist, or one the account cannot enter: `EACCES` anywhere on the way, as
+  under the shipped systemd unit's `ProtectHome=true`) it is
+  `<storage.path>/update-bundle/<key>` (logged), so a service account under
+  the shipped unit updates itself into its storage folder. A home folder that
+  exists and fails the ownership checks below is refused, never replaced by
+  the storage folder; the storage folder gets the same checks. No root,
+  service account, unit change or write to the install folder is needed.
 
 The home bundle of an install is moved only with it. A bundle whose mount
 path changes at every start would get a new home bundle each time; no bundle
@@ -56,12 +61,24 @@ does: root with a read-only install folder is refused with a message to make
 the folder writable or install by hand, and a home build started as root
 exits. Every folder from the home bundle's `updates/` up to the home folder
 (or the storage folder) must belong to the effective user and not be
-writable by its group or by others; otherwise the build is refused with the
-reason, and the installed build runs.
+writable by its group or by others. The path is also walked from `/` the way
+the system resolves it, following every symlink: each folder and symlink on
+it must belong to the effective user or to root, and a folder its group or
+others can write must carry the sticky bit (`/tmp`), where only an entry's
+owner can rename it. Inside the build, every folder and file must belong to
+the effective user and not be writable by its group or by others, and every
+symlink must belong to it; an update is unpacked with group and other write
+bits removed, whatever the archive or the umask say. Otherwise the build is
+refused with the reason, and the installed build runs.
 
 **One daemon per home bundle.** The daemon holds `<key>.daemon.lock` beside
 the bundle for its life; a second daemon from the same install and account is
-refused at its start check (give each node its own install). An update is
+refused at its start check (give each node its own install). The lock is an
+`flock` on an open file that the start check takes and passes across each
+`exec` (`SDN_UPDATE_DAEMON_LOCK_FD`, read and removed at start), so there is
+no moment between the start check and the daemon it starts when another
+daemon could take it. Every change of `trial.json` (pass, fail, signal stop,
+start, revert) is made under `<key>.trial.lock`. An update is
 installed under `<key>.install.lock`, so a typed `update install` and the
 daemon's own install never run at once. Every process that runs a home build
 holds `<key>.inuse.lock` shared, and a stale bundle (the installed build
@@ -104,7 +121,8 @@ So:
    same pid) with the installed launcher and its own arguments, in the
    environment the installed launcher had: entries the start check removed are
    given back and those pointing into the home bundle removed. This holds under
-   systemd with any restart policy, launchd and a daemon started by hand,
+   systemd with any restart policy and a daemon started by hand (launchd
+   watches the same pid; not run end to end under launchd),
    except when the shutdown itself fails: if the 75-second shutdown watchdog
    ends the process, a service manager that restarts the node starts it again,
    and a node started by hand stays stopped until it is started. The update
@@ -131,9 +149,27 @@ So:
    `updates/failed/<update id>`, the quarantine; the ledger records
    `rollback`), records `health-reverted` and runs the previous build. A
    pending trial whose files fail verification, or whose `trial.json` cannot
-   be read, is reverted the same way. Not covered: a trial build that hangs
-   so that its timer cannot act keeps running until the service manager or an
-   operator stops it; the next start through the installed path rolls it back.
+   be read, is reverted the same way. A command other than `daemon` reverts
+   only when no daemon holds the daemon lock: while the trial daemon is alive
+   (stuck, or late after a suspend) it runs the installed build and leaves the
+   revert to the next daemon start, so no running build has its files moved
+   away. A revert works only on the build `state.json` names: a `trial.json`
+   naming another update is what a revert stopped after its rollback leaves,
+   and the next daemon start only clears it (writing `health-reverted` when
+   the ledger lacks it), so the build that ran before the trial is never
+   quarantined; `FailTrial` writes only while `trial.json` still names its
+   update. Not covered: a trial build that hangs so that its timer cannot act
+   keeps running until the service manager or an operator stops it; the next
+   daemon start through the installed path rolls it back.
+4a. **Stopped during a trial.** `SIGTERM` or `SIGINT` reaching the trial
+   build before it passes (`systemctl restart`, a reboot) is not a failure:
+   the trial build watches for it from its first instruction, records it in
+   `trial.json` (`interruptions`, `starts` back to 0, no deadline) and ends
+   as it would have; the next start runs the trial again with a new deadline.
+   The bound is `update.MaxTrialInterruptions` = 3: after three such stops
+   the trial runs a fourth time, and a stop during that one fails it, so a
+   build that is always restarted before it is ready cannot stay on trial.
+   A `SIGKILL`, a power loss or a crash counts as a failed trial start.
 5. **Revert refused.** When the store-format guard refuses the rollback (the
    trial build moved the store to a format the previous build cannot open),
    nothing is swapped and the build that failed keeps running. The log says
