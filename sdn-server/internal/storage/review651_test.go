@@ -16,8 +16,10 @@ import (
 
 // Unset, the store's layout decides: a build whose default is bounded opens
 // a store a later build (or an explicit setting) promoted, for example after
-// the update channel rolled back to it. Set, the setting decides, and false
-// refuses a promoted store instead of silently bounding it.
+// the update channel rolled back to it; a build whose engine supports layout
+// 2 creates a fresh store unlimited (it holds no records a rollback needs)
+// and keeps an existing bounded store bounded. Set, the setting decides, and
+// false refuses a promoted store instead of silently bounding it.
 func TestFormat4VisibilitySettingFollowsStore(t *testing.T) {
 	setting := func(opts ...StoreOption) storeConfig {
 		var c storeConfig
@@ -26,23 +28,33 @@ func TestFormat4VisibilitySettingFollowsStore(t *testing.T) {
 		}
 		return c
 	}
+	prev := format4StampedLayout
+	t.Cleanup(func() { format4StampedLayout = prev })
 	yes, no := true, false
 	for _, tc := range []struct {
 		name    string
 		cfg     storeConfig
 		layout  uint16
+		fresh   bool
+		stamped int
 		want    bool
 		refused bool
 	}{
-		{"unset, fresh or layout 1", setting(WithUnlimitedSQLVisibilitySetting(nil)), 1, false, false},
-		{"unset, no store yet", setting(), 0, false, false},
-		{"unset, layout 2", setting(WithUnlimitedSQLVisibilitySetting(nil)), 2, true, false},
-		{"true, layout 1 (promotes)", setting(WithUnlimitedSQLVisibilitySetting(&yes)), 1, true, false},
-		{"true, layout 2", setting(WithUnlimitedSQLVisibility(true)), 2, true, false},
-		{"false, layout 1", setting(WithUnlimitedSQLVisibilitySetting(&no)), 1, false, false},
-		{"false, layout 2 refuses", setting(WithUnlimitedSQLVisibility(false)), 2, false, true},
+		{"unset, layout 1, layout-1 build", setting(WithUnlimitedSQLVisibilitySetting(nil)), 1, false, 1, false, false},
+		{"unset, layout 1, layout-2 build (an existing bounded store stays bounded)", setting(WithUnlimitedSQLVisibilitySetting(nil)), 1, false, 2, false, false},
+		{"unset, fresh, layout-1 build", setting(), 0, true, 1, false, false},
+		{"unset, fresh, layout-2 build (created unlimited)", setting(), 0, true, 2, true, false},
+		{"unset, layout 2, layout-1 stamp still opens it", setting(WithUnlimitedSQLVisibilitySetting(nil)), 2, false, 1, true, false},
+		{"unset, layout 2, layout-2 build", setting(WithUnlimitedSQLVisibilitySetting(nil)), 2, false, 2, true, false},
+		{"true, layout 1 (promotes)", setting(WithUnlimitedSQLVisibilitySetting(&yes)), 1, false, 2, true, false},
+		{"true, fresh", setting(WithUnlimitedSQLVisibility(true)), 0, true, 1, true, false},
+		{"true, layout 2", setting(WithUnlimitedSQLVisibility(true)), 2, false, 2, true, false},
+		{"false, layout 1", setting(WithUnlimitedSQLVisibilitySetting(&no)), 1, false, 2, false, false},
+		{"false, fresh, layout-2 build (created bounded)", setting(WithUnlimitedSQLVisibility(false)), 0, true, 2, false, false},
+		{"false, layout 2 refuses", setting(WithUnlimitedSQLVisibility(false)), 2, false, 2, false, true},
 	} {
-		got, err := format4UnlimitedVisibility(tc.cfg, marker.Markers{Format: 5, Layout: tc.layout, RequiredLayout: tc.layout})
+		format4StampedLayout = tc.stamped
+		got, err := format4UnlimitedVisibility(tc.cfg, marker.Markers{Format: 5, Layout: tc.layout, RequiredLayout: tc.layout}, tc.fresh)
 		if tc.refused {
 			if err == nil || !strings.Contains(err.Error(), "unlimited_sql_visibility") {
 				t.Fatalf("%s: want a refusal naming the setting, got %v, %v", tc.name, got, err)
@@ -53,6 +65,60 @@ func TestFormat4VisibilitySettingFollowsStore(t *testing.T) {
 			t.Fatalf("%s: got %v, %v; want %v", tc.name, got, err, tc.want)
 		}
 	}
+}
+
+// The rollout rule for the first release that pins a layout-2 engine, on
+// real stores: with the setting unset, a new store is created at layout 2
+// with unlimited visibility; a store created bounded stays at layout 1 and
+// bounded; a promoted store stays unlimited. A build stamped layout 1 (the
+// published pin before that release) creates a new store bounded.
+func TestFormat4UnsetSettingCreatesNewStoreUnlimited(t *testing.T) {
+	onFormat4Engine(t, func(t *testing.T) {
+		prev := format4StampedLayout
+		t.Cleanup(func() { format4StampedLayout = prev })
+		open := func(root string, opts ...StoreOption) (bool, marker.Markers) {
+			t.Helper()
+			s := openFormat4ForTest(t, root, opts...)
+			unlimited := s.f4.opt.UnlimitedVisibility
+			if err := s.Close(); err != nil {
+				t.Fatal(err)
+			}
+			m, err := marker.Read(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return unlimited, m
+		}
+
+		format4StampedLayout = 2
+		fresh := t.TempDir()
+		if unlimited, m := open(fresh); !unlimited || m.Layout != 2 || m.RequiredLayout != 2 {
+			t.Fatalf("new store, unset, layout-2 build: unlimited=%v markers=%+v", unlimited, m)
+		}
+		if unlimited, m := open(fresh); !unlimited || m.Layout != 2 {
+			t.Fatalf("reopened new store, unset: unlimited=%v markers=%+v", unlimited, m)
+		}
+
+		bounded := t.TempDir()
+		if unlimited, m := open(bounded, WithUnlimitedSQLVisibility(false)); unlimited || m.Layout != 1 {
+			t.Fatalf("new store, false: unlimited=%v markers=%+v", unlimited, m)
+		}
+		if unlimited, m := open(bounded); unlimited || m.Layout != 1 || m.RequiredLayout != 1 {
+			t.Fatalf("existing bounded store, unset, layout-2 build: unlimited=%v markers=%+v", unlimited, m)
+		}
+		if unlimited, m := open(bounded, WithUnlimitedSQLVisibility(true)); !unlimited || m.Layout != 2 {
+			t.Fatalf("existing bounded store, true: unlimited=%v markers=%+v", unlimited, m)
+		}
+		if unlimited, m := open(bounded); !unlimited || m.Layout != 2 {
+			t.Fatalf("promoted store, unset: unlimited=%v markers=%+v", unlimited, m)
+		}
+
+		format4StampedLayout = 1
+		older := t.TempDir()
+		if unlimited, m := open(older); unlimited || m.Layout != 1 {
+			t.Fatalf("new store, unset, layout-1 build: unlimited=%v markers=%+v", unlimited, m)
+		}
+	})
 }
 
 // A statement naming a relation the stream store does not have is an error:

@@ -1553,9 +1553,10 @@ type StatusConfig struct {
 // StorageConfig contains storage-related settings.
 type StorageConfig struct {
 	// UnlimitedSQLVisibility true promotes the stream store to layout 2. It
-	// is irreversible; back up the store before enabling it. Unset, a store
-	// already at layout 2 opens with unlimited visibility and any other store
-	// stays bounded; false refuses a store at layout 2.
+	// is irreversible; back up the store before enabling it. Unset, a new
+	// store is created unlimited when the embedded engine supports layout 2,
+	// a store already at layout 2 opens with unlimited visibility, and any
+	// other store stays bounded; false refuses a store at layout 2.
 	UnlimitedSQLVisibility *bool `yaml:"unlimited_sql_visibility,omitempty"`
 	// RowCacheBytes is the stream engine's shared row-order cache (0: 32 MiB).
 	RowCacheBytes uint64 `yaml:"row_cache_bytes,omitempty"`

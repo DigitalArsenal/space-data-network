@@ -6,12 +6,22 @@ it does not turn an incomplete query into a successful result.
 
 ## Enable complete visibility explicitly
 
-`storage.unlimited_sql_visibility` is unset by default. Unset, a store that is
-not yet promoted keeps bounded registrations (the existing 10,000-row default
-and 400,000-row OMM/TBS windows), and a store already at layout 2 (or with a
-pending promotion) opens with unlimited visibility: a build started on a store
-that a later build or an explicit setting promoted, for example after the update
-channel rolled back to it, keeps it running. With a supporting engine, `true`
+`storage.unlimited_sql_visibility` is unset by default. Unset, the store
+decides:
+
+- A new store (an empty data directory) is created at layout 2 with unlimited
+  visibility when the embedded engine supports layout 2 (the binary is stamped
+  `MaxStoreLayout` 2). It holds no records a rollback to an older build would
+  need. A binary stamped layout 1 creates it bounded.
+- An existing store that is not promoted keeps bounded registrations (the
+  existing 10,000-row default and 400,000-row OMM/TBS windows). An upgrade never
+  promotes a store by default.
+- A store already at layout 2 (or with a pending promotion) opens with unlimited
+  visibility: a build started on a store that a later build or an explicit
+  setting promoted, for example after the update channel rolled back to it,
+  keeps it running.
+
+With a supporting engine, `true`
 registers explicit unlimited visibility for every standard (type-spec tag 13,
 uint8 one) and promotes the store. `false` keeps bounded visibility and refuses
 a promoted store. Missing tag 13, including the historical tag 10 value zero,

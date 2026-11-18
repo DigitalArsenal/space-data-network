@@ -43,6 +43,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format2"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format4"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format4/marker"
+	"github.com/spacedatanetwork/sdn-server/internal/versioninfo"
 )
 
 // format4ControlDBName is the control instance's database under fsql4/.
@@ -289,17 +290,31 @@ func format4CreateMode(basePath string) (format4.CreateMode, error) {
 	}
 }
 
+// format4StampedLayout is the store layout this binary's embedded engine
+// supports (versioninfo.MaxStoreLayout, which a test holds equal to the
+// engine's capability). Tests set it to exercise a layout-2 build.
+var format4StampedLayout = versioninfo.MaxStoreLayout
+
 // format4UnlimitedVisibility decides the stream store's SQL visibility from
-// storage.unlimited_sql_visibility and the store's markers. Set, the setting
-// decides: true promotes a layout-1 store; false refuses a store already at
-// layout 2 (or with a pending promotion), which cannot be bounded again.
-// Unset, the store decides: a store at layout 2 opens with unlimited
-// visibility (a build whose default is bounded, started on a store a later
-// build or an explicit setting promoted, e.g. after a rollback), and any
-// other store stays bounded.
-func format4UnlimitedVisibility(cfg storeConfig, markers marker.Markers) (bool, error) {
+// storage.unlimited_sql_visibility, the store's markers and whether the store
+// is created now (fresh: an empty data directory). Set, the setting decides:
+// true promotes a layout-1 store; false refuses a store already at layout 2
+// (or with a pending promotion), which cannot be bounded again. Unset, the
+// store decides: a fresh store is created unlimited when the embedded engine
+// supports layout 2 (it holds no records a rollback to an older build would
+// need); a store at layout 2 opens with unlimited visibility (a build whose
+// default is bounded, started on a store a later build or an explicit setting
+// promoted, e.g. after a rollback); any other store stays bounded.
+func format4UnlimitedVisibility(cfg storeConfig, markers marker.Markers, fresh bool) (bool, error) {
 	if markers.RequiredLayout < 2 {
-		return cfg.unlimitedSQLVisibilitySet && cfg.unlimitedSQLVisibility, nil
+		if cfg.unlimitedSQLVisibilitySet {
+			return cfg.unlimitedSQLVisibility, nil
+		}
+		if fresh && format4StampedLayout >= 2 {
+			log.Infof("format 5: new store: unlimited SQL visibility (storage.unlimited_sql_visibility unset; a new store is created at layout 2)")
+			return true, nil
+		}
+		return false, nil
 	}
 	if cfg.unlimitedSQLVisibilitySet && !cfg.unlimitedSQLVisibility {
 		return false, fmt.Errorf("format 5: stream format %d layout %d has unlimited SQL visibility and cannot be bounded again; "+
@@ -327,20 +342,21 @@ func newFormat4Store(basePath string, validator *sds.Validator, cfg storeConfig)
 			_ = lock.release()
 		}
 	}()
-	// The markers are read under the store lock: no other process is
+	if err := migrateStore5Locked(context.Background(), basePath); err != nil {
+		return nil, err
+	}
+	mode, err := format4CreateMode(basePath)
+	if err != nil {
+		return nil, err
+	}
+	// The markers are read under the store lock, after a migration or a
+	// finished activation, and before the engine opens: no other process is
 	// promoting the store while its layout decides the setting.
 	markers, err := marker.Read(basePath)
 	if err != nil {
 		return nil, err
 	}
-	unlimited, err := format4UnlimitedVisibility(cfg, markers)
-	if err != nil {
-		return nil, err
-	}
-	if err := migrateStore5Locked(context.Background(), basePath); err != nil {
-		return nil, err
-	}
-	mode, err := format4CreateMode(basePath)
+	unlimited, err := format4UnlimitedVisibility(cfg, markers, mode == format4.CreateFresh)
 	if err != nil {
 		return nil, err
 	}

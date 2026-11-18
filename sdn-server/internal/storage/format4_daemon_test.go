@@ -101,6 +101,12 @@ func openFormat4ForTest(t testing.TB, dir string, opts ...StoreOption) *FlatSQLS
 
 func TestFormat4UnlimitedVisibilityOptIn(t *testing.T) {
 	onFormat4Engine(t, func(t *testing.T) {
+		// A build stamped layout 1 (bounded by default): the build a rollback
+		// returns to. TestFormat4UnsetSettingCreatesNewStoreUnlimited covers a
+		// layout-2 build's default.
+		prevStamp := format4StampedLayout
+		format4StampedLayout = 1
+		t.Cleanup(func() { format4StampedLayout = prevStamp })
 		root := t.TempDir()
 		store := openFormat4ForTest(t, root)
 		m, err := marker.Read(root)
