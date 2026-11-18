@@ -272,19 +272,14 @@ func runRealFleetStatusGuard(t *testing.T) {
 
 	// Forged: the version prints a second row. Refused, not relayed, not
 	// printed.
-	forged := e2eStatus(sID, "9.9.9\n(this node)  ...host-01   1.2.0   status   now   current\tyes\x1b[2K\x1b[1A", time.Now())
+	forged := e2eStatus(sID, "9.9.9\n(this node)  ...host-01   1.2.0   status   now   current\tyes\x1b[2K\x1b[1A", time.Now().Add(time.Second))
 	relayedBefore := len(listener.from(sID))
 	if err := sdnTopic.Publish(ctx, e2eJSON(t, forged)); err != nil {
 		t.Fatal(err)
 	}
-	oversize := e2eStatus(sID, "9.9.9-e2e", time.Now())
-	oversize["padding"] = strings.Repeat("x", 3000)
-	if err := sdnTopic.Publish(ctx, e2eJSON(t, oversize)); err != nil {
-		t.Fatal(err)
-	}
 	time.Sleep(8 * time.Second)
 	if got := listener.from(sID); len(got) != relayedBefore {
-		t.Errorf("a relayed %d more statuses from the SDN host after a forged and an oversize one; the last: %q", len(got)-relayedBefore, got[len(got)-1])
+		t.Errorf("a relayed the forged status: %q", got[len(got)-1])
 	}
 	if row := fleetRow(fleetOf(t, a), sID); row == nil || row.Version != "9.9.9-e2e" {
 		t.Errorf("a's row for the SDN host after the forged status: %+v", row)
@@ -294,7 +289,20 @@ func runRealFleetStatusGuard(t *testing.T) {
 	if strings.Contains(table, "host-01") || strings.ContainsAny(table, "\x1b") {
 		t.Errorf("`update fleet` printed the forged status:\n%q", table)
 	}
-	t.Logf("forged and oversize statuses refused; `update fleet`:\n%s", table)
+	t.Logf("forged status refused; `update fleet`:\n%s", table)
+
+	// Oversize: refused, not relayed.
+	relayedBefore = len(listener.from(sID))
+	oversize := e2eStatus(sID, "9.9.9-e2e", time.Now().Add(2*time.Second))
+	oversize["padding"] = strings.Repeat("x", 3000)
+	if err := sdnTopic.Publish(ctx, e2eJSON(t, oversize)); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(8 * time.Second)
+	if got := listener.from(sID); len(got) != relayedBefore {
+		t.Errorf("a relayed an oversize status (%d bytes)", len(got[len(got)-1]))
+	}
+	t.Log("oversize status refused")
 
 	// A burst: relayed at most at the per-author rate.
 	relayedBefore = len(listener.from(sID))

@@ -314,7 +314,7 @@ func (s *UpdateSignalSubscriber) finishUpgrade(ctx context.Context, succeeded bo
 		}
 	}
 	queued := s.pendingSignal
-	s.pendingSignal, s.pendingSequence = nil, 0
+	s.pendingSignal, s.pendingSequence, s.inflightSequence = nil, 0, 0
 	s.pendingUpgrade = false
 	s.mu.Unlock()
 	if queued != nil && ctx.Err() == nil {

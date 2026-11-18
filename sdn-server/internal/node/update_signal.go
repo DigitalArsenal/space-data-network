@@ -164,6 +164,8 @@ type UpdateSignalSubscriber struct {
 	pendingUpgrade  bool
 	pendingSignal   []byte
 	pendingSequence int64
+	// inflightSequence is the sequence of the signal that holds the claim.
+	inflightSequence int64
 	handled         map[string]bool
 	installRefusals map[string]error
 	// handoffFailures counts helper hand-offs that timed out with nothing
@@ -496,7 +498,15 @@ func (s *UpdateSignalSubscriber) Run(ctx context.Context) error {
 			log.Warnf("update signal: error reading topic %s: %v", s.deps.Topic, err)
 			continue
 		}
-		runUpdateGossip("update-signal", func() { s.handle(ctx, data) })
+		if update.IsStatusMessage(data) {
+			runUpdateGossip("update-status", func() { s.handle(ctx, data) })
+			continue
+		}
+		// A signal's handling waits for its rollout due time, then fetches
+		// and stages: it runs beside this loop, which keeps reading the
+		// topic (other nodes' statuses, and a newer signal that replaces the
+		// wait).
+		go runUpdateGossip("update-signal", func() { s.handle(ctx, data) })
 	}
 }
 
@@ -616,7 +626,7 @@ func (s *UpdateSignalSubscriber) claimSignal(signal *update.Signal, raw []byte) 
 	defer s.mu.Unlock()
 	id := signal.UpdateID
 	if s.pendingUpgrade {
-		if signal.Sequence > s.pendingSequence {
+		if signal.Sequence > max(s.pendingSequence, s.inflightSequence) {
 			if s.pendingSignal != nil {
 				log.Debugf("update signal: dropping remembered sequence %d for newer sequence %d", s.pendingSequence, signal.Sequence)
 			}
@@ -643,6 +653,7 @@ func (s *UpdateSignalSubscriber) claimSignal(signal *update.Signal, raw []byte) 
 		return false
 	}
 	s.pendingUpgrade = true
+	s.inflightSequence = signal.Sequence
 	s.handled[id] = true
 	return true
 }
