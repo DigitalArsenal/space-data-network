@@ -121,3 +121,17 @@ release by hand once.
 
 `service install --dry-run` prints the service file and commands without
 writing or running them.
+
+---
+
+**A lane of more than 8,388,608 records no longer ends the engine.** The
+node's engine is FlatSQL 3.12.12, which carries the change of FlatSQL
+3.12.11: with the earlier engine, a lane past 8,388,608 records ended the
+engine during a checkpoint, and on a node with a large catalog lane the
+`$MPE` publications failed. The engine now keeps 24 bytes per record in
+fixed-size blocks for a lane's commit tree and reads full digests back from
+the stream when it needs them; the commits roots are unchanged. The cost:
+rebuilding that cache after a restart re-reads each unit's digests, so the
+first commits root on a fresh cache takes about 45-50 % longer (a native
+measurement at 606,000 records). The limit: about 32 million records across
+all lanes of one engine fit in its 2 GiB heap (computed).
