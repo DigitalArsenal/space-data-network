@@ -4,8 +4,30 @@ import (
 	"context"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format4"
 	"github.com/spacedatanetwork/sdn-server/internal/storage/format4/marker"
+	"os"
+	"sync"
 	"testing"
 )
+
+// visibilityAOT is one compiled-engine cache folder for this test process,
+// removed by TestMain: the engine compiles once for the tests here, and
+// nothing is read from or left in the user's cache. The artifact's file name
+// carries the engine's sha256 and the runtime's compile settings
+// (flatsqlrt.ThreadedAOTPath), so two engines never share an entry.
+var visibilityAOT struct {
+	once sync.Once
+	dir  string
+	err  error
+}
+
+func visibilityAOTDir(t testing.TB) string {
+	t.Helper()
+	visibilityAOT.once.Do(func() { visibilityAOT.dir, visibilityAOT.err = os.MkdirTemp("", "sdn-migrate4-visibility-aot-") })
+	if visibilityAOT.err != nil {
+		t.Fatal(visibilityAOT.err)
+	}
+	return visibilityAOT.dir
+}
 
 func TestMigrate4RegistrationKeepsBoundedLayout(t *testing.T) {
 	requirePSEngine(t)
@@ -17,7 +39,7 @@ func TestMigrate4RegistrationKeepsBoundedLayout(t *testing.T) {
 	if spec.UnlimitedVisibility || spec.A18Bound == 0 {
 		t.Fatal("migration must require a separate explicit opt-in")
 	}
-	m := migrator4{root: root, rep: &migrate4Report{}, opt: migrate4Options{CompileOnMiss: true, AOTCacheDir: t.TempDir()},
+	m := migrator4{root: root, rep: &migrate4Report{}, opt: migrate4Options{CompileOnMiss: true, AOTCacheDir: visibilityAOTDir(t)},
 		schemas: []string{"OCM.fbs"}, specs: map[string]format4.TypeSpec{"OCM.fbs": spec}}
 	for _, mode := range []format4.CreateMode{format4.CreateFresh, format4.OpenExisting} {
 		if err := m.openTarget(context.Background(), mode); err != nil {
@@ -39,7 +61,7 @@ func TestMigrate4VerificationOpensPromotedLayout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := migrator4{root: root, rep: &migrate4Report{}, opt: migrate4Options{CompileOnMiss: true, AOTCacheDir: t.TempDir(), Wasm: engineWasm(t)},
+	m := migrator4{root: root, rep: &migrate4Report{}, opt: migrate4Options{CompileOnMiss: true, AOTCacheDir: visibilityAOTDir(t), Wasm: engineWasm(t)},
 		schemas: []string{"OCM.fbs"}, specs: map[string]format4.TypeSpec{"OCM.fbs": spec}}
 	ctx := context.Background()
 	if err := m.openTarget(ctx, format4.CreateFresh); err != nil {
