@@ -1210,6 +1210,9 @@ jobs:
             "linux arm64 tar.gz"
             "windows amd64 zip"
           )
+          # The five payloads build side by side (each in its own temporary
+          # directory and output directory); every one must succeed.
+          pids=()
           for target in "${targets[@]}"; do
             read -r target_os target_arch target_ext <<< "${target}"
             archive_path="dist/cli/cli-${target_os}-${target_arch}/spacedatanetwork-${VERSION}-${target_os}-${target_arch}.${target_ext}"
@@ -1219,8 +1222,17 @@ jobs:
             fi
             node deployment/release/build-cli-update-payload.mjs \
               --bundle-archive "${archive_path}" \
-              --carrier-out-dir "${payload_dir}/${target_os}-${target_arch}"
+              --carrier-out-dir "${payload_dir}/${target_os}-${target_arch}" &
+            pids+=("$!")
           done
+          failed=0
+          for pid in "${pids[@]}"; do
+            wait "${pid}" || failed=1
+          done
+          if [[ "${failed}" != 0 ]]; then
+            echo "a CLI update payload failed to build" >&2
+            exit 1
+          fi
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: cli-update-payloads
