@@ -176,7 +176,9 @@ func (s *FlatSQLStore) initDatasetPublicationSeriesTables() error {
 // MarkDatasetPublicationWindowUnfinished records that a publication of the
 // lane is writing the window with shardCID and has not completed. The mark
 // is written before the window's publication row and removed when a series
-// that names the window is recorded (RecordDatasetPublicationSeries). A
+// that names the window is recorded (RecordDatasetPublicationSeries), or,
+// in the transaction that deletes the row, when retention retires the last
+// row of the lane with that shard CID. A
 // window still marked belongs to a publication that failed or was cut
 // (an error, a crash, a kill) after writing it: such a row is never adopted
 // as a legacy series, so it never counts as a completed publication, and
@@ -197,6 +199,27 @@ func (s *FlatSQLStore) MarkDatasetPublicationWindowUnfinished(lane DatasetPublic
 		return fmt.Errorf("mark dataset publication window %s unfinished: %w", shardCID, err)
 	}
 	return nil
+}
+
+// UnfinishedDatasetPublicationWindow reports whether a window of the lane
+// (its shard CID) is marked unfinished: a publication wrote it and has not
+// completed (it is running, or it failed or was cut).
+func (s *FlatSQLStore) UnfinishedDatasetPublicationWindow(lane DatasetPublicationLane, shardCID string) (bool, error) {
+	lane = lane.normalized()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var one int
+	err := s.db.QueryRow(`
+		SELECT 1 FROM sdn_dataset_publication_unfinished_windows
+		WHERE schema_name = ? AND provider_id = ? AND source_name = ? AND shard_cid = ?`,
+		lane.SchemaName, lane.ProviderID, lane.SourceName, strings.TrimSpace(shardCID)).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read the unfinished mark of publication window %s: %w", shardCID, err)
+	}
+	return true, nil
 }
 
 // unfinishedDatasetPublicationWindows is the lane's shard CIDs still marked
@@ -881,7 +904,7 @@ func (s *FlatSQLStore) ApplyDatasetPublicationRetention(plan DatasetPublicationR
 	}
 
 	for _, row := range plan.RetireRows {
-		deleted, err := s.DeleteDatasetShardPublication(row)
+		deleted, err := s.retireDatasetShardPublication(lane, row)
 		if err != nil {
 			return result, err
 		}

@@ -752,8 +752,90 @@ func (s *FlatSQLStore) DeleteDatasetShardPublication(pub DatasetShardPublication
 	return true, nil
 }
 
+// retireDatasetShardPublication is DeleteDatasetShardPublication for
+// publication retention: in the same transaction it removes the lane's
+// unfinished mark of the row's shard CID (MarkDatasetPublicationWindowUnfinished)
+// when no row of the lane with that shard CID is left, so a mark never
+// outlives the rows it marks and never keeps a later row with the same
+// shard CID from being adopted.
+func (s *FlatSQLStore) retireDatasetShardPublication(lane DatasetPublicationLane, pub DatasetShardPublication) (bool, error) {
+	if err := s.requireWritable("delete dataset shard publication"); err != nil {
+		return false, err
+	}
+	lane = lane.normalized()
+	pub = normalizeDatasetShardPublication(pub)
+	if pub.SchemaName == "" {
+		return false, errors.New("schema name is required")
+	}
+	if pub.QueryProfile == "" {
+		return false, errors.New("query profile is required")
+	}
+	if pub.Offset < 0 || pub.Limit <= 0 {
+		return false, errors.New("a positive window is required")
+	}
+	query := DatasetShardPublicationQuery{
+		SchemaName:   pub.SchemaName,
+		ProviderID:   pub.ProviderID,
+		SourceName:   pub.SourceName,
+		BatchID:      pub.BatchID,
+		QueryProfile: pub.QueryProfile,
+		Limit:        pub.Limit,
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, fmt.Errorf("begin retire dataset shard publication: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	deleted, err := applyDatasetShardPublicationDeleteExactWith(tx, query, pub.Offset)
+	if err != nil {
+		return false, err
+	}
+	if deleted == 0 {
+		return false, nil
+	}
+	if shard := strings.TrimSpace(pub.ShardCID); shard != "" {
+		if _, err := tx.Exec(`
+			DELETE FROM sdn_dataset_publication_unfinished_windows
+			WHERE schema_name = ? AND provider_id = ? AND source_name = ? AND shard_cid = ?
+			  AND NOT EXISTS (
+				SELECT 1 FROM sdn_dataset_shard_publications
+				WHERE schema_name = ? AND provider_id = ? AND source_name = ? AND shard_cid = ?)`,
+			lane.SchemaName, lane.ProviderID, lane.SourceName, shard,
+			lane.SchemaName, lane.ProviderID, lane.SourceName, shard); err != nil {
+			return false, fmt.Errorf("clear unfinished publication window %s: %w", shard, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("commit retire dataset shard publication: %w", err)
+	}
+	committed = true
+	if err := s.appendAuxiliaryMetadata(auxiliaryMetadataEvent{
+		Kind: auxiliaryEventDatasetShardPublicationDelete,
+		DatasetShardPublicationDelete: &auxiliaryDatasetShardPublicationDelete{
+			Query:  query,
+			Offset: pub.Offset,
+			Exact:  true,
+		},
+	}); err != nil {
+		return true, fmt.Errorf("append dataset shard publication delete metadata: %w", err)
+	}
+	return true, nil
+}
+
 func (s *FlatSQLStore) applyDatasetShardPublicationDeleteExact(query DatasetShardPublicationQuery, offset int) (int64, error) {
-	result, err := s.auxWrite().Exec(`
+	return applyDatasetShardPublicationDeleteExactWith(s.auxWrite(), query, offset)
+}
+
+func applyDatasetShardPublicationDeleteExactWith(w auxWriter, query DatasetShardPublicationQuery, offset int) (int64, error) {
+	result, err := w.Exec(`
 		DELETE FROM sdn_dataset_shard_publications
 		WHERE schema_name = ? AND query_profile = ? AND provider_id = ? AND source_name = ?
 		  AND batch_id = ? AND window_offset = ? AND window_limit = ?`,
