@@ -469,25 +469,21 @@ func runRealRolloutRaces(t *testing.T) {
 		}
 		return p6 != nil
 	})
-	accepted, err := time.Parse(time.RFC3339, p6.AcceptedAt)
-	if err != nil {
-		t.Fatal(err)
-	}
 	// The install starts by the end of the window measured from the wait's
-	// start; without the bound it would start 30 minutes later.
-	waitPush(t, time.Until(accepted.Add(90*time.Second)), "r6 starting its install within the window", func() bool {
+	// start; without the bound it would start 30 minutes later. Measured on
+	// this test's monotonic clock from when r6 recorded the wait: the
+	// container's wall clock can jump when its virtual machine stalls.
+	pendingSeen := time.Now()
+	waitPush(t, 90*time.Second, "r6 starting its install within the window", func() bool {
 		r6.trackHelper()
 		return ledgerHasIfPresent(r6.paths.Root, clock.updateID, "stop-requested")
 	})
+	started := time.Since(pendingSeen)
 	r6.waitUpgrade(t, clock, boot+2*time.Duration(health)*time.Second)
 	if !strings.Contains(r6.logs(), "lane clock moved back 30 minutes") || !strings.Contains(r6.logs(), "the wall clock moved back during its rollout wait") {
 		t.Errorf("r6 does not show the clock step and the bounded wait:\n%s", tailString(r6.logs(), 30))
 	}
-	at := installStartedAt(t, r6.logs(), clock.updateID, p6.Due())
-	if at.After(accepted.Add(time.Minute + 15*time.Second)) {
-		t.Errorf("r6 started its install at %s, more than the window (60 s) after it accepted the update at %s", at, accepted)
-	}
-	t.Logf("v16, its clock moved back 30 minutes during the wait: installed at %s, %s after it accepted the update", at.Format(time.RFC3339), at.Sub(accepted).Round(time.Second))
+	t.Logf("v16, its clock moved back 30 minutes during the wait: its install started %s after it recorded the wait (window 60 s), and it runs %s", started.Round(time.Second), clock.version)
 	// r and r6 dial no peer.
 	for _, log := range append(append([]string(nil), r.logPaths...), r6.logPaths...) {
 		requireIsolated(t, log)
