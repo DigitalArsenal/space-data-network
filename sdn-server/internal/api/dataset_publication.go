@@ -463,7 +463,7 @@ func (s *ConcreteDatasetPublicationService) publishSelectedDatasetUpdate(ctx con
 		return nil, atPublicationStep("wait for the lane", err)
 	}
 	defer release()
-	s.runs.markHeld(runOf(ctx), s.now())
+	s.runs.markHeld(runOf(ctx))
 	var catalogSnapshot *storage.CatalogSnapshot
 	if activeReq.FullCatalog && strings.TrimSpace(activeReq.BatchID) == "" && schema == "CAT.fbs" {
 		if _, ok := activeStore.CatalogProductSource(activeReq.ProviderID, activeReq.SourceName); ok {
@@ -1152,16 +1152,18 @@ func (s *ConcreteDatasetPublicationService) publishDatasetExport(
 		PublicationCutoff:       publicationCutoff,
 		PublicationSourceCutoff: publicationSourceCutoff,
 	}
+	upsert := s.store.UpsertDatasetShardPublication
 	if announce {
 		// Until the publication completes, this window is one of a
 		// publication that has not: if it fails or is cut from here on, the
-		// row stays and must never count as a completed publication.
+		// row stays and must never count as a completed publication. The
+		// row and its unfinished mark are written in one transaction.
 		lane := storage.DatasetPublicationLane{SchemaName: schema, ProviderID: sourceIdentity.ProviderID, SourceName: sourceIdentity.SourceName}
-		if err := s.store.MarkDatasetPublicationWindowUnfinished(lane, export.ShardCID); err != nil {
-			return nil, storage.DatasetShardPublication{}, atPublicationStep("record publication", err)
+		upsert = func(pub storage.DatasetShardPublication) error {
+			return s.store.UpsertUnfinishedDatasetShardPublication(lane, pub)
 		}
 	}
-	if err := s.store.UpsertDatasetShardPublication(shardPublication); err != nil {
+	if err := upsert(shardPublication); err != nil {
 		return nil, storage.DatasetShardPublication{}, atPublicationStep("record publication", fmt.Errorf("record dataset shard publication: %w", err))
 	}
 	publishedShard, found, err := s.store.FindDatasetShardPublication(storage.DatasetShardPublicationQuery{

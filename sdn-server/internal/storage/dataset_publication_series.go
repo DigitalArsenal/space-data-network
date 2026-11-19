@@ -170,36 +170,19 @@ func (s *FlatSQLStore) initDatasetPublicationSeriesTables() error {
 	`); err != nil {
 		return fmt.Errorf("failed to create dataset publication unfinished windows table: %w", err)
 	}
-	return nil
+	return s.initDatasetPublicationFailedScopesTable()
 }
 
-// MarkDatasetPublicationWindowUnfinished records that a publication of the
-// lane is writing the window with shardCID and has not completed. The mark
-// is written before the window's publication row and removed when a series
-// that names the window is recorded (RecordDatasetPublicationSeries), or,
-// in the transaction that deletes the row, when retention retires the last
-// row of the lane with that shard CID. A
-// window still marked belongs to a publication that failed or was cut
-// (an error, a crash, a kill) after writing it: such a row is never adopted
-// as a legacy series, so it never counts as a completed publication, and
+// A window's unfinished mark records that a publication of the lane wrote
+// the window and has not completed. UpsertUnfinishedDatasetShardPublication
+// writes it in the transaction that writes the window's publication row;
+// it is removed when a series that names the window is recorded
+// (RecordDatasetPublicationSeries), or, in the transaction that deletes the
+// row, when retention retires the last row of the lane with that shard CID.
+// A window still marked belongs to a publication that failed or was cut (an
+// error, a crash, a kill) after writing it: such a row is never adopted as
+// a legacy series, so it never counts as a completed publication, and
 // retention releases it like any row no series names.
-func (s *FlatSQLStore) MarkDatasetPublicationWindowUnfinished(lane DatasetPublicationLane, shardCID string) error {
-	if err := s.requireWritable("mark dataset publication window unfinished"); err != nil {
-		return err
-	}
-	lane = lane.normalized()
-	shardCID = strings.TrimSpace(shardCID)
-	if lane.SchemaName == "" || shardCID == "" {
-		return errors.New("schema and shard CID are required")
-	}
-	defer s.lockWrite("MarkDatasetPublicationWindowUnfinished")()
-	if _, err := s.db.Exec(`
-		INSERT OR IGNORE INTO sdn_dataset_publication_unfinished_windows (schema_name, provider_id, source_name, shard_cid)
-		VALUES (?, ?, ?, ?)`, lane.SchemaName, lane.ProviderID, lane.SourceName, shardCID); err != nil {
-		return fmt.Errorf("mark dataset publication window %s unfinished: %w", shardCID, err)
-	}
-	return nil
-}
 
 // UnfinishedDatasetPublicationWindow reports whether a window of the lane
 // (its shard CID) is marked unfinished: a publication wrote it and has not
@@ -412,7 +395,7 @@ func (s *FlatSQLStore) listDatasetPublicationSeriesLocked(lane DatasetPublicatio
 // legacy series per batch, so retention always knows what each advertised row
 // belongs to. The windows this series published are never adopted, nor are
 // windows a publication wrote without completing
-// (MarkDatasetPublicationWindowUnfinished).
+// (UpsertUnfinishedDatasetShardPublication).
 func (s *FlatSQLStore) RecordDatasetPublicationSeries(series DatasetPublicationSeries, providerPeerID string) error {
 	if err := s.requireWritable("record dataset publication series"); err != nil {
 		return err

@@ -1376,6 +1376,8 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				// (graph: sdn-publication-hygiene-20260928).
 				publicationService.SetPublicationPolicy(cfg.Publishing.Retention, cfg.Publishing.IPNSPointers)
 				publicationService.SetAlerts(n.Alerts())
+				// The publication_failed alerts the last run stopped with.
+				publicationService.RestorePublicationAlerts()
 				publications = publicationService
 				// What publications that did not complete before the last
 				// stop left in the publication directory.

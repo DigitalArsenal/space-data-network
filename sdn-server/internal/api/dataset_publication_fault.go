@@ -8,7 +8,8 @@ package api
 // window of a publication; "record completion" fails the recording of a
 // publication's completion after every window was announced. The fault
 // fires once per process, at the first publication that reaches it. Unset,
-// nothing is injected.
+// nothing is injected. SDN_E2E_PUBLICATION_ALERT_CLEAR_HOLD holds the
+// clearing of a publication_failed alert (heldAlertClear).
 
 import (
 	"context"
@@ -19,6 +20,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 type publicationWindowKey struct{}
@@ -46,6 +48,36 @@ var (
 	publicationFaultWindow int
 	publicationFaultFired  atomic.Bool
 )
+
+var (
+	alertClearHoldOnce sync.Once
+	alertClearHold     time.Duration
+)
+
+// heldAlertClear holds the clearing of a lane's publication_failed alert for
+// SDN_E2E_PUBLICATION_ALERT_CLEAR_HOLD (a duration; unset, nothing is held),
+// after it was decided and before it is made, for the real-daemon test of a
+// failure raised meanwhile. The caller holds what makes the decision and the
+// clear one step.
+func heldAlertClear(lane string) {
+	alertClearHoldOnce.Do(func() {
+		spec := strings.TrimSpace(os.Getenv("SDN_E2E_PUBLICATION_ALERT_CLEAR_HOLD"))
+		if spec == "" {
+			return
+		}
+		hold, err := time.ParseDuration(spec)
+		if err != nil || hold <= 0 {
+			log.Errorf("SDN_E2E_PUBLICATION_ALERT_CLEAR_HOLD %q: not a positive duration; nothing is held", spec)
+			return
+		}
+		alertClearHold = hold
+	})
+	if alertClearHold <= 0 {
+		return
+	}
+	log.Warnf("SDN_E2E_PUBLICATION_ALERT_CLEAR_HOLD: the clearing of the publication_failed alert of %s is held %s", lane, alertClearHold)
+	time.Sleep(alertClearHold)
+}
 
 // injectedPublicationFault answers the injected fault of step, at the window
 // ctx publishes, once; nil otherwise.

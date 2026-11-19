@@ -244,6 +244,24 @@ func (s *FlatSQLStore) initDatasetShardPublicationTable() error {
 }
 
 func (s *FlatSQLStore) UpsertDatasetShardPublication(pub DatasetShardPublication) error {
+	return s.upsertDatasetShardPublication(pub, nil)
+}
+
+// UpsertUnfinishedDatasetShardPublication is UpsertDatasetShardPublication
+// of a window of a publication of lane that has not completed: in the same
+// transaction as the row it marks the window's shard CID unfinished (the
+// mark RecordDatasetPublicationSeries removes when the publication
+// completes), so no crash leaves a row without its mark or a mark without
+// its row.
+func (s *FlatSQLStore) UpsertUnfinishedDatasetShardPublication(lane DatasetPublicationLane, pub DatasetShardPublication) error {
+	lane = lane.normalized()
+	if lane.SchemaName == "" {
+		return errors.New("the lane's schema is required")
+	}
+	return s.upsertDatasetShardPublication(pub, &lane)
+}
+
+func (s *FlatSQLStore) upsertDatasetShardPublication(pub DatasetShardPublication, unfinished *DatasetPublicationLane) error {
 	if (pub.PublicationCutoff == nil) != (pub.PublicationSourceCutoff == nil) {
 		return fmt.Errorf("publication cutoffs must both be present or absent")
 	}
@@ -293,7 +311,11 @@ func (s *FlatSQLStore) UpsertDatasetShardPublication(pub DatasetShardPublication
 	if err := s.populateDatasetShardPublicationFeedMetadataLocked(&pub); err != nil {
 		return err
 	}
-	if err := s.applyDatasetShardPublicationUpsert(pub); err != nil {
+	if unfinished == nil {
+		if err := s.applyDatasetShardPublicationUpsert(pub); err != nil {
+			return err
+		}
+	} else if err := s.upsertMarkedDatasetShardPublicationLocked(*unfinished, pub); err != nil {
 		return err
 	}
 	if err := s.appendAuxiliaryMetadata(auxiliaryMetadataEvent{
@@ -305,8 +327,40 @@ func (s *FlatSQLStore) UpsertDatasetShardPublication(pub DatasetShardPublication
 	return nil
 }
 
+// upsertMarkedDatasetShardPublicationLocked writes the unfinished mark of
+// pub's shard CID in lane and pub's row in one transaction. s.mu is held.
+func (s *FlatSQLStore) upsertMarkedDatasetShardPublicationLocked(lane DatasetPublicationLane, pub DatasetShardPublication) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin upsert of an unfinished dataset shard publication: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	if _, err := tx.Exec(`
+		INSERT OR IGNORE INTO sdn_dataset_publication_unfinished_windows (schema_name, provider_id, source_name, shard_cid)
+		VALUES (?, ?, ?, ?)`, lane.SchemaName, lane.ProviderID, lane.SourceName, pub.ShardCID); err != nil {
+		return fmt.Errorf("mark dataset publication window %s unfinished: %w", pub.ShardCID, err)
+	}
+	if err := applyDatasetShardPublicationUpsertWith(tx, pub); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit upsert of an unfinished dataset shard publication: %w", err)
+	}
+	committed = true
+	return nil
+}
+
 func (s *FlatSQLStore) applyDatasetShardPublicationUpsert(pub DatasetShardPublication) error {
-	_, err := s.auxWrite().Exec(`
+	return applyDatasetShardPublicationUpsertWith(s.auxWrite(), pub)
+}
+
+func applyDatasetShardPublicationUpsertWith(w auxWriter, pub DatasetShardPublication) error {
+	_, err := w.Exec(`
 		INSERT INTO sdn_dataset_shard_publications (
 			schema_name, provider_id, source_name, batch_id, query_profile,
 			window_offset, window_limit, record_count, byte_count,
@@ -754,7 +808,7 @@ func (s *FlatSQLStore) DeleteDatasetShardPublication(pub DatasetShardPublication
 
 // retireDatasetShardPublication is DeleteDatasetShardPublication for
 // publication retention: in the same transaction it removes the lane's
-// unfinished mark of the row's shard CID (MarkDatasetPublicationWindowUnfinished)
+// unfinished mark of the row's shard CID (UpsertUnfinishedDatasetShardPublication)
 // when no row of the lane with that shard CID is left, so a mark never
 // outlives the rows it marks and never keeps a later row with the same
 // shard CID from being adopted.
