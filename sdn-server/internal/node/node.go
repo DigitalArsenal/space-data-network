@@ -973,6 +973,7 @@ func (n *Node) init() error {
 
 	n.protocol = protocol.NewSDSExchangeHandlerWithOptions(n.store, n.validator, limits, rateLimiter)
 	n.protocol.SetPushAuthorizer(n.mayAcceptPush)
+	n.protocol.SetGossipRecordAdmitter(n.gossipRecordAdmitted)
 	n.protocol.SetPrivateReadAuthorizer(n.mayReadPrivate)
 	n.protocol.SetPubSubPNMHandler(n.handleDatasetPublicationPNM)
 	n.tipQueue = n.buildTipQueue()
@@ -4151,6 +4152,17 @@ func (n *Node) materializeDatasetPublicationPNMInner(ctx context.Context, schema
 		// DPM names the lane, before the shard or index is fetched.
 		LaneAllowed: func(laneSchema, providerID, sourceName string) bool {
 			if n.subscribedFrom(from, laneSchema, providerID, sourceName) {
+				// A lane whose followed stream is connected receives the
+				// publication's records on the stream, in sequence: its
+				// shard is not fetched and imported a second time. A lane
+				// whose stream the producer refuses imports here.
+				if n.followStreaming(from, laneSchema, providerID, sourceName) {
+					key := "streamed|" + from.String() + "|" + laneSchema + "|" + providerID + "|" + sourceName
+					if _, seen := unsubscribedLaneLog.LoadOrStore(key, true); !seen {
+						log.Infof("Not fetching the publications of %s %s/%s from %s: their records arrive on the followed stream", laneSchema, providerID, sourceName, from.ShortString())
+					}
+					return false
+				}
 				return true
 			}
 			key := from.String() + "|" + laneSchema + "|" + providerID + "|" + sourceName
@@ -4163,7 +4175,7 @@ func (n *Node) materializeDatasetPublicationPNMInner(ctx context.Context, schema
 	if errors.Is(err, storage.ErrDatasetPublicationLaneNotImported) {
 		// Skipped, not failed: the in-memory mark stays, so the same PNM is
 		// not fetched again for 24 hours, and no replay state is written, so
-		// a later allow-list entry imports it. The caller learns the lane was
+		// a later subscription imports it. The caller learns the lane was
 		// refused (the TipQueue then neither queues nor pins the tip).
 		datasetPNMLaneRefused.Store(pnmKey, true)
 		return false, err

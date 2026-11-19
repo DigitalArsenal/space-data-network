@@ -948,13 +948,12 @@ func (h *SyncHandler) handleAction(w http.ResponseWriter, r *http.Request) {
 				WriteErrorFrame(w, http.StatusBadRequest, "bad_request", "This node cannot follow a lane.", 0)
 				return
 			}
+			// The rule the frame names decides where the first read starts;
+			// it is set on the lane (below) only once the subscription is
+			// made, so a refused one leaves the lane as it was.
 			q := r.URL.Query()
-			if retentionWord != "" {
-				// The rule decides where the first read starts: set it first.
-				h.toggleSubscription(key, true, retentionWord)
-			}
 			plan, err := h.deps.SubscribeLane(r.Context(), LaneSubscription{Schema: key.schema, ProviderID: key.providerID, SourceName: key.sourceName,
-				Producer: producer, Start: q.Get("start"), Force: q.Get("force") == "1" || q.Get("force") == "true"})
+				Producer: producer, Start: q.Get("start"), Force: q.Get("force") == "1" || q.Get("force") == "true", Retention: retentionWord})
 			if err != nil {
 				status, code := subscribeErrorStatus(plan)
 				WriteErrorFrame(w, status, code, "That lane cannot be followed: "+err.Error(), 0)
