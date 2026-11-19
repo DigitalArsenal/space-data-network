@@ -156,3 +156,111 @@ whoever ran it, so another local account could choose the config that
 a system account (such as the package's `sdn`) counts now; for another
 account's node, pass `-c`. `install.sh` passes the node's own config to every
 command it runs.
+
+**Nodes no longer all restart for an update at the same moment.** A node
+acts on an update it accepted (from a signal or from its feed check) at its
+own time within `update.rollout_window_seconds` (default 1800, 30 minutes;
+`0` acts at once, at most 86400). The delay is fixed by the node's peer id and the
+update id, so two nodes almost never share one, and the node keeps the time it
+accepted the update and its due time in `updates/pending.json`: a restart
+during the wait keeps the due time. The node's log says when it acts and why
+(`acts on it at <time> (rollout window ..., this node's delay ...)`), and
+`spacedatanetwork update check` and `spacedatanetwork status` print
+`update_pending=<update id> ... due_at=<time>`. `spacedatanetwork update
+install` typed on the node still installs at once. The release signer can sign
+a window into the signal (`sdn-update-signal-signer --rollout-window-seconds
+N`, or `update sign-signals --rollout-window-seconds N`); it replaces the
+node's setting for that update. The release workflow has an input,
+`rollout_window_seconds` (default 1800), that it signs into every signal of
+the release, so the publisher sets the pace of each push (the workflow's first
+job refuses a value that is not a whole number from 0 to 86400, and both
+signers refuse a negative `--rollout-window-seconds` instead of signing no
+window); a node that finds
+the release by its feed check (the feed carries no window) uses its own
+setting. Nodes of 1.1.9 and earlier verify such a signal and ignore the
+window: they act at once unless their own `update.max_delay_seconds` spreads
+them. `update.max_delay_seconds` is replaced by
+`update.rollout_window_seconds`; a config that still sets it has that line
+ignored. The delays of two nodes are independent, so they can be down at the
+same time: two nodes that each restart in five minutes overlap about 31% of
+the time with the 30-minute default (16% with 60 minutes, 75% with 10
+minutes, always with five minutes or less). `update install` typed on a node
+installs at once; an operator who must not have two hosts down together
+installs on one by hand first and checks `update fleet` before the push.
+While a node waits, a wall clock set back does not lengthen the wait beyond
+the window, and a pending update that is refused (for example quarantined
+after a typed install of it was rolled back) is no longer reported as
+pending.
+
+A newer signal that arrives while a node waits for an older update ends the
+wait and is handled under its own window (a window of 0 acts at once); the
+older update is not installed. At the due time the node reads its feed index
+again and does not install an update the index no longer lists. A pending
+signal that expired while the node was down is cleared with a warning at the
+next start, and the node checks its feed at once; the remaining wait after a
+restart is never longer than the window. The node that published a signal
+sends it again, for an hour, when a node that was part of its fleet at that
+moment joins its update topic again and does not report having it, so a node
+that was restarting when the signal went out still gets it; a node new to the
+publisher, or one that comes back later, gets the release from its feed
+check.
+
+**Which version every node runs: `spacedatanetwork update fleet`.** Each
+node now publishes its own update status on the update topic of its channel,
+signed by its peer key: its version, an update it waits to act on and when,
+an update that failed on it and whether it was rolled back (from its own
+deploy ledger), and the newest signal it accepted. `spacedatanetwork update
+fleet` prints one row for this node and for every SDN node it knows: name (as
+the node publishes it in the peer directory), the end of its peer id,
+version, where it comes from (`status`, the node's own statement, which this
+node does not check, or `identify`), when it was last seen, its update state
+(`current`, `pending <version> until <time>`, `failed <version>, rolled back
+(<reason code>)`, or `not reporting`), and whether it accepted the newest
+signal this node verified itself or already runs its sequence. `--json`, and
+`GET /api/peers/versions` on the admin API (administrators only, like the
+other `/api/peers` routes), give the same data. A failure is published as a
+reason code from a fixed list; its text stays in the node's ledger. Every
+peer on the topic reads a node's status, including when it will restart for
+a pending update; `update.publish_status: false` (default true) publishes
+none. A node accepts and relays a status only from a node it has identified
+itself as an SDN node, dated within five minutes of its clock, at most six at
+once and then one every ten seconds per node, with every field from a fixed
+character set and length (at most 2 KiB in all); it drops a status not
+renewed for 30 minutes and ignores a status no newer than the one it holds.
+Peers known only by their identify agent string (which any peer chooses)
+are bounded: at most 1,024 such authors active within a minute, and at most
+512 of their statuses held, first come: a new such author's status is not kept once 512
+are held. Pinned peers (`peers.trusted_peers` too), `network.bootstrap`
+peers, peers the registry trusts and peers whose status the node already
+holds are outside those bounds, so a flood of new identities cannot remove
+the nodes already shown. A publisher's own fleet belongs in its pinned
+(`peers.trusted_peers`) or `network.bootstrap` peers, so its rows are always
+kept. `not reporting` is a node of 1.1.9 or earlier, a node
+that does not publish, a node reached only through other nodes, or a status
+that expired; nodes of 1.1.9 and earlier drop these status messages unread
+and do not relay them, so two nodes joined only through them do not see each
+other's status. The last-seen time of a connected peer on `/api/peers/sdn`
+is now kept current: it stopped at the time the connection was made. The
+continuous-integration proof that an installed, published node takes a
+pushed update by itself runs the published 1.1.9 archive; it ran the 1.1.5
+archive before, and 1.1.5 is no longer checked.
+
+**An interrupted home install still leaves the new build on trial.** A node
+that updates into its home folder wrote the new build's state and then its
+trial record; stopped between the two, it ran the new build at the next start
+as if it had passed its trial. The state write now marks the build as on
+trial, and the next daemon start writes the missing trial record from it.
+The opposite case is covered too: a build that answers ready records its
+pass in one state write before it removes its trial record, and a start after
+a stop between those steps finishes the pass, so a build that passed is never
+tried again (a second trial could roll a good build back on a slow start).
+
+**`update install --config <the node's config>` works while the node runs.**
+With `--config`, a node whose admin listener serves a certificate that the
+system does not trust (an origin certificate, as on a node behind a proxy)
+was not recognized as running, so the command tried to install in place and
+was refused with "store at ... is already open for writing". A config given
+with `--config` or `SDN_CONFIG` that is the same file the running daemon was
+started with (an absolute path on its command line, run by the same account,
+root or a system account) is now treated as that daemon's config, so the
+command trusts the daemon's certificate and hands the install to the helper.

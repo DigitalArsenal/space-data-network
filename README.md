@@ -209,6 +209,7 @@ its update roots (`trust/update-roots.json` in the bundle).
 spacedatanetwork update check      # this build, the feed's newest release, the rollback slots
 spacedatanetwork update install    # fetch, verify, install, restart, health-check
 spacedatanetwork update slots      # the builds this node can return to
+spacedatanetwork update fleet      # the version and update state of every SDN node this one knows
 spacedatanetwork update rollback --reason "<why>"   # with the daemon stopped
 ```
 
@@ -217,6 +218,26 @@ spacedatanetwork update rollback --reason "<why>"   # with the daemon stopped
   the feed every six hours (`update.check_interval_seconds`), so a node that
   was off when a release was announced still takes it. `update.enabled: false`
   in a node's config turns both off for that node.
+- **Spread over a window, not coordinated.** A node acts on an update at
+  its own time within `update.rollout_window_seconds` (default 30 minutes;
+  `0` acts at once), fixed by its peer id and the update id and kept across a
+  restart; `update check` shows `update_pending=... due_at=...` while it
+  waits, and `update install` installs at once. A release's signal carries
+  the window its publisher chose (the release workflow's
+  `rollout_window_seconds`, default 30 minutes), which replaces the setting;
+  a node that finds the release by its feed check uses its own. The delays of
+  two nodes are independent, so they can be down together: two nodes that
+  each restart in five minutes overlap about 31% of the time with the
+  30-minute window. Where two hosts must not be down together, install on
+  one by hand first (`update install`). Nodes of 1.1.9 and earlier act at
+  once unless their own `update.max_delay_seconds` is set.
+- **The fleet view.** Each node publishes its own version and update state,
+  signed, on its update topic (`update.publish_status: false` turns that
+  off); `update fleet` (and the admin route `GET /api/peers/versions`) shows
+  them for every SDN node this one knows. The states are self-reported:
+  "failed, rolled back" is the node's own statement. A node of 1.1.9 or
+  earlier, a node that does not publish, or one reached only through other
+  nodes shows `not reporting`.
 - **Health gate and rollback.** The new build must answer `/api/v1/ready`
   within `update.health_timeout_seconds` (default 600); an update of a
   writable install folder also checks that it reports itself on `/api/v1/id`.

@@ -258,11 +258,33 @@ type UpdateConfig struct {
 	// of how many valid signals arrive.
 	MinIntervalSeconds int `yaml:"min_interval_seconds,omitempty"`
 
-	// MaxDelaySeconds spreads a fleet-wide roll over a window instead of
-	// restarting every box at once. Zero (the default) means act immediately,
-	// which is right for a fleet whose boxes hold different roles; set it on a
-	// fleet where several boxes serve the same surface.
-	MaxDelaySeconds int `yaml:"max_delay_seconds,omitempty"`
+	// RolloutWindowSeconds spreads a fleet-wide roll: this node acts on an
+	// accepted update (a signal or a feed-check find) at its own delay within
+	// this many seconds, fixed by its peer id and the update id, so nodes do
+	// not restart together and a restart during the wait keeps the due time.
+	// Default 1800 (Default()); 0 acts at once; at most 86400. A signal that
+	// carries a signed rollout_window_seconds replaces it for that update. A
+	// typed `update install` never waits.
+	RolloutWindowSeconds int `yaml:"rollout_window_seconds"`
+
+	// PublishStatus publishes this node's update status (its version, update
+	// state, a pending update's due time, a failed update's reason code) on
+	// its update topic, where every peer on the topic reads it; the due time
+	// says when this node will restart. Default true. False publishes
+	// nothing, and other nodes' fleet views show this node "not reporting".
+	PublishStatus bool `yaml:"publish_status"`
+}
+
+// RolloutWindow is the resolved rollout window (0 to 24 hours).
+func (u UpdateConfig) RolloutWindow() time.Duration {
+	seconds := u.RolloutWindowSeconds
+	if seconds < 0 {
+		seconds = 0
+	}
+	if seconds > 24*60*60 {
+		seconds = 24 * 60 * 60
+	}
+	return time.Duration(seconds) * time.Second
 }
 
 // HealthTimeout is the resolved post-restart health budget.
@@ -2201,7 +2223,7 @@ func Default() *Config {
 		// Default ON: owner ruling 2026-08-09 is that the publisher pushes a
 		// signal and ALL installs upgrade in place. See UpdateConfig for the
 		// gates that make a default-on push lane safe.
-		Update: UpdateConfig{Enabled: true},
+		Update: UpdateConfig{Enabled: true, RolloutWindowSeconds: 1800, PublishStatus: true},
 		Schemas: SchemaConfig{
 			Validate: true,
 			Strict:   true,

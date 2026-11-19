@@ -36,6 +36,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -371,6 +372,24 @@ func InstallUIPackage(paths Paths, in UIInstall) (*UIPackage, error) {
 		return nil, err
 	}
 
+	// One switch at a time, in this process and across processes, and never
+	// backward: the installed package is read again under the lock, so an
+	// install verified against an older package (two signals handled close
+	// together, or a replay of an older one) does not replace a package
+	// installed since.
+	uiInstallMu.Lock()
+	defer uiInstallMu.Unlock()
+	lock, err := lockFileWait(root, uiLockName)
+	if err != nil {
+		return nil, err
+	}
+	defer lock.Release()
+	if active, err := ActiveUIPackage(paths); err != nil {
+		return nil, err
+	} else if active != nil && active.Sequence >= result.Sequence {
+		return nil, &UIPackageSupersededError{UpdateID: manifest.UpdateID, Sequence: result.Sequence, Installed: active.UpdateID, InstalledSequence: active.Sequence}
+	}
+
 	dir := strconv.FormatInt(result.Sequence, 10)
 	dest := filepath.Join(root, dir)
 	if err := os.RemoveAll(dest); err != nil {
@@ -413,15 +432,30 @@ func InstallUIPackage(paths Paths, in UIInstall) (*UIPackage, error) {
 		_ = os.RemoveAll(dest)
 		return nil, err
 	}
-	tmp := UICurrentPath(paths) + ".tmp"
-	if err := os.WriteFile(tmp, append(data, '\n'), 0o644); err != nil {
-		return nil, err
-	}
-	if err := os.Rename(tmp, UICurrentPath(paths)); err != nil {
+	if err := writeFileAtomic(UICurrentPath(paths), append(data, '\n'), 0o644); err != nil {
 		return nil, err
 	}
 	pruneUIPackages(root, dir)
 	return pkg, nil
+}
+
+// uiLockName is the lock file in updates/ui/ that one UI switch holds.
+const uiLockName = ".install.lock"
+
+var uiInstallMu sync.Mutex
+
+// UIPackageSupersededError is an install refused because the installed UI
+// package is the same or a newer one.
+type UIPackageSupersededError struct {
+	UpdateID          string
+	Sequence          int64
+	Installed         string
+	InstalledSequence int64
+}
+
+func (e *UIPackageSupersededError) Error() string {
+	return fmt.Sprintf("UI package %s (sequence %d) not installed: %s (sequence %d) is installed, which is the same or newer",
+		e.UpdateID, e.Sequence, e.Installed, e.InstalledSequence)
 }
 
 // assertOnlyUIFiles refuses a package whose ui/ tree holds anything its

@@ -32,10 +32,20 @@ func resolvedCheckInterval(seconds int) time.Duration {
 	return time.Duration(seconds) * time.Second
 }
 
-func (s *UpdateSignalSubscriber) runFeedChecks(ctx context.Context) {
+func (s *UpdateSignalSubscriber) runFeedChecks(ctx context.Context, pendingFind *update.Pending, checkNow bool) {
 	delay := s.deps.CheckDelay
 	if delay <= 0 {
 		delay = time.Minute + time.Duration(rand.Int63n(int64(4*time.Minute)))
+	}
+	if checkNow {
+		// A pending signal was cleared at start: check the feed at once.
+		delay = time.Second
+	}
+	if pendingFind != nil {
+		// A feed-check find was waiting for its rollout due time when this
+		// node stopped: check again at that time (the due time is kept).
+		delay = max(time.Until(pendingFind.Due()), time.Second)
+		log.Infof("Feed-check find %s resumes at its due time %s.", pendingFind.UpdateID, pendingFind.DueAt)
 	}
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
@@ -171,6 +181,9 @@ func (s *UpdateSignalSubscriber) checkFeed(ctx context.Context) (resultErr error
 		previousRefusal := s.installRefusals[entry.UpdateID]
 		if !claimed {
 			s.handled[entry.UpdateID] = true
+			// What this check installs: a signal that arrives meanwhile is
+			// remembered only when it is newer (claimSignal).
+			s.inflightSequence = max(s.inflightSequence, entry.Sequence)
 		}
 		s.mu.Unlock()
 		if claimed {
@@ -182,10 +195,26 @@ func (s *UpdateSignalSubscriber) checkFeed(ctx context.Context) (resultErr error
 			continue
 		}
 		signal := update.SignalFromFeedEntry(*entry, s.feed.String(), s.deps.Now(), false)
-		err = s.upgradeTriggered(ctx, signal, state, "feed-check")
+		if !s.waitForRollout(operationCtx, signal, nil, "feed-check") {
+			if err := operationCtx.Err(); err != nil {
+				return err
+			}
+			// Replaced by a newer signal, or withdrawn at its due time.
+			s.feedDeferredCandidates = nil
+			return errFeedCheckDeferred
+		}
+		if current, err := update.LoadState(s.deps.Paths); err == nil && current.Sequence >= entry.Sequence {
+			_ = update.ClearPending(s.deps.Paths, entry.UpdateID)
+			s.feedDeferredCandidates = nil
+			return nil
+		} else if err == nil {
+			state = current
+		}
+		err = s.upgradeTriggered(operationCtx, signal, state, "feed-check")
 		if err == nil {
 			succeeded = true
 			s.feedDeferredCandidates = nil
+			_ = update.ClearPending(s.deps.Paths, entry.UpdateID)
 			return errFeedCheckHandedOff
 		}
 		var refusal *update.StoreFormatRefusal
@@ -288,7 +317,12 @@ func (s *UpdateSignalSubscriber) finishUpgrade(ctx context.Context, succeeded bo
 		}
 	}
 	queued := s.pendingSignal
-	s.pendingSignal, s.pendingSequence = nil, 0
+	if queued != nil && s.pendingSequence <= s.inflightSequence {
+		// Never an older release after a newer one's attempt.
+		log.Debugf("update signal: dropping remembered sequence %d, not newer than the attempted sequence %d", s.pendingSequence, s.inflightSequence)
+		queued = nil
+	}
+	s.pendingSignal, s.pendingSequence, s.inflightSequence = nil, 0, 0
 	s.pendingUpgrade = false
 	s.mu.Unlock()
 	if queued != nil && ctx.Err() == nil {

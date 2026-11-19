@@ -138,10 +138,10 @@ func findSystemConfig() (string, []string, error) {
 // ResolvePath applies the documented order and reports what it chose.
 func ResolvePath(explicit string) (Resolution, error) {
 	if p := strings.TrimSpace(explicit); p != "" {
-		return Resolution{Path: p, Source: SourceFlag, Exists: fileExists(p)}, nil
+		return namedOrRunningDaemon(Resolution{Path: p, Source: SourceFlag, Exists: fileExists(p)}), nil
 	}
 	if p := strings.TrimSpace(os.Getenv("SDN_CONFIG")); p != "" {
-		return Resolution{Path: p, Source: SourceEnv, Exists: fileExists(p)}, nil
+		return namedOrRunningDaemon(Resolution{Path: p, Source: SourceEnv, Exists: fileExists(p)}), nil
 	}
 	// Tier 3: ask the running daemon. This outranks the directory scan because
 	// it answers the actual question ("which node runs here?") instead of
@@ -162,6 +162,36 @@ func ResolvePath(explicit string) (Resolution, error) {
 	}
 	home := DefaultPath()
 	return Resolution{Path: home, Source: SourceHome, Exists: fileExists(home)}, nil
+}
+
+// namedOrRunningDaemon returns res as the running daemon's resolution when
+// the file it names (-c or SDN_CONFIG) is the very file a running daemon of a
+// trusted account was started with: then the config IS that daemon's, so
+// IsOwnDaemonConfig holds and the CLI anchors to the certificate it declares,
+// exactly as when the path came from the process table. Stack issue 839:
+// `update install --config <the node's config>` reached a TLS daemon through
+// system roots, concluded no daemon ran, and was refused by the store lock.
+func namedOrRunningDaemon(res Resolution) Resolution {
+	named, err := os.Stat(res.Path)
+	if err != nil || named.IsDir() {
+		return res
+	}
+	for _, d := range FindRunningDaemons() {
+		if d.ConfigPath == "" || !trustedDaemonOwner(d) {
+			continue
+		}
+		path := d.ConfigPath
+		if !filepath.IsAbs(path) {
+			// A relative --config is relative to the daemon's working
+			// folder, which the process table does not say; only an
+			// absolute path can name the same file with certainty.
+			continue
+		}
+		if info, err := os.Stat(path); err == nil && os.SameFile(named, info) {
+			return Resolution{Path: res.Path, Source: ConfigSource(fmt.Sprintf("%s (pid %d), named by %s", SourceRunningDaemonPrefix, d.PID, res.Source)), Exists: true}
+		}
+	}
+	return res
 }
 
 // LoadResolved resolves and loads in one step. Every CLI command that touches

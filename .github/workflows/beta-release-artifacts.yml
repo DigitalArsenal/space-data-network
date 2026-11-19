@@ -30,6 +30,19 @@ on:
         required: false
         type: boolean
         default: true
+      # The pace of the push: signed into every update signal of the release,
+      # it replaces each receiving node's update.rollout_window_seconds, and
+      # each node installs at its own time within this many seconds of
+      # accepting the signal. 0 installs at once everywhere; at most 86400.
+      # A node that finds the release by its feed check instead uses its own
+      # setting (the feed index carries no window). The first job refuses a
+      # value that is not a whole number from 0 to 86400, before anything is
+      # signed or published.
+      rollout_window_seconds:
+        description: Rollout window in seconds signed into the update signals (a whole number, 0 installs at once on every node, at most 86400).
+        required: false
+        type: number
+        default: 1800
 
 permissions:
   contents: write
@@ -63,6 +76,27 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24'
+      # The rollout window is signed into every update signal of the release
+      # (cli-update-feed); a value the signer would refuse, or one that would
+      # mean something else (a negative number, a fraction), stops the run
+      # here, in its first minute.
+      - name: Check the rollout window
+        env:
+          ROLLOUT_WINDOW_SECONDS: ${{ inputs.rollout_window_seconds }}
+        run: |
+          set -euo pipefail
+          value="${ROLLOUT_WINDOW_SECONDS}"
+          case "${value}" in
+            ''|*[!0-9]*|0[0-9]*)
+              echo "::error::rollout_window_seconds must be a whole number of seconds from 0 to 86400, written without leading zeros (0 installs at once on every node); it is '${value}'."
+              exit 1
+              ;;
+          esac
+          if [ "${#value}" -gt 5 ] || [ "$((10#${value}))" -gt 86400 ]; then
+            echo "::error::rollout_window_seconds must be at most 86400 (one day); it is ${value}."
+            exit 1
+          fi
+          echo "rollout window ${value} s"
       - id: version
         name: Compute beta release number
         env:
@@ -1399,10 +1433,12 @@ jobs:
         if: steps.signing.outputs.available == 'true'
         env:
           SDN_UPDATE_SIGNING_KEY_PEM: ${{ secrets.SDN_UPDATE_SIGNING_KEY_PEM }}
+          ROLLOUT_WINDOW_SECONDS: ${{ inputs.rollout_window_seconds }}
         run: |
           "$RUNNER_TEMP/sdn-signal-signer/sdn-update-signal-signer" \
             --key-env SDN_UPDATE_SIGNING_KEY_PEM --feed-dir dist/update-feed-tree/update-feed \
-            --roots deployment/release/fleet-trust-roots.json
+            --roots deployment/release/fleet-trust-roots.json \
+            --rollout-window-seconds "${ROLLOUT_WINDOW_SECONDS}"
       - name: Pack the signed CLI update feed
         if: steps.signing.outputs.available == 'true'
         run: |
@@ -1608,10 +1644,13 @@ jobs:
           done
           node deployment/release/build-sdn-update-feed.js "${feed_args[@]}"
       - name: Sign the update signals
+        env:
+          ROLLOUT_WINDOW_SECONDS: ${{ inputs.rollout_window_seconds }}
         run: |
           "$RUNNER_TEMP/sdn-signal-signer/sdn-update-signal-signer" \
             --key-env SDN_UPDATE_SIGNING_KEY_PEM --feed-dir dist/update-feed-tree/update-feed \
-            --roots "${DRY_RUN_ROOTS}"
+            --roots "${DRY_RUN_ROOTS}" \
+            --rollout-window-seconds "${ROLLOUT_WINDOW_SECONDS}"
       - name: Pack the signed CLI update feed
         run: |
           set -euo pipefail

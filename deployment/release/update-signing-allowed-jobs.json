@@ -92,7 +92,8 @@
           "name": "Sign the update signals",
           "if": "steps.signing.outputs.available == 'true'",
           "env": {
-            "SDN_UPDATE_SIGNING_KEY_PEM": "${{ secrets.SDN_UPDATE_SIGNING_KEY_PEM }}"
+            "SDN_UPDATE_SIGNING_KEY_PEM": "${{ secrets.SDN_UPDATE_SIGNING_KEY_PEM }}",
+            "ROLLOUT_WINDOW_SECONDS": "${{ inputs.rollout_window_seconds }}"
           },
           "reviewedRun": "Sign the update signals"
         },
