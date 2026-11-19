@@ -61,6 +61,12 @@ type updateFleet struct {
 	// peers that join the topic until announcedUntil.
 	announced      []byte
 	announcedUntil time.Time
+	// announcedTo is the fleet when the signal went out: the peers on the
+	// topic and the peers whose status this node held. Only they get it
+	// again; a node new to this one learns of releases by its feed check.
+	announcedTo map[peer.ID]bool
+	// topicPeers lists the peers on the update topic (set by announce).
+	topicPeers func() []peer.ID
 	// topic is the update topic this node follows.
 	topic string
 }
@@ -151,7 +157,18 @@ func (f *updateFleet) noteAnnounced(raw []byte, now time.Time) {
 		until = expires
 	}
 	f.mu.Lock()
-	f.announced, f.announcedUntil = append([]byte(nil), raw...), until
+	fleet := map[peer.ID]bool{}
+	for id := range f.statuses {
+		if pid, err := peer.Decode(id); err == nil {
+			fleet[pid] = true
+		}
+	}
+	if f.topicPeers != nil {
+		for _, id := range f.topicPeers() {
+			fleet[id] = true
+		}
+	}
+	f.announced, f.announcedUntil, f.announcedTo = append([]byte(nil), raw...), until, fleet
 	f.mu.Unlock()
 }
 
@@ -224,9 +241,11 @@ func (f *updateFleet) latestSignal() *update.StatusAck {
 const reannounceStatusWait = 6 * time.Second
 
 // reannounce sends the newest signal this node published again when a peer
-// joins the topic and the peer's own status, if it sends one, does not show it
-// already has that signal or a later sequence: a node that was restarting or
-// disconnected when the signal went out gets it when it comes back. At most
+// that was part of the fleet when it went out (on the topic, or known by its
+// status) joins the topic, and the peer's own status, if it sends one, does
+// not show it already has that signal or a later sequence: a node that was
+// restarting or disconnected when the signal went out gets it when it comes
+// back. A node new to this one learns of releases by its feed check. At most
 // once per statusJoinDebounce, and only while the signal is within
 // signalReannounceFor of its publication and not expired.
 func (f *updateFleet) reannounce(ctx context.Context, topic *pubsub.Topic, joins <-chan peer.ID) {
@@ -248,7 +267,7 @@ func (f *updateFleet) reannounce(ctx context.Context, topic *pubsub.Topic, joins
 		case <-time.After(reannounceStatusWait):
 		}
 		raw := f.reannouncement(time.Now())
-		if raw == nil || f.peerHasSignal(id, raw, joinedAt) {
+		if raw == nil || !f.wasInFleet(id) || f.peerHasSignal(id, raw, joinedAt) {
 			continue
 		}
 		if wait := statusJoinDebounce - time.Since(last); wait > 0 {
@@ -263,6 +282,14 @@ func (f *updateFleet) reannounce(ctx context.Context, topic *pubsub.Topic, joins
 			log.Infof("Update signal sent again on %s: peer %s joined the topic and has not reported it", topic.String(), id)
 		}
 	}
+}
+
+// wasInFleet reports whether id was on the topic, or had sent this node its
+// status, when the signal went out.
+func (f *updateFleet) wasInFleet(id peer.ID) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.announcedTo[id]
 }
 
 // peerHasSignal reports whether id's own status, received since joinedAt,
@@ -314,6 +341,9 @@ func (f *updateFleet) announce(ctx context.Context, topic *pubsub.Topic) {
 			}
 		}
 	}()
+	f.mu.Lock()
+	f.topicPeers = topic.ListPeers
+	f.mu.Unlock()
 	go f.reannounce(ctx, topic, joins)
 	publish := func(why string) {
 		if !f.publish {
