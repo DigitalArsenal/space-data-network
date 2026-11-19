@@ -90,12 +90,74 @@ func TestPublicationCursorRefusedRealDaemons(t *testing.T) {
 	if !inFollows["cr-ka"] || inFollows["cr-rc"] {
 		t.Fatalf("follows.dss held %v before the refusal; want the lane that started at its beginning (cr-ka) and not the bounded one (cr-rc)", inFollows)
 	}
-	if names := followFileNames(t, b, "follows.dss"); len(names) != 0 {
-		t.Fatalf("follows.dss holds %v after both lanes started again at the current batch, want none", names)
+	// Both lanes keep their history (keep-all), so what the refused cursor
+	// left unread is kept with each subscription; the one made from the
+	// beginning stays in follows.dss.
+	requireUnread := func(when string) {
+		t.Helper()
+		for _, lane := range []string{"cr-rc", "cr-ka"} {
+			sub := b.subscription(t, lane)
+			if sub.UnreadSince.IsZero() || !strings.Contains(sub.Unread, "are not read") {
+				t.Fatalf("%s: %s shows nothing unread (unread %q, since %v); the refused cursor left records unread", when, lane, sub.Unread, sub.UnreadSince)
+			}
+		}
+		if names := followFileNames(t, b, "follows.dss"); len(names) != 1 || !names["cr-ka"] {
+			t.Fatalf("%s: follows.dss holds %v; want only the lane subscribed from its beginning (cr-ka)", when, names)
+		}
+		if names := followFileNames(t, b, "subscriptions.dss"); !names["cr-rc"] || !names["cr-ka"] {
+			t.Fatalf("%s: subscriptions.dss holds %v, want both lanes", when, names)
+		}
 	}
-	if names := followFileNames(t, b, "subscriptions.dss"); !names["cr-rc"] || !names["cr-ka"] {
-		t.Fatalf("subscriptions.dss holds %v, want both lanes", names)
+	requireUnread("after the refused cursors")
+	if out, err := b.cli(t, "sync", "subscriptions"); err != nil || strings.Count(out, "not read:") != 2 {
+		t.Fatalf("sync subscriptions does not show both lanes' unread records: %v\n%s", err, out)
 	}
+
+	// The fact survives a restart, and its alert is raised again.
+	b.stop(t)
+	b.start(t)
+	requireUnread("after a restart")
+	for _, lane := range []string{"cr-rc", "cr-ka"} {
+		if !hasAlertOn(b.alerts(t), "follow_cursor_refused", lane) {
+			t.Fatalf("after a restart: no follow_cursor_refused alert for %s, whose unread records are not acknowledged", lane)
+		}
+	}
+	t.Log("both lanes show their unread records after a restart; the lane subscribed from its beginning stays in follows.dss")
+
+	// Acknowledged: cr-rc no longer reports it, and leaves no alert.
+	if out, err := b.cli(t, "sync", "subscribe", "--schema", "OMM", "--provider-id", "publication-e2e", "--source-name", "cr-rc", "--from", a.id, "--acknowledge-unread"); err != nil {
+		t.Fatalf("sync subscribe --acknowledge-unread cr-rc: %v\n%s", err, out)
+	}
+	if sub := b.subscription(t, "cr-rc"); sub.Unread != "" || !sub.UnreadSince.IsZero() {
+		t.Fatalf("cr-rc still shows unread records after they were acknowledged: %q", sub.Unread)
+	}
+	if hasAlertOn(b.alerts(t), "follow_cursor_refused", "cr-rc") {
+		t.Fatal("cr-rc's follow_cursor_refused alert stays after its unread records were acknowledged")
+	}
+	// Subscribed again from its beginning: cr-ka reads the whole lane.
+	if out, err := b.cli(t, "sync", "subscribe", "--schema", "OMM", "--provider-id", "publication-e2e", "--source-name", "cr-ka", "--from", a.id, "--start", "beginning"); err != nil {
+		t.Fatalf("sync subscribe --start beginning cr-ka: %v\n%s", err, out)
+	}
+	whole := a.scan(t, "OMM.fbs", "cr-ka")
+	b.awaitRecords(t, "OMM.fbs", "cr-ka", whole, 4*time.Minute)
+	deadline := time.Now().Add(3 * time.Minute)
+	for {
+		sub := b.subscription(t, "cr-ka")
+		if sub.Unread == "" && sub.StartsAt == "beginning" && sub.ReceivedRecords == int64(len(whole)) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("cr-ka subscribed again from its beginning: start %q, received %d of the lane's %d records, unread %q", sub.StartsAt, sub.ReceivedRecords, len(whole), sub.Unread)
+		}
+		time.Sleep(2 * time.Second)
+	}
+	if hasAlertOn(b.alerts(t), "follow_cursor_refused", "cr-ka") {
+		t.Fatal("cr-ka's follow_cursor_refused alert stays after the lane was read again from its beginning")
+	}
+	if names := followFileNames(t, b, "follows.dss"); len(names) != 1 || !names["cr-ka"] {
+		t.Fatalf("follows.dss holds %v after cr-ka was subscribed again from its beginning, want cr-ka", names)
+	}
+	t.Logf("cr-rc acknowledged; cr-ka subscribed again from its beginning read the whole lane (%d records)", len(whole))
 	b.requireAlive(t)
 }
 
