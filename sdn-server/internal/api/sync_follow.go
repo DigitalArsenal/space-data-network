@@ -76,13 +76,18 @@ type LanePlan struct {
 	StatementError string `json:"statement_error,omitempty"`
 	// FirstReadRecords and FirstReadBytes are the batch (start current) or
 	// the lane (start beginning).
-	FirstReadRecords int64  `json:"first_read_records"`
-	FirstReadBytes   int64  `json:"first_read_bytes"`
-	FreeBytes        int64  `json:"free_disk_bytes"`
-	NeedBytes        int64  `json:"needed_disk_bytes"`
-	HeldRecords      int64  `json:"held_records"`
-	RecordCeiling    int64  `json:"record_ceiling"`
-	Refusal          string `json:"refusal,omitempty"`
+	FirstReadRecords int64 `json:"first_read_records"`
+	FirstReadBytes   int64 `json:"first_read_bytes"`
+	FreeBytes        int64 `json:"free_disk_bytes"`
+	NeedBytes        int64 `json:"needed_disk_bytes"`
+	HeldRecords      int64 `json:"held_records"`
+	RecordCeiling    int64 `json:"record_ceiling"`
+	// ReservedRecords and ReservedBytes are what this node's followed lanes
+	// and publication imports are storing now (store bytes; not counted in
+	// FreeBytes).
+	ReservedRecords int64  `json:"reserved_records"`
+	ReservedBytes   int64  `json:"reserved_bytes"`
+	Refusal         string `json:"refusal,omitempty"`
 }
 
 // LedgerLane is one lane of the removed import gate and its producers.

@@ -2,6 +2,9 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spacedatanetwork/sdn-server/internal/api"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
 
@@ -92,6 +96,109 @@ func TestPublicationUnheldBatchImportsPNMRealDaemons(t *testing.T) {
 		}
 		time.Sleep(2 * time.Second)
 	}
+	b.requireAlive(t)
+}
+
+// publicationFollowFaultsBinary is a daemon built with the tag
+// sdn_e2e_follow_faults (follow_faults_e2e.go: the stores of a lane named "panic-..."
+// panic, a lane named "late-..." starts late): SDN_E2E_PUBLICATION_FOLLOW_FAULTS_BINARY, or built here.
+func publicationFollowFaultsBinary(t *testing.T) string {
+	t.Helper()
+	if binary := os.Getenv("SDN_E2E_PUBLICATION_FOLLOW_FAULTS_BINARY"); binary != "" {
+		return binary
+	}
+	exe := filepath.Join(publicationTemp(t, "build-follow-faults"), "spacedatanetwork")
+	module, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(filepath.Join(module, "..", "scripts", "go-with-wasmedge.sh"), "build", "-o", exe, "-tags", "sdn_e2e_follow_faults", "./cmd/spacedatanetwork")
+	cmd.Dir = module
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("build the follow-faults daemon: %v\n%s", err, tailString(string(out), 20))
+	}
+	return exe
+}
+
+// plan is GET /api/v1/sync/plan of lane (OMM, publication-e2e, source) from p.
+func (d *publicationDaemon) plan(t *testing.T, p *publicationDaemon, source string) api.LanePlan {
+	t.Helper()
+	q := url.Values{"schema": {"OMM"}, "provider_id": {"publication-e2e"}, "source": {source}, "from": {p.id}}
+	var plan api.LanePlan
+	if err := json.Unmarshal(d.request(t, "GET", api.SyncPlanPath+"?"+q.Encode(), "", nil, http.StatusOK), &plan); err != nil {
+		t.Fatal(err)
+	}
+	return plan
+}
+
+// TestPublicationStorePanicReleasesReservationRealDaemons: a followed store
+// that panics (a receiver built so the stores of its "panic-" lanes panic)
+// releases the running guard's reservation, on a followed page and on a fetch
+// by CID of the current batch. The reservation is shared by every lane, so a
+// panic that kept it would, retried at each reconnect, stop every lane at the
+// record ceiling: here a few leaked retries leave less than the other lane's
+// next 3,000 records under the ceiling of 8,000, and that lane keeps storing
+// only because none is leaked.
+func TestPublicationStorePanicReleasesReservationRealDaemons(t *testing.T) {
+	if os.Getenv("SDN_E2E_PUBLICATION") != "1" {
+		t.Skip("set SDN_E2E_PUBLICATION=1 for real daemons")
+	}
+	exe := publicationBinary(t)
+	a := newPublicationDaemon(t, exe, "panic-producer", "", "", "keep-all")
+	a.start(t)
+	a.ingestOMMCIDs(t, "sp-ok", "o1", 940_000, 100)
+	a.ingestOMMCIDs(t, "panic-seq", "q1", 942_000, 2_000)
+	a.ingestOMMCIDs(t, "panic-cid", "c1", 945_000, 2_000)
+	b := newPublicationDaemon(t, publicationFollowFaultsBinary(t), "panic-receiver", a.address, a.id, "keep-all")
+	b.appendConfig(t, "  record_ceiling: 8000\n", "subscriptions:\n")
+	b.start(t)
+	time.Sleep(3 * time.Second)
+	b.subscribeCurrent(t, a, "sp-ok")
+	b.awaitRecords(t, "OMM.fbs", "sp-ok", a.scan(t, "OMM.fbs", "sp-ok"), 3*time.Minute)
+	// panic-seq's records come on followed pages (from its beginning),
+	// panic-cid's by CID (its current batch).
+	if out, err := b.cli(t, "sync", "subscribe", "--schema", "OMM", "--provider-id", "publication-e2e", "--source-name", "panic-seq", "--from", a.id, "--start", "beginning"); err != nil {
+		t.Fatalf("sync subscribe panic-seq: %v\n%s", err, out)
+	}
+	b.subscribeCurrent(t, a, "panic-cid")
+	deadline := time.Now().Add(4 * time.Minute)
+	for {
+		log := readFileString(b.logPath)
+		seq, cid := strings.Count(log, "the store of lane panic-seq panics"), strings.Count(log, "the store of lane panic-cid panics")
+		if seq >= 2 && cid >= 2 {
+			t.Logf("the stores panicked: %d times on panic-seq's pages, %d times on panic-cid's fetches by CID", seq, cid)
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the stores panicked %d times on panic-seq, %d on panic-cid; want at least 2 each", seq, cid)
+		}
+		time.Sleep(2 * time.Second)
+	}
+	// Nothing is reserved between the stores (a store in progress holds its
+	// reservation for an instant).
+	deadline = time.Now().Add(30 * time.Second)
+	for {
+		plan := b.plan(t, a, "sp-ok")
+		if plan.ReservedRecords == 0 && plan.ReservedBytes == 0 {
+			t.Logf("after the panics nothing is reserved (held %d records, ceiling %d)", plan.HeldRecords, plan.RecordCeiling)
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("after the panicked stores the followed lanes still reserve %d records, %d store bytes: the panics kept their reservations", plan.ReservedRecords, plan.ReservedBytes)
+		}
+		time.Sleep(time.Second)
+	}
+	a.ingestOMMCIDs(t, "sp-ok", "o1", 950_000, 3_000)
+	b.awaitRecords(t, "OMM.fbs", "sp-ok", a.scan(t, "OMM.fbs", "sp-ok"), 2*time.Minute)
+	for _, al := range b.alerts(t) {
+		if al.Kind == "follow_stopped" {
+			t.Fatalf("a lane stopped at the running guard after the panicked stores: %s: %s", al.Subject, al.LastError)
+		}
+	}
+	if sub := b.subscription(t, "sp-ok"); sub.Stopped != "" {
+		t.Fatalf("lane sp-ok stopped: %s", sub.Stopped)
+	}
+	t.Log("lane sp-ok kept storing (3,100 records) while the panic lanes retried")
 	b.requireAlive(t)
 }
 

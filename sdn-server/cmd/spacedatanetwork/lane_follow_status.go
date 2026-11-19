@@ -55,7 +55,8 @@ func lanePlan(p node.FollowPlan) api.LanePlan {
 		BatchID: p.Statement.BatchID, BatchRecords: p.Statement.Records, BatchBytes: p.Statement.BatchBytes,
 		LaneRecords: p.Statement.LaneRecords, LaneBytes: p.Statement.LaneBytes, StatementError: p.StatementError,
 		FirstReadRecords: p.FirstReadRecords, FirstReadBytes: p.FirstReadBytes, FreeBytes: p.FreeBytes, NeedBytes: p.NeedBytes,
-		HeldRecords: p.HeldRecords, RecordCeiling: p.RecordCeiling, Refusal: p.Refusal}
+		HeldRecords: p.HeldRecords, RecordCeiling: p.RecordCeiling, ReservedRecords: p.ReservedRecords, ReservedBytes: p.ReservedBytes,
+		Refusal: p.Refusal}
 }
 
 func followRequest(req api.LaneSubscription) (node.FollowKey, node.FollowOptions) {

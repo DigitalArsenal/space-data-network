@@ -283,6 +283,9 @@ func writePlan(w io.Writer, p api.LanePlan) {
 	fmt.Fprintf(w, "first read:  %d records, %s (starts at %s)\n", p.FirstReadRecords, humanBytes(p.FirstReadBytes), where)
 	if p.StatementError == "" {
 		fmt.Fprintf(w, "this node:   %s free disk, %s needed; %d records held, ceiling %d\n", humanBytes(p.FreeBytes), humanBytes(p.NeedBytes), p.HeldRecords, p.RecordCeiling)
+		if p.ReservedRecords > 0 || p.ReservedBytes > 0 {
+			fmt.Fprintf(w, "storing:     %d records, %s being stored now (not counted as free)\n", p.ReservedRecords, humanBytes(p.ReservedBytes))
+		}
 	}
 	if p.Refusal != "" {
 		fmt.Fprintf(w, "refused:     %s\n", p.Refusal)

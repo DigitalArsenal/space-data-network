@@ -222,6 +222,10 @@ type FollowPlan struct {
 	FirstReadRecords, FirstReadBytes int64
 	FreeBytes, NeedBytes             int64
 	HeldRecords, RecordCeiling       int64
+	// ReservedRecords and ReservedBytes are what the followed lanes are
+	// storing now (the running guard's reservation; ReservedBytes are store
+	// bytes, not counted in FreeBytes).
+	ReservedRecords, ReservedBytes int64
 	// Refusal is why the first read does not fit ("" when it does).
 	Refusal string
 }
@@ -606,9 +610,10 @@ func (m *followManager) Plan(ctx context.Context, key FollowKey, opts FollowOpti
 	if m.n.config != nil {
 		plan.RecordCeiling = m.n.config.Subscriptions.EffectiveRecordCeiling()
 	}
+	plan.ReservedRecords, plan.ReservedBytes = m.reserved()
 	if free, err := storage.FreeDiskBytes(m.storeDir()); err == nil {
 		// What the followed lanes are storing is not free.
-		plan.FreeBytes = int64(min(free, uint64(1<<62))) - m.reservedBytes()
+		plan.FreeBytes = int64(min(free, uint64(1<<62))) - plan.ReservedBytes
 	} else {
 		return plan, fmt.Errorf("free disk under %s: %w", m.storeDir(), err)
 	}
@@ -623,9 +628,9 @@ func (m *followManager) Plan(ctx context.Context, key FollowKey, opts FollowOpti
 	case plan.FreeBytes < plan.NeedBytes:
 		plan.Refusal = fmt.Sprintf("the first read is %d records, %d bytes; it needs about %d bytes of free disk (%d per record byte and 1 GiB to spare), and %d are free",
 			plan.FirstReadRecords, plan.FirstReadBytes, plan.NeedBytes, followStoreExpansion, plan.FreeBytes)
-	case plan.HeldRecords+plan.FirstReadRecords > plan.RecordCeiling:
-		plan.Refusal = fmt.Sprintf("the first read is %d records, %d bytes; this node holds %d records and its ceiling is %d (subscriptions.record_ceiling)",
-			plan.FirstReadRecords, plan.FirstReadBytes, plan.HeldRecords, plan.RecordCeiling)
+	case plan.HeldRecords+plan.ReservedRecords+plan.FirstReadRecords > plan.RecordCeiling:
+		plan.Refusal = fmt.Sprintf("the first read is %d records, %d bytes; this node holds %d records, its followed lanes are storing %d, and its ceiling is %d (subscriptions.record_ceiling)",
+			plan.FirstReadRecords, plan.FirstReadBytes, plan.HeldRecords, plan.ReservedRecords, plan.RecordCeiling)
 	}
 	return plan, nil
 }
@@ -868,6 +873,16 @@ func (m *followManager) startLocked(st FollowStatus) {
 // wait before a reconnect doubles up to 30 s and starts again at 1 s after a
 // connection that delivered a page.
 func (m *followManager) run(ctx context.Context, e *followEntry) {
+	if followStartDelay != nil {
+		m.mu.Lock()
+		source := e.status.SourceName
+		m.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(followStartDelay(source)):
+		}
+	}
 	backoff := time.Second
 	for ctx.Err() == nil {
 		pages, err := m.followGuarded(ctx, e)
@@ -1039,8 +1054,7 @@ func (m *followManager) followOnce(ctx context.Context, e *followEntry) (int, er
 			_ = stream.Reset()
 			return pages, err
 		}
-		res, storeErr := m.storeRuns(ctx, st, remote, runs, "", nil)
-		release()
+		res, storeErr := m.storeReserved(release, func() (storedRuns, error) { return m.storeRuns(ctx, st, remote, runs, "", nil) })
 		m.mu.Lock()
 		if e.status.Stopped != "" {
 			e.status.Stopped = ""
@@ -1116,6 +1130,15 @@ func (m *followManager) followOnce(ctx context.Context, e *followEntry) (int, er
 	}
 }
 
+// followStoreFault and followStartDelay are nil in every release build. A
+// build with the tag sdn_e2e_follow_faults sets them (follow_faults_e2e.go):
+// the store of a test lane panics, and a test lane's first stream opens late,
+// for the publication real-daemon tests.
+var (
+	followStoreFault func(sourceName string)
+	followStartDelay func(sourceName string) time.Duration
+)
+
 // storedRuns is what storeRuns stored.
 type storedRuns struct {
 	verify, store   time.Duration
@@ -1162,6 +1185,9 @@ func (m *followManager) storeRuns(ctx context.Context, st FollowStatus, remote p
 			data = append(data, body)
 		}
 		res.verify += time.Since(began)
+		if followStoreFault != nil {
+			followStoreFault(st.SourceName)
+		}
 		tags := storage.SourceTags{ProviderID: st.ProviderID, SourceName: st.SourceName, BatchID: string(h.BATCH_ID()), ProducerPeerID: remote.String()}
 		if batch != "" {
 			tags.BatchID = batch
@@ -1462,8 +1488,12 @@ func (m *followManager) holdRecords(ctx context.Context, st FollowStatus, remote
 			if err != nil {
 				return got, fetched, err
 			}
-			stored, err := m.fetchByCID(ctx, remote, st, batch, pending)
-			release()
+			var stored []string
+			_, err = m.storeReserved(release, func() (storedRuns, error) {
+				var err error
+				stored, err = m.fetchByCID(ctx, remote, st, batch, pending)
+				return storedRuns{}, err
+			})
 			if err != nil {
 				return got, fetched, err
 			}
@@ -1655,11 +1685,26 @@ func (m *followManager) reserve(records int, bytes int64) (func(), error) {
 	}, nil
 }
 
-// reservedBytes is the store bytes the followed lanes are storing.
-func (m *followManager) reservedBytes() int64 {
+// storeReserved runs store, the store a reservation was granted for, and
+// releases the reservation when store returns or panics: the reservation is
+// shared by every lane, so one held past its store (a panic recovered by
+// followGuarded, retried at each reconnect) would stop every lane.
+func (m *followManager) storeReserved(release func(), store func() (storedRuns, error)) (storedRuns, error) {
+	defer release()
+	return store()
+}
+
+// reserved is the records and store bytes the followed lanes are storing.
+func (m *followManager) reserved() (records, bytes int64) {
 	m.heldMu.Lock()
 	defer m.heldMu.Unlock()
-	return m.reserveBytes
+	return m.reserveRecords, m.reserveBytes
+}
+
+// reservedBytes is the store bytes the followed lanes are storing.
+func (m *followManager) reservedBytes() int64 {
+	_, bytes := m.reserved()
+	return bytes
 }
 
 // Statuses is every followed lane's status, sorted by lane.
