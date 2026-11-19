@@ -3069,7 +3069,14 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	daemonServing.Store(true)
 	select {
-	case <-sigChan:
+	case sig := <-sigChan:
+		// Which signal ended the daemon, and its parent process: a stop
+		// from outside is told apart from a service manager's.
+		number := 0
+		if s, ok := sig.(syscall.Signal); ok {
+			number = int(s)
+		}
+		log.Infof("Received %s (signal %d; parent process %d)", sig, number, os.Getppid())
 	case <-updateShutdown:
 		log.Info("Update shutdown requested")
 		if homePaths.IsHome() {
