@@ -37,6 +37,8 @@ const moduleScheduleCancelWait = 30 * time.Second
 //	                history; 404 when the node does not know it.
 //	DELETE          cancel the running manual run and answer its state once
 //	                it ended (at most 30 s later); 409 when none runs.
+//	DELETE ?id=ID   cancel that run only; 404 when it is not the one
+//	                running (it ended, or another run of the schedule runs).
 func handleModuleScheduleRun(w http.ResponseWriter, r *http.Request, mgr *plugins.Manager, moduleID, methodID string) {
 	writeRun := func(status int, run plugins.RuntimeModuleScheduleRun) {
 		w.Header().Set("Content-Type", "application/json")
@@ -59,7 +61,11 @@ func handleModuleScheduleRun(w http.ResponseWriter, r *http.Request, mgr *plugin
 	case http.MethodDelete:
 		ctx, cancel := context.WithTimeout(r.Context(), moduleScheduleCancelWait)
 		defer cancel()
-		run, err := mgr.CancelRuntimeModuleScheduleRun(ctx, moduleID, methodID)
+		run, err := mgr.CancelRuntimeModuleScheduleRun(ctx, moduleID, methodID, strings.TrimSpace(r.URL.Query().Get("id")))
+		if errors.Is(err, plugins.ErrManualRunNotRunning) {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
 		if errors.Is(err, plugins.ErrNoManualRun) {
 			http.Error(w, err.Error(), http.StatusConflict)
 			return

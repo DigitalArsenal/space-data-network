@@ -28,6 +28,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime/debug"
+	"strings"
 	"time"
 )
 
@@ -41,6 +42,10 @@ var ErrManualRunsStopped = errors.New("the node is stopping")
 // ErrNoManualRun answers a status or cancel request for a schedule with no
 // manual run, or for a run id the node does not know.
 var ErrNoManualRun = errors.New("no manual run")
+
+// ErrManualRunNotRunning answers a cancel request that names a run that is
+// not the one running (it ended, or another run of the schedule runs).
+var ErrManualRunNotRunning = errors.New("it is not the run running")
 
 // DefaultManualRunBound bounds a manual run whose provider names no bound of
 // its own (a flow service with no execution_timeout).
@@ -271,8 +276,10 @@ func (m *Manager) RuntimeModuleScheduleRunState(moduleID, methodID, runID string
 // CancelRuntimeModuleScheduleRun cancels a schedule's running manual run and
 // waits for it to end, at most until ctx ends. It returns the run's state:
 // ended, or still "running" when ctx ended first. With no run running it
-// answers ErrNoManualRun.
-func (m *Manager) CancelRuntimeModuleScheduleRun(ctx context.Context, moduleID, methodID string) (RuntimeModuleScheduleRun, error) {
+// answers ErrNoManualRun. A runID ("" for whichever runs) names the run to
+// cancel: when the running run is another one, or none runs, it cancels
+// nothing and answers ErrManualRunNotRunning.
+func (m *Manager) CancelRuntimeModuleScheduleRun(ctx context.Context, moduleID, methodID, runID string) (RuntimeModuleScheduleRun, error) {
 	if m == nil {
 		return RuntimeModuleScheduleRun{}, errors.New("plugin manager is nil")
 	}
@@ -288,6 +295,9 @@ func (m *Manager) CancelRuntimeModuleScheduleRun(ctx context.Context, moduleID, 
 		started = active.run
 	}
 	m.manualMu.Unlock()
+	if runID = strings.TrimSpace(runID); runID != "" && (!ok || started.ID != runID) {
+		return RuntimeModuleScheduleRun{}, fmt.Errorf("module %q schedule %q: run %s: %w", moduleID, methodID, runID, ErrManualRunNotRunning)
+	}
 	if !ok {
 		return RuntimeModuleScheduleRun{}, fmt.Errorf("module %q schedule %q has no running manual run: %w", moduleID, methodID, ErrNoManualRun)
 	}

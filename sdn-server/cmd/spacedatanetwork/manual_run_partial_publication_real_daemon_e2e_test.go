@@ -283,3 +283,83 @@ func TestPublicationManualRunBoundRealDaemons(t *testing.T) {
 		t.Fatalf("the manual run took %s, as long as the origin", took)
 	}
 }
+
+// TestPublicationManualRunCancelByIDRealDaemons starts a manual run, cancels
+// it, and starts another, on a node whose GP origin answers after two
+// minutes. A cancel that names the first run (as `apps run
+// --cancel-on-interrupt` names the run it follows) is answered 404 and
+// leaves the second run running (it cancelled the second run here); a
+// cancel that names the second run, and a cancel naming no run, cancel it.
+func TestPublicationManualRunCancelByIDRealDaemons(t *testing.T) {
+	if os.Getenv("SDN_E2E_PUBLICATION") != "1" {
+		t.Skip("set SDN_E2E_PUBLICATION=1 for isolated real daemons")
+	}
+	d := gpFlowDaemonServing(t, "manual-cancel-id", "  first_fire_when_due: false\n", func(fixture []byte) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			select {
+			case <-time.After(2 * time.Minute):
+			case <-r.Context().Done():
+				return
+			}
+			w.Header().Set("Content-Type", "text/csv")
+			w.Write(fixture)
+		}
+	})
+	d.start(t)
+	path := appRunPath(gpFlowAppID, gpFlowTrigger)
+	start := func() string {
+		t.Helper()
+		var run struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+		}
+		raw := d.request(t, "POST", path+"?detach=1", "application/json", []byte(`{"force":true}`), http.StatusAccepted)
+		if err := json.Unmarshal(raw, &run); err != nil || run.ID == "" || run.Status != "running" {
+			t.Fatalf("the manual run did not start (%v): %s", err, raw)
+		}
+		return run.ID
+	}
+	state := func(id string) string {
+		t.Helper()
+		var run struct {
+			Status  string `json:"status"`
+			Message string `json:"message"`
+		}
+		raw := d.request(t, "GET", path+"?id="+id, "", nil, http.StatusOK)
+		if err := json.Unmarshal(raw, &run); err != nil {
+			t.Fatal(err)
+		}
+		return run.Status + " " + run.Message
+	}
+
+	first := start()
+	d.request(t, "DELETE", path+"?id="+first, "", nil, http.StatusOK)
+	if end := awaitManualRunEnd(t, d, 1, time.Minute); !strings.Contains(end, "cancelled by the operator") {
+		t.Fatalf("the first run's end: status=%s", end)
+	}
+	second := start()
+	t.Logf("first run %s (cancelled), second run %s", first, second)
+
+	status, body := postStatus(t, d, "DELETE", path+"?id="+first, nil)
+	t.Logf("cancel naming the first run: HTTP %d %s", status, strings.TrimSpace(body))
+	if now := state(second); !strings.HasPrefix(now, "running") {
+		t.Fatalf("a cancel naming the ended first run ended the second run: %s", now)
+	}
+	if status != http.StatusNotFound {
+		t.Fatalf("a cancel naming the ended first run answered HTTP %d, want 404: %s", status, body)
+	}
+
+	d.request(t, "DELETE", path+"?id="+second, "", nil, http.StatusOK)
+	if end := awaitManualRunEnd(t, d, 2, time.Minute); !strings.Contains(end, "cancelled by the operator") {
+		t.Fatalf("the second run's end: status=%s", end)
+	}
+	third := start()
+	out, err, _ := appsCLI(t, d, "apps", "cancel", gpFlowAppID, gpFlowTrigger)
+	t.Logf("apps cancel (%v):\n%s", err, out)
+	if err != nil {
+		t.Fatalf("apps cancel failed: %v", err)
+	}
+	if end := awaitManualRunEnd(t, d, 3, time.Minute); !strings.Contains(end, "cancelled by the operator") {
+		t.Fatalf("the third run (%s) after apps cancel: status=%s", third, end)
+	}
+}

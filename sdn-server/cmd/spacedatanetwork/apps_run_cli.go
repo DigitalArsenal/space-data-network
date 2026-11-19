@@ -210,7 +210,7 @@ alone.`,
 		}
 		out := cmd.OutOrStdout()
 		for _, trigger := range triggers {
-			run, err := cancelAppRun(cmd.Context(), client, appID, trigger)
+			run, err := cancelAppRun(cmd.Context(), client, appID, trigger, "")
 			if err != nil {
 				if strings.Contains(err.Error(), "409") {
 					fmt.Fprintf(out, "%s %s: no running manual run\n", appID, trigger)
@@ -254,9 +254,15 @@ func startAppRun(ctx context.Context, client *adminClient, appID, trigger string
 	return run, err
 }
 
-func cancelAppRun(ctx context.Context, client *adminClient, appID, trigger string) (appRun, error) {
+// cancelAppRun cancels run runID of the schedule, or, with runID "", the
+// running one. The node answers 404 when runID is not the run running.
+func cancelAppRun(ctx context.Context, client *adminClient, appID, trigger, runID string) (appRun, error) {
 	var run appRun
-	err := client.do(ctx, "DELETE", appRunPath(appID, trigger), nil, &run)
+	path := appRunPath(appID, trigger)
+	if runID != "" {
+		path += "?id=" + url.QueryEscape(runID)
+	}
+	err := client.do(ctx, "DELETE", path, nil, &run)
 	return run, err
 }
 
@@ -300,7 +306,10 @@ func waitAppRun(ctx context.Context, cmd *cobra.Command, client *adminClient, ou
 			if appsRunCancelOnInterrupt {
 				cancelCtx, cancel := context.WithTimeout(context.Background(), moduleScheduleCancelWait+10*time.Second)
 				defer cancel()
-				run, err := cancelAppRun(cancelCtx, client, appID, trigger)
+				run, err := cancelAppRun(cancelCtx, client, appID, trigger, runID)
+				if err != nil && strings.Contains(err.Error(), " 404 ") {
+					return appRun{}, fmt.Sprintf("interrupted; run %s was not cancelled: it is no longer running on the node; %s", runID, see)
+				}
 				if err != nil {
 					return appRun{}, fmt.Sprintf("interrupted; cancelling the run failed: %v; %s", err, see)
 				}
