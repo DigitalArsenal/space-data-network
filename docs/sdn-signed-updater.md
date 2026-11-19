@@ -578,7 +578,13 @@ production key replaces it through a release that carries `trust_roots`.
   typed by an operator never waits. A UI package is not delayed (nothing
   restarts); UI packages install one at a time, each checked again against
   the package installed when its turn comes, so the node never ends on an
-  older package than one it installed.
+  older package than one it installed. A signal is known by its signed content (its
+  canonical document and signature), so a re-encoding of one signal is a
+  copy: a copy of a signal being handled, or handled in the last 15 seconds,
+  is dropped for the cost of a parse and a hash, and a UI package signal at
+  or below the sequence being installed or waiting is dropped before it
+  waits. The log line `Update signal handlers running: N; copies ...
+  dropped: M` (at most every 5 seconds) shows both.
   The log line is `Update <id> (version <v>) accepted at <t>; this node acts
   on it at <due> (rollout window <w>s from config|signal, this node's delay
   <d>s)`; `update check` and `status` print `update_pending=<id> version=...
@@ -605,7 +611,7 @@ production key replaces it through a release that carries `trust_roots`.
   release workflow signs every release's signals with its
   `rollout_window_seconds` input (default 1800). The workflow's first job
   refuses a value that is not a whole number from 0 to 86400, before anything
-  is built or signed, and both signers refuse a given flag outside 0..86400
+  is signed or published, and both signers refuse a given flag outside 0..86400
   (a negative value is an error, not "no window"). The signature covers the
   canonical form of the signal as published, unknown fields included, and
   older nodes decode a signal into a structure that ignores fields it does
@@ -680,13 +686,17 @@ production key replaces it through a release that carries `trust_roots`.
   seen), and a status not renewed for 30 minutes is dropped. The agent string
   is the peer's own claim, so the bounds apply to peers known only by it: the
   rate table admits at most 1,024 such authors active within a minute, and a
-  node holds at most 512 of their statuses; once it holds 512, a status from
+  node holds at most 512 of their statuses, first come: once it holds 512, a status from
   a new such author is not kept, and the statuses held stay until they
   expire. A peer this node has reason to trust is outside both bounds: a pin
   (a `peers.trusted_peers` entry is one), a `network.bootstrap` peer, a
   peer its registry trusts, and a peer whose status it already holds. So a
   flood of new identities cannot remove the nodes a node already shows, or
-  keep their next statuses out. Nodes
+  keep their next statuses out. The other side of first come: while 512
+  such statuses are held, a node of the fleet that is known to this node
+  only by its agent string and starts publishing later gets no row until
+  some expire. A publisher's own fleet belongs in its `peers.trusted_peers`
+  (pins) or `network.bootstrap` peers, so its rows are always kept. Nodes
   of 1.1.9 and earlier accept only signals on this topic: their validator
   rejects a status, so it is neither delivered to them nor relayed by them,
   and with no peer scoring in their pub/sub router the rejection costs the

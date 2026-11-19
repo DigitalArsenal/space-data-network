@@ -6,8 +6,12 @@ package main
 // (update.rollout_window_seconds 120 from step 3 on).
 //
 //	rollout-races  1. UI packages: the signal for package N, whose carrier
-//	                  the feed serves 15 s late, then the one for N+1: r
-//	                  ends on N+1 and serves it.
+//	                  the feed serves 30 s late, then the one for N+1: r
+//	                  ends on N+1 and serves it. Meanwhile 3,000 re-encoded
+//	                  copies each of the N+1 signal and of a CLI signal
+//	                  arrive: r runs at most 16 signal handlers at once and
+//	                  drops the copies, and a real newer CLI signal sent in
+//	                  the middle is acted on.
 //	               2. A release r waits for (signed window 600 s; v6, which
 //	                  never starts its update lane) is typed in by hand,
 //	                  fails its health gate and is rolled back and
@@ -39,6 +43,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -220,6 +225,19 @@ func servedUILabel(d *pushDaemon) string {
 	return response.Header.Get("X-SDN-UI")
 }
 
+// reencodeSignal is raw with i spaces after its opening brace: other bytes,
+// the same canonical signed document, so it verifies.
+func reencodeSignal(t *testing.T, raw []byte, i int) []byte {
+	t.Helper()
+	if len(raw) == 0 || raw[0] != '{' {
+		t.Fatalf("signal does not start with an object: %q", raw)
+	}
+	out := make([]byte, 0, len(raw)+i)
+	out = append(out, '{')
+	out = append(out, bytes.Repeat([]byte{' '}, i)...)
+	return append(out, raw[1:]...)
+}
+
 // realE2EClockBackBuild is v16: a build whose update lane's wall clock moves
 // back 30 minutes as its first rollout wait starts (sdn_e2e_clock_back).
 func realE2EClockBackBuild(t *testing.T, dir string) realBuild {
@@ -324,15 +342,27 @@ func runRealRolloutRaces(t *testing.T) {
 		return ""
 	}
 
-	// 1. UI packages N and N+1, N's carrier served 15 s late: r ends on N+1.
+	// 1. UI packages N and N+1, N's carrier served 30 s late: r ends on N+1.
+	// While N installs and N+1 waits, a peer floods r with re-encodings of
+	// the N+1 signal and of a CLI signal (filler), and a real newer CLI
+	// signal (bad, step 2's release) arrives in the middle of the flood.
 	recipient := nodeEnvelopeRecipient(t, r)
 	uiN := publishUIPackage(t, feed, key, 7000, v1.version, recipient)
 	uiN1 := publishUIPackage(t, feed, key, 7001, v1.version, recipient)
+	filler := v2
+	filler.name, filler.version, filler.sequence = "filler", "1.1.2-e2e.23", 250
+	filler.updateID = pick(rID.String(), "filler", 600*time.Second, 300*time.Second, 590*time.Second)
+	bad := v6
+	bad.sequence = 300
+	bad.updateID = pick(rID.String(), "bad", 600*time.Second, 300*time.Second, 590*time.Second)
+	feed.publish(t, filler, key)
+	feed.publish(t, bad, key)
+	sign("filler-bad", 600)
 	var slowServed atomic.Int64
 	feed.mu.Lock()
 	feed.requestHook = func(w http.ResponseWriter, req *http.Request) bool {
 		if req.URL.Path == uiN.carrierPath {
-			time.Sleep(15 * time.Second)
+			time.Sleep(30 * time.Second)
 			slowServed.Add(1)
 		}
 		return false
@@ -341,6 +371,19 @@ func runRealRolloutRaces(t *testing.T) {
 	send(uiN.signal)
 	time.Sleep(2 * time.Second)
 	send(uiN1.signal)
+	time.Sleep(time.Second)
+	const copies = 3000
+	fillerSignal := signalOf(filler)
+	floodStart := time.Now()
+	for i := 1; i <= copies; i++ {
+		send(reencodeSignal(t, uiN1.signal, i))
+		send(reencodeSignal(t, fillerSignal, i))
+		if i == copies/2 {
+			send(signalOf(bad))
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	t.Logf("%d re-encoded copies each of the N+1 UI signal and a CLI signal sent in %s", copies, time.Since(floodStart).Round(time.Second))
 	waitPush(t, 90*time.Second, "N's late carrier served and both UI signals handled", func() bool {
 		return slowServed.Load() > 0 && ledgerHasIfPresent(r.paths.Root, uiN1.updateID, "ui-install")
 	})
@@ -359,16 +402,34 @@ func runRealRolloutRaces(t *testing.T) {
 		t.Errorf("updates/ui/current.json is not one whole JSON document (%v): %q", err, raw)
 	}
 	if active != nil {
-		t.Logf("UI packages N (carrier 15 s late) and N+1: r installed %s and serves %s", active.Version, servedUILabel(r))
+		t.Logf("UI packages N (carrier 30 s late) and N+1: r installed %s and serves %s", active.Version, servedUILabel(r))
 	}
+	// The flood stays bounded: r's handler lines (at most one per 5 s).
+	maxRunning, dropped := 0, 0
+	for _, m := range regexp.MustCompile(`Update signal handlers running: (\d+); copies of signals being handled or just handled dropped: (\d+)`).FindAllStringSubmatch(r.logs(), -1) {
+		running, _ := strconv.Atoi(m[1])
+		n, _ := strconv.Atoi(m[2])
+		maxRunning, dropped = max(maxRunning, running), dropped+n
+	}
+	t.Logf("during the flood: at most %d signal handlers running, %d copies dropped", maxRunning, dropped)
+	if maxRunning > 16 {
+		t.Errorf("r ran up to %d update signal handlers at once during a flood of re-encoded copies of two signals, want at most 16", maxRunning)
+	}
+	if dropped < copies {
+		t.Errorf("r dropped %d of the %d re-encoded copies as copies, want at least %d", dropped, 2*copies, copies)
+	}
+	// The real newer CLI signal sent in the middle of the flood was acted
+	// on: it replaced the wait for filler.
+	waitPush(t, time.Minute, "r pending the bad release, sent during the flood", func() bool {
+		p, err := update.ReadPending(r.paths)
+		return err == nil && p != nil && p.UpdateID == bad.updateID
+	})
+	t.Log("the real newer CLI signal sent during the flood replaced r's wait for filler")
+	// filler leaves the index, so no later feed check offers it.
+	feed.withdrawIndexEntry(t, filler.updateID)
 
 	// 2. A release r waits for, typed in by hand, fails its health gate and
 	// is rolled back: after the restart no pending update.
-	bad := v6
-	bad.sequence = 300
-	bad.updateID = pick(rID.String(), "bad", 600*time.Second, 300*time.Second, 590*time.Second)
-	feed.publish(t, bad, key)
-	sign("bad", 600)
 	send(signalOf(bad))
 	waitPush(t, time.Minute, "r pending the bad release", func() bool {
 		p, err := update.ReadPending(r.paths)

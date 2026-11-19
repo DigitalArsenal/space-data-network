@@ -203,6 +203,16 @@ type UpdateSignalSubscriber struct {
 	// signals being handled, so a copy that arrives meanwhile is dropped.
 	checkSlots chan struct{}
 	inflight   map[[sha256.Size]byte]bool
+	// recentSignals are the signals handled lately, by signalKey.
+	recentSignals map[[sha256.Size]byte]time.Time
+	// handlersRunning and copiesDropped feed the handler log line.
+	handlersRunning    int
+	copiesDropped      int
+	handlersReportedAt time.Time
+	// uiInstalling is the sequence of the UI package being installed and
+	// uiWaiting the one waiting for its turn (0: none). A UI signal at or
+	// below either is dropped before it waits.
+	uiInstalling, uiWaiting int64
 }
 
 // signalCheckSlots is how many delivered signals are checked at once (state
@@ -554,46 +564,129 @@ func (s *UpdateSignalSubscriber) Run(ctx context.Context) error {
 	}
 }
 
-// dispatch handles one signal beside the topic loop. A copy of a signal
-// being handled is dropped; at most signalCheckSlots signals are checked at
-// once, and the loop waits for a slot (any peer can deliver a validly signed
-// signal again, and each costs a state read and signature checks).
+// dispatch handles one signal beside the topic loop. A signal is known by
+// its signed content (signalKey), not its bytes: a re-encoding of a signed
+// signal (whitespace, key order, escapes) verifies just the same, so it is the
+// same signal. A copy of one being handled, or of one handled within
+// recentSignalFor, is dropped for the cost of a parse and a hash; at most
+// signalCheckSlots signals are checked at once, and the loop waits for a slot.
 func (s *UpdateSignalSubscriber) dispatch(ctx context.Context, data []byte) {
-	digest := sha256.Sum256(data)
+	key := signalKey(data)
+	now := time.Now()
 	s.mu.Lock()
 	if s.inflight == nil {
 		s.inflight = map[[sha256.Size]byte]bool{}
 	}
+	if s.recentSignals == nil {
+		s.recentSignals = map[[sha256.Size]byte]time.Time{}
+	}
 	if s.checkSlots == nil {
 		s.checkSlots = make(chan struct{}, signalCheckSlots)
 	}
-	if s.inflight[digest] {
+	if at, ok := s.recentSignals[key]; s.inflight[key] || (ok && now.Sub(at) < recentSignalFor) {
+		s.copiesDropped++
+		s.noteHandlersLocked(now)
 		s.mu.Unlock()
-		log.Debugf("update signal: dropping a copy of a signal being handled")
 		return
 	}
-	s.inflight[digest] = true
+	s.inflight[key] = true
 	slots := s.checkSlots
 	s.mu.Unlock()
 	select {
 	case slots <- struct{}{}:
 	case <-ctx.Done():
 		s.mu.Lock()
-		delete(s.inflight, digest)
+		delete(s.inflight, key)
 		s.mu.Unlock()
 		return
 	}
+	s.mu.Lock()
+	s.handlersRunning++
+	s.noteHandlersLocked(now)
+	s.mu.Unlock()
 	go runUpdateGossip("update-signal", func() {
 		var once sync.Once
 		checked := func() { once.Do(func() { <-slots }) }
 		defer func() {
 			checked()
 			s.mu.Lock()
-			delete(s.inflight, digest)
+			delete(s.inflight, key)
+			s.rememberSignalLocked(key, time.Now())
+			s.handlersRunning--
 			s.mu.Unlock()
 		}()
 		s.handleChecked(ctx, data, checked)
 	})
+}
+
+const (
+	// recentSignalFor is how long a handled signal's copies are dropped
+	// without a check.
+	recentSignalFor = 15 * time.Second
+	// recentSignalCap bounds the handled signals remembered.
+	recentSignalCap = 1024
+	// handlerReportEvery spaces the log line on running handlers and
+	// dropped copies.
+	handlerReportEvery = 5 * time.Second
+)
+
+// signalKey is what a signal is known by: sha256 of its canonical signed
+// document and its signature, which every re-encoding of one signed signal
+// shares. A message that is not a signal is known by its bytes.
+func signalKey(data []byte) [sha256.Size]byte {
+	signal, err := update.ParseSignal(data)
+	if err != nil {
+		return sha256.Sum256(data)
+	}
+	canonical, err := update.CanonicalSignedDocument(data)
+	if err != nil {
+		return sha256.Sum256(data)
+	}
+	h := sha256.New()
+	h.Write(canonical)
+	h.Write([]byte{0})
+	h.Write([]byte(signal.Signing.Signature))
+	var key [sha256.Size]byte
+	copy(key[:], h.Sum(nil))
+	return key
+}
+
+// rememberSignalLocked records key as handled at now, within
+// recentSignalCap (expired entries go first, then the oldest). The caller
+// holds s.mu.
+func (s *UpdateSignalSubscriber) rememberSignalLocked(key [sha256.Size]byte, now time.Time) {
+	if len(s.recentSignals) >= recentSignalCap {
+		var oldest [sha256.Size]byte
+		var oldestAt time.Time
+		for k, at := range s.recentSignals {
+			if now.Sub(at) >= recentSignalFor {
+				delete(s.recentSignals, k)
+				continue
+			}
+			if oldestAt.IsZero() || at.Before(oldestAt) {
+				oldest, oldestAt = k, at
+			}
+		}
+		if len(s.recentSignals) >= recentSignalCap {
+			delete(s.recentSignals, oldest)
+		}
+	}
+	s.recentSignals[key] = now
+}
+
+// noteHandlersLocked logs, at most once per handlerReportEvery and only when
+// copies were dropped or more than one handler runs, how many signal handlers
+// run and how many copies were dropped since the last line. The caller holds
+// s.mu.
+func (s *UpdateSignalSubscriber) noteHandlersLocked(now time.Time) {
+	if s.copiesDropped == 0 && s.handlersRunning <= 1 {
+		return
+	}
+	if now.Sub(s.handlersReportedAt) < handlerReportEvery {
+		return
+	}
+	log.Infof("Update signal handlers running: %d; copies of signals being handled or just handled dropped: %d", s.handlersRunning, s.copiesDropped)
+	s.handlersReportedAt, s.copiesDropped = now, 0
 }
 
 // handle verifies one signal and, if it survives every gate, self-upgrades.
@@ -913,8 +1006,31 @@ func (s *UpdateSignalSubscriber) handleUI(ctx context.Context, signal *update.Si
 		return
 	}
 	checked()
+	// At most one waiter per newer sequence: a signal at or below the one
+	// being installed or waiting is dropped here, before it waits.
+	s.mu.Lock()
+	if signal.Sequence <= max(s.uiInstalling, s.uiWaiting) {
+		s.mu.Unlock()
+		log.Debugf("UI package signal %s (sequence %d) dropped: sequence %d is being installed or waiting", signal.UpdateID, signal.Sequence, max(s.uiInstalling, s.uiWaiting))
+		return
+	}
+	s.uiWaiting = signal.Sequence
+	s.mu.Unlock()
 	s.uiMu.Lock()
 	defer s.uiMu.Unlock()
+	s.mu.Lock()
+	if s.uiWaiting != signal.Sequence {
+		// A newer package waits too: it goes instead.
+		s.mu.Unlock()
+		return
+	}
+	s.uiWaiting, s.uiInstalling = 0, signal.Sequence
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		s.uiInstalling = 0
+		s.mu.Unlock()
+	}()
 	installed, ok := s.uiActionable(signal, false)
 	if !ok {
 		return
