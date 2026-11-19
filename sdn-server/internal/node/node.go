@@ -2991,10 +2991,24 @@ func (n *Node) runDatasetPublicationPNMCatchup() {
 
 	timer := time.NewTimer(datasetPublicationCatchupInitialDelay)
 	defer timer.Stop()
+	// A subscribed lane whose publications waited for its followed stream
+	// asks for a run as soon as the stream settles (followManager.settledLocked).
+	var nudge <-chan struct{}
+	if n.follows != nil {
+		nudge = n.follows.catchupNudge
+	}
 	for {
 		select {
 		case <-n.ctx.Done():
 			return
+		case <-nudge:
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			timer.Reset(0)
 		case <-timer.C:
 			runPeerIngress("dataset-pnm-catchup", "", func() {
 				if materialized, err := n.materializeStoredDatasetPublicationPNMs(n.ctx, datasetPublicationCatchupLimit); err != nil {
@@ -4137,6 +4151,10 @@ func (n *Node) materializeDatasetPublicationPNMInner(ctx context.Context, schema
 	if err != nil {
 		return false, fmt.Errorf("dataset publication PNM from %s: %w", from.ShortString(), err)
 	}
+	// lane is the subscribed lane the publication carries; deferred is set
+	// when it waits for the lane's stream (LaneAllowed).
+	var lane FollowKey
+	deferred := false
 	workDir := filepath.Join(n.config.Storage.Path, datasetPublicationReplayWorkRoot)
 	// The 2-minute budget bounds the FETCH only. The import runs under the
 	// node context, like the feed-head path's: a 42K-record shard takes
@@ -4163,18 +4181,31 @@ func (n *Node) materializeDatasetPublicationPNMInner(ctx context.Context, schema
 		// DPM names the lane, before the shard or index is fetched.
 		LaneAllowed: func(laneSchema, providerID, sourceName string) bool {
 			if n.subscribedFrom(from, laneSchema, providerID, sourceName) {
-				// A lane whose followed stream is connected receives the
-				// publication's records on the stream, in sequence: its
-				// shard is not fetched and imported a second time. A lane
-				// whose stream the producer refuses imports here, and so does
-				// an archive-all lane, whose rule keeps each publication's
-				// DAG (its records are stored once by content address).
-				if n.followStreaming(from, laneSchema, providerID, sourceName) &&
-					n.laneRetentionRule(laneSchema, providerID, sourceName) != channels.RetentionArchiveAll {
+				lane = FollowKey{Schema: laneSchema, ProviderID: providerID, SourceName: sourceName, Producer: from.String()}
+				// A lane whose followed stream is connected and holds its
+				// current batch receives the publication's records on the
+				// stream, in sequence: its shard is not fetched and imported
+				// a second time. A lane whose stream has not settled since
+				// the lane started leaves the publication to the stored-$PNM
+				// catch-up (Node.followPublication). A lane whose stream the
+				// producer refuses, or whose current batch is not held,
+				// imports here, and so does an archive-all lane, whose rule
+				// keeps each publication's DAG (its records are stored once
+				// by content address).
+				if n.laneRetentionRule(laneSchema, providerID, sourceName) == channels.RetentionArchiveAll {
+					return true
+				}
+				switch n.followPublication(from, laneSchema, providerID, sourceName) {
+				case followPublicationStreamed:
 					key := "streamed|" + from.String() + "|" + laneSchema + "|" + providerID + "|" + sourceName
 					if _, seen := unsubscribedLaneLog.LoadOrStore(key, true); !seen {
 						log.Infof("Not fetching the publications of %s %s/%s from %s: their records arrive on the followed stream", laneSchema, providerID, sourceName, from.ShortString())
 					}
+					return false
+				case followPublicationDeferred:
+					deferred = true
+					log.Infof("Publication %s of %s %s/%s from %s waits for the lane's followed stream, which has not held the producer's current batch since the lane started; the stored-$PNM catch-up takes it up again",
+						fileID, laneSchema, providerID, sourceName, from.ShortString())
 					return false
 				}
 				return true
@@ -4185,7 +4216,28 @@ func (n *Node) materializeDatasetPublicationPNMInner(ctx context.Context, schema
 			}
 			return false
 		},
+		// The import is under the running guard of the followed lanes: one
+		// reservation, the same free disk reserve and record ceiling.
+		Reserve: func(records int, bytes int64) (func(), error) {
+			if n.follows == nil {
+				return func() {}, nil
+			}
+			return n.follows.reserve(records, bytes)
+		},
 	})
+	if errors.Is(err, storage.ErrDatasetPublicationLaneNotImported) && deferred {
+		// Left for the stored-$PNM catch-up: no mark, no replay state.
+		n.clearDatasetPNMMaterialized(pnmKey)
+		return false, err
+	}
+	if errors.Is(err, errFollowStopped) {
+		// The running guard stopped it: tried again by the stored-$PNM
+		// catch-up (every datasetPublicationCatchupInterval), as a stopped
+		// stream is checked again; no mark, no replay state.
+		n.clearDatasetPNMMaterialized(pnmKey)
+		n.follows.publicationStopped(lane, fileID, err)
+		return false, fmt.Errorf("%w: %w", storage.ErrDatasetPublicationLaneNotImported, err)
+	}
 	if errors.Is(err, storage.ErrDatasetPublicationLaneNotImported) {
 		// Skipped, not failed: the in-memory mark stays, so the same PNM is
 		// not fetched again for 24 hours, and no replay state is written, so
@@ -4230,6 +4282,7 @@ func (n *Node) materializeDatasetPublicationPNMInner(ctx context.Context, schema
 	// A publication from this producer landed: whatever it was being rejected
 	// for, it is not being rejected now.
 	n.clearPublicationRejected(from.String())
+	n.follows.publicationImported(lane, result.Imported)
 
 	// Materialization fetched these blocks through the local Kubo API, so
 	// they are already in the blockstore but unpinned. The lane's retention

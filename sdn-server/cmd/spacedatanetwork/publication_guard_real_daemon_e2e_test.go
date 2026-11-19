@@ -202,6 +202,168 @@ func TestPublicationStorePanicReleasesReservationRealDaemons(t *testing.T) {
 	b.requireAlive(t)
 }
 
+// importedPublicationOf reports a line of log that imported a publication of
+// standard schema ("Materialized trusted dataset update ... on <schema>").
+func importedPublicationOf(log, schema string) string {
+	for _, line := range strings.Split(log, "\n") {
+		if strings.Contains(line, "Materialized trusted dataset update") && strings.Contains(line, "on "+schema) {
+			return line
+		}
+	}
+	return ""
+}
+
+// TestPublicationRestartStreamedPNMRealDaemons: a publication of a lane whose
+// followed stream held the batch is left to the stream, and it is not
+// imported after a restart either, although the stored-$PNM catch-up (15 s
+// after the start) runs before the stream holds the batch again (the
+// receiver is built so the lane's first stream opens 40 s after it starts,
+// as a producer answering late would). The publication waits for the stream;
+// once the stream holds the batch the catch-up runs again and leaves it to
+// the stream.
+func TestPublicationRestartStreamedPNMRealDaemons(t *testing.T) {
+	if os.Getenv("SDN_E2E_PUBLICATION") != "1" {
+		t.Skip("set SDN_E2E_PUBLICATION=1 for real daemons")
+	}
+	exe := publicationBinary(t)
+	a := newPublicationDaemon(t, exe, "late-producer", "", "", "keep-all")
+	a.start(t)
+	a.ingestOMMCIDs(t, "late-rs", "r1", 930_000, 300)
+	b := newPublicationDaemon(t, publicationFollowFaultsBinary(t), "late-receiver", a.address, a.id, "keep-all")
+	b.start(t)
+	time.Sleep(3 * time.Second)
+	b.subscribeCurrent(t, a, "late-rs")
+	want := a.scan(t, "OMM.fbs", "late-rs")
+	b.awaitRecords(t, "OMM.fbs", "late-rs", want, 4*time.Minute)
+	held := func(when string) {
+		t.Helper()
+		deadline := time.Now().Add(3 * time.Minute)
+		for {
+			sub := b.subscription(t, "late-rs")
+			if sub.Connected && sub.CurrentBatch == "r1" && sub.Lag == 0 {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("%s: lane late-rs connected %t, current batch %q, lag %d; want r1 held", when, sub.Connected, sub.CurrentBatch, sub.Lag)
+			}
+			time.Sleep(2 * time.Second)
+		}
+	}
+	held("after the subscription")
+	a.publish(t, "OMM.fbs", "late-rs", "r1")
+	deadline := time.Now().Add(3 * time.Minute)
+	for !strings.Contains(readFileString(b.logPath), "Not fetching the publications of OMM.fbs publication-e2e/late-rs") {
+		if time.Now().After(deadline) {
+			t.Fatal("the receiver's log does not say lane late-rs's publication was left to its stream")
+		}
+		time.Sleep(2 * time.Second)
+	}
+	if line := importedPublicationOf(readFileString(b.logPath), "OMM.fbs"); line != "" {
+		t.Fatalf("the receiver imported lane late-rs's publication although its stream held the batch: %s", line)
+	}
+	t.Log("lane late-rs: its publication was left to the stream, which held batch r1")
+
+	b.stop(t)
+	mark := len(readFileString(b.logPath))
+	b.start(t)
+	deadline = time.Now().Add(4 * time.Minute)
+	for {
+		since := readFileString(b.logPath)[mark:]
+		if line := importedPublicationOf(since, "OMM.fbs"); line != "" {
+			t.Fatalf("after the restart the receiver imported lane late-rs's publication a second time: %s", line)
+		}
+		if strings.Contains(since, "Not fetching the publications of OMM.fbs publication-e2e/late-rs") {
+			if !strings.Contains(since, "waits for the lane's followed stream") {
+				t.Fatal("after the restart the publication was left to the stream, but the log shows no catch-up that waited for the stream: the stream held the batch before the first catch-up, so this run proves nothing")
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("after the restart no catch-up left lane late-rs's publication to its stream; log since the restart:\n%s", tailString(since, 30))
+		}
+		time.Sleep(2 * time.Second)
+	}
+	held("after the restart")
+	b.requireRecords(t, "OMM.fbs", "late-rs", want)
+	t.Log("after the restart the publication waited for the stream and was not imported again; the stream holds batch r1")
+	b.requireAlive(t)
+}
+
+// TestPublicationPNMGuardRealDaemons: a lane's signed publications are
+// imported under the running guard of the followed lanes. A receiver whose
+// record ceiling (3) the publication's records would pass does not import it
+// (follow_stopped, the lane stopped); with the ceiling raised the stored-$PNM
+// catch-up imports it and the alert clears.
+func TestPublicationPNMGuardRealDaemons(t *testing.T) {
+	if os.Getenv("SDN_E2E_PUBLICATION") != "1" {
+		t.Skip("set SDN_E2E_PUBLICATION=1 for real daemons")
+	}
+	exe := publicationBinary(t)
+	a := newPublicationDaemon(t, exe, "pnmguard-producer", "", "", "keep-all")
+	a.start(t)
+	b := newPublicationDaemon(t, exe, "pnmguard-receiver", a.address, a.id, "keep-all")
+	b.appendConfig(t, "  record_ceiling: 3\n", "subscriptions:\n")
+	b.start(t)
+	time.Sleep(3 * time.Second)
+	// OEM: the producer refuses the stream to a peer it grants no private
+	// reads, so the lane imports only through its publications.
+	b.follow(t, a, "OEM", "pg", "start=beginning&force=1")
+	var body []byte
+	for i := 0; i < 6; i++ {
+		body = append(body, baselineOEM(200+i)...)
+	}
+	a.ingest(t, "OEM.fbs", "pg", "g1", body, 6)
+	want := a.scan(t, "OEM.fbs", "pg")
+	if len(want) != 6 {
+		t.Fatalf("producer holds %d OEM records, want 6", len(want))
+	}
+	a.publish(t, "OEM.fbs", "pg", "g1")
+	deadline := time.Now().Add(4 * time.Minute)
+	for !hasAlertOn(b.alerts(t), "follow_stopped", "pg") {
+		if got := len(b.scan(t, "OEM.fbs", "pg")); got > 0 {
+			t.Fatalf("the receiver imported %d records of lane pg past its record ceiling of 3", got)
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("no follow_stopped alert for lane pg after its publication")
+		}
+		time.Sleep(2 * time.Second)
+	}
+	time.Sleep(5 * time.Second)
+	if got := len(b.scan(t, "OEM.fbs", "pg")); got > 0 {
+		t.Fatalf("the receiver imported %d records of lane pg past its record ceiling of 3", got)
+	}
+	var stopped api.LaneFollow
+	for _, s := range b.subscriptions(t).Subscriptions {
+		if s.SourceName == "pg" {
+			stopped = s
+		}
+	}
+	if stopped.Stopped == "" {
+		t.Fatal("sync subscriptions does not show lane pg stopped")
+	}
+	t.Logf("lane pg stopped at the guard: %.300s", stopped.Stopped)
+
+	b.stop(t)
+	raw, err := os.ReadFile(b.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(b.cfg, []byte(strings.Replace(string(raw), "  record_ceiling: 3\n", "  record_ceiling: 1000000\n", 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	b.start(t)
+	b.awaitRecords(t, "OEM.fbs", "pg", want, 4*time.Minute)
+	deadline = time.Now().Add(time.Minute)
+	for hasAlertOn(b.alerts(t), "follow_stopped", "pg") {
+		if time.Now().After(deadline) {
+			t.Fatal("follow_stopped stays on lane pg after its publication was imported")
+		}
+		time.Sleep(2 * time.Second)
+	}
+	t.Log("with the ceiling raised the catch-up imported the 6 records and the alert cleared")
+	b.requireAlive(t)
+}
+
 // TestPublicationSubscriptionsUnreadableRealDaemons: a subscriptions.dss
 // that does not read at start is moved aside, not overwritten, and raises
 // subscriptions_unreadable; no subscription changes while it is not loaded,

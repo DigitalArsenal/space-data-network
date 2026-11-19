@@ -312,7 +312,47 @@ type followEntry struct {
 	// is true the lane's $PNM publications are imported although its stream
 	// is connected (Node.followStreaming).
 	batchHeld bool
+	// settled is true once the lane's stream has had an outcome since the
+	// lane started: a stated batch held or not held, the stream refused as
+	// not authorized, or the lane stopped by the running guard. Until then,
+	// for followPublicationWait from started, the lane's $PNM publications
+	// wait (Node.followPublication); deferred marks one that waited, so the
+	// stored-$PNM catch-up runs again once the lane settles.
+	settled  bool
+	started  time.Time
+	deferred bool
 }
+
+// followPublicationWait bounds the wait of a lane's publications for its
+// stream to settle after the lane starts: a lane whose stream does not
+// connect in that time imports its publications.
+const followPublicationWait = 5 * time.Minute
+
+// settledLocked marks e's stream settled; the caller holds m.mu.
+func (m *followManager) settledLocked(e *followEntry) {
+	e.settled = true
+	if e.deferred {
+		e.deferred = false
+		select {
+		case m.catchupNudge <- struct{}{}:
+		default:
+		}
+	}
+}
+
+// What the $PNM path does with a publication of a subscribed lane
+// (Node.followPublication).
+const (
+	// followPublicationImport: the publication is imported.
+	followPublicationImport = iota
+	// followPublicationStreamed: the stream is connected and holds the
+	// batch the producer states as current; it carries the records.
+	followPublicationStreamed
+	// followPublicationDeferred: the lane started less than
+	// followPublicationWait ago and its stream has not settled; the
+	// publication is left for the stored-$PNM catch-up.
+	followPublicationDeferred
+)
 
 type followRate struct {
 	at    time.Time
@@ -341,6 +381,9 @@ type followManager struct {
 	heldAt         time.Time
 	reserveRecords int64
 	reserveBytes   int64
+	// catchupNudge asks the stored-$PNM catch-up to run now (a lane whose
+	// publications waited for its stream settled).
+	catchupNudge chan struct{}
 	// blocked is why the subscription files are not loaded ("" once they
 	// are): while it is set nothing writes them and no lane runs.
 	blocked string
@@ -358,7 +401,7 @@ func (m *followManager) storeDir() string {
 
 func newFollowManager(n *Node, dir string) *followManager {
 	return &followManager{n: n, path: filepath.Join(dir, followFileName), subsPath: filepath.Join(dir, subscriptionsFileName),
-		subs: map[FollowKey]*followEntry{}}
+		subs: map[FollowKey]*followEntry{}, catchupNudge: make(chan struct{}, 1)}
 }
 
 // readFollowFile reads one subscriptions file (none: no records). A record
@@ -812,20 +855,35 @@ func (n *Node) subscribedFrom(from peer.ID, schema, providerID, sourceName strin
 	return ok
 }
 
-// followStreaming reports a subscription to the lane from the peer whose
-// followed stream is connected and holds the batch the producer states as
-// current. A lane whose current batch is not held (its list read or its
-// fetches by CID fail, so it gets only the records stored after its cursor)
-// is not streaming: its $PNM publications carry it.
-func (n *Node) followStreaming(from peer.ID, schema, providerID, sourceName string) bool {
+// followPublication is what the $PNM path does with a publication of the
+// subscribed lane from the peer. A lane whose followed stream is connected
+// and holds the batch the producer states as current is streamed: the stream
+// carries the publication's records. A lane whose current batch is not held
+// (its list read or its fetches by CID fail, so it gets only the records
+// stored after its cursor), or whose stream the producer refuses, imports
+// it. A lane started less than followPublicationWait ago whose stream has not
+// settled yet (after a restart: the stored-$PNM catch-up runs before most
+// streams have held their batch again) leaves it to the catch-up, which runs
+// again as soon as the lane settles: a batch already held is not imported a
+// second time, and a lane that cannot hold it still gets it.
+func (n *Node) followPublication(from peer.ID, schema, providerID, sourceName string) int {
 	if n == nil || n.follows == nil {
-		return false
+		return followPublicationImport
 	}
 	key := normalizeFollowKey(FollowKey{Schema: schema, ProviderID: providerID, SourceName: sourceName, Producer: from.String()})
 	n.follows.mu.Lock()
 	defer n.follows.mu.Unlock()
 	e, ok := n.follows.subs[key]
-	return ok && e.status.Connected && e.batchHeld
+	switch {
+	case !ok:
+		return followPublicationImport
+	case e.status.Connected && e.batchHeld:
+		return followPublicationStreamed
+	case !e.settled && time.Since(e.started) < followPublicationWait:
+		e.deferred = true
+		return followPublicationDeferred
+	}
+	return followPublicationImport
 }
 
 // errGossipRecordNoLane is why a record gossiped on a schema topic is not
@@ -859,7 +917,7 @@ func (n *Node) followTrusted(id peer.ID) bool {
 // startLocked starts one lane; the caller holds m.mu.
 func (m *followManager) startLocked(st FollowStatus) {
 	ctx, cancel := context.WithCancel(m.n.ctx)
-	e := &followEntry{status: st, cancel: cancel, done: make(chan struct{})}
+	e := &followEntry{status: st, cancel: cancel, done: make(chan struct{}), started: time.Now()}
 	m.subs[st.FollowKey] = e
 	m.n.wg.Add(1)
 	go func() {
@@ -915,6 +973,10 @@ func (m *followManager) run(ctx context.Context, e *followEntry) {
 		}
 		if stopped {
 			e.status.Stopped = err.Error()
+		}
+		if stopped || followNotAuthorized(err) {
+			// The stream holds no batch: the lane's publications carry it.
+			m.settledLocked(e)
 		}
 		key := e.status.FollowKey
 		m.mu.Unlock()
@@ -1103,6 +1165,7 @@ func (m *followManager) followOnce(ctx context.Context, e *followEntry) (int, er
 				}
 				m.mu.Lock()
 				e.batchHeld = false
+				m.settledLocked(e)
 				m.mu.Unlock()
 				if errors.Is(err, errFollowStopped) {
 					_ = stream.Reset()
@@ -1212,6 +1275,7 @@ func (m *followManager) holdCurrent(ctx context.Context, st FollowStatus, e *fol
 	markHeld := func() {
 		m.mu.Lock()
 		e.batchHeld = true
+		m.settledLocked(e)
 		m.mu.Unlock()
 	}
 	if stmt.Retracted {
@@ -1239,10 +1303,12 @@ func (m *followManager) holdCurrent(ctx context.Context, st FollowStatus, e *fol
 	case e.current.BatchID == stmt.BatchID && own == stmt.Records:
 		// The current batch grew by records that arrived in sequence.
 		e.current, e.held, e.batchHeld = stmt, own, true
+		m.settledLocked(e)
 		m.mu.Unlock()
 		return nil
 	case e.current == stmt && own == e.held:
 		e.batchHeld = true
+		m.settledLocked(e)
 		m.mu.Unlock()
 		return nil
 	case time.Since(e.lastSync) < followSyncEvery:
@@ -1300,6 +1366,7 @@ func (m *followManager) holdCurrent(ctx context.Context, st FollowStatus, e *fol
 	}
 	m.mu.Lock()
 	e.current, e.held, e.rule, e.batchHeld = stmt, counts[stmt.BatchID], rule, true
+	m.settledLocked(e)
 	e.status.RemovedRecords += removed + superseded
 	m.mu.Unlock()
 	m.n.alerts.Clear(ops.KindFollowRefused, followAlertSubject(st.FollowKey))
@@ -1683,6 +1750,41 @@ func (m *followManager) reserve(records int, bytes int64) (func(), error) {
 			m.heldMu.Unlock()
 		})
 	}, nil
+}
+
+// publicationStopped reports a publication of a subscribed lane that the
+// running guard did not import (alert follow_stopped, the lane stopped); the
+// stored-$PNM catch-up tries it again.
+func (m *followManager) publicationStopped(key FollowKey, fileID string, err error) {
+	if m == nil || key.Schema == "" {
+		return
+	}
+	key = normalizeFollowKey(key)
+	text := fmt.Sprintf("publication %s not imported: %v; the stored-$PNM catch-up tries it again", fileID, err)
+	m.mu.Lock()
+	if e := m.subs[key]; e != nil {
+		e.status.Stopped = text
+	}
+	m.mu.Unlock()
+	log.Warnf("Subscribed lane %s %s/%s from %s: %s", key.Schema, key.ProviderID, key.SourceName, key.Producer, text)
+	m.n.alerts.Raise(ops.KindFollowStopped, followAlertSubject(key), ops.SeverityError, text)
+}
+
+// publicationImported counts the records a publication of a subscribed lane
+// stored (for the running guard's count of records held) and clears a stop
+// of the lane: the guard let it through.
+func (m *followManager) publicationImported(key FollowKey, records int) {
+	if m == nil || key.Schema == "" {
+		return
+	}
+	m.addHeld(int64(records))
+	key = normalizeFollowKey(key)
+	m.mu.Lock()
+	if e := m.subs[key]; e != nil {
+		e.status.Stopped = ""
+	}
+	m.mu.Unlock()
+	m.n.alerts.Clear(ops.KindFollowStopped, followAlertSubject(key))
 }
 
 // storeReserved runs store, the store a reservation was granted for, and
