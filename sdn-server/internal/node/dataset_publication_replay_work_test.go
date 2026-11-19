@@ -23,7 +23,6 @@ import (
 
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
-	sdnpubsub "github.com/spacedatanetwork/sdn-server/internal/pubsub"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
@@ -161,16 +160,14 @@ func newReplayNodeFixture(t *testing.T, serveShard bool) *replayNodeFixture {
 		config: &config.Config{
 			Storage: config.StorageConfig{Path: filepath.Join(tmpDir, "subscriber-storage")},
 			Admin:   config.AdminConfig{IPFSAPIURL: ipfs.URL},
-			// The subscriber lists the lane it imports (a new lane from a
-			// trusted peer is imported only when listed: trusted_import.go).
-			Peers: config.PeersConfig{TrustedImport: config.TrustedImportConfig{
-				Allow: []config.LaneSelector{{Schema: "CAT.fbs", ProviderID: tags.ProviderID}},
-			}},
 		},
 		ctx:                     ctx,
 		cancel:                  cancel,
 		datasetMaterializedPNMs: make(map[string]time.Time),
 	}
+	// The subscriber subscribes to the lane it imports from the provider (a
+	// node imports only the lanes it subscribes to).
+	subscribeForTest(t, f.node, "CAT.fbs", tags.ProviderID, tags.SourceName, providerID)
 	// Runs before the stores close: background work the materialization
 	// started (the storage quota pass) finishes first.
 	t.Cleanup(func() {
@@ -206,56 +203,6 @@ func (f *replayNodeFixture) replayState(t *testing.T) string {
 		return ""
 	}
 	return state.State
-}
-
-// The feed-head path imported this shard and recorded it; the PNM replay of
-// the same publication verifies the signed manifest, finds that record and
-// marks the PNM materialized without fetching the shard or index again.
-func TestMaterializeDatasetPublicationPNMMarksAFeedHeadImportedShardWithoutRefetching(t *testing.T) {
-	t.Parallel()
-	f := newReplayNodeFixture(t, false)
-	store := f.node.store
-
-	imported, index, err := store.ImportDatasetShardFromFiles(f.export.ShardPath, f.export.IndexPath, f.providerID.String())
-	if err != nil || imported != 1 {
-		t.Fatalf("feed-head import: %d records, %v", imported, err)
-	}
-	ann := sdnpubsub.DatasetFeedHeadAnnouncement{
-		SchemaName:    "CAT.fbs",
-		ProviderID:    f.tags.ProviderID,
-		SourceName:    f.tags.SourceName,
-		BatchID:       f.tags.BatchID,
-		QueryProfile:  storage.DatasetPublicationQueryProfile,
-		Limit:         10,
-		RecordCount:   int64(f.export.RecordCount),
-		ByteCount:     f.export.ShardBytes,
-		ShardCID:      f.export.ShardCID,
-		IndexCID:      f.export.IndexCID,
-		ManifestCID:   f.manifestCID,
-		PublishedAtMs: time.Unix(1700007777, 0).UnixMilli(),
-	}
-	shardHeader := datasetFeedHeadAssetHeader{SHA256: f.export.ShardSHA256, ByteCount: f.export.ShardBytes}
-	indexHeader := datasetFeedHeadAssetHeader{SHA256: f.export.IndexSHA256, ByteCount: f.export.IndexBytes}
-	if err := store.UpsertDatasetShardPublication(datasetShardPublicationFromFeedHead(ann, shardHeader, indexHeader, index)); err != nil {
-		t.Fatal(err)
-	}
-
-	materialized, err := f.node.materializeDatasetPublicationPNM(f.node.ctx, "CAT.fbs", f.pnm, f.providerID)
-	if err != nil || !materialized {
-		t.Fatalf("materialize = %v, %v; want the PNM materialized", materialized, err)
-	}
-	if shard, idx := f.requestsFor(f.export.ShardCID), f.requestsFor(f.export.IndexCID); shard != 0 || idx != 0 {
-		t.Fatalf("the shard was fetched again: %d shard and %d index requests", shard, idx)
-	}
-	if f.requestsFor(f.manifestCID) != 1 {
-		t.Fatalf("manifest requests = %d, want 1", f.requestsFor(f.manifestCID))
-	}
-	if state := f.replayState(t); state != storage.DatasetPublicationReplayStateMaterialized {
-		t.Fatalf("replay state = %q, want %q", state, storage.DatasetPublicationReplayStateMaterialized)
-	}
-	if left := replayWorkRootEntries(t, f.replayRoot()); len(left) != 0 {
-		t.Fatalf("the replay left %v in its work root", left)
-	}
 }
 
 // A replay that fetches and imports leaves nothing in its work root.

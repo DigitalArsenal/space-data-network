@@ -3,13 +3,18 @@ package node
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/libp2p/go-libp2p"
+	libp2pcrypto "github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/peer"
 
 	"github.com/spacedatanetwork/sdn-server/internal/config"
@@ -20,8 +25,17 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/syncwire"
 )
 
-// Real producer -> replica -> requester: retirement survives reopen, leaves
+// Real producer -> subscriber -> requester: retirement survives reopen, leaves
 // held files and records intact, and cannot resurrect a superseded publication.
+// A node imports a lane only through its subscription, and a subscriber keeps
+// the records of a publication, not its files or its publication row, so the
+// publication rows and files retirement acts on are the producer's own. The
+// subscriber imports the producer's signed $PNM publications through the
+// subscription gate and reads the producer's listing and shards over the wire.
+// That a retired publication cannot come back is asserted on the producer:
+// its replay ledger, its publication index after a later sweep and a reopen,
+// and its listing. The subscriber's replay of the old publication is checked
+// too, but it rests on the subscriber's own replay state, not on retirement.
 // Explicit observation dates exercise policy; no wall-clock speed is asserted.
 func TestPublicationRetirement(t *testing.T) {
 	t.Setenv("SDN_STORE_FORMAT", "4")
@@ -37,43 +51,87 @@ func TestPublicationRetirement(t *testing.T) {
 		}
 		return s
 	}
-	producer := open(filepath.Join(root, "producer", "data"))
-	defer producer.Close()
-	replicaPath := filepath.Join(root, "replica", "data")
-	replica := open(replicaPath)
-	defer func() { replica.Close() }()
-	provider, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"), libp2p.DisableRelay())
+	producerPath := filepath.Join(root, "producer", "data")
+	producer := open(producerPath)
+	defer func() { producer.Close() }()
+	subscriber := open(filepath.Join(root, "subscriber", "data"))
+	defer subscriber.Close()
+
+	priv, _, err := libp2pcrypto.GenerateEd25519Key(bytes.NewReader(bytes.Repeat([]byte{0x5a}, 128)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawPriv, err := priv.Raw()
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider, err := libp2p.New(libp2p.Identity(priv), libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"), libp2p.DisableRelay())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer provider.Close()
-	consumer, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"), libp2p.DisableRelay())
+	consumer, err := libp2p.New(libp2p.NoListenAddrs, libp2p.DisableRelay())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer consumer.Close()
-	reader, err := libp2p.New(libp2p.NoListenAddrs, libp2p.DisableRelay())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer reader.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	if err := consumer.Connect(ctx, peer.AddrInfo{ID: provider.ID(), Addrs: provider.Addrs()}); err != nil {
 		t.Fatal(err)
 	}
-	if err := reader.Connect(ctx, peer.AddrInfo{ID: consumer.ID(), Addrs: consumer.Addrs()}); err != nil {
-		t.Fatal(err)
-	}
 	protocol.NewFlatSQLSyncHandler(producer).Register(provider)
+
+	// The producer's IPFS API: it serves each publication's manifest, and its
+	// shard and index from the producer's files as they are at request time.
+	var mu sync.Mutex
+	requests := map[string]int{}
+	objects := map[string]func() ([]byte, error){}
+	ipfs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cidValue := r.URL.Query().Get("arg")
+		mu.Lock()
+		requests[cidValue]++
+		read, ok := objects[cidValue]
+		mu.Unlock()
+		if r.URL.Path != "/api/v0/cat" || !ok {
+			http.Error(w, "not served: "+cidValue, http.StatusNotFound)
+			return
+		}
+		data, err := read()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		_, _ = w.Write(data)
+	}))
+	defer ipfs.Close()
+	requestsFor := func(cid string) int {
+		mu.Lock()
+		defer mu.Unlock()
+		return requests[cid]
+	}
+
 	registry := peers.NewRegistry(false, nil)
 	if err := registry.AddPeer(&peers.TrustedPeer{ID: provider.ID(), TrustLevel: peers.Trusted}); err != nil {
 		t.Fatal(err)
 	}
-	n := &Node{host: consumer, store: replica, validator: validator, peerRegistry: registry, ctx: ctx,
-		config: &config.Config{Storage: config.StorageConfig{Path: replicaPath}, Peers: config.PeersConfig{
-			TrustedImport: config.TrustedImportConfig{Allow: []config.LaneSelector{{Schema: "OMM.fbs", ProviderID: "retirement-e2e", SourceName: "fixture"}}}}}}
+	nodeCtx, stopNode := context.WithCancel(ctx)
+	n := &Node{host: consumer, store: subscriber, validator: validator, peerRegistry: registry, ctx: nodeCtx, cancel: stopNode,
+		config: &config.Config{Storage: config.StorageConfig{Path: filepath.Join(root, "subscriber")},
+			Admin: config.AdminConfig{IPFSAPIURL: ipfs.URL}},
+		datasetMaterializedPNMs: make(map[string]time.Time)}
+	// Background work a materialization starts (the storage quota pass)
+	// finishes before the stores close.
+	defer func() {
+		stopNode()
+		n.wg.Wait()
+	}()
+	// The subscriber subscribes to the lane from the producer: the only gate
+	// through which it imports the lane's publications.
+	subscribeForTest(t, n, "OMM.fbs", "retirement-e2e", "fixture", provider.ID())
+
 	pubs := make([]storage.DatasetShardPublication, 4)
+	pnms := make([][]byte, 4)
 	for i, batch := range []string{"held", "lost", "recovered", "never-fetched"} {
 		tags := storage.SourceTags{ProviderID: "retirement-e2e", SourceName: "fixture", BatchID: batch, ContentKeyID: "public"}
 		record := sds.NewOMMBuilder().WithNoradCatID(uint32(900000 + i)).WithObjectName(batch).Build()
@@ -93,28 +151,90 @@ func TestPublicationRetirement(t *testing.T) {
 			t.Fatal(err)
 		}
 		pubs[i] = pub
+		shardPath, err := producer.DatasetPublicationShardPath(pub)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if shardPath != export.ShardPath {
+			t.Fatalf("export shard %s is not the publication's shard %s", export.ShardPath, shardPath)
+		}
+		publishedAt := time.Unix(1700000000+int64(i), 0).UTC()
+		manifest, err := storage.BuildSignedDatasetPublicationManifest(filepath.Join(root, "publish", batch), storage.DatasetPublicationManifestOptions{
+			Export: export, DatasetID: "omm-retirement-" + batch, UpdateID: batch, ProviderPeerID: provider.ID().String(),
+			ProviderEPMCID: "bafy-provider-epm", PublishedAt: publishedAt, SigningKey: ed25519.PrivateKey(rawPriv), SchemaHash: "omm-schema-hash"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		pnms[i], err = storage.BuildDatasetPublicationPNM(manifest, storage.DatasetPublicationPNMOptions{
+			PublishedAt: publishedAt, SigningKey: ed25519.PrivateKey(rawPriv)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		manifestBytes, indexPath := manifest.Bytes, export.IndexPath
+		mu.Lock()
+		objects[manifest.CID] = func() ([]byte, error) { return manifestBytes, nil }
+		objects[export.ShardCID] = func() ([]byte, error) { return os.ReadFile(shardPath) }
+		objects[export.IndexCID] = func() ([]byte, error) { return os.ReadFile(indexPath) }
+		mu.Unlock()
 		if batch == "never-fetched" {
 			if err := os.Remove(export.ShardPath); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := n.materializeDatasetFeedHeadAnnouncement(ctx, syncwire.SegmentFromPublication(pub), provider.ID()); err == nil {
-				t.Fatal("missing provider file was accepted")
+			if ok, err := n.materializeDatasetPublicationPNM(ctx, "OMM.fbs", pnms[i], provider.ID()); err == nil || ok {
+				t.Fatalf("missing provider file was accepted: %v, %v", ok, err)
 			}
 			continue
 		}
-		if count, err := n.materializeDatasetFeedHeadAnnouncement(ctx, syncwire.SegmentFromPublication(pub), provider.ID()); err != nil || count != 1 {
-			t.Fatalf("import %s: %d, %v", batch, count, err)
+		if ok, err := n.materializeDatasetPublicationPNM(ctx, "OMM.fbs", pnms[i], provider.ID()); err != nil || !ok {
+			t.Fatalf("import %s: %v, %v", batch, ok, err)
+		}
+		// The subscriber holds the $PNM, as gossip stores it, for the
+		// stored-$PNM catch-up below.
+		if _, err := subscriber.Store("PNM.fbs", pnms[i], provider.ID().String(), nil); err != nil {
+			t.Fatal(err)
 		}
 	}
-	remote, err := n.listRemoteDatasetShardPublications(ctx, provider.ID(), "OMM.fbs")
-	if err != nil || len(remote) != 3 {
-		t.Fatalf("provider unavailable history: %d, %v", len(remote), err)
+	countRecords := func(s *storage.FlatSQLStore) int {
+		records, err := s.QueryIndexedRecords(storage.IndexedRecordQuery{SchemaName: "OMM.fbs", ProviderID: "retirement-e2e", SourceName: "fixture", Limit: 10})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(records)
 	}
-	lost, err := replica.DatasetPublicationShardPath(pubs[1])
+	if got := countRecords(subscriber); got != 3 {
+		t.Fatalf("subscriber imported %d records, want 3", got)
+	}
+	list := func() ([]syncwire.Segment, uint64) {
+		stream, response, err := syncwire.Call(ctx, consumer, provider.ID(), syncwire.OpListPublished, syncwire.QRPFields{SchemaName: "OMM.fbs", Limit: 10})
+		if err != nil {
+			t.Fatal(err)
+		}
+		stream.Close()
+		rows, err := syncwire.Segments(response)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return rows, response.TOTAL_COUNT()
+	}
+	// The producer lists its unavailable history as unavailable.
+	rows, total := list()
+	available := map[string]bool{}
+	for _, row := range rows {
+		if row.Availability == "available" {
+			available[row.BatchID] = true
+		} else if row.BatchID != "never-fetched" {
+			t.Fatalf("unexpected listing before retirement: %+v", row)
+		}
+	}
+	if len(rows) != 4 || total != 4 || len(available) != 3 || !available["held"] || !available["lost"] || !available["recovered"] {
+		t.Fatalf("provider unavailable history: %d rows, total %d, available %v", len(rows), total, available)
+	}
+
+	lost, err := producer.DatasetPublicationShardPath(pubs[1])
 	if err != nil {
 		t.Fatal(err)
 	}
-	recovered, err := replica.DatasetPublicationIndexPath(pubs[2])
+	recovered, err := producer.DatasetPublicationIndexPath(pubs[2])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,53 +250,105 @@ func TestPublicationRetirement(t *testing.T) {
 	}
 	observed := time.Unix(1800000000, 0)
 	retire := func(at time.Time, want int) {
-		got, err := replica.RetireUnavailableDatasetPublications(at)
+		got, err := producer.RetireUnavailableDatasetPublications(at)
 		if err != nil || got != want {
 			t.Fatalf("retired %d, want %d: %v", got, want, err)
 		}
 	}
+	reopen := func() {
+		if err := producer.Close(); err != nil {
+			t.Fatal(err)
+		}
+		producer = open(producerPath)
+		protocol.NewFlatSQLSyncHandler(producer).Register(provider)
+	}
 	retire(observed, 0) // Old publication time is not evidence of long absence.
 	retire(observed.Add(23*time.Hour), 0)
-	if err := replica.Close(); err != nil {
-		t.Fatal(err)
-	}
-	replica = open(replicaPath)
-	n.store = replica
+	reopen()
 	if err := os.WriteFile(recovered, index, 0600); err != nil {
 		t.Fatal(err)
 	}
-	retire(observed.Add(24*time.Hour), 1)
-	if err := replica.Close(); err != nil {
-		t.Fatal(err)
-	}
-	replica = open(replicaPath)
-	n.store = replica
-	protocol.NewFlatSQLSyncHandler(replica).Register(consumer)
-	stream, response, err := syncwire.Call(ctx, reader, consumer.ID(), syncwire.OpListPublished, syncwire.QRPFields{SchemaName: "OMM.fbs", Limit: 10})
-	if err != nil {
-		t.Fatal(err)
-	}
-	stream.Close()
-	rows, err := syncwire.Segments(response)
-	if err != nil || len(rows) != 2 || response.TOTAL_COUNT() != 2 {
-		t.Fatalf("listed %d rows, total %d: %v", len(rows), response.TOTAL_COUNT(), err)
+	// The lost shard and the shard the producer lost before anyone fetched it
+	// are both its own unavailable publications a day after first observed.
+	retire(observed.Add(24*time.Hour), 2)
+	reopen()
+
+	rows, total = list()
+	if len(rows) != 2 || total != 2 {
+		t.Fatalf("listed %d rows, total %d", len(rows), total)
 	}
 	for _, row := range rows {
 		if (row.BatchID != "held" && row.BatchID != "recovered") || row.Availability != "available" {
 			t.Fatalf("unexpected listing: %+v", row)
 		}
 	}
-	// A replay of the old announcement cannot refill the serving index.
-	if count, err := n.materializeDatasetFeedHeadAnnouncement(ctx, syncwire.SegmentFromPublication(pubs[1]), provider.ID()); err != nil || count != 0 {
-		t.Fatalf("retired feed replay: %d, %v", count, err)
+
+	// What retirement itself guarantees, on the producer, where it runs: the
+	// two retired publications cannot come back. Each is kept as retired in
+	// the replay ledger (the dedup state), the rows stay gone from the
+	// producer's own index after a later sweep and after a reopen, and the
+	// listing a requester reads over the wire never names them again.
+	for _, i := range []int{1, 3} {
+		if state, found, err := producer.DatasetPublicationReplayState(storage.DatasetPublicationRetirementKey(pubs[i])); err != nil || !found || state.State != "retired" {
+			t.Fatalf("retirement dedup of %s: %+v, %v, %v", pubs[i].BatchID, state, found, err)
+		}
 	}
-	if cached, err := n.datasetShardPublicationAlreadyCached(pubs[1]); err != nil || !cached {
-		t.Fatalf("retirement dedup: %v, %v", cached, err)
+	indexed := func(when string) {
+		t.Helper()
+		held, err := producer.ListDatasetShardPublicationsForProfile(storage.DatasetPublicationQueryProfile, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		batches := map[string]bool{}
+		for _, pub := range held {
+			batches[pub.BatchID] = true
+		}
+		if len(held) != 2 || !batches["held"] || !batches["recovered"] {
+			t.Fatalf("%s: the producer's publication index holds %v, want only held and recovered", when, batches)
+		}
+		if rows, total := list(); len(rows) != 2 || total != 2 {
+			t.Fatalf("%s: retired publication listed again: %d rows, total %d", when, len(rows), total)
+		}
 	}
+	indexed("after retirement and a reopen")
+	if got, err := producer.RetireUnavailableDatasetPublications(observed.Add(48 * time.Hour)); err != nil || got != 0 {
+		t.Fatalf("a later sweep retired %d, want 0: %v", got, err)
+	}
+	indexed("after a later sweep")
+	reopen()
+	indexed("after a second reopen")
+	for _, i := range []int{1, 3} {
+		if state, found, err := producer.DatasetPublicationReplayState(storage.DatasetPublicationRetirementKey(pubs[i])); err != nil || !found || state.State != "retired" {
+			t.Fatalf("retirement dedup of %s after a second reopen: %+v, %v, %v", pubs[i].BatchID, state, found, err)
+		}
+	}
+	// Retirement reconciles the index only: the lost file stays lost.
 	if _, err := os.Stat(lost); !os.IsNotExist(err) {
-		t.Fatalf("retired file was fetched again: %v", err)
+		t.Fatalf("retired file was written again: %v", err)
 	}
-	held, err := replica.DatasetPublicationShardPath(pubs[0])
+
+	// The subscriber's side, which is not retirement's: a node imports a
+	// publication once, by its own replay state, so a replay of the retired
+	// publication's signed $PNM, and the stored-$PNM catch-up, import
+	// nothing and fetch none of its files (this holds with or without the
+	// producer's retirement).
+	lostRequests := map[string]int{}
+	for _, cid := range []string{pubs[1].ShardCID, pubs[1].IndexCID} {
+		lostRequests[cid] = requestsFor(cid)
+	}
+	if ok, err := n.materializeDatasetPublicationPNM(ctx, "OMM.fbs", pnms[1], provider.ID()); err != nil || ok {
+		t.Fatalf("publication replay on the subscriber: %v, %v", ok, err)
+	}
+	if got, err := n.materializeStoredDatasetPublicationPNMs(ctx, 0); err != nil || got != 0 {
+		t.Fatalf("stored $PNM catch-up on the subscriber: %d, %v", got, err)
+	}
+	for cid, before := range lostRequests {
+		if after := requestsFor(cid); after != before {
+			t.Fatalf("retired publication asset %s was fetched again: %d requests, was %d", cid, after, before)
+		}
+	}
+
+	held, err := producer.DatasetPublicationShardPath(pubs[0])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +356,7 @@ func TestPublicationRetirement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stream, _, err = syncwire.Call(ctx, reader, consumer.ID(), syncwire.OpReadShard, syncwire.QRPFields{SchemaName: "OMM.fbs", CID: pubs[0].ShardCID})
+	stream, _, err := syncwire.Call(ctx, consumer, provider.ID(), syncwire.OpReadShard, syncwire.QRPFields{SchemaName: "OMM.fbs", CID: pubs[0].ShardCID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,8 +365,10 @@ func TestPublicationRetirement(t *testing.T) {
 	if err != nil || !bytes.Equal(actual, expected) {
 		t.Fatalf("held shard changed: %v", err)
 	}
-	records, err := replica.QueryIndexedRecords(storage.IndexedRecordQuery{SchemaName: "OMM.fbs", ProviderID: "retirement-e2e", SourceName: "fixture", Limit: 10})
-	if err != nil || len(records) != 3 {
-		t.Fatalf("retirement changed stored records: %d, %v", len(records), err)
+	if got := countRecords(producer); got != 4 {
+		t.Fatalf("retirement changed stored records: %d", got)
+	}
+	if got := countRecords(subscriber); got != 3 {
+		t.Fatalf("subscriber records changed: %d", got)
 	}
 }

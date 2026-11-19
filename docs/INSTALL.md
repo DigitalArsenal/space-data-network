@@ -264,6 +264,7 @@ writes a complete config. Edit these before binding anything non-loopback:
 | `status.allowed_origins` | your own origin, or delete the line |
 | `network.listen` | keep the defaults unless a port is taken (see step 4) |
 | `subscriptions.default_retention` | `replace-current` (the default: each publication replaces the lane's previous set) or `archive-all` (keep and pin every publication). A subscription can choose its own rule. |
+| `subscriptions.record_ceiling` | the records this node may hold before a new subscription's first read is refused (default 32,000,000, the store engine's ceiling) |
 
 Sign in to the dashboard with the node's own root key, or seed operators
 under `users:` with their `signing_pubkey_hex`. A node whose root identity is
@@ -351,9 +352,20 @@ network:
     - /ip4/167.172.219.213/tcp/4001/p2p/16Uiu2HAmGjaPxkWFSXBbmhs9K5x1Zo6euJw95VjS6Jj2bcPpYr2U
 ```
 
-The publisher needs no configuration. Once connected, the node materializes
-the publisher's signed dataset publications; the dashboard's SOURCES page
-lists them by origin with SYNC, EXPORT and ARCHIVE per lane.
+The publisher needs no configuration. Then subscribe to each lane you want:
+a node imports only the lanes it subscribes to.
+
+```sh
+spacedatanetwork sync subscribe --schema OMM --provider-id celestrak.eth \
+  --source-name celestrak-gp --from 16Uiu2HAmGjaPxkWFSXBbmhs9K5x1Zo6euJw95VjS6Jj2bcPpYr2U
+spacedatanetwork sync subscriptions
+```
+
+The command signs in to the running daemon with the node's root key, prints
+the first read (the publisher's current batch for a `replace-current` lane,
+the whole lane for a `keep-all` or `archive-all` lane) and refuses it when
+this node's free disk or record ceiling cannot take it (`--force` takes it
+anyway). [SUBSCRIPTIONS.md](SUBSCRIPTIONS.md) has the details.
 
 ## 8. Publish your own records
 

@@ -300,6 +300,12 @@ func (h *FlatSQLSyncHandler) handleReadChunk(w io.Writer, peerID peer.ID, req sy
 	query.QueryProfile = req.queryProfile
 	projection, listed := syncwire.Filter(req.q, syncwire.FilterProjection, syncwire.QRPFilterEq)
 	named, fetched := syncwire.Filter(req.q, syncwire.FilterCID, syncwire.QRPFilterIn)
+	if listed && projection == syncwire.ProjectionStatement {
+		if req.q.FOLLOW() || fetched || req.batchID != "" || req.providerID == "" || req.sourceName == "" || req.cursor != "" {
+			return errors.New("a lane's statement is one unfollowed read-chunk naming the lane and no batch, with PROJECTION STATEMENT alone")
+		}
+		return writeLaneStatement(w, activeStore, query)
+	}
 	if listed || fetched {
 		if req.q.FOLLOW() || listed == fetched || req.batchID == "" || req.providerID == "" || req.sourceName == "" {
 			return errors.New("a batch's list or its records by CID is one unfollowed read-chunk naming the lane and the batch, with one of PROJECTION and CID")
@@ -344,10 +350,15 @@ var (
 // Followed streams this node serves at once: per trusted peer, per peer
 // without a trust relation (anonymous), for all anonymous peers together and
 // in total. A stream past any is refused busy, so throwaway peer IDs hold at
-// most followAnonStreamsTotal of the followStreamsTotal slots.
+// most followAnonStreamsTotal of the followStreamsTotal slots, and one
+// anonymous peer at most an eighth of them: eight peers fill the anonymous
+// pool, and a subscriber the producer trusts is served outside it (16
+// streams, one per lane). A subscriber follows one stream per lane: a node
+// following more than eight lanes of one producer is listed by that producer
+// as trusted.
 const (
 	followStreamsPerPeer     = 16
-	followAnonStreamsPerPeer = 4
+	followAnonStreamsPerPeer = 8
 	followAnonStreamsTotal   = 64
 	followStreamsTotal       = 256
 )
@@ -375,6 +386,39 @@ func writeBatchCIDPage(w io.Writer, store *storage.FlatSQLStore, req syncRequest
 	}
 	_, err = w.Write(syncwire.CIDPage(syncwire.QRPFields{SchemaName: req.schema, ProviderID: req.providerID, SourceName: req.sourceName,
 		BatchID: req.batchID, Cursor: req.cursor, NextCursor: next, Limit: syncwire.FollowCIDPageLimit, GeneratedAtMs: time.Now().UnixMilli()}, cids))
+	return err
+}
+
+// writeLaneStatement answers a lane's statement (syncwire.LaneStatement):
+// its current batch and that batch's records and bytes, the lane's records
+// and bytes, and a resume cursor at the type's newest sequence for the
+// followed read of the lane (the query a subscriber's followed request
+// names: the lane, no batch, no profile), so a follow opened there sends
+// only what is stored after it.
+func writeLaneStatement(w io.Writer, store *storage.FlatSQLStore, query datasync.QueryRequest) error {
+	follow := datasync.QueryRequest{Schema: query.Schema, ProviderID: query.ProviderID, SourceName: query.SourceName}
+	boundary, err := store.RecordSequenceHead(datasync.FilterFromRequest(follow, 0, 0))
+	if err != nil {
+		return err
+	}
+	stmt := laneStatement(store, follow)
+	st := syncwire.LaneStatement{FollowStatement: stmt, ResumeCursor: datasync.ResumeCursorAt(store, follow, boundary)}
+	if stmt.BatchID != "" {
+		batch := follow
+		batch.BatchID = stmt.BatchID
+		records, head, err := store.RawRecordSnapshot(datasync.FilterFromRequest(batch, 0, 0))
+		if err != nil {
+			return err
+		}
+		st.Records, st.BatchBytes = records, head.TotalBytes
+	}
+	records, head, err := store.RawRecordSnapshot(datasync.FilterFromRequest(follow, 0, 0))
+	if err != nil {
+		return err
+	}
+	st.LaneRecords, st.LaneBytes = records, head.TotalBytes
+	_, err = w.Write(syncwire.StatementPage(syncwire.QRPFields{SchemaName: follow.Schema, ProviderID: follow.ProviderID, SourceName: follow.SourceName,
+		GeneratedAtMs: time.Now().UnixMilli()}, st))
 	return err
 }
 

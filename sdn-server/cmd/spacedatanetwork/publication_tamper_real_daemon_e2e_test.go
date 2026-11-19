@@ -70,9 +70,8 @@ func TestPublicationContentAddressRealDaemons(t *testing.T) {
 	a := newPublicationDaemon(t, exe, "content-producer", "", "", "keep-all")
 	a.start(t)
 	b := newPublicationDaemon(t, exe, "content-receiver", a.address, a.id, "keep-all")
-	// Refuse the independent feed-head import so it cannot populate the
-	// dataset before the PNM's manifest content-address check is observed.
-	b.importPolicy(t, "deny")
+	// The receiver does not subscribe to the lane, so nothing populates it:
+	// the PNM's manifest content-address check runs before the lane gate.
 	b.start(t)
 	b.stop(t)
 	a.ingestOMM(t, "content-address", "first", 700000, 16)

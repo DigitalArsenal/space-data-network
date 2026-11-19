@@ -170,7 +170,7 @@ Stream protocols:
 ### Pubsub lanes
 
 - **Per-schema data topics** — `/spacedatanetwork/sds/<SCHEMA>` — the streaming record lane: one topic per standard, joined for every validated schema. Publication notifications ride the PNM standard's own data topic, `/spacedatanetwork/sds/PNM.fbs`.
-- **Feed heads** — `/space-data-network/feed-heads/2.0.0/<schema>` — small, signed, mutable pointer messages (one `$QRP` Page carrying one SEGMENT row). A feed head announces where a standard's latest immutable materialized set lives (record count, byte count, shard / query-index / manifest CIDs, publication CID) and is what replicas subscribe to *before* fetching the immutable shards.
+- **Followed lanes** (not a topic) — from 1.2.0 a node imports only the lanes it subscribes to, over a followed `read-chunk` stream from the producer (`docs/SUBSCRIPTIONS.md`). The feed-heads topic is gone.
 - **Adjuncts** — `/spacedatanetwork/edge-relays` (relay announcements), storefront topics `/sdn/storefront/{listings,purchases,reviews}`, per-buyer delivery topics `/sdn/data/{listing_id}/{buyer_peer_id}`, and channel discovery topics.
 
 ### The publication lifecycle (dataset lane)
@@ -252,8 +252,8 @@ Follow one record from origin to a consumer's screen:
 1. **Origin.** A provider (human, script, or flow worker) acquires source data — say, an orbital element set — and encodes it as a size-prefixed SDS FlatBuffer (`OMM`). The bytes are now the record; there is no other form.
 2. **Validation and admission.** `ingest`-style workers or the publish API present the bytes. The node checks the schema is allowed for publishing on this node, checks the session/trust/authorization policy, caps the body size, and validates the record structurally against the schema. The record's own size prefix and file identifier decide which standard's table it enters — a caller can never steer an `OMM` record onto another standard's table through an allowed path.
 3. **Storage.** The bytes are appended to the standard's append-only stream (content-addressed, CID-deduplicated), indexed, journaled, and mirrored into the engine's per-source shadow table for the standard. On disk: one stream, one engine, one format.
-4. **Announcement.** A signed feed head goes out on the schema's feed-heads topic; the record may also stream on the schema's pubsub topic. The provider periodically materializes the authoritative set into a shard + query index, signs a DPM, pins it to IPFS, and signs a PNM.
-5. **Propagation.** Other nodes verify the feed head / PNM signatures against the publisher's published identity key, fetch the shard by content address over `flatsql-sync`, verify hashes and signatures, and import it. Full nodes with public addresses serve and pin; light peers and browsers sync over relay.
+4. **Announcement.** Each subscriber that follows the lane receives the record over its followed stream within seconds; the record may also stream on the schema's pubsub topic. The provider periodically materializes the authoritative set into a shard + query index, signs a DPM, pins it to IPFS, and signs a PNM.
+5. **Propagation.** A node that subscribes to the lane from that publisher takes the records from its followed stream, and verifies a PNM signature against the publisher's published identity key before it imports the shard by content address over `flatsql-sync`; a node imports nothing it does not subscribe to. Full nodes with public addresses serve and pin; light peers and browsers sync over relay.
 6. **Serving.** Records answer queries from the engine: the public schemas over the anonymous HTTP data plane, everything else behind authentication. A requesting browser is itself a node — it fetched, verified, and stores the same bytes locally rather than trusting the server's word.
 
 That is the whole design: one format, one identity tree, signed at every boundary, with the host acting only as a connector.

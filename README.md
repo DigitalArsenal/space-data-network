@@ -763,9 +763,26 @@ provenance without exposing maneuver intent to the public network.
 | **SessionKey** | AES-256-GCM | Bulk streaming |
 | **Hybrid** | Plaintext header + encrypted payload | Routable encrypted data |
 
-### Streaming Subscriptions
+### Subscriptions: what a node imports
 
-Three delivery modes: **Single** (on-demand), **Streaming** (real-time), **Batch** (periodic). Subscriptions support schema/peer filtering, rate limiting, and priority routing.
+A node imports only the lanes it subscribes to. A subscription names a lane
+(standard, provider, source) and the trusted producer peer to follow it from;
+the node follows the lane over a live stream, so records arrive within
+seconds of the producer storing them, and resumes after a restart with
+nothing lost or doubled.
+
+```bash
+spacedatanetwork sync subscribe --schema OMM --provider-id space-data-network-02 \
+  --source-name celestrak-gp --from <producer peer id>
+spacedatanetwork sync subscriptions
+spacedatanetwork sync unsubscribe --schema OMM --provider-id space-data-network-02 \
+  --source-name celestrak-gp --from <producer peer id>
+```
+
+The first read is bounded by the lane's rule (a `replace-current` lane starts
+at the producer's current batch, a `keep-all` lane at its beginning) and is
+refused when this node's disk or record ceiling cannot take it, unless
+`--force`. See [docs/SUBSCRIPTIONS.md](./docs/SUBSCRIPTIONS.md).
 
 ### Browser Nodes (sdn-js)
 

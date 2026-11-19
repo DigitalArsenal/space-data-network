@@ -70,12 +70,18 @@ type AdminMountDeps struct {
 	// FlowServices lists the timer-served flows the node runs.
 	FlowServices func() []FlowServiceInfo
 
-	// SyncLane runs one bounded trusted-peer catch-up pass for a lane and
-	// returns how many shards were materialized.
-	SyncLane func(ctx context.Context, schema, providerID, sourceName string) (int, error)
-	// Follow starts (on) or stops following a lane from a producer peer
-	// (a $DSS Subscribe or Unsubscribe that names PROVIDER_PEER_ID).
-	Follow func(schema, providerID, sourceName, producerPeerID string, on bool) error
+	// SubscribeLane follows a lane from a producer peer once its first
+	// read fits (a $DSS Subscribe that names PROVIDER_PEER_ID);
+	// PlanLaneSubscription answers that first read without subscribing.
+	SubscribeLane        func(ctx context.Context, req LaneSubscription) (LanePlan, error)
+	PlanLaneSubscription func(ctx context.Context, req LaneSubscription) (LanePlan, error)
+	// Unfollow stops following a lane (an Unsubscribe; an empty producer is
+	// every producer, an empty provider and source every lane of the
+	// standard).
+	Unfollow func(schema, providerID, sourceName, producerPeerID string) error
+	// LedgerLanes is the removed import gate's lanes (the 1.1.9 ledger and
+	// allow list) and their producers (sync subscribe --from-ledger).
+	LedgerLanes func() ([]LedgerLane, error)
 	// LaneFollows is what this node has received from the producers it
 	// follows; LaneServed what it has served to its followers. Both fill
 	// a lane's $DSS.

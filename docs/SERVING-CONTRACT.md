@@ -65,10 +65,13 @@ peers). SEGMENT rows use one column set (`syncwire.SegmentColumns`), read by
 column name; empty strings and bytes are Null cells. A `source_name`-only
 filter is indexed (`(schema_name, source_name, cid)`).
 
-Feed heads: topic `/space-data-network/feed-heads/2.0.0/<SCHEMA>.fbs`, message =
-one `$QRP` Page with one SEGMENT row; SIGNATURE (Bytes) = Ed25519 over
-`"SDN-FEED-HEAD\0"` + that frame rebuilt with SIGNATURE and SIGNATURE_TYPE Null;
-SIGNATURE_TYPE `Ed25519`; SIGNING_PUBLIC_KEY (Bytes, 32).
+Feed heads (the topic `/space-data-network/feed-heads/2.0.0/<SCHEMA>.fbs`)
+are removed in 1.2.0: a node imports only the lanes it subscribes to, over a
+followed `read-chunk` (`FOLLOW`). A lane's statement is an unfollowed
+`read-chunk` naming the lane and no batch with FILTERS `PROJECTION` Eq
+`STATEMENT`: one `$QRP` Page with `BATCH_ID`, `TOTAL_COUNT` (the current
+batch's records), `RESUME_CURSOR` (the lane's present position) and one row
+`BATCH_RECORDS`, `BATCH_BYTES`, `LANE_RECORDS`, `LANE_BYTES` (Int).
 
 ## Maintenance (admin session or loopback dev auto-admin)
 

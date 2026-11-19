@@ -1,23 +1,17 @@
 package node
 
-// D2 on the PNM replay path (multi-body round 2, 2026-10-13): a trusted
-// peer's dataset-update PNM reaches materializeDatasetPublicationPNM three
-// ways (the schema-topic gossip, the PNM.fbs TipQueue, the stored-PNM
-// catch-up). A lane this node neither holds nor lists is skipped on every one
-// of them once the signed DPM names it: the shard and index are never
-// fetched and no record lands.
+// The import gate on the PNM replay path: a trusted peer's dataset-update
+// PNM reaches materializeDatasetPublicationPNM three ways (the schema-topic
+// gossip, the PNM.fbs TipQueue, the stored-PNM catch-up). A lane this node
+// does not subscribe to from that peer is skipped on every one of them once
+// the signed DPM names it: the shard and index are never fetched and no
+// record lands.
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/libp2p/go-libp2p/core/peer"
-
-	"github.com/spacedatanetwork/sdn-server/internal/config"
 	sdnpubsub "github.com/spacedatanetwork/sdn-server/internal/pubsub"
-	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
 
@@ -45,10 +39,14 @@ func (f *replayNodeFixture) assertNothingImported(t *testing.T, path string) {
 	}
 }
 
+// newDenyingReplayFixture is the replay fixture without its subscription:
+// the provider is trusted, but this node does not subscribe to the lane.
 func newDenyingReplayFixture(t *testing.T) *replayNodeFixture {
 	t.Helper()
 	f := newReplayNodeFixture(t, true)
-	f.node.config.Peers.TrustedImport = config.Default().Peers.TrustedImport
+	if err := f.node.Unfollow("CAT.fbs", f.tags.ProviderID, f.tags.SourceName, f.providerID.String()); err != nil {
+		t.Fatal(err)
+	}
 	return f
 }
 
@@ -116,30 +114,6 @@ func TestTrustedPNMTipQueueDeclinesANewLane(t *testing.T) {
 	f.assertNothingImported(t, "tipqueue")
 }
 
-// A store wipe does not turn the lanes a node synced into new lanes: the
-// lane ledger beside the store (kept by store-wipe) still lists them, and the
-// default (deny new lanes) imports them again; a lane never held stays out.
-func TestTrustedImportLedgerSurvivesAStoreWipe(t *testing.T) {
-	dir := t.TempDir()
-	cfg := config.Default()
-	cfg.Storage.Path = dir
-	n := &Node{config: cfg}
-	from := peer.ID("host-02")
-	n.trustedImportLedger().record("OMM.fbs", "space-data-network-02", "celestrak-gp")
-	// The wipe and the restart: a new process (no ledger in memory), an
-	// empty store.
-	trustedImportLedgers.Delete(filepath.Join(dir, trustedImportLaneLedgerFile))
-	if _, err := os.Stat(filepath.Join(dir, trustedImportLaneLedgerFile)); err != nil {
-		t.Fatalf("ledger not written: %v", err)
-	}
-	if !n.trustedPeerLaneImportAllowed(from, "OMM.fbs", "space-data-network-02", "celestrak-gp", "") {
-		t.Fatal("the satellite catalog lane a wiped node held before is refused")
-	}
-	if n.trustedPeerLaneImportAllowed(from, "SBD.fbs", "lowell-astorb", "astorb-numbered", "") {
-		t.Fatal("a lane the node never held is imported")
-	}
-}
-
 func TestTrustedPNMStoredCatchUpSkipsANewLane(t *testing.T) {
 	t.Parallel()
 	f := newDenyingReplayFixture(t)
@@ -157,30 +131,10 @@ func TestTrustedPNMStoredCatchUpSkipsANewLane(t *testing.T) {
 func TestTrustedPNMReplayImportsAListedLane(t *testing.T) {
 	t.Parallel()
 	f := newDenyingReplayFixture(t)
-	f.node.config.Peers.TrustedImport.Allow = []config.LaneSelector{{Schema: "CAT.fbs", ProviderID: f.tags.ProviderID}}
+	subscribeForTest(t, f.node, "CAT.fbs", f.tags.ProviderID, f.tags.SourceName, f.providerID)
 	materialized, err := f.node.materializeDatasetPublicationPNM(f.node.ctx, "CAT.fbs", f.pnm, f.providerID)
 	if err != nil || !materialized {
 		t.Fatalf("materialize = %v, %v; want the listed lane imported", materialized, err)
-	}
-	if n := f.laneRecords(t); n != 1 {
-		t.Fatalf("records = %d, want 1", n)
-	}
-}
-
-// A lane this node holds records of (received earlier only as PNMs, so it
-// has no shard-publication row) keeps importing with no config change.
-func TestTrustedPNMReplayImportsALaneHeldAsRecords(t *testing.T) {
-	t.Parallel()
-	f := newDenyingReplayFixture(t)
-	held := f.tags
-	held.BatchID = "batch-replay-work-000"
-	record := sds.NewCATBuilder().WithNoradCatID(25545).WithObjectName("HELD").WithObjectType("PAYLOAD").WithOpsStatus("OPERATIONAL").Build()
-	if _, err := f.node.store.StoreWithSourceTags("CAT.fbs", record, f.providerID.String(), nil, held); err != nil {
-		t.Fatal(err)
-	}
-	materialized, err := f.node.materializeDatasetPublicationPNM(f.node.ctx, "CAT.fbs", f.pnm, f.providerID)
-	if err != nil || !materialized {
-		t.Fatalf("materialize = %v, %v; want the held lane imported", materialized, err)
 	}
 	if n := f.laneRecords(t); n != 1 {
 		t.Fatalf("records = %d, want 1", n)

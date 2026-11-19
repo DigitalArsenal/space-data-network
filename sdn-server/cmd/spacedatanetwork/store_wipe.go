@@ -51,9 +51,11 @@ var storeWipeMustSurvive = []string{
 	"auth.db", "auth.db-wal", "auth.db-shm",
 	"keys/", "secrets/", "modules/", "customer-modules/", "license/", "flows/",
 	"p2p-forge-certs/", "tls/", "field-encryption-identity.json",
-	// The lanes this node has held from its trusted peers
-	// (internal/node/trusted_import.go): a wiped store re-imports them.
-	"trusted-import-lanes.json",
+	// The lanes this node subscribes to (internal/node/follow.go). After a
+	// wipe each followed lane fetches the producer's current batch again at
+	// its first quiet page; its older history comes back only by subscribing
+	// again with --start beginning.
+	"follows.dss", "subscriptions.dss",
 }
 
 var storeWipeYes bool

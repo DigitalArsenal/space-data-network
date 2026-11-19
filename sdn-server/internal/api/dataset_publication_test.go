@@ -165,7 +165,6 @@ func TestDatasetPublicationHandlerParsesAnnounceExisting(t *testing.T) {
 type fakeDatasetUpdatePublisher struct {
 	announcement  sdnpubsub.DatasetUpdateAnnouncement
 	announcements []sdnpubsub.DatasetUpdateAnnouncement
-	feedHeads     []sdnpubsub.DatasetFeedHeadAnnouncement
 	called        bool
 }
 
@@ -173,11 +172,6 @@ func (f *fakeDatasetUpdatePublisher) PublishDatasetUpdatePNM(ctx context.Context
 	f.called = true
 	f.announcement = ann
 	f.announcements = append(f.announcements, ann)
-	return nil
-}
-
-func (f *fakeDatasetUpdatePublisher) PublishDatasetFeedHead(ctx context.Context, ann sdnpubsub.DatasetFeedHeadAnnouncement) error {
-	f.feedHeads = append(f.feedHeads, ann)
 	return nil
 }
 
@@ -317,12 +311,6 @@ func TestConcreteDatasetPublicationServiceExportsPinsSignsAndAnnounces(t *testin
 	}
 	if publishedShard.ShardCID != result.ShardCID || publishedShard.IndexCID != result.IndexCID || publishedShard.ManifestCID != result.ManifestCID || publishedShard.PNMCID != result.PNMCID {
 		t.Fatalf("published shard registry entry mismatch: %#v result=%#v", publishedShard, result)
-	}
-	if len(publisher.feedHeads) != 1 {
-		t.Fatalf("feed head announcements = %d, want 1", len(publisher.feedHeads))
-	}
-	if publisher.feedHeads[0].FeedHead != publishedShard.FeedHead || publisher.feedHeads[0].FeedSequence != publishedShard.FeedSequence {
-		t.Fatalf("feed head announcement mismatch: announcement=%#v stored=%#v", publisher.feedHeads[0], publishedShard)
 	}
 
 	ledger, err := store.ListPinLedgerEntries(storage.PinLedgerQuery{
@@ -552,12 +540,6 @@ func TestConcreteDatasetPublicationServicePublishesRegisteredDatastoreNamespace(
 	if result.Schema != "CAT.fbs" || result.RecordCount != 2 {
 		t.Fatalf("unexpected result: %#v", result)
 	}
-	if len(publisher.feedHeads) != 1 {
-		t.Fatalf("feed head announcements = %d, want 1", len(publisher.feedHeads))
-	}
-	if publisher.feedHeads[0].ProviderID != "space-data-network-02" || publisher.feedHeads[0].SourceName != "provider-cat-historical" || publisher.feedHeads[0].BatchID != "historical-head" {
-		t.Fatalf("feed head source identity mismatch: %#v", publisher.feedHeads[0])
-	}
 
 	if rootPublications, err := rootStore.ListDatasetShardPublications(storage.DatasetShardPublicationQuery{
 		SchemaName:   "CAT.fbs",
@@ -765,7 +747,6 @@ func TestConcreteDatasetPublicationServiceSkipsUnchangedFullCatalogShards(t *tes
 	service.SetChannelRecorder(restartedChannelAPI)
 	pinnedAfterFirst := len(pinned)
 	announcementsAfterFirst := len(publisher.announcements)
-	headsAfterFirst := len(publisher.feedHeads)
 
 	second, err := service.PublishDatasetUpdate(context.Background(), req)
 	if err != nil {
@@ -779,9 +760,6 @@ func TestConcreteDatasetPublicationServiceSkipsUnchangedFullCatalogShards(t *tes
 	}
 	if len(publisher.announcements) != announcementsAfterFirst+len(first.Publications) {
 		t.Fatalf("second publish announcements = %d, want %d re-announced reusable PNMs", len(publisher.announcements), announcementsAfterFirst+len(first.Publications))
-	}
-	if len(publisher.feedHeads) != headsAfterFirst+len(first.Publications) {
-		t.Fatalf("second publish feed heads = %d, want %d re-announced reusable feed heads", len(publisher.feedHeads), headsAfterFirst+len(first.Publications))
 	}
 	for i := range first.Publications {
 		if second.Publications[i].ShardCID != first.Publications[i].ShardCID ||
@@ -916,7 +894,6 @@ func TestConcreteDatasetPublicationServiceAnnounceExistingRepublishesRepairedInd
 
 	publisher.called = false
 	publisher.announcements = nil
-	publisher.feedHeads = nil
 	service.now = func() time.Time { return time.Date(2026, 5, 15, 12, 2, 0, 0, time.UTC) }
 
 	repairCtx, cancelRepair := context.WithCancel(context.Background())
@@ -942,8 +919,8 @@ func TestConcreteDatasetPublicationServiceAnnounceExistingRepublishesRepairedInd
 	if repaired.Publications[0].ManifestCID == "" || repaired.Publications[0].PNMCID == "" {
 		t.Fatalf("repaired publication missing republished manifest/PNM: %#v", repaired.Publications[0])
 	}
-	if !publisher.called || len(publisher.announcements) != 1 || len(publisher.feedHeads) != 1 {
-		t.Fatalf("repair announcements = pnm:%d feed:%d called:%v", len(publisher.announcements), len(publisher.feedHeads), publisher.called)
+	if !publisher.called || len(publisher.announcements) != 1 {
+		t.Fatalf("repair announcements = pnm:%d called:%v", len(publisher.announcements), publisher.called)
 	}
 	if _, ok := pinned[repaired.Publications[0].ManifestCID]; !ok {
 		t.Fatalf("repaired manifest %q was not pinned", repaired.Publications[0].ManifestCID)

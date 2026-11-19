@@ -1,5 +1,91 @@
 # Next node release: release-notes text
 
+**After this update a node imports only the lanes it subscribes to.**
+`peers.trusted_import` and the five-minute shard catch-up are gone;
+subscriptions are `$DSS` records (`subscriptions.dss`). A node updated from
+1.1.9 converts its lane ledger (`trusted-import-lanes.json`) and its
+`peers.trusted_import` allow list into subscriptions on its first start, each
+from the trusted peer the lane's records came from and starting at that
+peer's current batch, and records what it converted in
+`<storage.path>/trusted-import-converted`. The ledger and the config are
+left in place, and the converted subscriptions are kept where 1.1.9 does not
+read them, so an update that rolls back to 1.1.9 by itself imports as 1.1.9
+did and reads no lane from its beginning. Every start names each removed key
+still in the config (log and the alert `subscription_conversion`); a new node
+whose config carries `peers.trusted_import` refuses to start.
+
+- No subscription is read from a lane's beginning unless it was made with
+  `--start beginning` (or by a `keep-all` or `archive-all` lane's rule, after
+  its size check). A producer that refuses a saved cursor (a rebuilt index or
+  store) gets the lane started again at its current batch, with the alert
+  `follow_cursor_refused`. On a lane whose history the node keeps, the
+  records not read are kept with the subscription (`sync subscriptions`:
+  "not read") until `sync subscribe --start beginning` reads the lane again
+  or `sync subscribe --acknowledge-unread` accepts the gap.
+- Each followed page, each fetch by content address of a current batch, and
+  each `$PNM` publication import is checked before it is stored, against one
+  reservation that all lanes share (released when each store returns, also
+  when it fails): a lane stops, its cursor kept, before the store would pass
+  `subscriptions.record_ceiling` or leave less than 1 GiB of free disk under
+  `storage.path` (alert `follow_stopped`), and resumes once the page fits.
+  `--force` skips only the check before the subscription.
+- A record gossiped on a schema topic (`POST /api/v1/pubsub/publish`, the
+  sdn-js `publish`) names no lane and is no longer stored by any node,
+  whatever its trust of the sender or `network.accept_push_from`. Signed
+  `$PNM` announcements (node identity, dataset publications) are unchanged.
+- A lane whose followed stream is connected no longer fetches its
+  publications' shards as well (an `archive-all` lane still keeps them),
+  once it holds the producer's current batch; a lane whose stream the
+  producer refuses, or whose current batch it cannot hold, imports through
+  them. After a restart a publication waits (at most 5 minutes) until the
+  lane's stream has held its batch again or failed to, so it is not imported
+  a second time.
+- A producer serves a peer it does not trust at most 8 followed streams
+  (64 for all such peers); a node following more lanes of one producer is
+  listed by it in `peers.trusted_peers` (16 streams, outside the 64),
+  unless the producer may run 1.1.9 again: 1.1.9 imports every lane of a
+  peer it trusts.
+- `subscriptions.dss` and `follows.dss` are written `follows.dss` first. A
+  file whose bytes do not decode at start is moved aside, not overwritten; a
+  file whose read fails (permission, I/O) is left in place and read again at
+  the next start; either way the node imports no lane and changes no
+  subscription until the file reads (alert `subscriptions_unreadable`). A
+  subscription naming a field this release does not know (a later version
+  wrote it) is not run and kept as it is (alert `subscription_refused`); the
+  other lanes run. An unsubscribe made under 1.1.9 during a rollback comes
+  back with the next start of this release. `sync unsubscribe` clears the
+  lane's alerts.
+
+- `spacedatanetwork sync subscribe --schema <standard> --provider-id
+  <provider> --source-name <source> --from <producer peer id>` subscribes,
+  signed in to the running daemon with the node's root key. The first read is
+  bounded by the lane's rule: a `replace-current` lane starts at the
+  producer's current batch, a `keep-all` or `archive-all` lane at its
+  beginning (`--start` overrides). The command prints the producer's size of
+  that first read and the node refuses it when its free disk or its record
+  ceiling (`subscriptions.record_ceiling`, default 32,000,000) cannot take
+  it, unless `--force`. `sync subscribe --from-ledger` plans (and with
+  `--yes` makes) the subscriptions of a 1.1.9 ledger and allow list. `sync
+  unsubscribe` and `sync subscriptions` (each lane's producer, start time,
+  records and bytes received, current batch and lag) complete the set; `sync
+  status` reads through a running daemon instead of failing on the store it
+  holds.
+- Removed with the old gate: the feed-head announcements and their topic,
+  the trust-promotion catch-up, the `$DSS` `Sync` action (refused: a followed
+  lane is always current) and `security.require_signed_feed_heads`. A signed
+  `$PNM` publication still imports, for a subscribed lane only.
+- The lane statement is new on the wire (`read-chunk` with `PROJECTION`
+  `STATEMENT`). A 1.1.9 producer answers it with an error: a new subscription
+  to it is refused (`--force --start beginning` follows it unsized), and a
+  converted subscription imports the lane's `$PNM` publications and waits to
+  start its stream until the producer runs this release. A 1.1.9
+  follower of a producer on this release keeps following: the followed
+  stream is unchanged.
+- `docs/SUBSCRIPTIONS.md` has the commands, the first-read rules, the
+  upgrade and the API.
+
+---
+
 Text for the notes of the first node release that carries this change. It
 replaces the paragraph "Linux: give the node a key password file" that the
 v1.1.0 and v1.1.4 release notes carry, and

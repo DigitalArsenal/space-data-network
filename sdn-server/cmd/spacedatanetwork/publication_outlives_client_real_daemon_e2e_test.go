@@ -31,6 +31,7 @@ func TestPublicationOutlivesClientRealDaemons(t *testing.T) {
 	a.start(t)
 	b := newPublicationDaemon(t, exe, "outlives-receiver", a.address, a.id, "keep-all")
 	b.start(t)
+	b.follow(t, a, "OMM", "outlives", "")
 	time.Sleep(3 * time.Second)
 
 	const n, per = 150_000, 5_000
@@ -63,7 +64,10 @@ func TestPublicationOutlivesClientRealDaemons(t *testing.T) {
 	}
 	t.Logf("the client gave up after %s", publicationClientDeadline)
 	b.awaitRecords(t, "OMM.fbs", "outlives", want, 6*time.Minute)
-	completed := publicationLogAfter(t, a, `Dataset publication OMM.fbs publication-e2e/outlives batch "first" completed in `)
+	// The receiver follows the lane, so its records can arrive before the
+	// publication completes: the completion is awaited within the same
+	// budget the records had.
+	completed := publicationAwaitLog(t, a, `Dataset publication OMM.fbs publication-e2e/outlives batch "first" completed in `, 6*time.Minute)
 	t.Logf("producer: completed in %s", completed)
 	for _, orphan := range orphans {
 		if _, err := os.Stat(orphan); !os.IsNotExist(err) {

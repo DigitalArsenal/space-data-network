@@ -24,7 +24,6 @@ import (
 	sdnpubsub "github.com/spacedatanetwork/sdn-server/internal/pubsub"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
-	"github.com/spacedatanetwork/sdn-server/internal/syncwire"
 	"github.com/spacedatanetwork/sdn-server/internal/typedfb/ingestresult"
 )
 
@@ -123,10 +122,6 @@ type DatasetPublicationService interface {
 // DatasetUpdatePublisher is implemented by the running SDN node.
 type DatasetUpdatePublisher interface {
 	PublishDatasetUpdatePNM(context.Context, sdnpubsub.DatasetUpdateAnnouncement) error
-}
-
-type DatasetFeedHeadPublisher interface {
-	PublishDatasetFeedHead(context.Context, sdnpubsub.DatasetFeedHeadAnnouncement) error
 }
 
 type DatasetPublicationChannelUpdate struct {
@@ -624,9 +619,6 @@ func (s *ConcreteDatasetPublicationService) announceExistingDatasetPublications(
 					return nil, err
 				}
 			}
-		}
-		if err := s.announceDatasetFeedHead(workCtx, publication); err != nil {
-			return nil, err
 		}
 		result.Publications = append(result.Publications, DatasetPublicationResult{
 			Schema:      publication.SchemaName,
@@ -1335,22 +1327,10 @@ func (s *ConcreteDatasetPublicationService) reusableDatasetPublicationResult(
 }
 
 func (s *ConcreteDatasetPublicationService) announceDatasetPublication(ctx context.Context, req DatasetPublicationRequest, publishedShard storage.DatasetShardPublication, pnmBytes []byte) error {
-	if err := s.publisher.PublishDatasetUpdatePNM(ctx, sdnpubsub.DatasetUpdateAnnouncement{
+	return s.publisher.PublishDatasetUpdatePNM(ctx, sdnpubsub.DatasetUpdateAnnouncement{
 		PNM:     pnmBytes,
 		Schemas: append([]string{publishedShard.SchemaName}, req.AnnouncementSchemas...),
-	}); err != nil {
-		return err
-	}
-	return s.announceDatasetFeedHead(ctx, publishedShard)
-}
-
-func (s *ConcreteDatasetPublicationService) announceDatasetFeedHead(ctx context.Context, publishedShard storage.DatasetShardPublication) error {
-	if headPublisher, ok := s.publisher.(DatasetFeedHeadPublisher); ok {
-		if err := headPublisher.PublishDatasetFeedHead(ctx, syncwire.SegmentFromPublication(publishedShard)); err != nil {
-			return err
-		}
-	}
-	return nil
+	})
 }
 
 // recordShardGroupCARBundle makes sure shard-group CAR bundles cover the

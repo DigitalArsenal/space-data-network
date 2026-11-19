@@ -114,28 +114,15 @@ func DefaultNamedOnlyLanes() []LaneSelector {
 	}
 }
 
-// TrustedImportConfig scopes what this node materializes from its trusted
-// peers' dataset publications (the catch-up pass and live feed heads).
-// Before 2026-10-13 a trusted peer's every publication of every schema was
-// imported; a provider that starts publishing a new bulk lane (895,910
-// asteroid $SBD records every 72 hours) would land on every node that trusts
-// it. Now a lane this node does not already hold is imported only when
-// listed (multi-body round 2, coordinator D2).
-type TrustedImportConfig struct {
-	// NewLanes is the rule for a lane this node holds no publication of yet:
-	// "deny" (default) imports it only when Allow names it; "allow" imports
-	// every lane, as before.
-	NewLanes string `yaml:"new_lanes,omitempty"`
-	// Allow names lanes imported from trusted peers even when new here.
-	Allow []LaneSelector `yaml:"allow,omitempty"`
-	// Deny names lanes never imported from trusted peers, held or not.
-	// Deny wins over Allow and over a held lane.
-	Deny []LaneSelector `yaml:"deny,omitempty"`
-}
-
-// NewLanesAllowed reports whether unlisted new lanes are imported.
-func (c TrustedImportConfig) NewLanesAllowed() bool {
-	return strings.EqualFold(strings.TrimSpace(c.NewLanes), "allow")
+// RemovedTrustedImport is peers.trusted_import, removed in 1.2.0: a node
+// imports only the lanes it subscribes to (spacedatanetwork sync
+// subscribe). It is read only so a node updated from 1.1.9 converts its
+// allow list into subscriptions once (node.convertRemovedTrustedImport); a later
+// start reports it as ignored, and a new node refuses to start with it.
+type RemovedTrustedImport struct {
+	NewLanes string         `yaml:"new_lanes,omitempty"`
+	Allow    []LaneSelector `yaml:"allow,omitempty"`
+	Deny     []LaneSelector `yaml:"deny,omitempty"`
 }
 
 // Subscription retention words. These mirror
@@ -163,6 +150,23 @@ type SubscriptionsConfig struct {
 	// with `spacedatanetwork channels retention` or the dashboard ($DSS
 	// SetRetention on POST /api/v1/sync) and kept in the subscription file.
 	DefaultRetention string `yaml:"default_retention"`
+	// RecordCeiling is the records this node's store may hold before a new
+	// subscription's first read is refused (sync subscribe --force takes it
+	// anyway). 0 means DefaultSubscriptionRecordCeiling.
+	RecordCeiling int64 `yaml:"record_ceiling,omitempty"`
+}
+
+// DefaultSubscriptionRecordCeiling is the computed ceiling of the format-5
+// engine's 2 GiB heap across all lanes (about 40 bytes of checkpoint cache a
+// record; stack issue 818).
+const DefaultSubscriptionRecordCeiling int64 = 32_000_000
+
+// EffectiveRecordCeiling is RecordCeiling, or the default when unset.
+func (c SubscriptionsConfig) EffectiveRecordCeiling() int64 {
+	if c.RecordCeiling > 0 {
+		return c.RecordCeiling
+	}
+	return DefaultSubscriptionRecordCeiling
 }
 
 // EffectiveDefaultRetention returns the configured default rule, or
@@ -1268,9 +1272,11 @@ type NetworkConfig struct {
 	EdgeRelays []string `yaml:"edge_relays"`
 	MaxConns   int      `yaml:"max_connections"`
 
-	// AcceptPushFrom controls WHOSE RECORDS THIS NODE WILL STORE from gossip
-	// (records and PNM announcements on pubsub topics): "trusted" (default)
-	// or "any".
+	// AcceptPushFrom controls whose $PNM announcements gossiped on pubsub
+	// topics this node stores: "trusted" (default) or "any". A gossiped
+	// record that is not a $PNM names no lane and is stored from no one: a
+	// node imports only the lanes it subscribes to (internal/node/follow.go,
+	// gossipRecordAdmitted).
 	//
 	// It defaults to trusted because the alternative was the shipped
 	// behaviour and it was not safe: the per-record push message (since
@@ -1849,11 +1855,34 @@ type SecurityConfig struct {
 	// without it. Mutually exclusive with key_password.
 	KeyPasswordFile string `yaml:"key_password_file,omitempty"`
 
-	// RequireSignedFeedHeads rejects dataset feed-head announcements that do
-	// not carry an Ed25519 payload signature. Invalid signatures are always
-	// rejected; this flag additionally rejects unsigned announcements, for
-	// networks where every publisher has upgraded to signed feed heads.
-	RequireSignedFeedHeads bool `yaml:"require_signed_feed_heads,omitempty"`
+	// RemovedRequireSignedFeedHeads is security.require_signed_feed_heads,
+	// removed in 1.2.0 with the feed heads: read only to name it as
+	// ignored when a config still carries it.
+	RemovedRequireSignedFeedHeads *bool `yaml:"require_signed_feed_heads,omitempty"`
+}
+
+// RemovedKeys names each key of c that 1.2.0 removed and ignores.
+func (c *Config) RemovedKeys() []string {
+	if c == nil {
+		return nil
+	}
+	var out []string
+	if t := c.Peers.RemovedTrustedImport; t != nil {
+		out = append(out, "peers.trusted_import")
+		if strings.TrimSpace(t.NewLanes) != "" {
+			out = append(out, "peers.trusted_import.new_lanes")
+		}
+		if len(t.Allow) > 0 {
+			out = append(out, "peers.trusted_import.allow")
+		}
+		if len(t.Deny) > 0 {
+			out = append(out, "peers.trusted_import.deny")
+		}
+	}
+	if c.Security.RemovedRequireSignedFeedHeads != nil {
+		out = append(out, "security.require_signed_feed_heads")
+	}
+	return out
 }
 
 // TorConfig contains local TOR runtime settings.
@@ -1920,9 +1949,9 @@ type PeersConfig struct {
 	// TrustBasedRateLimiting adjusts rate limits based on peer trust level.
 	TrustBasedRateLimiting bool `yaml:"trust_based_rate_limiting"`
 
-	// TrustedImport scopes the lanes imported from trusted peers
-	// (peers.trusted_import): new lanes are denied unless listed.
-	TrustedImport TrustedImportConfig `yaml:"trusted_import"`
+	// RemovedTrustedImport is the removed peers.trusted_import, present
+	// when a config file still carries it (RemovedTrustedImport).
+	RemovedTrustedImport *RemovedTrustedImport `yaml:"trusted_import,omitempty"`
 }
 
 // DefaultIPFSAPIURL is the Kubo RPC API endpoint AdminConfig.IPFSAPIURL
@@ -2218,7 +2247,6 @@ func Default() *Config {
 			EnableDHT:              true,
 			EnableMDNS:             true,
 			TrustBasedRateLimiting: true,
-			TrustedImport:          TrustedImportConfig{NewLanes: "deny"},
 		},
 		Lanes: LanesConfig{NamedOnly: DefaultNamedOnlyLanes()},
 		Admin: AdminConfig{

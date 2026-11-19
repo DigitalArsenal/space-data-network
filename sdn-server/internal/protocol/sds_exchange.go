@@ -10,6 +10,7 @@ import (
 	"io"
 	"runtime/debug"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -110,6 +111,11 @@ type SDSExchangeHandler struct {
 	pushAuthorizer PushAuthorizer
 	warnedNoAuthz  atomic.Bool
 
+	// recordAdmitter decides, after pushAuthorizer, whether a record (not a
+	// $PNM) gossiped on a schema topic is stored. Nil: pushAuthorizer alone
+	// decides. See SetGossipRecordAdmitter.
+	recordAdmitter GossipRecordAdmitter
+
 	// readAuthorizer admits peers to schemas outside the anonymous read
 	// surface (NET-02). Unset: public schemas only.
 	readAuthorizer PeerAuthorizer
@@ -166,6 +172,34 @@ func AllowAnyPush(peer.ID) bool { return true }
 // its deny-by-default state.
 func (h *SDSExchangeHandler) SetPushAuthorizer(fn PushAuthorizer) {
 	h.pushAuthorizer = fn
+}
+
+// logEvery logs a refusal per peer at most once an interval.
+type logEvery struct {
+	every time.Duration
+	last  sync.Map // peer.ID -> time.Time
+}
+
+func (l *logEvery) Allow(p peer.ID) bool {
+	now := time.Now()
+	if v, ok := l.last.Load(p); ok && now.Sub(v.(time.Time)) < l.every {
+		return false
+	}
+	l.last.Store(p, now)
+	return true
+}
+
+// refusedGossipLog paces the log of gossiped records not stored.
+var refusedGossipLog = &logEvery{every: 10 * time.Minute}
+
+// GossipRecordAdmitter answers nil when a record of schema gossiped by from
+// on a schema topic may be stored, or why not.
+type GossipRecordAdmitter func(from peer.ID, schema string) error
+
+// SetGossipRecordAdmitter installs the subscription gate of gossiped records
+// (the node installs Node.gossipRecordAdmitted).
+func (h *SDSExchangeHandler) SetGossipRecordAdmitter(fn GossipRecordAdmitter) {
+	h.recordAdmitter = fn
 }
 
 // SetPrivateReadAuthorizer installs the check that admits a peer to schemas
@@ -750,6 +784,17 @@ func (h *SDSExchangeHandler) HandlePubSubMessageStored(schema string, data []byt
 		log.Warnf("REFUSING pubsub record from untrusted peer %s on %s: records are accepted only from trusted peers.",
 			from.ShortString(), routedSchema)
 		return false, nil
+	}
+	// And it takes the subscription gate: a node imports only the lanes it
+	// subscribes to.
+	if h.recordAdmitter != nil {
+		if err := h.recordAdmitter(from, routedSchema); err != nil {
+			if !refusedGossipLog.Allow(from) {
+				return false, nil
+			}
+			log.Infof("Not storing a %s record gossiped by %s on %s: %v", routedSchema, from.ShortString(), schema, err)
+			return false, nil
+		}
 	}
 
 	// Store data

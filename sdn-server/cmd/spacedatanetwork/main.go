@@ -1416,13 +1416,15 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 							gateAdminOnlyHandler(w, r, inner, authHandler, cfg.Admin.RequireAuth)
 						}
 					},
-					RunFlowNow:   runFlowServiceNow(n),
-					FlowServices: flowServiceInfos(n, cfg),
-					SyncLane:     n.SyncLane,
-					Follow:       n.Follow,
-					LaneFollows:  laneFollows(n),
-					LaneServed:   laneServed(n),
-					Pins:         pins,
+					RunFlowNow:           runFlowServiceNow(n),
+					FlowServices:         flowServiceInfos(n, cfg),
+					SubscribeLane:        subscribeLane(n),
+					PlanLaneSubscription: planLaneSubscription(n),
+					Unfollow:             n.Unfollow,
+					LedgerLanes:          ledgerLanes(n),
+					LaneFollows:          laneFollows(n),
+					LaneServed:           laneServed(n),
+					Pins:                 pins,
 				}
 				api.MountRegisteredAdmin(adminMux, adminMountDeps)
 				log.Infof("FlatBuffer admin lanes mounted at %s://%s: %s", adminScheme, adminAddr, strings.Join(api.RegisteredAdminMountNames(), ", "))
@@ -3073,7 +3075,15 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	daemonServing.Store(true)
 	select {
-	case <-sigChan:
+	case sig := <-sigChan:
+		// Which signal ended the daemon. Go's signal delivery does not say
+		// which process sent it; the daemon's own parent process (under
+		// systemd always 1) is logged as what it is, not as the sender.
+		number := 0
+		if s, ok := sig.(syscall.Signal); ok {
+			number = int(s)
+		}
+		log.Infof("Received %s (signal %d; the sender is not known; this daemon's parent process is %d)", sig, number, os.Getppid())
 	case <-updateShutdown:
 		log.Info("Update shutdown requested")
 		if homePaths.IsHome() {
