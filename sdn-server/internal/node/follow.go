@@ -286,6 +286,10 @@ type FollowStatus struct {
 	// inOldFile that followFileName held it at load.
 	filter    string
 	inOldFile bool
+	// raw and oldRaw are a refused subscription's records as read from
+	// subscriptionsFileName and followFileName: written back byte for
+	// byte (every field: status, times, rates, its ERROR), never re-encoded.
+	raw, oldRaw []byte
 }
 
 // inFollowFile reports a subscription followFileName holds: one that starts
@@ -455,14 +459,23 @@ func readFollowFile(path string) ([]FollowStatus, error) {
 		if st.Schema == "" || st.Producer == "" || !d.SUBSCRIBED() {
 			continue
 		}
+		// A SYNC_FILTER this build cannot interpret (a field it does not
+		// know, a value of a known field it does not read, a query that does
+		// not parse) refuses that subscription only: a later version may
+		// have written it, and the file's other lanes run.
 		var unknown *followFilterUnknownError
 		if err := parseFollowFilter(string(d.SYNC_FILTER()), &st); errors.As(err, &unknown) {
 			st.Refused = fmt.Sprintf("this build does not run the subscription: its SYNC_FILTER (in %s) names %s, which this build does not know (a later version wrote it); the lane is not followed and its publications are not imported, and the record is kept as it is",
 				filepath.Base(path), unknown.names())
-			st.filter = string(d.SYNC_FILTER())
 		} else if err != nil {
-			return nil, fmt.Errorf("%s %w: subscription %s %s/%s from %s: %w", path, errFollowFileDecode, st.Schema, st.ProviderID, st.SourceName, st.Producer, err)
+			st.Refused = fmt.Sprintf("this build does not run the subscription: its SYNC_FILTER (in %s) does not read in this build (%v; a later version may have written it); the lane is not followed and its publications are not imported, and the record is kept as it is",
+				filepath.Base(path), err)
 		}
+		if st.Refused != "" {
+			st.filter = string(d.SYNC_FILTER())
+		}
+		// The record as read: load keeps it for a refused subscription.
+		st.raw = slices.Clone(frame)
 		if ms := d.LAST_SYNC_STARTED_AT(); ms > 0 {
 			st.Since = time.UnixMilli(int64(min(ms, uint64(1<<62))))
 		}
@@ -629,6 +642,7 @@ func (m *followManager) load() error {
 	}
 	for _, st := range old {
 		st.inOldFile = true
+		st.oldRaw = st.raw
 		i, held := index[st.FollowKey]
 		if !held {
 			index[st.FollowKey] = len(subs)
@@ -636,6 +650,7 @@ func (m *followManager) load() error {
 			continue
 		}
 		subs[i].inOldFile = true
+		subs[i].oldRaw = st.raw
 		if subs[i].inFollowFile() && st.Cursor != "" {
 			subs[i].Cursor = st.Cursor
 		}
@@ -645,6 +660,10 @@ func (m *followManager) load() error {
 	for _, st := range subs {
 		if _, held := m.subs[st.FollowKey]; held {
 			continue
+		}
+		if st.Refused == "" {
+			// Only a refused subscription is written back as read.
+			st.raw, st.oldRaw = nil, nil
 		}
 		if st.Refused != "" {
 			m.keepRefusedLocked(st)
@@ -1998,6 +2017,16 @@ func (m *followManager) save() error {
 	}
 	var all, beginning bytes.Buffer
 	for _, st := range m.Statuses() {
+		if st.Refused != "" {
+			// As read, byte for byte: the record from subscriptionsFileName
+			// (or, for one only followFileName held, that one), and in
+			// followFileName that file's record.
+			all.Write(firstFrame(st.raw, encodeFollowDSS(st, true)))
+			if st.inFollowFile() {
+				beginning.Write(firstFrame(st.oldRaw, st.raw, encodeFollowDSS(st, false)))
+			}
+			continue
+		}
 		all.Write(encodeFollowDSS(st, true))
 		if st.inFollowFile() {
 			beginning.Write(encodeFollowDSS(st, false))
@@ -2007,6 +2036,16 @@ func (m *followManager) save() error {
 		return err
 	}
 	return writeFileAtomic(m.subsPath, all.Bytes())
+}
+
+// firstFrame is the first of frames that is not empty.
+func firstFrame(frames ...[]byte) []byte {
+	for _, f := range frames {
+		if len(f) > 0 {
+			return f
+		}
+	}
+	return nil
 }
 
 func writeFileAtomic(path string, data []byte) error {
