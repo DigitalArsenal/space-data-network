@@ -68,6 +68,7 @@ package wasmrt
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 #include <pthread.h>
 #include <dlfcn.h>
@@ -78,6 +79,8 @@ package wasmrt
 #endif
 #if defined(__APPLE__)
 #include <mach-o/loader.h>
+#include <mach-o/dyld.h>
+#include <mach/vm_prot.h>
 #endif
 
 #define SDN_FAULT_NSIG 3
@@ -125,26 +128,161 @@ static void sdn_fault_puthex(char *buf, int *n, uintptr_t v) {
 	}
 }
 
+// Every executable image loaded when the pin ran (the executable, the C
+// library, the dynamic loader, the vDSO): a crash report names the image a pc
+// lies in and the offset in it, which symbolizes against that file. Guest AOT
+// code is in none of them.
+#define SDN_IMAGE_MAX 1024
+static uintptr_t sdn_image_lo[SDN_IMAGE_MAX], sdn_image_hi[SDN_IMAGE_MAX], sdn_image_base[SDN_IMAGE_MAX];
+static const char *sdn_image_name[SDN_IMAGE_MAX];
+static atomic_int sdn_image_n;
+
+static void sdn_add_image(uintptr_t lo, uintptr_t hi, uintptr_t base, const char *name) {
+	int n = atomic_load(&sdn_image_n);
+	if (n >= SDN_IMAGE_MAX) {
+		return;
+	}
+	sdn_image_lo[n] = lo;
+	sdn_image_hi[n] = hi;
+	sdn_image_base[n] = base;
+	sdn_image_name[n] = name;
+	atomic_store(&sdn_image_n, n + 1);
+}
+
+static int sdn_image_of(uintptr_t pc) {
+	int n = atomic_load(&sdn_image_n);
+	for (int i = 0; i < n; i++) {
+		if (pc >= sdn_image_lo[i] && pc < sdn_image_hi[i]) {
+			return i;
+		}
+	}
+	return -1;
+}
+
+// The last fault each thread handed to WasmEdge's handler, so that a second
+// fault on that thread names the first. WasmEdge's handler, given a fault on a
+// thread that is in no compiled call, stores its stack trace through a null
+// fault context (lib/system/fault.cpp: localHandler) and faults again in its
+// own unwinder; that second fault alone says nothing of the cause.
+#define SDN_REDIRECT_SLOTS 64
+struct sdn_redirect {
+	_Atomic(uintptr_t) thread;
+	uintptr_t pc, addr;
+	int sig;
+	struct timespec at;
+};
+static struct sdn_redirect sdn_redirects[SDN_REDIRECT_SLOTS];
+static atomic_int sdn_library_notes;
+
+static struct sdn_redirect *sdn_redirect_slot(uintptr_t self) {
+	return &sdn_redirects[(self >> 4) % SDN_REDIRECT_SLOTS];
+}
+
+static void sdn_redirect_record(int sig, uintptr_t pc, uintptr_t addr) {
+	uintptr_t self = (uintptr_t)pthread_self();
+	struct sdn_redirect *r = sdn_redirect_slot(self);
+	atomic_store(&r->thread, 0);
+	r->pc = pc;
+	r->addr = addr;
+	r->sig = sig;
+	clock_gettime(CLOCK_MONOTONIC, &r->at);
+	atomic_store(&r->thread, self);
+}
+
+static void sdn_fault_puts(char *buf, int *n, int cap, const char *s) {
+	for (const char *p = s; *p && *n < cap; p++) buf[(*n)++] = *p;
+}
+
+static void sdn_fault_putdec(char *buf, int *n, int cap, uint64_t v) {
+	char tmp[20];
+	int k = 0;
+	do {
+		tmp[k++] = (char)('0' + v % 10);
+		v /= 10;
+	} while (v != 0 && k < (int)sizeof tmp);
+	while (k > 0 && *n < cap) buf[(*n)++] = tmp[--k];
+}
+
+// sdn_fault_putpc writes "0xPC" and, when the pc is in a known image,
+// " (name+0xOFFSET)".
+static void sdn_fault_putpc(char *buf, int *n, int cap, uintptr_t pc) {
+	sdn_fault_puthex(buf, n, pc);
+	int i = sdn_image_of(pc);
+	if (i < 0) {
+		return;
+	}
+	const char *name = sdn_image_name[i];
+	const char *base = name;
+	for (const char *p = name; p && *p; p++) {
+		if (*p == '/') base = p + 1;
+	}
+	sdn_fault_puts(buf, n, cap, " (");
+	sdn_fault_puts(buf, n, cap, base && *base ? base : "main");
+	sdn_fault_puts(buf, n, cap, "+");
+	sdn_fault_puthex(buf, n, pc - sdn_image_base[i]);
+	sdn_fault_puts(buf, n, cap, ")");
+}
+
+static void sdn_fault_putsig(char *buf, int *n, int sig) {
+	buf[(*n)++] = (char)('0' + (sig / 10) % 10);
+	buf[(*n)++] = (char)('0' + sig % 10);
+}
+
 static void sdn_fault_note(int sig, siginfo_t *info, uintptr_t pc, const char *what) {
 	// Async-signal-safe: write(2) of a buffer built by hand. Bounded, so a
 	// fault loop cannot flood the journal.
 	if (atomic_fetch_add(&sdn_fault_notes, 1) >= 32) {
 		return;
 	}
-	char buf[320];
+	char buf[640];
+	const int cap = (int)sizeof buf - 80;
 	int n = 0;
-	const char *head = "[wasmrt] FATAL signal ";
-	for (const char *p = head; *p; p++) buf[n++] = *p;
-	buf[n++] = (char)('0' + (sig / 10) % 10);
-	buf[n++] = (char)('0' + sig % 10);
-	const char *at = " pc ";
-	for (const char *p = at; *p; p++) buf[n++] = *p;
-	sdn_fault_puthex(buf, &n, pc);
-	const char *mid = " addr ";
-	for (const char *p = mid; *p; p++) buf[n++] = *p;
+	sdn_fault_puts(buf, &n, cap, "[wasmrt] FATAL signal ");
+	sdn_fault_putsig(buf, &n, sig);
+	sdn_fault_puts(buf, &n, cap, " pc ");
+	sdn_fault_putpc(buf, &n, cap, pc);
+	sdn_fault_puts(buf, &n, cap, " addr ");
 	sdn_fault_puthex(buf, &n, info ? (uintptr_t)info->si_addr : 0);
 	buf[n++] = ' ';
-	for (const char *p = what; *p && n < (int)sizeof buf - 2; p++) buf[n++] = *p;
+	sdn_fault_puts(buf, &n, cap, what);
+	uintptr_t self = (uintptr_t)pthread_self();
+	struct sdn_redirect *r = sdn_redirect_slot(self);
+	if (atomic_load(&r->thread) == self) {
+		struct timespec now;
+		clock_gettime(CLOCK_MONOTONIC, &now);
+		int64_t us = (int64_t)(now.tv_sec - r->at.tv_sec) * 1000000 + (now.tv_nsec - r->at.tv_nsec) / 1000;
+		sdn_fault_puts(buf, &n, cap, "; after this thread handed signal ");
+		sdn_fault_putsig(buf, &n, r->sig);
+		sdn_fault_puts(buf, &n, cap, " pc ");
+		sdn_fault_putpc(buf, &n, cap, r->pc);
+		sdn_fault_puts(buf, &n, cap, " addr ");
+		sdn_fault_puthex(buf, &n, r->addr);
+		sdn_fault_puts(buf, &n, cap, " to WasmEdge's handler ");
+		sdn_fault_putdec(buf, &n, cap, us < 0 ? 0 : (uint64_t)us);
+		sdn_fault_puts(buf, &n, cap, " us earlier");
+	}
+	buf[n++] = '\n';
+	ssize_t w = write(2, buf, (size_t)n);
+	(void)w;
+}
+
+// sdn_library_note names a fault in a shared library (not WasmEdge's image,
+// not guest AOT code) that is handed to WasmEdge's handler: inside a compiled
+// call it becomes a guest trap, outside one it ends the process.
+static void sdn_library_note(int sig, siginfo_t *info, uintptr_t pc) {
+	if (atomic_fetch_add(&sdn_library_notes, 1) >= 32) {
+		return;
+	}
+	char buf[400];
+	const int cap = (int)sizeof buf - 2;
+	int n = 0;
+	sdn_fault_puts(buf, &n, cap, "[wasmrt] WARN signal ");
+	sdn_fault_putsig(buf, &n, sig);
+	sdn_fault_puts(buf, &n, cap, " pc ");
+	sdn_fault_putpc(buf, &n, cap, pc);
+	sdn_fault_puts(buf, &n, cap, " addr ");
+	sdn_fault_puthex(buf, &n, info ? (uintptr_t)info->si_addr : 0);
+	sdn_fault_puts(buf, &n, cap, " in a shared library, not guest AOT code: handed to WasmEdge's handler");
 	buf[n++] = '\n';
 	ssize_t w = write(2, buf, (size_t)n);
 	(void)w;
@@ -283,6 +421,10 @@ static void sdn_fault_forward(int sig, siginfo_t *info, void *uctx) {
 		signal(sig, SIG_DFL);
 		return;
 	}
+	if (sdn_image_of(pc) >= 0) {
+		sdn_library_note(sig, info, pc);
+	}
+	sdn_redirect_record(sig, pc, addr);
 	if (canRedirect) {
 		sdn_redirect_context(uctx, &pc, &sp, sig, info ? info->si_code : 0, addr, 1);
 		return; // the thread resumes in sdn_fault_redirect
@@ -456,6 +598,54 @@ static int sdn_note_native_image(uintptr_t addr) {
 #endif
 }
 
+#if defined(__linux__)
+static int sdn_all_images_cb(struct dl_phdr_info *info, size_t size, void *data) {
+	(void)size;
+	(void)data;
+	for (int j = 0; j < info->dlpi_phnum; j++) {
+		const ElfW(Phdr) *ph = &info->dlpi_phdr[j];
+		if (ph->p_type == PT_LOAD && (ph->p_flags & PF_X) != 0) {
+			uintptr_t lo = (uintptr_t)info->dlpi_addr + (uintptr_t)ph->p_vaddr;
+			sdn_add_image(lo, lo + (uintptr_t)ph->p_memsz, (uintptr_t)info->dlpi_addr, info->dlpi_name);
+		}
+	}
+	return 0;
+}
+#endif
+
+// sdn_note_all_images records the executable text of every image loaded now,
+// once. Returns how many ranges it holds.
+static int sdn_note_all_images(void) {
+	if (atomic_load(&sdn_image_n) != 0) {
+		return atomic_load(&sdn_image_n);
+	}
+#if defined(__linux__)
+	dl_iterate_phdr(sdn_all_images_cb, NULL);
+#elif defined(__APPLE__)
+	uint32_t count = _dyld_image_count();
+	for (uint32_t k = 0; k < count; k++) {
+		const struct mach_header_64 *mh = (const struct mach_header_64 *)_dyld_get_image_header(k);
+		if (mh == NULL || mh->magic != MH_MAGIC_64) {
+			continue;
+		}
+		uintptr_t slide = (uintptr_t)_dyld_get_image_vmaddr_slide(k);
+		const char *name = _dyld_get_image_name(k);
+		const struct load_command *lc = (const struct load_command *)(mh + 1);
+		for (uint32_t c = 0; c < mh->ncmds; c++) {
+			if (lc->cmd == LC_SEGMENT_64) {
+				const struct segment_command_64 *seg = (const struct segment_command_64 *)lc;
+				if ((seg->initprot & VM_PROT_EXECUTE) != 0 && seg->vmsize > 0) {
+					uintptr_t lo = (uintptr_t)seg->vmaddr + slide;
+					sdn_add_image(lo, lo + (uintptr_t)seg->vmsize, (uintptr_t)mh, name);
+				}
+			}
+			lc = (const struct load_command *)((const char *)lc + lc->cmdsize);
+		}
+	}
+#endif
+	return atomic_load(&sdn_image_n);
+}
+
 // sdn_adopt_wasmedge_handlers runs INSIDE a compiled WasmEdge call, where
 // WasmEdge's handler is installed: it records that handler as the forwarder's
 // target and puts Go's handler back. Returns how many signals it adopted.
@@ -511,6 +701,26 @@ __attribute__((noinline)) static void sdn_native_bad_store(void) {
 		abort();
 	}
 	*p = 1;
+}
+
+// sdn_libc_bad_store_thread faults inside the C library, on a thread no Go
+// code or WasmEdge call ever ran on (tests: what such a fault looks like).
+static void *sdn_libc_bad_store_run(void *arg) {
+	(void)arg;
+	void *p = mmap(NULL, 4096, PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
+	if (p == MAP_FAILED) {
+		abort();
+	}
+	memset(p, 1, 4096);
+	return NULL;
+}
+
+static void sdn_libc_bad_store_on_c_thread(void) {
+	pthread_t t;
+	if (pthread_create(&t, NULL, sdn_libc_bad_store_run, NULL) != 0) {
+		abort();
+	}
+	pthread_join(t, NULL);
 }
 
 // sdn_thread_blocks reports whether the calling thread blocks sig.
@@ -597,6 +807,10 @@ func threadBlocksSignal(sig syscall.Signal) bool {
 // crashInNativeCode faults in C code (tests).
 func crashInNativeCode() { C.sdn_native_bad_store() }
 
+// crashInLibcOnCThread faults inside the C library on a C thread outside any
+// WasmEdge call (tests).
+func crashInLibcOnCThread() { C.sdn_libc_bad_store_on_c_thread() }
+
 // signalNativeRanges is how many executable ranges of WasmEdge's own image
 // the forwarder excludes from redirection.
 var signalNativeRanges int
@@ -643,6 +857,7 @@ func pinFaultHandler() error {
 			return nil, wasmedge.Result_Fail
 		}
 		signalNativeRanges = int(C.sdn_native_ranges())
+		C.sdn_note_all_images()
 		ready <- nil
 		<-signalPinHold
 		return nil, wasmedge.Result_Success
