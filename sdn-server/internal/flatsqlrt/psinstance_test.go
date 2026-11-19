@@ -122,12 +122,15 @@ type probeConfig struct {
 	// notify while recording it as issued: a runtime that loses wakeups (the
 	// negative control for the lost-wakeup count).
 	DropNotify uint32
+	// StartDelayUs makes each service thread wait this long before its loop:
+	// a thread the scheduler starts late.
+	StartDelayUs uint32
 }
 
 func (c probeConfig) bytes() []byte {
 	b := make([]byte, 64+len(c.Prefix))
 	for i, v := range []uint32{c.Mode, c.Threads, c.ActiveWaitUs, c.IdleWaitUs, c.IOOps, c.IOSize, c.IOFileBytes,
-		c.StackBytes, c.Marker, c.Files, uint32(len(c.Prefix)), c.DropNotify} {
+		c.StackBytes, c.Marker, c.Files, uint32(len(c.Prefix)), c.DropNotify, c.StartDelayUs} {
 		binary.LittleEndian.PutUint32(b[4*i:], v)
 	}
 	copy(b[64:], c.Prefix)
@@ -246,6 +249,38 @@ func TestPSInstanceDoorbellRoundTrip(t *testing.T) {
 	}
 	if st := p.Stats(); st.State != "dead" || st.Threads.Live != 0 {
 		t.Fatalf("after stop: %+v", st)
+	}
+}
+
+// A ring that lands before a service thread has entered its loop is work the
+// thread must take when it starts. flatsql_ps_start returns once the threads
+// are spawned, not once they run, so the first ring after an open can beat
+// them (TestPSInstanceDoorbellRoundTrip failed this way on 4-CPU CI runners:
+// round 1, writer 0). The probe's threads start 300 ms late here, so every
+// ring lands in that window.
+func TestPSRingBeforeTheServiceThreadStarts(t *testing.T) {
+	requirePatched(t)
+	const writers = 2
+	p := openProbe(t, probeConfig{Mode: probeDoorbell, Threads: writers, StartDelayUs: 300000}, probeOpts{})
+	defer p.Stop()
+	for i := 0; i < writers; i++ {
+		if hb, ok := p.Load32(p.Layout().HeartbeatBase + uint32(4*i)); !ok || hb != 0 {
+			t.Fatalf("writer %d entered its loop before the ring (heartbeat %d)", i, hb)
+		}
+		if err := p.Ring(i); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < writers; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		err := p.WaitAck(ctx, i, 1)
+		cancel()
+		if err != nil {
+			t.Fatalf("writer %d: a ring before its thread started was never acknowledged: %v", i, err)
+		}
+	}
+	if err := p.Stop(); err != nil {
+		t.Fatal(err)
 	}
 }
 
