@@ -615,7 +615,15 @@ run_go_extended() {
       */flatsqlrt|*/format2) budget=30m ;;
       */cmd/spacedatanetwork) skip=(-skip="${MIGRATION_GO_TESTS}|${UPDATE_GO_TESTS}") ;;
     esac
-    go_test_with_timings "$label" -v -p=1 -timeout="$budget" -count=1 ${skip[@]+"${skip[@]}"} "$pkg" \
+    # SDN_CI_KEEP_TEST_BINARIES=1 keeps each test binary in
+    # .ci-artifacts/testbin, so a native crash's pc can be symbolized
+    # against the exact binary that crashed (stack issue 876).
+    local keep=()
+    if [[ "${SDN_CI_KEEP_TEST_BINARIES:-0}" == 1 ]]; then
+      mkdir -p "$ROOT/.ci-artifacts/testbin"
+      keep=(-o "$ROOT/.ci-artifacts/testbin/")
+    fi
+    go_test_with_timings "$label" -v -p=1 -timeout="$budget" -count=1 ${keep[@]+"${keep[@]}"} ${skip[@]+"${skip[@]}"} "$pkg" \
       || failed=1
   done
   return "$failed"
