@@ -170,6 +170,9 @@ func (s *FlatSQLStore) initDatasetPublicationSeriesTables() error {
 	`); err != nil {
 		return fmt.Errorf("failed to create dataset publication unfinished windows table: %w", err)
 	}
+	if _, err := s.db.Exec(datasetPublicationRetractedTable); err != nil {
+		return fmt.Errorf("failed to create dataset publication retracted table: %w", err)
+	}
 	return s.initDatasetPublicationFailedScopesTable()
 }
 
@@ -628,6 +631,10 @@ type DatasetPublicationRetentionPolicy struct {
 	// lane whose batches are PARTS of one dataset (the cellular chunk lane)
 	// must never lose a part.
 	SnapshotBatches bool
+	// RetractAll retires every series, advertised row and pin of the lane and
+	// keeps none (a retraction); KeepSeries is ignored, and nothing is
+	// treated as a publication in flight, so the caller must hold the lane.
+	RetractAll bool
 }
 
 // DatasetPublicationRetentionPlan is what one retention pass would release.
@@ -668,7 +675,7 @@ func (s *FlatSQLStore) PlanDatasetPublicationRetention(lane DatasetPublicationLa
 
 func (s *FlatSQLStore) planDatasetPublicationRetention(lane DatasetPublicationLane, providerPeerID string, policy DatasetPublicationRetentionPolicy, series []DatasetPublicationSeries) (DatasetPublicationRetentionPlan, error) {
 	plan := DatasetPublicationRetentionPlan{Lane: lane, Keep: policy.KeepSeries}
-	if policy.KeepSeries <= 0 || lane.SchemaName == "" || len(series) == 0 {
+	if lane.SchemaName == "" || (!policy.RetractAll && (policy.KeepSeries <= 0 || len(series) == 0)) {
 		return plan, nil
 	}
 	var err error
@@ -682,6 +689,10 @@ func (s *FlatSQLStore) planDatasetPublicationRetention(lane DatasetPublicationLa
 	for i, each := range series {
 		superseded := newerScope[each.BatchID]
 		newerScope[each.BatchID] = true
+		if policy.RetractAll {
+			plan.RetiredSeries = append(plan.RetiredSeries, each.SeriesID)
+			continue
+		}
 		if i < policy.KeepSeries {
 			plan.KeptSeries = append(plan.KeptSeries, each.SeriesID)
 			protect(each)
@@ -704,7 +715,12 @@ func (s *FlatSQLStore) planDatasetPublicationRetention(lane DatasetPublicationLa
 	}
 	// Anything written after the newest series began is a publication still
 	// in flight on another path; this pass never retires it.
-	inFlightAfter := series[0].PublishedAt
+	var inFlightAfter time.Time
+	if policy.RetractAll {
+		inFlightAfter = time.Now().UTC().Add(24 * time.Hour)
+	} else {
+		inFlightAfter = series[0].PublishedAt
+	}
 
 	rows, err := s.ListDatasetShardPublications(DatasetShardPublicationQuery{
 		SchemaName:   lane.SchemaName,
