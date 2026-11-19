@@ -117,7 +117,8 @@ the store and decides from the store when it clears. A failed batch clears
 when a count of the records it holds now finds none unpublished: every one
 of them is in a completed publication's export (what a later run's
 publication carries when its pull returns those records again), or the batch
-holds none any more (expired or superseded). The count runs after every
+holds none any more (expired or superseded); a completed publication of the
+whole batch itself clears it at once. The count runs after every
 failure in the lane, after every completed publication of a whole batch or
 of the whole lane, and at start; while any record is unpublished, the alert
 stays and says how many, and says that publishing the batch whole clears it.

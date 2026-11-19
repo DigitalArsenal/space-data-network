@@ -63,6 +63,11 @@ none unpublished:
 - the batch holds no records any more (they expired, or a replace-current
   lane superseded them); the log says so when the alert clears.
 
+A completed publication of the whole failed batch itself that read the lane
+after the failed one did exported every record the batch held then: it
+removes the batch's scope when it is reported, before its caller is
+answered, without a count.
+
 The count runs after every failure in the lane, after every completed
 publication of a whole batch or of the whole lane, and at start. It reads the
 batch's record list and their tags (a page of 2,048 at a time), the lane's

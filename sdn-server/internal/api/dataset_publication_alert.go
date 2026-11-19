@@ -16,7 +16,10 @@ package api
 //     more (they expired, or a replace-current lane superseded them). The
 //     batch's records are recounted after each failure in the lane, after
 //     each completed publication of a whole batch or of the whole lane, and
-//     at start. Nothing is carried from one count to the next.
+//     at start. Nothing is carried from one count to the next. A completed
+//     publication of the whole batch itself that read the lane after the
+//     failed one did exported every record the batch held then, and removes
+//     the scope when it is reported, before its callers are answered.
 //   - any other failed scope (a head of a batch or of the lane, a
 //     publication of the whole lane, an announcement of existing
 //     publications, a batch of a datastore lane or of a store whose records
@@ -300,12 +303,12 @@ func (s *ConcreteDatasetPublicationService) publicationCompleted(req DatasetPubl
 	batch, op := failedOperation(req)
 	whole := op == opLane || (op == opBatch && strings.TrimSpace(req.DatastoreKey) == "")
 	after := fmt.Sprintf("dataset publication %s: after the publication of batch %q, ", lane, batch)
-	s.enqueueAlertJob(func(ctx context.Context) {
-		s.clearSameOperation(lane, batch, op, stamp, after)
-		if whole {
-			s.enqueueRecount(lane, after)
-		}
-	})
+	// The same operation is settled here, before the publication's callers
+	// are answered: it reads no store (one row delete per scope it clears).
+	s.clearSameOperation(lane, batch, op, stamp, after)
+	if whole {
+		s.enqueueRecount(lane, after)
+	}
 }
 
 // clearSameOperation removes the failed scopes of lane that a completed
@@ -324,8 +327,11 @@ func (s *ConcreteDatasetPublicationService) clearSameOperation(lane, batch, op s
 		covers := false
 		switch {
 		case key.op == opBatch:
-			// A batch whose records can be counted goes by its count only.
-			covers = op == opBatch && key.batch == batch && !scope.countable(s.store)
+			// A completed publication of the whole batch that read the lane
+			// after the failed one exported every record the batch held
+			// then; any other batch's publication covers it only through a
+			// recount.
+			covers = op == opBatch && key.batch == batch
 		case op == opLane:
 			covers = key.op == opLane || key.op == opLaneHead || key.op == opOverflow
 		default:
