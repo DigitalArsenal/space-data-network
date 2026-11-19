@@ -403,6 +403,29 @@ ingest event. Failed snapshots remain pending with capped retry backoff.
 Starting the daemon also schedules a catchup snapshot for every configured
 source lane, including records stored before the restart.
 
+To withdraw a published lane in one step (a source's operator objects to its
+data being republished), call, from the box:
+
+```sh
+curl -X POST 'http://127.0.0.1:5001/api/v1/admin/dataset-updates/retract?schema=SIT.fbs&providerId=<you>&sourceName=<lane>'
+```
+
+That is a dry run: it answers one `$QRP` page, a row per fact (kind, key,
+detail, count): the lane's publications (`series`), its records by batch
+(`batch`), every CID it would unpin (`pin`, with role and bytes) and the
+totals. Add `&apply=true` to do it. Applied, it unpins
+the lane's CIDs, removes its advertised shards and files, deletes the lane's
+records from this node, and marks the lane retracted: the source list, the
+channel list and `list-published` stop offering it, the node refuses to
+publish it again, and a peer following the lane is told on its next quiet
+page and drops what it holds of it from this node. A peer that already
+imported the records and does not follow, and any copy a peer or a gateway
+already holds, stays; a retraction cannot recall bytes another node holds.
+Records a flow ingests into a retracted lane stay stored here until the flow
+is stopped. A network that publishes several lanes (sites and sensors) takes
+one call per lane. A second apply finishes what a first left (an unpin Kubo
+refused).
+
 Saved module inputs from the runtime `/inputs` API are reapplied before
 startup cron scheduling. A module whose saved inputs cannot be applied stays
 in an error state while other modules continue starting.

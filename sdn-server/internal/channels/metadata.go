@@ -154,6 +154,16 @@ func (r *VerifiedMetadataRegistry) RecordRestored(metadata VerifiedMetadata) Ver
 	return metadata
 }
 
+// Forget drops a channel's metadata (a retracted lane's channel).
+func (r *VerifiedMetadataRegistry) Forget(channel ChannelID) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	delete(r.metadata, channel.ChannelID)
+	r.mu.Unlock()
+}
+
 func (r *VerifiedMetadataRegistry) Get(channel ChannelID) (VerifiedMetadata, bool) {
 	if r == nil {
 		return VerifiedMetadata{}, false
