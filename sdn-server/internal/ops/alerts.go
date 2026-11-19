@@ -75,9 +75,15 @@ const (
 	// (subject: the lane, or "" for the key).
 	KindSubscriptionConversion = "subscription_conversion"
 	// KindSubscriptionsUnreadable: a subscriptions file (subject: its name)
-	// did not read at start; it was moved aside, and no lane is imported or
-	// changed until a readable copy is in place.
+	// did not read at start: bytes that do not decode were moved aside, a
+	// read that failed (permission, I/O) left the file in place; no lane is
+	// imported or changed until it reads.
 	KindSubscriptionsUnreadable = "subscriptions_unreadable"
+	// KindSubscriptionRefused: a subscription (subject: the lane) names a
+	// field this build does not know (a later version wrote it); that lane is
+	// not followed or imported, its record is kept as it is, and the other
+	// lanes run.
+	KindSubscriptionRefused = "subscription_refused"
 	// KindPublicationFailed: one of this node's own dataset publications
 	// (subject: its lane) failed or was cut before it completed.
 	KindPublicationFailed = "publication_failed"

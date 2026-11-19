@@ -13,8 +13,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/DSS"
+	flatbuffers "github.com/google/flatbuffers/go"
+
 	"github.com/spacedatanetwork/sdn-server/internal/api"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
+	"github.com/spacedatanetwork/sdn-server/internal/syncwire"
 )
 
 // hasAlertOn reports an active alert of kind whose subject contains text.
@@ -451,6 +455,183 @@ func TestPublicationSubscriptionsUnreadableRealDaemons(t *testing.T) {
 	a.ingestOMMCIDs(t, "ur", "r1", 977_000, 20)
 	b.awaitRecords(t, "OMM.fbs", "ur", a.scan(t, "OMM.fbs", "ur"), 3*time.Minute)
 	t.Log("with the readable copy back the subscription loaded and the lane received the 20 new records")
+
+	// A read that fails (here: no permission) is not a corrupt file: the
+	// node stays blocked, naming the error, without moving the file, and
+	// loads it by itself at the next start once it reads.
+	if os.Geteuid() == 0 {
+		t.Log("running as root, which reads a file without permission: the failed-read check is not run")
+		b.requireAlive(t)
+		return
+	}
+	setAside := len(aside())
+	b.stop(t)
+	if err := os.Chmod(subsPath, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(subsPath, 0o600) })
+	b.start(t)
+	found := false
+	for _, al := range b.alerts(t) {
+		if al.Kind == "subscriptions_unreadable" && strings.Contains(al.Subject, "subscriptions.dss") {
+			found = true
+			if !strings.Contains(al.LastError, "permission denied") || !strings.Contains(al.LastError, "left in place") {
+				t.Fatalf("the alert of a subscriptions.dss without read permission does not name the error and that the file stays: %q", al.LastError)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("no subscriptions_unreadable alert on a start whose subscriptions.dss cannot be read")
+	}
+	if _, err := os.Stat(subsPath); err != nil {
+		t.Fatalf("subscriptions.dss whose read failed is not in place: %v", err)
+	}
+	if got := len(aside()); got != setAside {
+		t.Fatalf("subscriptions.dss whose read failed was moved aside: %d files aside, was %d", got, setAside)
+	}
+	if len(b.subscriptions(t).Subscriptions) != 0 {
+		t.Fatal("subscriptions are listed although their file did not read")
+	}
+	b.stop(t)
+	if err := os.Chmod(subsPath, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	b.start(t)
+	if hasAlertOn(b.alerts(t), "subscriptions_unreadable", "subscriptions.dss") {
+		t.Fatal("subscriptions_unreadable stays after subscriptions.dss reads again")
+	}
+	a.ingestOMMCIDs(t, "ur", "r1", 977_500, 20)
+	b.awaitRecords(t, "OMM.fbs", "ur", a.scan(t, "OMM.fbs", "ur"), 3*time.Minute)
+	t.Log("a subscriptions.dss without read permission: blocked, left in place, loaded by itself once it read again")
+	b.requireAlive(t)
+}
+
+// setSubscriptionFilter rewrites the subscriptions file at path with lane
+// source's SYNC_FILTER set to filter (every other field, and every other
+// record, as they were).
+func setSubscriptionFilter(t *testing.T, path, source, filter string) {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frames, err := syncwire.SplitFrames(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	found := false
+	for _, f := range frames {
+		d := DSS.GetSizePrefixedRootAsDSS(f, 0)
+		syncFilter := string(d.SYNC_FILTER())
+		if string(d.SOURCE_NAME()) == source {
+			syncFilter, found = filter, true
+		}
+		b := flatbuffers.NewBuilder(512)
+		str := func(s []byte) flatbuffers.UOffsetT {
+			if len(s) == 0 {
+				return 0
+			}
+			return b.CreateByteString(s)
+		}
+		schema, provider, src, producer := str(d.SCHEMA_NAME()), str(d.PROVIDER_ID()), str(d.SOURCE_NAME()), str(d.PROVIDER_PEER_ID())
+		cursor, protocol, filterOff := str(d.CURSOR()), str(d.SYNC_PROTOCOL()), str([]byte(syncFilter))
+		DSS.DSSStart(b)
+		for _, field := range []struct {
+			off flatbuffers.UOffsetT
+			add func(*flatbuffers.Builder, flatbuffers.UOffsetT)
+		}{{schema, DSS.DSSAddSCHEMA_NAME}, {provider, DSS.DSSAddPROVIDER_ID}, {src, DSS.DSSAddSOURCE_NAME}, {producer, DSS.DSSAddPROVIDER_PEER_ID},
+			{cursor, DSS.DSSAddCURSOR}, {protocol, DSS.DSSAddSYNC_PROTOCOL}, {filterOff, DSS.DSSAddSYNC_FILTER}} {
+			if field.off != 0 {
+				field.add(b, field.off)
+			}
+		}
+		DSS.DSSAddLAST_SYNC_STARTED_AT(b, d.LAST_SYNC_STARTED_AT())
+		DSS.DSSAddSYNCED_ROWS(b, d.SYNCED_ROWS())
+		DSS.DSSAddLOCAL_ROWS(b, d.LOCAL_ROWS())
+		DSS.DSSAddDOWNLOADED_BYTES(b, d.DOWNLOADED_BYTES())
+		DSS.DSSAddSUBSCRIBED(b, d.SUBSCRIBED())
+		DSS.FinishSizePrefixedDSSBuffer(b, DSS.DSSEnd(b))
+		out.Write(b.FinishedBytes())
+	}
+	if !found {
+		t.Fatalf("%s holds no subscription of lane %s", path, source)
+	}
+	if err := os.WriteFile(path, out.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestPublicationSubscriptionUnknownFieldRealDaemons: a subscription whose
+// SYNC_FILTER names a field this build does not know (as a later version
+// could write before a rollback) refuses only that subscription
+// (subscription_refused naming the lane and the field): the file is not
+// treated as unreadable, the other lane keeps importing, the refused lane
+// imports nothing, and its record is kept as it was. Unsubscribing it clears
+// its alert.
+func TestPublicationSubscriptionUnknownFieldRealDaemons(t *testing.T) {
+	if os.Getenv("SDN_E2E_PUBLICATION") != "1" {
+		t.Skip("set SDN_E2E_PUBLICATION=1 for real daemons")
+	}
+	exe := publicationBinary(t)
+	a := newPublicationDaemon(t, exe, "unknown-producer", "", "", "keep-all")
+	a.start(t)
+	a.ingestOMMCIDs(t, "uf-a", "a1", 985_000, 50)
+	a.ingestOMMCIDs(t, "uf-b", "b1", 986_000, 50)
+	b := newPublicationDaemon(t, exe, "unknown-receiver", a.address, a.id, "keep-all")
+	b.start(t)
+	time.Sleep(3 * time.Second)
+	b.subscribeCurrent(t, a, "uf-a")
+	b.subscribeCurrent(t, a, "uf-b")
+	b.awaitRecords(t, "OMM.fbs", "uf-a", a.scan(t, "OMM.fbs", "uf-a"), 3*time.Minute)
+	b.awaitRecords(t, "OMM.fbs", "uf-b", a.scan(t, "OMM.fbs", "uf-b"), 3*time.Minute)
+	b.stop(t)
+	subsPath := filepath.Join(filepath.Dir(b.store), "subscriptions.dss")
+	const later = "later=1&start=current"
+	setSubscriptionFilter(t, subsPath, "uf-a", later)
+	b.start(t)
+	alerts := b.alerts(t)
+	if hasAlertOn(alerts, "subscriptions_unreadable", "subscriptions.dss") {
+		t.Fatalf("one subscription with an unknown field made the whole file unreadable: %+v", alerts)
+	}
+	refused := false
+	for _, al := range alerts {
+		if al.Kind == "subscription_refused" && strings.Contains(al.Subject, "uf-a") && strings.Contains(al.LastError, `"later"`) {
+			refused = true
+		}
+		if al.Kind == "subscription_refused" && strings.Contains(al.Subject, "uf-b") {
+			t.Fatalf("lane uf-b is refused too: %s", al.LastError)
+		}
+	}
+	if !refused {
+		t.Fatalf("no subscription_refused alert naming lane uf-a and the field \"later\": %+v", alerts)
+	}
+	if sub := b.subscription(t, "uf-a"); !strings.Contains(sub.Error, `"later"`) {
+		t.Fatalf("sync subscriptions does not show why uf-a is not run: %q", sub.Error)
+	}
+	a.ingestOMMCIDs(t, "uf-b", "b1", 987_000, 20)
+	a.ingestOMMCIDs(t, "uf-a", "a1", 988_000, 20)
+	b.awaitRecords(t, "OMM.fbs", "uf-b", a.scan(t, "OMM.fbs", "uf-b"), 3*time.Minute)
+	time.Sleep(20 * time.Second)
+	if got := len(b.scan(t, "OMM.fbs", "uf-a")); got != 50 {
+		t.Fatalf("the refused lane uf-a holds %d records, want the 50 it held before", got)
+	}
+	var kept string
+	for _, r := range b.dssFile(t, "subscriptions.dss") {
+		if string(r.SOURCE_NAME()) == "uf-a" {
+			kept = string(r.SYNC_FILTER())
+		}
+	}
+	if kept != later {
+		t.Fatalf("subscriptions.dss holds uf-a's SYNC_FILTER as %q, want it kept as %q", kept, later)
+	}
+	t.Log("lane uf-a refused (unknown field \"later\"), its record kept; lane uf-b received its 20 new records")
+	if out, err := b.cli(t, "sync", "unsubscribe", "--schema", "OMM", "--provider-id", "publication-e2e", "--source-name", "uf-a", "--from", a.id); err != nil {
+		t.Fatalf("sync unsubscribe uf-a: %v\n%s", err, out)
+	}
+	if hasAlertOn(b.alerts(t), "subscription_refused", "uf-a") {
+		t.Fatal("subscription_refused stays on lane uf-a after it was unsubscribed")
+	}
 	b.requireAlive(t)
 }
 

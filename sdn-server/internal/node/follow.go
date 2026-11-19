@@ -110,6 +110,7 @@ import (
 	"runtime/debug"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -274,12 +275,26 @@ type FollowStatus struct {
 	// a refused cursor started again at the current batch: it stays in
 	// followFileName while Unread is set.
 	FromBeginning bool
+	// Refused is why this build does not run the subscription ("" when it
+	// does): its SYNC_FILTER names a field this build does not know (a later
+	// version wrote it). The lane is not followed and its publications are
+	// not imported; the record is written back as it was read (filter, and
+	// followFileName membership as loaded), so the later version finds it
+	// again.
+	Refused string
+	// filter is the SYNC_FILTER of a refused subscription as read;
+	// inOldFile that followFileName held it at load.
+	filter    string
+	inOldFile bool
 }
 
 // inFollowFile reports a subscription followFileName holds: one that starts
 // at the lane's beginning, or one made so whose refused cursor is not
-// acknowledged.
+// acknowledged. A refused subscription stays where it was loaded from.
 func (st FollowStatus) inFollowFile() bool {
+	if st.Refused != "" {
+		return st.inOldFile
+	}
 	return st.Start == FollowStartBeginning || (!st.Unread.IsZero() && st.FromBeginning)
 }
 
@@ -404,9 +419,16 @@ func newFollowManager(n *Node, dir string) *followManager {
 		subs: map[FollowKey]*followEntry{}, catchupNudge: make(chan struct{}, 1)}
 }
 
+// errFollowFileDecode marks a subscriptions file whose bytes do not decode
+// (as opposed to a read that failed: permission, I/O, a directory).
+var errFollowFileDecode = errors.New("does not decode as subscriptions")
+
 // readFollowFile reads one subscriptions file (none: no records). A record
 // with no start in SYNC_FILTER starts at the beginning (followFileName's
-// records, as 1.1.9 wrote them).
+// records, as 1.1.9 wrote them). A record whose SYNC_FILTER names a field
+// this build does not know is returned refused (FollowStatus.Refused), not
+// as an error. Bytes that do not decode are errFollowFileDecode; a read that
+// fails is its own error.
 func readFollowFile(path string) ([]FollowStatus, error) {
 	raw, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -417,12 +439,12 @@ func readFollowFile(path string) ([]FollowStatus, error) {
 	}
 	frames, err := syncwire.SplitFrames(raw)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
+		return nil, fmt.Errorf("%s %w: %w", path, errFollowFileDecode, err)
 	}
 	var out []FollowStatus
 	for _, frame := range frames {
 		if !DSS.SizePrefixedDSSBufferHasIdentifier(frame) {
-			return nil, fmt.Errorf("%s: a frame that is not a $DSS record", path)
+			return nil, fmt.Errorf("%s %w: a frame that is not a $DSS record", path, errFollowFileDecode)
 		}
 		d := DSS.GetSizePrefixedRootAsDSS(frame, 0)
 		st := FollowStatus{FollowKey: normalizeFollowKey(FollowKey{Schema: string(d.SCHEMA_NAME()), ProviderID: string(d.PROVIDER_ID()),
@@ -433,8 +455,13 @@ func readFollowFile(path string) ([]FollowStatus, error) {
 		if st.Schema == "" || st.Producer == "" || !d.SUBSCRIBED() {
 			continue
 		}
-		if err := parseFollowFilter(string(d.SYNC_FILTER()), &st); err != nil {
-			return nil, fmt.Errorf("%s: subscription %s %s/%s from %s: %w", path, st.Schema, st.ProviderID, st.SourceName, st.Producer, err)
+		var unknown *followFilterUnknownError
+		if err := parseFollowFilter(string(d.SYNC_FILTER()), &st); errors.As(err, &unknown) {
+			st.Refused = fmt.Sprintf("this build does not run the subscription: its SYNC_FILTER (in %s) names %s, which this build does not know (a later version wrote it); the lane is not followed and its publications are not imported, and the record is kept as it is",
+				filepath.Base(path), unknown.names())
+			st.filter = string(d.SYNC_FILTER())
+		} else if err != nil {
+			return nil, fmt.Errorf("%s %w: subscription %s %s/%s from %s: %w", path, errFollowFileDecode, st.Schema, st.ProviderID, st.SourceName, st.Producer, err)
 		}
 		if ms := d.LAST_SYNC_STARTED_AT(); ms > 0 {
 			st.Since = time.UnixMilli(int64(min(ms, uint64(1<<62))))
@@ -453,8 +480,26 @@ const (
 	followFilterSubscribed = "subscribed"
 )
 
+// followFilterUnknownError is a SYNC_FILTER naming fields this build does not
+// know.
+type followFilterUnknownError struct{ keys []string }
+
+func (e *followFilterUnknownError) names() string {
+	quoted := make([]string, len(e.keys))
+	for i, k := range e.keys {
+		quoted[i] = strconv.Quote(k)
+	}
+	return strings.Join(quoted, ", ")
+}
+
+func (e *followFilterUnknownError) Error() string {
+	return "SYNC_FILTER names " + e.names() + ", not a subscription field of this build"
+}
+
 // parseFollowFilter reads a subscription's SYNC_FILTER into st ("" starts at
-// the beginning: followFileName's records, as 1.1.9 wrote them).
+// the beginning: followFileName's records, as 1.1.9 wrote them). Fields this
+// build does not know are a *followFilterUnknownError (after the known ones
+// are read); a known field that does not read is an error.
 func parseFollowFilter(filter string, st *FollowStatus) error {
 	if filter == "" {
 		return nil
@@ -463,7 +508,18 @@ func parseFollowFilter(filter string, st *FollowStatus) error {
 	if err != nil {
 		return fmt.Errorf("SYNC_FILTER %q: %w", filter, err)
 	}
+	var unknown []string
+	for k := range q {
+		switch k {
+		case followFilterStart, followFilterUnread, followFilterSubscribed:
+		default:
+			unknown = append(unknown, k)
+		}
+	}
 	for k, v := range q {
+		if slices.Contains(unknown, k) {
+			continue
+		}
 		if len(v) != 1 {
 			return fmt.Errorf("SYNC_FILTER %q names %s %d times", filter, k, len(v))
 		}
@@ -486,9 +542,11 @@ func parseFollowFilter(filter string, st *FollowStatus) error {
 				return fmt.Errorf("SYNC_FILTER %q: subscribed %q is not %q", filter, v[0], FollowStartBeginning)
 			}
 			st.FromBeginning = true
-		default:
-			return fmt.Errorf("SYNC_FILTER %q: %q is not a subscription field", filter, k)
 		}
+	}
+	if len(unknown) > 0 {
+		sort.Strings(unknown)
+		return &followFilterUnknownError{keys: unknown}
 	}
 	if _, ok := q[followFilterStart]; !ok {
 		return fmt.Errorf("SYNC_FILTER %q names no start", filter)
@@ -496,8 +554,11 @@ func parseFollowFilter(filter string, st *FollowStatus) error {
 	return nil
 }
 
-// followFilter is a subscription's SYNC_FILTER.
+// followFilter is a subscription's SYNC_FILTER (a refused one's as read).
 func followFilter(st FollowStatus) string {
+	if st.Refused != "" {
+		return st.filter
+	}
 	q := url.Values{followFilterStart: {st.Start}}
 	if !st.Unread.IsZero() {
 		q.Set(followFilterUnread, st.Unread.UTC().Format(time.RFC3339Nano))
@@ -512,8 +573,10 @@ func followFilter(st FollowStatus) string {
 // read is moved aside to (followed by the UTC time).
 const followUnreadableSuffix = ".unreadable-"
 
-// readFollowFileOrSetAside reads one subscriptions file. One that does not
-// read is moved aside (never overwritten) and named in the error; with none
+// readFollowFileOrSetAside reads one subscriptions file. One whose bytes do
+// not decode is moved aside (never overwritten) and named in the error; one
+// whose read fails (permission, I/O, a directory in its place) is left where
+// it is, named with the error, and read again at the next start. With none
 // at path, a file moved aside earlier is still an error: the subscriptions
 // it held are not "none".
 func readFollowFileOrSetAside(path string) ([]FollowStatus, error) {
@@ -528,6 +591,9 @@ func readFollowFileOrSetAside(path string) ([]FollowStatus, error) {
 		}
 		return subs, nil
 	}
+	if !errors.Is(err, errFollowFileDecode) {
+		return nil, fmt.Errorf("%s did not read (%w); it is left in place and read again at the next start", path, err)
+	}
 	aside := path + followUnreadableSuffix + time.Now().UTC().Format("20060102T150405.000000000Z")
 	if renameErr := os.Rename(path, aside); renameErr != nil {
 		return nil, fmt.Errorf("%w; not moved aside: %v", err, renameErr)
@@ -536,9 +602,13 @@ func readFollowFileOrSetAside(path string) ([]FollowStatus, error) {
 }
 
 // load reads the subscriptions (see the package comment for the two files)
-// and starts each lane. A file that does not read loads nothing: it is moved
-// aside, the alert subscriptions_unreadable names it, no lane runs and
-// nothing writes the files until a restart finds them readable.
+// and starts each lane. A file that does not read loads nothing: one whose
+// bytes do not decode is moved aside, one whose read fails is left in place;
+// the alert subscriptions_unreadable names it, no lane runs and nothing
+// writes the files until a restart finds them readable. A subscription whose
+// SYNC_FILTER names a field this build does not know is not run (alert
+// subscription_refused naming the lane and the field) and is kept as read;
+// the other lanes run.
 func (m *followManager) load() error {
 	subs, err := readFollowFileOrSetAside(m.subsPath)
 	var old []FollowStatus
@@ -558,12 +628,14 @@ func (m *followManager) load() error {
 		index[st.FollowKey] = i
 	}
 	for _, st := range old {
+		st.inOldFile = true
 		i, held := index[st.FollowKey]
 		if !held {
 			index[st.FollowKey] = len(subs)
 			subs = append(subs, st)
 			continue
 		}
+		subs[i].inOldFile = true
 		if subs[i].inFollowFile() && st.Cursor != "" {
 			subs[i].Cursor = st.Cursor
 		}
@@ -571,11 +643,18 @@ func (m *followManager) load() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, st := range subs {
-		if _, held := m.subs[st.FollowKey]; !held {
-			m.startLocked(st)
-			if text := st.UnreadText(); text != "" {
-				m.n.alerts.Raise(ops.KindFollowCursorRefused, followAlertSubject(st.FollowKey), ops.SeverityWarning, text)
-			}
+		if _, held := m.subs[st.FollowKey]; held {
+			continue
+		}
+		if st.Refused != "" {
+			m.keepRefusedLocked(st)
+			log.Warnf("Subscription %s %s/%s from %s: %s", st.Schema, st.ProviderID, st.SourceName, st.Producer, st.Refused)
+			m.n.alerts.Raise(ops.KindSubscriptionRefused, followAlertSubject(st.FollowKey), ops.SeverityError, st.Refused)
+			continue
+		}
+		m.startLocked(st)
+		if text := st.UnreadText(); text != "" {
+			m.n.alerts.Raise(ops.KindFollowCursorRefused, followAlertSubject(st.FollowKey), ops.SeverityWarning, text)
 		}
 	}
 	return nil
@@ -696,6 +775,9 @@ func (m *followManager) Subscribe(ctx context.Context, key FollowKey, opts Follo
 		st = e.status
 	}
 	m.mu.Unlock()
+	if held && st.Refused != "" {
+		return FollowPlan{FollowKey: key}, fmt.Errorf("this node holds that subscription and does not run it (%s); sync unsubscribe it first to subscribe again", st.Refused)
+	}
 	if opts.AcknowledgeUnread {
 		if !held {
 			return FollowPlan{FollowKey: key}, errors.New("this node does not subscribe to that lane from that producer")
@@ -821,6 +903,11 @@ func (m *followManager) Follow(key FollowKey, on bool) error {
 	for _, e := range stopped {
 		e.cancel()
 		<-e.done
+		// What was raised about the lane goes with it.
+		subject := followAlertSubject(e.status.FollowKey)
+		for _, kind := range []string{ops.KindFollowCursorRefused, ops.KindFollowStopped, ops.KindFollowRefused, ops.KindSubscriptionRefused} {
+			m.n.alerts.Clear(kind, subject)
+		}
 	}
 	return m.save()
 }
@@ -851,8 +938,8 @@ func (n *Node) subscribedFrom(from peer.ID, schema, providerID, sourceName strin
 	key := normalizeFollowKey(FollowKey{Schema: schema, ProviderID: providerID, SourceName: sourceName, Producer: from.String()})
 	n.follows.mu.Lock()
 	defer n.follows.mu.Unlock()
-	_, ok := n.follows.subs[key]
-	return ok
+	e, ok := n.follows.subs[key]
+	return ok && e.status.Refused == ""
 }
 
 // followPublication is what the $PNM path does with a publication of the
@@ -912,6 +999,16 @@ func (n *Node) gossipRecordAdmitted(from peer.ID, schema string) error {
 // followed streams get the trusted limits (protocol.FlatSQLSyncHandler).
 func (n *Node) followTrusted(id peer.ID) bool {
 	return n != nil && n.peerRegistry != nil && n.peerRegistry.IsTrusted(id)
+}
+
+// keepRefusedLocked holds a subscription this build does not run
+// (FollowStatus.Refused): listed, written back as read, not followed; the
+// caller holds m.mu.
+func (m *followManager) keepRefusedLocked(st FollowStatus) {
+	st.LastError = st.Refused
+	done := make(chan struct{})
+	close(done)
+	m.subs[st.FollowKey] = &followEntry{status: st, cancel: func() {}, done: done, started: time.Now(), settled: true}
 }
 
 // startLocked starts one lane; the caller holds m.mu.

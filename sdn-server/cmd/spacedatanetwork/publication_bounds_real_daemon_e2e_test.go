@@ -29,6 +29,9 @@ func TestPublicationCursorRefusedRealDaemons(t *testing.T) {
 	}
 	a.ingestOMMCIDs(t, "cr-ka", "k1", 760_000, 500)
 	a.ingestOMMCIDs(t, "cr-ka", "k2", 761_000, 500)
+	// cr-un: a keep-all lane unsubscribed while its refused cursor's gap is
+	// unread; its alert goes with it.
+	a.ingestOMMCIDs(t, "cr-un", "n1", 765_000, 300)
 	b := newPublicationDaemon(t, exe, "cursor-receiver", a.address, a.id, "keep-all")
 	b.start(t)
 	time.Sleep(3 * time.Second)
@@ -38,6 +41,8 @@ func TestPublicationCursorRefusedRealDaemons(t *testing.T) {
 	if out, err := b.cli(t, "sync", "subscribe", "--schema", "OMM", "--provider-id", "publication-e2e", "--source-name", "cr-ka", "--from", a.id, "--start", "beginning"); err != nil {
 		t.Fatalf("sync subscribe cr-ka: %v\n%s", err, out)
 	}
+	b.subscribeCurrent(t, a, "cr-un")
+	b.awaitRecords(t, "OMM.fbs", "cr-un", a.scan(t, "OMM.fbs", "cr-un"), 3*time.Minute)
 	b.awaitRecords(t, "OMM.fbs", "cr-rc", a.scanBatch(t, "OMM.fbs", "cr-rc", "c3"), 3*time.Minute)
 	b.awaitRecords(t, "OMM.fbs", "cr-ka", a.scan(t, "OMM.fbs", "cr-ka"), 3*time.Minute)
 	if got := b.subscription(t, "cr-rc").ReceivedRecords; got != 1_000 {
@@ -87,6 +92,25 @@ func TestPublicationCursorRefusedRealDaemons(t *testing.T) {
 			t.Fatalf("no follow_cursor_refused alert for %s: %+v", lane, alerts)
 		}
 	}
+	// cr-un's cursor is refused too, its gap unread; unsubscribed, its
+	// follow_cursor_refused goes with it (not left until a restart).
+	deadline := time.Now().Add(4 * time.Minute)
+	for !hasAlertOn(b.alerts(t), "follow_cursor_refused", "cr-un") {
+		if time.Now().After(deadline) {
+			t.Fatal("no follow_cursor_refused alert for cr-un after the producer's reindex")
+		}
+		time.Sleep(2 * time.Second)
+	}
+	if sub := b.subscription(t, "cr-un"); sub.Unread == "" {
+		t.Fatal("cr-un shows nothing unread after its refused cursor")
+	}
+	if out, err := b.cli(t, "sync", "unsubscribe", "--schema", "OMM", "--provider-id", "publication-e2e", "--source-name", "cr-un", "--from", a.id); err != nil {
+		t.Fatalf("sync unsubscribe cr-un: %v\n%s", err, out)
+	}
+	if hasAlertOn(b.alerts(t), "follow_cursor_refused", "cr-un") {
+		t.Fatal("cr-un's follow_cursor_refused alert stays after the lane was unsubscribed")
+	}
+	t.Log("cr-un unsubscribed with its gap unread: its follow_cursor_refused alert cleared")
 	if !inFollows["cr-ka"] || inFollows["cr-rc"] {
 		t.Fatalf("follows.dss held %v before the refusal; want the lane that started at its beginning (cr-ka) and not the bounded one (cr-rc)", inFollows)
 	}
@@ -140,7 +164,7 @@ func TestPublicationCursorRefusedRealDaemons(t *testing.T) {
 	}
 	whole := a.scan(t, "OMM.fbs", "cr-ka")
 	b.awaitRecords(t, "OMM.fbs", "cr-ka", whole, 4*time.Minute)
-	deadline := time.Now().Add(3 * time.Minute)
+	deadline = time.Now().Add(3 * time.Minute)
 	for {
 		sub := b.subscription(t, "cr-ka")
 		if sub.Unread == "" && sub.StartsAt == "beginning" && sub.ReceivedRecords == int64(len(whole)) {
