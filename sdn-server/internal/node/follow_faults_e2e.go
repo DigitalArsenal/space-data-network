@@ -14,7 +14,11 @@ import (
 //     guard's reservation is released all the same);
 //   - a lane whose source name starts with "late-" opens its first followed
 //     stream 40 s after it starts (a producer that answers late after a
-//     restart), past the first stored-$PNM catch-up 15 s after the start.
+//     restart), past the first stored-$PNM catch-up 15 s after the start;
+//   - a lane whose source name starts with "late270-" opens its first
+//     followed stream 270 s after it starts;
+//   - a lane whose source name starts with "never-" opens no followed
+//     stream for 24 hours (a producer whose stream never connects).
 func init() {
 	followStoreFault = func(sourceName string) {
 		if strings.HasPrefix(sourceName, "panic-") {
@@ -22,8 +26,13 @@ func init() {
 		}
 	}
 	followStartDelay = func(sourceName string) time.Duration {
-		if strings.HasPrefix(sourceName, "late-") {
+		switch {
+		case strings.HasPrefix(sourceName, "late-"):
 			return 40 * time.Second
+		case strings.HasPrefix(sourceName, "late270-"):
+			return 270 * time.Second
+		case strings.HasPrefix(sourceName, "never-"):
+			return 24 * time.Hour
 		}
 		return 0
 	}

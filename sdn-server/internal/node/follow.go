@@ -340,6 +340,9 @@ type followEntry struct {
 	settled  bool
 	started  time.Time
 	deferred bool
+	// waitNudge is set once a run of the catch-up is asked for at the end
+	// of followPublicationWait (followManager.nudgeAt).
+	waitNudge bool
 }
 
 // followPublicationWait bounds the wait of a lane's publications for its
@@ -987,9 +990,32 @@ func (n *Node) followPublication(from peer.ID, schema, providerID, sourceName st
 		return followPublicationStreamed
 	case !e.settled && time.Since(e.started) < followPublicationWait:
 		e.deferred = true
+		if !e.waitNudge {
+			// The catch-up runs again when the wait ends, whatever else
+			// moved its timer: a nudge from another lane resets it to its
+			// interval, and the bound is followPublicationWait.
+			e.waitNudge = true
+			n.follows.nudgeAt(key, e, followPublicationWait-time.Since(e.started))
+		}
 		return followPublicationDeferred
 	}
 	return followPublicationImport
+}
+
+// nudgeAt asks the stored-$PNM catch-up to run after d, when lane key is
+// still e, its publications still wait and its stream has not settled.
+func (m *followManager) nudgeAt(key FollowKey, e *followEntry, d time.Duration) {
+	time.AfterFunc(max(d, 0), func() {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		if m.subs[key] != e || !e.deferred || e.settled {
+			return
+		}
+		select {
+		case m.catchupNudge <- struct{}{}:
+		default:
+		}
+	})
 }
 
 // errGossipRecordNoLane is why a record gossiped on a schema topic is not
