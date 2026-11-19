@@ -337,8 +337,11 @@ is the lane (`<schema> <provider>/<source>`) and whose `last_error` names each
 failed batch and how many of its records no completed publication carries. A
 completed publication is one whose every window was announced and whose
 completion was recorded; what a publication that failed partway left counts
-for nothing. The alert clears when that count reaches zero (a later run's
-publication carries the records again) or the batch itself is published; see
+for nothing. The count is made from the store after each failure and each
+completed publication of a whole batch or lane; the alert clears when it
+reaches zero (a later run's publication carries the records again, the batch
+itself is published whole, or the batch holds no records any more). The
+failed scopes are kept in the store, so a restart raises the alert again; see
 `sdn-server/docs/operations-alerts.md`.
 
 ---

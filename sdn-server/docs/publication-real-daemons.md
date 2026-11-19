@@ -163,8 +163,7 @@ recording of the completion after every window was announced (the fault
 fires once per process). The alert says all three records are unpublished.
 A publication of a batch carrying one of them leaves the alert saying two
 are, and retention lists no series made of the failed publication's rows; a
-publication of a batch carrying all three clears the alert, and the failed
-batch's records were counted once.
+publication of a batch carrying all three clears the alert.
 
 `TestPublicationAlertBatchGainedRecordsRealDaemons` publishes a batch of two
 records, stores a third in it, and fails its republication at the third
@@ -174,8 +173,35 @@ records of the first batch and the one of the second unpublished: the
 completed publication of the first batch exported two records, and the
 batch holds three. An announcement of the batch's existing publications
 announces the completed publication's window only. The publication of an
-unrelated batch leaves the alert with the same counts; a publication of the
-whole first batch clears it.
+unrelated batch leaves the alert with the same counts. The publication of a
+batch holding the first two records leaves it saying, once the count that
+publication prompts ran, that one of the three records of the first batch is
+unpublished; a publication of the whole first batch clears it.
+
+`TestPublicationAlertGainedAfterFailureRealDaemons` stores two records in a
+batch and fails its publication, stores a third record in it and fails its
+publication again, and publishes another batch holding the first two
+records: the alert stays, saying one of the batch's three records is
+unpublished (it cleared here when the batch was counted at its first failure
+only and the other batch covered what that count found). A publication
+of the whole batch clears it.
+
+`TestPublicationAlertRestartRealDaemons` fails a batch's publication and
+restarts the node: the alert is raised again at start and counts the batch's
+records. A publication of the whole batch clears it, and the node restarted
+again raises no alert.
+
+`TestPublicationAlertSupersededBatchRealDaemons` fails a batch's publication
+on a replace-current node, stores a batch of other records, supersedes the
+lane by it (`POST /api/v1/admin/store/supersede`, the store's replace-current
+eviction) and publishes it: the failed batch holds no records any more, and
+the alert clears, the log saying so.
+
+`TestPublicationAlertFailureDuringClearRealDaemons` holds the clearing of an
+alert for 20 s after it was decided
+(`SDN_E2E_PUBLICATION_ALERT_CLEAR_HOLD=20s`), and fails another batch's
+publication meanwhile: after the hold the alert is active and names that
+batch.
 
 `TestPublicationAlertHeadPublicationRealDaemons` fails a three-record batch's
 publication, then publishes a head of that batch (`limit: 1`) and a head of

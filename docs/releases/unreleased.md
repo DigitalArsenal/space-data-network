@@ -107,25 +107,33 @@ runs. `apps run --cancel-on-interrupt` cancels its own run only. The
 dashboard's Run now waits for the run as before; a page closed meanwhile no
 longer cancels it.
 
-**A publication alert clears once later runs publish the failed batch's
-records.** A `publication_failed` alert of a batch cleared only when that
-same batch was published, so the alert of a scheduled run whose publication
-failed stayed (health `degraded`) through every later successful run until
-the node restarted. It now also clears when every record of the failed batch
-is in a completed publication of the lane, which is what a later run's
-publication carries when its pull returns those records again. While any
-record of the failed batch is in no publication, the alert stays and says
-how many. Only completed publications of a whole batch count, and only
-while the batch holds exactly what that publication exported: a batch that
-gained records after its publication (a batch stored in parts) counts for
-none of its records until it is published whole again. A publication of a
-head (a `limit`, or a publication of a lane with no batch and no chunk size)
-clears nothing. The windows a publication wrote before it failed partway
-are never taken for a publication of the batch and are not announced again
-by an announcement of existing publications. The records are counted after
-the publication is reported, off its path, once per failed batch, and at
-most 200,000 per batch and 400,000 per lane are followed (about 40 MB per
-lane); a batch beyond that keeps its alert until it is published whole.
+**A publication alert clears once the failed batch's records are published,
+and survives a restart.** A `publication_failed` alert of a batch cleared
+only when that same batch was published, so the alert of a scheduled run
+whose publication failed stayed (health `degraded`) through every later
+successful run until the node restarted, and a restart dropped it whether
+or not anything was published. The node now records each failed scope in
+the store and decides from the store when it clears. A failed batch clears
+when a count of the records it holds now finds none unpublished: every one
+of them is in a completed publication's export (what a later run's
+publication carries when its pull returns those records again), or the batch
+holds none any more (expired or superseded). The count runs after every
+failure in the lane, after every completed publication of a whole batch or
+of the whole lane, and at start; while any record is unpublished, the alert
+stays and says how many, and says that publishing the batch whole clears it.
+Only completed publications count, and only for the set they exported: a
+batch that gained records after its publication counts for none of its
+records until it is published whole again, and on a lane that publishes the
+publication journal's retained selection a record counts only when it was in
+that selection. A failed head of a batch or of the lane, a failed
+publication of the whole lane, a failed announcement of existing
+publications, and a failed batch of a datastore lane clear when the same
+operation completes again; a publication of a head never clears a failed
+batch. The windows a publication wrote before it failed partway are never
+taken for a publication of the batch and are not announced again by an
+announcement of existing publications. At most 16 failed batches are tracked
+per lane; beyond them the alert says so and stays until a publication of the
+whole lane completes.
 
 **Retention releases the windows of a failed publication.** Node 1.1.9
 adopted the windows a publication wrote before it failed (rows, pins and the
