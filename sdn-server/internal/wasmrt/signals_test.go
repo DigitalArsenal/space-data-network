@@ -203,6 +203,11 @@ func TestNativeFaultIsNotTakenForAGuestTrap(t *testing.T) {
 // signature of stack issue 876. The crash report must name the first fault,
 // in the library that took it, not only the second.
 func TestLibraryFaultOutsideACallIsNamed(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		// On darwin the child never reaches the forwarder: it spins at 100%
+		// CPU in the Go runtime with nothing on stderr.
+		t.Skip("linux only: on darwin a C library fault on a C thread hangs the process")
+	}
 	out, err := runSignalChild(t, "libc-crash-outside-call")
 	var exit *exec.ExitError
 	if err == nil || !errorsAs(err, &exit) {
@@ -218,7 +223,7 @@ func TestLibraryFaultOutsideACallIsNamed(t *testing.T) {
 	if !libraryFaultNamed.MatchString(out) {
 		t.Fatalf("the crash report does not name the first fault in its library:\n%s", out)
 	}
-	t.Logf("libc-crash-outside-call: %s", lastLines(out, "[wasmrt]"))
+	t.Logf("libc-crash-outside-call: %s", lastLines(out, "[wasmrt] FATAL"))
 }
 
 var libraryFaultNamed = regexp.MustCompile(`handed signal 1[01] pc 0x[0-9a-f]+ \(lib[^ )]*\+0x[0-9a-f]+\) addr 0x[0-9a-f]+`)

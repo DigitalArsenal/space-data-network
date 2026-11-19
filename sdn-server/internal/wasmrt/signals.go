@@ -711,7 +711,9 @@ static void *sdn_libc_bad_store_run(void *arg) {
 	if (p == MAP_FAILED) {
 		abort();
 	}
-	memset(p, 1, 4096);
+	// Through a volatile pointer, so the compiler cannot inline the store.
+	void *(*volatile set)(void *, int, size_t) = memset;
+	set(p, 1, 4096);
 	return NULL;
 }
 
