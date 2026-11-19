@@ -384,7 +384,8 @@ spacedatanetwork sync subscribe --schema OMM --provider-id <provider> \
   --source-name <source> --from <producer peer id> --json
 # -> {"plan":{"start":"current","rule":"replace-current","producer_batch":"...",
 #     "first_read_records":2000,"first_read_bytes":640000,"free_disk_bytes":...,
-#     "record_ceiling":32000000,"refusal":""},"subscribed":true}
+#     "record_ceiling":32000000,"reserved_records":0,"reserved_bytes":0,"refusal":""},
+#     "subscribed":true}
 spacedatanetwork sync subscriptions --json
 # -> {"subscriptions":[{"schema":"OMM.fbs","provider_id":"...","source_name":"...",
 #     "producer":"16Uiu2...","subscribed_since":"...","connected":true,
