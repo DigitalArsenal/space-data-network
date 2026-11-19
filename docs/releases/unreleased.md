@@ -145,6 +145,19 @@ generated file and the command line that passes it, and a first start that is
 still refused says that no identity exists yet, why this host's fingerprint is
 refused, and how to proceed, instead of saying a secret failed to open.
 
+**A rare crash of a Linux node is fixed.** The node's WebAssembly runtime
+detached threads that were already running: every call with a deadline (the
+storage engine's control calls among them), every WebAssembly thread spawn,
+and every compile of a module to native code (four at each start, and each
+time the engine's compiled code is not cached). In glibc through at least
+2.42 (sourceware bug 19951, fixed on glibc master, December 2025) detaching a
+thread that is exiting at that moment can read memory that has just been
+freed, and the node ends with a segmentation fault. Every supported Linux
+host was exposed, Ubuntu 24.04 (glibc 2.39) included. The runtime now starts
+these threads detached and links compiled code on one thread, so it never
+detaches a running thread. `spacedatanetwork substrate-selftest` reports the
+runtime's patch series as `patch_series` (10).
+
 **The credential store follows the identity's key password.** It now uses
 `SDN_KEY_PASSWORD`, `SDN_KEY_PASSWORD_FILE`, `security.key_password`,
 `security.key_password_file`, in that order, so "credential store

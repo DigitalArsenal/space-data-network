@@ -1,0 +1,26 @@
+diff --git a/lib/llvm/codegen.cpp b/lib/llvm/codegen.cpp
+index 2de0bda..2bc2301 100644
+--- a/lib/llvm/codegen.cpp
++++ b/lib/llvm/codegen.cpp
+@@ -233,11 +233,17 @@ Expect<void> outputNativeLibrary(const std::filesystem::path &OutputPath,
+           "-syslibroot", "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
+           ObjectName.u8string().c_str(), "-o", OutputPath.u8string().c_str()},
+ #elif WASMEDGE_OS_LINUX
++  // --threads=1: the output file already exists (outputWasmLibrary writes the
++  // object bytes to it first), and with more than one thread lld removes an
++  // existing output through lld::unlinkAsync, which starts a std::thread and
++  // detaches it. Detaching a running thread races its exit in glibc
++  // (sourceware bug 19951). With one thread, unlinkAsync returns before it
++  // starts the thread.
+   LinkResult = lld::elf::link(
+-      std::initializer_list<const char *>{"ld.lld", "--eh-frame-hdr",
+-                                          "--shared", "--gc-sections",
+-                                          "--discard-all", ObjectName.c_str(),
+-                                          "-o", OutputPath.u8string().c_str()},
++      std::initializer_list<const char *>{
++          "ld.lld", "--threads=1", "--eh-frame-hdr", "--shared",
++          "--gc-sections", "--discard-all", ObjectName.c_str(), "-o",
++          OutputPath.u8string().c_str()},
+ #elif WASMEDGE_OS_WINDOWS
+   LinkResult = lld::coff::link(
+       std::initializer_list<const char *>{

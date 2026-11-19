@@ -39,7 +39,7 @@ func TestAOTAtomicStoreStack(t *testing.T) {
 }
 
 func TestAtomicStoreSubstrateReport(t *testing.T) {
-	rep := SubstrateReport{AtomicNotifyWithoutStore: true, StopReachesEveryThread: true,
+	rep := SubstrateReport{PatchSeries: RequiredPatchSeries, AtomicNotifyWithoutStore: true, StopReachesEveryThread: true,
 		AOTChecked: true, InterruptibleAOT: true, AOTAtomicMemargOffset: true, AOTLoopStopChecks: true}
 	if rep.Patched() || rep.Tag() != "sdn4" {
 		t.Fatalf("missing patch: %+v", rep)
@@ -47,5 +47,15 @@ func TestAtomicStoreSubstrateReport(t *testing.T) {
 	rep.AOTAtomicStoreStack = true
 	if !rep.Patched() || rep.Tag() != "sdn5" {
 		t.Fatalf("patched: %+v", rep)
+	}
+	// Every behavior present, but the binary links an earlier patch series
+	// (or none, the wasmedge_unpatched tag): not patched.
+	rep.PatchSeries = RequiredPatchSeries - 1
+	if rep.Patched() {
+		t.Fatalf("an earlier patch series reports patched: %+v", rep)
+	}
+	rep.PatchSeries = 0
+	if rep.Patched() {
+		t.Fatalf("no patch series reports patched: %+v", rep)
 	}
 }
