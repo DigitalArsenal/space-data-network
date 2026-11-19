@@ -105,6 +105,56 @@ func TestSignalVerifiesAndIsActionable(t *testing.T) {
 	}
 }
 
+// One signed signal has one accepted spelling of its signature. Go's base64
+// decoder also takes line breaks inside the text and any value in the unused
+// bits of the last character; were those accepted, each spelling would pass
+// as a different valid message and be checked in full again.
+func TestSignalRefusesAnotherSpellingOfItsSignature(t *testing.T) {
+	_, priv, roots, keyID := signalTestKey(t)
+	raw := signTestSignal(t, priv, keyID, nil, sigdomain.DomainUpdateSignalV1)
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	signing := doc["signing"].(map[string]any)
+	original := signing["signature"].(string)
+	if !strings.HasSuffix(original, "==") {
+		t.Fatalf("an ed25519 signature is 64 bytes, 88 characters ending ==: %q", original)
+	}
+	last := len(original) - 3
+	stray := original[:last] + string(original[last]+1) + "=="
+	if decoded, err := base64.StdEncoding.DecodeString(stray); err != nil || base64.StdEncoding.EncodeToString(decoded) != original {
+		t.Fatalf("the stray-bit spelling must decode to the same signature (err=%v)", err)
+	}
+	for name, spelling := range map[string]string{
+		"line break inside":  original[:10] + "\n" + original[10:],
+		"carriage return":    original[:40] + "\r\n" + original[40:],
+		"stray trailing bit": stray,
+	} {
+		signing["signature"] = spelling
+		respelled, err := json.Marshal(doc)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		signal, err := ParseSignal(respelled)
+		if err != nil {
+			continue // refused even earlier
+		}
+		if err := signal.Verify(hostOpts(roots)); err == nil {
+			t.Fatalf("%s: a second spelling of the signature was accepted", name)
+		}
+	}
+	signing["signature"] = original
+	same, _ := json.Marshal(doc)
+	signal, err := ParseSignal(same)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := signal.Verify(hostOpts(roots)); err != nil {
+		t.Fatalf("the signer's own spelling must verify: %v", err)
+	}
+}
+
 // The point of the separate statement domain: a signature minted over a MANIFEST
 // must never be accepted as a signal, and vice versa. Without this, the cheap,
 // frequent, broadcast document and the document that authorizes bytes would

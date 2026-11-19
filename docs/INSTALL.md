@@ -264,6 +264,7 @@ writes a complete config. Edit these before binding anything non-loopback:
 | `status.allowed_origins` | your own origin, or delete the line |
 | `network.listen` | keep the defaults unless a port is taken (see step 4) |
 | `subscriptions.default_retention` | `replace-current` (the default: each publication replaces the lane's previous set) or `archive-all` (keep and pin every publication). A subscription can choose its own rule. |
+| `subscriptions.record_ceiling` | the records this node may hold before a new subscription's first read is refused (default 32,000,000, the store engine's ceiling) |
 
 Sign in to the dashboard with the node's own root key, or seed operators
 under `users:` with their `signing_pubkey_hex`. A node whose root identity is
@@ -351,9 +352,20 @@ network:
     - /ip4/167.172.219.213/tcp/4001/p2p/16Uiu2HAmGjaPxkWFSXBbmhs9K5x1Zo6euJw95VjS6Jj2bcPpYr2U
 ```
 
-The publisher needs no configuration. Once connected, the node materializes
-the publisher's signed dataset publications; the dashboard's SOURCES page
-lists them by origin with SYNC, EXPORT and ARCHIVE per lane.
+The publisher needs no configuration. Then subscribe to each lane you want:
+a node imports only the lanes it subscribes to.
+
+```sh
+spacedatanetwork sync subscribe --schema OMM --provider-id celestrak.eth \
+  --source-name celestrak-gp --from 16Uiu2HAmGjaPxkWFSXBbmhs9K5x1Zo6euJw95VjS6Jj2bcPpYr2U
+spacedatanetwork sync subscriptions
+```
+
+The command signs in to the running daemon with the node's root key, prints
+the first read (the publisher's current batch for a `replace-current` lane,
+the whole lane for a `keep-all` or `archive-all` lane) and refuses it when
+this node's free disk or record ceiling cannot take it (`--force` takes it
+anyway). [SUBSCRIPTIONS.md](SUBSCRIPTIONS.md) has the details.
 
 ## 8. Publish your own records
 
@@ -463,6 +475,7 @@ the installers unpack). A bundle reads its updates from
 spacedatanetwork update check      # this build, the newest release on the feed, the rollback slots
 spacedatanetwork update install    # fetch, verify, install, restart, health-check
 spacedatanetwork update slots      # the builds this node can return to (the last five)
+spacedatanetwork update fleet      # the version and update state of this node and every SDN node it knows
 spacedatanetwork update rollback --reason "<why>"   # with the node stopped; --slot <version> for an older one
 ```
 
@@ -473,6 +486,42 @@ check comes one to five minutes after the start), so a node that was off when
 a release was announced still takes it. Set `update.enabled: false` in a
 node's config to turn both off for that node. Nodes from 1.1.4 to 1.1.6 learn
 of a release only from a signal; 1.1.7 and later also check the feed.
+
+**Not all at once.** A node acts on an update it accepted at its own time
+within `update.rollout_window_seconds` (default 1800, 30 minutes; `0` acts at
+once; at most 86400), fixed by its peer id and the update id, so the nodes
+of a fleet do not all restart at the same moment. A restart during the wait
+keeps the due time (`updates/pending.json`). `update check` and `status`
+print `update_pending=<update id> ... due_at=<time>` while a node waits, and
+`update install` typed on the node installs at once. A release signal
+carries the window its publisher chose (the release workflow's
+`rollout_window_seconds` input, default 1800; the workflow refuses a value
+that is not a whole number from 0 to 86400), which replaces the setting for
+that update; a node that finds the release by its feed check uses its own
+setting. The delays of two nodes are independent and spread evenly over the
+window, so two nodes that are each down for D seconds overlap with
+probability 1-(1-D/W)² for a window of W seconds: with five-minute restarts,
+about 31% of the time with the default 30-minute window, about 16% with 60
+minutes, 75% with 10 minutes, and always with five minutes or less. Where two
+hosts must not be down together, run `update install` on one of them by hand
+first (it installs at once) and check `update fleet` before the push. Nodes of 1.1.9 and earlier ignore the window
+and act at once, unless their `update.max_delay_seconds` (a random delay
+those releases have) is set.
+
+**Which version every node runs.** `spacedatanetwork update fleet` prints a
+row for this node and for every SDN node it knows: name, the end of its peer
+id, version, where the version and state come from (`status`: the node's own
+signed statement, not checked by this node; `identify`: only its identify
+version), last seen, update state (`current`, `pending <version> until
+<time>`, `failed <version>, rolled back (<reason code>)`, or `not
+reporting`), and whether it accepted the newest signal this node verified or
+already runs its sequence. A node that publishes no status shows `not
+reporting`: a node of 1.1.9 or earlier, a node with `update.publish_status:
+false`, a node this node has not identified itself (reached only through
+other nodes), or one whose status was not renewed for 30 minutes. Every peer
+on the update topic reads a node's status, including when it will restart for
+a pending update; `update.publish_status: false` publishes none. `--json` and
+the admin route `GET /api/peers/versions` give the same data.
 
 **No root and no service account.** The account that runs the node needs no
 write access to the install folder, and no rights beyond its own data and
@@ -653,6 +702,13 @@ How an install takes an update:
   `updates/handoff-failure.json` and restarts the build that was running,
   which raises the alert and waits out the same backoff. The count survives
   restarts; a completed swap clears it.
+- `update install --config <config>` with the node running: when the file
+  is the one the running daemon was started with (an absolute path on its
+  command line), the command trusts the certificate that config names for
+  the admin listener and hands the install to the helper, as without
+  `--config`. Before this release, `--config` with an admin certificate the
+  system does not trust (an origin certificate) ended in "store at ... is
+  already open for writing"; run it without `--config` on those releases.
 - A pushed update signal (on by default, `update.enabled`) is acted on only
   when it is signed by an update root and its manifest and carrier lie under
   the bundle's own `update.feedBaseUrl`. A signal naming any other host, port

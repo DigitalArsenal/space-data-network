@@ -113,7 +113,7 @@ func TestPublicationFollowRealDaemons(t *testing.T) {
 		}
 		sub := b.followRecord(t)
 		if string(sub.PROVIDER_PEER_ID()) != a.id || string(sub.SOURCE_NAME()) != "follow" || !sub.SUBSCRIBED() || len(sub.CURSOR()) == 0 {
-			t.Fatalf("follows.dss record: producer %q source %q subscribed %v cursor %d bytes", sub.PROVIDER_PEER_ID(), sub.SOURCE_NAME(), sub.SUBSCRIBED(), len(sub.CURSOR()))
+			t.Fatalf("subscriptions.dss record: producer %q source %q subscribed %v cursor %d bytes", sub.PROVIDER_PEER_ID(), sub.SOURCE_NAME(), sub.SUBSCRIBED(), len(sub.CURSOR()))
 		}
 	})
 
@@ -188,7 +188,7 @@ func TestPublicationFollowRealDaemons(t *testing.T) {
 		a.ingestOMMFrames(t, "two", "two-a1", 260_000, a1)
 		fake.connect(t, b.address)
 		b.request(t, "POST", "/api/v1/sync", publicationStreamType, api.EncodeDSSFollow("OMM", "publication-e2e", "two", a.id), http.StatusAccepted)
-		b.request(t, "POST", "/api/v1/sync", publicationStreamType, api.EncodeDSSFollow("OMM", "publication-e2e", "two", fake.id.String()), http.StatusAccepted)
+		b.request(t, "POST", "/api/v1/sync?start=beginning&force=1", publicationStreamType, api.EncodeDSSFollow("OMM", "publication-e2e", "two", fake.id.String()), http.StatusAccepted)
 		b.awaitRecords(t, "OMM.fbs", "two", unionCounts(a.scanBatch(t, "OMM.fbs", "two", "two-a1"), fake.want("two")), 2*time.Minute)
 		a.ingestOMMFrames(t, "two", "two-a2", 260_000, append(append([][]byte(nil), a1[:500]...), ommFrames(261_000, 500)...))
 		want := unionCounts(a.scanBatch(t, "OMM.fbs", "two", "two-a2"), fake.want("two"))
@@ -201,7 +201,7 @@ func TestPublicationFollowRealDaemons(t *testing.T) {
 
 	t.Run("claimed_origin_refused", func(t *testing.T) {
 		fake.connect(t, b.address)
-		b.request(t, "POST", "/api/v1/sync", publicationStreamType, api.EncodeDSSFollow("OMM", "publication-e2e", "claim", fake.id.String()), http.StatusAccepted)
+		b.request(t, "POST", "/api/v1/sync?start=beginning&force=1", publicationStreamType, api.EncodeDSSFollow("OMM", "publication-e2e", "claim", fake.id.String()), http.StatusAccepted)
 		fake.awaitOpened(t, "claim", 2)
 		b.requireAlive(t)
 		if got := b.scan(t, "OMM.fbs", "claim"); len(got) != 0 {
@@ -214,7 +214,7 @@ func TestPublicationFollowRealDaemons(t *testing.T) {
 
 	t.Run("stream_cut_mid_page", func(t *testing.T) {
 		fake.connect(t, b.address)
-		b.request(t, "POST", "/api/v1/sync", publicationStreamType, api.EncodeDSSFollow("OMM", "publication-e2e", "cut", fake.id.String()), http.StatusAccepted)
+		b.request(t, "POST", "/api/v1/sync?start=beginning&force=1", publicationStreamType, api.EncodeDSSFollow("OMM", "publication-e2e", "cut", fake.id.String()), http.StatusAccepted)
 		b.awaitRecords(t, "OMM.fbs", "cut", fake.want("cut"), 2*time.Minute)
 		if fake.opened("cut") < 2 {
 			t.Fatal("the cut stream was not opened again")
@@ -227,7 +227,7 @@ func TestPublicationFollowRealDaemons(t *testing.T) {
 		// the rest; pause-1 stays the receiver's current batch until all
 		// 200 are held.
 		fake.connect(t, b.address)
-		b.request(t, "POST", "/api/v1/sync", publicationStreamType, api.EncodeDSSFollow("OMM", "publication-e2e", "pause", fake.id.String()), http.StatusAccepted)
+		b.request(t, "POST", "/api/v1/sync?start=beginning&force=1", publicationStreamType, api.EncodeDSSFollow("OMM", "publication-e2e", "pause", fake.id.String()), http.StatusAccepted)
 		b.awaitRecords(t, "OMM.fbs", "pause", fake.batchWant("pause-1"), 2*time.Minute)
 		fake.setPauseStage(1)
 		sent := fake.framesWant(fake.batches["pause-2"][50:100])
@@ -256,7 +256,7 @@ func TestPublicationFollowRealDaemons(t *testing.T) {
 
 	t.Run("hostile_record_count", func(t *testing.T) {
 		fake.connect(t, b.address)
-		b.request(t, "POST", "/api/v1/sync", publicationStreamType, api.EncodeDSSFollow("OMM", "publication-e2e", "count", fake.id.String()), http.StatusAccepted)
+		b.request(t, "POST", "/api/v1/sync?start=beginning&force=1", publicationStreamType, api.EncodeDSSFollow("OMM", "publication-e2e", "count", fake.id.String()), http.StatusAccepted)
 		fake.awaitOpened(t, "count", 2)
 		b.requireAlive(t)
 		if !strings.Contains(readFileString(b.logPath), "a run of 4294967295 records") {
@@ -266,7 +266,7 @@ func TestPublicationFollowRealDaemons(t *testing.T) {
 
 	t.Run("hostile_frame_flood", func(t *testing.T) {
 		fake.connect(t, b.address)
-		b.request(t, "POST", "/api/v1/sync", publicationStreamType, api.EncodeDSSFollow("OMM", "publication-e2e", "flood", fake.id.String()), http.StatusAccepted)
+		b.request(t, "POST", "/api/v1/sync?start=beginning&force=1", publicationStreamType, api.EncodeDSSFollow("OMM", "publication-e2e", "flood", fake.id.String()), http.StatusAccepted)
 		fake.awaitOpened(t, "flood", 2)
 		time.Sleep(5 * time.Second)
 		b.requireAlive(t)
@@ -281,7 +281,7 @@ func TestPublicationFollowRealDaemons(t *testing.T) {
 		// A header frame whose root offset points outside it: the receiver
 		// refuses the stream and raises an alert; it does not crash.
 		fake.connect(t, b.address)
-		b.request(t, "POST", "/api/v1/sync", publicationStreamType, api.EncodeDSSFollow("OMM", "publication-e2e", "malformed", fake.id.String()), http.StatusAccepted)
+		b.request(t, "POST", "/api/v1/sync?start=beginning&force=1", publicationStreamType, api.EncodeDSSFollow("OMM", "publication-e2e", "malformed", fake.id.String()), http.StatusAccepted)
 		fake.awaitOpened(t, "malformed", 2)
 		time.Sleep(2 * time.Second)
 		b.requireAlive(t)
@@ -297,12 +297,12 @@ func TestPublicationFollowRealDaemons(t *testing.T) {
 
 	t.Run("unsubscribe_standard", func(t *testing.T) {
 		b.request(t, "POST", "/api/v1/sync", publicationStreamType, api.EncodeDSSAction("OMM", "", "", api.DSSActionUnsubscribe), http.StatusAccepted)
-		raw, err := os.ReadFile(findFile(t, b.root, "follows.dss"))
+		raw, err := os.ReadFile(findFile(t, b.root, "subscriptions.dss"))
 		if err != nil {
 			t.Fatal(err)
 		}
 		if frames, _ := syncwire.SplitFrames(raw); len(frames) != 0 {
-			t.Fatalf("follows.dss holds %d lanes after the standard was unsubscribed", len(frames))
+			t.Fatalf("subscriptions.dss holds %d lanes after the standard was unsubscribed", len(frames))
 		}
 		before := fake.opened("flood") + fake.opened("count") + fake.opened("claim")
 		time.Sleep(35 * time.Second)
@@ -313,16 +313,16 @@ func TestPublicationFollowRealDaemons(t *testing.T) {
 	})
 }
 
-// followRecord is the receiver's one followed lane in follows.dss.
+// followRecord is the receiver's one followed lane in subscriptions.dss.
 func (d *publicationDaemon) followRecord(t *testing.T) *DSS.DSS {
 	t.Helper()
-	raw, err := os.ReadFile(findFile(t, d.root, "follows.dss"))
+	raw, err := os.ReadFile(findFile(t, d.root, "subscriptions.dss"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	frames, err := syncwire.SplitFrames(raw)
 	if err != nil || len(frames) != 1 || !DSS.SizePrefixedDSSBufferHasIdentifier(frames[0]) {
-		t.Fatalf("follows.dss holds %d frames (%v), want one $DSS record", len(frames), err)
+		t.Fatalf("subscriptions.dss holds %d frames (%v), want one $DSS record", len(frames), err)
 	}
 	return DSS.GetSizePrefixedRootAsDSS(frames[0], 0)
 }

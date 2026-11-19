@@ -615,7 +615,15 @@ run_go_extended() {
       */flatsqlrt|*/format2) budget=30m ;;
       */cmd/spacedatanetwork) skip=(-skip="${MIGRATION_GO_TESTS}|${UPDATE_GO_TESTS}") ;;
     esac
-    go_test_with_timings "$label" -v -p=1 -timeout="$budget" -count=1 ${skip[@]+"${skip[@]}"} "$pkg" \
+    # SDN_CI_KEEP_TEST_BINARIES=1 keeps each test binary in
+    # .ci-artifacts/testbin, so a native crash's pc can be symbolized
+    # against the exact binary that crashed (stack issue 876).
+    local keep=()
+    if [[ "${SDN_CI_KEEP_TEST_BINARIES:-0}" == 1 ]]; then
+      mkdir -p "$ROOT/.ci-artifacts/testbin"
+      keep=(-o "$ROOT/.ci-artifacts/testbin/")
+    fi
+    go_test_with_timings "$label" -v -p=1 -timeout="$budget" -count=1 ${keep[@]+"${keep[@]}"} ${skip[@]+"${skip[@]}"} "$pkg" \
       || failed=1
   done
   return "$failed"
@@ -628,7 +636,7 @@ run_go_extended() {
 # 260s (LaneCount), 225s (FollowStatus), 223s (ImportChunks), 220s
 # (InvalidSignature) and 213s (Key); ContentAddress takes about as long as
 # Key (72.7s against 67.9s on macOS). Each group is about 1,000s of runner
-# time against a 45m budget. Every group checks that the three lists together
+# time against a 45m budget. Every group checks that the four lists together
 # are exactly the package's ^TestPublication.*RealDaemons$ tests, each listed
 # once, and that each test of its own list ran and ended exactly once.
 PUBLICATION_GO_TESTS="^TestPublication.*RealDaemons$"
@@ -636,22 +644,48 @@ PUBLICATION_GO_TEST_TIMEOUT="45m"
 
 publication_group_tests() {
   case "$1" in
-    publication-1) echo "TestPublicationRetentionRealDaemons TestPublicationFollowRealDaemons TestPublicationOutlivesClientRealDaemons TestPublicationManualRunOutlivesClientRealDaemons TestPublicationManualRunCancelByIDRealDaemons TestPublicationAlertGainedAfterFailureRealDaemons TestPublicationAlertSupersededBatchRealDaemons" ;;
-    publication-2) echo "TestPublicationRealDaemons TestPublicationFingerprintRealDaemons TestPublicationContentAddressRealDaemons TestPublicationKeyRealDaemons TestPublicationSlowFlowRealDaemons TestPublicationManualRunStopsWithNodeRealDaemons TestPublicationManualRunBoundRealDaemons TestPublicationAlertRestartRealDaemons TestPublicationAlertFailureDuringClearRealDaemons" ;;
-    publication-3) echo "TestPublicationLaneCountRealDaemons TestPublicationFollowStatusRealDaemons TestPublicationImportChunksRealDaemons TestPublicationInvalidSignatureRealDaemons TestPublicationFailureRealDaemons TestPublicationAlertClearsWhenLaterRunsPublishItRealDaemons TestPublicationAlertPartialFailureRealDaemons TestPublicationAlertBatchGainedRecordsRealDaemons TestPublicationAlertHeadPublicationRealDaemons" ;;
+    publication-1) echo "TestPublicationRetentionRealDaemons TestPublicationFollowRealDaemons TestPublicationOutlivesClientRealDaemons TestPublicationGossipGateRealDaemons TestPublicationPNMOnlyLaneRealDaemons TestPublicationUnheldBatchImportsPNMRealDaemons TestPublicationStorePanicReleasesReservationRealDaemons TestPublicationManualRunOutlivesClientRealDaemons TestPublicationManualRunCancelByIDRealDaemons TestPublicationAlertGainedAfterFailureRealDaemons" ;;
+    publication-2) echo "TestPublicationRealDaemons TestPublicationFingerprintRealDaemons TestPublicationContentAddressRealDaemons TestPublicationKeyRealDaemons TestPublicationSlowFlowRealDaemons TestPublicationSubscriptionFileOrderRealDaemons TestPublicationPNMGuardRealDaemons TestPublicationManualRunStopsWithNodeRealDaemons TestPublicationManualRunBoundRealDaemons TestPublicationAlertRestartRealDaemons TestPublicationAlertFailureDuringClearRealDaemons" ;;
+    publication-3) echo "TestPublicationLaneCountRealDaemons TestPublicationFollowStatusRealDaemons TestPublicationImportChunksRealDaemons TestPublicationInvalidSignatureRealDaemons TestPublicationFailureRealDaemons TestPublicationCursorRefusedRealDaemons TestPublicationStreamSlotsRealDaemons TestPublicationSubscriptionsUnreadableRealDaemons TestPublicationSubscriptionUnknownFieldRealDaemons TestPublicationAlertClearsWhenLaterRunsPublishItRealDaemons TestPublicationAlertPartialFailureRealDaemons" ;;
+    publication-4) echo "TestPublicationSubscribeRealDaemons TestPublicationUpgradeRealDaemons TestPublicationRollbackRealDaemons TestPublicationConversionRecordRealDaemons TestPublicationDiskFloorRealDaemons TestPublicationRestartStreamedPNMRealDaemons TestPublicationAlertBatchGainedRecordsRealDaemons TestPublicationAlertHeadPublicationRealDaemons TestPublicationAlertSupersededBatchRealDaemons" ;;
   esac
+}
+
+# The 1.1.9 release binary TestPublicationUpgradeRealDaemons updates from:
+# the published archive, checked against its release checksum, and its
+# daemon binary (runtime/sdn/spacedatanetwork; bin/ holds a launcher script).
+fetch_v119_binary() {
+  [[ -n "${SDN_E2E_V119_BINARY:-}" ]] && return 0
+  local asset sum dir
+  case "$(uname -s)-$(uname -m)" in
+    Linux-x86_64) asset=spacedatanetwork-1.1.9-linux-amd64.tar.gz sum=45127438512c09be90a26991c8463401e596af89eae98a66da96c95c1f253e07 ;;
+    Linux-aarch64) asset=spacedatanetwork-1.1.9-linux-arm64.tar.gz sum=b585921e0eca17670833291eec6aba3969160a72eb796cf255553e7ae08cc516 ;;
+    Darwin-arm64) asset=spacedatanetwork-1.1.9-darwin-arm64.tar.gz sum=372b7601593a7a1950fd3de14e0d5697194683c1394b95874eef0905cd36f748 ;;
+    *) fail "no 1.1.9 release archive for $(uname -s)-$(uname -m); set SDN_E2E_V119_BINARY to a build of tag v1.1.9" ;;
+  esac
+  dir="$ROOT/.ci-artifacts/v1.1.9"
+  mkdir -p "$dir"
+  [[ -f "$dir/$asset" ]] || curl --fail --location --retry 3 -o "$dir/$asset" \
+    "https://github.com/DigitalArsenal/space-data-network/releases/download/v1.1.9/$asset" || fail "download $asset"
+  [[ "$( (sha256sum "$dir/$asset" 2>/dev/null || shasum -a 256 "$dir/$asset") | cut -d' ' -f1)" == "$sum" ]] \
+    || fail "$asset does not match its release checksum"
+  # GNU tar matches a member pattern only with --wildcards; bsdtar always does.
+  local wild=()
+  case "$(tar --version 2>/dev/null)" in *'GNU tar'*) wild=(--wildcards) ;; esac
+  tar -xzf "$dir/$asset" -C "$dir" --strip-components=3 ${wild[@]+"${wild[@]}"} '*/runtime/sdn/spacedatanetwork' || fail "extract the 1.1.9 daemon"
+  export SDN_E2E_V119_BINARY="$dir/spacedatanetwork"
 }
 
 run_publication() {
   local group="${SDN_CI_PUBLICATION_GROUP:-all}" run g
-  case "$group" in all|publication-1|publication-2|publication-3) ;; *) fail "unknown publication group: $group" ;; esac
+  case "$group" in all|publication-1|publication-2|publication-3|publication-4) ;; *) fail "unknown publication group: $group" ;; esac
   step "Publication between real daemons ($group)"
   local list="$ROOT/.ci-artifacts/publication-tests"
   mkdir -p "$ROOT/.ci-artifacts"
   "$ROOT/scripts/go-with-wasmedge.sh" test -list "$PUBLICATION_GO_TESTS" ./cmd/spacedatanetwork/ > "$list.go" 2>&1 \
     || { cat "$list.go"; fail "listing publication tests"; }
   grep -E "$PUBLICATION_GO_TESTS" "$list.go" | LC_ALL=C sort > "$list.expected" || true
-  for g in publication-1 publication-2 publication-3; do
+  for g in publication-1 publication-2 publication-3 publication-4; do
     printf '%s\n' $(publication_group_tests "$g")
   done | LC_ALL=C sort > "$list.grouped"
   [[ -s "$list.expected" ]] || fail "no publication tests listed"
@@ -664,6 +698,7 @@ run_publication() {
   else
     run="^($(publication_group_tests "$group" | tr ' ' '|'))\$"
   fi
+  case "$group" in all|publication-4) fetch_v119_binary ;; esac
   export SDN_E2E_PUBLICATION=1
   export SDN_CI_GO_COVERAGE=1
   go_test_with_timings "publication-${group#publication-}" -v -p=1 -timeout="$budget" -count=1 -run="$run" ./cmd/spacedatanetwork/ \
@@ -716,27 +751,36 @@ run_update_channel() {
     || fail "update channel"
 }
 
-# SDN_CI_UPDATE_GROUP splits TestUpdateChannelRealDaemonE2E into two CI jobs:
-# `home` runs its home-read-only-install subtests, `channel` all the others;
-# unset runs all of them. Run 44245748601 ran both in one binary and hit go
-# test's 50m panic (the home subtests alone take about 15m on a runner).
+# SDN_CI_UPDATE_GROUP splits TestUpdateChannelRealDaemonE2E into four CI
+# jobs: `home` runs its home-read-only-install subtests, `fleet` the published
+# receiver, rollout, fleet view and --config subtests, `rollout` the update
+# status guard, the rollout's signal paths and its races, `channel` all the
+# others; unset runs all of them. Run 44245748601 ran everything in one binary and hit go
+# test's 50m panic (the home subtests alone take about 15m on a runner); run
+# 44379302576's channel group took 42.5m of its 50m, and run 44408129190's
+# fleet group 24.5m of its job.
 # update_group_args go|test prints the selection as `go test` or test-binary
 # flags.
 update_group_args() {
   local p="-"
   [[ "$1" == test ]] && p="-test."
   local home="${UPDATE_GO_TESTS}/^home-read-only-install\$"
+  local fleet="${UPDATE_GO_TESTS}/^(installed-v1.1.9-push|rollout-fleet|config-flag-tls)\$"
+  local rollout="${UPDATE_GO_TESTS}/^(fleet-status-guard|rollout-signals|rollout-races)\$"
+  local others="${UPDATE_GO_TESTS}/^(home-read-only-install|installed-v1.1.9-push|rollout-fleet|config-flag-tls|fleet-status-guard|rollout-signals|rollout-races)\$"
   case "${SDN_CI_UPDATE_GROUP:-all}" in
     home) printf '%s\n' "${p}run=${home}" ;;
-    channel) printf '%s\n' "${p}run=${UPDATE_GO_TESTS} ${p}skip=${home}" ;;
+    fleet) printf '%s\n' "${p}run=${fleet}" ;;
+    rollout) printf '%s\n' "${p}run=${rollout}" ;;
+    channel) printf '%s\n' "${p}run=${UPDATE_GO_TESTS} ${p}skip=${others}" ;;
     *) printf '%s\n' "${p}run=${UPDATE_GO_TESTS}" ;;
   esac
 }
 
 check_update_group() {
   case "${SDN_CI_UPDATE_GROUP:-all}" in
-    home|channel|all) ;;
-    *) fail "unknown SDN_CI_UPDATE_GROUP=${SDN_CI_UPDATE_GROUP} (home, channel or unset)" ;;
+    home|fleet|rollout|channel|all) ;;
+    *) fail "unknown SDN_CI_UPDATE_GROUP=${SDN_CI_UPDATE_GROUP} (home, fleet, rollout, channel or unset)" ;;
   esac
 }
 
@@ -750,15 +794,18 @@ run_update_channel_isolated() {
   local build select
   check_update_group
   read -r -a select <<< "$(update_group_args test)"
-  step "Update channel fixtures (v1, v2, v3 never ready, v6 and v7 never open their store, v11 exits at start, the release signal signer)"
+  step "Update channel fixtures (v1, v2, v3 never ready, v6 and v7 never open their store, v8 killed mid-install, v11 exits at start, v15 killed mid-pass, v16 whose update clock moves back, the release signal signer)"
   mkdir -p "$bin" "$logs"
-  for build in v1 v2 v3 v6 v7 v11; do
+  for build in v1 v2 v3 v6 v7 v8 v11 v15 v16; do
     local build_args=(-o "$bin/spacedatanetwork-$build")
     case "$build" in
       v3) build_args+=(-tags sdn_e2e_not_ready) ;;
       v6) build_args+=(-tags sdn_e2e_hang_before_store) ;;
       v7) build_args+=(-tags sdn_e2e_hang_before_store,sdn_e2e_no_trial_timer) ;;
+      v8) build_args+=(-tags sdn_e2e_crash_mid_apply) ;;
       v11) build_args+=(-tags sdn_e2e_crash_at_start) ;;
+      v15) build_args+=(-tags sdn_e2e_crash_mid_pass) ;;
+      v16) build_args+=(-tags sdn_e2e_clock_back) ;;
     esac
     (cd "$ROOT/sdn-server" && SDN_GO_LDFLAGS="-X github.com/spacedatanetwork/sdn-server/internal/versioninfo.ReleaseTag=e2e-$build" \
       ../scripts/go-with-wasmedge.sh build "${build_args[@]}" ./cmd/spacedatanetwork) || fail "build update fixture $build"

@@ -258,11 +258,16 @@ func loadNodeRootSigningKey(ctx context.Context, cfg *config.Config, res config.
 		}
 	}
 
-	wp, err := resolveHDWalletWasmPath()
-	if err != nil {
-		return nil, err
+	// The module the daemon itself uses: a file when one is installed, else
+	// the binary's built-in copy (as the daemon's loadHDWallet).
+	var hw *wasm.HDWalletModule
+	if wp, perr := resolveHDWalletWasmPath(); perr == nil {
+		hw, err = wasm.NewHDWalletModule(ctx, wp)
+	} else if embedded := wasm.EmbeddedHDWalletWasm(); embedded != nil {
+		hw, err = wasm.NewHDWalletModuleFromBytes(ctx, embedded)
+	} else {
+		return nil, perr
 	}
-	hw, err := wasm.NewHDWalletModule(ctx, wp)
 	if err != nil {
 		return nil, fmt.Errorf("load HD wallet WASM: %w", err)
 	}

@@ -737,9 +737,9 @@ func (h *ChannelHandler) getPNM(w http.ResponseWriter, r *http.Request, parsed c
 //
 // Trust: the bytes are only served when the $PNM envelope verifies
 // structurally AND its CID equals the manifest CID recorded in the node's own
-// publication row. That row is written either by this node's own publication
-// lane or by materializeDatasetFeedHeadAnnouncement, which admits publications
-// only from peers that pass peerRegistry.IsTrusted. Because the PNM is fetched
+// publication row. That row is written by this node's own publication lane
+// (a 1.1.x node also wrote it when it imported a trusted peer's feed head).
+// Because the PNM is fetched
 // BY the CID that row names, no substitution is possible without breaking the
 // content address. Full provider-signature verification stays where the key
 // lives (the materialization lane, node.go:3857); this route re-checks the

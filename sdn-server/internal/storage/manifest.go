@@ -100,6 +100,29 @@ type DatasetPublicationReplayOptions struct {
 	// before the shard or index is: one "no" ends the replay with
 	// ErrDatasetPublicationLaneNotImported and nothing else is fetched.
 	LaneAllowed func(schema, providerID, sourceName string) bool
+	// Reserve, when set, is asked before the shard is fetched, for the
+	// records the signed DPM states (at least one) and the shard's bytes;
+	// the release it returns is called when the import returns. An error
+	// ends the replay before the fetch.
+	Reserve func(records int, bytes int64) (func(), error)
+}
+
+// datasetManifestRecords is the records a DPM's sources state (at least 1).
+func datasetManifestRecords(manifest *dpm.DPM) int {
+	total := uint64(0)
+	for i := 0; i < manifest.SOURCESLength(); i++ {
+		var source dpm.DPMSourceBatch
+		if manifest.SOURCES(&source, i) {
+			total += uint64(source.RECORD_COUNT())
+		}
+	}
+	switch {
+	case total < 1:
+		return 1
+	case total > 1<<40:
+		return 1 << 40
+	}
+	return int(total)
 }
 
 // ErrDatasetPublicationLaneNotImported reports a publication whose lane the
@@ -486,6 +509,17 @@ func MaterializeDatasetPublication(ctx context.Context, store *FlatSQLStore, opt
 			PublishedAt:     datasetManifestPublishedAt(manifest),
 			AlreadyImported: true,
 		}, nil
+	}
+	if opts.Reserve != nil {
+		shardBytes := int64(1 << 62)
+		if shardAsset.Bytes < 1<<62 {
+			shardBytes = int64(shardAsset.Bytes)
+		}
+		release, err := opts.Reserve(datasetManifestRecords(manifest), shardBytes)
+		if err != nil {
+			return nil, err
+		}
+		defer release()
 	}
 	if opts.FetchByCIDToFile != nil {
 		return materializeDatasetPublicationFromFiles(ctx, fetchCtx, store, opts, manifest, manifestCID, shardAsset, indexAsset)

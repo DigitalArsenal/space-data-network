@@ -110,10 +110,16 @@ type Signal struct {
 	// Rollback mirrors the manifest's declared source-lineage reversal. A host
 	// will not auto-install one: reversing lineage is an operator statement
 	// (`--allow-rollback`), and a broadcast is not an operator.
-	Rollback    bool          `json:"rollback,omitempty"`
-	PublishedAt string        `json:"published_at"`
-	ExpiresAt   string        `json:"expires_at,omitempty"`
-	Signing     SignalSigning `json:"signing"`
+	Rollback bool `json:"rollback,omitempty"`
+	// RolloutWindowSeconds, when present, replaces the receiving node's
+	// update.rollout_window_seconds for this update: each node acts at its
+	// own time within this many seconds of accepting it (rollout.go). It is
+	// signed with the rest of the signal. A node built before the field
+	// existed verifies the signal and ignores the field.
+	RolloutWindowSeconds *int64        `json:"rollout_window_seconds,omitempty"`
+	PublishedAt          string        `json:"published_at"`
+	ExpiresAt            string        `json:"expires_at,omitempty"`
+	Signing              SignalSigning `json:"signing"`
 
 	raw []byte
 }
@@ -310,6 +316,9 @@ func (s *Signal) assertShape() error {
 			return err
 		}
 	}
+	if w := s.RolloutWindowSeconds; w != nil && (*w < 0 || *w > MaxRolloutWindowSeconds) {
+		return fmt.Errorf("update signal rollout_window_seconds %d is outside 0..%d", *w, MaxRolloutWindowSeconds)
+	}
 	return nil
 }
 
@@ -377,8 +386,11 @@ func (s *Signal) assertSignature(roots TrustedRoots) error {
 	if err != nil {
 		return err
 	}
-	signature, err := base64.StdEncoding.DecodeString(s.Signing.Signature)
-	if err != nil {
+	// One spelling per signature: the decoder alone would also take line
+	// breaks inside the text and stray bits in its last character, and each
+	// such spelling of one signed signal would pass as a different message.
+	signature, err := base64.StdEncoding.Strict().DecodeString(s.Signing.Signature)
+	if err != nil || base64.StdEncoding.EncodeToString(signature) != s.Signing.Signature {
 		return errors.New("invalid update signal signature encoding")
 	}
 	statement, err := SignalStatement(s.raw)

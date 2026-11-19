@@ -12,8 +12,29 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { LEOLABS_NETWORK } from "./leolabs-network.mjs";
 import { NETWORKS as OTHER_NETWORKS } from "./networks.mjs";
+import { ADDITIONS, NEW_NETWORKS } from "./networks-2.mjs";
 
-export const NETWORKS = [LEOLABS_NETWORK, ...OTHER_NETWORKS];
+// Round 1 is the publication of 2026-11-18 (11 networks). Round 2 (2026-11-19) adds rows to four of those networks and adds new networks.
+// A row's `round` says which batch carried it to the node: a lane is appended to, never resent, so round 2 posts only round-2 rows.
+const ROUND_2_RETRIEVED_AT = "2026-11-19T00:00:00.000Z";
+const inRound2 = (row) => ({ ...row, round: 2, cite: { retrievedAt: ROUND_2_RETRIEVED_AT, ...row.cite } });
+const withAdditions = (network) => {
+  const more = ADDITIONS[network.slug];
+  if (!more) return network;
+  return {
+    ...network,
+    sites: [...network.sites, ...(more.sites ?? []).map(inRound2)],
+    sensors: [...network.sensors, ...(more.sensors ?? []).map(inRound2)],
+    inorbit: [...network.inorbit, ...(more.inorbit ?? []).map(inRound2)],
+    leftOut: [...network.leftOut.filter(([what]) => !(more.nowPublished ?? []).includes(what)), ...(more.leftOut ?? [])],
+  };
+};
+const known = new Set([LEOLABS_NETWORK, ...OTHER_NETWORKS].map((network) => network.slug));
+for (const slug of Object.keys(ADDITIONS)) if (!known.has(slug)) throw new Error(`additions name a network that is not published: ${slug}`);
+const newNetwork = (network) => ({ ...network, retrievedAt: ROUND_2_RETRIEVED_AT, sites: network.sites.map(inRound2), sensors: network.sensors.map(inRound2), inorbit: network.inorbit.map(inRound2) });
+
+export const NETWORKS = [...[LEOLABS_NETWORK, ...OTHER_NETWORKS].map(withAdditions), ...NEW_NETWORKS.map(newNetwork)];
+export const roundOf = (row) => row.round ?? 1;
 export const providerOf = (network) => `sdn-ssa-${network.slug}`;
 // The source name carries the network, so the console's SOURCES list reads "ussf-ssn-sites · 12" and not nine lanes called "sites".
 export const SITE_SOURCE = (network) => `${network.slug}-sites`;
@@ -51,6 +72,7 @@ const PRODUCER = "space-data-network deployment/leolabs-sensors 2";
 export const siteId = (network, slug) => `${network.slug}:site:${slug}`;
 export const sensorId = (network, id) => `${network.slug}:${id}`;
 const OWNER_DECISION = "Published on the Space Data Network owner's decision of 2026-11-18, facts only, with the citation of each row.";
+const OWNER_DECISION_2 = "Published on the Space Data Network owner's decision of 2026-11-19, facts only, with the citation of each row.";
 
 const pvn = (network, cite) =>
   Object.assign(new PVNT(), {
@@ -63,8 +85,8 @@ const pvn = (network, cite) =>
     LICENSE_ID: `${network.slug}-terms`,
     LINEAGE: network.slug,
     SOURCE_URL: cite.url,
-    SOURCE_VERSION: network.version ?? `retrieved ${RETRIEVED_AT.slice(0, 10)}`,
-    RETRIEVED_AT: network.retrievedAt ?? RETRIEVED_AT,
+    SOURCE_VERSION: network.version ?? `retrieved ${(cite.retrievedAt ?? network.retrievedAt ?? RETRIEVED_AT).slice(0, 10)}`,
+    RETRIEVED_AT: cite.retrievedAt ?? network.retrievedAt ?? RETRIEVED_AT,
   });
 
 const citation = (network, cite, recordId, field = "register:") =>
@@ -72,9 +94,9 @@ const citation = (network, cite, recordId, field = "register:") =>
     PROVENANCE: pvn(network, cite),
     SOURCE_RECORD_ID: recordId,
     SOURCE_URL: cite.url,
-    SOURCE_VERSION: network.version ?? `retrieved ${RETRIEVED_AT.slice(0, 10)}`,
+    SOURCE_VERSION: network.version ?? `retrieved ${(cite.retrievedAt ?? network.retrievedAt ?? RETRIEVED_AT).slice(0, 10)}`,
     SOURCE_FIELD: `${field}${recordId}`,
-    RETRIEVED_AT: network.retrievedAt ?? RETRIEVED_AT,
+    RETRIEVED_AT: cite.retrievedAt ?? network.retrievedAt ?? RETRIEVED_AT,
   });
 
 const opp = (network, cite, recordId, notes) =>
@@ -82,8 +104,8 @@ const opp = (network, cite, recordId, notes) =>
     SOURCE: cite.source ?? cite.text,
     SOURCE_RECORD_ID: recordId,
     SOURCE_URL: cite.url,
-    RETRIEVED_AT: network.retrievedAt ?? RETRIEVED_AT,
-    SOURCE_VERSION: network.version ?? `retrieved ${RETRIEVED_AT.slice(0, 10)}`,
+    RETRIEVED_AT: cite.retrievedAt ?? network.retrievedAt ?? RETRIEVED_AT,
+    SOURCE_VERSION: network.version ?? `retrieved ${(cite.retrievedAt ?? network.retrievedAt ?? RETRIEVED_AT).slice(0, 10)}`,
     METHOD: oppDeterminationMethod.OPERATOR_STATED,
     LICENSE: cite.license ?? network.terms.text,
     ATTRIBUTION: `${network.credit}. ${cite.url}`,
@@ -131,7 +153,7 @@ export function sitRecords(network) {
       Object.assign(new SITPartyT(), {
         ROLE: sitPartyRole[party.role],
         NAME: party.name,
-        CITATION: Object.assign(citation(network, { url: party.cite ?? site.cite.url, text: site.cite.text }, rid), { SOURCE_FIELD: "description" }),
+        CITATION: Object.assign(citation(network, { ...site.cite, url: party.cite ?? site.cite.url }, rid), { SOURCE_FIELD: "description" }),
       }),
     );
     record.PROVENANCE = pvn(network, site.cite);
@@ -179,7 +201,7 @@ function sensorRecord(network, row, siteRow) {
   const verified = row.verified ? ` Catalog number verified: ${row.verified}.` : "";
   const limitWords = row.band ? (limits ? ` Band limits ${row.band.lowMHz} to ${row.band.highMHz} MHz are published by the cited source.` : " Band limits are not published; none are invented.") : "";
   record.PROVENANCE = opp(network, row.cite, row.id, row.note ?? "");
-  record.NOTES = `${row.name}${where}. Source: ${row.cite.text} (${row.cite.url}); credit ${network.credit}.${limitWords}${status}${verified} ${row.note ?? ""} ${OWNER_DECISION}`.replace(/\s+/g, " ").trim();
+  record.NOTES = `${row.name}${where}. Source: ${row.cite.text} (${row.cite.url}); credit ${network.credit}.${limitWords}${status}${verified} ${row.note ?? ""} ${roundOf(row) === 2 ? OWNER_DECISION_2 : OWNER_DECISION}`.replace(/\s+/g, " ").trim();
   return { id: record.SENSOR_ID, record, bytes: finish(SNR, record) };
 }
 
@@ -213,22 +235,30 @@ export function frame(records) {
 }
 
 /** The lanes of one network, as the publisher posts them. */
-export function lanesOf(network) {
+export function lanesOf(network, round) {
   const lanes = [];
-  const sites = sitRecords(network);
-  const sensors = snrRecords(network);
-  if (sites.length) lanes.push({ schema: "SIT.fbs", providerId: providerOf(network), sourceName: SITE_SOURCE(network), file: "sit.sdn", records: sites, count: sites.length, sourceUrl: network.sites[0].cite.url });
-  if (sensors.length) lanes.push({ schema: "SNR.fbs", providerId: providerOf(network), sourceName: SENSOR_SOURCE(network), file: "snr.sdn", records: sensors, count: sensors.length, sourceUrl: (network.sensors[0] ?? network.inorbit[0]).cite.url });
+  const inRound = (rows, records) => records.filter((_, i) => round === undefined || roundOf(rows[i]) === round);
+  const sites = inRound(network.sites, sitRecords(network));
+  const sensors = inRound([...network.sensors, ...network.inorbit], snrRecords(network));
+  if (sites.length) lanes.push({ schema: "SIT.fbs", providerId: providerOf(network), sourceName: SITE_SOURCE(network), file: "sit.sdn", records: sites, count: sites.length, sourceUrl: network.sites.find((row) => round === undefined || roundOf(row) === round).cite.url });
+  if (sensors.length) lanes.push({ schema: "SNR.fbs", providerId: providerOf(network), sourceName: SENSOR_SOURCE(network), file: "snr.sdn", records: sensors, count: sensors.length, sourceUrl: [...network.sensors, ...network.inorbit].find((row) => round === undefined || roundOf(row) === round).cite.url });
   return lanes;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname)) {
   const dir = process.argv[2];
-  if (!dir) throw new Error("Usage: build-records.mjs <out-dir>");
+  const roundAt = process.argv.indexOf("--round");
+  const round = roundAt > 0 ? Number(process.argv[roundAt + 1]) : undefined;
+  if (!dir) throw new Error("Usage: build-records.mjs <out-dir> [--round 2]   (--round writes only the rows of that round, and lanes.tsv for the host step)");
+  const tsv = [];
   for (const network of NETWORKS) {
-    const lanes = lanesOf(network);
+    const lanes = lanesOf(network, round);
+    if (!lanes.length) continue;
+    for (const lane of lanes) tsv.push([lane.schema, lane.providerId, lane.sourceName, network.slug, lane.count, lane.sourceUrl, `${lane.sourceName}-${round ?? 1}`, lanesOf(network).find((l) => l.schema === lane.schema).count].join("\t"));
     mkdirSync(path.join(dir, network.slug), { recursive: true });
     for (const lane of lanes) writeFileSync(path.join(dir, network.slug, lane.file), frame(lane.records));
     console.log(`${network.slug}: ${network.sites.length} $SIT, ${network.sensors.length} ground $SNR, ${network.inorbit.length} in-orbit $SNR, ${network.leftOut.length} left out (provider ${providerOf(network)})`);
   }
+  // schema, provider, source, network, records in this batch, source address, batch id, records in the lane after the batch
+  writeFileSync(path.join(dir, "lanes.tsv"), `${tsv.join("\n")}\n`);
 }

@@ -422,14 +422,22 @@ func ApplyPrepared(paths Paths, prepared *Prepared, opts ApplyOptions) (*ApplyRe
 
 		TrustRootsFrom: trustRootsFrom,
 	}
+	if paths.IsHome() {
+		// A home build runs only once it verifies against its signed manifest
+		// and archive, at every start: keep them before the state names it.
+		if err := keepProof(paths, candidate); err != nil {
+			return nil, fmt.Errorf("update applied but its signed manifest and archive were not kept, so it will not run: %w", err)
+		}
+		// The state write that names the build also marks it on trial, so no
+		// crash after it can leave the build running without a trial.
+		newState.TrialUpdateID = candidate.UpdateID
+	}
 	if err := SaveState(paths, newState); err != nil {
 		return nil, fmt.Errorf("update applied but state write failed: %w", err)
 	}
 	if paths.IsHome() {
-		// A home build runs only once it verifies against its signed manifest
-		// and archive, at every start: keep them.
-		if err := keepProof(paths, candidate); err != nil {
-			return nil, fmt.Errorf("update applied but its signed manifest and archive were not kept, so it will not run: %w", err)
+		if crashAfterHomeStateWrite != nil {
+			crashAfterHomeStateWrite()
 		}
 		// Not proven until a daemon start of it answers ready (trial.go).
 		if err := writeTrial(paths, &Trial{

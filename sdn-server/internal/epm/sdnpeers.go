@@ -369,6 +369,10 @@ func identifiesAsSDNAgent(node PeerNode, registryPeer *peers.TrustedPeer, flags 
 	return len(flags) > 0
 }
 
+// IsSDNAgentVersion reports whether an identify agent version names a Space
+// Data Network node: the test the peer directory admits a node by.
+func IsSDNAgentVersion(agentVersion string) bool { return isSDNAgentVersion(agentVersion) }
+
 func isSDNAgentVersion(agentVersion string) bool {
 	value := strings.ToLower(strings.TrimSpace(agentVersion))
 	return strings.Contains(value, "spacedatanetwork") ||

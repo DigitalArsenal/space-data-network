@@ -2,7 +2,6 @@ package api
 
 import (
 	"bytes"
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -137,16 +136,14 @@ func TestSyncWithoutASyncPrimitiveReportsErrorInPlainWords(t *testing.T) {
 	store := newConnectorsTestStore(t)
 	mux, _ := newSyncTestMux(t, &AdminMountDeps{Store: store, Config: &config.Config{}, NodePeerID: "16Uiu2HAmLocalNodeForSyncTest"})
 
+	// A lane is imported by following it: Sync is refused, naming the
+	// command that subscribes.
 	rec, frames := syncFrames(t, mux, http.MethodPost, SyncPath, EncodeDSSAction("OMM.fbs", "space-data-network-02", "celestrak-gp", DSSActionSync))
-	if rec.Code != http.StatusAccepted {
-		t.Fatalf("POST Sync status = %d body = %q", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusBadRequest || len(frames) != 1 {
+		t.Fatalf("POST Sync status = %d, frames = %d; want 400 and one error", rec.Code, len(frames))
 	}
-	dss := decodeDSSFrame(t, frames[0])
-	if int8(dss.STATUS()) != DSSStateError {
-		t.Fatalf("STATUS = %d, want ERROR when the node cannot sync", dss.STATUS())
-	}
-	if msg := string(dss.ERROR()); !strings.Contains(msg, "cannot sync") {
-		t.Fatalf("ERROR = %q, want a plain sentence", msg)
+	if refusal, err := ParseQRP(frames[0]); err != nil || !strings.Contains(string(refusal.MESSAGE()), "sync subscribe") {
+		t.Fatalf("Sync refusal %v: %q", err, refusal.MESSAGE())
 	}
 
 	// Pin actions belong to the node pin policy and return explicit guidance here.
@@ -160,51 +157,5 @@ func TestSyncWithoutASyncPrimitiveReportsErrorInPlainWords(t *testing.T) {
 	}
 	if int8(refusal.KIND()) != QRPKindError || string(refusal.ERROR_CODE()) != "bad_request" || !strings.Contains(string(refusal.MESSAGE()), "/api/node/pins") {
 		t.Fatalf("pin refusal kind=%v code=%q message=%q", refusal.KIND(), refusal.ERROR_CODE(), refusal.MESSAGE())
-	}
-}
-
-func TestSyncRunsTheLanePrimitiveAndReportsSyncedRows(t *testing.T) {
-	store := newConnectorsTestStore(t)
-	release := make(chan struct{})
-	deps := &AdminMountDeps{
-		Store: store, Config: &config.Config{}, NodePeerID: "16Uiu2HAmLocalNodeForSyncTest",
-		SyncLane: func(_ context.Context, schema, providerID, sourceName string) (int, error) {
-			<-release
-			if schema != "OMM.fbs" || providerID != "space-data-network-02" || sourceName != "celestrak-gp" {
-				t.Errorf("SyncLane lane = %s/%s/%s", schema, providerID, sourceName)
-			}
-			return 7, nil
-		},
-	}
-	mux, _ := newSyncTestMux(t, deps)
-
-	rec, frames := syncFrames(t, mux, http.MethodPost, SyncPath, EncodeDSSAction("OMM.fbs", "space-data-network-02", "celestrak-gp", DSSActionSync))
-	if rec.Code != http.StatusAccepted {
-		t.Fatalf("POST Sync status = %d", rec.Code)
-	}
-	if got := int8(decodeDSSFrame(t, frames[0]).STATUS()); got != DSSStateSyncing {
-		t.Fatalf("STATUS while running = %d, want SYNCING", got)
-	}
-	// A second action on a busy lane is refused with 409.
-	rec, _ = syncFrames(t, mux, http.MethodPost, SyncPath, EncodeDSSAction("OMM.fbs", "space-data-network-02", "celestrak-gp", DSSActionHydrate))
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("second action on a busy lane status = %d, want 409", rec.Code)
-	}
-	close(release)
-
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		_, frames = syncFrames(t, mux, http.MethodGet, SyncPath+"/OMM.fbs/space-data-network-02/celestrak-gp", nil)
-		dss := decodeDSSFrame(t, frames[0])
-		if int8(dss.STATUS()) != DSSStateSyncing {
-			if dss.SyncedRows() != 7 || string(dss.ERROR()) != "" || dss.LastSyncStartedAt() == 0 {
-				t.Fatalf("after sync: SYNCED_ROWS=%d ERROR=%q LAST_SYNC_STARTED_AT=%d", dss.SyncedRows(), string(dss.ERROR()), dss.LastSyncStartedAt())
-			}
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("sync never finished")
-		}
-		time.Sleep(20 * time.Millisecond)
 	}
 }

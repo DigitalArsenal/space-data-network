@@ -21,6 +21,12 @@ func TestPublicationImportChunksRealDaemons(t *testing.T) {
 	a.start(t)
 	b := newPublicationDaemon(t, exe, "chunks-receiver", a.address, a.id, "keep-all")
 	b.start(t)
+	b.follow(t, a, "OMM", "chunks", "")
+	// OEM is off the public read surface and the producer grants the
+	// receiver no private reads: it does not state the lane, so the
+	// subscription is forced, and the lane imports through its signed
+	// publications (the chunked shard import).
+	b.follow(t, a, "OEM", "chunks", "start=beginning&force=1")
 	time.Sleep(3 * time.Second)
 
 	const elementSets = 10_000

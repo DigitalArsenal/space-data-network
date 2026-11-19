@@ -227,7 +227,7 @@ receiver, which trusts the producer and keeps the lane under
 `replace-current`, subscribes with a `$DSS` Subscribe that names the producer
 (`PROVIDER_PEER_ID`), receives the stored records and then live ones over the
 followed read-chunk stream, keeps the subscription as a `$DSS` record in
-`follows.dss`, replaces the older batch with the newer one while the producer
+`subscriptions.dss`, replaces the older batch with the newer one while the producer
 keeps both, resumes after its own restart and after the producer's with every
 record held once, and drops the records the producer removed. A producer the
 receiver does not trust is refused with no stream opened. A test host
@@ -243,6 +243,122 @@ both daemons: the receiver's counts the records and bytes received and the
 time spent receiving, verifying and storing them; the producer's counts its
 follower (`SUBSCRIBER_COUNT`) and exactly the record bytes it served
 (`SERVED_BYTES`), and no follower once the receiver has stopped.
+
+A node imports only the lanes it subscribes to (1.2.0), so every receiving
+daemon of these tests subscribes to the lanes it is meant to import; one that
+does not imports nothing (`TestPublicationRealDaemons/refusal_unsubscribed`,
+`TestPublicationContentAddressRealDaemons`).
+
+`TestPublicationSubscribeRealDaemons` drives the operator commands (`sync
+subscribe`, `sync subscriptions`, `sync status`, `sync unsubscribe`), each
+signed in to its daemon with the node's root key. A new subscription to a
+`replace-current` lane whose producer holds six batches receives only the
+current batch (2,000 of 12,000 records, counted on both sides and in the
+receiver's received records and bytes), then live records within seconds; a
+`keep-all` lane past the receiver's `subscriptions.record_ceiling` is refused
+naming both figures; `--force` subscribes, and the running guard stops the
+lane before the store passes the ceiling (alert `follow_stopped`, cursor
+kept); with the ceiling raised it resumes at its cursor and the whole lane
+arrives.
+
+`TestPublicationUpgradeRealDaemons` needs `SDN_E2E_V119_BINARY` (a build of
+tag v1.1.9; `./scripts/ci-local.sh publication` downloads the published
+archive for groups `all` and `publication-4`). On 1.1.9 a receiver imports
+two lanes through `peers.trusted_import` and its ledger; updated alone, it
+converts them to subscriptions kept in `subscriptions.dss` (not in
+`follows.dss`, which 1.1.9 reads), leaves the ledger in place, loses no
+record, and
+waits for the 1.1.9 producer's statement; a new subscription to that producer
+is refused and `--force --start beginning` follows it; a lane the old allow
+list admitted (a 1.1.9 control receiver imports it) is not imported. With the
+producer updated too, the converted subscriptions start at its current batch
+(only the live records are sent) and each lane equals the producer's, byte
+for byte, while a 1.1.9 follower keeps following the updated producer.
+
+`TestPublicationRollbackRealDaemons` (also `SDN_E2E_V119_BINARY`) updates a
+1.1.9 receiver that imports a lane through `peers.trusted_import`, rolls it
+back to 1.1.9 before the converted subscription holds a cursor, and updates
+it again: on the rollback 1.1.9 imports the next publication through its old
+path and never reads the lane's unpublished older batch, its own follow keeps
+flowing, and back on this build the subscription starts at the producer's
+current batch, live, with the conversion run once.
+
+`TestPublicationConversionRecordRealDaemons`: a ledger that does not parse
+converts nothing, writes no conversion record and raises
+`subscription_conversion`; fixed, the next start converts it, and the record
+names the removed keys, the deny list and an allow entry naming an untrusted
+peer (not subscribed).
+
+`TestPublicationCursorRefusedRealDaemons`: after the producer's `reindex`
+expires its cursors, a lane that started at the current batch and one that
+started at its beginning both start again at the producer's current batch
+(received counts: the first read and the new records only), with
+`follow_cursor_refused`. Both lanes (keep-all) show their unread records in
+`sync subscriptions`, across a restart that raises the alert again; the one
+subscribed from its beginning stays in `follows.dss`. Acknowledged, one lane
+shows nothing unread and has no alert; the other, subscribed again from its
+beginning, reads the whole lane. A third lane unsubscribed with its gap
+unread leaves no alert.
+
+`TestPublicationUnheldBatchImportsPNMRealDaemons`: a producer serves a lane
+it imported from a third daemon, so its records name that daemon as their
+producer; a receiver's stream to it is connected but every fetch of the batch
+by CID is refused. The lane's signed publication brings the 300 records, and
+the batch then becomes current.
+
+`TestPublicationSubscriptionsUnreadableRealDaemons`: a receiver started on an
+unreadable `subscriptions.dss` moves it aside (bytes kept), raises
+`subscriptions_unreadable`, lists no subscription, refuses a new one and
+writes no file, also after a restart; a readable copy put back loads the
+subscription and the lane resumes. A `subscriptions.dss` without read
+permission (not run as root) is not moved: the alert names the error, and the
+next start after the permission is back loads it.
+
+`TestPublicationSubscriptionUnknownFieldRealDaemons`: a subscription whose
+`SYNC_FILTER` names a field this build does not know raises
+`subscription_refused` (lane and field), imports nothing and is written back
+as it was; the other lane keeps importing; unsubscribed, its alert clears.
+
+`TestPublicationStorePanicReleasesReservationRealDaemons` (a receiver built
+with the tag `sdn_e2e_follow_faults`, or `SDN_E2E_PUBLICATION_FOLLOW_FAULTS_BINARY`):
+the stores of two lanes panic, on followed pages and on fetches by CID; after
+the panics nothing is reserved (`GET /api/v1/sync/plan`) and a third lane
+stores 3,000 records under a record ceiling a few leaked reservations would
+have closed.
+
+`TestPublicationRestartStreamedPNMRealDaemons` (the same build, whose
+"late-" lane's first stream opens 40 s after the start): a publication left
+to the stream is not imported after a restart either; the stored-`$PNM`
+catch-up at 15 s leaves it waiting, and once the stream holds the batch
+again the catch-up leaves it to the stream.
+
+`TestPublicationPNMGuardRealDaemons`: a publication-only lane (OEM) whose
+publication would pass the receiver's record ceiling of 3 is not imported
+(`follow_stopped`, `stopped`); with the ceiling raised the catch-up imports
+it and the alert clears.
+
+`TestPublicationSubscriptionFileOrderRealDaemons`: with `follows.dss` not
+writable, an unsubscribe fails and both files still hold the lane; once
+writable, the unsubscribe holds across a restart.
+
+`TestPublicationDiskFloorRealDaemons` (macOS: the receiver's storage path is
+a 3 GB disk image of its own, filled to 16 MiB above the 1 GiB reserve, and
+the directory holding it is not; skipped elsewhere): a forced current-batch
+subscription of 20,000 records stops (`follow_stopped`) before its fetches by
+CID pass the reserve.
+
+`TestPublicationStreamSlotsRealDaemons`: a producer serves a subscriber it
+does not trust 8 followed streams and refuses the ninth busy; listing the
+subscriber as trusted serves all nine.
+
+`TestPublicationGossipGateRealDaemons`: records gossiped on the OMM topic by
+a trusted producer the receiver subscribes to reach the receiver, which has
+`network.accept_push_from: any`, and none is stored.
+
+`TestPublicationPNMOnlyLaneRealDaemons`: an OEM lane whose stream the
+producer refuses imports through its signed publication (nothing received on
+the stream, records equal); an OMM lane whose stream is connected does not
+fetch its publication's shard.
 
 `TestPublicationLaneCountRealDaemons` compares a scan's `TOTAL_COUNT` on one
 daemon with the distinct records sent: lanes with one tag instance (counted

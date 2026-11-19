@@ -45,11 +45,15 @@ var (
 
 var syncCmd = &cobra.Command{
 	Use:   "sync",
-	Short: "Monitor local SDN data synchronization",
-	Long: `Monitor the local FlatSQL replica state recorded by SDN data sync.
+	Short: "Subscribe to lanes and monitor local SDN data synchronization",
+	Long: `Subscribe this node to lanes (a node imports only the lanes it subscribes to)
+and monitor the local FlatSQL replica state.
 
-The sync monitor reads the local storage ledger directly, so it works even when
-the admin API requires browser authentication.`,
+'sync status' and 'sync watch' read through the running daemon's sync lane
+(/api/v1/sync) when a daemon answers on the configured admin address, and the
+store directly when none does. 'sync subscribe', 'sync unsubscribe' and
+'sync subscriptions' go through the daemon's admin API, signed in with the
+node's root key.`,
 }
 
 var syncStatusCmd = &cobra.Command{
@@ -183,6 +187,10 @@ func loadSyncStatusSnapshot(ctx context.Context, options syncStatusOptions) (syn
 	cfg, _, err := config.LoadResolved(configPath)
 	if err != nil {
 		return syncStatusSnapshot{}, fmt.Errorf("failed to load config: %w", err)
+	}
+	// A running daemon holds the store: read through its API.
+	if snapshot, ok, err := daemonSyncStatusSnapshot(ctx, options); ok {
+		return snapshot, err
 	}
 	validator, err := sds.NewValidator(nil)
 	if err != nil {

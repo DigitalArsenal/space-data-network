@@ -437,6 +437,36 @@ size-prefixed `$QRP{KIND=Request}` frame with content type
 sdn-js: `encodeQrpScanRequest`, `decodeQrpScanStream`, `decodeQrpIndexPage` and
 `decodeQrpError` (`sdn-js/src/ui/runtime/qrp-frames.ts`).
 
+### Subscribing to a lane (importing from another node)
+
+A node imports only the lanes it subscribes to (1.2.0). As an operator agent,
+use the commands (they sign in with the node's root key and take `--json`):
+
+```bash
+spacedatanetwork sync subscribe --schema OMM --provider-id <provider> \
+  --source-name <source> --from <producer peer id> --json
+# -> {"plan":{"start":"current","rule":"replace-current","producer_batch":"...",
+#     "first_read_records":2000,"first_read_bytes":640000,"free_disk_bytes":...,
+#     "record_ceiling":32000000,"reserved_records":0,"reserved_bytes":0,"refusal":""},
+#     "subscribed":true}
+spacedatanetwork sync subscriptions --json
+# -> {"subscriptions":[{"schema":"OMM.fbs","provider_id":"...","source_name":"...",
+#     "producer":"16Uiu2...","subscribed_since":"...","connected":true,
+#     "received_records":2500,"received_bytes":...,"current_batch":"b6",
+#     "producer_batch":"b6","producer_batch_records":2500,"lag_records":0}]}
+spacedatanetwork sync unsubscribe --schema OMM --provider-id <provider> \
+  --source-name <source> --from <producer peer id>
+```
+
+A refused first read exits non-zero with `refusal` set (free disk or record
+ceiling; `--force` subscribes anyway). Over HTTP (admin): `GET
+/api/v1/sync/plan`, `POST /api/v1/sync` with a `$DSS` Subscribe naming
+`PROVIDER_PEER_ID` (`?start=current|beginning`, `?force=1`; 202, or 409
+`first_read_refused`; `?acknowledge_unread=1` on an existing subscription
+clears its `unread`), `GET /api/v1/sync/subscriptions`. The anonymous `GET
+/api/v1/sync` `$DSS` of a followed lane reads `SUBSCRIBED` and `SYNC_PROTOCOL`
+`flatsql-sync read-chunk follow`. Details: `docs/SUBSCRIPTIONS.md`.
+
 
 ### Querying records
 
@@ -658,7 +688,10 @@ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:7173/api/v1/ready
 # -> 200 when the node serves; 503 while it starts or warms its data services
 spacedatanetwork update check
 # version=<this build>  channel=release  update_feed_base_url=https://sdn.spaceaware.io/updates
-# update_signal_enabled=true  update_health_timeout=10m0s  rollback_slots=<n>/5
+# update_signal_enabled=true  update_health_timeout=10m0s  update_rollout_window=10m0s  rollback_slots=<n>/5
+# update_pending=none | update_pending=<update id> version=... sequence=... trigger=signal|feed-check
+#   accepted_at=<t> due_at=<t> window_seconds=<w> window_from=config|signal delay_seconds=<d>
+# update_failed=<update id> version=... sequence=... at=<t> rolled_back=true|false   (only while it applies)
 # provider_update=<update id> status=available version=<newer> ...   (a newer release exists)
 # provider_update_check=error error="..."                             (none newer, or the feed is unreachable)
 # updates_available=true|false
@@ -672,6 +705,50 @@ its own: when a signal signed by an update root announces it, and at a feed
 check every six hours (`update.check_interval_seconds`). Nodes from 1.1.4 to
 1.1.6 learn of a release only from a signal; 1.1.7 and later also check the
 feed.
+
+`update_pending=` names an update the node accepted and waits to act on: it
+acts at `due_at`, its own time within the rollout window
+(`update.rollout_window_seconds`, default 1800; `window_from=signal` when the
+signal carried a signed window). Waiting is normal; to install now, run
+`spacedatanetwork update install`. `spacedatanetwork status` prints the same
+`update_pending=` and `update_failed=` lines.
+
+### Every node's version and update state
+
+```bash
+spacedatanetwork update fleet
+# NAME         PEER         VERSION  SOURCE     LAST SEEN  UPDATE                                    SIGNAL
+# (this node)  ...k4kVmQx1  1.2.0    this node  now        current                                   yes
+# host-b       ...9TnPzRa2  1.2.0    status     now        pending 1.2.1 until 2026-12-01T10:41:07Z  yes
+# -            ...Lw2bYe7c  1.1.9    identify   3m0s ago   not reporting                             -
+# latest_signal=<update id> sequence=<n> (the newest signal this node verified)
+spacedatanetwork update fleet --json      # the same, as GET /api/peers/versions returns it
+```
+
+`GET /api/peers/versions` (admin session) returns `{"generated_at", "latest_signal":
+{"update_id","sequence"}, "rows": [...]}`; each row has `peer_id`, `self`,
+`name`, `source` (`local`, `status` or `identify`), `version`,
+`agent_version`, `online`, `last_seen`, `state` (`current`, `pending`,
+`failed`, `not reporting`), `pending` (`update_id`, `version`, `sequence`,
+`due_at`), `failed` (`update_id`, `version`, `sequence`, `at`,
+`reason_code`, `rolled_back`), `sequence`, `acknowledged`,
+`acknowledged_latest` (true when the node accepted the newest signal this
+node verified itself, or runs its sequence or a later one) and `status_at`.
+`latest_signal` is that newest verified signal; no other node's claim moves
+it. The state is what the node itself published (a signed status message on
+its update topic, `source: status`), not checked by this node; `not
+reporting` means no status from it is held: a node of 1.1.9 or earlier, a
+node with `update.publish_status: false`, a node this node has not
+identified itself as an SDN node (reached only through other nodes), or a
+status not renewed for 30 minutes. `failed` with `rolled_back: true` is the
+node saying an update failed its health gate or trial and it went back to the
+previous build; with `rolled_back: false` the failed build keeps running (its
+revert was refused) and an operator decides. `reason_code` is one of
+`not-ready-by-deadline`, `stopped-during-trial`, `trial-record-unreadable`,
+`health-failed`, `revert-refused`; the failure's text stays in the failing
+node's ledger. Strings in the response come from other nodes and the peer
+directory: print them as data (`update fleet` removes control and format
+characters).
 
 ### Install an update
 
@@ -709,6 +786,8 @@ is, in order: `prepared_update=`, `daemon_shutdown=requested`,
 `daemon_health=healthy`, `daemon_identity=verified bundle_version=<new> ...`.
 With no daemon running, `update install` installs directly and prints
 `installed_update=` and `next=restart the SDN daemon to run the new version`.
+`--config <config>` is fine while the node runs when it names the file the
+daemon was started with (an absolute path on its command line).
 A refusal before anything is installed is an error naming the reason
 (`untrusted update signing key`, `update sequence rejected`, a store-format
 refusal, ...): the node keeps running what it ran.
