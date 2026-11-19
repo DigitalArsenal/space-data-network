@@ -470,10 +470,3 @@ func runSyncSubscriptions(cmd *cobra.Command, asJSON bool) error {
 	}
 	return nil
 }
-
-func orDash(s string) string {
-	if s == "" {
-		return "-"
-	}
-	return s
-}
