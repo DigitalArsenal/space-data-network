@@ -39,9 +39,10 @@ func TestPublicationMisstatedSizesRealDaemons(t *testing.T) {
 	if os.Getenv("SDN_E2E_PUBLICATION") != "1" {
 		t.Skip("set SDN_E2E_PUBLICATION=1 for real daemons")
 	}
+	exe := publicationBinary(t) // first: it selects the store format the daemons use
 	a := newPublicationDaemon(t, publicationFollowFaultsBinary(t), "misstate-producer", "", "", "keep-all")
 	a.start(t)
-	b := newPublicationDaemon(t, publicationBinary(t), "misstate-receiver", a.address, a.id, "keep-all")
+	b := newPublicationDaemon(t, exe, "misstate-receiver", a.address, a.id, "keep-all")
 	b.start(t)
 	time.Sleep(3 * time.Second)
 	lanes := []string{"honest-ms", "overstate-ms", "understate-bytes-ms", "understate-records-ms"}
