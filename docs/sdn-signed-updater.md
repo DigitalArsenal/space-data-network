@@ -607,11 +607,13 @@ production key replaces it through a release that carries `trust_roots`.
   or disconnected at that moment does not get it from that publish. The node
   that published the signal through its admin API sends it again, for an
   hour after publishing it (or until the signal expires, if sooner), when a
-  peer joins its update topic and that peer's own status, received in the six
-  seconds after it joined, does not show it already has the signal or a later
-  sequence (at most once every ten seconds). A node that comes back later
-  than that, or reaches the publisher only through other nodes, gets the
-  release from its own feed check.
+  peer that was part of its fleet when the signal went out (on the topic, or
+  a node whose status it held) joins its update topic again and that peer's
+  own status, received in the six seconds after it joined, does not show it
+  already has the signal or a later sequence (at most once every ten seconds).
+  A node new to the publisher, one that comes back later than that, or one
+  that reaches the publisher only through other nodes gets the release from
+  its own feed check.
 - **Not coordinated.** Each node's delay is its own, and the delays of two
   nodes are independent: they can be down at the same time. For two nodes
   that are each down for five minutes, the chance that they overlap is about

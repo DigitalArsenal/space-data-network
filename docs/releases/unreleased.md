@@ -115,9 +115,10 @@ again and does not install an update the index no longer lists. A pending
 signal that expired while the node was down is cleared with a warning at the
 next start, and the node checks its feed at once; the remaining wait after a
 restart is never longer than the window. The node that published a signal
-sends it again, for an hour, to a peer that joins its update topic and does
-not report having it, so a node that was restarting when the signal went out
-still gets it; a node that comes back later gets the release from its feed
+sends it again, for an hour, when a node that was part of its fleet at that
+moment joins its update topic again and does not report having it, so a node
+that was restarting when the signal went out still gets it; a node new to the
+publisher, or one that comes back later, gets the release from its feed
 check.
 
 **Which version every node runs: `spacedatanetwork update fleet`.** Each
