@@ -91,9 +91,18 @@ type SubstrateReport struct {
 	PatchSeries int `json:"patch_series"`
 }
 
-// Patched reports whether the runtime behaves like the patched build.
+// RequiredPatchSeries is the runtime patch series this node needs. The
+// behaviors probed below cover patches 01-07; 08 and 09 (no pthread_detach)
+// cannot be probed from inside, so the series the binary links stands for
+// them.
+const RequiredPatchSeries = 10
+
+// Patched reports whether the runtime is the patched build: it links the
+// required patch series and behaves like it. A build made with the
+// wasmedge_unpatched tag links series 0 and is never patched.
 func (r SubstrateReport) Patched() bool {
-	return !r.Inconclusive && len(r.Errors) == 0 && r.AtomicNotifyWithoutStore && r.StopReachesEveryThread &&
+	return r.PatchSeries >= RequiredPatchSeries &&
+		!r.Inconclusive && len(r.Errors) == 0 && r.AtomicNotifyWithoutStore && r.StopReachesEveryThread &&
 		(!r.AOTChecked || (r.InterruptibleAOT && r.AOTAtomicMemargOffset && r.AOTLoopStopChecks && r.AOTAtomicStoreStack))
 }
 
@@ -249,6 +258,12 @@ func RunSubstrateSelfTest(opts SubstrateOptions) SubstrateReport {
 			rep.AOTLoopStopChecks = ok
 			conclusiveFailure = conclusiveFailure || !ok
 		}
+	}
+	// The series is a fact of the link, not an observation: a binary that
+	// links less than the required series is not patched, whatever it shows.
+	if rep.PatchSeries < RequiredPatchSeries {
+		fail("links runtime patch series %d, needs %d", rep.PatchSeries, RequiredPatchSeries)
+		conclusiveFailure = true
 	}
 	// A notify that timed out on every attempt, and a missing observation,
 	// cannot establish that a patch is absent. Only an observed behavioral
