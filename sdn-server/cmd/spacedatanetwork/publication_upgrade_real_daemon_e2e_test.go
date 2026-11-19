@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,8 +25,9 @@ import (
 //     1.1.9 receiver follows a third lane over the followed stream.
 //  2. The receiver alone updated, on its 1.1.9 data folder and config: it
 //     starts, converts the ledger and the allow list to two subscriptions
-//     (the provider-wide selector is reported, not converted), renames the
-//     ledger, and loses no record. Its producer still runs 1.1.9, which
+//     (the provider-wide selector is reported, not converted) kept where
+//     1.1.9 does not read them, leaves the ledger in place, and loses no
+//     record. Its producer still runs 1.1.9, which
 //     states no lane: the converted subscriptions wait, naming why; a new
 //     subscription is refused for the same reason, and --force --start
 //     beginning follows the 1.1.9 producer anyway. The old path is gone: a
@@ -93,19 +95,27 @@ func TestPublicationUpgradeRealDaemons(t *testing.T) {
 			t.Fatalf("the updated receiver's log lacks %q", want)
 		}
 	}
-	if _, err := os.Stat(ledger); !os.IsNotExist(err) {
-		t.Fatalf("the ledger %s is still in place: %v", ledger, err)
-	}
-	if _, err := os.Stat(ledger + ".converted"); err != nil {
-		t.Fatalf("the ledger was not renamed: %v", err)
+	// The ledger and the config stay as 1.1.9 left them (a rollback imports
+	// through them again); the conversion is recorded beside them.
+	if text := readFileString(ledger); !strings.Contains(text, "upg-allow") || !strings.Contains(text, "upg-ledger") {
+		t.Fatalf("the ledger is not left in place for a rollback: %q", text)
 	}
 	record := readFileString(filepath.Join(filepath.Dir(ledger), "trusted-import-converted"))
 	if !strings.Contains(record, "upg-allow from "+p.id+": subscribed") || !strings.Contains(record, "upg-ledger from "+p.id+": subscribed") {
 		t.Fatalf("conversion record: %s", record)
 	}
-	for _, d := range r.followRecords(t) {
-		if string(d.PROVIDER_PEER_ID()) != p.id || !d.SUBSCRIBED() {
-			t.Fatalf("converted follows.dss record: producer %q subscribed %v", d.PROVIDER_PEER_ID(), d.SUBSCRIBED())
+	// The converted subscriptions are bounded: they are in subscriptions.dss,
+	// which 1.1.9 does not read, and not in follows.dss, which it does.
+	if len(r.dssFile(t, "follows.dss")) != 0 {
+		t.Fatalf("follows.dss holds %d records after the conversion, want none", len(r.dssFile(t, "follows.dss")))
+	}
+	converted := r.dssFile(t, "subscriptions.dss")
+	if len(converted) != 2 {
+		t.Fatalf("subscriptions.dss holds %d records, want the 2 converted lanes", len(converted))
+	}
+	for _, d := range converted {
+		if string(d.PROVIDER_PEER_ID()) != p.id || !d.SUBSCRIBED() || string(d.SYNC_FILTER()) != "start=current" {
+			t.Fatalf("converted subscriptions.dss record: producer %q subscribed %v start %q", d.PROVIDER_PEER_ID(), d.SUBSCRIBED(), d.SYNC_FILTER())
 		}
 	}
 	r.requireRecords(t, "OMM.fbs", "upg-allow", p.scan(t, "OMM.fbs", "upg-allow"))
@@ -178,10 +188,22 @@ func TestPublicationUpgradeRealDaemons(t *testing.T) {
 	r.requireAlive(t)
 }
 
-// followRecords is every $DSS record of d's follows.dss.
-func (d *publicationDaemon) followRecords(t *testing.T) []*DSS.DSS {
+// dssFile is every $DSS record of d's subscription file name (follows.dss,
+// subscriptions.dss); none when the file is absent.
+func (d *publicationDaemon) dssFile(t *testing.T, name string) []*DSS.DSS {
 	t.Helper()
-	raw, err := os.ReadFile(findFile(t, d.root, "follows.dss"))
+	found := ""
+	_ = filepath.WalkDir(d.root, func(path string, e fs.DirEntry, err error) error {
+		if err == nil && !e.IsDir() && e.Name() == name {
+			found = path
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	if found == "" {
+		return nil
+	}
+	raw, err := os.ReadFile(found)
 	if err != nil {
 		t.Fatal(err)
 	}

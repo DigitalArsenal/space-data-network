@@ -113,7 +113,7 @@ func TestPublicationFollowRealDaemons(t *testing.T) {
 		}
 		sub := b.followRecord(t)
 		if string(sub.PROVIDER_PEER_ID()) != a.id || string(sub.SOURCE_NAME()) != "follow" || !sub.SUBSCRIBED() || len(sub.CURSOR()) == 0 {
-			t.Fatalf("follows.dss record: producer %q source %q subscribed %v cursor %d bytes", sub.PROVIDER_PEER_ID(), sub.SOURCE_NAME(), sub.SUBSCRIBED(), len(sub.CURSOR()))
+			t.Fatalf("subscriptions.dss record: producer %q source %q subscribed %v cursor %d bytes", sub.PROVIDER_PEER_ID(), sub.SOURCE_NAME(), sub.SUBSCRIBED(), len(sub.CURSOR()))
 		}
 	})
 
@@ -297,12 +297,12 @@ func TestPublicationFollowRealDaemons(t *testing.T) {
 
 	t.Run("unsubscribe_standard", func(t *testing.T) {
 		b.request(t, "POST", "/api/v1/sync", publicationStreamType, api.EncodeDSSAction("OMM", "", "", api.DSSActionUnsubscribe), http.StatusAccepted)
-		raw, err := os.ReadFile(findFile(t, b.root, "follows.dss"))
+		raw, err := os.ReadFile(findFile(t, b.root, "subscriptions.dss"))
 		if err != nil {
 			t.Fatal(err)
 		}
 		if frames, _ := syncwire.SplitFrames(raw); len(frames) != 0 {
-			t.Fatalf("follows.dss holds %d lanes after the standard was unsubscribed", len(frames))
+			t.Fatalf("subscriptions.dss holds %d lanes after the standard was unsubscribed", len(frames))
 		}
 		before := fake.opened("flood") + fake.opened("count") + fake.opened("claim")
 		time.Sleep(35 * time.Second)
@@ -313,16 +313,16 @@ func TestPublicationFollowRealDaemons(t *testing.T) {
 	})
 }
 
-// followRecord is the receiver's one followed lane in follows.dss.
+// followRecord is the receiver's one followed lane in subscriptions.dss.
 func (d *publicationDaemon) followRecord(t *testing.T) *DSS.DSS {
 	t.Helper()
-	raw, err := os.ReadFile(findFile(t, d.root, "follows.dss"))
+	raw, err := os.ReadFile(findFile(t, d.root, "subscriptions.dss"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	frames, err := syncwire.SplitFrames(raw)
 	if err != nil || len(frames) != 1 || !DSS.SizePrefixedDSSBufferHasIdentifier(frames[0]) {
-		t.Fatalf("follows.dss holds %d frames (%v), want one $DSS record", len(frames), err)
+		t.Fatalf("subscriptions.dss holds %d frames (%v), want one $DSS record", len(frames), err)
 	}
 	return DSS.GetSizePrefixedRootAsDSS(frames[0], 0)
 }

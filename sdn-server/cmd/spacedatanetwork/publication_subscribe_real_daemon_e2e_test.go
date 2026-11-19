@@ -23,8 +23,10 @@ import (
 //     2,000), then the records the producer stores next within seconds.
 //   - A keep-all lane starts at its beginning: with the lane (8,000 records)
 //     past the receiver's record ceiling (5,000) the subscription is
-//     refused, naming both, and nothing is followed; --force subscribes and
-//     the whole lane arrives.
+//     refused, naming both, and nothing is followed; --force subscribes, and
+//     the running guard stops the lane before the store passes the ceiling
+//     (alert follow_stopped, the cursor kept); with the ceiling raised it
+//     resumes at its cursor and the whole lane arrives.
 //   - sync subscriptions lists the lane with its producer, start time,
 //     received records and bytes, current batch and lag; sync status reads
 //     through the running daemon; sync unsubscribe stops the lane.
@@ -154,8 +156,48 @@ func TestPublicationSubscribeRealDaemons(t *testing.T) {
 		if err != nil || !strings.Contains(out, "subscribed: OMM.fbs publication-e2e/ka") {
 			t.Fatalf("sync subscribe --force: %v\n%s", err, out)
 		}
+		// --force skips the check before the subscription, not the running
+		// guard: the lane stops before the store passes its ceiling.
+		deadline := time.Now().Add(3 * time.Minute)
+		for {
+			sub := c.subscription(t, "ka")
+			if sub.Stopped != "" && hasAlert(c.alerts(t), "follow_stopped", "ceiling of 5000") {
+				t.Logf("forced subscription stopped at the ceiling: %s", sub.Stopped)
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("the forced subscription did not stop at the ceiling: stopped %q, error %q, alerts %+v", sub.Stopped, sub.Error, c.alerts(t))
+			}
+			time.Sleep(2 * time.Second)
+		}
+		held := len(c.scan(t, "OMM.fbs", "ka"))
+		if held == 0 || held > 5_000 {
+			t.Fatalf("the stopped lane holds %d records, want some and at most the ceiling's 5000", held)
+		}
+		cursor := ""
+		for _, d := range c.dssFile(t, "subscriptions.dss") {
+			if string(d.SOURCE_NAME()) == "ka" {
+				cursor = string(d.CURSOR())
+			}
+		}
+		if cursor == "" {
+			t.Fatal("the stopped lane's cursor was not kept")
+		}
+		t.Logf("--force: %d of the lane's 8,000 records stored before the guard stopped it; the cursor is kept", held)
+		c.stop(t)
+		raw, err := os.ReadFile(c.cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(c.cfg, []byte(strings.Replace(string(raw), "  record_ceiling: 5000\n", "  record_ceiling: 20000\n", 1)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		c.start(t)
 		c.awaitRecords(t, "OMM.fbs", "ka", want, 3*time.Minute)
-		t.Log("--force: the whole keep-all lane (8,000 records) arrived")
+		if sub := c.subscription(t, "ka"); sub.ReceivedRecords > 8_000 {
+			t.Fatalf("the resumed lane received %d records in all, more than the lane's 8000: it did not resume at its cursor", sub.ReceivedRecords)
+		}
+		t.Log("with the ceiling raised the lane resumed at its cursor and the whole keep-all lane (8,000 records) arrived")
 	})
 }
 

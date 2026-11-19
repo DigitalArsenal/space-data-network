@@ -636,10 +636,10 @@ PUBLICATION_GO_TEST_TIMEOUT="45m"
 
 publication_group_tests() {
   case "$1" in
-    publication-1) echo "TestPublicationRetentionRealDaemons TestPublicationFollowRealDaemons TestPublicationOutlivesClientRealDaemons" ;;
+    publication-1) echo "TestPublicationRetentionRealDaemons TestPublicationFollowRealDaemons TestPublicationOutlivesClientRealDaemons TestPublicationGossipGateRealDaemons TestPublicationPNMOnlyLaneRealDaemons" ;;
     publication-2) echo "TestPublicationRealDaemons TestPublicationFingerprintRealDaemons TestPublicationContentAddressRealDaemons TestPublicationKeyRealDaemons TestPublicationSlowFlowRealDaemons" ;;
-    publication-3) echo "TestPublicationLaneCountRealDaemons TestPublicationFollowStatusRealDaemons TestPublicationImportChunksRealDaemons TestPublicationInvalidSignatureRealDaemons TestPublicationFailureRealDaemons" ;;
-    publication-4) echo "TestPublicationSubscribeRealDaemons TestPublicationUpgradeRealDaemons" ;;
+    publication-3) echo "TestPublicationLaneCountRealDaemons TestPublicationFollowStatusRealDaemons TestPublicationImportChunksRealDaemons TestPublicationInvalidSignatureRealDaemons TestPublicationFailureRealDaemons TestPublicationCursorRefusedRealDaemons TestPublicationStreamSlotsRealDaemons" ;;
+    publication-4) echo "TestPublicationSubscribeRealDaemons TestPublicationUpgradeRealDaemons TestPublicationRollbackRealDaemons TestPublicationConversionRecordRealDaemons" ;;
   esac
 }
 
