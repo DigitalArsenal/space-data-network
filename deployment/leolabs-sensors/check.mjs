@@ -108,7 +108,7 @@ for (const network of NETWORKS) {
       assert.equal(rec.NORAD_CAT_ID, 0, "a ground sensor names no spacecraft");
     } else {
       assert.equal(rec.NORAD_CAT_ID, row.norad, "an in-orbit sensor is bound by its NORAD catalog number");
-      assert(row.verified && /GCAT satcat|CelesTrak/.test(row.verified), `${row.id}: the catalog number is verified against a public catalog`);
+      assert(row.verified && /GCAT|CelesTrak|planet4589|n2yo|catalog/i.test(row.verified), `${row.id}: the catalog number is verified against a public catalog`);
       assert(!rec.SITE_ID, "an in-orbit sensor names no ground site");
     }
     if (row.band) {

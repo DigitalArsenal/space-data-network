@@ -16,7 +16,13 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { NETWORKS, frame, lanesOf } from "./build-records.mjs";
 
 // One lane pair per network: provider `sdn-ssa-<network>`, so a network stands alone on the node.
-export const LANES = NETWORKS.flatMap((network) => lanesOf(network).map((lane) => ({ ...lane, network: network.slug })));
+// Two passes, as on the production node: round 1 (the publication of 2026-11-18), then round 2 appended to the same lanes and to new ones.
+// `total` is what the lane holds after the batch: the node signs the whole lane, so the signed count is the total, not the batch.
+export const LANES = [1, 2].flatMap((round) => NETWORKS.flatMap((network) => lanesOf(network, round).map((lane) => {
+  const whole = lanesOf(network).find((l) => l.schema === lane.schema);
+  const total = round === 1 ? lane.count : whole.count;
+  return { ...lane, network: network.slug, round, total };
+})));
 
 const work = process.argv[2];
 const keep = process.argv.includes("--keep");
@@ -95,16 +101,16 @@ try {
   for (const lane of LANES) {
     // 1. the records, as a batch on the lane's provider/source (the publisher's own loopback lane)
     const body = frame(lane.records);
-    const q = new URLSearchParams({ provider_id: lane.providerId, source_name: lane.sourceName, batch_id: `${lane.sourceName}-1`, source_url: lane.sourceUrl });
+    const q = new URLSearchParams({ provider_id: lane.providerId, source_name: lane.sourceName, batch_id: `${lane.sourceName}-${lane.round}`, source_url: lane.sourceUrl });
     const put = await fetch(`http://127.0.0.1:${port.lane}/api/v1/data/publish/batch/${lane.schema}?${q}`, { method: "POST", headers: { "Content-Type": "application/vnd.sdn.flatbuffers.stream" }, body });
     const putText = await put.text();
-    console.log(`publish.batch ${lane.schema} -> ${put.status} ${putText.slice(0, 200)}`);
+    console.log(`publish.batch round ${lane.round} ${lane.schema} ${lane.sourceName} (${lane.count} records) -> ${put.status} ${putText.slice(0, 200)}`);
     if (!put.ok) throw new Error(`publish ${lane.schema}`);
     // 2. the node signs and announces the lane as a dataset publication
     const sign = await fetch(`${admin}/api/v1/admin/dataset-updates/publish`, { method: "POST", body: JSON.stringify({ schema: lane.schema, providerId: lane.providerId, sourceName: lane.sourceName }) });
     const signed = await sign.json();
     console.log(`dataset-updates/publish ${lane.schema} -> ${sign.status} recordCount=${signed.recordCount} manifestCid=${signed.manifestCid}`);
-    if (!sign.ok || signed.recordCount !== lane.count) throw new Error(`sign ${lane.schema}: ${JSON.stringify(signed).slice(0, 300)}`);
+    if (!sign.ok || signed.recordCount !== lane.total) throw new Error(`sign ${lane.schema}: ${JSON.stringify(signed).slice(0, 300)}`);
     // 3. read back over the query API: one $QRP Request frame in; runs of [$QRP Page][RECORD_COUNT record frames] out
     const bytes = await readLane(lane);
     console.log(`query ${lane.schema} ${lane.providerId} -> ${bytes.length} bytes`);
