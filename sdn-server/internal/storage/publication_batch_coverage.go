@@ -13,16 +13,28 @@ package storage
 // clears only when no record of the batch is left unpublished.
 //
 // A record counts as published when it is tagged to a batch of the lane that
-// has a COMPLETED publication series of its whole batch: a series recorded
-// by the publication's completion (never a "legacy:" series adopted from
-// rows, which a publication that failed partway can leave), with the
-// fingerprint of the batch's record set (a series limited to a head of the
-// batch has none). Such a series exported every record tagged to its batch,
-// and a batch's tags are written by that batch's ingest only, so a record
-// tagged to it is in the series. Retention keeps the series of every batch
-// the store still holds unless the lane declares its batches snapshots, so
-// a series released by a snapshot lane's retention makes its records count
-// as unpublished here (the count errs on the side of keeping an alert).
+// has a COMPLETED publication series of its whole batch whose fingerprint is
+// the fingerprint of the batch's record set NOW: a series recorded by the
+// publication's completion (never a "legacy:" series adopted from rows,
+// which a publication that failed partway can leave), with the fingerprint
+// of the set it exported (a series limited to a head of the batch has none).
+// A batch stored in parts gains records after a publication of its first
+// part; its set then differs from the set that series exported, so none of
+// its records counts until a publication of the whole batch as it is now
+// completes. With the fingerprints equal the series exported exactly the
+// batch's current records, so a record tagged to the batch is in it. A tag,
+// once written, stays while the store holds its record (a repeat CID adds
+// the new batch's tag to the record's tags), so a record seen tagged to a
+// batch whose set equals the series' set, read after the tag, is in the
+// series. Retention keeps the series of every batch the store still holds
+// unless the lane declares its batches snapshots, so a series released by a
+// snapshot lane's retention makes its records count as unpublished here
+// (the count errs on the side of keeping an alert).
+//
+// Cost of a fingerprint: one read of the batch's CIDs, sorted (the read a
+// publication of the batch makes to fingerprint it). A count reads it for
+// each batch that tags a record of the counted batch and has a completed
+// series, once per count; a batch with no completed series costs nothing.
 
 import (
 	"context"
@@ -47,32 +59,87 @@ const batchCoveragePage = 2048
 
 // UnpublishedBatchRecords answers the CIDs of the records tagged to batchID
 // in the lane (schema, provider, source) that carry no tag of a batch of the
-// lane with a completed publication of its whole batch, and how many records
-// the batch holds. More than max unpublished records is ErrTooManyUnpublished.
+// lane whose whole current set a completed publication exported, and how
+// many records the batch holds. More than max unpublished records is
+// ErrTooManyUnpublished.
 //
 // Cost: one read of the batch's CIDs and of their tags, a page of 2,048 at a
-// time, and one read of the lane's series.
+// time, one read of the lane's series, and one fingerprint of each batch
+// that tags one of the records and has a completed series.
 func (s *FlatSQLStore) UnpublishedBatchRecords(ctx context.Context, schemaName, providerID, sourceName, batchID string, max int) (unpublished []string, total int64, err error) {
 	schemaName, providerID = strings.TrimSpace(schemaName), strings.TrimSpace(providerID)
 	sourceName, batchID = strings.TrimSpace(sourceName), strings.TrimSpace(batchID)
 	if schemaName == "" || providerID == "" || sourceName == "" || batchID == "" {
 		return nil, 0, errors.New("schema, provider, source and batch are required")
 	}
-	published, err := s.publishedLaneBatches(ctx, schemaName, providerID, sourceName)
+	switch s.rb.(type) {
+	case format4Backend, nil:
+	default:
+		return nil, 0, ErrBatchCoverageUnsupported
+	}
+	completed, err := s.completedLaneBatchFingerprints(ctx, schemaName, providerID, sourceName)
 	if err != nil {
 		return nil, 0, err
 	}
-	covered := func(provider, source, batch string) bool {
-		return provider == providerID && source == sourceName && published[batch]
+	current := map[string]bool{}
+	published := func(batch string) (bool, error) {
+		if len(completed[batch]) == 0 {
+			return false, nil
+		}
+		if known, ok := current[batch]; ok {
+			return known, nil
+		}
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		fingerprint, _, err := s.PagedDatasetPublicationSetFingerprint(schemaName, providerID, sourceName, batch)
+		if err != nil {
+			return false, fmt.Errorf("fingerprint batch %q: %w", batch, err)
+		}
+		current[batch] = fingerprint != "" && completed[batch][fingerprint]
+		return current[batch], nil
+	}
+	covered := func(provider, source, batch string) (bool, error) {
+		if provider != providerID || source != sourceName {
+			return false, nil
+		}
+		return published(batch)
 	}
 	switch b := s.rb.(type) {
 	case format4Backend:
 		return b.unpublishedBatchRecords(ctx, schemaName, providerID, sourceName, batchID, covered, max)
-	case nil:
-		return s.unpublishedBatchRecordsFormat1(ctx, schemaName, providerID, sourceName, batchID, published, max)
 	default:
-		return nil, 0, ErrBatchCoverageUnsupported
+		return s.unpublishedBatchRecordsFormat1(ctx, schemaName, providerID, sourceName, batchID, published, max)
 	}
+}
+
+// BatchPublishedAsHeld reports whether a completed publication series of the
+// whole batch (recorded at completion, not "legacy:", with a fingerprint)
+// exported exactly the records the store holds tagged to the batch now: the
+// fingerprint of the batch's current set is the fingerprint of such a series.
+// Cost: one read of the lane's series and, when the batch has a completed
+// series, one fingerprint of the batch.
+func (s *FlatSQLStore) BatchPublishedAsHeld(ctx context.Context, schemaName, providerID, sourceName, batchID string) (bool, error) {
+	schemaName, providerID = strings.TrimSpace(schemaName), strings.TrimSpace(providerID)
+	sourceName, batchID = strings.TrimSpace(sourceName), strings.TrimSpace(batchID)
+	if schemaName == "" || providerID == "" || sourceName == "" || batchID == "" {
+		return false, errors.New("schema, provider, source and batch are required")
+	}
+	completed, err := s.completedLaneBatchFingerprints(ctx, schemaName, providerID, sourceName)
+	if err != nil {
+		return false, err
+	}
+	if len(completed[batchID]) == 0 {
+		return false, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	fingerprint, _, err := s.PagedDatasetPublicationSetFingerprint(schemaName, providerID, sourceName, batchID)
+	if err != nil {
+		return false, fmt.Errorf("fingerprint batch %q: %w", batchID, err)
+	}
+	return fingerprint != "" && completed[batchID][fingerprint], nil
 }
 
 // EachLaneBatchCIDPage calls fn with the CIDs of the lane's records tagged to
@@ -129,16 +196,17 @@ func (s *FlatSQLStore) EachLaneBatchCIDPage(ctx context.Context, schemaName, pro
 	}
 }
 
-// publishedLaneBatches is the lane's batches with a completed publication
-// series of the whole batch that carries records: recorded at a
-// publication's completion (not adopted as "legacy:"), with a fingerprint.
-func (s *FlatSQLStore) publishedLaneBatches(ctx context.Context, schemaName, providerID, sourceName string) (map[string]bool, error) {
+// completedLaneBatchFingerprints is, per batch of the lane, the fingerprints
+// of its completed publication series of the whole batch that carry
+// records: recorded at a publication's completion (not adopted as
+// "legacy:"), with a fingerprint.
+func (s *FlatSQLStore) completedLaneBatchFingerprints(ctx context.Context, schemaName, providerID, sourceName string) (map[string]map[string]bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT DISTINCT batch_id FROM sdn_dataset_publication_series
+		SELECT DISTINCT batch_id, fingerprint FROM sdn_dataset_publication_series
 		WHERE schema_name = ? AND provider_id = ? AND source_name = ? AND record_count > 0
 		  AND batch_id != '' AND series_id NOT LIKE 'legacy:%' AND fingerprint != ''`,
 		schemaName, providerID, sourceName)
@@ -146,18 +214,21 @@ func (s *FlatSQLStore) publishedLaneBatches(ctx context.Context, schemaName, pro
 		return nil, fmt.Errorf("read the lane's published batches: %w", err)
 	}
 	defer rows.Close()
-	out := map[string]bool{}
+	out := map[string]map[string]bool{}
 	for rows.Next() {
-		var batch string
-		if err := rows.Scan(&batch); err != nil {
+		var batch, fingerprint string
+		if err := rows.Scan(&batch, &fingerprint); err != nil {
 			return nil, err
 		}
-		out[batch] = true
+		if out[batch] == nil {
+			out[batch] = map[string]bool{}
+		}
+		out[batch][fingerprint] = true
 	}
 	return out, rows.Err()
 }
 
-func (b format4Backend) unpublishedBatchRecords(ctx context.Context, schemaName, providerID, sourceName, batchID string, covered func(provider, source, batch string) bool, max int) ([]string, int64, error) {
+func (b format4Backend) unpublishedBatchRecords(ctx context.Context, schemaName, providerID, sourceName, batchID string, covered func(provider, source, batch string) (bool, error), max int) ([]string, int64, error) {
 	var unpublished []string
 	var total int64
 	after := int64(0)
@@ -176,7 +247,11 @@ func (b format4Backend) unpublishedBatchRecords(ctx context.Context, schemaName,
 			}
 			for _, c := range cids {
 				total++
-				if !anyTagCovered(tags[c], covered) {
+				done, err := anyTagCovered(tags[c], covered)
+				if err != nil {
+					return nil, 0, err
+				}
+				if !done {
 					if len(unpublished) >= max {
 						return nil, 0, ErrTooManyUnpublished
 					}
@@ -191,13 +266,14 @@ func (b format4Backend) unpublishedBatchRecords(ctx context.Context, schemaName,
 	}
 }
 
-func anyTagCovered(rows []format4.TagRow, covered func(provider, source, batch string) bool) bool {
+func anyTagCovered(rows []format4.TagRow, covered func(provider, source, batch string) (bool, error)) (bool, error) {
 	for _, r := range rows {
-		if covered(r.Provider, r.Source, r.Batch) {
-			return true
+		done, err := covered(r.Provider, r.Source, r.Batch)
+		if err != nil || done {
+			return done, err
 		}
 	}
-	return false
+	return false, nil
 }
 
 // format1BatchCIDPage is one page of a batch's CIDs on a format-1 store,
@@ -225,7 +301,7 @@ func (s *FlatSQLStore) format1BatchCIDPage(ctx context.Context, schemaName, prov
 }
 
 // unpublishedBatchRecordsFormat1 is the count on a format-1 store.
-func (s *FlatSQLStore) unpublishedBatchRecordsFormat1(ctx context.Context, schemaName, providerID, sourceName, batchID string, published map[string]bool, max int) ([]string, int64, error) {
+func (s *FlatSQLStore) unpublishedBatchRecordsFormat1(ctx context.Context, schemaName, providerID, sourceName, batchID string, published func(batch string) (bool, error), max int) ([]string, int64, error) {
 	var unpublished []string
 	var total int64
 	after := ""
@@ -271,7 +347,11 @@ func (s *FlatSQLStore) unpublishedBatchRecordsFormat1(ctx context.Context, schem
 			total++
 			done := false
 			for _, batch := range batches[c] {
-				if published[batch] {
+				ok, err := published(batch)
+				if err != nil {
+					return nil, 0, err
+				}
+				if ok {
 					done = true
 					break
 				}

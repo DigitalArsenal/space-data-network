@@ -26,12 +26,15 @@ package api
 // Every publication that fails is logged as an error naming its lane, batch
 // and step, and raises the publication_failed alert of its lane, which names
 // each failed batch and how many of its records no completed publication of
-// the lane carries. The alert clears once no
-// scope that failed in the lane is unpublished: the same batch, or the whole
-// lane (a publication with no batch), is published with at least one
+// the lane carries. The alert clears once no scope that failed in the lane
+// is unpublished: a publication of every record of the same batch (or, for
+// a failed publication with no batch, of every record of the lane) that
+// read the lane after the failed one did completes with at least one
 // record, or every record of the failed batch is in a completed publication
-// of the lane. That last case is how a later run clears it: a later pull of
-// the same source that returns a record again tags it to the later batch,
+// of the lane that exported its batch as the store holds it. A publication
+// of a head (a limit, or a lane publication with no batch and no chunk
+// size) covers nothing: it exported only some of the scope's records. The
+// second way is how a later run clears it: a later pull of the same source that returns a record again tags it to the later batch,
 // whose publication carries it (storage.UnpublishedBatchRecords). A record
 // of the failed batch that no later pull returned is in no publication, so
 // the alert stays and its text, restated after each publication of the
@@ -92,7 +95,11 @@ func publicationStepOf(err error) string {
 // publicationRun is one running publication.
 type publicationRun struct {
 	started time.Time
-	done    chan struct{}
+	// heldAt is when the run first held its lane (publicationHygiene
+	// holdLane), before it read the lane; zero until then. Under
+	// publicationRuns.mu.
+	heldAt time.Time
+	done   chan struct{}
 	result  *DatasetPublicationResult
 	err     error
 	// Under publicationRuns.mu: the callers waiting for the result, how to
@@ -146,8 +153,11 @@ type publicationRuns struct {
 	mu    sync.Mutex
 	byKey map[string]*publicationRun
 	// failed is, per lane, the batches (or "" for the whole lane) whose
-	// publication failed and that no publication has covered since.
-	failed map[string]map[string]bool
+	// publication failed and that no publication has covered since, each
+	// with when each failed publication of it read the lane, per provider
+	// and source (one per scope in a lane of the node's store, whose name
+	// names them; a datastore lane's name does not).
+	failed map[string]map[string]map[string]time.Time
 	// coverage follows which records of each failed batch are published.
 	coverage publicationCoverage
 	// files is held shared while an export writes or reuses files in the
@@ -162,7 +172,7 @@ type publicationRuns struct {
 
 func newPublicationRuns() *publicationRuns {
 	life, stop := context.WithCancelCause(context.Background())
-	return &publicationRuns{byKey: make(map[string]*publicationRun), failed: make(map[string]map[string]bool), life: life, stop: stop}
+	return &publicationRuns{byKey: make(map[string]*publicationRun), failed: make(map[string]map[string]map[string]time.Time), life: life, stop: stop}
 }
 
 // oldestStart is the start of the oldest running publication other than
@@ -325,7 +335,7 @@ func (s *ConcreteDatasetPublicationService) runDatasetPublication(ctx context.Co
 			// when its context ended after it completed.
 			result, err := publish(workCtx)
 			run.result, run.err = result, err
-			s.reportDatasetPublication(req, s.now().Sub(run.started), result, err, errors.Is(context.Cause(workCtx), errPublicationsStopped))
+			s.reportDatasetPublication(req, run, result, err, errors.Is(context.Cause(workCtx), errPublicationsStopped))
 			runs.mu.Lock()
 			delete(runs.byKey, key)
 			runs.mu.Unlock()
@@ -369,10 +379,10 @@ func (s *ConcreteDatasetPublicationService) runDatasetPublication(ctx context.Co
 // cancelled is logged as that and changes no alert. It reads no store: what
 // needs the store (which records of a failed batch are published) runs on
 // the coverage worker afterwards (dataset_publication_coverage.go).
-func (s *ConcreteDatasetPublicationService) reportDatasetPublication(req DatasetPublicationRequest, took time.Duration, result *DatasetPublicationResult, err error, stopped bool) {
+func (s *ConcreteDatasetPublicationService) reportDatasetPublication(req DatasetPublicationRequest, run *publicationRun, result *DatasetPublicationResult, err error, stopped bool) {
 	lane := datasetPublicationLaneName(req)
 	batch := strings.TrimSpace(req.BatchID)
-	took = took.Round(time.Millisecond)
+	took := s.now().Sub(run.started).Round(time.Millisecond)
 	if err != nil && stopped {
 		log.Warnf("Dataset publication %s batch %q stopped with the node after %s, at step %q", lane, batch, took, publicationStepOf(err))
 		return
@@ -383,7 +393,7 @@ func (s *ConcreteDatasetPublicationService) reportDatasetPublication(req Dataset
 		// An announcement of existing publications leaves nothing
 		// unpublished: the lane's next publication clears its alert.
 		if !req.AnnounceExisting {
-			s.runs.failScope(lane, batch)
+			s.runs.failScope(lane, batch, publicationIdentity(req), s.runs.readLaneAt(run))
 			s.noteFailure(lane, text)
 			text += " (" + s.alertText(lane, s.runs.failedScopes(lane)) + ")"
 		}
@@ -401,8 +411,18 @@ func (s *ConcreteDatasetPublicationService) reportDatasetPublication(req Dataset
 	if req.AnnounceExisting || records == 0 {
 		return
 	}
-	left := s.runs.coverScope(lane, batch)
-	s.forgetCoverage(lane, batch)
+	scope, whole := publicationCoveredScope(req)
+	if !whole {
+		if left := s.runs.failedScopes(lane); len(left) > 0 {
+			log.Infof("Dataset publication %s batch %q published a head of its scope (limit %d), not every record of a failed scope: %d failed scope(s) stay",
+				lane, batch, req.Limit, len(left))
+		}
+		return
+	}
+	left, covered := s.runs.coverScope(lane, scope, publicationIdentity(req), s.runs.readLaneAt(run))
+	if covered && scope != "" {
+		s.forgetCoverage(lane, scope)
+	}
 	if len(left) == 0 {
 		s.forgetCoverage(lane, "")
 		s.alerts.Clear(ops.KindPublicationFailed, lane)
@@ -414,6 +434,59 @@ func (s *ConcreteDatasetPublicationService) reportDatasetPublication(req Dataset
 	if batch != "" && wholeBatchPublication(req) {
 		s.coverByPublishedBatch(req, lane, batch)
 	}
+}
+
+// publicationCoveredScope is the scope a completed publication of req
+// exported every record of, as the lane held them when it read the lane:
+// the batch it names when it published the whole batch, or the whole lane
+// ("") for a series of every record of the lane (no batch, no limit, a full
+// catalog or a chunk size). A publication limited to a head (a limit, or a
+// publication of a lane with no batch, which publishes its newest records)
+// exported none: whole is false.
+func publicationCoveredScope(req DatasetPublicationRequest) (scope string, whole bool) {
+	if req.Limit > 0 {
+		return "", false
+	}
+	if batch := strings.TrimSpace(req.BatchID); batch != "" {
+		return batch, true
+	}
+	if req.FullCatalog || req.ChunkSize > 0 {
+		return "", true
+	}
+	return "", false
+}
+
+// publicationIdentity is the provider and source a request publishes.
+func publicationIdentity(req DatasetPublicationRequest) string {
+	return strings.TrimSpace(req.ProviderID) + "\x00" + strings.TrimSpace(req.SourceName)
+}
+
+// markHeld records when run first held its lane.
+func (r *publicationRuns) markHeld(run *publicationRun, at time.Time) {
+	if r == nil || run == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if run.heldAt.IsZero() {
+		run.heldAt = at
+	}
+}
+
+// readLaneAt is when run read its lane: when it held the lane (publications
+// of a lane hold it one at a time, and read it only while they hold it), or,
+// for a run that never held it, its start. A failed run that never held its
+// lane read nothing; its scope is what the lane held when it was requested.
+func (r *publicationRuns) readLaneAt(run *publicationRun) time.Time {
+	if r == nil || run == nil {
+		return time.Time{}
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !run.heldAt.IsZero() {
+		return run.heldAt
+	}
+	return run.started
 }
 
 // wholeBatchPublication reports a publication of every record of one batch
@@ -431,20 +504,26 @@ func (r *publicationRuns) isFailed(lane, batch string) bool {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.failed[lane][batch]
+	return len(r.failed[lane][batch]) > 0
 }
 
-// failScope records a failed scope of a lane.
-func (r *publicationRuns) failScope(lane, batch string) {
+// failScope records a failed scope of a lane: a publication of it for the
+// provider and source identity, which read the lane at readAt, failed.
+func (r *publicationRuns) failScope(lane, batch, identity string, readAt time.Time) {
 	if r == nil {
 		return
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.failed[lane] == nil {
-		r.failed[lane] = make(map[string]bool)
+		r.failed[lane] = make(map[string]map[string]time.Time)
 	}
-	r.failed[lane][batch] = true
+	if r.failed[lane][batch] == nil {
+		r.failed[lane][batch] = make(map[string]time.Time)
+	}
+	if readAt.After(r.failed[lane][batch][identity]) {
+		r.failed[lane][batch][identity] = readAt
+	}
 }
 
 // failedScopes is a lane's failed scopes, each a batch or "" for the whole
@@ -463,22 +542,47 @@ func (r *publicationRuns) failedScopes(lane string) []string {
 	return scopes
 }
 
-// coverScope removes the failed scopes a completed publication of batch
-// ("" for the whole lane) covers and returns the scopes left.
-func (r *publicationRuns) coverScope(lane, batch string) []string {
+// coverScope is a completed publication of every record of scope (a batch,
+// or "" for the whole lane) for the provider and source identity, which read
+// the lane at readAt. It covers each failed publication of the same scope
+// and identity that read the lane before: the records that publication
+// would have exported were all in the lane when the completed one read it
+// (a record's tags stay while the store holds it). A failed publication
+// that read the lane later may have held records the completed one did not
+// export, and stays. It returns the lane's failed scopes left and whether
+// scope is no longer failed.
+func (r *publicationRuns) coverScope(lane, scope, identity string, readAt time.Time) ([]string, bool) {
 	if r == nil {
-		return nil
+		return nil, false
 	}
 	r.mu.Lock()
-	if batch == "" {
-		delete(r.failed, lane)
-		r.mu.Unlock()
-		return nil
+	covered := false
+	if failures := r.failed[lane][scope]; len(failures) > 0 {
+		if at, ok := failures[identity]; ok && at.Before(readAt) {
+			delete(failures, identity)
+		}
+		if len(failures) == 0 {
+			delete(r.failed[lane], scope)
+			covered = true
+		}
 	}
-	delete(r.failed[lane], batch)
 	if len(r.failed[lane]) == 0 {
 		delete(r.failed, lane)
 	}
 	r.mu.Unlock()
-	return r.failedScopes(lane)
+	return r.failedScopes(lane), covered
+}
+
+// dropScope removes a failed batch every record of which is in a completed
+// publication of the lane (dataset_publication_coverage.go).
+func (r *publicationRuns) dropScope(lane, batch string) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.failed[lane], batch)
+	if len(r.failed[lane]) == 0 {
+		delete(r.failed, lane)
+	}
 }

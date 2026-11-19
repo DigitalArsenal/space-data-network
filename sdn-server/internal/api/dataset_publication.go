@@ -463,6 +463,7 @@ func (s *ConcreteDatasetPublicationService) publishSelectedDatasetUpdate(ctx con
 		return nil, atPublicationStep("wait for the lane", err)
 	}
 	defer release()
+	s.runs.markHeld(runOf(ctx), s.now())
 	var catalogSnapshot *storage.CatalogSnapshot
 	if activeReq.FullCatalog && strings.TrimSpace(activeReq.BatchID) == "" && schema == "CAT.fbs" {
 		if _, ok := activeStore.CatalogProductSource(activeReq.ProviderID, activeReq.SourceName); ok {
@@ -599,6 +600,19 @@ func (s *ConcreteDatasetPublicationService) announceExistingDatasetPublications(
 	for _, publication := range publications {
 		if rowLimit > 0 && result.RecordCount >= rowLimit {
 			break
+		}
+		// A window of a publication that did not complete (running, failed
+		// or cut) is not announced again: it is not part of a completed
+		// publication.
+		unfinished, err := s.store.UnfinishedDatasetPublicationWindow(storage.DatasetPublicationLane{
+			SchemaName: publication.SchemaName, ProviderID: publication.ProviderID, SourceName: publication.SourceName,
+		}, publication.ShardCID)
+		if err != nil {
+			return nil, err
+		}
+		if unfinished {
+			log.Infof("Skipping existing dataset publication %s %s offset=%d limit=%d: a publication wrote it and did not complete", publication.SchemaName, publication.ShardCID, publication.Offset, publication.Limit)
+			continue
 		}
 		repaired, err := s.ensureDatasetPublicationAssets(workCtx, req, publication)
 		if err != nil {
