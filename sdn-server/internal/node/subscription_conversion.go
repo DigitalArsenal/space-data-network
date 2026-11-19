@@ -191,6 +191,9 @@ func (n *Node) removedImportLanes() ([]ConvertedLane, error) {
 			log.Debugf("Origins of %s %s/%s unread: %v", l.Schema, l.ProviderID, l.SourceName, err)
 		}
 		untrusted := false
+		if strings.EqualFold(l.ProviderID, "local-node") {
+			producedHere = true // this node's own profile lane
+		}
 		for _, id := range senders {
 			id = strings.TrimSpace(id)
 			if id == "" {

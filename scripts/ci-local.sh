@@ -661,7 +661,10 @@ fetch_v119_binary() {
     "https://github.com/DigitalArsenal/space-data-network/releases/download/v1.1.9/$asset" || fail "download $asset"
   [[ "$( (sha256sum "$dir/$asset" 2>/dev/null || shasum -a 256 "$dir/$asset") | cut -d' ' -f1)" == "$sum" ]] \
     || fail "$asset does not match its release checksum"
-  tar -xzf "$dir/$asset" -C "$dir" --strip-components=3 '*/runtime/sdn/spacedatanetwork' || fail "extract the 1.1.9 daemon"
+  # GNU tar matches a member pattern only with --wildcards; bsdtar always does.
+  local wild=()
+  case "$(tar --version 2>/dev/null)" in *'GNU tar'*) wild=(--wildcards) ;; esac
+  tar -xzf "$dir/$asset" -C "$dir" --strip-components=3 ${wild[@]+"${wild[@]}"} '*/runtime/sdn/spacedatanetwork' || fail "extract the 1.1.9 daemon"
   export SDN_E2E_V119_BINARY="$dir/spacedatanetwork"
 }
 
