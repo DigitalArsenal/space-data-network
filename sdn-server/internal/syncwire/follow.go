@@ -152,12 +152,23 @@ var ErrFollowPageLimit = errors.New("followed page past its limits")
 type FollowStatement struct {
 	BatchID string
 	Records int64
+	// Retracted states that the producer's operator withdrew the lane: the
+	// end header carries ERROR_CODE LaneRetractedCode and no batch. A
+	// subscriber that holds records of the lane from this producer drops them.
+	Retracted bool
 }
+
+// LaneRetractedCode is the ERROR_CODE of an end header that states a lane
+// retracted. The page is still a Page (STATUS Ok): nothing failed.
+const LaneRetractedCode = "lane_retracted"
 
 // StatementOf reads the statement an end header carries ("" batch: none).
 func StatementOf(end *QRP.QRP) FollowStatement {
 	if end == nil {
 		return FollowStatement{}
+	}
+	if string(end.ERROR_CODE()) == LaneRetractedCode {
+		return FollowStatement{Retracted: true}
 	}
 	return FollowStatement{BatchID: strings.TrimSpace(string(end.BATCH_ID())), Records: int64(min(end.TOTAL_COUNT(), uint64(1<<62)))}
 }

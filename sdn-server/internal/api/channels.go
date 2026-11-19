@@ -205,6 +205,28 @@ func (h *ChannelHandler) RecordDatasetPublicationChannelUpdate(update DatasetPub
 	return nil
 }
 
+// ForgetDatasetPublicationChannel drops the metadata a retracted lane's
+// channel held, so the channel list stops offering it.
+func (h *ChannelHandler) ForgetDatasetPublicationChannel(schema, sourceID string) error {
+	if h == nil {
+		return nil
+	}
+	standardCode, err := channels.StandardCodeFromSchemaName(schema)
+	if err != nil {
+		return err
+	}
+	channelID, err := channels.FormatChannelID(channels.ChannelIDInput{SourceID: sourceID, StandardCode: standardCode})
+	if err != nil {
+		return err
+	}
+	parsed, err := channels.ParseChannelID(channelID)
+	if err != nil {
+		return err
+	}
+	h.metadata.Forget(parsed)
+	return nil
+}
+
 func (h *ChannelHandler) handleCollection(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/api/v1/channels" {
 		http.NotFound(w, r)

@@ -1,0 +1,234 @@
+// Build the space surveillance publications: for every network (LeoLabs and the others), its $SIT sites and its $SNR sensors
+// (ground radars and telescopes bound by SITE_ID, in-orbit sensors bound by NORAD_CAT_ID), typed SDS records, nothing else.
+//
+//   SDS_PIN=<spacedatastandards.org checkout at the stack's pin> node build-records.mjs <out-dir>
+//
+// Writes <out-dir>/<network>/sit.sdn and snr.sdn (where the network has any): repeated [u32 little-endian length][bare FlatBuffer], the
+// body the node's POST /api/v1/data/publish/batch/{schema} takes. No JSON is inside a record. ONE PROVIDER PER NETWORK
+// (provider id `sdn-ssa-<network>`), so one network is one lane pair and can be withdrawn alone. The schemas are the pin's: SIT 1.2.0, SNR 0.0.4.
+import { mkdirSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+import { LEOLABS_NETWORK } from "./leolabs-network.mjs";
+import { NETWORKS as OTHER_NETWORKS } from "./networks.mjs";
+
+export const NETWORKS = [LEOLABS_NETWORK, ...OTHER_NETWORKS];
+export const providerOf = (network) => `sdn-ssa-${network.slug}`;
+// The source name carries the network, so the console's SOURCES list reads "ussf-ssn-sites · 12" and not nine lanes called "sites".
+export const SITE_SOURCE = (network) => `${network.slug}-sites`;
+export const SENSOR_SOURCE = (network) => `${network.slug}-sensors`;
+
+const PIN = process.env.SDS_PIN;
+if (!PIN) throw new Error("Set SDS_PIN to the spacedatastandards.org checkout at the pin (it holds lib/js and node_modules/flatbuffers).");
+const req = createRequire(path.join(PIN, "package.json"));
+const fb = await import(pathToFileURL(req.resolve("flatbuffers")).href);
+const lib = async (p) => import(pathToFileURL(path.join(PIN, "lib/js", p)).href);
+const { SIT, SITT } = await lib("SIT/SIT.js");
+const { SITCitationT } = await lib("SIT/SITCitation.js");
+const { SITPartyT } = await lib("SIT/SITParty.js");
+const { PVNT } = await lib("SIT/PVN.js");
+const { pvnSourceKind } = await lib("SIT/pvnSourceKind.js");
+const { pvnLicenseClass } = await lib("SIT/pvnLicenseClass.js");
+const { SiteType } = await lib("SIT/SiteType.js");
+const { sitPartyRole } = await lib("SIT/sitPartyRole.js");
+const { siteLifecycleStatus } = await lib("SIT/siteLifecycleStatus.js");
+const { SNR, SNRT } = await lib("SNR/SNR.js");
+const { SNRSpectralBandT } = await lib("SNR/SNRSpectralBand.js");
+const { SNRMountingT } = await lib("SNR/SNRMounting.js");
+const { SNRRfParametersT } = await lib("SNR/SNRRfParameters.js");
+const { SNROpticalParametersT } = await lib("SNR/SNROpticalParameters.js");
+const { OPPProvenanceT } = await lib("SNR/OPPProvenance.js");
+const { SensorType } = await lib("SNR/SensorType.js");
+const { snrEmissionMode } = await lib("SNR/snrEmissionMode.js");
+const { snrBandDirection } = await lib("SNR/snrBandDirection.js");
+const { snrMountingFrame } = await lib("SNR/snrMountingFrame.js");
+const { snrPointingMode } = await lib("SNR/snrPointingMode.js");
+const { oppDeterminationMethod } = await lib("SNR/oppDeterminationMethod.js");
+
+const RETRIEVED_AT = "2026-11-18T00:00:00.000Z";
+const PRODUCER = "space-data-network deployment/leolabs-sensors 2";
+export const siteId = (network, slug) => `${network.slug}:site:${slug}`;
+export const sensorId = (network, id) => `${network.slug}:${id}`;
+const OWNER_DECISION = "Published on the Space Data Network owner's decision of 2026-11-18, facts only, with the citation of each row.";
+
+const pvn = (network, cite) =>
+  Object.assign(new PVNT(), {
+    SOURCE_ID: network.slug,
+    SOURCE_KIND: pvnSourceKind.Reference,
+    ORIGINATOR: network.operator,
+    PROVIDER_ID: providerOf(network),
+    PRODUCER,
+    LICENSE_CLASS: pvnLicenseClass[network.terms.class],
+    LICENSE_ID: `${network.slug}-terms`,
+    LINEAGE: network.slug,
+    SOURCE_URL: cite.url,
+    SOURCE_VERSION: network.version ?? `retrieved ${RETRIEVED_AT.slice(0, 10)}`,
+    RETRIEVED_AT: network.retrievedAt ?? RETRIEVED_AT,
+  });
+
+const citation = (network, cite, recordId, field = "register:") =>
+  Object.assign(new SITCitationT(), {
+    PROVENANCE: pvn(network, cite),
+    SOURCE_RECORD_ID: recordId,
+    SOURCE_URL: cite.url,
+    SOURCE_VERSION: network.version ?? `retrieved ${RETRIEVED_AT.slice(0, 10)}`,
+    SOURCE_FIELD: `${field}${recordId}`,
+    RETRIEVED_AT: network.retrievedAt ?? RETRIEVED_AT,
+  });
+
+const opp = (network, cite, recordId, notes) =>
+  Object.assign(new OPPProvenanceT(), {
+    SOURCE: cite.source ?? cite.text,
+    SOURCE_RECORD_ID: recordId,
+    SOURCE_URL: cite.url,
+    RETRIEVED_AT: network.retrievedAt ?? RETRIEVED_AT,
+    SOURCE_VERSION: network.version ?? `retrieved ${RETRIEVED_AT.slice(0, 10)}`,
+    METHOD: oppDeterminationMethod.OPERATOR_STATED,
+    LICENSE: cite.license ?? network.terms.text,
+    ATTRIBUTION: `${network.credit}. ${cite.url}`,
+    NOTES: notes,
+  });
+
+function finish(root, record) {
+  const builder = new fb.Builder(1024);
+  const finishName = `finish${root.name}Buffer`;
+  root[finishName](builder, record.pack(builder));
+  return builder.asUint8Array();
+}
+
+const siteStatus = (status) => {
+  if (!(status in siteLifecycleStatus)) throw new Error(`unknown site status ${status}`);
+  return siteLifecycleStatus[status];
+};
+const STATUS_WORDS = { OPERATING: "Operating", DECOMMISSIONED: "Retired", PERMANENT_SHUTDOWN: "Retired", PLANNED: "Planned", UNDER_CONSTRUCTION: "Under construction" };
+
+export function sitRecords(network) {
+  return network.sites.map((site) => {
+    const sensors = network.sensors.filter((s) => s.site === site.slug);
+    const rid = site.recordId ?? site.slug;
+    const record = new SITT();
+    record.ID = siteId(network, site.slug);
+    record.NAME = site.name;
+    record.ABBREVIATION = site.abbr;
+    if (!(site.type in SiteType)) throw new Error(`unknown site type ${site.type}`);
+    record.SITE_TYPE = SiteType[site.type];
+    record.SITE_KIND = site.kind;
+    record.NETWORK = network.name;
+    record.LATITUDE = site.lat;
+    record.LONGITUDE = site.lon;
+    if (site.alt !== undefined) record.ALTITUDE = site.alt;
+    record.CTR_ID = site.country;
+    record.OPERATIONAL_STATUS = STATUS_WORDS[site.status] ?? site.status;
+    record.LIFECYCLE_STATUS = siteStatus(site.status);
+    if (site.statusDate) record.LIFECYCLE_STATUS_DATE = site.statusDate;
+    record.SOURCE = site.cite.text;
+    // Short on purpose: the console shows this text above the site's sensors, and the source line (SOURCE) and the record's citations carry the rest.
+    record.DESCRIPTION = `${site.where}. ${site.note ?? ""} Position: ${site.precision}. Credit: ${network.credit}.`.replace(/\s+/g, " ").trim();
+    record.DESCRIPTION_LANGUAGE = "en";
+    record.POSITION_CITATION = citation(network, site.cite, rid);
+    record.PARTIES = (site.parties ?? []).map((party) =>
+      Object.assign(new SITPartyT(), {
+        ROLE: sitPartyRole[party.role],
+        NAME: party.name,
+        CITATION: Object.assign(citation(network, { url: party.cite ?? site.cite.url, text: site.cite.text }, rid), { SOURCE_FIELD: "description" }),
+      }),
+    );
+    record.PROVENANCE = pvn(network, site.cite);
+    return { id: record.ID, record, bytes: finish(SIT, record) };
+  });
+}
+
+function sensorRecord(network, row, siteRow) {
+  const record = new SNRT();
+  record.SENSOR_ID = sensorId(network, row.id);
+  record.NAME = row.name;
+  if (siteRow) record.SITE_ID = siteId(network, siteRow.slug);
+  if (row.norad) record.NORAD_CAT_ID = row.norad;
+  if (!(row.type in SensorType)) throw new Error(`unknown sensor type ${row.type}`);
+  record.TYPE = SensorType[row.type];
+  record.EMISSION = snrEmissionMode[row.emission];
+  const limits = row.band && row.band.lowMHz !== undefined;
+  if (row.band) {
+    const band = Object.assign(new SNRSpectralBandT(), {
+      NAME: row.band.name,
+      DESIGNATION: row.band.designation,
+      FREQ_LOW_HZ: limits ? row.band.lowMHz * 1e6 : 0,
+      FREQ_HIGH_HZ: limits ? row.band.highMHz * 1e6 : 0,
+      DIRECTION: row.emission === "ACTIVE" ? snrBandDirection.TRANSMIT : snrBandDirection.RECEIVE,
+    });
+    if (row.band.cite) band.PROVENANCE = opp(network, row.band.cite, row.band.cite.recordId ?? row.id, row.band.cite.notes ?? "");
+    record.SPECTRAL_BANDS = [band];
+  }
+  if (row.az !== undefined && row.el !== undefined) {
+    record.MOUNTING = Object.assign(new SNRMountingT(), {
+      FRAME: snrMountingFrame.LOCAL_ENU,
+      BORESIGHT_AZIMUTH_DEG: row.az,
+      BORESIGHT_ELEVATION_DEG: row.el,
+      POINTING: snrPointingMode.FIXED,
+    });
+  }
+  if (row.powerW !== undefined || row.bandwidthHz !== undefined) {
+    record.RF = Object.assign(new SNRRfParametersT(), { PEAK_POWER_W: row.powerW ?? 0, BANDWIDTH_HZ: row.bandwidthHz ?? 0 });
+  }
+  if (row.apertureM !== undefined || row.focalM !== undefined) {
+    record.OPTICAL = Object.assign(new SNROpticalParametersT(), { APERTURE_M: row.apertureM ?? 0, FOCAL_LENGTH_M: row.focalM ?? 0 });
+  }
+  const where = siteRow ? ` at ${siteRow.name}` : row.host ? `, carried by ${row.host} (NORAD ${row.norad})` : "";
+  const status = row.status ? ` Status: ${row.status}.` : "";
+  const verified = row.verified ? ` Catalog number verified: ${row.verified}.` : "";
+  const limitWords = row.band ? (limits ? ` Band limits ${row.band.lowMHz} to ${row.band.highMHz} MHz are published by the cited source.` : " Band limits are not published; none are invented.") : "";
+  record.PROVENANCE = opp(network, row.cite, row.id, row.note ?? "");
+  record.NOTES = `${row.name}${where}. Source: ${row.cite.text} (${row.cite.url}); credit ${network.credit}.${limitWords}${status}${verified} ${row.note ?? ""} ${OWNER_DECISION}`.replace(/\s+/g, " ").trim();
+  return { id: record.SENSOR_ID, record, bytes: finish(SNR, record) };
+}
+
+/** Ground sensors (by SITE_ID) and in-orbit sensors (by NORAD_CAT_ID) of one network. */
+export function snrRecords(network) {
+  const bySlug = new Map(network.sites.map((site) => [site.slug, site]));
+  const ground = network.sensors.map((row) => {
+    const siteRow = bySlug.get(row.site);
+    if (!siteRow) throw new Error(`${network.slug}/${row.id}: site ${row.site} is not a row of the network`);
+    return sensorRecord(network, row, siteRow);
+  });
+  const orbit = network.inorbit.map((row) => {
+    if (!Number.isInteger(row.norad) || row.norad <= 0) throw new Error(`${network.slug}/${row.id}: no verified NORAD catalog number`);
+    if (!row.verified) throw new Error(`${network.slug}/${row.id}: NORAD ${row.norad} is not verified against a public catalog`);
+    return sensorRecord(network, row, null);
+  });
+  return [...ground, ...orbit];
+}
+
+export function frame(records) {
+  const total = records.reduce((n, r) => n + 4 + r.bytes.length, 0);
+  const out = new Uint8Array(total);
+  const view = new DataView(out.buffer);
+  let at = 0;
+  for (const { bytes } of records) {
+    view.setUint32(at, bytes.length, true);
+    out.set(bytes, at + 4);
+    at += 4 + bytes.length;
+  }
+  return out;
+}
+
+/** The lanes of one network, as the publisher posts them. */
+export function lanesOf(network) {
+  const lanes = [];
+  const sites = sitRecords(network);
+  const sensors = snrRecords(network);
+  if (sites.length) lanes.push({ schema: "SIT.fbs", providerId: providerOf(network), sourceName: SITE_SOURCE(network), file: "sit.sdn", records: sites, count: sites.length, sourceUrl: network.sites[0].cite.url });
+  if (sensors.length) lanes.push({ schema: "SNR.fbs", providerId: providerOf(network), sourceName: SENSOR_SOURCE(network), file: "snr.sdn", records: sensors, count: sensors.length, sourceUrl: (network.sensors[0] ?? network.inorbit[0]).cite.url });
+  return lanes;
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname)) {
+  const dir = process.argv[2];
+  if (!dir) throw new Error("Usage: build-records.mjs <out-dir>");
+  for (const network of NETWORKS) {
+    const lanes = lanesOf(network);
+    mkdirSync(path.join(dir, network.slug), { recursive: true });
+    for (const lane of lanes) writeFileSync(path.join(dir, network.slug, lane.file), frame(lane.records));
+    console.log(`${network.slug}: ${network.sites.length} $SIT, ${network.sensors.length} ground $SNR, ${network.inorbit.length} in-orbit $SNR, ${network.leftOut.length} left out (provider ${providerOf(network)})`);
+  }
+}
