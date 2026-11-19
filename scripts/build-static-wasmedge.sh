@@ -97,6 +97,13 @@ fi
 #   07-atomic-store-stack
 #                   AOT atomic stores consume both the value and the address.
 #                   Retaining the address corrupts subsequent stack operations.
+#   08-async-detached-thread
+#                   Async (deadline calls, WASI thread workers) starts its
+#                   thread detached instead of calling pthread_detach on it.
+#                   On glibc before 2.34 (sourceware bug 19951) that call
+#                   races the thread's exit and reads the thread descriptor
+#                   from a stack that can be unmapped by then: SIGSEGV at
+#                   __pthread_detach+32 in engine CI (stack issue 876).
 #
 # THE PATCH TEXT LIVES IN THIS FILE, deliberately. The CI prefix cache key and
 # the Dockerfile's static layer are both keyed on this file's bytes, so a patch
@@ -514,6 +521,91 @@ diff --git a/lib/llvm/compiler.cpp b/lib/llvm/compiler.cpp
 SDN_WASMEDGE_PATCH_EOF
 }
 
+write_sdn_patch_08_async_detached_thread() {
+  cat <<'SDN_WASMEDGE_PATCH_EOF'
+diff --git a/include/common/async.h b/include/common/async.h
+index 5b441d1..f1a2eb8 100644
+--- a/include/common/async.h
++++ b/include/common/async.h
+@@ -13,10 +13,16 @@
+ //===----------------------------------------------------------------------===//
+ #pragma once
+ 
++#include "common/defines.h"
+ #include "errcode.h"
+ 
+ #include <future>
++#include <memory>
++#include <system_error>
+ #include <thread>
++#if !WASMEDGE_OS_WINDOWS
++#include <pthread.h>
++#endif
+ 
+ namespace WasmEdge {
+ 
+@@ -29,13 +35,37 @@ public:
+       : StopFunc([&TargetInst]() { TargetInst.stop(); }) {
+     std::promise<T> Promise;
+     Future = Promise.get_future();
+-    Thread =
+-        std::thread([FPtr, P = std::move(Promise),
+-                     Tuple = std::tuple(
+-                         &TargetInst, std::forward<ArgsT>(Args)...)]() mutable {
+-          P.set_value(std::apply(FPtr, Tuple));
+-        });
++    auto Body = [FPtr, P = std::move(Promise),
++                 Tuple = std::tuple(&TargetInst,
++                                    std::forward<ArgsT>(Args)...)]() mutable {
++      P.set_value(std::apply(FPtr, Tuple));
++    };
++#if WASMEDGE_OS_WINDOWS
++    Thread = std::thread(std::move(Body));
+     Thread.detach();
++#else
++    // The thread is created detached. Detaching a running thread races its
++    // exit on glibc before 2.34 (sourceware bug 19951): pthread_detach reads
++    // the thread descriptor after marking the thread detached, and by then
++    // the thread can have exited and its stack, which holds the descriptor,
++    // can have been unmapped.
++    using BodyT = decltype(Body);
++    auto Owned = std::make_unique<BodyT>(std::move(Body));
++    pthread_attr_t Attr;
++    int Err = pthread_attr_init(&Attr);
++    if (Err == 0) {
++      Err = pthread_attr_setdetachstate(&Attr, PTHREAD_CREATE_DETACHED);
++      if (Err == 0) {
++        pthread_t Id;
++        Err = pthread_create(&Id, &Attr, &runDetached<BodyT>, Owned.get());
++      }
++      pthread_attr_destroy(&Attr);
++    }
++    if (Err != 0) {
++      throw std::system_error(Err, std::generic_category(), "Async thread");
++    }
++    static_cast<void>(Owned.release());
++#endif
+   }
+   Async(const Async &) noexcept = delete;
+   Async(Async &&Other) noexcept : Async() { swap(*this, Other); }
+@@ -75,6 +105,14 @@ public:
+   }
+ 
+ protected:
++#if !WASMEDGE_OS_WINDOWS
++  template <typename BodyT> static void *runDetached(void *Arg) noexcept {
++    std::unique_ptr<BodyT> Body(static_cast<BodyT *>(Arg));
++    (*Body)();
++    return nullptr;
++  }
++#endif
++
+   std::shared_future<T> Future;
+   std::thread Thread;
+   std::function<void()> StopFunc;
+SDN_WASMEDGE_PATCH_EOF
+}
+
 SDN_PATCH_DIR="${WORK}/sdn-patches"
 SDN_PATCH_STAMP=""
 if [[ "$WASMEDGE_VERSION" == "0.16.4" ]]; then
@@ -532,6 +624,7 @@ if [[ "$WASMEDGE_VERSION" == "0.16.4" ]]; then
   write_sdn_patch_05_loop_stop_checks > "$SDN_PATCH_DIR/05-loop-stop-checks.patch"
   write_sdn_patch_06_call_indirect > "$SDN_PATCH_DIR/06-call-indirect.patch"
   write_sdn_patch_07_atomic_store_stack > "$SDN_PATCH_DIR/07-atomic-store-stack.patch"
+  write_sdn_patch_08_async_detached_thread > "$SDN_PATCH_DIR/08-async-detached-thread.patch"
   for sdn_patch in "$SDN_PATCH_DIR"/*.patch; do
     if git -C "$SRC" apply --reverse --check "$sdn_patch" >/dev/null 2>&1; then
       echo "WasmEdge patch already applied: $(basename "$sdn_patch")"

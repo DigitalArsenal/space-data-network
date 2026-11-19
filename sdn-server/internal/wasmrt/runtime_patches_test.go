@@ -26,6 +26,7 @@ func TestStaticBuildCarriesTheRuntimePatches(t *testing.T) {
 		{"write_sdn_patch_05_loop_stop_checks", "wasmedge-0.16.4-loop-stop-checks.patch"},
 		{"write_sdn_patch_06_call_indirect", "wasmedge-0.16.4-call-indirect.patch"},
 		{"write_sdn_patch_07_atomic_store_stack", "wasmedge-0.16.4-atomic-store-stack.patch"},
+		{"write_sdn_patch_08_async_detached_thread", "wasmedge-0.16.4-async-detached-thread.patch"},
 	} {
 		re := regexp.MustCompile(`(?s)` + tc.fn + `\(\) \{\n  cat <<'SDN_WASMEDGE_PATCH_EOF'\n(.*?)SDN_WASMEDGE_PATCH_EOF\n\}`)
 		m := re.FindSubmatch(script)

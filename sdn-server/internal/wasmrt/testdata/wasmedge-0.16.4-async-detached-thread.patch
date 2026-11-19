@@ -1,0 +1,80 @@
+diff --git a/include/common/async.h b/include/common/async.h
+index 5b441d1..f1a2eb8 100644
+--- a/include/common/async.h
++++ b/include/common/async.h
+@@ -13,10 +13,16 @@
+ //===----------------------------------------------------------------------===//
+ #pragma once
+ 
++#include "common/defines.h"
+ #include "errcode.h"
+ 
+ #include <future>
++#include <memory>
++#include <system_error>
+ #include <thread>
++#if !WASMEDGE_OS_WINDOWS
++#include <pthread.h>
++#endif
+ 
+ namespace WasmEdge {
+ 
+@@ -29,13 +35,37 @@ public:
+       : StopFunc([&TargetInst]() { TargetInst.stop(); }) {
+     std::promise<T> Promise;
+     Future = Promise.get_future();
+-    Thread =
+-        std::thread([FPtr, P = std::move(Promise),
+-                     Tuple = std::tuple(
+-                         &TargetInst, std::forward<ArgsT>(Args)...)]() mutable {
+-          P.set_value(std::apply(FPtr, Tuple));
+-        });
++    auto Body = [FPtr, P = std::move(Promise),
++                 Tuple = std::tuple(&TargetInst,
++                                    std::forward<ArgsT>(Args)...)]() mutable {
++      P.set_value(std::apply(FPtr, Tuple));
++    };
++#if WASMEDGE_OS_WINDOWS
++    Thread = std::thread(std::move(Body));
+     Thread.detach();
++#else
++    // The thread is created detached. Detaching a running thread races its
++    // exit on glibc before 2.34 (sourceware bug 19951): pthread_detach reads
++    // the thread descriptor after marking the thread detached, and by then
++    // the thread can have exited and its stack, which holds the descriptor,
++    // can have been unmapped.
++    using BodyT = decltype(Body);
++    auto Owned = std::make_unique<BodyT>(std::move(Body));
++    pthread_attr_t Attr;
++    int Err = pthread_attr_init(&Attr);
++    if (Err == 0) {
++      Err = pthread_attr_setdetachstate(&Attr, PTHREAD_CREATE_DETACHED);
++      if (Err == 0) {
++        pthread_t Id;
++        Err = pthread_create(&Id, &Attr, &runDetached<BodyT>, Owned.get());
++      }
++      pthread_attr_destroy(&Attr);
++    }
++    if (Err != 0) {
++      throw std::system_error(Err, std::generic_category(), "Async thread");
++    }
++    static_cast<void>(Owned.release());
++#endif
+   }
+   Async(const Async &) noexcept = delete;
+   Async(Async &&Other) noexcept : Async() { swap(*this, Other); }
+@@ -75,6 +105,14 @@ public:
+   }
+ 
+ protected:
++#if !WASMEDGE_OS_WINDOWS
++  template <typename BodyT> static void *runDetached(void *Arg) noexcept {
++    std::unique_ptr<BodyT> Body(static_cast<BodyT *>(Arg));
++    (*Body)();
++    return nullptr;
++  }
++#endif
++
+   std::shared_future<T> Future;
+   std::thread Thread;
+   std::function<void()> StopFunc;
