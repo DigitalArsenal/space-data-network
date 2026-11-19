@@ -40,6 +40,7 @@ package node
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -190,7 +191,24 @@ type UpdateSignalSubscriber struct {
 	// sequence waitSequence: a newer verified signal replaces it.
 	waitCancel   context.CancelFunc
 	waitSequence int64
+
+	// uiMu makes UI package installs take turns: each verifies against the
+	// package installed when its turn comes.
+	uiMu sync.Mutex
+	// ackMu and latestMu order the writes of acknowledged.json and
+	// latest-signal.json with the values they record.
+	ackMu, latestMu sync.Mutex
+	// checkSlots bounds the signals being checked at once (signalCheckSlots);
+	// the topic loop waits for a free slot. inflight holds the digests of the
+	// signals being handled, so a copy that arrives meanwhile is dropped.
+	checkSlots chan struct{}
+	inflight   map[[sha256.Size]byte]bool
 }
+
+// signalCheckSlots is how many delivered signals are checked at once (state
+// read, signature checks). A signal that passed its checks and waits for its
+// due time or downloads gives its slot back.
+const signalCheckSlots = 4
 
 // Acknowledged is the newest update signal this node accepted, or nil.
 func (s *UpdateSignalSubscriber) Acknowledged() *update.StatusAck {
@@ -210,6 +228,10 @@ func (s *UpdateSignalSubscriber) Acknowledged() *update.StatusAck {
 // and in updates/acknowledged.json, so the node still states it after the
 // restart the update causes.
 func (s *UpdateSignalSubscriber) acknowledge(signal *update.Signal) {
+	// The comparison and the write go together, so the file never ends on
+	// an older signal than the one held in memory.
+	s.ackMu.Lock()
+	defer s.ackMu.Unlock()
 	s.mu.Lock()
 	newer := s.acknowledged == nil || signal.Sequence > s.acknowledged.Sequence
 	if newer {
@@ -242,6 +264,8 @@ func (s *UpdateSignalSubscriber) LatestVerified() *update.StatusAck {
 // is newer than the one held.
 func (s *UpdateSignalSubscriber) noteVerified(signal *update.Signal) {
 	ack := update.StatusAck{UpdateID: signal.UpdateID, Sequence: signal.Sequence}
+	s.latestMu.Lock()
+	defer s.latestMu.Unlock()
 	s.mu.Lock()
 	newer := s.latestVerified == nil || ack.Sequence > s.latestVerified.Sequence
 	if newer {
@@ -299,6 +323,9 @@ func (s *UpdateSignalSubscriber) waitForRollout(ctx context.Context, signal *upd
 	log.Infof("Update %s (version %s) accepted at %s; this node acts on it at %s (rollout window %ds from %s, this node's delay %ds). `spacedatanetwork update install` installs it at once.",
 		signal.UpdateID, signal.Version, pending.AcceptedAt, pending.DueAt, pending.WindowSeconds, pending.WindowFrom, pending.DelaySeconds)
 	s.deps.Fleet.localChanged()
+	if rolloutWaitStarted != nil {
+		rolloutWaitStarted()
+	}
 	waitCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	s.mu.Lock()
@@ -311,8 +338,19 @@ func (s *UpdateSignalSubscriber) waitForRollout(ctx context.Context, signal *upd
 	}()
 	// The timer runs on the monotonic clock and the due time is a wall-clock
 	// time: wait again until the wall clock reaches it, so a clock step
-	// during the wait never starts the install early.
+	// forward during the wait never starts the install early. A step back
+	// never makes the wait longer than the window: time.Now carries the
+	// monotonic clock, and the wait ends at the latest one window after it
+	// began.
+	waitStarted, bound := time.Now(), time.Duration(pending.WindowSeconds)*time.Second
 	for wait > 0 {
+		if left := bound - time.Since(waitStarted); left <= 0 {
+			log.Warnf("Update %s: the wall clock moved back during its rollout wait (due %s); it has waited its whole rollout window (%ds) and acts now.",
+				signal.UpdateID, pending.DueAt, pending.WindowSeconds)
+			break
+		} else if wait > left {
+			wait = left
+		}
 		timer := time.NewTimer(wait)
 		select {
 		case <-waitCtx.Done():
@@ -512,12 +550,60 @@ func (s *UpdateSignalSubscriber) Run(ctx context.Context) error {
 		// and stages: it runs beside this loop, which keeps reading the
 		// topic (other nodes' statuses, and a newer signal that replaces the
 		// wait).
-		go runUpdateGossip("update-signal", func() { s.handle(ctx, data) })
+		s.dispatch(ctx, data)
 	}
+}
+
+// dispatch handles one signal beside the topic loop. A copy of a signal
+// being handled is dropped; at most signalCheckSlots signals are checked at
+// once, and the loop waits for a slot (any peer can deliver a validly signed
+// signal again, and each costs a state read and signature checks).
+func (s *UpdateSignalSubscriber) dispatch(ctx context.Context, data []byte) {
+	digest := sha256.Sum256(data)
+	s.mu.Lock()
+	if s.inflight == nil {
+		s.inflight = map[[sha256.Size]byte]bool{}
+	}
+	if s.checkSlots == nil {
+		s.checkSlots = make(chan struct{}, signalCheckSlots)
+	}
+	if s.inflight[digest] {
+		s.mu.Unlock()
+		log.Debugf("update signal: dropping a copy of a signal being handled")
+		return
+	}
+	s.inflight[digest] = true
+	slots := s.checkSlots
+	s.mu.Unlock()
+	select {
+	case slots <- struct{}{}:
+	case <-ctx.Done():
+		s.mu.Lock()
+		delete(s.inflight, digest)
+		s.mu.Unlock()
+		return
+	}
+	go runUpdateGossip("update-signal", func() {
+		var once sync.Once
+		checked := func() { once.Do(func() { <-slots }) }
+		defer func() {
+			checked()
+			s.mu.Lock()
+			delete(s.inflight, digest)
+			s.mu.Unlock()
+		}()
+		s.handleChecked(ctx, data, checked)
+	})
 }
 
 // handle verifies one signal and, if it survives every gate, self-upgrades.
 func (s *UpdateSignalSubscriber) handle(ctx context.Context, data []byte) {
+	s.handleChecked(ctx, data, func() {})
+}
+
+// handleChecked is handle; checked is called once the signal has passed its
+// checks, before the rollout wait or a download.
+func (s *UpdateSignalSubscriber) handleChecked(ctx context.Context, data []byte, checked func()) {
 	if status, err := update.ParseStatus(data); err == nil {
 		// Authenticated by the topic validator: its peer_id is the author.
 		s.deps.Fleet.record(status)
@@ -533,7 +619,7 @@ func (s *UpdateSignalSubscriber) handle(ctx context.Context, data []byte) {
 		return
 	}
 	if signal.Target.Kind == update.TargetKindUIBundle {
-		s.handleUI(ctx, signal)
+		s.handleUI(ctx, signal, checked)
 		return
 	}
 
@@ -569,6 +655,7 @@ func (s *UpdateSignalSubscriber) handle(ctx context.Context, data []byte) {
 	if signal.Rollback {
 		log.Warnf("update signal %s declares a source-lineage ROLLBACK; this box will NOT install it automatically. Run `spacedatanetwork update install --update-id %s --allow-rollback` on the box to accept it deliberately.",
 			signal.UpdateID, signal.UpdateID)
+		s.clearRefusedPending(signal.UpdateID)
 		return
 	}
 
@@ -579,6 +666,7 @@ func (s *UpdateSignalSubscriber) handle(ctx context.Context, data []byte) {
 	if update.HasFailedUpdate(s.deps.Paths, signal.UpdateID) {
 		log.Warnf("update signal %s refused: this box already tried that update and marked it failed (updates/failed/%s). Clear that directory to try again deliberately.",
 			signal.UpdateID, signal.UpdateID)
+		s.clearRefusedPending(signal.UpdateID)
 		return
 	}
 
@@ -586,6 +674,7 @@ func (s *UpdateSignalSubscriber) handle(ctx context.Context, data []byte) {
 	if !s.claimSignal(signal, data) {
 		return
 	}
+	checked()
 
 	succeeded := false
 	defer func() { s.finishUpgrade(ctx, succeeded, signal.UpdateID) }()
@@ -624,6 +713,22 @@ func (s *UpdateSignalSubscriber) handle(ctx context.Context, data []byte) {
 	succeeded = true
 	_ = update.ClearPending(s.deps.Paths, signal.UpdateID)
 	s.deps.Alerts.Clear(ops.KindUpdateFailed, signal.UpdateID)
+}
+
+// clearRefusedPending removes the pending record of an update this node
+// refuses (quarantined, or a declared rollback): the node no longer waits for
+// it, so its status must not say it does.
+func (s *UpdateSignalSubscriber) clearRefusedPending(updateID string) {
+	pending, err := update.ReadPending(s.deps.Paths)
+	if err != nil || pending == nil || pending.UpdateID != updateID {
+		return
+	}
+	if err := update.ClearPending(s.deps.Paths, updateID); err != nil {
+		log.Warnf("Update %s: cannot clear its pending record: %v", updateID, err)
+		return
+	}
+	log.Infof("Update %s was pending and is refused; its pending record is cleared.", updateID)
+	s.deps.Fleet.localChanged()
 }
 
 // claim enforces once-per-update and the minimum interval between swaps.
@@ -798,11 +903,52 @@ const uiRetryFloor = time.Minute
 // refusal and the quarantine — and then no helper and no stop: the package is
 // fetched, opened with this node's key, verified file by file and switched in
 // while the daemon serves (update.InstallUIPackage).
-func (s *UpdateSignalSubscriber) handleUI(ctx context.Context, signal *update.Signal) {
+//
+// UI packages install one at a time (uiMu), and each is checked again against
+// the package installed when its turn comes, so two signals handled close
+// together, or a replay of an older one while a newer one downloads, never
+// leave the node on the older package.
+func (s *UpdateSignalSubscriber) handleUI(ctx context.Context, signal *update.Signal, checked func()) {
+	if _, ok := s.uiActionable(signal, true); !ok {
+		return
+	}
+	checked()
+	s.uiMu.Lock()
+	defer s.uiMu.Unlock()
+	installed, ok := s.uiActionable(signal, false)
+	if !ok {
+		return
+	}
+	if !s.claimUI(signal.UpdateID) {
+		return
+	}
+	pkg, err := s.installUI(ctx, signal, installed)
+	var superseded *update.UIPackageSupersededError
+	if errors.As(err, &superseded) {
+		log.Infof("%v", err)
+		return
+	}
+	if err != nil {
+		log.Errorf("UI package %s not installed: %v", signal.UpdateID, err)
+		s.deps.Alerts.Raise(ops.KindUpdateFailed, signal.UpdateID, ops.SeverityError, err.Error())
+		s.release(signal.UpdateID)
+		return
+	}
+	s.deps.Alerts.Clear(ops.KindUpdateFailed, signal.UpdateID)
+	log.Infof("UI package %s (version %s, sequence %d) installed while serving; the dashboard and homepage switch on the next request, with no restart.",
+		pkg.UpdateID, pkg.Version, pkg.Sequence)
+}
+
+// uiActionable runs a UI package signal's gates against the package installed
+// now (signature, channel, freshness, a sequence above the installed one, the
+// rollback refusal, the quarantine) and returns the installed sequence. first
+// is the check on arrival; the second, in the signal's turn, logs a signal an
+// install meanwhile made old.
+func (s *UpdateSignalSubscriber) uiActionable(signal *update.Signal, first bool) (int64, bool) {
 	active, err := update.ActiveUIPackage(s.deps.Paths)
 	if err != nil {
 		log.Warnf("update signal: cannot read the installed UI package, ignoring %s: %v", signal.UpdateID, err)
-		return
+		return 0, false
 	}
 	var installed int64
 	if active != nil {
@@ -816,30 +962,26 @@ func (s *UpdateSignalSubscriber) handleUI(ctx context.Context, signal *update.Si
 		Now:             s.deps.Now(),
 		FeedBaseURL:     s.feed.String(),
 	}); err != nil {
-		log.Debugf("UI package signal %s not actionable here: %v", signal.UpdateID, err)
-		return
+		if first {
+			log.Debugf("UI package signal %s not actionable here: %v", signal.UpdateID, err)
+		} else {
+			log.Infof("UI package signal %s (sequence %d) not installed: UI package sequence %d was installed while it waited its turn (%v).", signal.UpdateID, signal.Sequence, installed, err)
+		}
+		return installed, false
 	}
 	if signal.Rollback {
-		log.Warnf("UI package signal %s declares a source-lineage ROLLBACK; this box will NOT install it automatically.", signal.UpdateID)
-		return
+		if first {
+			log.Warnf("UI package signal %s declares a source-lineage ROLLBACK; this box will NOT install it automatically.", signal.UpdateID)
+		}
+		return installed, false
 	}
 	if update.HasFailedUpdate(s.deps.Paths, signal.UpdateID) {
-		log.Warnf("UI package signal %s refused: this box already tried it and reversed it (updates/failed/%s).", signal.UpdateID, signal.UpdateID)
-		return
+		if first {
+			log.Warnf("UI package signal %s refused: this box already tried it and reversed it (updates/failed/%s).", signal.UpdateID, signal.UpdateID)
+		}
+		return installed, false
 	}
-	if !s.claimUI(signal.UpdateID) {
-		return
-	}
-	pkg, err := s.installUI(ctx, signal, installed)
-	if err != nil {
-		log.Errorf("UI package %s not installed: %v", signal.UpdateID, err)
-		s.deps.Alerts.Raise(ops.KindUpdateFailed, signal.UpdateID, ops.SeverityError, err.Error())
-		s.release(signal.UpdateID)
-		return
-	}
-	s.deps.Alerts.Clear(ops.KindUpdateFailed, signal.UpdateID)
-	log.Infof("UI package %s (version %s, sequence %d) installed while serving; the dashboard and homepage switch on the next request, with no restart.",
-		pkg.UpdateID, pkg.Version, pkg.Sequence)
+	return installed, true
 }
 
 // claimUI is once-per-update for UI packages. Nothing restarts, so there is
@@ -1071,6 +1213,7 @@ func (n *Node) startUpdateSignalSubscriber() {
 		Alerts:        n.alerts,
 		BundleVersion: update.RunningIdentity().BundleVersion,
 		EnvelopeKey:   n.updateEnvelopeKey,
+		Now:           updateSignalClock,
 	})
 	if err != nil {
 		log.Warnf("Update signal lane NOT started: %v", err)

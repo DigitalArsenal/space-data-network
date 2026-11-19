@@ -181,6 +181,9 @@ func (s *UpdateSignalSubscriber) checkFeed(ctx context.Context) (resultErr error
 		previousRefusal := s.installRefusals[entry.UpdateID]
 		if !claimed {
 			s.handled[entry.UpdateID] = true
+			// What this check installs: a signal that arrives meanwhile is
+			// remembered only when it is newer (claimSignal).
+			s.inflightSequence = max(s.inflightSequence, entry.Sequence)
 		}
 		s.mu.Unlock()
 		if claimed {
@@ -314,6 +317,11 @@ func (s *UpdateSignalSubscriber) finishUpgrade(ctx context.Context, succeeded bo
 		}
 	}
 	queued := s.pendingSignal
+	if queued != nil && s.pendingSequence <= s.inflightSequence {
+		// Never an older release after a newer one's attempt.
+		log.Debugf("update signal: dropping remembered sequence %d, not newer than the attempted sequence %d", s.pendingSequence, s.inflightSequence)
+		queued = nil
+	}
 	s.pendingSignal, s.pendingSequence, s.inflightSequence = nil, 0, 0
 	s.pendingUpgrade = false
 	s.mu.Unlock()

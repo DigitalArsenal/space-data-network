@@ -138,12 +138,36 @@ func writeJSONAtomic(path string, v any) error {
 	if err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	return writeFileAtomic(path, append(data, '\n'), 0o600)
+}
+
+// atomicWriters serializes the writers of one file in this process.
+var atomicWriters sync.Map
+
+// writeFileAtomic replaces path with data: written to a temporary file of its
+// own in the same folder, synced, then renamed over path. Writers of the same
+// path in this process take turns, and each has its own temporary file, so
+// two writes never mix.
+func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
+	mu, _ := atomicWriters.LoadOrStore(path, &sync.Mutex{})
+	mu.(*sync.Mutex).Lock()
+	defer mu.(*sync.Mutex).Unlock()
+	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
 	if err != nil {
 		return err
 	}
-	if _, err := f.Write(append(data, '\n')); err != nil {
+	tmp := f.Name()
+	committed := false
+	defer func() {
+		if !committed {
+			_ = os.Remove(tmp)
+		}
+	}()
+	if err := f.Chmod(mode); err != nil {
+		f.Close()
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
 		f.Close()
 		return err
 	}
@@ -157,6 +181,7 @@ func writeJSONAtomic(path string, v any) error {
 	if err := os.Rename(tmp, path); err != nil {
 		return err
 	}
+	committed = true
 	// The rename is durable only once the folder is.
 	if dir, err := os.Open(filepath.Dir(path)); err == nil {
 		_ = dir.Sync()

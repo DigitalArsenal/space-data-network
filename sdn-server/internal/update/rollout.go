@@ -31,7 +31,7 @@ import (
 const (
 	// DefaultRolloutWindowSeconds is update.rollout_window_seconds when the
 	// config does not set it.
-	DefaultRolloutWindowSeconds = 600
+	DefaultRolloutWindowSeconds = 1800
 	// MaxRolloutWindowSeconds bounds a window from config or from a signal.
 	MaxRolloutWindowSeconds = 24 * 60 * 60
 
@@ -41,6 +41,20 @@ const (
 	pendingFileName = "pending.json"
 	rolloutDomain   = "SDN-UPDATE-ROLLOUT-V1"
 )
+
+// SignedRolloutWindow is the window a signer signs into every signal from its
+// --rollout-window-seconds flag: nil when the flag was not given, an error for
+// a value outside 0..MaxRolloutWindowSeconds (a negative value is refused, not
+// read as "no window").
+func SignedRolloutWindow(given bool, seconds int64) (*int64, error) {
+	if !given {
+		return nil, nil
+	}
+	if seconds < 0 || seconds > MaxRolloutWindowSeconds {
+		return nil, fmt.Errorf("--rollout-window-seconds %d is outside 0..%d (0 acts at once; leave the flag out to sign no window)", seconds, MaxRolloutWindowSeconds)
+	}
+	return &seconds, nil
+}
 
 // RolloutDelay is this node's delay within window for updateID.
 func RolloutDelay(peerID, updateID string, window time.Duration) time.Duration {
@@ -105,12 +119,17 @@ func ReadPending(paths Paths) (*Pending, error) {
 }
 
 // CurrentPending is ReadPending without a record that names an update at or
-// below the installed sequence (installed since, by any path), which it
-// removes.
+// below the installed sequence (installed since, by any path) or a
+// quarantined update (updates/failed/<id>: tried and reversed, which this
+// node never installs by itself again); it removes such a record.
 func CurrentPending(paths Paths) (*Pending, error) {
 	pending, err := ReadPending(paths)
 	if err != nil || pending == nil {
 		return pending, err
+	}
+	if HasFailedUpdate(paths, pending.UpdateID) {
+		_ = ClearPending(paths, pending.UpdateID)
+		return nil, nil
 	}
 	if state, serr := LoadState(paths); serr == nil && pending.Sequence <= state.Sequence {
 		_ = ClearPending(paths, pending.UpdateID)
