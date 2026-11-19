@@ -130,7 +130,7 @@ import (
 
 // followFileName is the file of the subscriptions that start at the lane's
 // beginning, in the form 1.1.9 reads; subscriptionsFileName every
-// subscription. Both are in the storage directory.
+// subscription. Both are in the directory that holds storage.path.
 const (
 	followFileName        = "follows.dss"
 	subscriptionsFileName = "subscriptions.dss"
@@ -340,6 +340,16 @@ type followManager struct {
 	// blocked is why the subscription files are not loaded ("" once they
 	// are): while it is set nothing writes them and no lane runs.
 	blocked string
+}
+
+// storeDir is where the followed records are stored (storage.path), whose
+// free disk the size check and the running guard read; the directory of the
+// subscription files when the node has no storage path.
+func (m *followManager) storeDir() string {
+	if m.n.config != nil && m.n.config.Storage.Path != "" {
+		return m.n.config.Storage.Path
+	}
+	return filepath.Dir(m.path)
 }
 
 func newFollowManager(n *Node, dir string) *followManager {
@@ -596,11 +606,11 @@ func (m *followManager) Plan(ctx context.Context, key FollowKey, opts FollowOpti
 	if m.n.config != nil {
 		plan.RecordCeiling = m.n.config.Subscriptions.EffectiveRecordCeiling()
 	}
-	if free, err := storage.FreeDiskBytes(filepath.Dir(m.path)); err == nil {
+	if free, err := storage.FreeDiskBytes(m.storeDir()); err == nil {
 		// What the followed lanes are storing is not free.
 		plan.FreeBytes = int64(min(free, uint64(1<<62))) - m.reservedBytes()
 	} else {
-		return plan, fmt.Errorf("free disk under %s: %w", filepath.Dir(m.path), err)
+		return plan, fmt.Errorf("free disk under %s: %w", m.storeDir(), err)
 	}
 	if summary, err := m.n.store.DataSummary(); err == nil {
 		for _, s := range summary.Schemas {
@@ -1611,7 +1621,7 @@ func (m *followManager) reserve(records int, bytes int64) (func(), error) {
 	if records <= 0 {
 		return func() {}, nil
 	}
-	dir := filepath.Dir(m.path)
+	dir := m.storeDir()
 	free, freeErr := storage.FreeDiskBytes(dir)
 	held, err := m.heldRecords()
 	if err != nil {

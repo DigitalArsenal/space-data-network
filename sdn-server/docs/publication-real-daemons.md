@@ -206,11 +206,11 @@ subscribed from its beginning stays in `follows.dss`. Acknowledged, one lane
 shows nothing unread and has no alert; the other, subscribed again from its
 beginning, reads the whole lane.
 
-`TestPublicationUnheldBatchImportsPNMRealDaemons`: a producer whose identity
-changed holds a batch whose records name its earlier identity; a receiver's
-stream to it is connected but every fetch of the batch by CID is refused. The
-lane's signed publication brings the 300 records, and the batch then becomes
-current.
+`TestPublicationUnheldBatchImportsPNMRealDaemons`: a producer serves a lane
+it imported from a third daemon, so its records name that daemon as their
+producer; a receiver's stream to it is connected but every fetch of the batch
+by CID is refused. The lane's signed publication brings the 300 records, and
+the batch then becomes current.
 
 `TestPublicationSubscriptionsUnreadableRealDaemons`: a receiver started on an
 unreadable `subscriptions.dss` moves it aside (bytes kept), raises

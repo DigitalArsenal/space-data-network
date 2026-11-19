@@ -35,34 +35,29 @@ func (d *publicationDaemon) subscribeCurrent(t *testing.T, p *publicationDaemon,
 
 // TestPublicationUnheldBatchImportsPNMRealDaemons: a lane whose followed
 // stream is connected but whose current batch this node cannot hold (here
-// every record of the batch names an earlier identity of the producer, so
-// each fetch by CID is refused) gets the batch through the lane's signed
-// $PNM publication: until its current batch is held the lane does not count
-// as streamed. Once the publication's records are held the batch becomes
-// current.
+// the producer serves a lane it imported itself, so every record of the batch
+// names another peer as its producer and each fetch by CID is refused) gets
+// the batch through the lane's signed $PNM publication: until its current
+// batch is held the lane does not count as streamed. Once the publication's
+// records are held the batch becomes current.
 func TestPublicationUnheldBatchImportsPNMRealDaemons(t *testing.T) {
 	if os.Getenv("SDN_E2E_PUBLICATION") != "1" {
 		t.Skip("set SDN_E2E_PUBLICATION=1 for real daemons")
 	}
 	exe := publicationBinary(t)
-	a := newPublicationDaemon(t, exe, "unheld-producer", "", "", "keep-all")
+	c := newPublicationDaemon(t, exe, "unheld-origin", "", "", "keep-all")
+	c.start(t)
+	c.ingestOMMCIDs(t, "uh", "u1", 970_000, 300)
+	// a imports the lane from c: its records name c as their producer.
+	a := newPublicationDaemon(t, exe, "unheld-producer", c.address, c.id, "keep-all")
 	a.start(t)
-	first := a.id
-	a.ingestOMMCIDs(t, "uh", "u1", 970_000, 300)
-	// The producer's identity changes; its store keeps the records stored
-	// under the first one (the test's own throwaway keys, moved aside).
-	a.stop(t)
-	if err := os.Rename(filepath.Join(a.root, "keys"), filepath.Join(a.root, "keys-first")); err != nil {
-		t.Fatal(err)
-	}
-	a.start(t)
-	if a.id == first {
-		t.Fatal("the producer kept its identity; the test needs a new one")
-	}
-	want := a.scan(t, "OMM.fbs", "uh")
+	time.Sleep(3 * time.Second)
+	a.subscribeCurrent(t, c, "uh")
+	want := c.scan(t, "OMM.fbs", "uh")
 	if len(want) != 300 {
-		t.Fatalf("producer holds %d records of lane uh, want 300", len(want))
+		t.Fatalf("origin holds %d records of lane uh, want 300", len(want))
 	}
+	a.awaitRecords(t, "OMM.fbs", "uh", want, 3*time.Minute)
 	b := newPublicationDaemon(t, exe, "unheld-receiver", a.address, a.id, "keep-all")
 	b.start(t)
 	time.Sleep(3 * time.Second)
@@ -119,7 +114,7 @@ func TestPublicationSubscriptionsUnreadableRealDaemons(t *testing.T) {
 	b.subscribeCurrent(t, a, "ur")
 	b.awaitRecords(t, "OMM.fbs", "ur", a.scan(t, "OMM.fbs", "ur"), 3*time.Minute)
 	b.stop(t)
-	subsPath := filepath.Join(b.store, "subscriptions.dss")
+	subsPath := filepath.Join(filepath.Dir(b.store), "subscriptions.dss")
 	good, err := os.ReadFile(subsPath)
 	if err != nil || len(good) == 0 {
 		t.Fatalf("subscriptions.dss after the subscription: %v (%d bytes)", err, len(good))
@@ -217,7 +212,7 @@ func TestPublicationSubscriptionFileOrderRealDaemons(t *testing.T) {
 	}
 	// follows.dss cannot be written: its temporary file's name is taken by
 	// a directory.
-	blocker := filepath.Join(b.store, "follows.dss.tmp")
+	blocker := filepath.Join(filepath.Dir(b.store), "follows.dss.tmp")
 	if err := os.Mkdir(blocker, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -281,13 +276,23 @@ func TestPublicationDiskFloorRealDaemons(t *testing.T) {
 			t.Errorf("hdiutil detach %s: %v %s", mount, err, out)
 		}
 	})
-	onImage := filepath.Join(mount, "store")
-	if err := os.Mkdir(onImage, 0o700); err != nil {
+	// The receiver's storage path, and the directory holding it (its
+	// subscription files), are on the image.
+	onImage := filepath.Join(mount, "node", "store")
+	if err := os.MkdirAll(onImage, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(onImage, b.store); err != nil {
+	raw, err := os.ReadFile(b.cfg)
+	if err != nil {
 		t.Fatal(err)
 	}
+	if !strings.Contains(string(raw), b.store) {
+		t.Fatal("the receiver's config does not name its storage path")
+	}
+	if err := os.WriteFile(b.cfg, []byte(strings.ReplaceAll(string(raw), b.store, onImage)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	b.store = onImage
 	b.start(t)
 	time.Sleep(5 * time.Second)
 	// Fill the image until 16 MiB above the reserve is free.

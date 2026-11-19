@@ -140,7 +140,7 @@ serves its stream but not its current batch.
 
 ## Where subscriptions are kept
 
-`<storage.path>/subscriptions.dss`: one size-prefixed `$DSS` record per lane,
+`subscriptions.dss`, in the directory that holds `storage.path` (beside it, not in it; where 1.1.9 keeps `follows.dss`): one size-prefixed `$DSS` record per lane,
 with the producer (`PROVIDER_PEER_ID`), the cursor to resume at (`CURSOR`),
 where it starts (`SYNC_FILTER` `start=current` or `start=beginning`, with
 `unread=<time>` while a refused cursor's gap is not acknowledged, and
@@ -150,7 +150,7 @@ is saved only after the store has taken a page, so a restart resumes with
 nothing lost; a record sent again is the same content address and is stored
 once.
 
-`<storage.path>/follows.dss` holds, in the same form, only the subscriptions
+`follows.dss`, beside it, holds, in the same form, only the subscriptions
 that start at the lane's beginning. It is the file 1.1.9 reads: 1.1.9 follows
 each of its records from its cursor, and from the lane's beginning when it
 has none, so a subscription that starts at the producer's current batch is
