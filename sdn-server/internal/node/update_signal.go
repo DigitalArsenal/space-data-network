@@ -309,15 +309,21 @@ func (s *UpdateSignalSubscriber) waitForRollout(ctx context.Context, signal *upd
 		s.waitCancel, s.waitSequence = nil, 0
 		s.mu.Unlock()
 	}()
-	timer := time.NewTimer(wait)
-	defer timer.Stop()
-	select {
-	case <-waitCtx.Done():
-		if ctx.Err() == nil {
-			log.Infof("Update %s: a newer verified update signal replaces it; its rollout wait ends.", signal.UpdateID)
+	// The timer runs on the monotonic clock and the due time is a wall-clock
+	// time: wait again until the wall clock reaches it, so a clock step
+	// during the wait never starts the install early.
+	for wait > 0 {
+		timer := time.NewTimer(wait)
+		select {
+		case <-waitCtx.Done():
+			timer.Stop()
+			if ctx.Err() == nil {
+				log.Infof("Update %s: a newer verified update signal replaces it; its rollout wait ends.", signal.UpdateID)
+			}
+			return false
+		case <-timer.C:
 		}
-		return false
-	case <-timer.C:
+		wait = due.Sub(s.deps.Now())
 	}
 	if s.withdrawnFromFeed(ctx, signal.UpdateID) {
 		log.Warnf("Update %s (version %s): rollout due time %s reached, and the feed index no longer lists it (withdrawn); not installing it.",
