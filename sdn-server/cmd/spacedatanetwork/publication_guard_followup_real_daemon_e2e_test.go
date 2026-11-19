@@ -341,9 +341,14 @@ func TestPublicationDeferredWaitBoundRealDaemons(t *testing.T) {
 			break
 		}
 		if time.Since(started) > bound {
-			log := readFileString(b.logPath)
-			t.Fatalf("lane never-w's publication was not imported %s after the lane started (the bound is 5 minutes); nudged by late270-w: %t",
-				bound, strings.Contains(log, "Not fetching the publications of OMM.fbs publication-e2e/late270-w"))
+			settled := false
+			for _, line := range strings.Split(readFileString(b.logPath), "\n") {
+				if strings.Contains(line, "publication-e2e/late270-w from") && strings.Contains(line, "batch l1 is current") {
+					settled = true
+				}
+			}
+			t.Fatalf("lane never-w's publication was not imported %s after the lane started (the bound is 5 minutes); lane late270-w's stream held its batch (its nudge ran the catch-up): %t",
+				bound, settled)
 		}
 		time.Sleep(2 * time.Second)
 	}
