@@ -636,7 +636,10 @@ run_go_extended() {
 # 260s (LaneCount), 225s (FollowStatus), 223s (ImportChunks), 220s
 # (InvalidSignature) and 213s (Key); ContentAddress takes about as long as
 # Key (72.7s against 67.9s on macOS). Each group is about 1,000s of runner
-# time against a 45m budget. Every group checks that the four lists together
+# time against a 45m budget. Run 44564628985 took 160s to 540s per test
+# (about 230s for most), and two groups of ten and eleven tests reached the
+# 45m budget; the manual-run and publication-alert tests are publication-5
+# and publication-6. Every group checks that the six lists together
 # are exactly the package's ^TestPublication.*RealDaemons$ tests, each listed
 # once, and that each test of its own list ran and ended exactly once.
 PUBLICATION_GO_TESTS="^TestPublication.*RealDaemons$"
@@ -644,10 +647,12 @@ PUBLICATION_GO_TEST_TIMEOUT="45m"
 
 publication_group_tests() {
   case "$1" in
-    publication-1) echo "TestPublicationRetentionRealDaemons TestPublicationFollowRealDaemons TestPublicationOutlivesClientRealDaemons TestPublicationGossipGateRealDaemons TestPublicationPNMOnlyLaneRealDaemons TestPublicationUnheldBatchImportsPNMRealDaemons TestPublicationStorePanicReleasesReservationRealDaemons TestPublicationManualRunOutlivesClientRealDaemons TestPublicationManualRunCancelByIDRealDaemons TestPublicationAlertGainedAfterFailureRealDaemons" ;;
-    publication-2) echo "TestPublicationRealDaemons TestPublicationFingerprintRealDaemons TestPublicationContentAddressRealDaemons TestPublicationKeyRealDaemons TestPublicationSlowFlowRealDaemons TestPublicationSubscriptionFileOrderRealDaemons TestPublicationPNMGuardRealDaemons TestPublicationManualRunStopsWithNodeRealDaemons TestPublicationManualRunBoundRealDaemons TestPublicationAlertRestartRealDaemons TestPublicationAlertFailureDuringClearRealDaemons" ;;
-    publication-3) echo "TestPublicationLaneCountRealDaemons TestPublicationFollowStatusRealDaemons TestPublicationImportChunksRealDaemons TestPublicationInvalidSignatureRealDaemons TestPublicationFailureRealDaemons TestPublicationCursorRefusedRealDaemons TestPublicationStreamSlotsRealDaemons TestPublicationSubscriptionsUnreadableRealDaemons TestPublicationSubscriptionUnknownFieldRealDaemons TestPublicationAlertClearsWhenLaterRunsPublishItRealDaemons TestPublicationAlertPartialFailureRealDaemons" ;;
-    publication-4) echo "TestPublicationSubscribeRealDaemons TestPublicationUpgradeRealDaemons TestPublicationRollbackRealDaemons TestPublicationConversionRecordRealDaemons TestPublicationDiskFloorRealDaemons TestPublicationRestartStreamedPNMRealDaemons TestPublicationAlertBatchGainedRecordsRealDaemons TestPublicationAlertHeadPublicationRealDaemons TestPublicationAlertSupersededBatchRealDaemons" ;;
+    publication-1) echo "TestPublicationRetentionRealDaemons TestPublicationFollowRealDaemons TestPublicationOutlivesClientRealDaemons TestPublicationGossipGateRealDaemons TestPublicationPNMOnlyLaneRealDaemons TestPublicationUnheldBatchImportsPNMRealDaemons TestPublicationStorePanicReleasesReservationRealDaemons" ;;
+    publication-2) echo "TestPublicationRealDaemons TestPublicationFingerprintRealDaemons TestPublicationContentAddressRealDaemons TestPublicationKeyRealDaemons TestPublicationSlowFlowRealDaemons TestPublicationSubscriptionFileOrderRealDaemons TestPublicationPNMGuardRealDaemons" ;;
+    publication-3) echo "TestPublicationLaneCountRealDaemons TestPublicationFollowStatusRealDaemons TestPublicationImportChunksRealDaemons TestPublicationInvalidSignatureRealDaemons TestPublicationFailureRealDaemons TestPublicationCursorRefusedRealDaemons TestPublicationStreamSlotsRealDaemons TestPublicationSubscriptionsUnreadableRealDaemons TestPublicationSubscriptionUnknownFieldRealDaemons" ;;
+    publication-4) echo "TestPublicationSubscribeRealDaemons TestPublicationUpgradeRealDaemons TestPublicationRollbackRealDaemons TestPublicationConversionRecordRealDaemons TestPublicationDiskFloorRealDaemons TestPublicationRestartStreamedPNMRealDaemons" ;;
+    publication-5) echo "TestPublicationManualRunOutlivesClientRealDaemons TestPublicationManualRunCancelByIDRealDaemons TestPublicationManualRunStopsWithNodeRealDaemons TestPublicationManualRunBoundRealDaemons TestPublicationAlertRestartRealDaemons TestPublicationAlertFailureDuringClearRealDaemons" ;;
+    publication-6) echo "TestPublicationAlertGainedAfterFailureRealDaemons TestPublicationAlertClearsWhenLaterRunsPublishItRealDaemons TestPublicationAlertPartialFailureRealDaemons TestPublicationAlertBatchGainedRecordsRealDaemons TestPublicationAlertHeadPublicationRealDaemons TestPublicationAlertSupersededBatchRealDaemons" ;;
   esac
 }
 
@@ -678,14 +683,14 @@ fetch_v119_binary() {
 
 run_publication() {
   local group="${SDN_CI_PUBLICATION_GROUP:-all}" run g
-  case "$group" in all|publication-1|publication-2|publication-3|publication-4) ;; *) fail "unknown publication group: $group" ;; esac
+  case "$group" in all|publication-1|publication-2|publication-3|publication-4|publication-5|publication-6) ;; *) fail "unknown publication group: $group" ;; esac
   step "Publication between real daemons ($group)"
   local list="$ROOT/.ci-artifacts/publication-tests"
   mkdir -p "$ROOT/.ci-artifacts"
   "$ROOT/scripts/go-with-wasmedge.sh" test -list "$PUBLICATION_GO_TESTS" ./cmd/spacedatanetwork/ > "$list.go" 2>&1 \
     || { cat "$list.go"; fail "listing publication tests"; }
   grep -E "$PUBLICATION_GO_TESTS" "$list.go" | LC_ALL=C sort > "$list.expected" || true
-  for g in publication-1 publication-2 publication-3 publication-4; do
+  for g in publication-1 publication-2 publication-3 publication-4 publication-5 publication-6; do
     printf '%s\n' $(publication_group_tests "$g")
   done | LC_ALL=C sort > "$list.grouped"
   [[ -s "$list.expected" ]] || fail "no publication tests listed"
