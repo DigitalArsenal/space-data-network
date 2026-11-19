@@ -109,6 +109,9 @@ type FollowStatus struct {
 	LastReceivedAt        time.Time
 	Connected             bool
 	LastError             string
+	// Retracted is true once the producer stated the lane retracted: this
+	// node dropped the records it held of the lane from that producer.
+	Retracted bool
 }
 
 type followEntry struct {
@@ -497,6 +500,9 @@ func (m *followManager) storeRuns(ctx context.Context, st FollowStatus, remote p
 // this node (see the package comment). It returns nil when there is nothing
 // to do, or when the last list read was less than followSyncEvery ago.
 func (m *followManager) holdCurrent(ctx context.Context, st FollowStatus, e *followEntry, remote peer.ID, stmt syncwire.FollowStatement) error {
+	if stmt.Retracted {
+		return m.dropRetracted(st, e, remote)
+	}
 	if stmt.BatchID == "" {
 		return nil
 	}
@@ -579,6 +585,43 @@ func (m *followManager) holdCurrent(ctx context.Context, st FollowStatus, e *fol
 	log.Infof("Followed lane %s %s/%s from %s: batch %s is current (%d records listed, %d tagged from held records, %d fetched by CID, %d removed that the batch no longer holds, %d removed with the superseded batches; rule %s) in %s",
 		st.Schema, st.ProviderID, st.SourceName, remote, stmt.BatchID, len(list), got-fetched, fetched, removed, superseded, rule,
 		time.Since(began).Round(time.Millisecond))
+	return nil
+}
+
+// dropRetracted removes every record of the lane this node holds from the
+// producer, because the producer states the lane retracted. A record also
+// held under another lane or producer stays (RemoveFollowLaneRecords). What
+// the producer served to others, and any copy this node already exported or
+// forwarded, is not this node's to recall.
+func (m *followManager) dropRetracted(st FollowStatus, e *followEntry, remote peer.ID) error {
+	counts, err := m.n.store.FollowLaneBatchCounts(st.Schema, st.ProviderID, st.SourceName, remote.String())
+	if errors.Is(err, storage.ErrFollowLaneUnsupported) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var removed int64
+	for batch := range counts {
+		cids, err := m.n.store.FollowLaneBatchCIDs(st.Schema, st.ProviderID, st.SourceName, batch, remote.String())
+		if err != nil {
+			return err
+		}
+		n, err := m.n.store.RemoveFollowLaneRecords(st.Schema, st.ProviderID, st.SourceName, remote.String(), func(string) bool { return true }, cids)
+		removed += n
+		if err != nil {
+			return fmt.Errorf("remove the records of the retracted lane: %w", err)
+		}
+	}
+	m.mu.Lock()
+	e.current, e.held = syncwire.FollowStatement{Retracted: true}, 0
+	e.status.Retracted = true
+	e.status.RemovedRecords += removed
+	e.status.LastError = ""
+	m.mu.Unlock()
+	if removed > 0 {
+		log.Infof("Followed lane %s %s/%s from %s: the producer retracted the lane; %d records removed", st.Schema, st.ProviderID, st.SourceName, remote, removed)
+	}
 	return nil
 }
 

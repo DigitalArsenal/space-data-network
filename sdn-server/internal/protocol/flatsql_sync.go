@@ -505,6 +505,11 @@ func laneStatement(store *storage.FlatSQLStore, query datasync.QueryRequest) syn
 	if query.ProviderID == "" || query.SourceName == "" {
 		return syncwire.FollowStatement{}
 	}
+	if _, retracted, err := store.DatasetPublicationLaneRetractedAt(storage.DatasetPublicationLane{SchemaName: syncwire.NormalizeSchema(query.Schema), ProviderID: query.ProviderID, SourceName: query.SourceName}); err != nil {
+		log.Debugf("flatsql-sync: retraction of %s %s/%s unread: %v", query.Schema, query.ProviderID, query.SourceName, err)
+	} else if retracted {
+		return syncwire.FollowStatement{Retracted: true}
+	}
 	batch, records, err := store.LaneCurrentBatch(query.Schema, query.ProviderID, query.SourceName)
 	if err != nil {
 		if !errors.Is(err, storage.ErrFollowLaneUnsupported) {
