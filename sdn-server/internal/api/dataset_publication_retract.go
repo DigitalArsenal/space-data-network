@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"slices"
@@ -12,42 +11,106 @@ import (
 
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
+	"github.com/spacedatanetwork/sdn-server/internal/syncwire"
 )
 
-// DatasetPublicationRetractRequest is the body of the loopback admin route
-// POST /api/v1/admin/dataset-updates/retract: one lane of this node's own
-// publications, withdrawn in one step. A dry run unless Apply.
+// DatasetPublicationRetractRequest names the lane of the loopback admin route
+// POST /api/v1/admin/dataset-updates/retract?schema=&providerId=&sourceName=
+// [&apply=true]: one lane of this node's own publications, withdrawn in one
+// step. A dry run unless Apply.
 type DatasetPublicationRetractRequest struct {
-	Schema     string `json:"schema"`
-	ProviderID string `json:"providerId"`
-	SourceName string `json:"sourceName"`
-	Apply      bool   `json:"apply,omitempty"`
+	Schema     string
+	ProviderID string
+	SourceName string
+	Apply      bool
 }
 
 // DatasetPublicationRetractReport is what a retraction would remove (dry run)
-// or removed (applied).
+// or removed (applied). The route answers it as a $QRP page
+// (retractReportFrame).
 type DatasetPublicationRetractReport struct {
-	Schema     string `json:"schema"`
-	ProviderID string `json:"providerId"`
-	SourceName string `json:"sourceName"`
-	Applied    bool   `json:"applied"`
+	Schema     string
+	ProviderID string
+	SourceName string
+	Applied    bool
 	// AlreadyRetracted is true when the lane was marked retracted before this
 	// call (a second call only finishes what the first left).
-	AlreadyRetracted bool `json:"alreadyRetracted"`
+	AlreadyRetracted bool
 	// RetiredSeries are the lane's recorded publications.
-	RetiredSeries []string `json:"retiredSeries"`
+	RetiredSeries []string
 	// Records are this node's own records of the lane, by batch.
-	Records        int64                            `json:"records"`
-	RecordsByBatch map[string]int64                 `json:"recordsByBatch"`
-	Unpin          []DatasetPublicationRetentionPin `json:"unpin"`
-	UnpinBytes     int64                            `json:"unpinBytes"`
-	SharedKept     []DatasetPublicationRetentionPin `json:"sharedKeptPinned"`
-	RetireRows     []DatasetPublicationRetentionRow `json:"retireRows"`
+	Records        int64
+	RecordsByBatch map[string]int64
+	Unpin          []DatasetPublicationRetentionPin
+	UnpinBytes     int64
+	SharedKept     []DatasetPublicationRetentionPin
+	RetireRows     []DatasetPublicationRetentionRow
 	// RecordsRemoved is what the delete removed; a record the lane shares
 	// with another lane or producer stays, so it can be below Records.
-	RecordsRemoved int64                                      `json:"recordsRemoved,omitempty"`
-	Result         *storage.DatasetPublicationRetentionResult `json:"result,omitempty"`
-	RetractedAt    *time.Time                                 `json:"retractedAt,omitempty"`
+	RecordsRemoved int64
+	Result         *storage.DatasetPublicationRetentionResult
+	RetractedAt    *time.Time
+}
+
+// retractColumns are the columns of the $QRP page a retraction answers: one
+// row per fact. kind is series, batch (count: records), pin and shared-pin
+// (key: CID, detail: role, count: bytes), window (key: shard CID, detail:
+// batch, count: records), and total (key: applied, already-retracted, records,
+// records-removed, unpin-bytes, unpinned, unpin-failed, retracted-at-ms).
+var retractColumns = []syncwire.QRPColumnField{
+	{Name: "kind", Type: "TEXT"}, {Name: "key", Type: "TEXT"}, {Name: "detail", Type: "TEXT"}, {Name: "count", Type: "INT"},
+}
+
+// retractReportFrame is the report as one size-prefixed $QRP Page.
+func retractReportFrame(report *DatasetPublicationRetractReport) []byte {
+	var rows [][]syncwire.QRPCell
+	row := func(kind, key, detail string, count int64) {
+		rows = append(rows, []syncwire.QRPCell{syncwire.TextCell(kind), syncwire.TextCell(key), syncwire.TextCell(detail), syncwire.IntCell(count)})
+	}
+	flag := func(b bool) int64 {
+		if b {
+			return 1
+		}
+		return 0
+	}
+	row("total", "applied", "", flag(report.Applied))
+	row("total", "already-retracted", "", flag(report.AlreadyRetracted))
+	row("total", "records", "", report.Records)
+	row("total", "records-removed", "", report.RecordsRemoved)
+	row("total", "unpin-bytes", "", report.UnpinBytes)
+	if report.Result != nil {
+		row("total", "unpinned", "", int64(report.Result.Unpinned))
+		row("total", "unpin-failed", "", int64(report.Result.UnpinFailed))
+	}
+	if report.RetractedAt != nil {
+		row("total", "retracted-at-ms", "", report.RetractedAt.UnixMilli())
+	}
+	for _, id := range report.RetiredSeries {
+		row("series", id, "", 0)
+	}
+	batches := make([]string, 0, len(report.RecordsByBatch))
+	for batch := range report.RecordsByBatch {
+		batches = append(batches, batch)
+	}
+	sort.Strings(batches)
+	for _, batch := range batches {
+		row("batch", batch, "", report.RecordsByBatch[batch])
+	}
+	for _, pin := range report.Unpin {
+		row("pin", pin.CID, pin.Role, pin.Bytes)
+	}
+	for _, pin := range report.SharedKept {
+		row("shared-pin", pin.CID, pin.Role, pin.Bytes)
+	}
+	for _, window := range report.RetireRows {
+		row("window", window.ShardCID, window.BatchID, int64(window.Records))
+	}
+	return syncwire.BuildQRP(syncwire.QRPFields{
+		Kind: syncwire.QRPKindPage, Status: syncwire.QRPStatusOk,
+		SchemaName: report.Schema, ProviderID: report.ProviderID, SourceName: report.SourceName,
+		RecordCount: uint32(len(rows)), TotalCount: uint64(len(rows)), GeneratedAtMs: time.Now().UnixMilli(),
+		Columns: retractColumns, Rows: rows,
+	})
 }
 
 // DatasetPublicationRetractRunner retracts a lane on demand.
@@ -67,22 +130,29 @@ func (h *DatasetPublicationHandler) handleRetract(w http.ResponseWriter, r *http
 	}
 	runner, ok := h.service.(DatasetPublicationRetractRunner)
 	if !ok || h.service == nil {
-		writeError(w, http.StatusServiceUnavailable, "dataset publication retract unavailable")
+		WriteErrorFrame(w, http.StatusServiceUnavailable, "unavailable", "Dataset publication retract is unavailable on this node.", 0)
 		return
 	}
-	var req DatasetPublicationRetractRequest
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64*1024))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request: "+err.Error())
+	query := r.URL.Query()
+	req := DatasetPublicationRetractRequest{
+		Schema:     query.Get("schema"),
+		ProviderID: query.Get("providerId"),
+		SourceName: query.Get("sourceName"),
+	}
+	switch strings.ToLower(strings.TrimSpace(query.Get("apply"))) {
+	case "", "false":
+	case "true":
+		req.Apply = true
+	default:
+		WriteErrorFrame(w, http.StatusBadRequest, "bad_request", "apply is true or absent.", 0)
 		return
 	}
 	report, err := runner.RunPublicationRetract(r.Context(), req)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		WriteErrorFrame(w, http.StatusBadRequest, "bad_request", err.Error(), 0)
 		return
 	}
-	writeJSON(w, http.StatusOK, report)
+	WriteFrameStream(w, http.StatusOK, [][]byte{retractReportFrame(report)}, map[string]string{"Cache-Control": "no-store"})
 }
 
 // retractProducers are the producer tags of this node's own records of a

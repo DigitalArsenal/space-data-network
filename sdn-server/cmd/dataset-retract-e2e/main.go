@@ -188,7 +188,7 @@ func run(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if !got.Applied || got.RetractedAt == nil || got.RecordsRemoved != int64(len(laneA.sites)) || got.Result == nil || got.Result.UnpinFailed != 0 || got.Result.Unpinned != len(dry.Unpin) {
+		if !got.Applied || got.RetractedAtMs == 0 || got.RecordsRemoved != int64(len(laneA.sites)) || got.UnpinFailed != 0 || got.Unpinned != int64(len(dry.Unpin)) {
 			return fmt.Errorf("apply answered %+v", got)
 		}
 		pins, err := k.pins(ctx)
@@ -200,7 +200,7 @@ func run(ctx context.Context) error {
 				return fmt.Errorf("%s %s is still pinned (%s)", p.Role, p.CID, pins[p.CID])
 			}
 		}
-		fmt.Printf("     applied: %d CIDs unpinned, %d records removed\n", got.Result.Unpinned, got.RecordsRemoved)
+		fmt.Printf("     applied: %d CIDs unpinned, %d records removed\n", got.Unpinned, got.RecordsRemoved)
 		return nil
 	}())
 
@@ -232,7 +232,7 @@ func run(ctx context.Context) error {
 		return nil
 	}())
 	check("g the route is loopback only and names one lane", func() error {
-		status, body, err := c.post(ctx, "/api/v1/admin/dataset-updates/retract", map[string]any{"schema": schema, "providerId": laneB.provider, "sourceName": laneB.source}, true)
+		status, _, body, err := c.postQuery(ctx, "/api/v1/admin/dataset-updates/retract", url.Values{"schema": {schema}, "providerId": {laneB.provider}, "sourceName": {laneB.source}, "apply": {"true"}}, true)
 		if err != nil {
 			return err
 		}
@@ -242,7 +242,7 @@ func run(ctx context.Context) error {
 		if status != http.StatusUnauthorized {
 			return fmt.Errorf("a proxied request answered HTTP %d %s, want 401", status, clip(body))
 		}
-		status, body, err = c.post(ctx, "/api/v1/admin/dataset-updates/retract", map[string]any{"schema": schema, "providerId": laneB.provider}, false)
+		status, _, body, err = c.postQuery(ctx, "/api/v1/admin/dataset-updates/retract", url.Values{"schema": {schema}, "providerId": {laneB.provider}, "apply": {"true"}}, false)
 		if err != nil {
 			return err
 		}
@@ -341,34 +341,98 @@ func (c client) publish(ctx context.Context, l lane) error {
 	return nil
 }
 
+// retractReport is the $QRP page the retract route answers, one row per fact
+// (kind, key, detail, count).
 type retractReport struct {
-	Applied          bool     `json:"applied"`
-	AlreadyRetracted bool     `json:"alreadyRetracted"`
-	RetiredSeries    []string `json:"retiredSeries"`
-	Records          int64    `json:"records"`
-	RecordsRemoved   int64    `json:"recordsRemoved"`
-	Unpin            []struct {
-		CID  string `json:"cid"`
-		Role string `json:"role"`
-	} `json:"unpin"`
-	UnpinBytes  int64      `json:"unpinBytes"`
-	RetractedAt *time.Time `json:"retractedAt"`
-	Result      *struct {
-		Unpinned    int
-		UnpinFailed int
-	} `json:"result"`
+	Applied          bool
+	AlreadyRetracted bool
+	RetiredSeries    []string
+	Records          int64
+	RecordsRemoved   int64
+	Unpin            []struct{ CID, Role string }
+	UnpinBytes       int64
+	Unpinned         int64
+	UnpinFailed      int64
+	// RetractedAtMs is 0 when the lane is not marked.
+	RetractedAtMs int64
 }
 
+// retract calls the route: the lane in the query string, no body; a dry run
+// unless apply. The answer is one $QRP Page; an error is one $QRP Error.
 func (c client) retract(ctx context.Context, l lane, apply bool) (retractReport, error) {
 	var out retractReport
-	status, body, err := c.post(ctx, "/api/v1/admin/dataset-updates/retract", map[string]any{"schema": schema, "providerId": l.provider, "sourceName": l.source, "apply": apply}, false)
+	status, hdr, body, err := c.postQuery(ctx, "/api/v1/admin/dataset-updates/retract", url.Values{"schema": {schema}, "providerId": {l.provider}, "sourceName": {l.source}, "apply": {fmt.Sprint(apply)}}, false)
 	if err != nil {
 		return out, err
 	}
 	if status != http.StatusOK {
 		return out, fmt.Errorf("retract: HTTP %d %s", status, clip(body))
 	}
-	return out, json.Unmarshal(body, &out)
+	if ct := hdr.Get("Content-Type"); ct != "application/vnd.sdn.flatbuffers.stream" {
+		return out, fmt.Errorf("retract answered Content-Type %q, want the $QRP stream", ct)
+	}
+	fs, err := frames(body)
+	if err != nil || len(fs) != 1 {
+		return out, fmt.Errorf("retract answered %d frames %v, want one $QRP page", len(fs), err)
+	}
+	q := QRP.GetRootAsQRP(fs[0], 0)
+	if QRP.EnumNamesqrpKind[q.KIND()] != "Page" {
+		return out, fmt.Errorf("retract answered a %s frame", QRP.EnumNamesqrpKind[q.KIND()])
+	}
+	for r := 0; r < q.ROWSLength(); r++ {
+		var row QRP.QRPRow
+		q.ROWS(&row, r)
+		var kind, key, detail QRP.QRPValue
+		var count QRP.QRPValue
+		row.CELLS(&kind, 0)
+		row.CELLS(&key, 1)
+		row.CELLS(&detail, 2)
+		row.CELLS(&count, 3)
+		k, name, n := string(kind.TEXT_VALUE()), string(key.TEXT_VALUE()), count.INT_VALUE()
+		switch k {
+		case "total":
+			switch name {
+			case "applied":
+				out.Applied = n == 1
+			case "already-retracted":
+				out.AlreadyRetracted = n == 1
+			case "records":
+				out.Records = n
+			case "records-removed":
+				out.RecordsRemoved = n
+			case "unpin-bytes":
+				out.UnpinBytes = n
+			case "unpinned":
+				out.Unpinned = n
+			case "unpin-failed":
+				out.UnpinFailed = n
+			case "retracted-at-ms":
+				out.RetractedAtMs = n
+			}
+		case "series":
+			out.RetiredSeries = append(out.RetiredSeries, name)
+		case "pin":
+			out.Unpin = append(out.Unpin, struct{ CID, Role string }{name, string(detail.TEXT_VALUE())})
+		}
+	}
+	return out, nil
+}
+
+func (c client) postQuery(ctx context.Context, path string, query url.Values, proxied bool) (int, http.Header, []byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+path+"?"+query.Encode(), nil)
+	if err != nil {
+		return 0, nil, nil, err
+	}
+	if proxied {
+		req.Header.Set("X-Forwarded-For", "203.0.113.7")
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return 0, nil, nil, err
+	}
+	defer resp.Body.Close()
+	out, err := io.ReadAll(resp.Body)
+	return resp.StatusCode, resp.Header, out, err
 }
 
 // state is what the node shows of every lane: its sources, its channels, its

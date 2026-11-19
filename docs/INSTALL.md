@@ -407,13 +407,13 @@ To withdraw a published lane in one step (a source's operator objects to its
 data being republished), call, from the box:
 
 ```sh
-curl -X POST http://127.0.0.1:5001/api/v1/admin/dataset-updates/retract \
-  -H 'Content-Type: application/json' \
-  -d '{"schema":"SIT.fbs","providerId":"<you>","sourceName":"<lane>"}'
+curl -X POST 'http://127.0.0.1:5001/api/v1/admin/dataset-updates/retract?schema=SIT.fbs&providerId=<you>&sourceName=<lane>'
 ```
 
-That is a dry run: it answers the lane's publications, its record count and
-every CID it would unpin. Add `"apply": true` to do it. Applied, it unpins
+That is a dry run: it answers one `$QRP` page, a row per fact (kind, key,
+detail, count): the lane's publications (`series`), its records by batch
+(`batch`), every CID it would unpin (`pin`, with role and bytes) and the
+totals. Add `&apply=true` to do it. Applied, it unpins
 the lane's CIDs, removes its advertised shards and files, deletes the lane's
 records from this node, and marks the lane retracted: the source list, the
 channel list and `list-published` stop offering it, the node refuses to
