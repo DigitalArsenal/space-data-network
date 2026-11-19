@@ -132,8 +132,9 @@ adopted the windows a publication wrote before it failed (rows, pins and the
 announcements already sent) as a series of their batch at the lane's next
 completed publication, and kept them like any other series. They are now
 marked unfinished when written and never adopted, so the lane's retention
-(`publishing.retention` with `keep_series` set) retires their rows and unpins their shard, index
-and manifest CIDs at the lane's next completed publication, as it does for
-any row no series names. A subscriber that fetched such a window from its
+(`publishing.retention` with `keep_series` set) retires their rows and
+unpins their shard, index and manifest CIDs at the lane's next completed
+publication, as it does for any row no series names. With `keep_series: 0`
+nothing is released, as before. A subscriber that fetched such a window from its
 announcement keeps its copy; the producer no longer serves it once retention
 released it. Windows that 1.1.9 already adopted stay adopted.
