@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"runtime/debug"
 	"strings"
@@ -194,6 +195,41 @@ func TestNativeFaultIsNotTakenForAGuestTrap(t *testing.T) {
 		t.Fatalf("native crash returned:\n%s", out)
 	}
 }
+
+// A fault inside a shared library (the C library) on a thread with no WasmEdge
+// call in progress is not guest code. WasmEdge's handler, given it, stores its
+// stack trace through the thread's null fault context and faults again at a
+// small address (0xd0 on glibc x86-64) inside its own unwinder: the CI
+// signature of stack issue 876. The crash report must name the first fault,
+// in the library that took it, not only the second.
+func TestLibraryFaultOutsideACallIsNamed(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		// On darwin the child never reaches the forwarder: it spins at 100%
+		// CPU in the Go runtime with nothing on stderr.
+		t.Skip("linux only: on darwin a C library fault on a C thread hangs the process")
+	}
+	out, err, timedOut := runSignalChildWithin(t, "libc-crash-outside-call", time.Minute)
+	if timedOut {
+		t.Fatalf("the C library fault hung the process instead of ending it:\n%s", out)
+	}
+	var exit *exec.ExitError
+	if err == nil || !errorsAs(err, &exit) {
+		t.Fatalf("child survived a C library bad store (err=%v):\n%s", err, out)
+	}
+	ws, ok := exit.Sys().(syscall.WaitStatus)
+	if !ok || !ws.Signaled() || (ws.Signal() != syscall.SIGSEGV && ws.Signal() != syscall.SIGBUS) {
+		t.Fatalf("the C library fault did not end in SIGSEGV/SIGBUS (err=%v):\n%s", err, out)
+	}
+	if strings.Contains(out, "RETURNED") {
+		t.Fatalf("the C library fault returned:\n%s", out)
+	}
+	if !libraryFaultNamed.MatchString(out) {
+		t.Fatalf("the crash report does not name the first fault in its library:\n%s", out)
+	}
+	t.Logf("libc-crash-outside-call: %s", lastLines(out, "[wasmrt] FATAL"))
+}
+
+var libraryFaultNamed = regexp.MustCompile(`handed signal 1[01] pc 0x[0-9a-f]+ \(lib[^ )]*\+0x[0-9a-f]+\) addr 0x[0-9a-f]+`)
 
 // Guest recursion that exhausts the native stack is not redirected: there is
 // no room to resume in, and on x86-64 the redirect would store to that stack
@@ -540,6 +576,16 @@ func TestSignalChild(t *testing.T) {
 		debug.SetTraceback("all")
 		panic("sdn-trap-park-traceback")
 
+	case "libc-crash-outside-call":
+		if err := EnsureGoSignalHandling(); err != nil {
+			t.Fatalf("pin: %v", err)
+		}
+		m := newSignalFaultModule(t)
+		if _, err := m.Execute("answer"); err != nil {
+			t.Fatal(err)
+		}
+		crashInLibcOnCThread()
+		fmt.Println("RETURNED from a C library bad store")
 	case "native-crash":
 		if err := EnsureGoSignalHandling(); err != nil {
 			t.Fatalf("pin: %v", err)
