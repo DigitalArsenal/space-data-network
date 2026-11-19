@@ -382,6 +382,43 @@ func TestHandleTrustLevelChangeOnlyActsOnFullBoundaryCrossing(t *testing.T) {
 	})
 }
 
+// TestRegistryTrustChangeUpdatesTipQueueTrust exercises the D2 wiring
+// through the registry: n.peerRegistry.OnTrustChange(n.handleTrustLevelChange)
+// (as registered in init()), then a real SetTrustLevel promotion to Full
+// marks the provider trusted in the TipQueue's bookkeeping, and a real
+// demotion below Full marks it untrusted again. Promotion starts no import
+// of its own (a lane is imported only by subscription).
+func TestRegistryTrustChangeUpdatesTipQueueTrust(t *testing.T) {
+	n, _, providerID := buildTipMaterializationFixture(t)
+	if err := n.peerRegistry.AddPeer(&peers.TrustedPeer{ID: providerID, TrustLevel: peers.Standard}); err != nil {
+		t.Fatalf("add standard-trust provider: %v", err)
+	}
+	n.peerRegistry.OnTrustChange(n.handleTrustLevelChange)
+	if n.tipQueue.Config().IsTrusted(providerID.String()) {
+		t.Fatal("precondition: a Standard-trust provider should start untrusted in TipQueue config")
+	}
+
+	if err := n.peerRegistry.SetTrustLevel(providerID, peers.Trusted); err != nil {
+		t.Fatalf("SetTrustLevel(Trusted) failed: %v", err)
+	}
+	promoted := waitForCondition(t, 3*time.Second, func() bool {
+		return n.tipQueue.Config().IsTrusted(providerID.String())
+	})
+	if !promoted {
+		t.Fatal("promotion to Full did not update the TipQueue trust bookkeeping in time")
+	}
+
+	if err := n.peerRegistry.SetTrustLevel(providerID, peers.Standard); err != nil {
+		t.Fatalf("SetTrustLevel(Standard) (demotion) failed: %v", err)
+	}
+	demoted := waitForCondition(t, 2*time.Second, func() bool {
+		return !n.tipQueue.Config().IsTrusted(providerID.String())
+	})
+	if !demoted {
+		t.Fatal("demotion below Full did not unsubscribe (TipQueue config still reports trusted)")
+	}
+}
+
 // --- D4: resource caps on auto-ingest fetches --------------------------
 
 // TestIPFSTipFetcherRejectsContentOverCapViaStatPreCheckWithoutDownloading
