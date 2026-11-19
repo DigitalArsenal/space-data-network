@@ -69,7 +69,7 @@ func TestPublicationAlertGainedAfterFailureRealDaemons(t *testing.T) {
 		t.Fatalf("the publication of the whole of \"x\" answered %d records", pub.RecordCount)
 	}
 	awaitPublicationAlertCleared(t, d, lane, time.Minute)
-	t.Logf("cleared: %s", publicationLogAfter(t, d, `every record of failed batch "x"`))
+	t.Logf("cleared: %s", publicationLogAfter(t, d, `failed scope "publish batch" of batch "x" is published`))
 }
 
 // TestPublicationAlertRestartRealDaemons fails a batch's publication and
@@ -160,12 +160,15 @@ func TestPublicationAlertFailureDuringClearRealDaemons(t *testing.T) {
 	d.start(t)
 	source := "failure-during-clear"
 	lane := "OMM.fbs publication-e2e/" + source
-	d.ingestOMMFrames(t, source, "x", 0, [][]byte{baselineOMM(0)})
+	// The frames are built once: a record built in another second is another
+	// record (its creation date).
+	frames := [][]byte{baselineOMM(0), baselineOMM(1)}
+	d.ingestOMMFrames(t, source, "x", 0, frames[:1])
 	failBatchPublication(t, d, source, "x", 1)
 	awaitPublicationAlert(t, d, lane, `batch \"x\" is unpublished: 1 of its 1 records are in no completed publication of the lane`, time.Minute)
 
-	d.ingestOMMFrames(t, source, "y", 0, [][]byte{baselineOMM(0)})
-	d.ingestOMMFrames(t, source, "w", 0, [][]byte{baselineOMM(1)})
+	d.ingestOMMFrames(t, source, "y", 0, frames[:1])
+	d.ingestOMMFrames(t, source, "w", 0, frames[1:])
 	if pub := d.publish(t, "OMM.fbs", source, "y"); pub.RecordCount != 1 {
 		t.Fatalf("the publication of \"y\" answered %d records", pub.RecordCount)
 	}
