@@ -32,6 +32,10 @@ import (
 // publication rows and files retirement acts on are the producer's own. The
 // subscriber imports the producer's signed $PNM publications through the
 // subscription gate and reads the producer's listing and shards over the wire.
+// That a retired publication cannot come back is asserted on the producer:
+// its replay ledger, its publication index after a later sweep and a reopen,
+// and its listing. The subscriber's replay of the old publication is checked
+// too, but it rests on the subscriber's own replay state, not on retirement.
 // Explicit observation dates exercise policy; no wall-clock speed is asserted.
 func TestPublicationRetirement(t *testing.T) {
 	t.Setenv("SDN_STORE_FORMAT", "4")
@@ -279,34 +283,69 @@ func TestPublicationRetirement(t *testing.T) {
 		}
 	}
 
-	// A replay of the old publication cannot refill the serving index, and
-	// its files are not fetched or written again.
+	// What retirement itself guarantees, on the producer, where it runs: the
+	// two retired publications cannot come back. Each is kept as retired in
+	// the replay ledger (the dedup state), the rows stay gone from the
+	// producer's own index after a later sweep and after a reopen, and the
+	// listing a requester reads over the wire never names them again.
+	for _, i := range []int{1, 3} {
+		if state, found, err := producer.DatasetPublicationReplayState(storage.DatasetPublicationRetirementKey(pubs[i])); err != nil || !found || state.State != "retired" {
+			t.Fatalf("retirement dedup of %s: %+v, %v, %v", pubs[i].BatchID, state, found, err)
+		}
+	}
+	indexed := func(when string) {
+		t.Helper()
+		held, err := producer.ListDatasetShardPublicationsForProfile(storage.DatasetPublicationQueryProfile, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		batches := map[string]bool{}
+		for _, pub := range held {
+			batches[pub.BatchID] = true
+		}
+		if len(held) != 2 || !batches["held"] || !batches["recovered"] {
+			t.Fatalf("%s: the producer's publication index holds %v, want only held and recovered", when, batches)
+		}
+		if rows, total := list(); len(rows) != 2 || total != 2 {
+			t.Fatalf("%s: retired publication listed again: %d rows, total %d", when, len(rows), total)
+		}
+	}
+	indexed("after retirement and a reopen")
+	if got, err := producer.RetireUnavailableDatasetPublications(observed.Add(48 * time.Hour)); err != nil || got != 0 {
+		t.Fatalf("a later sweep retired %d, want 0: %v", got, err)
+	}
+	indexed("after a later sweep")
+	reopen()
+	indexed("after a second reopen")
+	for _, i := range []int{1, 3} {
+		if state, found, err := producer.DatasetPublicationReplayState(storage.DatasetPublicationRetirementKey(pubs[i])); err != nil || !found || state.State != "retired" {
+			t.Fatalf("retirement dedup of %s after a second reopen: %+v, %v, %v", pubs[i].BatchID, state, found, err)
+		}
+	}
+	// Retirement reconciles the index only: the lost file stays lost.
+	if _, err := os.Stat(lost); !os.IsNotExist(err) {
+		t.Fatalf("retired file was written again: %v", err)
+	}
+
+	// The subscriber's side, which is not retirement's: a node imports a
+	// publication once, by its own replay state, so a replay of the retired
+	// publication's signed $PNM, and the stored-$PNM catch-up, import
+	// nothing and fetch none of its files (this holds with or without the
+	// producer's retirement).
 	lostRequests := map[string]int{}
 	for _, cid := range []string{pubs[1].ShardCID, pubs[1].IndexCID} {
 		lostRequests[cid] = requestsFor(cid)
 	}
 	if ok, err := n.materializeDatasetPublicationPNM(ctx, "OMM.fbs", pnms[1], provider.ID()); err != nil || ok {
-		t.Fatalf("retired publication replay: %v, %v", ok, err)
+		t.Fatalf("publication replay on the subscriber: %v, %v", ok, err)
 	}
 	if got, err := n.materializeStoredDatasetPublicationPNMs(ctx, 0); err != nil || got != 0 {
-		t.Fatalf("stored $PNM catch-up after retirement: %d, %v", got, err)
+		t.Fatalf("stored $PNM catch-up on the subscriber: %d, %v", got, err)
 	}
 	for cid, before := range lostRequests {
 		if after := requestsFor(cid); after != before {
 			t.Fatalf("retired publication asset %s was fetched again: %d requests, was %d", cid, after, before)
 		}
-	}
-	if state, found, err := producer.DatasetPublicationReplayState(storage.DatasetPublicationRetirementKey(pubs[1])); err != nil || !found || state.State != "retired" {
-		t.Fatalf("retirement dedup: %+v, %v, %v", state, found, err)
-	}
-	if _, err := producer.RetireUnavailableDatasetPublications(observed.Add(48 * time.Hour)); err != nil {
-		t.Fatal(err)
-	}
-	if rows, total = list(); len(rows) != 2 || total != 2 {
-		t.Fatalf("retired publication listed again: %d rows, total %d", len(rows), total)
-	}
-	if _, err := os.Stat(lost); !os.IsNotExist(err) {
-		t.Fatalf("retired file was fetched again: %v", err)
 	}
 
 	held, err := producer.DatasetPublicationShardPath(pubs[0])
