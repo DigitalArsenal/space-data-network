@@ -100,12 +100,18 @@ the current batch's records by content address before it reads them (for
 the most bytes one page can hold, 8 MiB): a page that would leave less than
 1 GiB of free disk under `storage.path` (at 5 bytes per record byte), or
 take the records the node holds past `subscriptions.record_ceiling`, is not
-stored. What the other lanes are storing at the same time counts against
-both: the lanes share one reservation. The lane stops, its cursor
-kept; `sync subscriptions` shows why (`stopped`) and the alert
-`follow_stopped` names the lane. The node checks again every 5 minutes and
-the lane resumes at its cursor once the page fits (free disk, or a raised
-ceiling and a restart). `--force` does not skip this check.
+stored. A lane's `$PNM` publications are imported under the same check,
+for the records the signed manifest states and the shard's bytes, before
+the shard is fetched. What the other lanes are storing at the same time
+counts against both: the lanes and the publication imports share one
+reservation, released when each store returns, also when it fails. The
+lane stops, its cursor kept; `sync subscriptions` shows why (`stopped`) and
+the alert `follow_stopped` names the lane. The node checks again every 5
+minutes (a publication: at the next stored-`$PNM` catch-up) and the lane
+resumes once the page fits (free disk, or a raised ceiling and a restart).
+`--force` does not skip this check. `GET /api/v1/sync/plan` and `sync
+subscribe` show what is being stored at the moment (`reserved_records`,
+`reserved_bytes`).
 
 A producer refuses a saved cursor when its record sequence was renumbered (a
 rebuilt index, a store re-derived from its journals, a wiped store). The
@@ -119,13 +125,19 @@ read" in its text), across restarts, with the alert raised again at each
 start, until `sync subscribe --start beginning` (same lane and producer)
 reads the whole lane again or `sync subscribe --acknowledge-unread` accepts
 the gap. A lane subscribed from its beginning stays in `follows.dss`
-meanwhile.
+meanwhile. `sync unsubscribe` clears the lane's alerts (`follow_cursor_refused`,
+`follow_stopped`, `follow_refused`, `subscription_refused`).
 
 A lane whose stream is connected does not import its `$PNM` publications
 (their records arrive on the stream) once the batch the producer states is
-held as current. Until then, or while holding it fails (its list cannot be
-read, or its records fetched by content address are refused), the lane's
-publications import as they come.
+held as current. While holding it fails (its list cannot be read, or its
+records fetched by content address are refused), or the producer refuses
+the stream, the lane's publications import as they come. After the lane
+starts (a restart, a new subscription), until its stream has held the
+stated batch or failed to, and for at most 5 minutes, a publication waits:
+the stored-`$PNM` catch-up takes it up again as soon as the stream settles,
+so a batch the stream holds again after a restart is not imported a second
+time.
 
 A producer serves a peer it does not list as trusted at most 8 followed
 streams (one per lane), and all such peers together 64; a peer it lists as
@@ -164,13 +176,22 @@ unsubscribed lane back from `follows.dss`. An unsubscribe made while the node
 ran 1.1.9 (a rollback) removes the lane from `follows.dss` only: it comes
 back with the next 1.2.0 start; unsubscribe again then.
 
-A file that does not read at start is moved aside
+A file whose bytes do not decode at start is moved aside
 (`subscriptions.dss.unreadable-<time>`, likewise `follows.dss`), never
 overwritten. The node then imports no lane and refuses every change to its
 subscriptions, and the alert `subscriptions_unreadable` names the file; a
 restart that finds the file still missing stays so. Put a readable copy back
 (a backup) and restart, or remove the moved file to start with no
-subscriptions.
+subscriptions. A file whose read fails (permission, an I/O error) is left
+where it is: the node stays so, the alert names the error, and the next
+start that reads the file loads it.
+
+A subscription whose `SYNC_FILTER` names a field this build does not know
+(written by a later version, then rolled back) is not run: the alert
+`subscription_refused` names the lane and the field, the lane is neither
+followed nor imported, and its record is written back as it was read. The
+other lanes run. To subscribe the lane again with this build, unsubscribe it
+first.
 
 ## Updating a node from 1.1.9
 

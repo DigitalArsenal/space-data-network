@@ -22,11 +22,13 @@ whose config carries `peers.trusted_import` refuses to start.
   records not read are kept with the subscription (`sync subscriptions`:
   "not read") until `sync subscribe --start beginning` reads the lane again
   or `sync subscribe --acknowledge-unread` accepts the gap.
-- Each followed page, and each fetch by content address of a current
-  batch, is checked before it is stored, against one reservation that all
-  lanes share: a lane stops, its cursor kept, before the store would pass `subscriptions.record_ceiling` or
-  leave less than 1 GiB of free disk (alert `follow_stopped`), and resumes
-  once the page fits. `--force` skips only the check before the subscription.
+- Each followed page, each fetch by content address of a current batch, and
+  each `$PNM` publication import is checked before it is stored, against one
+  reservation that all lanes share (released when each store returns, also
+  when it fails): a lane stops, its cursor kept, before the store would pass
+  `subscriptions.record_ceiling` or leave less than 1 GiB of free disk under
+  `storage.path` (alert `follow_stopped`), and resumes once the page fits.
+  `--force` skips only the check before the subscription.
 - A record gossiped on a schema topic (`POST /api/v1/pubsub/publish`, the
   sdn-js `publish`) names no lane and is no longer stored by any node,
   whatever its trust of the sender or `network.accept_push_from`. Signed
@@ -35,17 +37,24 @@ whose config carries `peers.trusted_import` refuses to start.
   publications' shards as well (an `archive-all` lane still keeps them),
   once it holds the producer's current batch; a lane whose stream the
   producer refuses, or whose current batch it cannot hold, imports through
-  them.
+  them. After a restart a publication waits (at most 5 minutes) until the
+  lane's stream has held its batch again or failed to, so it is not imported
+  a second time.
 - A producer serves a peer it does not trust at most 8 followed streams
   (64 for all such peers); a node following more lanes of one producer is
   listed by it in `peers.trusted_peers` (16 streams, outside the 64),
   unless the producer may run 1.1.9 again: 1.1.9 imports every lane of a
   peer it trusts.
 - `subscriptions.dss` and `follows.dss` are written `follows.dss` first. A
-  file that does not read at start is moved aside, not overwritten; the node
-  then imports no lane and changes no subscription until a readable copy is
-  back (alert `subscriptions_unreadable`). An unsubscribe made under 1.1.9
-  during a rollback comes back with the next start of this release.
+  file whose bytes do not decode at start is moved aside, not overwritten; a
+  file whose read fails (permission, I/O) is left in place and read again at
+  the next start; either way the node imports no lane and changes no
+  subscription until the file reads (alert `subscriptions_unreadable`). A
+  subscription naming a field this release does not know (a later version
+  wrote it) is not run and kept as it is (alert `subscription_refused`); the
+  other lanes run. An unsubscribe made under 1.1.9 during a rollback comes
+  back with the next start of this release. `sync unsubscribe` clears the
+  lane's alerts.
 
 - `spacedatanetwork sync subscribe --schema <standard> --provider-id
   <provider> --source-name <source> --from <producer peer id>` subscribes,

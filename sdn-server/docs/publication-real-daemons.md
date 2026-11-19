@@ -204,7 +204,8 @@ started at its beginning both start again at the producer's current batch
 `sync subscriptions`, across a restart that raises the alert again; the one
 subscribed from its beginning stays in `follows.dss`. Acknowledged, one lane
 shows nothing unread and has no alert; the other, subscribed again from its
-beginning, reads the whole lane.
+beginning, reads the whole lane. A third lane unsubscribed with its gap
+unread leaves no alert.
 
 `TestPublicationUnheldBatchImportsPNMRealDaemons`: a producer serves a lane
 it imported from a third daemon, so its records name that daemon as their
@@ -216,16 +217,42 @@ the batch then becomes current.
 unreadable `subscriptions.dss` moves it aside (bytes kept), raises
 `subscriptions_unreadable`, lists no subscription, refuses a new one and
 writes no file, also after a restart; a readable copy put back loads the
-subscription and the lane resumes.
+subscription and the lane resumes. A `subscriptions.dss` without read
+permission (not run as root) is not moved: the alert names the error, and the
+next start after the permission is back loads it.
+
+`TestPublicationSubscriptionUnknownFieldRealDaemons`: a subscription whose
+`SYNC_FILTER` names a field this build does not know raises
+`subscription_refused` (lane and field), imports nothing and is written back
+as it was; the other lane keeps importing; unsubscribed, its alert clears.
+
+`TestPublicationStorePanicReleasesReservationRealDaemons` (a receiver built
+with the tag `sdn_e2e_follow_faults`, or `SDN_E2E_PUBLICATION_FOLLOW_FAULTS_BINARY`):
+the stores of two lanes panic, on followed pages and on fetches by CID; after
+the panics nothing is reserved (`GET /api/v1/sync/plan`) and a third lane
+stores 3,000 records under a record ceiling a few leaked reservations would
+have closed.
+
+`TestPublicationRestartStreamedPNMRealDaemons` (the same build, whose
+"late-" lane's first stream opens 40 s after the start): a publication left
+to the stream is not imported after a restart either; the stored-`$PNM`
+catch-up at 15 s leaves it waiting, and once the stream holds the batch
+again the catch-up leaves it to the stream.
+
+`TestPublicationPNMGuardRealDaemons`: a publication-only lane (OEM) whose
+publication would pass the receiver's record ceiling of 3 is not imported
+(`follow_stopped`, `stopped`); with the ceiling raised the catch-up imports
+it and the alert clears.
 
 `TestPublicationSubscriptionFileOrderRealDaemons`: with `follows.dss` not
 writable, an unsubscribe fails and both files still hold the lane; once
 writable, the unsubscribe holds across a restart.
 
-`TestPublicationDiskFloorRealDaemons` (macOS: the receiver's store is on a
-3 GB disk image of its own, filled to 16 MiB above the 1 GiB reserve; skipped
-elsewhere): a forced current-batch subscription of 20,000 records stops
-(`follow_stopped`) before its fetches by CID pass the reserve.
+`TestPublicationDiskFloorRealDaemons` (macOS: the receiver's storage path is
+a 3 GB disk image of its own, filled to 16 MiB above the 1 GiB reserve, and
+the directory holding it is not; skipped elsewhere): a forced current-batch
+subscription of 20,000 records stops (`follow_stopped`) before its fetches by
+CID pass the reserve.
 
 `TestPublicationStreamSlotsRealDaemons`: a producer serves a subscriber it
 does not trust 8 followed streams and refuses the ninth busy; listing the
