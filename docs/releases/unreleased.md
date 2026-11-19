@@ -101,8 +101,11 @@ the command says so. `apps run` follows its own run by id: when the node no
 longer knows it (a restart), the command says so and exits non-zero instead
 of reporting another run. Scripts use the same route:
 `POST .../schedules/<trigger-id>/run?detach=1`, then `GET ...?id=<id>`;
-`DELETE` cancels. The dashboard's Run now waits for the run as before; a
-page closed meanwhile no longer cancels it.
+`DELETE ...?id=<id>` cancels that run (404 when it is not the one running,
+so a cancel never ends another run), `DELETE` with no id cancels whichever
+runs. `apps run --cancel-on-interrupt` cancels its own run only. The
+dashboard's Run now waits for the run as before; a page closed meanwhile no
+longer cancels it.
 
 **A publication alert clears once later runs publish the failed batch's
 records.** A `publication_failed` alert of a batch cleared only when that
@@ -112,7 +115,25 @@ the node restarted. It now also clears when every record of the failed batch
 is in a completed publication of the lane, which is what a later run's
 publication carries when its pull returns those records again. While any
 record of the failed batch is in no publication, the alert stays and says
-how many. Only completed publications count: the windows a publication
-wrote before it failed partway are never taken for a publication of the
-batch, and the lane's retention releases them. The records are counted
-after the publication is reported, off its path, once per failed batch.
+how many. Only completed publications of a whole batch count, and only
+while the batch holds exactly what that publication exported: a batch that
+gained records after its publication (a batch stored in parts) counts for
+none of its records until it is published whole again. A publication of a
+head (a `limit`, or a publication of a lane with no batch and no chunk size)
+clears nothing. The windows a publication wrote before it failed partway
+are never taken for a publication of the batch and are not announced again
+by an announcement of existing publications. The records are counted after
+the publication is reported, off its path, once per failed batch, and at
+most 200,000 per batch and 400,000 per lane are followed (about 44 MB per
+lane); a batch beyond that keeps its alert until it is published whole.
+
+**Retention releases the windows of a failed publication.** Node 1.1.9
+adopted the windows a publication wrote before it failed (rows, pins and the
+announcements already sent) as a series of their batch at the lane's next
+completed publication, and kept them like any other series. They are now
+marked unfinished when written and never adopted, so the lane's retention
+(`publishing.retention` with `keep_series` set) retires their rows and unpins their shard, index
+and manifest CIDs at the lane's next completed publication, as it does for
+any row no series names. A subscriber that fetched such a window from its
+announcement keeps its copy; the producer no longer serves it once retention
+released it. Windows that 1.1.9 already adopted stay adopted.

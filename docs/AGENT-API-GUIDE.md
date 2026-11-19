@@ -301,7 +301,10 @@ escaped):
   `outputSize`); `404` when the schedule has none.
 - `DELETE` cancels the running manual run and answers its state once it ended
   (`status` `error`, `message` ending `context canceled (cancelled by the
-  operator)`), at most 30 s later; `409` when none runs.
+  operator)`), at most 30 s later; `409` when none runs. `DELETE ?id=<id>`
+  cancels that run only: `404` when it is not the one running (it ended, or
+  another run of the schedule runs), and nothing is cancelled. `apps run
+  --cancel-on-interrupt` cancels by id; `apps cancel` names no run.
 - `POST` without `detach` answers when the run ends. A client that leaves
   stops waiting; the run continues, and `GET` then reports it. When the node
   stops, the run is cancelled and the request is answered at once (its

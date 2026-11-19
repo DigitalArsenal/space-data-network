@@ -166,6 +166,27 @@ are, and retention lists no series made of the failed publication's rows; a
 publication of a batch carrying all three clears the alert, and the failed
 batch's records were counted once.
 
+`TestPublicationAlertBatchGainedRecordsRealDaemons` publishes a batch of two
+records, stores a third in it, and fails its republication at the third
+window's announcement (`SDN_E2E_PUBLICATION_FAULT=announce@3`); a second
+batch holding the third record fails too. The alert counts all three
+records of the first batch and the one of the second unpublished: the
+completed publication of the first batch exported two records, and the
+batch holds three. An announcement of the batch's existing publications
+announces the completed publication's window only. The publication of an
+unrelated batch leaves the alert with the same counts; a publication of the
+whole first batch clears it.
+
+`TestPublicationAlertHeadPublicationRealDaemons` fails a three-record batch's
+publication, then publishes a head of that batch (`limit: 1`) and a head of
+the lane (no batch): neither clears the alert. A publication of the whole
+batch clears it.
+
+`TestPublicationManualRunCancelByIDRealDaemons` starts a manual run, cancels
+it, and starts another. A cancel naming the first run answers 404 and the
+second keeps running; a cancel naming the second ends it, and `apps cancel`
+(no id) ends a third.
+
 `TestPublicationSlowFlowRealDaemons` runs the same flow by hand while a
 300,000-record publication of the same lane runs, on a node whose admin
 write timeout is 3 s (`SDN_ADMIN_WRITE_TIMEOUT`) and whose http-request

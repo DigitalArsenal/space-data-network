@@ -40,27 +40,45 @@ completion was recorded as a series of the lane. A publication that failed
 partway (at a later window's announcement, at recording its completion, or
 cut by a crash) completed nothing, whatever rows and announced windows it
 left: its windows are marked unfinished when written, never count as a
-publication of the batch, and the lane's retention releases them like any
-row no series names.
+publication of the batch, are not announced again by an announcement of
+existing publications (`announceExisting`), and the lane's retention
+releases them like any row no series names (the mark goes with the row).
+Node 1.1.9 adopted such windows as a series of their batch and kept them;
+retention now unpins them.
 
 It clears when nothing that failed is still unpublished:
 
-- the failed batch itself, or the whole lane (a publication with no batch),
-  is published with at least one record; or
-- every record of the failed batch is in a completed publication of the lane.
-  This is how a later scheduled run clears it: a pull that returns a record
-  again tags it to the later batch, and that batch's publication carries it.
+- a publication of every record of the failed batch (or, for a failed
+  publication with no batch, of every record of the lane: no batch, no
+  `limit`, a `chunkSize` or `fullCatalog`) completes with at least one
+  record, and it read the lane after the failed publication did; or
+- every record of the failed batch is in a completed publication of the lane
+  that exported its batch as the store holds it now. This is how a later
+  scheduled run clears it: a pull that returns a record again tags it to the
+  later batch, and that batch's publication carries it.
+
+A publication of a head clears nothing: one with a `limit`, or one of a lane
+with no batch and no chunk size (the lane's newest records). It exported
+only some of the scope's records.
 
 Which records are published is worked out after the publication was reported
 done, off the publication's path, one job at a time, on work the node's stop
 cancels. When a batch fails, its records are counted once: one read of the
 batch's record list and of their tags, a page of 2,048 at a time. A record
-counts as published when it is tagged to a batch with a completed
-publication of its whole batch. The records found unpublished (at most
-200,000 per batch; a batch with more keeps its alert until the batch or the
-lane is published) are kept in memory, and after each completed publication
-of a whole batch of the lane the published batch's record list (no tags) is
-read once and its records are taken off them. The alert says
+counts as published when it is tagged to a batch whose completed publication
+of its whole batch exported the batch as it is now: the fingerprint of the
+batch's records equals that publication's. A batch stored in parts that
+gained records after its publication counts for none of its records until it
+is published whole again. The count fingerprints each batch that tags one of
+the records and has a completed publication, once. When no record is left
+unpublished, the batch is published and its scope goes. The records found
+unpublished are kept in memory, at most 200,000 per batch and 400,000 per
+lane (about 110 bytes each: at most about 44 MB per lane); a batch beyond
+either bound is not followed and keeps its alert until a publication of the
+whole batch completes. After each completed publication of a whole batch of
+the lane, the published batch's record list (no tags) is read once, then the
+batch is fingerprinted, and only when it still holds what that publication
+exported are its records taken off the followed ones. The alert says
 `(its records are being counted)` until the first count ends.
 
 A record of the failed batch that no later pull returned (an element set its
