@@ -498,10 +498,11 @@ jobs:
         with:
           submodules: recursive
       # The CelesTrak GP ingest flow of TestPublicationFailureRealDaemons and
-      # TestPublicationSlowFlowRealDaemons, from the public modules repository.
+      # TestPublicationSlowFlowRealDaemons, from the modules repository (private).
       - uses: ./.github/actions/sdn-go-env
         with:
           needs-modules: 'true'
+          modules-ssh-key: ${{ secrets.MODULES_REPO_DEPLOY_KEY }}
           needs-flow-bundles: 'false'
       - name: Publication between real daemons
         run: ./scripts/ci-local.sh publication
