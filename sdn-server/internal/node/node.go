@@ -4155,8 +4155,11 @@ func (n *Node) materializeDatasetPublicationPNMInner(ctx context.Context, schema
 				// A lane whose followed stream is connected receives the
 				// publication's records on the stream, in sequence: its
 				// shard is not fetched and imported a second time. A lane
-				// whose stream the producer refuses imports here.
-				if n.followStreaming(from, laneSchema, providerID, sourceName) {
+				// whose stream the producer refuses imports here, and so does
+				// an archive-all lane, whose rule keeps each publication's
+				// DAG (its records are stored once by content address).
+				if n.followStreaming(from, laneSchema, providerID, sourceName) &&
+					n.laneRetentionRule(laneSchema, providerID, sourceName) != channels.RetentionArchiveAll {
 					key := "streamed|" + from.String() + "|" + laneSchema + "|" + providerID + "|" + sourceName
 					if _, seen := unsubscribedLaneLog.LoadOrStore(key, true); !seen {
 						log.Infof("Not fetching the publications of %s %s/%s from %s: their records arrive on the followed stream", laneSchema, providerID, sourceName, from.ShortString())

@@ -28,7 +28,7 @@ whose config carries `peers.trusted_import` refuses to start.
   whatever its trust of the sender or `network.accept_push_from`. Signed
   `$PNM` announcements (node identity, dataset publications) are unchanged.
 - A lane whose followed stream is connected no longer fetches its
-  publications' shards as well; a lane whose stream the producer refuses
+  publications' shards as well (an `archive-all` lane still keeps them); a lane whose stream the producer refuses
   imports through them.
 - A producer serves a peer it does not trust at most 8 followed streams
   (64 for all such peers); a node following more lanes of one producer is

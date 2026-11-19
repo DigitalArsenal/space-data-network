@@ -15,7 +15,8 @@ announcements, the five-minute catch-up of published shards and
 still imports, but only for a lane this node subscribes to from that peer,
 and only while the lane's followed stream is not connected: a lane whose
 stream is connected receives the publication's records on the stream, and
-its shard is not fetched again. A lane whose stream the producer refuses (a
+its shard is not fetched again (except under `archive-all`, which keeps each
+publication's DAG). A lane whose stream the producer refuses (a
 standard off its public read surface, such as `CNP` or `IQC`, to a peer it
 grants no private reads) imports through its publications.
 
