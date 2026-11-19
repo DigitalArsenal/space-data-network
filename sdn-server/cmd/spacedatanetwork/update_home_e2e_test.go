@@ -554,7 +554,7 @@ func versionOf(b realBuild, name, version, id string, seq int64) realBuild {
 func runRealHomeUpdate(t *testing.T) {
 	builds := realE2EBuilds(t, filepath.Join(t.TempDir(), "builds"))
 	v1, v2, v3 := builds[0], builds[1], builds[2]
-	hang, hangNoTimer, crash := realE2EHangBuilds(t, filepath.Join(t.TempDir(), "hang-builds"))
+	hang, hangNoTimer, crash, crashMidApply, crashMidPass := realE2EHangBuilds(t, filepath.Join(t.TempDir(), "hang-builds"))
 
 	t.Run("signals", func(t *testing.T) {
 		n := newHomeNode(t, "node", v1)
@@ -992,19 +992,106 @@ func runRealHomeUpdate(t *testing.T) {
 		n.sameProcess(t)
 		n.noHelperNoWrite(t, v1)
 	})
+
+	t.Run("crash-mid-apply", func(t *testing.T) {
+		// The installed build v8 is killed in the middle of a home install of
+		// v2, after the state write and before trial.json: the next start
+		// still runs v2 as a trial, and v2 passes it.
+		n := newHomeNode(t, "node", crashMidApply)
+		n.loop.stop(t)
+		n.stopped = true
+		n.publish(t, v2)
+		text, err := n.typed(t, "install-crash-mid-apply", "update", "install")
+		if err == nil {
+			t.Fatalf("the v8 install was not killed mid-apply:\n%s", text)
+		}
+		state, serr := update.LoadState(n.paths())
+		if serr != nil || state.UpdateID != v2.updateID || state.TrialUpdateID != v2.updateID {
+			t.Fatalf("after the kill the state is %+v (%v), want v2 marked on trial:\n%s", state, serr, text)
+		}
+		if trial, terr := update.ReadTrial(n.paths()); trial != nil || terr != nil {
+			t.Fatalf("trial.json exists after a kill before it was written: %+v (%v)", trial, terr)
+		}
+		n.loop = startRestartLoop(t, n.d)
+		n.wantStarts = 1
+		n.stopped = false
+		n.waitFor(t, "v2 to pass its trial after the interrupted install", n.boot+time.Duration(n.health)*time.Second, func() bool {
+			return pushIdentityMatches(n.d.adminBase, v2) && ledgerHasIfPresent(n.homeRoot, v2.updateID, "health-passed")
+		})
+		if !strings.Contains(n.d.logs(), "its trial record was not written") {
+			t.Fatalf("the start did not say it restored v2's trial:\n%s", tailString(n.d.logs(), 40))
+		}
+		if got := n.countLogs("update: this process runs update " + v2.updateID + " as a trial"); got != 1 {
+			t.Fatalf("v2 ran as a trial %d times, want 1", got)
+		}
+		n.noHelperNoWrite(t, crashMidApply)
+	})
+
+	t.Run("crash-mid-pass", func(t *testing.T) {
+		// v15 is killed in the middle of passing its own trial, after
+		// PassTrial's state write and before trial.json is removed. The
+		// supervisor starts the installed path again: the start finishes the
+		// pass, and v15 runs, not as a trial again (a trial run again could
+		// roll a good build back on a slow start).
+		n := newHomeNode(t, "node", v1)
+		n.announce(t, crashMidPass)
+		killed := "this build is killed after the state write of its trial pass"
+		n.waitFor(t, "v15 killed in the middle of its pass", n.boot+time.Duration(n.health)*time.Second, func() bool {
+			return n.countLogs(killed) == 1
+		})
+		n.wantStarts++
+		n.waitFor(t, "v15 serving after the supervisor's restart", n.boot+time.Duration(n.health)*time.Second, func() bool {
+			starts, pid := n.loop.state()
+			if starts == n.wantStarts && pid != n.pid {
+				n.pid = pid
+			}
+			return starts == n.wantStarts && pushIdentityMatches(n.d.adminBase, crashMidPass)
+		})
+		if !strings.Contains(n.d.logs(), "update "+crashMidPass.updateID+" passed its trial (the pass stopped after its state write)") {
+			t.Errorf("the start did not say it finished v15's pass:\n%s", tailString(n.d.logs(), 40))
+		}
+		if got := n.countLogs("update: this process runs update " + crashMidPass.updateID + " as a trial"); got != 1 {
+			t.Errorf("v15 ran as a trial %d times, want 1 (the pass was decided before the kill)", got)
+		}
+		passed := 0
+		for _, e := range readLedger(t, n.homeRoot) {
+			if e.UpdateID != crashMidPass.updateID {
+				continue
+			}
+			switch e.Action {
+			case "health-passed":
+				passed++
+			case "health-failed", "health-reverted", "revert-refused":
+				t.Errorf("v15 has %s in its ledger: %v", e.Action, ledgerActionsIfPresent(n.homeRoot))
+			}
+		}
+		if passed != 1 {
+			t.Errorf("v15 has %d health-passed lines, want 1: %v", passed, ledgerActionsIfPresent(n.homeRoot))
+		}
+		if trial, err := update.ReadTrial(n.paths()); trial != nil || err != nil {
+			t.Errorf("trial.json is still there after the pass was finished: %+v (%v)", trial, err)
+		}
+		if state, err := update.LoadState(n.paths()); err != nil || state.TrialUpdateID != "" || state.TrialPassed != crashMidPass.updateID {
+			t.Errorf("state after the finished pass: %+v (%v), want no trial mark and trial_passed %s", state, err, crashMidPass.updateID)
+		}
+		requireRealIdentity(t, n.d.adminBase, crashMidPass)
+		n.noHelperNoWrite(t, v1)
+	})
 }
 
 // realE2EHangBuilds are v6 (blocks before its store opens), v7 (the same,
 // with no trial deadline timer) and v11 (exits with an error at start),
 // prebuilt beside the other fixtures or built here.
-func realE2EHangBuilds(t *testing.T, dir string) (realBuild, realBuild, realBuild) {
+func realE2EHangBuilds(t *testing.T, dir string) (realBuild, realBuild, realBuild, realBuild, realBuild) {
 	t.Helper()
 	builds := []realBuild{
 		{name: "v6", version: "1.1.2-e2e.6", updateID: "cli-bundle-release-e2e-6", sequence: 600},
 		{name: "v7", version: "1.1.2-e2e.7", updateID: "cli-bundle-release-e2e-7", sequence: 700},
 		{name: "v11", version: "1.1.2-e2e.11", updateID: "cli-bundle-release-e2e-11", sequence: 1100},
+		{name: "v8", version: "1.1.2-e2e.8", updateID: "cli-bundle-release-e2e-8", sequence: 80},
+		{name: "v15", version: "1.1.2-e2e.15", updateID: "cli-bundle-release-e2e-15", sequence: 150},
 	}
-	tags := map[string]string{"v6": "sdn_e2e_hang_before_store", "v7": "sdn_e2e_hang_before_store,sdn_e2e_no_trial_timer", "v11": "sdn_e2e_crash_at_start"}
+	tags := map[string]string{"v6": "sdn_e2e_hang_before_store", "v7": "sdn_e2e_hang_before_store,sdn_e2e_no_trial_timer", "v11": "sdn_e2e_crash_at_start", "v8": "sdn_e2e_crash_mid_apply", "v15": "sdn_e2e_crash_mid_pass"}
 	prebuilt := strings.TrimSpace(os.Getenv(realE2EBinDirEnv))
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
@@ -1032,7 +1119,7 @@ func realE2EHangBuilds(t *testing.T, dir string) (realBuild, realBuild, realBuil
 			t.Fatalf("no %s build at %s", b.name, b.path)
 		}
 	}
-	return builds[0], builds[1], builds[2]
+	return builds[0], builds[1], builds[2], builds[3], builds[4]
 }
 
 func ledgerHasAction(root, action string) bool {

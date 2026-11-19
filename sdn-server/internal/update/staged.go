@@ -84,6 +84,19 @@ type State struct {
 	// compiled-in roots: a rotation may have dropped one of those, and losing
 	// the file must not bring it back (LoadTrustRoots).
 	TrustRootsFrom string `json:"trust_roots_from,omitempty"`
+
+	// TrialUpdateID is set by a home install to the update it installs: the
+	// build is on trial until the ledger records health-passed or
+	// health-reverted for it. It is written in the same state write that
+	// names the build, so a crash before updates/trial.json is written still
+	// leaves the build on trial (the start check writes the missing record).
+	TrialUpdateID string `json:"trial_update_id,omitempty"`
+	// TrialPassed names the update whose trial passed. PassTrial writes it,
+	// and clears TrialUpdateID, in one state write before it removes
+	// updates/trial.json: that write is what "passed" means, so a stop
+	// between the steps never runs the passed build as a trial again
+	// (ChooseHomeBuild finishes the pass instead).
+	TrialPassed string `json:"trial_passed,omitempty"`
 }
 
 type StatePrevious struct {

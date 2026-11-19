@@ -27,7 +27,14 @@ func run(args []string) error {
 	dir := flags.String("feed-dir", "", "update feed directory")
 	rootsPath := flags.String("roots", "", "trusted update roots file")
 	verifyOnly := flags.Bool("verify-only", false, "verify the signals without signing")
+	rolloutWindow := flags.Int64("rollout-window-seconds", -1, "sign this rollout window into every signal (0 acts at once; unset leaves each node's update.rollout_window_seconds)")
 	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	given := false
+	flags.Visit(func(f *flag.Flag) { given = given || f.Name == "rollout-window-seconds" })
+	window, err := update.SignedRolloutWindow(given, *rolloutWindow)
+	if err != nil {
 		return err
 	}
 	if flags.NArg() != 0 {
@@ -48,7 +55,7 @@ func run(args []string) error {
 		if err != nil {
 			return err
 		}
-		if err := update.SignFeedSignals(*dir, key, roots); err != nil {
+		if err := update.SignFeedSignals(*dir, key, roots, window); err != nil {
 			return err
 		}
 	}

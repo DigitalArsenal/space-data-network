@@ -69,14 +69,17 @@ var updateCheckCmd = &cobra.Command{
 			fmt.Fprintf(out, "update_signal_enabled=%t\n", cfg.Update.Enabled)
 			fmt.Fprintf(out, "update_signal_topic=%s\n", topic)
 			fmt.Fprintf(out, "update_health_timeout=%s\n", cfg.Update.HealthTimeout())
+			fmt.Fprintf(out, "update_rollout_window=%s\n", cfg.Update.RolloutWindow())
 		}
 		if layout.Root != "" {
-			if inventory, err := update.Inventory(update.PathsFor(layout.Root)); err == nil {
+			paths := update.PathsFor(layout.Root)
+			if inventory, err := update.Inventory(paths); err == nil {
 				fmt.Fprintf(out, "rollback_slots=%d/%d\n", len(inventory.Slots), inventory.Limit)
 				for _, slot := range inventory.Missing {
 					fmt.Fprintf(out, "rollback_slot_missing=%s\n", slot.UpdateID)
 				}
 			}
+			writeUpdateRolloutState(out, paths)
 		}
 
 		staged, available := scanStagedForCheck()
@@ -690,10 +693,18 @@ func prepareUpdateHelper(paths update.Paths, updateID string, token string, stor
 		source = resolved
 	}
 	cfg, _ := mustLoadResolved(configPath)
+	// The daemon's own certificate, when the config is the running daemon's
+	// (the same anchor the probe above used): the helper then verifies the
+	// daemon with it instead of resolving a config of its own.
+	adminCA := ""
+	if _, res, err := config.LoadResolved(configPath); err == nil && res.IsOwnDaemonConfig() && cfg.Admin.EffectiveTLSMode() != "disabled" {
+		adminCA = daemonCertPath(cfg)
+	}
 	return update.PrepareHelperPlan(update.HelperPlanOptions{
 		Paths:            paths,
 		SourceExecutable: source,
 		UpdateID:         updateID,
+		AdminCAFile:      adminCA,
 		AdminURL:         adminURL(cfg),
 		Token:            token,
 		RestartArgv:      nil,

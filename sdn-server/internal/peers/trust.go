@@ -1377,6 +1377,16 @@ func (r *Registry) RecordConnection(id peer.ID) {
 	})
 }
 
+// RecordSeen records that a peer is seen now: on a live connection, or
+// through a message it authored. A connection is recorded once, when it is
+// upgraded (RecordConnection), so a peer on one long-lived connection needs
+// this to keep its last-seen time current.
+func (r *Registry) RecordSeen(id peer.ID) {
+	r.UpdateStats(id, func(tp *TrustedPeer) {
+		tp.LastSeen = time.Now()
+	})
+}
+
 // RecordMessage records a message event for a peer.
 func (r *Registry) RecordMessage(id peer.ID, sent bool, bytes int64) {
 	r.UpdateStats(id, func(tp *TrustedPeer) {

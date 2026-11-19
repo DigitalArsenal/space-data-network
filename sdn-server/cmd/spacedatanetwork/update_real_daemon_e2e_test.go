@@ -115,12 +115,17 @@ func TestUpdateChannelRealDaemonE2E(t *testing.T) {
 	builds := realE2EBuilds(t, filepath.Join(t.TempDir(), "builds"))
 	t.Setenv(realE2EBinDirEnv, filepath.Dir(builds[0].path))
 	t.Run("feed-recovery", runRealFeedRecovery)
-	t.Run("installed-v1.1.5-push", func(t *testing.T) {
+	t.Run("installed-v1.1.9-push", func(t *testing.T) {
 		if os.Getenv("SDN_E2E_INSTALLED_BUNDLE") == "" {
-			t.Fatal("SDN_E2E_INSTALLED_BUNDLE must name the published 1.1.5 archive; installed receiver proof cannot run")
+			t.Fatal("SDN_E2E_INSTALLED_BUNDLE must name the published 1.1.9 archive; installed receiver proof cannot run")
 		}
 		runRealPushChannelReceiver(t, true)
 	})
+	t.Run("rollout-fleet", runRealRolloutFleet)
+	t.Run("config-flag-tls", runRealConfigFlagTLS)
+	t.Run("fleet-status-guard", runRealFleetStatusGuard)
+	t.Run("rollout-signals", runRealRolloutSignals)
+	t.Run("rollout-races", runRealRolloutRaces)
 	t.Run("pull", func(t *testing.T) { runRealDaemonUpdateChannel(t, installThroughCLI) })
 	t.Run("push-catchup-withdrawal-validation", runRealPushChannel)
 	t.Run("home-read-only-install", runRealHomeUpdate)
@@ -452,7 +457,9 @@ func writeRealDaemonConfig(t *testing.T, path, store string, adminPort, kuboPort
 		// No --health-timeout is passed: `update install` must hand the helper
 		// this budget (installHealthTimeout). requireHelperHealthBudget checks
 		// the helper's argv, requireGateWaited how long v3's gate waited.
-		"update:", "  enabled: true", fmt.Sprintf("  health_timeout_seconds: %d", healthSeconds),
+		// rollout_window_seconds 0: these nodes act on an update at once;
+		// the rollout subtest sets its own window.
+		"update:", "  enabled: true", fmt.Sprintf("  health_timeout_seconds: %d", healthSeconds), "  rollout_window_seconds: 0",
 		"",
 	}
 	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o600); err != nil {
@@ -1024,11 +1031,11 @@ func runRealPushChannelReceiver(t *testing.T, installed bool) {
 	if installed {
 		archive := os.Getenv("SDN_E2E_INSTALLED_BUNDLE")
 		expected := map[string]string{
-			"amd64": "f0d18ef21455bc7dfcd9f1da791420bf838d4a3ae1522c22143143993d48cd8c",
-			"arm64": "f0e4623d496f540536fe43c881b203f474b4b72e622a7613f8ac765a9cc24925",
+			"amd64": "45127438512c09be90a26991c8463401e596af89eae98a66da96c95c1f253e07",
+			"arm64": "b585921e0eca17670833291eec6aba3969160a72eb796cf255553e7ae08cc516",
 		}[runtime.GOARCH]
 		if expected == "" || e2eFileSHA256(archive) != expected {
-			t.Fatal("published 1.1.5 archive does not match its pinned release checksum")
+			t.Fatal("published 1.1.9 archive does not match its pinned release checksum")
 		}
 		installedBundle = filepath.Join(work, "published")
 		if err := os.MkdirAll(installedBundle, 0o755); err != nil {
@@ -1037,7 +1044,7 @@ func runRealPushChannelReceiver(t *testing.T, installed bool) {
 		if output, err := exec.Command("tar", "-xzf", archive, "-C", installedBundle, "--strip-components=1").CombinedOutput(); err != nil {
 			t.Fatalf("extract verified published archive: %v %s", err, output)
 		}
-		t.Logf("published 1.1.5 linux-%s archive verified sha256=%s", runtime.GOARCH, expected)
+		t.Logf("published 1.1.9 linux-%s archive verified sha256=%s", runtime.GOARCH, expected)
 		v2.template = installedBundle
 	}
 	v4.name, v4.version, v4.updateID, v4.sequence = "v4", "1.1.2-e2e.4", "cli-bundle-release-e2e-4", 400
@@ -1105,8 +1112,8 @@ func runRealPushChannelReceiver(t *testing.T, installed bool) {
 		if err := json.Unmarshal(raw, &manifest); err != nil {
 			t.Fatal(err)
 		}
-		if manifest["version"] != "1.1.5" {
-			t.Fatal("receiver bundle is not published 1.1.5")
+		if manifest["version"] != "1.1.9" {
+			t.Fatal("receiver bundle is not published 1.1.9")
 		}
 		manifest["update"].(map[string]any)["feedBaseUrl"] = feed.base
 		writeE2EJSON(t, filepath.Join(b.paths.Root, "manifest.json"), manifest)
@@ -1115,7 +1122,7 @@ func runRealPushChannelReceiver(t *testing.T, installed bool) {
 		if e2eFileSHA256(original) != e2eFileSHA256(filepath.Join(b.paths.Root, "runtime", "sdn", "spacedatanetwork")) {
 			t.Fatal("published executable changed")
 		}
-		t.Logf("receiver is unmodified published 1.1.5 executable sha256=%s", e2eFileSHA256(original))
+		t.Logf("receiver is unmodified published 1.1.9 executable sha256=%s", e2eFileSHA256(original))
 	}
 	aInfo := pushPeer(t, a.adminBase)
 	b.configure(t, func(cfg *config.Config) {
@@ -1160,8 +1167,13 @@ func runRealPushChannelReceiver(t *testing.T, installed bool) {
 	publish := func(v realBuild) []byte {
 		feed.publish(t, v, key)
 		// The release workflow's signer, with the key in its environment.
-		runSignalPipelineEnv(t, signer, work, "sign-"+v.name, []string{"SDN_UPDATE_SIGNING_KEY_PEM=" + string(keyPEM)},
-			"--key-env", "SDN_UPDATE_SIGNING_KEY_PEM", "--roots", rootsPath, "--feed-dir", feed.dir)
+		signArgs := []string{"--key-env", "SDN_UPDATE_SIGNING_KEY_PEM", "--roots", rootsPath, "--feed-dir", feed.dir}
+		if installed {
+			// A field the published receiver does not know, under the
+			// signature: it must verify the signal and act on it at once.
+			signArgs = append(signArgs, "--rollout-window-seconds", "600")
+		}
+		runSignalPipelineEnv(t, signer, work, "sign-"+v.name, []string{"SDN_UPDATE_SIGNING_KEY_PEM=" + string(keyPEM)}, signArgs...)
 		runSignalPipelineEnv(t, signer, work, "verify-"+v.name, nil, "--verify-only", "--roots", rootsPath, "--feed-dir", feed.dir)
 		raw, err := os.ReadFile(signalPath(v))
 		if err != nil {
@@ -1236,7 +1248,7 @@ func runRealPushChannelReceiver(t *testing.T, installed bool) {
 			t.Fatal(err)
 		}
 		messageCtx, messageCancel := context.WithTimeout(ctx, 30*time.Second)
-		_, err = subscription.Next(messageCtx)
+		_, err = nextUpdateSignal(messageCtx, subscription)
 		messageCancel()
 		if err != nil {
 			t.Fatal(err)
@@ -1247,7 +1259,7 @@ func runRealPushChannelReceiver(t *testing.T, installed bool) {
 	// The local publisher's identity is absent from its release trust roots.
 	a.command(t, true, "local-node-signed", "update", "signal", "--channel", realE2EChannel, "--version", v2.version)
 	localCtx, localCancel := context.WithTimeout(ctx, 30*time.Second)
-	localMessage, localErr := subscription.Next(localCtx)
+	localMessage, localErr := nextUpdateSignal(localCtx, subscription)
 	localCancel()
 	if localErr != nil {
 		t.Fatalf("node-signed publish was not delivered: %v", localErr)
@@ -1287,7 +1299,7 @@ func runRealPushChannelReceiver(t *testing.T, installed bool) {
 		close(releaseFeedCheck)
 	}
 	messageCtx, messageCancel := context.WithTimeout(ctx, 30*time.Second)
-	message, err := subscription.Next(messageCtx)
+	message, err := nextUpdateSignal(messageCtx, subscription)
 	messageCancel()
 	if err != nil || !bytes.Equal(message.Data, v2signal) {
 		t.Fatalf("published signal bytes changed: %v", err)
@@ -1302,7 +1314,8 @@ func runRealPushChannelReceiver(t *testing.T, installed bool) {
 		t.Fatal("push changed the peer identity")
 	}
 	if installed {
-		t.Log("published 1.1.5 receiver installed branch payload from pipeline-style push")
+		t.Log("published 1.1.9 receiver installed branch payload from pipeline-style push")
+		requirePublishedReceiverIgnoredNewMessages(t, v2signal, aInfo.ID, b.logPaths[0])
 		return
 	}
 
@@ -1785,7 +1798,7 @@ func runRealPushChannelReceiver(t *testing.T, installed bool) {
 		}
 	}
 	noRelayCtx, noRelayCancel := context.WithTimeout(ctx, 5*time.Second)
-	relayed, relayErr := observerSub.Next(noRelayCtx)
+	relayed, relayErr := nextUpdateSignal(noRelayCtx, observerSub)
 	noRelayCancel()
 	if relayErr == nil {
 		t.Fatalf("rejected gossip relayed downstream: %d bytes", len(relayed.Data))
@@ -1805,7 +1818,7 @@ func runRealPushChannelReceiver(t *testing.T, installed bool) {
 		t.Fatal(err)
 	}
 	relayCtx, relayCancel := context.WithTimeout(ctx, 30*time.Second)
-	relayed, relayErr = observerSub.Next(relayCtx)
+	relayed, relayErr = nextUpdateSignal(relayCtx, observerSub)
 	relayCancel()
 	if relayErr != nil || !bytes.Equal(relayed.Data, signed) {
 		t.Fatalf("valid relay control failed: %v", relayErr)
@@ -1893,7 +1906,16 @@ func (d *pushDaemon) start(t *testing.T, budget time.Duration) {
 	d.tracker.add(cmd.Process.Pid)
 	exited := make(chan struct{})
 	d.exited = exited
-	go func() { _ = cmd.Wait(); close(exited) }()
+	go func() {
+		err := cmd.Wait()
+		// Said in the daemon's own log, so a daemon that died (killed by
+		// the kernel, a crash) is told apart from one that hung.
+		if f, ferr := os.OpenFile(name, os.O_APPEND|os.O_WRONLY, 0); ferr == nil {
+			fmt.Fprintf(f, "e2e: daemon pid %d exited: %v (%s)\n", cmd.Process.Pid, err, cmd.ProcessState)
+			f.Close()
+		}
+		close(exited)
+	}()
 	waitRealReady(t, d.adminBase, budget, name)
 }
 

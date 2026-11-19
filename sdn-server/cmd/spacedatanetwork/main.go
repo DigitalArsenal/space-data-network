@@ -345,6 +345,9 @@ func runStatus(cmd *cobra.Command) error {
 	if err := writeStoreStatus(out, cfg.Storage.Path); err != nil {
 		fmt.Fprintf(out, "store_status_error=%v\n", err)
 	}
+	if layout := bundle.ResolveCurrent(); layout.Root != "" {
+		writeUpdateRolloutState(out, sdnupdate.PathsFor(layout.Root))
+	}
 	return writeDaemonStatus(cmd.Context(), out, baseURL)
 }
 
@@ -1902,6 +1905,9 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			// using /api/peers and /api/auth/users.
 			adminMux.HandleFunc("/api/accounts", handleAccounts(n, func() *auth.Handler { return authHandler }))
 			adminMux.HandleFunc("/api/peers/sdn", handleObservedSDNPeers(n))
+			// The fleet version view: every known SDN node's version and
+			// update state (`spacedatanetwork update fleet`).
+			adminMux.HandleFunc("/api/peers/versions", handleUpdateFleet(n))
 			adminMux.HandleFunc("/api/peers/graph", handlePeerGraph(n))
 			adminMux.HandleFunc("/api/peers/graph/schema", handlePeerGraphSchema)
 
