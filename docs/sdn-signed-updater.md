@@ -556,7 +556,7 @@ production key replaces it through a release that carries `trust_roots`.
 
 - **Rollout window.** A node acts on an update it accepted (a signal that
   passed every check above, or a feed-check find) at its own time within
-  `update.rollout_window_seconds` (default 600; `0` acts at once; at most
+  `update.rollout_window_seconds` (default 1800; `0` acts at once; at most
   86400): the time it accepted the update plus `window x (first 8 bytes of
   sha256("SDN-UPDATE-ROLLOUT-V1" 0x00 peer-id 0x00 update-id)) / 2^64`,
   in whole seconds (`update.RolloutDelay`). It writes the accepted time, the
@@ -566,11 +566,19 @@ production key replaces it through a release that carries `trust_roots`.
   feed-check find makes the first feed check run at its due time. On a
   restart the remaining wait is capped at the window, so a clock that was
   ahead when the update was accepted and was corrected since cannot stretch
-  the wait to days. A pending signal that no longer verifies at the start
+  the wait to days; while the node runs, the wait ends at the latest one
+  window after it began on the monotonic clock, so a wall clock set back
+  during the wait does not stretch it either. A pending signal that no longer verifies at the start
   (it expired while the node was down) is cleared with a warning, and the
   node checks its feed at once. After the wait the node reads its state again
-  and does nothing if the update is already installed. `update install` typed
-  by an operator never waits. A UI package is not delayed (nothing restarts).
+  and does nothing if the update is already installed. A pending record of an
+  update the node refuses (quarantined in `updates/failed/`, for example
+  after a typed install of it was rolled back, or a declared rollback) is
+  cleared, so the node never reports a wait it is not in. `update install`
+  typed by an operator never waits. A UI package is not delayed (nothing
+  restarts); UI packages install one at a time, each checked again against
+  the package installed when its turn comes, so the node never ends on an
+  older package than one it installed.
   The log line is `Update <id> (version <v>) accepted at <t>; this node acts
   on it at <due> (rollout window <w>s from config|signal, this node's delay
   <d>s)`; `update check` and `status` print `update_pending=<id> version=...
@@ -580,7 +588,10 @@ production key replaces it through a release that carries `trust_roots`.
   sequence that arrives while the node waits for an older update ends that
   wait: the newer update is handled under its own window (a window of 0 acts
   at once) and replaces `updates/pending.json`; the older update is not
-  installed. This holds for a wait on a feed-check find too.
+  installed. This holds for a wait on a feed-check find too. A signal of an
+  older release that arrives during a wait is not kept, and is never
+  installed after the newer release's attempt (whether that attempt
+  succeeds or fails).
 - **Withdrawn during the wait.** At the due time the node reads its feed
   index again. An update the index no longer lists (withdrawn, even with its
   manifest left in place) is not installed, and its pending record is
@@ -592,7 +603,10 @@ production key replaces it through a release that carries `trust_roots`.
   `spacedatanetwork update sign-signals --rollout-window-seconds N` sign it
   into every signal of a feed; without the flag no window is signed. The
   release workflow signs every release's signals with its
-  `rollout_window_seconds` input (default 300). The signature covers the
+  `rollout_window_seconds` input (default 1800). The workflow's first job
+  refuses a value that is not a whole number from 0 to 86400, before anything
+  is built or signed, and both signers refuse a given flag outside 0..86400
+  (a negative value is an error, not "no window"). The signature covers the
   canonical form of the signal as published, unknown fields included, and
   older nodes decode a signal into a structure that ignores fields it does
   not name, so a node of 1.1.9 or earlier verifies such a signal and acts on
@@ -615,11 +629,12 @@ production key replaces it through a release that carries `trust_roots`.
   that reaches the publisher only through other nodes gets the release from
   its own feed check.
 - **Not coordinated.** Each node's delay is its own, and the delays of two
-  nodes are independent: they can be down at the same time. For two nodes
-  that are each down for five minutes, the chance that they overlap is about
-  one push in six with a 60-minute window, three in four with the 10-minute
-  default, and every push with a window of five minutes or less. Nodes do not
-  agree a schedule among themselves.
+  nodes are independent and spread evenly over the window W: two nodes that
+  are each down for D seconds overlap with probability 1-(1-D/W)² (D < W).
+  For five-minute restarts that is about 31% with the 30-minute default, 16%
+  with 60 minutes, 75% with 10 minutes, and every push with a window of five
+  minutes or less. Nodes do not agree a schedule among themselves; where two
+  hosts must not be down together, install on one by hand first (below).
 - **Pacing a push.** The publisher sets the pace of each release: the
   workflow's `rollout_window_seconds` input (or the signer's flag) is signed
   into the release's signals and replaces every receiving node's setting. A
@@ -660,9 +675,18 @@ production key replaces it through a release that carries `trust_roots`.
   `:` in update ids) and length, times in RFC 3339, `state` and
   `reason_code` from their lists, and the message at most 2 KiB. Fields this
   release does not know are ignored: never stored, never shown. A node keeps
-  at most 512 statuses, the newest per peer; a status no newer than the one
-  it holds changes nothing (a replayed status does not make a node look
-  recently seen), and a status not renewed for 30 minutes is dropped. Nodes
+  the newest status per peer; a status no newer than the one it holds
+  changes nothing (a replayed status does not make a node look recently
+  seen), and a status not renewed for 30 minutes is dropped. The agent string
+  is the peer's own claim, so the bounds apply to peers known only by it: the
+  rate table admits at most 1,024 such authors active within a minute, and a
+  node holds at most 512 of their statuses; once it holds 512, a status from
+  a new such author is not kept, and the statuses held stay until they
+  expire. A peer this node has reason to trust is outside both bounds: a pin
+  (a `peers.trusted_peers` entry is one), a `network.bootstrap` peer, a
+  peer its registry trusts, and a peer whose status it already holds. So a
+  flood of new identities cannot remove the nodes a node already shows, or
+  keep their next statuses out. Nodes
   of 1.1.9 and earlier accept only signals on this topic: their validator
   rejects a status, so it is neither delivered to them nor relayed by them,
   and with no peer scoring in their pub/sub router the rejection costs the

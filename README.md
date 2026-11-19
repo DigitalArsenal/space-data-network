@@ -219,16 +219,18 @@ spacedatanetwork update rollback --reason "<why>"   # with the daemon stopped
   was off when a release was announced still takes it. `update.enabled: false`
   in a node's config turns both off for that node.
 - **Spread over a window, not coordinated.** A node acts on an update at
-  its own time within `update.rollout_window_seconds` (default ten minutes;
+  its own time within `update.rollout_window_seconds` (default 30 minutes;
   `0` acts at once), fixed by its peer id and the update id and kept across a
   restart; `update check` shows `update_pending=... due_at=...` while it
   waits, and `update install` installs at once. A release's signal carries
   the window its publisher chose (the release workflow's
-  `rollout_window_seconds`, default five minutes), which replaces the
-  setting; a node that finds the release by its feed check uses its own. The
-  delays of two nodes are independent, so they can be down together: a wider
-  window makes that rarer. Nodes of 1.1.9 and earlier act at once unless
-  their own `update.max_delay_seconds` is set.
+  `rollout_window_seconds`, default 30 minutes), which replaces the setting;
+  a node that finds the release by its feed check uses its own. The delays of
+  two nodes are independent, so they can be down together: two nodes that
+  each restart in five minutes overlap about 31% of the time with the
+  30-minute window. Where two hosts must not be down together, install on
+  one by hand first (`update install`). Nodes of 1.1.9 and earlier act at
+  once unless their own `update.max_delay_seconds` is set.
 - **The fleet view.** Each node publishes its own version and update state,
   signed, on its update topic (`update.publish_status: false` turns that
   off); `update fleet` (and the admin route `GET /api/peers/versions`) shows

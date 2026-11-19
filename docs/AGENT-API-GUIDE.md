@@ -615,7 +615,7 @@ feed.
 
 `update_pending=` names an update the node accepted and waits to act on: it
 acts at `due_at`, its own time within the rollout window
-(`update.rollout_window_seconds`, default 600; `window_from=signal` when the
+(`update.rollout_window_seconds`, default 1800; `window_from=signal` when the
 signal carried a signed window). Waiting is normal; to install now, run
 `spacedatanetwork update install`. `spacedatanetwork status` prints the same
 `update_pending=` and `update_failed=` lines.

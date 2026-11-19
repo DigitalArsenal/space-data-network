@@ -82,7 +82,7 @@ command it runs.
 
 **Nodes no longer all restart for an update at the same moment.** A node
 acts on an update it accepted (from a signal or from its feed check) at its
-own time within `update.rollout_window_seconds` (default 600, ten minutes;
+own time within `update.rollout_window_seconds` (default 1800, 30 minutes;
 `0` acts at once, at most 86400). The delay is fixed by the node's peer id and the
 update id, so two nodes almost never share one, and the node keeps the time it
 accepted the update and its due time in `updates/pending.json`: a restart
@@ -94,19 +94,26 @@ install` typed on the node still installs at once. The release signer can sign
 a window into the signal (`sdn-update-signal-signer --rollout-window-seconds
 N`, or `update sign-signals --rollout-window-seconds N`); it replaces the
 node's setting for that update. The release workflow has an input,
-`rollout_window_seconds` (default 300), that it signs into every signal of
-the release, so the publisher sets the pace of each push; a node that finds
+`rollout_window_seconds` (default 1800), that it signs into every signal of
+the release, so the publisher sets the pace of each push (the workflow's first
+job refuses a value that is not a whole number from 0 to 86400, and both
+signers refuse a negative `--rollout-window-seconds` instead of signing no
+window); a node that finds
 the release by its feed check (the feed carries no window) uses its own
 setting. Nodes of 1.1.9 and earlier verify such a signal and ignore the
 window: they act at once unless their own `update.max_delay_seconds` spreads
 them. `update.max_delay_seconds` is replaced by
 `update.rollout_window_seconds`; a config that still sets it has that line
 ignored. The delays of two nodes are independent, so they can be down at the
-same time: for two nodes that are each down for five minutes, about one push
-in six with a 60-minute window, three in four with a 10-minute window, and
-every push with five minutes or less. A wider window makes overlap rarer; to
-take one node first, run `update install` on it and check `update fleet`
-before the push.
+same time: two nodes that each restart in five minutes overlap about 31% of
+the time with the 30-minute default (16% with 60 minutes, 75% with 10
+minutes, always with five minutes or less). `update install` typed on a node
+installs at once; an operator who must not have two hosts down together
+installs on one by hand first and checks `update fleet` before the push.
+While a node waits, a wall clock set back does not lengthen the wait beyond
+the window, and a pending update that is refused (for example quarantined
+after a typed install of it was rolled back) is no longer reported as
+pending.
 
 A newer signal that arrives while a node waits for an older update ends the
 wait and is handled under its own window (a window of 0 acts at once); the
@@ -141,14 +148,23 @@ a pending update; `update.publish_status: false` (default true) publishes
 none. A node accepts and relays a status only from a node it has identified
 itself as an SDN node, dated within five minutes of its clock, at most six at
 once and then one every ten seconds per node, with every field from a fixed
-character set and length (at most 2 KiB in all); it keeps at most 512
-statuses, drops one not renewed for 30 minutes, and ignores a status no newer
-than the one it holds. `not reporting` is a node of 1.1.9 or earlier, a node
+character set and length (at most 2 KiB in all); it drops a status not
+renewed for 30 minutes and ignores a status no newer than the one it holds.
+Peers known only by their identify agent string (which any peer chooses)
+are bounded: at most 1,024 such authors active within a minute, and at most
+512 of their statuses held, where a new author's status is not kept once 512
+are held. Pinned peers (`peers.trusted_peers` too), `network.bootstrap`
+peers, peers the registry trusts and peers whose status the node already
+holds are outside those bounds, so a flood of new identities cannot remove
+the nodes already shown. `not reporting` is a node of 1.1.9 or earlier, a node
 that does not publish, a node reached only through other nodes, or a status
 that expired; nodes of 1.1.9 and earlier drop these status messages unread
 and do not relay them, so two nodes joined only through them do not see each
 other's status. The last-seen time of a connected peer on `/api/peers/sdn`
-is now kept current: it stopped at the time the connection was made.
+is now kept current: it stopped at the time the connection was made. The
+continuous-integration proof that an installed, published node takes a
+pushed update by itself runs the published 1.1.9 archive; it ran the 1.1.5
+archive before, and 1.1.5 is no longer checked.
 
 **An interrupted home install still leaves the new build on trial.** A node
 that updates into its home folder wrote the new build's state and then its
