@@ -487,12 +487,14 @@ jobs:
     env:
       SDN_CI_PUBLICATION_GROUP: ${{ matrix.group }}
     steps:
+      # openssh-client: the modules repository is read over SSH with its
+      # deploy key.
       - name: Prepare the release container
         run: |
           export DEBIAN_FRONTEND=noninteractive
           apt-get -o Acquire::Retries=5 update -qq
           apt-get -o Acquire::Retries=5 install -y -qq --no-install-recommends \
-            ca-certificates curl git xz-utils build-essential zlib1g-dev libtinfo-dev
+            ca-certificates curl git openssh-client xz-utils build-essential zlib1g-dev libtinfo-dev
           git config --global --add safe.directory '*'
       - uses: actions/checkout@v4
         with:
