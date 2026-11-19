@@ -100,8 +100,8 @@ type publicationRun struct {
 	// publicationRuns.mu.
 	heldAt time.Time
 	done   chan struct{}
-	result  *DatasetPublicationResult
-	err     error
+	result *DatasetPublicationResult
+	err    error
 	// Under publicationRuns.mu: the callers waiting for the result, how to
 	// cancel the run when the last of them leaves, and the files the run
 	// reused whose time could not be refreshed (the sweep keeps them).
