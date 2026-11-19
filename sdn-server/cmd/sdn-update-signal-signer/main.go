@@ -31,9 +31,11 @@ func run(args []string) error {
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	var window *int64
-	if *rolloutWindow >= 0 {
-		window = rolloutWindow
+	given := false
+	flags.Visit(func(f *flag.Flag) { given = given || f.Name == "rollout-window-seconds" })
+	window, err := update.SignedRolloutWindow(given, *rolloutWindow)
+	if err != nil {
+		return err
 	}
 	if flags.NArg() != 0 {
 		return fmt.Errorf("unexpected arguments: %v", flags.Args())

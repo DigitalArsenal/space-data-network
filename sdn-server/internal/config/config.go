@@ -258,7 +258,7 @@ type UpdateConfig struct {
 	// accepted update (a signal or a feed-check find) at its own delay within
 	// this many seconds, fixed by its peer id and the update id, so nodes do
 	// not restart together and a restart during the wait keeps the due time.
-	// Default 600 (Default()); 0 acts at once; at most 86400. A signal that
+	// Default 1800 (Default()); 0 acts at once; at most 86400. A signal that
 	// carries a signed rollout_window_seconds replaces it for that update. A
 	// typed `update install` never waits.
 	RolloutWindowSeconds int `yaml:"rollout_window_seconds"`
@@ -2194,7 +2194,7 @@ func Default() *Config {
 		// Default ON: owner ruling 2026-08-09 is that the publisher pushes a
 		// signal and ALL installs upgrade in place. See UpdateConfig for the
 		// gates that make a default-on push lane safe.
-		Update: UpdateConfig{Enabled: true, RolloutWindowSeconds: 600, PublishStatus: true},
+		Update: UpdateConfig{Enabled: true, RolloutWindowSeconds: 1800, PublishStatus: true},
 		Schemas: SchemaConfig{
 			Validate: true,
 			Strict:   true,

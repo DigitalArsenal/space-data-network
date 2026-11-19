@@ -42,6 +42,10 @@ func newSignSignalsCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			window, err := update.SignedRolloutWindow(cmd.Flags().Changed("rollout-window-seconds"), rolloutWindow)
+			if err != nil {
+				return err
+			}
 			if !verifyOnly {
 				if (keyFile == "") == (keyEnv == "") {
 					return errors.New("provide exactly one of --key-file or --key-env")
@@ -58,10 +62,6 @@ func newSignSignalsCommand() *cobra.Command {
 				key, err := update.ParseSigningKeyPEM(raw)
 				if err != nil {
 					return err
-				}
-				var window *int64
-				if rolloutWindow >= 0 {
-					window = &rolloutWindow
 				}
 				if err := update.SignFeedSignals(dir, key, roots, window); err != nil {
 					return err

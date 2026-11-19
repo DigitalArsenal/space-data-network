@@ -3,6 +3,7 @@
 import test from 'node:test';
 import yaml from 'js-yaml';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -778,6 +779,31 @@ test('a dry run signs its update feed with a throwaway key, through the reviewed
   assert.match(refuse, /--verify-only[\s\S]*--roots deployment\/release\/fleet-trust-roots\.json[\s\S]*exit 1/);
   const upload = job.steps.find((s) => String(s.uses).startsWith('actions/upload-artifact'));
   assert.equal(upload.with['retention-days'], 1);
+});
+
+test('the first job refuses a rollout window the signer would refuse or read otherwise, before anything is signed', () => {
+  const workflow = yaml.load(readRepoFile('.github/workflows/beta-release-artifacts.yml'));
+  const input = workflow.on.workflow_dispatch.inputs.rollout_window_seconds;
+  assert.equal(input.default, 1800);
+  const job = workflow.jobs['beta-version'];
+  assert.ok(!job.needs, 'beta-version must be the first job');
+  const check = job.steps.find((s) => s.name === 'Check the rollout window');
+  assert.ok(check, 'beta-version must check the rollout window');
+  assert.deepEqual(check.env, {ROLLOUT_WINDOW_SECONDS: '${{ inputs.rollout_window_seconds }}'});
+  // Every job that signs runs after beta-version.
+  for (const name of ['update-signing-check', 'cli-update-feed', 'cli-update-feed-dry-run']) {
+    assert.ok(needs(workflow.jobs, name).includes('beta-version') || waitsForSuccess(workflow.jobs, name, 'beta-version'), `${name} must run after beta-version`);
+  }
+  const run = (value) => spawnSync('bash', ['-e', '-c', check.run], {env: {PATH: process.env.PATH, ROLLOUT_WINDOW_SECONDS: value}, encoding: 'utf8'});
+  for (const value of ['0', '1', '300', '1800', '86400']) {
+    const result = run(value);
+    assert.equal(result.status, 0, `window ${value} must pass: ${result.stdout}${result.stderr}`);
+  }
+  for (const value of ['', '-1', '1.5', '1e3', ' 300', '0300', '86401', '999999999999999999999', '1800; echo x']) {
+    const result = run(value);
+    assert.equal(result.status, 1, `window '${value}' must be refused: ${result.stdout}${result.stderr}`);
+    assert.match(result.stdout, /::error::rollout_window_seconds must be/);
+  }
 });
 
 test('the update feed job fails a stable release without its key, signs with the derived key id only, and verifies every manifest against the fleet roots', () => {
