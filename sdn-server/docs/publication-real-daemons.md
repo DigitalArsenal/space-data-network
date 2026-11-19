@@ -200,7 +200,32 @@ peer (not subscribed).
 expires its cursors, a lane that started at the current batch and one that
 started at its beginning both start again at the producer's current batch
 (received counts: the first read and the new records only), with
-`follow_cursor_refused`.
+`follow_cursor_refused`. Both lanes (keep-all) show their unread records in
+`sync subscriptions`, across a restart that raises the alert again; the one
+subscribed from its beginning stays in `follows.dss`. Acknowledged, one lane
+shows nothing unread and has no alert; the other, subscribed again from its
+beginning, reads the whole lane.
+
+`TestPublicationUnheldBatchImportsPNMRealDaemons`: a producer whose identity
+changed holds a batch whose records name its earlier identity; a receiver's
+stream to it is connected but every fetch of the batch by CID is refused. The
+lane's signed publication brings the 300 records, and the batch then becomes
+current.
+
+`TestPublicationSubscriptionsUnreadableRealDaemons`: a receiver started on an
+unreadable `subscriptions.dss` moves it aside (bytes kept), raises
+`subscriptions_unreadable`, lists no subscription, refuses a new one and
+writes no file, also after a restart; a readable copy put back loads the
+subscription and the lane resumes.
+
+`TestPublicationSubscriptionFileOrderRealDaemons`: with `follows.dss` not
+writable, an unsubscribe fails and both files still hold the lane; once
+writable, the unsubscribe holds across a restart.
+
+`TestPublicationDiskFloorRealDaemons` (macOS: the receiver's store is on a
+3 GB disk image of its own, filled to 16 MiB above the 1 GiB reserve; skipped
+elsewhere): a forced current-batch subscription of 20,000 records stops
+(`follow_stopped`) before its fetches by CID pass the reserve.
 
 `TestPublicationStreamSlotsRealDaemons`: a producer serves a subscriber it
 does not trust 8 followed streams and refuses the ninth busy; listing the

@@ -18,9 +18,13 @@ whose config carries `peers.trusted_import` refuses to start.
   `--start beginning` (or by a `keep-all` or `archive-all` lane's rule, after
   its size check). A producer that refuses a saved cursor (a rebuilt index or
   store) gets the lane started again at its current batch, with the alert
-  `follow_cursor_refused`.
-- Each followed page is checked before it is stored: a lane stops, its
-  cursor kept, before the store would pass `subscriptions.record_ceiling` or
+  `follow_cursor_refused`. On a lane whose history the node keeps, the
+  records not read are kept with the subscription (`sync subscriptions`:
+  "not read") until `sync subscribe --start beginning` reads the lane again
+  or `sync subscribe --acknowledge-unread` accepts the gap.
+- Each followed page, and each fetch by content address of a current
+  batch, is checked before it is stored, against one reservation that all
+  lanes share: a lane stops, its cursor kept, before the store would pass `subscriptions.record_ceiling` or
   leave less than 1 GiB of free disk (alert `follow_stopped`), and resumes
   once the page fits. `--force` skips only the check before the subscription.
 - A record gossiped on a schema topic (`POST /api/v1/pubsub/publish`, the
@@ -28,11 +32,20 @@ whose config carries `peers.trusted_import` refuses to start.
   whatever its trust of the sender or `network.accept_push_from`. Signed
   `$PNM` announcements (node identity, dataset publications) are unchanged.
 - A lane whose followed stream is connected no longer fetches its
-  publications' shards as well (an `archive-all` lane still keeps them); a lane whose stream the producer refuses
-  imports through them.
+  publications' shards as well (an `archive-all` lane still keeps them),
+  once it holds the producer's current batch; a lane whose stream the
+  producer refuses, or whose current batch it cannot hold, imports through
+  them.
 - A producer serves a peer it does not trust at most 8 followed streams
   (64 for all such peers); a node following more lanes of one producer is
-  listed by it in `peers.trusted_peers` (16 streams, outside the 64).
+  listed by it in `peers.trusted_peers` (16 streams, outside the 64),
+  unless the producer may run 1.1.9 again: 1.1.9 imports every lane of a
+  peer it trusts.
+- `subscriptions.dss` and `follows.dss` are written `follows.dss` first. A
+  file that does not read at start is moved aside, not overwritten; the node
+  then imports no lane and changes no subscription until a readable copy is
+  back (alert `subscriptions_unreadable`). An unsubscribe made under 1.1.9
+  during a rollback comes back with the next start of this release.
 
 - `spacedatanetwork sync subscribe --schema <standard> --provider-id
   <provider> --source-name <source> --from <producer peer id>` subscribes,

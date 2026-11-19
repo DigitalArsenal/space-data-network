@@ -398,7 +398,8 @@ A refused first read exits non-zero with `refusal` set (free disk or record
 ceiling; `--force` subscribes anyway). Over HTTP (admin): `GET
 /api/v1/sync/plan`, `POST /api/v1/sync` with a `$DSS` Subscribe naming
 `PROVIDER_PEER_ID` (`?start=current|beginning`, `?force=1`; 202, or 409
-`first_read_refused`), `GET /api/v1/sync/subscriptions`. The anonymous `GET
+`first_read_refused`; `?acknowledge_unread=1` on an existing subscription
+clears its `unread`), `GET /api/v1/sync/subscriptions`. The anonymous `GET
 /api/v1/sync` `$DSS` of a followed lane reads `SUBSCRIBED` and `SYNC_PROTOCOL`
 `flatsql-sync read-chunk follow`. Details: `docs/SUBSCRIPTIONS.md`.
 

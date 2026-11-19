@@ -95,10 +95,13 @@ batch, which it starts at once the producer states the lane, and `--force
 ## While a lane is followed
 
 The check above runs once, before the subscription. While the lane is
-followed, the node checks each page before it stores it: a page that would
-leave less than 1 GiB of free disk under `storage.path` (at 5 bytes per
-record byte), or take the records the node holds past
-`subscriptions.record_ceiling`, is not stored. The lane stops, its cursor
+followed, the node checks each page before it stores it, and each fetch of
+the current batch's records by content address before it reads them (for
+the most bytes one page can hold, 8 MiB): a page that would leave less than
+1 GiB of free disk under `storage.path` (at 5 bytes per record byte), or
+take the records the node holds past `subscriptions.record_ceiling`, is not
+stored. What the other lanes are storing at the same time counts against
+both: the lanes share one reservation. The lane stops, its cursor
 kept; `sync subscriptions` shows why (`stopped`) and the alert
 `follow_stopped` names the lane. The node checks again every 5 minutes and
 the lane resumes at its cursor once the page fits (free disk, or a raised
@@ -107,23 +110,41 @@ ceiling and a restart). `--force` does not skip this check.
 A producer refuses a saved cursor when its record sequence was renumbered (a
 rebuilt index, a store re-derived from its journals, a wiped store). The
 lane then starts again at the producer's current batch, never at the lane's
-beginning, and the alert `follow_cursor_refused` names it. For a lane that
-was subscribed from its beginning the alert says that the records the
-producer stored between the last position held and its current batch are
-not read; `sync unsubscribe` and `sync subscribe --start beginning` read the
-whole lane again.
+beginning, and the alert `follow_cursor_refused` names it. For a lane whose
+history the node keeps (one subscribed from its beginning, or a `keep-all`
+or `archive-all` lane) the records the producer stored between the last
+position held and its current batch are not read. That is kept with the
+subscription (`unread`, `unread_since` in `sync subscriptions --json`, "not
+read" in its text), across restarts, with the alert raised again at each
+start, until `sync subscribe --start beginning` (same lane and producer)
+reads the whole lane again or `sync subscribe --acknowledge-unread` accepts
+the gap. A lane subscribed from its beginning stays in `follows.dss`
+meanwhile.
+
+A lane whose stream is connected does not import its `$PNM` publications
+(their records arrive on the stream) once the batch the producer states is
+held as current. Until then, or while holding it fails (its list cannot be
+read, or its records fetched by content address are refused), the lane's
+publications import as they come.
 
 A producer serves a peer it does not list as trusted at most 8 followed
 streams (one per lane), and all such peers together 64; a peer it lists as
 trusted gets 16, outside those 64. A node that follows more than 8 lanes of
-one producer is listed by that producer in `peers.trusted_peers`. A followed
-stream past these limits is refused busy and asked for again.
+one producer is listed by that producer in `peers.trusted_peers`, unless the
+producer may ever run 1.1.9 again (a rollback): a 1.1.9 node imports every
+lane of a peer it trusts. A followed stream past these limits is refused
+busy and asked for again. Records fetched from a producer are taken only as
+that producer's own: a run that names another peer as origin or producer is
+refused, so a producer whose stored records name an earlier identity of it
+serves its stream but not its current batch.
 
 ## Where subscriptions are kept
 
 `<storage.path>/subscriptions.dss`: one size-prefixed `$DSS` record per lane,
 with the producer (`PROVIDER_PEER_ID`), the cursor to resume at (`CURSOR`),
-where it starts (`SYNC_FILTER` `start=current` or `start=beginning`), when it
+where it starts (`SYNC_FILTER` `start=current` or `start=beginning`, with
+`unread=<time>` while a refused cursor's gap is not acknowledged, and
+`subscribed=beginning` for a lane so started), when it
 was subscribed (`LAST_SYNC_STARTED_AT`) and what has been received. The cursor
 is saved only after the store has taken a page, so a restart resumes with
 nothing lost; a record sent again is the same content address and is stored
@@ -135,7 +156,21 @@ each of its records from its cursor, and from the lane's beginning when it
 has none, so a subscription that starts at the producer's current batch is
 never in it, and a node rolled back to 1.1.9 does not read such a lane from
 its beginning. At start, a record of `follows.dss` that `subscriptions.dss`
-lacks (a 1.1.9 follow) becomes a subscription from the lane's beginning.
+lacks (a 1.1.9 follow) becomes a subscription from the lane's beginning; a
+lane `subscriptions.dss` holds is kept as it holds it, whether or not
+`follows.dss` does. The node writes `follows.dss` first, then
+`subscriptions.dss`, so a crash between the two writes cannot bring an
+unsubscribed lane back from `follows.dss`. An unsubscribe made while the node
+ran 1.1.9 (a rollback) removes the lane from `follows.dss` only: it comes
+back with the next 1.2.0 start; unsubscribe again then.
+
+A file that does not read at start is moved aside
+(`subscriptions.dss.unreadable-<time>`, likewise `follows.dss`), never
+overwritten. The node then imports no lane and refuses every change to its
+subscriptions, and the alert `subscriptions_unreadable` names the file; a
+restart that finds the file still missing stays so. Put a readable copy back
+(a backup) and restart, or remove the moved file to start with no
+subscriptions.
 
 ## Updating a node from 1.1.9
 
@@ -183,6 +218,7 @@ them. A new node (an empty storage path) whose config carries
 | Route | Who | What |
 |---|---|---|
 | `POST /api/v1/sync[?start=current\|beginning][&force=1]` | admin | one size-prefixed `$DSS`, `REQUESTED_ACTION` Subscribe with `PROVIDER_PEER_ID`: subscribe (202), or 409 `first_read_refused`, 400 for a producer that is not trusted; a `RETENTION` in the frame decides the default start and is set on the lane only when the subscription is made |
+| `POST /api/v1/sync?acknowledge_unread=1` | admin | Subscribe naming an existing subscription: clears what a refused cursor left unread on it (`sync subscribe --acknowledge-unread`) |
 | `POST /api/v1/sync` | admin | Unsubscribe, with or without `PROVIDER_PEER_ID` |
 | `GET /api/v1/sync/plan?schema=&provider_id=&source=&from=[&start=]` | admin | the first read, as JSON, without subscribing |
 | `GET /api/v1/sync/subscriptions` | admin | the followed lanes, as JSON |
