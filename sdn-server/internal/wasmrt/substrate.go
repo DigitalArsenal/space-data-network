@@ -86,6 +86,9 @@ type SubstrateReport struct {
 	// Runs is how many self-test runs gave this report: an inconclusive run
 	// is run again, up to substrateRuns times (RunSubstrateSelfTestSettled).
 	Runs int `json:"runs"`
+	// PatchSeries is the SDN runtime patch series the binary links (patch
+	// 10-series-marker); 0 in a build with the wasmedge_unpatched tag.
+	PatchSeries int `json:"patch_series"`
 }
 
 // Patched reports whether the runtime behaves like the patched build.
@@ -170,7 +173,7 @@ const probeSpinnerBase = 64
 // RunSubstrateSelfTest runs the substrate checks in fresh, short-lived VMs.
 func RunSubstrateSelfTest(opts SubstrateOptions) SubstrateReport {
 	start := time.Now()
-	rep := SubstrateReport{RuntimeVersion: wasmedge.GetVersion(), AOTStop: StopObservation{Outcome: "not_checked"}}
+	rep := SubstrateReport{RuntimeVersion: wasmedge.GetVersion(), PatchSeries: PatchSeries(), AOTStop: StopObservation{Outcome: "not_checked"}}
 	if opts.Spinners <= 0 {
 		opts.Spinners = 4
 	}
@@ -294,8 +297,8 @@ func SubstrateStatus() SubstrateReport {
 	if !substrateReport.Patched() {
 		level = "WARN"
 	}
-	fmt.Fprintf(os.Stderr, "[wasmrt] %s substrate self-test: runtime %s notify-without-store=%t stop-reaches-every-thread=%t interruptible-aot=%t (%.1fx) aot-atomic-memarg-offset=%t aot-loop-stop-checks=%t aot-atomic-store-stack=%t in %s after %d run(s); %s\n",
-		level, substrateReport.RuntimeVersion, substrateReport.AtomicNotifyWithoutStore,
+	fmt.Fprintf(os.Stderr, "[wasmrt] %s substrate self-test: runtime %s patch-series=%d notify-without-store=%t stop-reaches-every-thread=%t interruptible-aot=%t (%.1fx) aot-atomic-memarg-offset=%t aot-loop-stop-checks=%t aot-atomic-store-stack=%t in %s after %d run(s); %s\n",
+		level, substrateReport.RuntimeVersion, substrateReport.PatchSeries, substrateReport.AtomicNotifyWithoutStore,
 		substrateReport.StopReachesEveryThread, substrateReport.InterruptibleAOT, substrateReport.AOTSpeedup,
 		substrateReport.AOTAtomicMemargOffset, substrateReport.AOTLoopStopChecks, substrateReport.AOTAtomicStoreStack,
 		substrateReport.Elapsed.Round(time.Millisecond), substrateReport.Runs, substrateReport.FailureReason())

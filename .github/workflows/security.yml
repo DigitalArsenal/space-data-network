@@ -355,7 +355,9 @@ jobs:
           chmod +x ../scripts/install-wasmedge.sh ../scripts/go-with-wasmedge.sh
           ../scripts/install-wasmedge.sh
           ../scripts/go-with-wasmedge.sh mod download
-          ../scripts/go-with-wasmedge.sh build ./...
+          # The upstream runtime lacks the SDN patch series; wasmedge_unpatched
+          # drops the link-time series check (sdn-server/internal/wasmrt/patch_series.go).
+          ../scripts/go-with-wasmedge.sh build -tags wasmedge_unpatched ./...
 
       - name: Set up Node.js
         if: matrix.language == 'javascript'

@@ -1,0 +1,16 @@
+diff --git a/lib/api/wasmedge.cpp b/lib/api/wasmedge.cpp
+index 15d2d9a..a66357b 100644
+--- a/lib/api/wasmedge.cpp
++++ b/lib/api/wasmedge.cpp
+@@ -484,6 +484,11 @@ WASMEDGE_CAPI_EXPORT uint32_t WasmEdge_VersionGetPatch(void) {
+   return WASMEDGE_VERSION_PATCH;
+ }
+
++// The SDN runtime patch series this library was built with (patches 01 to
++// 10). The name carries the number: a consumer that requires series 10
++// references this symbol and fails to link against a library without it.
++WASMEDGE_CAPI_EXPORT uint32_t WasmEdge_SDNPatchSeries10(void) { return 10; }
++
+ // <<<<<<<< WasmEdge version functions <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+
+ // >>>>>>>> WasmEdge logging functions >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>

@@ -4,6 +4,7 @@ package wasmrt
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,29 +13,33 @@ import (
 	"time"
 )
 
-const (
-	asyncThreadChildEnv = "SDN_WASMRT_ASYNC_THREAD_CHILD"
-	detachProbeArmedEnv = "SDN_DETACH_PROBE_ARMED"
-)
+const asyncThreadChildEnv = "SDN_WASMRT_ASYNC_THREAD_CHILD"
 
-// A call with a deadline runs on a thread WasmEdge's Async starts. Upstream
-// starts it joinable and then calls pthread_detach on it. On glibc before 2.34
-// (the release container's 2.31) that call races the thread's exit: it marks
-// the thread detached, the thread exits and its stack is released and can be
-// unmapped, and pthread_detach then reads the thread descriptor inside that
-// stack. Engine CI job 135535855695 died that way: SIGSEGV at
-// libpthread.so.0+0x99a0 (__pthread_detach+32, the read of cancelhandling),
-// which the signal forwarder handed to WasmEdge's handler and which then
-// faulted again at 0xd0 (stack issue 876). The runtime must start the thread
-// detached and never call pthread_detach. The child runs deadline calls with
-// a preloaded pthread_detach that ends the process once armed.
+// The runtime must never call pthread_detach. In glibc through at least 2.42
+// (sourceware bug 19951, fixed on glibc master, December 2025) that call races
+// the exit of the thread it detaches: it marks the thread detached, the thread
+// exits and its stack is released and can be unmapped, and pthread_detach
+// then reads the thread descriptor inside that stack. Engine CI job
+// 135535855695 died that way: SIGSEGV at libpthread.so.0+0x99a0
+// (__pthread_detach+32, the read of cancelhandling), which the signal
+// forwarder handed to WasmEdge's handler and which then faulted again at 0xd0
+// (stack issue 876).
+//
+// Two places in the runtime detached a running thread:
+//   - WasmEdge's Async, for every call with a deadline and every WASI thread
+//     spawn (patch 08-async-detached-thread starts the thread detached);
+//   - lld's unlinkAsync, once per AOT compile, because the link's output file
+//     already exists (patch 09-lld-single-thread links with --threads=1).
+//
+// The child compiles a module and makes deadline calls with a preloaded
+// pthread_detach that ends the process.
 func TestAsyncCallThreadsStartDetached(t *testing.T) {
 	cc := os.Getenv("CC")
 	if cc == "" {
 		cc = "cc"
 	}
 	probe := filepath.Join(t.TempDir(), "detach-probe.so")
-	build := exec.Command(cc, "-shared", "-fPIC", "-O2", "-o", probe, filepath.Join("testdata", "detach-probe.c"), "-ldl")
+	build := exec.Command(cc, "-shared", "-fPIC", "-O2", "-o", probe, filepath.Join("testdata", "detach-probe.c"))
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build the pthread_detach probe: %v\n%s", err, out)
 	}
@@ -47,8 +52,11 @@ func TestAsyncCallThreadsStartDetached(t *testing.T) {
 	if ctx.Err() != nil {
 		t.Fatalf("the child did not finish:\n%s", out)
 	}
-	if strings.Contains(out, "DETACH-PROBE") {
-		t.Fatalf("the runtime called pthread_detach on a thread it started:\n%s", out)
+	if !strings.Contains(out, "DETACH-PROBE-LOADED") {
+		t.Fatalf("the pthread_detach probe was not loaded into the child:\n%s", out)
+	}
+	if strings.Contains(out, "DETACH-PROBE-CALLED") {
+		t.Fatalf("the runtime called pthread_detach:\n%s", out)
 	}
 	if err != nil || !strings.Contains(out, "ASYNC-CALLS-DONE") {
 		t.Fatalf("child err=%v:\n%s", err, out)
@@ -64,16 +72,12 @@ func TestAsyncThreadChild(t *testing.T) {
 	if os.Getenv("LD_PRELOAD") == "" {
 		t.Fatal("the child runs only with the pthread_detach probe preloaded")
 	}
-	// The AOT compile calls pthread_detach inside LLVM, not through Async, so
-	// it runs before the probe is armed: only the calls are under test.
+	// Printed as each phase starts, so a probe exit names the phase.
+	fmt.Fprintln(os.Stderr, "ASYNC-CHILD AOT compile")
 	m := newSignalFaultModule(t, WithExecTimeout(10*time.Second))
 	defer m.Release()
-	// With cgo, os.Setenv sets the C environment the probe reads.
-	if err := os.Setenv(detachProbeArmedEnv, "1"); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Unsetenv(detachProbeArmedEnv)
 	const calls = 200
+	fmt.Fprintf(os.Stderr, "ASYNC-CHILD %d deadline calls\n", calls)
 	for i := 0; i < calls; i++ {
 		v, err := m.Execute("answer")
 		if err != nil {

@@ -19,7 +19,7 @@ index 5b441d1..f1a2eb8 100644
  
  namespace WasmEdge {
  
-@@ -29,13 +35,37 @@ public:
+@@ -29,13 +35,38 @@ public:
        : StopFunc([&TargetInst]() { TargetInst.stop(); }) {
      std::promise<T> Promise;
      Future = Promise.get_future();
@@ -39,10 +39,11 @@ index 5b441d1..f1a2eb8 100644
      Thread.detach();
 +#else
 +    // The thread is created detached. Detaching a running thread races its
-+    // exit on glibc before 2.34 (sourceware bug 19951): pthread_detach reads
-+    // the thread descriptor after marking the thread detached, and by then
-+    // the thread can have exited and its stack, which holds the descriptor,
-+    // can have been unmapped.
++    // exit in glibc through at least 2.42 (sourceware bug 19951, fixed on
++    // glibc master, December 2025): pthread_detach reads the thread
++    // descriptor after marking the thread detached, and by then the thread
++    // can have exited and its stack, which holds the descriptor, can have
++    // been unmapped.
 +    using BodyT = decltype(Body);
 +    auto Owned = std::make_unique<BodyT>(std::move(Body));
 +    pthread_attr_t Attr;
@@ -63,7 +64,7 @@ index 5b441d1..f1a2eb8 100644
    }
    Async(const Async &) noexcept = delete;
    Async(Async &&Other) noexcept : Async() { swap(*this, Other); }
-@@ -75,6 +105,14 @@ public:
+@@ -75,6 +106,14 @@ public:
    }
  
  protected:
