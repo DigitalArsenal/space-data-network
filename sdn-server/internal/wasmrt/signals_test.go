@@ -208,7 +208,10 @@ func TestLibraryFaultOutsideACallIsNamed(t *testing.T) {
 		// CPU in the Go runtime with nothing on stderr.
 		t.Skip("linux only: on darwin a C library fault on a C thread hangs the process")
 	}
-	out, err := runSignalChild(t, "libc-crash-outside-call")
+	out, err, timedOut := runSignalChildWithin(t, "libc-crash-outside-call", time.Minute)
+	if timedOut {
+		t.Fatalf("the C library fault hung the process instead of ending it:\n%s", out)
+	}
 	var exit *exec.ExitError
 	if err == nil || !errorsAs(err, &exit) {
 		t.Fatalf("child survived a C library bad store (err=%v):\n%s", err, out)

@@ -172,10 +172,15 @@ struct sdn_redirect {
 	struct timespec at;
 };
 static struct sdn_redirect sdn_redirects[SDN_REDIRECT_SLOTS];
+_Static_assert(SDN_REDIRECT_SLOTS == 64, "sdn_redirect_slot keeps the top 6 bits of the mixed thread id");
 static atomic_int sdn_library_notes;
 
+// Thread descriptors sit at one offset inside page-aligned stacks, so their
+// low bits are the same for every thread: the slot comes from mixed bits.
+// Two threads can still share a slot; the later record replaces the earlier,
+// and a reader takes a record only if it is its own before and after the copy.
 static struct sdn_redirect *sdn_redirect_slot(uintptr_t self) {
-	return &sdn_redirects[(self >> 4) % SDN_REDIRECT_SLOTS];
+	return &sdn_redirects[(uint64_t)((uint64_t)self * 0x9E3779B97F4A7C15ull) >> 58];
 }
 
 static void sdn_redirect_record(int sig, uintptr_t pc, uintptr_t addr) {
@@ -247,16 +252,22 @@ static void sdn_fault_note(int sig, siginfo_t *info, uintptr_t pc, const char *w
 	sdn_fault_puts(buf, &n, cap, what);
 	uintptr_t self = (uintptr_t)pthread_self();
 	struct sdn_redirect *r = sdn_redirect_slot(self);
-	if (atomic_load(&r->thread) == self) {
+	int mine = atomic_load(&r->thread) == self;
+	uintptr_t rpc = r->pc, raddr = r->addr;
+	int rsig = r->sig;
+	struct timespec rat = r->at;
+	// Another thread sharing the slot clears the owner before it writes: a
+	// copy is this thread's record only if the owner is unchanged after it.
+	if (mine && atomic_load(&r->thread) == self) {
 		struct timespec now;
 		clock_gettime(CLOCK_MONOTONIC, &now);
-		int64_t us = (int64_t)(now.tv_sec - r->at.tv_sec) * 1000000 + (now.tv_nsec - r->at.tv_nsec) / 1000;
+		int64_t us = (int64_t)(now.tv_sec - rat.tv_sec) * 1000000 + (now.tv_nsec - rat.tv_nsec) / 1000;
 		sdn_fault_puts(buf, &n, cap, "; after this thread handed signal ");
-		sdn_fault_putsig(buf, &n, r->sig);
+		sdn_fault_putsig(buf, &n, rsig);
 		sdn_fault_puts(buf, &n, cap, " pc ");
-		sdn_fault_putpc(buf, &n, cap, r->pc);
+		sdn_fault_putpc(buf, &n, cap, rpc);
 		sdn_fault_puts(buf, &n, cap, " addr ");
-		sdn_fault_puthex(buf, &n, r->addr);
+		sdn_fault_puthex(buf, &n, raddr);
 		sdn_fault_puts(buf, &n, cap, " to WasmEdge's handler ");
 		sdn_fault_putdec(buf, &n, cap, us < 0 ? 0 : (uint64_t)us);
 		sdn_fault_puts(buf, &n, cap, " us earlier");
