@@ -8,13 +8,15 @@ package main
 //	rollout-races  1. UI packages: the signal for package N, whose carrier
 //	                  the feed serves 15 s late, then the one for N+1: r
 //	                  ends on N+1 and serves it.
-//	               2. A release r waits for (signed window 600 s) is typed
-//	                  in by hand, fails its health gate and is rolled back
-//	                  and quarantined: after its restart r reports no
+//	               2. A release r waits for (signed window 600 s; v6, which
+//	                  never starts its update lane) is typed in by hand,
+//	                  fails its health gate and is rolled back and
+//	                  quarantined: after its restart r reports no
 //	                  pending update and keeps no pending record.
 //	               3. While r's feed check waits for release N+1, the signal
-//	               	  of the older release N (window 0) arrives; N+1's
-//	                  carrier then fails to download: r does not install N.
+//	                  of the older release N (window 0, not in the feed
+//	                  index) arrives; N+1's carrier then fails to download:
+//	                  r does not install N.
 //	               4. r6 runs v16, whose update lane's wall clock moves back
 //	                  30 minutes as its rollout wait starts: r6 still
 //	                  installs within the window (60 s) of the wait's start.
@@ -253,7 +255,9 @@ func runRealRolloutRaces(t *testing.T) {
 	work := t.TempDir()
 	keepRealLogs(t, work)
 	builds := realE2EBuilds(t, filepath.Join(work, "builds"))
-	v1, v2, v3 := builds[0], builds[1], builds[2]
+	v1, v2 := builds[0], builds[1]
+	// v6 never opens its store, so it never starts its update lane either.
+	v6, _, _, _, _ := realE2EHangBuilds(t, filepath.Join(work, "builds"))
 	v16 := realE2EClockBackBuild(t, filepath.Join(work, "builds"))
 	health := envInt(t, "SDN_E2E_REAL_DAEMON_HEALTH_SECONDS", 180)
 	boot := time.Duration(envInt(t, "SDN_E2E_REAL_DAEMON_BOOT_SECONDS", 600)) * time.Second
@@ -360,7 +364,8 @@ func runRealRolloutRaces(t *testing.T) {
 
 	// 2. A release r waits for, typed in by hand, fails its health gate and
 	// is rolled back: after the restart no pending update.
-	bad := v3
+	bad := v6
+	bad.sequence = 300
 	bad.updateID = pick(rID.String(), "bad", 600*time.Second, 300*time.Second, 590*time.Second)
 	feed.publish(t, bad, key)
 	sign("bad", 600)
@@ -399,6 +404,11 @@ func runRealRolloutRaces(t *testing.T) {
 	feed.publish(t, older, key)
 	feed.publish(t, newer, key)
 	sign("older-newer", 0)
+	// The older release is not in the index (its manifest and carrier stay
+	// on the feed), so the feed check never offers it: only its signal can
+	// install it. (A feed check whose newest candidate fails goes on to the
+	// next one it lists, by design.)
+	feed.withdrawIndexEntry(t, older.updateID)
 	r.configure(t, func(cfg *config.Config) {
 		cfg.Update.RolloutWindowSeconds = int(window / time.Second)
 		cfg.Update.CheckDelaySeconds = 3
