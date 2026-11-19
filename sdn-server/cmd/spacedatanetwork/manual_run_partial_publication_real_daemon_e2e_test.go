@@ -313,7 +313,7 @@ func TestPublicationManualRunCancelByIDRealDaemons(t *testing.T) {
 			ID     string `json:"id"`
 			Status string `json:"status"`
 		}
-		raw := d.request(t, "POST", path+"?detach=1", "application/json", []byte(`{"force":true}`), http.StatusAccepted)
+		raw := d.request(t, "POST", path+"?detach=1", "application/json", nil, http.StatusAccepted)
 		if err := json.Unmarshal(raw, &run); err != nil || run.ID == "" || run.Status != "running" {
 			t.Fatalf("the manual run did not start (%v): %s", err, raw)
 		}
@@ -329,7 +329,7 @@ func TestPublicationManualRunCancelByIDRealDaemons(t *testing.T) {
 		if err := json.Unmarshal(raw, &run); err != nil {
 			t.Fatal(err)
 		}
-		return run.Status + " " + run.Message
+		return run.Status + " " + string(raw)
 	}
 
 	first := start()
@@ -339,6 +339,9 @@ func TestPublicationManualRunCancelByIDRealDaemons(t *testing.T) {
 	}
 	second := start()
 	t.Logf("first run %s (cancelled), second run %s", first, second)
+	if now := state(second); !strings.HasPrefix(now, "running") {
+		t.Fatalf("the second run is not running before any cancel names a run: %s", now)
+	}
 
 	status, body := postStatus(t, d, "DELETE", path+"?id="+first, nil)
 	t.Logf("cancel naming the first run: HTTP %d %s", status, strings.TrimSpace(body))
