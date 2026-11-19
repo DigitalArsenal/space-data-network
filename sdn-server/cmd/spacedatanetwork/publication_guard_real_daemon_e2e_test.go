@@ -696,8 +696,10 @@ func TestPublicationSubscriptionFileOrderRealDaemons(t *testing.T) {
 // a fetch by CID of the current batch can store before it reads them, so a
 // receiver whose free disk is just above the 1 GiB reserve stops the lane
 // (follow_stopped) instead of fetching the batch past the reserve. The
-// receiver's store is on a disk image of its own (macOS hdiutil); elsewhere
-// the test is skipped.
+// receiver's storage path is a disk image of its own (macOS hdiutil), and
+// only it: the directory holding it, where the subscription files are, has
+// the machine's free disk, so the guard must read free disk under
+// storage.path. Elsewhere the test is skipped.
 func TestPublicationDiskFloorRealDaemons(t *testing.T) {
 	if os.Getenv("SDN_E2E_PUBLICATION") != "1" {
 		t.Skip("set SDN_E2E_PUBLICATION=1 for real daemons")
@@ -713,7 +715,14 @@ func TestPublicationDiskFloorRealDaemons(t *testing.T) {
 	}
 	b := newPublicationDaemon(t, exe, "floor-receiver", a.address, a.id, "keep-all")
 	image := filepath.Join(publicationTemp(t, "floor-image"), "store.sparseimage")
-	mount := publicationTemp(t, "floor-mount")
+	// The image is mounted as the receiver's storage path itself: the
+	// directory holding it (its subscription files, its config) is on the
+	// machine's disk, so only a guard that reads free disk under
+	// storage.path sees the small image.
+	mount := filepath.Join(publicationTemp(t, "floor-mount"), "store")
+	if err := os.Mkdir(mount, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	if out, err := exec.Command("hdiutil", "create", "-size", "3g", "-type", "SPARSE", "-fs", "HFS+", "-volname", "sdnfloor", image).CombinedOutput(); err != nil {
 		t.Fatalf("hdiutil create: %v %s", err, out)
 	}
@@ -726,12 +735,7 @@ func TestPublicationDiskFloorRealDaemons(t *testing.T) {
 			t.Errorf("hdiutil detach %s: %v %s", mount, err, out)
 		}
 	})
-	// The receiver's storage path, and the directory holding it (its
-	// subscription files), are on the image.
-	onImage := filepath.Join(mount, "node", "store")
-	if err := os.MkdirAll(onImage, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	onImage := mount
 	raw, err := os.ReadFile(b.cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -759,7 +763,7 @@ func TestPublicationDiskFloorRealDaemons(t *testing.T) {
 	if fill <= 0 {
 		t.Fatalf("the image has %d bytes free, not more than the reserve and margin", free())
 	}
-	filler, err := os.Create(filepath.Join(mount, "filler"))
+	filler, err := os.Create(filepath.Join(mount, ".floor-filler"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -775,6 +779,14 @@ func TestPublicationDiskFloorRealDaemons(t *testing.T) {
 	filler.Close()
 	before := free()
 	t.Logf("receiver's store: %d bytes free, %d above the 1 GiB reserve", before, before-reserve)
+	parentFree, err := storage.FreeDiskBytes(filepath.Dir(onImage))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if int64(parentFree) < before+(4<<30) {
+		t.Fatalf("the directory holding the storage path has %d bytes free, not well above the image's %d: it is on the image too, so this run cannot tell the two apart", parentFree, before)
+	}
+	t.Logf("the directory holding the storage path (the subscription files): %d bytes free, not on the image", parentFree)
 	// Forced past the size check (the batch does not fit), so only the
 	// running guard stands between the fetch and the reserve.
 	b.subscribeCurrent(t, a, "df", "--force")
