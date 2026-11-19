@@ -84,6 +84,12 @@ const (
 	// not followed or imported, its record is kept as it is, and the other
 	// lanes run.
 	KindSubscriptionRefused = "subscription_refused"
+	// KindPublicationMisstated: a publication of a subscribed lane (subject:
+	// the lane) whose signed DPM states sizes it does not keep: a shard or
+	// index larger than stated, more records than stated, or none stated.
+	// Nothing past the stated size is fetched and none of its records is
+	// stored; it is not fetched again.
+	KindPublicationMisstated = "publication_misstated"
 	// KindPublicationFailed: one of this node's own dataset publications
 	// (subject: its lane) failed or was cut before it completed.
 	KindPublicationFailed = "publication_failed"

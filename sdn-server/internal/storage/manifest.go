@@ -85,9 +85,14 @@ type DatasetPublicationReplayOptions struct {
 	// Verified with the algorithm the record DECLARES, so an HD (secp256k1)
 	// provider is as valid as a legacy Ed25519 one.
 	ProviderPublicKey crypto.PubKey
-	FetchByCID        func(context.Context, string) ([]byte, error)
-	FetchByCIDToFile  func(context.Context, string, string) error
-	FetchRetryDelays  []time.Duration
+	// FetchByCID and FetchByCIDToFile fetch a CID reading at most maxBytes
+	// (none when negative; the manifest has no stated size): the shard and
+	// the index are fetched up to the sizes the signed DPM states, and a
+	// larger one is a *CIDLargerThanLimitError (see
+	// FetchIPFSBlockByCIDUpTo).
+	FetchByCID       func(ctx context.Context, cid string, maxBytes int64) ([]byte, error)
+	FetchByCIDToFile func(ctx context.Context, cid, path string, maxBytes int64) error
+	FetchRetryDelays []time.Duration
 	// FetchBudget, when positive, bounds the manifest, shard and index
 	// fetches together. It never bounds the import: see
 	// MaterializeDatasetPublication.
@@ -101,28 +106,73 @@ type DatasetPublicationReplayOptions struct {
 	// ErrDatasetPublicationLaneNotImported and nothing else is fetched.
 	LaneAllowed func(schema, providerID, sourceName string) bool
 	// Reserve, when set, is asked before the shard is fetched, for the
-	// records the signed DPM states (at least one) and the shard's bytes;
-	// the release it returns is called when the import returns. An error
-	// ends the replay before the fetch.
+	// records the signed DPM states and the shard's stated bytes; the
+	// release it returns is called when the import returns. An error ends
+	// the replay before the fetch.
 	Reserve func(records int, bytes int64) (func(), error)
 }
 
-// datasetManifestRecords is the records a DPM's sources state (at least 1).
-func datasetManifestRecords(manifest *dpm.DPM) int {
-	total := uint64(0)
+// datasetManifestMisstate is nil in every release build. A build with the
+// tag sdn_e2e_follow_faults sets it (manifest_faults_e2e.go): it changes the
+// sizes a publication's DPM states, as a faulty or hostile producer would,
+// before the DPM is signed.
+var datasetManifestMisstate func(export *DatasetExport)
+
+// datasetStatedLimit bounds a size a DPM states (records, bytes) as this
+// node reads it: a larger statement is read as this, which no reservation
+// admits, and no sum or product of such figures overflows an int64.
+const datasetStatedLimit = int64(1) << 62
+
+// datasetManifestRecords is the records a DPM's sources state (their sum,
+// saturating at datasetStatedLimit; 0 when they state none).
+func datasetManifestRecords(manifest *dpm.DPM) int64 {
+	total := int64(0)
 	for i := 0; i < manifest.SOURCESLength(); i++ {
 		var source dpm.DPMSourceBatch
 		if manifest.SOURCES(&source, i) {
-			total += uint64(source.RECORD_COUNT())
+			total += datasetStatedFigure(source.RECORD_COUNT())
+			if total > datasetStatedLimit {
+				total = datasetStatedLimit
+			}
 		}
 	}
-	switch {
-	case total < 1:
-		return 1
-	case total > 1<<40:
-		return 1 << 40
+	return total
+}
+
+// datasetStatedFigure is a stated figure, saturating at datasetStatedLimit.
+func datasetStatedFigure(v uint64) int64 {
+	if v > uint64(datasetStatedLimit) {
+		return datasetStatedLimit
 	}
-	return int(total)
+	return int64(v)
+}
+
+// datasetStatedBytes is an asset's stated bytes, saturating at
+// datasetStatedLimit.
+func datasetStatedBytes(asset publicationAsset) int64 {
+	return datasetStatedFigure(asset.Bytes)
+}
+
+// ErrDatasetPublicationMisstated is a publication whose signed DPM states
+// sizes its shard, index or records do not keep: a shard or index larger
+// than stated (the fetch stops at the stated size), more records than
+// stated (none is stored), or no records or bytes at all. The replay ends;
+// what the producer signed does not change, so it is not tried again.
+var ErrDatasetPublicationMisstated = errors.New("dataset publication misstates its size")
+
+// misstatedFetch reads a fetch error: a CID larger than the stated size is
+// ErrDatasetPublicationMisstated naming the asset and both figures.
+func misstatedFetch(kind string, err error) error {
+	var large *CIDLargerThanLimitError
+	if !errors.As(err, &large) {
+		return err
+	}
+	if large.Size >= 0 {
+		return fmt.Errorf("%w: its DPM states a %s of %d bytes and the %s (CID %s) holds %d bytes; nothing past the stated size was fetched",
+			ErrDatasetPublicationMisstated, kind, large.Limit, kind, large.CID, large.Size)
+	}
+	return fmt.Errorf("%w: its DPM states a %s of %d bytes and the %s (CID %s) holds more (the fetch stopped at %d bytes)",
+		ErrDatasetPublicationMisstated, kind, large.Limit, kind, large.CID, large.Limit+1)
 }
 
 // ErrDatasetPublicationLaneNotImported reports a publication whose lane the
@@ -336,7 +386,7 @@ func VerifyDatasetPublicationReplay(ctx context.Context, store *FlatSQLStore, op
 		return nil, err
 	}
 
-	manifestBytes, err := fetchDatasetPublicationCID(ctx, opts.FetchByCID, opts.FetchRetryDelays, manifestCID)
+	manifestBytes, err := fetchDatasetPublicationCID(ctx, opts.FetchByCID, opts.FetchRetryDelays, manifestCID, -1)
 	if err != nil {
 		return nil, fmt.Errorf("fetch manifest CID %s: %w", manifestCID, err)
 	}
@@ -366,16 +416,16 @@ func VerifyDatasetPublicationReplay(ctx context.Context, store *FlatSQLStore, op
 	if !ok {
 		return nil, fmt.Errorf("DPM missing QUERY_INDEX asset")
 	}
-	shardBytes, err := fetchDatasetPublicationCID(ctx, opts.FetchByCID, opts.FetchRetryDelays, shardAsset.CID)
+	shardBytes, err := fetchDatasetPublicationCID(ctx, opts.FetchByCID, opts.FetchRetryDelays, shardAsset.CID, datasetStatedBytes(shardAsset))
 	if err != nil {
-		return nil, fmt.Errorf("fetch shard CID %s: %w", shardAsset.CID, err)
+		return nil, fmt.Errorf("fetch shard CID %s: %w", shardAsset.CID, misstatedFetch("shard", err))
 	}
 	if err := verifyBytesCIDAndHash("shard", shardBytes, shardAsset.CID, shardAsset.SHA256); err != nil {
 		return nil, err
 	}
-	indexBytes, err := fetchDatasetPublicationCID(ctx, opts.FetchByCID, opts.FetchRetryDelays, indexAsset.CID)
+	indexBytes, err := fetchDatasetPublicationCID(ctx, opts.FetchByCID, opts.FetchRetryDelays, indexAsset.CID, datasetStatedBytes(indexAsset))
 	if err != nil {
-		return nil, fmt.Errorf("fetch index CID %s: %w", indexAsset.CID, err)
+		return nil, fmt.Errorf("fetch index CID %s: %w", indexAsset.CID, misstatedFetch("index", err))
 	}
 	if err := verifyBytesCIDAndHash("index", indexBytes, indexAsset.CID, indexAsset.SHA256); err != nil {
 		return nil, err
@@ -453,7 +503,7 @@ func MaterializeDatasetPublication(ctx context.Context, store *FlatSQLStore, opt
 		fetchCtx, stopFetchBudget = context.WithTimeout(ctx, opts.FetchBudget)
 	}
 	defer stopFetchBudget()
-	manifestBytes, err := fetchDatasetPublicationCID(fetchCtx, opts.FetchByCID, opts.FetchRetryDelays, manifestCID)
+	manifestBytes, err := fetchDatasetPublicationCID(fetchCtx, opts.FetchByCID, opts.FetchRetryDelays, manifestCID, -1)
 	if err != nil {
 		return nil, fmt.Errorf("fetch manifest CID %s: %w", manifestCID, err)
 	}
@@ -510,21 +560,30 @@ func MaterializeDatasetPublication(ctx context.Context, store *FlatSQLStore, opt
 			AlreadyImported: true,
 		}, nil
 	}
+	// The signed DPM's figures bound the replay: the reservation is made
+	// for them, the shard and index are fetched up to their stated bytes,
+	// and an index listing more records than stated stores none. A
+	// publication stating no records or no bytes has nothing to bound it.
+	statedRecords := datasetManifestRecords(manifest)
+	switch {
+	case statedRecords == 0:
+		return nil, fmt.Errorf("%w: its DPM states no records", ErrDatasetPublicationMisstated)
+	case shardAsset.Bytes == 0:
+		return nil, fmt.Errorf("%w: its DPM states a shard of 0 bytes", ErrDatasetPublicationMisstated)
+	case indexAsset.Bytes == 0:
+		return nil, fmt.Errorf("%w: its DPM states an index of 0 bytes", ErrDatasetPublicationMisstated)
+	}
 	if opts.Reserve != nil {
-		shardBytes := int64(1 << 62)
-		if shardAsset.Bytes < 1<<62 {
-			shardBytes = int64(shardAsset.Bytes)
-		}
-		release, err := opts.Reserve(datasetManifestRecords(manifest), shardBytes)
+		release, err := opts.Reserve(int(statedRecords), datasetStatedBytes(shardAsset))
 		if err != nil {
 			return nil, err
 		}
 		defer release()
 	}
 	if opts.FetchByCIDToFile != nil {
-		return materializeDatasetPublicationFromFiles(ctx, fetchCtx, store, opts, manifest, manifestCID, shardAsset, indexAsset)
+		return materializeDatasetPublicationFromFiles(ctx, fetchCtx, store, opts, manifest, manifestCID, shardAsset, indexAsset, statedRecords)
 	}
-	return materializeDatasetPublicationFromBytes(ctx, fetchCtx, store, opts, manifest, manifestCID, shardAsset, indexAsset)
+	return materializeDatasetPublicationFromBytes(ctx, fetchCtx, store, opts, manifest, manifestCID, shardAsset, indexAsset, statedRecords)
 }
 
 // replicatedDatasetShardPublication finds the store's publication row for
@@ -564,22 +623,22 @@ func sameSHA256IfBothKnown(a, b string) bool {
 
 // materializeDatasetPublicationFromBytes fetches under fetchCtx and imports
 // under ctx.
-func materializeDatasetPublicationFromBytes(ctx, fetchCtx context.Context, store *FlatSQLStore, opts DatasetPublicationReplayOptions, manifest *dpm.DPM, manifestCID string, shardAsset, indexAsset publicationAsset) (*DatasetPublicationReplayResult, error) {
-	shardBytes, err := fetchDatasetPublicationCID(fetchCtx, opts.FetchByCID, opts.FetchRetryDelays, shardAsset.CID)
+func materializeDatasetPublicationFromBytes(ctx, fetchCtx context.Context, store *FlatSQLStore, opts DatasetPublicationReplayOptions, manifest *dpm.DPM, manifestCID string, shardAsset, indexAsset publicationAsset, statedRecords int64) (*DatasetPublicationReplayResult, error) {
+	shardBytes, err := fetchDatasetPublicationCID(fetchCtx, opts.FetchByCID, opts.FetchRetryDelays, shardAsset.CID, datasetStatedBytes(shardAsset))
 	if err != nil {
-		return nil, fmt.Errorf("fetch shard CID %s: %w", shardAsset.CID, err)
+		return nil, fmt.Errorf("fetch shard CID %s: %w", shardAsset.CID, misstatedFetch("shard", err))
 	}
 	if err := verifyBytesCIDAndHash("shard", shardBytes, shardAsset.CID, shardAsset.SHA256); err != nil {
 		return nil, err
 	}
-	indexBytes, err := fetchDatasetPublicationCID(fetchCtx, opts.FetchByCID, opts.FetchRetryDelays, indexAsset.CID)
+	indexBytes, err := fetchDatasetPublicationCID(fetchCtx, opts.FetchByCID, opts.FetchRetryDelays, indexAsset.CID, datasetStatedBytes(indexAsset))
 	if err != nil {
-		return nil, fmt.Errorf("fetch index CID %s: %w", indexAsset.CID, err)
+		return nil, fmt.Errorf("fetch index CID %s: %w", indexAsset.CID, misstatedFetch("index", err))
 	}
 	if err := verifyBytesCIDAndHash("index", indexBytes, indexAsset.CID, indexAsset.SHA256); err != nil {
 		return nil, err
 	}
-	imported, index, err := store.ImportDatasetShardContext(ctx, shardBytes, indexBytes, string(manifest.PROVIDER_PEER_ID()))
+	imported, index, err := store.importDatasetShardBytes(ctx, shardBytes, indexBytes, string(manifest.PROVIDER_PEER_ID()), statedRecords)
 	if err != nil {
 		return nil, err
 	}
@@ -604,7 +663,7 @@ func materializeDatasetPublicationFromBytes(ctx, fetchCtx context.Context, store
 
 // materializeDatasetPublicationFromFiles fetches under fetchCtx and imports
 // under ctx, in a work directory of its own that it removes on return.
-func materializeDatasetPublicationFromFiles(ctx, fetchCtx context.Context, store *FlatSQLStore, opts DatasetPublicationReplayOptions, manifest *dpm.DPM, manifestCID string, shardAsset, indexAsset publicationAsset) (*DatasetPublicationReplayResult, error) {
+func materializeDatasetPublicationFromFiles(ctx, fetchCtx context.Context, store *FlatSQLStore, opts DatasetPublicationReplayOptions, manifest *dpm.DPM, manifestCID string, shardAsset, indexAsset publicationAsset, statedRecords int64) (*DatasetPublicationReplayResult, error) {
 	workDir, cleanup, err := datasetPublicationMaterializationWorkDir(opts.WorkDir)
 	if err != nil {
 		return nil, err
@@ -615,19 +674,19 @@ func materializeDatasetPublicationFromFiles(ctx, fetchCtx context.Context, store
 	if indexAsset.Schema == publicationstate.SchemaName {
 		indexPath = strings.TrimSuffix(indexPath, ".json") + ".fb"
 	}
-	if err := fetchDatasetPublicationCIDToFile(fetchCtx, opts.FetchByCIDToFile, opts.FetchRetryDelays, shardAsset.CID, shardPath); err != nil {
-		return nil, fmt.Errorf("fetch shard CID %s: %w", shardAsset.CID, err)
+	if err := fetchDatasetPublicationCIDToFile(fetchCtx, opts.FetchByCIDToFile, opts.FetchRetryDelays, shardAsset.CID, shardPath, datasetStatedBytes(shardAsset)); err != nil {
+		return nil, fmt.Errorf("fetch shard CID %s: %w", shardAsset.CID, misstatedFetch("shard", err))
 	}
 	if _, _, err := verifyFileCIDAndHash("shard", shardPath, shardAsset.CID, shardAsset.SHA256); err != nil {
 		return nil, err
 	}
-	if err := fetchDatasetPublicationCIDToFile(fetchCtx, opts.FetchByCIDToFile, opts.FetchRetryDelays, indexAsset.CID, indexPath); err != nil {
-		return nil, fmt.Errorf("fetch index CID %s: %w", indexAsset.CID, err)
+	if err := fetchDatasetPublicationCIDToFile(fetchCtx, opts.FetchByCIDToFile, opts.FetchRetryDelays, indexAsset.CID, indexPath, datasetStatedBytes(indexAsset)); err != nil {
+		return nil, fmt.Errorf("fetch index CID %s: %w", indexAsset.CID, misstatedFetch("index", err))
 	}
 	if _, _, err := verifyFileCIDAndHash("index", indexPath, indexAsset.CID, indexAsset.SHA256); err != nil {
 		return nil, err
 	}
-	imported, index, err := store.ImportDatasetShardFromFilesContext(ctx, shardPath, indexPath, string(manifest.PROVIDER_PEER_ID()))
+	imported, index, err := store.importDatasetShardFiles(ctx, shardPath, indexPath, string(manifest.PROVIDER_PEER_ID()), statedRecords)
 	if err != nil {
 		return nil, err
 	}
@@ -789,12 +848,22 @@ func datasetPublicationWorkBytes(path string, info os.FileInfo) int64 {
 	return total
 }
 
-func fetchDatasetPublicationCID(ctx context.Context, fetch func(context.Context, string) ([]byte, error), retryDelays []time.Duration, cidValue string) ([]byte, error) {
+// fetchDatasetPublicationCID fetches cidValue up to maxBytes (none when
+// negative), retrying after retryDelays; content larger than maxBytes is
+// not fetched again.
+func fetchDatasetPublicationCID(ctx context.Context, fetch func(context.Context, string, int64) ([]byte, error), retryDelays []time.Duration, cidValue string, maxBytes int64) ([]byte, error) {
 	var lastErr error
 	for attempt := 0; ; attempt++ {
-		data, err := fetch(ctx, cidValue)
+		data, err := fetch(ctx, cidValue, maxBytes)
 		if err == nil {
+			if maxBytes >= 0 && int64(len(data)) > maxBytes {
+				return nil, &CIDLargerThanLimitError{CID: cidValue, Limit: maxBytes, Size: int64(len(data))}
+			}
 			return data, nil
+		}
+		var large *CIDLargerThanLimitError
+		if errors.As(err, &large) {
+			return nil, err
 		}
 		lastErr = err
 		if attempt >= len(retryDelays) {
@@ -814,14 +883,25 @@ func fetchDatasetPublicationCID(ctx context.Context, fetch func(context.Context,
 	}
 }
 
-func fetchDatasetPublicationCIDToFile(ctx context.Context, fetch func(context.Context, string, string) error, retryDelays []time.Duration, cidValue, path string) error {
+// fetchDatasetPublicationCIDToFile is fetchDatasetPublicationCID to a file:
+// a file larger than maxBytes is removed and not fetched again.
+func fetchDatasetPublicationCIDToFile(ctx context.Context, fetch func(context.Context, string, string, int64) error, retryDelays []time.Duration, cidValue, path string, maxBytes int64) error {
 	var lastErr error
 	for attempt := 0; ; attempt++ {
-		err := fetch(ctx, cidValue, path)
+		err := fetch(ctx, cidValue, path, maxBytes)
 		if err == nil {
+			info, statErr := os.Stat(path)
+			if statErr == nil && maxBytes >= 0 && info.Size() > maxBytes {
+				_ = os.Remove(path)
+				return &CIDLargerThanLimitError{CID: cidValue, Limit: maxBytes, Size: info.Size()}
+			}
 			return nil
 		}
 		_ = os.Remove(path)
+		var large *CIDLargerThanLimitError
+		if errors.As(err, &large) {
+			return err
+		}
 		lastErr = err
 		if attempt >= len(retryDelays) {
 			return lastErr
@@ -878,11 +958,30 @@ func (s *FlatSQLStore) ImportDatasetShard(shardBytes, indexBytes []byte, provide
 // ImportDatasetShardContext is ImportDatasetShard under ctx: see
 // importDatasetShardRecords for how the deadline holds.
 func (s *FlatSQLStore) ImportDatasetShardContext(ctx context.Context, shardBytes, indexBytes []byte, providerPeerID string) (int, *DatasetExportIndex, error) {
+	return s.importDatasetShardBytes(ctx, shardBytes, indexBytes, providerPeerID, -1)
+}
+
+// statedRecordsKept refuses an index listing more records than a
+// publication states (statedRecords; none stated when negative), before
+// any is stored.
+func statedRecordsKept(index *DatasetExportIndex, statedRecords int64) error {
+	if statedRecords >= 0 && int64(index.RecordCount) > statedRecords {
+		return fmt.Errorf("%w: its DPM states %d records and its index lists %d; none was stored", ErrDatasetPublicationMisstated, statedRecords, index.RecordCount)
+	}
+	return nil
+}
+
+// importDatasetShardBytes is ImportDatasetShardContext storing nothing when
+// the index lists more records than statedRecords (no limit when negative).
+func (s *FlatSQLStore) importDatasetShardBytes(ctx context.Context, shardBytes, indexBytes []byte, providerPeerID string, statedRecords int64) (int, *DatasetExportIndex, error) {
 	if s == nil {
 		return 0, nil, fmt.Errorf("store is required")
 	}
 	index, err := parseDatasetExportIndexBytes(indexBytes)
 	if err != nil {
+		return 0, nil, err
+	}
+	if err := statedRecordsKept(index, statedRecords); err != nil {
 		return 0, nil, err
 	}
 	if err := verifyBytesCIDAndHash("shard", shardBytes, index.ShardCID, index.ShardSHA256); err != nil {
@@ -919,6 +1018,13 @@ func (s *FlatSQLStore) ImportDatasetShardFromFiles(shardPath, indexPath, provide
 // ImportDatasetShardFromFilesContext is ImportDatasetShardFromFiles under ctx:
 // see importDatasetShardRecords for how the deadline holds.
 func (s *FlatSQLStore) ImportDatasetShardFromFilesContext(ctx context.Context, shardPath, indexPath, providerPeerID string) (int, *DatasetExportIndex, error) {
+	return s.importDatasetShardFiles(ctx, shardPath, indexPath, providerPeerID, -1)
+}
+
+// importDatasetShardFiles is ImportDatasetShardFromFilesContext storing
+// nothing when the index lists more records than statedRecords (no limit
+// when negative).
+func (s *FlatSQLStore) importDatasetShardFiles(ctx context.Context, shardPath, indexPath, providerPeerID string, statedRecords int64) (int, *DatasetExportIndex, error) {
 	if s == nil {
 		return 0, nil, fmt.Errorf("store is required")
 	}
@@ -936,6 +1042,9 @@ func (s *FlatSQLStore) ImportDatasetShardFromFilesContext(ctx context.Context, s
 	}
 	index, err := parseDatasetExportIndexBytes(indexBytes)
 	if err != nil {
+		return 0, nil, err
+	}
+	if err := statedRecordsKept(index, statedRecords); err != nil {
 		return 0, nil, err
 	}
 	shardSHA, shardSize, err := verifyFileCIDAndHash("shard", shardPath, index.ShardCID, index.ShardSHA256)
@@ -1298,6 +1407,12 @@ func BuildSignedDatasetPublicationManifest(outputDir string, opts DatasetPublica
 		opts.QueryEngineVers = "sdn-index-v1"
 	}
 
+	if datasetManifestMisstate != nil && opts.Export != nil {
+		export := *opts.Export
+		export.SourceBatches = append([]DatasetExportSourceBatch(nil), opts.Export.SourceBatches...)
+		datasetManifestMisstate(&export)
+		opts.Export = &export
+	}
 	unsigned, err := buildDatasetPublicationManifestBytes(opts, nil, "")
 	if err != nil {
 		return nil, err
