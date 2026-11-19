@@ -138,7 +138,9 @@ describe('module-delivery SDK compatibility', () => {
     expect(typeof ui.decryptEncryptedModuleBundle).toBe('function');
     expect(typeof ui.loadDecryptedModule).toBe('function');
     expect(typeof ui.invokeLoadedModule).toBe('function');
-  });
+    // The import transforms the whole UI entry: about 16 s on a 4-CPU CI
+    // runner, which the suite's 20 s default leaves no room for.
+  }, 120_000);
 
   // SKIP (2026-08-05, graph/tasks/sdn-gauntlet-required-reds-flowrt-hdwallet.md):
   // `@spacedatanetwork/sdn-js` resolves to the built dist/index.mjs, whose

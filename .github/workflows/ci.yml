@@ -197,8 +197,8 @@ jobs:
       - name: Prepare the release container
         run: |
           export DEBIAN_FRONTEND=noninteractive
-          apt-get update -qq
-          apt-get install -y -qq --no-install-recommends \
+          apt-get -o Acquire::Retries=5 update -qq
+          apt-get -o Acquire::Retries=5 install -y -qq --no-install-recommends \
             ca-certificates curl git xz-utils build-essential zlib1g-dev libtinfo-dev
           git config --global --add safe.directory '*'
       - uses: actions/checkout@v4
@@ -252,8 +252,8 @@ jobs:
       - name: Prepare the release container
         run: |
           export DEBIAN_FRONTEND=noninteractive
-          apt-get update -qq
-          apt-get install -y -qq --no-install-recommends \
+          apt-get -o Acquire::Retries=5 update -qq
+          apt-get -o Acquire::Retries=5 install -y -qq --no-install-recommends \
             ca-certificates curl git xz-utils build-essential zlib1g-dev libtinfo-dev
           git config --global --add safe.directory '*'
       - uses: actions/checkout@v4
@@ -281,8 +281,8 @@ jobs:
       - name: Prepare the container
         run: |
           export DEBIAN_FRONTEND=noninteractive
-          apt-get update -qq
-          apt-get install -y -qq --no-install-recommends \
+          apt-get -o Acquire::Retries=5 update -qq
+          apt-get -o Acquire::Retries=5 install -y -qq --no-install-recommends \
             ca-certificates curl gnupg git xz-utils build-essential zlib1g-dev libtinfo-dev
           git config --global --add safe.directory '*'
       - uses: actions/checkout@v4
@@ -301,8 +301,8 @@ jobs:
           export DEBIAN_FRONTEND=noninteractive
           echo "deb http://apt.llvm.org/focal/ llvm-toolchain-focal-16 main" > /etc/apt/sources.list.d/llvm.list
           curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --dearmor -o /etc/apt/trusted.gpg.d/llvm.gpg
-          apt-get update -qq
-          apt-get install -y -qq --no-install-recommends \
+          apt-get -o Acquire::Retries=5 update -qq
+          apt-get -o Acquire::Retries=5 install -y -qq --no-install-recommends \
             ninja-build clang-16 llvm-16-dev liblld-16-dev libpolly-16-dev \
             libzstd-dev zlib1g-dev libtinfo-dev build-essential
           curl -fsSL "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-x86_64.tar.gz" | tar -xz -C /opt
@@ -332,8 +332,8 @@ jobs:
       - name: Prepare the release container
         run: |
           export DEBIAN_FRONTEND=noninteractive
-          apt-get update -qq
-          apt-get install -y -qq --no-install-recommends \
+          apt-get -o Acquire::Retries=5 update -qq
+          apt-get -o Acquire::Retries=5 install -y -qq --no-install-recommends \
             ca-certificates curl git xz-utils build-essential zlib1g-dev libtinfo-dev
           git config --global --add safe.directory '*'
       - uses: actions/checkout@v4
@@ -358,8 +358,8 @@ jobs:
       - name: Prepare the release container
         run: |
           export DEBIAN_FRONTEND=noninteractive
-          apt-get update -qq
-          apt-get install -y -qq --no-install-recommends \
+          apt-get -o Acquire::Retries=5 update -qq
+          apt-get -o Acquire::Retries=5 install -y -qq --no-install-recommends \
             ca-certificates curl git xz-utils build-essential zlib1g-dev libtinfo-dev
           git config --global --add safe.directory '*'
       - uses: actions/checkout@v4
@@ -413,8 +413,8 @@ jobs:
       - name: Prepare the release container
         run: |
           export DEBIAN_FRONTEND=noninteractive
-          apt-get update -qq
-          apt-get install -y -qq --no-install-recommends \
+          apt-get -o Acquire::Retries=5 update -qq
+          apt-get -o Acquire::Retries=5 install -y -qq --no-install-recommends \
             ca-certificates curl git xz-utils build-essential zlib1g-dev libtinfo-dev iproute2
           git config --global --add safe.directory '*'
           useradd --create-home update-e2e
@@ -490,8 +490,8 @@ jobs:
       - name: Prepare the release container
         run: |
           export DEBIAN_FRONTEND=noninteractive
-          apt-get update -qq
-          apt-get install -y -qq --no-install-recommends \
+          apt-get -o Acquire::Retries=5 update -qq
+          apt-get -o Acquire::Retries=5 install -y -qq --no-install-recommends \
             ca-certificates curl git xz-utils build-essential zlib1g-dev libtinfo-dev
           git config --global --add safe.directory '*'
       - uses: actions/checkout@v4
@@ -519,8 +519,8 @@ jobs:
       - name: Prepare the release container
         run: |
           export DEBIAN_FRONTEND=noninteractive
-          apt-get update -qq
-          apt-get install -y -qq --no-install-recommends \
+          apt-get -o Acquire::Retries=5 update -qq
+          apt-get -o Acquire::Retries=5 install -y -qq --no-install-recommends \
             ca-certificates curl git xz-utils build-essential zlib1g-dev libtinfo-dev
           git config --global --add safe.directory '*'
       - uses: actions/checkout@v4
@@ -551,8 +551,8 @@ jobs:
       - name: Prepare the release container
         run: |
           export DEBIAN_FRONTEND=noninteractive
-          apt-get update -qq
-          apt-get install -y -qq --no-install-recommends \
+          apt-get -o Acquire::Retries=5 update -qq
+          apt-get -o Acquire::Retries=5 install -y -qq --no-install-recommends \
             ca-certificates curl git xz-utils build-essential zlib1g-dev libtinfo-dev
           git config --global --add safe.directory '*'
       - uses: actions/checkout@v4
@@ -599,8 +599,8 @@ jobs:
       - name: Prepare the release container
         run: |
           export DEBIAN_FRONTEND=noninteractive
-          apt-get update -qq
-          apt-get install -y -qq --no-install-recommends \
+          apt-get -o Acquire::Retries=5 update -qq
+          apt-get -o Acquire::Retries=5 install -y -qq --no-install-recommends \
             ca-certificates curl git xz-utils build-essential zlib1g-dev libtinfo-dev
           git config --global --add safe.directory '*'
       - uses: actions/checkout@v4
@@ -636,8 +636,8 @@ jobs:
       - name: Prepare the release container
         run: |
           export DEBIAN_FRONTEND=noninteractive
-          apt-get update -qq
-          apt-get install -y -qq --no-install-recommends \
+          apt-get -o Acquire::Retries=5 update -qq
+          apt-get -o Acquire::Retries=5 install -y -qq --no-install-recommends \
             ca-certificates curl git xz-utils build-essential zlib1g-dev libtinfo-dev
           git config --global --add safe.directory '*'
       - uses: actions/checkout@v4
