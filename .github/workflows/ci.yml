@@ -192,6 +192,7 @@ jobs:
         group: [general-1, general-2, format2, format2-kill, command, engine]
     env:
       SDN_CI_GO_GROUP: ${{ matrix.group }}
+      SDN_CI_KEEP_TEST_BINARIES: ${{ matrix.group == 'engine' && '1' || '0' }}
     steps:
       - name: Prepare the release container
         run: |
@@ -208,6 +209,16 @@ jobs:
           modules-token: ${{ secrets.MODULES_REPO_TOKEN }}
       - name: go test (quick)
         run: ./scripts/ci-local.sh go
+      # A native crash names its pc; this keeps the exact binary it is in
+      # (stack issue 876: SIGSEGV at 0xd0 in WasmEdge's unwinder).
+      - name: Keep the engine test binaries of a failed run
+        if: failure() && matrix.group == 'engine'
+        uses: actions/upload-artifact@v4
+        with:
+          name: engine-test-binaries-${{ github.run_attempt }}
+          path: .ci-artifacts/testbin/
+          retention-days: 7
+          if-no-files-found: ignore
 
   # THE RECORD STORE. internal/storage is 324 tests over the data path — the
   # thing this whole node exists to be — and it is excluded from the quick
