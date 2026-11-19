@@ -83,16 +83,11 @@ func TestPublicationRollbackRealDaemons(t *testing.T) {
 		}
 		time.Sleep(2 * time.Second)
 	}
-	if names := followFileNames(t, r, "follows.dss"); len(names) != 1 || !names["rb-follow"] {
-		t.Fatalf("follows.dss holds %v, want rb-follow alone", names)
-	}
-	if names := followFileNames(t, r, "subscriptions.dss"); len(names) != 2 || !names["rb-follow"] || !names["rb-ledger"] {
-		t.Fatalf("subscriptions.dss holds %v, want rb-ledger and rb-follow", names)
-	}
-	if text := readFileString(ledger); !strings.Contains(text, "rb-ledger") {
-		t.Fatalf("the ledger is not left for a rollback: %q", text)
-	}
-	t.Log("this build: rb-ledger waits for the 1.1.9 producer's statement, in subscriptions.dss only; the ledger is in place")
+	// The files are checked after the rollback, so that a build that keeps
+	// the waiting subscription where 1.1.9 reads it shows what 1.1.9 does.
+	inFollows, inSubs := followFileNames(t, r, "follows.dss"), followFileNames(t, r, "subscriptions.dss")
+	ledgerText := readFileString(ledger)
+	t.Log("this build: rb-ledger waits for the 1.1.9 producer's statement; the ledger is in place")
 
 	// 3. Rolled back to 1.1.9 before the subscription holds a cursor.
 	r.stop(t)
@@ -100,8 +95,15 @@ func TestPublicationRollbackRealDaemons(t *testing.T) {
 	r.start(t)
 	p.ingestOMMCIDs(t, "rb-ledger", "l2", 840_000, 300)
 	p.publish(t, "OMM.fbs", "rb-ledger", "l2")
-	want := unionCounts(l1, p.scanBatch(t, "OMM.fbs", "rb-ledger", "l2"))
-	r.awaitRecords(t, "OMM.fbs", "rb-ledger", want, 6*time.Minute)
+	l2 := p.scanBatch(t, "OMM.fbs", "rb-ledger", "l2")
+	want := unionCounts(l1, l2)
+	deadline = time.Now().Add(6 * time.Minute)
+	for !containsCounts(r.scan(t, "OMM.fbs", "rb-ledger"), l2) {
+		if time.Now().After(deadline) {
+			t.Fatal("rolled back to 1.1.9 the receiver did not import publication l2 through its old path")
+		}
+		time.Sleep(2 * time.Second)
+	}
 	p.ingestOMMCIDs(t, "rb-follow", "f1", 850_000, 100)
 	r.awaitRecords(t, "OMM.fbs", "rb-follow", p.scan(t, "OMM.fbs", "rb-follow"), 3*time.Minute)
 	time.Sleep(30 * time.Second)
@@ -109,6 +111,15 @@ func TestPublicationRollbackRealDaemons(t *testing.T) {
 		t.Fatalf("rolled back to 1.1.9 the receiver read rb-ledger from its beginning: it holds %d records of the unpublished batch lx", len(lx))
 	}
 	r.requireRecords(t, "OMM.fbs", "rb-ledger", want)
+	if !strings.Contains(ledgerText, "rb-ledger") {
+		t.Fatalf("the update did not leave the ledger for a rollback: %q", ledgerText)
+	}
+	if len(inFollows) != 1 || !inFollows["rb-follow"] {
+		t.Fatalf("before the rollback follows.dss held %v, want rb-follow alone", inFollows)
+	}
+	if len(inSubs) != 2 || !inSubs["rb-follow"] || !inSubs["rb-ledger"] {
+		t.Fatalf("before the rollback subscriptions.dss held %v, want rb-ledger and rb-follow", inSubs)
+	}
 	t.Log("rolled back to 1.1.9: rb-ledger imported publication l2 through the old path and never read lx; rb-follow kept flowing")
 
 	// 4. This build again, then the producer updated.
