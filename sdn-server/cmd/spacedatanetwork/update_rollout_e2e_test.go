@@ -4,7 +4,7 @@ package main
 // Subtests of TestUpdateChannelRealDaemonE2E, gated and run like it (CI group
 // `rollout`).
 //
-//	fleet-status-guard  two daemons (b with update.publish_status false) and
+//	fleet-status-guard  daemons a, b and c (b with update.publish_status false) and
 //	                    in-test libp2p hosts. b publishes no status and a's
 //	                    fleet view shows it "not reporting". A host that is
 //	                    not an SDN node publishes statuses signed by 40 fresh
@@ -18,7 +18,12 @@ package main
 //	                    relayed, and `update fleet` prints no forged row; a
 //	                    burst of 30 statuses is relayed at most at the
 //	                    per-author rate; once it disconnects, a replay of its
-//	                    last status does not make it look seen again.
+//	                    last status does not make it look seen again. Then
+//	                    1,100 identities that each identified to a as an SDN
+//	                    node publish a status within a minute: a keeps the
+//	                    row of c (a third daemon, whose status it held) and
+//	                    takes c's next status. a dials no peer, b and c only
+//	                    a.
 //	rollout-signals     a publisher and a receiver r (update.rollout_window
 //	                    600 s). A signal with no window waits by the config
 //	                    window; a newer signal with window 0 replaces that
@@ -169,6 +174,13 @@ func runRealFleetStatusGuard(t *testing.T) {
 	})
 	b.start(t, boot)
 	bID := pushPeer(t, b.adminBase).ID
+	// c publishes its status (the default) and dials a.
+	c := newPushDaemon(t, filepath.Join(work, "c"), v1, feed, roots, health)
+	c.configure(t, func(cfg *config.Config) {
+		cfg.Network.Bootstrap = []string{aInfo.Addrs[0].String() + "/p2p/" + aInfo.ID.String()}
+	})
+	c.start(t, boot)
+	cID := pushPeer(t, c.adminBase).ID
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -339,9 +351,133 @@ func runRealFleetStatusGuard(t *testing.T) {
 		t.Errorf("a replay of the offline SDN host's last status changed its row: before %+v, after %+v", before, after)
 	}
 	t.Logf("a replay of an offline node's last status: last seen stays %s", before.LastSeen)
-	// a dials no peer; b dials only a (its config passed requireIsolatedConfig).
+
+	// A flood of identities that each identify as an SDN node, more than the
+	// rate table's 1,024 authors and the store's 512 statuses, all within a
+	// minute: c, whose status a held before, keeps its row, and its next
+	// status is taken.
+	waitFleet(t, a, 2*time.Minute, "c's own status", func(r *node.FleetReport) bool {
+		row := fleetRow(r, cID)
+		return row != nil && row.Source == "status"
+	})
+	cBefore := fleetRow(fleetOf(t, a), cID).StatusAt
+	floodKeys := floodIdentities(t, ctx, aInfo, 1100)
+	flooder := newE2ETopicHost(t, ctx, "spacedatanetwork/9.9.9-flooder")
+	flooder.connect(t, ctx, a)
+	floodStart := time.Now()
+	for _, priv := range floodKeys {
+		id, err := peer.IDFromPrivateKey(priv)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := flooder.topic.Publish(ctx, e2eJSON(t, e2eStatus(id, "9.9.9-flood", time.Now())), ps.WithSecretKeyAndPeerId(priv, id)); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Logf("%d flood statuses published in %s", len(floodKeys), time.Since(floodStart).Round(time.Second))
+	if row := fleetRow(fleetOf(t, a), cID); row == nil || row.Source != "status" {
+		t.Errorf("after the flood a no longer holds c's status: %+v", row)
+	}
+	// A peer joining c's topic makes c publish its status again.
+	joiner := newE2ETopicHost(t, ctx, "e2e-joiner/1.0")
+	joiner.connect(t, ctx, c)
+	renewed := false
+	for deadline := time.Now().Add(25 * time.Second); time.Now().Before(deadline) && !renewed; time.Sleep(time.Second) {
+		row := fleetRow(fleetOf(t, a), cID)
+		renewed = row != nil && row.Source == "status" && row.StatusAt != cBefore
+	}
+	if !renewed {
+		t.Errorf("a did not take c's status published %s after the flood began (c's row %+v, the one before %s)", time.Since(floodStart).Round(time.Second), fleetRow(fleetOf(t, a), cID), cBefore)
+	}
+	flooded := 0
+	for _, row := range fleetOf(t, a).Rows {
+		if row.Version == "9.9.9-flood" {
+			flooded++
+		}
+	}
+	t.Logf("after a flood of %d identities: a keeps c's row and took its next status (%t); %d flood rows shown", len(floodKeys), renewed, flooded)
+
+	// a dials no peer; b and c dial only a (their configs passed
+	// requireIsolatedConfig).
 	for _, log := range a.logPaths {
 		requireIsolated(t, log)
+	}
+	for _, d := range []*pushDaemon{b, c} {
+		for _, log := range d.logPaths {
+			requireIsolatedDialing(t, log, aInfo.ID)
+		}
+	}
+}
+
+// floodIdentities makes count keys whose peers each connected to target,
+// presented "spacedatanetwork/9.9.9-flood" to its identify exchange, and
+// disconnected (target keeps what identify told it).
+func floodIdentities(t *testing.T, ctx context.Context, target peer.AddrInfo, count int) []crypto.PrivKey {
+	t.Helper()
+	keys := make([]crypto.PrivKey, count)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var failed []error
+	work := make(chan int)
+	for w := 0; w < 8; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range work {
+				priv, _, err := crypto.GenerateEd25519Key(rand.Reader)
+				if err == nil {
+					var h host.Host
+					if h, err = libp2p.New(libp2p.NoListenAddrs, libp2p.DisableRelay(), libp2p.Identity(priv), libp2p.UserAgent("spacedatanetwork/9.9.9-flood")); err == nil {
+						if err = h.Connect(ctx, target); err == nil {
+							for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+								if _, perr := h.Peerstore().Get(target.ID, "AgentVersion"); perr == nil {
+									break
+								}
+							}
+							time.Sleep(300 * time.Millisecond)
+						}
+						_ = h.Close()
+					}
+				}
+				mu.Lock()
+				if err != nil {
+					failed = append(failed, err)
+				}
+				keys[i] = priv
+				mu.Unlock()
+			}
+		}()
+	}
+	for i := 0; i < count; i++ {
+		work <- i
+	}
+	close(work)
+	wg.Wait()
+	if len(failed) > 0 {
+		t.Fatalf("%d of %d flood identities could not connect; the first: %v", len(failed), count, failed[0])
+	}
+	return keys
+}
+
+// requireIsolatedDialing is requireIsolated for a daemon whose bootstrap list
+// names this test's loopback daemons: no fallback to the built-in peers, and
+// every bootstrap peer it connected to is one of allowed.
+func requireIsolatedDialing(t *testing.T, logPath string, allowed ...peer.ID) {
+	t.Helper()
+	text := readFileString(logPath)
+	if strings.Contains(text, "falling back to built-in defaults") {
+		t.Fatalf("the test daemon is not isolated (it fell back to the built-in bootstrap peers):\n%s", tailString(text, 40))
+	}
+	for _, line := range strings.Split(text, "\n") {
+		_, rest, ok := strings.Cut(line, "Connected to bootstrap peer ")
+		if !ok {
+			continue
+		}
+		id, _, _ := strings.Cut(rest, " ")
+		if !slices.ContainsFunc(allowed, func(p peer.ID) bool { return p.String() == id }) {
+			t.Fatalf("the test daemon connected to bootstrap peer %s, which is not one of this test's daemons %v:\n%s", id, allowed, line)
+		}
 	}
 }
 
@@ -662,7 +798,11 @@ func runRealRolloutSignals(t *testing.T) {
 		t.Errorf("u5, replaced while it waited, was installed: %v", ledgerActions(t, r.paths.Root))
 	}
 	t.Logf("u6, pushed while r was down, reached r %s after it was ready and replaced its wait for u5", time.Since(ready).Round(time.Second))
+	// a dials no peer; r dials only a.
 	for _, log := range a.logPaths {
 		requireIsolated(t, log)
+	}
+	for _, log := range r.logPaths {
+		requireIsolatedDialing(t, log, aInfo.ID)
 	}
 }

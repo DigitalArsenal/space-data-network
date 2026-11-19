@@ -481,10 +481,15 @@ func runRealRolloutFleet(t *testing.T) {
 	if check := readFileString(filepath.Join(b.work, "check-failed.log")); !strings.Contains(check, "update_failed="+v3.updateID+" ") || !strings.Contains(check, "rolled_back=true") {
 		t.Fatalf("`update check` on b does not report the failed update:\n%s", check)
 	}
-	// The publisher dials no peer; the receivers dial only loopback daemons
-	// of this test (their configs pass requireIsolatedConfig at configure).
+	// The publisher dials no peer; the receivers dial only the publisher and
+	// each other (their configs pass requireIsolatedConfig at configure).
 	for _, log := range a.logPaths {
 		requireIsolated(t, log)
+	}
+	for _, name := range names {
+		for _, log := range receivers[name].logPaths {
+			requireIsolatedDialing(t, log, aInfo.ID, ids["b"], ids["c"], ids["d"])
+		}
 	}
 }
 

@@ -125,6 +125,7 @@ func TestUpdateChannelRealDaemonE2E(t *testing.T) {
 	t.Run("config-flag-tls", runRealConfigFlagTLS)
 	t.Run("fleet-status-guard", runRealFleetStatusGuard)
 	t.Run("rollout-signals", runRealRolloutSignals)
+	t.Run("rollout-races", runRealRolloutRaces)
 	t.Run("pull", func(t *testing.T) { runRealDaemonUpdateChannel(t, installThroughCLI) })
 	t.Run("push-catchup-withdrawal-validation", runRealPushChannel)
 	t.Run("home-read-only-install", runRealHomeUpdate)
