@@ -31,7 +31,7 @@ import (
 const (
 	// DefaultRolloutWindowSeconds is update.rollout_window_seconds when the
 	// config does not set it.
-	DefaultRolloutWindowSeconds = 3600
+	DefaultRolloutWindowSeconds = 600
 	// MaxRolloutWindowSeconds bounds a window from config or from a signal.
 	MaxRolloutWindowSeconds = 24 * 60 * 60
 
