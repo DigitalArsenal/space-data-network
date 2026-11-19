@@ -13,9 +13,14 @@ type LaneFollow struct {
 	SourceName string    `json:"source_name"`
 	Producer   string    `json:"producer"`
 	Since      time.Time `json:"subscribed_since,omitempty"`
-	// Start is "current" while the subscription waits for the producer's
-	// statement to start at its current batch.
-	Start                 string    `json:"pending_start,omitempty"`
+	// StartsAt is where the subscription starts ("current": the producer's
+	// current batch, "beginning": the lane's beginning); Start is "current"
+	// while it waits for the producer's statement to start there.
+	StartsAt string `json:"start"`
+	Start    string `json:"pending_start,omitempty"`
+	// Stopped is why the running guard stopped the lane before its record
+	// ceiling or free disk reserve (the cursor is kept).
+	Stopped               string    `json:"stopped,omitempty"`
 	ReceivedBytes         int64     `json:"received_bytes"`
 	ReceivedRecords       int64     `json:"received_records"`
 	StoredRecords         int64     `json:"stored_records"`
@@ -42,6 +47,9 @@ type LaneSubscription struct {
 	// Start is "current", "beginning" or "" (by the lane's rule).
 	Start string
 	Force bool
+	// Retention is the rule the subscription sets on the lane ("": none);
+	// it decides the default start.
+	Retention string
 }
 
 // LanePlan is a subscription's first read and whether this node takes it.

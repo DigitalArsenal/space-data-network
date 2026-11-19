@@ -55,7 +55,7 @@ var storeWipeMustSurvive = []string{
 	// wipe each followed lane fetches the producer's current batch again at
 	// its first quiet page; its older history comes back only by subscribing
 	// again with --start beginning.
-	"follows.dss",
+	"follows.dss", "subscriptions.dss",
 }
 
 var storeWipeYes bool

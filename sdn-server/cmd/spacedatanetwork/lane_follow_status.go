@@ -14,8 +14,12 @@ func laneFollows(n *node.Node) func() []api.LaneFollow {
 		statuses := n.FollowStatuses()
 		out := make([]api.LaneFollow, 0, len(statuses))
 		for _, s := range statuses {
+			pending := ""
+			if s.Start == node.FollowStartCurrent && s.Cursor == "" {
+				pending = node.FollowStartCurrent
+			}
 			out = append(out, api.LaneFollow{Schema: s.Schema, ProviderID: s.ProviderID, SourceName: s.SourceName, Producer: s.Producer,
-				Since: s.Since, Start: s.Start,
+				Since: s.Since, StartsAt: s.Start, Start: pending, Stopped: s.Stopped,
 				ReceivedBytes: s.ReceivedBytes, ReceivedRecords: s.ReceivedRecords, StoredRecords: s.StoredRecords, RemovedRecords: s.RemovedRecords,
 				ReceiveBytesPerSecond: s.ReceiveBytesPerSecond,
 				TransferMs:            s.TransferMs, VerifyMs: s.VerifyMs, StoreMs: s.StoreMs, LastReceivedAt: s.LastReceivedAt,
@@ -50,7 +54,7 @@ func lanePlan(p node.FollowPlan) api.LanePlan {
 
 func followRequest(req api.LaneSubscription) (node.FollowKey, node.FollowOptions) {
 	return node.FollowKey{Schema: req.Schema, ProviderID: req.ProviderID, SourceName: req.SourceName, Producer: req.Producer},
-		node.FollowOptions{Start: req.Start, Force: req.Force}
+		node.FollowOptions{Start: req.Start, Force: req.Force, Rule: req.Retention}
 }
 
 // subscribeLane follows a lane once its first read fits (sync subscribe).

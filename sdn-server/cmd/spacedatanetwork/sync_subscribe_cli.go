@@ -410,8 +410,16 @@ func runSyncSubscriptions(cmd *cobra.Command, asJSON bool) error {
 		if !s.Since.IsZero() {
 			fmt.Fprintf(out, "  subscribed since: %s\n", s.Since.UTC().Format(time.RFC3339))
 		}
-		if s.Start != "" {
+		switch {
+		case s.Start != "":
 			fmt.Fprintf(out, "  waiting to start at the producer's current batch\n")
+		case s.StartsAt == "beginning":
+			fmt.Fprintf(out, "  started at the lane's beginning\n")
+		default:
+			fmt.Fprintf(out, "  started at the producer's current batch\n")
+		}
+		if s.Stopped != "" {
+			fmt.Fprintf(out, "  stopped: %s\n", s.Stopped)
 		}
 		state := "connected"
 		if !s.Connected {

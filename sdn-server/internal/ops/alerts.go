@@ -62,6 +62,14 @@ const (
 	// node refused (malformed, past its limits, or naming another peer), or
 	// its current batch could not be held.
 	KindFollowRefused = "follow_refused"
+	// KindFollowStopped: a followed lane (subject: the lane) stopped before
+	// its next page would take the store past its record ceiling or its
+	// free disk below the reserve; the cursor is kept.
+	KindFollowStopped = "follow_stopped"
+	// KindFollowCursorRefused: a producer refused a followed lane's saved
+	// cursor (subject: the lane); the lane starts again at the producer's
+	// current batch.
+	KindFollowCursorRefused = "follow_cursor_refused"
 	// KindSubscriptionConversion: the removed peers.trusted_import is still
 	// in the config, or a lane of it could not become a subscription
 	// (subject: the lane, or "" for the key).
