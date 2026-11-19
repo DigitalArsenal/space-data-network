@@ -1250,9 +1250,11 @@ type NetworkConfig struct {
 	EdgeRelays []string `yaml:"edge_relays"`
 	MaxConns   int      `yaml:"max_connections"`
 
-	// AcceptPushFrom controls WHOSE RECORDS THIS NODE WILL STORE from gossip
-	// (records and PNM announcements on pubsub topics): "trusted" (default)
-	// or "any".
+	// AcceptPushFrom controls whose $PNM announcements gossiped on pubsub
+	// topics this node stores: "trusted" (default) or "any". A gossiped
+	// record that is not a $PNM names no lane and is stored from no one: a
+	// node imports only the lanes it subscribes to (internal/node/follow.go,
+	// gossipRecordAdmitted).
 	//
 	// It defaults to trusted because the alternative was the shipped
 	// behaviour and it was not safe: the per-record push message (since
@@ -1830,6 +1832,35 @@ type SecurityConfig struct {
 	// backed up apart from the node's data: the identity cannot be opened
 	// without it. Mutually exclusive with key_password.
 	KeyPasswordFile string `yaml:"key_password_file,omitempty"`
+
+	// RemovedRequireSignedFeedHeads is security.require_signed_feed_heads,
+	// removed in 1.2.0 with the feed heads: read only to name it as
+	// ignored when a config still carries it.
+	RemovedRequireSignedFeedHeads *bool `yaml:"require_signed_feed_heads,omitempty"`
+}
+
+// RemovedKeys names each key of c that 1.2.0 removed and ignores.
+func (c *Config) RemovedKeys() []string {
+	if c == nil {
+		return nil
+	}
+	var out []string
+	if t := c.Peers.RemovedTrustedImport; t != nil {
+		out = append(out, "peers.trusted_import")
+		if strings.TrimSpace(t.NewLanes) != "" {
+			out = append(out, "peers.trusted_import.new_lanes")
+		}
+		if len(t.Allow) > 0 {
+			out = append(out, "peers.trusted_import.allow")
+		}
+		if len(t.Deny) > 0 {
+			out = append(out, "peers.trusted_import.deny")
+		}
+	}
+	if c.Security.RemovedRequireSignedFeedHeads != nil {
+		out = append(out, "security.require_signed_feed_heads")
+	}
+	return out
 }
 
 // TorConfig contains local TOR runtime settings.

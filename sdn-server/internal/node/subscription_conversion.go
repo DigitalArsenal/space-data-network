@@ -23,13 +23,23 @@ package node
 //     than the current batch is read, and records already held are tagged to
 //     the batch, not sent again (follow.go). Its bound (the batch's records
 //     and bytes) is logged when the producer's statement arrives;
-//   - then the ledger is renamed trusted-import-lanes.json.converted and
-//     trusted-import-converted (plain text, one line per lane) records the
-//     conversion. It runs once.
+//   - an allow entry that names a peer this node does not trust is reported
+//     in the conversion record, not subscribed from;
+//   - trusted-import-converted (plain text, one line per lane, and each
+//     removed key the config carries) records the conversion, which runs
+//     once. The ledger and the config are left as they are: an update that
+//     fails its health check rolls back to 1.1.9 with nobody logged in, and
+//     1.1.9 imports through them again. The converted subscriptions are in
+//     subscriptions.dss, which 1.1.9 does not read (follow.go), so 1.1.9
+//     does not read a converted lane from its beginning; when this build
+//     starts again it finds the record and the subscriptions as it left
+//     them.
 //
-// A later start with peers.trusted_import still in the config logs that the
-// key is ignored and raises subscription_conversion. A new node (an empty
-// storage path) whose config carries the key refuses to start.
+// A ledger that cannot be read converts nothing and writes no record: the
+// alert subscription_conversion names the error, and the next start tries
+// again. Every start names each removed key the config still carries (log
+// and the alert subscription_conversion). A new node (an empty storage path)
+// whose config carries peers.trusted_import refuses to start.
 
 import (
 	"encoding/json"
@@ -101,6 +111,9 @@ type ConvertedLane struct {
 	// there are none.
 	Producers []string
 	Reason    string
+	// Untrusted are peers an allow entry names for the lane that this node
+	// does not trust (not subscribed from).
+	Untrusted []string
 	// FromLedger and FromAllow say where the lane was named.
 	FromLedger, FromAllow bool
 }
@@ -123,12 +136,9 @@ func (n *Node) removedImportLanes() ([]ConvertedLane, error) {
 		return l
 	}
 	var ledgerErr error
-	// The ledger, or, once converted, the renamed ledger (sync subscribe
-	// --from-ledger reads it after the conversion too).
+	// The ledger stays in place after the conversion (sync subscribe
+	// --from-ledger reads it then too).
 	ledgerPath := filepath.Join(n.storagePath(), removedImportLedgerFile)
-	if _, err := os.Stat(ledgerPath); errors.Is(err, os.ErrNotExist) {
-		ledgerPath += ".converted"
-	}
 	if raw, err := os.ReadFile(ledgerPath); err == nil {
 		var rows []struct {
 			Schema     string `json:"schema"`
@@ -213,8 +223,19 @@ func (n *Node) removedImportLanes() ([]ConvertedLane, error) {
 		}
 		for _, s := range allow {
 			if p := strings.TrimSpace(s.Peer); p != "" && p != "*" && s.Matches(p, l.Schema, l.ProviderID, l.SourceName) {
-				if pid, err := peer.Decode(p); err == nil && pid.String() != self {
+				pid, err := peer.Decode(p)
+				switch {
+				case err != nil:
+					l.Untrusted = append(l.Untrusted, p+" (not a peer id)")
+				case pid.String() == self:
+					producedHere = true
+				case n.peerRegistry != nil && n.peerRegistry.IsTrusted(pid):
 					producers[pid.String()] = true
+				default:
+					// A subscription from a peer this node does not trust
+					// fails admission at every connection: reported, not
+					// subscribed.
+					l.Untrusted = append(l.Untrusted, pid.String())
 				}
 			}
 		}
@@ -222,7 +243,7 @@ func (n *Node) removedImportLanes() ([]ConvertedLane, error) {
 		// peer: 1.1.9 imported it from any trusted peer that published it,
 		// so it is followed from each peer of peers.trusted_peers (a peer
 		// that does not hold the lane serves an empty stream).
-		if len(producers) == 0 && len(senders) == 0 && l.FromAllow {
+		if len(producers) == 0 && len(senders) == 0 && len(l.Untrusted) == 0 && !producedHere && l.FromAllow {
 			for _, p := range n.configuredTrustedPeers() {
 				if p.String() != self {
 					producers[p.String()] = true
@@ -237,6 +258,8 @@ func (n *Node) removedImportLanes() ([]ConvertedLane, error) {
 		case len(l.Producers) > 0:
 		case producedHere:
 			l.Reason = laneProducedHereReason
+		case len(l.Untrusted) > 0:
+			l.Reason = "the allow list names its producer as " + strings.Join(l.Untrusted, ", ") + ", which this node does not trust: subscribe with `spacedatanetwork sync subscribe --from <producer peer id>` once it is trusted"
 		case untrusted:
 			l.Reason = "its records came from a peer this node does not trust: subscribe with `spacedatanetwork sync subscribe --from <producer peer id>` once it is trusted"
 		default:
@@ -289,27 +312,47 @@ func (n *Node) convertRemovedTrustedImport() {
 	marker := filepath.Join(base, importConversionFile)
 	_, ledgerErr := os.Stat(ledger)
 	_, markerErr := os.Stat(marker)
+	removed := n.config.RemovedKeys()
+	if len(removed) > 0 {
+		names := strings.Join(removed, ", ")
+		log.Warnf("Removed in 1.2.0 and ignored, still in the config: %s. Remove them; a node imports only the lanes it subscribes to (`spacedatanetwork sync subscribe`)", names)
+		n.alerts.Raise(ops.KindSubscriptionConversion, "config", ops.SeverityWarning,
+			"removed in 1.2.0 and ignored, still in the config: "+names+"; remove them")
+	}
 	hasKey := n.config.Peers.RemovedTrustedImport != nil
 	if markerErr == nil || (!hasKey && ledgerErr != nil) {
-		if hasKey {
-			log.Warnf("peers.trusted_import is ignored: it was converted to subscriptions (%s). Remove it from the config; subscriptions are managed with `spacedatanetwork sync subscribe`", marker)
-			n.alerts.Raise(ops.KindSubscriptionConversion, "", ops.SeverityWarning,
-				"peers.trusted_import is still in the config and is ignored (converted to subscriptions); remove it")
-		}
 		return
 	}
 	lanes, err := n.removedImportLanes()
 	if err != nil {
-		log.Errorf("Converting the import ledger and allow list to subscriptions: %v", err)
-		if lanes == nil {
-			n.alerts.Raise(ops.KindSubscriptionConversion, "", ops.SeverityError, "the import ledger could not be converted to subscriptions: "+err.Error())
-			return
-		}
+		// Nothing is converted and no record is written: the next start
+		// tries again.
+		log.Errorf("The import ledger and allow list were not converted to subscriptions (tried again at the next start): %v", err)
+		n.alerts.Raise(ops.KindSubscriptionConversion, "", ops.SeverityError,
+			"the import ledger and allow list were not converted to subscriptions (tried again at the next start): "+err.Error())
+		return
 	}
 	var report strings.Builder
 	fmt.Fprintf(&report, "# peers.trusted_import and %s converted to subscriptions at %s\n", removedImportLedgerFile, time.Now().UTC().Format(time.RFC3339))
+	for _, key := range removed {
+		fmt.Fprintf(&report, "removed key %s: ignored\n", key)
+	}
+	if t := n.config.Peers.RemovedTrustedImport; t != nil {
+		for _, s := range t.Deny {
+			fmt.Fprintf(&report, "peers.trusted_import.deny %s %s/%s (peer %s): not converted; nothing is imported without a subscription\n",
+				s.Schema, s.ProviderID, s.SourceName, s.Peer)
+		}
+	}
 	converted := 0
 	for _, l := range lanes {
+		for _, p := range l.Untrusted {
+			fmt.Fprintf(&report, "%s %s/%s from %s: not subscribed: the allow list names this peer and this node does not trust it\n", l.Schema, l.ProviderID, l.SourceName, p)
+			if len(l.Producers) > 0 {
+				log.Warnf("Import ledger lane %s %s/%s: the allow list names %s, which this node does not trust; not subscribed from it", l.Schema, l.ProviderID, l.SourceName, p)
+				n.alerts.Raise(ops.KindSubscriptionConversion, l.Schema+" "+l.ProviderID+"/"+l.SourceName, ops.SeverityWarning,
+					"the allow list names "+p+", which this node does not trust; not subscribed from it")
+			}
+		}
 		if len(l.Producers) == 0 {
 			fmt.Fprintf(&report, "%s %s/%s: not converted: %s\n", l.Schema, l.ProviderID, l.SourceName, l.Reason)
 			if l.Reason != laneProducedHereReason {
@@ -335,15 +378,8 @@ func (n *Node) convertRemovedTrustedImport() {
 	}
 	if err := os.WriteFile(marker, []byte(report.String()), 0o600); err != nil {
 		log.Errorf("Conversion record %s not written: %v", marker, err)
+		n.alerts.Raise(ops.KindSubscriptionConversion, "", ops.SeverityError, "the conversion record could not be written: "+err.Error())
 		return
 	}
-	if ledgerErr == nil {
-		if err := os.Rename(ledger, ledger+".converted"); err != nil {
-			log.Warnf("Import ledger not renamed: %v", err)
-		}
-	}
-	log.Infof("Converted the removed import gate to %d subscriptions (%d lanes named); record in %s", converted, len(lanes), marker)
-	if hasKey {
-		log.Warnf("peers.trusted_import is ignored from now on: remove it from the config")
-	}
+	log.Infof("Converted the removed import gate to %d subscriptions (%d lanes named); record in %s; the ledger and the config are left for a rollback to 1.1.9", converted, len(lanes), marker)
 }
