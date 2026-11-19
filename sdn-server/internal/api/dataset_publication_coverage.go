@@ -52,8 +52,8 @@ import (
 // lane. A batch with more than its share, or counted when its lane follows
 // its bound already, is not followed: it keeps its alert until a whole-batch
 // publication of it that read the lane after its failure completes. One
-// followed CID takes about 110 bytes of memory (a 59-character CID in a
-// set), so a lane follows at most about 44 MB.
+// followed CID takes about 100 bytes of memory (a 59-character CID in a
+// set: 39.6 MB measured for 400,000), so a lane follows at most about 40 MB.
 const (
 	maxFollowedUnpublishedRecords = 200_000
 	maxFollowedLaneRecords        = 400_000

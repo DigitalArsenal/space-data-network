@@ -124,7 +124,7 @@ clears nothing. The windows a publication wrote before it failed partway
 are never taken for a publication of the batch and are not announced again
 by an announcement of existing publications. The records are counted after
 the publication is reported, off its path, once per failed batch, and at
-most 200,000 per batch and 400,000 per lane are followed (about 44 MB per
+most 200,000 per batch and 400,000 per lane are followed (about 40 MB per
 lane); a batch beyond that keeps its alert until it is published whole.
 
 **Retention releases the windows of a failed publication.** Node 1.1.9

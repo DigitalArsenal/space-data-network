@@ -73,7 +73,7 @@ is published whole again. The count fingerprints each batch that tags one of
 the records and has a completed publication, once. When no record is left
 unpublished, the batch is published and its scope goes. The records found
 unpublished are kept in memory, at most 200,000 per batch and 400,000 per
-lane (about 110 bytes each: at most about 44 MB per lane); a batch beyond
+lane (about 100 bytes each: at most about 40 MB per lane); a batch beyond
 either bound is not followed and keeps its alert until a publication of the
 whole batch completes. After each completed publication of a whole batch of
 the lane, the published batch's record list (no tags) is read once, then the
