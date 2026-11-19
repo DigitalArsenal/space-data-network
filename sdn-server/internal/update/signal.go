@@ -386,8 +386,11 @@ func (s *Signal) assertSignature(roots TrustedRoots) error {
 	if err != nil {
 		return err
 	}
-	signature, err := base64.StdEncoding.DecodeString(s.Signing.Signature)
-	if err != nil {
+	// One spelling per signature: the decoder alone would also take line
+	// breaks inside the text and stray bits in its last character, and each
+	// such spelling of one signed signal would pass as a different message.
+	signature, err := base64.StdEncoding.Strict().DecodeString(s.Signing.Signature)
+	if err != nil || base64.StdEncoding.EncodeToString(signature) != s.Signing.Signature {
 		return errors.New("invalid update signal signature encoding")
 	}
 	statement, err := SignalStatement(s.raw)
