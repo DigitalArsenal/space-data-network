@@ -14,12 +14,18 @@ inputs:
       carries the COMPILED flow bundles the wire-contract suites mount.
     required: false
     default: ''
+  modules-ssh-key:
+    description: >
+      Read-only deploy key of DigitalArsenal/space-data-network-modules
+      (MODULES_REPO_DEPLOY_KEY). The repository is private since 2026-11-19,
+      so the job's own token no longer reads it.
+    required: false
+    default: ''
   needs-modules:
     description: >
       'true' for a lane that runs a test on the modules checkout (the
       publication lane's CelesTrak GP ingest flow): it is checked out with
-      the job's token when no modules-token is supplied, and its absence
-      fails the lane.
+      modules-ssh-key or modules-token, and its absence fails the lane.
     required: false
     default: 'false'
   needs-flow-bundles:
@@ -81,14 +87,19 @@ runs:
     # licensing/core/dist/isomorphic/module.wasm, which CI has been logging as
     # "not found; artifact-dependent Go tests will skip" since forever.
     #
-    # The modules repository is public, so the job's own token checks it
-    # out; modules-token (MODULES_REPO_TOKEN) is used when supplied. A lane
-    # checks it out when it passes modules-token or needs-modules: 'true'.
+    # The modules repository is private: it is read with its deploy key
+    # (modules-ssh-key) or a token (modules-token). The job's own token does
+    # not read it. The branch is named, so the checkout asks the API nothing.
+    # A lane checks it out when it passes modules-token or needs-modules:
+    # 'true'. A run without the repository's secrets (a pull request from a
+    # fork) fails here in a lane that needs the modules.
     - name: Check out space-data-network-modules
       if: inputs.modules-token != '' || inputs.needs-modules == 'true'
       uses: actions/checkout@v4
       with:
         repository: DigitalArsenal/space-data-network-modules
+        ref: main
+        ssh-key: ${{ inputs.modules-ssh-key }}
         token: ${{ inputs.modules-token || github.token }}
         path: .ci-artifacts/space-data-network-modules
         persist-credentials: false
