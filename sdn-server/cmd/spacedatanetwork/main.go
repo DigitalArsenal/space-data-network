@@ -3076,13 +3076,14 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	daemonServing.Store(true)
 	select {
 	case sig := <-sigChan:
-		// Which signal ended the daemon, and its parent process: a stop
-		// from outside is told apart from a service manager's.
+		// Which signal ended the daemon. Go's signal delivery does not say
+		// which process sent it; the daemon's own parent process (under
+		// systemd always 1) is logged as what it is, not as the sender.
 		number := 0
 		if s, ok := sig.(syscall.Signal); ok {
 			number = int(s)
 		}
-		log.Infof("Received %s (signal %d; parent process %d)", sig, number, os.Getppid())
+		log.Infof("Received %s (signal %d; the sender is not known; this daemon's parent process is %d)", sig, number, os.Getppid())
 	case <-updateShutdown:
 		log.Info("Update shutdown requested")
 		if homePaths.IsHome() {
