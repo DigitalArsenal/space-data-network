@@ -645,6 +645,18 @@ func (m *followManager) followOnce(ctx context.Context, e *followEntry) (int, er
 			return pages, fmt.Errorf("%v; the stream ends", err)
 		}
 		transfer := time.Since(began)
+		// A page with records: the next page is granted before this one is
+		// stored, so the producer reads and sends it while this node writes
+		// (two pages at most in flight; the cursor is still saved only after
+		// the store returns, so a restart resumes before the granted page).
+		// A quiet page is granted after the current-batch step below.
+		ahead := len(runs) > 0
+		if ahead {
+			if err := syncwire.Grant(stream, st.Schema); err != nil {
+				_ = stream.Reset()
+				return pages, fmt.Errorf("grant: %w", err)
+			}
+		}
 		res, storeErr := m.storeRuns(ctx, st, remote, runs, "", nil)
 		m.mu.Lock()
 		e.status.ReceivedBytes += received
@@ -701,9 +713,11 @@ func (m *followManager) followOnce(ctx context.Context, e *followEntry) (int, er
 			m.applyRules(false)
 			m.n.datasetSupersedeMu.Unlock()
 		}
-		if err := syncwire.Grant(stream, st.Schema); err != nil {
-			_ = stream.Reset()
-			return pages, fmt.Errorf("grant: %w", err)
+		if !ahead {
+			if err := syncwire.Grant(stream, st.Schema); err != nil {
+				_ = stream.Reset()
+				return pages, fmt.Errorf("grant: %w", err)
+			}
 		}
 	}
 }
