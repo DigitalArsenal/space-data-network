@@ -205,6 +205,9 @@ type Node struct {
 
 	// updateFleet holds the update statuses of other nodes (update_fleet.go).
 	updateFleet *updateFleet
+	// bootstrapIDs are the peer ids of network.bootstrap (bootstrapPeerIDs).
+	bootstrapIDsOnce sync.Once
+	bootstrapIDs     map[peer.ID]bool
 
 	// peerAdmission is the connection-manager side of trust: which peers this
 	// node KEEPS when the public swarm floods it (peer_admission_policy.go).
@@ -619,6 +622,7 @@ func (n *Node) init() error {
 	}
 	n.peerRegistry = peers.NewRegistry(n.config.Peers.StrictMode, persistence)
 	n.updateFleet = newUpdateFleet(n.peerRegistry.RecordSeen, n.config.Update.PublishStatus)
+	n.updateFleet.reserved = n.configuredStatusAuthor
 
 	// PIN STORE (owner ruling 2026-07-30: a peer that has never been seen may
 	// only appear if it was "added manually and 'pinned'"). This is DURABLE and

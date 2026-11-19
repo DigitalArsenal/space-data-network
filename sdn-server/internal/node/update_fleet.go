@@ -37,8 +37,11 @@ const (
 	// statusExpiry: a status not renewed for this long is dropped (a node
 	// renews its status every statusAnnounceInterval).
 	statusExpiry = 30 * time.Minute
-	// statusCapacity bounds the statuses held; the least recently renewed
-	// goes first.
+	// statusCapacity bounds the statuses held from authors this node knows
+	// only as SDN nodes by their identify agent string. Once it is full, a
+	// status from a new such author is not kept; the statuses held are kept
+	// until they expire. Authors this node trusts by configuration or its
+	// registry are not counted and always kept.
 	statusCapacity = 512
 	// signalReannounceFor bounds how long the node that published a signal
 	// sends it again to peers that join its update topic.
@@ -55,6 +58,9 @@ type updateFleet struct {
 	latest  func() *update.StatusAck
 	changed chan struct{}
 	seen    func(peer.ID)
+	// reserved reports an author this node trusts by configuration or its
+	// registry (Node.configuredStatusAuthor). Nil trusts none.
+	reserved func(peer.ID) bool
 	// publish is update.publish_status: false publishes no status.
 	publish bool
 	// announced is the newest signal this node published, sent again to
@@ -84,6 +90,9 @@ func (n *Node) updateFleetTopic() string {
 type fleetStatus struct {
 	status   *update.Status
 	received time.Time
+	// reserved: its author is one this node trusts by configuration or its
+	// registry; not counted against statusCapacity.
+	reserved bool
 }
 
 func newUpdateFleet(seen func(peer.ID), publish bool) *updateFleet {
@@ -93,7 +102,10 @@ func newUpdateFleet(seen func(peer.ID), publish bool) *updateFleet {
 // record keeps status when it is newer than the one held for its peer and its
 // own time is within statusClockSkew of this node's clock; only then is the
 // peer recorded as seen. A replayed older status changes nothing. The caller
-// has checked that its peer_id is the message's author.
+// has checked that its peer_id is the message's author. A status from a new
+// author this node knows only by its agent string is not kept while
+// statusCapacity such statuses are held: those held stay until they expire,
+// so a flood of new identities cannot push out the nodes already shown.
 func (f *updateFleet) record(status *update.Status) {
 	if f == nil || status == nil {
 		return
@@ -108,10 +120,20 @@ func (f *updateFleet) record(status *update.Status) {
 		return
 	}
 	f.mu.Lock()
+	reservedFn := f.reserved
+	f.mu.Unlock()
+	reserved := reservedFn != nil && reservedFn(id)
+	f.mu.Lock()
 	held, ok := f.statuses[status.PeerID]
 	newer := !ok || at.After(held.status.AtTime())
+	if newer && !ok && !reserved {
+		f.pruneLocked(now)
+		if f.ordinaryLocked() >= statusCapacity {
+			newer = false
+		}
+	}
 	if newer {
-		f.statuses[status.PeerID] = fleetStatus{status: status, received: now}
+		f.statuses[status.PeerID] = fleetStatus{status: status, received: now, reserved: reserved || (ok && held.reserved)}
 		f.pruneLocked(now)
 	}
 	f.mu.Unlock()
@@ -120,17 +142,44 @@ func (f *updateFleet) record(status *update.Status) {
 	}
 }
 
-// pruneLocked drops expired statuses, then the least recently renewed ones
-// beyond statusCapacity. The caller holds f.mu.
+// holds reports whether a status of id is held.
+func (f *updateFleet) holds(id peer.ID) bool {
+	if f == nil {
+		return false
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	held, ok := f.statuses[id.String()]
+	return ok && time.Since(held.received) <= statusExpiry
+}
+
+// ordinaryLocked counts the statuses whose author is not reserved. The
+// caller holds f.mu.
+func (f *updateFleet) ordinaryLocked() int {
+	count := 0
+	for _, held := range f.statuses {
+		if !held.reserved {
+			count++
+		}
+	}
+	return count
+}
+
+// pruneLocked drops expired statuses, then (a bound that record keeps) the
+// least recently renewed ordinary ones beyond statusCapacity. The caller
+// holds f.mu.
 func (f *updateFleet) pruneLocked(now time.Time) {
 	for id, held := range f.statuses {
 		if now.Sub(held.received) > statusExpiry {
 			delete(f.statuses, id)
 		}
 	}
-	for len(f.statuses) > statusCapacity {
+	for f.ordinaryLocked() > statusCapacity {
 		oldest, oldestAt := "", time.Time{}
 		for id, held := range f.statuses {
+			if held.reserved {
+				continue
+			}
 			if oldest == "" || held.received.Before(oldestAt) {
 				oldest, oldestAt = id, held.received
 			}

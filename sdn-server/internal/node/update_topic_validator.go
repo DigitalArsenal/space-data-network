@@ -83,7 +83,7 @@ func (n *Node) validateStatus(message *ps.Message, limiter *statusRateLimiter, n
 	if at := status.AtTime(); at.Before(now.Add(-statusClockSkew)) || at.After(now.Add(statusClockSkew)) {
 		return ps.ValidationIgnore
 	}
-	if !limiter.allow(author, now) {
+	if !limiter.allow(author, now, n.reservedStatusAuthor(author)) {
 		return ps.ValidationIgnore
 	}
 	return ps.ValidationAccept
@@ -111,10 +111,61 @@ func (n *Node) knownSDNNode(id peer.ID) bool {
 	return false
 }
 
-// statusRateLimiter is a token bucket per status author.
+// reservedStatusAuthor reports whether this node has reason to trust id
+// beyond the agent string it presented to identify (which any peer chooses):
+// a pin (a config trusted peer is one), a configured bootstrap peer, a peer
+// the registry trusts, or a peer whose status this node already holds. Such a
+// peer has its own room in the status rate table and the status store, so
+// peers known only by their agent string cannot crowd it out.
+func (n *Node) reservedStatusAuthor(id peer.ID) bool {
+	if n == nil {
+		return false
+	}
+	if n.configuredStatusAuthor(id) {
+		return true
+	}
+	return n.updateFleet.holds(id)
+}
+
+// configuredStatusAuthor is reservedStatusAuthor without the held statuses.
+func (n *Node) configuredStatusAuthor(id peer.ID) bool {
+	if n == nil || id == "" {
+		return false
+	}
+	if registry := n.PeerRegistry(); registry != nil {
+		if _, pinned := registry.PinOf(id); pinned {
+			return true
+		}
+		if registry.IsTrusted(id) {
+			return true
+		}
+	}
+	return n.bootstrapPeerIDs()[id]
+}
+
+// bootstrapPeerIDs are the peer ids of network.bootstrap.
+func (n *Node) bootstrapPeerIDs() map[peer.ID]bool {
+	n.bootstrapIDsOnce.Do(func() {
+		n.bootstrapIDs = map[peer.ID]bool{}
+		if n.config == nil {
+			return
+		}
+		for _, entry := range n.config.Network.Bootstrap {
+			if info, err := peer.AddrInfoFromString(strings.TrimSpace(entry)); err == nil {
+				n.bootstrapIDs[info.ID] = true
+			}
+		}
+	})
+	return n.bootstrapIDs
+}
+
+// statusRateLimiter is a token bucket per status author. Authors this node
+// has reason to trust (reservedStatusAuthor) have their own table, so the
+// bound on authors (statusRateAuthors) applies only to the others.
 type statusRateLimiter struct {
-	mu      sync.Mutex
-	buckets map[peer.ID]*statusBucket
+	mu       sync.Mutex
+	buckets  map[peer.ID]*statusBucket
+	reserved map[peer.ID]*statusBucket
 }
 
 type statusBucket struct {
@@ -123,26 +174,35 @@ type statusBucket struct {
 }
 
 func newStatusRateLimiter() *statusRateLimiter {
-	return &statusRateLimiter{buckets: map[peer.ID]*statusBucket{}}
+	return &statusRateLimiter{buckets: map[peer.ID]*statusBucket{}, reserved: map[peer.ID]*statusBucket{}}
 }
 
-func (l *statusRateLimiter) allow(id peer.ID, now time.Time) bool {
+func (l *statusRateLimiter) allow(id peer.ID, now time.Time, reserved bool) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	b, ok := l.buckets[id]
+	table := l.buckets
+	if reserved {
+		table = l.reserved
+		if b, ok := l.buckets[id]; ok {
+			// Known before it was reserved: its bucket moves with it.
+			delete(l.buckets, id)
+			table[id] = b
+		}
+	}
+	b, ok := table[id]
 	if !ok {
-		if len(l.buckets) >= statusRateAuthors {
-			for k, v := range l.buckets {
+		if len(table) >= statusRateAuthors {
+			for k, v := range table {
 				if now.Sub(v.at) > statusRateBurst*statusRateRefill {
-					delete(l.buckets, k)
+					delete(table, k)
 				}
 			}
-			if len(l.buckets) >= statusRateAuthors {
+			if !reserved && len(table) >= statusRateAuthors {
 				return false
 			}
 		}
 		b = &statusBucket{tokens: statusRateBurst, at: now}
-		l.buckets[id] = b
+		table[id] = b
 	}
 	b.tokens = min(float64(statusRateBurst), b.tokens+now.Sub(b.at).Seconds()/statusRateRefill.Seconds())
 	b.at = now
