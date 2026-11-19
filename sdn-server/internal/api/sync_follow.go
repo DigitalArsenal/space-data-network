@@ -39,6 +39,11 @@ type LaneFollow struct {
 	StatedBatch   string `json:"producer_batch,omitempty"`
 	StatedRecords int64  `json:"producer_batch_records"`
 	Lag           int64  `json:"lag_records"`
+	// Unread says what a refused cursor left unread on a lane whose history
+	// this node keeps, until the lane is subscribed from its beginning again
+	// or the gap is acknowledged; UnreadSince is when.
+	Unread      string    `json:"unread,omitempty"`
+	UnreadSince time.Time `json:"unread_since,omitempty"`
 }
 
 // LaneSubscription is a subscription request (sync subscribe).
@@ -50,6 +55,9 @@ type LaneSubscription struct {
 	// Retention is the rule the subscription sets on the lane ("": none);
 	// it decides the default start.
 	Retention string
+	// AcknowledgeUnread clears what a refused cursor left unread on the
+	// existing subscription (?acknowledge_unread=1).
+	AcknowledgeUnread bool
 }
 
 // LanePlan is a subscription's first read and whether this node takes it.

@@ -32,7 +32,7 @@ import (
 
 type syncSubscribeOptions struct {
 	Schema, ProviderID, SourceName, From, Start string
-	Force, JSON, FromLedger, Yes                bool
+	Force, JSON, FromLedger, Yes, Acknowledge   bool
 }
 
 var (
@@ -59,10 +59,19 @@ ceiling (subscriptions.record_ceiling) cannot take it, unless --force.
 
 --from-ledger converts the lanes of the 1.1.9 import ledger and
 peers.trusted_import allow list into subscriptions that start at each
-producer's current batch: it prints the plan and acts only with --yes.`,
+producer's current batch: it prints the plan and acts only with --yes.
+
+When a producer refuses the saved cursor of a lane whose history this node
+keeps, the lane starts again at the producer's current batch and the records
+between were not read; sync subscriptions shows it as "not read" until
+--start beginning reads the whole lane again or --acknowledge-unread accepts
+the gap.`,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		if syncSubscribeFlags.FromLedger {
 			return runSyncSubscribeFromLedger(cmd, syncSubscribeFlags)
+		}
+		if syncSubscribeFlags.Acknowledge {
+			return runSyncAcknowledgeUnread(cmd, syncSubscribeFlags)
 		}
 		return runSyncSubscribe(cmd, syncSubscribeFlags)
 	},
@@ -98,6 +107,7 @@ func init() {
 	f.BoolVar(&syncSubscribeFlags.FromLedger, "from-ledger", false, "subscribe to every lane of the 1.1.9 import ledger and allow list")
 	f.BoolVar(&syncSubscribeFlags.Yes, "yes", false, "with --from-ledger: subscribe (without it the plan is printed only)")
 	f.BoolVar(&syncSubscribeFlags.JSON, "json", false, "print machine-readable JSON")
+	f.BoolVar(&syncSubscribeFlags.Acknowledge, "acknowledge-unread", false, "accept the records a refused cursor left unread on this subscription (subscribes nothing)")
 	addSessionTokenFlag(syncSubscribeCmd)
 
 	u := syncUnsubscribeCmd.Flags()
@@ -233,6 +243,27 @@ func runSyncSubscribe(cmd *cobra.Command, o syncSubscribeOptions) error {
 	if !subscribed {
 		return fmt.Errorf("not subscribed: %s (--force subscribes anyway)", plan.Refusal)
 	}
+	return nil
+}
+
+// runSyncAcknowledgeUnread clears what a refused cursor left unread on one
+// subscription.
+func runSyncAcknowledgeUnread(cmd *cobra.Command, o syncSubscribeOptions) error {
+	if err := requireLane(o); err != nil {
+		return err
+	}
+	c, err := newAdminClient(cmd)
+	if err != nil {
+		return err
+	}
+	if _, err := syncAPICall(cmd.Context(), c, http.MethodPost, api.SyncPath+"?acknowledge_unread=1", publicationStreamMediaType,
+		api.EncodeDSSFollow(o.Schema, o.ProviderID, o.SourceName, o.From), nil); err != nil {
+		return err
+	}
+	if o.JSON {
+		return printJSON(cmd, map[string]any{"acknowledged": true, "schema": o.Schema, "provider_id": o.ProviderID, "source_name": o.SourceName, "producer": o.From})
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "acknowledged: %s %s/%s from %s: the records left unread are no longer reported\n", o.Schema, o.ProviderID, o.SourceName, o.From)
 	return nil
 }
 
@@ -420,6 +451,9 @@ func runSyncSubscriptions(cmd *cobra.Command, asJSON bool) error {
 		}
 		if s.Stopped != "" {
 			fmt.Fprintf(out, "  stopped: %s\n", s.Stopped)
+		}
+		if s.Unread != "" {
+			fmt.Fprintf(out, "  not read: %s\n", s.Unread)
 		}
 		state := "connected"
 		if !s.Connected {

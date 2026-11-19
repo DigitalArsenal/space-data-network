@@ -74,6 +74,10 @@ const (
 	// in the config, or a lane of it could not become a subscription
 	// (subject: the lane, or "" for the key).
 	KindSubscriptionConversion = "subscription_conversion"
+	// KindSubscriptionsUnreadable: a subscriptions file (subject: its name)
+	// did not read at start; it was moved aside, and no lane is imported or
+	// changed until a readable copy is in place.
+	KindSubscriptionsUnreadable = "subscriptions_unreadable"
 	// KindPublicationFailed: one of this node's own dataset publications
 	// (subject: its lane) failed or was cut before it completed.
 	KindPublicationFailed = "publication_failed"

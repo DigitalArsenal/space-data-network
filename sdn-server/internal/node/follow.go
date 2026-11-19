@@ -48,7 +48,15 @@ package node
 // in it, and a node rolled back to 1.1.9 does not read such a lane from its
 // beginning. At load, a record of followFileName that subscriptionsFileName
 // lacks (a 1.1.9 follow) is a subscription that starts at the beginning; for
-// one both files hold, followFileName's cursor is the newer (1.1.9 ran last).
+// one both files hold, followFileName's cursor is the newer (1.1.9 ran last);
+// a lane only subscriptionsFileName holds is kept as it holds it. Writes go
+// to followFileName first, so a crash between the two writes cannot leave
+// an unsubscribed lane in followFileName alone. An unsubscribe made under
+// 1.1.9 (during a rollback) removes the lane from followFileName only, so
+// the lane comes back with the next 1.2.0 start. A file that does not read
+// at start is moved aside, never overwritten: no lane runs and no
+// subscription changes until a readable copy is in place (alert
+// subscriptions_unreadable).
 //
 // The first read is bounded by the lane's rule. A subscription starts at the
 // producer's current batch (FollowStartCurrent) or at the lane's beginning
@@ -70,21 +78,33 @@ package node
 // subscribe to from its beginning. A producer that refuses the saved cursor
 // (its scan generation turned: a rebuilt index, a store re-derived from its
 // journals, a wiped store) gets the subscription started again at its
-// current batch, with the alert follow_cursor_refused; for a subscription
-// that started at the beginning the alert says that the records stored
-// between the last position held and the current batch were not read.
+// current batch, with the alert follow_cursor_refused. For a lane whose
+// history this node keeps (subscribed from its beginning, or a keep-all or
+// archive-all lane) the records stored between the last position held and
+// the current batch are not read: that is kept with the subscription
+// (FollowStatus.Unread) until the operator subscribes from the beginning
+// again or acknowledges it.
 //
-// The running guard: before each page is stored the node checks that the
-// page leaves its free disk above followDiskReserve and its records within
-// its record ceiling. A page that does not fit stops the lane (alert
-// follow_stopped, the cursor kept) and the lane is checked again every
-// followStoppedWait. Force skips only the check before the subscription.
+// While a lane's stream is connected its $PNM publications are not imported
+// (their records arrive on the stream), but only once the batch the producer
+// states is held as current: a lane whose current batch cannot be held gets
+// it through its publications.
+//
+// The running guard: before each page is stored, and before each fetch by
+// CID (for the most bytes one page can hold), the node reserves the page's
+// store bytes and records in one reservation shared by every lane, and
+// checks that the free disk less the reservation stays above
+// followDiskReserve and the records held and reserved within its record
+// ceiling. A page that does not fit stops the lane (alert follow_stopped, the
+// cursor kept) and the lane is checked again every followStoppedWait. Force
+// skips only the check before the subscription.
 
 import (
 	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime/debug"
@@ -138,9 +158,6 @@ var errFollowRefused = errors.New("refused")
 const (
 	FollowStartCurrent   = "current"
 	FollowStartBeginning = "beginning"
-	// followStartFilter prefixes a subscription's start in its $DSS
-	// SYNC_FILTER.
-	followStartFilter = "start="
 )
 
 // followStoppedWait is the wait before a lane the running guard stopped is
@@ -187,6 +204,10 @@ type FollowOptions struct {
 	// Rule is the retention rule the subscription sets on the lane ("": the
 	// lane's rule as it is); it decides the default start.
 	Rule string
+	// AcknowledgeUnread clears what a refused cursor left unread
+	// (FollowStatus.Unread) on the existing subscription; it subscribes
+	// nothing.
+	AcknowledgeUnread bool
 }
 
 // FollowPlan is a subscription's first read and whether this node takes it.
@@ -238,6 +259,33 @@ type FollowStatus struct {
 	// Retracted is true once the producer stated the lane retracted: this
 	// node dropped the records it held of the lane from that producer.
 	Retracted bool
+	// Unread is when the producer refused the saved cursor of a lane whose
+	// history this node keeps (a keep-all or archive-all lane, or one
+	// subscribed from its beginning): the records the producer stored
+	// between the last position held and its current batch then were not
+	// read. It is kept with the subscription until the operator subscribes
+	// to the lane again from its beginning or acknowledges it.
+	Unread time.Time
+	// FromBeginning marks a subscription made from the lane's beginning that
+	// a refused cursor started again at the current batch: it stays in
+	// followFileName while Unread is set.
+	FromBeginning bool
+}
+
+// inFollowFile reports a subscription followFileName holds: one that starts
+// at the lane's beginning, or one made so whose refused cursor is not
+// acknowledged.
+func (st FollowStatus) inFollowFile() bool {
+	return st.Start == FollowStartBeginning || (!st.Unread.IsZero() && st.FromBeginning)
+}
+
+// UnreadText says what a refused cursor left unread ("" when nothing).
+func (st FollowStatus) UnreadText() string {
+	if st.Unread.IsZero() {
+		return ""
+	}
+	return fmt.Sprintf("the producer refused the saved cursor at %s; the records it stored between the last position held and its current batch at that time are not read (to read the whole lane: sync subscribe --start beginning; to accept the gap: sync subscribe --acknowledge-unread)",
+		st.Unread.UTC().Format(time.RFC3339))
 }
 
 type followEntry struct {
@@ -255,6 +303,11 @@ type followEntry struct {
 	stated syncwire.FollowStatement
 	// rule is the lane's rule as last applied to the current batch.
 	rule string
+	// batchHeld is true once the batch the producer states is held as
+	// current, and false again when holding a stated batch fails: until it
+	// is true the lane's $PNM publications are imported although its stream
+	// is connected (Node.followStreaming).
+	batchHeld bool
 }
 
 type followRate struct {
@@ -274,10 +327,19 @@ type followManager struct {
 	// saveMu serializes writes of the files.
 	saveMu sync.Mutex
 	// heldMu guards the running guard's count of the records this node
-	// holds (read from the store at heldAt, plus what follows stored since).
-	heldMu sync.Mutex
-	held   int64
-	heldAt time.Time
+	// holds (read from the store at heldAt, plus what follows stored since),
+	// and the records and store bytes every lane has been granted and not
+	// yet stored (reserveRecords, reserveBytes): one reservation for all
+	// lanes, so lanes storing together stay within the free disk reserve and
+	// the record ceiling.
+	heldMu         sync.Mutex
+	held           int64
+	heldAt         time.Time
+	reserveRecords int64
+	reserveBytes   int64
+	// blocked is why the subscription files are not loaded ("" once they
+	// are): while it is set nothing writes them and no lane runs.
+	blocked string
 }
 
 func newFollowManager(n *Node, dir string) *followManager {
@@ -314,12 +376,8 @@ func readFollowFile(path string) ([]FollowStatus, error) {
 		if st.Schema == "" || st.Producer == "" || !d.SUBSCRIBED() {
 			continue
 		}
-		switch filter := string(d.SYNC_FILTER()); filter {
-		case "", followStartFilter + FollowStartBeginning:
-		case followStartFilter + FollowStartCurrent:
-			st.Start = FollowStartCurrent
-		default:
-			return nil, fmt.Errorf("%s: subscription %s %s/%s from %s has SYNC_FILTER %q, not a start", path, st.Schema, st.ProviderID, st.SourceName, st.Producer, filter)
+		if err := parseFollowFilter(string(d.SYNC_FILTER()), &st); err != nil {
+			return nil, fmt.Errorf("%s: subscription %s %s/%s from %s: %w", path, st.Schema, st.ProviderID, st.SourceName, st.Producer, err)
 		}
 		if ms := d.LAST_SYNC_STARTED_AT(); ms > 0 {
 			st.Since = time.UnixMilli(int64(min(ms, uint64(1<<62))))
@@ -329,15 +387,113 @@ func readFollowFile(path string) ([]FollowStatus, error) {
 	return out, nil
 }
 
-// load reads the subscriptions (see the package comment for the two files)
-// and starts each lane.
-func (m *followManager) load() error {
-	subs, err := readFollowFile(m.subsPath)
-	if err != nil {
-		return err
+// Keys of a subscription's SYNC_FILTER (a URL query): where it starts, when a
+// refused cursor left records unread, and that it was made from the lane's
+// beginning.
+const (
+	followFilterStart      = "start"
+	followFilterUnread     = "unread"
+	followFilterSubscribed = "subscribed"
+)
+
+// parseFollowFilter reads a subscription's SYNC_FILTER into st ("" starts at
+// the beginning: followFileName's records, as 1.1.9 wrote them).
+func parseFollowFilter(filter string, st *FollowStatus) error {
+	if filter == "" {
+		return nil
 	}
-	old, err := readFollowFile(m.path)
+	q, err := url.ParseQuery(filter)
 	if err != nil {
+		return fmt.Errorf("SYNC_FILTER %q: %w", filter, err)
+	}
+	for k, v := range q {
+		if len(v) != 1 {
+			return fmt.Errorf("SYNC_FILTER %q names %s %d times", filter, k, len(v))
+		}
+		switch k {
+		case followFilterStart:
+			switch v[0] {
+			case FollowStartBeginning, FollowStartCurrent:
+				st.Start = v[0]
+			default:
+				return fmt.Errorf("SYNC_FILTER %q: start %q is not a start", filter, v[0])
+			}
+		case followFilterUnread:
+			at, err := time.Parse(time.RFC3339Nano, v[0])
+			if err != nil {
+				return fmt.Errorf("SYNC_FILTER %q: unread: %w", filter, err)
+			}
+			st.Unread = at
+		case followFilterSubscribed:
+			if v[0] != FollowStartBeginning {
+				return fmt.Errorf("SYNC_FILTER %q: subscribed %q is not %q", filter, v[0], FollowStartBeginning)
+			}
+			st.FromBeginning = true
+		default:
+			return fmt.Errorf("SYNC_FILTER %q: %q is not a subscription field", filter, k)
+		}
+	}
+	if _, ok := q[followFilterStart]; !ok {
+		return fmt.Errorf("SYNC_FILTER %q names no start", filter)
+	}
+	return nil
+}
+
+// followFilter is a subscription's SYNC_FILTER.
+func followFilter(st FollowStatus) string {
+	q := url.Values{followFilterStart: {st.Start}}
+	if !st.Unread.IsZero() {
+		q.Set(followFilterUnread, st.Unread.UTC().Format(time.RFC3339Nano))
+		if st.FromBeginning {
+			q.Set(followFilterSubscribed, FollowStartBeginning)
+		}
+	}
+	return q.Encode()
+}
+
+// followUnreadableSuffix is the suffix a subscriptions file that does not
+// read is moved aside to (followed by the UTC time).
+const followUnreadableSuffix = ".unreadable-"
+
+// readFollowFileOrSetAside reads one subscriptions file. One that does not
+// read is moved aside (never overwritten) and named in the error; with none
+// at path, a file moved aside earlier is still an error: the subscriptions
+// it held are not "none".
+func readFollowFileOrSetAside(path string) ([]FollowStatus, error) {
+	subs, err := readFollowFile(path)
+	if err == nil {
+		if _, statErr := os.Stat(path); errors.Is(statErr, os.ErrNotExist) {
+			if aside, _ := filepath.Glob(path + followUnreadableSuffix + "*"); len(aside) > 0 {
+				sort.Strings(aside)
+				return nil, fmt.Errorf("%s is missing and %s holds the subscriptions it held when it did not read; put a readable copy at %s, or remove %s to start with none",
+					path, aside[len(aside)-1], path, strings.Join(aside, ", "))
+			}
+		}
+		return subs, nil
+	}
+	aside := path + followUnreadableSuffix + time.Now().UTC().Format("20060102T150405.000000000Z")
+	if renameErr := os.Rename(path, aside); renameErr != nil {
+		return nil, fmt.Errorf("%w; not moved aside: %v", err, renameErr)
+	}
+	return nil, fmt.Errorf("%w; moved to %s: put a readable copy at %s, or remove %s to start with none", err, aside, path, aside)
+}
+
+// load reads the subscriptions (see the package comment for the two files)
+// and starts each lane. A file that does not read loads nothing: it is moved
+// aside, the alert subscriptions_unreadable names it, no lane runs and
+// nothing writes the files until a restart finds them readable.
+func (m *followManager) load() error {
+	subs, err := readFollowFileOrSetAside(m.subsPath)
+	var old []FollowStatus
+	if err == nil {
+		old, err = readFollowFileOrSetAside(m.path)
+	}
+	if err != nil {
+		m.mu.Lock()
+		m.blocked = err.Error()
+		m.mu.Unlock()
+		m.n.alerts.Raise(ops.KindSubscriptionsUnreadable, filepath.Base(m.subsPath), ops.SeverityError,
+			"the subscriptions are not loaded, so this node imports no lane and changes no subscription: "+err.Error())
 		return err
 	}
 	index := map[FollowKey]int{}
@@ -351,7 +507,7 @@ func (m *followManager) load() error {
 			subs = append(subs, st)
 			continue
 		}
-		if subs[i].Start == FollowStartBeginning && st.Cursor != "" {
+		if subs[i].inFollowFile() && st.Cursor != "" {
 			subs[i].Cursor = st.Cursor
 		}
 	}
@@ -360,9 +516,21 @@ func (m *followManager) load() error {
 	for _, st := range subs {
 		if _, held := m.subs[st.FollowKey]; !held {
 			m.startLocked(st)
+			if text := st.UnreadText(); text != "" {
+				m.n.alerts.Raise(ops.KindFollowCursorRefused, followAlertSubject(st.FollowKey), ops.SeverityWarning, text)
+			}
 		}
 	}
 	return nil
+}
+
+// errBlockedLocked is why a change is refused while the subscription files
+// are not loaded (nil once they are); the caller holds m.mu.
+func (m *followManager) errBlockedLocked() error {
+	if m.blocked == "" {
+		return nil
+	}
+	return fmt.Errorf("the subscription files did not load, so no subscription changes until they do: %s", m.blocked)
 }
 
 func normalizeFollowKey(key FollowKey) FollowKey {
@@ -429,7 +597,8 @@ func (m *followManager) Plan(ctx context.Context, key FollowKey, opts FollowOpti
 		plan.RecordCeiling = m.n.config.Subscriptions.EffectiveRecordCeiling()
 	}
 	if free, err := storage.FreeDiskBytes(filepath.Dir(m.path)); err == nil {
-		plan.FreeBytes = int64(min(free, uint64(1<<62)))
+		// What the followed lanes are storing is not free.
+		plan.FreeBytes = int64(min(free, uint64(1<<62))) - m.reservedBytes()
 	} else {
 		return plan, fmt.Errorf("free disk under %s: %w", filepath.Dir(m.path), err)
 	}
@@ -452,17 +621,40 @@ func (m *followManager) Plan(ctx context.Context, key FollowKey, opts FollowOpti
 }
 
 // Subscribe starts following a lane: the plan first, refused unless it fits
-// or opts.Force; a lane already followed from the producer is left as it is.
+// or opts.Force. A lane already followed from the producer is left as it is,
+// except that opts.AcknowledgeUnread clears what a refused cursor left
+// unread, and a subscription from the lane's beginning replaces one with
+// records unread (the whole lane is read again).
 func (m *followManager) Subscribe(ctx context.Context, key FollowKey, opts FollowOptions) (FollowPlan, error) {
 	key = normalizeFollowKey(key)
 	m.mu.Lock()
+	if err := m.errBlockedLocked(); err != nil {
+		m.mu.Unlock()
+		return FollowPlan{FollowKey: key}, err
+	}
 	e, held := m.subs[key]
 	var st FollowStatus
 	if held {
 		st = e.status
 	}
 	m.mu.Unlock()
-	if held {
+	if opts.AcknowledgeUnread {
+		if !held {
+			return FollowPlan{FollowKey: key}, errors.New("this node does not subscribe to that lane from that producer")
+		}
+		m.mu.Lock()
+		was := e.status.Unread
+		e.status.Unread, e.status.FromBeginning = time.Time{}, false
+		m.mu.Unlock()
+		if !was.IsZero() {
+			m.n.alerts.Clear(ops.KindFollowCursorRefused, followAlertSubject(key))
+			log.Infof("Followed lane %s %s/%s from %s: the records left unread by the cursor refused at %s are acknowledged", key.Schema, key.ProviderID,
+				key.SourceName, key.Producer, was.UTC().Format(time.RFC3339))
+		}
+		return FollowPlan{FollowKey: key, Start: st.Start, Rule: opts.Rule}, m.save()
+	}
+	replace := held && !st.Unread.IsZero() && opts.Start == FollowStartBeginning
+	if held && !replace {
 		return FollowPlan{FollowKey: key, Start: st.Start, Rule: opts.Rule}, nil
 	}
 	plan, err := m.Plan(ctx, key, opts)
@@ -471,6 +663,20 @@ func (m *followManager) Subscribe(ctx context.Context, key FollowKey, opts Follo
 	}
 	if plan.Refusal != "" && !opts.Force {
 		return plan, errors.New(plan.Refusal)
+	}
+	if replace {
+		// The lane is read again from its beginning: the old subscription
+		// stops first, then the new one starts (below).
+		m.mu.Lock()
+		if cur := m.subs[key]; cur == e {
+			delete(m.subs, key)
+		}
+		m.mu.Unlock()
+		e.cancel()
+		<-e.done
+		m.n.alerts.Clear(ops.KindFollowCursorRefused, followAlertSubject(key))
+		log.Infof("Followed lane %s %s/%s from %s: subscribed again from the lane's beginning; the records left unread at %s are read", key.Schema,
+			key.ProviderID, key.SourceName, key.Producer, st.Unread.UTC().Format(time.RFC3339))
 	}
 	if plan.StatementError != "" && plan.Start == FollowStartCurrent {
 		// Forced: the follow reads the statement when the producer gives it.
@@ -498,7 +704,7 @@ func (m *followManager) adopt(key FollowKey) bool {
 	key = normalizeFollowKey(key)
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, held := m.subs[key]; held {
+	if _, held := m.subs[key]; held || m.blocked != "" {
 		return false
 	}
 	m.startLocked(FollowStatus{FollowKey: key, Start: FollowStartCurrent, Since: time.Now().UTC()})
@@ -536,6 +742,10 @@ func (m *followManager) Follow(key FollowKey, on bool) error {
 	}
 	var stopped []*followEntry
 	m.mu.Lock()
+	if err := m.errBlockedLocked(); err != nil {
+		m.mu.Unlock()
+		return err
+	}
 	for k, e := range m.subs {
 		if k.Schema != key.Schema {
 			continue
@@ -588,7 +798,10 @@ func (n *Node) subscribedFrom(from peer.ID, schema, providerID, sourceName strin
 }
 
 // followStreaming reports a subscription to the lane from the peer whose
-// followed stream is connected.
+// followed stream is connected and holds the batch the producer states as
+// current. A lane whose current batch is not held (its list read or its
+// fetches by CID fail, so it gets only the records stored after its cursor)
+// is not streaming: its $PNM publications carry it.
 func (n *Node) followStreaming(from peer.ID, schema, providerID, sourceName string) bool {
 	if n == nil || n.follows == nil {
 		return false
@@ -597,7 +810,7 @@ func (n *Node) followStreaming(from peer.ID, schema, providerID, sourceName stri
 	n.follows.mu.Lock()
 	defer n.follows.mu.Unlock()
 	e, ok := n.follows.subs[key]
-	return ok && e.status.Connected
+	return ok && e.status.Connected && e.batchHeld
 }
 
 // errGossipRecordNoLane is why a record gossiped on a schema topic is not
@@ -811,11 +1024,13 @@ func (m *followManager) followOnce(ctx context.Context, e *followEntry) (int, er
 				return pages, fmt.Errorf("grant: %w", err)
 			}
 		}
-		if err := m.room(runsRecords(runs), received); err != nil {
+		release, err := m.reserve(runsRecords(runs), received)
+		if err != nil {
 			_ = stream.Reset()
 			return pages, err
 		}
 		res, storeErr := m.storeRuns(ctx, st, remote, runs, "", nil)
+		release()
 		m.mu.Lock()
 		if e.status.Stopped != "" {
 			e.status.Stopped = ""
@@ -862,6 +1077,9 @@ func (m *followManager) followOnce(ctx context.Context, e *followEntry) (int, er
 				if ctx.Err() != nil {
 					return pages, ctx.Err()
 				}
+				m.mu.Lock()
+				e.batchHeld = false
+				m.mu.Unlock()
 				if errors.Is(err, errFollowStopped) {
 					_ = stream.Reset()
 					return pages, err
@@ -955,14 +1173,25 @@ func (m *followManager) storeRuns(ctx context.Context, st FollowStatus, remote p
 // this node (see the package comment). It returns nil when there is nothing
 // to do, or when the last list read was less than followSyncEvery ago.
 func (m *followManager) holdCurrent(ctx context.Context, st FollowStatus, e *followEntry, remote peer.ID, stmt syncwire.FollowStatement) error {
+	markHeld := func() {
+		m.mu.Lock()
+		e.batchHeld = true
+		m.mu.Unlock()
+	}
 	if stmt.Retracted {
-		return m.dropRetracted(st, e, remote)
+		if err := m.dropRetracted(st, e, remote); err != nil {
+			return err
+		}
+		markHeld()
+		return nil
 	}
 	if stmt.BatchID == "" {
+		markHeld()
 		return nil
 	}
 	counts, err := m.n.store.FollowLaneBatchCounts(st.Schema, st.ProviderID, st.SourceName, remote.String())
 	if errors.Is(err, storage.ErrFollowLaneUnsupported) {
+		markHeld()
 		return nil
 	}
 	if err != nil {
@@ -973,10 +1202,11 @@ func (m *followManager) holdCurrent(ctx context.Context, st FollowStatus, e *fol
 	switch {
 	case e.current.BatchID == stmt.BatchID && own == stmt.Records:
 		// The current batch grew by records that arrived in sequence.
-		e.current, e.held = stmt, own
+		e.current, e.held, e.batchHeld = stmt, own, true
 		m.mu.Unlock()
 		return nil
 	case e.current == stmt && own == e.held:
+		e.batchHeld = true
 		m.mu.Unlock()
 		return nil
 	case time.Since(e.lastSync) < followSyncEvery:
@@ -1033,7 +1263,7 @@ func (m *followManager) holdCurrent(ctx context.Context, st FollowStatus, e *fol
 		return err
 	}
 	m.mu.Lock()
-	e.current, e.held, e.rule = stmt, counts[stmt.BatchID], rule
+	e.current, e.held, e.rule, e.batchHeld = stmt, counts[stmt.BatchID], rule, true
 	e.status.RemovedRecords += removed + superseded
 	m.mu.Unlock()
 	m.n.alerts.Clear(ops.KindFollowRefused, followAlertSubject(st.FollowKey))
@@ -1216,10 +1446,14 @@ func (m *followManager) holdRecords(ctx context.Context, st FollowStatus, remote
 	for start := 0; start < len(absent); start += syncwire.FollowFetchMaxCIDs {
 		pending := absent[start:min(start+syncwire.FollowFetchMaxCIDs, len(absent))]
 		for len(pending) > 0 {
-			if err := m.room(len(pending), 0); err != nil {
+			// The records' bytes are not known before they arrive: the
+			// fetch reserves the most one page of them can hold.
+			release, err := m.reserve(len(pending), syncwire.FollowMaxPageBytes)
+			if err != nil {
 				return got, fetched, err
 			}
 			stored, err := m.fetchByCID(ctx, remote, st, batch, pending)
+			release()
 			if err != nil {
 				return got, fetched, err
 			}
@@ -1290,18 +1524,35 @@ func (m *followManager) producerRead(ctx context.Context, remote peer.ID, st Fol
 
 // restartAtCurrent starts a subscription whose cursor the producer refused
 // again at the producer's current batch (see the package comment).
+//
+// For a lane whose history this node keeps (subscribed from its beginning,
+// or a keep-all or archive-all lane) the records stored between the last
+// position held and the current batch are not read: that is kept with the
+// subscription (FollowStatus.Unread, in both files' SYNC_FILTER and shown by
+// sync subscriptions) until the operator subscribes from the beginning again
+// or acknowledges it, and a subscription made from the beginning stays in
+// followFileName meanwhile.
 func (m *followManager) restartAtCurrent(e *followEntry, refused *syncwire.RemoteError) {
 	m.mu.Lock()
-	was := e.status.Start
-	e.status.Start, e.status.Cursor = FollowStartCurrent, ""
 	key := e.status.FollowKey
+	m.mu.Unlock()
+	rule := m.n.laneRetentionRule(key.Schema, key.ProviderID, key.SourceName)
+	m.mu.Lock()
+	was := e.status.Start
+	keeps := was == FollowStartBeginning || !e.status.Unread.IsZero() || rule == channels.RetentionKeepAll || rule == channels.RetentionArchiveAll
+	if keeps && e.status.Unread.IsZero() {
+		e.status.Unread = time.Now().UTC()
+		e.status.FromBeginning = was == FollowStartBeginning
+	}
+	e.status.Start, e.status.Cursor = FollowStartCurrent, ""
+	st := e.status
 	m.mu.Unlock()
 	if err := m.save(); err != nil {
 		log.Errorf("Followed lane %s %s/%s from %s: start at the current batch not saved: %v", key.Schema, key.ProviderID, key.SourceName, key.Producer, err)
 	}
 	msg := fmt.Sprintf("the producer refused the saved cursor (%s); the lane starts again at the producer's current batch", refused.Code)
-	if was == FollowStartBeginning {
-		msg += "; records the producer stored between the last position held and its current batch are not read (to read the whole lane: sync unsubscribe, then sync subscribe --start beginning)"
+	if text := st.UnreadText(); text != "" {
+		msg += "; " + text
 	}
 	log.Warnf("Followed lane %s %s/%s from %s: %s", key.Schema, key.ProviderID, key.SourceName, key.Producer, msg)
 	m.n.alerts.Raise(ops.KindFollowCursorRefused, followAlertSubject(key), ops.SeverityWarning, msg)
@@ -1349,30 +1600,56 @@ func (m *followManager) recordCeiling() int64 {
 	return config.DefaultSubscriptionRecordCeiling
 }
 
-// room is the running guard: nil when records more records of bytes record
-// bytes leave the free disk above followDiskReserve and the records held
-// within the record ceiling.
-func (m *followManager) room(records int, bytes int64) error {
+// reserve is the running guard: it reserves records more records of bytes
+// record bytes (their store bytes, bytes times followStoreExpansion) for one
+// lane to store, when the free disk less every lane's reservations stays
+// above followDiskReserve and the records held and reserved within the
+// record ceiling. The caller calls the release it returns once the store has
+// returned (the records stored are then counted as held, addHeld). A
+// refusal is errFollowStopped.
+func (m *followManager) reserve(records int, bytes int64) (func(), error) {
 	if records <= 0 {
-		return nil
+		return func() {}, nil
 	}
 	dir := filepath.Dir(m.path)
-	if free, err := storage.FreeDiskBytes(dir); err == nil {
-		need := bytes*followStoreExpansion + followDiskReserve
-		if int64(min(free, uint64(1<<62))) < need {
-			return fmt.Errorf("%w: storing %d more records (%d bytes) needs about %d bytes of free disk under %s (1 GiB to spare), and %d are free",
-				errFollowStopped, records, bytes, need, dir, free)
-		}
-	}
+	free, freeErr := storage.FreeDiskBytes(dir)
 	held, err := m.heldRecords()
 	if err != nil {
-		return fmt.Errorf("records held here: %w", err)
+		return nil, fmt.Errorf("records held here: %w", err)
 	}
-	if ceiling := m.recordCeiling(); held+int64(records) > ceiling {
-		return fmt.Errorf("%w: this node holds %d records and %d more would pass its ceiling of %d (subscriptions.record_ceiling)",
-			errFollowStopped, held, records, ceiling)
+	ceiling := m.recordCeiling()
+	storeBytes := bytes * followStoreExpansion
+	m.heldMu.Lock()
+	defer m.heldMu.Unlock()
+	if freeErr == nil {
+		need := m.reserveBytes + storeBytes + followDiskReserve
+		if int64(min(free, uint64(1<<62))) < need {
+			return nil, fmt.Errorf("%w: storing %d more records (%d bytes) needs about %d bytes of free disk under %s (1 GiB to spare, and %d bytes the followed lanes are storing), and %d are free",
+				errFollowStopped, records, bytes, need, dir, m.reserveBytes, free)
+		}
 	}
-	return nil
+	if held+m.reserveRecords+int64(records) > ceiling {
+		return nil, fmt.Errorf("%w: this node holds %d records, its followed lanes are storing %d, and %d more would pass its ceiling of %d (subscriptions.record_ceiling)",
+			errFollowStopped, held, m.reserveRecords, records, ceiling)
+	}
+	m.reserveBytes += storeBytes
+	m.reserveRecords += int64(records)
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			m.heldMu.Lock()
+			m.reserveBytes -= storeBytes
+			m.reserveRecords -= int64(records)
+			m.heldMu.Unlock()
+		})
+	}, nil
+}
+
+// reservedBytes is the store bytes the followed lanes are storing.
+func (m *followManager) reservedBytes() int64 {
+	m.heldMu.Lock()
+	defer m.heldMu.Unlock()
+	return m.reserveBytes
 }
 
 // Statuses is every followed lane's status, sorted by lane.
@@ -1410,22 +1687,34 @@ func (m *followManager) Statuses() []FollowStatus {
 	return out
 }
 
-// save writes every subscription to subscriptionsFileName and those that
-// start at the lane's beginning to followFileName, each file atomically.
+// save writes the subscriptions followFileName holds (inFollowFile) to it,
+// then every subscription to subscriptionsFileName, each file atomically.
+// That order is what keeps a crash between the two writes harmless: a lane
+// unsubscribed is gone from followFileName first, so it cannot come back
+// from there as a subscription from the beginning that subscriptionsFileName
+// lacks; a lane both files held and only followFileName lost is kept as
+// subscriptionsFileName holds it (load). Nothing is written while the files
+// did not load.
 func (m *followManager) save() error {
 	m.saveMu.Lock()
 	defer m.saveMu.Unlock()
+	m.mu.Lock()
+	err := m.errBlockedLocked()
+	m.mu.Unlock()
+	if err != nil {
+		return err
+	}
 	var all, beginning bytes.Buffer
 	for _, st := range m.Statuses() {
 		all.Write(encodeFollowDSS(st, true))
-		if st.Start == FollowStartBeginning {
+		if st.inFollowFile() {
 			beginning.Write(encodeFollowDSS(st, false))
 		}
 	}
-	if err := writeFileAtomic(m.subsPath, all.Bytes()); err != nil {
+	if err := writeFileAtomic(m.path, beginning.Bytes()); err != nil {
 		return err
 	}
-	return writeFileAtomic(m.path, beginning.Bytes())
+	return writeFileAtomic(m.subsPath, all.Bytes())
 }
 
 func writeFileAtomic(path string, data []byte) error {
@@ -1467,7 +1756,7 @@ func encodeFollowDSS(st FollowStatus, start bool) []byte {
 	errText := str(st.LastError)
 	pending := flatbuffers.UOffsetT(0)
 	if start {
-		pending = b.CreateString(followStartFilter + st.Start)
+		pending = b.CreateString(followFilter(st))
 	}
 	lastAt := ""
 	if !st.LastReceivedAt.IsZero() {

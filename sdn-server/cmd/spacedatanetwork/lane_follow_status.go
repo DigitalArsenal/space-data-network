@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/api"
 	"github.com/spacedatanetwork/sdn-server/internal/node"
@@ -18,13 +19,18 @@ func laneFollows(n *node.Node) func() []api.LaneFollow {
 			if s.Start == node.FollowStartCurrent && s.Cursor == "" {
 				pending = node.FollowStartCurrent
 			}
+			var unreadSince time.Time
+			if !s.Unread.IsZero() {
+				unreadSince = s.Unread.UTC()
+			}
 			out = append(out, api.LaneFollow{Schema: s.Schema, ProviderID: s.ProviderID, SourceName: s.SourceName, Producer: s.Producer,
 				Since: s.Since, StartsAt: s.Start, Start: pending, Stopped: s.Stopped,
 				ReceivedBytes: s.ReceivedBytes, ReceivedRecords: s.ReceivedRecords, StoredRecords: s.StoredRecords, RemovedRecords: s.RemovedRecords,
 				ReceiveBytesPerSecond: s.ReceiveBytesPerSecond,
 				TransferMs:            s.TransferMs, VerifyMs: s.VerifyMs, StoreMs: s.StoreMs, LastReceivedAt: s.LastReceivedAt,
 				Connected: s.Connected, Error: s.LastError,
-				CurrentBatch: s.CurrentBatch, StatedBatch: s.Stated.BatchID, StatedRecords: s.Stated.Records, Lag: s.Lag})
+				CurrentBatch: s.CurrentBatch, StatedBatch: s.Stated.BatchID, StatedRecords: s.Stated.Records, Lag: s.Lag,
+				Unread: s.UnreadText(), UnreadSince: unreadSince})
 		}
 		return out
 	}
@@ -54,7 +60,7 @@ func lanePlan(p node.FollowPlan) api.LanePlan {
 
 func followRequest(req api.LaneSubscription) (node.FollowKey, node.FollowOptions) {
 	return node.FollowKey{Schema: req.Schema, ProviderID: req.ProviderID, SourceName: req.SourceName, Producer: req.Producer},
-		node.FollowOptions{Start: req.Start, Force: req.Force, Rule: req.Retention}
+		node.FollowOptions{Start: req.Start, Force: req.Force, Rule: req.Retention, AcknowledgeUnread: req.AcknowledgeUnread}
 }
 
 // subscribeLane follows a lane once its first read fits (sync subscribe).

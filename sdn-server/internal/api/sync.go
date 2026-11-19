@@ -953,7 +953,8 @@ func (h *SyncHandler) handleAction(w http.ResponseWriter, r *http.Request) {
 			// made, so a refused one leaves the lane as it was.
 			q := r.URL.Query()
 			plan, err := h.deps.SubscribeLane(r.Context(), LaneSubscription{Schema: key.schema, ProviderID: key.providerID, SourceName: key.sourceName,
-				Producer: producer, Start: q.Get("start"), Force: q.Get("force") == "1" || q.Get("force") == "true", Retention: retentionWord})
+				Producer: producer, Start: q.Get("start"), Force: q.Get("force") == "1" || q.Get("force") == "true", Retention: retentionWord,
+				AcknowledgeUnread: q.Get("acknowledge_unread") == "1" || q.Get("acknowledge_unread") == "true"})
 			if err != nil {
 				status, code := subscribeErrorStatus(plan)
 				WriteErrorFrame(w, status, code, "That lane cannot be followed: "+err.Error(), 0)
