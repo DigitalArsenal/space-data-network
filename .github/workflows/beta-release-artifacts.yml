@@ -37,7 +37,7 @@ on:
       # A node that finds the release by its feed check instead uses its own
       # setting (the feed index carries no window). The first job refuses a
       # value that is not a whole number from 0 to 86400, before anything is
-      # built or signed.
+      # signed or published.
       rollout_window_seconds:
         description: Rollout window in seconds signed into the update signals (a whole number, 0 installs at once on every node, at most 86400).
         required: false

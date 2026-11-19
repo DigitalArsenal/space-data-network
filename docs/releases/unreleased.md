@@ -152,11 +152,13 @@ character set and length (at most 2 KiB in all); it drops a status not
 renewed for 30 minutes and ignores a status no newer than the one it holds.
 Peers known only by their identify agent string (which any peer chooses)
 are bounded: at most 1,024 such authors active within a minute, and at most
-512 of their statuses held, where a new author's status is not kept once 512
+512 of their statuses held, first come: a new such author's status is not kept once 512
 are held. Pinned peers (`peers.trusted_peers` too), `network.bootstrap`
 peers, peers the registry trusts and peers whose status the node already
 holds are outside those bounds, so a flood of new identities cannot remove
-the nodes already shown. `not reporting` is a node of 1.1.9 or earlier, a node
+the nodes already shown. A publisher's own fleet belongs in its pinned
+(`peers.trusted_peers`) or `network.bootstrap` peers, so its rows are always
+kept. `not reporting` is a node of 1.1.9 or earlier, a node
 that does not publish, a node reached only through other nodes, or a status
 that expired; nodes of 1.1.9 and earlier drop these status messages unread
 and do not relay them, so two nodes joined only through them do not see each
