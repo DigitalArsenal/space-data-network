@@ -90,7 +90,8 @@ struct probe_cfg {
   uint32_t files;          // MODE_HAMMER: files per thread
   uint32_t prefix_len;     // path prefix length (bytes follow the struct)
   uint32_t drop_notify;    // negative control: skip every Nth doorbell notify (0 = never)
-  uint32_t reserved[4];
+  uint32_t start_delay_us; // each service thread waits this long before its loop (a late start)
+  uint32_t reserved[3];
 };
 
 static struct probe_cfg g_cfg;
@@ -178,7 +179,10 @@ static int32_t path_open(uint32_t tid, uint32_t index, int32_t flags) {
 // ---- service threads ----------------------------------------------------------
 static void doorbell_loop(uint32_t tid) {
   struct doorbell *d = &g_door[tid];
-  uint32_t seen = atomic_load(&d->seq);
+  // Work is every ring past the last one acknowledged, counted from the ack
+  // word, never from seq at start: the host can ring between
+  // flatsql_ps_start and this load, and that ring is work too.
+  uint32_t seen = (uint32_t)atomic_load(&g_ack[tid]);
   uint64_t last_work = now_ns();
   while (!stopping()) {
     atomic_fetch_add_explicit(&g_heartbeat[tid], 1, memory_order_relaxed);
@@ -314,6 +318,11 @@ static void hammer_loop(uint32_t tid) {
 static void *service_main(void *arg) {
   uint32_t tid = (uint32_t)(uintptr_t)arg;
   atomic_store(&g_canary[tid], 0xC0FFEE00u + tid);
+  if (g_cfg.start_delay_us) {
+    // A thread the scheduler starts late: the host may ring before its loop.
+    _Atomic uint32_t never = 0;
+    wait_u32(&never, 0, (uint64_t)g_cfg.start_delay_us * 1000ull);
+  }
   switch (g_cfg.mode) {
     case MODE_DOORBELL: doorbell_loop(tid); break;
     case MODE_CPU: cpu_loop(tid); break;
