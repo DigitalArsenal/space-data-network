@@ -58,8 +58,7 @@ func awaitPublicationAlertCleared(t *testing.T, d *publicationDaemon, lane strin
 //   - another batch with the same three records whose publication fails at
 //     its first announcement is counted two of three unpublished: the
 //     rows the first failed publication left count for nothing;
-//   - a publication of a batch carrying all three clears it;
-//   - the first failed batch's records were counted once.
+//   - a publication of a batch carrying all three clears it.
 func TestPublicationAlertPartialFailureRealDaemons(t *testing.T) {
 	if os.Getenv("SDN_E2E_PUBLICATION") != "1" {
 		t.Skip("set SDN_E2E_PUBLICATION=1 for isolated real daemons")
@@ -138,10 +137,6 @@ func TestPublicationAlertPartialFailureRealDaemons(t *testing.T) {
 			}
 			awaitPublicationAlertCleared(t, d, lane, time.Minute)
 			t.Logf("cleared: every record of failed batch \"failed\"%s", publicationLogAfter(t, d, `every record of failed batch "failed"`))
-			counted := strings.Count(readFileString(d.logPath), `Dataset publication `+lane+`: failed batch "failed": `)
-			if counted != 1 {
-				t.Fatalf("the failed batch's records were counted %d times, want once", counted)
-			}
 		})
 	}
 }

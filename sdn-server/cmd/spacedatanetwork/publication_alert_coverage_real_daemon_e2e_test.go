@@ -65,6 +65,9 @@ func awaitAlertAfter(t *testing.T, d *publicationDaemon, lane, want string, budg
 //   - the publication of an unrelated batch "z" completes and the alert
 //     stays, saying the same counts (it cleared here when any completed
 //     series of a batch counted, whatever the batch held since);
+//   - the publication of batch "w", holding the two records of part one,
+//     completes, and the alert, read after the count that publication
+//     prompts, says one of the three records of "y" is unpublished;
 //   - a publication of the whole of "y" as it is now clears it.
 func TestPublicationAlertBatchGainedRecordsRealDaemons(t *testing.T) {
 	if os.Getenv("SDN_E2E_PUBLICATION") != "1" {
@@ -128,6 +131,16 @@ func TestPublicationAlertBatchGainedRecordsRealDaemons(t *testing.T) {
 			t.Fatalf("the alert does not say %q: %s", want, alert)
 		}
 	}
+
+	// A batch sharing the records of part one with "y": once its
+	// publication's count ran, the alert says one record of "y" is
+	// unpublished.
+	d.ingestOMMFrames(t, source, "w", 0, frames[:2])
+	if pub := d.publish(t, "OMM.fbs", source, "w"); pub.RecordCount != 2 {
+		t.Fatalf("the publication of \"w\" answered %d records", pub.RecordCount)
+	}
+	alert = awaitAlertAfter(t, d, lane, `after the publication of batch \"w\", batch \"x\" is unpublished: 1 of its 1 records are in no completed publication of the lane; batch \"y\" is unpublished: 1 of its 3 records are in no completed publication of the lane`, time.Minute)
+	t.Logf("alert after the publication of \"w\": %s", alert)
 
 	// The whole of "y" as it is now.
 	if pub := d.publish(t, "OMM.fbs", source, "y"); pub.RecordCount != 3 {
