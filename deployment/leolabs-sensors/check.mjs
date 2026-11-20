@@ -25,6 +25,9 @@ const { snrBandDirection } = await lib("SNR/snrBandDirection.js");
 const { snrEmissionMode } = await lib("SNR/snrEmissionMode.js");
 const { snrMountingFrame } = await lib("SNR/snrMountingFrame.js");
 const { snrPointingMode } = await lib("SNR/snrPointingMode.js");
+const { scvSensorShapeKind } = await lib("SNR/scvSensorShapeKind.js");
+const { scvSensorRangeBoundaryKind } = await lib("SNR/scvSensorRangeBoundaryKind.js");
+const { scvCoordinateFrame } = await lib("SNR/scvCoordinateFrame.js");
 
 const frames = (bytes) => {
   const out = [];
@@ -139,13 +142,30 @@ for (const network of NETWORKS) {
     if (row.powerW !== undefined) assert.equal(rec.RF.PEAK_POWER_W, row.powerW);
     if (row.bandwidthHz !== undefined) assert.equal(rec.RF.BANDWIDTH_HZ, row.bandwidthHz);
     if (row.apertureM !== undefined) assert.equal(rec.OPTICAL.APERTURE_M, row.apertureM);
-    assert.equal(rec.FIELD_OF_VIEW, null, "no field of view is published (no outline can be stored)");
+    if (row.shape) {
+      // The outline as the record carries it: every point, in order, bit for bit the builder's doubles.
+      const fov = rec.FIELD_OF_VIEW;
+      assert(fov, `${row.id}: the outline is published`);
+      assert.equal(fov.SHAPE_KIND, scvSensorShapeKind.CUSTOM_POLYGON);
+      assert.equal(fov.POLYGON_FRAME, scvCoordinateFrame.SENSOR_LOCAL);
+      assert.equal(fov.RANGE_BOUNDARY, scvSensorRangeBoundaryKind.RADIAL_SPHERICAL);
+      assert.equal(fov.MIN_RANGE_M, 0);
+      assert.equal(fov.MAX_RANGE_M, row.shape.maxRangeM);
+      assert.equal(fov.POLYGON_VERTICES.length, row.shape.count, `${row.id}: every outline point`);
+      fov.POLYGON_VERTICES.forEach((v, i) => assert.deepEqual([v.X, v.Y, v.Z], row.shape.vertices[i], `${row.id}: vertex ${i}`));
+      // The range is the longest vertex, to a micrometer (the rotation into the sensor's axes rounds the last bit).
+      near(Math.max(...fov.POLYGON_VERTICES.map((v) => Math.hypot(v.X, v.Y, v.Z))), fov.MAX_RANGE_M, 1e-6);
+      assert.equal(rec.FIELD_OF_VIEW_PROVENANCE.SOURCE_URL, row.shape.cite.url);
+      assert(rec.FIELD_OF_VIEW_PROVENANCE.ATTRIBUTION.includes(network.credit));
+    } else {
+      assert.equal(rec.FIELD_OF_VIEW, null, `${row.id}: no field of view is published`);
+    }
     if (row.status === "retired") assert(/RETIRED/.test(rec.NOTES), `${row.id}: a retired sensor says RETIRED`);
     assert(rec.PROVENANCE.ATTRIBUTION.includes(network.credit));
     assert.equal(rec.PROVENANCE.SOURCE_URL, row.cite.url);
     assert(rec.NOTES.includes(network.credit));
     const b = rec.SPECTRAL_BANDS[0];
-    console.log(`SNR ${rec.SENSOR_ID}\n  NAME=${rec.NAME} ${ground ? `SITE_ID=${rec.SITE_ID}` : `NORAD_CAT_ID=${rec.NORAD_CAT_ID}`} TYPE=${SensorType[rec.TYPE]} EMISSION=${snrEmissionMode[rec.EMISSION]}\n  BAND=${b ? `${b.DESIGNATION} low=${b.FREQ_LOW_HZ} high=${b.FREQ_HIGH_HZ} name="${b.NAME}"` : "none"}\n  MOUNTING=${rec.MOUNTING ? `az=${rec.MOUNTING.BORESIGHT_AZIMUTH_DEG} el=${rec.MOUNTING.BORESIGHT_ELEVATION_DEG}` : "none"} RF.PEAK_POWER_W=${rec.RF?.PEAK_POWER_W ?? "none"} OPTICAL.APERTURE_M=${rec.OPTICAL?.APERTURE_M ?? "none"} FIELD_OF_VIEW=none`);
+    console.log(`SNR ${rec.SENSOR_ID}\n  NAME=${rec.NAME} ${ground ? `SITE_ID=${rec.SITE_ID}` : `NORAD_CAT_ID=${rec.NORAD_CAT_ID}`} TYPE=${SensorType[rec.TYPE]} EMISSION=${snrEmissionMode[rec.EMISSION]}\n  BAND=${b ? `${b.DESIGNATION} low=${b.FREQ_LOW_HZ} high=${b.FREQ_HIGH_HZ} name="${b.NAME}"` : "none"}\n  MOUNTING=${rec.MOUNTING ? `az=${rec.MOUNTING.BORESIGHT_AZIMUTH_DEG} el=${rec.MOUNTING.BORESIGHT_ELEVATION_DEG}` : "none"} RF.PEAK_POWER_W=${rec.RF?.PEAK_POWER_W ?? "none"} OPTICAL.APERTURE_M=${rec.OPTICAL?.APERTURE_M ?? "none"} FIELD_OF_VIEW=${rec.FIELD_OF_VIEW ? `CUSTOM_POLYGON ${rec.FIELD_OF_VIEW.POLYGON_VERTICES.length} vertices SENSOR_LOCAL MAX_RANGE_M=${rec.FIELD_OF_VIEW.MAX_RANGE_M.toFixed(1)}` : "none"}`);
   }
   table.push({ network: network.slug, provider: providerOf(network), sites: sites.length, sensors: network.sensors.length, inorbit: network.inorbit.length, withLimits: wanted.filter(({ row }) => row.band?.lowMHz !== undefined).length, retired: wanted.filter(({ row }) => row.status === "retired").length + network.sites.filter((s) => ["DECOMMISSIONED", "PERMANENT_SHUTDOWN"].includes(s.status)).length, leftOut: network.leftOut.length });
 }

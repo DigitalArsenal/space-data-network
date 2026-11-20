@@ -5,9 +5,9 @@
 // loaded once as a visitor; no file of the site is kept). Credit: LeoLabs, https://leolabs.space .
 // Nothing here is computed: every number is a value the page, the AMOS 2021 paper or an FCC license states.
 //
-// NOT HERE, on purpose: field-of-view outlines and any range or elevation extent derived from them. The page publishes an
-// outline cut at a 2000 km altitude ceiling (2100 km for PFISR), not a maximum range, beam width or minimum elevation, and no
-// module or engine surface that turns such an outline into an az/el mask or a range exists yet (see STATE-LLP.md).
+// NOT HERE: the field-of-view outlines. They are in leolabs-shapes.mjs, read from the page's data file kept in source/
+// (owner 2026-11-20: LeoLabs' permission, "port them over exactly"). Each outline is cut at a 2000 km altitude ceiling for every
+// radar, PFISR included (its drawn top point is 2100 km from the radar, which is how the page draws it, not a ceiling).
 
 export const PAGE_URL = "https://platform.leolabs.space/visualizations/leo";
 export const PAGE_EPOCH = "2026-11-18T19:01:02.000Z";
