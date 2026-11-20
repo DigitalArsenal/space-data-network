@@ -24,7 +24,8 @@ function shapeOf(radar) {
       notes:
         `The outline's ${outline.count} points, in LeoLabs' order, each as the vector from the radar to the point in the sensor's axes (meters). ` +
         "The data file gives them in an Earth-fixed frame on a sphere of 6378.16 km on which the radar's latitude and longitude are used, so its local up is the geodetic one; " +
-        "each point is 2000 km above that sphere. MAX_RANGE_M is the longest distance from the radar to the outline.",
+        "each point is 2000 km above that sphere. RANGE_BOUNDARY ALTITUDE_SHELL, MAX_ALTITUDE_M 2000 km above the Earth's standard ellipsoid: the coverage ends there. " +
+        "MAX_RANGE_M is the longest distance from the radar to the outline.",
     },
   };
 }
@@ -75,8 +76,7 @@ export const LEOLABS_NETWORK = {
         "Radar type: a phased-array radar per LeoLabs; the page does not say which feed. " +
         `Field of view: LeoLabs' outline of this radar's coverage, ${shape.count} points from the page's data file, the directions from the radar to where its coverage reaches 2000 km altitude ` +
         `(elevations ${shape.minElevationDeg.toFixed(1)} to ${shape.maxElevationDeg.toFixed(1)} degrees). ` +
-        `The standard has no altitude ceiling, so the range is the longest distance to that edge, ${km(shape.maxRangeM)}, at the lowest elevation: ` +
-        "a shape cut at that range follows LeoLabs' directions exactly and reaches above 2000 km altitude away from the lowest edge. " +
+        `The shape ends at that 2000 km altitude ceiling, each direction at its own distance; the range is the longest of those distances, ${km(shape.maxRangeM)}, at the lowest elevation. ` +
         `${kindWords} ` +
         `${peers.length ? `Paired radar at this site: ${peers.map((peer) => `leolabs:${peer.id}`).join(", ")}. ` : ""}` +
         `${radar.id === "rasr1" ? `${VIDEO.text}: ${VIDEO.url}. ` : ""}` +

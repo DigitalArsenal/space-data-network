@@ -11,8 +11,10 @@
 //
 // WHAT A RECORD CARRIES. FIELD_OF_VIEW CUSTOM_POLYGON, POLYGON_FRAME SENSOR_LOCAL: every outline point, in order, as the vector
 // from the radar to the point in the sensor's own axes, in meters (its direction is the outline's direction; its length is the
-// distance to the 2000 km ceiling in that direction). MAX_RANGE_M is the longest of those distances. Nothing is smoothed,
-// resampled or dropped.
+// distance to the 2000 km ceiling in that direction). RANGE_BOUNDARY ALTITUDE_SHELL with MAX_ALTITUDE_M 2000 km and no
+// ALTITUDE_REFERENCE: the volume ends where each direction reaches 2000 km above the Earth's standard ellipsoid (LeoLabs' sphere
+// is their Earth; the radar stands on ours). MAX_RANGE_M is the longest of the outline's distances, LeoLabs' own number, which
+// still bounds every direction. Nothing is smoothed, resampled or dropped.
 //
 // THE SENSOR'S AXES (MOUNTING FRAME LOCAL_ENU, POINTING FIXED, no roll), the axes the console points a site's sensor with
 // (east-north-up turned by heading A - 90 degrees and pitch E - 90 degrees, no roll):
@@ -42,6 +44,8 @@ if (digest !== SHAPE_SOURCE.sha256) throw new Error(`${SHAPE_SOURCE.file}: sha25
 const DATA = JSON.parse(gunzipSync(gz).toString("utf8"));
 /** The data file's own epoch: "2026-11-20T09:01:02.481279+00:00". */
 export const SHAPE_EPOCH = DATA.epoch;
+/** The altitude every radar's outline reaches (the data file's points lie 2000 km above its 6378.16 km sphere, within 1 to 7 km). */
+export const CEILING_M = 2000000;
 
 const rad = Math.PI / 180;
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
@@ -54,7 +58,7 @@ export function instrumentOf(id) {
 }
 
 /**
- * A radar's outline as FIELD_OF_VIEW vertices: { vertices: [[x, y, z] m], maxRangeM, minElevationDeg, maxElevationDeg, azDeg, elDeg, count }.
+ * A radar's outline as FIELD_OF_VIEW vertices: { vertices: [[x, y, z] m], maxRangeM, ceilingM, minElevationDeg, maxElevationDeg, azDeg, elDeg, count }.
  * azDeg / elDeg are the boresight the data file states, which the record's MOUNTING carries; the elevations are the outline's
  * lowest and highest above the radar's horizontal.
  */
@@ -71,6 +75,9 @@ export function outlineOf(id) {
   let maxRangeM = 0;
   let minElevationDeg = 90, maxElevationDeg = -90;
   const vertices = row.fov.map((point) => {
+    // Every point is on the ceiling: 2000 km above the file's 6378.16 km sphere (it holds to 1 to 7 km).
+    const above = Math.hypot(...point) * 1000 - 6378160;
+    if (Math.abs(above - CEILING_M) > 10000) throw new Error(`${id}: an outline point is ${(above / 1000).toFixed(1)} km above the sphere, not the 2000 km ceiling`);
     const v = [0, 1, 2].map((i) => (point[i] - row.pos[i]) * 1000);
     const enu = [dot(v, east), dot(v, north), dot(v, up)];
     const range = Math.hypot(...v);
@@ -80,5 +87,5 @@ export function outlineOf(id) {
     maxElevationDeg = Math.max(maxElevationDeg, elevation);
     return [dot(enu, X), dot(enu, Y), dot(enu, Z)];
   });
-  return { vertices, maxRangeM, minElevationDeg, maxElevationDeg, azDeg: row.boresight.azimuth, elDeg: row.boresight.elevation, count: vertices.length };
+  return { vertices, maxRangeM, ceilingM: CEILING_M, minElevationDeg, maxElevationDeg, azDeg: row.boresight.azimuth, elDeg: row.boresight.elevation, count: vertices.length };
 }
