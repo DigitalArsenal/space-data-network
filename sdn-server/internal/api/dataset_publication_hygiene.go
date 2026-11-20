@@ -201,6 +201,42 @@ func (h *publicationHygiene) policy() (config.PublicationRetentionConfig, []conf
 	return h.retention, h.pointers
 }
 
+// shortSnapshotRefusal is the snapshot guard (publishing.retention.lanes[]
+// .min_record_ratio): it refuses a batch of a snapshot lane that holds fewer
+// than ratio x the records of the newest series the lane published from
+// another batch. Nil when the lane has no guard, has no earlier series, or the
+// batch is large enough. Refused batches record no series, so the comparison
+// is always against the last batch that WAS published.
+func (s *ConcreteDatasetPublicationService) shortSnapshotRefusal(store *storage.FlatSQLStore, schema string, req DatasetPublicationRequest, count int) error {
+	retention, _ := s.hygiene.policy()
+	ratio := retention.SnapshotFloorFor(schema, req.ProviderID, req.SourceName)
+	if ratio <= 0 || store == nil {
+		return nil
+	}
+	lane := storage.DatasetPublicationLane{SchemaName: schema, ProviderID: req.ProviderID, SourceName: req.SourceName}
+	series, err := store.ListDatasetPublicationSeries(lane)
+	if err != nil {
+		// The guard cannot read the lane's history: publish as before rather
+		// than stall the lane on a read error, and say so.
+		log.Warnf("snapshot guard %s %s/%s batch %q: cannot read published series (%v); guard skipped", schema, req.ProviderID, req.SourceName, req.BatchID, err)
+		return nil
+	}
+	for _, previous := range series { // newest first
+		if previous.BatchID == req.BatchID || previous.RecordCount <= 0 {
+			continue
+		}
+		floor := int(float64(previous.RecordCount)*ratio + 0.999999)
+		if count >= floor {
+			return nil
+		}
+		err := fmt.Errorf("snapshot batch %q of %s %s/%s holds %d records, under %d (%.2f x %d, the series published %s from batch %q): REFUSED, the lane keeps advertising that series; if the source really shrank, lower or remove min_record_ratio for this lane",
+			req.BatchID, schema, req.ProviderID, req.SourceName, count, floor, ratio, previous.RecordCount, previous.PublishedAt.Format(time.RFC3339), previous.BatchID)
+		log.Warnf("snapshot guard: %v", err)
+		return err
+	}
+	return nil
+}
+
 // publicationFingerprint is the set the request would export, taken before
 // the export starts; "" when the request is not scoped to one lane.
 func (s *ConcreteDatasetPublicationService) publicationFingerprint(req DatasetPublicationRequest, schema string) string {

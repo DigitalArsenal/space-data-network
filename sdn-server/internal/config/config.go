@@ -1002,6 +1002,32 @@ type PublicationRetentionLane struct {
 	// whose batches are PARTS of one dataset (the cellular chunk lane): each
 	// part is published once and must stay published.
 	SnapshotBatches bool `yaml:"snapshot_batches,omitempty"`
+	// MinRecordRatio guards a snapshot lane against a short upstream pull:
+	// a batch holding fewer records than this fraction of the newest
+	// published series of the lane is refused, nothing is published, and the
+	// lane keeps advertising the series it had. 0 (the default) turns the
+	// guard off; it applies only with snapshot_batches. Why: on 2026-11-20
+	// CelesTrak answered the full-catalog GP pull twice with a body cut at
+	// about 3.7 MB (24,973 and 24,929 rows against 32,917 to 32,958 on every
+	// run of the two days before), and each short batch replaced the whole
+	// catalog the console loads. host-02's GP lanes take 0.95.
+	MinRecordRatio float64 `yaml:"min_record_ratio,omitempty"`
+}
+
+// SnapshotFloorFor is the lane's min_record_ratio when the lane is a
+// snapshot lane with a ratio in (0, 1], else 0 (no guard). First match wins,
+// as in PolicyFor.
+func (c PublicationRetentionConfig) SnapshotFloorFor(schema, providerID, sourceName string) float64 {
+	for _, lane := range c.Lanes {
+		if !PublishingLaneMatches(lane.Schema, lane.ProviderID, lane.SourceName, schema, providerID, sourceName) {
+			continue
+		}
+		if !lane.SnapshotBatches || lane.MinRecordRatio <= 0 || lane.MinRecordRatio > 1 {
+			return 0
+		}
+		return lane.MinRecordRatio
+	}
+	return 0
 }
 
 // PolicyFor resolves one lane's retention: the series count and whether its
