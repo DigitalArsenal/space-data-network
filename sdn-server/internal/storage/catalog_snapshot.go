@@ -4,32 +4,81 @@ import (
 	"errors"
 	"fmt"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/CAT"
+	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"path/filepath"
 	"sort"
 	"strings"
 )
 
-// CatalogSnapshot binds a complete CAT view and its exact OCM closure to the
-// same durable journal cutoff. Product-only commits leave the CAT view intact.
+// A catalog's product closure is every retained source of the catalog product
+// standards (config.CatalogProductSchemas: OCM, OMM) with the index's
+// provider and catalog_product_source; each reference resolves among the
+// records of its own standard.
+func isCatalogProductSchema(schema string) bool {
+	return strings.HasSuffix(schema, ".fbs") && config.IsCatalogProductSchema(schema)
+}
+
+// catalogProductsPerObject is the product allowance of one catalog object: a
+// CAT row lists at most one product of each catalogProductKind
+// (Sgp4Elements, Sgp4XpElements, StateCovariance, ApElements).
+const catalogProductsPerObject = 4
+
+// CatalogSnapshot binds a complete CAT view and its exact product closure to
+// the same durable journal cutoff: one selection per retained product
+// standard, in config.CatalogProductSchemas order. Product-only commits leave
+// the CAT view intact.
 type CatalogSnapshot struct {
-	Cutoff          uint64
-	Index, Products *PublicationSelection
+	Cutoff   uint64
+	Index    *PublicationSelection
+	Products []*PublicationSelection
 }
 
 func (s *CatalogSnapshot) Close() {
 	if s != nil {
 		s.Index.Close()
-		s.Products.Close()
+		for _, p := range s.Products {
+			p.Close()
+		}
+	}
+}
+
+func (s *CatalogSnapshot) pin(original *FlatSQLStore) {
+	s.Index.pin(original)
+	for _, p := range s.Products {
+		p.pin(original)
 	}
 }
 
 func (s *FlatSQLStore) catalogSource(schema, provider, source string) (PublicationSource, bool) {
 	for _, x := range s.publicationSources {
-		if x.Schema == "CAT.fbs" && x.Provider == provider && x.ProductSource != "" && ((schema == "CAT.fbs" && x.Source == source) || (schema == "OCM.fbs" && x.ProductSource == source)) {
+		if x.Schema == "CAT.fbs" && x.Provider == provider && x.ProductSource != "" && ((schema == "CAT.fbs" && x.Source == source) || (isCatalogProductSchema(schema) && x.ProductSource == source)) {
 			return x, true
 		}
 	}
 	return PublicationSource{}, false
+}
+
+// catalogProductSchemasOf lists the product standards of a catalog index, in
+// config.CatalogProductSchemas order: each retained product source, and each
+// standard the journal holds product entries of.
+func (s *FlatSQLStore) catalogProductSchemasOf(x PublicationSource) []string {
+	var out []string
+	for _, schema := range config.CatalogProductSchemas {
+		present := s.retainsPublication(schema, x.Provider, x.ProductSource)
+		for _, e := range s.publicationEntries {
+			present = present || (e.Schema == schema && isCatalogProductEntry(x, e))
+		}
+		if present {
+			out = append(out, schema)
+		}
+	}
+	return out
+}
+
+// isCatalogProductEntry reports whether a journal entry belongs to the
+// product closure of catalog index x.
+func isCatalogProductEntry(x PublicationSource, e publicationEntry) bool {
+	return x.ProductSource != "" && isCatalogProductSchema(e.Schema) && e.Tags.ProviderID == x.Provider && e.Tags.SourceName == x.ProductSource
 }
 func (s *FlatSQLStore) publicationCutoffLocked() uint64 {
 	var seq uint64
@@ -46,10 +95,17 @@ func (s *FlatSQLStore) captureCatalogLocked(x PublicationSource, cutoff uint64) 
 	if err != nil {
 		return nil, err
 	}
-	products := &PublicationSelection{Schema: "OCM.fbs", Provider: x.Provider, Source: x.ProductSource}
-	if err := s.publicationFailures[publicationSourceKey{"OCM.fbs", x.Provider, x.ProductSource}]; err != nil {
-		return nil, err
+	snap := &CatalogSnapshot{Index: index}
+	bySchema := map[string]*PublicationSelection{}
+	for _, schema := range s.catalogProductSchemasOf(x) {
+		if err := s.publicationFailures[publicationSourceKey{schema, x.Provider, x.ProductSource}]; err != nil {
+			return nil, err
+		}
+		p := &PublicationSelection{Schema: schema, Provider: x.Provider, Source: x.ProductSource}
+		snap.Products = append(snap.Products, p)
+		bySchema[schema] = p
 	}
+	limit := catalogProductsPerObject * maxPublicationSelectionRecords
 	wanted := map[string]bool{}
 	for _, r := range index.refs {
 		data, err := r.read()
@@ -67,15 +123,18 @@ func (s *FlatSQLStore) captureCatalogLocked(x PublicationSource, cutoff uint64) 
 			}
 			wanted[string(product.RECORD_CID())] = true
 		}
-		if len(wanted) > maxPublicationSelectionRecords {
-			return nil, publicationContentError(errors.New("catalog closure exceeds 100000 records; partition the source"))
+		if len(wanted) > limit {
+			return nil, publicationContentError(fmt.Errorf("catalog closure exceeds %d product references (%d per object); partition the source", limit, catalogProductsPerObject))
 		}
 	}
-	selected := map[string]publicationRecordRef{}
+	// A record's bytes carry its standard's file identifier, so one content
+	// identifier names a record of exactly one product standard.
+	selected := map[string]bool{}
 	for _, e := range s.publicationEntries {
-		if e.Aborted || !e.Applied || e.Sequence > cutoff || e.Schema != "OCM.fbs" || e.Tags.ProviderID != x.Provider || e.Tags.SourceName != x.ProductSource {
+		if e.Aborted || !e.Applied || e.Sequence > cutoff || !isCatalogProductEntry(x, e) {
 			continue
 		}
+		products := bySchema[e.Schema]
 		products.SourceCutoff = max(products.SourceCutoff, e.SourceSequence)
 		if e.Discarded {
 			continue
@@ -85,7 +144,10 @@ func (s *FlatSQLStore) captureCatalogLocked(x PublicationSource, cutoff uint64) 
 		}
 		for _, r := range e.Refs {
 			if wanted[r.CID()] || wanted[r.FramedCID()] {
-				selected[r.CID()] = r
+				if !selected[r.CID()] {
+					selected[r.CID()] = true
+					products.refs = append(products.refs, r)
+				}
 				delete(wanted, r.CID())
 				delete(wanted, r.FramedCID())
 			}
@@ -94,14 +156,13 @@ func (s *FlatSQLStore) captureCatalogLocked(x PublicationSource, cutoff uint64) 
 	if len(wanted) != 0 {
 		return nil, &PublicationContentError{Cause: errors.New("catalog snapshot has an unresolved product reference")}
 	}
-	for _, r := range selected {
-		products.refs = append(products.refs, r)
-	}
-	sort.Slice(products.refs, func(i, j int) bool { return publicationDigestLess(products.refs[i].Digest, products.refs[j].Digest) })
 	// Pair identities follow this index source's cutoff, never unrelated writes.
-	cutoff = index.Cutoff
-	products.Cutoff = cutoff
-	return &CatalogSnapshot{Cutoff: cutoff, Index: index, Products: products}, nil
+	snap.Cutoff = index.Cutoff
+	for _, products := range snap.Products {
+		sort.Slice(products.refs, func(i, j int) bool { return publicationDigestLess(products.refs[i].Digest, products.refs[j].Digest) })
+		products.Cutoff = snap.Cutoff
+	}
+	return snap, nil
 }
 
 // CaptureCatalogSnapshot validates all references before returning either set.
@@ -137,8 +198,7 @@ func (s *FlatSQLStore) CaptureCatalogSnapshot(provider, indexSource string, cuto
 	}
 	snap, err := s.captureCatalogLocked(x, cutoff)
 	if err == nil {
-		snap.Index.pin(original)
-		snap.Products.pin(original)
+		snap.pin(original)
 	}
 	return snap, err
 }
@@ -180,14 +240,16 @@ func (s *FlatSQLStore) SelectPublication(schema, provider, source, batch string)
 			if err != nil {
 				return nil, err
 			}
-			snap.Index.pin(original)
-			snap.Products.pin(original)
-			if schema == "CAT.fbs" {
-				snap.Products.Close()
-				return snap.Index, nil
+			snap.pin(original)
+			var chosen *PublicationSelection
+			for _, p := range append([]*PublicationSelection{snap.Index}, snap.Products...) {
+				if p.Schema == schema {
+					chosen = p
+				} else {
+					p.Close()
+				}
 			}
-			snap.Index.Close()
-			return snap.Products, nil
+			return chosen, nil
 		}
 	}
 	p, err := s.retainedSelectionLocked(schema, provider, source, batch, cutoff)
@@ -197,16 +259,17 @@ func (s *FlatSQLStore) SelectPublication(schema, provider, source, batch string)
 	return p, err
 }
 
-// ExportCatalogSnapshot writes both deterministic SDS shards only after closure
-// validation. The caller exposes the returned pair together; an error exposes
-// neither. The immutable selection survives concurrent deletion and replacement.
+// ExportCatalogSnapshot writes the deterministic SDS shards of every product
+// standard, then the index, only after closure validation. The caller exposes
+// the returned set together; an error exposes none. The immutable selection
+// survives concurrent deletion and replacement.
 func (s *FlatSQLStore) ExportCatalogSnapshot(dir, provider, source string, cutoff uint64) (*CatalogSnapshot, []*DatasetExport, error) {
 	snap, err := s.CaptureCatalogSnapshot(provider, source, cutoff)
 	if err != nil {
 		return nil, nil, err
 	}
 	var exports []*DatasetExport
-	for _, p := range []*PublicationSelection{snap.Products, snap.Index} {
+	for _, p := range append(append([]*PublicationSelection(nil), snap.Products...), snap.Index) {
 		if len(p.refs) == 0 {
 			continue
 		}

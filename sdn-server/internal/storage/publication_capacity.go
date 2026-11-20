@@ -14,13 +14,29 @@ func publicationGenerationLimit(x PublicationSource) int {
 	return min(maxPublicationSelectionRecords, n+(n+3)/4)
 }
 
+// publicationProductLimit is the product allowance of one generation of a
+// paired catalog index: catalogProductsPerObject for each object it admits.
+func publicationProductLimit(x PublicationSource) int {
+	if x.ProductSource == "" {
+		return 0
+	}
+	return catalogProductsPerObject * publicationGenerationLimit(x)
+}
+
+// publicationGenerationReservation is what one generation of a paired catalog
+// index holds back before its first product: its objects and their products.
+func publicationGenerationReservation(x PublicationSource) int {
+	return publicationGenerationLimit(x) + publicationProductLimit(x)
+}
+
 // Four generations per source include 25% object headroom (capped by the
-// selection bound). Pending batches retain their bytes; completed history
+// selection bound); a paired catalog index adds four generations of its
+// product allowance. Pending batches retain their bytes; completed history
 // coalesces to the latest generation through reclamation.
 func (s *FlatSQLStore) publicationRecordLimit() int {
 	n := 0
 	for _, x := range s.publicationSources {
-		n += 4 * publicationGenerationLimit(x)
+		n += 4 * (publicationGenerationLimit(x) + publicationProductLimit(x))
 	}
 	if n == 0 {
 		n = 2 * maxPublicationSelectionRecords
@@ -37,7 +53,7 @@ func (s *FlatSQLStore) generationUsage(x PublicationSource) (cutoff uint64, prod
 		if e.Schema == "CAT.fbs" && e.Tags.SourceName == x.Source {
 			indexes += len(e.Refs)
 		}
-		if e.Schema == "OCM.fbs" && e.Tags.SourceName == x.ProductSource {
+		if isCatalogProductEntry(x, e) {
 			products += len(e.Refs)
 		}
 	}
@@ -56,7 +72,7 @@ func (s *FlatSQLStore) admitPublicationGeneration(schema string, tags SourceTags
 			}
 			_, p, c := s.generationUsage(pair)
 			if p+c > 0 {
-				reserved += max(0, 2*publicationGenerationLimit(pair)-p-c)
+				reserved += max(0, publicationGenerationReservation(pair)-p-c)
 			}
 		}
 		if s.publicationRecordCount+count+reserved > s.publicationRecordLimit() {
@@ -65,10 +81,9 @@ func (s *FlatSQLStore) admitPublicationGeneration(schema string, tags SourceTags
 		return nil
 	}
 	_, products, indexes := s.generationUsage(x)
-	limit := publicationGenerationLimit(x)
-	used := products
+	limit, used := publicationProductLimit(x), products
 	if schema == "CAT.fbs" {
-		used = indexes
+		limit, used = publicationGenerationLimit(x), indexes
 	}
 	refusal := func(reason string) error {
 		if err := s.abortPublicationGeneration(x); err != nil {
@@ -86,7 +101,7 @@ func (s *FlatSQLStore) admitPublicationGeneration(schema string, tags SourceTags
 		}
 		_, p, c := s.generationUsage(pair)
 		if p+c > 0 || pair.Provider == x.Provider && pair.Source == x.Source {
-			reserved += max(0, 2*publicationGenerationLimit(pair)-p-c)
+			reserved += max(0, publicationGenerationReservation(pair)-p-c)
 		}
 	}
 	if s.publicationRecordCount+reserved > s.publicationRecordLimit() {
@@ -105,7 +120,7 @@ func (s *FlatSQLStore) abortPublicationGeneration(x PublicationSource) error {
 	cutoff := s.latestCatalogGeneration(x)
 	var sequences []uint64
 	for _, e := range s.publicationEntries {
-		if e.Sequence > cutoff && !e.Aborted && e.Tags.ProviderID == x.Provider && ((e.Schema == "CAT.fbs" && e.Tags.SourceName == x.Source) || (e.Schema == "OCM.fbs" && e.Tags.SourceName == x.ProductSource)) {
+		if e.Sequence > cutoff && !e.Aborted && ((e.Schema == "CAT.fbs" && e.Tags.ProviderID == x.Provider && e.Tags.SourceName == x.Source) || isCatalogProductEntry(x, e)) {
 			sequences = append(sequences, e.Sequence)
 		}
 	}

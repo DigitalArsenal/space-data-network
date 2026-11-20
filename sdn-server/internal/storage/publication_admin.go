@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/spacedatanetwork/sdn-server/internal/config"
 )
 
 // StopPublicationRetention is a startup operation. It preserves immutable files
@@ -66,7 +68,8 @@ func (s *FlatSQLStore) ExcludeCatalogRecords(provider, source string, cids []str
 	// Persist product takedowns before the index takedown. Mixed journal entries
 	// retain their bytes, but later product batch captures filter these identifiers.
 	if x, ok := s.catalogSource("CAT.fbs", provider, source); ok {
-		products, err := s.catalogExclusions("OCM.fbs", provider, x.ProductSource)
+		// Every product standard of the source shares its takedown list.
+		products, err := s.catalogExclusions(config.CatalogProductSchemas[0], provider, x.ProductSource)
 		if err != nil {
 			return err
 		}
@@ -108,11 +111,12 @@ func (s *FlatSQLStore) ExcludeCatalogRecords(provider, source string, cids []str
 }
 func (s *FlatSQLStore) catalogExclusions(schema, provider, source string) (map[string]bool, error) {
 	out := map[string]bool{}
-	if schema != "CAT.fbs" && schema != "OCM.fbs" {
+	if schema != "CAT.fbs" && !isCatalogProductSchema(schema) {
 		return out, nil
 	}
+	// One product takedown list per product source serves all its standards.
 	path := s.exclusionPath(provider, source)
-	if schema == "OCM.fbs" {
+	if schema != "CAT.fbs" {
 		path += ".products"
 	}
 	raw, err := os.ReadFile(path)
