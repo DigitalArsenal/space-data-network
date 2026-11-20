@@ -1,10 +1,33 @@
 // The LeoLabs network, in the same row shape as every other network (networks.mjs). The values are roster.mjs' (the page's, the AMOS
 // paper's and the FCC license's); this file only gives each row its network, operator, kind, status and its own citation.
 import { LEOLABS_URL, PAGE_EPOCH, PAGE_URL, PAPER, PAPER_URL, RADARS, SITES, VIDEO } from "./roster.mjs";
+import { SHAPE_EPOCH, SHAPE_SOURCE, outlineOf } from "./leolabs-shapes.mjs";
 
 const CREDIT = `LeoLabs, ${LEOLABS_URL}`;
 const PAGE_CITE = { url: PAGE_URL, text: `LeoLabs public visualization, data epoch ${PAGE_EPOCH}` };
 const mhz = (value) => `${value} MHz`;
+const km = (meters) => `${Math.round(meters / 1000).toLocaleString("en-US")} km`;
+
+/** A radar's field of view: LeoLabs' own outline (leolabs-shapes.mjs), with the citation of the data file it was read from. */
+function shapeOf(radar) {
+  const outline = outlineOf(radar.id);
+  if (outline.azDeg !== radar.az || outline.elDeg !== radar.el) throw new Error(`${radar.id}: the data file's boresight ${outline.azDeg}/${outline.elDeg} is not the roster's ${radar.az}/${radar.el}`);
+  return {
+    ...outline,
+    cite: {
+      url: SHAPE_SOURCE.url,
+      text: `LeoLabs public visualization data file, epoch ${SHAPE_EPOCH}`,
+      source: "LeoLabs public visualization (https://platform.leolabs.space/visualizations/leo), its data file static.json.gz",
+      recordId: `instruments/${radar.id}/fov`,
+      retrievedAt: SHAPE_SOURCE.retrievedAt,
+      version: `data epoch ${SHAPE_EPOCH}, sha256 ${SHAPE_SOURCE.sha256}`,
+      notes:
+        `The outline's ${outline.count} points, in LeoLabs' order, each as the vector from the radar to the point in the sensor's axes (meters). ` +
+        "The data file gives them in an Earth-fixed frame on a sphere of 6378.16 km on which the radar's latitude and longitude are used, so its local up is the geodetic one; " +
+        "each point is 2000 km above that sphere. MAX_RANGE_M is the longest distance from the radar to the outline.",
+    },
+  };
+}
 
 export const LEOLABS_NETWORK = {
   slug: "leolabs", name: "LeoLabs", operator: "LeoLabs, Inc.", kind: "commercial space surveillance radar network",
@@ -14,8 +37,9 @@ export const LEOLABS_NETWORK = {
     text:
       "No license is granted by LeoLabs. LeoLabs lets its visualization be used with credit and a link to https://leolabs.space " +
       "for non-commercial educational, academic or research uses and for news, and reserves all rights " +
-      "(https://platform.leolabs.space/visualizations_terms_for_sharing). Facts only (name, position, pointing, power, frequency) " +
-      "are published here with that credit, on the Space Data Network owner's decision of 2026-11-18; LeoLabs can have them removed.",
+      "(https://platform.leolabs.space/visualizations_terms_for_sharing). Facts (name, position, pointing, power, frequency) " +
+      "are published here with that credit, on the Space Data Network owner's decision of 2026-11-18, and each radar's coverage outline " +
+      "from the visualization's data file with LeoLabs' permission as the owner states it (2026-11-20), open and free; LeoLabs can have them removed.",
   },
   sites: SITES.map((site) => {
     const first = RADARS.find((r) => r.id === site.radarIds[0]);
@@ -28,8 +52,9 @@ export const LEOLABS_NETWORK = {
   }),
   sensors: RADARS.map((radar) => {
     const limits = radar.bandLowMHz !== undefined;
+    const shape = shapeOf(radar);
     const peers = RADARS.filter((other) => other.site === radar.site && other.id !== radar.id);
-    const shape =
+    const kindWords =
       radar.kind === "planar"
         ? "The page marks it as a two-dimensional (planar) radar."
         : `${PAPER} (${PAPER_URL}) describes the fan radars as one-dimensional fields of view, UHF one fan and S-band two fans per site.`;
@@ -42,14 +67,17 @@ export const LEOLABS_NETWORK = {
         designation: radar.band, lowMHz: radar.bandLowMHz, highMHz: radar.bandHighMHz,
         cite: limits ? { url: radar.bandCite.url, text: radar.bandCite.text, source: radar.bandCite.source, recordId: radar.bandCite.recordId, license: radar.bandCite.license, notes: radar.bandCite.notes } : undefined,
       },
-      powerW: radar.powerW, az: radar.az, el: radar.el, cite: PAGE_CITE,
+      powerW: radar.powerW, az: radar.az, el: radar.el, cite: PAGE_CITE, shape,
       note:
         `Transmit frequency ${mhz(radar.freqMHz)} and transmit power ${radar.powerW} W are the page's single values (the power is taken as the peak transmit power). ` +
         `${limits ? `Band limits ${radar.bandLowMHz} to ${radar.bandHighMHz} MHz are from ${radar.bandCite.text}. ` : "Band limits are not published. "}` +
         `Boresight azimuth ${radar.az}, elevation ${radar.el} degrees (local east-north-up). ` +
         "Radar type: a phased-array radar per LeoLabs; the page does not say which feed. " +
-        "Field of view and range are not set: the page publishes an outline cut at a 2000 km altitude ceiling (2100 km for PFISR), not a maximum range, beam width or minimum elevation. " +
-        `${shape} ` +
+        `Field of view: LeoLabs' outline of this radar's coverage, ${shape.count} points from the page's data file, the directions from the radar to where its coverage reaches 2000 km altitude ` +
+        `(elevations ${shape.minElevationDeg.toFixed(1)} to ${shape.maxElevationDeg.toFixed(1)} degrees). ` +
+        `The standard has no altitude ceiling, so the range is the longest distance to that edge, ${km(shape.maxRangeM)}, at the lowest elevation: ` +
+        "a shape cut at that range follows LeoLabs' directions exactly and reaches above 2000 km altitude away from the lowest edge. " +
+        `${kindWords} ` +
         `${peers.length ? `Paired radar at this site: ${peers.map((peer) => `leolabs:${peer.id}`).join(", ")}. ` : ""}` +
         `${radar.id === "rasr1" ? `${VIDEO.text}: ${VIDEO.url}. ` : ""}` +
         `${radar.id === "pfisr" ? "Operated by SRI International for the National Science Foundation; LeoLabs is a user. " : ""}`.trim(),

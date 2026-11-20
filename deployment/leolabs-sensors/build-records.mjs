@@ -35,6 +35,9 @@ const newNetwork = (network) => ({ ...network, retrievedAt: ROUND_2_RETRIEVED_AT
 
 export const NETWORKS = [...[LEOLABS_NETWORK, ...OTHER_NETWORKS].map(withAdditions), ...NEW_NETWORKS.map(newNetwork)];
 export const roundOf = (row) => row.round ?? 1;
+// Round 3 (2026-11-20) adds no row: it sends a lane again, whole, because its records changed. The LeoLabs radars now carry
+// their coverage outline (leolabs-shapes.mjs); their twelve $SNR records, same SENSOR_IDs, go out as the lane's next batch.
+export const RESENT = { 3: [{ network: "leolabs", schema: "SNR.fbs" }] };
 export const providerOf = (network) => `sdn-ssa-${network.slug}`;
 // The source name carries the network, so the console's SOURCES list reads "ussf-ssn-sites · 12" and not nine lanes called "sites".
 export const SITE_SOURCE = (network) => `${network.slug}-sites`;
@@ -60,6 +63,12 @@ const { SNRMountingT } = await lib("SNR/SNRMounting.js");
 const { SNRRfParametersT } = await lib("SNR/SNRRfParameters.js");
 const { SNROpticalParametersT } = await lib("SNR/SNROpticalParameters.js");
 const { OPPProvenanceT } = await lib("SNR/OPPProvenance.js");
+const { SCVSensorShapeContractT } = await lib("SNR/SCVSensorShapeContract.js");
+const { SCVVec3T } = await lib("SNR/SCVVec3.js");
+const { scvSensorShapeKind } = await lib("SNR/scvSensorShapeKind.js");
+const { scvSensorAxisConvention } = await lib("SNR/scvSensorAxisConvention.js");
+const { scvSensorRangeBoundaryKind } = await lib("SNR/scvSensorRangeBoundaryKind.js");
+const { scvCoordinateFrame } = await lib("SNR/scvCoordinateFrame.js");
 const { SensorType } = await lib("SNR/SensorType.js");
 const { snrEmissionMode } = await lib("SNR/snrEmissionMode.js");
 const { snrBandDirection } = await lib("SNR/snrBandDirection.js");
@@ -73,6 +82,8 @@ export const siteId = (network, slug) => `${network.slug}:site:${slug}`;
 export const sensorId = (network, id) => `${network.slug}:${id}`;
 const OWNER_DECISION = "Published on the Space Data Network owner's decision of 2026-11-18, facts only, with the citation of each row.";
 const OWNER_DECISION_2 = "Published on the Space Data Network owner's decision of 2026-11-19, facts only, with the citation of each row.";
+const OWNER_DECISION_3 =
+  "Published on the Space Data Network owner's decisions of 2026-11-18 (the facts, with the citation of each row) and 2026-11-20 (the coverage outline, with LeoLabs' permission as the owner states it, open and free).";
 
 const pvn = (network, cite) =>
   Object.assign(new PVNT(), {
@@ -105,7 +116,7 @@ const opp = (network, cite, recordId, notes) =>
     SOURCE_RECORD_ID: recordId,
     SOURCE_URL: cite.url,
     RETRIEVED_AT: cite.retrievedAt ?? network.retrievedAt ?? RETRIEVED_AT,
-    SOURCE_VERSION: network.version ?? `retrieved ${(cite.retrievedAt ?? network.retrievedAt ?? RETRIEVED_AT).slice(0, 10)}`,
+    SOURCE_VERSION: cite.version ?? network.version ?? `retrieved ${(cite.retrievedAt ?? network.retrievedAt ?? RETRIEVED_AT).slice(0, 10)}`,
     METHOD: oppDeterminationMethod.OPERATOR_STATED,
     LICENSE: cite.license ?? network.terms.text,
     ATTRIBUTION: `${network.credit}. ${cite.url}`,
@@ -196,12 +207,25 @@ function sensorRecord(network, row, siteRow) {
   if (row.apertureM !== undefined || row.focalM !== undefined) {
     record.OPTICAL = Object.assign(new SNROpticalParametersT(), { APERTURE_M: row.apertureM ?? 0, FOCAL_LENGTH_M: row.focalM ?? 0 });
   }
+  // A published outline (leolabs-shapes.mjs): every point, in order, as a vector from the sensor in its own axes, meters.
+  if (row.shape) {
+    record.FIELD_OF_VIEW = Object.assign(new SCVSensorShapeContractT(), {
+      SHAPE_KIND: scvSensorShapeKind.CUSTOM_POLYGON,
+      AXIS_CONVENTION: scvSensorAxisConvention.LOCAL_X_RIGHT_Y_UP_Z_BORESIGHT,
+      RANGE_BOUNDARY: scvSensorRangeBoundaryKind.RADIAL_SPHERICAL,
+      MIN_RANGE_M: 0,
+      MAX_RANGE_M: row.shape.maxRangeM,
+      POLYGON_VERTICES: row.shape.vertices.map(([x, y, z]) => Object.assign(new SCVVec3T(), { X: x, Y: y, Z: z })),
+      POLYGON_FRAME: scvCoordinateFrame.SENSOR_LOCAL,
+    });
+    record.FIELD_OF_VIEW_PROVENANCE = opp(network, row.shape.cite, row.shape.cite.recordId, row.shape.cite.notes);
+  }
   const where = siteRow ? ` at ${siteRow.name}` : row.host ? `, carried by ${row.host} (NORAD ${row.norad})` : "";
   const status = row.status ? ` Status: ${row.status}.` : "";
   const verified = row.verified ? ` Catalog number verified: ${row.verified}.` : "";
   const limitWords = row.band ? (limits ? ` Band limits ${row.band.lowMHz} to ${row.band.highMHz} MHz are published by the cited source.` : " Band limits are not published; none are invented.") : "";
   record.PROVENANCE = opp(network, row.cite, row.id, row.note ?? "");
-  record.NOTES = `${row.name}${where}. Source: ${row.cite.text} (${row.cite.url}); credit ${network.credit}.${limitWords}${status}${verified} ${row.note ?? ""} ${roundOf(row) === 2 ? OWNER_DECISION_2 : OWNER_DECISION}`.replace(/\s+/g, " ").trim();
+  record.NOTES = `${row.name}${where}. Source: ${row.cite.text} (${row.cite.url}); credit ${network.credit}.${limitWords}${status}${verified} ${row.note ?? ""} ${row.shape ? OWNER_DECISION_3 : roundOf(row) === 2 ? OWNER_DECISION_2 : OWNER_DECISION}`.replace(/\s+/g, " ").trim();
   return { id: record.SENSOR_ID, record, bytes: finish(SNR, record) };
 }
 
@@ -236,6 +260,10 @@ export function frame(records) {
 
 /** The lanes of one network, as the publisher posts them. */
 export function lanesOf(network, round) {
+  if (RESENT[round]) {
+    const resent = RESENT[round].filter((lane) => lane.network === network.slug).map((lane) => lane.schema);
+    return lanesOf(network).filter((lane) => resent.includes(lane.schema));
+  }
   const lanes = [];
   const inRound = (rows, records) => records.filter((_, i) => round === undefined || roundOf(rows[i]) === round);
   const sites = inRound(network.sites, sitRecords(network));
