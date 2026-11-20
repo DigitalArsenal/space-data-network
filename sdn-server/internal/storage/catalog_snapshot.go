@@ -58,12 +58,17 @@ func (s *FlatSQLStore) catalogSource(schema, provider, source string) (Publicati
 	return PublicationSource{}, false
 }
 
-// catalogProductSchemasOf lists the retained product standards of a catalog
-// index, in config.CatalogProductSchemas order.
+// catalogProductSchemasOf lists the product standards of a catalog index, in
+// config.CatalogProductSchemas order: each retained product source, and each
+// standard the journal holds product entries of.
 func (s *FlatSQLStore) catalogProductSchemasOf(x PublicationSource) []string {
 	var out []string
 	for _, schema := range config.CatalogProductSchemas {
-		if s.retainsPublication(schema, x.Provider, x.ProductSource) {
+		present := s.retainsPublication(schema, x.Provider, x.ProductSource)
+		for _, e := range s.publicationEntries {
+			present = present || (e.Schema == schema && isCatalogProductEntry(x, e))
+		}
+		if present {
 			out = append(out, schema)
 		}
 	}
