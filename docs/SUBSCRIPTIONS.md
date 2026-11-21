@@ -157,6 +157,8 @@ lane, the stored-`$PNM` catch-up runs at once and reads the publications it
 had passed over. `sync subscriptions` shows such a lane with "publications:
 kept" (`keep_publications` in `--json`).
 
+A node that has imported a lane's publications also lists them (`list-published`) and serves their files (`read-shard`, `read-index`). Each row is listed `available` while its shard and index are on the node's disk. Lane retention removes the files of the batches it no longer keeps as current. When a file is gone but the node's IPFS repository still holds that content in full, with every block of its DAG local and a shard of the published size, the row is still listed `available`, and both reads serve the bytes from the repository. A Bitswap reader that falls back to the publication before the newest then finds it, for as long as the node holds it, whether that is because of a pin or because the repository collects no garbage. A row that is neither on disk nor fully in the repository is listed `unavailable` (`shard_missing` or `index_missing`). After 24 hours it is retired from the listing.
+
 A node with its DHT off (`peers.enable_dht: false`) has no content routing,
 and Kubo's Bitswap asks for a block only the peers that served it blocks
 before, its LAN peers and its peered peers (broadcast control, on since Kubo

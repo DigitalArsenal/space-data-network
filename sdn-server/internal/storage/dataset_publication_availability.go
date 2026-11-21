@@ -34,11 +34,16 @@ func (s *FlatSQLStore) DatasetPublicationAvailability(pub DatasetShardPublicatio
 		return "unavailable", "invalid_index_metadata"
 	}
 	for _, asset := range []struct {
-		role, path string
-		size       int64
-	}{{"shard", shard, pub.ByteCount}, {"index", index, 0}} {
+		role, path, cid string
+		size            int64
+	}{{"shard", shard, pub.ShardCID, pub.ByteCount}, {"index", index, pub.IndexCID, 0}} {
 		info, err := os.Stat(asset.path)
 		if os.IsNotExist(err) {
+			// The file is gone; the content still counts when the node's
+			// IPFS repository holds all of it (dataset_publication_content.go).
+			if size, held := s.PublicationContentHeld(asset.cid); held && (asset.size <= 0 || size == asset.size) {
+				continue
+			}
 			return "unavailable", asset.role + "_missing"
 		}
 		if err != nil {
