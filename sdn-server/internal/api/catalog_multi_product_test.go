@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/CAT"
+	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/MOR"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/OCM"
 	flatbuffers "github.com/google/flatbuffers/go"
 	cidlib "github.com/ipfs/go-cid"
@@ -79,9 +80,28 @@ func catalogRow(t *testing.T, norad uint32, asOf string, products []catalogRowPr
 	return bytes.Clone(b.FinishedBytes())
 }
 
+// catalogMOR is an SDN-AP set as the catalog builder's minimum profile stores
+// it: a $MOR whose MEAN_ELEMENT_THEORY is AP.
+func catalogMOR(norad uint32) []byte {
+	b := flatbuffers.NewBuilder(256)
+	designator, originator := b.CreateString(fmt.Sprintf("FIX-%d", norad)), b.CreateString("synthetic-node")
+	MOR.MORStart(b)
+	MOR.MORAddNORAD_CAT_ID(b, norad)
+	MOR.MORAddINTERNATIONAL_DESIGNATOR(b, designator)
+	MOR.MORAddORIGINATOR(b, originator)
+	MOR.MORAddMEAN_ELEMENT_THEORY(b, 5)          // AP (the generated enum type is unexported)
+	MOR.MORAddEPOCH_UNIX_US(b, 1795132800000000) // 2026-11-20T00:00:00Z
+	MOR.MORAddMEAN_MOTION(b, 15.5)
+	MOR.MORAddECCENTRICITY(b, 0.0005)
+	MOR.MORAddINCLINATION(b, 51.6)
+	MOR.FinishSizePrefixedMORBuffer(b, MOR.MOREnd(b))
+	return bytes.Clone(b.FinishedBytes())
+}
+
 // The fixture catalog: every object lists a GP OMM (an $OMM, SGP4 theory), an
-// SGP4-XP set (an $OCM whose MEAN_ELEMENTS theory is SGP4XP) and an SDN-AP
-// record (an $OCM whose MEAN_ELEMENTS theory is AP), in that order.
+// SGP4-XP set (an $OCM whose MEAN_ELEMENTS theory is SGP4XP) and an SDN-AP set
+// (a $MOR whose MEAN_ELEMENT_THEORY is AP), in that order: three products in
+// three standards.
 func catalogThreeProductRows(t *testing.T, objects int) (rows [][]byte, products map[string][]catalogRowProduct) {
 	t.Helper()
 	seed, err := os.ReadFile(filepath.Join("testdata", "catalog-history", "seed-OCM.sds"))
@@ -94,11 +114,9 @@ func catalogThreeProductRows(t *testing.T, objects int) (rows [][]byte, products
 		norad := uint32(920000 + i)
 		gp := sds.NewOMMBuilder().WithNoradCatID(norad).WithObjectName(fmt.Sprintf("FIXTURE %d", norad)).WithEpoch(asOf).WithMeanMotion(15.5).WithInclination(51.6).Build()
 		// The seed is an SDN-AP set; its SGP4-XP twin differs in theory only.
-		ap, xp := bytes.Clone(seed), bytes.Clone(seed)
-		for _, record := range [][]byte{ap, xp} {
-			if !OCM.GetRootAsOCM(record, 4).METADATA(nil).MutateNORAD_CAT_ID(norad) {
-				t.Fatal("missing synthetic identifier")
-			}
+		xp := bytes.Clone(seed)
+		if !OCM.GetRootAsOCM(xp, 4).METADATA(nil).MutateNORAD_CAT_ID(norad) {
+			t.Fatal("missing synthetic identifier")
 		}
 		elements := OCM.GetRootAsOCM(xp, 4).MEAN_ELEMENTS(nil)
 		if elements == nil || OCM.EnumNamesmeanElementSource[elements.MEAN_ELEMENT_THEORY()] != "AP" || !elements.MutateMEAN_ELEMENT_THEORY(1) || OCM.EnumNamesmeanElementSource[elements.MEAN_ELEMENT_THEORY()] != "SGP4XP" {
@@ -107,7 +125,7 @@ func catalogThreeProductRows(t *testing.T, objects int) (rows [][]byte, products
 		row := []catalogRowProduct{
 			{kind: 1, schema: "OMM.fbs", source: "public-gp", record: gp},
 			{kind: 2, schema: "OCM.fbs", source: "operator-ephemeris-xp", record: xp},
-			{kind: 4, schema: "OCM.fbs", source: "operator-ephemeris-ap", record: ap},
+			{kind: 4, schema: "MOR.fbs", source: "operator-ephemeris-ap", record: catalogMOR(norad)},
 		}
 		for _, p := range row {
 			products[p.schema] = append(products[p.schema], p)
@@ -118,7 +136,7 @@ func catalogThreeProductRows(t *testing.T, objects int) (rows [][]byte, products
 }
 
 // TestCatalogThreeProductRowsPublishAndReadBack: a whole catalog whose rows
-// each list three products of two standards publishes through the production
+// each list three products of three standards ($OMM, $OCM, $MOR) publishes through the production
 // signer and exporter, one series per product standard before the index, and
 // a separate consumer reads back every row with its products in order, each
 // one resolved in its own standard. The object limit is the catalog's own
@@ -135,6 +153,7 @@ func TestCatalogThreeProductRowsPublishAndReadBack(t *testing.T) {
 		{Schema: "CAT.fbs", Provider: "synthetic-node", Source: "catalog-index", ProductSource: "catalog-products", CatalogObjectLimit: objects},
 		{Schema: "OCM.fbs", Provider: "synthetic-node", Source: "catalog-products"},
 		{Schema: "OMM.fbs", Provider: "synthetic-node", Source: "catalog-products"},
+		{Schema: "MOR.fbs", Provider: "synthetic-node", Source: "catalog-products"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +198,7 @@ func TestCatalogThreeProductRowsPublishAndReadBack(t *testing.T) {
 	rows, products := catalogThreeProductRows(t, objects)
 	// Products of each standard first, then the terminal index batch, as the
 	// builder stores a generation.
-	for _, schema := range []string{"OMM.fbs", "OCM.fbs"} {
+	for _, schema := range []string{"OMM.fbs", "OCM.fbs", "MOR.fbs"} {
 		var records [][]byte
 		for _, p := range products[schema] {
 			records = append(records, p.record[4:])
@@ -198,13 +217,13 @@ func TestCatalogThreeProductRowsPublishAndReadBack(t *testing.T) {
 	if _, err := service.PublishDatasetUpdate(ctx, DatasetPublicationRequest{Schema: "CAT.fbs", ProviderID: "synthetic-node", SourceName: "catalog-index", FullCatalog: true}); err != nil {
 		t.Fatalf("publish the catalog snapshot: %v", err)
 	}
-	if fmt.Sprint(received) != "[OCM.fbs OMM.fbs CAT.fbs]" {
+	if fmt.Sprint(received) != "[OCM.fbs OMM.fbs MOR.fbs CAT.fbs]" {
 		t.Fatalf("consumer received %v, want each product standard before the index", received)
 	}
 
 	// Read back from the consumer: every record of every standard, by CID.
 	readBack := map[string]map[string][]byte{}
-	for _, schema := range []string{"CAT.fbs", "OCM.fbs", "OMM.fbs"} {
+	for _, schema := range []string{"CAT.fbs", "OCM.fbs", "OMM.fbs", "MOR.fbs"} {
 		source := "catalog-products"
 		if schema == "CAT.fbs" {
 			source = "catalog-index"
@@ -218,8 +237,8 @@ func TestCatalogThreeProductRowsPublishAndReadBack(t *testing.T) {
 			readBack[schema][catalogRecordCID(t, framed)] = framed
 		}
 	}
-	if len(readBack["CAT.fbs"]) != objects || len(readBack["OCM.fbs"]) != 2*objects || len(readBack["OMM.fbs"]) != objects {
-		t.Fatalf("read back %d rows, %d OCM and %d OMM products; want %d, %d, %d", len(readBack["CAT.fbs"]), len(readBack["OCM.fbs"]), len(readBack["OMM.fbs"]), objects, 2*objects, objects)
+	if len(readBack["CAT.fbs"]) != objects || len(readBack["OCM.fbs"]) != objects || len(readBack["OMM.fbs"]) != objects || len(readBack["MOR.fbs"]) != objects {
+		t.Fatalf("read back %d rows, %d OCM, %d OMM and %d MOR products; want %d of each", len(readBack["CAT.fbs"]), len(readBack["OCM.fbs"]), len(readBack["OMM.fbs"]), len(readBack["MOR.fbs"]), objects)
 	}
 	for _, row := range rows {
 		got := readBack["CAT.fbs"][catalogRecordCID(t, row)]
@@ -233,7 +252,7 @@ func TestCatalogThreeProductRowsPublishAndReadBack(t *testing.T) {
 		for i, want := range []struct {
 			kind           int8
 			schema, source string
-		}{{1, "OMM.fbs", "public-gp"}, {2, "OCM.fbs", "operator-ephemeris-xp"}, {4, "OCM.fbs", "operator-ephemeris-ap"}} {
+		}{{1, "OMM.fbs", "public-gp"}, {2, "OCM.fbs", "operator-ephemeris-xp"}, {4, "MOR.fbs", "operator-ephemeris-ap"}} {
 			var p CAT.CATProduct
 			cat.PRODUCTS(&p, i)
 			if int8(p.KIND()) != want.kind || string(p.SOURCE_ID()) != want.source {

@@ -291,11 +291,13 @@ command trusts the daemon's certificate and hands the install to the helper.
 paired catalog (`catalog_product_source`) now publishes rows that list, for
 example, a GP OMM, an SGP4-XP set and an SDN-AP record side by side. Each
 product resolves among the records of its own standard: retain one product
-source per standard the rows name (`OCM.fbs` and `OMM.fbs`, both under the
-provider and the source `catalog_product_source` names). A snapshot publishes
-one series per product standard (OCM, then OMM), then the index. Before this
-a listed `$OMM` product made the whole snapshot fail ("unresolved product
-reference"), and an `OMM.fbs` source could not be retained.
+source per standard the rows name (`OCM.fbs`, `OMM.fbs` and `MOR.fbs`, each
+under the provider and the source `catalog_product_source` names). A `$MOR`
+minimum orbit record is what the catalog builder's minimum profile stores. A
+snapshot publishes one series per product standard (OCM, then OMM, then MOR),
+then the index. Before this a listed `$OMM` product made the whole snapshot
+fail ("unresolved product reference"), and an `OMM.fbs` or `MOR.fbs` source
+could not be retained.
 
 - A catalog generation now admits four products per object (one per CAT
   product kind), and a closure of up to 400,000 product references; it was

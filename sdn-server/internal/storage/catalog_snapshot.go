@@ -11,7 +11,7 @@ import (
 )
 
 // A catalog's product closure is every retained source of the catalog product
-// standards (config.CatalogProductSchemas: OCM, OMM) with the index's
+// standards (config.CatalogProductSchemas: OCM, OMM, MOR) with the index's
 // provider and catalog_product_source; each reference resolves among the
 // records of its own standard.
 func isCatalogProductSchema(schema string) bool {

@@ -8,9 +8,10 @@ import (
 
 // CatalogProductSchemas are the standards a CAT row's PRODUCTS name by record
 // CID that this node stores: an $OCM (a state and covariance, or an element
-// set) and an $OMM element set. The order is a catalog snapshot's product
+// set), an $OMM element set and a $MOR minimum orbit record (the catalog
+// builder's minimum profile). The order is a catalog snapshot's product
 // order.
-var CatalogProductSchemas = []string{"OCM.fbs", "OMM.fbs"}
+var CatalogProductSchemas = []string{"OCM.fbs", "OMM.fbs", "MOR.fbs"}
 
 // IsCatalogProductSchema reports whether a standard, with or without its .fbs
 // suffix, is one of CatalogProductSchemas.
@@ -101,7 +102,7 @@ func (c *Config) validatePublicationSources() error {
 				}
 			}
 			if schema != "CAT" && !IsCatalogProductSchema(schema) {
-				return fmt.Errorf("retain_for_publication supports only CAT and the catalog product standards (OCM, OMM)")
+				return fmt.Errorf("retain_for_publication supports only CAT and the catalog product standards (OCM, OMM, MOR)")
 			}
 			if f := strings.ToLower(strings.TrimSpace(os.Getenv("SDN_STORE_FORMAT"))); f != "" && f != "4" && f != "sqlite" {
 				return fmt.Errorf("retain_for_publication requires SDN_STORE_FORMAT=4")
@@ -113,7 +114,7 @@ func (c *Config) validatePublicationSources() error {
 				products = products || retained[key(standard, rule.ProviderID, rule.CatalogProductSource)]
 			}
 			if schema != "CAT" || !retained[key(rule.Schema, rule.ProviderID, rule.SourceName)] || !products {
-				return fmt.Errorf("catalog_product_source requires explicit retain_for_publication on the CAT source and on at least one product source (OCM or OMM)")
+				return fmt.Errorf("catalog_product_source requires explicit retain_for_publication on the CAT source and on at least one product source (OCM, OMM or MOR)")
 			}
 		}
 		if keep, _ := c.Publishing.Retention.PolicyFor(rule.Schema, rule.ProviderID, rule.SourceName); keep != 0 {

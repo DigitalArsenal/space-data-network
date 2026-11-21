@@ -46,8 +46,9 @@ requires a durable intent; prepared scope metadata contains only recovery identi
 and its directory is synchronized once after both metadata files.
 
 Enable retention on empty CAT and product sources in store format 4. The product
-standards are OCM and OMM: a catalog row's products are `$OCM` states and
-element sets and `$OMM` element sets, each stored in its own standard under the
+standards are OCM, OMM and MOR: a catalog row's products are `$OCM` states and
+element sets, `$OMM` element sets and `$MOR` minimum orbit records (the catalog
+builder's minimum profile), each stored in its own standard under the
 provider and the source that `catalog_product_source` names. Existing unretained history cannot be
 reconstructed. Sealed standards are refused; CAT and the product standards have
 no sealed fields. Provider and source identities must be exact.
