@@ -6,6 +6,23 @@ import (
 	"strings"
 )
 
+// CatalogProductSchemas are the standards a CAT row's PRODUCTS name by record
+// CID that this node stores: an $OCM (a state and covariance, or an element
+// set) and an $OMM element set. The order is a catalog snapshot's product
+// order.
+var CatalogProductSchemas = []string{"OCM.fbs", "OMM.fbs"}
+
+// IsCatalogProductSchema reports whether a standard, with or without its .fbs
+// suffix, is one of CatalogProductSchemas.
+func IsCatalogProductSchema(schema string) bool {
+	for _, x := range CatalogProductSchemas {
+		if x == strings.TrimSuffix(schema, ".fbs")+".fbs" {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *Config) validatePublicationSources() error {
 	for i := range c.Publishing.AutoPublish {
 		rule := &c.Publishing.AutoPublish[i]
@@ -74,25 +91,29 @@ func (c *Config) validatePublicationSources() error {
 			if !batch {
 				return fmt.Errorf("retain_for_publication requires a matching batch rule to drain retained entries")
 			}
-			if schema == "OCM" {
+			if IsCatalogProductSchema(schema) {
 				paired := false
 				for _, other := range c.Publishing.AutoPublish {
 					paired = paired || (strings.TrimSuffix(other.Schema, ".fbs") == "CAT" && strings.TrimSpace(other.ProviderID) == strings.TrimSpace(rule.ProviderID) && strings.TrimSpace(other.CatalogProductSource) == strings.TrimSpace(rule.SourceName))
 				}
 				if !paired {
-					return fmt.Errorf("retained OCM source requires its CAT index")
+					return fmt.Errorf("retained %s source requires its CAT index", schema)
 				}
 			}
-			if schema != "CAT" && schema != "OCM" {
-				return fmt.Errorf("retain_for_publication supports only CAT and OCM")
+			if schema != "CAT" && !IsCatalogProductSchema(schema) {
+				return fmt.Errorf("retain_for_publication supports only CAT and the catalog product standards (OCM, OMM)")
 			}
 			if f := strings.ToLower(strings.TrimSpace(os.Getenv("SDN_STORE_FORMAT"))); f != "" && f != "4" && f != "sqlite" {
 				return fmt.Errorf("retain_for_publication requires SDN_STORE_FORMAT=4")
 			}
 		}
 		if rule.CatalogProductSource != "" {
-			if schema != "CAT" || !retained[key(rule.Schema, rule.ProviderID, rule.SourceName)] || !retained[key("OCM", rule.ProviderID, rule.CatalogProductSource)] {
-				return fmt.Errorf("catalog_product_source requires explicit retain_for_publication on both CAT and OCM sources")
+			products := false
+			for _, standard := range CatalogProductSchemas {
+				products = products || retained[key(standard, rule.ProviderID, rule.CatalogProductSource)]
+			}
+			if schema != "CAT" || !retained[key(rule.Schema, rule.ProviderID, rule.SourceName)] || !products {
+				return fmt.Errorf("catalog_product_source requires explicit retain_for_publication on the CAT source and on at least one product source (OCM or OMM)")
 			}
 		}
 		if keep, _ := c.Publishing.Retention.PolicyFor(rule.Schema, rule.ProviderID, rule.SourceName); keep != 0 {

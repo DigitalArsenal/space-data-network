@@ -116,7 +116,7 @@ func TestCatalogReviewExclusionsAndStableCutoff(t *testing.T) {
 	if _, count := after.Index.Fingerprint(); count != 31 {
 		t.Fatal("CAT exclusion not applied")
 	}
-	if _, count := after.Products.Fingerprint(); count != 31 {
+	if _, count := after.Products[0].Fingerprint(); count != 31 {
 		t.Fatal("excluded product remained selected")
 	}
 	if _, count := before.Index.Fingerprint(); count != 32 {

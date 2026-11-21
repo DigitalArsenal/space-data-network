@@ -16,7 +16,8 @@ func TestPublicationSourceConfiguration(t *testing.T) {
 		{"source_only", func(c *Config) { c.Publishing.AutoPublish[0].PublishScope = "source" }, "batch rule"},
 		{"disabled", func(c *Config) { c.Publishing.Enabled = false }, "publishing.enabled"},
 		{"wildcard", func(c *Config) { c.Publishing.AutoPublish[0].SourceName = "*" }, "exact"},
-		{"schema", func(c *Config) { c.Publishing.AutoPublish[0].Schema = "OMM" }, "CAT and OCM"},
+		{"schema", func(c *Config) { c.Publishing.AutoPublish[0].Schema = "OEM" }, "only CAT and the catalog product standards"},
+		{"unpaired_product", func(c *Config) { c.Publishing.AutoPublish[0].Schema = "OMM" }, "retained OMM source requires its CAT index"},
 		{"series", func(c *Config) { c.Publishing.Retention.KeepSeries = 2 }, "keep_series"},
 		{"override", func(c *Config) {
 			c.Publishing.Retention.Lanes = []PublicationRetentionLane{{Schema: "CAT", KeepSeries: 1}}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/CAT"
+	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"os"
 	"path/filepath"
 	"strings"
@@ -150,7 +151,9 @@ func (s *FlatSQLStore) reclaimPublicationLocked() (result error) {
 	block := func(x PublicationSource, err error) {
 		blocked[publicationSourceKey{x.Schema, x.Provider, x.Source}] = true
 		if x.ProductSource != "" {
-			blocked[publicationSourceKey{"OCM.fbs", x.Provider, x.ProductSource}] = true
+			for _, schema := range config.CatalogProductSchemas {
+				blocked[publicationSourceKey{schema, x.Provider, x.ProductSource}] = true
+			}
 		}
 		s.noteReclamationSkip(err.Error())
 	}
@@ -192,7 +195,7 @@ func (s *FlatSQLStore) reclaimPublicationLocked() (result error) {
 				add(p)
 			}
 			for _, e := range v.publicationEntries {
-				if !e.Aborted && e.Schema == "OCM.fbs" && e.Tags.ProviderID == x.Provider && e.Tags.SourceName == x.ProductSource && e.Sequence > cutoff {
+				if !e.Aborted && isCatalogProductEntry(x, e) && e.Sequence > cutoff {
 					keep[filepath.Join(v.publicationEntryDir(e.Sequence), "records.sds")] = true
 				}
 			}
@@ -232,7 +235,9 @@ func (s *FlatSQLStore) reclaimPublicationLocked() (result error) {
 		if f.ProductsError != nil {
 			if x, ok := v.catalogSource(e.Schema, e.Tags.ProviderID, e.Tags.SourceName); ok {
 				blocked[publicationSourceKey{x.Schema, x.Provider, x.Source}] = true
-				blocked[publicationSourceKey{"OCM.fbs", x.Provider, x.ProductSource}] = true
+				for _, schema := range config.CatalogProductSchemas {
+					blocked[publicationSourceKey{schema, x.Provider, x.ProductSource}] = true
+				}
 			}
 			s.publicationReclaimSkips++
 			s.publicationReclaimReason = f.ProductsError.Error()
@@ -249,7 +254,7 @@ func (s *FlatSQLStore) reclaimPublicationLocked() (result error) {
 		}
 	}
 	for _, e := range s.publicationEntries {
-		if e.Schema == "OCM.fbs" {
+		if isCatalogProductSchema(e.Schema) {
 			for _, r := range e.Refs {
 				if wanted[e.Tags.ProviderID][r.Digest] || wanted[e.Tags.ProviderID][r.FramedDigest] {
 					keep[r.Path()] = true
