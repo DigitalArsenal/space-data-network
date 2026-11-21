@@ -107,21 +107,21 @@ function Get-SdnFileHashSha256 {
   return ([System.BitConverter]::ToString($bytes) -replace '-', '').ToLowerInvariant()
 }
 
-# Expand-Archive is Microsoft.PowerShell.Archive and is the NEXT line the
-# installer would have reached, so it gets the same treatment before it can
-# fail the same way for the same unexplained reason.
+# The archive is always extracted with .NET, entry by entry. Expand-Archive
+# (Microsoft.PowerShell.Archive) is not used: on the windows-latest runner's
+# Windows PowerShell 5.1 it failed inside itself with "Cannot find an overload
+# for "ExtractToDirectory" and the argument count: "3"" (the v1.1.10 published
+# installer smoke, stack #1027). ZipFile.OpenRead and
+# ZipFileExtensions.ExtractToFile(entry, path, overwrite) exist in .NET
+# Framework 4.5 and later and in .NET for PowerShell 7, so this one path works
+# on both.
 function Expand-SdnArchive {
   param(
     [string]$LiteralPath,
     [string]$DestinationPath
   )
 
-  if (Get-Command -Name Expand-Archive -ErrorAction SilentlyContinue) {
-    Expand-Archive -LiteralPath $LiteralPath -DestinationPath $DestinationPath -Force
-    return
-  }
-  Write-Info 'Expand-Archive unavailable; extracting with .NET'
-
+  Add-Type -AssemblyName System.IO.Compression
   Add-Type -AssemblyName System.IO.Compression.FileSystem
   # ExtractToDirectory refuses an existing destination on PowerShell 5.1, and
   # the installer re-runs into a directory it has already made.
