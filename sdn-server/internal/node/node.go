@@ -4105,6 +4105,20 @@ func (n *Node) materializeDatasetPublicationPNM(ctx context.Context, schema stri
 // in-memory mark is declined too, not fetched and pinned by the TipQueue.
 var datasetPNMLaneRefused sync.Map
 
+// forgetDeclinedDatasetPNMs drops the marks of the PNMs whose lane was not
+// imported (refused or streamed), so the next stored-$PNM catch-up reads
+// them again: a lane that starts keeping its publications gets its current
+// one now, not after the 24-hour mark.
+func (n *Node) forgetDeclinedDatasetPNMs() {
+	datasetPNMLaneRefused.Range(func(k, _ any) bool {
+		datasetPNMLaneRefused.Delete(k)
+		if key, ok := k.(string); ok {
+			n.clearDatasetPNMMaterialized(key)
+		}
+		return true
+	})
+}
+
 // materializeDatasetPublicationPNMLane is materializeDatasetPublicationPNM
 // that also reports whether the lane scope refused the publication's lane.
 func (n *Node) materializeDatasetPublicationPNMLane(ctx context.Context, schema string, pnmBytes []byte, from peer.ID) (materialized bool, refused bool, err error) {
@@ -4213,8 +4227,11 @@ func (n *Node) materializeDatasetPublicationPNMInner(ctx context.Context, schema
 				// producer refuses, or whose current batch is not held,
 				// imports here, and so does an archive-all lane, whose rule
 				// keeps each publication's DAG (its records are stored once
-				// by content address).
-				if n.laneRetentionRule(laneSchema, providerID, sourceName) == channels.RetentionArchiveAll {
+				// by content address), and a lane whose subscription keeps
+				// its publications (a gateway host: its readers fetch the
+				// producer's manifests and shards from it).
+				if n.laneRetentionRule(laneSchema, providerID, sourceName) == channels.RetentionArchiveAll ||
+					n.followKeepsPublications(from, laneSchema, providerID, sourceName) {
 					return true
 				}
 				switch n.followPublication(from, laneSchema, providerID, sourceName) {
