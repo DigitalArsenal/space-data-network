@@ -246,6 +246,47 @@ func TestIPNSPointerFailsWhenNoDelegatedPublisherAccepts(t *testing.T) {
 	}
 }
 
+// TestIPNSPointerResumesAfterRestart: after a restart (a fresh pointer
+// worker) with no new series, ResumeIPNSPointers re-sends the pointer the key
+// holds in Kubo, re-signed with a higher sequence, and republish_every goes on
+// from there.
+func TestIPNSPointerResumesAfterRestart(t *testing.T) {
+	f := newHygieneFixture(t)
+	signer := enableIPNSSigning(t, f.kubo, "celestrak-ipns", true)
+	publisher := newFakeIPNSPublisher(t, http.StatusOK)
+	f.service.SetPublicationPolicy(config.PublicationRetentionConfig{KeepSeries: 2}, []config.IPNSPointerConfig{
+		{Schema: "IQC", SourceName: hygieneSource, Key: "celestrak-ipns", RepublishEvery: time.Hour, DelegatedPublishers: []string{publisher.server.URL}},
+	})
+	hygieneIngest(t, f.store, "b1", 0, 20, "2026-11-21T03:00:00Z")
+	result := f.publishBatch(t, "b1", 0)
+	f.service.hygiene.ipns.wait()
+	if got := len(publisher.received(signer.name.String())); got != 1 {
+		t.Fatalf("publisher received %d records before the restart", got)
+	}
+
+	// The restart: the old worker's timers die with the process.
+	f.service.hygiene.ipns.stop()
+	f.service.hygiene.ipns = newIPNSPointerWorker()
+	t.Cleanup(f.service.hygiene.ipns.stop)
+	f.service.ResumeIPNSPointers(10 * time.Millisecond)
+	deadline := time.Now().Add(20 * time.Second)
+	for len(publisher.received(signer.name.String())) < 2 {
+		if time.Now().After(deadline) {
+			t.Fatal("the pointer was not resumed within 20 s")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	f.service.hygiene.ipns.wait()
+	value, seq, _ := verifiedRecord(t, signer.name, publisher.received(signer.name.String())[1])
+	if value != "/ipfs/"+result.ManifestCID || seq != 2 {
+		t.Fatalf("resumed record names %s sequence %d, want /ipfs/%s sequence 2", value, seq, result.ManifestCID)
+	}
+	status, ok := f.service.hygiene.ipns.lastStatus("celestrak-ipns")
+	if !ok || status.Err != nil || status.Path != "/ipfs/"+result.ManifestCID {
+		t.Fatalf("resumed pointer status %+v", status)
+	}
+}
+
 // TestIPNSPointerRepublishesWhileNoNewSeriesArrives: republish_every re-signs
 // the current pointer with a new sequence and sends it again, with no new
 // series (an upstream outage), and stops once a newer series replaces it.

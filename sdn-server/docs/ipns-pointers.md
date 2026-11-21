@@ -21,7 +21,7 @@ publishing:
 ```
 
 - `lifetime`: how long the signed record is valid (Kubo's default is 48 h).
-- `republish_every`: re-sign and re-send the current pointer at this interval while no newer series replaces it. DHT nodes drop a record after about 48 hours, so without it a long upstream outage (no new series) would let the name disappear while its record is still valid. Must be shorter than `lifetime`.
+- `republish_every`: re-sign and re-send the current pointer at this interval while no newer series replaces it. DHT nodes drop a record after about 48 hours, so without it a long upstream outage (no new series) would let the name disappear while its record is still valid. Must be shorter than `lifetime`. A minute after the node starts, each such key's current record (the signed record Kubo holds, if it is still valid) is re-sent, so a restart followed by no new series does not stop the republishing.
 - `delegated_publishers`: Routing V1 base URLs. Empty keeps the Kubo DHT put alone.
 
 The node logs one line per pointer: `IPNS pointer <lane>: /ipns/<name> sequence <n> valid until <time> sent to <k> of <m> delegated publishers`, or the reason it failed.
