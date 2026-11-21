@@ -2,7 +2,7 @@
   "suiteVersion": "1.1.9",
   "dependencies": {
     "spacedatastandards": "1.292.0",
-    "flatsql": "3.12.12",
+    "flatsql": "3.12.13",
     "hdWalletWasm": "2.1.3",
     "hdWalletUI": "2.1.3",
     "ipfsWebUI": "4.12.0"
