@@ -164,7 +164,11 @@ type FlatSQLStore struct {
 	// write holds it shared, and a removal that checks a record's tags and
 	// then deletes it holds it alone, so no record gains a tag between the
 	// check and the delete (follow_lane.go).
-	tagMu                          sync.RWMutex
+	tagMu sync.RWMutex
+	// publicationContent answers for a publication file that is not on
+	// disk whether the node's IPFS repository holds its content
+	// (dataset_publication_content.go). Unset: only the files count.
+	publicationContent             atomic.Pointer[publicationContentHolder]
 	publicationSourceKeys          atomic.Pointer[map[publicationSourceKey]bool]
 	publicationEnabled             atomic.Bool
 	publicationGroupMu             sync.Mutex

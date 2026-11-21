@@ -881,6 +881,12 @@ func (n *Node) init() error {
 	n.host = n.kubo.Host()
 	n.dht = n.kubo.WANDHT()
 	kuboClientURLs(&n.config.Admin, n.kubo)
+	// A publication whose files retention removed still lists as available,
+	// and read-shard and read-index serve it, while the repository holds its
+	// content in full (storage/dataset_publication_content.go).
+	if n.store != nil {
+		n.store.SetPublicationContent(n.kubo)
+	}
 	n.wg.Add(1)
 	go func() {
 		defer n.wg.Done()
@@ -5203,7 +5209,10 @@ func (n *Node) StopContext(ctx context.Context) error {
 	}
 
 	// Kubo owns the host, its DHT and the repository; closing it closes all
-	// three.
+	// three. The store stops reading publication content from it first.
+	if n.store != nil {
+		n.store.SetPublicationContent(nil)
+	}
 	if err := n.kubo.Stop(); err != nil {
 		return fmt.Errorf("failed to close the node's Kubo: %w", err)
 	}
