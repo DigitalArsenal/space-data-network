@@ -46,6 +46,7 @@ import (
 	bCMS "github.com/DigitalArsenal/spacedatastandards.org/lib/go/CMS"
 	bCMT "github.com/DigitalArsenal/spacedatastandards.org/lib/go/CMT"
 	bCNP "github.com/DigitalArsenal/spacedatastandards.org/lib/go/CNP"
+	bCOA "github.com/DigitalArsenal/spacedatastandards.org/lib/go/COA"
 	bCOM "github.com/DigitalArsenal/spacedatastandards.org/lib/go/COM"
 	bCOT "github.com/DigitalArsenal/spacedatastandards.org/lib/go/COT"
 	bCPS "github.com/DigitalArsenal/spacedatastandards.org/lib/go/CPS"
@@ -65,6 +66,7 @@ import (
 	bDMG "github.com/DigitalArsenal/spacedatastandards.org/lib/go/DMG"
 	bDOA "github.com/DigitalArsenal/spacedatastandards.org/lib/go/DOA"
 	bDPM "github.com/DigitalArsenal/spacedatastandards.org/lib/go/DPM"
+	bDRB "github.com/DigitalArsenal/spacedatastandards.org/lib/go/DRB"
 	bDSS "github.com/DigitalArsenal/spacedatastandards.org/lib/go/DSS"
 	bDTT "github.com/DigitalArsenal/spacedatastandards.org/lib/go/DTT"
 	bEGP "github.com/DigitalArsenal/spacedatastandards.org/lib/go/EGP"
@@ -144,6 +146,7 @@ import (
 	bMFE "github.com/DigitalArsenal/spacedatastandards.org/lib/go/MFE"
 	bMNF "github.com/DigitalArsenal/spacedatastandards.org/lib/go/MNF"
 	bMNV "github.com/DigitalArsenal/spacedatastandards.org/lib/go/MNV"
+	bMOR "github.com/DigitalArsenal/spacedatastandards.org/lib/go/MOR"
 	bMPE "github.com/DigitalArsenal/spacedatastandards.org/lib/go/MPE"
 	bMPL "github.com/DigitalArsenal/spacedatastandards.org/lib/go/MPL"
 	bMSL "github.com/DigitalArsenal/spacedatastandards.org/lib/go/MSL"
@@ -245,6 +248,7 @@ import (
 	bSKQ "github.com/DigitalArsenal/spacedatastandards.org/lib/go/SKQ"
 	bSKR "github.com/DigitalArsenal/spacedatastandards.org/lib/go/SKR"
 	bSKT "github.com/DigitalArsenal/spacedatastandards.org/lib/go/SKT"
+	bSLO "github.com/DigitalArsenal/spacedatastandards.org/lib/go/SLO"
 	bSLP "github.com/DigitalArsenal/spacedatastandards.org/lib/go/SLP"
 	bSNR "github.com/DigitalArsenal/spacedatastandards.org/lib/go/SNR"
 	bSNW "github.com/DigitalArsenal/spacedatastandards.org/lib/go/SNW"
@@ -288,6 +292,7 @@ import (
 	bTRS "github.com/DigitalArsenal/spacedatastandards.org/lib/go/TRS"
 	bTRV "github.com/DigitalArsenal/spacedatastandards.org/lib/go/TRV"
 	bTXS "github.com/DigitalArsenal/spacedatastandards.org/lib/go/TXS"
+	bUST "github.com/DigitalArsenal/spacedatastandards.org/lib/go/UST"
 	bVAM "github.com/DigitalArsenal/spacedatastandards.org/lib/go/VAM"
 	bVCF "github.com/DigitalArsenal/spacedatastandards.org/lib/go/VCF"
 	bVCM "github.com/DigitalArsenal/spacedatastandards.org/lib/go/VCM"
@@ -349,6 +354,7 @@ var driftGuardedSchemas = []struct {
 	{"CMS.fbs", &bCMS.CMS{}},
 	{"CMT.fbs", &bCMT.CMT{}},
 	{"CNP.fbs", &bCNP.CNP{}},
+	{"COA.fbs", &bCOA.COA{}},
 	{"COM.fbs", &bCOM.COM{}},
 	{"COT.fbs", &bCOT.COT{}},
 	{"CPS.fbs", &bCPS.CPS{}},
@@ -368,6 +374,7 @@ var driftGuardedSchemas = []struct {
 	{"DMG.fbs", &bDMG.DMG{}},
 	{"DOA.fbs", &bDOA.DOA{}},
 	{"DPM.fbs", &bDPM.DPM{}},
+	{"DRB.fbs", &bDRB.DRB{}},
 	{"DSS.fbs", &bDSS.DSS{}},
 	{"DTT.fbs", &bDTT.DTT{}},
 	{"EGP.fbs", &bEGP.EGP{}},
@@ -447,6 +454,7 @@ var driftGuardedSchemas = []struct {
 	{"MFE.fbs", &bMFE.MFE{}},
 	{"MNF.fbs", &bMNF.MNF{}},
 	{"MNV.fbs", &bMNV.MNV{}},
+	{"MOR.fbs", &bMOR.MOR{}},
 	{"MPE.fbs", &bMPE.MPE{}},
 	{"MPL.fbs", &bMPL.MPL{}},
 	{"MSL.fbs", &bMSL.MSL{}},
@@ -548,6 +556,7 @@ var driftGuardedSchemas = []struct {
 	{"SKQ.fbs", &bSKQ.SKQ{}},
 	{"SKR.fbs", &bSKR.SKR{}},
 	{"SKT.fbs", &bSKT.SKT{}},
+	{"SLO.fbs", &bSLO.SLO{}},
 	{"SLP.fbs", &bSLP.SLP{}},
 	{"SNR.fbs", &bSNR.SNR{}},
 	{"SNW.fbs", &bSNW.SNW{}},
@@ -591,6 +600,7 @@ var driftGuardedSchemas = []struct {
 	{"TRS.fbs", &bTRS.TRS{}},
 	{"TRV.fbs", &bTRV.TRV{}},
 	{"TXS.fbs", &bTXS.TXS{}},
+	{"UST.fbs", &bUST.UST{}},
 	{"VAM.fbs", &bVAM.VAM{}},
 	{"VCF.fbs", &bVCF.VCF{}},
 	{"VCM.fbs", &bVCM.VCM{}},
