@@ -1057,6 +1057,18 @@ type IPNSPointerConfig struct {
 	// otherwise).
 	Lifetime time.Duration `yaml:"lifetime,omitempty"`
 	TTL      time.Duration `yaml:"ttl,omitempty"`
+	// DelegatedPublishers are Routing V1 HTTP publishers (base URLs such as
+	// https://delegated-ipfs.dev). When set, the node reads the record Kubo
+	// signed from Kubo's own datastore and PUTs it to each publisher, so the
+	// name moves even when Kubo's DHT put outlasts its deadline (host-02,
+	// 2026-11-19 to 11-21). The pointer counts as published when one
+	// publisher accepts the record. Empty: Kubo's DHT put only.
+	DelegatedPublishers []string `yaml:"delegated_publishers,omitempty"`
+	// RepublishEvery re-signs and re-sends the current pointer at this
+	// interval while no newer series replaces it, so the name stays
+	// resolvable through a long upstream outage (DHT nodes drop a record
+	// after about 48 hours). 0: only after each series.
+	RepublishEvery time.Duration `yaml:"republish_every,omitempty"`
 }
 
 // PublishingLaneMatches reports whether a configured (schema, provider,
@@ -2483,6 +2495,18 @@ func (c *Config) validate() error {
 		}
 		if pointer.Lifetime < 0 || pointer.TTL < 0 {
 			return fmt.Errorf("publishing.ipns_pointers[%d] lifetime/ttl must not be negative", i)
+		}
+		if pointer.RepublishEvery < 0 {
+			return fmt.Errorf("publishing.ipns_pointers[%d].republish_every must not be negative", i)
+		}
+		if pointer.RepublishEvery > 0 && pointer.Lifetime > 0 && pointer.RepublishEvery >= pointer.Lifetime {
+			return fmt.Errorf("publishing.ipns_pointers[%d].republish_every (%s) must be shorter than lifetime (%s)", i, pointer.RepublishEvery, pointer.Lifetime)
+		}
+		for j, publisher := range pointer.DelegatedPublishers {
+			u, err := url.Parse(strings.TrimSpace(publisher))
+			if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+				return fmt.Errorf("publishing.ipns_pointers[%d].delegated_publishers[%d] %q must be an http(s) base URL", i, j, publisher)
+			}
 		}
 	}
 	if c.AssetPins.MaxUploadBytes < 0 {
