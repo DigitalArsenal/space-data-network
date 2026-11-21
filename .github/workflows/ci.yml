@@ -483,7 +483,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        group: [publication-1, publication-2, publication-3, publication-4]
+        group: [publication-1, publication-2, publication-3, publication-4, publication-5, publication-6]
     env:
       SDN_CI_PUBLICATION_GROUP: ${{ matrix.group }}
     steps:

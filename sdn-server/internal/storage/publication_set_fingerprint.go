@@ -39,6 +39,13 @@ var publicationSetFingerprintRun = 1 << 16
 // and merged into the hash in CID text order, the order of the engine's CID
 // window. Other stores answer as DatasetPublicationSetFingerprint does.
 func (s *FlatSQLStore) PagedDatasetPublicationSetFingerprint(schemaName, providerID, sourceName, batchID string) (string, int, error) {
+	return s.PagedDatasetPublicationSetFingerprintContext(context.Background(), schemaName, providerID, sourceName, batchID)
+}
+
+// PagedDatasetPublicationSetFingerprintContext is
+// PagedDatasetPublicationSetFingerprint whose read of a format-4 lane stops,
+// with ctx's error, when ctx ends.
+func (s *FlatSQLStore) PagedDatasetPublicationSetFingerprintContext(ctx context.Context, schemaName, providerID, sourceName, batchID string) (string, int, error) {
 	if p, err := s.SelectPublication(schemaName, providerID, sourceName, batchID); err != nil {
 		return "", 0, err
 	} else if p != nil {
@@ -50,7 +57,7 @@ func (s *FlatSQLStore) PagedDatasetPublicationSetFingerprint(schemaName, provide
 	if !ok {
 		return s.DatasetPublicationSetFingerprint(schemaName, providerID, sourceName, batchID)
 	}
-	plan, err := b.planPublication(context.Background(), schemaName, providerID, sourceName, batchID, false)
+	plan, err := b.planPublication(ctx, schemaName, providerID, sourceName, batchID, false)
 	if err != nil {
 		return "", 0, err
 	}

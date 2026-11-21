@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -399,6 +400,14 @@ func (sf *ServiceFlow) SetSchedulePhase(phase SchedulePhase) {
 	sf.schedulePhase = phase
 }
 
+// ManualRunBound implements plugins.ManualRunBounder: an operator's manual
+// run of the service, including any wait for its exclusive group, is bounded
+// by the service's execution_timeout when it has one (else the manager's
+// default).
+func (sf *ServiceFlow) ManualRunBound(string) time.Duration {
+	return sf.deps.ExecutionTimeout
+}
+
 // CronFirstRunDelay implements plugins.CronFirstRunDelayer.
 func (sf *ServiceFlow) CronFirstRunDelay(method string, interval time.Duration) time.Duration {
 	sf.statsMu.Lock()
@@ -510,7 +519,7 @@ func (sf *ServiceFlow) InvokeCron(ctx context.Context, method string, input []by
 		}
 		// A guest may translate a canceled hostcall into a status frame and
 		// drain successfully. The caller's cancellation remains authoritative.
-		if ctx.Err() != nil {
+		if ctx.Err() != nil && !errors.Is(err, ctx.Err()) {
 			err = ctx.Err()
 		}
 		sf.recordTimerResult(err)
@@ -530,6 +539,14 @@ func (sf *ServiceFlow) InvokeCron(ctx context.Context, method string, input []by
 			}
 		}
 	}()
+	// A panic ends the run as an error, which the deferred bookkeeping above
+	// (deferred earlier, so it runs after this) books like any failure.
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			log.Errorf("Flow service %q: trigger %q panicked: %v\n%s", sf.programID, method, recovered, debug.Stack())
+			out, err = nil, fmt.Errorf("flow service %q trigger %q panicked: %v", sf.programID, method, recovered)
+		}
+	}()
 	sf.statsMu.Lock()
 	slot, group := sf.exclusive, sf.exclusiveGroup
 	sf.statsMu.Unlock()
@@ -538,10 +555,13 @@ func (sf *ServiceFlow) InvokeCron(ctx context.Context, method string, input []by
 		case slot <- struct{}{}:
 		default:
 			log.Infof("Flow service %q: trigger %q waits for another run of exclusive group %q", sf.programID, method, group)
+			waitStarted := time.Now()
 			select {
 			case slot <- struct{}{}:
+				log.Infof("Flow service %q: trigger %q waited %s for exclusive group %q", sf.programID, method, time.Since(waitStarted).Round(time.Millisecond), group)
 			case <-ctx.Done():
-				return nil, ctx.Err()
+				return nil, fmt.Errorf("waited %s for another run of exclusive group %q, which did not end: %w",
+					time.Since(waitStarted).Round(time.Second), group, ctx.Err())
 			}
 		}
 		releaseSlot = func() { <-slot }

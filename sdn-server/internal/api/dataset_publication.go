@@ -465,6 +465,7 @@ func (s *ConcreteDatasetPublicationService) publishSelectedDatasetUpdate(ctx con
 		return nil, atPublicationStep("wait for the lane", err)
 	}
 	defer release()
+	s.runs.markHeld(runOf(ctx))
 	if at, retracted, err := activeStore.DatasetPublicationLaneRetractedAt(storage.DatasetPublicationLane{SchemaName: schema, ProviderID: activeReq.ProviderID, SourceName: activeReq.SourceName}); err != nil {
 		return nil, atPublicationStep("check retraction", err)
 	} else if retracted {
@@ -551,6 +552,9 @@ func (s *ConcreteDatasetPublicationService) publishSelectedDatasetUpdate(ctx con
 	if err != nil {
 		return nil, err
 	}
+	if err := injectedPublicationFault(ctx, "record completion"); err != nil {
+		return nil, atPublicationStep("record completion", err)
+	}
 	if err := activeService.afterPublication(ctx, activeReq, schema, result, carCIDs, fingerprint, startedAt); err != nil {
 		return nil, atPublicationStep("record completion", err)
 	}
@@ -618,6 +622,19 @@ func (s *ConcreteDatasetPublicationService) announceExistingDatasetPublications(
 	for _, publication := range publications {
 		if rowLimit > 0 && result.RecordCount >= rowLimit {
 			break
+		}
+		// A window of a publication that did not complete (running, failed
+		// or cut) is not announced again: it is not part of a completed
+		// publication.
+		unfinished, err := s.store.UnfinishedDatasetPublicationWindow(storage.DatasetPublicationLane{
+			SchemaName: publication.SchemaName, ProviderID: publication.ProviderID, SourceName: publication.SourceName,
+		}, publication.ShardCID)
+		if err != nil {
+			return nil, err
+		}
+		if unfinished {
+			log.Infof("Skipping existing dataset publication %s %s offset=%d limit=%d: a publication wrote it and did not complete", publication.SchemaName, publication.ShardCID, publication.Offset, publication.Limit)
+			continue
 		}
 		repaired, err := s.ensureDatasetPublicationAssets(workCtx, req, publication)
 		if err != nil {
@@ -940,11 +957,12 @@ func (s *ConcreteDatasetPublicationService) publishDatasetUpdateSeries(ctx conte
 		}
 		partReq := req
 		partReq.DatasetID = datasetID
+		partCtx := withPublicationWindow(ctx, part)
 		filter, effectiveLimit, err := s.seriesExportFilter(partReq, schema, limit, offset)
 		if err != nil {
 			return nil, nil, atPublicationStep("plan window", err)
 		}
-		publication, err := s.publishDatasetUpdatePart(ctx, partReq, schema, filter, datasetPublicationSourceIdentityFromRequest(partReq), datasetUpdateID(partReq, s.now(), part))
+		publication, err := s.publishDatasetUpdatePart(partCtx, partReq, schema, filter, datasetPublicationSourceIdentityFromRequest(partReq), datasetUpdateID(partReq, s.now(), part))
 		if errors.Is(err, storage.ErrPublicationPlanStale) {
 			// The lane changed under the plan: this window and the rest of
 			// the series read the CID window by offset.
@@ -954,7 +972,7 @@ func (s *ConcreteDatasetPublicationService) publishDatasetUpdateSeries(ctx conte
 			if filter, effectiveLimit, err = s.seriesExportFilter(partReq, schema, limit, offset); err != nil {
 				return nil, nil, atPublicationStep("plan window", err)
 			}
-			publication, err = s.publishDatasetUpdatePart(ctx, partReq, schema, filter, datasetPublicationSourceIdentityFromRequest(partReq), datasetUpdateID(partReq, s.now(), part))
+			publication, err = s.publishDatasetUpdatePart(partCtx, partReq, schema, filter, datasetPublicationSourceIdentityFromRequest(partReq), datasetUpdateID(partReq, s.now(), part))
 		}
 		limit = effectiveLimit
 		if err != nil {
@@ -1153,7 +1171,18 @@ func (s *ConcreteDatasetPublicationService) publishDatasetExport(
 		PublicationCutoff:       publicationCutoff,
 		PublicationSourceCutoff: publicationSourceCutoff,
 	}
-	if err := s.store.UpsertDatasetShardPublication(shardPublication); err != nil {
+	upsert := s.store.UpsertDatasetShardPublication
+	if announce {
+		// Until the publication completes, this window is one of a
+		// publication that has not: if it fails or is cut from here on, the
+		// row stays and must never count as a completed publication. The
+		// row and its unfinished mark are written in one transaction.
+		lane := storage.DatasetPublicationLane{SchemaName: schema, ProviderID: sourceIdentity.ProviderID, SourceName: sourceIdentity.SourceName}
+		upsert = func(pub storage.DatasetShardPublication) error {
+			return s.store.UpsertUnfinishedDatasetShardPublication(lane, pub)
+		}
+	}
+	if err := upsert(shardPublication); err != nil {
 		return nil, storage.DatasetShardPublication{}, atPublicationStep("record publication", fmt.Errorf("record dataset shard publication: %w", err))
 	}
 	publishedShard, found, err := s.store.FindDatasetShardPublication(storage.DatasetShardPublicationQuery{
@@ -1179,6 +1208,9 @@ func (s *ConcreteDatasetPublicationService) publishDatasetExport(
 		return nil, storage.DatasetShardPublication{}, atPublicationStep("record channel", err)
 	}
 	if announce {
+		if err := injectedPublicationFault(ctx, "announce"); err != nil {
+			return nil, storage.DatasetShardPublication{}, atPublicationStep("announce", err)
+		}
 		if err := s.announceDatasetPublication(ctx, req, publishedShard, pnmBytes); err != nil {
 			return nil, storage.DatasetShardPublication{}, atPublicationStep("announce", err)
 		}

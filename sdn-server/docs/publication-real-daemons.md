@@ -120,6 +120,99 @@ and the flow's run ends with an error. A publication of another batch of the
 lane and an announcement of its existing publications complete and leave the
 alert raised; a publication of the failed batch clears it.
 
+`TestPublicationAlertClearsWhenLaterRunsPublishItRealDaemons` runs the same
+flow three times, as its schedule does. The first run's publication fails
+(the same blocked shard directory) and the alert says the failed batch's two
+records are in no completed publication. The second run's pull returns one
+of the two records: its own batch is published, and the alert stays, saying
+one record is still unpublished. The third run's pull returns both records
+again (in another order, so another batch): every record of the failed batch
+is in a completed publication, and the alert clears.
+
+`TestPublicationManualRunOutlivesClientRealDaemons` runs the same flow by
+hand on a node whose GP origin answers after 20 s, so every run lasts longer
+than its client waits. `apps run --timeout 4s` stops waiting, says the run
+continues and how to see its result, and exits non-zero; the run ends ok on
+the node and `apps status` shows it. `apps run` of a running run joins it,
+and SIGINT stops it waiting with the run continuing to an ok end. A raw
+run-now request whose client gives up after 4 s (the shape of the 2026-11-17
+cut-off) leaves the run to end ok. `apps run --detach` returns at once, and
+`apps cancel` ends the run as cancelled by the operator. A forced request
+(and `apps run --force`) that joins a run started without force is told the
+force does not apply. `apps run` follows its own run by id: when that run is
+cancelled and another starts at once, the command reports the cancelled run
+and exits non-zero.
+
+`TestPublicationManualRunStopsWithNodeRealDaemons` runs the flow by hand on
+a node whose GP origin answers after two minutes. A non-forced run cancelled
+by the operator gives back its attempt in the provider's minimum interval:
+the next non-forced run starts. A run-now request waits for that run, and
+the node is stopped (SIGTERM): the request is answered within 10 s, saying
+the node is stopping, and the admin server's shutdown is not held to its
+bound.
+
+`TestPublicationManualRunBoundRealDaemons` runs the flow by hand on a node
+whose service has `execution_timeout: 6s` and whose origin answers after
+30 s: the run ends at its bound, saying so.
+
+`TestPublicationAlertPartialFailureRealDaemons` fails a three-record batch's
+publication, one record per window, after it wrote publication rows:
+`SDN_E2E_PUBLICATION_FAULT=announce@2` fails the second window's
+announcement, `SDN_E2E_PUBLICATION_FAULT="record completion"` fails the
+recording of the completion after every window was announced (the fault
+fires once per process). The alert says all three records are unpublished.
+A publication of a batch carrying one of them leaves the alert saying two
+are, and retention lists no series made of the failed publication's rows; a
+publication of a batch carrying all three clears the alert.
+
+`TestPublicationAlertBatchGainedRecordsRealDaemons` publishes a batch of two
+records, stores a third in it, and fails its republication at the third
+window's announcement (`SDN_E2E_PUBLICATION_FAULT=announce@3`); a second
+batch holding the third record fails too. The alert counts all three
+records of the first batch and the one of the second unpublished: the
+completed publication of the first batch exported two records, and the
+batch holds three. An announcement of the batch's existing publications
+announces the completed publication's window only. The publication of an
+unrelated batch leaves the alert with the same counts. The publication of a
+batch holding the first two records leaves it saying, once the count that
+publication prompts ran, that one of the three records of the first batch is
+unpublished; a publication of the whole first batch clears it.
+
+`TestPublicationAlertGainedAfterFailureRealDaemons` stores two records in a
+batch and fails its publication, stores a third record in it and fails its
+publication again, and publishes another batch holding the first two
+records: the alert stays, saying one of the batch's three records is
+unpublished (it cleared here when the batch was counted at its first failure
+only and the other batch covered what that count found). A publication
+of the whole batch clears it.
+
+`TestPublicationAlertRestartRealDaemons` fails a batch's publication and
+restarts the node: the alert is raised again at start and counts the batch's
+records. A publication of the whole batch clears it, and the node restarted
+again raises no alert.
+
+`TestPublicationAlertSupersededBatchRealDaemons` fails a batch's publication
+on a replace-current node, stores a batch of other records, supersedes the
+lane by it (`POST /api/v1/admin/store/supersede`, the store's replace-current
+eviction) and publishes it: the failed batch holds no records any more, and
+the alert clears, the log saying so.
+
+`TestPublicationAlertFailureDuringClearRealDaemons` holds the clearing of an
+alert for 20 s after it was decided
+(`SDN_E2E_PUBLICATION_ALERT_CLEAR_HOLD=20s`), and fails another batch's
+publication meanwhile: after the hold the alert is active and names that
+batch.
+
+`TestPublicationAlertHeadPublicationRealDaemons` fails a three-record batch's
+publication, then publishes a head of that batch (`limit: 1`) and a head of
+the lane (no batch): neither clears the alert. A publication of the whole
+batch clears it.
+
+`TestPublicationManualRunCancelByIDRealDaemons` starts a manual run, cancels
+it, and starts another. A cancel naming the first run answers 404 and the
+second keeps running; a cancel naming the second ends it, and `apps cancel`
+(no id) ends a third.
+
 `TestPublicationSlowFlowRealDaemons` runs the same flow by hand while a
 300,000-record publication of the same lane runs, on a node whose admin
 write timeout is 3 s (`SDN_ADMIN_WRITE_TIMEOUT`) and whose http-request

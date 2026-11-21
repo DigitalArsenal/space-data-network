@@ -179,6 +179,74 @@ a system account (such as the package's `sdn`) counts now; for another
 account's node, pass `-c`. `install.sh` passes the node's own config to every
 command it runs.
 
+**A manual run is no longer cut off when its command stops waiting.**
+`spacedatanetwork apps run` gave up after about 65 seconds ("daemon
+unavailable") and the node then cancelled the run ("context canceled"), so a
+flow that needed longer never finished by hand. A manual run now belongs to
+the node: it runs to its end whatever the command does, within a bound (the
+flow service's `execution_timeout`, or 2 hours, including any wait for its
+`exclusive_group`). The node's stop cancels it and answers a request waiting
+for it at once. The command waits and
+says every 30 s that the run is still going; `--timeout <duration>` bounds
+the wait (the command then prints how to see the result and exits non-zero,
+and the run continues), `--detach` returns at once, Ctrl-C stops waiting
+(the run continues; `--cancel-on-interrupt` cancels it instead). The new
+`apps status <app-id> [trigger-id]` shows a run's state and result, and
+`apps cancel <app-id> [trigger-id]` cancels a running one; a cancelled run
+gives back its attempt in the provider's minimum interval, so the next
+manual run starts at once. A second `apps run` of a schedule that is running
+joins that run; `--force` does not apply to a run started without it, and
+the command says so. `apps run` follows its own run by id: when the node no
+longer knows it (a restart), the command says so and exits non-zero instead
+of reporting another run. Scripts use the same route:
+`POST .../schedules/<trigger-id>/run?detach=1`, then `GET ...?id=<id>`;
+`DELETE ...?id=<id>` cancels that run (404 when it is not the one running,
+so a cancel never ends another run), `DELETE` with no id cancels whichever
+runs. `apps run --cancel-on-interrupt` cancels its own run only. The
+dashboard's Run now waits for the run as before; a page closed meanwhile no
+longer cancels it.
+
+**A publication alert clears once the failed batch's records are published,
+and survives a restart.** A `publication_failed` alert of a batch cleared
+only when that same batch was published, so the alert of a scheduled run
+whose publication failed stayed (health `degraded`) through every later
+successful run until the node restarted, and a restart dropped it whether
+or not anything was published. The node now records each failed scope in
+the store and decides from the store when it clears. A failed batch clears
+when a count of the records it holds now finds none unpublished: every one
+of them is in a completed publication's export (what a later run's
+publication carries when its pull returns those records again), or the batch
+holds none any more (expired or superseded); a completed publication of the
+whole batch itself clears it at once. The count runs after every
+failure in the lane, after every completed publication of a whole batch or
+of the whole lane, and at start; while any record is unpublished, the alert
+stays and says how many, and says that publishing the batch whole clears it.
+Only completed publications count, and only for the set they exported: a
+batch that gained records after its publication counts for none of its
+records until it is published whole again, and on a lane that publishes the
+publication journal's retained selection a record counts only when it was in
+that selection. A failed head of a batch or of the lane, a failed
+publication of the whole lane, a failed announcement of existing
+publications, and a failed batch of a datastore lane clear when the same
+operation completes again; a publication of a head never clears a failed
+batch. The windows a publication wrote before it failed partway are never
+taken for a publication of the batch and are not announced again by an
+announcement of existing publications. At most 16 failed batches are tracked
+per lane; beyond them the alert says so and stays until a publication of the
+whole lane completes.
+
+**Retention releases the windows of a failed publication.** Node 1.1.9
+adopted the windows a publication wrote before it failed (rows, pins and the
+announcements already sent) as a series of their batch at the lane's next
+completed publication, and kept them like any other series. They are now
+marked unfinished when written and never adopted, so the lane's retention
+(`publishing.retention` with `keep_series` set) retires their rows and
+unpins their shard, index and manifest CIDs at the lane's next completed
+publication, as it does for any row no series names. With `keep_series: 0`
+nothing is released, as before. A subscriber that fetched such a window from its
+announcement keeps its copy; the producer no longer serves it once retention
+released it. Windows that 1.1.9 already adopted stay adopted.
+
 **Nodes no longer all restart for an update at the same moment.** A node
 acts on an update it accepted (from a signal or from its feed check) at its
 own time within `update.rollout_window_seconds` (default 1800, 30 minutes;

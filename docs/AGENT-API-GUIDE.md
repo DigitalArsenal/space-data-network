@@ -281,6 +281,69 @@ Operator life cycle:
 - Config-managed operators cannot have trust changed or be removed through the
   API.
 
+### Running an app's schedule by hand
+
+A manual run belongs to the node: no request's end ends it. Admin-gated, at
+`/api/v1/modules/runtime/<app-id>/schedules/<trigger-id>/run` (path segments
+escaped):
+
+- `POST ?detach=1` starts the run and answers `202` at once with its state
+  (`{"id","methodId","trigger":"manual","startedAt","status":"running"}`). The
+  body, if any, is the run's input (`{"force":true}` runs it inside the
+  provider's minimum interval). A run of the same schedule that is already
+  running is joined (`"joined":true`), not started again, and keeps its own
+  input: a forced request that joins a run started without force is told so
+  (`"forceNotApplied":true`).
+- `GET ?id=<id>` answers that run: running, ended, or in the schedule's run
+  history; `404` when the node does not know it (a restart cut it before it
+  was recorded). `GET` without `id` answers the running manual run, or the
+  last one (`status` `ok`, `error`, `deferred`; `finishedAt`, `message`,
+  `outputSize`); `404` when the schedule has none.
+- `DELETE` cancels the running manual run and answers its state once it ended
+  (`status` `error`, `message` ending `context canceled (cancelled by the
+  operator)`), at most 30 s later; `409` when none runs. `DELETE ?id=<id>`
+  cancels that run only: `404` when it is not the one running (it ended, or
+  another run of the schedule runs), and nothing is cancelled. `apps run
+  --cancel-on-interrupt` cancels by id; `apps cancel` names no run.
+- `POST` without `detach` answers when the run ends. A client that leaves
+  stops waiting; the run continues, and `GET` then reports it. When the node
+  stops, the run is cancelled and the request is answered at once (its
+  message ends `(the node is stopping)`).
+
+A manual run is bounded: by its flow service's `execution_timeout` when set,
+otherwise by 2 hours, counted from its start and including any wait for a
+run of its `exclusive_group`; at the bound it ends `error`, its message
+ending `(the manual run's bound of <duration> passed)`, and a wait for the
+exclusive group names the group and how long it waited.
+
+A script starts with `POST ?detach=1` and polls `GET ?id=<id>` every few
+seconds. The CLI does the same: `spacedatanetwork apps run <app-id>
+[trigger-id]` waits for the run it started or joined, by its id
+(`--timeout <duration>` bounds the wait and exits non-zero with the run still
+going; `--detach` returns at once; Ctrl-C stops waiting, or cancels with
+`--cancel-on-interrupt`; `--force` runs inside the provider's minimum
+interval), and exits non-zero saying so when the node no longer knows that
+run; `apps status` reports, `apps cancel` cancels. A manual run inside the
+provider's minimum interval ends `deferred`, naming when it is allowed. A
+manual run books an attempt in the provider's minimum interval when it
+starts; a run that ends cancelled (by the operator or the node's stop) gives
+that attempt back (`sourcemetrics` `RecordAttemptOutcome`), so the next
+manual run starts at once, whether or not the cancelled run had reached the
+provider.
+
+A failed publication of the node's own data raises a `publication_failed`
+alert (`GET /api/v1/status/alerts`, `/api/v1/health` `degraded`) whose subject
+is the lane (`<schema> <provider>/<source>`) and whose `last_error` names each
+failed batch and how many of its records no completed publication carries. A
+completed publication is one whose every window was announced and whose
+completion was recorded; what a publication that failed partway left counts
+for nothing. The count is made from the store after each failure and each
+completed publication of a whole batch or lane; the alert clears when it
+reaches zero (a later run's publication carries the records again, the batch
+itself is published whole, or the batch holds no records any more). The
+failed scopes are kept in the store, so a restart raises the alert again; see
+`sdn-server/docs/operations-alerts.md`.
+
 ---
 
 ## 4. Writing data to a node (vendor ingest)

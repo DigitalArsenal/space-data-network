@@ -249,6 +249,20 @@ func (r *Registry) Raise(kind, subject, severity, errText string) {
 	}
 }
 
+// Restate replaces the text of an active alert without counting a new
+// failure: what is still wrong changed (part of it was fixed), and nothing
+// failed again. It is a no-op on an alert that is not active.
+func (r *Registry) Restate(kind, subject, errText string) {
+	if r == nil || kind == "" || errText == "" {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if existing, ok := r.active[alertKey{kind: kind, subject: subject}]; ok {
+		existing.LastError = errText
+	}
+}
+
 // Clear reports that (kind, subject) is working again. Clearing an alert that
 // is not active is a no-op, so a success path may call it unconditionally.
 func (r *Registry) Clear(kind, subject string) {
