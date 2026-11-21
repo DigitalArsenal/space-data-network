@@ -804,13 +804,12 @@ func publishIPNSPointer(ctx context.Context, job ipnsPointerJob) (string, error)
 	if err != nil {
 		return "", err
 	}
-	var before uint64
 	previous, held, err := storage.ReadLocalIPNSRecord(ctx, job.APIURL, name)
 	if err != nil {
 		return name, err
 	}
-	if held {
-		before = previous.Sequence
+	if !held {
+		previous = storage.LocalIPNSRecord{}
 	}
 	published := make(chan error, 1)
 	go func() {
@@ -822,7 +821,7 @@ func publishIPNSPointer(ctx context.Context, job ipnsPointerJob) (string, error)
 			log.Infof("IPNS pointer %s (key %s) -> %s: Kubo's own name/publish (DHT put) ended: %v", job.Lane, job.Key, job.Path, err)
 		}
 	}()
-	record, err := waitForSignedIPNSRecord(ctx, job, name, before, published)
+	record, err := waitForSignedIPNSRecord(ctx, job, name, previous, published)
 	if err != nil {
 		return name, err
 	}
@@ -843,16 +842,29 @@ func publishIPNSPointer(ctx context.Context, job ipnsPointerJob) (string, error)
 }
 
 // waitForSignedIPNSRecord waits until Kubo's datastore holds a record for
-// name newer than sequence before that names job.Path. Kubo stores the record
-// before its DHT put, so this does not wait on the DHT.
-func waitForSignedIPNSRecord(ctx context.Context, job ipnsPointerJob, name string, before uint64, published <-chan error) (storage.LocalIPNSRecord, error) {
+// name that names job.Path and is newer than previous (the record Kubo held
+// before this publish; zero when it held none). Kubo stores the record before
+// its DHT put, so this does not wait on the DHT.
+//
+// Newer is the IPNS order: a higher sequence, or the same sequence with a
+// later validity. boxo's publisher raises the sequence only when the value
+// changes, so re-sending the same pointer (republish_every, the resume after
+// boot) gives the same sequence with a later end of life; on host-02 on
+// 2026-11-21 the resume waited for sequence 194 while Kubo had re-signed 193.
+func waitForSignedIPNSRecord(ctx context.Context, job ipnsPointerJob, name string, previous storage.LocalIPNSRecord, published <-chan error) (storage.LocalIPNSRecord, error) {
 	ticker := time.NewTicker(ipnsLocalRecordPoll)
 	defer ticker.Stop()
 	answered := false
 	var publishErr error
+	newer := func(record storage.LocalIPNSRecord) bool {
+		if record.Sequence != previous.Sequence {
+			return record.Sequence > previous.Sequence
+		}
+		return record.Validity.After(previous.Validity)
+	}
 	for {
 		record, held, err := storage.ReadLocalIPNSRecord(ctx, job.APIURL, name)
-		if err == nil && held && record.Sequence > before && record.Value == job.Path {
+		if err == nil && held && record.Value == job.Path && newer(record) {
 			return record, nil
 		}
 		if answered {
@@ -862,7 +874,7 @@ func waitForSignedIPNSRecord(ctx context.Context, job ipnsPointerJob, name strin
 			if err != nil {
 				return storage.LocalIPNSRecord{}, err
 			}
-			return storage.LocalIPNSRecord{}, fmt.Errorf("Kubo answered name/publish but holds no record for /ipns/%s newer than sequence %d naming %s", name, before, job.Path)
+			return storage.LocalIPNSRecord{}, fmt.Errorf("Kubo answered name/publish but holds no record for /ipns/%s naming %s newer than sequence %d valid until %s", name, job.Path, previous.Sequence, previous.Validity.UTC().Format(time.RFC3339Nano))
 		}
 		select {
 		case <-ctx.Done():

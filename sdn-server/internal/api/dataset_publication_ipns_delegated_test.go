@@ -35,9 +35,10 @@ type ipnsTestSigner struct {
 	hang    bool
 	release chan struct{}
 
-	mu  sync.Mutex
-	seq uint64
-	raw []byte
+	mu    sync.Mutex
+	seq   uint64
+	value string
+	raw   []byte
 }
 
 func enableIPNSSigning(t *testing.T, k *hygieneKubo, key string, hang bool) *ipnsTestSigner {
@@ -82,7 +83,13 @@ func (s *ipnsTestSigner) publish(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.mu.Lock()
-	s.seq++
+	// boxo v0.43.0 namesys (ipns_publisher.go): the first record is sequence
+	// 0, and the sequence rises only when the value changes; re-publishing
+	// the same value re-signs the same sequence with a later end of life.
+	if s.raw != nil && s.value != value.String() {
+		s.seq++
+	}
+	s.value = value.String()
 	rec, err := ipns.NewRecord(s.sk, value, s.seq, time.Now().Add(lifetime), 5*time.Minute)
 	if err == nil {
 		s.raw, err = ipns.MarshalRecord(rec)
@@ -223,8 +230,8 @@ func TestIPNSPointerReachesDelegatedPublishersWhileTheDHTPutHangs(t *testing.T) 
 			t.Fatalf("round %d: publisher received %d records", round, len(got))
 		}
 		value, seq, validity := verifiedRecord(t, signer.name, got[round-1])
-		if value != "/ipfs/"+result.ManifestCID || seq != uint64(round) {
-			t.Fatalf("round %d: record names %s sequence %d, want /ipfs/%s sequence %d", round, value, seq, result.ManifestCID, round)
+		if value != "/ipfs/"+result.ManifestCID || seq != uint64(round-1) {
+			t.Fatalf("round %d: record names %s sequence %d, want /ipfs/%s sequence %d", round, value, seq, result.ManifestCID, round-1)
 		}
 		if until := time.Until(validity); until < 167*time.Hour || until > 169*time.Hour {
 			t.Fatalf("round %d: record valid for %s, want the configured 168h", round, until)
@@ -246,7 +253,7 @@ func TestIPNSPointerFailsWhenNoDelegatedPublisherAccepts(t *testing.T) {
 	f.publishBatch(t, "b1", 0)
 	f.service.hygiene.ipns.wait()
 	status, ok := f.service.hygiene.ipns.lastStatus("celestrak-ipns")
-	if !ok || status.Err == nil || !strings.Contains(status.Err.Error(), "no delegated publisher accepted sequence 1") || !strings.Contains(status.Err.Error(), "status 502") {
+	if !ok || status.Err == nil || !strings.Contains(status.Err.Error(), "no delegated publisher accepted sequence 0") || !strings.Contains(status.Err.Error(), "status 502") {
 		t.Fatalf("pointer status %+v, want the refusal", status)
 	}
 }
@@ -282,9 +289,12 @@ func TestIPNSPointerResumesAfterRestart(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	f.service.hygiene.ipns.wait()
-	value, seq, _ := verifiedRecord(t, signer.name, publisher.received(signer.name.String())[1])
-	if value != "/ipfs/"+result.ManifestCID || seq != 2 {
-		t.Fatalf("resumed record names %s sequence %d, want /ipfs/%s sequence 2", value, seq, result.ManifestCID)
+	// The same value: boxo re-signs the same sequence with a later end of
+	// life, which is the newer record in the IPNS order (host-02, 2026-11-21).
+	_, firstSeq, firstValidity := verifiedRecord(t, signer.name, publisher.received(signer.name.String())[0])
+	value, seq, validity := verifiedRecord(t, signer.name, publisher.received(signer.name.String())[1])
+	if value != "/ipfs/"+result.ManifestCID || seq != firstSeq || !validity.After(firstValidity) {
+		t.Fatalf("resumed record names %s sequence %d valid until %s, want /ipfs/%s sequence %d valid after %s", value, seq, validity, result.ManifestCID, firstSeq, firstValidity)
 	}
 	status, ok := f.service.hygiene.ipns.lastStatus("celestrak-ipns")
 	if !ok || status.Err != nil || status.Path != "/ipfs/"+result.ManifestCID {
@@ -313,11 +323,13 @@ func TestIPNSPointerRepublishesWhileNoNewSeriesArrives(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	got := publisher.received(signer.name.String())
+	var lastValidity time.Time
 	for i, raw := range got[:3] {
-		value, seq, _ := verifiedRecord(t, signer.name, raw)
-		if value != "/ipfs/"+first.ManifestCID || seq != uint64(i+1) {
-			t.Fatalf("record %d names %s sequence %d, want /ipfs/%s sequence %d", i, value, seq, first.ManifestCID, i+1)
+		value, seq, validity := verifiedRecord(t, signer.name, raw)
+		if value != "/ipfs/"+first.ManifestCID || seq != 0 || !validity.After(lastValidity) {
+			t.Fatalf("record %d names %s sequence %d valid until %s, want /ipfs/%s sequence 0 valid after %s", i, value, seq, validity, first.ManifestCID, lastValidity)
 		}
+		lastValidity = validity
 	}
 	// A newer series replaces the pointer; from then on only it is republished.
 	hygieneIngest(t, f.store, "b2", 100, 120, "2026-11-21T06:00:00Z")
@@ -327,13 +339,16 @@ func TestIPNSPointerRepublishesWhileNoNewSeriesArrives(t *testing.T) {
 	f.service.hygiene.ipns.wait()
 	got = publisher.received(signer.name.String())
 	sawSecond := false
-	var last uint64
-	for _, raw := range got {
-		value, seq, _ := verifiedRecord(t, signer.name, raw)
-		if seq <= last {
-			t.Fatalf("sequence %d after %d", seq, last)
+	var lastSeq uint64
+	lastValidity = time.Time{}
+	for i, raw := range got {
+		value, seq, validity := verifiedRecord(t, signer.name, raw)
+		// Each record is newer in the IPNS order: a higher sequence, or the
+		// same sequence with a later validity.
+		if i > 0 && (seq < lastSeq || (seq == lastSeq && !validity.After(lastValidity))) {
+			t.Fatalf("record %d (sequence %d, valid until %s) is not newer than sequence %d valid until %s", i, seq, validity, lastSeq, lastValidity)
 		}
-		last = seq
+		lastSeq, lastValidity = seq, validity
 		if value == "/ipfs/"+second.ManifestCID {
 			sawSecond = true
 		} else if sawSecond {
