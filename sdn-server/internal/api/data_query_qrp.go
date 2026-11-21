@@ -17,9 +17,12 @@ package api
 // returns every record of the snapshot exactly once under concurrent ingest
 // and expiry. A PAGE walk without CURSOR pins a fresh snapshot per page;
 // sequences only grow, so it is exact under append, not under expiry.
-// SORT_FIELD and SORT_DESC are refused: sequence order is the one order.
-// A small-body (SBD) page is sequence order with PAGE offsets; a TIME_PROFILE
-// page is the epoch index's profile order. Neither takes CURSOR.
+// A raw-lane page refuses SORT_FIELD and SORT_DESC: sequence order is its one
+// order. A small-body (SBD) page is sequence order with PAGE offsets; a
+// TIME_PROFILE page is the epoch index's profile order. Neither takes CURSOR.
+// A window query (FROM/TO_EPOCH_MS) is oldest first; it takes SORT_FIELD
+// "EPOCH", and SORT_DESC for newest first. Its page headers carry the window
+// as FROM_EPOCH_MS and TO_EPOCH_MS.
 
 import (
 	"bufio"
@@ -73,6 +76,8 @@ type dataQuery struct {
 	page      int
 	limit     int
 	cursor    string
+	// sortDesc reads a window query newest first (SORT_FIELD EPOCH, SORT_DESC).
+	sortDesc bool
 }
 
 // queryPage is one answered page: its records, the total they were counted
@@ -118,6 +123,10 @@ func (h *DataQueryHandler) handleDataQuery(w http.ResponseWriter, r *http.Reques
 
 // runDataQuery selects one page and its total.
 func runDataQuery(ctx context.Context, store *storage.FlatSQLStore, q dataQuery) (queryPage, error) {
+	if q.epoch != nil && q.epoch.Profile == storage.EpochProfileWindow {
+		records, total, err := store.QueryEpochWindowSorted(*q.epoch, q.sortDesc, (q.page-1)*q.limit, q.limit)
+		return queryPage{records: records, total: total}, err
+	}
 	if q.epoch != nil {
 		total, err := store.CountEpochRecords(*q.epoch)
 		if err != nil {
@@ -235,9 +244,12 @@ func readDataQuery(r *http.Request) (dataQuery, error) {
 		limit:     int(f.LIMIT()),
 		cursor:    strings.TrimSpace(string(f.CURSOR())),
 	}
-	if len(f.SORT_FIELD()) > 0 || f.SORT_DESC() {
-		return dataQuery{}, errors.New("query pages are in store sequence order: SORT_FIELD and SORT_DESC are not supported")
+	sortField := strings.ToUpper(strings.TrimSpace(string(f.SORT_FIELD())))
+	sorted := sortField != "" || f.SORT_DESC()
+	if sorted && sortField != "EPOCH" {
+		return dataQuery{}, errors.New("SORT_FIELD takes EPOCH, on a window query (FROM_EPOCH_MS and TO_EPOCH_MS)")
 	}
+	q.sortDesc = f.SORT_DESC()
 	if q.limit <= 0 {
 		q.limit = dataQueryDefaultLimit
 	}
@@ -260,7 +272,14 @@ func readDataQuery(r *http.Request) (dataQuery, error) {
 		if f.FILTERSLength() > 0 {
 			return dataQuery{}, errors.New("FILTERS select through the epoch index: set TIME_PROFILE or FROM/TO_EPOCH_MS")
 		}
+		if sorted {
+			return dataQuery{}, errors.New("a raw-lane page is in store sequence order: SORT_FIELD EPOCH takes a window query (FROM_EPOCH_MS and TO_EPOCH_MS)")
+		}
 		return q, nil
+	}
+	if sorted && profile != qrpProfileUnspecified && profile != qrpProfileAll {
+		return dataQuery{}, errors.New("SORT_FIELD EPOCH takes a window query (FROM_EPOCH_MS and TO_EPOCH_MS), not TIME_PROFILE " +
+			QRP.EnumNamesqrpTimeProfile[f.TIME_PROFILE()])
 	}
 	if q.raw.ProducerPeerID != "" || q.raw.PeerID != "" || q.raw.SyncFilter != "" || q.raw.Search != "" || q.cursor != "" {
 		return dataQuery{}, errors.New("a TIME_PROFILE query takes PROVIDER_ID, SOURCE_NAME, BATCH_ID and FILTERS, not PRODUCER_PEER_ID, ORIGIN_ID, SQL, SEARCH or CURSOR")
@@ -345,8 +364,14 @@ func writeQueryRuns(w http.ResponseWriter, store *storage.FlatSQLStore, q dataQu
 		search = q.raw.Search
 	}
 	generated := time.Now().UnixMilli()
+	var fromMs, toMs int64
+	if q.epoch != nil && q.epoch.Profile == storage.EpochProfileWindow && q.epoch.From != nil && q.epoch.To != nil {
+		fromMs, toMs = q.epoch.From.UnixMilli(), q.epoch.To.UnixMilli()
+	}
 	header := func(lane scanLane, count int) []byte {
 		return buildRunHeader(runHeader{
+			fromEpochMs:    fromMs,
+			toEpochMs:      toMs,
 			lane:           lane,
 			schemaName:     q.raw.SchemaName,
 			fileIdentifier: fileIdentifier,
@@ -390,6 +415,9 @@ type runHeader struct {
 	page, limit, recordCount           uint32
 	totalCount                         uint64
 	generatedAtMs                      int64
+	// fromEpochMs and toEpochMs are the window a window query's page was
+	// selected from (0 on other pages).
+	fromEpochMs, toEpochMs int64
 }
 
 func buildRunHeader(f runHeader) []byte {
@@ -425,6 +453,10 @@ func buildRunHeader(f runHeader) []byte {
 	QRP.QRPAddRECORD_COUNT(b, f.recordCount)
 	QRP.QRPAddTOTAL_COUNT(b, f.totalCount)
 	QRP.QRPAddGENERATED_AT_MS(b, f.generatedAtMs)
+	if f.fromEpochMs != 0 || f.toEpochMs != 0 {
+		QRP.QRPAddFROM_EPOCH_MS(b, f.fromEpochMs)
+		QRP.QRPAddTO_EPOCH_MS(b, f.toEpochMs)
+	}
 	QRP.FinishSizePrefixedQRPBuffer(b, QRP.QRPEnd(b))
 	return b.FinishedBytes()
 }

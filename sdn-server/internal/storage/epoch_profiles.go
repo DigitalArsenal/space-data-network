@@ -579,6 +579,53 @@ func normalizeSchemaNameForEpoch(schemaName string) string {
 	return schemaName + ".fbs"
 }
 
+// EpochWindowMaxSorted bounds the matches a descending epoch window reads:
+// the index serves a window oldest first, so its newest records are its last.
+const EpochWindowMaxSorted = 250000
+
+// QueryEpochWindowSorted answers epoch.window in EPOCH order, oldest first or
+// (desc) newest first: the records at [offset, offset+limit) of that order,
+// and the number the window matches. Ascending is the index's own order
+// (epoch, then CID). Descending reads the whole window and reverses it, so it
+// is refused for a window of more than EpochWindowMaxSorted records.
+func (s *FlatSQLStore) QueryEpochWindowSorted(query EpochRecordQuery, desc bool, offset, limit int) ([]*Record, int64, error) {
+	query.Profile = EpochProfileWindow
+	offset, limit = max(offset, 0), max(limit, 1)
+	total, err := s.CountEpochRecords(query)
+	if err != nil {
+		return nil, 0, err
+	}
+	if total == 0 || int64(offset) >= total {
+		return nil, total, nil
+	}
+	query.Limit = offset + limit
+	if desc {
+		if total > EpochWindowMaxSorted {
+			return nil, total, fmt.Errorf("a descending epoch window takes at most %d matches, this one has %d", EpochWindowMaxSorted, total)
+		}
+		query.Limit = int(total)
+	}
+	matches, err := s.QueryEpochRecords(query)
+	if err != nil {
+		return nil, total, err
+	}
+	records := make([]*Record, 0, len(matches))
+	for _, m := range matches {
+		if m.Record != nil {
+			records = append(records, m.Record)
+		}
+	}
+	if desc {
+		for i, j := 0, len(records)-1; i < j; i, j = i+1, j-1 {
+			records[i], records[j] = records[j], records[i]
+		}
+	}
+	if offset >= len(records) {
+		return nil, total, nil
+	}
+	return records[offset:min(offset+limit, len(records))], total, nil
+}
+
 func epochQueryLimit(query EpochRecordQuery) int {
 	if query.Limit <= 0 {
 		return 1000

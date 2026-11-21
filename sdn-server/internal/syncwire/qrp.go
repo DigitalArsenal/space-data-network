@@ -123,6 +123,9 @@ type QRPFields struct {
 	// Follow asks read-chunk to keep the stream open and send records as
 	// they are stored (FollowReadChunk).
 	Follow bool
+	// SortField and SortDesc order a window query (SORT_FIELD EPOCH).
+	SortField string
+	SortDesc  bool
 }
 
 // QRPColumnField is one $QRP COLUMNS descriptor.
@@ -309,6 +312,7 @@ func BuildQRP(f QRPFields) []byte {
 	etag := str(f.Etag)
 	cid := str(f.CID)
 	archiveID := str(f.ArchiveID)
+	sortField := str(f.SortField)
 	filters := buildQRPFilters(b, f.Filters)
 	columns := buildQRPColumns(b, f.Columns)
 	rows := buildQRPRows(b, f.Rows)
@@ -396,6 +400,12 @@ func BuildQRP(f QRPFields) []byte {
 	}
 	if f.Follow {
 		QRP.QRPAddFOLLOW(b, true)
+	}
+	if sortField != 0 {
+		QRP.QRPAddSORT_FIELD(b, sortField)
+	}
+	if f.SortDesc {
+		QRP.QRPAddSORT_DESC(b, true)
 	}
 	root := QRP.QRPEnd(b)
 	QRP.FinishSizePrefixedQRPBuffer(b, root)
