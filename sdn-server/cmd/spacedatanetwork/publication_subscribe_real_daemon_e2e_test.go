@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"strings"
@@ -108,9 +109,31 @@ func TestPublicationSubscribeRealDaemons(t *testing.T) {
 			t.Fatalf("sync status read through the daemon has no lane rc with 2500 rows:\n%s", out)
 		}
 
+		// The daemons run with their DHT off: the followed producer is in
+		// the receiver's Kubo peering, so Bitswap asks it for blocks.
+		if !kuboPeered(t, b.kubo, a.id) {
+			t.Fatalf("the receiver (DHT off) follows a lane from %s but has not peered it in Kubo", a.id)
+		}
+		// --publications keep on the followed lane changes only that.
+		out, err = b.cli(t, "sync", "subscribe", "--schema", "OMM", "--provider-id", "publication-e2e", "--source-name", "rc", "--from", a.id, "--publications", "keep")
+		if err != nil {
+			t.Fatalf("sync subscribe --publications keep: %v\n%s", err, out)
+		}
+		if kept := b.subscription(t, "rc"); !kept.KeepPublications || kept.ReceivedRecords < sub.ReceivedRecords || kept.Since != sub.Since {
+			t.Fatalf("after --publications keep: keep %v, received %d (was %d), since %v (was %v); want kept, the same subscription",
+				kept.KeepPublications, kept.ReceivedRecords, sub.ReceivedRecords, kept.Since, sub.Since)
+		}
+		if out, err = b.cli(t, "sync", "subscriptions"); err != nil || !strings.Contains(out, "publications: kept") {
+			t.Fatalf("sync subscriptions does not show the kept publications: %v\n%s", err, out)
+		}
+		t.Log("--publications keep set on the followed lane, which kept its stream and counts")
+
 		out, err = b.cli(t, "sync", "unsubscribe", "--schema", "OMM", "--provider-id", "publication-e2e", "--source-name", "rc", "--from", a.id)
 		if err != nil {
 			t.Fatalf("sync unsubscribe: %v\n%s", err, out)
+		}
+		if kuboPeered(t, b.kubo, a.id) {
+			t.Fatalf("no lane is followed from %s, but the receiver keeps it peered", a.id)
 		}
 		out, err = b.cli(t, "sync", "subscriptions", "--json")
 		var list syncSubscriptionList
@@ -199,6 +222,27 @@ func TestPublicationSubscribeRealDaemons(t *testing.T) {
 		}
 		t.Log("with the ceiling raised the lane resumed at its cursor and the whole keep-all lane (8,000 records) arrived")
 	})
+}
+
+// kuboPeered reports whether the Kubo RPC API at base lists id in its
+// peering service (swarm/peering/ls).
+func kuboPeered(t *testing.T, base, id string) bool {
+	t.Helper()
+	resp, err := http.Post(base+"/api/v0/swarm/peering/ls", "", nil)
+	if err != nil {
+		t.Fatalf("swarm/peering/ls: %v", err)
+	}
+	defer resp.Body.Close()
+	var out struct{ Peers []struct{ ID string } }
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("swarm/peering/ls: %v", err)
+	}
+	for _, p := range out.Peers {
+		if p.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 // cli runs the daemon's binary as an operator would, against d's config and

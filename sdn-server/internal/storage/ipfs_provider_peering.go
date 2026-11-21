@@ -20,8 +20,9 @@ import (
 // addresses are not "LAN". Registering the selected provider with the peering
 // service for the duration of one fetch is the narrow, deterministic remedy
 // measured on 2026-09-10 (13/13 native files, one provider at a time); it is
-// removed again afterwards so no permanent Peering.Peers entry accumulates
-// (swarm/peering/add persists to the Kubo config).
+// removed again afterwards, so the peering service does not keep peers this
+// call added (swarm/peering/add is runtime only: it is not written to the
+// repository's Peering.Peers, so it is also gone after a restart).
 
 const providerPeeringConnectTimeout = 10 * time.Second
 

@@ -454,6 +454,35 @@ func (n *Node) WANDHT() *dht.IpfsDHT {
 	return n.ipfs.DHT.WAN
 }
 
+// Peer registers ai with Kubo's peering service, which keeps a connection to
+// it and protects that connection. Bitswap's broadcast control (on by
+// default since Kubo 0.37) sends a want only to peers that served this node
+// before, LAN peers and peered peers, so a node with no content routing (its
+// DHT off) never asks a merely connected peer for a block: a peered one it
+// does. It reports false when ai was peered already (by the repository's
+// Peering.Peers or an earlier call), true when this call added it. Nothing
+// is written to the repository's config.
+func (n *Node) Peer(ai peer.AddrInfo) bool {
+	ps := n.ipfs.Peering
+	if ps == nil {
+		return false
+	}
+	for _, p := range ps.ListPeers() {
+		if p.ID == ai.ID {
+			return false
+		}
+	}
+	ps.AddPeer(ai)
+	return true
+}
+
+// Unpeer removes id from Kubo's peering service (Peer).
+func (n *Node) Unpeer(id peer.ID) {
+	if n.ipfs.Peering != nil {
+		n.ipfs.Peering.RemovePeer(id)
+	}
+}
+
 // APIURL is the RPC API base URL.
 func (n *Node) APIURL() string { return n.apiURL }
 

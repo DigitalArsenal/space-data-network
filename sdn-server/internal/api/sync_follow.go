@@ -44,6 +44,10 @@ type LaneFollow struct {
 	// or the gap is acknowledged; UnreadSince is when.
 	Unread      string    `json:"unread,omitempty"`
 	UnreadSince time.Time `json:"unread_since,omitempty"`
+	// KeepPublications is set when the subscription keeps the lane's
+	// publications (?publications=keep): each is fetched and imported, so
+	// this node serves their files.
+	KeepPublications bool `json:"keep_publications,omitempty"`
 }
 
 // LaneSubscription is a subscription request (sync subscribe).
@@ -58,6 +62,11 @@ type LaneSubscription struct {
 	// AcknowledgeUnread clears what a refused cursor left unread on the
 	// existing subscription (?acknowledge_unread=1).
 	AcknowledgeUnread bool
+	// Publications is "keep" (each of the lane's publications is fetched and
+	// imported, so this node serves its files), "stream", or "" (a new
+	// subscription streams; an existing one is left as it is)
+	// (?publications=).
+	Publications string
 }
 
 // LanePlan is a subscription's first read and whether this node takes it.
