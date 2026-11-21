@@ -497,6 +497,18 @@ func (s *ConcreteDatasetPublicationService) publishSelectedDatasetUpdate(ctx con
 			return &DatasetPublicationResult{RecordCount: 0}, nil
 		}
 	}
+	if activeReq.BatchID != "" {
+		if refusal := activeService.shortSnapshotRefusal(activeStore, schema, activeReq); refusal != nil {
+			// The batch stays in the store; only its publication is refused.
+			// Its journal entry is closed like an empty batch's, so the
+			// refusal is not retried, and nothing is retired: the lane keeps
+			// advertising the series it had.
+			if err := activeStore.CompletePublication(activeService.selection); err != nil {
+				return nil, atPublicationStep("record completion", err)
+			}
+			return nil, atPublicationStep("snapshot guard", refusal)
+		}
+	}
 	// A compact CAT snapshot publishes its selected products, one series per
 	// product standard, before its index. Every series uses one validated
 	// cutoff and owns immutable bytes throughout.

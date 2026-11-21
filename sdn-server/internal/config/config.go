@@ -1028,6 +1028,47 @@ type PublicationRetentionLane struct {
 	// whose batches are PARTS of one dataset (the cellular chunk lane): each
 	// part is published once and must stay published.
 	SnapshotBatches bool `yaml:"snapshot_batches,omitempty"`
+	// MinRecordRatio guards a snapshot lane against a short upstream pull:
+	// a batch holding fewer records than this fraction of the newest
+	// published series of the lane is refused, nothing is published, and the
+	// lane keeps advertising the series it had. 0 (the default) turns the
+	// guard off; it applies only with snapshot_batches. Why: on 2026-11-20
+	// CelesTrak answered the full-catalog GP pull twice with a body cut at
+	// about 3.7 MB (24,973 and 24,929 rows against 32,917 to 32,958 on every
+	// run of the two days before), and each short batch replaced the whole
+	// catalog the console loads. host-02's GP lanes take 0.95.
+	MinRecordRatio float64 `yaml:"min_record_ratio,omitempty"`
+	// MinRecords is an absolute floor for a snapshot lane: a batch holding
+	// fewer records is refused like a batch under min_record_ratio. The ratio
+	// alone measures against the newest published series, so once a short
+	// batch WAS published (host-02's 2026-11-20 20:35 UTC batch, 24,929
+	// records) it would let the next short one through; the floor does not
+	// move. 0 (the default) turns it off; it applies only with
+	// snapshot_batches. host-02's GP lanes take 31000 (the full catalog held
+	// 32,917 to 32,958 records on 11-18 to 11-20).
+	MinRecords int `yaml:"min_records,omitempty"`
+}
+
+// SnapshotFloorFor is the lane's snapshot guard: min_record_ratio when it is
+// in (0, 1] (else 0) and min_records when it is positive (else 0), both 0 when
+// the lane is not a snapshot lane. First match wins, as in PolicyFor.
+func (c PublicationRetentionConfig) SnapshotFloorFor(schema, providerID, sourceName string) (ratio float64, minRecords int) {
+	for _, lane := range c.Lanes {
+		if !PublishingLaneMatches(lane.Schema, lane.ProviderID, lane.SourceName, schema, providerID, sourceName) {
+			continue
+		}
+		if !lane.SnapshotBatches {
+			return 0, 0
+		}
+		if lane.MinRecordRatio > 0 && lane.MinRecordRatio <= 1 {
+			ratio = lane.MinRecordRatio
+		}
+		if lane.MinRecords > 0 {
+			minRecords = lane.MinRecords
+		}
+		return ratio, minRecords
+	}
+	return 0, 0
 }
 
 // PolicyFor resolves one lane's retention: the series count and whether its

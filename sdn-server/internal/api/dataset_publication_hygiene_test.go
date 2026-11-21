@@ -509,6 +509,157 @@ func TestPublicationRetentionRespectsBatchSemantics(t *testing.T) {
 	})
 }
 
+// TestSnapshotGuardRefusesShortBatchAndKeepsPreviousSeries: a snapshot lane
+// with min_record_ratio refuses a batch well under its last published series
+// (the 2026-11-20 CelesTrak GP cut: 24,929 of about 32,950 rows), announces
+// nothing and keeps advertising the full series; a later full batch publishes
+// against that full series, and the guard is off when the ratio is unset.
+func TestSnapshotGuardRefusesShortBatchAndKeepsPreviousSeries(t *testing.T) {
+	lane := storage.DatasetPublicationLane{SchemaName: "IQC.fbs", ProviderID: hygieneProvider, SourceName: hygieneSource}
+	publish := func(f *hygieneFixture, batch string) (*DatasetPublicationResult, error) {
+		return f.service.PublishDatasetUpdate(context.Background(), DatasetPublicationRequest{
+			Schema: "IQC.fbs", ProviderID: hygieneProvider, SourceName: hygieneSource, BatchID: batch,
+		})
+	}
+	advertisedBatches := func(t *testing.T, f *hygieneFixture) map[string]int {
+		t.Helper()
+		out := map[string]int{}
+		for _, row := range f.advertisedRows(t) {
+			out[row.BatchID] += row.RecordCount
+		}
+		return out
+	}
+
+	t.Run("guarded lane refuses the short batch", func(t *testing.T) {
+		f := newHygieneFixture(t)
+		f.service.SetPublicationPolicy(config.PublicationRetentionConfig{
+			KeepSeries: 2,
+			Lanes:      []config.PublicationRetentionLane{{Schema: "IQC", SourceName: hygieneSource, KeepSeries: 2, SnapshotBatches: true, MinRecordRatio: 0.95}},
+		}, nil)
+		hygieneIngest(t, f.store, "full-1", 0, 40, "2026-11-20T08:00:00Z")
+		if _, err := publish(f, "full-1"); err != nil {
+			t.Fatalf("first full batch: %v", err)
+		}
+		announced := len(f.announcer.announcements)
+
+		// 30 of 40 is under the floor of 38.
+		hygieneIngest(t, f.store, "short-1", 100, 130, "2026-11-20T17:00:00Z")
+		_, err := publish(f, "short-1")
+		if err == nil || !strings.Contains(err.Error(), "REFUSED") || !strings.Contains(err.Error(), "holds 30 records, under 38") {
+			t.Fatalf("short batch: err %v, want the snapshot guard's refusal", err)
+		}
+		if got := len(f.announcer.announcements); got != announced {
+			t.Fatalf("short batch announced %d publications", got-announced)
+		}
+		if got := advertisedBatches(t, f); got["full-1"] != 40 || got["short-1"] != 0 {
+			t.Fatalf("advertised %v, want only the full series (40 records)", got)
+		}
+		// A second short batch is still measured against the full series.
+		hygieneIngest(t, f.store, "short-2", 200, 229, "2026-11-20T20:00:00Z")
+		if _, err := publish(f, "short-2"); err == nil {
+			t.Fatal("second short batch published")
+		}
+		// A refusal is closed, not retried: publishing it again publishes
+		// nothing (refused again, or nothing left to publish).
+		if result, err := publish(f, "short-1"); err == nil && result != nil && result.RecordCount != 0 {
+			t.Fatalf("short batch published %d records on retry", result.RecordCount)
+		}
+		if got := len(f.announcer.announcements); got != announced {
+			t.Fatalf("refused batches announced %d publications", got-announced)
+		}
+
+		// A full batch (39 of 40, within the ratio) publishes.
+		hygieneIngest(t, f.store, "full-2", 300, 339, "2026-11-21T02:00:00Z")
+		if _, err := publish(f, "full-2"); err != nil {
+			t.Fatalf("second full batch: %v", err)
+		}
+		series, err := f.store.ListDatasetPublicationSeries(lane)
+		if err != nil || len(series) == 0 || series[0].BatchID != "full-2" || series[0].RecordCount != 39 {
+			t.Fatalf("newest series %+v (err %v), want full-2 with 39 records", series, err)
+		}
+		for _, s := range series {
+			if strings.HasPrefix(s.BatchID, "short") {
+				t.Fatalf("refused batch %q recorded a series", s.BatchID)
+			}
+		}
+	})
+
+	t.Run("unguarded lane publishes the short batch", func(t *testing.T) {
+		f := newHygieneFixture(t)
+		f.service.SetPublicationPolicy(config.PublicationRetentionConfig{
+			KeepSeries: 2,
+			Lanes:      []config.PublicationRetentionLane{{Schema: "IQC", SourceName: hygieneSource, KeepSeries: 2, SnapshotBatches: true}},
+		}, nil)
+		hygieneIngest(t, f.store, "full-1", 0, 40, "2026-11-20T08:00:00Z")
+		if _, err := publish(f, "full-1"); err != nil {
+			t.Fatalf("full batch: %v", err)
+		}
+		hygieneIngest(t, f.store, "short-1", 100, 130, "2026-11-20T17:00:00Z")
+		if result, err := publish(f, "short-1"); err != nil || result.RecordCount != 30 {
+			t.Fatalf("short batch without a guard: %+v, %v", result, err)
+		}
+	})
+
+	// host-02 on 2026-11-21: the newest published series is already a short
+	// one (24,929), so 0.95 of it would pass the next short pull; min_records
+	// does not move with it.
+	t.Run("min_records refuses a short batch after a short series was published", func(t *testing.T) {
+		f := newHygieneFixture(t)
+		unguarded := config.PublicationRetentionConfig{
+			KeepSeries: 2,
+			Lanes:      []config.PublicationRetentionLane{{Schema: "IQC", SourceName: hygieneSource, KeepSeries: 2, SnapshotBatches: true}},
+		}
+		f.service.SetPublicationPolicy(unguarded, nil)
+		hygieneIngest(t, f.store, "full-1", 0, 40, "2026-11-20T08:00:00Z")
+		if _, err := publish(f, "full-1"); err != nil {
+			t.Fatalf("full batch: %v", err)
+		}
+		hygieneIngest(t, f.store, "short-1", 100, 130, "2026-11-20T20:35:00Z")
+		if _, err := publish(f, "short-1"); err != nil {
+			t.Fatalf("short batch before the guard: %v", err)
+		}
+		announced := len(f.announcer.announcements)
+
+		f.service.SetPublicationPolicy(config.PublicationRetentionConfig{
+			KeepSeries: 2,
+			Lanes:      []config.PublicationRetentionLane{{Schema: "IQC", SourceName: hygieneSource, KeepSeries: 2, SnapshotBatches: true, MinRecordRatio: 0.95, MinRecords: 38}},
+		}, nil)
+		// 29 passes 0.95 x 30 but not min_records 38.
+		hygieneIngest(t, f.store, "short-2", 200, 229, "2026-11-21T08:25:00Z")
+		_, err := publish(f, "short-2")
+		if err == nil || !strings.Contains(err.Error(), "holds 29 records, under 38 (min_records 38)") {
+			t.Fatalf("short batch after a short series: err %v, want the min_records refusal", err)
+		}
+		if got := len(f.announcer.announcements); got != announced {
+			t.Fatalf("refused batch announced %d publications", got-announced)
+		}
+		if got := advertisedBatches(t, f); got["short-2"] != 0 || got["short-1"] != 30 {
+			t.Fatalf("advertised %v, want short-1 still advertised and short-2 not", got)
+		}
+		// A full answer publishes.
+		hygieneIngest(t, f.store, "full-2", 300, 340, "2026-11-21T08:30:00Z")
+		if result, err := publish(f, "full-2"); err != nil || result.RecordCount != 40 {
+			t.Fatalf("full batch after the refusal: %+v, %v", result, err)
+		}
+	})
+
+	t.Run("min_records alone guards a lane with no published series", func(t *testing.T) {
+		f := newHygieneFixture(t)
+		f.service.SetPublicationPolicy(config.PublicationRetentionConfig{
+			KeepSeries: 2,
+			Lanes:      []config.PublicationRetentionLane{{Schema: "IQC", SourceName: hygieneSource, KeepSeries: 2, SnapshotBatches: true, MinRecords: 25}},
+		}, nil)
+		hygieneIngest(t, f.store, "short-1", 0, 20, "2026-11-21T08:25:00Z")
+		if _, err := publish(f, "short-1"); err == nil || !strings.Contains(err.Error(), "holds 20 records, under 25 (min_records 25)") {
+			t.Fatalf("first batch under min_records: err %v", err)
+		}
+		hygieneIngest(t, f.store, "full-1", 100, 130, "2026-11-21T08:30:00Z")
+		if result, err := publish(f, "full-1"); err != nil || result.RecordCount != 30 {
+			t.Fatalf("batch over min_records: %+v, %v", result, err)
+		}
+	})
+}
+
 // TestIPNSPointerTracksLatestDPM: a configured lane's IPNS name ends on the
 // newest series' DPM; an unconfigured lane publishes no name.
 func TestIPNSPointerTracksLatestDPM(t *testing.T) {
