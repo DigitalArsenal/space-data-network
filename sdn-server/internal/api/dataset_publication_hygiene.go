@@ -874,6 +874,71 @@ func (w *ipnsPointerWorker) scheduleRepublish(job ipnsPointerJob, generation uin
 	})
 }
 
+// ResumeIPNSPointers re-sends, after delay, the pointer each key with
+// republish_every already holds in Kubo: the signed record Kubo keeps names
+// the last series this node pointed at. Without it a restart followed by no
+// new series (an upstream outage, or every batch refused by the snapshot
+// guard) would leave the name to lapse from the DHT. A key that published in
+// this process before the delay ran is left alone; republish_every repeats
+// the resumed pointer from then on.
+func (s *ConcreteDatasetPublicationService) ResumeIPNSPointers(delay time.Duration) {
+	if s == nil || s.hygiene == nil || s.hygiene.ipns == nil || strings.TrimSpace(s.ipfsAPIURL) == "" {
+		return
+	}
+	_, pointers := s.hygiene.policy()
+	for _, pointer := range pointers {
+		if pointer.RepublishEvery <= 0 || strings.TrimSpace(pointer.Key) == "" {
+			continue
+		}
+		pointer := pointer
+		time.AfterFunc(delay, func() { s.resumeIPNSPointer(pointer) })
+	}
+}
+
+func (s *ConcreteDatasetPublicationService) resumeIPNSPointer(pointer config.IPNSPointerConfig) {
+	key := strings.TrimSpace(pointer.Key)
+	lane := strings.TrimSpace(pointer.Schema + " " + pointer.ProviderID + "/" + pointer.SourceName)
+	if !s.hygiene.ipns.untouched(key) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	name, err := storage.KuboKeyIPNSName(ctx, s.ipfsAPIURL, key)
+	if err != nil {
+		log.Warnf("IPNS pointer %s (key %s): not resumed: %v", lane, key, err)
+		return
+	}
+	record, held, err := storage.ReadLocalIPNSRecord(ctx, s.ipfsAPIURL, name)
+	if err != nil || !held {
+		log.Warnf("IPNS pointer %s (key %s): not resumed: Kubo holds no signed record for /ipns/%s (%v)", lane, key, name, err)
+		return
+	}
+	if !strings.HasPrefix(record.Value, "/ipfs/") || !record.Validity.After(time.Now()) {
+		log.Warnf("IPNS pointer %s (key %s): not resumed: the record Kubo holds names %s and was valid until %s", lane, key, record.Value, record.Validity.UTC().Format(time.RFC3339))
+		return
+	}
+	log.Infof("IPNS pointer %s (key %s): resuming /ipns/%s -> %s (sequence %d)", lane, key, name, record.Value, record.Sequence)
+	s.hygiene.ipns.enqueue(ipnsPointerJob{
+		APIURL:         s.ipfsAPIURL,
+		Key:            key,
+		Path:           record.Value,
+		Lifetime:       pointer.Lifetime,
+		TTL:            pointer.TTL,
+		Lane:           lane,
+		Publishers:     append([]string(nil), pointer.DelegatedPublishers...),
+		RepublishEvery: pointer.RepublishEvery,
+	})
+}
+
+// untouched reports whether nothing was published or queued under key in
+// this process yet.
+func (w *ipnsPointerWorker) untouched(key string) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	_, queued := w.pending[key]
+	return !queued && w.generation[key] == 0 && !w.stopped
+}
+
 // stop ends republishing (shutdown, tests).
 func (w *ipnsPointerWorker) stop() {
 	if w == nil {
