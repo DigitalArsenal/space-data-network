@@ -43,6 +43,9 @@ type hygieneKubo struct {
 	calls  map[string]int
 	names  map[string]string
 	server *httptest.Server
+	// signer, when set, makes name/publish sign real IPNS records and serves
+	// key/list and name/get (see dataset_publication_ipns_delegated_test.go).
+	signer *ipnsTestSigner
 }
 
 func newHygieneKubo(t *testing.T) *hygieneKubo {
@@ -118,8 +121,22 @@ func (k *hygieneKubo) serve(w http.ResponseWriter, r *http.Request) {
 		value := r.URL.Query().Get("arg")
 		k.mu.Lock()
 		k.names[key] = value
+		signer := k.signer
 		k.mu.Unlock()
+		if signer != nil {
+			signer.publish(w, r)
+			return
+		}
 		_, _ = fmt.Fprintf(w, `{"Name":"k51-fake-%s","Value":"%s"}`+"\n", key, value)
+	case "/api/v0/key/list", "/api/v0/name/get":
+		k.mu.Lock()
+		signer := k.signer
+		k.mu.Unlock()
+		if signer == nil {
+			http.Error(w, "unexpected "+r.URL.Path, http.StatusNotFound)
+			return
+		}
+		signer.serve(w, r)
 	default:
 		http.Error(w, "unexpected "+r.URL.Path, http.StatusNotFound)
 	}

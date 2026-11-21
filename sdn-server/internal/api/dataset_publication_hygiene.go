@@ -112,9 +112,19 @@ func (s *ConcreteDatasetPublicationService) SweepPublicationFiles() {
 	}
 }
 
-// ipnsPointerPublishTimeout bounds one name/publish call. An online Kubo puts
-// the record into the DHT before it answers.
+// ipnsPointerPublishTimeout bounds one pointer publish: the name/publish call
+// when no delegated publisher is configured (an online Kubo puts the record
+// into the DHT before it answers), else reading the signed record back and
+// sending it to the publishers.
 const ipnsPointerPublishTimeout = 3 * time.Minute
+
+// ipnsPointerDHTTimeout bounds Kubo's own DHT put when delegated publishers
+// carry the record: it runs on after the pointer is published, and only its
+// outcome is logged.
+const ipnsPointerDHTTimeout = 15 * time.Minute
+
+// ipnsLocalRecordPoll is how often the node looks for the record Kubo signed.
+const ipnsLocalRecordPoll = 250 * time.Millisecond
 
 type publicationHygiene struct {
 	mu        sync.Mutex
@@ -398,12 +408,14 @@ func (s *ConcreteDatasetPublicationService) afterPublication(ctx context.Context
 			continue
 		}
 		s.hygiene.ipns.enqueue(ipnsPointerJob{
-			APIURL:   s.ipfsAPIURL,
-			Key:      strings.TrimSpace(pointer.Key),
-			Path:     "/ipfs/" + strings.TrimSpace(result.ManifestCID),
-			Lifetime: pointer.Lifetime,
-			TTL:      pointer.TTL,
-			Lane:     schema + " " + req.ProviderID + "/" + req.SourceName,
+			APIURL:         s.ipfsAPIURL,
+			Key:            strings.TrimSpace(pointer.Key),
+			Path:           "/ipfs/" + strings.TrimSpace(result.ManifestCID),
+			Lifetime:       pointer.Lifetime,
+			TTL:            pointer.TTL,
+			Lane:           schema + " " + req.ProviderID + "/" + req.SourceName,
+			Publishers:     append([]string(nil), pointer.DelegatedPublishers...),
+			RepublishEvery: pointer.RepublishEvery,
 		})
 	}
 	return nil
@@ -762,6 +774,96 @@ type ipnsPointerJob struct {
 	Lifetime time.Duration
 	TTL      time.Duration
 	Lane     string
+	// Publishers are Routing V1 HTTP publishers that receive the signed
+	// record (publishing.ipns_pointers[].delegated_publishers).
+	Publishers []string
+	// RepublishEvery re-sends the pointer while it is still the newest.
+	RepublishEvery time.Duration
+}
+
+// publishIPNSPointer publishes one pointer. Without delegated publishers it
+// is Kubo's name/publish, DHT put included. With them, Kubo signs and stores
+// the record, the node reads it back from Kubo's own datastore and PUTs it to
+// every publisher, and Kubo's DHT put runs on in the background (its outcome
+// is only logged): on a host where the DHT put outlasts the deadline the name
+// still moves.
+func publishIPNSPointer(ctx context.Context, job ipnsPointerJob) (string, error) {
+	if len(job.Publishers) == 0 {
+		name, _, err := storage.PublishIPNSName(ctx, job.APIURL, job.Key, job.Path, job.Lifetime, job.TTL)
+		return name, err
+	}
+	name, err := storage.KuboKeyIPNSName(ctx, job.APIURL, job.Key)
+	if err != nil {
+		return "", err
+	}
+	var before uint64
+	previous, held, err := storage.ReadLocalIPNSRecord(ctx, job.APIURL, name)
+	if err != nil {
+		return name, err
+	}
+	if held {
+		before = previous.Sequence
+	}
+	published := make(chan error, 1)
+	go func() {
+		dhtCtx, cancel := context.WithTimeout(context.Background(), ipnsPointerDHTTimeout)
+		defer cancel()
+		_, _, err := storage.PublishIPNSName(dhtCtx, job.APIURL, job.Key, job.Path, job.Lifetime, job.TTL)
+		published <- err
+		if err != nil {
+			log.Infof("IPNS pointer %s (key %s) -> %s: Kubo's own name/publish (DHT put) ended: %v", job.Lane, job.Key, job.Path, err)
+		}
+	}()
+	record, err := waitForSignedIPNSRecord(ctx, job, name, before, published)
+	if err != nil {
+		return name, err
+	}
+	var failures []string
+	for _, publisher := range job.Publishers {
+		if err := storage.PutIPNSRecordToPublisher(ctx, publisher, name, record.Raw); err != nil {
+			failures = append(failures, err.Error())
+		}
+	}
+	if len(failures) == len(job.Publishers) {
+		return name, fmt.Errorf("no delegated publisher accepted sequence %d: %s", record.Sequence, strings.Join(failures, "; "))
+	}
+	if len(failures) > 0 {
+		log.Warnf("IPNS pointer %s (key %s) sequence %d: %s", job.Lane, job.Key, record.Sequence, strings.Join(failures, "; "))
+	}
+	log.Infof("IPNS pointer %s: /ipns/%s sequence %d valid until %s sent to %d of %d delegated publishers", job.Lane, name, record.Sequence, record.Validity.UTC().Format(time.RFC3339), len(job.Publishers)-len(failures), len(job.Publishers))
+	return name, nil
+}
+
+// waitForSignedIPNSRecord waits until Kubo's datastore holds a record for
+// name newer than sequence before that names job.Path. Kubo stores the record
+// before its DHT put, so this does not wait on the DHT.
+func waitForSignedIPNSRecord(ctx context.Context, job ipnsPointerJob, name string, before uint64, published <-chan error) (storage.LocalIPNSRecord, error) {
+	ticker := time.NewTicker(ipnsLocalRecordPoll)
+	defer ticker.Stop()
+	answered := false
+	var publishErr error
+	for {
+		record, held, err := storage.ReadLocalIPNSRecord(ctx, job.APIURL, name)
+		if err == nil && held && record.Sequence > before && record.Value == job.Path {
+			return record, nil
+		}
+		if answered {
+			if publishErr != nil {
+				return storage.LocalIPNSRecord{}, fmt.Errorf("post IPFS name/publish: %w", publishErr)
+			}
+			if err != nil {
+				return storage.LocalIPNSRecord{}, err
+			}
+			return storage.LocalIPNSRecord{}, fmt.Errorf("Kubo answered name/publish but holds no record for /ipns/%s newer than sequence %d naming %s", name, before, job.Path)
+		}
+		select {
+		case <-ctx.Done():
+			return storage.LocalIPNSRecord{}, fmt.Errorf("Kubo stored no record for /ipns/%s naming %s before the deadline: %w", name, job.Path, ctx.Err())
+		case publishErr = <-published:
+			answered = true
+		case <-ticker.C:
+		}
+	}
 }
 
 // ipnsPointerStatus is the outcome of the last publish under one key.
@@ -785,20 +887,49 @@ type ipnsPointerWorker struct {
 	order   []string
 	running bool
 	status  map[string]ipnsPointerStatus
-	publish func(ctx context.Context, job ipnsPointerJob) (string, error)
+	// generation counts publishes per key; only the republish timer of the
+	// newest publish of a key may fire.
+	generation map[string]uint64
+	stopped    bool
+	publish    func(ctx context.Context, job ipnsPointerJob) (string, error)
 }
 
 func newIPNSPointerWorker() *ipnsPointerWorker {
 	w := &ipnsPointerWorker{
-		pending: make(map[string]ipnsPointerJob),
-		status:  make(map[string]ipnsPointerStatus),
-		publish: func(ctx context.Context, job ipnsPointerJob) (string, error) {
-			name, _, err := storage.PublishIPNSName(ctx, job.APIURL, job.Key, job.Path, job.Lifetime, job.TTL)
-			return name, err
-		},
+		pending:    make(map[string]ipnsPointerJob),
+		status:     make(map[string]ipnsPointerStatus),
+		generation: make(map[string]uint64),
+		publish:    publishIPNSPointer,
 	}
 	w.idle = sync.NewCond(&w.mu)
 	return w
+}
+
+// scheduleRepublish re-enqueues job after its RepublishEvery unless a newer
+// publish of the key happened meanwhile (whatever this one's outcome, so a
+// failed republish is retried at the next interval).
+func (w *ipnsPointerWorker) scheduleRepublish(job ipnsPointerJob, generation uint64) {
+	if job.RepublishEvery <= 0 {
+		return
+	}
+	time.AfterFunc(job.RepublishEvery, func() {
+		w.mu.Lock()
+		current := !w.stopped && w.generation[job.Key] == generation
+		w.mu.Unlock()
+		if current {
+			w.enqueue(job)
+		}
+	})
+}
+
+// stop ends republishing (shutdown, tests).
+func (w *ipnsPointerWorker) stop() {
+	if w == nil {
+		return
+	}
+	w.mu.Lock()
+	w.stopped = true
+	w.mu.Unlock()
 }
 
 func (w *ipnsPointerWorker) enqueue(job ipnsPointerJob) {
@@ -830,11 +961,14 @@ func (w *ipnsPointerWorker) run() {
 		w.order = w.order[1:]
 		job := w.pending[key]
 		delete(w.pending, key)
+		w.generation[key]++
+		generation := w.generation[key]
 		w.mu.Unlock()
 
 		ctx, cancel := context.WithTimeout(context.Background(), ipnsPointerPublishTimeout)
 		name, err := w.publish(ctx, job)
 		cancel()
+		w.scheduleRepublish(job, generation)
 		if err != nil {
 			log.Warnf("IPNS pointer %s (key %s) -> %s failed: %v", job.Lane, job.Key, job.Path, err)
 		} else {
