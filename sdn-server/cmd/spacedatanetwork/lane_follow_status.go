@@ -30,7 +30,7 @@ func laneFollows(n *node.Node) func() []api.LaneFollow {
 				TransferMs:            s.TransferMs, VerifyMs: s.VerifyMs, StoreMs: s.StoreMs, LastReceivedAt: s.LastReceivedAt,
 				Connected: s.Connected, Error: s.LastError,
 				CurrentBatch: s.CurrentBatch, StatedBatch: s.Stated.BatchID, StatedRecords: s.Stated.Records, Lag: s.Lag,
-				Unread: s.UnreadText(), UnreadSince: unreadSince})
+				Unread: s.UnreadText(), UnreadSince: unreadSince, KeepPublications: s.KeepPublications})
 		}
 		return out
 	}
@@ -61,7 +61,7 @@ func lanePlan(p node.FollowPlan) api.LanePlan {
 
 func followRequest(req api.LaneSubscription) (node.FollowKey, node.FollowOptions) {
 	return node.FollowKey{Schema: req.Schema, ProviderID: req.ProviderID, SourceName: req.SourceName, Producer: req.Producer},
-		node.FollowOptions{Start: req.Start, Force: req.Force, Rule: req.Retention, AcknowledgeUnread: req.AcknowledgeUnread}
+		node.FollowOptions{Start: req.Start, Force: req.Force, Rule: req.Retention, AcknowledgeUnread: req.AcknowledgeUnread, Publications: req.Publications}
 }
 
 // subscribeLane follows a lane once its first read fits (sync subscribe).
