@@ -1774,7 +1774,9 @@ func (b format4Backend) recordIndexSeqPage(q RecordIndexSeqQuery) (RecordIndexSe
 	}
 	out := RecordIndexSeqPage{Through: sq.SeqThrough, Rows: []RecordIndexRow{}}
 	if sq.SeqThrough <= 0 || q.AfterSeq >= sq.SeqThrough {
-		if sq.SeqThrough > 0 {
+		if q.KnownTotal > 0 && q.ThroughSeq > 0 {
+			out.Total = q.KnownTotal
+		} else if sq.SeqThrough > 0 {
 			h, err := b.d.api().Head(b.d.ctx, sq)
 			if err != nil && !errors.Is(err, format4.ErrNoType) {
 				return RecordIndexSeqPage{}, fmt.Errorf("count record index page: %w", err)
@@ -1789,10 +1791,16 @@ func (b format4Backend) recordIndexSeqPage(q RecordIndexSeqQuery) (RecordIndexSe
 		headErr error
 		counted = make(chan struct{})
 	)
-	go func() {
-		defer close(counted)
-		head, headErr = api.Head(ctx, sq)
-	}()
+	if q.KnownTotal > 0 && q.ThroughSeq > 0 {
+		// A continuation of the same snapshot: its count is the first page's.
+		head.N = q.KnownTotal
+		close(counted)
+	} else {
+		go func() {
+			defer close(counted)
+			head, headErr = api.Head(ctx, sq)
+		}()
+	}
 	pq := sq
 	pq.SeqAfter, pq.Order, pq.Limit, pq.Offset, pq.Hydrate = max(q.AfterSeq, 0), format4.OrderSeqAsc, int64(q.Limit), int64(q.Offset), extracted
 	recs, err := api.Scan(ctx, pq)
