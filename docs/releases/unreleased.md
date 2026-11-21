@@ -9,6 +9,30 @@ umask so the file is never readable by others.
 
 ---
 
+**A followed lane can keep its publications (`sync subscribe --publications
+keep`).** Since 1.1.10 a followed lane's records arrive on its stream, and
+its publications (the producer's signed manifests, shards and indexes) are
+not fetched while the stream holds the producer's current batch. A gateway
+host whose readers fetch a producer's publications from it then held none of
+the newest ones: on 2026-11-21 the SpaceAware console's space weather read
+"the provider node no longer holds the published files" for each new batch.
+`--publications keep` fetches and imports every publication of the lane
+again, as 1.1.9 did, under the lane's retention rule; on a lane already
+followed it changes only that, and the stored-`$PNM` catch-up reads at once
+what it had passed over. `sync subscriptions` shows "publications: kept". The
+flag is kept in the subscription (`publications=keep` in `SYNC_FILTER`): a
+node rolled back to 1.1.10 holds such a subscription without running it
+(alert `subscription_refused`) until it updates again.
+
+**A node with its DHT off peers the producers it follows.** Such a node has
+no content routing, and Kubo's Bitswap asks for a block only peers that
+served it before, LAN peers and peered peers, so it never asked a producer
+it was merely connected to: on 2026-11-21 every fetch of host-02's blocks
+through host-01's gateway timed out. The node now adds each producer it
+follows a lane from to Kubo's peering service when the followed stream
+opens, and removes it when it follows no lane from that producer; a producer
+in the Kubo repository's `Peering.Peers` is left as it is.
+
 **Linux: a fresh node gets its key password file automatically.** The Linux
 kernel makes `/sys/class/dmi/id/product_uuid` readable only by root, so on
 most Linux machines a node that does not run as root cannot derive its

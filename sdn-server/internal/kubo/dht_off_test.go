@@ -1,14 +1,17 @@
 package kubo_test
 
 import (
+	"bytes"
 	"context"
 	"path/filepath"
 	"testing"
 	"time"
 
+	blocks "github.com/ipfs/go-block-format"
 	"github.com/libp2p/go-libp2p-kad-dht/dual"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/multiformats/go-multiaddr"
 	"github.com/spacedatanetwork/sdn-server/internal/kubo"
 )
 
@@ -61,5 +64,80 @@ func TestDHTOffJoinsNoDHTThroughAServingPeer(t *testing.T) {
 	}
 	if peers := b.Host().Network().Peers(); len(peers) != 1 || peers[0] != a.Host().ID() {
 		t.Fatalf("a node with its DHT off is connected to %v, want only A", peers)
+	}
+}
+
+// TestDHTOffFetchesFromAPeeredProducer: a node with its DHT off has no
+// content routing, and Bitswap's broadcast control asks only peers that
+// served it before, LAN peers and peered peers. So it never asks a producer
+// it is merely connected to (host-01 and host-02, 2026-11-21: host-02 dialed
+// host-01, both ledgers empty, every fetch of host-02's blocks through
+// host-01's gateway timed out). Peered, the producer is asked and serves.
+func TestDHTOffFetchesFromAPeeredProducer(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	keyF, _ := newKey(t)
+	keyP, idP := newKey(t)
+	follower := startConfig(t, kubo.Config{RepoPath: filepath.Join(t.TempDir(), "kubo"), Key: keyF, DHT: kubo.DHTOff})
+	producer := startConfig(t, kubo.Config{RepoPath: filepath.Join(t.TempDir(), "kubo"), Key: keyP, DHT: kubo.DHTOff})
+	want := blocks.NewBlock([]byte("a producer's published shard, 2026-11-21"))
+	if err := producer.IPFS().Blocks.AddBlock(ctx, want); err != nil {
+		t.Fatal(err)
+	}
+	// The producer dials the follower, as host-02 dials host-01.
+	if err := producer.Host().Connect(ctx, peer.AddrInfo{ID: follower.Host().ID(), Addrs: follower.Host().Addrs()}); err != nil {
+		t.Fatalf("the producer connects to the follower: %v", err)
+	}
+	// Loopback is "LAN" to broadcast control; the follower knows the
+	// producer by a public address, as host-01 knows host-02. Identify
+	// finishes first, or it adds the loopback addresses back.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if protos, _ := follower.Host().Peerstore().GetProtocols(idP); len(protos) > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("identify of the producer did not finish")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	time.Sleep(500 * time.Millisecond)
+	public := multiaddr.StringCast("/ip4/203.0.113.7/tcp/4001")
+	follower.Host().Peerstore().ClearAddrs(idP)
+	follower.Host().Peerstore().AddAddr(idP, public, time.Hour)
+	if addrs := follower.Host().Peerstore().Addrs(idP); len(addrs) != 1 || !addrs[0].Equal(public) {
+		t.Fatalf("the follower knows the producer at %v, want only %s", addrs, public)
+	}
+
+	fetch, stop := context.WithTimeout(ctx, 5*time.Second)
+	_, err := follower.IPFS().Blocks.GetBlock(fetch, want.Cid())
+	stop()
+	if err == nil {
+		t.Fatal("a DHT-off follower fetched from a merely connected producer: the broadcast control this test reproduces is not in force")
+	}
+	if follower.Host().Network().Connectedness(idP) != network.Connected {
+		t.Fatal("the producer's connection dropped; the failed fetch proves nothing")
+	}
+
+	if !follower.Peer(peer.AddrInfo{ID: idP}) {
+		t.Fatal("Peer reported the producer as peered already")
+	}
+	if follower.Peer(peer.AddrInfo{ID: idP}) {
+		t.Fatal("a second Peer added the producer again")
+	}
+	fetch, stop = context.WithTimeout(ctx, 10*time.Second)
+	got, err := follower.IPFS().Blocks.GetBlock(fetch, want.Cid())
+	stop()
+	if err != nil {
+		t.Fatalf("peered, the producer was not asked: %v", err)
+	}
+	if !bytes.Equal(got.RawData(), want.RawData()) {
+		t.Fatal("received a different block")
+	}
+	follower.Unpeer(idP)
+	for _, p := range follower.IPFS().Peering.ListPeers() {
+		if p.ID == idP {
+			t.Fatal("Unpeer left the producer peered")
+		}
 	}
 }
