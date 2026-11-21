@@ -105,7 +105,12 @@ func (s *ipnsTestSigner) publish(w http.ResponseWriter, r *http.Request) {
 func (s *ipnsTestSigner) serve(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/api/v0/key/list":
-		_, _ = fmt.Fprintf(w, `{"Keys":[{"Name":"self","Id":"k51-other"},{"Name":"%s","Id":"%s"}]}`+"\n", s.key, s.name.String())
+		// Kubo's text encoding, as host-02's Kubo 0.43.1 answers it.
+		if r.URL.Query().Get("encoding") != "text" || r.URL.Query().Get("l") != "true" {
+			http.Error(w, "key/list expected with l=true&encoding=text", http.StatusBadRequest)
+			return
+		}
+		_, _ = fmt.Fprintf(w, "kzwfwjn5ji4purkaknrwvpronfvibl14m4uj4zvolmjz02gajewxm0fo7nsyagx self           \n%s  %s \n", s.name.String(), s.key)
 	case "/api/v0/name/get":
 		if r.URL.Query().Get("offline") != "true" {
 			// The point of the fix: the node never waits on a network lookup.
