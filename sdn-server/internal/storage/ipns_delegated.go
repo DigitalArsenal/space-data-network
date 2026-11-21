@@ -3,7 +3,6 @@ package storage
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -45,22 +44,18 @@ func KuboKeyIPNSName(ctx context.Context, ipfsAPIURL, key string) (string, error
 	if key == "" {
 		return "", fmt.Errorf("ipns key is required")
 	}
-	body, err := postKuboRPC(ctx, ipfsAPIURL, "/api/v0/key/list", url.Values{"l": {"true"}, "ipns-base": {"base36"}}, 1<<20)
+	// Kubo's text form of key/list -l: one "<IPNS name> <key name>" line per key.
+	body, err := postKuboRPC(ctx, ipfsAPIURL, "/api/v0/key/list", url.Values{"l": {"true"}, "ipns-base": {"base36"}, "encoding": {"text"}}, 1<<20)
 	if err != nil {
 		return "", err
 	}
-	var listed struct {
-		Keys []struct {
-			Name string `json:"Name"`
-			ID   string `json:"Id"`
-		} `json:"Keys"`
-	}
-	if err := json.Unmarshal(body, &listed); err != nil {
-		return "", fmt.Errorf("decode IPFS key/list response: %w", err)
-	}
-	for _, k := range listed.Keys {
-		if k.Name == key && strings.TrimSpace(k.ID) != "" {
-			return strings.TrimSpace(k.ID), nil
+	for _, line := range strings.Split(string(body), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 2 && fields[1] == key {
+			if _, err := ipns.NameFromString(fields[0]); err != nil {
+				return "", fmt.Errorf("Kubo key %q has an IPNS name %q that does not parse: %w", key, fields[0], err)
+			}
+			return fields[0], nil
 		}
 	}
 	return "", fmt.Errorf("Kubo has no key %q", key)
