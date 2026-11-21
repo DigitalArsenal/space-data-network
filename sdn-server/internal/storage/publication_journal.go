@@ -93,7 +93,7 @@ func (s *FlatSQLStore) ConfigurePublicationSources(sources []PublicationSource) 
 		x.Source = strings.TrimSpace(x.Source)
 		x.ProductSource = strings.TrimSpace(x.ProductSource)
 		if (x.Schema != "CAT.fbs" && !isCatalogProductSchema(x.Schema)) || x.Provider == "" || x.Source == "" {
-			return errors.New("publication retention requires CAT or a catalog product standard (OCM, OMM) and exact provider/source")
+			return errors.New("publication retention requires CAT or a catalog product standard (OCM, OMM, MOR) and exact provider/source")
 		}
 		if x.ProductSource != "" && x.Schema != "CAT.fbs" {
 			return errors.New("catalog_product_source requires CAT")
