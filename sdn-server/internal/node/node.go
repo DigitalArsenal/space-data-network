@@ -3216,6 +3216,9 @@ func isPermanentDatasetPublicationMaterializationError(err error) bool {
 	if err == nil {
 		return false
 	}
+	if errors.Is(err, storage.ErrDatasetPublicationMisstated) {
+		return true
+	}
 	msg := err.Error()
 	for _, marker := range []string{
 		"buffer missing identifier",
@@ -4166,11 +4169,11 @@ func (n *Node) materializeDatasetPublicationPNMInner(ctx context.Context, schema
 	result, err := storage.MaterializeDatasetPublication(n.ctx, n.store, storage.DatasetPublicationReplayOptions{
 		PNM:               pnmBytes,
 		ProviderPublicKey: providerPublicKey,
-		FetchByCID: func(ctx context.Context, cid string) ([]byte, error) {
-			return storage.FetchIPFSBlockByCID(ctx, ipfsAPIURL, cid)
+		FetchByCID: func(ctx context.Context, cid string, maxBytes int64) ([]byte, error) {
+			return storage.FetchIPFSBlockByCIDUpTo(ctx, ipfsAPIURL, cid, maxBytes)
 		},
-		FetchByCIDToFile: func(ctx context.Context, cid string, path string) error {
-			return storage.FetchIPFSBlockByCIDToFile(ctx, ipfsAPIURL, cid, path)
+		FetchByCIDToFile: func(ctx context.Context, cid, path string, maxBytes int64) error {
+			return storage.FetchIPFSBlockByCIDToFileUpTo(ctx, ipfsAPIURL, cid, path, maxBytes)
 		},
 		FetchRetryDelays: []time.Duration{2 * time.Second, 5 * time.Second, 10 * time.Second, 20 * time.Second},
 		FetchBudget:      datasetPublicationFetchBudget,
@@ -4237,6 +4240,12 @@ func (n *Node) materializeDatasetPublicationPNMInner(ctx context.Context, schema
 		n.clearDatasetPNMMaterialized(pnmKey)
 		n.follows.publicationStopped(lane, fileID, err)
 		return false, fmt.Errorf("%w: %w", storage.ErrDatasetPublicationLaneNotImported, err)
+	}
+	if errors.Is(err, storage.ErrDatasetPublicationMisstated) {
+		// The signed DPM states sizes the publication does not keep: alert
+		// publication_misstated on the lane with both figures; recorded as a
+		// permanent error below, so it is not fetched again.
+		n.follows.publicationMisstated(lane, from, fileID, err)
 	}
 	if errors.Is(err, storage.ErrDatasetPublicationLaneNotImported) {
 		// Skipped, not failed: the in-memory mark stays, so the same PNM is

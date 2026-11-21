@@ -28,7 +28,16 @@ whose config carries `peers.trusted_import` refuses to start.
   when it fails): a lane stops, its cursor kept, before the store would pass
   `subscriptions.record_ceiling` or leave less than 1 GiB of free disk under
   `storage.path` (alert `follow_stopped`), and resumes once the page fits.
-  `--force` skips only the check before the subscription.
+  `--force` skips only the check before the subscription. A publication is
+  reserved for the records and shard bytes its signed manifest states; a
+  stated size no disk can hold stops the lane without overflowing the
+  reservation.
+- A `$PNM` publication is held to the sizes its signed manifest states: its
+  shard and index are fetched up to the stated bytes and no further, an
+  index listing more records than stated stores none, and a manifest stating
+  no records or a shard of 0 bytes is refused. Such a publication raises the
+  alert `publication_misstated` on the lane, naming both figures, and is not
+  fetched again.
 - A record gossiped on a schema topic (`POST /api/v1/pubsub/publish`, the
   sdn-js `publish`) names no lane and is no longer stored by any node,
   whatever its trust of the sender or `network.accept_push_from`. Signed
@@ -37,9 +46,9 @@ whose config carries `peers.trusted_import` refuses to start.
   publications' shards as well (an `archive-all` lane still keeps them),
   once it holds the producer's current batch; a lane whose stream the
   producer refuses, or whose current batch it cannot hold, imports through
-  them. After a restart a publication waits (at most 5 minutes) until the
-  lane's stream has held its batch again or failed to, so it is not imported
-  a second time.
+  them. After a restart a publication waits (at most 5 minutes from the
+  lane's start, whatever else runs the catch-up) until the lane's stream has
+  held its batch again or failed to, so it is not imported a second time.
 - A producer serves a peer it does not trust at most 8 followed streams
   (64 for all such peers); a node following more lanes of one producer is
   listed by it in `peers.trusted_peers` (16 streams, outside the 64),
@@ -50,9 +59,10 @@ whose config carries `peers.trusted_import` refuses to start.
   file whose read fails (permission, I/O) is left in place and read again at
   the next start; either way the node imports no lane and changes no
   subscription until the file reads (alert `subscriptions_unreadable`). A
-  subscription naming a field this release does not know (a later version
-  wrote it) is not run and kept as it is (alert `subscription_refused`); the
-  other lanes run. An unsubscribe made under 1.1.9 during a rollback comes
+  subscription whose filter this release cannot read (a field it does not
+  know, or a value of a field it does not read: a later version wrote it) is
+  not run and kept byte for byte as the file holds it (alert
+  `subscription_refused`); the other lanes run. An unsubscribe made under 1.1.9 during a rollback comes
   back with the next start of this release. `sync unsubscribe` clears the
   lane's alerts.
 
