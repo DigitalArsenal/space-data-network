@@ -209,44 +209,52 @@ func (h *publicationHygiene) policy() (config.PublicationRetentionConfig, []conf
 // is always against the last batch that WAS published.
 func (s *ConcreteDatasetPublicationService) shortSnapshotRefusal(store *storage.FlatSQLStore, schema string, req DatasetPublicationRequest) error {
 	retention, _ := s.hygiene.policy()
-	ratio := retention.SnapshotFloorFor(schema, req.ProviderID, req.SourceName)
-	if ratio <= 0 || store == nil {
-		return nil
-	}
-	lane := storage.DatasetPublicationLane{SchemaName: schema, ProviderID: req.ProviderID, SourceName: req.SourceName}
-	series, err := store.ListDatasetPublicationSeries(lane)
-	if err != nil {
-		// The guard cannot read the lane's history: publish as before rather
-		// than stall the lane on a read error, and say so.
-		log.Warnf("snapshot guard %s %s/%s batch %q: cannot read published series (%v); guard skipped", schema, req.ProviderID, req.SourceName, req.BatchID, err)
-		return nil
-	}
-	if len(series) == 0 {
+	ratio, minRecords := retention.SnapshotFloorFor(schema, req.ProviderID, req.SourceName)
+	if (ratio <= 0 && minRecords <= 0) || store == nil {
 		return nil
 	}
 	// The batch's size: the journal selection's count when the store keeps
 	// a publication journal for the lane, else the batch's tagged records.
 	var count int
+	var err error
 	if s.selection != nil {
 		_, count = s.selection.Fingerprint()
 	} else if _, count, err = store.DatasetPublicationSetFingerprint(schema, req.ProviderID, req.SourceName, req.BatchID); err != nil {
 		log.Warnf("snapshot guard %s %s/%s batch %q: cannot count the batch (%v); guard skipped", schema, req.ProviderID, req.SourceName, req.BatchID, err)
 		return nil
 	}
-	for _, previous := range series { // newest first
-		if previous.BatchID == req.BatchID || previous.RecordCount <= 0 {
-			continue
+	// The floor: min_records, raised to ratio x the newest series the lane
+	// published from another batch when that is higher.
+	floor := minRecords
+	basis := fmt.Sprintf("min_records %d", minRecords)
+	keeps := "the lane keeps advertising the series it had"
+	if ratio > 0 {
+		lane := storage.DatasetPublicationLane{SchemaName: schema, ProviderID: req.ProviderID, SourceName: req.SourceName}
+		series, err := store.ListDatasetPublicationSeries(lane)
+		if err != nil {
+			// The ratio cannot be measured on a read error: publish as before
+			// (or hold to min_records) rather than stall the lane, and say so.
+			log.Warnf("snapshot guard %s %s/%s batch %q: cannot read published series (%v); ratio skipped", schema, req.ProviderID, req.SourceName, req.BatchID, err)
 		}
-		floor := int(float64(previous.RecordCount)*ratio + 0.999999)
-		if count >= floor {
-			return nil
+		for _, previous := range series { // newest first
+			if previous.BatchID == req.BatchID || previous.RecordCount <= 0 {
+				continue
+			}
+			if byRatio := int(float64(previous.RecordCount)*ratio + 0.999999); byRatio > floor {
+				floor = byRatio
+				basis = fmt.Sprintf("%.2f x %d, the series published %s from batch %q", ratio, previous.RecordCount, previous.PublishedAt.Format(time.RFC3339), previous.BatchID)
+				keeps = "the lane keeps advertising that series"
+			}
+			break
 		}
-		err := fmt.Errorf("snapshot batch %q of %s %s/%s holds %d records, under %d (%.2f x %d, the series published %s from batch %q): REFUSED, the lane keeps advertising that series; if the source really shrank, lower or remove min_record_ratio for this lane",
-			req.BatchID, schema, req.ProviderID, req.SourceName, count, floor, ratio, previous.RecordCount, previous.PublishedAt.Format(time.RFC3339), previous.BatchID)
-		log.Warnf("snapshot guard: %v", err)
-		return err
 	}
-	return nil
+	if count >= floor {
+		return nil
+	}
+	refusal := fmt.Errorf("snapshot batch %q of %s %s/%s holds %d records, under %d (%s): REFUSED, %s; if the source really shrank, lower or remove min_record_ratio / min_records for this lane",
+		req.BatchID, schema, req.ProviderID, req.SourceName, count, floor, basis, keeps)
+	log.Warnf("snapshot guard: %v", refusal)
+	return refusal
 }
 
 // publicationFingerprint is the set the request would export, taken before
