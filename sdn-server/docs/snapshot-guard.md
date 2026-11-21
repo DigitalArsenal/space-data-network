@@ -15,12 +15,16 @@ publishing:
         keep_series: 2
         snapshot_batches: true
         min_record_ratio: 0.95
+        min_records: 31000
       - schema: MPE.fbs
         source_name: celestrak-gp
         keep_series: 2
         snapshot_batches: true
         min_record_ratio: 0.95
+        min_records: 31000
 ```
+
+`min_records` is an absolute floor beside the ratio. The ratio is measured against the newest published series, so once a short batch has been published (host-02's 20:35 UTC batch of 24,929 records was the newest series on 2026-11-21) 0.95 of it would let the next short pull through. The floor does not move. The guard refuses a batch under the higher of the two.
 
 `min_record_ratio` applies only with `snapshot_batches`. With it set, a batch holding fewer records than ratio x the newest published series of the lane (from another batch) is refused:
 
@@ -33,7 +37,7 @@ publishing:
 snapshot guard: snapshot batch "<batch>" of OMM.fbs space-data-network-02/celestrak-gp holds 24929 records, under 31298 (0.95 x 32945, the series published <time> from batch "<batch>"): REFUSED, the lane keeps advertising that series; if the source really shrank, lower or remove min_record_ratio for this lane
 ```
 
-Unset or 0 turns the guard off (the default).
+When `min_records` sets the floor, the text in brackets reads `(min_records 31000)`. Unset or 0 turns each part off (the default); with both off there is no guard.
 
 ## Why 0.95
 
