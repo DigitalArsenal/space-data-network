@@ -379,11 +379,14 @@ func New(ctx context.Context, cfg *config.Config) (*Node, error) {
 type dhtParticipation int
 
 const (
-	// dhtParticipationOff honours `peers.enable_dht: false`. The DHT object is
-	// still CONSTRUCTED — several call sites dereference n.dht with no nil
-	// guard (Start's Bootstrap at node.go, the advertisement/discovery
-	// routines), and making it nil would trade one defect for a panic — but it
-	// is never bootstrapped, so it joins nothing and answers nobody.
+	// dhtParticipationOff honours `peers.enable_dht: false`: the embedded Kubo
+	// routes nothing (routing "none") and n.dht is nil. A constructed but
+	// unbootstrapped client was not off: it learned the public DHT through any
+	// connected peer that serves it and dialed the peers it found (the owner
+	// machine's provider fleet, 2026-11-21). Every n.dht use is behind the
+	// participation check or a nil check (runDHTDiscovery returns for off,
+	// Start bootstraps only when not off, the relay walk and the gateway's
+	// peer lookup test for nil).
 	dhtParticipationOff dhtParticipation = iota
 	// dhtParticipationClient queries the DHT and publishes its own provider
 	// records without serving strangers' lookups. It also means this node
