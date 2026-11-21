@@ -37,7 +37,9 @@ export const NETWORKS = [...[LEOLABS_NETWORK, ...OTHER_NETWORKS].map(withAdditio
 export const roundOf = (row) => row.round ?? 1;
 // Round 3 (2026-11-20) adds no row: it sends a lane again, whole, because its records changed. The LeoLabs radars now carry
 // their coverage outline (leolabs-shapes.mjs); their twelve $SNR records, same SENSOR_IDs, go out as the lane's next batch.
-export const RESENT = { 3: [{ network: "leolabs", schema: "SNR.fbs" }] };
+// Round 4 is not a recipe round: batch leolabs-sensors-4 is the rollback (the 2026-11-18 records sent again). Round 5 (2026-11-20)
+// sends the LeoLabs radars again with their 2000 km altitude ceiling ($SCV ALTITUDE_SHELL, SDS 1.291.0), batch leolabs-sensors-5.
+export const RESENT = { 3: [{ network: "leolabs", schema: "SNR.fbs" }], 5: [{ network: "leolabs", schema: "SNR.fbs" }] };
 export const providerOf = (network) => `sdn-ssa-${network.slug}`;
 // The source name carries the network, so the console's SOURCES list reads "ussf-ssn-sites · 12" and not nine lanes called "sites".
 export const SITE_SOURCE = (network) => `${network.slug}-sites`;
@@ -207,12 +209,15 @@ function sensorRecord(network, row, siteRow) {
   if (row.apertureM !== undefined || row.focalM !== undefined) {
     record.OPTICAL = Object.assign(new SNROpticalParametersT(), { APERTURE_M: row.apertureM ?? 0, FOCAL_LENGTH_M: row.focalM ?? 0 });
   }
-  // A published outline (leolabs-shapes.mjs): every point, in order, as a vector from the sensor in its own axes, meters.
+  // A published outline (leolabs-shapes.mjs): every point, in order, as a vector from the sensor in its own axes, meters, and the
+  // altitude ceiling it reaches (no ALTITUDE_REFERENCE: above the Earth's standard ellipsoid).
   if (row.shape) {
+    if (scvSensorRangeBoundaryKind.ALTITUDE_SHELL === undefined) throw new Error(`SDS_PIN ${PIN} has no $SCV ALTITUDE_SHELL: a standards checkout with the altitude ceiling is needed`);
     record.FIELD_OF_VIEW = Object.assign(new SCVSensorShapeContractT(), {
       SHAPE_KIND: scvSensorShapeKind.CUSTOM_POLYGON,
       AXIS_CONVENTION: scvSensorAxisConvention.LOCAL_X_RIGHT_Y_UP_Z_BORESIGHT,
-      RANGE_BOUNDARY: scvSensorRangeBoundaryKind.RADIAL_SPHERICAL,
+      RANGE_BOUNDARY: scvSensorRangeBoundaryKind.ALTITUDE_SHELL,
+      MAX_ALTITUDE_M: row.shape.ceilingM,
       MIN_RANGE_M: 0,
       MAX_RANGE_M: row.shape.maxRangeM,
       POLYGON_VERTICES: row.shape.vertices.map(([x, y, z]) => Object.assign(new SCVVec3T(), { X: x, Y: y, Z: z })),

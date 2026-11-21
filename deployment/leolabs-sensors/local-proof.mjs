@@ -17,23 +17,24 @@ import { NETWORKS, RESENT, frame, lanesOf } from "./build-records.mjs";
 
 // One lane pair per network: provider `sdn-ssa-<network>`, so a network stands alone on the node.
 // Three passes, as on the production node: round 1 (the publication of 2026-11-18), round 2 appended to the same lanes and to new
-// ones (2026-11-19), round 3 a lane sent again whole (RESENT: the LeoLabs radars with their outlines, 2026-11-20).
+// ones (2026-11-19), round 3 a lane sent again whole (RESENT: the LeoLabs radars with their outlines, 2026-11-20), round 5 the
+// same lane again with the altitude ceiling (2026-11-20; batch 4 is the rollback, not a recipe round).
 // `total` is what the lane holds after the batch: the node signs the whole lane, so the signed count is the total, not the batch.
 const lanesFrom = (builder, rounds) => rounds.flatMap((round) => builder.NETWORKS.flatMap((network) => builder.lanesOf(network, round).map((lane) => {
   const whole = builder.lanesOf(network).find((l) => l.schema === lane.schema);
   const total = round === 1 ? lane.count : whole.count;
   return { ...lane, network: network.slug, round, total };
 })));
-export const LANES = lanesFrom({ NETWORKS, lanesOf }, [1, 2, 3]);
+export const LANES = lanesFrom({ NETWORKS, lanesOf }, [1, 2, 3, 5]);
 
 const work = process.argv[2];
 const keep = process.argv.includes("--keep");
-// --previous <dir>: the recipe as it was when rounds 1 and 2 went out (a copy of its files), so rounds 1 and 2 publish the records
-// the production node holds and round 3 is sent over them, as it will be there.
+// --previous <dir>: the recipe as it was when rounds 1 to 3 went out (a copy of its files), so rounds 1 to 3 publish the records
+// the production node holds and round 5 is sent over them, as it will be there.
 const previousAt = process.argv.indexOf("--previous");
 const previous = previousAt > 0 ? await import(pathToFileURL(path.join(path.resolve(process.argv[previousAt + 1]), "build-records.mjs")).href) : null;
-const PUBLISHED = previous ? [...lanesFrom(previous, [1, 2]), ...LANES.filter((lane) => lane.round === 3)] : LANES;
-if (!work || !process.env.SDN_NODE_BINARY) throw new Error("Usage: SDN_NODE_BINARY=<node> SDS_PIN=<pin> local-proof.mjs <work-dir under /Volumes/ramdisk> [--keep] [--previous <recipe dir of rounds 1 and 2>]");
+const PUBLISHED = previous ? [...lanesFrom(previous, [1, 2, 3]), ...LANES.filter((lane) => lane.round === 5)] : LANES;
+if (!work || !process.env.SDN_NODE_BINARY) throw new Error("Usage: SDN_NODE_BINARY=<node> SDS_PIN=<pin> local-proof.mjs <work-dir under /Volumes/ramdisk> [--keep] [--previous <recipe dir of rounds 1 to 3>]");
 if (!work.startsWith("/Volumes/ramdisk/")) throw new Error("the work dir must be under /Volumes/ramdisk");
 rmSync(work, { recursive: true, force: true });
 mkdirSync(path.join(work, "kubo"), { recursive: true });

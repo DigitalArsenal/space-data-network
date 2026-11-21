@@ -148,7 +148,12 @@ for (const network of NETWORKS) {
       assert(fov, `${row.id}: the outline is published`);
       assert.equal(fov.SHAPE_KIND, scvSensorShapeKind.CUSTOM_POLYGON);
       assert.equal(fov.POLYGON_FRAME, scvCoordinateFrame.SENSOR_LOCAL);
-      assert.equal(fov.RANGE_BOUNDARY, scvSensorRangeBoundaryKind.RADIAL_SPHERICAL);
+      // The altitude ceiling: 2000 km above the Earth's standard ellipsoid (no reference given).
+      assert(scvSensorRangeBoundaryKind.ALTITUDE_SHELL !== undefined, "the standards checkout has $SCV ALTITUDE_SHELL");
+      assert.equal(fov.RANGE_BOUNDARY, scvSensorRangeBoundaryKind.ALTITUDE_SHELL);
+      assert.equal(fov.MAX_ALTITUDE_M, 2000000);
+      assert.equal(fov.MAX_ALTITUDE_M, row.shape.ceilingM);
+      assert.equal(fov.ALTITUDE_REFERENCE, null, `${row.id}: the ceiling is above the Earth's standard ellipsoid`);
       assert.equal(fov.MIN_RANGE_M, 0);
       assert.equal(fov.MAX_RANGE_M, row.shape.maxRangeM);
       assert.equal(fov.POLYGON_VERTICES.length, row.shape.count, `${row.id}: every outline point`);
@@ -165,7 +170,7 @@ for (const network of NETWORKS) {
     assert.equal(rec.PROVENANCE.SOURCE_URL, row.cite.url);
     assert(rec.NOTES.includes(network.credit));
     const b = rec.SPECTRAL_BANDS[0];
-    console.log(`SNR ${rec.SENSOR_ID}\n  NAME=${rec.NAME} ${ground ? `SITE_ID=${rec.SITE_ID}` : `NORAD_CAT_ID=${rec.NORAD_CAT_ID}`} TYPE=${SensorType[rec.TYPE]} EMISSION=${snrEmissionMode[rec.EMISSION]}\n  BAND=${b ? `${b.DESIGNATION} low=${b.FREQ_LOW_HZ} high=${b.FREQ_HIGH_HZ} name="${b.NAME}"` : "none"}\n  MOUNTING=${rec.MOUNTING ? `az=${rec.MOUNTING.BORESIGHT_AZIMUTH_DEG} el=${rec.MOUNTING.BORESIGHT_ELEVATION_DEG}` : "none"} RF.PEAK_POWER_W=${rec.RF?.PEAK_POWER_W ?? "none"} OPTICAL.APERTURE_M=${rec.OPTICAL?.APERTURE_M ?? "none"} FIELD_OF_VIEW=${rec.FIELD_OF_VIEW ? `CUSTOM_POLYGON ${rec.FIELD_OF_VIEW.POLYGON_VERTICES.length} vertices SENSOR_LOCAL MAX_RANGE_M=${rec.FIELD_OF_VIEW.MAX_RANGE_M.toFixed(1)}` : "none"}`);
+    console.log(`SNR ${rec.SENSOR_ID}\n  NAME=${rec.NAME} ${ground ? `SITE_ID=${rec.SITE_ID}` : `NORAD_CAT_ID=${rec.NORAD_CAT_ID}`} TYPE=${SensorType[rec.TYPE]} EMISSION=${snrEmissionMode[rec.EMISSION]}\n  BAND=${b ? `${b.DESIGNATION} low=${b.FREQ_LOW_HZ} high=${b.FREQ_HIGH_HZ} name="${b.NAME}"` : "none"}\n  MOUNTING=${rec.MOUNTING ? `az=${rec.MOUNTING.BORESIGHT_AZIMUTH_DEG} el=${rec.MOUNTING.BORESIGHT_ELEVATION_DEG}` : "none"} RF.PEAK_POWER_W=${rec.RF?.PEAK_POWER_W ?? "none"} OPTICAL.APERTURE_M=${rec.OPTICAL?.APERTURE_M ?? "none"} FIELD_OF_VIEW=${rec.FIELD_OF_VIEW ? `CUSTOM_POLYGON ${rec.FIELD_OF_VIEW.POLYGON_VERTICES.length} vertices SENSOR_LOCAL MAX_RANGE_M=${rec.FIELD_OF_VIEW.MAX_RANGE_M.toFixed(1)} MAX_ALTITUDE_M=${rec.FIELD_OF_VIEW.MAX_ALTITUDE_M}` : "none"}`);
   }
   table.push({ network: network.slug, provider: providerOf(network), sites: sites.length, sensors: network.sensors.length, inorbit: network.inorbit.length, withLimits: wanted.filter(({ row }) => row.band?.lowMHz !== undefined).length, retired: wanted.filter(({ row }) => row.status === "retired").length + network.sites.filter((s) => ["DECOMMISSIONED", "PERMANENT_SHUTDOWN"].includes(s.status)).length, leftOut: network.leftOut.length });
 }
