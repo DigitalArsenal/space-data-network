@@ -544,6 +544,21 @@ const engineStandardCatalogGraph = `
     AS_NAME:string;
     SERVICE_TIER:string;
   }
+  table COA {
+    ID:string;
+    NAME:string;
+    KIND:byte;
+    NORAD_CAT_ID:uint;
+    GROUP_ID:string;
+    EVENT_STANDARD:string;
+    EVENT_ID:string;
+    EVENT_EPOCH:string;
+    LEAD_SECONDS:double;
+    RETURN_WITHIN_SECONDS:double;
+    PREPARATION_SECONDS:double;
+    CHECKOUT_SECONDS:double;
+    DELTA_V_BUDGET_M_S_PER_YEAR:double;
+  }
   table COM {
     SYSTEM_ID:uint;
     ENTITY_ID:uint;
@@ -865,6 +880,13 @@ const engineStandardCatalogGraph = `
     PROVIDER_PEER_ID:string;
     PROVIDER_EPM_CID:string;
     PUBLISH_TIMESTAMP:string;
+  }
+  table DRB {
+    RECEIVER_ARTIFACT_SHA256:[ubyte];
+    START_UNIX_US:int64;
+    WINDOW_COUNT:ubyte;
+    POSITION_ONLY:bool;
+    WIDE_RECORDS:bool;
   }
   table DSS {
     STATUS:byte;
@@ -1973,6 +1995,14 @@ const engineStandardCatalogGraph = `
     DELTA_POS_V:double;
     DELTA_POS_W:double;
     DELTA_MASS:double;
+  }
+  table MOR {
+    NORAD_CAT_ID:uint32;
+    INTERNATIONAL_DESIGNATOR:string;
+    ORIGINATOR:string;
+    MEAN_ELEMENT_THEORY:byte;
+    EPOCH_UNIX_US:int64;
+    RECORD_KIND:ubyte;
   }
   table MPE {
     ENTITY_ID:string;
@@ -3441,6 +3471,24 @@ const engineStandardCatalogGraph = `
     COLOR_BLUE_BAND_ID:string;
     COLOR_RED_BAND_ID:string;
   }
+  table SLO {
+    LOADOUT_ID:string;
+    CONFIG_STANDARD:string;
+    CONFIG_ID:string;
+    CONFIG_CID:string;
+    HOST_SCOPE:byte;
+    NORAD_CAT_ID:uint;
+    SITE_ID:string;
+    ENTITY_ID:string;
+    CONSTELLATION_ID:string;
+    GROUP_ID:string;
+    BUS_ID:string;
+    VALID_FROM:string;
+    VALID_TO:string;
+    COUNT:uint;
+    POSITION:string;
+    SERIAL_NUMBER:string;
+  }
   table SLP {
     PROBLEM_ID:string;
     NAME:string;
@@ -3969,6 +4017,13 @@ const engineStandardCatalogGraph = `
     POSITION_UNCERTAINTY_M:double;
     POSITION_DISPUTED:bool;
   }
+  table UST {
+    PEER_ID:string;
+    VERSION:string;
+    SEQUENCE:long;
+    UPDATE_ID:string;
+    STATE:string;
+  }
   table VAM {
     ID:string;
     VERSION:string;
@@ -4131,6 +4186,7 @@ var engineGeneratedStandardBindings = map[string]engineRoutedSchema{
 	"CMS.fbs":  {Table: "CMS", FileID: "$CMS"},
 	"CMT.fbs":  {Table: "CMT", FileID: "$CMT"},
 	"CNP.fbs":  {Table: "CNP", FileID: "$CNP"},
+	"COA.fbs":  {Table: "COA", FileID: "$COA"},
 	"COM.fbs":  {Table: "COM", FileID: "$COM"},
 	"COT.fbs":  {Table: "COT", FileID: "$COT"},
 	"CPS.fbs":  {Table: "CPS", FileID: "$CPS"},
@@ -4150,6 +4206,7 @@ var engineGeneratedStandardBindings = map[string]engineRoutedSchema{
 	"DMG.fbs":  {Table: "DMG", FileID: "$DMG"},
 	"DOA.fbs":  {Table: "DOA", FileID: "$DOA"},
 	"DPM.fbs":  {Table: "DPM", FileID: "$DPM"},
+	"DRB.fbs":  {Table: "DRB", FileID: "$DRB"},
 	"DSS.fbs":  {Table: "DSS", FileID: "$DSS"},
 	"DTT.fbs":  {Table: "DTT", FileID: "$DTT"},
 	"EGP.fbs":  {Table: "EGP", FileID: "$EGP"},
@@ -4228,6 +4285,7 @@ var engineGeneratedStandardBindings = map[string]engineRoutedSchema{
 	"MFE.fbs":  {Table: "MFE", FileID: "$MFE"},
 	"MNF.fbs":  {Table: "MNF", FileID: "$MNF"},
 	"MNV.fbs":  {Table: "MNV", FileID: "$MNV"},
+	"MOR.fbs":  {Table: "MOR", FileID: "$MOR"},
 	"MPE.fbs":  {Table: "MPE", FileID: "$MPE"},
 	"MPL.fbs":  {Table: "MPL", FileID: "$MPL"},
 	"MSL.fbs":  {Table: "MSL", FileID: "$MSL"},
@@ -4332,6 +4390,7 @@ var engineGeneratedStandardBindings = map[string]engineRoutedSchema{
 	"SKQ.fbs":  {Table: "SKQ", FileID: "$SKQ"},
 	"SKR.fbs":  {Table: "SKR", FileID: "$SKR"},
 	"SKT.fbs":  {Table: "SKT", FileID: "$SKT"},
+	"SLO.fbs":  {Table: "SLO", FileID: "$SLO"},
 	"SLP.fbs":  {Table: "SLP", FileID: "$SLP"},
 	"SNR.fbs":  {Table: "SNR", FileID: "$SNR"},
 	"SNW.fbs":  {Table: "SNW", FileID: "$SNW"},
@@ -4374,6 +4433,7 @@ var engineGeneratedStandardBindings = map[string]engineRoutedSchema{
 	"TRS.fbs":  {Table: "TRS", FileID: "$TRS"},
 	"TRV.fbs":  {Table: "TRV", FileID: "$TRV"},
 	"TXS.fbs":  {Table: "TXS", FileID: "$TXS"},
+	"UST.fbs":  {Table: "UST", FileID: "$UST"},
 	"VAM.fbs":  {Table: "VAM", FileID: "$VAM"},
 	"VCF.fbs":  {Table: "VCF", FileID: "$VCF"},
 	"VCM.fbs":  {Table: "VCM", FileID: "$VCM"},
