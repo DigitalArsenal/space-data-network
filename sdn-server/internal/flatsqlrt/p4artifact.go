@@ -30,9 +30,9 @@ var p4ThreadsWasm []byte
 
 const (
 	// P4ThreadsPackage is the npm release the artifact comes from.
-	P4ThreadsPackage = "flatsql@3.12.13"
+	P4ThreadsPackage = "flatsql@3.12.14"
 	// P4ThreadsGitHead is that release's gitHead (flatsql main).
-	P4ThreadsGitHead = "5edc3d9dc2a67344e21e812df7d5d955e97af561"
+	P4ThreadsGitHead = "5711a156b3bde226fc4b042ebc7c01d7f58b3304"
 	// P4ThreadsSHA256 is the artifact's sha256 (the package's integrity.json):
 	// the release pin.
 	P4ThreadsSHA256 = versioninfo.P4EngineSHA256
