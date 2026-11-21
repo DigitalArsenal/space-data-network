@@ -308,6 +308,71 @@ node deployment/release/build-sdn-update-feed.js \
 `sdn.spaceaware.io/updates` is a release-operations step after artifact
 verification; the tooling intentionally does not claim a live deployment.
 
+### Release runbook: put a published release on the update channel
+
+The release workflow (`beta-release-artifacts.yml`) builds, signs and verifies
+the CLI update feed and attaches it to the GitHub release as
+`spacedatanetwork-update-feed-<version>.tar.gz`. It does NOT put it on the
+channel. Until the steps below run, no installed node can see the release:
+v1.1.10 was published at 2026-11-21 16:45Z, and no node had it 20 minutes
+later, because host-01's feed tree still ended at 1.1.9. Run these right after
+the release is published, on host-01 (`ssh sdn.spaceaware.io`, as root). The
+feed directory is `/opt/spacedatanetwork/update-feed`, the node's
+`SDN_UPDATE_FEED_DIR`.
+
+1. Download the feed and the checksums into a staging folder on the data
+   volume, and verify:
+
+   ```sh
+   S=/mnt/volume_nyc3_01/sdn-release-<version>-staging; mkdir -p $S && cd $S
+   B=https://github.com/DigitalArsenal/space-data-network/releases/download/v<version>
+   curl -fsSL -o spacedatanetwork-checksums.txt $B/spacedatanetwork-checksums.txt
+   curl -fsSL -o spacedatanetwork-update-feed-<version>.tar.gz $B/spacedatanetwork-update-feed-<version>.tar.gz
+   grep spacedatanetwork-update-feed-<version>.tar.gz spacedatanetwork-checksums.txt | sha256sum -c -
+   ```
+
+2. Extract into a fresh folder (`mkdir extract && tar -xzf ... -C extract`).
+   The tree is `update-feed/cli-bundle/release/<platform>/<arch>/`, with one
+   `index.json` (only the new version) and a `<version>/` folder
+   (`manifest.json`, `update.wasm`, `signal.json`) for each of linux/amd64,
+   linux/arm64, darwin/arm64, darwin/amd64 and windows/amd64. Compare it with
+   the live tree: the live `index.json` lists the previous version, and the
+   older version folders stay as they are.
+3. For each platform, keep a copy of the live `index.json`
+   (`index.json.bak-<UTC time>-before-<version>`), copy the `<version>/`
+   folder in, and replace `index.json` with the new one (write it next to the
+   old one, then `mv -f`). Leave `cli-bundle/beta` and `ui-bundle` alone.
+4. Check the public indexes:
+   `curl https://sdn.spaceaware.io/updates/cli-bundle/release/<platform>/<arch>/index.json`
+   lists the new version for each platform, and its `manifest.json` answers 200.
+5. Announce the pipeline-signed signals, so nodes do not wait for their
+   six-hourly feed check. Tell the operators of the console first: every
+   bundle node then restarts within its rollout window.
+
+   ```sh
+   SSL_CERT_FILE=/etc/spacedatanetwork/tls/origin.crt \
+   SDN_UPDATE_FEED_DIR=/opt/spacedatanetwork/update-feed \
+     /opt/spacedatanetwork/sdn-bundle/runtime/sdn/spacedatanetwork update signal \
+     --channel release --from-feed --version <version> \
+     --node-url https://127.0.0.1:443 \
+     -c /etc/space-data-network/config.module-delivery-sidecar.yaml
+   ```
+
+   It prints one `target=<platform>/<arch> sent=<update id>` line for each of
+   the five targets. `--from-feed` takes no `--dry-run`, and it publishes the
+   signals the pipeline signed with the release key. Two things are needed for
+   the CLI to sign in to the daemon with its root key:
+   - It must reach the daemon over loopback. Through `https://sdn.spaceaware.io`
+     the request arrives through the proxy, and the node refuses it ("SEC-001
+     hotfix: refused a root-key auth challenge").
+   - It must trust the daemon's self-signed certificate. That certificate names
+     127.0.0.1, so `SSL_CERT_FILE` pointing at it is enough.
+
+   v1.1.10's signals went out this way at 2026-11-21 17:36Z.
+6. Within the rollout window (default 30 minutes), check host-01 and host-02:
+   `spacedatanetwork version`, `updates/state.json`, the services, and on
+   host-01 `https://sdn.spaceaware.io/.well-known/sdn/modules.pmm` (200).
+
 ## Electron Application Update Path
 
 Branded SDN Desktop builds must use the SDN update feed origin for application
