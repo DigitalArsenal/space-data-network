@@ -71,7 +71,10 @@ const (
 	DHTServer
 	// DHTClient queries and publishes its own records, never serves.
 	DHTClient
-	// DHTOff is a client with no bootstrap peers: it joins nothing.
+	// DHTOff takes no part in any DHT: Kubo routes nothing (routing "none").
+	// A DHT client with no bootstrap peers is not off: it learns the public
+	// DHT through any connected peer that serves it (a fleet's customer node),
+	// and dials out to the peers it finds.
 	DHTOff
 )
 
@@ -79,8 +82,10 @@ func (m DHTMode) routing() kubolibp2p.RoutingOption {
 	switch m {
 	case DHTServer:
 		return kubolibp2p.DHTServerOption
-	case DHTClient, DHTOff:
+	case DHTClient:
 		return kubolibp2p.DHTClientOption
+	case DHTOff:
+		return kubolibp2p.NilRouterOption
 	default:
 		return kubolibp2p.DHTOption
 	}
@@ -90,8 +95,10 @@ func (m DHTMode) routingType() string {
 	switch m {
 	case DHTServer:
 		return "dhtserver"
-	case DHTClient, DHTOff:
+	case DHTClient:
 		return "dhtclient"
+	case DHTOff:
+		return "none"
 	default:
 		return "dht"
 	}
