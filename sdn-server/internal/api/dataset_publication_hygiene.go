@@ -207,7 +207,7 @@ func (h *publicationHygiene) policy() (config.PublicationRetentionConfig, []conf
 // another batch. Nil when the lane has no guard, has no earlier series, or the
 // batch is large enough. Refused batches record no series, so the comparison
 // is always against the last batch that WAS published.
-func (s *ConcreteDatasetPublicationService) shortSnapshotRefusal(store *storage.FlatSQLStore, schema string, req DatasetPublicationRequest, count int) error {
+func (s *ConcreteDatasetPublicationService) shortSnapshotRefusal(store *storage.FlatSQLStore, schema string, req DatasetPublicationRequest) error {
 	retention, _ := s.hygiene.policy()
 	ratio := retention.SnapshotFloorFor(schema, req.ProviderID, req.SourceName)
 	if ratio <= 0 || store == nil {
@@ -219,6 +219,18 @@ func (s *ConcreteDatasetPublicationService) shortSnapshotRefusal(store *storage.
 		// The guard cannot read the lane's history: publish as before rather
 		// than stall the lane on a read error, and say so.
 		log.Warnf("snapshot guard %s %s/%s batch %q: cannot read published series (%v); guard skipped", schema, req.ProviderID, req.SourceName, req.BatchID, err)
+		return nil
+	}
+	if len(series) == 0 {
+		return nil
+	}
+	// The batch's size: the journal selection's count when the store keeps
+	// a publication journal for the lane, else the batch's tagged records.
+	var count int
+	if s.selection != nil {
+		_, count = s.selection.Fingerprint()
+	} else if _, count, err = store.DatasetPublicationSetFingerprint(schema, req.ProviderID, req.SourceName, req.BatchID); err != nil {
+		log.Warnf("snapshot guard %s %s/%s batch %q: cannot count the batch (%v); guard skipped", schema, req.ProviderID, req.SourceName, req.BatchID, err)
 		return nil
 	}
 	for _, previous := range series { // newest first

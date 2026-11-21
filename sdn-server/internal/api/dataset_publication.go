@@ -490,14 +490,15 @@ func (s *ConcreteDatasetPublicationService) publishSelectedDatasetUpdate(ctx con
 		}
 	}
 	if activeService.selection != nil && activeReq.BatchID != "" {
-		_, count := activeService.selection.Fingerprint()
-		if count == 0 {
+		if _, count := activeService.selection.Fingerprint(); count == 0 {
 			if err := activeStore.CompletePublication(activeService.selection); err != nil {
 				return nil, atPublicationStep("record completion", err)
 			}
 			return &DatasetPublicationResult{RecordCount: 0}, nil
 		}
-		if refusal := activeService.shortSnapshotRefusal(activeStore, schema, activeReq, count); refusal != nil {
+	}
+	if activeReq.BatchID != "" {
+		if refusal := activeService.shortSnapshotRefusal(activeStore, schema, activeReq); refusal != nil {
 			// The batch stays in the store; only its publication is refused.
 			// Its journal entry is closed like an empty batch's, so the
 			// refusal is not retried, and nothing is retired: the lane keeps
