@@ -2702,6 +2702,8 @@ func (n *Node) startFlowServices() error {
 				n.sourceMetrics.RecordAttemptUnchanged(serviceID)
 			case errors.Is(runErr, flowrt.ErrNothingToStore):
 				n.sourceMetrics.RecordAttemptSucceeded(serviceID)
+			case errors.Is(runErr, flowrt.ErrLocalRunSucceeded):
+				n.sourceMetrics.RecordAttemptLocalSucceeded(serviceID)
 			default:
 				n.sourceMetrics.RecordAttemptOutcome(serviceID, runErr)
 			}
@@ -2942,11 +2944,28 @@ func (n *Node) reconcileRetrievalLedger(refire bool) {
 // flowServiceRetrievalDue reports whether a flow's sources are past their
 // retrieval window, failure backoff included (sourcemetrics.RetrievalDue). A
 // flow with no ledger rows has never retrieved anything and is due by
-// definition.
+// definition. A loaded flow that fetches from no publisher (a catalog builder
+// over this node's store) is held back only by its own failure backoff
+// (sourcemetrics.LocalRunDue).
 func (n *Node) flowServiceRetrievalDue(appID string) (bool, string) {
 	baseHours, _ := n.flowServiceRetrievalBaseHours(appID) // 0: node default
+	if n.flowServiceFetchesNothing(appID) {
+		due, reason, _ := n.sourceMetrics.LocalRunDue(appID, baseHours)
+		return due, reason
+	}
 	due, reason, _ := n.sourceMetrics.RetrievalDue(appID, baseHours, true)
 	return due, reason
+}
+
+// flowServiceFetchesNothing reports whether appID is a loaded flow service
+// whose manifest declares only local capabilities (flowrt.ServiceFlow.Retrieves).
+// Anything else, a flow not loaded included, keeps the retrieval gate.
+func (n *Node) flowServiceFetchesNothing(appID string) bool {
+	if n == nil || n.plugins == nil {
+		return false
+	}
+	sf, ok := n.plugins.Get(appID).(*flowrt.ServiceFlow)
+	return ok && sf != nil && !sf.Retrieves()
 }
 
 // flowServiceRetrievalBaseHours reports the operator-configured base debounce
