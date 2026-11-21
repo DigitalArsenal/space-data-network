@@ -123,7 +123,8 @@ func TestFormat4UnsetSettingCreatesNewStoreUnlimited(t *testing.T) {
 
 // A statement naming a relation the stream store does not have is an error:
 // an empty answer reads as "no records" (a module asking for a standard this
-// node does not know, or for a field-sealed one). A registered standard with
+// node does not know, or for a field-sealed one; QQQ is no SDS standard: MOR
+// was the example until SDS 1.289.0 made it one). A registered standard with
 // no records still answers an empty stream.
 func TestFormat4RawStreamNoRelationIsAnError(t *testing.T) {
 	onFormat4Engine(t, func(t *testing.T) {
@@ -133,7 +134,7 @@ func TestFormat4RawStreamNoRelationIsAnError(t *testing.T) {
 		if err != nil || st == nil || st.Rows != 0 {
 			t.Fatalf("a registered standard with no records: stream=%v err=%v", st, err)
 		}
-		for _, q := range []string{"SELECT _data FROM MOR", "SELECT COUNT(*) FROM OMMM", `SELECT _data FROM "OMM@no-such-source"`} {
+		for _, q := range []string{"SELECT _data FROM QQQ", "SELECT COUNT(*) FROM OMMM", `SELECT _data FROM "OMM@no-such-source"`} {
 			st, err := s.QueryRawStream(q)
 			if !errors.Is(err, ErrNoSQLRelation) {
 				t.Fatalf("%s: want ErrNoSQLRelation, got stream=%v err=%v", q, st, err)
