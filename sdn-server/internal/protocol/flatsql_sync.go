@@ -11,6 +11,7 @@ package protocol
 // follow their header with the raw shard or index bytes it counts.
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -57,6 +58,9 @@ type FlatSQLSyncHandler struct {
 	// followed stream of any other peer gets the anonymous limits. Unset:
 	// every peer is anonymous.
 	followTrust PeerAuthorizer
+	// followWork limits the store reads served to followers at once
+	// (flatsql_sync_work.go).
+	followWork *followWork
 }
 
 // syncRequest is one decoded $QRP request.
@@ -82,7 +86,8 @@ type syncRequest struct {
 // sds.IsPublicReadSchema names, from the node's own datastore. Everything
 // else needs SetPrivateReadAuthorizer.
 func NewFlatSQLSyncHandler(store *storage.FlatSQLStore) *FlatSQLSyncHandler {
-	return &FlatSQLSyncHandler{store: store, probes: newWireSpeedProbeBudget(), publicationReads: newPublicationListBudget(), follows: newFollowStats(), followSlots: newFollowSlots()}
+	return &FlatSQLSyncHandler{store: store, probes: newWireSpeedProbeBudget(), publicationReads: newPublicationListBudget(), follows: newFollowStats(), followSlots: newFollowSlots(),
+		followWork: newFollowWork()}
 }
 
 // SetPrivateReadAuthorizer installs the check that admits a peer to private
@@ -201,7 +206,18 @@ func (h *FlatSQLSyncHandler) HandleStream(op string, s network.Stream) {
 	var requestErr error
 	switch op {
 	case syncwire.OpReadChunk:
-		requestErr = h.handleReadChunk(s, peerID, req)
+		// The read runs under the stream's context: a peer that resets
+		// the stream ends the store read it asked for.
+		began := time.Now()
+		watch, stop := watchStream(context.Background(), s)
+		requestErr = h.handleReadChunk(watch.ctx, watchedStream{streamWatch: watch, w: s}, peerID, req)
+		reset := errors.Is(context.Cause(watch.ctx), errStreamReset)
+		stop()
+		if reset {
+			log.Infof("flatsql-sync: %s %s %s/%s from %s: the peer reset the stream after %s; its store read stopped (%v)", op, req.schema,
+				req.providerID, req.sourceName, peerID.ShortString(), time.Since(began).Round(time.Millisecond), requestErr)
+			return
+		}
 	case syncwire.OpOpenManifest:
 		requestErr = h.handleOpenManifest(s, req)
 	case syncwire.OpListPublished:
@@ -286,7 +302,7 @@ func (req syncRequest) publicationQuery() storage.DatasetShardPublicationQuery {
 	}
 }
 
-func (h *FlatSQLSyncHandler) handleReadChunk(w io.Writer, peerID peer.ID, req syncRequest) error {
+func (h *FlatSQLSyncHandler) handleReadChunk(ctx context.Context, w io.Writer, peerID peer.ID, req syncRequest) error {
 	activeStore, cleanup, err := h.storeForRequest(req)
 	if err != nil {
 		return err
@@ -304,28 +320,57 @@ func (h *FlatSQLSyncHandler) handleReadChunk(w io.Writer, peerID peer.ID, req sy
 		if req.q.FOLLOW() || fetched || req.batchID != "" || req.providerID == "" || req.sourceName == "" || req.cursor != "" {
 			return errors.New("a lane's statement is one unfollowed read-chunk naming the lane and no batch, with PROJECTION STATEMENT alone")
 		}
-		return writeLaneStatement(w, activeStore, query)
+		var frame []byte
+		if err := h.boundedWork(ctx, peerID, false, followStatementBound, func(read context.Context) error {
+			if followWorkFault != nil {
+				if err := followWorkFault(read, query.SourceName); err != nil {
+					return err
+				}
+			}
+			var err error
+			frame, err = laneStatementPage(activeStore, query)
+			return err
+		}); err != nil {
+			return err
+		}
+		_, err := w.Write(frame)
+		return err
 	}
 	if listed || fetched {
 		if req.q.FOLLOW() || listed == fetched || req.batchID == "" || req.providerID == "" || req.sourceName == "" {
 			return errors.New("a batch's list or its records by CID is one unfollowed read-chunk naming the lane and the batch, with one of PROJECTION and CID")
 		}
-		if listed {
-			if projection != syncwire.ProjectionCID {
-				return fmt.Errorf("unsupported PROJECTION %q", truncateName(projection))
-			}
-			return writeBatchCIDPage(w, activeStore, req)
+		if listed && projection != syncwire.ProjectionCID {
+			return fmt.Errorf("unsupported PROJECTION %q", truncateName(projection))
 		}
-		return writeBatchRecords(w, activeStore, req, named)
+		var frame []byte
+		var records []*storage.Record
+		var asked int
+		if err := h.boundedWork(ctx, peerID, true, followStatementBound, func(context.Context) error {
+			var err error
+			if listed {
+				frame, err = batchCIDPage(activeStore, req)
+			} else {
+				records, asked, err = batchRecords(activeStore, req, named)
+			}
+			return err
+		}); err != nil {
+			return err
+		}
+		if listed {
+			_, err := w.Write(frame)
+			return err
+		}
+		return syncwire.WriteFollowPage(w, activeStore, &datasync.Page{Schema: req.schema, Limit: asked}, records, syncwire.FollowStatement{})
 	}
 	if req.q.FOLLOW() {
 		rw, ok := w.(io.ReadWriter)
 		if !ok {
 			return errors.New("a followed read needs a two-way stream")
 		}
-		return h.followReadChunk(rw, activeStore, query, peerID, req)
+		return h.followReadChunk(ctx, rw, activeStore, query, peerID, req)
 	}
-	page, records, err := datasync.ScanPage(activeStore, query, datasync.MaxSyncChunkLimit)
+	page, records, err := datasync.ScanPageContext(ctx, activeStore, query, datasync.MaxSyncChunkLimit)
 	if err != nil {
 		return err
 	}
@@ -366,66 +411,74 @@ const (
 // errFollowLifetime ends an anonymous followed stream at its lifetime.
 var errFollowLifetime = fmt.Errorf("%w: an anonymous followed stream's lifetime is over; open another at the resume cursor", syncwire.ErrBusy)
 
-// writeBatchCIDPage answers one page of a batch's list of CIDs. CURSOR and
+// batchCIDPage is one page of a batch's list of CIDs. CURSOR and
 // NEXT_CURSOR are the sequence after which the page reads.
-func writeBatchCIDPage(w io.Writer, store *storage.FlatSQLStore, req syncRequest) error {
+func batchCIDPage(store *storage.FlatSQLStore, req syncRequest) ([]byte, error) {
 	var after int64
 	if req.cursor != "" {
 		var err error
 		if after, err = strconv.ParseInt(req.cursor, 10, 64); err != nil || after < 0 {
-			return fmt.Errorf("a batch list CURSOR %q is not a node-issued position", truncateName(req.cursor))
+			return nil, fmt.Errorf("a batch list CURSOR %q is not a node-issued position", truncateName(req.cursor))
 		}
 	}
 	cids, last, more, err := store.LaneBatchCIDPage(req.schema, req.providerID, req.sourceName, req.batchID, after, syncwire.FollowCIDPageLimit)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	next := ""
 	if more {
 		next = strconv.FormatInt(last, 10)
 	}
-	_, err = w.Write(syncwire.CIDPage(syncwire.QRPFields{SchemaName: req.schema, ProviderID: req.providerID, SourceName: req.sourceName,
-		BatchID: req.batchID, Cursor: req.cursor, NextCursor: next, Limit: syncwire.FollowCIDPageLimit, GeneratedAtMs: time.Now().UnixMilli()}, cids))
-	return err
+	return syncwire.CIDPage(syncwire.QRPFields{SchemaName: req.schema, ProviderID: req.providerID, SourceName: req.sourceName,
+		BatchID: req.batchID, Cursor: req.cursor, NextCursor: next, Limit: syncwire.FollowCIDPageLimit, GeneratedAtMs: time.Now().UnixMilli()}, cids), nil
 }
 
-// writeLaneStatement answers a lane's statement (syncwire.LaneStatement):
-// its current batch and that batch's records and bytes, the lane's records
-// and bytes, and a resume cursor at the type's newest sequence for the
-// followed read of the lane (the query a subscriber's followed request
-// names: the lane, no batch, no profile), so a follow opened there sends
-// only what is stored after it.
-func writeLaneStatement(w io.Writer, store *storage.FlatSQLStore, query datasync.QueryRequest) error {
+// laneStatementPage is a lane's statement (syncwire.LaneStatement): its
+// current batch and that batch's records and bytes, the lane's records and
+// bytes, and a resume cursor at the type's newest sequence for the followed
+// read of the lane (the query a subscriber's followed request names: the
+// lane, no batch, no profile), so a follow opened there sends only what is
+// stored after it.
+//
+// On a format 5 store every figure comes from maintained counters (the type
+// summary and the lane counters), never from reading the lane's records, so
+// a statement costs the lane's batches, not its records: the batch's and
+// the lane's records and bytes are the sums of their tag instances' counters
+// (storage.LaneTotals; a record in two of the lane's batches counts in each).
+func laneStatementPage(store *storage.FlatSQLStore, query datasync.QueryRequest) ([]byte, error) {
 	follow := datasync.QueryRequest{Schema: query.Schema, ProviderID: query.ProviderID, SourceName: query.SourceName}
 	boundary, err := store.RecordSequenceHead(datasync.FilterFromRequest(follow, 0, 0))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	stmt := laneStatement(store, follow)
 	st := syncwire.LaneStatement{FollowStatement: stmt, ResumeCursor: datasync.ResumeCursorAt(store, follow, boundary)}
-	if stmt.BatchID != "" {
-		batch := follow
-		batch.BatchID = stmt.BatchID
-		records, head, err := store.RawRecordSnapshot(datasync.FilterFromRequest(batch, 0, 0))
-		if err != nil {
-			return err
+	totals := func(batch string) (int64, int64, error) {
+		records, bytes, err := store.LaneTotals(follow.Schema, follow.ProviderID, follow.SourceName, batch)
+		if !errors.Is(err, storage.ErrFollowLaneUnsupported) {
+			return records, bytes, err
 		}
-		st.Records, st.BatchBytes = records, head.TotalBytes
+		q := follow
+		q.BatchID = batch
+		records, head, err := store.RawRecordSnapshot(datasync.FilterFromRequest(q, 0, 0))
+		return records, head.TotalBytes, err
 	}
-	records, head, err := store.RawRecordSnapshot(datasync.FilterFromRequest(follow, 0, 0))
-	if err != nil {
-		return err
+	if stmt.BatchID != "" {
+		if st.Records, st.BatchBytes, err = totals(stmt.BatchID); err != nil {
+			return nil, err
+		}
 	}
-	st.LaneRecords, st.LaneBytes = records, head.TotalBytes
-	_, err = w.Write(syncwire.StatementPage(syncwire.QRPFields{SchemaName: follow.Schema, ProviderID: follow.ProviderID, SourceName: follow.SourceName,
-		GeneratedAtMs: time.Now().UnixMilli()}, st))
-	return err
+	if st.LaneRecords, st.LaneBytes, err = totals(""); err != nil {
+		return nil, err
+	}
+	return syncwire.StatementPage(syncwire.QRPFields{SchemaName: follow.Schema, ProviderID: follow.ProviderID, SourceName: follow.SourceName,
+		GeneratedAtMs: time.Now().UnixMilli()}, st), nil
 }
 
-// writeBatchRecords answers the records of a batch named by CID as one
-// followed page (no statement); records past the page's limits, and CIDs the
-// batch does not hold, are left out.
-func writeBatchRecords(w io.Writer, store *storage.FlatSQLStore, req syncRequest, named string) error {
+// batchRecords is the records of a batch named by CID for one followed page
+// (no statement), and the CIDs named; records past the page's limits, and
+// CIDs the batch does not hold, are left out.
+func batchRecords(store *storage.FlatSQLStore, req syncRequest, named string) ([]*storage.Record, int, error) {
 	var cids []string
 	for _, c := range strings.Split(named, ",") {
 		if c = strings.TrimSpace(c); c != "" {
@@ -433,14 +486,13 @@ func writeBatchRecords(w io.Writer, store *storage.FlatSQLStore, req syncRequest
 		}
 	}
 	if len(cids) == 0 || len(cids) > syncwire.FollowFetchMaxCIDs {
-		return fmt.Errorf("a fetch by CID names 1 to %d CIDs, not %d", syncwire.FollowFetchMaxCIDs, len(cids))
+		return nil, 0, fmt.Errorf("a fetch by CID names 1 to %d CIDs, not %d", syncwire.FollowFetchMaxCIDs, len(cids))
 	}
 	records, err := store.LaneRecordsByCID(req.schema, req.providerID, req.sourceName, req.batchID, cids)
 	if err != nil {
-		return err
+		return nil, 0, err
 	}
-	records = records[:syncwire.FollowPageCut(records, syncwire.FollowMaxRecords)]
-	return syncwire.WriteFollowPage(w, store, &datasync.Page{Schema: req.schema, Limit: len(cids)}, records, syncwire.FollowStatement{})
+	return records[:syncwire.FollowPageCut(records, syncwire.FollowMaxRecords)], len(cids), nil
 }
 
 type deadlineSetter interface {
@@ -456,12 +508,19 @@ type deadlineSetter interface {
 // subscriber's saved position expires and it reads the lane again instead of
 // skipping. The peer's read permission is checked again before each page:
 // once it is gone the stream ends.
-func (h *FlatSQLSyncHandler) followReadChunk(s io.ReadWriter, store *storage.FlatSQLStore, query datasync.QueryRequest, peerID peer.ID, req syncRequest) error {
+func (h *FlatSQLSyncHandler) followReadChunk(ctx context.Context, s io.ReadWriter, store *storage.FlatSQLStore, query datasync.QueryRequest, peerID peer.ID, req syncRequest) error {
 	trusted := authorizedPeer(h.followTrust, peerID) || authorizedPeer(h.readAuthorizer, peerID)
 	if !h.followSlots.acquire(peerID, trusted) {
 		return errFollowBusy
 	}
 	defer h.followSlots.release(peerID, trusted)
+	if query.Cursor == "" && query.ResumeCursor == "" {
+		// A follow from the lane's beginning reads forward from sequence 0
+		// as a resume does: a followed page carries no count (TOTAL_COUNT
+		// is the stated batch's records), and counting the lane reads
+		// every record of it.
+		query.ResumeCursor = datasync.ResumeCursorAt(store, query, 0)
+	}
 	grantWait, ends := followGrantWait, time.Time{}
 	if !trusted {
 		grantWait, ends = followAnonGrantWait, time.Now().Add(followAnonLifetime)
@@ -495,29 +554,9 @@ func (h *FlatSQLSyncHandler) followReadChunk(s io.ReadWriter, store *storage.Fla
 		}
 		var page *datasync.Page
 		var records []*storage.Record
-		quiet := time.NewTimer(followQuiet)
-		for {
-			written := store.WriteSignal(query.Schema)
-			var err error
-			page, records, err = datasync.ScanPage(store, query, syncwire.FollowMaxRecords)
-			if err != nil {
-				quiet.Stop()
-				return err
-			}
-			if !caughtUp || len(records) > 0 || page.NextCursor != "" {
-				break
-			}
-			done := false
-			select {
-			case <-written:
-			case <-quiet.C:
-				done = true
-			}
-			if done {
-				break
-			}
+		if err := h.followPage(ctx, peerID, store, query, first, caughtUp, &page, &records); err != nil {
+			return err
 		}
-		quiet.Stop()
 		cut := syncwire.FollowPageCut(records, query.Limit)
 		more := page.NextCursor != "" || cut < len(records)
 		records = records[:cut]
@@ -539,6 +578,38 @@ func (h *FlatSQLSyncHandler) followReadChunk(s io.ReadWriter, store *storage.Fla
 		query.TotalCount, query.SnapshotID, query.Head = 0, "", ""
 		query.Cursor, query.ResumeCursor = "", page.ResumeCursor
 		caughtUp = !more
+	}
+}
+
+// followPage reads a followed stream's next page into page and records:
+// under a work slot (busy at once for the stream's first page; a later page
+// waits for one), with the stream's context and within followPageBound. A
+// stream caught up waits for new records for followQuiet, without a slot,
+// and then answers an empty page.
+func (h *FlatSQLSyncHandler) followPage(stream context.Context, peerID peer.ID, store *storage.FlatSQLStore, query datasync.QueryRequest, first, caughtUp bool,
+	page **datasync.Page, records *[]*storage.Record) error {
+	bound := time.Now().Add(followPageBound)
+	quiet := time.NewTimer(followQuiet)
+	defer quiet.Stop()
+	for {
+		written := store.WriteSignal(query.Schema)
+		if err := h.boundedWork(stream, peerID, !first, time.Until(bound), func(read context.Context) error {
+			var err error
+			*page, *records, err = datasync.ScanPageContext(read, store, query, syncwire.FollowMaxRecords)
+			return err
+		}); err != nil {
+			return err
+		}
+		if !caughtUp || len(*records) > 0 || (*page).NextCursor != "" {
+			return nil
+		}
+		select {
+		case <-written:
+		case <-quiet.C:
+			return nil
+		case <-stream.Done():
+			return context.Cause(stream)
+		}
 	}
 }
 

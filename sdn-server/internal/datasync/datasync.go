@@ -4,6 +4,7 @@
 package datasync
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -189,6 +190,12 @@ func Scan(store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (*ScanRes
 // ScanPage reads one page of the rowid-snapshot scan. req.IncludeData
 // hydrates the record bytes in the same read; otherwise records are refs.
 func ScanPage(store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (*Page, []*storage.Record, error) {
+	return ScanPageContext(context.Background(), store, req, maxLimit)
+}
+
+// ScanPageContext is ScanPage for a reader that may leave: the page's
+// record read ends when ctx ends (storage.QueryRawRecordsContext).
+func ScanPageContext(ctx context.Context, store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (*Page, []*storage.Record, error) {
 	if store == nil {
 		return nil, nil, fmt.Errorf("FlatSQL store is unavailable")
 	}
@@ -314,13 +321,7 @@ func ScanPage(store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (*Pag
 		}
 		filter.MaxRowID = snapshot.MaxRowID
 	}
-	var records []*storage.Record
-	var err error
-	if req.IncludeData {
-		records, err = store.QueryRawRecords(filter)
-	} else {
-		records, err = store.QueryRawRecordRefs(filter)
-	}
+	records, err := store.QueryRawRecordsContext(ctx, filter, req.IncludeData)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -560,6 +560,55 @@ func f4IdentityLess(a, c format4.Tag) bool {
 // ---- raw records (datasync v1, /api/v1/data) -------------------------------------------
 
 func (b format4Backend) queryRawRecords(filter RawRecordQuery, hydrate bool) ([]*Record, error) {
+	return b.queryRawRecordsContext(nil, filter, hydrate)
+}
+
+// readContext is the engine context of one read for a caller's ctx (nil:
+// the store's alone): it ends with the store and with ctx, and an engine
+// read whose context ends is canceled in the engine.
+func (b format4Backend) readContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		return b.d.ctx, func() {}
+	}
+	read, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(b.d.ctx, cancel)
+	return read, func() { stop(); cancel() }
+}
+
+// recordSequenceHead is a rowid cursor's boundary, RawRecordHead's MaxRowID
+// under UseRowIDCursor without its count: the filter's MaxRowID when it
+// names one, else the type's newest sequence from the maintained type
+// summary (never before AfterRowID). It reads no record; a HEAD of a lane of
+// several batches reads every record of the lane (format 1 answered
+// MAX(rowid) with one b-tree seek).
+func (b format4Backend) recordSequenceHead(filter RawRecordQuery) (int64, error) {
+	if err := b.closed(); err != nil {
+		return 0, err
+	}
+	if err := b.CheckFullTextSearch(filter.SchemaName, filter.Search); err != nil {
+		return 0, err
+	}
+	schemaName := strings.TrimSpace(filter.SchemaName)
+	if schemaName == "" {
+		return 0, errors.New("schema name is required")
+	}
+	typ, err := f4Type(schemaName)
+	if err != nil {
+		return 0, err
+	}
+	if filter.MaxRowID > 0 {
+		return filter.MaxRowID, nil
+	}
+	h, err := b.f4TypeHead(typ)
+	if err != nil {
+		return 0, fmt.Errorf("raw record head failed: %w", err)
+	}
+	return max(h.MaxSeq, filter.AfterRowID, 0), nil
+}
+
+func (b format4Backend) queryRawRecordsContext(ctx context.Context, filter RawRecordQuery, hydrate bool) ([]*Record, error) {
+	read, done := b.readContext(ctx)
+	defer done()
 	if err := b.closed(); err != nil {
 		return nil, err
 	}
@@ -595,18 +644,18 @@ func (b format4Backend) queryRawRecords(filter RawRecordQuery, hydrate bool) ([]
 		case filter.UseRowIDCursor:
 			// The datasync cursor: seq order, each record once (A16).
 			q.Order, q.Limit = format4.OrderSeqAsc, int64(filter.Limit)
-			recs, err = b.d.api().Scan(b.d.ctx, q)
+			recs, err = b.d.api().Scan(read, q)
 		case f4Indexed(q):
 			// Off the cursor, with a sync filter or a search: format 1's
 			// w order (COALESCE(epoch, ts) asc, CID asc), its tagged
 			// records then its untagged ones, paged by the engine (C-39 E3).
 			q.Order, q.Limit, q.Offset = format4.OrderWAsc, int64(filter.Limit), int64(filter.Offset)
-			recs, err = b.d.api().Scan(b.d.ctx, q)
+			recs, err = b.d.api().Scan(read, q)
 		default:
 			// Newest first as format 1: the tagged records by delivery time
 			// desc, CID asc, then the untagged ones by ts (C-39 E2).
 			q.Order, q.Limit, q.Offset = format4.OrderNewest, int64(filter.Limit), int64(filter.Offset)
-			recs, err = b.d.api().Scan(b.d.ctx, q)
+			recs, err = b.d.api().Scan(read, q)
 		}
 		if errors.Is(err, format4.ErrNoType) {
 			recs, err = nil, nil
