@@ -16,8 +16,6 @@ umask so the file is never readable by others.
 - A subscription whose `SYNC_FILTER` this build cannot read is refused alone (alert `subscription_refused`); the other lanes run, and the refused record is written back byte for byte.
 - After a restart a lane's publications wait at most 5 minutes for its stream, whatever else runs the catch-up.
 
-**A publication stays available while the node's IPFS repository holds it.** A follower's lane retention removes the files of the batches it no longer keeps as current. On 2026-11-21 host-01 listed four of host-02's five CelesTrak GP batches as `unavailable (shard_missing)`, although it pinned their content and served it over Bitswap. Readers that drop unavailable rows therefore had no earlier batch to fall back to. A shard or index whose file is gone now counts as present when the repository holds all of its content (every block local, with no fetch), and a shard must also be the published size. Such a row lists as `available`, and `read-shard` and `read-index` serve the bytes from the repository.
-
 **Linux: a fresh node gets its key password file automatically.** The Linux
 kernel makes `/sys/class/dmi/id/product_uuid` readable only by root, so on
 most Linux machines a node that does not run as root cannot derive its
