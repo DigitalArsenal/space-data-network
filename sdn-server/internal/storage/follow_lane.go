@@ -66,6 +66,42 @@ func (s *FlatSQLStore) LaneCurrentBatch(schemaName, providerID, sourceName strin
 	return current, cur.records, nil
 }
 
+// LaneTotals is a lane's records and bytes (batchID "": every batch; else
+// that batch), from the lane counters alone: the sum over the type's live
+// tag instances meeting the lane. It reads no record, so it costs the lane's
+// instances, not its records. A record tagged to two of the lane's batches
+// is counted in each: the lane's sum is its records exactly when no record
+// is in two of its batches, and more than them otherwise (a HEAD that counts
+// each record once reads every record of the lane).
+func (s *FlatSQLStore) LaneTotals(schemaName, providerID, sourceName, batchID string) (records, bytes int64, err error) {
+	b, ok := s.rb.(format4Backend)
+	if !ok {
+		return 0, 0, ErrFollowLaneUnsupported
+	}
+	if err := b.closed(); err != nil {
+		return 0, 0, err
+	}
+	typ, err := f4Type(schemaName)
+	if err != nil {
+		return 0, 0, err
+	}
+	lanes, err := b.f4Lanes(typ)
+	if err != nil {
+		return 0, 0, err
+	}
+	want := f4Lane(providerID, sourceName, batchID, "", "")
+	if want.Provider == "" || want.Source == "" {
+		return 0, 0, errors.New("a lane's totals name its provider and source")
+	}
+	for _, l := range lanes {
+		if l.Records > 0 && f4LaneMeets(l, want) {
+			records += l.Records
+			bytes += l.Bytes
+		}
+	}
+	return records, bytes, nil
+}
+
 // LaneBatchCIDPage is one page of a batch's list: the CIDs of the lane's
 // records tagged to batchID, in sequence order after afterSeq, at most limit.
 // It returns the last sequence read and whether more may follow.
