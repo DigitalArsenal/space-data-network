@@ -16,6 +16,8 @@ umask so the file is never readable by others.
 - A subscription whose `SYNC_FILTER` this build cannot read is refused alone (alert `subscription_refused`); the other lanes run, and the refused record is written back byte for byte.
 - After a restart a lane's publications wait at most 5 minutes for its stream, whatever else runs the catch-up.
 
+**An update's restart no longer cuts a dataset publication short.** Before it stops for an update the node finishes the publications that are running, for at most 30 minutes, and refuses new ones meanwhile (HTTP 503, retryable); `spacedatanetwork status` prints `update_stop_wait=` while it waits. A lane or batch publication that a stop or a crash ends anyway, or that was refused during the wait, is published again at the next start; an interrupted one is first reported as failed at the step "interrupted by the node's stop", which raises the lane's `publication_failed` alert until it completes.
+
 **Linux: a fresh node gets its key password file automatically.** The Linux
 kernel makes `/sys/class/dmi/id/product_uuid` readable only by root, so on
 most Linux machines a node that does not run as root cannot derive its

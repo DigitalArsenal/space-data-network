@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 const controlTokenName = "control-token"
@@ -19,12 +20,18 @@ const controlTokenName = "control-token"
 type ControlHandlerOptions struct {
 	BundleRoot string
 	Shutdown   func()
+	// Prepare runs when the handshake is accepted, before the answer: it
+	// stops the daemon taking new work that would postpone its stop and
+	// returns how much work runs and the longest the daemon waits for it
+	// before it begins its shutdown (0 for none). Nil waits for nothing.
+	Prepare func() (running int, wait time.Duration)
 }
 
 type controlHandler struct {
 	bundleRoot string
 	paths      Paths
 	shutdown   func()
+	prepare    func() (int, time.Duration)
 }
 
 type controlShutdownRequest struct {
@@ -54,6 +61,13 @@ type ControlShutdown struct {
 	// the direct spawn and let the supervisor's own Restart= policy respawn
 	// it when this is true.
 	Supervised bool `json:"supervised"`
+	// RunningPublications is how many dataset publications ran when the
+	// daemon accepted the shutdown, and WaitBeforeStopSeconds the longest it
+	// waits for them to finish before it begins its shutdown (0: it begins
+	// at once). It accepts no new publication meanwhile. The helper waits
+	// that much longer for the pid to exit.
+	RunningPublications   int   `json:"runningPublications,omitempty"`
+	WaitBeforeStopSeconds int64 `json:"waitBeforeStopSeconds,omitempty"`
 }
 
 func NewControlHandler(opts ControlHandlerOptions) http.Handler {
@@ -64,6 +78,7 @@ func NewControlHandler(opts ControlHandlerOptions) http.Handler {
 		bundleRoot: filepath.Clean(paths.Root),
 		paths:      paths,
 		shutdown:   opts.Shutdown,
+		prepare:    opts.Prepare,
 	}
 }
 
@@ -114,15 +129,21 @@ func (h *controlHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeControlError(w, http.StatusInternalServerError, fmt.Sprintf("consume update control token: %v", err))
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusAccepted)
-	_ = json.NewEncoder(w).Encode(ControlShutdown{
+	answer := ControlShutdown{
 		Status:      "shutdown_requested",
 		PID:         os.Getpid(),
 		BundleRoot:  h.bundleRoot,
 		RestartArgv: h.paths.RestartArgv(os.Args),
 		Supervised:  SupervisedBySystemd(),
-	})
+	}
+	if h.prepare != nil {
+		running, wait := h.prepare()
+		answer.RunningPublications = running
+		answer.WaitBeforeStopSeconds = int64(wait / time.Second)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	_ = json.NewEncoder(w).Encode(answer)
 	if h.shutdown != nil {
 		go h.shutdown()
 	}

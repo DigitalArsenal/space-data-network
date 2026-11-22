@@ -1029,6 +1029,22 @@ func (o helperApplyOptions) stopServingDaemon(ctx context.Context, version strin
 	}
 	daemon = servingDaemon{PID: answer.PID, RestartArgv: answer.RestartArgv, Supervised: answer.Supervised}
 	fmt.Fprintf(o.Out, "daemon_shutdown=requested pid=%d supervised=%t\n", daemon.PID, daemon.Supervised)
+	// The daemon finishes the dataset publications that run before it begins
+	// its shutdown: its graceful stop is given that much longer.
+	bounds := o.Stop
+	if answer.WaitBeforeStopSeconds > 0 {
+		wait := time.Duration(answer.WaitBeforeStopSeconds) * time.Second
+		if bounds.Grace <= 0 {
+			bounds.Grace = update.DefaultStopGrace
+		}
+		bounds.Grace += wait
+		fmt.Fprintf(o.Out, "daemon_stop_wait=dataset-publications running=%d at_most=%s\n", answer.RunningPublications, wait)
+		// The daemon has accepted the stop: the ledger line is reported if it
+		// cannot be written, not obeyed.
+		o.recordAfter("stop-waits-for-publications", answer.PID, version, fmt.Sprintf(
+			"the daemon finishes its %d running dataset publication(s) before it stops, for at most %s, and accepts no new one meanwhile",
+			answer.RunningPublications, wait))
+	}
 	if daemon.Supervised {
 		daemon.Supervisor = o.Supervisor(ctx, daemon.PID)
 		if daemon.Supervisor != nil {
@@ -1043,7 +1059,7 @@ func (o helperApplyOptions) stopServingDaemon(ctx context.Context, version strin
 		Version:  version,
 		PID:      daemon.PID,
 		How:      "update shutdown handshake",
-		Bounds:   o.Stop,
+		Bounds:   bounds,
 		Out:      o.Out,
 	}
 	if sup := daemon.Supervisor; sup != nil {

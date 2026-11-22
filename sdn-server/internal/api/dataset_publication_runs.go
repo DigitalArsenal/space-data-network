@@ -18,6 +18,11 @@ package api
 // after its client has left (the answer then reaches no one, and the
 // publication is complete). A second request for the same publication while
 // one runs waits for that one's result instead of starting another.
+// Before the node stops for an update it refuses new publications and waits
+// for the running ones (HoldPublications, AwaitPublications). A lane or batch
+// publication keeps a durable mark while it runs, and one refused while the
+// node stops leaves one, so the next start publishes what the process did not
+// complete (dataset_publication_resume.go).
 // Publications of one lane run one at a time (publicationHygiene.lockLane).
 // A caller bound to its publications (the auto-publisher) stops waiting at
 // its own deadline, and a run no caller waits for any more is cancelled
@@ -50,6 +55,18 @@ import (
 // errPublicationsStopped is the cause of a publication cancelled by the
 // node's stop.
 var errPublicationsStopped = errors.New("the node is stopping")
+
+// errPublicationsHeld is why a new publication is refused while the node
+// waits for its running publications before it restarts for an update
+// (HoldPublications).
+var errPublicationsHeld = errors.New("the node is restarting for an update")
+
+// PublicationRefusedForRestart reports an error of a publication refused
+// because the node is stopping or restarting for an update: the request can
+// be made again once the node has restarted.
+func PublicationRefusedForRestart(err error) bool {
+	return errors.Is(err, errPublicationsHeld) || errors.Is(err, errPublicationsStopped)
+}
 
 // publicationStepError names the step of a publication an error came from.
 // Its text is the underlying error's.
@@ -149,7 +166,13 @@ type publicationRuns struct {
 	life    context.Context
 	stop    context.CancelCauseFunc
 	stopped bool
-	active  sync.WaitGroup
+	// held refuses new runs and lets running ones finish
+	// (HoldPublications).
+	held   bool
+	active sync.WaitGroup
+	// marks is the directory of the durable marks of running publications
+	// (dataset_publication_resume.go); "" keeps none.
+	marks string
 }
 
 func newPublicationRuns() *publicationRuns {
@@ -241,6 +264,46 @@ func (s *ConcreteDatasetPublicationService) StopPublications(ctx context.Context
 	}
 }
 
+// HoldPublications refuses every new publication from now on and returns how
+// many publications run. A request for a publication that already runs still
+// waits for it. The node calls it when it restarts for an update, then
+// AwaitPublications: the set of running publications only shrinks, so new
+// requests cannot postpone the update. A refused request answers
+// PublicationRefusedForRestart, and a lane or batch publication refused so is
+// published after the restart (ResumeInterruptedPublications).
+func (s *ConcreteDatasetPublicationService) HoldPublications() int {
+	if s == nil || s.runs == nil {
+		return 0
+	}
+	s.runs.mu.Lock()
+	defer s.runs.mu.Unlock()
+	s.runs.held = true
+	return len(s.runs.byKey)
+}
+
+// AwaitPublications waits until no publication runs or ctx ends, and returns
+// how many still run.
+func (s *ConcreteDatasetPublicationService) AwaitPublications(ctx context.Context) int {
+	if s == nil || s.runs == nil {
+		return 0
+	}
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		s.runs.mu.Lock()
+		running := len(s.runs.byKey)
+		s.runs.mu.Unlock()
+		if running == 0 {
+			return 0
+		}
+		select {
+		case <-ctx.Done():
+			return running
+		case <-ticker.C:
+		}
+	}
+}
+
 // datasetPublicationRunKey identifies a request: two requests with the same
 // fields are the same publication.
 func datasetPublicationRunKey(req DatasetPublicationRequest) string {
@@ -288,9 +351,13 @@ func (s *ConcreteDatasetPublicationService) runDatasetPublication(ctx context.Co
 	runs.mu.Lock()
 	if runs.stopped {
 		runs.mu.Unlock()
-		return nil, fmt.Errorf("dataset publication %s batch %q: %w", lane, batch, errPublicationsStopped)
+		return nil, runs.refuseForRestart(req, errPublicationsStopped)
 	}
 	run, joined := runs.byKey[key]
+	if !joined && runs.held {
+		runs.mu.Unlock()
+		return nil, runs.refuseForRestart(req, errPublicationsHeld)
+	}
 	if !joined {
 		run = &publicationRun{started: s.now(), done: make(chan struct{})}
 		runs.byKey[key] = run
@@ -303,6 +370,11 @@ func (s *ConcreteDatasetPublicationService) runDatasetPublication(ctx context.Co
 	}
 	runs.mu.Unlock()
 
+	if !joined {
+		// Kept until the run ends other than by the node's stop: a mark left
+		// at a start is a publication the process ended during.
+		runs.mark(req)
+	}
 	if joined {
 		log.Infof("Dataset publication %s batch %q is already running (started %s ago): this request waits for its result",
 			lane, batch, s.now().Sub(run.started).Round(time.Millisecond))
@@ -317,7 +389,11 @@ func (s *ConcreteDatasetPublicationService) runDatasetPublication(ctx context.Co
 			// when its context ended after it completed.
 			result, err := publish(workCtx)
 			run.result, run.err = result, err
-			s.reportDatasetPublication(req, s.now().Sub(run.started), result, err, errors.Is(context.Cause(workCtx), errPublicationsStopped))
+			stopped := errors.Is(context.Cause(workCtx), errPublicationsStopped)
+			s.reportDatasetPublication(req, s.now().Sub(run.started), result, err, stopped)
+			if err == nil || !stopped {
+				runs.unmark(req)
+			}
 			runs.mu.Lock()
 			delete(runs.byKey, key)
 			runs.mu.Unlock()

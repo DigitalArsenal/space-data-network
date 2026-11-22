@@ -109,6 +109,24 @@ is read for publication once. Shard and index files that no publication row
 names (what a publication that never completed leaves) are removed once a
 publication completes; the published ones stay.
 
+`TestPublicationUpdateRestartWaitsRealDaemons` runs the producer from a
+bundle and makes the update helper's shutdown handshake while a
+150,000-record batch is being published. The node answers that it waits at
+most 30 minutes (`waitBeforeStopSeconds` 1800) for its one running
+publication (`runningPublications` 1); `spacedatanetwork status` prints
+`update_stop_wait=dataset-publications running=1`; a publication of another
+batch requested meanwhile answers HTTP 503 and is kept. The running
+publication completes and answers its client before the node logs
+"Shutting down...". Started again, the node publishes the refused batch by
+itself and does not read the completed one again.
+
+`TestPublicationInterruptedRedoneRealDaemons` stops the producer (SIGINT)
+while a 150,000-record batch is being published. At the next start the node
+logs the publication as failed at the step "interrupted by the node's stop",
+publishes the batch again (two publications of it in all) and the
+lane's `publication_failed` alert is clear once it completes; a further
+restart publishes nothing again.
+
 `TestPublicationFailureRealDaemons` runs the CelesTrak GP ingest flow of
 `space-data-network-modules` (`SDN_E2E_MODULES`, the modules checkout; the
 test fails when it is set and the flow is missing, and skips when it is not

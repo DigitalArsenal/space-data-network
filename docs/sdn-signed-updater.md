@@ -23,6 +23,24 @@ outside the replaceable bundle and service cgroup; for one it cannot write,
 the daemon installs into its account's home and restarts itself through the
 installed path, with no helper (below).
 
+**Running dataset publications finish first** (stack issue 1044). When an
+update asks the daemon to stop (the helper's shutdown handshake, or a home
+bundle's restart), the daemon refuses every new dataset publication and
+waits, at most 30 minutes, for the running ones to finish; only then does its
+shutdown begin. A request for a publication that already runs still waits for
+it; a new one answers HTTP 503 with `Retry-After`. The handshake's answer
+states `runningPublications` and `waitBeforeStopSeconds`; the helper records
+`stop-waits-for-publications` in the deploy ledger, prints `daemon_stop_wait=`, and waits that
+much longer for the daemon's pid to exit before it escalates. While the daemon
+waits, `updates/stop-wait.json` says so and `spacedatanetwork status` prints
+`update_stop_wait=dataset-publications running=<n> pid=<pid> since=<time>
+until=<time>`. A signal during the wait ends it. A publication of a lane or a
+batch (with every other request field at its default) that is still running
+at the bound, or that any stop or crash ends, keeps a mark in the publication
+directory's `publication-runs` folder, as does one refused during the wait,
+and the next start publishes it again
+(`sdn-server/internal/api/dataset_publication_resume.go`).
+
 This path is implemented in Go (`sdn-server/internal/update/`,
 `sdn-server/internal/node/update_signal.go`). The `packages/sdn-updater-module`
 WASM package contains stub methods and does not drive updates. Besides acting

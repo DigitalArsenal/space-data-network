@@ -234,6 +234,12 @@ func (h *DatasetPublicationHandler) handlePublish(w http.ResponseWriter, r *http
 		log.Warnf("dataset publication: the answer keeps the server's write timeout (%v)", err)
 	}
 	result, err := h.service.PublishDatasetUpdate(r.Context(), req)
+	if PublicationRefusedForRestart(err) {
+		// The node is stopping or restarting for an update: retryable.
+		w.Header().Set("Retry-After", "60")
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -361,6 +367,10 @@ func NewConcreteDatasetPublicationService(
 	ipfsAPIURL string,
 	outputDir string,
 ) *ConcreteDatasetPublicationService {
+	runs := newPublicationRuns()
+	if dir := strings.TrimSpace(outputDir); dir != "" {
+		runs.marks = filepath.Join(dir, publicationRunsDir)
+	}
 	return &ConcreteDatasetPublicationService{
 		store:          store,
 		publisher:      publisher,
@@ -371,7 +381,7 @@ func NewConcreteDatasetPublicationService(
 		outputDir:      strings.TrimSpace(outputDir),
 		now:            func() time.Time { return time.Now().UTC() },
 		hygiene:        newPublicationHygiene(),
-		runs:           newPublicationRuns(),
+		runs:           runs,
 	}
 }
 
